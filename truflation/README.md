@@ -88,9 +88,9 @@ action get_value($date) public view {
 
 ## Example
 
-I have created and tested a basic example of composing streams together. For simplicity, I have implemented the extensions directly in the Kwil codebase. If we choose to adopt these, we can move these to Truflation's codebase. `mathutil` code can be found [here](<https://github.com/kwilteam/kwil-db/tree/truflation-extensions/extensions/actions/mathutil>), while `basestream` and `truflation_streams` can be found [here](<https://github.com/kwilteam/kwil-db/tree/truflation-extensions/extensions/actions/truflation>). To run this, we need to build a Kwil binary with these extensions.
+I have created and tested a basic example of composing streams together. To run this, we need to build a Kwil binary with these extensions.
 
-The example schemas can also be found in this repo, under `examples`.
+The example schemas can also be found in this directory, under `example_schemas`.
 
 ### Beef, Corn, And Barley
 
@@ -102,11 +102,12 @@ The second composite stream combines the beef_corn stream with the barley base s
 
 ### Using The Example
 
-To use the example, run the Kwil binary found [here](<https://github.com/kwilteam/kwil-db/tree/truflation-extensions>). Refer to the Kwil docs on [how to run a node](<https://docs.kwil.com/docs/node/quickstart>).
+To use the example, build this binary using the repo README, and run the `kwild` node. Refer to the Kwil docs on [how to run a node](<https://docs.kwil.com/docs/node/quickstart>).
 
 #### Deploy the Base Streams
 
 Once the node is running, you can deploy the schemas found in `examples`. First, deploy the three base streams:
+
 ```bash
 kwil-cli database deploy -p=./examples/basestream.kf  -n=beef
 kwil-cli database deploy -p=./examples/basestream.kf  -n=corn

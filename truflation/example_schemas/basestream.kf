@@ -1,0 +1,37 @@
+database base;
+
+use basestream {
+    table_name: 'prices',
+    date_column: 'date_value',
+    value_column: 'value'
+} as basestream;
+
+// `prices` is the main table that tracks the stream prices
+table prices {
+  id text primary notnull minlen(36) maxlen(36), // rfc 4122 uuidv4
+  date_value text notnull unique minlen(10) maxlen(10), // enforce dd-mm-yyyy format
+  value int notnull, // accuracy of 3; the number "3.141" would be stored as "3141"
+  created_at int notnull // based on blockheight
+}
+
+// public action to add record to prices table
+action add_record ($id, $date_value, $value, $created_at) public {
+  INSERT INTO prices (id, date_value, value, created_at)
+  VALUES ($id, $date_value, $value, $created_at);
+}
+
+// action to remove record from prices table
+action delete_record ($id) public {
+  DELETE FROM prices
+  WHERE id = $id;
+}
+
+action get_index($date) public view {
+    $val = basestream.get_index($date);
+    SELECT $val AS result;
+}
+
+action get_value($date) public view {
+    $val = basestream.get_value($date);
+    SELECT $val AS result;
+}
