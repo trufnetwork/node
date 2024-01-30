@@ -109,9 +109,9 @@ To use the example, build this binary using the repo README, and run the `kwild`
 Once the node is running, you can deploy the schemas found in `examples`. First, deploy the three base streams:
 
 ```bash
-kwil-cli database deploy -p=./examples/basestream.kf  -n=beef
-kwil-cli database deploy -p=./examples/basestream.kf  -n=corn
-kwil-cli database deploy -p=./examples/basestream.kf  -n=barley
+kwil-cli database deploy -p=./example_schemas/basestream.kf  -n=beef
+kwil-cli database deploy -p=./example_schemas/basestream.kf  -n=corn
+kwil-cli database deploy -p=./example_schemas/basestream.kf  -n=barley
 ```
 
 Once deployed, seed them with some initial values. Remember that, in order to account for accuracy, we add 3 extra 0s to values. For example, 40.101 becomes 40101:
@@ -129,7 +129,7 @@ kwil-cli database execute -n=barley -a=add_record id:24c80091-a203-4182-a56b-e68
 Once we have seeded data, we can create the beef_corn stream. To do this, edit the `composed_1.kf` stream to add in the DBID for your beef and corn streams. Then, deploy the stream:
 
 ```bash
-kwil-cli database deploy -p=./examples/composed_1.kf  -n=beef_corn
+kwil-cli database deploy -p=./example_schemas/composed_1.kf  -n=beef_corn
 ```
 
 You can check that everything is working properly by getting the combined value from the beef_corn stream:
@@ -143,7 +143,7 @@ kwil-cli database call -a=get_value date: -n=beef_corn
 Just like in the above step, we will now use the `composed_2.kf` schema to compose the beef_corn stream with the barley stream. Edit the `composed_2.kf` to add in the dbids for the beef_corn and barley streams. Then, deploy the stream:
 
 ```bash
-kwil-cli database deploy -p=./examples/composed_2.kf  -n=beef_corn_barley
+kwil-cli database deploy -p=./example_schemas/composed_2.kf  -n=beef_corn_barley
 ```
 
 To check that it is working, we can get the value for the beef_corn_barley stream. If seeded with the values given above, this should give:
