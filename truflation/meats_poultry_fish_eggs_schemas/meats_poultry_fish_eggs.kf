@@ -1,0 +1,31 @@
+database base;
+
+use meats_poultry_fish_eggs {
+    table_name: 'meats',
+    date_column: 'date_value',
+    cpi_column: 'cpi_value',
+    yahoo_column: 'yahoo_value',
+    nielsen_column: 'nielsen_value',
+    numbeo_column: 'numbeo_value'
+} as meats_poultry_fish_eggs;
+
+// `meats` is the main table that tracks the stream of prices for meats, poultry, fish, and eggs
+table meats {
+  date_value text notnull primary unique minlen(10) maxlen(10), // enforce yyyy-mm-dd format
+  cpi_value int default(0), // accuracy of 3; the number "3.141" would be stored as "3141"
+  yahoo_value int default(0), // accuracy of 3; the number "3.141" would be stored as "3141"
+  nielsen_value int default(0), // accuracy of 3; the number "3.141" would be stored as "3141"
+  numbeo_value int default(0), // accuracy of 3; the number "3.141" would be stored as "3141"
+  created_at int notnull // based on blockheight
+}
+
+// public action to add record to meats table
+action add_record ($date_value, $cpi_value, $yahoo_value, $nielsen_value, $numbeo_value, $created_at) public {
+  INSERT INTO meats (date_value, cpi_value, yahoo_value, nielsen_value, numbeo_value, created_at)
+  VALUES ($date_value, $cpi_value, $yahoo_value, $nielsen_value, $numbeo_value, $created_at);
+}
+
+action get_index($date) public view {
+    $val = meats_poultry_fish_eggs.get_index($date);
+    SELECT $val AS result;
+}
