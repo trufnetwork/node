@@ -180,7 +180,7 @@ func getValue(scope *execution.ProcedureContext, fn func(context.Context, Querie
 }
 
 func (b *MeatsPoultryFishEggsExt) index(ctx context.Context, dataset Querier, date string) (int64, error) {
-	res, err := dataset.Query(ctx, fmt.Sprintf(sqlGetBaseValue), nil)
+	res, err := dataset.Query(ctx, sqlGetBaseValue, nil)
 	if err != nil {
 		return 0, errors.New(fmt.Sprintf("error getting base value: %s", err))
 	}
