@@ -110,13 +110,12 @@ Configure your CLI by calling `kwil-cli configure` and then add the following co
 ```bash
 $ kwil-cli configure
 
-Kwil RPC URL: http://truflation-testnet.kwil.com
-Kwil Chain ID: truflation-testnet
+Kwil RPC URL: http://localhost:8080
+Kwil Chain ID: <leave empty>
 Private Key: <any-ethereum-private-key>
 ```
 
-You may use the default localhost and empty chain ID if you are running a local node.
-Refer to the Kwil docs on [here](https://docs.kwil.com/docs/ref/kwil-cli/database).
+This will create a `~/.kwil-cli/config` file with the above configurations. The configuration above assumes you are running the Kwil node on your local machine. Feel free to adjust the configuration if you are running the node elsewhere. <br/>
 To verify that your CLI is configured properly, you can run:
 
 ```bash
