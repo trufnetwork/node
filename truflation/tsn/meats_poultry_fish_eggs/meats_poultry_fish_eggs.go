@@ -131,26 +131,40 @@ func (b *MeatsPoultryFishEggsExt) Call(scope *execution.ProcedureContext, method
 		return nil, fmt.Errorf("unknown method: %s", method)
 	case "get_index":
 		return getValue(scope, b.index, args...)
+	case "get_value":
+		return getValue(scope, b.value, args...)
 	}
 }
 
 const (
 	sqlGetBaseValue = `SELECT 	
-		(SELECT cpi_value FROM meats WHERE cpi_value !=0 ORDER BY date_value ASC LIMIT 1) AS cpi,
-		(SELECT yahoo_value FROM meats WHERE yahoo_value !=0 ORDER BY date_value ASC LIMIT 1) AS yahoo,
-		(SELECT nielsen_value FROM meats WHERE nielsen_value !=0 ORDER BY date_value ASC LIMIT 1) AS nielsen,
-		(SELECT numbeo_value FROM meats WHERE numbeo_value !=0 ORDER BY date_value ASC LIMIT 1) AS numbeo;`
+		(SELECT %s FROM meats WHERE %s !=0 ORDER BY %s ASC LIMIT 1) AS cpi,
+		(SELECT %s FROM meats WHERE %s !=0 ORDER BY %s ASC LIMIT 1) AS yahoo,
+		(SELECT %s FROM meats WHERE %s !=0 ORDER BY %s ASC LIMIT 1) AS nielsen,
+		(SELECT %s FROM meats WHERE %s !=0 ORDER BY %s ASC LIMIT 1) AS numbeo;`
 	sqlGetLatestValue = `SELECT
-		(SELECT cpi_value FROM meats WHERE cpi_value !=0 ORDER BY date_value DESC LIMIT 1) AS cpi,
-		(SELECT yahoo_value FROM meats WHERE yahoo_value !=0 ORDER BY date_value DESC LIMIT 1) AS yahoo,
-		(SELECT nielsen_value FROM meats WHERE nielsen_value !=0 ORDER BY date_value DESC LIMIT 1) AS nielsen,
-		(SELECT numbeo_value FROM meats WHERE numbeo_value !=0 ORDER BY date_value DESC LIMIT 1) AS numbeo;`
+		(SELECT %s FROM meats WHERE %s !=0 ORDER BY %s DESC LIMIT 1) AS cpi,
+		(SELECT %s FROM meats WHERE %s !=0 ORDER BY %s DESC LIMIT 1) AS yahoo,
+		(SELECT %s FROM meats WHERE %s !=0 ORDER BY %s DESC LIMIT 1) AS nielsen,
+		(SELECT %s FROM meats WHERE %s !=0 ORDER BY %s DESC LIMIT 1) AS numbeo;`
 	sqlGetSpecificValue = `SELECT
-		cpi_value AS cpi, yahoo_value AS yahoo, nielsen_value AS nielsen, numbeo_value AS numbeo
-		FROM meats
-		WHERE date_value = $date;`
+		%s AS cpi, %s AS yahoo, %s AS nielsen, %s AS numbeo
+		FROM %s
+		WHERE %s = $date;`
 	zeroDate = "0000-00-00"
 )
+
+func (b *MeatsPoultryFishEggsExt) sqlGetBaseValue() string {
+	return fmt.Sprintf(sqlGetBaseValue, b.cpiColumn, b.cpiColumn, b.dateColumn, b.yahooColumn, b.yahooColumn, b.dateColumn, b.nielsenColumn, b.nielsenColumn, b.dateColumn, b.numbeoColumn, b.numbeoColumn, b.dateColumn)
+}
+
+func (b *MeatsPoultryFishEggsExt) sqlGetLatestValue() string {
+	return fmt.Sprintf(sqlGetLatestValue, b.cpiColumn, b.cpiColumn, b.dateColumn, b.yahooColumn, b.yahooColumn, b.dateColumn, b.nielsenColumn, b.nielsenColumn, b.dateColumn, b.numbeoColumn, b.numbeoColumn, b.dateColumn)
+}
+
+func (b *MeatsPoultryFishEggsExt) sqlGetSpecificValue() string {
+	return fmt.Sprintf(sqlGetSpecificValue, b.cpiColumn, b.yahooColumn, b.nielsenColumn, b.numbeoColumn, b.table, b.dateColumn)
+}
 
 func getValue(scope *execution.ProcedureContext, fn func(context.Context, Querier, string) (int64, error), args ...any) ([]any, error) {
 	dataset, err := scope.Dataset(scope.DBID)
@@ -180,7 +194,7 @@ func getValue(scope *execution.ProcedureContext, fn func(context.Context, Querie
 }
 
 func (b *MeatsPoultryFishEggsExt) index(ctx context.Context, dataset Querier, date string) (int64, error) {
-	res, err := dataset.Query(ctx, sqlGetBaseValue, nil)
+	res, err := dataset.Query(ctx, b.sqlGetBaseValue(), nil)
 	if err != nil {
 		return 0, errors.New(fmt.Sprintf("error getting base value: %s", err))
 	}
@@ -211,9 +225,9 @@ func (b *MeatsPoultryFishEggsExt) index(ctx context.Context, dataset Querier, da
 	}
 
 	if date == zeroDate || date == "" {
-		res, err = dataset.Query(ctx, sqlGetLatestValue, nil)
+		res, err = dataset.Query(ctx, b.sqlGetLatestValue(), nil)
 	} else {
-		res, err = dataset.Query(ctx, sqlGetSpecificValue, map[string]any{
+		res, err = dataset.Query(ctx, b.sqlGetSpecificValue(), map[string]any{
 			"$date": date,
 		})
 	}
@@ -253,6 +267,55 @@ func (b *MeatsPoultryFishEggsExt) index(ctx context.Context, dataset Querier, da
 
 	index := (cpi * 250 / 1000) + (nielsen * 500 / 1000) + (yahoo * 125 / 1000) + (numbeo * 125 / 1000)
 	return index, nil
+}
+
+func (b *MeatsPoultryFishEggsExt) value(ctx context.Context, dataset Querier, date string) (int64, error) {
+	var res *sql.ResultSet
+	var err error
+	if date == zeroDate || date == "" {
+		res, err = dataset.Query(ctx, b.sqlGetLatestValue(), nil)
+	} else {
+		res, err = dataset.Query(ctx, b.sqlGetSpecificValue(), map[string]any{
+			"$date": date,
+		})
+	}
+	if err != nil {
+		fmt.Println("error getting current value: ", err)
+		return 0, err
+	}
+
+	scalarCPI, scalarYahoo, scalarNielsen, scalarNumbeo, err := getScalar(res)
+	if err != nil {
+		fmt.Println("error getting current scalar: ", err)
+		return 0, err
+	}
+
+	valueCPI, ok := scalarCPI.(int64)
+	if !ok {
+		fmt.Println("expected int64 for current value cpi")
+		return 0, errors.New("expected int64 for current value")
+	}
+
+	valueYahoo, ok := scalarYahoo.(int64)
+	if !ok {
+		fmt.Println("expected int64 for current value yahoo")
+		return 0, errors.New("expected int64 for current value")
+	}
+
+	valueNielsen, ok := scalarNielsen.(int64)
+	if !ok {
+		fmt.Println("expected int64 for current value nielsen")
+		return 0, errors.New("expected int64 for current value")
+	}
+
+	valueNumbeo, ok := scalarNumbeo.(int64)
+	if !ok {
+		fmt.Println("expected int64 for current value numbeo")
+		return 0, errors.New("expected int64 for current value")
+	}
+
+	value := (valueCPI * 250 / 1000) + (valueNielsen * 500 / 1000) + (valueYahoo * 125 / 1000) + (valueNumbeo * 125 / 1000)
+	return value, nil
 }
 
 func getScalar(res *sql.ResultSet) (any, any, any, any, error) {
