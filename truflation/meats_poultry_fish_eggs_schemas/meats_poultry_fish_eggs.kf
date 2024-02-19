@@ -29,3 +29,8 @@ action get_index($date) public view {
     $val = meats_poultry_fish_eggs.get_index($date);
     SELECT $val AS result;
 }
+
+action get_value($date) public view {
+    $val = meats_poultry_fish_eggs.get_value($date);
+    SELECT $val AS result;
+}
