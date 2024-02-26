@@ -1,0 +1,39 @@
+database composed;
+
+use truflation_streams as streams;
+use mathutil as math;
+
+// get food at home indexes
+action get_index($date) public view {
+    $cereal_idx = streams.get_index('REPLACE_WITH_CEREAL_DBID', $date);
+    $meat_idx   = streams.get_index('REPLACE_WITH_MEAT_DBID', $date);
+//    $dairy_idx  = streams.get_index('REPLACE_WITH_DAIRY_DBID', $date); we don't have dairy index yet, uncomment when we have it
+//    $fruit_idx  = streams.get_index('REPLACE_WITH_FRUIT_DBID', $date); we don't have fruit index yet, uncomment when we have it
+//    $other_idx  = streams.get_index('REPLACE_WITH_OTHER_DBID', $date); we don't have other index yet, uncomment when we have it
+
+    $cereal = math.fraction($cereal_idx, 1338, 100000);
+    $meat   = math.fraction($meat_idx, 2248, 100000);
+//    $dairy  = math.fraction($dairy_idx, 991, 100000); we don't have dairy index yet, uncomment when we have it
+//    $fruit  = math.fraction($fruit_idx, 2043, 100000); we don't have fruit index yet, uncomment when we have it
+//    $other  = math.fraction($other_idx, 3715, 100000); we don't have other index yet, uncomment when we have it
+
+//    select $cereal + $meat + $dairy + $fruit + $other AS result; we don't have dairy, fruit, and other index yet, uncomment when we have it
+    select $cereal + $meat AS result;
+}
+
+action get_value($date) public view {
+    $cereal_value = streams.get_value('REPLACE_WITH_CEREAL_DBID', $date);
+    $meat_value   = streams.get_value('REPLACE_WITH_MEAT_DBID', $date);
+//    $dairy_value  = streams.get_value('REPLACE_WITH_DAIRY_DBID', $date); we don't have dairy value yet, uncomment when we have it
+//    $fruit_value  = streams.get_value('REPLACE_WITH_FRUIT_DBID', $date); we don't have fruit value yet, uncomment when we have it
+//    $other_value  = streams.get_value('REPLACE_WITH_OTHER_DBID', $date); we don't have other value yet, uncomment when we have it
+
+    $cereal = math.fraction($cereal_value, 1338, 10000);
+    $meat   = math.fraction($meat_value, 2248, 10000);
+//    $dairy  = math.fraction($dairy_value, 991, 100000); we don't have dairy value yet, uncomment when we have it
+//    $fruit  = math.fraction($fruit_value, 2043, 100000); we don't have fruit value yet, uncomment when we have it
+//    $other  = math.fraction($other_value, 3715, 100000); we don't have other value yet, uncomment when we have it
+
+//    select $cereal + $meat + $dairy + $fruit AS result; we don't have dairy and fruit value yet, uncomment when we have it
+    select $cereal + $meat AS result;
+}
