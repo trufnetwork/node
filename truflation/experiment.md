@@ -45,11 +45,11 @@ Run if you need to ensure that the database is deployed.
 
 ## Query Kwil Data
 ```shell
-../.build/kwil-cli database call -a=get_index date:"2000-07-19" date_to:"" -n=com_yahoo_finance_corn_futures
+../.build/kwil-cli database call -a=get_index date:"2000-07-18" date_to:"" -n=com_yahoo_finance_corn_futures
 ```
 
 ```shell
-../.build/kwil-cli database call -a=get_index date:"2000-07-19" date_to:"2000-07-24" -n=com_yahoo_finance_corn_futures
+../.build/kwil-cli database call -a=get_index date:"2000-07-18" date_to:"2000-07-22" -n=com_yahoo_finance_corn_futures
 ```
 
 ## Deploy Experiment Table
@@ -62,9 +62,9 @@ Run if you need to ensure that the database is deployed.
 ## Query experiment_table
 
 ```shell
-../.build/kwil-cli database call -a=get_index date:"2010-03-01" date_to:"" -n=experiment_table
+../.build/kwil-cli database call -a=get_index date:"2000-07-18" date_to:"" -n=experiment_table
 ```
 
 ```shell
-../.build/kwil-cli database call -a=get_index date:"2010-03-01" date_to:"2010-03-05" -n=experiment_table
+../.build/kwil-cli database call -a=get_index date:"2000-07-18" date_to:"2000-07-22" -n=experiment_table
 ```
