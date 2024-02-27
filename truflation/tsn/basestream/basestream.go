@@ -178,16 +178,12 @@ func getValue(scope *execution.ProcedureContext, fn func(context.Context, Querie
 		return nil, err
 	}
 
-	valAny := make([]any, len(val))
-	for i, v := range val {
-		valAny[i] = v
-	}
-
-	return valAny, nil
+	// returned array here is an array because the caller can be expecting multiple values returned
+	return []any{val}, nil
 }
 
-// index returns the inflation index for a given date.
-// this follows Truflation function of ((current_value/first_value)*100).
+// Index returns the inflation index for a given date.
+// This follows Truflation function of ((current_value/first_value)*100).
 // It will multiplty the returned result by an additional 1000, since Kwil
 // cannot handle decimals.
 func (b *BaseStreamExt) index(ctx context.Context, dataset Querier, date string, dateTo *string) ([]int64, error) {
@@ -239,14 +235,15 @@ func (b *BaseStreamExt) value(ctx context.Context, dataset Querier, date string,
 		res, err = dataset.Query(ctx, b.sqlGetBaseValue(), nil)
 	} else if date == "" {
 		res, err = dataset.Query(ctx, b.sqlGetLatestValue(), nil)
-	} else if dateTo != nil {
-		res, err = dataset.Query(ctx, b.sqlGetRangeValue(), map[string]any{
+	} else if dateTo == nil {
+		res, err = dataset.Query(ctx, b.sqlGetSpecificValue(), map[string]any{
 			"$date": date,
 		})
 	} else {
-		res, err = dataset.Query(ctx, b.sqlGetSpecificValue(), map[string]any{
+		// kwild does not support ptr, so we need to convert dateTo to a value
+		res, err = dataset.Query(ctx, b.sqlGetRangeValue(), map[string]any{
 			"$date":    date,
-			"$date_to": &dateTo,
+			"$date_to": *dateTo,
 		})
 	}
 
