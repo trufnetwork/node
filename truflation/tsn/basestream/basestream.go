@@ -178,8 +178,25 @@ func getValue(scope *execution.ProcedureContext, fn func(context.Context, Querie
 		return nil, err
 	}
 
-	// returned array here is an array because the caller can be expecting multiple values returned
-	return []any{val}, nil
+	// Attention: the steps below are necessary to return the result directly, instead of using extension results
+	// as normally. It modifies the last query result directly, to make the action think this is the final.
+	// To make it work, we don´t call another sql query in the kf file
+
+	// each row contains column values
+	rowsResult := make([][]any, len(val))
+	for i, v := range val {
+		rowsResult[i] = []any{v}
+	}
+
+	// we return 0 as it doesn´t matter at all
+	newResultSet := sql.ResultSet{
+		ReturnedColumns: []string{"value"},
+		Rows:            rowsResult,
+	}
+	scope.Result = &newResultSet
+
+	// returning 0 instead of the result, as it doesn´t matter at all
+	return []any{0}, nil
 }
 
 // Index returns the inflation index for a given date.

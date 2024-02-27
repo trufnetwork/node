@@ -27,10 +27,8 @@ action add_record ($id, $date_value, $value, $created_at) public {
 
 action get_index($date, $date_to) public view {
     $val = basestream.get_index($date, $date_to);
-    SELECT $val AS result;
 }
 
 action get_value($date, $date_to) public view {
     $val = basestream.get_value($date, $date_to);
-    SELECT $val AS result;
 }
