@@ -39,6 +39,15 @@ Run if you need to ensure that the database is deployed.
 ```
 
 
+## Query Kwil Data
+```shell
+../.build/kwil-cli database call -a=get_index date:"2000-07-19" date_to:"" -n=com_yahoo_finance_corn_futures
+```
+
+```shell
+../.build/kwil-cli database call -a=get_index date:"2000-07-19" date_to:"2000-07-24" -n=com_yahoo_finance_corn_futures
+```
+
 ```shell
 ../.build/kwil-cli database deploy -p=./example_schemas/experiment_table.kf --name=experiment_table --sync
 ```
