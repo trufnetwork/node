@@ -66,12 +66,12 @@ jobs:
           go build -mod=readonly ./... ./parse/... ./core/... ./test/specifications/
 
       - name: Lint
-        uses:  golangci/golangci-lint-action@v4.0.0
+        uses: golangci/golangci-lint-action@v3
         with:
           install-mode: "binary"
           version: "latest"
           skip-pkg-cache: true
-          args: ./... ./core/... ./test/... ./parse/... --timeout=10m --config=.golangci.yml --skip-dirs ./core/rpc/protobuf
+          args: ./... ./core/... ./test/... ./parse/... --timeout=10m --config=.golangci.yml --skip-dirs ./core/rpc/protobuf, vendor
 
       - name: Run unit test
         run: |
