@@ -1,14 +1,20 @@
+## Build Kwil Binaries
+Run it when you make changes to the source code.
+```shell
+cd .. && task build;
+```
 
 ## Run Kwil Node
 ```shell
 ../.build/kwild --autogen
 ```
 
-## Build Kwil Binaries
-Run it when you make changes to the source code.
+or debugging with dlv
 ```shell
-cd .. && task build;
+dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec ../.build/kwild -- --autogen
 ```
+
+
 
 ## Clear Kwil Data
 ```shell
