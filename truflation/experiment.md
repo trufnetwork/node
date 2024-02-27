@@ -55,6 +55,7 @@ Run if you need to ensure that the database is deployed.
 ## Deploy Experiment Table
 
 ```shell
+../.build/kwil-cli database drop experiment_table --sync
 ../.build/kwil-cli database deploy -p=./example_schemas/experiment_table.kf --name=experiment_table --sync
 ```
 
