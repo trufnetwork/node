@@ -153,11 +153,24 @@ func getValue(scope *execution.ProcedureContext, fn func(context.Context, Querie
 		if !ok {
 			return nil, fmt.Errorf("expected string for date_to, got %T", args[1])
 		}
-		dateTo = &dateToStr
+		// if date_to is "", we should keep it nil
+		if dateToStr != "" {
+			dateTo = &dateToStr
+		}
 	}
 
+	// Date validations
+	// - date valid
 	if !tsn.IsValidDate(date) {
 		return nil, fmt.Errorf("invalid date: %s", date)
+	}
+	// - date_to valid
+	if dateTo != nil && !tsn.IsValidDate(*dateTo) {
+		return nil, fmt.Errorf("invalid date_to: %s", *dateTo)
+	}
+	// - date-to is after date
+	if dateTo != nil && *dateTo < date {
+		return nil, fmt.Errorf("date_to %s is before date %s", *dateTo, date)
 	}
 
 	val, err := fn(scope.Ctx, dataset, date, dateTo)
