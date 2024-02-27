@@ -105,21 +105,30 @@ func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs 
 		}
 
 		weightedResults := make([]float64, len(results))
-		for _, val := range results {
-			val = int64(float64(val) * weight)
+		for i, val := range results {
+			weightedResults[i] = float64(val) * weight
 		}
 		resultsSet = append(resultsSet, weightedResults)
 	}
 
+	if len(resultsSet) == 0 {
+		return nil, fmt.Errorf("no results from any database")
+	}
+	numResults := len(resultsSet[0])
+
 	// sum the results
-	finalValuesFloat := make([]float64, len(resultsSet[0]))
+	finalValuesFloat := make([]float64, numResults)
 	for _, results := range resultsSet {
+		// error if the number of results is different
+		if len(results) != numResults {
+			return nil, fmt.Errorf("different number of results from databases")
+		}
 		for i, val := range results {
 			finalValuesFloat[i] += val
 		}
 	}
 
-	finalValues := make([]int64, len(resultsSet[0]))
+	finalValues := make([]int64, numResults)
 	for i, intVal := range finalValuesFloat {
 		finalValues[i] = int64(intVal)
 	}
