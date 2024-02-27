@@ -1,10 +1,12 @@
 database truflation_stream;
 
-use from_base {
+use basestream {
     table_name: 'generic_table'
 } as basestream;
 
 // `generic_table` is the main table that tracks the stream generic_table
+// don't worry about this name; it's just a placeholder for the actual table name that is replaced when we
+// deploy the table
 table generic_table {
   id text primary notnull minlen(36) maxlen(36), // rfc 4122 uuidv4
   date_value text notnull minlen(10) maxlen(10), // enforce yyyy-mm-dd format
@@ -19,8 +21,6 @@ action get_all() public view {
 
 // public action to add record to generic_table table
 action add_record ($id, $date_value, $value, $created_at) public {
-  // check_admin();
-
   INSERT INTO generic_table (id, date_value, value, created_at)
   VALUES ($id, $date_value, $value, $created_at);
 }
