@@ -2,29 +2,26 @@ database base;
 
 // alternative that gets from multiple tables
 
-use truflation_streams as streams;
+use truflation_streams {
+    // valid id's:
+    // - <wallet_address>/<stream_name>
+    // - /<stream_name> (then the wallet address will be the sender of the transaction)
+    // - <DBID>
+    stream_1_id: '/com_yahoo_finance_corn_futures',
+    stream_1_weight: '0.1',
+    stream_2_id: '/com_truflation_us_hotel_price',
+    stream_2_weight: '0.9'
+} as streams;
 use mathutil as mathutil;
 use math as math;
 
 
+
+
 action get_index($date, $date_to) public view {
-    $corn = streams.get_index('/com_yahoo_finance_corn_futures', $date, $date_to);
-    $hotel = streams.get_index('/com_truflation_us_hotel_price',$date, $date_to);
-
-    $corn_weighted = mathutil.fraction($corn, 1, 10);
-    $hotel_weighted = mathutil.fraction($hotel, 9, 10);
-
-    $index = math.add($corn_weighted, $hotel_weighted);
-
-    SELECT $index AS result;
+    streams.get_index($date, $date_to);
 }
 
 action get_value($date, $date_to) public view {
-    $corn = streams.get_value('/com_yahoo_finance_corn_futures', $date, $date_to);
-    $hotel = streams.get_value('/com_truflation_us_hotel_price',$date, $date_to);
-
-    $corn_weighted = mathutil.fraction($corn, 1, 10);
-    $hotel_weighted = mathutil.fraction($hotel, 9, 10);
-
-    $value = math.add($corn_weighted, $hotel_weighted);
+    streams.get_value($date, $date_to);
 }
