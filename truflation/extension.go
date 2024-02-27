@@ -4,6 +4,7 @@ import (
 	"github.com/kwilteam/kwil-db/extensions/actions"
 	"github.com/kwilteam/kwil-db/truflation/mathutil"
 	"github.com/kwilteam/kwil-db/truflation/tsn/basestream"
+	"github.com/kwilteam/kwil-db/truflation/tsn/from_base"
 	"github.com/kwilteam/kwil-db/truflation/tsn/meats_poultry_fish_eggs"
 	"github.com/kwilteam/kwil-db/truflation/tsn/stream"
 )
@@ -27,6 +28,11 @@ func init() {
 	}
 
 	err = actions.RegisterExtension("basestream", basestream.InitializeBasestream)
+	if err != nil {
+		panic(err)
+	}
+
+	err = actions.RegisterExtension("from_base", from_base.InitializeBasestream)
 	if err != nil {
 		panic(err)
 	}

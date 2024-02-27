@@ -1,0 +1,43 @@
+database base;
+
+// alternative that gets from multiple tables
+
+// these idx_id are fake
+use from_base { table: "com.truflation.us.cpi" } as cpi;
+use from_base { table: "com.truflation.us.yahoo" } as yahoo;
+use from_base { table: "com.truflation.us.nielsen" } as nielsen;
+use from_base { table: "com.truflation.us.numbeo" } as numbeo;
+use mathutil as math;
+
+
+action get_index($date, $date_to) public view {
+    $cpi = cpi.get_index($date, $date_to);
+    $yahoo = yahoo.get_index($date, $date_to);
+    $nielsen = nielsen.get_index($date, $date_to);
+    $numbeo = numbeo.get_index($date, $date_to);
+
+    $cpi_weighted = math.fraction($cpi, 1, 10);
+    $yahoo_weighted = math.fraction($yahoo, 2, 10);
+    $nielsen_weighted = math.fraction($nielsen, 1, 10);
+    $numbeo_weighted = math.fraction($numbeo, 6, 10);
+
+    $index = $cpi_weighted + $yahoo_weighted + $nielsen_weighted + $numbeo_weighted;
+
+    SELECT $index AS result;
+}
+
+action get_value($date, $date_to) public view {
+    $cpi = cpi.get_value($date, $date_to);
+    $yahoo = yahoo.get_value($date, $date_to);
+    $nielsen = nielsen.get_value($date, $date_to);
+    $numbeo = numbeo.get_value($date, $date_to);
+
+    $cpi_weighted = math.fraction($cpi, 1, 10);
+    $yahoo_weighted = math.fraction($yahoo, 2, 10);
+    $nielsen_weighted = math.fraction($nielsen, 1, 10);
+    $numbeo_weighted = math.fraction($numbeo, 6, 10);
+
+    $value = $cpi_weighted + $yahoo_weighted + $nielsen_weighted + $numbeo_weighted;
+
+    SELECT $value AS result;
+}

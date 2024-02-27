@@ -1,0 +1,67 @@
+database base;
+
+// on this alternative, we split the extension into one responsible for getting from sources
+// and another for calculating the weights
+
+// advantage: flexibility from multiple sources
+// disadvantage: pollution on kuneiform files
+
+use from_table {
+    table_name: 'meats',
+    date_column: 'date_value',
+
+    // columns
+    cpi_column: 'cpi_value',
+    yahoo_column: 'yahoo_value',
+    nielsen_column: 'nielsen_value',
+    numbeo_column: 'numbeo_value',
+} as meats_poultry_fish_eggs;
+
+use from_known_api {
+    endpoint: 'important_feature',
+} as important_feature;
+
+use calculate_weights {} as calculate_weights;
+
+
+action get_index($date) public view {
+    // from table
+    $table_values = meats_poultry_fish_eggs.indexes_from_date($date);
+    // I don't think this is correct, but we need to unpack somehow
+    $cpi_index, $yahoo_index, $nielsen_index, $numbeo_index = $table_values
+
+    // from api
+    $important_feature_index = important_feature.get_index($date);
+
+
+
+    $index = calculate_weights.calculate(
+        $cpi_index, 0.1,
+        $yahoo_index, 0.2,
+        $nielsen_index, 0.1,
+        $numbeo_index, 0.1,
+        $important_feature_index, 0.5
+    );
+
+    SELECT $index AS result;
+}
+
+action get_value($date) public view {
+    // from table
+    $table_values = meats_poultry_fish_eggs.values_from_date($date);
+    // I don't think this is correct, but we need to unpack somehow
+    $cpi_value, $yahoo_value, $nielsen_value, $numbeo_value = $table_values
+
+    // from api
+    $important_feature_value = important_feature.get_value($date);
+
+    $value = calculate_weights.calculate(
+        $cpi_value, 0.1,
+        $yahoo_value, 0.2,
+        $nielsen_value, 0.1,
+        $numbeo_value, 0.1,
+        $important_feature_value, 0.5
+    );
+
+    SELECT $index AS result;
+}
