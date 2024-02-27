@@ -69,9 +69,9 @@ jobs:
         uses: golangci/golangci-lint-action@v3
         with:
           install-mode: "binary"
-          version: "latest"
+          version: v1.52.2
           skip-pkg-cache: true
-          args: ./... ./core/... ./test/... ./parse/... --timeout=10m --config=.golangci.yml --skip-dirs ./core/rpc/protobuf, vendor
+          args: ./... ./core/... ./test/... ./parse/... --timeout=10m --config=.golangci.yml --skip-dirs ./core/rpc/protobuf
 
       - name: Run unit test
         run: |
