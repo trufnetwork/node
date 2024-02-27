@@ -8,8 +8,8 @@ use math as math;
 
 
 action get_index($date, $date_to) public view {
-    $corn = streams.get_index('com_yahoo_finance_corn_futures', $date, $date_to);
-    $hotel = streams.get_index('com_truflation_us_hotel_price',$date, $date_to);
+    $corn = streams.get_index('/com_yahoo_finance_corn_futures', $date, $date_to);
+    $hotel = streams.get_index('/com_truflation_us_hotel_price',$date, $date_to);
 
     $corn_weighted = mathutil.fraction($corn, 1, 10);
     $hotel_weighted = mathutil.fraction($hotel, 9, 10);
@@ -20,8 +20,8 @@ action get_index($date, $date_to) public view {
 }
 
 action get_value($date, $date_to) public view {
-    $corn = streams.get_value('com_yahoo_finance_corn_futures', $date, $date_to);
-    $hotel = streams.get_value('com_truflation_us_hotel_price',$date, $date_to);
+    $corn = streams.get_value('/com_yahoo_finance_corn_futures', $date, $date_to);
+    $hotel = streams.get_value('/com_truflation_us_hotel_price',$date, $date_to);
 
     $corn_weighted = mathutil.fraction($corn, 1, 10);
     $hotel_weighted = mathutil.fraction($hotel, 9, 10);
