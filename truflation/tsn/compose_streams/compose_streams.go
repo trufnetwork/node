@@ -50,6 +50,15 @@ func InitializeStream(ctx *execution.DeploymentContext, metadata map[string]stri
 		weightMap[DBID] = weightFloat
 	}
 
+	// ensure weightmap sum is 1
+	var sum float64
+	for _, weight := range weightMap {
+		sum += weight
+	}
+	if sum != 1 {
+		return nil, fmt.Errorf("weights do not sum to 1")
+	}
+
 	return &Stream{
 		weightMap: weightMap,
 	}, nil
@@ -96,12 +105,38 @@ func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs 
 		}
 	}
 
+	// easier to test if we pass the function as a parameter
+	calculateWeightedResultsFromStream := func(dbId string) ([]int64, error) {
+		return CallOnTargetDBID(scoper, method, dbId, date, dateTo)
+	}
+
+	finalValues, err := s.CalculateWeightedResultsWithFn(calculateWeightedResultsFromStream)
+	if err != nil {
+		return nil, err
+	}
+
+	rowsResult := make([][]any, len(finalValues))
+	for i, val := range finalValues {
+		rowsResult[i] = []any{val}
+	}
+
+	scoper.Result = &sql.ResultSet{
+		ReturnedColumns: []string{"value"},
+		Rows:            rowsResult,
+	}
+
+	// dummy return, as result is what matters
+	return []any{0}, nil
+}
+
+func (s *Stream) CalculateWeightedResultsWithFn(fn func(string) ([]int64, error)) ([]int64, error) {
 	// although weights are stored as float64, we will use int64 for the final value. It should remain correct, as the
 	// original result is already multiplied by 1000.
 	var resultsSet [][]float64
 	// for each database, get the value and multiply by the weight
 	for dbId, weight := range s.weightMap {
-		results, err := CallOnTargetDBID(scoper, method, nil, dbId, date, dateTo)
+		results, err := fn(dbId)
+		//results, err := CallOnTargetDBID(scoper, method, dbId, date, dateTo)
 		if err != nil {
 			return nil, err
 		}
@@ -113,9 +148,6 @@ func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs 
 		resultsSet = append(resultsSet, weightedResults)
 	}
 
-	if len(resultsSet) == 0 {
-		return nil, fmt.Errorf("no results from any database")
-	}
 	numResults := len(resultsSet[0])
 
 	// sum the results
@@ -135,25 +167,13 @@ func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs 
 		// round values to the nearest integer
 		finalValues[i] = int64(math.Round(intVal))
 	}
-
-	rowsResult := make([][]any, len(finalValues))
-	for i, val := range finalValues {
-		rowsResult[i] = []any{val}
-	}
-
-	scoper.Result = &sql.ResultSet{
-		ReturnedColumns: []string{"value"},
-		Rows:            rowsResult,
-	}
-
-	// dummy return, as result is what matters
-	return []any{0}, nil
+	return finalValues, nil
 }
 
 // CallOnTargetDBID calls the given method on the target database.
 // So streams extension is about calling the same method on similar databases, that implements the same methods with the
 // same signature.
-func CallOnTargetDBID(scoper *execution.ProcedureContext, method string, err error, target string,
+func CallOnTargetDBID(scoper *execution.ProcedureContext, method string, target string,
 	date string, dateTo string) ([]int64, error) {
 	dataset, err := scoper.Dataset(target)
 	if err != nil {
