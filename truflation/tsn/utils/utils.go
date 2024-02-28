@@ -40,6 +40,10 @@ func GetDBIDFromPath(ctx *execution.DeploymentContext, pathOrDBID string) (strin
 	return DBID, nil
 }
 
+// RoundToDecimalPlaces rounds a float to a given number of decimal places.
+// Examples:
+// - RoundToDecimalPlaces(1.2349, 2) -> 1.23
+// - RoundToDecimalPlaces(1.2349, 3) -> 1.235
 func RoundToDecimalPlaces(val float64, places int) float64 {
 	shift := math.Pow(10, float64(places))
 	return math.Round(val*shift) / shift
