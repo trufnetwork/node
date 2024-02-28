@@ -104,7 +104,7 @@ const (
 	sqlGetBaseValue     = `select %s from %s order by %s ASC LIMIT 1;`
 	sqlGetLatestValue   = `select %s from %s order by %s DESC LIMIT 1;`
 	sqlGetSpecificValue = `select %s from %s where %s = $date;`
-	sqlGetRangeValue    = `select %s from %s where %s >= $date and %s <= $date_to;`
+	sqlGetRangeValue    = `select %s from %s where %s >= $date and %s <= $date_to order by %s ASC;`
 	zeroDate            = "0000-00-00"
 )
 
@@ -121,7 +121,7 @@ func (b *BaseStreamExt) sqlGetSpecificValue() string {
 }
 
 func (b *BaseStreamExt) sqlGetRangeValue() string {
-	return fmt.Sprintf(sqlGetRangeValue, b.valueColumn, b.table, b.dateColumn, b.dateColumn)
+	return fmt.Sprintf(sqlGetRangeValue, b.valueColumn, b.table, b.dateColumn, b.dateColumn, b.dateColumn)
 }
 
 // getValue gets the value for the specified function.
