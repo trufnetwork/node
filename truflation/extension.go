@@ -4,8 +4,9 @@ import (
 	"github.com/kwilteam/kwil-db/extensions/actions"
 	"github.com/kwilteam/kwil-db/truflation/mathutil"
 	"github.com/kwilteam/kwil-db/truflation/tsn/basestream"
+	"github.com/kwilteam/kwil-db/truflation/tsn/compose_streams"
 	"github.com/kwilteam/kwil-db/truflation/tsn/meats_poultry_fish_eggs"
-	"github.com/kwilteam/kwil-db/truflation/tsn/weighted_stream"
+	"github.com/kwilteam/kwil-db/truflation/tsn/stream"
 )
 
 // in order for an extension to be registered and included in the binary compilation,
@@ -21,7 +22,12 @@ func init() {
 		panic(err)
 	}
 
-	err = actions.RegisterExtension("truflation_streams", weighted_stream.InitializeStream)
+	err = actions.RegisterExtension("compose_truflation_streams", compose_streams.InitializeStream)
+	if err != nil {
+		panic(err)
+	}
+
+	err = actions.RegisterExtension("truflation_streams", stream.InitializeStream)
 	if err != nil {
 		panic(err)
 	}

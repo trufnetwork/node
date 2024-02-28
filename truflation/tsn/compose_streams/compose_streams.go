@@ -1,6 +1,6 @@
 // package stream is an extension for the Truflation stream primitive.
 // It allows data to be pulled from valid streams.
-package weighted_stream
+package compose_streams
 
 import (
 	"fmt"
