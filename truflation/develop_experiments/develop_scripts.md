@@ -19,7 +19,7 @@ cd ../../ && GO_GCFLAGS="all=-N -l" task build:kwild;
 ## Run Kwil Node
 
 ```shell
-../.build/kwild --autogen
+../../.build/kwild --autogen
 ```
 
 or debugging with dlv
