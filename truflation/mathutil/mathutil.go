@@ -2,7 +2,7 @@ package mathutil
 
 import (
 	"fmt"
-	"math/big"
+	"github.com/kwilteam/kwil-db/truflation/tsn/utils"
 	"strings"
 
 	"github.com/kwilteam/kwil-db/internal/engine/execution"
@@ -51,25 +51,12 @@ func (m *mathUtilExt) Call(scoper *execution.ProcedureContext, method string, in
 }
 
 func fraction(number, numerator, denominator int64) ([]any, error) {
-	if denominator == 0 {
-		return nil, fmt.Errorf("denominator cannot be zero")
+	result, err := utils.Fraction(number, numerator, denominator)
+	if err != nil {
+		return nil, err
 	}
 
-	// we will simply rely on go's integer division to truncate (round down)
-	// we will use big math to avoid overflow
-	bigNumber := big.NewInt(number)
-	bigNumerator := big.NewInt(numerator)
-	bigDenominator := big.NewInt(denominator)
-
-	// (numerator/denominator) * number
-
-	// numerator * number
-	bigProduct := new(big.Int).Mul(bigNumerator, bigNumber)
-
-	// numerator * number / denominator
-	bigQuotient := new(big.Int).Div(bigProduct, bigDenominator)
-
-	return []any{bigQuotient.Int64()}, nil
+	return []any{result}, nil
 }
 
 const (

@@ -1,9 +1,10 @@
 package utils
 
 import (
+	"fmt"
 	"github.com/kwilteam/kwil-db/core/utils"
 	"github.com/kwilteam/kwil-db/internal/engine/execution"
-	"math"
+	"math/big"
 	"strings"
 )
 
@@ -40,11 +41,23 @@ func GetDBIDFromPath(ctx *execution.DeploymentContext, pathOrDBID string) (strin
 	return DBID, nil
 }
 
-// RoundToDecimalPlaces rounds a float to a given number of decimal places.
-// Examples:
-// - RoundToDecimalPlaces(1.2349, 2) -> 1.23
-// - RoundToDecimalPlaces(1.2349, 3) -> 1.235
-func RoundToDecimalPlaces(val float64, places int) float64 {
-	shift := math.Pow(10, float64(places))
-	return math.Round(val*shift) / shift
+func Fraction(number int64, numerator int64, denominator int64) (int64, error) {
+	if denominator == 0 {
+		return 0, fmt.Errorf("denominator cannot be zero")
+	}
+
+	// we will simply rely on go's integer division to truncate (round down)
+	// we will use big math to avoid overflow
+	bigNumber := big.NewInt(number)
+	bigNumerator := big.NewInt(numerator)
+	bigDenominator := big.NewInt(denominator)
+
+	// (numerator/denominator) * number
+
+	// numerator * number
+	bigProduct := new(big.Int).Mul(bigNumerator, bigNumber)
+
+	// numerator * number / denominator
+	result := new(big.Int).Div(bigProduct, bigDenominator).Int64()
+	return result, nil
 }

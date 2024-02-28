@@ -61,7 +61,7 @@ action get_value($date, $date_to) public view {
 
 ## Compose_truflation_Streams
 
-`compose_truflation_streams` allows composing of schemas that are valid Truflation streams. Any schema that has `get_index(YYYY-MM-DD, YYYY-MM-DD?)` and `get_value(YYYY-MM-DD, YYYY-MM-DD?)` actions is a valid Truflation stream. The logic of the stream composition is included inside the extension. It's important to ensure the sum of the weights is equal to 1.
+`compose_truflation_streams` allows composing of schemas that are valid Truflation streams. Any schema that has `get_index(YYYY-MM-DD, YYYY-MM-DD?)` and `get_value(YYYY-MM-DD, YYYY-MM-DD?)` actions is a valid Truflation stream. The logic of the stream composition is included inside the extension.
 
 You may use any of these options as an id of a stream:
 
@@ -74,9 +74,9 @@ You may use any prefix to identify a stream on its key, but is important that ea
 ```
 use compose_truflation_streams {
     stream_1_id: 'corn_id',
-    stream_1_weight: '0.1',
+    stream_1_weight: '1',
     stream_2_id: 'hotel_id',
-    stream_2_weight: '0.9'
+    stream_2_weight: '9'
 } as streams;
 
 action get_index($date, $date_to) public view {

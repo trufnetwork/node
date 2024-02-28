@@ -9,16 +9,16 @@ import (
 func TestCalculateWeightedResultsWithFn(t *testing.T) {
 	tests := []struct {
 		name          string
-		weightMap     map[string]float64
+		weightMap     map[string]int64
 		fn            func(string) ([]int64, error)
 		expected      []int64
 		expectedError error
 	}{
 		{
 			name: "empty results",
-			weightMap: map[string]float64{
-				"abc": 0.5,
-				"def": 0.5,
+			weightMap: map[string]int64{
+				"abc": 1,
+				"def": 1,
 			},
 			fn: func(s string) ([]int64, error) {
 				return []int64{}, nil
@@ -28,7 +28,7 @@ func TestCalculateWeightedResultsWithFn(t *testing.T) {
 		},
 		{
 			name: "single item",
-			weightMap: map[string]float64{
+			weightMap: map[string]int64{
 				"abc": 1,
 			},
 			fn: func(s string) ([]int64, error) {
@@ -39,9 +39,9 @@ func TestCalculateWeightedResultsWithFn(t *testing.T) {
 		},
 		{
 			name: "multiple items with same weight",
-			weightMap: map[string]float64{
-				"abc": 0.5,
-				"def": 0.5,
+			weightMap: map[string]int64{
+				"abc": 5,
+				"def": 5,
 			},
 			fn: func(s string) ([]int64, error) {
 				return []int64{10, 20}, nil
@@ -51,9 +51,9 @@ func TestCalculateWeightedResultsWithFn(t *testing.T) {
 		},
 		{
 			name: "multiple items with different weights",
-			weightMap: map[string]float64{
-				"abc": 0.1,
-				"def": 0.9,
+			weightMap: map[string]int64{
+				"abc": 1,
+				"def": 9,
 			},
 			fn: func(s string) ([]int64, error) {
 				if s == "abc" {
@@ -67,9 +67,9 @@ func TestCalculateWeightedResultsWithFn(t *testing.T) {
 		},
 		{
 			name: "results from different databases do not match",
-			weightMap: map[string]float64{
-				"abc": 0.1,
-				"def": 0.9,
+			weightMap: map[string]int64{
+				"abc": 1,
+				"def": 9,
 			},
 			fn: func(s string) ([]int64, error) {
 				if s == "abc" {
@@ -85,8 +85,13 @@ func TestCalculateWeightedResultsWithFn(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			totalWeight := int64(0)
+			for _, weight := range test.weightMap {
+				totalWeight += weight
+			}
 			s := &Stream{
-				weightMap: test.weightMap,
+				weightMap:   test.weightMap,
+				totalWeight: totalWeight,
 			}
 			result, err := s.CalculateWeightedResultsWithFn(test.fn)
 			if test.expectedError != nil {

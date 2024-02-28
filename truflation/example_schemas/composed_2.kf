@@ -7,9 +7,9 @@ use compose_truflation_streams {
     // - <DBID>
     // the prefix "stream_1" is arbitrary, we just need to ensure there are keys with _id and _weight suffixes
     stream_1_id: 'REPLACE_WITH_BEEF_CORN_DBID',
-    stream_1_weight: '0.9',
+    stream_1_weight: '9',
     stream_2_id: 'REPLACE_WITH_BARLEY_DBID',
-    stream_2_weight: '0.1'
+    stream_2_weight: '1'
 } as streams;
 
 action get_index($date, $date_to) public view {

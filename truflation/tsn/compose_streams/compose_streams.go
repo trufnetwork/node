@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/kwilteam/kwil-db/internal/sql"
 	utils "github.com/kwilteam/kwil-db/truflation/tsn/utils"
-	"math"
 	"strconv"
 	"strings"
 
@@ -18,9 +17,9 @@ import (
 //
 //	usage: use truflation_streams {
 //	   stream_1_id: '/com_yahoo_finance_corn_futures',
-//	   stream_1_weight: '0.1',
+//	   stream_1_weight: 1,
 //	   stream_2_id: '/com_truflation_us_hotel_price',
-//	   stream_2_weight: '0.9'
+//	   stream_2_weight: 9
 //	} as streams;
 //
 // It takes no configs.
@@ -33,13 +32,14 @@ func InitializeStream(ctx *execution.DeploymentContext, metadata map[string]stri
 		}
 	}
 
-	weightMap := make(map[string]float64)
+	totalWeight := int64(0)
+	weightMap := make(map[string]int64)
 	for key, dbIdOrPath := range ids {
-		weight, ok := metadata[key+"_weight"]
+		weightStr, ok := metadata[key+"_weight"]
 		if !ok {
-			return nil, fmt.Errorf("missing weight for stream %s", dbIdOrPath)
+			return nil, fmt.Errorf("missing weightStr for stream %s", dbIdOrPath)
 		}
-		weightFloat, err := strconv.ParseFloat(weight, 32)
+		weightInt, err := strconv.ParseInt(weightStr, 10, 64)
 		if err != nil {
 			return nil, err
 		}
@@ -47,20 +47,13 @@ func InitializeStream(ctx *execution.DeploymentContext, metadata map[string]stri
 		if err != nil {
 			return nil, err
 		}
-		weightMap[DBID] = utils.RoundToDecimalPlaces(weightFloat, 3)
-	}
-
-	// ensure weightmap sum is 1
-	var sum float64
-	for _, weight := range weightMap {
-		sum += weight
-	}
-	if sum != 1 {
-		return nil, fmt.Errorf("weights do not sum to 1")
+		totalWeight += weightInt
+		weightMap[DBID] = weightInt
 	}
 
 	return &Stream{
-		weightMap: weightMap,
+		weightMap:   weightMap,
+		totalWeight: totalWeight,
 	}, nil
 }
 
@@ -68,7 +61,8 @@ func InitializeStream(ctx *execution.DeploymentContext, metadata map[string]stri
 // Stream has two methods: "index" and "value".
 // Both of them get the value of the target stream at the given time.
 type Stream struct {
-	weightMap map[string]float64
+	weightMap   map[string]int64
+	totalWeight int64
 }
 
 func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs []any) ([]any, error) {
@@ -130,9 +124,7 @@ func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs 
 }
 
 func (s *Stream) CalculateWeightedResultsWithFn(fn func(string) ([]int64, error)) ([]int64, error) {
-	// although weights are stored as float64, we will use int64 for the final value. It should remain correct, as the
-	// original result is already multiplied by 1000.
-	var resultsSet [][]float64
+	var resultsSet [][]int64
 	// for each database, get the value and multiply by the weight
 	for dbId, weight := range s.weightMap {
 		results, err := fn(dbId)
@@ -141,9 +133,14 @@ func (s *Stream) CalculateWeightedResultsWithFn(fn func(string) ([]int64, error)
 			return nil, err
 		}
 
-		weightedResults := make([]float64, len(results))
+		weightedResults := make([]int64, len(results))
 		for i, val := range results {
-			weightedResults[i] = float64(val) * weight
+			// by multiplying by `precisionMagnifier`, we can keep 3 decimal places of precision with int64 operations
+			precisionMagnifier := int64(1000)
+			weightedResults[i], err = utils.Fraction(val, weight*precisionMagnifier, s.totalWeight*precisionMagnifier)
+			if err != nil {
+				return nil, err
+			}
 		}
 		resultsSet = append(resultsSet, weightedResults)
 	}
@@ -151,22 +148,17 @@ func (s *Stream) CalculateWeightedResultsWithFn(fn func(string) ([]int64, error)
 	numResults := len(resultsSet[0])
 
 	// sum the results
-	finalValuesFloat := make([]float64, numResults)
+	finalValues := make([]int64, numResults)
 	for _, results := range resultsSet {
 		// error if the number of results is different
 		if len(results) != numResults {
 			return nil, fmt.Errorf("different number of results from databases")
 		}
 		for i, val := range results {
-			finalValuesFloat[i] += val
+			finalValues[i] += val
 		}
 	}
 
-	finalValues := make([]int64, numResults)
-	for i, intVal := range finalValuesFloat {
-		// round values to the nearest integer
-		finalValues[i] = int64(math.Round(intVal))
-	}
 	return finalValues, nil
 }
 
