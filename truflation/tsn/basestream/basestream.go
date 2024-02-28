@@ -136,8 +136,8 @@ func getValue(scope *execution.ProcedureContext, fn func(context.Context, Querie
 		return nil, err
 	}
 
-	if len(args) < 1 {
-		return nil, fmt.Errorf("expected at least one argument")
+	if len(args) != 2 {
+		return nil, fmt.Errorf("expected 2 arguments, got %d", len(args))
 	}
 
 	// date is optional
@@ -168,7 +168,7 @@ func getValue(scope *execution.ProcedureContext, fn func(context.Context, Querie
 	if dateTo != nil && !tsn.IsValidDate(*dateTo) {
 		return nil, fmt.Errorf("invalid date_to: %s", *dateTo)
 	}
-	// - date-to is after date
+	// - date_to is after date
 	if dateTo != nil && *dateTo < date {
 		return nil, fmt.Errorf("date_to %s is before date %s", *dateTo, date)
 	}
