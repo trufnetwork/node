@@ -47,7 +47,7 @@ func InitializeStream(ctx *execution.DeploymentContext, metadata map[string]stri
 		if err != nil {
 			return nil, err
 		}
-		weightMap[DBID] = weightFloat
+		weightMap[DBID] = utils.RoundToDecimalPlaces(weightFloat, 3)
 	}
 
 	// ensure weightmap sum is 1

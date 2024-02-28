@@ -3,6 +3,7 @@ package utils
 import (
 	"github.com/kwilteam/kwil-db/core/utils"
 	"github.com/kwilteam/kwil-db/internal/engine/execution"
+	"math"
 	"strings"
 )
 
@@ -37,4 +38,9 @@ func GetDBIDFromPath(ctx *execution.DeploymentContext, pathOrDBID string) (strin
 	DBID := utils.GenerateDBID(dbName, walletAddress)
 
 	return DBID, nil
+}
+
+func RoundToDecimalPlaces(val float64, places int) float64 {
+	shift := math.Pow(10, float64(places))
+	return math.Round(val*shift) / shift
 }
