@@ -130,8 +130,7 @@ Expected:
 |-------|
 | 20000 |
 
-This value should be 10% of corn futures value on 2000-07-19. We purposely set hotels value to 0 to easily verify the
-weights are correct.
+This value should be 10% of corn futures value on 2000-07-19. We purposely set hotels value to 0 to easily verify the weights are correct.
 
 ```shell
 ../../.build/kwil-cli database call -a=get_index date:"2000-07-18" date_to:"2000-07-22" -n=composed
