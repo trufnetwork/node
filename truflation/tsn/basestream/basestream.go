@@ -188,11 +188,12 @@ func getValue(scope *execution.ProcedureContext, fn func(context.Context, Querie
 		rowsResult[i] = []any{v}
 	}
 
-	// we return 0 as it doesn´t matter at all
 	newResultSet := sql.ResultSet{
 		ReturnedColumns: []string{"value"},
 		Rows:            rowsResult,
 	}
+	// result means the last query result
+	// at kuneiform file, we must be sure there's no other query after this one on the action
 	scope.Result = &newResultSet
 
 	// returning 0 instead of the result, as it doesn´t matter at all
