@@ -4,8 +4,9 @@ package weighted_stream
 
 import (
 	"fmt"
-	"github.com/kwilteam/kwil-db/core/utils"
 	"github.com/kwilteam/kwil-db/internal/sql"
+	utils "github.com/kwilteam/kwil-db/truflation/tsn/utils"
+	"math"
 	"strconv"
 	"strings"
 
@@ -42,7 +43,7 @@ func InitializeStream(ctx *execution.DeploymentContext, metadata map[string]stri
 		if err != nil {
 			return nil, err
 		}
-		DBID, err := getDBIDFromPath(ctx, dbIdOrPath)
+		DBID, err := utils.GetDBIDFromPath(ctx, dbIdOrPath)
 		if err != nil {
 			return nil, err
 		}
@@ -63,6 +64,7 @@ type Stream struct {
 
 func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs []any) ([]any, error) {
 	switch strings.ToLower(method) {
+	// we verify that the method is one of the known methods, as they should be also implemented by the target
 	case string(knownMethodIndex):
 		// do nothing
 	case string(knownMethodValue):
@@ -130,7 +132,8 @@ func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs 
 
 	finalValues := make([]int64, numResults)
 	for i, intVal := range finalValuesFloat {
-		finalValues[i] = int64(intVal)
+		// round values to the nearest integer
+		finalValues[i] = int64(math.Round(intVal))
 	}
 
 	rowsResult := make([][]any, len(finalValues))
@@ -147,6 +150,9 @@ func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs 
 	return []any{0}, nil
 }
 
+// CallOnTargetDBID calls the given method on the target database.
+// So streams extension is about calling the same method on similar databases, that implements the same methods with the
+// same signature.
 func CallOnTargetDBID(scoper *execution.ProcedureContext, method string, err error, target string,
 	date string, dateTo string) ([]int64, error) {
 	dataset, err := scoper.Dataset(target)
@@ -181,39 +187,6 @@ func CallOnTargetDBID(scoper *execution.ProcedureContext, method string, err err
 	}
 
 	return result, nil
-}
-
-// getDBIDFromPath returns the DBID from a path or a DBID.
-// possible inputs:
-// - xac760c4d5332844f0da28c01adb53c6c369be0a2c4bf530a0f3366bd (DBID)
-// - <owner_wallet_address>/<db_name>
-// - /<db_name> (will use the wallet address from the scoper)
-func getDBIDFromPath(ctx *execution.DeploymentContext, pathOrDBID string) (string, error) {
-	// if the path does not contain a "/", we assume it is a DBID
-	if !strings.Contains(pathOrDBID, "/") {
-		return pathOrDBID, nil
-	}
-
-	walletAddress := ""
-	dbName := ""
-
-	if strings.HasPrefix(pathOrDBID, "/") {
-		// get the wallet address
-		signer := ctx.Schema.Owner // []byte type
-		walletAddress = string(signer)
-		dbName = strings.Split(pathOrDBID, "/")[1]
-	}
-
-	// if walletAddress is empty, we assume the path is a full path
-	if walletAddress == "" {
-		walletAddress = strings.Split(pathOrDBID, "/")[0]
-		dbName = strings.Split(pathOrDBID, "/")[1]
-	}
-
-	walledAddressBytes := []byte(walletAddress)
-	DBID := utils.GenerateDBID(dbName, walledAddressBytes)
-
-	return DBID, nil
 }
 
 type knownMethod string
