@@ -70,6 +70,16 @@ Run if you need to ensure that the database is deployed.
 ## Query Kwil Data
 
 ```shell
+# query latest
+../../.build/kwil-cli database call -a=get_index date:"" date_to:"" -n=com_yahoo_finance_corn_futures
+```
+
+Expected:
+| value  |
+|--------|
+| 250000 |
+
+```shell
 ../../.build/kwil-cli database call -a=get_index date:"2000-07-18" date_to:"" -n=com_yahoo_finance_corn_futures
 ```
 
@@ -91,14 +101,26 @@ Expected:
 | 300000 |
 | 250000 |
 
-## Deploy Composed Table
+### Expect all of these to error:
+```shell
+# wrong date format
+../../.build/kwil-cli database call -a=get_index date:"2000/07/18" date_to:"" -n=com_yahoo_finance_corn_futures
+```
 
+```shell
+# wrong date_to format
+../../.build/kwil-cli database call -a=get_index date:"2000-07-18" date_to:"2000/07/22" -n=com_yahoo_finance_corn_futures
+```
+
+## Composed Table
+
+### Deploy
 ```shell
 ../../.build/kwil-cli database drop composed --sync
 ../../.build/kwil-cli database deploy -p=./composed.kf --name=composed --sync
 ```
 
-## Query Composed Table
+### Query
 
 ```shell
 ../../.build/kwil-cli database call -a=get_index date:"2000-07-19" date_to:"" -n=composed
@@ -124,3 +146,14 @@ weights are correct.
 | 250000 |
 
 See again the 20000 value. It is 10% of the corn futures value on 2000-07-19.
+
+### Expect all of these to error:
+```shell
+# wrong date format
+../../.build/kwil-cli database call -a=get_index date:"2000/07/18" date_to:"" -n=composed
+```
+
+```shell
+# wrong date_to format
+../../.build/kwil-cli database call -a=get_index date:"2000-07-18" date_to:"2000/07/22" -n=composed
+```
