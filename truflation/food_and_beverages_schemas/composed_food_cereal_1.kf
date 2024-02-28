@@ -1,0 +1,32 @@
+database composed;
+
+use truflation_streams as streams;
+use mathutil as math;
+
+action get_index($date) public view {
+    $cpi_idx = streams.get_index('x3a7fba58d216c40eebb0f7bca96a23c300b3210641b5a604693ab1c2', $date);
+    $nielsen_idx = streams.get_index('xf3957862c00dce6adfd097fe75c383373ba7905475e3a9284a9cd29d', $date);
+    $yahoo_idx = streams.get_index('x6af4616159e9358252c5178e3d8209faedade2e205fa0eb501fd637a', $date);
+    $numbeo_idx = streams.get_index('x0d2add3f5e525696cc904d662adffa1990c8fdcf6e61fbcc548d53db', $date);
+
+    $cpi = math.fraction($cpi_idx, 250, 1000);
+    $nielsen = math.fraction($nielsen_idx, 500, 1000);
+    $yahoo = math.fraction($yahoo_idx, 125, 1000);
+    $numbeo = math.fraction($numbeo_idx, 125, 1000);
+
+    select $cpi + $nielsen + $yahoo + $numbeo AS result;
+}
+
+action get_value($date) public view {
+    $cpi_value = streams.get_value('x3a7fba58d216c40eebb0f7bca96a23c300b3210641b5a604693ab1c2', $date);
+    $nielsen_value = streams.get_value('xf3957862c00dce6adfd097fe75c383373ba7905475e3a9284a9cd29d', $date);
+    $yahoo_value = streams.get_value('x6af4616159e9358252c5178e3d8209faedade2e205fa0eb501fd637a', $date);
+    $numbeo_value = streams.get_value('x0d2add3f5e525696cc904d662adffa1990c8fdcf6e61fbcc548d53db', $date);
+
+    $cpi = math.fraction($cpi_value, 250, 1000);
+    $nielsen = math.fraction($nielsen_value, 500, 1000);
+    $yahoo = math.fraction($yahoo_value, 125, 1000);
+    $numbeo = math.fraction($numbeo_value, 125, 1000);
+
+    select $cpi + $nielsen + $yahoo + $numbeo AS result;
+}
