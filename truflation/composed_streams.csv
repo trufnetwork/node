@@ -1,0 +1,5 @@
+parent_stream,stream,weight
+composed1,stream1,123
+composed1,stream2,123
+composed2,stream3,123
+composed2,composed1,123

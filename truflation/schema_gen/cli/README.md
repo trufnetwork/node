@@ -8,7 +8,7 @@ The schema gen CLI is a toy tool to display generating Kuneiform schemas from a 
 
 To use it, simply run:
 
-```go
+```sh
 go run ./cli.go -name mydb -import xdbid:10,ydbid:25 -out mydb.json
 ```
 
