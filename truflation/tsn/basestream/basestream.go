@@ -98,14 +98,14 @@ func (b *BaseStreamExt) Call(scope *execution.ProcedureContext, method string, a
 
 const (
 	// getBaseValue gets the base value from a base stream, to be used in index calculation.
-	sqlGetBaseValue     = `select %s from %s order by %s ASC LIMIT 1;`
+	sqlGetBaseValue     = `select %s from %s WHERE %s != 0 order by %s ASC LIMIT 1;`
 	sqlGetLatestValue   = `select %s from %s order by %s DESC LIMIT 1;`
 	sqlGetSpecificValue = `select %s from %s where %s = $date;`
 	zeroDate            = "0000-00-00"
 )
 
 func (b *BaseStreamExt) sqlGetBaseValue() string {
-	return fmt.Sprintf(sqlGetBaseValue, b.valueColumn, b.table, b.dateColumn)
+	return fmt.Sprintf(sqlGetBaseValue, b.valueColumn, b.table, b.valueColumn, b.dateColumn)
 }
 
 func (b *BaseStreamExt) sqlGetLatestValue() string {

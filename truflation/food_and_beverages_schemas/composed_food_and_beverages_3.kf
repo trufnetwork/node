@@ -4,8 +4,8 @@ use truflation_streams as streams;
 use mathutil as math;
 
 action get_index($date) public view {
-    $food_at_home_idx = streams.get_value('x5602fee310e1c556df49d00af4ecb0c039847c28b8b745e1f29493c2', $date);
-    $food_away_from_home_idx = streams.get_value('xd4a3f8c76f3cbbd4e5f7d08596f12fdcb2cc155e1eeb1fb06c6cb3de', $date);
+    $food_at_home_idx = streams.get_index('food_at_home', $date);
+    $food_away_from_home_idx = streams.get_index('food_away_from_home', $date);
 
     $food_at_home = math.fraction($food_at_home_idx, 32451, 100000);
     $food_away_from_home = math.fraction($food_away_from_home_idx, 67549, 100000);
@@ -14,11 +14,11 @@ action get_index($date) public view {
 }
 
 action get_value($date) public view {
-    $food_at_home_idx_value = streams.get_value('x5602fee310e1c556df49d00af4ecb0c039847c28b8b745e1f29493c2', $date);
-    $food_away_from_home_idx_value = streams.get_value('xd4a3f8c76f3cbbd4e5f7d08596f12fdcb2cc155e1eeb1fb06c6cb3de', $date);
+    $food_at_home_value = streams.get_value('food_at_home', $date);
+    $food_away_from_home_value = streams.get_value('food_away_from_home', $date);
 
-    $food_at_home = math.fraction($food_at_home_idx_value, 32451, 100000);
-    $food_away_from_home = math.fraction($food_away_from_home_idx_value, 67549, 100000);
+    $food_at_home = math.fraction($food_at_home_value, 32451, 100000);
+    $food_away_from_home = math.fraction($food_away_from_home_value, 67549, 100000);
 
     select $food_at_home + $food_away_from_home AS result;
 }

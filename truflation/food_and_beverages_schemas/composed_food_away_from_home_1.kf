@@ -4,10 +4,10 @@ use truflation_streams as streams;
 use mathutil as math;
 
 action get_index($date) public view {
-    $cpi_idx = streams.get_index('x51d8f33bba7befa4fa0ee7a4f7ac69996215a2d14e202fd1434d88ef', $date);
-    $bigmac_idx = streams.get_index('xc5bd57fdcb2b59cb16ac818197c709e9506120024ab69240423ef57d', $date);
-    $yahoo_idx = streams.get_index('x33d6470b90c74e13f03ccf898e0a398777af87ac24fc8e7a5d594bd4', $date);
-    $numbeo_idx = streams.get_index('x8514318988632ec70cb29dbac0c005a1c694199ccb6b74e6e0b0960d', $date);
+    $cpi_idx = streams.get_index('food_away_from_home_cpi', $date);
+    $bigmac_idx = streams.get_index('food_away_from_home_bigmac', $date);
+    $yahoo_idx = streams.get_index('food_away_from_home_yahoo', $date);
+    $numbeo_idx = streams.get_index('food_away_from_home_numbeo', $date);
 
     $cpi = math.fraction($cpi_idx, 30, 100);
     $bigmac = math.fraction($bigmac_idx, 30, 100);
@@ -18,10 +18,10 @@ action get_index($date) public view {
 }
 
 action get_value($date) public view {
-    $cpi_value = streams.get_value('x51d8f33bba7befa4fa0ee7a4f7ac69996215a2d14e202fd1434d88ef', $date);
-    $bigmac_value = streams.get_value('xc5bd57fdcb2b59cb16ac818197c709e9506120024ab69240423ef57d', $date);
-    $yahoo_value = streams.get_value('x33d6470b90c74e13f03ccf898e0a398777af87ac24fc8e7a5d594bd4', $date);
-    $numbeo_value = streams.get_value('x8514318988632ec70cb29dbac0c005a1c694199ccb6b74e6e0b0960d', $date);
+    $cpi_value = streams.get_value('food_away_from_home_cpi', $date);
+    $bigmac_value = streams.get_value('food_away_from_home_bigmac', $date);
+    $yahoo_value = streams.get_value('food_away_from_home_yahoo', $date);
+    $numbeo_value = streams.get_value('food_away_from_home_numbeo', $date);
 
     $cpi = math.fraction($cpi_value, 30, 100);
     $bigmac = math.fraction($bigmac_value, 30, 100);

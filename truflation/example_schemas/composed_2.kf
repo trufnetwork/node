@@ -4,8 +4,8 @@ use truflation_streams as streams;
 use mathutil as math;
 
 action get_index($date) public view {
-    $beef_corn_idx = streams.get_index('REPLACE_WITH_BEEF_CORN_DBID', $date);
-    $barley_idx = streams.get_index('REPLACE_WITH_BARLEY_DBID', $date);
+    $beef_corn_idx = streams.get_index('beef_corn', $date);
+    $barley_idx = streams.get_index('barley', $date);
 
     $beef_corn = math.fraction($beef_corn_idx, 9, 10);
     $barley = math.fraction($barley_idx, 1, 10);
@@ -14,8 +14,8 @@ action get_index($date) public view {
 }
 
 action get_value($date) public view {
-    $beef_corn_value = streams.get_value('REPLACE_WITH_BEEF_CORN_DBID', $date);
-    $barley_value = streams.get_value('REPLACE_WITH_BARLEY_DBID', $date);
+    $beef_corn_value = streams.get_value('beef_corn', $date);
+    $barley_value = streams.get_value('barley', $date);
 
     $beef_corn = math.fraction($beef_corn_value, 9, 10);
     $barley = math.fraction($barley_value, 1, 10);

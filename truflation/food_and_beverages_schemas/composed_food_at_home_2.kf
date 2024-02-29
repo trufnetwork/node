@@ -4,11 +4,11 @@ use truflation_streams as streams;
 use mathutil as math;
 
 action get_index($date) public view {
-    $cereal_idx = streams.get_value('xb6bb50bbff0592b32981188819babd68e93c336b2733dc4c1596439f', $date);
-    $meats_idx = streams.get_value('x85045cee0fb56cbab7a64e8e4784935393ed0cb14c7d7a9cf8cf2067', $date);
-    $dairy_idx = streams.get_value('x9ec5bfd4ad926b5e8888c03f887183afd099f899c2cc6b51b28ae809', $date);
-    $fruits_idx = streams.get_value('xd8eceec2150fda0c2afa2acef08bc92b09d8474566710c8b4eca1e7d', $date);
-    $other_idx = streams.get_value('x8db40d2be123e89042d8d7b18c642a21b252518e40a5d25984223246', $date);
+    $cereal_idx = streams.get_index('cereal', $date);
+    $meats_idx = streams.get_index('meats', $date);
+    $dairy_idx = streams.get_index('dairy', $date);
+    $fruits_idx = streams.get_index('fruits', $date);
+    $other_idx = streams.get_index('other', $date);
 
     $cereal = math.fraction($cereal_idx, 12946, 100000);
     $meats = math.fraction($meats_idx, 21751, 100000);
@@ -20,11 +20,11 @@ action get_index($date) public view {
 }
 
 action get_value($date) public view {
-    $cereal_value = streams.get_value('xb6bb50bbff0592b32981188819babd68e93c336b2733dc4c1596439f', $date);
-    $meats_value = streams.get_value('x85045cee0fb56cbab7a64e8e4784935393ed0cb14c7d7a9cf8cf2067', $date);
-    $dairy_value = streams.get_value('x9ec5bfd4ad926b5e8888c03f887183afd099f899c2cc6b51b28ae809', $date);
-    $fruits_value = streams.get_value('xd8eceec2150fda0c2afa2acef08bc92b09d8474566710c8b4eca1e7d', $date);
-    $other_value = streams.get_value('x8db40d2be123e89042d8d7b18c642a21b252518e40a5d25984223246', $date);
+    $cereal_value = streams.get_value('cereal', $date);
+    $meats_value = streams.get_value('meats', $date);
+    $dairy_value = streams.get_value('dairy', $date);
+    $fruits_value = streams.get_value('fruits', $date);
+    $other_value = streams.get_value('other', $date);
 
     $cereal = math.fraction($cereal_value, 12946, 100000);
     $meats = math.fraction($meats_value, 21751, 100000);

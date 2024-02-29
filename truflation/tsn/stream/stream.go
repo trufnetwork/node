@@ -5,6 +5,8 @@ package stream
 import (
 	"errors"
 	"fmt"
+	"github.com/kwilteam/kwil-db/cmd/kwil-cli/config"
+	"github.com/kwilteam/kwil-db/core/utils"
 	"strings"
 
 	"github.com/kwilteam/kwil-db/internal/engine/execution"
@@ -18,13 +20,21 @@ func InitializeStream(ctx *execution.DeploymentContext, metadata map[string]stri
 		return nil, errors.New("stream does not take any configs")
 	}
 
-	return &Stream{}, nil
+	conf, err := config.LoadCliConfig()
+	if err != nil {
+		return nil, errors.New("failed to load config")
+	}
+
+	return &Stream{
+		accountID: conf.Identity(),
+	}, nil
 }
 
 // Stream is the namespace for the stream extension.
 // Stream has two methods: "index" and "value".
 // Both of them get the value of the target stream at the given time.
 type Stream struct {
+	accountID []byte
 }
 
 func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs []any) ([]any, error) {
@@ -41,7 +51,7 @@ func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs 
 		return nil, fmt.Errorf("expected 2 inputs, got %d", len(inputs))
 	}
 
-	target, ok := inputs[0].(string)
+	name, ok := inputs[0].(string)
 	if !ok {
 		return nil, fmt.Errorf("expected string, got %T", inputs[0])
 	}
@@ -55,7 +65,7 @@ func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs 
 		return nil, fmt.Errorf("invalid date: %s", date)
 	}
 
-	dataset, err := scoper.Dataset(target)
+	dataset, err := scoper.Dataset(utils.GenerateDBID(name, s.accountID))
 	if err != nil {
 		return nil, err
 	}
