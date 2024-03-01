@@ -21,8 +21,10 @@ func GetDBIDFromPath(ctx *execution.DeploymentContext, pathOrDBID string) (strin
 		return pathOrDBID, nil
 	}
 
-	var walletAddress []byte
-	dbName := ""
+	var (
+		walletAddress []byte
+		dbName        string
+	)
 
 	if strings.HasPrefix(pathOrDBID, "/") {
 		// get the wallet address

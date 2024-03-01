@@ -1,4 +1,4 @@
-for file in ./temp_csv/*.csv; do
+for file in ./food_and_beverages_clean_csv/*.csv; do
   echo "Processing file: $file"
   if echo "$file" | grep -q "Cereal" && echo "$file" | grep -q "cpi"; then
     kwil-cli database batch --path "$file" --action add_record --name cereal_cpi --values created_at:$(date +%s)
