@@ -1,0 +1,24 @@
+database composed;
+
+use truflation_streams as streams;
+use mathutil as math;
+
+action get_index($date) public view {
+    $food_at_home_idx = streams.get_index('food_at_home', $date);
+    $food_away_from_home_idx = streams.get_index('food_away_from_home', $date);
+
+    $food_at_home = math.fraction($food_at_home_idx, 32451, 100000);
+    $food_away_from_home = math.fraction($food_away_from_home_idx, 67549, 100000);
+
+    select $food_at_home + $food_away_from_home AS result;
+}
+
+action get_value($date) public view {
+    $food_at_home_value = streams.get_value('food_at_home', $date);
+    $food_away_from_home_value = streams.get_value('food_away_from_home', $date);
+
+    $food_at_home = math.fraction($food_at_home_value, 32451, 100000);
+    $food_away_from_home = math.fraction($food_away_from_home_value, 67549, 100000);
+
+    select $food_at_home + $food_away_from_home AS result;
+}

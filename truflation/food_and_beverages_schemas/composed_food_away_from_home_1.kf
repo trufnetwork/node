@@ -1,0 +1,32 @@
+database composed;
+
+use truflation_streams as streams;
+use mathutil as math;
+
+action get_index($date) public view {
+    $cpi_idx = streams.get_index('food_away_from_home_cpi', $date);
+    $bigmac_idx = streams.get_index('food_away_from_home_bigmac', $date);
+    $yahoo_idx = streams.get_index('food_away_from_home_yahoo', $date);
+    $numbeo_idx = streams.get_index('food_away_from_home_numbeo', $date);
+
+    $cpi = math.fraction($cpi_idx, 30, 100);
+    $bigmac = math.fraction($bigmac_idx, 30, 100);
+    $yahoo = math.fraction($yahoo_idx, 30, 100);
+    $numbeo = math.fraction($numbeo_idx, 10, 100);
+
+    select $cpi + $bigmac + $yahoo + $numbeo AS result;
+}
+
+action get_value($date) public view {
+    $cpi_value = streams.get_value('food_away_from_home_cpi', $date);
+    $bigmac_value = streams.get_value('food_away_from_home_bigmac', $date);
+    $yahoo_value = streams.get_value('food_away_from_home_yahoo', $date);
+    $numbeo_value = streams.get_value('food_away_from_home_numbeo', $date);
+
+    $cpi = math.fraction($cpi_value, 30, 100);
+    $bigmac = math.fraction($bigmac_value, 30, 100);
+    $yahoo = math.fraction($yahoo_value, 30, 100);
+    $numbeo = math.fraction($numbeo_value, 10, 100);
+
+    select $cpi + $bigmac + $yahoo + $numbeo AS result;
+}

@@ -22,22 +22,27 @@ func Test_Index(t *testing.T) {
 	// The number 1500 will be identified by Truflation stream clients as 1.500
 	mockQ := &mockQuerier{
 		stmts: map[string]*sql.ResultSet{
-			b.sqlGetBaseValue():     mockScalar("value", int64(75000)),  // 75.000
-			b.sqlGetLatestValue():   mockScalar("value", int64(200000)), // 200.000
-			b.sqlGetSpecificValue(): mockScalar("value", int64(150000)), // 150.000
+			b.sqlGetBaseValue():     mockScalar("value", []any{int64(75000)}),                 // 75.000
+			b.sqlGetLatestValue():   mockScalar("value", []any{int64(200000)}),                // 200.000
+			b.sqlGetSpecificValue(): mockScalar("value", []any{int64(150000)}),                // 150.000
+			b.sqlGetRangeValue():    mockScalar("value", []any{int64(150000), int64(300000)}), // 150.000, 300.000
 		},
 	}
 
-	returned, err := b.index(ctx, mockQ, "2024-01-01")
+	returned, err := b.index(ctx, mockQ, "2024-01-01", nil)
 	assert.NoError(t, err)
-	assert.Equal(t, int64(200000), returned) // 200.000 * 1000
+	assert.Equal(t, []int64{int64(200000)}, returned) // 200.000 * 1000
 
-	returned, err = b.index(ctx, mockQ, "") // this should return the latest value
+	returned, err = b.index(ctx, mockQ, "", nil) // this should return the latest value
 	assert.NoError(t, err)
-	returned2, err := b.index(ctx, mockQ, zeroDate) // this should return the latest value
+	assert.Equal(t, []int64{int64(266666)}, returned) // 266.666 * 1000
+
+	dateTo := "2024-01-02"
+	returned, err = b.index(ctx, mockQ, "2024-01-01", &dateTo)
+
 	assert.NoError(t, err)
-	assert.Equal(t, int64(266666), returned) // 266.666 * 1000
-	assert.Equal(t, int64(266666), returned2)
+	// 200%, 400%
+	assert.Equal(t, []int64{int64(200000), int64(400000)}, returned) // 200.000 * 1000, 400.000 * 1000
 }
 
 func Test_Value(t *testing.T) {
@@ -50,31 +55,36 @@ func Test_Value(t *testing.T) {
 
 	mockQ := &mockQuerier{
 		stmts: map[string]*sql.ResultSet{
-			b.sqlGetLatestValue():   mockScalar("value", int64(200000)), // 200.000
-			b.sqlGetSpecificValue(): mockScalar("value", int64(150000)), // 150.000
+			b.sqlGetLatestValue():   mockScalar("value", []any{int64(200000)}),                // 200.000
+			b.sqlGetSpecificValue(): mockScalar("value", []any{int64(150000)}),                // 150.000
+			b.sqlGetRangeValue():    mockScalar("value", []any{int64(150000), int64(300000)}), // 150.000, 300.000
 		},
 	}
 
-	returned, err := b.value(ctx, mockQ, "2024-01-01")
+	returned, err := b.value(ctx, mockQ, "2024-01-01", nil)
 	assert.NoError(t, err)
-	assert.Equal(t, int64(150000), returned) // 150.000 * 1000
+	assert.Equal(t, []int64{int64(150000)}, returned) // 150.000 * 1000
 
-	returned, err = b.value(ctx, mockQ, "") // this should return the latest value
+	returned, err = b.value(ctx, mockQ, "", nil) // this should return the latest value
 	assert.NoError(t, err)
-	returned2, err := b.value(ctx, mockQ, zeroDate) // this should return the latest value
+	assert.Equal(t, []int64{int64(200000)}, returned) // 200.000 * 1000
+
+	dateTo := "2024-01-02"
+	returned, err = b.value(ctx, mockQ, "2024-01-01", &dateTo)
 	assert.NoError(t, err)
-	assert.Equal(t, int64(200000), returned) // 200.000 * 1000
-	assert.Equal(t, int64(200000), returned2)
+	assert.Equal(t, []int64{int64(150000), int64(300000)}, returned) // 150.000 * 1000, 300.000 * 1000
 }
 
 // mockScalar is a helper function that creates a new actions.Result that
 // returns the given value as a single row and column result.
-func mockScalar(column string, v any) *sql.ResultSet {
+func mockScalar(column string, arrayOfResults []any) *sql.ResultSet {
+	mockedRows := make([][]any, len(arrayOfResults))
+	for i, result := range arrayOfResults {
+		mockedRows[i] = []any{result}
+	}
 	return &sql.ResultSet{
 		ReturnedColumns: []string{column},
-		Rows: [][]any{
-			{v},
-		},
+		Rows:            mockedRows,
 	}
 }
 
