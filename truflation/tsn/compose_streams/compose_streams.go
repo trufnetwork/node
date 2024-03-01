@@ -204,7 +204,7 @@ func FillForwardWithLatestFromCols[T comparable](originalResultsSet [][]utils.Wi
 	sort.Strings(allDates)
 
 	// Prepare the latest value holder for each streamResults
-	latestValueMap := make([]T, numOfStreams)
+	latestValueMap := make([]any, numOfStreams)
 
 	// Prepare the structure for new results
 	newResults := make([][]utils.WithDate[T], numOfStreams)
@@ -212,9 +212,6 @@ func FillForwardWithLatestFromCols[T comparable](originalResultsSet [][]utils.Wi
 		newResults[i] = make([]utils.WithDate[T], 0, len(allDates))
 	}
 
-	isZero := func(v T) bool {
-		return v == *new(T)
-	}
 	// Fill in the new results, iterating through each date
 OUTER:
 	for _, date := range allDates {
@@ -222,18 +219,25 @@ OUTER:
 		for streamIdx := range originalResultsSet {
 			valueFoundForCurrentStream := allDatesMap[date][streamIdx]
 
-			if isZero(valueFoundForCurrentStream.Value) {
+			// this means that there was no value for this stream at this date
+			if valueFoundForCurrentStream.Date == "" {
 				// there were no value for this stream at this date
 
 				// is there a last value already?
 				latestValue := latestValueMap[streamIdx]
-				if isZero(latestValue) {
+				if latestValue == nil {
 					// there was no value, nor a latest value. It may happen at the beginning of the stream
 					// we discard other streams and continue to the next date
 					continue OUTER
 				}
+
+				latestValueCorrectType, ok := latestValue.(T)
+				if !ok {
+					// this should never happen
+					panic(fmt.Sprintf("latest value has wrong type: %T", latestValue))
+				}
 				// if there was a latest value, we update the latest value
-				newValuesToBePushed[streamIdx] = utils.WithDate[T]{Date: date, Value: latestValue}
+				newValuesToBePushed[streamIdx] = utils.WithDate[T]{Date: date, Value: latestValueCorrectType}
 			} else {
 				// if there was a value, we update the latest value
 				latestValueMap[streamIdx] = valueFoundForCurrentStream.Value

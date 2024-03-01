@@ -3,6 +3,7 @@ package basestream
 import (
 	"context"
 	"fmt"
+	"github.com/kwilteam/kwil-db/truflation/tsn/utils"
 	"testing"
 
 	"github.com/kwilteam/kwil-db/internal/sql"
@@ -22,27 +23,30 @@ func Test_Index(t *testing.T) {
 	// The number 1500 will be identified by Truflation stream clients as 1.500
 	mockQ := &mockQuerier{
 		stmts: map[string]*sql.ResultSet{
-			b.sqlGetBaseValue():     mockScalar("value", []any{int64(75000)}),                 // 75.000
-			b.sqlGetLatestValue():   mockScalar("value", []any{int64(200000)}),                // 200.000
-			b.sqlGetSpecificValue(): mockScalar("value", []any{int64(150000)}),                // 150.000
-			b.sqlGetRangeValue():    mockScalar("value", []any{int64(150000), int64(300000)}), // 150.000, 300.000
+			b.sqlGetBaseValue():     mockDateScalar("value", []utils.WithDate[int64]{{Date: "2024-01-01", Value: 75000}}),  // 75.000
+			b.sqlGetLatestValue():   mockDateScalar("value", []utils.WithDate[int64]{{Date: "2024-01-01", Value: 200000}}), // 200.000
+			b.sqlGetSpecificValue(): mockDateScalar("value", []utils.WithDate[int64]{{Date: "2024-01-01", Value: 150000}}), // 150.000
+			b.sqlGetRangeValue(): mockDateScalar("value", []utils.WithDate[int64]{
+				{Date: "2024-01-01", Value: 150000},
+				{Date: "2024-01-02", Value: 300000},
+			}), // 150.000, 300.000
 		},
 	}
 
 	returned, err := b.index(ctx, mockQ, "2024-01-01", nil)
 	assert.NoError(t, err)
-	assert.Equal(t, []int64{int64(200000)}, returned) // 200.000 * 1000
+	assert.Equal(t, []utils.WithDate[int64]{{Date: "2024-01-01", Value: 200000}}, returned) // 200.000 * 1000
 
 	returned, err = b.index(ctx, mockQ, "", nil) // this should return the latest value
 	assert.NoError(t, err)
-	assert.Equal(t, []int64{int64(266666)}, returned) // 266.666 * 1000
+	assert.Equal(t, []utils.WithDate[int64]{{Date: "2024-01-01", Value: 266666}}, returned) // 266.666 * 1000
 
 	dateTo := "2024-01-02"
 	returned, err = b.index(ctx, mockQ, "2024-01-01", &dateTo)
 
 	assert.NoError(t, err)
 	// 200%, 400%
-	assert.Equal(t, []int64{int64(200000), int64(400000)}, returned) // 200.000 * 1000, 400.000 * 1000
+	assert.Equal(t, []utils.WithDate[int64]{{Date: "2024-01-01", Value: 200000}, {Date: "2024-01-02", Value: 400000}}, returned) // 200.000 * 1000, 400.000 * 1000
 }
 
 func Test_Value(t *testing.T) {
@@ -55,35 +59,35 @@ func Test_Value(t *testing.T) {
 
 	mockQ := &mockQuerier{
 		stmts: map[string]*sql.ResultSet{
-			b.sqlGetLatestValue():   mockScalar("value", []any{int64(200000)}),                // 200.000
-			b.sqlGetSpecificValue(): mockScalar("value", []any{int64(150000)}),                // 150.000
-			b.sqlGetRangeValue():    mockScalar("value", []any{int64(150000), int64(300000)}), // 150.000, 300.000
+			b.sqlGetLatestValue():   mockDateScalar("value", []utils.WithDate[int64]{{Date: "2024-01-01", Value: 200000}}),                                      // 200.000
+			b.sqlGetSpecificValue(): mockDateScalar("value", []utils.WithDate[int64]{{Date: "2024-01-01", Value: 150000}}),                                      // 150.000
+			b.sqlGetRangeValue():    mockDateScalar("value", []utils.WithDate[int64]{{Date: "2024-01-01", Value: 150000}, {Date: "2024-01-02", Value: 300000}}), // 150.000, 300.000
 		},
 	}
 
 	returned, err := b.value(ctx, mockQ, "2024-01-01", nil)
 	assert.NoError(t, err)
-	assert.Equal(t, []int64{int64(150000)}, returned) // 150.000 * 1000
+	assert.Equal(t, []utils.WithDate[int64]{{Date: "2024-01-01", Value: 150000}}, returned) // 150.000 * 1000
 
 	returned, err = b.value(ctx, mockQ, "", nil) // this should return the latest value
 	assert.NoError(t, err)
-	assert.Equal(t, []int64{int64(200000)}, returned) // 200.000 * 1000
+	assert.Equal(t, []utils.WithDate[int64]{{Date: "2024-01-01", Value: 200000}}, returned) // 200.000 * 1000
 
 	dateTo := "2024-01-02"
 	returned, err = b.value(ctx, mockQ, "2024-01-01", &dateTo)
 	assert.NoError(t, err)
-	assert.Equal(t, []int64{int64(150000), int64(300000)}, returned) // 150.000 * 1000, 300.000 * 1000
+	assert.Equal(t, []utils.WithDate[int64]{{Date: "2024-01-01", Value: 150000}, {Date: "2024-01-02", Value: 300000}}, returned) // 150.000 * 1000, 300.000 * 1000
 }
 
-// mockScalar is a helper function that creates a new actions.Result that
-// returns the given value as a single row and column result.
-func mockScalar(column string, arrayOfResults []any) *sql.ResultSet {
+// mockDateScalar is a helper function that creates a new actions.Result that
+// returns the given value as a row and column result with a date.
+func mockDateScalar(column string, arrayOfResults []utils.WithDate[int64]) *sql.ResultSet {
 	mockedRows := make([][]any, len(arrayOfResults))
 	for i, result := range arrayOfResults {
-		mockedRows[i] = []any{result}
+		mockedRows[i] = []any{result.Date, result.Value}
 	}
 	return &sql.ResultSet{
-		ReturnedColumns: []string{column},
+		ReturnedColumns: []string{"date", column},
 		Rows:            mockedRows,
 	}
 }
