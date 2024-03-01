@@ -77,7 +77,7 @@ Run if you need to ensure that the database is deployed.
 Expected:
 |    date    | value  |
 |------------|--------|
-| 2000-07-24 | 250000 |
+| 2000-07-30 | 500000 |
 
 ```shell
 ../../.build/kwil-cli database call -a=get_index date:"2000-07-18" date_to:"" -n=com_yahoo_finance_corn_futures
