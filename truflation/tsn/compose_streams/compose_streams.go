@@ -77,7 +77,7 @@ func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs 
 	}
 
 	if len(inputs) != 2 {
-		return nil, fmt.Errorf("expected at least 2 inputs, got %d", len(inputs))
+		return nil, fmt.Errorf("expected 2 inputs, got %d", len(inputs))
 	}
 
 	date, ok := inputs[0].(string)
