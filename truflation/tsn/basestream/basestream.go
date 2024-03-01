@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/kwilteam/kwil-db/truflation/tsn/utils"
 	"strings"
 
 	"github.com/kwilteam/kwil-db/internal/engine/execution"
@@ -101,31 +102,31 @@ func (b *BaseStreamExt) Call(scope *execution.ProcedureContext, method string, a
 
 const (
 	// getBaseValue gets the base value from a base stream, to be used in index calculation.
-	sqlGetBaseValue     = `select %s from %s order by %s ASC LIMIT 1;`
-	sqlGetLatestValue   = `select %s from %s order by %s DESC LIMIT 1;`
-	sqlGetSpecificValue = `select %s from %s where %s = $date;`
-	sqlGetRangeValue    = `select %s from %s where %s >= $date and %s <= $date_to order by %s ASC;`
+	sqlGetBaseValue     = `select %s, %s from %s order by %s ASC LIMIT 1;`
+	sqlGetLatestValue   = `select %s, %s from %s order by %s DESC LIMIT 1;`
+	sqlGetSpecificValue = `select %s, %s from %s where %s = $date;`
+	sqlGetRangeValue    = `select %s, %s from %s where %s >= $date and %s <= $date_to order by %s ASC;`
 	zeroDate            = "0000-00-00"
 )
 
 func (b *BaseStreamExt) sqlGetBaseValue() string {
-	return fmt.Sprintf(sqlGetBaseValue, b.valueColumn, b.table, b.dateColumn)
+	return fmt.Sprintf(sqlGetBaseValue, b.dateColumn, b.valueColumn, b.table, b.dateColumn)
 }
 
 func (b *BaseStreamExt) sqlGetLatestValue() string {
-	return fmt.Sprintf(sqlGetLatestValue, b.valueColumn, b.table, b.dateColumn)
+	return fmt.Sprintf(sqlGetLatestValue, b.dateColumn, b.valueColumn, b.table, b.dateColumn)
 }
 
 func (b *BaseStreamExt) sqlGetSpecificValue() string {
-	return fmt.Sprintf(sqlGetSpecificValue, b.valueColumn, b.table, b.dateColumn)
+	return fmt.Sprintf(sqlGetSpecificValue, b.dateColumn, b.valueColumn, b.table, b.dateColumn)
 }
 
 func (b *BaseStreamExt) sqlGetRangeValue() string {
-	return fmt.Sprintf(sqlGetRangeValue, b.valueColumn, b.table, b.dateColumn, b.dateColumn, b.dateColumn)
+	return fmt.Sprintf(sqlGetRangeValue, b.dateColumn, b.valueColumn, b.table, b.dateColumn, b.dateColumn, b.dateColumn)
 }
 
 // getValue gets the value for the specified function.
-func getValue(scope *execution.ProcedureContext, fn func(context.Context, Querier, string, *string) ([]int64, error), args ...any) ([]any, error) {
+func getValue(scope *execution.ProcedureContext, fn func(context.Context, Querier, string, *string) ([]utils.WithDate[int64], error), args ...any) ([]any, error) {
 	// usage: get_value($date, $date_to?)
 	// behavior: 	if $date is not provided, it will return the latest value.
 	// 				else if $date_to is provided, it will return the value for the date range.
@@ -185,11 +186,11 @@ func getValue(scope *execution.ProcedureContext, fn func(context.Context, Querie
 	// each row contains column values
 	rowsResult := make([][]any, len(val))
 	for i, v := range val {
-		rowsResult[i] = []any{v}
+		rowsResult[i] = []any{v.Date, v.Value}
 	}
 
 	newResultSet := sql.ResultSet{
-		ReturnedColumns: []string{"value"},
+		ReturnedColumns: []string{"date", "value"},
 		Rows:            rowsResult,
 	}
 	// result means the last query result
@@ -204,28 +205,28 @@ func getValue(scope *execution.ProcedureContext, fn func(context.Context, Querie
 // This follows Truflation function of ((current_value/first_value)*100).
 // It will multiplty the returned result by an additional 1000, since Kwil
 // cannot handle decimals.
-func (b *BaseStreamExt) index(ctx context.Context, dataset Querier, date string, dateTo *string) ([]int64, error) {
+func (b *BaseStreamExt) index(ctx context.Context, dataset Querier, date string, dateTo *string) ([]utils.WithDate[int64], error) {
 
 	// we will first get the first ever value
 	baseValueArr, err := b.value(ctx, dataset, zeroDate, nil)
 	if err != nil {
-		return []int64{}, err
+		return []utils.WithDate[int64]{}, err
 	}
 	// expect single value
 	if len(baseValueArr) != 1 {
-		return []int64{}, errors.New("expected single value for base value")
+		return []utils.WithDate[int64]{}, errors.New("expected single value for base value")
 	}
-	baseValue := baseValueArr[0]
+	baseValue := baseValueArr[0].Value
 
 	// now we will get the value for the requested date
 	currentValueArr, err := b.value(ctx, dataset, date, dateTo)
 	if err != nil {
-		return []int64{}, err
+		return []utils.WithDate[int64]{}, err
 	}
 
 	// if there's no date_to, we expect a single value
 	if dateTo == nil && len(currentValueArr) != 1 {
-		return []int64{}, errors.New("expected single value for current value")
+		return []utils.WithDate[int64]{}, errors.New("expected single value for current value")
 	}
 
 	// we can't do floating point division, but Truflation normally tracks
@@ -236,9 +237,9 @@ func (b *BaseStreamExt) index(ctx context.Context, dataset Querier, date string,
 	// Therefore, we will alter the equation to ((current_value*100000)/first_value).
 	// This essentially gives us the same result, but with an extra 3 digits of precision.
 	//index := (currentValue * 100000) / baseValue
-	indexes := make([]int64, len(currentValueArr))
+	indexes := make([]utils.WithDate[int64], len(currentValueArr))
 	for i, currentValue := range currentValueArr {
-		indexes[i] = (currentValue * 100000) / baseValue
+		indexes[i] = utils.WithDate[int64]{Date: currentValue.Date, Value: (currentValue.Value * 100000) / baseValue}
 	}
 
 	return indexes, nil
@@ -246,7 +247,7 @@ func (b *BaseStreamExt) index(ctx context.Context, dataset Querier, date string,
 
 // value returns the value for a given date.
 // if no date is given, it will return the latest value.
-func (b *BaseStreamExt) value(ctx context.Context, dataset Querier, date string, dateTo *string) ([]int64, error) {
+func (b *BaseStreamExt) value(ctx context.Context, dataset Querier, date string, dateTo *string) ([]utils.WithDate[int64], error) {
 	var res *sql.ResultSet
 	var err error
 	if date == zeroDate {
@@ -266,43 +267,15 @@ func (b *BaseStreamExt) value(ctx context.Context, dataset Querier, date string,
 	}
 
 	if err != nil {
-		return []int64{}, errors.New(fmt.Sprintf("error getting current value: %s", err))
+		return []utils.WithDate[int64]{}, errors.New(fmt.Sprintf("error getting current value: %s", err))
 	}
 
-	scalar, err := getScalar(res)
+	values, err := utils.GetScalarWithDate[int64](res)
 	if err != nil {
-		return []int64{}, errors.New(fmt.Sprintf("error getting current scalar: %s", err))
-	}
-
-	values := make([]int64, len(scalar))
-	for i, v := range scalar {
-		value, ok := v.(int64)
-		if !ok {
-			return []int64{}, errors.New("expected int64 for current value")
-		}
-		values[i] = value
+		return []utils.WithDate[int64]{}, errors.New(fmt.Sprintf("error getting current scalar: %s", err))
 	}
 
 	return values, nil
-}
-
-// getScalar gets a scalar value from a query result.
-// It is expecting a result that has one row and one column.
-// If it does not have one row and one column, it will return an error.
-func getScalar(res *sql.ResultSet) ([]any, error) {
-	if len(res.ReturnedColumns) != 1 {
-		return nil, fmt.Errorf("stream expected one column, got %d", len(res.ReturnedColumns))
-	}
-	if len(res.Rows) == 0 {
-		return nil, fmt.Errorf("stream has no data")
-	}
-
-	singleValueRows := make([]any, len(res.Rows))
-	for i, row := range res.Rows {
-		singleValueRows[i] = row[0]
-	}
-
-	return singleValueRows, nil
 }
 
 type Querier interface {

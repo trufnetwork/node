@@ -75,9 +75,9 @@ Run if you need to ensure that the database is deployed.
 ```
 
 Expected:
-| value  |
-|--------|
-| 250000 |
+|    date    | value  |
+|------------|--------|
+| 2000-07-24 | 250000 |
 
 ```shell
 ../../.build/kwil-cli database call -a=get_index date:"2000-07-18" date_to:"" -n=com_yahoo_finance_corn_futures
@@ -85,21 +85,21 @@ Expected:
 
 Expected:
 
-| value  |
-|--------|
-| 150000 |
+|    date    | value  |
+|------------|--------|
+| 2000-07-18 | 150000 |
 
 ```shell
 ../../.build/kwil-cli database call -a=get_index date:"2000-07-18" date_to:"2000-07-22" -n=com_yahoo_finance_corn_futures
 ```
 
-| value  |
-|--------|
-| 150000 |
-| 200000 |
-| 250000 |
-| 300000 |
-| 250000 |
+|    date    | value  |
+|------------|--------|
+| 2000-07-18 | 150000 |
+| 2000-07-19 | 200000 |
+| 2000-07-20 | 250000 |
+| 2000-07-21 | 300000 |
+| 2000-07-22 | 250000 |
 
 ### Expect all of these to error:
 ```shell
@@ -126,9 +126,9 @@ Expected:
 ../../.build/kwil-cli database call -a=get_index date:"2000-07-19" date_to:"" -n=composed
 ```
 
-| value |
-|-------|
-| 20000 |
+|    date    | value |
+|------------|-------|
+| 2000-07-19 | 20000 |
 
 This value should be 10% of corn futures value on 2000-07-19. We purposely set hotels value to 0 to easily verify the weights are correct.
 
@@ -136,13 +136,13 @@ This value should be 10% of corn futures value on 2000-07-19. We purposely set h
 ../../.build/kwil-cli database call -a=get_index date:"2000-07-18" date_to:"2000-07-22" -n=composed
 ```
 
-| value  |
-|--------|
-| 150000 |
-| 20000  |
-| 250000 |
-| 300000 |
-| 250000 |
+|    date    | value  |
+|------------|--------|
+| 2000-07-18 | 150000 |
+| 2000-07-19 |  20000 |
+| 2000-07-20 | 250000 |
+| 2000-07-21 | 300000 |
+| 2000-07-22 | 250000 |
 
 See again the 20000 value. It is 10% of the corn futures value on 2000-07-19.
 
