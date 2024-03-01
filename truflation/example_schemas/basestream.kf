@@ -28,10 +28,10 @@ action delete_record ($id) public {
 
 action get_index($date) public view {
     $val = basestream.get_index($date);
-    SELECT $val AS result;
+    // we ensure no other extension or query is called after this
 }
 
 action get_value($date) public view {
     $val = basestream.get_value($date);
-    SELECT $val AS result;
+    // we ensure no other extension or query is called after this
 }

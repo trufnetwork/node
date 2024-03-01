@@ -15,6 +15,13 @@ import (
 	"github.com/kwilteam/kwil-db/truflation/tsn"
 )
 
+func getOrDefault(m map[string]string, key string, defaultValue string) string {
+	if value, ok := m[key]; ok {
+		return value
+	}
+	return defaultValue
+}
+
 // InitializeBasestream initializes the basestream extension.
 // It takes 3 configs: table, date_column, and value_column.
 // The table is the table that the data is stored in.
@@ -27,14 +34,10 @@ func InitializeBasestream(ctx *execution.DeploymentContext, metadata map[string]
 	if !ok {
 		return nil, errors.New("missing table config")
 	}
-	dateColumn, ok = metadata["date_column"]
-	if !ok {
-		return nil, errors.New("missing date_column config")
-	}
-	valueColumn, ok = metadata["value_column"]
-	if !ok {
-		return nil, errors.New("missing value_column config")
-	}
+
+	// get from
+	dateColumn = getOrDefault(metadata, "date_column", "date_value")
+	valueColumn = getOrDefault(metadata, "value_column", "value")
 
 	foundTable := false
 	foundDateColumn := false
@@ -101,6 +104,7 @@ const (
 	sqlGetBaseValue     = `select %s from %s order by %s ASC LIMIT 1;`
 	sqlGetLatestValue   = `select %s from %s order by %s DESC LIMIT 1;`
 	sqlGetSpecificValue = `select %s from %s where %s = $date;`
+	sqlGetRangeValue    = `select %s from %s where %s >= $date and %s <= $date_to order by %s ASC;`
 	zeroDate            = "0000-00-00"
 )
 
@@ -116,79 +120,112 @@ func (b *BaseStreamExt) sqlGetSpecificValue() string {
 	return fmt.Sprintf(sqlGetSpecificValue, b.valueColumn, b.table, b.dateColumn)
 }
 
+func (b *BaseStreamExt) sqlGetRangeValue() string {
+	return fmt.Sprintf(sqlGetRangeValue, b.valueColumn, b.table, b.dateColumn, b.dateColumn, b.dateColumn)
+}
+
 // getValue gets the value for the specified function.
-func getValue(scope *execution.ProcedureContext, fn func(context.Context, Querier, string) (int64, error), args ...any) ([]any, error) {
+func getValue(scope *execution.ProcedureContext, fn func(context.Context, Querier, string, *string) ([]int64, error), args ...any) ([]any, error) {
+	// usage: get_value($date, $date_to?)
+	// behavior: 	if $date is not provided, it will return the latest value.
+	// 				else if $date_to is provided, it will return the value for the date range.
+	// returns either a single value or a range of values.
+
 	dataset, err := scope.Dataset(scope.DBID)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(args) != 1 {
-		return nil, fmt.Errorf("expected one argument")
+	if len(args) != 2 {
+		return nil, fmt.Errorf("expected 2 arguments, got %d", len(args))
 	}
 
+	// date is optional
 	date, ok := args[0].(string)
 	if !ok {
-		return nil, fmt.Errorf("expected string for date argument")
+		return nil, fmt.Errorf("expected string for date, got %T", args[0])
 	}
 
+	// date_to should be nil if not provided. If provided, try to convert to string.
+	var dateTo *string
+	if args[1] != nil {
+		dateToStr, ok := args[1].(string)
+		if !ok {
+			return nil, fmt.Errorf("expected string for date_to, got %T", args[1])
+		}
+		// if date_to is "", we should keep it nil
+		if dateToStr != "" {
+			dateTo = &dateToStr
+		}
+	}
+
+	// Date validations
+	// - date valid
 	if !tsn.IsValidDate(date) {
 		return nil, fmt.Errorf("invalid date: %s", date)
 	}
+	// - date_to valid
+	if dateTo != nil && !tsn.IsValidDate(*dateTo) {
+		return nil, fmt.Errorf("invalid date_to: %s", *dateTo)
+	}
+	// - date_to is after date
+	if dateTo != nil && *dateTo < date {
+		return nil, fmt.Errorf("date_to %s is before date %s", *dateTo, date)
+	}
 
-	val, err := fn(scope.Ctx, dataset, date)
+	val, err := fn(scope.Ctx, dataset, date, dateTo)
 	if err != nil {
 		return nil, err
 	}
 
-	return []any{val}, nil
+	// Attention: the steps below are necessary to return the result directly, instead of using extension results
+	// as normally. It modifies the last query result directly, to make the action think this is the final.
+	// To make it work, we don´t call another sql query in the kf file
+
+	// each row contains column values
+	rowsResult := make([][]any, len(val))
+	for i, v := range val {
+		rowsResult[i] = []any{v}
+	}
+
+	newResultSet := sql.ResultSet{
+		ReturnedColumns: []string{"value"},
+		Rows:            rowsResult,
+	}
+	// result means the last query result
+	// at kuneiform file, we must be sure there's no other query after this one on the action
+	scope.Result = &newResultSet
+
+	// returning 0 instead of the result, as it doesn´t matter at all
+	return []any{0}, nil
 }
 
-// index returns the inflation index for a given date.
-// this follows Truflation function of ((current_value/first_value)*100).
+// Index returns the inflation index for a given date.
+// This follows Truflation function of ((current_value/first_value)*100).
 // It will multiplty the returned result by an additional 1000, since Kwil
 // cannot handle decimals.
-func (b *BaseStreamExt) index(ctx context.Context, dataset Querier, date string) (int64, error) {
+func (b *BaseStreamExt) index(ctx context.Context, dataset Querier, date string, dateTo *string) ([]int64, error) {
 
 	// we will first get the first ever value
-	res, err := dataset.Query(ctx, b.sqlGetBaseValue(), nil)
+	baseValueArr, err := b.value(ctx, dataset, zeroDate, nil)
 	if err != nil {
-		return 0, err
+		return []int64{}, err
 	}
-
-	scalar, err := getScalar(res)
-	if err != nil {
-		return 0, err
+	// expect single value
+	if len(baseValueArr) != 1 {
+		return []int64{}, errors.New("expected single value for base value")
 	}
-
-	baseValue, ok := scalar.(int64)
-	if !ok {
-		return 0, errors.New("expected int64 for base value")
-	}
-	if baseValue == 0 {
-		return 0, errors.New("base value cannot be zero")
-	}
+	baseValue := baseValueArr[0]
 
 	// now we will get the value for the requested date
-	if date == zeroDate || date == "" {
-		res, err = dataset.Query(ctx, b.sqlGetLatestValue(), nil)
-	} else {
-		res, err = dataset.Query(ctx, b.sqlGetSpecificValue(), map[string]any{
-			"$date": date,
-		})
-	}
+	currentValueArr, err := b.value(ctx, dataset, date, dateTo)
 	if err != nil {
-		return 0, err
+		return []int64{}, err
 	}
 
-	scalar, err = getScalar(res)
-	if err != nil {
-		return 0, err
-	}
-
-	currentValue, ok := scalar.(int64)
-	if !ok {
-		return 0, errors.New("expected int64 for current value")
+	// if there's no date_to, we expect a single value
+	if dateTo == nil && len(currentValueArr) != 1 {
+		return []int64{}, errors.New("expected single value for current value")
 	}
 
 	// we can't do floating point division, but Truflation normally tracks
@@ -198,54 +235,74 @@ func (b *BaseStreamExt) index(ctx context.Context, dataset Querier, date string)
 	// Truflations calculation is ((current_value/first_value)*100).
 	// Therefore, we will alter the equation to ((current_value*100000)/first_value).
 	// This essentially gives us the same result, but with an extra 3 digits of precision.
-	index := (currentValue * 100000) / baseValue
-	return index, nil
+	//index := (currentValue * 100000) / baseValue
+	indexes := make([]int64, len(currentValueArr))
+	for i, currentValue := range currentValueArr {
+		indexes[i] = (currentValue * 100000) / baseValue
+	}
+
+	return indexes, nil
 }
 
 // value returns the value for a given date.
-// if no date or the zero date is given, it will return the latest value.
-func (b *BaseStreamExt) value(ctx context.Context, dataset Querier, date string) (int64, error) {
+// if no date is given, it will return the latest value.
+func (b *BaseStreamExt) value(ctx context.Context, dataset Querier, date string, dateTo *string) ([]int64, error) {
 	var res *sql.ResultSet
 	var err error
-	if date == zeroDate || date == "" {
+	if date == zeroDate {
+		res, err = dataset.Query(ctx, b.sqlGetBaseValue(), nil)
+	} else if date == "" {
 		res, err = dataset.Query(ctx, b.sqlGetLatestValue(), nil)
-	} else {
+	} else if dateTo == nil {
 		res, err = dataset.Query(ctx, b.sqlGetSpecificValue(), map[string]any{
 			"$date": date,
 		})
+	} else {
+		// kwild does not support ptr, so we need to convert dateTo to a value
+		res, err = dataset.Query(ctx, b.sqlGetRangeValue(), map[string]any{
+			"$date":    date,
+			"$date_to": *dateTo,
+		})
 	}
+
 	if err != nil {
-		return 0, err
+		return []int64{}, errors.New(fmt.Sprintf("error getting current value: %s", err))
 	}
 
 	scalar, err := getScalar(res)
 	if err != nil {
-		return 0, err
+		return []int64{}, errors.New(fmt.Sprintf("error getting current scalar: %s", err))
 	}
 
-	value, ok := scalar.(int64)
-	if !ok {
-		return 0, errors.New("expected int64 for current value")
+	values := make([]int64, len(scalar))
+	for i, v := range scalar {
+		value, ok := v.(int64)
+		if !ok {
+			return []int64{}, errors.New("expected int64 for current value")
+		}
+		values[i] = value
 	}
 
-	return value, nil
+	return values, nil
 }
 
 // getScalar gets a scalar value from a query result.
 // It is expecting a result that has one row and one column.
 // If it does not have one row and one column, it will return an error.
-func getScalar(res *sql.ResultSet) (any, error) {
+func getScalar(res *sql.ResultSet) ([]any, error) {
 	if len(res.ReturnedColumns) != 1 {
 		return nil, fmt.Errorf("stream expected one column, got %d", len(res.ReturnedColumns))
 	}
 	if len(res.Rows) == 0 {
 		return nil, fmt.Errorf("stream has no data")
 	}
-	if len(res.Rows) != 1 {
-		return nil, fmt.Errorf("stream expected one row, got %d", len(res.Rows))
+
+	singleValueRows := make([]any, len(res.Rows))
+	for i, row := range res.Rows {
+		singleValueRows[i] = row[0]
 	}
 
-	return res.Rows[0][0], nil
+	return singleValueRows, nil
 }
 
 type Querier interface {

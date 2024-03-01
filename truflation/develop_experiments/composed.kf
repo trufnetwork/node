@@ -6,10 +6,10 @@ use compose_truflation_streams {
     // - /<stream_name> (then the wallet address will be the sender of the transaction)
     // - <DBID>
     // the prefix "stream_1" is arbitrary, we just need to ensure there are keys with _id and _weight suffixes
-    stream_1_id: 'REPLACE_WITH_BEEF_CORN_DBID',
-    stream_1_weight: '9',
-    stream_2_id: 'REPLACE_WITH_BARLEY_DBID',
-    stream_2_weight: '1'
+    stream_1_id: '/com_yahoo_finance_corn_futures',
+    stream_1_weight: '1',
+    stream_2_id: '/com_truflation_us_hotel_price',
+    stream_2_weight: '9'
 } as streams;
 
 action get_index($date, $date_to) public view {
