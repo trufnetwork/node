@@ -26,6 +26,7 @@ func InitializeStream(ctx *execution.DeploymentContext, metadata map[string]stri
 // Stream has two methods: "index" and "value".
 // Both of them get the value of the target stream at the given time.
 type Stream struct {
+	accountID []byte
 }
 
 func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs []any) ([]any, error) {
