@@ -100,7 +100,7 @@ func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs 
 	}
 
 	// easier to test if we pass the function as a parameter
-	calculateWeightedResultsFromStream := func(dbId string) ([]int64, error) {
+	calculateWeightedResultsFromStream := func(dbId string) ([]utils.WithDate[int64], error) {
 		return CallOnTargetDBID(scoper, method, dbId, date, dateTo)
 	}
 
@@ -111,11 +111,11 @@ func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs 
 
 	rowsResult := make([][]any, len(finalValues))
 	for i, val := range finalValues {
-		rowsResult[i] = []any{val}
+		rowsResult[i] = []any{val.Date, val.Value}
 	}
 
 	scoper.Result = &sql.ResultSet{
-		ReturnedColumns: []string{"value"},
+		ReturnedColumns: []string{"date", "value"},
 		Rows:            rowsResult,
 	}
 
@@ -123,8 +123,8 @@ func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs 
 	return []any{0}, nil
 }
 
-func (s *Stream) CalculateWeightedResultsWithFn(fn func(string) ([]int64, error)) ([]int64, error) {
-	var resultsSet [][]int64
+func (s *Stream) CalculateWeightedResultsWithFn(fn func(string) ([]utils.WithDate[int64], error)) ([]utils.WithDate[int64], error) {
+	var resultsSet [][]utils.WithDate[int64]
 	// for each database, get the value and multiply by the weight
 	for dbId, weight := range s.weightMap {
 		results, err := fn(dbId)
@@ -133,14 +133,15 @@ func (s *Stream) CalculateWeightedResultsWithFn(fn func(string) ([]int64, error)
 			return nil, err
 		}
 
-		weightedResults := make([]int64, len(results))
+		weightedResults := make([]utils.WithDate[int64], len(results))
 		for i, val := range results {
 			// by multiplying by `precisionMagnifier`, we can keep 3 decimal places of precision with int64 operations
 			precisionMagnifier := int64(1000)
-			weightedResults[i], err = utils.Fraction(val, weight*precisionMagnifier, s.totalWeight*precisionMagnifier)
+			weightedValue, err := utils.Fraction(val.Value, weight*precisionMagnifier, s.totalWeight*precisionMagnifier)
 			if err != nil {
 				return nil, err
 			}
+			weightedResults[i] = utils.WithDate[int64]{Date: val.Date, Value: weightedValue}
 		}
 		resultsSet = append(resultsSet, weightedResults)
 	}
@@ -148,14 +149,15 @@ func (s *Stream) CalculateWeightedResultsWithFn(fn func(string) ([]int64, error)
 	numResults := len(resultsSet[0])
 
 	// sum the results
-	finalValues := make([]int64, numResults)
+	finalValues := make([]utils.WithDate[int64], numResults)
 	for _, results := range resultsSet {
 		// error if the number of results is different
 		if len(results) != numResults {
 			return nil, fmt.Errorf("different number of results from databases")
 		}
 		for i, val := range results {
-			finalValues[i] += val
+			finalValues[i].Value += val.Value
+			finalValues[i].Date = val.Date
 		}
 	}
 
@@ -166,7 +168,7 @@ func (s *Stream) CalculateWeightedResultsWithFn(fn func(string) ([]int64, error)
 // So streams extension is about calling the same method on similar databases, that implements the same methods with the
 // same signature.
 func CallOnTargetDBID(scoper *execution.ProcedureContext, method string, target string,
-	date string, dateTo string) ([]int64, error) {
+	date string, dateTo string) ([]utils.WithDate[int64], error) {
 	dataset, err := scoper.Dataset(target)
 	if err != nil {
 		return nil, err
@@ -184,18 +186,9 @@ func CallOnTargetDBID(scoper *execution.ProcedureContext, method string, target 
 		return nil, fmt.Errorf("stream returned nil result")
 	}
 
-	// create a result array that will be the rows of the result
-	result := make([]int64, len(newScope.Result.Rows))
-	for i, row := range newScope.Result.Rows {
-		// expect all rows to return int64 results in 1 column only
-		if len(row) != 1 {
-			return nil, fmt.Errorf("stream returned %d columns, expected 1", len(row))
-		}
-		val, ok := row[0].(int64)
-		if !ok {
-			return nil, fmt.Errorf("stream returned %T, expected int64", row[0])
-		}
-		result[i] = val
+	result, err := utils.GetScalarWithDate[int64](newScope.Result)
+	if err != nil {
+		return nil, err
 	}
 
 	return result, nil
