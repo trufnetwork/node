@@ -75,13 +75,13 @@ kwil-cli database deploy -p=../example_schemas/basestream.kf -n=food_away_from_h
 kwil-cli database deploy -p=../example_schemas/basestream.kf -n=food_away_from_home_numbeo
 kwil-cli database deploy -p=../example_schemas/basestream.kf -n=food_away_from_home_bigmac
 
-kwil-cli database deploy -p=../food_and_beverages_schemas/composed_food_cereal_1.kf  -n=cereal
-kwil-cli database deploy -p=../food_and_beverages_schemas/composed_food_meats_1.kf  -n=meats
-kwil-cli database deploy -p=../food_and_beverages_schemas/composed_food_dairy_1.kf  -n=dairy
-kwil-cli database deploy -p=../food_and_beverages_schemas/composed_food_fruits_1.kf  -n=fruits
-kwil-cli database deploy -p=../food_and_beverages_schemas/composed_food_other_1.kf  -n=other
-kwil-cli database deploy -p=../food_and_beverages_schemas/composed_food_away_from_home_1.kf  -n=food_away_from_home
-
-kwil-cli database deploy -p=../food_and_beverages_schemas/composed_food_at_home_2.kf  -n=food_at_home
-
-kwil-cli database deploy -p=../food_and_beverages_schemas/composed_food_and_beverages_3.kf  -n=food_and_beverages
+#kwil-cli database deploy -p=../food_and_beverages_schemas/composed_food_cereal_1.kf  -n=cereal
+#kwil-cli database deploy -p=../food_and_beverages_schemas/composed_food_meats_1.kf  -n=meats
+#kwil-cli database deploy -p=../food_and_beverages_schemas/composed_food_dairy_1.kf  -n=dairy
+#kwil-cli database deploy -p=../food_and_beverages_schemas/composed_food_fruits_1.kf  -n=fruits
+#kwil-cli database deploy -p=../food_and_beverages_schemas/composed_food_other_1.kf  -n=other
+#kwil-cli database deploy -p=../food_and_beverages_schemas/composed_food_away_from_home_1.kf  -n=food_away_from_home
+#
+#kwil-cli database deploy -p=../food_and_beverages_schemas/composed_food_at_home_2.kf  -n=food_at_home
+#
+#kwil-cli database deploy -p=../food_and_beverages_schemas/composed_food_and_beverages_3.kf  -n=food_and_beverages

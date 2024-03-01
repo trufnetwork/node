@@ -1,6 +1,6 @@
 # create temp_csv folder
-rm -rf ./temp_csv
-mkdir -p ./temp_csv
+rm -rf ./food_and_beverages_clean_csv
+mkdir -p ./food_and_beverages_clean_csv
 
 # for each file on ./raw_csv, create temp file that have cleaned data
 # The header will be id, date_value, value for each file
@@ -8,7 +8,7 @@ mkdir -p ./temp_csv
 # save the file to ./temp_csv
 # separate cpi, yahoo, nielsen, numbeo into different files
 # example: meats_cpi.csv, meats_yahoo.csv, meats_nielsen.csv, meats_numbeo.csv
-for file in ./raw_csv/*.csv; do
+for file in ./food_and_beverages_raw_csv/*; do
   echo "Processing $file"
   if echo "$file" | grep -q "Away"; then
     awk -F, 'BEGIN {OFS=","} ("uuidgen" | getline uuid) > 0 {if (NR==1) print "id,date_value,value"; else print uuid, $1, $2*1000} {close("uuidgen")}' "$file" > ./temp_csv/$(basename "$file" .csv)_cpi.csv
