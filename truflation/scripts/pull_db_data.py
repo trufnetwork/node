@@ -3,23 +3,27 @@ import os
 
 import pandas as pd
 
-# This script is intended to help pulling data from DB directly for development purposes
-# it's necessary to have mysqlclient and pandas available to run it
-# also remember to configure the secret_db_credentials.json file with the correct credentials
+"""
 
-# But if don't fulfill these requirements, don't worry, as the result should be pushed to the repository
-# and the data will be available at ./raw_from_db
+ This script is intended to help pulling data from DB directly for development purposes
+ it's necessary to have mysqlclient and pandas available to run it
+ also remember to configure the secret_db_credentials.json file with the correct credentials
 
-# It is also limited to 200 rows per table, ordered by `date` with maximum date of 2024-02-28 for sample purposes
+ But if don't fulfill these requirements, don't worry, as the result should be pushed to the repository
+ and the data will be available at ./raw_from_db
+
+ It is also limited to 200 rows per table, ordered by `date` with maximum date of 2024-02-28 for sample purposes
 
 
-# The result of this script will be a set of csv files at ./raw_from_db
-# with the following format:
-# | date | value | created_at |
-# |------|-------|------------|
-# | 2024-02-28 | 0.12345 (precision is variable) | 2024-02-28 00:00:00 |
-#
-# the name of each file will be the same as the table name, for example: com_numbeo_us_mortgage_interest.csv
+ The result of this script will be a set of csv files at ./raw_from_db
+ with the following format:
+
+ | date       | value                            | created_at         |
+ |------------|----------------------------------|---------------------|
+ | 2024-02-28 | 0.12345 (precision is variable) | 2024-02-28 00:00:00 |
+
+ the name of each file will be the same as the table name, for example: com_numbeo_us_mortgage_interest.csv
+"""
 
 if __name__ == '__main__':
     # if __file__ is not defined, get the current working directory
