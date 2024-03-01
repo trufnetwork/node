@@ -5,7 +5,6 @@ package stream
 import (
 	"errors"
 	"fmt"
-	"github.com/kwilteam/kwil-db/cmd/kwil-cli/config"
 	"github.com/kwilteam/kwil-db/core/utils"
 	"strings"
 
@@ -47,11 +46,11 @@ func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs 
 		return nil, fmt.Errorf("unknown method '%s'", method)
 	}
 
-	if len(inputs) != 2 {
-		return nil, fmt.Errorf("expected 2 inputs, got %d", len(inputs))
+	if len(inputs) < 2 {
+		return nil, fmt.Errorf("expected at least 2 inputs, got %d", len(inputs))
 	}
 
-	name, ok := inputs[0].(string)
+	pathOrDBID, ok := inputs[0].(string)
 	if !ok {
 		return nil, fmt.Errorf("expected string, got %T", inputs[0])
 	}
@@ -61,11 +60,35 @@ func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs 
 		return nil, fmt.Errorf("expected string, got %T", inputs[1])
 	}
 
+	// date_to may be nil without issues
+	var dateTo string
+	if len(inputs) > 2 {
+		dateTo, ok = inputs[2].(string)
+		if !ok {
+			return nil, fmt.Errorf("expected string, got %T", inputs[2])
+		}
+	}
+
 	if !tsn.IsValidDate(date) {
 		return nil, fmt.Errorf("invalid date: %s", date)
 	}
 
-	dataset, err := scoper.Dataset(utils.GenerateDBID(name, s.accountID))
+	// target is the necessary path to compute the stream OR the DBID itself
+	// if no "/" is present, it is the DBID
+	// if it starts with a /, is from the same wallet namespace
+	// or it is a full path, <walletaddress>/<db_name>
+
+	target, err := getDBIDFromPath(scoper, pathOrDBID)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.CallOnTargetDBID(scoper, method, err, target, date, dateTo)
+}
+
+func (s *Stream) CallOnTargetDBID(scoper *execution.ProcedureContext, method string, err error, target string,
+	date string, dateTo string) ([]any, error) {
+	dataset, err := scoper.Dataset(target)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +96,7 @@ func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs 
 	// the stream protocol returns results as relations
 	// we need to create a new scope to get the result
 	newScope := scoper.NewScope()
-	_, err = dataset.Call(newScope, method, []any{date})
+	_, err = dataset.Call(newScope, method, []any{date, dateTo})
 	if err != nil {
 		return nil, err
 	}
@@ -82,19 +105,54 @@ func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs 
 		return nil, fmt.Errorf("stream returned nil result")
 	}
 
-	if len(newScope.Result.Rows) != 1 {
-		return nil, fmt.Errorf("stream returned %d results, expected 1", len(newScope.Result.Rows))
-	}
-	if len(newScope.Result.Rows[0]) != 1 {
-		return nil, fmt.Errorf("stream returned %d columns, expected 1", len(newScope.Result.Rows[0]))
+	// create a result array that will be the rows of the result
+	result := make([]any, len(newScope.Result.Rows))
+	for i, row := range newScope.Result.Rows {
+		// expect all rows to return int64 results in 1 column only
+		if len(row) != 1 {
+			return nil, fmt.Errorf("stream returned %d columns, expected 1", len(row))
+		}
+		val, ok := row[0].(int64)
+		if !ok {
+			return nil, fmt.Errorf("stream returned %T, expected int64", row[0])
+		}
+		result[i] = val
 	}
 
-	val, ok := newScope.Result.Rows[0][0].(int64)
-	if !ok {
-		return nil, fmt.Errorf("stream returned %T, expected int64", newScope.Result.Rows[0][0])
+	return result, nil
+}
+
+// getDBIDFromPath returns the DBID from a path or a DBID.
+// possible inputs:
+// - xac760c4d5332844f0da28c01adb53c6c369be0a2c4bf530a0f3366bd (DBID)
+// - <owner_wallet_address>/<db_name>
+// - /<db_name> (will use the wallet address from the scoper)
+func getDBIDFromPath(scoper *execution.ProcedureContext, pathOrDBID string) (string, error) {
+	// if the path does not contain a "/", we assume it is a DBID
+	if !strings.Contains(pathOrDBID, "/") {
+		return pathOrDBID, nil
 	}
 
-	return []any{val}, nil
+	walletAddress := ""
+	dbName := ""
+
+	if strings.HasPrefix(pathOrDBID, "/") {
+		// get the wallet address
+		signer := scoper.Signer // []byte type
+		walletAddress = string(signer)
+		dbName = strings.Split(pathOrDBID, "/")[1]
+	}
+
+	// if walletAddress is empty, we assume the path is a full path
+	if walletAddress == "" {
+		walletAddress = strings.Split(pathOrDBID, "/")[0]
+		dbName = strings.Split(pathOrDBID, "/")[1]
+	}
+
+	walledAddressBytes := []byte(walletAddress)
+	DBID := utils.GenerateDBID(dbName, walledAddressBytes)
+
+	return DBID, nil
 }
 
 type knownMethod string

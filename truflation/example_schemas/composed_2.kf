@@ -1,24 +1,23 @@
 database composed;
 
-use truflation_streams as streams;
-use mathutil as math;
+use compose_truflation_streams {
+    // valid id's:
+    // - <wallet_address>/<stream_name>
+    // - /<stream_name> (then the wallet address will be the sender of the transaction)
+    // - <DBID>
+    // the prefix "stream_1" is arbitrary, we just need to ensure there are keys with _id and _weight suffixes
+    stream_1_id: 'REPLACE_WITH_BEEF_CORN_DBID',
+    stream_1_weight: '9',
+    stream_2_id: 'REPLACE_WITH_BARLEY_DBID',
+    stream_2_weight: '1'
+} as streams;
 
-action get_index($date) public view {
-    $beef_corn_idx = streams.get_index('beef_corn', $date);
-    $barley_idx = streams.get_index('barley', $date);
-
-    $beef_corn = math.fraction($beef_corn_idx, 9, 10);
-    $barley = math.fraction($barley_idx, 1, 10);
-
-    select $beef_corn + $barley AS result;
+action get_index($date, $date_to) public view {
+    streams.get_index($date, $date_to);
+    // we ensure no other extension or query is called after this
 }
 
-action get_value($date) public view {
-    $beef_corn_value = streams.get_value('beef_corn', $date);
-    $barley_value = streams.get_value('barley', $date);
-
-    $beef_corn = math.fraction($beef_corn_value, 9, 10);
-    $barley = math.fraction($barley_value, 1, 10);
-
-    select $beef_corn + $barley AS result;
+action get_value($date, $date_to) public view {
+    streams.get_value($date, $date_to);
+    // we ensure no other extension or query is called after this
 }

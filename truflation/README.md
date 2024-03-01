@@ -20,9 +20,15 @@ action my_action() public {
 
 ## Basestream
 
-`basestream` allows any schema storing data to be turned into a Truflation stream. It can be configured to be given a `table_name`, `date_column`, and a `value_column` from which it will get values.
+`basestream` allows any schema storing data to be turned into a Truflation stream. It requires a `table_name` configuration. The `date_column` and `value_column` configurations are optional. If not provided, `date_column` defaults to "date_value" and `value_column` defaults to "value". These configurations specify the columns from which the extension will get values.
 
-It is capable of calculating both an index as well as a value for any date (in `YYYY-MM-DD` format). The index is the calculation described [here](<https://system.docs.truflation.com/backend/cpi-calculations/workflow/normalizing-data>) The value is simply the value for any given date. If either an empty string or a zero value is passed, it will return the most recent date:
+Currently, the `basestream` extension should be the last operation in an action. This allows it to return responses of any size by modifying the last query result. No other SQL queries should follow this extension in the Kuneiform file.
+
+It is capable of calculating both an index as well as a value for any date (in `YYYY-MM-DD` format). The index is the calculation described [here](<https://system.docs.truflation.com/backend/cpi-calculations/workflow/normalizing-data>). The value is simply the value for any given date.
+
+- If empty string is passed to both dates, it will return the most recent date;
+- If a date is passed to the first date, it will return the value / index for that date;
+- If a date is passed to the first date and another date is passed to the second date, it will return the value / index for the range of dates.
 
 ```
 use basestream {
@@ -32,10 +38,10 @@ use basestream {
 } as basestream;
 
 table prices {
-  id text primary notnull minlen(36) maxlen(36), 
+  id text primary notnull minlen(36) maxlen(36),
   date_value text notnull unique minlen(10) maxlen(10),
   value int notnull,
-  created_at int notnull 
+  created_at int notnull
 }
 
 // public action to add record to prices table
@@ -44,45 +50,41 @@ action add_record ($id, $date_value, $value, $created_at) public {
   VALUES ($id, $date_value, $value, $created_at);
 }
 
-action get_index($date) public view {
-    $val = basestream.get_index($date);
-    SELECT $val AS result;
+action get_index($date, $date_to) public view {
+    $val = basestream.get_index($date, $date_to);
 }
 
-action get_value($date) public view {
-    $val = basestream.get_value($date);
-    SELECT $val AS result;
+action get_value($date, $date_to) public view {
+    $val = basestream.get_value($date, $date_to);
 }
 ```
 
-## Truflation_Streams
+## Compose_truflation_Streams
 
-`truflation_streams` allows composing of schemas that are valid Truflation streams. Any schema that has `get_index(YYYY-MM-DD)` and `get_value(YYYY-MM-DD)` actions is a valid Truflation stream. Both actions must return a single int64.
+`compose_truflation_streams` allows composing of schemas that are valid Truflation streams. Any schema that has `get_index(YYYY-MM-DD, YYYY-MM-DD?)` and `get_value(YYYY-MM-DD, YYYY-MM-DD?)` actions is a valid Truflation stream. The logic of the stream composition is included inside the extension.
 
-Using the `mathutil` extension, we can read individual streams, assign them a weight, and return a value:
+You may use any of these options as an id of a stream:
+
+- `<wallet_address>/<stream_name>`
+- `/<stream_name> (then the wallet address will be the sender of the transaction)`
+- `<DBID>`
+
+You may use any prefix to identify a stream on its key, but is important that each stream contains the suffix `_id` and `_weight`.
 
 ```
-use truflation_streams as streams;
-use mathutil as math;
+use compose_truflation_streams {
+    stream_1_id: 'corn_id',
+    stream_1_weight: '1',
+    stream_2_id: 'hotel_id',
+    stream_2_weight: '9'
+} as streams;
 
-action get_index($date) public view {
-    $beef_idx = streams.get_index('beef', $date);
-    $corn_idx = streams.get_index('corn', $date);
-
-    $beef = math.fraction($beef_idx, 7, 10);
-    $corn = math.fraction($corn_idx, 3, 10);
-
-    select $beef + $corn AS result;
+action get_index($date, $date_to) public view {
+    streams.get_index($date, $date_to);
 }
 
-action get_value($date) public view {
-    $beef_value = streams.get_value('beef', $date);
-    $corn_value = streams.get_value('corn', $date);
-
-    $beef = math.fraction($beef_value, 7, 10);
-    $corn = math.fraction($corn_value, 3, 10);
-
-    select $beef + $corn AS result;
+action get_value($date, $date_to) public view {
+    streams.get_value($date, $date_to);
 }
 ```
 
@@ -135,7 +137,7 @@ kwil-cli database deploy -p=./example_schemas/composed_1.kf  -n=beef_corn
 You can check that everything is working properly by getting the combined value from the beef_corn stream:
 
 ```bash
-kwil-cli database call -a=get_value date: -n=beef_corn
+kwil-cli database call -a=get_value date: date_to: -n=beef_corn
 ```
 
 #### Deploy beef_corn_barley Index
@@ -149,7 +151,7 @@ kwil-cli database deploy -p=./example_schemas/composed_2.kf  -n=beef_corn_barley
 To check that it is working, we can get the value for the beef_corn_barley stream. If seeded with the values given above, this should give:
 
 ```bash
-$ kwil-cli database call -a=get_value date: -n=beef_corn_barley
+$ kwil-cli database call -a=get_value date: date_to: -n=beef_corn_barley
 | result |
 +--------+
 |  26510 |
