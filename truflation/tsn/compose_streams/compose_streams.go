@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/kwilteam/kwil-db/internal/sql"
 	utils "github.com/kwilteam/kwil-db/truflation/tsn/utils"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -146,11 +147,12 @@ func (s *Stream) CalculateWeightedResultsWithFn(fn func(string) ([]utils.WithDat
 		resultsSet = append(resultsSet, weightedResults)
 	}
 
-	numResults := len(resultsSet[0])
+	filledResultSet := FillForwardWithLatestFromCols(resultsSet)
 
+	numResults := len(filledResultSet[0])
 	// sum the results
 	finalValues := make([]utils.WithDate[int64], numResults)
-	for _, results := range resultsSet {
+	for _, results := range filledResultSet {
 		// error if the number of results is different
 		if len(results) != numResults {
 			return nil, fmt.Errorf("different number of results from databases")
@@ -162,6 +164,91 @@ func (s *Stream) CalculateWeightedResultsWithFn(fn func(string) ([]utils.WithDat
 	}
 
 	return finalValues, nil
+}
+
+// FillForwardWithLatestFromCols fills forward the given values with the latest value from the given columns.
+// Example:
+// | Date  | stream A | stream B |   composed   |
+// |-------|----------|----------|--------------|
+// | 01jan | A        | B        | A . B        |
+// | 02jan | A        | -        | A . (01jan)B |
+// | 03jan | A        | -        | A . (01jan)B |
+// | …     | ..       | ..       |              |
+// | 01feb | A        | B        | A . B        |
+func FillForwardWithLatestFromCols[T comparable](originalResultsSet [][]utils.WithDate[T]) [][]utils.WithDate[T] {
+	numOfStreams := len(originalResultsSet)
+
+	// Determine the total number of dates across all streams to ensure we cover all dates
+	// we use map[int] because we want to track the index of streams
+	allDatesMap := make(map[string]map[int]utils.WithDate[T])
+	for streamIdx, streamResults := range originalResultsSet {
+		for _, result := range streamResults {
+			dateResultMap := allDatesMap[result.Date]
+
+			// if the dateResultMap is nil, we create it
+			if dateResultMap == nil {
+				dateResultMap = make(map[int]utils.WithDate[T])
+				allDatesMap[result.Date] = dateResultMap
+			}
+			dateResultMap[streamIdx] = result
+		}
+	}
+
+	// Convert dates from set to slice and sort
+	allDates := make([]string, 0, len(allDatesMap))
+	for date := range allDatesMap {
+		allDates = append(allDates, date)
+	}
+
+	// if something was processed out of order, here we make sure to make it deterministic
+	sort.Strings(allDates)
+
+	// Prepare the latest value holder for each streamResults
+	latestValueMap := make([]T, numOfStreams)
+
+	// Prepare the structure for new results
+	newResults := make([][]utils.WithDate[T], numOfStreams)
+	for i := range newResults {
+		newResults[i] = make([]utils.WithDate[T], 0, len(allDates))
+	}
+
+	isZero := func(v T) bool {
+		return v == *new(T)
+	}
+	// Fill in the new results, iterating through each date
+OUTER:
+	for _, date := range allDates {
+		newValuesToBePushed := make([]utils.WithDate[T], numOfStreams)
+		for streamIdx := range originalResultsSet {
+			valueFoundForCurrentStream := allDatesMap[date][streamIdx]
+
+			if isZero(valueFoundForCurrentStream.Value) {
+				// there were no value for this stream at this date
+
+				// is there a last value already?
+				latestValue := latestValueMap[streamIdx]
+				if isZero(latestValue) {
+					// there was no value, nor a latest value. It may happen at the beginning of the stream
+					// we discard other streams and continue to the next date
+					continue OUTER
+				}
+				// if there was a latest value, we update the latest value
+				newValuesToBePushed[streamIdx] = utils.WithDate[T]{Date: date, Value: latestValue}
+			} else {
+				// if there was a value, we update the latest value
+				latestValueMap[streamIdx] = valueFoundForCurrentStream.Value
+				newValuesToBePushed[streamIdx] = valueFoundForCurrentStream
+			}
+
+		}
+
+		// if we made to here, this date has values for all streams, we can push it to the new results
+		for streamIdx, val := range newValuesToBePushed {
+			newResults[streamIdx] = append(newResults[streamIdx], val)
+		}
+	}
+
+	return newResults
 }
 
 // CallOnTargetDBID calls the given method on the target database.
