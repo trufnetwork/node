@@ -19,14 +19,7 @@ func InitializeStream(ctx *execution.DeploymentContext, metadata map[string]stri
 		return nil, errors.New("stream does not take any configs")
 	}
 
-	conf, err := config.LoadCliConfig()
-	if err != nil {
-		return nil, errors.New("failed to load config")
-	}
-
-	return &Stream{
-		accountID: conf.Identity(),
-	}, nil
+	return &Stream{}, nil
 }
 
 // Stream is the namespace for the stream extension.

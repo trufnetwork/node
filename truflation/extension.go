@@ -5,8 +5,6 @@ import (
 	"github.com/kwilteam/kwil-db/truflation/mathutil"
 	"github.com/kwilteam/kwil-db/truflation/tsn/basestream"
 	"github.com/kwilteam/kwil-db/truflation/tsn/compose_streams"
-	"github.com/kwilteam/kwil-db/truflation/tsn/foodstream"
-	"github.com/kwilteam/kwil-db/truflation/tsn/meats_poultry_fish_eggs"
 	"github.com/kwilteam/kwil-db/truflation/tsn/stream"
 )
 
