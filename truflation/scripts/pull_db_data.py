@@ -12,6 +12,15 @@ import pandas as pd
 
 # It is also limited to 200 rows per table, ordered by `date` with maximum date of 2024-02-28 for sample purposes
 
+
+# The result of this script will be a set of csv files at ./raw_from_db
+# with the following format:
+# | date | value | created_at |
+# |------|-------|------------|
+# | 2024-02-28 | 0.12345 (precision is variable) | 2024-02-28 00:00:00 |
+#
+# the name of each file will be the same as the table name, for example: com_numbeo_us_mortgage_interest.csv
+
 if __name__ == '__main__':
     # if __file__ is not defined, get the current working directory
     current_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
