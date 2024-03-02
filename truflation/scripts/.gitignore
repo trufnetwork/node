@@ -1,3 +1,5 @@
 secret_db_credentials.json
 temp_csv
 temp_composed_schemas
+# or we commit that?
+produce_source_maps/all_tables.csv
