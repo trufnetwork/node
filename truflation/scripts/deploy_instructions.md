@@ -46,6 +46,14 @@ This will deploy the primitives and composed streams to the kwil database.
 
 Beware: This step takes a lot of time, as there's a lot of transactions to occur. Be patient.
 
+## Add data to the database
+
+```shell
+./database_add_primitives.sh
+```
+
+This will add the data to the database, from the files in `./temp_csv/`. This is also slow, as there's a lot of transactions to occur.
+
 ## Test querying the latest data for a primitive schema
 
 ```shell
