@@ -11,10 +11,10 @@ primitive_count_left=$(ls ./temp_csv/*.csv | wc -l)
 for file in ./temp_csv/*.csv; do
     filename=$(basename "$file")
     filename="${filename%.*}"
-#    echo "Dropping $filename"
-#    ../../.build/kwil-cli database drop "$filename" --sync
-#    echo "Deploying $filename"
-#    ../../.build/kwil-cli database deploy -p=../base_schema/base_schema.kf --sync --name="$filename" --sync
+    echo "Dropping $filename"
+    ../../.build/kwil-cli database drop "$filename" --sync
+    echo "Deploying $filename"
+    ../../.build/kwil-cli database deploy -p=../base_schema/base_schema.kf --sync --name="$filename" --sync
 
     primitive_count_left=$(($primitive_count_left-1))
     echo "Done, $primitive_count_left to go"
