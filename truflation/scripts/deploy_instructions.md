@@ -65,6 +65,14 @@ This will add the data to the database, from the files in `./temp_csv/`. This is
 
 150 tables can take 10 secs * 150 tables = 25 minutes.
 
+## Add data to the database
+
+```shell
+./database_add_primitives.sh
+```
+
+This will add the data to the database, from the files in `./temp_csv/`. This is also slow, as there's a lot of transactions to occur.
+
 ## Test querying the latest data for a primitive schema
 
 ```shell
