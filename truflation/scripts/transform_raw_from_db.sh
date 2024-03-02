@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# assume temp_csv already exists
+
+# delete all from temp_csv
+rm -rf ./temp_csv
+mkdir ./temp_csv
 
 # for each file on ./raw_from_db, create temp file that have cleaned data
 # The header will be id, date_value, value for each file
