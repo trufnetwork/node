@@ -5,60 +5,37 @@ cd "$(dirname "$0")"
 # delete the temp_csv folder
 rm -rf ./temp_csv
 
-# comes from --filter-by-all-tables flag
-# It should permit us to filter the csv files that we want to process, extracting it from ./produce_source_maps/all_tables.csv
-filter_by_all_tables=false
-
-# set necessary flags to variables
-while [[ $# -gt 0 ]]; do
-    key="$1"
-    case $key in
-        --filter-by-all-tables)
-            filter_by_all_tables=true
-            shift
-            ;;
-        *)
-            echo "Unknown flag: $key"
-            exit 1
-            ;;
-    esac
-done
-
-
 # create the temp_csv folder
 mkdir -p ./temp_csv
 
-files_list=($(ls ./raw_from_db/*.csv))
+## FILTER BY TABLE FILE
+# We do this to have more fine-grained control over which tables we want to process, deploy, etc
 
-if [ "$filter_by_all_tables" = true ]; then
-  echo "Filtering by all_tables.csv"
+tables_file="./produce_source_maps/all_tables.csv"
 
-  tables_file="./produce_source_maps/all_tables.csv"
+# First, find the column numbers for database_name and is_primitive
+header=$(head -1 "$tables_file")
+database_name_col=$(echo $header | awk -F, '{for(i=1;i<=NF;i++) if($i=="database_name") print i}')
+is_primitive_col=$(echo $header | awk -F, '{for(i=1;i<=NF;i++) if($i=="is_primitive") print i}')
 
-  # First, find the column numbers for database_name and is_primitive
-  header=$(head -1 "$tables_file")
-  database_name_col=$(echo $header | awk -F, '{for(i=1;i<=NF;i++) if($i=="database_name") print i}')
-  is_primitive_col=$(echo $header | awk -F, '{for(i=1;i<=NF;i++) if($i=="is_primitive") print i}')
+db_names=()
 
-  # Then, filter the rows that have is_primitive=True and extract the database_name column
-  IFS=$'\n' read -r -d '' -a to_be_filtered < <(awk -F, -v db="$database_name_col" -v prim="$is_primitive_col" -v OFS=',' '{if($prim=="True") print $db}' "$tables_file" && printf '\0')
+# Then, filter the rows that have is_primitive=True and extract the database_name column, pushing to db_names
+IFS=$'\n' read -r -d '' -a db_names < <(awk -F, -v db="$database_name_col" -v prim="$is_primitive_col" -v OFS=',' '{if($prim=="True") print $db}' "$tables_file" && printf '\0')
 
-  # Assuming files_list is an array of filenames you want to filter
-  # Example: files_list=("table1.csv" "table2.csv" ...)
+# Now, we have the list of database names that we want to process
 
-  # Then, filter the files_list that have the to_be_filtered
-  filtered_files_list=()
-  for file in "${files_list[@]}"; do
-    for table in "${to_be_filtered[@]}"; do
-      if [[ "$file" == *"$table.csv"* ]]; then
-        filtered_files_list+=("$file")
-        break # Break the inner loop if a match is found
-      fi
-    done
-  done
-fi
-
-
+# we build our list of files to process
+files_list=()
+for db_name in "${db_names[@]}"; do
+  # if the file doesn't exist, we error out
+  db_file="./raw_from_db/$db_name.csv"
+  if [ ! -f $db_file ]; then
+    echo "$db_file does not exist"
+    exit 1
+  fi
+  files_list+=($db_file)
+done
 
 
 files_count_left=${#files_list[@]}
