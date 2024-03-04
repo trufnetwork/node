@@ -213,9 +213,9 @@ func FillForwardWithLatestFromCols[T comparable](originalResultsSet [][]utils.Wi
 	}
 
 	// Fill in the new results, iterating through each date
-OUTER:
 	for _, date := range allDates {
 		newValuesToBePushed := make([]utils.WithDate[T], numOfStreams)
+		should_discard := false
 		for streamIdx := range originalResultsSet {
 			valueFoundForCurrentStream := allDatesMap[date][streamIdx]
 
@@ -227,8 +227,8 @@ OUTER:
 				latestValue := latestValueMap[streamIdx]
 				if latestValue == nil {
 					// there was no value, nor a latest value. It may happen at the beginning of the stream
-					// we discard other streams and continue to the next date
-					continue OUTER
+					should_discard = true
+					continue
 				}
 
 				latestValueCorrectType, ok := latestValue.(T)
@@ -246,9 +246,11 @@ OUTER:
 
 		}
 
-		// if we made to here, this date has values for all streams, we can push it to the new results
-		for streamIdx, val := range newValuesToBePushed {
-			newResults[streamIdx] = append(newResults[streamIdx], val)
+		if !should_discard {
+			// if we made to here, this date has values for all streams, we can push it to the new results
+			for streamIdx, val := range newValuesToBePushed {
+				newResults[streamIdx] = append(newResults[streamIdx], val)
+			}
 		}
 	}
 
