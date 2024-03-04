@@ -30,8 +30,6 @@ primitive_count_left=${#primitive_files_list[@]}
 for file in "${primitive_files_list[@]}"; do
     filename=$(basename "$file")
     filename="${filename%.*}"
-#    echo "Dropping $filename"
-#    ../../.build/kwil-cli database drop "$filename" --sync
     if [ "$skip_drop" = false ]; then
         echo "Dropping $filename"
         ../../.build/kwil-cli database drop "$filename" --sync

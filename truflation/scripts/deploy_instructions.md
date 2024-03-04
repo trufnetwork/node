@@ -24,6 +24,16 @@ Make sure you've copied secret_db_credentials.example.json to secret_db_credenti
 python ./pull_db_data.py
 ```
 
+### Generate CSV files with clean data from primitives
+
+This will process the data from the database and generate csv files with clean data. Output is at `./temp_csv/` dir
+
+You may add the `--filter-by-all-tables` flag to filter the data by the tables in `all_tables.csv`. Otherwise it will generate CSV from all files from `./raw_from_db/` directory. This is useful for testing purposes: i.e., we test less data.
+
+```shell
+./generate_clean_csv_from_raw.sh --filter-by-all-tables
+```
+
 Will output data to `./raw_from_db/` directory. This must be committed.
 
 ## Create Composed Schemas
@@ -38,8 +48,10 @@ Will output data to `./temp_composed_schemas/` directory. This does not need to 
 
 MAKE SURE KWIL-DB IS RUNNING
 
+`--skip-drop` flag is useful for testing purposes, as it will not drop the database before deploying the schemas.
+
 ```shell
-./database_deploy.sh
+./database_deploy.sh --skip-drop
 ```
 
 This will deploy the primitives and composed streams to the kwil database.
@@ -54,20 +66,25 @@ Beware: This step takes a lot of time, as there's a lot of transactions to occur
 
 This will add the data to the database, from the files in `./temp_csv/`. This is also slow, as there's a lot of transactions to occur.
 
+## Or both
+
+```shell
+./database_deploy.sh --skip-drop;
+./database_add_primitives.sh;
+```
+
 ## Test querying the latest data for a primitive schema
 
 ```shell
-../../.build/kwil-cli database call -a=get_index date:"" date_to:"" -n=com_numbeo_us_taxi_1km_3m_avg
+../../.build/kwil-cli database call -a=get_index date:"2023-01-01" date_to:"2023-12-31" -n=cmnme_saatet_3bed_in_city_3m_avg
 ```
 
 ## Test querying the latest data for a composed schema downstream
 
 ```shell
-../../.build/kwil-cli database call -a=get_index date:"" date_to:"" -n=rented_dwellings
+../../.build/kwil-cli database call -a=get_index date:"2023-01-01" date_to:"2023-12-31" -n=rented_dwellings
 ```
 
-## Test querying the latest data for CPI
-
 ```shell
-../../.build/kwil-cli database call -a=get_index date:"" date_to:"" -n=cpi
+../../.build/kwil-cli database call -a=get_index date:"2023-01-01" date_to:"2023-12-31" -n=cpi
 ```
