@@ -1,18 +1,41 @@
 #!/usr/bin/env bash
 
+# should come from --skip-drop flag
+skip_drop=false
+
+# set necessary flags to variables
+while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+        --skip-drop)
+            skip_drop=true
+            shift
+            ;;
+        *)
+            echo "Unknown flag: $key"
+            exit 1
+            ;;
+    esac
+done
+
 cd "$(dirname "$0")"
 
 echo "Deploying primitive schemas"
 
-primitive_count_left=$(ls ./temp_csv/*.csv | wc -l)
+primitive_files_list=($(ls ./temp_csv/*.csv))
+primitive_count_left=${#primitive_files_list[@]}
 
 # fore each csv file in temp_csv
 # drop the db, then run the deploy command
-for file in ./temp_csv/*.csv; do
+for file in "${primitive_files_list[@]}"; do
     filename=$(basename "$file")
     filename="${filename%.*}"
-    echo "Dropping $filename"
-    ../../.build/kwil-cli database drop "$filename" --sync
+#    echo "Dropping $filename"
+#    ../../.build/kwil-cli database drop "$filename" --sync
+    if [ "$skip_drop" = false ]; then
+        echo "Dropping $filename"
+        ../../.build/kwil-cli database drop "$filename" --sync
+    fi
     echo "Deploying $filename"
     ../../.build/kwil-cli database deploy -p=../base_schema/base_schema.kf --sync --name="$filename" --sync
 
@@ -24,15 +47,18 @@ echo "Done deploying primitive schemas"
 
 echo "Deploying composed schemas"
 
-composed_count_left=$(ls ./temp_composed_schemas/*.json | wc -l)
+composed_files_list=($(ls ./temp_composed_schemas/*.json))
+composed_count_left=${#composed_files_list[@]}
 
 # for each file in temp_composed_schemas/*.json
 # drop the db, then run the deploy command
-for file in ./temp_composed_schemas/*.json; do
+for file in "${composed_files_list[@]}"; do
     filename=$(basename "$file")
     filename="${filename%.*}"
-    echo "Dropping $filename"
-    ../../.build/kwil-cli database drop "$filename" --sync
+    if [ "$skip_drop" = false ]; then
+        echo "Dropping $filename"
+        ../../.build/kwil-cli database drop "$filename" --sync
+    fi
     echo "Deploying $filename"
     ../../.build/kwil-cli database deploy -p="$file" --type json --name "$filename" --sync
 
