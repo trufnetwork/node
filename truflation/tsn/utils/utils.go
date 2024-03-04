@@ -70,9 +70,9 @@ type WithDate[T any] struct {
 	Value T
 }
 
-// GetScalarWithDate gets a scalar value with its date from a query result.
-// It is expecting a result that has one row and two columns.
-// If it does not have one row and one column, it will return an error.
+// GetScalarWithDate gets scalar values with respective dates from a query result.
+// It is expecting a result that has two columns.
+// Else, it will return an error.
 func GetScalarWithDate[T any](res *sql.ResultSet) ([]WithDate[T], error) {
 	if len(res.ReturnedColumns) != 2 {
 		return nil, fmt.Errorf("stream expected one column, got %d", len(res.ReturnedColumns))
