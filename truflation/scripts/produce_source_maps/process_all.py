@@ -110,8 +110,18 @@ if __name__ == '__main__':
 
         return prefix + sufix
 
+    def fix_kwil_db_name(name):
+        name = adjust_name_length(name)
+        # should remove invalid characters, replacing by _
+        name = re.sub(r'[^a-z0-9_]+', '_', name)
 
-    all_tables['database_name'] = all_tables['source_database_name'].apply(adjust_name_length)
+        return name
+
+
+    all_tables['database_name'] = all_tables['source_database_name'].apply(fix_kwil_db_name)
+
+    # remove from source_database_name values when it's not a primitive, it doesn't make sense
+    all_tables['source_database_name'] = all_tables['source_database_name'].where(all_tables['is_primitive'], None)
 
     # add parent_database_name column
     all_tables['parent_database_name'] = all_tables['parent_id'].apply(

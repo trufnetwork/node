@@ -105,8 +105,8 @@ proal_care_products_and_services,gov_bls_personal_care_328,2142000
 proal_care_products_and_services,com_nielseniq_us_personal_care,551000
 proal_care_products_and_services,gov_bls_personal_care_3182,424500
 proal_care_products_and_services,gov_bls_personal_care_3183,126500
-food_non-alcoholic_beverages,food_at_home,10335000
-food_non-alcoholic_beverages,food_away_from_home,4965000
+food_non_alcoholic_beverages,food_at_home,10335000
+food_non_alcoholic_beverages,food_away_from_home,4965000
 housing,other_lodging,1329000
 housing,rented_dwellings,8114000
 housing,owned_dwellings,13757000
@@ -174,7 +174,7 @@ food_at_home,com_numbeo_us_banana_3m_avg,36486
 food_at_home,com_numbeo_us_lettuce_3m_avg,36486
 food_at_home,com_truflation_yahoo_food,123850
 food_at_home,com_numbeo_us_onion_3m_avg,36486
-food_away_from_home,com_economist_us_big-mac,1489500
+food_away_from_home,com_economist_us_big_mac,1489500
 food_away_from_home,gov_bls_food_away_from_home,1489500
 food_away_from_home,com_truflation_yahoo_food,1489500
 food_away_from_home,com_numbeo_us_mcmeal_3m_avg,124125
@@ -211,5 +211,5 @@ cpi,health,8545000
 cpi,utilities,5899000
 cpi,transport,19832000
 cpi,housing,23200000
-cpi,food_non-alcoholic_beverages,15300000
+cpi,food_non_alcoholic_beverages,15300000
 ,cpi,0
