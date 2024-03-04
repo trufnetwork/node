@@ -1,7 +1,21 @@
-import pandas as pd
+import argparse
+import os
 import re
 
+import pandas as pd
+
 if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--minimum', action='store_true', help='Use minimum file instead of full file, for testing')
+
+    args = parser.parse_args()
+    use_minimum = args.minimum
+
+    file_to_read = 'categories-tables-us.csv' if not use_minimum else 'categories-tables-us-min.csv'
+
+    dirname = os.path.dirname(__file__)
+    full_path = os.path.join(dirname, file_to_read)
 
     # import ./categories-tables-us.csv
     # read:
@@ -12,7 +26,7 @@ if __name__ == '__main__':
     # - relative_importance as float
     # - category as text
     # - subcategory as text
-    categories = pd.read_csv('categories-tables-us.csv',
+    categories = pd.read_csv(full_path,
                              dtype={'source_id': 'str', 'category_id': 'str', 'subcategory_id': 'str', 'table': 'str',
                                     'relative_importance': 'float', 'category': 'str', 'subcategory': 'str'})
     # let's create a categories_only table that contains just rows that doens't contain data in the subcategory column
@@ -78,6 +92,7 @@ if __name__ == '__main__':
     # add is_primitive column with True if id is not in parent_id column
     all_tables['is_primitive'] = ~all_tables['id'].isin(all_tables['parent_id'])
 
+
     # reprocess all names to be database_name friendly:
     # Vehicle purchases (net outlay) -> vehicle_purchases_net_outlay
     # Residential phone service, VOIP, and phone cards -> residential_phone_service_voip_and_phone_cards
@@ -110,6 +125,7 @@ if __name__ == '__main__':
 
         return prefix + sufix
 
+
     def fix_kwil_db_name(name):
         name = adjust_name_length(name)
         # should remove invalid characters, replacing by _
@@ -138,8 +154,8 @@ if __name__ == '__main__':
     # now try to find for if for a database_name, there are more than one source_database_name in unique_source_database_name
     for database_name in unique_database_name['database_name']:
         source_database_names = \
-        unique_source_database_name[unique_source_database_name['database_name'] == database_name][
-            'source_database_name']
+            unique_source_database_name[unique_source_database_name['database_name'] == database_name][
+                'source_database_name']
         if len(source_database_names) > 1:
             print(f'duplicated database_name: {database_name}')
             print(source_database_names)
@@ -147,11 +163,11 @@ if __name__ == '__main__':
             # make it error out
             assert False
     # save all_tables to a csv file
-    all_tables.to_csv('all_tables.csv', index=False)
+    all_tables.to_csv(os.path.join(dirname, 'all_tables.csv'), index=False)
     composed_streams = all_tables.rename(
         columns={'parent_database_name': 'parent_stream', 'database_name': 'stream', 'relative_importance': 'weight'})
 
     composed_streams = composed_streams[['parent_stream', 'stream', 'weight']]
 
     # save to ../../composed_streams.csv
-    composed_streams.to_csv('../../composed_streams.csv', index=False)
+    composed_streams.to_csv(os.path.join(dirname, '../../composed_streams.csv'), index=False)
