@@ -57,7 +57,13 @@ This will add the data to the database, from the files in `./temp_csv/`. This is
 ## Test querying the latest data for a primitive schema
 
 ```shell
-../../.build/kwil-cli database call -a=get_index date:"" date_to:"" -n=com_kbb_us_cars_and_trucks
+../../.build/kwil-cli database call -a=get_index date:"" date_to:"" -n=com_numbeo_us_taxi_1km_3m_avg
+```
+
+## Test querying the latest data for a composed schema downstream
+
+```shell
+../../.build/kwil-cli database call -a=get_index date:"" date_to:"" -n=rented_dwellings
 ```
 
 ## Test querying the latest data for CPI
