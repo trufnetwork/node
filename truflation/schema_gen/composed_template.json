@@ -1,0 +1,40 @@
+{
+    "owner": "",
+    "name": "composed_example",
+    "actions": [
+      {
+        "name": "get_index",
+        "inputs": [
+          "$date",
+          "$date_to"
+        ],
+        "public": true,
+        "mutability": "view",
+        "auxiliaries": null,
+        "statements": [
+          "streams.get_index($date,$date_to);"
+        ]
+      },
+      {
+        "name": "get_value",
+        "inputs": [
+          "$date",
+          "$date_to"
+        ],
+        "public": true,
+        "mutability": "view",
+        "auxiliaries": null,
+        "statements": [
+          "streams.get_value($date,$date_to);"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "name": "compose_truflation_streams",
+        "config": [],
+        "alias": "streams"
+      }
+    ]
+  }
+  
