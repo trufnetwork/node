@@ -134,7 +134,7 @@ func getValue(scope *execution.ProcedureContext, fn func(context.Context, Querie
 
 	dataset, err := scope.Dataset(scope.DBID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error getting dataset (dbid=%s): %w", scope.DBID, err)
 	}
 
 	if len(args) != 2 {
@@ -176,7 +176,7 @@ func getValue(scope *execution.ProcedureContext, fn func(context.Context, Querie
 
 	val, err := fn(scope.Ctx, dataset, date, dateTo)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error getting value (dbid=%s): %w", scope.DBID, err)
 	}
 
 	// Attention: the steps below are necessary to return the result directly, instead of using extension results
