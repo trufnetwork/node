@@ -1,6 +1,6 @@
 # create temp_csv folder
-rm -rf ./food_and_beverages_clean_csv
-mkdir -p ./food_and_beverages_clean_csv
+rm -rf ./temp_csv
+mkdir -p ./temp_csv
 
 # for each file on ./raw_csv, create temp file that have cleaned data
 # The header will be id, date_value, value for each file

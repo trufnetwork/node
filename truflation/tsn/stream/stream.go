@@ -25,9 +25,7 @@ func InitializeStream(ctx *execution.DeploymentContext, metadata map[string]stri
 // Stream is the namespace for the stream extension.
 // Stream has two methods: "index" and "value".
 // Both of them get the value of the target stream at the given time.
-type Stream struct {
-	accountID []byte
-}
+type Stream struct{}
 
 func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs []any) ([]any, error) {
 	switch strings.ToLower(method) {
