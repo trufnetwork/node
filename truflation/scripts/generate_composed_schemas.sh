@@ -15,9 +15,12 @@ declare -A stream_groups
 
 # Read the CSV file, skipping the header
 while IFS=, read -r parent_stream stream weight; do
-    # Append the stream and weight to the parent stream's entry in the associative array
-    stream_groups["$parent_stream"]+="/$stream:$weight,"
-done < <(tail -n +2 ../composed_streams.csv)
+    # to avoid incomplete lines
+    if [[ -n $parent_stream ]]; then
+      # Append the stream and weight to the parent stream's entry in the associative array
+      stream_groups["$parent_stream"]+="/$stream:$weight,"
+    fi
+done < <(tail -n +2 ../composed_streams.csv | grep .)
 
 # make sure it is clean
 rm -rf ./temp_composed_schemas
