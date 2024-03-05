@@ -78,7 +78,7 @@ func GetScalarWithDate(res *sql.ResultSet) ([]ValueWithDate, error) {
 		return nil, fmt.Errorf("stream expected one column, got %d", len(res.ReturnedColumns))
 	}
 	if len(res.Rows) == 0 {
-		return nil, fmt.Errorf("stream has no data")
+		return []ValueWithDate{}, nil
 	}
 
 	rowsWithDate := make([]ValueWithDate, len(res.Rows))

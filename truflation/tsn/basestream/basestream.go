@@ -105,6 +105,7 @@ const (
 	sqlGetBaseValue     = `select %s, %s from %s WHERE %s != 0 order by %s ASC LIMIT 1;`
 	sqlGetLatestValue   = `select %s, %s from %s order by %s DESC LIMIT 1;`
 	sqlGetSpecificValue = `select %s, %s from %s where %s = $date;`
+	sqlGetLastBefore    = `select %s, %s from %s where %s <= $date order by %s DESC LIMIT 1;`
 	sqlGetRangeValue    = `select %s, %s from %s where %s >= $date and %s <= $date_to order by %s ASC;`
 	zeroDate            = "0000-00-00"
 )
@@ -119,6 +120,10 @@ func (b *BaseStreamExt) sqlGetLatestValue() string {
 
 func (b *BaseStreamExt) sqlGetSpecificValue() string {
 	return fmt.Sprintf(sqlGetSpecificValue, b.dateColumn, b.valueColumn, b.table, b.dateColumn)
+}
+
+func (b *BaseStreamExt) sqlGetLastBefore() string {
+	return fmt.Sprintf(sqlGetLastBefore, b.dateColumn, b.valueColumn, b.table, b.dateColumn, b.dateColumn)
 }
 
 func (b *BaseStreamExt) sqlGetRangeValue() string {
@@ -271,8 +276,74 @@ func (b *BaseStreamExt) value(ctx context.Context, dataset Querier, date string,
 	}
 
 	values, err := utils.GetScalarWithDate(res)
+
 	if err != nil {
-		return []utils.ValueWithDate{}, errors.New(fmt.Sprintf("error getting current scalar: %s", err))
+		return []utils.ValueWithDate{}, errors.New(fmt.Sprintf("error getting current value: %s", err))
+	}
+
+	/*
+		if:
+		- there's no row in the answer OR;
+		- the first row date is not the same as the requested first date
+		we try to get the last value before the requested date
+		and assign it to the first value as the specified date
+
+		examples:
+		given there's a value of 100 on 2000-01-01
+
+		e.g. for requested 2000-02-01, the original response would be
+		| date | value |
+		|------|-------|
+		| empty | empty |
+
+		but the response should be
+		| date | value |
+		|------|-------|
+		| 2000-02-01 | 100 |
+
+		e.g. range response for 2000-02-01 to 2000-02-02 would be
+		| date | value |
+		|------|-------|
+		| empty | empty |
+		| 2000-02-02 | 200 |
+
+		but the response should be
+		| date | value |
+		|------|-------|
+		| 2000-02-01 | 100 |
+		| 2000-02-02 | 200 |
+
+		unless there's no data before these dates, in which case we return without modifications
+	*/
+	if (len(values) == 0 || values[0].Date != date) && date != zeroDate {
+		// we will get the last value before the requested date
+		lastValueBefore, err := dataset.Query(ctx, b.sqlGetLastBefore(), map[string]any{
+			"$date": date,
+		})
+		if err != nil {
+			return []utils.ValueWithDate{}, errors.New(fmt.Sprintf("error getting last value before requested date: %s", err))
+		}
+
+		lastValue, err := utils.GetScalarWithDate(lastValueBefore)
+		if err != nil {
+			return []utils.ValueWithDate{}, errors.New(fmt.Sprintf("error getting last value before requested date: %s", err))
+		}
+
+		switch true {
+		case len(lastValue) == 0:
+			// if there's no last value before, we just end the if clause
+			break
+		case len(lastValue) != 1:
+			return []utils.ValueWithDate{}, errors.New("expected single value for last value before requested date")
+			// let's append the last value before the requested date
+		default:
+			values = append(lastValue, values...)
+		}
+	}
+
+	// if there's no data at all, we error out
+	if len(values) == 0 {
+		return []utils.ValueWithDate{}, errors.New("no data found")
 	}
 
 	return values, nil
