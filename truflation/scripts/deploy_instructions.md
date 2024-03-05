@@ -5,10 +5,8 @@ This step will process ./produce_source_maps/categories-tables-us.csv and genera
 - fetch data from database
 - create composed schemas
 
-If you wish to test with less data, use `--minimum` flag. This will get data from a mini version of `categories-tables-us.csv`. This speeds up deployment and testing.
-
 ```shell
-python ./produce_source_maps/process_all.py --minimum
+python ./produce_source_maps/process_all.py
 ```
 
 Feel free to inspect the output, as it contains pretty much all the information you need to deploy and query schemas.
@@ -49,17 +47,13 @@ Will output data to `./temp_composed_schemas/` directory. This does not need to 
 
 MAKE SURE KWIL-DB IS RUNNING
 
-`--skip-drop` flag is useful for testing purposes, as it will not drop the database before deploying the schemas. May get things done quicker.
+`--skip-drop` will not drop the database before deploying the schemas.
 
 ```shell
-./database_deploy.sh --skip-drop
+./database_deploy.sh
 ```
 
 This will deploy the primitives and composed streams to the kwil database.
-
-Beware: This step can take a lot of time, as there's a lot of transactions to occur. Be patient.
-
-If you are using the full data, this can take 10 secs * +200 tables ~= 30 minutes. Use `--minimum` flag on `Produce Source Maps` step to speed up deployment and testing.
 
 ## Add data to the database
 

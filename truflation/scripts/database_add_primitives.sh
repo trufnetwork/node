@@ -21,6 +21,6 @@ for file in "${files[@]}"; do
   fi
 
 
-  ../../.build/kwil-cli database batch --sync --path "$file" --action add_record --name=$db_name --values created_at:$(date +%s) --sync
+  ../../.build/kwil-cli database batch --path "$file" --action add_record --name=$db_name --values created_at:$(date +%s)
   echo "Done processing file: $file. More $((files_count--)) to go"
 done

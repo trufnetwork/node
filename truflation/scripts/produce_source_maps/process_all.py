@@ -1,18 +1,10 @@
-import argparse
 import os
 import re
 
 import pandas as pd
 
 if __name__ == '__main__':
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--minimum', action='store_true', help='Use minimum file instead of full file, for testing')
-
-    args = parser.parse_args()
-    use_minimum = args.minimum
-
-    file_to_read = 'categories-tables-us.csv' if not use_minimum else 'categories-tables-us-min.csv'
+    file_to_read = 'categories-tables-us.csv'
 
     dirname = os.path.dirname(__file__)
     full_path = os.path.join(dirname, file_to_read)
