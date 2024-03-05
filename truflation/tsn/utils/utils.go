@@ -64,16 +64,16 @@ func Fraction(number int64, numerator int64, denominator int64) (int64, error) {
 	return result, nil
 }
 
-// WithDate is a struct that contains an arbitrary value and a date. Useful for time series results.
-type WithDate[T any] struct {
+// ValueWithDate is a struct that contains an arbitrary value and a date. Useful for time series results.
+type ValueWithDate struct {
 	Date  string
-	Value T
+	Value int64
 }
 
 // GetScalarWithDate gets scalar values with respective dates from a query result.
 // It is expecting a result that has two columns.
 // Else, it will return an error.
-func GetScalarWithDate[T any](res *sql.ResultSet) ([]WithDate[T], error) {
+func GetScalarWithDate(res *sql.ResultSet) ([]ValueWithDate, error) {
 	if len(res.ReturnedColumns) != 2 {
 		return nil, fmt.Errorf("stream expected one column, got %d", len(res.ReturnedColumns))
 	}
@@ -81,7 +81,7 @@ func GetScalarWithDate[T any](res *sql.ResultSet) ([]WithDate[T], error) {
 		return nil, fmt.Errorf("stream has no data")
 	}
 
-	rowsWithDate := make([]WithDate[T], len(res.Rows))
+	rowsWithDate := make([]ValueWithDate, len(res.Rows))
 	for i, row := range res.Rows {
 		// we expect a row to contain: [date, value]
 		date, err := row[0].(string)
@@ -92,9 +92,9 @@ func GetScalarWithDate[T any](res *sql.ResultSet) ([]WithDate[T], error) {
 			return nil, fmt.Errorf("invalid date: %s", date)
 		}
 
-		value, ok := row[1].(T)
+		value, ok := row[1].(int64)
 		if !ok {
-			return nil, fmt.Errorf("expected value of type %T, got %T", (interface{})(nil), row[1])
+			return nil, fmt.Errorf("expected value of type %T, got %T", int64(0), row[1])
 		}
 
 		rowsWithDate[i].Date = date

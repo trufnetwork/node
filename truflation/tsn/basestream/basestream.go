@@ -126,7 +126,7 @@ func (b *BaseStreamExt) sqlGetRangeValue() string {
 }
 
 // getValue gets the value for the specified function.
-func getValue(scope *execution.ProcedureContext, fn func(context.Context, Querier, string, *string) ([]utils.WithDate[int64], error), args ...any) ([]any, error) {
+func getValue(scope *execution.ProcedureContext, fn func(context.Context, Querier, string, *string) ([]utils.ValueWithDate, error), args ...any) ([]any, error) {
 	// usage: get_value($date, $date_to?)
 	// behavior: 	if $date is not provided, it will return the latest value.
 	// 				else if $date_to is provided, it will return the value for the date range.
@@ -205,28 +205,28 @@ func getValue(scope *execution.ProcedureContext, fn func(context.Context, Querie
 // This follows Truflation function of ((current_value/first_value)*100).
 // It will multiplty the returned result by an additional 1000, since Kwil
 // cannot handle decimals.
-func (b *BaseStreamExt) index(ctx context.Context, dataset Querier, date string, dateTo *string) ([]utils.WithDate[int64], error) {
+func (b *BaseStreamExt) index(ctx context.Context, dataset Querier, date string, dateTo *string) ([]utils.ValueWithDate, error) {
 
 	// we will first get the first ever value
 	baseValueArr, err := b.value(ctx, dataset, zeroDate, nil)
 	if err != nil {
-		return []utils.WithDate[int64]{}, err
+		return []utils.ValueWithDate{}, err
 	}
 	// expect single value
 	if len(baseValueArr) != 1 {
-		return []utils.WithDate[int64]{}, errors.New("expected single value for base value")
+		return []utils.ValueWithDate{}, errors.New("expected single value for base value")
 	}
 	baseValue := baseValueArr[0].Value
 
 	// now we will get the value for the requested date
 	currentValueArr, err := b.value(ctx, dataset, date, dateTo)
 	if err != nil {
-		return []utils.WithDate[int64]{}, err
+		return []utils.ValueWithDate{}, err
 	}
 
 	// if there's no date_to, we expect a single value
 	if dateTo == nil && len(currentValueArr) != 1 {
-		return []utils.WithDate[int64]{}, errors.New("expected single value for current value")
+		return []utils.ValueWithDate{}, errors.New("expected single value for current value")
 	}
 
 	// we can't do floating point division, but Truflation normally tracks
@@ -237,9 +237,9 @@ func (b *BaseStreamExt) index(ctx context.Context, dataset Querier, date string,
 	// Therefore, we will alter the equation to ((current_value*100000)/first_value).
 	// This essentially gives us the same result, but with an extra 3 digits of precision.
 	//index := (currentValue * 100000) / baseValue
-	indexes := make([]utils.WithDate[int64], len(currentValueArr))
+	indexes := make([]utils.ValueWithDate, len(currentValueArr))
 	for i, currentValue := range currentValueArr {
-		indexes[i] = utils.WithDate[int64]{Date: currentValue.Date, Value: (currentValue.Value * 100000) / baseValue}
+		indexes[i] = utils.ValueWithDate{Date: currentValue.Date, Value: (currentValue.Value * 100000) / baseValue}
 	}
 
 	return indexes, nil
@@ -247,7 +247,7 @@ func (b *BaseStreamExt) index(ctx context.Context, dataset Querier, date string,
 
 // value returns the value for a given date.
 // if no date is given, it will return the latest value.
-func (b *BaseStreamExt) value(ctx context.Context, dataset Querier, date string, dateTo *string) ([]utils.WithDate[int64], error) {
+func (b *BaseStreamExt) value(ctx context.Context, dataset Querier, date string, dateTo *string) ([]utils.ValueWithDate, error) {
 	var res *sql.ResultSet
 	var err error
 	if date == zeroDate {
@@ -267,12 +267,12 @@ func (b *BaseStreamExt) value(ctx context.Context, dataset Querier, date string,
 	}
 
 	if err != nil {
-		return []utils.WithDate[int64]{}, errors.New(fmt.Sprintf("error getting current value: %s", err))
+		return []utils.ValueWithDate{}, errors.New(fmt.Sprintf("error getting current value: %s", err))
 	}
 
-	values, err := utils.GetScalarWithDate[int64](res)
+	values, err := utils.GetScalarWithDate(res)
 	if err != nil {
-		return []utils.WithDate[int64]{}, errors.New(fmt.Sprintf("error getting current scalar: %s", err))
+		return []utils.ValueWithDate{}, errors.New(fmt.Sprintf("error getting current scalar: %s", err))
 	}
 
 	return values, nil

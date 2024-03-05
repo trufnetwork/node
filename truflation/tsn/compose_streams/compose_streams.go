@@ -101,7 +101,7 @@ func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs 
 	}
 
 	// easier to test if we pass the function as a parameter
-	calculateWeightedResultsFromStream := func(dbId string) ([]utils.WithDate[int64], error) {
+	calculateWeightedResultsFromStream := func(dbId string) ([]utils.ValueWithDate, error) {
 		return CallOnTargetDBID(scoper, method, dbId, date, dateTo)
 	}
 
@@ -124,8 +124,8 @@ func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs 
 	return []any{0}, nil
 }
 
-func (s *Stream) CalculateWeightedResultsWithFn(fn func(string) ([]utils.WithDate[int64], error)) ([]utils.WithDate[int64], error) {
-	var resultsSet [][]utils.WithDate[int64]
+func (s *Stream) CalculateWeightedResultsWithFn(fn func(string) ([]utils.ValueWithDate, error)) ([]utils.ValueWithDate, error) {
+	var resultsSet [][]utils.ValueWithDate
 	// for each database, get the value and multiply by the weight
 	for dbId, weight := range s.weightMap {
 		results, err := fn(dbId)
@@ -134,7 +134,7 @@ func (s *Stream) CalculateWeightedResultsWithFn(fn func(string) ([]utils.WithDat
 			return nil, err
 		}
 
-		weightedResults := make([]utils.WithDate[int64], len(results))
+		weightedResults := make([]utils.ValueWithDate, len(results))
 		for i, val := range results {
 			// by multiplying by `precisionMagnifier`, we can keep 3 decimal places of precision with int64 operations
 			precisionMagnifier := int64(1000)
@@ -142,7 +142,7 @@ func (s *Stream) CalculateWeightedResultsWithFn(fn func(string) ([]utils.WithDat
 			if err != nil {
 				return nil, err
 			}
-			weightedResults[i] = utils.WithDate[int64]{Date: val.Date, Value: weightedValue}
+			weightedResults[i] = utils.ValueWithDate{Date: val.Date, Value: weightedValue}
 		}
 		resultsSet = append(resultsSet, weightedResults)
 	}
@@ -151,7 +151,7 @@ func (s *Stream) CalculateWeightedResultsWithFn(fn func(string) ([]utils.WithDat
 
 	numResults := len(filledResultSet[0])
 	// sum the results
-	finalValues := make([]utils.WithDate[int64], numResults)
+	finalValues := make([]utils.ValueWithDate, numResults)
 	for _, results := range filledResultSet {
 		// error if the number of results is different
 		if len(results) != numResults {
@@ -175,19 +175,19 @@ func (s *Stream) CalculateWeightedResultsWithFn(fn func(string) ([]utils.WithDat
 // | 03jan | A        | -        | A . (01jan)B |
 // | …     | ..       | ..       |              |
 // | 01feb | A        | B        | A . B        |
-func FillForwardWithLatestFromCols[T comparable](originalResultsSet [][]utils.WithDate[T]) [][]utils.WithDate[T] {
+func FillForwardWithLatestFromCols(originalResultsSet [][]utils.ValueWithDate) [][]utils.ValueWithDate {
 	numOfStreams := len(originalResultsSet)
 
 	// Determine the total number of dates across all streams to ensure we cover all dates
 	// we use map[int] because we want to track the index of streams
-	allDatesMap := make(map[string]map[int]utils.WithDate[T])
+	allDatesMap := make(map[string]map[int]utils.ValueWithDate)
 	for streamIdx, streamResults := range originalResultsSet {
 		for _, result := range streamResults {
 			dateResultMap := allDatesMap[result.Date]
 
 			// if the dateResultMap is nil, we create it
 			if dateResultMap == nil {
-				dateResultMap = make(map[int]utils.WithDate[T])
+				dateResultMap = make(map[int]utils.ValueWithDate)
 				allDatesMap[result.Date] = dateResultMap
 			}
 			dateResultMap[streamIdx] = result
@@ -207,14 +207,14 @@ func FillForwardWithLatestFromCols[T comparable](originalResultsSet [][]utils.Wi
 	latestValueMap := make([]any, numOfStreams)
 
 	// Prepare the structure for new results
-	newResults := make([][]utils.WithDate[T], numOfStreams)
+	newResults := make([][]utils.ValueWithDate, numOfStreams)
 	for i := range newResults {
-		newResults[i] = make([]utils.WithDate[T], 0, len(allDates))
+		newResults[i] = make([]utils.ValueWithDate, 0, len(allDates))
 	}
 
 	// Fill in the new results, iterating through each date
 	for _, date := range allDates {
-		newValuesToBePushed := make([]utils.WithDate[T], numOfStreams)
+		newValuesToBePushed := make([]utils.ValueWithDate, numOfStreams)
 		should_discard := false
 		for streamIdx := range originalResultsSet {
 			valueFoundForCurrentStream := allDatesMap[date][streamIdx]
@@ -231,13 +231,13 @@ func FillForwardWithLatestFromCols[T comparable](originalResultsSet [][]utils.Wi
 					continue
 				}
 
-				latestValueCorrectType, ok := latestValue.(T)
+				latestValueCorrectType, ok := latestValue.(int64)
 				if !ok {
 					// this should never happen
 					panic(fmt.Sprintf("latest value has wrong type: %T", latestValue))
 				}
 				// if there was a latest value, we update the latest value
-				newValuesToBePushed[streamIdx] = utils.WithDate[T]{Date: date, Value: latestValueCorrectType}
+				newValuesToBePushed[streamIdx] = utils.ValueWithDate{Date: date, Value: latestValueCorrectType}
 			} else {
 				// if there was a value, we update the latest value
 				latestValueMap[streamIdx] = valueFoundForCurrentStream.Value
@@ -261,7 +261,7 @@ func FillForwardWithLatestFromCols[T comparable](originalResultsSet [][]utils.Wi
 // So streams extension is about calling the same method on similar databases, that implements the same methods with the
 // same signature.
 func CallOnTargetDBID(scoper *execution.ProcedureContext, method string, target string,
-	date string, dateTo string) ([]utils.WithDate[int64], error) {
+	date string, dateTo string) ([]utils.ValueWithDate, error) {
 	dataset, err := scoper.Dataset(target)
 	if err != nil {
 		return nil, err
@@ -279,7 +279,7 @@ func CallOnTargetDBID(scoper *execution.ProcedureContext, method string, target 
 		return nil, fmt.Errorf("stream returned nil result")
 	}
 
-	result, err := utils.GetScalarWithDate[int64](newScope.Result)
+	result, err := utils.GetScalarWithDate(newScope.Result)
 	if err != nil {
 		return nil, err
 	}
