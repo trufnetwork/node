@@ -11,8 +11,8 @@ func TestCalculateWeightedResultsWithFn(t *testing.T) {
 	tests := []struct {
 		name          string
 		weightMap     map[string]int64
-		fn            func(string) ([]utils.WithDate[int64], error)
-		expected      []utils.WithDate[int64]
+		fn            func(string) ([]utils.ValueWithDate, error)
+		expected      []utils.ValueWithDate
 		expectedError error
 	}{
 		{
@@ -21,10 +21,10 @@ func TestCalculateWeightedResultsWithFn(t *testing.T) {
 				"abc": 1,
 				"def": 1,
 			},
-			fn: func(s string) ([]utils.WithDate[int64], error) {
-				return []utils.WithDate[int64]{}, nil
+			fn: func(s string) ([]utils.ValueWithDate, error) {
+				return []utils.ValueWithDate{}, nil
 			},
-			expected:      []utils.WithDate[int64]{},
+			expected:      []utils.ValueWithDate{},
 			expectedError: nil,
 		},
 		{
@@ -32,10 +32,10 @@ func TestCalculateWeightedResultsWithFn(t *testing.T) {
 			weightMap: map[string]int64{
 				"abc": 1,
 			},
-			fn: func(s string) ([]utils.WithDate[int64], error) {
-				return []utils.WithDate[int64]{{Date: "2024-01-01", Value: 3}}, nil
+			fn: func(s string) ([]utils.ValueWithDate, error) {
+				return []utils.ValueWithDate{{Date: "2024-01-01", Value: 3}}, nil
 			},
-			expected:      []utils.WithDate[int64]{{Date: "2024-01-01", Value: 3}},
+			expected:      []utils.ValueWithDate{{Date: "2024-01-01", Value: 3}},
 			expectedError: nil,
 		},
 		{
@@ -44,10 +44,10 @@ func TestCalculateWeightedResultsWithFn(t *testing.T) {
 				"abc": 5,
 				"def": 5,
 			},
-			fn: func(s string) ([]utils.WithDate[int64], error) {
-				return []utils.WithDate[int64]{{Date: "2024-01-01", Value: 10}, {Date: "2024-01-02", Value: 20}}, nil
+			fn: func(s string) ([]utils.ValueWithDate, error) {
+				return []utils.ValueWithDate{{Date: "2024-01-01", Value: 10}, {Date: "2024-01-02", Value: 20}}, nil
 			},
-			expected:      []utils.WithDate[int64]{{Date: "2024-01-01", Value: 10}, {Date: "2024-01-02", Value: 20}},
+			expected:      []utils.ValueWithDate{{Date: "2024-01-01", Value: 10}, {Date: "2024-01-02", Value: 20}},
 			expectedError: nil,
 		},
 		{
@@ -56,14 +56,14 @@ func TestCalculateWeightedResultsWithFn(t *testing.T) {
 				"abc": 1,
 				"def": 9,
 			},
-			fn: func(s string) ([]utils.WithDate[int64], error) {
+			fn: func(s string) ([]utils.ValueWithDate, error) {
 				if s == "abc" {
-					return []utils.WithDate[int64]{{Date: "2024-01-01", Value: 10}, {Date: "2024-01-02", Value: 20}}, nil
+					return []utils.ValueWithDate{{Date: "2024-01-01", Value: 10}, {Date: "2024-01-02", Value: 20}}, nil
 				} else {
-					return []utils.WithDate[int64]{{Date: "2024-01-01", Value: 0}, {Date: "2024-01-02", Value: 0}}, nil
+					return []utils.ValueWithDate{{Date: "2024-01-01", Value: 0}, {Date: "2024-01-02", Value: 0}}, nil
 				}
 			},
-			expected:      []utils.WithDate[int64]{{Date: "2024-01-01", Value: 1}, {Date: "2024-01-02", Value: 2}},
+			expected:      []utils.ValueWithDate{{Date: "2024-01-01", Value: 1}, {Date: "2024-01-02", Value: 2}},
 			expectedError: nil,
 		},
 		{
@@ -72,14 +72,14 @@ func TestCalculateWeightedResultsWithFn(t *testing.T) {
 				"abc": 1,
 				"def": 9,
 			},
-			fn: func(s string) ([]utils.WithDate[int64], error) {
+			fn: func(s string) ([]utils.ValueWithDate, error) {
 				if s == "abc" {
-					return []utils.WithDate[int64]{{Date: "2024-01-01", Value: 10}}, nil
+					return []utils.ValueWithDate{{Date: "2024-01-01", Value: 10}}, nil
 				} else {
-					return []utils.WithDate[int64]{{Date: "2024-01-01", Value: 0}, {Date: "2024-01-02", Value: 0}}, nil
+					return []utils.ValueWithDate{{Date: "2024-01-01", Value: 0}, {Date: "2024-01-02", Value: 0}}, nil
 				}
 			},
-			expected:      []utils.WithDate[int64]{{Date: "2024-01-01", Value: 1}, {Date: "2024-01-02", Value: 1}},
+			expected:      []utils.ValueWithDate{{Date: "2024-01-01", Value: 1}, {Date: "2024-01-02", Value: 1}},
 			expectedError: nil,
 		},
 	}
@@ -109,64 +109,64 @@ func TestCalculateWeightedResultsWithFn(t *testing.T) {
 func TestFillForwardWithLatestFromCols(t *testing.T) {
 	tests := []struct {
 		name               string
-		originalResultsSet [][]utils.WithDate[int]
-		expectedResultsSet [][]utils.WithDate[int]
+		originalResultsSet [][]utils.ValueWithDate
+		expectedResultsSet [][]utils.ValueWithDate
 	}{
 		{
 			name:               "empty original results set",
-			originalResultsSet: [][]utils.WithDate[int]{},
-			expectedResultsSet: [][]utils.WithDate[int]{},
+			originalResultsSet: [][]utils.ValueWithDate{},
+			expectedResultsSet: [][]utils.ValueWithDate{},
 		},
 		{
 			name:               "single date with single value",
-			originalResultsSet: [][]utils.WithDate[int]{{{Date: "2024-01-01", Value: 1}}},
-			expectedResultsSet: [][]utils.WithDate[int]{{{Date: "2024-01-01", Value: 1}}},
+			originalResultsSet: [][]utils.ValueWithDate{{{Date: "2024-01-01", Value: 1}}},
+			expectedResultsSet: [][]utils.ValueWithDate{{{Date: "2024-01-01", Value: 1}}},
 		},
 		{
 			name:               "multiple dates with single values",
-			originalResultsSet: [][]utils.WithDate[int]{{{Date: "2024-01-01", Value: 2}, {Date: "2024-01-02", Value: 3}}},
-			expectedResultsSet: [][]utils.WithDate[int]{{{Date: "2024-01-01", Value: 2}, {Date: "2024-01-02", Value: 3}}},
+			originalResultsSet: [][]utils.ValueWithDate{{{Date: "2024-01-01", Value: 2}, {Date: "2024-01-02", Value: 3}}},
+			expectedResultsSet: [][]utils.ValueWithDate{{{Date: "2024-01-01", Value: 2}, {Date: "2024-01-02", Value: 3}}},
 		},
 		{
 			name: "multiple dates from more sources without gaps",
-			originalResultsSet: [][]utils.WithDate[int]{
+			originalResultsSet: [][]utils.ValueWithDate{
 				{{Date: "2024-01-01", Value: 2}, {Date: "2024-01-02", Value: 3}},
 				{{Date: "2024-01-01", Value: 4}, {Date: "2024-01-02", Value: 5}},
 			},
-			expectedResultsSet: [][]utils.WithDate[int]{
+			expectedResultsSet: [][]utils.ValueWithDate{
 				{{Date: "2024-01-01", Value: 2}, {Date: "2024-01-02", Value: 3}},
 				{{Date: "2024-01-01", Value: 4}, {Date: "2024-01-02", Value: 5}},
 			},
 		},
 		{
 			name: "multiple dates from more sources with gap in the middle",
-			originalResultsSet: [][]utils.WithDate[int]{
+			originalResultsSet: [][]utils.ValueWithDate{
 				{{Date: "2024-01-01", Value: 2}, {Date: "2024-01-02", Value: 3}, {Date: "2024-01-03", Value: 4}},
 				{{Date: "2024-01-01", Value: 4}, {Date: "2024-01-03", Value: 5}},
 			},
-			expectedResultsSet: [][]utils.WithDate[int]{
+			expectedResultsSet: [][]utils.ValueWithDate{
 				{{Date: "2024-01-01", Value: 2}, {Date: "2024-01-02", Value: 3}, {Date: "2024-01-03", Value: 4}},
 				{{Date: "2024-01-01", Value: 4}, {Date: "2024-01-02", Value: 4}, {Date: "2024-01-03", Value: 5}},
 			},
 		},
 		{
 			name: "multiple dates from more sources with gap in the end",
-			originalResultsSet: [][]utils.WithDate[int]{
+			originalResultsSet: [][]utils.ValueWithDate{
 				{{Date: "2024-01-01", Value: 2}, {Date: "2024-01-02", Value: 3}},
 				{{Date: "2024-01-01", Value: 4}},
 			},
-			expectedResultsSet: [][]utils.WithDate[int]{
+			expectedResultsSet: [][]utils.ValueWithDate{
 				{{Date: "2024-01-01", Value: 2}, {Date: "2024-01-02", Value: 3}},
 				{{Date: "2024-01-01", Value: 4}, {Date: "2024-01-02", Value: 4}},
 			},
 		},
 		{
 			name: "multiple dates from more sources with gap in the beginning",
-			originalResultsSet: [][]utils.WithDate[int]{
+			originalResultsSet: [][]utils.ValueWithDate{
 				{{Date: "2024-01-02", Value: 3}},
 				{{Date: "2024-01-01", Value: 4}, {Date: "2024-01-02", Value: 5}},
 			},
-			expectedResultsSet: [][]utils.WithDate[int]{
+			expectedResultsSet: [][]utils.ValueWithDate{
 				{{Date: "2024-01-02", Value: 3}},
 				{{Date: "2024-01-02", Value: 5}},
 			},
