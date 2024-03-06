@@ -315,7 +315,7 @@ func (b *BaseStreamExt) value(ctx context.Context, dataset Querier, date string,
 
 		unless there's no data before these dates, in which case we return without modifications
 	*/
-	if (len(values) == 0 || values[0].Date != date) && date != zeroDate {
+	if (len(values) == 0 || values[0].Date != date) && (date != zeroDate && date != "") {
 		// we will get the last value before the requested date
 		lastValueBefore, err := dataset.Query(ctx, b.sqlGetLastBefore(), map[string]any{
 			"$date": date,
