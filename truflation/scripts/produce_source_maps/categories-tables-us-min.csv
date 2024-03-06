@@ -1,0 +1,16 @@
+category,subcategory,source_id,relative_importance,category_id,subcategory_id,table
+Food & Non-alcoholic Beverages,,0,15.3,78,0,
+Food & Non-alcoholic Beverages,Food at home,0,10.335,78,90,
+Food & Non-alcoholic Beverages,Food at home,,0.083625,78,90,com_numbeo_us_bread_3m_avg
+Food & Non-alcoholic Beverages,Food at home,,0.2322,78,90,com_numbeo_us_water_3m_avg
+Food & Non-alcoholic Beverages,Food away from home,0,4.965,78,91,
+Food & Non-alcoholic Beverages,Food away from home,,0.124125,78,91,com_numbeo_us_cappuccino_3m_avg
+Food & Non-alcoholic Beverages,Food away from home,178,1.4895,78,91,com_truflation_yahoo_food
+Alcohol & Tobacco,,0,1.9,84,0,
+Alcohol & Tobacco,Alcoholic beverages,0,1.145,84,136,
+Alcohol & Tobacco,Alcoholic beverages,219,0.09542,84,136,com_numbeo_us_wine_3m_avg
+Alcohol & Tobacco,Alcoholic beverages,220,0.5725,84,136,com_nielseniq_us_alcoholic_beverages
+Other,,0,3.244,89,0,
+Other,Personal Care products and services,0,3.244,89,157,
+Other,Personal Care products and services,242,0.1265,89,157,gov_bls_personal_care_3183
+Other,Personal Care products and services,243,0.4245,89,157,gov_bls_personal_care_3182

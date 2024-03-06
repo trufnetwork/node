@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"github.com/kwilteam/kwil-db/core/utils"
 	"github.com/kwilteam/kwil-db/internal/engine/execution"
+	"github.com/kwilteam/kwil-db/internal/sql"
+	"github.com/kwilteam/kwil-db/truflation/tsn"
 	"math/big"
 	"strings"
 )
@@ -60,4 +62,44 @@ func Fraction(number int64, numerator int64, denominator int64) (int64, error) {
 	// numerator * number / denominator
 	result := new(big.Int).Div(bigProduct, bigDenominator).Int64()
 	return result, nil
+}
+
+// WithDate is a struct that contains an arbitrary value and a date. Useful for time series results.
+type WithDate[T any] struct {
+	Date  string
+	Value T
+}
+
+// GetScalarWithDate gets a scalar value with its date from a query result.
+// It is expecting a result that has one row and two columns.
+// If it does not have one row and one column, it will return an error.
+func GetScalarWithDate[T any](res *sql.ResultSet) ([]WithDate[T], error) {
+	if len(res.ReturnedColumns) != 2 {
+		return nil, fmt.Errorf("stream expected one column, got %d", len(res.ReturnedColumns))
+	}
+	if len(res.Rows) == 0 {
+		return nil, fmt.Errorf("stream has no data")
+	}
+
+	rowsWithDate := make([]WithDate[T], len(res.Rows))
+	for i, row := range res.Rows {
+		// we expect a row to contain: [date, value]
+		date, err := row[0].(string)
+		if !err {
+			return nil, fmt.Errorf("expected string for date, got %T", row[0])
+		}
+		if !tsn.IsValidDate(date) {
+			return nil, fmt.Errorf("invalid date: %s", date)
+		}
+
+		value, ok := row[1].(T)
+		if !ok {
+			return nil, fmt.Errorf("expected value of type %T, got %T", (interface{})(nil), row[1])
+		}
+
+		rowsWithDate[i].Date = date
+		rowsWithDate[i].Value = value
+	}
+
+	return rowsWithDate, nil
 }

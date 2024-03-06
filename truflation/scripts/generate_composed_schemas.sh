@@ -15,23 +15,26 @@ declare -A stream_groups
 
 # Read the CSV file, skipping the header
 while IFS=, read -r parent_stream stream weight; do
-    # Append the stream and weight to the parent stream's entry in the associative array
-    stream_groups["$parent_stream"]+="/$stream:$weight,"
-done < <(tail -n +2 ../../composed_streams.csv)
+    # to avoid incomplete lines
+    if [[ -n $parent_stream ]]; then
+      # Append the stream and weight to the parent stream's entry in the associative array
+      stream_groups["$parent_stream"]+="/$stream:$weight,"
+    fi
+done < <(tail -n +2 ../composed_streams.csv | grep .)
 
-echo "Stream groups:"
-# Iterate over the associative array to print the stream groups
-for parent_stream in "${!stream_groups[@]}"; do
-    echo "$parent_stream: ${stream_groups[$parent_stream]}"
-done
+# make sure it is clean
+rm -rf ./temp_composed_schemas
 
 # Creates the directory if it doesn't exist
-mkdir -p ../temp_composed_schemas
+mkdir -p ./temp_composed_schemas
+
 
 # Iterate over the associative array to run commands for each parent stream
 for parent_stream in "${!stream_groups[@]}"; do
     # Remove the trailing comma from the list of streams and weights
     streams_weights=${stream_groups[$parent_stream]%,}
     # Run the command, substituting the placeholders with the actual values
-    go run ../../schema_gen/cli/cli.go -name "$parent_stream" -import "$streams_weights" -out "../temp_composed_schemas/$parent_stream.json"
+    go run ../schema_gen/cli/cli.go -name "$parent_stream" -import "$streams_weights" -out "./temp_composed_schemas/$parent_stream.json"
 done
+
+echo "Composed Schemas Generated"
