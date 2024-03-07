@@ -47,6 +47,7 @@ python ./test_samples/transform_source.py
 
 ## Seed Kwil Data
 
+
 ```shell
 ../../.build/kwil-cli database drop com_truflation_us_hotel_price --sync
 ../../.build/kwil-cli database deploy -p=../base_schema/base_schema.kf --sync --name=com_truflation_us_hotel_price
