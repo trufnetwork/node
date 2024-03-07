@@ -1,11 +1,14 @@
 package key
 
 import (
+	"bytes"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"github.com/kwilteam/kwil-db/internal/abci"
+	"os"
 
 	"github.com/kwilteam/kwil-db/cmd/common/display"
-	"github.com/kwilteam/kwil-db/internal/abci"
 	"github.com/spf13/cobra"
 )
 
@@ -44,7 +47,7 @@ func infoCmd() *cobra.Command {
 				}
 				return display.PrintCmd(cmd, keyInfo)
 			} else if privkeyFile != "" {
-				key, err := abci.ReadKeyFile(privkeyFile)
+				key, err := readKeyFile(privkeyFile)
 				if err != nil {
 					return display.PrintErr(cmd, err)
 				}
@@ -63,4 +66,19 @@ func infoCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&privkeyFile, "key-file", "o", "", "file containing the private key to display")
 
 	return cmd
+}
+
+// readKeyFile reads a private key from a text file containing the hexadecimal
+// encoding of the private key bytes.
+func readKeyFile(keyFile string) ([]byte, error) {
+	privKeyHexB, err := os.ReadFile(keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("error reading private key file: %v", err)
+	}
+	privKeyHex := string(bytes.TrimSpace(privKeyHexB))
+	privB, err := hex.DecodeString(privKeyHex)
+	if err != nil {
+		return nil, fmt.Errorf("error decoding private key: %v", err)
+	}
+	return privB, nil
 }

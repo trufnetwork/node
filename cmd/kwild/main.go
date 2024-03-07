@@ -20,6 +20,7 @@ import (
 
 	_ "github.com/kwilteam/kwil-db/extensions" // a base location where all extensions can be registered
 	_ "github.com/kwilteam/kwil-db/extensions/auth"
+	_ "github.com/kwilteam/kwil-db/internal/oracles/eth-deposit-oracle"
 )
 
 var (
@@ -47,6 +48,8 @@ func rootCmd() *cobra.Command {
 		Args:              cobra.NoArgs, // just flags
 		Version:           version.KwilVersion,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Printf("kwild version %v (Go version %s)\n", version.KwilVersion, runtime.Version())
+
 			var err error
 			kwildCfg, err = config.GetCfg(flagCfg)
 			if err != nil {

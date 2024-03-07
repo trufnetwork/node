@@ -2,10 +2,11 @@ package key
 
 import (
 	"encoding/hex"
+	"github.com/kwilteam/kwil-db/internal/abci"
 	"os"
 
+	"github.com/cometbft/cometbft/crypto/ed25519"
 	"github.com/kwilteam/kwil-db/cmd/common/display"
-	"github.com/kwilteam/kwil-db/internal/abci"
 	"github.com/spf13/cobra"
 )
 
@@ -28,7 +29,7 @@ func genCmd() *cobra.Command {
 		Example: genExample,
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			privKey := abci.GeneratePrivateKey()
+			privKey := generatePrivateKey()
 			if out == "" {
 				if raw {
 					return display.PrintCmd(cmd, display.RespString(hex.EncodeToString(privKey)))
@@ -51,4 +52,9 @@ func genCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&out, "key-file", "o", "", "file to which the new private key is written (stdout by default)")
 
 	return cmd
+}
+
+func generatePrivateKey() []byte {
+	privKey := ed25519.GenPrivKey()
+	return privKey[:]
 }
