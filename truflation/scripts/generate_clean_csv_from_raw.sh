@@ -37,7 +37,6 @@ for db_name in "${db_names[@]}"; do
   files_list+=($db_file)
 done
 
-
 files_count_left=${#files_list[@]}
 
 # for each file on ./raw_from_db, create temp file that have cleaned data
@@ -62,9 +61,15 @@ for file in "${files_list[@]}"; do
         close("uuidgen")
       }
     }
-  }' "$file" > "./temp_csv/$table_name.csv"  # this is the original line
+  }' "$file" > "./temp_csv/$table_name.csv" &  # this is the original line
   #  awk -F, 'BEGIN {OFS=","} ("uuidgen" | getline uuid) > 0 {if (NR==1) print "id,date_value,value"; else print uuid, $1, int($2*1000)} {close("uuidgen")}' "$file" > ./temp_csv/"$table_name".csv
 
   files_count_left=$(($files_count_left-1))
+
+  # for each time the count is divisible by 10, we wait
+if [ $(($files_count_left % 50)) -eq 0 ]; then
+    wait
   echo "Done, $files_count_left to go"
+  fi
+
 done
