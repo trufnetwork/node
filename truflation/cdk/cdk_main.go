@@ -18,28 +18,6 @@ type CdkStackProps struct {
 	awscdk.StackProps
 }
 
-/*
-What do we want?
-
-We have a repo called tsn-db
-Among many things, when we run its binaries, we're able to query a internal database such as:
-`kwil-cli database call -a=get_index date:"" date_to:"" -n=com_yahoo_finance_corn_futures`
-
-we already have a docker image that has the exported ports like these:
-EXPOSE 50051 50151 8080 26656 26657
-
-
-An CDK stack:
-- written in go
-- on github MAIN commits, it runs deployment
-- deployment:
-	- created from github action, in which from this we build a docker image, ready to be used by cdk
-	- this cdk will create all needed infrastructure
-	- needs to be deployed to an AWS EC2 instance
-	- for now a staging server
-	- accessible with a public IP
-*/
-
 func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) awscdk.Stack {
 	var sprops awscdk.StackProps
 	if props != nil {
@@ -69,7 +47,7 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 		AssetName:    nil,
 		BuildArgs:    nil,
 		BuildSecrets: nil,
-		File:         jsii.String("build/package/docker/kwild.dockerfile"),
+		File:         jsii.String("truflation/docker/tsn.dockerfile"),
 		NetworkMode:  nil,
 		Platform:     nil,
 		Target:       nil,
@@ -77,15 +55,14 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	})
 	repo := imageAsset.Repository()
 
-	// The code that defines your stack goes here
-
 	// default vpc
 	vpcInstance := awsec2.Vpc_FromLookup(stack, jsii.String("VPC"), &awsec2.VpcLookupOptions{
 		IsDefault: jsii.Bool(true),
 	})
 
-	// Create instance
-	instance, instanceRole := createInstance(stack, vpcInstance)
+	// Create instance using imageAsset hash so that the instance is recreated when the image changes.
+	newName := "TsnDBInstance" + *imageAsset.AssetHash()
+	instance, instanceRole := createInstance(stack, newName, vpcInstance)
 
 	deployImageOnInstance(stack, instance, imageAsset, repo)
 
@@ -100,7 +77,7 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	return stack
 }
 
-func createInstance(stack awscdk.Stack, vpc awsec2.IVpc) (awsec2.Instance, awsiam.IRole) {
+func createInstance(stack awscdk.Stack, name string, vpc awsec2.IVpc) (awsec2.Instance, awsiam.IRole) {
 	// Create security group.
 	instanceSG := awsec2.NewSecurityGroup(stack, jsii.String("NodeSG"), &awsec2.SecurityGroupProps{
 		Vpc:              vpc,
@@ -108,16 +85,18 @@ func createInstance(stack awscdk.Stack, vpc awsec2.IVpc) (awsec2.Instance, awsia
 		Description:      jsii.String("TSN-DB instance security group."),
 	})
 
-	instanceSG.AddIngressRule(
-		awsec2.Peer_AnyIpv4(),
-		awsec2.NewPort(&awsec2.PortProps{
-			Protocol:             awsec2.Protocol_TCP,
-			FromPort:             jsii.Number(8080),
-			ToPort:               jsii.Number(8080),
-			StringRepresentation: jsii.String("Allow requests to common app range."),
-		}),
-		jsii.String("Allow requests to common app range."),
-		jsii.Bool(false))
+	// TODO: add 8080 support when it's gateway protected
+	//instanceSG.AddIngressRule(
+	//	awsec2.Peer_AnyIpv4(),
+	//	awsec2.NewPort(&awsec2.PortProps{
+	//		Protocol:             awsec2.Protocol_TCP,
+	//		FromPort:             jsii.Number(8080),
+	//		ToPort:               jsii.Number(8080),
+	//		StringRepresentation: jsii.String("Allow requests to common app range."),
+	//	}),
+	//	jsii.String("Allow requests to common app range."),
+	//	jsii.Bool(false))
+
 	// ssh
 	instanceSG.AddIngressRule(
 		awsec2.Peer_AnyIpv4(),
@@ -147,8 +126,8 @@ func createInstance(stack awscdk.Stack, vpc awsec2.IVpc) (awsec2.Instance, awsia
 		AssumedBy: awsiam.NewServicePrincipal(jsii.String("ec2.amazonaws.com"), nil),
 	})
 
-	instance := awsec2.NewInstance(stack, jsii.String("Instance"), &awsec2.InstanceProps{
-		InstanceType: awsec2.InstanceType_Of(awsec2.InstanceClass_T3, awsec2.InstanceSize_NANO),
+	instance := awsec2.NewInstance(stack, jsii.String(name), &awsec2.InstanceProps{
+		InstanceType: awsec2.InstanceType_Of(awsec2.InstanceClass_T3, awsec2.InstanceSize_SMALL),
 		// ubuntu 22.04
 		// https://cloud-images.ubuntu.com/locator/ec2/
 		MachineImage: awsec2.MachineImage_FromSsmParameter(jsii.String("/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id"), nil),
@@ -159,6 +138,15 @@ func createInstance(stack awscdk.Stack, vpc awsec2.IVpc) (awsec2.Instance, awsia
 		SecurityGroup: instanceSG,
 		Role:          instanceRole,
 		KeyPair:       awsec2.KeyPair_FromKeyPairName(stack, jsii.String("KeyPair"), keyPair),
+		BlockDevices: &[]*awsec2.BlockDevice{
+			{
+				DeviceName: jsii.String("/dev/sda1"),
+				Volume: awsec2.BlockDeviceVolume_Ebs(jsii.Number(50), &awsec2.EbsDeviceOptions{
+					DeleteOnTermination: jsii.Bool(true),
+					Encrypted:           jsii.Bool(false),
+				}),
+			},
+		},
 	})
 	eip := awsec2.NewCfnEIP(stack, jsii.String("EIP"), nil)
 	awsec2.NewCfnEIPAssociation(stack, jsii.String("EIPAssociation"), &awsec2.CfnEIPAssociationProps{
@@ -174,6 +162,11 @@ func deployImageOnInstance(stack awscdk.Stack, instance awsec2.Instance, imageAs
 	script1Content := `#!/bin/bash
 set -e
 set -x
+
+# lets add repo, region and image uri to /tmp/init-vars just for easier debug
+echo "repo=` + *repo.RepositoryUri() + `" > /tmp/init-vars
+echo "region=` + *stack.Region() + `" >> /tmp/init-vars
+echo "imageUri=` + *imageAsset.ImageUri() + `" >> /tmp/init-vars
 
 # install docker
 apt-get update
@@ -201,7 +194,7 @@ After=docker.service
 
 [Service]
 Restart=always
-ExecStart=/usr/bin/docker run -d -p 8080:8080 --name tsn-db-app ` + *imageAsset.ImageUri() + `
+ExecStart=/usr/bin/docker run --network host --name tsn-db-app ` + *imageAsset.ImageUri() + `
 ExecStop=/usr/bin/docker stop tsn-db-app
 ExecStopPost=/usr/bin/docker rm tsn-db-app
 
