@@ -1,11 +1,11 @@
 package main
 
 import (
-	"cdk/config"
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsecr"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsecrassets"
 	"github.com/aws/jsii-runtime-go"
+	"infra/config"
 	"os"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
