@@ -16,9 +16,9 @@ import (
 
 	"github.com/kwilteam/kwil-db/cmd/kwild/config"
 	"github.com/kwilteam/kwil-db/core/crypto"
-	"github.com/kwilteam/kwil-db/core/log"               // to top
-	"github.com/kwilteam/kwil-db/internal/abci"          // internalize
-	"github.com/kwilteam/kwil-db/internal/abci/cometbft" // internalize
+	"github.com/kwilteam/kwil-db/core/log"
+	"github.com/kwilteam/kwil-db/internal/abci/cometbft"
+	"github.com/kwilteam/kwil-db/internal/oracles"
 	gateway "github.com/kwilteam/kwil-db/internal/services/grpc_gateway"
 	grpc "github.com/kwilteam/kwil-db/internal/services/grpc_server"
 	"github.com/kwilteam/kwil-db/internal/sql/sqlite"
@@ -34,6 +34,7 @@ type Server struct {
 	gateway        *gateway.GatewayServer
 	adminTPCServer *grpc.Server
 	cometBftNode   *cometbft.CometBftNode
+	oracleMgr      *oracles.OracleMgr
 	closers        *closeFuncs
 	log            log.Logger
 
@@ -119,14 +120,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}()
 	defer func() {
 		if err := recover(); err != nil {
-			switch et := err.(type) {
-			case abci.FatalError:
-				s.log.Error("Blockchain application hit an unrecoverable error:\n\n%v",
-					zap.Stringer("error", et))
-				// cometbft *may* already recover panics from the application. Investigate.
-			default:
-				s.log.Error("kwild server panic", zap.Any("error", err))
-			}
+			s.log.Error("kwild server panic", zap.Any("error", err))
 		}
 	}()
 
@@ -174,18 +168,34 @@ func (s *Server) Start(ctx context.Context) error {
 	})
 	s.log.Info("grpc server started", zap.String("address", s.cfg.AppCfg.AdminListenAddress))
 
+	// Start oracle manager only after node caught up
 	group.Go(func() error {
 		go func() {
 			<-groupCtx.Done()
-			s.log.Info("stop comet server")
-			if err := s.cometBftNode.Stop(); err != nil {
-				s.log.Warn("failed to stop comet server", zap.Error(err))
-			}
+			s.log.Info("stop oracle manager")
+			s.oracleMgr.Stop()
 		}()
 
-		return s.cometBftNode.Start()
+		s.oracleMgr.Start()
+		return nil
 	})
-	s.log.Info("comet node started")
+	s.log.Info("oracle manager started")
+
+	group.Go(func() error {
+		// The CometBFT services do not block on Start().
+		if err := s.cometBftNode.Start(); err != nil {
+			return err
+		}
+		s.log.Info("comet node is now started")
+
+		<-groupCtx.Done()
+		s.log.Info("stop comet server")
+		if err := s.cometBftNode.Stop(); err != nil {
+			return fmt.Errorf("failed to stop comet server: %w", err)
+		}
+		s.log.Info("comet server is stopped")
+		return nil
+	})
 
 	err := group.Wait()
 

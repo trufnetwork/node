@@ -76,7 +76,20 @@ Run if you need to ensure that the database is deployed.
 ```
 
 Expected:
-|    date    | value  |
+
+| date       | value  |
+|------------|--------|
+| 2000-07-30 | 500000 |
+
+Query after latest:
+
+```shell
+../../.build/kwil-cli database call -a=get_index date:"2000-08-02" date_to:"" -n=com_yahoo_finance_corn_futures
+```
+
+Expected answer with the latest date.
+
+| date       | value  |
 |------------|--------|
 | 2000-07-30 | 500000 |
 
@@ -86,7 +99,7 @@ Expected:
 
 Expected:
 
-|    date    | value  |
+| date       | value  |
 |------------|--------|
 | 2000-07-18 | 150000 |
 
@@ -94,7 +107,7 @@ Expected:
 ../../.build/kwil-cli database call -a=get_index date:"2000-07-18" date_to:"2000-07-22" -n=com_yahoo_finance_corn_futures
 ```
 
-|    date    | value  |
+| date       | value  |
 |------------|--------|
 | 2000-07-18 | 150000 |
 | 2000-07-19 | 200000 |
@@ -103,6 +116,7 @@ Expected:
 | 2000-07-22 | 250000 |
 
 ### Expect all of these to error:
+
 ```shell
 # wrong date format
 ../../.build/kwil-cli database call -a=get_index date:"2000/07/18" date_to:"" -n=com_yahoo_finance_corn_futures
@@ -113,9 +127,20 @@ Expected:
 ../../.build/kwil-cli database call -a=get_index date:"2000-07-18" date_to:"2000/07/22" -n=com_yahoo_finance_corn_futures
 ```
 
+```shell
+# before any available data
+../../.build/kwil-cli database call -a=get_index date:"1999-07-17" date_to:"1999-07-22" -n=com_yahoo_finance_corn_futures
+```
+
+```shell
+# before any available data
+../../.build/kwil-cli database call -a=get_index date:"1999-07-17" date_to:"" -n=com_yahoo_finance_corn_futures
+```
+
 ## Composed Table
 
 ### Deploy
+
 ```shell
 ../../.build/kwil-cli database drop composed --sync
 ../../.build/kwil-cli database deploy -p=./composed.kf --name=composed --sync
@@ -123,17 +148,15 @@ Expected:
 
 ### Query
 
-
-|    date    | corn | hotel | expected |
+| date       | corn | hotel | expected |
 |------------|------|-------|----------|
-| 2000-07-19 |   20 |     1 |      2,9 |
-
+| 2000-07-19 | 20   | 1     | 2,9      |
 
 ```shell
 ../../.build/kwil-cli database call -a=get_value date:"2000-07-19" date_to:"" -n=composed
 ```
 
-|    date    | value |
+| date       | value |
 |------------|-------|
 | 2000-07-19 | 2900  |
 
@@ -143,32 +166,56 @@ This value should be 10% of corn futures value on 2000-07-19. We purposely set h
 ../../.build/kwil-cli database call -a=get_index date:"2000-07-18" date_to:"2000-07-22" -n=composed
 ```
 
-|    date    | value  |
+| date       | value  |
 |------------|--------|
 | 2000-07-18 | 150000 |
-| 2000-07-19 |  29000 |
+| 2000-07-19 | 29000  |
 | 2000-07-20 | 250000 |
 | 2000-07-21 | 300000 |
 | 2000-07-22 | 250000 |
 
 ### Fill behavior
 
+| date       | corn | hotel | expected |
+|------------|------|-------|----------|
+| 2000-07-23 | 30   | 30    | 30       |
+| 2000-07-24 | 25   | 25    | 25       |
+| 2000-07-25 | 30   |       | 25,5     |
+| 2000-07-26 | 35   | 25    | 26       |
+| 2000-07-27 | 40   | 30    | 31       |
+| 2000-07-28 | 45   |       | 31,5     |
+| 2000-07-29 |      | 25    | 27       |
+| 2000-07-30 | 50   | 50    | 50       |
+
 ```shell
 ../../.build/kwil-cli database call -a=get_value date:"2000-07-23" date_to:"2000-07-30" -n=composed
 ```
 
-|    date    | corn | hotel | expected |
-|------------|------|-------|----------|
-| 2000-07-23 |   30 |    30 |       30 |
-| 2000-07-24 |   25 |    25 |       25 |
-| 2000-07-25 |   30 |       |     25,5 |
-| 2000-07-26 |   35 |    25 |       26 |
-| 2000-07-27 |   40 |    30 |       31 |
-| 2000-07-28 |   45 |       |     31,5 |
-| 2000-07-29 |      |    25 |       27 |
-| 2000-07-30 |   50 |    50 |       50 |
+Expected:
+
+| date       | value |
+|------------|-------|
+| 2000-07-23 | 30000 |
+| 2000-07-24 | 25000 |
+| 2000-07-25 | 25500 |
+| 2000-07-26 | 26000 |
+| 2000-07-27 | 31000 |
+| 2000-07-28 | 31500 |
+| 2000-07-29 | 27000 |
+| 2000-07-30 | 50000 |
+
+```shell
+../../.build/kwil-cli database call -a=get_value date:"2000-07-28" date_to:"2000-07-30" -n=composed
+```
+
+| date       | value |
+|------------|-------|
+| 2000-07-28 | 31500 |
+| 2000-07-29 | 27000 |
+| 2000-07-30 | 50000 |
 
 ### Expect all of these to error:
+
 ```shell
 # wrong date format
 ../../.build/kwil-cli database call -a=get_index date:"2000/07/18" date_to:"" -n=composed

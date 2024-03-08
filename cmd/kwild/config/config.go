@@ -16,10 +16,10 @@ import (
 
 	"github.com/kwilteam/kwil-db/core/crypto"
 	"github.com/kwilteam/kwil-db/core/log"
-	"github.com/mitchellh/mapstructure"
-	toml "github.com/pelletier/go-toml/v2"
 
 	merge "dario.cat/mergo"
+	"github.com/mitchellh/mapstructure"
+	toml "github.com/pelletier/go-toml/v2"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 )
@@ -57,12 +57,13 @@ type AppConfig struct {
 	SqliteFilePath     string   `mapstructure:"sqlite_file_path"`
 	ExtensionEndpoints []string `mapstructure:"extension_endpoints"`
 	//SnapshotConfig     SnapshotConfig `mapstructure:"snapshots"`
-	TLSCertFile  string `mapstructure:"tls_cert_file"`
-	TLSKeyFile   string `mapstructure:"tls_key_file"`
-	EnableRPCTLS bool   `mapstructure:"rpctls"`
-	Hostname     string `mapstructure:"hostname"`
-	ProfileMode  string `mapstructure:"profile_mode"`
-	ProfileFile  string `mapstructure:"profile_file"`
+	TLSCertFile  string                       `mapstructure:"tls_cert_file"`
+	TLSKeyFile   string                       `mapstructure:"tls_key_file"`
+	EnableRPCTLS bool                         `mapstructure:"rpctls"`
+	Hostname     string                       `mapstructure:"hostname"`
+	ProfileMode  string                       `mapstructure:"profile_mode"`
+	ProfileFile  string                       `mapstructure:"profile_file"`
+	Oracles      map[string]map[string]string `mapstructure:"oracles"`
 }
 
 type SnapshotConfig struct {
@@ -265,6 +266,8 @@ func GetCfg(flagCfg *KwildConfig) (*KwildConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to expand root directory \"%v\": %v", rootDir, err)
 	}
+
+	fmt.Printf("Root directory \"%v\"\n", rootDir)
 
 	// make sure the root dir exists
 	err = os.MkdirAll(rootDir, 0755)
