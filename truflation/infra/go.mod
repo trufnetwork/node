@@ -1,4 +1,4 @@
-module cdk
+module infra
 
 go 1.18
 
