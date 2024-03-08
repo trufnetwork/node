@@ -149,9 +149,9 @@ func NewCometBftNode(app abciTypes.Application, conf *cometConfig.Config, genDoc
 		&p2p.NodeKey{
 			PrivKey: privateKey,
 		},
-		proxy.NewLocalClientCreator(app),
+		proxy.NewConnSyncLocalClientCreator(app), // "connection-synchronized" local client
 		genesisDocProvider(genDoc),
-		cometNodes.DefaultDBProvider,
+		cometConfig.DefaultDBProvider,
 		cometNodes.DefaultMetricsProvider(conf.Instrumentation),
 		logger,
 	)
@@ -172,4 +172,10 @@ func (n *CometBftNode) Start() error {
 // Stop stops the CometBFT node.
 func (n *CometBftNode) Stop() error {
 	return n.Node.Stop()
+}
+
+// IsCatchup returns true if the node is operating in ccatchup / blocksync
+// mode.  If the node is caught up with the network, it returns false.
+func (n *CometBftNode) IsCatchup() bool {
+	return n.Node.ConsensusReactor().WaitSync()
 }

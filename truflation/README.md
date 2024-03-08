@@ -106,6 +106,24 @@ The second composite stream combines the beef_corn stream with the barley base s
 
 To use the example, build this binary using the repo README, and run the `kwild` node. Refer to the Kwil docs on [how to run a node](<https://docs.kwil.com/docs/node/quickstart>).
 
+#### Configure your CLI
+
+Configure your CLI by calling `kwil-cli configure` and then add the following configs:
+```bash
+$ kwil-cli configure
+
+Kwil RPC URL: http://localhost:8080
+Kwil Chain ID: <leave empty>
+Private Key: <any-ethereum-private-key>
+```
+
+This will create a `~/.kwil-cli/config` file with the above configurations. The configuration above assumes you are running the Kwil node on your local machine. Feel free to adjust the configuration if you are running the node elsewhere. <br/>
+To verify that your CLI is configured properly, you can run:
+
+```bash
+$ kwil-cli utils ping
+```
+
 #### Deploy the Base Streams
 
 Once the node is running, you can deploy the schemas found in `examples`. First, deploy the three base streams:
