@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+set -e
+
 cd "$(dirname "$0")"
 
 files=($(ls ./temp_csv/*.csv))
@@ -13,7 +15,7 @@ for file in "${files[@]}"; do
   db_name="${db_name%.*}"
 
   # if we're able to query the database already, we may skip this file
-  error_logs=$(../../.build/kwil-cli database call -a=get_index date:"" date_to:"" -n="$db_name" 2>&1)
+  error_logs=$(../../.build/kwil-cli database call -a=get_index date:"" date_to:"" -n="$db_name" 2>&1 || true)
 
   if [[ $error_logs != *"error"* ]]; then
     echo "Skipping file: $file"

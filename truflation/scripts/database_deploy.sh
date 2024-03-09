@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+-set e
+
 cd "$(dirname "$0")"
 
 function check_database_for_list {

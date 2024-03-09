@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+set -e
 
 # for each line ./composed_streams.csv
 # parse  columns being: 1: parent_stream, 2: stream, 3: weight with presence of the header
