@@ -2,6 +2,7 @@
 .build/
 .github/
 .vscode/
+.idea/
 .wal/
 build/package/docker/
 .gitattributes
