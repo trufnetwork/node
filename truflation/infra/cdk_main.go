@@ -43,9 +43,42 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	//	},
 	//})
 
+	buildArgs := make(map[string]*string)
+
+	// git commit should come from the environment variable, else it will execute git rev-parse HEAD
+	if len(os.Getenv("GIT_COMMIT")) == 0 {
+		buildArgs["git_commit"] = jsii.String("$(git rev-parse HEAD)")
+	} else {
+		buildArgs["git_commit"] = jsii.String(os.Getenv("GIT_COMMIT"))
+	}
+
+	// git version will be added only if it's available
+	if len(os.Getenv("GIT_VERSION")) > 0 {
+		buildArgs["version"] = jsii.String(os.Getenv("GIT_VERSION"))
+	}
+
+	// build time will be added only if it's available
+	if len(os.Getenv("BUILD_TIME")) > 0 {
+		buildArgs["build_time"] = jsii.String(os.Getenv("BUILD_TIME"))
+	}
+
 	imageAsset := awsecrassets.NewDockerImageAsset(stack, jsii.String("DockerImageAsset"), &awsecrassets.DockerImageAssetProps{
-		AssetName:    nil,
-		BuildArgs:    nil,
+		AssetName: nil,
+		BuildArgs: &buildArgs,
+		CacheFrom: &[]*awsecrassets.DockerCacheOption{
+			{
+				Type: jsii.String("local"),
+				Params: &map[string]*string{
+					"src": jsii.String("/tmp/.buildx-cache-tsn-db"),
+				},
+			},
+		},
+		CacheTo: &awsecrassets.DockerCacheOption{
+			Type: jsii.String("local"),
+			Params: &map[string]*string{
+				"dest": jsii.String("/tmp/.buildx-cache-tsn-db-new"),
+			},
+		},
 		BuildSecrets: nil,
 		File:         jsii.String("truflation/docker/tsn.dockerfile"),
 		NetworkMode:  nil,
