@@ -1,10 +1,11 @@
 package compose_streams
 
 import (
-	"github.com/kwilteam/kwil-db/truflation/tsn/utils"
-	"github.com/stretchr/testify/assert"
 	"reflect"
 	"testing"
+
+	"github.com/kwilteam/kwil-db/truflation/tsn/utils"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestCalculateWeightedResultsWithFn(t *testing.T) {

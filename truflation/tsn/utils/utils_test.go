@@ -1,10 +1,11 @@
 package utils
 
 import (
+	"testing"
+
 	"github.com/kwilteam/kwil-db/core/utils"
 	"github.com/kwilteam/kwil-db/internal/engine/execution"
 	"github.com/kwilteam/kwil-db/internal/engine/types"
-	"testing"
 )
 
 func TestGetDBIDFromPath(t *testing.T) {

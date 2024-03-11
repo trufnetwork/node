@@ -2,10 +2,10 @@ package abci
 
 import (
 	"encoding/json"
-	"github.com/kwilteam/kwil-db/core/types/transactions"
-	"github.com/kwilteam/kwil-db/internal/abci/snapshots"
 
 	abciTypes "github.com/cometbft/cometbft/abci/types"
+	"github.com/kwilteam/kwil-db/core/types/transactions"
+	"github.com/kwilteam/kwil-db/internal/abci/snapshots"
 )
 
 func convertABCISnapshots(req *abciTypes.Snapshot) *snapshots.Snapshot {

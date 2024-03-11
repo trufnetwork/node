@@ -5,9 +5,9 @@ package stream
 import (
 	"errors"
 	"fmt"
-	"github.com/kwilteam/kwil-db/core/utils"
 	"strings"
 
+	"github.com/kwilteam/kwil-db/core/utils"
 	"github.com/kwilteam/kwil-db/internal/engine/execution"
 	"github.com/kwilteam/kwil-db/truflation/tsn"
 )
@@ -74,10 +74,10 @@ func (s *Stream) Call(scoper *execution.ProcedureContext, method string, inputs 
 		return nil, err
 	}
 
-	return s.CallOnTargetDBID(scoper, method, err, target, date, dateTo)
+	return s.CallOnTargetDBID(scoper, method, target, date, dateTo)
 }
 
-func (s *Stream) CallOnTargetDBID(scoper *execution.ProcedureContext, method string, err error, target string,
+func (s *Stream) CallOnTargetDBID(scoper *execution.ProcedureContext, method string, target string,
 	date string, dateTo string) ([]any, error) {
 	dataset, err := scoper.Dataset(target)
 	if err != nil {

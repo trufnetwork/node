@@ -4,14 +4,14 @@ package compose_streams
 
 import (
 	"fmt"
-	"github.com/kwilteam/kwil-db/internal/sql"
-	utils "github.com/kwilteam/kwil-db/truflation/tsn/utils"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/kwilteam/kwil-db/internal/engine/execution"
+	"github.com/kwilteam/kwil-db/internal/sql"
 	"github.com/kwilteam/kwil-db/truflation/tsn"
+	"github.com/kwilteam/kwil-db/truflation/tsn/utils"
 )
 
 // InitializeStream initializes the stream extension.

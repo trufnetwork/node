@@ -2,10 +2,10 @@ package mathutil
 
 import (
 	"fmt"
-	"github.com/kwilteam/kwil-db/truflation/tsn/utils"
 	"strings"
 
 	"github.com/kwilteam/kwil-db/internal/engine/execution"
+	"github.com/kwilteam/kwil-db/truflation/tsn/utils"
 )
 
 func InitializeMathUtil(ctx *execution.DeploymentContext, metadata map[string]string) (execution.ExtensionNamespace, error) {

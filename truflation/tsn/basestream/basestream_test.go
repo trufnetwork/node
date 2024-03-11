@@ -3,10 +3,10 @@ package basestream
 import (
 	"context"
 	"fmt"
-	"github.com/kwilteam/kwil-db/truflation/tsn/utils"
 	"testing"
 
 	"github.com/kwilteam/kwil-db/internal/sql"
+	"github.com/kwilteam/kwil-db/truflation/tsn/utils"
 	"github.com/stretchr/testify/assert"
 )
 
