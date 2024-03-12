@@ -1,5 +1,6 @@
 version: "3"
 
+#  it depends on the kwild service which is currently private, can't be tested
 services:
   kwild:
     container_name: kwild

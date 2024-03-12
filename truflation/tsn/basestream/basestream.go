@@ -7,13 +7,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/kwilteam/kwil-db/truflation/tsn/utils"
 	"strings"
 
 	"github.com/kwilteam/kwil-db/internal/engine/execution"
 	"github.com/kwilteam/kwil-db/internal/engine/types"
 	"github.com/kwilteam/kwil-db/internal/sql"
 	"github.com/kwilteam/kwil-db/truflation/tsn"
+	"github.com/kwilteam/kwil-db/truflation/tsn/utils"
 )
 
 func getOrDefault(m map[string]string, key string, defaultValue string) string {
@@ -272,13 +272,13 @@ func (b *BaseStreamExt) value(ctx context.Context, dataset Querier, date string,
 	}
 
 	if err != nil {
-		return []utils.ValueWithDate{}, errors.New(fmt.Sprintf("error getting current value: %s", err))
+		return []utils.ValueWithDate{}, fmt.Errorf("error getting current value: %w", err)
 	}
 
 	values, err := utils.GetScalarWithDate(res)
 
 	if err != nil {
-		return []utils.ValueWithDate{}, errors.New(fmt.Sprintf("error getting current value: %s", err))
+		return []utils.ValueWithDate{}, fmt.Errorf("error getting current value: %w", err)
 	}
 
 	/*
@@ -321,12 +321,12 @@ func (b *BaseStreamExt) value(ctx context.Context, dataset Querier, date string,
 			"$date": date,
 		})
 		if err != nil {
-			return []utils.ValueWithDate{}, errors.New(fmt.Sprintf("error getting last value before requested date: %s", err))
+			return []utils.ValueWithDate{}, fmt.Errorf("error getting last value before requested date: %w", err)
 		}
 
 		lastValue, err := utils.GetScalarWithDate(lastValueBefore)
 		if err != nil {
-			return []utils.ValueWithDate{}, errors.New(fmt.Sprintf("error getting last value before requested date: %s", err))
+			return []utils.ValueWithDate{}, fmt.Errorf("error getting last value before requested date: %w", err)
 		}
 
 		switch true {
@@ -334,7 +334,7 @@ func (b *BaseStreamExt) value(ctx context.Context, dataset Querier, date string,
 			// if there's no last value before, we just end the if clause
 			break
 		case len(lastValue) != 1:
-			return []utils.ValueWithDate{}, errors.New("expected single value for last value before requested date")
+			return []utils.ValueWithDate{}, fmt.Errorf("expected single value for last value before requested date")
 			// let's append the last value before the requested date
 		default:
 			values = append(lastValue, values...)

@@ -2,12 +2,13 @@ package utils
 
 import (
 	"fmt"
+	"math/big"
+	"strings"
+
 	"github.com/kwilteam/kwil-db/core/utils"
 	"github.com/kwilteam/kwil-db/internal/engine/execution"
 	"github.com/kwilteam/kwil-db/internal/sql"
 	"github.com/kwilteam/kwil-db/truflation/tsn"
-	"math/big"
-	"strings"
 )
 
 // GetDBIDFromPath returns the DBID from a path or a DBID.
