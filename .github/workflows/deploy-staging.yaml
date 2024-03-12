@@ -1,6 +1,10 @@
-name: Release
+name: Deploy Staging Environment
 
 on:
+  pull_request:
+    types: [ opened, synchronize, reopened, ready_for_review ]
+    branches:
+      - main
   push:
     branches:
       - main
@@ -71,7 +75,7 @@ jobs:
             ${{ runner.os }}-buildx-tsn-db
 
       - name: Build & push KD image
-        id: docker_build_tsn-db
+        id: docker_build_tsn_db
         uses: docker/build-push-action@v4
         with:
           context: .
