@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_call:
   pull_request:
     types: [ opened, synchronize, reopened, ready_for_review ]
   workflow_dispatch:
@@ -49,34 +50,6 @@ jobs:
           git config --global url."https://${GH_ACCESS_TOKEN}:x-oauth-basic@github.com/truflation/".insteadOf "https://github.com/truflation/"
           task install:deps
 
-      # checks
-      - name: Check tidiness of go.mod and go.sum
-        run: |
-          ./scripts/mods/check_tidy
-
-      - name: Ensure generated protobuf Go source is up-to-date
-        run: |
-          ./scripts/proto/check_up
-
-      - name: Ensure generated swagger Go code is up-to-date
-        run: |
-          ./scripts/swagger/check_up
-
-      - name: Compile packages, apps, and specs
-        run: | # enter workspace mode to do this on one line
-          go work init && go work use . ./parse ./test ./core
-          go build -mod=readonly ./... ./parse/... ./core/... ./test/specifications/
-
-      - name: Lint
-        uses: golangci/golangci-lint-action@v4
-        with:
-          skip-pkg-cache: true
-
-      # unit test
-      - name: Run unit test
-        run: |
-          task test:unit
-
   acceptance-test:
     runs-on: ubuntu-latest
     if: ${{ !github.event.pull_request.draft }} # only run on non-draft PRs
@@ -121,34 +94,16 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: Cache Docker layers for kwild
+      - name: Cache Docker layers for TSN DB
         uses: actions/cache@v3
         with:
-          path: /tmp/.buildx-cache-kwild
-          #key: ${{ runner.os }}-buildx-kwild-${{ github.sha }}
-          key: ${{ runner.os }}-buildx-kwild
+          path: /tmp/.buildx-cache-tsn-db
+          # we don't use sha, so we can reuse between commits.
+          # docker takes care of invalidating the cache if the build context changes
+          #key: ${{ runner.os }}-buildx-tsn-db-${{ github.sha }}
+          key: ${{ runner.os }}-buildx-tsn-db
           restore-keys: |
-            ${{ runner.os }}-buildx-kwild
-
-      - name: manual git tag
-        run: |
-          version=`echo ${{ github.sha }} | cut -c 1-7`
-          echo "GIT_TAG=$version" >> $GITHUB_ENV
-        #run: echo "GIT_TAG=`git describe --match 'v[0-9]*' --dirty --always --tags | sed 's/^v//'`" >> $GITHUB_ENV
-
-      - name: manual build time
-        run: |
-          build_time=`TZ=UTC date -u --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" +"%Y-%m-%dT%H:%M:%SZ"`
-          echo "BUILD_TIME=$build_time" >> $GITHUB_ENV
-
-      - name: Build cli binaries
-        run: |
-          task build:cli
-          task build:admin
-
-      - name: Pull math extension docker image
-        run: |
-          docker pull kwilbrennan/extensions-math:multi-arch --platform linux/amd64
+            ${{ runner.os }}-buildx-tsn-db
 
       # this test have dependency on private repo, so can't be tested
 #      - name: Pull kgw repo & create vendor
@@ -176,22 +131,19 @@ jobs:
 #          cache-from: type=local,src=/tmp/.buildx-cache-kgw
 #          cache-to: type=local,dest=/tmp/.buildx-cache-kgw-new
 
-      - name: Build kwild image
-        id: docker_build_kwild
+      - name: Build image
+        id: docker_build_tsn_db
         uses: docker/build-push-action@v4
         with:
           context: .
-          load: true
           builder: ${{ steps.buildx.outputs.name }}
           build-args: |
             git_commit=${{ github.sha }}
-            version=${{ env.GIT_TAG }}
-            build_time=${{ env.BUILD_TIME }}
-          file: ./build/package/docker/kwild.dockerfile
-          push: false
-          tags: kwild:latest
-          cache-from: type=local,src=/tmp/.buildx-cache-kwild
-          cache-to: type=local,dest=/tmp/.buildx-cache-kwild-new
+            version=${{ steps.config.outputs.version }}
+            build_time=${{ github.event.release.created_at }}
+          file: ./truflation/docker/tsn.dockerfile
+          cache-from: type=local,src=/tmp/.buildx-cache-tsn-db
+          cache-to: type=local,dest=/tmp/.buildx-cache-tsn-db-new
 
       # maybe no need
       # these test have dependency on private repo, so can't be tested
@@ -214,8 +166,8 @@ jobs:
 
       - name: Move cache
         run: |
-          rm -rf /tmp/.buildx-cache-kwild
-          mv /tmp/.buildx-cache-kwild-new /tmp/.buildx-cache-kwild
+          rm -rf /tmp/.buildx-cache-tsn-db
+          mv /tmp/.buildx-cache-tsn-db-new /tmp/.buildx-cache-tsn-db
 
         # since we don't build kgw image, we don't need to move the cache
 #          rm -rf /tmp/.buildx-cache-kgw
