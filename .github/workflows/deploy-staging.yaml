@@ -7,8 +7,8 @@ on:
       - feat/deploy-action
 
 jobs:
-  build-push-image:
-    name: Build & push image
+  build-image:
+    name: Build image
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -81,9 +81,6 @@ jobs:
             version=${{ steps.config.outputs.version }}
             build_time=${{ github.event.release.created_at }}
           file: ./truflation/docker/tsn.dockerfile
-          tags: |
-            ${{ steps.login-ecr.outputs.registry }}/${{ secrets.AWS_KWILD_ECR }}:${{ steps.config.outputs.version }}
-            ${{ steps.login-ecr.outputs.registry }}/${{ secrets.AWS_KWILD_ECR }}:latest
           cache-from: type=local,src=/tmp/.buildx-cache-tsn-db
           cache-to: type=local,dest=/tmp/.buildx-cache-tsn-db-new
 
