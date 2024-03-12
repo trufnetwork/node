@@ -88,6 +88,12 @@ jobs:
         run: |
           rm -rf /tmp/.buildx-cache-tsn-db
           mv /tmp/.buildx-cache-tsn-db-new /tmp/.buildx-cache-tsn-db
+      -
+        name: Upload artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: app
+          path: /tmp/.buildx-cache-tsn-db
 
   deploy-with-cdk:
     name: Deploy with CDK
@@ -105,6 +111,12 @@ jobs:
 
       - name: Install AWS CDK
         run: npm install -g aws-cdk
+
+      - name: Download artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: app
+          path: /tmp/.buildx-cache-tsn-db
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
