@@ -100,7 +100,12 @@ jobs:
           rm -rf /tmp/.buildx-cache-tsn-db
           mv /tmp/.buildx-cache-tsn-db-new /tmp/.buildx-cache-tsn-db
 
-            - name: Install AWS CDK
+      - name: Install Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: '18'
+
+      - name: Install AWS CDK
         run: npm install -g aws-cdk
 
       - name: Smoke test cdk
