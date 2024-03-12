@@ -139,7 +139,7 @@ jobs:
       - name: Generate go vendor
         #for faster builds and private repos, need to run this after pb:compile:v1
         run: |
-          go mod vendor
+          go work vendor
 
       - name: Install AWS CDK
         run: npm install -g aws-cdk
