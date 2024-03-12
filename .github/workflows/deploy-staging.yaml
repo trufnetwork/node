@@ -34,7 +34,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.21.x'
+          go-version: '1.22.x'
           check-latest: true
           cache: true
 
@@ -52,11 +52,13 @@ jobs:
           go work use ./parse
           go work use ./test
           go mod download
-
-      - name: Generate go vendor
-        #for faster builds and private repos, need to run this after pb:compile:v1
-        run: |
+          go help work
           go work vendor
+
+#      - name: Generate go vendor
+#        #for faster builds and private repos, need to run this after pb:compile:v1
+#        run: |
+#          go work vendor
 
       - name: configure variables
         id: config
