@@ -52,7 +52,6 @@ jobs:
           go work use ./parse
           go work use ./test
           go mod download
-          go help work
           go work vendor
 
 #      - name: Generate go vendor
@@ -110,18 +109,6 @@ jobs:
       - name: Install AWS CDK
         run: npm install -g aws-cdk
 
-      - name: Smoke test cdk
-        run: |
-          cd truflation/infra
-          cdk synth
-          cd ../..
-
-      - name: Download artifact
-        uses: actions/download-artifact@v2
-        with:
-          name: app
-          path: /tmp/.buildx-cache-tsn-db
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
         with:
@@ -130,7 +117,9 @@ jobs:
           aws-region: us-east-2
 
       - name: Deploy
-        run: cdk deploy truflation/infra --require-approval never
+        run: |
+          cd truflation/infra
+          cdk deploy truflation/infra --require-approval never
         env:
           GIT_COMMIT: ${{ github.sha }}
           GIT_VERSION: ${{ steps.config.outputs.version }}
