@@ -39,6 +39,20 @@ You can start a single node network using the `kwild` binary built in the step a
 
 For more information on running nodes, and how to run a multi-node network, refer to the Kwil [documentation](<https://docs.kwil.com/docs/node/quickstart>).
 
+## Building and Using Docker Image
+
+To build a Docker image of TSN-DB with seed data, run the following command:
+
+```shell
+docker build -t tsn-db:latest . -f ./truflation/docker/tsn.dockerfile
+```
+
+To run the Docker image, use the following command:
+
+```shell
+docker run --name tsn-db -p 8080:8080 tsn-db:latest
+```
+
 ## Resetting local deployments
 
 By default, `kwild` stores all data in `~/.kwild`. To reset the data on a deployment, remove the data directory while the node is stopped:

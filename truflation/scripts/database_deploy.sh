@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 
+set -e
+
 cd "$(dirname "$0")"
 
+check_database_for_list_result=()
 function check_database_for_list {
-    expected_list=("$@")
+    expected_file_list=("$@")
     # remove path and extension, any that might be there
     # filename="${fullfile##*/}"
-    expected_list=($(for file in "${expected_list[@]}"; do filename="${file##*/}"; echo "${filename%.*}"; done))
+    expected_db_list=($(for file in "${expected_file_list[@]}"; do filename="${file##*/}"; echo "${filename%.*}"; done))
 
     # with ../../.build/kwil-cli database list --self
     # output for each is this:
@@ -17,17 +20,19 @@ function check_database_for_list {
 
     actual_list=($(../../.build/kwil-cli database list --self | grep "Name:" | awk '{print $2}'))
 
+    missing_files=()
 
-    # for each expected_list
+    # for each expected_db_list
     # check if it's in actual_list
-    for expected in "${expected_list[@]}"; do
+    for index in "${!expected_db_list[@]}"; do
+        expected=${expected_db_list[index]}
         if [[ ! " ${actual_list[@]} " =~ " ${expected} " ]]; then
-            echo "Database $expected not found"
-            exit 1
+            missing_files+=("${expected_file_list[index]}")
         fi
     done
 
-    echo "All databases found"
+    # return missing databases from function
+    check_database_for_list_result=("${missing_files[@]}")
 }
 
 # should come from --skip-drop flag
@@ -56,6 +61,8 @@ primitive_count_left=${#primitive_files_list[@]}
 composed_files_list=($(ls ./temp_composed_schemas/*.json))
 composed_count_left=${#composed_files_list[@]}
 
+max_retries=3
+retry=0
 
 # if --skip-drop is not set
 # we loop through both list and drop the db
@@ -72,38 +79,90 @@ if [ "$skip_drop" = false ]; then
     sleep 10
 fi
 
-# fore each csv file in temp_csv
-# drop the db, then run the deploy command
-for file in "${primitive_files_list[@]}"; do
-    filename=$(basename "$file")
-    filename="${filename%.*}"
-    echo "Deploying $filename"
-    ../../.build/kwil-cli database deploy -p=../base_schema/base_schema.kf --name="$filename"
 
-    primitive_count_left=$(($primitive_count_left-1))
-    echo "Done, $primitive_count_left to go"
+
+function deploy_primitives {
+  echo "Deploying primitive schemas"
+
+  # if there are no primitive schemas, return
+  if [ ${#primitive_files_list[@]} -eq 0 ]; then
+      return
+  fi
+
+  # fore each csv file in temp_csv
+  # drop the db, then run the deploy command
+  for file in "${primitive_files_list[@]}"; do
+      filename=$(basename "$file")
+      filename="${filename%.*}"
+      echo "Deploying $filename"
+      ../../.build/kwil-cli database deploy -p=../base_schema/base_schema.kf --name="$filename"
+
+      primitive_count_left=$(($primitive_count_left-1))
+      echo "Done, $primitive_count_left to go"
+  done
+}
+
+function deploy_composed {
+  # if there are no composed schemas, return
+  if [ ${#composed_files_list[@]} -eq 0 ]; then
+      return
+  fi
+  echo "Deploying composed schemas"
+  # for each file in temp_composed_schemas/*.json
+  # drop the db, then run the deploy command
+  for file in "${composed_files_list[@]}"; do
+      filename=$(basename "$file")
+      filename="${filename%.*}"
+      echo "Deploying $filename"
+      ../../.build/kwil-cli database deploy -p="$file" --type json --name "$filename"
+
+      composed_count_left=$(($composed_count_left-1))
+      echo "Done, $composed_count_left to go"
+  done
+}
+
+while [ $retry -lt $max_retries ]; do
+  deploy_primitives
+  deploy_composed
+
+  sleep 10
+
+  echo "Checking deployed databases"
+
+  check_database_for_list "${primitive_files_list[@]}"
+  primitive_missing=("${check_database_for_list_result[@]}")
+
+  check_database_for_list "${composed_files_list[@]}"
+  composed_missing=("${check_database_for_list_result[@]}")
+
+  if [ ${#primitive_missing[@]} -eq 0 ] && [ ${#composed_missing[@]} -eq 0 ]; then
+    echo "All databases deployed successfully"
+    break
+  else
+    retry=$(($retry+1))
+    echo "Some databases are missing, retrying for the $retry time"
+
+    if [ ${#primitive_missing[@]} -ne 0 ]; then
+      echo "Missing primitive databases: ${#primitive_missing[@]}"
+      primitive_files_list=("${primitive_missing[@]}")
+      primitive_count_left=${#primitive_files_list[@]}
+    fi
+
+    if [ ${#composed_missing[@]} -ne 0 ]; then
+      echo "Missing composed databases: ${#composed_missing[@]}"
+      composed_files_list=("${composed_missing[@]}")
+      composed_count_left=${#composed_files_list[@]}
+    fi
+  fi
 done
 
-echo "Done deploying primitive schemas"
+if [ $retry -eq $max_retries ]; then
+  echo "Max retries reached, some databases are still missing"
+  echo "Missing primitive databases: ${primitive_files_list[@]}"
+  echo "Missing composed databases: ${composed_files_list[@]}"
 
-echo "Deploying composed schemas"
+  exit 1
+fi
 
-# for each file in temp_composed_schemas/*.json
-# drop the db, then run the deploy command
-for file in "${composed_files_list[@]}"; do
-    filename=$(basename "$file")
-    filename="${filename%.*}"
-    echo "Deploying $filename"
-    ../../.build/kwil-cli database deploy -p="$file" --type json --name "$filename"
-
-    composed_count_left=$(($composed_count_left-1))
-    echo "Done, $composed_count_left to go"
-done
-
-sleep 10
-
-echo "Checking deployed databases"
-check_database_for_list "${primitive_files_list[@]}"
-check_database_for_list "${composed_files_list[@]}"
 
 echo "All done"

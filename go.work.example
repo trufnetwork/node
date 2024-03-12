@@ -5,6 +5,7 @@ use (
 	./core
 	./parse
 	./test
+	./truflation/infra
 )
 
 // replace github.com/kwilteam/kuneiform => ../kuneiform
