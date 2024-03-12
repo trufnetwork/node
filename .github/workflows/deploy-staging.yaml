@@ -8,7 +8,7 @@ on:
 
 jobs:
   tests:
-    uses: ./ci.yml  # don't forget to add `on: [workflow_call]` to permit it
+    uses: ./.github/workflows/ci.yaml  # don't forget to add `on: [workflow_call]` to permit it
   build-image:
     name: Build image
     runs-on: ubuntu-latest
