@@ -50,7 +50,7 @@ jobs:
       - name: Generate go vendor
         #for faster builds and private repos, need to run this after pb:compile:v1
         run: |
-          task vendor
+          go mod vendor
 
       - name: configure variables
         id: config
@@ -114,8 +114,41 @@ jobs:
         with:
           node-version: '18'
 
+      - name: Install Taskfile
+        uses: arduino/setup-task@v1
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21.x'
+          check-latest: true
+          cache: true
+
+      - name: Install dependencies
+        env:
+          GH_ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          go version
+          git config --global url."https://${GH_ACCESS_TOKEN}:x-oauth-basic@github.com/truflation/".insteadOf "https://github.com/truflation/"
+          go work init
+          go work use truflation
+          go mod download
+
+      - name: Generate go vendor
+        #for faster builds and private repos, need to run this after pb:compile:v1
+        run: |
+          go mod vendor
+
       - name: Install AWS CDK
         run: npm install -g aws-cdk
+
+      - name: Smoke test cdk
+        run: |
+          cd truflation/infra
+          cdk synth
+          cd ../..
 
       - name: Download artifact
         uses: actions/download-artifact@v2
