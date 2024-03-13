@@ -49,10 +49,6 @@ jobs:
           task install:deps
           go work init
           go work use truflation/infra
-          go work use .
-          go work use ./core
-          go work use ./parse
-          go work use ./test
           go mod download
           go work vendor
 
