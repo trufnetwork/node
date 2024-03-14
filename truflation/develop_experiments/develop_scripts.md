@@ -50,13 +50,13 @@ python ./test_samples/transform_source.py
 
 ```shell
 ../../.build/kwil-cli database drop com_truflation_us_hotel_price --sync
-../../.build/kwil-cli database deploy -p=../base_schema/base_schema.kf --sync --name=com_truflation_us_hotel_price
+../../.build/kwil-cli database deploy -p=<(exec ../scripts/use_base_schema.sh) --name=com_truflation_us_hotel_price --sync
 ../../.build/kwil-cli database batch --sync --path ./test_samples/transformed/com_truflation_us_hotel_price.csv --action add_record --name=com_truflation_us_hotel_price
 ```
 
 ```shell
 ../../.build/kwil-cli database drop com_yahoo_finance_corn_futures --sync
-../../.build/kwil-cli database deploy --sync -p=../base_schema/base_schema.kf --name=com_yahoo_finance_corn_futures --sync
+../../.build/kwil-cli database deploy --sync -p=<(exec ../scripts/use_base_schema.sh) --name=com_yahoo_finance_corn_futures --sync
 ../../.build/kwil-cli database batch --sync --path ./test_samples/transformed/com_yahoo_finance_corn_futures.csv --action add_record --name=com_yahoo_finance_corn_futures --sync
 ```
 
@@ -224,4 +224,45 @@ Expected:
 ```shell
 # wrong date_to format
 ../../.build/kwil-cli database call -a=get_index date:"2000-07-18" date_to:"2000/07/22" -n=composed
+```
+
+## Table with more allowed wallets
+
+Seed database which allows another wallet to access the data.
+
+```shell
+db_name="com_truflation_us_hotel_price_2"
+private_key="26aff20bde5606467627557793ebbb6162e9faf9f2d0830fd98a6f207dcf605d"
+address="0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf"
+
+../../.build/kwil-cli database drop $db_name --sync
+../../.build/kwil-cli database deploy -p=<(exec ../scripts/use_base_schema.sh $address) --name=$db_name --sync
+../../.build/kwil-cli database batch --sync --path ./test_samples/transformed/com_truflation_us_hotel_price.csv --action add_record --name=$db_name
+```
+
+query the database as owner
+
+```shell
+db_name="com_truflation_us_hotel_price_2"
+../../.build/kwil-cli database call -a=get_index date:"" date_to:"" -n=$db_name
+```
+
+query the database as the allowed wallet
+
+```shell
+db_name="com_truflation_us_hotel_price_2"
+private_key="26aff20bde5606467627557793ebbb6162e9faf9f2d0830fd98a6f207dcf605d"
+owner_address=$(../../.build/kwil-cli account id)
+
+../../.build/kwil-cli database call -a=get_index date:"" date_to:"" -n=$db_name --private-key=$private_key --owner $owner_address
+```
+
+query the database as a non-allowed wallet
+
+```shell
+db_name="com_truflation_us_hotel_price_2"
+private_key="0000000000000000000000000000000000000000000000000000000000000123"
+owner_address=$(../../.build/kwil-cli account id)
+
+../../.build/kwil-cli database call -a=get_index date:"" date_to:"" -n=$db_name --private-key=$private_key --owner $owner_address
 ```

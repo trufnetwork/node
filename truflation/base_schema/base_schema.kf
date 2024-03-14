@@ -4,6 +4,10 @@ use basestream {
     table_name: 'base_values_table'
 } as basestream;
 
+use whitelist {
+    whitelist_wallets: '$WHITELIST_WALLETS$'
+} as whitelist;
+
 // `base_values_table` is the main table that tracks the stream
 // it's the same structure for every database, that will receive a different name, e.g.: `com_truflation_us_hotel_price`
 table base_values_table {
@@ -25,9 +29,11 @@ action add_record ($id, $date_value, $value, $created_at) public {
 }
 
 action get_index($date, $date_to) public view {
+    whitelist.check(@caller);
     $val = basestream.get_index($date, $date_to);
 }
 
 action get_value($date, $date_to) public view {
+    whitelist.check(@caller);
     $val = basestream.get_value($date, $date_to);
 }
