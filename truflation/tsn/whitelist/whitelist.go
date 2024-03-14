@@ -8,7 +8,7 @@ import (
 
 func checkWalletFormat(wallet string) error {
 	if len(wallet) != 42 {
-		return fmt.Errorf("invalid wallet address format")
+		return fmt.Errorf("invalid wallet address length")
 	}
 	if wallet[:2] != "0x" {
 		return fmt.Errorf("invalid wallet address format")
@@ -17,7 +17,7 @@ func checkWalletFormat(wallet string) error {
 }
 
 //	metadata: {
-//	  "whitelist_wallet"?: "0x1234,0x5678,0x9abc" // comma separated list of wallet addresses
+//	  "whitelist_wallets"?: "0x1234,0x5678,0x9abc" // comma separated list of wallet addresses
 //	}
 func InitializeExtension(ctx *execution.DeploymentContext, metadata map[string]string) (execution.ExtensionNamespace, error) {
 	extension_name := "whitelist"
@@ -30,15 +30,20 @@ func InitializeExtension(ctx *execution.DeploymentContext, metadata map[string]s
 	var whitelistedWallets [][]byte
 	whitelistedWallets = append(whitelistedWallets, ownerWallet)
 
-	walletsStrFromInput := metadata["whitelist_wallet"]
+	walletsStrFromInput := metadata["whitelist_wallets"]
 	if walletsStrFromInput != "" {
 		wallets := strings.Split(walletsStrFromInput, ",")
 		for _, wallet := range wallets {
 			err := checkWalletFormat(wallet)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("invalid address -> %s: %s", wallet, err)
 			}
 			whitelistedWallets = append(whitelistedWallets, []byte(wallet))
+		}
+	} else {
+		// if the user provided a metadata, and it's not whitelist_wallets, we error out
+		if len(metadata) == 1 {
+			return nil, fmt.Errorf("metadata key %s is not supported", metadata)
 		}
 	}
 
