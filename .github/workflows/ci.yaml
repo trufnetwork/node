@@ -10,54 +10,12 @@ on:
       - main
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    if: ${{ !github.event.pull_request.draft }} # only run on non-draft PRs
-    steps:
-      # shared setup for all tests
-      - name: Checkout
-        uses: actions/checkout@v3
-        with:
-          submodules: true
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install Protoc
-        uses: arduino/setup-protoc@v2
-        with:
-          version: '23.4'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install Taskfile
-        uses: arduino/setup-task@v1
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      #ubuntu-latest has go 1.21 installed https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2204-Readme.md#go
-      #self-hosted also has go 1.21 installed
-      #the default behavior here will load pre-installed go version
-      - name: Setup Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.21.x'
-          check-latest: true
-          cache: false
-
-      - name: Install dependencies
-        env:
-          GH_ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          go version
-          git config --global url."https://${GH_ACCESS_TOKEN}:x-oauth-basic@github.com/truflation/".insteadOf "https://github.com/truflation/"
-          task install:deps
-
   acceptance-test:
     runs-on: ubuntu-latest
     if: ${{ !github.event.pull_request.draft }} # only run on non-draft PRs
     steps:
-      - name: Remove unnecessary files
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+      # This step is needed to avoid the error "No space left on device" due to limited space on the runner
+      - uses: waycarbon/github-action-container-cleanup@v1
 
       - name: Checkout
         uses: actions/checkout@v3
@@ -99,16 +57,15 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: Cache Docker layers for TSN DB
-        uses: actions/cache@v3
+      - name: Restore Docker layers
+        id: restore_cache
+        uses: actions/cache/restore@v4
         with:
           path: /tmp/.buildx-cache-tsn-db
           # we don't use sha, so we can reuse between commits.
           # docker takes care of invalidating the cache if the build context changes
           #key: ${{ runner.os }}-buildx-tsn-db-${{ github.sha }}
           key: ${{ runner.os }}-buildx-tsn-db
-          restore-keys: |
-            ${{ runner.os }}-buildx-tsn-db
 
       - name: Build image
         id: docker_build_tsn_db
@@ -126,26 +83,48 @@ jobs:
           tags: tsn-db:latest
           load: true
 
-      # Buggy: Waiting for fixes about bad error outputs, otherwise we can't debug the output
-      - name: Run tsn-db image
-        run: |
-          docker run -d -p 8080:8080 tsn-db:latest
-          task build:cli
-          sleep 90
-          for ((n=1; n<=6; n++)); do
-            output=$(.build/kwil-cli database call -a=get_index date:"2023-01-01" date_to:"2023-12-31" --kwil-provider=http://127.0.0.1:8080  -o=7e5f4552091a69125d5dfcb7b8c2659029395bdf -n=cpi)
-            if [[ $output == *"2023-12-01"* ]]; then
-              echo "Success: Command output contains expected text."
-              return
-            else
-              echo "actual output: $output"
-              echo "Attempt $n: Command output did not contain expected text."
-            fi
-            sleep 5
-          done
-          echo "Max tries reached without success."
-
       - name: Move cache
         run: |
           rm -rf /tmp/.buildx-cache-tsn-db
           mv /tmp/.buildx-cache-tsn-db-new /tmp/.buildx-cache-tsn-db
+
+      # we save already to be able to free up space
+      - name: Save Docker layers Cache
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/.buildx-cache-tsn-db
+          # we don't use sha, so we can reuse between commits.
+          # docker takes care of invalidating the cache if the build context changes
+          #key: ${{ runner.os }}-buildx-tsn-db-${{ github.sha }}
+          key: ${{ steps.restore_cache.outputs.cache-primary-key }}
+
+      - name: Free Up Space
+        run: |
+          docker system prune -f
+          rm -rf /tmp/.buildx-cache-tsn-db
+
+      - name: Run tsn-db image
+        run: |
+          task build:cli
+          docker_id=$(docker run -p 8080:8080 -d tsn-db:latest)
+
+          # wait for the server to start
+          # -f = follow logs | -m1 = only one match | -o = only matching | -P = perl regex
+          # last pipe avoid failing on broken pipes (141), preserving other error codes
+          # PS: multiline command with \ isn't working here
+          timeout 300 docker logs $docker_id -f | grep  -m1 -oP '"Health check state changed","state":"up"' || { ec=$?; [ $ec -eq 141 ] && true || (exit $ec); }
+
+          PRIVATE_KEY="0000000000000000000000000000000000000000000000000000000000000001" # any wallet, just to use it
+          PROVIDER="http://127.0.0.1:8080"
+
+          output=$(.build/kwil-cli database call -a=get_index date:"2023-01-01" date_to:"2023-12-31" --kwil-provider=$PROVIDER --private-key=$PRIVATE_KEY -o=7e5f4552091a69125d5dfcb7b8c2659029395bdf -n=cpi)
+          if [[ $output == *"2023-12-01"* ]]; then
+            echo "Success: Command output contains expected text."
+          else
+            echo "Command output did not contain expected text. Output:"
+            echo $output
+
+            echo "Server log:"
+            docker logs $docker_id
+            exit 1
+          fi
