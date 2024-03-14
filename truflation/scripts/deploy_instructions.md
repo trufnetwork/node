@@ -82,3 +82,9 @@ This will add the data to the database, from the files in `./temp_csv/`. This is
 ```shell
 ../../.build/kwil-cli database call -a=get_index date:"2023-01-01" date_to:"2023-12-31" -n=cpi
 ```
+
+Querying with an address that is not allowed
+
+```shell
+../../.build/kwil-cli database call -a=get_index date:"2023-01-01" date_to:"2023-12-31" -n=cpi --private-key="0000000000000000000000000000000000000000000000000000000000000123" --owner="$(../../.build/kwil-cli account id)"
+```
