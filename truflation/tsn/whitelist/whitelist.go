@@ -30,7 +30,7 @@ func InitializeExtension(ctx *execution.DeploymentContext, metadata map[string]s
 	var whitelistedWallets [][]byte
 	whitelistedWallets = append(whitelistedWallets, ownerWallet)
 
-	walletsStrFromInput := metadata["whitelist_wallets"]
+	walletsStrFromInput, ok := metadata["whitelist_wallets"]
 	if walletsStrFromInput != "" {
 		wallets := strings.Split(walletsStrFromInput, ",")
 		for _, wallet := range wallets {
@@ -40,15 +40,16 @@ func InitializeExtension(ctx *execution.DeploymentContext, metadata map[string]s
 			}
 			whitelistedWallets = append(whitelistedWallets, []byte(wallet))
 		}
-	} else {
-		// if the user provided a metadata, and it's not whitelist_wallets, we error out
-		if len(metadata) > 0 {
-			keys := make([]string, 0, len(metadata))
-			for k := range metadata {
-				keys = append(keys, k)
-			}
-			return nil, fmt.Errorf("metadata was provided, but none of the expected keys were found: %v", keys)
+	}
+
+	// let's prevent typos in the parameters
+	if !ok && len(metadata) > 0 {
+		// to prevent typos, we error other keys without providing "whitelist_wallets"
+		keys := make([]string, 0, len(metadata))
+		for k := range metadata {
+			keys = append(keys, k)
 		}
+		return nil, fmt.Errorf("probable typo, unknown keys used: %s", keys)
 	}
 
 	return &WhitelistExt{
