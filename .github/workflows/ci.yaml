@@ -14,8 +14,14 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ !github.event.pull_request.draft }} # only run on non-draft PRs
     steps:
-      # This step is needed to avoid the error "No space left on device" due to limited space on the runner
-      - uses: waycarbon/github-action-container-cleanup@v1
+      # Clear cache to avoid no space left on device
+      - name: Clear cache
+        if: ${{ !env.ACT }} # skip during local actions testing
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"        
 
       - name: Checkout
         uses: actions/checkout@v3
