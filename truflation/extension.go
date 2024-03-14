@@ -6,6 +6,7 @@ import (
 	"github.com/kwilteam/kwil-db/truflation/tsn/basestream"
 	"github.com/kwilteam/kwil-db/truflation/tsn/compose_streams"
 	"github.com/kwilteam/kwil-db/truflation/tsn/stream"
+	"github.com/kwilteam/kwil-db/truflation/tsn/whitelist"
 )
 
 // in order for an extension to be registered and included in the binary compilation,
@@ -32,6 +33,11 @@ func init() {
 	}
 
 	err = actions.RegisterExtension("basestream", basestream.InitializeBasestream)
+	if err != nil {
+		panic(err)
+	}
+
+	err = actions.RegisterExtension("whitelist", whitelist.InitializeExtension)
 	if err != nil {
 		panic(err)
 	}
