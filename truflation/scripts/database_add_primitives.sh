@@ -20,22 +20,27 @@ while [[ $retries -lt $max_retries ]]; do
     db_name=$(basename "$file")
     db_name="${db_name%.*}"
 
-    # if we're able to query the database already, we may skip this file
-    error_logs=$(../../.build/kwil-cli database call -a=get_index date:"" date_to:"" -n="$db_name" 2>&1 || true)
+    while true; do
+      # if we're able to query the database already, we may skip this file
+      error_logs=$(../../.build/kwil-cli database call -a=get_index date:"" date_to:"" -n="$db_name" 2>&1 || true)
+      if [[ $error_logs != *"error"* ]]; then
+        echo "Skipping file: $file"
+        break
+      fi
 
-    if [[ $error_logs != *"error"* ]]; then
-      echo "Skipping file: $file"
-      continue
-    fi
-
-
-    output=$(../../.build/kwil-cli database batch --path "$file" --action add_record --name=$db_name --values created_at:$(date +%s))
-    echo "Output: $output"
-    # if output contains error, add to pending_files
-    if [[ $output == "error"* ]]; then
-      echo "Error processing file: $file"
-      pending_files+=("$file")
-    fi
+      output=$(../../.build/kwil-cli database batch --path "$file" --action add_record --name="$db_name" --values created_at:$(date +%s) 2>&1 || true)
+      echo "$output"
+      if [[ $output =~ "invalid nonce" ]]; then
+        echo "Error nonce, retrying file immediately with expected nonce: $file"
+        expected_nonce=$(echo "$output" | grep -oP 'expected \K[0-9]+')
+        ../../.build/kwil-cli database batch --path "$file" --action add_record --name=$db_name --values created_at:$(date +%s) --nonce "$expected_nonce"
+      elif [[ $output =~ "error" ]]; then
+        echo "Error deploying file: $file"
+        pending_files+=("$file")
+      else
+        break
+      fi
+    done
 
     echo "Done processing file: $file."
   done

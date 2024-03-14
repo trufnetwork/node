@@ -73,7 +73,19 @@ if [ "$skip_drop" = false ]; then
         filename=$(basename "$file")
         filename="${filename%.*}"
         echo "Dropping $filename"
-        ../../.build/kwil-cli database drop "$filename"
+        while true; do
+            output=$(../../.build/kwil-cli database drop "$filename" 2>&1 || true)
+            echo $output
+            if [[ $output =~ "invalid nonce" ]]; then
+              echo "Error nonce, retrying file immediately: $file"
+              expected_nonce=$(echo $output | grep -oP 'expected \K[0-9]+')
+              ../../.build/kwil-cli database drop "$filename" --nonce $expected_nonce
+            elif [[ $output =~ "error" ]]; then
+              echo "Error dropping file: $file"
+            else
+                break
+            fi
+        done
     done
 
     sleep 10
@@ -95,7 +107,19 @@ function deploy_primitives {
       filename=$(basename "$file")
       filename="${filename%.*}"
       echo "Deploying $filename"
-      ../../.build/kwil-cli database deploy -p=../base_schema/base_schema.kf --name="$filename"
+      while true; do
+          output=$(../../.build/kwil-cli database deploy -p=../base_schema/base_schema.kf --name="$filename" 2>&1 || true)
+          echo $output
+          if [[ $output =~ "invalid nonce" ]]; then
+            echo "Error nonce, retrying file immediately: $file"
+            expected_nonce=$(echo $output | grep -oP 'expected \K[0-9]+')
+            ../../.build/kwil-cli database deploy -p=../base_schema/base_schema.kf --name="$filename" --nonce $expected_nonce
+          elif [[ $output =~ "error" ]]; then
+            echo "Error deploying file: $file"
+          else
+              break
+          fi
+      done
 
       primitive_count_left=$(($primitive_count_left-1))
       echo "Done, $primitive_count_left to go"
@@ -114,7 +138,19 @@ function deploy_composed {
       filename=$(basename "$file")
       filename="${filename%.*}"
       echo "Deploying $filename"
-      ../../.build/kwil-cli database deploy -p="$file" --type json --name "$filename"
+      while true; do
+          output=$(../../.build/kwil-cli database deploy -p="$file" --type json --name "$filename" 2>&1 || true)
+          echo $output
+          if [[ $output =~ "invalid nonce" ]]; then
+            echo "Error nonce, retrying file immediately: $file"
+            expected_nonce=$(echo $output | grep -oP 'expected \K[0-9]+')
+            ../../.build/kwil-cli database deploy -p="$file" --type json --name "$filename" --nonce $expected_nonce
+          elif [[ $output =~ "error" ]]; then
+            echo "Error deploying file: $file"
+          else
+              break
+          fi
+      done
 
       composed_count_left=$(($composed_count_left-1))
       echo "Done, $composed_count_left to go"
