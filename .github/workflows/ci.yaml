@@ -55,6 +55,11 @@ jobs:
           task install:deps
           go mod download
 
+      - name: Lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          skip-pkg-cache: true
+
       - name: Run Go Tests
         run: |
           task test:unit
