@@ -1,6 +1,7 @@
 package whitelist
 
 import (
+	"encoding/hex"
 	"fmt"
 	"github.com/kwilteam/kwil-db/internal/engine/execution"
 	"strings"
@@ -11,7 +12,7 @@ func checkWalletFormat(wallet string) error {
 		return fmt.Errorf("invalid wallet address length")
 	}
 	if wallet[:2] != "0x" {
-		return fmt.Errorf("invalid wallet address format")
+		return fmt.Errorf("address should start with 0x")
 	}
 	return nil
 }
@@ -25,9 +26,12 @@ func InitializeExtension(ctx *execution.DeploymentContext, metadata map[string]s
 		return nil, fmt.Errorf("extension %s has too many arguments used", extension_name)
 	}
 
-	ownerWallet := ctx.Schema.Owner // type: []byte
+	ownerWalletByte := ctx.Schema.Owner // type: []byte
+	// []byte to hex string
+	ownerWallet := "0x" + hex.EncodeToString(ownerWalletByte)
 	// array type
-	var whitelistedWallets [][]byte
+	var whitelistedWallets []string
+
 	whitelistedWallets = append(whitelistedWallets, ownerWallet)
 
 	walletsStrFromInput, ok := metadata["whitelist_wallets"]
@@ -38,7 +42,7 @@ func InitializeExtension(ctx *execution.DeploymentContext, metadata map[string]s
 			if err != nil {
 				return nil, fmt.Errorf("invalid address -> %s: %s", wallet, err)
 			}
-			whitelistedWallets = append(whitelistedWallets, []byte(wallet))
+			whitelistedWallets = append(whitelistedWallets, wallet)
 		}
 	}
 
@@ -52,6 +56,16 @@ func InitializeExtension(ctx *execution.DeploymentContext, metadata map[string]s
 		return nil, fmt.Errorf("probable typo, unknown keys used: %s", keys)
 	}
 
+	// make all wallets unique, and lowercase
+	uniqueWallets := make(map[string]bool)
+	for _, wallet := range whitelistedWallets {
+		uniqueWallets[strings.ToLower(wallet)] = true
+	}
+	whitelistedWallets = make([]string, 0, len(uniqueWallets))
+	for wallet := range uniqueWallets {
+		whitelistedWallets = append(whitelistedWallets, wallet)
+	}
+
 	return &WhitelistExt{
 		whitelistedWallets: whitelistedWallets,
 	}, nil
@@ -60,7 +74,7 @@ func InitializeExtension(ctx *execution.DeploymentContext, metadata map[string]s
 var _ = execution.ExtensionInitializer(InitializeExtension)
 
 type WhitelistExt struct {
-	whitelistedWallets [][]byte
+	whitelistedWallets []string
 }
 
 func (w *WhitelistExt) Call(scoper *execution.ProcedureContext, method string, inputs []interface{}) ([]interface{}, error) {
@@ -79,12 +93,14 @@ func (w *WhitelistExt) check(inputs []interface{}) ([]interface{}, error) {
 	}
 
 	wallet, ok := inputs[0].(string)
+	// to lower case
+	wallet = strings.ToLower(wallet)
 	if !ok {
 		return nil, fmt.Errorf("expected string, got %T", inputs[0])
 	}
 
 	for _, wl := range w.whitelistedWallets {
-		if string(wl) == wallet {
+		if wl == wallet {
 			return []interface{}{true}, nil
 		}
 	}
