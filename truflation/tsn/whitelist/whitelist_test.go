@@ -114,42 +114,36 @@ func TestInitializeExtension(t *testing.T) {
 	tests := []struct {
 		name            string
 		metadata        map[string]string
-		wallets         string
 		expectError     bool
 		expectedWallets []string
 	}{
 		{
-			"Empty metadata and wallet",
+			"Empty metadata",
 			make(map[string]string),
-			"",
 			false,
 			[]string{ownerAddress},
 		},
 		{
 			"Too much arguments",
-			map[string]string{"whitelist_wallet": "wallet1,wallet2", "whitelist_wallet2": "wallet3,wallet4"},
-			"",
+			map[string]string{"whitelist_wallets": "wallet1,wallet2", "whitelist_wallet2": "wallet3,wallet4"},
 			true,
 			nil,
 		},
 		{
-			"Wallet format not correct",
-			make(map[string]string),
-			invalidAddress,
-			true,
-			nil,
+			name:            "Wallet format not correct",
+			metadata:        map[string]string{"whitelist_wallets": "wallet1,wallet2," + invalidAddress},
+			expectError:     true,
+			expectedWallets: nil,
 		},
 		{
 			"Valid metadata and wallet",
-			make(map[string]string),
-			validAddress,
+			map[string]string{"whitelist_wallets": validAddress},
 			false,
 			[]string{ownerAddress, validAddress},
 		},
 		{
 			"Valid metadata and multiple wallets",
-			make(map[string]string),
-			validAddress + "," + validAddress2,
+			map[string]string{"whitelist_wallets": validAddress + "," + validAddress2},
 			false,
 			[]string{ownerAddress, validAddress, validAddress2},
 		},
@@ -157,7 +151,6 @@ func TestInitializeExtension(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.metadata["whitelist_wallet"] = tt.wallets
 			ext, err := InitializeExtension(ctx, tt.metadata)
 			if (err != nil) != tt.expectError {
 				t.Fatalf("InitializeExtension() error = %v, expectError %v", err, tt.expectError)

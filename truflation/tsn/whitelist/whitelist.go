@@ -42,8 +42,12 @@ func InitializeExtension(ctx *execution.DeploymentContext, metadata map[string]s
 		}
 	} else {
 		// if the user provided a metadata, and it's not whitelist_wallets, we error out
-		if len(metadata) == 1 {
-			return nil, fmt.Errorf("metadata key %s is not supported", metadata)
+		if len(metadata) > 0 {
+			keys := make([]string, 0, len(metadata))
+			for k := range metadata {
+				keys = append(keys, k)
+			}
+			return nil, fmt.Errorf("metadata was provided, but none of the expected keys were found: %v", keys)
 		}
 	}
 
