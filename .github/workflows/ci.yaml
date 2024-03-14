@@ -21,7 +21,7 @@ jobs:
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /opt/ghc
           sudo rm -rf "/usr/local/share/boost"
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY"        
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
 
       - name: Checkout
         uses: actions/checkout@v3
@@ -54,6 +54,10 @@ jobs:
           git config --global url."https://${GH_ACCESS_TOKEN}:x-oauth-basic@github.com/truflation/".insteadOf "https://github.com/truflation/"
           task install:deps
           go mod download
+
+      - name: Run Go Tests
+        run: |
+          task test:unit
 
       - name: Generate go vendor
         #for faster builds and private repos, need to run this after pb:compile:v1
