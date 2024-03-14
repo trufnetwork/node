@@ -107,13 +107,15 @@ function deploy_primitives {
       filename=$(basename "$file")
       filename="${filename%.*}"
       echo "Deploying $filename"
+      # we define here so we avoid running the command many times. One schema fits all
+      transformed_base_schema=$(./use_base_schema.sh)
       while true; do
-          output=$(../../.build/kwil-cli database deploy -p=<(exec ./use_base_schema.sh) --name="$filename" 2>&1 || true)
+          output=$(../../.build/kwil-cli database deploy -p=<(echo $transformed_base_schema) --name="$filename" 2>&1 || true)
           echo $output
           if [[ $output =~ "invalid nonce" ]]; then
             echo "Error nonce, retrying file immediately: $file"
             expected_nonce=$(echo $output | grep -oP 'expected \K[0-9]+')
-            ../../.build/kwil-cli database deploy -p=<(exec ./use_base_schema.sh) --name="$filename" --nonce $expected_nonce
+            ../../.build/kwil-cli database deploy -p=<(echo $transformed_base_schema) --name="$filename" --nonce $expected_nonce
           elif [[ $output =~ "error" ]]; then
             echo "Error deploying file: $file"
           else
