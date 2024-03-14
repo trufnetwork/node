@@ -95,7 +95,11 @@ function deploy_primitives {
       filename=$(basename "$file")
       filename="${filename%.*}"
       echo "Deploying $filename"
-      ../../.build/kwil-cli database deploy -p=../base_schema/base_schema.kf --name="$filename"
+
+      # ../../.build/kwil-cli database deploy -p=../base_schema/base_schema.kf --name="$filename"
+      ../../.build/kwil-cli database deploy -p=<(exec ./use_base_schema.sh) --name="$filename"
+
+
 
       primitive_count_left=$(($primitive_count_left-1))
       echo "Done, $primitive_count_left to go"
