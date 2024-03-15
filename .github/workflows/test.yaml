@@ -2,6 +2,9 @@ name: GH Action Test
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - "feat/scripts/whitelist-parameters"
 
 jobs:
   test:
