@@ -7,14 +7,16 @@ cd "$(dirname "$0")"
 # on error, exit
 set -e
 
+SUCCESS=0
+FAILURE=1
+
 function got_generic_error() {
-  # "error" "fail" "invalid"
   echo "$1" | grep -i -E "error|fail|invalid" &> /dev/null
   if [[ $? -eq 0 ]]; then
-    return 0
+    return $SUCCESS # found an error
   fi
 
-  return 0
+  return $FAILURE
 }
 
 function expect_error() {
@@ -22,24 +24,25 @@ function expect_error() {
 
   if got_generic_error "$1"; then
     echo -e "✅ Expected error found in output\n"
-    return 0
+    return $SUCCESS
   fi
 
   echo -e "❌ Expected error not found in output\n"
-  exit 1
+  return $FAILURE
 }
 
 function expect_success() {
   echo -e "Expecting success in output: \n$1\n"
 
-  if got_generic_error "$1"; then
+  if ! got_generic_error "$1"; then
     echo -e "✅ Success found in output\n"
-    return 0
+    return $SUCCESS
   fi
 
-  echo -e "❌ Success not found in output\n"
-  exit 1
+  echo -e "❌ Success not found in output (error detected)\n"
+  return $FAILURE
 }
+
 
 # it's address is 0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf
 allowed_private_key="26aff20bde5606467627557793ebbb6162e9faf9f2d0830fd98a6f207dcf605d"
