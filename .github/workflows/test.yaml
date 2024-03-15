@@ -1,0 +1,15 @@
+name: GH Action Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test grep
+        run: |
+          content="failed to deploy database: err code = 4, msg = invalid nonce for account 7e5f4552091a69125d5dfcb7b8c2659029395bdf: got 147, expected 193 TxHash: 7c59b4f5a8112439b846cef9037342d39b552d72f52cd609644e4b1de6e5ea61 invalid nonce"
+          echo $content | grep -oP 'nonce for account \K[0-9a-fA-F]+'
+          echo "OK"
