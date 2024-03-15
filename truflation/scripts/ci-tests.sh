@@ -41,6 +41,7 @@ function expect_success() {
   exit 1
 }
 
+# it's address is 0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf
 allowed_private_key="26aff20bde5606467627557793ebbb6162e9faf9f2d0830fd98a6f207dcf605d"
 not_allowed_private_key="26aff20bde5606467627557793ebbb6162e9faf9f2d0830fd98a6f207dcf605e"
 # from the docker image
