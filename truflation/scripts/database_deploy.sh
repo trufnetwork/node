@@ -91,9 +91,11 @@ if [ "$skip_drop" = false ]; then
     sleep 10
 fi
 
-
+# This controls which wallets have access to the deployed databases
+allowed_wallets=$WHITELIST_WALLETS
+echo "Using allowed wallets: $allowed_wallets"
 # we define here so we avoid running the command many times. One schema fits all
-transformed_base_schema=$(exec ./use_base_schema.sh)
+transformed_base_schema=$(exec ./use_base_schema.sh "$allowed_wallets")
 
 function deploy_primitives {
   echo "Deploying primitive schemas"
