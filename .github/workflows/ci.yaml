@@ -92,6 +92,8 @@ jobs:
             git_commit=${{ github.sha }}
             version=${{ steps.config.outputs.version }}
             build_time=${{ github.event.release.created_at }}
+            # hardcoded for testing reasons
+            whitelist_wallets="0x26aff20bde5606467627557793ebbb6162e9faf9f2d0830fd98a6f207dcf605d"
           file: ./truflation/docker/tsn.dockerfile
           cache-from: type=local,src=/tmp/.buildx-cache-tsn-db
           cache-to: type=local,dest=/tmp/.buildx-cache-tsn-db-new

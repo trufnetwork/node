@@ -107,6 +107,7 @@ jobs:
           GIT_COMMIT: ${{ github.sha }}
           GIT_VERSION: ${{ steps.config.outputs.version }}
           BUILD_TIME: ${{ github.event.release.created_at }}
+          WHITELIST_WALLETS: ${{ vars.whitelist_wallets }}
 
       - name: Move cache
         run: |

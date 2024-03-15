@@ -62,6 +62,11 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 		buildArgs["build_time"] = jsii.String(os.Getenv("BUILD_TIME"))
 	}
 
+	// whitelist_wallets will be added only if it's available
+	if len(os.Getenv("WHITELIST_WALLETS")) > 0 {
+		buildArgs["whitelist_wallets"] = jsii.String(os.Getenv("WHITELIST_WALLETS"))
+	}
+
 	imageAsset := awsecrassets.NewDockerImageAsset(stack, jsii.String("DockerImageAsset"), &awsecrassets.DockerImageAssetProps{
 		AssetName: nil,
 		BuildArgs: &buildArgs,
