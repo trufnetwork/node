@@ -129,17 +129,4 @@ jobs:
           # PS: multiline command with \ isn't working here
           timeout 300 docker logs $docker_id -f | grep  -m1 -oP '"Health check state changed","state":"up"' || { ec=$?; [ $ec -eq 141 ] && true || (exit $ec); }
 
-          PRIVATE_KEY="0000000000000000000000000000000000000000000000000000000000000001" # any wallet, just to use it
-          PROVIDER="http://127.0.0.1:8080"
-
-          output=$(.build/kwil-cli database call -a=get_index date:"2023-01-01" date_to:"2023-12-31" --kwil-provider=$PROVIDER --private-key=$PRIVATE_KEY -o=7e5f4552091a69125d5dfcb7b8c2659029395bdf -n=cpi)
-          if [[ $output == *"2023-12-01"* ]]; then
-            echo "Success: Command output contains expected text."
-          else
-            echo "Command output did not contain expected text. Output:"
-            echo $output
-
-            echo "Server log:"
-            docker logs $docker_id
-            exit 1
-          fi
+          ./truflation/scripts/ci-test.sh || (echo "Command failed, printing logs:" && docker logs $docker_id)
