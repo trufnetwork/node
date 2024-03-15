@@ -93,7 +93,7 @@ jobs:
             version=${{ steps.config.outputs.version }}
             build_time=${{ github.event.release.created_at }}
             # hardcoded for testing reasons
-            whitelist_wallets="0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf"
+            whitelist_wallets=0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf
           file: ./truflation/docker/tsn.dockerfile
           cache-from: type=local,src=/tmp/.buildx-cache-tsn-db
           cache-to: type=local,dest=/tmp/.buildx-cache-tsn-db-new
