@@ -131,4 +131,4 @@ jobs:
           # PS: multiline command with \ isn't working here
           timeout 300 docker logs $docker_id -f | grep  -m1 -oP '"Health check state changed","state":"up"' || { ec=$?; [ $ec -eq 141 ] && true || (exit $ec); }
 
-          ./truflation/scripts/ci-test.sh || (echo "Command failed, printing logs:" && docker logs $docker_id)
+          ./truflation/scripts/ci-tests.sh || (echo "Command failed, printing logs:" && docker logs $docker_id && exit 1)
