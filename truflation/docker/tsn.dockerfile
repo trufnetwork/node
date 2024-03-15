@@ -2,6 +2,8 @@ FROM golang:alpine AS build
 
 # required for scripts
 RUN apk add --no-cache bash uuidgen python3~3.11 py3-pip~23 py3-pandas~2
+# required for -P option, otherwise some scripts may fail
+RUN apk add --upgrade grep
 
 ARG version
 ARG build_time
