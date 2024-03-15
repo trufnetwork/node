@@ -2,10 +2,11 @@ package whitelist
 
 import (
 	"encoding/hex"
-	"github.com/kwilteam/kwil-db/internal/engine/execution"
-	"github.com/kwilteam/kwil-db/internal/engine/types"
 	"reflect"
 	"testing"
+
+	"github.com/kwilteam/kwil-db/internal/engine/execution"
+	"github.com/kwilteam/kwil-db/internal/engine/types"
 )
 
 func TestWhitelistExt_check(t *testing.T) {
