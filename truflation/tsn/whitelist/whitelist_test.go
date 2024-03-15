@@ -3,6 +3,7 @@ package whitelist
 import (
 	"encoding/hex"
 	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/kwilteam/kwil-db/internal/engine/execution"
@@ -165,6 +166,10 @@ func TestInitializeExtension(t *testing.T) {
 
 			if err == nil {
 				actualWallets := ext.(*WhitelistExt).whitelistedWallets
+
+				// order is not important
+				sort.Strings(actualWallets)
+				sort.Strings(tt.expectedWallets)
 
 				if !reflect.DeepEqual(actualWallets, tt.expectedWallets) {
 					t.Errorf("Expected wallets %v, but got %v", tt.expectedWallets, actualWallets)
