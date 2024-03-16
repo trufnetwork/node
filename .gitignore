@@ -2,7 +2,8 @@
 .build
 .env
 
-scripts/secret_db_credentials.json
 scripts/temp_csv
+scripts/composed_streams.csv
 scripts/temp_composed_schemas
+scripts/secret_db_credentials.json
 scripts/produce_source_maps/all_tables.csv

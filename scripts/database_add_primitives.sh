@@ -22,13 +22,13 @@ while [[ $retries -lt $max_retries ]]; do
 
     while true; do
       # if we're able to query the database already, we may skip this file
-      error_logs=$(../../.build/kwil-cli database call -a=get_index date:"" date_to:"" -n="$db_name" 2>&1 || true)
+      error_logs=$(./../.build/kwil-cli database call -a=get_index date:"" date_to:"" -n="$db_name" 2>&1 || true)
       if [[ $error_logs != *"error"* ]]; then
         echo "Skipping file: $file"
         break
       fi
 
-      output=$(../../.build/kwil-cli database batch --path "$file" --action add_record --name="$db_name" --values created_at:$(date +%s) 2>&1 || true)
+      output=$(./../.build/kwil-cli database batch --path "$file" --action add_record --name="$db_name" --values created_at:$(date +%s) 2>&1 || true)
       echo "$output"
       if [[ $output =~ "invalid nonce" ]]; then
         echo "Error nonce, retrying file immediately with expected nonce: $file"
