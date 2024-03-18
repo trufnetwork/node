@@ -2,8 +2,8 @@ package whitelist
 
 import (
 	"encoding/hex"
-	"github.com/kwilteam/kwil-db/internal/engine/execution"
-	"github.com/kwilteam/kwil-db/internal/engine/types"
+	"github.com/kwilteam/kwil-db/common"
+	"github.com/kwilteam/kwil-db/extensions/precompiles"
 	"reflect"
 	"sort"
 	"testing"
@@ -116,7 +116,7 @@ func TestInitializeExtension(t *testing.T) {
 	}
 
 	invalidAddress := "notgood"
-	var ctx = &execution.DeploymentContext{Schema: &types.Schema{Owner: byteOwner}}
+	var ctx = &precompiles.DeploymentContext{Schema: &common.Schema{Owner: byteOwner}}
 
 	tests := []struct {
 		name            string
@@ -158,7 +158,7 @@ func TestInitializeExtension(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ext, err := InitializeExtension(ctx, tt.metadata)
+			ext, err := InitializeExtension(ctx, nil, tt.metadata)
 			if (err != nil) != tt.expectError {
 				t.Fatalf("InitializeExtension() error = %v, expectError %v", err, tt.expectError)
 			}

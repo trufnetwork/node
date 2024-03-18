@@ -1,0 +1,4 @@
+run:
+  skip-files:
+    - deployments/infra/cdk_main.go
+      # temporary, until cdk is ready, then we can remove this line and the file if default options are good

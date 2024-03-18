@@ -51,7 +51,7 @@ For more information on running nodes, and how to run a multi-node network, refe
 To build a Docker image of TSN-DB with seed data, run the following command:
 
 ```shell
-docker build -t tsn-db:latest . -f ./truflation/docker/tsn.dockerfile
+docker build -t tsn-db:latest . -f ./deployments/Dockerfile
 ```
 
 To run the Docker image, use the following command:

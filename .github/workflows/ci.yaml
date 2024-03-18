@@ -8,128 +8,98 @@ on:
   push:
     branches:
       - main
+      - refactor/upgrade-zero-seven
 
 jobs:
   acceptance-test:
     runs-on: ubuntu-latest
-    if: ${{ !github.event.pull_request.draft }} # only run on non-draft PRs
+    if: ${{ !github.event.pull_request.draft }}
     steps:
-      # Clear cache to avoid no space left on device
       - name: Clear cache
         if: ${{ !env.ACT }} # skip during local actions testing
         run: |
-          echo "hello"
-#          sudo rm -rf /usr/share/dotnet
-#          sudo rm -rf /opt/ghc
-#          sudo rm -rf "/usr/local/share/boost"
-#          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
-#
-#      - name: Checkout
-#        uses: actions/checkout@v3
-#        with:
-#          submodules: true
-#          token: ${{ secrets.GITHUB_TOKEN }}
-#
-#      - name: Install Protoc
-#        uses: arduino/setup-protoc@v2
-#        with:
-#          version: '23.4'
-#          repo-token: ${{ secrets.GITHUB_TOKEN }}
-#
-#      - name: Install Taskfile
-#        uses: arduino/setup-task@v1
-#        with:
-#          repo-token: ${{ secrets.GITHUB_TOKEN }}
-#
-#      - name: Setup Go
-#        uses: actions/setup-go@v4
-#        with:
-#          go-version: '1.21'
-#          check-latest: true
-#
-#      - name: Install dependencies
-#        env:
-#          GH_ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-#        run: |
-#          go version
-#          git config --global url."https://${GH_ACCESS_TOKEN}:x-oauth-basic@github.com/truflation/".insteadOf "https://github.com/truflation/"
-#          task install:deps
-#          go mod download
-#
-#      - name: Lint
-#        uses: golangci/golangci-lint-action@v4
-#        with:
-#          skip-pkg-cache: true
-#
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+
+      - uses: actions/checkout@v4
+
+      - name: Install Taskfile
+        uses: arduino/setup-task@v2
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          args: --timeout=30m --config=.golangci.yml --issues-exit-code=0
+          skip-cache: true
+
+      # TODO: Test needs to be fixed first on issue 120 and 129
 #      - name: Run Go Tests
 #        run: |
 #          task test:unit
-#
-#      - name: Generate go vendor
-#        #for faster builds and private repos, need to run this after pb:compile:v1
-#        run: |
-#          task vendor
-#
-#      - name: Set up Docker Buildx
-#        uses: docker/setup-buildx-action@v2
-#
-#      - name: Restore Docker layers
-#        id: restore_cache
-#        uses: actions/cache/restore@v4
-#        with:
-#          path: /tmp/.buildx-cache-tsn-db
-#          # we don't use sha, so we can reuse between commits.
-#          # docker takes care of invalidating the cache if the build context changes
-#          #key: ${{ runner.os }}-buildx-tsn-db-${{ github.sha }}
-#          key: ${{ runner.os }}-buildx-tsn-db
-#
-#      - name: Build image
-#        id: docker_build_tsn_db
-#        uses: docker/build-push-action@v4
-#        with:
-#          context: .
-#          builder: ${{ steps.buildx.outputs.name }}
-#          build-args: |
-#            git_commit=${{ github.sha }}
-#            version=${{ steps.config.outputs.version }}
-#            build_time=${{ github.event.release.created_at }}
-#            # hardcoded for testing reasons
-#            whitelist_wallets=0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf
-#          file: ./truflation/docker/tsn.dockerfile
-#          cache-from: type=local,src=/tmp/.buildx-cache-tsn-db
-#          cache-to: type=local,dest=/tmp/.buildx-cache-tsn-db-new
-#          tags: tsn-db:latest
-#          load: true
-#
-#      - name: Move cache
-#        run: |
-#          rm -rf /tmp/.buildx-cache-tsn-db
-#          mv /tmp/.buildx-cache-tsn-db-new /tmp/.buildx-cache-tsn-db
-#
-#      # we save already to be able to free up space
-#      - name: Save Docker layers Cache
-#        uses: actions/cache/save@v4
-#        with:
-#          path: /tmp/.buildx-cache-tsn-db
-#          # we don't use sha, so we can reuse between commits.
-#          # docker takes care of invalidating the cache if the build context changes
-#          #key: ${{ runner.os }}-buildx-tsn-db-${{ github.sha }}
-#          key: ${{ steps.restore_cache.outputs.cache-primary-key }}
-#
-#      - name: Free Up Space
-#        run: |
-#          docker system prune -f
-#          rm -rf /tmp/.buildx-cache-tsn-db
-#
-#      - name: Run tsn-db image
-#        run: |
-#          task build:cli
-#          docker_id=$(docker run -p 8080:8080 -d tsn-db:latest)
-#
-#          # wait for the server to start
-#          # -f = follow logs | -m1 = only one match | -o = only matching | -P = perl regex
-#          # last pipe avoid failing on broken pipes (141), preserving other error codes
-#          # PS: multiline command with \ isn't working here
-#          timeout 300 docker logs $docker_id -f | grep  -m1 -oP '"Health check state changed","state":"up"' || { ec=$?; [ $ec -eq 141 ] && true || (exit $ec); }
-#
-#                    ./truflation/scripts/ci-tests.sh || (echo "Command failed, printing logs:" && docker logs $docker_id && exit 1)
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Restore Docker layers
+        id: restore_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/.buildx-cache-tsn-db
+          key: ${{ runner.os }}-buildx-tsn-db
+
+      - name: Build image
+        id: docker_build_tsn_db
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          builder: ${{ steps.buildx.outputs.name }}
+          build-args: |
+            git_commit=${{ github.sha }}
+            version=${{ steps.config.outputs.version }}
+            build_time=${{ github.event.release.created_at }}
+            # hardcoded for testing reasons
+            whitelist_wallets=0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf
+          file: ./deployments/Dockerfile
+          cache-from: type=local,src=/tmp/.buildx-cache-tsn-db
+          cache-to: type=local,dest=/tmp/.buildx-cache-tsn-db-new
+          tags: tsn-db:latest
+          load: true
+
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache-tsn-db
+          mv /tmp/.buildx-cache-tsn-db-new /tmp/.buildx-cache-tsn-db
+
+      # we save already to be able to free up space
+      - name: Save Docker layers Cache
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/.buildx-cache-tsn-db
+          key: ${{ steps.restore_cache.outputs.cache-primary-key }}
+
+      - name: Free Up Space
+        run: |
+          docker system prune -f
+          rm -rf /tmp/.buildx-cache-tsn-db
+
+      - name: Run tsn-db image
+        run: |
+          task kwil-cli
+          docker_id=$(docker run -p 8080:8080 -d tsn-db:latest)
+          postgres_id=$(docker run -d -p 5432:5432 --name kwil-postgres -e "POSTGRES_HOST_AUTH_METHOD=trust" kwildb/postgres:latest)
+
+          # wait for the server to start
+          # -f = follow logs | -m1 = only one match | -o = only matching | -P = perl regex
+          # last pipe avoid failing on broken pipes (141), preserving other error codes
+          # PS: multiline command with \ isn't working here
+
+          timeout 300 docker logs postgres_id -f | grep  -m1 -oP '"database system is ready to accept connections"' || { ec=$?; [ $ec -eq 141 ] && true || (exit $ec); }        
+          timeout 300 docker logs $docker_id -f | grep  -m1 -oP '"Health check state changed","state":"up"' || { ec=$?; [ $ec -eq 141 ] && true || (exit $ec); }
+          ./scripts/ci-tests.sh || (echo "Command failed, printing logs:" && docker logs $docker_id && exit 1)

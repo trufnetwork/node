@@ -1,11 +1,11 @@
 package utils
 
 import (
-	"github.com/kwilteam/kwil-db/common"
-	"github.com/kwilteam/kwil-db/extensions/precompiles"
 	"testing"
 
+	"github.com/kwilteam/kwil-db/common"
 	"github.com/kwilteam/kwil-db/core/utils"
+	"github.com/kwilteam/kwil-db/extensions/precompiles"
 )
 
 func TestGetDBIDFromPath(t *testing.T) {

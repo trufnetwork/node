@@ -9,6 +9,7 @@ jobs:
 #  tests:
 #    uses: ./.github/workflows/ci.yaml  # don't forget to add `on: [workflow_call]` to permit it
   build-image:
+    if: ${{ !env.ACT }} # skip during local actions testing
     environment: production
     name: Build image
     runs-on: ubuntu-latest

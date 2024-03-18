@@ -53,3 +53,9 @@ tasks:
     desc: Seed the database
     cmds:
       - bash ./scripts/setup.sh
+
+# TODO: Test needs to be fixed first on issue 120 and 129
+#  test:unit:
+#    desc: Run unit tests
+#    cmds:
+#      - go test ./...
