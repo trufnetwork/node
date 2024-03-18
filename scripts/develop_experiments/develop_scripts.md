@@ -7,19 +7,25 @@ This file aims at providing a quick reference for the most common tasks during t
 Run it when you make changes to the source code.
 
 ```shell
-cd ../../ && task build:kwild;
+task build;
+```
+
+## Start Postgres
+
+```shell
+task postgres
 ```
 
 If you need to have a better time debugging after building, run this to tell compiler to preserve variables while debugging.
 
 ```shell
-cd ../../ && GO_GCFLAGS="all=-N -l" task build:kwild;
+task build:debug;
 ```
 
 ## Run Kwil Node
 
 ```shell
-../../.build/kwild --autogen
+task kwild
 ```
 
 or debugging with dlv
@@ -38,15 +44,15 @@ rm -r ~/.kwild
 
 
 ```shell
-../../.build/kwil-cli database drop stream_b --sync
-../../.build/kwil-cli database deploy -p=<(exec ../scripts/use_base_schema.sh) --name=stream_b --sync
-../../.build/kwil-cli database batch --sync --path ./test_samples/stream_b.csv --action add_record --name=stream_b
+../../.build/kwil-cli database drop stream_a --sync
+../../.build/kwil-cli database deploy --sync -p=<(exec ../use_base_schema.sh) --name=stream_a --sync
+../../.build/kwil-cli database batch --sync --path ./test_samples/stream_a.csv --action add_record --name=stream_a --sync
 ```
 
 ```shell
-../../.build/kwil-cli database drop stream_a --sync
-../../.build/kwil-cli database deploy --sync -p=<(exec ../scripts/use_base_schema.sh) --name=stream_a --sync
-../../.build/kwil-cli database batch --sync --path ./test_samples/stream_a.csv --action add_record --name=stream_a --sync
+../../.build/kwil-cli database drop stream_b --sync
+../../.build/kwil-cli database deploy -p=<(exec ../use_base_schema.sh) --name=stream_b --sync
+../../.build/kwil-cli database batch --sync --path ./test_samples/stream_b.csv --action add_record --name=stream_b
 ```
 
 ## List Kwil Databases
@@ -61,7 +67,7 @@ Run if you need to ensure that the database is deployed.
 
 ```shell
 # query latest
-../../.build/kwil-cli database call -a=get_index date:"" date_to:"" -n=stream_a
+../../.build/kwil-cli database call -a=get_index date:"" date_to:"" -n=stream_b
 ```
 
 Expected:
@@ -73,7 +79,7 @@ Expected:
 Query after latest:
 
 ```shell
-../../.build/kwil-cli database call -a=get_index date:"2000-08-02" date_to:"" -n=stream_a
+../../.build/kwil-cli database call -a=get_index date:"2000-08-02" date_to:"" -n=stream_b
 ```
 
 Expected answer with the latest date.
@@ -83,7 +89,7 @@ Expected answer with the latest date.
 | 2000-07-30 | 500000 |
 
 ```shell
-../../.build/kwil-cli database call -a=get_index date:"2000-07-18" date_to:"" -n=stream_a
+../../.build/kwil-cli database call -a=get_index date:"2000-07-18" date_to:"" -n=stream_b
 ```
 
 Expected:
@@ -93,7 +99,7 @@ Expected:
 | 2000-07-18 | 150000 |
 
 ```shell
-../../.build/kwil-cli database call -a=get_index date:"2000-07-18" date_to:"2000-07-22" -n=stream_a
+../../.build/kwil-cli database call -a=get_index date:"2000-07-18" date_to:"2000-07-22" -n=stream_b
 ```
 
 | date       | value  |
@@ -108,22 +114,22 @@ Expected:
 
 ```shell
 # wrong date format
-../../.build/kwil-cli database call -a=get_index date:"2000/07/18" date_to:"" -n=stream_a
+../../.build/kwil-cli database call -a=get_index date:"2000/07/18" date_to:"" -n=stream_b
 ```
 
 ```shell
 # wrong date_to format
-../../.build/kwil-cli database call -a=get_index date:"2000-07-18" date_to:"2000/07/22" -n=stream_a
+../../.build/kwil-cli database call -a=get_index date:"2000-07-18" date_to:"2000/07/22" -n=stream_b
 ```
 
 ```shell
 # before any available data
-../../.build/kwil-cli database call -a=get_index date:"1999-07-17" date_to:"1999-07-22" -n=stream_a
+../../.build/kwil-cli database call -a=get_index date:"1999-07-17" date_to:"1999-07-22" -n=stream_b
 ```
 
 ```shell
 # before any available data
-../../.build/kwil-cli database call -a=get_index date:"1999-07-17" date_to:"" -n=stream_a
+../../.build/kwil-cli database call -a=get_index date:"1999-07-17" date_to:"" -n=stream_b
 ```
 
 ## Composed Table
@@ -225,7 +231,7 @@ private_key="26aff20bde5606467627557793ebbb6162e9faf9f2d0830fd98a6f207dcf605d"
 address="0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf"
 
 ../../.build/kwil-cli database drop $db_name --sync
-../../.build/kwil-cli database deploy -p=<(exec ../scripts/use_base_schema.sh $address) --name=$db_name --sync
+../../.build/kwil-cli database deploy -p=<(exec ../use_base_schema.sh $address) --name=$db_name --sync
 ../../.build/kwil-cli database batch --sync --path ./test_samples/stream_b.csv --action add_record --name=$db_name
 ```
 
