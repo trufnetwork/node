@@ -4,7 +4,6 @@
 package basestream
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"github.com/kwilteam/kwil-db/common"
@@ -90,9 +89,9 @@ func (b *BaseStreamExt) Call(scope *precompiles.ProcedureContext, app *common.Ap
 	default:
 		return nil, fmt.Errorf("unknown method: %s", method)
 	case "get_index":
-		return getValue(scope, app, scope.DBID, b.index, args...)
+		return getValue(scope, app, b.index, args...)
 	case "get_value":
-		return getValue(scope, app, scope.DBID, b.value, args...)
+		return getValue(scope, app, b.value, args...)
 	}
 }
 
@@ -133,7 +132,7 @@ func (b *BaseStreamExt) sqlGetRangeValue(date string, dateTo string) string {
 //	else if $date_to is provided, it will return the value for the date range.
 //
 // returns either a single value or a range of values.
-func getValue(scope *precompiles.ProcedureContext, app *common.App, dbid string, fn func(context.Context, *common.App, string, string, *string) ([]utils.ValueWithDate, error), args ...any) ([]any, error) {
+func getValue(scope *precompiles.ProcedureContext, app *common.App, fn func(*precompiles.ProcedureContext, *common.App, string, *string) ([]utils.ValueWithDate, error), args ...any) ([]any, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("expected 2 arguments, got %d", len(args))
 	}
@@ -170,7 +169,7 @@ func getValue(scope *precompiles.ProcedureContext, app *common.App, dbid string,
 		return nil, fmt.Errorf("date_to %s is before date %s", *dateTo, date)
 	}
 
-	val, err := fn(scope.Ctx, app, dbid, date, dateTo)
+	val, err := fn(scope, app, date, dateTo)
 	if err != nil {
 		return nil, fmt.Errorf("error getting value (dbid=%s): %w", scope.DBID, err)
 	}
@@ -196,10 +195,10 @@ func getValue(scope *precompiles.ProcedureContext, app *common.App, dbid string,
 // This follows Truflation function of ((current_value/first_value)*100).
 // It will multiplty the returned result by an additional 1000, since Kwil
 // cannot handle decimals.
-func (b *BaseStreamExt) index(ctx context.Context, app *common.App, dbid string, date string, dateTo *string) ([]utils.ValueWithDate, error) {
+func (b *BaseStreamExt) index(scope *precompiles.ProcedureContext, app *common.App, date string, dateTo *string) ([]utils.ValueWithDate, error) {
 
 	// we will first get the first ever value
-	baseValueArr, err := b.value(ctx, app, dbid, zeroDate, nil)
+	baseValueArr, err := b.value(scope, app, zeroDate, nil)
 	if err != nil {
 		return []utils.ValueWithDate{}, err
 	}
@@ -210,7 +209,7 @@ func (b *BaseStreamExt) index(ctx context.Context, app *common.App, dbid string,
 	baseValue := baseValueArr[0].Value
 
 	// now we will get the value for the requested date
-	currentValueArr, err := b.value(ctx, app, dbid, date, dateTo)
+	currentValueArr, err := b.value(scope, app, date, dateTo)
 	if err != nil {
 		return []utils.ValueWithDate{}, err
 	}
@@ -238,17 +237,17 @@ func (b *BaseStreamExt) index(ctx context.Context, app *common.App, dbid string,
 
 // value returns the value for a given date.
 // if no date is given, it will return the latest value.
-func (b *BaseStreamExt) value(ctx context.Context, app *common.App, dbid string, date string, dateTo *string) ([]utils.ValueWithDate, error) {
+func (b *BaseStreamExt) value(scope *precompiles.ProcedureContext, app *common.App, date string, dateTo *string) ([]utils.ValueWithDate, error) {
 	var res *sql.ResultSet
 	var err error
 	if date == zeroDate {
-		res, err = app.Engine.Execute(ctx, app.DB, dbid, b.sqlGetBaseValue(), nil)
+		res, err = app.Engine.Execute(scope.Ctx, app.DB, scope.DBID, b.sqlGetBaseValue(), nil)
 	} else if date == "" {
-		res, err = app.Engine.Execute(ctx, app.DB, dbid, b.sqlGetLatestValue(), nil)
+		res, err = app.Engine.Execute(scope.Ctx, app.DB, scope.DBID, b.sqlGetLatestValue(), nil)
 	} else if dateTo == nil {
-		res, err = app.Engine.Execute(ctx, app.DB, dbid, b.sqlGetSpecificValue(date), nil)
+		res, err = app.Engine.Execute(scope.Ctx, app.DB, scope.DBID, b.sqlGetSpecificValue(date), nil)
 	} else {
-		res, err = app.Engine.Execute(ctx, app.DB, dbid, b.sqlGetRangeValue(date, *dateTo), nil)
+		res, err = app.Engine.Execute(scope.Ctx, app.DB, scope.DBID, b.sqlGetRangeValue(date, *dateTo), nil)
 	}
 
 	if err != nil {
@@ -297,7 +296,7 @@ func (b *BaseStreamExt) value(ctx context.Context, app *common.App, dbid string,
 	*/
 	if (len(values) == 0 || values[0].Date != date) && (date != zeroDate && date != "") {
 		// we will get the last value before the requested date
-		lastValueBefore, err := app.DB.Execute(ctx, b.sqlGetLastBefore(date))
+		lastValueBefore, err := app.Engine.Execute(scope.Ctx, app.DB, scope.DBID, b.sqlGetLastBefore(date), nil)
 		if err != nil {
 			return []utils.ValueWithDate{}, fmt.Errorf("error getting last value before requested date: %w", err)
 		}
