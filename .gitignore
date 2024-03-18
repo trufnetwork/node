@@ -1,6 +1,10 @@
 .git
 .build
 .env
+.idea
+
+go.work*
+vendor
 
 scripts/temp_csv
 scripts/composed_streams.csv

@@ -85,7 +85,7 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 			},
 		},
 		BuildSecrets: nil,
-		File:         jsii.String("truflation/docker/tsn.dockerfile"),
+		File:         jsii.String("deployments/tsn.dockerfile"),
 		NetworkMode:  nil,
 		Platform:     nil,
 		Target:       nil,
