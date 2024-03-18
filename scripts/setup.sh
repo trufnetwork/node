@@ -6,7 +6,7 @@ set -e
 cd "$(dirname "$0")"
 
 # run it in parallel, assign process pid to kwild_pid
-../../.build/kwild --autogen &> /dev/null & kwild_pid=$!
+./../.build/kwild --autogen &> /dev/null & kwild_pid=$!
 
 function cleanup {
   echo "Killing kwild process $kwild_pid"
@@ -17,7 +17,13 @@ function cleanup {
 trap cleanup SIGINT SIGTERM EXIT
 
 # to make sure kwild is ready
-sleep 5;
+for i in {1..10}; do
+  if ./../.build/kwil-cli utils ping &> /dev/null; then
+    break
+  fi
+  echo "Waiting for kwild to be ready"
+  sleep 5
+done
 
 
 # if $PRIVATE_KEY is setup and config does not exist, we create with
@@ -27,7 +33,7 @@ if [ -n "$PRIVATE_KEY" ] && [ ! -f ~/.kwil_cli/config.json ]; then
 fi
 
 # smoke test about kwil-cli
-test_content=$(../../.build/kwil-cli database list --self)
+test_content=$(./../.build/kwil-cli database list --self)
 
 # if contains Error, error out
 # or if contains "must have a configured wallet"
@@ -44,10 +50,10 @@ fi
 
 
 python ./produce_source_maps/process_all.py
-./generate_clean_csv_from_raw.sh
-./generate_composed_schemas.sh
-./database_deploy.sh --skip-drop
-./database_add_primitives.sh
+bash ./generate_clean_csv_from_raw.sh
+bash ./generate_composed_schemas.sh
+bash ./database_deploy.sh --skip-drop
+bash ./database_add_primitives.sh
 
 # Function that tries a command N times until it succeeds based on expected output
 try_n_times() {
@@ -77,6 +83,7 @@ try_n_times() {
 
 # until it works
 # arguments are $1: max_tries, $2: expected_output, $@: command and its arguments
-try_n_times 30 "2023-12-01" ../../.build/kwil-cli database call -a=get_index date:"2023-01-01" date_to:"2023-12-31" -n=cpi
+# TODO: date range needs to be fixed first in #121
+try_n_times 30 "2023-12-01" ./../.build/kwil-cli database call -a=get_index date:"2023-01-01" date_to:"2023-12-31" -n=cpi
 
 echo "Success!"

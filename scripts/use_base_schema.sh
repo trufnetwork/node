@@ -18,7 +18,7 @@ if [ $# -gt 1 ]; then
   exit 1
 fi
 
-base_schema_content=$(cat ../base_schema/base_schema.kf)
+base_schema_content=$(cat ./../internal/schemas/base_schema.kf)
 TO_BE_REPLACED="\$WHITELIST_WALLETS\$"
 # should be replaced by $1 or an empty string
 REPLACED_FOR=${1:-""}

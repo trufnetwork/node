@@ -162,4 +162,4 @@ if __name__ == '__main__':
     composed_streams = composed_streams[['parent_stream', 'stream', 'weight']]
 
     # save to ../../composed_streams.csv
-    composed_streams.to_csv(os.path.join(dirname, '../../composed_streams.csv'), index=False)
+    composed_streams.to_csv(os.path.join(dirname, '../composed_streams.csv'), index=False)
