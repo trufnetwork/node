@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"github.com/kwilteam/kwil-db/common"
 	"github.com/kwilteam/kwil-db/common/sql"
+	"github.com/kwilteam/kwil-db/extensions/precompiles"
+	"github.com/stretchr/testify/mock"
 	"github.com/truflation/tsn-db/internal/utils"
 	"github.com/truflation/tsn-db/mocks"
 	"testing"
@@ -13,38 +15,49 @@ import (
 )
 
 func Test_Index(t *testing.T) {
-	ctx := context.Background()
-	app := &common.App{
-		DB:     mocks.NewDB(t),
-		Engine: mocks.NewEngine(t),
+	scope := &precompiles.ProcedureContext{
+		DBID: "dbid",
+		Ctx:  context.Background(),
 	}
-
 	b := &BaseStreamExt{
 		table:       "price",
 		dateColumn:  "date",
 		valueColumn: "value",
 	}
 
-	returned, err := b.index(ctx, app, "dbid", "2024-01-01", nil)
-	assert.NoError(t, err)
-	assert.Equal(t, map[string]interface{}{}, returned) // 200.000 * 1000
+	mockStmts := map[string]*sql.ResultSet{
+		b.sqlGetBaseValue():                 mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 75000}}),  // 75.000
+		b.sqlGetLatestValue():               mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 200000}}), // 200.000
+		b.sqlGetSpecificValue("2024-01-01"): mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 150000}}), // 150.000
+		b.sqlGetRangeValue("2024-01-01", "2024-01-02"): mockDateScalar("value", []utils.ValueWithDate{
+			{Date: "2024-01-01", Value: 150000},
+			{Date: "2024-01-02", Value: 300000},
+		}), // 150.000, 300.000
+	}
 
-	returned, err = b.index(ctx, app, "dbid", "", nil) // this should return the latest value
+	app := &common.App{
+		Engine: newEngine(t, mockStmts),
+	}
+
+	returned, err := b.index(scope, app, "2024-01-01", nil)
+	assert.NoError(t, err)
+	assert.Equal(t, []utils.ValueWithDate{{Date: "2024-01-01", Value: 200000}}, returned) // 200.000 * 1000
+
+	returned, err = b.index(scope, app, "", nil) // this should return the latest value
 	assert.NoError(t, err)
 	assert.Equal(t, []utils.ValueWithDate{{Date: "2024-01-01", Value: 266666}}, returned) // 266.666 * 1000
 
 	dateTo := "2024-01-02"
-	returned, err = b.index(ctx, app, "dbid", "2024-01-01", &dateTo)
+	returned, err = b.index(scope, app, "2024-01-01", &dateTo)
 
 	assert.NoError(t, err)
 	assert.Equal(t, []utils.ValueWithDate{{Date: "2024-01-01", Value: 200000}, {Date: "2024-01-02", Value: 400000}}, returned) // 200.000 * 1000, 400.000 * 1000
 }
 
 func Test_Value(t *testing.T) {
-	ctx := context.Background()
-	app := &common.App{
-		DB:     mocks.NewDB(t),
-		Engine: mocks.NewEngine(t),
+	scope := &precompiles.ProcedureContext{
+		DBID: "dbid",
+		Ctx:  context.Background(),
 	}
 	b := &BaseStreamExt{
 		table:       "price",
@@ -52,16 +65,26 @@ func Test_Value(t *testing.T) {
 		valueColumn: "value",
 	}
 
-	returned, err := b.value(ctx, app, "dbid", "2024-01-01", nil)
+	mockStmts := map[string]*sql.ResultSet{
+		b.sqlGetLatestValue():                          mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 200000}}),                                      // 200.000
+		b.sqlGetSpecificValue("2024-01-01"):            mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 150000}}),                                      // 150.000
+		b.sqlGetRangeValue("2024-01-01", "2024-01-02"): mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 150000}, {Date: "2024-01-02", Value: 300000}}), // 150.000, 300.000
+	}
+
+	app := &common.App{
+		Engine: newEngine(t, mockStmts),
+	}
+
+	returned, err := b.value(scope, app, "2024-01-01", nil)
 	assert.NoError(t, err)
 	assert.Equal(t, []utils.ValueWithDate{{Date: "2024-01-01", Value: 150000}}, returned) // 150.000 * 1000
 
-	returned, err = b.value(ctx, app, "dbid", "", nil) // this should return the latest value
+	returned, err = b.value(scope, app, "", nil) // this should return the latest value
 	assert.NoError(t, err)
 	assert.Equal(t, []utils.ValueWithDate{{Date: "2024-01-01", Value: 200000}}, returned) // 200.000 * 1000
 
 	dateTo := "2024-01-02"
-	returned, err = b.value(ctx, app, "dbid", "2024-01-01", &dateTo)
+	returned, err = b.value(scope, app, "2024-01-01", &dateTo)
 	assert.NoError(t, err)
 	assert.Equal(t, []utils.ValueWithDate{{Date: "2024-01-01", Value: 150000}, {Date: "2024-01-02", Value: 300000}}, returned) // 150.000 * 1000, 300.000 * 1000
 }
@@ -80,13 +103,27 @@ func mockDateScalar(column string, arrayOfResults []utils.ValueWithDate) *sql.Re
 }
 
 type mockQuerier struct {
+	*mocks.Engine
 	stmts map[string]*sql.ResultSet
 }
 
-func (m *mockQuerier) Query(ctx context.Context, stmt string, params map[string]any) (*sql.ResultSet, error) {
-	res, ok := m.stmts[stmt]
+func newEngine(t interface {
+	mock.TestingT
+	Cleanup(func())
+},
+	stmts map[string]*sql.ResultSet,
+) *mockQuerier {
+	return &mockQuerier{
+		Engine: mocks.NewEngine(t),
+		stmts:  stmts,
+	}
+}
+
+// Execute(ctx context.Context, tx sql.DB, dbid, query string, values map[string]any) (*sql.ResultSet, error)
+func (m *mockQuerier) Execute(ctx context.Context, tx sql.DB, dbid, query string, values map[string]any) (*sql.ResultSet, error) {
+	res, ok := m.stmts[query]
 	if !ok {
-		return nil, fmt.Errorf("unexpected statement: %s", stmt)
+		return nil, fmt.Errorf("unexpected statement: %s", query)
 	}
 	return res, nil
 }
