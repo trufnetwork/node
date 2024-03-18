@@ -10,6 +10,11 @@ tasks:
     cmds:
       - go build -o ./.build/kwild ./cmd/kwild/main.go
 
+  build:debug:
+    desc: Build kwild binary with debug flags
+    cmds:
+      - go build -gcflags "all=-N -l" -o ./.build/kwild ./cmd/kwild/main.go
+
   kwild:
     desc: Run kwild server
     cmds:
