@@ -2,8 +2,8 @@ package main
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
-	"github.com/aws/aws-cdk-go/awscdk/v2/awsecr"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsecrassets"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/jsii-runtime-go"
 	"infra/config"
 	"os"
@@ -43,33 +43,9 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	//	},
 	//})
 
-	buildArgs := make(map[string]*string)
-
-	// git commit should come from the environment variable, else it will execute git rev-parse HEAD
-	if len(os.Getenv("GIT_COMMIT")) == 0 {
-		buildArgs["git_commit"] = jsii.String("$(git rev-parse HEAD)")
-	} else {
-		buildArgs["git_commit"] = jsii.String(os.Getenv("GIT_COMMIT"))
-	}
-
-	// git version will be added only if it's available
-	if len(os.Getenv("GIT_VERSION")) > 0 {
-		buildArgs["version"] = jsii.String(os.Getenv("GIT_VERSION"))
-	}
-
-	// build time will be added only if it's available
-	if len(os.Getenv("BUILD_TIME")) > 0 {
-		buildArgs["build_time"] = jsii.String(os.Getenv("BUILD_TIME"))
-	}
-
-	// whitelist_wallets will be added only if it's available
-	if len(os.Getenv("WHITELIST_WALLETS")) > 0 {
-		buildArgs["whitelist_wallets"] = jsii.String(os.Getenv("WHITELIST_WALLETS"))
-	}
-
-	imageAsset := awsecrassets.NewDockerImageAsset(stack, jsii.String("DockerImageAsset"), &awsecrassets.DockerImageAssetProps{
+	tsnImageAsset := awsecrassets.NewDockerImageAsset(stack, jsii.String("DockerImageAsset"), &awsecrassets.DockerImageAssetProps{
 		AssetName: nil,
-		BuildArgs: &buildArgs,
+		BuildArgs: nil,
 		CacheFrom: &[]*awsecrassets.DockerCacheOption{
 			{
 				Type: jsii.String("local"),
@@ -85,27 +61,56 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 			},
 		},
 		BuildSecrets: nil,
-		File:         jsii.String("deployments/tsn.dockerfile"),
+		File:         jsii.String("deployments/Dockerfile"),
 		NetworkMode:  nil,
 		Platform:     nil,
 		Target:       nil,
 		Directory:    jsii.String("../../"),
 	})
-	repo := imageAsset.Repository()
 
-	// default vpc
+	pushDataImageAsset := awsecrassets.NewDockerImageAsset(stack, jsii.String("PushDataImageAsset"), &awsecrassets.DockerImageAssetProps{
+		AssetName: nil,
+		BuildArgs: nil,
+		CacheFrom: &[]*awsecrassets.DockerCacheOption{
+			{
+				Type: jsii.String("local"),
+				Params: &map[string]*string{
+					"src": jsii.String("/tmp/.buildx-cache-push-data-tsn"),
+				},
+			},
+		},
+		CacheTo: &awsecrassets.DockerCacheOption{
+			Type: jsii.String("local"),
+			Params: &map[string]*string{
+				"dest": jsii.String("/tmp/.buildx-cache-push-data-tsn-new"),
+			},
+		},
+		File:      jsii.String("deployments/push-tsn-data.dockerfile"),
+		Directory: jsii.String("../../"),
+	})
+
+	// Adding our docker compose file to the instance
+	dockerComposeAsset := awss3assets.NewAsset(stack, jsii.String("DockerComposeAsset"), &awss3assets.AssetProps{
+		Path: jsii.String("../../compose.yaml"),
+	})
+
+	initElements := []awsec2.InitElement{
+		awsec2.InitFile_FromExistingAsset(jsii.String("/home/ubuntu/docker-compose.yaml"), dockerComposeAsset, nil), // default vpc
+	}
+
 	vpcInstance := awsec2.Vpc_FromLookup(stack, jsii.String("VPC"), &awsec2.VpcLookupOptions{
 		IsDefault: jsii.Bool(true),
 	})
 
-	// Create instance using imageAsset hash so that the instance is recreated when the image changes.
-	newName := "TsnDBInstance" + *imageAsset.AssetHash()
-	instance, instanceRole := createInstance(stack, newName, vpcInstance)
+	// Create instance using tsnImageAsset hash so that the instance is recreated when the image changes.
+	newName := "TsnDBInstance" + *tsnImageAsset.AssetHash()
+	instance, instanceRole := createInstance(stack, newName, vpcInstance, &initElements)
 
-	deployImageOnInstance(stack, instance, imageAsset, repo)
+	deployImageOnInstance(stack, instance, tsnImageAsset, pushDataImageAsset)
 
 	// make ecr repository available to the instance
-	repo.GrantPull(instanceRole)
+	tsnImageAsset.Repository().GrantPull(instanceRole)
+	pushDataImageAsset.Repository().GrantPull(instanceRole)
 
 	// Output info.
 	awscdk.NewCfnOutput(stack, jsii.String("public-address"), &awscdk.CfnOutputProps{
@@ -115,7 +120,7 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	return stack
 }
 
-func createInstance(stack awscdk.Stack, name string, vpc awsec2.IVpc) (awsec2.Instance, awsiam.IRole) {
+func createInstance(stack awscdk.Stack, name string, vpc awsec2.IVpc, initElements *[]awsec2.InitElement) (awsec2.Instance, awsiam.IRole) {
 	// Create security group.
 	instanceSG := awsec2.NewSecurityGroup(stack, jsii.String("NodeSG"), &awsec2.SecurityGroupProps{
 		Vpc:              vpc,
@@ -164,8 +169,13 @@ func createInstance(stack awscdk.Stack, name string, vpc awsec2.IVpc) (awsec2.In
 		AssumedBy: awsiam.NewServicePrincipal(jsii.String("ec2.amazonaws.com"), nil),
 	})
 
+	initData := awsec2.CloudFormationInit_FromElements(
+		*initElements...,
+	)
+
 	instance := awsec2.NewInstance(stack, jsii.String(name), &awsec2.InstanceProps{
 		InstanceType: awsec2.InstanceType_Of(awsec2.InstanceClass_T3, awsec2.InstanceSize_SMALL),
+		Init:         initData,
 		// ubuntu 22.04
 		// https://cloud-images.ubuntu.com/locator/ec2/
 		MachineImage: awsec2.MachineImage_FromSsmParameter(jsii.String("/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id"), nil),
@@ -175,7 +185,11 @@ func createInstance(stack awscdk.Stack, name string, vpc awsec2.IVpc) (awsec2.In
 		},
 		SecurityGroup: instanceSG,
 		Role:          instanceRole,
-		KeyPair:       awsec2.KeyPair_FromKeyPairName(stack, jsii.String("KeyPair"), keyPair),
+		// takes a long time to deploy, so we raise the timeout
+		InitOptions: &awsec2.ApplyCloudFormationInitOptions{
+			Timeout: awscdk.Duration_Minutes(jsii.Number(10)),
+		},
+		KeyPair: awsec2.KeyPair_FromKeyPairName(stack, jsii.String("KeyPair"), keyPair),
 		BlockDevices: &[]*awsec2.BlockDevice{
 			{
 				DeviceName: jsii.String("/dev/sda1"),
@@ -195,16 +209,12 @@ func createInstance(stack awscdk.Stack, name string, vpc awsec2.IVpc) (awsec2.In
 	return instance, instanceRole
 }
 
-func deployImageOnInstance(stack awscdk.Stack, instance awsec2.Instance, imageAsset awsecrassets.DockerImageAsset, repo awsecr.IRepository) {
+func deployImageOnInstance(stack awscdk.Stack, instance awsec2.Instance, tsnImageAsset awsecrassets.DockerImageAsset, pushDataImageAsset awsecrassets.DockerImageAsset) {
+
 	// create a script from the asset
 	script1Content := `#!/bin/bash
 set -e
 set -x
-
-# lets add repo, region and image uri to /tmp/init-vars just for easier debug
-echo "repo=` + *repo.RepositoryUri() + `" > /tmp/init-vars
-echo "region=` + *stack.Region() + `" >> /tmp/init-vars
-echo "imageUri=` + *imageAsset.ImageUri() + `" >> /tmp/init-vars
 
 # install docker
 apt-get update
@@ -219,9 +229,18 @@ newgrp docker
 apt-get install -y awscli
 
 # login to ecr
-aws ecr get-login-password --region ` + *stack.Region() + ` | docker login --username AWS --password-stdin ` + *repo.RepositoryUri() + `
+aws ecr get-login-password --region ` + *stack.Region() + ` | docker login --username AWS --password-stdin ` + *tsnImageAsset.Repository().RepositoryUri() + `
 # pull the image
-docker pull ` + *imageAsset.ImageUri() + `
+docker pull ` + *tsnImageAsset.ImageUri() + `
+# tag the image as tsn-db:local, as the docker compose file expects that
+docker tag ` + *tsnImageAsset.ImageUri() + ` tsn-db:local
+
+# login to ecr
+aws ecr get-login-password --region ` + *stack.Region() + ` | docker login --username AWS --password-stdin ` + *pushDataImageAsset.Repository().RepositoryUri() + `
+# pull the image
+docker pull ` + *pushDataImageAsset.ImageUri() + `
+# tag the image as push-tsn-data:local, as the docker compose file expects that
+docker tag ` + *pushDataImageAsset.ImageUri() + ` push-tsn-data:local
 
 # create a systemd service file
 cat <<EOF > /etc/systemd/system/tsn-db-app.service
@@ -231,10 +250,12 @@ Requires=docker.service
 After=docker.service
 
 [Service]
-Restart=always
-ExecStart=/usr/bin/docker run --network host --name tsn-db-app ` + *imageAsset.ImageUri() + `
-ExecStop=/usr/bin/docker stop tsn-db-app
-ExecStopPost=/usr/bin/docker rm tsn-db-app
+Type=oneshot
+RemainAfterExit=yes
+# this path comes from the init asset
+ExecStart=/bin/bash -c "docker compose -f /home/ubuntu/docker-compose.yaml up -d" 
+ExecStop=/bin/bash -c "docker compose -f /home/ubuntu/docker-compose.yaml down"
+
 
 [Install]
 WantedBy=multi-user.target
