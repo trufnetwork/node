@@ -51,11 +51,16 @@ not_allowed_private_key="26aff20bde5606467627557793ebbb6162e9faf9f2d0830fd98a6f2
 owner_private_key="0000000000000000000000000000000000000000000000000000000000000001"
 owner_address="7e5f4552091a69125d5dfcb7b8c2659029395bdf"
 
+# note: inside gh action, localhost is not available
+grpc_url=${GRPC_URL:-"http://127.0.0.1:8080"}
+
+common_config="--kwil-provider $grpc_url --owner=$owner_address"
+
 echo -e "❓ Making sure we're able to call the database from own private key\n"
-expect_success "$(../.build/kwil-cli database call -a=get_index date:"2023-12-25" date_to:"2023-12-31" -n=cpi --private-key="$owner_private_key" --owner="$owner_address" 2>&1)"
+expect_success "$(../.build/kwil-cli database call -a=get_index date:"2023-12-25" date_to:"2023-12-31" -n=cpi --private-key="$owner_private_key" $common_config  2>&1)"
 
 echo -e "❓ Making sure we're able to call the database from an allowed private key\n"
-expect_success "$(../.build/kwil-cli database call -a=get_index date:"2023-12-25" date_to:"2023-12-31" -n=cpi --owner="$owner_address" --private-key="$allowed_private_key" 2>&1)"
+expect_success "$(../.build/kwil-cli database call -a=get_index date:"2023-12-25" date_to:"2023-12-31" -n=cpi  --private-key="$allowed_private_key" $common_config 2>&1)"
 
 echo -e "❓ Making sure we're not able to call the database from a different private key\n"
-expect_error "$(../.build/kwil-cli database call -a=get_index date:"2023-12-25" date_to:"2023-12-31" -n=cpi --owner="$owner_address" --private-key="$not_allowed_private_key" 2>&1)"
+expect_error "$(../.build/kwil-cli database call -a=get_index date:"2023-12-25" date_to:"2023-12-31" -n=cpi --private-key="$not_allowed_private_key" $common_config 2>&1)"
