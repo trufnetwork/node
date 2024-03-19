@@ -33,7 +33,7 @@ while [[ $retries -lt $max_retries ]]; do
       if [[ $output =~ "invalid nonce" ]]; then
         echo "Error nonce, retrying file immediately with expected nonce: $file"
         expected_nonce=$(echo "$output" | grep -oP 'expected \K[0-9]+')
-        ../../.build/kwil-cli database batch --path "$file" --action add_record --name=$db_name --values created_at:$(date +%s) --nonce "$expected_nonce"
+        ./../.build/kwil-cli database batch --path "$file" --action add_record --name=$db_name --values created_at:$(date +%s) --nonce "$expected_nonce"
       elif [[ $output =~ "error" ]]; then
         echo "Error deploying file: $file"
         pending_files+=("$file")

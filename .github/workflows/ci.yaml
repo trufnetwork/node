@@ -42,14 +42,11 @@ jobs:
 ##      - name: Run Go Tests
 ##        run: |
 ##          task test:unit
-#
+
       - name: Docker Compose Up
         uses: isbang/compose-action@v1.5.1
         with:
           compose-file: "./compose.yaml"
-        env:
-          # hardcoded for testing reasons
-          whitelist_wallets: "0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf"
 
       - name: setup python
         uses: actions/setup-python@v5
@@ -61,9 +58,10 @@ jobs:
         # It takes time to download the kwil binary and extract kwil-cli so I push kwil-cli to the repo.
         # It needed to seed database. Are there any better way to do this?
         # PRIVATE_KEY is hardcoded for testing reasons
-      - name: Seed Database
+      - name: Seed Database and Run Tests
         if: ${{ !env.ACT }} # act doesn't have uuidgen, so it will fail if run on act
         run: |
           timeout 300 docker logs tsn-db-tsn-db-1 -f | grep  -m1 -oP '"Health check state changed","state":"up"' || { ec=$?; [ $ec -eq 141 ] && true || (exit $ec); }
           export PRIVATE_KEY="0000000000000000000000000000000000000000000000000000000000000001"
           scripts/setup.sh
+#          scripts/ci-tests.sh need to take a look on whitelist feature

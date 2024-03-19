@@ -1,8 +1,5 @@
 FROM golang:1.22.1-alpine3.19 AS build
 
-# a comma separated list of wallet addresses that are allowed to query the node
-ARG whitelist_wallets
-
 WORKDIR /app
 COPY . .
 
@@ -23,8 +20,9 @@ COPY --from=build /app/deployments/config.toml /root/.kwild/config.toml
 
 COPY --from=build /app/deployments/config.toml /root/.kwild/config.toml
 
+# hardcoded for testing reasons
 ENV PRIVATE_KEY="0000000000000000000000000000000000000000000000000000000000000001"
-ENV WHITELIST_WALLETS=$whitelist_wallets
+ENV WHITELIST_WALLETS="7e5f4552091a69125d5dfcb7b8c2659029395bdf"
 
 EXPOSE 50051 50151 8080 26656 26657
 ENTRYPOINT ["/app/kwild", "--autogen"]
