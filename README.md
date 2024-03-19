@@ -41,31 +41,49 @@ docker run -d -p 5432:5432 --name kwil-postgres -e "POSTGRES_HOST_AUTH_METHOD=tr
 You can start a single node network using the `kwild` binary built in the step above:
 
 ```shell
-.build/kwild --autogen
+task kwild
 ```
 
 For more information on running nodes, and how to run a multi-node network, refer to the Kwil [documentation](<https://docs.kwil.com/docs/node/quickstart>).
 
-## Building and Using Docker Image // TODO: Rewrite me please
-
-To build a Docker image of TSN-DB with seed data, run the following command:
-
-```shell
-docker build -t tsn-db:latest . -f ./deployments/Dockerfile
-```
-
-To run the Docker image, use the following command:
-
-```shell
-docker run --name tsn-db -p 8080:8080 tsn-db:latest
-```
-
-## Resetting local deployments
+### Resetting local deployments
 
 By default, `kwild` stores all data in `~/.kwild`. To reset the data on a deployment, remove the data directory while the node is stopped:
 
 ```shell
 rm -r ~/.kwild
+```
+
+## Docker Compose Deployment
+
+### Run TSN-DB with Postgres using Docker Compose
+
+To run the TSN-DB with Postgres using Docker Compose, run the following command:
+```shell
+task compose
+```
+
+### Seed Data
+
+#### Configure the kwil-cli
+
+To seed data into the TSN-DB, you will need to configure the kwil-cli.
+```shell
+kwil-cli configure
+
+# Enter the following values:
+Kwil RPC URL: http://localhost:8080
+Kwil Chain ID: <leave blank>
+Private Key: <any ethereum private key>
+# use private key 0000000000000000000000000000000000000000000000000000000000000001 for testing
+```
+
+
+
+#### Seed Data
+To seed data into the TSN-DB, run the following command:
+```shell
+task seed
 ```
 
 ## License
