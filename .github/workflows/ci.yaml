@@ -43,14 +43,10 @@ jobs:
 ##        run: |
 ##          task test:unit
 
-      # private key and whitelist wallets are hardcoded for testing reasons
       - name: Docker Compose Up
         uses: isbang/compose-action@v1.5.1
         with:
           compose-file: "./compose.yaml"
-        env:
-          PRIVATE_KEY: "0000000000000000000000000000000000000000000000000000000000000001"
-          WHITELIST_WALLETS: "7e5f4552091a69125d5dfcb7b8c2659029395bdf"
 
       - name: setup python
         uses: actions/setup-python@v5
@@ -59,13 +55,14 @@ jobs:
       - name: Install Python dependencies
         run: python -m pip install --upgrade pip pandas
 
-        # It takes time to download the kwil binary and extract kwil-cli so I push kwil-cli to the repo.
-        # It needed to seed database. Are there any better way to do this?
-        # PRIVATE_KEY is hardcoded for testing reasons
+      # It takes time to download the kwil binary and extract kwil-cli so I push kwil-cli to the repo.
+      # It needed to seed database. Are there any better way to do this?
+      # PRIVATE_KEY and WHITELIST_WALLETS are hardcoded for testing reasons
       - name: Seed Database and Run Tests
         if: ${{ !env.ACT }} # act doesn't have uuidgen, so it will fail if run on act
         run: |
           timeout 300 docker logs tsn-db-tsn-db-1 -f | grep  -m1 -oP '"Health check state changed","state":"up"' || { ec=$?; [ $ec -eq 141 ] && true || (exit $ec); }
           export PRIVATE_KEY="0000000000000000000000000000000000000000000000000000000000000001"
+          export WHITELIST_WALLETS="7e5f4552091a69125d5dfcb7b8c2659029395bdf"
           scripts/setup.sh
           scripts/ci-tests.sh
