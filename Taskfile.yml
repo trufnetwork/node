@@ -54,6 +54,11 @@ tasks:
         && mv ./kwil-cli .build
         && rm ./kwil-db.tar.gz
 
+  clear-data:
+    cmds:
+      - rm -r ~/.kwild || true
+      - docker volume rm tsn-db_data-kwil-postgres tsn-db_data-push-tsn-data -f
+
   seed:
     desc: Seed the database
     cmds:

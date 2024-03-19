@@ -48,10 +48,23 @@ For more information on running nodes, and how to run a multi-node network, refe
 
 ### Resetting local deployments
 
-By default, `kwild` stores all data in `~/.kwild`. To reset the data on a deployment, remove the data directory while the node is stopped:
+You can clear the local Kwil data by running the following command:
 
 ```shell
-rm -r ~/.kwild
+task clear-data
+```
+
+### Configure the kwil-cli
+
+To interact with the the TSN-DB, you will need to configure the kwil-cli.
+```shell
+kwil-cli configure
+
+# Enter the following values:
+Kwil RPC URL: http://localhost:8080
+Kwil Chain ID: <leave blank>
+Private Key: <any ethereum private key>
+# use private key 0000000000000000000000000000000000000000000000000000000000000001 for testing
 ```
 
 ## Docker Compose Deployment
@@ -63,25 +76,10 @@ To run the TSN-DB with Postgres using Docker Compose, run the following command:
 task compose
 ```
 
-### Seed Data
-
-#### Configure the kwil-cli
-
-To seed data into the TSN-DB, you will need to configure the kwil-cli.
-```shell
-kwil-cli configure
-
-# Enter the following values:
-Kwil RPC URL: http://localhost:8080
-Kwil Chain ID: <leave blank>
-Private Key: <any ethereum private key>
-# use private key 0000000000000000000000000000000000000000000000000000000000000001 for testing
-```
-
-
+This will start the TSN-DB and Postgres in Docker containers, which is already seeded.
 
 #### Seed Data
-To seed data into the TSN-DB, run the following command:
+If you need to manually seed data into the TSN-DB, run the following command:
 ```shell
 task seed
 ```
