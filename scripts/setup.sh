@@ -33,22 +33,24 @@ if [ "$isLocal" = true ]; then
   fi
 fi
 
+# comes from env variable, but defaults to localhost:8080
+grpc_url=${GRPC_URL:-"http://localhost:8080"}
+
+./wait_kwild.sh
 
 # if $PRIVATE_KEY is setup and config does not exist, we create with
 if [ -n "$PRIVATE_KEY" ] && [ ! -f ~/.kwil_cli/config.json ]; then
   mkdir -p ~/.kwil_cli
-  echo "{\"private_key\":\"$PRIVATE_KEY\",\"grpc_url\":\"http://localhost:8080\",\"chain_id\":\"\"}" > ~/.kwil_cli/config.json
+  echo "{\"private_key\":\"$PRIVATE_KEY\",\"grpc_url\":\"$grpc_url\",\"chain_id\":\"\"}" > ~/.kwil_cli/config.json
 fi
 
-# to make sure kwild is ready
-for i in {1..10}; do
-#  check kwil-cli is exist
-  if ../.build/kwil-cli utils ping &> /dev/null; then
-    break
-  fi
-  echo "Waiting for kwild to be ready"
-  sleep 5
-done
+# ensure there's a config file
+if [ ! -f ~/.kwil_cli/config.json ]; then
+  echo "No config file found. Please set PRIVATE_KEY or create a config file at ~/.kwil_cli/config.json"
+  exit 1
+fi
+
+
 
 # smoke test about kwil-cli
 test_content=$(./../.build/kwil-cli database list --self)
