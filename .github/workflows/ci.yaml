@@ -13,7 +13,7 @@ on:
 jobs:
   acceptance-test:
     runs-on: ubuntu-latest
-#    if: ${{ !github.event.pull_request.draft }}
+    if: ${{ !github.event.pull_request.draft }}
     steps:
       - name: Clear cache
         if: ${{ !env.ACT }} # skip during local actions testing
@@ -52,6 +52,7 @@ jobs:
         with:
           compose-file: "./compose.yaml"
         env:
+          # hardcoded for testing reasons
           whitelist_wallets: "0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf"
 
       # It takes time to download the kwil binary and extract kwil-cli so I push kwil-cli to the repo, are there any better way to do this?
@@ -66,6 +67,7 @@ jobs:
       - name: Install Python dependencies
         run: python -m pip install --upgrade pip pandas
 
+        # PRIVATE_KEY is hardcoded for testing reasons
       - name: Seed Database
         if: ${{ !env.ACT }} # skip during local actions testing
         run: |
