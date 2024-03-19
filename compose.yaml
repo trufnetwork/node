@@ -1,0 +1,22 @@
+services:
+  kwil-postgres:
+    image: "kwildb/postgres:latest"
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  tsn-db:
+    build:
+      context: .
+      dockerfile: ./deployments/Dockerfile
+    ports:
+      - "8080:8080"
+    depends_on:
+      kwil-postgres:
+        condition: service_healthy

@@ -13,7 +13,7 @@ on:
 jobs:
   acceptance-test:
     runs-on: ubuntu-latest
-    if: ${{ !github.event.pull_request.draft }}
+#    if: ${{ !github.event.pull_request.draft }}
     steps:
       - name: Clear cache
         if: ${{ !env.ACT }} # skip during local actions testing
@@ -44,62 +44,62 @@ jobs:
 #        run: |
 #          task test:unit
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+#      - name: Set up Docker Buildx
+#        uses: docker/setup-buildx-action@v3
 
-      - name: Restore Docker layers
-        id: restore_cache
-        uses: actions/cache/restore@v4
+#      - name: Restore Docker layers
+#        id: restore_cache
+#        uses: actions/cache/restore@v4
+#        with:
+#          path: /tmp/.buildx-cache-tsn-db
+#          key: ${{ runner.os }}-buildx-tsn-db
+
+#      - name: Build image
+#        id: docker_build_tsn_db
+#        uses: docker/build-push-action@v4
+#        with:
+#          context: .
+#          builder: ${{ steps.buildx.outputs.name }}
+#          build-args: |
+#            git_commit=${{ github.sha }}
+#            version=${{ steps.config.outputs.version }}
+#            build_time=${{ github.event.release.created_at }}
+#             hardcoded for testing reasons
+#            whitelist_wallets=0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf
+#          file: ./deployments/Dockerfile
+#          cache-from: type=local,src=/tmp/.buildx-cache-tsn-db
+#          cache-to: type=local,dest=/tmp/.buildx-cache-tsn-db-new
+#          tags: tsn-db:latest
+#          load: true
+
+      - name: Docker Compose Up
+        uses: isbang/compose-action@v1.5.1
         with:
-          path: /tmp/.buildx-cache-tsn-db
-          key: ${{ runner.os }}-buildx-tsn-db
+          compose-file: "./compose.yaml"
+        env:
+          whitelist_wallets: "0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf"
 
-      - name: Build image
-        id: docker_build_tsn_db
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          builder: ${{ steps.buildx.outputs.name }}
-          build-args: |
-            git_commit=${{ github.sha }}
-            version=${{ steps.config.outputs.version }}
-            build_time=${{ github.event.release.created_at }}
-            # hardcoded for testing reasons
-            whitelist_wallets=0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf
-          file: ./deployments/Dockerfile
-          cache-from: type=local,src=/tmp/.buildx-cache-tsn-db
-          cache-to: type=local,dest=/tmp/.buildx-cache-tsn-db-new
-          tags: tsn-db:latest
-          load: true
-
-      - name: Move cache
-        run: |
-          rm -rf /tmp/.buildx-cache-tsn-db
-          mv /tmp/.buildx-cache-tsn-db-new /tmp/.buildx-cache-tsn-db
+#      - name: Move cache
+#        run: |
+#          rm -rf /tmp/.buildx-cache-tsn-db
+#          mv /tmp/.buildx-cache-tsn-db-new /tmp/.buildx-cache-tsn-db
 
       # we save already to be able to free up space
-      - name: Save Docker layers Cache
-        uses: actions/cache/save@v4
-        with:
-          path: /tmp/.buildx-cache-tsn-db
-          key: ${{ steps.restore_cache.outputs.cache-primary-key }}
+#      - name: Save Docker layers Cache
+#        uses: actions/cache/save@v4
+#        with:
+#          path: /tmp/.buildx-cache-tsn-db
+#          key: ${{ steps.restore_cache.outputs.cache-primary-key }}
 
-      - name: Free Up Space
-        run: |
-          docker system prune -f
-          rm -rf /tmp/.buildx-cache-tsn-db
+#      - name: Free Up Space
+#        run: |
+#          docker system prune -f
+#          rm -rf /tmp/.buildx-cache-tsn-db
 
+      # It takes time to download the kwil binary and extract kwil-cli so I push kwil-cli to the repo
       - name: Run tsn-db image
         run: |
-          task kwil-cli
-          docker_id=$(docker run -p 8080:8080 -d tsn-db:latest)
-          postgres_id=$(docker run -d -p 5432:5432 --name kwil-postgres -e "POSTGRES_HOST_AUTH_METHOD=trust" kwildb/postgres:latest)
-
-          # wait for the server to start
-          # -f = follow logs | -m1 = only one match | -o = only matching | -P = perl regex
-          # last pipe avoid failing on broken pipes (141), preserving other error codes
-          # PS: multiline command with \ isn't working here
-
-          timeout 300 docker logs postgres_id -f | grep  -m1 -oP '"database system is ready to accept connections"' || { ec=$?; [ $ec -eq 141 ] && true || (exit $ec); }        
-          timeout 300 docker logs $docker_id -f | grep  -m1 -oP '"Health check state changed","state":"up"' || { ec=$?; [ $ec -eq 141 ] && true || (exit $ec); }
-          ./scripts/ci-tests.sh || (echo "Command failed, printing logs:" && docker logs $docker_id && exit 1)
+          mv ./kwil-cli ./.build/kwil-cli
+          timeout 60s sh -c 'until docker ps | grep tsn-db | grep  -m1 -oP '"Health check state changed","state":"up"' || { ec=$?; [ $ec -eq 141 ] && true || (exit $ec); do echo "Waiting for container to be healthy..."; sleep 2; done'
+          timeout 300 docker logs tsn-db-tsn-db-1 -f | grep  -m1 -oP '"Health check state changed","state":"up"' || { ec=$?; [ $ec -eq 141 ] && true || (exit $ec); }
+          ./scripts/ci-tests.sh

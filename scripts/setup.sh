@@ -5,25 +5,33 @@ set -e
 
 cd "$(dirname "$0")"
 
-# run it in parallel, assign process pid to kwild_pid
-./../.build/kwild --autogen &> /dev/null & kwild_pid=$!
-
-function cleanup {
-  echo "Killing kwild process $kwild_pid"
-  kill -9 $kwild_pid
-}
-
-# trap the cleanup function to SIGINT, SIGTERM and EXIT signals
-trap cleanup SIGINT SIGTERM EXIT
-
-# to make sure kwild is ready
-for i in {1..10}; do
-  if ./../.build/kwil-cli utils ping &> /dev/null; then
-    break
-  fi
-  echo "Waiting for kwild to be ready"
-  sleep 5
+#get flags --local
+isLocal=false
+while [ "$1" != "" ]; do
+    case $1 in
+        --local )               isLocal=true
+                                ;;
+    esac
+    shift
 done
+
+if [ "$isLocal" = true ]; then
+  # run it in parallel, assign process pid to kwild_pid
+  ../.build/kwild --autogen &> /dev/null & kwild_pid=$!
+  function cleanup {
+    echo "Killing kwild process $kwild_pid"
+    kill -9 $kwild_pid
+  }
+  # trap the cleanup function to SIGINT, SIGTERM and EXIT signals
+  trap cleanup SIGINT SIGTERM EXIT
+
+  sleep 5
+  # if we kwild is not running, error out
+  if ! kill -0 $kwild_pid; then
+    echo "kwild process is not running"
+    exit 1
+  fi
+fi
 
 
 # if $PRIVATE_KEY is setup and config does not exist, we create with
@@ -32,6 +40,16 @@ if [ -n "$PRIVATE_KEY" ] && [ ! -f ~/.kwil_cli/config.json ]; then
   echo "{\"private_key\":\"$PRIVATE_KEY\",\"grpc_url\":\"http://localhost:8080\",\"chain_id\":\"\"}" > ~/.kwil_cli/config.json
 fi
 
+# to make sure kwild is ready
+for i in {1..10}; do
+#  check kwil-cli is exist
+  if ../.build/kwil-cli utils ping &> /dev/null; then
+    break
+  fi
+  echo "Waiting for kwild to be ready"
+  sleep 5
+done
+
 # smoke test about kwil-cli
 test_content=$(./../.build/kwil-cli database list --self)
 
@@ -39,12 +57,6 @@ test_content=$(./../.build/kwil-cli database list --self)
 # or if contains "must have a configured wallet"
 if [[ $test_content == *"Error"* ]] || [[ $test_content == *"must have a configured wallet"* ]]; then
   echo "kwil-cli error: $test_content"
-  exit 1
-fi
-
-# if we kwild is not running, error out
-if ! kill -0 $kwild_pid; then
-  echo "kwild process is not running"
   exit 1
 fi
 
