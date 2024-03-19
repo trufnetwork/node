@@ -1,7 +1,8 @@
 .git
-.build
 .env
 .idea
+
+.build/kwild
 
 scripts/temp_csv
 scripts/composed_streams.csv

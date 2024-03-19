@@ -25,10 +25,6 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Install Taskfile
-        if: ${{ !env.ACT }} # skip during local actions testing
-        uses: arduino/setup-task@v2
-
       - name: Setup Go
         if: ${{ !env.ACT }} # skip during local actions testing
         uses: actions/setup-go@v4
@@ -42,7 +38,7 @@ jobs:
           args: --timeout=30m --config=.golangci.yml --issues-exit-code=0
           skip-cache: true
 
-#      # TODO: Test needs to be fixed first on issue 120 and 129
+        # TODO: Test needs to be fixed first on issue 120 and 129
 ##      - name: Run Go Tests
 ##        run: |
 ##          task test:unit
@@ -55,11 +51,6 @@ jobs:
           # hardcoded for testing reasons
           whitelist_wallets: "0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf"
 
-      # It takes time to download the kwil binary and extract kwil-cli so I push kwil-cli to the repo, are there any better way to do this?
-      - name: Move kwil-cli to .build
-        run: |
-          mkdir -p ./.build && mv kwil-cli ./.build/kwil-cli
-
       - name: setup python
         uses: actions/setup-python@v5
         with:
@@ -67,9 +58,11 @@ jobs:
       - name: Install Python dependencies
         run: python -m pip install --upgrade pip pandas
 
+        # It takes time to download the kwil binary and extract kwil-cli so I push kwil-cli to the repo.
+        # It needed to seed database. Are there any better way to do this?
         # PRIVATE_KEY is hardcoded for testing reasons
       - name: Seed Database
-        if: ${{ !env.ACT }} # skip during local actions testing
+        if: ${{ !env.ACT }} # act doesn't have uuidgen, so it will fail if run on act
         run: |
           timeout 300 docker logs tsn-db-tsn-db-1 -f | grep  -m1 -oP '"Health check state changed","state":"up"' || { ec=$?; [ $ec -eq 141 ] && true || (exit $ec); }
           export PRIVATE_KEY="0000000000000000000000000000000000000000000000000000000000000001"
