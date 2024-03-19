@@ -31,3 +31,6 @@ go.work
 
 ### Things that doesn't produce code or seed
 *.md
+scripts/temp_*
+scripts/produce_source_maps/all_tables.csv
+scripts/composed_streams.csv

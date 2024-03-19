@@ -44,29 +44,54 @@ jobs:
           skip-cache: true
 
         # TODO: Test needs to be fixed first on issue 120 and 129
-##      - name: Run Go Tests
-##        run: |
-##          task test:unit
+      ##      - name: Run Go Tests
+      ##        run: |
+      ##          task test:unit
 
       - name: Docker Compose Up
+        # docker compose up --wait makes it exit with 1 even for a successful run
+        continue-on-error: true
         uses: isbang/compose-action@v1.5.1
         with:
           compose-file: "./compose.yaml"
+          # waits every container to be ready, so we're sure there's data already
+          up-flags: '--wait'
+        env:
+          # This is not a secret, it's hardcoded for the CI testing
+          PRIVATE_KEY: "0000000000000000000000000000000000000000000000000000000000000001"
+          WHITELIST_WALLETS: "0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf"
 
-      - name: setup python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-      - name: Install Python dependencies
-        run: python -m pip install --upgrade pip pandas
-
-      # It takes time to download the kwil binary and extract kwil-cli so I push kwil-cli to the repo.
-      # It needed to seed database. Are there any better way to do this?
-      # PRIVATE_KEY and WHITELIST_WALLETS are hardcoded for testing reasons
-      - name: Seed Database and Run Tests
+      # we need it to be manually checked, as above action will always exit with 1 even if it's successful
+      - name: Check compose status
         run: |
-          timeout 300 docker logs tsn-db-tsn-db-1 -f | grep  -m1 -oP '"Health check state changed","state":"up"' || { ec=$?; [ $ec -eq 141 ] && true || (exit $ec); }
-          export PRIVATE_KEY="0000000000000000000000000000000000000000000000000000000000000001"
-          export WHITELIST_WALLETS="0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf"
-          scripts/setup.sh
+          output=$(docker ps -a --format "{{.Names}},{{.Image}},{{.Status}}")
+          
+          function expect_status() {
+            image_name=$1
+            expected_status=$2
+            image_row=$(echo "$output" | grep "$image_name")
+            if echo "$image_row" | grep -q "$expected_status"; then
+              echo "$image_name exited with 0"
+            else
+              echo -e "$image_name isn't with expected status $expected_status\n"
+              echo -e "docker ps output: \n$output\n\n"
+          
+              # extract the container name, knowing it's the first column
+              container_name=$(echo "$image_row" | cut -d ',' -f 1)
+          
+              echo -e "docker logs for $image_name: \n"
+              docker logs $container_name | tail -n 500
+          
+              exit 1
+            fi
+          }
+          
+          # we ensure both containers are exited with 0
+          # if you are running locally, make sure any previous postgres volume state is clean
+          # otherwise, tsn-db will error for out for block state being out of sync.
+          expect_status "tsn-db:local" "Up "
+          expect_status "push-tsn-data:local" "Exited (0)"
+
+      - name: Run Tests
+        run: |
           scripts/ci-tests.sh
