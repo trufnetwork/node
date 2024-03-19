@@ -70,4 +70,5 @@ jobs:
         if: ${{ !env.ACT }} # skip during local actions testing
         run: |
           timeout 300 docker logs tsn-db-tsn-db-1 -f | grep  -m1 -oP '"Health check state changed","state":"up"' || { ec=$?; [ $ec -eq 141 ] && true || (exit $ec); }
+          export PRIVATE_KEY="0000000000000000000000000000000000000000000000000000000000000001"
           scripts/setup.sh
