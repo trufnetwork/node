@@ -32,7 +32,6 @@ jobs:
           sudo apt-get install uuid-runtime
 
       - name: Setup Go
-        if: ${{ !env.ACT }} # skip during local actions testing
         uses: actions/setup-go@v4
         with:
           go-version: '1.21'
@@ -65,10 +64,9 @@ jobs:
       # It needed to seed database. Are there any better way to do this?
       # PRIVATE_KEY and WHITELIST_WALLETS are hardcoded for testing reasons
       - name: Seed Database and Run Tests
-        if: ${{ !env.ACT }} # act doesn't have uuidgen, so it will fail if run on act
         run: |
           timeout 300 docker logs tsn-db-tsn-db-1 -f | grep  -m1 -oP '"Health check state changed","state":"up"' || { ec=$?; [ $ec -eq 141 ] && true || (exit $ec); }
           export PRIVATE_KEY="0000000000000000000000000000000000000000000000000000000000000001"
-          export WHITELIST_WALLETS="7e5f4552091a69125d5dfcb7b8c2659029395bdf"
+          export WHITELIST_WALLETS="0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf"
           scripts/setup.sh
           scripts/ci-tests.sh
