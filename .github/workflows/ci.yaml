@@ -25,12 +25,6 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Setup Local uuidgen
-        if: ${{ env.ACT }} # we just need that for local actions testing
-        run: |
-          sudo apt-get update
-          sudo apt-get install uuid-runtime
-
       - name: Setup Go
         uses: actions/setup-go@v4
         with:
