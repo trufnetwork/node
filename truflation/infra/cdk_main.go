@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsecr"
@@ -257,13 +256,12 @@ systemctl enable tsn-db-app.service
 systemctl start tsn-db-app.service
 `
 
-	kwilGatewayBinaryScript := fmt.Sprintf(
-		`#!/bin/bash
+	kwilGatewayBinaryScript := `#!/bin/bash
 unzip /tmp/kwil-binaries/kgw_v0.1.2.zip -d /tmp/kwil-binaries
 mkdir -p /tmp/kwil-binaries/kgw_v0.1.2/kgw_0.1.2_linux_arm64
 tar -xf /tmp/kwil-binaries/kgw_v0.1.2/kgw_0.1.2_linux_arm64.tar.gz -C /tmp/kwil-binaries/kgw_v0.1.2/kgw_0.1.2_linux_arm64
 chmod +x /tmp/kwil-binaries/kgw_v0.1.2/kgw_0.1.2_linux_arm64/kgw
-`)
+`
 
 	instance.AddUserData(&script1Content, &kwilGatewayBinaryScript)
 }
