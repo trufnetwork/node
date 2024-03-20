@@ -1,0 +1,6 @@
+[app]
+
+# TCP or UNIX socket address for the KWILD App's HTTP server to listen on
+#http_listen_addr = "localhost:8080" # default
+http_listen_addr = "0.0.0.0:8080" # for external access
+pg_db_host = "kwil-postgres"

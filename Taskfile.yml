@@ -25,6 +25,11 @@ tasks:
     cmds:
       - docker start kwil-postgres || docker run -d -p 5432:5432 --name kwil-postgres -e "POSTGRES_HOST_AUTH_METHOD=trust" kwildb/postgres:latest
 
+  compose:
+    desc: Run docker-compose
+    cmds:
+      - docker compose up
+
   tools:
     desc: Install tools
     cmds:
@@ -49,7 +54,22 @@ tasks:
         && mv ./kwil-cli .build
         && rm ./kwil-db.tar.gz
 
+  clear-data:
+    cmds:
+      - rm -r ~/.kwild || true
+      - docker volume rm tsn-db_data-kwil-postgres tsn-db_data-push-tsn-data -f
+
   seed:
     desc: Seed the database
     cmds:
       - bash ./scripts/setup.sh
+
+  test:unit:
+    desc: Run unit tests
+    cmds:
+      - go test ./internal/extensions/...
+
+  coverage:
+    desc: Run coverage
+    cmds:
+      - bash ./scripts/coverage.sh

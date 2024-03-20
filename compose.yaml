@@ -1,0 +1,75 @@
+services:
+  kwil-postgres:
+    image: "kwildb/postgres:latest"
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    # persis data
+    volumes:
+      - type: volume
+        source: data-kwil-postgres
+        target: /var/lib/postgresql/data
+        volume:
+          nocopy: true
+    networks:
+      - tsn-network
+
+  tsn-db:
+    container_name: tsn-db
+    hostname: tsn-db
+    image: "tsn-db:local"
+    build:
+      context: .
+      dockerfile: ./deployments/Dockerfile
+    ports:
+      - "8080:8080"
+    depends_on:
+      kwil-postgres:
+        condition: service_healthy
+    networks:
+      - tsn-network
+
+  push-tsn-data:
+    image: "push-tsn-data:local"
+    build:
+      context: .
+      dockerfile: ./deployments/push-tsn-data.dockerfile
+    volumes:
+      - type: volume
+        source: data-push-tsn-data
+        # should only run once at deployment
+        target: /firstrun
+        volume:
+          nocopy: false
+    depends_on:
+      tsn-db:
+        condition: service_started
+    networks:
+      - tsn-network
+    environment:
+      # should come from environment
+      - PRIVATE_KEY=${PRIVATE_KEY:?PRIVATE_KEY is necessary for deployment}
+      # this is not required, but if it is set, it should be a comma separated list of wallet addresses (e.g. 0x1234,0x5678)
+      # if not set, only the owner of the private key will be able to query
+      - WHITELIST_WALLETS=${WHITELIST_WALLETS}
+
+  finisher:
+    container_name: wait-for-completion
+    image: hello-world
+    depends_on:
+      push-tsn-data:
+        condition: service_completed_successfully
+
+networks:
+  tsn-network:
+    driver: bridge
+
+volumes:
+  data-kwil-postgres:
+  data-push-tsn-data:

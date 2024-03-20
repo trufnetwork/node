@@ -267,6 +267,10 @@ func CallOnTargetDBID(scoper *precompiles.ProcedureContext, app *common.App, met
 		Signer:    newScope.Signer,
 		Caller:    newScope.Caller,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("error calling procedure (dbid=%s): %w", target, err)
+	}
+
 	if res == nil {
 		return nil, fmt.Errorf("stream returned nil result")
 	}
