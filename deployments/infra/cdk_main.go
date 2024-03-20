@@ -281,6 +281,9 @@ systemctl start tsn-db-app.service`
 	instance.AddUserData(&script1Content)
 }
 
+// Warning: Used environment variables are not encrypted in the CloudFormation template,
+// nor to who have access to the instance if it used on a service configuration file.
+// Switch for encryption if necessary.
 func getEnvStringsForService(envDict map[string]string) string {
 	envStrings := ""
 	for k, v := range envDict {
