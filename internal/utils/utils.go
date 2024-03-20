@@ -16,10 +16,10 @@ import (
 // - xac760c4d5332844f0da28c01adb53c6c369be0a2c4bf530a0f3366bd (DBID)
 // - <owner_wallet_address>/<db_name>
 // - /<db_name> (will use the wallet address from the scoper)
-func GetDBIDFromPath(ctx *precompiles.DeploymentContext, pathOrDBID string) (string, error) {
+func GetDBIDFromPath(ctx *precompiles.DeploymentContext, pathOrDBID string) string {
 	// if the path does not contain a "/", we assume it is a DBID
 	if !strings.Contains(pathOrDBID, "/") {
-		return pathOrDBID, nil
+		return pathOrDBID
 	}
 
 	var walletAddress []byte
@@ -41,7 +41,7 @@ func GetDBIDFromPath(ctx *precompiles.DeploymentContext, pathOrDBID string) (str
 
 	DBID := utils.GenerateDBID(dbName, walletAddress)
 
-	return DBID, nil
+	return DBID
 }
 
 func Fraction(number int64, numerator int64, denominator int64) (int64, error) {
@@ -76,7 +76,7 @@ type ValueWithDate struct {
 // Else, it will return an error.
 func GetScalarWithDate(res *sql.ResultSet) ([]ValueWithDate, error) {
 	if len(res.Columns) != 2 {
-		return nil, fmt.Errorf("stream expected one column, got %d", len(res.Columns))
+		return nil, fmt.Errorf("stream expected two column, got %d", len(res.Columns))
 	}
 	if len(res.Rows) == 0 {
 		return []ValueWithDate{}, nil
