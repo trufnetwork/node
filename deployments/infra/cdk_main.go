@@ -95,9 +95,10 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	})
 
 	initElements := []awsec2.InitElement{
-		awsec2.InitFile_FromExistingAsset(jsii.String("/home/ubuntu/docker-compose.yaml"), dockerComposeAsset, nil), // default vpc
+		awsec2.InitFile_FromExistingAsset(jsii.String("/home/ec2-user/docker-compose.yaml"), dockerComposeAsset, nil),
 	}
 
+	// default vpc
 	vpcInstance := awsec2.Vpc_FromLookup(stack, jsii.String("VPC"), &awsec2.VpcLookupOptions{
 		IsDefault: jsii.Bool(true),
 	})
@@ -111,6 +112,7 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	// make ecr repository available to the instance
 	tsnImageAsset.Repository().GrantPull(instanceRole)
 	pushDataImageAsset.Repository().GrantPull(instanceRole)
+	dockerComposeAsset.GrantRead(instanceRole)
 
 	// Output info.
 	awscdk.NewCfnOutput(stack, jsii.String("public-address"), &awscdk.CfnOutputProps{
@@ -173,23 +175,19 @@ func createInstance(stack awscdk.Stack, name string, vpc awsec2.IVpc, initElemen
 		*initElements...,
 	)
 
+	// comes with pre-installed cloud init requirements
+	AWSLinux2MachineImage := awsec2.MachineImage_LatestAmazonLinux2(nil)
 	instance := awsec2.NewInstance(stack, jsii.String(name), &awsec2.InstanceProps{
 		InstanceType: awsec2.InstanceType_Of(awsec2.InstanceClass_T3, awsec2.InstanceSize_SMALL),
 		Init:         initData,
-		// ubuntu 22.04
-		// https://cloud-images.ubuntu.com/locator/ec2/
-		MachineImage: awsec2.MachineImage_FromSsmParameter(jsii.String("/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id"), nil),
+		MachineImage: AWSLinux2MachineImage,
 		Vpc:          vpc,
 		VpcSubnets: &awsec2.SubnetSelection{
 			SubnetType: subnetType,
 		},
 		SecurityGroup: instanceSG,
 		Role:          instanceRole,
-		// takes a long time to deploy, so we raise the timeout
-		InitOptions: &awsec2.ApplyCloudFormationInitOptions{
-			Timeout: awscdk.Duration_Minutes(jsii.Number(10)),
-		},
-		KeyPair: awsec2.KeyPair_FromKeyPairName(stack, jsii.String("KeyPair"), keyPair),
+		KeyPair:       awsec2.KeyPair_FromKeyPairName(stack, jsii.String("KeyPair"), keyPair),
 		BlockDevices: &[]*awsec2.BlockDevice{
 			{
 				DeviceName: jsii.String("/dev/sda1"),
@@ -211,38 +209,52 @@ func createInstance(stack awscdk.Stack, name string, vpc awsec2.IVpc, initElemen
 
 func deployImageOnInstance(stack awscdk.Stack, instance awsec2.Instance, tsnImageAsset awsecrassets.DockerImageAsset, pushDataImageAsset awsecrassets.DockerImageAsset) {
 
+	// we could improve this script by adding a ResourceSignal, which would signalize to CDK that the instance is ready
+	// and fail the deployment otherwise
+
 	// create a script from the asset
 	script1Content := `#!/bin/bash
 set -e
 set -x
 
-# install docker
-apt-get update
-apt-get install -y docker.io
+# Update the system
+yum update -y
 
-# add the ubuntu user to the docker group
-usermod -aG docker ubuntu
-# flush changes
+# Install Docker
+amazon-linux-extras install docker
+
+# Start Docker and enable it to start at boot
+systemctl start docker
+systemctl enable docker
+
+mkdir -p /usr/local/lib/docker/cli-plugins/
+curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod a+x /usr/local/lib/docker/cli-plugins/docker-compose
+
+# Add the ec2-user to the docker group (ec2-user is the default user in Amazon Linux 2)
+usermod -aG docker ec2-user
+
+# reload the group
 newgrp docker
 
-# install aws cli
-apt-get install -y awscli
+# Install the AWS CLI
+yum install -y aws-cli
 
-# login to ecr
+# Login to ECR
 aws ecr get-login-password --region ` + *stack.Region() + ` | docker login --username AWS --password-stdin ` + *tsnImageAsset.Repository().RepositoryUri() + `
-# pull the image
+# Pull the image
 docker pull ` + *tsnImageAsset.ImageUri() + `
-# tag the image as tsn-db:local, as the docker compose file expects that
+# Tag the image as tsn-db:local, as the docker-compose file expects that
 docker tag ` + *tsnImageAsset.ImageUri() + ` tsn-db:local
 
-# login to ecr
+# Login to ECR again for the second repository
 aws ecr get-login-password --region ` + *stack.Region() + ` | docker login --username AWS --password-stdin ` + *pushDataImageAsset.Repository().RepositoryUri() + `
-# pull the image
+# Pull the image
 docker pull ` + *pushDataImageAsset.ImageUri() + `
-# tag the image as push-tsn-data:local, as the docker compose file expects that
+# Tag the image as push-tsn-data:local, as the docker-compose file expects that
 docker tag ` + *pushDataImageAsset.ImageUri() + ` push-tsn-data:local
 
-# create a systemd service file
+# Create a systemd service file
 cat <<EOF > /etc/systemd/system/tsn-db-app.service
 [Unit]
 Description=My Docker Application
@@ -252,22 +264,40 @@ After=docker.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-# this path comes from the init asset
-ExecStart=/bin/bash -c "docker compose -f /home/ubuntu/docker-compose.yaml up -d" 
-ExecStop=/bin/bash -c "docker compose -f /home/ubuntu/docker-compose.yaml down"
-
+# This path comes from the init asset
+ExecStart=/bin/bash -c "docker compose -f /home/ec2-user/docker-compose.yaml up -d"
+ExecStop=/bin/bash -c "docker compose -f /home/ec2-user/docker-compose.yaml down"
+` + getEnvStringsForService(getEnvVars("WHITELIST_WALLETS", "PRIVATE_KEY")) + `
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# reload systemd to recognize the new service, enable it to start on boot, and start the service
+# Reload systemd to recognize the new service, enable it to start on boot, and start the service
 systemctl daemon-reload
 systemctl enable tsn-db-app.service
-systemctl start tsn-db-app.service
-`
+systemctl start tsn-db-app.service`
 
 	instance.AddUserData(&script1Content)
+}
+
+func getEnvStringsForService(envDict map[string]string) string {
+	envStrings := ""
+	for k, v := range envDict {
+		envStrings += "Environment=\"" + k + "=" + v + "\"\n"
+	}
+	return envStrings
+}
+
+// getEnvVars returns a map of environment variables from the given list of
+// environment variable names. If an environment variable is not set, it will
+// be an empty string in the map.
+func getEnvVars(envNames ...string) map[string]string {
+	envDict := make(map[string]string)
+	for _, envName := range envNames {
+		envDict[envName] = os.Getenv(envName)
+	}
+	return envDict
 }
 
 func main() {
