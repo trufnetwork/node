@@ -8,7 +8,7 @@ on:
   push:
     branches:
       - main
-      - refactor/upgrade-zero-seven
+      - refactor/upgrade-zero-seven # TODO: remove this line after the refactor is done
 
 jobs:
   acceptance-test:
@@ -43,10 +43,9 @@ jobs:
           args: --timeout=30m --config=.golangci.yml --issues-exit-code=0
           skip-cache: true
 
-        # TODO: Test needs to be fixed first on issue 120 and 129
-##      - name: Run Go Tests
-##        run: |
-##          task test:unit
+      - name: Run Go Tests
+        run: |
+          go test ./internal/extensions/...
 
       - name: Docker Compose Up
         uses: isbang/compose-action@v1.5.1

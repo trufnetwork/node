@@ -59,8 +59,12 @@ tasks:
     cmds:
       - bash ./scripts/setup.sh
 
-# TODO: Test needs to be fixed first on issue 120 and 129
-#  test:unit:
-#    desc: Run unit tests
-#    cmds:
-#      - go test ./...
+  test:unit:
+    desc: Run unit tests
+    cmds:
+      - go test ./internal/extensions/...
+
+  coverage:
+    desc: Run coverage
+    cmds:
+      - bash ./scripts/coverage.sh
