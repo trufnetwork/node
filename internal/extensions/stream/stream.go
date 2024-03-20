@@ -56,8 +56,8 @@ func (s *Stream) Call(scoper *precompiles.ProcedureContext, app *common.App, met
 		}
 	}
 
-	if !utils2.IsValidDate(date) {
-		return nil, fmt.Errorf("invalid date: %s", date)
+	if !utils2.IsValidDate(date) || (dateTo != "" && !utils2.IsValidDate(dateTo)) {
+		return nil, fmt.Errorf("invalid date: %s, date_to: %s", date, dateTo)
 	}
 
 	// target is the necessary path to compute the stream OR the DBID itself
@@ -65,11 +65,7 @@ func (s *Stream) Call(scoper *precompiles.ProcedureContext, app *common.App, met
 	// if it starts with a /, is from the same wallet namespace
 	// or it is a full path, <walletaddress>/<db_name>
 
-	target, err := getDBIDFromPath(scoper, pathOrDBID)
-	if err != nil {
-		return nil, err
-	}
-
+	target := getDBIDFromPath(scoper, pathOrDBID)
 	scoper.SetValue("date", date)
 	scoper.SetValue("date_to", dateTo)
 	res, err := app.Engine.Execute(scoper.Ctx, app.DB, target, method, scoper.Values())
@@ -86,10 +82,10 @@ func (s *Stream) Call(scoper *precompiles.ProcedureContext, app *common.App, met
 // - xac760c4d5332844f0da28c01adb53c6c369be0a2c4bf530a0f3366bd (DBID)
 // - <owner_wallet_address>/<db_name>
 // - /<db_name> (will use the wallet address from the scoper)
-func getDBIDFromPath(scoper *precompiles.ProcedureContext, pathOrDBID string) (string, error) {
+func getDBIDFromPath(scoper *precompiles.ProcedureContext, pathOrDBID string) string {
 	// if the path does not contain a "/", we assume it is a DBID
 	if !strings.Contains(pathOrDBID, "/") {
-		return pathOrDBID, nil
+		return pathOrDBID
 	}
 
 	walletAddress := ""
@@ -111,7 +107,7 @@ func getDBIDFromPath(scoper *precompiles.ProcedureContext, pathOrDBID string) (s
 	walledAddressBytes := []byte(walletAddress)
 	DBID := utils.GenerateDBID(dbName, walledAddressBytes)
 
-	return DBID, nil
+	return DBID
 }
 
 type knownMethod string
