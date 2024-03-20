@@ -1,4 +1,4 @@
-module infra
+module github.com/truflation/tsn-db/infra
 
 go 1.22.1
 
