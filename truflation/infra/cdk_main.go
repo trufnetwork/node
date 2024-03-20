@@ -1,15 +1,16 @@
 package main
 
 import (
+	"fmt"
 	"github.com/aws/aws-cdk-go/awscdk/v2"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsecr"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsecrassets"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awss3"
 	"github.com/aws/jsii-runtime-go"
 	"infra/config"
 	"os"
-
-	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
-	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 
 	"github.com/aws/constructs-go/constructs/v10"
 )
@@ -100,7 +101,12 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 
 	// Create instance using imageAsset hash so that the instance is recreated when the image changes.
 	newName := "TsnDBInstance" + *imageAsset.AssetHash()
-	instance, instanceRole := createInstance(stack, newName, vpcInstance)
+	bucketName := "kwil-binaries"
+	kwilGatewayBucket := awss3.Bucket_FromBucketName(stack, jsii.String("KwilGatewayBucket"), jsii.String(bucketName))
+	objPath := "gateway/kgw_v0.1.2.zip"
+
+	instanceRole := createInstanceRole(stack, kwilGatewayBucket, objPath)
+	instance := createInstance(stack, instanceRole, newName, vpcInstance)
 
 	deployImageOnInstance(stack, instance, imageAsset, repo)
 
@@ -115,7 +121,7 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	return stack
 }
 
-func createInstance(stack awscdk.Stack, name string, vpc awsec2.IVpc) (awsec2.Instance, awsiam.IRole) {
+func createInstance(stack awscdk.Stack, instanceRole awsiam.IRole, name string, vpc awsec2.IVpc) awsec2.Instance {
 	// Create security group.
 	instanceSG := awsec2.NewSecurityGroup(stack, jsii.String("NodeSG"), &awsec2.SecurityGroupProps{
 		Vpc:              vpc,
@@ -159,11 +165,6 @@ func createInstance(stack awscdk.Stack, name string, vpc awsec2.IVpc) (awsec2.In
 		keyPair = jsii.String(config.KeyPairName(stack))
 	}
 
-	// Create instance role.
-	instanceRole := awsiam.NewRole(stack, jsii.String("InstanceRole"), &awsiam.RoleProps{
-		AssumedBy: awsiam.NewServicePrincipal(jsii.String("ec2.amazonaws.com"), nil),
-	})
-
 	instance := awsec2.NewInstance(stack, jsii.String(name), &awsec2.InstanceProps{
 		InstanceType: awsec2.InstanceType_Of(awsec2.InstanceClass_T3, awsec2.InstanceSize_SMALL),
 		// ubuntu 22.04
@@ -192,7 +193,17 @@ func createInstance(stack awscdk.Stack, name string, vpc awsec2.IVpc) (awsec2.In
 		AllocationId: eip.AttrAllocationId(),
 	})
 
-	return instance, instanceRole
+	return instance
+}
+
+func createInstanceRole(stack awscdk.Stack, kwilGatewayBucket awss3.IBucket, objPath string) awsiam.IRole {
+	instanceRole := awsiam.NewRole(stack, jsii.String("InstanceRole"), &awsiam.RoleProps{
+		AssumedBy: awsiam.NewServicePrincipal(jsii.String("ec2.amazonaws.com"), nil),
+	})
+
+	kwilGatewayBucket.GrantRead(instanceRole, jsii.String(objPath))
+
+	return instanceRole
 }
 
 func deployImageOnInstance(stack awscdk.Stack, instance awsec2.Instance, imageAsset awsecrassets.DockerImageAsset, repo awsecr.IRepository) {
@@ -246,7 +257,15 @@ systemctl enable tsn-db-app.service
 systemctl start tsn-db-app.service
 `
 
-	instance.AddUserData(&script1Content)
+	kwilGatewayBinaryScript := fmt.Sprintf(
+		`#!/bin/bash
+unzip /tmp/kwil-binaries/kgw_v0.1.2.zip -d /tmp/kwil-binaries
+mkdir -p /tmp/kwil-binaries/kgw_v0.1.2/kgw_0.1.2_linux_arm64
+tar -xf /tmp/kwil-binaries/kgw_v0.1.2/kgw_0.1.2_linux_arm64.tar.gz -C /tmp/kwil-binaries/kgw_v0.1.2/kgw_0.1.2_linux_arm64
+chmod +x /tmp/kwil-binaries/kgw_v0.1.2/kgw_0.1.2_linux_arm64/kgw
+`)
+
+	instance.AddUserData(&script1Content, &kwilGatewayBinaryScript)
 }
 
 func main() {
