@@ -5,7 +5,7 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsecrassets"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/jsii-runtime-go"
-	"infra/config"
+	"github.com/truflation/tsn-db/infra/config"
 	"os"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
