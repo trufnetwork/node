@@ -56,6 +56,29 @@ func Test_Index(t *testing.T) {
 
 	returned, err = b.index(scope, app, "2024-01-01", nil)
 	assert.NoError(t, err)
+	assert.Equal(t, []utils.ValueWithDate{{Date: "2024-01-01", Value: 200000}}, returned)
+
+	t.Run("validation - it should return an error expected single value when base value is not a single value", func(t *testing.T) {
+		mockSql := map[string]*sql.ResultSet{
+			b.sqlGetBaseValue(): mockDateScalar("value", []utils.ValueWithDate{
+				{Date: "2024-01-01", Value: 75000},
+				{Date: "2024-01-02", Value: 150000},
+			}),
+		}
+		app.Engine = newEngine(t, mockSql)
+		_, err = b.index(scope, app, "2024-01-01", nil)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "expected single value")
+	})
+
+	t.Run("error - it should return an error if b.value returns an error", func(t *testing.T) {
+		mockSql := map[string]*sql.ResultSet{
+			b.sqlGetBaseValue(): mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 75000}}), // 75.000
+		}
+		app.Engine = newEngine(t, mockSql)
+		_, err = b.index(scope, app, "2024-01-01", nil)
+		assert.Error(t, err)
+	})
 }
 
 func Test_Value(t *testing.T) {
