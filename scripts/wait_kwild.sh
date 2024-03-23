@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -e
+cd "$(dirname "$0")"
 
 grpc_url=${GRPC_URL:-"http://localhost:8080"}
 
