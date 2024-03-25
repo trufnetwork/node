@@ -51,10 +51,10 @@ jobs:
           # so we make it dependent on:
           # - working branch (by default this already works like this)
           # - workflow file
-          key: ${{ runner.os }}-buildx-cache-ci
+          key: /tmp/buildx-cache-ci
           restore-keys: |
-            ${{ runner.os }}-buildx-cache-ci
-            ${{ runner.os }}-buildx-cache
+            /tmp/buildx-cache-ci
+            /tmp/buildx-cache
 
       - name: Setup Docker
         uses: docker/setup-buildx-action@v3
@@ -86,7 +86,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ runner.workspace }}/cache-new
-          key: ${{ runner.os }}-buildx-cache-ci
+          key: /tmp/buildx-cache-ci
 
       - name: Cleanup Cache Files
         if: ${{ !env.ACT }} # skip during local actions testing
