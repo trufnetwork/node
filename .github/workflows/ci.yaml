@@ -41,6 +41,28 @@ jobs:
         run: |
           go test ./internal/...
 
+      - name: Setup Cache key
+        id: setup-key
+        shell: bash
+        run: |
+          branch="${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}"
+          key="${{ runner.os }}-buildx-cache-$branch-ci"
+          # make it available to other steps
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.workspace }}/cache
+          # cache here is reused by buildx docker builder
+          # so we make it dependent on:
+          # - working branch
+          # - workflow file
+          key: ${{ steps.setup-key.outputs.key }}
+
+      - name: Setup Docker
+        uses: docker/setup-buildx-action@v3
+
       - name: Docker Compose Up
         # docker compose up --wait makes it exit with 1 even for a successful run
         continue-on-error: true
@@ -48,11 +70,25 @@ jobs:
         with:
           compose-file: "./compose.yaml"
           # waits every container to be ready, so we're sure there's data already
-          up-flags: '--wait'
+          # also force build to ensure it is working locally
+          up-flags: '--wait --force-recreate --build'
         env:
+          CACHE_DIR: ${{ runner.workspace }}/cache
           # This is not a secret, it's hardcoded for the CI testing
           PRIVATE_KEY: "0000000000000000000000000000000000000000000000000000000000000001"
           WHITELIST_WALLETS: "0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf"
+
+      - name: Save Cache
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.workspace }}/cache-new
+          key: ${{ steps.setup-key.outputs.key }}
+
+      - name: Cleanup Cache Files
+        if: ${{ !env.ACT }} # skip during local actions testing
+        run: |
+          rm -rf ${{ runner.workspace }}/cache
+          rm -rf ${{ runner.workspace }}/cache-new
 
       # we need it to be manually checked, as above action will always exit with 1 even if it's successful
       - name: Check compose status
