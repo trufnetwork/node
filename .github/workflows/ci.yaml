@@ -80,7 +80,7 @@ jobs:
         continue-on-error: true
         run: |
           gh extension install actions/gh-actions-cache
-          gh actions-cache delete "${{ env.cache-key }}" --confirm
+          gh actions-cache delete "${{ steps.restore-cache.outputs.cache-primary-key }}" --confirm
 
       - name: Save Cache
         uses: actions/cache/save@v4
