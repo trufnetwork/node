@@ -32,7 +32,6 @@ jobs:
           cache: false
 
       - name: Lint
-        if: ${{ !env.ACT }} # skip during local actions testing
         uses: golangci/golangci-lint-action@v4
         with:
           args: --timeout=30m --issues-exit-code=0
