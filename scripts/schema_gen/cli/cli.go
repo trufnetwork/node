@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	schemagen "github.com/truflation/tsn-db/scripts/schema_gen"
 	"os"
 	"strconv"
 	"strings"
+
+	schemagen "github.com/truflation/tsn-db/scripts/schema_gen"
 )
 
 func main() {
