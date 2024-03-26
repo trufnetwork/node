@@ -29,6 +29,8 @@ go.work.sum
 .build
 .github
 .idea
+**/.git
+*.iml
 
 ### Things that doesn't produce code or seed
 *.md
