@@ -58,8 +58,8 @@ jobs:
           # This is not a secret, it's hardcoded for the CI testing
           PRIVATE_KEY: "0000000000000000000000000000000000000000000000000000000000000001"
           WHITELIST_WALLETS: "0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf"
-          CACHE_FROM: "type=gha"
-          CACHE_TO: "type=gha,mode=max"
+          CACHE_FROM: "type=gha,scope=truflation/tsn"
+          CACHE_TO: "type=gha,mode=max,scope=truflation/tsn"
 
       # we need it to be manually checked, as above action will always exit with 1 even if it's successful
       - name: Check compose status
