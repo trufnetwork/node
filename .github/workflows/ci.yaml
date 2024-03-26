@@ -52,8 +52,8 @@ jobs:
         with:
           compose-file: "./compose.yaml"
           # waits every container to be ready, so we're sure there's data already
-          # also force build to ensure it is working locally
-          up-flags: '--wait --force-recreate --build'
+          # when in ACT, also force build to ensure it is working locally
+          up-flags: "--wait ${{env.ACT && '--build --force-recreate --no-deps' || ''}}"
         env:
           # This is not a secret, it's hardcoded for the CI testing
           PRIVATE_KEY: "0000000000000000000000000000000000000000000000000000000000000001"
