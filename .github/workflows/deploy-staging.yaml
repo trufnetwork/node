@@ -15,17 +15,16 @@ jobs:
 #    needs: [ tests ]  # require tests to pass before deploy runs
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: '1.22.x'
           check-latest: true
-          cache: true
 
       - name: Install dependencies
         env:
@@ -45,7 +44,7 @@ jobs:
         uses: docker/setup-qemu-action@v2
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
       - name: Install Node.js
         uses: actions/setup-node@v2
@@ -62,17 +61,6 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY }}
           aws-region: us-east-2
 
-      - name: Cache Docker layers for TSN DB
-        uses: actions/cache@v3
-        with:
-          path: /tmp/.buildx-cache-tsn-db
-          # we don't use sha, so we can reuse between commits.
-          # docker takes care of invalidating the cache if the build context changes
-          #key: ${{ runner.os }}-buildx-tsn-db-${{ github.sha }}
-          key: ${{ runner.os }}-buildx-tsn-db
-          restore-keys: |
-            ${{ runner.os }}-buildx-tsn-db
-
       # this step includes building the docker image. See main_cdk.go for details on args used
       - name: Deploy
         run: |
@@ -84,8 +72,4 @@ jobs:
         env:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           WHITELIST_WALLETS: ${{ vars.whitelist_wallets }}
-
-      - name: Move cache
-        run: |
-          rm -rf /tmp/.buildx-cache-tsn-db
-          mv /tmp/.buildx-cache-tsn-db-new /tmp/.buildx-cache-tsn-db
+          CI: true

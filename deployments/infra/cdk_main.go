@@ -8,6 +8,7 @@ import (
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/config"
 	"os"
+	"strings"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
@@ -44,22 +45,30 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	//	},
 	//})
 
+	cacheType := "local"
+	cacheFromParams := "src=/tmp/buildx-cache/#IMAGE_NAME"
+	cacheToParams := "dest=/tmp/buildx-cache-new/#IMAGE_NAME"
+
+	if os.Getenv("CI") == "true" {
+		cacheType = "gha"
+		cacheFromParams = "scope=truflation/tsn/#IMAGE_NAME"
+		cacheToParams = "mode=max,scope=truflation/tsn/#IMAGE_NAME"
+	}
+
 	tsnImageAsset := awsecrassets.NewDockerImageAsset(stack, jsii.String("DockerImageAsset"), &awsecrassets.DockerImageAssetProps{
 		AssetName: nil,
 		BuildArgs: nil,
 		CacheFrom: &[]*awsecrassets.DockerCacheOption{
 			{
-				Type: jsii.String("local"),
-				Params: &map[string]*string{
-					"src": jsii.String("/tmp/.buildx-cache-tsn-db"),
-				},
+				Type: jsii.String(cacheType),
+				// the image name here must match from the compose file, then the cache should work
+				// across different workflows
+				Params: UpdateParamsWithImageName(cacheFromParams, "tsn-db"),
 			},
 		},
 		CacheTo: &awsecrassets.DockerCacheOption{
-			Type: jsii.String("local"),
-			Params: &map[string]*string{
-				"dest": jsii.String("/tmp/.buildx-cache-tsn-db-new"),
-			},
+			Type:   jsii.String(cacheType),
+			Params: UpdateParamsWithImageName(cacheToParams, "tsn-db"),
 		},
 		BuildSecrets: nil,
 		File:         jsii.String("deployments/Dockerfile"),
@@ -74,17 +83,15 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 		BuildArgs: nil,
 		CacheFrom: &[]*awsecrassets.DockerCacheOption{
 			{
-				Type: jsii.String("local"),
-				Params: &map[string]*string{
-					"src": jsii.String("/tmp/.buildx-cache-push-data-tsn"),
-				},
+				Type: jsii.String(cacheType),
+				// the image name here must match from the compose file, then the cache should work
+				// across different workflows
+				Params: UpdateParamsWithImageName(cacheFromParams, "push-tsn-data"),
 			},
 		},
 		CacheTo: &awsecrassets.DockerCacheOption{
-			Type: jsii.String("local"),
-			Params: &map[string]*string{
-				"dest": jsii.String("/tmp/.buildx-cache-push-data-tsn-new"),
-			},
+			Type:   jsii.String(cacheType),
+			Params: UpdateParamsWithImageName(cacheToParams, "push-tsn-data"),
 		},
 		File:      jsii.String("deployments/push-tsn-data.dockerfile"),
 		Directory: jsii.String("../../"),
@@ -127,6 +134,31 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	})
 
 	return stack
+}
+
+// ConvertParamsToMap converts a string of comma-separated key-value pairs to a map.
+// e.g.: "key1=value1,key2=value2" -> {"key1": "value1", "key2": "value2"}
+func ConvertParamsToMap(paramsStr string) *map[string]*string {
+	params := strings.Split(paramsStr, ",")
+	paramsMap := make(map[string]*string)
+	for _, param := range params {
+		kv := strings.Split(param, "=")
+		paramsMap[kv[0]] = jsii.String(kv[1])
+	}
+	return &paramsMap
+}
+
+// UpdateMapValues in every param, it replaces the target string with the value string.
+func UpdateMapValues(params *map[string]*string, target string, value string) {
+	for k, v := range *params {
+		(*params)[k] = jsii.String(strings.Replace(*v, target, value, -1))
+	}
+}
+
+func UpdateParamsWithImageName(paramsStr string, imageName string) *map[string]*string {
+	params := ConvertParamsToMap(paramsStr)
+	UpdateMapValues(params, "#IMAGE_NAME", imageName)
+	return params
 }
 
 func createInstance(stack awscdk.Stack, instanceRole awsiam.IRole, name string, vpc awsec2.IVpc, initElements *[]awsec2.InitElement) awsec2.Instance {
