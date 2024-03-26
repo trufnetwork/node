@@ -2,9 +2,10 @@ package ed25519authenticator_test
 
 import (
 	"crypto/ed25519"
+	"testing"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/truflation/tsn-db/internal/extensions/ed25519authenticator"
-	"testing"
 )
 
 type ed25519AuthenticatorTest struct {

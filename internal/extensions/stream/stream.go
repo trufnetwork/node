@@ -3,11 +3,12 @@ package stream
 import (
 	"errors"
 	"fmt"
+	"strings"
+
 	"github.com/kwilteam/kwil-db/common"
 	"github.com/kwilteam/kwil-db/core/utils"
 	"github.com/kwilteam/kwil-db/extensions/precompiles"
 	utils2 "github.com/truflation/tsn-db/internal/utils"
-	"strings"
 )
 
 // InitializeStream initializes the stream extension.

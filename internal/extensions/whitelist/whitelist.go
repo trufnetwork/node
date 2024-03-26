@@ -3,9 +3,10 @@ package whitelist
 import (
 	"encoding/hex"
 	"fmt"
+	"strings"
+
 	"github.com/kwilteam/kwil-db/common"
 	"github.com/kwilteam/kwil-db/extensions/precompiles"
-	"strings"
 )
 
 func checkWalletFormat(wallet string) error {

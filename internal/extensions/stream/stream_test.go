@@ -1,6 +1,8 @@
 package stream_test
 
 import (
+	"testing"
+
 	"github.com/kwilteam/kwil-db/common"
 	"github.com/kwilteam/kwil-db/common/sql"
 	"github.com/kwilteam/kwil-db/extensions/precompiles"
@@ -8,7 +10,6 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/truflation/tsn-db/internal/extensions/stream"
 	"github.com/truflation/tsn-db/mocks"
-	"testing"
 )
 
 type streamTest struct {
