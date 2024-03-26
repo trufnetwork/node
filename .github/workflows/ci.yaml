@@ -42,20 +42,6 @@ jobs:
         run: |
           go test ./internal/...
 
-      - name: Restore Cache
-        uses: actions/cache/restore@v4
-        id: restore-cache
-        with:
-          path: /tmp/buildx-cache
-          # cache here is reused by buildx docker builder
-          # so we make it dependent on:
-          # - working branch (by default this already works like this)
-          # - workflow file
-          key: ${{ runner.os }}-buildx-cache-ci
-          restore-keys: |
-            ${{ runner.os }}-buildx-cache-ci
-            ${{ runner.os }}-buildx-cache
-
       - name: Setup Docker
         uses: docker/setup-buildx-action@v3
 
@@ -69,30 +55,11 @@ jobs:
           # also force build to ensure it is working locally
           up-flags: '--wait --force-recreate --build'
         env:
-          CACHE_DIR: /tmp/buildx-cache
           # This is not a secret, it's hardcoded for the CI testing
           PRIVATE_KEY: "0000000000000000000000000000000000000000000000000000000000000001"
           WHITELIST_WALLETS: "0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf"
-
-      # overwrite cache key: delete previous and save current
-      - name: Delete Previous Cache
-        if: ${{ steps.restore-cache.outputs.cache-hit }}
-        continue-on-error: true
-        run: |
-          gh extension install actions/gh-actions-cache
-          gh actions-cache delete "${{ steps.restore-cache.outputs.cache-primary-key }}" --confirm
-
-      - name: Save Cache
-        uses: actions/cache/save@v4
-        with:
-          path: /tmp/buildx-cache-new
-          key: ${{ runner.os }}-buildx-cache-ci
-
-      - name: Cleanup Cache Files
-        if: ${{ !env.ACT }} # skip during local actions testing
-        run: |
-          rm -rf ${{ runner.workspace }}/cache
-          rm -rf ${{ runner.workspace }}/cache-new
+          CACHE_FROM: "type=gha"
+          CACHE_TO: "type=gha,mode=max"
 
       # we need it to be manually checked, as above action will always exit with 1 even if it's successful
       - name: Check compose status
