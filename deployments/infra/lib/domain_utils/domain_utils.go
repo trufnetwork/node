@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsroute53"
 	"github.com/aws/jsii-runtime-go"
+	"strings"
 )
 
 // AssociateEnclaveCertificateToInstanceIamRole Associate an AWS Nitro Enclaves certificate with an AWS Identity and Access Management (IAM) role.
@@ -23,9 +24,6 @@ func AssociateEnclaveCertificateToInstanceIamRole(stack awscdk.Stack, certificat
 
 	policy := awsiam.NewPolicy(stack, jsii.String("EnclaveCertificateIamRolePolicy"), &awsiam.PolicyProps{
 		Statements: &[]awsiam.PolicyStatement{
-			awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
-				Effect: awsiam.Effect_ALLOW,
-			}),
 			awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
 				Effect: awsiam.Effect_ALLOW,
 				Actions: &[]*string{
@@ -73,9 +71,9 @@ func CreateDomainRecords(stack awscdk.Stack, domain *string, hostedZone *awsrout
 }
 
 func GetACMCertificate(stack awscdk.Stack, domain *string, hostedZone *awsroute53.IHostedZone) awscertificatemanager.Certificate {
-	id := awscdk.Fn_Join(jsii.String("-"), &[]*string{domain, jsii.String("ACM-Certificate")})
+	id := strings.Join([]string{*domain, "ACM-Certificate"}, "-")
 	// Create ACM certificate.
-	return awscertificatemanager.NewCertificate(stack, id, &awscertificatemanager.CertificateProps{
+	return awscertificatemanager.NewCertificate(stack, &id, &awscertificatemanager.CertificateProps{
 		DomainName: domain,
 		Validation: awscertificatemanager.CertificateValidation_FromDns(*hostedZone),
 	})
