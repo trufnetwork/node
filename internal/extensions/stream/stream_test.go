@@ -17,7 +17,7 @@ type streamTest struct {
 	app    *common.App
 }
 
-func newStreamTest(t *testing.T) streamTest {
+func newStreamTest() streamTest {
 	return streamTest{
 		stream: &stream.Stream{},
 		scoper: &precompiles.ProcedureContext{},
@@ -39,7 +39,7 @@ func TestInitializeStream(t *testing.T) {
 }
 
 func TestStream_Call(t *testing.T) {
-	instance := newStreamTest(t)
+	instance := newStreamTest()
 	mockEngine := mocks.NewEngine(t)
 	instance.app.Engine = mockEngine
 

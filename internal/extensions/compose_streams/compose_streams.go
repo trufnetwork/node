@@ -41,10 +41,7 @@ func InitializeStream(ctx *precompiles.DeploymentContext, service *common.Servic
 		if err != nil {
 			return nil, err
 		}
-		DBID, err := utils.GetDBIDFromPath(ctx, dbIdOrPath)
-		if err != nil {
-			return nil, err
-		}
+		DBID := utils.GetDBIDFromPath(ctx, dbIdOrPath)
 		totalWeight += weightInt
 		weightMap[DBID] = weightInt
 	}
@@ -123,7 +120,6 @@ func (s *Stream) CalculateWeightedResultsWithFn(fn func(string) ([]utils.ValueWi
 	// for each database, get the value and multiply by the weight
 	for dbId, weight := range s.weightMap {
 		results, err := fn(dbId)
-		//results, err := CallOnTargetDBID(scoper, method, dbId, date, dateTo)
 		if err != nil {
 			fmt.Println("error getting results from dbid", dbId, ":", err)
 			return nil, err

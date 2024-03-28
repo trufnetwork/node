@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsecrassets"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awss3"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/config"
@@ -107,6 +108,13 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	newName := "TsnDBInstance" + *tsnImageAsset.AssetHash()
 	instance, instanceRole := createInstance(stack, newName, vpcInstance, &initElements)
 
+	bucketName := "kwil-binaries"
+	kwilGatewayBucket := awss3.Bucket_FromBucketName(stack, jsii.String("KwilGatewayBucket"), jsii.String(bucketName))
+	objPath := "gateway/kgw_v0.1.2.zip"
+
+	instanceRole := createInstanceRole(stack, kwilGatewayBucket, objPath)
+	instance := createInstance(stack, instanceRole, newName, vpcInstance, &initElements)
+
 	deployImageOnInstance(stack, instance, tsnImageAsset, pushDataImageAsset)
 
 	// make ecr repository available to the instance
@@ -122,7 +130,7 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	return stack
 }
 
-func createInstance(stack awscdk.Stack, name string, vpc awsec2.IVpc, initElements *[]awsec2.InitElement) (awsec2.Instance, awsiam.IRole) {
+func createInstance(stack awscdk.Stack, instanceRole awsiam.IRole, name string, vpc awsec2.IVpc, initElements *[]awsec2.InitElement) awsec2.Instance {
 	// Create security group.
 	instanceSG := awsec2.NewSecurityGroup(stack, jsii.String("NodeSG"), &awsec2.SecurityGroupProps{
 		Vpc:              vpc,
@@ -204,7 +212,17 @@ func createInstance(stack awscdk.Stack, name string, vpc awsec2.IVpc, initElemen
 		AllocationId: eip.AttrAllocationId(),
 	})
 
-	return instance, instanceRole
+	return instance
+}
+
+func createInstanceRole(stack awscdk.Stack, kwilGatewayBucket awss3.IBucket, objPath string) awsiam.IRole {
+	// Create instance role.
+	instanceRole := awsiam.NewRole(stack, jsii.String("InstanceRole"), &awsiam.RoleProps{
+		AssumedBy: awsiam.NewServicePrincipal(jsii.String("ec2.amazonaws.com"), nil),
+	})
+
+	kwilGatewayBucket.GrantRead(instanceRole, jsii.String(objPath))
+	return instanceRole
 }
 
 func deployImageOnInstance(stack awscdk.Stack, instance awsec2.Instance, tsnImageAsset awsecrassets.DockerImageAsset, pushDataImageAsset awsecrassets.DockerImageAsset) {
@@ -278,7 +296,14 @@ systemctl daemon-reload
 systemctl enable tsn-db-app.service
 systemctl start tsn-db-app.service`
 
-	instance.AddUserData(&script1Content)
+	kwilGatewayBinaryScript := `#!/bin/bash
+aws s3 cp s3://kwil-binaries/gateway/kgw_v0.1.2.zip /tmp/kgw_v0.1.2.zip
+unzip /tmp/kgw_v0.1.2.zip -d /tmp/
+tar -xf /tmp/kgw_v0.1.2/kgw_0.1.2_linux_amd64.tar.gz -C /tmp/kgw_v0.1.2
+chmod +x /tmp/kgw_v0.1.2/kgw
+mv /tmp/kgw_v0.1.2/kgw /usr/local/bin/kgw
+`
+	instance.AddUserData(&script1Content, &kwilGatewayBinaryScript)
 }
 
 // Warning: Used environment variables are not encrypted in the CloudFormation template,

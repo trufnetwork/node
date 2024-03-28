@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"github.com/kwilteam/kwil-db/common"
 	"github.com/kwilteam/kwil-db/extensions/precompiles"
+	"github.com/stretchr/testify/assert"
 	"reflect"
 	"sort"
 	"testing"
@@ -116,6 +117,7 @@ func TestInitializeExtension(t *testing.T) {
 	}
 
 	invalidAddress := "notgood"
+	invalidAddress2 := "000000000000000000000000000000000000000001"
 	var ctx = &precompiles.DeploymentContext{Schema: &common.Schema{Owner: byteOwner}}
 
 	tests := []struct {
@@ -154,6 +156,18 @@ func TestInitializeExtension(t *testing.T) {
 			false,
 			[]string{ownerAddress, validAddress, validAddress2},
 		},
+		{
+			"Address not start with 0x",
+			map[string]string{"whitelist_wallets": invalidAddress2},
+			true,
+			nil,
+		},
+		{
+			"wrong metadata",
+			map[string]string{"wrong": "wrong"},
+			true,
+			nil,
+		},
 	}
 
 	for _, tt := range tests {
@@ -176,4 +190,20 @@ func TestInitializeExtension(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWhitelistExt_Call(t *testing.T) {
+	t.Run("success - it should return nil when method is check", func(t *testing.T) {
+		instance := &WhitelistExt{
+			whitelistedWallets: []string{"wallet1", "wallet2"},
+		}
+		_, err := instance.Call(nil, nil, "check", []interface{}{"wallet1"})
+		assert.NoError(t, err, "WhitelistExt.Call returned an error")
+	})
+
+	t.Run("validation - it should return error when method is unknown", func(t *testing.T) {
+		instance := &WhitelistExt{}
+		_, err := instance.Call(nil, nil, "unknown", nil)
+		assert.Contains(t, err.Error(), "unknown method")
+	})
 }

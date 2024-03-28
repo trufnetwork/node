@@ -34,12 +34,12 @@ jobs:
         if: ${{ !env.ACT }} # skip during local actions testing
         uses: golangci/golangci-lint-action@v4
         with:
-          args: --timeout=30m --config=.golangci.yml --issues-exit-code=0
+          args: --timeout=30m --issues-exit-code=0
           skip-cache: true
 
       - name: Run Go Tests
         run: |
-          go test ./internal/extensions/...
+          go test ./internal/...
 
       - name: Docker Compose Up
         # docker compose up --wait makes it exit with 1 even for a successful run
