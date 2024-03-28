@@ -1,10 +1,13 @@
 package main
 
 import (
+	"os"
+
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsecrassets"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awss3"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
@@ -12,7 +15,6 @@ import (
 	"github.com/truflation/tsn-db/infra/lib/domain_utils"
 	"github.com/truflation/tsn-db/infra/lib/gateway_utils"
 	"github.com/truflation/tsn-db/infra/lib/instance_utils"
-	"os"
 )
 
 type CdkStackProps struct {
