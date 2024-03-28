@@ -6,11 +6,12 @@ package basestream
 import (
 	"errors"
 	"fmt"
+	"strings"
+
 	"github.com/kwilteam/kwil-db/common"
 	"github.com/kwilteam/kwil-db/common/sql"
 	"github.com/kwilteam/kwil-db/extensions/precompiles"
 	"github.com/truflation/tsn-db/internal/utils"
-	"strings"
 )
 
 func getOrDefault(m map[string]string, key string, defaultValue string) string {

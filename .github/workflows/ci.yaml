@@ -10,7 +10,29 @@ on:
       - main
       - refactor/upgrade-zero-seven # TODO: remove this line after the refactor is done
 
+permissions:
+  contents: read
+  # Optional: allow read access to pull request. Use with `only-new-issues` option.
+  # pull-requests: read
+
 jobs:
+  golangci:
+    name: lint
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.pull_request.draft }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: false
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          # Require: The version of golangci-lint to use.
+          version: v1.54
+          args: --timeout=30m --issues-exit-code=0 --verbose
+
   acceptance-test:
     runs-on: ubuntu-latest
     if: ${{ !github.event.pull_request.draft }}
@@ -26,20 +48,16 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: '1.21'
-
-      - name: Lint
-        if: ${{ !env.ACT }} # skip during local actions testing
-        uses: golangci/golangci-lint-action@v4
-        with:
-          args: --timeout=30m --issues-exit-code=0
-          skip-cache: true
 
       - name: Run Go Tests
         run: |
           go test ./internal/...
+
+      - name: Setup Docker
+        uses: docker/setup-buildx-action@v3
 
       - name: Docker Compose Up
         # docker compose up --wait makes it exit with 1 even for a successful run
@@ -48,11 +66,14 @@ jobs:
         with:
           compose-file: "./compose.yaml"
           # waits every container to be ready, so we're sure there's data already
-          up-flags: '--wait'
+          # when in ACT, also force build to ensure it is working locally
+          up-flags: "--wait ${{env.ACT && '--build --force-recreate --no-deps' || ''}}"
         env:
           # This is not a secret, it's hardcoded for the CI testing
           PRIVATE_KEY: "0000000000000000000000000000000000000000000000000000000000000001"
           WHITELIST_WALLETS: "0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf"
+          CACHE_FROM: "type=gha,scope=truflation/tsn"
+          CACHE_TO: "type=gha,mode=max,scope=truflation/tsn"
 
       # we need it to be manually checked, as above action will always exit with 1 even if it's successful
       - name: Check compose status

@@ -27,6 +27,10 @@ services:
     build:
       context: .
       dockerfile: ./deployments/Dockerfile
+      cache_from:
+        - ${CACHE_FROM:-type=local,src=/tmp/buildx-cache}/tsn-db
+      cache_to:
+        - ${CACHE_TO:-type=local,src=/tmp/buildx-cache-new}/tsn-db
     ports:
       - "8080:8080"
     depends_on:
@@ -40,6 +44,10 @@ services:
     build:
       context: .
       dockerfile: ./deployments/push-tsn-data.dockerfile
+      cache_from:
+        - ${CACHE_FROM:-type=local,src=/tmp/buildx-cache}/push-tsn-data
+      cache_to:
+        - ${CACHE_TO:-type=local,src=/tmp/buildx-cache-new}/push-tsn-data
     volumes:
       - type: volume
         source: data-push-tsn-data

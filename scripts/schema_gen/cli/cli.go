@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/truflation/tsn-db/scripts/schema_gen"
+	schemagen "github.com/truflation/tsn-db/scripts/schema_gen"
 )
 
 func main() {

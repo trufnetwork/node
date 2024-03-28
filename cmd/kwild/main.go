@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+
 	"github.com/kwilteam/kwil-db/extensions/auth"
 	"github.com/kwilteam/kwil-db/extensions/precompiles"
 	"github.com/truflation/tsn-db/internal/extensions/basestream"
@@ -10,7 +12,6 @@ import (
 	"github.com/truflation/tsn-db/internal/extensions/mathutil"
 	"github.com/truflation/tsn-db/internal/extensions/stream"
 	"github.com/truflation/tsn-db/internal/extensions/whitelist"
-	"os"
 
 	"github.com/kwilteam/kwil-db/cmd/kwild/root"
 )

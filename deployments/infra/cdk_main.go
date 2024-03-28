@@ -12,9 +12,6 @@ import (
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/config"
-	"github.com/truflation/tsn-db/infra/lib/domain_utils"
-	"github.com/truflation/tsn-db/infra/lib/gateway_utils"
-	"github.com/truflation/tsn-db/infra/lib/instance_utils"
 )
 
 type CdkStackProps struct {
@@ -50,20 +47,28 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	//	},
 	//})
 
+	cacheType := "local"
+	cacheFromParams := "src=/tmp/buildx-cache/#IMAGE_NAME"
+	cacheToParams := "dest=/tmp/buildx-cache-new/#IMAGE_NAME"
+
+	if os.Getenv("CI") == "true" {
+		cacheType = "gha"
+		cacheFromParams = "scope=truflation/tsn/#IMAGE_NAME"
+		cacheToParams = "mode=max,scope=truflation/tsn/#IMAGE_NAME"
+	}
+
 	tsnImageAsset := awsecrassets.NewDockerImageAsset(stack, jsii.String("TsnImageAsset"), &awsecrassets.DockerImageAssetProps{
 		CacheFrom: &[]*awsecrassets.DockerCacheOption{
 			{
-				Type: jsii.String("local"),
-				Params: &map[string]*string{
-					"src": jsii.String("/tmp/.buildx-cache-tsn-db"),
-				},
+				Type: jsii.String(cacheType),
+				// the image name here must match from the compose file, then the cache should work
+				// across different workflows
+				Params: UpdateParamsWithImageName(cacheFromParams, "tsn-db"),
 			},
 		},
 		CacheTo: &awsecrassets.DockerCacheOption{
-			Type: jsii.String("local"),
-			Params: &map[string]*string{
-				"dest": jsii.String("/tmp/.buildx-cache-tsn-db-new"),
-			},
+			Type:   jsii.String(cacheType),
+			Params: UpdateParamsWithImageName(cacheToParams, "tsn-db"),
 		},
 		File:      jsii.String("deployments/Dockerfile"),
 		Directory: jsii.String("../../"),
@@ -73,17 +78,15 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	pushDataImageAsset := awsecrassets.NewDockerImageAsset(stack, jsii.String("PushDataImageAsset"), &awsecrassets.DockerImageAssetProps{
 		CacheFrom: &[]*awsecrassets.DockerCacheOption{
 			{
-				Type: jsii.String("local"),
-				Params: &map[string]*string{
-					"src": jsii.String("/tmp/.buildx-cache-push-data-tsn"),
-				},
+				Type: jsii.String(cacheType),
+				// the image name here must match from the compose file, then the cache should work
+				// across different workflows
+				Params: UpdateParamsWithImageName(cacheFromParams, "push-tsn-data"),
 			},
 		},
 		CacheTo: &awsecrassets.DockerCacheOption{
-			Type: jsii.String("local"),
-			Params: &map[string]*string{
-				"dest": jsii.String("/tmp/.buildx-cache-push-data-tsn-new"),
-			},
+			Type:   jsii.String(cacheType),
+			Params: UpdateParamsWithImageName(cacheToParams, "push-tsn-data"),
 		},
 		File:      jsii.String("deployments/push-tsn-data.dockerfile"),
 		Directory: jsii.String("../../"),
