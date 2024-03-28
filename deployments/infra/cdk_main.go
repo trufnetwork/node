@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"strings"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
@@ -12,6 +13,8 @@ import (
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/config"
+	"github.com/truflation/tsn-db/infra/lib/domain_utils"
+	"github.com/truflation/tsn-db/infra/lib/instance_utils"
 )
 
 type CdkStackProps struct {
@@ -152,6 +155,31 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	})
 
 	return stack
+}
+
+// ConvertParamsToMap converts a string of comma-separated key-value pairs to a map.
+// e.g.: "key1=value1,key2=value2" -> {"key1": "value1", "key2": "value2"}
+func ConvertParamsToMap(paramsStr string) *map[string]*string {
+	params := strings.Split(paramsStr, ",")
+	paramsMap := make(map[string]*string)
+	for _, param := range params {
+		kv := strings.Split(param, "=")
+		paramsMap[kv[0]] = jsii.String(kv[1])
+	}
+	return &paramsMap
+}
+
+// UpdateMapValues in every param, it replaces the target string with the value string.
+func UpdateMapValues(params *map[string]*string, target string, value string) {
+	for k, v := range *params {
+		(*params)[k] = jsii.String(strings.Replace(*v, target, value, -1))
+	}
+}
+
+func UpdateParamsWithImageName(paramsStr string, imageName string) *map[string]*string {
+	params := ConvertParamsToMap(paramsStr)
+	UpdateMapValues(params, "#IMAGE_NAME", imageName)
+	return params
 }
 
 func main() {
