@@ -50,20 +50,6 @@ task postgres
 ```
 
 ##### Run Kwild
-
-### Run Postgres
-
-Before running the custom kwild binary, you will have to start Postgres.
-The Kwil team has provided a default image with the necessary configurations. 
-For more information on how to configure your own Postgres database, please refer to the [Postgres setup guide](https://docs.kwil.com/docs/daemon/installation#postgresql).
-
-```
-docker run -d -p 5432:5432 --name kwil-postgres -e "POSTGRES_HOST_AUTH_METHOD=trust" \
-    kwildb/postgres:latest
-```
-
-### Run Kwild
-
 You can start a single node network using the `kwild` binary built in the step above:
 
 ```shell

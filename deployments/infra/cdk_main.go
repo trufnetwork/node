@@ -106,7 +106,6 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 
 	// Create instance using tsnImageAsset hash so that the instance is recreated when the image changes.
 	newName := "TsnDBInstance" + *tsnImageAsset.AssetHash()
-	instance, instanceRole := createInstance(stack, newName, vpcInstance, &initElements)
 
 	bucketName := "kwil-binaries"
 	kwilGatewayBucket := awss3.Bucket_FromBucketName(stack, jsii.String("KwilGatewayBucket"), jsii.String(bucketName))
