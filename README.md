@@ -50,6 +50,7 @@ task postgres
 ```
 
 ##### Run Kwild
+
 You can start a single node network using the `kwild` binary built in the step above:
 
 ```shell

@@ -173,11 +173,6 @@ func createInstance(stack awscdk.Stack, instanceRole awsiam.IRole, name string, 
 		keyPair = jsii.String(config.KeyPairName(stack))
 	}
 
-	// Create instance role.
-	instanceRole := awsiam.NewRole(stack, jsii.String("InstanceRole"), &awsiam.RoleProps{
-		AssumedBy: awsiam.NewServicePrincipal(jsii.String("ec2.amazonaws.com"), nil),
-	})
-
 	initData := awsec2.CloudFormationInit_FromElements(
 		*initElements...,
 	)
