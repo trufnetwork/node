@@ -16,7 +16,7 @@ unzip /tmp/kgw_v0.1.2.zip -d /tmp/
 tar -xf /tmp/kgw_v0.1.2/kgw_0.1.2_linux_amd64.tar.gz -C /tmp/kgw_v0.1.2
 chmod +x /tmp/kgw_v0.1.2/kgw
 # we send the binary as it is expected by the docker-compose file
-mv /tmp/kgw_v0.1.2/kgw /home/ec2-user/kgw/
+mv /tmp/kgw_v0.1.2/kgw /home/ec2-user/kgw/kgw
 
 # Install the AWS Nitro Enclaves CLI, to be able to use the ACM agent
 # for certificate management with nginx
@@ -52,9 +52,6 @@ systemctl start kgw.service
 # Start the ACM agent
 systemctl enable nitro-enclaves-acm.service
 systemctl start nitro-enclaves-acm.service
-
-# smoke test
-curl -v https://` + *domain + `
 `
 
 	instance.AddUserData(jsii.String(kgwSetupScript))
