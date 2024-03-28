@@ -81,7 +81,7 @@ func GetACMCertificate(stack awscdk.Stack, domain *string, hostedZone *awsroute5
 	})
 }
 
-const MainDomain = "tsn.truflation.com"
+const MainDomain = "tsn.test.truflation.com"
 
 func GetTSNHostedZone(stack awscdk.Stack) awsroute53.IHostedZone {
 	return awsroute53.HostedZone_FromLookup(stack, jsii.String("HostedZone"), &awsroute53.HostedZoneProviderProps{
