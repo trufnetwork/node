@@ -26,7 +26,10 @@ tasks:
       - docker start kwil-postgres || docker run -d -p 5432:5432 --name kwil-postgres -e "POSTGRES_HOST_AUTH_METHOD=trust" kwildb/postgres:latest
 
   compose:
-    desc: Run docker-compose
+    desc: Run docker-compose locally
+    env:
+      PRIVATE_KEY: "0000000000000000000000000000000000000000000000000000000000000001" # feel free to change this private key if you have one, it is for local development anyway
+     # WHITELIST_WALLETS: "0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf" # feel free to uncomment and change this whitelist wallets if you want to use whitelist wallets feature in local development
     cmds:
       - docker compose up
 

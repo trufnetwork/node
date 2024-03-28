@@ -41,7 +41,7 @@ if [ ! -e \$CONTAINER_ALREADY_STARTED ]; then\n\
     touch \$CONTAINER_ALREADY_STARTED\n\
 else\n\
     echo \"-- Not first container startup. Let's just make sure it's working --\"\n\
-    ./scripts/wait-kwild.sh\n\
+    /app/scripts/wait_kwild.sh\n\
 fi" > ./start-in-docker.sh
 
 RUN chmod +x ./start-in-docker.sh

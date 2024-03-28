@@ -18,21 +18,24 @@ table base_values_table {
 }
 
 //get_all retrieves the records in the stream, so they can be composed with in another stream
+@kgw(authn='true')
 action get_all() public view {
   SELECT * FROM base_values_table;
 }
 
 // public action to add record to base_values_table table
-action add_record ($id, $date_value, $value, $created_at) public {
+action add_record ($id, $date_value, $value, $created_at) public owner {
   INSERT INTO base_values_table (id, date_value, value, created_at)
   VALUES ($id, $date_value, $value, $created_at);
 }
 
+@kgw(authn='true')
 action get_index($date, $date_to) public view {
     whitelist.check(@caller);
     $val = basestream.get_index($date, $date_to);
 }
 
+@kgw(authn='true')
 action get_value($date, $date_to) public view {
     whitelist.check(@caller);
     $val = basestream.get_value($date, $date_to);
