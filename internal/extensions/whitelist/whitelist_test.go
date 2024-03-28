@@ -2,6 +2,9 @@ package whitelist
 
 import (
 	"encoding/hex"
+	"github.com/kwilteam/kwil-db/common"
+	"github.com/kwilteam/kwil-db/extensions/precompiles"
+	"github.com/stretchr/testify/assert"
 	"reflect"
 	"sort"
 	"testing"

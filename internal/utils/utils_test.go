@@ -1,6 +1,8 @@
 package utils
 
 import (
+	"github.com/kwilteam/kwil-db/common/sql"
+	"github.com/stretchr/testify/assert"
 	"testing"
 
 	"github.com/kwilteam/kwil-db/common/sql"

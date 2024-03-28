@@ -2,6 +2,12 @@ package compose_streams
 
 import (
 	"errors"
+	"github.com/kwilteam/kwil-db/common"
+	"github.com/kwilteam/kwil-db/common/sql"
+	"github.com/kwilteam/kwil-db/extensions/precompiles"
+	"github.com/stretchr/testify/mock"
+	"github.com/truflation/tsn-db/internal/utils"
+	"github.com/truflation/tsn-db/mocks"
 	"reflect"
 	"testing"
 
