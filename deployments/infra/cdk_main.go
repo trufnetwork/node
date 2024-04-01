@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/truflation/tsn-db/infra/lib/domain_utils"
+	"github.com/truflation/tsn-db/infra/lib/gateway_utils"
 	"os"
 	"strings"
 
@@ -13,7 +15,6 @@ import (
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/config"
-	"github.com/truflation/tsn-db/infra/lib/domain_utils"
 	"github.com/truflation/tsn-db/infra/lib/instance_utils"
 )
 
@@ -110,8 +111,12 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	kgwDirectoryAsset.GrantRead(instanceRole)
 
 	initElements := []awsec2.InitElement{
-		awsec2.InitFile_FromExistingAsset(jsii.String("/home/ec2-user/docker-compose.yaml"), dockerComposeAsset, nil),
-		awsec2.InitFile_FromExistingAsset(jsii.String("/home/ec2-user/kgw/"), kgwDirectoryAsset, nil),
+		awsec2.InitFile_FromExistingAsset(jsii.String("/home/ec2-user/docker-compose.yaml"), dockerComposeAsset, &awsec2.InitFileOptions{
+			Owner: jsii.String("ec2-user"),
+		}),
+		awsec2.InitFile_FromExistingAsset(jsii.String("/home/ec2-user/kgw.zip"), kgwDirectoryAsset, &awsec2.InitFileOptions{
+			Owner: jsii.String("ec2-user"),
+		}),
 	}
 
 	// default vpc
@@ -127,15 +132,15 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	objPath := "gateway/kgw_v0.1.2.zip"
 	kwilGatewayBucket.GrantRead(instanceRole, jsii.String(objPath))
 
-	instance := instance_utils.CreateInstance(stack, instanceRole, newName, vpcInstance, &initElements)
+	instance, eip := instance_utils.CreateInstance(stack, instanceRole, newName, vpcInstance, &initElements)
 
 	// Get the hosted zone.
 	domain := config.Domain(stack)
 	hostedZone := domain_utils.GetTSNHostedZone(stack)
-	domain_utils.CreateDomainRecords(stack, domain, &hostedZone, instance.InstancePublicIp())
-	// Create ACM certificate.
+	domain_utils.CreateDomainRecords(stack, domain, &hostedZone, eip.AttrPublicIp())
+	//Create ACM certificate.
 	acmCertificate := domain_utils.GetACMCertificate(stack, domain, &hostedZone)
-	// enable the instance to use the certificate
+	//enable the instance to use the certificate
 	domain_utils.AssociateEnclaveCertificateToInstanceIamRole(stack, *acmCertificate.CertificateArn(), instanceRole)
 
 	instance_utils.AddTsnDbStartupScriptsToInstance(instance_utils.AddStartupScriptsOptions{
@@ -144,6 +149,8 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 		TsnImageAsset:      tsnImageAsset,
 		PushDataImageAsset: pushDataImageAsset,
 	})
+	gateway_utils.InstallCertbotOnInstance(instance)
+	gateway_utils.AddCertbotDnsValidationToInstance(instance, domain, hostedZone)
 	gateway_utils.AddKwilGatewayStartupScriptsToInstance(gateway_utils.AddKwilGatewayStartupScriptsOptions{
 		Instance: instance,
 		Domain:   domain,

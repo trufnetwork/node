@@ -6,7 +6,7 @@ services:
       args:
         - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS}
         - SESSION_SECRET=${SESSION_SECRET:?}
-        - DOMAIN_NAME=https://${DOMAIN_NAME:-localhost}
+        - DOMAIN=https://${DOMAIN:-localhost}
       context: .
       dockerfile: ./gateway.dockerfile
     ports:
@@ -28,11 +28,19 @@ services:
       - type: bind
         source: ./default.conf.template
         target: /etc/nginx/templates/default.conf.template
+      # certificates from letsencrypt
       - type: bind
-        source: /etc/pki/nginx/nginx-acm.conf
-        target: /etc/pki/nginx/nginx-acm.conf
+        source: /etc/letsencrypt/live/${DOMAIN}/fullchain.pem
+        target: /etc/letsencrypt/live/${DOMAIN}/fullchain.pem
+      - type: bind
+        source: /etc/letsencrypt/live/${DOMAIN}/privkey.pem
+        target: /etc/letsencrypt/live/${DOMAIN}/privkey.pem
+      # letsencrypt config
+      - type: bind
+        source: /etc/letsencrypt/options-ssl-nginx.conf
+        target: /etc/letsencrypt/options-ssl-nginx.conf
     environment:
-      DOMAIN_NAME=${DOMAIN_NAME:-localhost}
+      - DOMAIN_NAME=${DOMAIN:-localhost}
     depends_on:
       - kwil-gateway
     networks:

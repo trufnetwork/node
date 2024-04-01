@@ -51,7 +51,7 @@ COPY ./kgw ./kgw
 COPY ./kgw.base-config.json ./config/config.json
 
 # smoke test
-RUN /app/kgw version | grep -q "Usage: kgw"
+RUN /app/kgw --version | grep -q "built on linux"
 
 ENV SESSION_SECRET=$SESSION_SECRET
 ENV CORS_ALLOWED_ORIGINS=$CORS_ALLOWED_ORIGINS
