@@ -139,9 +139,7 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	hostedZone := domain_utils.GetTSNHostedZone(stack)
 	domain_utils.CreateDomainRecords(stack, domain, &hostedZone, eip.AttrPublicIp())
 	//Create ACM certificate.
-	acmCertificate := domain_utils.GetACMCertificate(stack, domain, &hostedZone)
-	//enable the instance to use the certificate
-	domain_utils.AssociateEnclaveCertificateToInstanceIamRole(stack, *acmCertificate.CertificateArn(), instanceRole)
+	domain_utils.GetACMCertificate(stack, domain, &hostedZone)
 
 	instance_utils.AddTsnDbStartupScriptsToInstance(instance_utils.AddStartupScriptsOptions{
 		Stack:              stack,
