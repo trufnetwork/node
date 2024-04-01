@@ -129,7 +129,7 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 
 	bucketName := "kwil-binaries"
 	kwilGatewayBucket := awss3.Bucket_FromBucketName(stack, jsii.String("KwilGatewayBucket"), jsii.String(bucketName))
-	objPath := "gateway/kgw_v0.1.2.zip"
+	objPath := "gateway/kgw-0.1.3.zip"
 	kwilGatewayBucket.GrantRead(instanceRole, jsii.String(objPath))
 
 	instance, eip := instance_utils.CreateInstance(stack, instanceRole, newName, vpcInstance, &initElements)
