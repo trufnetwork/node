@@ -10,7 +10,7 @@ import (
 	"github.com/truflation/tsn-db/infra/lib/utils"
 )
 
-func CreateInstance(stack awscdk.Stack, instanceRole awsiam.IRole, name string, vpc awsec2.IVpc, initElements *[]awsec2.InitElement) awsec2.Instance {
+func CreateInstance(stack awscdk.Stack, instanceRole awsiam.IRole, name string, vpc awsec2.IVpc, initElements *[]awsec2.InitElement) (awsec2.Instance, awsec2.CfnEIP) {
 	// Create security group.
 	instanceSG := awsec2.NewSecurityGroup(stack, jsii.String("NodeSG"), &awsec2.SecurityGroupProps{
 		Vpc:              vpc,
@@ -52,7 +52,6 @@ func CreateInstance(stack awscdk.Stack, instanceRole awsiam.IRole, name string, 
 	initData := awsec2.CloudFormationInit_FromElements(
 		*initElements...,
 	)
-
 	// comes with pre-installed cloud init requirements
 	AWSLinux2MachineImage := awsec2.MachineImage_LatestAmazonLinux2(nil)
 	instance := awsec2.NewInstance(stack, jsii.String(name), &awsec2.InstanceProps{
@@ -82,7 +81,7 @@ func CreateInstance(stack awscdk.Stack, instanceRole awsiam.IRole, name string, 
 		AllocationId: eip.AttrAllocationId(),
 	})
 
-	return instance
+	return instance, eip
 }
 
 type AddStartupScriptsOptions struct {
@@ -154,7 +153,7 @@ After=docker.service
 Type=oneshot
 RemainAfterExit=yes
 # This path comes from the init asset
-ExecStart=/bin/bash -c "docker compose -f /home/ec2-user/docker-compose.yaml up -d --wait"
+ExecStart=/bin/bash -c "docker compose -f /home/ec2-user/docker-compose.yaml up -d --wait || true"
 ExecStop=/bin/bash -c "docker compose -f /home/ec2-user/docker-compose.yaml down"
 ` + utils.GetEnvStringsForService(utils.GetEnvVars("WHITELIST_WALLETS", "PRIVATE_KEY")) + `
 
