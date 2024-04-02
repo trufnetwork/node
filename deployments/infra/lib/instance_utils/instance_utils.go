@@ -10,7 +10,7 @@ import (
 	"github.com/truflation/tsn-db/infra/lib/utils"
 )
 
-func CreateInstance(stack awscdk.Stack, instanceRole awsiam.IRole, name string, vpc awsec2.IVpc, initElements *[]awsec2.InitElement) (awsec2.Instance, awsec2.CfnEIP) {
+func CreateInstance(stack awscdk.Stack, instanceRole awsiam.IRole, name string, vpc awsec2.IVpc, initElements *[]awsec2.InitElement) awsec2.Instance {
 	// Create security group.
 	instanceSG := awsec2.NewSecurityGroup(stack, jsii.String("NodeSG"), &awsec2.SecurityGroupProps{
 		Vpc:              vpc,
@@ -75,13 +75,8 @@ func CreateInstance(stack awscdk.Stack, instanceRole awsiam.IRole, name string, 
 			},
 		},
 	})
-	eip := awsec2.NewCfnEIP(stack, jsii.String("EIP"), nil)
-	awsec2.NewCfnEIPAssociation(stack, jsii.String("EIPAssociation"), &awsec2.CfnEIPAssociationProps{
-		InstanceId:   instance.InstanceId(),
-		AllocationId: eip.AttrAllocationId(),
-	})
 
-	return instance, eip
+	return instance
 }
 
 type AddStartupScriptsOptions struct {

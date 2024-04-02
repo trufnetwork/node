@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/aws/aws-cdk-go/awscdk/v2/awscertificatemanager"
 	"github.com/truflation/tsn-db/infra/lib/domain_utils"
 	"github.com/truflation/tsn-db/infra/lib/gateway_utils"
 	"os"
@@ -20,6 +21,7 @@ import (
 
 type CdkStackProps struct {
 	awscdk.StackProps
+	cert awscertificatemanager.Certificate
 }
 
 func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) awscdk.Stack {
@@ -132,23 +134,20 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	objPath := "gateway/kgw-0.1.3.zip"
 	kwilGatewayBucket.GrantRead(instanceRole, jsii.String(objPath))
 
-	instance, eip := instance_utils.CreateInstance(stack, instanceRole, newName, vpcInstance, &initElements)
+	instance := instance_utils.CreateInstance(stack, instanceRole, newName, vpcInstance, &initElements)
 
 	// Get the hosted zone.
 	domain := config.Domain(stack)
 	hostedZone := domain_utils.GetTSNHostedZone(stack)
-	domain_utils.CreateDomainRecords(stack, domain, &hostedZone, eip.AttrPublicIp())
-	//Create ACM certificate.
-	domain_utils.GetACMCertificate(stack, domain, &hostedZone)
 
+	gateway_utils.CloudfrontForEc2Instance(stack, instance.InstancePublicDnsName(), domain, hostedZone, props.cert)
+	//enable the instance to use the certificate
 	instance_utils.AddTsnDbStartupScriptsToInstance(instance_utils.AddStartupScriptsOptions{
 		Stack:              stack,
 		Instance:           instance,
 		TsnImageAsset:      tsnImageAsset,
 		PushDataImageAsset: pushDataImageAsset,
 	})
-	gateway_utils.InstallCertbotOnInstance(instance)
-	gateway_utils.AddCertbotDnsValidationToInstance(instance, domain, hostedZone)
 	gateway_utils.AddKwilGatewayStartupScriptsToInstance(gateway_utils.AddKwilGatewayStartupScriptsOptions{
 		Instance: instance,
 		Domain:   domain,
@@ -187,13 +186,32 @@ func UpdateParamsWithImageName(paramsStr string, imageName string) *map[string]*
 	return params
 }
 
+// CertStack creates a stack with an ACM certificate for the domain, fixed at us-east-1.
+// This is necessary because CloudFront requires the certificate to be in us-east-1.
+func CertStack(app constructs.Construct) awscertificatemanager.Certificate {
+	env := env()
+	env.Region = jsii.String("us-east-1")
+	stackName := config.StackName(app) + "-Cert"
+	stack := awscdk.NewStack(app, jsii.String(stackName), &awscdk.StackProps{
+		Env:                   env,
+		CrossRegionReferences: jsii.Bool(true),
+	})
+	domain := config.Domain(stack)
+	hostedZone := domain_utils.GetTSNHostedZone(stack)
+	return domain_utils.GetACMCertificate(stack, domain, &hostedZone)
+}
+
 func main() {
 	app := awscdk.NewApp(nil)
 
+	certificate := CertStack(app)
+
 	TsnDBCdkStack(app, config.StackName(app), &CdkStackProps{
 		awscdk.StackProps{
-			Env: env(),
+			Env:                   env(),
+			CrossRegionReferences: jsii.Bool(true),
 		},
+		certificate,
 	})
 
 	app.Synth(nil)
