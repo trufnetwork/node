@@ -63,7 +63,7 @@ jobs:
           # this must be on absolute path
           export CDK_DOCKER=$(pwd)/buildx.sh
 
-          cdk deploy --require-approval never
+          cdk deploy --require-approval never --all
         env:
           # args used in tsn-db compose
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
