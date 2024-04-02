@@ -76,8 +76,3 @@ jobs:
           CORS_ALLOWED_ORIGINS: ${{ vars.GW_CORS_ALLOWED_ORIGINS }}
           # domain is also used, but it is hardcoded in the CDK process depending on environment
           # e.g.: for staging, it is set to 'staging.tsn.truflation.com'
-
-      - name: Move cache
-        run: |
-          rm -rf /tmp/.buildx-cache-tsn-db
-          mv /tmp/.buildx-cache-tsn-db-new /tmp/.buildx-cache-tsn-db
