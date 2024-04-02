@@ -12,7 +12,7 @@ services:
       args:
         - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-*}
         - SESSION_SECRET=${SESSION_SECRET:-not_secret}
-        - DOMAIN=https://localhost
+        - DOMAIN=https://localhost:443
       dockerfile: dev-gateway.dockerfile
       context: .
     ports:
