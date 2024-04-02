@@ -11,8 +11,10 @@ import (
 )
 
 // CloudfrontForEc2Instance creates a CloudFront distribution for an EC2 instance without using a load balancer.
+// and disables caching while forwarding all headers to the instance.
 func CloudfrontForEc2Instance(scope constructs.Construct, instancePublicDnsName *string, domainName *string,
 	hostedZone awsroute53.IHostedZone, certificate awscertificatemanager.Certificate) awscloudfront.Distribution {
+
 	// Define the CloudFront distribution
 	distribution := awscloudfront.NewDistribution(scope, jsii.String("CloudFrontDistribution"), &awscloudfront.DistributionProps{
 		DefaultBehavior: &awscloudfront.BehaviorOptions{
@@ -21,6 +23,7 @@ func CloudfrontForEc2Instance(scope constructs.Construct, instancePublicDnsName 
 				HttpsPort:      jsii.Number(443),
 				ProtocolPolicy: awscloudfront.OriginProtocolPolicy_HTTP_ONLY,
 			}),
+			CachePolicy:          awscloudfront.CachePolicy_CACHING_DISABLED(),
 			ViewerProtocolPolicy: awscloudfront.ViewerProtocolPolicy_REDIRECT_TO_HTTPS,
 		},
 		DomainNames: &[]*string{domainName},
