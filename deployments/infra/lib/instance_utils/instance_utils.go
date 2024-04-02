@@ -18,6 +18,8 @@ func CreateInstance(stack awscdk.Stack, instanceRole awsiam.IRole, name string, 
 		Description:      jsii.String("TSN-DB Instance security group."),
 	})
 
+	// TODO security could be hardened by allowing only specific IPs
+	//   relative to cloudfront distribution IPs
 	instanceSG.AddIngressRule(
 		awsec2.Peer_AnyIpv4(),
 		awsec2.Port_Tcp(jsii.Number(80)),
