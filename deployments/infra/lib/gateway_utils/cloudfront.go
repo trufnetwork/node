@@ -12,6 +12,7 @@ import (
 
 // CloudfrontForEc2Instance creates a CloudFront distribution for an EC2 instance without using a load balancer.
 // and disables caching while forwarding all headers to the instance.
+// it makes easier to use TSL certificate for the domain name.
 func CloudfrontForEc2Instance(scope constructs.Construct, instancePublicDnsName *string, domainName *string,
 	hostedZone awsroute53.IHostedZone, certificate awscertificatemanager.Certificate) awscloudfront.Distribution {
 
