@@ -58,15 +58,13 @@ ENV SESSION_SECRET=$SESSION_SECRET
 ENV CORS_ALLOWED_ORIGINS=$CORS_ALLOWED_ORIGINS
 ENV DOMAIN=$DOMAIN
 
-# set $CORS_ARGS to empty string if $CORS_ALLOWED_ORIGINS is empty
-# the reason for this is that * is not a valid value for --cors-allow-origins
-ENV CORS_ARGS=""
-RUN if [ -z "$CORS_ALLOWED_ORIGINS" ]; then export CORS_ARGS="--cors-allow-origins $CORS_ALLOWED_ORIGINS"; fi
-
-# we know that this returns
-# {"chain_id":"kwil-chain-qG6KXYD3", "height":"782", "hash":"ee1ee0964b76f79b48652b22a253b20bd72cd45cecb441e08ba2dee7aa845cac"}(
 # todo: parameterize tsn-db port
-RUN export CHAIN_ID=$(curl http://tsn-db:8080/api/v1/chain_info | jq -r '.chain_id')
+COPY ./entrypoint.sh ./entrypoint.sh
+
+# make the entrypoint executable
+RUN chmod +x entrypoint.sh
+
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 CMD ./kgw -c ./config/config.json --session-secret $SESSION_SECRET\
  --domain $DOMAIN $CORS_ARGS --chain-id $CHAIN_ID
