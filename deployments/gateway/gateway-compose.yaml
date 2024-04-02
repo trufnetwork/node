@@ -28,17 +28,6 @@ services:
       - type: bind
         source: ./default.conf.template
         target: /etc/nginx/templates/default.conf.template
-      # certificates from letsencrypt
-      - type: bind
-        source: /etc/letsencrypt/live/${DOMAIN}/fullchain.pem
-        target: /etc/letsencrypt/live/${DOMAIN}/fullchain.pem
-      - type: bind
-        source: /etc/letsencrypt/live/${DOMAIN}/privkey.pem
-        target: /etc/letsencrypt/live/${DOMAIN}/privkey.pem
-      # letsencrypt config
-      - type: bind
-        source: /etc/letsencrypt/options-ssl-nginx.conf
-        target: /etc/letsencrypt/options-ssl-nginx.conf
     environment:
       - DOMAIN_NAME=${DOMAIN:-localhost}
     depends_on:

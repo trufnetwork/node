@@ -1,22 +1,8 @@
 server {
-    listen       443 ssl;
-    listen       [::]:443 ssl;
+    listen 80;
+    listen [::]:80;
     http2 on;
     server_name  ${DOMAIN_NAME};
-    root         /usr/share/nginx/html;
-
-    # RSA certificate
-    ssl_certificate /etc/letsencrypt/live/${DOMAIN_NAME}/fullchain.pem; # managed by Certbot
-    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN_NAME}/privkey.pem; # managed by Certbot
-
-    include /etc/letsencrypt/options-ssl-nginx.conf; # managed by Certbot
-
-    error_page 404 /404.html;
-        location = /40x.html {
-    }
-    error_page 500 502 503 504 /50x.html;
-        location = /50x.html {
-    }
 
     # forward to kwil-gateway:8090
     location / {
@@ -26,11 +12,4 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
-}
-
-# upgrade http to https
-server {
-    listen 80;
-    server_name ${DOMAIN_NAME};
-    return 301 https://$host$request_uri;
 }
