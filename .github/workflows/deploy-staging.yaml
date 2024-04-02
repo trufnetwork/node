@@ -6,14 +6,24 @@ on:
       - main
 
 jobs:
-#  tests:
-#    uses: ./.github/workflows/ci.yaml  # don't forget to add `on: [workflow_call]` to permit it
+  #  tests:
+  #    uses: ./.github/workflows/ci.yaml  # don't forget to add `on: [workflow_call]` to permit it
   build-image:
     environment: production
     name: Build image
     runs-on: ubuntu-latest
-#    needs: [ tests ]  # require tests to pass before deploy runs
+    #    needs: [ tests ]  # require tests to pass before deploy runs
     steps:
+      - name: Check secrets
+        env:
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          AWS_ACCESS_KEY: ${{ secrets.AWS_ACCESS_KEY }}
+          AWS_SECRET_KEY: ${{ secrets.AWS_SECRET_KEY }}
+          GW_SESSION_SECRET: ${{ secrets.GW_SESSION_SECRET }}
+        if: ${{ env.PRIVATE_KEY == '' || env.AWS_ACCESS_KEY == '' || env.AWS_SECRET_KEY == '' || env.GW_SESSION_SECRET == '' }}
+        run: |
+          echo "Missing secrets"
+          exit 1
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -71,6 +81,7 @@ jobs:
           CI: true
 
           # args used in gateway compose
+          # the job should fail if GW_SESSION_SECRET is not set
           SESSION_SECRET: ${{ secrets.GW_SESSION_SECRET }}
           # E.g.: our frontend. If not provided, defaults to *
           CORS_ALLOWED_ORIGINS: ${{ vars.GW_CORS_ALLOWED_ORIGINS }}
