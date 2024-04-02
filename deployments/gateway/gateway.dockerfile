@@ -1,5 +1,6 @@
 FROM alpine:3.14
 
+RUN apk add --no-cache curl jq
 
 #  Options:
 #  --config CONFIG, -c CONFIG
@@ -62,5 +63,10 @@ ENV DOMAIN=$DOMAIN
 ENV CORS_ARGS=""
 RUN if [ -z "$CORS_ALLOWED_ORIGINS" ]; then export CORS_ARGS="--cors-allow-origins $CORS_ALLOWED_ORIGINS"; fi
 
+# we know that this returns
+# {"chain_id":"kwil-chain-qG6KXYD3", "height":"782", "hash":"ee1ee0964b76f79b48652b22a253b20bd72cd45cecb441e08ba2dee7aa845cac"}(
+# todo: parameterize tsn-db port
+RUN export CHAIN_ID=$(curl http://tsn-db:8080/api/v1/chain_info | jq -r '.chain_id')
+
 CMD ./kgw -c ./config/config.json --session-secret $SESSION_SECRET\
- --domain $DOMAIN $CORS_ARGS
+ --domain $DOMAIN $CORS_ARGS --chain-id $CHAIN_ID
