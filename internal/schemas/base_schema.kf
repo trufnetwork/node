@@ -8,6 +8,10 @@ use whitelist {
     whitelist_wallets: '$WHITELIST_WALLETS$'
 } as whitelist;
 
+use whitelist {
+    whitelist_wallets: '$WRITE_WHITELIST_WALLETS$'
+} as write_whitelist;
+
 // `base_values_table` is the main table that tracks the stream
 // it's the same structure for every database, that will receive a different name, e.g.: `com_truflation_us_hotel_price`
 table base_values_table {
@@ -24,7 +28,8 @@ action get_all() public view {
 }
 
 // public action to add record to base_values_table table
-action add_record ($id, $date_value, $value, $created_at) public owner {
+action add_record ($id, $date_value, $value, $created_at) public {
+  write_whitelist.check(@caller);
   INSERT INTO base_values_table (id, date_value, value, created_at)
   VALUES ($id, $date_value, $value, $created_at);
 }

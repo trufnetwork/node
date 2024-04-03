@@ -29,7 +29,8 @@ tasks:
     desc: Run docker-compose locally
     env:
       PRIVATE_KEY: "0000000000000000000000000000000000000000000000000000000000000001" # feel free to change this private key if you have one, it is for local development anyway
-     # WHITELIST_WALLETS: "0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf" # feel free to uncomment and change this whitelist wallets if you want to use whitelist wallets feature in local development
+#      WHITELIST_WALLETS: "0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf" # feel free to uncomment and change this whitelist wallets if you want to use whitelist wallets feature in local development
+#      WRITE_WHITELIST_WALLETS: "0x2B5AD5c4795c026514f8317c7a215E218DcCD6cF" # feel free to uncomment and change this whitelist wallets if you want to use whitelist wallets feature in local development
     cmds:
       - docker compose up
 
