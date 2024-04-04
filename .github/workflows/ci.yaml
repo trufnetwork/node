@@ -8,7 +8,6 @@ on:
   push:
     branches:
       - main
-      - refactor/upgrade-zero-seven # TODO: remove this line after the refactor is done
 
 permissions:
   contents: read
@@ -46,6 +45,12 @@ jobs:
           sudo rm -rf "$AGENT_TOOLSDIRECTORY"
 
       - uses: actions/checkout@v4
+
+      - name: Install Taskfile
+        uses: arduino/setup-task@v2
+
+      - name: Run Taskfile
+        run: task kwil-binaries
 
       - name: Setup Go
         uses: actions/setup-go@v5

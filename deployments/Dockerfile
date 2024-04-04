@@ -10,10 +10,18 @@ RUN go mod verify
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /app/.build/kwild /app/cmd/kwild/main.go
 # owner public address for this PK is 7e5f4552091a69125d5dfcb7b8c2659029395bdf
 
+FROM busybox:1.35.0-uclibc as busybox
+
 FROM gcr.io/distroless/static-debian12
+
+COPY --from=busybox /bin/sh /bin/sh
 
 WORKDIR /app
 COPY --from=build /app/.build/kwild ./kwild
+
+COPY --from=build /app/.build/kwil-admin /app/kwil-admin
+
+RUN ./kwil-admin setup init --chain-id truflation-staging -o /root/.kwild
 
 # copy the produced data
 COPY --from=build /app/deployments/config.toml /root/.kwild/config.toml

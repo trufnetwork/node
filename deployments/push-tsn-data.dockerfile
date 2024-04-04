@@ -10,13 +10,7 @@ RUN apk add --no-cache bash uuidgen python3~3.11 py3-pip~23 py3-pandas~2
 # required for -P option, otherwise some scripts (e.g. retrying on nonce error) may fail
 RUN apk add --upgrade grep
 
-# download kwil-cli
-RUN wget -O kwil-db.tar.gz https://github.com/kwilteam/kwil-db/releases/download/v0.7.0/kwil-db_0.7.0_linux_amd64.tar.gz\
-      && tar -xzvf kwil-db.tar.gz 'kwil-cli'\
-      && mkdir -p ./.build\
-      && mv ./kwil-cli .build\
-      && rm ./kwil-db.tar.gz
-
+COPY ./.build/kwil-cli ./.build/kwil-cli
 
 COPY go.mod .
 COPY go.sum .
