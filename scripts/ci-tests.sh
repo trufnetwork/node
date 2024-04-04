@@ -64,3 +64,9 @@ expect_success "$(../.build/kwil-cli database call -a=get_index date:"2023-12-25
 
 echo -e "❓ Making sure we're not able to call the database from a different private key\n"
 expect_error "$(../.build/kwil-cli database call -a=get_index date:"2023-12-25" date_to:"2023-12-31" -n=cpi --private-key="$not_allowed_private_key" $common_config 2>&1)"
+
+# test allowed write wallets
+echo -e "❓ Making sure we're able to add a record from an allowed private key\n"
+# it's address is 0x2B5AD5c4795c026514f8317c7a215E218DcCD6cF
+allowed_write_private_key="0000000000000000000000000000000000000000000000000000000000000002"
+expect_success "$(../.build/kwil-cli database execute id:"61e44a61-26e7-4276-936e-0fa495293e53" date_value:"2023-10-02" value:"113884" created_at:$(date +%s) --action add_record --name=com_truflation_us_hotel_price --private-key="$allowed_write_private_key" $common_config 2>&1)"

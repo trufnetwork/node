@@ -1,5 +1,7 @@
 FROM alpine:3.14
 
+RUN apk add --no-cache curl jq
+
 WORKDIR /app
 
 # we expect the user to provide the binary path available at the build context
@@ -26,4 +28,4 @@ RUN chmod +x entrypoint.sh
 ENTRYPOINT ["/app/entrypoint.sh"]
 
 CMD /app/kgw --config ./config/config.json --session-secret $SESSION_SECRET \
-     --domain $DOMAIN $CORS_ARGS
+     --domain $DOMAIN $CORS_ARGS --chain-id $CHAIN_ID

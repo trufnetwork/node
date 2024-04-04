@@ -8,11 +8,13 @@
 
  use compose_truflation_streams as streams;
 
+@kgw(authn='true')
  action get_index($date, $date_to) public view {
      streams.get_index($date, $date_to);
      // we ensure no other extension or query is called after this
  }
 
+@kgw(authn='true')
  action get_value($date, $date_to) public view {
      streams.get_value($date, $date_to);
      // we ensure no other extension or query is called after this

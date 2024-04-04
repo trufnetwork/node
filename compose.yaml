@@ -66,6 +66,7 @@ services:
       # this is not required, but if it is set, it should be a comma separated list of wallet addresses (e.g. 0x1234,0x5678)
       # if not set, only the owner of the private key will be able to query
       - WHITELIST_WALLETS=${WHITELIST_WALLETS}
+      - WRITE_WHITELIST_WALLETS=${WRITE_WHITELIST_WALLETS}
 
   finisher:
     container_name: wait-for-completion

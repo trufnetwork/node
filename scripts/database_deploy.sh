@@ -95,8 +95,11 @@ fi
 allowed_wallets=$WHITELIST_WALLETS
 echo "Using allowed wallets: $allowed_wallets"
 
+allowed_write_wallets=$WRITE_WHITELIST_WALLETS
+echo "Using allowed write wallets: $allowed_write_wallets"
+
 # we define here so we avoid running the command many times. One schema fits all
-transformed_base_schema=$(exec ./use_base_schema.sh "$allowed_wallets")
+transformed_base_schema=$(exec ./use_base_schema.sh "$allowed_wallets"";""$allowed_write_wallets")
 
 echo -e "Using transformed base schema: \n$transformed_base_schema"
 

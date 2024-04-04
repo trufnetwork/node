@@ -4,6 +4,9 @@
     "actions": [
       {
         "name": "get_index",
+        "annotations": [
+          "kgw(authn='true')"
+        ],
         "inputs": [
           "$date",
           "$date_to"
@@ -17,6 +20,9 @@
       },
       {
         "name": "get_value",
+        "annotations": [
+          "kgw(authn='true')"
+        ],
         "inputs": [
           "$date",
           "$date_to"
@@ -37,4 +43,3 @@
       }
     ]
   }
-  
