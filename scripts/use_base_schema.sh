@@ -24,8 +24,8 @@ TO_BE_REPLACED_WRITE="\$WRITE_WHITELIST_WALLETS\$"
 # should be replaced by $1 or an empty string
 variable=${1:-""}
 # inside variable, there's a comma separated list of wallets
-REPLACED_FOR=$(echo $variable | cut -d',' -f1)
-REPLACED_FOR_WRITE=$(echo $variable | cut -d',' -f2)
+REPLACED_FOR=$(echo $variable | cut -d';' -f1)
+REPLACED_FOR_WRITE=$(echo $variable | cut -d';' -f2)
 content=${base_schema_content//$TO_BE_REPLACED/$REPLACED_FOR}
 content=${content//$TO_BE_REPLACED_WRITE/$REPLACED_FOR_WRITE}
 
