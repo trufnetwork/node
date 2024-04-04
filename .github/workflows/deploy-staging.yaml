@@ -72,4 +72,5 @@ jobs:
         env:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           WHITELIST_WALLETS: ${{ vars.whitelist_wallets }}
+          WRITE_WHITELIST_WALLETS: ${{ vars.write_whitelist_wallets }}
           CI: true
