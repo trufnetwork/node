@@ -40,6 +40,7 @@ Invoke `task` command to see all available tasks. The `build` task will compile 
 ```shell
 task # list all available tasks
 task build # build the binary
+task kwil-binaries # download and extract the kwil binaries
 ```
 
 ##### Run Postgres

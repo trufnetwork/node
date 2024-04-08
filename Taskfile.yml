@@ -50,12 +50,13 @@ tasks:
     cmds:
       - golangci-lint run
 
-  kwil-cli:
+  kwil-binaries:
     cmds:
       - wget -O kwil-db.tar.gz https://github.com/kwilteam/kwil-db/releases/download/v0.7.0/kwil-db_0.7.0_linux_amd64.tar.gz
-        && tar -xzvf kwil-db.tar.gz 'kwil-cli'
+        && tar -xzvf kwil-db.tar.gz 'kwil-cli' 'kwil-admin'
         && mkdir -p ./.build
         && mv ./kwil-cli .build
+        && mv ./kwil-admin .build
         && rm ./kwil-db.tar.gz
 
   clear-data:
