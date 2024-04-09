@@ -24,6 +24,8 @@ This document is a reference for the terminology used in the TSN-DB project. It 
 - [Stream B is] COMPOSED OF [Streams A and C]
 - TRUFLATION DATABASE: The mariaDB instance storing truflation data. It may be an instance of some environment (test, staging, prod)
 - TRUFLATION DATABASE TABLE: We should NOT use _TABLE_ to refer it without correctly specifying, otherwise it creates confusion with kuneiform tables.
+- WHITELIST: A wallet may be whitelisted, meaning it is allowed to perform certain actions. It maybe write or read specific.
+- PRIVATE KEY: A secret key that refers to a wallet. It may own schemas, or refer to an entity/user that needs to interact with the TSN-DB.
 
 
 ## Avoid
