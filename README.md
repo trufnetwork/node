@@ -91,6 +91,10 @@ Kwil Gateway (KGW) is a load-balancer with authentication ([authn](https://www.c
 
 Although we use it on our servers, it's not required to be able to develop on the TSN-DB. However, if you want to run the KGW locally or test it, you can follow the instructions in the [Kwil Gateway Directory](./deployments/dev-gateway/README.md)
 
+## Terminology
+
+See [TERMINOLOGY.md](./TERMINOLOGY.md) for a list of terms used in the TSN-DB project.
+
 ## License
 
 The tsn-db repository is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for more details.
