@@ -8,7 +8,7 @@ This document is a reference for the terminology used in the TSN project. It is 
 - PRIMITIVE STREAM: A type of stream where the data elements are primitive and not composed. Meaning, a direct source of the data elements is a Data Provider.
 - COMPOSED STREAM: A type of stream that is composed of other streams. Its output is calculated based on inputs from primitive or other composed.
 - TAXONOMY: A scheme of hierarchical stream classification, in which streams are organized into categories and types.
-- SCHEMA: Short for kuneiform schema. It may be read as a database. Depending on the architecture, it may store more than a stream.
+- DATA CONTRACTS: Or simply contracts. Is a set of rules that define the structure and behavior of data. A contract is defined in a Kuneiform file.
 - TABLE: One of the contract's building blocks, that defines the underlying data structure of the Stream.
 - ACTION: One of the contract's building blocks; defines Contract methods that can be called by the end-user, i.e.: data read-only or write methods.
 - EXTENSION: Short for Kwil extension.
@@ -18,13 +18,13 @@ This document is a reference for the terminology used in the TSN project. It is 
 - INDEX: A calculation over _VALUE_. E.g., `currentValue / baseValue`.
 - PRIMITIVE: A data element that is supplied directly from Data Provider. It is usually used to calculate indexes. For example, CPI can be queried for its value or its index of a date.
 - STREAM ID: A generated hash used as a unique identifier of a stream.
-- UPGRADEABLE SCHEMA: A Kuneiform Schema that does need redeployment for important structural changes.
+- UPGRADEABLE CONTRACT: A contract that does need redeployment for important structural changes.
 - CHILD OF: A relation between streams, where a child stream is a subset of a parent stream
 - PARENT OF: A relation between streams, where a parent stream is a superset of a child stream. All streams that have children are Composed Streams.
 - TRUFLATION DATABASE: The MariaDB instance that stores truflation data. It may be an instance of some environment (test, staging, prod).
 - TRUFLATION DATABASE TABLE: We should NOT use _TABLE_ to refer it without correctly specifying; Otherwise, it creates confusion with kuneiform tables.
 - WHITELIST: A list of wallets that defines permission to perform a certain action. It may be "write" or "read" specific.
-- PRIVATE KEY: A secret key that refers to a wallet. It may own schemas, or refer to an entity/user that needs to interact with the TSN-DB.
+- PRIVATE KEY: A secret key that refers to a wallet. It may own contracts, or refer to an entity/user that needs to interact with the TSN-DB.
 
 
 ## Avoid
