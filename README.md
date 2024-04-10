@@ -93,7 +93,7 @@ Although we use it on our servers, it's not required to be able to develop on th
 
 ## Terminology
 
-See [TERMINOLOGY.md](./TERMINOLOGY.md) for a list of terms used in the TSN-DB project.
+See [TERMINOLOGY.md](./TERMINOLOGY.md) for a list of terms used in the TSN project.
 
 ## License
 

@@ -4,19 +4,19 @@ This document is a reference for the terminology used in the TSN-DB project. It 
 
 ## Definitions
 
-- STREAM: A flow of data that can either be composed or primitive. Its data source may be calculated or just stored.
-- COMPOSED STREAM: A type of stream that is composed of other streams. Its output is calculated based on inputs.
-- PRIMITIVE STREAM: A type of stream that is stored as is. Its output is based on what is purely stored.
-- TAXONOMY: Description of stream compositions
+- STREAM: a sequence of data elements made available over time.
+- COMPOSED STREAM: A type of stream that is composed of other streams. Its output is calculated based on inputs from primitive or other composed.
+- PRIMITIVE STREAM: A type of stream where the data elements are primitive and not composed. Meaning, a direct source of the data elements is a Data Provider.
+- TAXONOMY: A scheme of hierarchical stream classification, in which streams are organized into categories and types.
 - SCHEMA: Short for kuneiform schema. It may be read as a database. Depending on the architecture, it may store more than a stream.
-- TABLE: A kuneiform schema may have many tables inside it. E.g. values table, metadata table, etc.
-- ACTION: A kuneiform schema may contain many actions, which can be read-only or mutations, which write data.
+- TABLE: One of the contract's building blocks, that defines the underlying data structure of the Stream.
+- ACTION: One of the contract's building blocks; defines Contract methods that can be called by the end-user, i.e.: data read-only or write methods.
 - EXTENSION: Short for Kwil extension
 - PROCEDURE: Short for Kwil procedure (upcoming)
 - DATA PROVIDER: An entity that creates/pushes primitive data OR creates taxonomy definitions
-- ENVIRONMENT: A TSN-DB deployment that serves a purpose. E.g., staging, development, production, local
-- INDEX: A calculation over _VALUE_. It's the `currentValue / baseValue`
-- VALUE: The raw value used to calculate indexes. For example, CPI can be queried for its value or its index of a date.
+- ENVIRONMENT: A TSN deployment that serves a purpose. E.g., local, staging, production.
+- INDEX: A calculation over _VALUE_. E.g., `currentValue / baseValue`
+- PRIMITIVE: A data element that is supplied directly from Data Provider. It is usually used to calculate indexes. For example, CPI can be queried for its value or its index of a date.
 - STREAM ID: Identifier of a stream. It may be a code such as `CPI` or a hash.
 - UPGRADEABLE SCHEMA: A Kuneiform Schema that does need redeployment for important structural changes
 - [Stream A is] CHILD OF [Stream B]
