@@ -15,8 +15,8 @@ This document is a reference for the terminology used in the TSN project. It is 
 - PROCEDURE: Short for Kwil procedure (upcoming).
 - DATA PROVIDER: An entity that creates/pushes primitive data OR creates taxonomy definitions.
 - ENVIRONMENT: A TSN deployment that serves a purpose. E.g., local, staging, production.
-- INDEX: A calculation over _VALUE_. E.g., `currentValue / baseValue`.
-- PRIMITIVE: A data element that is supplied directly from Data Provider. It is usually used to calculate indexes. For example, CPI can be queried for its value or its index of a date.
+- PRIMITIVE: A data element that is supplied directly from Data Provider. It is usually used to calculate indexes. For example, CPI can be queried for its primitive or its index of a date.
+- INDEX: A calculation over _PRIMITIVE_. E.g., `currentPrimitive / basePrimitive`.
 - STREAM ID: A generated hash used as a unique identifier of a stream.
 - UPGRADEABLE CONTRACT: A contract that does need redeployment for important structural changes.
 - CHILD OF: A relation between streams, where a child stream is a subset of a parent stream
@@ -32,5 +32,5 @@ If something is being frequently used that could create confusion, let's be expl
 
 - Categories: However it may be used by marketing as it resembles more something usual to end users.
 - Sub-stream.
-- Don't use `index` for streams indistinctly. Although CPI is, for marketing, an index, we should refer to it as a STREAM. Unless we want to say the `index` from CPI, which is a calculation over `value`.
+- Don't use `index` for streams indistinctly. Although CPI is, for marketing, an index, we should refer to it as a STREAM. Unless we want to say the `index` from CPI, which is a calculation over `primitive`.
 - SCHEMA: Avoid using this term to refer to kuneiform files, or other similar concepts due to ambiguity of this term.
