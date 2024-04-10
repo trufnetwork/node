@@ -5,8 +5,8 @@ This document is a reference for the terminology used in the TSN-DB project. It 
 ## Definitions
 
 - STREAM: a sequence of data elements made available over time.
-- COMPOSED STREAM: A type of stream that is composed of other streams. Its output is calculated based on inputs from primitive or other composed.
 - PRIMITIVE STREAM: A type of stream where the data elements are primitive and not composed. Meaning, a direct source of the data elements is a Data Provider.
+- COMPOSED STREAM: A type of stream that is composed of other streams. Its output is calculated based on inputs from primitive or other composed.
 - TAXONOMY: A scheme of hierarchical stream classification, in which streams are organized into categories and types.
 - SCHEMA: Short for kuneiform schema. It may be read as a database. Depending on the architecture, it may store more than a stream.
 - TABLE: One of the contract's building blocks, that defines the underlying data structure of the Stream.
