@@ -6,7 +6,7 @@ This document is a reference for the terminology used in the TSN project. It is 
 
 - STREAM: a sequence of data elements made available over time.
 - PRIMITIVE STREAM: A type of stream where the data elements are primitive and not composed. Meaning, a direct source of the data elements is a Data Provider.
-- COMPOSED STREAM: A type of stream that is composed of other streams. Its output is calculated based on inputs from primitive or other composed.
+- COMPOSED STREAM: A type of stream that is composed of other streams. Its output is calculated based on inputs from primitive or other composed streams.
 - TAXONOMY: A scheme of hierarchical stream classification, in which streams are organized into categories and types.
 - DATA CONTRACTS: Or simply contracts. Is a set of rules that define the structure and behavior of data. A contract is defined in a Kuneiform file.
 - TABLE: One of the contract's building blocks, that defines the underlying data structure of the Stream.
