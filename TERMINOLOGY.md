@@ -17,7 +17,7 @@ This document is a reference for the terminology used in the TSN-DB project. It 
 - ENVIRONMENT: A TSN deployment that serves a purpose. E.g., local, staging, production.
 - INDEX: A calculation over _VALUE_. E.g., `currentValue / baseValue`
 - PRIMITIVE: A data element that is supplied directly from Data Provider. It is usually used to calculate indexes. For example, CPI can be queried for its value or its index of a date.
-- STREAM ID: Identifier of a stream. It may be a code such as `CPI` or a hash.
+- STREAM ID: A generated hash used as an identifier of a stream
 - UPGRADEABLE SCHEMA: A Kuneiform Schema that does need redeployment for important structural changes
 - [Stream A is] CHILD OF [Stream B]
 - [Stream B is] PARENT OF [Stream A]
