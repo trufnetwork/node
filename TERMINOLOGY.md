@@ -19,9 +19,8 @@ This document is a reference for the terminology used in the TSN project. It is 
 - PRIMITIVE: A data element that is supplied directly from Data Provider. It is usually used to calculate indexes. For example, CPI can be queried for its value or its index of a date.
 - STREAM ID: A generated hash used as a unique identifier of a stream.
 - UPGRADEABLE SCHEMA: A Kuneiform Schema that does need redeployment for important structural changes.
-- [Stream A is] CHILD OF [Stream B].
-- [Stream B is] PARENT OF [Stream A].
-- [Stream B is] COMPOSED OF [Streams A and C].
+- CHILD OF: A relation between streams, where a child stream is a subset of a parent stream
+- PARENT OF: A relation between streams, where a parent stream is a superset of a child stream. All streams that have children are Composed Streams.
 - TRUFLATION DATABASE: The MariaDB instance that stores truflation data. It may be an instance of some environment (test, staging, prod).
 - TRUFLATION DATABASE TABLE: We should NOT use _TABLE_ to refer it without correctly specifying; Otherwise, it creates confusion with kuneiform tables.
 - WHITELIST: A list of wallets that defines permission to perform a certain action. It may be "write" or "read" specific.
