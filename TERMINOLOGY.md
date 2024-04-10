@@ -18,7 +18,7 @@ This document is a reference for the terminology used in the TSN project. It is 
 - PRIMITIVE: A data element that is supplied directly from Data Provider. It is usually used to calculate indexes. For example, CPI can be queried for its primitive or its index of a date.
 - INDEX: A calculation over _PRIMITIVE_. E.g., `currentPrimitive / basePrimitive`.
 - STREAM ID: A generated hash used as a unique identifier of a stream.
-- UPGRADEABLE CONTRACT: A contract that does need redeployment for important structural changes.
+- UPGRADEABLE CONTRACT: A contract that doesn't need redeployment for important structural changes.
 - CHILD OF: A relation between streams, where a child stream is a subset of a parent stream
 - PARENT OF: A relation between streams, where a parent stream is a superset of a child stream. All streams that have children are Composed Streams.
 - TRUFLATION DATABASE: The MariaDB instance that stores truflation data. It may be an instance of some environment (test, staging, prod).
