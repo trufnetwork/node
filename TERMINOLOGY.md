@@ -34,3 +34,4 @@ If something is being frequently used that could create confusion, let's be expl
 - Categories: However it may be used by marketing as it resembles more something usual to end users.
 - Sub-stream.
 - Don't use `index` for streams indistinctly. Although CPI is, for marketing, an index, we should refer to it as a STREAM. Unless we want to say the `index` from CPI, which is a calculation over `value`.
+- SCHEMA: Avoid using this term to refer to kuneiform files, or other similar concepts due to ambiguity of this term.
