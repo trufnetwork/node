@@ -1,6 +1,6 @@
 # Terminology
 
-This document is a reference for the terminology used in the TSN-DB project. It is intended to be a living document that evolves as the project evolves. It is meant to be a reference for developers and users of the TSN-DB project.
+This document is a reference for the terminology used in the TSN project. It is intended to be a living document that evolves as the project evolves. It is meant to be a reference for developers and users of the TSN project.
 
 ## Definitions
 
