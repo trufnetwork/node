@@ -18,7 +18,7 @@ COPY go.sum .
 COPY ./go.mod ./go.sum ./
 COPY ./scripts/ ./scripts/
 
-COPY ./internal/schemas/ ./internal/schemas/
+COPY ./internal/contracts/ ./internal/contracts/
 
 RUN go mod download
 RUN go mod verify

@@ -50,7 +50,7 @@ MAKE SURE KWIL-DB IS RUNNING
 `--skip-drop` will not drop the database before deploying the contracts.
 
 ```shell
-./database_deploy.sh
+./contracts_deploy.sh
 ```
 
 This will deploy the primitives and composed streams to the kwil database.
@@ -58,7 +58,7 @@ This will deploy the primitives and composed streams to the kwil database.
 ## Add data to the database
 
 ```shell
-./database_add_primitives.sh
+./contracts_add_primitives.sh
 ```
 
 This will add the data to the database, from the files in `./temp_csv/`. This is also slow, as there's a lot of transactions to occur.

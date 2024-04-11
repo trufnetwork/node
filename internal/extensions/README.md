@@ -83,7 +83,7 @@ action get_index($date, $date_to) public view {
     composed_stream.get_index($date, $date_to);
 }
 
-action get_value($date, $date_to) public view {
+action get_primitives($date, $date_to) public view {
     composed_stream.get_primitive($date, $date_to);
 }
 ```
