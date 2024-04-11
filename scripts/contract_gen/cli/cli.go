@@ -1,4 +1,4 @@
-// package cli contains a command line tool for generating schemas
+// package cli contains a command line tool for generating contracts
 package main
 
 import (
@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	schemagen "github.com/truflation/tsn-db/scripts/schema_gen"
+	contractgen "github.com/truflation/tsn-db/scripts/contract_gen"
 )
 
 func main() {
@@ -43,25 +43,25 @@ func main() {
 		}
 	}
 
-	// Generate schema
-	schema, err := schemagen.GenerateComposedSchema(*nameFlag, weightMap)
+	// Generate contract
+	contract, err := contractgen.GenerateComposedStreamContract(*nameFlag, weightMap)
 	if err != nil {
-		fmt.Println("Error generating schema: ", err)
+		fmt.Println("Error generating contract: ", err)
 		return
 	}
 
-	// Write schema to file
-	bts, err := json.Marshal(schema)
+	// Write contract to file
+	bts, err := json.Marshal(contract)
 	if err != nil {
-		fmt.Println("Error marshalling schema: ", err)
+		fmt.Println("Error marshalling contract: ", err)
 		return
 	}
 
 	err = os.WriteFile(*outFlag, bts, 0644)
 	if err != nil {
-		fmt.Println("Error writing schema to file: ", err)
+		fmt.Println("Error writing contract to file: ", err)
 		return
 	}
 
-	fmt.Println("Schema written to ", *outFlag)
+	fmt.Println("Contract written to ", *outFlag)
 }

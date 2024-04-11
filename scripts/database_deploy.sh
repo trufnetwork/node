@@ -53,12 +53,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-echo "Deploying primitive schemas"
+echo "Deploying primitive stream contracts"
 
 primitive_files_list=($(ls ./temp_csv/*.csv))
 primitive_count_left=${#primitive_files_list[@]}
 
-composed_files_list=($(ls ./temp_composed_schemas/*.json))
+composed_files_list=($(ls ./temp_composed_stream_contracts/*.json))
 composed_count_left=${#composed_files_list[@]}
 
 max_retries=3
@@ -98,15 +98,15 @@ echo "Using allowed wallets: $allowed_wallets"
 allowed_write_wallets=$WRITE_WHITELIST_WALLETS
 echo "Using allowed write wallets: $allowed_write_wallets"
 
-# we define here so we avoid running the command many times. One schema fits all
-transformed_base_schema=$(exec ./use_base_schema.sh "$allowed_wallets"";""$allowed_write_wallets")
+# we define here so we avoid running the command many times. One contract file fits all
+transformed_primitive_contract=$(exec ./use_primitive_contract.sh "$allowed_wallets"";""$allowed_write_wallets")
 
-echo -e "Using transformed base schema: \n$transformed_base_schema"
+echo -e "Using transformed primitive contract: \n$transformed_primitive_contract"
 
 function deploy_primitives {
-  echo "Deploying primitive schemas"
+  echo "Deploying primitive contracts"
 
-  # if there are no primitive schemas, return
+  # if there are no primitive contracts, return
   if [ ${#primitive_files_list[@]} -eq 0 ]; then
       return
   fi
@@ -118,12 +118,12 @@ function deploy_primitives {
       filename="${filename%.*}"
       echo "Deploying $filename"
       while true; do
-          output=$(./../.build/kwil-cli database deploy -p=<(echo "$transformed_base_schema") --name="$filename" 2>&1 || true)
+          output=$(./../.build/kwil-cli database deploy -p=<(echo "$transformed_primitive_contract") --name="$filename" 2>&1 || true)
           echo $output
           if [[ $output =~ "invalid nonce" ]]; then
             echo "Error nonce, retrying file immediately: $file"
             expected_nonce=$(echo $output | grep -oP 'expected \K[0-9]+')
-            ./../.build/kwil-cli database deploy -p=<(echo "$transformed_base_schema") --name="$filename" --nonce $expected_nonce
+            ./../.build/kwil-cli database deploy -p=<(echo "$transformed_primitive_contract") --name="$filename" --nonce $expected_nonce
           elif [[ $output =~ "error" ]]; then
             echo "Error deploying file: $file"
           else
@@ -137,12 +137,12 @@ function deploy_primitives {
 }
 
 function deploy_composed {
-  # if there are no composed schemas, return
+  # if there are no composed contracts, return
   if [ ${#composed_files_list[@]} -eq 0 ]; then
       return
   fi
-  echo "Deploying composed schemas"
-  # for each file in temp_composed_schemas/*.json
+  echo "Deploying composed contracts"
+  # for each file in temp_composed_stream_contracts/*.json
   # drop the db, then run the deploy command
   for file in "${composed_files_list[@]}"; do
       filename=$(basename "$file")

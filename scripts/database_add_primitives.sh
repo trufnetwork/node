@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 
 files=($(ls ./temp_csv/*.csv))
 files_count=${#files[@]}
-echo "Adding primitive schemas, total files: $files_count"
+echo "Adding primitive to contracts, total files: $files_count"
 
 pending_files=("${files[@]}")
 max_retries=5

@@ -1,4 +1,4 @@
-database truflation_stream;
+database truflation_primitive_stream;
 
 use primitive_stream {
     table_name: 'primitive_table'

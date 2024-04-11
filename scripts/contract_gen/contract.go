@@ -1,4 +1,4 @@
-package schemagen
+package contractgen
 
 import (
 	_ "embed"
@@ -8,24 +8,24 @@ import (
 	"github.com/kwilteam/kwil-db/core/types/transactions"
 )
 
-//go:embed composed_template.json
+//go:embed composed_stream_template.json
 var template []byte
 
-// GenerateComposedSchema generates a schema that composes across other streams.
+// GenerateComposedStreamContract generates a contract that composes across other streams.
 // It can be given a map[string]int64, which maps the streams it imports to
 // the weight it should be given.
-func GenerateComposedSchema(name string, imports map[string]int64) (*transactions.Schema, error) {
-	var schema transactions.Schema
-	err := json.Unmarshal(template, &schema)
+func GenerateComposedStreamContract(name string, imports map[string]int64) (*transactions.Schema, error) {
+	var contract transactions.Schema
+	err := json.Unmarshal(template, &contract)
 	if err != nil {
 		return nil, err
 	}
 
-	schema.Name = name
+	contract.Name = name
 
 	count := 0
 	found := false
-	for _, ext := range schema.Extensions {
+	for _, ext := range contract.Extensions {
 		// If the extension is a composed_stream extension, we can
 		// add the imports to it.
 		if ext.Name == "composed_stream" { // TODO: we should use a global constant string for this once other PR is merged
@@ -55,5 +55,5 @@ func GenerateComposedSchema(name string, imports map[string]int64) (*transaction
 		return nil, fmt.Errorf("composed_stream extension not found")
 	}
 
-	return &schema, nil
+	return &contract, nil
 }

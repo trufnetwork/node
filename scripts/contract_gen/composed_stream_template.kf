@@ -1,7 +1,7 @@
  // this file exists purely for informational purposes
  // it is the unparsed version of composed_template.json,
- // which is a template used to generate schemas from.
- // schemas can be parsed at https://ide.kwil.com,
+ // which is a template used to generate contracts from.
+ // contracts can be parsed at https://ide.kwil.com,
  // and right-clicking the files in the "compiled files"
  // section of the third tab
  database composed_example;

@@ -65,7 +65,7 @@ fi
 
 python ./produce_source_maps/process_all.py
 bash ./generate_clean_csv_from_raw.sh
-bash ./generate_composed_schemas.sh
+bash ./generate_composed_contracts.sh
 bash ./database_deploy.sh --skip-drop
 bash ./database_add_primitives.sh
 

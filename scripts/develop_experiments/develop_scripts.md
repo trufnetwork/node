@@ -45,13 +45,13 @@ rm -r ~/.kwild
 
 ```shell
 ../../.build/kwil-cli database drop stream_a --sync
-../../.build/kwil-cli database deploy --sync -p=<(exec ../use_base_schema.sh) --name=stream_a --sync
+../../.build/kwil-cli database deploy --sync -p=<(exec ../use_primitive_contract.sh) --name=stream_a --sync
 ../../.build/kwil-cli database batch --sync --path ./test_samples/stream_a.csv --action add_record --name=stream_a --sync
 ```
 
 ```shell
 ../../.build/kwil-cli database drop stream_b --sync
-../../.build/kwil-cli database deploy -p=<(exec ../use_base_schema.sh) --name=stream_b --sync
+../../.build/kwil-cli database deploy -p=<(exec ../use_primitive_contract.sh) --name=stream_b --sync
 ../../.build/kwil-cli database batch --sync --path ./test_samples/stream_b.csv --action add_record --name=stream_b
 ```
 
@@ -231,7 +231,7 @@ private_key="26aff20bde5606467627557793ebbb6162e9faf9f2d0830fd98a6f207dcf605d"
 address="0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf"
 
 ../../.build/kwil-cli database drop $db_name --sync
-../../.build/kwil-cli database deploy -p=<(exec ../use_base_schema.sh $address) --name=$db_name --sync
+../../.build/kwil-cli database deploy -p=<(exec ../use_primitive_contract.sh $address) --name=$db_name --sync
 ../../.build/kwil-cli database batch --sync --path ./test_samples/stream_b.csv --action add_record --name=$db_name
 ```
 

@@ -20,7 +20,7 @@ action my_action() public {
 
 ## Primitive Stream
 
-`primitive_stream` allows any schema storing data to be turned into a Truflation stream. It requires a `table_name` configuration. The `date_column` and `value_column` configurations are optional. If not provided, `date_column` defaults to "date_value" and `value_column` defaults to "value". These configurations specify the columns from which the extension will get values.
+`primitive_stream` allows any contract storing data to be turned into a Truflation primitive stream. It requires a `table_name` configuration. The `date_column` and `value_column` configurations are optional. If not provided, `date_column` defaults to "date_value" and `value_column` defaults to "value". These configurations specify the columns from which the extension will get values.
 
 Currently, the `primitive_stream` extension should be the last operation in an action. This allows it to return responses of any size by modifying the last query result. No other SQL queries should follow this extension in the Kuneiform file.
 
@@ -59,9 +59,9 @@ action get_value($date, $date_to) public view {
 }
 ```
 
-## Compose_truflation_Streams
+## Composed Streams
 
-`compose_truflation_streams` allows composing of schemas that are valid Truflation streams. Any schema that has `get_index(YYYY-MM-DD, YYYY-MM-DD?)` and `get_value(YYYY-MM-DD, YYYY-MM-DD?)` actions is a valid Truflation stream. The logic of the stream composition is included inside the extension.
+`composed_streams` allows composing contracts that are valid Truflation streams. Any contract that has `get_index(YYYY-MM-DD, YYYY-MM-DD?)` and `get_value(YYYY-MM-DD, YYYY-MM-DD?)` actions is a valid Truflation stream. The logic of the stream composition is included inside the extension.
 
 You may use any of these options as an id of a stream:
 
@@ -72,19 +72,19 @@ You may use any of these options as an id of a stream:
 You may use any prefix to identify a stream on its key, but is important that each stream contains the suffix `_id` and `_weight`.
 
 ```
-use compose_truflation_streams {
+use composed_stream {
     stream_1_id: 'corn_id',
     stream_1_weight: '1',
     stream_2_id: 'hotel_id',
     stream_2_weight: '9'
-} as streams;
+} as composed_stream;
 
 action get_index($date, $date_to) public view {
-    streams.get_index($date, $date_to);
+    composed_stream.get_index($date, $date_to);
 }
 
 action get_value($date, $date_to) public view {
-    streams.get_value($date, $date_to);
+    composed_stream.get_value($date, $date_to);
 }
 ```
 
@@ -92,7 +92,7 @@ action get_value($date, $date_to) public view {
 
 I have created and tested a basic example of composing streams together. To run this, we need to build a Kwil binary with these extensions.
 
-The example schemas can also be found in this directory, under `example_schemas`.
+The example contracts can also be found in this directory, under `example_contracts`.
 
 ### Beef, Corn, And Barley
 
@@ -126,12 +126,12 @@ $ kwil-cli utils ping
 
 #### Deploy the Primitive Streams
 
-Once the node is running, you can deploy the schemas found in `examples`. First, deploy the three primitive streams:
+Once the node is running, you can deploy the contracts found in `examples`. First, deploy the three primitive streams:
 
 ```bash
-kwil-cli database deploy -p=./example_schemas/primitive_stream.kf  -n=beef
-kwil-cli database deploy -p=./example_schemas/primitive_stream.kf  -n=corn
-kwil-cli database deploy -p=./example_schemas/primitive_stream.kf  -n=barley
+kwil-cli database deploy -p=./example_contracts/primitive_stream.kf  -n=beef
+kwil-cli database deploy -p=./example_contracts/primitive_stream.kf  -n=corn
+kwil-cli database deploy -p=./example_contracts/primitive_stream.kf  -n=barley
 ```
 
 Once deployed, seed them with some initial values. Remember that, in order to account for accuracy, we add 3 extra 0s to values. For example, 40.101 becomes 40101:
@@ -149,7 +149,7 @@ kwil-cli database execute -n=barley -a=add_record id:24c80091-a203-4182-a56b-e68
 Once we have seeded data, we can create the beef_corn stream. To do this, edit the `composed_1.kf` stream to add in the DBID for your beef and corn streams. Then, deploy the stream:
 
 ```bash
-kwil-cli database deploy -p=./example_schemas/composed_1.kf  -n=beef_corn
+kwil-cli database deploy -p=./example_contracts/composed_1.kf  -n=beef_corn
 ```
 
 You can check that everything is working properly by getting the combined value from the beef_corn stream:
@@ -160,10 +160,10 @@ kwil-cli database call -a=get_value date: date_to: -n=beef_corn
 
 #### Deploy beef_corn_barley Index
 
-Just like in the above step, we will now use the `composed_2.kf` schema to compose the beef_corn stream with the barley stream. Edit the `composed_2.kf` to add in the dbids for the beef_corn and barley streams. Then, deploy the stream:
+Just like in the above step, we will now use the `composed_2.kf` contract to compose the beef_corn stream with the barley stream. Edit the `composed_2.kf` to add in the dbids for the beef_corn and barley streams. Then, deploy the stream:
 
 ```bash
-kwil-cli database deploy -p=./example_schemas/composed_2.kf  -n=beef_corn_barley
+kwil-cli database deploy -p=./example_contracts/composed_2.kf  -n=beef_corn_barley
 ```
 
 To check that it is working, we can get the value for the beef_corn_barley stream. If seeded with the values given above, this should give:
