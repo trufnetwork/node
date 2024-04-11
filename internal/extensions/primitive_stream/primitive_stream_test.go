@@ -329,6 +329,6 @@ func TestPrimitiveStreamExt_Call(t *testing.T) {
 		mockEngine.EXPECT().Execute(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil, assert.AnError)
 		_, err := instance.primitiveStream.Call(instance.scope, instance.app, "get_index", []any{"2024-01-01", "2024-01-02"})
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "error getting current value on db execute")
+		assert.Contains(t, err.Error(), "error getting current primitive on db execute")
 	})
 }

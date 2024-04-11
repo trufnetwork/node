@@ -230,10 +230,10 @@ func TestInitializeComposedStream(t *testing.T) {
 		assert.NoError(t, err, "InitializeComposedStream returned an error")
 	})
 
-	t.Run("validation - missing weightStr for composedStream", func(t *testing.T) {
+	t.Run("validation - missing weightStr for composed_stream", func(t *testing.T) {
 		metadata := map[string]string{"key_id": "dbId"}
 		_, err := InitializeComposedStream(nil, nil, metadata)
-		assert.EqualError(t, err, "missing weightStr for composedStream dbId")
+		assert.EqualError(t, err, "missing weightStr for composed_stream dbId")
 	})
 
 	t.Run("error - it should return error when weightStr is not a number", func(t *testing.T) {
@@ -279,7 +279,7 @@ func TestCallOnTargetDBID(t *testing.T) {
 		mockEngine.EXPECT().Procedure(mock.Anything, mock.Anything, mock.Anything).Return(nil, nil)
 		_, err := CallOnTargetDBID(instance.scoper, instance.app, "get_primitive", "targetDBID", "2023-11-01", "2023-12-31")
 		assert.Error(t, err, "composedStream.Call did not return an error")
-		assert.Contains(t, err.Error(), "composedStream returned nil")
+		assert.Contains(t, err.Error(), "stream returned nil")
 	})
 
 	t.Run("validation - it should return error getting scalar", func(t *testing.T) {
