@@ -66,8 +66,8 @@ fi
 python ./produce_source_maps/process_all.py
 bash ./generate_clean_csv_from_raw.sh
 bash ./generate_composed_contracts.sh
-bash ./database_deploy.sh --skip-drop
-bash ./database_add_primitives.sh
+bash ./contracts_deploy.sh --skip-drop
+bash ./contracts_add_primitives.sh
 
 # Function that tries a command N times until it succeeds based on expected output
 try_n_times() {
