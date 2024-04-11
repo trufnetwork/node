@@ -6,10 +6,10 @@ import (
 
 	"github.com/kwilteam/kwil-db/extensions/auth"
 	"github.com/kwilteam/kwil-db/extensions/precompiles"
-	"github.com/truflation/tsn-db/internal/extensions/basestream"
-	"github.com/truflation/tsn-db/internal/extensions/compose_streams"
+	"github.com/truflation/tsn-db/internal/extensions/composed_stream"
 	"github.com/truflation/tsn-db/internal/extensions/ed25519authenticator"
 	"github.com/truflation/tsn-db/internal/extensions/mathutil"
+	"github.com/truflation/tsn-db/internal/extensions/primitive_stream"
 	"github.com/truflation/tsn-db/internal/extensions/stream"
 	"github.com/truflation/tsn-db/internal/extensions/whitelist"
 
@@ -35,7 +35,7 @@ func init() {
 		panic(err)
 	}
 
-	err = precompiles.RegisterPrecompile("compose_truflation_streams", compose_streams.InitializeStream)
+	err = precompiles.RegisterPrecompile("composed_stream", composed_stream.InitializeStream)
 	if err != nil {
 		panic(err)
 	}
@@ -45,7 +45,7 @@ func init() {
 		panic(err)
 	}
 
-	err = precompiles.RegisterPrecompile("basestream", basestream.InitializeBasestream)
+	err = precompiles.RegisterPrecompile("primitive_stream", primitive_stream.InitializePrimitiveStream)
 	if err != nil {
 		panic(err)
 	}

@@ -1,7 +1,7 @@
-// package basestream implements the base stream extension.
+// package primitive stream implements the primitive stream extension.
 // it is meant to be used for a Truflation primitive stream
 // that tracks some time series data.
-package basestream
+package primitive_stream
 
 import (
 	"errors"
@@ -21,12 +21,12 @@ func getOrDefault(m map[string]string, key string, defaultValue string) string {
 	return defaultValue
 }
 
-// InitializeBasestream initializes the basestream extension.
+// InitializePrimitiveStream initializes the basestream extension.
 // It takes 3 configs: table, date_column, and value_column.
 // The table is the table that the data is stored in.
 // The date_column is the column that the date is stored in, stored as "YYYY-MM-DD".
 // The value_column is the column that the value is stored in. It must be an integer.
-func InitializeBasestream(ctx *precompiles.DeploymentContext, service *common.Service, metadata map[string]string) (precompiles.Instance, error) {
+func InitializePrimitiveStream(ctx *precompiles.DeploymentContext, service *common.Service, metadata map[string]string) (precompiles.Instance, error) {
 	var table, dateColumn, valueColumn string
 	var ok bool
 	table, ok = metadata["table_name"]
@@ -72,20 +72,20 @@ func InitializeBasestream(ctx *precompiles.DeploymentContext, service *common.Se
 		return nil, fmt.Errorf("value column %s not found", valueColumn)
 	}
 
-	return &BaseStreamExt{
+	return &PrimitiveStreamExt{
 		table:       table,
 		dateColumn:  dateColumn,
 		valueColumn: valueColumn,
 	}, nil
 }
 
-type BaseStreamExt struct {
+type PrimitiveStreamExt struct {
 	table       string
 	dateColumn  string
 	valueColumn string
 }
 
-func (b *BaseStreamExt) Call(scope *precompiles.ProcedureContext, app *common.App, method string, args []any) ([]any, error) {
+func (b *PrimitiveStreamExt) Call(scope *precompiles.ProcedureContext, app *common.App, method string, args []any) ([]any, error) {
 	switch strings.ToLower(method) {
 	default:
 		return nil, fmt.Errorf("unknown method: %s", method)
@@ -106,23 +106,23 @@ const (
 	zeroDate            = "0000-00-00"
 )
 
-func (b *BaseStreamExt) sqlGetBaseValue() string {
+func (b *PrimitiveStreamExt) sqlGetBaseValue() string {
 	return fmt.Sprintf(sqlGetBaseValue, b.dateColumn, b.valueColumn, b.table, b.valueColumn, b.dateColumn)
 }
 
-func (b *BaseStreamExt) sqlGetLatestValue() string {
+func (b *PrimitiveStreamExt) sqlGetLatestValue() string {
 	return fmt.Sprintf(sqlGetLatestValue, b.dateColumn, b.valueColumn, b.table, b.dateColumn)
 }
 
-func (b *BaseStreamExt) sqlGetSpecificValue(date string) string {
+func (b *PrimitiveStreamExt) sqlGetSpecificValue(date string) string {
 	return fmt.Sprintf(sqlGetSpecificValue, b.dateColumn, b.valueColumn, b.table, b.dateColumn, date)
 }
 
-func (b *BaseStreamExt) sqlGetLastBefore(date string) string {
+func (b *PrimitiveStreamExt) sqlGetLastBefore(date string) string {
 	return fmt.Sprintf(sqlGetLastBefore, b.dateColumn, b.valueColumn, b.table, b.dateColumn, date, b.dateColumn)
 }
 
-func (b *BaseStreamExt) sqlGetRangeValue(date string, dateTo string) string {
+func (b *PrimitiveStreamExt) sqlGetRangeValue(date string, dateTo string) string {
 	return fmt.Sprintf(sqlGetRangeValue, b.dateColumn, b.valueColumn, b.table, b.dateColumn, date, b.dateColumn, dateTo, b.dateColumn)
 }
 
@@ -196,7 +196,7 @@ func getValue(scope *precompiles.ProcedureContext, app *common.App, fn func(*pre
 // This follows Truflation function of ((current_value/first_value)*100).
 // It will multiplty the returned result by an additional 1000, since Kwil
 // cannot handle decimals.
-func (b *BaseStreamExt) index(scope *precompiles.ProcedureContext, app *common.App, date string, dateTo *string) ([]utils.ValueWithDate, error) {
+func (b *PrimitiveStreamExt) index(scope *precompiles.ProcedureContext, app *common.App, date string, dateTo *string) ([]utils.ValueWithDate, error) {
 
 	// we will first get the first ever value
 	baseValueArr, err := b.value(scope, app, zeroDate, nil)
@@ -238,7 +238,7 @@ func (b *BaseStreamExt) index(scope *precompiles.ProcedureContext, app *common.A
 
 // value returns the value for a given date.
 // if no date is given, it will return the latest value.
-func (b *BaseStreamExt) value(scope *precompiles.ProcedureContext, app *common.App, date string, dateTo *string) ([]utils.ValueWithDate, error) {
+func (b *PrimitiveStreamExt) value(scope *precompiles.ProcedureContext, app *common.App, date string, dateTo *string) ([]utils.ValueWithDate, error) {
 	var res *sql.ResultSet
 	var err error
 	if date == zeroDate {

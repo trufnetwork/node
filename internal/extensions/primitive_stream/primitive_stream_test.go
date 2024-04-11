@@ -1,4 +1,4 @@
-package basestream
+package primitive_stream
 
 import (
 	"context"
@@ -20,7 +20,7 @@ func Test_Index(t *testing.T) {
 		DBID: "dbid",
 		Ctx:  context.Background(),
 	}
-	b := &BaseStreamExt{
+	b := &PrimitiveStreamExt{
 		table:       "price",
 		dateColumn:  "date",
 		valueColumn: "value",
@@ -33,7 +33,7 @@ func Test_Index(t *testing.T) {
 		b.sqlGetRangeValue("2024-01-01", "2024-01-02"): mockDateScalar("value", []utils.ValueWithDate{
 			{Date: "2024-01-01", Value: 150000},
 			{Date: "2024-01-02", Value: 300000},
-		}),                                                                                                                    // 150.000, 300.000
+		}), // 150.000, 300.000
 		b.sqlGetLastBefore("2024-01-01"): mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 266666}}), // 266.666
 	}
 
@@ -87,7 +87,7 @@ func Test_Value(t *testing.T) {
 		DBID: "dbid",
 		Ctx:  context.Background(),
 	}
-	b := &BaseStreamExt{
+	b := &PrimitiveStreamExt{
 		table:       "price",
 		dateColumn:  "date",
 		valueColumn: "value",
@@ -160,7 +160,7 @@ type baseStreamTest struct {
 	ctx        *precompiles.DeploymentContext
 	scope      *precompiles.ProcedureContext
 	app        *common.App
-	baseStream *BaseStreamExt
+	baseStream *PrimitiveStreamExt
 }
 
 func newBaseStreamTest() *baseStreamTest {
@@ -186,7 +186,7 @@ func newBaseStreamTest() *baseStreamTest {
 		},
 		scope:      &precompiles.ProcedureContext{},
 		app:        &common.App{},
-		baseStream: &BaseStreamExt{},
+		baseStream: &PrimitiveStreamExt{},
 	}
 }
 
@@ -199,7 +199,7 @@ func TestInitializeBasestream(t *testing.T) {
 
 	instance := newBaseStreamTest()
 	t.Run("success - it should initialize the basestream", func(t *testing.T) {
-		_, err := InitializeBasestream(instance.ctx, nil, metadata)
+		_, err := InitializePrimitiveStream(instance.ctx, nil, metadata)
 		assert.NoError(t, err)
 	})
 
@@ -207,7 +207,7 @@ func TestInitializeBasestream(t *testing.T) {
 		wrongMetadata := map[string]string{
 			"wrong_table_name": "price",
 		}
-		_, err := InitializeBasestream(instance.ctx, nil, wrongMetadata)
+		_, err := InitializePrimitiveStream(instance.ctx, nil, wrongMetadata)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "missing table")
 	})
@@ -215,7 +215,7 @@ func TestInitializeBasestream(t *testing.T) {
 	t.Run("validation - it should return date type must be text", func(t *testing.T) {
 		wrongInstance := newBaseStreamTest()
 		wrongInstance.ctx.Schema.Tables[0].Columns[0].Type = common.INT
-		_, err := InitializeBasestream(wrongInstance.ctx, nil, metadata)
+		_, err := InitializePrimitiveStream(wrongInstance.ctx, nil, metadata)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "date column date must be of type TEXT")
 	})
@@ -223,7 +223,7 @@ func TestInitializeBasestream(t *testing.T) {
 	t.Run("validation - it should return value type must be int", func(t *testing.T) {
 		wrongInstance := newBaseStreamTest()
 		wrongInstance.ctx.Schema.Tables[0].Columns[1].Type = common.TEXT
-		_, err := InitializeBasestream(wrongInstance.ctx, nil, metadata)
+		_, err := InitializePrimitiveStream(wrongInstance.ctx, nil, metadata)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "value column value must be of type INT")
 	})
@@ -234,7 +234,7 @@ func TestInitializeBasestream(t *testing.T) {
 			"date_column":  "wrong_date",
 			"value_column": "value",
 		}
-		_, err := InitializeBasestream(instance.ctx, nil, wrongMetadata)
+		_, err := InitializePrimitiveStream(instance.ctx, nil, wrongMetadata)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})
@@ -245,7 +245,7 @@ func TestInitializeBasestream(t *testing.T) {
 			"date_column":  "date",
 			"value_column": "wrong_value",
 		}
-		_, err := InitializeBasestream(instance.ctx, nil, wrongMetadata)
+		_, err := InitializePrimitiveStream(instance.ctx, nil, wrongMetadata)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})
@@ -255,7 +255,7 @@ func TestInitializeBasestream(t *testing.T) {
 			"table_name":  "wrong_table",
 			"date_column": "date",
 		}
-		_, err := InitializeBasestream(instance.ctx, nil, wrongMetadata)
+		_, err := InitializePrimitiveStream(instance.ctx, nil, wrongMetadata)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})

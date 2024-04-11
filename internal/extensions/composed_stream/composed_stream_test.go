@@ -1,4 +1,4 @@
-package compose_streams
+package composed_stream
 
 import (
 	"errors"
