@@ -284,5 +284,5 @@ type knownMethod string
 
 const (
 	knownMethodIndex knownMethod = "get_index"
-	knownMethodValue knownMethod = "get_value"
+	knownMethodValue knownMethod = "get_primitive"
 )

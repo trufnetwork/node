@@ -27,10 +27,10 @@ func Test_Index(t *testing.T) {
 	}
 
 	mockStmts := map[string]*sql.ResultSet{
-		b.sqlGetBaseValue():                 mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 75000}}),  // 75.000
-		b.sqlGetLatestValue():               mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 200000}}), // 200.000
-		b.sqlGetSpecificValue("2024-01-01"): mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 150000}}), // 150.000
-		b.sqlGetRangeValue("2024-01-01", "2024-01-02"): mockDateScalar("value", []utils.ValueWithDate{
+		b.sqlGetBasePrimitive():                 mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 75000}}),  // 75.000
+		b.sqlGetLatestPrimitive():               mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 200000}}), // 200.000
+		b.sqlGetSpecificPrimitive("2024-01-01"): mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 150000}}), // 150.000
+		b.sqlGetRangePrimitive("2024-01-01", "2024-01-02"): mockDateScalar("value", []utils.ValueWithDate{
 			{Date: "2024-01-01", Value: 150000},
 			{Date: "2024-01-02", Value: 300000},
 		}), // 150.000, 300.000
@@ -61,7 +61,7 @@ func Test_Index(t *testing.T) {
 
 	t.Run("validation - it should return an error expected single value when base value is not a single value", func(t *testing.T) {
 		mockSql := map[string]*sql.ResultSet{
-			b.sqlGetBaseValue(): mockDateScalar("value", []utils.ValueWithDate{
+			b.sqlGetBasePrimitive(): mockDateScalar("value", []utils.ValueWithDate{
 				{Date: "2024-01-01", Value: 75000},
 				{Date: "2024-01-02", Value: 150000},
 			}),
@@ -74,7 +74,7 @@ func Test_Index(t *testing.T) {
 
 	t.Run("error - it should return an error if b.value returns an error", func(t *testing.T) {
 		mockSql := map[string]*sql.ResultSet{
-			b.sqlGetBaseValue(): mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 75000}}), // 75.000
+			b.sqlGetBasePrimitive(): mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 75000}}), // 75.000
 		}
 		app.Engine = newEngine(t, mockSql)
 		_, err = b.index(scope, app, "2024-01-01", nil)
@@ -94,25 +94,25 @@ func Test_Value(t *testing.T) {
 	}
 
 	mockStmts := map[string]*sql.ResultSet{
-		b.sqlGetLatestValue():                          mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 200000}}),                                      // 200.000
-		b.sqlGetSpecificValue("2024-01-01"):            mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 150000}}),                                      // 150.000
-		b.sqlGetRangeValue("2024-01-01", "2024-01-02"): mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 150000}, {Date: "2024-01-02", Value: 300000}}), // 150.000, 300.000
+		b.sqlGetLatestPrimitive():                          mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 200000}}),                                      // 200.000
+		b.sqlGetSpecificPrimitive("2024-01-01"):            mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 150000}}),                                      // 150.000
+		b.sqlGetRangePrimitive("2024-01-01", "2024-01-02"): mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 150000}, {Date: "2024-01-02", Value: 300000}}), // 150.000, 300.000
 	}
 
 	app := &common.App{
 		Engine: newEngine(t, mockStmts),
 	}
 
-	returned, err := b.value(scope, app, "2024-01-01", nil)
+	returned, err := b.primitive(scope, app, "2024-01-01", nil)
 	assert.NoError(t, err)
 	assert.Equal(t, []utils.ValueWithDate{{Date: "2024-01-01", Value: 150000}}, returned) // 150.000 * 1000
 
-	returned, err = b.value(scope, app, "", nil) // this should return the latest value
+	returned, err = b.primitive(scope, app, "", nil) // this should return the latest value
 	assert.NoError(t, err)
 	assert.Equal(t, []utils.ValueWithDate{{Date: "2024-01-01", Value: 200000}}, returned) // 200.000 * 1000
 
 	dateTo := "2024-01-02"
-	returned, err = b.value(scope, app, "2024-01-01", &dateTo)
+	returned, err = b.primitive(scope, app, "2024-01-01", &dateTo)
 	assert.NoError(t, err)
 	assert.Equal(t, []utils.ValueWithDate{{Date: "2024-01-01", Value: 150000}, {Date: "2024-01-02", Value: 300000}}, returned) // 150.000 * 1000, 300.000 * 1000
 }
@@ -278,7 +278,7 @@ func TestPrimitiveStreamExt_Call(t *testing.T) {
 	t.Run("success - it should return the value", func(t *testing.T) {
 		mockEngine.ExpectedCalls = nil
 		mockEngine.EXPECT().Execute(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 150000}}), nil)
-		_, err := instance.primitiveStream.Call(instance.scope, instance.app, "get_value", []any{"2024-01-01", "2024-01-02"})
+		_, err := instance.primitiveStream.Call(instance.scope, instance.app, "get_primitive", []any{"2024-01-01", "2024-01-02"})
 		assert.NoError(t, err)
 	})
 

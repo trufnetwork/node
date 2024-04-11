@@ -259,17 +259,17 @@ func TestCallOnTargetDBID(t *testing.T) {
 		assert.NoError(t, err, "composedStream.Call returned an error")
 	})
 
-	t.Run("success - it should return nil when method is get_value", func(t *testing.T) {
+	t.Run("success - it should return nil when method is get_primitive", func(t *testing.T) {
 		mockEngine.ExpectedCalls = nil
 		mockEngine.EXPECT().Procedure(mock.Anything, mock.Anything, mock.Anything).Return(expectedResultSet, nil)
-		_, err := CallOnTargetDBID(instance.scoper, instance.app, "get_value", "targetDBID", "2023-11-01", "2023-12-31")
+		_, err := CallOnTargetDBID(instance.scoper, instance.app, "get_primitive", "targetDBID", "2023-11-01", "2023-12-31")
 		assert.NoError(t, err, "composedStream.Call returned an error")
 	})
 
 	t.Run("error - it should return error when app.Engine.Procedure returns an error", func(t *testing.T) {
 		mockEngine.ExpectedCalls = nil
 		mockEngine.EXPECT().Procedure(mock.Anything, mock.Anything, mock.Anything).Return(nil, assert.AnError)
-		_, err := CallOnTargetDBID(instance.scoper, instance.app, "get_value", "targetDBID", "2023-11-01", "2023-12-31")
+		_, err := CallOnTargetDBID(instance.scoper, instance.app, "get_primitive", "targetDBID", "2023-11-01", "2023-12-31")
 		assert.Error(t, err, "composedStream.Call did not return an error")
 		assert.Contains(t, err.Error(), assert.AnError.Error())
 	})
@@ -277,7 +277,7 @@ func TestCallOnTargetDBID(t *testing.T) {
 	t.Run("validation - it should return composedStream returned nil error when app.Engine.Procedure returns nil", func(t *testing.T) {
 		mockEngine.ExpectedCalls = nil
 		mockEngine.EXPECT().Procedure(mock.Anything, mock.Anything, mock.Anything).Return(nil, nil)
-		_, err := CallOnTargetDBID(instance.scoper, instance.app, "get_value", "targetDBID", "2023-11-01", "2023-12-31")
+		_, err := CallOnTargetDBID(instance.scoper, instance.app, "get_primitive", "targetDBID", "2023-11-01", "2023-12-31")
 		assert.Error(t, err, "composedStream.Call did not return an error")
 		assert.Contains(t, err.Error(), "composedStream returned nil")
 	})
@@ -285,7 +285,7 @@ func TestCallOnTargetDBID(t *testing.T) {
 	t.Run("validation - it should return error getting scalar", func(t *testing.T) {
 		mockEngine.ExpectedCalls = nil
 		mockEngine.EXPECT().Procedure(mock.Anything, mock.Anything, mock.Anything).Return(&sql.ResultSet{}, nil)
-		_, err := CallOnTargetDBID(instance.scoper, instance.app, "get_value", "targetDBID", "wrongDate", "2023-12-31")
+		_, err := CallOnTargetDBID(instance.scoper, instance.app, "get_primitive", "targetDBID", "wrongDate", "2023-12-31")
 		assert.Error(t, err, "composedStream.Call did not return an error")
 		assert.Contains(t, err.Error(), "error getting scalar")
 	})
@@ -307,14 +307,14 @@ func TestStream_Call(t *testing.T) {
 		assert.NoError(t, err, "composedStream.Call returned an error")
 	})
 
-	t.Run("success - it should return nil when method is get_value", func(t *testing.T) {
+	t.Run("success - it should return nil when method is get_primitive", func(t *testing.T) {
 		mockEngine.ExpectedCalls = nil
 		expectedResultSet := &sql.ResultSet{
 			Columns: []string{"date", "value"},
 			Rows:    [][]interface{}{{"2023-12-31", int64(1)}},
 		}
 		mockEngine.EXPECT().Procedure(mock.Anything, mock.Anything, mock.Anything).Return(expectedResultSet, nil)
-		_, err := instance.composedStream.Call(instance.scoper, instance.app, "get_value", []interface{}{"2023-11-01", "2023-12-31"})
+		_, err := instance.composedStream.Call(instance.scoper, instance.app, "get_primitive", []interface{}{"2023-11-01", "2023-12-31"})
 		assert.NoError(t, err, "composedStream.Call returned an error")
 	})
 

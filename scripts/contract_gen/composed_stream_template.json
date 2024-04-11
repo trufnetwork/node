@@ -19,7 +19,7 @@
         ]
       },
       {
-        "name": "get_value",
+        "name": "get_primitive",
         "annotations": [
           "kgw(authn='true')"
         ],
@@ -31,7 +31,7 @@
         "mutability": "view",
         "auxiliaries": null,
         "statements": [
-          "composed_stream.get_value($date,$date_to);"
+          "composed_stream.get_primitive($date,$date_to);"
         ]
       }
     ],

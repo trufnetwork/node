@@ -15,7 +15,7 @@
  }
 
 @kgw(authn='true')
- action get_value($date, $date_to) public view {
-     composed_stream.get_value($date, $date_to);
+ action get_primitive($date, $date_to) public view {
+     composed_stream.get_primitive($date, $date_to);
      // we ensure no other extension or query is called after this
  }

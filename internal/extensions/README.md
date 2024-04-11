@@ -6,7 +6,7 @@ There are 3 extensions present here:
 
 ## Mathutil
 
-`mathutil` provides a basic function to multiply an integer by a fraction. This allows for weighting values used within composed streams.
+`mathutil` provides a basic function to multiply an integer by a fraction. This allows for weighting primitives used within composed streams.
 
 Below is an example of multiplying the number 100 by 4/9:
 
@@ -24,7 +24,7 @@ action my_action() public {
 
 Currently, the `primitive_stream` extension should be the last operation in an action. This allows it to return responses of any size by modifying the last query result. No other SQL queries should follow this extension in the Kuneiform file.
 
-It is capable of calculating both an index as well as a value for any date (in `YYYY-MM-DD` format). The index is the calculation described [here](<https://system.docs.truflation.com/backend/cpi-calculations/workflow/normalizing-data>). The value is simply the value for any given date.
+It is capable of calculating both an index as well as a primitive for any date (in `YYYY-MM-DD` format). The index is the calculation described [here](<https://system.docs.truflation.com/backend/cpi-calculations/workflow/normalizing-data>). The value is simply the value for any given date.
 
 - If empty string is passed to both dates, it will return the most recent date;
 - If a date is passed to the first date, it will return the value / index for that date;
@@ -54,14 +54,14 @@ action get_index($date, $date_to) public view {
     $val = primitive_stream.get_index($date, $date_to);
 }
 
-action get_value($date, $date_to) public view {
-    $val = primitive_stream.get_value($date, $date_to);
+action get_primitive($date, $date_to) public view {
+    $val = primitive_stream.get_primitive($date, $date_to);
 }
 ```
 
 ## Composed Streams
 
-`composed_streams` allows composing contracts that are valid Truflation streams. Any contract that has `get_index(YYYY-MM-DD, YYYY-MM-DD?)` and `get_value(YYYY-MM-DD, YYYY-MM-DD?)` actions is a valid Truflation stream. The logic of the stream composition is included inside the extension.
+`composed_streams` allows composing contracts that are valid Truflation streams. Any contract that has `get_index(YYYY-MM-DD, YYYY-MM-DD?)` and `get_primitive(YYYY-MM-DD, YYYY-MM-DD?)` actions is a valid Truflation stream. The logic of the stream composition is included inside the extension.
 
 You may use any of these options as an id of a stream:
 
@@ -84,7 +84,7 @@ action get_index($date, $date_to) public view {
 }
 
 action get_value($date, $date_to) public view {
-    composed_stream.get_value($date, $date_to);
+    composed_stream.get_primitive($date, $date_to);
 }
 ```
 
@@ -155,7 +155,7 @@ kwil-cli database deploy -p=./example_contracts/composed_1.kf  -n=beef_corn
 You can check that everything is working properly by getting the combined value from the beef_corn stream:
 
 ```bash
-kwil-cli database call -a=get_value date: date_to: -n=beef_corn
+kwil-cli database call -a=get_primitive date: date_to: -n=beef_corn
 ```
 
 #### Deploy beef_corn_barley Index
@@ -166,10 +166,10 @@ Just like in the above step, we will now use the `composed_2.kf` contract to com
 kwil-cli database deploy -p=./example_contracts/composed_2.kf  -n=beef_corn_barley
 ```
 
-To check that it is working, we can get the value for the beef_corn_barley stream. If seeded with the values given above, this should give:
+To check that it is working, we can get the primitive for the beef_corn_barley stream. If seeded with the values given above, this should give:
 
 ```bash
-$ kwil-cli database call -a=get_value date: date_to: -n=beef_corn_barley
+$ kwil-cli database call -a=get_primitive date: date_to: -n=beef_corn_barley
 | result |
 +--------+
 |  26510 |

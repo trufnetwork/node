@@ -90,50 +90,44 @@ func (b *PrimitiveStreamExt) Call(scope *precompiles.ProcedureContext, app *comm
 	default:
 		return nil, fmt.Errorf("unknown method: %s", method)
 	case "get_index":
-		return getValue(scope, app, b.index, args...)
-	case "get_value":
-		return getValue(scope, app, b.value, args...)
+		return getValueForFn(scope, app, b.index, args...)
+	case "get_primitive":
+		return getValueForFn(scope, app, b.primitive, args...)
 	}
 }
 
 const (
-	// getBaseValue gets the base value from a base stream, to be used in index calculation.
-	sqlGetBaseValue     = `select %s, %s from %s WHERE %s != 0 order by %s ASC LIMIT 1;`
-	sqlGetLatestValue   = `select %s, %s from %s order by %s DESC LIMIT 1;`
-	sqlGetSpecificValue = `select %s, %s from %s where %s = '%s';`
-	sqlGetLastBefore    = `select %s, %s from %s where %s <= '%s' order by %s DESC LIMIT 1;`
-	sqlGetRangeValue    = `select %s, %s from %s where %s >= '%s' and %s <= '%s' order by %s ASC;` // I can't use @date, changed it to basic %s, please take a look
-	zeroDate            = "0000-00-00"
+	// getBasePrimitive gets the base primitive from a base stream, to be used in index calculation.
+	sqlGetBasePrimitive     = `select %s, %s from %s WHERE %s != 0 order by %s ASC LIMIT 1;`
+	sqlGetLatestPrimitive   = `select %s, %s from %s order by %s DESC LIMIT 1;`
+	sqlGetSpecificPrimitive = `select %s, %s from %s where %s = '%s';`
+	sqlGetLastBefore        = `select %s, %s from %s where %s <= '%s' order by %s DESC LIMIT 1;`
+	sqlGetRangePrimitive    = `select %s, %s from %s where %s >= '%s' and %s <= '%s' order by %s ASC;` // I can't use @date, changed it to basic %s, please take a look
+	zeroDate                = "0000-00-00"
 )
 
-func (b *PrimitiveStreamExt) sqlGetBaseValue() string {
-	return fmt.Sprintf(sqlGetBaseValue, b.dateColumn, b.valueColumn, b.table, b.valueColumn, b.dateColumn)
+func (b *PrimitiveStreamExt) sqlGetBasePrimitive() string {
+	return fmt.Sprintf(sqlGetBasePrimitive, b.dateColumn, b.valueColumn, b.table, b.valueColumn, b.dateColumn)
 }
 
-func (b *PrimitiveStreamExt) sqlGetLatestValue() string {
-	return fmt.Sprintf(sqlGetLatestValue, b.dateColumn, b.valueColumn, b.table, b.dateColumn)
+func (b *PrimitiveStreamExt) sqlGetLatestPrimitive() string {
+	return fmt.Sprintf(sqlGetLatestPrimitive, b.dateColumn, b.valueColumn, b.table, b.dateColumn)
 }
 
-func (b *PrimitiveStreamExt) sqlGetSpecificValue(date string) string {
-	return fmt.Sprintf(sqlGetSpecificValue, b.dateColumn, b.valueColumn, b.table, b.dateColumn, date)
+func (b *PrimitiveStreamExt) sqlGetSpecificPrimitive(date string) string {
+	return fmt.Sprintf(sqlGetSpecificPrimitive, b.dateColumn, b.valueColumn, b.table, b.dateColumn, date)
 }
 
 func (b *PrimitiveStreamExt) sqlGetLastBefore(date string) string {
 	return fmt.Sprintf(sqlGetLastBefore, b.dateColumn, b.valueColumn, b.table, b.dateColumn, date, b.dateColumn)
 }
 
-func (b *PrimitiveStreamExt) sqlGetRangeValue(date string, dateTo string) string {
-	return fmt.Sprintf(sqlGetRangeValue, b.dateColumn, b.valueColumn, b.table, b.dateColumn, date, b.dateColumn, dateTo, b.dateColumn)
+func (b *PrimitiveStreamExt) sqlGetRangePrimitive(date string, dateTo string) string {
+	return fmt.Sprintf(sqlGetRangePrimitive, b.dateColumn, b.valueColumn, b.table, b.dateColumn, date, b.dateColumn, dateTo, b.dateColumn)
 }
 
-// getValue gets the value for the specified function.
-// usage: get_value($date, $date_to?)
-// behavior: 	if $date is not provided, it will return the latest value.
-//
-//	else if $date_to is provided, it will return the value for the date range.
-//
-// returns either a single value or a range of values.
-func getValue(scope *precompiles.ProcedureContext, app *common.App, fn func(*precompiles.ProcedureContext, *common.App, string, *string) ([]utils.ValueWithDate, error), args ...any) ([]any, error) {
+// getValueForFn gets the value for the specified function.
+func getValueForFn(scope *precompiles.ProcedureContext, app *common.App, fn func(*precompiles.ProcedureContext, *common.App, string, *string) ([]utils.ValueWithDate, error), args ...any) ([]any, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("expected 2 arguments, got %d", len(args))
 	}
@@ -193,80 +187,80 @@ func getValue(scope *precompiles.ProcedureContext, app *common.App, fn func(*pre
 }
 
 // Index returns the inflation index for a given date.
-// This follows Truflation function of ((current_value/first_value)*100).
+// This follows Truflation function of ((current_primitive/first_primitive)*100).
 // It will multiplty the returned result by an additional 1000, since Kwil
 // cannot handle decimals.
 func (b *PrimitiveStreamExt) index(scope *precompiles.ProcedureContext, app *common.App, date string, dateTo *string) ([]utils.ValueWithDate, error) {
 
-	// we will first get the first ever value
-	baseValueArr, err := b.value(scope, app, zeroDate, nil)
+	// we will first get the first ever primitive
+	basePrimitiveArr, err := b.primitive(scope, app, zeroDate, nil)
 	if err != nil {
 		return []utils.ValueWithDate{}, err
 	}
 	// expect single value
-	if len(baseValueArr) != 1 {
-		return []utils.ValueWithDate{}, errors.New("expected single value for base value")
+	if len(basePrimitiveArr) != 1 {
+		return []utils.ValueWithDate{}, errors.New("expected single value for base primitive")
 	}
-	baseValue := baseValueArr[0].Value
+	basePrimitive := basePrimitiveArr[0].Value
 
-	// now we will get the value for the requested date
-	currentValueArr, err := b.value(scope, app, date, dateTo)
+	// now we will get the primitive for the requested date
+	currentPrimitiveArr, err := b.primitive(scope, app, date, dateTo)
 	if err != nil {
 		return []utils.ValueWithDate{}, err
 	}
 
 	// if there's no date_to, we expect a single value
-	if dateTo == nil && len(currentValueArr) != 1 {
-		return []utils.ValueWithDate{}, errors.New("expected single value for current value")
+	if dateTo == nil && len(currentPrimitiveArr) != 1 {
+		return []utils.ValueWithDate{}, errors.New("expected single value for current primitive")
 	}
 
 	// we can't do floating point division, but Truflation normally tracks
 	// index precision to the thousandth, so we will multiply by 1000 before
 	// performing integer division. This will round the result down (golang truncates
 	// integer division results).
-	// Truflations calculation is ((current_value/first_value)*100).
-	// Therefore, we will alter the equation to ((current_value*100000)/first_value).
+	// Truflations calculation is ((current_primitive/first_primitive)*100).
+	// Therefore, we will alter the equation to ((current_primitive*100000)/first_primitive).
 	// This essentially gives us the same result, but with an extra 3 digits of precision.
-	//index := (currentValue * 100000) / baseValue
-	indexes := make([]utils.ValueWithDate, len(currentValueArr))
-	for i, currentValue := range currentValueArr {
-		indexes[i] = utils.ValueWithDate{Date: currentValue.Date, Value: (currentValue.Value * 100000) / baseValue}
+	//index := (currentPrimitive * 100000) / basePrimitive
+	indexes := make([]utils.ValueWithDate, len(currentPrimitiveArr))
+	for i, currentPrimitive := range currentPrimitiveArr {
+		indexes[i] = utils.ValueWithDate{Date: currentPrimitive.Date, Value: (currentPrimitive.Value * 100000) / basePrimitive}
 	}
 
 	return indexes, nil
 }
 
-// value returns the value for a given date.
-// if no date is given, it will return the latest value.
-func (b *PrimitiveStreamExt) value(scope *precompiles.ProcedureContext, app *common.App, date string, dateTo *string) ([]utils.ValueWithDate, error) {
+// primitive returns the primitive for a given date.
+// if no date is given, it will return the latest primitive.
+func (b *PrimitiveStreamExt) primitive(scope *precompiles.ProcedureContext, app *common.App, date string, dateTo *string) ([]utils.ValueWithDate, error) {
 	var res *sql.ResultSet
 	var err error
 	if date == zeroDate {
-		res, err = app.Engine.Execute(scope.Ctx, app.DB, scope.DBID, b.sqlGetBaseValue(), nil)
+		res, err = app.Engine.Execute(scope.Ctx, app.DB, scope.DBID, b.sqlGetBasePrimitive(), nil)
 	} else if date == "" {
-		res, err = app.Engine.Execute(scope.Ctx, app.DB, scope.DBID, b.sqlGetLatestValue(), nil)
+		res, err = app.Engine.Execute(scope.Ctx, app.DB, scope.DBID, b.sqlGetLatestPrimitive(), nil)
 	} else if dateTo == nil {
-		res, err = app.Engine.Execute(scope.Ctx, app.DB, scope.DBID, b.sqlGetSpecificValue(date), nil)
+		res, err = app.Engine.Execute(scope.Ctx, app.DB, scope.DBID, b.sqlGetSpecificPrimitive(date), nil)
 	} else {
-		res, err = app.Engine.Execute(scope.Ctx, app.DB, scope.DBID, b.sqlGetRangeValue(date, *dateTo), nil)
+		res, err = app.Engine.Execute(scope.Ctx, app.DB, scope.DBID, b.sqlGetRangePrimitive(date, *dateTo), nil)
 	}
 
 	if err != nil {
-		return []utils.ValueWithDate{}, fmt.Errorf("error getting current value on db execute: %w", err)
+		return []utils.ValueWithDate{}, fmt.Errorf("error getting current primitive on db execute: %w", err)
 	}
 
-	values, err := utils.GetScalarWithDate(res)
+	primitives, err := utils.GetScalarWithDate(res)
 
 	if err != nil {
-		return []utils.ValueWithDate{}, fmt.Errorf("error getting current value on get scalar with date: %w", err)
+		return []utils.ValueWithDate{}, fmt.Errorf("error getting current primitive on get scalar with date: %w", err)
 	}
 
 	/*
 		if:
 		- there's no row in the answer OR;
 		- the first row date is not the same as the requested first date
-		we try to get the last value before the requested date
-		and assign it to the first value as the specified date
+		we try to get the last primitive before the requested date
+		and assign it to the first primitive as the specified date
 
 		examples:
 		given there's a value of 100 on 2000-01-01
@@ -295,34 +289,34 @@ func (b *PrimitiveStreamExt) value(scope *precompiles.ProcedureContext, app *com
 
 		unless there's no data before these dates, in which case we return without modifications
 	*/
-	if (len(values) == 0 || values[0].Date != date) && (date != zeroDate && date != "") {
-		// we will get the last value before the requested date
-		lastValueBefore, err := app.Engine.Execute(scope.Ctx, app.DB, scope.DBID, b.sqlGetLastBefore(date), nil)
+	if (len(primitives) == 0 || primitives[0].Date != date) && (date != zeroDate && date != "") {
+		// we will get the last primitive before the requested date
+		lastPrimitiveBefore, err := app.Engine.Execute(scope.Ctx, app.DB, scope.DBID, b.sqlGetLastBefore(date), nil)
 		if err != nil {
-			return []utils.ValueWithDate{}, fmt.Errorf("error getting last value before requested date: %w", err)
+			return []utils.ValueWithDate{}, fmt.Errorf("error getting last primitive before requested date: %w", err)
 		}
 
-		lastValue, err := utils.GetScalarWithDate(lastValueBefore)
+		lastPrimitive, err := utils.GetScalarWithDate(lastPrimitiveBefore)
 		if err != nil {
-			return []utils.ValueWithDate{}, fmt.Errorf("error getting last value before requested date: %w", err)
+			return []utils.ValueWithDate{}, fmt.Errorf("error getting last primitive before requested date: %w", err)
 		}
 
 		switch true {
-		case len(lastValue) == 0:
+		case len(lastPrimitive) == 0:
 			// if there's no last value before, we just end the if clause
 			break
-		case len(lastValue) != 1:
-			return []utils.ValueWithDate{}, fmt.Errorf("expected single value for last value before requested date")
+		case len(lastPrimitive) != 1:
+			return []utils.ValueWithDate{}, fmt.Errorf("expected single value for last primitive before requested date")
 			// let's append the last value before the requested date
 		default:
-			values = append(lastValue, values...)
+			primitives = append(lastPrimitive, primitives...)
 		}
 	}
 
 	// if there's no data at all, we error out
-	if len(values) == 0 {
+	if len(primitives) == 0 {
 		return []utils.ValueWithDate{}, errors.New("no data found")
 	}
 
-	return values, nil
+	return primitives, nil
 }

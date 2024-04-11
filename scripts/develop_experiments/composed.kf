@@ -17,7 +17,7 @@ action get_index($date, $date_to) public view {
     // we ensure no other extension or query is called after this
 }
 
-action get_value($date, $date_to) public view {
-    streams.get_value($date, $date_to);
+action get_primitive($date, $date_to) public view {
+    streams.get_primitive($date, $date_to);
     // we ensure no other extension or query is called after this
 }

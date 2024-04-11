@@ -148,7 +148,7 @@ Expected:
 | 2000-07-19 | 20   | 1     | 2,9      |
 
 ```shell
-../../.build/kwil-cli database call -a=get_value date:"2000-07-19" date_to:"" -n=composed
+../../.build/kwil-cli database call -a=get_primitive date:"2000-07-19" date_to:"" -n=composed
 ```
 
 | date       | value |
@@ -183,7 +183,7 @@ This value should be 10% of corn futures value on 2000-07-19. We purposely set h
 | 2000-07-30 | 50   | 50    | 50       |
 
 ```shell
-../../.build/kwil-cli database call -a=get_value date:"2000-07-23" date_to:"2000-07-30" -n=composed
+../../.build/kwil-cli database call -a=get_primitive date:"2000-07-23" date_to:"2000-07-30" -n=composed
 ```
 
 Expected:
@@ -200,7 +200,7 @@ Expected:
 | 2000-07-30 | 50000 |
 
 ```shell
-../../.build/kwil-cli database call -a=get_value date:"2000-07-28" date_to:"2000-07-30" -n=composed
+../../.build/kwil-cli database call -a=get_primitive date:"2000-07-28" date_to:"2000-07-30" -n=composed
 ```
 
 | date       | value |

@@ -41,7 +41,7 @@ action get_index($date, $date_to) public view {
 }
 
 @kgw(authn='true')
-action get_value($date, $date_to) public view {
+action get_primitive($date, $date_to) public view {
     whitelist.check(@caller);
-    $val = primitive_stream.get_value($date, $date_to);
+    $val = primitive_stream.get_primitive($date, $date_to);
 }
