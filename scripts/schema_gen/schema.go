@@ -26,9 +26,9 @@ func GenerateComposedSchema(name string, imports map[string]int64) (*transaction
 	count := 0
 	found := false
 	for _, ext := range schema.Extensions {
-		// If the extension is a compose_truflation_streams extension, we can
+		// If the extension is a composed_stream extension, we can
 		// add the imports to it.
-		if ext.Name == "compose_truflation_streams" { // TODO: we should use a global constant string for this once other PR is merged
+		if ext.Name == "composed_stream" { // TODO: we should use a global constant string for this once other PR is merged
 			found = true
 			for stream, weight := range imports {
 
@@ -52,7 +52,7 @@ func GenerateComposedSchema(name string, imports map[string]int64) (*transaction
 
 	// if not found, we need to add it
 	if !found {
-		return nil, fmt.Errorf("compose_truflation_streams extension not found")
+		return nil, fmt.Errorf("composed_stream extension not found")
 	}
 
 	return &schema, nil
