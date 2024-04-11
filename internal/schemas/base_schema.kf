@@ -37,11 +37,11 @@ action add_record ($id, $date_value, $value, $created_at) public {
 @kgw(authn='true')
 action get_index($date, $date_to) public view {
     whitelist.check(@caller);
-    $val = basestream.get_index($date, $date_to);
+    $val = primitive_stream.get_index($date, $date_to);
 }
 
 @kgw(authn='true')
 action get_value($date, $date_to) public view {
     whitelist.check(@caller);
-    $val = basestream.get_value($date, $date_to);
+    $val = primitive_stream.get_value($date, $date_to);
 }

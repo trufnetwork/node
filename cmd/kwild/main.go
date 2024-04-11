@@ -34,7 +34,7 @@ func init() {
 		panic(err)
 	}
 
-	err = precompiles.RegisterPrecompile("composed_stream", composed_stream.InitializeStream)
+	err = precompiles.RegisterPrecompile("composed_stream", composed_stream.InitializeComposedStream)
 	if err != nil {
 		panic(err)
 	}

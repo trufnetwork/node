@@ -12,9 +12,9 @@ import (
 	"github.com/truflation/tsn-db/internal/utils"
 )
 
-// InitializeStream initializes the stream extension.
+// InitializeComposedStream initializes the composedStream extension.
 //
-//	usage: use truflation_streams {
+//	usage: use composed_stream {
 //	   stream_1_id: '/com_yahoo_finance_corn_futures',
 //	   stream_1_weight: 1,
 //	   stream_2_id: '/com_truflation_us_hotel_price',
@@ -22,7 +22,7 @@ import (
 //	} as streams;
 //
 // It takes no configs.
-func InitializeStream(ctx *precompiles.DeploymentContext, service *common.Service, metadata map[string]string) (precompiles.Instance, error) {
+func InitializeComposedStream(ctx *precompiles.DeploymentContext, service *common.Service, metadata map[string]string) (precompiles.Instance, error) {
 	ids := make(map[string]string)
 	for key, value := range metadata {
 		if strings.HasSuffix(key, "_id") {
@@ -36,7 +36,7 @@ func InitializeStream(ctx *precompiles.DeploymentContext, service *common.Servic
 	for key, dbIdOrPath := range ids {
 		weightStr, ok := metadata[key+"_weight"]
 		if !ok {
-			return nil, fmt.Errorf("missing weightStr for stream %s", dbIdOrPath)
+			return nil, fmt.Errorf("missing weightStr for composedStream %s", dbIdOrPath)
 		}
 		weightInt, err := strconv.ParseInt(weightStr, 10, 64)
 		if err != nil {
@@ -47,21 +47,21 @@ func InitializeStream(ctx *precompiles.DeploymentContext, service *common.Servic
 		weightMap[DBID] = weightInt
 	}
 
-	return &Stream{
+	return &ComposedStreamExt{
 		weightMap:   weightMap,
 		totalWeight: totalWeight,
 	}, nil
 }
 
-// Stream is the namespace for the stream extension.
-// Stream has two methods: "index" and "value".
-// Both of them get the value of the target stream at the given time.
-type Stream struct {
+// ComposedStreamExt is the namespace for the composedStream extension.
+// ComposedStreamExt has two methods: "index" and "value".
+// Both of them get the value of the target composedStream at the given time.
+type ComposedStreamExt struct {
 	weightMap   map[string]int64
 	totalWeight int64
 }
 
-func (s *Stream) Call(scoper *precompiles.ProcedureContext, app *common.App, method string, inputs []any) ([]any, error) {
+func (s *ComposedStreamExt) Call(scoper *precompiles.ProcedureContext, app *common.App, method string, inputs []any) ([]any, error) {
 	switch strings.ToLower(method) {
 	// we verify that the method is one of the known methods, as they should be also implemented by the target
 	case string(knownMethodIndex):
@@ -116,7 +116,7 @@ func (s *Stream) Call(scoper *precompiles.ProcedureContext, app *common.App, met
 	return []any{0}, nil
 }
 
-func (s *Stream) CalculateWeightedResultsWithFn(fn func(string) ([]utils.ValueWithDate, error)) ([]utils.ValueWithDate, error) {
+func (s *ComposedStreamExt) CalculateWeightedResultsWithFn(fn func(string) ([]utils.ValueWithDate, error)) ([]utils.ValueWithDate, error) {
 	var resultsSet [][]utils.ValueWithDate
 	// for each database, get the value and multiply by the weight
 	for dbId, weight := range s.weightMap {
@@ -160,7 +160,7 @@ func (s *Stream) CalculateWeightedResultsWithFn(fn func(string) ([]utils.ValueWi
 
 // FillForwardWithLatestFromCols fills forward the given values with the latest value from the given columns.
 // Example:
-// | Date  | stream A | stream B |   composed   |
+// | Date  | composedStream A | composedStream B |   composed   |
 // |-------|----------|----------|--------------|
 // | 01jan | A        | B        | A . B        |
 // | 02jan | A        | -        | A . (01jan)B |
@@ -211,14 +211,14 @@ func FillForwardWithLatestFromCols(originalResultsSet [][]utils.ValueWithDate) [
 		for streamIdx := range originalResultsSet {
 			valueFoundForCurrentStream := allDatesMap[date][streamIdx]
 
-			// this means that there was no value for this stream at this date
+			// this means that there was no value for this composedStream at this date
 			if valueFoundForCurrentStream.Date == "" {
-				// there were no value for this stream at this date
+				// there were no value for this composedStream at this date
 
 				// is there a last value already?
 				latestValue := latestValueMap[streamIdx]
 				if latestValue == nil {
-					// there was no value, nor a latest value. It may happen at the beginning of the stream
+					// there was no value, nor a latest value. It may happen at the beginning of the composedStream
 					should_discard = true
 					continue
 				}
@@ -254,7 +254,7 @@ func FillForwardWithLatestFromCols(originalResultsSet [][]utils.ValueWithDate) [
 // same signature.
 func CallOnTargetDBID(scoper *precompiles.ProcedureContext, app *common.App, method string, target string,
 	date string, dateTo string) ([]utils.ValueWithDate, error) {
-	// the stream protocol returns results as relations
+	// the composedStream protocol returns results as relations
 	// we need to create a new scope to get the result
 	newScope := scoper.NewScope()
 	res, err := app.Engine.Procedure(newScope.Ctx, app.DB, &common.ExecutionData{
@@ -269,7 +269,7 @@ func CallOnTargetDBID(scoper *precompiles.ProcedureContext, app *common.App, met
 	}
 
 	if res == nil {
-		return nil, fmt.Errorf("stream returned nil result")
+		return nil, fmt.Errorf("composedStream returned nil result")
 	}
 
 	result, err := utils.GetScalarWithDate(res)

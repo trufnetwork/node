@@ -110,7 +110,7 @@ func TestCalculateWeightedResultsWithFn(t *testing.T) {
 			for _, weight := range test.weightMap {
 				totalWeight += weight
 			}
-			s := &Stream{
+			s := &ComposedStreamExt{
 				weightMap:   test.weightMap,
 				totalWeight: totalWeight,
 			}
@@ -205,9 +205,9 @@ func TestFillForwardWithLatestFromCols(t *testing.T) {
 
 type composeStreamsTest struct {
 	mock.Mock
-	scoper *precompiles.ProcedureContext
-	app    *common.App
-	stream *Stream
+	scoper         *precompiles.ProcedureContext
+	app            *common.App
+	composedStream *ComposedStreamExt
 }
 
 func newComposeStreamsTest() composeStreamsTest {
@@ -215,31 +215,31 @@ func newComposeStreamsTest() composeStreamsTest {
 		Mock:   mock.Mock{},
 		scoper: &precompiles.ProcedureContext{},
 		app:    &common.App{},
-		stream: &Stream{
+		composedStream: &ComposedStreamExt{
 			weightMap:   map[string]int64{"dbId": 1},
 			totalWeight: 1,
 		},
 	}
 }
 
-func TestInitializeStream(t *testing.T) {
+func TestInitializeComposedStream(t *testing.T) {
 	//instance := newComposeStreamsTest()
-	t.Run("success - it should return Stream instance", func(t *testing.T) {
+	t.Run("success - it should return ComposedStreamExt instance", func(t *testing.T) {
 		metadata := map[string]string{"key_id": "dbId", "key_weight": "1"}
-		_, err := InitializeStream(nil, nil, metadata)
-		assert.NoError(t, err, "InitializeStream returned an error")
+		_, err := InitializeComposedStream(nil, nil, metadata)
+		assert.NoError(t, err, "InitializeComposedStream returned an error")
 	})
 
-	t.Run("validation - missing weightStr for stream", func(t *testing.T) {
+	t.Run("validation - missing weightStr for composedStream", func(t *testing.T) {
 		metadata := map[string]string{"key_id": "dbId"}
-		_, err := InitializeStream(nil, nil, metadata)
-		assert.EqualError(t, err, "missing weightStr for stream dbId")
+		_, err := InitializeComposedStream(nil, nil, metadata)
+		assert.EqualError(t, err, "missing weightStr for composedStream dbId")
 	})
 
 	t.Run("error - it should return error when weightStr is not a number", func(t *testing.T) {
 		metadata := map[string]string{"key_id": "dbId", "key_weight": "not_a_number"}
-		_, err := InitializeStream(nil, nil, metadata)
-		assert.Error(t, err, "InitializeStream did not return an error")
+		_, err := InitializeComposedStream(nil, nil, metadata)
+		assert.Error(t, err, "InitializeComposedStream did not return an error")
 	})
 }
 
@@ -256,37 +256,37 @@ func TestCallOnTargetDBID(t *testing.T) {
 		mockEngine.ExpectedCalls = nil
 		mockEngine.EXPECT().Procedure(mock.Anything, mock.Anything, mock.Anything).Return(expectedResultSet, nil)
 		_, err := CallOnTargetDBID(instance.scoper, instance.app, "get_index", "targetDBID", "2023-11-01", "2023-12-31")
-		assert.NoError(t, err, "stream.Call returned an error")
+		assert.NoError(t, err, "composedStream.Call returned an error")
 	})
 
 	t.Run("success - it should return nil when method is get_value", func(t *testing.T) {
 		mockEngine.ExpectedCalls = nil
 		mockEngine.EXPECT().Procedure(mock.Anything, mock.Anything, mock.Anything).Return(expectedResultSet, nil)
 		_, err := CallOnTargetDBID(instance.scoper, instance.app, "get_value", "targetDBID", "2023-11-01", "2023-12-31")
-		assert.NoError(t, err, "stream.Call returned an error")
+		assert.NoError(t, err, "composedStream.Call returned an error")
 	})
 
 	t.Run("error - it should return error when app.Engine.Procedure returns an error", func(t *testing.T) {
 		mockEngine.ExpectedCalls = nil
 		mockEngine.EXPECT().Procedure(mock.Anything, mock.Anything, mock.Anything).Return(nil, assert.AnError)
 		_, err := CallOnTargetDBID(instance.scoper, instance.app, "get_value", "targetDBID", "2023-11-01", "2023-12-31")
-		assert.Error(t, err, "stream.Call did not return an error")
+		assert.Error(t, err, "composedStream.Call did not return an error")
 		assert.Contains(t, err.Error(), assert.AnError.Error())
 	})
 
-	t.Run("validation - it should return stream returned nil error when app.Engine.Procedure returns nil", func(t *testing.T) {
+	t.Run("validation - it should return composedStream returned nil error when app.Engine.Procedure returns nil", func(t *testing.T) {
 		mockEngine.ExpectedCalls = nil
 		mockEngine.EXPECT().Procedure(mock.Anything, mock.Anything, mock.Anything).Return(nil, nil)
 		_, err := CallOnTargetDBID(instance.scoper, instance.app, "get_value", "targetDBID", "2023-11-01", "2023-12-31")
-		assert.Error(t, err, "stream.Call did not return an error")
-		assert.Contains(t, err.Error(), "stream returned nil")
+		assert.Error(t, err, "composedStream.Call did not return an error")
+		assert.Contains(t, err.Error(), "composedStream returned nil")
 	})
 
 	t.Run("validation - it should return error getting scalar", func(t *testing.T) {
 		mockEngine.ExpectedCalls = nil
 		mockEngine.EXPECT().Procedure(mock.Anything, mock.Anything, mock.Anything).Return(&sql.ResultSet{}, nil)
 		_, err := CallOnTargetDBID(instance.scoper, instance.app, "get_value", "targetDBID", "wrongDate", "2023-12-31")
-		assert.Error(t, err, "stream.Call did not return an error")
+		assert.Error(t, err, "composedStream.Call did not return an error")
 		assert.Contains(t, err.Error(), "error getting scalar")
 	})
 }
@@ -303,8 +303,8 @@ func TestStream_Call(t *testing.T) {
 			Rows:    [][]interface{}{{"2023-12-30", int64(1)}, {"2023-12-31", int64(2)}},
 		}
 		mockEngine.EXPECT().Procedure(mock.Anything, mock.Anything, mock.Anything).Return(expectedResultSet, nil)
-		_, err := instance.stream.Call(instance.scoper, instance.app, "get_index", []interface{}{"2023-11-01", "2023-12-31"})
-		assert.NoError(t, err, "stream.Call returned an error")
+		_, err := instance.composedStream.Call(instance.scoper, instance.app, "get_index", []interface{}{"2023-11-01", "2023-12-31"})
+		assert.NoError(t, err, "composedStream.Call returned an error")
 	})
 
 	t.Run("success - it should return nil when method is get_value", func(t *testing.T) {
@@ -314,45 +314,45 @@ func TestStream_Call(t *testing.T) {
 			Rows:    [][]interface{}{{"2023-12-31", int64(1)}},
 		}
 		mockEngine.EXPECT().Procedure(mock.Anything, mock.Anything, mock.Anything).Return(expectedResultSet, nil)
-		_, err := instance.stream.Call(instance.scoper, instance.app, "get_value", []interface{}{"2023-11-01", "2023-12-31"})
-		assert.NoError(t, err, "stream.Call returned an error")
+		_, err := instance.composedStream.Call(instance.scoper, instance.app, "get_value", []interface{}{"2023-11-01", "2023-12-31"})
+		assert.NoError(t, err, "composedStream.Call returned an error")
 	})
 
 	t.Run("error - it should return error when Engine.Procedure returns error", func(t *testing.T) {
 		mockEngine.ExpectedCalls = nil
 		mockEngine.EXPECT().Procedure(mock.Anything, mock.Anything, mock.Anything).Return(nil, assert.AnError)
-		_, err := instance.stream.Call(instance.scoper, instance.app, "get_index", []interface{}{"2023-11-01", "2023-12-31"})
-		assert.Error(t, err, "stream.Call did not return an error")
+		_, err := instance.composedStream.Call(instance.scoper, instance.app, "get_index", []interface{}{"2023-11-01", "2023-12-31"})
+		assert.Error(t, err, "composedStream.Call did not return an error")
 		assert.Contains(t, err.Error(), assert.AnError.Error())
 	})
 
 	t.Run("validation - it should return unknown method error", func(t *testing.T) {
-		_, err := instance.stream.Call(nil, nil, "unknown", nil)
+		_, err := instance.composedStream.Call(nil, nil, "unknown", nil)
 		assert.Contains(t, err.Error(), "unknown method")
 	})
 
 	t.Run("validation - it should return error when inputs length is less than 2", func(t *testing.T) {
-		_, err := instance.stream.Call(nil, nil, "get_index", []interface{}{})
+		_, err := instance.composedStream.Call(nil, nil, "get_index", []interface{}{})
 		assert.Contains(t, err.Error(), "expected 2 inputs")
 	})
 
 	t.Run("validation - it should return error when inputs[0] is not string", func(t *testing.T) {
-		_, err := instance.stream.Call(nil, nil, "get_index", []interface{}{1, "2023-12-31"})
+		_, err := instance.composedStream.Call(nil, nil, "get_index", []interface{}{1, "2023-12-31"})
 		assert.Contains(t, err.Error(), "expected string")
 	})
 
 	t.Run("validation - it should return error when inputs[1] is not string", func(t *testing.T) {
-		_, err := instance.stream.Call(nil, nil, "get_index", []interface{}{"2023-11-01", 1})
+		_, err := instance.composedStream.Call(nil, nil, "get_index", []interface{}{"2023-11-01", 1})
 		assert.Contains(t, err.Error(), "expected string")
 	})
 
 	t.Run("validation - it should return error when inputs[0] is not valid date", func(t *testing.T) {
-		_, err := instance.stream.Call(nil, nil, "get_index", []interface{}{"2023-11-01", "not_a_date"})
+		_, err := instance.composedStream.Call(nil, nil, "get_index", []interface{}{"2023-11-01", "not_a_date"})
 		assert.Contains(t, err.Error(), "invalid date")
 	})
 
 	t.Run("validation - it should return error when inputs[1] is not valid date", func(t *testing.T) {
-		_, err := instance.stream.Call(nil, nil, "get_index", []interface{}{"not_a_date", "2023-12-31"})
+		_, err := instance.composedStream.Call(nil, nil, "get_index", []interface{}{"not_a_date", "2023-12-31"})
 		assert.Contains(t, err.Error(), "invalid date")
 	})
 }

@@ -21,7 +21,7 @@ func getOrDefault(m map[string]string, key string, defaultValue string) string {
 	return defaultValue
 }
 
-// InitializePrimitiveStream initializes the basestream extension.
+// InitializePrimitiveStream initializes the primitive_stream extension.
 // It takes 3 configs: table, date_column, and value_column.
 // The table is the table that the data is stored in.
 // The date_column is the column that the date is stored in, stored as "YYYY-MM-DD".
