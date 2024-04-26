@@ -18,3 +18,6 @@ scripts/produce_source_maps/all_tables.csv
 
 # kgw binary needs to be kept private
 deployments/gateway/kgw
+
+# .build directory
+.build

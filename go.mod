@@ -3,8 +3,8 @@ module github.com/truflation/tsn-db
 go 1.22.1
 
 require (
-	github.com/kwilteam/kwil-db v0.7.0
-	github.com/kwilteam/kwil-db/core v0.1.1
+	github.com/kwilteam/kwil-db v0.7.4
+	github.com/kwilteam/kwil-db/core v0.1.2
 	github.com/stretchr/testify v1.8.4
 )
 
