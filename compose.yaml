@@ -38,6 +38,10 @@ services:
         condition: service_healthy
     networks:
       - tsn-network
+    volumes:
+      - type: volume
+        source: data-tsn-db
+        target: /root/.kwild
 
   push-tsn-data:
     image: "push-tsn-data:local"
@@ -83,3 +87,4 @@ networks:
 volumes:
   data-kwil-postgres:
   data-push-tsn-data:
+  data-tsn-db:
