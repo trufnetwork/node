@@ -67,4 +67,4 @@ RUN chmod +x entrypoint.sh
 ENTRYPOINT ["/app/entrypoint.sh"]
 
 CMD ./kgw -c ./config/config.json --session-secret $SESSION_SECRET\
- --domain $DOMAIN $CORS_ARGS --chain-id $CHAIN_ID
+ --domain $DOMAIN $CORS_ARGS --chain-id $CHAIN_ID --allow-deploy-db
