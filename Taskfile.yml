@@ -64,6 +64,13 @@ tasks:
       - rm -r ~/.kwild || true
       - docker volume rm tsn-db_data-kwil-postgres tsn-db_data-push-tsn-data -f
 
+  # After generating the certs, you need to trust them in your local machine by running the task setup:local-cert
+  # leave the fields empty and press enter to use the default values
+  setup:new-local-cert:
+    desc: Generate a new local cert
+    cmds:
+      - sudo openssl req -x509 -nodes -days 365 -addext "subjectAltName = DNS:localhost" -newkey rsa:2048 -keyout ./deployments/dev-gateway/certs/localhost.key -out ./deployments/dev-gateway/certs/localhost.crt
+
   setup:local-cert:
     desc: Trust local certs for development
     cmds:
