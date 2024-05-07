@@ -7,7 +7,6 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/config"
-	"github.com/truflation/tsn-db/infra/lib/utils"
 )
 
 func CreateInstance(stack awscdk.Stack, instanceRole awsiam.IRole, name string, vpc awsec2.IVpc, initElements *[]awsec2.InitElement) awsec2.Instance {
@@ -82,17 +81,15 @@ func CreateInstance(stack awscdk.Stack, instanceRole awsiam.IRole, name string, 
 }
 
 type AddStartupScriptsOptions struct {
-	Stack              awscdk.Stack
-	Instance           awsec2.Instance
-	TsnImageAsset      awsecrassets.DockerImageAsset
-	PushDataImageAsset awsecrassets.DockerImageAsset
+	Stack         awscdk.Stack
+	Instance      awsec2.Instance
+	TsnImageAsset awsecrassets.DockerImageAsset
 }
 
 func AddTsnDbStartupScriptsToInstance(options AddStartupScriptsOptions) {
 	stack := options.Stack
 	instance := options.Instance
 	tsnImageAsset := options.TsnImageAsset
-	pushDataImageAsset := options.PushDataImageAsset
 
 	// we could improve this script by adding a ResourceSignal, which would signalize to CDK that the Instance is ready
 	// and fail the deployment otherwise
@@ -132,13 +129,6 @@ docker pull ` + *tsnImageAsset.ImageUri() + `
 # Tag the image as tsn-db:local, as the docker-compose file expects that
 docker tag ` + *tsnImageAsset.ImageUri() + ` tsn-db:local
 
-# Login to ECR again for the second repository
-aws ecr get-login-password --region ` + *stack.Region() + ` | docker login --username AWS --password-stdin ` + *pushDataImageAsset.Repository().RepositoryUri() + `
-# Pull the image
-docker pull ` + *pushDataImageAsset.ImageUri() + `
-# Tag the image as push-tsn-data:local, as the docker-compose file expects that
-docker tag ` + *pushDataImageAsset.ImageUri() + ` push-tsn-data:local
-
 # Create a systemd service file
 cat <<EOF > /etc/systemd/system/tsn-db-app.service
 [Unit]
@@ -152,7 +142,6 @@ RemainAfterExit=yes
 # This path comes from the init asset
 ExecStart=/bin/bash -c "docker compose -f /home/ec2-user/docker-compose.yaml up -d --wait || true"
 ExecStop=/bin/bash -c "docker compose -f /home/ec2-user/docker-compose.yaml down"
-` + utils.GetEnvStringsForService(utils.GetEnvVars("WHITELIST_WALLETS", "PRIVATE_KEY")) + `
 
 [Install]
 WantedBy=multi-user.target

@@ -81,24 +81,6 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	})
 	tsnImageAsset.Repository().GrantPull(instanceRole)
 
-	pushDataImageAsset := awsecrassets.NewDockerImageAsset(stack, jsii.String("PushDataImageAsset"), &awsecrassets.DockerImageAssetProps{
-		CacheFrom: &[]*awsecrassets.DockerCacheOption{
-			{
-				Type: jsii.String(cacheType),
-				// the image name here must match from the compose file, then the cache should work
-				// across different workflows
-				Params: UpdateParamsWithImageName(cacheFromParams, "push-tsn-data"),
-			},
-		},
-		CacheTo: &awsecrassets.DockerCacheOption{
-			Type:   jsii.String(cacheType),
-			Params: UpdateParamsWithImageName(cacheToParams, "push-tsn-data"),
-		},
-		File:      jsii.String("deployments/push-tsn-data.dockerfile"),
-		Directory: jsii.String("../../"),
-	})
-	pushDataImageAsset.Repository().GrantPull(instanceRole)
-
 	// Adding our docker compose file to the instance
 	dockerComposeAsset := awss3assets.NewAsset(stack, jsii.String("TsnComposeAsset"), &awss3assets.AssetProps{
 		Path: jsii.String("../../compose.yaml"),
@@ -143,10 +125,8 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	gateway_utils.CloudfrontForEc2Instance(stack, instance.InstancePublicDnsName(), domain, hostedZone, props.cert)
 	//enable the instance to use the certificate
 	instance_utils.AddTsnDbStartupScriptsToInstance(instance_utils.AddStartupScriptsOptions{
-		Stack:              stack,
-		Instance:           instance,
-		TsnImageAsset:      tsnImageAsset,
-		PushDataImageAsset: pushDataImageAsset,
+		Stack:    stack,
+		Instance: instance,
 	})
 	gateway_utils.AddKwilGatewayStartupScriptsToInstance(gateway_utils.AddKwilGatewayStartupScriptsOptions{
 		Instance: instance,
