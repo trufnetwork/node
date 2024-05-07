@@ -44,4 +44,4 @@ function expect_success() {
 }
 
 echo -e "❓ Making sure we're able to ping the TSN node\n"
-expect_success "$(../.build/kwil-cli ping 2>&1)"
+expect_success "$(../.build/kwil-cli utils ping 2>&1)"
