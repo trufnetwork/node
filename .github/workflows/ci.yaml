@@ -74,10 +74,6 @@ jobs:
           # when in ACT, also force build to ensure it is working locally
           up-flags: "--wait ${{env.ACT && '--build --force-recreate --no-deps' || ''}}"
         env:
-          # This is not a secret, it's hardcoded for the CI testing
-          PRIVATE_KEY: "0000000000000000000000000000000000000000000000000000000000000001"
-          WHITELIST_WALLETS: "0x304e893AdB2Ad8E8C37F4884Ad1EC3df8bA9bDcf"
-          WRITE_WHITELIST_WALLETS: "0x2B5AD5c4795c026514f8317c7a215E218DcCD6cF"
           CACHE_FROM: "type=gha,scope=truflation/tsn"
           CACHE_TO: "type=gha,mode=max,scope=truflation/tsn"
 
@@ -110,7 +106,6 @@ jobs:
           # if you are running locally, make sure any previous postgres volume state is clean
           # otherwise, tsn-db will error for out for block state being out of sync.
           expect_status "tsn-db:local" "Up "
-          expect_status "push-tsn-data:local" "Exited (0)"
 
       - name: Run Tests
         run: |
