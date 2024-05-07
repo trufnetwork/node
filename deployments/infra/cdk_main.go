@@ -125,8 +125,9 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	gateway_utils.CloudfrontForEc2Instance(stack, instance.InstancePublicDnsName(), domain, hostedZone, props.cert)
 	//enable the instance to use the certificate
 	instance_utils.AddTsnDbStartupScriptsToInstance(instance_utils.AddStartupScriptsOptions{
-		Stack:    stack,
-		Instance: instance,
+		Stack:         stack,
+		Instance:      instance,
+		TsnImageAsset: tsnImageAsset,
 	})
 	gateway_utils.AddKwilGatewayStartupScriptsToInstance(gateway_utils.AddKwilGatewayStartupScriptsOptions{
 		Instance: instance,
