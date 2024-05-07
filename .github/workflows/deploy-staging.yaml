@@ -16,11 +16,10 @@ jobs:
     steps:
       - name: Check secrets
         env:
-          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           AWS_ACCESS_KEY: ${{ secrets.AWS_ACCESS_KEY }}
           AWS_SECRET_KEY: ${{ secrets.AWS_SECRET_KEY }}
           GW_SESSION_SECRET: ${{ secrets.GW_SESSION_SECRET }}
-        if: ${{ env.PRIVATE_KEY == '' || env.AWS_ACCESS_KEY == '' || env.AWS_SECRET_KEY == '' || env.GW_SESSION_SECRET == '' }}
+        if: ${{ env.AWS_ACCESS_KEY == '' || env.AWS_SECRET_KEY == '' || env.GW_SESSION_SECRET == '' }}
         run: |
           echo "Missing secrets"
           exit 1
@@ -81,10 +80,6 @@ jobs:
 
           cdk deploy --require-approval never --all
         env:
-          # args used in tsn-db compose
-          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
-          WHITELIST_WALLETS: ${{ vars.whitelist_wallets }}
-          WRITE_WHITELIST_WALLETS: ${{ vars.write_whitelist_wallets }}
           CI: true
 
           # args used in gateway compose
