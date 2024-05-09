@@ -1,32 +1,70 @@
 FROM golang:1.22.1-alpine3.19 AS build
 
 WORKDIR /app
-COPY . .
+COPY go.mod go.sum ./
 
 RUN go mod download
 RUN go mod verify
 
+COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /app/.build/kwild /app/cmd/kwild/main.go
 # owner public address for this PK is 7e5f4552091a69125d5dfcb7b8c2659029395bdf
 
 FROM busybox:1.35.0-uclibc as busybox
+# busy box will provide us with a shell to run commands in distroless
 
 FROM gcr.io/distroless/static-debian12
 
 COPY --from=busybox /bin/sh /bin/sh
+COPY --from=busybox /bin/chmod /bin/chmod
 
 WORKDIR /app
 COPY --from=build /app/.build/kwild ./kwild
-
 COPY --from=build /app/.build/kwil-admin /app/kwil-admin
 
-RUN ./kwil-admin setup init --chain-id truflation-staging -o /root/.kwild
+ARG CHAIN_ID=truflation-staging
+ARG COPY_CONFIG_PATH
+ARG DB_HOST=kwil-postgres
 
-# copy the produced data
-COPY --from=build /app/deployments/config.toml /root/.kwild/config.toml
+# P2P config
+# TODO when https://github.com/kwilteam/kwil-db/pull/706 is published, we can remove this workaround and use
+# KWILD_CHAIN_P2P_PERSISTENT_PEERS and KWILD_CHAIN_P2P_EXTERNAL_ADDRESS env directly
+ARG PERSISTENT_PEERS
+ARG EXTERNAL_ADDRESS
 
-COPY --from=build /app/deployments/config.toml /root/.kwild/config.toml
+# if COPY_CONFIG_PATH is not provided, we create a default config
+RUN if [ -d $COPY_CONFIG_PATH ];\
+    then \
+    ./kwil-admin setup init --chain-id $CHAIN_ID -o /root/.kwild ;\
+    fi
+
+
+# create entrypoint file
+RUN echo "#!/bin/sh" > /app/entrypoint.sh
+RUN echo "set -e" >> /app/entrypoint.sh
+RUN echo "exec /app/kwild --autogen --root-dir ${COPY_CONFIG_PATH:-/root/.kwild} \
+  --app.http-listen-addr \"0.0.0.0:8080\"\
+  --app.pg-db-host $DB_HOST \\" >> /app/entrypoint.sh
+
+
+# if PERSISTENT_PEERS is provided, use with --chain.p2p.persistent-peers
+RUN if [ -n "$PERSISTENT_PEERS" ];\
+    then \
+    echo "  --chain.p2p.persistent-peers \"$PERSISTENT_PEERS\" \\" >> /app/entrypoint.sh;\
+    fi
+
+# if EXTERNAL_ADDRESS is provided, use with --chain.p2p.external-address
+RUN if [ -n "$EXTERNAL_ADDRESS" ];\
+    then \
+    echo "  --chain.p2p.external-address \"$EXTERNAL_ADDRESS\" \\" >> /app/entrypoint.sh;\
+    fi
+
+# close entrypoint file
+RUN echo "" >> /app/entrypoint.sh
+
+RUN chmod +x /app/entrypoint.sh
+
 
 EXPOSE 50051 50151 8080 26656 26657
-ENTRYPOINT ["/app/kwild", "--autogen"]
+ENTRYPOINT ["/app/entrypoint.sh"]

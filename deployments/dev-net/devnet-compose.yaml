@@ -1,0 +1,127 @@
+services:
+  kwil-postgres-1:
+    image: "kwildb/postgres:latest"
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    # persis data
+    volumes:
+      - type: volume
+        source: data-kwil-postgres-1
+        target: /var/lib/postgresql/data
+        volume:
+          nocopy: true
+    networks:
+      - tsn-network
+
+  kwil-postgres-2:
+    image: "kwildb/postgres:latest"
+    ports:
+      - "5433:5432"
+    environment:
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    # persis data
+    volumes:
+      - type: volume
+        source: data-kwil-postgres-2
+        target: /var/lib/postgresql/data
+        volume:
+          nocopy: true
+    networks:
+      - tsn-network
+
+  tsn-conf:
+    container_name: tsn-conf
+    image: "tsn-conf:local"
+    build:
+      context: ../..
+      dockerfile: gen-kwil-conf.dockerfile
+      cache_from:
+        - ${CACHE_FROM:-type=local,src=/tmp/buildx-cache}/generate-kwil-conf
+      cache_to:
+        - ${CACHE_TO:-type=local,dest=/tmp/buildx-cache-new}/generate-kwil-conf
+      args:
+        - CHAIN_ID=${CHAIN_ID:-tsn-local}
+        - NUMBER_OF_NODES=2
+        - CONFIG_PATH=/app/config
+        - HOSTNAMES=tsn-db-1,tsn-db-2
+    volumes:
+      - type: volume
+        source: tsn-conf
+        target: /app/config
+
+  tsn-db-1:
+    container_name: tsn-db-1
+    hostname: tsn-db-1
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        - COPY_CONFIG_PATH=/root/.kwild/node0/
+        - DB_HOST=kwil-postgres-1
+      cache_from:
+        - ${CACHE_FROM:-type=local,src=/tmp/buildx-cache}/tsn-db
+      cache_to:
+        - ${CACHE_TO:-type=local,dest=/tmp/buildx-cache-new}/tsn-db
+    ports:
+      - "8080:8080"
+    depends_on:
+      tsn-conf:
+        condition: service_completed_successfully
+      kwil-postgres-1:
+        condition: service_healthy
+    networks:
+      - tsn-network
+    volumes:
+      - type: volume
+        source: tsn-conf
+        target: /root/.kwild
+
+  tsn-db-2:
+    container_name: tsn-db-2
+    hostname: tsn-db-2
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        - COPY_CONFIG_PATH=/root/.kwild/node1/
+        - DB_HOST=kwil-postgres-2
+      cache_from:
+        - ${CACHE_FROM:-type=local,src=/tmp/buildx-cache}/tsn-db
+      cache_to:
+        - ${CACHE_TO:-type=local,dest=/tmp/buildx-cache-new}/tsn-db
+    ports:
+      - "8081:8080"
+    depends_on:
+      tsn-conf:
+        condition: service_completed_successfully
+      kwil-postgres-2:
+        condition: service_healthy
+    networks:
+      - tsn-network
+    volumes:
+      - type: volume
+        source: tsn-conf
+        target: /root/.kwild
+
+
+networks:
+  tsn-network:
+    driver: bridge
+    name: tsn-network
+
+volumes:
+  data-kwil-postgres-1:
+  data-kwil-postgres-2:
+  tsn-conf:
