@@ -21,5 +21,3 @@ cd ../develop_experiments
 # test query on both
 ../../.build/kwil-cli database call -a=get_index date:"" date_to:"" -n=stream_a --kwil-provider=$PROVIDER1
 ../../.build/kwil-cli database call -a=get_index date:"" date_to:"" -n=stream_a --kwil-provider=$PROVIDER2
-
-
