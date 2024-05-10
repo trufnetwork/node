@@ -22,10 +22,10 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:-not_secret}
       DOMAIN: https://localhost:443
       # to test the dev-network, use the following values:
-      BACKENDS: tsn-db-1:8080,tsn-db-2:8080
-      CHAIN_ID: tsn-local
-      # BACKENDS: ${BACKENDS:-tsn-db:8080}
-      # CHAIN_ID: ${CHAIN_ID:-truflation-staging}
+      # BACKENDS: tsn-db-1:8080,tsn-db-2:8080
+      # CHAIN_ID: tsn-local
+      BACKENDS: ${BACKENDS:-tsn-db:8080}
+      CHAIN_ID: ${CHAIN_ID:-truflation-staging}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS}
 
   nginx:
