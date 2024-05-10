@@ -7,18 +7,26 @@ services:
         # bind the file to the container
         source: ../../.build/kgw
         target: /app/kgw
+      - type: bind
+        source: ../gateway/kgw-config.pkl
+        target: /app/kgw-config.pkl
 
     build:
-      args:
-        - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-*}
-        - SESSION_SECRET=${SESSION_SECRET:-not_secret}
-        - DOMAIN=https://localhost:443
-      dockerfile: dev-gateway.dockerfile
-      context: .
+      dockerfile: ../gateway/gateway.dockerfile
+
     ports:
       - "8090:8090"
     networks:
       - tsn-network
+    environment:
+      SESSION_SECRET: ${SESSION_SECRET:-not_secret}
+      DOMAIN: https://localhost:443
+      # to test the dev-network, use the following values:
+      BACKENDS: tsn-db-1:8080,tsn-db-2:8080
+      CHAIN_ID: tsn-local
+      # BACKENDS: ${BACKENDS:-tsn-db:8080}
+      # CHAIN_ID: ${CHAIN_ID:-truflation-staging}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS}
 
   nginx:
     container_name: nginx
@@ -40,7 +48,6 @@ services:
       - kwil-gateway
     networks:
       - tsn-network
-
 
 networks:
   tsn-network:
