@@ -46,7 +46,7 @@ services:
     image: "tsn-conf:local"
     build:
       context: ../..
-      dockerfile: gen-kwil-conf.dockerfile
+      dockerfile: ./deployments/dev-net/gen-kwil-conf.dockerfile
       cache_from:
         - ${CACHE_FROM:-type=local,src=/tmp/buildx-cache}/generate-kwil-conf
       cache_to:
@@ -66,7 +66,7 @@ services:
     hostname: tsn-db-1
     build:
       context: ../..
-      dockerfile: Dockerfile
+      dockerfile: ./deployments/Dockerfile
       args:
         - COPY_CONFIG_PATH=/root/.kwild/node0/
         - DB_HOST=kwil-postgres-1
@@ -93,7 +93,7 @@ services:
     hostname: tsn-db-2
     build:
       context: ../..
-      dockerfile: Dockerfile
+      dockerfile: ./deployments/Dockerfile
       args:
         - COPY_CONFIG_PATH=/root/.kwild/node1/
         - DB_HOST=kwil-postgres-2
