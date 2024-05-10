@@ -1,6 +1,7 @@
 FROM alpine:3.14
 
 RUN apk add --no-cache curl jq
+RUN apk add --no-cache bash
 
 #  Options:
 #  --config CONFIG, -c CONFIG
@@ -43,28 +44,14 @@ RUN apk add --no-cache curl jq
 
 WORKDIR /app
 
+RUN curl -L -o pkl https://github.com/apple/pkl/releases/download/0.25.3/pkl-alpine-linux-amd64
+RUN chmod +x pkl
+
 # we expect the user to provide the binary path available at the build context
-ARG SESSION_SECRET
-ARG CORS_ALLOWED_ORIGINS
-ARG DOMAIN
+ARG EXTRA_ARGS
 
-COPY ./kgw ./kgw
-COPY ./kgw.base-config.json ./config/config.json
+ENV EXTRA_ARGS=$EXTRA_ARGS
 
-# smoke test
-RUN /app/kgw --version | grep -q "built on linux"
-
-ENV SESSION_SECRET=$SESSION_SECRET
-ENV CORS_ALLOWED_ORIGINS=$CORS_ALLOWED_ORIGINS
-ENV DOMAIN=$DOMAIN
-
-# todo: parameterize tsn-db port
-COPY ./entrypoint.sh ./entrypoint.sh
-
-# make the entrypoint executable
-RUN chmod +x entrypoint.sh
-
-ENTRYPOINT ["/app/entrypoint.sh"]
-
-CMD ./kgw -c ./config/config.json --session-secret $SESSION_SECRET\
- --domain $DOMAIN $CORS_ARGS --chain-id $CHAIN_ID --allow-deploy-db
+# use bash
+SHELL ["/bin/bash", "-c"]
+CMD ./kgw -c <(./pkl eval kgw-config.pkl) $EXTRA_ARGS

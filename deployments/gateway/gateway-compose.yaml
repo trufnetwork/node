@@ -3,38 +3,30 @@ services:
     container_name: kwil-gateway
     hostname: kwil-gateway
     build:
-      args:
-        - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS}
-        - SESSION_SECRET=${SESSION_SECRET:?}
-        - DOMAIN=https://${DOMAIN:-localhost}
       context: .
       dockerfile: ./gateway.dockerfile
     ports:
-      - "8090:8090"
+      - "80:8090"
     networks:
       - tsn-network
-
-  nginx:
-    container_name: nginx
-    hostname: nginx
-    image: "nginx:latest"
-    ports:
-      - "80:80"
-      - "443:443"
+    environment:
+      # todo: make a breaking change that removes default for CHAIN_ID
+      #       and make it required
+      CHAIN-ID: ${CHAIN_ID:-truflation-staging}
+      # comma separated list of backends
+      BACKENDS: ${BACKENDS:-tsn-db:8080}
+      SESSION-SECRET: ${SESSION_SECRET:?}
+      DOMAIN: https://${DOMAIN:-localhost}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS}
+      ALLOW_DEPLOY_DB: true
     volumes:
       - type: bind
-        source: ./nginx.conf
-        target: /etc/nginx/nginx.conf
+        # bind the file to the container
+        source: ./kgw
+        target: /app/kgw
       - type: bind
-        source: ./default.conf.template
-        target: /etc/nginx/templates/default.conf.template
-    environment:
-      - DOMAIN_NAME=${DOMAIN:-localhost}
-    depends_on:
-      - kwil-gateway
-    networks:
-      - tsn-network
-
+        source: ./kgw-config.pkl
+        target: /app/kgw-config.pkl
 
 networks:
   tsn-network:

@@ -1,0 +1,61 @@
+/*
+  PKL docs: https://pkl-lang.org/main/current/language-tutorial/01_basic_config.html
+
+  The intention of usage is outputting a JSON object with the configuration values
+  while manipulating its values as simply as possible.
+
+  There are some differences between CLI inputs for KGW and the configuration file format
+  i.e. comma separated strings to list.
+
+  In this way we expect to keep our docker image and docker compose files:
+  - more flexible
+  - not needing to rebuild for a config change
+
+  Usage: pkl eval kgw-config.pkl
+  // output will be a JSON object
+
+  TODO: if KGW starts to support ENV variables, we can remove this setup
+*/
+
+// hard coded values
+listen_addr = "0.0.0.0:8090"
+statement = "I agree to the terms and conditions."
+
+// env variable string values
+domain = read?("env:DOMAIN")
+session_secret = read?("env:SESSION_SECRET")
+log_level = read?("env:LOG_LEVEL")
+chain_id = read("env:CHAIN_ID")
+tsl_cert_file = read?("env:TSL_CERT_FILE")
+tsl_key_file = read?("env:TSL_KEY_FILE")
+
+// env variable boolean values
+allow_deploy_db = read?("env:ALLOW_DEPLOY_DB") == "true"
+
+// SPECIAL CASE: BACKENDS
+// we just need to split the string by comma
+hidden backends_str = read("env:BACKENDS")
+backends = backends_str.split(",")
+
+// SPECIAL CASE: HANDLING CORS
+// * is a special value that means all origins are allowed
+// but in kgw config, it just means something that wasn't set, and not a list containing "*"
+hidden cors_allow_origins_raw = read?("env:CORS_ALLOW_ORIGINS")
+// if the value is "*", we want to return an empty list: otherwise we split by comma
+cors_allow_origins = if (
+  cors_allow_origins_raw == "*"
+  || cors_allow_origins_raw == null
+  || cors_allow_origins_raw.isEmpty
+)
+  null else
+  cors_allow_origins_raw.split(",")
+
+
+// remove empty strings from final file
+hidden rendered = module.toMap().filter((_, val) -> val is Boolean || val?.isEmpty != true)
+
+output {
+  // by specifying here, we don't need to specify in the pkl CLI usage
+  renderer = new JsonRenderer {}
+  value = rendered
+}
