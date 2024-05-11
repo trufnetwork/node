@@ -27,6 +27,7 @@ services:
       BACKENDS: ${BACKENDS:-tsn-db:8080}
       CHAIN_ID: ${CHAIN_ID:-truflation-staging}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS}
+      ALLOW_DEPLOY_DB: true
 
   nginx:
     container_name: nginx
