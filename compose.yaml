@@ -20,6 +20,20 @@ services:
     networks:
       - tsn-network
 
+  tsn-conf:
+    container_name: tsn-conf
+    build:
+      context: .
+      dockerfile: ./deployments/tsn-config.dockerfile
+      target: ${CONF_TARGET:-}
+      args:
+        EXTERNAL_CONFIG_PATH: ${EXTERNAL_CONFIG_PATH}
+
+    volumes:
+      - type: volume
+        source: data-tsn-db
+        target: /root/.kwild
+
   tsn-db:
     container_name: tsn-db
     hostname: tsn-db
