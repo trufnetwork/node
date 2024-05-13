@@ -46,7 +46,7 @@ services:
     image: "tsn-conf:local"
     build:
       context: ../..
-      dockerfile: ./deployments/dev-net/gen-kwil-conf.dockerfile
+      dockerfile: network-conf.dockerfile
       cache_from:
         - ${CACHE_FROM:-type=local,src=/tmp/buildx-cache}/generate-kwil-conf
       cache_to:

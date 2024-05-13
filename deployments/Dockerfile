@@ -23,8 +23,10 @@ WORKDIR /app
 COPY --from=build /app/.build/kwild ./kwild
 COPY --from=build /app/.build/kwil-admin /app/kwil-admin
 
-ARG CHAIN_ID=truflation-staging
-ARG COPY_CONFIG_PATH
+ARG CONFIG_PATH=/root/.kwild
+# Q: Why do we configure DB_HOST and these other configurations here instead of directly in the config generator?
+# A: These need to be set dynamically at runtime.
+# I.e., when deploying the network, we just know the IP of each node after they are created.
 ARG DB_HOST=kwil-postgres
 
 # P2P config
@@ -33,17 +35,10 @@ ARG DB_HOST=kwil-postgres
 ARG PERSISTENT_PEERS
 ARG EXTERNAL_ADDRESS
 
-# if COPY_CONFIG_PATH is not provided, we create a default config
-RUN if [ -d $COPY_CONFIG_PATH ];\
-    then \
-    ./kwil-admin setup init --chain-id $CHAIN_ID -o /root/.kwild ;\
-    fi
-
-
 # create entrypoint file
 RUN echo "#!/bin/sh" > /app/entrypoint.sh
 RUN echo "set -e" >> /app/entrypoint.sh
-RUN echo "exec /app/kwild --autogen --root-dir ${COPY_CONFIG_PATH:-/root/.kwild} \
+RUN echo "exec /app/kwild --autogen --root-dir ${CONFIG_PATH} \
   --app.http-listen-addr \"0.0.0.0:8080\"\
   --app.pg-db-host $DB_HOST \\" >> /app/entrypoint.sh
 
