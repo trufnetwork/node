@@ -21,13 +21,18 @@ services:
       - tsn-network
 
   tsn-conf:
-    container_name: tsn-conf
+    # this service permits us to use the best approach for configuration:
+    # with target = created, the image will generate a new configuration to be used
+    # with target = external, it will use the context folder as the configuration
+    # at build time it will copy the configuration to the volume
     build:
+      # EXTERNAL_CONFIG_PATH is the path to the configuration directory
+      # Both EXTERNAL_CONFIG_PATH and CONF_TARGET should be used together for external configuration
       context: .
-      dockerfile: ./deployments/tsn-config.dockerfile
-      target: ${CONF_TARGET:-}
       args:
-        EXTERNAL_CONFIG_PATH: ${EXTERNAL_CONFIG_PATH}
+        - EXTERNAL_CONFIG_PATH=${EXTERNAL_CONFIG_PATH}
+      dockerfile: ./deployments/tsn-config.dockerfile
+      target: ${CONF_TARGET:-created}
 
     volumes:
       - type: volume
@@ -45,11 +50,24 @@ services:
         - ${CACHE_FROM:-type=local,src=/tmp/buildx-cache}/tsn-db
       cache_to:
         - ${CACHE_TO:-type=local,dest=/tmp/buildx-cache-new}/tsn-db
+    environment:
+      # the hostname of the container. It is used to identify the node in the network
+      # if they live in different hosts, it should be the hostname of the host
+      HOSTNAME: ${HOSTNAME:-tsn-db}
+      CONFIG_PATH: /root/.kwild
+      DB_HOST: kwil-postgres
+      # comma separated list of peers, used for p2p communication
+      PERSISTENT_PEERS: ${PERSISTENT_PEERS}
+      # external address of the node, used for p2p communication
+      EXTERNAL_ADDRESS: ${EXTERNAL_ADDRESS}
+
     ports:
       - "8080:8080"
     depends_on:
       kwil-postgres:
         condition: service_healthy
+      tsn-conf:
+        condition: service_completed_successfully
     networks:
       - tsn-network
     volumes:
