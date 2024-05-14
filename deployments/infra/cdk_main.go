@@ -1,6 +1,7 @@
 package main
 
 import (
+	domain_utils "github.com/truflation/tsn-db/infra/lib/domain_utils"
 	"os"
 	"strconv"
 
@@ -12,9 +13,8 @@ import (
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/config"
-	"github.com/truflation/tsn-db/infra/lib/domain_utils"
-	"github.com/truflation/tsn-db/infra/lib/gateway_utils"
-	"github.com/truflation/tsn-db/infra/lib/tsn_utils"
+	"github.com/truflation/tsn-db/infra/lib/kwil-gateway"
+	"github.com/truflation/tsn-db/infra/lib/tsn"
 	"github.com/truflation/tsn-db/infra/lib/utils"
 )
 
@@ -47,7 +47,7 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	// ### TSN ASSETS
 
 	// TSN docker image
-	tsnImageAsset := tsn_utils.NewTSNImageAsset(stack)
+	tsnImageAsset := tsn.NewTSNImageAsset(stack)
 
 	// TSN docker compose file to be used by any TSN node
 	tsnComposeAsset := awss3assets.NewAsset(stack, jsii.String("TsnComposeAsset"), &awss3assets.AssetProps{
@@ -81,7 +81,7 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	// ## Instances & Permissions
 
 	// ### TSN INSTANCE
-	tsnCluster := tsn_utils.NewTSNCluster(stack, tsn_utils.NewTSNClusterInput{
+	tsnCluster := tsn.NewTSNCluster(stack, tsn.NewTSNClusterInput{
 		NumberOfNodes:         2,
 		TSNDockerComposeAsset: tsnComposeAsset,
 		TSNDockerImageAsset:   tsnImageAsset,
@@ -95,11 +95,11 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 
 	// ### GATEWAY INSTANCE
 
-	kgwInstance := gateway_utils.NewKGWInstance(stack, gateway_utils.NewKGWInstanceInput{
+	kgwInstance := kwil_gateway.NewKGWInstance(stack, kwil_gateway.NewKGWInstanceInput{
 		Vpc:            defaultVPC,
 		KGWBinaryAsset: kgwBinaryS3Object,
 		KGWDirAsset:    kgwDirectoryAsset,
-		Config: gateway_utils.KGWConfig{
+		Config: kwil_gateway.KGWConfig{
 			Domain:           domain,
 			CorsAllowOrigins: cdkParams.CorsAllowOrigins.ValueAsString(),
 			SessionSecret:    cdkParams.SessionSecret.ValueAsString(),
@@ -115,7 +115,7 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	// Cloudfront for the gateway instance
 	// We use cloudfront to handle TLS termination. The certificate is created in a separate stack in us-east-1.
 	// We disable caching.
-	gateway_utils.CloudfrontForEc2Instance(stack, kgwInstance.Instance.InstancePublicDnsName(), domain, hostedZone, props.cert)
+	kwil_gateway.CloudfrontForEc2Instance(stack, kgwInstance.Instance.InstancePublicDnsName(), domain, hostedZone, props.cert)
 
 	// ## Output info
 	// Public ip of each TSN node

@@ -3,7 +3,7 @@ package config
 import (
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
-	"github.com/truflation/tsn-db/infra/lib/domain"
+	"github.com/truflation/tsn-db/infra/lib/domain_utils"
 )
 
 // DO NOT modify this function, change stack name by 'cdk.json/context/stackName'.
@@ -65,9 +65,9 @@ func DeploymentStage(scope constructs.Construct) DeploymentStageType {
 
 func Domain(scope constructs.Construct) *string {
 	domainEnvMap := map[DeploymentStageType]string{
-		DeploymentStage_DEV:     "dev." + domain.MainDomain,
-		DeploymentStage_STAGING: "staging." + domain.MainDomain,
-		DeploymentStage_PROD:    domain.MainDomain,
+		DeploymentStage_DEV:     "dev." + domain_utils.MainDomain,
+		DeploymentStage_STAGING: "staging." + domain_utils.MainDomain,
+		DeploymentStage_PROD:    domain_utils.MainDomain,
 	}
 
 	return jsii.String(domainEnvMap[DeploymentStage(scope)])
