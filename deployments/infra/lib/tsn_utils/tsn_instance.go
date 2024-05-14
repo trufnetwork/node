@@ -7,7 +7,7 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
-	"github.com/truflation/tsn-db/infra/config"
+	peer2 "github.com/truflation/tsn-db/infra/lib/network_utils/peer"
 )
 
 type newTSNInstanceInput struct {
@@ -18,12 +18,17 @@ type newTSNInstanceInput struct {
 	TSNDockerComposeAsset awss3assets.Asset
 	TSNDockerImageAsset   awsecrassets.DockerImageAsset
 	TSNConfigAsset        awss3assets.Asset
+	TSNConfigImageAsset   awss3assets.Asset
+	PeerConnection        peer2.PeerConnection
+	AllPeerConnections    []peer2.PeerConnection
+	KeyPair               awsec2.IKeyPair
 }
 
 type TSNInstance struct {
-	Instance      awsec2.Instance
-	SecurityGroup awsec2.ISecurityGroup
-	Role          awsiam.IRole
+	Instance       awsec2.Instance
+	SecurityGroup  awsec2.ISecurityGroup
+	Role           awsiam.IRole
+	PeerConnection peer2.PeerConnection
 }
 
 func NewTSNInstance(scope constructs.Construct, input newTSNInstanceInput) TSNInstance {
@@ -36,19 +41,20 @@ func NewTSNInstance(scope constructs.Construct, input newTSNInstanceInput) TSNIn
 	//	subnetType = awsec2.SubnetType_PRIVATE_WITH_NAT
 	//}
 
-	// Get key-pair pointer.
-	var keyPair *string = nil
-	if len(config.KeyPairName(scope)) > 0 {
-		keyPair = jsii.String(config.KeyPairName(scope))
-	}
-
 	defaultInstanceUser := jsii.String("ec2-user")
 
+	tsnConfigZipPath := "/home/ec2-user/tsn-node-config.zip"
+	tsnComposePath := "/home/ec2-user/docker-compose.yaml"
+	tsnConfigImagePath := "/home/ec2-user/deployments/tsn-config.dockerfile"
+
 	initData := awsec2.CloudFormationInit_FromElements(
-		awsec2.InitFile_FromExistingAsset(jsii.String("/home/ec2-user/docker-compose.yaml"), input.TSNDockerComposeAsset, &awsec2.InitFileOptions{
+		awsec2.InitFile_FromExistingAsset(jsii.String(tsnComposePath), input.TSNDockerComposeAsset, &awsec2.InitFileOptions{
 			Owner: defaultInstanceUser,
 		}),
-		awsec2.InitFile_FromExistingAsset(jsii.String("/home/ec2-user/tsn-node-config.zip"), input.TSNConfigAsset, &awsec2.InitFileOptions{
+		awsec2.InitFile_FromExistingAsset(jsii.String(tsnConfigZipPath), input.TSNConfigAsset, &awsec2.InitFileOptions{
+			Owner: defaultInstanceUser,
+		}),
+		awsec2.InitFile_FromExistingAsset(jsii.String(tsnConfigImagePath), input.TSNConfigImageAsset, &awsec2.InitFileOptions{
 			Owner: defaultInstanceUser,
 		}),
 	)
@@ -64,7 +70,7 @@ func NewTSNInstance(scope constructs.Construct, input newTSNInstanceInput) TSNIn
 		},
 		SecurityGroup: input.SecurityGroup,
 		Role:          input.Role,
-		KeyPair:       awsec2.KeyPair_FromKeyPairName(scope, jsii.String("KeyPair"), keyPair),
+		KeyPair:       input.KeyPair,
 		BlockDevices: &[]*awsec2.BlockDevice{
 			{
 				DeviceName: jsii.String("/dev/sda1"),
@@ -76,14 +82,29 @@ func NewTSNInstance(scope constructs.Construct, input newTSNInstanceInput) TSNIn
 		},
 	})
 
-	AddTsnDbStartupScriptsToInstance(scope, AddStartupScriptsOptions{
-		Instance:      instance,
-		TsnImageAsset: nil,
+	// Create Elastic Ip association instead of attaching, so dependency is not circular
+	awsec2.NewCfnEIPAssociation(scope, jsii.String("TSN-Instance-ElasticIpAssociation-"+input.Id), &awsec2.CfnEIPAssociationProps{
+		InstanceId:   instance.InstanceId(),
+		AllocationId: input.PeerConnection.ElasticIp.AttrAllocationId(),
 	})
 
-	return TSNInstance{
-		Instance:      instance,
-		SecurityGroup: input.SecurityGroup,
-		Role:          input.Role,
+	node := TSNInstance{
+		Instance:       instance,
+		SecurityGroup:  input.SecurityGroup,
+		Role:           input.Role,
+		PeerConnection: input.PeerConnection,
 	}
+
+	AddTsnDbStartupScriptsToInstance(scope, AddStartupScriptsOptions{
+		currentPeer:        input.PeerConnection,
+		allPeers:           input.AllPeerConnections,
+		Instance:           instance,
+		Region:             input.Vpc.Env().Region,
+		TsnImageAsset:      input.TSNDockerImageAsset,
+		TsnConfigZipPath:   &tsnConfigZipPath,
+		TsnComposePath:     &tsnComposePath,
+		TsnConfigImagePath: &tsnConfigImagePath,
+	})
+
+	return node
 }

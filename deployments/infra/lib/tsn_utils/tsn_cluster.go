@@ -1,12 +1,15 @@
 package tsn_utils
 
 import (
+	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsecrassets"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
-	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
+	"github.com/truflation/tsn-db/infra/config"
+	"github.com/truflation/tsn-db/infra/lib/network_utils"
+	peer2 "github.com/truflation/tsn-db/infra/lib/network_utils/peer"
 	"strconv"
 )
 
@@ -14,7 +17,10 @@ type NewTSNClusterInput struct {
 	NumberOfNodes         int
 	TSNDockerComposeAsset awss3assets.Asset
 	TSNDockerImageAsset   awsecrassets.DockerImageAsset
+	TSNConfigImageAsset   awss3assets.Asset
 	Vpc                   awsec2.IVpc
+	Params                config.CDKParams
+	KwilAdminBinPath      string
 }
 
 type TSNCluster struct {
@@ -23,11 +29,19 @@ type TSNCluster struct {
 	SecurityGroup awsec2.SecurityGroup
 }
 
-func NewTSNCluster(scope constructs.Construct, input NewTSNClusterInput) TSNCluster {
+func NewTSNCluster(scope awscdk.Stack, input NewTSNClusterInput) TSNCluster {
 	// to be safe, let's create a reasonable ceiling for the number of nodes
 	if input.NumberOfNodes > 5 {
 		panic("Number of nodes limited to 5 to prevent typos")
 	}
+
+	// create new key pair
+	keyPairName := config.KeyPairName(scope)
+	if len(keyPairName) == 0 {
+		panic("KeyPairName is empty")
+	}
+
+	keyPair := awsec2.KeyPair_FromKeyPairName(scope, jsii.String("DefaultKeyPair"), jsii.String(keyPairName))
 
 	securityGroup := NewTSNSecurityGroup(scope, NewTSNSecurityGroupInput{
 		vpc: input.Vpc,
@@ -36,6 +50,22 @@ func NewTSNCluster(scope constructs.Construct, input NewTSNClusterInput) TSNClus
 	role := awsiam.NewRole(scope, jsii.String("TSN-Cluster-Role"), &awsiam.RoleProps{
 		AssumedBy: awsiam.NewServicePrincipal(jsii.String("ec2.amazonaws.com"), nil),
 	})
+
+	configAssets := network_utils.NewKwilNetworkConfigAssets(scope, network_utils.KwilNetworkConfigAssetInput{
+		NumberOfNodes: input.NumberOfNodes,
+		ChainId:       input.Params.ChainId.ValueAsString(),
+		//KwilAdminBinPath: input.Params.KwilAdminBinPath.Resolve(scope),
+	})
+
+	// we create a peer connection for each node before even creating the instances
+	// that's required because Peer Connection info is used at startup scripts
+	peerConnections := make([]peer2.PeerConnection, input.NumberOfNodes)
+	for i := 0; i < input.NumberOfNodes; i++ {
+		elasticIp := awsec2.NewCfnEIP(scope, jsii.String("TSN-Instance-ElasticIp-"+strconv.Itoa(i)), &awsec2.CfnEIPProps{
+			Domain: jsii.String("vpc"),
+		})
+		peerConnections[i] = peer2.NewPeerConnection(elasticIp)
+	}
 
 	instances := make([]TSNInstance, input.NumberOfNodes)
 	for i := 0; i < input.NumberOfNodes; i++ {
@@ -46,6 +76,11 @@ func NewTSNCluster(scope constructs.Construct, input NewTSNClusterInput) TSNClus
 			SecurityGroup:         securityGroup,
 			TSNDockerComposeAsset: input.TSNDockerComposeAsset,
 			TSNDockerImageAsset:   input.TSNDockerImageAsset,
+			TSNConfigImageAsset:   input.TSNConfigImageAsset,
+			TSNConfigAsset:        configAssets[i],
+			PeerConnection:        peerConnections[i],
+			AllPeerConnections:    peerConnections,
+			KeyPair:               keyPair,
 		})
 		instances[i] = instance
 	}
