@@ -12,25 +12,25 @@ type CDKParams struct {
 	ChainId          awscdk.CfnParameter
 }
 
-func NewCDKParams(scope constructs.Construct) *CDKParams {
-	corsAllowOrigins := awscdk.NewCfnParameter(scope, jsii.String("CorsAllowOrigins"), &awscdk.CfnParameterProps{
+func NewCDKParams(scope constructs.Construct) CDKParams {
+	corsAllowOrigins := awscdk.NewCfnParameter(scope, jsii.String("corsAllowOrigins"), &awscdk.CfnParameterProps{
 		Type:        jsii.String("String"),
 		Description: jsii.String("CORS allow origins"),
 		Default:     jsii.String("*"),
 	})
 
-	sessionSecret := awscdk.NewCfnParameter(scope, jsii.String("SessionSecret"), &awscdk.CfnParameterProps{
+	sessionSecret := awscdk.NewCfnParameter(scope, jsii.String("sessionSecret"), &awscdk.CfnParameterProps{
 		Type:        jsii.String("String"),
 		Description: jsii.String("Kwil Gateway session secret"),
 		NoEcho:      jsii.Bool(true),
 	})
 
-	chainId := awscdk.NewCfnParameter(scope, jsii.String("ChainId"), &awscdk.CfnParameterProps{
+	chainId := awscdk.NewCfnParameter(scope, jsii.String("chainId"), &awscdk.CfnParameterProps{
 		Type:        jsii.String("String"),
 		Description: jsii.String("Chain ID"),
 	})
 
-	return &CDKParams{
+	return CDKParams{
 		CorsAllowOrigins: corsAllowOrigins,
 		SessionSecret:    sessionSecret,
 		ChainId:          chainId,
