@@ -79,9 +79,9 @@ jobs:
           # this must be on absolute path
           export CDK_DOCKER=$(pwd)/buildx.sh
 
+          # GW_CORS_ALLOW_ORIGINS = Comma separated list of allowed origins
           cdk deploy --require-approval never --all \
             --parameters TSN-DB-Stack:sessionSecret=${{ secrets.GW_SESSION_SECRET }} \
-            # E.g.: Comma separated list of allowed origins. If not provided, defaults to *
             --parameters TSN-DB-Stack:corsAllowOrigins=${{ secrets.GW_CORS_ALLOW_ORIGINS || '*' }}
 
         env:
