@@ -1,4 +1,4 @@
-package gateway_utils
+package kwil_gateway
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
@@ -8,7 +8,7 @@ import (
 	"github.com/aws/jsii-runtime-go"
 	"github.com/kwilteam/kwil-db/core/utils/random"
 	"github.com/truflation/tsn-db/infra/config"
-	"github.com/truflation/tsn-db/infra/lib/tsn_utils"
+	"github.com/truflation/tsn-db/infra/lib/tsn"
 	"github.com/truflation/tsn-db/infra/lib/utils"
 )
 
@@ -17,7 +17,7 @@ type KGWConfig struct {
 	Domain           *string
 	SessionSecret    *string
 	ChainId          *string
-	Nodes            []tsn_utils.TSNInstance
+	Nodes            []tsn.TSNInstance
 }
 
 type NewKGWInstanceInput struct {

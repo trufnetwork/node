@@ -1,10 +1,10 @@
-package tsn_utils
+package tsn
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
-	"github.com/truflation/tsn-db/infra/lib/network_utils/peer"
+	"github.com/truflation/tsn-db/infra/lib/kwil-network/peer"
 )
 
 type NewTSNSecurityGroupInput struct {

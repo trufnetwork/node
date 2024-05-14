@@ -1,4 +1,4 @@
-package tsn_utils
+package tsn
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
@@ -7,7 +7,8 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
-	peer2 "github.com/truflation/tsn-db/infra/lib/network_utils/peer"
+	"github.com/kwilteam/kwil-db/core/utils/random"
+	peer2 "github.com/truflation/tsn-db/infra/lib/kwil-network/peer"
 )
 
 type newTSNInstanceInput struct {
@@ -32,8 +33,10 @@ type TSNInstance struct {
 }
 
 func NewTSNInstance(scope constructs.Construct, input newTSNInstanceInput) TSNInstance {
-	// Create tsnInstance using tsnImageAsset hash so that the tsnInstance is recreated when the image changes.
-	name := "TSN-Instance-" + input.Id + "-" + *input.TSNDockerImageAsset.AssetHash()
+	randomBit := random.String(4)
+
+	// Create tsnInstance using randomBit so that the tsnInstance is recreated on each deployment.
+	name := "TSN-Instance-" + input.Id + "-" + randomBit
 
 	// Creating in private subnet only when deployment cluster in PROD stage.
 	subnetType := awsec2.SubnetType_PUBLIC

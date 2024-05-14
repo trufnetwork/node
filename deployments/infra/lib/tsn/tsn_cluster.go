@@ -1,4 +1,4 @@
-package tsn_utils
+package tsn
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
@@ -8,8 +8,8 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/config"
-	"github.com/truflation/tsn-db/infra/lib/network_utils"
-	peer2 "github.com/truflation/tsn-db/infra/lib/network_utils/peer"
+	"github.com/truflation/tsn-db/infra/lib/kwil-network"
+	peer2 "github.com/truflation/tsn-db/infra/lib/kwil-network/peer"
 	"strconv"
 )
 
@@ -51,7 +51,7 @@ func NewTSNCluster(scope awscdk.Stack, input NewTSNClusterInput) TSNCluster {
 		AssumedBy: awsiam.NewServicePrincipal(jsii.String("ec2.amazonaws.com"), nil),
 	})
 
-	configAssets := network_utils.NewKwilNetworkConfigAssets(scope, network_utils.KwilNetworkConfigAssetInput{
+	configAssets := kwil_network.NewKwilNetworkConfigAssets(scope, kwil_network.KwilNetworkConfigAssetInput{
 		NumberOfNodes: input.NumberOfNodes,
 		ChainId:       input.Params.ChainId.ValueAsString(),
 		//KwilAdminBinPath: input.Params.KwilAdminBinPath.Resolve(scope),

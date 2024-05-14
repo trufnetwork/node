@@ -1,4 +1,4 @@
-package domain_utils
+package domain
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"

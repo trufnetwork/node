@@ -1,4 +1,4 @@
-package network_utils
+package kwil_network
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
