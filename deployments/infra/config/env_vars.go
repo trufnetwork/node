@@ -8,6 +8,7 @@ import (
 type EnvironmentVariables struct {
 	KwilAdminBinPath string `env:"KWIL_ADMIN_BIN_PATH" required:"true"`
 	CdkDocker        string `env:"CDK_DOCKER" required:"true"`
+	ChainId          string `env:"CHAIN_ID" required:"true"`
 }
 
 func GetEnvironmentVariables() EnvironmentVariables {

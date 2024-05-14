@@ -27,13 +27,11 @@ type NetworkConfigOutput struct {
 func GenerateNetworkConfig(input NetworkConfigInput) NetworkConfigOutput {
 	nNodes := input.NumberOfNodes
 
-	// check if the kwil-admin binary is a token
-	// if it is, resolve it
-	kwilAdminBinPath := config.GetEnvironmentVariables().KwilAdminBinPath
+	envVars := config.GetEnvironmentVariables()
 
-	cmd := exec.Command(kwilAdminBinPath, "setup", "testnet",
+	cmd := exec.Command(envVars.KwilAdminBinPath, "setup", "testnet",
 		"-v", strconv.Itoa(nNodes),
-		"--chain-id", *input.ChainId,
+		"--chain-id", envVars.ChainId,
 		"-o", input.ConfigPath,
 	)
 	err := cmd.Run()
@@ -55,7 +53,6 @@ func GenerateNetworkConfig(input NetworkConfigInput) NetworkConfigOutput {
 
 type KwilNetworkConfigAssetInput struct {
 	NumberOfNodes int
-	ChainId       *string
 }
 
 type KwilNetworkConfig struct {

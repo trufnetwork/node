@@ -19,8 +19,6 @@ type NewTSNClusterInput struct {
 	TSNDockerImageAsset   awsecrassets.DockerImageAsset
 	TSNConfigImageAsset   awss3assets.Asset
 	Vpc                   awsec2.IVpc
-	Params                config.CDKParams
-	KwilAdminBinPath      string
 }
 
 type TSNCluster struct {
@@ -53,8 +51,6 @@ func NewTSNCluster(scope awscdk.Stack, input NewTSNClusterInput) TSNCluster {
 
 	configAssets := kwil_network.NewKwilNetworkConfigAssets(scope, kwil_network.KwilNetworkConfigAssetInput{
 		NumberOfNodes: input.NumberOfNodes,
-		ChainId:       input.Params.ChainId.ValueAsString(),
-		//KwilAdminBinPath: input.Params.KwilAdminBinPath.Resolve(scope),
 	})
 
 	// we create a peer connection for each node before even creating the instances

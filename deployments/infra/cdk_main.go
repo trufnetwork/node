@@ -86,7 +86,6 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 		TSNDockerComposeAsset: tsnComposeAsset,
 		TSNDockerImageAsset:   tsnImageAsset,
 		Vpc:                   defaultVPC,
-		Params:                cdkParams,
 		TSNConfigImageAsset:   tsnConfigImageAsset,
 	})
 
@@ -103,7 +102,7 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 			Domain:           domain,
 			CorsAllowOrigins: cdkParams.CorsAllowOrigins.ValueAsString(),
 			SessionSecret:    cdkParams.SessionSecret.ValueAsString(),
-			ChainId:          cdkParams.ChainId.ValueAsString(),
+			ChainId:          jsii.String(config.GetEnvironmentVariables().ChainId),
 			Nodes:            tsnCluster.Nodes,
 		},
 	})

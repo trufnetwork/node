@@ -80,12 +80,12 @@ jobs:
           export CDK_DOCKER=$(pwd)/buildx.sh
 
           cdk deploy --require-approval never --all \
-            --parameters TSN-DB-Stack:chainId=truflation-staging \
             --parameters TSN-DB-Stack:sessionSecret=${{ secrets.GW_SESSION_SECRET }} \
             # E.g.: Comma separated list of allowed origins. If not provided, defaults to *
-            --parameters TSN-DB-Stack:sessionSecret=${{ secrets.GW_CORS_ALLOW_ORIGINS || '*' }}
+            --parameters TSN-DB-Stack:corsAllowOrigins=${{ secrets.GW_CORS_ALLOW_ORIGINS || '*' }}
 
         env:
           CI: true
           # used to instantiate configuration
           KWIL_ADMIN_BIN_PATH: ./.build/kwil-admin
+          CHAIN_ID: truflation-staging

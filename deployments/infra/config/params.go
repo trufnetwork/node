@@ -9,7 +9,6 @@ import (
 type CDKParams struct {
 	CorsAllowOrigins awscdk.CfnParameter
 	SessionSecret    awscdk.CfnParameter
-	ChainId          awscdk.CfnParameter
 }
 
 func NewCDKParams(scope constructs.Construct) CDKParams {
@@ -25,14 +24,8 @@ func NewCDKParams(scope constructs.Construct) CDKParams {
 		NoEcho:      jsii.Bool(true),
 	})
 
-	chainId := awscdk.NewCfnParameter(scope, jsii.String("chainId"), &awscdk.CfnParameterProps{
-		Type:        jsii.String("String"),
-		Description: jsii.String("Chain ID"),
-	})
-
 	return CDKParams{
 		CorsAllowOrigins: corsAllowOrigins,
 		SessionSecret:    sessionSecret,
-		ChainId:          chainId,
 	}
 }
