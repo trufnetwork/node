@@ -83,7 +83,7 @@ jobs:
             --parameters TSN-DB-Stack:chainId=truflation-staging \
             --parameters TSN-DB-Stack:sessionSecret=${{ secrets.GW_SESSION_SECRET }} \
             # E.g.: Comma separated list of allowed origins. If not provided, defaults to *
-            --parameters TSN-DB-Stack:sessionSecret=${{ secrets.GW_CORS_ALLOWED_ORIGINS || '*' }}
+            --parameters TSN-DB-Stack:sessionSecret=${{ secrets.GW_CORS_ALLOW_ORIGINS || '*' }}
 
         env:
           CI: true
