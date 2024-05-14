@@ -41,10 +41,6 @@ func NewTSNCluster(scope awscdk.Stack, input NewTSNClusterInput) TSNCluster {
 
 	keyPair := awsec2.KeyPair_FromKeyPairName(scope, jsii.String("DefaultKeyPair"), jsii.String(keyPairName))
 
-	securityGroup := NewTSNSecurityGroup(scope, NewTSNSecurityGroupInput{
-		vpc: input.Vpc,
-	})
-
 	role := awsiam.NewRole(scope, jsii.String("TSN-Cluster-Role"), &awsiam.RoleProps{
 		AssumedBy: awsiam.NewServicePrincipal(jsii.String("ec2.amazonaws.com"), nil),
 	})
@@ -62,6 +58,11 @@ func NewTSNCluster(scope awscdk.Stack, input NewTSNClusterInput) TSNCluster {
 		})
 		peerConnections[i] = peer2.NewPeerConnection(elasticIp, configAssets[i].Id)
 	}
+
+	securityGroup := NewTSNSecurityGroup(scope, NewTSNSecurityGroupInput{
+		vpc:   input.Vpc,
+		peers: peerConnections,
+	})
 
 	instances := make([]TSNInstance, input.NumberOfNodes)
 	for i := 0; i < input.NumberOfNodes; i++ {

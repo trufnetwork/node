@@ -1,6 +1,7 @@
 package tsn
 
 import (
+	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
@@ -8,7 +9,8 @@ import (
 )
 
 type NewTSNSecurityGroupInput struct {
-	vpc awsec2.IVpc
+	vpc   awsec2.IVpc
+	peers []peer.PeerConnection
 }
 
 func NewTSNSecurityGroup(scope constructs.Construct, input NewTSNSecurityGroupInput) awsec2.SecurityGroup {
@@ -36,12 +38,17 @@ func NewTSNSecurityGroup(scope constructs.Construct, input NewTSNSecurityGroupIn
 		jsii.String("Allow ssh."),
 		jsii.Bool(false))
 
-	// allow communication between nodes by the P2P port, by the same security group
-	sg.AddIngressRule(
-		sg,
-		awsec2.Port_Tcp(jsii.Number(peer.TsnP2pPort)),
-		jsii.String("Allow communication between nodes."),
-		jsii.Bool(false))
+	// allow communication between nodes by the P2P port
+	for _, p := range input.peers {
+		sg.AddIngressRule(
+			// We need to provide the public IP of the peer node
+			// We can't use the SG allowance directly because this rule references the private IP,
+			// but we need the public IP reference instead
+			awsec2.Peer_Ipv4(awscdk.Fn_Join(jsii.String(""), &[]*string{p.ElasticIp.AttrPublicIp(), jsii.String("/32")})),
+			awsec2.Port_Tcp(jsii.Number(p.P2PPort)),
+			jsii.String("Allow communication between nodes."),
+			jsii.Bool(false))
+	}
 
 	return sg
 }
