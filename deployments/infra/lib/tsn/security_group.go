@@ -25,8 +25,8 @@ func NewTSNSecurityGroup(scope constructs.Construct, input NewTSNSecurityGroupIn
 	//   relative to cloudfront distribution IPs
 	sg.AddIngressRule(
 		awsec2.Peer_AnyIpv4(),
-		awsec2.Port_Tcp(jsii.Number(peer.TsnHttpPort)),
-		jsii.String("Allow requests to http."),
+		awsec2.Port_Tcp(jsii.Number(peer.TsnRPCPort)),
+		jsii.String("Allow requests to the TSN RPC port."),
 		jsii.Bool(false))
 
 	// ssh

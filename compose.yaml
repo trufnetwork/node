@@ -62,7 +62,11 @@ services:
       EXTERNAL_ADDRESS: ${EXTERNAL_ADDRESS}
 
     ports:
+      - "50051:50051"
+      - "50151:50151"
       - "8080:8080"
+      - "26656:26656"
+      - "26657:26657"
     depends_on:
       kwil-postgres:
         condition: service_healthy

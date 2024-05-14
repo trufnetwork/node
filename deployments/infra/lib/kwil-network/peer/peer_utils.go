@@ -10,12 +10,12 @@ import (
 // TsnP2pPort is the port used for P2P communication
 // this is hardcoded at the Dockerfile that generates TSN nodes
 const TsnP2pPort = 26656
-const TsnHttpPort = 80
+const TsnRPCPort = 8080
 
 type PeerConnection struct {
 	ElasticIp               awsec2.CfnEIP
 	P2PPort                 int
-	HttpPort                int
+	RPCPort                 int
 	NodeCometEncodedAddress string
 }
 
@@ -46,7 +46,7 @@ func (p PeerConnection) GetP2PAddress(withId bool) *string {
 }
 
 func (p PeerConnection) GetHttpAddress() *string {
-	ipAndPort := []*string{p.ElasticIp.AttrPublicIp(), jsii.String(strconv.Itoa(p.HttpPort))}
+	ipAndPort := []*string{p.ElasticIp.AttrPublicIp(), jsii.String(strconv.Itoa(p.RPCPort))}
 	return awscdk.Fn_Join(jsii.String(":"), &ipAndPort)
 }
 
@@ -54,7 +54,7 @@ func NewPeerConnection(ip awsec2.CfnEIP, nodeCometEncodedAddress string) PeerCon
 	return PeerConnection{
 		ElasticIp:               ip,
 		P2PPort:                 TsnP2pPort,
-		HttpPort:                TsnHttpPort,
+		RPCPort:                 TsnRPCPort,
 		NodeCometEncodedAddress: nodeCometEncodedAddress,
 	}
 }
