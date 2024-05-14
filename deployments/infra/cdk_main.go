@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"strconv"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awscertificatemanager"
@@ -53,6 +54,11 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 		Path: jsii.String("../../compose.yaml"),
 	})
 
+	// TSN config image
+	tsnConfigImageAsset := awss3assets.NewAsset(stack, jsii.String("TsnConfigImageAsset"), &awss3assets.AssetProps{
+		Path: jsii.String("../tsn-config.dockerfile"),
+	})
+
 	// ### GATEWAY ASSETS
 
 	// differently from tsn-db, the gateway docker images will be built in its own instance, not in GH actions.
@@ -80,6 +86,8 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 		TSNDockerComposeAsset: tsnComposeAsset,
 		TSNDockerImageAsset:   tsnImageAsset,
 		Vpc:                   defaultVPC,
+		Params:                cdkParams,
+		TSNConfigImageAsset:   tsnConfigImageAsset,
 	})
 
 	tsnComposeAsset.GrantRead(tsnCluster.Role)
@@ -112,14 +120,14 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	// ## Output info
 	// Public ip of each TSN node
 	for _, node := range tsnCluster.Nodes {
-		awscdk.NewCfnOutput(stack, jsii.String("public-address-"+*node.Instance.InstanceId()), &awscdk.CfnOutputProps{
+		awscdk.NewCfnOutput(stack, jsii.String("public-address-"+*node.Instance.Node().Id()), &awscdk.CfnOutputProps{
 			Value: node.Instance.InstancePublicIp(),
 		})
 	}
 
 	// Number of TSN nodes
 	awscdk.NewCfnOutput(stack, jsii.String("tsn-nodes-count"), &awscdk.CfnOutputProps{
-		Value: jsii.String(string(len(tsnCluster.Nodes))),
+		Value: jsii.String(strconv.Itoa(len(tsnCluster.Nodes))),
 	})
 
 	// Public ip of the gateway instance
