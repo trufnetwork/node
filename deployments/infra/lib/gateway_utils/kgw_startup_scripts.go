@@ -5,7 +5,6 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/lib/utils"
-	"reflect"
 )
 
 type AddKwilGatewayStartupScriptsOptions struct {
@@ -20,7 +19,7 @@ func AddKwilGatewayStartupScriptsToInstance(options AddKwilGatewayStartupScripts
 
 	var nodeAddresses []*string
 	for _, node := range config.Nodes {
-		nodeAddresses = append(nodeAddresses, node.Instance.InstancePublicIp())
+		nodeAddresses = append(nodeAddresses, node.PeerConnection.GetHttpAddress())
 	}
 
 	// Create the environment variables for the gateway compose file
@@ -36,6 +35,26 @@ func AddKwilGatewayStartupScriptsToInstance(options AddKwilGatewayStartupScripts
 set -e
 set -x 
 
+# Update the system
+yum update -y
+
+# Install Docker
+amazon-linux-extras install docker
+
+# Start Docker and enable it to start at boot
+systemctl start docker
+systemctl enable docker
+
+# Add the ec2-user to the docker group (ec2-user is the default user in Amazon Linux 2)
+usermod -aG docker ec2-user
+
+# reload the group
+newgrp docker
+
+mkdir -p /usr/local/lib/docker/cli-plugins/
+curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod a+x /usr/local/lib/docker/cli-plugins/docker-compose
+
 # Extract the gateway files
 unzip /home/ec2-user/kgw.zip -d /home/ec2-user/kgw
 
@@ -49,9 +68,6 @@ mv /tmp/kgw-binary/kgw /home/ec2-user/kgw/kgw
 cat <<EOF > /etc/systemd/system/kgw.service
 [Unit]
 Description=Kwil Gateway Compose
-# must come after tsn-db service, as the network is created by the tsn-db service
-After=tsn-db-app.service
-Requires=tsn-db-app.service
 Restart=on-failure
 
 [Service]
@@ -84,18 +100,6 @@ type KGWEnvConfig struct {
 }
 
 // GetDict returns a map of the environment variables and their values
-// uses reflect
 func (c KGWEnvConfig) GetDict() map[string]string {
-	envVars := make(map[string]string)
-	v := reflect.ValueOf(c)
-	t := v.Type()
-	for i := 0; i < v.NumField(); i++ {
-		field := v.Field(i)
-		if field.Kind() == reflect.Ptr {
-			if !field.IsNil() {
-				envVars[t.Field(i).Tag.Get("env")] = field.Elem().String()
-			}
-		}
-	}
-	return envVars
+	return utils.GetDictFromStruct(c)
 }
