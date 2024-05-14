@@ -13,14 +13,36 @@ const TsnP2pPort = 26656
 const TsnHttpPort = 80
 
 type PeerConnection struct {
-	ElasticIp awsec2.CfnEIP
-	P2PPort   int
-	HttpPort  int
+	ElasticIp               awsec2.CfnEIP
+	P2PPort                 int
+	HttpPort                int
+	NodeCometEncodedAddress string
 }
 
-func (p PeerConnection) GetP2PAddress() *string {
-	ipAndPort := []*string{p.ElasticIp.AttrPublicIp(), jsii.String(strconv.Itoa(p.P2PPort))}
-	return awscdk.Fn_Join(jsii.String(":"), &ipAndPort)
+func (p PeerConnection) GetP2PAddress(withId bool) *string {
+	// full p2p address = <comet_address>@<public_ip>:<p2p_port>
+	// partial p2p address = <public_ip>:<p2p_port>
+
+	// we need to create a partial address first
+	partialAddress := []*string{
+		p.ElasticIp.AttrPublicIp(),
+		jsii.String(":"),
+		jsii.String(strconv.Itoa(p.P2PPort)),
+	}
+
+	var result []*string
+	if withId {
+		cometAddressParts := []*string{
+			jsii.String(p.NodeCometEncodedAddress),
+			jsii.String("@"),
+		}
+
+		result = append(cometAddressParts, partialAddress...)
+	} else {
+		result = partialAddress
+	}
+
+	return awscdk.Fn_Join(jsii.String(""), &result)
 }
 
 func (p PeerConnection) GetHttpAddress() *string {
@@ -28,10 +50,11 @@ func (p PeerConnection) GetHttpAddress() *string {
 	return awscdk.Fn_Join(jsii.String(":"), &ipAndPort)
 }
 
-func NewPeerConnection(ip awsec2.CfnEIP) PeerConnection {
+func NewPeerConnection(ip awsec2.CfnEIP, nodeCometEncodedAddress string) PeerConnection {
 	return PeerConnection{
-		ElasticIp: ip,
-		P2PPort:   TsnP2pPort,
-		HttpPort:  TsnHttpPort,
+		ElasticIp:               ip,
+		P2PPort:                 TsnP2pPort,
+		HttpPort:                TsnHttpPort,
+		NodeCometEncodedAddress: nodeCometEncodedAddress,
 	}
 }
