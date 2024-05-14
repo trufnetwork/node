@@ -87,5 +87,5 @@ jobs:
         env:
           CI: true
           # used to instantiate configuration
-          KWIL_ADMIN_BIN_PATH: ./.build/kwil-admin
+          KWIL_ADMIN_BIN_PATH: ../../.build/kwil-admin
           CHAIN_ID: truflation-staging
