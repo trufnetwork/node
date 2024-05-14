@@ -64,7 +64,7 @@ func NewTSNCluster(scope awscdk.Stack, input NewTSNClusterInput) TSNCluster {
 		elasticIp := awsec2.NewCfnEIP(scope, jsii.String("TSN-Instance-ElasticIp-"+strconv.Itoa(i)), &awsec2.CfnEIPProps{
 			Domain: jsii.String("vpc"),
 		})
-		peerConnections[i] = peer2.NewPeerConnection(elasticIp)
+		peerConnections[i] = peer2.NewPeerConnection(elasticIp, configAssets[i].Id)
 	}
 
 	instances := make([]TSNInstance, input.NumberOfNodes)
@@ -77,7 +77,7 @@ func NewTSNCluster(scope awscdk.Stack, input NewTSNClusterInput) TSNCluster {
 			TSNDockerComposeAsset: input.TSNDockerComposeAsset,
 			TSNDockerImageAsset:   input.TSNDockerImageAsset,
 			TSNConfigImageAsset:   input.TSNConfigImageAsset,
-			TSNConfigAsset:        configAssets[i],
+			TSNConfigAsset:        configAssets[i].Asset,
 			PeerConnection:        peerConnections[i],
 			AllPeerConnections:    peerConnections,
 			KeyPair:               keyPair,

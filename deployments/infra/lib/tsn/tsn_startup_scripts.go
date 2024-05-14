@@ -32,7 +32,7 @@ func AddTsnDbStartupScriptsToInstance(scope constructs.Construct, options AddSta
 	// create a list of persistent peers
 	var persistentPeersList []*string
 	for _, peer := range options.allPeers {
-		persistentPeersList = append(persistentPeersList, peer.GetP2PAddress())
+		persistentPeersList = append(persistentPeersList, peer.GetP2PAddress(true))
 	}
 
 	// create a string from the list
@@ -43,7 +43,7 @@ func AddTsnDbStartupScriptsToInstance(scope constructs.Construct, options AddSta
 		ConfTarget:         jsii.String("external"),
 		ExternalConfigPath: jsii.String(tsnConfigRelativeToCompose),
 		PersistentPeers:    persistentPeers,
-		ExternalAddress:    options.currentPeer.GetP2PAddress(),
+		ExternalAddress:    options.currentPeer.GetP2PAddress(false),
 	}
 
 	// we could improve this script by adding a ResourceSignal, which would signalize to CDK that the Instance is ready
