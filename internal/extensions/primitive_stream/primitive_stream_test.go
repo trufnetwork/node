@@ -33,7 +33,7 @@ func Test_Index(t *testing.T) {
 		b.sqlGetRangePrimitive("2024-01-01", "2024-01-02"): mockDateScalar("value", []utils.ValueWithDate{
 			{Date: "2024-01-01", Value: 150000},
 			{Date: "2024-01-02", Value: 300000},
-		}), // 150.000, 300.000
+		}),                                                                                                                    // 150.000, 300.000
 		b.sqlGetLastBefore("2024-01-01"): mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 266666}}), // 266.666
 	}
 
@@ -179,6 +179,10 @@ func newPrimitiveStreamTest() *primitiveStreamTest {
 								Name: "value",
 								Type: common.INT,
 							},
+							{
+								Name: "created_at",
+								Type: common.TEXT,
+							},
 						},
 					},
 				},
@@ -192,9 +196,10 @@ func newPrimitiveStreamTest() *primitiveStreamTest {
 
 func TestInitializePrimitiveStream(t *testing.T) {
 	metadata := map[string]string{
-		"table_name":   "price",
-		"date_column":  "date",
-		"value_column": "value",
+		"table_name":        "price",
+		"date_column":       "date",
+		"value_column":      "value",
+		"created_at_column": "created_at",
 	}
 
 	instance := newPrimitiveStreamTest()
@@ -254,6 +259,18 @@ func TestInitializePrimitiveStream(t *testing.T) {
 		wrongMetadata := map[string]string{
 			"table_name":  "wrong_table",
 			"date_column": "date",
+		}
+		_, err := InitializePrimitiveStream(instance.ctx, nil, wrongMetadata)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("validation - it should return an error if the created_at column does not exist", func(t *testing.T) {
+		wrongMetadata := map[string]string{
+			"table_name":        "price",
+			"date_column":       "date",
+			"value_column":      "value",
+			"created_at_column": "wrong_created_at",
 		}
 		_, err := InitializePrimitiveStream(instance.ctx, nil, wrongMetadata)
 		assert.Error(t, err)

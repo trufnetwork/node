@@ -37,10 +37,12 @@ func InitializePrimitiveStream(ctx *precompiles.DeploymentContext, service *comm
 	// get from
 	dateColumn = getOrDefault(metadata, "date_column", "date_value")
 	valueColumn = getOrDefault(metadata, "value_column", "value")
+	createdAtColumn := getOrDefault(metadata, "created_at_column", "created_at")
 
 	foundTable := false
 	foundDateColumn := false
 	foundValueColumn := false
+	foundCreatedAtColumn := false
 	// now we validate that the table and columns exist
 	for _, tbl := range ctx.Schema.Tables {
 		if strings.EqualFold(tbl.Name, table) {
@@ -58,6 +60,12 @@ func InitializePrimitiveStream(ctx *precompiles.DeploymentContext, service *comm
 						return nil, fmt.Errorf("value column %s must be of type INTEGER", valueColumn)
 					}
 				}
+				if strings.EqualFold(col.Name, createdAtColumn) {
+					foundCreatedAtColumn = true
+					if col.Type != common.TEXT {
+						return nil, fmt.Errorf("created_at column %s must be of type TEXT", createdAtColumn)
+					}
+				}
 			}
 		}
 	}
@@ -71,18 +79,23 @@ func InitializePrimitiveStream(ctx *precompiles.DeploymentContext, service *comm
 	if !foundValueColumn {
 		return nil, fmt.Errorf("value column %s not found", valueColumn)
 	}
+	if !foundCreatedAtColumn {
+		return nil, fmt.Errorf("created_at column %s not found", createdAtColumn)
+	}
 
 	return &PrimitiveStreamExt{
-		table:       table,
-		dateColumn:  dateColumn,
-		valueColumn: valueColumn,
+		table:           table,
+		dateColumn:      dateColumn,
+		valueColumn:     valueColumn,
+		createdAtColumn: createdAtColumn,
 	}, nil
 }
 
 type PrimitiveStreamExt struct {
-	table       string
-	dateColumn  string
-	valueColumn string
+	table           string
+	dateColumn      string
+	valueColumn     string
+	createdAtColumn string
 }
 
 func (b *PrimitiveStreamExt) Call(scope *precompiles.ProcedureContext, app *common.App, method string, args []any) ([]any, error) {
@@ -98,32 +111,33 @@ func (b *PrimitiveStreamExt) Call(scope *precompiles.ProcedureContext, app *comm
 
 const (
 	// getBasePrimitive gets the base primitive from a base stream, to be used in index calculation.
-	sqlGetBasePrimitive     = `select %s, %s from %s WHERE %s != 0 order by %s ASC LIMIT 1;`
-	sqlGetLatestPrimitive   = `select %s, %s from %s order by %s DESC LIMIT 1;`
-	sqlGetSpecificPrimitive = `select %s, %s from %s where %s = '%s';`
-	sqlGetLastBefore        = `select %s, %s from %s where %s <= '%s' order by %s DESC LIMIT 1;`
-	sqlGetRangePrimitive    = `select %s, %s from %s where %s >= '%s' and %s <= '%s' order by %s ASC;` // I can't use @date, changed it to basic %s, please take a look
+	sqlGetBasePrimitive     = `select %s, %s from %s WHERE %s != 0 order by %s ASC, %s DESC LIMIT 1;`
+	sqlGetLatestPrimitive   = `select %s, %s from %s order by %s DESC, %s DESC LIMIT 1;`
+	sqlGetSpecificPrimitive = `select %s, %s from %s where %s = '%s' order by %s DESC LIMIT 1;`
+	sqlGetLastBefore        = `select %s, %s from %s where %s <= '%s' order by %s DESC, %s DESC LIMIT 1;`
+	sqlGetRangePrimitive    = `select %s, %s from %s join (select %s, max(%s) AS max_created_at from %s where %s >= '%s' and %s <= '%s' group by %s) as max_created ON %s = max_created.%s and %s = max_created.max_created_at ORDER BY %s ASC;`
+	sqlGetLatestCreatedAt   = `select %s from %s order by %s DESC LIMIT 1;`
 	zeroDate                = "0000-00-00"
 )
 
 func (b *PrimitiveStreamExt) sqlGetBasePrimitive() string {
-	return fmt.Sprintf(sqlGetBasePrimitive, b.dateColumn, b.valueColumn, b.table, b.valueColumn, b.dateColumn)
+	return fmt.Sprintf(sqlGetBasePrimitive, b.dateColumn, b.valueColumn, b.table, b.valueColumn, b.dateColumn, b.createdAtColumn)
 }
 
 func (b *PrimitiveStreamExt) sqlGetLatestPrimitive() string {
-	return fmt.Sprintf(sqlGetLatestPrimitive, b.dateColumn, b.valueColumn, b.table, b.dateColumn)
+	return fmt.Sprintf(sqlGetLatestPrimitive, b.dateColumn, b.valueColumn, b.table, b.dateColumn, b.createdAtColumn)
 }
 
 func (b *PrimitiveStreamExt) sqlGetSpecificPrimitive(date string) string {
-	return fmt.Sprintf(sqlGetSpecificPrimitive, b.dateColumn, b.valueColumn, b.table, b.dateColumn, date)
+	return fmt.Sprintf(sqlGetSpecificPrimitive, b.dateColumn, b.valueColumn, b.table, b.dateColumn, date, b.createdAtColumn)
 }
 
 func (b *PrimitiveStreamExt) sqlGetLastBefore(date string) string {
-	return fmt.Sprintf(sqlGetLastBefore, b.dateColumn, b.valueColumn, b.table, b.dateColumn, date, b.dateColumn)
+	return fmt.Sprintf(sqlGetLastBefore, b.dateColumn, b.valueColumn, b.table, b.dateColumn, date, b.dateColumn, b.createdAtColumn)
 }
 
 func (b *PrimitiveStreamExt) sqlGetRangePrimitive(date string, dateTo string) string {
-	return fmt.Sprintf(sqlGetRangePrimitive, b.dateColumn, b.valueColumn, b.table, b.dateColumn, date, b.dateColumn, dateTo, b.dateColumn)
+	return fmt.Sprintf(sqlGetRangePrimitive, b.dateColumn, b.valueColumn, b.table, b.dateColumn, b.createdAtColumn, b.table, b.dateColumn, date, b.dateColumn, dateTo, b.dateColumn, b.dateColumn, b.dateColumn, b.createdAtColumn, b.dateColumn)
 }
 
 // getValueForFn gets the value for the specified function.
