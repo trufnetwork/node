@@ -111,12 +111,11 @@ func (b *PrimitiveStreamExt) Call(scope *precompiles.ProcedureContext, app *comm
 
 const (
 	// getBasePrimitive gets the base primitive from a base stream, to be used in index calculation.
-	sqlGetBasePrimitive     = `select %s, %s from %s WHERE %s != 0 order by %s ASC, %s DESC LIMIT 1;`
-	sqlGetLatestPrimitive   = `select %s, %s from %s order by %s DESC, %s DESC LIMIT 1;`
-	sqlGetSpecificPrimitive = `select %s, %s from %s where %s = '%s' order by %s DESC LIMIT 1;`
-	sqlGetLastBefore        = `select %s, %s from %s where %s <= '%s' order by %s DESC, %s DESC LIMIT 1;`
-	sqlGetRangePrimitive    = `select %s, %s from %s join (select %s, max(%s) AS max_created_at from %s where %s >= '%s' and %s <= '%s' group by %s) as max_created ON %s = max_created.%s and %s = max_created.max_created_at ORDER BY %s ASC;`
-	sqlGetLatestCreatedAt   = `select %s from %s order by %s DESC LIMIT 1;`
+	sqlGetBasePrimitive     = `SELECT %s, %s FROM %s WHERE %s != 0 ORDER BY %s ASC, %s DESC LIMIT 1;`
+	sqlGetLatestPrimitive   = `SELECT %s, %s FROM %s ORDER by %s DESC, %s DESC LIMIT 1;`
+	sqlGetSpecificPrimitive = `SELECT %s, %s FROM %s WHERE %s = '%s' ORDER BY %s DESC LIMIT 1;`
+	sqlGetLastBefore        = `SELECT %s, %s FROM %s WHERE %s <= '%s' ORDER BY %s DESC, %s DESC LIMIT 1;`
+	sqlGetRangePrimitive    = `SELECT %s, %s FROM %s JOIN (SELECT %s, MAX(%s) AS max_created_at FROM %s WHERE %s >= '%s' AND %s <= '%s' GROUP BY %s) AS max_created ON %s = max_created.%s AND %s = max_created.max_created_at ORDER BY %s ASC;`
 	zeroDate                = "0000-00-00"
 )
 
