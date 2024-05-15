@@ -7,16 +7,12 @@ services:
       dockerfile: ./gateway.dockerfile
     ports:
       - "80:8090"
-    networks:
-      - tsn-network
     environment:
-      # todo: make a breaking change that removes default for CHAIN_ID
-      #       and make it required
-      CHAIN_ID: ${CHAIN_ID:-truflation-staging}
+      CHAIN_ID: ${CHAIN_ID:?}
       # comma separated list of backends
-      BACKENDS: ${BACKENDS:-tsn-db:8080}
+      BACKENDS: ${BACKENDS:?}
       SESSION_SECRET: ${SESSION_SECRET:?}
-      DOMAIN: https://${DOMAIN:-localhost}
+      DOMAIN: https://${DOMAIN:?}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS}
       ALLOW_DEPLOY_DB: true
     volumes:
@@ -27,10 +23,3 @@ services:
       - type: bind
         source: ./kgw-config.pkl
         target: /app/kgw-config.pkl
-
-networks:
-  tsn-network:
-    driver: bridge
-    name: tsn-network
-    # should already be created by compose.yaml
-    external: true

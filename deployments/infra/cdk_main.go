@@ -1,22 +1,21 @@
 package main
 
 import (
-	"github.com/aws/aws-cdk-go/awscdk/v2/awscertificatemanager"
-	"github.com/truflation/tsn-db/infra/lib/domain_utils"
-	"github.com/truflation/tsn-db/infra/lib/gateway_utils"
+	domain_utils "github.com/truflation/tsn-db/infra/lib/domain_utils"
 	"os"
-	"strings"
+	"strconv"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awscertificatemanager"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
-	"github.com/aws/aws-cdk-go/awscdk/v2/awsecrassets"
-	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/config"
-	"github.com/truflation/tsn-db/infra/lib/instance_utils"
+	"github.com/truflation/tsn-db/infra/lib/kwil-gateway"
+	"github.com/truflation/tsn-db/infra/lib/tsn"
+	"github.com/truflation/tsn-db/infra/lib/utils"
 )
 
 type CdkStackProps struct {
@@ -31,140 +30,115 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	}
 	stack := awscdk.NewStack(scope, jsii.String(id), &sprops)
 
+	cdkParams := config.NewCDKParams(stack)
+
+	// ## Pre-existing resources
+
+	// default vpc
+	defaultVPC := awsec2.Vpc_FromLookup(stack, jsii.String("VPC"), &awsec2.VpcLookupOptions{
+		IsDefault: jsii.Bool(true),
+	})
+
+	// Main Hosted Zone & Domain
+	domain := config.Domain(stack)
+	hostedZone := domain_utils.GetTSNHostedZone(stack)
+
+	// ## ASSETS
+	// ### TSN ASSETS
+
+	// TSN docker image
+	tsnImageAsset := tsn.NewTSNImageAsset(stack)
+
+	// TSN docker compose file to be used by any TSN node
+	tsnComposeAsset := awss3assets.NewAsset(stack, jsii.String("TsnComposeAsset"), &awss3assets.AssetProps{
+		Path: jsii.String("../../compose.yaml"),
+	})
+
+	// TSN config image
+	tsnConfigImageAsset := awss3assets.NewAsset(stack, jsii.String("TsnConfigImageAsset"), &awss3assets.AssetProps{
+		Path: jsii.String("../tsn-config.dockerfile"),
+	})
+
+	// ### GATEWAY ASSETS
+
+	// differently from tsn-db, the gateway docker images will be built in its own instance, not in GH actions.
+	// that's why we don't use an asset for the gateway docker image
+	kgwDirectoryAsset := awss3assets.NewAsset(stack, jsii.String("KgwDirectoryAsset"), &awss3assets.AssetProps{
+		// gateway directory contains more than one file to configure the gateway, so we need to zip it
+		Path: jsii.String("../gateway/"),
+	})
+
+	// we store KGW binary in S3, and that bucket lives outside the stack
+	kgwBinaryS3Object := utils.S3Object{
+		Bucket: awss3.Bucket_FromBucketName(
+			stack,
+			jsii.String("KwilGatewayBucket"),
+			jsii.String("kwil-binaries"),
+		),
+		Key: jsii.String("gateway/kgw-v0.2.0.zip"),
+	}
+
+	// ## Instances & Permissions
+
+	// ### TSN INSTANCE
+	tsnCluster := tsn.NewTSNCluster(stack, tsn.NewTSNClusterInput{
+		NumberOfNodes:         2,
+		TSNDockerComposeAsset: tsnComposeAsset,
+		TSNDockerImageAsset:   tsnImageAsset,
+		Vpc:                   defaultVPC,
+		TSNConfigImageAsset:   tsnConfigImageAsset,
+	})
+
+	tsnComposeAsset.GrantRead(tsnCluster.Role)
+	tsnImageAsset.Repository().GrantPull(tsnCluster.Role)
+
+	// ### GATEWAY INSTANCE
+
+	kgwInstance := kwil_gateway.NewKGWInstance(stack, kwil_gateway.NewKGWInstanceInput{
+		Vpc:            defaultVPC,
+		KGWBinaryAsset: kgwBinaryS3Object,
+		KGWDirAsset:    kgwDirectoryAsset,
+		Config: kwil_gateway.KGWConfig{
+			Domain:           domain,
+			CorsAllowOrigins: cdkParams.CorsAllowOrigins.ValueAsString(),
+			SessionSecret:    cdkParams.SessionSecret.ValueAsString(),
+			ChainId:          jsii.String(config.GetEnvironmentVariables().ChainId),
+			Nodes:            tsnCluster.Nodes,
+		},
+	})
+
+	// add read permission to the kgw instance role
+	kgwBinaryS3Object.GrantRead(kgwInstance.Role)
+	kgwDirectoryAsset.GrantRead(kgwInstance.Role)
+
+	// Cloudfront for the gateway instance
+	// We use cloudfront to handle TLS termination. The certificate is created in a separate stack in us-east-1.
+	// We disable caching.
+	kwil_gateway.CloudfrontForEc2Instance(stack, kgwInstance.Instance.InstancePublicDnsName(), domain, hostedZone, props.cert)
+
+	// ## Output info
+	// Public ip of each TSN node
+	for _, node := range tsnCluster.Nodes {
+		awscdk.NewCfnOutput(stack, jsii.String("public-address-"+*node.Instance.Node().Id()), &awscdk.CfnOutputProps{
+			Value: node.Instance.InstancePublicIp(),
+		})
+	}
+
+	// Number of TSN nodes
+	awscdk.NewCfnOutput(stack, jsii.String("tsn-nodes-count"), &awscdk.CfnOutputProps{
+		Value: jsii.String(strconv.Itoa(len(tsnCluster.Nodes))),
+	})
+
+	// Public ip of the gateway instance
+	awscdk.NewCfnOutput(stack, jsii.String("gateway-public-address"), &awscdk.CfnOutputProps{
+		Value: kgwInstance.Instance.InstancePublicIp(),
+	})
+
 	awscdk.NewCfnOutput(stack, jsii.String("region"), &awscdk.CfnOutputProps{
 		Value: stack.Region(),
 	})
 
-	instanceRole := awsiam.NewRole(stack, jsii.String("InstanceRole"), &awsiam.RoleProps{
-		AssumedBy: awsiam.NewServicePrincipal(jsii.String("ec2.amazonaws.com"), nil),
-	})
-
-	// for some reason this is not working, it's not setting the repo correctly
-	//repo := awsecr.NewRepository(stack, jsii.String("ECRRepository"), &awsecr.RepositoryProps{
-	//	RepositoryName:     jsii.String(config.EcrRepoName(stack)),
-	//	RemovalPolicy:      awscdk.RemovalPolicy_DESTROY,
-	//	ImageTagMutability: awsecr.TagMutability_MUTABLE,
-	//	ImageScanOnPush:    jsii.Bool(false),
-	//	LifecycleRules: &[]*awsecr.LifecycleRule{
-	//		{
-	//			MaxImageCount: jsii.Number(10),
-	//			RulePriority:  jsii.Number(1),
-	//		},
-	//	},
-	//})
-
-	cacheType := "local"
-	cacheFromParams := "src=/tmp/buildx-cache/#IMAGE_NAME"
-	cacheToParams := "dest=/tmp/buildx-cache-new/#IMAGE_NAME"
-
-	if os.Getenv("CI") == "true" {
-		cacheType = "gha"
-		cacheFromParams = "scope=truflation/tsn/#IMAGE_NAME"
-		cacheToParams = "mode=max,scope=truflation/tsn/#IMAGE_NAME"
-	}
-
-	tsnImageAsset := awsecrassets.NewDockerImageAsset(stack, jsii.String("TsnImageAsset"), &awsecrassets.DockerImageAssetProps{
-		CacheFrom: &[]*awsecrassets.DockerCacheOption{
-			{
-				Type: jsii.String(cacheType),
-				// the image name here must match from the compose file, then the cache should work
-				// across different workflows
-				Params: UpdateParamsWithImageName(cacheFromParams, "tsn-db"),
-			},
-		},
-		CacheTo: &awsecrassets.DockerCacheOption{
-			Type:   jsii.String(cacheType),
-			Params: UpdateParamsWithImageName(cacheToParams, "tsn-db"),
-		},
-		File:      jsii.String("deployments/Dockerfile"),
-		Directory: jsii.String("../../"),
-	})
-	tsnImageAsset.Repository().GrantPull(instanceRole)
-
-	// Adding our docker compose file to the instance
-	dockerComposeAsset := awss3assets.NewAsset(stack, jsii.String("TsnComposeAsset"), &awss3assets.AssetProps{
-		Path: jsii.String("../../compose.yaml"),
-	})
-	dockerComposeAsset.GrantRead(instanceRole)
-
-	// differently from tsn-db, the gateway docker images will be built by the instance, not in GH actions.
-	kgwDirectoryAsset := awss3assets.NewAsset(stack, jsii.String("KgwComposeAsset"), &awss3assets.AssetProps{
-		// gateway directory contains more than one file to configure the gateway, so we need to zip it
-		Path: jsii.String("../gateway/"),
-	})
-	kgwDirectoryAsset.GrantRead(instanceRole)
-
-	initElements := []awsec2.InitElement{
-		awsec2.InitFile_FromExistingAsset(jsii.String("/home/ec2-user/docker-compose.yaml"), dockerComposeAsset, &awsec2.InitFileOptions{
-			Owner: jsii.String("ec2-user"),
-		}),
-		awsec2.InitFile_FromExistingAsset(jsii.String("/home/ec2-user/kgw.zip"), kgwDirectoryAsset, &awsec2.InitFileOptions{
-			Owner: jsii.String("ec2-user"),
-		}),
-	}
-
-	// default vpc
-	vpcInstance := awsec2.Vpc_FromLookup(stack, jsii.String("VPC"), &awsec2.VpcLookupOptions{
-		IsDefault: jsii.Bool(true),
-	})
-
-	// Create instance using tsnImageAsset hash so that the instance is recreated when the image changes.
-	newName := "TsnDBInstance" + *tsnImageAsset.AssetHash()
-
-	bucketName := "kwil-binaries"
-	kwilGatewayBucket := awss3.Bucket_FromBucketName(stack, jsii.String("KwilGatewayBucket"), jsii.String(bucketName))
-	objPath := "gateway/kgw-v0.2.0.zip"
-	kwilGatewayBucket.GrantRead(instanceRole, jsii.String(objPath))
-
-	instance := instance_utils.CreateInstance(stack, instanceRole, newName, vpcInstance, &initElements)
-
-	// Get the hosted zone.
-	domain := config.Domain(stack)
-	hostedZone := domain_utils.GetTSNHostedZone(stack)
-
-	gateway_utils.CloudfrontForEc2Instance(stack, instance.InstancePublicDnsName(), domain, hostedZone, props.cert)
-	//enable the instance to use the certificate
-	instance_utils.AddTsnDbStartupScriptsToInstance(instance_utils.AddStartupScriptsOptions{
-		Stack:         stack,
-		Instance:      instance,
-		TsnImageAsset: tsnImageAsset,
-	})
-	gateway_utils.AddKwilGatewayStartupScriptsToInstance(gateway_utils.AddKwilGatewayStartupScriptsOptions{
-		Instance: instance,
-		Domain:   domain,
-	})
-
-	// Output info.
-	awscdk.NewCfnOutput(stack, jsii.String("public-address"), &awscdk.CfnOutputProps{
-		Value: instance.InstancePublicIp(),
-	})
-
 	return stack
-}
-
-// ConvertParamsToMap converts a string of comma-separated key-value pairs to a map.
-// e.g.: "key1=value1,key2=value2" -> {"key1": "value1", "key2": "value2"}
-func ConvertParamsToMap(paramsStr string) *map[string]*string {
-	params := strings.Split(paramsStr, ",")
-	paramsMap := make(map[string]*string)
-	for _, param := range params {
-		kv := strings.Split(param, "=")
-		paramsMap[kv[0]] = jsii.String(kv[1])
-	}
-	return &paramsMap
-}
-
-// UpdateMapValues in every param, it replaces the target string with the value string.
-func UpdateMapValues(params *map[string]*string, target string, value string) {
-	for k, v := range *params {
-		(*params)[k] = jsii.String(strings.Replace(*v, target, value, -1))
-	}
-}
-
-func UpdateParamsWithImageName(paramsStr string, imageName string) *map[string]*string {
-	params := ConvertParamsToMap(paramsStr)
-	UpdateMapValues(params, "#IMAGE_NAME", imageName)
-	return params
 }
 
 // CertStack creates a stack with an ACM certificate for the domain, fixed at us-east-1.

@@ -79,14 +79,13 @@ jobs:
           # this must be on absolute path
           export CDK_DOCKER=$(pwd)/buildx.sh
 
-          cdk deploy --require-approval never --all
+          # GW_CORS_ALLOW_ORIGINS = Comma separated list of allowed origins
+          cdk deploy --require-approval never --all \
+            --parameters TSN-DB-Stack:sessionSecret=${{ secrets.GW_SESSION_SECRET }} \
+            --parameters TSN-DB-Stack:corsAllowOrigins=${{ secrets.GW_CORS_ALLOW_ORIGINS || '*' }}
+
         env:
           CI: true
-
-          # args used in gateway compose
-          # the job should fail if GW_SESSION_SECRET is not set
-          SESSION_SECRET: ${{ secrets.GW_SESSION_SECRET }}
-          # E.g.: our frontend. If not provided, defaults to *
-          CORS_ALLOWED_ORIGINS: ${{ vars.GW_CORS_ALLOWED_ORIGINS }}
-          # domain is also used, but it is hardcoded in the CDK process depending on environment
-          # e.g.: for staging, it is set to 'staging.tsn.truflation.com'
+          # used to instantiate configuration
+          KWIL_ADMIN_BIN_PATH: ../../.build/kwil-admin
+          CHAIN_ID: truflation-staging

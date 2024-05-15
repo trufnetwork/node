@@ -1,4 +1,4 @@
-package gateway_utils
+package kwil_gateway
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awscertificatemanager"

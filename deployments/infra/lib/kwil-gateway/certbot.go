@@ -1,4 +1,4 @@
-package gateway_utils
+package kwil_gateway
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
@@ -6,6 +6,9 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsroute53"
 	"github.com/aws/jsii-runtime-go"
 )
+
+// Note: we currently DON'T use certbot in our infrastructure. However, it's very likely that the current approach
+// of using other means for SSL certificates may change.
 
 // Certbot is a tool to automatically obtain and renew SSL certificates.
 // Limitations are the rates that Let's Encrypt enforces, such as how many certificates you can get per week for a domain.

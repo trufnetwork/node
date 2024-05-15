@@ -23,41 +23,42 @@ WORKDIR /app
 COPY --from=build /app/.build/kwild ./kwild
 COPY --from=build /app/.build/kwil-admin /app/kwil-admin
 
-ARG CHAIN_ID=truflation-staging
-ARG COPY_CONFIG_PATH
-ARG DB_HOST=kwil-postgres
-
-# P2P config
-# TODO when https://github.com/kwilteam/kwil-db/pull/706 is published, we can remove this workaround and use
-# KWILD_CHAIN_P2P_PERSISTENT_PEERS and KWILD_CHAIN_P2P_EXTERNAL_ADDRESS env directly
-ARG PERSISTENT_PEERS
-ARG EXTERNAL_ADDRESS
-
-# if COPY_CONFIG_PATH is not provided, we create a default config
-RUN if [ -d $COPY_CONFIG_PATH ];\
-    then \
-    ./kwil-admin setup init --chain-id $CHAIN_ID -o /root/.kwild ;\
-    fi
-
 
 # create entrypoint file
 RUN echo "#!/bin/sh" > /app/entrypoint.sh
 RUN echo "set -e" >> /app/entrypoint.sh
-RUN echo "exec /app/kwild --autogen --root-dir ${COPY_CONFIG_PATH:-/root/.kwild} \
+RUN echo "set -x" >> /app/entrypoint.sh
+# test if CONFIG_PATH and DB_HOST are provided at runtime
+RUN echo "test -n \"\$CONFIG_PATH\"" >> /app/entrypoint.sh
+RUN echo "test -n \"\$DB_HOST\"" >> /app/entrypoint.sh
+RUN echo "exec /app/kwild --root-dir \$CONFIG_PATH \
+  --app.hostname \"\$HOSTNAME\"\
   --app.http-listen-addr \"0.0.0.0:8080\"\
-  --app.pg-db-host $DB_HOST \\" >> /app/entrypoint.sh
+  --chain.p2p.listen-addr \"tcp://0.0.0.0:26656\"\
+  --app.pg-db-host \$DB_HOST \\" >> /app/entrypoint.sh
 
+# TODO when https://github.com/kwilteam/kwil-db/pull/706 is published, we can remove all these workarounds
+#   and configure from the docker-compose file instead
+
+# NOTE:
+# we're hardcoding chain.p2p.listen-addr to override any value provided in the config file
+# this bypasses the need to change kwil-admin command that generates network config
+# this becomes needed as the current behavior is to setup incremental p2p ports for each node, while we
+# want this to be fixed at 26656 for all nodes in the network
+
+# P2P config
+# KWILD_CHAIN_P2P_PERSISTENT_PEERS and KWILD_CHAIN_P2P_EXTERNAL_ADDRESS env directly
 
 # if PERSISTENT_PEERS is provided, use with --chain.p2p.persistent-peers
-RUN if [ -n "$PERSISTENT_PEERS" ];\
+RUN if [ -n "\$PERSISTENT_PEERS" ];\
     then \
-    echo "  --chain.p2p.persistent-peers \"$PERSISTENT_PEERS\" \\" >> /app/entrypoint.sh;\
+    echo "  --chain.p2p.persistent-peers \"\$PERSISTENT_PEERS\" \\" >> /app/entrypoint.sh;\
     fi
 
 # if EXTERNAL_ADDRESS is provided, use with --chain.p2p.external-address
-RUN if [ -n "$EXTERNAL_ADDRESS" ];\
+RUN if [ -n "\$EXTERNAL_ADDRESS" ];\
     then \
-    echo "  --chain.p2p.external-address \"$EXTERNAL_ADDRESS\" \\" >> /app/entrypoint.sh;\
+    echo "  --chain.p2p.external-address \"\$EXTERNAL_ADDRESS\" \\" >> /app/entrypoint.sh;\
     fi
 
 # close entrypoint file

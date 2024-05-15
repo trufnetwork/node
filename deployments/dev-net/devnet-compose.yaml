@@ -46,7 +46,7 @@ services:
     image: "tsn-conf:local"
     build:
       context: ../..
-      dockerfile: ./deployments/dev-net/gen-kwil-conf.dockerfile
+      dockerfile: ./deployments/dev-net/network-conf.dockerfile
       cache_from:
         - ${CACHE_FROM:-type=local,src=/tmp/buildx-cache}/generate-kwil-conf
       cache_to:
@@ -67,13 +67,13 @@ services:
     build:
       context: ../..
       dockerfile: ./deployments/Dockerfile
-      args:
-        - COPY_CONFIG_PATH=/root/.kwild/node0/
-        - DB_HOST=kwil-postgres-1
       cache_from:
         - ${CACHE_FROM:-type=local,src=/tmp/buildx-cache}/tsn-db
       cache_to:
         - ${CACHE_TO:-type=local,dest=/tmp/buildx-cache-new}/tsn-db
+    environment:
+      - CONFIG_PATH=/root/.kwild/node0/
+      - DB_HOST=kwil-postgres-1
     ports:
       - "8080:8080"
     depends_on:
@@ -94,13 +94,13 @@ services:
     build:
       context: ../..
       dockerfile: ./deployments/Dockerfile
-      args:
-        - COPY_CONFIG_PATH=/root/.kwild/node1/
-        - DB_HOST=kwil-postgres-2
       cache_from:
         - ${CACHE_FROM:-type=local,src=/tmp/buildx-cache}/tsn-db
       cache_to:
         - ${CACHE_TO:-type=local,dest=/tmp/buildx-cache-new}/tsn-db
+    environment:
+      - CONFIG_PATH=/root/.kwild/node1/
+      - DB_HOST=kwil-postgres-2
     ports:
       - "8081:8080"
     depends_on:
@@ -114,6 +114,7 @@ services:
       - type: volume
         source: tsn-conf
         target: /root/.kwild
+
 
 
 networks:

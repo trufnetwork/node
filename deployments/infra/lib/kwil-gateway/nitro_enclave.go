@@ -1,4 +1,4 @@
-package gateway_utils
+package kwil_gateway
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
@@ -6,6 +6,9 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/jsii-runtime-go"
 )
+
+// Note: we currently DON'T use Nitro Enclave in our infrastructure. However, it's very likely that the current approach
+// of using other means for SSL certificates may change.
 
 // Nitro enclave requires 4cpu and 8GB of memory
 // they wouldn't be the best choice for a small instance
