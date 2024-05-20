@@ -2,9 +2,48 @@ database truflation_system_contract;
 
 // `system_streams` is the table that stores the streams that have been accepted by the TSN Gov
 table system_streams {
-    id text primary notnull minlen(36) maxlen(36), // rfc 4122 uuidv4
     stream_id text notnull minlen(32) maxlen(32), // stream id, name of contract in form of a hash, starts with st
     data_provider text notnull minlen(42) maxlen(42), // wallet address, deployer of contract, starts with 0x
-    accepted_at text,
-    revoked_at text
+    accepted_at int notnull, // blockheight
+    revoked_at int, // blockheight
+
+    #data_provider_stream_id_idx primary(data_provider, stream_id)
+}
+
+procedure get_official_stream($data_provider text, $stream_id text) private view returns (result bool) {
+    for $row in SELECT * FROM system_streams WHERE data_provider = $data_provider AND stream_id = $stream_id AND revoked_at IS NULL {
+        return $row.stream_id != null;
+    }
+
+    return false;
+}
+
+procedure accept_stream($data_provider text, $stream_id text) public owner {
+    // TODO: check if stream exists
+    // TODO: if it's a composed stream, check if all children are already system streams
+
+    $is_official_stream bool := get_official_stream($data_provider, $stream_id);
+
+    if $is_official_stream == true {
+        error('this stream is already official');
+    }
+
+    // todo replace by real blockheight by kwil
+    $current_blockheight int := 1;
+
+     INSERT INTO system_streams (stream_id, data_provider, accepted_at)
+     VALUES ($stream_id, $data_provider, $current_blockheight);
+}
+
+procedure revoke_stream($data_provider text, $stream_id text) public owner {
+    $is_official_stream bool := get_official_stream($data_provider, $stream_id);
+
+    // Check if
+    if $is_official_stream == false {
+        error('this stream is not official');
+    }
+
+    $current_blockheight int := 1;
+
+    UPDATE system_streams SET revoked_at = $current_blockheight WHERE data_provider = $data_provider AND stream_id = $stream_id;
 }
