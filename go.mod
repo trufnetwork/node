@@ -8,14 +8,12 @@ require (
 	github.com/stretchr/testify v1.8.4
 )
 
-<!-- To test a specific kwil-db version, use the following replacements-->
-<!--
-replace (
-	github.com/kwilteam/kwil-db => /where_you_cloned/kwil-db
-	github.com/kwilteam/kwil-db/core => /where_you_cloned/kwil-db/core
-	github.com/kwilteam/kwil-db/parse => /where_you_cloned/kwil-db/parse
-)
--->
+// To test a specific kwil-db version, use the following replacements
+// replace (
+// 	github.com/kwilteam/kwil-db => /where_you_cloned/kwil-db
+// 	github.com/kwilteam/kwil-db/core => /where_you_cloned/kwil-db/core
+// 	github.com/kwilteam/kwil-db/parse => /where_you_cloned/kwil-db/parse
+// )
 
 require (
 	dario.cat/mergo v1.0.0 // indirect
