@@ -1,0 +1,10 @@
+database truflation_system_contract;
+
+// `system_streams` is the table that stores the streams that have been accepted by the TSN Gov
+table system_streams {
+    id text primary notnull minlen(36) maxlen(36), // rfc 4122 uuidv4
+    stream_id text notnull minlen(32) maxlen(32), // stream id, name of contract in form of a hash, starts with st
+    data_provider text notnull minlen(42) maxlen(42), // wallet address, deployer of contract, starts with 0x
+    accepted_at text,
+    revoked_at text
+}
