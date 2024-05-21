@@ -9,3 +9,8 @@ deploy contract
 ../../.build/kwil-cli database drop composed_stream_a --sync
 ../../.build/kwil-cli database deploy -p=../../internal/contracts/composed_stream_template.kf --name composed_stream_a --sync
 ```
+
+call init
+```shell
+../../.build/kwil-cli database execute --action=init -n=composed_stream_a --sync 
+```
