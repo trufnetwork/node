@@ -1,0 +1,29 @@
+// This file is the template to be used by Data Providers to deploy their own contracts.
+// A stream must conform to this same interface (read and permissions) to be eligible to officialization from our
+// accepted System Streams.
+
+database primitive_stream_db_name;
+
+table primitive_events {
+    date_value text unique notnull minlen(10) maxlen(10), // enforce yyyy-mm-dd format
+    value int notnull,
+    created_at text notnull, // based on blockheight
+
+    #identifier_idx   primary(date_value, created_at)
+}
+
+table metadata {
+    row_id      uuid    primary notnull,
+    key         text    notnull,
+    value_i     int,                 // integer type
+    // TODO: uncomment to add this field in imminent kwil support
+    // value_f     decimal,             // float type
+    value_b     bool,                // boolean type
+    value_s     text,                // string type
+    value_ref   text,                // indexed string type
+    created_at  int     notnull,     // block height
+    disabled_at int,                 // block height
+
+    #key_idx    index(key),
+    #ref_idx    index(value_ref)
+}
