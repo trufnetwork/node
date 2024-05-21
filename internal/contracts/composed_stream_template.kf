@@ -5,7 +5,7 @@
 database composed_stream_db_name;
 
 table taxonomies {
-    child_stream_id text    notnull,
+    child_stream_id     text    notnull,
     child_data_provider text    notnull,
     weight              int     notnull,
     created_at          int     notnull,    //  block height
@@ -25,7 +25,7 @@ table metadata {
     value_s     text,                // string type
     value_ref   text,                // indexed string type
     created_at  int     notnull,     // block height
-    disabled_at int     notnull,     // block height
+    disabled_at int,                 // block height
 
     #key_idx    index(key),
     #ref_idx    index(value_ref)
