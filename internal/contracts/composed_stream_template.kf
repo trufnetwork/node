@@ -68,10 +68,9 @@ procedure init() public owner {
 
     $readonly_keys text[] := [
         'type',
-        'readonly_keys',
-        'taxonomy_version',
         'stream_owner',
-        'readonly_key' // itself, so it's not updated
+        'readonly_key',
+        'taxonomy_version'
     ];
 
     for $key in $readonly_keys {
