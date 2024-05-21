@@ -1,21 +1,32 @@
- // this file exists purely for informational purposes
- // it is the unparsed version of composed_template.json,
- // which is a template used to generate contracts from.
- // contracts can be parsed at https://ide.kwil.com,
- // and right-clicking the files in the "compiled files"
- // section of the third tab
- database composed_example;
+// This file is the template to be used by Data Providers to deploy their own contracts.
+// A stream must conform to this same interface (read and permissions) to be eligible to officialization from our
+// accepted System Streams.
 
- use composed_stream as composed_stream;
+database composed_stream_db_name;
 
-@kgw(authn='true')
- action get_index($date, $date_to) public view {
-     composed_stream.get_index($date, $date_to);
-     // we ensure no other extension or query is called after this
- }
+table taxonomies {
+    child_stream_id text    notnull,
+    child_data_provider text    notnull,
+    weight              int     notnull,
+    created_at          int     notnull,    //  block height
+    disabled_at         int,                //  block height
+    version             int     notnull,
 
-@kgw(authn='true')
- action get_primitive($date, $date_to) public view {
-     composed_stream.get_primitive($date, $date_to);
-     // we ensure no other extension or query is called after this
- }
+    #identifier_idx   primary(version, child_data_provider, child_stream_id)
+}
+
+table metadata {
+    row_id      uuid    primary notnull,
+    key         text    notnull,
+    value_i     int,                 // integer type
+    // TODO: uncomment to add this field in imminent kwil support
+    // value_f     decimal,             // float type
+    value_b     bool,                // boolean type
+    value_s     text,                // string type
+    value_ref   text,                // indexed string type
+    created_at  int     notnull,     // block height
+    disabled_at int     notnull,     // block height
+
+    #key_idx    index(key),
+    #ref_idx    index(value_ref)
+}
