@@ -27,3 +27,51 @@ table metadata {
     #key_idx    index(key),
     #ref_idx    index(value_ref)
 }
+
+// init method prepares the contract with default values and permanent ones
+procedure init() public owner {
+    // check if it was already initialized
+    // for that we check if type is already provided
+    for $row in SELECT * FROM metadata WHERE key = 'type' LIMIT 1 {
+        error('this contract was already initialized');
+    }
+
+    // TODO replace by intrinsic current_block value when kwil supports
+    $current_block int := 1;
+
+    // uuid's namespaces are any random generated uuid from https://www.uuidtools.com/v5
+    // but each usage should be different to maintain determinism, so we reuse the previous result
+    $current_uuid uuid := uuid_generate_v5('111bfa42-17a2-11ef-bf03-325096b39f47'::uuid, @txid);
+
+    // type = primitive
+    $current_uuid :=  uuid_generate_v5($current_uuid, @txid);
+    INSERT INTO metadata (row_id, key, value_s, created_at)
+        VALUES ($current_uuid, 'type', 'primitive', $current_block);
+
+    // stream_owner = @caller
+    $current_uuid :=  uuid_generate_v5($current_uuid, @txid);
+    INSERT INTO metadata (row_id, key, value_ref, created_at)
+        VALUES ($current_uuid, 'stream_owner', @caller, 1);
+
+    // compose_visibility = 0 (public)
+    $current_uuid :=  uuid_generate_v5($current_uuid, @txid);
+    INSERT INTO metadata (row_id, key, value_i, created_at)
+        VALUES ($current_uuid, 'compose_visibility', 0, $current_block);
+
+    // read_visibility = 0 (public)
+    $current_uuid :=  uuid_generate_v5($current_uuid, @txid);
+    INSERT INTO metadata (row_id, key, value_i, created_at)
+        VALUES ($current_uuid, 'read_visibility', 0, $current_block);
+
+    $readonly_keys text[] := [
+        'type',
+        'stream_owner',
+        'readonly_key'
+    ];
+
+    for $key in $readonly_keys {
+        $current_uuid :=  uuid_generate_v5($current_uuid, @txid);
+        INSERT INTO metadata (row_id, key, value_s, created_at)
+            VALUES ($current_uuid, 'readonly_key', $key, $current_block);
+    }
+}
