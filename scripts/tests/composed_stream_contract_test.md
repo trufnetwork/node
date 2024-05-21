@@ -10,7 +10,7 @@ deploy contract
 ../../.build/kwil-cli database deploy -p=../../internal/contracts/composed_stream_template.kf --name composed_stream_a --sync
 ```
 
-call init
+call init. If you run twice, it should error.
 ```shell
 ../../.build/kwil-cli database execute --action=init -n=composed_stream_a --sync 
 ```
