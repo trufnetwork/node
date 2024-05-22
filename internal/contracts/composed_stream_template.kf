@@ -57,7 +57,6 @@ procedure stream_owner_only() private {
 
 // init method prepares the contract with default values and permanent ones
 procedure init() public owner {
-    $is_initiated bool := is_initiated();
     if is_initiated() {
         error('this contract was already initialized');
     }
