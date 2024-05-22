@@ -58,4 +58,11 @@ uuid=$(python3 -c 'import uuid, sys; print(uuid.UUID(bytes=bytes(map(int, sys.ar
 
 # Disable the metadata
 ../../.build/kwil-cli database execute row_id:$uuid --action=disable_metadata -n=primitive_stream_a --sync
-``
+```
+
+### Insert Record
+
+insert record
+```shell
+../../.build/kwil-cli database execute --action=insert_record -n=primitive_stream_a date_value:2021-01-01 value:1 --sync 
+```

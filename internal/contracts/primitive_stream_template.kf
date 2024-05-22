@@ -7,7 +7,7 @@ database primitive_stream_db_name;
 table primitive_events {
     date_value text unique notnull minlen(10) maxlen(10), // enforce yyyy-mm-dd format
     value int notnull,
-    created_at text notnull, // based on blockheight
+    created_at int notnull, // based on blockheight
 
     #identifier_idx   primary(date_value, created_at)
 }
@@ -217,4 +217,19 @@ procedure disable_metadata($row_id uuid) public {
     if $found == false {
         error('metadata record not found');
     }
+}
+
+procedure insert_record($date_value text, $value int) public {
+    stream_owner_only();
+
+    if is_initiated() == false {
+        error('contract must be initiated');
+    }
+
+    // TODO replace by context value when kwil supports
+    $current_block int := 3;
+
+    // insert data
+    INSERT INTO primitive_events (date_value, value, created_at)
+        VALUES ($date_value, $value, $current_block);
 }
