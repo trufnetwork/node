@@ -39,3 +39,10 @@ insert readonly prop
 ```shell
 ../../.build/kwil-cli database execute key:type value:other val_type:string --action=insert_metadata -n=primitive_stream_a --sync 
 ```
+
+### Insert Record
+
+insert record
+```shell
+../../.build/kwil-cli database execute --action=insert_record -n=primitive_stream_a date_value:2021-01-01 value:1 --sync 
+```
