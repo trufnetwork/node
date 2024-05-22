@@ -104,6 +104,9 @@ procedure init() public owner {
     }
 }
 
+// Note:    We're letting the user be the source of truth for which type a key should have.
+//          To change that, we could initiate `key_type:<key>` key on metadata table, that could be used here
+//          to enforce a type. However, this would force us to know every metadata key before deploying a contract
 procedure insert_metadata(
     $key text,
     $value text,
