@@ -12,7 +12,7 @@ table taxonomies {
     disabled_at         int,                //  block height
     version             int     notnull,
 
-    #identifier_idx   primary(version, child_data_provider, child_stream_id),
+    #identifier_idx   primary(version, child_data_provider, child_stream_id)
 }
 
 table metadata {
@@ -28,7 +28,7 @@ table metadata {
     disabled_at int,                 // block height
 
     #key_idx        index(key),
-    #ref_idx        index(value_ref)
+    #ref_idx        index(value_ref),
     #created_idx    index(created_at) // faster sorting
 }
 

@@ -25,7 +25,7 @@ table metadata {
     disabled_at int,                 // block height
 
     #key_idx    index(key),
-    #ref_idx    index(value_ref)
+    #ref_idx    index(value_ref),
     #created_idx    index(created_at) // faster sorting
 }
 
