@@ -192,3 +192,33 @@ procedure get_metadata($key text, $only_latest bool) public view returns table(
              ORDER BY created_at DESC;
         }
 }
+
+procedure disable_metadata($row_id uuid) public {
+    stream_owner_only();
+
+    // TODO when kwil enables current block from context
+    $current_block int := 3;
+
+    $found bool := false;
+
+    // Check if the metadata is not read-only
+    for $metadata_row in
+    SELECT key
+    FROM metadata
+    WHERE row_id = $row_id AND disabled_at IS NULL
+    LIMIT 1 {
+        $found := true;
+        $row_key text := $metadata_row.key;
+
+        for $readonly_row in SELECT row_id FROM metadata WHERE key = 'readonly_key' AND value_s = $row_key LIMIT 1 {
+            error('Cannot disable read-only metadata');
+        }
+
+        UPDATE metadata SET disabled_at = $current_block
+        WHERE row_id = $row_id;
+    }
+
+    if $found == false {
+        error('metadata record not found');
+    }
+}

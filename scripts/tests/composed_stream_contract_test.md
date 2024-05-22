@@ -28,6 +28,16 @@ get `compose_visibility`
 ../../.build/kwil-cli database call key:compose_visibility only_latest:false --action=get_metadata -n=composed_stream_a
 ```
 
+disable latest `compose_visibility`
+```shell
+# Extract the latest row_id of key compose_visibility and convert to UUID
+row_id=$(../../.build/kwil-cli database call key:compose_visibility only_latest:true --action=get_metadata -n=composed_stream_a --output json | jq -r '.result[0].row_id | @sh')
+uuid=$(python3 -c 'import uuid, sys; print(uuid.UUID(bytes=bytes(map(int, sys.argv[1].split()))).urn[9:])' "$row_id")
+
+# Disable the metadata
+../../.build/kwil-cli database execute row_id:$uuid --action=disable_metadata -n=composed_stream_a --sync
+```
+
 #### Metadata Errors
 
 insert with bad type
@@ -39,3 +49,14 @@ insert readonly prop
 ```shell
 ../../.build/kwil-cli database execute key:type value:other val_type:string --action=insert_metadata -n=composed_stream_a --sync 
 ```
+
+disable readonly metadata
+```shell
+# Extract the latest row_id of key `type` and convert to UUID
+row_id=$(../../.build/kwil-cli database call key:type only_latest:true --action=get_metadata -n=composed_stream_a --output json | jq -r '.result[0].row_id | @sh')
+uuid=$(python3 -c 'import uuid, sys; print(uuid.UUID(bytes=bytes(map(int, sys.argv[1].split()))).urn[9:])' "$row_id")
+
+# Disable the metadata
+../../.build/kwil-cli database execute row_id:$uuid --action=disable_metadata -n=composed_stream_a --sync
+```
+
