@@ -28,11 +28,33 @@ table metadata {
     #ref_idx    index(value_ref)
 }
 
-// init method prepares the contract with default values and permanent ones
-procedure init() public owner {
+procedure is_initiated() private view returns (res bool) {
     // check if it was already initialized
     // for that we check if type is already provided
     for $row in SELECT * FROM metadata WHERE key = 'type' LIMIT 1 {
+        return true;
+    }
+
+    return false;
+}
+
+procedure is_stream_owner($address text) private view returns (res bool) {
+    for $row in SELECT * FROM metadata WHERE key = 'stream_owner' AND value_ref = $address LIMIT 1 {
+        return true;
+    }
+    return false;
+}
+
+procedure stream_owner_only() private {
+    if is_stream_owner(@caller) == false  {
+        error('Stream owner only procedure');
+    }
+}
+
+// init method prepares the contract with default values and permanent ones
+procedure init() public owner {
+    $is_initiated bool := is_initiated();
+    if is_initiated() {
         error('this contract was already initialized');
     }
 
@@ -74,4 +96,95 @@ procedure init() public owner {
         INSERT INTO metadata (row_id, key, value_s, created_at)
             VALUES ($current_uuid, 'readonly_key', $key, $current_block);
     }
+}
+
+// Note:    We're letting the user be the source of truth for which type a key should have.
+//          To change that, we could initiate `key_type:<key>` key on metadata table, that could be used here
+//          to enforce a type. However, this would force us to know every metadata key before deploying a contract
+procedure insert_metadata(
+    $key text,
+    $value text,
+    $val_type text
+    // TODO: would be better to use value_x from args. However this doesn't work well for nullable inputs
+    //  i.e. if we use a bool type we'll get an conversion error from Nil -> bool. And we don't want to force user to provide
+    //  a value if nil is intended.
+    ) public {
+
+    $value_i int;
+    $value_s text;
+    $value_f text; // todo: decimal
+    $value_b bool;
+    $value_ref text;
+
+    if $val_type == 'int' {
+        $value_i := $value::int;
+    } elseif $val_type == 'string' {
+        $value_s := $value;
+    } elseif $val_type == 'bool' {
+        $value_b := $value::bool;
+    } elseif $val_type == 'ref' {
+        $value_ref := $value;
+    } elseif $val_type == 'float' {
+        // TODO add ::decimal
+        $value_f := $value;
+    } else {
+        error(format('unknown type used "%s". valid types = "float" | "bool" | "int" | "ref" | "string"', $val_type));
+    }
+
+    stream_owner_only();
+
+    if is_initiated() == false {
+        error('contract must be initiated');
+    }
+
+    // check if it's read-only
+    for $row in SELECT * FROM metadata WHERE key = 'readonly_key' AND value_s = $key LIMIT 1 {
+        error('Cannot insert metadata for read-only key');
+    }
+
+    $uuid uuid := uuid_generate_v5('1361df5d-0230-47b3-b2c1-37950cf51fe9'::uuid, @txid);
+    // TODO replace by context value when kwil supports
+    $current_block int := 2;
+
+    // insert data
+    // TODO add value_f
+    INSERT INTO metadata (row_id, key, value_i, value_s, value_b, value_ref, created_at)
+        VALUES ($uuid, $key, $value_i, $value_s, $value_b, $value_ref, $current_block);
+}
+
+procedure get_metadata($key text, $only_latest bool) public view returns table(
+        row_id uuid,
+        value_i int,
+        // TODO: uncomment when supported
+        // value_f decimal,
+        value_b bool,
+        value_s text,
+        value_ref text,
+        created_at int
+        ) {
+
+        if $only_latest {
+            return SELECT
+                          row_id,
+                          value_i,
+                          value_b,
+                          value_s,
+                          value_ref,
+                          created_at
+            FROM metadata
+            WHERE key = $key AND disabled_at IS NULL
+            ORDER BY created_at DESC
+            LIMIT 1;
+        } else {
+            return SELECT
+                          row_id,
+                          value_i,
+                          value_b,
+                          value_s,
+                          value_ref,
+                          created_at
+             FROM metadata
+             WHERE key = $key AND disabled_at IS NULL
+             ORDER BY created_at DESC;
+        }
 }
