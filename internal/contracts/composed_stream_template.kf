@@ -13,8 +13,6 @@ table taxonomies {
     version             int     notnull,
 
     #identifier_idx   primary(version, child_data_provider, child_stream_id),
-    // faster sorting
-    #created_idx     index(created_at)
 }
 
 table metadata {
@@ -29,8 +27,9 @@ table metadata {
     created_at  int     notnull,     // block height
     disabled_at int,                 // block height
 
-    #key_idx    index(key),
-    #ref_idx    index(value_ref)
+    #key_idx        index(key),
+    #ref_idx        index(value_ref)
+    #created_idx    index(created_at) // faster sorting
 }
 
 procedure is_initiated() private view returns (res bool) {

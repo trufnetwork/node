@@ -26,6 +26,7 @@ table metadata {
 
     #key_idx    index(key),
     #ref_idx    index(value_ref)
+    #created_idx    index(created_at) // faster sorting
 }
 
 procedure is_initiated() private view returns (res bool) {
