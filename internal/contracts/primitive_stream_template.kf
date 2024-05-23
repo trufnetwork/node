@@ -203,3 +203,45 @@ procedure insert_record($date_value text, $value int) public {
     INSERT INTO primitive_events (date_value, value, created_at)
         VALUES ($date_value, $value, $current_block);
 }
+
+// TODO: frozen_at is not used yet, but it will be used for lookback mechanism
+// we can't do floating point division, but Truflation normally tracks
+// index precision to the thousandth, so we will multiply by 1000 before performing integer division.
+// Truflations calculation is ((current_primitive/first_primitive)*100).
+// Therefore, we will alter the equation to ((current_primitive*100000)/first_primitive).
+// This essentially gives us the same result, but with an extra 3 digits of precision.
+// index := (currentPrimitive * 100000) / basePrimitive
+procedure get_index($date_from text, $date_to text, $frozen_at text) private view returns table(
+        date_value text,
+        value int,
+        index int
+        ) {
+
+    $dateFromValue text := '0000-00-00';
+    if $date_from != '' {
+        $dateFromValue := $date_from;
+    }
+
+    $dateToValue text := '9999-99-99';
+    if $date_to != '' {
+        $dateToValue := $date_to;
+    }
+
+    $baseValue int := get_base_value();
+    for $row in SELECT date_value, value FROM primitive_events WHERE date_value >= $dateFromValue AND date_value <= $dateToValue ORDER BY date_value DESC, created_at DESC {
+        // TODO: replace the following line by the commented one when kwil supports division
+        // as per docs, it should be supported, but it's not working
+        // return next $row.date_value, row.value * 100000 / $baseValue;
+        return next $row.date_value, $row.value * 100000 * $baseValue;
+    }
+}
+
+// get_base_value returns the first value of the primitive stream
+procedure get_base_value() private view returns (value int) {
+    for $row in SELECT value from primitive_events ORDER BY date_value ASC, created_at DESC LIMIT 1 {
+        return $row.value;
+    }
+
+    // if no iterations, then there is no base value
+    error('no base value found');
+}

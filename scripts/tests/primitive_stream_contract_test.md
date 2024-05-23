@@ -45,4 +45,12 @@ insert readonly prop
 insert record
 ```shell
 ../../.build/kwil-cli database execute --action=insert_record -n=primitive_stream_a date_value:2021-01-01 value:1 --sync 
+../../.build/kwil-cli database execute --action=insert_record -n=primitive_stream_a date_value:2021-01-02 value:2 --sync 
+```
+
+### Get Index
+
+get index
+```shell
+../../.build/kwil-cli database call --action=get_index date_from:2021-01-01 date_to:2021-01-02 frozen_at: -n=primitive_stream_a
 ```
