@@ -28,10 +28,29 @@ get `read_visibility`
 ../../.build/kwil-cli database call key:read_visibility only_latest:false --action=get_metadata -n=primitive_stream_a
 ```
 
-Check read access for a public stream
+Check read access for stream
 ```shell
-wallet=$(../../.build/kwil-cli account id --private-key 0000000000000000000000000000000000000000000000000000000000000123)
+wallet=0x$(../../.build/kwil-cli account id --private-key 0000000000000000000000000000000000000000000000000000000000000123)
 ../../.build/kwil-cli database call wallet:$wallet --action=is_wallet_allowed_to_read -n=primitive_stream_a
+```
+
+Give read permission to wallet
+```shell
+other=0x$(../../.build/kwil-cli account id --private-key 0000000000000000000000000000000000000000000000000000000000000123)
+
+../../.build/kwil-cli database execute key:allow_read_wallet value:$other val_type:ref --action=insert_metadata -n=primitive_stream_a --sync
+```
+
+Check stream owner
+```shell
+owner=0x$(../../.build/kwil-cli account id)
+other=0x$(../../.build/kwil-cli account id --private-key 0000000000000000000000000000000000000000000000000000000000000123)
+
+# should be true
+../../.build/kwil-cli database call wallet:$owner --action=is_stream_owner -n=primitive_stream_a
+
+# should be false
+../../.build/kwil-cli database call wallet:$other --action=is_stream_owner -n=primitive_stream_a --owner $owner
 ```
 
 disable latest `read_visibility`
