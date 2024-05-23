@@ -51,7 +51,7 @@ procedure is_wallet_allowed_to_read($wallet text) public view returns (value boo
     // if public, anyone can always read
     // If there's no visibility metadata, it's public.
     $visibility int := 0;
-    for $v_row in get_metadata('read_visibility', true) {
+    for $v_row in SELECT * FROM get_metadata('read_visibility', true) {
         $visibility := $v_row.value_i;
     }
 
@@ -117,10 +117,12 @@ procedure init() public owner {
         'readonly_key'
     ];
 
+    // TODO: key is converted to text due to a bug(?) in kwil.
+    // The key itself is already a text but somehow it's recognized as a []text
     for $key in $readonly_keys {
         $current_uuid :=  uuid_generate_v5($current_uuid, @txid);
         INSERT INTO metadata (row_id, metadata_key, value_s, created_at)
-            VALUES ($current_uuid, 'readonly_key', $key, $current_block);
+            VALUES ($current_uuid, 'readonly_key', $key::text, $current_block);
     }
 }
 
@@ -277,22 +279,32 @@ procedure get_index($date_from text, $date_to text, $frozen_at text) private vie
         error('wallet not allowed to read');
     }
 
-    $dateFromValue text := '0000-00-00';
-    if $date_from != '' {
-        $dateFromValue := $date_from;
-    }
-
-    $dateToValue text := '9999-99-99';
-    if $date_to != '' {
-        $dateToValue := $date_to;
-    }
-
     $baseValue int := get_base_value();
-    for $row in SELECT date_value, value FROM primitive_events WHERE date_value >= $dateFromValue AND date_value <= $dateToValue ORDER BY date_value DESC, created_at DESC {
-        // TODO: replace the following line by the commented one when kwil supports division
-        // as per docs, it should be supported, but it's not working
-        // return next $row.date_value, row.value * 100000 / $baseValue;
-        return next $row.date_value, $row.value * 100000 * $baseValue;
+    if $baseValue == 0 {
+        error('base value is 0');
+    }
+
+    // TODO: had to use this workaround because && operator is not working
+    // It will return multiple records on the given date if there are multiple records with the same date
+    // See get_record for the explanation
+    if $date_from != '' {
+        if $date_to != '' {
+            for $row_index1 in SELECT date_value, value FROM primitive_events WHERE date_value >= $date_from AND date_value <= $date_to ORDER BY date_value DESC, created_at DESC {
+                return next $row_index1.date_value, $row_index1.value * 100000 / $baseValue;
+            }
+        } else {
+            for $row_index2 in SELECT date_value, value FROM primitive_events WHERE date_value >= $date_from ORDER BY date_value DESC, created_at DESC {
+                return next $row_index2.date_value, $row_index2.value * 100000 / $baseValue;
+            }
+        }
+    } else {
+        if $date_to == '' {
+            for $row_index3 in SELECT date_value, value FROM primitive_events ORDER BY date_value DESC, created_at DESC LIMIT 1 {
+                return next $row_index3.date_value, $row_index3.value * 100000 / $baseValue;
+            }
+        } else {
+            error('date_from is required if date_to is provided');
+        }
     }
 }
 
@@ -304,4 +316,67 @@ procedure get_base_value() private view returns (value int) {
 
     // if no iterations, then there is no base value
     error('no base value found');
+}
+
+// TODO: frozen_at is not used yet, but it will be used for lookback mechanism
+procedure get_record(
+    $date_from text,
+    $date_to text,
+    $frozen_at text
+    ) public view returns table(
+    date_value text,
+    value int
+    ) {
+
+    // check read access
+    if is_wallet_allowed_to_read(@caller) == false {
+        error('wallet not allowed to read');
+    }
+
+    // TODO: whereClause here is a placeholder only, not supported yet, but it will make things cleaner if it available
+    //$whereClause text := 'WHERE 1=1 ';
+    //if $date_from != '' {
+    //    $whereClause := $whereClause || 'AND date_value >= $date_from ';
+    //}
+
+    //if $date_to != '' {
+    //    $whereClause := $whereClause || 'AND date_value <= $date_to ';
+    //}
+
+
+    // TODO: Normally we would use the following query to get the latest value of each date
+    // But it's not working for JOIN and MAX() function
+    //for $row in SELECT date_value, value FROM primitive_events JOIN (SELECT date_value, MAX(created_at) as created_at FROM primitive_events GROUP BY date_value) as max_created
+    //ON primitive_events.date_value = max_created.date_value AND primitive_events.created_at = max_created.created_at
+    //$whereClause
+    //ORDER BY date_value DESC {
+    //    return next $row.date_value, $row.value;
+    //}
+
+    // TODO: had to use this workaround because && operator is not working
+    // Also, it will return multiple records on the given date if there are multiple records with the same date
+    if $date_from != '' {
+        if $date_to != '' {
+            for $row_record1 in SELECT date_value, value FROM primitive_events
+             WHERE date_value >= $date_from AND date_value <= $date_to
+             ORDER BY date_value DESC {
+                return next $row_record1.date_value, $row_record1.value;
+            }
+        } else {
+            for $row_record2 in SELECT date_value, value FROM primitive_events
+            WHERE date_value >= $date_from
+            ORDER BY date_value DESC {
+                return next $row_record2.date_value, $row_record2.value;
+            }
+        }
+    } else {
+        if $date_to == '' {
+            for $row_record3 in SELECT date_value, value FROM primitive_events
+            ORDER BY date_value DESC, created_at DESC LIMIT 1 {
+                return next $row_record3.date_value, $row_record3.value;
+            }
+        } else {
+            error('date_from is required if date_to is provided');
+        }
+    }
 }
