@@ -53,6 +53,23 @@ other=0x$(../../.build/kwil-cli account id --private-key 00000000000000000000000
 ../../.build/kwil-cli database call wallet:$other --action=is_stream_owner -n=composed_stream_a --owner $owner
 ```
 
+transfer ownership
+```shell
+new_owner_pk=0000000000000000000000000000000000000000000000000000000000000456
+new_owner=0x$(../../.build/kwil-cli account id --private-key $new_owner_pk)
+old_owner=0x$(../../.build/kwil-cli account id)
+../../.build/kwil-cli database execute new_owner:$new_owner --action=transfer_stream_ownership -n=composed_stream_a --sync
+
+// should be true
+../../.build/kwil-cli database call wallet:$new_owner --action=is_stream_owner -n=composed_stream_a
+
+// should be false
+../../.build/kwil-cli database call wallet:$old_owner --action=is_stream_owner -n=composed_stream_a
+
+# transfer back
+../../.build/kwil-cli database execute new_owner:$old_owner --action=transfer_stream_ownership -n=composed_stream_a --sync --private-key $new_owner_pk --owner $old_owner
+```
+
 disable latest `read_visibility`
 ```shell
 # Extract the latest row_id of key read_visibility and convert to UUID
