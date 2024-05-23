@@ -23,7 +23,7 @@ table metadata {
     // value_f     decimal,             // float type
     value_b     bool,                // boolean type
     value_s     text,                // string type
-    value_ref   text,                // indexed string type
+    value_ref   text,                // indexed string type -- lowercase
     created_at  int     notnull,     // block height
     disabled_at int,                 // block height
 
@@ -32,7 +32,7 @@ table metadata {
     #created_idx    index(created_at) // faster sorting
 }
 
-procedure is_initiated() private view returns (res bool) {
+procedure is_initiated() private view returns (result bool) {
     // check if it was already initialized
     // for that we check if type is already provided
     for $row in SELECT * FROM metadata WHERE metadata_key = 'type' LIMIT 1 {
@@ -42,8 +42,8 @@ procedure is_initiated() private view returns (res bool) {
     return false;
 }
 
-procedure is_stream_owner($address text) private view returns (res bool) {
-    for $row in SELECT * FROM metadata WHERE metadata_key = 'stream_owner' AND value_ref = $address LIMIT 1 {
+procedure is_stream_owner($wallet text) public view returns (result bool) {
+    for $row in SELECT * FROM metadata WHERE metadata_key = 'stream_owner' AND value_ref = LOWER($wallet) LIMIT 1 {
         return true;
     }
     return false;
@@ -68,7 +68,7 @@ procedure is_wallet_allowed_to_read($wallet text) public view returns (value boo
     }
 
     // if there's metadata allow_read_wallet -> <wallet>, then its permitted
-    for $row in SELECT * FROM metadata WHERE metadata_key = 'allow_read_wallet' AND value_ref = $wallet AND disabled_at IS NULL LIMIT 1 {
+    for $row in SELECT * FROM metadata WHERE metadata_key = 'allow_read_wallet' AND value_ref = LOWER($wallet) AND disabled_at IS NULL LIMIT 1 {
         return true;
     }
 
@@ -102,7 +102,7 @@ procedure init() public owner {
     // stream_owner = @caller
     $current_uuid :=  uuid_generate_v5($current_uuid, @txid);
     INSERT INTO metadata (row_id, metadata_key, value_ref, created_at)
-        VALUES ($current_uuid, 'stream_owner', @caller, 1);
+        VALUES ($current_uuid, 'stream_owner', LOWER(@caller), 1);
 
     // compose_visibility = 0 (public)
     $current_uuid :=  uuid_generate_v5($current_uuid, @txid);
@@ -179,7 +179,7 @@ procedure insert_metadata(
     // insert data
     // TODO add value_f
     INSERT INTO metadata (row_id, metadata_key, value_i, value_s, value_b, value_ref, created_at)
-        VALUES ($uuid, $key, $value_i, $value_s, $value_b, $value_ref, $current_block);
+        VALUES ($uuid, $key, $value_i, $value_s, $value_b, LOWER($value_ref), $current_block);
 }
 
 procedure get_metadata($key text, $only_latest bool) public view returns table(
