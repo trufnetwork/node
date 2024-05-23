@@ -49,6 +49,37 @@ procedure is_stream_owner($address text) private view returns (res bool) {
     return false;
 }
 
+procedure is_wallet_allowed_to_read($wallet text) public view returns (value bool) {
+
+    // if public, anyone can always read
+    // If there's no visibility metadata, it's public.
+    $visibility int;
+    for $v_row in get_metadata('read_visibility', true) {
+        $visibility := $v_row.value_i;
+    }
+
+    if  $visibility == null {
+        return true;
+    }
+
+    // TODO replace by `OR` operator when supported
+    if $visibility == 0 {
+        return true;
+    }
+
+    // if it's the owner, it's permitted
+    if is_stream_owner($wallet) {
+        return true;
+    }
+
+    // if there's metadata allow_read_wallet -> <wallet>, then its permitted
+    for $row in SELECT * FROM metadata WHERE metadata_key = 'allow_read_wallet' AND value_ref = $wallet AND disabled_at IS NULL LIMIT 1 {
+        return true;
+    }
+
+    return false;
+}
+
 procedure stream_owner_only() private {
     if is_stream_owner(@caller) == false  {
         error('Stream owner only procedure');

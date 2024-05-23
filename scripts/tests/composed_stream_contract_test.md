@@ -28,7 +28,13 @@ get `read_visibility`
 ../../.build/kwil-cli database call key:read_visibility only_latest:false --action=get_metadata -n=composed_stream_a
 ```
 
-disable latest `compose_visibility`
+Check read access for a public stream
+```shell
+wallet=$(../../.build/kwil-cli account id --private-key 0000000000000000000000000000000000000000000000000000000000000123)
+../../.build/kwil-cli database call wallet:$wallet --action=is_wallet_allowed_to_read -n=composed_stream_a
+```
+
+disable latest `read_visibility`
 ```shell
 # Extract the latest row_id of key read_visibility and convert to UUID
 row_id=$(../../.build/kwil-cli database call key:read_visibility only_latest:true --action=get_metadata -n=composed_stream_a --output json | jq -r '.result[0].row_id | @sh')
