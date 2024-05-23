@@ -14,7 +14,7 @@ table primitive_events {
 
 table metadata {
     row_id      uuid    primary notnull,
-    key         text    notnull,
+    metadata_key         text    notnull,
     value_i     int,                 // integer type
     // TODO: uncomment to add this field in imminent kwil support
     // value_f     decimal,             // float type
@@ -24,7 +24,7 @@ table metadata {
     created_at  int     notnull,     // block height
     disabled_at int,                 // block height
 
-    #key_idx    index(key),
+    #key_idx    index(metadata_key),
     #ref_idx    index(value_ref),
     #created_idx    index(created_at) // faster sorting
 }
@@ -32,7 +32,7 @@ table metadata {
 procedure is_initiated() private view returns (res bool) {
     // check if it was already initialized
     // for that we check if type is already provided
-    for $row in SELECT * FROM metadata WHERE key = 'type' LIMIT 1 {
+    for $row in SELECT * FROM metadata WHERE metadata_key = 'type' LIMIT 1 {
         return true;
     }
 
@@ -40,9 +40,35 @@ procedure is_initiated() private view returns (res bool) {
 }
 
 procedure is_stream_owner($address text) private view returns (res bool) {
-    for $row in SELECT * FROM metadata WHERE key = 'stream_owner' AND value_ref = $address LIMIT 1 {
+    for $row in SELECT * FROM metadata WHERE metadata_key = 'stream_owner' AND value_ref = $address LIMIT 1 {
         return true;
     }
+    return false;
+}
+
+procedure is_wallet_allowed_to_read($wallet text) public view returns (value bool) {
+
+    // if public, anyone can always read
+    // If there's no visibility metadata, it's public.
+    $visibility int := 0;
+    for $v_row in get_metadata('read_visibility', true) {
+        $visibility := $v_row.value_i;
+    }
+
+    if $visibility == 0 {
+        return true;
+    }
+
+    // if it's the owner, it's permitted
+    if is_stream_owner($wallet) {
+        return true;
+    }
+
+    // if there's metadata allow_read_wallet -> <wallet>, then its permitted
+    for $row in SELECT * FROM metadata WHERE metadata_key = 'allow_read_wallet' AND value_ref = $wallet AND disabled_at IS NULL LIMIT 1 {
+        return true;
+    }
+
     return false;
 }
 
@@ -67,22 +93,22 @@ procedure init() public owner {
 
     // type = primitive
     $current_uuid :=  uuid_generate_v5($current_uuid, @txid);
-    INSERT INTO metadata (row_id, key, value_s, created_at)
+    INSERT INTO metadata (row_id, metadata_key, value_s, created_at)
         VALUES ($current_uuid, 'type', 'primitive', $current_block);
 
     // stream_owner = @caller
     $current_uuid :=  uuid_generate_v5($current_uuid, @txid);
-    INSERT INTO metadata (row_id, key, value_ref, created_at)
+    INSERT INTO metadata (row_id, metadata_key, value_ref, created_at)
         VALUES ($current_uuid, 'stream_owner', @caller, 1);
 
     // compose_visibility = 0 (public)
     $current_uuid :=  uuid_generate_v5($current_uuid, @txid);
-    INSERT INTO metadata (row_id, key, value_i, created_at)
+    INSERT INTO metadata (row_id, metadata_key, value_i, created_at)
         VALUES ($current_uuid, 'compose_visibility', 0, $current_block);
 
     // read_visibility = 0 (public)
     $current_uuid :=  uuid_generate_v5($current_uuid, @txid);
-    INSERT INTO metadata (row_id, key, value_i, created_at)
+    INSERT INTO metadata (row_id, metadata_key, value_i, created_at)
         VALUES ($current_uuid, 'read_visibility', 0, $current_block);
 
     $readonly_keys text[] := [
@@ -93,7 +119,7 @@ procedure init() public owner {
 
     for $key in $readonly_keys {
         $current_uuid :=  uuid_generate_v5($current_uuid, @txid);
-        INSERT INTO metadata (row_id, key, value_s, created_at)
+        INSERT INTO metadata (row_id, metadata_key, value_s, created_at)
             VALUES ($current_uuid, 'readonly_key', $key, $current_block);
     }
 }
@@ -138,7 +164,7 @@ procedure insert_metadata(
     }
 
     // check if it's read-only
-    for $row in SELECT * FROM metadata WHERE key = 'readonly_key' AND value_s = $key LIMIT 1 {
+    for $row in SELECT * FROM metadata WHERE metadata_key = 'readonly_key' AND value_s = $key LIMIT 1 {
         error('Cannot insert metadata for read-only key');
     }
 
@@ -148,7 +174,7 @@ procedure insert_metadata(
 
     // insert data
     // TODO add value_f
-    INSERT INTO metadata (row_id, key, value_i, value_s, value_b, value_ref, created_at)
+    INSERT INTO metadata (row_id, metadata_key, value_i, value_s, value_b, value_ref, created_at)
         VALUES ($uuid, $key, $value_i, $value_s, $value_b, $value_ref, $current_block);
 }
 
@@ -172,7 +198,7 @@ procedure get_metadata($key text, $only_latest bool) public view returns table(
                           value_ref,
                           created_at
             FROM metadata
-            WHERE key = $key AND disabled_at IS NULL
+            WHERE metadata_key = $key AND disabled_at IS NULL
             ORDER BY created_at DESC
             LIMIT 1;
         } else {
@@ -184,7 +210,7 @@ procedure get_metadata($key text, $only_latest bool) public view returns table(
                           value_ref,
                           created_at
              FROM metadata
-             WHERE key = $key AND disabled_at IS NULL
+             WHERE metadata_key = $key AND disabled_at IS NULL
              ORDER BY created_at DESC;
         }
 }
@@ -199,14 +225,14 @@ procedure disable_metadata($row_id uuid) public {
 
     // Check if the metadata is not read-only
     for $metadata_row in
-    SELECT key
+    SELECT metadata_key
     FROM metadata
     WHERE row_id = $row_id AND disabled_at IS NULL
     LIMIT 1 {
         $found := true;
-        $row_key text := $metadata_row.key;
+        $row_key text := $metadata_row.metadata_key;
 
-        for $readonly_row in SELECT row_id FROM metadata WHERE key = 'readonly_key' AND value_s = $row_key LIMIT 1 {
+        for $readonly_row in SELECT row_id FROM metadata WHERE metadata_key = 'readonly_key' AND value_s = $row_key LIMIT 1 {
             error('Cannot disable read-only metadata');
         }
 
@@ -243,8 +269,7 @@ procedure insert_record($date_value text, $value int) public {
 // index := (currentPrimitive * 100000) / basePrimitive
 procedure get_index($date_from text, $date_to text, $frozen_at text) private view returns table(
         date_value text,
-        value int,
-        index int
+        value int
         ) {
 
     $dateFromValue text := '0000-00-00';
