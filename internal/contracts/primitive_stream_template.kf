@@ -272,6 +272,11 @@ procedure get_index($date_from text, $date_to text, $frozen_at text) private vie
         value int
         ) {
 
+    // check read access
+    if is_wallet_allowed_to_read(@caller) == false {
+        error('wallet not allowed to read');
+    }
+
     $dateFromValue text := '0000-00-00';
     if $date_from != '' {
         $dateFromValue := $date_from;

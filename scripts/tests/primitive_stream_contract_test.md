@@ -18,7 +18,7 @@ call init. If you run twice, it should error.
 
 ### Metadata
 
-insert `read_visibility` -> 1
+insert `read_visibility` -> 1 (private)
 ```shell
 ../../.build/kwil-cli database execute key:read_visibility value:1 val_type:int --action=insert_metadata -n=primitive_stream_a --sync 
 ```
@@ -79,4 +79,10 @@ insert record
 get index
 ```shell
 ../../.build/kwil-cli database call --action=get_index date_from:2021-01-01 date_to:2021-01-02 frozen_at: -n=primitive_stream_a
+```
+
+try read when it's private (make sure you set to private read access)
+```shell
+owner=$(../../.build/kwil-cli account id)
+../../.build/kwil-cli database call --action=get_index date_from:2021-01-01 date_to:2021-01-02 frozen_at: -n=primitive_stream_a --private-key 0000000000000000000000000000000000000000000000000000000000000123 --owner $owner
 ```
