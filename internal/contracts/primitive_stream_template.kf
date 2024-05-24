@@ -5,7 +5,7 @@
 database primitive_stream_db_name;
 
 table primitive_events {
-    date_value text unique notnull minlen(10) maxlen(10), // enforce yyyy-mm-dd format
+    date_value text notnull minlen(10) maxlen(10), // enforce yyyy-mm-dd format
     value int notnull,
     created_at int notnull, // based on blockheight
 
@@ -284,22 +284,36 @@ procedure get_index($date_from text, $date_to text, $frozen_at text) private vie
         error('base value is 0');
     }
 
+    $frozenValue int := 0;
+    if $frozen_at != '' {
+        $frozenValue := $frozen_at::int;
+    }
+
     // TODO: had to use this workaround because && operator is not working
     // It will return multiple records on the given date if there are multiple records with the same date
     // See get_record for the explanation
     if $date_from != '' {
         if $date_to != '' {
-            for $row_index1 in SELECT date_value, value FROM primitive_events WHERE date_value >= $date_from AND date_value <= $date_to ORDER BY date_value DESC, created_at DESC {
+            for $row_index1 in SELECT date_value, value FROM primitive_events
+            WHERE date_value >= $date_from
+            AND date_value <= $date_to
+            AND (created_at <= $frozenValue OR $frozenValue = 0)
+            ORDER BY date_value DESC, created_at DESC {
                 return next $row_index1.date_value, $row_index1.value * 100000 / $baseValue;
             }
         } else {
-            for $row_index2 in SELECT date_value, value FROM primitive_events WHERE date_value >= $date_from ORDER BY date_value DESC, created_at DESC {
+            for $row_index2 in SELECT date_value, value FROM primitive_events
+            WHERE date_value >= $date_from
+            AND (created_at <= $frozenValue OR $frozenValue = 0)
+            ORDER BY date_value DESC, created_at DESC {
                 return next $row_index2.date_value, $row_index2.value * 100000 / $baseValue;
             }
         }
     } else {
         if $date_to == '' {
-            for $row_index3 in SELECT date_value, value FROM primitive_events ORDER BY date_value DESC, created_at DESC LIMIT 1 {
+            for $row_index3 in SELECT date_value, value FROM primitive_events
+            WHERE created_at <= $frozenValue OR $frozenValue = 0
+            ORDER BY date_value DESC, created_at DESC LIMIT 1 {
                 return next $row_index3.date_value, $row_index3.value * 100000 / $baseValue;
             }
         } else {
@@ -333,6 +347,11 @@ procedure get_record(
         error('wallet not allowed to read');
     }
 
+    $frozenValue int := 0;
+    if $frozen_at != '' {
+        $frozenValue := $frozen_at::int;
+    }
+
     // TODO: whereClause here is a placeholder only, not supported yet, but it will make things cleaner if it available
     //$whereClause text := 'WHERE 1=1 ';
     //if $date_from != '' {
@@ -359,12 +378,14 @@ procedure get_record(
         if $date_to != '' {
             for $row_record1 in SELECT date_value, value FROM primitive_events
              WHERE date_value >= $date_from AND date_value <= $date_to
+             AND (created_at <= $frozenValue OR $frozenValue = 0)
              ORDER BY date_value DESC {
                 return next $row_record1.date_value, $row_record1.value;
             }
         } else {
             for $row_record2 in SELECT date_value, value FROM primitive_events
             WHERE date_value >= $date_from
+            AND (created_at <= $frozenValue OR $frozenValue = 0)
             ORDER BY date_value DESC {
                 return next $row_record2.date_value, $row_record2.value;
             }
@@ -372,6 +393,7 @@ procedure get_record(
     } else {
         if $date_to == '' {
             for $row_record3 in SELECT date_value, value FROM primitive_events
+            WHERE created_at <= $frozenValue OR $frozenValue = 0
             ORDER BY date_value DESC, created_at DESC LIMIT 1 {
                 return next $row_record3.date_value, $row_record3.value;
             }

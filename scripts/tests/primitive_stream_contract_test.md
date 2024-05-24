@@ -113,6 +113,7 @@ owner=$(../../.build/kwil-cli account id)
 get record
 ```shell
 ../../.build/kwil-cli database call --action=get_record date_from: date_to: frozen_at: -n=primitive_stream_a
+../../.build/kwil-cli database call --action=get_record date_from: date_to: frozen_at:2 -n=primitive_stream_a
 ../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to: frozen_at: -n=primitive_stream_a
 ../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to:2021-01-02 frozen_at: -n=primitive_stream_a
 ```
