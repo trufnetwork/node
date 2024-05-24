@@ -333,3 +333,38 @@ procedure set_taxonomy($data_providers text[], $stream_ids text[], $weights text
     }
 }
 
+procedure describe_taxonomies($latest_version bool) public view returns table(
+        child_stream_id text,
+        child_data_provider text,
+        weight int,
+        created_at int,
+        version int
+        ) {
+
+        if $latest_version == true {
+            $current_version int := get_current_version();
+            for $row in SELECT
+                child_stream_id,
+                child_data_provider,
+                weight,
+                created_at,
+                version
+            FROM taxonomies
+            WHERE version = $current_version AND disabled_at IS NULL
+            ORDER BY created_at DESC {
+                return next $row.child_stream_id, $row.child_data_provider, $row.weight, $row.created_at, $row.version;
+            }
+        } else {
+            for $row2 in SELECT
+                child_stream_id,
+                child_data_provider,
+                weight,
+                created_at,
+                version
+            FROM taxonomies
+            WHERE disabled_at IS NULL
+            ORDER BY version DESC {
+                return next $row2.child_stream_id, $row2.child_data_provider, $row2.weight, $row2.created_at, $row2.version;
+            }
+        }
+}

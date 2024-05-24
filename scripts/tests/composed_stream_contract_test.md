@@ -113,3 +113,13 @@ create with multiple child
 ```shell
 ../../.build/kwil-cli database execute data_providers:dp,dp2 stream_ids:stid,stid2 weights:1,2 --action=set_taxonomy -n=composed_stream_a --sync
 ```
+
+show taxonomies
+```shell
+../../.build/kwil-cli database call -a=describe_taxonomies -n=composed_stream_a
+```
+
+show only latest taxonomy
+```shell
+../../.build/kwil-cli database call latest_version:true -a=describe_taxonomies -n=composed_stream_a
+```
