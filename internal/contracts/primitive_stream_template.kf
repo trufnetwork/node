@@ -262,7 +262,6 @@ procedure insert_record($date_value text, $value int) public {
         VALUES ($date_value, $value, $current_block);
 }
 
-// TODO: frozen_at is not used yet, but it will be used for lookback mechanism
 // we can't do floating point division, but Truflation normally tracks
 // index precision to the thousandth, so we will multiply by 1000 before performing integer division.
 // Truflations calculation is ((current_primitive/first_primitive)*100).
@@ -274,51 +273,14 @@ procedure get_index($date_from text, $date_to text, $frozen_at text) private vie
         value int
         ) {
 
-    // check read access
-    if is_wallet_allowed_to_read(@caller) == false {
-        error('wallet not allowed to read');
-    }
-
     $baseValue int := get_base_value();
     if $baseValue == 0 {
         error('base value is 0');
     }
 
-    $frozenValue int := 0;
-    if $frozen_at != '' {
-        $frozenValue := $frozen_at::int;
-    }
-
-    // TODO: had to use this workaround because && operator is not working
-    // It will return multiple records on the given date if there are multiple records with the same date
-    // See get_record for the explanation
-    if $date_from != '' {
-        if $date_to != '' {
-            for $row_index1 in SELECT date_value, value FROM primitive_events
-            WHERE date_value >= $date_from
-            AND date_value <= $date_to
-            AND (created_at <= $frozenValue OR $frozenValue = 0)
-            ORDER BY date_value DESC, created_at DESC {
-                return next $row_index1.date_value, $row_index1.value * 100000 / $baseValue;
-            }
-        } else {
-            for $row_index2 in SELECT date_value, value FROM primitive_events
-            WHERE date_value >= $date_from
-            AND (created_at <= $frozenValue OR $frozenValue = 0)
-            ORDER BY date_value DESC, created_at DESC {
-                return next $row_index2.date_value, $row_index2.value * 100000 / $baseValue;
-            }
-        }
-    } else {
-        if $date_to == '' {
-            for $row_index3 in SELECT date_value, value FROM primitive_events
-            WHERE created_at <= $frozenValue OR $frozenValue = 0
-            ORDER BY date_value DESC, created_at DESC LIMIT 1 {
-                return next $row_index3.date_value, $row_index3.value * 100000 / $baseValue;
-            }
-        } else {
-            error('date_from is required if date_to is provided');
-        }
+    for $current_record in SELECT * FROM get_record($date_from, $date_to, $frozen_at) {
+        $index int := ($current_record.value * 100000) / $baseValue;
+        return next $current_record.date_value, $index;
     }
 }
 
