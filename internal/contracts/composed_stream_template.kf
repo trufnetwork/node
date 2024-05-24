@@ -374,3 +374,23 @@ procedure describe_taxonomies($latest_version bool) public view returns table(
             }
         }
 }
+
+procedure disable_taxonomy($version int) public {
+    stream_owner_only();
+
+    // TODO when kwil enables current block from context
+    $current_block int := 4;
+
+    $found bool := false;
+
+    // Check if the taxonomies with the given version exist and disable them
+    for $row in SELECT child_stream_id FROM taxonomies WHERE version = $version AND disabled_at IS NULL {
+        $found := true;
+        UPDATE taxonomies SET disabled_at = $current_block
+        WHERE version = $version AND disabled_at IS NULL;
+    }
+
+    if $found == false {
+        error('No taxonomies found for the given version');
+    }
+}
