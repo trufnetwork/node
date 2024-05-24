@@ -102,3 +102,14 @@ uuid=$(python3 -c 'import uuid, sys; print(uuid.UUID(bytes=bytes(map(int, sys.ar
 ../../.build/kwil-cli database execute row_id:$uuid --action=disable_metadata -n=composed_stream_a --sync
 ```
 
+### Taxonomies
+
+create a single child
+```shell
+../../.build/kwil-cli database execute data_providers:dp stream_ids:stid weights:1 --action=set_taxonomy -n=composed_stream_a --sync
+```
+
+create with multiple child
+```shell
+../../.build/kwil-cli database execute data_providers:dp,dp2 stream_ids:stid,stid2 weights:1,2 --action=set_taxonomy -n=composed_stream_a --sync
+```

@@ -277,3 +277,59 @@ procedure check_eth_address($address text) private {
         }
     }
 }
+
+procedure get_current_version() private view returns (result int) {
+    // select max(version) from taxonomies
+    for $row in SELECT version FROM taxonomies ORDER BY version DESC LIMIT 1 {
+        return $row.version;
+    }
+
+    return 0;
+}
+
+
+// NOTE we won't use this signature jsonb is not supported
+// procedure set_taxonomy($payload text) public {
+//     stream_owner_only();
+//     $next_version int := get_current_version() + 1;
+//     $block_height int := 2;
+//     $current_uuid uuid := uuid_generate_v5('e92064da-19c5-11ef-9bc0-325096b39f47'::uuid, @txid);
+//    for $row in SELECT
+//            elem->>'stream_id' as stream_id,
+//            elem->>'data_provider' as data_provider,
+//            elem->>'weight' as weight
+//        FROM jsonb_array_elements($payload::jsonb) as elem {
+//         $current_uuid :=  uuid_generate_v5($current_uuid, @txid);
+//         INSERT INTO taxonomy ( child_stream_id, child_stream_id, weight, created_at, version)
+//             VALUES ($row.stream_id, $row.data_provider, $row.weight::int, $block_height, $next_version);
+//     }
+// }
+
+// set_taxonomy is a batch insert that
+// - gets an array of values for each properties, zipping them as needed
+// - increases the version
+// - adds taxonomy records in batch
+procedure set_taxonomy($data_providers text[], $stream_ids text[], $weights text[]) public {
+    stream_owner_only();
+
+    $next_version int := get_current_version() + 1;
+    $block_height int := 2;
+    $current_uuid uuid := uuid_generate_v5('e92064da-19c5-11ef-9bc0-325096b39f47'::uuid, @txid);
+
+    $length int := array_length($data_providers);
+
+    // check lengths
+    if $length != array_length($stream_ids) {
+        error('data_providers and stream_ids must have the same length');
+    }
+    if $length != array_length($weights) {
+        error('data_providers and weights must have the same length');
+    }
+
+    for $i in 1..$length {
+        $current_uuid :=  uuid_generate_v5($current_uuid, @txid);
+        INSERT INTO taxonomies (child_stream_id, child_data_provider, weight, created_at, version)
+            VALUES ($stream_ids[$i], $data_providers[$i], $weights[$i]::int, $block_height, $next_version);
+    }
+}
+
