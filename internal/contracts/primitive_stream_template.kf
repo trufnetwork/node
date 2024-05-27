@@ -268,7 +268,7 @@ procedure insert_record($date_value text, $value int) public {
 // Therefore, we will alter the equation to ((current_primitive*100000)/first_primitive).
 // This essentially gives us the same result, but with an extra 3 digits of precision.
 // index := (currentPrimitive * 100000) / basePrimitive
-procedure get_index($date_from text, $date_to text, $frozen_at text) private view returns table(
+procedure get_index($date_from text, $date_to text, $frozen_at text) public view returns table(
         date_value text,
         value int
         ) {
