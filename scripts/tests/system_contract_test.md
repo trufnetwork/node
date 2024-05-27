@@ -34,11 +34,11 @@ Get record
 
 ```shell
 owner=0x$(../../.build/kwil-cli account id)
-../../.build/kwil-cli database call data_provider:$owner stream_id:primitive_stream_a date_from:2021-01-01 --action=get_unsafe_record -n=system_contract
+../../.build/kwil-cli database call data_provider:$owner stream_id:primitive_stream_000000000000001 date_from:2021-01-01 --action=get_unsafe_record -n=system_contract
 ```
 
 Get index
 ```shell
 owner=0x$(../../.build/kwil-cli account id)
-../../.build/kwil-cli database call data_provider:$owner stream_id:primitive_stream_a date_from:2021-01-01 --action=get_unsafe_index -n=system_contract
+../../.build/kwil-cli database call data_provider:$owner stream_id:primitive_stream_000000000000001 date_from:2021-01-01 --action=get_unsafe_index -n=system_contract
 ```
