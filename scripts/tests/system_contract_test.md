@@ -21,3 +21,24 @@ revoke stream
 ```shell
 ../../.build/kwil-cli database execute data_provider:0xfC43f5F9dd45258b3AFf31Bdbe6561D97e8B71de stream_id:st123456789012345678901234567890 --action=revoke_stream -n=system_contract --sync
 ```
+
+### Get Unsafe Methods
+
+
+To prepare:
+
+- head to [primitive scripts](primitive_stream_contract_test.md#deploy--init), deploy and init
+- [Insert records](primitive_stream_contract_test.md#insert-record)
+
+Get record
+
+```shell
+owner=0x$(../../.build/kwil-cli account id)
+../../.build/kwil-cli database call data_provider:$owner stream_id:primitive_stream_a date_from:2021-01-01 --action=get_unsafe_record -n=system_contract
+```
+
+Get index
+```shell
+owner=0x$(../../.build/kwil-cli account id)
+../../.build/kwil-cli database call data_provider:$owner stream_id:primitive_stream_a date_from:2021-01-01 --action=get_unsafe_index -n=system_contract
+```
