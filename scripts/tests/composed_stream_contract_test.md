@@ -122,9 +122,12 @@ show taxonomies
 show only latest taxonomy
 ```shell
 ../../.build/kwil-cli database call latest_version:true -a=describe_taxonomies -n=composed_stream_a
+<<<<<<< feat/disable-taxonomy -- Incoming Change
 ```
 
 disable taxonomy on version 2
 ```shell
 ../../.build/kwil-cli database execute version:2 --action=disable_taxonomy -n=composed_stream_a --sync
+=======
+>>>>>>> main -- Current Change
 ```

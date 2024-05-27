@@ -278,6 +278,7 @@ procedure check_eth_address($address text) private {
     }
 }
 
+<<<<<<< feat/disable-taxonomy -- Incoming Change
 procedure get_current_version($show_disabled bool) private view returns (result int) {
     if $show_disabled == false {
          for $row in SELECT version FROM taxonomies WHERE disabled_at IS NULL ORDER BY version DESC LIMIT 1 {
@@ -287,6 +288,12 @@ procedure get_current_version($show_disabled bool) private view returns (result 
         for $row2 in SELECT version FROM taxonomies ORDER BY version DESC LIMIT 1 {
             return $row2.version;
         }
+=======
+procedure get_current_version() private view returns (result int) {
+    // select max(version) from taxonomies
+    for $row in SELECT version FROM taxonomies ORDER BY version DESC LIMIT 1 {
+        return $row.version;
+>>>>>>> main -- Current Change
     }
 
     return 0;
@@ -317,7 +324,11 @@ procedure get_current_version($show_disabled bool) private view returns (result 
 procedure set_taxonomy($data_providers text[], $stream_ids text[], $weights text[]) public {
     stream_owner_only();
 
+<<<<<<< feat/disable-taxonomy -- Incoming Change
     $next_version int := get_current_version(true) + 1;
+=======
+    $next_version int := get_current_version() + 1;
+>>>>>>> main -- Current Change
     $block_height int := 2;
     $current_uuid uuid := uuid_generate_v5('e92064da-19c5-11ef-9bc0-325096b39f47'::uuid, @txid);
 
@@ -347,8 +358,12 @@ procedure describe_taxonomies($latest_version bool) public view returns table(
         ) {
 
         if $latest_version == true {
+<<<<<<< feat/disable-taxonomy -- Incoming Change
             // just the latest enabled version should be returned
             $current_version int := get_current_version(false);
+=======
+            $current_version int := get_current_version();
+>>>>>>> main -- Current Change
             for $row in SELECT
                 child_stream_id,
                 child_data_provider,
@@ -374,6 +389,7 @@ procedure describe_taxonomies($latest_version bool) public view returns table(
             }
         }
 }
+<<<<<<< feat/disable-taxonomy -- Incoming Change
 
 procedure disable_taxonomy($version int) public {
     stream_owner_only();
@@ -394,3 +410,5 @@ procedure disable_taxonomy($version int) public {
         error('No taxonomies found for the given version');
     }
 }
+=======
+>>>>>>> main -- Current Change
