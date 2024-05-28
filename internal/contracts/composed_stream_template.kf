@@ -278,10 +278,15 @@ procedure check_eth_address($address text) private {
     }
 }
 
-procedure get_current_version() private view returns (result int) {
-    // select max(version) from taxonomies
-    for $row in SELECT version FROM taxonomies ORDER BY version DESC LIMIT 1 {
-        return $row.version;
+procedure get_current_version($show_disabled bool) private view returns (result int) {
+    if $show_disabled == false {
+         for $row in SELECT version FROM taxonomies WHERE disabled_at IS NULL ORDER BY version DESC LIMIT 1 {
+             return $row.version;
+         }
+    } else {
+        for $row2 in SELECT version FROM taxonomies ORDER BY version DESC LIMIT 1 {
+            return $row2.version;
+        }
     }
 
     return 0;
@@ -312,7 +317,7 @@ procedure get_current_version() private view returns (result int) {
 procedure set_taxonomy($data_providers text[], $stream_ids text[], $weights text[]) public {
     stream_owner_only();
 
-    $next_version int := get_current_version() + 1;
+    $next_version int := get_current_version(true) + 1;
     $block_height int := 2;
     $current_uuid uuid := uuid_generate_v5('e92064da-19c5-11ef-9bc0-325096b39f47'::uuid, @txid);
 
@@ -342,7 +347,8 @@ procedure describe_taxonomies($latest_version bool) public view returns table(
         ) {
 
         if $latest_version == true {
-            $current_version int := get_current_version();
+            // just the latest enabled version should be returned
+            $current_version int := get_current_version(false);
             for $row in SELECT
                 child_stream_id,
                 child_data_provider,
@@ -367,4 +373,24 @@ procedure describe_taxonomies($latest_version bool) public view returns table(
                 return next $row2.child_stream_id, $row2.child_data_provider, $row2.weight, $row2.created_at, $row2.version;
             }
         }
+}
+
+procedure disable_taxonomy($version int) public {
+    stream_owner_only();
+
+    // TODO when kwil enables current block from context
+    $current_block int := 4;
+
+    $found bool := false;
+
+    // Check if the taxonomies with the given version exist and disable them
+    for $row in SELECT child_stream_id FROM taxonomies WHERE version = $version AND disabled_at IS NULL {
+        $found := true;
+        UPDATE taxonomies SET disabled_at = $current_block
+        WHERE version = $version AND disabled_at IS NULL;
+    }
+
+    if $found == false {
+        error('No taxonomies found for the given version');
+    }
 }
