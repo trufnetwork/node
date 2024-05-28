@@ -18,19 +18,19 @@ To prepare:
 
 accept stream
 ```shell
-owner=0x$(../../.build/kwil-cli account id)
+owner=$(../../.build/kwil-cli account id)
 ../../.build/kwil-cli database execute data_provider:$owner stream_id:primitive_stream_000000000000001 --action=accept_stream -n=system_contract --sync 
 ```
 
 revoke stream
 ```shell
-owner=0x$(../../.build/kwil-cli account id)
+owner=$(../../.build/kwil-cli account id)
 ../../.build/kwil-cli database execute data_provider:$owner stream_id:primitive_stream_000000000000001 --action=revoke_stream -n=system_contract --sync
 ```
 
 cannot accept inexistent stream
 ```shell
-../../.build/kwil-cli database execute data_provider:0xfC43f5F9dd45258b3AFf31Bdbe6561D97e8B71de stream_id:st123456789012345678901234567890 --action=accept_stream -n=system_contract --sync 
+../../.build/kwil-cli database execute data_provider:fC43f5F9dd45258b3AFf31Bdbe6561D97e8B71de stream_id:st123456789012345678901234567890 --action=accept_stream -n=system_contract --sync 
 ```
 
 ### Get Unsafe Methods
@@ -38,13 +38,13 @@ cannot accept inexistent stream
 Get record
 
 ```shell
-owner=0x$(../../.build/kwil-cli account id)
+owner=$(../../.build/kwil-cli account id)
 ../../.build/kwil-cli database call data_provider:$owner stream_id:primitive_stream_000000000000001 date_from:2021-01-01 --action=get_unsafe_record -n=system_contract
 ```
 
 Get index
 ```shell
-owner=0x$(../../.build/kwil-cli account id)
+owner=$(../../.build/kwil-cli account id)
 ../../.build/kwil-cli database call data_provider:$owner stream_id:primitive_stream_000000000000001 date_from:2021-01-01 --action=get_unsafe_index -n=system_contract
 ```
 
