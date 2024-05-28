@@ -16,7 +16,7 @@ use whitelist {
 // it's the same structure for every database, that will receive a different name, e.g.: `com_truflation_us_hotel_price`
 table primitive_table {
   id text primary notnull minlen(36) maxlen(36), // rfc 4122 uuidv4
-  date_value text unique notnull minlen(10) maxlen(10), // enforce yyyy-mm-dd format
+  date_value text notnull minlen(10) maxlen(10), // enforce yyyy-mm-dd format
   value int notnull,
   created_at text notnull // based on blockheight
 }
@@ -44,4 +44,9 @@ action get_index($date, $date_to) public view {
 action get_primitive($date, $date_to) public view {
     whitelist.check(@caller);
     $val = primitive_stream.get_primitive($date, $date_to);
+}
+
+@kgw(authn='true')
+action get_latest_created_at() public view {
+    SELECT created_at FROM primitive_table ORDER BY created_at DESC LIMIT 1;
 }

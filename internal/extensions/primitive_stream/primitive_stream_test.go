@@ -33,7 +33,7 @@ func Test_Index(t *testing.T) {
 		b.sqlGetRangePrimitive("2024-01-01", "2024-01-02"): mockDateScalar("value", []utils.ValueWithDate{
 			{Date: "2024-01-01", Value: 150000},
 			{Date: "2024-01-02", Value: 300000},
-		}),                                                                                                                    // 150.000, 300.000
+		}), // 150.000, 300.000
 		b.sqlGetLastBefore("2024-01-01"): mockDateScalar("value", []utils.ValueWithDate{{Date: "2024-01-01", Value: 266666}}), // 266.666
 	}
 

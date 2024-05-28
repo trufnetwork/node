@@ -115,8 +115,9 @@ const (
 	sqlGetLatestPrimitive   = `SELECT %s, %s FROM %s ORDER by %s DESC, %s DESC LIMIT 1;`
 	sqlGetSpecificPrimitive = `SELECT %s, %s FROM %s WHERE %s = '%s' ORDER BY %s DESC LIMIT 1;`
 	sqlGetLastBefore        = `SELECT %s, %s FROM %s WHERE %s <= '%s' ORDER BY %s DESC, %s DESC LIMIT 1;`
-	sqlGetRangePrimitive    = `SELECT %s, %s FROM %s JOIN (SELECT %s, MAX(%s) AS max_created_at FROM %s WHERE %s >= '%s' AND %s <= '%s' GROUP BY %s) AS max_created ON %s = max_created.%s AND %s = max_created.max_created_at ORDER BY %s ASC;`
-	zeroDate                = "0000-00-00"
+	// we're sorting by created at too, because we need to get unique values from here later. We just delete the rows that are not unique.
+	sqlGetRangePrimitive = `SELECT %s, %s FROM %s WHERE %s >= '%s' AND %s <= '%s' ORDER BY %s ASC, %s DESC;` // I can't use @date, changed it to basic %s, please take a look
+	zeroDate             = "0000-00-00"
 )
 
 func (b *PrimitiveStreamExt) sqlGetBasePrimitive() string {
@@ -136,7 +137,7 @@ func (b *PrimitiveStreamExt) sqlGetLastBefore(date string) string {
 }
 
 func (b *PrimitiveStreamExt) sqlGetRangePrimitive(date string, dateTo string) string {
-	return fmt.Sprintf(sqlGetRangePrimitive, b.dateColumn, b.valueColumn, b.table, b.dateColumn, b.createdAtColumn, b.table, b.dateColumn, date, b.dateColumn, dateTo, b.dateColumn, b.dateColumn, b.dateColumn, b.createdAtColumn, b.dateColumn)
+	return fmt.Sprintf(sqlGetRangePrimitive, b.dateColumn, b.valueColumn, b.table, b.dateColumn, date, b.dateColumn, dateTo, b.dateColumn, b.createdAtColumn)
 }
 
 // getValueForFn gets the value for the specified function.
@@ -243,6 +244,37 @@ func (b *PrimitiveStreamExt) index(scope *precompiles.ProcedureContext, app *com
 	return indexes, nil
 }
 
+// uniqueByCreatedAt deletes the duplicate rows with the same date column
+// we know that this will behave correctly if the query is sorted by asc date and then desc created at
+func (b *PrimitiveStreamExt) uniqueByCreatedAt(result *sql.ResultSet) (*sql.ResultSet, error) {
+	// find date column
+	dateIndex := -1
+	for i, col := range result.Columns {
+		if col == b.dateColumn {
+			dateIndex = i
+		}
+	}
+
+	// if dateIndex is not found, error out
+	if dateIndex == -1 {
+		return nil, errors.New("date column not found")
+	}
+
+	// we don't need to sort. The query is sorted already by desc created at. So if we find 2 consecutive rows with date, we delete it
+	lastDate := ""
+
+	for i := 0; i < len(result.Rows); i++ {
+		if result.Rows[i][dateIndex] != lastDate {
+			lastDate = result.Rows[i][dateIndex].(string)
+		} else {
+			result.Rows = append(result.Rows[:i], result.Rows[i+1:]...)
+			i--
+		}
+	}
+
+	return result, nil
+}
+
 // primitive returns the primitive for a given date.
 // if no date is given, it will return the latest primitive.
 func (b *PrimitiveStreamExt) primitive(scope *precompiles.ProcedureContext, app *common.App, date string, dateTo *string) ([]utils.ValueWithDate, error) {
@@ -256,6 +288,9 @@ func (b *PrimitiveStreamExt) primitive(scope *precompiles.ProcedureContext, app 
 		res, err = app.Engine.Execute(scope.Ctx, app.DB, scope.DBID, b.sqlGetSpecificPrimitive(date), nil)
 	} else {
 		res, err = app.Engine.Execute(scope.Ctx, app.DB, scope.DBID, b.sqlGetRangePrimitive(date, *dateTo), nil)
+		if err == nil {
+			res, err = b.uniqueByCreatedAt(res)
+		}
 	}
 
 	if err != nil {

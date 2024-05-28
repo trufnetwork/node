@@ -18,7 +18,7 @@ if [ $# -gt 1 ]; then
   exit 1
 fi
 
-primitive_contract_content=$(cat ./../internal/contracts/primitive_stream.kf)
+primitive_contract_content=$(cat ./../internal/contracts/primitive_stream_template_old.kf)
 TO_BE_REPLACED="\$WHITELIST_WALLETS\$"
 TO_BE_REPLACED_WRITE="\$WRITE_WHITELIST_WALLETS\$"
 # should be replaced by $1 or an empty string

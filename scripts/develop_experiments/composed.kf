@@ -1,6 +1,6 @@
 database composed;
 
-use compose_truflation_streams {
+use composed_stream {
     // valid id's:
     // - <wallet_address>/<stream_name>
     // - /<stream_name> (then the wallet address will be the sender of the transaction)
@@ -10,14 +10,16 @@ use compose_truflation_streams {
     stream_1_weight: '1',
     stream_2_id: '/stream_a',
     stream_2_weight: '9'
-} as streams;
+} as composed_stream;
 
+@kgw(authn='true')
 action get_index($date, $date_to) public view {
-    streams.get_index($date, $date_to);
+    composed_stream.get_index($date, $date_to);
     // we ensure no other extension or query is called after this
 }
 
+@kgw(authn='true')
 action get_primitive($date, $date_to) public view {
-    streams.get_primitive($date, $date_to);
+    composed_stream.get_primitive($date, $date_to);
     // we ensure no other extension or query is called after this
 }
