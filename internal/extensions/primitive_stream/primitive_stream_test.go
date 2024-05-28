@@ -188,9 +188,11 @@ func newPrimitiveStreamTest() *primitiveStreamTest {
 				},
 			},
 		},
-		scope:           &precompiles.ProcedureContext{},
-		app:             &common.App{},
-		primitiveStream: &PrimitiveStreamExt{},
+		scope: &precompiles.ProcedureContext{},
+		app:   &common.App{},
+		primitiveStream: &PrimitiveStreamExt{
+			dateColumn: "date",
+		},
 	}
 }
 
