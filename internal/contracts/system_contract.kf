@@ -3,7 +3,7 @@ database truflation_system_contract;
 // `system_streams` is the table that stores the streams that have been accepted by the TSN Gov
 table system_streams {
     stream_id text notnull minlen(32) maxlen(32), // stream id, name of contract in form of a hash, starts with st
-    data_provider text notnull minlen(42) maxlen(42), // wallet address, deployer of contract, starts with 0x
+    data_provider text notnull minlen(40) maxlen(40), // wallet address, deployer of contract, does NOT start with 0x
     accepted_at int notnull, // blockheight
     revoked_at int, // blockheight
 
@@ -16,6 +16,10 @@ procedure get_official_stream($data_provider text, $stream_id text) private view
     }
 
     return false;
+}
+
+procedure verify_hex($text text) private {
+    $hex text := decode($text, 'hex');
 }
 
 foreign procedure get_metadata($key text, $only_latest bool) returns table(
@@ -56,6 +60,8 @@ procedure accept_stream($data_provider text, $stream_id text) public owner {
 
     // todo replace by real blockheight by kwil
     $current_blockheight int := 1;
+
+    verify_hex($data_provider);
 
      INSERT INTO system_streams (stream_id, data_provider, accepted_at)
      VALUES ($stream_id, $data_provider, $current_blockheight);
