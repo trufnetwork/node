@@ -70,7 +70,7 @@ deploy and fetch
 ../../.build/kwil-cli database execute --action=init -n=primitive_stream_000000000000002 --sync
 ../../.build/kwil-cli database execute --action=insert_record -n=primitive_stream_000000000000002 date_value:2021-01-01 value:1 --sync 
 
-owner=0x$(../../.build/kwil-cli account id)
+owner=$(../../.build/kwil-cli account id)
 # try getting from unofficial streams (should work)
 ../../.build/kwil-cli database call data_provider:$owner stream_id:primitive_stream_000000000000002 date_from:2021-01-01 --action=get_unsafe_record -n=system_contract
 
