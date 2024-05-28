@@ -18,6 +18,8 @@ procedure get_official_stream($data_provider text, $stream_id text) private view
     return false;
 }
 
+// Verify hex enforces the format `ab1234` instead of `0xab1234` so we can quickly spot errors
+// it may be removed as soon as we can normalize hex inputs, but for now we can't because substring is not supported
 procedure verify_hex($text text) private {
     $hex text := decode($text, 'hex');
 }
