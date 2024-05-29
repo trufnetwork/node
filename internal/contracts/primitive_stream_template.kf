@@ -51,7 +51,7 @@ procedure is_wallet_allowed_to_read($wallet text) public view returns (value boo
     // if public, anyone can always read
     // If there's no visibility metadata, it's public.
     $visibility int := 0;
-    for $v_row in SELECT * FROM get_metadata('read_visibility', true) {
+    for $v_row in SELECT * FROM get_metadata('read_visibility', true, null) {
         $visibility := $v_row.value_i;
     }
 
@@ -65,7 +65,7 @@ procedure is_wallet_allowed_to_read($wallet text) public view returns (value boo
     }
 
     // if there's metadata allow_read_wallet -> <wallet>, then its permitted
-    for $row in SELECT * FROM metadata WHERE metadata_key = 'allow_read_wallet' AND value_ref = LOWER($wallet) AND disabled_at IS NULL LIMIT 1 {
+    for $row in SELECT * FROM get_metadata('allow_read_wallet', false, $wallet) {
         return true;
     }
 
@@ -180,7 +180,10 @@ procedure insert_metadata(
         VALUES ($uuid, $key, $value_i, $value_s, $value_b, LOWER($value_ref), $current_block);
 }
 
-procedure get_metadata($key text, $only_latest bool) public view returns table(
+// key: the metadata key to look for
+// only_latest: if true, only return the latest version of the metadata
+// ref: if provided, only return metadata with that ref
+procedure get_metadata($key text, $only_latest bool, $ref text) public view returns table(
         row_id uuid,
         value_i int,
         // TODO: uncomment when supported
@@ -191,31 +194,58 @@ procedure get_metadata($key text, $only_latest bool) public view returns table(
         created_at int
         ) {
 
-        if $only_latest {
-            return SELECT
-                          row_id,
-                          value_i,
-                          value_b,
-                          value_s,
-                          value_ref,
-                          created_at
-            FROM metadata
-            WHERE metadata_key = $key AND disabled_at IS NULL
-            ORDER BY created_at DESC
-            LIMIT 1;
+        if $only_latest == true {
+            if $ref is distinct from null {
+                for $row in SELECT
+                              row_id,
+                              value_ref,
+                              created_at
+                FROM metadata
+                WHERE metadata_key = $key AND disabled_at IS NULL AND value_ref = LOWER($ref)
+                ORDER BY created_at DESC
+                LIMIT 1 {
+                    return next $row.row_id, null, null, null, $row.value_ref, $row.created_at;
+                }
+            } else {
+                return SELECT
+                              row_id,
+                              value_i,
+                              value_b,
+                              value_s,
+                              value_ref,
+                              created_at
+                FROM metadata
+                WHERE metadata_key = $key AND disabled_at IS NULL
+                ORDER BY created_at DESC
+                LIMIT 1;
+            }
         } else {
-            return SELECT
-                          row_id,
-                          value_i,
-                          value_b,
-                          value_s,
-                          value_ref,
-                          created_at
-             FROM metadata
-             WHERE metadata_key = $key AND disabled_at IS NULL
-             ORDER BY created_at DESC;
+           // SHOULD BE THE EXACT CODE AS ABOVE, BUT WITHOUT LIMIT
+           if $ref is distinct from null {
+               for $row2 in SELECT
+                             row_id,
+                             value_ref,
+                             created_at
+               FROM metadata
+               WHERE metadata_key = $key AND disabled_at IS NULL AND value_ref = LOWER($ref)
+               ORDER BY created_at DESC {
+                   return next $row2.row_id, null, null, null, $row2.value_ref, $row2.created_at;
+               }
+           } else {
+               return SELECT
+                             row_id,
+                             value_i,
+                             value_b,
+                             value_s,
+                             value_ref,
+                             created_at
+               FROM metadata
+               WHERE metadata_key = $key AND disabled_at IS NULL
+               ORDER BY created_at DESC;
+           }
         }
 }
+
 
 procedure disable_metadata($row_id uuid) public {
     stream_owner_only();

@@ -26,19 +26,22 @@ insert `read_visibility` -> 1 (private)
 get `read_visibility`
 ```shell
 ../../.build/kwil-cli database call key:read_visibility only_latest:false --action=get_metadata -n=primitive_stream_000000000000001
-0``
+```
 
 Check read access for stream
 ```shell
 wallet=0x$(../../.build/kwil-cli account id --private-key 0000000000000000000000000000000000000000000000000000000000000123)
 ../../.build/kwil-cli database call wallet:$wallet --action=is_wallet_allowed_to_read -n=primitive_stream_000000000000001
-0``
+```
 
 Give read permission to wallet
 ```shell
 other=0x$(../../.build/kwil-cli account id --private-key 0000000000000000000000000000000000000000000000000000000000000123)
 
+# add permission
 ../../.build/kwil-cli database execute key:allow_read_wallet value:$other val_type:ref --action=insert_metadata -n=primitive_stream_000000000000001 --sync
+# read the permission
+../../.build/kwil-cli database call key:allow_read_wallet ref:$other --action=get_metadata -n=primitive_stream_000000000000001
 ```
 
 Check stream owner
@@ -115,9 +118,9 @@ insert record
 get index
 ```shell
 ../../.build/kwil-cli database call --action=get_index date_from: date_to: frozen_at: -n=primitive_stream_000000000000001
-0./../.build/kwil-cli database call --action=get_index date_from:2021-01-01 date_to: frozen_at: -n=primitive_stream_000000000000001
-0./../.build/kwil-cli database call --action=get_index date_from:2021-01-01 date_to:2021-01-02 frozen_at: -n=primitive_stream_000000000000001
-0``
+../../.build/kwil-cli database call --action=get_index date_from:2021-01-01 date_to: frozen_at: -n=primitive_stream_000000000000001
+../../.build/kwil-cli database call --action=get_index date_from:2021-01-01 date_to:2021-01-02 frozen_at: -n=primitive_stream_000000000000001
+```
 
 try read when it's private (make sure you set to private read access)
 ```shell
@@ -130,10 +133,10 @@ owner=$(../../.build/kwil-cli account id)
 get record
 ```shell
 ../../.build/kwil-cli database call --action=get_record date_from: date_to: frozen_at: -n=primitive_stream_000000000000001
-0./../.build/kwil-cli database call --action=get_record date_from: date_to: frozen_at:2 -n=primitive_stream_000000000000001
-0./../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to: frozen_at: -n=primitive_stream_000000000000001
-0./../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to:2021-01-02 frozen_at: -n=primitive_stream_000000000000001
-0``
+../../.build/kwil-cli database call --action=get_record date_from: date_to: frozen_at:2 -n=primitive_stream_000000000000001
+../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to: frozen_at: -n=primitive_stream_000000000000001
+../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to:2021-01-02 frozen_at: -n=primitive_stream_000000000000001
+```
 
 try read when it's private (make sure you set to private read access)
 ```shell
