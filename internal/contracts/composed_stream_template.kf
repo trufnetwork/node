@@ -382,7 +382,7 @@ procedure get_metadata($key text, $only_latest bool, $ref text) public view retu
         ) {
 
         if $only_latest == true {
-            if $ref is not distinct from null {
+            if $ref is distinct from null {
                 for $row in SELECT
                               row_id,
                               value_ref,
