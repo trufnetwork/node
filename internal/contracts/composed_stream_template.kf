@@ -239,7 +239,7 @@ procedure is_wallet_allowed_to_read($wallet text) public view returns (value boo
     // if public, anyone can always read
     // If there's no visibility metadata, it's public.
     $visibility int := 0;
-    for $v_row in SELECT * FROM get_metadata('read_visibility', true) {
+    for $v_row in SELECT * FROM get_metadata('read_visibility', true, null) {
         $visibility := $v_row.value_i;
     }
 
