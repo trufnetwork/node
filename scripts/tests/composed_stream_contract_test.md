@@ -38,7 +38,11 @@ Give read permission to wallet
 ```shell
 other=0x$(../../.build/kwil-cli account id --private-key 0000000000000000000000000000000000000000000000000000000000000123)
 
+# add permission
 ../../.build/kwil-cli database execute key:allow_read_wallet value:$other val_type:ref --action=insert_metadata -n=composed_stream_a --sync
+# read the permission
+../../.build/kwil-cli database call key:allow_read_wallet ref:$other --action=get_metadata -n=composed_stream_a
+
 ```
 
 Check stream owner
