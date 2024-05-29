@@ -128,3 +128,32 @@ disable taxonomy on version 2
 ```shell
 ../../.build/kwil-cli database execute version:2 --action=disable_taxonomy -n=composed_stream_a --sync
 ```
+
+#### get records with taxonomy
+
+complete test for get records with taxonomy
+```shell
+../../.build/kwil-cli database drop composed_stream_0000000000000001
+../../.build/kwil-cli database drop primitive_stream_000000000000001
+../../.build/kwil-cli database drop primitive_stream_000000000000002 --sync
+
+../../.build/kwil-cli database deploy -p=../../internal/contracts/primitive_stream_template.kf --name=primitive_stream_000000000000001
+../../.build/kwil-cli database deploy -p=../../internal/contracts/primitive_stream_template.kf --name=primitive_stream_000000000000002
+../../.build/kwil-cli database deploy -p=../../internal/contracts/composed_stream_template.kf --name=composed_stream_0000000000000001 --sync
+
+../../.build/kwil-cli database execute --action=init -n=primitive_stream_000000000000001
+../../.build/kwil-cli database execute --action=init -n=primitive_stream_000000000000002
+../../.build/kwil-cli database execute --action=init -n=composed_stream_0000000000000001 --sync
+
+../../.build/kwil-cli database execute --action=insert_record -n=primitive_stream_000000000000001 date_value:2021-01-01 value:1
+../../.build/kwil-cli database execute --action=insert_record -n=primitive_stream_000000000000001 date_value:2021-01-02 value:2 
+../../.build/kwil-cli database execute --action=insert_record -n=primitive_stream_000000000000002 date_value:2021-01-01 value:3 
+../../.build/kwil-cli database execute --action=insert_record -n=primitive_stream_000000000000002 date_value:2021-01-02 value:4 --sync
+
+../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to:2021-01-02 frozen_at: -n=primitive_stream_000000000000001
+../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to:2021-01-02 frozen_at: -n=primitive_stream_000000000000002
+
+../../.build/kwil-cli database execute data_providers:dp,dp2 stream_ids:primitive_stream_000000000000001,primitive_stream_000000000000002 weights:1,2 --action=set_taxonomy -n=composed_stream_0000000000000001 --sync
+../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to:2021-01-02 frozen_at: -n=composed_stream_0000000000000001
+../../.build/kwil-cli database call --action=get_index date_from:2021-01-01 date_to:2021-01-02 frozen_at: -n=composed_stream_0000000000000001
+```
