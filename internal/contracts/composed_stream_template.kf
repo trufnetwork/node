@@ -210,10 +210,10 @@ procedure get_index($date_from text, $date_to text, $frozen_at text) public view
             $dbid text := 'xd74c3f5812976a7f5982e9b63f8352dc5c3b12a71abc29f0578b2672';
             $dbid2 text := 'x34ba7edd495810995b921b525666c7b0d60f18a2249d79f818a43e66';
             for $row3 in SELECT * FROM ext_get_data[$dbid, 'get_index']($single_date, $single_date, $frozen_at) {
-                $value_sum := $value_sum + ($row3.value * $row2.weight * 1000 / $weight_sum);
+                $value_sum := $value_sum + ($row3.value * $row2.weight / $weight_sum);
             }
                 for $row4 in SELECT * FROM ext_get_data[$dbid, 'get_index']($single_date, $single_date, $frozen_at) {
-                $value_sum := $value_sum + ($row4.value * $row2.weight * 1000 / $weight_sum);
+                $value_sum := $value_sum + ($row4.value * $row2.weight / $weight_sum);
             }
             if $value_sum == 0 {
                 error('No data found');
