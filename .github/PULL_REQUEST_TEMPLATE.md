@@ -1,4 +1,4 @@
-<!--- Provide a general summary of your changes in the Title above by following Developers Guidelines -->
+<!--- Provide a general summary of your changes in the Title above by following our Developer Guidelines -->
 
 ## Description
 <!--- Describe your changes in detail; user bullet points. -->
