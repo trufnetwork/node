@@ -32,12 +32,7 @@ table metadata {
     #created_idx    index(created_at) // faster sorting
 }
 
-foreign procedure ext_get_record($date_from text, $date_to text, $frozen_at text) returns table(
-    date_value text,
-    value int
-)
-
-foreign procedure ext_get_index($date_from text, $date_to text, $frozen_at text) returns table(
+foreign procedure ext_get_data($date_from text, $date_to text, $frozen_at text) returns table(
     date_value text,
     value int
 )
@@ -106,19 +101,24 @@ procedure get_record($date_from text, $date_to text, $frozen_at text) public vie
     }
 
     if array_length($date_list) == 0 {
-        error('No data found');
+        error('No data found on date_list');
     }
 
     for $single_date in $date_list {
         $value_sum int := 0;
         for $row2 in SELECT * FROM describe_taxonomies(true) {
-            $dbid text := generate_dbid($row2.child_data_provider, $row2.child_stream_id);
-            for $row3 in SELECT * FROM ext_get_record[$dbid, 'get_record']($single_date, $single_date, $frozen_at) {
-                $value_to_add := $row3.value * $row2.weight / $weight_sum;
-                $value_sum := $value_sum + $value_to_add;
+            // TODO: need to fix this generate_dbid, for now we're using a fixed value
+            //$dbid text := generate_dbid($row2.child_data_provider, $row2.child_stream_id);
+            $dbid text := 'xd74c3f5812976a7f5982e9b63f8352dc5c3b12a71abc29f0578b2672';
+            $dbid2 text := 'x34ba7edd495810995b921b525666c7b0d60f18a2249d79f818a43e66';
+            for $row3 in SELECT * FROM ext_get_data[$dbid, 'get_record']($single_date, $single_date, $frozen_at) {
+                $value_sum := $value_sum + ($row3.value * $row2.weight * 1000 / $weight_sum);
+            }
+            for $row4 in SELECT * FROM ext_get_data[$dbid, 'get_record']($single_date, $single_date, $frozen_at) {
+                $value_sum := $value_sum + ($row4.value * $row2.weight * 1000 / $weight_sum);
             }
             if $value_sum == 0 {
-                error('No data found');
+                error('No data found on ext_get_data');
             }
         }
         return next $single_date, $value_sum;
@@ -140,10 +140,11 @@ procedure get_date_list($date_from text, $date_to text, $frozen_at text) public 
     // get list date
     $date_list text[];
     for $row2 in SELECT * FROM describe_taxonomies(true) {
-        return next '2021-01-01';
-        $dbid text := generate_dbid($row2.child_data_provider, $row2.child_stream_id);
-
-        for $row3 in SELECT * FROM ext_get_record[$dbid, 'get_record']($date_from, $date_to, $frozen_at) {
+        // TODO: need to fix this generate_dbid, for now we're using a fixed value
+        //$dbid text := generate_dbid($row2.child_data_provider, $row2.child_stream_id);
+        $dbid text := 'xd74c3f5812976a7f5982e9b63f8352dc5c3b12a71abc29f0578b2672';
+        $dbid2 text := 'x34ba7edd495810995b921b525666c7b0d60f18a2249d79f818a43e66';
+        for $row3 in SELECT * FROM ext_get_data[$dbid, 'get_record']($date_from, $date_to, $frozen_at) {
             $found bool := false;
             for $single_date in $date_list {
                 if $single_date == $row3.date_value {
@@ -155,6 +156,18 @@ procedure get_date_list($date_from text, $date_to text, $frozen_at text) public 
                 $date_list := array_append($date_list, $row3.date_value);
             }
         }
+        for $row4 in SELECT * FROM ext_get_data[$dbid2, 'get_record']($date_from, $date_to, $frozen_at) {
+                    $found bool := false;
+                    for $single_date2 in $date_list {
+                        if $single_date2 == $row4.date_value {
+                            $found := true;
+                            // TODO: would be better to use break or continue if supported here
+                        }
+                    }
+                    if $found == false {
+                        $date_list := array_append($date_list, $row3.date_value);
+                    }
+                }
     }
 
     if array_length($date_list) == 0 {
@@ -192,10 +205,15 @@ procedure get_index($date_from text, $date_to text, $frozen_at text) public view
     for $single_date in $date_list {
         $value_sum int := 0;
         for $row2 in SELECT * FROM describe_taxonomies(true) {
-            $dbid text := generate_dbid($row2.child_data_provider, $row2.child_stream_id);
-            for $row3 in SELECT * FROM ext_get_record[$dbid, 'get_index']($single_date, $single_date, $frozen_at) {
-                $value_to_add := $row3.value * $row2.weight / $weight_sum;
-                $value_sum := $value_sum + $value_to_add;
+            // TODO: need to fix this generate_dbid, for now we're using a fixed value
+            // $dbid text := generate_dbid($row2.child_data_provider, $row2.child_stream_id);
+            $dbid text := 'xd74c3f5812976a7f5982e9b63f8352dc5c3b12a71abc29f0578b2672';
+            $dbid2 text := 'x34ba7edd495810995b921b525666c7b0d60f18a2249d79f818a43e66';
+            for $row3 in SELECT * FROM ext_get_data[$dbid, 'get_index']($single_date, $single_date, $frozen_at) {
+                $value_sum := $value_sum + ($row3.value * $row2.weight * 1000 / $weight_sum);
+            }
+                for $row4 in SELECT * FROM ext_get_data[$dbid, 'get_index']($single_date, $single_date, $frozen_at) {
+                $value_sum := $value_sum + ($row4.value * $row2.weight * 1000 / $weight_sum);
             }
             if $value_sum == 0 {
                 error('No data found');
