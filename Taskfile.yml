@@ -82,3 +82,4 @@ tasks:
     desc: Run coverage
     cmds:
       - bash ./scripts/coverage.sh
+ 
