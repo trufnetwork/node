@@ -81,8 +81,8 @@ procedure generate_dbid($data_provider text, $stream_id text) private view retur
     error('could not generate dbid');
 }
 
-procedure get_date_list($date_from text, $date_to text, $frozen_at text) public view returns table(
-    date_value text
+procedure get_date_list($date_from text, $date_to text, $frozen_at text) public view returns (
+    date_value text[]
 ) {
     $weight_sum int := 0;
     for $row in SELECT * FROM describe_taxonomies(true) {
@@ -97,9 +97,7 @@ procedure get_date_list($date_from text, $date_to text, $frozen_at text) public 
     $date_list text[];
     for $row2 in SELECT * FROM describe_taxonomies(true) {
         // TODO: need to fix this generate_dbid, for now we're using a fixed value
-        //$dbid text := generate_dbid($row2.child_data_provider, $row2.child_stream_id);
-        $dbid text := 'xd74c3f5812976a7f5982e9b63f8352dc5c3b12a71abc29f0578b2672';
-        $dbid2 text := 'x34ba7edd495810995b921b525666c7b0d60f18a2249d79f818a43e66';
+        $dbid text := generate_dbid($row2.child_data_provider, $row2.child_stream_id);
         for $row3 in SELECT * FROM ext_get_data[$dbid, 'get_record']($date_from, $date_to, $frozen_at) {
             $found bool := false;
             for $single_date in $date_list {
@@ -112,36 +110,22 @@ procedure get_date_list($date_from text, $date_to text, $frozen_at text) public 
                 $date_list := array_append($date_list, $row3.date_value);
             }
         }
-        for $row4 in SELECT * FROM ext_get_data[$dbid2, 'get_record']($date_from, $date_to, $frozen_at) {
-                    $found bool := false;
-                    for $single_date2 in $date_list {
-                        if $single_date2 == $row4.date_value {
-                            $found := true;
-                            // TODO: would be better to use break or continue if supported here
-                        }
-                    }
-                    if $found == false {
-                        $date_list := array_append($date_list, $row3.date_value);
-                    }
-                }
     }
 
     if array_length($date_list) == 0 {
         error('No data found on get_date_list');
     }
 
-    for $date in $date_list {
-        return next $date;
-    }
+    return $date_list;
 }
 
-// TODO: currently two dimensional array and map type is not supported
-// so we're using a workaround to get the data from the external contract
-// this results in a lot of queries, which is not ideal
-// once the map or two dimensional type is supported, we can get all the data in one query
-// alternatively, if there is a chance we can build a query from a text inside a variable
-// like in Golang's `fmt.Sprintf` or something like `query builder` GORM, that's would suffice
-procedure get_record($date_from text, $date_to text, $frozen_at text) public view returns table(
+// It returns every record value for every date as its own
+// row. e.g.:
+// 2020-06-01, 100
+// 2020-06-01, 140
+// 2020-06-02, 103
+// 2020-06-02, 143
+procedure get_record_internal($date_from text, $date_to text, $frozen_at text) private view returns table(
     date_value text,
     value int
 ) {
@@ -155,31 +139,34 @@ procedure get_record($date_from text, $date_to text, $frozen_at text) public vie
     }
 
     // get list date, it would be easier if map type supported
-    $date_list text[];
-    for $row_date in SELECT * FROM get_date_list($date_from, $date_to, $frozen_at) {
-        $date_list := array_append($date_list, $row_date.date_value);
-    }
+    $date_list := get_date_list($date_from, $date_to, $frozen_at);
 
     if array_length($date_list) == 0 {
         error('No data found on date_list');
     }
 
-    for $single_date in $date_list {
-        $value_sum int := 0;
-        for $row2 in SELECT * FROM describe_taxonomies(true) {
-            $dbid text := generate_dbid($row2.child_data_provider, $row2.child_stream_id);
-            for $row3 in SELECT * FROM ext_get_data[$dbid, 'get_record']($single_date, $single_date, $frozen_at) {
-                $value_sum := $value_sum + ($row3.value * $row2.weight * 1000 / $weight_sum);
-            }
-            if $value_sum == 0 {
-                error('No data found on ext_get_data');
-            }
+    // find the first and last dates
+    $start_date := $date_list[1];
+    $end_date := $date_list[array_length($date_list)];
+
+    for $row2 in SELECT * FROM describe_taxonomies(true) {
+        $dbid text := generate_dbid($row2.child_data_provider, $row2.child_stream_id);
+        for $row3 in SELECT * FROM ext_get_data[$dbid, 'get_record']($start_date, $end_date, $frozen_at) {
+
+            // for each value, we will return it to the table with the calculations done
+
+            return next $row3.date_value, ($row3.value * $row2.weight * 1000 / $weight_sum);
         }
-        return next $single_date, $value_sum;
     }
 }
 
-procedure get_index($date_from text, $date_to text, $frozen_at text) public view returns table(
+// It returns every index value for every date as its own
+// row. e.g.:
+// 2020-06-01, 100
+// 2020-06-01, 140
+// 2020-06-02, 103
+// 2020-06-02, 143
+procedure get_index_internal($date_from text, $date_to text, $frozen_at text) private view returns table(
     date_value text,
     value int
 ) {
@@ -192,28 +179,47 @@ procedure get_index($date_from text, $date_to text, $frozen_at text) public view
         error('No taxonomies found');
     }
 
-    // get list date, it would be cleaner if map type supported
-    $date_list text[];
-    for $row_date in SELECT * FROM get_date_list($date_from, $date_to, $frozen_at) {
-        $date_list := array_append($date_list, $row_date.date_value);
-    }
+    // get list date, it would be easier if map type supported
+    $date_list := get_date_list($date_from, $date_to, $frozen_at);
 
     if array_length($date_list) == 0 {
-        error('No data found');
+        error('No data found on date_list');
     }
 
-    for $single_date in $date_list {
-        $value_sum int := 0;
-        for $row2 in SELECT * FROM describe_taxonomies(true) {
-            $dbid text := generate_dbid($row2.child_data_provider, $row2.child_stream_id);
-            for $row3 in SELECT * FROM ext_get_data[$dbid, 'get_index']($single_date, $single_date, $frozen_at) {
-                $value_sum := $value_sum + ($row3.value * $row2.weight / $weight_sum);
-            }
-            if $value_sum == 0 {
-                error('No data found');
-            }
+    // find the first and last dates
+    $start_date := $date_list[1];
+    $end_date := $date_list[array_length($date_list)];
+
+    for $row2 in SELECT * FROM describe_taxonomies(true) {
+        $dbid text := generate_dbid($row2.child_data_provider, $row2.child_stream_id);
+        for $row3 in SELECT * FROM ext_get_data[$dbid, 'get_index']($start_date, $end_date, $frozen_at) {
+
+            // for each value, we will return it to the table with the calculations done
+
+            return next $row3.date_value, ($row3.value * $row2.weight / $weight_sum);
         }
-        return next $single_date, $value_sum;
+    }
+}
+
+// get_record retrieves the records for a specified date range
+procedure get_record($date_from text, $date_to text, $frozen_at text) public view returns table(
+    date_value text,
+    value int
+) {
+    // here, we sum all of the values that were found by aggregating on the date_valie
+    for $row in SELECT date_value, sum(value) as value FROM get_record_internal($date_from, $date_to, $frozen_at) GROUP BY date_value {
+        return next $row.date_value, $row.value;
+    }
+}
+
+// get_index retrieves the indexes for a specified date range
+procedure get_index($date_from text, $date_to text, $frozen_at text) public view returns table(
+    date_value text,
+    value int
+) {
+    // here, we sum all of the indexes that were found by aggregating on the date_valie
+    for $row in SELECT date_value, sum(value) as value FROM get_index_internal($date_from, $date_to, $frozen_at) GROUP BY date_value {
+        return next $row.date_value, $row.value;
     }
 }
 
