@@ -84,8 +84,7 @@ procedure init() public owner {
         error('this contract was already initialized');
     }
 
-    // TODO replace by intrinsic current_block value when kwil supports
-    $current_block int := 1;
+    $current_block int := @height;
 
     // uuid's namespaces are any random generated uuid from https://www.uuidtools.com/v5
     // but each usage should be different to maintain determinism, so we reuse the previous result
@@ -171,8 +170,7 @@ procedure insert_metadata(
     }
 
     $uuid uuid := uuid_generate_v5('1361df5d-0230-47b3-b2c1-37950cf51fe9'::uuid, @txid);
-    // TODO replace by context value when kwil supports
-    $current_block int := 2;
+    $current_block int := @height;
 
     // insert data
     // TODO add value_f
@@ -250,8 +248,7 @@ procedure get_metadata($key text, $only_latest bool, $ref text) public view retu
 procedure disable_metadata($row_id uuid) public {
     stream_owner_only();
 
-    // TODO when kwil enables current block from context
-    $current_block int := 3;
+    $current_block int := @height;
 
     $found bool := false;
 
@@ -284,8 +281,7 @@ procedure insert_record($date_value text, $value int) public {
         error('contract must be initiated');
     }
 
-    // TODO replace by context value when kwil supports
-    $current_block int := 3;
+    $current_block int := @height;
 
     // insert data
     INSERT INTO primitive_events (date_value, value, created_at)
@@ -324,7 +320,6 @@ procedure get_base_value() private view returns (value int) {
     error('no base value found');
 }
 
-// TODO: frozen_at is not used yet, but it will be used for lookback mechanism
 procedure get_record(
     $date_from text,
     $date_to text,

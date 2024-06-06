@@ -60,8 +60,7 @@ procedure accept_stream($data_provider text, $stream_id text) public owner {
         error('this stream is already official');
     }
 
-    // todo replace by real blockheight by kwil
-    $current_blockheight int := 1;
+    $current_blockheight int := @height;
 
     verify_hex($data_provider);
 
@@ -77,7 +76,7 @@ procedure revoke_stream($data_provider text, $stream_id text) public owner {
         error('this stream is not official');
     }
 
-    $current_blockheight int := 1;
+    $current_blockheight int := @height;
 
     UPDATE system_streams SET revoked_at = $current_blockheight WHERE data_provider = $data_provider AND stream_id = $stream_id;
 }
