@@ -194,7 +194,7 @@ procedure get_index_internal($date_from text, $date_to text, $frozen_at text) pr
 
             // for each value, we will return it to the table with the calculations done
 
-            return next $row3.date_value, $row3.value * $row2.weight::decimal(10,3) / $weight_sum::decimal(10,3);
+            return next $row3.date_value, $row3.value * $row2.weight / $weight_sum;
         }
     }
 }

@@ -298,7 +298,7 @@ procedure get_index($date_from text, $date_to text, $frozen_at text) public view
     }
 
     for $current_record in SELECT * FROM get_record($date_from, $date_to, $frozen_at) {
-        $index decimal(10,3) := ($current_record.value::decimal(10,3) * 100::decimal(10,3)) / $baseValue::decimal(10,3);
+        $index decimal(10,3) := ($current_record.value * 100::decimal(10,3)) / $baseValue;
         return next $current_record.date_value, $index;
     }
 }
