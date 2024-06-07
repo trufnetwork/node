@@ -6,7 +6,7 @@ database primitive_stream_db_name;
 
 table primitive_events {
     date_value text notnull minlen(10) maxlen(10), // enforce yyyy-mm-dd format
-    value int notnull,
+    value decimal(10,3) notnull,
     created_at int notnull, // based on blockheight
 
     #identifier_idx   primary(date_value, created_at)
@@ -270,7 +270,7 @@ procedure disable_metadata($row_id uuid) public {
     }
 }
 
-procedure insert_record($date_value text, $value int) public {
+procedure insert_record($date_value text, $value decimal(10,3)) public {
     stream_owner_only();
 
     if is_initiated() == false {
@@ -292,8 +292,8 @@ procedure get_index($date_from text, $date_to text, $frozen_at text) public view
         value decimal(10,3)
         ) {
 
-    $baseValue int := get_base_value();
-    if $baseValue == 0 {
+    $baseValue decimal(10,3) := get_base_value();
+    if $baseValue == 0::decimal(10,3) {
         error('base value is 0');
     }
 
@@ -304,7 +304,7 @@ procedure get_index($date_from text, $date_to text, $frozen_at text) public view
 }
 
 // get_base_value returns the first value of the primitive stream
-procedure get_base_value() private view returns (value int) {
+procedure get_base_value() private view returns (value decimal(10,3)) {
     for $row in SELECT value from primitive_events ORDER BY date_value ASC, created_at DESC LIMIT 1 {
         return $row.value;
     }
@@ -319,7 +319,7 @@ procedure get_record(
     $frozen_at text
     ) public view returns table(
     date_value text,
-    value int
+    value decimal(10,3)
     ) {
 
     // check read access
