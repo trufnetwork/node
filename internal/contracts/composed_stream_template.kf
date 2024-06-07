@@ -19,8 +19,7 @@ table metadata {
     row_id      uuid    primary notnull,
     metadata_key         text    notnull,
     value_i     int,                 // integer type
-    // TODO: uncomment to add this field in imminent kwil support
-    // value_f     decimal,             // float type
+    value_f     decimal(10,3),       // float type
     value_b     bool,                // boolean type
     value_s     text,                // string type
     value_ref   text,                // indexed string type -- lowercase
@@ -32,9 +31,14 @@ table metadata {
     #created_idx    index(created_at) // faster sorting
 }
 
-foreign procedure ext_get_data($date_from text, $date_to text, $frozen_at text) returns table(
+foreign procedure ext_get_record($date_from text, $date_to text, $frozen_at text) returns table(
     date_value text,
     value int
+)
+
+foreign procedure ext_get_index($date_from text, $date_to text, $frozen_at text) returns table(
+    date_value text,
+    value decimal(10,3)
 )
 
 procedure stream_exists($data_provider text, $stream_id text) public view returns (result bool) {
@@ -97,7 +101,7 @@ procedure get_date_list($date_from text, $date_to text, $frozen_at text) public 
     $date_list text[];
     for $row2 in SELECT * FROM describe_taxonomies(true) {
         $dbid text := generate_dbid($row2.child_data_provider, $row2.child_stream_id);
-        for $row3 in SELECT * FROM ext_get_data[$dbid, 'get_record']($date_from, $date_to, $frozen_at) {
+        for $row3 in SELECT * FROM ext_get_record[$dbid, 'get_record']($date_from, $date_to, $frozen_at) {
             $found bool := false;
             for $single_date in $date_list {
                 if $single_date == $row3.date_value {
@@ -126,7 +130,7 @@ procedure get_date_list($date_from text, $date_to text, $frozen_at text) public 
 // 2020-06-02, 143
 procedure get_record_internal($date_from text, $date_to text, $frozen_at text) private view returns table(
     date_value text,
-    value int
+    value decimal(10,3)
 ) {
     $weight_sum int := 0;
     for $row in SELECT * FROM describe_taxonomies(true) {
@@ -150,11 +154,11 @@ procedure get_record_internal($date_from text, $date_to text, $frozen_at text) p
 
     for $row2 in SELECT * FROM describe_taxonomies(true) {
         $dbid text := generate_dbid($row2.child_data_provider, $row2.child_stream_id);
-        for $row3 in SELECT * FROM ext_get_data[$dbid, 'get_record']($start_date, $end_date, $frozen_at) {
+        for $row3 in SELECT * FROM ext_get_record[$dbid, 'get_record']($start_date, $end_date, $frozen_at) {
 
             // for each value, we will return it to the table with the calculations done
 
-            return next $row3.date_value, ($row3.value * $row2.weight * 1000 / $weight_sum);
+            return next $row3.date_value, $row3.value::decimal(10,3) * $row2.weight::decimal(10,3) / $weight_sum::decimal(10,3);
         }
     }
 }
@@ -167,7 +171,7 @@ procedure get_record_internal($date_from text, $date_to text, $frozen_at text) p
 // 2020-06-02, 143
 procedure get_index_internal($date_from text, $date_to text, $frozen_at text) private view returns table(
     date_value text,
-    value int
+    value decimal(10,3)
 ) {
     $weight_sum int := 0;
     for $row in SELECT * FROM describe_taxonomies(true) {
@@ -191,11 +195,11 @@ procedure get_index_internal($date_from text, $date_to text, $frozen_at text) pr
 
     for $row2 in SELECT * FROM describe_taxonomies(true) {
         $dbid text := generate_dbid($row2.child_data_provider, $row2.child_stream_id);
-        for $row3 in SELECT * FROM ext_get_data[$dbid, 'get_index']($start_date, $end_date, $frozen_at) {
+        for $row3 in SELECT * FROM ext_get_index[$dbid, 'get_index']($start_date, $end_date, $frozen_at) {
 
             // for each value, we will return it to the table with the calculations done
 
-            return next $row3.date_value, ($row3.value * $row2.weight / $weight_sum);
+            return next $row3.date_value, $row3.value * $row2.weight::decimal(10,3) / $weight_sum::decimal(10,3);
         }
     }
 }
@@ -329,7 +333,7 @@ procedure insert_metadata(
 
     $value_i int;
     $value_s text;
-    $value_f text; // todo: decimal
+    $value_f decimal(10,3);
     $value_b bool;
     $value_ref text;
 
@@ -342,8 +346,7 @@ procedure insert_metadata(
     } elseif $val_type == 'ref' {
         $value_ref := $value;
     } elseif $val_type == 'float' {
-        // TODO add ::decimal
-        $value_f := $value;
+        $value_f := $value::decimal(10,3);
     } else {
         error(format('unknown type used "%s". valid types = "float" | "bool" | "int" | "ref" | "string"', $val_type));
     }
@@ -363,9 +366,8 @@ procedure insert_metadata(
     $current_block int := @height;
 
     // insert data
-    // TODO add value_f
-    INSERT INTO metadata (row_id, metadata_key, value_i, value_s, value_b, value_ref, created_at)
-        VALUES ($uuid, $key, $value_i, $value_s, $value_b, LOWER($value_ref), $current_block);
+    INSERT INTO metadata (row_id, metadata_key, value_i, value_f, value_s, value_b, value_ref, created_at)
+        VALUES ($uuid, $key, $value_i, $value_f, $value_s, $value_b, LOWER($value_ref), $current_block);
 }
 
 // key: the metadata key to look for
@@ -374,8 +376,7 @@ procedure insert_metadata(
 procedure get_metadata($key text, $only_latest bool, $ref text) public view returns table(
         row_id uuid,
         value_i int,
-        // TODO: uncomment when supported
-        // value_f decimal,
+        value_f decimal(10,3),
         value_b bool,
         value_s text,
         value_ref text,
@@ -392,12 +393,13 @@ procedure get_metadata($key text, $only_latest bool, $ref text) public view retu
                 WHERE metadata_key = $key AND disabled_at IS NULL AND value_ref = LOWER($ref)
                 ORDER BY created_at DESC
                 LIMIT 1 {
-                    return next $row.row_id, null, null, null, $row.value_ref, $row.created_at;
+                    return next $row.row_id, null, null, null, null, $row.value_ref, $row.created_at;
                 }
             } else {
                 return SELECT
                               row_id,
                               value_i,
+                              value_f,
                               value_b,
                               value_s,
                               value_ref,
@@ -417,12 +419,13 @@ procedure get_metadata($key text, $only_latest bool, $ref text) public view retu
                FROM metadata
                WHERE metadata_key = $key AND disabled_at IS NULL AND value_ref = LOWER($ref)
                ORDER BY created_at DESC {
-                   return next $row2.row_id, null, null, null, $row2.value_ref, $row2.created_at;
+                   return next $row2.row_id, null, null, null, null, $row2.value_ref, $row2.created_at;
                }
            } else {
                return SELECT
                              row_id,
                              value_i,
+                             value_f,
                              value_b,
                              value_s,
                              value_ref,

@@ -27,8 +27,7 @@ procedure verify_hex($text text) private {
 foreign procedure get_metadata($key text, $only_latest bool) returns table(
     row_id uuid,
     value_i int,
-    // TODO: uncomment when supported
-    // value_f decimal,
+    value_f decimal(10, 3),
     value_b bool,
     value_s text,
     value_ref text,

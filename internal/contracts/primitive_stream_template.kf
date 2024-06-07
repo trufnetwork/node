@@ -16,8 +16,7 @@ table metadata {
     row_id      uuid    primary notnull,
     metadata_key         text    notnull,
     value_i     int,                 // integer type
-    // TODO: uncomment to add this field in imminent kwil support
-    // value_f     decimal,             // float type
+    value_f     decimal(10,3),
     value_b     bool,                // boolean type
     value_s     text,                // string type
     value_ref   text,                // indexed string type -- lowercase
@@ -116,12 +115,10 @@ procedure init() public owner {
         'readonly_key'
     ];
 
-    // TODO: key is converted to text due to a bug(?) in kwil.
-    // The key itself is already a text but somehow it's recognized as a []text
     for $key in $readonly_keys {
         $current_uuid :=  uuid_generate_v5($current_uuid, @txid);
         INSERT INTO metadata (row_id, metadata_key, value_s, created_at)
-            VALUES ($current_uuid, 'readonly_key', $key::text, $current_block);
+            VALUES ($current_uuid, 'readonly_key', $key, $current_block);
     }
 }
 
@@ -139,7 +136,7 @@ procedure insert_metadata(
 
     $value_i int;
     $value_s text;
-    $value_f text; // todo: decimal
+    $value_f decimal(10,3);
     $value_b bool;
     $value_ref text;
 
@@ -152,8 +149,7 @@ procedure insert_metadata(
     } elseif $val_type == 'ref' {
         $value_ref := $value;
     } elseif $val_type == 'float' {
-        // TODO add ::decimal
-        $value_f := $value;
+        $value_f := $value::decimal(10,3);
     } else {
         error(format('unknown type used "%s". valid types = "float" | "bool" | "int" | "ref" | "string"', $val_type));
     }
@@ -173,9 +169,8 @@ procedure insert_metadata(
     $current_block int := @height;
 
     // insert data
-    // TODO add value_f
-    INSERT INTO metadata (row_id, metadata_key, value_i, value_s, value_b, value_ref, created_at)
-        VALUES ($uuid, $key, $value_i, $value_s, $value_b, LOWER($value_ref), $current_block);
+    INSERT INTO metadata (row_id, metadata_key, value_i, value_f, value_s, value_b, value_ref, created_at)
+        VALUES ($uuid, $key, $value_i, $value_f, $value_s, $value_b, LOWER($value_ref), $current_block);
 }
 
 // key: the metadata key to look for
@@ -184,8 +179,7 @@ procedure insert_metadata(
 procedure get_metadata($key text, $only_latest bool, $ref text) public view returns table(
         row_id uuid,
         value_i int,
-        // TODO: uncomment when supported
-        // value_f decimal,
+        value_f decimal(10,3),
         value_b bool,
         value_s text,
         value_ref text,
@@ -202,12 +196,13 @@ procedure get_metadata($key text, $only_latest bool, $ref text) public view retu
                 WHERE metadata_key = $key AND disabled_at IS NULL AND value_ref = LOWER($ref)
                 ORDER BY created_at DESC
                 LIMIT 1 {
-                    return next $row.row_id, null, null, null, $row.value_ref, $row.created_at;
+                    return next $row.row_id, null, null, null, null, $row.value_ref, $row.created_at;
                 }
             } else {
                 return SELECT
                               row_id,
                               value_i,
+                              value_f,
                               value_b,
                               value_s,
                               value_ref,
@@ -227,12 +222,13 @@ procedure get_metadata($key text, $only_latest bool, $ref text) public view retu
                FROM metadata
                WHERE metadata_key = $key AND disabled_at IS NULL AND value_ref = LOWER($ref)
                ORDER BY created_at DESC {
-                   return next $row2.row_id, null, null, null, $row2.value_ref, $row2.created_at;
+                   return next $row2.row_id, null, null, null, null, $row2.value_ref, $row2.created_at;
                }
            } else {
                return SELECT
                              row_id,
                              value_i,
+                             value_f,
                              value_b,
                              value_s,
                              value_ref,
@@ -288,15 +284,12 @@ procedure insert_record($date_value text, $value int) public {
         VALUES ($date_value, $value, $current_block);
 }
 
-// we can't do floating point division, but Truflation normally tracks
-// index precision to the thousandth, so we will multiply by 1000 before performing integer division.
 // Truflations calculation is ((current_primitive/first_primitive)*100).
-// Therefore, we will alter the equation to ((current_primitive*100000)/first_primitive).
 // This essentially gives us the same result, but with an extra 3 digits of precision.
-// index := (currentPrimitive * 100000) / basePrimitive
+// index := (currentPrimitive * 100) / basePrimitive
 procedure get_index($date_from text, $date_to text, $frozen_at text) public view returns table(
         date_value text,
-        value int
+        value decimal(10,3)
         ) {
 
     $baseValue int := get_base_value();
@@ -305,7 +298,7 @@ procedure get_index($date_from text, $date_to text, $frozen_at text) public view
     }
 
     for $current_record in SELECT * FROM get_record($date_from, $date_to, $frozen_at) {
-        $index int := ($current_record.value * 1000) / $baseValue;
+        $index decimal(10,3) := ($current_record.value::decimal(10,3) * 100::decimal(10,3)) / $baseValue::decimal(10,3);
         return next $current_record.date_value, $index;
     }
 }
