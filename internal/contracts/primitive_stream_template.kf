@@ -313,7 +313,9 @@ procedure get_base_value() private view returns (value decimal(10,3)) {
     error('no base value found');
 }
 
-procedure get_primitive(
+// get_original_record returns the original value of the primitive stream for a given date
+// it does not fill the gaps in the primitive stream
+procedure get_original_record(
     $date_from text,
     $date_to text,
     $frozen_at text
@@ -383,6 +385,13 @@ procedure get_primitive(
     }
 }
 
+// get_record returns the value of the primitive stream for a given date
+// it is able to fill the gaps in the primitive stream by using the last value before the given date
+// in our original implementation, the steps taken was much simpler
+// 1. fetches the original range
+// 2. checks if the original range's first value = start_date
+// 3. if it's not, it tries fetching the last date before it, and prepends result
+// The cause of this added complexity is the lack of support for storing table results in a variable
 procedure get_record(
     $date_from text,
     $date_to text,
@@ -397,35 +406,35 @@ procedure get_record(
         $countedRecords := $row.count;
     }
 
-    $firstRecord text := '';
-    for $row1 in SELECT * FROM get_primitive($date_from, $date_to, $frozen_at) ORDER BY date_value ASC LIMIT 1 {
-        $firstRecord := $row1.date_value;
+    $firstRecordDateValue text := '';
+    for $row1 in SELECT * FROM get_original_record($date_from, $date_to, $frozen_at) ORDER BY date_value ASC LIMIT 1 {
+        $firstRecordDateValue := $row1.date_value;
     }
 
-    if ($countedRecords == 0 OR $firstRecord != $date_from) AND $date_from != '' {
+    if ($countedRecords == 0 OR $firstRecordDateValue != $date_from) AND $date_from != '' {
         $lastPrimitiveCount int := 0;
-        for $row3 in SELECT COUNT(*) as count FROM get_last_primitive($date_from) {
+        for $row3 in SELECT COUNT(*) as count FROM get_last_record_before_date($date_from) {
             $lastPrimitiveCount := $row3.count;
         }
 
-        if $lastPrimitiveCount == 0 {
-        } elseif $lastPrimitiveCount != 1 {
-            error('more than one record found');
+        if $lastPrimitiveCount != 1 {
+            error('either no records found or multiple records found for the given date');
         } else {
-            for $row4 in SELECT * FROM get_last_primitive($date_from) {
+            for $row4 in SELECT * FROM get_last_record_before_date($date_from) {
                 return next $date_from, $row4.value;
             }
 
-            for $row5 in SELECT * FROM get_primitive($date_from, $date_to, $frozen_at) {
+            for $row5 in SELECT * FROM get_original_record($date_from, $date_to, $frozen_at) {
                 return next $row5.date_value, $row5.value;
             }
         }
     } else {
-        return SELECT * FROM get_primitive($date_from, $date_to, $frozen_at);
+        return SELECT * FROM get_original_record($date_from, $date_to, $frozen_at);
     }
 }
 
-procedure get_last_primitive(
+// get_last_record_before_date returns the last record before the given date
+procedure get_last_record_before_date(
     $date_from text
 ) public view returns table(
     date_value text,
