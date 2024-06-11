@@ -6,6 +6,9 @@ on:
     types: [ opened, synchronize, reopened, ready_for_review ]
   workflow_dispatch:
   push:
+    paths-ignore:
+      - '**.md'
+      - '**.kf'
     branches:
       - main
 
