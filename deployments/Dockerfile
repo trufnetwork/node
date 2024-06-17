@@ -6,6 +6,11 @@ COPY go.mod go.sum ./
 RUN go mod download
 RUN go mod verify
 
+COPY ./scripts/download-binaries.sh ./scripts/download-binaries.sh
+RUN chmod +x ./scripts/download-binaries.sh
+# download the kwil binaries
+RUN sh ./scripts/download-binaries.sh
+
 COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /app/.build/kwild /app/cmd/kwild/main.go
@@ -16,13 +21,14 @@ FROM busybox:1.35.0-uclibc as busybox
 
 FROM gcr.io/distroless/static-debian12
 
-COPY --from=busybox /bin/sh /bin/sh
-COPY --from=busybox /bin/chmod /bin/chmod
+# make every needed tool available here to simplify development and
+# debugging
+COPY --from=busybox /bin/* /bin/
 
 WORKDIR /app
-COPY --from=build /app/.build/kwild ./kwild
-COPY --from=build /app/.build/kwil-admin /app/kwil-admin
 
+# move .build content to /app
+COPY --from=build /app/.build/* /app/
 
 # create entrypoint file
 RUN echo "#!/bin/sh" > /app/entrypoint.sh
@@ -33,7 +39,6 @@ RUN echo "test -n \"\$CONFIG_PATH\"" >> /app/entrypoint.sh
 RUN echo "test -n \"\$DB_HOST\"" >> /app/entrypoint.sh
 RUN echo "exec /app/kwild --root-dir \$CONFIG_PATH \
   --app.hostname \"\$HOSTNAME\"\
-  --app.http-listen-addr \"0.0.0.0:8080\"\
   --chain.p2p.listen-addr \"tcp://0.0.0.0:26656\"\
   --app.pg-db-host \$DB_HOST \\" >> /app/entrypoint.sh
 
@@ -67,5 +72,5 @@ RUN echo "" >> /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 
-EXPOSE 50051 50151 8080 26656 26657
+EXPOSE 50051 50151 8080 8484 26656 26657
 ENTRYPOINT ["/app/entrypoint.sh"]
