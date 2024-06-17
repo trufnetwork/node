@@ -82,17 +82,17 @@ procedure revoke_stream($data_provider text, $stream_id text) public owner {
 
 foreign procedure ext_get_record($date_from text, $date_to text, $frozen_at text) returns table(
     date_value text,
-    value int
+    value decimal(10, 3)
 )
 
 foreign procedure ext_get_index($date_from text, $date_to text, $frozen_at text) returns table(
     date_value text,
-    value int
+    value decimal(10, 3)
 )
 
 procedure get_unsafe_record($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at text) public view returns table(
     date_value text,
-    value int
+    value decimal(10, 3)
 ) {
     $dbid text := generate_dbid($data_provider, $stream_id);
 
@@ -137,7 +137,7 @@ procedure generate_dbid($data_provider text, $stream_id text) private view retur
 
 procedure get_unsafe_index($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at text) public view returns table(
     date_value text,
-    value int
+    value decimal(10, 3)
 ) {
     $dbid text := generate_dbid($data_provider, $stream_id);
 
@@ -148,7 +148,7 @@ procedure get_unsafe_index($data_provider text, $stream_id text, $date_from text
 
 procedure get_record($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at text) public view returns table(
     date_value text,
-    value int
+    value decimal(10, 3)
 ) {
 
     $is_official_stream bool := get_official_stream($data_provider, $stream_id);
@@ -167,7 +167,7 @@ procedure get_record($data_provider text, $stream_id text, $date_from text, $dat
 
 procedure get_index($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at text) public view returns table(
     date_value text,
-    value int
+    value decimal(10, 3)
 ) {
     $is_official_stream bool := get_official_stream($data_provider, $stream_id);
 

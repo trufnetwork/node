@@ -78,3 +78,32 @@ owner=$(../../.build/kwil-cli account id)
 ../../.build/kwil-cli database call data_provider:$owner stream_id:primitive_stream_000000000000002 date_from:2021-01-01 --action=get_index -n=system_contract
 
 ```
+
+### Allowed Composability Streams
+
+deploy and fetch
+
+```shell
+../../.build/kwil-cli database drop system_contract --sync
+../../.build/kwil-cli database drop primitive_stream_000000000000003 --sync
+../../.build/kwil-cli database deploy -p=../../internal/contracts/system_contract.kf --name system_contract --sync
+../../.build/kwil-cli database deploy -p=../../internal/contracts/primitive_stream_template.kf --name primitive_stream_000000000000003 --sync
+../../.build/kwil-cli database execute --action=init -n=primitive_stream_000000000000003 --sync
+../../.build/kwil-cli database execute --action=insert_record -n=primitive_stream_000000000000003 date_value:2021-01-01 value:1 --sync
+
+owner=$(../../.build/kwil-cli account id)
+# try getting from allowed composability streams (should work)
+../../.build/kwil-cli database call data_provider:$owner stream_id:primitive_stream_000000000000003 date_from:2021-01-01 --action=get_unsafe_record -n=system_contract
+
+# set compose_visibility to 1 (private) from the stream by inserting a metadata
+../../.build/kwil-cli database execute --action=insert_metadata -n=primitive_stream_000000000000003 key:compose_visibility value:1 val_type:int --sync
+
+# try getting from allowed composability streams (should error)
+../../.build/kwil-cli database call data_provider:$owner stream_id:primitive_stream_000000000000003 date_from:2021-01-01 --action=get_unsafe_record -n=system_contract
+
+# insert a metadata allow_compose_stream to allow composability, assuming the private key is 001, the dbid of the system contract is xa9595222f0c9bdf337c51153f473998c30eaa3007e329c425078b18f
+../../.build/kwil-cli database execute --action=insert_metadata -n=primitive_stream_000000000000003 key:allow_compose_stream value:xa9595222f0c9bdf337c51153f473998c30eaa3007e329c425078b18f val_type:ref --sync
+
+# try getting from allowed composability streams (should work)
+../../.build/kwil-cli database call data_provider:$owner stream_id:primitive_stream_000000000000003 date_from:2021-01-01 --action=get_unsafe_record -n=system_contract
+```

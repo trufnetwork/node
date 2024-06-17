@@ -328,6 +328,8 @@ procedure get_original_record(
     if is_wallet_allowed_to_read(@caller) == false {
         error('wallet not allowed to read');
     }
+    // check compose access
+    is_stream_allowed_to_compose();
 
     $frozenValue int := 0;
     if $frozen_at != '' {
@@ -472,4 +474,24 @@ procedure check_eth_address($address text) private {
             error('address does not start with 0x');
         }
     }
+}
+
+procedure is_stream_allowed_to_compose() public view returns (value bool) {
+    // if public, anyone can always read
+    // If there's no visibility metadata, it's public.
+    $visibility int := 0;
+    for $v_row in SELECT * FROM get_metadata('compose_visibility', true, null) {
+        $visibility := $v_row.value_i;
+    }
+
+    if $visibility == 0 {
+        return true;
+    }
+
+    // if there's metadata allow_compose_stream -> <foreign_caller>, then its permitted
+    for $row in SELECT * FROM get_metadata('allow_compose_stream', true, @foreign_caller) LIMIT 1 {
+        return true;
+    }
+
+    error('stream not allowed to compose');
 }
