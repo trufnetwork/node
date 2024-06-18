@@ -11,6 +11,7 @@ require (
 	github.com/StackExchange/wmi v1.2.1 // indirect
 	github.com/alexliesenfeld/health v0.8.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.0 // indirect
+	github.com/aws/aws-lambda-go v1.47.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.10.0 // indirect
 	github.com/btcsuite/btcd/btcec/v2 v2.3.2 // indirect
