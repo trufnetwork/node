@@ -24,7 +24,7 @@ services:
       # to test the dev-network, use the following values:
       # BACKENDS: tsn-db-1:8080,tsn-db-2:8080
       # CHAIN_ID: tsn-local
-      BACKENDS: ${BACKENDS:-tsn-db:8080}
+      BACKENDS: ${BACKENDS:-tsn-db:8484}
       CHAIN_ID: ${CHAIN_ID:-truflation-staging}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS}
       ALLOW_DEPLOY_DB: true
