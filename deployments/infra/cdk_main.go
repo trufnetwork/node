@@ -2,6 +2,7 @@ package main
 
 import (
 	domain_utils "github.com/truflation/tsn-db/infra/lib/domain_utils"
+	system_contract "github.com/truflation/tsn-db/infra/lib/system-contract"
 	"os"
 	"strconv"
 
@@ -110,6 +111,17 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	// add read permission to the kgw instance role
 	kgwBinaryS3Object.GrantRead(kgwInstance.Role)
 	kgwDirectoryAsset.GrantRead(kgwInstance.Role)
+
+	// Deploy the system contract everytime the hash changes
+	system_contract.DeployContractResource(stack, system_contract.DeployContractResourceOptions{
+		DeployContractLambdaFnOptions: system_contract.DeployContractLambdaFnOptions{
+			SystemContractPath: jsii.String("./internal/contracts/system_contract.kf"),
+		},
+		PrivateKey:  config.GetEnvironmentVariables().PrivateKey,
+		ProviderUrl: kgwInstance.Instance.InstancePublicIp(),
+		// so that every time the hash changes, the contract is deployed again
+		Hash: tsnImageAsset.AssetHash(),
+	})
 
 	// Cloudfront for the gateway instance
 	// We use cloudfront to handle TLS termination. The certificate is created in a separate stack in us-east-1.
