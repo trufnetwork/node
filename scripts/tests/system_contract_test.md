@@ -81,7 +81,7 @@ owner=$(../../.build/kwil-cli account id)
 
 ### Allowed Composability Streams
 
-deploy and fetch
+deploy and fetch from primitive stream
 
 ```shell
 ../../.build/kwil-cli database drop system_contract --sync
@@ -106,4 +106,31 @@ owner=$(../../.build/kwil-cli account id)
 
 # try getting from allowed composability streams (should work)
 ../../.build/kwil-cli database call data_provider:$owner stream_id:primitive_stream_000000000000003 date_from:2021-01-01 --action=get_unsafe_record -n=system_contract
+```
+
+test with composed stream
+
+```shell
+# deploy composed stream
+../../.build/kwil-cli database drop composed_stream_0000000000000003 --sync
+../../.build/kwil-cli database deploy -p=../../internal/contracts/composed_stream_template.kf --name composed_stream_0000000000000003 --sync
+../../.build/kwil-cli database execute --action=init -n=composed_stream_0000000000000003 --sync
+
+# get owner
+owner=$(../../.build/kwil-cli account id)
+
+# set data_provider to owner
+../../.build/kwil-cli database execute data_providers:$owner stream_ids:primitive_stream_000000000000003 weights:1 --action=set_taxonomy -n=composed_stream_0000000000000003 --sync
+
+# try getting from allowed composability streams (should error)
+../../.build/kwil-cli database call data_provider:$owner stream_id:composed_stream_0000000000000003 date_from:2021-01-01 --action=get_unsafe_record -n=system_contract
+
+# insert a metadata allow_compose_stream to allow composability, assuming the private key is 001, the dbid of the composed stream is xad21e6518020850a2af996148c535e9c4ade45c88d28f46b29cdd727 to primitive_stream_000000000000003
+../../.build/kwil-cli database execute --action=insert_metadata -n=primitive_stream_000000000000003 key:allow_compose_stream value:xad21e6518020850a2af996148c535e9c4ade45c88d28f46b29cdd727 val_type:ref --sync
+
+# insert a metadata allow_compose_stream to allow composability, assuming the private key is 001, the dbid of the system contract is xa9595222f0c9bdf337c51153f473998c30eaa3007e329c425078b18f to composed_stream_0000000000000003
+../../.build/kwil-cli database execute --action=insert_metadata -n=composed_stream_0000000000000003 key:allow_compose_stream value:xa9595222f0c9bdf337c51153f473998c30eaa3007e329c425078b18f val_type:ref --sync
+
+# try getting from allowed composability streams (should work)
+../../.build/kwil-cli database call data_provider:$owner stream_id:composed_stream_0000000000000003 date_from:2021-01-01 --action=get_unsafe_record -n=system_contract
 ```
