@@ -8,7 +8,11 @@ tasks:
   build:
     desc: Build kwild binary
     cmds:
-      - go build -o ./.build/kwild ./cmd/kwild/main.go
+      - ./scripts/build/binary
+    env:
+      TARGET: ./.build
+      SOURCE: ./cmd/kwild/main.go
+
 
   build:debug:
     desc: Build kwild binary with debug flags
