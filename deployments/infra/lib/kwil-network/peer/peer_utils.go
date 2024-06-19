@@ -10,7 +10,7 @@ import (
 // TsnP2pPort is the port used for P2P communication
 // this is hardcoded at the Dockerfile that generates TSN nodes
 const TsnP2pPort = 26656
-const TsnRPCPort = 8080
+const TsnRPCPort = 8484
 
 type PeerConnection struct {
 	ElasticIp               awsec2.CfnEIP
