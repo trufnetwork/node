@@ -1,4 +1,4 @@
-database truflation_system_contract;
+database tsn_system_contract;
 
 // `system_streams` is the table that stores the streams that have been accepted by the TSN Gov
 table system_streams {
