@@ -40,13 +40,11 @@ download_binaries() {
     if [[ $? -eq 0 ]]; then
         echo "Binary downloaded successfully"
 
-        tar -xzvf kwil-db.tar.gz 'kwil-cli' 'kwil-admin'
+        tar -xzvf kwil-db.tar.gz 'kwil-admin'
         mkdir -p ./.build
-        mv ./kwil-cli .build
         mv ./kwil-admin .build
         rm ./kwil-db.tar.gz
 
-        chmod +x ./.build/kwil-cli
         chmod +x ./.build/kwil-admin
     else
         echo "Failed to download binary"
