@@ -20,7 +20,9 @@ jobs:
           AWS_ACCESS_KEY: ${{ secrets.AWS_ACCESS_KEY }}
           AWS_SECRET_KEY: ${{ secrets.AWS_SECRET_KEY }}
           GW_SESSION_SECRET: ${{ secrets.GW_SESSION_SECRET }}
-        if: ${{ env.AWS_ACCESS_KEY == '' || env.AWS_SECRET_KEY == '' || env.GW_SESSION_SECRET == '' }}
+          # PRIVATE_KEY is the private key of the account that will be used to deploy the TSN system contract
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+        if: ${{ env.AWS_ACCESS_KEY == '' || env.AWS_SECRET_KEY == '' || env.GW_SESSION_SECRET == '' || env.PRIVATE_KEY == '' }}
         run: |
           echo "Missing secrets"
           exit 1
@@ -89,3 +91,4 @@ jobs:
           # used to instantiate configuration
           KWIL_ADMIN_BIN_PATH: ../../.build/kwil-admin
           CHAIN_ID: truflation-staging
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
