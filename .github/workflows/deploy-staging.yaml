@@ -49,6 +49,7 @@ jobs:
           GH_ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           go work init
+          go work use .
           go work use deployments/infra
           go mod download
           go work vendor
