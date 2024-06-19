@@ -75,7 +75,7 @@ services:
       - CONFIG_PATH=/root/.kwild/node0/
       - DB_HOST=kwil-postgres-1
     ports:
-      - "8080:8080"
+      - "8484:8484"
     depends_on:
       tsn-conf:
         condition: service_completed_successfully
@@ -102,7 +102,7 @@ services:
       - CONFIG_PATH=/root/.kwild/node1/
       - DB_HOST=kwil-postgres-2
     ports:
-      - "8081:8080"
+      - "8485:8484"
     depends_on:
       tsn-conf:
         condition: service_completed_successfully

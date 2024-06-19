@@ -60,7 +60,7 @@ unzip /home/ec2-user/kgw.zip -d /home/ec2-user/kgw
 
 unzip ` + *options.kgwBinaryPath + ` -d /tmp/kgw-pkg
 mkdir -p /tmp/kgw-binary
-tar -xf /tmp/kgw-pkg/kgw-v0.2.0/kgw_0.2.0_linux_amd64.tar.gz -C /tmp/kgw-binary
+tar -xf /tmp/kgw-pkg/kgw_0.3.0-next_linux_amd64.tar.gz -C /tmp/kgw-binary
 chmod +x /tmp/kgw-binary/kgw
 # we send the binary as it is expected by the docker-compose file
 mv /tmp/kgw-binary/kgw /home/ec2-user/kgw/kgw
