@@ -3,9 +3,10 @@ package init_system_contract
 import (
 	"context"
 	"fmt"
-	"os"
+	"github.com/cenkalti/backoff/v4"
+	"github.com/kwilteam/kwil-db/core/gatewayclient"
+	"time"
 
-	"github.com/kwilteam/kwil-db/core/client"
 	"github.com/kwilteam/kwil-db/core/crypto"
 	"github.com/kwilteam/kwil-db/core/crypto/auth"
 	clientType "github.com/kwilteam/kwil-db/core/types/client"
@@ -13,24 +14,20 @@ import (
 )
 
 type InitSystemContractOptions struct {
-	PrivateKey         string
-	ProviderUrl        string
-	SystemContractPath string
+	// PrivateKey is the private key of the account that will deploy the system contract. i.e., the TSN wallet
+	PrivateKey string
+	// ProviderUrl we're using the gateway client to interact with the TSN, so it should be the gateway URL
+	ProviderUrl           string
+	SystemContractContent string
+	// RetryTimeout is the maximum time to wait for the TSN to start
+	RetryTimeout time.Duration
 }
 
-// Helper function to check if a file exists
-func fileExists(filePath string) bool {
-	info, err := os.Stat(filePath)
-	return err == nil && !info.IsDir()
-}
+func InitSystemContract(ctx context.Context, options InitSystemContractOptions) error {
+	// use ctx to cancel long running operations
 
-func InitSystemContract(options InitSystemContractOptions) error {
-	ctx := context.Background()
-
-	// Check if the system contract file exists
-	if !fileExists(options.SystemContractPath) {
-		return fmt.Errorf("system contract not found at the expected location: %s", options.SystemContractPath)
-	}
+	fmt.Println("Initializing system contract...")
+	fmt.Println("System contract content:", options.SystemContractContent)
 
 	pk, err := crypto.Secp256k1PrivateKeyFromHex(options.PrivateKey)
 	if err != nil {
@@ -39,28 +36,42 @@ func InitSystemContract(options InitSystemContractOptions) error {
 
 	signer := &auth.EthPersonalSigner{Key: *pk}
 
-	kwilClient, err := client.NewClient(ctx, options.ProviderUrl, &clientType.Options{
-		Signer: signer,
+	var kwilClient clientType.Client
+
+	// Make sure the TSN is running. We expect to receive pong. On this step, we retry for the max timeout
+	err = backoff.RetryNotify(func() error {
+		kwilClient, err = gatewayclient.NewClient(ctx, options.ProviderUrl, &gatewayclient.GatewayOptions{
+			Options: clientType.Options{
+				Signer: signer,
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create kwil client: %w", err)
+		}
+
+		fmt.Println("Pinging the network...")
+		res, err := kwilClient.Ping(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to ping the network: %w", err)
+		}
+
+		if res != "pong" {
+			return fmt.Errorf("expected pong, received: %s", res)
+		}
+
+		return nil
+	}, backoff.NewExponentialBackOff(
+		backoff.WithMaxInterval(15*time.Second),
+		backoff.WithMaxElapsedTime(options.RetryTimeout),
+	), func(err error, duration time.Duration) {
+		fmt.Printf("Error: %v. Retrying in %s\n", err, duration)
 	})
+
 	if err != nil {
-		return fmt.Errorf("failed to create kwil client: %w", err)
+		return fmt.Errorf("timed out while waiting for TSN to start: %w", err)
 	}
 
-	// Make sure the TSN is running. We expect to receive pong
-	res, err := kwilClient.Ping(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to ping the network: %w", err)
-	}
-
-	fmt.Println("Received from TSN: ", res)
-
-	// Read the system contract file
-	contractContent, err := os.ReadFile(options.SystemContractPath)
-	if err != nil {
-		return fmt.Errorf("failed to read system contract file: %w", err)
-	}
-
-	schema, err := parse.Parse(contractContent)
+	schema, err := parse.Parse([]byte(options.SystemContractContent))
 	if err != nil {
 		return fmt.Errorf("failed to parse system contract: %w", err)
 	}
