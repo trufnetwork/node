@@ -55,6 +55,9 @@ func DeployContractResource(scope constructs.Construct, options DeployContractRe
 		// Properties to pass to the Lambda
 		// if any of these keys change, we need to update the lambda code
 		Properties: &map[string]interface{}{
+			// the intention of UpdateHash is just updating some of the custom resource
+			// properties. Then we'll be triggering an resource Update event every time
+			// the hash changes.
 			"UpdateHash":           options.Hash,
 			"PrivateKeySSMId":      ssmPrivateKey.ParameterName(),
 			"ProviderUrl":          options.ProviderUrl,
