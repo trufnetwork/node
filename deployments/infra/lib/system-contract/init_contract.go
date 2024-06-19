@@ -29,7 +29,6 @@ func DeployContractLambdaFn(scope constructs.Construct, options DeployContractLa
 			GoBuildFlags: &[]*string{
 				jsii.String("-ldflags \"-s -w\""),
 			},
-			// 	Volumes *[]*DockerVolume `field:"optional" json:"volumes" yaml:"volumes"`
 			Volumes: &[]*awscdk.DockerVolume{
 				{
 					ContainerPath: options.ContainerSystemContractPath,
