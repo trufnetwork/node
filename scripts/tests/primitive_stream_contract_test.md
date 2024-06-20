@@ -44,6 +44,18 @@ other=0x$(../../.build/kwil-cli account id --private-key 00000000000000000000000
 ../../.build/kwil-cli database call key:allow_read_wallet ref:$other --action=get_metadata -n=primitive_stream_000000000000001
 ```
 
+Check write access to wallet
+```shell
+wallet=0x$(../../.build/kwil-cli account id --private-key 0000000000000000000000000000000000000000000000000000000000000123)
+../../.build/kwil-cli database call wallet:$wallet --action=is_wallet_allowed_to_write -n=primitive_stream_000000000000001
+
+# give access to write
+../../.build/kwil-cli database execute key:allow_write_wallet value:$wallet val_type:ref --action=insert_metadata -n=primitive_stream_000000000000001 --sync
+
+# check again
+../../.build/kwil-cli database call wallet:$wallet --action=is_wallet_allowed_to_write -n=primitive_stream_000000000000001
+```
+
 Check stream owner
 ```shell
 owner=0x$(../../.build/kwil-cli account id)

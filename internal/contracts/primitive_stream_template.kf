@@ -45,6 +45,20 @@ procedure is_stream_owner($wallet text) public view returns (result bool) {
     return false;
 }
 
+procedure is_wallet_allowed_to_write($wallet text) public view returns (value bool) {
+    // if it's the owner, it's permitted
+    if is_stream_owner($wallet) {
+        return true;
+    }
+
+    // if there's metadata allow_write_wallet -> <wallet>, then its permitted
+    for $row in SELECT * FROM get_metadata('allow_write_wallet', false, $wallet) {
+        return true;
+    }
+
+    return false;
+}
+
 procedure is_wallet_allowed_to_read($wallet text) public view returns (value bool) {
 
     // if public, anyone can always read
@@ -271,7 +285,9 @@ procedure disable_metadata($row_id uuid) public {
 }
 
 procedure insert_record($date_value text, $value decimal(10,3)) public {
-    stream_owner_only();
+    if is_wallet_allowed_to_write(@caller) == false {
+        error('wallet not allowed to write');
+    }
 
     if is_initiated() == false {
         error('contract must be initiated');
