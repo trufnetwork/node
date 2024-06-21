@@ -536,7 +536,7 @@ procedure set_taxonomy($data_providers text[], $stream_ids text[], $weights deci
     stream_owner_only();
 
     $next_version int := get_current_version(true) + 1;
-    $block_height int := 2;
+    $block_height int := @height;
     $current_uuid uuid := uuid_generate_v5('e92064da-19c5-11ef-9bc0-325096b39f47'::uuid, @txid);
 
     $length int := array_length($data_providers);
