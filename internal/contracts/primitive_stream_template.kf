@@ -6,7 +6,7 @@ database primitive_stream_db_name;
 
 table primitive_events {
     date_value text notnull minlen(10) maxlen(10), // enforce yyyy-mm-dd format
-    value decimal(10,3) notnull,
+    value decimal(21,3) notnull,
     created_at int notnull, // based on blockheight
 
     #identifier_idx   primary(date_value, created_at)
@@ -16,7 +16,7 @@ table metadata {
     row_id      uuid    primary notnull,
     metadata_key         text    notnull,
     value_i     int,                 // integer type
-    value_f     decimal(10,3),
+    value_f     decimal(21,3),
     value_b     bool,                // boolean type
     value_s     text,                // string type
     value_ref   text,                // indexed string type -- lowercase
@@ -150,7 +150,7 @@ procedure insert_metadata(
 
     $value_i int;
     $value_s text;
-    $value_f decimal(10,3);
+    $value_f decimal(21,3);
     $value_b bool;
     $value_ref text;
 
@@ -163,7 +163,7 @@ procedure insert_metadata(
     } elseif $val_type == 'ref' {
         $value_ref := $value;
     } elseif $val_type == 'float' {
-        $value_f := $value::decimal(10,3);
+        $value_f := $value::decimal(21,3);
     } else {
         error(format('unknown type used "%s". valid types = "float" | "bool" | "int" | "ref" | "string"', $val_type));
     }
@@ -193,7 +193,7 @@ procedure insert_metadata(
 procedure get_metadata($key text, $only_latest bool, $ref text) public view returns table(
         row_id uuid,
         value_i int,
-        value_f decimal(10,3),
+        value_f decimal(21,3),
         value_b bool,
         value_s text,
         value_ref text,
@@ -284,7 +284,7 @@ procedure disable_metadata($row_id uuid) public {
     }
 }
 
-procedure insert_record($date_value text, $value decimal(10,3)) public {
+procedure insert_record($date_value text, $value decimal(21,3)) public {
     if is_wallet_allowed_to_write(@caller) == false {
         error('wallet not allowed to write');
     }
@@ -305,22 +305,22 @@ procedure insert_record($date_value text, $value decimal(10,3)) public {
 // index := (currentPrimitive * 100) / basePrimitive
 procedure get_index($date_from text, $date_to text, $frozen_at text) public view returns table(
         date_value text,
-        value decimal(10,3)
+        value decimal(21,3)
         ) {
 
-    $baseValue decimal(10,3) := get_base_value();
-    if $baseValue == 0::decimal(10,3) {
+    $baseValue decimal(21,3) := get_base_value();
+    if $baseValue == 0::decimal(21,3) {
         error('base value is 0');
     }
 
     for $current_record in SELECT * FROM get_record($date_from, $date_to, $frozen_at) {
-        $index decimal(10,3) := ($current_record.value * 100::decimal(10,3)) / $baseValue;
+        $index decimal(21,3) := ($current_record.value * 100::decimal(21,3)) / $baseValue;
         return next $current_record.date_value, $index;
     }
 }
 
 // get_base_value returns the first value of the primitive stream
-procedure get_base_value() private view returns (value decimal(10,3)) {
+procedure get_base_value() private view returns (value decimal(21,3)) {
     for $row in SELECT value from primitive_events ORDER BY date_value ASC, created_at DESC LIMIT 1 {
         return $row.value;
     }
@@ -337,7 +337,7 @@ procedure get_original_record(
     $frozen_at text
     ) private view returns table(
     date_value text,
-    value decimal(10,3)
+    value decimal(21,3)
     ) {
 
     // check read access
@@ -416,7 +416,7 @@ procedure get_record(
     $frozen_at text
     ) public view returns table(
     date_value text,
-    value decimal(10,3)
+    value decimal(21,3)
     ) {
 
     $countedRecords int := 0;
@@ -456,7 +456,7 @@ procedure get_last_record_before_date(
     $date_from text
 ) public view returns table(
     date_value text,
-    value decimal(10,3)
+    value decimal(21,3)
     ) {
     for $row in SELECT date_value, value FROM primitive_events WHERE date_value <= $date_from ORDER BY date_value DESC, created_at DESC LIMIT 1 {
         return next $row.date_value, $row.value;
