@@ -268,7 +268,7 @@ procedure is_wallet_allowed_to_read($wallet text) public view returns (value boo
     return false;
 }
 
-procedure stream_owner_only() private {
+procedure stream_owner_only() private view {
     if is_stream_owner(@caller) == false  {
         error('Stream owner only procedure');
     }
@@ -550,7 +550,6 @@ procedure set_taxonomy($data_providers text[], $stream_ids text[], $weights deci
     }
 
     for $i in 1..$length {
-        $current_uuid :=  uuid_generate_v5($current_uuid, @txid);
         INSERT INTO taxonomies (child_stream_id, child_data_provider, weight, created_at, version)
             VALUES ($stream_ids[$i], $data_providers[$i], $weights[$i], $block_height, $next_version);
     }
