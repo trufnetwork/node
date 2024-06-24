@@ -80,80 +80,24 @@ procedure generate_dbid($data_provider text, $stream_id text) private view retur
     error('could not generate dbid');
 }
 
-procedure get_date_list($date_from text, $date_to text, $frozen_at text) public view returns (
-    date_value text[]
-) {
-    $weight_sum decimal(21,3) := 0::decimal(21,3);
-    for $row in SELECT * FROM describe_taxonomies(true) {
-        $weight_sum := $weight_sum + $row.weight;
-    }
-
-    if $weight_sum == 0::decimal(21,3) {
-        error('No taxonomies found');
-    }
-
-    // get list date
-    $date_list text[];
-    for $row2 in SELECT * FROM describe_taxonomies(true) {
-        $dbid text := generate_dbid($row2.child_data_provider, $row2.child_stream_id);
-        for $row3 in SELECT * FROM ext_get_data[$dbid, 'get_record']($date_from, $date_to, $frozen_at) {
-            $found bool := false;
-            for $single_date in $date_list {
-                if $single_date == $row3.date_value {
-                    $found := true;
-                    // TODO: would be better to use break or continue if supported here
-                }
-            }
-            if $found == false {
-                $date_list := array_append($date_list, $row3.date_value);
-            }
-        }
-    }
-
-    if array_length($date_list) == 0 {
-        error('No data found on get_date_list');
-    }
-
-    return $date_list;
-}
-
 // It returns every record value for every date as its own
 // row. e.g.:
 // 2020-06-01, 100
 // 2020-06-01, 140
 // 2020-06-02, 103
 // 2020-06-02, 143
-procedure get_record_internal($date_from text, $date_to text, $frozen_at text) private view returns table(
+procedure get_raw_record($date_from text, $date_to text, $frozen_at text) private view returns table(
     date_value text,
-    value decimal(21,3)
+    value decimal(21,3),
+    taxonomy_index int
 ) {
-    $weight_sum decimal(21,3) := 0::decimal(21,3);
-    for $row in SELECT * FROM describe_taxonomies(true) {
-        $weight_sum := $weight_sum + $row.weight;
-    }
-
-    if $weight_sum == 0::decimal(21,3) {
-        error('No taxonomies found');
-    }
-
-    // get list date, it would be easier if map type supported
-    $date_list := get_date_list($date_from, $date_to, $frozen_at);
-
-    if array_length($date_list) == 0 {
-        error('No data found on date_list');
-    }
-
-    // find the first and last dates
-    $start_date := $date_list[1];
-    $end_date := $date_list[array_length($date_list)];
-
+    // arrays are 1-indexed, so we match that
+    $taxonomy_index int := 0;
     for $row2 in SELECT * FROM describe_taxonomies(true) {
+        $taxonomy_index := $taxonomy_index + 1;
         $dbid text := generate_dbid($row2.child_data_provider, $row2.child_stream_id);
-        for $row3 in SELECT * FROM ext_get_data[$dbid, 'get_record']($start_date, $end_date, $frozen_at) {
-
-            // for each value, we will return it to the table with the calculations done
-
-            return next $row3.date_value, $row3.value * $row2.weight::decimal(21,3) / $weight_sum::decimal(21,3);
+        for $row3 in SELECT * FROM ext_get_data[$dbid, 'get_record']($date_from, $date_to, $frozen_at) {
+            return next $row3.date_value, $row3.value, $taxonomy_index;
         }
     }
 }
@@ -166,40 +110,139 @@ procedure get_record_internal($date_from text, $date_to text, $frozen_at text) p
 // 2020-06-02, 143
 procedure get_index_internal($date_from text, $date_to text, $frozen_at text) private view returns table(
     date_value text,
-    value decimal(21,3)
+    value decimal(21,3),
+    child_stream_id text,
+    taxonomy_index int
 ) {
-    $weight_sum decimal(21,3) := 0::decimal(21,3);
+
+}
+
+// helper function to set an array element at a given index
+procedure set_array_element($array decimal(21,3)[], $index int, $value decimal(21,3)) private view returns (result decimal(21,3)[]) {
+    // we can't use this because of the lack of support for array assignment
+    // such as $array[$index] := $value;
+    $new_array decimal(21,3)[];
+    // arrays are 1-indexed, so we match that
+    $last_index int := array_length($array);
+    for $i in 1..$last_index {
+        if $i == $index {
+            $new_array := array_append($new_array, $value);
+        } else {
+            $new_array := array_append($new_array, $array[$i]);
+        }
+    }
+
+    return $new_array;
+}
+
+// get_record_filled retrieves the filled records for a specified date range
+// and fills the gaps with the last known value for each taxonomy
+// if the last known value is not available, it will not emit the record, making it a sparse table
+procedure get_record_filled($date_from text, $date_to text, $frozen_at text) private view returns table(
+    date_value text,
+    value_with_weight decimal(21,3), // value * weight
+    // we also return the weight, so we can calculate the total weight for a date
+    weight decimal(21,3)
+) {
+    // Initialize taxonomy variables
+    $taxonomy_count int := 0;
+    $taxonomy_weight_list decimal(21,3)[];
+    $last_values decimal(21,3)[];
+
+    // Fetch taxonomy details
     for $row in SELECT * FROM describe_taxonomies(true) {
-        $weight_sum := $weight_sum + $row.weight;
+        $taxonomy_count := $taxonomy_count + 1;
+        $taxonomy_weight_list := array_append($taxonomy_weight_list, $row.weight);
+        $last_values := array_append($last_values, null::decimal(21,3));
     }
 
-    if $weight_sum == 0::decimal(21,3) {
-        error('No taxonomies found');
+    // Initialize last values array with null values
+    // arrays are 1-indexed, so we match that
+    $current_taxonomy_index int := 0;
+    $expected_next_taxonomy_index int := 1;
+    $we_are_in_a_new_loop bool := false;
+    $last_loop_date text := '';
+
+   // what could make this process easier:
+   // - assign values to specific indexes in the array (set_array_element)
+   // - use a map to store the last values, so we can easily check if a value is null
+   // - better manipulation of tables as objects, then we could modify a table to
+   //   fill forward without needing to return immediately on each loop
+
+    // Iterate through the records and process them
+    for $row_raw in SELECT date_value, value, taxonomy_index FROM get_raw_record($date_from, $date_to, $frozen_at) as r
+    ORDER BY r.date_value ASC {
+
+        // Update the last values array with the current value
+        $current_taxonomy_index := $row_raw.taxonomy_index;
+
+        // Check if we are in a new loop
+        if $last_loop_date != $row_raw.date_value {
+            $we_are_in_a_new_loop := true;
+        } else {
+            $we_are_in_a_new_loop := false;
+        }
+
+        // Handle the new loop case
+        if $we_are_in_a_new_loop == true {
+            // did we expect to be in the new loop?
+            if $expected_next_taxonomy_index != 1 {
+                // We're in a new loop, but we have some missing values from the previous loop
+                // Fill the gap of the previous date
+                for $i in $expected_next_taxonomy_index..$taxonomy_count {
+                    if $last_values[$i] is not null {
+                        return next $last_loop_date, $last_values[$i] * $taxonomy_weight_list[$i], $taxonomy_weight_list[$i];
+                    }
+                }
+            }
+
+            // We're in a new loop, let's aknowledge it
+            $last_loop_date := $row_raw.date_value;
+
+            // Maybe we didn't start the loop at the first taxonomy
+            for $i1 in 1..($current_taxonomy_index - 1) {
+                if $last_values[$i1] is distinct from null {
+                    return next $row_raw.date_value, $last_values[$i1] * $taxonomy_weight_list[$i1], $taxonomy_weight_list[$i1];
+                }
+            }
+        } else {
+            // we're not in a new loop, let's fill the gaps between the last and the current taxonomy
+            // if we are in the expected next index, the loop won't run
+            for $i2 in $expected_next_taxonomy_index..$current_taxonomy_index - 1 {
+                // if last values is not null, we should return it
+                if $last_values[$i2] is not null {
+                    return next $row_raw.date_value, $last_values[$i2] * $taxonomy_weight_list[$i2], $taxonomy_weight_list[$i2];
+                } else {
+                    // it's null. We don't need to return nothing, because its weight shouldn't be counted in the sum
+                    // but let's maintain the else statement for clarity
+                }
+            }
+        }
+
+        // Adjust next expected index, reset if needed
+        $expected_next_taxonomy_index := $current_taxonomy_index + 1;
+        if $expected_next_taxonomy_index > $taxonomy_count {
+            $expected_next_taxonomy_index := 1;
+        }
+
+        // Return the current row value
+        return next $row_raw.date_value, $row_raw.value * $taxonomy_weight_list[$current_taxonomy_index], $taxonomy_weight_list[$current_taxonomy_index];
+        // Update the last values array with the already processed value
+        $last_values := set_array_element($last_values, $row_raw.taxonomy_index, $row_raw.value);
     }
 
-    // get list date, it would be easier if map type supported
-    $date_list := get_date_list($date_from, $date_to, $frozen_at);
-
-    if array_length($date_list) == 0 {
-        error('No data found on date_list');
-    }
-
-    // find the first and last dates
-    $start_date := $date_list[1];
-    $end_date := $date_list[array_length($date_list)];
-
-    for $row2 in SELECT * FROM describe_taxonomies(true) {
-        $dbid text := generate_dbid($row2.child_data_provider, $row2.child_stream_id);
-        for $row3 in SELECT * FROM ext_get_data[$dbid, 'get_index']($start_date, $end_date, $frozen_at) {
-
-            // for each value, we will return it to the table with the calculations done
-
-            return next $row3.date_value, $row3.value * $row2.weight / $weight_sum;
+    // Final check to fill any remaining gaps
+    if $expected_next_taxonomy_index != 1 {
+        for $i3 in $expected_next_taxonomy_index..$taxonomy_count {
+            if $last_values[$i3] is not null {
+                return next $last_loop_date, $last_values[$i3] * $taxonomy_weight_list[$i3], $taxonomy_weight_list[$i3];
+            }
         }
     }
 }
 
-// get_record retrieves the records for a specified date range
+// get_record retrieves the records for a specified date range as expected from the stream interface
+// i.e. with filled gaps
 procedure get_record($date_from text, $date_to text, $frozen_at text) public view returns table(
     date_value text,
     value decimal(21,3)
@@ -207,10 +250,18 @@ procedure get_record($date_from text, $date_to text, $frozen_at text) public vie
     // check if the stream is allowed to compose
     is_stream_allowed_to_compose();
 
-    // here, we sum all of the values that were found by aggregating on the date_valie
-    return select r.date_value as date_value, sum(r.value)::decimal(21,3) as value from get_record_internal($date_from, $date_to, $frozen_at) as r
-    group by r.date_value;
+    // here, we sum all of the records that were found by aggregating on the date_valie
+    for $row in
+        SELECT
+            r.date_value AS date_value,
+            SUM(r.value_with_weight)::decimal(21,3) AS total_value_with_weight,
+            SUM(r.weight)::decimal(21,3) AS total_weight
+        FROM get_record_filled($date_from, $date_to, $frozen_at) as r group by r.date_value {
+        // total_weight is not necessa
+        return next $row.date_value, $row.total_value_with_weight / $row.total_weight;
+    }
 }
+
 
 // get_index retrieves the indexes for a specified date range
 procedure get_index($date_from text, $date_to text, $frozen_at text) public view returns table(
