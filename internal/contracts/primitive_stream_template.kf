@@ -439,6 +439,12 @@ procedure get_record(
             // if the first result date is not the same as the start date, then we need to fetch the last record before it
             if $first_result_date != $date_from {
                 for $last_row in SELECT * FROM get_last_record_before_date($first_result_date) {
+                    // Note: although the user requested a date_from, we are returning the previous date here
+                    // e.g., the user used date_from:2021-01-02, and we are returning 2021-01-01 as first value
+                    //
+                    // that happens because the accuracy is guaranteed with this behavior, otherwise the
+                    // user won't be able to know when a data point really exist in our database or not.
+
                     return next $last_row.date_value, $last_row.value;
                 }
             }
