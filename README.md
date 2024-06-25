@@ -70,6 +70,8 @@ You can clear the local data by running the following command:
 task clear-data
 ```
 
+If you use Docker Desktop, you can also reset the local deployments by simply deleting containers, images, and volumes.
+
 ##### Configure the kwil-cli
 
 To interact with the the TSN-DB, you will need to configure the kwil-cli.
@@ -77,16 +79,10 @@ To interact with the the TSN-DB, you will need to configure the kwil-cli.
 kwil-cli configure
 
 # Enter the following values:
-Kwil RPC URL: http://localhost:8080
+Kwil RPC URL: http://localhost:8484
 Kwil Chain ID: <leave blank>
 Private Key: <any ethereum private key>
 # use private key 0000000000000000000000000000000000000000000000000000000000000001 for testing
-```
-
-##### Seed Data
-If you need to manually seed data into the TSN-DB, run the following command:
-```shell
-task seed
 ```
 
 #### Run the Kwil Gateway (optional)
