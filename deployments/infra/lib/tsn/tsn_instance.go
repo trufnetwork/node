@@ -64,7 +64,7 @@ func NewTSNInstance(scope constructs.Construct, input newTSNInstanceInput) TSNIn
 
 	AWSLinux2MachineImage := awsec2.MachineImage_LatestAmazonLinux2(nil)
 	instance := awsec2.NewInstance(scope, jsii.String(name), &awsec2.InstanceProps{
-		InstanceType: awsec2.InstanceType_Of(awsec2.InstanceClass_T3, awsec2.InstanceSize_SMALL),
+		InstanceType: awsec2.InstanceType_Of(awsec2.InstanceClass_T3, awsec2.InstanceSize_MEDIUM),
 		Init:         initData,
 		MachineImage: AWSLinux2MachineImage,
 		Vpc:          input.Vpc,
