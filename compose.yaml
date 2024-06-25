@@ -46,6 +46,7 @@ services:
     build:
       context: .
       dockerfile: ./deployments/Dockerfile
+      # For local development, if cache is not supported, please comment the following lines
       cache_from:
         - ${CACHE_FROM:-type=local,src=/tmp/buildx-cache}/tsn-db
       cache_to:
