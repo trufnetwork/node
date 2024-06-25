@@ -108,13 +108,20 @@ procedure get_raw_record($date_from text, $date_to text, $frozen_at text) privat
 // 2020-06-01, 140
 // 2020-06-02, 103
 // 2020-06-02, 143
-procedure get_index_internal($date_from text, $date_to text, $frozen_at text) private view returns table(
+procedure get_raw_index($date_from text, $date_to text, $frozen_at text) private view returns table(
     date_value text,
     value decimal(21,3),
-    child_stream_id text,
     taxonomy_index int
 ) {
-
+    // arrays are 1-indexed, so we match that
+    $taxonomy_index int := 0;
+    for $row2 in SELECT * FROM describe_taxonomies(true) {
+        $taxonomy_index := $taxonomy_index + 1;
+        $dbid text := generate_dbid($row2.child_data_provider, $row2.child_stream_id);
+        for $row3 in SELECT * FROM ext_get_data[$dbid, 'get_index']($date_from, $date_to, $frozen_at) {
+            return next $row3.date_value, $row3.value, $taxonomy_index;
+        }
+    }
 }
 
 // helper function to set an array element at a given index
@@ -241,6 +248,112 @@ procedure get_record_filled($date_from text, $date_to text, $frozen_at text) pri
     }
 }
 
+// get_index_filled retrieves the filled index for a specified date range
+// and fills the gaps with the last known value for each taxonomy
+// if the last known value is not available, it will not emit the index, making it a sparse table
+procedure get_index_filled($date_from text, $date_to text, $frozen_at text) private view returns table(
+    date_value text,
+    value_with_weight decimal(21,3), // value * weight
+    // we also return the weight, so we can calculate the total weight for a date
+    weight decimal(21,3)
+) {
+    // Initialize taxonomy variables
+    $taxonomy_count int := 0;
+    $taxonomy_weight_list decimal(21,3)[];
+    $last_values decimal(21,3)[];
+
+    // Fetch taxonomy details
+    for $row in SELECT * FROM describe_taxonomies(true) {
+        $taxonomy_count := $taxonomy_count + 1;
+        $taxonomy_weight_list := array_append($taxonomy_weight_list, $row.weight);
+        $last_values := array_append($last_values, null::decimal(21,3));
+    }
+
+    // Initialize last values array with null values
+    // arrays are 1-indexed, so we match that
+    $current_taxonomy_index int := 0;
+    $expected_next_taxonomy_index int := 1;
+    $we_are_in_a_new_loop bool := false;
+    $last_loop_date text := '';
+
+   // what could make this process easier:
+   // - assign values to specific indexes in the array (set_array_element)
+   // - use a map to store the last values, so we can easily check if a value is null
+   // - better manipulation of tables as objects, then we could modify a table to
+   //   fill forward without needing to return immediately on each loop
+
+    // Iterate through the index and process them
+    for $row_raw in SELECT date_value, value, taxonomy_index FROM get_raw_index($date_from, $date_to, $frozen_at) as r
+    ORDER BY r.date_value ASC {
+
+        // Update the last values array with the current value
+        $current_taxonomy_index := $row_raw.taxonomy_index;
+
+        // Check if we are in a new loop
+        if $last_loop_date != $row_raw.date_value {
+            $we_are_in_a_new_loop := true;
+        } else {
+            $we_are_in_a_new_loop := false;
+        }
+
+        // Handle the new loop case
+        if $we_are_in_a_new_loop == true {
+            // did we expect to be in the new loop?
+            if $expected_next_taxonomy_index != 1 {
+                // We're in a new loop, but we have some missing values from the previous loop
+                // Fill the gap of the previous date
+                for $i in $expected_next_taxonomy_index..$taxonomy_count {
+                    if $last_values[$i] is not null {
+                        return next $last_loop_date, $last_values[$i] * $taxonomy_weight_list[$i], $taxonomy_weight_list[$i];
+                    }
+                }
+            }
+
+            // We're in a new loop, let's aknowledge it
+            $last_loop_date := $row_raw.date_value;
+
+            // Maybe we didn't start the loop at the first taxonomy
+            for $i1 in 1..($current_taxonomy_index - 1) {
+                if $last_values[$i1] is distinct from null {
+                    return next $row_raw.date_value, $last_values[$i1] * $taxonomy_weight_list[$i1], $taxonomy_weight_list[$i1];
+                }
+            }
+        } else {
+            // we're not in a new loop, let's fill the gaps between the last and the current taxonomy
+            // if we are in the expected next index, the loop won't run
+            for $i2 in $expected_next_taxonomy_index..$current_taxonomy_index - 1 {
+                // if last values is not null, we should return it
+                if $last_values[$i2] is not null {
+                    return next $row_raw.date_value, $last_values[$i2] * $taxonomy_weight_list[$i2], $taxonomy_weight_list[$i2];
+                } else {
+                    // it's null. We don't need to return nothing, because its weight shouldn't be counted in the sum
+                    // but let's maintain the else statement for clarity
+                }
+            }
+        }
+
+        // Adjust next expected index, reset if needed
+        $expected_next_taxonomy_index := $current_taxonomy_index + 1;
+        if $expected_next_taxonomy_index > $taxonomy_count {
+            $expected_next_taxonomy_index := 1;
+        }
+
+        // Return the current row value
+        return next $row_raw.date_value, $row_raw.value * $taxonomy_weight_list[$current_taxonomy_index], $taxonomy_weight_list[$current_taxonomy_index];
+        // Update the last values array with the already processed value
+        $last_values := set_array_element($last_values, $row_raw.taxonomy_index, $row_raw.value);
+    }
+
+    // Final check to fill any remaining gaps
+    if $expected_next_taxonomy_index != 1 {
+        for $i3 in $expected_next_taxonomy_index..$taxonomy_count {
+            if $last_values[$i3] is not null {
+                return next $last_loop_date, $last_values[$i3] * $taxonomy_weight_list[$i3], $taxonomy_weight_list[$i3];
+            }
+        }
+    }
+}
+
 // get_record retrieves the records for a specified date range as expected from the stream interface
 // i.e. with filled gaps
 procedure get_record($date_from text, $date_to text, $frozen_at text) public view returns table(
@@ -257,13 +370,15 @@ procedure get_record($date_from text, $date_to text, $frozen_at text) public vie
             SUM(r.value_with_weight)::decimal(21,3) AS total_value_with_weight,
             SUM(r.weight)::decimal(21,3) AS total_weight
         FROM get_record_filled($date_from, $date_to, $frozen_at) as r group by r.date_value {
-        // total_weight is not necessa
+        // total_weight is not necessarily the sum of all taxonomy weights, because
+        // there might be missing data points for initial dates
         return next $row.date_value, $row.total_value_with_weight / $row.total_weight;
     }
 }
 
 
-// get_index retrieves the indexes for a specified date range
+// get_index retrieves the index for a specified date range as expected from the stream interface
+// i.e. with filled gaps
 procedure get_index($date_from text, $date_to text, $frozen_at text) public view returns table(
     date_value text,
     value decimal(21,3)
@@ -271,9 +386,17 @@ procedure get_index($date_from text, $date_to text, $frozen_at text) public view
     // check if the stream is allowed to compose
     is_stream_allowed_to_compose();
 
-    // here, we sum all of the indexes that were found by aggregating on the date_valie
-    return select r.date_value as date_value, sum(r.value)::decimal(21,3) as value from get_index_internal($date_from, $date_to, $frozen_at) as r
-    group by r.date_value;
+    // here, we sum all of the index that were found by aggregating on the date_valie
+    for $row in
+        SELECT
+            r.date_value AS date_value,
+            SUM(r.value_with_weight)::decimal(21,3) AS total_value_with_weight,
+            SUM(r.weight)::decimal(21,3) AS total_weight
+        FROM get_index_filled($date_from, $date_to, $frozen_at) as r group by r.date_value {
+        // total_weight is not necessarily the sum of all taxonomy weights, because
+        // there might be missing data points for initial dates
+        return next $row.date_value, $row.total_value_with_weight / $row.total_weight;
+    }
 }
 
 procedure is_initiated() private view returns (result bool) {
