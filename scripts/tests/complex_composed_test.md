@@ -124,7 +124,7 @@ Deploy primitives and insert records
 ../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to:2021-01-13 -n=complex_composed_a
 ```
 
-This is the expected result of the table above, calculated from an spreadsheet:
+This is the expected result, calculated from an spreadsheet:
 
 | Date       | Result |
 |------------|--------|
