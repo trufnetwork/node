@@ -154,7 +154,7 @@ procedure get_record_filled($date_from text, $date_to text, $frozen_at text) pri
     $prev_loop_date text := '';
 
    // what could make this process easier:
-   // - assign values to specific records in the array (set_array_element)
+   // - assign values to specific indexes in the array (set_array_element)
    // - use a map to store the last values, so we can easily check if a value is null
    // - better manipulation of tables as objects, then we could modify a table to
    //   fill forward without needing to return immediately on each loop
