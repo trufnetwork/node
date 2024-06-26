@@ -124,24 +124,6 @@ procedure get_raw_index($date_from text, $date_to text, $frozen_at text) private
     }
 }
 
-// helper function to set an array element at a given index
-procedure set_array_element($array decimal(21,3)[], $index int, $value decimal(21,3)) private view returns (result decimal(21,3)[]) {
-    // we can't use this because of the lack of support for array assignment
-    // such as $array[$index] := $value;
-    $new_array decimal(21,3)[];
-    // arrays are 1-indexed, so we match that
-    $last_index int := array_length($array);
-    for $i in 1..$last_index {
-        if $i == $index {
-            $new_array := array_append($new_array, $value);
-        } else {
-            $new_array := array_append($new_array, $array[$i]);
-        }
-    }
-
-    return $new_array;
-}
-
 // get_record_filled retrieves the filled records for a specified date range
 // and fills the gaps with the last known value for each taxonomy
 // if the last known value is not available, it will not emit the record, making it a sparse table
@@ -168,81 +150,113 @@ procedure get_record_filled($date_from text, $date_to text, $frozen_at text) pri
     $current_taxonomy_index int := 0;
     $expected_next_taxonomy_index int := 1;
     $we_are_in_a_new_loop bool := false;
-    $last_loop_date text := '';
+    $reached_requested_range bool := false;
+    $prev_loop_date text := '';
 
    // what could make this process easier:
-   // - assign values to specific indexes in the array (set_array_element)
+   // - assign values to specific records in the array (set_array_element)
    // - use a map to store the last values, so we can easily check if a value is null
    // - better manipulation of tables as objects, then we could modify a table to
    //   fill forward without needing to return immediately on each loop
 
     // Iterate through the records and process them
     for $row_raw in SELECT date_value, value, taxonomy_index FROM get_raw_record($date_from, $date_to, $frozen_at) as r
-    ORDER BY r.date_value ASC {
+    ORDER BY r.date_value ASC, r.taxonomy_index ASC {
 
         // Update the last values array with the current value
         $current_taxonomy_index := $row_raw.taxonomy_index;
 
         // Check if we are in a new loop
-        if $last_loop_date != $row_raw.date_value {
+        if $prev_loop_date != $row_raw.date_value {
             $we_are_in_a_new_loop := true;
         } else {
             $we_are_in_a_new_loop := false;
         }
 
-        // Handle the new loop case
-        if $we_are_in_a_new_loop == true {
-            // did we expect to be in the new loop?
-            if $expected_next_taxonomy_index != 1 {
-                // We're in a new loop, but we have some missing values from the previous loop
-                // Fill the gap of the previous date
-                for $i in $expected_next_taxonomy_index..$taxonomy_count {
-                    if $last_values[$i] is not null {
-                        return next $last_loop_date, $last_values[$i] * $taxonomy_weight_list[$i], $taxonomy_weight_list[$i];
+        // Check if we reached the requested range
+        // so we can emit most recent values before date_from, if needed
+        if $reached_requested_range == false  {
+           // if date_from is null, we won't ever be in the requested range
+           // this is useful because date_from IS null means we just want the latest value
+           if $date_from IS DISTINCT FROM null {
+               // check if we reached the requested range
+               if $row_raw.date_value >= $date_from {
+                   $reached_requested_range := true;
+                   $is_exactly_date_from bool := $row_raw.date_value == $date_from;
+                   // we will emit values if we are NOT in the date_from;
+                   // it means that we skipped the date_from and we need the most recent past data
+                   for $emit_row in SELECT * FROM
+                                    emit_values_if($is_exactly_date_from == false, $prev_loop_date, $last_values, $taxonomy_weight_list) {
+                       return next $emit_row.date_value, $emit_row.value * $emit_row.weight, $emit_row.weight;
+                   }
+               }
+           }
+        }
+
+         // we will only emit values if we are in the requested range
+         // we won't use the else statement, because it might have been assigned in this same
+         // loop iteration
+         if $reached_requested_range == true {
+            // here we are already processing the requested range
+            // our objective is filling last loop and present loop gaps
+
+            // Handle the new loop case
+            if $we_are_in_a_new_loop == true {
+                // did we expect to be in the new loop?
+                if $expected_next_taxonomy_index != 1 {
+                    // We're in a new loop, but we have some missing values from the previous loop
+                    // Fill the gap of the previous date
+                    for $i in $expected_next_taxonomy_index..$taxonomy_count {
+                        if $last_values[$i] is not null {
+                            return next $prev_loop_date, $last_values[$i] * $taxonomy_weight_list[$i], $taxonomy_weight_list[$i];
+                        }
+                    }
+                }
+
+                // Maybe we didn't start the loop at the first taxonomy
+                for $i1 in 1..($current_taxonomy_index - 1) {
+                    if $last_values[$i1] is distinct from null {
+                        return next $row_raw.date_value, $last_values[$i1] * $taxonomy_weight_list[$i1], $taxonomy_weight_list[$i1];
+                    }
+                }
+            } else {
+                // we're not in a new loop, let's fill the gaps between the last and the current taxonomy
+                // if we are in the expected next index, the loop won't run
+                for $i2 in $expected_next_taxonomy_index..$current_taxonomy_index - 1 {
+                    // if last values is not null, we should return it
+                    if $last_values[$i2] is not null {
+                        return next $row_raw.date_value, $last_values[$i2] * $taxonomy_weight_list[$i2], $taxonomy_weight_list[$i2];
+                    } else {
+                        // it's null. We don't need to return nothing, because its weight shouldn't be counted in the sum
+                        // but let's maintain the else statement for clarity
                     }
                 }
             }
 
-            // We're in a new loop, let's aknowledge it
-            $last_loop_date := $row_raw.date_value;
-
-            // Maybe we didn't start the loop at the first taxonomy
-            for $i1 in 1..($current_taxonomy_index - 1) {
-                if $last_values[$i1] is distinct from null {
-                    return next $row_raw.date_value, $last_values[$i1] * $taxonomy_weight_list[$i1], $taxonomy_weight_list[$i1];
-                }
-            }
-        } else {
-            // we're not in a new loop, let's fill the gaps between the last and the current taxonomy
-            // if we are in the expected next index, the loop won't run
-            for $i2 in $expected_next_taxonomy_index..$current_taxonomy_index - 1 {
-                // if last values is not null, we should return it
-                if $last_values[$i2] is not null {
-                    return next $row_raw.date_value, $last_values[$i2] * $taxonomy_weight_list[$i2], $taxonomy_weight_list[$i2];
-                } else {
-                    // it's null. We don't need to return nothing, because its weight shouldn't be counted in the sum
-                    // but let's maintain the else statement for clarity
-                }
-            }
-        }
-
         // Adjust next expected index, reset if needed
-        $expected_next_taxonomy_index := $current_taxonomy_index + 1;
-        if $expected_next_taxonomy_index > $taxonomy_count {
-            $expected_next_taxonomy_index := 1;
-        }
+            $expected_next_taxonomy_index := $current_taxonomy_index + 1;
+            if $expected_next_taxonomy_index > $taxonomy_count {
+                $expected_next_taxonomy_index := 1;
+            }
 
-        // Return the current row value
-        return next $row_raw.date_value, $row_raw.value * $taxonomy_weight_list[$current_taxonomy_index], $taxonomy_weight_list[$current_taxonomy_index];
+            // Return the current row value
+            return next $row_raw.date_value, $row_raw.value * $taxonomy_weight_list[$current_taxonomy_index], $taxonomy_weight_list[$current_taxonomy_index];
+
+         }
+
         // Update the last values array with the already processed value
+        $prev_loop_date := $row_raw.date_value;
         $last_values := set_array_element($last_values, $row_raw.taxonomy_index, $row_raw.value);
     }
 
     // Final check to fill any remaining gaps
-    if $expected_next_taxonomy_index != 1 {
+    if $expected_next_taxonomy_index != 1 OR $reached_requested_range == false {
         for $i3 in $expected_next_taxonomy_index..$taxonomy_count {
             if $last_values[$i3] is not null {
-                return next $last_loop_date, $last_values[$i3] * $taxonomy_weight_list[$i3], $taxonomy_weight_list[$i3];
+                return next $prev_loop_date, $last_values[$i3] * $taxonomy_weight_list[$i3], $taxonomy_weight_list[$i3];
+            } else {
+                // it's null. We don't need to return nothing, because its weight shouldn't be counted in the sum
+                // but let's maintain the else statement for clarity
             }
         }
     }
@@ -274,7 +288,8 @@ procedure get_index_filled($date_from text, $date_to text, $frozen_at text) priv
     $current_taxonomy_index int := 0;
     $expected_next_taxonomy_index int := 1;
     $we_are_in_a_new_loop bool := false;
-    $last_loop_date text := '';
+    $reached_requested_range bool := false;
+    $prev_loop_date text := '';
 
    // what could make this process easier:
    // - assign values to specific indexes in the array (set_array_element)
@@ -284,71 +299,101 @@ procedure get_index_filled($date_from text, $date_to text, $frozen_at text) priv
 
     // Iterate through the index and process them
     for $row_raw in SELECT date_value, value, taxonomy_index FROM get_raw_index($date_from, $date_to, $frozen_at) as r
-    ORDER BY r.date_value ASC {
+    ORDER BY r.date_value ASC, r.taxonomy_index ASC {
 
         // Update the last values array with the current value
         $current_taxonomy_index := $row_raw.taxonomy_index;
 
         // Check if we are in a new loop
-        if $last_loop_date != $row_raw.date_value {
+        if $prev_loop_date != $row_raw.date_value {
             $we_are_in_a_new_loop := true;
         } else {
             $we_are_in_a_new_loop := false;
         }
 
-        // Handle the new loop case
-        if $we_are_in_a_new_loop == true {
-            // did we expect to be in the new loop?
-            if $expected_next_taxonomy_index != 1 {
-                // We're in a new loop, but we have some missing values from the previous loop
-                // Fill the gap of the previous date
-                for $i in $expected_next_taxonomy_index..$taxonomy_count {
-                    if $last_values[$i] is not null {
-                        return next $last_loop_date, $last_values[$i] * $taxonomy_weight_list[$i], $taxonomy_weight_list[$i];
+        // Check if we reached the requested range
+        // so we can emit most recent values before date_from, if needed
+        if $reached_requested_range == false  {
+           // if date_from is null, we won't ever be in the requested range
+           // this is useful because date_from IS null means we just want the latest value
+           if $date_from IS DISTINCT FROM null {
+               // check if we reached the requested range
+               if $row_raw.date_value >= $date_from {
+                   $reached_requested_range := true;
+                   $is_exactly_date_from bool := $row_raw.date_value == $date_from;
+                   // we will emit values if we are NOT in the date_from;
+                   // it means that we skipped the date_from and we need the most recent past data
+                   for $emit_row in
+                    SELECT * FROM emit_values_if($is_exactly_date_from == false, $prev_loop_date, $last_values, $taxonomy_weight_list) {
+                       return next $emit_row.date_value, $emit_row.value * $emit_row.weight, $emit_row.weight;
+                   }
+               }
+           }
+        }
+
+         // we will only emit values if we are in the requested range
+         // we won't use the else statement, because it might have been assigned in this same
+         // loop iteration
+         if $reached_requested_range == true {
+            // here we are already processing the requested range
+            // our objective is filling last loop and present loop gaps
+
+            // Handle the new loop case
+            if $we_are_in_a_new_loop == true {
+                // did we expect to be in the new loop?
+                if $expected_next_taxonomy_index != 1 {
+                    // We're in a new loop, but we have some missing values from the previous loop
+                    // Fill the gap of the previous date
+                    for $i in $expected_next_taxonomy_index..$taxonomy_count {
+                        if $last_values[$i] is not null {
+                            return next $prev_loop_date, $last_values[$i] * $taxonomy_weight_list[$i], $taxonomy_weight_list[$i];
+                        }
+                    }
+                }
+
+                // Maybe we didn't start the loop at the first taxonomy
+                for $i1 in 1..($current_taxonomy_index - 1) {
+                    if $last_values[$i1] is distinct from null {
+                        return next $row_raw.date_value, $last_values[$i1] * $taxonomy_weight_list[$i1], $taxonomy_weight_list[$i1];
+                    }
+                }
+            } else {
+                // we're not in a new loop, let's fill the gaps between the last and the current taxonomy
+                // if we are in the expected next index, the loop won't run
+                for $i2 in $expected_next_taxonomy_index..$current_taxonomy_index - 1 {
+                    // if last values is not null, we should return it
+                    if $last_values[$i2] is not null {
+                        return next $row_raw.date_value, $last_values[$i2] * $taxonomy_weight_list[$i2], $taxonomy_weight_list[$i2];
+                    } else {
+                        // it's null. We don't need to return nothing, because its weight shouldn't be counted in the sum
+                        // but let's maintain the else statement for clarity
                     }
                 }
             }
 
-            // We're in a new loop, let's aknowledge it
-            $last_loop_date := $row_raw.date_value;
-
-            // Maybe we didn't start the loop at the first taxonomy
-            for $i1 in 1..($current_taxonomy_index - 1) {
-                if $last_values[$i1] is distinct from null {
-                    return next $row_raw.date_value, $last_values[$i1] * $taxonomy_weight_list[$i1], $taxonomy_weight_list[$i1];
-                }
+            // Adjust next expected index, reset if needed
+            $expected_next_taxonomy_index := $current_taxonomy_index + 1;
+            if $expected_next_taxonomy_index > $taxonomy_count {
+                $expected_next_taxonomy_index := 1;
             }
-        } else {
-            // we're not in a new loop, let's fill the gaps between the last and the current taxonomy
-            // if we are in the expected next index, the loop won't run
-            for $i2 in $expected_next_taxonomy_index..$current_taxonomy_index - 1 {
-                // if last values is not null, we should return it
-                if $last_values[$i2] is not null {
-                    return next $row_raw.date_value, $last_values[$i2] * $taxonomy_weight_list[$i2], $taxonomy_weight_list[$i2];
-                } else {
-                    // it's null. We don't need to return nothing, because its weight shouldn't be counted in the sum
-                    // but let's maintain the else statement for clarity
-                }
-            }
-        }
 
-        // Adjust next expected index, reset if needed
-        $expected_next_taxonomy_index := $current_taxonomy_index + 1;
-        if $expected_next_taxonomy_index > $taxonomy_count {
-            $expected_next_taxonomy_index := 1;
-        }
+            // Return the current row value
+            return next $row_raw.date_value, $row_raw.value * $taxonomy_weight_list[$current_taxonomy_index], $taxonomy_weight_list[$current_taxonomy_index];
+         }
 
-        // Return the current row value
-        return next $row_raw.date_value, $row_raw.value * $taxonomy_weight_list[$current_taxonomy_index], $taxonomy_weight_list[$current_taxonomy_index];
         // Update the last values array with the already processed value
+        $prev_loop_date := $row_raw.date_value;
         $last_values := set_array_element($last_values, $row_raw.taxonomy_index, $row_raw.value);
     }
 
     // Final check to fill any remaining gaps
-    if $expected_next_taxonomy_index != 1 {
+    if $expected_next_taxonomy_index != 1 OR $reached_requested_range == false {
         for $i3 in $expected_next_taxonomy_index..$taxonomy_count {
             if $last_values[$i3] is not null {
-                return next $last_loop_date, $last_values[$i3] * $taxonomy_weight_list[$i3], $taxonomy_weight_list[$i3];
+                return next $prev_loop_date, $last_values[$i3] * $taxonomy_weight_list[$i3], $taxonomy_weight_list[$i3];
+            } else {
+                // it's null. We don't need to return nothing, because its weight shouldn't be counted in the sum
+                // but let's maintain the else statement for clarity
             }
         }
     }
@@ -803,4 +848,37 @@ procedure is_stream_allowed_to_compose() public view returns (value bool) {
     }
 
     error('Stream not allowed to compose');
+}
+
+// # Miscellaneous helpers
+
+// emit_values_if is a helper function to emit values if a condition is met
+procedure emit_values_if($condition bool, $date_value text, $values decimal(21,3)[], $weights decimal(21,3)[]) private view returns table(
+    date_value text,
+    value decimal(21,3),
+    weight decimal(21,3)
+) {
+    if $condition == true {
+        for $i in 1..array_length($values) {
+            return next $date_value, $values[$i] * $weights[$i], $weights[$i];
+        }
+    }
+}
+
+// helper function to set an array element at a given index
+procedure set_array_element($array decimal(21,3)[], $index int, $value decimal(21,3)) private view returns (result decimal(21,3)[]) {
+    // we can't use this because of the lack of support for array assignment
+    // such as $array[$index] := $value;
+    $new_array decimal(21,3)[];
+    // arrays are 1-indexed, so we match that
+    $last_index int := array_length($array);
+    for $i in 1..$last_index {
+        if $i == $index {
+            $new_array := array_append($new_array, $value);
+        } else {
+            $new_array := array_append($new_array, $array[$i]);
+        }
+    }
+
+    return $new_array;
 }
