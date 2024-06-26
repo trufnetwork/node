@@ -169,3 +169,11 @@ complete test for get records with taxonomy, assuming data provider is `7e5f4552
 ../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to:2021-01-02 -n=composed_stream_0000000000000001
 ../../.build/kwil-cli database call --action=get_index date_from:2021-01-01 date_to:2021-01-02 -n=composed_stream_0000000000000001
 ```
+
+checks that wrong empty inputs doesn't work
+```shell
+# all of these should error
+../../.build/kwil-cli database call --action=get_record date_from: -n=composed_stream_0000000000000001
+../../.build/kwil-cli database call --action=get_record date_to: -n=composed_stream_0000000000000001
+../../.build/kwil-cli database call --action=get_record frozen_at: -n=composed_stream_0000000000000001
+```

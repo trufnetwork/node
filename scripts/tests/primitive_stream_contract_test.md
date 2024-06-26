@@ -164,3 +164,11 @@ owner=$(../../.build/kwil-cli account id)
 ../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 -n=primitive_stream_000000000000001 --private-key 0000000000000000000000000000000000000000000000000000000000000123 --owner $owner
 ../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to:2021-01-01 -n=primitive_stream_000000000000001 --private-key 0000000000000000000000000000000000000000000000000000000000000123 --owner $owner
 ```
+
+checks that wrong empty inputs doesn't work
+```shell
+# all of these should error
+../../.build/kwil-cli database call --action=get_record date_from: -n=primitive_stream_000000000000001
+../../.build/kwil-cli database call --action=get_record date_to: -n=primitive_stream_000000000000001
+../../.build/kwil-cli database call --action=get_record frozen_at: -n=primitive_stream_000000000000001
+```
