@@ -842,3 +842,17 @@ procedure is_stream_allowed_to_compose() public view returns (value bool) {
 
     error('Stream not allowed to compose');
 }
+
+procedure get_index_change($date_from text, $date_to text, $frozen_at text) public view returns (
+    value decimal(21,3)) {
+    $index1 decimal(21,3):=0::decimal(21,3);
+    for $row1 in SELECT * FROM get_index($date_from, $date_from, $frozen_at){
+        $index1 := $row1.value;
+    }
+    $index2 decimal(21,3):=0::decimal(21,3);
+    for $row2 in SELECT * FROM get_index($date_to, $date_to, $frozen_at){
+        $index2 := $row2.value;
+    }
+    $percentage_value decimal(21,3) := ($index2 - $index1) * 100.00::decimal(21,3) / $index1;
+    return $percentage_value;
+}
