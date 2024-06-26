@@ -131,25 +131,25 @@ insert record
 
 get index
 ```shell
-../../.build/kwil-cli database call --action=get_index date_from: date_to: frozen_at: -n=primitive_stream_000000000000001
-../../.build/kwil-cli database call --action=get_index date_from:2021-01-01 date_to: frozen_at: -n=primitive_stream_000000000000001
-../../.build/kwil-cli database call --action=get_index date_from:2021-01-01 date_to:2021-01-02 frozen_at: -n=primitive_stream_000000000000001
+../../.build/kwil-cli database call --action=get_index -n=primitive_stream_000000000000001
+../../.build/kwil-cli database call --action=get_index date_from:2021-01-01 -n=primitive_stream_000000000000001
+../../.build/kwil-cli database call --action=get_index date_from:2021-01-01 date_to:2021-01-02 -n=primitive_stream_000000000000001
 ```
 
 try read when it's private (make sure you set to private read access)
 ```shell
 owner=$(../../.build/kwil-cli account id)
-../../.build/kwil-cli database call --action=get_index date_from:2021-01-01 date_to:2021-01-02 frozen_at: -n=primitive_stream_000000000000001 --private-key 0000000000000000000000000000000000000000000000000000000000000123 --owner $owner
+../../.build/kwil-cli database call --action=get_index date_from:2021-01-01 date_to:2021-01-02 -n=primitive_stream_000000000000001 --private-key 0000000000000000000000000000000000000000000000000000000000000123 --owner $owner
 ```
 
 ### Get Record
 
 get record
 ```shell
-../../.build/kwil-cli database call --action=get_record date_from: date_to: frozen_at: -n=primitive_stream_000000000000001
-../../.build/kwil-cli database call --action=get_record date_from: date_to: frozen_at:2 -n=primitive_stream_000000000000001
-../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to: frozen_at: -n=primitive_stream_000000000000001
-../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to:2021-01-02 frozen_at: -n=primitive_stream_000000000000001
+../../.build/kwil-cli database call --action=get_record -n=primitive_stream_000000000000001
+../../.build/kwil-cli database call --action=get_record frozen_at:2 -n=primitive_stream_000000000000001
+../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 -n=primitive_stream_000000000000001
+../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to:2021-01-02 -n=primitive_stream_000000000000001
 ```
 
 get record counting with a past date
@@ -160,7 +160,7 @@ get record counting with a past date
 try read when it's private (make sure you set to private read access)
 ```shell
 owner=$(../../.build/kwil-cli account id)
-../../.build/kwil-cli database call --action=get_record date_from: date_to: frozen_at: -n=primitive_stream_000000000000001 --private-key 0000000000000000000000000000000000000000000000000000000000000123 --owner $owner
-../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to: frozen_at: -n=primitive_stream_000000000000001 --private-key 0000000000000000000000000000000000000000000000000000000000000123 --owner $owner
-../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to:2021-01-01 frozen_at: -n=primitive_stream_000000000000001 --private-key 0000000000000000000000000000000000000000000000000000000000000123 --owner $owner
+../../.build/kwil-cli database call --action=get_record -n=primitive_stream_000000000000001 --private-key 0000000000000000000000000000000000000000000000000000000000000123 --owner $owner
+../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 -n=primitive_stream_000000000000001 --private-key 0000000000000000000000000000000000000000000000000000000000000123 --owner $owner
+../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to:2021-01-01 -n=primitive_stream_000000000000001 --private-key 0000000000000000000000000000000000000000000000000000000000000123 --owner $owner
 ```
