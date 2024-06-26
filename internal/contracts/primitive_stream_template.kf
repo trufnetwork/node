@@ -373,21 +373,27 @@ procedure get_original_record(
     //}
 
     // TODO: had to use this workaround because && operator is not working
-    // Also, it will return multiple records on the given date if there are multiple records with the same date
+    $last_result_date text := '';
     if $date_from != '' {
         if $date_to != '' {
             for $row_record1 in SELECT date_value, value FROM primitive_events
              WHERE date_value >= $date_from AND date_value <= $date_to
              AND (created_at <= $frozenValue OR $frozenValue = 0)
-             ORDER BY date_value DESC {
-                return next $row_record1.date_value, $row_record1.value;
+             ORDER BY date_value DESC, created_at DESC {
+                if $last_result_date != $row_record1.date_value {
+                    $last_result_date := $row_record1.date_value;
+                    return next $row_record1.date_value, $row_record1.value;
+                }
             }
         } else {
             for $row_record2 in SELECT date_value, value FROM primitive_events
             WHERE date_value >= $date_from
             AND (created_at <= $frozenValue OR $frozenValue = 0)
-            ORDER BY date_value DESC {
-                return next $row_record2.date_value, $row_record2.value;
+            ORDER BY date_value DESC, created_at DESC {
+                if $last_result_date != $row_record2.date_value {
+                    $last_result_date := $row_record2.date_value;
+                    return next $row_record2.date_value, $row_record2.value;
+                }
             }
         }
     } else {
@@ -395,7 +401,10 @@ procedure get_original_record(
             for $row_record3 in SELECT date_value, value FROM primitive_events
             WHERE created_at <= $frozenValue OR $frozenValue = 0
             ORDER BY date_value DESC, created_at DESC LIMIT 1 {
-                return next $row_record3.date_value, $row_record3.value;
+                if $last_result_date != $row_record3.date_value {
+                    $last_result_date := $row_record3.date_value;
+                    return next $row_record3.date_value, $row_record3.value;
+                }
             }
         } else {
             error('date_from is required if date_to is provided');
@@ -419,35 +428,39 @@ procedure get_record(
     value decimal(21,3)
     ) {
 
-    $countedRecords int := 0;
-    for $row in SELECT COUNT(*) as count FROM primitive_events WHERE date_value <= $date_from {
-        $countedRecords := $row.count;
-    }
+    $is_first_result bool := true;
 
-    $firstRecordDateValue text := '';
-    for $row1 in SELECT * FROM get_original_record($date_from, $date_to, $frozen_at) ORDER BY date_value ASC LIMIT 1 {
-        $firstRecordDateValue := $row1.date_value;
-    }
+    for $row in SELECT * FROM get_original_record($date_from, $date_to, $frozen_at) {
+        // we will only fetch the last record before the first result
+        // if the first result is not the same as the start date
+        if $is_first_result == true {
+            $first_result_date text := $row.date_value;
 
-    if ($countedRecords == 0 OR $firstRecordDateValue != $date_from) AND $date_from != '' {
-        $lastPrimitiveCount int := 0;
-        for $row3 in SELECT COUNT(*) as count FROM get_last_record_before_date($date_from) {
-            $lastPrimitiveCount := $row3.count;
-        }
+            // if the first result date is not the same as the start date, then we need to fetch the last record before it
+            if $first_result_date != $date_from {
+                for $last_row in SELECT * FROM get_last_record_before_date($first_result_date) {
+                    // Note: although the user requested a date_from, we are returning the previous date here
+                    // e.g., the user used date_from:2021-01-02, and we are returning 2021-01-01 as first value
+                    //
+                    // that happens because the accuracy is guaranteed with this behavior, otherwise the
+                    // user won't be able to know when a data point really exist in our database or not.
 
-        if $lastPrimitiveCount != 1 {
-            error('either no records found or multiple records found for the given date');
-        } else {
-            for $row4 in SELECT * FROM get_last_record_before_date($date_from) {
-                return next $date_from, $row4.value;
+                    return next $last_row.date_value, $last_row.value;
+                }
             }
 
-            for $row5 in SELECT * FROM get_original_record($date_from, $date_to, $frozen_at) {
-                return next $row5.date_value, $row5.value;
-            }
+            $is_first_result := false;
         }
-    } else {
-        return SELECT * FROM get_original_record($date_from, $date_to, $frozen_at);
+
+        return next $row.date_value, $row.value;
+    }
+
+    // it's still the first result? i.e. there were no results
+    // so let's try finding the last record before the start date
+    if $is_first_result == true {
+        for $last_row2 in SELECT * FROM get_last_record_before_date($date_from) {
+            return next $last_row2.date_value, $last_row2.value;
+        }
     }
 }
 
@@ -458,7 +471,7 @@ procedure get_last_record_before_date(
     date_value text,
     value decimal(21,3)
     ) {
-    for $row in SELECT date_value, value FROM primitive_events WHERE date_value <= $date_from ORDER BY date_value DESC, created_at DESC LIMIT 1 {
+    for $row in SELECT date_value, value FROM primitive_events WHERE date_value < $date_from ORDER BY date_value DESC, created_at DESC LIMIT 1 {
         return next $row.date_value, $row.value;
     }
 }

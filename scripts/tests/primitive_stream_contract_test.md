@@ -121,8 +121,10 @@ uuid=$(python3 -c 'import uuid, sys; print(uuid.UUID(bytes=bytes(map(int, sys.ar
 
 insert record
 ```shell
-../../.build/kwil-cli database execute --action=insert_record -n=primitive_stream_000000000000001 date_value:2021-01-01 value:1 --sync 
-../../.build/kwil-cli database execute --action=insert_record -n=primitive_stream_000000000000001 date_value:2021-01-02 value:2 --sync 
+../../.build/kwil-cli database execute --action=insert_record -n=primitive_stream_000000000000001 date_value:2021-01-01 value:1
+../../.build/kwil-cli database execute --action=insert_record -n=primitive_stream_000000000000001 date_value:2021-01-02 value:2
+../../.build/kwil-cli database execute --action=insert_record -n=primitive_stream_000000000000001 date_value:2021-01-05 value:3 --sync 
+
 ```
 
 ### Get Index
@@ -148,6 +150,11 @@ get record
 ../../.build/kwil-cli database call --action=get_record date_from: date_to: frozen_at:2 -n=primitive_stream_000000000000001
 ../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to: frozen_at: -n=primitive_stream_000000000000001
 ../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to:2021-01-02 frozen_at: -n=primitive_stream_000000000000001
+```
+
+get record counting with a past date
+```shell
+../../.build/kwil-cli database call --action=get_record date_from:2021-01-03 -n=primitive_stream_000000000000001
 ```
 
 try read when it's private (make sure you set to private read access)

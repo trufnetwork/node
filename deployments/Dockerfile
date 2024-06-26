@@ -39,6 +39,8 @@ RUN echo "test -n \"\$CONFIG_PATH\"" >> /app/entrypoint.sh
 RUN echo "test -n \"\$DB_HOST\"" >> /app/entrypoint.sh
 RUN echo "exec /app/kwild --root-dir \$CONFIG_PATH \
   --app.hostname \"\$HOSTNAME\"\
+  --app.http-listen-addr \"0.0.0.0:8080\"\
+  --app.jsonrpc-listen-addr \"0.0.0.0:8484\"\
   --chain.p2p.listen-addr \"tcp://0.0.0.0:26656\"\
   --app.pg-db-host \$DB_HOST \\" >> /app/entrypoint.sh
 

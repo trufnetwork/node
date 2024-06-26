@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/cloudformation"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/ssm"
 	"github.com/mitchellh/mapstructure"
@@ -26,6 +27,7 @@ type DeployContractResourceProperties struct {
 
 var ssmClient *ssm.SSM
 var s3Client *s3.S3
+var cfnClient *cloudformation.CloudFormation
 
 func HandleRequest(ctx context.Context, event cfn.Event) (string, error) {
 	// we handle the request type for the resource
@@ -39,6 +41,11 @@ func HandleRequest(ctx context.Context, event cfn.Event) (string, error) {
 		return "", fmt.Errorf("unknown request type %s", event.RequestType)
 	}
 	var props DeployContractResourceProperties
+
+	// Check for rollback update
+	if isRollbackUpdate(ctx, event) {
+		return "Rollback update detected, no action taken", nil
+	}
 
 	if err := mapstructure.Decode(event.ResourceProperties, &props); err != nil {
 		return "", fmt.Errorf("failed to decode event.ResourceProperties: %w", err)
@@ -81,6 +88,7 @@ func main() {
 
 	ssmClient = ssm.New(sess)
 	s3Client = s3.New(sess)
+	cfnClient = cloudformation.New(sess)
 
 	lambda.Start(HandleRequest)
 }
@@ -113,4 +121,28 @@ func readS3Object(bucket string, key string) (string, error) {
 	}
 
 	return string(systemContractContent), nil
+}
+
+func isRollbackUpdate(ctx context.Context, event cfn.Event) bool {
+	if event.RequestType == cfn.RequestUpdate {
+		stackEvents, err := cfnClient.DescribeStackEventsWithContext(ctx, &cloudformation.DescribeStackEventsInput{
+			StackName: &event.StackID,
+		})
+		if err != nil {
+			fmt.Printf("Error fetching stack events: %v\n", err)
+			return false
+		}
+
+		for _, stackEvent := range stackEvents.StackEvents {
+			if stackEvent.ResourceStatus != nil {
+				status := *stackEvent.ResourceStatus
+				if status == cloudformation.ResourceStatusUpdateRollbackInProgress ||
+					status == cloudformation.ResourceStatusUpdateRollbackComplete ||
+					status == cloudformation.ResourceStatusUpdateRollbackFailed {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
