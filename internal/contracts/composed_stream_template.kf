@@ -363,16 +363,54 @@ procedure get_record($date_from text, $date_to text, $frozen_at text) public vie
     // check if the stream is allowed to compose
     is_stream_allowed_to_compose();
 
+    // TODO: had to use this ugly if else because && is somehow not working
+    // Also, query builder is not supported so yeah, looks ugly
     // here, we sum all of the records that were found by aggregating on the date_valie
-    for $row in
-        SELECT
-            r.date_value AS date_value,
-            SUM(r.value_with_weight)::decimal(21,3) AS total_value_with_weight,
-            SUM(r.weight)::decimal(21,3) AS total_weight
-        FROM get_record_filled($date_from, $date_to, $frozen_at) as r group by r.date_value {
-        // total_weight is not necessarily the sum of all taxonomy weights, because
-        // there might be missing data points for initial dates
-        return next $row.date_value, $row.total_value_with_weight / $row.total_weight;
+    if $date_from != '' {
+        if $date_to != '' {
+            for $row in
+                SELECT
+                    r.date_value AS date_value,
+                    SUM(r.value_with_weight)::decimal(21,3) AS total_value_with_weight,
+                    SUM(r.weight)::decimal(21,3) AS total_weight
+                FROM get_record_filled($date_from, $date_to, $frozen_at) as r
+                WHERE r.date_value >= $date_from AND r.date_value <= $date_to
+                group by r.date_value {
+                // total_weight is not necessarily the sum of all taxonomy weights, because
+                // there might be missing data points for initial dates
+                return next $row.date_value, $row.total_value_with_weight / $row.total_weight;
+            }
+        } else {
+            for $row2 in
+                SELECT
+                    r.date_value AS date_value,
+                    SUM(r.value_with_weight)::decimal(21,3) AS total_value_with_weight,
+                    SUM(r.weight)::decimal(21,3) AS total_weight
+                FROM get_record_filled($date_from, $date_to, $frozen_at) as r
+                WHERE r.date_value >= $date_from
+                group by r.date_value {
+                // total_weight is not necessarily the sum of all taxonomy weights, because
+                // there might be missing data points for initial dates
+                return next $row2.date_value, $row2.total_value_with_weight / $row2.total_weight;
+            }
+        }
+    } else {
+        if $date_to != '' {
+            error('date_from must be provided if date_to is provided');
+        } else {
+            for $row3 in
+                SELECT
+                    r.date_value AS date_value,
+                    SUM(r.value_with_weight)::decimal(21,3) AS total_value_with_weight,
+                    SUM(r.weight)::decimal(21,3) AS total_weight
+                FROM get_record_filled($date_from, $date_to, $frozen_at) as r
+                WHERE r.date_value >= (SELECT MAX(date_value) FROM get_record_filled($date_from, $date_to, $frozen_at))
+                group by r.date_value {
+                // total_weight is not necessarily the sum of all taxonomy weights, because
+                // there might be missing data points for initial dates
+                return next $row3.date_value, $row3.total_value_with_weight / $row3.total_weight;
+            }
+        }
     }
 }
 
