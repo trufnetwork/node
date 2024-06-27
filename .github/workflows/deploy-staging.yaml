@@ -2,9 +2,6 @@ name: Deploy Staging Environment
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
 
 jobs:
   #  tests:
