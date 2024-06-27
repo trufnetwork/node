@@ -13,6 +13,9 @@ This will be our calculated table to see if it works as we want:
 | 2021-01-08 |      | 23   |      |
 | 2021-01-09 | 25   |      |      |
 | 2021-01-10 |      |      | 30   |
+| 2021-01-11 |      | 32   |      |
+| 2021-01-12 |      |      |      |
+| 2021-01-13 |      |      | 39   |
 
 - Missing values that have past data for the same primitive stream will be filled forward
 - Missing values that do not have past values should be DISCONSIDERED, not contributing to the weighted average. It means its weight should be 0.
@@ -92,6 +95,21 @@ Deploy primitives and insert records
 ## no data for p1
 ## no data for p2
 ../../.build/kwil-cli database execute --action=insert_record -n=p3 date_value:2021-01-10 value:30 --sync
+
+# date 2021-01-11
+## no data for p1
+../../.build/kwil-cli database execute --action=insert_record -n=p2 date_value:2021-01-11 value:32
+## no data for p3
+
+# date 2021-01-12
+## no data for p1
+## no data for p2
+## no data for p3
+
+# date 2021-01-13
+## no data for p1
+## no data for p2
+../../.build/kwil-cli database execute --action=insert_record -n=p3 date_value:2021-01-13 value:39 --sync
 ```
 
 # get record for each primitive stream
@@ -103,10 +121,10 @@ Deploy primitives and insert records
 
 
 ```shell
-../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to:2021-01-10 -n=complex_composed_a
+../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to:2021-01-13 -n=complex_composed_a
 ```
 
-This is the expected result of the table above, calculated from an spreadsheet:
+This is the expected result, calculated from an spreadsheet:
 
 | Date       | Result |
 |------------|--------|
@@ -120,3 +138,66 @@ This is the expected result of the table above, calculated from an spreadsheet:
 | 2021-01-08 | 19.833 |
 | 2021-01-09 | 20.833 |
 | 2021-01-10 | 26.833 |
+| 2021-01-11 | 29.833 | 
+| 2021-01-13 | 34.333 |
+
+Note the missing value on 2021-01-12, because there's no data point in any primitive stream.
+
+# get latest value
+```shell
+../../.build/kwil-cli database call --action=get_record -n=complex_composed_a
+```
+
+This is the expected result:
+
+| Date       | Result |
+|------------|--------|
+| 2021-01-13 | 34.333 |
+
+# get from an empty date in the middle
+```shell
+../../.build/kwil-cli database call --action=get_record date_from:2021-01-12 date_to:2021-01-12 -n=complex_composed_a
+```
+
+This is the expected result:
+
+| Date       | Result |
+|------------|--------|
+| 2021-01-11 | 29.833 |
+
+Note that the result is the same as the previous date, because the missing value on 2021-01-12, so the most recent value is 2021-01-11.
+
+Let's also check the index of the latest value:
+```shell
+../../.build/kwil-cli database call --action=get_index -n=complex_composed_a
+```
+
+Expected result:
+
+| Date       | Result  |
+|------------|---------|
+| 2021-01-13 | 967.500 |
+
+# Check index for all dates
+```shell
+../../.build/kwil-cli database call --action=get_index date_from:2021-01-01 date_to:2021-01-13 -n=complex_composed_a
+```
+
+Expected result:
+
+| Date       | Result  |
+|------------|---------|
+| 2021-01-01 | 100.000 |
+| 2021-01-02 | 150.000 |
+| 2021-01-03 | 200.000 |
+| 2021-01-04 | 225.000 |
+| 2021-01-05 | 337.500 |
+| 2021-01-06 | 467.500 |
+| 2021-01-07 | 512.500 |
+| 2021-01-08 | 532.500 |
+| 2021-01-09 | 557.500 |
+| 2021-01-10 | 757.500 |
+| 2021-01-11 | 817.500 |
+| 2021-01-13 | 967.500 |
+
+Note that the final index is 967.5 is NOT the same as dividing the record for the last day by the first record, because the weights are applied on the index percentages themselves. See https://system.docs.truflation.com/backend/cpi-calculations/workflow/aggregated-indexes for more information.

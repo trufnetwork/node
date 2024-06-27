@@ -340,6 +340,10 @@ procedure get_original_record(
     value decimal(21,3)
     ) {
 
+    check_valid_date_or_null($date_from, 'date_from');
+    check_valid_date_or_null($date_to, 'date_to');
+    check_valid_int_or_null($frozen_at, 'frozen_at');
+
     // check read access
     if is_wallet_allowed_to_read(@caller) == false {
         error('wallet not allowed to read');
@@ -348,7 +352,7 @@ procedure get_original_record(
     is_stream_allowed_to_compose();
 
     $frozenValue int := 0;
-    if $frozen_at != '' {
+    if $frozen_at IS DISTINCT FROM NULL {
         $frozenValue := $frozen_at::int;
     }
 
@@ -374,8 +378,10 @@ procedure get_original_record(
 
     // TODO: had to use this workaround because && operator is not working
     $last_result_date text := '';
-    if $date_from != '' {
-        if $date_to != '' {
+    if $date_from IS DISTINCT FROM NULL {
+        if $date_to IS DISTINCT FROM NULL {
+            // date_from and date_to are provided
+            // we will fetch all records from date_from to date_to
             for $row_record1 in SELECT date_value, value FROM primitive_events
              WHERE date_value >= $date_from AND date_value <= $date_to
              AND (created_at <= $frozenValue OR $frozenValue = 0)
@@ -386,6 +392,8 @@ procedure get_original_record(
                 }
             }
         } else {
+            // only date_from is provided
+            // we will fetch all records from date_from to the latest
             for $row_record2 in SELECT date_value, value FROM primitive_events
             WHERE date_value >= $date_from
             AND (created_at <= $frozenValue OR $frozenValue = 0)
@@ -397,7 +405,9 @@ procedure get_original_record(
             }
         }
     } else {
-        if $date_to == '' {
+        if $date_to IS NOT DISTINCT FROM NULL {
+            // no date_from and date_to provided
+            // we fetch only the latest record
             for $row_record3 in SELECT date_value, value FROM primitive_events
             WHERE created_at <= $frozenValue OR $frozenValue = 0
             ORDER BY date_value DESC, created_at DESC LIMIT 1 {
@@ -407,6 +417,7 @@ procedure get_original_record(
                 }
             }
         } else {
+            // date_to is provided but date_from is not
             error('date_from is required if date_to is provided');
         }
     }
@@ -524,6 +535,7 @@ procedure is_stream_allowed_to_compose() public view returns (value bool) {
 
     error('stream not allowed to compose');
 }
+
 procedure get_index_change($date_from text, $date_to text, $frozen_at text) public view returns (
     value decimal(21,3)) {
     $index1 decimal(21,3):=0::decimal(21,3);
@@ -536,4 +548,24 @@ procedure get_index_change($date_from text, $date_to text, $frozen_at text) publ
     }
     $percentage_value decimal(21,3) := ($index2 - $index1) * 100.00::decimal(21,3) / $index1;
     return $percentage_value;
+}
+
+// # Helper functions
+
+// ## Verifiers
+
+procedure check_valid_date_or_null($date text, $name text) private view {
+    if $date IS DISTINCT FROM NULL {
+        if length($date) != 10 {
+            error(format('%s must be in yyyy-mm-dd format or should not be provided: received %s', $name, $date));
+        }
+    }
+}
+
+procedure check_valid_int_or_null($int text, $name text) private view {
+    if $int IS DISTINCT FROM NULL {
+        if $int == '' OR $int::int IS NULL {
+            error(format('%s must be an integer or should not be provided: received %s', $name, $int));
+        }
+    }
 }

@@ -156,13 +156,13 @@ complete test for get records with taxonomy, assuming data provider is `7e5f4552
 ../../.build/kwil-cli database execute --action=insert_record -n=primitive_stream_000000000000002 date_value:2021-01-01 value:3 
 ../../.build/kwil-cli database execute --action=insert_record -n=primitive_stream_000000000000002 date_value:2021-01-02 value:4 --sync
 
-../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to:2021-01-04 frozen_at: -n=primitive_stream_000000000000001
-../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to:2021-01-02 frozen_at: -n=primitive_stream_000000000000002
+../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to:2021-01-04 -n=primitive_stream_000000000000001
+../../.build/kwil-cli database call --action=get_record date_from:2021-01-01 date_to:2021-01-02 -n=primitive_stream_000000000000002
 
-../../.build/kwil-cli database call --action=get_index date_from:2021-01-01 date_to:2021-01-02 frozen_at: -n=primitive_stream_000000000000001
-../../.build/kwil-cli database call --action=get_index date_from:2021-01-01 date_to:2021-01-02 frozen_at: -n=primitive_stream_000000000000002
+../../.build/kwil-cli database call --action=get_index date_from:2021-01-01 date_to:2021-01-02 -n=primitive_stream_000000000000001
+../../.build/kwil-cli database call --action=get_index date_from:2021-01-01 date_to:2021-01-02 -n=primitive_stream_000000000000002
 
-../../.build/kwil-cli database call --action=get_record date_from:2021-01-03 date_to:2021-01-04 frozen_at: -n=primitive_stream_000000000000001
+../../.build/kwil-cli database call --action=get_record date_from:2021-01-03 date_to:2021-01-04 -n=primitive_stream_000000000000001
 
 ../../.build/kwil-cli database execute data_providers:7e5f4552091a69125d5dfcb7b8c2659029395bdf,7e5f4552091a69125d5dfcb7b8c2659029395bdf stream_ids:primitive_stream_000000000000001,primitive_stream_000000000000002 weights:1,2 --action=set_taxonomy -n=composed_stream_0000000000000001 --sync
 
@@ -207,4 +207,12 @@ get index change
 ../../.build/kwil-cli database call --action=get_index date_from:2021-01-01 date_to:2021-01-02 frozen_at: -n=composed_stream_0000000000000001
 
 ../../.build/kwil-cli database call --action=get_index_change date_from:2021-01-01 date_to:2021-01-02 frozen_at: -n=composed_stream_0000000000000001
+```
+
+checks that wrong empty inputs doesn't work
+```shell
+# all of these should error
+../../.build/kwil-cli database call --action=get_record date_from: -n=composed_stream_0000000000000001
+../../.build/kwil-cli database call --action=get_record date_to: -n=composed_stream_0000000000000001
+../../.build/kwil-cli database call --action=get_record frozen_at: -n=composed_stream_0000000000000001
 ```
