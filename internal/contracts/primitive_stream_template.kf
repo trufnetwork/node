@@ -152,7 +152,7 @@ procedure insert_metadata(
     $value_s text;
     $value_f decimal(21,3);
     $value_b bool;
-    $value_ref text;
+    $value_ref text:='';
 
     if $val_type == 'int' {
         $value_i := $value::int;
@@ -201,7 +201,7 @@ procedure get_metadata($key text, $only_latest bool, $ref text) public view retu
         ) {
 
         if $only_latest == true {
-            if $ref is distinct from null {
+            if $ref != '' {
                 for $row in SELECT
                               row_id,
                               value_ref,

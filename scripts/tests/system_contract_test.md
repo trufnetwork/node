@@ -60,6 +60,11 @@ get index
 ../../.build/kwil-cli database call data_provider:$owner stream_id:primitive_stream_000000000000001 date_from:2021-01-01 --action=get_index -n=system_contract
 ```
 
+get index change
+```shell
+../../.build/kwil-cli database call data_provider:$owner stream_id:primitive_stream_000000000000001 date_from:2021-01-01 date_to:2021-01-02 --action=get_index_change -n=system_contract
+```
+
 #### Error from unnoficial streams
 
 deploy and fetch
