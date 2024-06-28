@@ -81,6 +81,21 @@ services:
         source: data-tsn-db
         target: /root/.kwild
 
+  indexer:
+    build: ./deployments/indexer
+#    command: [
+#      "./kwil-indexer", "run",
+#      "--cometbft-endpoint", "http://tsn-db:26657",
+#      "--pg-conn", "postgresql://postgres@kwil-postgres:5432/postgres?sslmode=disable",
+#      "--kwil-pg-conn", "postgresql://kwild@kwil-postgres:5432/kwild?sslmode=disable"
+#    ]
+    ports:
+      - "1337:1337"
+    depends_on:
+      - tsn-db
+    networks:
+      - tsn-network
+
 networks:
   tsn-network:
     driver: bridge
