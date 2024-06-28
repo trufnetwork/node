@@ -42,6 +42,7 @@ RUN echo "exec /app/kwild --root-dir \$CONFIG_PATH \
   --app.http-listen-addr \"0.0.0.0:8080\"\
   --app.jsonrpc-listen-addr \"0.0.0.0:8484\"\
   --chain.p2p.listen-addr \"tcp://0.0.0.0:26656\"\
+  --chain.rpc.listen-addr \"tcp://0.0.0.0:26657\"\
   --app.pg-db-host \$DB_HOST \\" >> /app/entrypoint.sh
 
 # TODO when https://github.com/kwilteam/kwil-db/pull/706 is published, we can remove all these workarounds
