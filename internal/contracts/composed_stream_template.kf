@@ -860,7 +860,7 @@ procedure emit_values_if($condition bool, $date_value text, $values decimal(21,3
 ) {
     if $condition == true {
         for $i in 1..array_length($values) {
-            return next $date_value, $values[$i] * $weights[$i], $weights[$i];
+            return next $date_value, $values[$i], $weights[$i];
         }
     }
 }
