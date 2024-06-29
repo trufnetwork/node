@@ -37,7 +37,7 @@ foreign procedure get_metadata($key text, $only_latest bool, $ref text) returns 
 procedure stream_exists($data_provider text, $stream_id text) public view returns (result bool) {
     $dbid text := generate_dbid($data_provider, $stream_id);
 
-    for $row in SELECT * FROM get_metadata[$dbid, 'get_metadata']('type', true, '') {
+    for $row in SELECT * FROM get_metadata[$dbid, 'get_metadata']('type', true, null) {
         return true;
     }
 
