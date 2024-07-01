@@ -152,7 +152,7 @@ procedure insert_metadata(
     $value_s text;
     $value_f decimal(21,3);
     $value_b bool;
-    $value_ref text:='';
+    $value_ref text;
 
     if $val_type == 'int' {
         $value_i := $value::int;
