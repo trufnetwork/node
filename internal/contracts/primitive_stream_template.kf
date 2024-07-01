@@ -342,7 +342,7 @@ procedure get_original_record(
 
     check_valid_date_or_null($date_from, 'date_from');
     check_valid_date_or_null($date_to, 'date_to');
-    // check_valid_int_or_null($frozen_at, 'frozen_at');
+    check_valid_int_or_null($frozen_at, 'frozen_at');
 
     // check read access
     if is_wallet_allowed_to_read(@caller) == false {
