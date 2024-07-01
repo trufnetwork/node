@@ -20,7 +20,7 @@ call init. If you run twice, it should error.
 
 insert `read_visibility` -> 1 (private)
 ```shell
-../../.build/kwil-cli database execute key:read_visibility value:1 val_type:bool --action=insert_metadata -n=primitive_stream_000000000000001 --sync 
+../../.build/kwil-cli database execute key:read_visibility value:1 val_type:int --action=insert_metadata -n=primitive_stream_000000000000001 --sync 
 ```
 
 get `read_visibility`
