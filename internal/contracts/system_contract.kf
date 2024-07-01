@@ -24,7 +24,7 @@ procedure verify_hex($text text) private {
     $hex text := decode($text, 'hex');
 }
 
-foreign procedure get_metadata($key text, $only_latest bool, $ref text) returns table(
+foreign procedure ext_get_metadata($key text, $only_latest bool, $ref text) returns table(
     row_id uuid,
     value_i int,
     value_f decimal(21, 3),
@@ -37,7 +37,7 @@ foreign procedure get_metadata($key text, $only_latest bool, $ref text) returns 
 procedure stream_exists($data_provider text, $stream_id text) public view returns (result bool) {
     $dbid text := generate_dbid($data_provider, $stream_id);
 
-    for $row in SELECT * FROM get_metadata[$dbid, 'get_metadata']('type', true, null) {
+    for $row in SELECT * FROM ext_get_metadata[$dbid, 'get_metadata']('type', true, null) {
         return true;
     }
 
