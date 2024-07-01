@@ -91,6 +91,16 @@ Kwil Gateway (KGW) is a load-balancer with authentication ([authn](https://www.c
 
 Although we use it on our servers, it's not required to be able to develop on the TSN-DB. However, if you want to run the KGW locally or test it, you can follow the instructions in the [Kwil Gateway Directory](./deployments/dev-gateway/README.md)
 
+#### Indexer
+
+Indexer is started by default when you run the TSN-DB using Docker Compose.
+Alternatively, you can start the indexer using the following command:
+```shell
+task indexer
+```
+
+You can view the metrics dashboard at http://localhost:1337/v0/swagger.
+
 ## License
 
 The tsn-db repository is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for more details.

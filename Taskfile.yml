@@ -25,7 +25,6 @@ tasks:
       TARGET: ./.build
       SOURCE: ./cmd/kwil-cli/main.go
 
-
   build:debug:
     desc: Build kwild binary with debug flags
     cmds:
@@ -40,6 +39,11 @@ tasks:
     desc: Run a postgres container
     cmds:
       - docker start kwil-postgres || docker run -d -p 5432:5432 --name kwil-postgres -e "POSTGRES_HOST_AUTH_METHOD=trust" kwildb/postgres:latest
+
+  indexer:
+    desc: Run the indexer
+    cmds:
+      - ./deployments/indexer/kwil-indexer run
 
   compose:
     desc: Run docker-compose locally
