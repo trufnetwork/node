@@ -8,6 +8,7 @@ import (
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/kwilteam/kwil-db/core/utils/random"
+	"github.com/truflation/tsn-db/infra/config"
 	peer2 "github.com/truflation/tsn-db/infra/lib/kwil-network/peer"
 )
 
@@ -62,9 +63,17 @@ func NewTSNInstance(scope constructs.Construct, input newTSNInstanceInput) TSNIn
 		}),
 	)
 
+	var instanceSize awsec2.InstanceSize
+	switch config.DeploymentStage(scope) {
+	case config.DeploymentStage_DEV:
+		instanceSize = awsec2.InstanceSize_SMALL
+	case config.DeploymentStage_STAGING, config.DeploymentStage_PROD:
+		instanceSize = awsec2.InstanceSize_MEDIUM
+	}
+
 	AWSLinux2MachineImage := awsec2.MachineImage_LatestAmazonLinux2(nil)
 	instance := awsec2.NewInstance(scope, jsii.String(name), &awsec2.InstanceProps{
-		InstanceType: awsec2.InstanceType_Of(awsec2.InstanceClass_T3, awsec2.InstanceSize_MEDIUM),
+		InstanceType: awsec2.InstanceType_Of(awsec2.InstanceClass_T3, instanceSize),
 		Init:         initData,
 		MachineImage: AWSLinux2MachineImage,
 		Vpc:          input.Vpc,
