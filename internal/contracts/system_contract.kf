@@ -24,10 +24,10 @@ procedure verify_hex($text text) private {
     $hex text := decode($text, 'hex');
 }
 
-foreign procedure get_metadata($key text, $only_latest bool) returns table(
+foreign procedure ext_get_metadata($key text, $only_latest bool, $ref text) returns table(
     row_id uuid,
     value_i int,
-    value_f decimal(10, 3),
+    value_f decimal(21, 3),
     value_b bool,
     value_s text,
     value_ref text,
@@ -37,7 +37,7 @@ foreign procedure get_metadata($key text, $only_latest bool) returns table(
 procedure stream_exists($data_provider text, $stream_id text) public view returns (result bool) {
     $dbid text := generate_dbid($data_provider, $stream_id);
 
-    for $row in SELECT * FROM get_metadata[$dbid, 'get_metadata']('type', true) {
+    for $row in SELECT * FROM ext_get_metadata[$dbid, 'get_metadata']('type', true, null) {
         return true;
     }
 
@@ -80,19 +80,22 @@ procedure revoke_stream($data_provider text, $stream_id text) public owner {
     UPDATE system_streams SET revoked_at = $current_blockheight WHERE data_provider = $data_provider AND stream_id = $stream_id;
 }
 
-foreign procedure ext_get_record($date_from text, $date_to text, $frozen_at text) returns table(
+foreign procedure ext_get_record($date_from text, $date_to text, $frozen_at int) returns table(
     date_value text,
-    value decimal(10, 3)
+    value decimal(21, 3)
 )
 
-foreign procedure ext_get_index($date_from text, $date_to text, $frozen_at text) returns table(
+foreign procedure ext_get_index($date_from text, $date_to text, $frozen_at int) returns table(
     date_value text,
-    value decimal(10, 3)
+    value decimal(21, 3)
+)
+foreign procedure ext_get_index_change($date_from text, $date_to text, $frozen_at int) returns table (
+    value decimal(21,3)
 )
 
-procedure get_unsafe_record($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at text) public view returns table(
+procedure get_unsafe_record($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at int) public view returns table(
     date_value text,
-    value decimal(10, 3)
+    value decimal(21, 3)
 ) {
     $dbid text := generate_dbid($data_provider, $stream_id);
 
@@ -135,9 +138,9 @@ procedure generate_dbid($data_provider text, $stream_id text) private view retur
     error('could not generate dbid');
 }
 
-procedure get_unsafe_index($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at text) public view returns table(
+procedure get_unsafe_index($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at int) public view returns table(
     date_value text,
-    value decimal(10, 3)
+    value decimal(21, 3)
 ) {
     $dbid text := generate_dbid($data_provider, $stream_id);
 
@@ -146,9 +149,9 @@ procedure get_unsafe_index($data_provider text, $stream_id text, $date_from text
     }
 }
 
-procedure get_record($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at text) public view returns table(
+procedure get_record($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at int) public view returns table(
     date_value text,
-    value decimal(10, 3)
+    value decimal(21, 3)
 ) {
 
     $is_official_stream bool := get_official_stream($data_provider, $stream_id);
@@ -165,9 +168,9 @@ procedure get_record($data_provider text, $stream_id text, $date_from text, $dat
 
 }
 
-procedure get_index($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at text) public view returns table(
+procedure get_index($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at int) public view returns table(
     date_value text,
-    value decimal(10, 3)
+    value decimal(21, 3)
 ) {
     $is_official_stream bool := get_official_stream($data_provider, $stream_id);
 
@@ -180,4 +183,20 @@ procedure get_index($data_provider text, $stream_id text, $date_from text, $date
     for $row in SELECT * FROM ext_get_index[$dbid, 'get_index']($date_from, $date_to, $frozen_at) {
         return next $row.date_value, $row.value;
     }
+}
+
+procedure get_index_change($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at int) public view returns table(
+    value decimal(21,3)) {
+    $is_official_stream bool := get_official_stream($data_provider, $stream_id);
+
+    if $is_official_stream == false {
+        error('this stream is not official');
+    }
+
+    $dbid text := generate_dbid($data_provider, $stream_id);
+
+    for $row in SELECT * FROM ext_get_index_change[$dbid, 'get_index_change']($date_from, $date_to, $frozen_at) {
+        return next $row.value;
+    }
+    
 }

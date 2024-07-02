@@ -31,7 +31,7 @@ table metadata {
     #created_idx    index(created_at) // faster sorting
 }
 
-foreign procedure ext_get_data($date_from text, $date_to text, $frozen_at text) returns table(
+foreign procedure ext_get_data($date_from text, $date_to text, $frozen_at int) returns table(
     date_value text,
     value decimal(21,3)
 )
@@ -86,7 +86,7 @@ procedure generate_dbid($data_provider text, $stream_id text) private view retur
 // 2020-06-01, 140
 // 2020-06-02, 103
 // 2020-06-02, 143
-procedure get_raw_record($date_from text, $date_to text, $frozen_at text) private view returns table(
+procedure get_raw_record($date_from text, $date_to text, $frozen_at int) private view returns table(
     date_value text,
     value decimal(21,3),
     taxonomy_index int
@@ -108,7 +108,7 @@ procedure get_raw_record($date_from text, $date_to text, $frozen_at text) privat
 // 2020-06-01, 140
 // 2020-06-02, 103
 // 2020-06-02, 143
-procedure get_raw_index($date_from text, $date_to text, $frozen_at text) private view returns table(
+procedure get_raw_index($date_from text, $date_to text, $frozen_at int) private view returns table(
     date_value text,
     value decimal(21,3),
     taxonomy_index int
@@ -127,7 +127,7 @@ procedure get_raw_index($date_from text, $date_to text, $frozen_at text) private
 // get_record_filled retrieves the filled records for a specified date range
 // and fills the gaps with the last known value for each taxonomy
 // if the last known value is not available, it will not emit the record, making it a sparse table
-procedure get_record_filled($date_from text, $date_to text, $frozen_at text) private view returns table(
+procedure get_record_filled($date_from text, $date_to text, $frozen_at int) private view returns table(
     date_value text,
     value_with_weight decimal(21,3), // value * weight
     // we also return the weight, so we can calculate the total weight for a date
@@ -265,7 +265,7 @@ procedure get_record_filled($date_from text, $date_to text, $frozen_at text) pri
 // get_index_filled retrieves the filled index for a specified date range
 // and fills the gaps with the last known value for each taxonomy
 // if the last known value is not available, it will not emit the index, making it a sparse table
-procedure get_index_filled($date_from text, $date_to text, $frozen_at text) private view returns table(
+procedure get_index_filled($date_from text, $date_to text, $frozen_at int) private view returns table(
     date_value text,
     value_with_weight decimal(21,3), // value * weight
     // we also return the weight, so we can calculate the total weight for a date
@@ -401,7 +401,7 @@ procedure get_index_filled($date_from text, $date_to text, $frozen_at text) priv
 
 // get_record retrieves the records for a specified date range as expected from the stream interface
 // i.e. with filled gaps
-procedure get_record($date_from text, $date_to text, $frozen_at text) public view returns table(
+procedure get_record($date_from text, $date_to text, $frozen_at int) public view returns table(
     date_value text,
     value decimal(21,3)
 ) {
@@ -424,7 +424,7 @@ procedure get_record($date_from text, $date_to text, $frozen_at text) public vie
 
 // get_index retrieves the index for a specified date range as expected from the stream interface
 // i.e. with filled gaps
-procedure get_index($date_from text, $date_to text, $frozen_at text) public view returns table(
+procedure get_index($date_from text, $date_to text, $frozen_at int) public view returns table(
     date_value text,
     value decimal(21,3)
 ) {
@@ -850,6 +850,23 @@ procedure is_stream_allowed_to_compose() public view returns (value bool) {
     error('Stream not allowed to compose');
 }
 
+
+procedure get_index_change($date_from text, $date_to text, $frozen_at int) public view returns table(
+    value decimal(21,3)) {
+    $index1 decimal(21,3):=0::decimal(21,3);
+    if $frozen_at == null{
+        $frozen_at := 0;
+    }
+    for $row1 in SELECT * FROM get_index($date_from, $date_from, $frozen_at){
+        $index1 := $row1.value;
+    }
+    $index2 decimal(21,3):=0::decimal(21,3);
+    for $row2 in SELECT * FROM get_index($date_to, $date_to, $frozen_at){
+        $index2 := $row2.value;
+    }
+    $percentage_value decimal(21,3) := ($index2 - $index1) * 100.00::decimal(21,3) / $index1;
+    return next $percentage_value;
+}
 // # Miscellaneous helpers
 
 // emit_values_if is a helper function to emit values if a condition is met

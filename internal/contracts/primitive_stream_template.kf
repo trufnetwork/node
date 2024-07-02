@@ -303,7 +303,7 @@ procedure insert_record($date_value text, $value decimal(21,3)) public {
 // Truflations calculation is ((current_primitive/first_primitive)*100).
 // This essentially gives us the same result, but with an extra 3 digits of precision.
 // index := (currentPrimitive * 100) / basePrimitive
-procedure get_index($date_from text, $date_to text, $frozen_at text) public view returns table(
+procedure get_index($date_from text, $date_to text, $frozen_at int) public view returns table(
         date_value text,
         value decimal(21,3)
         ) {
@@ -334,7 +334,7 @@ procedure get_base_value() private view returns (value decimal(21,3)) {
 procedure get_original_record(
     $date_from text,
     $date_to text,
-    $frozen_at text
+    $frozen_at int
     ) private view returns table(
     date_value text,
     value decimal(21,3)
@@ -433,7 +433,7 @@ procedure get_original_record(
 procedure get_record(
     $date_from text,
     $date_to text,
-    $frozen_at text
+    $frozen_at int
     ) public view returns table(
     date_value text,
     value decimal(21,3)
@@ -534,6 +534,23 @@ procedure is_stream_allowed_to_compose() public view returns (value bool) {
     }
 
     error('stream not allowed to compose');
+}
+
+procedure get_index_change($date_from text, $date_to text, $frozen_at int) public view returns table(
+    value decimal(21,3)) {
+    if $frozen_at == null{
+        $frozen_at := 0;
+    }
+    $index1 decimal(21,3):=0::decimal(21,3);
+    for $row1 in SELECT * FROM get_index($date_from, $date_from, $frozen_at){
+        $index1 := $row1.value;
+    }
+    $index2 decimal(21,3):=0::decimal(21,3);
+    for $row2 in SELECT * FROM get_index($date_to, $date_to, $frozen_at){
+        $index2 := $row2.value;
+    }
+    $percentage_value decimal(21,3) := ($index2 - $index1) * 100.00::decimal(21,3) / $index1;
+    return next $percentage_value;
 }
 
 // # Helper functions

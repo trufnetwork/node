@@ -141,6 +141,12 @@ try read when it's private (make sure you set to private read access)
 owner=$(../../.build/kwil-cli account id)
 ../../.build/kwil-cli database call --action=get_index date_from:2021-01-01 date_to:2021-01-02 -n=primitive_stream_000000000000001 --private-key 0000000000000000000000000000000000000000000000000000000000000123 --owner $owner
 ```
+### Get Index Change
+
+get index change
+```shell
+../../.build/kwil-cli database call --action=get_index_change date_from:2021-01-01 date_to:2021-01-02 frozen_at: -n=primitive_stream_000000000000001
+```
 
 ### Get Record
 
