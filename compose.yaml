@@ -81,15 +81,6 @@ services:
         source: data-tsn-db
         target: /root/.kwild
 
-  indexer:
-    build: ./deployments/indexer
-    ports:
-      - "1337:1337"
-    depends_on:
-      - tsn-db
-    networks:
-      - tsn-network
-
 networks:
   tsn-network:
     driver: bridge
