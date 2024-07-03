@@ -140,13 +140,6 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 		IndexerPublicDnsName: indexerInstance.Instance.InstancePublicDnsName(),
 	})
 
-	//utils.PublishInstanceToSubdomain(stack, utils.PublishInstanceToSubdomainInput{
-	//	Instance:   indexerInstance.Instance,
-	//	Subdomain:  "indexer",
-	//	HostedZone: hostedZone,
-	//	Domain:     domain,
-	//})
-
 	// Deploy the system contract everytime the hash changes
 	deployContract := system_contract.DeployContractResource(stack, system_contract.DeployContractResourceOptions{
 		SystemContractPath: jsii.String("../../internal/contracts/system_contract.kf"),
