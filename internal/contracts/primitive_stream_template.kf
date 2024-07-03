@@ -342,7 +342,6 @@ procedure get_original_record(
 
     check_valid_date_or_null($date_from, 'date_from');
     check_valid_date_or_null($date_to, 'date_to');
-    check_valid_int_or_null($frozen_at, 'frozen_at');
 
     // check read access
     if is_wallet_allowed_to_read(@caller) == false {
@@ -561,14 +560,6 @@ procedure check_valid_date_or_null($date text, $name text) private view {
     if $date IS DISTINCT FROM NULL {
         if length($date) != 10 {
             error(format('%s must be in yyyy-mm-dd format or should not be provided: received %s', $name, $date));
-        }
-    }
-}
-
-procedure check_valid_int_or_null($int text, $name text) private view {
-    if $int IS DISTINCT FROM NULL {
-        if $int == '' OR $int::int IS NULL {
-            error(format('%s must be an integer or should not be provided: received %s', $name, $int));
         }
     }
 }
