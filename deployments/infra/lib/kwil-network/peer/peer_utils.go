@@ -11,11 +11,12 @@ import (
 // this is hardcoded at the Dockerfile that generates TSN nodes
 const TsnP2pPort = 26656
 const TsnRPCPort = 8484
+const TsnIndexerPort = 1337
+const TsnCometBFTRPCPort = 26657
+const TSNPostgresPort = 5432
 
 type PeerConnection struct {
 	ElasticIp               awsec2.CfnEIP
-	P2PPort                 int
-	RPCPort                 int
 	NodeCometEncodedAddress string
 }
 
@@ -27,7 +28,7 @@ func (p PeerConnection) GetP2PAddress(withId bool) *string {
 	partialAddress := []*string{
 		p.ElasticIp.AttrPublicIp(),
 		jsii.String(":"),
-		jsii.String(strconv.Itoa(p.P2PPort)),
+		jsii.String(strconv.Itoa(TsnP2pPort)),
 	}
 
 	var result []*string
@@ -46,15 +47,13 @@ func (p PeerConnection) GetP2PAddress(withId bool) *string {
 }
 
 func (p PeerConnection) GetHttpAddress() *string {
-	ipAndPort := []*string{p.ElasticIp.AttrPublicIp(), jsii.String(strconv.Itoa(p.RPCPort))}
+	ipAndPort := []*string{p.ElasticIp.AttrPublicIp(), jsii.String(strconv.Itoa(TsnRPCPort))}
 	return awscdk.Fn_Join(jsii.String(":"), &ipAndPort)
 }
 
 func NewPeerConnection(ip awsec2.CfnEIP, nodeCometEncodedAddress string) PeerConnection {
 	return PeerConnection{
 		ElasticIp:               ip,
-		P2PPort:                 TsnP2pPort,
-		RPCPort:                 TsnRPCPort,
 		NodeCometEncodedAddress: nodeCometEncodedAddress,
 	}
 }
