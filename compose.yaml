@@ -1,6 +1,7 @@
 services:
   kwil-postgres:
     image: "kwildb/postgres:latest"
+    hostname: kwil-postgres
     ports:
       - "5432:5432"
     environment:
@@ -60,7 +61,7 @@ services:
       # comma separated list of peers, used for p2p communication
       PERSISTENT_PEERS: ${PERSISTENT_PEERS}
       # external address of the node, used for p2p communication
-      EXTERNAL_ADDRESS: ${EXTERNAL_ADDRESS}
+      EXTERNAL_ADDRESS: ${EXTERNAL_ADDRESS:-http://tsn-db:26656}
 
     ports:
       - "50051:50051"
