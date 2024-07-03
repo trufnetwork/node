@@ -1,6 +1,7 @@
 package tsn
 
 import (
+	"fmt"
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/constructs-go/constructs/v10"
@@ -23,31 +24,46 @@ func NewTSNSecurityGroup(scope constructs.Construct, input NewTSNSecurityGroupIn
 		Description:      jsii.String("TSN-DB Instance security group."),
 	})
 
-	// TODO security could be hardened by allowing only specific IPs
-	//   relative to cloudfront distribution IPs
-	sg.AddIngressRule(
-		awsec2.Peer_AnyIpv4(),
-		awsec2.Port_Tcp(jsii.Number(peer.TsnRPCPort)),
-		jsii.String("Allow requests to the TSN RPC port."),
-		jsii.Bool(false))
+	// These ports are open to the public
+	publicPorts := []struct {
+		port int
+		name string
+	}{
+		{peer.TsnRPCPort, "TSN RPC port"},
+		{peer.TsnIndexerPort, "TSN Indexer port"},
+		{22, "SSH port"},
+	}
 
-	// ssh
-	sg.AddIngressRule(
-		awsec2.Peer_AnyIpv4(),
-		awsec2.Port_Tcp(jsii.Number(22)),
-		jsii.String("Allow ssh."),
-		jsii.Bool(false))
+	// Only other TSN nodes should be able to communicate through these ports
+	interNodePorts := []struct {
+		port int
+		name string
+	}{
+		{peer.TsnP2pPort, "TSN P2P port"},
+	}
 
-	// allow communication between nodes by the P2P port
-	for _, p := range input.peers {
+	for _, p := range publicPorts {
 		sg.AddIngressRule(
-			// We need to provide the public IP of the peer node
-			// We can't use the SG allowance directly because this rule references the private IP,
-			// but we need the public IP reference instead
-			awsec2.Peer_Ipv4(awscdk.Fn_Join(jsii.String(""), &[]*string{p.ElasticIp.AttrPublicIp(), jsii.String("/32")})),
-			awsec2.Port_Tcp(jsii.Number(p.P2PPort)),
-			jsii.String("Allow communication between nodes."),
+			// TODO security could be hardened by allowing only specific IPs
+			//   relative to cloudfront distribution IPs
+			awsec2.Peer_AnyIpv4(),
+			awsec2.Port_Tcp(jsii.Number(p.port)),
+			jsii.String(fmt.Sprintf("Allow requests to the %s.", p.name)),
 			jsii.Bool(false))
+	}
+
+	// allow communication between nodes
+	for _, p := range input.peers {
+		for _, port := range interNodePorts {
+			sg.AddIngressRule(
+				// We need to provide the public IP of the peer node
+				// We can't use the SG allowance directly because this rule references the private IP,
+				// but we need the public IP reference instead
+				awsec2.Peer_Ipv4(awscdk.Fn_Join(jsii.String(""), &[]*string{p.ElasticIp.AttrPublicIp(), jsii.String("/32")})),
+				awsec2.Port_Tcp(jsii.Number(port.port)),
+				jsii.String(fmt.Sprintf("Allow communication between nodes by the %s.", port.name)),
+				jsii.Bool(false))
+		}
 	}
 
 	return sg

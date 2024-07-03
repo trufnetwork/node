@@ -43,7 +43,7 @@ func AddTsnDbStartupScriptsToInstance(scope constructs.Construct, options AddSta
 		ConfTarget:         jsii.String("external"),
 		ExternalConfigPath: jsii.String(tsnConfigRelativeToCompose),
 		PersistentPeers:    persistentPeers,
-		ExternalAddress:    options.currentPeer.GetP2PAddress(false),
+		ExternalAddress:    jsii.String("http://" + *options.currentPeer.GetP2PAddress(false)),
 	}
 
 	// we could improve this script by adding a ResourceSignal, which would signalize to CDK that the Instance is ready
