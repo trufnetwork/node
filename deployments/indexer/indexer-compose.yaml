@@ -1,0 +1,44 @@
+services:
+  indexer-postgres:
+    image: "postgres:latest"
+    hostname: indexer-postgres
+    environment:
+      - POSTGRES_HOST_AUTH_METHOD=trust
+      - POSTGRES_DB=indexer
+      - POSTGRES_USER=indexer
+      - POSTGRES_PASSWORD=indexer
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    # persis data
+    volumes:
+      - type: volume
+        source: data-indexer
+        target: /var/lib/postgresql/data
+        volume:
+          nocopy: true
+    networks:
+      - tsn-network
+  indexer:
+    build:
+      dockerfile: indexer.dockerfile
+      args:
+        NODE_COMETBFT_ENDPOINT: ${NODE_COMETBFT_ENDPOINT:?NODE_COMETBFT_ENDPOINT is required}
+        KWIL_PG_CONN: ${KWIL_PG_CONN:?KWIL_PG_CONN is required}
+        INDEXER_PG_CONN: "postgresql://indexer:indexer@indexer-postgres:5432/indexer?sslmode=disable"
+    ports:
+      - "1337:1337"
+    networks:
+      - tsn-network
+    depends_on:
+      indexer-postgres:
+        condition: service_healthy
+
+networks:
+  tsn-network:
+    driver: bridge
+    name: tsn-network
+volumes:
+  data-indexer:
