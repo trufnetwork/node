@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	domain_utils "github.com/truflation/tsn-db/infra/lib/domain_utils"
+	kwil_indexer_instance "github.com/truflation/tsn-db/infra/lib/kwil-indexer"
 	system_contract "github.com/truflation/tsn-db/infra/lib/system-contract"
 	"os"
 	"strconv"
@@ -70,6 +71,11 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 		Path: jsii.String("../gateway/"),
 	})
 
+	indexerDirectoryAsset := awss3assets.NewAsset(stack, jsii.String("IndexerDirectoryAsset"), &awss3assets.AssetProps{
+		// indexer directory contains more than one file to configure the indexer, so we need to zip it
+		Path: jsii.String("../indexer/"),
+	})
+
 	// we store KGW binary in S3, and that bucket lives outside the stack
 	kgwBinaryS3Object := utils.S3Object{
 		Bucket: awss3.Bucket_FromBucketName(
@@ -113,10 +119,33 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	kgwBinaryS3Object.GrantRead(kgwInstance.Role)
 	kgwDirectoryAsset.GrantRead(kgwInstance.Role)
 
-	// Cloudfront for the gateway instance
+	// ### INDEXER INSTANCE
+	indexerInstance := kwil_indexer_instance.NewIndexerInstance(stack, kwil_indexer_instance.NewIndexerInstanceInput{
+		Vpc:             defaultVPC,
+		TSNInstance:     tsnCluster.Nodes[0],
+		IndexerDirAsset: indexerDirectoryAsset,
+	})
+
+	// add read permission to the indexer instance role
+	indexerDirectoryAsset.GrantRead(indexerInstance.Role)
+
+	// Cloudfront for the TSN
 	// We use cloudfront to handle TLS termination. The certificate is created in a separate stack in us-east-1.
 	// We disable caching.
-	cf := kwil_gateway.CloudfrontForEc2Instance(stack, kgwInstance.Instance.InstancePublicDnsName(), domain, hostedZone, props.cert)
+	cf := kwil_gateway.TSNCloudfrontInstance(stack, kwil_gateway.TSNCloudfrontConfig{
+		DomainName:           domain,
+		KgwPublicDnsName:     kgwInstance.Instance.InstancePublicDnsName(),
+		Certificate:          props.cert,
+		HostedZone:           hostedZone,
+		IndexerPublicDnsName: indexerInstance.Instance.InstancePublicDnsName(),
+	})
+
+	//utils.PublishInstanceToSubdomain(stack, utils.PublishInstanceToSubdomainInput{
+	//	Instance:   indexerInstance.Instance,
+	//	Subdomain:  "indexer",
+	//	HostedZone: hostedZone,
+	//	Domain:     domain,
+	//})
 
 	// Deploy the system contract everytime the hash changes
 	deployContract := system_contract.DeployContractResource(stack, system_contract.DeployContractResourceOptions{
@@ -153,6 +182,11 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	// Public ip of the gateway instance
 	awscdk.NewCfnOutput(stack, jsii.String("gateway-public-address"), &awscdk.CfnOutputProps{
 		Value: kgwInstance.Instance.InstancePublicIp(),
+	})
+
+	// Public ip of the indexer instance
+	awscdk.NewCfnOutput(stack, jsii.String("indexer-public-address"), &awscdk.CfnOutputProps{
+		Value: indexerInstance.Instance.InstancePublicIp(),
 	})
 
 	awscdk.NewCfnOutput(stack, jsii.String("region"), &awscdk.CfnOutputProps{
