@@ -67,7 +67,7 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 	//   relative to cloudfront distribution IPs
 	instanceSG.AddIngressRule(
 		awsec2.Peer_AnyIpv4(),
-		awsec2.Port_Tcp(jsii.Number(peer.TsnIndexerPort)),
+		awsec2.Port_Tcp(jsii.Number(80)),
 		jsii.String("Allow requests to kwil-indexer."),
 		jsii.Bool(false))
 

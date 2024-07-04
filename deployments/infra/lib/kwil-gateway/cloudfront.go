@@ -8,7 +8,6 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsroute53targets"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
-	"github.com/truflation/tsn-db/infra/lib/kwil-network/peer"
 )
 
 type TSNCloudfrontConfig struct {
@@ -41,7 +40,7 @@ func TSNCloudfrontInstance(scope constructs.Construct, config TSNCloudfrontConfi
 			// Note that this will fail if indexer expects a different path for some requests
 			"/v0/*": {
 				Origin: awscloudfrontorigins.NewHttpOrigin(jsii.String(*config.IndexerPublicDnsName), &awscloudfrontorigins.HttpOriginProps{
-					HttpPort:       jsii.Number(peer.TsnIndexerPort),
+					HttpPort:       jsii.Number(80),
 					ProtocolPolicy: awscloudfront.OriginProtocolPolicy_HTTP_ONLY,
 				}),
 				AllowedMethods:       awscloudfront.AllowedMethods_ALLOW_ALL(),
