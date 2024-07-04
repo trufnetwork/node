@@ -99,7 +99,12 @@ Alternatively, you can start the indexer using the following command:
 task indexer
 ```
 
-You can view the metrics dashboard at http://localhost:1337/v0/swagger.
+You can view the metrics dashboard at http://localhost:1337/v0/swagger. 
+Replace `localhost` with the IP address or domain name of the server where the indexer is running.
+
+You can view our deployed indexer at https://staging.tsn.test.truflation.com/v0/swagger. 
+There you can see the list of available endpoints and their descriptions. 
+For example, you can see the list of transactions by calling the [/chain/transactions](https://staging.tsn.test.truflation.com/v0/chain/transactions) endpoint.
 
 ## License
 
