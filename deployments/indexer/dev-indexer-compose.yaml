@@ -1,4 +1,16 @@
 services:
+  indexer-caddy:
+    image: "caddy:latest"
+    hostname: indexer-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - type: bind
+        source: ./Caddyfile
+        target: /etc/caddy/Caddyfile
+    networks:
+      - tsn-network
   indexer-postgres:
     image: "postgres:latest"
     hostname: indexer-postgres
@@ -22,6 +34,7 @@ services:
     networks:
       - tsn-network
   indexer:
+    hostname: indexer
     build:
       dockerfile: indexer.dockerfile
       args:

@@ -1,0 +1,25 @@
+{
+    # Global options block
+    # Optional: Enable access logs
+    # log {
+    #     output file /var/log/caddy/access.log
+    # }
+}
+
+:80 {
+    reverse_proxy http://indexer:1337 {
+        header_down Access-Control-Allow-Origin "*"
+        header_down Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+        header_down Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization"
+    }
+
+    @options {
+        method OPTIONS
+    }
+    handle @options {
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+        header Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization"
+        respond 200
+    }
+}
