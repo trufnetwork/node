@@ -109,42 +109,45 @@ For example, you can see the list of transactions by calling the [/chain/transac
 ### System Contract
 
 System Contract is a contract that stores the accepted streams by TSN Gov. It also serves as an entry point for queries.
-
+It also serves as an entry point for queries.
 Currently for development purposes, private key 001 will be used to interact with the system contract. 
-It still need to be updated to use the correct private key.
+It still needs to be updated to use the correct private key.
 
 #### Fetching through System Contract
 
 As our system contract is currently live on our staging server, you can fetch records from the system contract using the following command:
+
 ```shell
 kwil-cli database call -a=get_unsafe_record -n=tsn_system_contract -o=34f9e432b4c70e840bc2021fd161d15ab5e19165 data_provider:4710a8d8f0d845da110086812a32de6d90d7ff5c stream_id:st1b148397e2ea36889efad820e2315d date_from:2024-06-01 date_to:2024-06-17 --private-key 0000000000000000000000000000000000000000000000000000000000000001 --provider https://staging.tsn.test.truflation.com
 ```
-in this example, we are fetching records from the system contract for the stream `st1b148397e2ea36889efad820e2315d` 
-from the data provider `4710a8d8f0d845da110086812a32de6d90d7ff5c` which is Electric Vehicle Index that provided by 
+in this example, we are fetching records from the system contract for the stream `st1b148397e2ea36889efad820e2315d`
+from the data provider `4710a8d8f0d845da110086812a32de6d90d7ff5c` which is Electric Vehicle Index that provided by
 Truflation Data Provider.
 
 The `unsafe` in the `get_unsafe_record` action is used so that the system contract can fetch records from the stream
 contract directly without waiting for the stream contract to be officialized.
 
 list of available actions in the system contract:
+
 - `get_unsafe_record(data_provider, stream_id, date_from, date_to, frozen_at)` - fetch records from the stream contract without waiting for the stream contract to be officialized
+
 - `get_unsafe_index(data_provider, stream_id, date_from, date_to, frozen_at)` - fetch index from the stream contract without waiting for the stream contract to be officialized
 - `get_record(data_provider, stream_id, date_from, date_to, frozen_at)` fetch records from the stream contract, stream needs to be officialized
 - `get_index(data_provider, stream_id, date_from, date_to, frozen_at)` - fetch index from the stream contract, stream needs to be officialized
-- `get_index_change` - fetch index change from the stream contract, stream needs to be officialized
+- `get_index_change` - fetch index change from the stream contract, which must be officialized
 - `stream_exists(data_provider, stream_id)` - check if the stream exists in the system contract
 - `accept_stream(data_provider, stream_id)` - accept the stream as official, owner only
 - `revoke_stream(data_provider, stream_id)` - revoke official status of the stream, owner only
 
 #### Fetching through Contact Directly
 
-Right now, users can fetch records from the contract directly.
+Currently, users can fetch records from the contract directly.
 ```shell
 kwil-cli database call -a=get_record -n=st1b148397e2ea36889efad820e2315d -o=4710a8d8f0d845da110086812a32de6d90d7ff5c date_from:2024-06-01 date_to:2024-06-17 --private-key 0000000000000000000000000000000000000000000000000000000000000001 --provider https://staging.tsn.test.truflation.com
 ```
-Users are able to fetch records from the stream contract without through the system contract to keep it simple at this 
+Users are able to fetch records from the stream contract without through the system contract to keep it simple at this
 phase, and in the hands of the Truflation as a data provider. Normally, before fetching records from the stream
-contract, the stream needs to be officialized by the system contract. It can be done by calling the `accept_stream` action in the system contract as the owner of the stream.
+contract, the stream must be officialized by the system contract. It can be done by calling the `accept_stream` action in the system contract as the owner of the stream.
 
 ## License
 
