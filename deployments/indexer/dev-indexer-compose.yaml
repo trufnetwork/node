@@ -14,11 +14,12 @@ services:
   indexer-postgres:
     image: "postgres:latest"
     hostname: indexer-postgres
+    restart: on-failure
     environment:
       - POSTGRES_HOST_AUTH_METHOD=trust
       - POSTGRES_DB=indexer
-      - POSTGRES_USER=indexer
-      - POSTGRES_PASSWORD=indexer
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 5s
@@ -35,12 +36,13 @@ services:
       - tsn-network
   indexer:
     hostname: indexer
+    restart: on-failure
     build:
       dockerfile: indexer.dockerfile
       args:
         NODE_COMETBFT_ENDPOINT: "http://tsn-db:26657"
         KWIL_PG_CONN: "postgresql://kwild@kwil-postgres:5432/kwild?sslmode=disable"
-        INDEXER_PG_CONN: "postgresql://indexer:indexer@indexer-postgres:5432/indexer?sslmode=disable"
+        INDEXER_PG_CONN: "postgresql://postgres:postgres@indexer-postgres:5432/indexer?sslmode=disable"
     ports:
       - "1337:1337"
     networks:
