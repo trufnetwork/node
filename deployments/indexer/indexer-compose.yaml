@@ -37,6 +37,7 @@ services:
     networks:
       - tsn-network
   indexer:
+    restart: on-failure
     build:
       dockerfile: indexer.dockerfile
       args:
