@@ -2,6 +2,7 @@ services:
   kwil-postgres:
     image: "kwildb/postgres:latest"
     hostname: kwil-postgres
+    restart: on-failure
     ports:
       - "5432:5432"
     environment:
@@ -44,6 +45,7 @@ services:
     container_name: tsn-db
     hostname: tsn-db
     image: "tsn-db:local"
+    restart: on-failure
     build:
       context: .
       dockerfile: ./deployments/Dockerfile
