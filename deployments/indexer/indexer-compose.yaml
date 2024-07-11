@@ -14,7 +14,8 @@ services:
       - tsn-network
 
   indexer-postgres:
-    image: "postgres:16.3"
+    image: "postgres:latest"
+    restart: on-failure
     hostname: indexer-postgres
     environment:
       - POSTGRES_HOST_AUTH_METHOD=trust
