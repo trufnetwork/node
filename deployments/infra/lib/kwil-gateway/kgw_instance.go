@@ -99,15 +99,6 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 		},
 		SecurityGroup: instanceSG,
 		KeyPair:       awsec2.KeyPair_FromKeyPairName(scope, jsii.String("KeyPair"), keyPair),
-		BlockDevices: &[]*awsec2.BlockDevice{
-			{
-				DeviceName: jsii.String("/dev/sda1"),
-				Volume: awsec2.BlockDeviceVolume_Ebs(jsii.Number(50), &awsec2.EbsDeviceOptions{
-					DeleteOnTermination: jsii.Bool(true),
-					Encrypted:           jsii.Bool(false),
-				}),
-			},
-		},
 	})
 
 	AddKwilGatewayStartupScriptsToInstance(AddKwilGatewayStartupScriptsOptions{

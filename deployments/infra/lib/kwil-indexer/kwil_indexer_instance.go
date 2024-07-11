@@ -11,6 +11,7 @@ import (
 	"github.com/truflation/tsn-db/infra/config"
 	"github.com/truflation/tsn-db/infra/lib/kwil-network/peer"
 	"github.com/truflation/tsn-db/infra/lib/tsn"
+	"github.com/truflation/tsn-db/infra/lib/utils"
 )
 
 type KGWConfig struct {
@@ -118,6 +119,8 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 			},
 		},
 	})
+
+	instance.AddUserData(utils.MountVolumeToPathAndPersist("nvme1n1", "/data")...)
 
 	AddKwilIndexerStartupScriptsToInstance(AddKwilIndexerStartupScriptsOptions{
 		indexerZippedDirPath: indexerZippedDirPath,

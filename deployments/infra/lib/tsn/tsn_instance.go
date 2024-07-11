@@ -10,6 +10,7 @@ import (
 	"github.com/kwilteam/kwil-db/core/utils/random"
 	"github.com/truflation/tsn-db/infra/config"
 	peer2 "github.com/truflation/tsn-db/infra/lib/kwil-network/peer"
+	"github.com/truflation/tsn-db/infra/lib/utils"
 )
 
 type newTSNInstanceInput struct {
@@ -47,9 +48,9 @@ func NewTSNInstance(scope constructs.Construct, input newTSNInstanceInput) TSNIn
 
 	defaultInstanceUser := jsii.String("ec2-user")
 
-	tsnConfigZipPath := "/home/ec2-user/tsn-node-config.zip"
-	tsnComposePath := "/home/ec2-user/docker-compose.yaml"
-	tsnConfigImagePath := "/home/ec2-user/deployments/tsn-config.dockerfile"
+	tsnConfigZipPath := "/data/tsn-node-config.zip"
+	tsnComposePath := "/data/docker-compose.yaml"
+	tsnConfigImagePath := "/data/tsn-config.dockerfile"
 
 	initData := awsec2.CloudFormationInit_FromElements(
 		awsec2.InitFile_FromExistingAsset(jsii.String(tsnComposePath), input.TSNDockerComposeAsset, &awsec2.InitFileOptions{
@@ -93,6 +94,10 @@ func NewTSNInstance(scope constructs.Construct, input newTSNInstanceInput) TSNIn
 			},
 		},
 	})
+
+	instance.AddUserData(
+		utils.MountVolumeToPathAndPersist("nvme1n1", "/data")...,
+	)
 
 	// Create Elastic Ip association instead of attaching, so dependency is not circular
 	awsec2.NewCfnEIPAssociation(scope, jsii.String("TSN-Instance-ElasticIpAssociation-"+input.Id), &awsec2.CfnEIPAssociationProps{

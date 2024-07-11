@@ -13,6 +13,7 @@ import (
 type IndexerEnvConfig struct {
 	NodeCometBftEndpoint *string `env:"NODE_COMETBFT_ENDPOINT"`
 	KwilPgConn           *string `env:"KWIL_PG_CONN"`
+	PostgresVolume       *string `env:"POSTGRES_VOLUME"`
 }
 
 type AddKwilIndexerStartupScriptsOptions struct {
@@ -39,6 +40,7 @@ func AddKwilIndexerStartupScriptsToInstance(options AddKwilIndexerStartupScripts
 			*tsnInstance.InstancePrivateIp(),
 			strconv.Itoa(peer.TSNPostgresPort),
 		)),
+		PostgresVolume: jsii.String("/data/postgres"),
 	}
 
 	setupScript := `#!/bin/bash
