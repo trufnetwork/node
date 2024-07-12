@@ -11,11 +11,11 @@ func MountVolumeToPathAndPersist(volumeName string, path string) []*string {
 	}
 
 	commands := jsii.Strings(
-		"sudo mkfs -t xfs /dev/"+volumeName,
-		"sudo mkdir -p "+path,
-		"sudo mount /dev/"+volumeName+" "+path,
-		"sudo chown ec2-user:ec2-user "+path,
-		"echo '/dev/"+volumeName+" "+path+" xfs defaults 0 0' | sudo tee -a /etc/fstab",
+		fmt.Sprintf("sudo mkfs -t xfs /dev/%s", volumeName),
+		fmt.Sprintf("sudo mkdir -p %s", path),
+		fmt.Sprintf("sudo mount /dev/%s %s", volumeName, path),
+		fmt.Sprintf("sudo chown ec2-user:ec2-user %s", path),
+		fmt.Sprintf("echo '/dev/%s %s xfs defaults 0 0' | sudo tee -a /etc/fstab", volumeName, path),
 	)
 
 	return *commands
