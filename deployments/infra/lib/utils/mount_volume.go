@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"fmt"
 	"github.com/aws/jsii-runtime-go"
 )
 
