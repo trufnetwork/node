@@ -11,3 +11,9 @@ func MountVolumeToPathAndPersist(volumeName string, path string) []*string {
 		"echo '/dev/"+volumeName+" "+path+" xfs defaults 0 0' | sudo tee -a /etc/fstab",
 	)
 }
+
+func MoveToPath(file string, path string) *string {
+	return jsii.String(
+		"sudo mv " + file + " " + path,
+	)
+}

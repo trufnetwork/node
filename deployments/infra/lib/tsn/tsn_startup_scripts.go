@@ -18,6 +18,7 @@ type AddStartupScriptsOptions struct {
 	TsnConfigImagePath *string
 	TsnConfigZipPath   *string
 	TsnComposePath     *string
+	DataDirPath        *string
 	Region             *string
 }
 
@@ -26,7 +27,8 @@ func AddTsnDbStartupScriptsToInstance(scope constructs.Construct, options AddSta
 
 	tsnImageAsset := options.TsnImageAsset
 
-	tsnConfigExtractedPath := "/data/tsn"
+	tsnConfigExtractedPath := *options.DataDirPath + "tsn"
+	postgresDataPath := *options.DataDirPath + "postgres"
 	tsnConfigRelativeToCompose := "./tsn"
 
 	// create a list of persistent peers
@@ -45,7 +47,7 @@ func AddTsnDbStartupScriptsToInstance(scope constructs.Construct, options AddSta
 		PersistentPeers:    persistentPeers,
 		ExternalAddress:    jsii.String("http://" + *options.currentPeer.GetP2PAddress(false)),
 		TsnVolume:          jsii.String(tsnConfigExtractedPath),
-		PostgresVolume:     jsii.String("/data/postgres"),
+		PostgresVolume:     jsii.String(postgresDataPath),
 	}
 
 	// we could improve this script by adding a ResourceSignal, which would signalize to CDK that the Instance is ready

@@ -90,7 +90,7 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 	// comes with pre-installed cloud init requirements
 	AWSLinux2MachineImage := awsec2.MachineImage_LatestAmazonLinux2(nil)
 	instance := awsec2.NewInstance(scope, jsii.String("KGWInstance"+randomBit), &awsec2.InstanceProps{
-		InstanceType: awsec2.InstanceType_Of(awsec2.InstanceClass_T3, awsec2.InstanceSize_NANO),
+		InstanceType: awsec2.InstanceType_Of(awsec2.InstanceClass_T3, awsec2.InstanceSize_SMALL),
 		Init:         initData,
 		MachineImage: AWSLinux2MachineImage,
 		Vpc:          input.Vpc,
