@@ -27,6 +27,6 @@ func MoveToPath(file string, path string) *string {
 		panic("file and path cannot be empty")
 	}
 
-	command := jsii.String("sudo mv " + file + " " + path)
+	command := jsii.String(fmt.Sprintf("sudo mv %s %s", file, path))
 	return command
 }
