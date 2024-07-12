@@ -90,7 +90,7 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 
 	// ### TSN INSTANCE
 	tsnCluster := tsn.NewTSNCluster(stack, tsn.NewTSNClusterInput{
-		NumberOfNodes:         2,
+		NumberOfNodes:         config.NumOfNodes(stack),
 		TSNDockerComposeAsset: tsnComposeAsset,
 		TSNDockerImageAsset:   tsnImageAsset,
 		Vpc:                   defaultVPC,

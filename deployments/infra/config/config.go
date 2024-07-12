@@ -4,6 +4,7 @@ import (
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/lib/domain_utils"
+	"log"
 )
 
 // DO NOT modify this function, change stack name by 'cdk.json/context/stackName'.
@@ -69,6 +70,26 @@ func Domain(scope constructs.Construct) *string {
 		DeploymentStage_STAGING: "staging." + domain_utils.MainDomain,
 		DeploymentStage_PROD:    domain_utils.MainDomain,
 	}
+	// special domain names only work for DEV
+	ctxValue := scope.Node().TryGetContext(jsii.String("specialDomain"))
+	if v, ok := ctxValue.(string); ok {
+		// warn if special domain is used in non-DEV stage
+		if DeploymentStage(scope) != DeploymentStage_DEV {
+			log.Printf("Special domain %s is used in non-DEV stage", v)
+		}
+		domainEnvMap[DeploymentStage_DEV] = v + "." + domain_utils.MainDomain
+	}
 
 	return jsii.String(domainEnvMap[DeploymentStage(scope)])
+}
+
+func NumOfNodes(scope constructs.Construct) int {
+	numOfNodes := 1
+
+	ctxValue := scope.Node().TryGetContext(jsii.String("numOfNodes"))
+	if v, ok := ctxValue.(int); ok {
+		numOfNodes = v
+	}
+
+	return numOfNodes
 }

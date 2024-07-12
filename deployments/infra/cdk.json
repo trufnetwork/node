@@ -58,10 +58,10 @@
     "@aws-cdk/aws-codepipeline-actions:useNewDefaultBranchForCodeCommitSource": true,
     "@aws-cdk/aws-cloudwatch-actions:changeLambdaPermissionLogicalIdForLambdaAction": true,
     "@aws-cdk/aws-codepipeline:crossAccountKeysDefaultValueToFalse": true,
-
     "stackName": "TSN-DB-Stack",
     "imageRepoName": "tsn-db-repo",
     "deploymentStage": "STAGING",
+    "numOfNodes": 1,
     "keyPairName": "tsn-key-pair"
   }
 }
