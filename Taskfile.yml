@@ -50,6 +50,18 @@ tasks:
     cmds:
       - docker compose up
 
+  compose-dev:
+    desc: Run docker-compose locally with dev configuration, 2 nodes, gateway, and indexer services
+    cmds:
+        - docker compose -f deployments/dev-net/devnet-compose.yaml up -d
+        - docker compose -f deployments/dev-gateway/dev-gateway-compose.yaml up -d
+        - docker compose -f deployments/indexer/dev-indexer-compose.yaml up -d
+    env:
+        BACKENDS: tsn-db-1:8484,tsn-db-2:8484
+        CHAIN_ID: tsn-local
+        NODE_COMETBFT_ENDPOINT: http://tsn-db-1:26657
+        KWIL_PG_CONN: postgresql://kwild@kwil-postgres-1:5432/kwild?sslmode=disable
+
   tools:
     desc: Install tools
     cmds:

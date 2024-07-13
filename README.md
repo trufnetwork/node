@@ -32,6 +32,13 @@ task compose
 ```
 It will build and start the TSN-DB in Docker containers, which is already seeded.
 
+Alternatively, you can run the following commands to run TSN-DB in Docker containers with similar setup as our the deployed server.
+It has 2 nodes, gateway, and indexer enabled.
+```shell
+task compose-dev
+```
+Accessing the nodes from gateway will be default to `http://localhost:443` and accessing the indexer will be default to `http://localhost:1337/v0/swagger`.
+
 #### Build and Run the TSN-DB without Docker Compose
 
 Alternatively, you can build and run the TSN-DB without Docker Compose. 

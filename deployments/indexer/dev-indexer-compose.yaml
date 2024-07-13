@@ -3,8 +3,8 @@ services:
     image: "caddy:latest"
     hostname: indexer-caddy
     ports:
-      - "80:80"
-      - "443:443"
+      - "81:81"
+      - "444:444"
     volumes:
       - type: bind
         source: ./Caddyfile
@@ -40,8 +40,8 @@ services:
     build:
       dockerfile: indexer.dockerfile
       args:
-        NODE_COMETBFT_ENDPOINT: "http://tsn-db:26657"
-        KWIL_PG_CONN: "postgresql://kwild@kwil-postgres:5432/kwild?sslmode=disable"
+        NODE_COMETBFT_ENDPOINT: ${NODE_COMETBFT_ENDPOINT:-http://tsn-db:26657}
+        KWIL_PG_CONN: ${KWIL_PG_CONN:-postgresql://kwild@kwil-postgres:5432/kwild?sslmode=disable}
         INDEXER_PG_CONN: "postgresql://postgres:postgres@indexer-postgres:5432/indexer?sslmode=disable"
     ports:
       - "1337:1337"
