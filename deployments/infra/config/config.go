@@ -87,7 +87,7 @@ func NumOfNodes(scope constructs.Construct) int {
 	numOfNodes := 1
 
 	ctxValue := scope.Node().TryGetContext(jsii.String("numOfNodes"))
-	if v, ok := ctxValue.(int); ok {
+	if v, err := ctxValue.(int); !err {
 		numOfNodes = v
 	}
 
