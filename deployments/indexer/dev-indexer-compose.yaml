@@ -53,6 +53,7 @@ services:
 
 networks:
   tsn-network:
+    external: true
     driver: bridge
     name: tsn-network
 volumes:
