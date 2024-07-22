@@ -37,6 +37,9 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 		AssumedBy: awsiam.NewServicePrincipal(jsii.String("ec2.amazonaws.com"), nil),
 	})
 
+	// create a new elastic ip, because we need the ip before the instance is created
+	indexerElasticIp := awsec2.NewCfnEIP(scope, jsii.String("IndexerElasticIp"), &awsec2.CfnEIPProps{})
+
 	// Create security group
 	instanceSG := awsec2.NewSecurityGroup(scope, jsii.String("IndexerSG"), &awsec2.SecurityGroupProps{
 		Vpc:              input.Vpc,
@@ -51,14 +54,16 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 	}{
 		{peer.TSNPostgresPort, "TSN Postgres port"},
 		{peer.TsnCometBFTRPCPort, "TSN Comet BFT RPC port"},
+		// note: the tsn p2p port (usually 26656) will be automatically crawled by the indexer
 		{peer.TsnP2pPort, "TSN P2P port"},
 	}
 
 	// allow communication from indexer to TSN node
 	for _, p := range indexerToTsnPorts {
 		input.TSNInstance.SecurityGroup.AddIngressRule(
-			// for this to work, it's necessary to use the private IP of the tsn node
-			instanceSG,
+			// we use the elastic ip of the indexer to allow communication via public ip
+			// we need to use the public ip because the node anounces itself with the public ip to the indexer
+			awsec2.Peer_Ipv4(jsii.String(fmt.Sprintf("%s/32", *indexerElasticIp.AttrPublicIp()))),
 			awsec2.Port_Tcp(jsii.Number(p.port)),
 			jsii.String(fmt.Sprintf("Allow requests to the %s from the indexer.", p.name)),
 			jsii.Bool(false))
@@ -118,6 +123,12 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 				}),
 			},
 		},
+	})
+
+	// Associate the elastic ip with the instance
+	awsec2.NewCfnEIPAssociation(scope, jsii.String("IndexerElasticIpAssociation"), &awsec2.CfnEIPAssociationProps{
+		InstanceId:   instance.InstanceId(),
+		AllocationId: indexerElasticIp.AttrAllocationId(),
 	})
 
 	instance.AddUserData(utils.MountVolumeToPathAndPersist("nvme1n1", "/data")...)

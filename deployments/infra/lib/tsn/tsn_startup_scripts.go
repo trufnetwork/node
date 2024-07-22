@@ -34,7 +34,7 @@ func AddTsnDbStartupScriptsToInstance(scope constructs.Construct, options AddSta
 	// create a list of persistent peers
 	var persistentPeersList []*string
 	for _, peer := range options.allPeers {
-		persistentPeersList = append(persistentPeersList, peer.GetP2PAddress(true))
+		persistentPeersList = append(persistentPeersList, peer.GetExternalP2PAddress(true))
 	}
 
 	// create a string from the list
@@ -45,7 +45,7 @@ func AddTsnDbStartupScriptsToInstance(scope constructs.Construct, options AddSta
 		ConfTarget:         jsii.String("external"),
 		ExternalConfigPath: jsii.String(tsnConfigRelativeToCompose),
 		PersistentPeers:    persistentPeers,
-		ExternalAddress:    jsii.String("http://" + *options.currentPeer.GetP2PAddress(false)),
+		ExternalAddress:    jsii.String("http://" + *options.currentPeer.GetExternalP2PAddress(false)),
 		TsnVolume:          jsii.String(tsnConfigExtractedPath),
 		PostgresVolume:     jsii.String(postgresDataPath),
 	}

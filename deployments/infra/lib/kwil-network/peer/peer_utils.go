@@ -20,7 +20,7 @@ type PeerConnection struct {
 	NodeCometEncodedAddress string
 }
 
-func (p PeerConnection) GetP2PAddress(withId bool) *string {
+func (p PeerConnection) GetExternalP2PAddress(withId bool) *string {
 	// full p2p address = <comet_address>@<public_ip>:<p2p_port>
 	// partial p2p address = <public_ip>:<p2p_port>
 

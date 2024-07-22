@@ -23,21 +23,22 @@ type AddKwilIndexerStartupScriptsOptions struct {
 }
 
 func AddKwilIndexerStartupScriptsToInstance(options AddKwilIndexerStartupScriptsOptions) {
-	tsnInstance := options.TSNInstance.Instance
+	tsnInstance := options.TSNInstance
 
 	// Create the environment variables for the gateway compose file
 	indexerEnvConfig := IndexerEnvConfig{
+		// note: the tsn p2p port (usually 26656) will be automatically crawled by the indexer
 		NodeCometBftEndpoint: jsii.String(fmt.Sprintf(
 			"http://%s:%s",
-			// private ip, so the security group targetted port allowance is correctly triggered
-			*tsnInstance.InstancePrivateIp(),
+			// public ip so the external elastic ip is used to allow the indexer to connect to the TSN node
+			*tsnInstance.PeerConnection.ElasticIp.AttrPublicIp(),
 			strconv.Itoa(peer.TsnCometBFTRPCPort),
 		)),
 		// postgresql://kwild@<ip>:<psqlport>/kwild?sslmode=disable
 		KwilPgConn: jsii.String(fmt.Sprintf(
 			"postgresql://kwild@%s:%s/kwild?sslmode=disable",
-			// private ip, so the security group targetted port allowance is correctly triggered
-			*tsnInstance.InstancePrivateIp(),
+			// public ip so the external elastic ip is used to allow the indexer to connect to the TSN node
+			*tsnInstance.PeerConnection.ElasticIp.AttrPublicIp(),
 			strconv.Itoa(peer.TSNPostgresPort),
 		)),
 		PostgresVolume: jsii.String("/data/postgres"),
