@@ -36,10 +36,10 @@ services:
     restart: unless-stopped
     build:
       dockerfile: indexer.dockerfile
-      args:
-        NODE_COMETBFT_ENDPOINT: ${NODE_COMETBFT_ENDPOINT:?NODE_COMETBFT_ENDPOINT is required}
-        KWIL_PG_CONN: ${KWIL_PG_CONN:?KWIL_PG_CONN is required}
-        INDEXER_PG_CONN: "postgresql://postgres:postgres@indexer-postgres:5432/indexer?sslmode=disable"
+    environment:
+      NODE_COMETBFT_ENDPOINT: ${NODE_COMETBFT_ENDPOINT:?NODE_COMETBFT_ENDPOINT is required}
+      KWIL_PG_CONN: ${KWIL_PG_CONN:?KWIL_PG_CONN is required}
+      INDEXER_PG_CONN: "postgresql://postgres:postgres@indexer-postgres:5432/indexer?sslmode=disable"
     ports:
       - "1337:1337"
     networks:
