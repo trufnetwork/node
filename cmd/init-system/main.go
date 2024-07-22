@@ -66,7 +66,7 @@ func HandleRequest(ctx context.Context, event cfn.Event) (string, error) {
 
 	// Initialize system contract
 	options := init_system_contract.InitSystemContractOptions{
-		RetryTimeout:          10 * time.Minute,
+		RetryTimeout:          15 * time.Minute,
 		PrivateKey:            privateKey,
 		ProviderUrl:           props.ProviderUrl,
 		SystemContractContent: systemContractContent,
