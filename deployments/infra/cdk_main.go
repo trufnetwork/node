@@ -124,6 +124,8 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 		Vpc:             defaultVPC,
 		TSNInstance:     tsnCluster.Nodes[0],
 		IndexerDirAsset: indexerDirectoryAsset,
+		Domain:          domain,
+		HostedZone:      hostedZone,
 	})
 
 	// add read permission to the indexer instance role
@@ -137,7 +139,7 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 		KgwPublicDnsName:     kgwInstance.Instance.InstancePublicDnsName(),
 		Certificate:          props.cert,
 		HostedZone:           hostedZone,
-		IndexerPublicDnsName: indexerInstance.Instance.InstancePublicDnsName(),
+		IndexerPublicDnsName: indexerInstance.InstanceDnsName,
 	})
 
 	// Deploy the system contract everytime the hash changes

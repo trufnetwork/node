@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsroute53"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
@@ -21,12 +22,18 @@ type NewIndexerInstanceInput struct {
 	Vpc             awsec2.IVpc
 	TSNInstance     tsn.TSNInstance
 	IndexerDirAsset awss3assets.Asset
+	HostedZone      awsroute53.IHostedZone
+	Domain          *string
 }
 
 type IndexerInstance struct {
-	Instance      awsec2.Instance
+	Instance awsec2.Instance
+	// security group of the instance to allow communication
 	SecurityGroup awsec2.SecurityGroup
-	Role          awsiam.IRole
+	// public DNS name is needed for cloudfront
+	InstanceDnsName *string
+	// if we need to add policies to the role
+	Role awsiam.IRole
 }
 
 const IndexerVolumeSize = 50
@@ -39,6 +46,13 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 
 	// create a new elastic ip, because we need the ip before the instance is created
 	indexerElasticIp := awsec2.NewCfnEIP(scope, jsii.String("IndexerElasticIp"), &awsec2.CfnEIPProps{})
+
+	// Create an A record pointing to the Elastic IP, as EIP doesn't automatically create a DNS record
+	aRecord := awsroute53.NewARecord(scope, jsii.String("IndexerElasticIpDnsRecord"), &awsroute53.ARecordProps{
+		Zone:       input.HostedZone,
+		RecordName: jsii.String("indexer." + *input.Domain),
+		Target:     awsroute53.RecordTarget_FromIpAddresses(indexerElasticIp.AttrPublicIp()),
+	})
 
 	// Create security group
 	instanceSG := awsec2.NewSecurityGroup(scope, jsii.String("IndexerSG"), &awsec2.SecurityGroupProps{
@@ -140,8 +154,9 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 	})
 
 	return IndexerInstance{
-		Instance:      instance,
-		SecurityGroup: instanceSG,
-		Role:          role,
+		Instance:        instance,
+		SecurityGroup:   instanceSG,
+		Role:            role,
+		InstanceDnsName: aRecord.DomainName(),
 	}
 }
