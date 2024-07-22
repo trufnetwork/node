@@ -73,7 +73,9 @@ services:
         - ${CACHE_TO:-type=local,dest=/tmp/buildx-cache-new}/tsn-db
     environment:
       - CONFIG_PATH=/root/.kwild/node0/
-      - DB_HOST=kwil-postgres-1
+      - KWILD_APP_PG_DB_HOST=kwil-postgres-1
+      - KWILD_APP_HOSTNAME=tsn-db-1
+      - KWILD_CHAIN_P2P_EXTERNAL_ADDRESS=http://tsn-db-1:26656
     ports:
       - "8484:8484"
       - "26657:26657"
@@ -101,7 +103,9 @@ services:
         - ${CACHE_TO:-type=local,dest=/tmp/buildx-cache-new}/tsn-db
     environment:
       - CONFIG_PATH=/root/.kwild/node1/
-      - DB_HOST=kwil-postgres-2
+      - KWILD_APP_PG_DB_HOST=kwil-postgres-2
+      - KWILD_APP_HOSTNAME=tsn-db-2
+      - KWILD_CHAIN_P2P_EXTERNAL_ADDRESS=http://tsn-db-2:26656
     ports:
       - "8485:8484"
       - "26658:26657"
