@@ -14,7 +14,7 @@ services:
   indexer-postgres:
     image: "postgres:latest"
     hostname: indexer-postgres
-    restart: on-failure
+    restart: unless-stopped
     environment:
       - POSTGRES_HOST_AUTH_METHOD=trust
       - POSTGRES_DB=indexer
@@ -36,7 +36,7 @@ services:
       - tsn-network
   indexer:
     hostname: indexer
-    restart: on-failure
+    restart: unless-stopped
     build:
       dockerfile: indexer.dockerfile
       args:
@@ -50,6 +50,11 @@ services:
     depends_on:
       indexer-postgres:
         condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:1337/v0/swagger" ]
+      interval: 5s
+      retries: 5
+      timeout: 5s
 
 networks:
   tsn-network:

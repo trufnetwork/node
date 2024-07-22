@@ -1,5 +1,8 @@
 FROM alpine:latest
 
+# install curl
+RUN apk add --no-cache curl
+
 # Set working directory inside the container
 WORKDIR /app
 
