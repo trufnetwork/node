@@ -29,8 +29,6 @@ This document is a reference for the terminology used in the TSN project. It is 
 - SYSTEM CONTRACT: The unique contract within TSN that manages official streams and serves as the primary access point for stream queries.
 - OFFICIAL STREAM: A stream that has been approved by TSN governance and registered in the System Contract.
 - UNOFFICIAL STREAM: A stream that exists within TSN but has not been approved by governance or registered in the System Contract.
-- STREAM REGISTRATION: The process of adding an approved stream to the System Contract, making it an official stream.
-- STREAM REVOCATION: The process of removing a previously official stream from the System Contract.
 - TSN GOVERNANCE: The entity or group responsible for approving streams and managing the System Contract.
 - SAFE READ: A query made through the System Contract that only returns data from official streams.
 - UNSAFE READ: A query made through the System Contract that can return data from any stream, official or unofficial.
