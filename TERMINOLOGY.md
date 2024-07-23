@@ -12,7 +12,7 @@ This document is a reference for the terminology used in the TSN project. It is 
 - TABLE: One of the contract's building blocks, that defines the underlying data structure of the Stream.
 - ACTION: One of the contract's building blocks; defines Contract methods that can be called by the end-user, i.e.: data read-only or write methods.
 - EXTENSION: Short for Kwil extension.
-- PROCEDURE: Short for Kwil procedure (upcoming).
+- PROCEDURE: Short for Kwil procedure.
 - DATA PROVIDER: An entity that creates/pushes primitive data OR creates taxonomy definitions.
 - ENVIRONMENT: A TSN deployment that serves a purpose. E.g., local, staging, production.
 - PRIMITIVE: A data element that is supplied directly from Data Provider.
@@ -26,6 +26,14 @@ This document is a reference for the terminology used in the TSN project. It is 
 - TRUFLATION DATABASE TABLE: We should NOT use _TABLE_ to refer it without correctly specifying; Otherwise, it creates confusion with kuneiform tables.
 - WHITELIST: A list of wallets that defines permission to perform a certain action. It may be "write" or "read" specific.
 - PRIVATE KEY: A secret key that refers to a wallet. It may own contracts, or refer to an entity/user that needs to interact with the TSN-DB.
+- SYSTEM CONTRACT: The unique contract within TSN that manages official streams and serves as the primary access point for stream queries.
+- OFFICIAL STREAM: A stream that has been approved by TSN governance and registered in the System Contract.
+- UNOFFICIAL STREAM: A stream that exists within TSN but has not been approved by governance or registered in the System Contract.
+- STREAM REGISTRATION: The process of adding an approved stream to the System Contract, making it an official stream.
+- STREAM REVOCATION: The process of removing a previously official stream from the System Contract.
+- TSN GOVERNANCE: The entity or group responsible for approving streams and managing the System Contract.
+- SAFE READ: A query made through the System Contract that only returns data from official streams.
+- UNSAFE READ: A query made through the System Contract that can return data from any stream, official or unofficial.
 
 
 ## Avoid
