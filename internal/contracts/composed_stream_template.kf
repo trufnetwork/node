@@ -586,7 +586,12 @@ procedure insert_metadata(
         error('Cannot insert metadata for read-only key');
     }
 
-    $uuid uuid := uuid_generate_v5('1361df5d-0230-47b3-b2c1-37950cf51fe9'::uuid, @txid);
+    // we create one deterministic uuid for each metadata record
+    // we can't use just @txid because a single transaction can insert multiple metadata records.
+    // the result will be idempotency here too.
+    $uuid_key := @txid || $key || $value;
+
+    $uuid uuid := uuid_generate_v5('1361df5d-0230-47b3-b2c1-37950cf51fe9'::uuid, $uuid_key);
     $current_block int := @height;
 
     // insert data
