@@ -868,6 +868,10 @@ procedure get_index_change($date_from text, $date_to text, $frozen_at int, $days
         $frozen_at := 0;
     }
 
+    if $days_interval == null{
+        $days_interval := 1;
+    }
+
     for $row1 in SELECT * FROM get_index($date_from, $date_to, $frozen_at){
         $prev_date_value := format_unix_timestamp((parse_unix_timestamp($row1.date_value, 'yyyy-MM-dd')::int - ($days_interval * 86400))::decimal(16,6), 'yyyy-MM-dd');
         for $row2 in SELECT * FROM get_index($prev_date_value, $prev_date_value, $frozen_at){
