@@ -61,7 +61,7 @@
     "stackName": "TSN-DB-Stack",
     "imageRepoName": "tsn-db-repo",
     "deploymentStage": "STAGING",
-    "numOfNodes": 1,
+    "numOfNodes": 2,
     "keyPairName": "tsn-key-pair"
   }
 }
