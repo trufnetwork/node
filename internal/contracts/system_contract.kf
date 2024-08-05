@@ -35,7 +35,7 @@ foreign procedure ext_get_metadata($key text, $only_latest bool, $ref text) retu
 )
 
 procedure stream_exists($data_provider text, $stream_id text) public view returns (result bool) {
-    $dbid text := generate_dbid($data_provider, $stream_id);
+    $dbid text := get_dbid($data_provider, $stream_id);
 
     for $row in SELECT * FROM ext_get_metadata[$dbid, 'get_metadata']('type', true, null) {
         return true;
@@ -97,14 +97,14 @@ procedure get_unsafe_record($data_provider text, $stream_id text, $date_from tex
     date_value text,
     value decimal(21, 3)
 ) {
-    $dbid text := generate_dbid($data_provider, $stream_id);
+    $dbid text := get_dbid($data_provider, $stream_id);
 
     for $row in SELECT * FROM ext_get_record[$dbid, 'get_record']($date_from, $date_to, $frozen_at) {
         return next $row.date_value, $row.value;
     }
 }
 
-procedure generate_dbid($data_provider text, $stream_id text) private view returns (result text) {
+procedure get_dbid($data_provider text, $stream_id text) private view returns (result text) {
     $starts_with_0x bool := false;
     for $row in SELECT $data_provider LIKE '0x%' as a {
         $starts_with_0x := $row.a;
@@ -113,36 +113,19 @@ procedure generate_dbid($data_provider text, $stream_id text) private view retur
     $data_provider_without_0x text;
 
     if $starts_with_0x == true {
-        // TODO: once substring, left or right function is supported, we can remove this
-        // for $row in SELECT substr($data_provider, 2) as a {
-        //     $data_provider_without_0x := $row.a;
-        // }
-        error('data provider should not start with 0x');
+        $data_provider_without_0x := substring($data_provider, 3);
     } else {
         $data_provider_without_0x := $data_provider;
     }
 
-    $encoded_stream_id := encode(lower($stream_id)::blob, 'hex');
-
-    for $row2 in SELECT
-    'x' || encode(
-        digest(
-                decode($encoded_stream_id || $data_provider_without_0x, 'hex'),
-                'sha224'
-        ),
-        'hex'
-       ) AS dbid {
-           return $row2.dbid;
-       }
-
-    error('could not generate dbid');
+    return generate_dbid($stream_id, decode($data_provider_without_0x, 'hex'));
 }
 
 procedure get_unsafe_index($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at int) public view returns table(
     date_value text,
     value decimal(21, 3)
 ) {
-    $dbid text := generate_dbid($data_provider, $stream_id);
+    $dbid text := get_dbid($data_provider, $stream_id);
 
     for $row in SELECT * FROM ext_get_index[$dbid, 'get_index']($date_from, $date_to, $frozen_at) {
         return next $row.date_value, $row.value;
@@ -160,7 +143,7 @@ procedure get_record($data_provider text, $stream_id text, $date_from text, $dat
         error('this stream is not official');
     }
 
-    $dbid text := generate_dbid($data_provider, $stream_id);
+    $dbid text := get_dbid($data_provider, $stream_id);
 
     for $row in SELECT * FROM get_unsafe_record($data_provider, $stream_id, $date_from, $date_to, $frozen_at) {
         return next $row.date_value, $row.value;
@@ -178,7 +161,7 @@ procedure get_index($data_provider text, $stream_id text, $date_from text, $date
         error('this stream is not official');
     }
 
-    $dbid text := generate_dbid($data_provider, $stream_id);
+    $dbid text := get_dbid($data_provider, $stream_id);
 
     for $row in SELECT * FROM ext_get_index[$dbid, 'get_index']($date_from, $date_to, $frozen_at) {
         return next $row.date_value, $row.value;
@@ -193,7 +176,7 @@ procedure get_index_change($data_provider text, $stream_id text, $date_from text
         error('this stream is not official');
     }
 
-    $dbid text := generate_dbid($data_provider, $stream_id);
+    $dbid text := get_dbid($data_provider, $stream_id);
 
     for $row in SELECT * FROM ext_get_index_change[$dbid, 'get_index_change']($date_from, $date_to, $frozen_at) {
         return next $row.value;

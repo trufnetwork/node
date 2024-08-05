@@ -6,9 +6,9 @@ require (
 	github.com/aws/aws-lambda-go v1.47.0
 	github.com/aws/aws-sdk-go v1.54.4
 	github.com/cenkalti/backoff/v4 v4.3.0
-	github.com/kwilteam/kwil-db v0.8.4-0.20240719185706-ebee92edea3d
-	github.com/kwilteam/kwil-db/core v0.2.2-0.20240719185706-ebee92edea3d
-	github.com/kwilteam/kwil-db/parse v0.2.4-0.20240719185706-ebee92edea3d
+	github.com/kwilteam/kwil-db v0.8.4-0.20240731225936-dc8d6befe577
+	github.com/kwilteam/kwil-db/core v0.2.2-0.20240731225936-dc8d6befe577
+	github.com/kwilteam/kwil-db/parse v0.2.4-0.20240731225936-dc8d6befe577
 	github.com/mitchellh/mapstructure v1.5.0
 )
 
@@ -69,7 +69,7 @@ require (
 	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.1.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.19.1 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
-	github.com/holiman/uint256 v1.3.0 // indirect
+	github.com/holiman/uint256 v1.3.1 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgio v1.0.0 // indirect
 	github.com/jackc/pglogrepl v0.0.0-20240307033717-828fbfe908e9 // indirect
