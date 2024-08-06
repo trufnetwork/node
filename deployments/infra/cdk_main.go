@@ -83,7 +83,7 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 			jsii.String("KwilGatewayBucket"),
 			jsii.String("kwil-binaries"),
 		),
-		Key: jsii.String("gateway/kgw-v0.3.0-beta.1.zip"),
+		Key: jsii.String("gateway/kgw-v0.3.1.zip"),
 	}
 
 	// ## Instances & Permissions
