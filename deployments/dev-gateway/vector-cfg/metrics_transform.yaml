@@ -27,11 +27,7 @@ transforms:
       } else if result.event == "deploy_schema" {
         result.attributes.dbid = .attributes.metadata.request.payload.dbid
         result.attributes.name = .attributes.metadata.request.payload.name
-      } else if result.event == "call_action" {
-        result.attributes.dbid = .attributes.metadata.request.payload.dbid
-        result.attributes.name = .attributes.metadata.request.payload.name
-        result.attributes.arguments = .attributes.metadata.request.payload.arguments
-      } else if result.event == "execute" {
+      } else if result.event == "call_action" || result.event == "execute" {
         result.attributes.dbid = .attributes.metadata.request.payload.dbid
         result.attributes.name = .attributes.metadata.request.payload.name
         result.attributes.arguments = .attributes.metadata.request.payload.arguments
@@ -71,7 +67,8 @@ transforms:
         name: response_size_bytes
         tags: *common_tags
 
-      - type: counter
+      # Total fees histogram
+      - type: histogram
         field: metrics.fee
-        name: total_fees
+        name: fee
         tags: *common_tags
