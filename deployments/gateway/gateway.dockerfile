@@ -47,11 +47,6 @@ WORKDIR /app
 RUN curl -L -o pkl https://github.com/apple/pkl/releases/download/0.25.3/pkl-alpine-linux-amd64
 RUN chmod +x pkl
 
-# we expect the user to provide the binary path available at the build context
-ARG EXTRA_ARGS
-
-ENV EXTRA_ARGS=$EXTRA_ARGS
-
 # use bash
 SHELL ["/bin/bash", "-c"]
 CMD ./kgw -c <(./pkl eval kgw-config.pkl) $EXTRA_ARGS
