@@ -1,5 +1,5 @@
 transforms:
-  # Base transform for common fields and metrics
+  # Extract and structure common fields from logs
   base_transform:
     type: "remap"
     inputs: [ "telemetry_logs" ]
@@ -19,8 +19,8 @@ transforms:
         "attributes": {}
       }
 
-      # Event-specific attributes
-      # Don't forget to assign null to attributes that are not used, otherwise we get errors
+      # Extract event-specific attributes
+      # Assign null to attributes that are not used, otherwise we get errors
       if result.event == "drop_schema" {
         result.attributes.dbid = .attributes.metadata.request.payload.DBID
         result.attributes.name = null
@@ -42,11 +42,12 @@ transforms:
       
       . = result
 
-  # Convert logs to metrics
+  # Convert structured logs to metrics
   final_metrics:
     type: log_to_metric
     inputs: [ "base_transform" ]
     metrics:
+      # Common tags for all metrics
       - type: histogram
         field: metrics.duration
         name: duration_ms
@@ -58,13 +59,13 @@ transforms:
           name: "{{ .attributes.name }}"
           # won't use arguments as tags due to the potential for high cardinality
 
-      # Histograms are used for metrics that have a distribution. We want to be able to answer questions like:
-      # - What is the 99th percentile of the request size?
+      # Request size histogram
       - type: histogram
         field: metrics.request_size
         name: request_size_bytes
         tags: *common_tags
 
+      # Response size histogram
       - type: histogram
         field: metrics.response_size
         name: response_size_bytes

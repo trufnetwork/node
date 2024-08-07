@@ -1,3 +1,4 @@
+# OpenTelemetry source for Kwil Gateway logs
 sources:
   kgw_logs:
     type: opentelemetry
@@ -6,7 +7,9 @@ sources:
     http:
       address: 0.0.0.0:4318
 
+# Output configurations
 sinks:
+  # Prometheus exporter for metrics
   prometheus:
     type: prometheus_exporter
     inputs: [ final_metrics ]
@@ -15,6 +18,8 @@ sinks:
     flush_period_secs: 60
     buckets: [ 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0 ]
     quantiles: [ 0.5, 0.9, 0.95, 0.99 ]
+
+  # Raw log output to file
   raw_logs:
     type: file
     inputs: ["telemetry_logs"]
@@ -24,7 +29,9 @@ sinks:
         timestamp_format: "rfc3339"
       codec: json
 
+# Data transformations
 transforms:
+  # Filter for OpenTelemetry logs
   telemetry_logs:
     type: filter
     inputs: [ kgw_logs.logs ]

@@ -156,6 +156,18 @@ Users are able to fetch records from the stream contract without through the sys
 phase, and in the hands of the Truflation as a data provider. Normally, before fetching records from the stream
 contract, the stream must be officialized by the system contract. It can be done by calling the `accept_stream` action in the system contract as the owner of the stream.
 
+
+### Metrics and Monitoring
+
+The TSN-DB includes metrics collection for improved monitoring and performance analysis. When running the development setup using `task compose-dev`, the following monitoring tools are available:
+
+- Prometheus: Accessible at `http://localhost:9090`
+- Grafana: Accessible at `http://localhost:3000` (default credentials: admin/admin)
+
+These tools provide insights into the performance and behavior of the TSN-DB system. Prometheus collects and stores metrics, while Grafana offers customizable dashboards for visualization.
+
+For more details on the metrics configuration, refer to the files in the `deployments/dev-gateway` directory.
+
 ## License
 
 The tsn-db repository is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for more details.
