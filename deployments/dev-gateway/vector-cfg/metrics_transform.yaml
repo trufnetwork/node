@@ -1,0 +1,76 @@
+transforms:
+  # Base transform for common fields and metrics
+  base_transform:
+    type: "remap"
+    inputs: [ "telemetry_logs" ]
+    source: |
+      # Extract common fields and metrics
+      result = {
+        "event": .attributes.metadata.request.payload_type,
+        "timestamp": .attributes.metadata.timestamp,
+        "sender": .attributes.metadata.request.sender,
+        "code": .attributes.metadata.response.code,
+        "metrics": {
+          "duration": to_float!(.attributes.metadata.response.duration),
+          "request_size": to_float!(.attributes.metadata.request.size),
+          "response_size": to_float!(.attributes.metadata.response.size),
+          "fee": to_float!(.attributes.metadata.request.fee)
+        },
+        "attributes": {}
+      }
+
+      # Event-specific attributes
+      # Don't forget to assign null to attributes that are not used, otherwise we get errors
+      if result.event == "drop_schema" {
+        result.attributes.dbid = .attributes.metadata.request.payload.DBID
+        result.attributes.name = null
+      } else if result.event == "deploy_schema" {
+        result.attributes.dbid = .attributes.metadata.request.payload.dbid
+        result.attributes.name = .attributes.metadata.request.payload.name
+      } else if result.event == "call_action" {
+        result.attributes.dbid = .attributes.metadata.request.payload.dbid
+        result.attributes.name = .attributes.metadata.request.payload.name
+        result.attributes.arguments = .attributes.metadata.request.payload.arguments
+      } else if result.event == "execute" {
+        result.attributes.dbid = .attributes.metadata.request.payload.dbid
+        result.attributes.name = .attributes.metadata.request.payload.name
+        result.attributes.arguments = .attributes.metadata.request.payload.arguments
+      } else {
+        log("Unknown event type: " + string!(result.event), level: "warn")
+        abort
+      }
+      
+      . = result
+
+  # Convert logs to metrics
+  final_metrics:
+    type: log_to_metric
+    inputs: [ "base_transform" ]
+    metrics:
+      - type: histogram
+        field: metrics.duration
+        name: duration_ms
+        tags: &common_tags
+          event: "{{ .event }}"
+          sender: "{{ .sender }}"
+          code: "{{ .code }}"
+          dbid: "{{ .attributes.dbid }}"
+          name: "{{ .attributes.name }}"
+          # won't use arguments as tags due to the potential for high cardinality
+
+      # Histograms are used for metrics that have a distribution. We want to be able to answer questions like:
+      # - What is the 99th percentile of the request size?
+      - type: histogram
+        field: metrics.request_size
+        name: request_size_bytes
+        tags: *common_tags
+
+      - type: histogram
+        field: metrics.response_size
+        name: response_size_bytes
+        tags: *common_tags
+
+      - type: counter
+        field: metrics.fee
+        name: total_fees
+        tags: *common_tags

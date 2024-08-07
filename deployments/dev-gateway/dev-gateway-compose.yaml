@@ -28,6 +28,11 @@ services:
       CHAIN_ID: ${CHAIN_ID:-truflation-staging}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS}
       ALLOW_DEPLOY_DB: true
+      EXPORT_RPC_META_LOG: "true"
+      META_LOG_FORMAT: "otel_nested"
+      META_LOG_OTEL_PROCESSOR: "batch"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "vector:4317"
+      META_LOG_OTEL_COLLECTOR_TLS: "false"
 
   nginx:
     container_name: nginx
@@ -49,6 +54,40 @@ services:
       - kwil-gateway
     networks:
       - tsn-network
+
+  vector:
+    image: timberio/vector:latest-alpine
+    command: --config /etc/vector/vector-cfg/*
+    volumes:
+      - ./vector-cfg/:/etc/vector/vector-cfg/:ro
+
+    networks:
+      - tsn-network
+
+  prometheus:
+    image: prom/prometheus:v2.30.3
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    volumes:
+      - ./dev-prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - tsn-network
+
+  grafana:
+    image: grafana/grafana:8.2.2
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-storage:/var/lib/grafana
+    networks:
+      - tsn-network
+
+volumes:
+  grafana-storage:
 
 networks:
   tsn-network:

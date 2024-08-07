@@ -50,9 +50,17 @@ cors_allow_origins = if (
   null else
   cors_allow_origins_raw.split(",")
 
+// OpenTelemetry configurations
+export_meta_log = read?("env:EXPORT_RPC_META_LOG") == "true"
+meta_log_format = read?("env:META_LOG_FORMAT")
+meta_log_output = read?("env:META_LOG_OUTPUT")
+meta_log_otel_processor = read?("env:META_LOG_OTEL_PROCESSOR")
+meta_log_otel_collector = read?("env:OTEL_EXPORTER_OTLP_ENDPOINT")
+meta_log_otel_collector_tls = read?("env:META_LOG_OTEL_COLLECTOR_TLS") == "true"
+meta_log_otel_collector_cert = read?("env:META_LOG_OTEL_COLLECTOR_CERT")
 
-// remove empty strings from final file
-hidden rendered = module.toMap().filter((_, val) -> val is Boolean || val?.isEmpty != true)
+// Remove empty strings and null values from final file
+hidden rendered = module.toMap().filter((_, val) -> val is Boolean || (val != null && val?.isEmpty != true))
 
 output {
   // by specifying here, we don't need to specify in the pkl CLI usage

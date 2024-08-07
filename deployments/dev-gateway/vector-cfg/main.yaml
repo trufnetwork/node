@@ -1,0 +1,33 @@
+sources:
+  kgw_logs:
+    type: opentelemetry
+    grpc:
+      address: 0.0.0.0:4317
+    http:
+      address: 0.0.0.0:4318
+
+sinks:
+  prometheus:
+    type: prometheus_exporter
+    inputs: [ final_metrics ]
+    address: 0.0.0.0:8686
+    default_namespace: kgw
+    flush_period_secs: 60
+    buckets: [ 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0 ]
+    quantiles: [ 0.5, 0.9, 0.95, 0.99 ]
+  raw_logs:
+    type: file
+    inputs: ["telemetry_logs"]
+    path: "/var/log/vector/raw_logs.log"
+    encoding:
+      logfmt:
+        timestamp_format: "rfc3339"
+      codec: json
+
+transforms:
+  telemetry_logs:
+    type: filter
+    inputs: [ kgw_logs.logs ]
+    condition:
+      type: vrl
+      source: .source_type == "opentelemetry"
