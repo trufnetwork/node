@@ -7,16 +7,16 @@ import (
 	"log"
 )
 
-// DO NOT modify this function, change stack name by 'cdk.json/context/stackName'.
-func StackName(scope constructs.Construct) string {
-	stackName := "MyEKSClusterStack"
+// Stack suffix is intended to be used after the stack name to differentiate between different stages.
+func WithStackSuffix(scope constructs.Construct, stackName string) string {
+	stage := GetDomainStage(scope)
 
-	ctxValue := scope.Node().TryGetContext(jsii.String("stackName"))
-	if v, ok := ctxValue.(string); ok {
-		stackName = v
+	suffix := "-Stack"
+	if stage != "" {
+		suffix = "-" + string(stage) + suffix
 	}
 
-	return stackName
+	return stackName + suffix
 }
 
 // DO NOT modify this function, change EC2 key pair name by 'cdk.json/context/keyPairName'.
@@ -29,18 +29,6 @@ func KeyPairName(scope constructs.Construct) string {
 	}
 
 	return keyPairName
-}
-
-// DO NOT modify this function, change ECR repository name by 'cdk.json/context/imageRepoName'.
-func EcrRepoName(scope constructs.Construct) string {
-	ecrRepoName := "MyRepository"
-
-	ctxValue := scope.Node().TryGetContext(jsii.String("imageRepoName"))
-	if v, ok := ctxValue.(string); ok {
-		ecrRepoName = v
-	}
-
-	return ecrRepoName
 }
 
 // Deployment stage config
@@ -64,23 +52,37 @@ func DeploymentStage(scope constructs.Construct) DeploymentStageType {
 	return deploymentStage
 }
 
-func Domain(scope constructs.Construct) *string {
-	domainEnvMap := map[DeploymentStageType]string{
-		DeploymentStage_DEV:     "dev." + domain_utils.MainDomain,
-		DeploymentStage_STAGING: "staging." + domain_utils.MainDomain,
-		DeploymentStage_PROD:    domain_utils.MainDomain,
+func GetDomainStage(scope constructs.Construct) string {
+	stageEnvMap := map[DeploymentStageType]string{
+		DeploymentStage_DEV:     "dev",
+		DeploymentStage_STAGING: "staging",
+		DeploymentStage_PROD:    "",
 	}
+
 	// special domain names only work for DEV
 	ctxValue := scope.Node().TryGetContext(jsii.String("specialDomain"))
+
 	if v, ok := ctxValue.(string); ok {
-		// warn if special domain is used in non-DEV stage
 		if DeploymentStage(scope) != DeploymentStage_DEV {
 			log.Printf("Special domain %s is used in non-DEV stage", v)
 		}
-		domainEnvMap[DeploymentStage_DEV] = v + "." + domain_utils.MainDomain
+		stageEnvMap[DeploymentStage_DEV] = v
 	}
 
-	return jsii.String(domainEnvMap[DeploymentStage(scope)])
+	return stageEnvMap[DeploymentStage(scope)]
+}
+
+func Domain(scope constructs.Construct, subdomains ...string) *string {
+	// goes like this: <stage>.<subdomain#...>.<main_domain>
+	domain := GetDomainStage(scope)
+
+	for _, subdomain := range subdomains {
+		domain += "." + subdomain
+	}
+
+	domain += "." + domain_utils.MainDomain
+
+	return jsii.String(domain)
 }
 
 func NumOfNodes(scope constructs.Construct) int {
