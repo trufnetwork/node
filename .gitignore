@@ -21,3 +21,6 @@ deployments/gateway/kgw
 
 # .build directory
 .build
+
+### Genesis files
+deployments/network
