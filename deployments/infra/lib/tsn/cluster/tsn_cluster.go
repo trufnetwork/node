@@ -1,38 +1,30 @@
-package tsn
+package cluster
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsecrassets"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsroute53"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/config"
 	"github.com/truflation/tsn-db/infra/lib/kwil-network"
-	peer2 "github.com/truflation/tsn-db/infra/lib/kwil-network/peer"
+	"github.com/truflation/tsn-db/infra/lib/kwil-network/peer"
+	"github.com/truflation/tsn-db/infra/lib/tsn"
 	"strconv"
 )
 
 type NewTSNClusterInput struct {
-	NumberOfNodes         int
+	NodesConfig           []kwil_network.KwilNetworkConfig
 	TSNDockerComposeAsset awss3assets.Asset
 	TSNDockerImageAsset   awsecrassets.DockerImageAsset
 	TSNConfigImageAsset   awss3assets.Asset
+	HostedZone            awsroute53.IHostedZone
 	Vpc                   awsec2.IVpc
 }
 
-type TSNCluster struct {
-	Nodes         []TSNInstance
-	Role          awsiam.IRole
-	SecurityGroup awsec2.SecurityGroup
-}
-
 func NewTSNCluster(scope awscdk.Stack, input NewTSNClusterInput) TSNCluster {
-	// to be safe, let's create a reasonable ceiling for the number of nodes
-	if input.NumberOfNodes > 5 {
-		panic("Number of nodes limited to 5 to prevent typos")
-	}
-
 	// create new key pair
 	keyPairName := config.KeyPairName(scope)
 	if len(keyPairName) == 0 {
@@ -45,28 +37,19 @@ func NewTSNCluster(scope awscdk.Stack, input NewTSNClusterInput) TSNCluster {
 		AssumedBy: awsiam.NewServicePrincipal(jsii.String("ec2.amazonaws.com"), nil),
 	})
 
-	configAssets := kwil_network.NewKwilNetworkConfigAssets(scope, kwil_network.KwilNetworkConfigAssetInput{
-		NumberOfNodes: input.NumberOfNodes,
-	})
-
-	// we create a peer connection for each node before even creating the instances
-	// that's required because Peer Connection info is used at startup scripts
-	peerConnections := make([]peer2.PeerConnection, input.NumberOfNodes)
-	for i := 0; i < input.NumberOfNodes; i++ {
-		elasticIp := awsec2.NewCfnEIP(scope, jsii.String("TSN-Instance-ElasticIp-"+strconv.Itoa(i)), &awsec2.CfnEIPProps{
-			Domain: jsii.String("vpc"),
-		})
-		peerConnections[i] = peer2.NewPeerConnection(elasticIp, configAssets[i].Id)
+	numOfNodes := len(input.NodesConfig)
+	allPeerConnections := make([]peer.TSNPeer, numOfNodes)
+	for i := 0; i < numOfNodes; i++ {
+		allPeerConnections[i] = input.NodesConfig[i].Connection
 	}
 
-	securityGroup := NewTSNSecurityGroup(scope, NewTSNSecurityGroupInput{
-		vpc:   input.Vpc,
-		peers: peerConnections,
+	securityGroup := tsn.NewTSNSecurityGroup(scope, tsn.NewTSNSecurityGroupInput{
+		Vpc: input.Vpc,
 	})
 
-	instances := make([]TSNInstance, input.NumberOfNodes)
-	for i := 0; i < input.NumberOfNodes; i++ {
-		instance := NewTSNInstance(scope, newTSNInstanceInput{
+	instances := make([]tsn.TSNInstance, numOfNodes)
+	for i := 0; i < numOfNodes; i++ {
+		instance := tsn.NewTSNInstance(scope, tsn.NewTSNInstanceInput{
 			Id:                    strconv.Itoa(i),
 			Role:                  role,
 			Vpc:                   input.Vpc,
@@ -74,12 +57,24 @@ func NewTSNCluster(scope awscdk.Stack, input NewTSNClusterInput) TSNCluster {
 			TSNDockerComposeAsset: input.TSNDockerComposeAsset,
 			TSNDockerImageAsset:   input.TSNDockerImageAsset,
 			TSNConfigImageAsset:   input.TSNConfigImageAsset,
-			TSNConfigAsset:        configAssets[i].Asset,
-			PeerConnection:        peerConnections[i],
-			AllPeerConnections:    peerConnections,
+			TSNConfigAsset:        input.NodesConfig[i].Asset,
+			PeerConnection:        input.NodesConfig[i].Connection,
+			AllPeerConnections:    allPeerConnections,
 			KeyPair:               keyPair,
 		})
 		instances[i] = instance
+	}
+
+	// for each connection, create A Record in Route53
+	for i := 0; i < numOfNodes; i++ {
+		peerConnection := input.NodesConfig[i].Connection
+		instance := instances[i]
+		aRecord := awsroute53.NewARecord(scope, jsii.String("Peer-ARecord-"+strconv.Itoa(i)), &awsroute53.ARecordProps{
+			Zone:       input.HostedZone,
+			Target:     awsroute53.RecordTarget_FromIpAddresses(instance.Instance.InstancePublicIp()),
+			RecordName: peerConnection.Address,
+		})
+		_ = aRecord
 	}
 
 	return TSNCluster{

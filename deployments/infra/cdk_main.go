@@ -5,6 +5,7 @@ import (
 	domain_utils "github.com/truflation/tsn-db/infra/lib/domain_utils"
 	kwil_indexer_instance "github.com/truflation/tsn-db/infra/lib/kwil-indexer"
 	system_contract "github.com/truflation/tsn-db/infra/lib/system-contract"
+	"github.com/truflation/tsn-db/infra/lib/tsn/cluster"
 	"os"
 	"strconv"
 
@@ -26,7 +27,7 @@ type CdkStackProps struct {
 	cert awscertificatemanager.Certificate
 }
 
-func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) awscdk.Stack {
+func TsnAutoStack(scope constructs.Construct, id string, props *CdkStackProps) awscdk.Stack {
 	var sprops awscdk.StackProps
 	if props != nil {
 		sprops = props.StackProps
@@ -89,12 +90,15 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 	// ## Instances & Permissions
 
 	// ### TSN INSTANCE
-	tsnCluster := tsn.NewTSNCluster(stack, tsn.NewTSNClusterInput{
-		NumberOfNodes:         config.NumOfNodes(stack),
-		TSNDockerComposeAsset: tsnComposeAsset,
-		TSNDockerImageAsset:   tsnImageAsset,
-		Vpc:                   defaultVPC,
-		TSNConfigImageAsset:   tsnConfigImageAsset,
+	tsnCluster := cluster.NewAutoTSNCluster(stack, cluster.NewAutoTSNClusterInput{
+		NumberOfNodes: config.NumOfNodes(stack),
+		NewTSNClusterInput: cluster.NewTSNClusterInput{
+			TSNDockerComposeAsset: tsnComposeAsset,
+			TSNDockerImageAsset:   tsnImageAsset,
+			Vpc:                   defaultVPC,
+			HostedZone:            hostedZone,
+			TSNConfigImageAsset:   tsnConfigImageAsset,
+		},
 	})
 
 	tsnComposeAsset.GrantRead(tsnCluster.Role)
@@ -196,7 +200,7 @@ func TsnDBCdkStack(scope constructs.Construct, id string, props *CdkStackProps) 
 func CertStack(app constructs.Construct) awscertificatemanager.Certificate {
 	env := env()
 	env.Region = jsii.String("us-east-1")
-	stackName := config.StackName(app) + "-Cert"
+	stackName := config.WithStackSuffix(app, "TSN-Cert")
 	stack := awscdk.NewStack(app, jsii.String(stackName), &awscdk.StackProps{
 		Env:                   env,
 		CrossRegionReferences: jsii.Bool(true),
@@ -211,13 +215,18 @@ func main() {
 
 	certificate := CertStack(app)
 
-	TsnDBCdkStack(app, config.StackName(app), &CdkStackProps{
-		awscdk.StackProps{
-			Env:                   env(),
-			CrossRegionReferences: jsii.Bool(true),
+	TsnAutoStack(
+		app,
+		config.WithStackSuffix(app, "TSN-DB-Auto"),
+		&CdkStackProps{
+			awscdk.StackProps{
+				Env:                   env(),
+				CrossRegionReferences: jsii.Bool(true),
+				Description:           jsii.String("TSN-DB Auto is a stack that uses on-fly generated config files for the TSN nodes"),
+			},
+			certificate,
 		},
-		certificate,
-	})
+	)
 
 	app.Synth(nil)
 }
