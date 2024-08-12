@@ -7,13 +7,12 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
-	"github.com/kwilteam/kwil-db/core/utils/random"
 	"github.com/truflation/tsn-db/infra/config"
 	peer2 "github.com/truflation/tsn-db/infra/lib/kwil-network/peer"
 	"github.com/truflation/tsn-db/infra/lib/utils"
 )
 
-type newTSNInstanceInput struct {
+type NewTSNInstanceInput struct {
 	Id                    string
 	Role                  awsiam.IRole
 	Vpc                   awsec2.IVpc
@@ -22,8 +21,8 @@ type newTSNInstanceInput struct {
 	TSNDockerImageAsset   awsecrassets.DockerImageAsset
 	TSNConfigAsset        awss3assets.Asset
 	TSNConfigImageAsset   awss3assets.Asset
-	PeerConnection        peer2.PeerConnection
-	AllPeerConnections    []peer2.PeerConnection
+	PeerConnection        peer2.TSNPeer
+	AllPeerConnections    []peer2.TSNPeer
 	KeyPair               awsec2.IKeyPair
 }
 
@@ -31,16 +30,12 @@ type TSNInstance struct {
 	Instance       awsec2.Instance
 	SecurityGroup  awsec2.ISecurityGroup
 	Role           awsiam.IRole
-	PeerConnection peer2.PeerConnection
+	PeerConnection peer2.TSNPeer
 }
 
-func NewTSNInstance(scope constructs.Construct, input newTSNInstanceInput) TSNInstance {
-	randomBit := random.String(4)
+func NewTSNInstance(scope constructs.Construct, input NewTSNInstanceInput) TSNInstance {
+	name := "TSN-Instance-" + input.Id
 
-	// Create tsnInstance using randomBit so that the tsnInstance is recreated on each deployment.
-	name := "TSN-Instance-" + input.Id + "-" + randomBit
-
-	// Creating in private subnet only when deployment cluster in PROD stage.
 	subnetType := awsec2.SubnetType_PUBLIC
 	//if config.DeploymentStage(scope) == config.DeploymentStage_PROD {
 	//	subnetType = awsec2.SubnetType_PRIVATE_WITH_NAT
@@ -66,6 +61,9 @@ func NewTSNInstance(scope constructs.Construct, input newTSNInstanceInput) TSNIn
 		}),
 	)
 
+	// instance size is based on the deployment stage
+	// DEV: t3.small
+	// STAGING, PROD: t3.medium
 	var instanceSize awsec2.InstanceSize
 	switch config.DeploymentStage(scope) {
 	case config.DeploymentStage_DEV:
@@ -101,12 +99,6 @@ func NewTSNInstance(scope constructs.Construct, input newTSNInstanceInput) TSNIn
 		utils.MountVolumeToPathAndPersist("nvme1n1", "/data")...,
 	)
 	instance.AddUserData(utils.MoveToPath(initAssetsDir+"*", mountDataDir))
-
-	// Create Elastic Ip association instead of attaching, so dependency is not circular
-	awsec2.NewCfnEIPAssociation(scope, jsii.String("TSN-Instance-ElasticIpAssociation-"+input.Id), &awsec2.CfnEIPAssociationProps{
-		InstanceId:   instance.InstanceId(),
-		AllocationId: input.PeerConnection.ElasticIp.AttrAllocationId(),
-	})
 
 	node := TSNInstance{
 		Instance:       instance,
