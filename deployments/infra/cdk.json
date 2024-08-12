@@ -1,4 +1,5 @@
 {
+  "debug:app": "dlv debug --headless --accept-multiclient --api-version 2 --listen 127.0.0.1:2345 cdk_main.go",
   "app": "go mod download && go run cdk_main.go",
   "watch": {
     "include": [
