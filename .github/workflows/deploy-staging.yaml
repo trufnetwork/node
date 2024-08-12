@@ -39,7 +39,7 @@ jobs:
 
       - name: Get updated genesis.json
         run: |
-          curl -H "Authorization: token ${{ secrets.READ_TOKEN }}" -o ./deployments/network/staging/genesis.json https://raw.githubusercontent.com/truflation/tsn-node-operator/main/configs/network/staging/genesis.json
+          curl -H "Authorization: token ${{ secrets.READ_TOKEN }}" --create-dirs -o ./deployments/network/staging/genesis.json https://raw.githubusercontent.com/truflation/tsn-node-operator/main/configs/network/staging/genesis.json
 
       - name: Setup Go
         uses: actions/setup-go@v5
