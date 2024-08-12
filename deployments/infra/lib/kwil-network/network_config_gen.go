@@ -46,6 +46,18 @@ func GenerateNetworkConfig(input NetworkConfigInput) NetworkConfigOutput {
 		nodeConfigPaths[i] = input.ConfigPath + "/node" + strconv.Itoa(i)
 	}
 
+	// setup each node in the network with the genesis file
+	// TODO: uncomment this when we can use static genesis file, it will reset the obtained config.toml files
+	// TODO: during the setup testnet above. Might be shadowed by https://github.com/truflation/tsn/issues/459 issue
+	//for _, nodeConfigPath := range nodeConfigPaths {
+	//	if err = exec.Command(envVars.KwilAdminBinPath, "setup", "peer",
+	//		"--root-dir", nodeConfigPath,
+	//		"--genesis", envVars.GenesisPath,
+	//	).Run(); err != nil {
+	//		panic(err)
+	//	}
+	//}
+
 	return NetworkConfigOutput{
 		NodeConfigPaths: nodeConfigPaths,
 	}

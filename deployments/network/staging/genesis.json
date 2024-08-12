@@ -1,0 +1,47 @@
+{
+  "genesis_time": "2024-08-08T15:24:23.773191999Z",
+  "chain_id": "tsn-staging",
+  "initial_height": 0,
+  "app_hash": null,
+  "activations": null,
+  "consensus_params": {
+    "block": {
+      "max_bytes": 6291456,
+      "max_gas": -1,
+      "abci_max_bytes": false
+    },
+    "evidence": {
+      "max_age_num_blocks": 100000,
+      "max_age_duration": 172800000000000,
+      "max_bytes": 1048576
+    },
+    "version": {
+      "app": 0
+    },
+    "validator": {
+      "pub_key_types": [
+        "ed25519"
+      ],
+      "join_expiry": 14400
+    },
+    "votes": {
+      "vote_expiry": 28800
+    },
+    "abci": {
+      "vote_extensions_enable_height": 0
+    },
+    "without_gas_costs": true
+  },
+  "validators": [
+    {
+      "pub_key": "4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1",
+      "power": 1,
+      "name": "tsn-node-1"
+    },
+    {
+      "pub_key": "0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae",
+      "power": 1,
+      "name": "tsn-node-2"
+    }
+  ]
+}

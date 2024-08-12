@@ -113,14 +113,27 @@ You can view our deployed indexer at https://staging.tsn.test.truflation.com/v0/
 There you can see the list of available endpoints and their descriptions. 
 For example, you can see the list of transactions by calling the [/chain/transactions](https://staging.tsn.test.truflation.com/v0/chain/transactions) endpoint.
 
-### System Contract
+### Genesis File
+
+The genesis file for the TSN-DB is located in the `deployments/networks` directory. It contains the initial configuration for the genesis block of the TSN network.
+
+#### Fetching Genesis File
+
+In order to fetch the latest genesis file, make sure you have read access to the repository. Then, create `.env` file in the root directory similar to the `.env.example` file and put your GitHub token in it.
+After that, you can fetch the latest genesis file using the following command:
+
+```shell
+task get-genesis
+```
+
+## System Contract
 
 System Contract is a contract that stores the accepted streams by TSN Gov. It also serves as an entry point for queries.
 It also serves as an entry point for queries.
 Currently for development purposes, private key 001 will be used to interact with the system contract. 
 It still needs to be updated to use the correct private key.
 
-#### Fetching through System Contract
+### Fetching through System Contract
 
 As our system contract is currently live on our staging server, you can fetch records from the system contract using the following command:
 
@@ -146,7 +159,7 @@ list of available actions in the system contract:
 - `accept_stream(data_provider, stream_id)` - accept the stream as official, owner only
 - `revoke_stream(data_provider, stream_id)` - revoke official status of the stream, owner only
 
-#### Fetching through Contact Directly
+### Fetching through Contact Directly
 
 Currently, users can fetch records from the contract directly.
 ```shell
@@ -157,7 +170,7 @@ phase, and in the hands of the Truflation as a data provider. Normally, before f
 contract, the stream must be officialized by the system contract. It can be done by calling the `accept_stream` action in the system contract as the owner of the stream.
 
 
-### Metrics and Monitoring
+## Metrics and Monitoring
 
 The TSN-DB includes metrics collection for improved monitoring and performance analysis. When running the development setup using `task compose-dev`, the following monitoring tools are available:
 
