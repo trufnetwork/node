@@ -1,7 +1,6 @@
 package tsn
 
 import (
-	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsecrassets"
 	"github.com/aws/constructs-go/constructs/v10"
@@ -12,8 +11,8 @@ import (
 
 type AddStartupScriptsOptions struct {
 	Instance           awsec2.Instance
-	currentPeer        peer2.PeerConnection
-	allPeers           []peer2.PeerConnection
+	currentPeer        peer2.TSNPeer
+	allPeers           []peer2.TSNPeer
 	TsnImageAsset      awsecrassets.DockerImageAsset
 	TsnConfigImagePath *string
 	TsnConfigZipPath   *string
@@ -31,21 +30,10 @@ func AddTsnDbStartupScriptsToInstance(scope constructs.Construct, options AddSta
 	postgresDataPath := *options.DataDirPath + "postgres"
 	tsnConfigRelativeToCompose := "./tsn"
 
-	// create a list of persistent peers
-	var persistentPeersList []*string
-	for _, peer := range options.allPeers {
-		persistentPeersList = append(persistentPeersList, peer.GetExternalP2PAddress(true))
-	}
-
-	// create a string from the list
-	persistentPeers := awscdk.Fn_Join(jsii.String(","), &persistentPeersList)
-
 	tsnConfig := TSNEnvConfig{
-		Hostname:           options.currentPeer.ElasticIp.AttrPublicIp(),
+		Hostname:           options.currentPeer.Address,
 		ConfTarget:         jsii.String("external"),
 		ExternalConfigPath: jsii.String(tsnConfigRelativeToCompose),
-		PersistentPeers:    persistentPeers,
-		ExternalAddress:    jsii.String("http://" + *options.currentPeer.GetExternalP2PAddress(false)),
 		TsnVolume:          jsii.String(tsnConfigExtractedPath),
 		PostgresVolume:     jsii.String(postgresDataPath),
 	}
@@ -125,12 +113,8 @@ type TSNEnvConfig struct {
 	ConfTarget *string `env:"CONF_TARGET"`
 	// if copied from host, where to copy from
 	ExternalConfigPath *string `env:"EXTERNAL_CONFIG_PATH"`
-	// comma separated list of peers, used for p2p communication
-	PersistentPeers *string `env:"PERSISTENT_PEERS"`
-	// comma separated list of peers, used for p2p communication
-	ExternalAddress *string `env:"EXTERNAL_ADDRESS"`
-	TsnVolume       *string `env:"TSN_VOLUME"`
-	PostgresVolume  *string `env:"POSTGRES_VOLUME"`
+	TsnVolume          *string `env:"TSN_VOLUME"`
+	PostgresVolume     *string `env:"POSTGRES_VOLUME"`
 }
 
 // GetDict returns a map of the environment variables and their values

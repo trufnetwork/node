@@ -19,7 +19,7 @@ func AddKwilGatewayStartupScriptsToInstance(options AddKwilGatewayStartupScripts
 
 	var nodeAddresses []*string
 	for _, node := range config.Nodes {
-		nodeAddresses = append(nodeAddresses, node.PeerConnection.GetHttpAddress())
+		nodeAddresses = append(nodeAddresses, node.PeerConnection.GetRpcHost())
 	}
 
 	// Create the environment variables for the gateway compose file

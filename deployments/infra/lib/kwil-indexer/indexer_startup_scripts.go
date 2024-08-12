@@ -31,14 +31,14 @@ func AddKwilIndexerStartupScriptsToInstance(options AddKwilIndexerStartupScripts
 		NodeCometBftEndpoint: jsii.String(fmt.Sprintf(
 			"http://%s:%s",
 			// public ip so the external elastic ip is used to allow the indexer to connect to the TSN node
-			*tsnInstance.PeerConnection.ElasticIp.AttrPublicIp(),
+			*tsnInstance.PeerConnection.Address,
 			strconv.Itoa(peer.TsnCometBFTRPCPort),
 		)),
 		// postgresql://kwild@<ip>:<psqlport>/kwild?sslmode=disable
 		KwilPgConn: jsii.String(fmt.Sprintf(
 			"postgresql://kwild@%s:%s/kwild?sslmode=disable",
 			// public ip so the external elastic ip is used to allow the indexer to connect to the TSN node
-			*tsnInstance.PeerConnection.ElasticIp.AttrPublicIp(),
+			*tsnInstance.PeerConnection.Address,
 			strconv.Itoa(peer.TSNPostgresPort),
 		)),
 		PostgresVolume: jsii.String("/data/postgres"),
