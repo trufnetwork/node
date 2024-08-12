@@ -115,4 +115,4 @@ tasks:
     dotenv: ['.env']
     cmds:
       - |
-        curl -H "Authorization: token ${READ_TOKEN}" --create-dirs -o ./deployments/network/staging/genesis.json https://raw.githubusercontent.com/truflation/tsn-node-operator/main/configs/network/staging/genesis.json
+        curl -f -H "Authorization: token ${READ_TOKEN}" --create-dirs -o ./deployments/network/staging/genesis.json https://raw.githubusercontent.com/truflation/tsn-node-operator/main/configs/network/staging/genesis.json
