@@ -15,6 +15,19 @@ import (
 	"strconv"
 )
 
+type TSNCluster struct {
+	Nodes         []tsn.TSNInstance
+	Role          awsiam.IRole
+	SecurityGroup awsec2.SecurityGroup
+	IdHash        string
+}
+
+// TSNClusterProvider is an interface that provides a way to create a TSNCluster
+// this way, we can have different implementations of TSNCluster creation
+type TSNClusterProvider interface {
+	CreateCluster(stack awscdk.Stack, input NewTSNClusterInput) TSNCluster
+}
+
 type NewTSNClusterInput struct {
 	NodesConfig           []kwil_network.KwilNetworkConfig
 	TSNDockerComposeAsset awss3assets.Asset
@@ -40,6 +53,12 @@ func NewTSNCluster(scope awscdk.Stack, input NewTSNClusterInput) TSNCluster {
 	})
 
 	numOfNodes := len(input.NodesConfig)
+
+	// let's limit it here, so we prevent typos
+	if numOfNodes > 5 {
+		panic("safety measure: number of nodes should be less than 5")
+	}
+
 	allPeerConnections := make([]peer.TSNPeer, numOfNodes)
 	for i := 0; i < numOfNodes; i++ {
 		allPeerConnections[i] = input.NodesConfig[i].Connection

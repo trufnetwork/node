@@ -2,37 +2,23 @@ package cluster
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
-	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
-	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/truflation/tsn-db/infra/lib/kwil-network"
-	"github.com/truflation/tsn-db/infra/lib/tsn"
 )
 
-type NewAutoTSNClusterInput struct {
-	NewTSNClusterInput
+type AutoTsnClusterProvider struct {
 	NumberOfNodes int
+	// Controls the restart of the instance when the hash changes.
+	IdHash string
 }
 
-type TSNCluster struct {
-	Nodes         []tsn.TSNInstance
-	Role          awsiam.IRole
-	SecurityGroup awsec2.SecurityGroup
-}
+var _ TSNClusterProvider = (*AutoTsnClusterProvider)(nil)
 
-func NewAutoTSNCluster(scope awscdk.Stack, input NewAutoTSNClusterInput) TSNCluster {
-	// to be safe, let's create a reasonable ceiling for the number of nodes
-	if input.NumberOfNodes > 5 {
-		panic("Number of nodes limited to 5 to prevent typos")
-	}
-
-	input.NewTSNClusterInput.NodesConfig = kwil_network.KwilNetworkConfigAssetsFromNumberOfNodes(scope, kwil_network.KwilAutoNetworkConfigAssetInput{
-		NumberOfNodes: input.NumberOfNodes,
+func (t AutoTsnClusterProvider) CreateCluster(scope awscdk.Stack, input NewTSNClusterInput) TSNCluster {
+	input.NodesConfig = kwil_network.KwilNetworkConfigAssetsFromNumberOfNodes(scope, kwil_network.KwilAutoNetworkConfigAssetInput{
+		NumberOfNodes: t.NumberOfNodes,
 	})
 
-	return NewTSNCluster(scope, input.NewTSNClusterInput)
-}
+	input.IdHash = t.IdHash
 
-type NewConfigTSNClusterInput struct {
-	NewAutoTSNClusterInput
-	NodePrivateKeys []*string
+	return NewTSNCluster(scope, input)
 }

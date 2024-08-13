@@ -11,18 +11,19 @@ import (
 )
 
 type TsnClusterFromConfigInput struct {
-	NewTSNClusterInput
 	GenesisFilePath string
-	PrivateKeys     []*string
+	PrivateKeys     []string
 }
 
-func TsnClusterFromConfig(scope awscdk.Stack, input TsnClusterFromConfigInput) TSNCluster {
-	numOfNodes := len(input.PrivateKeys)
+var _ TSNClusterProvider = (*TsnClusterFromConfigInput)(nil)
+
+func (t TsnClusterFromConfigInput) CreateCluster(scope awscdk.Stack, input NewTSNClusterInput) TSNCluster {
+	numOfNodes := len(t.PrivateKeys)
 
 	// Generate TSNPeer for each node
 	peerConnections := make([]peer.TSNPeer, numOfNodes)
 	for i := 0; i < numOfNodes; i++ {
-		keys := kwil_network.ExtractKeys(*input.PrivateKeys[i])
+		keys := kwil_network.ExtractKeys(t.PrivateKeys[i])
 		peerConnections[i] = peer.TSNPeer{
 			NodeCometEncodedAddress: keys.NodeId,
 			Address:                 config.Domain(scope, fmt.Sprintf("node-%d", i+1)),
@@ -36,8 +37,8 @@ func TsnClusterFromConfig(scope awscdk.Stack, input TsnClusterFromConfigInput) T
 		configDir := kwil_network.GeneratePeerConfig(kwil_network.GeneratePeerConfigInput{
 			CurrentPeer:     peerConnections[i],
 			Peers:           peerConnections,
-			PrivateKey:      input.PrivateKeys[i],
-			GenesisFilePath: input.GenesisFilePath,
+			PrivateKey:      jsii.String(t.PrivateKeys[i]),
+			GenesisFilePath: t.GenesisFilePath,
 		})
 
 		nodesConfig[i] = kwil_network.KwilNetworkConfig{
@@ -48,15 +49,8 @@ func TsnClusterFromConfig(scope awscdk.Stack, input TsnClusterFromConfigInput) T
 		}
 	}
 
-	// Create NewTSNClusterInput
-	newTSNClusterInput := NewTSNClusterInput{
-		NodesConfig:           nodesConfig,
-		TSNDockerComposeAsset: input.TSNDockerComposeAsset,
-		TSNDockerImageAsset:   input.TSNDockerImageAsset,
-		TSNConfigImageAsset:   input.TSNConfigImageAsset,
-		Vpc:                   input.Vpc,
-	}
+	input.NodesConfig = nodesConfig
 
 	// Call NewTSNCluster
-	return NewTSNCluster(scope, newTSNClusterInput)
+	return NewTSNCluster(scope, input)
 }
