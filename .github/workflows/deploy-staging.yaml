@@ -19,7 +19,9 @@ jobs:
           GW_SESSION_SECRET: ${{ secrets.GW_SESSION_SECRET }}
           # PRIVATE_KEY is the private key of the account that will be used to deploy the TSN system contract
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
-        if: ${{ env.AWS_ACCESS_KEY == '' || env.AWS_SECRET_KEY == '' || env.GW_SESSION_SECRET == '' || env.PRIVATE_KEY == '' }}
+          # READ_TOKEN is the token used to read the genesis.json from the tsn-node-operator repo
+          READ_TOKEN: ${{ secrets.READ_TOKEN }}
+        if: ${{ env.AWS_ACCESS_KEY == '' || env.AWS_SECRET_KEY == '' || env.GW_SESSION_SECRET == '' || env.PRIVATE_KEY == '' || env.READ_TOKEN == '' }}
         run: |
           echo "Missing secrets"
           exit 1
@@ -34,6 +36,10 @@ jobs:
 
       - name: Run Taskfile
         run: task kwil-binaries
+
+      - name: Get updated genesis.json
+        run: |
+          curl -H "Authorization: token ${{ secrets.READ_TOKEN }}" --create-dirs -o ./deployments/network/staging/genesis.json https://raw.githubusercontent.com/truflation/tsn-node-operator/main/configs/network/staging/genesis.json
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -80,13 +86,14 @@ jobs:
           export CDK_DOCKER=$(pwd)/buildx.sh
 
           # GW_CORS_ALLOW_ORIGINS = Comma separated list of allowed origins
-          cdk deploy --require-approval never TSN-From-Config* TSN-Cert* \
-            --parameters TSN-From-Config-staging-Stack:sessionSecret=${{ secrets.GW_SESSION_SECRET }} \
-            --parameters TSN-From-Config-staging-Stack:corsAllowOrigins=${{ secrets.GW_CORS_ALLOW_ORIGINS || '*' }}
+          cdk deploy --require-approval never --all \
+            --parameters TSN-DB-Stack:sessionSecret=${{ secrets.GW_SESSION_SECRET }} \
+            --parameters TSN-DB-Stack:corsAllowOrigins=${{ secrets.GW_CORS_ALLOW_ORIGINS || '*' }}
 
         env:
           CI: true
           # used to instantiate configuration
           KWIL_ADMIN_BIN_PATH: ../../.build/kwil-admin
+          GENESIS_PATH: ../../deployments/network/genesis.json
           CHAIN_ID: truflation-staging
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
