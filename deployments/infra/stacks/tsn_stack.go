@@ -28,6 +28,11 @@ type TsnStackProps struct {
 func TsnStack(stack awscdk.Stack, props *TsnStackProps) awscdk.Stack {
 	cdkParams := config.NewCDKParams(stack)
 
+	// if it's not being synthesized, return the stack
+	if !config.IsStackInSynthesis(stack) {
+		return stack
+	}
+
 	// ## Pre-existing resources
 
 	// default vpc
@@ -103,7 +108,7 @@ func TsnStack(stack awscdk.Stack, props *TsnStackProps) awscdk.Stack {
 			Domain:           domain,
 			CorsAllowOrigins: cdkParams.CorsAllowOrigins.ValueAsString(),
 			SessionSecret:    cdkParams.SessionSecret.ValueAsString(),
-			ChainId:          jsii.String(config.GetEnvironmentVariables[config.MainEnvironmentVariables]().ChainId),
+			ChainId:          jsii.String(config.GetEnvironmentVariables[config.MainEnvironmentVariables](stack).ChainId),
 			Nodes:            tsnCluster.Nodes,
 		},
 	})
@@ -138,7 +143,7 @@ func TsnStack(stack awscdk.Stack, props *TsnStackProps) awscdk.Stack {
 	// Deploy the system contract everytime the hash changes
 	deployContract := system_contract.DeployContractResource(stack, system_contract.DeployContractResourceOptions{
 		SystemContractPath: jsii.String("../../internal/contracts/system_contract.kf"),
-		PrivateKey:         config.GetEnvironmentVariables[config.MainEnvironmentVariables]().PrivateKey,
+		PrivateKey:         config.GetEnvironmentVariables[config.MainEnvironmentVariables](stack).PrivateKey,
 		ProviderUrl:        jsii.String(fmt.Sprintf("https://%s", *domain)),
 		// so that every time the hash changes, the contract is deployed again
 		Hash: jsii.String(tsnCluster.IdHash),

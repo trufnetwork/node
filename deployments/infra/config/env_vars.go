@@ -1,6 +1,7 @@
 package config
 
 import (
+	"github.com/aws/constructs-go/constructs/v10"
 	"os"
 	"reflect"
 )
@@ -20,11 +21,17 @@ type AutoStackEnvironmentVariables struct {
 type ConfigStackEnvironmentVariables struct {
 	// comma separated list of private keys for the nodes
 	NodePrivateKeys string `env:"NODE_PRIVATE_KEYS" required:"true"`
-	GenesisFilePath string `env:"GENESIS_FILE_PATH" required:"true"`
+	GenesisPath     string `env:"GENESIS_PATH" required:"true"`
 }
 
-func GetEnvironmentVariables[T any]() T {
+func GetEnvironmentVariables[T any](scope constructs.Construct) T {
 	var env T
+
+	// only run if we are synthesizing the stack
+	if !IsStackInSynthesis(scope) {
+		return env
+	}
+
 	t := reflect.TypeOf(env)
 	v := reflect.ValueOf(&env).Elem()
 

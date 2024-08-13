@@ -3,6 +3,7 @@ package kwil_network
 import (
 	"encoding/json"
 	"github.com/aws/aws-cdk-go/awscdk/v2"
+	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/config"
 	"github.com/truflation/tsn-db/infra/lib/kwil-network/peer"
@@ -25,7 +26,7 @@ type GenerateGenesisFileInput struct {
 //   - reading the genesis file inside it at <tmp-dir>/genesis.json
 //   - modifying the genesis file to include all peers as validators
 
-func GenerateGenesisFile(input GenerateGenesisFileInput) string {
+func GenerateGenesisFile(scope constructs.Construct, input GenerateGenesisFileInput) string {
 	// Create a temporary directory for the configuration
 	tempDir := awscdk.FileSystem_Mkdtemp(jsii.String("genesis-config"))
 
@@ -40,7 +41,7 @@ func GenerateGenesisFile(input GenerateGenesisFileInput) string {
 	}
 	// Generate configuration using kwil-admin CLI
 	// kwil-admin setup init -o <tmp-dir> --chain-id <chainId>
-	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables]()
+	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables](scope)
 	cmd := exec.Command(envVars.KwilAdminBinPath, "setup", "init",
 		"--chain-id", input.ChainId,
 		"-o", *tempDir,

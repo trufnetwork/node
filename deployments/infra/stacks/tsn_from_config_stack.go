@@ -26,8 +26,8 @@ func TsnFromConfigStack(
 	}
 	stack := awscdk.NewStack(scope, jsii.String(id), &sprops)
 
-	cfg := config.GetEnvironmentVariables[config.ConfigStackEnvironmentVariables]()
-	genesisFilePath := cfg.GenesisFilePath
+	cfg := config.GetEnvironmentVariables[config.ConfigStackEnvironmentVariables](stack)
+	genesisFilePath := cfg.GenesisPath
 
 	// from comma separated string to slice
 	privateKeys := strings.Split(cfg.NodePrivateKeys, ",")

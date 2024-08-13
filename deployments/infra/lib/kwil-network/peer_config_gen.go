@@ -3,6 +3,7 @@ package kwil_network
 import (
 	"fmt"
 	"github.com/aws/aws-cdk-go/awscdk/v2"
+	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/config"
 	"github.com/truflation/tsn-db/infra/lib/kwil-network/peer"
@@ -17,12 +18,12 @@ type GeneratePeerConfigInput struct {
 	PrivateKey      *string
 }
 
-func GeneratePeerConfig(input GeneratePeerConfigInput) string {
+func GeneratePeerConfig(scope constructs.Construct, input GeneratePeerConfigInput) string {
 	// Create a temporary directory for the configuration
 	tempDir := awscdk.FileSystem_Mkdtemp(jsii.String("peer-config"))
 
 	// Get environment variables
-	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables]()
+	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables](scope)
 
 	// Generate configuration using kwil-admin CLI
 	cmd := exec.Command(envVars.KwilAdminBinPath, "setup", "peer",

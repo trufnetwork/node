@@ -2,6 +2,7 @@ package kwil_network
 
 import (
 	"encoding/json"
+	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/truflation/tsn-db/infra/config"
 	"os/exec"
 )
@@ -21,8 +22,8 @@ type KeyGenOutput struct {
 	Error  string   `json:"error"`
 }
 
-func GenerateNodeKeys() NodeKeys {
-	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables]()
+func GenerateNodeKeys(scope constructs.Construct) NodeKeys {
+	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables](scope)
 
 	cmd := exec.Command(envVars.KwilAdminBinPath, "key", "gen", "--output", "json")
 
