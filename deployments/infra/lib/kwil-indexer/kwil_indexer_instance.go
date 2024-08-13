@@ -69,8 +69,6 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 	}{
 		{peer.TSNPostgresPort, "TSN Postgres port"},
 		{peer.TsnCometBFTRPCPort, "TSN Comet BFT RPC port"},
-		// note: the tsn p2p port (usually 26656) will be automatically crawled by the indexer
-		{peer.TsnP2pPort, "TSN P2P port"},
 	}
 
 	// allow communication from indexer to TSN node
