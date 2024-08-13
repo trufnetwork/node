@@ -107,7 +107,7 @@ func NewTSNInstance(scope constructs.Construct, input NewTSNInstanceInput) TSNIn
 		PeerConnection: input.PeerConnection,
 	}
 
-	AddTsnDbStartupScriptsToInstance(scope, AddStartupScriptsOptions{
+	AddTsnDbStartupScriptsToInstance(AddStartupScriptsOptions{
 		currentPeer:        input.PeerConnection,
 		allPeers:           input.AllPeerConnections,
 		Instance:           instance,

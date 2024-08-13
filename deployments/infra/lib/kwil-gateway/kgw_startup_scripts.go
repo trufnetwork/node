@@ -31,64 +31,25 @@ func AddKwilGatewayStartupScriptsToInstance(options AddKwilGatewayStartupScripts
 		Domain:           config.Domain,
 	}
 
-	kgwSetupScript := `#!/bin/bash
-set -e
-set -x 
-
-# Update the system
-yum update -y
-
-# Install Docker
-amazon-linux-extras install docker
-
-# Start Docker and enable it to start at boot
-systemctl start docker
-systemctl enable docker
-
-# Add the ec2-user to the docker group (ec2-user is the default user in Amazon Linux 2)
-usermod -aG docker ec2-user
-
-# reload the group
-newgrp docker
-
-mkdir -p /usr/local/lib/docker/cli-plugins/
-curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 -o /usr/local/lib/docker/cli-plugins/docker-compose
-chmod a+x /usr/local/lib/docker/cli-plugins/docker-compose
-
-# Extract the gateway files
-unzip /home/ec2-user/kgw.zip -d /home/ec2-user/kgw
-
+	script := "#!/bin/bash\nset -e\nset -x\n\n"
+	script += utils.InstallDockerScript() + "\n"
+	script += utils.UnzipFileScript("/home/ec2-user/kgw.zip", "/home/ec2-user/kgw") + "\n"
+	script += `
 unzip ` + *options.kgwBinaryPath + ` kgw_0.3.1_linux_amd64.tar.gz -d /tmp/kgw-pkg
 mkdir -p /tmp/kgw-binary
 tar -xf /tmp/kgw-pkg/kgw_0.3.1_linux_amd64.tar.gz  -C /tmp/kgw-binary
 chmod +x /tmp/kgw-binary/kgw
-# we send the binary as it is expected by the docker-compose file
 mv /tmp/kgw-binary/kgw /home/ec2-user/kgw/kgw
+` + "\n"
+	script += utils.CreateSystemdServiceScript(
+		"kgw",
+		"Kwil Gateway Compose",
+		"/bin/bash -c \"docker compose -f /home/ec2-user/kgw/gateway-compose.yaml up -d --wait || true\"",
+		"/bin/bash -c \"docker compose -f /home/ec2-user/kgw/gateway-compose.yaml down\"",
+		kgwEnvConfig.GetDict(),
+	)
 
-cat <<EOF > /etc/systemd/system/kgw.service
-[Unit]
-Description=Kwil Gateway Compose
-Restart=on-failure
-
-[Service]
-type=oneshot
-RemainAfterExit=yes
-ExecStart=/bin/bash -c "docker compose -f /home/ec2-user/kgw/gateway-compose.yaml up -d --wait || true"
-ExecStop=/bin/bash -c "docker compose -f /home/ec2-user/kgw/gateway-compose.yaml down"
-` + utils.GetEnvStringsForService(kgwEnvConfig.GetDict()) + `
-
-
-[Install]
-WantedBy=multi-user.target
-
-EOF
-
-systemctl daemon-reload
-systemctl enable kgw.service
-systemctl start kgw.service
-`
-
-	instance.AddUserData(jsii.String(kgwSetupScript))
+	instance.AddUserData(jsii.String(script))
 }
 
 type KGWEnvConfig struct {
