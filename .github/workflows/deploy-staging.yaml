@@ -80,9 +80,9 @@ jobs:
           export CDK_DOCKER=$(pwd)/buildx.sh
 
           # GW_CORS_ALLOW_ORIGINS = Comma separated list of allowed origins
-          cdk deploy --require-approval never --all \
-            --parameters TSN-DB-Stack:sessionSecret=${{ secrets.GW_SESSION_SECRET }} \
-            --parameters TSN-DB-Stack:corsAllowOrigins=${{ secrets.GW_CORS_ALLOW_ORIGINS || '*' }}
+          cdk deploy --require-approval never TSN-From-Config* TSN-Cert* \
+            --parameters TSN-From-Config-staging-Stack:sessionSecret=${{ secrets.GW_SESSION_SECRET }} \
+            --parameters TSN-From-Config-staging-Stack:corsAllowOrigins=${{ secrets.GW_CORS_ALLOW_ORIGINS || '*' }}
 
         env:
           CI: true
