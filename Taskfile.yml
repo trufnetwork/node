@@ -46,11 +46,13 @@ tasks:
       - ./deployments/indexer/kwil-indexer run
 
   compose:
+    deps: [ kwil-binaries ]
     desc: Run docker-compose locally
     cmds:
       - docker compose up
 
   compose-dev:
+    deps: [ kwil-binaries ]
     desc: Run docker-compose locally with dev configuration, 2 nodes, gateway, and indexer services
     cmds:
         - docker compose -f deployments/dev-net/devnet-compose.yaml up -d
@@ -81,6 +83,8 @@ tasks:
   kwil-binaries:
     cmds:
       - ./scripts/download-binaries.sh
+    sources:
+      - ./.build/kwil-admin
 
   # After generating the certs, you need to trust them in your local machine by running the task setup:local-cert
   # leave the fields empty and press enter to use the default values
