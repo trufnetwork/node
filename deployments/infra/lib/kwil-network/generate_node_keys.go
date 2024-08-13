@@ -48,12 +48,6 @@ func ExtractKeys(privateKey string) NodeKeys {
 
 	cmd := exec.Command(envVars.KwilAdminBinPath, "key", "info", privateKey, "--output", "json")
 
-	err := cmd.Run()
-
-	if err != nil {
-		panic(err)
-	}
-
 	// read the output of the command. extract from result
 	// and return the NodeKeys struct
 	var output KeyGenOutput
