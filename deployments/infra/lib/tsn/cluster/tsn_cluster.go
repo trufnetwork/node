@@ -47,10 +47,11 @@ func NewTSNCluster(scope awscdk.Stack, input NewTSNClusterInput) TSNCluster {
 		Vpc: input.Vpc,
 	})
 
+	idHash := config.GetEnvironmentVariables().RestartHash
 	instances := make([]tsn.TSNInstance, numOfNodes)
 	for i := 0; i < numOfNodes; i++ {
 		instance := tsn.NewTSNInstance(scope, tsn.NewTSNInstanceInput{
-			Id:                    strconv.Itoa(i),
+			Id:                    strconv.Itoa(i) + "-" + idHash,
 			Role:                  role,
 			Vpc:                   input.Vpc,
 			SecurityGroup:         securityGroup,
@@ -65,13 +66,24 @@ func NewTSNCluster(scope awscdk.Stack, input NewTSNClusterInput) TSNCluster {
 		instances[i] = instance
 	}
 
-	// for each connection, create A Record in Route53
+	// for each connection, create:
+	// - elastic ip so it doesn't change throught restarts;
+	// - A Record in Route53, so we can use the domain name to connect to the peer
 	for i := 0; i < numOfNodes; i++ {
 		peerConnection := input.NodesConfig[i].Connection
 		instance := instances[i]
+
+		// Create Elastic IP
+		eip := awsec2.NewCfnEIP(scope, jsii.String("Peer-EIP-"+strconv.Itoa(i)), &awsec2.CfnEIPProps{})
+		// associations make sure not to couple both creation and association
+		awsec2.NewCfnEIPAssociation(scope, jsii.String("Peer-EIP-Association-"+strconv.Itoa(i)), &awsec2.CfnEIPAssociationProps{
+			AllocationId: eip.AttrAllocationId(),
+			InstanceId:   instance.Instance.InstanceId(),
+		})
+
 		aRecord := awsroute53.NewARecord(scope, jsii.String("Peer-ARecord-"+strconv.Itoa(i)), &awsroute53.ARecordProps{
 			Zone:       input.HostedZone,
-			Target:     awsroute53.RecordTarget_FromIpAddresses(instance.Instance.InstancePublicIp()),
+			Target:     awsroute53.RecordTarget_FromIpAddresses(eip.AttrPublicIp()),
 			RecordName: peerConnection.Address,
 		})
 		_ = aRecord
