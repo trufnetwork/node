@@ -10,6 +10,8 @@ type EnvironmentVariables struct {
 	CdkDocker        string `env:"CDK_DOCKER" required:"true"`
 	ChainId          string `env:"CHAIN_ID" required:"true"`
 	PrivateKey       string `env:"PRIVATE_KEY" required:"true"`
+	// when this hash changes, all instances will be redeployed
+	RestartHash string `env:"RESTART_HASH"`
 }
 
 func GetEnvironmentVariables() EnvironmentVariables {

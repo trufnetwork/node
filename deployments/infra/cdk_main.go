@@ -146,13 +146,15 @@ func TsnAutoStack(scope constructs.Construct, id string, props *CdkStackProps) a
 		IndexerPublicDnsName: indexerInstance.InstanceDnsName,
 	})
 
+	idHash := config.GetEnvironmentVariables().RestartHash
+
 	// Deploy the system contract everytime the hash changes
 	deployContract := system_contract.DeployContractResource(stack, system_contract.DeployContractResourceOptions{
 		SystemContractPath: jsii.String("../../internal/contracts/system_contract.kf"),
 		PrivateKey:         config.GetEnvironmentVariables().PrivateKey,
 		ProviderUrl:        jsii.String(fmt.Sprintf("https://%s", *domain)),
 		// so that every time the hash changes, the contract is deployed again
-		Hash: tsnImageAsset.AssetHash(),
+		Hash: jsii.String(idHash),
 	})
 
 	// contract must be the last thing done here. Otherwise it might try to deploy the contract before the instances are ready
