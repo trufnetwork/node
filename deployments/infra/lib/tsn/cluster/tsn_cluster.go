@@ -22,6 +22,8 @@ type NewTSNClusterInput struct {
 	TSNConfigImageAsset   awss3assets.Asset
 	HostedZone            awsroute53.IHostedZone
 	Vpc                   awsec2.IVpc
+	// Controls the restart of the instance when the hash changes.
+	IdHash string
 }
 
 func NewTSNCluster(scope awscdk.Stack, input NewTSNClusterInput) TSNCluster {
@@ -47,11 +49,10 @@ func NewTSNCluster(scope awscdk.Stack, input NewTSNClusterInput) TSNCluster {
 		Vpc: input.Vpc,
 	})
 
-	idHash := config.GetEnvironmentVariables().RestartHash
 	instances := make([]tsn.TSNInstance, numOfNodes)
 	for i := 0; i < numOfNodes; i++ {
 		instance := tsn.NewTSNInstance(scope, tsn.NewTSNInstanceInput{
-			Id:                    strconv.Itoa(i) + "-" + idHash,
+			Id:                    strconv.Itoa(i) + "-" + input.IdHash,
 			Role:                  role,
 			Vpc:                   input.Vpc,
 			SecurityGroup:         securityGroup,
@@ -93,5 +94,6 @@ func NewTSNCluster(scope awscdk.Stack, input NewTSNClusterInput) TSNCluster {
 		Nodes:         instances,
 		Role:          role,
 		SecurityGroup: securityGroup,
+		IdHash:        input.IdHash,
 	}
 }
