@@ -2,15 +2,12 @@ package kwil_network
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
-	"strings"
-
 	"github.com/aws/aws-cdk-go/awscdk/v2"
-	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/config"
 	"github.com/truflation/tsn-db/infra/lib/kwil-network/peer"
+	"os"
+	"os/exec"
 )
 
 type GeneratePeerConfigInput struct {
@@ -20,27 +17,19 @@ type GeneratePeerConfigInput struct {
 	PrivateKey      *string
 }
 
-func GeneratePeerConfig(scope constructs.Construct, input GeneratePeerConfigInput) string {
+func GeneratePeerConfig(input GeneratePeerConfigInput) string {
 	// Create a temporary directory for the configuration
 	tempDir := awscdk.FileSystem_Mkdtemp(jsii.String("peer-config"))
 
 	// Get environment variables
 	envVars := config.GetEnvironmentVariables()
 
-	// Prepare persistent peers string
-	var persistentPeers []string
-	for _, p := range input.Peers {
-		persistentPeers = append(persistentPeers, *p.GetExternalP2PAddress(true))
-	}
-	persistentPeersStr := strings.Join(persistentPeers, ",")
-
 	// Generate configuration using kwil-admin CLI
 	cmd := exec.Command(envVars.KwilAdminBinPath, "setup", "peer",
-		"--chain.p2p.external-address", "http://"+*input.CurrentPeer.GetExternalP2PAddress(false),
-		"--chain.p2p.persistent-peers", persistentPeersStr,
-		"--app.hostname", *input.CurrentPeer.Address,
+		"--chain.p2p.external-address", "should-be-overwritten-by-env",
+		"--chain.p2p.persistent-peers", "should-be-overwritten-by-env",
+		"--app.hostname", "should-be-overwritten-by-env",
 		"--root-dir", *tempDir,
-
 		"-g", input.GenesisFilePath,
 	)
 
@@ -51,6 +40,13 @@ func GeneratePeerConfig(scope constructs.Construct, input GeneratePeerConfigInpu
 
 	// replace the private key in the generated configuration
 	replacePrivateKeyInConfig(*tempDir, *input.PrivateKey)
+
+	// try finding TOKEN in the generated configuration, to be sure we're not using any token strings
+	searchTokenCmd := exec.Command("grep", "-r", "\\${Token", *tempDir)
+	output, err = searchTokenCmd.CombinedOutput()
+	if err == nil {
+		panic(fmt.Sprintf("Found TOKEN in generated configuration: %s", output))
+	}
 
 	// Return the path of the generated configuration directory
 	return *tempDir

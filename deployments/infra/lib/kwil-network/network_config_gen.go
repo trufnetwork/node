@@ -31,13 +31,15 @@ type KwilNetworkConfig struct {
 // It may be used as a init file mounted into EC2 instances
 func KwilNetworkConfigAssetsFromNumberOfNodes(scope constructs.Construct, input KwilAutoNetworkConfigAssetInput) []KwilNetworkConfig {
 	env := config.GetEnvironmentVariables()
+	nodeKeys := make([]NodeKeys, input.NumberOfNodes)
 	peers := make([]peer.TSNPeer, input.NumberOfNodes)
 	for i := 0; i < input.NumberOfNodes; i++ {
-		keys := GenerateNodeKeys()
+		nodeKeys[i] = GenerateNodeKeys()
 		peers[i] = peer.TSNPeer{
-			NodeCometEncodedAddress: keys.NodeId,
+			NodeCometEncodedAddress: nodeKeys[i].NodeId,
 			// e.g. staging.node-1.tsn.truflation.com
-			Address: config.Domain(scope, "node-"+strconv.Itoa(i+1)),
+			Address:        config.Domain(scope, "node-"+strconv.Itoa(i+1)),
+			NodeHexAddress: nodeKeys[i].PublicKeyPlainHex,
 		}
 	}
 
@@ -48,9 +50,8 @@ func KwilNetworkConfigAssetsFromNumberOfNodes(scope constructs.Construct, input 
 
 	assets := make([]KwilNetworkConfig, input.NumberOfNodes)
 	for i := 0; i < input.NumberOfNodes; i++ {
-		keys := GenerateNodeKeys()
-		cfg := GeneratePeerConfig(scope, GeneratePeerConfigInput{
-			PrivateKey:      jsii.String(keys.PrivateKeyHex),
+		cfg := GeneratePeerConfig(GeneratePeerConfigInput{
+			PrivateKey:      jsii.String(nodeKeys[i].PrivateKeyHex),
 			GenesisFilePath: genesisFilePath,
 			Peers:           peers,
 			CurrentPeer:     peers[i],

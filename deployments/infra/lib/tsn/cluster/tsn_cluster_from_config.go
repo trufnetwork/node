@@ -26,13 +26,14 @@ func TsnClusterFromConfig(scope awscdk.Stack, input TsnClusterFromConfigInput) T
 		peerConnections[i] = peer.TSNPeer{
 			NodeCometEncodedAddress: keys.NodeId,
 			Address:                 config.Domain(scope, fmt.Sprintf("node-%d", i+1)),
+			NodeHexAddress:          keys.PublicKeyPlainHex,
 		}
 	}
 
 	// Generate KwilNetworkConfig for each node
 	nodesConfig := make([]kwil_network.KwilNetworkConfig, numOfNodes)
 	for i := 0; i < numOfNodes; i++ {
-		configDir := kwil_network.GeneratePeerConfig(scope, kwil_network.GeneratePeerConfigInput{
+		configDir := kwil_network.GeneratePeerConfig(kwil_network.GeneratePeerConfigInput{
 			CurrentPeer:     peerConnections[i],
 			Peers:           peerConnections,
 			PrivateKey:      input.PrivateKeys[i],
