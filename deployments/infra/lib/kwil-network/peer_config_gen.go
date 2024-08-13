@@ -22,7 +22,7 @@ func GeneratePeerConfig(input GeneratePeerConfigInput) string {
 	tempDir := awscdk.FileSystem_Mkdtemp(jsii.String("peer-config"))
 
 	// Get environment variables
-	envVars := config.GetEnvironmentVariables()
+	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables]()
 
 	// Generate configuration using kwil-admin CLI
 	cmd := exec.Command(envVars.KwilAdminBinPath, "setup", "peer",

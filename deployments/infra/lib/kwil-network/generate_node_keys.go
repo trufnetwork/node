@@ -22,7 +22,7 @@ type KeyGenOutput struct {
 }
 
 func GenerateNodeKeys() NodeKeys {
-	envVars := config.GetEnvironmentVariables()
+	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables]()
 
 	cmd := exec.Command(envVars.KwilAdminBinPath, "key", "gen", "--output", "json")
 
@@ -44,7 +44,7 @@ func GenerateNodeKeys() NodeKeys {
 }
 
 func ExtractKeys(privateKey string) NodeKeys {
-	envVars := config.GetEnvironmentVariables()
+	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables]()
 
 	cmd := exec.Command(envVars.KwilAdminBinPath, "key", "info", privateKey, "--output", "json")
 

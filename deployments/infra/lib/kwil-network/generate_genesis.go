@@ -40,7 +40,7 @@ func GenerateGenesisFile(input GenerateGenesisFileInput) string {
 	}
 	// Generate configuration using kwil-admin CLI
 	// kwil-admin setup init -o <tmp-dir> --chain-id <chainId>
-	envVars := config.GetEnvironmentVariables()
+	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables]()
 	cmd := exec.Command(envVars.KwilAdminBinPath, "setup", "init",
 		"--chain-id", input.ChainId,
 		"-o", *tempDir,

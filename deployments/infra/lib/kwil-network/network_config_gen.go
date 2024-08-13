@@ -30,7 +30,7 @@ type KwilNetworkConfig struct {
 // KwilNetworkConfigAssetsFromNumberOfNodes generates configuration S3 asset for a network kwil node
 // It may be used as a init file mounted into EC2 instances
 func KwilNetworkConfigAssetsFromNumberOfNodes(scope constructs.Construct, input KwilAutoNetworkConfigAssetInput) []KwilNetworkConfig {
-	env := config.GetEnvironmentVariables()
+	env := config.GetEnvironmentVariables[config.MainEnvironmentVariables]()
 	nodeKeys := make([]NodeKeys, input.NumberOfNodes)
 	peers := make([]peer.TSNPeer, input.NumberOfNodes)
 	for i := 0; i < input.NumberOfNodes; i++ {
