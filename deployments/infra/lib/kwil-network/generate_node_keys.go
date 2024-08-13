@@ -44,8 +44,8 @@ func GenerateNodeKeys(scope constructs.Construct) NodeKeys {
 	return output.Result
 }
 
-func ExtractKeys(privateKey string) NodeKeys {
-	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables]()
+func ExtractKeys(scope constructs.Construct, privateKey string) NodeKeys {
+	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables](scope)
 
 	cmd := exec.Command(envVars.KwilAdminBinPath, "key", "info", privateKey, "--output", "json")
 
