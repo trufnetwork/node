@@ -40,7 +40,7 @@ KWIL_ADMIN_BIN_PATH=kwil-admin \
 CHAIN_ID=truflation-dev \
 CDK_DOCKER="<YOUR-DIRECTORY>/tsn/deployments/infra/buildx.sh" \
 NODE_PRIVATE_KEYS="key1,key2,key3" \
-GENESIS_FILE_PATH="/path/to/genesis.json" \
+GENESIS_PATH="/path/to/genesis.json" \
 cdk deploy --profile <YOUR-AWS-PROFILE> TSN-From-Config* TSN-Cert* \
 --parameters TSN-From-Config-<environment>-Stack:sessionSecret=abab
 ```
@@ -52,7 +52,7 @@ cdk deploy --profile <YOUR-AWS-PROFILE> TSN-From-Config* TSN-Cert* \
 - `CHAIN_ID`: Chain ID for the Kwil network
 - `CDK_DOCKER`: Path to docker buildx script
 - `NODE_PRIVATE_KEYS`: Comma-separated list of private keys for TSN nodes (only for pre-configured setup)
-- `GENESIS_FILE_PATH`: Path to the genesis file (only for pre-configured setup)
+- `GENESIS_PATH`: Path to the genesis file (only for pre-configured setup)
 
 ## AWS Profile
 
