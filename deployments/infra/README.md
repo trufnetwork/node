@@ -1,39 +1,87 @@
-# Welcome to your CDK Go project!
+# TSN-DB Infrastructure
 
-This is a blank project for CDK development with Go.
+This project contains the AWS CDK infrastructure code for deploying TSN-DB nodes, a Kwil Gateway, and an Indexer.
+
+## Overview
+
+The infrastructure can be deployed in two ways:
+1. Auto-generated configuration
+2. Pre-configured setup
 
 The `cdk.json` file tells the CDK toolkit how to execute your app.
 
-## Useful commands
+## Deployment Methods
 
- * `cdk deploy`      deploy this stack to your default AWS account/region
- * `cdk diff`        compare deployed stack with current state
- * `cdk synth`       emits the synthesized CloudFormation template
- * `go test`         run unit tests
+### 1. Auto-generated Configuration
 
-### Example
+This method dynamically generates the TSN node configuration during deployment.
 
-Example of how to deploy a stack:
+#### Example Command:
 
 ```bash
-PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001 KWIL_ADMIN_BIN_PATH=kwil-admin CHAIN_ID=truflation-dev CDK_DOCKER="<YOUR-DIRECTORY>/tsn/deployments/infra/buildx.sh" cdk deploy --profile <YOUR-AWS-PROVILE> --all --asset-parallelism=false --notices false --parameters TSN-DB-Stack-dev:sessionSecret=abab
+PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
+KWIL_ADMIN_BIN_PATH=kwil-admin \
+CHAIN_ID=truflation-dev \
+CDK_DOCKER="<YOUR-DIRECTORY>/tsn/deployments/infra/buildx.sh" \
+cdk deploy --profile <YOUR-AWS-PROFILE> --all --asset-parallelism=false --notices false \
+--context deploymentStage=DEV \
+--parameters TSN-DB-Stack-dev:sessionSecret=abab
 ```
 
-Legend:
-- `PRIVATE_KEY` - any ETH private key
-- `KWIL_ADMIN_BIN_PATH` - path to kwil-admin binary, if it already on PATH, you can just use `kwil-admin`
-- `CHAIN_ID` - chain id for kwild
-- `CDK_DOCKER` - path to docker buildx script
-- `--profile` - AWS profile
+### 2. Pre-configured Setup
 
-Please use the command wisely for DEV environment only. i.e. Set `deploymentStage` to `DEV` (uppercase) in `cdk.json` file.
-Configure the `stackName`, `deploymentStage` and other configurations in `cdk.json` file. Don't forget to delete the stack after testing.
+This method uses a pre-existing genesis file and a list of private keys for the TSN nodes.
 
-#### Note for Windows users
-
-If you are using Windows with WSL2, you may need to disable your Windows firewall to allow cdk-cli to forward the port to the docker container.
-Then you can open PowerShell as an administrator and run the following command to forward the port:
+#### Example Command:
 
 ```bash
+PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
+KWIL_ADMIN_BIN_PATH=kwil-admin \
+CHAIN_ID=truflation-dev \
+CDK_DOCKER="<YOUR-DIRECTORY>/tsn/deployments/infra/buildx.sh" \
+NODE_PRIVATE_KEYS="key1,key2,key3" \
+GENESIS_FILE_PATH="/path/to/genesis.json" \
+cdk deploy --profile <YOUR-AWS-PROFILE> TSN-From-Config* TSN-Cert* \
+--parameters TSN-From-Config-<environment>-Stack:sessionSecret=abab
+```
+
+## Environment Variables
+
+- `PRIVATE_KEY`: Ethereum private key for the admin account
+- `KWIL_ADMIN_BIN_PATH`: Path to kwil-admin binary (use `kwil-admin` if it's in your PATH)
+- `CHAIN_ID`: Chain ID for the Kwil network
+- `CDK_DOCKER`: Path to docker buildx script
+- `NODE_PRIVATE_KEYS`: Comma-separated list of private keys for TSN nodes (only for pre-configured setup)
+- `GENESIS_FILE_PATH`: Path to the genesis file (only for pre-configured setup)
+
+## AWS Profile
+
+Use the `--profile` option to specify your AWS profile.
+
+## Deployment Stage
+
+Set the deployment stage using the `--context deploymentStage=<STAGE>` option, or by editing the `cdk.json` file. Valid stages are:
+- `DEV`
+- `STAGING`
+- `PROD`
+
+You may also edit the number of nodes for auto-generated configuration in the `cdk.json` file.
+
+## Useful Commands
+
+- `cdk deploy`: Deploy this stack to your default AWS account/region
+- `cdk diff`: Compare deployed stack with current state
+- `cdk synth`: Emit the synthesized CloudFormation template
+- `go test`: Run unit tests
+
+## Note for Windows Users
+
+If you're using Windows with WSL2, you may need to disable your Windows firewall to allow cdk-cli to forward the port to the docker container. Open PowerShell as an administrator and run:
+
+```powershell
 netsh interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=22 connectaddress=localhost connectport=22
 ```
+
+## Important
+
+Always use these commands responsibly, especially in non-production environments. Remember to delete the stack after testing to avoid unnecessary AWS charges.
