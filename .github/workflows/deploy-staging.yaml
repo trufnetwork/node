@@ -17,11 +17,13 @@ jobs:
           AWS_ACCESS_KEY: ${{ secrets.AWS_ACCESS_KEY }}
           AWS_SECRET_KEY: ${{ secrets.AWS_SECRET_KEY }}
           GW_SESSION_SECRET: ${{ secrets.GW_SESSION_SECRET }}
+          # NODE_PRIVATE_KEYS is a comma separated list of private keys of the nodes to act as validators
+          NODE_PRIVATE_KEYS: ${{ secrets.NODE_PRIVATE_KEYS }}
           # PRIVATE_KEY is the private key of the account that will be used to deploy the TSN system contract
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           # READ_TOKEN is the token used to read the genesis.json from the tsn-node-operator repo
           READ_TOKEN: ${{ secrets.READ_TOKEN }}
-        if: ${{ env.AWS_ACCESS_KEY == '' || env.AWS_SECRET_KEY == '' || env.GW_SESSION_SECRET == '' || env.PRIVATE_KEY == '' || env.READ_TOKEN == '' }}
+        if: ${{ env.AWS_ACCESS_KEY == '' || env.AWS_SECRET_KEY == '' || env.GW_SESSION_SECRET == '' || env.PRIVATE_KEY == '' || env.READ_TOKEN == '' || env.NODE_PRIVATE_KEYS == '' }}
         run: |
           echo "Missing secrets"
           exit 1
@@ -85,10 +87,12 @@ jobs:
           # this must be on absolute path
           export CDK_DOCKER=$(pwd)/buildx.sh
 
-          # GW_CORS_ALLOW_ORIGINS = Comma separated list of allowed origins
-          cdk deploy --require-approval never --all \
+        # GW_CORS_ALLOW_ORIGINS = Comma separated list of allowed origins
+          cdk deploy --require-approval never TSN-DB-Auto* TSN-Cert* \
+            --exclusively \
             --parameters TSN-DB-Stack:sessionSecret=${{ secrets.GW_SESSION_SECRET }} \
-            --parameters TSN-DB-Stack:corsAllowOrigins=${{ secrets.GW_CORS_ALLOW_ORIGINS || '*' }}
+            --parameters TSN-DB-Stack:corsAllowOrigins=${{ secrets.GW_CORS_ALLOW_ORIGINS || '*' }} \
+            --context deploymentStage=STAGING
 
         env:
           CI: true
@@ -97,3 +101,4 @@ jobs:
           GENESIS_PATH: ../../deployments/network/genesis.json
           CHAIN_ID: truflation-staging
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          NODE_PRIVATE_KEYS: ${{ secrets.NODE_PRIVATE_KEYS }}
