@@ -1,6 +1,7 @@
 package kwil_network
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/constructs-go/constructs/v10"
@@ -24,6 +25,8 @@ func GeneratePeerConfig(scope constructs.Construct, input GeneratePeerConfigInpu
 
 	// Get environment variables
 	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables](scope)
+
+	validateGenesisFile(input.GenesisFilePath)
 
 	// Generate configuration using kwil-admin CLI
 	cmd := exec.Command(envVars.KwilAdminBinPath, "setup", "peer",
@@ -61,5 +64,29 @@ func replacePrivateKeyInConfig(configDir string, privateKey string) {
 
 	if err != nil {
 		panic(fmt.Sprintf("Failed to write private key to file: %v", err))
+	}
+}
+
+// validateGenesisFile checks
+// - the genesis file exists
+// - it's a valid json file
+// - it has a "validators" key
+func validateGenesisFile(genesisFilePath string) {
+	// Read the genesis file
+	genesisFileContent, err := os.ReadFile(genesisFilePath)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to read genesis file: %s", genesisFilePath))
+	}
+
+	// Check if it's a valid json file
+	var genesis map[string]interface{}
+	err = json.Unmarshal(genesisFileContent, &genesis)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to unmarshal genesis file: %v", err))
+	}
+
+	// Check if it has a "validators" key
+	if _, ok := genesis["validators"]; !ok {
+		panic(fmt.Sprintf("Genesis file doesn't have a 'validators' key: %s, %v", genesisFilePath, genesis))
 	}
 }
