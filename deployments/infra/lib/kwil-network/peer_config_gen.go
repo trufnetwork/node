@@ -75,14 +75,14 @@ func validateGenesisFile(genesisFilePath string) {
 	// Read the genesis file
 	genesisFileContent, err := os.ReadFile(genesisFilePath)
 	if err != nil {
-		panic(fmt.Sprintf("Failed to read genesis file: %s", genesisFilePath))
+		panic(fmt.Sprintf("Failed to read genesis file at %s: %v", genesisFilePath, err))
 	}
 
 	// Check if it's a valid json file
 	var genesis map[string]interface{}
 	err = json.Unmarshal(genesisFileContent, &genesis)
 	if err != nil {
-		panic(fmt.Sprintf("Failed to unmarshal genesis file: %v", err))
+		panic(fmt.Sprintf("Failed to unmarshal genesis file at %s: %v", genesisFilePath, err))
 	}
 
 	// Check if it has a "validators" key

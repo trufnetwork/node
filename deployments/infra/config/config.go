@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/lib/domain_utils"
@@ -99,7 +100,7 @@ func NumOfNodes(scope constructs.Construct) int {
 			var err error
 			numOfNodes, err = strconv.Atoi(v)
 			if err != nil {
-				log.Printf("Error converting numOfNodes context value to int: %v", err)
+				panic(fmt.Sprintf("numOfNodes context value is not a number: %s", v))
 			}
 		}
 	}
