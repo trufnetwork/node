@@ -41,7 +41,7 @@ jobs:
 
       - name: Get updated genesis.json
         run: |
-          curl -H "Authorization: token ${{ secrets.READ_TOKEN }}" --create-dirs -o ./deployments/network/staging/genesis.json https://raw.githubusercontent.com/truflation/tsn-node-operator/main/configs/network/staging/genesis.json
+          curl -f -H "Authorization: token ${{ secrets.READ_TOKEN }}" --create-dirs -o ./deployments/network/staging/genesis.json https://raw.githubusercontent.com/truflation/tsn-node-operator/main/configs/network/staging/genesis.json --silent --show-error || echo "Error: Failed to download genesis.json (HTTP status code: $?)"
 
       - name: Setup Go
         uses: actions/setup-go@v5
