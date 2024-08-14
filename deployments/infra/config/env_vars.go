@@ -11,7 +11,6 @@ type MainEnvironmentVariables struct {
 	CdkDocker        string `env:"CDK_DOCKER" required:"true"`
 	ChainId          string `env:"CHAIN_ID" required:"true"`
 	PrivateKey       string `env:"PRIVATE_KEY" required:"true"`
-	GenesisPath      string `env:"GENESIS_PATH" required:"true"`
 }
 
 type AutoStackEnvironmentVariables struct {
