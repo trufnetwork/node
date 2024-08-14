@@ -181,6 +181,31 @@ These tools provide insights into the performance and behavior of the TSN-DB sys
 
 For more details on the metrics configuration, refer to the files in the `deployments/dev-gateway` directory.
 
+## Deployment
+
+TSN DB uses GitHub Actions for automated deployments. Both are triggered manually via workflow dispatch.
+
+### Auto Deployment
+
+The `deploy-auto.yaml` workflow allows for on-demand deployment of test environments:
+
+- Inputs:
+    - `NUMBER_OF_NODES`: Number of nodes to deploy (max 5, default 1)
+    - `SUBDOMAIN`: Subdomain for the environment (default 'dev')
+- Deploys to AWS using CDK
+- Uses `RESTART_HASH` to control full redeployment of TSN instances
+
+### Staging Deployment
+
+The `deploy-staging.yaml` workflow handles staging environment deployments:
+
+- Requires specific secrets (AWS credentials, session secrets, private keys)
+- Deploys to AWS using CDK
+- Uses existing genesis file and private keys for TSN nodes
+- Instances are not redeployed on every execution
+
+For detailed configuration and usage, refer to the workflow files in the `.github/workflows/` directory.
+
 ## License
 
 The tsn-db repository is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for more details.
