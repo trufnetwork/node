@@ -3,8 +3,22 @@
 # the intention is spin up environments for testing only
 name: Deploy TSN Auto Environment
 
+
 on:
   workflow_dispatch:
+    inputs:
+      NUMBER_OF_NODES:
+        description: 'Number of nodes to deploy. Max 5.'
+        required: false
+        default: 1
+        type: number
+      SUBDOMAIN:
+      # We could enable this once https://github.com/orgs/community/discussions/49688 is resolved
+      # changing this input create entirely new stacks, then we should be able to better gate who can dispatch this workflow
+        description: 'Subdomain for the environment. On conflict with existing stack domains, it will fail.'
+        required: false
+        default: 'dev'
+        type: string
 
 jobs:
   #  tests:
@@ -15,6 +29,13 @@ jobs:
     runs-on: ubuntu-latest
     #    needs: [ tests ]  # require tests to pass before deploy runs
     steps:
+      - name: Forbid different subdomain
+        if: ${{!env.ACT}} # during local testing, it's ok to run other subdomains
+        run: |
+          if [ "${{github.event.inputs.SUBDOMAIN}}" != "dev" ]; then
+            echo "Only dev subdomain is allowed for auto deployments. See code comments for more details."
+            exit 1
+          fi
       - name: Check secrets
         env:
           AWS_ACCESS_KEY: ${{ secrets.AWS_ACCESS_KEY }}
@@ -81,15 +102,21 @@ jobs:
           cd deployments/infra
           # this must be on absolute path
           export CDK_DOCKER=$(pwd)/buildx.sh
+          # this will make sure every run redeploys all the instances
+          export RESTART_HASH=$(date +%s)
 
           # GW_CORS_ALLOW_ORIGINS = Comma separated list of allowed origins
           cdk deploy --require-approval never TSN-DB-Auto* TSN-Cert* \
-            --parameters TSN-DB-Auto-staging-Stack:sessionSecret=${{ secrets.GW_SESSION_SECRET }} \
-            --parameters TSN-DB-Auto-staging-Stack:corsAllowOrigins=${{ secrets.GW_CORS_ALLOW_ORIGINS || '*' }}
+            --parameters TSN-DB-Auto-${{github.event.inputs.SUBDOMAIN}}-Stack:sessionSecret=${{ secrets.GW_SESSION_SECRET }} \
+            --parameters TSN-DB-Auto-${{github.event.inputs.SUBDOMAIN}}-Stack:corsAllowOrigins=${{ secrets.GW_CORS_ALLOW_ORIGINS || '*' }} \
+            --exclusively \
+            --context deploymentStage=DEV \
+            --context specialDomain=${{github.event.inputs.SUBDOMAIN}} \
+            --context numOfNodes=${{github.event.inputs.NUMBER_OF_NODES}}
 
         env:
           CI: true
           # used to instantiate configuration
           KWIL_ADMIN_BIN_PATH: ../../.build/kwil-admin
-          CHAIN_ID: truflation-staging
+          CHAIN_ID: truflation-dev
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
