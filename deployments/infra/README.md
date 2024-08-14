@@ -23,10 +23,18 @@ PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
 KWIL_ADMIN_BIN_PATH=kwil-admin \
 CHAIN_ID=truflation-dev \
 CDK_DOCKER="<YOUR-DIRECTORY>/tsn/deployments/infra/buildx.sh" \
+RESTART_HASH=$(date +%s) \
 cdk deploy --profile <YOUR-AWS-PROFILE> --all --asset-parallelism=false --notices false \
 --context deploymentStage=DEV \
 --parameters TSN-DB-Stack-dev:sessionSecret=abab
 ```
+
+### RESTART_HASH Explanation
+
+The `RESTART_HASH` environment variable controls the full redeployment of TSN instances, re-executing all processes. 
+
+- Use a fixed value (e.g., `RESTART_HASH=v0`) to avoid redeployments.
+- Use a timestamp (e.g., `RESTART_HASH=$(date +%s)`) to force redeployment on every execution.
 
 ### 2. Pre-configured Setup
 
@@ -53,6 +61,7 @@ cdk deploy --profile <YOUR-AWS-PROFILE> TSN-From-Config* TSN-Cert* \
 - `CDK_DOCKER`: Path to docker buildx script
 - `NODE_PRIVATE_KEYS`: Comma-separated list of private keys for TSN nodes (only for pre-configured setup)
 - `GENESIS_PATH`: Path to the genesis file (only for pre-configured setup)
+- `RESTART_HASH`: Controls redeployment of TSN instances (for auto-generated configuration)
 
 ## AWS Profile
 
