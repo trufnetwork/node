@@ -5,6 +5,7 @@ import (
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/lib/domain_utils"
 	"log"
+	"strconv"
 )
 
 // Stack suffix is intended to be used after the stack name to differentiate between different stages.
@@ -90,7 +91,17 @@ func NumOfNodes(scope constructs.Construct) int {
 
 	ctxValue := scope.Node().TryGetContext(jsii.String("numOfNodes"))
 	if ctxValue != nil {
-		numOfNodes = int(ctxValue.(float64))
+		// ctxValue may be a float64 or a string
+		switch v := ctxValue.(type) {
+		case float64:
+			numOfNodes = int(v)
+		case string:
+			var err error
+			numOfNodes, err = strconv.Atoi(v)
+			if err != nil {
+				log.Printf("Error converting numOfNodes context value to int: %v", err)
+			}
+		}
 	}
 
 	return numOfNodes
