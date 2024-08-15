@@ -37,7 +37,7 @@ jobs:
       - name: Build for Darwin ARM64
         run: |
           GOOS=darwin GOARCH=arm64 go build -o ./.build/kwild ./cmd/kwild/main.go
-          tar -czvf ./.build/tsn_${{ env.VERSION }}_arm64.tar.gz -C ./.build kwild
+          tar -czvf ./.build/tsn_${{ env.VERSION }}_darwin_arm64.tar.gz -C ./.build kwild
           rm -rf ./.build/kwild
 
       - name: Build for Linux AMD64
