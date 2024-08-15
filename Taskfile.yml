@@ -52,7 +52,7 @@ tasks:
       - docker compose up
 
   compose-dev:
-    deps: [ kwil-binaries ]
+    deps: [ kwil-binaries-dev ]
     desc: Run docker-compose locally with dev configuration, 2 nodes, gateway, and indexer services
     cmds:
         - docker compose -f deployments/dev-net/devnet-compose.yaml up -d
@@ -63,6 +63,13 @@ tasks:
         CHAIN_ID: tsn-local
         NODE_COMETBFT_ENDPOINT: http://tsn-db-1:26657
         KWIL_PG_CONN: postgresql://kwild@kwil-postgres-1:5432/kwild?sslmode=disable
+
+  compose-dev-down:
+    desc: Shutdown dev 2 nodes, gateway, and indexer services
+    cmds:
+        - docker compose -f deployments/dev-net/devnet-compose.yaml down
+        - docker compose -f deployments/dev-gateway/dev-gateway-compose.yaml down
+        - docker compose -f deployments/indexer/dev-indexer-compose.yaml down
 
   tools:
     desc: Install tools
@@ -85,6 +92,14 @@ tasks:
       - ./scripts/download-binaries.sh
     sources:
       - ./.build/kwil-admin
+
+  kwil-binaries-dev:
+    deps:
+      - kwil-binaries
+    cmds:
+      - ./scripts/download-binaries-dev.sh
+    sources:
+      - ./.build/kgw
 
   # After generating the certs, you need to trust them in your local machine by running the task setup:local-cert
   # leave the fields empty and press enter to use the default values
