@@ -99,9 +99,9 @@ jobs:
           # GW_CORS_ALLOW_ORIGINS = Comma separated list of allowed origins
           cdk deploy --require-approval never TSN-From-Config* TSN-Cert* \
             --exclusively \
-            --parameters TSN-From-Config-dev-Stack:sessionSecret=${{ secrets.GW_SESSION_SECRET }} \
-            --parameters TSN-From-Config-dev-Stack:corsAllowOrigins=${{ secrets.GW_CORS_ALLOW_ORIGINS || '*' }} \
-            --context deploymentStage=DEV
+            --parameters TSN-From-Config-staging-Stack:sessionSecret=${{ secrets.GW_SESSION_SECRET }} \
+            --parameters TSN-From-Config-staging-Stack:corsAllowOrigins=${{ secrets.GW_CORS_ALLOW_ORIGINS || '*' }} \
+            --context deploymentStage=STAGING
 
         env:
           CI: true
