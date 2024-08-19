@@ -83,7 +83,7 @@ func Domain(scope constructs.Construct, subdomains ...string) *string {
 	}
 
 	stageDomain += "." + domain_utils.MainDomain
-	// comecou em 14:31
+
 	return jsii.String(stageDomain)
 }
 
