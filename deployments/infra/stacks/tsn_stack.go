@@ -136,7 +136,7 @@ func TsnStack(stack awscdk.Stack, props *TsnStackProps) awscdk.Stack {
 	// We disable caching.
 	cf := kwil_gateway.TSNCloudfrontInstance(
 		stack,
-		jsii.String("NewCloudFrontDistribution"),
+		jsii.String("CloudFrontDistribution"),
 		kwil_gateway.TSNCloudfrontConfig{
 			DomainName:           domain,
 			KgwPublicDnsName:     kgwInstance.Instance.InstancePublicDnsName(),
@@ -148,7 +148,7 @@ func TsnStack(stack awscdk.Stack, props *TsnStackProps) awscdk.Stack {
 
 	kwil_gateway.TSNCloudfrontInstance(
 		stack,
-		jsii.String("CloudFrontDistribution"),
+		jsii.String("TestCloudFrontDistribution"),
 		kwil_gateway.TSNCloudfrontConfig{
 			DomainName:           testDomain,
 			KgwPublicDnsName:     kgwInstance.Instance.InstancePublicDnsName(),
