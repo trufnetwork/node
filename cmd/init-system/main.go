@@ -13,6 +13,7 @@ import (
 	"github.com/mitchellh/mapstructure"
 	init_system_contract "github.com/truflation/tsn-db/internal/init-system-contract"
 	"io"
+	"log"
 	"time"
 )
 
@@ -23,6 +24,7 @@ type DeployContractResourceProperties struct {
 	ProviderUrl          string `json:"ProviderUrl"`
 	SystemContractBucket string `json:"SystemContractBucket"`
 	SystemContractKey    string `json:"SystemContractKey"`
+	UpdateHash           string `json:"UpdateHash"`
 }
 
 var ssmClient *ssm.SSM
@@ -42,9 +44,8 @@ func HandleRequest(ctx context.Context, event cfn.Event) (string, error) {
 	}
 	var props DeployContractResourceProperties
 
-	// Check for rollback update
-	if isRollbackUpdate(ctx, event) {
-		return "Rollback update detected, no action taken", nil
+	if shouldSkipUpdate(ctx, event) {
+		return "No action taken", nil
 	}
 
 	if err := mapstructure.Decode(event.ResourceProperties, &props); err != nil {
@@ -123,6 +124,22 @@ func readS3Object(bucket string, key string) (string, error) {
 	return string(systemContractContent), nil
 }
 
+func shouldSkipUpdate(ctx context.Context, event cfn.Event) bool {
+	// if is rollback update, we skip the update
+	if isRollbackUpdate(ctx, event) {
+		log.Printf("Rollback update detected, no action taken")
+		return true
+	}
+
+	// if the update hash has not changed, and it's an update, we skip the update
+	if event.RequestType == cfn.RequestUpdate && !updateHashChanged(event) {
+		log.Printf("Update did not change, no action taken")
+		return true
+	}
+
+	return false
+}
+
 func isRollbackUpdate(ctx context.Context, event cfn.Event) bool {
 	if event.RequestType == cfn.RequestUpdate {
 		stackEvents, err := cfnClient.DescribeStackEventsWithContext(ctx, &cloudformation.DescribeStackEventsInput{
@@ -145,4 +162,18 @@ func isRollbackUpdate(ctx context.Context, event cfn.Event) bool {
 		}
 	}
 	return false
+}
+
+func updateHashChanged(event cfn.Event) bool {
+	oldProps := DeployContractResourceProperties{}
+	if err := mapstructure.Decode(event.OldResourceProperties, &oldProps); err != nil {
+		fmt.Printf("Failed to decode event.OldResourceProperties: %v\n", err)
+		return true
+	}
+	newProps := DeployContractResourceProperties{}
+	if err := mapstructure.Decode(event.ResourceProperties, &newProps); err != nil {
+		fmt.Printf("Failed to decode event.ResourceProperties: %v\n", err)
+		return true
+	}
+	return oldProps.UpdateHash != newProps.UpdateHash
 }
