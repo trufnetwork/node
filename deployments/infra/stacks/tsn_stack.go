@@ -3,7 +3,6 @@ package stacks
 import (
 	"fmt"
 	"github.com/aws/aws-cdk-go/awscdk/v2"
-	"github.com/aws/aws-cdk-go/awscdk/v2/awscertificatemanager"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
@@ -21,8 +20,8 @@ import (
 )
 
 type TsnStackProps struct {
-	cert            awscertificatemanager.Certificate
-	clusterProvider cluster.TSNClusterProvider
+	certStackExports CertStackExports
+	clusterProvider  cluster.TSNClusterProvider
 }
 
 func TsnStack(stack awscdk.Stack, props *TsnStackProps) awscdk.Stack {
@@ -135,7 +134,7 @@ func TsnStack(stack awscdk.Stack, props *TsnStackProps) awscdk.Stack {
 	cf := kwil_gateway.TSNCloudfrontInstance(stack, kwil_gateway.TSNCloudfrontConfig{
 		DomainName:           domain,
 		KgwPublicDnsName:     kgwInstance.Instance.InstancePublicDnsName(),
-		Certificate:          props.cert,
+		Certificate:          props.certStackExports.TestDomainCert,
 		HostedZone:           hostedZone,
 		IndexerPublicDnsName: indexerInstance.InstanceDnsName,
 	})

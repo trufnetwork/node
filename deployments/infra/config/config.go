@@ -76,15 +76,28 @@ func GetDomainStage(scope constructs.Construct) string {
 
 func Domain(scope constructs.Construct, subdomains ...string) *string {
 	// goes like this: <stage>.<subdomain#...>.<main_domain>
-	domain := GetDomainStage(scope)
+	stageDomain := GetDomainStage(scope)
 
 	for _, subdomain := range subdomains {
-		domain += "." + subdomain
+		stageDomain += "." + subdomain
 	}
 
-	domain += "." + domain_utils.MainDomain
+	stageDomain += "." + domain_utils.MainDomain
+	// comecou em 14:31
+	return jsii.String(stageDomain)
+}
 
-	return jsii.String(domain)
+func TestDomain(scope constructs.Construct, subdomains ...string) *string {
+	// goes like this: <stage>.<subdomain#...>.<main_domain>
+	stageDomain := GetDomainStage(scope)
+
+	for _, subdomain := range subdomains {
+		stageDomain += "." + subdomain
+	}
+
+	stageDomain += "." + domain_utils.TestDomain
+
+	return jsii.String(stageDomain)
 }
 
 func NumOfNodes(scope constructs.Construct) int {

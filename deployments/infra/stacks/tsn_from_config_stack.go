@@ -2,7 +2,6 @@ package stacks
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
-	"github.com/aws/aws-cdk-go/awscdk/v2/awscertificatemanager"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/config"
@@ -12,7 +11,7 @@ import (
 
 type TsnFromConfigStackProps struct {
 	awscdk.StackProps
-	Cert awscertificatemanager.Certificate
+	CertStackExports CertStackExports
 }
 
 func TsnFromConfigStack(
@@ -33,7 +32,7 @@ func TsnFromConfigStack(
 	privateKeys := strings.Split(cfg.NodePrivateKeys, ",")
 
 	return TsnStack(stack, &TsnStackProps{
-		cert: props.Cert,
+		certStackExports: props.CertStackExports,
 		clusterProvider: cluster.TsnClusterFromConfigInput{
 			GenesisFilePath: genesisFilePath,
 			PrivateKeys:     privateKeys,
