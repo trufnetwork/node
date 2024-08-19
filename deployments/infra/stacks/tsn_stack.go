@@ -43,6 +43,9 @@ func TsnStack(stack awscdk.Stack, props *TsnStackProps) awscdk.Stack {
 	domain := config.Domain(stack)
 	hostedZone := domain_utils.GetTSNHostedZone(stack)
 
+	testDomain := config.TestDomain(stack)
+	testHostedZone := domain_utils.GetTSNTestHostedZone(stack)
+
 	// ## ASSETS
 	// ### TSN ASSETS
 
@@ -131,13 +134,29 @@ func TsnStack(stack awscdk.Stack, props *TsnStackProps) awscdk.Stack {
 	// Cloudfront for the TSN
 	// We use cloudfront to handle TLS termination. The certificate is created in a separate stack in us-east-1.
 	// We disable caching.
-	cf := kwil_gateway.TSNCloudfrontInstance(stack, kwil_gateway.TSNCloudfrontConfig{
-		DomainName:           domain,
-		KgwPublicDnsName:     kgwInstance.Instance.InstancePublicDnsName(),
-		Certificate:          props.certStackExports.TestDomainCert,
-		HostedZone:           hostedZone,
-		IndexerPublicDnsName: indexerInstance.InstanceDnsName,
-	})
+	cf := kwil_gateway.TSNCloudfrontInstance(
+		stack,
+		jsii.String("NewCloudFrontDistribution"),
+		kwil_gateway.TSNCloudfrontConfig{
+			DomainName:           domain,
+			KgwPublicDnsName:     kgwInstance.Instance.InstancePublicDnsName(),
+			Certificate:          props.certStackExports.DomainCert,
+			HostedZone:           hostedZone,
+			IndexerPublicDnsName: indexerInstance.InstanceDnsName,
+		},
+	)
+
+	kwil_gateway.TSNCloudfrontInstance(
+		stack,
+		jsii.String("CloudFrontDistribution"),
+		kwil_gateway.TSNCloudfrontConfig{
+			DomainName:           testDomain,
+			KgwPublicDnsName:     kgwInstance.Instance.InstancePublicDnsName(),
+			Certificate:          props.certStackExports.TestDomainCert,
+			HostedZone:           testHostedZone,
+			IndexerPublicDnsName: indexerInstance.InstanceDnsName,
+		},
+	)
 
 	// Deploy the system contract everytime the hash changes
 	deployContract := system_contract.DeployContractResource(stack, system_contract.DeployContractResourceOptions{

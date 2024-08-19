@@ -21,9 +21,9 @@ type TSNCloudfrontConfig struct {
 // TSNCloudfrontInstance creates a CloudFront distribution for an EC2 instance without using a load balancer.
 // and disables caching while forwarding all headers to the instance.
 // it makes easier to use TSL certificate for the domain name.
-func TSNCloudfrontInstance(scope constructs.Construct, config TSNCloudfrontConfig) awscloudfront.Distribution {
+func TSNCloudfrontInstance(scope constructs.Construct, id *string, config TSNCloudfrontConfig) awscloudfront.Distribution {
 	// Define the CloudFront distribution
-	distribution := awscloudfront.NewDistribution(scope, jsii.String("CloudFrontDistribution"), &awscloudfront.DistributionProps{
+	distribution := awscloudfront.NewDistribution(scope, id, &awscloudfront.DistributionProps{
 		DefaultBehavior: &awscloudfront.BehaviorOptions{
 			Origin: awscloudfrontorigins.NewHttpOrigin(jsii.String(*config.KgwPublicDnsName), &awscloudfrontorigins.HttpOriginProps{
 				HttpPort:       jsii.Number(80),
@@ -54,7 +54,7 @@ func TSNCloudfrontInstance(scope constructs.Construct, config TSNCloudfrontConfi
 	})
 
 	// Create a Route 53 alias record to point the domain name to the CloudFront distribution
-	awsroute53.NewARecord(scope, jsii.String("AliasRecord"), &awsroute53.ARecordProps{
+	awsroute53.NewARecord(scope, jsii.Sprintf("%sRecord", *id), &awsroute53.ARecordProps{
 		Zone:       config.HostedZone,
 		RecordName: config.DomainName,
 		Target:     awsroute53.RecordTarget_FromAlias(awsroute53targets.NewCloudFrontTarget(distribution)),
