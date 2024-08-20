@@ -43,9 +43,6 @@ func TsnStack(stack awscdk.Stack, props *TsnStackProps) awscdk.Stack {
 	domain := config.Domain(stack)
 	hostedZone := domain_utils.GetTSNHostedZone(stack)
 
-	testDomain := config.TestDomain(stack)
-	testHostedZone := domain_utils.GetTSNTestHostedZone(stack)
-
 	// ## ASSETS
 	// ### TSN ASSETS
 
@@ -142,18 +139,6 @@ func TsnStack(stack awscdk.Stack, props *TsnStackProps) awscdk.Stack {
 			KgwPublicDnsName:     kgwInstance.Instance.InstancePublicDnsName(),
 			Certificate:          props.certStackExports.DomainCert,
 			HostedZone:           hostedZone,
-			IndexerPublicDnsName: indexerInstance.InstanceDnsName,
-		},
-	)
-
-	kwil_gateway.TSNCloudfrontInstance(
-		stack,
-		jsii.String("TestCloudFrontDistribution"),
-		kwil_gateway.TSNCloudfrontConfig{
-			DomainName:           testDomain,
-			KgwPublicDnsName:     kgwInstance.Instance.InstancePublicDnsName(),
-			Certificate:          props.certStackExports.TestDomainCert,
-			HostedZone:           testHostedZone,
 			IndexerPublicDnsName: indexerInstance.InstanceDnsName,
 		},
 	)
