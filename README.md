@@ -109,9 +109,9 @@ task indexer
 You can view the metrics dashboard at http://localhost:1337/v0/swagger. 
 Replace `localhost` with the IP address or domain name of the server where the indexer is running.
 
-You can view our deployed indexer at https://staging.tsn.test.truflation.com/v0/swagger. 
+You can view our deployed indexer at https://staging.tsn.truflation.com/v0/swagger. 
 There you can see the list of available endpoints and their descriptions. 
-For example, you can see the list of transactions by calling the [/chain/transactions](https://staging.tsn.test.truflation.com/v0/chain/transactions) endpoint.
+For example, you can see the list of transactions by calling the [/chain/transactions](https://staging.tsn.truflation.com/v0/chain/transactions) endpoint.
 
 ### Genesis File
 
@@ -138,7 +138,7 @@ It still needs to be updated to use the correct private key.
 As our system contract is currently live on our staging server, you can fetch records from the system contract using the following command:
 
 ```shell
-kwil-cli database call -a=get_unsafe_record -n=tsn_system_contract -o=34f9e432b4c70e840bc2021fd161d15ab5e19165 data_provider:4710a8d8f0d845da110086812a32de6d90d7ff5c stream_id:st1b148397e2ea36889efad820e2315d date_from:2024-06-01 date_to:2024-06-17 --private-key 0000000000000000000000000000000000000000000000000000000000000001 --provider https://staging.tsn.test.truflation.com
+kwil-cli database call -a=get_unsafe_record -n=tsn_system_contract -o=34f9e432b4c70e840bc2021fd161d15ab5e19165 data_provider:4710a8d8f0d845da110086812a32de6d90d7ff5c stream_id:st1b148397e2ea36889efad820e2315d date_from:2024-06-01 date_to:2024-06-17 --private-key 0000000000000000000000000000000000000000000000000000000000000001 --provider https://staging.tsn.truflation.com
 ```
 in this example, we are fetching records from the system contract for the stream `st1b148397e2ea36889efad820e2315d`
 from the data provider `4710a8d8f0d845da110086812a32de6d90d7ff5c` which is Electric Vehicle Index that provided by
@@ -163,7 +163,7 @@ list of available actions in the system contract:
 
 Currently, users can fetch records from the contract directly.
 ```shell
-kwil-cli database call -a=get_record -n=st1b148397e2ea36889efad820e2315d -o=4710a8d8f0d845da110086812a32de6d90d7ff5c date_from:2024-06-01 date_to:2024-06-17 --private-key 0000000000000000000000000000000000000000000000000000000000000001 --provider https://staging.tsn.test.truflation.com
+kwil-cli database call -a=get_record -n=st1b148397e2ea36889efad820e2315d -o=4710a8d8f0d845da110086812a32de6d90d7ff5c date_from:2024-06-01 date_to:2024-06-17 --private-key 0000000000000000000000000000000000000000000000000000000000000001 --provider https://staging.tsn.truflation.com
 ```
 Users are able to fetch records from the stream contract without through the system contract to keep it simple at this
 phase, and in the hands of the Truflation as a data provider. Normally, before fetching records from the stream
