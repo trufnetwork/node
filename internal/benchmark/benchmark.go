@@ -4,22 +4,22 @@ import (
 	"context"
 	"github.com/kwilteam/kwil-db/core/utils"
 	"github.com/kwilteam/kwil-db/testing"
+	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/truflation/tsn-sdk/core/util"
+	"slices"
 	"time"
 )
 
 // Benchmark case generation and execution
-func generateBenchmarkCases(visibility util.VisibilityEnum) []BenchmarkCase {
+func generateBenchmarkCases(input RunBenchmarkInput) []BenchmarkCase {
 	var cases []BenchmarkCase
-	depths := []int{0, 1, 10, 50, 100}
-	days := []int{1, 7, 30, 365}
 	procedures := []ProcedureEnum{ProcedureGetRecord, ProcedureGetIndex, ProcedureGetChangeIndex}
 
-	for _, depth := range depths {
-		for _, day := range days {
+	for _, depth := range input.Depths {
+		for _, day := range input.Days {
 			for _, procedure := range procedures {
 				cases = append(cases, BenchmarkCase{
-					Depth: depth, Days: day, Visibility: visibility,
+					Depth: depth, Days: day, Visibility: input.Visibility,
 					Procedure: procedure, Samples: samplesPerCase,
 				})
 			}
@@ -59,6 +59,41 @@ func runBenchmarkCase(ctx context.Context, platform *testing.Platform, c Benchma
 		result.CaseDurations[i] = time.Since(start)
 	}
 
-	result.MeanDuration = calculateMeanDuration(result.CaseDurations)
 	return result, nil
+}
+
+type RunBenchmarkInput struct {
+	Visibility util.VisibilityEnum
+	Depths     []int
+	Days       []int
+}
+
+func runBenchmark(input RunBenchmarkInput) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		benchCases := generateBenchmarkCases(input)
+
+		deployer := MustNewEthereumAddressFromString("0x0000000000000000000000000000000200000000")
+		platform.Deployer = deployer.Bytes()
+		// get max depth based on the cases
+		maxDepth := slices.MaxFunc(benchCases, func(a, b BenchmarkCase) int {
+			return a.Depth - b.Depth
+		})
+		// get schemas based on the max depth
+		schemas := getSchemas(maxDepth.Depth)
+
+		if err := setupSchemas(ctx, platform, schemas, input.Visibility); err != nil {
+			return err
+		}
+
+		results, err := runBenchmarkCases(ctx, platform, benchCases)
+		if err != nil {
+			return err
+		}
+
+		printResults(results)
+
+		saveResults(results, "todo/file/to/save.csv")
+
+		return nil
+	}
 }

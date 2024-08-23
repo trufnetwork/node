@@ -18,7 +18,6 @@ type (
 	Result struct {
 		Case          BenchmarkCase
 		CaseDurations []time.Duration
-		MeanDuration  time.Duration
 	}
 )
 

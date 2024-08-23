@@ -10,6 +10,8 @@ import (
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/truflation/tsn-db/internal/contracts"
 	"github.com/truflation/tsn-sdk/core/util"
+	"golang.org/x/exp/constraints"
+	"log"
 	"math/rand"
 	"slices"
 	"strconv"
@@ -54,25 +56,41 @@ func executeStreamProcedure(ctx context.Context, platform *kwilTesting.Platform,
 	return err
 }
 
-// calculateMeanDuration computes the average duration from a slice of time.Duration values.
-func calculateMeanDuration(durations []time.Duration) time.Duration {
-	var total time.Duration
-	for _, d := range durations {
-		total += d
-	}
-	return total / time.Duration(len(durations))
-}
-
 // printResults outputs the benchmark results in a human-readable format.
 func printResults(results []Result) {
 	fmt.Println("Benchmark Results:")
 	for _, r := range results {
-		fmt.Printf("Depth: %d, Days: %d, Visibility: %d, Procedure: %s\n",
-			r.Case.Depth, r.Case.Days, r.Case.Visibility, r.Case.Procedure)
-		fmt.Printf("  Mean Duration: %v\n", r.MeanDuration)
+		fmt.Printf("Depth: %d, Days: %d, Visibility: %s, Procedure: %s\n",
+			r.Case.Depth, r.Case.Days, visibilityToString(r.Case.Visibility), r.Case.Procedure)
+		fmt.Printf("  Mean Duration: %v\n", Average(r.CaseDurations))
 		fmt.Printf("  Min Duration: %v\n", slices.Min(r.CaseDurations))
 		fmt.Printf("  Max Duration: %v\n", slices.Max(r.CaseDurations))
 		fmt.Println()
+	}
+}
+
+func Average[T constraints.Integer | constraints.Float](values []T) T {
+	sum := T(0)
+	for _, v := range values {
+		sum += v
+	}
+	return sum / T(len(values))
+}
+
+func saveResults(results []Result, filePath string) error {
+	// TODO: Implement saving results to a file
+	log.Println("Missing implementation for saving results to file")
+	return nil
+}
+
+func visibilityToString(visibility util.VisibilityEnum) string {
+	switch visibility {
+	case util.PublicVisibility:
+		return "Public"
+	case util.PrivateVisibility:
+		return "Private"
+	default:
+		return "Unknown"
 	}
 }
 
