@@ -1,4 +1,4 @@
-package stacks
+package asset
 
 import (
 	"fmt"
@@ -14,7 +14,7 @@ func TestBuildGoBinaryIntoS3Asset(t *testing.T) {
 	app := awscdk.NewApp(nil)
 	stack := awscdk.NewStack(app, jsii.String("test-stack"), nil)
 
-	asset := buildGoBinaryIntoS3Asset(stack, jsii.String("test-asset"), buildGoBinaryIntoS3AssetInput{
+	asset := BuildGoBinaryIntoS3Asset(stack, jsii.String("test-asset"), BuildGoBinaryIntoS3AssetInput{
 		BinaryPath: jsii.String("../tests/hello/main.go"),
 		BinaryName: jsii.String("hello"),
 	})

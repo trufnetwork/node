@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsstepfunctions"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
+	"github.com/truflation/tsn-db/infra/lib/utils/asset"
 )
 
 // BenchmarkStack creates the main infrastructure for running benchmarks
@@ -16,10 +17,10 @@ func BenchmarkStack(scope constructs.Construct, id string, props *awscdk.StackPr
 	stack := awscdk.NewStack(scope, jsii.String(id), props)
 
 	// Create S3 buckets for storing binaries and results
-	binaryS3Asset := buildGoBinaryIntoS3Asset(
+	binaryS3Asset := asset.BuildGoBinaryIntoS3Asset(
 		stack,
 		jsii.String("benchmark-binary"),
-		buildGoBinaryIntoS3AssetInput{
+		asset.BuildGoBinaryIntoS3AssetInput{
 			BinaryPath: jsii.String("../../../cmd/benchmark/main.go"),
 			BinaryName: jsii.String("benchmark"),
 		},

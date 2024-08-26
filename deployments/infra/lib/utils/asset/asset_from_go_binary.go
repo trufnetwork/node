@@ -1,4 +1,4 @@
-package stacks
+package asset
 
 import (
 	"bytes"
@@ -13,12 +13,12 @@ import (
 	"github.com/aws/jsii-runtime-go"
 )
 
-type buildGoBinaryIntoS3AssetInput struct {
+type BuildGoBinaryIntoS3AssetInput struct {
 	BinaryPath *string
 	BinaryName *string
 }
 
-func buildGoBinaryIntoS3Asset(scope constructs.Construct, id *string, input buildGoBinaryIntoS3AssetInput) awss3assets.Asset {
+func BuildGoBinaryIntoS3Asset(scope constructs.Construct, id *string, input BuildGoBinaryIntoS3AssetInput) awss3assets.Asset {
 	binaryDir := filepath.Dir(*input.BinaryPath)
 	// Create an S3 asset from the Go binary
 	asset := awss3assets.NewAsset(scope, id, &awss3assets.AssetProps{
