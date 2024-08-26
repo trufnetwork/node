@@ -16,8 +16,15 @@ func BenchmarkStack(scope constructs.Construct, id string, props *awscdk.StackPr
 	stack := awscdk.NewStack(scope, jsii.String(id), props)
 
 	// Create S3 buckets for storing binaries and results
-	binaryBucket := createBucket("binary")
-	resultsBucket := createBucket("results")
+	binaryS3Asset := buildGoBinaryIntoS3Asset(
+		stack,
+		jsii.String("benchmark-binary"),
+		buildGoBinaryIntoS3AssetInput{
+			BinaryPath: jsii.String("../../../cmd/benchmark/main.go"),
+			BinaryName: jsii.String("benchmark"),
+		},
+	)
+	resultsBucket := createBucket(stack, "benchmark-results-"+*stack.StackName())
 
 	// Define the EC2 instance types to be tested
 	testedInstances := []awsec2.InstanceType{
@@ -33,22 +40,31 @@ func BenchmarkStack(scope constructs.Construct, id string, props *awscdk.StackPr
 		launchTemplatesMap[instanceType] = createLaunchTemplate(
 			stack,
 			CreateLaunchTemplateInput{
-				InstanceType: instanceType,
+				InstanceType:  instanceType,
+				binaryS3Asset: binaryS3Asset,
 			},
 		)
 	}
 
 	// Create the main state machine to orchestrate the benchmark process
-	createStateMachine(stack, launchTemplatesMap, binaryBucket, resultsBucket)
+	createStateMachine(stack, CreateStateMachineInput{
+		launchTemplatesMap: launchTemplatesMap,
+		binaryS3Asset:      binaryS3Asset,
+		resultsBucket:      resultsBucket,
+	})
+}
+
+type CreateStateMachineInput struct {
+	launchTemplatesMap map[awsec2.InstanceType]awsec2.LaunchTemplate
+	binaryS3Asset      awscdk.IAsset
+	resultsBucket      awss3.IBucket
 }
 
 // createStateMachine sets up the Step Functions state machine that coordinates
 // the benchmark workflows for each instance type.
 func createStateMachine(
 	scope constructs.Construct,
-	launchTemplatesMap map[awsec2.InstanceType]awsec2.LaunchTemplate,
-	binaryBucket awss3.IBucket,
-	resultsBucket awss3.IBucket,
+	input CreateStateMachineInput,
 ) awsstepfunctions.StateMachine {
 	var workflows []awsstepfunctions.IChainable
 
@@ -59,11 +75,11 @@ func createStateMachine(
 	// todo: getCurrentTimeTask should be a task that gets the current time
 	var getCurrentTimeTask awsstepfunctions.IChainable
 
-	for _, launchTemplate := range launchTemplatesMap {
+	for _, launchTemplate := range input.launchTemplatesMap {
 		workflow := createWorkflow(scope, CreateWorkflowInput{
 			LaunchTemplate:  launchTemplate,
-			BinaryBucket:    binaryBucket,
-			ResultsBucket:   resultsBucket,
+			BinaryS3Asset:   input.binaryS3Asset,
+			ResultsBucket:   input.resultsBucket,
 			currentTimeTask: getCurrentTimeTask,
 		})
 		workflows = append(workflows, workflow)
@@ -81,7 +97,8 @@ func createStateMachine(
 }
 
 type CreateLaunchTemplateInput struct {
-	InstanceType awsec2.InstanceType
+	InstanceType  awsec2.InstanceType
+	binaryS3Asset awscdk.IAsset
 }
 
 // createLaunchTemplate generates an EC2 launch template for a given instance type.
@@ -109,15 +126,18 @@ func parallelizeWorkflows(scope constructs.Construct, workflows []awsstepfunctio
 
 // createBucket creates an S3 bucket with appropriate settings.
 // TODO: Implement this function with proper S3 bucket configuration.
-func createBucket(name string) awss3.IBucket {
-	// Implement S3 bucket creation
-	return nil
+func createBucket(scope constructs.Construct, name string) awss3.IBucket {
+	return awss3.NewBucket(scope, jsii.String(name), &awss3.BucketProps{
+		// private
+		PublicReadAccess: jsii.Bool(false),
+		BucketName:       jsii.String(name),
+	})
 }
 
 // CreateWorkflowInput defines the input parameters for creating a benchmark workflow.
 type CreateWorkflowInput struct {
 	LaunchTemplate  awsec2.LaunchTemplate
-	BinaryBucket    awss3.IBucket
+	BinaryS3Asset   awscdk.IAsset
 	ResultsBucket   awss3.IBucket
 	currentTimeTask awsstepfunctions.IChainable
 }
