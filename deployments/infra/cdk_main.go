@@ -39,5 +39,13 @@ func main() {
 		},
 	)
 
+	stacks.BenchmarkStack(
+		app,
+		config.WithStackSuffix(app, "Benchmark"),
+		&awscdk.StackProps{
+			Env: utils.CdkEnv(),
+		},
+	)
+
 	app.Synth(nil)
 }

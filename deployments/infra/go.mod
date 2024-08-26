@@ -3,12 +3,10 @@ module github.com/truflation/tsn-db/infra
 go 1.22.1
 
 require (
-	github.com/BurntSushi/toml v1.2.1
 	github.com/aws/aws-cdk-go/awscdk/v2 v2.146.0
 	github.com/aws/aws-cdk-go/awscdklambdagoalpha/v2 v2.146.0-alpha.0
 	github.com/aws/constructs-go/constructs/v10 v10.3.0
 	github.com/aws/jsii-runtime-go v1.99.0
-	github.com/kwilteam/kwil-db/core v0.1.3
 )
 
 require (
