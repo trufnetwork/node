@@ -91,6 +91,29 @@ If you're using Windows with WSL2, you may need to disable your Windows firewall
 netsh interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=22 connectaddress=localhost connectport=22
 ```
 
+## Benchmark Stack
+
+The Benchmark Stack is designed to test and measure the performance of smart contracts across multiple EC2 instance types. It deploys resources necessary for conducting benchmarks on different AWS EC2 instances to evaluate contract execution efficiency.
+
+
+### Features
+
+- Supports multiple EC2 instance types (t3.micro, t3.small, t3.medium, t3.large)
+- Uses S3 buckets for storing binaries and results
+- Implements a Step Functions state machine to orchestrate the benchmark process
+- Parallel execution of benchmarks across different instance types
+
+### Deployment
+
+To deploy the Benchmark Stack:
+
+
+```bash
+cdk deploy --profile <YOUR-AWS-PROFILE> TSN-Benchmark-Stack-<environmenta>
+```
+
+Replace `<environment>` with your target environment (e.g., dev, staging, prod).
+
 ## Important
 
 Always use these commands responsibly, especially in non-production environments. Remember to delete the stack after testing to avoid unnecessary AWS charges.
