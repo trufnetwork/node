@@ -1,18 +1,56 @@
 package stacks
 
 import (
+	"fmt"
+
+	// AWS CDK imports
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsstepfunctions"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
+
+	// Local imports
+	"github.com/truflation/tsn-db/infra/config"
 	"github.com/truflation/tsn-db/infra/lib/utils/asset"
 )
 
-// BenchmarkStack creates the main infrastructure for running benchmarks
-// across multiple EC2 instance types.
+// Type definitions
+type (
+	CreateStateMachineInput struct {
+		LaunchTemplatesMap map[awsec2.InstanceType]CreateLaunchTemplateOutput
+		BinaryS3Asset      awscdk.IAsset
+		ResultsBucket      awss3.IBucket
+	}
+
+	CreateLaunchTemplateInput struct {
+		ID            string
+		InstanceType  awsec2.InstanceType
+		BinaryS3Asset awss3assets.Asset
+		SecurityGroup awsec2.ISecurityGroup
+		IAMRole       awsiam.IRole
+		KeyPair       awsec2.IKeyPair
+	}
+
+	CreateLaunchTemplateOutput struct {
+		LaunchTemplate      awsec2.LaunchTemplate
+		InstanceType        awsec2.InstanceType
+		BenchmarkBinaryPath string
+	}
+
+	CreateWorkflowInput struct {
+		LaunchTemplate  awsec2.LaunchTemplate
+		BinaryS3Asset   awscdk.IAsset
+		ResultsBucket   awss3.IBucket
+		CurrentTimeTask awsstepfunctions.IChainable
+	}
+)
+
+// Main stack function
 func BenchmarkStack(scope constructs.Construct, id string, props *awscdk.StackProps) {
 	stack := awscdk.NewStack(scope, jsii.String(id), props)
 
@@ -35,38 +73,110 @@ func BenchmarkStack(scope constructs.Construct, id string, props *awscdk.StackPr
 		awsec2.InstanceType_Of(awsec2.InstanceClass_T3, awsec2.InstanceSize_LARGE),
 	}
 
+	// default vpc
+	defaultVPC := awsec2.Vpc_FromLookup(stack, jsii.String("VPC"), &awsec2.VpcLookupOptions{
+		IsDefault: jsii.Bool(true),
+	})
+
+	securityGroup := awsec2.NewSecurityGroup(stack, jsii.String("benchmark-security-group"), &awsec2.SecurityGroupProps{
+		Vpc: defaultVPC,
+	})
+
+	// permit 22 port for ssh
+	securityGroup.AddIngressRule(
+		awsec2.Peer_AnyIpv4(),
+		awsec2.Port_Tcp(jsii.Number(22)),
+		jsii.String("Allow SSH access"),
+		jsii.Bool(true),
+	)
+
+	ec2InstanceRole := awsiam.NewRole(stack, jsii.String("EC2InstanceRole"), &awsiam.RoleProps{})
+
+	// permit write access to the results bucket
+	resultsBucket.GrantReadWrite(ec2InstanceRole, "*")
+
+	// Use default key pair
+	keyPairName := config.KeyPairName(scope)
+	if len(keyPairName) == 0 {
+		panic("KeyPairName is empty")
+	}
+
+	keyPair := awsec2.KeyPair_FromKeyPairName(stack, jsii.String(keyPairName), jsii.String("benchmark-key-pair"))
+
 	// Create EC2 launch templates for each instance type
-	launchTemplatesMap := make(map[awsec2.InstanceType]awsec2.LaunchTemplate)
+	launchTemplatesMap := make(map[awsec2.InstanceType]CreateLaunchTemplateOutput)
 	for _, instanceType := range testedInstances {
 		launchTemplatesMap[instanceType] = createLaunchTemplate(
 			stack,
 			CreateLaunchTemplateInput{
+				ID:            fmt.Sprintf("benchmark-%s", *instanceType.ToString()),
 				InstanceType:  instanceType,
-				binaryS3Asset: binaryS3Asset,
+				BinaryS3Asset: binaryS3Asset,
+				SecurityGroup: securityGroup,
+				IAMRole:       ec2InstanceRole,
+				KeyPair:       keyPair,
 			},
 		)
 	}
 
 	// Create the main state machine to orchestrate the benchmark process
 	createStateMachine(stack, CreateStateMachineInput{
-		launchTemplatesMap: launchTemplatesMap,
-		binaryS3Asset:      binaryS3Asset,
-		resultsBucket:      resultsBucket,
+		LaunchTemplatesMap: launchTemplatesMap,
+		BinaryS3Asset:      binaryS3Asset,
+		ResultsBucket:      resultsBucket,
 	})
 }
 
-type CreateStateMachineInput struct {
-	launchTemplatesMap map[awsec2.InstanceType]awsec2.LaunchTemplate
-	binaryS3Asset      awscdk.IAsset
-	resultsBucket      awss3.IBucket
+// S3 related functions
+func createBucket(scope constructs.Construct, name string) awss3.IBucket {
+	return awss3.NewBucket(scope, jsii.String(name), &awss3.BucketProps{
+		// private
+		PublicReadAccess: jsii.Bool(false),
+		BucketName:       jsii.String(name),
+	})
 }
 
-// createStateMachine sets up the Step Functions state machine that coordinates
-// the benchmark workflows for each instance type.
-func createStateMachine(
-	scope constructs.Construct,
-	input CreateStateMachineInput,
-) awsstepfunctions.StateMachine {
+// EC2 related functions
+func createLaunchTemplate(scope constructs.Construct, input CreateLaunchTemplateInput) CreateLaunchTemplateOutput {
+	launchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String(input.ID), &awsec2.LaunchTemplateProps{
+		InstanceType:  input.InstanceType,
+		SecurityGroup: input.SecurityGroup,
+		KeyPair:       input.KeyPair,
+	})
+
+	instanceType := input.InstanceType.ToString()
+
+	launchTemplate.UserData().AddCommands(
+		*jsii.Strings(
+			// we need to tell what type of instance this is
+			fmt.Sprintf("INSTANCE_TYPE=%s", *instanceType),
+			"echo INSTANCE_TYPE=$INSTANCE_TYPE >> /etc/environment",
+		)...,
+	)
+
+	benchmarkBinaryPath := "/home/ec2-user/benchmark"
+
+	// copy the binary from S3
+	launchTemplate.UserData().AddCommands(
+		*jsii.Strings(
+			fmt.Sprintf("aws s3 cp s3://%s/%s %s",
+				*input.BinaryS3Asset.S3BucketName(),
+				*input.BinaryS3Asset.S3ObjectKey(),
+				benchmarkBinaryPath,
+			),
+			fmt.Sprintf("chmod +x %s", benchmarkBinaryPath),
+		)...,
+	)
+
+	return CreateLaunchTemplateOutput{
+		LaunchTemplate:      launchTemplate,
+		InstanceType:        input.InstanceType,
+		BenchmarkBinaryPath: benchmarkBinaryPath,
+	}
+}
+
+// Step Functions related functions
+func createStateMachine(scope constructs.Construct, input CreateStateMachineInput) awsstepfunctions.StateMachine {
 	var workflows []awsstepfunctions.IChainable
 
 	// get timestamp should be the first step in the workflow
@@ -76,12 +186,12 @@ func createStateMachine(
 	// todo: getCurrentTimeTask should be a task that gets the current time
 	var getCurrentTimeTask awsstepfunctions.IChainable
 
-	for _, launchTemplate := range input.launchTemplatesMap {
+	for _, launchTemplate := range input.LaunchTemplatesMap {
 		workflow := createWorkflow(scope, CreateWorkflowInput{
-			LaunchTemplate:  launchTemplate,
-			BinaryS3Asset:   input.binaryS3Asset,
-			ResultsBucket:   input.resultsBucket,
-			currentTimeTask: getCurrentTimeTask,
+			LaunchTemplate:  launchTemplate.LaunchTemplate,
+			BinaryS3Asset:   input.BinaryS3Asset,
+			ResultsBucket:   input.ResultsBucket,
+			CurrentTimeTask: getCurrentTimeTask,
 		})
 		workflows = append(workflows, workflow)
 	}
@@ -97,54 +207,6 @@ func createStateMachine(
 	return stateMachine
 }
 
-type CreateLaunchTemplateInput struct {
-	InstanceType  awsec2.InstanceType
-	binaryS3Asset awscdk.IAsset
-}
-
-// createLaunchTemplate generates an EC2 launch template for a given instance type.
-// TODO: Implement this function to set up the EC2 instance configuration.
-func createLaunchTemplate(scope constructs.Construct, input CreateLaunchTemplateInput) awsec2.LaunchTemplate {
-	// Implement EC2 launch template creation
-	// Consider:
-	// - Appropriate AMI selection
-	// - IAM role for EC2 instances with minimal permissions
-	// - User data script for instance initialization
-	// - Save instance type somewhere to be referenced in the workflow
-	return nil
-}
-
-// parallelizeWorkflows combines individual instance workflows into a parallel execution.
-// TODO: Implement this function to run workflows concurrently.
-func parallelizeWorkflows(scope constructs.Construct, workflows []awsstepfunctions.IChainable) awsstepfunctions.IChainable {
-	return awsstepfunctions.NewParallel(scope, jsii.String("ParallelWorkflow"), &awsstepfunctions.ParallelProps{
-		// Configure parallel execution
-		// Consider:
-		// - Error handling strategy
-		// - Result aggregation
-	})
-}
-
-// createBucket creates an S3 bucket with appropriate settings.
-// TODO: Implement this function with proper S3 bucket configuration.
-func createBucket(scope constructs.Construct, name string) awss3.IBucket {
-	return awss3.NewBucket(scope, jsii.String(name), &awss3.BucketProps{
-		// private
-		PublicReadAccess: jsii.Bool(false),
-		BucketName:       jsii.String(name),
-	})
-}
-
-// CreateWorkflowInput defines the input parameters for creating a benchmark workflow.
-type CreateWorkflowInput struct {
-	LaunchTemplate  awsec2.LaunchTemplate
-	BinaryS3Asset   awscdk.IAsset
-	ResultsBucket   awss3.IBucket
-	currentTimeTask awsstepfunctions.IChainable
-}
-
-// createWorkflow builds the Step Functions workflow for a single instance type.
-// TODO: Implement the complete workflow with all necessary steps.
 func createWorkflow(scope constructs.Construct, input CreateWorkflowInput) awsstepfunctions.IChainable {
 	// Implement the complete workflow
 	// Steps to consider:
@@ -159,8 +221,16 @@ func createWorkflow(scope constructs.Construct, input CreateWorkflowInput) awsst
 	return nil
 }
 
-// createTimestampLambda creates a Lambda function to generate timestamps.
-// TODO: Implement this function to create a simple Lambda for timestamp generation.
+func parallelizeWorkflows(scope constructs.Construct, workflows []awsstepfunctions.IChainable) awsstepfunctions.IChainable {
+	return awsstepfunctions.NewParallel(scope, jsii.String("ParallelWorkflow"), &awsstepfunctions.ParallelProps{
+		// Configure parallel execution
+		// Consider:
+		// - Error handling strategy
+		// - Result aggregation
+	})
+}
+
+// Lambda related functions
 func createTimestampLambda() awslambda.IFunction {
 	// Implement Lambda function creation
 	// Consider:
