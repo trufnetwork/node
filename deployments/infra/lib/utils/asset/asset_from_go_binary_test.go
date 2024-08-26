@@ -15,7 +15,7 @@ func TestBuildGoBinaryIntoS3Asset(t *testing.T) {
 	stack := awscdk.NewStack(app, jsii.String("test-stack"), nil)
 
 	asset := BuildGoBinaryIntoS3Asset(stack, jsii.String("test-asset"), BuildGoBinaryIntoS3AssetInput{
-		BinaryPath: jsii.String("../tests/hello/main.go"),
+		BinaryPath: jsii.String("../../../tests/hello/main.go"),
 		BinaryName: jsii.String("hello"),
 	})
 

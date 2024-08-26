@@ -83,6 +83,14 @@ func (l *LocalGoBundling) TryBundle(outputDir *string, options *awscdk.BundlingO
 		return jsii.Bool(false)
 	}
 
+	// check if got exit status 0
+	if cmd.ProcessState.ExitCode() != 0 {
+		fmt.Printf("Go binary build failed\n")
+		fmt.Printf("Stdout: %s\n", stdout.String())
+		fmt.Printf("Stderr: %s\n", stderr.String())
+		return jsii.Bool(false)
+	}
+
 	fmt.Printf("Go binary built successfully\n")
 	fmt.Printf("Stdout: %s\n", stdout.String())
 
