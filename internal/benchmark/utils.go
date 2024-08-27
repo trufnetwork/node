@@ -108,18 +108,12 @@ func saveAsCSV(results []Result, filePath string) error {
 
 	// Write each result
 	for _, result := range results {
-		var visibility string
-		if result.Case.Visibility == util.PublicVisibility {
-			visibility = "public"
-		} else {
-			visibility = "private"
-		}
 		row := []string{
 			string(result.Case.Procedure),                                       // procedure
 			strconv.Itoa(result.Case.Depth),                                     // depth
 			strconv.Itoa(result.Case.Days),                                      // n_of_dates
 			strconv.FormatInt(Average(result.CaseDurations).Milliseconds(), 10), // duration_ms
-			visibility, // visibility
+			visibilityToString(result.Case.Visibility),                          // visibility
 		}
 		if err = writer.Write(row); err != nil {
 			return err
@@ -157,12 +151,7 @@ func saveAsMarkdown(results []Result, filePath string) error {
 	groupedResults := make(map[string]map[string]map[int]map[int]time.Duration)
 	for _, result := range results {
 		procedure := string(result.Case.Procedure)
-		var visibility string
-		if result.Case.Visibility == util.PublicVisibility {
-			visibility = "all public"
-		} else {
-			visibility = "all private"
-		}
+		visibility := visibilityToString(result.Case.Visibility)
 		if _, ok := groupedResults[procedure]; !ok {
 			groupedResults[procedure] = make(map[string]map[int]map[int]time.Duration)
 		}
@@ -180,23 +169,20 @@ func saveAsMarkdown(results []Result, filePath string) error {
 		for visibility, daysMap := range visibilities {
 			//TODO: replace with instance type once we can get it from the platform
 			instanceType := runtime.GOOS + "_" + runtime.GOARCH
-			_, err = file.WriteString(fmt.Sprintf("%s - %s - %s\n\n", instanceType, procedure, visibility))
-			if err != nil {
+			if _, err = file.WriteString(fmt.Sprintf("%s - %s - %s\n\n", instanceType, procedure, visibility)); err != nil {
 				return err
 			}
 
 			// Write table header
 			_, err = file.WriteString("| queried days / depth |")
 			for _, depth := range depths {
-				_, err = file.WriteString(fmt.Sprintf(" %d |", depth))
-				if err != nil {
+				if _, err = file.WriteString(fmt.Sprintf(" %d |", depth)); err != nil {
 					return err
 				}
 			}
 			_, err = file.WriteString("\n|----------------------|")
 			for range depths {
-				_, err = file.WriteString("---|")
-				if err != nil {
+				if _, err = file.WriteString("---|"); err != nil {
 					return err
 				}
 			}
@@ -213,14 +199,12 @@ func saveAsMarkdown(results []Result, filePath string) error {
 					}
 				}
 				row += "|\n"
-				_, err = file.WriteString(row)
-				if err != nil {
+				if _, err = file.WriteString(row); err != nil {
 					return err
 				}
 			}
 
-			_, err = file.WriteString("\n")
-			if err != nil {
+			if _, err = file.WriteString("\n"); err != nil {
 				return err
 			}
 		}
@@ -243,7 +227,7 @@ func saveResults(results []Result, filePath string) error {
 	return nil
 }
 
-func deleteFileIfExists(filePath string) error {
+func deleteFileIfExists() error {
 	// Delete the CSV file if it exists
 	if _, err := os.Stat(filePath); err == nil {
 		if err = os.Remove(filePath); err != nil {

@@ -9,7 +9,7 @@ import (
 // Main benchmark test function
 func TestBench(t *testing.T) {
 	// Delete the file if it exists
-	if err := deleteFileIfExists(filePath); err != nil {
+	if err := deleteFileIfExists(); err != nil {
 		t.Fatal(err)
 	}
 
