@@ -24,8 +24,7 @@ The tests vary across several dimensions:
 
 To run the benchmark:
 
-1. Ensure you have the TSN-DB set up and running.
-2. From the root of the project, run the following command:
+From the root of the project, run the following command:
 
 ```
 go test -v ./internal/benchmark

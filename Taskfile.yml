@@ -135,3 +135,8 @@ tasks:
     cmds:
       - |
         curl -f -H "Authorization: token ${READ_TOKEN}" --create-dirs -o ./deployments/network/staging/genesis.json https://raw.githubusercontent.com/truflation/tsn-node-operator/main/configs/network/staging/genesis.json
+
+  benchmark:
+    desc: Run benchmark tests and regenerate the report
+    cmds:
+      - go test -v -timeout 0 ./internal/benchmark

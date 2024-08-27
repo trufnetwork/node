@@ -92,8 +92,6 @@ func runBenchmark(input RunBenchmarkInput) func(ctx context.Context, platform *k
 
 		printResults(results)
 
-		saveResults(results, "todo/file/to/save.csv")
-
-		return nil
+		return saveResults(results, filePath)
 	}
 }
