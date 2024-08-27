@@ -3,6 +3,7 @@ package asset
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,15 +12,22 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
+	"github.com/go-playground/validator/v10"
 )
 
 type BuildGoBinaryIntoS3AssetInput struct {
-	BinaryPath *string
-	BinaryName *string
+	BinaryPath *string `validate:"required"`
+	BinaryName *string `validate:"required"`
 }
 
 func BuildGoBinaryIntoS3Asset(scope constructs.Construct, id *string, input BuildGoBinaryIntoS3AssetInput) awss3assets.Asset {
 	binaryDir := filepath.Dir(*input.BinaryPath)
+
+	// validate input
+	if err := validator.New().Struct(input); err != nil {
+		panic(err)
+	}
+
 	// Create an S3 asset from the Go binary
 	asset := awss3assets.NewAsset(scope, id, &awss3assets.AssetProps{
 		Path: jsii.String(binaryDir),
@@ -77,22 +85,22 @@ func (l *LocalGoBundling) TryBundle(outputDir *string, options *awscdk.BundlingO
 	// Run the command
 	err := cmd.Run()
 	if err != nil {
-		fmt.Printf("Error building Go binary: %v\n", err)
-		fmt.Printf("Stdout: %s\n", stdout.String())
-		fmt.Printf("Stderr: %s\n", stderr.String())
+		log.Printf("Error building Go binary: %v\n", err)
+		log.Printf("Stdout: %s\n", stdout.String())
+		log.Printf("Stderr: %s\n", stderr.String())
 		return jsii.Bool(false)
 	}
 
 	// check if got exit status 0
 	if cmd.ProcessState.ExitCode() != 0 {
-		fmt.Printf("Go binary build failed\n")
-		fmt.Printf("Stdout: %s\n", stdout.String())
-		fmt.Printf("Stderr: %s\n", stderr.String())
+		log.Printf("Go binary build failed\n")
+		log.Printf("Stdout: %s\n", stdout.String())
+		log.Printf("Stderr: %s\n", stderr.String())
 		return jsii.Bool(false)
 	}
 
-	fmt.Printf("Go binary built successfully\n")
-	fmt.Printf("Stdout: %s\n", stdout.String())
+	log.Printf("Go binary built successfully\n")
+	log.Printf("Stdout: %s\n", stdout.String())
 
 	return jsii.Bool(true)
 }

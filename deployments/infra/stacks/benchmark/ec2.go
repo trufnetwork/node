@@ -27,6 +27,7 @@ type (
 
 // EC2 related functions
 func createLaunchTemplate(scope constructs.Construct, input CreateLaunchTemplateInput) CreateLaunchTemplateOutput {
+	// Create a new EC2 launch template with specified properties
 	launchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String(input.ID), &awsec2.LaunchTemplateProps{
 		InstanceType:  input.InstanceType,
 		SecurityGroup: input.SecurityGroup,
@@ -35,9 +36,9 @@ func createLaunchTemplate(scope constructs.Construct, input CreateLaunchTemplate
 
 	instanceType := input.InstanceType.ToString()
 
+	// Add user data to set and persist the instance type
 	launchTemplate.UserData().AddCommands(
 		*jsii.Strings(
-			// we need to tell what type of instance this is
 			fmt.Sprintf("INSTANCE_TYPE=%s", *instanceType),
 			"echo INSTANCE_TYPE=$INSTANCE_TYPE >> /etc/environment",
 		)...,
@@ -45,7 +46,7 @@ func createLaunchTemplate(scope constructs.Construct, input CreateLaunchTemplate
 
 	benchmarkBinaryPath := "/home/ec2-user/benchmark"
 
-	// copy the binary from S3
+	// Add user data to download and set up the benchmark binary
 	launchTemplate.UserData().AddCommands(
 		*jsii.Strings(
 			fmt.Sprintf("aws s3 cp s3://%s/%s %s",

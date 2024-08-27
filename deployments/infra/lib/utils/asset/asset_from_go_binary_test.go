@@ -24,7 +24,11 @@ func TestBuildGoBinaryIntoS3Asset(t *testing.T) {
 	fullPath := fmt.Sprintf("%s/%s/%s", *app.Outdir(), *assetPath, "hello")
 
 	// run and expect
-	os.Chmod(fullPath, 0755)
+	err := os.Chmod(fullPath, 0755)
+	if err != nil {
+		t.Fatalf("Failed to chmod binary: %s", err)
+	}
+
 	cmd := exec.Command(fullPath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -35,5 +39,7 @@ func TestBuildGoBinaryIntoS3Asset(t *testing.T) {
 		t.Fatalf("Expected 'Hello, World!', got %s", output)
 	}
 
-	app.Synth(nil)
+	if err := app.Synth(nil); err != nil {
+		t.Fatalf("Failed to synth app: %s", err)
+	}
 }

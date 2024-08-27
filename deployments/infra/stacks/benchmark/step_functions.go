@@ -34,6 +34,7 @@ func createStateMachine(scope constructs.Construct, input CreateStateMachineInpu
 	// todo: getCurrentTimeTask should be a task that gets the current time
 	var getCurrentTimeTask awsstepfunctions.IChainable
 
+	// create workflows for each launch template
 	for _, launchTemplate := range input.LaunchTemplatesMap {
 		workflow := createWorkflow(scope, CreateWorkflowInput{
 			LaunchTemplate:  launchTemplate.LaunchTemplate,
