@@ -8,8 +8,10 @@ import (
 
 // Main benchmark test function
 func TestBench(t *testing.T) {
-	depths := []int{0, 1, 10, 50, 100}
-	days := []int{1, 7, 30, 365}
+	// Delete the file if it exists
+	if err := deleteFileIfExists(); err != nil {
+		t.Fatal(err)
+	}
 
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "benchmark_test",
