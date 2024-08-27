@@ -30,6 +30,11 @@ tasks:
     cmds:
       - go build -gcflags "all=-N -l" -o ./.build/kwild ./cmd/kwild/main.go
 
+  build:benchmark:
+    desc: Build benchmark binaries
+    cmds:
+      - go test -v -c -timeout 0 ./internal/benchmark -o ./.build/benchmark
+
   kwild:
     desc: Run kwild server
     cmds:
