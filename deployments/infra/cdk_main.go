@@ -6,6 +6,7 @@ import (
 	"github.com/truflation/tsn-db/infra/config"
 	"github.com/truflation/tsn-db/infra/lib/utils"
 	"github.com/truflation/tsn-db/infra/stacks"
+	"github.com/truflation/tsn-db/infra/stacks/benchmark"
 )
 
 func main() {
@@ -39,7 +40,7 @@ func main() {
 		},
 	)
 
-	stacks.BenchmarkStack(
+	benchmark.BenchmarkStack(
 		app,
 		config.WithStackSuffix(app, "Benchmark"),
 		&awscdk.StackProps{
