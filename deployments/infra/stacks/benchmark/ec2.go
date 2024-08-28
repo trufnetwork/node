@@ -35,6 +35,7 @@ func createLaunchTemplate(scope constructs.Construct, input CreateLaunchTemplate
 		MachineImage:  awsec2.MachineImage_LatestAmazonLinux2(nil),
 		SecurityGroup: input.SecurityGroup,
 		KeyPair:       input.KeyPair,
+		Role:          input.IAMRole,
 		UserData:      awsec2.UserData_ForLinux(nil),
 	})
 
