@@ -20,9 +20,9 @@ type (
 		KeyPair       awsec2.IKeyPair
 	}
 	CreateLaunchTemplateOutput struct {
-		LaunchTemplate      awsec2.LaunchTemplate
-		InstanceType        awsec2.InstanceType
-		BenchmarkBinaryPath string
+		LaunchTemplate         awsec2.LaunchTemplate
+		InstanceType           awsec2.InstanceType
+		BenchmarkBinaryZipPath string
 	}
 )
 
@@ -57,6 +57,17 @@ func createLaunchTemplate(scope constructs.Construct, input CreateLaunchTemplate
 		panic("UserData is nil")
 	}
 
+	// install docker
+	userData.AddCommands(
+		*jsii.Strings(
+			"sudo yum update -y",
+			"sudo yum install -y docker",
+			"sudo service docker start",
+			"sudo usermod -a -G docker ec2-user",
+			"newgrp docker",
+		)...,
+	)
+
 	userData.AddCommands(
 		*jsii.Strings(
 			fmt.Sprintf("INSTANCE_TYPE=%s", *instanceType),
@@ -64,7 +75,7 @@ func createLaunchTemplate(scope constructs.Construct, input CreateLaunchTemplate
 		)...,
 	)
 
-	benchmarkBinaryPath := "/home/ec2-user/benchmark"
+	benchmarkBinaryZipPath := "/home/ec2-user/benchmark.zip"
 
 	// Check if S3 bucket name and object key are not nil
 	if input.BinaryS3Asset.S3BucketName() == nil || input.BinaryS3Asset.S3ObjectKey() == nil {
@@ -77,15 +88,15 @@ func createLaunchTemplate(scope constructs.Construct, input CreateLaunchTemplate
 			fmt.Sprintf("aws s3 cp s3://%s/%s %s",
 				*input.BinaryS3Asset.S3BucketName(),
 				*input.BinaryS3Asset.S3ObjectKey(),
-				benchmarkBinaryPath,
+				benchmarkBinaryZipPath,
 			),
-			fmt.Sprintf("chmod +x %s", benchmarkBinaryPath),
+			fmt.Sprintf("chmod +x %s", benchmarkBinaryZipPath),
 		)...,
 	)
 
 	return CreateLaunchTemplateOutput{
-		LaunchTemplate:      launchTemplate,
-		InstanceType:        input.InstanceType,
-		BenchmarkBinaryPath: benchmarkBinaryPath,
+		LaunchTemplate:         launchTemplate,
+		InstanceType:           input.InstanceType,
+		BenchmarkBinaryZipPath: benchmarkBinaryZipPath,
 	}
 }
