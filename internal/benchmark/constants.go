@@ -9,7 +9,6 @@ import (
 const (
 	RootStreamName       = "primitive"
 	ComposedStreamPrefix = "composed"
-	filePath             = "./benchmark_results.csv"
 )
 
 var (

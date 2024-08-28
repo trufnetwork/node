@@ -38,8 +38,8 @@ func BenchmarkStack(scope constructs.Construct, id string, props *awscdk.StackPr
 	testedInstances := []awsec2.InstanceType{
 		awsec2.InstanceType_Of(awsec2.InstanceClass_T3, awsec2.InstanceSize_MICRO),
 		awsec2.InstanceType_Of(awsec2.InstanceClass_T3, awsec2.InstanceSize_SMALL),
-		awsec2.InstanceType_Of(awsec2.InstanceClass_T3, awsec2.InstanceSize_MEDIUM),
-		awsec2.InstanceType_Of(awsec2.InstanceClass_T3, awsec2.InstanceSize_LARGE),
+		//awsec2.InstanceType_Of(awsec2.InstanceClass_T3, awsec2.InstanceSize_MEDIUM),
+		//awsec2.InstanceType_Of(awsec2.InstanceClass_T3, awsec2.InstanceSize_LARGE),
 	}
 
 	// default vpc

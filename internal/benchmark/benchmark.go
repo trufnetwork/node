@@ -2,12 +2,13 @@ package benchmark
 
 import (
 	"context"
+	"slices"
+	"time"
+
 	"github.com/kwilteam/kwil-db/core/utils"
 	"github.com/kwilteam/kwil-db/testing"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/truflation/tsn-sdk/core/util"
-	"slices"
-	"time"
 )
 
 // Benchmark case generation and execution
@@ -63,6 +64,7 @@ func runBenchmarkCase(ctx context.Context, platform *testing.Platform, c Benchma
 }
 
 type RunBenchmarkInput struct {
+	ResultPath string
 	Visibility util.VisibilityEnum
 	Depths     []int
 	Days       []int
@@ -92,6 +94,6 @@ func runBenchmark(input RunBenchmarkInput) func(ctx context.Context, platform *k
 
 		printResults(results)
 
-		return saveResults(results, filePath)
+		return saveResults(results, input.ResultPath)
 	}
 }

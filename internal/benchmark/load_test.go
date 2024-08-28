@@ -1,15 +1,23 @@
 package benchmark
 
 import (
+	"os"
+	"testing"
+
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/truflation/tsn-sdk/core/util"
-	"testing"
 )
 
 // Main benchmark test function
 func TestBench(t *testing.T) {
+	// try get resultPath from env
+	resultPath := os.Getenv("RESULTS_PATH")
+	if resultPath == "" {
+		resultPath = "./benchmark_results.csv"
+	}
+
 	// Delete the file if it exists
-	if err := deleteFileIfExists(); err != nil {
+	if err := deleteFileIfExists(resultPath); err != nil {
 		t.Fatal(err)
 	}
 
@@ -21,11 +29,13 @@ func TestBench(t *testing.T) {
 				Visibility: util.PublicVisibility,
 				Depths:     depths,
 				Days:       days,
+				ResultPath: resultPath,
 			}),
 			runBenchmark(RunBenchmarkInput{
 				Visibility: util.PrivateVisibility,
 				Depths:     depths,
 				Days:       days,
+				ResultPath: resultPath,
 			}),
 		},
 	})

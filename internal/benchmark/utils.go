@@ -4,6 +4,14 @@ import (
 	"context"
 	"encoding/csv"
 	"fmt"
+	"math/rand"
+	"os"
+	"runtime"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/cockroachdb/apd/v3"
 	"github.com/kwilteam/kwil-db/common"
 	kwiltypes "github.com/kwilteam/kwil-db/core/types"
@@ -12,13 +20,6 @@ import (
 	"github.com/truflation/tsn-db/internal/contracts"
 	"github.com/truflation/tsn-sdk/core/util"
 	"golang.org/x/exp/constraints"
-	"math/rand"
-	"os"
-	"runtime"
-	"slices"
-	"strconv"
-	"strings"
-	"time"
 )
 
 // getStreamId generates a StreamId based on the given depth.
@@ -227,7 +228,7 @@ func saveResults(results []Result, filePath string) error {
 	return nil
 }
 
-func deleteFileIfExists() error {
+func deleteFileIfExists(filePath string) error {
 	// Delete the CSV file if it exists
 	if _, err := os.Stat(filePath); err == nil {
 		if err = os.Remove(filePath); err != nil {
