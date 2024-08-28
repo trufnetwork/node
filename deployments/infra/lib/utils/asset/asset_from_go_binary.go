@@ -18,6 +18,8 @@ import (
 type BuildGoBinaryIntoS3AssetInput struct {
 	BinaryPath *string `validate:"required"`
 	BinaryName *string `validate:"required"`
+	// If true, the binary will be built as a test binary
+	IsTest bool
 }
 
 func BuildGoBinaryIntoS3Asset(scope constructs.Construct, id *string, input BuildGoBinaryIntoS3AssetInput) awss3assets.Asset {
@@ -34,66 +36,56 @@ func BuildGoBinaryIntoS3Asset(scope constructs.Construct, id *string, input Buil
 		// Use a custom bundling option to build the Go binary
 		Bundling: &awscdk.BundlingOptions{
 			Image: awscdk.DockerImage_FromRegistry(jsii.String("should-never-run-this-image")),
-			Local: NewLocalGoBundling(*input.BinaryPath, *input.BinaryName),
+			Local: NewLocalGoBundling(*input.BinaryPath, *input.BinaryName, input.IsTest),
 		},
 	})
 
 	return asset
 }
 
-type LocalGoBundling struct {
+// BaseLocalGoBundling is the common structure for both test and regular bundling
+type BaseLocalGoBundling struct {
 	binaryPath string
 	binaryName string
+	isTest     bool
 }
 
-var _ awscdk.ILocalBundling = &LocalGoBundling{}
+var _ awscdk.ILocalBundling = &BaseLocalGoBundling{}
 
-func (l *LocalGoBundling) TryBundle(outputDir *string, options *awscdk.BundlingOptions) *bool {
+func (b *BaseLocalGoBundling) TryBundle(outputDir *string, options *awscdk.BundlingOptions) *bool {
 	goCmd := "go"
-	// get args
-	buildArgs := []string{"build", "-o", filepath.Join(*outputDir, l.binaryName)}
+	var buildArgs []string
+	if b.isTest {
+		buildArgs = []string{"test", "-v", "-c", "-timeout", "0", b.binaryPath}
+	} else {
+		buildArgs = []string{"build"}
+	}
+	buildArgs = append(buildArgs, "-o", filepath.Join(*outputDir, b.binaryName))
 
-	// Add the source file path from the BundlingOptions
-	buildArgs = append(buildArgs, l.binaryPath)
-
-	// Set up environment variables
 	env := []string{
 		"GOOS=linux",
 		"GOARCH=amd64",
 		"CGO_ENABLED=0",
 	}
 
-	// include host go env vars
 	env = append(env, os.Environ()...)
 
-	// Merge with any environment variables from BundlingOptions
 	if options.Environment != nil {
 		for k, v := range *options.Environment {
 			env = append(env, fmt.Sprintf("%s=%s", k, *v))
 		}
 	}
 
-	// Execute the Go build command as a shell command
 	cmd := exec.Command(goCmd, buildArgs...)
 	cmd.Env = env
 
-	// Capture stdout and stderr
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	// Run the command
 	err := cmd.Run()
-	if err != nil {
+	if err != nil || cmd.ProcessState.ExitCode() != 0 {
 		log.Printf("Error building Go binary: %v\n", err)
-		log.Printf("Stdout: %s\n", stdout.String())
-		log.Printf("Stderr: %s\n", stderr.String())
-		return jsii.Bool(false)
-	}
-
-	// check if got exit status 0
-	if cmd.ProcessState.ExitCode() != 0 {
-		log.Printf("Go binary build failed\n")
 		log.Printf("Stdout: %s\n", stdout.String())
 		log.Printf("Stderr: %s\n", stderr.String())
 		return jsii.Bool(false)
@@ -105,9 +97,10 @@ func (l *LocalGoBundling) TryBundle(outputDir *string, options *awscdk.BundlingO
 	return jsii.Bool(true)
 }
 
-func NewLocalGoBundling(binaryPath string, binaryName string) *LocalGoBundling {
-	return &LocalGoBundling{
+func NewLocalGoBundling(binaryPath string, binaryName string, isTest bool) *BaseLocalGoBundling {
+	return &BaseLocalGoBundling{
 		binaryPath: binaryPath,
 		binaryName: binaryName,
+		isTest:     isTest,
 	}
 }
