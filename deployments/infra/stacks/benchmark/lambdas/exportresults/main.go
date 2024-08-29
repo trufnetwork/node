@@ -36,7 +36,12 @@ type Event struct {
 	KeyPrefix string `json:"keyPrefix"`
 }
 
+const markdownFilePath = "/tmp/results.md"
+
 func HandleRequest(ctx context.Context, event Event) error {
+	// delete if file exists. remember that lambdas can share the same filesystem accross multiple invocations1
+	cleanup()
+
 	log.Printf("Starting export process for bucket: %s, key: %s", event.Bucket, event.KeyPrefix)
 
 	reportTime, err := time.Parse("2006-01-02T15:04:05.000Z", event.KeyPrefix)
@@ -84,6 +89,8 @@ func HandleRequest(ctx context.Context, event Event) error {
 		log.Printf("Processing file %d/%d: %s", i+1, len(csvFiles), csvFile)
 		// get instance type from the key
 		instanceType := csvFile[strings.LastIndex(csvFile, "_")+1:]
+		// remove the .csv extension
+		instanceType = instanceType[:strings.LastIndex(instanceType, ".csv")]
 
 		if err != nil {
 			log.Printf("Error processing file %s: %v", csvFile, err)
@@ -113,7 +120,7 @@ func HandleRequest(ctx context.Context, event Event) error {
 			Results:      results,
 			CurrentDate:  reportTime,
 			InstanceType: instanceType,
-			FilePath:     "/tmp/results.md",
+			FilePath:     markdownFilePath,
 		})
 
 		if err != nil {
@@ -155,7 +162,7 @@ func HandleRequest(ctx context.Context, event Event) error {
 		return err
 	}
 
-	mergedFile, err := os.ReadFile("/tmp/results.md")
+	mergedFile, err := os.ReadFile(markdownFilePath)
 	if err != nil {
 		log.Printf("Error reading merged file: %v", err)
 		return err
@@ -185,6 +192,16 @@ func init() {
 	s3Client = s3.New(sess)
 	log.SetOutput(os.Stderr)
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.Lshortfile)
+}
+
+func cleanup() {
+	_, err := os.Stat(markdownFilePath)
+	if err == nil {
+		err = os.Remove(markdownFilePath)
+		if err != nil {
+			log.Printf("Error deleting file: %v", err)
+		}
+	}
 }
 
 func main() {
