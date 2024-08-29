@@ -57,7 +57,8 @@ func runBenchmarkCase(ctx context.Context, platform *testing.Platform, c Benchma
 		if c.Procedure == ProcedureGetChangeIndex {
 			args = append(args, 1) // change index accept an additional arg: $days_interval
 		}
-		if err := executeStreamProcedure(ctx, platform, nthDbId, string(c.Procedure), args); err != nil {
+		// we read using the reader address to be sure visibility is tested
+		if err := executeStreamProcedure(ctx, platform, nthDbId, string(c.Procedure), args, readerAddress.Bytes()); err != nil {
 			return Result{}, err
 		}
 		result.CaseDurations[i] = time.Since(start)

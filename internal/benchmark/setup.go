@@ -4,13 +4,14 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"strconv"
+
 	"github.com/kwilteam/kwil-db/common"
 	kwiltypes "github.com/kwilteam/kwil-db/core/types"
 	"github.com/kwilteam/kwil-db/core/utils"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/truflation/tsn-sdk/core/types"
 	"github.com/truflation/tsn-sdk/core/util"
-	"strconv"
 )
 
 type setupSchemaInput struct {
@@ -175,7 +176,7 @@ func insertRecordsForPrimitive(ctx context.Context, platform *kwilTesting.Platfo
 	records := generateRecords(fromDate, fixedDate)
 
 	for _, record := range records {
-		if err := executeStreamProcedure(ctx, platform, dbid, "insert_record", record); err != nil {
+		if err := executeStreamProcedure(ctx, platform, dbid, "insert_record", record, platform.Deployer); err != nil {
 			return err
 		}
 	}
@@ -203,5 +204,5 @@ func setTaxonomyForComposed(ctx context.Context, platform *kwilTesting.Platform,
 	}
 
 	return executeStreamProcedure(ctx, platform, dbid, "set_taxonomy",
-		[]any{dataProvidersArg, streamIdsArg, weightsArg})
+		[]any{dataProvidersArg, streamIdsArg, weightsArg}, platform.Deployer)
 }
