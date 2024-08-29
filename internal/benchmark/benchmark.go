@@ -20,8 +20,11 @@ func generateBenchmarkCases(input RunBenchmarkInput) []BenchmarkCase {
 		for _, day := range input.Days {
 			for _, procedure := range procedures {
 				cases = append(cases, BenchmarkCase{
-					Depth: depth, Days: day, Visibility: input.Visibility,
-					Procedure: procedure, Samples: samplesPerCase,
+					Depth:      depth,
+					Days:       day,
+					Visibility: input.Visibility,
+					Procedure:  procedure,
+					Samples:    samplesPerCase,
 				})
 			}
 		}

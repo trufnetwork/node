@@ -2,8 +2,11 @@ package benchexport
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"time"
+
+	"github.com/fbiville/markdown-table-formatter/pkg/markdown"
 
 	"golang.org/x/exp/slices"
 )
@@ -31,6 +34,8 @@ func SaveAsMarkdown(input SaveAsMarkdownInput) error {
 	depths = slices.Compact(depths)
 	days = slices.Compact(days)
 
+	log.Printf("Saving to %s", input.FilePath)
+
 	// Open the file in append mode, or create it if it doesn't exist
 	file, err := os.OpenFile(input.FilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -44,82 +49,130 @@ func SaveAsMarkdown(input SaveAsMarkdownInput) error {
 		return err
 	}
 
+	// check if all results have the same amount of samples. We proceed only if they are the same
+	sampleCount := make(map[int]int)
+	for _, result := range input.Results {
+		sampleCount[result.Samples]++
+	}
+	if len(sampleCount) > 1 {
+		return fmt.Errorf("results have different amount of samples")
+	}
+
 	// Write the header row only if the file is empty
 	if stat.Size() == 0 {
 		// Write the current date
 		date := input.CurrentDate.Format("2006-01-02 15:04:05")
 		_, err = file.WriteString(fmt.Sprintf("Date: %s\n\n## Dates x Depth\n\n", date))
+		// add how many samples
+		_, err = file.WriteString(fmt.Sprintf("Samples per query: %d\n", input.Results[0].Samples))
+		_, err = file.WriteString(fmt.Sprintf("Results in milliseconds\n\n"))
 		if err != nil {
 			return err
 		}
 	}
 
-	// Group results by [procedure][visibility]
-	groupedResults := make(map[string]map[string]map[int]map[int]int64)
+	// Group results by [instance_type][procedure][visibility]
+	groupedResults := make(map[string]map[string]map[string]map[int]map[int]int64)
 	for _, result := range input.Results {
+		instanceType := input.InstanceType
 		procedure := result.Procedure
 		visibility := result.Visibility
-		if _, ok := groupedResults[procedure]; !ok {
-			groupedResults[procedure] = make(map[string]map[int]map[int]int64)
+		if _, ok := groupedResults[instanceType]; !ok {
+			groupedResults[instanceType] = make(map[string]map[string]map[int]map[int]int64)
 		}
-		if _, ok := groupedResults[procedure][visibility]; !ok {
-			groupedResults[procedure][visibility] = make(map[int]map[int]int64)
+		if _, ok := groupedResults[instanceType][procedure]; !ok {
+			groupedResults[instanceType][procedure] = make(map[string]map[int]map[int]int64)
 		}
-		if _, ok := groupedResults[procedure][visibility][result.Days]; !ok {
-			groupedResults[procedure][visibility][result.Days] = make(map[int]int64)
+		if _, ok := groupedResults[instanceType][procedure][visibility]; !ok {
+			groupedResults[instanceType][procedure][visibility] = make(map[int]map[int]int64)
 		}
-		groupedResults[procedure][visibility][result.Days][result.Depth] = result.DurationMs
+		if _, ok := groupedResults[instanceType][procedure][visibility][result.Days]; !ok {
+			groupedResults[instanceType][procedure][visibility][result.Days] = make(map[int]int64)
+		}
+		groupedResults[instanceType][procedure][visibility][result.Days][result.Depth] = result.DurationMs
 	}
 
-	// Write markdown for each procedure and visibility combination
-	for procedure, visibilities := range groupedResults {
-		for visibility, daysMap := range visibilities {
-			if _, err = file.WriteString(fmt.Sprintf("%s - %s - %s\n\n", input.InstanceType, procedure, visibility)); err != nil {
-				return err
+	// Sort instance types to ensure consistent order
+	instanceTypes := make([]string, 0, len(groupedResults))
+	for instanceType := range groupedResults {
+		instanceTypes = append(instanceTypes, instanceType)
+	}
+	slices.Sort(instanceTypes)
+
+	// Write markdown for each instance type, procedure, and visibility combination
+	for _, instanceType := range instanceTypes {
+		if _, err = file.WriteString(fmt.Sprintf("### %s\n\n", instanceType)); err != nil {
+			return err
+		}
+
+		procedures := groupedResults[instanceType]
+
+		// sort procedures
+		proceduresKeys := make([]string, 0, len(procedures))
+		for procedure := range procedures {
+			proceduresKeys = append(proceduresKeys, procedure)
+		}
+		slices.Sort(proceduresKeys)
+
+		for _, procedure := range proceduresKeys {
+			visibilities := procedures[procedure]
+			visibilitiesKeys := make([]string, 0, len(visibilities))
+			for visibility := range visibilities {
+				visibilitiesKeys = append(visibilitiesKeys, visibility)
 			}
+			slices.Sort(visibilitiesKeys)
 
-			// Write table header
-			_, err = file.WriteString("| queried days / depth |")
+			for _, visibility := range visibilitiesKeys {
+				daysMap := visibilities[visibility]
 
-			if err != nil {
-				return err
-			}
-
-			for _, depth := range depths {
-				if _, err = file.WriteString(fmt.Sprintf(" %d |", depth)); err != nil {
+				// Write full information for each table
+				if _, err = file.WriteString(fmt.Sprintf("%s - %s - %s \n\n", instanceType, procedure, visibility)); err != nil {
 					return err
 				}
-			}
-			_, err = file.WriteString("\n|----------------------|")
-			if err != nil {
-				return err
-			}
-			for range depths {
-				if _, err = file.WriteString("---|"); err != nil {
-					return err
-				}
-			}
-			_, err = file.WriteString("\n")
-			if err != nil {
-				return err
-			}
 
-			// Write table rows
-			for _, day := range days {
-				row := fmt.Sprintf("| %d ", day)
+				// Create headers for the table
+				headers := []string{"queried days / depth"}
 				for _, depth := range depths {
-					if duration, ok := daysMap[day][depth]; ok {
-						row += fmt.Sprintf("| %d ", duration)
-					} else {
-						row += "|    "
+					headers = append(headers, fmt.Sprintf("%d", depth))
+				}
+
+				// Create a new table formatter
+				tableFormatter := markdown.NewTableFormatterBuilder().
+					WithPrettyPrint().
+					Build(headers...)
+
+				rows := make([][]string, 0)
+
+				// Add rows for each day
+				for _, day := range days {
+					exists := false
+					row := []string{fmt.Sprintf("%d", day)}
+					for _, depth := range depths {
+						if duration, ok := daysMap[day][depth]; ok {
+							row = append(row, fmt.Sprintf("%d", duration))
+							exists = true
+						} else {
+							row = append(row, "")
+						}
+					}
+					if exists {
+						rows = append(rows, row)
 					}
 				}
-				row += "|\n"
-				if _, err = file.WriteString(row); err != nil {
+
+				// Format the table
+				formattedTable, err := tableFormatter.Format(rows)
+				if err != nil {
+					return err
+				}
+
+				// Write the formatted table to the file
+				if _, err = file.WriteString(formattedTable + "\n\n"); err != nil {
 					return err
 				}
 			}
 
+			// Add an extra newline between procedures for better readability
 			if _, err = file.WriteString("\n"); err != nil {
 				return err
 			}
