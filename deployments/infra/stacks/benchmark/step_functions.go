@@ -109,6 +109,8 @@ func createStateMachine(scope constructs.Construct, input CreateStateMachineInpu
 	stateMachine := awsstepfunctions.NewStateMachine(scope, jsii.String("BenchmarkStateMachine"), &awsstepfunctions.StateMachineProps{
 		DefinitionBody: awsstepfunctions.DefinitionBody_FromChainable(benchmarkWorkflowChain),
 		Timeout:        awscdk.Duration_Minutes(jsii.Number(30)),
+		// <stackname>-benchmark
+		StateMachineName: jsii.String(fmt.Sprintf("%s-benchmark", *awscdk.Aws_STACK_NAME())),
 	})
 
 	return stateMachine

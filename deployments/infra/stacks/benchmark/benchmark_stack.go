@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
 	"github.com/aws/aws-cdk-go/awscdklambdagoalpha/v2"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
@@ -75,8 +76,15 @@ func BenchmarkStack(scope constructs.Construct, id string, props *awscdk.StackPr
 
 	// Add the ExportResults Lambda function
 	exportResultsLambda := awscdklambdagoalpha.NewGoFunction(stack, jsii.String("ExportResultsLambda"), &awscdklambdagoalpha.GoFunctionProps{
-		Entry:   jsii.String("./stacks/benchmark/lambdas/exportresults/main.go"),
+		Entry:   jsii.String("./stacks/benchmark/lambdas/exportresults"),
+		Runtime: awslambda.Runtime_PROVIDED_AL2023(),
 		Timeout: awscdk.Duration_Minutes(jsii.Number(5)),
+		Bundling: &awscdklambdagoalpha.BundlingOptions{
+			GoBuildFlags: &[]*string{
+				jsii.String("-ldflags \"-s -w\""),
+			},
+			Platform: jsii.String("linux/amd64"),
+		},
 	})
 
 	// grant the lambda function permission to write to the results bucket
