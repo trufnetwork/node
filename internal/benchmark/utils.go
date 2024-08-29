@@ -2,11 +2,9 @@ package benchmark
 
 import (
 	"context"
-	"encoding/csv"
 	"fmt"
 	"math/rand"
 	"os"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -17,6 +15,7 @@ import (
 	kwiltypes "github.com/kwilteam/kwil-db/core/types"
 	"github.com/kwilteam/kwil-db/parse"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
+	"github.com/truflation/tsn-db/internal/benchmark/benchexport"
 	"github.com/truflation/tsn-db/internal/contracts"
 	"github.com/truflation/tsn-sdk/core/util"
 	"golang.org/x/exp/constraints"
@@ -81,147 +80,19 @@ func Average[T constraints.Integer | constraints.Float](values []T) T {
 	return sum / T(len(values))
 }
 
-func saveAsCSV(results []Result, filePath string) error {
-	// Open the file in append mode, or create it if it doesn't exist
-	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	// Check if the file is empty to determine whether to write the header
-	stat, err := file.Stat()
-	if err != nil {
-		return err
-	}
-
-	// Create a new CSV writer
-	writer := csv.NewWriter(file)
-	defer writer.Flush()
-
-	// Write the header row only if the file is empty
-	if stat.Size() == 0 {
-		header := []string{"procedure", "depth", "n_of_dates", "duration_ms", "compose_visibility", "read_visibility"}
-		if err = writer.Write(header); err != nil {
-			return err
-		}
-	}
-
-	// Write each result
-	for _, result := range results {
-		row := []string{
-			string(result.Case.Procedure),                                       // procedure
-			strconv.Itoa(result.Case.Depth),                                     // depth
-			strconv.Itoa(result.Case.Days),                                      // n_of_dates
-			strconv.FormatInt(Average(result.CaseDurations).Milliseconds(), 10), // duration_ms
-			visibilityToString(result.Case.Visibility),                          // visibility
-		}
-		if err = writer.Write(row); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func saveAsMarkdown(results []Result, filePath string) error {
-	// Open the file in append mode, or create it if it doesn't exist
-	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	// Check if the file is empty to determine whether to write the header
-	stat, err := file.Stat()
-	if err != nil {
-		return err
-	}
-
-	// Write the header row only if the file is empty
-	if stat.Size() == 0 {
-		// Write the current date
-		date := time.Now().Format("2006-01-02")
-		_, err = file.WriteString(fmt.Sprintf("Date: %s\n\n## Dates x Depth\n\n", date))
-		if err != nil {
-			return err
-		}
-	}
-
-	// Group results by [procedure][visibility]
-	groupedResults := make(map[string]map[string]map[int]map[int]time.Duration)
-	for _, result := range results {
-		procedure := string(result.Case.Procedure)
-		visibility := visibilityToString(result.Case.Visibility)
-		if _, ok := groupedResults[procedure]; !ok {
-			groupedResults[procedure] = make(map[string]map[int]map[int]time.Duration)
-		}
-		if _, ok := groupedResults[procedure][visibility]; !ok {
-			groupedResults[procedure][visibility] = make(map[int]map[int]time.Duration)
-		}
-		if _, ok := groupedResults[procedure][visibility][result.Case.Days]; !ok {
-			groupedResults[procedure][visibility][result.Case.Days] = make(map[int]time.Duration)
-		}
-		groupedResults[procedure][visibility][result.Case.Days][result.Case.Depth] = Average(result.CaseDurations)
-	}
-
-	// Write markdown for each procedure and visibility combination
-	for procedure, visibilities := range groupedResults {
-		for visibility, daysMap := range visibilities {
-			//TODO: replace with instance type once we can get it from the platform
-			instanceType := runtime.GOOS + "_" + runtime.GOARCH
-			if _, err = file.WriteString(fmt.Sprintf("%s - %s - %s\n\n", instanceType, procedure, visibility)); err != nil {
-				return err
-			}
-
-			// Write table header
-			_, err = file.WriteString("| queried days / depth |")
-			for _, depth := range depths {
-				if _, err = file.WriteString(fmt.Sprintf(" %d |", depth)); err != nil {
-					return err
-				}
-			}
-			_, err = file.WriteString("\n|----------------------|")
-			for range depths {
-				if _, err = file.WriteString("---|"); err != nil {
-					return err
-				}
-			}
-			_, err = file.WriteString("\n")
-
-			// Write table rows
-			for _, day := range days {
-				row := fmt.Sprintf("| %d ", day)
-				for _, depth := range depths {
-					if duration, ok := daysMap[day][depth]; ok {
-						row += fmt.Sprintf("| %d ", duration.Milliseconds())
-					} else {
-						row += "|    "
-					}
-				}
-				row += "|\n"
-				if _, err = file.WriteString(row); err != nil {
-					return err
-				}
-			}
-
-			if _, err = file.WriteString("\n"); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
 func saveResults(results []Result, filePath string) error {
-	// Save as CSV
-	if err := saveAsCSV(results, filePath); err != nil {
-		return err
+	savedResults := make([]benchexport.SavedResults, len(results))
+	for i, r := range results {
+		savedResults[i] = benchexport.SavedResults{
+			Procedure:  string(r.Case.Procedure),                // procedure
+			Depth:      r.Case.Depth,                            // depth
+			Days:       r.Case.Days,                             // n_of_dates
+			DurationMs: Average(r.CaseDurations).Milliseconds(), // duration_ms
+			Visibility: visibilityToString(r.Case.Visibility),   // visibility
+		}
 	}
-
-	// Save as Markdown
-	if err := saveAsMarkdown(results, strings.Replace(filePath, ".csv", ".md", 1)); err != nil {
+	// Save as CSV
+	if err := benchexport.SaveOrAppendToCSV(savedResults, filePath); err != nil {
 		return err
 	}
 
