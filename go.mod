@@ -7,9 +7,9 @@ require (
 	github.com/aws/aws-sdk-go v1.54.4
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/cockroachdb/apd/v3 v3.2.1
-	github.com/kwilteam/kwil-db v0.8.4-0.20240807151754-7dc015c29267
-	github.com/kwilteam/kwil-db/core v0.2.2-0.20240807151754-7dc015c29267
-	github.com/kwilteam/kwil-db/parse v0.2.4-0.20240807151754-7dc015c29267
+	github.com/kwilteam/kwil-db v0.8.4-0.20240827162722-08719d472804
+	github.com/kwilteam/kwil-db/core v0.2.2-0.20240827162722-08719d472804
+	github.com/kwilteam/kwil-db/parse v0.2.4-0.20240827162722-08719d472804
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/truflation/tsn-sdk v0.1.1-0.20240820124358-fd3a36d9cc50
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56
