@@ -2,11 +2,11 @@ package benchexport
 
 import (
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 )
 
@@ -16,6 +16,7 @@ type SavedResults struct {
 	Days       int    `json:"days"`
 	DurationMs int64  `json:"duration_ms"`
 	Visibility string `json:"visibility"`
+	Samples    int    `json:"samples"`
 }
 
 // SaveOrAppendToCSV saves a slice of any struct type to a CSV file, using JSON tags for headers.
@@ -102,6 +103,7 @@ func getRowFromStruct(item interface{}) ([]string, error) {
 }
 
 // LoadCSV loads a slice of any struct type from a CSV file, using JSON tags for fields.
+// - gets the header from the first line of the CSV file, maps the header to the struct fields
 // - reads the CSV file and converts each row to a JSON string.
 // - unmarshals the JSON string to a struct.
 // - returns the slice of structs.
@@ -112,16 +114,80 @@ func LoadCSV[T any](reader io.Reader) ([]T, error) {
 		return nil, err
 	}
 
+	if len(records) < 1 {
+		return nil, fmt.Errorf("CSV file is empty")
+	}
+
 	var data []T
 
+	header := records[0]
+	records = records[1:]
+
+	headerMap := make(map[string]int)
+	for i, h := range header {
+		headerMap[h] = i
+	}
+
+	t := reflect.TypeOf((*T)(nil)).Elem()
+
 	for _, record := range records {
-		item := new(T)
-		jsonStr := "{" + strings.Join(record, ",") + "}"
-		if err := json.Unmarshal([]byte(jsonStr), item); err != nil {
-			return nil, err
+		item := reflect.New(t).Interface()
+		v := reflect.ValueOf(item).Elem()
+
+		for i := 0; i < t.NumField(); i++ {
+			field := t.Field(i)
+			tag := field.Tag.Get("json")
+			if tag == "" || tag == "-" {
+				continue
+			}
+			tagName := strings.Split(tag, ",")[0]
+
+			if index, ok := headerMap[tagName]; ok && index < len(record) {
+				value := record[index]
+				if err := setField(v.Field(i), value); err != nil {
+					return nil, fmt.Errorf("error setting field %s: %v", field.Name, err)
+				}
+			}
 		}
-		data = append(data, *item)
+
+		data = append(data, reflect.ValueOf(item).Elem().Interface().(T))
 	}
 
 	return data, nil
+}
+
+// setField sets the value of a struct field based on its type
+func setField(field reflect.Value, value string) error {
+	switch field.Kind() {
+	case reflect.String:
+		field.SetString(value)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		if intValue, err := strconv.ParseInt(value, 10, 64); err == nil {
+			field.SetInt(intValue)
+		} else {
+			return err
+		}
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		if uintValue, err := strconv.ParseUint(value, 10, 64); err == nil {
+			field.SetUint(uintValue)
+		} else {
+			return err
+		}
+	case reflect.Float32, reflect.Float64:
+		if floatValue, err := strconv.ParseFloat(value, 64); err == nil {
+			field.SetFloat(floatValue)
+		} else {
+			return err
+		}
+	case reflect.Bool:
+		if boolValue, err := strconv.ParseBool(value); err == nil {
+			field.SetBool(boolValue)
+		} else {
+			return err
+		}
+	default:
+		return fmt.Errorf("unsupported field type: %v", field.Kind())
+	}
+
+	return nil
 }
