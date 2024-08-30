@@ -2,6 +2,10 @@
 
 This directory contains benchmark tests for the Truflation Stream Network Database (TSN-DB), focusing on evaluating the performance impact of stream composition depth.
 
+This benchmark is part of a larger system used to evaluate TSN-DB performance across different environments and AWS EC2 instance types. The results from these tests are used to generate markdown reports for each instance, providing valuable insights into the system's performance under various conditions.
+
+For information on how to trigger these benchmarks and view the resulting reports, please refer to the [Getting Benchmarks](../../infra/docs/getting-benchmarks.md) documentation.
+
 ## Objective
 
 The primary goal of this benchmark is to identify the limits regarding the depth at which composed streams can be created and queried efficiently.
@@ -13,7 +17,7 @@ The primary goal of this benchmark is to identify the limits regarding the depth
 
 ## Benchmark Parameters
 
-The tests vary across several dimensions:
+The tests vary across several dimensions, [defined here](./constants.go):
 
 1. **Stream Depth**: 0, 1, 10, 50, 100
 2. **Time Range**: 1, 7, 30, 365 days
