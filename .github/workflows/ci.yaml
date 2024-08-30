@@ -32,7 +32,7 @@ jobs:
         uses: golangci/golangci-lint-action@v4
         with:
           # Require: The version of golangci-lint to use.
-          version: v1.54
+          version: v1.60.3
           args: --timeout=30m --issues-exit-code=0 --verbose
 
   acceptance-test:

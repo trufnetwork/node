@@ -60,7 +60,7 @@ func createAndInitializeSchema(ctx context.Context, platform *kwilTesting.Platfo
 		Procedure: "init",
 		Dataset:   utils.GenerateDBID(schema.Name, platform.Deployer),
 		Args:      []any{},
-		TransactionData: *&common.TransactionData{
+		TransactionData: common.TransactionData{
 			Signer: platform.Deployer,
 			TxID:   platform.Txid(),
 			Height: 1,

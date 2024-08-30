@@ -7,10 +7,12 @@ require (
 	github.com/aws/aws-sdk-go v1.54.4
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/cockroachdb/apd/v3 v3.2.1
+	github.com/fbiville/markdown-table-formatter v0.3.0
 	github.com/kwilteam/kwil-db v0.8.4-0.20240827162722-08719d472804
 	github.com/kwilteam/kwil-db/core v0.2.2-0.20240827162722-08719d472804
 	github.com/kwilteam/kwil-db/parse v0.2.4-0.20240827162722-08719d472804
 	github.com/mitchellh/mapstructure v1.5.0
+	github.com/stretchr/testify v1.9.0
 	github.com/truflation/tsn-sdk v0.1.1-0.20240820124358-fd3a36d9cc50
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56
 )
@@ -52,7 +54,6 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ethereum/c-kzg-4844 v1.0.2 // indirect
 	github.com/ethereum/go-ethereum v1.14.6 // indirect
-	github.com/fbiville/markdown-table-formatter v0.3.0 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/getsentry/sentry-go v0.27.0 // indirect
 	github.com/go-kit/kit v0.12.0 // indirect
@@ -123,7 +124,6 @@ require (
 	github.com/spf13/cobra v1.8.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/spf13/viper v1.18.2 // indirect
-	github.com/stretchr/testify v1.9.0 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/supranational/blst v0.3.12 // indirect
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7 // indirect

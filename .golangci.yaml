@@ -2,7 +2,7 @@ run:
   deadline: 10m
 
 output:
-  formats: github-actions,colored-line-number
+  formats: colored-line-number
 
 issues:
   exclude-dirs:

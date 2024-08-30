@@ -63,9 +63,15 @@ func SaveAsMarkdown(input SaveAsMarkdownInput) error {
 		// Write the current date
 		date := input.CurrentDate.Format("2006-01-02 15:04:05")
 		_, err = file.WriteString(fmt.Sprintf("Date: %s\n\n## Dates x Depth\n\n", date))
+		if err != nil {
+			return err
+		}
 		// add how many samples
 		_, err = file.WriteString(fmt.Sprintf("Samples per query: %d\n", input.Results[0].Samples))
-		_, err = file.WriteString(fmt.Sprintf("Results in milliseconds\n\n"))
+		if err != nil {
+			return err
+		}
+		_, err = file.WriteString("Results in milliseconds\n\n")
 		if err != nil {
 			return err
 		}
