@@ -115,6 +115,10 @@ cdk deploy --profile <YOUR-AWS-PROFILE> TSN-Benchmark-Stack-<environment> --excl
 
 Replace `<environment>` with your target environment (e.g., dev, staging, prod).
 
+### Usage
+
+See [Getting Benchmarks](./docs/getting-benchmarks.md) for more information.
+
 ## Important
 
 Always use these commands responsibly, especially in non-production environments. Remember to delete the stack after testing to avoid unnecessary AWS charges.
