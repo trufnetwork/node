@@ -1,0 +1,59 @@
+name: Deploy TSN Tools
+
+# this workflow should be deploying every TSN tool that needs to be deployed with `main` commits
+
+on:
+  workflow_dispatch:
+  push:
+      branches:
+      - main
+
+jobs:
+  deploy-benchmark:
+    name: Deploy Benchmark Stack
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          check-latest: true
+
+      - name: Install dependencies
+        env:
+          GH_ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          go work init
+          go work use .
+          go work use deployments/infra
+          go mod download
+          go work vendor
+
+      - name: Install Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: '18'
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY }}
+          aws-region: us-east-2
+
+      - name: Deploy Benchmark Stack
+        run: |
+          cd deployments/infra
+          cdk deploy --require-approval never Benchmark-staging-Stack \
+            --exclusively \
+            --context deploymentStage=STAGING
