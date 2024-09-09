@@ -8,13 +8,16 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/cockroachdb/apd/v3 v3.2.1
 	github.com/fbiville/markdown-table-formatter v0.3.0
-	github.com/kwilteam/kwil-db v0.8.4-0.20240904172400-17170099ef0f
-	github.com/kwilteam/kwil-db/core v0.2.2-0.20240904172400-17170099ef0f
-	github.com/kwilteam/kwil-db/parse v0.2.4-0.20240904172400-17170099ef0f
+	github.com/google/uuid v1.6.0
+	github.com/kwilteam/kwil-db v0.8.4-0.20240909231022-a5cba0c52918
+	github.com/kwilteam/kwil-db/core v0.2.2-0.20240731225936-dc8d6befe577
+	github.com/kwilteam/kwil-db/parse v0.2.4-0.20240807151754-7dc015c29267
 	github.com/mitchellh/mapstructure v1.5.0
+	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.9.0
 	github.com/truflation/tsn-sdk v0.1.1-0.20240820124358-fd3a36d9cc50
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56
+	golang.org/x/sync v0.7.0
 )
 
 require (
@@ -70,7 +73,6 @@ require (
 	github.com/google/flatbuffers v23.5.26+incompatible // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/orderedcode v0.0.1 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.1 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.1.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.19.1 // indirect
@@ -104,7 +106,6 @@ require (
 	github.com/olekukonko/tablewriter v0.0.6-0.20230925090304-df64c4bbad77 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect
 	github.com/petermattis/goid v0.0.0-20240503122002-4b96552b8156 // indirect
-	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_golang v1.14.0 // indirect
 	github.com/prometheus/client_model v0.3.0 // indirect
@@ -136,7 +137,6 @@ require (
 	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/crypto v0.25.0 // indirect
 	golang.org/x/net v0.27.0 // indirect
-	golang.org/x/sync v0.7.0 // indirect
 	golang.org/x/sys v0.22.0 // indirect
 	golang.org/x/text v0.16.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240509183442-62759503f434 // indirect
