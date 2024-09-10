@@ -71,7 +71,7 @@ func TestBench(t *testing.T) {
 		// testing 1 stream only
 		{1, 1},
 
-		// flat trees = cost of adding a new stream to our composed
+		//flat trees = cost of adding a new stream to our composed
 		{50, math.MaxInt},
 		{100, math.MaxInt},
 		{200, math.MaxInt},
@@ -160,7 +160,9 @@ func TestBench(t *testing.T) {
 					}()
 
 					if err == nil {
-						successResults = append(successResults, <-resultsCh...)
+						for result := range resultsCh {
+							successResults = append(successResults, result...)
+						}
 						// break the retries loop
 						break RetryFor
 					}
