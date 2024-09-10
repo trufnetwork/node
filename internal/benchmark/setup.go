@@ -39,70 +39,67 @@ func setupSchemas(
 		Node   trees.TreeNode
 	}
 
-	// we make schemas parsing separate from the rest because it takes too much time and can be done in parallel
-	var schemasAndNodes []schemaAndNode
+	// Create an unbuffered channel to process one schema at a time
+	schemaChan := make(chan schemaAndNode)
 
 	eg, grpCtx := errgroup.WithContext(ctx)
 
-	// Create a channel to safely collect results
-	resultChan := make(chan schemaAndNode, len(input.Tree.Nodes))
-
-	for _, node := range input.Tree.Nodes {
-		node := node // Create a new variable to avoid closure issues
-		eg.Go(func() error {
-			var schema *kwiltypes.Schema
-			var err error
-			if node.IsLeaf {
-				schema, err = parse.Parse(contracts.PrimitiveStreamContent)
-				if err != nil {
-					return errors.Wrap(err, "failed to parse primitive stream")
-				}
-			} else {
-				schema, err = parse.Parse(contracts.ComposedStreamContent)
-				if err != nil {
-					return errors.Wrap(err, "failed to parse composed stream")
-				}
-			}
-
-			schema.Name = getStreamId(node.Index).String()
+	// Producer goroutine to generate schemas
+	// it can be trying to create scheams asap, but consumer will block if it's not finished
+	eg.Go(func() error {
+		defer close(schemaChan)
+		for _, node := range input.Tree.Nodes {
 			select {
 			case <-grpCtx.Done():
 				return grpCtx.Err()
-			case resultChan <- schemaAndNode{
-				Schema: schema,
-				Node:   node,
-			}:
+			default:
+				var schema *kwiltypes.Schema
+				var err error
+				if node.IsLeaf {
+					schema, err = parse.Parse(contracts.PrimitiveStreamContent)
+				} else {
+					schema, err = parse.Parse(contracts.ComposedStreamContent)
+				}
+				if err != nil {
+					return errors.Wrap(err, "failed to parse stream")
+				}
+
+				schema.Name = getStreamId(node.Index).String()
+				select {
+				case schemaChan <- schemaAndNode{Schema: schema, Node: node}:
+				case <-grpCtx.Done():
+					return grpCtx.Err()
+				}
 			}
-			return nil
-		})
-	}
+		}
+		return nil
+	})
+
+	// Consumer goroutine to process schemas
+	// it can't be parallel because uses postgres pool under the hood
+	eg.Go(func() error {
+		for schema := range schemaChan {
+			if err := createAndInitializeSchema(grpCtx, platform, schema.Schema); err != nil {
+				return errors.Wrap(err, "failed to create and initialize schema")
+			}
+
+			if err := setupSchema(grpCtx, platform, schema.Schema, setupSchemaInput{
+				visibility: input.BenchmarkCase.Visibility,
+				treeNode:   schema.Node,
+				days:       380,
+				owner:      deployerAddress,
+			}); err != nil {
+				return errors.Wrap(err, "failed to setup schema")
+			}
+		}
+		return nil
+	})
 
 	// Wait for all goroutines to complete
 	if err := eg.Wait(); err != nil {
 		return err
 	}
 
-	// Collect results from the channel
-	close(resultChan)
-	schemasAndNodes = make([]schemaAndNode, 0, len(input.Tree.Nodes))
-	for result := range resultChan {
-		schemasAndNodes = append(schemasAndNodes, result)
-	}
-
-	for _, schema := range schemasAndNodes {
-		if err := createAndInitializeSchema(ctx, platform, schema.Schema); err != nil {
-			return errors.Wrap(err, "failed to create and initialize schema")
-		}
-
-		if err := setupSchema(ctx, platform, schema.Schema, setupSchemaInput{
-			visibility: input.BenchmarkCase.Visibility,
-			treeNode:   schema.Node,
-			days:       380, // to be sure we have more days to calculate change index
-			owner:      deployerAddress,
-		}); err != nil {
-			return errors.Wrap(err, "failed to setup schema")
-		}
-	}
 	return nil
 }
 
