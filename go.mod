@@ -15,7 +15,7 @@ require (
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.9.0
-	github.com/truflation/tsn-sdk v0.1.1-0.20240820124358-fd3a36d9cc50
+	github.com/truflation/tsn-sdk v0.1.1-0.20240911193915-8708610aabbc
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56
 	golang.org/x/sync v0.7.0
 )
