@@ -189,7 +189,7 @@ func createBenchmarkWorkflow(scope constructs.Construct, input CreateWorkflowInp
 				"CloudWatchOutputEnabled": true,
 			},
 			"Parameters": map[string]interface{}{
-				"executionTimeout": awsstepfunctions.JsonPath_Array(jsii.Sprintf("%d", TotalTimeout.Seconds())),
+				"executionTimeout": awsstepfunctions.JsonPath_Array(jsii.String(fmt.Sprintf("%d", int(TotalTimeout.Seconds())))),
 				"commands": awsstepfunctions.JsonPath_Array(
 					awsstepfunctions.JsonPath_Format(
 						jsii.String("aws s3 cp s3://{}/{} {}"),
