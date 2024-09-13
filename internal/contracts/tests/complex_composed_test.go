@@ -61,7 +61,7 @@ func WithTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platfo
 				| 2021-01-09 | 25   |      |      |
 				| 2021-01-10 |      |      | 30   |
 				| 2021-01-11 |      | 32   |      |
-				   | 2021-01-12 |      |      |      |
+				| 2021-01-12 |      |      |      |
 				| 2021-01-13 |      |      | 39   |
 				`,
 				primitiveStreamNames[0],
