@@ -387,6 +387,48 @@ func SetupPrimitiveFromMarkdown(ctx context.Context, input MarkdownPrimitiveSetu
 	return setupPrimitive(ctx, setup)
 }
 
+type InsertMarkdownDataInput struct {
+	Platform            *kwilTesting.Platform
+	Height              int64
+	PrimitiveStreamName string
+	MarkdownData        string
+}
+
+// InsertMarkdownData inserts data from a markdown table into a primitive stream
+func InsertMarkdownData(ctx context.Context, input InsertMarkdownDataInput) error {
+	table, err := TableFromMarkdown(input.MarkdownData)
+	if err != nil {
+		return err
+	}
+
+	primitiveStreamId := util.GenerateStreamId(input.PrimitiveStreamName)
+	dbid := utils.GenerateDBID(primitiveStreamId.String(), input.Platform.Deployer)
+
+	txid := input.Platform.Txid()
+
+	for _, row := range table.Rows {
+		date := row[0]
+		value := row[1]
+		if value == "" {
+			continue
+		}
+		_, err := input.Platform.Engine.Procedure(ctx, input.Platform.DB, &common.ExecutionData{
+			Procedure: "insert_record",
+			Dataset:   dbid,
+			Args:      []any{MustParseDate(date), value},
+			TransactionData: common.TransactionData{
+				Signer: input.Platform.Deployer,
+				TxID:   txid,
+				Height: input.Height,
+			},
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func MustParseDate(date string) civil.Date {
 	parsed, err := time.Parse("2006-01-02", date)
 	if err != nil {
