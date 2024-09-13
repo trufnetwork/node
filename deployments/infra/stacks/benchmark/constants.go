@@ -3,5 +3,5 @@ package benchmark
 import "time"
 
 const (
-	TotalTimeout = 6 * time.Hour
+	TotalTimeout = 48 * time.Hour
 )

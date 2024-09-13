@@ -177,7 +177,7 @@ func createBenchmarkWorkflow(scope constructs.Construct, input CreateWorkflowInp
 		// see shape at https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_SendCommand.html#API_SendCommand_ResponseSyntax
 		ResultPath: jsii.String("$.commandOutput"),
 		// the longest part is this
-		TaskTimeout: awsstepfunctions.Timeout_Duration(awscdk.Duration_Hours(jsii.Number(6))),
+		TaskTimeout: awsstepfunctions.Timeout_Duration(awscdk.Duration_Seconds(jsii.Number(TotalTimeout.Seconds()))),
 		Parameters: &map[string]interface{}{
 			"InstanceIds": awsstepfunctions.JsonPath_Array(
 				awsstepfunctions.JsonPath_StringAt(jsii.String("$.ec2Instance.InstanceId")),
@@ -189,7 +189,7 @@ func createBenchmarkWorkflow(scope constructs.Construct, input CreateWorkflowInp
 				"CloudWatchOutputEnabled": true,
 			},
 			"Parameters": map[string]interface{}{
-				"executionTimeout": awsstepfunctions.JsonPath_Array(jsii.Sprintf("%d", 6*60*60)),
+				"executionTimeout": awsstepfunctions.JsonPath_Array(jsii.String(fmt.Sprintf("%d", int(TotalTimeout.Seconds())))),
 				"commands": awsstepfunctions.JsonPath_Array(
 					awsstepfunctions.JsonPath_Format(
 						jsii.String("aws s3 cp s3://{}/{} {}"),

@@ -2,8 +2,11 @@ package tests
 
 import (
 	"context"
-	"fmt"
+	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
 	"testing"
+
+	"github.com/pkg/errors"
+	"github.com/truflation/tsn-sdk/core/util"
 
 	"github.com/kwilteam/kwil-db/common"
 	"github.com/kwilteam/kwil-db/core/types/decimal"
@@ -25,50 +28,28 @@ func TestIndexChange(t *testing.T) {
 
 func testIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		dbid := utils.GenerateDBID("primitive_stream_db_name", platform.Deployer)
+		streamName := "primitive_stream_db_name"
+		streamId := util.GenerateStreamId(streamName)
+		dbid := utils.GenerateDBID(streamId.String(), platform.Deployer)
 
-		// Initialize the contract
-		if _, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
-			Procedure: "init",
-			Dataset:   dbid,
-			Args:      []any{},
-			TransactionData: common.TransactionData{
-				Signer: platform.Deployer,
-				TxID:   platform.Txid(),
-				Height: 1,
-			},
+		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+			Platform:            platform,
+			Height:              0,
+			PrimitiveStreamName: streamName,
+			MarkdownData: `
+			| date       | value  |
+			|------------|--------|
+			| 2023-01-01 | 100.00 |
+			| 2023-01-02 | 102.00 |
+			| 2023-01-03 | 103.00 |
+			| 2023-01-04 | 101.00 |
+			# add a gap here just to test the logic
+			| 2023-01-06 | 106.00 |
+			| 2023-01-07 | 105.00 |
+			| 2023-01-08 | 108.00 |
+			`,
 		}); err != nil {
-			return err
-		}
-
-		// Insert 7 days of data
-		testData := []struct {
-			date  string
-			value string
-		}{
-			{"2023-01-01", "100.00"},
-			{"2023-01-02", "102.00"},
-			{"2023-01-03", "103.00"},
-			{"2023-01-04", "101.00"},
-			// add a gap here just to test the logic
-			{"2023-01-06", "106.00"},
-			{"2023-01-07", "105.00"},
-			{"2023-01-08", "108.00"},
-		}
-
-		for _, data := range testData {
-			if _, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
-				Procedure: "insert_record",
-				Dataset:   dbid,
-				Args:      []any{data.date, data.value},
-				TransactionData: common.TransactionData{
-					Signer: platform.Deployer,
-					TxID:   platform.Txid(),
-					Height: 0,
-				},
-			}); err != nil {
-				return err
-			}
+			return errors.Wrap(err, "error setting up primitive stream")
 		}
 
 		// Get index change for 7 days with 1 day interval
@@ -83,7 +64,7 @@ func testIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesti
 			},
 		})
 		if err != nil {
-			return err
+			return errors.Wrap(err, "error getting index change")
 		}
 
 		// Convert decimal.Decimal values to strings
@@ -120,12 +101,9 @@ func testIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesti
 
 func testYoYIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		dbid := utils.GenerateDBID("primitive_stream_db_name", platform.Deployer)
-
-		// Initialize the contract (reuse the initialization from testIndexChange)
-		if err := initializeContract(ctx, platform, dbid); err != nil {
-			return err
-		}
+		streamName := "primitive_stream_db_name"
+		streamId := util.GenerateStreamId(streamName)
+		dbid := utils.GenerateDBID(streamId.String(), platform.Deployer)
 
 		/*
 			Here’s an example calculation for corn inflation for May 22nd 2023:
@@ -138,19 +116,21 @@ func testYoYIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 		*/
 
 		// Insert test data for two years
-		testData := []struct {
-			date  string
-			value string
-		}{
-			{"2022-01-01", "100.00"},
-			{"2022-04-23", "102.00"}, // this should be used
-			{"2022-12-31", "105.00"},
-			{"2023-01-01", "106.00"}, // just adding to add volume
-			{"2023-05-01", "108.00"},
-		}
-
-		if err := insertTestData(ctx, platform, dbid, testData); err != nil {
-			return err
+		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+			Platform:            platform,
+			Height:              0,
+			PrimitiveStreamName: streamName,
+			MarkdownData: `
+        | date       | value  |
+        |------------|--------|
+        | 2022-01-01 | 100.00 |
+        | 2022-04-23 | 102.00 |
+        | 2022-12-31 | 105.00 |
+        | 2023-01-01 | 106.00 |
+        | 2023-05-01 | 108.00 |
+			`,
+		}); err != nil {
+			return errors.Wrap(err, "error setting up primitive stream")
 		}
 
 		// Test YoY calculation
@@ -165,7 +145,7 @@ func testYoYIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 			},
 		})
 		if err != nil {
-			return err
+			return errors.Wrap(err, "error getting index change")
 		}
 
 		results := make([][]struct {
@@ -183,7 +163,7 @@ func testYoYIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 		// Check if the date is correct
 		latestDate := result.Rows[0][0].(string)
 		if latestDate != "2023-05-01" {
-			return fmt.Errorf("incorrect latest date: got %s, expected 2023-05-01", latestDate)
+			return errors.Errorf("incorrect latest date: got %s, expected 2023-05-01", latestDate)
 		}
 
 		// 05-01 idx: 8%
@@ -193,46 +173,9 @@ func testYoYIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 		// check if 5.882 is in the result
 		latestYoyChange := results[0][0].value
 		if latestYoyChange != "5.882" {
-			return fmt.Errorf("incorrect latest yoy change: got %s, expected 5.882", latestYoyChange)
+			return errors.Errorf("incorrect latest yoy change: got %s, expected 5.882", latestYoyChange)
 		}
 
 		return nil
 	}
-}
-
-// Helper functions to keep the code DRY
-
-func initializeContract(ctx context.Context, platform *kwilTesting.Platform, dbid string) error {
-	_, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
-		Procedure: "init",
-		Dataset:   dbid,
-		Args:      []any{},
-		TransactionData: common.TransactionData{
-			Signer: platform.Deployer,
-			TxID:   platform.Txid(),
-			Height: 1,
-		},
-	})
-	return err
-}
-
-func insertTestData(ctx context.Context, platform *kwilTesting.Platform, dbid string, testData []struct {
-	date  string
-	value string
-}) error {
-	for _, data := range testData {
-		if _, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
-			Procedure: "insert_record",
-			Dataset:   dbid,
-			Args:      []any{data.date, data.value},
-			TransactionData: common.TransactionData{
-				Signer: platform.Deployer,
-				TxID:   platform.Txid(),
-				Height: 0,
-			},
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
 }

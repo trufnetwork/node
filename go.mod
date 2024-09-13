@@ -8,12 +8,14 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/cockroachdb/apd/v3 v3.2.1
 	github.com/fbiville/markdown-table-formatter v0.3.0
+	github.com/golang-sql/civil v0.0.0-20220223132316-b832511892a9
 	github.com/google/uuid v1.6.0
 	github.com/kwilteam/kwil-db v0.8.4-0.20240913154734-7663e98c0181
 	github.com/kwilteam/kwil-db/core v0.2.2-0.20240731225936-dc8d6befe577
 	github.com/kwilteam/kwil-db/parse v0.2.4-0.20240807151754-7dc015c29267
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/pkg/errors v0.9.1
+	github.com/samber/lo v1.47.0
 	github.com/stretchr/testify v1.9.0
 	github.com/truflation/tsn-sdk v0.1.1-0.20240911193915-8708610aabbc
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56
@@ -64,7 +66,6 @@ require (
 	github.com/go-logfmt/logfmt v0.6.0 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/golang-sql/civil v0.0.0-20220223132316-b832511892a9 // indirect
 	github.com/golang/glog v1.2.1 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
