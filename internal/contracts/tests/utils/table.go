@@ -64,5 +64,9 @@ func parseRow(row string) []string {
 	for i := range fields {
 		fields[i] = strings.TrimSpace(fields[i])
 	}
+	// If the last field starts with '#', remove it
+	if len(fields) > 0 && strings.HasPrefix(fields[len(fields)-1], "#") {
+		fields = fields[:len(fields)-1]
+	}
 	return fields
 }

@@ -101,7 +101,14 @@ func AssertResultRowsEqualMarkdownTable(t *testing.T, actual []ResultRow, markdo
 		t.Fatalf("error parsing expected markdown table: %v", err)
 	}
 
-	expected := expectedTable.Rows
+	// clear empty rows, because we won't get those from answer, but
+	// tests might include it just to be explicit about what is being tested
+	expected := [][]string{}
+	for _, row := range expectedTable.Rows {
+		if row[1] != "" {
+			expected = append(expected, row)
+		}
+	}
 
 	actualInStrings := [][]string{}
 	for _, row := range actual {
