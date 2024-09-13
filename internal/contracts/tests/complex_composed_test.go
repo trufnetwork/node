@@ -3,9 +3,10 @@ package tests
 import (
 	"context"
 	"fmt"
+	"github.com/truflation/tsn-db/internal/contracts/tests/utils/procedure"
+	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
+	"github.com/truflation/tsn-db/internal/contracts/tests/utils/table"
 	"testing"
-
-	testutils "github.com/truflation/tsn-db/internal/contracts/tests/utils"
 
 	"github.com/pkg/errors"
 	"github.com/truflation/tsn-sdk/core/util"
@@ -43,7 +44,7 @@ func WithTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platfo
 		platform.Deployer = deployerAddress.Bytes()
 
 		// Deploy the contracts here
-		err := testutils.SetupComposedFromMarkdown(ctx, testutils.MarkdownComposedSetupInput{
+		err := setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
 			Platform:           platform,
 			ComposedStreamName: composedStreamName,
 			Height:             1,
@@ -83,7 +84,7 @@ func testComplexComposedRecord(t *testing.T) func(ctx context.Context, platform 
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		composedDBID := utils.GenerateDBID(composedStreamId.String(), platform.Deployer)
 
-		result, err := testutils.GetRecord(ctx, testutils.GetRecordOrIndexInput{
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordOrIndexInput{
 			Platform: platform,
 			DBID:     composedDBID,
 			DateFrom: "2021-01-01",
@@ -111,7 +112,7 @@ func testComplexComposedRecord(t *testing.T) func(ctx context.Context, platform 
 		| 2021-01-13 | 34.333 |
 		`
 
-		testutils.AssertResultRowsEqualMarkdownTable(t, result, expected)
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
 
 		return nil
 	}
@@ -121,7 +122,7 @@ func testComplexComposedIndex(t *testing.T) func(ctx context.Context, platform *
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		composedDBID := utils.GenerateDBID(composedStreamId.String(), platform.Deployer)
 
-		result, err := testutils.GetIndex(ctx, testutils.GetRecordOrIndexInput{
+		result, err := procedure.GetIndex(ctx, procedure.GetRecordOrIndexInput{
 			Platform: platform,
 			DBID:     composedDBID,
 			DateFrom: "2021-01-01",
@@ -149,7 +150,7 @@ func testComplexComposedIndex(t *testing.T) func(ctx context.Context, platform *
 		| 2021-01-13 | 967.500 |
 		`
 
-		testutils.AssertResultRowsEqualMarkdownTable(t, result, expected)
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
 
 		return nil
 	}
@@ -159,7 +160,7 @@ func testComplexComposedLatestValue(t *testing.T) func(ctx context.Context, plat
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		composedDBID := utils.GenerateDBID(composedStreamId.String(), platform.Deployer)
 
-		result, err := testutils.GetRecord(ctx, testutils.GetRecordOrIndexInput{
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordOrIndexInput{
 			Platform: platform,
 			DBID:     composedDBID,
 			DateFrom: "2021-01-13",
@@ -176,7 +177,7 @@ func testComplexComposedLatestValue(t *testing.T) func(ctx context.Context, plat
 		| 2021-01-13 | 34.333 |
 		`
 
-		testutils.AssertResultRowsEqualMarkdownTable(t, result, expected)
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
 
 		return nil
 	}
@@ -186,7 +187,7 @@ func testComplexComposedEmptyDate(t *testing.T) func(ctx context.Context, platfo
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		composedDBID := utils.GenerateDBID(composedStreamId.String(), platform.Deployer)
 
-		result, err := testutils.GetRecord(ctx, testutils.GetRecordOrIndexInput{
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordOrIndexInput{
 			Platform: platform,
 			DBID:     composedDBID,
 			DateFrom: "2021-01-12",
@@ -203,7 +204,7 @@ func testComplexComposedEmptyDate(t *testing.T) func(ctx context.Context, platfo
 		| 2021-01-11 | 29.833 |
 		`
 
-		testutils.AssertResultRowsEqualMarkdownTable(t, result, expected)
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
 
 		return nil
 	}
@@ -213,7 +214,7 @@ func testComplexComposedIndexChange(t *testing.T) func(ctx context.Context, plat
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		composedDBID := utils.GenerateDBID(composedStreamId.String(), platform.Deployer)
 
-		result, err := testutils.GetIndexChange(ctx, testutils.GetIndexChangeInput{
+		result, err := procedure.GetIndexChange(ctx, procedure.GetIndexChangeInput{
 			Platform: platform,
 			DBID:     composedDBID,
 			DateFrom: "2021-01-02",
@@ -242,7 +243,7 @@ func testComplexComposedIndexChange(t *testing.T) func(ctx context.Context, plat
 		| 2021-01-13 | 18.349 |
 		`
 
-		testutils.AssertResultRowsEqualMarkdownTable(t, result, expected)
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
 
 		return nil
 	}
@@ -252,7 +253,7 @@ func testComplexComposedOutOfRange(t *testing.T) func(ctx context.Context, platf
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		composedDBID := utils.GenerateDBID(composedStreamId.String(), platform.Deployer)
 
-		result, err := testutils.GetRecord(ctx, testutils.GetRecordOrIndexInput{
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordOrIndexInput{
 			Platform: platform,
 			DBID:     composedDBID,
 			DateFrom: "2020-12-31",
@@ -278,7 +279,7 @@ func testComplexComposedInvalidDate(t *testing.T) func(ctx context.Context, plat
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		composedDBID := utils.GenerateDBID(composedStreamId.String(), platform.Deployer)
 
-		_, err := testutils.GetRecord(ctx, testutils.GetRecordOrIndexInput{
+		_, err := procedure.GetRecord(ctx, procedure.GetRecordOrIndexInput{
 			Platform: platform,
 			DBID:     composedDBID,
 			DateFrom: "invalid-date",

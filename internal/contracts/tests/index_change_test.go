@@ -2,10 +2,10 @@ package tests
 
 import (
 	"context"
+	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
 	"testing"
 
 	"github.com/pkg/errors"
-	testutils "github.com/truflation/tsn-db/internal/contracts/tests/utils"
 	"github.com/truflation/tsn-sdk/core/util"
 
 	"github.com/kwilteam/kwil-db/common"
@@ -32,7 +32,7 @@ func testIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesti
 		streamId := util.GenerateStreamId(streamName)
 		dbid := utils.GenerateDBID(streamId.String(), platform.Deployer)
 
-		if err := testutils.SetupPrimitiveFromMarkdown(ctx, testutils.MarkdownPrimitiveSetupInput{
+		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
 			Platform:            platform,
 			Height:              0,
 			PrimitiveStreamName: streamName,
@@ -116,7 +116,7 @@ func testYoYIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 		*/
 
 		// Insert test data for two years
-		if err := testutils.SetupPrimitiveFromMarkdown(ctx, testutils.MarkdownPrimitiveSetupInput{
+		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
 			Platform:            platform,
 			Height:              0,
 			PrimitiveStreamName: streamName,

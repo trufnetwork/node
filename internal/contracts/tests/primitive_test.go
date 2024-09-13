@@ -2,12 +2,14 @@ package tests
 
 import (
 	"context"
+	"github.com/truflation/tsn-db/internal/contracts/tests/utils/procedure"
+	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
+	"github.com/truflation/tsn-db/internal/contracts/tests/utils/table"
 	"testing"
 
 	"github.com/truflation/tsn-sdk/core/util"
 
 	"github.com/pkg/errors"
-	testutils "github.com/truflation/tsn-db/internal/contracts/tests/utils"
 
 	"github.com/kwilteam/kwil-db/core/utils"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
@@ -31,7 +33,7 @@ func TestPrimitiveStream(t *testing.T) {
 func WithPrimitiveTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Setup initial data
-		err := testutils.SetupPrimitiveFromMarkdown(ctx, testutils.MarkdownPrimitiveSetupInput{
+		err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
 			Platform:            platform,
 			PrimitiveStreamName: primitiveStreamName,
 			Height:              1,
@@ -59,7 +61,7 @@ func testInsertAndGetRecord(t *testing.T) func(ctx context.Context, platform *kw
 		dbid := utils.GenerateDBID(primitiveStreamId.String(), platform.Deployer)
 
 		// Get records
-		result, err := testutils.GetRecord(ctx, testutils.GetRecordOrIndexInput{
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordOrIndexInput{
 			Platform: platform,
 			DBID:     dbid,
 			DateFrom: "2021-01-01",
@@ -80,7 +82,7 @@ func testInsertAndGetRecord(t *testing.T) func(ctx context.Context, platform *kw
 		| 2021-01-05 | 3.000 |
 		`
 
-		testutils.AssertResultRowsEqualMarkdownTable(t, result, expected)
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
 
 		return nil
 	}
@@ -90,7 +92,7 @@ func testGetIndex(t *testing.T) func(ctx context.Context, platform *kwilTesting.
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		dbid := utils.GenerateDBID(primitiveStreamId.String(), platform.Deployer)
 
-		result, err := testutils.GetIndex(ctx, testutils.GetRecordOrIndexInput{
+		result, err := procedure.GetIndex(ctx, procedure.GetRecordOrIndexInput{
 			Platform: platform,
 			DBID:     dbid,
 			DateFrom: "2021-01-01",
@@ -111,7 +113,7 @@ func testGetIndex(t *testing.T) func(ctx context.Context, platform *kwilTesting.
 		| 2021-01-05 | 300.000 |
 		`
 
-		testutils.AssertResultRowsEqualMarkdownTable(t, result, expected)
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
 
 		return nil
 	}
@@ -121,7 +123,7 @@ func testGetIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		dbid := utils.GenerateDBID(primitiveStreamId.String(), platform.Deployer)
 
-		result, err := testutils.GetIndexChange(ctx, testutils.GetIndexChangeInput{
+		result, err := procedure.GetIndexChange(ctx, procedure.GetIndexChangeInput{
 			Platform: platform,
 			DBID:     dbid,
 			DateFrom: "2021-01-01",
@@ -142,7 +144,7 @@ func testGetIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 		| 2021-01-05 | -40.000 |
 		`
 
-		testutils.AssertResultRowsEqualMarkdownTable(t, result, expected)
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
 
 		return nil
 	}

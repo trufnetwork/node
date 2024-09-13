@@ -2,9 +2,11 @@ package tests
 
 import (
 	"context"
+	"github.com/truflation/tsn-db/internal/contracts/tests/utils/procedure"
+	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
+	"github.com/truflation/tsn-db/internal/contracts/tests/utils/table"
 	"testing"
 
-	"github.com/truflation/tsn-db/internal/contracts/tests/utils"
 	"github.com/truflation/tsn-sdk/core/util"
 
 	"github.com/kwilteam/kwil-db/core/utils"
@@ -38,7 +40,7 @@ func testComposedLastAvailable(t *testing.T) func(ctx context.Context, platform 
 		composedDBID := utils.GenerateDBID(composedStreamId.String(), platform.Deployer)
 
 		// Setup data for the test
-		err := testutils.SetupComposedFromMarkdown(ctx, testutils.MarkdownComposedSetupInput{
+		err := setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
 			Platform:           platform,
 			ComposedStreamName: composedStreamName,
 			Height:             1,
@@ -56,7 +58,7 @@ func testComposedLastAvailable(t *testing.T) func(ctx context.Context, platform 
 			return errors.Wrap(err, "error setting up last available test data")
 		}
 
-		result, err := testutils.GetRecord(ctx, testutils.GetRecordOrIndexInput{
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordOrIndexInput{
 			Platform: platform,
 			DBID:     composedDBID,
 			DateFrom: "2024-08-29",
@@ -76,7 +78,7 @@ func testComposedLastAvailable(t *testing.T) func(ctx context.Context, platform 
 		| 2024-09-01 | 2.333  | # 1 & 2 & 3
 		`
 
-		testutils.AssertResultRowsEqualMarkdownTable(t, result, expected)
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
 
 		return nil
 	}
@@ -87,7 +89,7 @@ func testComposedNoPastData(t *testing.T) func(ctx context.Context, platform *kw
 		composedDBID := utils.GenerateDBID(composedStreamId.String(), platform.Deployer)
 
 		// Setup data for the test
-		err := testutils.SetupComposedFromMarkdown(ctx, testutils.MarkdownComposedSetupInput{
+		err := setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
 			Platform:           platform,
 			ComposedStreamName: composedStreamName,
 			Height:             1,
@@ -104,7 +106,7 @@ func testComposedNoPastData(t *testing.T) func(ctx context.Context, platform *kw
 			return errors.Wrap(err, "error setting up no past data test")
 		}
 
-		result, err := testutils.GetRecord(ctx, testutils.GetRecordOrIndexInput{
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordOrIndexInput{
 			Platform: platform,
 			DBID:     composedDBID,
 			DateFrom: "2024-08-30",
@@ -123,7 +125,7 @@ func testComposedNoPastData(t *testing.T) func(ctx context.Context, platform *kw
 		| 2024-09-01 | 2.333  | # 1 & 2 & 3
 		`
 
-		testutils.AssertResultRowsEqualMarkdownTable(t, result, expected)
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
 
 		return nil
 	}
