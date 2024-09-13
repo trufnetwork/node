@@ -913,8 +913,15 @@ procedure get_index_change($date_from text, $date_to text, $frozen_at int, $days
             for $selector in $real_prev_date_idx..array_length($real_prev_dates) {
                 // if next real prev date is greater than expected prev date (or null), then we need to use the current real value
                 if $real_prev_dates[$selector + 1] > $expected_prev_dates[$expected_prev_date_idx] OR $real_prev_dates[$selector + 1] IS NULL {
+                    // if the current real prev date is already greater than expected prev date
+                    // we use NULL. We're probably before the first real prev date here
+                    if $real_prev_dates[$selector] > $expected_prev_dates[$expected_prev_date_idx] {
+                        $result_prev_dates := array_append($result_prev_dates, null::text);
+                        $result_prev_values := array_append($result_prev_values, null::decimal(21,3));
+                    } else {
                     $result_prev_dates := array_append($result_prev_dates, $real_prev_dates[$selector]);
                     $result_prev_values := array_append($result_prev_values, $real_prev_values[$selector]);
+                    }
                     // we already appended one for current $real_prev_date_idx, then we need to go to next
                     $real_prev_date_idx := $selector;
                     break;
@@ -934,7 +941,8 @@ procedure get_index_change($date_from text, $date_to text, $frozen_at int, $days
     // calculate the index change
     if array_length($result_prev_dates) > 0 {
         for $row_result in 1..array_length($result_prev_dates) {
-            if $result_prev_values[$row_result] != 0::decimal(21,3) {
+            // if the expected_prev_date is null, then we don't have a real prev date
+            if $result_prev_dates[$row_result] IS DISTINCT FROM NULL {
                 return next $current_dates[$row_result], ($current_values[$row_result] - $result_prev_values[$row_result]) * 100.00::decimal(21,3) / $result_prev_values[$row_result];
             }
         }
