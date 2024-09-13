@@ -9,7 +9,7 @@ require (
 	github.com/cockroachdb/apd/v3 v3.2.1
 	github.com/fbiville/markdown-table-formatter v0.3.0
 	github.com/google/uuid v1.6.0
-	github.com/kwilteam/kwil-db v0.8.4-0.20240909231022-a5cba0c52918
+	github.com/kwilteam/kwil-db v0.8.4-0.20240913154734-7663e98c0181
 	github.com/kwilteam/kwil-db/core v0.2.2-0.20240731225936-dc8d6befe577
 	github.com/kwilteam/kwil-db/parse v0.2.4-0.20240807151754-7dc015c29267
 	github.com/mitchellh/mapstructure v1.5.0
