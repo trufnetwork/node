@@ -1,12 +1,13 @@
 package stacks
 
 import (
+	"strings"
+
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/config"
 	"github.com/truflation/tsn-db/infra/lib/tsn/cluster"
-	"strings"
 )
 
 type TsnFromConfigStackProps struct {

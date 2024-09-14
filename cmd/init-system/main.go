@@ -3,64 +3,54 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
+	"time"
+
 	"github.com/aws/aws-lambda-go/cfn"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/cloudformation"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/ssm"
+	"github.com/caarlos0/env/v11"
 	"github.com/mitchellh/mapstructure"
 	init_system_contract "github.com/truflation/tsn-db/internal/init-system-contract"
-	"io"
-	"log"
-	"time"
 )
 
 // DeployContractResourceProperties represents the properties of the custom resource
 // must match what is described on our defined CustomResource
-type DeployContractResourceProperties struct {
-	PrivateKeySSMId      string `json:"PrivateKeySSMId"`
-	ProviderUrl          string `json:"ProviderUrl"`
-	SystemContractBucket string `json:"SystemContractBucket"`
-	SystemContractKey    string `json:"SystemContractKey"`
-	UpdateHash           string `json:"UpdateHash"`
+type DeployContractEnvVariables struct {
+	PrivateKeySSMId      string `env:"PRIVATE_KEY_SSM_ID,required"`
+	ProviderUrl          string `env:"PROVIDER_URL,required"`
+	SystemContractBucket string `env:"SYSTEM_CONTRACT_BUCKET,required"`
+	SystemContractKey    string `env:"SYSTEM_CONTRACT_KEY,required"`
+	UpdateHash           string `env:"UPDATE_HASH,required"`
 }
 
 var ssmClient *ssm.SSM
 var s3Client *s3.S3
-var cfnClient *cloudformation.CloudFormation
 
 func HandleRequest(ctx context.Context, event cfn.Event) (string, error) {
-	// we handle the request type for the resource
-	// we only act uppon resource creation and updates
-	switch event.RequestType {
-	case cfn.RequestCreate, cfn.RequestUpdate:
-		break
-	case cfn.RequestDelete:
-		return "Delete is not implemented for this resource", nil
-	default:
-		return "", fmt.Errorf("unknown request type %s", event.RequestType)
-	}
-	var props DeployContractResourceProperties
+	var envVars DeployContractEnvVariables
 
-	if shouldSkipUpdate(ctx, event) {
-		return "No action taken", nil
+	// Use the envconfig library to decode environment variables
+	if err := env.Parse(&envVars); err != nil {
+		return "", fmt.Errorf("failed to process environment variables: %w", err)
 	}
 
-	if err := mapstructure.Decode(event.ResourceProperties, &props); err != nil {
+	if err := mapstructure.Decode(event.ResourceProperties, &envVars); err != nil {
 		return "", fmt.Errorf("failed to decode event.ResourceProperties: %w", err)
 	}
 
 	// Read the private key from SSM
 	// TODO use decryption with KMS
-	privateKey, err := getSSMParameter(ctx, props.PrivateKeySSMId)
+	privateKey, err := getSSMParameter(ctx, envVars.PrivateKeySSMId)
 	if err != nil {
 		return "", fmt.Errorf("failed to read private key from SSM: %w", err)
 	}
 
 	// Read the system contract content from S3
-	systemContractContent, err := readS3Object(props.SystemContractBucket, props.SystemContractKey)
+	systemContractContent, err := readS3Object(envVars.SystemContractBucket, envVars.SystemContractKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to read system contract content from S3: %w", err)
 	}
@@ -69,7 +59,7 @@ func HandleRequest(ctx context.Context, event cfn.Event) (string, error) {
 	options := init_system_contract.InitSystemContractOptions{
 		RetryTimeout:          15 * time.Minute,
 		PrivateKey:            privateKey,
-		ProviderUrl:           props.ProviderUrl,
+		ProviderUrl:           envVars.ProviderUrl,
 		SystemContractContent: systemContractContent,
 	}
 
@@ -89,7 +79,6 @@ func main() {
 
 	ssmClient = ssm.New(sess)
 	s3Client = s3.New(sess)
-	cfnClient = cloudformation.New(sess)
 
 	lambda.Start(HandleRequest)
 }
@@ -122,58 +111,4 @@ func readS3Object(bucket string, key string) (string, error) {
 	}
 
 	return string(systemContractContent), nil
-}
-
-func shouldSkipUpdate(ctx context.Context, event cfn.Event) bool {
-	// if is rollback update, we skip the update
-	if isRollbackUpdate(ctx, event) {
-		log.Printf("Rollback update detected, no action taken")
-		return true
-	}
-
-	// if the update hash has not changed, and it's an update, we skip the update
-	if event.RequestType == cfn.RequestUpdate && !updateHashChanged(event) {
-		log.Printf("Update did not change, no action taken")
-		return true
-	}
-
-	return false
-}
-
-func isRollbackUpdate(ctx context.Context, event cfn.Event) bool {
-	if event.RequestType == cfn.RequestUpdate {
-		stackEvents, err := cfnClient.DescribeStackEventsWithContext(ctx, &cloudformation.DescribeStackEventsInput{
-			StackName: &event.StackID,
-		})
-		if err != nil {
-			fmt.Printf("Error fetching stack events: %v\n", err)
-			return false
-		}
-
-		for _, stackEvent := range stackEvents.StackEvents {
-			if stackEvent.ResourceStatus != nil {
-				status := *stackEvent.ResourceStatus
-				if status == cloudformation.ResourceStatusUpdateRollbackInProgress ||
-					status == cloudformation.ResourceStatusUpdateRollbackComplete ||
-					status == cloudformation.ResourceStatusUpdateRollbackFailed {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-func updateHashChanged(event cfn.Event) bool {
-	oldProps := DeployContractResourceProperties{}
-	if err := mapstructure.Decode(event.OldResourceProperties, &oldProps); err != nil {
-		fmt.Printf("Failed to decode event.OldResourceProperties: %v\n", err)
-		return true
-	}
-	newProps := DeployContractResourceProperties{}
-	if err := mapstructure.Decode(event.ResourceProperties, &newProps); err != nil {
-		fmt.Printf("Failed to decode event.ResourceProperties: %v\n", err)
-		return true
-	}
-	return oldProps.UpdateHash != newProps.UpdateHash
 }

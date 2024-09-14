@@ -13,6 +13,7 @@ import (
 )
 
 type NewTSNInstanceInput struct {
+	Index                 int
 	Id                    string
 	Role                  awsiam.IRole
 	Vpc                   awsec2.IVpc
@@ -27,19 +28,17 @@ type NewTSNInstanceInput struct {
 }
 
 type TSNInstance struct {
-	Instance       awsec2.Instance
+	Index          int
+	LaunchTemplate awsec2.LaunchTemplate
 	SecurityGroup  awsec2.ISecurityGroup
 	Role           awsiam.IRole
+	ElasticIp      awsec2.CfnEIP
 	PeerConnection peer2.TSNPeer
 }
 
 func NewTSNInstance(scope constructs.Construct, input NewTSNInstanceInput) TSNInstance {
 	name := "TSN-Instance-" + input.Id
-
-	subnetType := awsec2.SubnetType_PUBLIC
-	//if config.DeploymentStage(scope) == config.DeploymentStage_PROD {
-	//	subnetType = awsec2.SubnetType_PRIVATE_WITH_NAT
-	//}
+	index := input.Index
 
 	defaultInstanceUser := jsii.String("ec2-user")
 
@@ -73,17 +72,13 @@ func NewTSNInstance(scope constructs.Construct, input NewTSNInstanceInput) TSNIn
 	}
 
 	AWSLinux2MachineImage := awsec2.MachineImage_LatestAmazonLinux2(nil)
-	instance := awsec2.NewInstance(scope, jsii.String(name), &awsec2.InstanceProps{
-		InstanceType: awsec2.InstanceType_Of(awsec2.InstanceClass_T3, instanceSize),
-		Init:         initData,
-		MachineImage: AWSLinux2MachineImage,
-		Vpc:          input.Vpc,
-		VpcSubnets: &awsec2.SubnetSelection{
-			SubnetType: subnetType,
-		},
-		SecurityGroup: input.SecurityGroup,
-		Role:          input.Role,
-		KeyPair:       input.KeyPair,
+	tsnLaunchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String(name), &awsec2.LaunchTemplateProps{
+		InstanceType:       awsec2.InstanceType_Of(awsec2.InstanceClass_T3, instanceSize),
+		MachineImage:       AWSLinux2MachineImage,
+		SecurityGroup:      input.SecurityGroup,
+		Role:               input.Role,
+		KeyPair:            input.KeyPair,
+		LaunchTemplateName: jsii.String(name),
 		BlockDevices: &[]*awsec2.BlockDevice{
 			{
 				DeviceName: jsii.String("/dev/sda1"),
@@ -95,22 +90,28 @@ func NewTSNInstance(scope constructs.Construct, input NewTSNInstanceInput) TSNIn
 		},
 	})
 
-	instance.AddUserData(
+	initData.Attach(tsnLaunchTemplate.Node().DefaultChild().(awsec2.CfnLaunchTemplate), &awsec2.AttachInitOptions{
+		InstanceRole: input.Role,
+		UserData:     tsnLaunchTemplate.UserData(),
+		Platform:     awsec2.OperatingSystemType_LINUX,
+	})
+
+	tsnLaunchTemplate.UserData().AddCommands(
 		utils.MountVolumeToPathAndPersist("nvme1n1", "/data")...,
 	)
-	instance.AddUserData(utils.MoveToPath(initAssetsDir+"*", mountDataDir))
+	tsnLaunchTemplate.UserData().AddCommands(utils.MoveToPath(initAssetsDir+"*", mountDataDir))
 
 	node := TSNInstance{
-		Instance:       instance,
+		LaunchTemplate: tsnLaunchTemplate,
 		SecurityGroup:  input.SecurityGroup,
 		Role:           input.Role,
 		PeerConnection: input.PeerConnection,
+		Index:          index,
 	}
 
-	AddTsnDbStartupScriptsToInstance(AddStartupScriptsOptions{
+	scripts := TsnDbStartupScripts(AddStartupScriptsOptions{
 		currentPeer:        input.PeerConnection,
 		allPeers:           input.AllPeerConnections,
-		Instance:           instance,
 		Region:             input.Vpc.Env().Region,
 		TsnImageAsset:      input.TSNDockerImageAsset,
 		DataDirPath:        jsii.String(mountDataDir),
@@ -118,6 +119,8 @@ func NewTSNInstance(scope constructs.Construct, input NewTSNInstanceInput) TSNIn
 		TsnComposePath:     jsii.String(mountDataDir + tsnComposeFile),
 		TsnConfigImagePath: jsii.String(mountDataDir + tsnConfigImageFile),
 	})
+
+	tsnLaunchTemplate.UserData().AddCommands(scripts)
 
 	return node
 }

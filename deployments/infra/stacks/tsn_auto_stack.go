@@ -24,7 +24,6 @@ func TsnAutoStack(scope constructs.Construct, id string, props *TsnAutoStackProp
 		certStackExports: props.CertStackExports,
 		clusterProvider: cluster.AutoTsnClusterProvider{
 			NumberOfNodes: config.NumOfNodes(stack),
-			IdHash:        config.GetEnvironmentVariables[config.AutoStackEnvironmentVariables](stack).RestartHash,
 		},
 	})
 }

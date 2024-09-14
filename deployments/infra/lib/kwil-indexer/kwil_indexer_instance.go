@@ -23,8 +23,6 @@ type NewIndexerInstanceInput struct {
 	IndexerDirAsset awss3assets.Asset
 	HostedZone      awsroute53.IHostedZone
 	Domain          *string
-	// Controls the restart of the instance when the hash changes.
-	IdHash string
 }
 
 type IndexerInstance struct {
@@ -115,7 +113,7 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 
 	// comes with pre-installed cloud init requirements
 	AWSLinux2MachineImage := awsec2.MachineImage_LatestAmazonLinux2(nil)
-	instance := awsec2.NewInstance(scope, jsii.String("IndexerInstance"+input.IdHash), &awsec2.InstanceProps{
+	instance := awsec2.NewInstance(scope, jsii.String("IndexerInstance"), &awsec2.InstanceProps{
 		InstanceType: awsec2.InstanceType_Of(awsec2.InstanceClass_T3, indexerInstanceSize),
 		Init:         initData,
 		MachineImage: AWSLinux2MachineImage,

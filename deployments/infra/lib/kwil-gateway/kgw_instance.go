@@ -24,8 +24,6 @@ type NewKGWInstanceInput struct {
 	KGWBinaryAsset utils.S3Object
 	Vpc            awsec2.IVpc
 	Config         KGWConfig
-	// Controls the restart of the instance when the hash changes.
-	IdHash string
 }
 
 type KGWInstance struct {
@@ -88,7 +86,7 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 
 	// comes with pre-installed cloud init requirements
 	AWSLinux2MachineImage := awsec2.MachineImage_LatestAmazonLinux2(nil)
-	instance := awsec2.NewInstance(scope, jsii.String("KGWInstance"+input.IdHash), &awsec2.InstanceProps{
+	instance := awsec2.NewInstance(scope, jsii.String("KGWInstance"), &awsec2.InstanceProps{
 		InstanceType: awsec2.InstanceType_Of(awsec2.InstanceClass_T3, awsec2.InstanceSize_SMALL),
 		Init:         initData,
 		MachineImage: AWSLinux2MachineImage,

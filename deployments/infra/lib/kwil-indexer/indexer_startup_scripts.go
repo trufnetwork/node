@@ -2,12 +2,13 @@ package kwil_indexer_instance
 
 import (
 	"fmt"
+	"strconv"
+
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/lib/kwil-network/peer"
 	"github.com/truflation/tsn-db/infra/lib/tsn"
 	"github.com/truflation/tsn-db/infra/lib/utils"
-	"strconv"
 )
 
 type IndexerEnvConfig struct {
@@ -46,12 +47,13 @@ func AddKwilIndexerStartupScriptsToInstance(options AddKwilIndexerStartupScripts
 
 	setupScript := `#!/bin/bash
 set -e
-set -x 
+set -x
+`
 
-` + setupDockerScript + `
+	setupScript += utils.InstallDockerScript() + "\n"
+	setupScript += utils.ConfigureDockerDataRoot("/data/docker") + "\n"
 
-
-# Extract the indexer files
+	setupScript += `# Extract the indexer files
 unzip ` + *options.indexerZippedDirPath + ` -d /home/ec2-user/indexer
 
 cat <<EOF > /etc/systemd/system/kwil-indexer.service
@@ -79,25 +81,3 @@ systemctl start kwil-indexer.service
 
 	options.IndexerInstance.AddUserData(jsii.String(setupScript))
 }
-
-const setupDockerScript = `
-# Update the system
-yum update -y
-
-# Install Docker
-amazon-linux-extras install docker
-
-# Start Docker and enable it to start at boot
-systemctl start docker
-systemctl enable docker
-
-# Add the ec2-user to the docker group (ec2-user is the default user in Amazon Linux 2)
-usermod -aG docker ec2-user
-
-# reload the group
-newgrp docker
-
-mkdir -p /usr/local/lib/docker/cli-plugins/
-curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 -o /usr/local/lib/docker/cli-plugins/docker-compose
-chmod a+x /usr/local/lib/docker/cli-plugins/docker-compose
-`

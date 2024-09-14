@@ -2,7 +2,6 @@ package tsn
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
-	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsecrassets"
 	"github.com/aws/jsii-runtime-go"
 	peer2 "github.com/truflation/tsn-db/infra/lib/kwil-network/peer"
@@ -10,7 +9,6 @@ import (
 )
 
 type AddStartupScriptsOptions struct {
-	Instance           awsec2.Instance
 	currentPeer        peer2.TSNPeer
 	allPeers           []peer2.TSNPeer
 	TsnImageAsset      awsecrassets.DockerImageAsset
@@ -21,9 +19,7 @@ type AddStartupScriptsOptions struct {
 	Region             *string
 }
 
-func AddTsnDbStartupScriptsToInstance(options AddStartupScriptsOptions) {
-	instance := options.Instance
-
+func TsnDbStartupScripts(options AddStartupScriptsOptions) *string {
 	tsnConfigExtractedPath := *options.DataDirPath + "tsn"
 	postgresDataPath := *options.DataDirPath + "postgres"
 	tsnConfigRelativeToCompose := "./tsn"
@@ -48,6 +44,7 @@ func AddTsnDbStartupScriptsToInstance(options AddStartupScriptsOptions) {
 	}
 
 	script := utils.InstallDockerScript() + "\n"
+	script += utils.ConfigureDockerDataRoot(*options.DataDirPath+"/docker") + "\n"
 	script += utils.UnzipFileScript(*options.TsnConfigZipPath, tsnConfigExtractedPath) + "\n"
 	// Add ECR login and image pulling
 	script += `
@@ -66,7 +63,7 @@ docker tag ` + *options.TsnImageAsset.ImageUri() + ` tsn-db:local`
 		tsnConfig.GetDict(),
 	)
 
-	instance.AddUserData(&script)
+	return &script
 }
 
 type TSNEnvConfig struct {

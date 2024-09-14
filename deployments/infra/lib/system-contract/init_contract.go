@@ -1,17 +1,22 @@
 package system_contract
 
 import (
+	"os"
+	"path/filepath"
+
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdklambdagoalpha/v2"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
-	"os"
-	"path/filepath"
 )
 
 type DeployContractLambdaFnOptions struct {
 	HostSystemContractPath      *string
 	ContainerSystemContractPath *string
+	PrivateKeySSMId             *string
+	ProviderUrl                 *string
+	SystemContractBucket        *string
+	SystemContractKey           *string
 }
 
 func DeployContractLambdaFn(scope constructs.Construct, options DeployContractLambdaFnOptions) awscdklambdagoalpha.GoFunction {
@@ -35,6 +40,12 @@ func DeployContractLambdaFn(scope constructs.Construct, options DeployContractLa
 					HostPath:      jsii.String(absoluteHostSystemContractPath),
 				},
 			},
+		},
+		Environment: &map[string]*string{
+			"PRIVATE_KEY_SSM_ID":     options.PrivateKeySSMId,
+			"PROVIDER_URL":           options.ProviderUrl,
+			"SYSTEM_CONTRACT_BUCKET": options.SystemContractBucket,
+			"SYSTEM_CONTRACT_KEY":    options.SystemContractKey,
 		},
 	})
 }
