@@ -2,10 +2,11 @@ package tests
 
 import (
 	"context"
+	"testing"
+
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/procedure"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/table"
-	"testing"
 
 	"github.com/truflation/tsn-sdk/core/util"
 
@@ -26,6 +27,7 @@ func TestPrimitiveStream(t *testing.T) {
 			WithPrimitiveTestSetup(testInsertAndGetRecord(t)),
 			WithPrimitiveTestSetup(testGetIndex(t)),
 			WithPrimitiveTestSetup(testGetIndexChange(t)),
+			WithPrimitiveTestSetup(testDuplicateDate(t)),
 		},
 	})
 }
@@ -143,6 +145,53 @@ func testGetIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 		| 2021-01-04 | 25.000  |
 		| 2021-01-05 | -40.000 |
 		`
+
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+
+		return nil
+	}
+}
+
+func testDuplicateDate(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		dbid := utils.GenerateDBID(primitiveStreamId.String(), platform.Deployer)
+
+		// insert a duplicate date
+		err := setup.InsertMarkdownPrimitiveData(ctx, setup.InsertMarkdownDataInput{
+			Platform:            platform,
+			Height:              2, // later height
+			PrimitiveStreamName: primitiveStreamName,
+			MarkdownData: `
+			| date       | value |
+			|------------|-------|
+			| 2021-01-01 | 9.000 |
+			`,
+		})
+
+		if err != nil {
+			return errors.Wrap(err, "error inserting duplicate date")
+		}
+
+		expected := `
+		| date       | value |
+		|------------|-------|
+		| 2021-01-01 | 9.000 |
+		| 2021-01-02 | 2.000 |
+		| 2021-01-03 | 4.000 |
+		| 2021-01-04 | 5.000 |
+		| 2021-01-05 | 3.000 |
+		`
+
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordOrIndexInput{
+			Platform: platform,
+			DBID:     dbid,
+			DateFrom: "2021-01-01",
+			DateTo:   "2021-01-05",
+		})
+
+		if err != nil {
+			return errors.Wrap(err, "error getting records")
+		}
 
 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
 

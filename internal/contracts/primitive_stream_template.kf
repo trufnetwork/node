@@ -381,40 +381,53 @@ procedure get_original_record(
     //    return next $row.date_value, $row.value;
     //}
 
-    // TODO: had to use this workaround because && operator is not working
-    $last_result_date text := '';
-    if $date_from IS DISTINCT FROM NULL {
-        if $date_to IS DISTINCT FROM NULL {
-            // date_from and date_to are provided
-            // we will fetch all records from date_from to date_to
-            return SELECT date_value, value FROM primitive_events
-                WHERE date_value >= $date_from AND date_value <= $date_to
-                AND (created_at <= $frozenValue OR $frozenValue = 0)
-                AND $last_result_date != date_value
-                ORDER BY date_value DESC, created_at DESC;
-        } else {
-            // only date_from is provided
-            // we will fetch all records from date_from to the latest
-            return SELECT date_value, value FROM primitive_events
-                WHERE date_value >= $date_from
-                AND (created_at <= $frozenValue OR $frozenValue = 0)
-                AND $last_result_date != date_value
-                ORDER BY date_value DESC, created_at DESC;
+   // TODO: had to use this workaround because && operator is not working
+   $last_result_date text := '';
+   if $date_from IS DISTINCT FROM NULL {
+       if $date_to IS DISTINCT FROM NULL {
+           // date_from and date_to are provided
+           // we will fetch all records from date_from to date_to
+           for $row in SELECT date_value, value FROM primitive_events
+               WHERE date_value >= $date_from AND date_value <= $date_to
+               AND (created_at <= $frozenValue OR $frozenValue = 0)
+               AND $last_result_date != date_value
+               ORDER BY date_value DESC, created_at DESC {
+                   if $last_result_date != $row.date_value {
+                        $last_result_date := $row.date_value;
+                       return next $row.date_value, $row.value;
+                   }
+               }
+       } else {
+           // only date_from is provided
+           // we will fetch all records from date_from to the latest
+           for $row2 in SELECT date_value, value FROM primitive_events
+               WHERE date_value >= $date_from
+               AND (created_at <= $frozenValue OR $frozenValue = 0)
+               AND $last_result_date != date_value
+               ORDER BY date_value DESC, created_at DESC {
+                   if $last_result_date != $row2.date_value {
+                        $last_result_date := $row2.date_value;
+                       return next $row2.date_value, $row2.value;
+                   }
+               }
         }
-    } else {
-        if $date_to IS NOT DISTINCT FROM NULL {
-            // no date_from and date_to provided
-            // we fetch only the latest record
-            return SELECT date_value, value FROM primitive_events
-                WHERE created_at <= $frozenValue OR $frozenValue = 0
-                AND $last_result_date != date_value
-                ORDER BY date_value DESC, created_at DESC LIMIT 1;
-        } else {
-            // date_to is provided but date_from is not
-            error('date_from is required if date_to is provided');
-        }
-    }
+   } else {
+       if $date_to IS NOT DISTINCT FROM NULL {
+           // no date_from and date_to provided
+           // we fetch only the latest record
+           return SELECT date_value, value FROM primitive_events
+               WHERE created_at <= $frozenValue OR $frozenValue = 0
+               AND $last_result_date != date_value
+               ORDER BY date_value DESC, created_at DESC LIMIT 1;
+       } else {
+           // date_to is provided but date_from is not
+           error('date_from is required if date_to is provided');
+       }
+   }
 }
+
+
+
 
 // get_record returns the value of the primitive stream for a given date
 // it is able to fill the gaps in the primitive stream by using the last value before the given date
@@ -610,7 +623,7 @@ procedure get_index_change($date_from text, $date_to text, $frozen_at int, $days
         $real_prev_values := array_append($real_prev_values, $row_prev.value);
         $real_prev_dates := array_append($real_prev_dates, $row_prev.date_value);
     }
-    
+
     // now we calculate the matching dates for the real prev values
     $result_prev_dates text[];
     $result_prev_values decimal(21,3)[];
@@ -623,7 +636,7 @@ procedure get_index_change($date_from text, $date_to text, $frozen_at int, $days
             // we start from the last index of real prev dates. we don't need to check previous values
             for $selector in $real_prev_date_idx..array_length($real_prev_dates) {
                 // if next real prev date is greater than expected prev date (or null), then we need to use the current real value
-                if $real_prev_dates[$selector + 1] > $expected_prev_dates[$expected_prev_date_idx] 
+                if $real_prev_dates[$selector + 1] > $expected_prev_dates[$expected_prev_date_idx]
                    OR $real_prev_dates[$selector + 1] IS NULL {
                     // if the current real prev date is already greater than expected prev date
                     // we use NULL. We're probably before the first real prev date here
