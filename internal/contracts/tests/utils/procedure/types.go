@@ -2,12 +2,23 @@ package procedure
 
 import kwilTesting "github.com/kwilteam/kwil-db/testing"
 
-type GetRecordOrIndexInput struct {
+type GetRecordInput struct {
 	Platform *kwilTesting.Platform
 	DBID     string
 	DateFrom string
 	DateTo   string
+	FrozenAt int64
 	Height   int64
+}
+
+type GetIndexInput struct {
+	Platform *kwilTesting.Platform
+	DBID     string
+	DateFrom string
+	DateTo   string
+	FrozenAt int64
+	Height   int64
+	BaseDate string
 }
 
 type ResultRow []string
@@ -17,7 +28,8 @@ type GetIndexChangeInput struct {
 	DBID     string
 	DateFrom string
 	DateTo   string
-	Interval int
-	FrozenAt *string
+	FrozenAt int64
 	Height   int64
+	BaseDate string
+	Interval int
 }

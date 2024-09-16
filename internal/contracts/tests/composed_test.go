@@ -2,10 +2,10 @@ package tests
 
 import (
 	"context"
+	"testing"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/procedure"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/table"
-	"testing"
 
 	"github.com/truflation/tsn-sdk/core/util"
 
@@ -58,7 +58,7 @@ func testComposedLastAvailable(t *testing.T) func(ctx context.Context, platform 
 			return errors.Wrap(err, "error setting up last available test data")
 		}
 
-		result, err := procedure.GetRecord(ctx, procedure.GetRecordOrIndexInput{
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 			Platform: platform,
 			DBID:     composedDBID,
 			DateFrom: "2024-08-29",
@@ -106,7 +106,7 @@ func testComposedNoPastData(t *testing.T) func(ctx context.Context, platform *kw
 			return errors.Wrap(err, "error setting up no past data test")
 		}
 
-		result, err := procedure.GetRecord(ctx, procedure.GetRecordOrIndexInput{
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 			Platform: platform,
 			DBID:     composedDBID,
 			DateFrom: "2024-08-30",

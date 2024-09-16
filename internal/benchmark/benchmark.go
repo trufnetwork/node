@@ -70,9 +70,17 @@ func runSingleTest(ctx context.Context, input RunSingleTestInput) (Result, error
 
 	for i := 0; i < input.Case.Samples; i++ {
 		start := time.Now()
+		// args for:
+		// get_record: fromDate, toDate, frozenAt
+		// get_index: fromDate, toDate, frozenAt, baseDate
+		// get_index_change: fromDate, toDate, frozenAt, baseDate, daysInterval
 		args := []any{fromDate, toDate, nil}
-		if input.Procedure == ProcedureGetChangeIndex {
-			args = append(args, 1) // change index accept an additional arg: $days_interval
+		switch input.Procedure {
+		case ProcedureGetIndex:
+			args = append(args, nil) // baseDate
+		case ProcedureGetChangeIndex:
+			args = append(args, nil) // baseDate
+			args = append(args, 1)   // daysInterval
 		}
 		// we read using the reader address to be sure visibility is tested
 		if err := executeStreamProcedure(ctx, input.Platform, nthDbId, string(input.Procedure), args, readerAddress.Bytes()); err != nil {
