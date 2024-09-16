@@ -312,12 +312,12 @@ procedure insert_record($date_value text, $value decimal(21,3)) public {
 // Truflations calculation is ((current_primitive/first_primitive)*100).
 // This essentially gives us the same result, but with an extra 3 digits of precision.
 // index := (currentPrimitive * 100) / basePrimitive
-procedure get_index($date_from text, $date_to text, $frozen_at int) public view returns table(
+procedure get_index($date_from text, $date_to text, $frozen_at int, $base_date text) public view returns table(
         date_value text,
         value decimal(21,3)
         ) {
 
-    $baseValue decimal(21,3) := get_base_value();
+    $baseValue decimal(21,3) := get_base_value($base_date);
     if $baseValue == 0::decimal(21,3) {
         error('base value is 0');
     }
@@ -325,9 +325,17 @@ procedure get_index($date_from text, $date_to text, $frozen_at int) public view 
     return SELECT date_value, (value * 100::decimal(21,3)) / $baseValue as value FROM get_record($date_from, $date_to, $frozen_at);
 }
 
-// get_base_value returns the first value of the primitive stream
-procedure get_base_value() private view returns (value decimal(21,3)) {
-    for $row in SELECT value from primitive_events ORDER BY date_value ASC, created_at DESC LIMIT 1 {
+// get_base_value returns the first value of the primitive stream after the given date
+procedure get_base_value($base_date text) private view returns (value decimal(21,3)) {
+    // let's coalesce null with ''
+    // then, if it's empty, it will always be the first value
+    if $base_date is null {
+        $base_date := '';
+    }
+
+    for $row in SELECT value from primitive_events
+    WHERE date_value >= $base_date
+    ORDER BY date_value ASC, created_at DESC LIMIT 1 {
         return $row.value;
     }
 
@@ -545,7 +553,7 @@ procedure is_stream_allowed_to_compose() public view returns (value bool) {
     error('stream not allowed to compose');
 }
 
-procedure get_index_change($date_from text, $date_to text, $frozen_at int, $days_interval int) public view returns table(
+procedure get_index_change($date_from text, $date_to text, $frozen_at int, $days_interval int, $base_date text) public view returns table(
     date_value text,
     value decimal(21,3)
 ) {
@@ -601,7 +609,7 @@ procedure get_index_change($date_from text, $date_to text, $frozen_at int, $days
     // example: [01-2000, 05-2000, 09-2000, 10-2000]
     $expected_prev_dates text[];
 
-    for $row_current in SELECT * FROM get_index($date_from, $date_to, $frozen_at) {
+    for $row_current in SELECT * FROM get_index($date_from, $date_to, $frozen_at, $base_date) {
         $prev_date := format_unix_timestamp((parse_unix_timestamp($row_current.date_value, 'yyyy-MM-dd')::int - ($days_interval * 86400))::decimal(16,6), 'yyyy-MM-dd');
         $expected_prev_dates := array_append($expected_prev_dates, $prev_date);
         $current_values := array_append($current_values, $row_current.value);
@@ -619,7 +627,7 @@ procedure get_index_change($date_from text, $date_to text, $frozen_at int, $days
     $real_prev_dates text[];
 
     // now we query the prev dates
-    for $row_prev in SELECT * FROM get_index($earliest_prev_date, $latest_prev_date, $frozen_at) {
+    for $row_prev in SELECT * FROM get_index($earliest_prev_date, $latest_prev_date, $frozen_at, $base_date) {
         $real_prev_values := array_append($real_prev_values, $row_prev.value);
         $real_prev_dates := array_append($real_prev_dates, $row_prev.date_value);
     }
