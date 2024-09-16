@@ -3,6 +3,7 @@ package procedure
 import (
 	"context"
 	"fmt"
+
 	"github.com/pkg/errors"
 
 	"github.com/kwilteam/kwil-db/common"
@@ -31,16 +32,11 @@ func getX(ctx context.Context, procedure string, input GetRecordOrIndexInput) ([
 		return nil, errors.Wrap(err, "error in getX")
 	}
 
-	var resultRows []ResultRow
-	for _, row := range result.Rows {
-		resultRow := ResultRow{}
-		for _, value := range row {
-			resultRow = append(resultRow, fmt.Sprintf("%v", value))
-		}
-		resultRows = append(resultRows, resultRow)
+	if len(result.Rows) == 0 {
+		return nil, errors.New("no rows returned from the procedure")
 	}
 
-	return resultRows, nil
+	return processResultRows(result.Rows)
 }
 
 func GetIndexChange(ctx context.Context, input GetIndexChangeInput) ([]ResultRow, error) {
@@ -58,13 +54,21 @@ func GetIndexChange(ctx context.Context, input GetIndexChangeInput) ([]ResultRow
 		return nil, errors.Wrap(err, "error in getIndexChange")
 	}
 
-	var resultRows []ResultRow
-	for _, row := range result.Rows {
+	return processResultRows(result.Rows)
+}
+
+func processResultRows(rows [][]any) ([]ResultRow, error) {
+	if len(rows) == 0 {
+		return nil, errors.New("no rows returned from the procedure")
+	}
+
+	resultRows := make([]ResultRow, len(rows))
+	for i, row := range rows {
 		resultRow := ResultRow{}
 		for _, value := range row {
 			resultRow = append(resultRow, fmt.Sprintf("%v", value))
 		}
-		resultRows = append(resultRows, resultRow)
+		resultRows[i] = resultRow
 	}
 
 	return resultRows, nil
