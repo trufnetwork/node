@@ -3,10 +3,11 @@ package tests
 import (
 	"context"
 	"fmt"
+	"testing"
+
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/procedure"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/table"
-	"testing"
 
 	"github.com/pkg/errors"
 	"github.com/truflation/tsn-sdk/core/util"
@@ -84,7 +85,7 @@ func testComplexComposedRecord(t *testing.T) func(ctx context.Context, platform 
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		composedDBID := utils.GenerateDBID(composedStreamId.String(), platform.Deployer)
 
-		result, err := procedure.GetRecord(ctx, procedure.GetRecordOrIndexInput{
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 			Platform: platform,
 			DBID:     composedDBID,
 			DateFrom: "2021-01-01",
@@ -122,7 +123,7 @@ func testComplexComposedIndex(t *testing.T) func(ctx context.Context, platform *
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		composedDBID := utils.GenerateDBID(composedStreamId.String(), platform.Deployer)
 
-		result, err := procedure.GetIndex(ctx, procedure.GetRecordOrIndexInput{
+		result, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
 			Platform: platform,
 			DBID:     composedDBID,
 			DateFrom: "2021-01-01",
@@ -160,7 +161,7 @@ func testComplexComposedLatestValue(t *testing.T) func(ctx context.Context, plat
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		composedDBID := utils.GenerateDBID(composedStreamId.String(), platform.Deployer)
 
-		result, err := procedure.GetRecord(ctx, procedure.GetRecordOrIndexInput{
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 			Platform: platform,
 			DBID:     composedDBID,
 			DateFrom: "2021-01-13",
@@ -187,7 +188,7 @@ func testComplexComposedEmptyDate(t *testing.T) func(ctx context.Context, platfo
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		composedDBID := utils.GenerateDBID(composedStreamId.String(), platform.Deployer)
 
-		result, err := procedure.GetRecord(ctx, procedure.GetRecordOrIndexInput{
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 			Platform: platform,
 			DBID:     composedDBID,
 			DateFrom: "2021-01-12",
@@ -253,7 +254,7 @@ func testComplexComposedOutOfRange(t *testing.T) func(ctx context.Context, platf
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		composedDBID := utils.GenerateDBID(composedStreamId.String(), platform.Deployer)
 
-		result, err := procedure.GetRecord(ctx, procedure.GetRecordOrIndexInput{
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 			Platform: platform,
 			DBID:     composedDBID,
 			DateFrom: "2020-12-31",
@@ -279,7 +280,7 @@ func testComplexComposedInvalidDate(t *testing.T) func(ctx context.Context, plat
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		composedDBID := utils.GenerateDBID(composedStreamId.String(), platform.Deployer)
 
-		_, err := procedure.GetRecord(ctx, procedure.GetRecordOrIndexInput{
+		_, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 			Platform: platform,
 			DBID:     composedDBID,
 			DateFrom: "invalid-date",

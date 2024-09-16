@@ -56,7 +56,7 @@ func testIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesti
 		result, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
 			Procedure: "get_index_change",
 			Dataset:   dbid,
-			Args:      []any{"2023-01-02", "2023-01-08", nil, 1},
+			Args:      []any{"2023-01-02", "2023-01-08", nil, nil, 1},
 			TransactionData: common.TransactionData{
 				Signer: platform.Deployer,
 				TxID:   platform.Txid(),
@@ -137,7 +137,7 @@ func testYoYIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 		result, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
 			Procedure: "get_index_change",
 			Dataset:   dbid,
-			Args:      []any{"2023-05-22", "2023-05-22", nil, 365}, // 365 days interval for YoY
+			Args:      []any{"2023-05-22", "2023-05-22", nil, nil, 365}, // 365 days interval for YoY
 			TransactionData: common.TransactionData{
 				Signer: platform.Deployer,
 				TxID:   platform.Txid(),

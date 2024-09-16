@@ -2,6 +2,8 @@ package tests
 
 import (
 	"context"
+	"testing"
+
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/procedure"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/table"
@@ -26,6 +28,8 @@ func TestPrimitiveStream(t *testing.T) {
 			WithPrimitiveTestSetup(testInsertAndGetRecord(t)),
 			WithPrimitiveTestSetup(testGetIndex(t)),
 			WithPrimitiveTestSetup(testGetIndexChange(t)),
+			WithPrimitiveTestSetup(testDuplicateDate(t)),
+			WithPrimitiveTestSetup(testGetRecordWithBaseDate(t)),
 		},
 	})
 }
@@ -61,7 +65,7 @@ func testInsertAndGetRecord(t *testing.T) func(ctx context.Context, platform *kw
 		dbid := utils.GenerateDBID(primitiveStreamId.String(), platform.Deployer)
 
 		// Get records
-		result, err := procedure.GetRecord(ctx, procedure.GetRecordOrIndexInput{
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 			Platform: platform,
 			DBID:     dbid,
 			DateFrom: "2021-01-01",
@@ -92,7 +96,7 @@ func testGetIndex(t *testing.T) func(ctx context.Context, platform *kwilTesting.
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		dbid := utils.GenerateDBID(primitiveStreamId.String(), platform.Deployer)
 
-		result, err := procedure.GetIndex(ctx, procedure.GetRecordOrIndexInput{
+		result, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
 			Platform: platform,
 			DBID:     dbid,
 			DateFrom: "2021-01-01",
@@ -142,6 +146,89 @@ func testGetIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 		| 2021-01-03 | 100.000 |
 		| 2021-01-04 | 25.000  |
 		| 2021-01-05 | -40.000 |
+		`
+
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+
+		return nil
+	}
+}
+
+func testDuplicateDate(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		dbid := utils.GenerateDBID(primitiveStreamId.String(), platform.Deployer)
+
+		// insert a duplicate date
+		err := setup.InsertMarkdownPrimitiveData(ctx, setup.InsertMarkdownDataInput{
+			Platform:            platform,
+			Height:              2, // later height
+			PrimitiveStreamName: primitiveStreamName,
+			MarkdownData: `
+			| date       | value |
+			|------------|-------|
+			| 2021-01-01 | 9.000 |
+			`,
+		})
+
+		if err != nil {
+			return errors.Wrap(err, "error inserting duplicate date")
+		}
+
+		expected := `
+		| date       | value |
+		|------------|-------|
+		| 2021-01-01 | 9.000 |
+		| 2021-01-02 | 2.000 |
+		| 2021-01-03 | 4.000 |
+		| 2021-01-04 | 5.000 |
+		| 2021-01-05 | 3.000 |
+		`
+
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
+			Platform: platform,
+			DBID:     dbid,
+			DateFrom: "2021-01-01",
+			DateTo:   "2021-01-05",
+		})
+
+		if err != nil {
+			return errors.Wrap(err, "error getting records")
+		}
+
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+
+		return nil
+	}
+}
+
+func testGetRecordWithBaseDate(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		dbid := utils.GenerateDBID(primitiveStreamId.String(), platform.Deployer)
+
+		// Define the base_date
+		baseDate := "2021-01-03"
+
+		// Get records with base_date
+		result, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
+			Platform: platform,
+			DBID:     dbid,
+			DateFrom: "2021-01-01",
+			DateTo:   "2021-01-05",
+			BaseDate: baseDate,
+			Height:   0,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error getting records with base_date")
+		}
+
+		expected := `
+		| date       | value |
+		|------------|-------|
+		| 2021-01-01 | 25.000 |
+		| 2021-01-02 | 50.000 |
+		| 2021-01-03 | 100.000 | # this is the base date
+		| 2021-01-04 | 125.000 |
+		| 2021-01-05 | 75.000 |
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
