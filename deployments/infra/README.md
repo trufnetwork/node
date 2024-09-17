@@ -14,7 +14,7 @@ The `cdk.json` file tells the CDK toolkit how to execute your app.
 
 ### 1. Auto-generated Configuration
 
-This method dynamically generates the TSN node configuration during deployment.
+This method dynamically generates the TSN node configuration during deployment. It deploys both the launch templates and the instances from these templates.
 
 #### Example Command:
 
@@ -38,7 +38,7 @@ The `RESTART_HASH` environment variable controls the full redeployment of TSN in
 
 ### 2. Pre-configured Setup
 
-This method uses a pre-existing genesis file and a list of private keys for the TSN nodes.
+This method uses a pre-existing genesis file and a list of private keys for the TSN nodes. It deploys only the launch templates, not the instances.
 
 #### Example Command:
 
@@ -52,6 +52,39 @@ GENESIS_PATH="/path/to/genesis.json" \
 cdk deploy --profile <YOUR-AWS-PROFILE> TSN-From-Config* TSN-Cert* \
 --parameters TSN-From-Config-<environment>-Stack:sessionSecret=abab
 ```
+
+## Upgrading Nodes (Staging Environment)
+
+For the staging environment, which uses the pre-configured setup, upgrading a node involves the following steps:
+
+1. Deploy the stack to update the launch template with the new image:
+
+    ```bash
+    cdk deploy --profile <YOUR-AWS-PROFILE> TSN-From-Config* TSN-Cert* \
+    --parameters TSN-From-Config-<environment>-Stack:sessionSecret=<SESSION-SECRET>
+    ```
+
+2. After deployment, SSH into the instance you want to upgrade.
+
+3. Pull the latest image from the ECR repository (you may need to login to the ECR repository first, please see the correct commands at the AWS console)
+
+    ```bash
+    docker pull <latest-image>
+    ```
+
+4. Tag the image as `tsn:local`
+
+    ```bash
+    docker tag <latest-image> tsn:local
+    ```
+
+5. Restart the systemd service that runs the TSN node:
+
+    ```bash
+    sudo systemctl restart tsn-db-app.service
+    ```
+
+This process ensures that your node is running the latest version of the software while maintaining the pre-configured setup.
 
 ## Environment Variables
 
