@@ -1,13 +1,28 @@
 package utils
 
-import "os"
+import (
+	"os"
+	"sort"
+)
 
 // Warning: Used environment variables are not encrypted in the CloudFormation template,
 // nor to who have access to the instance if it used on a service configuration file.
 // Switch for encryption if necessary.
 func GetEnvStringsForService(envDict map[string]string) string {
 	envStrings := ""
-	for k, v := range envDict {
+
+	// we need to sort the keys to make sure the env vars are in a consistent order
+	// across different runs of the same service
+	keys := make([]string, 0, len(envDict))
+
+	for k := range envDict {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		v := envDict[k]
 		envStrings += "Environment=\"" + k + "=" + v + "\"\n"
 	}
 	return envStrings
