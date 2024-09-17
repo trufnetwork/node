@@ -3,13 +3,14 @@ package kwil_network
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/config"
 	"github.com/truflation/tsn-db/infra/lib/kwil-network/peer"
-	"os"
-	"os/exec"
 )
 
 type GeneratePeerConfigInput struct {
@@ -33,6 +34,7 @@ func GeneratePeerConfig(scope constructs.Construct, input GeneratePeerConfigInpu
 		"--chain.p2p.external-address", "should-be-overwritten-by-env",
 		"--chain.p2p.persistent-peers", "should-be-overwritten-by-env",
 		"--app.hostname", "should-be-overwritten-by-env",
+		"--app.snapshots.enabled",
 		"--root-dir", *tempDir,
 		"-g", input.GenesisFilePath,
 	)
