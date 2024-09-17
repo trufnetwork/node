@@ -2,10 +2,10 @@ package tests
 
 import (
 	"context"
-	"testing"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/procedure"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/table"
+	"testing"
 
 	"github.com/truflation/tsn-sdk/core/util"
 
