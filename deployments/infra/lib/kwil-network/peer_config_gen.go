@@ -35,6 +35,7 @@ func GeneratePeerConfig(scope constructs.Construct, input GeneratePeerConfigInpu
 		"--chain.p2p.persistent-peers", "should-be-overwritten-by-env",
 		"--app.hostname", "should-be-overwritten-by-env",
 		"--app.snapshots.enabled",
+		"--app.snapshots.snapshot-dir", "/root/.kwild/snapshots",
 		"--root-dir", *tempDir,
 		"-g", input.GenesisFilePath,
 	)
