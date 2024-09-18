@@ -30,6 +30,7 @@ func NewTSNSecurityGroup(scope constructs.Construct, input NewTSNSecurityGroupIn
 		{peer.TsnRPCPort, "TSN RPC port"},
 		{peer.TsnIndexerPort, "TSN Indexer port"},
 		{peer.TsnP2pPort, "TSN P2P port"},
+		{peer.TsnCometBFTRPCPort, "TSN Comet BFT RPC port"},
 		{22, "SSH port"},
 	}
 
