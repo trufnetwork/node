@@ -19,13 +19,12 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /app/.build/kwild /app/cmd
 FROM busybox:1.35.0-uclibc as busybox
 # busy box will provide us with a shell to run commands in distroless
 
-FROM gcr.io/distroless/static-debian12
-
-# make every needed tool available here to simplify development and
-# debugging
-COPY --from=busybox /bin/* /bin/
+FROM alpine:latest
 
 WORKDIR /app
+
+# add postgres client tools
+RUN apk add --no-cache postgresql-client
 
 # move .build content to /app
 COPY --from=build /app/.build/* /app/
