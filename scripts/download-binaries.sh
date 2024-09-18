@@ -30,7 +30,7 @@ download_binaries() {
     fi
 
     # Set the URL for the binary
-    URL="https://github.com/kwilteam/kwil-db/releases/download/v0.8.1/kwil-db_0.8.1_${OS}_${ARCH}.tar.gz"
+    URL="https://github.com/kwilteam/kwil-db/releases/download/v0.8.4/kwil-db_0.8.4_${OS}_${ARCH}.tar.gz"
 
     echo "Detected platform: ${OS}-${ARCH}"
     echo "Downloading binary from $URL..."
