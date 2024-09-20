@@ -6,7 +6,7 @@ database primitive_stream_db_name;
 
 table primitive_events {
     date_value text notnull minlen(10) maxlen(10), // enforce yyyy-mm-dd format
-    value decimal(21,3) notnull,
+    value decimal(36,18) notnull,
     created_at int notnull, // based on blockheight
 
     #identifier_idx   primary(date_value, created_at)
@@ -16,7 +16,7 @@ table metadata {
     row_id      uuid    primary notnull,
     metadata_key         text    notnull,
     value_i     int,                 // integer type
-    value_f     decimal(21,3),
+    value_f     decimal(36,18),
     value_b     bool,                // boolean type
     value_s     text,                // string type
     value_ref   text,                // indexed string type -- lowercase
@@ -150,7 +150,7 @@ procedure insert_metadata(
 
     $value_i int;
     $value_s text;
-    $value_f decimal(21,3);
+    $value_f decimal(36,18);
     $value_b bool;
     $value_ref text;
 
@@ -163,7 +163,7 @@ procedure insert_metadata(
     } elseif $val_type == 'ref' {
         $value_ref := $value;
     } elseif $val_type == 'float' {
-        $value_f := $value::decimal(21,3);
+        $value_f := $value::decimal(36,18);
     } else {
         error(format('unknown type used "%s". valid types = "float" | "bool" | "int" | "ref" | "string"', $val_type));
     }
@@ -198,7 +198,7 @@ procedure insert_metadata(
 procedure get_metadata($key text, $only_latest bool, $ref text) public view returns table(
         row_id uuid,
         value_i int,
-        value_f decimal(21,3),
+        value_f decimal(36,18),
         value_b bool,
         value_s text,
         value_ref text,
@@ -210,7 +210,7 @@ procedure get_metadata($key text, $only_latest bool, $ref text) public view retu
                 return SELECT
                               row_id,
                               null::int as value_i,
-                              null::decimal(21,3) as value_f,
+                              null::decimal(36,18) as value_f,
                               null::bool as value_b,
                               null::text as value_s,
                               value_ref,
@@ -239,7 +239,7 @@ procedure get_metadata($key text, $only_latest bool, $ref text) public view retu
                return SELECT
                              row_id,
                              null::int as value_i,
-                             null::decimal(21,3) as value_f,
+                             null::decimal(36,18) as value_f,
                              null::bool as value_b,
                              null::text as value_s,
                              value_ref,
@@ -293,7 +293,7 @@ procedure disable_metadata($row_id uuid) public {
     }
 }
 
-procedure insert_record($date_value text, $value decimal(21,3)) public {
+procedure insert_record($date_value text, $value decimal(36,18)) public {
     if is_wallet_allowed_to_write(@caller) == false {
         error('wallet not allowed to write');
     }
@@ -314,19 +314,19 @@ procedure insert_record($date_value text, $value decimal(21,3)) public {
 // index := (currentPrimitive * 100) / basePrimitive
 procedure get_index($date_from text, $date_to text, $frozen_at int, $base_date text) public view returns table(
         date_value text,
-        value decimal(21,3)
+        value decimal(36,18)
         ) {
 
-    $baseValue decimal(21,3) := get_base_value($base_date);
-    if $baseValue == 0::decimal(21,3) {
+    $baseValue decimal(36,18) := get_base_value($base_date);
+    if $baseValue == 0::decimal(36,18) {
         error('base value is 0');
     }
 
-    return SELECT date_value, (value * 100::decimal(21,3)) / $baseValue as value FROM get_record($date_from, $date_to, $frozen_at);
+    return SELECT date_value, (value * 100::decimal(36,18)) / $baseValue as value FROM get_record($date_from, $date_to, $frozen_at);
 }
 
 // get_base_value returns the first value of the primitive stream after the given date
-procedure get_base_value($base_date text) private view returns (value decimal(21,3)) {
+procedure get_base_value($base_date text) private view returns (value decimal(36,18)) {
     // let's coalesce null with ''
     // then, if it's empty, it will always be the first value
     if $base_date is null {
@@ -351,7 +351,7 @@ procedure get_original_record(
     $frozen_at int
     ) private view returns table(
     date_value text,
-    value decimal(21,3)
+    value decimal(36,18)
     ) {
 
     check_valid_date_or_null($date_from, 'date_from');
@@ -450,7 +450,7 @@ procedure get_record(
     $frozen_at int
     ) public view returns table(
     date_value text,
-    value decimal(21,3)
+    value decimal(36,18)
     ) {
 
     $is_first_result bool := true;
@@ -494,7 +494,7 @@ procedure get_last_record_before_date(
     $date_from text
 ) public view returns table(
     date_value text,
-    value decimal(21,3)
+    value decimal(36,18)
     ) {
     return SELECT date_value, value FROM primitive_events WHERE date_value < $date_from ORDER BY date_value DESC, created_at DESC LIMIT 1;
 }
@@ -555,7 +555,7 @@ procedure is_stream_allowed_to_compose() public view returns (value bool) {
 
 procedure get_index_change($date_from text, $date_to text, $frozen_at int, $base_date text, $days_interval int) public view returns table(
     date_value text,
-    value decimal(21,3)
+    value decimal(36,18)
 ) {
     // the full process is this:
     // 1. we find the current values for the given date range
@@ -603,7 +603,7 @@ procedure get_index_change($date_from text, $date_to text, $frozen_at int, $base
         error('days_interval is required');
     }
 
-    $current_values decimal(21,3)[];
+    $current_values decimal(36,18)[];
     // example: [01-2001, 05-2001, 09-2001, 10-2001]
     $current_dates text[];
     // example: [01-2000, 05-2000, 09-2000, 10-2000]
@@ -623,7 +623,7 @@ procedure get_index_change($date_from text, $date_to text, $frozen_at int, $base
 
     // real previous values doesn't match the same length as expected previous dates
     // because the interval can have much more values than the expected dates
-    $real_prev_values decimal(21,3)[];
+    $real_prev_values decimal(36,18)[];
     $real_prev_dates text[];
 
     // now we query the prev dates
@@ -634,7 +634,7 @@ procedure get_index_change($date_from text, $date_to text, $frozen_at int, $base
 
     // now we calculate the matching dates for the real prev values
     $result_prev_dates text[];
-    $result_prev_values decimal(21,3)[];
+    $result_prev_values decimal(36,18)[];
 
     $real_prev_date_idx int := 1;
 
@@ -650,7 +650,7 @@ procedure get_index_change($date_from text, $date_to text, $frozen_at int, $base
                     // we use NULL. We're probably before the first real prev date here
                     if $real_prev_dates[$selector] > $expected_prev_dates[$expected_prev_date_idx] {
                         $result_prev_dates := array_append($result_prev_dates, null::text);
-                        $result_prev_values := array_append($result_prev_values, null::decimal(21,3));
+                        $result_prev_values := array_append($result_prev_values, null::decimal(36,18));
                     } else {
                         $result_prev_dates := array_append($result_prev_dates, $real_prev_dates[$selector]);
                         $result_prev_values := array_append($result_prev_values, $real_prev_values[$selector]);
@@ -676,7 +676,7 @@ procedure get_index_change($date_from text, $date_to text, $frozen_at int, $base
         for $row_result in 1..array_length($result_prev_dates) {
             // if the expected_prev_date is null, then we don't have a real prev date
             if $result_prev_dates[$row_result] IS DISTINCT FROM NULL {
-                return next $current_dates[$row_result], ($current_values[$row_result] - $result_prev_values[$row_result]) * 100.00::decimal(21,3) / $result_prev_values[$row_result];
+                return next $current_dates[$row_result], ($current_values[$row_result] - $result_prev_values[$row_result]) * 100.00::decimal(36,18) / $result_prev_values[$row_result];
             }
         }
     }
