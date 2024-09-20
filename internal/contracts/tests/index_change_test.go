@@ -82,13 +82,13 @@ func testIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesti
 
 		// Assert the correct output
 		expected := [][]any{
-			{"2023-01-02", "2.000"},
-			{"2023-01-03", "0.980"},
-			{"2023-01-04", "-1.942"},
+			{"2023-01-02", "2.000000000000000000"},
+			{"2023-01-03", "0.980392156862745098"},
+			{"2023-01-04", "-1.941747572815533981"},
 			// remember the gap
-			{"2023-01-06", "4.950"}, // it is now using the previous value
-			{"2023-01-07", "-0.943"},
-			{"2023-01-08", "2.857"},
+			{"2023-01-06", "4.950495049504950495"}, // it is now using the previous value
+			{"2023-01-07", "-0.943396226415094340"},
+			{"2023-01-08", "2.857142857142857143"},
 		}
 
 		assert.Equal(t, expected, convertedResult, "Index change results do not match expected values")
@@ -172,7 +172,7 @@ func testYoYIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 		// 05-01 yoyChange: 108 - 102 / 102 * 100.0 = 5.882
 		// check if 5.882 is in the result
 		latestYoyChange := results[0][0].value
-		if latestYoyChange != "5.882" {
+		if latestYoyChange != "5.882352941176470588" {
 			return errors.Errorf("incorrect latest yoy change: got %s, expected 5.882", latestYoyChange)
 		}
 

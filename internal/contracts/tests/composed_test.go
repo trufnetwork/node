@@ -72,10 +72,10 @@ func testComposedLastAvailable(t *testing.T) func(ctx context.Context, platform 
 		expected := `
 		| date       | value  |
 		| ---------- | ------ |
-		| 2024-08-29 | 3.250  | # 1 & 4
+		| 2024-08-29 | 3.250000000000000000  | # 1 & 4
 		| 2024-08-30 | 		  |
-		| 2024-08-31 | 3.333  | # 1 & 2 & 5
-		| 2024-09-01 | 2.333  | # 1 & 2 & 3
+		| 2024-08-31 | 3.333333333333333333  | # 1 & 2 & 5
+		| 2024-09-01 | 2.333333333333333333  | # 1 & 2 & 3
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
@@ -120,9 +120,9 @@ func testComposedNoPastData(t *testing.T) func(ctx context.Context, platform *kw
 		expected := `
 		| date       | value  |
 		| ---------- | ------ |
-		| 2024-08-30 | 1.000  | # 1
-		| 2024-08-31 | 1.667  | # 1 & 2
-		| 2024-09-01 | 2.333  | # 1 & 2 & 3
+		| 2024-08-30 | 1.000000000000000000  | # 1
+		| 2024-08-31 | 1.666666666666666667  | # 1 & 2
+		| 2024-09-01 | 2.333333333333333333  | # 1 & 2 & 3
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)

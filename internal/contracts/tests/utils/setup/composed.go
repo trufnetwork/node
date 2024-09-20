@@ -187,7 +187,7 @@ func setTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 	for _, item := range input.composedStream.TaxonomyDefinitions {
 		primitiveStreamStrings = append(primitiveStreamStrings, item.ChildStream.StreamId.String())
 		dataProviderStrings = append(dataProviderStrings, item.ChildStream.DataProvider.Address())
-		// should be formatted as 0.000 (3 decimal places)
+		// should be formatted as 0.000000000000000000 (18 decimal places)
 		weightStrings = append(weightStrings, fmt.Sprintf("%.3f", item.Weight))
 	}
 

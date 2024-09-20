@@ -30,7 +30,7 @@ func getStreamId(index int) *util.StreamId {
 func generateRecords(fromDate, toDate time.Time) [][]any {
 	var records [][]any
 	for d := fromDate; !d.After(toDate); d = d.AddDate(0, 0, 1) {
-		value, _ := apd.New(rand.Int63n(10000), 0).Float64()
+		value, _ := apd.New(rand.Int63n(100000000000000), 0).Float64()
 		records = append(records, []any{d.Format("2006-01-02"), fmt.Sprintf("%.2f", value)})
 	}
 	return records
