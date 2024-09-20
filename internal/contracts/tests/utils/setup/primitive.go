@@ -30,6 +30,7 @@ type PrimitiveStreamWithData struct {
 
 type MarkdownPrimitiveSetupInput struct {
 	Platform            *kwilTesting.Platform
+	Deployer            util.EthereumAddress
 	Height              int64
 	PrimitiveStreamName string
 	MarkdownData        string

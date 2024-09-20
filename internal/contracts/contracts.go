@@ -5,7 +5,10 @@ import (
 )
 
 //go:embed system_contract.kf
-var SystemContractContent string
+var SystemContractStringContent string
+
+//go:embed system_contract.kf
+var SystemContractContent []byte
 
 //go:embed composed_stream_template.kf
 var ComposedStreamContent []byte
