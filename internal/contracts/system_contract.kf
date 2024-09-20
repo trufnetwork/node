@@ -82,12 +82,12 @@ procedure revoke_stream($data_provider text, $stream_id text) public owner {
 
 foreign procedure ext_get_record($date_from text, $date_to text, $frozen_at int) returns table(
     date_value text,
-    value decimal(3618)
+    value decimal(36,18)
 )
 
 foreign procedure ext_get_index($date_from text, $date_to text, $frozen_at int) returns table(
     date_value text,
-    value decimal(3618)
+    value decimal(36,18)
 )
 foreign procedure ext_get_index_change($date_from text, $date_to text, $frozen_at int) returns table (
     value decimal(36,18)
@@ -95,7 +95,7 @@ foreign procedure ext_get_index_change($date_from text, $date_to text, $frozen_a
 
 procedure get_unsafe_record($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at int) public view returns table(
     date_value text,
-    value decimal(3618)
+    value decimal(36,18)
 ) {
     $dbid text := get_dbid($data_provider, $stream_id);
 
@@ -123,7 +123,7 @@ procedure get_dbid($data_provider text, $stream_id text) private view returns (r
 
 procedure get_unsafe_index($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at int) public view returns table(
     date_value text,
-    value decimal(3618)
+    value decimal(36,18)
 ) {
     $dbid text := get_dbid($data_provider, $stream_id);
 
@@ -134,7 +134,7 @@ procedure get_unsafe_index($data_provider text, $stream_id text, $date_from text
 
 procedure get_record($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at int) public view returns table(
     date_value text,
-    value decimal(3618)
+    value decimal(36,18)
 ) {
 
     $is_official_stream bool := get_official_stream($data_provider, $stream_id);
@@ -153,7 +153,7 @@ procedure get_record($data_provider text, $stream_id text, $date_from text, $dat
 
 procedure get_index($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at int) public view returns table(
     date_value text,
-    value decimal(3618)
+    value decimal(36,18)
 ) {
     $is_official_stream bool := get_official_stream($data_provider, $stream_id);
 
@@ -169,7 +169,8 @@ procedure get_index($data_provider text, $stream_id text, $date_from text, $date
 }
 
 procedure get_index_change($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at int) public view returns table(
-    value decimal(36,18)) {
+    value decimal(36,18)
+) {
     $is_official_stream bool := get_official_stream($data_provider, $stream_id);
 
     if $is_official_stream == false {
