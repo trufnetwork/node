@@ -10,18 +10,25 @@ table system_streams {
     #data_provider_stream_id_idx primary(data_provider, stream_id)
 }
 
-procedure get_official_stream($data_provider text, $stream_id text) private view returns (result bool) {
-    for $row in SELECT * FROM system_streams WHERE data_provider = $data_provider AND stream_id = $stream_id AND revoked_at IS NULL {
-        return $row.stream_id != null;
+procedure get_official_stream($data_provider text, $stream_id text) public view returns (result bool) {
+    // ensure valid address
+    $data_provider_cleaned text := ensure_ethereum_address($data_provider);
+
+    for $row in SELECT * FROM system_streams WHERE data_provider = $data_provider_cleaned AND stream_id = $stream_id AND revoked_at IS NULL {
+        return $row.stream_id IS DISTINCT FROM null;
     }
 
     return false;
 }
 
 // Verify hex enforces the format `ab1234` instead of `0xab1234` so we can quickly spot errors
-// it may be removed as soon as we can normalize hex inputs, but for now we can't because substring is not supported
-procedure verify_hex($text text) private {
+// it also checks if it's a valid hex string
+procedure verify_hex($text text) private view {
     $hex text := decode($text, 'hex');
+
+    if $hex == null {
+        error(format('invalid hex: %s', $text));
+    }
 }
 
 foreign procedure ext_get_metadata($key text, $only_latest bool, $ref text) returns table(
@@ -61,14 +68,17 @@ procedure accept_stream($data_provider text, $stream_id text) public owner {
 
     $current_blockheight int := @height;
 
-    verify_hex($data_provider);
+    $verified_data_provider text := ensure_ethereum_address($data_provider);
 
     INSERT INTO system_streams (stream_id, data_provider, accepted_at)
-    VALUES ($stream_id, $data_provider, $current_blockheight);
+    VALUES ($stream_id, $verified_data_provider, $current_blockheight);
 }
 
 procedure revoke_stream($data_provider text, $stream_id text) public owner {
-    $is_official_stream bool := get_official_stream($data_provider, $stream_id);
+    // ensure valid address
+    $data_provider_cleaned text := ensure_ethereum_address($data_provider);
+
+    $is_official_stream bool := get_official_stream($data_provider_cleaned, $stream_id);
 
     // Check if
     if $is_official_stream == false {
@@ -77,21 +87,29 @@ procedure revoke_stream($data_provider text, $stream_id text) public owner {
 
     $current_blockheight int := @height;
 
-    UPDATE system_streams SET revoked_at = $current_blockheight WHERE data_provider = $data_provider AND stream_id = $stream_id;
+    UPDATE system_streams SET revoked_at = $current_blockheight WHERE data_provider = $data_provider_cleaned AND stream_id = $stream_id;
 }
+
+// -------------------------------------------------------------------------------------------------
+// ------------------------------- FOREIGN PROCEDURES --------------------------------------------
+// -------------------------------------------------------------------------------------------------
 
 foreign procedure ext_get_record($date_from text, $date_to text, $frozen_at int) returns table(
     date_value text,
     value decimal(36,18)
 )
 
-foreign procedure ext_get_index($date_from text, $date_to text, $frozen_at int) returns table(
+foreign procedure ext_get_index($date_from text, $date_to text, $frozen_at int, $base_date text) returns table(
     date_value text,
     value decimal(36,18)
 )
-foreign procedure ext_get_index_change($date_from text, $date_to text, $frozen_at int) returns table (
+foreign procedure ext_get_index_change($date_from text, $date_to text, $frozen_at int, $base_date text, $days_interval int) returns table (
     value decimal(36,18)
 )
+
+// -------------------------------------------------------------------------------------------------
+// ------------------------------- UNSAFE PROCEDURES -----------------------------------------------
+// -------------------------------------------------------------------------------------------------
 
 procedure get_unsafe_record($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at int) public view returns table(
     date_value text,
@@ -103,6 +121,88 @@ procedure get_unsafe_record($data_provider text, $stream_id text, $date_from tex
         return next $row.date_value, $row.value;
     }
 }
+
+procedure get_unsafe_index($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at int, $base_date text) public view returns table(
+    date_value text,
+    value decimal(36,18)
+) {
+    $dbid text := get_dbid($data_provider, $stream_id);
+
+    for $row in SELECT * FROM ext_get_index[$dbid, 'get_index']($date_from, $date_to, $frozen_at, $base_date) {
+        return next $row.date_value, $row.value;
+    }
+}
+
+procedure get_unsafe_index_change($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at int, $base_date text, $days_interval int) public view returns table(
+    value decimal(36,18)
+) {
+    $dbid text := get_dbid($data_provider, $stream_id);
+
+    for $row in SELECT * FROM ext_get_index_change[$dbid, 'get_index_change']($date_from, $date_to, $frozen_at, $base_date, $days_interval) {
+        return next $row.value;
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+// ------------------------------- SAFE PROCEDURES -----------------------------------------------
+// -------------------------------------------------------------------------------------------------
+
+procedure get_record($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at int) public view returns table(
+    date_value text,
+    value decimal(36,18)
+) {
+
+    $is_official_stream bool := get_official_stream($data_provider, $stream_id);
+
+    if $is_official_stream == false {
+        error('this stream is not official');
+    }
+
+    $dbid text := get_dbid($data_provider, $stream_id);
+
+    for $row in SELECT * FROM get_unsafe_record($data_provider, $stream_id, $date_from, $date_to, $frozen_at) {
+        return next $row.date_value, $row.value;
+    }
+}
+
+procedure get_index($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at int, $base_date text) public view returns table(
+    date_value text,
+    value decimal(36,18)
+) {
+    $is_official_stream bool := get_official_stream($data_provider, $stream_id);
+
+    if $is_official_stream == false {
+        error('this stream is not official');
+    }
+
+    $dbid text := get_dbid($data_provider, $stream_id);
+
+    for $row in SELECT * FROM ext_get_index[$dbid, 'get_index']($date_from, $date_to, $frozen_at, $base_date) {
+        return next $row.date_value, $row.value;
+    }
+}
+
+procedure get_index_change($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at int, $base_date text, $days_interval int) public view returns table(
+    value decimal(36,18)
+) {
+    $is_official_stream bool := get_official_stream($data_provider, $stream_id);
+
+    if $is_official_stream == false {
+        error('this stream is not official');
+    }
+
+    $dbid text := get_dbid($data_provider, $stream_id);
+
+    for $row in SELECT * FROM ext_get_index_change[$dbid, 'get_index_change']($date_from, $date_to, $frozen_at, $base_date, $days_interval) {
+        return next $row.value;
+    }
+
+}
+
+// -------------------------------------------------------------------------------------------------
+// ------------------------------- HELPER PROCEDURES -----------------------------------------------
+// -------------------------------------------------------------------------------------------------
+
 
 procedure get_dbid($data_provider text, $stream_id text) private view returns (result text) {
     $starts_with_0x bool := false;
@@ -121,66 +221,21 @@ procedure get_dbid($data_provider text, $stream_id text) private view returns (r
     return generate_dbid($stream_id, decode($data_provider_without_0x, 'hex'));
 }
 
-procedure get_unsafe_index($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at int) public view returns table(
-    date_value text,
-    value decimal(36,18)
-) {
-    $dbid text := get_dbid($data_provider, $stream_id);
-
-    for $row in SELECT * FROM ext_get_index[$dbid, 'get_index']($date_from, $date_to, $frozen_at) {
-        return next $row.date_value, $row.value;
-    }
-}
-
-procedure get_record($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at int) public view returns table(
-    date_value text,
-    value decimal(36,18)
-) {
-
-    $is_official_stream bool := get_official_stream($data_provider, $stream_id);
-
-    if $is_official_stream == false {
-        error('this stream is not official');
+procedure ensure_ethereum_address($text text) private view returns (result text) {
+    $final_text_without_0x text := $text;
+    for $row in SELECT $text LIKE '0x%' as is_0x {
+        if $row.is_0x == true {
+            $final_text_without_0x := substring($text, 3);
+        }
     }
 
-    $dbid text := get_dbid($data_provider, $stream_id);
+    // verify hex
+    verify_hex($final_text_without_0x);
 
-    for $row in SELECT * FROM get_unsafe_record($data_provider, $stream_id, $date_from, $date_to, $frozen_at) {
-        return next $row.date_value, $row.value;
+    // should have 40 characters
+    if length($final_text_without_0x) != 40 {
+        error(format('invalid address length: %s', $final_text_without_0x));
     }
 
-}
-
-procedure get_index($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at int) public view returns table(
-    date_value text,
-    value decimal(36,18)
-) {
-    $is_official_stream bool := get_official_stream($data_provider, $stream_id);
-
-    if $is_official_stream == false {
-        error('this stream is not official');
-    }
-
-    $dbid text := get_dbid($data_provider, $stream_id);
-
-    for $row in SELECT * FROM ext_get_index[$dbid, 'get_index']($date_from, $date_to, $frozen_at) {
-        return next $row.date_value, $row.value;
-    }
-}
-
-procedure get_index_change($data_provider text, $stream_id text, $date_from text, $date_to text, $frozen_at int) public view returns table(
-    value decimal(36,18)
-) {
-    $is_official_stream bool := get_official_stream($data_provider, $stream_id);
-
-    if $is_official_stream == false {
-        error('this stream is not official');
-    }
-
-    $dbid text := get_dbid($data_provider, $stream_id);
-
-    for $row in SELECT * FROM ext_get_index_change[$dbid, 'get_index_change']($date_from, $date_to, $frozen_at) {
-        return next $row.value;
-    }
-
+    return $final_text_without_0x;
 }

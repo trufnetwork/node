@@ -4,18 +4,24 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
+
 	"github.com/kwilteam/kwil-db/common"
 	"github.com/kwilteam/kwil-db/core/utils"
 	"github.com/kwilteam/kwil-db/parse"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
-	"github.com/pkg/errors"
-	"github.com/stretchr/testify/assert"
+
 	"github.com/truflation/tsn-db/internal/contracts"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
 	"github.com/truflation/tsn-sdk/core/util"
 )
 
-const systemContractName = "system_contract"
+const (
+	systemContractName = "system_contract"
+)
+
+var systemContractDeployer = util.Unsafe_NewEthereumAddressFromString("0x1234567890123456789012345678901234567890")
 
 func TestSystemContract(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
@@ -30,10 +36,17 @@ func TestSystemContract(t *testing.T) {
 	})
 }
 
-func testDeployContract(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+// setupSystemContract initializes the system contract for testing.
+func setupSystemContract(ctx context.Context, platform *kwilTesting.Platform) error {
+	platform.Deployer = systemContractDeployer.Bytes()
+	return deploySystemContract(ctx, platform)
+}
+
+func testDeployContract(t *testing.T) kwilTesting.TestFunc {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		err := deploySystemContract(ctx, platform)
-		assert.NoError(t, err, "Failed to deploy system contract")
+		if err := setupSystemContract(ctx, platform); err != nil {
+			return err
+		}
 
 		exists, err := checkContractExists(ctx, platform, systemContractName)
 		assert.NoError(t, err, "Error checking contract existence")
@@ -43,14 +56,24 @@ func testDeployContract(t *testing.T) func(ctx context.Context, platform *kwilTe
 	}
 }
 
-func testAcceptAndRevokeStream(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testAcceptAndRevokeStream(t *testing.T) kwilTesting.TestFunc {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		dataProvider := getDataProvider(platform)
-		streamID := "primitive_stream_000000000000001"
+		if err := setupSystemContract(ctx, platform); err != nil {
+			return err
+		}
+
+		dataProvider := getDataProvider()
+		streamID := util.GenerateStreamId("primitive_stream")
+
+		// Deploy primitive stream with data
+		if err := deployPrimitiveStreamWithData(ctx, platform, dataProvider, "primitive_stream", 1); err != nil {
+			return errors.Wrap(err, "Failed to deploy primitive stream")
+		}
 
 		// Accept the stream
-		err := executeAcceptStream(ctx, platform, dataProvider, streamID)
-		assert.NoError(t, err, "Failed to accept stream")
+		if err := executeAcceptStream(ctx, platform, dataProvider, streamID); err != nil {
+			return errors.Wrap(err, "Failed to accept stream")
+		}
 
 		// Verify acceptance
 		accepted, err := isStreamAccepted(ctx, platform, dataProvider, streamID)
@@ -58,8 +81,9 @@ func testAcceptAndRevokeStream(t *testing.T) func(ctx context.Context, platform 
 		assert.True(t, accepted, "Stream should be accepted")
 
 		// Revoke the stream
-		err = executeRevokeStream(ctx, platform, dataProvider, streamID)
-		assert.NoError(t, err, "Failed to revoke stream")
+		if err := executeRevokeStream(ctx, platform, dataProvider, streamID); err != nil {
+			return errors.Wrap(err, "Failed to revoke stream")
+		}
 
 		// Verify revocation
 		accepted, err = isStreamAccepted(ctx, platform, dataProvider, streamID)
@@ -70,22 +94,35 @@ func testAcceptAndRevokeStream(t *testing.T) func(ctx context.Context, platform 
 	}
 }
 
-func testCannotAcceptInexistentStream(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testCannotAcceptInexistentStream(t *testing.T) kwilTesting.TestFunc {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		dataProvider := "fC43f5F9dd45258b3AFf31Bdbe6561D97e8B71de"
-		inexistentStreamID := "st123456789012345678901234567890"
+		if err := setupSystemContract(ctx, platform); err != nil {
+			return err
+		}
 
-		err := executeAcceptStream(ctx, platform, dataProvider, inexistentStreamID)
-		assert.Error(t, err, "Should not be able to accept an inexistent stream")
+		dataProvider := getDataProvider()
+		nonExistentStreamID := util.GenerateStreamId("inexistent_stream")
+
+		err := executeAcceptStream(ctx, platform, dataProvider, nonExistentStreamID)
+		assert.Error(t, err, "Should not be able to accept a nonexistent stream")
 
 		return nil
 	}
 }
 
-func testGetUnsafeMethods(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testGetUnsafeMethods(t *testing.T) kwilTesting.TestFunc {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		dataProvider := getDataProvider(platform)
-		streamID := "primitive_stream_000000000000001"
+		if err := setupSystemContract(ctx, platform); err != nil {
+			return err
+		}
+
+		dataProvider := getDataProvider()
+		streamID := util.GenerateStreamId("primitive_stream")
+
+		// Deploy the stream
+		if err := deployPrimitiveStreamWithData(ctx, platform, dataProvider, "primitive_stream", 1); err != nil {
+			return errors.Wrap(err, "Failed to deploy primitive stream")
+		}
 
 		// Get unsafe record
 		recordResult, err := executeGetUnsafeRecord(ctx, platform, dataProvider, streamID, "2021-01-01", "2021-01-05", 0)
@@ -101,17 +138,25 @@ func testGetUnsafeMethods(t *testing.T) func(ctx context.Context, platform *kwil
 	}
 }
 
-func testGetSafeMethods(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testGetSafeMethods(t *testing.T) kwilTesting.TestFunc {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		dataProvider := getDataProvider(platform)
-		streamID := "primitive_stream_000000000000001"
+		if err := setupSystemContract(ctx, platform); err != nil {
+			return err
+		}
 
-		// Ensure the stream is accepted
-		err := executeAcceptStream(ctx, platform, dataProvider, streamID)
-		assert.NoError(t, err, "Failed to accept stream for safe methods")
+		dataProvider := getDataProvider()
+		streamName := "primitive_stream"
+		streamID := util.GenerateStreamId(streamName)
 
-		err := deployPrimitiveStreamWithData(ctx, platform, dataProvider, streamID)
-		assert.NoError(t, err, "Failed to deploy primitive stream")
+		// Deploy the stream
+		if err := deployPrimitiveStreamWithData(ctx, platform, dataProvider, streamName, 1); err != nil {
+			return errors.Wrap(err, "Failed to deploy primitive stream")
+		}
+
+		// Accept the stream
+		if err := executeAcceptStream(ctx, platform, dataProvider, streamID); err != nil {
+			return errors.Wrap(err, "Failed to accept stream for safe methods")
+		}
 
 		// Get safe record
 		recordResult, err := executeGetRecord(ctx, platform, dataProvider, streamID, "2021-01-01", "2021-01-05", 0)
@@ -123,9 +168,10 @@ func testGetSafeMethods(t *testing.T) func(ctx context.Context, platform *kwilTe
 		assert.NoError(t, err, "Failed to get safe index")
 		assert.NotEmpty(t, indexResult, "Safe index should return data")
 
-		// Revoke the stream to test failure
-		err = executeRevokeStream(ctx, platform, dataProvider, streamID)
-		assert.NoError(t, err, "Failed to revoke stream for safe methods test")
+		// Revoke the stream
+		if err := executeRevokeStream(ctx, platform, dataProvider, streamID); err != nil {
+			return errors.Wrap(err, "Failed to revoke stream for safe methods test")
+		}
 
 		// Attempt to get safe record after revocation
 		_, err = executeGetRecord(ctx, platform, dataProvider, streamID, "2021-01-01", "2021-01-05", 0)
@@ -135,29 +181,20 @@ func testGetSafeMethods(t *testing.T) func(ctx context.Context, platform *kwilTe
 	}
 }
 
-// Helper functions
+// Helper functions for deploying contracts and executing procedures
 
 func deploySystemContract(ctx context.Context, platform *kwilTesting.Platform) error {
-	err := platform.Engine.DeleteDataset(ctx, platform.DB, systemContractName, &common.TransactionData{
-		Signer: platform.Deployer,
-		TxID:   platform.Txid(),
-		Height: 1,
-	})
-	if err != nil {
-		// It's okay if the dataset doesn't exist
-	}
-
 	schema, err := parse.Parse(contracts.SystemContractContent)
 	if err != nil {
-		return errors.Wrap(err, "failed to parse system contract")
+		return errors.Wrap(err, "Failed to parse system contract")
 	}
+	schema.Name = systemContractName
 
-	err = platform.Engine.CreateDataset(ctx, platform.DB, schema, &common.TransactionData{
+	return platform.Engine.CreateDataset(ctx, platform.DB, schema, &common.TransactionData{
 		Signer: platform.Deployer,
 		TxID:   platform.Txid(),
 		Height: 2,
 	})
-	return err
 }
 
 func checkContractExists(ctx context.Context, platform *kwilTesting.Platform, contractName string) (bool, error) {
@@ -173,15 +210,29 @@ func checkContractExists(ctx context.Context, platform *kwilTesting.Platform, co
 	return false, nil
 }
 
-func getDataProvider(platform *kwilTesting.Platform) string {
-	return "fC43f5F9dd45258b3AFf31Bdbe6561D97e8B71de"
+func getDataProvider() util.EthereumAddress {
+	return util.Unsafe_NewEthereumAddressFromString("0xfC43f5F9dd45258b3AFf31Bdbe6561D97e8B71de")
 }
 
-func executeAcceptStream(ctx context.Context, platform *kwilTesting.Platform, dataProvider, streamID string) error {
+func deployPrimitiveStreamWithData(ctx context.Context, platform *kwilTesting.Platform, dataProvider util.EthereumAddress, streamName string, height int64) error {
+	return setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+		Platform:            platform,
+		PrimitiveStreamName: streamName,
+		Height:              height,
+		Deployer:            dataProvider,
+		MarkdownData: `
+| date       | value |
+|------------|-------|
+| 2021-01-01 | 1     | # Minimal data for testing
+`,
+	})
+}
+
+func executeAcceptStream(ctx context.Context, platform *kwilTesting.Platform, dataProvider util.EthereumAddress, streamID util.StreamId) error {
 	_, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
 		Procedure: "accept_stream",
 		Dataset:   utils.GenerateDBID(systemContractName, platform.Deployer),
-		Args:      []any{dataProvider, streamID},
+		Args:      []any{dataProvider.Address(), streamID.String()},
 		TransactionData: common.TransactionData{
 			Signer: platform.Deployer,
 			TxID:   platform.Txid(),
@@ -191,11 +242,11 @@ func executeAcceptStream(ctx context.Context, platform *kwilTesting.Platform, da
 	return err
 }
 
-func executeRevokeStream(ctx context.Context, platform *kwilTesting.Platform, dataProvider, streamID string) error {
+func executeRevokeStream(ctx context.Context, platform *kwilTesting.Platform, dataProvider util.EthereumAddress, streamID util.StreamId) error {
 	_, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
 		Procedure: "revoke_stream",
 		Dataset:   utils.GenerateDBID(systemContractName, platform.Deployer),
-		Args:      []any{dataProvider, streamID},
+		Args:      []any{dataProvider.Address(), streamID.String()},
 		TransactionData: common.TransactionData{
 			Signer: platform.Deployer,
 			TxID:   platform.Txid(),
@@ -205,11 +256,11 @@ func executeRevokeStream(ctx context.Context, platform *kwilTesting.Platform, da
 	return err
 }
 
-func isStreamAccepted(ctx context.Context, platform *kwilTesting.Platform, dataProvider, streamID string) (bool, error) {
+func isStreamAccepted(ctx context.Context, platform *kwilTesting.Platform, dataProvider util.EthereumAddress, streamID util.StreamId) (bool, error) {
 	result, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
 		Procedure: "get_official_stream",
 		Dataset:   utils.GenerateDBID(systemContractName, platform.Deployer),
-		Args:      []any{dataProvider, streamID},
+		Args:      []any{dataProvider.Address(), streamID.String()},
 		TransactionData: common.TransactionData{
 			Signer: platform.Deployer,
 			TxID:   platform.Txid(),
@@ -225,91 +276,58 @@ func isStreamAccepted(ctx context.Context, platform *kwilTesting.Platform, dataP
 	return result.Rows[0][0].(bool), nil
 }
 
-func executeGetUnsafeRecord(ctx context.Context, platform *kwilTesting.Platform, dataProvider, streamID, dateFrom, dateTo string, frozenAt int64) ([][]any, error) {
+func executeGetUnsafeRecord(ctx context.Context, platform *kwilTesting.Platform, dataProvider util.EthereumAddress, streamID util.StreamId, dateFrom, dateTo string, frozenAt int64) ([][]any, error) {
 	result, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
 		Procedure: "get_unsafe_record",
 		Dataset:   utils.GenerateDBID(systemContractName, platform.Deployer),
-		Args:      []any{dataProvider, streamID, dateFrom, dateTo, frozenAt},
+		Args:      []any{dataProvider.Address(), streamID.String(), dateFrom, dateTo, frozenAt},
 		TransactionData: common.TransactionData{
 			Signer: platform.Deployer,
 			TxID:   platform.Txid(),
 			Height: 6,
 		},
 	})
-	if err != nil {
-		return nil, err
-	}
-	return result.Rows, nil
+	return result.Rows, err
 }
 
-func executeGetUnsafeIndex(ctx context.Context, platform *kwilTesting.Platform, dataProvider, streamID, dateFrom, dateTo string, frozenAt int64) ([][]any, error) {
+func executeGetUnsafeIndex(ctx context.Context, platform *kwilTesting.Platform, dataProvider util.EthereumAddress, streamID util.StreamId, dateFrom, dateTo string, frozenAt int64) ([][]any, error) {
 	result, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
 		Procedure: "get_unsafe_index",
 		Dataset:   utils.GenerateDBID(systemContractName, platform.Deployer),
-		Args:      []any{dataProvider, streamID, dateFrom, dateTo, frozenAt},
+		Args:      []any{dataProvider.Address(), streamID.String(), dateFrom, dateTo, frozenAt, nil},
 		TransactionData: common.TransactionData{
 			Signer: platform.Deployer,
 			TxID:   platform.Txid(),
 			Height: 7,
 		},
 	})
-	if err != nil {
-		return nil, err
-	}
-	return result.Rows, nil
+	return result.Rows, err
 }
 
-func executeGetRecord(ctx context.Context, platform *kwilTesting.Platform, dataProvider, streamID, dateFrom, dateTo string, frozenAt int64) ([][]any, error) {
+func executeGetRecord(ctx context.Context, platform *kwilTesting.Platform, dataProvider util.EthereumAddress, streamID util.StreamId, dateFrom, dateTo string, frozenAt int64) ([][]any, error) {
 	result, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
 		Procedure: "get_record",
 		Dataset:   utils.GenerateDBID(systemContractName, platform.Deployer),
-		Args:      []any{dataProvider, streamID, dateFrom, dateTo, frozenAt},
+		Args:      []any{dataProvider.Address(), streamID.String(), dateFrom, dateTo, frozenAt},
 		TransactionData: common.TransactionData{
 			Signer: platform.Deployer,
 			TxID:   platform.Txid(),
 			Height: 8,
 		},
 	})
-	if err != nil {
-		return nil, err
-	}
-	return result.Rows, nil
+	return result.Rows, err
 }
 
-func executeGetIndex(ctx context.Context, platform *kwilTesting.Platform, dataProvider, streamID, dateFrom, dateTo string, frozenAt int64) ([][]any, error) {
+func executeGetIndex(ctx context.Context, platform *kwilTesting.Platform, dataProvider util.EthereumAddress, streamID util.StreamId, dateFrom, dateTo string, frozenAt int64) ([][]any, error) {
 	result, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
 		Procedure: "get_index",
 		Dataset:   utils.GenerateDBID(systemContractName, platform.Deployer),
-		Args:      []any{dataProvider, streamID, dateFrom, dateTo, frozenAt},
+		Args:      []any{dataProvider.Address(), streamID.String(), dateFrom, dateTo, frozenAt, nil},
 		TransactionData: common.TransactionData{
 			Signer: platform.Deployer,
 			TxID:   platform.Txid(),
 			Height: 9,
 		},
 	})
-	if err != nil {
-		return nil, err
-	}
-	return result.Rows, nil
-}
-
-func deployPrimitiveStreamWithData(ctx context.Context, platform *kwilTesting.Platform, dataProvider string, streamName string) error {
-	// Setup initial data
-	err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
-		Platform:            platform,
-		PrimitiveStreamName: streamName,
-		Height:              1,
-		MarkdownData: `
-			| date       | value |
-			|------------|-------|
-			| 2021-01-01 | 1     |
-			| 2021-01-02 | 2     |
-			| 2021-01-03 | 4     |
-			| 2021-01-04 | 5     |
-			| 2021-01-05 | 3     |
-			`,
-	})
-	if err != nil {
-		return errors.Wrap(err, "error setting up primitive stream")
-	}
+	return result.Rows, err
 }
