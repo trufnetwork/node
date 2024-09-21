@@ -315,7 +315,13 @@ func executeGetRecord(ctx context.Context, platform *kwilTesting.Platform, dataP
 			Height: 8,
 		},
 	})
-	return result.Rows, err
+
+	// can't just return result.Rows, err, otherwise we get a nil pointer dereference
+	if err != nil {
+		return nil, err
+	}
+
+	return result.Rows, nil
 }
 
 func executeGetIndex(ctx context.Context, platform *kwilTesting.Platform, dataProvider util.EthereumAddress, streamID util.StreamId, dateFrom, dateTo string, frozenAt int64) ([][]any, error) {
