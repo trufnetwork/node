@@ -466,6 +466,12 @@ procedure init() public owner {
         error('this contract was already initialized');
     }
 
+    // check if caller is empty
+    // this happens can happen in tests, but we should also protect for that on production
+    if @caller == '' {
+        error('caller is empty');
+    }
+
     $current_block int := @height;
 
     // uuid's namespaces are any random generated uuid from https://www.uuidtools.com/v5
