@@ -3,6 +3,8 @@ package setup
 import (
 	"context"
 	"fmt"
+	"strconv"
+
 	"github.com/kwilteam/kwil-db/common"
 	"github.com/kwilteam/kwil-db/core/utils"
 	"github.com/kwilteam/kwil-db/parse"
@@ -13,7 +15,6 @@ import (
 	testtable "github.com/truflation/tsn-db/internal/contracts/tests/utils/table"
 	"github.com/truflation/tsn-sdk/core/types"
 	"github.com/truflation/tsn-sdk/core/util"
-	"strconv"
 )
 
 type ComposedStreamDefinition struct {
@@ -45,7 +46,17 @@ func setupComposedAndPrimitives(ctx context.Context, input SetupComposedAndPrimi
 		return errors.Wrap(err, "error creating composed dataset")
 	}
 
-	if err := initializeContract(ctx, input.Platform, composedDBID); err != nil {
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return errors.Wrap(err, "error creating composed dataset")
+	}
+
+	if err := initializeContract(ctx, InitializeContractInput{
+		Platform: input.Platform,
+		Deployer: deployer,
+		Dbid:     composedDBID,
+		Height:   input.Height,
+	}); err != nil {
 		return errors.Wrap(err, "error initializing composed stream")
 	}
 
@@ -63,6 +74,7 @@ func setupComposedAndPrimitives(ctx context.Context, input SetupComposedAndPrimi
 			Platform:                input.Platform,
 			Height:                  input.Height,
 			PrimitiveStreamWithData: primitiveStream,
+			Deployer:                deployer,
 		}); err != nil {
 			return errors.Wrap(err, "error setting up primitive stream")
 		}

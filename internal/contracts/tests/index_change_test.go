@@ -2,8 +2,9 @@ package tests
 
 import (
 	"context"
-	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
 	"testing"
+
+	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
 
 	"github.com/pkg/errors"
 	"github.com/truflation/tsn-sdk/core/util"
@@ -20,10 +21,24 @@ func TestIndexChange(t *testing.T) {
 		Name:        "index_change_test",
 		SchemaFiles: []string{"../primitive_stream_template.kf"},
 		FunctionTests: []kwilTesting.TestFunc{
-			testIndexChange(t),
-			testYoYIndexChange(t),
+			withTestIndexChangeSetup(testIndexChange(t)),
+			withTestIndexChangeSetup(testYoYIndexChange(t)),
 		},
 	})
+}
+
+func withTestIndexChangeSetup(test func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// setup deployer
+		deployer, err := util.NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address")
+		}
+
+		platform.Deployer = deployer.Bytes()
+
+		return test(ctx, platform)
+	}
 }
 
 func testIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
@@ -31,11 +46,16 @@ func testIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesti
 		streamName := "primitive_stream_db_name"
 		streamId := util.GenerateStreamId(streamName)
 		dbid := utils.GenerateDBID(streamId.String(), platform.Deployer)
+		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address")
+		}
 
 		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
 			Platform:            platform,
 			Height:              0,
 			PrimitiveStreamName: streamName,
+			Deployer:            deployer,
 			MarkdownData: `
 			| date       | value  |
 			|------------|--------|
@@ -104,6 +124,10 @@ func testYoYIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 		streamName := "primitive_stream_db_name"
 		streamId := util.GenerateStreamId(streamName)
 		dbid := utils.GenerateDBID(streamId.String(), platform.Deployer)
+		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address")
+		}
 
 		/*
 			Here’s an example calculation for corn inflation for May 22nd 2023:
@@ -120,6 +144,7 @@ func testYoYIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 			Platform:            platform,
 			Height:              0,
 			PrimitiveStreamName: streamName,
+			Deployer:            deployer,
 			MarkdownData: `
         | date       | value  |
         |------------|--------|

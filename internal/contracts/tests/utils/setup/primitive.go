@@ -2,6 +2,7 @@ package setup
 
 import (
 	"context"
+
 	"github.com/golang-sql/civil"
 	"github.com/kwilteam/kwil-db/common"
 	"github.com/kwilteam/kwil-db/core/utils"
@@ -38,6 +39,7 @@ type MarkdownPrimitiveSetupInput struct {
 
 type SetupPrimitiveInput struct {
 	Platform                *kwilTesting.Platform
+	Deployer                util.EthereumAddress
 	Height                  int64
 	PrimitiveStreamWithData PrimitiveStreamWithData
 }
@@ -50,20 +52,26 @@ func setupPrimitive(ctx context.Context, setupInput SetupPrimitiveInput) error {
 	primitiveSchema.Name = setupInput.PrimitiveStreamWithData.StreamId.String()
 
 	if err := setupInput.Platform.Engine.CreateDataset(ctx, setupInput.Platform.DB, primitiveSchema, &common.TransactionData{
-		Signer: setupInput.Platform.Deployer,
+		Signer: setupInput.Deployer.Bytes(),
 		TxID:   setupInput.Platform.Txid(),
 		Height: setupInput.Height,
 	}); err != nil {
 		return errors.Wrap(err, "error creating primitive dataset")
 	}
 
-	dbid := utils.GenerateDBID(setupInput.PrimitiveStreamWithData.StreamId.String(), setupInput.Platform.Deployer)
-	if err := initializeContract(ctx, setupInput.Platform, dbid); err != nil {
+	dbid := utils.GenerateDBID(setupInput.PrimitiveStreamWithData.StreamId.String(), setupInput.Deployer.Bytes())
+	if err := initializeContract(ctx, InitializeContractInput{
+		Platform: setupInput.Platform,
+		Deployer: setupInput.Deployer,
+		Dbid:     dbid,
+		Height:   setupInput.Height,
+	}); err != nil {
 		return errors.Wrap(err, "error initializing primitive stream")
 	}
 
 	if err := insertPrimitiveData(ctx, InsertPrimitiveDataInput{
 		Platform:        setupInput.Platform,
+		Deployer:        setupInput.Deployer,
 		primitiveStream: setupInput.PrimitiveStreamWithData,
 		height:          setupInput.Height,
 	}); err != nil {
@@ -110,6 +118,7 @@ func parsePrimitiveMarkdownSetup(input MarkdownPrimitiveSetupInput) (SetupPrimit
 		Platform:                input.Platform,
 		Height:                  input.Height,
 		PrimitiveStreamWithData: primitiveStream,
+		Deployer:                input.Deployer,
 	}, nil
 }
 
@@ -165,6 +174,7 @@ func InsertMarkdownPrimitiveData(ctx context.Context, input InsertMarkdownDataIn
 
 type InsertPrimitiveDataInput struct {
 	Platform        *kwilTesting.Platform
+	Deployer        util.EthereumAddress
 	primitiveStream PrimitiveStreamWithData
 	height          int64
 }
@@ -176,7 +186,7 @@ func insertPrimitiveData(ctx context.Context, input InsertPrimitiveDataInput) er
 		args = append(args, []any{data.DateValue, data.Value})
 	}
 
-	dbid := utils.GenerateDBID(input.primitiveStream.StreamId.String(), input.Platform.Deployer)
+	dbid := utils.GenerateDBID(input.primitiveStream.StreamId.String(), input.Deployer.Bytes())
 
 	txid := input.Platform.Txid()
 
@@ -186,7 +196,7 @@ func insertPrimitiveData(ctx context.Context, input InsertPrimitiveDataInput) er
 			Dataset:   dbid,
 			Args:      arg,
 			TransactionData: common.TransactionData{
-				Signer: input.Platform.Deployer,
+				Signer: input.Deployer.Bytes(),
 				TxID:   txid,
 				Height: input.height,
 			},

@@ -35,10 +35,18 @@ func TestPrimitiveStream(t *testing.T) {
 
 func WithPrimitiveTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		deployer, err := util.NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address")
+		}
+
+		platform.Deployer = deployer.Bytes()
+
 		// Setup initial data
-		err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+		err = setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
 			Platform:            platform,
 			PrimitiveStreamName: primitiveStreamName,
+			Deployer:            deployer,
 			Height:              1,
 			MarkdownData: `
 			| date       | value |

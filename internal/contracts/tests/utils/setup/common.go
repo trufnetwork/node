@@ -2,19 +2,28 @@ package setup
 
 import (
 	"context"
+
 	"github.com/kwilteam/kwil-db/common"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
+	"github.com/truflation/tsn-sdk/core/util"
 )
 
-func initializeContract(ctx context.Context, platform *kwilTesting.Platform, dbid string) error {
-	_, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+type InitializeContractInput struct {
+	Platform *kwilTesting.Platform
+	Deployer util.EthereumAddress
+	Dbid     string
+	Height   int64
+}
+
+func initializeContract(ctx context.Context, input InitializeContractInput) error {
+	_, err := input.Platform.Engine.Procedure(ctx, input.Platform.DB, &common.ExecutionData{
 		Procedure: "init",
-		Dataset:   dbid,
+		Dataset:   input.Dbid,
 		Args:      []any{},
 		TransactionData: common.TransactionData{
-			Signer: platform.Deployer,
-			TxID:   platform.Txid(),
-			Height: 1,
+			Signer: input.Deployer.Bytes(),
+			TxID:   input.Platform.Txid(),
+			Height: input.Height,
 		},
 	})
 	return err
