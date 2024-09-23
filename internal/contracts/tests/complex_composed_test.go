@@ -18,9 +18,10 @@ import (
 )
 
 var (
-	composedStreamName   = "complex_composed_a"
-	composedStreamId     = util.GenerateStreamId(composedStreamName)
-	primitiveStreamNames = []string{"p1", "p2", "p3"}
+	composedStreamName      = "complex_composed_a"
+	composedStreamId        = util.GenerateStreamId(composedStreamName)
+	primitiveStreamNames    = []string{"p1", "p2", "p3"}
+	complexComposedDeployer = util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
 )
 
 func TestComplexComposed(t *testing.T) {
@@ -41,13 +42,13 @@ func TestComplexComposed(t *testing.T) {
 func WithTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// platform.Deployer can't be the dummy value that is used by default
-		deployerAddress := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
-		platform.Deployer = deployerAddress.Bytes()
+		platform.Deployer = complexComposedDeployer.Bytes()
 
 		// Deploy the contracts here
 		err := setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
 			Platform:           platform,
 			ComposedStreamName: composedStreamName,
+			Deployer:           complexComposedDeployer,
 			Height:             1,
 			MarkdownData: fmt.Sprintf(`
 				| date       | %s   | %s   | %s   |

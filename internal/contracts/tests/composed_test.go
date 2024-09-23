@@ -14,6 +14,8 @@ import (
 	"github.com/pkg/errors"
 )
 
+var composedDeployer = util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
+
 func TestComposed(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name: "composed_test",
@@ -27,8 +29,7 @@ func TestComposed(t *testing.T) {
 func WithComposedTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// we just need to define a valid address here, as we don't need to deploy anything
-		deployerAddress := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
-		platform.Deployer = deployerAddress.Bytes()
+		platform.Deployer = composedDeployer.Bytes()
 
 		// Run the actual test function
 		return testFn(ctx, platform)
@@ -43,6 +44,7 @@ func testComposedLastAvailable(t *testing.T) func(ctx context.Context, platform 
 		err := setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
 			Platform:           platform,
 			ComposedStreamName: composedStreamName,
+			Deployer:           composedDeployer,
 			Height:             1,
 			MarkdownData: `
 				| date       | Stream 1 | Stream 2 | Stream 3 |
@@ -92,6 +94,7 @@ func testComposedNoPastData(t *testing.T) func(ctx context.Context, platform *kw
 		err := setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
 			Platform:           platform,
 			ComposedStreamName: composedStreamName,
+			Deployer:           composedDeployer,
 			Height:             1,
 			MarkdownData: `
 				| date       | Stream 1 | Stream 2 | Stream 3 |

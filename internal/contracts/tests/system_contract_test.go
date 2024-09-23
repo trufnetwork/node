@@ -190,8 +190,14 @@ func deploySystemContract(ctx context.Context, platform *kwilTesting.Platform) e
 	}
 	schema.Name = systemContractName
 
+	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+	if err != nil {
+		return errors.Wrap(err, "Failed to create system contract deployer")
+	}
+
 	return platform.Engine.CreateDataset(ctx, platform.DB, schema, &common.TransactionData{
-		Signer: platform.Deployer,
+		Signer: deployer.Bytes(),
+		Caller: deployer.Address(),
 		TxID:   platform.Txid(),
 		Height: 2,
 	})
