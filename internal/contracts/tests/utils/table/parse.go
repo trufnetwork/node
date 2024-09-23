@@ -20,7 +20,7 @@ func TableFromMarkdown(table string) (*Table, error) {
 	lines = lo.Filter(lines, func(line string, _ int) bool {
 		return strings.TrimSpace(line) != "" && !strings.HasPrefix(strings.TrimSpace(line), "#")
 	})
-	if len(lines) < 3 {
+	if len(lines) < 2 {
 		return nil, fmt.Errorf("not enough lines for a valid table: %d", len(lines))
 	}
 

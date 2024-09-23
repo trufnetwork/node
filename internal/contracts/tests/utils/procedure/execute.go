@@ -84,10 +84,6 @@ func GetIndexChange(ctx context.Context, input GetIndexChangeInput) ([]ResultRow
 }
 
 func processResultRows(rows [][]any) ([]ResultRow, error) {
-	if len(rows) == 0 {
-		return nil, errors.New("no rows returned from the procedure")
-	}
-
 	resultRows := make([]ResultRow, len(rows))
 	for i, row := range rows {
 		resultRow := ResultRow{}
