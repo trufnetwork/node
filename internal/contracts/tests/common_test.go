@@ -410,6 +410,65 @@ func testPermissionsAfterVisibilityChange(t *testing.T, contractInfo ContractInf
 	}
 }
 
+func TestIsStreamAllowedToCompose(t *testing.T) {
+	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name: "is_stream_allowed_to_compose",
+		FunctionTests: []kwilTesting.TestFunc{
+			testIsStreamAllowedToCompose(t, primitiveContractInfo),
+			testIsStreamAllowedToCompose(t, composedContractInfo),
+		},
+	})
+}
+
+func testIsStreamAllowedToCompose(t *testing.T, contractInfo ContractInfo) kwilTesting.TestFunc {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Set up and initialize the primary contract
+		if err := setupAndInitializeContract(ctx, platform, contractInfo); err != nil {
+			return err
+		}
+		dbid := getDBID(contractInfo, platform)
+
+		// Set up a foreign contract (the one attempting to compose)
+		foreignContractInfo := ContractInfo{
+			Name:     "foreign_stream_test",
+			StreamID: util.GenerateStreamId("foreign_stream_test"),
+			Deployer: util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000abc"),
+			Content:  contracts.PrimitiveStreamContent, // Using the same contract content for simplicity
+		}
+
+		if err := setupAndInitializeContract(ctx, platform, foreignContractInfo); err != nil {
+			return err
+		}
+
+		// set compose_visibility to private (1)
+		err := insertMetadata(ctx, platform, contractInfo.Deployer, dbid, "compose_visibility", "1", "int")
+		if err != nil {
+			return errors.Wrap(err, "Failed to change compose_visibility")
+		}
+
+		foreignDbid := getDBID(foreignContractInfo, platform)
+
+		canCompose, err := checkComposePermissions(ctx, platform, contractInfo.Deployer, dbid, foreignDbid)
+		assert.False(t, canCompose, "Foreign stream should not be allowed to compose without permission")
+		assert.Error(t, err, "Expected permission error when composing without permission")
+
+		// Grant compose permission to the foreign stream
+		err = insertMetadata(ctx, platform, contractInfo.Deployer, dbid, "allow_compose_stream", foreignDbid, "ref")
+		if err != nil {
+			return errors.Wrap(err, "Failed to grant compose permission")
+		}
+
+		// Attempt to compose again with permission
+		platform.Deployer = foreignContractInfo.Deployer.Bytes()
+
+		canCompose, err = checkComposePermissions(ctx, platform, contractInfo.Deployer, dbid, foreignDbid)
+		assert.True(t, canCompose, "Foreign stream should be allowed to compose after permission is granted")
+		assert.NoError(t, err, "No error expected when composing with permission")
+
+		return nil
+	}
+}
+
 // Helper functions
 
 func setupAndInitializeContract(ctx context.Context, platform *kwilTesting.Platform, contractInfo ContractInfo) error {
@@ -525,6 +584,27 @@ func checkReadPermissions(ctx context.Context, platform *kwilTesting.Platform, d
 		Procedure: "is_wallet_allowed_to_read",
 		Dataset:   dbid,
 		Args:      []any{wallet},
+		TransactionData: common.TransactionData{
+			Signer: deployer.Bytes(),
+			Caller: deployer.Address(),
+			TxID:   platform.Txid(),
+			Height: 0,
+		},
+	})
+	if err != nil {
+		return false, err
+	}
+	if len(result.Rows) == 0 {
+		return false, errors.New("No result returned")
+	}
+	return result.Rows[0][0].(bool), nil
+}
+
+func checkComposePermissions(ctx context.Context, platform *kwilTesting.Platform, deployer util.EthereumAddress, dbid string, foreignCaller string) (bool, error) {
+	result, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+		Procedure: "is_stream_allowed_to_compose",
+		Dataset:   dbid,
+		Args:      []any{foreignCaller},
 		TransactionData: common.TransactionData{
 			Signer: deployer.Bytes(),
 			Caller: deployer.Address(),

@@ -91,7 +91,7 @@ procedure get_raw_record(
         error('wallet not allowed to read');
     }
     // check if the stream is allowed to compose
-    is_stream_allowed_to_compose();
+    is_stream_allowed_to_compose(@foreign_caller);
 
     // check if the child_data_providers and child_stream_id are the same length
     if array_length($child_data_providers) != array_length($child_stream_ids) {
@@ -133,7 +133,7 @@ procedure get_raw_index(
         error('wallet not allowed to read');
     }
     // check if the stream is allowed to compose
-    is_stream_allowed_to_compose();
+    is_stream_allowed_to_compose(@foreign_caller);
 
     // check if the child_data_providers and child_stream_id are the same length
     if array_length($child_data_providers) != array_length($child_stream_ids) {
@@ -807,9 +807,9 @@ procedure disable_taxonomy($version int) public {
     }
 }
 
-procedure is_stream_allowed_to_compose() public view returns (value bool) {
-    // if @foreign_caller is empty, then it's a direct call
-    if @foreign_caller == '' {
+procedure is_stream_allowed_to_compose($foreign_caller text) public view returns (value bool) {
+    // if foreign_caller is empty, then it's a direct call
+    if $foreign_caller == '' {
         return true;
     }
 
@@ -825,7 +825,7 @@ procedure is_stream_allowed_to_compose() public view returns (value bool) {
     }
 
     // if there's metadata allow_compose_stream -> <foreign_caller>, then its permitted
-    for $row in SELECT * FROM get_metadata('allow_compose_stream', true, @foreign_caller) LIMIT 1 {
+    for $row in SELECT * FROM get_metadata('allow_compose_stream', true, $foreign_caller) LIMIT 1 {
         return true;
     }
 

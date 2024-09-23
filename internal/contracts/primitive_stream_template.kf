@@ -368,7 +368,7 @@ procedure get_original_record(
         error('wallet not allowed to read');
     }
     // check compose access
-    is_stream_allowed_to_compose();
+    is_stream_allowed_to_compose(@foreign_caller);
 
     $frozenValue int := 0;
     if $frozen_at IS DISTINCT FROM NULL {
@@ -534,9 +534,9 @@ procedure check_eth_address($address text) private {
     }
 }
 
-procedure is_stream_allowed_to_compose() public view returns (value bool) {
-    // if @foreign_caller is empty, then it's a direct call
-    if @foreign_caller == '' {
+procedure is_stream_allowed_to_compose($foreign_caller text) public view returns (value bool) {
+    // if foreign_caller is empty, then it's a direct call
+    if $foreign_caller == '' {
         return true;
     }
 
@@ -552,7 +552,7 @@ procedure is_stream_allowed_to_compose() public view returns (value bool) {
     }
 
     // if there's metadata allow_compose_stream -> <foreign_caller>, then its permitted
-    for $row in SELECT * FROM get_metadata('allow_compose_stream', true, @foreign_caller) LIMIT 1 {
+    for $row in SELECT * FROM get_metadata('allow_compose_stream', true, $foreign_caller) LIMIT 1 {
         return true;
     }
 
