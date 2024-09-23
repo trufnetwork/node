@@ -47,16 +47,12 @@ func testIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesti
 		streamName := "primitive_stream_db_name"
 		streamId := util.GenerateStreamId(streamName)
 		dbid := utils.GenerateDBID(streamId.String(), platform.Deployer)
-		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
-		if err != nil {
-			return errors.Wrap(err, "error creating ethereum address")
-		}
 
 		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
-			Platform:            platform,
-			Height:              0,
-			PrimitiveStreamName: streamName,
-			Deployer:            deployer,
+			Platform: platform,
+			StreamId: streamId,
+			Height:   0,
+
 			MarkdownData: `
 			| date       | value  |
 			|------------|--------|
@@ -73,13 +69,19 @@ func testIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesti
 			return errors.Wrap(err, "error setting up primitive stream")
 		}
 
+		signer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address")
+		}
+
 		// Get index change for 7 days with 1 day interval
 		result, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
 			Procedure: "get_index_change",
 			Dataset:   dbid,
 			Args:      []any{"2023-01-02", "2023-01-08", nil, nil, 1},
 			TransactionData: common.TransactionData{
-				Signer: platform.Deployer,
+				Signer: signer.Bytes(),
+				Caller: signer.Address(),
 				TxID:   platform.Txid(),
 				Height: 0,
 			},
@@ -125,10 +127,6 @@ func testYoYIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 		streamName := "primitive_stream_db_name"
 		streamId := util.GenerateStreamId(streamName)
 		dbid := utils.GenerateDBID(streamId.String(), platform.Deployer)
-		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
-		if err != nil {
-			return errors.Wrap(err, "error creating ethereum address")
-		}
 
 		/*
 			Here’s an example calculation for corn inflation for May 22nd 2023:
@@ -142,10 +140,9 @@ func testYoYIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 
 		// Insert test data for two years
 		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
-			Platform:            platform,
-			Height:              0,
-			PrimitiveStreamName: streamName,
-			Deployer:            deployer,
+			Platform: platform,
+			Height:   0,
+			StreamId: streamId,
 			MarkdownData: `
         | date       | value  |
         |------------|--------|
@@ -159,13 +156,19 @@ func testYoYIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 			return errors.Wrap(err, "error setting up primitive stream")
 		}
 
+		signer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address")
+		}
+
 		// Test YoY calculation
 		result, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
 			Procedure: "get_index_change",
 			Dataset:   dbid,
 			Args:      []any{"2023-05-22", "2023-05-22", nil, nil, 365}, // 365 days interval for YoY
 			TransactionData: common.TransactionData{
-				Signer: platform.Deployer,
+				Signer: signer.Bytes(),
+				Caller: signer.Address(),
 				TxID:   platform.Txid(),
 				Height: 0,
 			},

@@ -18,12 +18,11 @@ import (
 )
 
 type ComposedStreamDefinition struct {
-	StreamId            util.StreamId
+	StreamLocator       types.StreamLocator
 	TaxonomyDefinitions []types.TaxonomyItem
 }
 
 type SetupComposedAndPrimitivesInput struct {
-	Deployer                 util.EthereumAddress
 	ComposedStreamDefinition ComposedStreamDefinition
 	PrimitiveStreamsWithData []PrimitiveStreamWithData
 	Platform                 *kwilTesting.Platform
@@ -32,16 +31,19 @@ type SetupComposedAndPrimitivesInput struct {
 
 func setupComposedAndPrimitives(ctx context.Context, input SetupComposedAndPrimitivesInput) error {
 	// Create composed stream
-	composedDBID := utils.GenerateDBID(input.ComposedStreamDefinition.StreamId.String(), input.Platform.Deployer)
+	composedDBID := utils.GenerateDBID(
+		input.ComposedStreamDefinition.StreamLocator.StreamId.String(),
+		input.ComposedStreamDefinition.StreamLocator.DataProvider.Bytes(),
+	)
 	composedSchema, err := parse.Parse(contracts.ComposedStreamContent)
 	if err != nil {
 		return errors.Wrap(err, "error parsing composed stream content")
 	}
-	composedSchema.Name = input.ComposedStreamDefinition.StreamId.String()
+	composedSchema.Name = input.ComposedStreamDefinition.StreamLocator.StreamId.String()
 
 	if err := input.Platform.Engine.CreateDataset(ctx, input.Platform.DB, composedSchema, &common.TransactionData{
-		Signer: input.Deployer.Bytes(),
-		Caller: input.Deployer.Address(),
+		Signer: input.ComposedStreamDefinition.StreamLocator.DataProvider.Bytes(),
+		Caller: input.ComposedStreamDefinition.StreamLocator.DataProvider.Address(),
 		TxID:   input.Platform.Txid(),
 		Height: input.Height,
 	}); err != nil {
@@ -65,7 +67,6 @@ func setupComposedAndPrimitives(ctx context.Context, input SetupComposedAndPrimi
 	// Set taxonomy for composed stream
 	if err := setTaxonomy(ctx, SetTaxonomyInput{
 		Platform:       input.Platform,
-		Deployer:       deployer,
 		composedStream: input.ComposedStreamDefinition,
 	}); err != nil {
 		return errors.Wrap(err, "error setting taxonomy for composed stream")
@@ -77,7 +78,6 @@ func setupComposedAndPrimitives(ctx context.Context, input SetupComposedAndPrimi
 			Platform:                input.Platform,
 			Height:                  input.Height,
 			PrimitiveStreamWithData: primitiveStream,
-			Deployer:                deployer,
 		}); err != nil {
 			return errors.Wrap(err, "error setting up primitive stream")
 		}
@@ -87,10 +87,9 @@ func setupComposedAndPrimitives(ctx context.Context, input SetupComposedAndPrimi
 }
 
 type MarkdownComposedSetupInput struct {
-	Platform           *kwilTesting.Platform
-	ComposedStreamName string
-	MarkdownData       string
-	Deployer           util.EthereumAddress
+	Platform     *kwilTesting.Platform
+	StreamId     string
+	MarkdownData string
 	// optional. If not provided, each will have a weight of 1
 	Weights []string
 	Height  int64
@@ -114,6 +113,16 @@ func parseComposedMarkdownSetup(input MarkdownComposedSetupInput) (SetupComposed
 		return SetupComposedAndPrimitivesInput{}, fmt.Errorf("first header is not date")
 	}
 
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return SetupComposedAndPrimitivesInput{}, err
+	}
+
+	composedStreamLocator := types.StreamLocator{
+		StreamId:     util.GenerateStreamId(input.StreamId),
+		DataProvider: deployer,
+	}
+
 	primitiveStreams := []PrimitiveStreamWithData{}
 	for _, header := range table.Headers {
 		if header == "date" {
@@ -122,7 +131,10 @@ func parseComposedMarkdownSetup(input MarkdownComposedSetupInput) (SetupComposed
 		streamId := util.GenerateStreamId(header)
 		primitiveStreams = append(primitiveStreams, PrimitiveStreamWithData{
 			PrimitiveStreamDefinition: PrimitiveStreamDefinition{
-				StreamId: streamId,
+				StreamLocator: types.StreamLocator{
+					StreamId:     streamId,
+					DataProvider: deployer,
+				},
 			},
 			Data: []InsertRecordInput{},
 		})
@@ -142,13 +154,8 @@ func parseComposedMarkdownSetup(input MarkdownComposedSetupInput) (SetupComposed
 	}
 
 	composedStream := ComposedStreamDefinition{
-		StreamId:            util.GenerateStreamId(input.ComposedStreamName),
+		StreamLocator:       composedStreamLocator,
 		TaxonomyDefinitions: []types.TaxonomyItem{},
-	}
-
-	dataProvider, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
-	if err != nil {
-		return SetupComposedAndPrimitivesInput{}, err
 	}
 
 	var weights []string
@@ -168,15 +175,14 @@ func parseComposedMarkdownSetup(input MarkdownComposedSetupInput) (SetupComposed
 		}
 		composedStream.TaxonomyDefinitions = append(composedStream.TaxonomyDefinitions, types.TaxonomyItem{
 			ChildStream: types.StreamLocator{
-				StreamId:     primitiveStream.StreamId,
-				DataProvider: dataProvider,
+				StreamId:     primitiveStream.StreamLocator.StreamId,
+				DataProvider: primitiveStream.StreamLocator.DataProvider,
 			},
 			Weight: weight,
 		})
 	}
 
 	return SetupComposedAndPrimitivesInput{
-		Deployer:                 input.Deployer,
 		ComposedStreamDefinition: composedStream,
 		PrimitiveStreamsWithData: primitiveStreams,
 		Height:                   input.Height,
@@ -194,11 +200,15 @@ func SetupComposedFromMarkdown(ctx context.Context, input MarkdownComposedSetupI
 
 type SetTaxonomyInput struct {
 	Platform       *kwilTesting.Platform
-	Deployer       util.EthereumAddress
 	composedStream ComposedStreamDefinition
 }
 
 func setTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return errors.Wrap(err, "error creating composed dataset")
+	}
+
 	primitiveStreamStrings := []string{}
 	dataProviderStrings := []string{}
 	weightStrings := []string{}
@@ -209,9 +219,9 @@ func setTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 		weightStrings = append(weightStrings, fmt.Sprintf("%.18f", item.Weight))
 	}
 
-	dbid := utils.GenerateDBID(input.composedStream.StreamId.String(), input.Platform.Deployer)
+	dbid := utils.GenerateDBID(input.composedStream.StreamLocator.StreamId.String(), input.composedStream.StreamLocator.DataProvider.Bytes())
 
-	_, err := input.Platform.Engine.Procedure(ctx, input.Platform.DB, &common.ExecutionData{
+	_, err = input.Platform.Engine.Procedure(ctx, input.Platform.DB, &common.ExecutionData{
 		Procedure: "set_taxonomy",
 		Dataset:   dbid,
 		Args: []any{
@@ -220,8 +230,8 @@ func setTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 			weightStrings,
 		},
 		TransactionData: common.TransactionData{
-			Signer: input.Deployer.Bytes(),
-			Caller: input.Deployer.Address(),
+			Signer: input.Platform.Deployer,
+			Caller: deployer.Address(),
 			TxID:   input.Platform.Txid(),
 			Height: 0,
 		},

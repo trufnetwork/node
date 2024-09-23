@@ -42,10 +42,9 @@ func testComposedLastAvailable(t *testing.T) func(ctx context.Context, platform 
 
 		// Setup data for the test
 		err := setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
-			Platform:           platform,
-			ComposedStreamName: composedStreamName,
-			Deployer:           composedDeployer,
-			Height:             1,
+			Platform: platform,
+			StreamId: composedStreamId.String(),
+			Height:   1,
 			MarkdownData: `
 				| date       | Stream 1 | Stream 2 | Stream 3 |
 				| ---------- | --------- | --------- | --------- |
@@ -92,10 +91,9 @@ func testComposedNoPastData(t *testing.T) func(ctx context.Context, platform *kw
 
 		// Setup data for the test
 		err := setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
-			Platform:           platform,
-			ComposedStreamName: composedStreamName,
-			Deployer:           composedDeployer,
-			Height:             1,
+			Platform: platform,
+			StreamId: composedStreamId.String(),
+			Height:   1,
 			MarkdownData: `
 				| date       | Stream 1 | Stream 2 | Stream 3 |
 				| ---------- | --------- | --------- | --------- |

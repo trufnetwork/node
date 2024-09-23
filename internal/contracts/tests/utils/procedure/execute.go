@@ -3,9 +3,11 @@ package procedure
 import (
 	"context"
 	"fmt"
+
 	"github.com/truflation/tsn-sdk/core/util"
 
 	"github.com/kwilteam/kwil-db/common"
+	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
 )
 
@@ -96,4 +98,11 @@ func processResultRows(rows [][]any) ([]ResultRow, error) {
 	}
 
 	return resultRows, nil
+}
+
+// WithSigner returns a new platform with the given signer, but doesn't mutate the original platform
+func WithSigner(platform *kwilTesting.Platform, signer []byte) *kwilTesting.Platform {
+	newPlatform := *platform // create a copy of the original platform
+	newPlatform.Deployer = signer
+	return &newPlatform
 }

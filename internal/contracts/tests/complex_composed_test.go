@@ -46,10 +46,9 @@ func WithTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platfo
 
 		// Deploy the contracts here
 		err := setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
-			Platform:           platform,
-			ComposedStreamName: composedStreamName,
-			Deployer:           complexComposedDeployer,
-			Height:             1,
+			Platform: platform,
+			StreamId: composedStreamId.String(),
+			Height:   1,
 			MarkdownData: fmt.Sprintf(`
 				| date       | %s   | %s   | %s   |
 				| ---------- | ---- | ---- | ---- |

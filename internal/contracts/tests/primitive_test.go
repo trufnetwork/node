@@ -4,10 +4,12 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/procedure"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/table"
 
+	"github.com/truflation/tsn-sdk/core/types"
 	"github.com/truflation/tsn-sdk/core/util"
 
 	"github.com/pkg/errors"
@@ -29,6 +31,8 @@ func TestPrimitiveStream(t *testing.T) {
 			WithPrimitiveTestSetup(testGetIndexChange(t)),
 			WithPrimitiveTestSetup(testDuplicateDate(t)),
 			WithPrimitiveTestSetup(testGetRecordWithBaseDate(t)),
+			WithPrimitiveTestSetup(testFrozenDataRetrieval(t)),
+			WithPrimitiveTestSetup(testUnauthorizedInserts(t)),
 		},
 	})
 }
@@ -40,14 +44,13 @@ func WithPrimitiveTestSetup(testFn func(ctx context.Context, platform *kwilTesti
 			return errors.Wrap(err, "error creating ethereum address")
 		}
 
-		platform.Deployer = deployer.Bytes()
+		platform = procedure.WithSigner(platform, deployer.Bytes())
 
 		// Setup initial data
 		err = setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
-			Platform:            platform,
-			PrimitiveStreamName: primitiveStreamName,
-			Deployer:            deployer,
-			Height:              1,
+			Platform: platform,
+			StreamId: primitiveStreamId,
+			Height:   1,
 			MarkdownData: `
 			| date       | value |
 			|------------|-------|
@@ -165,11 +168,19 @@ func testDuplicateDate(t *testing.T) func(ctx context.Context, platform *kwilTes
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		dbid := utils.GenerateDBID(primitiveStreamId.String(), platform.Deployer)
 
+		primitiveStreamProvider, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address")
+		}
+
 		// insert a duplicate date
-		err := setup.InsertMarkdownPrimitiveData(ctx, setup.InsertMarkdownDataInput{
-			Platform:            platform,
-			Height:              2, // later height
-			PrimitiveStreamName: primitiveStreamName,
+		err = setup.InsertMarkdownPrimitiveData(ctx, setup.InsertMarkdownDataInput{
+			Platform: platform,
+			Height:   2, // later height
+			StreamLocator: types.StreamLocator{
+				StreamId:     primitiveStreamId,
+				DataProvider: primitiveStreamProvider,
+			},
 			MarkdownData: `
 			| date       | value |
 			|------------|-------|
@@ -239,6 +250,133 @@ func testGetRecordWithBaseDate(t *testing.T) func(ctx context.Context, platform 
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+
+		return nil
+	}
+}
+
+func testFrozenDataRetrieval(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		dbid := utils.GenerateDBID(primitiveStreamId.String(), platform.Deployer)
+
+		primitiveStreamProvider, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address")
+		}
+
+		// Insert initial data at height 2
+		err = setup.InsertMarkdownPrimitiveData(ctx, setup.InsertMarkdownDataInput{
+			Platform: platform,
+			Height:   1,
+			StreamLocator: types.StreamLocator{
+				StreamId:     primitiveStreamId,
+				DataProvider: primitiveStreamProvider,
+			},
+			// we set in 2022 not to mix up with the initial data set in 2021
+			MarkdownData: `
+            | date       | value |
+            |------------|-------|
+            | 2022-01-01 | 1     |
+            | 2022-01-02 | 2     |
+            `,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error inserting initial data")
+		}
+
+		// Insert additional data at height 2
+		err = setup.InsertMarkdownPrimitiveData(ctx, setup.InsertMarkdownDataInput{
+			Platform: platform,
+			Height:   2,
+			StreamLocator: types.StreamLocator{
+				StreamId:     primitiveStreamId,
+				DataProvider: primitiveStreamProvider,
+			},
+			MarkdownData: `
+            | date       | value |
+            |------------|-------|
+            | 2022-01-01 | 3     |
+            | 2022-01-03 | 4     |
+            `,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error inserting additional data")
+		}
+
+		// Retrieve data frozen at height 1
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
+			Platform: platform,
+			DBID:     dbid,
+			DateFrom: "2022-01-01",
+			DateTo:   "2022-01-03",
+			FrozenAt: 1,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error getting records frozen at height 1")
+		}
+
+		expected := `
+        | date       | value |
+        |------------|-------|
+        | 2022-01-01 | 1.000000000000000000 |
+        | 2022-01-02 | 2.000000000000000000 |
+        `
+
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+
+		// Retrieve data frozen at height 2
+		result, err = procedure.GetRecord(ctx, procedure.GetRecordInput{
+			Platform: platform,
+			DBID:     dbid,
+			DateFrom: "2022-01-01",
+			DateTo:   "2022-01-03",
+			FrozenAt: 2,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error getting records frozen at height 2")
+		}
+
+		expected = `
+        | date       | value |
+        |------------|-------|
+        | 2022-01-01 | 3.000000000000000000 |
+        | 2022-01-02 | 2.000000000000000000 |
+        | 2022-01-03 | 4.000000000000000000 |
+        `
+
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+
+		return nil
+	}
+}
+
+func testUnauthorizedInserts(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Change deployer to a non-authorized wallet
+		unauthorizedWallet := util.Unsafe_NewEthereumAddressFromString("0x9999999999999999999999999999999999999999")
+
+		primitiveStreamProvider, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address")
+		}
+
+		// Attempt to insert a record
+		err = setup.InsertMarkdownPrimitiveData(ctx, setup.InsertMarkdownDataInput{
+			Platform: procedure.WithSigner(platform, unauthorizedWallet.Bytes()),
+			Height:   2,
+			StreamLocator: types.StreamLocator{
+				StreamId:     primitiveStreamId,
+				DataProvider: primitiveStreamProvider,
+			},
+			MarkdownData: `
+            | date       | value |
+            |------------|-------|
+            | 2021-01-06 | 10    |
+            `,
+		})
+
+		assert.Error(t, err, "Unauthorized wallet should not be able to insert records")
+		assert.Contains(t, err.Error(), "wallet not allowed to write", "Expected permission error")
 
 		return nil
 	}

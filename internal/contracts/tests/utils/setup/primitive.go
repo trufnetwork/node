@@ -3,6 +3,8 @@ package setup
 import (
 	"context"
 
+	"github.com/truflation/tsn-sdk/core/types"
+
 	"github.com/golang-sql/civil"
 	"github.com/kwilteam/kwil-db/common"
 	"github.com/kwilteam/kwil-db/core/utils"
@@ -16,7 +18,7 @@ import (
 )
 
 type PrimitiveStreamDefinition struct {
-	StreamId util.StreamId
+	StreamLocator types.StreamLocator
 }
 
 type InsertRecordInput struct {
@@ -30,16 +32,14 @@ type PrimitiveStreamWithData struct {
 }
 
 type MarkdownPrimitiveSetupInput struct {
-	Platform            *kwilTesting.Platform
-	Deployer            util.EthereumAddress
-	Height              int64
-	PrimitiveStreamName string
-	MarkdownData        string
+	Platform     *kwilTesting.Platform
+	StreamId     util.StreamId
+	Height       int64
+	MarkdownData string
 }
 
 type SetupPrimitiveInput struct {
 	Platform                *kwilTesting.Platform
-	Deployer                util.EthereumAddress
 	Height                  int64
 	PrimitiveStreamWithData PrimitiveStreamWithData
 }
@@ -49,21 +49,26 @@ func setupPrimitive(ctx context.Context, setupInput SetupPrimitiveInput) error {
 	if err != nil {
 		return errors.Wrap(err, "error parsing primitive stream content")
 	}
-	primitiveSchema.Name = setupInput.PrimitiveStreamWithData.StreamId.String()
+	primitiveSchema.Name = setupInput.PrimitiveStreamWithData.StreamLocator.StreamId.String()
+
+	deployer, err := util.NewEthereumAddressFromBytes(setupInput.Platform.Deployer)
+	if err != nil {
+		return errors.Wrap(err, "error in setupPrimitive")
+	}
 
 	if err := setupInput.Platform.Engine.CreateDataset(ctx, setupInput.Platform.DB, primitiveSchema, &common.TransactionData{
-		Signer: setupInput.Deployer.Bytes(),
-		Caller: setupInput.Deployer.Address(),
+		Signer: deployer.Bytes(),
+		Caller: deployer.Address(),
 		TxID:   setupInput.Platform.Txid(),
 		Height: setupInput.Height,
 	}); err != nil {
 		return errors.Wrap(err, "error creating primitive dataset")
 	}
 
-	dbid := utils.GenerateDBID(setupInput.PrimitiveStreamWithData.StreamId.String(), setupInput.Deployer.Bytes())
+	dbid := utils.GenerateDBID(setupInput.PrimitiveStreamWithData.StreamLocator.StreamId.String(), deployer.Bytes())
 	if err := initializeContract(ctx, InitializeContractInput{
 		Platform: setupInput.Platform,
-		Deployer: setupInput.Deployer,
+		Deployer: deployer,
 		Dbid:     dbid,
 		Height:   setupInput.Height,
 	}); err != nil {
@@ -72,7 +77,6 @@ func setupPrimitive(ctx context.Context, setupInput SetupPrimitiveInput) error {
 
 	if err := insertPrimitiveData(ctx, InsertPrimitiveDataInput{
 		Platform:        setupInput.Platform,
-		Deployer:        setupInput.Deployer,
 		primitiveStream: setupInput.PrimitiveStreamWithData,
 		height:          setupInput.Height,
 	}); err != nil {
@@ -95,9 +99,17 @@ func parsePrimitiveMarkdownSetup(input MarkdownPrimitiveSetupInput) (SetupPrimit
 		return SetupPrimitiveInput{}, err
 	}
 
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return SetupPrimitiveInput{}, errors.Wrap(err, "error in parsePrimitiveMarkdownSetup")
+	}
+
 	primitiveStream := PrimitiveStreamWithData{
 		PrimitiveStreamDefinition: PrimitiveStreamDefinition{
-			StreamId: util.GenerateStreamId(input.PrimitiveStreamName),
+			StreamLocator: types.StreamLocator{
+				StreamId:     input.StreamId,
+				DataProvider: deployer,
+			},
 		},
 		Data: []InsertRecordInput{},
 	}
@@ -119,7 +131,6 @@ func parsePrimitiveMarkdownSetup(input MarkdownPrimitiveSetupInput) (SetupPrimit
 		Platform:                input.Platform,
 		Height:                  input.Height,
 		PrimitiveStreamWithData: primitiveStream,
-		Deployer:                input.Deployer,
 	}, nil
 }
 
@@ -132,10 +143,11 @@ func SetupPrimitiveFromMarkdown(ctx context.Context, input MarkdownPrimitiveSetu
 }
 
 type InsertMarkdownDataInput struct {
-	Platform            *kwilTesting.Platform
-	Height              int64
-	PrimitiveStreamName string
-	MarkdownData        string
+	Platform *kwilTesting.Platform
+	Height   int64
+	// we use locator instead because it could be a third party data provider
+	StreamLocator types.StreamLocator
+	MarkdownData  string
 }
 
 // InsertMarkdownPrimitiveData inserts data from a markdown table into a primitive stream
@@ -145,14 +157,13 @@ func InsertMarkdownPrimitiveData(ctx context.Context, input InsertMarkdownDataIn
 		return err
 	}
 
-	primitiveStreamId := util.GenerateStreamId(input.PrimitiveStreamName)
-	dbid := utils.GenerateDBID(primitiveStreamId.String(), input.Platform.Deployer)
+	dbid := utils.GenerateDBID(input.StreamLocator.StreamId.String(), input.StreamLocator.DataProvider.Bytes())
 
 	txid := input.Platform.Txid()
 
-	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	signer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
 	if err != nil {
-		return errors.Wrap(err, "error creating deployer")
+		return errors.Wrap(err, "error in InsertMarkdownPrimitiveData")
 	}
 
 	for _, row := range table.Rows {
@@ -166,8 +177,8 @@ func InsertMarkdownPrimitiveData(ctx context.Context, input InsertMarkdownDataIn
 			Dataset:   dbid,
 			Args:      []any{testdate.MustParseDate(date), value},
 			TransactionData: common.TransactionData{
-				Signer: deployer.Bytes(),
-				Caller: deployer.Address(),
+				Signer: signer.Bytes(),
+				Caller: signer.Address(),
 				TxID:   txid,
 				Height: input.Height,
 			},
@@ -181,7 +192,6 @@ func InsertMarkdownPrimitiveData(ctx context.Context, input InsertMarkdownDataIn
 
 type InsertPrimitiveDataInput struct {
 	Platform        *kwilTesting.Platform
-	Deployer        util.EthereumAddress
 	primitiveStream PrimitiveStreamWithData
 	height          int64
 }
@@ -193,9 +203,17 @@ func insertPrimitiveData(ctx context.Context, input InsertPrimitiveDataInput) er
 		args = append(args, []any{data.DateValue, data.Value})
 	}
 
-	dbid := utils.GenerateDBID(input.primitiveStream.StreamId.String(), input.Deployer.Bytes())
+	dbid := utils.GenerateDBID(
+		input.primitiveStream.StreamLocator.StreamId.String(),
+		input.primitiveStream.StreamLocator.DataProvider.Bytes(),
+	)
 
 	txid := input.Platform.Txid()
+
+	deployer, err := util.NewEthereumAddressFromBytes(input.primitiveStream.StreamLocator.DataProvider.Bytes())
+	if err != nil {
+		return errors.Wrap(err, "error in insertPrimitiveData")
+	}
 
 	for _, arg := range args {
 		_, err := input.Platform.Engine.Procedure(ctx, input.Platform.DB, &common.ExecutionData{
@@ -203,8 +221,8 @@ func insertPrimitiveData(ctx context.Context, input InsertPrimitiveDataInput) er
 			Dataset:   dbid,
 			Args:      arg,
 			TransactionData: common.TransactionData{
-				Signer: input.Deployer.Bytes(),
-				Caller: input.Deployer.Address(),
+				Signer: deployer.Bytes(),
+				Caller: deployer.Address(),
 				TxID:   txid,
 				Height: input.height,
 			},

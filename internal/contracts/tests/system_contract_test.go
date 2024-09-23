@@ -13,6 +13,7 @@ import (
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 
 	"github.com/truflation/tsn-db/internal/contracts"
+	"github.com/truflation/tsn-db/internal/contracts/tests/utils/procedure"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
 	"github.com/truflation/tsn-sdk/core/util"
 )
@@ -66,7 +67,7 @@ func testAcceptAndRevokeStream(t *testing.T) kwilTesting.TestFunc {
 		streamID := util.GenerateStreamId("primitive_stream")
 
 		// Deploy primitive stream with data
-		if err := deployPrimitiveStreamWithData(ctx, platform, dataProvider, "primitive_stream", 1); err != nil {
+		if err := deployPrimitiveStreamWithData(ctx, procedure.WithSigner(platform, dataProvider.Bytes()), "primitive_stream", 1); err != nil {
 			return errors.Wrap(err, "Failed to deploy primitive stream")
 		}
 
@@ -120,7 +121,7 @@ func testGetUnsafeMethods(t *testing.T) kwilTesting.TestFunc {
 		streamID := util.GenerateStreamId("primitive_stream")
 
 		// Deploy the stream
-		if err := deployPrimitiveStreamWithData(ctx, platform, dataProvider, "primitive_stream", 1); err != nil {
+		if err := deployPrimitiveStreamWithData(ctx, procedure.WithSigner(platform, dataProvider.Bytes()), "primitive_stream", 1); err != nil {
 			return errors.Wrap(err, "Failed to deploy primitive stream")
 		}
 
@@ -149,7 +150,7 @@ func testGetSafeMethods(t *testing.T) kwilTesting.TestFunc {
 		streamID := util.GenerateStreamId(streamName)
 
 		// Deploy the stream
-		if err := deployPrimitiveStreamWithData(ctx, platform, dataProvider, streamName, 1); err != nil {
+		if err := deployPrimitiveStreamWithData(ctx, procedure.WithSigner(platform, dataProvider.Bytes()), streamName, 1); err != nil {
 			return errors.Wrap(err, "Failed to deploy primitive stream")
 		}
 
@@ -220,12 +221,11 @@ func getDataProvider() util.EthereumAddress {
 	return util.Unsafe_NewEthereumAddressFromString("0xfC43f5F9dd45258b3AFf31Bdbe6561D97e8B71de")
 }
 
-func deployPrimitiveStreamWithData(ctx context.Context, platform *kwilTesting.Platform, dataProvider util.EthereumAddress, streamName string, height int64) error {
+func deployPrimitiveStreamWithData(ctx context.Context, platform *kwilTesting.Platform, streamName string, height int64) error {
 	return setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
-		Platform:            platform,
-		PrimitiveStreamName: streamName,
-		Height:              height,
-		Deployer:            dataProvider,
+		Platform: platform,
+		Height:   height,
+		StreamId: util.GenerateStreamId(streamName),
 		MarkdownData: `
 | date       | value |
 |------------|-------|

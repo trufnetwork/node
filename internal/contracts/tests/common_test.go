@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/truflation/tsn-db/internal/contracts/tests/utils/procedure"
+
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
@@ -58,7 +60,7 @@ func testMetadataInsertionAndRetrieval(t *testing.T, contractInfo ContractInfo) 
 		if err := setupAndInitializeContract(ctx, platform, contractInfo); err != nil {
 			return err
 		}
-		dbid := getDBID(contractInfo, platform)
+		dbid := getDBID(contractInfo)
 
 		// Insert metadata of various types
 		metadataItems := []struct {
@@ -126,7 +128,7 @@ func testOnlyOwnerCanInsertMetadata(t *testing.T, contractInfo ContractInfo) kwi
 		if err := setupAndInitializeContract(ctx, platform, contractInfo); err != nil {
 			return err
 		}
-		dbid := getDBID(contractInfo, platform)
+		dbid := getDBID(contractInfo)
 
 		// Change the deployer to a non-owner
 		nonOwner := util.Unsafe_NewEthereumAddressFromString("0x9999999999999999999999999999999999999999")
@@ -155,7 +157,7 @@ func testDisableMetadata(t *testing.T, contractInfo ContractInfo) kwilTesting.Te
 		if err := setupAndInitializeContract(ctx, platform, contractInfo); err != nil {
 			return err
 		}
-		dbid := getDBID(contractInfo, platform)
+		dbid := getDBID(contractInfo)
 
 		// Insert metadata
 		key := "temp_key"
@@ -204,7 +206,7 @@ func testReadOnlyMetadataCannotBeModified(t *testing.T, contractInfo ContractInf
 		if err := setupAndInitializeContract(ctx, platform, contractInfo); err != nil {
 			return err
 		}
-		dbid := getDBID(contractInfo, platform)
+		dbid := getDBID(contractInfo)
 
 		// Attempt to insert metadata with a read-only key
 		err := insertMetadata(ctx, platform, contractInfo.Deployer, dbid, "type", "modified", "string")
@@ -240,7 +242,7 @@ func testOwnershipTransfer(t *testing.T, contractInfo ContractInfo) kwilTesting.
 		if err := setupAndInitializeContract(ctx, platform, contractInfo); err != nil {
 			return err
 		}
-		dbid := getDBID(contractInfo, platform)
+		dbid := getDBID(contractInfo)
 
 		// Transfer ownership
 		newOwner := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -281,7 +283,7 @@ func testInitializationLogic(t *testing.T, contractInfo ContractInfo) kwilTestin
 		if err := setupAndInitializeContract(ctx, platform, contractInfo); err != nil {
 			return err
 		}
-		dbid := getDBID(contractInfo, platform)
+		dbid := getDBID(contractInfo)
 
 		// Attempt to re-initialize the contract
 		_, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
@@ -316,7 +318,7 @@ func testVisibilitySettings(t *testing.T, contractInfo ContractInfo) kwilTesting
 		if err := setupAndInitializeContract(ctx, platform, contractInfo); err != nil {
 			return err
 		}
-		dbid := getDBID(contractInfo, platform)
+		dbid := getDBID(contractInfo)
 
 		// Change read_visibility to private (1)
 		err := insertMetadata(ctx, platform, contractInfo.Deployer, dbid, "read_visibility", "1", "int")
@@ -353,7 +355,7 @@ func testInvalidEthereumAddressHandling(t *testing.T, contractInfo ContractInfo)
 		if err := setupAndInitializeContract(ctx, platform, contractInfo); err != nil {
 			return err
 		}
-		dbid := getDBID(contractInfo, platform)
+		dbid := getDBID(contractInfo)
 
 		// Attempt to transfer ownership to an invalid address
 		invalidAddress := "invalid_address"
@@ -380,7 +382,7 @@ func testPermissionsAfterVisibilityChange(t *testing.T, contractInfo ContractInf
 		if err := setupAndInitializeContract(ctx, platform, contractInfo); err != nil {
 			return err
 		}
-		dbid := getDBID(contractInfo, platform)
+		dbid := getDBID(contractInfo)
 
 		// Initially, anyone should be able to read
 		nonOwner := util.Unsafe_NewEthereumAddressFromString("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
@@ -402,7 +404,7 @@ func testPermissionsAfterVisibilityChange(t *testing.T, contractInfo ContractInf
 		// Change back to non-owner
 		platform.Deployer = nonOwner.Bytes()
 
-		canRead, err = checkReadPermissions(ctx, platform, contractInfo.Deployer, dbid, nonOwner.Address())
+		canRead, err = checkReadPermissions(ctx, procedure.WithSigner(platform, nonOwner.Bytes()), contractInfo.Deployer, dbid, nonOwner.Address())
 		assert.False(t, canRead, "Non-owner should not be able to read when read_visibility is private")
 		assert.NoError(t, err, "Error should not be returned when checking read permissions")
 
@@ -426,7 +428,7 @@ func testIsStreamAllowedToCompose(t *testing.T, contractInfo ContractInfo) kwilT
 		if err := setupAndInitializeContract(ctx, platform, contractInfo); err != nil {
 			return err
 		}
-		dbid := getDBID(contractInfo, platform)
+		dbid := getDBID(contractInfo)
 
 		// Set up a foreign contract (the one attempting to compose)
 		foreignContractInfo := ContractInfo{
@@ -441,14 +443,10 @@ func testIsStreamAllowedToCompose(t *testing.T, contractInfo ContractInfo) kwilT
 		}
 
 		// set compose_visibility to private (1)
-		err := insertMetadata(ctx, platform, contractInfo.Deployer, dbid, "compose_visibility", "1", "int")
-		if err != nil {
-			return errors.Wrap(err, "Failed to change compose_visibility")
-		}
 
-		foreignDbid := getDBID(foreignContractInfo, platform)
+		foreignDbid := getDBID(foreignContractInfo)
 
-		canCompose, err := checkComposePermissions(ctx, platform, contractInfo.Deployer, dbid, foreignDbid)
+		canCompose, err := checkComposePermissions(ctx, platform, dbid, foreignDbid)
 		assert.False(t, canCompose, "Foreign stream should not be allowed to compose without permission")
 		assert.Error(t, err, "Expected permission error when composing without permission")
 
@@ -461,7 +459,7 @@ func testIsStreamAllowedToCompose(t *testing.T, contractInfo ContractInfo) kwilT
 		// Attempt to compose again with permission
 		platform.Deployer = foreignContractInfo.Deployer.Bytes()
 
-		canCompose, err = checkComposePermissions(ctx, platform, contractInfo.Deployer, dbid, foreignDbid)
+		canCompose, err = checkComposePermissions(ctx, platform, dbid, foreignDbid)
 		assert.True(t, canCompose, "Foreign stream should be allowed to compose after permission is granted")
 		assert.NoError(t, err, "No error expected when composing with permission")
 
@@ -475,7 +473,7 @@ func setupAndInitializeContract(ctx context.Context, platform *kwilTesting.Platf
 	if err := setupContract(ctx, platform, contractInfo); err != nil {
 		return err
 	}
-	dbid := getDBID(contractInfo, platform)
+	dbid := getDBID(contractInfo)
 	return initializeContract(ctx, platform, dbid, contractInfo.Deployer)
 }
 
@@ -509,7 +507,7 @@ func initializeContract(ctx context.Context, platform *kwilTesting.Platform, dbi
 	return err
 }
 
-func getDBID(contractInfo ContractInfo, platform *kwilTesting.Platform) string {
+func getDBID(contractInfo ContractInfo) string {
 	return utils.GenerateDBID(contractInfo.StreamID.String(), contractInfo.Deployer.Bytes())
 }
 
@@ -600,7 +598,11 @@ func checkReadPermissions(ctx context.Context, platform *kwilTesting.Platform, d
 	return result.Rows[0][0].(bool), nil
 }
 
-func checkComposePermissions(ctx context.Context, platform *kwilTesting.Platform, deployer util.EthereumAddress, dbid string, foreignCaller string) (bool, error) {
+func checkComposePermissions(ctx context.Context, platform *kwilTesting.Platform, dbid string, foreignCaller string) (bool, error) {
+	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+	if err != nil {
+		return false, err
+	}
 	result, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
 		Procedure: "is_stream_allowed_to_compose",
 		Dataset:   dbid,
