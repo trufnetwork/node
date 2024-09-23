@@ -23,6 +23,7 @@ type ComposedStreamDefinition struct {
 }
 
 type SetupComposedAndPrimitivesInput struct {
+	Deployer                 util.EthereumAddress
 	ComposedStreamDefinition ComposedStreamDefinition
 	PrimitiveStreamsWithData []PrimitiveStreamWithData
 	Platform                 *kwilTesting.Platform
@@ -39,7 +40,8 @@ func setupComposedAndPrimitives(ctx context.Context, input SetupComposedAndPrimi
 	composedSchema.Name = input.ComposedStreamDefinition.StreamId.String()
 
 	if err := input.Platform.Engine.CreateDataset(ctx, input.Platform.DB, composedSchema, &common.TransactionData{
-		Signer: input.Platform.Deployer,
+		Signer: input.Deployer.Bytes(),
+		Caller: input.Deployer.Address(),
 		TxID:   input.Platform.Txid(),
 		Height: input.Height,
 	}); err != nil {
@@ -63,6 +65,7 @@ func setupComposedAndPrimitives(ctx context.Context, input SetupComposedAndPrimi
 	// Set taxonomy for composed stream
 	if err := setTaxonomy(ctx, SetTaxonomyInput{
 		Platform:       input.Platform,
+		Deployer:       deployer,
 		composedStream: input.ComposedStreamDefinition,
 	}); err != nil {
 		return errors.Wrap(err, "error setting taxonomy for composed stream")
@@ -87,6 +90,7 @@ type MarkdownComposedSetupInput struct {
 	Platform           *kwilTesting.Platform
 	ComposedStreamName string
 	MarkdownData       string
+	Deployer           util.EthereumAddress
 	// optional. If not provided, each will have a weight of 1
 	Weights []string
 	Height  int64
@@ -172,6 +176,7 @@ func parseComposedMarkdownSetup(input MarkdownComposedSetupInput) (SetupComposed
 	}
 
 	return SetupComposedAndPrimitivesInput{
+		Deployer:                 input.Deployer,
 		ComposedStreamDefinition: composedStream,
 		PrimitiveStreamsWithData: primitiveStreams,
 		Height:                   input.Height,
@@ -189,6 +194,7 @@ func SetupComposedFromMarkdown(ctx context.Context, input MarkdownComposedSetupI
 
 type SetTaxonomyInput struct {
 	Platform       *kwilTesting.Platform
+	Deployer       util.EthereumAddress
 	composedStream ComposedStreamDefinition
 }
 
@@ -214,7 +220,8 @@ func setTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 			weightStrings,
 		},
 		TransactionData: common.TransactionData{
-			Signer: input.Platform.Deployer,
+			Signer: input.Deployer.Bytes(),
+			Caller: input.Deployer.Address(),
 			TxID:   input.Platform.Txid(),
 			Height: 0,
 		},

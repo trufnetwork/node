@@ -22,6 +22,7 @@ func initializeContract(ctx context.Context, input InitializeContractInput) erro
 		Args:      []any{},
 		TransactionData: common.TransactionData{
 			Signer: input.Deployer.Bytes(),
+			Caller: input.Deployer.Address(),
 			TxID:   input.Platform.Txid(),
 			Height: input.Height,
 		},

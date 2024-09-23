@@ -53,6 +53,7 @@ func setupPrimitive(ctx context.Context, setupInput SetupPrimitiveInput) error {
 
 	if err := setupInput.Platform.Engine.CreateDataset(ctx, setupInput.Platform.DB, primitiveSchema, &common.TransactionData{
 		Signer: setupInput.Deployer.Bytes(),
+		Caller: setupInput.Deployer.Address(),
 		TxID:   setupInput.Platform.Txid(),
 		Height: setupInput.Height,
 	}); err != nil {
@@ -149,6 +150,11 @@ func InsertMarkdownPrimitiveData(ctx context.Context, input InsertMarkdownDataIn
 
 	txid := input.Platform.Txid()
 
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return errors.Wrap(err, "error creating deployer")
+	}
+
 	for _, row := range table.Rows {
 		date := row[0]
 		value := row[1]
@@ -160,7 +166,8 @@ func InsertMarkdownPrimitiveData(ctx context.Context, input InsertMarkdownDataIn
 			Dataset:   dbid,
 			Args:      []any{testdate.MustParseDate(date), value},
 			TransactionData: common.TransactionData{
-				Signer: input.Platform.Deployer,
+				Signer: deployer.Bytes(),
+				Caller: deployer.Address(),
 				TxID:   txid,
 				Height: input.Height,
 			},
@@ -197,6 +204,7 @@ func insertPrimitiveData(ctx context.Context, input InsertPrimitiveDataInput) er
 			Args:      arg,
 			TransactionData: common.TransactionData{
 				Signer: input.Deployer.Bytes(),
+				Caller: input.Deployer.Address(),
 				TxID:   txid,
 				Height: input.height,
 			},
