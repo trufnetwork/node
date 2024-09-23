@@ -364,7 +364,7 @@ procedure get_record($date_from text, $date_to text, $frozen_at int) public view
     }
 
     // if we finished the loop and we never entered the range, we emit the last value
-    if $in_range == false {
+    if $in_range == false AND $last_date is distinct from null {
         return next $last_date, $last_value;
     }
 }
@@ -405,7 +405,7 @@ procedure get_index($date_from text, $date_to text, $frozen_at int, $base_date t
     }
 
     // if we finished the loop and we never entered the range, we emit the last value
-    if $in_range == false {
+    if $in_range == false AND $last_date is distinct from null {
         return next $last_date, $last_value;
     }
 
