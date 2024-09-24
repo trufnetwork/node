@@ -1,3 +1,4 @@
+# Dev destination for Vector, sends metrics to Prometheus
 sinks:
   # Raw log output to file
   prometheus:

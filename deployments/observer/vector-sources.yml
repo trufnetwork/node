@@ -1,4 +1,5 @@
-# add host metrics source
+# Vector sources configuration
+# Should be used for both development and production
 sources:
   hostmetrics:
     # https://vector.dev/docs/reference/configuration/sources/host_metrics/

@@ -1,3 +1,6 @@
+# Observer (Development)
+# Objective of this setup is to be able to visualize metrics in Grafana
+# during development
 services:
   vector:
     image: timberio/vector:latest-alpine
