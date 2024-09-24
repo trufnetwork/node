@@ -23,6 +23,7 @@ func TestIndexChange(t *testing.T) {
 		FunctionTests: []kwilTesting.TestFunc{
 			withTestIndexChangeSetup(testIndexChange(t)),
 			withTestIndexChangeSetup(testYoYIndexChange(t)),
+			testDivisionByZero(t),
 		},
 	})
 }
@@ -201,6 +202,45 @@ func testYoYIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 			return errors.Errorf("incorrect latest yoy change: got %s, expected 5.882", latestYoyChange)
 		}
 
+		return nil
+	}
+}
+
+// testing division by zero
+// we expect this error to happen, unless our production data expects a different behavior
+func testDivisionByZero(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		streamName := "primitive_stream_db_name"
+		streamId := util.GenerateStreamId(streamName)
+		dbid := utils.GenerateDBID(streamId.String(), platform.Deployer)
+
+		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+			Platform:            platform,
+			Height:              0,
+			PrimitiveStreamName: streamName,
+			MarkdownData: `
+			| date       | value  |
+			|------------|--------|
+			| 2023-01-01 | 100.00 |
+			| 2023-01-02 | 0.00   |
+			| 2023-01-03 | 103.00 |
+			`,
+		}); err != nil {
+			return errors.Wrap(err, "error setting up primitive stream")
+		}
+
+		_, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+			Procedure: "get_index_change",
+			Dataset:   dbid,
+			Args:      []any{"2023-01-01", "2023-01-03", nil, nil, 1},
+			TransactionData: common.TransactionData{
+				Signer: platform.Deployer,
+				TxID:   platform.Txid(),
+				Height: 0,
+			},
+		})
+
+		assert.Error(t, err, "division by zero")
 		return nil
 	}
 }
