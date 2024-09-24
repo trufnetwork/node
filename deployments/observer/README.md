@@ -29,11 +29,6 @@ Uses Vector to send metrics directly to Datadog.
 
 ### Environment Variables
 
-- DATADOG_API_KEY
-- DATADOG_NAMESPACE
-- DATADOG_ENDPOINT
-
-## Notes
-
-- Metrics are collected every 15 seconds in development
-- Production setup uses Datadog for visualization and alerting
+- `DATADOG_API_KEY`: Datadog API key
+- `DATADOG_NAMESPACE`: Datadog namespace
+- `DATADOG_ENDPOINT`: Datadog endpoint
