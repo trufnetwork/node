@@ -51,7 +51,7 @@ tasks:
       - ./deployments/indexer/kwil-indexer run
 
   observer-dev:
-    desc: Run the observer development services (vector, prometheus)
+    desc: Run the observer development services (vector, prometheus, grafana)
     cmds:
       - docker compose -f deployments/observer/dev-observer-compose.yml up -d
 
