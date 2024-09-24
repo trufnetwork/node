@@ -264,7 +264,7 @@ func testFrozenDataRetrieval(t *testing.T) func(ctx context.Context, platform *k
 			return errors.Wrap(err, "error creating ethereum address")
 		}
 
-		// Insert initial data at height 2
+		// Insert initial data at height 1
 		err = setup.InsertMarkdownPrimitiveData(ctx, setup.InsertMarkdownDataInput{
 			Platform: platform,
 			Height:   1,
