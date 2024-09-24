@@ -1,0 +1,11 @@
+services:
+  vector:
+    image: timberio/vector:latest-alpine
+    command: --config /etc/vector/vector-cfg/*
+    volumes:
+      - ./vector-prod-destination.yml:/etc/vector/vector-cfg/vector-destination.yml
+      - ./vector-sources.yml:/etc/vector/vector-cfg/vector-sources.yml
+    environment:
+      DATADOG_API_KEY: ${DATADOG_API_KEY?}
+      DATADOG_NAMESPACE: ${DATADOG_NAMESPACE?}
+      DATADOG_ENDPOINT: ${DATADOG_ENDPOINT?}

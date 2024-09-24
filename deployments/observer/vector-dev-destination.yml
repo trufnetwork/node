@@ -1,0 +1,8 @@
+sinks:
+  # Raw log output to file
+  prometheus:
+    type: prometheus_exporter
+    inputs: [ hostmetrics ]
+    address: 0.0.0.0:8686
+    default_namespace: dev-observer
+    flush_period_secs: 60

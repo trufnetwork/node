@@ -1,0 +1,15 @@
+# add host metrics source
+sources:
+  hostmetrics:
+    # https://vector.dev/docs/reference/configuration/sources/host_metrics/
+    type: host_metrics
+    collectors: # default are [cpu disk filesystem load host memory network cgroups]
+      - cpu
+      - disk
+      - filesystem
+      - load
+      - memory
+      - network
+      # - cgroups # we don't need it discriminated here
+
+
