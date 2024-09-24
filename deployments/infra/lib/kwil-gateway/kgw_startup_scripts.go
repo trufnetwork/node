@@ -22,10 +22,6 @@ func AddKwilGatewayStartupScriptsToInstance(options AddKwilGatewayStartupScripts
 		nodeAddresses = append(nodeAddresses, node.PeerConnection.GetRpcHost())
 	}
 
-	// TODO: Temporary fix for the issue of the gateway keep syncing with the node-2 that is halted
-	// only take the first ([0]) node address
-	nodeAddresses = nodeAddresses[:1]
-
 	// Create the environment variables for the gateway compose file
 	kgwEnvConfig := KGWEnvConfig{
 		CorsAllowOrigins: config.CorsAllowOrigins,
