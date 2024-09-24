@@ -188,7 +188,7 @@ func setTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 		primitiveStreamStrings = append(primitiveStreamStrings, item.ChildStream.StreamId.String())
 		dataProviderStrings = append(dataProviderStrings, item.ChildStream.DataProvider.Address())
 		// should be formatted as 0.000000000000000000 (18 decimal places)
-		weightStrings = append(weightStrings, fmt.Sprintf("%.3f", item.Weight))
+		weightStrings = append(weightStrings, fmt.Sprintf("%.18f", item.Weight))
 	}
 
 	dbid := utils.GenerateDBID(input.composedStream.StreamId.String(), input.Platform.Deployer)
