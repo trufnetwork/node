@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/truflation/tsn-db/internal/contracts/tests/utils/procedure"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
 
 	"github.com/pkg/errors"
@@ -23,7 +24,7 @@ func TestIndexChange(t *testing.T) {
 		FunctionTests: []kwilTesting.TestFunc{
 			withTestIndexChangeSetup(testIndexChange(t)),
 			withTestIndexChangeSetup(testYoYIndexChange(t)),
-			testDivisionByZero(t),
+			withTestIndexChangeSetup(testDivisionByZero(t)),
 		},
 	})
 }
@@ -36,9 +37,7 @@ func withTestIndexChangeSetup(test func(ctx context.Context, platform *kwilTesti
 			return errors.Wrap(err, "error creating ethereum address")
 		}
 
-		platform.Deployer = deployer.Bytes()
-
-		return test(ctx, platform)
+		return test(ctx, procedure.WithSigner(platform, deployer.Bytes()))
 	}
 }
 
@@ -218,9 +217,9 @@ func testDivisionByZero(t *testing.T) func(ctx context.Context, platform *kwilTe
 		dbid := utils.GenerateDBID(streamId.String(), platform.Deployer)
 
 		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
-			Platform:            platform,
-			Height:              0,
-			PrimitiveStreamName: streamName,
+			Platform: platform,
+			Height:   0,
+			StreamId: streamId,
 			MarkdownData: `
 			| date       | value  |
 			|------------|--------|
