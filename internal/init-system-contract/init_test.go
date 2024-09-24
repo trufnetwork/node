@@ -2,10 +2,11 @@ package init_system_contract
 
 import (
 	"context"
-	"github.com/truflation/tsn-db/internal/contracts"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/truflation/tsn-db/internal/contracts"
 )
 
 func TestInitSystemContract(t *testing.T) {
@@ -20,7 +21,7 @@ func TestInitSystemContract(t *testing.T) {
 		err := InitSystemContract(ctx, InitSystemContractOptions{
 			PrivateKey:            "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
 			ProviderUrl:           "http://localhost:8090",
-			SystemContractContent: contracts.SystemContractContent,
+			SystemContractContent: contracts.SystemContractStringContent,
 			RetryTimeout:          15 * time.Minute,
 		})
 

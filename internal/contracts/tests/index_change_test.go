@@ -2,8 +2,9 @@ package tests
 
 import (
 	"context"
-	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
 	"testing"
+
+	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
 
 	"github.com/pkg/errors"
 	"github.com/truflation/tsn-sdk/core/util"
@@ -20,10 +21,25 @@ func TestIndexChange(t *testing.T) {
 		Name:        "index_change_test",
 		SchemaFiles: []string{"../primitive_stream_template.kf"},
 		FunctionTests: []kwilTesting.TestFunc{
-			testIndexChange(t),
-			testYoYIndexChange(t),
+			withTestIndexChangeSetup(testIndexChange(t)),
+			withTestIndexChangeSetup(testYoYIndexChange(t)),
+			testDivisionByZero(t),
 		},
 	})
+}
+
+func withTestIndexChangeSetup(test func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// setup deployer
+		deployer, err := util.NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address")
+		}
+
+		platform.Deployer = deployer.Bytes()
+
+		return test(ctx, platform)
+	}
 }
 
 func testIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
@@ -31,11 +47,16 @@ func testIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesti
 		streamName := "primitive_stream_db_name"
 		streamId := util.GenerateStreamId(streamName)
 		dbid := utils.GenerateDBID(streamId.String(), platform.Deployer)
+		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address")
+		}
 
 		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
 			Platform:            platform,
 			Height:              0,
 			PrimitiveStreamName: streamName,
+			Deployer:            deployer,
 			MarkdownData: `
 			| date       | value  |
 			|------------|--------|
@@ -82,13 +103,13 @@ func testIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesti
 
 		// Assert the correct output
 		expected := [][]any{
-			{"2023-01-02", "2.000"},
-			{"2023-01-03", "0.980"},
-			{"2023-01-04", "-1.942"},
+			{"2023-01-02", "2.000000000000000000"},
+			{"2023-01-03", "0.980392156862745098"},
+			{"2023-01-04", "-1.941747572815533981"},
 			// remember the gap
-			{"2023-01-06", "4.950"}, // it is now using the previous value
-			{"2023-01-07", "-0.943"},
-			{"2023-01-08", "2.857"},
+			{"2023-01-06", "4.950495049504950495"}, // it is now using the previous value
+			{"2023-01-07", "-0.943396226415094340"},
+			{"2023-01-08", "2.857142857142857143"},
 		}
 
 		assert.Equal(t, expected, convertedResult, "Index change results do not match expected values")
@@ -104,6 +125,10 @@ func testYoYIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 		streamName := "primitive_stream_db_name"
 		streamId := util.GenerateStreamId(streamName)
 		dbid := utils.GenerateDBID(streamId.String(), platform.Deployer)
+		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address")
+		}
 
 		/*
 			Here’s an example calculation for corn inflation for May 22nd 2023:
@@ -120,6 +145,7 @@ func testYoYIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 			Platform:            platform,
 			Height:              0,
 			PrimitiveStreamName: streamName,
+			Deployer:            deployer,
 			MarkdownData: `
         | date       | value  |
         |------------|--------|
@@ -172,10 +198,49 @@ func testYoYIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 		// 05-01 yoyChange: 108 - 102 / 102 * 100.0 = 5.882
 		// check if 5.882 is in the result
 		latestYoyChange := results[0][0].value
-		if latestYoyChange != "5.882" {
+		if latestYoyChange != "5.882352941176470588" {
 			return errors.Errorf("incorrect latest yoy change: got %s, expected 5.882", latestYoyChange)
 		}
 
+		return nil
+	}
+}
+
+// testing division by zero
+// we expect this error to happen, unless our production data expects a different behavior
+func testDivisionByZero(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		streamName := "primitive_stream_db_name"
+		streamId := util.GenerateStreamId(streamName)
+		dbid := utils.GenerateDBID(streamId.String(), platform.Deployer)
+
+		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+			Platform:            platform,
+			Height:              0,
+			PrimitiveStreamName: streamName,
+			MarkdownData: `
+			| date       | value  |
+			|------------|--------|
+			| 2023-01-01 | 100.00 |
+			| 2023-01-02 | 0.00   |
+			| 2023-01-03 | 103.00 |
+			`,
+		}); err != nil {
+			return errors.Wrap(err, "error setting up primitive stream")
+		}
+
+		_, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+			Procedure: "get_index_change",
+			Dataset:   dbid,
+			Args:      []any{"2023-01-01", "2023-01-03", nil, nil, 1},
+			TransactionData: common.TransactionData{
+				Signer: platform.Deployer,
+				TxID:   platform.Txid(),
+				Height: 0,
+			},
+		})
+
+		assert.Error(t, err, "division by zero")
 		return nil
 	}
 }

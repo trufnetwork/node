@@ -14,6 +14,8 @@ import (
 	"github.com/pkg/errors"
 )
 
+var composedDeployer = util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
+
 func TestComposed(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name: "composed_test",
@@ -27,8 +29,7 @@ func TestComposed(t *testing.T) {
 func WithComposedTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// we just need to define a valid address here, as we don't need to deploy anything
-		deployerAddress := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
-		platform.Deployer = deployerAddress.Bytes()
+		platform.Deployer = composedDeployer.Bytes()
 
 		// Run the actual test function
 		return testFn(ctx, platform)
@@ -43,6 +44,7 @@ func testComposedLastAvailable(t *testing.T) func(ctx context.Context, platform 
 		err := setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
 			Platform:           platform,
 			ComposedStreamName: composedStreamName,
+			Deployer:           composedDeployer,
 			Height:             1,
 			MarkdownData: `
 				| date       | Stream 1 | Stream 2 | Stream 3 |
@@ -72,10 +74,10 @@ func testComposedLastAvailable(t *testing.T) func(ctx context.Context, platform 
 		expected := `
 		| date       | value  |
 		| ---------- | ------ |
-		| 2024-08-29 | 3.250  | # 1 & 4
+		| 2024-08-29 | 3.250000000000000000  | # 1 & 4
 		| 2024-08-30 | 		  |
-		| 2024-08-31 | 3.333  | # 1 & 2 & 5
-		| 2024-09-01 | 2.333  | # 1 & 2 & 3
+		| 2024-08-31 | 3.333333333333333333  | # 1 & 2 & 5
+		| 2024-09-01 | 2.333333333333333333  | # 1 & 2 & 3
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
@@ -92,6 +94,7 @@ func testComposedNoPastData(t *testing.T) func(ctx context.Context, platform *kw
 		err := setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
 			Platform:           platform,
 			ComposedStreamName: composedStreamName,
+			Deployer:           composedDeployer,
 			Height:             1,
 			MarkdownData: `
 				| date       | Stream 1 | Stream 2 | Stream 3 |
@@ -120,9 +123,9 @@ func testComposedNoPastData(t *testing.T) func(ctx context.Context, platform *kw
 		expected := `
 		| date       | value  |
 		| ---------- | ------ |
-		| 2024-08-30 | 1.000  | # 1
-		| 2024-08-31 | 1.667  | # 1 & 2
-		| 2024-09-01 | 2.333  | # 1 & 2 & 3
+		| 2024-08-30 | 1.000000000000000000  | # 1
+		| 2024-08-31 | 1.666666666666666667  | # 1 & 2
+		| 2024-09-01 | 2.333333333333333333  | # 1 & 2 & 3
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)

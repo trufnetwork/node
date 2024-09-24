@@ -18,9 +18,10 @@ import (
 )
 
 var (
-	composedStreamName   = "complex_composed_a"
-	composedStreamId     = util.GenerateStreamId(composedStreamName)
-	primitiveStreamNames = []string{"p1", "p2", "p3"}
+	composedStreamName      = "complex_composed_a"
+	composedStreamId        = util.GenerateStreamId(composedStreamName)
+	primitiveStreamNames    = []string{"p1", "p2", "p3"}
+	complexComposedDeployer = util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
 )
 
 func TestComplexComposed(t *testing.T) {
@@ -41,13 +42,13 @@ func TestComplexComposed(t *testing.T) {
 func WithTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// platform.Deployer can't be the dummy value that is used by default
-		deployerAddress := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
-		platform.Deployer = deployerAddress.Bytes()
+		platform.Deployer = complexComposedDeployer.Bytes()
 
 		// Deploy the contracts here
 		err := setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
 			Platform:           platform,
 			ComposedStreamName: composedStreamName,
+			Deployer:           complexComposedDeployer,
 			Height:             1,
 			MarkdownData: fmt.Sprintf(`
 				| date       | %s   | %s   | %s   |
@@ -99,18 +100,18 @@ func testComplexComposedRecord(t *testing.T) func(ctx context.Context, platform 
 		expected := `
 		| date       | value  |
 		| ---------- | ------ |
-		| 2021-01-01 | 3.000  |
-		| 2021-01-02 | 5.333  |
-		| 2021-01-03 | 6.833  |
-		| 2021-01-04 | 7.833  |
-		| 2021-01-05 | 11.333 |
-		| 2021-01-06 | 16.833 |
-		| 2021-01-07 | 18.833 |
-		| 2021-01-08 | 19.833 |
-		| 2021-01-09 | 20.833 |
-		| 2021-01-10 | 26.833 |
-		| 2021-01-11 | 29.833 |
-		| 2021-01-13 | 34.333 |
+		| 2021-01-01 | 3.000000000000000000  |
+		| 2021-01-02 | 5.333333333333333333  |
+		| 2021-01-03 | 6.833333333333333333  |
+		| 2021-01-04 | 7.833333333333333333  |
+		| 2021-01-05 | 11.333333333333333333 |
+		| 2021-01-06 | 16.833333333333333333 |
+		| 2021-01-07 | 18.833333333333333333 |
+		| 2021-01-08 | 19.833333333333333333 |
+		| 2021-01-09 | 20.833333333333333333 |
+		| 2021-01-10 | 26.833333333333333333 |
+		| 2021-01-11 | 29.833333333333333333 |
+		| 2021-01-13 | 34.333333333333333333 |
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
@@ -137,18 +138,18 @@ func testComplexComposedIndex(t *testing.T) func(ctx context.Context, platform *
 		expected := `
 		| date       | value  |
 		| ---------- | ------ |
-		| 2021-01-01 | 100.000 |
-		| 2021-01-02 | 150.000 |
-		| 2021-01-03 | 200.000 |
-		| 2021-01-04 | 225.000 |
-		| 2021-01-05 | 337.500 |
-		| 2021-01-06 | 467.500 |
-		| 2021-01-07 | 512.500 |
-		| 2021-01-08 | 532.500 |
-		| 2021-01-09 | 557.500 |
-		| 2021-01-10 | 757.500 |
-		| 2021-01-11 | 817.500 |
-		| 2021-01-13 | 967.500 |
+		| 2021-01-01 | 100.000000000000000000 |
+		| 2021-01-02 | 150.000000000000000000 |
+		| 2021-01-03 | 200.000000000000000000 |
+		| 2021-01-04 | 225.000000000000000000 |
+		| 2021-01-05 | 337.500000000000000000 |
+		| 2021-01-06 | 467.500000000000000000 |
+		| 2021-01-07 | 512.500000000000000000 |
+		| 2021-01-08 | 532.500000000000000000 |
+		| 2021-01-09 | 557.500000000000000000 |
+		| 2021-01-10 | 757.500000000000000000 |
+		| 2021-01-11 | 817.500000000000000000 |
+		| 2021-01-13 | 967.500000000000000000 |
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
@@ -175,7 +176,7 @@ func testComplexComposedLatestValue(t *testing.T) func(ctx context.Context, plat
 		expected := `
 		| date       | value  |
 		| ---------- | ------ |
-		| 2021-01-13 | 34.333 |
+		| 2021-01-13 | 34.333333333333333333 |
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
@@ -202,7 +203,7 @@ func testComplexComposedEmptyDate(t *testing.T) func(ctx context.Context, platfo
 		expected := `
 		| date       | value  |
 		| ---------- | ------ |
-		| 2021-01-11 | 29.833 |
+		| 2021-01-11 | 29.833333333333333333 |
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
@@ -231,17 +232,17 @@ func testComplexComposedIndexChange(t *testing.T) func(ctx context.Context, plat
 		expected := `
 		| date       | value  |
 		| ---------- | ------ |
-		| 2021-01-02 | 50.000 |
-		| 2021-01-03 | 33.333 |
-		| 2021-01-04 | 12.500 |
-		| 2021-01-05 | 50.000 |
-		| 2021-01-06 | 38.519 |
-		| 2021-01-07 | 9.626  |
-		| 2021-01-08 | 3.902  |
-		| 2021-01-09 | 4.695  |
-		| 2021-01-10 | 35.874 |
-		| 2021-01-11 | 7.921  |
-		| 2021-01-13 | 18.349 |
+		| 2021-01-02 | 50.000000000000000000 |
+		| 2021-01-03 | 33.333333333333333333 |
+		| 2021-01-04 | 12.500000000000000000 |
+		| 2021-01-05 | 50.000000000000000000 |
+		| 2021-01-06 | 38.518518518518518519 |
+		| 2021-01-07 |  9.625668449197860963 |
+		| 2021-01-08 | 3.902439024390243902  |
+		| 2021-01-09 | 4.694835680751173709  |
+		| 2021-01-10 | 35.874439461883408072 |
+		| 2021-01-11 | 7.920792079207920792  |
+		| 2021-01-13 | 18.348623853211009174 |
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)

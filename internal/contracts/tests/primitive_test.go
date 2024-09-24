@@ -35,10 +35,18 @@ func TestPrimitiveStream(t *testing.T) {
 
 func WithPrimitiveTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		deployer, err := util.NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address")
+		}
+
+		platform.Deployer = deployer.Bytes()
+
 		// Setup initial data
-		err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+		err = setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
 			Platform:            platform,
 			PrimitiveStreamName: primitiveStreamName,
+			Deployer:            deployer,
 			Height:              1,
 			MarkdownData: `
 			| date       | value |
@@ -78,11 +86,11 @@ func testInsertAndGetRecord(t *testing.T) func(ctx context.Context, platform *kw
 		expected := `
 		| date       | value |
 		|------------|-------|
-		| 2021-01-01 | 1.000 |
-		| 2021-01-02 | 2.000 |
-		| 2021-01-03 | 4.000 |
-		| 2021-01-04 | 5.000 |
-		| 2021-01-05 | 3.000 |
+		| 2021-01-01 | 1.000000000000000000 |
+		| 2021-01-02 | 2.000000000000000000 |
+		| 2021-01-03 | 4.000000000000000000 |
+		| 2021-01-04 | 5.000000000000000000 |
+		| 2021-01-05 | 3.000000000000000000 |
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
@@ -109,11 +117,11 @@ func testGetIndex(t *testing.T) func(ctx context.Context, platform *kwilTesting.
 		expected := `
 		| date       | value  |
 		|------------|--------|
-		| 2021-01-01 | 100.000 |
-		| 2021-01-02 | 200.000 |
-		| 2021-01-03 | 400.000 |
-		| 2021-01-04 | 500.000 |
-		| 2021-01-05 | 300.000 |
+		| 2021-01-01 | 100.000000000000000000 |
+		| 2021-01-02 | 200.000000000000000000 |
+		| 2021-01-03 | 400.000000000000000000 |
+		| 2021-01-04 | 500.000000000000000000 |
+		| 2021-01-05 | 300.000000000000000000 |
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
@@ -141,10 +149,10 @@ func testGetIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 		expected := `
 		| date       | value  |
 		|------------|--------|
-		| 2021-01-02 | 100.000 |
-		| 2021-01-03 | 100.000 |
-		| 2021-01-04 | 25.000  |
-		| 2021-01-05 | -40.000 |
+		| 2021-01-02 | 100.000000000000000000 |
+		| 2021-01-03 | 100.000000000000000000 |
+		| 2021-01-04 | 25.000000000000000000  |
+		| 2021-01-05 | -40.000000000000000000 |
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
@@ -165,7 +173,7 @@ func testDuplicateDate(t *testing.T) func(ctx context.Context, platform *kwilTes
 			MarkdownData: `
 			| date       | value |
 			|------------|-------|
-			| 2021-01-01 | 9.000 |
+			| 2021-01-01 | 9.000000000000000000 |
 			`,
 		})
 
@@ -176,11 +184,11 @@ func testDuplicateDate(t *testing.T) func(ctx context.Context, platform *kwilTes
 		expected := `
 		| date       | value |
 		|------------|-------|
-		| 2021-01-01 | 9.000 |
-		| 2021-01-02 | 2.000 |
-		| 2021-01-03 | 4.000 |
-		| 2021-01-04 | 5.000 |
-		| 2021-01-05 | 3.000 |
+		| 2021-01-01 | 9.000000000000000000 |
+		| 2021-01-02 | 2.000000000000000000 |
+		| 2021-01-03 | 4.000000000000000000 |
+		| 2021-01-04 | 5.000000000000000000 |
+		| 2021-01-05 | 3.000000000000000000 |
 		`
 
 		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
@@ -223,11 +231,11 @@ func testGetRecordWithBaseDate(t *testing.T) func(ctx context.Context, platform 
 		expected := `
 		| date       | value |
 		|------------|-------|
-		| 2021-01-01 | 25.000 |
-		| 2021-01-02 | 50.000 |
-		| 2021-01-03 | 100.000 | # this is the base date
-		| 2021-01-04 | 125.000 |
-		| 2021-01-05 | 75.000 |
+		| 2021-01-01 | 25.000000000000000000 |
+		| 2021-01-02 | 50.000000000000000000 |
+		| 2021-01-03 | 100.000000000000000000 | # this is the base date
+		| 2021-01-04 | 125.000000000000000000 |
+		| 2021-01-05 | 75.000000000000000000 |
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)

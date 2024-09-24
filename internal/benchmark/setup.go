@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	mathrand "math/rand"
 	"strconv"
 	"strings"
 
+	"github.com/cockroachdb/apd/v3"
 	"github.com/google/uuid"
 	"github.com/kwilteam/kwil-db/common"
 	kwiltypes "github.com/kwilteam/kwil-db/core/types"
@@ -282,7 +284,7 @@ func insertRecordsForPrimitive(ctx context.Context, platform *kwilTesting.Platfo
 	var values []string
 
 	for _, record := range records {
-		values = append(values, fmt.Sprintf("('%s', %s::decimal(21,3), 0)", record[0], record[1]))
+		values = append(values, fmt.Sprintf("('%s', %s::decimal(36,18), 0)", record[0], record[1]))
 	}
 
 	sqlStmt += strings.Join(values, ", ")
@@ -302,8 +304,9 @@ func setTaxonomyForComposed(ctx context.Context, platform *kwilTesting.Platform,
 	var taxonomy []types.TaxonomyItem
 	for _, childIndex := range input.treeNode.Children {
 		childStreamId := getStreamId(childIndex)
+		randWeight, _ := apd.New(mathrand.Int63n(10), 0).Float64() // can't be so big, otherwise it overflows when multiplying values
 		taxonomy = append(taxonomy, types.TaxonomyItem{
-			Weight: 1,
+			Weight: randWeight,
 			ChildStream: types.StreamLocator{
 				DataProvider: input.owner,
 				StreamId:     *childStreamId,
