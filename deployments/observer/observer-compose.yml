@@ -3,11 +3,16 @@
 
 services:
   vector:
-    image: timberio/vector:0.41.1-alpine
+    image: timberio/vector:0.41.1-debian # debian is needed for journald input
     command: --config /etc/vector/vector-cfg/*
+    user: root # needed to read journalctl
     volumes:
       - ./vector-prod-destination.yml:/etc/vector/vector-cfg/vector-destination.yml
       - ./vector-sources.yml:/etc/vector/vector-cfg/vector-sources.yml
+      # we want to mount the journal and machine-id to get logs from systemd from host
+      - /run/log/journal:/run/log/journal:ro
+      - /var/log/journal:/var/log/journal:ro
+      - /etc/machine-id:/etc/machine-id:ro
     environment:
       DATADOG_API_KEY: ${DATADOG_API_KEY?}
       DATADOG_NAMESPACE: ${DATADOG_NAMESPACE} # optional

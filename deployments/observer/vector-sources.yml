@@ -1,7 +1,7 @@
 # Vector sources configuration
 # Should be used for both development and production
 sources:
-  hostmetrics:
+  out-metrics-hostmetrics:
     # https://vector.dev/docs/reference/configuration/sources/host_metrics/
     type: host_metrics
     collectors: # default are [cpu disk filesystem load host memory network cgroups]
@@ -13,4 +13,9 @@ sources:
       - network
       # - cgroups # we don't need it discriminated here
 
-
+  out-logs-journald:
+    # https://vector.dev/docs/reference/configuration/sources/journald/
+    type: journald
+    current_boot_only: true
+    include_matches:
+      PRIORITY: ["> 4"]

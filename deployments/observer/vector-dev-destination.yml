@@ -1,9 +1,17 @@
 # Dev destination for Vector, sends metrics to Prometheus
 sinks:
-  # Raw log output to file
   prometheus:
     type: prometheus_exporter
-    inputs: [ hostmetrics ]
+    inputs:
+      - out-metrics-hostmetrics
     address: 0.0.0.0:8686
     default_namespace: dev-observer
     flush_period_secs: 60
+
+  # Raw log output to console
+  console:
+    type: console
+    encoding:
+      codec: logfmt
+    inputs:
+      - out-logs-journald

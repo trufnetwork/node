@@ -3,29 +3,34 @@
 # during development
 services:
   vector:
-    image: timberio/vector:latest-alpine
-    command: --config /etc/vector/vector-cfg/*
+    image: timberio/vector:0.41.1-debian # debian is needed for journald input
+    command: '--config /etc/vector/vector-cfg/*'
+    user: root # needed to read journalctl
     volumes:
       - ./vector-dev-destination.yml:/etc/vector/vector-cfg/vector-dev-destination.yml
       - ./vector-sources.yml:/etc/vector/vector-cfg/vector-sources.yml
+      # we want to mount the journal and machine-id to get logs from systemd from host
+      - /run/log/journal:/run/log/journal:ro
+      - /var/log/journal:/var/log/journal:ro
+      - /etc/machine-id:/etc/machine-id:ro
 
   prometheus:
     image: prom/prometheus:v2.30.3
     command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
+      - '--config.file=/etc/prometheus/prometheus.yml'
     volumes:
       - ./dev-prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
-      - "9090:9090"
+      - '9090:9090'
 
   grafana:
     image: grafana/grafana:8.2.2
     ports:
-      - "3000:3000"
+      - '3000:3000'
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     volumes:
       - grafana-storage:/var/lib/grafana
 
 volumes:
-  grafana-storage:
+  grafana-storage: null

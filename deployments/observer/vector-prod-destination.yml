@@ -3,7 +3,15 @@ sinks:
   datadog-destination:
     type: datadog_metrics
     inputs:
-      - hostmetrics
+      - out-metrics-hostmetrics
+    default_api_key: ${DATADOG_API_KEY}
+    default_namespace: ${DATADOG_NAMESPACE}
+    endpoint: ${DATADOG_ENDPOINT}
+
+  datadog-logs:
+    type: datadog_logs
+    inputs:
+      - out-logs-journald
     default_api_key: ${DATADOG_API_KEY}
     default_namespace: ${DATADOG_NAMESPACE}
     endpoint: ${DATADOG_ENDPOINT}
