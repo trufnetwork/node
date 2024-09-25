@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/lib/kwil-network/peer"
 	"github.com/truflation/tsn-db/infra/lib/tsn"
@@ -19,14 +18,13 @@ type IndexerEnvConfig struct {
 
 type AddKwilIndexerStartupScriptsOptions struct {
 	TSNInstance          tsn.TSNInstance
-	IndexerInstance      awsec2.Instance
 	indexerZippedDirPath *string
 }
 
-func AddKwilIndexerStartupScriptsToInstance(options AddKwilIndexerStartupScriptsOptions) {
+func AddKwilIndexerStartupScripts(options AddKwilIndexerStartupScriptsOptions) *string {
 	tsnInstance := options.TSNInstance
 
-	// Create the environment variables for the gateway compose file
+	// Create the environment variables for the indexer compose file
 	indexerEnvConfig := IndexerEnvConfig{
 		// note: the tsn p2p port (usually 26656) will be automatically crawled by the indexer
 		NodeCometBftEndpoint: jsii.String(fmt.Sprintf(
@@ -45,39 +43,17 @@ func AddKwilIndexerStartupScriptsToInstance(options AddKwilIndexerStartupScripts
 		PostgresVolume: jsii.String("/data/postgres"),
 	}
 
-	setupScript := `#!/bin/bash
-set -e
-set -x
-`
+	script := "#!/bin/bash\nset -e\nset -x\n\n"
+	script += utils.InstallDockerScript() + "\n"
+	script += utils.ConfigureDockerDataRoot("/data/docker") + "\n"
+	script += utils.UnzipFileScript(*options.indexerZippedDirPath, "/home/ec2-user/indexer") + "\n"
+	script += utils.CreateSystemdServiceScript(
+		"kwil-indexer",
+		"Kwil Indexer Compose",
+		"/bin/bash -c \"docker compose -f /home/ec2-user/indexer/indexer-compose.yaml up -d\"",
+		"/bin/bash -c \"docker compose -f /home/ec2-user/indexer/indexer-compose.yaml down\"",
+		utils.GetDictFromStruct(indexerEnvConfig),
+	)
 
-	setupScript += utils.InstallDockerScript() + "\n"
-	setupScript += utils.ConfigureDockerDataRoot("/data/docker") + "\n"
-
-	setupScript += `# Extract the indexer files
-unzip ` + *options.indexerZippedDirPath + ` -d /home/ec2-user/indexer
-
-cat <<EOF > /etc/systemd/system/kwil-indexer.service
-[Unit]
-Description=Kwil Indexer Compose
-Restart=on-failure
-
-[Service]
-type=oneshot
-RemainAfterExit=yes
-ExecStart=/bin/bash -c "docker compose -f /home/ec2-user/indexer/indexer-compose.yaml up -d"
-ExecStop=/bin/bash -c "docker compose -f /home/ec2-user/indexer/indexer-compose.yaml down"
-` + utils.GetEnvStringsForService(utils.GetDictFromStruct(indexerEnvConfig)) + `
-
-
-[Install]
-WantedBy=multi-user.target
-
-EOF
-
-systemctl daemon-reload
-systemctl enable kwil-indexer.service
-systemctl start kwil-indexer.service
-`
-
-	options.IndexerInstance.AddUserData(jsii.String(setupScript))
+	return jsii.String(script)
 }

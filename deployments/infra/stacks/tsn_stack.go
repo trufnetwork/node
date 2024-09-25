@@ -100,6 +100,7 @@ func TsnStack(stack awscdk.Stack, props *TsnStackProps) awscdk.Stack {
 	// ### GATEWAY INSTANCE
 
 	kgwInstance := kwil_gateway.NewKGWInstance(stack, kwil_gateway.NewKGWInstanceInput{
+		HostedZone:     hostedZone,
 		Vpc:            defaultVPC,
 		KGWBinaryAsset: kgwBinaryS3Object,
 		KGWDirAsset:    kgwDirectoryAsset,
@@ -136,7 +137,7 @@ func TsnStack(stack awscdk.Stack, props *TsnStackProps) awscdk.Stack {
 		jsii.String("CloudFrontDistribution"),
 		kwil_gateway.TSNCloudfrontConfig{
 			DomainName:           domain,
-			KgwPublicDnsName:     kgwInstance.Instance.InstancePublicDnsName(),
+			KgwPublicDnsName:     kgwInstance.InstanceDnsName,
 			Certificate:          props.certStackExports.DomainCert,
 			HostedZone:           hostedZone,
 			IndexerPublicDnsName: indexerInstance.InstanceDnsName,
@@ -165,12 +166,12 @@ func TsnStack(stack awscdk.Stack, props *TsnStackProps) awscdk.Stack {
 
 	// Public ip of the gateway instance
 	awscdk.NewCfnOutput(stack, jsii.String("gateway-public-address"), &awscdk.CfnOutputProps{
-		Value: kgwInstance.Instance.InstancePublicIp(),
+		Value: kgwInstance.InstanceDnsName,
 	})
 
 	// Public ip of the indexer instance
 	awscdk.NewCfnOutput(stack, jsii.String("indexer-public-address"), &awscdk.CfnOutputProps{
-		Value: indexerInstance.Instance.InstancePublicIp(),
+		Value: indexerInstance.InstanceDnsName,
 	})
 
 	awscdk.NewCfnOutput(stack, jsii.String("region"), &awscdk.CfnOutputProps{

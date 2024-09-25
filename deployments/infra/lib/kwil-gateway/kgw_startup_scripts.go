@@ -2,19 +2,16 @@ package kwil_gateway
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
-	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/lib/utils"
 )
 
 type AddKwilGatewayStartupScriptsOptions struct {
-	Instance      awsec2.Instance
 	kgwBinaryPath *string
 	Config        KGWConfig
 }
 
-func AddKwilGatewayStartupScriptsToInstance(options AddKwilGatewayStartupScriptsOptions) {
-	instance := options.Instance
+func AddKwilGatewayStartupScriptsToInstance(options AddKwilGatewayStartupScriptsOptions) *string {
 	config := options.Config
 
 	var nodeAddresses []*string
@@ -49,7 +46,7 @@ mv /tmp/kgw-binary/kgw /home/ec2-user/kgw/kgw
 		kgwEnvConfig.GetDict(),
 	)
 
-	instance.AddUserData(jsii.String(script))
+	return jsii.String(script)
 }
 
 type KGWEnvConfig struct {
