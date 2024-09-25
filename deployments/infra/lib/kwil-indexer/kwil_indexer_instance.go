@@ -2,6 +2,7 @@ package kwil_indexer_instance
 
 import (
 	"fmt"
+
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsroute53"
@@ -45,6 +46,9 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 
 	// create a new elastic ip, because we need the ip before the instance is created
 	indexerElasticIp := awsec2.NewCfnEIP(scope, jsii.String("IndexerElasticIp"), &awsec2.CfnEIPProps{})
+
+	// give a name so we can identify the eip
+	indexerElasticIp.Tags().SetTag(jsii.String("Name"), jsii.String("IndexerElasticIp"), jsii.Number(10), jsii.Bool(true))
 
 	// Create an A record pointing to the Elastic IP, as EIP doesn't automatically create a DNS record
 	aRecord := awsroute53.NewARecord(scope, jsii.String("IndexerElasticIpDnsRecord"), &awsroute53.ARecordProps{
@@ -141,25 +145,6 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 	launchTemplate.UserData().AddCommands(scripts)
 
 	launchTemplate.UserData().AddCommands(utils.MountVolumeToPathAndPersist("nvme1n1", "/data")...)
-
-	tsnSubnetId := *input.Vpc.SelectSubnets(&awsec2.SubnetSelection{
-		SubnetType: awsec2.SubnetType_PUBLIC,
-	}).SubnetIds
-
-	// Create instance from launch template
-	instance := awsec2.NewCfnInstance(scope, jsii.String("IndexerInstance"), &awsec2.CfnInstanceProps{
-		LaunchTemplate: &awsec2.CfnInstance_LaunchTemplateSpecificationProperty{
-			LaunchTemplateId: launchTemplate.LaunchTemplateId(),
-			Version:          launchTemplate.LatestVersionNumber(),
-		},
-		SubnetId: tsnSubnetId[0],
-	})
-
-	// Associate the elastic ip with the instance
-	awsec2.NewCfnEIPAssociation(scope, jsii.String("IndexerElasticIpAssociation"), &awsec2.CfnEIPAssociationProps{
-		InstanceId:   instance.AttrInstanceId(),
-		AllocationId: indexerElasticIp.AttrAllocationId(),
-	})
 
 	return IndexerInstance{
 		SecurityGroup:   instanceSG,

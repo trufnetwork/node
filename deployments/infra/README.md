@@ -23,18 +23,10 @@ PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
 KWIL_ADMIN_BIN_PATH=kwil-admin \
 CHAIN_ID=truflation-dev \
 CDK_DOCKER="<YOUR-DIRECTORY>/tsn/deployments/infra/buildx.sh" \
-RESTART_HASH=$(date +%s) \
 cdk deploy --profile <YOUR-AWS-PROFILE> --all --asset-parallelism=false --notices false \
 --context deploymentStage=DEV \
 --parameters TSN-DB-Stack-dev:sessionSecret=abab
 ```
-
-### RESTART_HASH Explanation
-
-The `RESTART_HASH` environment variable controls the full redeployment of TSN instances, re-executing all processes. 
-
-- Use a fixed value (e.g., `RESTART_HASH=v0`) to avoid redeployments.
-- Use a timestamp (e.g., `RESTART_HASH=$(date +%s)`) to force redeployment on every execution.
 
 ### 2. Pre-configured Setup
 
@@ -52,6 +44,26 @@ GENESIS_PATH="/path/to/genesis.json" \
 cdk deploy --profile <YOUR-AWS-PROFILE> TSN-From-Config* TSN-Cert* \
 --parameters TSN-From-Config-<environment>-Stack:sessionSecret=abab
 ```
+
+## Redeploying Instances from Launch Templates
+
+In our stack, the launch templates for the Kwil Gateway (kgw) and Indexer instances are created, and the instances themselves are **not** automatically provisioned. This approach provides greater flexibility and control over instance deployment and updates. Below are the steps to redeploy an instance using the launch templates:
+
+1. **Deploy a New Instance from the Launch Template**
+   
+   Use the AWS Management Console, AWS CLI, or infrastructure as code tools to launch a new EC2 instance using the existing launch template for either the kgw or Indexer.
+
+2. **Detach the Elastic IP from the Running Instance**
+   
+   Identify the Elastic IP (EIP) associated with the current instance and detach it.
+
+3. **Attach the Elastic IP to the New Instance**
+   
+   Associate the detached EIP with the newly launched instance.
+
+4. **Delete the Old Instance**
+   
+   Once the EIP is successfully attached to the new instance and you've verified its operation, terminate the old instance to avoid unnecessary costs.
 
 ## Upgrading Nodes (Staging Environment)
 
@@ -94,7 +106,6 @@ This process ensures that your node is running the latest version of the softwar
 - `CDK_DOCKER`: Path to docker buildx script
 - `NODE_PRIVATE_KEYS`: Comma-separated list of private keys for TSN nodes (only for pre-configured setup)
 - `GENESIS_PATH`: Path to the genesis file (only for pre-configured setup)
-- `RESTART_HASH`: Controls redeployment of TSN instances (for auto-generated configuration)
 
 ## AWS Profile
 

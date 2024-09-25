@@ -102,26 +102,11 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 
 	launchTemplate.UserData().AddCommands(scripts)
 
-	tsnSubnetId := *input.Vpc.SelectSubnets(&awsec2.SubnetSelection{
-		SubnetType: awsec2.SubnetType_PUBLIC,
-	}).SubnetIds
+	// so we can later associate when creating the instance
+	eip := awsec2.NewCfnEIP(scope, jsii.String("KGWElasticIp"), &awsec2.CfnEIPProps{})
 
-	eip := awsec2.NewCfnEIP(scope, jsii.String("KGWElasticIp"), nil)
-
-	// Create instance from launch template
-	instance := awsec2.NewCfnInstance(scope, jsii.String("KGWInstance"), &awsec2.CfnInstanceProps{
-		LaunchTemplate: &awsec2.CfnInstance_LaunchTemplateSpecificationProperty{
-			LaunchTemplateId: launchTemplate.LaunchTemplateId(),
-			Version:          launchTemplate.LatestVersionNumber(),
-		},
-		SubnetId: tsnSubnetId[0],
-	})
-
-	// associate elastic ip to the instance
-	awsec2.NewCfnEIPAssociation(scope, jsii.String("KGW-EIP-Association"), &awsec2.CfnEIPAssociationProps{
-		InstanceId:   instance.AttrInstanceId(),
-		AllocationId: eip.AttrAllocationId(),
-	})
+	// give a name so we can identify the eip
+	eip.Tags().SetTag(jsii.String("Name"), jsii.String("KGWElasticIp"), jsii.Number(10), jsii.Bool(true))
 
 	domain := config.Domain(scope, "kgw")
 
