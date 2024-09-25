@@ -35,9 +35,9 @@ func AddKwilGatewayStartupScriptsToInstance(options AddKwilGatewayStartupScripts
 	script += utils.InstallDockerScript() + "\n"
 	script += utils.UnzipFileScript("/home/ec2-user/kgw.zip", "/home/ec2-user/kgw") + "\n"
 	script += `
-unzip ` + *options.kgwBinaryPath + ` kgw_0.3.1_linux_amd64.tar.gz -d /tmp/kgw-pkg
+unzip ` + *options.kgwBinaryPath + ` kgw_0.3.3_linux_amd64.tar.gz -d /tmp/kgw-pkg
 mkdir -p /tmp/kgw-binary
-tar -xf /tmp/kgw-pkg/kgw_0.3.1_linux_amd64.tar.gz  -C /tmp/kgw-binary
+tar -xf /tmp/kgw-pkg/kgw_0.3.3_linux_amd64.tar.gz  -C /tmp/kgw-binary
 chmod +x /tmp/kgw-binary/kgw
 mv /tmp/kgw-binary/kgw /home/ec2-user/kgw/kgw
 ` + "\n"
