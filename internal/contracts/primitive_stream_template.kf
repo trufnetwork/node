@@ -345,6 +345,14 @@ procedure get_first_record($after_date text, $frozen_at int) public view returns
     date_value text,
     value decimal(36,18)
 ) {
+    // check read access
+    if is_wallet_allowed_to_read(@caller) == false {
+        error('wallet not allowed to read');
+    }
+
+    // check compose access
+    is_stream_allowed_to_compose(@foreign_caller);
+
     // let's coalesce after_date with ''
     // then, if it's empty, it will always be the first value
     if $after_date is null {
