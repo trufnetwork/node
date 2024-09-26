@@ -149,7 +149,7 @@ func setupSchema(ctx context.Context, platform *kwilTesting.Platform, schema *kw
 
 	// if it's a leaf, then it's a primitive stream
 	if input.treeNode.IsLeaf {
-		if err := insertRecordsForPrimitive(ctx, platform, dbid, input.days); err != nil {
+		if err := insertRecordsForPrimitive(ctx, platform, dbid, input.days+1); err != nil {
 			return errors.Wrap(err, "failed to insert records for primitive")
 		}
 	} else {

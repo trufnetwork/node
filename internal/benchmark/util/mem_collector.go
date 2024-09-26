@@ -14,23 +14,25 @@ import (
 
 // DockerMemoryCollector collects memory usage stats of a Docker container.
 type DockerMemoryCollector struct {
-	containerName  string
-	maxMemoryUsage uint64
-	ctx            context.Context
-	cancel         context.CancelFunc
-	wg             sync.WaitGroup
-	mu             sync.Mutex
-	errChan        chan error
+	containerName   string
+	maxMemoryUsage  uint64
+	ctx             context.Context
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup
+	mu              sync.Mutex
+	errChan         chan error
+	firstSampleChan chan struct{}
 }
 
 // StartDockerMemoryCollector initializes and starts the memory collector.
 func StartDockerMemoryCollector(containerName string) (*DockerMemoryCollector, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	collector := &DockerMemoryCollector{
-		containerName: containerName,
-		ctx:           ctx,
-		cancel:        cancel,
-		errChan:       make(chan error, 1),
+		containerName:   containerName,
+		ctx:             ctx,
+		cancel:          cancel,
+		errChan:         make(chan error, 1),
+		firstSampleChan: make(chan struct{}),
 	}
 	collector.wg.Add(1)
 	go collector.collectStats()
@@ -44,6 +46,7 @@ func (c *DockerMemoryCollector) collectStats() {
 	cli, err := client.NewClientWithOpts(client.FromEnv)
 	if err != nil {
 		c.errChan <- fmt.Errorf("error creating Docker client: %w", err)
+		close(c.firstSampleChan) // Ensure channel is closed
 		return
 	}
 	defer cli.Close()
@@ -52,17 +55,20 @@ func (c *DockerMemoryCollector) collectStats() {
 	containerID, err := c.getContainerID(cli)
 	if err != nil {
 		c.errChan <- fmt.Errorf("error getting container ID: %w", err)
+		close(c.firstSampleChan) // Ensure channel is closed
 		return
 	}
 
 	stats, err := cli.ContainerStats(c.ctx, containerID, true) // stream=true
 	if err != nil {
 		c.errChan <- fmt.Errorf("error getting container stats: %w", err)
+		close(c.firstSampleChan) // Ensure channel is closed
 		return
 	}
 	defer stats.Body.Close()
 
 	decoder := json.NewDecoder(stats.Body)
+	firstSampleReceived := false
 	for {
 		var v *container.StatsResponse
 		if err := decoder.Decode(&v); err != nil {
@@ -73,6 +79,7 @@ func (c *DockerMemoryCollector) collectStats() {
 			return
 		}
 
+		// Calculate memory usage excluding cache
 		memoryUsage := v.MemoryStats.Usage - v.MemoryStats.Stats["cache"]
 
 		c.mu.Lock()
@@ -80,6 +87,12 @@ func (c *DockerMemoryCollector) collectStats() {
 			c.maxMemoryUsage = memoryUsage
 		}
 		c.mu.Unlock()
+
+		if !firstSampleReceived {
+			// Signal that the first sample has been received
+			close(c.firstSampleChan)
+			firstSampleReceived = true
+		}
 	}
 }
 
@@ -98,6 +111,19 @@ func (c *DockerMemoryCollector) getContainerID(cli *client.Client) (string, erro
 		}
 	}
 	return "", fmt.Errorf("container %s not found", c.containerName)
+}
+
+// WaitForFirstSample waits until the first stats sample has been received.
+func (c *DockerMemoryCollector) WaitForFirstSample() error {
+	// Check for errors that might have occurred
+	select {
+	case err := <-c.errChan:
+		return err
+	case <-c.firstSampleChan:
+		return nil
+	case <-c.ctx.Done():
+		return c.ctx.Err()
+	}
 }
 
 // GetMaxMemoryUsage returns the maximum memory usage observed during the collection period.

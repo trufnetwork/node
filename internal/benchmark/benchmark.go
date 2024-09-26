@@ -84,10 +84,22 @@ func runSingleTest(ctx context.Context, input RunSingleTestInput) (Result, error
 		case ProcedureGetFirstRecord:
 			args = []any{nil, nil} // afterDate, frozenAt
 		}
+
+		// FYI: we already tested sleeping for 10 seconds before running to see if
+		// the  memory is affected by previous operations, but it's not.
+		// time.Sleep(10 * time.Second)
+
 		collector, err := benchutil.StartDockerMemoryCollector("kwil-testing-postgres")
 		if err != nil {
 			return Result{}, err
 		}
+
+		// Wait for the collector to receive at least one stats sample
+		if err := collector.WaitForFirstSample(); err != nil {
+			collector.Stop()
+			return Result{}, err
+		}
+
 		start := time.Now()
 		// we read using the reader address to be sure visibility is tested
 		if err := executeStreamProcedure(ctx, input.Platform, nthDbId, string(input.Procedure), args, readerAddress.Bytes()); err != nil {
