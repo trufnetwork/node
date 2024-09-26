@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	testutils "github.com/truflation/tsn-db/internal/contracts/tests/utils"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/procedure"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/table"
@@ -33,6 +34,7 @@ func TestComplexComposed(t *testing.T) {
 			WithTestSetup(testComplexComposedLatestValue(t)),
 			WithTestSetup(testComplexComposedEmptyDate(t)),
 			WithTestSetup(testComplexComposedIndexChange(t)),
+			WithTestSetup(testComplexComposedFirstRecord(t)),
 			WithTestSetup(testComplexComposedOutOfRange(t)),
 			WithTestSetup(testComplexComposedInvalidDate(t)),
 		},
@@ -242,6 +244,69 @@ func testComplexComposedIndexChange(t *testing.T) func(ctx context.Context, plat
 		| 2021-01-10 | 35.874439461883408072 |
 		| 2021-01-11 | 7.920792079207920792  |
 		| 2021-01-13 | 18.348623853211009174 |
+		`
+
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+
+		return nil
+	}
+}
+
+// testComplexComposedFirstRecord tests that the first record is returned correctly
+// it tests on some situations:
+// - no after date is provided
+// - an after date is provided having partial data on it (some children having data, others not)
+// - an after date after the last record is provided
+func testComplexComposedFirstRecord(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		composedDBID := utils.GenerateDBID(composedStreamId.String(), platform.Deployer)
+
+		// no after date is provided
+		result, err := procedure.GetFirstRecord(ctx, procedure.GetFirstRecordInput{
+			Platform:  platform,
+			DBID:      composedDBID,
+			AfterDate: nil,
+			Height:    0,
+		})
+		assert.NoError(t, err, "Expected no error for valid date")
+
+		expected := `
+		| date       | value  |
+		| ---------- | ------ |
+		| 2021-01-01 | 3.000000000000000000 |
+		`
+
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+
+		// an after date is provided having partial data on it (some children having data, others not)
+		result, err = procedure.GetFirstRecord(ctx, procedure.GetFirstRecordInput{
+			Platform:  platform,
+			DBID:      composedDBID,
+			AfterDate: testutils.Ptr("2021-01-05"),
+			Height:    0,
+		})
+		assert.NoError(t, err, "Expected no error for valid date")
+
+		expected = `
+		| date       | value  |
+		| ---------- | ------ |
+		| 2021-01-05 | 11.333333333333333333 |
+		`
+
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+
+		// an after date after the last record is provided
+		result, err = procedure.GetFirstRecord(ctx, procedure.GetFirstRecordInput{
+			Platform:  platform,
+			DBID:      composedDBID,
+			AfterDate: testutils.Ptr("2021-01-14"),
+			Height:    0,
+		})
+		assert.Error(t, err, "Expected an error for date after the last record")
+
+		expected = `
+		| date       | value  |
+		| ---------- | ------ |
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)

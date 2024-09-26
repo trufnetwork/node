@@ -83,6 +83,30 @@ func GetIndexChange(ctx context.Context, input GetIndexChangeInput) ([]ResultRow
 	return processResultRows(result.Rows)
 }
 
+func GetFirstRecord(ctx context.Context, input GetFirstRecordInput) ([]ResultRow, error) {
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return nil, errors.Wrap(err, "error in getFirstRecord")
+	}
+
+	result, err := input.Platform.Engine.Procedure(ctx, input.Platform.DB, &common.ExecutionData{
+		Procedure: "get_first_record",
+		Dataset:   input.DBID,
+		Args:      []any{input.AfterDate, input.FrozenAt},
+		TransactionData: common.TransactionData{
+			Signer: input.Platform.Deployer,
+			Caller: deployer.Address(),
+			TxID:   input.Platform.Txid(),
+			Height: input.Height,
+		},
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "error in getFirstRecord")
+	}
+
+	return processResultRows(result.Rows)
+}
+
 func processResultRows(rows [][]any) ([]ResultRow, error) {
 	resultRows := make([]ResultRow, len(rows))
 	for i, row := range rows {

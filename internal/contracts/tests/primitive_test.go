@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	testutils "github.com/truflation/tsn-db/internal/contracts/tests/utils"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/procedure"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
 	"github.com/truflation/tsn-db/internal/contracts/tests/utils/table"
@@ -29,6 +30,7 @@ func TestPrimitiveStream(t *testing.T) {
 			WithPrimitiveTestSetup(testInsertAndGetRecord(t)),
 			WithPrimitiveTestSetup(testGetIndex(t)),
 			WithPrimitiveTestSetup(testGetIndexChange(t)),
+			WithPrimitiveTestSetup(testGetFirstRecord(t)),
 			WithPrimitiveTestSetup(testDuplicateDate(t)),
 			WithPrimitiveTestSetup(testGetRecordWithBaseDate(t)),
 			WithPrimitiveTestSetup(testFrozenDataRetrieval(t)),
@@ -156,6 +158,69 @@ func testGetIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 		| 2021-01-03 | 100.000000000000000000 |
 		| 2021-01-04 | 25.000000000000000000  |
 		| 2021-01-05 | -40.000000000000000000 |
+		`
+
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+
+		return nil
+	}
+}
+
+func testGetFirstRecord(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		dbid := utils.GenerateDBID(primitiveStreamId.String(), platform.Deployer)
+
+		result, err := procedure.GetFirstRecord(ctx, procedure.GetFirstRecordInput{
+			Platform:  platform,
+			DBID:      dbid,
+			AfterDate: nil,
+			Height:    0,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error getting first record")
+		}
+
+		expected := `
+		| date       | value |
+		|------------|-------|
+		| 2021-01-01 | 1.000000000000000000 |
+		`
+
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+
+		// get the first record with a date after 2021-01-02
+		result, err = procedure.GetFirstRecord(ctx, procedure.GetFirstRecordInput{
+			Platform:  platform,
+			DBID:      dbid,
+			AfterDate: testutils.Ptr("2021-01-02"),
+			Height:    0,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error getting first record")
+		}
+
+		expected = `
+		| date       | value |
+		|------------|-------|
+		| 2021-01-02 | 2.000000000000000000 |
+		`
+
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+
+		// get the first record with a date after 2021-01-10 (it doesn't exist)
+		result, err = procedure.GetFirstRecord(ctx, procedure.GetFirstRecordInput{
+			Platform:  platform,
+			DBID:      dbid,
+			AfterDate: testutils.Ptr("2021-01-10"),
+			Height:    0,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error getting first record")
+		}
+
+		expected = `
+		| date       | value |
+		|------------|-------|
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)

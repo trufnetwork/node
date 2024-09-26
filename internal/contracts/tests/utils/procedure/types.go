@@ -33,3 +33,11 @@ type GetIndexChangeInput struct {
 	BaseDate string
 	Interval int
 }
+
+type GetFirstRecordInput struct {
+	Platform  *kwilTesting.Platform
+	DBID      string
+	AfterDate *string
+	FrozenAt  int64
+	Height    int64
+}
