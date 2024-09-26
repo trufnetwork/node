@@ -45,6 +45,7 @@ func executeStreamProcedure(ctx context.Context, platform *kwilTesting.Platform,
 		Args:      args,
 		TransactionData: common.TransactionData{
 			Signer: signer,
+			Caller: MustEthereumAddressFromBytes(signer).Address(),
 			TxID:   platform.Txid(),
 			Height: 0,
 		},
@@ -154,4 +155,12 @@ func MustNewEthereumAddressFromBytes(b []byte) util.EthereumAddress {
 		panic(errors.Wrap(err, "failed to create EthereumAddress"))
 	}
 	return addr
+}
+
+func MustEthereumAddressFromBytes(b []byte) *util.EthereumAddress {
+	addr, err := util.NewEthereumAddressFromBytes(b)
+	if err != nil {
+		panic(errors.Wrap(err, "failed to create EthereumAddress"))
+	}
+	return &addr
 }

@@ -81,6 +81,8 @@ func runSingleTest(ctx context.Context, input RunSingleTestInput) (Result, error
 		case ProcedureGetChangeIndex:
 			args = append(args, nil) // baseDate
 			args = append(args, 1)   // daysInterval
+		case ProcedureGetFirstRecord:
+			args = []any{nil, nil} // afterDate, frozenAt
 		}
 		// we read using the reader address to be sure visibility is tested
 		if err := executeStreamProcedure(ctx, input.Platform, nthDbId, string(input.Procedure), args, readerAddress.Bytes()); err != nil {
