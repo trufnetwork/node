@@ -295,14 +295,14 @@ func testComplexComposedFirstRecord(t *testing.T) func(ctx context.Context, plat
 
 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
 
-		// date after the last record is provided
+		// an after date after the last record is provided
 		result, err = procedure.GetFirstRecord(ctx, procedure.GetFirstRecordInput{
 			Platform:  platform,
 			DBID:      composedDBID,
 			AfterDate: testutils.Ptr("2021-01-14"),
 			Height:    0,
 		})
-		assert.NoError(t, err, "Expected no error for valid date")
+		assert.Error(t, err, "Expected an error for date after the last record")
 
 		expected = `
 		| date       | value  |
