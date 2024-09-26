@@ -2,6 +2,7 @@ services:
   kwil-postgres:
     image: "kwildb/postgres:latest"
     hostname: kwil-postgres
+    shm_size: 256M
     restart: unless-stopped
     ports:
       - "5432:5432"
