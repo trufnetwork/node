@@ -449,9 +449,11 @@ procedure get_first_record($after_date text, $frozen_at int) public view returns
         }
    }
 
-   // 2. get_record with the earliest date
-   for $row in SELECT date_value, value FROM get_record($earliest_date, $earliest_date, $frozen_at) {
-        return next $row.date_value, $row.value;
+   // 2. get_record with the earliest date if it exists
+   if $earliest_date != '' {
+       for $row in SELECT date_value, value FROM get_record($earliest_date, $earliest_date, $frozen_at) {
+            return next $row.date_value, $row.value;
+       }
    }
 }
 
