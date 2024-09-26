@@ -19,11 +19,6 @@ The primary goal of this benchmark is to identify the limits regarding the depth
 
 The tests vary across several dimensions, [defined here](./constants.go):
 
-1. **Stream Depth**: 0, 1, 10, 50, 100
-2. **Time Range**: 1, 7, 30, 365 days
-3. **Visibility**: Public and Private
-4. **Procedures**: get_record, get_index, get_index_change
-
 ## Running the Benchmark
 
 To run the benchmark:
