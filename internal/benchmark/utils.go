@@ -39,16 +39,18 @@ func generateRecords(fromDate, toDate time.Time) [][]any {
 // executeStreamProcedure executes a procedure on the given platform and database.
 // It handles the common setup for procedure execution, including transaction data.
 func executeStreamProcedure(ctx context.Context, platform *kwilTesting.Platform, dbid, procedure string, args []any, signer []byte) error {
-	_, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+	_, err := platform.Engine.Procedure(&common.TxContext{
+		Ctx:    ctx,
+		Signer: signer,
+		Caller: MustEthereumAddressFromBytes(signer).Address(),
+		TxID:   platform.Txid(),
+		BlockContext: &common.BlockContext{
+			Height: 0,
+		},
+	}, platform.DB, &common.ExecutionData{
 		Procedure: procedure,
 		Dataset:   dbid,
 		Args:      args,
-		TransactionData: common.TransactionData{
-			Signer: signer,
-			Caller: MustEthereumAddressFromBytes(signer).Address(),
-			TxID:   platform.Txid(),
-			Height: 0,
-		},
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to execute stream procedure")

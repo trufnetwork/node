@@ -106,24 +106,30 @@ func setupSchemas(
 }
 
 func createAndInitializeSchema(ctx context.Context, platform *kwilTesting.Platform, schema *kwiltypes.Schema) error {
-	if err := platform.Engine.CreateDataset(ctx, platform.DB, schema, &common.TransactionData{
+	if err := platform.Engine.CreateDataset(&common.TxContext{
+		Ctx:    ctx,
 		Signer: platform.Deployer,
 		TxID:   platform.Txid(),
-		Height: 0,
-	}); err != nil {
+		BlockContext: &common.BlockContext{
+			Height: 1,
+		},
+		Caller: MustEthereumAddressFromBytes(platform.Deployer).Address(),
+	}, platform.DB, schema); err != nil {
 		return errors.Wrap(err, "failed to create dataset")
 	}
 
-	_, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+	_, err := platform.Engine.Procedure(&common.TxContext{
+		Ctx:    ctx,
+		Signer: platform.Deployer,
+		TxID:   platform.Txid(),
+		BlockContext: &common.BlockContext{
+			Height: 1,
+		},
+		Caller: MustEthereumAddressFromBytes(platform.Deployer).Address(),
+	}, platform.DB, &common.ExecutionData{
 		Procedure: "init",
 		Dataset:   utils.GenerateDBID(schema.Name, platform.Deployer),
 		Args:      []any{},
-		TransactionData: common.TransactionData{
-			Signer: platform.Deployer,
-			Caller: MustEthereumAddressFromBytes(platform.Deployer).Address(),
-			TxID:   platform.Txid(),
-			Height: 1,
-		},
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to initialize schema")
@@ -264,7 +270,15 @@ func batchInsertMetadata(ctx context.Context, platform *kwilTesting.Platform, db
 	sqlStmt += strings.Join(values, ", ")
 
 	// Execute the bulk insert
-	_, err := platform.Engine.Execute(ctx, platform.DB, dbid, sqlStmt, nil)
+	_, err := platform.Engine.Execute(&common.TxContext{
+		Ctx:    ctx,
+		Signer: platform.Deployer,
+		TxID:   platform.Txid(),
+		BlockContext: &common.BlockContext{
+			Height: 1,
+		},
+		Caller: MustEthereumAddressFromBytes(platform.Deployer).Address(),
+	}, platform.DB, dbid, sqlStmt, nil)
 	if err != nil {
 		return errors.Wrap(err, "failed to execute bulk insert for metadata")
 	}
@@ -291,7 +305,15 @@ func insertRecordsForPrimitive(ctx context.Context, platform *kwilTesting.Platfo
 	sqlStmt += strings.Join(values, ", ")
 
 	// Execute the bulk insert
-	_, err := platform.Engine.Execute(ctx, platform.DB, dbid, sqlStmt, nil)
+	_, err := platform.Engine.Execute(&common.TxContext{
+		Ctx:    ctx,
+		Signer: platform.Deployer,
+		TxID:   platform.Txid(),
+		BlockContext: &common.BlockContext{
+			Height: 1,
+		},
+		Caller: MustEthereumAddressFromBytes(platform.Deployer).Address(),
+	}, platform.DB, dbid, sqlStmt, nil)
 	if err != nil {
 		return errors.Wrap(err, "failed to execute bulk insert")
 	}
