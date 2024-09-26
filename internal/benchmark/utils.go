@@ -68,6 +68,7 @@ func printResults(results []Result) {
 			visibilityToString(r.Case.Visibility),
 			string(r.Procedure),
 			r.Case.Samples,
+			formatMemoryUsage(r.MemoryUsage),
 		)
 		fmt.Printf("  Mean Duration: %v\n", Average(r.CaseDurations))
 		fmt.Printf("  Min Duration: %v\n", slices.Min(r.CaseDurations))
