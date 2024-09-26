@@ -120,6 +120,7 @@ func createAndInitializeSchema(ctx context.Context, platform *kwilTesting.Platfo
 		Args:      []any{},
 		TransactionData: common.TransactionData{
 			Signer: platform.Deployer,
+			Caller: MustEthereumAddressFromBytes(platform.Deployer).Address(),
 			TxID:   platform.Txid(),
 			Height: 1,
 		},

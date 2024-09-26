@@ -119,7 +119,12 @@ func TestBench(t *testing.T) {
 				BranchingFactor: qtyStreams[1],
 				Samples:         samples,
 				Days:            days,
-				Procedures:      []ProcedureEnum{ProcedureGetRecord, ProcedureGetIndex, ProcedureGetChangeIndex},
+				Procedures: []ProcedureEnum{
+					ProcedureGetRecord,
+					ProcedureGetIndex,
+					ProcedureGetChangeIndex,
+					ProcedureGetFirstRecord,
+				},
 			},
 				// use pointer, so we can reassign the results channel
 				&resultsCh))
