@@ -61,7 +61,7 @@ func printResults(results []Result) {
 	fmt.Println("Benchmark Results:")
 	for _, r := range results {
 		fmt.Printf(
-			"Qty Streams: %d, Branching Factor: %d, Days Queried: %d, Visibility: %s, Procedure: %s, Samples: %d\n",
+			"Qty Streams: %d, Branching Factor: %d, Days Queried: %d, Visibility: %s, Procedure: %s, Samples: %d, Memory Usage: %s\n",
 			r.Case.QtyStreams,
 			r.Case.BranchingFactor,
 			r.DaysQueried,
@@ -133,6 +133,10 @@ func visibilityToString(visibility util.VisibilityEnum) string {
 	default:
 		return "Unknown"
 	}
+}
+
+func formatMemoryUsage(memoryUsage uint64) string {
+	return fmt.Sprintf("%d MB", memoryUsage/1024/1024)
 }
 
 // MustNewEthereumAddressFromString creates an EthereumAddress from a string,

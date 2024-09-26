@@ -69,7 +69,6 @@ func runSingleTest(ctx context.Context, input RunSingleTestInput) (Result, error
 	}
 
 	for i := 0; i < input.Case.Samples; i++ {
-		start := time.Now()
 		// args for:
 		// get_record: fromDate, toDate, frozenAt
 		// get_index: fromDate, toDate, frozenAt, baseDate
@@ -84,11 +83,21 @@ func runSingleTest(ctx context.Context, input RunSingleTestInput) (Result, error
 		case ProcedureGetFirstRecord:
 			args = []any{nil, nil} // afterDate, frozenAt
 		}
+		//collector, err := benchutil.StartDockerMemoryCollector("kwil-testing-postgres")
+		//if err != nil {
+		//	return Result{}, err
+		//}
+		start := time.Now()
 		// we read using the reader address to be sure visibility is tested
 		if err := executeStreamProcedure(ctx, input.Platform, nthDbId, string(input.Procedure), args, readerAddress.Bytes()); err != nil {
 			return Result{}, err
 		}
 		result.CaseDurations[i] = time.Since(start)
+		//collector.Stop()
+		//result.MemoryUsage, err = collector.GetMaxMemoryUsage()
+		//if err != nil {
+		//	return Result{}, err
+		//}
 	}
 
 	return result, nil

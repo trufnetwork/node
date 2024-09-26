@@ -19,6 +19,7 @@ type (
 	Result struct {
 		Case          BenchmarkCase
 		MaxDepth      int
+		MemoryUsage   uint64
 		Procedure     ProcedureEnum
 		DaysQueried   int
 		CaseDurations []time.Duration
