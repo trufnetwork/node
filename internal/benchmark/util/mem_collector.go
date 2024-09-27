@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
@@ -76,17 +77,18 @@ func (c *DockerMemoryCollector) collectStats() {
 				return
 			}
 			c.errChan <- fmt.Errorf("error decoding stats: %w", err)
+			if !firstSampleReceived {
+				close(c.firstSampleChan)
+			}
 			return
 		}
 
 		// Calculate memory usage excluding cache
 		memoryUsage := v.MemoryStats.Usage - v.MemoryStats.Stats["cache"]
 
-		c.mu.Lock()
 		if memoryUsage > c.maxMemoryUsage {
-			c.maxMemoryUsage = memoryUsage
+			atomic.StoreUint64(&c.maxMemoryUsage, memoryUsage)
 		}
-		c.mu.Unlock()
 
 		if !firstSampleReceived {
 			// Signal that the first sample has been received
@@ -135,9 +137,7 @@ func (c *DockerMemoryCollector) GetMaxMemoryUsage() (uint64, error) {
 	default:
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.maxMemoryUsage, nil
+	return atomic.LoadUint64(&c.maxMemoryUsage), nil
 }
 
 // Stop stops the memory collector and waits for it to finish.
