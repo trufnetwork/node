@@ -19,3 +19,7 @@ sources:
     current_boot_only: true
     include_matches:
       PRIORITY: ["1", "2", "3", "4"] # 0 (emergency) to 4 (warning)
+
+  out-logs-docker:
+    # https://vector.dev/docs/reference/configuration/sources/docker_logs/
+    type: docker_logs
