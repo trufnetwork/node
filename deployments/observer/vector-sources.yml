@@ -18,4 +18,4 @@ sources:
     type: journald
     current_boot_only: true
     include_matches:
-      PRIORITY: ["> 4"]
+      PRIORITY: ["1", "2", "3", "4"] # 0 (emergency) to 4 (warning)

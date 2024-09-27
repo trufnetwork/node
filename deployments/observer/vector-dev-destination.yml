@@ -3,7 +3,7 @@ sinks:
   prometheus:
     type: prometheus_exporter
     inputs:
-      - out-metrics-hostmetrics
+      - out-metrics-*
     address: 0.0.0.0:8686
     default_namespace: dev-observer
     flush_period_secs: 60
@@ -14,4 +14,4 @@ sinks:
     encoding:
       codec: logfmt
     inputs:
-      - out-logs-journald
+      - out-logs-*
