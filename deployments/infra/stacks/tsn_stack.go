@@ -80,7 +80,7 @@ func TsnStack(stack awscdk.Stack, props *TsnStackProps) awscdk.Stack {
 			jsii.String("KwilGatewayBucket"),
 			jsii.String("kwil-binaries"),
 		),
-		Key: jsii.String("gateway/kgw-v0.3.3.zip"),
+		Key: jsii.String("gateway/kgw-v0.3.4.zip"),
 	}
 
 	// ## Instances & Permissions
