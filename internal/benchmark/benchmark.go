@@ -103,6 +103,7 @@ func runSingleTest(ctx context.Context, input RunSingleTestInput) (Result, error
 		start := time.Now()
 		// we read using the reader address to be sure visibility is tested
 		if err := executeStreamProcedure(ctx, input.Platform, nthDbId, string(input.Procedure), args, readerAddress.Bytes()); err != nil {
+			collector.Stop()
 			return Result{}, err
 		}
 		result.CaseDurations[i] = time.Since(start)
