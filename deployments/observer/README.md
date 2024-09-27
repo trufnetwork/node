@@ -10,7 +10,7 @@ Run the development setup:
 task observer-dev
 ```
 
-This launches Vector, Prometheus, and Grafana using Docker Compose.
+This launches Vector, Prometheus, and Grafana using Docker Compose. Any collected logs are redirected to console.
 
 ### Components
 
@@ -40,3 +40,4 @@ Uses Vector to send metrics and logs directly to Datadog.
 ### Logs Collection
 
 - **Journald**: Vector is configured to collect logs from `journald` and forward them to Datadog logs in production, or to console in development.
+- **Docker Logs**: Vector collects Docker logs by mounting the Docker socket and utilizing the `docker_logs` source.
