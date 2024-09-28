@@ -27,13 +27,16 @@ type NewIndexerInstanceInput struct {
 }
 
 type IndexerInstance struct {
-	Instance awsec2.Instance
 	// security group of the instance to allow communication
 	SecurityGroup awsec2.SecurityGroup
 	// public DNS name is needed for cloudfront
 	InstanceDnsName *string
 	// if we need to add policies to the role
 	Role awsiam.IRole
+	// launch template of the instance
+	LaunchTemplate awsec2.LaunchTemplate
+	// Elastic IP of the instance
+	ElasticIp awsec2.CfnEIP
 }
 
 const IndexerVolumeSize = 50
@@ -150,5 +153,7 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 		SecurityGroup:   instanceSG,
 		Role:            role,
 		InstanceDnsName: aRecord.DomainName(),
+		ElasticIp:       indexerElasticIp,
+		LaunchTemplate:  launchTemplate,
 	}
 }

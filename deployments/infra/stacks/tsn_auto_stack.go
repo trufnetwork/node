@@ -6,6 +6,7 @@ import (
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/config"
 	"github.com/truflation/tsn-db/infra/lib/tsn/cluster"
+	"github.com/truflation/tsn-db/infra/lib/utils"
 )
 
 type TsnAutoStackProps struct {
@@ -20,10 +21,21 @@ func TsnAutoStack(scope constructs.Construct, id string, props *TsnAutoStackProp
 	}
 	stack := awscdk.NewStack(scope, jsii.String(id), &sprops)
 
-	return TsnStack(stack, &TsnStackProps{
+	tsnStack := TsnStack(stack, &TsnStackProps{
 		certStackExports: props.CertStackExports,
 		clusterProvider: cluster.AutoTsnClusterProvider{
 			NumberOfNodes: config.NumOfNodes(stack),
 		},
 	})
+
+	// create kgw and indexer from launch templates
+	// since the intention of tsn_auto_stack is quick development
+	utils.InstanceFromLaunchTemplateOnPublicSubnetWithElasticIp(utils.InstanceFromLaunchTemplateOnPublicSubnetInput{
+		Scope:          stack,
+		LaunchTemplate: tsnStack.IndexerInstance.LaunchTemplate,
+		ElasticIp:      tsnStack.IndexerInstance.ElasticIp,
+		Vpc:            tsnStack.Vpc,
+	})
+
+	return tsnStack.Stack
 }

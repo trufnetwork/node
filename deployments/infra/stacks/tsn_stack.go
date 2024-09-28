@@ -24,12 +24,22 @@ type TsnStackProps struct {
 	clusterProvider  cluster.TSNClusterProvider
 }
 
-func TsnStack(stack awscdk.Stack, props *TsnStackProps) awscdk.Stack {
+type TsnStackOutput struct {
+	Stack           awscdk.Stack
+	TSNCluster      cluster.TSNCluster
+	Vpc             awsec2.IVpc
+	KGWInstance     kwil_gateway.KGWInstance
+	IndexerInstance kwil_indexer_instance.IndexerInstance
+}
+
+func TsnStack(stack awscdk.Stack, props *TsnStackProps) TsnStackOutput {
 	cdkParams := config.NewCDKParams(stack)
 
 	// if it's not being synthesized, return the stack
 	if !config.IsStackInSynthesis(stack) {
-		return stack
+		return TsnStackOutput{
+			Stack: stack,
+		}
 	}
 
 	// ## Pre-existing resources
@@ -178,5 +188,11 @@ func TsnStack(stack awscdk.Stack, props *TsnStackProps) awscdk.Stack {
 		Value: stack.Region(),
 	})
 
-	return stack
+	return TsnStackOutput{
+		Stack:           stack,
+		TSNCluster:      tsnCluster,
+		Vpc:             defaultVPC,
+		KGWInstance:     kgwInstance,
+		IndexerInstance: indexerInstance,
+	}
 }

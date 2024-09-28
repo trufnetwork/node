@@ -38,5 +38,5 @@ func TsnFromConfigStack(
 			GenesisFilePath: genesisFilePath,
 			PrivateKeys:     privateKeys,
 		},
-	})
+	}).Stack
 }

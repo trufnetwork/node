@@ -33,6 +33,7 @@ type KGWInstance struct {
 	SecurityGroup   awsec2.SecurityGroup
 	Role            awsiam.IRole
 	LaunchTemplate  awsec2.LaunchTemplate
+	ElasticIp       awsec2.CfnEIP
 }
 
 func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWInstance {
@@ -122,5 +123,6 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 		Role:            role,
 		InstanceDnsName: domain,
 		LaunchTemplate:  launchTemplate,
+		ElasticIp:       eip,
 	}
 }
