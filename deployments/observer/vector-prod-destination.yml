@@ -1,17 +1,31 @@
-# Production destination for Vector, sends metrics to Datadog
-sinks:
-  datadog-destination:
-    type: datadog_metrics
+transforms:
+  out-transformed-metrics:
+    type: remap
     inputs:
       - out-metrics-*
-    default_api_key: ${DATADOG_API_KEY}
-    default_namespace: ${DATADOG_NAMESPACE}
-    endpoint: ${DATADOG_ENDPOINT}
+    source: |
+      .tags.instance_name = "${INSTANCE_NAME:-NotSet}"
 
-  datadog-logs:
-    type: datadog_logs
+# Production destination for Vector, sends metrics to Grafana Cloud
+sinks:
+  grafana-metrics-destination:
+    type: prometheus_remote_write
+    inputs:
+      - out-transformed-metrics
+    endpoint: ${GRAFANA_CLOUD_PROMETHEUS_ENDPOINT?}
+    auth:
+      strategy: basic
+      user: "1816369"
+      password: ${GRAFANA_CLOUD_PROMETHEUS_PASSWORD?}
+
+  grafana-logs:
+    type: loki
     inputs:
       - out-logs-*
-    default_api_key: ${DATADOG_API_KEY}
-    default_namespace: ${DATADOG_NAMESPACE}
-    endpoint: ${DATADOG_ENDPOINT}
+    encoding:
+      codec: json
+    labels:
+      instance_name: ${INSTANCE_NAME:-NotSet}
+    endpoint: https://${GRAFANA_CLOUD_LOGS_USER}:${GRAFANA_CLOUD_LOGS_PASSWORD}=@${GRAFANA_CLOUD_LOGS_DOMAIN}
+    # use prom endpoint as instructed by grafana cloud
+    path: /api/prom/push

@@ -11,7 +11,11 @@ sources:
       - load
       - memory
       - network
-      # - cgroups # we don't need it discriminated here
+      - cgroups
+    cgroups:
+      groups:
+        includes: 
+          - "system.slice/docker*"
 
   out-logs-journald:
     # https://vector.dev/docs/reference/configuration/sources/journald/

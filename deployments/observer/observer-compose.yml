@@ -1,6 +1,6 @@
 # Observer (Production)
 # This should send metrics to monitoring systems like Datadog, directly
-
+name: observer-prod
 services:
   vector:
     image: timberio/vector:0.41.1-debian # debian is needed for journald input
@@ -13,7 +13,14 @@ services:
       - /run/log/journal:/run/log/journal:ro
       - /var/log/journal:/var/log/journal:ro
       - /etc/machine-id:/etc/machine-id:ro
+      # we're want to collect docker logs from host
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Mount the cgroup filesystem to allow Vector to access cgroup metrics
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
     environment:
-      DATADOG_API_KEY: ${DATADOG_API_KEY?}
-      DATADOG_NAMESPACE: ${DATADOG_NAMESPACE} # optional
-      DATADOG_ENDPOINT: ${DATADOG_ENDPOINT?}
+      GRAFANA_CLOUD_PROMETHEUS_ENDPOINT: ${GRAFANA_CLOUD_PROMETHEUS_ENDPOINT?}
+      GRAFANA_CLOUD_PROMETHEUS_USER: ${GRAFANA_CLOUD_PROMETHEUS_USER?}
+      GRAFANA_CLOUD_PROMETHEUS_PASSWORD: ${GRAFANA_CLOUD_PROMETHEUS_PASSWORD?}
+      GRAFANA_CLOUD_LOGS_DOMAIN: ${GRAFANA_CLOUD_LOGS_DOMAIN?}
+      GRAFANA_CLOUD_LOGS_USER: ${GRAFANA_CLOUD_LOGS_USER?}
+      GRAFANA_CLOUD_LOGS_PASSWORD: ${GRAFANA_CLOUD_LOGS_PASSWORD?}
