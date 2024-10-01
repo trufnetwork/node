@@ -15,7 +15,7 @@ sinks:
     endpoint: ${GRAFANA_CLOUD_PROMETHEUS_ENDPOINT?}
     auth:
       strategy: basic
-      user: "1816369"
+      user: "${GRAFANA_CLOUD_PROMETHEUS_USER?}"
       password: ${GRAFANA_CLOUD_PROMETHEUS_PASSWORD?}
 
   grafana-logs:
