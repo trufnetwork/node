@@ -22,6 +22,7 @@ import (
 type TsnStackProps struct {
 	certStackExports CertStackExports
 	clusterProvider  cluster.TSNClusterProvider
+	InitElements     []awsec2.InitElement
 }
 
 type TsnStackOutput struct {
@@ -30,17 +31,11 @@ type TsnStackOutput struct {
 	Vpc             awsec2.IVpc
 	KGWInstance     kwil_gateway.KGWInstance
 	IndexerInstance kwil_indexer_instance.IndexerInstance
+	Params          config.CDKParams
 }
 
 func TsnStack(stack awscdk.Stack, props *TsnStackProps) TsnStackOutput {
 	cdkParams := config.NewCDKParams(stack)
-
-	// if it's not being synthesized, return the stack
-	if !config.IsStackInSynthesis(stack) {
-		return TsnStackOutput{
-			Stack: stack,
-		}
-	}
 
 	// ## Pre-existing resources
 
@@ -102,6 +97,7 @@ func TsnStack(stack awscdk.Stack, props *TsnStackProps) TsnStackOutput {
 		Vpc:                   defaultVPC,
 		HostedZone:            hostedZone,
 		TSNConfigImageAsset:   tsnConfigImageAsset,
+		InitElements:          props.InitElements,
 	})
 
 	tsnComposeAsset.GrantRead(tsnCluster.Role)
@@ -121,6 +117,7 @@ func TsnStack(stack awscdk.Stack, props *TsnStackProps) TsnStackOutput {
 			ChainId:          jsii.String(config.GetEnvironmentVariables[config.MainEnvironmentVariables](stack).ChainId),
 			Nodes:            tsnCluster.Nodes,
 		},
+		InitElements: props.InitElements,
 	})
 
 	// add read permission to the kgw instance role
@@ -134,6 +131,7 @@ func TsnStack(stack awscdk.Stack, props *TsnStackProps) TsnStackOutput {
 		IndexerDirAsset: indexerDirectoryAsset,
 		Domain:          domain,
 		HostedZone:      hostedZone,
+		InitElements:    props.InitElements,
 	})
 
 	// add read permission to the indexer instance role
@@ -194,5 +192,6 @@ func TsnStack(stack awscdk.Stack, props *TsnStackProps) TsnStackOutput {
 		Vpc:             defaultVPC,
 		KGWInstance:     kgwInstance,
 		IndexerInstance: indexerInstance,
+		Params:          cdkParams,
 	}
 }

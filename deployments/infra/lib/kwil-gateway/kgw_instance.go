@@ -1,6 +1,7 @@
 package kwil_gateway
 
 import (
+	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsroute53"
@@ -26,6 +27,7 @@ type NewKGWInstanceInput struct {
 	KGWBinaryAsset utils.S3Object
 	Vpc            awsec2.IVpc
 	Config         KGWConfig
+	InitElements   []awsec2.InitElement
 }
 
 type KGWInstance struct {
@@ -67,7 +69,7 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 
 	kgwBinaryPath := jsii.String("/home/ec2-user/kgw-binary.zip")
 
-	initData := awsec2.CloudFormationInit_FromElements(
+	elements := []awsec2.InitElement{
 		awsec2.InitFile_FromExistingAsset(jsii.String("/home/ec2-user/kgw.zip"), input.KGWDirAsset, &awsec2.InitFileOptions{
 			Owner: jsii.String("ec2-user"),
 		}),
@@ -75,25 +77,31 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 			input.KGWBinaryAsset.Key, &awsec2.InitFileOptions{
 				Owner: jsii.String("ec2-user"),
 			}),
-	)
+	}
+
+	elements = append(elements, input.InitElements...)
+
+	initData := awsec2.CloudFormationInit_FromElements(elements...)
 
 	// comes with pre-installed cloud init requirements
 	AWSLinux2MachineImage := awsec2.MachineImage_LatestAmazonLinux2(nil)
 
 	// Create launch template
 	launchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String("KGWLaunchTemplate"), &awsec2.LaunchTemplateProps{
-		InstanceType:  awsec2.InstanceType_Of(awsec2.InstanceClass_T3, awsec2.InstanceSize_SMALL),
-		MachineImage:  AWSLinux2MachineImage,
-		SecurityGroup: instanceSG,
-		Role:          role,
-		KeyPair:       keyPair,
+		InstanceType:       awsec2.InstanceType_Of(awsec2.InstanceClass_T3, awsec2.InstanceSize_SMALL),
+		MachineImage:       AWSLinux2MachineImage,
+		SecurityGroup:      instanceSG,
+		LaunchTemplateName: jsii.Sprintf("%s/%s", *awscdk.Aws_STACK_NAME(), "KGWLaunchTemplate"),
+		Role:               role,
+		KeyPair:            keyPair,
 	})
 
-	// Attach init data to the launch template
-	initData.Attach(launchTemplate.Node().DefaultChild().(awsec2.CfnLaunchTemplate), &awsec2.AttachInitOptions{
-		InstanceRole: role,
-		UserData:     launchTemplate.UserData(),
-		Platform:     awsec2.OperatingSystemType_LINUX,
+	// first step is to attach the init data to the launch template
+	utils.AttachInitDataToLaunchTemplate(utils.AttachInitDataToLaunchTemplateInput{
+		InitData:       &initData,
+		LaunchTemplate: launchTemplate,
+		Role:           role,
+		Platform:       awsec2.OperatingSystemType_LINUX,
 	})
 
 	scripts := AddKwilGatewayStartupScriptsToInstance(AddKwilGatewayStartupScriptsOptions{
@@ -107,7 +115,12 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 	eip := awsec2.NewCfnEIP(scope, jsii.String("KGWElasticIp"), &awsec2.CfnEIPProps{})
 
 	// give a name so we can identify the eip
-	eip.Tags().SetTag(jsii.String("Name"), jsii.String("KGWElasticIp"), jsii.Number(10), jsii.Bool(true))
+	eip.Tags().SetTag(
+		jsii.String("Name"),
+		jsii.Sprintf("%s/KGWElasticIp", *awscdk.Aws_STACK_NAME()),
+		jsii.Number(10),
+		jsii.Bool(true),
+	)
 
 	domain := config.Domain(scope, "kgw")
 

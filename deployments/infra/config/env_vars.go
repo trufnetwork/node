@@ -2,8 +2,7 @@ package config
 
 import (
 	"github.com/aws/constructs-go/constructs/v10"
-	"os"
-	"reflect"
+	"github.com/caarlos0/env/v11"
 )
 
 type MainEnvironmentVariables struct {
@@ -14,8 +13,7 @@ type MainEnvironmentVariables struct {
 }
 
 type AutoStackEnvironmentVariables struct {
-	// when this hash changes, all instances will be redeployed
-	RestartHash string `env:"RESTART_HASH"`
+	IncludeObserver bool `env:"INCLUDE_OBSERVER" default:"false"`
 }
 
 type ConfigStackEnvironmentVariables struct {
@@ -25,34 +23,17 @@ type ConfigStackEnvironmentVariables struct {
 }
 
 func GetEnvironmentVariables[T any](scope constructs.Construct) T {
-	var env T
+	var envObj T
 
 	// only run if we are synthesizing the stack
 	if !IsStackInSynthesis(scope) {
-		return env
+		return envObj
 	}
 
-	t := reflect.TypeOf(env)
-	v := reflect.ValueOf(&env).Elem()
-
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		tag := field.Tag.Get("env")
-		value := GetEnv(tag)
-
-		if value == "" {
-			if field.Tag.Get("required") == "true" {
-				panic("Required environment variable not set: " + tag)
-			}
-			continue
-		}
-
-		v.Field(i).SetString(value)
+	err := env.Parse(&envObj)
+	if err != nil {
+		panic(err)
 	}
 
-	return env
-}
-
-func GetEnv(key string) string {
-	return os.Getenv(key)
+	return envObj
 }

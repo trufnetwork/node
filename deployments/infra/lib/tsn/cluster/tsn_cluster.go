@@ -35,6 +35,7 @@ type NewTSNClusterInput struct {
 	TSNConfigImageAsset   awss3assets.Asset
 	HostedZone            awsroute53.IHostedZone
 	Vpc                   awsec2.IVpc
+	InitElements          []awsec2.InitElement
 }
 
 func NewTSNCluster(scope awscdk.Stack, input NewTSNClusterInput) TSNCluster {
@@ -81,6 +82,7 @@ func NewTSNCluster(scope awscdk.Stack, input NewTSNClusterInput) TSNCluster {
 			PeerConnection:        input.NodesConfig[i].Connection,
 			AllPeerConnections:    allPeerConnections,
 			KeyPair:               keyPair,
+			InitElements:          input.InitElements,
 		})
 		instances[i] = instance
 	}
@@ -94,7 +96,7 @@ func NewTSNCluster(scope awscdk.Stack, input NewTSNClusterInput) TSNCluster {
 		// Create Elastic IP
 		eip := awsec2.NewCfnEIP(scope, jsii.String("Peer-EIP-"+strconv.Itoa(i)), &awsec2.CfnEIPProps{})
 		// create a name so we can identify which node is which
-		eip.Tags().SetTag(jsii.String("Name"), jsii.String("Peer-EIP-"+strconv.Itoa(i)), jsii.Number(10), jsii.Bool(true))
+		eip.Tags().SetTag(jsii.String("Name"), jsii.Sprintf("%s-Peer-EIP-%d", *awscdk.Aws_STACK_NAME(), i), jsii.Number(10), jsii.Bool(true))
 
 		instances[i].ElasticIp = eip
 

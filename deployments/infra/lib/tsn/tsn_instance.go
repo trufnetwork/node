@@ -1,6 +1,7 @@
 package tsn
 
 import (
+	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsecrassets"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
@@ -22,6 +23,7 @@ type NewTSNInstanceInput struct {
 	TSNDockerImageAsset   awsecrassets.DockerImageAsset
 	TSNConfigAsset        awss3assets.Asset
 	TSNConfigImageAsset   awss3assets.Asset
+	InitElements          []awsec2.InitElement
 	PeerConnection        peer2.TSNPeer
 	AllPeerConnections    []peer2.TSNPeer
 	KeyPair               awsec2.IKeyPair
@@ -48,7 +50,7 @@ func NewTSNInstance(scope constructs.Construct, input NewTSNInstanceInput) TSNIn
 	tsnComposeFile := "docker-compose.yaml"
 	tsnConfigImageFile := "deployments/tsn-config.dockerfile"
 
-	initData := awsec2.CloudFormationInit_FromElements(
+	elements := []awsec2.InitElement{
 		awsec2.InitFile_FromExistingAsset(jsii.String(initAssetsDir+tsnComposeFile), input.TSNDockerComposeAsset, &awsec2.InitFileOptions{
 			Owner: defaultInstanceUser,
 		}),
@@ -58,7 +60,11 @@ func NewTSNInstance(scope constructs.Construct, input NewTSNInstanceInput) TSNIn
 		awsec2.InitFile_FromExistingAsset(jsii.String(initAssetsDir+tsnConfigImageFile), input.TSNConfigImageAsset, &awsec2.InitFileOptions{
 			Owner: defaultInstanceUser,
 		}),
-	)
+	}
+
+	elements = append(elements, input.InitElements...)
+
+	initData := awsec2.CloudFormationInit_FromElements(elements...)
 
 	// instance size is based on the deployment stage
 	// DEV: t3.small
@@ -78,7 +84,7 @@ func NewTSNInstance(scope constructs.Construct, input NewTSNInstanceInput) TSNIn
 		SecurityGroup:      input.SecurityGroup,
 		Role:               input.Role,
 		KeyPair:            input.KeyPair,
-		LaunchTemplateName: jsii.String(name),
+		LaunchTemplateName: jsii.Sprintf("%s/%s", *awscdk.Aws_STACK_NAME(), name),
 		BlockDevices: &[]*awsec2.BlockDevice{
 			{
 				DeviceName: jsii.String("/dev/sda1"),
@@ -90,10 +96,12 @@ func NewTSNInstance(scope constructs.Construct, input NewTSNInstanceInput) TSNIn
 		},
 	})
 
-	initData.Attach(tsnLaunchTemplate.Node().DefaultChild().(awsec2.CfnLaunchTemplate), &awsec2.AttachInitOptions{
-		InstanceRole: input.Role,
-		UserData:     tsnLaunchTemplate.UserData(),
-		Platform:     awsec2.OperatingSystemType_LINUX,
+	// first step is to attach the init data to the launch template
+	utils.AttachInitDataToLaunchTemplate(utils.AttachInitDataToLaunchTemplateInput{
+		LaunchTemplate: tsnLaunchTemplate,
+		InitData:       &initData,
+		Role:           input.Role,
+		Platform:       awsec2.OperatingSystemType_LINUX,
 	})
 
 	tsnLaunchTemplate.UserData().AddCommands(

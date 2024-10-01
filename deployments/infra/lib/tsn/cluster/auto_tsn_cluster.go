@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
+	"github.com/aws/jsii-runtime-go"
 	kwil_network "github.com/truflation/tsn-db/infra/lib/kwil-network"
 	"github.com/truflation/tsn-db/infra/lib/utils"
 )
@@ -20,13 +21,17 @@ func (t AutoTsnClusterProvider) CreateCluster(scope awscdk.Stack, input NewTSNCl
 	cluster := NewTSNCluster(scope, input)
 
 	// auto tsn cluster also creates the instance itself
-	for _, node := range cluster.Nodes {
-		utils.InstanceFromLaunchTemplateOnPublicSubnetWithElasticIp(utils.InstanceFromLaunchTemplateOnPublicSubnetInput{
-			Scope:          scope,
-			LaunchTemplate: node.LaunchTemplate,
-			ElasticIp:      node.ElasticIp,
-			Vpc:            input.Vpc,
-		})
+	for idx, node := range cluster.Nodes {
+		utils.InstanceFromLaunchTemplateOnPublicSubnetWithElasticIp(
+			scope,
+			jsii.Sprintf(
+				"node-%d",
+				idx,
+			), utils.InstanceFromLaunchTemplateOnPublicSubnetInput{
+				LaunchTemplate: node.LaunchTemplate,
+				ElasticIp:      node.ElasticIp,
+				Vpc:            input.Vpc,
+			})
 	}
 
 	return cluster
