@@ -8,6 +8,7 @@ services:
     command: '--config /etc/vector/vector-cfg/*'
     user: root # needed to read journalctl
     volumes:
+      # vector config
       - ./vector-dev-destination.yml:/etc/vector/vector-cfg/vector-dev-destination.yml
       - ./vector-sources.yml:/etc/vector/vector-cfg/vector-sources.yml
       # we want to mount the journal and machine-id to get logs from systemd from host
@@ -36,6 +37,17 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     volumes:
       - grafana-storage:/var/lib/grafana
+      # provision our sources
+      - ./dev-grafana/provisioning/datasources/sources.yaml:/etc/grafana/provisioning/datasources/sources.yaml
+
+
+  loki:
+    image: grafana/loki:2.7.1
+    ports:
+      - '3100:3100'
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./loki-config.yaml:/etc/loki/local-config.yaml
 
 volumes:
   grafana-storage: null

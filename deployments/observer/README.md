@@ -10,18 +10,20 @@ Run the development setup:
 task observer-dev
 ```
 
-This launches Vector, Prometheus, and Grafana using Docker Compose. Any collected logs are redirected to console.
+This launches Vector, Prometheus, Grafana, and Loki using Docker Compose. Any collected logs are redirected to console and Loki.
 
 ### Components
 
 - **Vector**: Collects host metrics and logs
 - **Prometheus**: Scrapes metrics from Vector (dev only)
 - **Grafana**: Visualizes metrics from Prometheus (dev only)
+- **Loki**: Collects and stores logs from Vector (dev only)
 
 ### Ports
 
 - **Prometheus**: 9090
 - **Grafana**: 3000 (default admin password: `admin`)
+- **Loki**: 3100
 
 ## Production
 
