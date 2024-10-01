@@ -10,4 +10,6 @@ type ObserverParameters struct {
 	LogsUser           *string `env:"GRAFANA_CLOUD_LOGS_USER" ssm:"GRAFANA_CLOUD_LOGS_USER"`
 	LogsPassword       *string `env:"GRAFANA_CLOUD_LOGS_PASSWORD" ssm:"GRAFANA_CLOUD_LOGS_PASSWORD,secure"`
 	InstanceName       *string `env:"INSTANCE_NAME"` // not set by ssm
+	ServiceName        *string `env:"SERVICE_NAME"`
+	Env                *string `env:"ENV"`
 }

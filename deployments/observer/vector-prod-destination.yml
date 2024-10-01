@@ -5,6 +5,8 @@ transforms:
       - out-metrics-*
     source: |
       .tags.instance_name = "${INSTANCE_NAME:-NotSet}"
+      .tags.service_name = "${SERVICE_NAME:-NotSet}"
+      .tags.env = "${ENV:-NotSet}"
 
 # Production destination for Vector, sends metrics to Grafana Cloud
 sinks:
@@ -26,6 +28,8 @@ sinks:
       codec: json
     labels:
       instance_name: ${INSTANCE_NAME:-NotSet}
+      service_name: ${SERVICE_NAME:-NotSet}
+      env: ${ENV:-NotSet}
     endpoint: https://${GRAFANA_CLOUD_LOGS_USER}:${GRAFANA_CLOUD_LOGS_PASSWORD}=@${GRAFANA_CLOUD_LOGS_DOMAIN}
     # use prom endpoint as instructed by grafana cloud
     path: /api/prom/push

@@ -27,13 +27,23 @@ func AttachObservability(scope constructs.Construct, input *AttachObservabilityI
 	// if we plan to have different params for envs (dev, test, prod), we'll need to
 	// change this
 	paramsPrefix := "/tsn/observer/"
+
+	envName := config.GetDomainStage(scope)
+	// if it's empty, we assign prod domain
+	if envName == "" {
+		envName = "prod"
+	}
+
 	attachObservability := func(
 		template awsec2.LaunchTemplate,
 		instanceName string,
+		serviceName string,
 	) {
 		// instantiate params with the ones are already available
 		params := ObserverParameters{
 			InstanceName: jsii.String(instanceName),
+			ServiceName:  jsii.String(serviceName),
+			Env:          jsii.String(envName),
 		}
 
 		initScript := GetObserverScript(ObserverScriptInput{
@@ -52,14 +62,9 @@ func AttachObservability(scope constructs.Construct, input *AttachObservabilityI
 		template.UserData().AddCommands(initScript)
 	}
 
-	domain := config.GetDomainStage(scope)
-	// if it's empty, we assign prod domain
-	if domain == "" {
-		domain = "prod"
-	}
-
 	type ObservableStructure struct {
 		InstanceName   string
+		ServiceName    string
 		LaunchTemplate awsec2.LaunchTemplate
 		InitData       *awsec2.CloudFormationInit
 	}
@@ -67,18 +72,21 @@ func AttachObservability(scope constructs.Construct, input *AttachObservabilityI
 	observableStructures := []ObservableStructure{
 		{
 			LaunchTemplate: input.KGWInstance.LaunchTemplate,
-			InstanceName:   fmt.Sprintf("%s-kgw", domain),
+			InstanceName:   fmt.Sprintf("%s-kgw", envName),
+			ServiceName:    "kwil-gateway",
 		},
 		{
 			LaunchTemplate: input.IndexerInstance.LaunchTemplate,
-			InstanceName:   fmt.Sprintf("%s-kwil-indexer", domain),
+			InstanceName:   fmt.Sprintf("%s-kwil-indexer", envName),
+			ServiceName:    "kwil-indexer",
 		},
 	}
 
 	for _, tsnInstance := range input.TSNCluster.Nodes {
 		observableStructures = append(observableStructures, ObservableStructure{
-			InstanceName:   *jsii.Sprintf("%s-tsn-node-%d", domain, tsnInstance.Index),
+			InstanceName:   *jsii.Sprintf("%s-tsn-node-%d", envName, tsnInstance.Index),
 			LaunchTemplate: tsnInstance.LaunchTemplate,
+			ServiceName:    "tsn-node",
 		})
 	}
 
@@ -86,6 +94,7 @@ func AttachObservability(scope constructs.Construct, input *AttachObservabilityI
 		attachObservability(
 			observableStructure.LaunchTemplate,
 			observableStructure.InstanceName,
+			observableStructure.ServiceName,
 		)
 	}
 }

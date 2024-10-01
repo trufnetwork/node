@@ -61,9 +61,26 @@ func GetParameterDescriptors(params interface{}) ([]ParameterDescriptor, error) 
 			continue // Skip fields without 'env' tag
 		}
 
+		var envValue string
+		fieldValue := elem.Field(i)
+
+		switch fieldValue.Kind() {
+		case reflect.String:
+			envValue = fieldValue.String()
+		case reflect.Ptr:
+			if !fieldValue.IsNil() && fieldValue.Elem().Kind() == reflect.String {
+				envValue = fieldValue.Elem().String()
+			} else {
+				envValue = "" // Or handle nil pointers as needed
+			}
+		default:
+			return nil, fmt.Errorf("unsupported field type for env tag: %s", field.Type)
+		}
+
 		descriptor := ParameterDescriptor{
 			FieldName: field.Name,
 			EnvName:   envTag,
+			EnvValue:  envValue,
 		}
 
 		if ssmTag != "" {
