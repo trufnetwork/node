@@ -44,7 +44,11 @@ func TsnDbStartupScripts(options AddStartupScriptsOptions) *string {
 	}
 
 	script := utils.InstallDockerScript() + "\n"
-	script += utils.ConfigureDockerDataRoot(*options.DataDirPath+"/docker") + "\n"
+	script += utils.ConfigureDocker(utils.ConfigureDockerInput{
+		DataRoot: jsii.String(*options.DataDirPath + "/docker"),
+		// when we want to enable docker metrics on the host
+		// MetricsAddr: jsii.String("127.0.0.1:9323"),
+	}) + "\n"
 	script += utils.UnzipFileScript(*options.TsnConfigZipPath, tsnConfigExtractedPath) + "\n"
 	// Add ECR login and image pulling
 	script += `

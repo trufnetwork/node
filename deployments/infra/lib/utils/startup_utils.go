@@ -2,6 +2,8 @@
 
 package utils
 
+import "encoding/json"
+
 // InstallDockerScript returns the script to install and setup Docker
 func InstallDockerScript() string {
 	return `
@@ -62,20 +64,22 @@ func UnzipFileScript(zipPath, destPath string) string {
 	return "unzip " + zipPath + " -d " + destPath
 }
 
-// ConfigureDockerDataRoot makes the docker data directory live on the given directory
-// it should be called before pulling any image
-// - stop docker service
-// - add /etc/docker/daemon.json with data-root set to the given directory
-// - start docker service
+type ConfigureDockerInput struct {
+	DataRoot    *string `json:"data-root"`
+	MetricsAddr *string `json:"metrics-addr"`
+}
 
-func ConfigureDockerDataRoot(directory string) string {
+func ConfigureDocker(input ConfigureDockerInput) string {
+	daemonJson, err := json.Marshal(input)
+	if err != nil {
+		panic(err)
+	}
+
 	return `
 systemctl stop docker
 
 cat <<EOF > /etc/docker/daemon.json
-{
-  "data-root": "` + directory + `"
-}
+` + string(daemonJson) + `
 EOF
 
 systemctl start docker
