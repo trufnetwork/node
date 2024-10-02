@@ -147,7 +147,7 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 
 	// first step is to attach the init data to the launch template
 	utils.AttachInitDataToLaunchTemplate(utils.AttachInitDataToLaunchTemplateInput{
-		InitData:       &initData,
+		InitData:       initData,
 		LaunchTemplate: launchTemplate,
 		Role:           role,
 		Platform:       awsec2.OperatingSystemType_LINUX,

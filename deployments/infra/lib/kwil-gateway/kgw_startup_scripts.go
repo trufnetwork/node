@@ -7,6 +7,7 @@ import (
 )
 
 type AddKwilGatewayStartupScriptsOptions struct {
+	KGWDirZipPath *string
 	kgwBinaryPath *string
 	Config        KGWConfig
 }
@@ -34,7 +35,7 @@ func AddKwilGatewayStartupScriptsToInstance(options AddKwilGatewayStartupScripts
 	// // when we want to enable docker metrics on the host
 	// 	MetricsAddr: jsii.String("127.0.0.1:9323"),
 	// }) + "\n"
-	script += utils.UnzipFileScript("/home/ec2-user/kgw.zip", "/home/ec2-user/kgw") + "\n"
+	script += utils.UnzipFileScript(*options.KGWDirZipPath, "/home/ec2-user/kgw") + "\n"
 	script += `
 unzip ` + *options.kgwBinaryPath + ` kgw_0.3.4_linux_amd64.tar.gz -d /tmp/kgw-pkg
 mkdir -p /tmp/kgw-binary

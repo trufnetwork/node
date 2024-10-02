@@ -31,7 +31,7 @@ type ParameterDescriptor struct {
 //
 //	type Config struct {
 //	    DatabaseURL string `env:"DB_URL" ssm:"/prod/db/url,secure"`
-//	    Port        int    `env:"PORT"`
+//		Name 		string `env:"NAME"`
 //	}
 //
 //	descriptors, err := GetParameterDescriptors(&Config{})

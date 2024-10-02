@@ -84,7 +84,7 @@ func AttachObservability(scope constructs.Construct, input *AttachObservabilityI
 
 	for _, tsnInstance := range input.TSNCluster.Nodes {
 		observableStructures = append(observableStructures, ObservableStructure{
-			InstanceName:   *jsii.Sprintf("%s-tsn-node-%d", envName, tsnInstance.Index),
+			InstanceName:   fmt.Sprintf("%s-tsn-node-%d", envName, tsnInstance.Index),
 			LaunchTemplate: tsnInstance.LaunchTemplate,
 			ServiceName:    "tsn-node",
 		})

@@ -68,9 +68,10 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 	keyPair := awsec2.KeyPair_FromKeyPairName(scope, jsii.String("KeyPair"), jsii.String(config.KeyPairName(scope)))
 
 	kgwBinaryPath := jsii.String("/home/ec2-user/kgw-binary.zip")
+	kgwDirZipPath := jsii.String("/home/ec2-user/kgw.zip")
 
 	elements := []awsec2.InitElement{
-		awsec2.InitFile_FromExistingAsset(jsii.String("/home/ec2-user/kgw.zip"), input.KGWDirAsset, &awsec2.InitFileOptions{
+		awsec2.InitFile_FromExistingAsset(kgwDirZipPath, input.KGWDirAsset, &awsec2.InitFileOptions{
 			Owner: jsii.String("ec2-user"),
 		}),
 		awsec2.InitFile_FromS3Object(kgwBinaryPath, input.KGWBinaryAsset.Bucket,
@@ -98,7 +99,7 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 
 	// first step is to attach the init data to the launch template
 	utils.AttachInitDataToLaunchTemplate(utils.AttachInitDataToLaunchTemplateInput{
-		InitData:       &initData,
+		InitData:       initData,
 		LaunchTemplate: launchTemplate,
 		Role:           role,
 		Platform:       awsec2.OperatingSystemType_LINUX,
@@ -107,6 +108,7 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 	scripts := AddKwilGatewayStartupScriptsToInstance(AddKwilGatewayStartupScriptsOptions{
 		kgwBinaryPath: kgwBinaryPath,
 		Config:        input.Config,
+		KGWDirZipPath: kgwDirZipPath,
 	})
 
 	launchTemplate.UserData().AddCommands(scripts)

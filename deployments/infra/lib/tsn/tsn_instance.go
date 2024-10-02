@@ -99,7 +99,7 @@ func NewTSNInstance(scope constructs.Construct, input NewTSNInstanceInput) TSNIn
 	// first step is to attach the init data to the launch template
 	utils.AttachInitDataToLaunchTemplate(utils.AttachInitDataToLaunchTemplateInput{
 		LaunchTemplate: tsnLaunchTemplate,
-		InitData:       &initData,
+		InitData:       initData,
 		Role:           input.Role,
 		Platform:       awsec2.OperatingSystemType_LINUX,
 	})
