@@ -15,9 +15,12 @@ services:
       - /etc/machine-id:/etc/machine-id:ro
       # we're want to collect docker logs from host
       - /var/run/docker.sock:/var/run/docker.sock
-      # Mount the cgroup filesystem to allow Vector to access cgroup metrics
-      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+      # Mount the proc filesystem to allow Vector to access host metrics
+      - /proc:/mnt/host/proc:ro
+      - /sys:/mnt/host/sys:ro
     environment:
+      PROCFS_ROOT: /mnt/host/proc
+      SYSFS_ROOT: /mnt/host/sys
       GRAFANA_CLOUD_PROMETHEUS_ENDPOINT: ${GRAFANA_CLOUD_PROMETHEUS_ENDPOINT?}
       GRAFANA_CLOUD_PROMETHEUS_USER: ${GRAFANA_CLOUD_PROMETHEUS_USER?}
       GRAFANA_CLOUD_PROMETHEUS_PASSWORD: ${GRAFANA_CLOUD_PROMETHEUS_PASSWORD?}

@@ -12,10 +12,23 @@ sources:
       - memory
       - network
       - cgroups
+    filesystem:
+      devices:
+        excludes:
+          - "binfmt_misc"
+      filesystems:
+        excludes:
+          - "binfmt_misc"
+      mountpoints:
+        excludes:
+          - "*/proc/sys/fs/binfmt_misc"
     cgroups:
       groups:
         includes: 
           - "system.slice/docker*"
+        excludes:
+          # https://vector.dev/docs/reference/configuration/sources/host_metrics/#warnings
+          - "*/proc/sys/fs/binfmt_misc"
 
   out-logs-journald:
     # https://vector.dev/docs/reference/configuration/sources/journald/
