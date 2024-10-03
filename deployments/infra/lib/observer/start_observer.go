@@ -78,7 +78,7 @@ cat << EOF1 > $ENV_FILE
 
 	for _, desc := range descriptors {
 		sb.WriteString(fmt.Sprintf(`%s=${%s}
- `, desc.EnvName, desc.EnvName))
+`, desc.EnvName, desc.EnvName))
 	}
 
 	sb.WriteString(`EOF1
