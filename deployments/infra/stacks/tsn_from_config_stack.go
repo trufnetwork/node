@@ -55,5 +55,11 @@ func TsnFromConfigStack(
 		InitElements: initElements,
 	})
 
+	observer.AttachObservability(stack, &observer.AttachObservabilityInput{
+		TSNCluster:      tsnStack.TSNCluster,
+		KGWInstance:     tsnStack.KGWInstance,
+		IndexerInstance: tsnStack.IndexerInstance,
+	})
+
 	return tsnStack.Stack
 }
