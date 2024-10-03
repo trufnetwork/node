@@ -30,38 +30,30 @@ func CreateStartObserverScript(input CreateStartObserverScriptInput) string {
 
 	var sb strings.Builder
 
-	sb.WriteString(`#!/bin/bash
- set -e
+	sb.WriteString(`AWS_REGION=` + *awscdk.Aws_REGION() + `
 
- AWS_REGION=` + *awscdk.Aws_REGION() + `
-
- # Parameterized paths
- OBSERVER_DIR="` + input.ObserverDir + `"
- ENV_FILE="$OBSERVER_DIR/.env"
- COMPOSE_FILE="$OBSERVER_DIR/observer-compose.yml"
- START_SCRIPT="` + input.StartScriptPath + `"
-
- fetch_parameter() {
-	 local param_name="$1"
-	 local is_secure="$2"
-	 local env_var_name="$3"
-
-	 if [ "$is_secure" = "true" ]; then
-		 value=$(aws ssm get-parameter --name "$param_name" --with-decryption --query "Parameter.Value" --output text --region $AWS_REGION)
-	 else
-		 value=$(aws ssm get-parameter --name "$param_name" --query "Parameter.Value" --output text --region $AWS_REGION)
-	 fi
-
-	 if [ -z "$value" ]; then
-		 echo "Error: Parameter $param_name not found or empty"
-		 exit 1
-	 fi
-
-	 export "$env_var_name=$value"
- }
-
- # Fetch parameters
- `)
+# Parameterized paths
+OBSERVER_DIR="` + input.ObserverDir + `"
+ENV_FILE="$OBSERVER_DIR/.env"
+COMPOSE_FILE="$OBSERVER_DIR/observer-compose.yml"
+START_SCRIPT="` + input.StartScriptPath + `"
+fetch_parameter() {
+ local param_name="$1"
+ local is_secure="$2"
+ local env_var_name="$3"
+ if [ "$is_secure" = "true" ]; then
+	 value=$(aws ssm get-parameter --name "$param_name" --with-decryption --query "Parameter.Value" --output text --region $AWS_REGION)
+ else
+	 value=$(aws ssm get-parameter --name "$param_name" --query "Parameter.Value" --output text --region $AWS_REGION)
+ fi
+ if [ -z "$value" ]; then
+	 echo "Error: Parameter $param_name not found or empty"
+	 exit 1
+ fi
+ export "$env_var_name=$value"
+}
+# Fetch parameters
+`)
 
 	for _, desc := range descriptors {
 		if desc.IsSSMParameter {
@@ -80,8 +72,8 @@ func CreateStartObserverScript(input CreateStartObserverScriptInput) string {
 	}
 
 	sb.WriteString(`
- # Write environment variables to .env file
- cat << EOF1 > $ENV_FILE
+# Write environment variables to .env file
+cat << EOF1 > $ENV_FILE
  `)
 
 	for _, desc := range descriptors {
@@ -91,22 +83,22 @@ func CreateStartObserverScript(input CreateStartObserverScriptInput) string {
 
 	sb.WriteString(`EOF1
 
- chmod 600 $ENV_FILE
- chown ec2-user:ec2-user $ENV_FILE
+chmod 600 $ENV_FILE
+chown ec2-user:ec2-user $ENV_FILE
 
- # Start Docker Compose
- docker compose -f $COMPOSE_FILE up -d --wait || true
+# Start Docker Compose
+docker compose -f $COMPOSE_FILE up -d --wait || true
  `)
 
 	// Write the script to $START_SCRIPT
 	scriptContent := sb.String()
 	initScript := `
- cat <<'EOF2' > $START_SCRIPT
+cat <<'EOF2' > $START_SCRIPT
  ` + scriptContent + `
- EOF2
+EOF2
 
- chmod +x $START_SCRIPT
- `
+chmod +x $START_SCRIPT
+`
 
 	return initScript
 }
