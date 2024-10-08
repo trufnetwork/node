@@ -10,6 +10,7 @@ sources:
       - filesystem
       - load
       - memory
+      - host
       - network
       - cgroups
     filesystem:
@@ -24,11 +25,16 @@ sources:
           - "*/proc/sys/fs/binfmt_misc"
     cgroups:
       groups:
-        includes: 
+        includes:
           - "system.slice/docker*"
         excludes:
           # https://vector.dev/docs/reference/configuration/sources/host_metrics/#warnings
           - "*/proc/sys/fs/binfmt_misc"
+
+  # IMPORTANT: don't use it without a filter
+  # It uses too many metrics
+  in-metrics-internal:
+    type: internal_metrics
 
   out-logs-journald:
     # https://vector.dev/docs/reference/configuration/sources/journald/
@@ -37,6 +43,51 @@ sources:
     include_matches:
       PRIORITY: ["1", "2", "3", "4"] # 0 (emergency) to 4 (warning)
 
-  out-logs-docker:
+  logs-docker:
     # https://vector.dev/docs/reference/configuration/sources/docker_logs/
     type: docker_logs
+
+
+transforms:
+  # we're getting too many unnecessary logs with this pattern
+  # so we're throttling them to 1 per 10 seconds
+  logs-docker-throttle:
+    type: throttle
+    inputs:
+      - logs-docker
+    exclude:
+      type: vrl
+      source: |
+        .message.msg == "request success" &&
+        (.message.method == "user.schema" || .message.method == "user.call")
+    window_secs: 10
+    threshold: 1
+    key_field: "{{ .message.method }}"
+  # throttle kgw logs
+  out-logs-kgw-throttle:
+    type: throttle
+    inputs:
+      - logs-docker-throttle
+    exclude:
+      type: vrl
+      source: |
+        contains(string!(.message.caller), "kgw/middleware") &&
+        .message.msg == "response served"
+    window_secs: 10
+    threshold: 1
+    key_field: "{{ .message.ipaddr }}"
+
+  ## maintain only needed internal metrics
+  # - component_discarded_events_total
+  # - component_errors_total
+  # This is very important, as without this filter, billing on
+  # paid services grow a lot due to high usage of metrics
+  out-metrics-internal-filter:
+    type: filter
+    inputs:
+      - in-metrics-internal
+    condition:
+      type: vrl
+      source: |
+        .name == "component_discarded_events_total" ||
+        .name == "component_errors_total"
