@@ -4,7 +4,7 @@ The database for Truflation Stream Network (TSN). It is built on top of the Kwil
 
 ## Overview
 
-Learn more about Truflation at [Truflation.com](https://truflation.com)
+Learn more about Truflation at [Truflation.com](https://truflation.com). Check our internal components status [here](https://truflation.grafana.net/public-dashboards/6fe3021962bb4fe1a4aebf5baddecab6).
 
 ## Terminology
 
