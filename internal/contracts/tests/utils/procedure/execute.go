@@ -126,3 +126,34 @@ func WithSigner(platform *kwilTesting.Platform, signer []byte) *kwilTesting.Plat
 	newPlatform.Deployer = signer
 	return &newPlatform
 }
+
+type DescribeTaxonomiesInput struct {
+	Platform      *kwilTesting.Platform
+	DBID          string
+	LatestVersion bool
+}
+
+// DescribeTaxonomies is a helper function to describe taxonomies of a composed stream
+func DescribeTaxonomies(ctx context.Context, input DescribeTaxonomiesInput) ([]ResultRow, error) {
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return nil, errors.Wrap(err, "error in DescribeTaxonomies.NewEthereumAddressFromBytes")
+	}
+
+	result, err := input.Platform.Engine.Procedure(ctx, input.Platform.DB, &common.ExecutionData{
+		Procedure: "describe_taxonomies",
+		Dataset:   input.DBID,
+		Args:      []any{input.LatestVersion},
+		TransactionData: common.TransactionData{
+			Signer: input.Platform.Deployer,
+			Caller: deployer.Address(),
+			TxID:   input.Platform.Txid(),
+			Height: 0,
+		},
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "error in DescribeTaxonomies.Procedure")
+	}
+
+	return processResultRows(result.Rows)
+}

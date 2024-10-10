@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"github.com/golang-sql/civil"
 	"strconv"
 	"testing"
 
@@ -29,6 +30,7 @@ func TestComposed(t *testing.T) {
 			WithComposedTestSetup(testDisableTaxonomy(t)),
 			WithComposedTestSetup(testOnlyOwnerCanDisableTaxonomy(t)),
 			WithComposedTestSetup(testWeightsInComposition(t)),
+			WithComposedTestSetup(testSetTaxonomyWithStartDate(t)),
 		},
 	})
 }
@@ -182,9 +184,11 @@ func testSetTaxonomyWithValidData(t *testing.T) func(ctx context.Context, platfo
 		}
 
 		// Set up child streams
-		childStreams := []types.TaxonomyItem{
-			{ChildStream: types.StreamLocator{DataProvider: deployer, StreamId: stream1}, Weight: 1.0},
-			{ChildStream: types.StreamLocator{DataProvider: deployer, StreamId: stream2}, Weight: 2.0},
+		childStreams := types.Taxonomy{
+			TaxonomyItems: []types.TaxonomyItem{
+				{ChildStream: types.StreamLocator{DataProvider: deployer, StreamId: stream1}, Weight: 1.0},
+				{ChildStream: types.StreamLocator{DataProvider: deployer, StreamId: stream2}, Weight: 2.0},
+			},
 		}
 
 		// Set taxonomy
@@ -221,6 +225,90 @@ func testSetTaxonomyWithValidData(t *testing.T) func(ctx context.Context, platfo
 	}
 }
 
+func testSetTaxonomyWithStartDate(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Initialize contract
+		if err := setupAndInitializeContract(ctx, platform, composedContractInfo); err != nil {
+			return err
+		}
+		dbid := getDBID(composedContractInfo)
+
+		stream1 := util.GenerateStreamId("stream1")
+		stream2 := util.GenerateStreamId("stream2")
+
+		// deploy child streams
+		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+			Platform: platform,
+			StreamId: stream1,
+			Height:   1,
+			MarkdownData: `
+				| date       | value |
+				| ---------- | ----- |
+				| 2024-01-01 | 5     |
+				| 2024-01-05 | 15    |
+			`,
+		}); err != nil {
+			return errors.Wrap(err, "error setting up child stream 1")
+		}
+
+		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+			Platform: platform,
+			StreamId: stream2,
+			Height:   1,
+			MarkdownData: `
+				| date       | value |
+				| ---------- | ----- |
+				| 2024-01-01 | 2     |
+				| 2024-01-05 | 10    |
+			`,
+		}); err != nil {
+			return errors.Wrap(err, "error setting up child stream 2")
+		}
+
+		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address from bytes")
+		}
+
+		// Set up child streams
+		childStreams := types.Taxonomy{
+			TaxonomyItems: []types.TaxonomyItem{
+				{ChildStream: types.StreamLocator{DataProvider: deployer, StreamId: stream1}, Weight: 1.0},
+				{ChildStream: types.StreamLocator{DataProvider: deployer, StreamId: stream2}, Weight: 2.0},
+			},
+			StartDate: &civil.Date{Year: 2020, Month: 1, Day: 1},
+		}
+
+		// Set taxonomy with start date
+		err = setTaxonomy(ctx, platform, dbid, childStreams)
+		if err != nil {
+			return errors.Wrap(err, "Failed to set taxonomy")
+		}
+
+		// Verify taxonomy is applied in describe_taxonomies
+		result, err := procedure.DescribeTaxonomies(ctx, procedure.DescribeTaxonomiesInput{
+			Platform:      platform,
+			DBID:          dbid,
+			LatestVersion: true,
+		})
+		if err != nil {
+			return errors.Wrap(err, "Failed to describe taxonomies after setting taxonomy")
+		}
+
+		// Expected results based on child streams and weights
+		expected := `
+		| stream_id | data_provider | weight | height | version | start_date |
+		| ---------- | ------------- | ------ | ------ | ------- | ---------- |
+		| st33b4aa48133588a36062a7e50c1417 | 0x0000000000000000000000000000000000000456 | 2.000000000000000000 | 0 | 1 | 2020-01-01 |
+		| st082823e4a18ca84660c4e739a3876b | 0x0000000000000000000000000000000000000456 | 1.000000000000000000 | 0 | 1 | 2020-01-01 |
+		`
+
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+
+		return nil
+	}
+}
+
 func testOnlyOwnerCanSetTaxonomy(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Initialize contract
@@ -233,8 +321,10 @@ func testOnlyOwnerCanSetTaxonomy(t *testing.T) func(ctx context.Context, platfor
 		nonOwner := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000001000101")
 
 		// Attempt to set taxonomy
-		childStreams := []types.TaxonomyItem{
-			{ChildStream: types.StreamLocator{DataProvider: util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000001"), StreamId: util.GenerateStreamId("stream1")}, Weight: 1.0},
+		childStreams := types.Taxonomy{
+			TaxonomyItems: []types.TaxonomyItem{
+				{ChildStream: types.StreamLocator{DataProvider: util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000001"), StreamId: util.GenerateStreamId("stream1")}, Weight: 1.0},
+			},
 		}
 
 		err := setTaxonomy(ctx, procedure.WithSigner(platform, nonOwner.Bytes()), dbid, childStreams)
@@ -274,8 +364,10 @@ func testDisableTaxonomy(t *testing.T) func(ctx context.Context, platform *kwilT
 		}
 
 		// Set taxonomy version 1
-		childStreams := []types.TaxonomyItem{
-			{ChildStream: types.StreamLocator{DataProvider: deployer, StreamId: stream1}, Weight: 1.0},
+		childStreams := types.Taxonomy{
+			TaxonomyItems: []types.TaxonomyItem{
+				{ChildStream: types.StreamLocator{DataProvider: deployer, StreamId: stream1}, Weight: 1.0},
+			},
 		}
 
 		err = setTaxonomy(ctx, platform, dbid, childStreams)
@@ -379,9 +471,11 @@ func testWeightsInComposition(t *testing.T) func(ctx context.Context, platform *
 		}
 
 		// Set initial taxonomy
-		initialChildStreams := []types.TaxonomyItem{
-			{ChildStream: types.StreamLocator{DataProvider: deployer, StreamId: stream1}, Weight: 1.0},
-			{ChildStream: types.StreamLocator{DataProvider: deployer, StreamId: stream2}, Weight: 2.0},
+		initialChildStreams := types.Taxonomy{
+			TaxonomyItems: []types.TaxonomyItem{
+				{ChildStream: types.StreamLocator{DataProvider: deployer, StreamId: stream1}, Weight: 1.0},
+				{ChildStream: types.StreamLocator{DataProvider: deployer, StreamId: stream2}, Weight: 2.0},
+			},
 		}
 
 		err = setTaxonomy(ctx, platform, dbid, initialChildStreams)
@@ -410,9 +504,11 @@ func testWeightsInComposition(t *testing.T) func(ctx context.Context, platform *
 		table.AssertResultRowsEqualMarkdownTable(t, initialResult, expectedInitial)
 
 		// Update taxonomy with new weights
-		updatedChildStreams := []types.TaxonomyItem{
-			{ChildStream: types.StreamLocator{DataProvider: deployer, StreamId: stream1}, Weight: 2.0},
-			{ChildStream: types.StreamLocator{DataProvider: deployer, StreamId: stream2}, Weight: 1.0},
+		updatedChildStreams := types.Taxonomy{
+			TaxonomyItems: []types.TaxonomyItem{
+				{ChildStream: types.StreamLocator{DataProvider: deployer, StreamId: stream1}, Weight: 2.0},
+				{ChildStream: types.StreamLocator{DataProvider: deployer, StreamId: stream2}, Weight: 1.0},
+			},
 		}
 		err = setTaxonomy(ctx, platform, dbid, updatedChildStreams)
 		if err != nil {
@@ -444,11 +540,11 @@ func testWeightsInComposition(t *testing.T) func(ctx context.Context, platform *
 }
 
 // setTaxonomy sets the taxonomy for a composed stream
-func setTaxonomy(ctx context.Context, platform *kwilTesting.Platform, dbid string, taxonomies []types.TaxonomyItem) error {
-	dataProviders := make([]string, len(taxonomies))
-	streamIDs := make([]string, len(taxonomies))
-	decimalWeights := make([]string, len(taxonomies))
-	for i, cs := range taxonomies {
+func setTaxonomy(ctx context.Context, platform *kwilTesting.Platform, dbid string, taxonomies types.Taxonomy) error {
+	dataProviders := make([]string, len(taxonomies.TaxonomyItems))
+	streamIDs := make([]string, len(taxonomies.TaxonomyItems))
+	decimalWeights := make([]string, len(taxonomies.TaxonomyItems))
+	for i, cs := range taxonomies.TaxonomyItems {
 		dataProviders[i] = cs.ChildStream.DataProvider.Address()
 		streamIDs[i] = cs.ChildStream.StreamId.String()
 		decimalWeights[i] = strconv.FormatFloat(cs.Weight, 'f', -1, 64)
@@ -459,10 +555,15 @@ func setTaxonomy(ctx context.Context, platform *kwilTesting.Platform, dbid strin
 		return errors.Wrap(err, "Failed to create Ethereum address from bytes")
 	}
 
+	var startDate string
+	if taxonomies.StartDate != nil {
+		startDate = taxonomies.StartDate.String()
+	}
+
 	_, err = platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
 		Procedure: "set_taxonomy",
 		Dataset:   dbid,
-		Args:      []any{dataProviders, streamIDs, decimalWeights},
+		Args:      []any{dataProviders, streamIDs, decimalWeights, startDate},
 		TransactionData: common.TransactionData{
 			Signer: deployer.Bytes(),
 			Caller: deployer.Address(),

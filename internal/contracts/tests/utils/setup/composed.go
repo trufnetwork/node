@@ -19,7 +19,7 @@ import (
 
 type ComposedStreamDefinition struct {
 	StreamLocator       types.StreamLocator
-	TaxonomyDefinitions []types.TaxonomyItem
+	TaxonomyDefinitions types.Taxonomy
 }
 
 type SetupComposedAndPrimitivesInput struct {
@@ -155,7 +155,7 @@ func parseComposedMarkdownSetup(input MarkdownComposedSetupInput) (SetupComposed
 
 	composedStream := ComposedStreamDefinition{
 		StreamLocator:       composedStreamLocator,
-		TaxonomyDefinitions: []types.TaxonomyItem{},
+		TaxonomyDefinitions: types.Taxonomy{},
 	}
 
 	var weights []string
@@ -173,7 +173,7 @@ func parseComposedMarkdownSetup(input MarkdownComposedSetupInput) (SetupComposed
 		if err != nil {
 			return SetupComposedAndPrimitivesInput{}, err
 		}
-		composedStream.TaxonomyDefinitions = append(composedStream.TaxonomyDefinitions, types.TaxonomyItem{
+		composedStream.TaxonomyDefinitions.TaxonomyItems = append(composedStream.TaxonomyDefinitions.TaxonomyItems, types.TaxonomyItem{
 			ChildStream: types.StreamLocator{
 				StreamId:     primitiveStream.StreamLocator.StreamId,
 				DataProvider: primitiveStream.StreamLocator.DataProvider,
@@ -212,11 +212,16 @@ func setTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 	primitiveStreamStrings := []string{}
 	dataProviderStrings := []string{}
 	weightStrings := []string{}
-	for _, item := range input.composedStream.TaxonomyDefinitions {
+	for _, item := range input.composedStream.TaxonomyDefinitions.TaxonomyItems {
 		primitiveStreamStrings = append(primitiveStreamStrings, item.ChildStream.StreamId.String())
 		dataProviderStrings = append(dataProviderStrings, item.ChildStream.DataProvider.Address())
 		// should be formatted as 0.000000000000000000 (18 decimal places)
 		weightStrings = append(weightStrings, fmt.Sprintf("%.18f", item.Weight))
+	}
+
+	var startDate string
+	if input.composedStream.TaxonomyDefinitions.StartDate != nil {
+		startDate = input.composedStream.TaxonomyDefinitions.StartDate.String()
 	}
 
 	dbid := utils.GenerateDBID(input.composedStream.StreamLocator.StreamId.String(), input.composedStream.StreamLocator.DataProvider.Bytes())
@@ -228,6 +233,7 @@ func setTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 			dataProviderStrings,
 			primitiveStreamStrings,
 			weightStrings,
+			startDate,
 		},
 		TransactionData: common.TransactionData{
 			Signer: input.Platform.Deployer,

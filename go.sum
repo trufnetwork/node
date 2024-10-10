@@ -475,6 +475,8 @@ github.com/tonistiigi/go-rosetta v0.0.0-20220804170347-3f4430f2d346 h1:TvtdmeYsY
 github.com/tonistiigi/go-rosetta v0.0.0-20220804170347-3f4430f2d346/go.mod h1:xKQhd7snlzKFuUi1taTGWjpRE8iFTA06DeacYi3CVFQ=
 github.com/truflation/tsn-sdk v0.1.1-0.20240911193915-8708610aabbc h1:ii8wHF4l5SjJJoTIeJ3jsZAGAn21Zw8MKfG8n1Bt/yY=
 github.com/truflation/tsn-sdk v0.1.1-0.20240911193915-8708610aabbc/go.mod h1:DghqhnXJRHyFNDXRYpiDKvO9TAv6Jepd8av+CbioURk=
+github.com/truflation/tsn-sdk v0.1.1-0.20241010060239-bca7759c3c10 h1:WxTIFzPp5qohnr7E0yPuCXgwnBhZN2mMRb8T8JExacU=
+github.com/truflation/tsn-sdk v0.1.1-0.20241010060239-bca7759c3c10/go.mod h1:DghqhnXJRHyFNDXRYpiDKvO9TAv6Jepd8av+CbioURk=
 github.com/tyler-smith/go-bip39 v1.1.0 h1:5eUemwrMargf3BSLRRCalXT93Ns6pQJIjYQN2nyfOP8=
 github.com/tyler-smith/go-bip39 v1.1.0/go.mod h1:gUYDtqQw1JS3ZJ8UWVcGTGqqr6YIN3CWg+kkNaLt55U=
 github.com/ugorji/go/codec v0.0.0-20181204163529-d75b2dcb6bc8/go.mod h1:VFNgLljTbGfSG7qAOspJ7OScBnGdDN/yBr0sguwnwf0=

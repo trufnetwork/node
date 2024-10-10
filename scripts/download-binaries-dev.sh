@@ -30,7 +30,7 @@ download_binaries() {
     fi
 
     # Set the URL for the binary
-    URL="https://www.dropbox.com/scl/fi/580oatp39osevyqev4e2p/kgw_0.3.4_${OS}_${ARCH}.tar.gz?rlkey=qwtjplh8el11nfynzjwrdzew2&st=6dmd4q0y&dl=0"
+    URL="https://www.dropbox.com/scl/fi/ibczzxjkol826mlfn8ity/kgw_0.3.4_${OS}_${ARCH}.tar.gz?rlkey=qwtjplh8el11nfynzjwrdzew2&st=6dmd4q0y&dl=0"
 
     echo "Detected platform: ${OS}-${ARCH}"
     echo "Downloading binary from $URL..."

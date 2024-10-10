@@ -132,7 +132,7 @@ tasks:
   test:unit:
     desc: Run unit tests
     cmds:
-      - go test ./internal/extensions/...
+      - go test ./internal/contracts/tests/...
 
   coverage:
     desc: Run coverage
