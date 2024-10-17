@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	mathrand "math/rand"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -88,7 +89,7 @@ func setupSchemas(
 			if err := setupSchema(grpCtx, platform, schema.Schema, setupSchemaInput{
 				visibility: input.BenchmarkCase.Visibility,
 				treeNode:   schema.Node,
-				days:       380,
+				days:       slices.Max(input.BenchmarkCase.Days),
 				owner:      deployerAddress,
 			}); err != nil {
 				return errors.Wrap(err, "failed to setup schema")
@@ -155,7 +156,7 @@ func setupSchema(ctx context.Context, platform *kwilTesting.Platform, schema *kw
 
 	// if it's a leaf, then it's a primitive stream
 	if input.treeNode.IsLeaf {
-		if err := insertRecordsForPrimitive(ctx, platform, dbid, input.days+1); err != nil {
+		if err := insertRecordsForPrimitive(ctx, platform, dbid, input.days+5); err != nil {
 			return errors.Wrap(err, "failed to insert records for primitive")
 		}
 	} else {
