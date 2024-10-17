@@ -9,6 +9,8 @@ services:
       - "80:8090"
     environment:
       CHAIN_ID: ${CHAIN_ID:?}
+      # default to 3 minutes
+      READ_TIMEOUT: ${READ_TIMEOUT:-180}
       # comma separated list of backends
       BACKENDS: ${BACKENDS:?}
       SESSION_SECRET: ${SESSION_SECRET:?}
