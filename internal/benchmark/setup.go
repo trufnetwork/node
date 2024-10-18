@@ -7,6 +7,7 @@ import (
 	mathrand "math/rand"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cockroachdb/apd/v3"
 	"github.com/google/uuid"
@@ -318,13 +319,22 @@ func setTaxonomyForComposed(ctx context.Context, platform *kwilTesting.Platform,
 	var dataProvidersArg []string
 	var streamIdsArg []string
 	var weightsArg []int
+	var startDateArg string
 
 	for _, t := range taxonomy {
 		dataProvidersArg = append(dataProvidersArg, t.ChildStream.DataProvider.Address())
 		streamIdsArg = append(streamIdsArg, t.ChildStream.StreamId.String())
 		weightsArg = append(weightsArg, int(t.Weight))
 	}
+	startDateArg = randDate(fixedDate.AddDate(0, 0, -input.days), fixedDate).Format(time.DateOnly)
 
 	return executeStreamProcedure(ctx, platform, dbid, "set_taxonomy",
-		[]any{dataProvidersArg, streamIdsArg, weightsArg}, platform.Deployer)
+		[]any{dataProvidersArg, streamIdsArg, weightsArg, startDateArg}, platform.Deployer)
+}
+
+func randDate(minDate, maxDate time.Time) time.Time {
+	delta := maxDate.Unix() - minDate.Unix()
+
+	sec := mathrand.Int63n(delta) + minDate.Unix()
+	return time.Unix(sec, 0)
 }
