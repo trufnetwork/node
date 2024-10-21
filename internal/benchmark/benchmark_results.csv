@@ -1,0 +1,5 @@
+procedure,branching_factor,qty_streams,days,duration_ms,visibility,samples
+get_record,8,200,1,203,Private,3
+get_record,8,200,7,141,Private,3
+get_record,8,200,30,283,Private,3
+get_record,8,200,365,2958,Private,3
