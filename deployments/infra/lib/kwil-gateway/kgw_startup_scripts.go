@@ -56,7 +56,7 @@ mv /tmp/kgw-binary/kgw /home/ec2-user/kgw/kgw
 
 type KGWEnvConfig struct {
 	Domain           *string `env:"DOMAIN"`
-	CorsAllowOrigins *string `env:"CORS_ALLOWED_ORIGINS"`
+	CorsAllowOrigins *string `env:"CORS_ALLOW_ORIGINS"`
 	SessionSecret    *string `env:"SESSION_SECRET"`
 	Backends         *string `env:"BACKENDS"`
 	ChainId          *string `env:"CHAIN_ID"`
