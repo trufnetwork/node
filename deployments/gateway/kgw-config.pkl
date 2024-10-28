@@ -43,10 +43,9 @@ backends = backends_str.split(",")
 // * is a special value that means all origins are allowed
 // but in kgw config, it just means something that wasn't set, and not a list containing "*"
 hidden cors_allow_origins_raw = read?("env:CORS_ALLOW_ORIGINS")
-// if the value is "*", we want to return an empty list: otherwise we split by comma
+// if not provided, we return an empty list: otherwise we split by comma
 cors_allow_origins = if (
-  cors_allow_origins_raw == "*"
-  || cors_allow_origins_raw == null
+  cors_allow_origins_raw == null
   || cors_allow_origins_raw.isEmpty
 )
   null else
