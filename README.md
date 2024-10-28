@@ -6,6 +6,20 @@ The database for Truflation Stream Network (TSN). It is built on top of the Kwil
 
 Learn more about Truflation at [Truflation.com](https://truflation.com). Check our internal components status [here](https://truflation.grafana.net/public-dashboards/6fe3021962bb4fe1a4aebf5baddecab6).
 
+### SDKs
+
+To interact with TSN, we provide official SDKs in multiple languages:
+
+- **Go SDK** ([tsn-sdk](https://github.com/truflation/tsn-sdk)): A Go library for interacting with TSN, providing tools for publishing, composing, and consuming economic data streams. Supports primitive streams, composed streams, and system streams.
+
+- **TypeScript/JavaScript SDK** ([tsn-sdk-js](https://github.com/truflation/tsn-sdk-js)): A TypeScript/JavaScript library that offers the same capabilities as the Go SDK, with specific implementations for both Node.js and browser environments.
+
+Both SDKs provide high-level abstractions for:
+- Stream deployment and initialization
+- Data insertion and retrieval
+- Stream composition and management
+- Configurable integration with any deployed TSN Node
+
 ## Terminology
 
 See [TERMINOLOGY.md](./TERMINOLOGY.md) for a list of terms used in the TSN project.
