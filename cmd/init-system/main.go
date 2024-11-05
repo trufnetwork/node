@@ -2,7 +2,8 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"github.com/pkg/errors"
+	"go.uber.org/zap"
 	"io"
 	"time"
 
@@ -35,24 +36,24 @@ func HandleRequest(ctx context.Context, event cfn.Event) (string, error) {
 
 	// Use the envconfig library to decode environment variables
 	if err := env.Parse(&envVars); err != nil {
-		return "", fmt.Errorf("failed to process environment variables: %w", err)
+		return "", errors.Wrap(err, "failed to process environment variables")
 	}
 
 	if err := mapstructure.Decode(event.ResourceProperties, &envVars); err != nil {
-		return "", fmt.Errorf("failed to decode event.ResourceProperties: %w", err)
+		return "", errors.Wrap(err, "failed to decode event.ResourceProperties")
 	}
 
 	// Read the private key from SSM
 	// TODO use decryption with KMS
 	privateKey, err := getSSMParameter(ctx, envVars.PrivateKeySSMId)
 	if err != nil {
-		return "", fmt.Errorf("failed to read private key from SSM: %w", err)
+		return "", errors.Wrap(err, "failed to read private key from SSM")
 	}
 
 	// Read the system contract content from S3
 	systemContractContent, err := readS3Object(envVars.SystemContractBucket, envVars.SystemContractKey)
 	if err != nil {
-		return "", fmt.Errorf("failed to read system contract content from S3: %w", err)
+		return "", errors.Wrap(err, "failed to read system contract content from S3")
 	}
 
 	// Initialize system contract
@@ -64,17 +65,21 @@ func HandleRequest(ctx context.Context, event cfn.Event) (string, error) {
 	}
 
 	if err := init_system_contract.InitSystemContract(ctx, options); err != nil {
-		return "", fmt.Errorf("failed to initialize system contract: %w", err)
+		return "", errors.Wrap(err, "failed to initialize system contract")
 	}
 
 	return "System contract successfully deployed", nil
+}
+
+func init() {
+	zap.ReplaceGlobals(zap.Must(zap.NewProduction()))
 }
 
 func main() {
 	// we configure the AWS SDK clients outside of the handler to reuse connections
 	sess, err := session.NewSession(&aws.Config{})
 	if err != nil {
-		panic(fmt.Errorf("failed to create new session: %w", err))
+		zap.L().Panic("failed to create new session", zap.Error(err))
 	}
 
 	ssmClient = ssm.New(sess)
@@ -88,7 +93,7 @@ func getSSMParameter(ctx context.Context, parameterName string) (string, error) 
 		Name: aws.String(parameterName),
 	})
 	if err != nil {
-		return "", err
+		return "", errors.WithStack(err)
 	}
 	return *param.Parameter.Value, nil
 }
@@ -101,13 +106,13 @@ func readS3Object(bucket string, key string) (string, error) {
 	})
 
 	if err != nil {
-		return "", fmt.Errorf("failed to read system contract content from S3: %w", err)
+		return "", errors.Wrap(err, "failed to read system contract content from S3")
 	}
 
 	// Read the system contract content
 	systemContractContent, err := io.ReadAll(systemContractObject.Body)
 	if err != nil {
-		return "", fmt.Errorf("failed to read system contract content: %w", err)
+		return "", errors.Wrap(err, "failed to read system contract content")
 	}
 
 	return string(systemContractContent), nil

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"github.com/cenkalti/backoff/v4"
 	"github.com/kwilteam/kwil-db/core/gatewayclient"
+	"github.com/pkg/errors"
+	"go.uber.org/zap"
 	"time"
 
 	"github.com/kwilteam/kwil-db/core/crypto"
@@ -26,12 +28,12 @@ type InitSystemContractOptions struct {
 func InitSystemContract(ctx context.Context, options InitSystemContractOptions) error {
 	// use ctx to cancel long running operations
 
-	fmt.Println("Initializing system contract...")
-	fmt.Println("System contract content:", options.SystemContractContent)
+	zap.L().Info("Initializing system contract...")
+	zap.L().Info("System contract content", zap.String("content", options.SystemContractContent))
 
 	pk, err := crypto.Secp256k1PrivateKeyFromHex(options.PrivateKey)
 	if err != nil {
-		return fmt.Errorf("failed to parse private key: %w", err)
+		return errors.Wrap(err, "failed to parse private key")
 	}
 
 	signer := &auth.EthPersonalSigner{Key: *pk}
@@ -46,17 +48,17 @@ func InitSystemContract(ctx context.Context, options InitSystemContractOptions) 
 			},
 		})
 		if err != nil {
-			return fmt.Errorf("failed to create kwil client: %w", err)
+			return errors.Wrap(err, "failed to create kwil client")
 		}
 
-		fmt.Println("Pinging the network...")
+		zap.L().Info("Pinging the network...")
 		res, err := kwilClient.Ping(ctx)
 		if err != nil {
-			return fmt.Errorf("failed to ping the network: %w", err)
+			return errors.Wrap(err, "failed to ping the network")
 		}
 
 		if res != "pong" {
-			return fmt.Errorf("expected pong, received: %s", res)
+			return errors.New(fmt.Sprintf("expected pong, received: %s", res))
 		}
 
 		return nil
@@ -64,27 +66,26 @@ func InitSystemContract(ctx context.Context, options InitSystemContractOptions) 
 		backoff.WithMaxInterval(15*time.Second),
 		backoff.WithMaxElapsedTime(options.RetryTimeout),
 	), func(err error, duration time.Duration) {
-		fmt.Printf("Error: %v. Retrying in %s\n", err, duration)
+		zap.L().Warn("Error while waiting for TSN to start", zap.Error(err), zap.String("retry_in", duration.String()))
 	})
 
 	if err != nil {
-		return fmt.Errorf("timed out while waiting for TSN to start: %w", err)
+		return errors.Wrap(err, "timed out while waiting for TSN to start")
 	}
 
 	schema, err := parse.Parse([]byte(options.SystemContractContent))
 	if err != nil {
-		return fmt.Errorf("failed to parse system contract: %w", err)
+		return errors.Wrap(err, "failed to parse system contract")
 	}
 
-	fmt.Println("Deploying system contract...")
+	zap.L().Info("Deploying system contract...")
 	// Deploy the system contract
 	txHash, err := kwilClient.DeployDatabase(ctx, schema, clientType.WithSyncBroadcast(true))
 	if err != nil {
-		return fmt.Errorf("failed to deploy system contract: %w", err)
+		return errors.Wrap(err, "failed to deploy system contract")
 	}
 
-	fmt.Println("System contract deployed")
-	fmt.Println("Transaction hash:", txHash)
+	zap.L().Info("System contract deployed", zap.String("tx_hash", txHash.Hex()))
 
 	return nil
 }

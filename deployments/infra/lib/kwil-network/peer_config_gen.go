@@ -3,6 +3,7 @@ package kwil_network
 import (
 	"encoding/json"
 	"fmt"
+	"go.uber.org/zap"
 	"os"
 	"os/exec"
 
@@ -42,7 +43,7 @@ func GeneratePeerConfig(scope constructs.Construct, input GeneratePeerConfigInpu
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		panic(fmt.Sprintf("Failed to generate peer config: %v\nOutput: %s", err, output))
+		zap.L().Panic("Failed to generate peer config", zap.Error(err), zap.String("output", string(output)))
 	}
 
 	// replace the private key in the generated configuration
@@ -52,7 +53,7 @@ func GeneratePeerConfig(scope constructs.Construct, input GeneratePeerConfigInpu
 	searchTokenCmd := exec.Command("grep", "-r", "\\${Token", *tempDir)
 	output, err = searchTokenCmd.CombinedOutput()
 	if err == nil {
-		panic(fmt.Sprintf("Found TOKEN in generated configuration: %s", output))
+		zap.L().Panic("Found TOKEN in generated configuration", zap.String("output", string(output)))
 	}
 
 	// Return the path of the generated configuration directory
@@ -66,7 +67,7 @@ func replacePrivateKeyInConfig(configDir string, privateKey string) {
 	err := os.WriteFile(privateKeyPath, []byte(privateKey), 0644)
 
 	if err != nil {
-		panic(fmt.Sprintf("Failed to write private key to file: %v", err))
+		zap.L().Panic("Failed to write private key to file", zap.Error(err))
 	}
 }
 
@@ -78,18 +79,18 @@ func validateGenesisFile(genesisFilePath string) {
 	// Read the genesis file
 	genesisFileContent, err := os.ReadFile(genesisFilePath)
 	if err != nil {
-		panic(fmt.Sprintf("Failed to read genesis file at %s: %v", genesisFilePath, err))
+		zap.L().Panic("Failed to read genesis file", zap.String("genesisFilePath", genesisFilePath), zap.Error(err))
 	}
 
 	// Check if it's a valid json file
 	var genesis map[string]interface{}
 	err = json.Unmarshal(genesisFileContent, &genesis)
 	if err != nil {
-		panic(fmt.Sprintf("Failed to unmarshal genesis file at %s: %v", genesisFilePath, err))
+		zap.L().Panic("Failed to unmarshal genesis file", zap.String("genesisFilePath", genesisFilePath), zap.Error(err))
 	}
 
 	// Check if it has a "validators" key
 	if _, ok := genesis["validators"]; !ok {
-		panic(fmt.Sprintf("Genesis file doesn't have a 'validators' key: %s, %v", genesisFilePath, genesis))
+		zap.L().Panic("Genesis file doesn't have a 'validators' key", zap.String("genesisFilePath", genesisFilePath), zap.Any("genesis", genesis))
 	}
 }

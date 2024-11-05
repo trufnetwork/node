@@ -3,6 +3,7 @@ package stacks
 import (
 	"bytes"
 	"fmt"
+	"go.uber.org/zap"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,14 +78,11 @@ func (l *LocalGoBundling) TryBundle(outputDir *string, options *awscdk.BundlingO
 	// Run the command
 	err := cmd.Run()
 	if err != nil {
-		fmt.Printf("Error building Go binary: %v\n", err)
-		fmt.Printf("Stdout: %s\n", stdout.String())
-		fmt.Printf("Stderr: %s\n", stderr.String())
+		zap.L().Error("Error building Go binary", zap.Error(err), zap.String("stdout", stdout.String()), zap.String("stderr", stderr.String()))
 		return jsii.Bool(false)
 	}
 
-	fmt.Printf("Go binary built successfully\n")
-	fmt.Printf("Stdout: %s\n", stdout.String())
+	zap.L().Info("Go binary built successfully", zap.String("stdout", stdout.String()))
 
 	return jsii.Bool(true)
 }

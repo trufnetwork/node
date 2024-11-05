@@ -7,7 +7,12 @@ import (
 	"github.com/truflation/tsn-db/infra/lib/utils"
 	"github.com/truflation/tsn-db/infra/stacks"
 	"github.com/truflation/tsn-db/infra/stacks/benchmark"
+	"go.uber.org/zap"
 )
+
+func init() {
+	zap.ReplaceGlobals(zap.Must(zap.NewProduction()))
+}
 
 func main() {
 	app := awscdk.NewApp(nil)

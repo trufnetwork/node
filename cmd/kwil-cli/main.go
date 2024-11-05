@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"go.uber.org/zap"
 	"os"
 
 	// NOTE: if extensions are used to build a kwild with new transaction
@@ -14,11 +14,14 @@ import (
 	root "github.com/kwilteam/kwil-db/cmd/kwil-cli/cmds"
 )
 
+func init() {
+	zap.ReplaceGlobals(zap.Must(zap.NewProduction()))
+}
+
 func main() {
 	root := root.NewRootCmd()
 	if err := root.Execute(); err != nil {
-		fmt.Println(err)
-		os.Exit(-1)
+		zap.L().Fatal("Failed to execute root command", zap.Error(err))
 	}
 	os.Exit(0)
 }

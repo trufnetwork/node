@@ -5,7 +5,7 @@ import (
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/lib/domain_utils"
-	"log"
+	"go.uber.org/zap"
 	"strconv"
 )
 
@@ -66,7 +66,7 @@ func GetDomainStage(scope constructs.Construct) string {
 
 	if v, ok := ctxValue.(string); ok {
 		if DeploymentStage(scope) != DeploymentStage_DEV {
-			log.Printf("Special domain %s is used in non-DEV stage", v)
+			zap.L().Warn("Special domain is used in non-DEV stage", zap.String("specialDomain", v))
 		}
 		stageEnvMap[DeploymentStage_DEV] = v
 	}

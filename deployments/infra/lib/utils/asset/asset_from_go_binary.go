@@ -3,7 +3,7 @@ package asset
 import (
 	"bytes"
 	"fmt"
-	"log"
+	"go.uber.org/zap"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -85,14 +85,11 @@ func (b *BaseLocalGoBundling) TryBundle(outputDir *string, options *awscdk.Bundl
 
 	err := cmd.Run()
 	if err != nil || cmd.ProcessState.ExitCode() != 0 {
-		log.Printf("Error building Go binary: %v\n", err)
-		log.Printf("Stdout: %s\n", stdout.String())
-		log.Printf("Stderr: %s\n", stderr.String())
+		zap.L().Error("Error building Go binary", zap.Error(err), zap.String("stdout", stdout.String()), zap.String("stderr", stderr.String()))
 		return jsii.Bool(false)
 	}
 
-	log.Printf("Go binary built successfully\n")
-	log.Printf("Stdout: %s\n", stdout.String())
+	zap.L().Info("Go binary built successfully", zap.String("stdout", stdout.String()))
 
 	return jsii.Bool(true)
 }

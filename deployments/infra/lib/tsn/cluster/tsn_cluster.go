@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"go.uber.org/zap"
 	"strconv"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
@@ -42,7 +43,7 @@ func NewTSNCluster(scope awscdk.Stack, input NewTSNClusterInput) TSNCluster {
 	// create new key pair
 	keyPairName := config.KeyPairName(scope)
 	if len(keyPairName) == 0 {
-		panic("KeyPairName is empty")
+		zap.L().Panic("KeyPairName is empty")
 	}
 
 	keyPair := awsec2.KeyPair_FromKeyPairName(scope, jsii.String("DefaultKeyPair"), jsii.String(keyPairName))
@@ -55,7 +56,7 @@ func NewTSNCluster(scope awscdk.Stack, input NewTSNClusterInput) TSNCluster {
 
 	// let's limit it here, so we prevent typos
 	if numOfNodes > 5 {
-		panic("safety measure: number of nodes should be less than 5")
+		zap.L().Panic("safety measure: number of nodes should be less than 5")
 	}
 
 	allPeerConnections := make([]peer.TSNPeer, numOfNodes)

@@ -7,6 +7,7 @@ import (
 	"github.com/aws/jsii-runtime-go"
 	"github.com/truflation/tsn-db/infra/config"
 	"github.com/truflation/tsn-db/infra/lib/kwil-network/peer"
+	"go.uber.org/zap"
 	"os"
 	"os/exec"
 	"strconv"
@@ -49,21 +50,21 @@ func GenerateGenesisFile(scope constructs.Construct, input GenerateGenesisFileIn
 
 	_, err := cmd.CombinedOutput()
 	if err != nil {
-		panic(err)
+		zap.L().Panic("Failed to generate genesis file", zap.Error(err))
 	}
 
 	// Read the genesis file
 	genesisFile := *tempDir + "/genesis.json"
 	genesisFileContent, err := os.ReadFile(genesisFile)
 	if err != nil {
-		panic(err)
+		zap.L().Panic("Failed to read genesis file", zap.Error(err))
 	}
 
 	// Modify the genesis file to include all peers as validators
 	genesis := make(map[string]interface{})
 	err = json.Unmarshal(genesisFileContent, &genesis)
 	if err != nil {
-		panic(err)
+		zap.L().Panic("Failed to unmarshal genesis file", zap.Error(err))
 	}
 
 	genesis["validators"] = validators
@@ -72,12 +73,12 @@ func GenerateGenesisFile(scope constructs.Construct, input GenerateGenesisFileIn
 	genesisBytes, err := json.Marshal(genesis)
 
 	if err != nil {
-		panic(err)
+		zap.L().Panic("Failed to marshal genesis file", zap.Error(err))
 	}
 
 	err = os.WriteFile(genesisFile, genesisBytes, 0644)
 	if err != nil {
-		panic(err)
+		zap.L().Panic("Failed to write genesis file", zap.Error(err))
 	}
 
 	return genesisFile

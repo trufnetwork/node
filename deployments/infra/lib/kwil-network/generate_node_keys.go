@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/truflation/tsn-db/infra/config"
+	"go.uber.org/zap"
 	"os/exec"
 )
 
@@ -33,12 +34,12 @@ func GenerateNodeKeys(scope constructs.Construct) NodeKeys {
 	bytesOutput, err := cmd.Output()
 
 	if err != nil {
-		panic(err)
+		zap.L().Panic("Failed to generate node keys", zap.Error(err))
 	}
 
 	err = json.Unmarshal(bytesOutput, &output)
 	if err != nil {
-		panic(err)
+		zap.L().Panic("Failed to unmarshal node keys", zap.Error(err))
 	}
 
 	return output.Result
