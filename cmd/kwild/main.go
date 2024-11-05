@@ -8,16 +8,6 @@ import (
 )
 
 func main() {
-   // ...
-}
-
-func init() {
-	zap.ReplaceGlobals(zap.Must(zap.NewProduction()))
-
-	// initialize extensions here if needed
-}
-
-func main() {
 	if err := root.RootCmd().Execute(); err != nil {
 		zap.L().Fatal("Failed to execute root command", zap.Error(err))
 	}
