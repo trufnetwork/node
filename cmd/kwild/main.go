@@ -7,8 +7,14 @@ import (
 	"github.com/kwilteam/kwil-db/cmd/kwild/root"
 )
 
+func main() {
+   // ...
+}
+
 func init() {
 	zap.ReplaceGlobals(zap.Must(zap.NewProduction()))
+
+	// initialize extensions here if needed
 }
 
 func main() {
