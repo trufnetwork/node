@@ -12,7 +12,7 @@ download_binaries() {
     # Determine the architecture
     if [[ "$ARCH" == "x86_64" || "$ARCH" == "arm64" ]]; then
         ARCH="amd64"
-    elif [[ "$ARCH" == "aarch64"]]; then
+    elif [[ "$ARCH" == "aarch64" ]]; then
         ARCH="arm64"
     else
         echo "Unsupported architecture: $ARCH"
