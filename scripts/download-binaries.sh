@@ -20,7 +20,7 @@ download_binaries() {
     fi
 
     # Determine the operating system
-    if [[ "$OS" == "linux" ||  "$OS" == "darwin"]]; then
+    if [[ "$OS" == "linux" ||  "$OS" == "darwin" ]]; then
         OS="linux"
     else
         echo "Unsupported operating system: $OS"
