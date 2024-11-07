@@ -10,9 +10,9 @@ download_binaries() {
     local OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 
     # Determine the architecture
-    if [[ "$ARCH" == "x86_64" ]]; then
+    if [[ "$ARCH" == "x86_64" || "$ARCH" == "arm64" ]]; then
         ARCH="amd64"
-    elif [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
+    elif [[ "$ARCH" == "aarch64"]]; then
         ARCH="arm64"
     else
         echo "Unsupported architecture: $ARCH"
@@ -20,10 +20,8 @@ download_binaries() {
     fi
 
     # Determine the operating system
-    if [[ "$OS" == "linux" ]]; then
+    if [[ "$OS" == "linux" || "$OS" == "darwin" ]]; then
         OS="linux"
-    elif [[ "$OS" == "darwin" ]]; then
-        OS="darwin"
     else
         echo "Unsupported operating system: $OS"
         exit 1
