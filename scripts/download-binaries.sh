@@ -5,9 +5,12 @@ cd "$(dirname "$0")"
 # go to the root dir
 cd ..
 
+BINARY=${1:-}
+
 download_binaries() {
     local ARCH=$(uname -m)
     local OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+    local BINARY_NAME=""
 
     # Determine the architecture
     if [[ "$ARCH" == "x86_64" ]]; then
@@ -30,6 +33,12 @@ download_binaries() {
         exit 1
     fi
 
+    if [ "$BINARY" = "kwil-cli" ] && [ "$OS" = "darwin" ]; then
+        BINARY_NAME="kwil-cli"
+    else 
+        BINARY_NAME="kwil-admin"
+    fi
+
     # Set the URL for the binary
     URL="https://github.com/kwilteam/kwil-db/releases/download/v0.8.4/kwil-db_0.8.4_${OS}_${ARCH}.tar.gz"
 
@@ -41,12 +50,13 @@ download_binaries() {
     if [[ $? -eq 0 ]]; then
         echo "Binary downloaded successfully"
 
-        tar -xzvf kwil-db.tar.gz 'kwil-admin'
+        tar -xzvf kwil-db.tar.gz $BINARY_NAME
         mkdir -p ./.build
-        mv ./kwil-admin .build
+        mv ./$BINARY_NAME .build
+
         rm ./kwil-db.tar.gz
 
-        chmod +x ./.build/kwil-admin
+        chmod +x ./.build/$BINARY_NAME
     else
         echo "Failed to download binary"
         exit 1
