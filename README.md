@@ -67,6 +67,26 @@ task # list all available tasks
 task build # build the binary
 task kwil-binaries # download and extract the kwil binaries
 ```
+##### Note for macOS/darwin Users:
+If you're using macOS (darwin architecture), you need to perform an additional steps to download the `kwil-cli`.
+1. Download the kwil-cli compatible with macOS from the kwil-db GitHub releases page
+```shell
+wget -O kwil-db.tar.gz https://github.com/kwilteam/kwil-db/releases/download/v0.8.4/kwil-db_0.8.4_darwin_amd64.tar.gz
+```
+2. Extract the kwil-cli:
+```shell
+tar -xzvf kwil-db.tar.gz 'kwil-cli'
+```
+3. Move to the `/.build` directory and make the binary executable:
+```shell
+mkdir -p ./.build
+mv ./kwil-cli .build
+chmod +x ./.build/kwil-cli
+```
+4. Export the kwil-cli before using it:
+```shell
+export PATH="$PATH:$HOME/tsn/.build"
+```
 
 ##### Run Postgres
 
