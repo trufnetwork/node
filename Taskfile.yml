@@ -101,7 +101,7 @@ tasks:
     cmds:
       - ./scripts/download-binaries.sh
     sources:
-      - ./.build/kwil-admin
+      - ./scripts/download-binaries.sh
 
   kwil-binaries-dev:
     deps:
@@ -109,7 +109,7 @@ tasks:
     cmds:
       - ./scripts/download-binaries-dev.sh
     sources:
-      - ./.build/kgw
+      - ./scripts/download-binaries-dev.sh
 
   # After generating the certs, you need to trust them in your local machine by running the task setup:local-cert
   # leave the fields empty and press enter to use the default values

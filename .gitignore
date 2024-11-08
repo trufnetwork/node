@@ -24,3 +24,7 @@ deployments/gateway/kgw
 
 ### Genesis files
 deployments/network
+
+/gitignore
+
+.task
