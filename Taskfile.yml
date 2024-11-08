@@ -9,12 +9,7 @@ tasks:
     desc: Build kwil binaries
     cmds:
       - task build:kwild
-      - |
-        if [ "$(uname)" = "Darwin" ]; then
-          task build:kwil-cli-darwin
-        else
-          task build:kwil-cli
-        fi
+      - task build:kwil-cli
 
   build:kwild:
     cmds:
@@ -29,11 +24,7 @@ tasks:
     env:
       TARGET: ./.build
       SOURCE: ./cmd/kwil-cli/main.go
-      
-  build:kwil-cli-darwin:
-    cmds:
-      - ./scripts/download-binaries.sh kwil-cli
- 
+
   build:debug:
     desc: Build kwild binary with debug flags
     cmds:
