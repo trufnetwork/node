@@ -4,7 +4,6 @@ services:
     hostname: kwil-postgres
     shm_size: 256M
     restart: unless-stopped
-    platform: linux/amd64
     ports:
       - "5432:5432"
     environment:
@@ -34,7 +33,6 @@ services:
       dockerfile: ./deployments/tsn-config.dockerfile
       target: ${CONF_TARGET:-created}
 
-    platform: linux/amd64
     volumes:
       - ${TSN_VOLUME:-data-tsn-db}:/root/.kwild
     networks:
@@ -45,7 +43,6 @@ services:
     hostname: tsn-db
     image: "tsn-db:local"
     restart: unless-stopped
-    platform: linux/amd64
     build:
       context: .
       dockerfile: ./deployments/Dockerfile

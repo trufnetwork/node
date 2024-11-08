@@ -5,7 +5,6 @@ services:
       - "5432:5432"
     environment:
       - POSTGRES_HOST_AUTH_METHOD=trust
-    platform: linux/amd64
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 5s
@@ -27,7 +26,6 @@ services:
       - "5433:5432"
     environment:
       - POSTGRES_HOST_AUTH_METHOD=trust
-    platform: linux/amd64
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 5s
@@ -58,7 +56,6 @@ services:
         - NUMBER_OF_NODES=2
         - CONFIG_PATH=/app/config
         - HOSTNAMES=tsn-db-1,tsn-db-2
-    platform: linux/amd64
     volumes:
       - type: volume
         source: tsn-conf
@@ -82,7 +79,6 @@ services:
     ports:
       - "8484:8484"
       - "26657:26657"
-    platform: linux/amd64
     depends_on:
       tsn-conf:
         condition: service_completed_successfully
@@ -113,7 +109,6 @@ services:
     ports:
       - "8485:8484"
       - "26658:26657"
-    platform: linux/amd64
     depends_on:
       tsn-conf:
         condition: service_completed_successfully
