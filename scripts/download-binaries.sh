@@ -20,7 +20,6 @@ download_binaries() {
     fi
 
     # Determine the operating system
-    # Map darwin to linux, since only linux binaries are available.
     if [[ "$OS" == "linux" ]]; then
         OS="linux"
     elif [[ "$OS" == "darwin" ]]; then
