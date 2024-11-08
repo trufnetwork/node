@@ -18,6 +18,8 @@ RUN test -n "$CONFIG_PATH"
 ARG HOSTNAMES
 RUN test -n "$HOSTNAMES"
 
-COPY ./.build/kwil-admin /app/kwil-admin
+# Copy the kwil-admin binary from the pre-built stage in Dockerfile
+COPY --from=build /app/.build/kwil-admin /app/kwil-admin
+RUN chmod +x /app/kwil-admin
 
 RUN ./kwil-admin setup testnet -v $NUMBER_OF_NODES --chain-id $CHAIN_ID -o $CONFIG_PATH --hostnames $HOSTNAMES

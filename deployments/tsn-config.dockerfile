@@ -30,7 +30,9 @@ WORKDIR /app
 # we don't want to overwrite any existing configuration
 RUN test ! -d /root/.kwild
 
-COPY  ./.build/kwil-admin /app/kwil-admin
+# Copy the kwil-admin binary from the pre-built stage in Dockerfile
+COPY --from=build /app/.build/kwil-admin /app/kwil-admin
+RUN chmod +x /app/kwil-admin
 
 # create entrypoint file
 RUN echo "#!/bin/sh" > /app/entrypoint.sh
