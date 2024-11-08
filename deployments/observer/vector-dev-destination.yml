@@ -1,18 +1,19 @@
 # Dev destination for Vector, sends metrics to Prometheus
 sinks:
   prometheus:
-    type: prometheus_exporter
+    # use this to mimic prod destination
+    type: prometheus_remote_write
+    batch:
+      timeout_secs: 30 # preventing excess here
     inputs:
       - out-metrics-*
-    address: 0.0.0.0:8686
-    default_namespace: dev-observer
-    flush_period_secs: 60
+    endpoint: http://localhost:9090/api/v1/write
 
   loki:
     type: loki
     inputs:
       - out-logs-*
-    endpoint: "http://loki:3100"
+    endpoint: "http://localhost:3100"
     labels:
       job: vector
     encoding:

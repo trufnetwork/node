@@ -1,9 +1,10 @@
 # Vector sources configuration
 # Should be used for both development and production
 sources:
-  out-metrics-hostmetrics:
+  in-metrics-hostmetrics:
     # https://vector.dev/docs/reference/configuration/sources/host_metrics/
     type: host_metrics
+    scrape_interval_secs: 60
     collectors: # default are [cpu disk filesystem load host memory network cgroups]
       - cpu
       - disk
@@ -35,6 +36,7 @@ sources:
   # It uses too many metrics
   in-metrics-internal:
     type: internal_metrics
+    scrape_interval_secs: 60
 
   out-logs-journald:
     # https://vector.dev/docs/reference/configuration/sources/journald/
@@ -91,3 +93,12 @@ transforms:
       source: |
         .name == "component_discarded_events_total" ||
         .name == "component_errors_total"
+
+  out-metrics-hostmetrics:
+    # filter out filesystem and mountpoint tags as not needed
+    type: remap
+    inputs:
+      - in-metrics-hostmetrics
+    source: |
+      del(.filesystem)
+      del(.mountpoint)

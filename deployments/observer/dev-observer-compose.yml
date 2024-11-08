@@ -35,6 +35,7 @@ services:
     image: prom/prometheus:v2.30.3
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--web.enable-remote-write-receiver'
     volumes:
       - ./dev-prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
