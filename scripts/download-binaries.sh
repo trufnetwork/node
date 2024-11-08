@@ -10,10 +10,9 @@ download_binaries() {
     local OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 
     # Determine the architecture
-    # If running on darwin/arm64, map to linux/amd64 to avoid architecture mismatch issue in provided binaries.
-    if [[ "$ARCH" == "x86_64" || "$ARCH" == "arm64" ]]; then
+    if [[ "$ARCH" == "x86_64" ]]; then
         ARCH="amd64"
-    elif [[ "$ARCH" == "aarch64" ]]; then
+    elif [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
         ARCH="arm64"
     else
         echo "Unsupported architecture: $ARCH"
@@ -22,8 +21,10 @@ download_binaries() {
 
     # Determine the operating system
     # Map darwin to linux, since only linux binaries are available.
-    if [[ "$OS" == "linux" ||  "$OS" == "darwin" ]]; then
+    if [[ "$OS" == "linux" ]]; then
         OS="linux"
+    elif [[ "$OS" == "darwin" ]]; then
+        OS="darwin"
     else
         echo "Unsupported operating system: $OS"
         exit 1
