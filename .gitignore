@@ -25,6 +25,7 @@ deployments/gateway/kgw
 ### Genesis files
 deployments/network
 
+# to hold development files not intended to be tracked by git
 /gitignore
 
 .task
