@@ -19,6 +19,12 @@ services:
           nocopy: true
     networks:
       - tsn-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "2"
+        tag: "{{.Name}}"
 
   kwil-postgres-2:
     image: "kwildb/postgres:latest"
@@ -40,6 +46,12 @@ services:
           nocopy: true
     networks:
       - tsn-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "2"
+        tag: "{{.Name}}"
 
   tsn-conf:
     container_name: tsn-conf
@@ -60,6 +72,12 @@ services:
       - type: volume
         source: tsn-conf
         target: /app/config
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "2"
+        tag: "{{.Name}}"
 
   tsn-db-1:
     container_name: tsn-db-1
@@ -90,6 +108,12 @@ services:
       - type: volume
         source: tsn-conf
         target: /root/.kwild
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "2"
+        tag: "{{.Name}}"
 
   tsn-db-2:
     container_name: tsn-db-2
@@ -120,6 +144,12 @@ services:
       - type: volume
         source: tsn-conf
         target: /root/.kwild
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "2"
+        tag: "{{.Name}}"
 
 networks:
   tsn-network:

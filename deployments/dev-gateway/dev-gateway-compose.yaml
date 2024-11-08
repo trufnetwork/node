@@ -33,6 +33,12 @@ services:
       META_LOG_OTEL_PROCESSOR: "batch"
       OTEL_EXPORTER_OTLP_ENDPOINT: "vector:4317"
       META_LOG_OTEL_COLLECTOR_TLS: "false"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "2"
+        tag: "{{.Name}}"
 
   nginx:
     container_name: nginx
@@ -54,6 +60,12 @@ services:
       - kwil-gateway
     networks:
       - tsn-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "2"
+        tag: "{{.Name}}"
 
   vector:
     image: timberio/vector:latest-alpine
@@ -63,6 +75,12 @@ services:
 
     networks:
       - tsn-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "2"
+        tag: "{{.Name}}"
 
   prometheus:
     image: prom/prometheus:v2.30.3
@@ -74,6 +92,12 @@ services:
       - "9090:9090"
     networks:
       - tsn-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "2"
+        tag: "{{.Name}}"
 
   grafana:
     image: grafana/grafana:8.2.2
@@ -85,6 +109,12 @@ services:
       - grafana-storage:/var/lib/grafana
     networks:
       - tsn-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "2"
+        tag: "{{.Name}}"
 
 volumes:
   grafana-storage:

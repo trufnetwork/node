@@ -24,6 +24,12 @@ services:
       PROCFS_ROOT: /mnt/host/proc
       SYSFS_ROOT: /mnt/host/sys
       DOCKER_HOST: unix:///var/run/docker.sock
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "2"
+        tag: "{{.Name}}"
 
   prometheus:
     image: prom/prometheus:v2.30.3
@@ -33,6 +39,12 @@ services:
       - ./dev-prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
       - '9090:9090'
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "2"
+        tag: "{{.Name}}"
 
   grafana:
     image: grafana/grafana:8.2.2
@@ -44,7 +56,12 @@ services:
       - grafana-storage:/var/lib/grafana
       # provision our sources
       - ./dev-grafana/provisioning/datasources/sources.yaml:/etc/grafana/provisioning/datasources/sources.yaml
-
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "2"
+        tag: "{{.Name}}"
 
   loki:
     image: grafana/loki:2.7.1
@@ -53,6 +70,12 @@ services:
     command: -config.file=/etc/loki/local-config.yaml
     volumes:
       - ./loki-config.yaml:/etc/loki/local-config.yaml
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "2"
+        tag: "{{.Name}}"
 
 volumes:
   grafana-storage: null

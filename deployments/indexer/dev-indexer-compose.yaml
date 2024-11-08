@@ -11,6 +11,12 @@ services:
         target: /etc/caddy/Caddyfile
     networks:
       - tsn-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "2"
+        tag: "{{.Name}}"
   indexer-postgres:
     image: "postgres:latest"
     hostname: indexer-postgres
@@ -34,6 +40,12 @@ services:
           nocopy: true
     networks:
       - tsn-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "2"
+        tag: "{{.Name}}"
   indexer:
     hostname: indexer
     restart: unless-stopped
@@ -55,6 +67,12 @@ services:
       interval: 5s
       retries: 5
       timeout: 5s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "2"
+        tag: "{{.Name}}"
 
 networks:
   tsn-network:

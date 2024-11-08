@@ -30,3 +30,11 @@ services:
       INSTANCE_NAME: ${INSTANCE_NAME}
       SERVICE_NAME: ${SERVICE_NAME}
       ENV: ${ENV}
+    network_mode: host
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "2"
+        tag: "{{.Name}}"

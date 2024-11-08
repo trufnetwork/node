@@ -18,6 +18,12 @@ services:
       - ${POSTGRES_VOLUME:-data-kwil-postgres}:/var/lib/postgresql/data
     networks:
       - tsn-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "2"
+        tag: "{{.Name}}"
 
   tsn-conf:
     # this service permits us to use the best approach for configuration:
@@ -37,6 +43,12 @@ services:
       - ${TSN_VOLUME:-data-tsn-db}:/root/.kwild
     networks:
       - tsn-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "2"
+        tag: "{{.Name}}"
 
   tsn-db:
     container_name: tsn-db
@@ -82,6 +94,12 @@ services:
       - ${TSN_VOLUME:-data-tsn-db}:/root/.kwild
     networks:
       - tsn-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "2"
+        tag: "{{.Name}}"
 
 networks:
   tsn-network:

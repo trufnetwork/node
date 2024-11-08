@@ -25,3 +25,9 @@ services:
       - type: bind
         source: ./kgw-config.pkl
         target: /app/kgw-config.pkl
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "2"
+        tag: "{{.Name}}"
