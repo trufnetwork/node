@@ -111,7 +111,7 @@ tasks:
     sources:
       - ./scripts/download-binaries-dev.sh
 
-  # After generating the certs, you need to trust them in your local machine by running the task setup:local-cert
+  # After generating the certs, you need to trust them in your local machine by running the task setup:local-cert (linux) or setup:local-cert-darwin (macOS)
   # leave the fields empty and press enter to use the default values
   setup:new-local-cert:
     desc: Generate a new local cert
@@ -123,6 +123,11 @@ tasks:
     cmds:
       - sudo cp ./deployments/dev-gateway/certs/localhost.crt /usr/local/share/ca-certificates/localhost.crt
       - sudo update-ca-certificates
+
+  setup:local-cert-darwin:
+    desc: Trust local certs for development in Darwin
+    cmds:
+      - sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ./deployments/dev-gateway/certs/localhost.crt
 
   start:local-gateway:
     desc: The gateway is not needed for development. However, you might want to test its configuration.
