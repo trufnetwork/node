@@ -1,3 +1,16 @@
+FROM golang:1.22.1-alpine3.19 AS build-kgw
+
+WORKDIR /app
+
+RUN apk update && apk add --no-cache wget
+
+# copy download kgw binaries to container
+COPY ./scripts/download-binaries-dev.sh ./scripts/download-binaries-dev.sh
+RUN chmod +x ./scripts/download-binaries-dev.sh
+
+# download kgw binaries to extract kgw to avoid mismatch architecture
+RUN sh ./scripts/download-binaries-dev.sh
+
 FROM alpine:3.14
 
 RUN apk add --no-cache curl jq
@@ -43,6 +56,9 @@ RUN apk add --no-cache bash
 
 
 WORKDIR /app
+
+COPY --from=build-kgw /app/.build/kgw ./kgw
+RUN chmod +x ./kgw
 
 RUN curl -L -o pkl https://github.com/apple/pkl/releases/download/0.25.3/pkl-alpine-linux-amd64
 RUN chmod +x pkl

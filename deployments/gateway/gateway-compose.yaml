@@ -3,8 +3,8 @@ services:
     container_name: kwil-gateway
     hostname: kwil-gateway
     build:
-      context: .
-      dockerfile: ./gateway.dockerfile
+      context: ../..
+      dockerfile: deployments/gateway/gateway.dockerfile
     ports:
       - "80:8090"
     environment:
@@ -18,10 +18,6 @@ services:
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS}
       ALLOW_DEPLOY_DB: true
     volumes:
-      - type: bind
-        # bind the file to the container
-        source: ./kgw
-        target: /app/kgw
       - type: bind
         source: ./kgw-config.pkl
         target: /app/kgw-config.pkl
