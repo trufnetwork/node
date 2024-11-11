@@ -62,7 +62,6 @@ tasks:
       - docker compose up
 
   compose-dev:
-    # deps: [ kwil-binaries-dev ]
     desc: Run docker-compose locally with dev configuration, 2 nodes, gateway, and indexer services
     cmds:
         - docker compose -f deployments/dev-net/devnet-compose.yaml up -d
