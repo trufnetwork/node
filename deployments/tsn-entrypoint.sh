@@ -5,7 +5,6 @@
 # remember: flags > env variables > config.toml > defaults
 
 exec /app/kwild --root-dir $CONFIG_PATH \
-       --app.http-listen-addr "0.0.0.0:8080"\
        --app.jsonrpc-listen-addr "0.0.0.0:8484"\
        --app.db-read-timeout "60s"\
        --app.snapshots.enabled\
