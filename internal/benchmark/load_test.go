@@ -13,7 +13,7 @@ import (
 
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
-	"github.com/truflation/tsn-sdk/core/util"
+	"github.com/trufnetwork/sdk-go/core/util"
 )
 
 // should execute docker", "rm", "-f", "kwil-testing-postgres

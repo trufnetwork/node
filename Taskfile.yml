@@ -68,9 +68,9 @@ tasks:
         - docker compose -f deployments/dev-gateway/dev-gateway-compose.yaml up -d
         - docker compose -f deployments/indexer/dev-indexer-compose.yaml up -d
     env:
-        BACKENDS: tsn-db-1:8484,tsn-db-2:8484
-        CHAIN_ID: tsn-local
-        NODE_COMETBFT_ENDPOINT: http://tsn-db-1:26657
+        BACKENDS: tn-db-1:8484,tn-db-2:8484
+        CHAIN_ID: tn-local
+        NODE_COMETBFT_ENDPOINT: http://tn-db-1:26657
         KWIL_PG_CONN: postgresql://kwild@kwil-postgres-1:5432/kwild?sslmode=disable
 
   compose-dev-down:
@@ -144,11 +144,11 @@ tasks:
       - bash ./scripts/coverage.sh
 
   get-genesis:
-    desc: Get genesis file from tsn-node-operator repo
+    desc: Get genesis file from tn-node-operator repo
     dotenv: ['.env']
     cmds:
       - |
-        curl -f -H "Authorization: token ${READ_TOKEN}" --create-dirs -o ./deployments/network/staging/genesis.json https://raw.githubusercontent.com/truflation/tsn-node-operator/main/configs/network/staging/genesis.json
+        curl -f -H "Authorization: token ${READ_TOKEN}" --create-dirs -o ./deployments/network/staging/genesis.json https://raw.githubusercontent.com/trufnetwork/truf-node-operator/main/configs/network/staging/genesis.json
 
   benchmark:
     desc: Run benchmark tests and regenerate the report

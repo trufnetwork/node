@@ -4,11 +4,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/truflation/tsn-db/internal/contracts/tests/utils/procedure"
-	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
+	"github.com/trufnetwork/node/internal/contracts/tests/utils/procedure"
+	"github.com/trufnetwork/node/internal/contracts/tests/utils/setup"
 
 	"github.com/pkg/errors"
-	"github.com/truflation/tsn-sdk/core/util"
+	"github.com/trufnetwork/sdk-go/core/util"
 
 	"github.com/kwilteam/kwil-db/common"
 	"github.com/kwilteam/kwil-db/core/types/decimal"
@@ -73,17 +73,19 @@ func testIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesti
 			return errors.Wrap(err, "error creating ethereum address")
 		}
 
+		txContext := &common.TxContext{
+			Ctx:          ctx,
+			BlockContext: &common.BlockContext{Height: 0},
+			Signer:       signer.Bytes(),
+			Caller:       signer.Address(),
+			TxID:         platform.Txid(),
+		}
+
 		// Get index change for 7 days with 1 day interval
-		result, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+		result, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
 			Procedure: "get_index_change",
 			Dataset:   dbid,
 			Args:      []any{"2023-01-02", "2023-01-08", nil, nil, 1},
-			TransactionData: common.TransactionData{
-				Signer: signer.Bytes(),
-				Caller: signer.Address(),
-				TxID:   platform.Txid(),
-				Height: 0,
-			},
 		})
 		if err != nil {
 			return errors.Wrap(err, "error getting index change")
@@ -119,7 +121,7 @@ func testIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesti
 	}
 }
 
-// testing https://system.docs.truflation.com/backend/cpi-calculations/workflow/yoy-values specification
+// testing https://system.docs.trufnetwork.com/backend/cpi-calculations/workflow/yoy-values specification
 
 func testYoYIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
@@ -160,17 +162,19 @@ func testYoYIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 			return errors.Wrap(err, "error creating ethereum address")
 		}
 
+		txContext := &common.TxContext{
+			Ctx:          ctx,
+			BlockContext: &common.BlockContext{Height: 0},
+			Signer:       signer.Bytes(),
+			Caller:       signer.Address(),
+			TxID:         platform.Txid(),
+		}
+
 		// Test YoY calculation
-		result, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+		result, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
 			Procedure: "get_index_change",
 			Dataset:   dbid,
 			Args:      []any{"2023-05-22", "2023-05-22", nil, nil, 365}, // 365 days interval for YoY
-			TransactionData: common.TransactionData{
-				Signer: signer.Bytes(),
-				Caller: signer.Address(),
-				TxID:   platform.Txid(),
-				Height: 0,
-			},
 		})
 		if err != nil {
 			return errors.Wrap(err, "error getting index change")
@@ -231,15 +235,17 @@ func testDivisionByZero(t *testing.T) func(ctx context.Context, platform *kwilTe
 			return errors.Wrap(err, "error setting up primitive stream")
 		}
 
-		_, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+		txContext := &common.TxContext{
+			Ctx:          ctx,
+			BlockContext: &common.BlockContext{Height: 0},
+			Signer:       platform.Deployer,
+			TxID:         platform.Txid(),
+		}
+
+		_, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
 			Procedure: "get_index_change",
 			Dataset:   dbid,
 			Args:      []any{"2023-01-01", "2023-01-03", nil, nil, 1},
-			TransactionData: common.TransactionData{
-				Signer: platform.Deployer,
-				TxID:   platform.Txid(),
-				Height: 0,
-			},
 		})
 
 		assert.Error(t, err, "division by zero")

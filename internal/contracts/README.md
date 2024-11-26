@@ -20,11 +20,11 @@ These contracts define the core functionality of the TSN, including:
 
 ## Synchronization
 
-We aim to keep these contracts in sync with the public versions in the [tsn-sdk repository](https://github.com/truflation/tsn-sdk). This private repository serves as the primary development environment.
+We aim to keep these contracts in sync with the public versions in the [sdk-go repository](https://github.com/trufnetwork/sdk-go). This private repository serves as the primary development environment.
 
 ## Additional Resources
 
-- [Detailed Contract Documentation](https://github.com/truflation/tsn-sdk/blob/main/docs/contracts.md)
+- [Detailed Contract Documentation](https://github.com/trufnetwork/sdk-go/blob/main/docs/contracts.md)
 - Benchmark tool (located in this directory)
 - Kuneiform logic tests (located in this directory)
 

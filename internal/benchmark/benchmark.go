@@ -3,7 +3,7 @@ package benchmark
 import (
 	"context"
 	"fmt"
-	benchutil "github.com/truflation/tsn-db/internal/benchmark/util"
+	benchutil "github.com/trufnetwork/node/internal/benchmark/util"
 	"log"
 	"os"
 	"time"
@@ -12,8 +12,8 @@ import (
 	"github.com/pkg/errors"
 
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
-	"github.com/truflation/tsn-db/internal/benchmark/trees"
-	"github.com/truflation/tsn-sdk/core/util"
+	"github.com/trufnetwork/node/internal/benchmark/trees"
+	"github.com/trufnetwork/sdk-go/core/util"
 )
 
 func runBenchmark(ctx context.Context, platform *kwilTesting.Platform, c BenchmarkCase, tree trees.Tree) ([]Result, error) {

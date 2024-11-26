@@ -17,10 +17,10 @@ import (
 	"github.com/kwilteam/kwil-db/parse"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
-	"github.com/truflation/tsn-db/internal/benchmark/trees"
-	"github.com/truflation/tsn-db/internal/contracts"
-	"github.com/truflation/tsn-sdk/core/types"
-	"github.com/truflation/tsn-sdk/core/util"
+	"github.com/trufnetwork/node/internal/benchmark/trees"
+	"github.com/trufnetwork/node/internal/contracts"
+	"github.com/trufnetwork/sdk-go/core/types"
+	"github.com/trufnetwork/sdk-go/core/util"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -107,24 +107,32 @@ func setupSchemas(
 }
 
 func createAndInitializeSchema(ctx context.Context, platform *kwilTesting.Platform, schema *kwiltypes.Schema) error {
-	if err := platform.Engine.CreateDataset(ctx, platform.DB, schema, &common.TransactionData{
-		Signer: platform.Deployer,
+	txContext := &common.TxContext{
+		Ctx: ctx,
+		BlockContext: &common.BlockContext{
+			Height: 0,
+		},
 		TxID:   platform.Txid(),
-		Height: 0,
-	}); err != nil {
+		Signer: platform.Deployer,
+	}
+
+	if err := platform.Engine.CreateDataset(txContext, platform.DB, schema); err != nil {
 		return errors.Wrap(err, "failed to create dataset")
 	}
 
-	_, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+	txContext2 := &common.TxContext{
+		Ctx: ctx,
+		BlockContext: &common.BlockContext{
+			Height: 1,
+		},
+		TxID:   platform.Txid(),
+		Signer: platform.Deployer,
+		Caller: MustEthereumAddressFromBytes(platform.Deployer).Address(),
+	}
+	_, err := platform.Engine.Procedure(txContext2, platform.DB, &common.ExecutionData{
 		Procedure: "init",
 		Dataset:   utils.GenerateDBID(schema.Name, platform.Deployer),
 		Args:      []any{},
-		TransactionData: common.TransactionData{
-			Signer: platform.Deployer,
-			Caller: MustEthereumAddressFromBytes(platform.Deployer).Address(),
-			TxID:   platform.Txid(),
-			Height: 1,
-		},
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to initialize schema")
@@ -264,8 +272,12 @@ func batchInsertMetadata(ctx context.Context, platform *kwilTesting.Platform, db
 
 	sqlStmt += strings.Join(values, ", ")
 
+	txContext := &common.TxContext{
+		Ctx: ctx,
+	}
+
 	// Execute the bulk insert
-	_, err := platform.Engine.Execute(ctx, platform.DB, dbid, sqlStmt, nil)
+	_, err := platform.Engine.Execute(txContext, platform.DB, dbid, sqlStmt, nil)
 	if err != nil {
 		return errors.Wrap(err, "failed to execute bulk insert for metadata")
 	}
@@ -291,8 +303,12 @@ func insertRecordsForPrimitive(ctx context.Context, platform *kwilTesting.Platfo
 
 	sqlStmt += strings.Join(values, ", ")
 
+	txContext := &common.TxContext{
+		Ctx: ctx,
+	}
+
 	// Execute the bulk insert
-	_, err := platform.Engine.Execute(ctx, platform.DB, dbid, sqlStmt, nil)
+	_, err := platform.Engine.Execute(txContext, platform.DB, dbid, sqlStmt, nil)
 	if err != nil {
 		return errors.Wrap(err, "failed to execute bulk insert")
 	}

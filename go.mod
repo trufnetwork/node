@@ -1,6 +1,8 @@
-module github.com/truflation/tsn-db
+module github.com/trufnetwork/node
 
 go 1.22.1
+
+replace github.com/trufnetwork/sdk-go => ../sdk-go
 
 require (
 	github.com/aws/aws-lambda-go v1.47.0
@@ -18,7 +20,7 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/samber/lo v1.47.0
 	github.com/stretchr/testify v1.9.0
-	github.com/truflation/tsn-sdk v0.1.1-0.20241010060239-bca7759c3c10
+	github.com/trufnetwork/sdk-go v0.1.1-0.20241010060239-bca7759c3c10
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56
 	golang.org/x/sync v0.8.0
 )

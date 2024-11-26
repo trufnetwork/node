@@ -43,5 +43,5 @@ function expect_success() {
   return $FAILURE
 }
 
-echo -e "❓ Making sure we're able to ping the TSN node\n"
+echo -e "❓ Making sure we're able to ping the TN node\n"
 expect_success "$(../.build/kwil-cli utils ping 2>&1)"

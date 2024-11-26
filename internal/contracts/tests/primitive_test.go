@@ -5,13 +5,13 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	testutils "github.com/truflation/tsn-db/internal/contracts/tests/utils"
-	"github.com/truflation/tsn-db/internal/contracts/tests/utils/procedure"
-	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
-	"github.com/truflation/tsn-db/internal/contracts/tests/utils/table"
+	testutils "github.com/trufnetwork/node/internal/contracts/tests/utils"
+	"github.com/trufnetwork/node/internal/contracts/tests/utils/procedure"
+	"github.com/trufnetwork/node/internal/contracts/tests/utils/setup"
+	"github.com/trufnetwork/node/internal/contracts/tests/utils/table"
 
-	"github.com/truflation/tsn-sdk/core/types"
-	"github.com/truflation/tsn-sdk/core/util"
+	"github.com/trufnetwork/sdk-go/core/types"
+	"github.com/trufnetwork/sdk-go/core/util"
 
 	"github.com/pkg/errors"
 

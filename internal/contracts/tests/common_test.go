@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/truflation/tsn-db/internal/contracts/tests/utils/procedure"
+	"github.com/trufnetwork/node/internal/contracts/tests/utils/procedure"
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
@@ -16,8 +16,8 @@ import (
 	"github.com/kwilteam/kwil-db/parse"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 
-	"github.com/truflation/tsn-db/internal/contracts"
-	"github.com/truflation/tsn-sdk/core/util"
+	"github.com/trufnetwork/node/internal/contracts"
+	"github.com/trufnetwork/sdk-go/core/util"
 )
 
 // ContractInfo holds information about a contract for testing purposes.
@@ -285,16 +285,18 @@ func testInitializationLogic(t *testing.T, contractInfo ContractInfo) kwilTestin
 		}
 		dbid := getDBID(contractInfo)
 
+		txContext := &common.TxContext{
+			Ctx:          ctx,
+			BlockContext: &common.BlockContext{Height: 0},
+			Signer:       contractInfo.Deployer.Bytes(),
+			TxID:         platform.Txid(),
+		}
+
 		// Attempt to re-initialize the contract
-		_, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+		_, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
 			Procedure: "init",
 			Dataset:   dbid,
 			Args:      []any{},
-			TransactionData: common.TransactionData{
-				Signer: contractInfo.Deployer.Bytes(),
-				TxID:   platform.Txid(),
-				Height: 0,
-			},
 		})
 		assert.Error(t, err, "Contract should not be re-initializable")
 
@@ -484,25 +486,30 @@ func setupContract(ctx context.Context, platform *kwilTesting.Platform, contract
 	}
 	schema.Name = contractInfo.StreamID.String()
 
-	return platform.Engine.CreateDataset(ctx, platform.DB, schema, &common.TransactionData{
-		Signer: contractInfo.Deployer.Bytes(),
-		Caller: contractInfo.Deployer.Address(),
-		TxID:   platform.Txid(),
-		Height: 0,
-	})
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 0},
+		Signer:       contractInfo.Deployer.Bytes(),
+		Caller:       contractInfo.Deployer.Address(),
+		TxID:         platform.Txid(),
+	}
+
+	return platform.Engine.CreateDataset(txContext, platform.DB, schema)
 }
 
 func initializeContract(ctx context.Context, platform *kwilTesting.Platform, dbid string, deployer util.EthereumAddress) error {
-	_, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 0},
+		Signer:       deployer.Bytes(),
+		Caller:       deployer.Address(),
+		TxID:         platform.Txid(),
+	}
+
+	_, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
 		Procedure: "init",
 		Dataset:   dbid,
 		Args:      []any{},
-		TransactionData: common.TransactionData{
-			Signer: deployer.Bytes(),
-			Caller: deployer.Address(),
-			TxID:   platform.Txid(),
-			Height: 0,
-		},
 	})
 	return err
 }
@@ -512,31 +519,35 @@ func getDBID(contractInfo ContractInfo) string {
 }
 
 func insertMetadata(ctx context.Context, platform *kwilTesting.Platform, deployer util.EthereumAddress, dbid string, key, value, valType string) error {
-	_, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 0},
+		Signer:       deployer.Bytes(),
+		Caller:       deployer.Address(),
+		TxID:         platform.Txid(),
+	}
+
+	_, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
 		Procedure: "insert_metadata",
 		Dataset:   dbid,
 		Args:      []any{key, value, valType},
-		TransactionData: common.TransactionData{
-			Signer: deployer.Bytes(),
-			Caller: deployer.Address(),
-			TxID:   platform.Txid(),
-			Height: 0,
-		},
 	})
 	return err
 }
 
 func getMetadata(ctx context.Context, platform *kwilTesting.Platform, deployer util.EthereumAddress, dbid, key string) ([]any, error) {
-	result, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 0},
+		Signer:       deployer.Bytes(),
+		Caller:       deployer.Address(),
+		TxID:         platform.Txid(),
+	}
+
+	result, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
 		Procedure: "get_metadata",
 		Dataset:   dbid,
 		Args:      []any{key, true, nil},
-		TransactionData: common.TransactionData{
-			Signer: deployer.Bytes(),
-			Caller: deployer.Address(),
-			TxID:   platform.Txid(),
-			Height: 0,
-		},
 	})
 	if err != nil {
 		return nil, err
@@ -548,46 +559,52 @@ func getMetadata(ctx context.Context, platform *kwilTesting.Platform, deployer u
 }
 
 func disableMetadata(ctx context.Context, platform *kwilTesting.Platform, deployer util.EthereumAddress, dbid string, rowID *types.UUID) error {
-	_, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 0},
+		Signer:       deployer.Bytes(),
+		Caller:       deployer.Address(),
+		TxID:         platform.Txid(),
+	}
+
+	_, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
 		Procedure: "disable_metadata",
 		Dataset:   dbid,
 		Args:      []any{rowID.String()},
-		TransactionData: common.TransactionData{
-			Signer: deployer.Bytes(),
-			Caller: deployer.Address(),
-			TxID:   platform.Txid(),
-			Height: 0,
-		},
 	})
 	return err
 }
 
 func transferStreamOwnership(ctx context.Context, platform *kwilTesting.Platform, deployer util.EthereumAddress, dbid, newOwner string) error {
-	_, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 0},
+		Signer:       deployer.Bytes(),
+		Caller:       deployer.Address(),
+		TxID:         platform.Txid(),
+	}
+
+	_, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
 		Procedure: "transfer_stream_ownership",
 		Dataset:   dbid,
 		Args:      []any{newOwner},
-		TransactionData: common.TransactionData{
-			Signer: deployer.Bytes(),
-			Caller: deployer.Address(),
-			TxID:   platform.Txid(),
-			Height: 0,
-		},
 	})
 	return err
 }
 
 func checkReadPermissions(ctx context.Context, platform *kwilTesting.Platform, deployer util.EthereumAddress, dbid string, wallet string) (bool, error) {
-	result, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 0},
+		Signer:       deployer.Bytes(),
+		Caller:       deployer.Address(),
+		TxID:         platform.Txid(),
+	}
+
+	result, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
 		Procedure: "is_wallet_allowed_to_read",
 		Dataset:   dbid,
 		Args:      []any{wallet},
-		TransactionData: common.TransactionData{
-			Signer: deployer.Bytes(),
-			Caller: deployer.Address(),
-			TxID:   platform.Txid(),
-			Height: 0,
-		},
 	})
 	if err != nil {
 		return false, err
@@ -603,16 +620,18 @@ func checkComposePermissions(ctx context.Context, platform *kwilTesting.Platform
 	if err != nil {
 		return false, err
 	}
-	result, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 0},
+		Signer:       deployer.Bytes(),
+		Caller:       deployer.Address(),
+		TxID:         platform.Txid(),
+	}
+	result, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
 		Procedure: "is_stream_allowed_to_compose",
 		Dataset:   dbid,
 		Args:      []any{foreignCaller},
-		TransactionData: common.TransactionData{
-			Signer: deployer.Bytes(),
-			Caller: deployer.Address(),
-			TxID:   platform.Txid(),
-			Height: 0,
-		},
 	})
 	if err != nil {
 		return false, err

@@ -12,10 +12,10 @@ import (
 	"github.com/kwilteam/kwil-db/parse"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 
-	"github.com/truflation/tsn-db/internal/contracts"
-	"github.com/truflation/tsn-db/internal/contracts/tests/utils/procedure"
-	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
-	"github.com/truflation/tsn-sdk/core/util"
+	"github.com/trufnetwork/node/internal/contracts"
+	"github.com/trufnetwork/node/internal/contracts/tests/utils/procedure"
+	"github.com/trufnetwork/node/internal/contracts/tests/utils/setup"
+	"github.com/trufnetwork/sdk-go/core/util"
 )
 
 const (
@@ -196,12 +196,15 @@ func deploySystemContract(ctx context.Context, platform *kwilTesting.Platform) e
 		return errors.Wrap(err, "Failed to create system contract deployer")
 	}
 
-	return platform.Engine.CreateDataset(ctx, platform.DB, schema, &common.TransactionData{
-		Signer: deployer.Bytes(),
-		Caller: deployer.Address(),
-		TxID:   platform.Txid(),
-		Height: 2,
-	})
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 2},
+		Signer:       deployer.Bytes(),
+		Caller:       deployer.Address(),
+		TxID:         platform.Txid(),
+	}
+
+	return platform.Engine.CreateDataset(txContext, platform.DB, schema)
 }
 
 func checkContractExists(ctx context.Context, platform *kwilTesting.Platform, contractName string) (bool, error) {
@@ -235,43 +238,49 @@ func deployPrimitiveStreamWithData(ctx context.Context, platform *kwilTesting.Pl
 }
 
 func executeAcceptStream(ctx context.Context, platform *kwilTesting.Platform, dataProvider util.EthereumAddress, streamID util.StreamId) error {
-	_, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 3},
+		Signer:       platform.Deployer,
+		TxID:         platform.Txid(),
+	}
+
+	_, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
 		Procedure: "accept_stream",
 		Dataset:   utils.GenerateDBID(systemContractName, platform.Deployer),
 		Args:      []any{dataProvider.Address(), streamID.String()},
-		TransactionData: common.TransactionData{
-			Signer: platform.Deployer,
-			TxID:   platform.Txid(),
-			Height: 3,
-		},
 	})
 	return err
 }
 
 func executeRevokeStream(ctx context.Context, platform *kwilTesting.Platform, dataProvider util.EthereumAddress, streamID util.StreamId) error {
-	_, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 4},
+		Signer:       platform.Deployer,
+		TxID:         platform.Txid(),
+	}
+
+	_, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
 		Procedure: "revoke_stream",
 		Dataset:   utils.GenerateDBID(systemContractName, platform.Deployer),
 		Args:      []any{dataProvider.Address(), streamID.String()},
-		TransactionData: common.TransactionData{
-			Signer: platform.Deployer,
-			TxID:   platform.Txid(),
-			Height: 4,
-		},
 	})
 	return err
 }
 
 func isStreamAccepted(ctx context.Context, platform *kwilTesting.Platform, dataProvider util.EthereumAddress, streamID util.StreamId) (bool, error) {
-	result, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 5},
+		Signer:       platform.Deployer,
+		TxID:         platform.Txid(),
+	}
+
+	result, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
 		Procedure: "get_official_stream",
 		Dataset:   utils.GenerateDBID(systemContractName, platform.Deployer),
 		Args:      []any{dataProvider.Address(), streamID.String()},
-		TransactionData: common.TransactionData{
-			Signer: platform.Deployer,
-			TxID:   platform.Txid(),
-			Height: 5,
-		},
 	})
 	if err != nil {
 		return false, err
@@ -283,43 +292,49 @@ func isStreamAccepted(ctx context.Context, platform *kwilTesting.Platform, dataP
 }
 
 func executeGetUnsafeRecord(ctx context.Context, platform *kwilTesting.Platform, dataProvider util.EthereumAddress, streamID util.StreamId, dateFrom, dateTo string, frozenAt int64) ([][]any, error) {
-	result, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 6},
+		Signer:       platform.Deployer,
+		TxID:         platform.Txid(),
+	}
+
+	result, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
 		Procedure: "get_unsafe_record",
 		Dataset:   utils.GenerateDBID(systemContractName, platform.Deployer),
 		Args:      []any{dataProvider.Address(), streamID.String(), dateFrom, dateTo, frozenAt},
-		TransactionData: common.TransactionData{
-			Signer: platform.Deployer,
-			TxID:   platform.Txid(),
-			Height: 6,
-		},
 	})
 	return result.Rows, err
 }
 
 func executeGetUnsafeIndex(ctx context.Context, platform *kwilTesting.Platform, dataProvider util.EthereumAddress, streamID util.StreamId, dateFrom, dateTo string, frozenAt int64) ([][]any, error) {
-	result, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 7},
+		Signer:       platform.Deployer,
+		TxID:         platform.Txid(),
+	}
+
+	result, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
 		Procedure: "get_unsafe_index",
 		Dataset:   utils.GenerateDBID(systemContractName, platform.Deployer),
 		Args:      []any{dataProvider.Address(), streamID.String(), dateFrom, dateTo, frozenAt, nil},
-		TransactionData: common.TransactionData{
-			Signer: platform.Deployer,
-			TxID:   platform.Txid(),
-			Height: 7,
-		},
 	})
 	return result.Rows, err
 }
 
 func executeGetRecord(ctx context.Context, platform *kwilTesting.Platform, dataProvider util.EthereumAddress, streamID util.StreamId, dateFrom, dateTo string, frozenAt int64) ([][]any, error) {
-	result, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 8},
+		Signer:       platform.Deployer,
+		TxID:         platform.Txid(),
+	}
+
+	result, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
 		Procedure: "get_record",
 		Dataset:   utils.GenerateDBID(systemContractName, platform.Deployer),
 		Args:      []any{dataProvider.Address(), streamID.String(), dateFrom, dateTo, frozenAt},
-		TransactionData: common.TransactionData{
-			Signer: platform.Deployer,
-			TxID:   platform.Txid(),
-			Height: 8,
-		},
 	})
 
 	// can't just return result.Rows, err, otherwise we get a nil pointer dereference
@@ -331,15 +346,17 @@ func executeGetRecord(ctx context.Context, platform *kwilTesting.Platform, dataP
 }
 
 func executeGetIndex(ctx context.Context, platform *kwilTesting.Platform, dataProvider util.EthereumAddress, streamID util.StreamId, dateFrom, dateTo string, frozenAt int64) ([][]any, error) {
-	result, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 9},
+		Signer:       platform.Deployer,
+		TxID:         platform.Txid(),
+	}
+
+	result, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
 		Procedure: "get_index",
 		Dataset:   utils.GenerateDBID(systemContractName, platform.Deployer),
 		Args:      []any{dataProvider.Address(), streamID.String(), dateFrom, dateTo, frozenAt, nil},
-		TransactionData: common.TransactionData{
-			Signer: platform.Deployer,
-			TxID:   platform.Txid(),
-			Height: 9,
-		},
 	})
 	return result.Rows, err
 }

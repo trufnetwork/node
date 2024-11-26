@@ -1,6 +1,6 @@
 # Terminology
 
-This document is a reference for the terminology used in the TSN project. It is intended to be a living document that evolves as the project evolves. It is meant to be a reference for developers and users of the TSN project.
+This document is a reference for the terminology used in the TN project. It is intended to be a living document that evolves as the project evolves. It is meant to be a reference for developers and users of the TN project.
 
 ## Definitions
 
@@ -14,7 +14,7 @@ This document is a reference for the terminology used in the TSN project. It is 
 - EXTENSION: Short for Kwil extension.
 - PROCEDURE: Short for Kwil procedure.
 - DATA PROVIDER: An entity that creates/pushes primitive data OR creates taxonomy definitions.
-- ENVIRONMENT: A TSN deployment that serves a purpose. E.g., local, staging, production.
+- ENVIRONMENT: A TN deployment that serves a purpose. E.g., local, staging, production.
 - PRIMITIVE: A data element that is supplied directly from Data Provider.
 - STREAM RECORD: Or just RECORD. It's the value used to calculate indexes. If it's a primitive stream, it's the primitive value.
 - INDEX: A calculation over _RECORD_. E.g., `currentDateRecord / baseDateRecord`.
@@ -22,14 +22,14 @@ This document is a reference for the terminology used in the TSN project. It is 
 - UPGRADEABLE CONTRACT: A contract that doesn't need redeployment for important structural changes.
 - CHILD OF: A relation between streams, where a child stream is a subset of a parent stream
 - PARENT OF: A relation between streams, where a parent stream is a superset of a child stream. All streams that have children are Composed Streams.
-- TRUFLATION DATABASE: The MariaDB instance that stores truflation data. It may be an instance of some environment (test, staging, prod).
+- TRUFLATION DATABASE: The MariaDB instance that stores trufnetwork data. It may be an instance of some environment (test, staging, prod).
 - TRUFLATION DATABASE TABLE: We should NOT use _TABLE_ to refer it without correctly specifying; Otherwise, it creates confusion with kuneiform tables.
 - WHITELIST: A list of wallets that defines permission to perform a certain action. It may be "write" or "read" specific.
-- PRIVATE KEY: A secret key that refers to a wallet. It may own contracts, or refer to an entity/user that needs to interact with the TSN-DB.
-- SYSTEM CONTRACT: The unique contract within TSN that manages official streams and serves as the primary access point for stream queries.
-- OFFICIAL STREAM: A stream that has been approved by TSN governance and registered in the System Contract.
-- UNOFFICIAL STREAM: A stream that exists within TSN but has not been approved by governance or registered in the System Contract.
-- TSN GOVERNANCE: The entity or group responsible for approving streams and managing the System Contract.
+- PRIVATE KEY: A secret key that refers to a wallet. It may own contracts, or refer to an entity/user that needs to interact with the TN-DB.
+- SYSTEM CONTRACT: The unique contract within TN that manages official streams and serves as the primary access point for stream queries.
+- OFFICIAL STREAM: A stream that has been approved by TN governance and registered in the System Contract.
+- UNOFFICIAL STREAM: A stream that exists within TN but has not been approved by governance or registered in the System Contract.
+- TN GOVERNANCE: The entity or group responsible for approving streams and managing the System Contract.
 - SAFE READ: A query made through the System Contract that only returns data from official streams.
 - UNSAFE READ: A query made through the System Contract that can return data from any stream, official or unofficial.
 

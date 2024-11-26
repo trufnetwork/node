@@ -43,7 +43,7 @@ jobs:
         run: |
           curl -f -H "Authorization: token ${{ secrets.READ_TOKEN }}" \
             --create-dirs -o ./deployments/network/staging/genesis.json \
-            https://raw.githubusercontent.com/truflation/tsn-node-operator/main/configs/network/staging/genesis.json \
+            https://raw.githubusercontent.com/trufnetwork/truf-node-operator/main/configs/network/staging/genesis.json \
             --silent --show-error \
             || echo "Error: Failed to download genesis.json (HTTP status code: $?)"
 

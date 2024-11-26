@@ -14,8 +14,8 @@ import (
 	"github.com/kwilteam/kwil-db/common"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
-	"github.com/truflation/tsn-db/internal/benchmark/benchexport"
-	"github.com/truflation/tsn-sdk/core/util"
+	"github.com/trufnetwork/node/internal/benchmark/benchexport"
+	"github.com/trufnetwork/sdk-go/core/util"
 	"golang.org/x/exp/constraints"
 )
 
@@ -39,16 +39,18 @@ func generateRecords(fromDate, toDate time.Time) [][]any {
 // executeStreamProcedure executes a procedure on the given platform and database.
 // It handles the common setup for procedure execution, including transaction data.
 func executeStreamProcedure(ctx context.Context, platform *kwilTesting.Platform, dbid, procedure string, args []any, signer []byte) error {
-	_, err := platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 0},
+		TxID:         platform.Txid(),
+		Signer:       signer,
+		Caller:       MustEthereumAddressFromBytes(signer).Address(),
+	}
+
+	_, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
 		Procedure: procedure,
 		Dataset:   dbid,
 		Args:      args,
-		TransactionData: common.TransactionData{
-			Signer: signer,
-			Caller: MustEthereumAddressFromBytes(signer).Address(),
-			TxID:   platform.Txid(),
-			Height: 0,
-		},
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to execute stream procedure")

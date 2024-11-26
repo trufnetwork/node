@@ -3,7 +3,7 @@ package setup
 import (
 	"context"
 
-	"github.com/truflation/tsn-sdk/core/types"
+	"github.com/trufnetwork/sdk-go/core/types"
 
 	"github.com/golang-sql/civil"
 	"github.com/kwilteam/kwil-db/common"
@@ -11,10 +11,10 @@ import (
 	"github.com/kwilteam/kwil-db/parse"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
-	"github.com/truflation/tsn-db/internal/contracts"
-	testdate "github.com/truflation/tsn-db/internal/contracts/tests/utils/date"
-	testtable "github.com/truflation/tsn-db/internal/contracts/tests/utils/table"
-	"github.com/truflation/tsn-sdk/core/util"
+	"github.com/trufnetwork/node/internal/contracts"
+	testdate "github.com/trufnetwork/node/internal/contracts/tests/utils/date"
+	testtable "github.com/trufnetwork/node/internal/contracts/tests/utils/table"
+	"github.com/trufnetwork/sdk-go/core/util"
 )
 
 type PrimitiveStreamDefinition struct {
@@ -56,12 +56,17 @@ func setupPrimitive(ctx context.Context, setupInput SetupPrimitiveInput) error {
 		return errors.Wrap(err, "error in setupPrimitive")
 	}
 
-	if err := setupInput.Platform.Engine.CreateDataset(ctx, setupInput.Platform.DB, primitiveSchema, &common.TransactionData{
+	txContext := &common.TxContext{
+		Ctx: ctx,
+		BlockContext: &common.BlockContext{
+			Height: setupInput.Height,
+		},
+		TxID:   setupInput.Platform.Txid(),
 		Signer: deployer.Bytes(),
 		Caller: deployer.Address(),
-		TxID:   setupInput.Platform.Txid(),
-		Height: setupInput.Height,
-	}); err != nil {
+	}
+
+	if err := setupInput.Platform.Engine.CreateDataset(txContext, setupInput.Platform.DB, primitiveSchema); err != nil {
 		return errors.Wrap(err, "error creating primitive dataset")
 	}
 
@@ -172,16 +177,21 @@ func InsertMarkdownPrimitiveData(ctx context.Context, input InsertMarkdownDataIn
 		if value == "" {
 			continue
 		}
-		_, err := input.Platform.Engine.Procedure(ctx, input.Platform.DB, &common.ExecutionData{
+
+		txContext := &common.TxContext{
+			Ctx: ctx,
+			BlockContext: &common.BlockContext{
+				Height: input.Height,
+			},
+			TxID:   txid,
+			Signer: signer.Bytes(),
+			Caller: signer.Address(),
+		}
+
+		_, err := input.Platform.Engine.Procedure(txContext, input.Platform.DB, &common.ExecutionData{
 			Procedure: "insert_record",
 			Dataset:   dbid,
 			Args:      []any{testdate.MustParseDate(date), value},
-			TransactionData: common.TransactionData{
-				Signer: signer.Bytes(),
-				Caller: signer.Address(),
-				TxID:   txid,
-				Height: input.Height,
-			},
 		})
 		if err != nil {
 			return err
@@ -216,16 +226,20 @@ func insertPrimitiveData(ctx context.Context, input InsertPrimitiveDataInput) er
 	}
 
 	for _, arg := range args {
-		_, err := input.Platform.Engine.Procedure(ctx, input.Platform.DB, &common.ExecutionData{
+		txContext := &common.TxContext{
+			Ctx: ctx,
+			BlockContext: &common.BlockContext{
+				Height: input.height,
+			},
+			TxID:   txid,
+			Signer: deployer.Bytes(),
+			Caller: deployer.Address(),
+		}
+
+		_, err := input.Platform.Engine.Procedure(txContext, input.Platform.DB, &common.ExecutionData{
 			Procedure: "insert_record",
 			Dataset:   dbid,
 			Args:      arg,
-			TransactionData: common.TransactionData{
-				Signer: deployer.Bytes(),
-				Caller: deployer.Address(),
-				TxID:   txid,
-				Height: input.height,
-			},
 		})
 		if err != nil {
 			return err

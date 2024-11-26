@@ -3,7 +3,7 @@ package benchmark
 import (
 	"time"
 
-	"github.com/truflation/tsn-sdk/core/util"
+	"github.com/trufnetwork/sdk-go/core/util"
 )
 
 type (

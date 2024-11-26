@@ -10,11 +10,11 @@ import (
 	"github.com/kwilteam/kwil-db/parse"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
-	"github.com/truflation/tsn-db/internal/contracts"
-	testdate "github.com/truflation/tsn-db/internal/contracts/tests/utils/date"
-	testtable "github.com/truflation/tsn-db/internal/contracts/tests/utils/table"
-	"github.com/truflation/tsn-sdk/core/types"
-	"github.com/truflation/tsn-sdk/core/util"
+	"github.com/trufnetwork/node/internal/contracts"
+	testdate "github.com/trufnetwork/node/internal/contracts/tests/utils/date"
+	testtable "github.com/trufnetwork/node/internal/contracts/tests/utils/table"
+	"github.com/trufnetwork/sdk-go/core/types"
+	"github.com/trufnetwork/sdk-go/core/util"
 )
 
 type ComposedStreamDefinition struct {
@@ -41,12 +41,15 @@ func setupComposedAndPrimitives(ctx context.Context, input SetupComposedAndPrimi
 	}
 	composedSchema.Name = input.ComposedStreamDefinition.StreamLocator.StreamId.String()
 
-	if err := input.Platform.Engine.CreateDataset(ctx, input.Platform.DB, composedSchema, &common.TransactionData{
-		Signer: input.ComposedStreamDefinition.StreamLocator.DataProvider.Bytes(),
-		Caller: input.ComposedStreamDefinition.StreamLocator.DataProvider.Address(),
-		TxID:   input.Platform.Txid(),
-		Height: input.Height,
-	}); err != nil {
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: input.Height},
+		Signer:       input.ComposedStreamDefinition.StreamLocator.DataProvider.Bytes(),
+		Caller:       input.ComposedStreamDefinition.StreamLocator.DataProvider.Address(),
+		TxID:         input.Platform.Txid(),
+	}
+
+	if err := input.Platform.Engine.CreateDataset(txContext, input.Platform.DB, composedSchema); err != nil {
 		return errors.Wrap(err, "error creating composed dataset")
 	}
 
@@ -226,7 +229,15 @@ func setTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 
 	dbid := utils.GenerateDBID(input.composedStream.StreamLocator.StreamId.String(), input.composedStream.StreamLocator.DataProvider.Bytes())
 
-	_, err = input.Platform.Engine.Procedure(ctx, input.Platform.DB, &common.ExecutionData{
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 0},
+		Signer:       input.Platform.Deployer,
+		Caller:       deployer.Address(),
+		TxID:         input.Platform.Txid(),
+	}
+
+	_, err = input.Platform.Engine.Procedure(txContext, input.Platform.DB, &common.ExecutionData{
 		Procedure: "set_taxonomy",
 		Dataset:   dbid,
 		Args: []any{
@@ -234,12 +245,6 @@ func setTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 			primitiveStreamStrings,
 			weightStrings,
 			startDate,
-		},
-		TransactionData: common.TransactionData{
-			Signer: input.Platform.Deployer,
-			Caller: deployer.Address(),
-			TxID:   input.Platform.Txid(),
-			Height: 0,
 		},
 	})
 	return err

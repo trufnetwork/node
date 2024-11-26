@@ -15,7 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/ssm"
 	"github.com/caarlos0/env/v11"
 	"github.com/mitchellh/mapstructure"
-	init_system_contract "github.com/truflation/tsn-db/internal/init-system-contract"
+	init_system_contract "github.com/trufnetwork/node/internal/init-system-contract"
 )
 
 // DeployContractResourceProperties represents the properties of the custom resource

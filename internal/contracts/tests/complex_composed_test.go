@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"testing"
 
-	testutils "github.com/truflation/tsn-db/internal/contracts/tests/utils"
-	"github.com/truflation/tsn-db/internal/contracts/tests/utils/procedure"
-	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
-	"github.com/truflation/tsn-db/internal/contracts/tests/utils/table"
+	testutils "github.com/trufnetwork/node/internal/contracts/tests/utils"
+	"github.com/trufnetwork/node/internal/contracts/tests/utils/procedure"
+	"github.com/trufnetwork/node/internal/contracts/tests/utils/setup"
+	"github.com/trufnetwork/node/internal/contracts/tests/utils/table"
 
 	"github.com/pkg/errors"
-	"github.com/truflation/tsn-sdk/core/util"
+	"github.com/trufnetwork/sdk-go/core/util"
 
 	"github.com/kwilteam/kwil-db/core/utils"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"

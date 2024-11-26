@@ -1,8 +1,8 @@
 # Contributing
 
-Thanks for taking the time to contribute to tsn-db! 
+Thanks for taking the time to contribute to node! 
 
-Please follow the guidelines below when contributing. If you have any questions, please feel free to reach out to us on [Discord](https://discord.com/invite/5AMCBYxfW4) or use the [discussions](https://github.com/truflation/tsn-db/discussions) feature on GitHub.
+Please follow the guidelines below when contributing. If you have any questions, please feel free to reach out to us on [Discord](https://discord.com/invite/5AMCBYxfW4) or use the [discussions](https://github.com/trufnetwork/node/discussions) feature on GitHub.
 
 ## Table of Contents
 
@@ -16,20 +16,20 @@ Please follow the guidelines below when contributing. If you have any questions,
 
 ## Discussions
 
-Discussions are for general discussions related to tsn-db. This can be to discuss tsn-db architecture, important tradeoffs / considerations, or any topics that cannot be directly closed by a pull request.
+Discussions are for general discussions related to node. This can be to discuss tn-db architecture, important tradeoffs / considerations, or any topics that cannot be directly closed by a pull request.
 
 Examples of good discussions:
 
-- Discussing potental ways to price queries in tsn-db
+- Discussing potental ways to price queries in tn-db
 - Discussing potential procedures for handling consensus failures & changes (and a future issue if the discussion determines we need a feature, bug fix, or documentation change).
 
 Discussions can lead to an issue if they determine that a feature, bug fix, or documentation change is needed.
 
 ## Issues
 
-Issues are for reporting bugs, requesting features, requesting repository documentation, or discussing any other changes that can be directly resolved with a pull request to the tsn-db repository.
+Issues are for reporting bugs, requesting features, requesting repository documentation, or discussing any other changes that can be directly resolved with a pull request to the tn-db repository.
 
-For general discussions, or discussions where it is unclear how the discussion would be closed by a pull request, please use the [discussion](https://github.com/truflation/tsn-db/discussions) section.
+For general discussions, or discussions where it is unclear how the discussion would be closed by a pull request, please use the [discussion](https://github.com/trufnetwork/node/discussions) section.
 
 For opening issues, please follow the following guidelines:
 
@@ -37,13 +37,13 @@ For opening issues, please follow the following guidelines:
 - **Search** the issue tracker before opening an issue to avoid duplicates.
 - **Be clear & detailed** about what you are reporting. If reporting a bug, please include a minimal reproducible example, a detailed explanation of your KwilD configuration, and any logs or error messages that may be relevant. 
 
-We strongly recommended submitting an issue before submitting a pull request, especially for pull requests that will require significant effort on your part. This is to ensure that the issue is not already being worked on and that your pull request will be accepted. Some features or fixes are intentionally not included in tsn-db - use issues to check with maintainers and save time!
+We strongly recommended submitting an issue before submitting a pull request, especially for pull requests that will require significant effort on your part. This is to ensure that the issue is not already being worked on and that your pull request will be accepted. Some features or fixes are intentionally not included in tn-db - use issues to check with maintainers and save time!
 
 ## Pull Requests
 
 ### Commit Messages
 
-tsn-db uses recommended [Go commit messages](https://go.dev/doc/contribute#commit_messages), with breaking changes and deprecations to be noted in the commit message footer. Commits should follow the following format:
+tn-db uses recommended [Go commit messages](https://go.dev/doc/contribute#commit_messages), with breaking changes and deprecations to be noted in the commit message footer. Commits should follow the following format:
 
 ```
 [Package/File/Directory Name]: [Concise and concrete description of the PR/Issue]
@@ -65,7 +65,7 @@ Resolves #123
 BREAKING CHANGE: This PR changes the behavior of the foo command. It now does something else.
 ```
 
-There are two types of breaking changes: API breaking changes and consensus breaking changes. API breaking changes are any changes that effect the external API of packages that are consumed outside of tsn-db. Consensus breaking changes are any changes that effect the consensus protocol of tsn-db (i.e. changes to the extension, or changes to the consensus protocol in internal).
+There are two types of breaking changes: API breaking changes and consensus breaking changes. API breaking changes are any changes that effect the external API of packages that are consumed outside of tn-db. Consensus breaking changes are any changes that effect the consensus protocol of tn-db (i.e. changes to the extension, or changes to the consensus protocol in internal).
 
 Changes to internal packages (i.e. deployments, internal, and scripts) that do not affect the database or consensus are not considered breaking changes and do not need to be tagged in the commit footer.
 
@@ -79,11 +79,11 @@ Please ensure that your contributions adhere to the following coding guidelines:
 
 ### Pull Request Process
 
-1. Fork the repository by clicking the "Fork" button on the top right of the repository page. Clone the tsn-db repository and add your fork as a remote.
+1. Fork the repository by clicking the "Fork" button on the top right of the repository page. Clone the tn-db repository and add your fork as a remote.
 
 ```bash
-git clone https://github.com/truflation/tsn-db
-cd tsn-db
+git clone https://github.com/trufnetwork/node
+cd tn-db
 git checkout main
 git remote add <your-origin-name> <your-fork-url>
 git fetch <your-origin-name>
@@ -115,10 +115,10 @@ git push -u <your-origin-name> <branch-name>
 
 Please ensure that all the commits in your git history match the commit message [guidelines](#commit-messages) above. You can use `git rebase -i` to edit your commit history.
 
-5. Open a pull request to the `main` branch of the tsn-db repository. Please follow the PR template. If `main` updates while the PR is open, please update the branch with latest `main` (rebase or merge).
+5. Open a pull request to the `main` branch of the tn-db repository. Please follow the PR template. If `main` updates while the PR is open, please update the branch with latest `main` (rebase or merge).
 
 6. Wait for a maintainer to review your PR. If there are any issues, you will be notified and you can make the necessary changes.
 
 ## License
 
-By contributing to tsn-db, you agree that your contributions will be licensed under its [Apache 2.0 License](https://www.apache.org/licenses/LICENSE-2.0).
+By contributing to tn-db, you agree that your contributions will be licensed under its [Apache 2.0 License](https://www.apache.org/licenses/LICENSE-2.0).

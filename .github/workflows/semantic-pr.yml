@@ -38,7 +38,7 @@ jobs:
           message: |
             Hey there! 👋🏼
 
-            We require pull request titles to follow [Truflation's Developer Guideline](https://github.com/truflation/developers) and it looks like your proposed title needs to be adjusted.
+            We require pull request titles to follow [Truflation's Developer Guideline](https://github.com/trufnetwork/developers) and it looks like your proposed title needs to be adjusted.
 
             Details:
 

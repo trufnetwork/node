@@ -6,17 +6,17 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/truflation/tsn-sdk/core/types"
+	"github.com/trufnetwork/sdk-go/core/types"
 
 	"github.com/kwilteam/kwil-db/common"
 	"github.com/kwilteam/kwil-db/core/utils"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
-	"github.com/truflation/tsn-db/internal/contracts/tests/utils/procedure"
-	"github.com/truflation/tsn-db/internal/contracts/tests/utils/setup"
-	"github.com/truflation/tsn-db/internal/contracts/tests/utils/table"
-	"github.com/truflation/tsn-sdk/core/util"
+	"github.com/trufnetwork/node/internal/contracts/tests/utils/procedure"
+	"github.com/trufnetwork/node/internal/contracts/tests/utils/setup"
+	"github.com/trufnetwork/node/internal/contracts/tests/utils/table"
+	"github.com/trufnetwork/sdk-go/core/util"
 )
 
 func TestComposed(t *testing.T) {
@@ -560,16 +560,18 @@ func setTaxonomy(ctx context.Context, platform *kwilTesting.Platform, dbid strin
 		startDate = taxonomies.StartDate.String()
 	}
 
-	_, err = platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 0},
+		Signer:       deployer.Bytes(),
+		Caller:       deployer.Address(),
+		TxID:         platform.Txid(),
+	}
+
+	_, err = platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
 		Procedure: "set_taxonomy",
 		Dataset:   dbid,
 		Args:      []any{dataProviders, streamIDs, decimalWeights, startDate},
-		TransactionData: common.TransactionData{
-			Signer: deployer.Bytes(),
-			Caller: deployer.Address(),
-			TxID:   platform.Txid(),
-			Height: 0,
-		},
 	})
 	if err != nil {
 		return errors.Wrap(err, "Failed to execute set_taxonomy procedure")
@@ -584,16 +586,18 @@ func disableTaxonomy(ctx context.Context, platform *kwilTesting.Platform, dbid s
 		return errors.Wrap(err, "Failed to create Ethereum address from bytes")
 	}
 
-	_, err = platform.Engine.Procedure(ctx, platform.DB, &common.ExecutionData{
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 0},
+		Signer:       deployer.Bytes(),
+		Caller:       deployer.Address(),
+		TxID:         platform.Txid(),
+	}
+
+	_, err = platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
 		Procedure: "disable_taxonomy",
 		Dataset:   dbid,
 		Args:      []any{version},
-		TransactionData: common.TransactionData{
-			Signer: deployer.Bytes(),
-			Caller: deployer.Address(),
-			TxID:   platform.Txid(),
-			Height: 0,
-		},
 	})
 	if err != nil {
 		return errors.Wrap(err, "Failed to execute disable_taxonomy procedure")

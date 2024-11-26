@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/truflation/tsn-db/internal/contracts"
+	"github.com/trufnetwork/node/internal/contracts"
 )
 
 func TestInitSystemContract(t *testing.T) {

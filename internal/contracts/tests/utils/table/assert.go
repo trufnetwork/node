@@ -2,7 +2,7 @@ package table
 
 import (
 	"github.com/stretchr/testify/assert"
-	"github.com/truflation/tsn-db/internal/contracts/tests/utils/procedure"
+	"github.com/trufnetwork/node/internal/contracts/tests/utils/procedure"
 	"testing"
 )
 

@@ -16,12 +16,12 @@ import (
 )
 
 type InitSystemContractOptions struct {
-	// PrivateKey is the private key of the account that will deploy the system contract. i.e., the TSN wallet
+	// PrivateKey is the private key of the account that will deploy the system contract. i.e., the TN wallet
 	PrivateKey string
-	// ProviderUrl we're using the gateway client to interact with the TSN, so it should be the gateway URL
+	// ProviderUrl we're using the gateway client to interact with the TN, so it should be the gateway URL
 	ProviderUrl           string
 	SystemContractContent string
-	// RetryTimeout is the maximum time to wait for the TSN to start
+	// RetryTimeout is the maximum time to wait for the TN to start
 	RetryTimeout time.Duration
 }
 
@@ -40,7 +40,7 @@ func InitSystemContract(ctx context.Context, options InitSystemContractOptions) 
 
 	var kwilClient clientType.Client
 
-	// Make sure the TSN is running. We expect to receive pong. On this step, we retry for the max timeout
+	// Make sure the TN is running. We expect to receive pong. On this step, we retry for the max timeout
 	err = backoff.RetryNotify(func() error {
 		kwilClient, err = gatewayclient.NewClient(ctx, options.ProviderUrl, &gatewayclient.GatewayOptions{
 			Options: clientType.Options{
@@ -66,7 +66,7 @@ func InitSystemContract(ctx context.Context, options InitSystemContractOptions) 
 		backoff.WithMaxInterval(15*time.Second),
 		backoff.WithMaxElapsedTime(options.RetryTimeout),
 	), func(err error, duration time.Duration) {
-		zap.L().Warn("Error while waiting for TSN to start", zap.Error(err), zap.String("retry_in", duration.String()))
+		zap.L().Warn("Error while waiting for TN to start", zap.Error(err), zap.String("retry_in", duration.String()))
 	})
 
 	if err != nil {
