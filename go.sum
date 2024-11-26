@@ -467,6 +467,8 @@ github.com/tklauser/numcpus v0.8.0 h1:Mx4Wwe/FjZLeQsK/6kt2EOepwwSl7SmJrK5bV/dXYg
 github.com/tklauser/numcpus v0.8.0/go.mod h1:ZJZlAY+dmR4eut8epnzf0u/VwodKmryxR8txiloSqBE=
 github.com/tonistiigi/go-rosetta v0.0.0-20220804170347-3f4430f2d346 h1:TvtdmeYsYEij78hS4oxnwikoiLdIrgav3BA+CbhaDAI=
 github.com/tonistiigi/go-rosetta v0.0.0-20220804170347-3f4430f2d346/go.mod h1:xKQhd7snlzKFuUi1taTGWjpRE8iFTA06DeacYi3CVFQ=
+github.com/trufnetwork/sdk-go v0.1.1-0.20241126115735-addca8e1da52 h1:LNZ99bITHatmYKVHH4YqBhpuAg2bUx8SlP2VHAWR4jE=
+github.com/trufnetwork/sdk-go v0.1.1-0.20241126115735-addca8e1da52/go.mod h1:xfGmTkamZxyAOG331+P2oceLFxR7u/4lIoELyYEeCR4=
 github.com/tyler-smith/go-bip39 v1.1.0 h1:5eUemwrMargf3BSLRRCalXT93Ns6pQJIjYQN2nyfOP8=
 github.com/tyler-smith/go-bip39 v1.1.0/go.mod h1:gUYDtqQw1JS3ZJ8UWVcGTGqqr6YIN3CWg+kkNaLt55U=
 github.com/ugorji/go/codec v0.0.0-20181204163529-d75b2dcb6bc8/go.mod h1:VFNgLljTbGfSG7qAOspJ7OScBnGdDN/yBr0sguwnwf0=
