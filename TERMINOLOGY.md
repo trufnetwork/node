@@ -1,5 +1,5 @@
 # Terminology
-
+ 
 This document is a reference for the terminology used in the TN project. It is intended to be a living document that evolves as the project evolves. It is meant to be a reference for developers and users of the TN project.
 
 ## Definitions
