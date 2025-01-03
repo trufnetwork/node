@@ -24,7 +24,7 @@ FROM alpine:latest
 WORKDIR /app
 
 # add postgres client tools
-RUN apk add --no-cache postgresql-client
+RUN apk add --no-cache postgresql16-client
 
 # move .build content to /app
 COPY --from=build /app/.build/* /app/
