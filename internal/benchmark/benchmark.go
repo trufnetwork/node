@@ -16,12 +16,13 @@ import (
 	"github.com/trufnetwork/sdk-go/core/util"
 )
 
-func runBenchmark(ctx context.Context, platform *kwilTesting.Platform, c BenchmarkCase, tree trees.Tree) ([]Result, error) {
+func runBenchmark(ctx context.Context, platform *kwilTesting.Platform, c BenchmarkCase, tree trees.Tree, unixOnly bool) ([]Result, error) {
 	var results []Result
 
 	err := setupSchemas(ctx, platform, SetupSchemasInput{
 		BenchmarkCase: c,
 		Tree:          tree,
+		UnixOnly:      unixOnly,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to setup schemas")
@@ -35,6 +36,7 @@ func runBenchmark(ctx context.Context, platform *kwilTesting.Platform, c Benchma
 				Days:      day,
 				Procedure: procedure,
 				Tree:      tree,
+				UnixOnly:  unixOnly,
 			})
 			if err != nil {
 				return nil, errors.Wrap(err, "failed to run single test")
@@ -52,6 +54,7 @@ type RunSingleTestInput struct {
 	Days      int
 	Procedure ProcedureEnum
 	Tree      trees.Tree
+	UnixOnly  bool
 }
 
 // runSingleTest runs a single test for the given input and returns the result.
@@ -60,6 +63,10 @@ func runSingleTest(ctx context.Context, input RunSingleTestInput) (Result, error
 	nthDbId := utils.GenerateDBID(getStreamId(0).String(), input.Platform.Deployer)
 	fromDate := fixedDate.AddDate(0, 0, -input.Days).Format("2006-01-02")
 	toDate := fixedDate.Format("2006-01-02")
+	if input.UnixOnly {
+		fromDate = fmt.Sprintf("%d", fixedDate.AddDate(0, 0, -input.Days).Unix())
+		toDate = fmt.Sprintf("%d", fixedDate.Unix())
+	}
 
 	result := Result{
 		Case:          input.Case,
@@ -127,7 +134,7 @@ type RunBenchmarkInput struct {
 }
 
 // it returns a result channel to be accumulated by the caller
-func getBenchmarFn(benchmarkCase BenchmarkCase, resultCh *chan []Result) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func getBenchmarFn(benchmarkCase BenchmarkCase, resultCh *chan []Result, unixOnly bool) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		log.Println("running benchmark", benchmarkCase)
 		platform.Deployer = deployer.Bytes()
@@ -142,7 +149,7 @@ func getBenchmarFn(benchmarkCase BenchmarkCase, resultCh *chan []Result) func(ct
 			return fmt.Errorf("tree max depth (%d) is greater than max depth (%d)", tree.MaxDepth, maxDepth)
 		}
 
-		results, err := runBenchmark(ctx, platform, benchmarkCase, tree)
+		results, err := runBenchmark(ctx, platform, benchmarkCase, tree, unixOnly)
 		if err != nil {
 			return errors.Wrap(err, "failed to run benchmark")
 		}

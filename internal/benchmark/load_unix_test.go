@@ -3,7 +3,6 @@ package benchmark
 import (
 	"context"
 	"fmt"
-	"math"
 	"os"
 	"os/signal"
 	"strconv"
@@ -16,7 +15,7 @@ import (
 )
 
 // Main benchmark test function
-func TestBench(t *testing.T) {
+func TestBenchUnix(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
@@ -40,7 +39,7 @@ func TestBench(t *testing.T) {
 	// try get resultPath from env
 	resultPath := os.Getenv("RESULTS_PATH")
 	if resultPath == "" {
-		resultPath = "./benchmark_results.csv"
+		resultPath = "./benchmark_unix_results.csv"
 	}
 
 	// Delete the file if it exists
@@ -62,37 +61,37 @@ func TestBench(t *testing.T) {
 		{1, 1},
 
 		//flat trees = cost of adding a new stream to our composed
-		{50, math.MaxInt},
-		{100, math.MaxInt},
-		{200, math.MaxInt},
-		{400, math.MaxInt},
+		//{50, math.MaxInt},
+		//{100, math.MaxInt},
+		//{200, math.MaxInt},
+		//{400, math.MaxInt},
 		// 800 streams kills t3.small instances for memory starvation. But probably because it stores the whole tree in memory
 		//{800, math.MaxInt},
 		//{1500, math.MaxInt}, // this gives error: Out of shared memory
 
 		// deep trees = cost of adding depth
-		{50, 1},
-		{100, 1},
+		//{50, 1},
+		//{100, 1},
 		//{200, 1}, // we can't go deeper than 180, for call stack size issues
 
 		// to get difference for stream qty on a real world situation
 		{50, 8},
 		{100, 8},
-		{200, 8},
-		{400, 8},
+		//{200, 8},
+		//{400, 8},
 		//{800, 8},
 
 		// to get difference for branching factor
-		{200, 2},
-		{200, 4},
+		//{200, 2},
+		//{200, 4},
 		// {200, 8}, // already tested above
-		{200, 16},
-		{200, 32},
+		//{200, 16},
+		//{200, 32},
 	}
 
 	samples := 3
 
-	days := []int{1, 7, 30, 365}
+	days := []int{1, 7}
 
 	visibilities := []util.VisibilityEnum{util.PublicVisibility, util.PrivateVisibility}
 
@@ -112,12 +111,12 @@ func TestBench(t *testing.T) {
 				Procedures: []ProcedureEnum{
 					ProcedureGetRecord,
 					ProcedureGetIndex,
-					ProcedureGetChangeIndex,
-					ProcedureGetFirstRecord,
+					//ProcedureGetChangeIndex,
+					//ProcedureGetFirstRecord,
 				},
 			},
 				// use pointer, so we can reassign the results channel
-				&resultsCh, false))
+				&resultsCh, true))
 		}
 	}
 
@@ -129,7 +128,7 @@ func TestBench(t *testing.T) {
 
 	for i, groupOfTests := range groupsOfTests {
 		schemaTest := kwilTesting.SchemaTest{
-			Name:          "benchmark_test_" + strconv.Itoa(i),
+			Name:          "benchmark_unix_test_" + strconv.Itoa(i),
 			SchemaFiles:   []string{},
 			FunctionTests: groupOfTests,
 		}
@@ -163,6 +162,7 @@ func TestBench(t *testing.T) {
 					}
 
 					t.Logf("Attempt %d failed: %s", attempt, err)
+					fmt.Println(errors.WithStack(err))
 					if attempt < maxRetries {
 						time.Sleep(time.Second * time.Duration(attempt)) // Exponential backoff
 					}

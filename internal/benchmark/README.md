@@ -29,6 +29,12 @@ From the root of the project, run the following command:
 go test -v ./internal/benchmark
 ```
 
+To run a specific test case, use the `-run` flag:
+```
+go test -run TestBenchUnix ./internal/benchmark -v
+```
+The above command will run the `TestBenchUnix` test case.
+
 ## Results
 
 After running, the benchmark will output performance metrics for each test case, including:

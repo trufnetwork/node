@@ -27,6 +27,7 @@ import (
 type SetupSchemasInput struct {
 	BenchmarkCase BenchmarkCase
 	Tree          trees.Tree
+	UnixOnly      bool
 }
 
 // Schema setup functions
@@ -59,9 +60,17 @@ func setupSchemas(
 				var schema *kwiltypes.Schema
 				var err error
 				if node.IsLeaf {
-					schema, err = parse.Parse(contracts.PrimitiveStreamContent)
+					if input.UnixOnly {
+						schema, err = parse.Parse(contracts.PrimitiveStreamUnixContent)
+					} else {
+						schema, err = parse.Parse(contracts.PrimitiveStreamContent)
+					}
 				} else {
-					schema, err = parse.Parse(contracts.ComposedStreamContent)
+					if input.UnixOnly {
+						schema, err = parse.Parse(contracts.ComposedStreamUnixContent)
+					} else {
+						schema, err = parse.Parse(contracts.ComposedStreamContent)
+					}
 				}
 				if err != nil {
 					return errors.Wrap(err, "failed to parse stream")
@@ -91,6 +100,7 @@ func setupSchemas(
 				treeNode:   schema.Node,
 				days:       380,
 				owner:      deployerAddress,
+				unixOnly:   input.UnixOnly,
 			}); err != nil {
 				return errors.Wrap(err, "failed to setup schema")
 			}
@@ -145,6 +155,7 @@ type setupSchemaInput struct {
 	days       int
 	owner      util.EthereumAddress
 	treeNode   trees.TreeNode
+	unixOnly   bool
 }
 
 func setupSchema(ctx context.Context, platform *kwilTesting.Platform, schema *kwiltypes.Schema, input setupSchemaInput) error {
@@ -158,7 +169,7 @@ func setupSchema(ctx context.Context, platform *kwilTesting.Platform, schema *kw
 
 	// if it's a leaf, then it's a primitive stream
 	if input.treeNode.IsLeaf {
-		if err := insertRecordsForPrimitive(ctx, platform, dbid, input.days+1); err != nil {
+		if err := insertRecordsForPrimitive(ctx, platform, dbid, input.days+1, input.unixOnly); err != nil {
 			return errors.Wrap(err, "failed to insert records for primitive")
 		}
 	} else {
@@ -274,6 +285,9 @@ func batchInsertMetadata(ctx context.Context, platform *kwilTesting.Platform, db
 
 	txContext := &common.TxContext{
 		Ctx: ctx,
+		BlockContext: &common.BlockContext{
+			Height: 1,
+		},
 	}
 
 	// Execute the bulk insert
@@ -289,22 +303,31 @@ func batchInsertMetadata(ctx context.Context, platform *kwilTesting.Platform, db
 // - it generates a random value for each record
 // - it inserts the records into the stream
 // - we use a bulk insert to speed up the process
-func insertRecordsForPrimitive(ctx context.Context, platform *kwilTesting.Platform, dbid string, days int) error {
+func insertRecordsForPrimitive(ctx context.Context, platform *kwilTesting.Platform, dbid string, days int, unixOnly bool) error {
 	fromDate := fixedDate.AddDate(0, 0, -days)
-	records := generateRecords(fromDate, fixedDate)
+	records := generateRecords(fromDate, fixedDate, unixOnly)
 
 	// Prepare the SQL statement for bulk insert
 	sqlStmt := "INSERT INTO primitive_events (date_value, value, created_at) VALUES "
 	var values []string
 
-	for _, record := range records {
-		values = append(values, fmt.Sprintf("('%s', %s::decimal(36,18), 0)", record[0], record[1]))
+	if unixOnly {
+		for _, record := range records {
+			values = append(values, fmt.Sprintf("(%d, %s::decimal(36,18), 0)", record[0], record[1]))
+		}
+	} else {
+		for _, record := range records {
+			values = append(values, fmt.Sprintf("('%s', %s::decimal(36,18), 0)", record[0], record[1]))
+		}
 	}
 
 	sqlStmt += strings.Join(values, ", ")
 
 	txContext := &common.TxContext{
 		Ctx: ctx,
+		BlockContext: &common.BlockContext{
+			Height: 1,
+		},
 	}
 
 	// Execute the bulk insert
@@ -342,7 +365,11 @@ func setTaxonomyForComposed(ctx context.Context, platform *kwilTesting.Platform,
 		streamIdsArg = append(streamIdsArg, t.ChildStream.StreamId.String())
 		weightsArg = append(weightsArg, int(t.Weight))
 	}
-	startDateArg = randDate(fixedDate.AddDate(0, 0, -input.days), fixedDate).Format(time.DateOnly)
+	if input.unixOnly {
+		startDateArg = strconv.Itoa(int(randDate(fixedDate.AddDate(0, 0, -input.days), fixedDate).Unix()))
+	} else {
+		startDateArg = randDate(fixedDate.AddDate(0, 0, -input.days), fixedDate).Format(time.DateOnly)
+	}
 
 	return executeStreamProcedure(ctx, platform, dbid, "set_taxonomy",
 		[]any{dataProvidersArg, streamIdsArg, weightsArg, startDateArg}, platform.Deployer)

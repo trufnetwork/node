@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"os/exec"
 	"slices"
 	"strconv"
 	"strings"
@@ -27,11 +28,18 @@ func getStreamId(index int) *util.StreamId {
 
 // generateRecords creates a slice of records with random values for each day
 // between the given fromDate and toDate, inclusive.
-func generateRecords(fromDate, toDate time.Time) [][]any {
+func generateRecords(fromDate, toDate time.Time, unixOnly bool) [][]any {
 	var records [][]any
-	for d := fromDate; !d.After(toDate); d = d.AddDate(0, 0, 1) {
-		value, _ := apd.New(rand.Int63n(100000000000000), 0).Float64()
-		records = append(records, []any{d.Format("2006-01-02"), fmt.Sprintf("%.2f", value)})
+	if unixOnly {
+		for d := fromDate; !d.After(toDate); d = d.Add(insertFreqInTime) {
+			value, _ := apd.New(rand.Int63n(100000000000000), 0).Float64()
+			records = append(records, []any{d.Unix(), fmt.Sprintf("%.2f", value)})
+		}
+	} else {
+		for d := fromDate; !d.After(toDate); d = d.AddDate(0, 0, 1) {
+			value, _ := apd.New(rand.Int63n(100000000000000), 0).Float64()
+			records = append(records, []any{d.Format("2006-01-02"), fmt.Sprintf("%.2f", value)})
+		}
 	}
 	return records
 }
@@ -170,4 +178,28 @@ func MustEthereumAddressFromBytes(b []byte) *util.EthereumAddress {
 		panic(errors.Wrap(err, "failed to create EthereumAddress"))
 	}
 	return &addr
+}
+
+// should execute docker", "rm", "-f", "kwil-testing-postgres
+func cleanupDocker() {
+	// Execute the cleanup command
+	cmd := exec.Command("docker", "rm", "-f", "kwil-testing-postgres")
+	err := cmd.Run()
+	if err != nil {
+		fmt.Printf("Error during cleanup: %v\n", err)
+	}
+}
+
+func chunk[T any](arr []T, chunkSize int) [][]T {
+	var result [][]T
+	for i := 0; i < len(arr); i += chunkSize {
+		end := i + chunkSize
+		if end > len(arr) {
+			end = len(arr)
+		}
+
+		result = append(result, arr[i:end])
+	}
+
+	return result
 }
