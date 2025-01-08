@@ -5,10 +5,10 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
-	"github.com/truflation/tsn-db/infra/config"
-	"github.com/truflation/tsn-db/infra/lib/observer"
-	"github.com/truflation/tsn-db/infra/lib/tsn/cluster"
-	"github.com/truflation/tsn-db/infra/lib/utils"
+	"github.com/trufnetwork/node/infra/config"
+	"github.com/trufnetwork/node/infra/lib/observer"
+	"github.com/trufnetwork/node/infra/lib/tsn/cluster"
+	"github.com/trufnetwork/node/infra/lib/utils"
 )
 
 type TsnAutoStackProps struct {

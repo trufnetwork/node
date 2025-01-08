@@ -4,7 +4,7 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsecrassets"
 	"github.com/aws/jsii-runtime-go"
-	"github.com/truflation/tsn-db/infra/lib/utils"
+	"github.com/trufnetwork/node/infra/lib/utils"
 )
 
 func NewTSNImageAsset(

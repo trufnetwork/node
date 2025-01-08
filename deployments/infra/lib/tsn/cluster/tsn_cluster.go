@@ -11,10 +11,10 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsroute53"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/jsii-runtime-go"
-	"github.com/truflation/tsn-db/infra/config"
-	kwil_network "github.com/truflation/tsn-db/infra/lib/kwil-network"
-	"github.com/truflation/tsn-db/infra/lib/kwil-network/peer"
-	"github.com/truflation/tsn-db/infra/lib/tsn"
+	"github.com/trufnetwork/node/infra/config"
+	kwil_network "github.com/trufnetwork/node/infra/lib/kwil-network"
+	"github.com/trufnetwork/node/infra/lib/kwil-network/peer"
+	"github.com/trufnetwork/node/infra/lib/tsn"
 )
 
 type TSNCluster struct {

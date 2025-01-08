@@ -12,8 +12,8 @@ import (
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 
-	"github.com/truflation/tsn-db/infra/config"
-	"github.com/truflation/tsn-db/infra/lib/utils/asset"
+	"github.com/trufnetwork/node/infra/config"
+	"github.com/trufnetwork/node/infra/lib/utils/asset"
 )
 
 // Main stack function

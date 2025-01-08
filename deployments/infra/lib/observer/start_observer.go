@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
-	"github.com/truflation/tsn-db/infra/lib/utils"
+	"github.com/trufnetwork/node/infra/lib/utils"
 )
 
 type CreateStartObserverScriptInput struct {

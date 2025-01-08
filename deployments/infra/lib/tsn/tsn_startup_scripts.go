@@ -4,8 +4,8 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsecrassets"
 	"github.com/aws/jsii-runtime-go"
-	peer2 "github.com/truflation/tsn-db/infra/lib/kwil-network/peer"
-	"github.com/truflation/tsn-db/infra/lib/utils"
+	peer2 "github.com/trufnetwork/node/infra/lib/kwil-network/peer"
+	"github.com/trufnetwork/node/infra/lib/utils"
 )
 
 type AddStartupScriptsOptions struct {

@@ -3,7 +3,7 @@ package kwil_network
 import (
 	"encoding/json"
 	"github.com/aws/constructs-go/constructs/v10"
-	"github.com/truflation/tsn-db/infra/config"
+	"github.com/trufnetwork/node/infra/config"
 	"go.uber.org/zap"
 	"os/exec"
 )

@@ -5,9 +5,9 @@ import (
 	"strconv"
 
 	"github.com/aws/jsii-runtime-go"
-	"github.com/truflation/tsn-db/infra/lib/kwil-network/peer"
-	"github.com/truflation/tsn-db/infra/lib/tsn"
-	"github.com/truflation/tsn-db/infra/lib/utils"
+	"github.com/trufnetwork/node/infra/lib/kwil-network/peer"
+	"github.com/trufnetwork/node/infra/lib/tsn"
+	"github.com/trufnetwork/node/infra/lib/utils"
 )
 
 type IndexerEnvConfig struct {

@@ -9,14 +9,14 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/jsii-runtime-go"
-	"github.com/truflation/tsn-db/infra/config"
-	"github.com/truflation/tsn-db/infra/lib/domain_utils"
-	kwil_gateway "github.com/truflation/tsn-db/infra/lib/kwil-gateway"
-	kwil_indexer_instance "github.com/truflation/tsn-db/infra/lib/kwil-indexer"
-	system_contract "github.com/truflation/tsn-db/infra/lib/system-contract"
-	"github.com/truflation/tsn-db/infra/lib/tsn"
-	"github.com/truflation/tsn-db/infra/lib/tsn/cluster"
-	"github.com/truflation/tsn-db/infra/lib/utils"
+	"github.com/trufnetwork/node/infra/config"
+	"github.com/trufnetwork/node/infra/lib/domain_utils"
+	kwil_gateway "github.com/trufnetwork/node/infra/lib/kwil-gateway"
+	kwil_indexer_instance "github.com/trufnetwork/node/infra/lib/kwil-indexer"
+	system_contract "github.com/trufnetwork/node/infra/lib/system-contract"
+	"github.com/trufnetwork/node/infra/lib/tsn"
+	"github.com/trufnetwork/node/infra/lib/tsn/cluster"
+	"github.com/trufnetwork/node/infra/lib/utils"
 )
 
 type TsnStackProps struct {

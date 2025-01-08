@@ -9,10 +9,10 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
-	"github.com/truflation/tsn-db/infra/config"
-	kwil_gateway "github.com/truflation/tsn-db/infra/lib/kwil-gateway"
-	kwil_indexer_instance "github.com/truflation/tsn-db/infra/lib/kwil-indexer"
-	"github.com/truflation/tsn-db/infra/lib/tsn/cluster"
+	"github.com/trufnetwork/node/infra/config"
+	kwil_gateway "github.com/trufnetwork/node/infra/lib/kwil-gateway"
+	kwil_indexer_instance "github.com/trufnetwork/node/infra/lib/kwil-indexer"
+	"github.com/trufnetwork/node/infra/lib/tsn/cluster"
 )
 
 type AttachObservabilityInput struct {

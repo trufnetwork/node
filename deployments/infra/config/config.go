@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
-	"github.com/truflation/tsn-db/infra/lib/domain_utils"
+	"github.com/trufnetwork/node/infra/lib/domain_utils"
 	"go.uber.org/zap"
 	"strconv"
 )

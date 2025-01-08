@@ -10,8 +10,8 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
-	"github.com/truflation/tsn-db/infra/config"
-	"github.com/truflation/tsn-db/infra/lib/kwil-network/peer"
+	"github.com/trufnetwork/node/infra/config"
+	"github.com/trufnetwork/node/infra/lib/kwil-network/peer"
 )
 
 type GeneratePeerConfigInput struct {

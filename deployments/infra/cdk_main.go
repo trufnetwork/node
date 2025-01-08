@@ -3,10 +3,10 @@ package main
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/jsii-runtime-go"
-	"github.com/truflation/tsn-db/infra/config"
-	"github.com/truflation/tsn-db/infra/lib/utils"
-	"github.com/truflation/tsn-db/infra/stacks"
-	"github.com/truflation/tsn-db/infra/stacks/benchmark"
+	"github.com/trufnetwork/node/infra/config"
+	"github.com/trufnetwork/node/infra/lib/utils"
+	"github.com/trufnetwork/node/infra/stacks"
+	"github.com/trufnetwork/node/infra/stacks/benchmark"
 	"go.uber.org/zap"
 )
 

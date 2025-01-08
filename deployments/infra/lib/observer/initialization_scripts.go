@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/aws/jsii-runtime-go"
-	"github.com/truflation/tsn-db/infra/lib/utils"
+	"github.com/trufnetwork/node/infra/lib/utils"
 )
 
 type ObserverScriptInput struct {

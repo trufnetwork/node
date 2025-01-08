@@ -3,8 +3,8 @@ package cluster
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/jsii-runtime-go"
-	kwil_network "github.com/truflation/tsn-db/infra/lib/kwil-network"
-	"github.com/truflation/tsn-db/infra/lib/utils"
+	kwil_network "github.com/trufnetwork/node/infra/lib/kwil-network"
+	"github.com/trufnetwork/node/infra/lib/utils"
 )
 
 type AutoTsnClusterProvider struct {
