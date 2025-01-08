@@ -11,7 +11,8 @@ type (
 	BenchmarkCase struct {
 		QtyStreams      int
 		BranchingFactor int
-		Days            []int
+		DataPointsSet   []int
+		UnixOnly        bool
 		Visibility      util.VisibilityEnum
 		Samples         int
 		Procedures      []ProcedureEnum
@@ -21,7 +22,7 @@ type (
 		MaxDepth      int
 		MemoryUsage   uint64
 		Procedure     ProcedureEnum
-		DaysQueried   int
+		DataPoints    int
 		CaseDurations []time.Duration
 	}
 )

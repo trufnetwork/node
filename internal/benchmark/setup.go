@@ -27,7 +27,6 @@ import (
 type SetupSchemasInput struct {
 	BenchmarkCase BenchmarkCase
 	Tree          trees.Tree
-	UnixOnly      bool
 }
 
 // Schema setup functions
@@ -60,13 +59,13 @@ func setupSchemas(
 				var schema *kwiltypes.Schema
 				var err error
 				if node.IsLeaf {
-					if input.UnixOnly {
+					if input.BenchmarkCase.UnixOnly {
 						schema, err = parse.Parse(contracts.PrimitiveStreamUnixContent)
 					} else {
 						schema, err = parse.Parse(contracts.PrimitiveStreamContent)
 					}
 				} else {
-					if input.UnixOnly {
+					if input.BenchmarkCase.UnixOnly {
 						schema, err = parse.Parse(contracts.ComposedStreamUnixContent)
 					} else {
 						schema, err = parse.Parse(contracts.ComposedStreamContent)
@@ -96,11 +95,11 @@ func setupSchemas(
 			}
 
 			if err := setupSchema(grpCtx, platform, schema.Schema, setupSchemaInput{
-				visibility: input.BenchmarkCase.Visibility,
-				treeNode:   schema.Node,
-				days:       380,
-				owner:      deployerAddress,
-				unixOnly:   input.UnixOnly,
+				visibility:  input.BenchmarkCase.Visibility,
+				treeNode:    schema.Node,
+				rangeParams: getMaxRangeParams(input.BenchmarkCase.DataPointsSet, input.BenchmarkCase.UnixOnly),
+				owner:       deployerAddress,
+				unixOnly:    input.BenchmarkCase.UnixOnly,
 			}); err != nil {
 				return errors.Wrap(err, "failed to setup schema")
 			}
@@ -151,11 +150,11 @@ func createAndInitializeSchema(ctx context.Context, platform *kwilTesting.Platfo
 }
 
 type setupSchemaInput struct {
-	visibility util.VisibilityEnum
-	days       int
-	owner      util.EthereumAddress
-	treeNode   trees.TreeNode
-	unixOnly   bool
+	visibility  util.VisibilityEnum
+	owner       util.EthereumAddress
+	treeNode    trees.TreeNode
+	rangeParams RangeParameters
+	unixOnly    bool
 }
 
 func setupSchema(ctx context.Context, platform *kwilTesting.Platform, schema *kwiltypes.Schema, input setupSchemaInput) error {
@@ -169,7 +168,7 @@ func setupSchema(ctx context.Context, platform *kwilTesting.Platform, schema *kw
 
 	// if it's a leaf, then it's a primitive stream
 	if input.treeNode.IsLeaf {
-		if err := insertRecordsForPrimitive(ctx, platform, dbid, input.days+1, input.unixOnly); err != nil {
+		if err := insertRecordsForPrimitive(ctx, platform, dbid, input.rangeParams, input.unixOnly); err != nil {
 			return errors.Wrap(err, "failed to insert records for primitive")
 		}
 	} else {
@@ -303,9 +302,8 @@ func batchInsertMetadata(ctx context.Context, platform *kwilTesting.Platform, db
 // - it generates a random value for each record
 // - it inserts the records into the stream
 // - we use a bulk insert to speed up the process
-func insertRecordsForPrimitive(ctx context.Context, platform *kwilTesting.Platform, dbid string, days int, unixOnly bool) error {
-	fromDate := fixedDate.AddDate(0, 0, -days)
-	records := generateRecords(fromDate, fixedDate, unixOnly)
+func insertRecordsForPrimitive(ctx context.Context, platform *kwilTesting.Platform, dbid string, rangeParams RangeParameters, unixOnly bool) error {
+	records := generateRecords(rangeParams, unixOnly)
 
 	// Prepare the SQL statement for bulk insert
 	sqlStmt := "INSERT INTO primitive_events (date_value, value, created_at) VALUES "
@@ -338,6 +336,12 @@ func insertRecordsForPrimitive(ctx context.Context, platform *kwilTesting.Platfo
 	return nil
 }
 
+type RangeParameters struct {
+	DataPoints int
+	FromDate   time.Time
+	ToDate     time.Time
+}
+
 // setTaxonomyForComposed sets the taxonomy for a composed stream.
 // - it creates a new taxonomy item for each child stream
 func setTaxonomyForComposed(ctx context.Context, platform *kwilTesting.Platform, dbid string, input setupSchemaInput) error {
@@ -365,10 +369,11 @@ func setTaxonomyForComposed(ctx context.Context, platform *kwilTesting.Platform,
 		streamIdsArg = append(streamIdsArg, t.ChildStream.StreamId.String())
 		weightsArg = append(weightsArg, int(t.Weight))
 	}
+
 	if input.unixOnly {
-		startDateArg = strconv.Itoa(int(randDate(fixedDate.AddDate(0, 0, -input.days), fixedDate).Unix()))
+		startDateArg = strconv.Itoa(int(input.rangeParams.FromDate.Unix()))
 	} else {
-		startDateArg = randDate(fixedDate.AddDate(0, 0, -input.days), fixedDate).Format(time.DateOnly)
+		startDateArg = input.rangeParams.FromDate.Format(time.DateOnly)
 	}
 
 	return executeStreamProcedure(ctx, platform, dbid, "set_taxonomy",

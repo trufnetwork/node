@@ -3,10 +3,11 @@ package benchmark
 import (
 	"context"
 	"fmt"
-	benchutil "github.com/trufnetwork/node/internal/benchmark/util"
 	"log"
 	"os"
 	"time"
+
+	benchutil "github.com/trufnetwork/node/internal/benchmark/util"
 
 	"github.com/kwilteam/kwil-db/core/utils"
 	"github.com/pkg/errors"
@@ -16,27 +17,25 @@ import (
 	"github.com/trufnetwork/sdk-go/core/util"
 )
 
-func runBenchmark(ctx context.Context, platform *kwilTesting.Platform, c BenchmarkCase, tree trees.Tree, unixOnly bool) ([]Result, error) {
+func runBenchmark(ctx context.Context, platform *kwilTesting.Platform, c BenchmarkCase, tree trees.Tree) ([]Result, error) {
 	var results []Result
 
 	err := setupSchemas(ctx, platform, SetupSchemasInput{
 		BenchmarkCase: c,
 		Tree:          tree,
-		UnixOnly:      unixOnly,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to setup schemas")
 	}
 
-	for _, day := range c.Days {
+	for _, dataPoints := range c.DataPointsSet {
 		for _, procedure := range c.Procedures {
 			result, err := runSingleTest(ctx, RunSingleTestInput{
-				Platform:  platform,
-				Case:      c,
-				Days:      day,
-				Procedure: procedure,
-				Tree:      tree,
-				UnixOnly:  unixOnly,
+				Platform:   platform,
+				Case:       c,
+				DataPoints: dataPoints,
+				Procedure:  procedure,
+				Tree:       tree,
 			})
 			if err != nil {
 				return nil, errors.Wrap(err, "failed to run single test")
@@ -49,29 +48,29 @@ func runBenchmark(ctx context.Context, platform *kwilTesting.Platform, c Benchma
 }
 
 type RunSingleTestInput struct {
-	Platform  *kwilTesting.Platform
-	Case      BenchmarkCase
-	Days      int
-	Procedure ProcedureEnum
-	Tree      trees.Tree
-	UnixOnly  bool
+	Platform   *kwilTesting.Platform
+	Case       BenchmarkCase
+	DataPoints int
+	Procedure  ProcedureEnum
+	Tree       trees.Tree
 }
 
 // runSingleTest runs a single test for the given input and returns the result.
 func runSingleTest(ctx context.Context, input RunSingleTestInput) (Result, error) {
 	// we're querying the index-0 stream because this is the root stream
 	nthDbId := utils.GenerateDBID(getStreamId(0).String(), input.Platform.Deployer)
-	fromDate := fixedDate.AddDate(0, 0, -input.Days).Format("2006-01-02")
-	toDate := fixedDate.Format("2006-01-02")
-	if input.UnixOnly {
-		fromDate = fmt.Sprintf("%d", fixedDate.AddDate(0, 0, -input.Days).Unix())
-		toDate = fmt.Sprintf("%d", fixedDate.Unix())
+	rangeParams := getRangeParameters(input.DataPoints, input.Case.UnixOnly)
+	fromDate := rangeParams.FromDate.Format("2006-01-02")
+	toDate := rangeParams.ToDate.Format("2006-01-02")
+	if input.Case.UnixOnly {
+		fromDate = fmt.Sprintf("%d", rangeParams.FromDate.Unix())
+		toDate = fmt.Sprintf("%d", rangeParams.ToDate.Unix())
 	}
 
 	result := Result{
 		Case:          input.Case,
 		Procedure:     input.Procedure,
-		DaysQueried:   input.Days,
+		DataPoints:    input.DataPoints,
 		MaxDepth:      input.Tree.MaxDepth,
 		CaseDurations: make([]time.Duration, input.Case.Samples),
 	}
@@ -129,12 +128,12 @@ type RunBenchmarkInput struct {
 	ResultPath string
 	Visibility util.VisibilityEnum
 	QtyStreams int
-	Days       []int
+	DataPoints []int
 	Samples    int
 }
 
 // it returns a result channel to be accumulated by the caller
-func getBenchmarFn(benchmarkCase BenchmarkCase, resultCh *chan []Result, unixOnly bool) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func getBenchmarkFn(benchmarkCase BenchmarkCase, resultCh *chan []Result) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		log.Println("running benchmark", benchmarkCase)
 		platform.Deployer = deployer.Bytes()
@@ -149,7 +148,7 @@ func getBenchmarFn(benchmarkCase BenchmarkCase, resultCh *chan []Result, unixOnl
 			return fmt.Errorf("tree max depth (%d) is greater than max depth (%d)", tree.MaxDepth, maxDepth)
 		}
 
-		results, err := runBenchmark(ctx, platform, benchmarkCase, tree, unixOnly)
+		results, err := runBenchmark(ctx, platform, benchmarkCase, tree)
 		if err != nil {
 			return errors.Wrap(err, "failed to run benchmark")
 		}

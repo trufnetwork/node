@@ -10,14 +10,14 @@ import (
 
 func TestSaveAsMarkdown(t *testing.T) {
 	testData := []SavedResults{
-		{Procedure: "Test1", BranchingFactor: 1, QtyStreams: 1, DurationMs: 100, Visibility: "Public", Samples: 10, Days: 7},
-		{Procedure: "Test1", BranchingFactor: 1, QtyStreams: 2, DurationMs: 100, Visibility: "Public", Samples: 10, Days: 7},
-		{Procedure: "Test1", BranchingFactor: 1, QtyStreams: 3, DurationMs: 100, Visibility: "Public", Samples: 10, Days: 7},
-		{Procedure: "Test2", BranchingFactor: 1, QtyStreams: 100, DurationMs: 150, Visibility: "Private", Samples: 10, Days: 365},
-		{Procedure: "Test1", BranchingFactor: 2, QtyStreams: 10, DurationMs: 200, Visibility: "Public", Samples: 10, Days: 1},
-		{Procedure: "Test1", BranchingFactor: 2, QtyStreams: 10, DurationMs: 300, Visibility: "Public", Samples: 10, Days: 7},
-		{Procedure: "Test2", BranchingFactor: 2, QtyStreams: 10, DurationMs: 250, Visibility: "Private", Samples: 10, Days: 365},
-		{Procedure: "Test2", BranchingFactor: 2, QtyStreams: 100, DurationMs: 350, Visibility: "Private", Samples: 10, Days: 365},
+		{Procedure: "Test1", BranchingFactor: 1, QtyStreams: 1, DataPoints: 100, DurationMs: 100, Visibility: "Public", Samples: 10, UnixOnly: false},
+		{Procedure: "Test1", BranchingFactor: 1, QtyStreams: 2, DataPoints: 100, DurationMs: 100, Visibility: "Public", Samples: 10, UnixOnly: false},
+		{Procedure: "Test1", BranchingFactor: 1, QtyStreams: 3, DataPoints: 100, DurationMs: 100, Visibility: "Public", Samples: 10, UnixOnly: false},
+		{Procedure: "Test2", BranchingFactor: 1, QtyStreams: 100, DataPoints: 150, DurationMs: 150, Visibility: "Private", Samples: 10, UnixOnly: false},
+		{Procedure: "Test1", BranchingFactor: 2, QtyStreams: 10, DataPoints: 200, DurationMs: 200, Visibility: "Public", Samples: 10, UnixOnly: false},
+		{Procedure: "Test1", BranchingFactor: 2, QtyStreams: 10, DataPoints: 300, DurationMs: 300, Visibility: "Public", Samples: 10, UnixOnly: false},
+		{Procedure: "Test2", BranchingFactor: 2, QtyStreams: 10, DataPoints: 250, DurationMs: 250, Visibility: "Private", Samples: 10, UnixOnly: false},
+		{Procedure: "Test2", BranchingFactor: 2, QtyStreams: 100, DataPoints: 350, DurationMs: 350, Visibility: "Private", Samples: 10, UnixOnly: false},
 	}
 
 	tempFile, err := os.CreateTemp("", "test_markdown_*.md")
@@ -40,7 +40,7 @@ func TestSaveAsMarkdown(t *testing.T) {
 
 	expectedContent := `Date: 2023-04-15 12:00:00
 
-## Dates x Qty Streams
+## Data points / Qty streams
 
 Samples per query: 10
 Results in milliseconds
@@ -49,41 +49,55 @@ Results in milliseconds
 
 #### Branching Factor: 1
 
-TestInstance - Test1 - Public 
+TestInstance - Test1 - Public
 
-| queried days / qty streams | 1   | 2   | 3   |
-| -------------------------- | --- | --- | --- |
-| 7                          | 100 | 100 | 100 |
+**UnixOnly = false**
+
+| Data points / Qty streams | 1   | 2   | 3   |
+| ------------------------- | --- | --- | --- |
+| 100                       | 100 | 100 | 100 |
 
 
 
-TestInstance - Test2 - Private 
 
-| queried days / qty streams | 100 |
-| -------------------------- | --- |
-| 365                        | 150 |
+TestInstance - Test2 - Private
+
+**UnixOnly = false**
+
+| Data points / Qty streams | 100 |
+| ------------------------- | --- |
+| 150                       | 150 |
+
 
 
 
 #### Branching Factor: 2
 
-TestInstance - Test1 - Public 
+TestInstance - Test1 - Public
 
-| queried days / qty streams | 10  |
-| -------------------------- | --- |
-| 1                          | 200 |
-| 7                          | 300 |
+**UnixOnly = false**
+
+| Data points / Qty streams | 10  |
+| ------------------------- | --- |
+| 200                       | 200 |
+| 300                       | 300 |
 
 
 
-TestInstance - Test2 - Private 
 
-| queried days / qty streams | 10  | 100 |
-| -------------------------- | --- | --- |
-| 365                        | 250 | 350 |
+TestInstance - Test2 - Private
+
+**UnixOnly = false**
+
+| Data points / Qty streams | 10  | 100 |
+| ------------------------- | --- | --- |
+| 250                       | 250 | -   |
+| 350                       | -   | 350 |
+
 
 
 
 `
+
 	assert.Equal(t, expectedContent, string(content))
 }

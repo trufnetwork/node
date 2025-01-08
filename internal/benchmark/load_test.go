@@ -15,6 +15,10 @@ import (
 	"github.com/trufnetwork/sdk-go/core/util"
 )
 
+// -----------------------------------------------------------------------------
+// Main benchmark test function
+// -----------------------------------------------------------------------------
+
 // Main benchmark test function
 func TestBench(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -51,12 +55,39 @@ func TestBench(t *testing.T) {
 
 	// -- Setup Test Parameters --
 
+	// Common parameters
+	// number of samples to run for each test
+	samples := 1
+	// visibilities to test
+	visibilities := []util.VisibilityEnum{
+		util.PublicVisibility,
+		// util.PrivateVisibility,
+	}
+
+	// Specific Parameters
+
+	type SpecificParams struct {
+		ShapePairs [][]int
+		DataPoints []int
+		UnixOnly   bool
+	}
+
+	// Date Parameters
+
+	// number of days to query
+	dateDataPoints := []int{
+		1,
+		7,
+		30,
+		365,
+	}
+
 	// shapePairs is a list of tuples, where each tuple represents a pair of qtyStreams and branchingFactor
 	// qtyStreams is the number of streams in the tree
 	// branchingFactor is the branching factor of the tree
 	// if branchingFactor is math.MaxInt, it means the tree is flat
 
-	shapePairs := [][]int{
+	dateShapePairs := [][]int{
 		// qtyStreams, branchingFactor
 		// testing 1 stream only
 		{1, 1},
@@ -90,34 +121,85 @@ func TestBench(t *testing.T) {
 		{200, 32},
 	}
 
-	samples := 3
+	dateSpecificParams := SpecificParams{
+		ShapePairs: dateShapePairs,
+		DataPoints: dateDataPoints,
+		UnixOnly:   false,
+	}
 
-	days := []int{1, 7, 30, 365}
+	// Unix Only Parameters
 
-	visibilities := []util.VisibilityEnum{util.PublicVisibility, util.PrivateVisibility}
+	unixOnlyShapePairs := [][]int{
+		// single stream
+		{1, 1},
+		// the effect of adding 1 composed stream
+		{2, 1},
+		// flat trees
+		{10, math.MaxInt},
+		{20, math.MaxInt},
+		{30, math.MaxInt},
+		// {100, math.MaxInt}, // to much to test
+		// {200, math.MaxInt},
+		// {400, math.MaxInt},
+	}
+
+	getRecordsInAMonthWithInterval := func(interval time.Duration) int {
+		return int(time.Hour * 24 * 30 / interval)
+	}
+
+	unixOnlyDataPoints := []int{
+		// sanity check
+		// 1,
+		// data points on one month:
+		// 1 record per 5 seconds
+		// getRecordsInAMonthWithInterval(time.Second * 5),
+		// 1 record per 1 minute
+		// getRecordsInAMonthWithInterval(time.Minute),
+		// 1 record per 5 minutes
+		getRecordsInAMonthWithInterval(time.Minute * 5),
+		// 1 record per 1 hour
+		getRecordsInAMonthWithInterval(time.Hour),
+	}
+
+	unixOnlySpecificParams := SpecificParams{
+		ShapePairs: unixOnlyShapePairs,
+		DataPoints: unixOnlyDataPoints,
+		UnixOnly:   true,
+	}
+
+	// -----
+
+	_ = dateSpecificParams
+	allParams := []SpecificParams{
+		// dateSpecificParams,
+		unixOnlySpecificParams,
+	}
 
 	var functionTests []kwilTesting.TestFunc
 	// a channel to receive results from the tests
 	var resultsCh chan []Result
 
 	// create combinations of shapePairs and visibilities
-	for _, qtyStreams := range shapePairs {
-		for _, visibility := range visibilities {
-			functionTests = append(functionTests, getBenchmarFn(BenchmarkCase{
-				Visibility:      visibility,
-				QtyStreams:      qtyStreams[0],
-				BranchingFactor: qtyStreams[1],
-				Samples:         samples,
-				Days:            days,
-				Procedures: []ProcedureEnum{
-					ProcedureGetRecord,
-					ProcedureGetIndex,
-					ProcedureGetChangeIndex,
-					ProcedureGetFirstRecord,
+	for _, specificParams := range allParams {
+		for _, shapePair := range specificParams.ShapePairs {
+			for _, visibility := range visibilities {
+				functionTests = append(functionTests, getBenchmarkFn(BenchmarkCase{
+					Visibility:      visibility,
+					QtyStreams:      shapePair[0],
+					BranchingFactor: shapePair[1],
+					Samples:         samples,
+					DataPointsSet:   specificParams.DataPoints,
+					UnixOnly:        specificParams.UnixOnly,
+					Procedures: []ProcedureEnum{
+						// ProcedureGetRecord,
+						ProcedureGetIndex,
+						// ProcedureGetChangeIndex,
+						// ProcedureGetFirstRecord,
+					},
 				},
-			},
-				// use pointer, so we can reassign the results channel
-				&resultsCh, false))
+					// use pointer, so we can reassign the results channel
+					&resultsCh))
+			}
 		}
 	}
 

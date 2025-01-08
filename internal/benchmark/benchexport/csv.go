@@ -14,10 +14,11 @@ type SavedResults struct {
 	Procedure       string `json:"procedure"`
 	BranchingFactor int    `json:"branching_factor"`
 	QtyStreams      int    `json:"qty_streams"`
-	Days            int    `json:"days"`
+	DataPoints      int    `json:"data_points"`
 	DurationMs      int64  `json:"duration_ms"`
 	Visibility      string `json:"visibility"`
 	Samples         int    `json:"samples"`
+	UnixOnly        bool   `json:"unix_only"`
 }
 
 // SaveOrAppendToCSV saves a slice of any struct type to a CSV file, using JSON tags for headers.
