@@ -184,7 +184,6 @@ procedure get_record_filled($date_from int, $date_to int, $frozen_at int) privat
     }
 
     $unemitted_taxonomies_for_date int[] := $base_taxonomy_list;
-    $removed_elements_count int := 0;
     $prev_date int := 0;
     $current_date int := 0;
 
@@ -204,37 +203,33 @@ procedure get_record_filled($date_from int, $date_to int, $frozen_at int) privat
         if $current_date != $prev_date {
             if $prev_date != 0 {
                 for $unemitted_taxonomy in $unemitted_taxonomies_for_date {
-                    // TODO: remove this when we have slices or include if we have just index assignment
-                    // if $unemitted_taxonomy is distinct from null {
-
-                    if $last_values[$unemitted_taxonomy] is distinct from null {
-                        // Use the stored dynamic weight from the previous date
-                        $dynamic_weight_prev := get_dynamic_weight($child_stream_id[$unemitted_taxonomy], $prev_date);
-                        return next $prev_date, $last_values[$unemitted_taxonomy] * $dynamic_weight_prev, $dynamic_weight_prev;
+                    // TODO: remove this when we have slices
+                    if $unemitted_taxonomy is distinct from null {
+                        if $last_values[$unemitted_taxonomy] is distinct from null {
+                            // Use the stored dynamic weight from the previous date
+                            $dynamic_weight_prev := get_dynamic_weight($child_stream_id[$unemitted_taxonomy], $prev_date);
+                            return next $prev_date, $last_values[$unemitted_taxonomy] * $dynamic_weight_prev, $dynamic_weight_prev;
+                        }
                     }
                 }
                 // Clear unemitted taxonomies for the new date
                 $unemitted_taxonomies_for_date := $base_taxonomy_list;
-                $removed_elements_count := 0;
             }
         }
 
-        // TODO: uncomment when we have index assignment
-        // $last_values[$row_raw.taxonomy_index] := $row_raw.value;
-
         // Update the last values for the current date
-        $last_values := array_update_element($last_values, $row_raw.taxonomy_index, $row_raw.value);
+        $last_values[$row_raw.taxonomy_index] := $row_raw.value;
 
         // Emit current value with the dynamic weight
         return next $current_date, $row_raw.value * $dynamic_weight, $dynamic_weight;
 
         // Remove emitted taxonomy from the unemitted list
         // we need to subtract the removed_elements_count because the array is shrinking
-        // TODO: we can improve it when we either can remove elements, or with array element assignment
-        $unemitted_taxonomies_for_date := remove_array_element($unemitted_taxonomies_for_date, $row_raw.taxonomy_index - $removed_elements_count);
-        $removed_elements_count := $removed_elements_count + 1;
+        // TODO: we can improve it when we can remove elements
+        // $unemitted_taxonomies_for_date := remove_array_element($unemitted_taxonomies_for_date, $row_raw.taxonomy_index - $removed_elements_count);
+        // TODO: we're making the elements null for now
         // remove elements is not performant without slices. Then let's make the elements null for now
-        // $unemitted_taxonomies_for_date[$row_raw.taxonomy_index] := null;
+        $unemitted_taxonomies_for_date[$row_raw.taxonomy_index] := null;
 
         $prev_date := $current_date;
     }
@@ -243,10 +238,13 @@ procedure get_record_filled($date_from int, $date_to int, $frozen_at int) privat
     if $prev_date != 0 {
         if $taxonomy_count > 0 {
             for $unemitted_taxonomy2 in $unemitted_taxonomies_for_date {
-                if $last_values[$unemitted_taxonomy2] is distinct from null {
-                    // Fetch the correct dynamic weight for the last date
-                    $dynamic_weight_last := get_dynamic_weight($child_stream_id[$unemitted_taxonomy2], $prev_date);
-                    return next $prev_date, $last_values[$unemitted_taxonomy2] * $dynamic_weight_last, $dynamic_weight_last;
+                // TODO: remove this when we have slices
+                if $unemitted_taxonomy2 is distinct from null {
+                    if $last_values[$unemitted_taxonomy2] is distinct from null {
+                        // Fetch the correct dynamic weight for the last date
+                        $dynamic_weight_last := get_dynamic_weight($child_stream_id[$unemitted_taxonomy2], $prev_date);
+                        return next $prev_date, $last_values[$unemitted_taxonomy2] * $dynamic_weight_last, $dynamic_weight_last;
+                    }
                 }
             }
         }
@@ -281,7 +279,6 @@ procedure get_index_filled($date_from int, $date_to int, $frozen_at int, $base_d
     }
 
     $unemitted_taxonomies_for_date int[] := $base_taxonomy_list;
-    $removed_elements_count int := 0;
     $prev_date int := 0;
     $current_date int := 0;
 
@@ -300,37 +297,33 @@ procedure get_index_filled($date_from int, $date_to int, $frozen_at int, $base_d
         if $current_date != $prev_date {
             if $prev_date != 0 {
                 for $unemitted_taxonomy in $unemitted_taxonomies_for_date {
-                    if $last_values[$unemitted_taxonomy] is distinct from null {
-                        // TODO: remove this when we have slices or include if we have just index assignment
-                        // if $unemitted_taxonomy is distinct from null {
-
-                        // Use the stored dynamic weight from the previous date
-                        $dynamic_weight_prev := get_dynamic_weight($child_stream_id[$unemitted_taxonomy], $prev_date);
-                        return next $prev_date, $last_values[$unemitted_taxonomy] * $dynamic_weight_prev, $dynamic_weight_prev;
+                    // TODO: remove this when we have slices
+                    if $unemitted_taxonomy is distinct from null {
+                        if $last_values[$unemitted_taxonomy] is distinct from null {
+                            // Use the stored dynamic weight from the previous date
+                            $dynamic_weight_prev := get_dynamic_weight($child_stream_id[$unemitted_taxonomy], $prev_date);
+                            return next $prev_date, $last_values[$unemitted_taxonomy] * $dynamic_weight_prev, $dynamic_weight_prev;
+                        }
                     }
                 }
             }
             // Clear unemitted taxonomies for the new date
             $unemitted_taxonomies_for_date := $base_taxonomy_list;
-            $removed_elements_count := 0;
         }
 
-        // TODO: uncomment when we have index assignment
-        // $last_values[$row_raw.taxonomy_index] := $row_raw.value;
-
         // Update the last values for the current date
-        $last_values := array_update_element($last_values, $row_raw.taxonomy_index, $row_raw.value);
+        $last_values[$row_raw.taxonomy_index] := $row_raw.value;
 
-        // Emit the current value with the dynamic weight
+        // Emit current value with the dynamic weight
         return next $current_date, $row_raw.value * $dynamic_weight, $dynamic_weight;
 
         // Remove emitted taxonomy from the unemitted list
-        // TODO: we can improve it when we either can remove elements, or with array element assignment
-        $unemitted_taxonomies_for_date := remove_array_element($unemitted_taxonomies_for_date, $row_raw.taxonomy_index - $removed_elements_count);
-        $removed_elements_count := $removed_elements_count + 1;
-
+        // we need to subtract the removed_elements_count because the array is shrinking
+        // TODO: we can improve it when we can remove elements
+        // $unemitted_taxonomies_for_date := remove_array_element($unemitted_taxonomies_for_date, $row_raw.taxonomy_index - $removed_elements_count);
+        // TODO: we're making the elements null for now
         // remove elements is not performant without slices. Then let's make the elements null for now
-        // $unemitted_taxonomies_for_date[$row_raw.taxonomy_index] := null;
+        $unemitted_taxonomies_for_date[$row_raw.taxonomy_index] := null;
 
         $prev_date := $current_date;
     }
@@ -339,10 +332,13 @@ procedure get_index_filled($date_from int, $date_to int, $frozen_at int, $base_d
     if $prev_date != 0 {
         if $taxonomy_count > 0 {
             for $unemitted_taxonomy2 in $unemitted_taxonomies_for_date {
-                if $last_values[$unemitted_taxonomy2] is distinct from null {
-                    // Fetch the correct dynamic weight for the last date
-                    $dynamic_weight_last := get_dynamic_weight($child_stream_id[$unemitted_taxonomy2], $prev_date);
-                    return next $prev_date, $last_values[$unemitted_taxonomy2] * $dynamic_weight_last, $dynamic_weight_last;
+                // TODO: remove this when we have slices
+                if $unemitted_taxonomy2 is distinct from null {
+                    if $last_values[$unemitted_taxonomy2] is distinct from null {
+                        // Fetch the correct dynamic weight for the last date
+                        $dynamic_weight_last := get_dynamic_weight($child_stream_id[$unemitted_taxonomy2], $prev_date);
+                        return next $prev_date, $last_values[$unemitted_taxonomy2] * $dynamic_weight_last, $dynamic_weight_last;
+                    }
                 }
             }
         }
@@ -1053,31 +1049,6 @@ procedure emit_values_if($condition bool, $date_value int, $values decimal(36,18
     }
 }
 
-
-procedure remove_array_element($array int[], $index int) private view returns (result int[]) {
-    // todo: this is too inefficient.
-    // we should use slices (i.e. arr[1:3]) when supported
-    $new_array int[];
-    for $i in 1..array_length($array) {
-        if $i != $index {
-            $new_array := array_append($new_array, $array[$i]);
-        }
-    }
-
-    return $new_array;
-}
-
-procedure array_update_element($array decimal(36,18)[], $index int, $value decimal(36,18)) private view returns (result decimal(36,18)[]) {
-    $new_array decimal(36,18)[];
-    for $i in 1..array_length($array) {
-        if $i == $index {
-            $new_array := array_append($new_array, $value);
-        } else {
-            $new_array := array_append($new_array, $array[$i]);
-        }
-    }
-    return $new_array;
-}
 
 // Returns the weight based on the closest start_date before or equal to the given date
 procedure get_dynamic_weight($stream_id text, $date_value int) private view returns (
