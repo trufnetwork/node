@@ -32,8 +32,8 @@ This document is a reference for the terminology used in the TN project. It is i
 - TN GOVERNANCE: The entity or group responsible for approving streams and managing the System Contract.
 - SAFE READ: A query made through the System Contract that only returns data from official streams.
 - UNSAFE READ: A query made through the System Contract that can return data from any stream, official or unofficial.
-- STREAM DEPLOYER: 
-- STREAM OWNER: 
+- STREAM DEPLOYER: Entity (defined by a wallet address) that deploys Data Contracts (Primitive and Composed) on the TN.
+- STREAM OWNER: A wallet address that owns a Data Contract (Primitive or Composed). The owner does not necessarily deploy the stream but can create Composed Stream using Data Contracts deployed by other wallets.
 - STREAM READER: A wallet address with permission to read data from a stream. For public streams, any address can be a reader. For private streams, the address must be whitelisted.
 - STREAM WRITER: A wallet address with permission to write data to a stream. Must be whitelisted by a stream owner to have write access.
 - STREAM VISIBILITY: Access control setting that determines data read permissions:
