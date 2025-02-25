@@ -1,6 +1,6 @@
 services:
   kwil-postgres:
-    image: "kwildb/postgres:latest"
+    image: "kwildb/postgres:16.8-1"
     hostname: kwil-postgres
     shm_size: 2G
     restart: unless-stopped
