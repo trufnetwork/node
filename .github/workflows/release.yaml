@@ -5,6 +5,13 @@ on:
   release:
     types: [published, edited]
 
+# Add permissions for the GITHUB_TOKEN
+permissions:
+  contents: write
+  packages: read
+  # This is required for creating and modifying releases
+  id-token: write
+
 jobs:
   build-release:
     name: Build & release
@@ -61,3 +68,4 @@ jobs:
             ./.build/tsn_${{ env.VERSION }}_darwin_arm64.tar.gz
             ./.build/tsn_${{ env.VERSION }}_linux_amd64.tar.gz
             ./.build/tsn_${{ env.VERSION }}_linux_arm64.tar.gz
+          token: ${{ secrets.GITHUB_TOKEN }}
