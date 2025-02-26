@@ -4,8 +4,9 @@
 # https://docs.kwil.com/docs/daemon/config/settings#config-override
 # remember: flags > env variables > config.toml > defaults
 
-# TODO: remove the --autogen flag when we can generate the proper config.toml file
-# TODO: see tsn-config.dockerfile comments for more information
-exec /app/kwild start --autogen --root $CONFIG_PATH \
+# Run the configuration script
+/app/config.sh
+
+exec /app/kwild start --root $CONFIG_PATH \
        --db.read-timeout "60s"\
        --snapshots.enable

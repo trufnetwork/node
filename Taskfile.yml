@@ -64,7 +64,7 @@ tasks:
     deps: [ kwil-binaries ]
     desc: Run docker-compose locally
     cmds:
-      - docker compose up
+      - docker compose up -d
 
   compose-dev:
     desc: Run docker-compose locally with dev configuration, 2 nodes, gateway, and indexer services

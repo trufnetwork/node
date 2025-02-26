@@ -25,31 +25,6 @@ services:
         max-file: "2"
         tag: "{{.Name}}"
 
-  tsn-conf:
-    # this service permits us to use the best approach for configuration:
-    # with target = created, the image will generate a new configuration to be used
-    # with target = external, it will use the context folder as the configuration
-    # at build time it will copy the configuration to the volume
-    build:
-      # EXTERNAL_CONFIG_PATH is the path to the configuration directory
-      # Both EXTERNAL_CONFIG_PATH and CONF_TARGET should be used together for external configuration
-      context: .
-      args:
-        - EXTERNAL_CONFIG_PATH=${EXTERNAL_CONFIG_PATH}
-      dockerfile: ./deployments/tsn-config.dockerfile
-      target: ${CONF_TARGET:-created}
-
-    volumes:
-      - ${TSN_VOLUME:-data-tsn-db}:/root/.kwild
-    networks:
-      - tsn-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "100m"
-        max-file: "2"
-        tag: "{{.Name}}"
-
   tsn-db:
     container_name: tsn-db
     hostname: tsn-db
@@ -63,21 +38,12 @@ services:
         - ${CACHE_FROM:-type=local,src=/tmp/buildx-cache}/tsn-db
       cache_to:
         - ${CACHE_TO:-type=local,dest=/tmp/buildx-cache-new}/tsn-db
+      args:
+        - CHAIN_ID=${CHAIN_ID:-tsn-local}
     environment:
       CONFIG_PATH: /root/.kwild
-      # the hostname of the container. It is used to identify the node in the network
-      # if they live in different hosts, it should be the hostname of the host
-      # app.hostname
-      KWILD_APP_HOSTNAME: ${HOSTNAME:-tsn-db}
       # app.pg-db-host
-      KWILD_APP_PG_DB_HOST: kwil-postgres
-      # comma separated list of peers, used for p2p communication
-      # chain.p2p.persistent-peers
-      KWILD_CHAIN_P2P_PERSISTENT_PEERS: ${PERSISTENT_PEERS}
-      # external address of the node, used for p2p communication
-      #  --chain.p2p.external-address
-      KWILD_CHAIN_P2P_EXTERNAL_ADDRESS: ${EXTERNAL_ADDRESS:-http://tsn-db:26656}
-
+      KWILD_DB_HOST: kwil-postgres
     ports:
       - "50051:50051"
       - "50151:50151"
@@ -88,8 +54,6 @@ services:
     depends_on:
       kwil-postgres:
         condition: service_healthy
-      tsn-conf:
-        condition: service_completed_successfully
     volumes:
       - ${TSN_VOLUME:-data-tsn-db}:/root/.kwild
     networks:
