@@ -9,10 +9,9 @@ import (
 	"go.uber.org/zap"
 	"time"
 
+	clientType "github.com/kwilteam/kwil-db/core/client/types"
 	"github.com/kwilteam/kwil-db/core/crypto"
 	"github.com/kwilteam/kwil-db/core/crypto/auth"
-	clientType "github.com/kwilteam/kwil-db/core/types/client"
-	"github.com/kwilteam/kwil-db/parse"
 )
 
 type InitSystemContractOptions struct {
@@ -26,6 +25,9 @@ type InitSystemContractOptions struct {
 }
 
 func InitSystemContract(ctx context.Context, options InitSystemContractOptions) error {
+	// TODO: Disabled for now for kwil-db v0.10.0 upgrade
+	return nil
+
 	// use ctx to cancel long running operations
 
 	zap.L().Info("Initializing system contract...")
@@ -38,7 +40,7 @@ func InitSystemContract(ctx context.Context, options InitSystemContractOptions) 
 
 	signer := &auth.EthPersonalSigner{Key: *pk}
 
-	var kwilClient clientType.Client
+	var kwilClient *gatewayclient.GatewayClient
 
 	// Make sure the TN is running. We expect to receive pong. On this step, we retry for the max timeout
 	err = backoff.RetryNotify(func() error {
@@ -73,19 +75,19 @@ func InitSystemContract(ctx context.Context, options InitSystemContractOptions) 
 		return errors.Wrap(err, "timed out while waiting for TSN to start")
 	}
 
-	schema, err := parse.Parse([]byte(options.SystemContractContent))
+	//schema, err := parse.Parse([]byte(options.SystemContractContent))
 	if err != nil {
 		return errors.Wrap(err, "failed to parse system contract")
 	}
 
 	zap.L().Info("Deploying system contract...")
 	// Deploy the system contract
-	txHash, err := kwilClient.DeployDatabase(ctx, schema, clientType.WithSyncBroadcast(true))
+	//txHash, err := kwilClient.DeployDatabase(ctx, schema, clientType.WithSyncBroadcast(true))
 	if err != nil {
 		return errors.Wrap(err, "failed to deploy system contract")
 	}
 
-	zap.L().Info("System contract deployed", zap.String("tx_hash", txHash.Hex()))
+	//zap.L().Info("System contract deployed", zap.String("tx_hash", txHash.Hex()))
 
 	return nil
 }

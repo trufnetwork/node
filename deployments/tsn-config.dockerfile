@@ -41,15 +41,15 @@ WORKDIR /app
 RUN test ! -d /root/.kwild
 
 # Copy the kwil-admin binary from the pre-built stage in Dockerfile
-COPY --from=build-kwil /app/.build/kwil-admin /app/kwil-admin
-RUN chmod +x /app/kwil-admin
+COPY --from=build-kwil /app/.build/kwild /app/kwild
+RUN chmod +x /app/kwild
 
 # create entrypoint file
 RUN echo "#!/bin/sh" > /app/entrypoint.sh
 RUN echo "set -e" >> /app/entrypoint.sh
 # should test if the .kwild/private_key is already there, and if not, generate it
 RUN echo "if [ ! -f /root/.kwild/private_key ]; \
- then ./kwil-admin setup init --chain-id $CHAIN_ID -o /root/.kwild;\\" \
+ then ./kwild setup init --chain-id $CHAIN_ID -o /root/.kwild;\\" \
     >> /app/entrypoint.sh
 # else we print a message
 RUN echo "else echo 'Configuration already exists'; fi" >> /app/entrypoint.sh
@@ -57,4 +57,7 @@ RUN echo "else echo 'Configuration already exists'; fi" >> /app/entrypoint.sh
 # make the entrypoint file executable
 RUN chmod +x /app/entrypoint.sh
 
-CMD ["sh", "-c", "/app/entrypoint.sh"]
+# TODO: Disabled for now as kwild from 0.10.0-beta.3 does not have kwild binaries.
+# TODO: Executing it with binaries from 0.10.0-beta.1 will resulting in error that stating we are using older configuration.
+# TODO: Is this a config file from a previous release?
+#CMD ["sh", "-c", "/app/entrypoint.sh"]

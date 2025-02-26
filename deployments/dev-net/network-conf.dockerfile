@@ -16,20 +16,14 @@ FROM busybox:1.35.0-uclibc as busybox
 WORKDIR /app
 
 # mandatory arguments
-ARG CHAIN_ID
-RUN test -n "$CHAIN_ID"
-
 ARG NUMBER_OF_NODES
 RUN test -n "$NUMBER_OF_NODES"
 
 ARG CONFIG_PATH
 RUN test -n "$CONFIG_PATH"
 
-ARG HOSTNAMES
-RUN test -n "$HOSTNAMES"
-
 # Copy the kwil-admin binary from the pre-built stage in Dockerfile
-COPY --from=build-kwil /app/.build/kwil-admin /app/kwil-admin
-RUN chmod +x /app/kwil-admin
+COPY --from=build-kwil /app/.build/kwild /app/kwild
+RUN chmod +x /app/kwild
 
-RUN ./kwil-admin setup testnet -v $NUMBER_OF_NODES --chain-id $CHAIN_ID -o $CONFIG_PATH --hostnames $HOSTNAMES
+RUN ./kwild setup testnet -v $NUMBER_OF_NODES -o $CONFIG_PATH

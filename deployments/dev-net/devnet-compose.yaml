@@ -53,31 +53,32 @@ services:
         max-file: "2"
         tag: "{{.Name}}"
 
-  tsn-conf:
-    container_name: tsn-conf
-    image: "tsn-conf:local"
-    build:
-      context: ../..
-      dockerfile: ./deployments/dev-net/network-conf.dockerfile
-      cache_from:
-        - ${CACHE_FROM:-type=local,src=/tmp/buildx-cache}/generate-kwil-conf
-      cache_to:
-        - ${CACHE_TO:-type=local,dest=/tmp/buildx-cache-new}/generate-kwil-conf
-      args:
-        - CHAIN_ID=${CHAIN_ID:-tsn-local}
-        - NUMBER_OF_NODES=2
-        - CONFIG_PATH=/app/config
-        - HOSTNAMES=tsn-db-1,tsn-db-2
-    volumes:
-      - type: volume
-        source: tsn-conf
-        target: /app/config
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "100m"
-        max-file: "2"
-        tag: "{{.Name}}"
+# TODO: Disabled for now as kwild v0.10.0-beta.3 does not have binaries for admin setup the config.toml file.
+#  tsn-conf:
+#    container_name: tsn-conf
+#    image: "tsn-conf:local"
+#    build:
+#      context: ../..
+#      dockerfile: ./deployments/dev-net/network-conf.dockerfile
+#      cache_from:
+#        - ${CACHE_FROM:-type=local,src=/tmp/buildx-cache}/generate-kwil-conf
+#      cache_to:
+#        - ${CACHE_TO:-type=local,dest=/tmp/buildx-cache-new}/generate-kwil-conf
+#      args:
+#        - CHAIN_ID=${CHAIN_ID:-tsn-local}
+#        - NUMBER_OF_NODES=2
+#        - CONFIG_PATH=/app/config
+#        - HOSTNAMES=tsn-db-1,tsn-db-2
+#    volumes:
+#      - type: volume
+#        source: tsn-conf
+#        target: /app/config
+#    logging:
+#      driver: "json-file"
+#      options:
+#        max-size: "100m"
+#        max-file: "2"
+#        tag: "{{.Name}}"
 
   tsn-db-1:
     container_name: tsn-db-1
@@ -98,8 +99,9 @@ services:
       - "8484:8484"
       - "26657:26657"
     depends_on:
-      tsn-conf:
-        condition: service_completed_successfully
+# TODO: Disabled for now as kwild v0.10.0-beta.3 does not have binaries for admin setup the config.toml file.
+#      tsn-conf:
+#        condition: service_completed_successfully
       kwil-postgres-1:
         condition: service_healthy
     networks:
@@ -134,8 +136,9 @@ services:
       - "8485:8484"
       - "26658:26657"
     depends_on:
-      tsn-conf:
-        condition: service_completed_successfully
+# TODO: Disabled for now as kwild v0.10.0-beta.3 does not have binaries for admin setup the config.toml file.
+#      tsn-conf:
+#        condition: service_completed_successfully
       kwil-postgres-2:
         condition: service_healthy
     networks:

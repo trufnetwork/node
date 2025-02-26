@@ -1,4 +1,4 @@
-package stream_storage_test
+package stream_storage
 
 // Configuration constants
 const (

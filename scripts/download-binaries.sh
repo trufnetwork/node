@@ -30,22 +30,22 @@ download_binaries() {
     fi
 
     # Set the URL for the binary
-    URL="https://github.com/kwilteam/kwil-db/releases/download/v0.9.1/kwil-db_0.9.1_${OS}_${ARCH}.tar.gz"
+    URL="https://github.com/kwilteam/kwil-db/releases/download/v0.10.0-beta-1/kwild_${OS}_${ARCH}.tar.gz"
 
     echo "Detected platform: ${OS}-${ARCH}"
     echo "Downloading binary from $URL..."
 
-    wget -O kwil-db.tar.gz $URL
+    wget -O kwild.tar.gz $URL
 
     if [[ $? -eq 0 ]]; then
         echo "Binary downloaded successfully"
 
-        tar -xzvf kwil-db.tar.gz 'kwil-admin'
+        tar -xzvf kwild.tar.gz './kwild'
         mkdir -p ./.build
-        mv ./kwil-admin .build
+        mv ./kwild .build
         rm ./kwil-db.tar.gz
 
-        chmod +x ./.build/kwil-admin
+        chmod +x ./.build/kwild
     else
         echo "Failed to download binary"
         exit 1

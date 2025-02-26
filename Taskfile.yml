@@ -38,7 +38,12 @@ tasks:
   kwild:
     desc: Run kwild server
     cmds:
-      - .build/kwild --autogen
+      - .build/kwild start --autogen
+
+  kwild-clean:
+    desc: Clean kwild server
+    cmds:
+      - rm -rf ~/.kwild
 
   postgres:
     desc: Run a postgres container

@@ -4,9 +4,8 @@
 # https://docs.kwil.com/docs/daemon/config/settings#config-override
 # remember: flags > env variables > config.toml > defaults
 
-exec /app/kwild --root-dir $CONFIG_PATH \
-       --app.jsonrpc-listen-addr "0.0.0.0:8484"\
-       --app.db-read-timeout "60s"\
-       --app.snapshots.enable\
-       --chain.p2p.listen-addr "tcp://0.0.0.0:26656"\
-       --chain.rpc.listen-addr "tcp://0.0.0.0:26657"
+# TODO: remove the --autogen flag when we can generate the proper config.toml file
+# TODO: see tsn-config.dockerfile comments for more information
+exec /app/kwild start --autogen --root $CONFIG_PATH \
+       --db.read-timeout "60s"\
+       --snapshots.enable
