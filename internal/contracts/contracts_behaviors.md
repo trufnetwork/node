@@ -7,6 +7,8 @@ Currently, our users have a set of expectations on how the streams should behave
 - Data Insertion
 - Composition
 
+This document lists the behaviors that must have automated tests to ensure they are met.
+
 ## Authorization
 
 - Stream ownership is clearly defined and can be transferred to another valid wallet.
