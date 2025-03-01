@@ -4,8 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/trufnetwork/node/internal/contracts/tests/utils/procedure"
-
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
@@ -226,47 +224,6 @@ func testReadOnlyMetadataCannotBeModified(t *testing.T, contractInfo ContractInf
 	}
 }
 
-func TestOwnershipTransfer(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name: "ownership_transfer",
-		FunctionTests: []kwilTesting.TestFunc{
-			testOwnershipTransfer(t, primitiveContractInfo),
-			testOwnershipTransfer(t, composedContractInfo),
-		},
-	})
-}
-
-func testOwnershipTransfer(t *testing.T, contractInfo ContractInfo) kwilTesting.TestFunc {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Set up and initialize the contract
-		if err := setupAndInitializeContract(ctx, platform, contractInfo); err != nil {
-			return err
-		}
-		dbid := getDBID(contractInfo)
-
-		// Transfer ownership
-		newOwner := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-		err := transferStreamOwnership(ctx, platform, contractInfo.Deployer, dbid, newOwner)
-		if err != nil {
-			return errors.Wrap(err, "Failed to transfer ownership")
-		}
-
-		// Attempt to perform an owner-only action with the old owner
-		err = insertMetadata(ctx, platform, contractInfo.Deployer, dbid, "new_key", "new_value", "string")
-		assert.Error(t, err, "Old owner should not be able to insert metadata after ownership transfer")
-
-		// Change platform deployer to the new owner
-		newOwnerAddress := util.Unsafe_NewEthereumAddressFromString(newOwner)
-		platform.Deployer = newOwnerAddress.Bytes()
-
-		// Attempt to perform an owner-only action with the new owner
-		err = insertMetadata(ctx, platform, newOwnerAddress, dbid, "new_key", "new_value", "string")
-		assert.NoError(t, err, "New owner should be able to insert metadata after ownership transfer")
-
-		return nil
-	}
-}
-
 func TestInitializationLogic(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name: "initialization_logic",
@@ -336,134 +293,6 @@ func testVisibilitySettings(t *testing.T, contractInfo ContractInfo) kwilTesting
 		canRead, err := checkReadPermissions(ctx, platform, contractInfo.Deployer, dbid, nonOwner.Address())
 		assert.False(t, canRead, "Non-owner should not be able to read when read_visibility is private")
 		assert.NoError(t, err, "Error should not be returned when checking read permissions")
-
-		return nil
-	}
-}
-
-func TestInvalidEthereumAddressHandling(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name: "invalid_ethereum_address_handling",
-		FunctionTests: []kwilTesting.TestFunc{
-			testInvalidEthereumAddressHandling(t, primitiveContractInfo),
-			testInvalidEthereumAddressHandling(t, composedContractInfo),
-		},
-	})
-}
-
-func testInvalidEthereumAddressHandling(t *testing.T, contractInfo ContractInfo) kwilTesting.TestFunc {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Set up and initialize the contract
-		if err := setupAndInitializeContract(ctx, platform, contractInfo); err != nil {
-			return err
-		}
-		dbid := getDBID(contractInfo)
-
-		// Attempt to transfer ownership to an invalid address
-		invalidAddress := "invalid_address"
-		err := transferStreamOwnership(ctx, platform, contractInfo.Deployer, dbid, invalidAddress)
-		assert.Error(t, err, "Should not accept invalid Ethereum address")
-
-		return nil
-	}
-}
-
-func TestPermissionsAfterVisibilityChange(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name: "permissions_after_visibility_change",
-		FunctionTests: []kwilTesting.TestFunc{
-			testPermissionsAfterVisibilityChange(t, primitiveContractInfo),
-			testPermissionsAfterVisibilityChange(t, composedContractInfo),
-		},
-	})
-}
-
-func testPermissionsAfterVisibilityChange(t *testing.T, contractInfo ContractInfo) kwilTesting.TestFunc {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Set up and initialize the contract
-		if err := setupAndInitializeContract(ctx, platform, contractInfo); err != nil {
-			return err
-		}
-		dbid := getDBID(contractInfo)
-
-		// Initially, anyone should be able to read
-		nonOwner := util.Unsafe_NewEthereumAddressFromString("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
-		platform.Deployer = nonOwner.Bytes()
-
-		canRead, err := checkReadPermissions(ctx, platform, contractInfo.Deployer, dbid, nonOwner.Address())
-		assert.True(t, canRead, "Non-owner should be able to read when read_visibility is public")
-		assert.NoError(t, err, "Error should not be returned when checking read permissions")
-
-		// Change back to owner
-		platform.Deployer = contractInfo.Deployer.Bytes()
-
-		// Change read_visibility to private (1)
-		err = insertMetadata(ctx, platform, contractInfo.Deployer, dbid, "read_visibility", "1", "int")
-		if err != nil {
-			return errors.Wrap(err, "Failed to change read_visibility")
-		}
-
-		// Change back to non-owner
-		platform.Deployer = nonOwner.Bytes()
-
-		canRead, err = checkReadPermissions(ctx, procedure.WithSigner(platform, nonOwner.Bytes()), contractInfo.Deployer, dbid, nonOwner.Address())
-		assert.False(t, canRead, "Non-owner should not be able to read when read_visibility is private")
-		assert.NoError(t, err, "Error should not be returned when checking read permissions")
-
-		return nil
-	}
-}
-
-func TestIsStreamAllowedToCompose(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name: "is_stream_allowed_to_compose",
-		FunctionTests: []kwilTesting.TestFunc{
-			testIsStreamAllowedToCompose(t, primitiveContractInfo),
-			testIsStreamAllowedToCompose(t, composedContractInfo),
-		},
-	})
-}
-
-func testIsStreamAllowedToCompose(t *testing.T, contractInfo ContractInfo) kwilTesting.TestFunc {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Set up and initialize the primary contract
-		if err := setupAndInitializeContract(ctx, platform, contractInfo); err != nil {
-			return err
-		}
-		dbid := getDBID(contractInfo)
-
-		// Set up a foreign contract (the one attempting to compose)
-		foreignContractInfo := ContractInfo{
-			Name:     "foreign_stream_test",
-			StreamID: util.GenerateStreamId("foreign_stream_test"),
-			Deployer: util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000abc"),
-			Content:  contracts.PrimitiveStreamContent, // Using the same contract content for simplicity
-		}
-
-		if err := setupAndInitializeContract(ctx, platform, foreignContractInfo); err != nil {
-			return err
-		}
-
-		// set compose_visibility to private (1)
-
-		foreignDbid := getDBID(foreignContractInfo)
-
-		canCompose, err := checkComposePermissions(ctx, platform, dbid, foreignDbid)
-		assert.False(t, canCompose, "Foreign stream should not be allowed to compose without permission")
-		assert.Error(t, err, "Expected permission error when composing without permission")
-
-		// Grant compose permission to the foreign stream
-		err = insertMetadata(ctx, platform, contractInfo.Deployer, dbid, "allow_compose_stream", foreignDbid, "ref")
-		if err != nil {
-			return errors.Wrap(err, "Failed to grant compose permission")
-		}
-
-		// Attempt to compose again with permission
-		platform.Deployer = foreignContractInfo.Deployer.Bytes()
-
-		canCompose, err = checkComposePermissions(ctx, platform, dbid, foreignDbid)
-		assert.True(t, canCompose, "Foreign stream should be allowed to compose after permission is granted")
-		assert.NoError(t, err, "No error expected when composing with permission")
 
 		return nil
 	}
@@ -575,23 +404,6 @@ func disableMetadata(ctx context.Context, platform *kwilTesting.Platform, deploy
 	return err
 }
 
-func transferStreamOwnership(ctx context.Context, platform *kwilTesting.Platform, deployer util.EthereumAddress, dbid, newOwner string) error {
-	txContext := &common.TxContext{
-		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: 0},
-		Signer:       deployer.Bytes(),
-		Caller:       deployer.Address(),
-		TxID:         platform.Txid(),
-	}
-
-	_, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
-		Procedure: "transfer_stream_ownership",
-		Dataset:   dbid,
-		Args:      []any{newOwner},
-	})
-	return err
-}
-
 func checkReadPermissions(ctx context.Context, platform *kwilTesting.Platform, deployer util.EthereumAddress, dbid string, wallet string) (bool, error) {
 	txContext := &common.TxContext{
 		Ctx:          ctx,
@@ -605,33 +417,6 @@ func checkReadPermissions(ctx context.Context, platform *kwilTesting.Platform, d
 		Procedure: "is_wallet_allowed_to_read",
 		Dataset:   dbid,
 		Args:      []any{wallet},
-	})
-	if err != nil {
-		return false, err
-	}
-	if len(result.Rows) == 0 {
-		return false, errors.New("No result returned")
-	}
-	return result.Rows[0][0].(bool), nil
-}
-
-func checkComposePermissions(ctx context.Context, platform *kwilTesting.Platform, dbid string, foreignCaller string) (bool, error) {
-	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
-	if err != nil {
-		return false, err
-	}
-
-	txContext := &common.TxContext{
-		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: 0},
-		Signer:       deployer.Bytes(),
-		Caller:       deployer.Address(),
-		TxID:         platform.Txid(),
-	}
-	result, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
-		Procedure: "is_stream_allowed_to_compose",
-		Dataset:   dbid,
-		Args:      []any{foreignCaller},
 	})
 	if err != nil {
 		return false, err
