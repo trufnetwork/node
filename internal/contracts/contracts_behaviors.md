@@ -48,8 +48,6 @@ This document lists the behaviors that must have automated tests to ensure they 
 - The composed stream provides aggregated records and index value based on the weighted contributions of its children.
 - If a child stream doesn't have data for the given date (including last available data), the composed stream will not count it's weight for that date.
 - For a single taxonomy version, there can't be duplicated child stream definitions.
-- If 2 child streams have overlapping taxonomy definitions, the composed stream will use the one with the highest `start_date` value.
-- There can't be 2 taxonomy versions with same `start_date`.
 - Only 1 taxonomy version can be active in a point in time.
 
 ## Other
