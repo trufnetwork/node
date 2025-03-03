@@ -21,3 +21,6 @@ var ComposedStreamUnixContent []byte
 
 //go:embed primitive_stream_unix.kf
 var PrimitiveStreamUnixContent []byte
+
+//go:embed primitive_stream_unix.sql
+var PrimitiveStreamUnixSQLContent []byte
