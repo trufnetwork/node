@@ -36,7 +36,7 @@ var (
 	}
 )
 
-func TestMetadataInsertionAndRetrieval(t *testing.T) {
+func TestCOMMON04MetadataInsertionAndRetrieval(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name: "metadata_insertion_and_retrieval",
 		FunctionTests: []kwilTesting.TestFunc{

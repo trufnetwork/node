@@ -28,10 +28,11 @@ func TestPrimitiveStream(t *testing.T) {
 		Name: "primitive_test",
 		FunctionTests: []kwilTesting.TestFunc{
 			WithPrimitiveTestSetup(testPRIMITIVE01_InsertAndGetRecord(t)),
+			WithPrimitiveTestSetup(testPRIMITIVE07_GetRecordWithFutureDate(t)),
 			WithPrimitiveTestSetup(testPRIMITIVE02_UnauthorizedInserts(t)),
-			WithPrimitiveTestSetup(testGetIndex(t)),
-			WithPrimitiveTestSetup(testGetIndexChange(t)),
-			WithPrimitiveTestSetup(testGetFirstRecord(t)),
+			WithPrimitiveTestSetup(testPRIMITIVE05GetIndex(t)),
+			WithPrimitiveTestSetup(testPRIMITIVE06GetIndexChange(t)),
+			WithPrimitiveTestSetup(testPRIMITIVE07GetFirstRecord(t)),
 			WithPrimitiveTestSetup(testDuplicateDate(t)),
 			WithPrimitiveTestSetup(testPRIMITIVE04GetRecordWithBaseDate(t)),
 			WithPrimitiveTestSetup(testFrozenDataRetrieval(t)),
@@ -105,7 +106,36 @@ func testPRIMITIVE01_InsertAndGetRecord(t *testing.T) func(ctx context.Context, 
 	}
 }
 
-func testGetIndex(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+// testPRIMITIVE07_GetRecord tests the GetRecord procedure's logic where querying for records that is not available yet will yield the last available record.
+func testPRIMITIVE07_GetRecordWithFutureDate(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		dbid := utils.GenerateDBID(primitiveStreamId.String(), platform.Deployer)
+
+		// Get records
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
+			Platform: platform,
+			DBID:     dbid,
+			DateFrom: "2021-01-06",
+			DateTo:   "2021-01-06",
+			Height:   0,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error getting records")
+		}
+
+		expected := `
+		| date       | value |
+		|------------|-------|
+		| 2021-01-05 | 3.000000000000000000 |
+		`
+
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+
+		return nil
+	}
+}
+
+func testPRIMITIVE05GetIndex(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		dbid := utils.GenerateDBID(primitiveStreamId.String(), platform.Deployer)
 
@@ -136,7 +166,7 @@ func testGetIndex(t *testing.T) func(ctx context.Context, platform *kwilTesting.
 	}
 }
 
-func testGetIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testPRIMITIVE06GetIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		dbid := utils.GenerateDBID(primitiveStreamId.String(), platform.Deployer)
 
@@ -167,7 +197,7 @@ func testGetIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTe
 	}
 }
 
-func testGetFirstRecord(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testPRIMITIVE07GetFirstRecord(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		dbid := utils.GenerateDBID(primitiveStreamId.String(), platform.Deployer)
 

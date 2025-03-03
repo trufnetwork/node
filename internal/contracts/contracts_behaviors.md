@@ -19,14 +19,14 @@ This document lists the behaviors that must have automated tests to ensure they 
 
 ## Data Querying
 
-- Authorized users (owner and whitelisted wallets) can query records over a specified date range.
-- Authorized users (owner and whitelisted wallets) can query index value which is a normalized index computed from the raw data overspecified date range.
-- Authorized users (owner and whitelisted wallets) can query percentage changes of an index overspecified date range.
-- Users can query metadata, enabled or not, to retrieve configuration details of the stream.
-- Authorized users can query earliest available record for a stream.
-- All metadata values are publicly available.
-- If a point in time is queried, but there's no available data for that point, the closest available data in the past is returned.
-- Only one data point per date is returned from query (the latest inserted one)
+- [PRIMITIVE01][PRIMITIVE04] Authorized users (owner and whitelisted wallets) can query records over a specified date range.
+- [PRIMITIVE05] Authorized users (owner and whitelisted wallets) can query index value which is a normalized index computed from the raw data overspecified date range.
+- [PRIMITIVE06] Authorized users (owner and whitelisted wallets) can query percentage changes of an index overspecified date range.
+- [COMMON04] Users can query metadata, enabled or not, to retrieve configuration details of the stream.
+- [PRIMITIVE07] Authorized users can query earliest available record for a stream.
+- [COMMON04] All metadata values are publicly available.
+- [PRIMITIVE07] If a point in time is queried, but there's no available data for that point, the closest available data in the past is returned.
+- [x] Only one data point per date is returned from query (the latest inserted one) (can't be tested, it is by design)
 
 ## Data Insertion
 
