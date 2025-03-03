@@ -35,6 +35,7 @@ func TestPrimitiveStream(t *testing.T) {
 			WithPrimitiveTestSetup(testGetRecordWithBaseDate(t)),
 			WithPrimitiveTestSetup(testFrozenDataRetrieval(t)),
 			WithPrimitiveTestSetup(testUnauthorizedInserts(t)),
+			WithPrimitiveTestSetup(testSetReadOnlyMetadataToPrimitiveStream(t)),
 		},
 	})
 }
@@ -443,6 +444,24 @@ func testUnauthorizedInserts(t *testing.T) func(ctx context.Context, platform *k
 		assert.Error(t, err, "Unauthorized wallet should not be able to insert records")
 		assert.Contains(t, err.Error(), "wallet not allowed to write", "Expected permission error")
 
+		return nil
+	}
+}
+
+func testSetReadOnlyMetadataToPrimitiveStream(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error { // Change deployer to a non-authorized wallet
+		dbid := utils.GenerateDBID(primitiveStreamId.String(), platform.Deployer)
+
+		// Attempt to set metadata
+		err := procedure.SetMetadata(ctx, procedure.SetMetadataInput{
+			Platform: platform,
+			DBID:     dbid,
+			Key:      "type",
+			Value:    "other",
+			ValType:  "string",
+			Height:   0,
+		})
+		assert.Error(t, err, "Cannot insert metadata for read-only key")
 		return nil
 	}
 }

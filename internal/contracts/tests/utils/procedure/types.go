@@ -41,3 +41,12 @@ type GetFirstRecordInput struct {
 	FrozenAt  int64
 	Height    int64
 }
+
+type SetMetadataInput struct {
+	Platform *kwilTesting.Platform
+	DBID     string
+	Key      string
+	Value    string
+	ValType  string
+	Height   int64
+}

@@ -30,14 +30,14 @@ This document lists the behaviors that must have automated tests to ensure they 
 
 ## Data Insertion
 
-- Authorized wallets can insert new data records (e.g., primitive events) with associated timestamps and values.
+- [x] Authorized wallets can insert new data records (e.g., primitive events) with associated timestamps and values.
     Note: truf-data-provider primitive has external_created_at field.
-- The stream owner can insert metadata that configures stream behavior. I.e. allow_read_wallet.
-- Some stream metadata are read-only and only set once created (e.g. stream_type, or other properties that are set only on special actions such as ownership transfer)
-- All metadata records are immutable, and can only be disabled but never deleted.
-- Data records are immutable. They can't be disabled or deleted.
-- Taxonomy definitions are immutable. But they can be disabled (only the whole version and not a single child definition)
-- A base date for a stream can be set by the stream owner. If not set, the stream will use the first record date as base date.
+- [x] The stream owner can insert metadata that configures stream behavior. I.e. allow_read_wallet.
+- [x] Some stream metadata are read-only and only set once created (e.g. stream_type, or other properties that are set only on special actions such as ownership transfer)
+- [x] All metadata records are immutable, and can only be disabled but never deleted.
+- [x] Data records are immutable. They can't be disabled or deleted.
+- [x] Taxonomy definitions are immutable. But they can be disabled (only the whole version and not a single child definition)
+- [x] A base date for a stream can be set by the stream owner. If not set, the stream will use the first record date as base date.
 
 
 ## Composition & Aggregation

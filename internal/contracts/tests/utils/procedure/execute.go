@@ -122,6 +122,34 @@ func GetFirstRecord(ctx context.Context, input GetFirstRecordInput) ([]ResultRow
 	return processResultRows(result.Rows)
 }
 
+func SetMetadata(ctx context.Context, input SetMetadataInput) error {
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return errors.Wrap(err, "error in setMetadata")
+	}
+
+	txContext := &common.TxContext{
+		Ctx: ctx,
+		BlockContext: &common.BlockContext{
+			Height: input.Height,
+		},
+		TxID:   input.Platform.Txid(),
+		Signer: input.Platform.Deployer,
+		Caller: deployer.Address(),
+	}
+
+	_, err = input.Platform.Engine.Procedure(txContext, input.Platform.DB, &common.ExecutionData{
+		Procedure: "insert_metadata",
+		Dataset:   input.DBID,
+		Args:      []any{input.Key, input.Value, input.ValType},
+	})
+	if err != nil {
+		return errors.Wrap(err, "error in setMetadata")
+	}
+
+	return nil
+}
+
 func processResultRows(rows [][]any) ([]ResultRow, error) {
 	resultRows := make([]ResultRow, len(rows))
 	for i, row := range rows {

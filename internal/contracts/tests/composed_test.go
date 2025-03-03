@@ -31,6 +31,7 @@ func TestComposed(t *testing.T) {
 			WithComposedTestSetup(testOnlyOwnerCanDisableTaxonomy(t)),
 			WithComposedTestSetup(testWeightsInComposition(t)),
 			WithComposedTestSetup(testSetTaxonomyWithStartDate(t)),
+			WithComposedTestSetup(testSetReadOnlyMetadataToComposedStream(t)),
 		},
 	})
 }
@@ -603,4 +604,22 @@ func disableTaxonomy(ctx context.Context, platform *kwilTesting.Platform, dbid s
 		return errors.Wrap(err, "Failed to execute disable_taxonomy procedure")
 	}
 	return nil
+}
+
+func testSetReadOnlyMetadataToComposedStream(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error { // Change deployer to a non-authorized wallet
+		dbid := utils.GenerateDBID(composedStreamId.String(), platform.Deployer)
+
+		// Attempt to set metadata
+		err := procedure.SetMetadata(ctx, procedure.SetMetadataInput{
+			Platform: platform,
+			DBID:     dbid,
+			Key:      "type",
+			Value:    "other",
+			ValType:  "string",
+			Height:   0,
+		})
+		assert.Error(t, err, "Cannot insert metadata for read-only key")
+		return nil
+	}
 }
