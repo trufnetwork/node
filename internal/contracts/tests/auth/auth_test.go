@@ -31,7 +31,7 @@ var (
 	}
 )
 
-// TestAUTH01_StreamOwnership tests AUTH.01: Stream ownership is clearly defined and can be transferred to another valid wallet.
+// TestAUTH01_StreamOwnership tests AUTH01: Stream ownership is clearly defined and can be transferred to another valid wallet.
 func TestAUTH01_StreamOwnership(t *testing.T) {
 	// Test valid ownership transfer
 	t.Run("ValidOwnershipTransfer", func(t *testing.T) {
@@ -128,7 +128,7 @@ func testInvalidAddressOwnershipTransfer(t *testing.T, contractInfo setup.Contra
 	}
 }
 
-// TestAUTH02_ReadPermissions tests AUTH.02: The stream owner can control which wallets are allowed to read from the stream.
+// TestAUTH02_ReadPermissions tests AUTH02: The stream owner can control which wallets are allowed to read from the stream.
 func TestAUTH02_ReadPermissions(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name: "read_permission_control_AUTH02",
@@ -212,7 +212,7 @@ func testReadPermissionControl(t *testing.T, contractInfo setup.ContractInfo) kw
 	}
 }
 
-// TestAUTH03_WritePermissions tests AUTH.03: The stream owner can control which wallets are allowed to insert data into the stream.
+// TestAUTH03_WritePermissions tests AUTH03: The stream owner can control which wallets are allowed to insert data into the stream.
 func TestAUTH03_WritePermissions(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name: "write_permission_control_AUTH03",
@@ -274,7 +274,7 @@ func testWritePermissionControl(t *testing.T, contractInfo setup.ContractInfo) k
 	}
 }
 
-// TestAUTH04_ComposePermissions tests AUTH.04: The stream owner can control which streams are allowed to compose from the stream.
+// TestAUTH04_ComposePermissions tests AUTH04: The stream owner can control which streams are allowed to compose from the stream.
 func TestAUTH04_ComposePermissions(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name: "compose_permission_control_AUTH04",
@@ -358,7 +358,7 @@ func testComposePermissionControl(t *testing.T, contractInfo setup.ContractInfo)
 	}
 }
 
-// TestAUTH05_StreamDeletion tests AUTH.05: Stream owners are able to delete their streams and all associated data.
+// TestAUTH05_StreamDeletion tests AUTH05: Stream owners are able to delete their streams and all associated data.
 func TestAUTH05_StreamDeletion(t *testing.T) {
 	t.Skip("Stream deletion not supported at the contract level at the moment")
 }

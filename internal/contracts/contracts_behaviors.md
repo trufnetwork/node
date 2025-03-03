@@ -11,11 +11,11 @@ This document lists the behaviors that must have automated tests to ensure they 
 
 ## Authorization
 
-- [AUTH.01] Stream ownership is clearly defined and can be transferred to another valid wallet.
-- [AUTH.02] The stream owner can control which wallets are allowed to read from the stream.
-- [AUTH.03] The stream owner can control which wallets are allowed to insert data into the stream.
-- [AUTH.04] The stream owner can control which streams are allowed to compose from the stream.
-- [AUTH.05] Stream owners are able to delete their streams and all associated data.
+- [AUTH01] Stream ownership is clearly defined and can be transferred to another valid wallet.
+- [AUTH02] The stream owner can control which wallets are allowed to read from the stream.
+- [AUTH03] The stream owner can control which wallets are allowed to insert data into the stream.
+- [AUTH04] The stream owner can control which streams are allowed to compose from the stream.
+- [AUTH05] Stream owners are able to delete their streams and all associated data.
 
 ## Data Querying
 
