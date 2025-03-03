@@ -2,9 +2,10 @@ package tests
 
 import (
 	"context"
-	"github.com/golang-sql/civil"
 	"strconv"
 	"testing"
+
+	"github.com/golang-sql/civil"
 
 	"github.com/trufnetwork/sdk-go/core/types"
 
@@ -142,10 +143,10 @@ func testComposedNoPastData(t *testing.T) func(ctx context.Context, platform *kw
 func testCOMPOSED01SetTaxonomyWithValidData(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Initialize contract
-		if err := setupAndInitializeContract(ctx, platform, composedContractInfo); err != nil {
+		if err := setup.SetupAndInitializeContract(ctx, platform, composedContractInfo); err != nil {
 			return err
 		}
-		dbid := getDBID(composedContractInfo)
+		dbid := setup.GetDBID(composedContractInfo)
 
 		stream1 := util.GenerateStreamId("stream1")
 		stream2 := util.GenerateStreamId("stream2")
@@ -229,10 +230,10 @@ func testCOMPOSED01SetTaxonomyWithValidData(t *testing.T) func(ctx context.Conte
 func testSetTaxonomyWithStartDate(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Initialize contract
-		if err := setupAndInitializeContract(ctx, platform, composedContractInfo); err != nil {
+		if err := setup.SetupAndInitializeContract(ctx, platform, composedContractInfo); err != nil {
 			return err
 		}
-		dbid := getDBID(composedContractInfo)
+		dbid := setup.GetDBID(composedContractInfo)
 
 		stream1 := util.GenerateStreamId("stream1")
 		stream2 := util.GenerateStreamId("stream2")
@@ -313,10 +314,10 @@ func testSetTaxonomyWithStartDate(t *testing.T) func(ctx context.Context, platfo
 func testCOMPOSED02OnlyOwnerCanSetTaxonomy(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Initialize contract
-		if err := setupAndInitializeContract(ctx, platform, composedContractInfo); err != nil {
+		if err := setup.SetupAndInitializeContract(ctx, platform, composedContractInfo); err != nil {
 			return err
 		}
-		dbid := getDBID(composedContractInfo)
+		dbid := setup.GetDBID(composedContractInfo)
 
 		// Use a non-owner account
 		nonOwner := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000001000101")
@@ -339,10 +340,10 @@ func testCOMPOSED02OnlyOwnerCanSetTaxonomy(t *testing.T) func(ctx context.Contex
 func testCOMPOSED04DisableTaxonomy(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Initialize contract
-		if err := setupAndInitializeContract(ctx, platform, composedContractInfo); err != nil {
+		if err := setup.SetupAndInitializeContract(ctx, platform, composedContractInfo); err != nil {
 			return err
 		}
-		dbid := getDBID(composedContractInfo)
+		dbid := setup.GetDBID(composedContractInfo)
 
 		//  setup primitive streams
 		stream1 := util.GenerateStreamId("stream1")
@@ -409,10 +410,10 @@ func testCOMPOSED04DisableTaxonomy(t *testing.T) func(ctx context.Context, platf
 func testOnlyOwnerCanDisableTaxonomy(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Initialize contract
-		if err := setupAndInitializeContract(ctx, platform, composedContractInfo); err != nil {
+		if err := setup.SetupAndInitializeContract(ctx, platform, composedContractInfo); err != nil {
 			return err
 		}
-		dbid := getDBID(composedContractInfo)
+		dbid := setup.GetDBID(composedContractInfo)
 
 		// Use a non-owner account
 		nonOwner := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000001000001")
@@ -429,10 +430,10 @@ func testOnlyOwnerCanDisableTaxonomy(t *testing.T) func(ctx context.Context, pla
 func testWeightsInComposition(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Initialize contract and set initial taxonomy
-		if err := setupAndInitializeContract(ctx, platform, composedContractInfo); err != nil {
+		if err := setup.SetupAndInitializeContract(ctx, platform, composedContractInfo); err != nil {
 			return err
 		}
-		dbid := getDBID(composedContractInfo)
+		dbid := setup.GetDBID(composedContractInfo)
 
 		stream1 := util.GenerateStreamId("stream1")
 		stream2 := util.GenerateStreamId("stream2")
