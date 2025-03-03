@@ -112,7 +112,7 @@ func assertMetadataValue(t *testing.T, valType string, expected interface{}, res
 	}
 }
 
-func TestOnlyOwnerCanInsertMetadata(t *testing.T) {
+func TestCOMMON01OnlyOwnerCanInsertMetadata(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name: "only_owner_can_insert_metadata",
 		FunctionTests: []kwilTesting.TestFunc{
@@ -141,7 +141,7 @@ func testOnlyOwnerCanInsertMetadata(t *testing.T, contractInfo ContractInfo) kwi
 	}
 }
 
-func TestDisableMetadata(t *testing.T) {
+func TestCOMMON03DisableMetadata(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name: "disable_metadata",
 		FunctionTests: []kwilTesting.TestFunc{
@@ -190,7 +190,7 @@ func testDisableMetadata(t *testing.T, contractInfo ContractInfo) kwilTesting.Te
 	}
 }
 
-func TestReadOnlyMetadataCannotBeModified(t *testing.T) {
+func TestCOMMON02ReadOnlyMetadataCannotBeModified(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name: "readonly_metadata_cannot_be_modified",
 		FunctionTests: []kwilTesting.TestFunc{

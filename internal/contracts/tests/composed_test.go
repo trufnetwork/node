@@ -25,13 +25,13 @@ func TestComposed(t *testing.T) {
 		FunctionTests: []kwilTesting.TestFunc{
 			WithComposedTestSetup(testComposedLastAvailable(t)),
 			WithComposedTestSetup(testComposedNoPastData(t)),
-			WithComposedTestSetup(testSetTaxonomyWithValidData(t)),
-			WithComposedTestSetup(testOnlyOwnerCanSetTaxonomy(t)),
-			WithComposedTestSetup(testDisableTaxonomy(t)),
+			WithComposedTestSetup(testCOMPOSED01SetTaxonomyWithValidData(t)),
+			WithComposedTestSetup(testCOMPOSED02OnlyOwnerCanSetTaxonomy(t)),
+			WithComposedTestSetup(testCOMPOSED04DisableTaxonomy(t)),
 			WithComposedTestSetup(testOnlyOwnerCanDisableTaxonomy(t)),
 			WithComposedTestSetup(testWeightsInComposition(t)),
 			WithComposedTestSetup(testSetTaxonomyWithStartDate(t)),
-			WithComposedTestSetup(testSetReadOnlyMetadataToComposedStream(t)),
+			WithComposedTestSetup(testCOMPOSED03SetReadOnlyMetadataToComposedStream(t)),
 		},
 	})
 }
@@ -139,7 +139,7 @@ func testComposedNoPastData(t *testing.T) func(ctx context.Context, platform *kw
 	}
 }
 
-func testSetTaxonomyWithValidData(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testCOMPOSED01SetTaxonomyWithValidData(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Initialize contract
 		if err := setupAndInitializeContract(ctx, platform, composedContractInfo); err != nil {
@@ -310,7 +310,7 @@ func testSetTaxonomyWithStartDate(t *testing.T) func(ctx context.Context, platfo
 	}
 }
 
-func testOnlyOwnerCanSetTaxonomy(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testCOMPOSED02OnlyOwnerCanSetTaxonomy(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Initialize contract
 		if err := setupAndInitializeContract(ctx, platform, composedContractInfo); err != nil {
@@ -336,7 +336,7 @@ func testOnlyOwnerCanSetTaxonomy(t *testing.T) func(ctx context.Context, platfor
 	}
 }
 
-func testDisableTaxonomy(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testCOMPOSED04DisableTaxonomy(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Initialize contract
 		if err := setupAndInitializeContract(ctx, platform, composedContractInfo); err != nil {
@@ -606,7 +606,7 @@ func disableTaxonomy(ctx context.Context, platform *kwilTesting.Platform, dbid s
 	return nil
 }
 
-func testSetReadOnlyMetadataToComposedStream(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testCOMPOSED03SetReadOnlyMetadataToComposedStream(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error { // Change deployer to a non-authorized wallet
 		dbid := utils.GenerateDBID(composedStreamId.String(), platform.Deployer)
 
