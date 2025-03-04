@@ -42,13 +42,12 @@ This document lists the behaviors that must have automated tests to ensure they 
 
 ## Composition & Aggregation
 
-- A composed stream aggregates data from multiple child streams (which may be either primitive or composed).
-- Each child stream’s contribution is weighted, and these weights can vary over time.
-- Taxonomies define the mapping of child streams, including a period of validity for each weight. (start_date and end_date, otherwise not set)
-- The composed stream provides aggregated records and index value based on the weighted contributions of its children.
-- If a child stream doesn't have data for the given date (including last available data), the composed stream will not count it's weight for that date.
-- For a single taxonomy version, there can't be duplicated child stream definitions.
-- Only 1 taxonomy version can be active in a point in time.
+- [AGGR01] A composed stream aggregates data from multiple child streams (which may be either primitive or composed).
+- [AGGR02] Each child stream’s contribution is weighted, and these weights can vary over time.
+- [AGGR03] Taxonomies define the mapping of child streams, including a period of validity for each weight. (start_date and end_date, otherwise not set)
+- [AGGR04] If a child stream doesn't have data for the given date (including last available data), the composed stream will not count it's weight for that date.
+- [AGGR05] For a single taxonomy version, there can't be duplicated child stream definitions.
+- [AGGR06] Only 1 taxonomy version can be active in a point in time.
 
 ## Other
 
