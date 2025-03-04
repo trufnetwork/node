@@ -51,5 +51,5 @@ This document lists the behaviors that must have automated tests to ensure they 
 
 ## Other
 
-- All referenced addresses must be lowercased and valid EVM addresses starting with `0x`.
-- stream ids must respect the following regex: `^st[a-z0-9]{30}$` and be unique by each stream owner.
+- [OTHER01] All referenced addresses must be lowercased and valid EVM addresses starting with `0x`.
+- [OTHER02] Stream ids must respect the following regex: `^st[a-z0-9]{30}$` and be unique by each stream owner.
