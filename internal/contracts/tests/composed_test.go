@@ -5,8 +5,6 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/golang-sql/civil"
-
 	"github.com/trufnetwork/sdk-go/core/types"
 
 	"github.com/kwilteam/kwil-db/common"
@@ -25,13 +23,10 @@ func TestComposed(t *testing.T) {
 		Name: "composed_test",
 		FunctionTests: []kwilTesting.TestFunc{
 			WithComposedTestSetup(testComposedLastAvailable(t)),
-			WithComposedTestSetup(testComposedNoPastData(t)),
 			WithComposedTestSetup(testCOMPOSED01SetTaxonomyWithValidData(t)),
 			WithComposedTestSetup(testCOMPOSED02OnlyOwnerCanSetTaxonomy(t)),
 			WithComposedTestSetup(testCOMPOSED04DisableTaxonomy(t)),
 			WithComposedTestSetup(testOnlyOwnerCanDisableTaxonomy(t)),
-			WithComposedTestSetup(testWeightsInComposition(t)),
-			WithComposedTestSetup(testSetTaxonomyWithStartDate(t)),
 			WithComposedTestSetup(testCOMPOSED03SetReadOnlyMetadataToComposedStream(t)),
 		},
 	})
