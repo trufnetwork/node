@@ -3,6 +3,7 @@ package procedure
 import (
 	"context"
 	"fmt"
+
 	"github.com/trufnetwork/sdk-go/core/util"
 
 	"github.com/kwilteam/kwil-db/common"
@@ -201,4 +202,31 @@ func DescribeTaxonomies(ctx context.Context, input DescribeTaxonomiesInput) ([]R
 	}
 
 	return processResultRows(result.Rows)
+}
+
+// SetTaxonomy sets the taxonomy for a composed stream with optional start date
+func SetTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return errors.Wrap(err, "error in SetTaxonomy")
+	}
+
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 0},
+		Signer:       input.Platform.Deployer,
+		Caller:       deployer.Address(),
+		TxID:         input.Platform.Txid(),
+	}
+
+	_, err = input.Platform.Engine.Procedure(txContext, input.Platform.DB, &common.ExecutionData{
+		Procedure: "set_taxonomy",
+		Dataset:   input.DBID,
+		Args:      []any{input.DataProviders, input.StreamIds, input.Weights, input.StartDate},
+	})
+	if err != nil {
+		return errors.Wrap(err, "error in SetTaxonomy")
+	}
+
+	return nil
 }

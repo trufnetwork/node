@@ -50,3 +50,12 @@ type SetMetadataInput struct {
 	ValType  string
 	Height   int64
 }
+
+type SetTaxonomyInput struct {
+	Platform      *kwilTesting.Platform
+	DBID          string
+	DataProviders []string
+	StreamIds     []string
+	Weights       []string
+	StartDate     string // Optional start date for taxonomy validity
+}
