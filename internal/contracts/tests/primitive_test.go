@@ -37,6 +37,7 @@ func TestPrimitiveStream(t *testing.T) {
 			WithPrimitiveTestSetup(testPRIMITIVE04GetRecordWithBaseDate(t)),
 			WithPrimitiveTestSetup(testFrozenDataRetrieval(t)),
 			WithPrimitiveTestSetup(testPRIMITIVE03_SetReadOnlyMetadataToPrimitiveStream(t)),
+			WithPrimitiveTestSetup(testPRIMITIVE08_AdditionalInsertWillFetchLatestRecord(t)),
 		},
 	})
 }
@@ -492,6 +493,54 @@ func testPRIMITIVE03_SetReadOnlyMetadataToPrimitiveStream(t *testing.T) func(ctx
 			Height:   0,
 		})
 		assert.Error(t, err, "Cannot insert metadata for read-only key")
+		return nil
+	}
+}
+
+func testPRIMITIVE08_AdditionalInsertWillFetchLatestRecord(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		dbid := utils.GenerateDBID(primitiveStreamId.String(), platform.Deployer)
+
+		primitiveStreamProvider, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address")
+		}
+
+		// Insert additional data at height 2
+		err = setup.InsertMarkdownPrimitiveData(ctx, setup.InsertMarkdownDataInput{
+			Platform: platform,
+			Height:   2,
+			StreamLocator: types.StreamLocator{
+				StreamId:     primitiveStreamId,
+				DataProvider: primitiveStreamProvider,
+			},
+			MarkdownData: `
+			| date       | value |
+			|------------|-------|
+			| 2021-01-05 | 5    |
+			`,
+		})
+
+		// Get records
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
+			Platform: platform,
+			DBID:     dbid,
+			DateFrom: "2021-01-05",
+			DateTo:   "2021-01-05",
+			Height:   0,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error getting records")
+		}
+
+		expected := `
+		| date       | value |
+		|------------|-------|
+		| 2021-01-05 | 5.000000000000000000 |
+		`
+
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+
 		return nil
 	}
 }

@@ -36,12 +36,15 @@ var (
 	}
 )
 
+// TestCOMMON04MetadataInsertionAndRetrieval tests the insertion and retrieval of metadata
+// for both primitive and composed streams. Also tests disabling metadata and attempting to retrieve it.
 func TestCOMMON04MetadataInsertionAndRetrieval(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name: "metadata_insertion_and_retrieval",
 		FunctionTests: []kwilTesting.TestFunc{
 			testMetadataInsertionAndRetrieval(t, primitiveContractInfo),
 			testMetadataInsertionAndRetrieval(t, composedContractInfo),
+			testMetadataInsertionThenDisableAndRetrieval(t, primitiveContractInfo),
 		},
 	})
 }
@@ -95,6 +98,68 @@ func testMetadataInsertionAndRetrieval(t *testing.T, contractInfo setup.Contract
 			}
 			assertMetadataValue(t, item.ValType, item.Expect, result, item.Key)
 		}
+
+		return nil
+	}
+}
+
+func testMetadataInsertionThenDisableAndRetrieval(t *testing.T, contractInfo setup.ContractInfo) kwilTesting.TestFunc {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Set up and initialize the contract
+		if err := setup.SetupAndInitializeContract(ctx, platform, contractInfo); err != nil {
+			return err
+		}
+		dbid := setup.GetDBID(contractInfo)
+
+		// Insert metadata
+		key := "temp_key"
+		value := "temporary value"
+		valType := "string"
+
+		err := procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+			Platform: platform,
+			Deployer: contractInfo.Deployer,
+			DBID:     dbid,
+			Key:      key,
+			Value:    value,
+			ValType:  valType,
+		})
+		if err != nil {
+			return errors.Wrapf(err, "Failed to insert metadata key %s", key)
+		}
+
+		// Retrieve the metadata to get the row_id
+		result, err := procedure.GetMetadata(ctx, procedure.GetMetadataInput{
+			Platform: platform,
+			Deployer: contractInfo.Deployer,
+			DBID:     dbid,
+			Key:      key,
+		})
+		if err != nil {
+			return errors.Wrapf(err, "Failed to get metadata key %s", key)
+		}
+		rowID := result[0].(*types.UUID)
+
+		// Disable the metadata
+		err = procedure.DisableMetadata(ctx, procedure.DisableMetadataInput{
+			Platform: platform,
+			Deployer: contractInfo.Deployer,
+			DBID:     dbid,
+			RowID:    rowID,
+		})
+		if err != nil {
+			return errors.Wrap(err, "Failed to disable metadata")
+		}
+
+		// Attempt to retrieve the disabled metadata
+		_, err = procedure.GetMetadata(ctx, procedure.GetMetadataInput{
+			Platform: platform,
+			Deployer: contractInfo.Deployer,
+			DBID:     dbid,
+			Key:      key,
+		})
+		assert.Error(t, err, "Disabled metadata should not be retrievable")
+		assert.Equal(t, "No metadata found", err.Error())
 
 		return nil
 	}

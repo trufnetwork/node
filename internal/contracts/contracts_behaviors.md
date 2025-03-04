@@ -26,7 +26,7 @@ This document lists the behaviors that must have automated tests to ensure they 
 - [PRIMITIVE07] Authorized users can query earliest available record for a stream.
 - [COMMON04] All metadata values are publicly available.
 - [PRIMITIVE07] If a point in time is queried, but there's no available data for that point, the closest available data in the past is returned.
-- [x] Only one data point per date is returned from query (the latest inserted one) (can't be tested, it is by design)
+- [PRIMITIVE08] Only one data point per date is returned from query (the latest inserted one)
 
 ## Data Insertion
 
