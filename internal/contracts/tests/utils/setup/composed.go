@@ -249,3 +249,48 @@ func setTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 	})
 	return err
 }
+
+type SetupComposedStreamInput struct {
+	Platform *kwilTesting.Platform
+	StreamId util.StreamId
+	Height   int64
+}
+
+// SetupComposedStream sets up a composed stream
+func SetupComposedStream(ctx context.Context, input SetupComposedStreamInput) error {
+	composedSchema, err := parse.Parse(contracts.ComposedStreamContent)
+	if err != nil {
+		return errors.Wrap(err, "error parsing composed stream content")
+	}
+	composedSchema.Name = input.StreamId.String()
+
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return errors.Wrap(err, "error creating ethereum address from bytes")
+	}
+
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: input.Height},
+		Signer:       input.Platform.Deployer,
+		Caller:       deployer.Address(),
+		TxID:         input.Platform.Txid(),
+	}
+
+	if err := input.Platform.Engine.CreateDataset(txContext, input.Platform.DB, composedSchema); err != nil {
+		return errors.Wrap(err, "error creating composed dataset")
+	}
+
+	composedDBID := utils.GenerateDBID(input.StreamId.String(), input.Platform.Deployer)
+
+	if err := initializeContract(ctx, InitializeContractInput{
+		Platform: input.Platform,
+		Deployer: deployer,
+		Dbid:     composedDBID,
+		Height:   input.Height,
+	}); err != nil {
+		return errors.Wrap(err, "error initializing composed stream")
+	}
+
+	return nil
+}
