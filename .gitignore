@@ -2,6 +2,7 @@
 .env*
 !.env.example
 .idea
+.cursor
 
 .build/kwild
 # must remain private
