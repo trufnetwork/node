@@ -5,8 +5,6 @@ import (
 	"os"
 	"testing"
 	"time"
-
-	"github.com/trufnetwork/node/internal/contracts"
 )
 
 func TestInitSystemContract(t *testing.T) {

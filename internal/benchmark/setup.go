@@ -20,7 +20,7 @@ package benchmark
 //	kwilTesting "github.com/kwilteam/kwil-db/testing"
 //	"github.com/pkg/errors"
 //	"github.com/trufnetwork/node/internal/benchmark/trees"
-//	"github.com/trufnetwork/node/internal/contracts"
+//	"github.com/trufnetwork/node/tests/streams"
 //	"github.com/trufnetwork/sdk-go/core/types"
 //	"github.com/trufnetwork/sdk-go/core/util"
 //	"golang.org/x/sync/errgroup"
