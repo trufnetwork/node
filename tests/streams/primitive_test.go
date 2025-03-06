@@ -2,11 +2,18 @@ package tests
 
 import (
 	"context"
+	"testing"
+
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
-	"testing"
+
+	"github.com/trufnetwork/node/tests/streams/utils/procedure"
+	"github.com/trufnetwork/node/tests/streams/utils/setup"
+	"github.com/trufnetwork/node/tests/streams/utils/table"
+	"github.com/trufnetwork/sdk-go/core/types"
+	"github.com/trufnetwork/sdk-go/core/util"
 )
 
 // import (
@@ -28,21 +35,17 @@ import (
 // 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 // )
 
-// const primitiveStreamName = "primitive_stream_000000000000001"
+const primitiveStreamName = "primitive_stream_000000000000001"
 
-// var primitiveStreamId = util.GenerateStreamId(primitiveStreamName)
+var primitiveStreamId = util.GenerateStreamId(primitiveStreamName)
 
 func TestPrimitiveStream(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name: "primitive_test",
-		SeedScripts: []string{
-			"../../internal/migrations/000-initial-data.sql",
-			"../../internal/migrations/001-common-actions.sql",
-			"../../internal/migrations/002-primitive-insertion.sql",
-		},
+		Name:        "primitive_test",
+		SeedScripts: testutils.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testPRIMITIVE01_DataInsertion(t),
-			//WithPrimitiveTestSetup(testPRIMITIVE01_InsertAndGetRecord(t)),
+			testPRIMITIVE01_InsertAndGetRecord(t),
 			//WithPrimitiveTestSetup(testPRIMITIVE07_GetRecordWithFutureDate(t)),
 			//WithPrimitiveTestSetup(testPRIMITIVE02_UnauthorizedInserts(t)),
 			//WithPrimitiveTestSetup(testPRIMITIVE05GetIndex(t)),
@@ -59,18 +62,26 @@ func TestPrimitiveStream(t *testing.T) {
 
 func testPRIMITIVE01_DataInsertion(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		validAddress := "0x0000000000000000000000000000000000000001"
-		err := testutils.ExecuteCreateStream(ctx, platform, "st123456789012345678901234567890", "primitive", validAddress)
+		validAddress := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000001")
+		platform = procedure.WithSigner(platform, validAddress.Bytes())
+		streamLocator := types.StreamLocator{
+			StreamId:     primitiveStreamId,
+			DataProvider: validAddress,
+		}
+		_, err := setup.CreateStream(ctx, platform, setup.StreamInfo{
+			Type:    setup.ContractTypePrimitive,
+			Locator: streamLocator,
+		})
 		if err != nil {
 			return errors.Wrap(err, "valid address should be accepted")
 		}
 		assert.NoError(t, err, "valid address should be accepted")
 
 		// Setup initial data
-		err = testutils.ExecuteInsertRecord(ctx, platform, "st123456789012345678901234567890", testutils.InsertRecordInput{
-			DateTs: 1612137600,
-			Value:  1,
-		}, validAddress)
+		err = setup.ExecuteInsertRecord(ctx, platform, streamLocator, setup.InsertRecordInput{
+			EventTime: 1612137600,
+			Value:     1,
+		}, 0)
 		if err != nil {
 			return errors.Wrap(err, "error inserting initial data")
 		}
@@ -80,71 +91,76 @@ func testPRIMITIVE01_DataInsertion(t *testing.T) func(ctx context.Context, platf
 	}
 }
 
-// func WithPrimitiveTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 		deployer, err := util.NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
-// 		if err != nil {
-// 			return errors.Wrap(err, "error creating ethereum address")
-// 		}
+func WithPrimitiveTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		deployer, err := util.NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address")
+		}
 
-// 		platform = procedure.WithSigner(platform, deployer.Bytes())
+		platform.Deployer = deployer.Bytes()
 
-// 		// Setup initial data
-// 		err = setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
-// 			Platform: platform,
-// 			StreamId: primitiveStreamId,
-// 			Height:   1,
-// 			MarkdownData: `
-// 			| date       | value |
-// 			|------------|-------|
-// 			| 2021-01-01 | 1     |
-// 			| 2021-01-02 | 2     |
-// 			| 2021-01-03 | 4     |
-// 			| 2021-01-04 | 5     |
-// 			| 2021-01-05 | 3     |
-// 			`,
-// 		})
-// 		if err != nil {
-// 			return errors.Wrap(err, "error setting up primitive stream")
-// 		}
+		// Setup initial data
+		err = setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+			Platform: platform,
+			StreamId: primitiveStreamId,
+			Height:   1,
+			MarkdownData: `
+			| event_time | value |
+			|------------|-------|
+			| 1          | 1     |
+			| 2          | 2     |
+			| 3          | 4     |
+			| 4          | 5     |
+			| 5          | 3     |
+			`,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error setting up primitive stream")
+		}
 
-// 		// Run the actual test function
-// 		return testFn(ctx, platform)
-// 	}
-// }
+		// Run the actual test function
+		return testFn(ctx, platform)
+	}
+}
 
-// func testPRIMITIVE01_InsertAndGetRecord(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 		t.Skip("Test skipped: primitive stream tests temporarily disabled")
-// 		dbid := utils.GenerateDBID(primitiveStreamId.String(), platform.Deployer)
+func testPRIMITIVE01_InsertAndGetRecord(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address")
+		}
 
-// 		// Get records
-// 		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
-// 			Platform: platform,
-// 			DBID:     dbid,
-// 			DateFrom: "2021-01-01",
-// 			DateTo:   "2021-01-05",
-// 			Height:   0,
-// 		})
-// 		if err != nil {
-// 			return errors.Wrap(err, "error getting records")
-// 		}
+		// Get records
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
+			Platform: platform,
+			StreamLocator: types.StreamLocator{
+				StreamId:     primitiveStreamId,
+				DataProvider: deployer,
+			},
+			FromTime: 1612137600,
+			ToTime:   1612137600,
+			Height:   0,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error getting records")
+		}
 
-// 		expected := `
-// 		| date       | value |
-// 		|------------|-------|
-// 		| 2021-01-01 | 1.000000000000000000 |
-// 		| 2021-01-02 | 2.000000000000000000 |
-// 		| 2021-01-03 | 4.000000000000000000 |
-// 		| 2021-01-04 | 5.000000000000000000 |
-// 		| 2021-01-05 | 3.000000000000000000 |
-// 		`
+		expected := `
+		| event_time | value |
+		|------------|-------|
+		| 1          | 1.000000000000000000 |
+		| 2          | 2.000000000000000000 |
+		| 3          | 4.000000000000000000 |
+		| 4          | 5.000000000000000000 |
+		| 5          | 3.000000000000000000 |
+		`
 
-// 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
 
-// 		return nil
-// 	}
-// }
+		return nil
+	}
+}
 
 // // testPRIMITIVE07_GetRecord tests the GetRecord procedure's logic where querying for records that is not available yet will yield the last available record.
 // func testPRIMITIVE07_GetRecordWithFutureDate(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
