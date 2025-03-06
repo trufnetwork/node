@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS taxonomies (
     created_at INT8 NOT NULL,
     disabled_at INT8,
     version INT8 NOT NULL,
-    start_ts INT8 NOT NULL,
+    start_time INT8 NOT NULL,
 
     PRIMARY KEY (taxonomy_id),
     FOREIGN KEY (data_provider, stream_id)
@@ -46,27 +46,27 @@ CREATE TABLE IF NOT EXISTS taxonomies (
 
     CHECK (weight >= 0),
     CHECK (version >= 0),
-    CHECK (start_ts >= 0)
+    CHECK (start_time >= 0)
 );
 
 -- Create indexes separately
-CREATE INDEX IF NOT EXISTS child_stream_idx ON taxonomies (data_provider, stream_id, start_ts, version, child_data_provider, child_stream_id);
+CREATE INDEX IF NOT EXISTS child_stream_idx ON taxonomies (data_provider, stream_id, start_time, version, child_data_provider, child_stream_id);
 
 CREATE TABLE IF NOT EXISTS primitive_events (
     stream_id TEXT NOT NULL,
     data_provider TEXT NOT NULL,
-    date_ts INT8 NOT NULL,     -- unix timestamp
+    event_time INT8 NOT NULL, -- unix timestamp
     value NUMERIC(36, 18) NOT NULL,
     created_at INT8 NOT NULL, -- based on blockheight
 
-    PRIMARY KEY (data_provider, stream_id, date_ts, created_at),
+    PRIMARY KEY (data_provider, stream_id, event_time, created_at),
     FOREIGN KEY (data_provider, stream_id)
         REFERENCES streams(data_provider, stream_id)
         ON DELETE CASCADE
 );
 
 -- Create indexes separately
-CREATE INDEX IF NOT EXISTS ts_idx ON primitive_events (date_ts);
+CREATE INDEX IF NOT EXISTS event_time_idx ON primitive_events (event_time);
 CREATE INDEX IF NOT EXISTS created_at_idx ON primitive_events (created_at);
 
 CREATE TABLE IF NOT EXISTS metadata (

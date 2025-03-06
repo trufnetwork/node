@@ -61,3 +61,16 @@ CREATE OR REPLACE ACTION create_stream(
             VALUES ($current_uuid, $data_provider, $stream_id, 'readonly_key', $key, $current_block);
     }
 }
+
+-- Helper function to check if a stream is primitive or composed
+CREATE OR REPLACE ACTION is_primitive_stream(
+    $data_provider TEXT,
+    $stream_id TEXT
+) PUBLIC view returns (is_primitive BOOL) {
+    for $row in SELECT stream_type FROM streams 
+        WHERE data_provider = $data_provider AND stream_id = $stream_id LIMIT 1 {
+        return $row.stream_type = 'primitive';
+    }
+    
+    ERROR('Stream not found: ' || $stream_id);
+};
