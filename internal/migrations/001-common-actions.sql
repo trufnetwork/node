@@ -60,7 +60,7 @@ CREATE OR REPLACE ACTION create_stream(
         INSERT INTO metadata (row_id, data_provider, stream_id, metadata_key, value_s, created_at)
             VALUES ($current_uuid, $data_provider, $stream_id, 'readonly_key', $key, $current_block);
     }
-}
+};
 
 -- Helper function to check if a stream is primitive or composed
 CREATE OR REPLACE ACTION is_primitive_stream(
@@ -73,4 +73,54 @@ CREATE OR REPLACE ACTION is_primitive_stream(
     }
     
     ERROR('Stream not found: ' || $stream_id);
+};
+
+-- This action wraps metadata selection with pagination parameters.
+-- It supports ordering only by created_at ascending or descending.
+CREATE OR REPLACE ACTION get_metadata(
+    $data_provider TEXT,
+    $stream_id TEXT,
+    $key TEXT,
+    $only_latest BOOL,
+    $ref TEXT,
+    $limit INT,
+    $offset INT,
+    $order_by TEXT
+) PUBLIC view returns table(
+    row_id uuid,
+    value_i int,
+    value_f NUMERIC(36,18),
+    value_b bool,
+    value_s TEXT,
+    value_ref TEXT,
+    created_at INT
+) {
+    -- Set default values if parameters are null
+    if $limit IS NULL {
+        $limit := 100;
+    }
+    if $offset IS NULL {
+        $offset := 0;
+    }
+    if $order_by IS NULL {
+        $order_by := 'created_at DESC';
+    }
+
+    RETURN SELECT row_id,
+                  value_i,
+                  value_f,
+                  value_b,
+                  value_s,
+                  value_ref,
+                  created_at
+        FROM metadata
+           WHERE metadata_key = $key
+            AND disabled_at IS NULL
+            AND ($ref IS NULL OR LOWER(value_ref) = LOWER($ref))
+            AND stream_id = $stream_id
+            AND data_provider = $data_provider
+       ORDER BY
+               CASE WHEN $order_by = 'created_at DESC' THEN created_at END DESC,
+               CASE WHEN $order_by = 'created_at ASC' THEN created_at END ASC
+       LIMIT $limit OFFSET $offset;
 };
