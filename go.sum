@@ -1156,6 +1156,16 @@ github.com/tklauser/go-sysconf v0.3.14 h1:g5vzr9iPFFz24v2KZXs/pvpvh8/V9Fw6vQK5ZZ
 github.com/tklauser/go-sysconf v0.3.14/go.mod h1:1ym4lWMLUOhuBOPGtRcJm7tEGX4SCYNEEEtghGG/8uY=
 github.com/tklauser/numcpus v0.9.0 h1:lmyCHtANi8aRUgkckBgoDk1nHCux3n2cgkJLXdQGPDo=
 github.com/tklauser/numcpus v0.9.0/go.mod h1:SN6Nq1O3VychhC1npsWostA+oW+VOQTxZrS604NSRyI=
+github.com/trufnetwork/sdk-go v0.2.1-0.20250228124404-8b2ad6bf70b4 h1:mWl8sGlkVInaeVtj0ADpXBInt+QOsBWyPiCKt2IceyU=
+github.com/trufnetwork/sdk-go v0.2.1-0.20250228124404-8b2ad6bf70b4/go.mod h1:XMszfniaEGqyyj+EuFy73S3YUcxLzk0WhQpC3AUwFnE=
+github.com/trufnetwork/sdk-go v0.2.1-0.20250306182229-2ff7f41fac55 h1:1rLQf4Jbg9rRWYQ5zezyCQ8tBdaAeIiH98jTT9LHwn8=
+github.com/trufnetwork/sdk-go v0.2.1-0.20250306182229-2ff7f41fac55/go.mod h1:G6oI/GvnRyq1BGCin3xpAm0aJ+/uzkjp8KYmfZSCqIo=
+github.com/trufnetwork/sdk-go v0.2.1-0.20250306183132-ab0df5d8822c h1:11AMEgIe3nsdzuDcVNiMYS4OFMenyfQlarLfgIjemWw=
+github.com/trufnetwork/sdk-go v0.2.1-0.20250306183132-ab0df5d8822c/go.mod h1:G6oI/GvnRyq1BGCin3xpAm0aJ+/uzkjp8KYmfZSCqIo=
+github.com/trufnetwork/sdk-go v0.2.1-0.20250306191914-c334b2c67a58 h1:oWEtu3tZRYT4muUm8oqggHXSpnBZbA1Rl9Zz4FNe/VI=
+github.com/trufnetwork/sdk-go v0.2.1-0.20250306191914-c334b2c67a58/go.mod h1:G6oI/GvnRyq1BGCin3xpAm0aJ+/uzkjp8KYmfZSCqIo=
+github.com/trufnetwork/sdk-go v0.2.1-0.20250306192322-57cbdf7b5b77 h1:Z03krVytn/S++kB9Vh9jvT0R3kFBX4EHiV23Q1dxJSM=
+github.com/trufnetwork/sdk-go v0.2.1-0.20250306192322-57cbdf7b5b77/go.mod h1:G6oI/GvnRyq1BGCin3xpAm0aJ+/uzkjp8KYmfZSCqIo=
 github.com/urfave/cli v1.22.2/go.mod h1:Gos4lmkARVdJ6EkW0WaNv/tZAAMe9V7XWyB60NtXRu0=
 github.com/urfave/cli v1.22.10 h1:p8Fspmz3iTctJstry1PYS3HVdllxnEzTEsgIgtxTrCk=
 github.com/urfave/cli v1.22.10/go.mod h1:Gos4lmkARVdJ6EkW0WaNv/tZAAMe9V7XWyB60NtXRu0=
