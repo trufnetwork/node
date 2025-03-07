@@ -20,6 +20,10 @@ type StreamInfo struct {
 	Type    ContractType
 }
 
+func (contractType ContractType) String() string {
+	return string(contractType)
+}
+
 // CreateStream parses and creates the dataset for a contract
 func CreateStream(ctx context.Context, platform *kwilTesting.Platform, contractInfo StreamInfo) (*common.CallResult, error) {
 
@@ -39,7 +43,31 @@ func CreateStream(ctx context.Context, platform *kwilTesting.Platform, contractI
 		platform.DB,
 		"",
 		"create_stream",
-		[]any{contractInfo.Locator.StreamId.String(), contractInfo.Type},
+		[]any{contractInfo.Locator.StreamId.String(), contractInfo.Type.String()},
+		func(row *common.Row) error {
+			return nil
+		},
+	)
+}
+
+func DeleteStream(ctx context.Context, platform *kwilTesting.Platform, streamLocator types.StreamLocator) (*common.CallResult, error) {
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 0},
+		Signer:       streamLocator.DataProvider.Bytes(),
+		Caller:       streamLocator.DataProvider.Address(),
+		TxID:         platform.Txid(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext: txContext,
+	}
+
+	return platform.Engine.Call(engineContext,
+		platform.DB,
+		"",
+		"delete_stream",
+		[]any{streamLocator.StreamId.String()},
 		func(row *common.Row) error {
 			return nil
 		},
