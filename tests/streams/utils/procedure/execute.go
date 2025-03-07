@@ -33,8 +33,8 @@ func GetRecord(ctx context.Context, input GetRecordInput) ([]ResultRow, error) {
 
 	var resultRows [][]any
 	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_record", []any{
-		input.StreamLocator.StreamId.String(),
 		input.StreamLocator.DataProvider.Address(),
+		input.StreamLocator.StreamId.String(),
 		input.FromTime,
 		input.ToTime,
 		input.FrozenAt,
@@ -76,8 +76,8 @@ func GetIndex(ctx context.Context, input GetIndexInput) ([]ResultRow, error) {
 
 	var resultRows [][]any
 	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_index", []any{
-		input.StreamLocator.StreamId.String(),
 		input.StreamLocator.DataProvider.Address(),
+		input.StreamLocator.StreamId.String(),
 		input.FromTime,
 		input.ToTime,
 		input.FrozenAt,
@@ -120,8 +120,8 @@ func GetIndexChange(ctx context.Context, input GetIndexChangeInput) ([]ResultRow
 
 	var resultRows [][]any
 	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_index_change", []any{
-		input.StreamLocator.StreamId.String(),
 		input.StreamLocator.DataProvider.Address(),
+		input.StreamLocator.StreamId.String(),
 		input.FromTime,
 		input.ToTime,
 		input.FrozenAt,
@@ -165,8 +165,8 @@ func GetFirstRecord(ctx context.Context, input GetFirstRecordInput) ([]ResultRow
 
 	var resultRows [][]any
 	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_first_record", []any{
-		input.StreamLocator.StreamId.String(),
 		input.StreamLocator.DataProvider.Address(),
+		input.StreamLocator.StreamId.String(),
 		input.AfterTime,
 		input.FrozenAt,
 	}, func(row *common.Row) error {
@@ -206,8 +206,8 @@ func SetMetadata(ctx context.Context, input SetMetadataInput) error {
 	}
 
 	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "set_metadata", []any{
-		input.StreamLocator.StreamId.String(),
 		input.StreamLocator.DataProvider.Address(),
+		input.StreamLocator.StreamId.String(),
 		input.Key,
 		input.Value,
 		input.ValType,
@@ -269,8 +269,8 @@ func DescribeTaxonomies(ctx context.Context, input DescribeTaxonomiesInput) ([]R
 
 	var resultRows [][]any
 	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "describe_taxonomies", []any{
-		input.StreamId,
 		input.DataProvider,
+		input.StreamId,
 		input.LatestVersion,
 	}, func(row *common.Row) error {
 		// Convert the row values to []any
@@ -308,8 +308,8 @@ func SetTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 	}
 
 	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "set_taxonomy", []any{
-		input.StreamLocator.StreamId.String(),
 		input.StreamLocator.DataProvider.Address(),
+		input.StreamLocator.StreamId.String(),
 		input.DataProviders,
 		input.StreamIds,
 		input.Weights,

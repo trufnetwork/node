@@ -7,6 +7,7 @@ import (
 	"github.com/trufnetwork/sdk-go/core/types"
 
 	"github.com/kwilteam/kwil-db/common"
+	kwilTypes "github.com/kwilteam/kwil-db/core/types"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
 	testtable "github.com/trufnetwork/node/tests/streams/utils/table"
@@ -15,7 +16,7 @@ import (
 
 type InsertRecordInput struct {
 	EventTime int64   `json:"event_time"`
-	Value     float32 `json:"value"`
+	Value     float64 `json:"value"`
 }
 
 type PrimitiveStreamDefinition struct {
@@ -122,13 +123,16 @@ func parsePrimitiveMarkdownSetup(input MarkdownPrimitiveSetupInput) (SetupPrimit
 		if err != nil {
 			return SetupPrimitiveInput{}, err
 		}
-		valueFloat, err := strconv.ParseFloat(value, 32)
+		valueFloat, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return SetupPrimitiveInput{}, err
+		}
 		if err != nil {
 			return SetupPrimitiveInput{}, err
 		}
 		primitiveStream.Data = append(primitiveStream.Data, InsertRecordInput{
 			EventTime: eventTimeInt,
-			Value:     float32(valueFloat),
+			Value:     valueFloat,
 		})
 	}
 
@@ -191,6 +195,7 @@ func InsertMarkdownPrimitiveData(ctx context.Context, input InsertMarkdownDataIn
 		}
 
 		_, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "insert_record", []any{
+			input.StreamLocator.DataProvider.Address(),
 			input.StreamLocator.StreamId.String(),
 			eventTime,
 			value,
@@ -213,10 +218,15 @@ type InsertPrimitiveDataInput struct {
 func insertPrimitiveData(ctx context.Context, input InsertPrimitiveDataInput) error {
 	args := [][]any{}
 	for _, data := range input.primitiveStream.Data {
+		valueDecimal, err := kwilTypes.ParseDecimalExplicit(strconv.FormatFloat(data.Value, 'f', -1, 64), 36, 18)
+		if err != nil {
+			return errors.Wrap(err, "error in insertPrimitiveData")
+		}
 		args = append(args, []any{
+			input.primitiveStream.StreamLocator.DataProvider.Address(),
 			input.primitiveStream.StreamLocator.StreamId.String(),
 			data.EventTime,
-			data.Value,
+			valueDecimal,
 		})
 	}
 
