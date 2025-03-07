@@ -2,8 +2,8 @@
 CREATE OR REPLACE ACTION get_record(
     $data_provider TEXT,
     $stream_id TEXT,
-    $from_time INT8,
-    $to_time INT8,
+    $from INT8,
+    $to INT8,
     $frozen_at INT8
 ) PUBLIC view returns table(
     event_time INT8,
@@ -14,9 +14,13 @@ CREATE OR REPLACE ACTION get_record(
     
     -- Route to the appropriate internal action
     if $is_primitive {
-        RETURN get_record_primitive($data_provider, $stream_id, $from_time, $to_time, $frozen_at);
+        for $row in get_record_primitive($data_provider, $stream_id, $from, $to, $frozen_at) {
+            RETURN NEXT $row.event_time, $row.value;
+        }
     } else {
-        RETURN get_record_composed($data_provider, $stream_id, $from_time, $to_time, $frozen_at);
+        for $row in get_record_composed($data_provider, $stream_id, $from, $to, $frozen_at) {
+            RETURN NEXT $row.event_time, $row.value;
+        }
     }
 };
 
@@ -24,7 +28,7 @@ CREATE OR REPLACE ACTION get_record(
 CREATE OR REPLACE ACTION get_last_record(
     $data_provider TEXT,
     $stream_id TEXT,
-    $before_time INT8,
+    $before INT8,
     $frozen_at INT8
 ) PUBLIC view returns table(
     event_time INT8,
@@ -35,9 +39,9 @@ CREATE OR REPLACE ACTION get_last_record(
     
     -- Route to the appropriate internal action
     if $is_primitive {
-        RETURN get_last_record_primitive($data_provider, $stream_id, $before_time, $frozen_at);
+        RETURN get_last_record_primitive($data_provider, $stream_id, $before, $frozen_at);
     } else {
-        RETURN get_last_record_composed($data_provider, $stream_id, $before_time, $frozen_at);
+        RETURN get_last_record_composed($data_provider, $stream_id, $before, $frozen_at);
     }
 };
 
@@ -45,7 +49,7 @@ CREATE OR REPLACE ACTION get_last_record(
 CREATE OR REPLACE ACTION get_first_record(
     $data_provider TEXT,
     $stream_id TEXT,
-    $after_time INT8,
+    $after INT8,
     $frozen_at INT8
 ) PUBLIC view returns table(
     event_time INT8,
@@ -56,9 +60,9 @@ CREATE OR REPLACE ACTION get_first_record(
     
     -- Route to the appropriate internal action
     if $is_primitive {
-        RETURN get_first_record_primitive($data_provider, $stream_id, $after_time, $frozen_at);
+        RETURN get_first_record_primitive($data_provider, $stream_id, $after, $frozen_at);
     } else {
-        RETURN get_first_record_composed($data_provider, $stream_id, $after_time, $frozen_at);
+        RETURN get_first_record_composed($data_provider, $stream_id, $after, $frozen_at);
     }
 };
 
@@ -84,8 +88,8 @@ CREATE OR REPLACE ACTION get_base_value(
 CREATE OR REPLACE ACTION get_index(
     $data_provider TEXT,
     $stream_id TEXT,
-    $from_time INT8,
-    $to_time INT8,
+    $from INT8,
+    $to INT8,
     $frozen_at INT8,
     $base_time INT8
 ) PUBLIC view returns table(
@@ -97,8 +101,8 @@ CREATE OR REPLACE ACTION get_index(
     
     -- Route to the appropriate internal action
     if $is_primitive {
-        RETURN get_index_primitive($data_provider, $stream_id, $from_time, $to_time, $frozen_at, $base_time);
+        RETURN get_index_primitive($data_provider, $stream_id, $from, $to, $frozen_at, $base_time);
     } else {
-        RETURN get_index_composed($data_provider, $stream_id, $from_time, $to_time, $frozen_at, $base_time);
+        RETURN get_index_composed($data_provider, $stream_id, $from, $to, $frozen_at, $base_time);
     }
 };
