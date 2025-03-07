@@ -2,8 +2,8 @@
 CREATE OR REPLACE ACTION get_record_composed(
     $data_provider TEXT,
     $stream_id TEXT,
-    $from_time INT8,
-    $to_time INT8,
+    $from INT8,
+    $to INT8,
     $frozen_at INT8
 ) PRIVATE view returns table(
     event_time INT8,
@@ -12,11 +12,11 @@ CREATE OR REPLACE ACTION get_record_composed(
     ERROR('Composed stream query implementation is missing');
 };
 
--- get_last_record_before_ts returns the last record before the given timestamp
+-- get_last_record returns the last record before the given timestamp
 CREATE OR REPLACE ACTION get_last_record_composed(
     $data_provider TEXT,
     $stream_id TEXT,
-    $before_time INT8,
+    $before INT8,
     $frozen_at INT8
 ) PRIVATE view returns table(
     event_time INT8,
@@ -29,7 +29,7 @@ CREATE OR REPLACE ACTION get_last_record_composed(
 CREATE OR REPLACE ACTION get_first_record_composed(
     $data_provider TEXT,
     $stream_id TEXT,
-    $after_time INT8,
+    $after INT8,
     $frozen_at INT8
 ) PRIVATE view returns table(
     event_time INT8,
@@ -52,8 +52,8 @@ CREATE OR REPLACE ACTION get_base_value_composed(
 CREATE OR REPLACE ACTION get_index_composed(
     $data_provider TEXT,
     $stream_id TEXT,
-    $from_time INT8,
-    $to_time INT8,
+    $from INT8,
+    $to INT8,
     $frozen_at INT8,
     $base_time INT8
 ) PRIVATE view returns table(
