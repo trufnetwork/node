@@ -45,7 +45,7 @@ func TestPrimitiveStream(t *testing.T) {
 		SeedScripts: testutils.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testPRIMITIVE01_DataInsertion(t),
-			testPRIMITIVE01_InsertAndGetRecord(t),
+			WithPrimitiveTestSetup(testPRIMITIVE01_InsertAndGetRecord(t)),
 			//WithPrimitiveTestSetup(testPRIMITIVE07_GetRecordWithFutureDate(t)),
 			//WithPrimitiveTestSetup(testPRIMITIVE02_UnauthorizedInserts(t)),
 			//WithPrimitiveTestSetup(testPRIMITIVE05GetIndex(t)),
@@ -138,8 +138,8 @@ func testPRIMITIVE01_InsertAndGetRecord(t *testing.T) func(ctx context.Context, 
 				StreamId:     primitiveStreamId,
 				DataProvider: deployer,
 			},
-			FromTime: 1612137600,
-			ToTime:   1612137600,
+			FromTime: 1,
+			ToTime:   5,
 			Height:   0,
 		})
 		if err != nil {

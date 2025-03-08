@@ -43,7 +43,7 @@ func CreateStream(ctx context.Context, platform *kwilTesting.Platform, contractI
 		platform.DB,
 		"",
 		"create_stream",
-		[]any{contractInfo.Locator.StreamId.String(), contractInfo.Type.String()},
+		[]any{contractInfo.Locator.StreamId.String(), string(contractInfo.Type)},
 		func(row *common.Row) error {
 			return nil
 		},

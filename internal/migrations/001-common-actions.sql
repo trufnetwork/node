@@ -95,7 +95,7 @@ CREATE OR REPLACE ACTION is_primitive_stream(
         return $row.stream_type = 'primitive';
     }
     
-    ERROR('Stream not found: ' || $stream_id);
+    ERROR('Stream not found: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
 };
 
 -- This action wraps metadata selection with pagination parameters.

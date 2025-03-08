@@ -143,7 +143,7 @@ func parseComposedMarkdownSetup(input MarkdownComposedSetupInput) (SetupComposed
 			}
 			primitiveStreams[i].Data = append(primitiveStreams[i].Data, InsertRecordInput{
 				EventTime: eventTimeInt,
-				Value:     float32(primitiveFloat),
+				Value:     primitiveFloat,
 			})
 		}
 	}
