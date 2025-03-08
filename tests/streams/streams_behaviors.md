@@ -16,6 +16,8 @@ This document lists the behaviors that must have automated tests to ensure they 
 - [AUTH03] The stream owner can control which wallets are allowed to insert data into the stream.
 - [AUTH04] The stream owner can control which streams are allowed to compose from the stream.
 - [AUTH05] Stream owners are able to delete their streams and all associated data.
+- [AUTH06] User must have read access to all invoved streams to access any record from streams.
+- [AUTH07] User must have write access to the stream to insert data.
 
 ## Data Querying
 
