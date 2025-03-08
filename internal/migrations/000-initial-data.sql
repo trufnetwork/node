@@ -51,8 +51,9 @@ CREATE TABLE IF NOT EXISTS taxonomies (
 
 -- Create indexes separately
 CREATE INDEX IF NOT EXISTS child_stream_idx ON taxonomies (data_provider, stream_id, start_time, version, child_data_provider, child_stream_id);
-CREATE INDEX IF NOT EXISTS active_child_stream_idx ON taxonomies (data_provider, stream_id)
-WHERE disabled_at IS NULL;
+-- TODO: Add this back in when we support where clause
+-- CREATE INDEX IF NOT EXISTS active_child_stream_idx ON taxonomies (data_provider, stream_id)
+-- WHERE disabled_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS primitive_events (
     stream_id TEXT NOT NULL,
@@ -77,15 +78,17 @@ CREATE INDEX IF NOT EXISTS pe_provider_stream_time_idx ON primitive_events
 CREATE INDEX IF NOT EXISTS pe_provider_stream_created_idx ON primitive_events 
 (data_provider, stream_id, created_at);
 
+-- TODO: Add this back in when we support window functions
 -- Optimizes the PARTITION BY event_time ORDER BY created_at DESC pattern
 -- Good for window functions selecting latest record per time point
-CREATE INDEX IF NOT EXISTS pe_window_func_idx ON primitive_events 
-(data_provider, stream_id, event_time, created_at DESC);
+-- CREATE INDEX IF NOT EXISTS pe_window_func_idx ON primitive_events 
+-- (data_provider, stream_id, event_time, created_at DESC);
 
+-- TODO: Add this back in when we support gap-filling queries
 -- Supports gap-filling queries that find most recent record BEFORE a timestamp
 -- Critical for time-series interpolation and "last known value" lookups
-CREATE INDEX IF NOT EXISTS pe_gap_filler_idx ON primitive_events 
-(data_provider, stream_id, event_time DESC, created_at DESC);
+-- CREATE INDEX IF NOT EXISTS pe_gap_filler_idx ON primitive_events 
+-- (data_provider, stream_id, event_time DESC, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS metadata (
     row_id UUID NOT NULL,
@@ -117,8 +120,9 @@ CREATE INDEX IF NOT EXISTS stream_ref_idx ON metadata (data_provider, stream_id,
 -- For fetching only by reference when metadata_key is the primary filter
 CREATE INDEX IF NOT EXISTS ref_idx ON metadata (metadata_key, value_ref, data_provider, stream_id);
 
+-- TODO: Add this back in when we support where clause
 -- For efficiently querying only active (non-disabled) metadata records
 -- Reduces scan size when disabled records are excluded from results
-CREATE INDEX IF NOT EXISTS active_metadata_idx ON metadata 
-(data_provider, stream_id, metadata_key)
-WHERE disabled_at IS NULL;
+-- CREATE INDEX IF NOT EXISTS active_metadata_idx ON metadata 
+-- (data_provider, stream_id, metadata_key)
+-- WHERE disabled_at IS NULL;

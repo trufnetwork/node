@@ -26,12 +26,25 @@ func (contractType ContractType) String() string {
 
 // CreateStream parses and creates the dataset for a contract
 func CreateStream(ctx context.Context, platform *kwilTesting.Platform, contractInfo StreamInfo) (*common.CallResult, error) {
+	return UntypedCreateStream(ctx, platform, contractInfo.Locator.StreamId.String(), contractInfo.Locator.DataProvider.Address(), string(contractInfo.Type))
+}
 
+func UntypedCreateStream(ctx context.Context, platform *kwilTesting.Platform, streamId string, dataProvider string, contractType string) (*common.CallResult, error) {
+	// Convert hex string to bytes for the signer
+	var signerBytes []byte
+	if len(dataProvider) > 2 {
+		// Remove 0x prefix if present
+		if dataProvider[:2] == "0x" {
+			signerBytes = []byte(dataProvider[2:])
+		} else {
+			signerBytes = []byte(dataProvider)
+		}
+	}
 	txContext := &common.TxContext{
 		Ctx:          ctx,
 		BlockContext: &common.BlockContext{Height: 0},
-		Signer:       contractInfo.Locator.DataProvider.Bytes(),
-		Caller:       contractInfo.Locator.DataProvider.Address(),
+		Signer:       signerBytes,
+		Caller:       dataProvider,
 		TxID:         platform.Txid(),
 	}
 
@@ -43,7 +56,7 @@ func CreateStream(ctx context.Context, platform *kwilTesting.Platform, contractI
 		platform.DB,
 		"",
 		"create_stream",
-		[]any{contractInfo.Locator.StreamId.String(), string(contractInfo.Type)},
+		[]any{streamId, contractType},
 		func(row *common.Row) error {
 			return nil
 		},

@@ -16,17 +16,19 @@ This document lists the behaviors that must have automated tests to ensure they 
 - [AUTH03] The stream owner can control which wallets are allowed to insert data into the stream.
 - [AUTH04] The stream owner can control which streams are allowed to compose from the stream.
 - [AUTH05] Stream owners are able to delete their streams and all associated data.
+- [AUTH06] User must have read access to all invoved streams to access any record from streams. This includes owner and whitelisted wallets.
+- [AUTH07] User must have write access to the stream to insert data. This includes owner and whitelisted wallets.
 
 ## Data Querying
 
-- [PRIMITIVE01][PRIMITIVE04] Authorized users (owner and whitelisted wallets) can query records over a specified date range.
-- [PRIMITIVE05] Authorized users (owner and whitelisted wallets) can query index value which is a normalized index computed from the raw data overspecified date range.
-- [PRIMITIVE06] Authorized users (owner and whitelisted wallets) can query percentage changes of an index overspecified date range.
-- [COMMON04] Users can query metadata, enabled or not, to retrieve configuration details of the stream.
-- [PRIMITIVE07] Authorized users can query earliest available record for a stream.
-- [COMMON04] All metadata values are publicly available.
-- [PRIMITIVE07] If a point in time is queried, but there's no available data for that point, the closest available data in the past is returned.
-- [PRIMITIVE08] Only one data point per date is returned from query (the latest inserted one)
+- [QUERY01] Authorized users (owner and whitelisted wallets) can query records over a specified date range.
+- [QUERY02] Authorized users (owner and whitelisted wallets) can query index value which is a normalized index computed from the raw data overspecified date range.
+- [QUERY03] Authorized users (owner and whitelisted wallets) can query percentage changes of an index overspecified date range.
+- [QUERY04] Users can query metadata, enabled or not, to retrieve configuration details of the stream.
+- [QUERY05] Authorized users can query earliest available record for a stream.
+- [QUERY04] All metadata values are publicly available.
+- [QUERY06] If a point in time is queried, but there's no available data for that point, the closest available data in the past is returned.
+- [QUERY07] Only one data point per date is returned from query (the latest inserted one)
 
 ## Data Insertion
 
@@ -43,7 +45,7 @@ This document lists the behaviors that must have automated tests to ensure they 
 ## Composition & Aggregation
 
 - [AGGR01] A composed stream aggregates data from multiple child streams (which may be either primitive or composed).
-- [AGGR02] Each child stream’s contribution is weighted, and these weights can vary over time.
+- [AGGR02] Each child stream's contribution is weighted, and these weights can vary over time.
 - [AGGR03] Taxonomies define the mapping of child streams, including a period of validity for each weight. (start_date and end_date, otherwise not set)
 - [AGGR04] If a child stream doesn't have data for the given date (including last available data), the composed stream will not count it's weight for that date.
 - [AGGR05] For a single taxonomy version, there can't be duplicated child stream definitions.
