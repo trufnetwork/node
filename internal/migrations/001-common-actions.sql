@@ -62,6 +62,29 @@ CREATE OR REPLACE ACTION create_stream(
     }
 };
 
+CREATE OR REPLACE ACTION delete_stream(
+    $stream_id TEXT
+) PUBLIC {
+    -- Get caller's address (data provider) first
+    $data_provider TEXT := @caller;
+
+    -- Check if caller is a valid ethereum address
+    -- TODO: really check if it's a valid address
+    if LENGTH($data_provider) != 42
+        OR substring($data_provider, 1, 2) != '0x' {
+        ERROR('Invalid data provider address. Must be a valid Ethereum address: ' || $data_provider);
+    }
+
+    -- Check if stream_id has valid format (st followed by 30 lowercase alphanumeric chars)
+    -- TODO: only alphanumeric characters be allowed
+    if LENGTH($stream_id) != 32 OR
+       substring($stream_id, 1, 2) != 'st' {
+        ERROR('Invalid stream_id format. Must start with "st" followed by 30 lowercase alphanumeric characters: ' || $stream_id);
+    }
+
+    DELETE FROM streams WHERE data_provider = $data_provider AND stream_id = $stream_id;
+};
+
 -- Helper function to check if a stream is primitive or composed
 CREATE OR REPLACE ACTION is_primitive_stream(
     $data_provider TEXT,

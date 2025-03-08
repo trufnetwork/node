@@ -1,5 +1,17 @@
 package tests
 
+import (
+	"context"
+	kwilTesting "github.com/kwilteam/kwil-db/testing"
+	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
+	testutils "github.com/trufnetwork/node/tests/streams/utils"
+	"github.com/trufnetwork/node/tests/streams/utils/setup"
+	"github.com/trufnetwork/sdk-go/core/types"
+	"github.com/trufnetwork/sdk-go/core/util"
+	"testing"
+)
+
 // import (
 // 	"context"
 // 	"testing"
@@ -373,31 +385,52 @@ package tests
 // 	})
 // }
 
-// func testStreamDeletion(t *testing.T, contractInfo setup.ContractInfo) kwilTesting.TestFunc {
-// 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 		// Set up and initialize the contract
-// 		if err := setup.SetupAndInitializeContract(ctx, platform, contractInfo); err != nil {
-// 			return errors.Wrapf(err, "failed to setup and initialize contract %s for deletion test", contractInfo.Name)
-// 		}
-// 		dbid := setup.GetDBID(contractInfo)
+func TestAUTH05_StreamDeletion(t *testing.T) {
+	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name: "stream_deletion_test",
+		SeedScripts: []string{
+			"../../../internal/migrations/000-initial-data.sql",
+			"../../../internal/migrations/001-common-actions.sql",
+		},
+		FunctionTests: []kwilTesting.TestFunc{
+			testStreamDeletion(t),
+		},
+	}, testutils.GetTestOptions())
+}
 
-// 		// Delete the contract
-// 		err := procedure.DeleteContract(ctx, procedure.DeleteContractInput{
-// 			Platform: platform,
-// 			Deployer: contractInfo.Deployer,
-// 			DBID:     dbid,
-// 		})
-// 		assert.NoError(t, err, "Error should not be returned when deleting contract")
+func testStreamDeletion(t *testing.T) kwilTesting.TestFunc {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		dataProvider := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000001")
+		streamLocator := types.StreamLocator{
+			StreamId:     util.GenerateStreamId("stream_deletion_test"),
+			DataProvider: dataProvider,
+		}
 
-// 		// Verify the contract no longer exists
-// 		exists, err := procedure.CheckContractExists(ctx, procedure.CheckContractExistsInput{
-// 			Platform: platform,
-// 			Deployer: contractInfo.Deployer,
-// 			DBID:     dbid,
-// 		})
-// 		assert.False(t, exists, "Contract should not exist after deletion")
-// 		assert.NoError(t, err, "Error should not be returned when checking contract existence")
+		// Set up and initialize the contract
+		_, err := setup.CreateStream(ctx, platform, setup.StreamInfo{
+			Locator: streamLocator,
+			Type:    setup.ContractTypePrimitive,
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to create stream for deletion test")
+		}
 
-// 		return nil
-// 	}
-// }
+		// Delete the stream
+		_, err = setup.DeleteStream(ctx, platform, streamLocator)
+		if err != nil {
+			return errors.Wrap(err, "failed to delete stream")
+		}
+		assert.NoError(t, err, "Error should not be returned when deleting stream")
+
+		// Verify the contract no longer exists
+		//exists, err := procedure.CheckContractExists(ctx, procedure.CheckContractExistsInput{
+		//	Platform: platform,
+		//	Deployer: contractInfo.Deployer,
+		//	DBID:     dbid,
+		//})
+		//assert.False(t, exists, "Contract should not exist after deletion")
+		//assert.NoError(t, err, "Error should not be returned when checking contract existence")
+
+		return nil
+	}
+}
