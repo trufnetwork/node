@@ -51,8 +51,6 @@ CREATE OR REPLACE ACTION insert_taxonomy(
                 AND version = $current_version;
         }
 
-        $randomizer := overlay(@txid, $i::text, length(@txid));
-        $taxonomy_id_value := uuid_generate_v5('41fea9f0-179f-11ef-8838-325096b39f47'::UUID, $randomizer);
         $child_data_provider_value := $child_data_providers[$i];
         $child_stream_id_value := $child_stream_ids[$i];
         $weight_value := $weights[$i];
@@ -72,7 +70,7 @@ CREATE OR REPLACE ACTION insert_taxonomy(
         ) VALUES (
             $data_provider,
             $stream_id,
-            $taxonomy_id_value, -- Generate a new UUID for the taxonomy.
+            uuid_generate_kwil(@txid||$i::TEXT), -- Generate a new UUID for the taxonomy.
             $child_data_provider_value,
             $child_stream_id_value,
             $weight_value,
