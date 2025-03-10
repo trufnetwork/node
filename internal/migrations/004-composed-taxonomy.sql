@@ -21,19 +21,8 @@ CREATE OR REPLACE ACTION insert_taxonomy(
         error('All child arrays must be of the same length');
     }
 
-    -- Retrieve the current version for this parent.
-    $parent_current_version := get_current_version($data_provider, $stream_id, false);
-
-    if $parent_current_version != 0 {
-        -- Disable all existing taxonomy records for this parent and version.
-        UPDATE taxonomies
-        SET disabled_at = @height
-        WHERE data_provider = $data_provider
-        AND stream_id = $stream_id
-        AND version = $parent_current_version;
-    }
-
-    $new_version := $parent_current_version + 1;
+    -- Retrieve the current version for this parent and increment it by 1.
+    $new_version := get_current_version($data_provider, $stream_id, true) + 1;
 
     FOR $i IN 1..$num_children {
         $child_data_provider_value := $child_data_providers[$i];
