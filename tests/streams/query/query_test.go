@@ -31,8 +31,10 @@ import (
 )
 
 const primitiveStreamName = "primitive_stream_query_test"
+const composedStreamName = "composed_stream_query_test"
 
 var primitiveStreamId = util.GenerateStreamId(primitiveStreamName)
+var composedStreamId = util.GenerateStreamId(composedStreamName)
 
 func TestQueryStream(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
@@ -48,6 +50,7 @@ func TestQueryStream(t *testing.T) {
 			WithQueryTestSetup(testQUERY07_DuplicateDate(t)),
 			WithQueryTestSetup(testQUERY01_GetRecordWithBaseDate(t)),
 			WithQueryTestSetup(testQUERY07_AdditionalInsertWillFetchLatestRecord(t)),
+			WithComposedQueryTestSetup(testAGGR03_ComposedStreamWithWeights(t)),
 		},
 	}, testutils.GetTestOptions())
 }
@@ -411,6 +414,43 @@ func testQUERY07_AdditionalInsertWillFetchLatestRecord(t *testing.T) func(ctx co
 
 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
 
+		return nil
+	}
+}
+
+// WithComposedQueryTestSetup is a helper function that sets up the test environment with a deployer and signer
+func WithComposedQueryTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
+		platform = procedure.WithSigner(platform, deployer.Bytes())
+
+		// Setup initial data
+		err := setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
+			Platform: platform,
+			StreamId: composedStreamId,
+			MarkdownData: `
+			| event_time | stream 1 | stream 2 | stream 3 |
+			| ---------- | -------- | -------- | -------- |
+			| 1          | 1        | 2        |          |
+			| 2          |          |          |          |
+			| 3          | 3        | 4        | 5        |
+			`,
+			Weights: nil,
+			Height:  1,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error setting up composed stream")
+		}
+
+		// Run the actual test function
+		return testFn(ctx, platform)
+	}
+}
+
+// [AGGR03] Taxonomies define the mapping of child streams, including a period of validity for each weight. (start_date otherwise not set)
+func testAGGR03_ComposedStreamWithWeights(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// TODO: Implement this test
 		return nil
 	}
 }
