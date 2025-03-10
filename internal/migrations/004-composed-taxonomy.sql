@@ -1,10 +1,10 @@
 CREATE OR REPLACE ACTION insert_taxonomy(
-    $data_provider TEXT, -- The data provider of the parent stream.
-    $stream_id TEXT,    -- The stream ID of the parent stream.
-    $child_data_providers TEXT[], -- The data providers of the child streams.
-    $child_stream_ids TEXT[], -- The stream IDs of the child streams.
-    $weights NUMERIC(36,18)[], -- The weights of the child streams.
-    $start_date INT -- The start date of the taxonomy.
+    $data_provider TEXT,            -- The data provider of the parent stream.
+    $stream_id TEXT,                -- The stream ID of the parent stream.
+    $child_data_providers TEXT[],   -- The data providers of the child streams.
+    $child_stream_ids TEXT[],       -- The stream IDs of the child streams.
+    $weights NUMERIC(36,18)[],      -- The weights of the child streams.
+    $start_date INT                 -- The start date of the taxonomy.
 ) PUBLIC view returns (result bool) {
     -- Ensure the wallet is allowed to write
     if is_wallet_allowed_to_write(@caller, $data_provider, $stream_id) == false {
@@ -21,41 +21,25 @@ CREATE OR REPLACE ACTION insert_taxonomy(
         error('All child arrays must be of the same length');
     }
 
+    -- Retrieve the current version for this parent.
+    $parent_current_version := get_current_version($data_provider, $stream_id, false);
+
+    if $parent_current_version != 0 {
+        -- Disable all existing taxonomy records for this parent and version.
+        UPDATE taxonomies
+        SET disabled_at = @height
+        WHERE data_provider = $data_provider
+        AND stream_id = $stream_id
+        AND version = $parent_current_version;
+    }
+
+    $new_version := $parent_current_version + 1;
+
     FOR $i IN 1..$num_children {
-        $current_version := 0::INT;
-        -- Retrieve the latest version for the given parent/child combination.
-
-        $child_data_provider_value := $child_data_providers[$i];
-        $child_stream_id_value := $child_stream_ids[$i];
-        for $row in SELECT version
-            FROM taxonomies
-            WHERE data_provider = $data_provider
-              AND stream_id = $stream_id
-              AND child_data_provider = $child_data_provider_value
-              AND child_stream_id = $child_stream_id_value
-            ORDER BY version DESC
-                LIMIT 1 {
-                $current_version := $row.version;
-        }
-
-        if $current_version != 0 {
-            -- Disable the existing taxonomy record by setting disabled_at to the current block height.
-            $child_data_provider_value := $child_data_providers[$i];
-            $child_stream_id_value := $child_stream_ids[$i];
-            UPDATE taxonomies
-                SET disabled_at = @height
-                WHERE data_provider = $data_provider
-                AND stream_id = $stream_id
-                AND child_data_provider = $child_data_provider_value
-                AND child_stream_id = $child_stream_id_value
-                AND version = $current_version;
-        }
-
         $child_data_provider_value := $child_data_providers[$i];
         $child_stream_id_value := $child_stream_ids[$i];
         $weight_value := $weights[$i];
-        $current_version_value := $current_version + 1;
-        -- Insert the new taxonomy record with version incremented by one.
+
         INSERT INTO taxonomies (
             data_provider,
             stream_id,
@@ -75,10 +59,41 @@ CREATE OR REPLACE ACTION insert_taxonomy(
             $child_stream_id_value,
             $weight_value,
             @height,             -- Use the current block height for created_at.
-            NULL,                -- New record is active.
-            $current_version_value, -- Increment the version.
+            NULL,               -- New record is active.
+            $new_version,          -- Use the new version for all child records.
             $start_date          -- Start date of the taxonomy.
         );
     }
     return true;
 };
+
+------------------------------------------------------------
+-- Helper action: Get the latest taxonomy version for a parent.
+-- When $show_disabled is false, only active (non-disabled) records are considered.
+CREATE OR REPLACE ACTION get_current_version(
+    $data_provider TEXT,
+    $stream_id TEXT,
+    $show_disabled bool
+) private view returns (result int) {
+    if $show_disabled == false {
+        for $row in SELECT version
+        FROM taxonomies
+        WHERE data_provider = $data_provider
+        AND stream_id = $stream_id
+        AND disabled_at IS NULL
+        ORDER BY version DESC
+        LIMIT 1 {
+            return $row.version;
+        }
+    } else {
+        for $row in SELECT version
+        FROM taxonomies
+        WHERE data_provider = $data_provider
+        AND stream_id = $stream_id
+        ORDER BY version DESC
+        LIMIT 1 {
+            return $row.version;
+        }
+    }
+    return 0;
+}
