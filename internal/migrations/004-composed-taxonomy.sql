@@ -85,4 +85,53 @@ CREATE OR REPLACE ACTION get_current_version(
         }
     }
     return 0;
-}
+};
+
+CREATE OR REPLACE ACTION describe_taxonomies(
+    $data_provider TEXT,    -- Parent data provider
+    $stream_id TEXT,        -- Parent stream id
+    $latest_version BOOL    -- If true, only the latest (active) version is returned
+) PUBLIC view returns table(
+    data_provider TEXT,         -- Parent data provider
+    stream_id TEXT,             -- Parent stream id
+    child_data_provider TEXT,   -- Child data provider
+    child_stream_id TEXT,       -- Child stream id
+    weight NUMERIC(36,18),
+    created_at INT,
+    version INT,
+    start_date INT             -- Aliased from start_time
+) {
+    if $latest_version == true {
+        $version := get_current_version($data_provider, $stream_id, false);
+        return SELECT
+            t.data_provider,
+            t.stream_id,
+            t.child_data_provider,
+            t.child_stream_id,
+            t.weight,
+            t.created_at,
+            t.version,
+            t.start_time AS start_date
+        FROM taxonomies t
+        WHERE t.disabled_at IS NULL
+            AND t.data_provider = $data_provider
+            AND t.stream_id = $stream_id
+            AND t.version = $version
+        ORDER BY t.created_at DESC;
+    } else {
+        return SELECT
+            t.data_provider,
+            t.stream_id,
+            t.child_data_provider,
+            t.child_stream_id,
+            t.weight,
+            t.created_at,
+            t.version,
+            t.start_time AS start_date
+        FROM taxonomies t
+        WHERE t.disabled_at IS NULL
+            AND t.data_provider = $data_provider
+            AND t.stream_id = $stream_id
+        ORDER BY t.version DESC;
+    }
+};

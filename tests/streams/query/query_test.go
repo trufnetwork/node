@@ -15,6 +15,7 @@ package tests
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/pkg/errors"
@@ -450,7 +451,46 @@ func WithComposedQueryTestSetup(testFn func(ctx context.Context, platform *kwilT
 // [AGGR03] Taxonomies define the mapping of child streams, including a period of validity for each weight. (start_date otherwise not set)
 func testAGGR03_ComposedStreamWithWeights(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// TODO: Implement this test
+		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address")
+		}
+
+		// Describe taxonomies
+		result, err := procedure.DescribeTaxonomies(ctx, procedure.DescribeTaxonomiesInput{
+			Platform:      platform,
+			StreamId:      composedStreamId.String(),
+			DataProvider:  deployer.Address(),
+			LatestVersion: true,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error getting records")
+		}
+
+		parentStreamId := composedStreamId.String()
+		childStream1 := util.GenerateStreamId("stream 1")
+		childStream1Id := childStream1.String()
+		childStream2 := util.GenerateStreamId("stream 2")
+		childStream2Id := childStream2.String()
+		childStream3 := util.GenerateStreamId("stream 3")
+		childStream3Id := childStream3.String()
+
+		// In the describe taxonomies result, the order of the child streams is ordered by created_at
+		// Since the child streams are created in the same block, the order is not deterministic
+		// That's why in the expected result, stream 3 is placed before stream 2 to match the actual result
+		expected := fmt.Sprintf(`
+		| data_provider | stream_id | child_data_provider | child_stream_id | weight | created_at | version | start_date |
+		|---------------|-----------|--------------------|-----------------|--------|------------|---------|------------|
+		| 0x0000000000000000000000000000000000000000 | %s | 0x0000000000000000000000000000000000000000 | %s | 1.000000000000000000 | 0 | 1 | 0 |
+		| 0x0000000000000000000000000000000000000000 | %s | 0x0000000000000000000000000000000000000000 | %s | 1.000000000000000000 | 0 | 1 | 0 |
+		| 0x0000000000000000000000000000000000000000 | %s | 0x0000000000000000000000000000000000000000 | %s | 1.000000000000000000 | 0 | 1 | 0 |
+		`,
+			parentStreamId, childStream1Id,
+			parentStreamId, childStream3Id,
+			parentStreamId, childStream2Id,
+		)
+
+		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
 		return nil
 	}
 }
