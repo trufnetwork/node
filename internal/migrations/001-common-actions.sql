@@ -147,3 +147,117 @@ CREATE OR REPLACE ACTION get_metadata(
                CASE WHEN $order_by = 'created_at ASC' THEN created_at END ASC
        LIMIT $limit OFFSET $offset;
 };
+
+CREATE OR REPLACE ACTION is_wallet_allowed_to_read_substreams(
+    $data_provider TEXT,
+    $stream_id TEXT,
+    $wallet_address TEXT,
+    $active_from INT,
+    $active_to INT
+) PUBLIC view returns (is_allowed BOOL) {
+    return with all_substreams as (
+            WITH RECURSIVE latest_taxonomies AS (
+            SELECT DISTINCT ON (t.data_provider, t.stream_id, t.child_data_provider, t.child_stream_id, t.start_time)
+                t.child_data_provider,
+                t.child_stream_id,
+                t.start_time
+            FROM taxonomies t
+            WHERE t.start_time <= $active_to
+            AND (t.disabled_at IS NULL OR t.disabled_at > $active_from)
+            AND t.data_provider = $data_provider
+            AND t.stream_id = $stream_id
+            ORDER BY t.data_provider, t.stream_id, t.child_data_provider, t.child_stream_id, 
+                    t.start_time DESC, t.version DESC
+        ),
+        active_versions AS (
+            SELECT DISTINCT ON (child_data_provider, child_stream_id)
+                child_data_provider,
+                child_stream_id
+            FROM latest_taxonomies
+            ORDER BY child_data_provider, child_stream_id, start_time DESC
+        ),
+        recursive_substreams AS (
+            -- Base case: direct children with valid versions
+            SELECT 
+                av.child_data_provider AS data_provider, 
+                av.child_stream_id AS stream_id
+            FROM active_versions av
+            
+            UNION ALL
+            
+            -- Recursive case: children of children with their valid versions
+            SELECT 
+                t.child_data_provider, 
+                t.child_stream_id
+            FROM taxonomies t
+            JOIN recursive_substreams rs ON t.data_provider = rs.data_provider AND t.stream_id = rs.stream_id
+            WHERE t.start_time <= $active_to
+            AND (t.disabled_at IS NULL OR t.disabled_at > $active_from)
+        )
+        -- Return individual rows instead of arrays
+        SELECT DISTINCT data_provider, stream_id
+    ),
+    inexisting_substreams as (
+        select data_provider, stream_id from all_substreams that are not in (select data_provider, stream_id from streams)
+    ),
+    private_substreams as (
+        select data_provider, stream_id from all_substreams where metadata about vibility is 1
+    ),
+    streams_without_permissions as (
+        select data_provider, stream_id from private_substreams where data_provider, stream_id doesnt have read wallet metadata for the wallet address
+    )
+    select count about inexistent streams, and streams without permissions;
+    
+    if one of the counts is greater than 0, return false;
+    otherwise, return true;
+};
+
+CREATE OR REPLACE ACTION get_substreams(
+    $data_provider TEXT,
+    $stream_id TEXT,
+    $active_from INT,
+    $active_to INT
+) PUBLIC view returns table(data_provider TEXT, stream_id TEXT) {
+    -- Get latest active taxonomies first with version precedence
+    WITH RECURSIVE latest_taxonomies AS (
+        SELECT DISTINCT ON (t.data_provider, t.stream_id, t.child_data_provider, t.child_stream_id, t.start_time)
+            t.child_data_provider,
+            t.child_stream_id,
+            t.start_time
+        FROM taxonomies t
+        WHERE t.start_time <= $active_to
+          AND (t.disabled_at IS NULL OR t.disabled_at > $active_from)
+          AND t.data_provider = $data_provider
+          AND t.stream_id = $stream_id
+        ORDER BY t.data_provider, t.stream_id, t.child_data_provider, t.child_stream_id, 
+                 t.start_time DESC, t.version DESC
+    ),
+    active_versions AS (
+        SELECT DISTINCT ON (child_data_provider, child_stream_id)
+            child_data_provider,
+            child_stream_id
+        FROM latest_taxonomies
+        ORDER BY child_data_provider, child_stream_id, start_time DESC
+    ),
+    recursive_substreams AS (
+        -- Base case: direct children with valid versions
+        SELECT 
+            av.child_data_provider AS data_provider, 
+            av.child_stream_id AS stream_id
+        FROM active_versions av
+        
+        UNION ALL
+        
+        -- Recursive case: children of children with their valid versions
+        SELECT 
+            t.child_data_provider, 
+            t.child_stream_id
+        FROM taxonomies t
+        JOIN recursive_substreams rs ON t.data_provider = rs.data_provider AND t.stream_id = rs.stream_id
+        WHERE t.start_time <= $active_to
+          AND (t.disabled_at IS NULL OR t.disabled_at > $active_from)
+    )
+    -- Return individual rows instead of arrays
+    SELECT DISTINCT data_provider, stream_id
+    FROM recursive_substreams;
+};
