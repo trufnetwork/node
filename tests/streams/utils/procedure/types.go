@@ -63,3 +63,11 @@ type SetTaxonomyInput struct {
 	Weights       []string
 	StartTime     int64
 }
+
+type GetCategoryStreamsInput struct {
+	Platform     *kwilTesting.Platform
+	DataProvider string
+	StreamId     string
+	ActiveFrom   *int64
+	ActiveTo     *int64
+}

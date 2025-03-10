@@ -323,3 +323,45 @@ func SetTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 
 	return nil
 }
+
+func GetCategoryStreams(ctx context.Context, input GetCategoryStreamsInput) ([]ResultRow, error) {
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return nil, errors.Wrap(err, "error in getCategoryStreams")
+	}
+
+	txContext := &common.TxContext{
+		Ctx: ctx,
+		BlockContext: &common.BlockContext{
+			Height: 0,
+		},
+		TxID:   input.Platform.Txid(),
+		Signer: input.Platform.Deployer,
+		Caller: deployer.Address(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext: txContext,
+	}
+
+	var resultRows [][]any
+	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_category_streams", []any{
+		input.DataProvider,
+		input.StreamId,
+		input.ActiveFrom,
+		input.ActiveTo,
+	}, func(row *common.Row) error {
+		// Convert the row values to []any
+		values := make([]any, len(row.Values))
+		for i, v := range row.Values {
+			values[i] = v
+		}
+		resultRows = append(resultRows, values)
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "error in getCategoryStreams")
+	}
+
+	return processResultRows(resultRows)
+}
