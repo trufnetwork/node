@@ -148,61 +148,28 @@ CREATE OR REPLACE ACTION get_metadata(
        LIMIT $limit OFFSET $offset;
 };
 
-CREATE OR REPLACE ACTION is_wallet_allowed_to_read_substreams(
+CREATE OR REPLACE ACTION is_allowed_to_read_all(
     $data_provider TEXT,
     $stream_id TEXT,
     $wallet_address TEXT,
     $active_from INT,
     $active_to INT
 ) PUBLIC view returns (is_allowed BOOL) {
-    return with all_substreams as (
-       WITH RECURSIVE 
-            -- effective_taxonomies holds, for every parent-child link that is active,
-            -- the rows that are considered effective given the time window.
-            effective_taxonomies AS (
-            SELECT 
-                t.data_provider,
-                t.stream_id,
-                t.child_data_provider,
-                t.child_stream_id,
-                t.start_time
-            FROM taxonomies t
-            WHERE t.disabled_at IS NULL
-                AND ($active_to IS NULL OR t.start_time <= $active_to)
-                AND (
-                -- (A) For rows before (or at) $active_from: only include the one with the maximum start_time.
-                ($active_from IS NOT NULL 
-                    AND t.start_time <= $active_from 
-                    AND t.start_time = (
-                        SELECT max(t2.start_time)
-                        FROM taxonomies t2
-                        WHERE t2.data_provider = t.data_provider
-                            AND t2.stream_id = t.stream_id
-                            AND t2.disabled_at IS NULL
-                            AND ($active_to IS NULL OR t2.start_time <= $active_to)
-                            AND t2.start_time <= $active_from
-                    )
-                )
-                -- (B) Also include any rows with start_time greater than $active_from.
-                OR ($active_from IS NULL OR t.start_time > $active_from)
-                )
-            ),
-            -- Now recursively gather substreams using the effective taxonomy links.
-            recursive_substreams AS (
-                -- Start with the root stream itself
-                SELECT $data_provider AS data_provider, 
-                       $stream_id AS stream_id
-                UNION
-                -- Then add all child streams
-                SELECT et.child_data_provider,
-                       et.child_stream_id
-                FROM effective_taxonomies et
-                JOIN recursive_substreams rs
-                    ON et.data_provider = rs.data_provider
-                    AND et.stream_id = rs.stream_id
-            )
-        SELECT DISTINCT data_provider, stream_id
-        FROM recursive_substreams
+    
+    $data_providers TEXT[];
+    $stream_ids TEXT[];
+
+    -- Get all data providers and stream ids for the given stream
+    for $row in get_category_streams($data_provider, $stream_id, $active_from, $active_to) {
+        $data_providers := array_append($data_providers, $row.data_provider);
+        $stream_ids := array_append($stream_ids, $row.stream_id);
+    }
+
+
+    
+    for $row in with all_substreams as (
+       SELECT unnest($data_providers) as data_provider, 
+              unnest($stream_ids) as stream_id
     ),
     inexisting_substreams as (
         SELECT a.data_provider, a.stream_id 
@@ -215,7 +182,7 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_read_substreams(
     private_substreams as (
         SELECT a.data_provider, a.stream_id 
         FROM all_substreams a
-        LEFT JOIN LATERAL (
+        WHERE (
             SELECT value_i
             FROM metadata m
             WHERE m.data_provider = a.data_provider
@@ -224,8 +191,7 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_read_substreams(
                 AND m.disabled_at IS NULL
             ORDER BY m.created_at DESC
             LIMIT 1
-        ) m ON TRUE
-        WHERE m.value_i = 1  -- 1 indicates private visibility
+        ) = 1  -- 1 indicates private visibility
     ),
     streams_without_permissions as (
         SELECT p.data_provider, p.stream_id 
@@ -245,12 +211,9 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_read_substreams(
     SELECT 
         (SELECT COUNT(*) FROM inexisting_substreams) AS missing_count,
         (SELECT COUNT(*) FROM streams_without_permissions) AS unauthorized_count
-    INTO $missing_count, $unauthorized_count;
-    
-    if $missing_count > 0 OR $unauthorized_count > 0 {
-        return false;
+    {
+        return $missing_count > 0 OR $unauthorized_count > 0;
     }
-    return true;
 };
 
 CREATE OR REPLACE ACTION get_category_streams(
@@ -260,7 +223,7 @@ CREATE OR REPLACE ACTION get_category_streams(
     $active_to INT
 ) PUBLIC view returns table(data_provider TEXT, stream_id TEXT) {
     -- Get all substreams with proper recursive traversal, including the root stream itself
-    WITH RECURSIVE 
+    return WITH RECURSIVE 
         -- effective_taxonomies holds, for every parent-child link that is active,
         -- the rows that are considered effective given the time window.
         effective_taxonomies AS (
@@ -306,8 +269,5 @@ CREATE OR REPLACE ACTION get_category_streams(
                     AND et.stream_id = rs.stream_id
             )
         SELECT DISTINCT data_provider, stream_id
-        FROM recursive_substreams
-        )
-    SELECT DISTINCT data_provider, stream_id
-    FROM recursive_substreams;
+        FROM recursive_substreams;
 };
