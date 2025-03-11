@@ -6,8 +6,12 @@
  */
 CREATE TABLE IF NOT EXISTS streams (
     stream_id TEXT NOT NULL,
+    -- data_provider != stream_owner
+    -- data_provider == creator of the stream
+    -- important because we want immutable reference, while ownership can be transferred
     data_provider TEXT NOT NULL,
     stream_type TEXT NOT NULL,
+    created_at INT8 NOT NULL,
 
     -- Primary key must be defined inline
     PRIMARY KEY (data_provider, stream_id),
