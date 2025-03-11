@@ -3,13 +3,12 @@ package setup
 import (
 	"context"
 	"fmt"
-	kwilTypes "github.com/kwilteam/kwil-db/core/types"
 	"strconv"
-	"time"
 
 	"github.com/kwilteam/kwil-db/common"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
+	"github.com/trufnetwork/node/tests/streams/utils/procedure"
 	testtable "github.com/trufnetwork/node/tests/streams/utils/table"
 	"github.com/trufnetwork/sdk-go/core/types"
 	"github.com/trufnetwork/sdk-go/core/util"
@@ -63,10 +62,23 @@ func setupComposedAndPrimitives(ctx context.Context, input SetupComposedAndPrimi
 		}
 	}
 
+	dataProviders := []string{}
+	streamIds := []string{}
+	weights := []string{}
+	for _, item := range input.ComposedStreamDefinition.TaxonomyDefinitions.TaxonomyItems {
+		dataProviders = append(dataProviders, item.ChildStream.DataProvider.Address())
+		streamIds = append(streamIds, item.ChildStream.StreamId.String())
+		weights = append(weights, strconv.FormatFloat(item.Weight, 'f', -1, 64))
+	}
+
 	// Set taxonomy for composed stream
-	if err := setTaxonomy(ctx, SetTaxonomyInput{
-		Platform:       input.Platform,
-		composedStream: input.ComposedStreamDefinition,
+	if err := procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
+		Platform:      input.Platform,
+		StreamLocator: input.ComposedStreamDefinition.StreamLocator,
+		DataProviders: dataProviders,
+		StreamIds:     streamIds,
+		Weights:       weights,
+		StartTime:     0,
 	}); err != nil {
 		return errors.Wrap(err, "error setting taxonomy for composed stream")
 	}
@@ -193,61 +205,6 @@ func SetupComposedFromMarkdown(ctx context.Context, input MarkdownComposedSetupI
 		return err
 	}
 	return setupComposedAndPrimitives(ctx, setup)
-}
-
-type SetTaxonomyInput struct {
-	Platform       *kwilTesting.Platform
-	composedStream ComposedStreamDefinition
-}
-
-func setTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
-	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
-	if err != nil {
-		return errors.Wrap(err, "error creating composed dataset")
-	}
-
-	primitiveStreamStrings := []string{}
-	dataProviderStrings := []string{}
-	var weightDecimals []*kwilTypes.Decimal
-	for _, item := range input.composedStream.TaxonomyDefinitions.TaxonomyItems {
-		primitiveStreamStrings = append(primitiveStreamStrings, item.ChildStream.StreamId.String())
-		dataProviderStrings = append(dataProviderStrings, item.ChildStream.DataProvider.Address())
-		// should be formatted as 0.000000000000000000 (18 decimal places)
-		valueDecimal, err := kwilTypes.ParseDecimalExplicit(strconv.FormatFloat(item.Weight, 'f', -1, 64), 36, 18)
-		if err != nil {
-			return errors.Wrap(err, "error parsing weight")
-		}
-		weightDecimals = append(weightDecimals, valueDecimal)
-	}
-
-	var startDate int64
-	if input.composedStream.TaxonomyDefinitions.StartDate != nil {
-		startDate = input.composedStream.TaxonomyDefinitions.StartDate.In(time.UTC).Unix()
-	}
-
-	txContext := &common.TxContext{
-		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: 0},
-		Signer:       input.Platform.Deployer,
-		Caller:       deployer.Address(),
-		TxID:         input.Platform.Txid(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
-
-	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "insert_taxonomy", []any{
-		input.composedStream.StreamLocator.DataProvider.Address(), // parent data provider
-		input.composedStream.StreamLocator.StreamId.String(),      // parent stream id
-		dataProviderStrings,    // child data providers
-		primitiveStreamStrings, // child stream ids
-		weightDecimals,
-		startDate,
-	}, func(row *common.Row) error {
-		return nil
-	})
-	return err
 }
 
 type SetupComposedStreamInput struct {

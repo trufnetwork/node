@@ -7,6 +7,7 @@ import (
 	"github.com/trufnetwork/sdk-go/core/util"
 
 	"github.com/kwilteam/kwil-db/common"
+	kwilTypes "github.com/kwilteam/kwil-db/core/types"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
 )
@@ -292,7 +293,26 @@ func DescribeTaxonomies(ctx context.Context, input DescribeTaxonomiesInput) ([]R
 func SetTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
 	if err != nil {
-		return errors.Wrap(err, "error in SetTaxonomy")
+		return errors.Wrap(err, "error creating composed dataset")
+	}
+
+	primitiveStreamStrings := []string{}
+	dataProviderStrings := []string{}
+	var weightDecimals []*kwilTypes.Decimal
+	for i, item := range input.StreamIds {
+		primitiveStreamStrings = append(primitiveStreamStrings, item)
+		dataProviderStrings = append(dataProviderStrings, input.DataProviders[i])
+		// should be formatted as 0.000000000000000000 (18 decimal places)
+		valueDecimal, err := kwilTypes.ParseDecimalExplicit(input.Weights[i], 36, 18)
+		if err != nil {
+			return errors.Wrap(err, "error parsing weight")
+		}
+		weightDecimals = append(weightDecimals, valueDecimal)
+	}
+
+	var startDate int64
+	if input.StartTime != 0 {
+		startDate = input.StartTime
 	}
 
 	txContext := &common.TxContext{
@@ -307,21 +327,17 @@ func SetTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 		TxContext: txContext,
 	}
 
-	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "set_taxonomy", []any{
-		input.StreamLocator.DataProvider.Address(),
-		input.StreamLocator.StreamId.String(),
-		input.DataProviders,
-		input.StreamIds,
-		input.Weights,
-		input.StartTime,
+	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "insert_taxonomy", []any{
+		input.StreamLocator.DataProvider.Address(), // parent data provider
+		input.StreamLocator.StreamId.String(),      // parent stream id
+		dataProviderStrings,                        // child data providers
+		primitiveStreamStrings,                     // child stream ids
+		weightDecimals,
+		startDate,
 	}, func(row *common.Row) error {
 		return nil
 	})
-	if err != nil {
-		return errors.Wrap(err, "error in SetTaxonomy")
-	}
-
-	return nil
+	return err
 }
 
 func GetCategoryStreams(ctx context.Context, input GetCategoryStreamsInput) ([]ResultRow, error) {

@@ -27,10 +27,80 @@ import (
 
 const (
 	rootStreamName = "1c"
-	dataProvider   = "provider1"
 )
 
 var rootStreamId = util.GenerateStreamId(rootStreamName)
+
+// Helper function to get category streams and assert results against expected
+func getCategoryAndAssert(t *testing.T, ctx context.Context, platform *kwilTesting.Platform,
+	fromTime, toTime *int64, expectedTable string, timeDescription string) error {
+
+	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+	if err != nil {
+		return errors.Wrap(err, "error creating ethereum address")
+	}
+
+	// Get substreams at specified time
+	result, err := procedure.GetCategoryStreams(ctx, procedure.GetCategoryStreamsInput{
+		Platform:     platform,
+		DataProvider: deployer.Address(),
+		StreamId:     rootStreamId.String(),
+		ActiveFrom:   fromTime,
+		ActiveTo:     toTime,
+	})
+
+	if err != nil {
+		return errors.Wrapf(err, "error getting substreams %s", timeDescription)
+	}
+
+	table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+		Actual:   result,
+		Expected: expectedTable,
+		ColumnTransformers: map[string]func(string) string{
+			"stream_id": func(column string) string {
+				s := util.GenerateStreamId(column)
+				return s.String()
+			},
+		},
+		SortColumns: []string{"stream_id"},
+	})
+	return nil
+}
+
+// Helper function to set taxonomy relationships between parent and children at a specific time
+func setTaxonomyAtTime(ctx context.Context, platform *kwilTesting.Platform, deployer util.EthereumAddress,
+	parent string, children []string, startTime int64) error {
+	parentId := util.GenerateStreamId(parent)
+
+	// Prepare arrays for SetTaxonomy
+	dataProviders := make([]string, len(children))
+	streamIds := make([]string, len(children))
+	weights := make([]string, len(children))
+
+	for i, child := range children {
+		childId := util.GenerateStreamId(child)
+		dataProviders[i] = deployer.Address()
+		streamIds[i] = childId.String()
+		weights[i] = "1"
+	}
+
+	err := procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
+		Platform: platform,
+		StreamLocator: types.StreamLocator{
+			StreamId:     parentId,
+			DataProvider: deployer,
+		},
+		DataProviders: dataProviders,
+		StreamIds:     streamIds,
+		Weights:       weights,
+		StartTime:     startTime,
+	})
+	if err != nil {
+		return errors.Wrapf(err, "error creating taxonomy for %s at time %d", parent, startTime)
+	}
+
+	return nil
+}
 
 func TestCategoryStreams(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
@@ -90,33 +160,8 @@ func WithCategoryTestSetup(testFn func(ctx context.Context, platform *kwilTestin
 
 		// Set taxonomies for each parent at time 0
 		for parent, children := range taxonomiesByParent {
-			parentId := util.GenerateStreamId(parent)
-
-			// Prepare arrays for SetTaxonomy
-			dataProviders := make([]string, len(children))
-			streamIds := make([]string, len(children))
-			weights := make([]string, len(children))
-
-			for i, child := range children {
-				childId := util.GenerateStreamId(child)
-				dataProviders[i] = deployer.Address()
-				streamIds[i] = childId.String()
-				weights[i] = "1"
-			}
-
-			err := procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
-				Platform: platform,
-				StreamLocator: types.StreamLocator{
-					StreamId:     parentId,
-					DataProvider: deployer,
-				},
-				DataProviders: dataProviders,
-				StreamIds:     streamIds,
-				Weights:       weights,
-				StartTime:     0, // Time 0
-			})
-			if err != nil {
-				return errors.Wrapf(err, "error creating taxonomy for %s at time 0", parent)
+			if err := setTaxonomyAtTime(ctx, platform, deployer, parent, children, 0); err != nil {
+				return err
 			}
 		}
 
@@ -128,33 +173,8 @@ func WithCategoryTestSetup(testFn func(ctx context.Context, platform *kwilTestin
 
 		// Set taxonomies for each parent at time 5
 		for parent, children := range taxonomiesByParentTime5 {
-			parentId := util.GenerateStreamId(parent)
-
-			// Prepare arrays for SetTaxonomy
-			dataProviders := make([]string, len(children))
-			streamIds := make([]string, len(children))
-			weights := make([]string, len(children))
-
-			for i, child := range children {
-				childId := util.GenerateStreamId(child)
-				dataProviders[i] = deployer.Address()
-				streamIds[i] = childId.String()
-				weights[i] = "1"
-			}
-
-			err := procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
-				Platform: platform,
-				StreamLocator: types.StreamLocator{
-					StreamId:     parentId,
-					DataProvider: deployer,
-				},
-				DataProviders: dataProviders,
-				StreamIds:     streamIds,
-				Weights:       weights,
-				StartTime:     5, // Time 5
-			})
-			if err != nil {
-				return errors.Wrapf(err, "error creating taxonomy for %s at time 5", parent)
+			if err := setTaxonomyAtTime(ctx, platform, deployer, parent, children, 5); err != nil {
+				return err
 			}
 		}
 
@@ -167,40 +187,18 @@ func WithCategoryTestSetup(testFn func(ctx context.Context, platform *kwilTestin
 
 			// Set taxonomies for each parent at time 6
 			for parent, children := range taxonomiesByParentTime6 {
-				parentId := util.GenerateStreamId(parent)
-
-				// Prepare arrays for SetTaxonomy
-				dataProviders := make([]string, len(children))
-				streamIds := make([]string, len(children))
-				weights := make([]string, len(children))
-
-				for i, child := range children {
-					childId := util.GenerateStreamId(child)
-					dataProviders[i] = deployer.Address()
-					streamIds[i] = childId.String()
-					weights[i] = "1"
-				}
-
 				// First create the taxonomy
-				result, err := procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
-					Platform: platform,
-					StreamLocator: types.StreamLocator{
-						StreamId:     parentId,
-						DataProvider: deployer,
-					},
-					DataProviders: dataProviders,
-					StreamIds:     streamIds,
-					Weights:       weights,
-					StartTime:     6, // Time 6
-				})
-				if err != nil {
-					return errors.Wrapf(err, "error creating taxonomy for %s at time 6", parent)
+				if err := setTaxonomyAtTime(ctx, platform, deployer, parent, children, 6); err != nil {
+					return err
 				}
+
+				// Get the taxonomy version - this is pseudo-code as we would need to retrieve the ID
+				// taxonomyVersion := "some-id-for-the-taxonomy"
 
 				// Then disable it
 				// This is a pseudo-code example of how we would disable the taxonomy
 				// when the functionality is supported
-				err = procedure.DisableTaxonomy(ctx, procedure.DisableTaxonomyInput{
+				err := procedure.DisableTaxonomy(ctx, procedure.DisableTaxonomyInput{
 					Platform:   platform,
 					TaxonomyId: taxonomyVersion,
 				})
@@ -217,33 +215,8 @@ func WithCategoryTestSetup(testFn func(ctx context.Context, platform *kwilTestin
 
 		// Set taxonomies for each parent at time 10
 		for parent, children := range taxonomiesByParentTime10 {
-			parentId := util.GenerateStreamId(parent)
-
-			// Prepare arrays for SetTaxonomy
-			dataProviders := make([]string, len(children))
-			streamIds := make([]string, len(children))
-			weights := make([]string, len(children))
-
-			for i, child := range children {
-				childId := util.GenerateStreamId(child)
-				dataProviders[i] = deployer.Address()
-				streamIds[i] = childId.String()
-				weights[i] = "1"
-			}
-
-			err := procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
-				Platform: platform,
-				StreamLocator: types.StreamLocator{
-					StreamId:     parentId,
-					DataProvider: deployer,
-				},
-				DataProviders: dataProviders,
-				StreamIds:     streamIds,
-				Weights:       weights,
-				StartTime:     10, // Time 10
-			})
-			if err != nil {
-				return errors.Wrapf(err, "error creating taxonomy for %s at time 10", parent)
+			if err := setTaxonomyAtTime(ctx, platform, deployer, parent, children, 10); err != nil {
+				return err
 			}
 		}
 
@@ -255,230 +228,120 @@ func WithCategoryTestSetup(testFn func(ctx context.Context, platform *kwilTestin
 // Test getting all substreams without time constraints
 func testGetAllSubstreams(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
-		if err != nil {
-			return errors.Wrap(err, "error creating ethereum address")
-		}
-
-		// Get all substreams
-		result, err := procedure.GetCategoryStreams(ctx, procedure.GetCategoryStreamsInput{
-			Platform:     platform,
-			DataProvider: deployer.Address(),
-			StreamId:     rootStreamName,
-			ActiveFrom:   nil,
-			ActiveTo:     nil,
-		})
-
-		if err != nil {
-			return errors.Wrap(err, "error getting all substreams")
-		}
-
 		expected := `
-		| data_provider | stream_id |
-		|---------------|-----------|
-		| provider1     | 1c        |
-		| provider1     | 1.1c      |
-		| provider1     | 1.1.1p    |
-		| provider1     | 1.1.2p    |
-		| provider1     | 1.2c      |
-		| provider1     | 1.2.1p    |
-		| provider1     | 1.3p      |
-		| provider1     | 1.4c      |
-		| provider1     | 1.5p      |
+		| data_provider                              | stream_id |
+		|--------------------------------------------|-----------|
+		| 0x0000000000000000000000000000000000000000 | 1c        |
+		| 0x0000000000000000000000000000000000000000 | 1.1c      |
+		| 0x0000000000000000000000000000000000000000 | 1.1.1p    |
+		| 0x0000000000000000000000000000000000000000 | 1.1.2p    |
+		| 0x0000000000000000000000000000000000000000 | 1.2c      |
+		| 0x0000000000000000000000000000000000000000 | 1.2.1p    |
+		| 0x0000000000000000000000000000000000000000 | 1.3p      |
+		| 0x0000000000000000000000000000000000000000 | 1.4c      |
+		| 0x0000000000000000000000000000000000000000 | 1.5p      |
 		`
 
-		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
-
-		return nil
+		return getCategoryAndAssert(t, ctx, platform, nil, nil, expected, "without time constraints")
 	}
 }
 
 // Test getting substreams at time 0
 func testGetSubstreamsAtTime0(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
-		if err != nil {
-			return errors.Wrap(err, "error creating ethereum address")
-		}
-
 		// Get substreams at time 0
 		activeFrom := int64(0)
 		activeTo := int64(0)
-		result, err := procedure.GetCategoryStreams(ctx, procedure.GetCategoryStreamsInput{
-			Platform:     platform,
-			DataProvider: deployer.Address(),
-			StreamId:     rootStreamName,
-			ActiveFrom:   &activeFrom,
-			ActiveTo:     &activeTo,
-		})
-
-		if err != nil {
-			return errors.Wrap(err, "error getting substreams at time 0")
-		}
 
 		expected := `
-		| data_provider | stream_id |
-		|---------------|-----------|
-		| provider1     | 1c        |
-		| provider1     | 1.1c      |
-		| provider1     | 1.1.1p    |
-		| provider1     | 1.1.2p    |
-		| provider1     | 1.2c      |
-		| provider1     | 1.2.1p    |
-		| provider1     | 1.3p      |
-		| provider1     | 1.4c      |
+		| data_provider                              | stream_id |
+		|--------------------------------------------|-----------|
+		| 0x0000000000000000000000000000000000000000 | 1c        |
+		| 0x0000000000000000000000000000000000000000 | 1.1c      |
+		| 0x0000000000000000000000000000000000000000 | 1.1.1p    |
+		| 0x0000000000000000000000000000000000000000 | 1.1.2p    |
+		| 0x0000000000000000000000000000000000000000 | 1.2c      |
+		| 0x0000000000000000000000000000000000000000 | 1.2.1p    |
+		| 0x0000000000000000000000000000000000000000 | 1.3p      |
+		| 0x0000000000000000000000000000000000000000 | 1.4c      |
 		`
 
-		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
-
-		return nil
+		return getCategoryAndAssert(t, ctx, platform, &activeFrom, &activeTo, expected, "at time 0")
 	}
 }
 
 // Test getting substreams at time 5
 func testGetSubstreamsAtTime5(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
-		if err != nil {
-			return errors.Wrap(err, "error creating ethereum address")
-		}
-
 		// Get substreams at time 5
 		activeFrom := int64(5)
 		activeTo := int64(5)
-		result, err := procedure.GetCategoryStreams(ctx, procedure.GetCategoryStreamsInput{
-			Platform:     platform,
-			DataProvider: deployer.Address(),
-			StreamId:     rootStreamName,
-			ActiveFrom:   &activeFrom,
-			ActiveTo:     &activeTo,
-		})
-
-		if err != nil {
-			return errors.Wrap(err, "error getting substreams at time 5")
-		}
 
 		expected := `
-		| data_provider | stream_id |
-		|---------------|-----------|
-		| provider1     | 1c        |
-		| provider1     | 1.1c      |
-		| provider1     | 1.1.1p    |
+		| data_provider                              | stream_id |
+		|--------------------------------------------|-----------|
+		| 0x0000000000000000000000000000000000000000 | 1c        |
+		| 0x0000000000000000000000000000000000000000 | 1.1c      |
+		| 0x0000000000000000000000000000000000000000 | 1.1.1p    |
 		`
 
-		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
-
-		return nil
+		return getCategoryAndAssert(t, ctx, platform, &activeFrom, &activeTo, expected, "at time 5")
 	}
 }
 
 // Test getting substreams at time 6
 func testGetSubstreamsAtTime6(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
-		if err != nil {
-			return errors.Wrap(err, "error creating ethereum address")
-		}
-
 		// Get substreams at time 6
 		activeFrom := int64(6)
 		activeTo := int64(6)
-		result, err := procedure.GetCategoryStreams(ctx, procedure.GetCategoryStreamsInput{
-			Platform:     platform,
-			DataProvider: deployer.Address(),
-			StreamId:     rootStreamName,
-			ActiveFrom:   &activeFrom,
-			ActiveTo:     &activeTo,
-		})
-
-		if err != nil {
-			return errors.Wrap(err, "error getting substreams at time 6")
-		}
 
 		expected := `
-		| data_provider | stream_id |
-		|---------------|-----------|
-		| provider1     | 1c        |
-		| provider1     | 1.1c      |
-		| provider1     | 1.1.1p    |
+		| data_provider                              | stream_id |
+		|--------------------------------------------|-----------|
+		| 0x0000000000000000000000000000000000000000 | 1c        |
+		| 0x0000000000000000000000000000000000000000 | 1.1c      |
+		| 0x0000000000000000000000000000000000000000 | 1.1.1p    |
 		`
 
-		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
-
-		return nil
+		return getCategoryAndAssert(t, ctx, platform, &activeFrom, &activeTo, expected, "at time 6")
 	}
 }
 
 // Test getting substreams at time 10
 func testGetSubstreamsAtTime10(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
-		if err != nil {
-			return errors.Wrap(err, "error creating ethereum address")
-		}
-
 		// Get substreams at time 10
 		activeFrom := int64(10)
 		activeTo := int64(10)
-		result, err := procedure.GetCategoryStreams(ctx, procedure.GetCategoryStreamsInput{
-			Platform:     platform,
-			DataProvider: deployer.Address(),
-			StreamId:     rootStreamName,
-			ActiveFrom:   &activeFrom,
-			ActiveTo:     &activeTo,
-		})
-
-		if err != nil {
-			return errors.Wrap(err, "error getting substreams at time 10")
-		}
 
 		expected := `
-		| data_provider | stream_id |
-		|---------------|-----------|
-		| provider1     | 1c        |
-		| provider1     | 1.5p      |
+		| data_provider                              | stream_id |
+		|--------------------------------------------|-----------|
+		| 0x0000000000000000000000000000000000000000 | 1c        |
+		| 0x0000000000000000000000000000000000000000 | 1.5p      |
 		`
 
-		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
-
-		return nil
+		return getCategoryAndAssert(t, ctx, platform, &activeFrom, &activeTo, expected, "at time 10")
 	}
 }
 
 // Test getting substreams in time range 6 to 10
 func testGetSubstreamsTimeRange6To10(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
-		if err != nil {
-			return errors.Wrap(err, "error creating ethereum address")
-		}
-
 		// Get substreams in time range 6 to 10
 		activeFrom := int64(6)
 		activeTo := int64(10)
-		result, err := procedure.GetCategoryStreams(ctx, procedure.GetCategoryStreamsInput{
-			Platform:     platform,
-			DataProvider: deployer.Address(),
-			StreamId:     rootStreamName,
-			ActiveFrom:   &activeFrom,
-			ActiveTo:     &activeTo,
-		})
-
-		if err != nil {
-			return errors.Wrap(err, "error getting substreams in time range 6 to 10")
-		}
 
 		expected := `
-		| data_provider | stream_id |
-		|---------------|-----------|
-		| provider1     | 1c        |
-		| provider1     | 1.1c      |
-		| provider1     | 1.1.1p    |
-		| provider1     | 1.5p      |
+		| data_provider                              | stream_id |
+		|--------------------------------------------|-----------|
+		| 0x0000000000000000000000000000000000000000 | 1c        |
+		| 0x0000000000000000000000000000000000000000 | 1.1c      |
+		| 0x0000000000000000000000000000000000000000 | 1.1.1p    |
+		| 0x0000000000000000000000000000000000000000 | 1.5p      |
 		`
 
-		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
-
-		return nil
+		return getCategoryAndAssert(t, ctx, platform, &activeFrom, &activeTo, expected, "in time range 6 to 10")
 	}
 }
