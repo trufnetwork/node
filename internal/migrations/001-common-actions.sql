@@ -4,6 +4,7 @@ CREATE OR REPLACE ACTION create_stream(
 ) PUBLIC {
     -- Get caller's address (data provider) first
     $data_provider TEXT := @caller;
+    $current_block INT := @height;
     
     -- Check if caller is a valid ethereum address
     -- TODO: really check if it's a valid address
@@ -30,12 +31,12 @@ CREATE OR REPLACE ACTION create_stream(
     }
     
     -- Create the stream
-    INSERT INTO streams (data_provider, stream_id, stream_type)
-    VALUES ($data_provider, $stream_id, $stream_type);
+    INSERT INTO streams (data_provider, stream_id, stream_type, created_at)
+    VALUES ($data_provider, $stream_id, $stream_type, $current_block);
     
     -- Add required metadata
     $current_block INT := @height;
-    $current_uuid UUID := uuid_generate_v5('41fea9f0-179f-11ef-8838-325096b39f47'::UUID, @txid);
+    $current_uuid UUID := uuid_generate_kwil('create_stream_' || @txid || $stream_id);
     
     -- Add type metadata
     $current_uuid := uuid_generate_v5($current_uuid, @txid);
@@ -62,27 +63,174 @@ CREATE OR REPLACE ACTION create_stream(
     }
 };
 
+CREATE OR REPLACE ACTION insert_metadata(
+    -- not necessarily the caller is the original deployer of the stream
+    $data_provider TEXT,
+    $stream_id TEXT,
+    $key TEXT,
+    $value TEXT,
+    $val_type TEXT
+) PUBLIC {
+    -- Initialize value variables
+    $value_i INT;
+    $value_s TEXT;
+    $value_f DECIMAL(36,18);
+    $value_b BOOL;
+    $value_ref TEXT;
+    
+    -- Check if caller is the stream owner
+    if !is_stream_owner($data_provider, $stream_id, @caller) {
+        ERROR('Only stream owner can insert metadata');
+    }
+    
+    -- Set the appropriate value based on type
+    if $val_type = 'int' {
+        $value_i := $value::INT;
+    } elseif $val_type = 'string' {
+        $value_s := $value;
+    } elseif $val_type = 'bool' {
+        $value_b := $value::BOOL;
+    } elseif $val_type = 'ref' {
+        $value_ref := $value;
+    } elseif $val_type = 'float' {
+        $value_f := $value::DECIMAL(36,18);
+    } else {
+        ERROR(FORMAT('Unknown type used "%s". Valid types = "float" | "bool" | "int" | "ref" | "string"', $val_type));
+    }
+    
+    -- Check if the key is read-only
+    $is_readonly BOOL := false;
+    for $row in SELECT * FROM metadata 
+        WHERE data_provider = $data_provider 
+        AND stream_id = $stream_id 
+        AND metadata_key = 'readonly_key' 
+        AND value_s = $key LIMIT 1 {
+        $is_readonly := true;
+    }
+    
+    if $is_readonly = true {
+        ERROR('Cannot insert metadata for read-only key');
+    }
+    
+    -- Create deterministic UUID for the metadata record
+    $uuid_key TEXT := @txid || $key || $value;
+    $uuid UUID := uuid_generate_kwil($uuid_key);
+    $current_block INT := @height;
+    
+    -- Insert the metadata
+    INSERT INTO metadata (
+        row_id, 
+        data_provider, 
+        stream_id, 
+        metadata_key, 
+        value_i, 
+        value_f, 
+        value_s, 
+        value_b, 
+        value_ref, 
+        created_at
+    ) VALUES (
+        $uuid, 
+        $data_provider, 
+        $stream_id, 
+        $key, 
+        $value_i, 
+        $value_f, 
+        $value_s, 
+        $value_b, 
+        LOWER($value_ref), 
+        $current_block
+    );
+};
+
+CREATE OR REPLACE ACTION disable_metadata(
+    -- not necessarily the caller is the original deployer of the stream
+    $data_provider TEXT,
+    $stream_id TEXT,
+    $row_id UUID
+) PUBLIC {
+    -- Check if caller is the stream owner
+    if !is_stream_owner($data_provider, $stream_id, @caller) {
+        ERROR('Only stream owner can disable metadata');
+    }
+    
+    $current_block INT := @height;
+    $found BOOL := false;
+    $metadata_key TEXT;
+    
+    -- Get the metadata key first to avoid nested queries
+    for $metadata_row in SELECT metadata_key
+        FROM metadata
+        WHERE row_id = $row_id 
+        AND data_provider = $data_provider
+        AND stream_id = $stream_id
+        AND disabled_at IS NULL
+        LIMIT 1 {
+        
+        $found := true;
+        $metadata_key := $metadata_row.metadata_key;
+    }
+    
+    if $found = false {
+        ERROR('Metadata record not found');
+    }
+    
+    -- In a separate step, check if the key is read-only
+    $is_readonly BOOL := false;
+    for $readonly_row in SELECT * FROM metadata 
+        WHERE data_provider = $data_provider 
+        AND stream_id = $stream_id 
+        AND metadata_key = 'readonly_key' 
+        AND value_s = $metadata_key LIMIT 1 {
+        $is_readonly := true;
+    }
+    
+    if $is_readonly = true {
+        ERROR('Cannot disable read-only metadata');
+    }
+    
+    -- Update the metadata to mark it as disabled
+    UPDATE metadata SET disabled_at = $current_block
+    WHERE row_id = $row_id
+    AND data_provider = $data_provider
+    AND stream_id = $stream_id;
+};
+
+CREATE OR REPLACE ACTION check_stream_id_format(
+    $stream_id TEXT
+) PUBLIC view returns (result BOOL) {
+    return LENGTH($stream_id) = 32 AND substring($stream_id, 1, 2) = 'st';
+};
+
+CREATE OR REPLACE ACTION check_ethereum_address(
+    $data_provider TEXT
+) PUBLIC view returns (result BOOL) {
+    return LENGTH($data_provider) = 42 AND substring($data_provider, 1, 2) = '0x';
+};
+
 CREATE OR REPLACE ACTION delete_stream(
+    -- not necessarily the caller is the original deployer of the stream
+    $data_provider TEXT,
     $stream_id TEXT
 ) PUBLIC {
-    -- Get caller's address (data provider) first
-    $data_provider TEXT := @caller;
-
-    -- Check if caller is a valid ethereum address
-    -- TODO: really check if it's a valid address
-    if LENGTH($data_provider) != 42
-        OR substring($data_provider, 1, 2) != '0x' {
-        ERROR('Invalid data provider address. Must be a valid Ethereum address: ' || $data_provider);
-    }
-
-    -- Check if stream_id has valid format (st followed by 30 lowercase alphanumeric chars)
-    -- TODO: only alphanumeric characters be allowed
-    if LENGTH($stream_id) != 32 OR
-       substring($stream_id, 1, 2) != 'st' {
-        ERROR('Invalid stream_id format. Must start with "st" followed by 30 lowercase alphanumeric characters: ' || $stream_id);
+     if !is_stream_owner($data_provider, $stream_id, @caller) {
+        ERROR('Only stream owner can delete the stream');
     }
 
     DELETE FROM streams WHERE data_provider = $data_provider AND stream_id = $stream_id;
+};
+
+CREATE OR REPLACE ACTION is_stream_owner(
+    $data_provider TEXT,
+    $stream_id TEXT,
+    $caller TEXT
+) PUBLIC view returns (is_owner BOOL) {
+    $lower_caller := LOWER($caller);
+    $result BOOL := false;
+    for $row in get_metadata($data_provider, $stream_id, 'stream_owner', true, $lower_caller, null, null, 'created_at DESC') {
+        $result := true;
+    }
+    return $result;
 };
 
 -- Helper function to check if a stream is primitive or composed
@@ -155,65 +303,101 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
     $active_from INT,
     $active_to INT
 ) PUBLIC view returns (is_allowed BOOL) {
-    
-    $data_providers TEXT[];
-    $stream_ids TEXT[];
-
-    -- Get all data providers and stream ids for the given stream
-    for $row in get_category_streams($data_provider, $stream_id, $active_from, $active_to) {
-        $data_providers := array_append($data_providers, $row.data_provider);
-        $stream_ids := array_append($stream_ids, $row.stream_id);
-    }
-
-
-    
-    for $row in with all_substreams as (
-       SELECT unnest($data_providers) as data_provider, 
-              unnest($stream_ids) as stream_id
-    ),
-    inexisting_substreams as (
-        SELECT a.data_provider, a.stream_id 
-        FROM all_substreams a
-        LEFT JOIN streams s 
-            ON a.data_provider = s.data_provider 
-            AND a.stream_id = s.stream_id
-        WHERE s.data_provider IS NULL
-    ),
-    private_substreams as (
-        SELECT a.data_provider, a.stream_id 
-        FROM all_substreams a
-        WHERE (
-            SELECT value_i
-            FROM metadata m
-            WHERE m.data_provider = a.data_provider
-                AND m.stream_id = a.stream_id
-                AND m.metadata_key = 'read_visibility'
-                AND m.disabled_at IS NULL
-            ORDER BY m.created_at DESC
-            LIMIT 1
-        ) = 1  -- 1 indicates private visibility
-    ),
-    streams_without_permissions as (
-        SELECT p.data_provider, p.stream_id 
-        FROM private_substreams p
-        WHERE NOT EXISTS (
-            SELECT 1
-            FROM metadata m
-            WHERE m.data_provider = p.data_provider
-                AND m.stream_id = p.stream_id
-                AND m.metadata_key = 'allow_read_wallet'
-                AND LOWER(m.value_ref) = LOWER($wallet_address)
-                AND m.disabled_at IS NULL
-            ORDER BY m.created_at DESC
-            LIMIT 1
+    -- Check for missing or unauthorized substreams using recursive CTE
+    for $counts in with recursive
+        -- effective_taxonomies holds, for every parent-child link that is active,
+        -- the rows that are considered effective given the time window.
+        effective_taxonomies AS (
+        SELECT 
+            t.data_provider,
+            t.stream_id,
+            t.child_data_provider,
+            t.child_stream_id,
+            t.start_time
+        FROM taxonomies t
+        WHERE t.disabled_at IS NULL
+            AND ($active_to IS NULL OR t.start_time <= $active_to)
+            AND (
+            -- (A) For rows before (or at) $active_from: only include the one with the maximum start_time.
+            ($active_from IS NOT NULL 
+                AND t.start_time <= $active_from 
+                AND t.start_time = (
+                    SELECT max(t2.start_time)
+                    FROM taxonomies t2
+                    WHERE t2.data_provider = t.data_provider
+                        AND t2.stream_id = t.stream_id
+                        AND t2.disabled_at IS NULL
+                        AND ($active_to IS NULL OR t2.start_time <= $active_to)
+                        AND t2.start_time <= $active_from
+                )
+            )
+            -- (B) Also include any rows with start_time greater than $active_from.
+            OR ($active_from IS NULL OR t.start_time > $active_from)
+            )
+        ),
+        -- Now recursively gather all substreams
+        recursive_substreams AS (
+            -- Start with the root stream itself
+            SELECT $data_provider AS data_provider, 
+                $stream_id AS stream_id
+            UNION
+            -- Then add all child streams
+            SELECT et.child_data_provider,
+                   et.child_stream_id
+            FROM effective_taxonomies et
+            JOIN recursive_substreams rs
+                ON et.data_provider = rs.data_provider
+                AND et.stream_id = rs.stream_id
+        ),
+        -- Find substreams that don't exist
+        inexisting_substreams as (
+            SELECT rs.data_provider, rs.stream_id 
+            FROM recursive_substreams rs
+            LEFT JOIN streams s 
+                ON rs.data_provider = s.data_provider 
+                AND rs.stream_id = s.stream_id
+            WHERE s.data_provider IS NULL
+        ),
+        -- Find substreams that are private
+        private_substreams as (
+            SELECT rs.data_provider, rs.stream_id 
+            FROM recursive_substreams rs
+            WHERE (
+                SELECT value_i
+                FROM metadata m
+                WHERE m.data_provider = rs.data_provider
+                    AND m.stream_id = rs.stream_id
+                    AND m.metadata_key = 'read_visibility'
+                    AND m.disabled_at IS NULL
+                ORDER BY m.created_at DESC
+                LIMIT 1
+            ) = 1  -- 1 indicates private visibility
+        ),
+        -- Find private streams where the wallet doesn't have access
+        streams_without_permissions as (
+            SELECT p.data_provider, p.stream_id 
+            FROM private_substreams p
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM metadata m
+                WHERE m.data_provider = p.data_provider
+                    AND m.stream_id = p.stream_id
+                    AND m.metadata_key = 'allow_read_wallet'
+                    AND LOWER(m.value_ref) = LOWER($wallet_address)
+                    AND m.disabled_at IS NULL
+                LIMIT 1
+            )
         )
-    )
     SELECT 
         (SELECT COUNT(*) FROM inexisting_substreams) AS missing_count,
-        (SELECT COUNT(*) FROM streams_without_permissions) AS unauthorized_count
-    {
-        return $missing_count > 0 OR $unauthorized_count > 0;
+        (SELECT COUNT(*) FROM streams_without_permissions) AS unauthorized_count {
+        
+        -- Return false if there are any missing or unauthorized streams
+        return $counts.missing_count = 0 AND $counts.unauthorized_count = 0;
     }
+    
+    -- If we got here (which we shouldn't), return false as a fallback
+    return false;
 };
 
 CREATE OR REPLACE ACTION get_category_streams(
@@ -224,7 +408,16 @@ CREATE OR REPLACE ACTION get_category_streams(
 ) PUBLIC view returns table(data_provider TEXT, stream_id TEXT) {
     if !stream_exists($data_provider, $stream_id) {
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
-    };
+    }
+
+    $stream_type TEXT;
+    for $row in SELECT stream_type FROM streams WHERE data_provider = $data_provider AND stream_id = $stream_id {
+        $stream_type := $row.stream_type;
+    }
+    
+    if $stream_type = 'primitive' {
+        return next $data_provider, $stream_id;
+    }
 
     -- Get all substreams with proper recursive traversal, including the root stream itself
     return WITH RECURSIVE 
