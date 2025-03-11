@@ -222,6 +222,10 @@ CREATE OR REPLACE ACTION get_category_streams(
     $active_from INT,
     $active_to INT
 ) PUBLIC view returns table(data_provider TEXT, stream_id TEXT) {
+    if !stream_exists($data_provider, $stream_id) {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    };
+
     -- Get all substreams with proper recursive traversal, including the root stream itself
     return WITH RECURSIVE 
         -- effective_taxonomies holds, for every parent-child link that is active,
@@ -270,4 +274,14 @@ CREATE OR REPLACE ACTION get_category_streams(
             )
         SELECT DISTINCT data_provider, stream_id
         FROM recursive_substreams;
+};
+
+CREATE OR REPLACE ACTION stream_exists(
+    $data_provider TEXT,
+    $stream_id TEXT
+) PUBLIC view returns (result BOOL) {
+    for $row in SELECT 1 FROM streams WHERE data_provider = $data_provider AND stream_id = $stream_id {
+        return true;
+    }
+    return false;
 };
