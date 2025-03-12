@@ -15,6 +15,7 @@ type CheckReadPermissionsInput struct {
 	Platform *kwilTesting.Platform
 	Locator  trufTypes.StreamLocator
 	Wallet   string
+	Height   int64
 }
 
 // CheckReadPermissions checks if a wallet is allowed to read from a contract
@@ -26,7 +27,7 @@ func CheckReadPermissions(ctx context.Context, input CheckReadPermissionsInput) 
 
 	txContext := &common.TxContext{
 		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: 0},
+		BlockContext: &common.BlockContext{Height: input.Height},
 		Signer:       input.Platform.Deployer,
 		Caller:       deployer.Address(),
 		TxID:         input.Platform.Txid(),
@@ -62,6 +63,7 @@ type CheckWritePermissionsInput struct {
 	Platform *kwilTesting.Platform
 	Locator  trufTypes.StreamLocator
 	Wallet   string
+	Height   int64
 }
 
 // CheckWritePermissions checks if a wallet is allowed to write to a contract
@@ -73,7 +75,7 @@ func CheckWritePermissions(ctx context.Context, input CheckWritePermissionsInput
 
 	txContext := &common.TxContext{
 		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: 0},
+		BlockContext: &common.BlockContext{Height: input.Height},
 		Signer:       input.Platform.Deployer,
 		Caller:       deployer.Address(),
 		TxID:         input.Platform.Txid(),
@@ -107,6 +109,7 @@ type CheckComposePermissionsInput struct {
 	Platform      *kwilTesting.Platform
 	Locator       trufTypes.StreamLocator
 	ForeignCaller string
+	Height        int64
 }
 
 // CheckComposePermissions checks if a stream is allowed to compose from another stream
@@ -118,7 +121,7 @@ func CheckComposePermissions(ctx context.Context, input CheckComposePermissionsI
 
 	txContext := &common.TxContext{
 		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: 0},
+		BlockContext: &common.BlockContext{Height: input.Height},
 		Signer:       input.Platform.Deployer,
 		Caller:       deployer.Address(),
 		TxID:         input.Platform.Txid(),
@@ -154,6 +157,7 @@ type InsertMetadataInput struct {
 	Key      string
 	Value    string
 	ValType  string
+	Height   int64
 }
 
 // InsertMetadata inserts metadata into a contract
@@ -165,7 +169,7 @@ func InsertMetadata(ctx context.Context, input InsertMetadataInput) error {
 
 	txContext := &common.TxContext{
 		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: 0},
+		BlockContext: &common.BlockContext{Height: input.Height},
 		Signer:       input.Platform.Deployer,
 		Caller:       deployer.Address(),
 		TxID:         input.Platform.Txid(),
@@ -191,6 +195,7 @@ type TransferStreamOwnershipInput struct {
 	Platform *kwilTesting.Platform
 	Locator  trufTypes.StreamLocator
 	NewOwner string
+	Height   int64
 }
 
 // TransferStreamOwnership transfers ownership of a stream to a new owner
@@ -202,7 +207,7 @@ func TransferStreamOwnership(ctx context.Context, input TransferStreamOwnershipI
 
 	txContext := &common.TxContext{
 		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: 0},
+		BlockContext: &common.BlockContext{Height: input.Height},
 		Signer:       input.Platform.Deployer,
 		Caller:       deployer.Address(),
 		TxID:         input.Platform.Txid(),
@@ -226,6 +231,7 @@ type GetMetadataInput struct {
 	Platform *kwilTesting.Platform
 	Locator  trufTypes.StreamLocator
 	Key      string
+	Height   int64
 }
 
 // GetMetadata retrieves metadata from a contract
@@ -237,7 +243,7 @@ func GetMetadata(ctx context.Context, input GetMetadataInput) ([]any, error) {
 
 	txContext := &common.TxContext{
 		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: 0},
+		BlockContext: &common.BlockContext{Height: input.Height},
 		Signer:       input.Platform.Deployer,
 		Caller:       deployer.Address(),
 		TxID:         input.Platform.Txid(),
@@ -272,6 +278,7 @@ type DisableMetadataInput struct {
 	Platform *kwilTesting.Platform
 	Locator  trufTypes.StreamLocator
 	RowID    *types.UUID
+	Height   int64
 }
 
 // DisableMetadata disables metadata in a contract
@@ -283,7 +290,7 @@ func DisableMetadata(ctx context.Context, input DisableMetadataInput) error {
 
 	txContext := &common.TxContext{
 		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: 0},
+		BlockContext: &common.BlockContext{Height: input.Height},
 		Signer:       input.Platform.Deployer,
 		Caller:       deployer.Address(),
 		TxID:         input.Platform.Txid(),

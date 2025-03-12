@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
@@ -167,6 +168,7 @@ func testReadPermissionControl(t *testing.T, streamInfo setup.StreamInfo) kwilTe
 			Key:      "allow_read_wallet",
 			Value:    nonOwnerAuthorized.Address(),
 			ValType:  "ref",
+			Height:   1,
 		})
 		if err != nil {
 			return errors.Wrapf(err, "failed to add wallet %s to read whitelist for stream",
@@ -191,6 +193,7 @@ func testReadPermissionControl(t *testing.T, streamInfo setup.StreamInfo) kwilTe
 			Key:      "read_visibility",
 			Value:    "1", // 1 = private
 			ValType:  "int",
+			Height:   2,
 		})
 		if err != nil {
 			return errors.Wrapf(err, "failed to change read_visibility to private for stream")
@@ -217,6 +220,159 @@ func testReadPermissionControl(t *testing.T, streamInfo setup.StreamInfo) kwilTe
 			return errors.Wrapf(err, "failed to check read permissions for authorized wallet")
 		}
 		assert.Equal(t, true, canRead, "authorized wallet should be able to read private stream")
+
+		return nil
+	}
+}
+
+// TestAUTH02_NestedReadPermissions tests read permissions across a chain of composed streams
+func TestAUTH02_NestedReadPermissions(t *testing.T) {
+	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name:        "nested_read_permission_control_AUTH02",
+		SeedScripts: migrations.GetSeedScriptPaths(),
+		FunctionTests: []kwilTesting.TestFunc{
+			testNestedReadPermissionControl(t),
+		},
+	}, testutils.GetTestOptions())
+}
+
+func testNestedReadPermissionControl(t *testing.T) kwilTesting.TestFunc {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Create addresses for the test
+		dataProvider := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000001")
+		authorizedWallet := util.Unsafe_NewEthereumAddressFromString("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+		unauthorizedWallet := util.Unsafe_NewEthereumAddressFromString("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+
+		// Create a slice of streams in our hierarchy
+		streamLocators := []types.StreamLocator{
+			{ // Primitive stream (index 0)
+				StreamId:     util.GenerateStreamId("nested_primitive_test"),
+				DataProvider: dataProvider,
+			},
+			{ // First-level composed stream (index 1)
+				StreamId:     util.GenerateStreamId("nested_composed_level1_test"),
+				DataProvider: dataProvider,
+			},
+			{ // Second-level composed stream (index 2)
+				StreamId:     util.GenerateStreamId("nested_composed_level2_test"),
+				DataProvider: dataProvider,
+			},
+		}
+
+		// Use a slice of stream types to match the streamLocators
+		streamTypes := []setup.ContractType{
+			setup.ContractTypePrimitive,
+			setup.ContractTypeComposed,
+			setup.ContractTypeComposed,
+		}
+
+		// 1. Create all streams
+		platform = procedure.WithSigner(platform, dataProvider.Bytes())
+		for i, locator := range streamLocators {
+			_, err := setup.CreateStream(ctx, platform, setup.StreamInfo{
+				Locator: locator,
+				Type:    streamTypes[i],
+			})
+			if err != nil {
+				return errors.Wrapf(err, "failed to create stream %s for nested test", locator.StreamId.String())
+			}
+		}
+
+		// 2. Set up the taxonomy chain
+		// Link first-level composed to primitive
+		err := procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
+			Platform:      platform,
+			StreamLocator: streamLocators[1],                                  // First-level composed
+			DataProviders: []string{streamLocators[0].DataProvider.Address()}, // Primitive
+			StreamIds:     []string{streamLocators[0].StreamId.String()},
+			Weights:       []string{"1.0"},
+			StartTime:     0,
+		})
+		if err != nil {
+			return errors.Wrapf(err, "failed to set taxonomy for first-level composed stream")
+		}
+
+		// Link second-level composed to first-level composed
+		err = procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
+			Platform:      platform,
+			StreamLocator: streamLocators[2],                                  // Second-level composed
+			DataProviders: []string{streamLocators[1].DataProvider.Address()}, // First-level composed
+			StreamIds:     []string{streamLocators[1].StreamId.String()},
+			Weights:       []string{"1.0"},
+			StartTime:     0,
+		})
+		if err != nil {
+			return errors.Wrapf(err, "failed to set taxonomy for second-level composed stream")
+		}
+
+		// 3. Add authorized wallet to primitive stream's read whitelist
+		err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+			Platform: platform,
+			Locator:  streamLocators[0], // Primitive
+			Key:      "allow_read_wallet",
+			Value:    authorizedWallet.Address(),
+			ValType:  "ref",
+			Height:   1,
+		})
+		if err != nil {
+			return errors.Wrapf(err, "failed to add wallet %s to read whitelist",
+				authorizedWallet.Address())
+		}
+
+		// 4. Set primitive stream's read visibility to private
+		err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+			Platform: platform,
+			Locator:  streamLocators[0], // Primitive
+			Key:      "read_visibility",
+			Value:    "1", // 1 = private
+			ValType:  "int",
+			Height:   2,
+		})
+		if err != nil {
+			return errors.Wrapf(err, "failed to set read_visibility to private")
+		}
+
+		// 5. Test scenarios with a helper function
+		checkReadPermission := func(locator types.StreamLocator, wallet util.EthereumAddress, expectCanRead bool, description string) error {
+			canRead, err := procedure.CheckReadPermissions(ctx, procedure.CheckReadPermissionsInput{
+				Platform: platform,
+				Locator:  locator,
+				Wallet:   wallet.Address(),
+			})
+			if err != nil {
+				return errors.Wrapf(err, "failed to check read permissions for %s on stream %s",
+					wallet.Address(), locator.StreamId.String())
+			}
+			assert.Equal(t, expectCanRead, canRead, description)
+			return nil
+		}
+
+		// Test each stream with both authorized and unauthorized wallet
+		for i, locator := range streamLocators {
+			streamName := []string{"primitive", "first-level composed", "second-level composed"}[i]
+
+			// Test authorized wallet (should be able to read all streams)
+			err = checkReadPermission(
+				locator,
+				authorizedWallet,
+				true,
+				fmt.Sprintf("authorized wallet should be able to read %s stream", streamName),
+			)
+			if err != nil {
+				return err
+			}
+
+			// Test unauthorized wallet (should not be able to read any stream due to permission inheritance)
+			err = checkReadPermission(
+				locator,
+				unauthorizedWallet,
+				false,
+				fmt.Sprintf("unauthorized wallet should not be able to read %s stream", streamName),
+			)
+			if err != nil {
+				return err
+			}
+		}
 
 		return nil
 	}
