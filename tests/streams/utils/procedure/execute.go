@@ -33,7 +33,7 @@ func GetRecord(ctx context.Context, input GetRecordInput) ([]ResultRow, error) {
 	}
 
 	var resultRows [][]any
-	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_record", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_record", []any{
 		input.StreamLocator.DataProvider.Address(),
 		input.StreamLocator.StreamId.String(),
 		input.FromTime,
@@ -50,6 +50,9 @@ func GetRecord(ctx context.Context, input GetRecordInput) ([]ResultRow, error) {
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "error in getRecord")
+	}
+	if r.Error != nil {
+		return nil, errors.Wrap(r.Error, "error in getRecord")
 	}
 
 	return processResultRows(resultRows)
@@ -76,7 +79,7 @@ func GetIndex(ctx context.Context, input GetIndexInput) ([]ResultRow, error) {
 	}
 
 	var resultRows [][]any
-	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_index", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_index", []any{
 		input.StreamLocator.DataProvider.Address(),
 		input.StreamLocator.StreamId.String(),
 		input.FromTime,
@@ -94,6 +97,9 @@ func GetIndex(ctx context.Context, input GetIndexInput) ([]ResultRow, error) {
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "error in getIndex")
+	}
+	if r.Error != nil {
+		return nil, errors.Wrap(r.Error, "error in getIndex")
 	}
 
 	return processResultRows(resultRows)
@@ -120,7 +126,7 @@ func GetIndexChange(ctx context.Context, input GetIndexChangeInput) ([]ResultRow
 	}
 
 	var resultRows [][]any
-	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_index_change", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_index_change", []any{
 		input.StreamLocator.DataProvider.Address(),
 		input.StreamLocator.StreamId.String(),
 		input.FromTime,
@@ -139,6 +145,9 @@ func GetIndexChange(ctx context.Context, input GetIndexChangeInput) ([]ResultRow
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "error in getIndexChange")
+	}
+	if r.Error != nil {
+		return nil, errors.Wrap(r.Error, "error in getIndexChange")
 	}
 
 	return processResultRows(resultRows)
@@ -165,7 +174,7 @@ func GetFirstRecord(ctx context.Context, input GetFirstRecordInput) ([]ResultRow
 	}
 
 	var resultRows [][]any
-	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_first_record", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_first_record", []any{
 		input.StreamLocator.DataProvider.Address(),
 		input.StreamLocator.StreamId.String(),
 		input.AfterTime,
@@ -181,6 +190,9 @@ func GetFirstRecord(ctx context.Context, input GetFirstRecordInput) ([]ResultRow
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "error in getFirstRecord")
+	}
+	if r.Error != nil {
+		return nil, errors.Wrap(r.Error, "error in getFirstRecord")
 	}
 
 	return processResultRows(resultRows)
@@ -206,7 +218,7 @@ func SetMetadata(ctx context.Context, input SetMetadataInput) error {
 		TxContext: txContext,
 	}
 
-	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "set_metadata", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "set_metadata", []any{
 		input.StreamLocator.DataProvider.Address(),
 		input.StreamLocator.StreamId.String(),
 		input.Key,
@@ -217,6 +229,9 @@ func SetMetadata(ctx context.Context, input SetMetadataInput) error {
 	})
 	if err != nil {
 		return errors.Wrap(err, "error in setMetadata")
+	}
+	if r.Error != nil {
+		return errors.Wrap(r.Error, "error in setMetadata")
 	}
 
 	return nil
@@ -269,7 +284,7 @@ func DescribeTaxonomies(ctx context.Context, input DescribeTaxonomiesInput) ([]R
 	}
 
 	var resultRows [][]any
-	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "describe_taxonomies", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "describe_taxonomies", []any{
 		input.DataProvider,
 		input.StreamId,
 		input.LatestVersion,
@@ -284,6 +299,9 @@ func DescribeTaxonomies(ctx context.Context, input DescribeTaxonomiesInput) ([]R
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "error in DescribeTaxonomies.Procedure")
+	}
+	if r.Error != nil {
+		return nil, errors.Wrap(r.Error, "error in DescribeTaxonomies.Procedure")
 	}
 
 	return processResultRows(resultRows)
@@ -317,7 +335,7 @@ func SetTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 
 	txContext := &common.TxContext{
 		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: 0},
+		BlockContext: &common.BlockContext{Height: input.Height},
 		Signer:       input.Platform.Deployer,
 		Caller:       deployer.Address(),
 		TxID:         input.Platform.Txid(),
@@ -327,7 +345,7 @@ func SetTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 		TxContext: txContext,
 	}
 
-	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "insert_taxonomy", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "insert_taxonomy", []any{
 		input.StreamLocator.DataProvider.Address(), // parent data provider
 		input.StreamLocator.StreamId.String(),      // parent stream id
 		dataProviderStrings,                        // child data providers
@@ -337,6 +355,9 @@ func SetTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 	}, func(row *common.Row) error {
 		return nil
 	})
+	if r.Error != nil {
+		return errors.Wrap(r.Error, "error in insert_taxonomy")
+	}
 	return err
 }
 
@@ -361,7 +382,7 @@ func GetCategoryStreams(ctx context.Context, input GetCategoryStreamsInput) ([]R
 	}
 
 	var resultRows [][]any
-	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_category_streams", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_category_streams", []any{
 		input.DataProvider,
 		input.StreamId,
 		input.ActiveFrom,
@@ -377,6 +398,9 @@ func GetCategoryStreams(ctx context.Context, input GetCategoryStreamsInput) ([]R
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "error in getCategoryStreams")
+	}
+	if r.Error != nil {
+		return nil, errors.Wrap(r.Error, "error in getCategoryStreams")
 	}
 
 	return processResultRows(resultRows)

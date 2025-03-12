@@ -41,7 +41,7 @@ func setupComposedAndPrimitives(ctx context.Context, input SetupComposedAndPrimi
 	}
 
 	// Create the composed stream using create_stream action
-	_, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "create_stream", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "create_stream", []any{
 		input.ComposedStreamDefinition.StreamLocator.StreamId.String(),
 		"composed",
 	}, func(row *common.Row) error {
@@ -49,6 +49,9 @@ func setupComposedAndPrimitives(ctx context.Context, input SetupComposedAndPrimi
 	})
 	if err != nil {
 		return errors.Wrap(err, "error creating composed stream")
+	}
+	if r.Error != nil {
+		return errors.Wrap(r.Error, "error creating composed stream")
 	}
 
 	// Deploy and initialize primitive streams
@@ -233,7 +236,7 @@ func SetupComposedStream(ctx context.Context, input SetupComposedStreamInput) er
 	}
 
 	// Create the composed stream using create_stream action
-	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "create_stream", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "create_stream", []any{
 		input.StreamId.String(),
 		"composed",
 	}, func(row *common.Row) error {
@@ -241,6 +244,9 @@ func SetupComposedStream(ctx context.Context, input SetupComposedStreamInput) er
 	})
 	if err != nil {
 		return errors.Wrap(err, "error creating composed stream")
+	}
+	if r.Error != nil {
+		return errors.Wrap(r.Error, "error creating composed stream")
 	}
 
 	return nil

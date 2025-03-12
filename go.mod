@@ -12,8 +12,8 @@ require (
 	github.com/docker/docker v27.3.1+incompatible
 	github.com/fbiville/markdown-table-formatter v0.3.0
 	github.com/golang-sql/civil v0.0.0-20220223132316-b832511892a9
-	github.com/kwilteam/kwil-db v0.10.0-rc.1
-	github.com/kwilteam/kwil-db/core v0.4.0-rc.1
+	github.com/kwilteam/kwil-db v0.10.0
+	github.com/kwilteam/kwil-db/core v0.4.0
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/pkg/errors v0.9.1
 	github.com/samber/lo v1.47.0

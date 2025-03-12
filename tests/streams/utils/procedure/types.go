@@ -62,6 +62,7 @@ type SetTaxonomyInput struct {
 	StreamIds     []string
 	Weights       []string
 	StartTime     int64
+	Height        int64
 }
 
 type GetCategoryStreamsInput struct {

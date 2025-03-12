@@ -11,6 +11,57 @@ import (
 	"github.com/trufnetwork/sdk-go/core/util"
 )
 
+type CheckReadAllPermissionsInput struct {
+	Platform *kwilTesting.Platform
+	Locator  trufTypes.StreamLocator
+	Wallet   string
+	Height   int64
+}
+
+// CheckReadAllPermissions checks if a wallet is allowed to read from all substreams of a stream
+func CheckReadAllPermissions(ctx context.Context, input CheckReadAllPermissionsInput) (bool, error) {
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return false, errors.Wrap(err, "failed to create Ethereum address from deployer bytes")
+	}
+
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: input.Height},
+		Signer:       input.Platform.Deployer,
+		Caller:       deployer.Address(),
+		TxID:         input.Platform.Txid(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext: txContext,
+	}
+
+	var allowed bool
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "is_allowed_to_read_all", []any{
+		input.Locator.DataProvider.Address(),
+		input.Locator.StreamId.String(),
+		input.Wallet,
+		nil, // active_from, nil means no restriction
+		nil, // active_to, nil means no restriction
+	}, func(row *common.Row) error {
+		if len(row.Values) > 0 {
+			if val, ok := row.Values[0].(bool); ok {
+				allowed = val
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	if r.Error != nil {
+		return false, errors.Wrap(r.Error, "error in is_allowed_to_read_all")
+	}
+
+	return allowed, nil
+}
+
 type CheckReadPermissionsInput struct {
 	Platform *kwilTesting.Platform
 	Locator  trufTypes.StreamLocator
@@ -18,7 +69,7 @@ type CheckReadPermissionsInput struct {
 	Height   int64
 }
 
-// CheckReadPermissions checks if a wallet is allowed to read from a contract
+// CheckReadPermissions checks if a wallet is allowed to read from a specific stream
 func CheckReadPermissions(ctx context.Context, input CheckReadPermissionsInput) (bool, error) {
 	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
 	if err != nil {
@@ -38,7 +89,7 @@ func CheckReadPermissions(ctx context.Context, input CheckReadPermissionsInput) 
 	}
 
 	var allowed bool
-	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "is_allowed_to_read_all", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "is_allowed_to_read", []any{
 		input.Locator.DataProvider.Address(),
 		input.Locator.StreamId.String(),
 		input.Wallet,
@@ -54,6 +105,9 @@ func CheckReadPermissions(ctx context.Context, input CheckReadPermissionsInput) 
 	})
 	if err != nil {
 		return false, err
+	}
+	if r.Error != nil {
+		return false, errors.Wrap(r.Error, "error in is_allowed_to_read")
 	}
 
 	return allowed, nil
@@ -86,7 +140,7 @@ func CheckWritePermissions(ctx context.Context, input CheckWritePermissionsInput
 	}
 
 	var allowed bool
-	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "is_allowed_to_write_all", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "is_allowed_to_write_all", []any{
 		input.Locator.DataProvider.Address(),
 		input.Locator.StreamId.String(),
 		input.Wallet,
@@ -100,6 +154,9 @@ func CheckWritePermissions(ctx context.Context, input CheckWritePermissionsInput
 	})
 	if err != nil {
 		return false, err
+	}
+	if r.Error != nil {
+		return false, errors.Wrap(r.Error, "error in is_allowed_to_write_all")
 	}
 
 	return allowed, nil
@@ -132,7 +189,7 @@ func CheckComposePermissions(ctx context.Context, input CheckComposePermissionsI
 	}
 
 	var allowed bool
-	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "is_stream_allowed_to_compose", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "is_stream_allowed_to_compose", []any{
 		input.Locator.DataProvider.Address(),
 		input.Locator.StreamId.String(),
 		input.ForeignCaller,
@@ -146,6 +203,9 @@ func CheckComposePermissions(ctx context.Context, input CheckComposePermissionsI
 	})
 	if err != nil {
 		return false, err
+	}
+	if r.Error != nil {
+		return false, errors.Wrap(r.Error, "error in is_stream_allowed_to_compose")
 	}
 
 	return allowed, nil
@@ -179,7 +239,7 @@ func InsertMetadata(ctx context.Context, input InsertMetadataInput) error {
 		TxContext: txContext,
 	}
 
-	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "insert_metadata", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "insert_metadata", []any{
 		input.Locator.DataProvider.Address(),
 		input.Locator.StreamId.String(),
 		input.Key,
@@ -188,7 +248,14 @@ func InsertMetadata(ctx context.Context, input InsertMetadataInput) error {
 	}, func(row *common.Row) error {
 		return nil
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	if r.Error != nil {
+		return errors.Wrap(r.Error, "error in insert_metadata")
+	}
+
+	return nil
 }
 
 type TransferStreamOwnershipInput struct {
@@ -217,14 +284,21 @@ func TransferStreamOwnership(ctx context.Context, input TransferStreamOwnershipI
 		TxContext: txContext,
 	}
 
-	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "transfer_stream_ownership", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "transfer_stream_ownership", []any{
 		input.Locator.DataProvider.Address(),
 		input.Locator.StreamId.String(),
 		input.NewOwner,
 	}, func(row *common.Row) error {
 		return nil
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	if r.Error != nil {
+		return errors.Wrap(r.Error, "error in transfer_stream_ownership")
+	}
+
+	return nil
 }
 
 type GetMetadataInput struct {
@@ -254,13 +328,12 @@ func GetMetadata(ctx context.Context, input GetMetadataInput) ([]any, error) {
 	}
 
 	var results []any
-	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_metadata", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_metadata", []any{
 		input.Locator.DataProvider.Address(),
 		input.Locator.StreamId.String(),
 		input.Key,
-		true,
 		nil,
-		100,
+		1, // get only latest row
 		0,
 		"created_at DESC",
 	}, func(row *common.Row) error {
@@ -269,6 +342,9 @@ func GetMetadata(ctx context.Context, input GetMetadataInput) ([]any, error) {
 	})
 	if err != nil {
 		return nil, err
+	}
+	if r.Error != nil {
+		return nil, errors.Wrap(r.Error, "error in get_metadata")
 	}
 
 	return results, nil
@@ -300,12 +376,19 @@ func DisableMetadata(ctx context.Context, input DisableMetadataInput) error {
 		TxContext: txContext,
 	}
 
-	_, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "disable_metadata", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "disable_metadata", []any{
 		input.Locator.DataProvider.Address(),
 		input.Locator.StreamId.String(),
 		input.RowID,
 	}, func(row *common.Row) error {
 		return nil
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	if r.Error != nil {
+		return errors.Wrap(r.Error, "error in disable_metadata")
+	}
+
+	return nil
 }
