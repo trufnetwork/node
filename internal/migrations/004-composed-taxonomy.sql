@@ -10,11 +10,16 @@ CREATE OR REPLACE ACTION insert_taxonomy(
     $weights NUMERIC(36,18)[],      -- The weights of the child streams.
     $start_date INT                 -- The start date of the taxonomy.
 ) PUBLIC view returns (result bool) {
-    -- Ensure the wallet is allowed to write
-    if is_wallet_allowed_to_write(@caller, $data_provider, $stream_id) == false {
-        ERROR('wallet not allowed to write');
+    -- ensure it's a composed stream
+    if is_primitive_stream($data_provider, $stream_id) == true {
+        ERROR('stream is not a composed stream');
     }
 
+    -- Ensure the wallet is allowed to write
+    if is_wallet_allowed_to_write($data_provider, $stream_id, @caller) == false {
+        ERROR('wallet not allowed to write');
+    }
+ 
     -- Determine the number of child records provided.
     $num_children := array_length($child_stream_ids);
 

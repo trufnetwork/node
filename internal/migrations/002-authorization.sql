@@ -9,26 +9,50 @@ CREATE OR REPLACE ACTION is_allowed_to_read(
     $active_from INT,
     $active_to INT
 ) PUBLIC view returns (is_allowed BOOL) {
+    $lowercase_wallet_address TEXT := LOWER($wallet_address);
     -- Check if the stream exists
     if !stream_exists($data_provider, $stream_id) {
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
     }
-
     -- Check if the stream is private
     $is_private BOOL := false;
-    for $row in get_metadata($data_provider, $stream_id, 'read_visibility', true, null, null, null, 'created_at DESC') {
-        $is_private := $row.value_i = 1;
+    for $row in get_metadata(
+        $data_provider,
+        $stream_id,
+        'read_visibility',
+        null,
+        1,
+        0,
+        'created_at DESC'
+    ) {
+        if $row.value_i = 1 {
+            $is_private := true;
+        }
+    }
+    if $is_private = false {
+        -- short circuit if the stream is not private
+        return true;
     }
 
     -- Check if the wallet is allowed to read the stream
     $is_allowed BOOL := false;
-    for $row in get_metadata($data_provider, $stream_id, 'allow_read_wallet', true, $wallet_address, null, null, 'created_at DESC') {
+    for $row in get_metadata(
+        $data_provider,
+        $stream_id,
+        'allow_read_wallet',
+        $lowercase_wallet_address,
+        1,
+        0,
+        'created_at DESC'
+    ) {
         $is_allowed := true;
     }
 
     if $is_private = true AND $is_allowed = false {
         return false;
     }
+
+    NOTICE(FORMAT('is_allowed_to_read: data_provider=%s stream_id=%s wallet_address=%s is_private=%s is_allowed=%s', $data_provider, $stream_id, $lowercase_wallet_address, $is_private, $is_allowed));
 
     return true;
 };
@@ -138,8 +162,13 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
     SELECT 
         (SELECT COUNT(*) FROM inexisting_substreams) AS missing_count,
         (SELECT COUNT(*) FROM streams_without_permissions) AS unauthorized_count {
-        -- Return false if there are any missing or unauthorized streams
-        $result := $counts.missing_count = 0 AND $counts.unauthorized_count = 0;
+        -- error out if there's a missing streams
+        if $counts.missing_count > 0 {
+            ERROR('count of inexisting substreams for stream: data_provider=' || $data_provider || ' stream_id=' || $stream_id || ' count=' || $counts.missing_count);
+        }
+
+        -- Return false if there are any unauthorized streams
+        $result := $counts.unauthorized_count = 0;
     }
     
     -- If we got here (which we shouldn't), return false as a fallback
@@ -156,12 +185,20 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_write(
     $wallet TEXT
 ) PUBLIC view returns (result bool) {
     -- Check if the wallet is the stream owner
-    if !is_stream_owner($data_provider, $stream_id) {
-        return false;
+    if is_stream_owner($data_provider, $stream_id, $wallet) {
+        return true;
     }
 
     -- Check if the wallet is explicitly allowed to write via metadata permissions
-    for $row in get_metadata($data_provider, $stream_id, 'allow_write_wallet', false, $wallet, 1, 0, 'created_at DESC') {
+    for $row in get_metadata(
+        $data_provider,
+        $stream_id,
+        'allow_write_wallet',
+        $wallet,
+        1,
+        0,
+        'created_at DESC'
+    ) {
         return true;
     }
 

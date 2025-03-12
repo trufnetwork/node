@@ -255,7 +255,15 @@ CREATE OR REPLACE ACTION is_stream_owner(
 ) PUBLIC view returns (is_owner BOOL) {
     $lower_caller := LOWER($caller);
     $result BOOL := false;
-    for $row in get_metadata($data_provider, $stream_id, 'stream_owner', true, $lower_caller, null, null, 'created_at DESC') {
+    for $row in get_metadata(
+        $data_provider,
+        $stream_id,
+        'stream_owner',
+        $lower_caller,
+        1,
+        0,
+        'created_at DESC'
+    ) {
         $result := true;
     }
     return $result;
@@ -284,7 +292,6 @@ CREATE OR REPLACE ACTION get_metadata(
     $data_provider TEXT,
     $stream_id TEXT,
     $key TEXT,
-    $only_latest BOOL,
     $ref TEXT,
     $limit INT,
     $offset INT,
@@ -332,6 +339,7 @@ CREATE OR REPLACE ACTION get_metadata(
  * get_category_streams: Retrieves all streams in a category (composed stream).
  * For primitive streams, returns just the stream itself.
  * For composed streams, recursively traverses taxonomy to find all substreams.
+ * It doesn't check for the existence of the substreams, it just returns them.
  */
 CREATE OR REPLACE ACTION get_category_streams(
     $data_provider TEXT,
@@ -343,13 +351,8 @@ CREATE OR REPLACE ACTION get_category_streams(
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
     }
 
-    $stream_type TEXT;
-    for $row in SELECT stream_type FROM streams WHERE data_provider = $data_provider AND stream_id = $stream_id {
-        $stream_type := $row.stream_type;
-    }
-    
-    if $stream_type = 'primitive' {
-        return next $data_provider, $stream_id;
+    if is_primitive_stream($data_provider, $stream_id) == true  {
+        return SELECT $data_provider as data_provider, $stream_id as stream_id;
     }
 
     -- Get all substreams with proper recursive traversal, including the root stream itself
