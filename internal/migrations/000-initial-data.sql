@@ -3,6 +3,12 @@
 
     The intention of this file is to store only tables and constraints that will be used on TN bootstrap.
     Actions should be added in separate files for better readability.
+    
+    Tables:
+    - streams: Core table storing stream metadata with immutable data provider references
+    - taxonomies: Defines parent-child relationships between streams with versioning
+    - primitive_events: Stores time-series data points for primitive streams
+    - metadata: Flexible key-value store for stream configuration and properties
  */
 CREATE TABLE IF NOT EXISTS streams (
     stream_id TEXT NOT NULL,

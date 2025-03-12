@@ -1,3 +1,7 @@
+/**
+ * insert_taxonomy: Creates a new taxonomy version for a composed stream.
+ * Validates input arrays, increments version, and inserts child stream relationships.
+ */
 CREATE OR REPLACE ACTION insert_taxonomy(
     $data_provider TEXT,            -- The data provider of the parent stream.
     $stream_id TEXT,                -- The stream ID of the parent stream.
@@ -56,9 +60,10 @@ CREATE OR REPLACE ACTION insert_taxonomy(
     return true;
 };
 
-------------------------------------------------------------
--- Helper action: Get the latest taxonomy version for a parent.
--- When $show_disabled is false, only active (non-disabled) records are considered.
+/**
+ * get_current_version: Helper to find the latest taxonomy version.
+ * When $show_disabled is false, only active (non-disabled) records are considered.
+ */
 CREATE OR REPLACE ACTION get_current_version(
     $data_provider TEXT,
     $stream_id TEXT,

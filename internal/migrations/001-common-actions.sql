@@ -1,3 +1,8 @@
+/**
+ * create_stream: Creates a new stream with required metadata.
+ * Validates stream_id format, data provider address, and stream type.
+ * Sets default metadata including type, owner, visibility, and readonly keys.
+ */
 CREATE OR REPLACE ACTION create_stream(
     $stream_id TEXT,
     $stream_type TEXT
@@ -63,6 +68,11 @@ CREATE OR REPLACE ACTION create_stream(
     }
 };
 
+/**
+ * insert_metadata: Adds metadata to a stream.
+ * Validates caller is stream owner and handles different value types.
+ * Prevents modification of readonly keys.
+ */
 CREATE OR REPLACE ACTION insert_metadata(
     -- not necessarily the caller is the original deployer of the stream
     $data_provider TEXT,
@@ -143,6 +153,10 @@ CREATE OR REPLACE ACTION insert_metadata(
     );
 };
 
+/**
+ * disable_metadata: Marks a metadata record as disabled.
+ * Validates caller is stream owner and prevents disabling readonly keys.
+ */
 CREATE OR REPLACE ACTION disable_metadata(
     -- not necessarily the caller is the original deployer of the stream
     $data_provider TEXT,
@@ -196,18 +210,28 @@ CREATE OR REPLACE ACTION disable_metadata(
     AND stream_id = $stream_id;
 };
 
+/**
+ * check_stream_id_format: Validates stream ID format (st + 30 alphanumeric chars).
+ */
 CREATE OR REPLACE ACTION check_stream_id_format(
     $stream_id TEXT
 ) PUBLIC view returns (result BOOL) {
     return LENGTH($stream_id) = 32 AND substring($stream_id, 1, 2) = 'st';
 };
 
+/**
+ * check_ethereum_address: Validates Ethereum address format.
+ */
 CREATE OR REPLACE ACTION check_ethereum_address(
     $data_provider TEXT
 ) PUBLIC view returns (result BOOL) {
     return LENGTH($data_provider) = 42 AND substring($data_provider, 1, 2) = '0x';
 };
 
+/**
+ * delete_stream: Removes a stream and all associated data.
+ * Only stream owner can perform this action.
+ */
 CREATE OR REPLACE ACTION delete_stream(
     -- not necessarily the caller is the original deployer of the stream
     $data_provider TEXT,
@@ -220,6 +244,10 @@ CREATE OR REPLACE ACTION delete_stream(
     DELETE FROM streams WHERE data_provider = $data_provider AND stream_id = $stream_id;
 };
 
+/**
+ * is_stream_owner: Checks if caller is the owner of a stream.
+ * Uses stream_owner metadata to determine ownership.
+ */
 CREATE OR REPLACE ACTION is_stream_owner(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -233,7 +261,9 @@ CREATE OR REPLACE ACTION is_stream_owner(
     return $result;
 };
 
--- Helper function to check if a stream is primitive or composed
+/**
+ * is_primitive_stream: Determines if a stream is primitive or composed.
+ */
 CREATE OR REPLACE ACTION is_primitive_stream(
     $data_provider TEXT,
     $stream_id TEXT
@@ -246,8 +276,10 @@ CREATE OR REPLACE ACTION is_primitive_stream(
     ERROR('Stream not found: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
 };
 
--- This action wraps metadata selection with pagination parameters.
--- It supports ordering only by created_at ascending or descending.
+/**
+ * get_metadata: Retrieves metadata for a stream with pagination and filtering.
+ * Supports ordering by creation time and filtering by key and reference.
+ */
 CREATE OR REPLACE ACTION get_metadata(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -296,110 +328,11 @@ CREATE OR REPLACE ACTION get_metadata(
        LIMIT $limit OFFSET $offset;
 };
 
-CREATE OR REPLACE ACTION is_allowed_to_read_all(
-    $data_provider TEXT,
-    $stream_id TEXT,
-    $wallet_address TEXT,
-    $active_from INT,
-    $active_to INT
-) PUBLIC view returns (is_allowed BOOL) {
-    -- Check for missing or unauthorized substreams using recursive CTE
-    for $counts in with recursive
-        -- effective_taxonomies holds, for every parent-child link that is active,
-        -- the rows that are considered effective given the time window.
-        effective_taxonomies AS (
-        SELECT 
-            t.data_provider,
-            t.stream_id,
-            t.child_data_provider,
-            t.child_stream_id,
-            t.start_time
-        FROM taxonomies t
-        WHERE t.disabled_at IS NULL
-            AND ($active_to IS NULL OR t.start_time <= $active_to)
-            AND (
-            -- (A) For rows before (or at) $active_from: only include the one with the maximum start_time.
-            ($active_from IS NOT NULL 
-                AND t.start_time <= $active_from 
-                AND t.start_time = (
-                    SELECT max(t2.start_time)
-                    FROM taxonomies t2
-                    WHERE t2.data_provider = t.data_provider
-                        AND t2.stream_id = t.stream_id
-                        AND t2.disabled_at IS NULL
-                        AND ($active_to IS NULL OR t2.start_time <= $active_to)
-                        AND t2.start_time <= $active_from
-                )
-            )
-            -- (B) Also include any rows with start_time greater than $active_from.
-            OR ($active_from IS NULL OR t.start_time > $active_from)
-            )
-        ),
-        -- Now recursively gather all substreams
-        recursive_substreams AS (
-            -- Start with the root stream itself
-            SELECT $data_provider AS data_provider, 
-                $stream_id AS stream_id
-            UNION
-            -- Then add all child streams
-            SELECT et.child_data_provider,
-                   et.child_stream_id
-            FROM effective_taxonomies et
-            JOIN recursive_substreams rs
-                ON et.data_provider = rs.data_provider
-                AND et.stream_id = rs.stream_id
-        ),
-        -- Find substreams that don't exist
-        inexisting_substreams as (
-            SELECT rs.data_provider, rs.stream_id 
-            FROM recursive_substreams rs
-            LEFT JOIN streams s 
-                ON rs.data_provider = s.data_provider 
-                AND rs.stream_id = s.stream_id
-            WHERE s.data_provider IS NULL
-        ),
-        -- Find substreams that are private
-        private_substreams as (
-            SELECT rs.data_provider, rs.stream_id 
-            FROM recursive_substreams rs
-            WHERE (
-                SELECT value_i
-                FROM metadata m
-                WHERE m.data_provider = rs.data_provider
-                    AND m.stream_id = rs.stream_id
-                    AND m.metadata_key = 'read_visibility'
-                    AND m.disabled_at IS NULL
-                ORDER BY m.created_at DESC
-                LIMIT 1
-            ) = 1  -- 1 indicates private visibility
-        ),
-        -- Find private streams where the wallet doesn't have access
-        streams_without_permissions as (
-            SELECT p.data_provider, p.stream_id 
-            FROM private_substreams p
-            WHERE NOT EXISTS (
-                SELECT 1
-                FROM metadata m
-                WHERE m.data_provider = p.data_provider
-                    AND m.stream_id = p.stream_id
-                    AND m.metadata_key = 'allow_read_wallet'
-                    AND LOWER(m.value_ref) = LOWER($wallet_address)
-                    AND m.disabled_at IS NULL
-                LIMIT 1
-            )
-        )
-    SELECT 
-        (SELECT COUNT(*) FROM inexisting_substreams) AS missing_count,
-        (SELECT COUNT(*) FROM streams_without_permissions) AS unauthorized_count {
-        
-        -- Return false if there are any missing or unauthorized streams
-        return $counts.missing_count = 0 AND $counts.unauthorized_count = 0;
-    }
-    
-    -- If we got here (which we shouldn't), return false as a fallback
-    return false;
-};
-
+/**
+ * get_category_streams: Retrieves all streams in a category (composed stream).
+ * For primitive streams, returns just the stream itself.
+ * For composed streams, recursively traverses taxonomy to find all substreams.
+ */
 CREATE OR REPLACE ACTION get_category_streams(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -469,6 +402,9 @@ CREATE OR REPLACE ACTION get_category_streams(
         FROM recursive_substreams;
 };
 
+/**
+ * stream_exists: Simple check if a stream exists in the database.
+ */
 CREATE OR REPLACE ACTION stream_exists(
     $data_provider TEXT,
     $stream_id TEXT
