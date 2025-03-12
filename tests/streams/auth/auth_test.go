@@ -152,7 +152,7 @@ func testReadPermissionControl(t *testing.T, streamInfo setup.StreamInfo) kwilTe
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		platform = procedure.WithSigner(platform, streamInfo.Locator.DataProvider.Bytes())
 		// Set up and initialize the contract
-		_, err := setup.CreateStream(ctx, platform, streamInfo)
+		err := setup.CreateStream(ctx, platform, streamInfo)
 		if err != nil {
 			return errors.Wrapf(err, "failed to create stream for read permission test")
 		}
@@ -160,6 +160,37 @@ func testReadPermissionControl(t *testing.T, streamInfo setup.StreamInfo) kwilTe
 		// Initially, anyone should be able to read (public visibility)
 		nonOwnerUnauthorized := util.Unsafe_NewEthereumAddressFromString("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
 		nonOwnerAuthorized := util.Unsafe_NewEthereumAddressFromString("0xffffffffffffffffffffffffffffffffffffffff")
+
+		// Helper function to check both single and all substreams read permissions
+		checkBothPermissions := func(wallet util.EthereumAddress, expectedCanRead bool, scenario string) error {
+			// Check single stream permissions
+			canRead, err := procedure.CheckReadPermissions(ctx, procedure.CheckReadPermissionsInput{
+				Platform: platform,
+				Locator:  streamInfo.Locator,
+				Wallet:   wallet.Address(),
+			})
+			if err != nil {
+				return errors.Wrapf(err, "failed to check single stream read permissions for %s", scenario)
+			}
+			assert.Equal(t, expectedCanRead, canRead,
+				fmt.Sprintf("%s should %s able to read private stream (single)",
+					scenario, expectedVerb(expectedCanRead)))
+
+			// Check all substreams permissions
+			canReadAll, err := procedure.CheckReadAllPermissions(ctx, procedure.CheckReadAllPermissionsInput{
+				Platform: platform,
+				Locator:  streamInfo.Locator,
+				Wallet:   wallet.Address(),
+			})
+			if err != nil {
+				return errors.Wrapf(err, "failed to check all substreams read permissions for %s", scenario)
+			}
+			assert.Equal(t, expectedCanRead, canReadAll,
+				fmt.Sprintf("%s should %s able to read private stream (all)",
+					scenario, expectedVerb(expectedCanRead)))
+
+			return nil
+		}
 
 		// Add non-owner authorized to read whitelist
 		err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
@@ -175,16 +206,10 @@ func testReadPermissionControl(t *testing.T, streamInfo setup.StreamInfo) kwilTe
 				nonOwnerAuthorized.Address())
 		}
 
-		// Anyone should be able to read when read_visibility is public
-		canRead, err := procedure.CheckReadPermissions(ctx, procedure.CheckReadPermissionsInput{
-			Platform: platform,
-			Locator:  streamInfo.Locator,
-			Wallet:   nonOwnerUnauthorized.Address(),
-		})
-		if err != nil {
-			return errors.Wrapf(err, "failed to check read permissions")
+		// Test with public visibility (default)
+		if err := checkBothPermissions(nonOwnerUnauthorized, true, "unauthorized wallet with public visibility"); err != nil {
+			return err
 		}
-		assert.Equal(t, true, canRead, "read permissions should be public by default")
 
 		// Change read_visibility to private (1)
 		err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
@@ -199,30 +224,25 @@ func testReadPermissionControl(t *testing.T, streamInfo setup.StreamInfo) kwilTe
 			return errors.Wrapf(err, "failed to change read_visibility to private for stream")
 		}
 
-		// Verify non-owner unauthorized can't read
-		canRead, err = procedure.CheckReadPermissions(ctx, procedure.CheckReadPermissionsInput{
-			Platform: platform,
-			Locator:  streamInfo.Locator,
-			Wallet:   nonOwnerUnauthorized.Address(),
-		})
-		if err != nil {
-			return errors.Wrapf(err, "failed to check read permissions for unauthorized wallet")
+		// Test with private visibility
+		if err := checkBothPermissions(nonOwnerUnauthorized, false, "unauthorized wallet"); err != nil {
+			return err
 		}
-		assert.Equal(t, false, canRead, "unauthorized wallet should not be able to read private stream")
 
-		// Verify non-owner authorized to read
-		canRead, err = procedure.CheckReadPermissions(ctx, procedure.CheckReadPermissionsInput{
-			Platform: platform,
-			Locator:  streamInfo.Locator,
-			Wallet:   nonOwnerAuthorized.Address(),
-		})
-		if err != nil {
-			return errors.Wrapf(err, "failed to check read permissions for authorized wallet")
+		if err := checkBothPermissions(nonOwnerAuthorized, true, "authorized wallet"); err != nil {
+			return err
 		}
-		assert.Equal(t, true, canRead, "authorized wallet should be able to read private stream")
 
 		return nil
 	}
+}
+
+// Helper function to return the appropriate verb based on expected permission
+func expectedVerb(canRead bool) string {
+	if canRead {
+		return "be"
+	}
+	return "not be"
 }
 
 // TestAUTH02_NestedReadPermissions tests read permissions across a chain of composed streams
@@ -269,7 +289,7 @@ func testNestedReadPermissionControl(t *testing.T) kwilTesting.TestFunc {
 		// 1. Create all streams
 		platform = procedure.WithSigner(platform, dataProvider.Bytes())
 		for i, locator := range streamLocators {
-			_, err := setup.CreateStream(ctx, platform, setup.StreamInfo{
+			err := setup.CreateStream(ctx, platform, setup.StreamInfo{
 				Locator: locator,
 				Type:    streamTypes[i],
 			})
@@ -334,7 +354,7 @@ func testNestedReadPermissionControl(t *testing.T) kwilTesting.TestFunc {
 
 		// 5. Test scenarios with a helper function
 		checkReadPermission := func(locator types.StreamLocator, wallet util.EthereumAddress, expectCanRead bool, description string) error {
-			canRead, err := procedure.CheckReadPermissions(ctx, procedure.CheckReadPermissionsInput{
+			canRead, err := procedure.CheckReadAllPermissions(ctx, procedure.CheckReadAllPermissionsInput{
 				Platform: platform,
 				Locator:  locator,
 				Wallet:   wallet.Address(),
@@ -567,7 +587,7 @@ func testStreamDeletion(t *testing.T) kwilTesting.TestFunc {
 		}
 
 		// Set up and initialize the contract
-		_, err := setup.CreateStream(ctx, platform, setup.StreamInfo{
+		err := setup.CreateStream(ctx, platform, setup.StreamInfo{
 			Locator: streamLocator,
 			Type:    setup.ContractTypePrimitive,
 		})

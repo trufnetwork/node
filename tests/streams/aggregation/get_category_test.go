@@ -138,12 +138,13 @@ func WithCategoryTestSetup(testFn func(ctx context.Context, platform *kwilTestin
 
 		for _, streamName := range streams {
 			streamId := util.GenerateStreamId(streamName)
-			_, err := setup.CreateStream(ctx, platform, setup.StreamInfo{
+			// Create a test stream
+			err := setup.CreateStream(ctx, platform, setup.StreamInfo{
 				Locator: types.StreamLocator{
 					StreamId:     streamId,
 					DataProvider: deployer,
 				},
-				Type: setup.ContractTypePrimitive,
+				Type: setup.ContractTypeComposed,
 			})
 			if err != nil {
 				return errors.Wrapf(err, "error creating stream %s", streamName)

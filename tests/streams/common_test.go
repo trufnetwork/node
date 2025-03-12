@@ -58,9 +58,9 @@ func testDisableMetadata(t *testing.T, streamInfo setup.StreamInfo) kwilTesting.
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		platform = procedure.WithSigner(platform, defaultDeployer.Bytes())
 		// Set up and initialize the contract
-		_, err := setup.CreateStream(ctx, platform, streamInfo)
+		err := setup.CreateStream(ctx, platform, streamInfo)
 		if err != nil {
-			return errors.Wrap(err, "failed to create stream for metadata test")
+			return errors.Wrapf(err, "failed to create stream")
 		}
 
 		// Insert metadata
@@ -128,7 +128,7 @@ func testReadOnlyMetadataCannotBeModified(t *testing.T, streamInfo setup.StreamI
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		platform = procedure.WithSigner(platform, defaultDeployer.Bytes())
 		// Set up and initialize the contract
-		_, err := setup.CreateStream(ctx, platform, streamInfo)
+		err := setup.CreateStream(ctx, platform, streamInfo)
 		if err != nil {
 			return errors.Wrap(err, "failed to create stream for read-only metadata test")
 		}

@@ -38,7 +38,7 @@ func testPRIMITIVE01_DataInsertion(t *testing.T) func(ctx context.Context, platf
 			StreamId:     primitiveStreamId,
 			DataProvider: validAddress,
 		}
-		_, err := setup.CreateStream(ctx, platform, setup.StreamInfo{
+		err := setup.CreateStream(ctx, platform, setup.StreamInfo{
 			Type:    setup.ContractTypePrimitive,
 			Locator: streamLocator,
 		})
