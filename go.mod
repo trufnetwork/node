@@ -12,12 +12,13 @@ require (
 	github.com/docker/docker v27.3.1+incompatible
 	github.com/fbiville/markdown-table-formatter v0.3.0
 	github.com/golang-sql/civil v0.0.0-20220223132316-b832511892a9
-	github.com/kwilteam/kwil-db v0.10.0
+	github.com/kwilteam/kwil-db v0.10.1-0.20250313184537-d69d72da06a0
 	github.com/kwilteam/kwil-db/core v0.4.0
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/pkg/errors v0.9.1
 	github.com/samber/lo v1.47.0
 	github.com/stretchr/testify v1.10.0
+	github.com/trufnetwork/sdk-go v0.2.1-0.20250306192322-57cbdf7b5b77
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20250218142911-aa4b98e5adaa
 )
@@ -217,7 +218,6 @@ require (
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7 // indirect
 	github.com/tklauser/go-sysconf v0.3.14 // indirect
 	github.com/tklauser/numcpus v0.9.0 // indirect
-	github.com/trufnetwork/sdk-go v0.2.1-0.20250306192322-57cbdf7b5b77 // indirect
 	github.com/whyrusleeping/go-keyspace v0.0.0-20160322163242-5b898ac5add1 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	go.opencensus.io v0.24.0 // indirect

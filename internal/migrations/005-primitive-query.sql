@@ -14,7 +14,7 @@ CREATE OR REPLACE ACTION get_record_primitive(
     value NUMERIC(36,18)
 ) {
     -- Check read access first
-    if is_wallet_allowed_to_read(@caller, $data_provider, $stream_id) == false {
+    if is_allowed_to_read($data_provider, $stream_id, @caller, 0, 0) == false {
         ERROR('wallet not allowed to read');
     }
 
@@ -96,7 +96,7 @@ CREATE OR REPLACE ACTION get_last_record_primitive(
     value NUMERIC(36,18)
 ) {
     -- Check read access, since we're querying directly from the primitive_events table
-    if is_wallet_allowed_to_read(@caller, $data_provider, $stream_id) == false {
+    if is_allowed_to_read($data_provider, $stream_id, @caller, 0, 0) == false {
         ERROR('wallet not allowed to read');
     }
     
@@ -131,10 +131,10 @@ CREATE OR REPLACE ACTION get_first_record_primitive(
     value NUMERIC(36,18)
 ) {
     -- Check read access, since we're querying directly from the primitive_events table
-    if is_wallet_allowed_to_read(@caller, $data_provider, $stream_id) == false {
+    if is_allowed_to_read($data_provider, $stream_id, @caller, 0, 0) == false {
         ERROR('wallet not allowed to read');
     }
-    
+
     -- Set default values if parameters are null
     if $after IS NULL {
         $after := 0;
@@ -166,7 +166,7 @@ CREATE OR REPLACE ACTION get_base_value_primitive(
     $frozen_at INT8
 ) PRIVATE view returns (value NUMERIC(36,18)) {
     -- Check read access, since we're querying directly from the primitive_events table
-    if is_wallet_allowed_to_read(@caller, $data_provider, $stream_id) == false {
+    if is_allowed_to_read($data_provider, $stream_id, @caller, 0, 0) == false {
         ERROR('wallet not allowed to read');
     }
     
@@ -233,7 +233,7 @@ CREATE OR REPLACE ACTION get_index_primitive(
     value NUMERIC(36,18)
 ) {
     -- Check read access
-    if is_wallet_allowed_to_read(@caller, $data_provider, $stream_id) == false {
+    if is_allowed_to_read($data_provider, $stream_id, @caller, 0, 0) == false {
         ERROR('wallet not allowed to read');
     }
     
@@ -256,18 +256,18 @@ CREATE OR REPLACE ACTION get_index_primitive(
             $effective_base_time := $row.value_i;
         }
     }
-    
+
     -- Get the base value
     $base_value NUMERIC(36,18) := get_base_value($data_provider, $stream_id, $effective_base_time, $frozen_at);
-    
+
     -- Check if base value is zero to avoid division by zero
-    if $base_value = 0 {
+    if $base_value = 0::NUMERIC(36,18) {
         ERROR('base value is 0');
     }
-    
+
     -- Calculate the index for each record
     for $row in get_record_primitive($data_provider, $stream_id, $from, $to, $frozen_at) {
-        RETURN NEXT $row.event_time, ($row.value * 100) / $base_value;
+        RETURN NEXT $row.event_time, ($row.value * 100::NUMERIC(36,18)) / $base_value;
     }
     return;
 };

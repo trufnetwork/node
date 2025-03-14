@@ -66,12 +66,16 @@ CREATE OR REPLACE ACTION get_first_record(
 ) {
     -- Check if the stream is primitive or composed
     $is_primitive BOOL := is_primitive_stream($data_provider, $stream_id);
-    
+
     -- Route to the appropriate internal action
     if $is_primitive {
-        RETURN get_first_record_primitive($data_provider, $stream_id, $after, $frozen_at);
+        for $row in get_first_record_primitive($data_provider, $stream_id, $after, $frozen_at) {
+            RETURN NEXT $row.event_time, $row.value;
+        }
     } else {
-        RETURN get_first_record_composed($data_provider, $stream_id, $after, $frozen_at);
+        for $row in get_first_record_composed($data_provider, $stream_id, $after, $frozen_at) {
+            RETURN NEXT $row.event_time, $row.value;
+        }
     }
 };
 
@@ -116,8 +120,12 @@ CREATE OR REPLACE ACTION get_index(
     
     -- Route to the appropriate internal action
     if $is_primitive {
-        RETURN get_index_primitive($data_provider, $stream_id, $from, $to, $frozen_at, $base_time);
+        for $row in get_index_primitive($data_provider, $stream_id, $from, $to, $frozen_at, $base_time) {
+            RETURN NEXT $row.event_time, $row.value;
+        }
     } else {
-        RETURN get_index_composed($data_provider, $stream_id, $from, $to, $frozen_at, $base_time);
+        for $row in get_index_composed($data_provider, $stream_id, $from, $to, $frozen_at, $base_time) {
+            RETURN NEXT $row.event_time, $row.value;
+        }
     }
 };
