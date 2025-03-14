@@ -77,3 +77,4 @@ CREATE OR REPLACE ACTION get_index_composed(
 ) {
     ERROR('Composed stream query implementation is missing');
 };
+
