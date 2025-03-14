@@ -62,14 +62,17 @@ func setupPrimitive(ctx context.Context, setupInput SetupPrimitiveInput) error {
 	}
 
 	// Create the stream using create_stream action
-	_, err = setupInput.Platform.Engine.Call(engineContext, setupInput.Platform.DB, "", "create_stream", []any{
+	r, err := setupInput.Platform.Engine.Call(engineContext, setupInput.Platform.DB, "", "create_stream", []any{
 		setupInput.PrimitiveStreamWithData.StreamLocator.StreamId.String(),
 		"primitive",
 	}, func(row *common.Row) error {
 		return nil
 	})
 	if err != nil {
-		return errors.Wrap(err, "error creating primitive stream")
+		return errors.Wrap(err, "error in setupPrimitive.CreateStream")
+	}
+	if r.Error != nil {
+		return errors.Wrap(r.Error, "error in setupPrimitive.CreateStream")
 	}
 
 	// Insert the data
@@ -194,7 +197,7 @@ func InsertMarkdownPrimitiveData(ctx context.Context, input InsertMarkdownDataIn
 			TxContext: txContext,
 		}
 
-		_, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "insert_record", []any{
+		r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "insert_record", []any{
 			input.StreamLocator.DataProvider.Address(),
 			input.StreamLocator.StreamId.String(),
 			eventTime,
@@ -204,6 +207,9 @@ func InsertMarkdownPrimitiveData(ctx context.Context, input InsertMarkdownDataIn
 		})
 		if err != nil {
 			return err
+		}
+		if r.Error != nil {
+			return errors.Wrap(r.Error, "error in InsertMarkdownPrimitiveData")
 		}
 	}
 	return nil
@@ -252,11 +258,14 @@ func insertPrimitiveData(ctx context.Context, input InsertPrimitiveDataInput) er
 			TxContext: txContext,
 		}
 
-		_, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "insert_record", arg, func(row *common.Row) error {
+		r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "insert_record", arg, func(row *common.Row) error {
 			return nil
 		})
 		if err != nil {
 			return err
+		}
+		if r.Error != nil {
+			return errors.Wrap(r.Error, "error in insertPrimitiveData")
 		}
 	}
 	return nil

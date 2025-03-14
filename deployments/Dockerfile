@@ -1,4 +1,4 @@
-FROM golang:1.22.7-alpine3.19 AS build
+FROM golang:1.23.7-alpine3.21 AS build
 
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -40,7 +40,8 @@ RUN echo "#!/bin/sh" > /app/config.sh && \
     echo "    echo 'Configuration does not exist';" >> /app/config.sh && \
     echo "    echo 'Creating configuration';" >> /app/config.sh && \
     echo "    ./kwild setup init --chain-id $CHAIN_ID --db-owner $ETHEREUM_ADDRESS -r /root/.kwil-new;" >> /app/config.sh && \
-    echo "    mv /root/.kwil-new/* /root/.kwild;" >> /app/config.sh && \
+    echo "    mkdir -p /root/.kwild;" >> /app/config.sh && \
+    echo "    cp /root/.kwil-new/* /root/.kwild;" >> /app/config.sh && \
     echo "    rm -rf /root/.kwil-new;" >> /app/config.sh && \
     echo "    echo 'Configuration created';" >> /app/config.sh && \
     echo "else" >> /app/config.sh && \

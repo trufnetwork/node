@@ -1,4 +1,7 @@
--- get_record returns the value of the composed stream for a given date range
+/**
+ * get_record_composed: Placeholder for composed stream data retrieval.
+ * Will aggregate child stream values based on taxonomy weights.
+ */
 CREATE OR REPLACE ACTION get_record_composed(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -12,7 +15,10 @@ CREATE OR REPLACE ACTION get_record_composed(
     ERROR('Composed stream query implementation is missing');
 };
 
--- get_last_record returns the last record before the given timestamp
+/**
+ * get_last_record_composed: Placeholder for finding last record in composed stream.
+ * Will determine the last record based on child stream values and weights.
+ */
 CREATE OR REPLACE ACTION get_last_record_composed(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -25,7 +31,10 @@ CREATE OR REPLACE ACTION get_last_record_composed(
     ERROR('Composed stream query implementation is missing');
 };
 
--- get_first_record returns the first record of the composed stream
+/**
+ * get_first_record_composed: Placeholder for finding first record in composed stream.
+ * Will determine the first record based on child stream values and weights.
+ */
 CREATE OR REPLACE ACTION get_first_record_composed(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -38,7 +47,10 @@ CREATE OR REPLACE ACTION get_first_record_composed(
     ERROR('Composed stream query implementation is missing');
 };
 
--- get_base_value returns the first nearest value of the composed stream before the given timestamp
+/**
+ * get_base_value_composed: Placeholder for finding base value in composed stream.
+ * Will calculate base value from child streams at the specified time.
+ */
 CREATE OR REPLACE ACTION get_base_value_composed(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -48,7 +60,10 @@ CREATE OR REPLACE ACTION get_base_value_composed(
     ERROR('Composed stream query implementation is missing');
 };
 
--- get_index calculation is ((current_composed/base_composed)*100)
+/**
+ * get_index_composed: Placeholder for index calculation in composed streams.
+ * Will calculate index values using the formula: (current_value/base_value)*100
+ */
 CREATE OR REPLACE ACTION get_index_composed(
     $data_provider TEXT,
     $stream_id TEXT,

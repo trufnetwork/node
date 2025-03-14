@@ -113,14 +113,17 @@ func testQUERY01_InsertAndGetRecord(t *testing.T) func(ctx context.Context, plat
 		expected := `
 		| event_time | value |
 		|------------|-------|
-		| 1          | 1     |
-		| 2          | 2     |
-		| 3          | 4     |
-		| 4          | 5     |
-		| 5          | 3     |
+		| 1          | 1.000000000000000000 |
+		| 2          | 2.000000000000000000 |
+		| 3          | 4.000000000000000000 |
+		| 4          | 5.000000000000000000 |
+		| 5          | 3.000000000000000000 |
 		`
 
-		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   result,
+			Expected: expected,
+		})
 
 		return nil
 	}
@@ -152,10 +155,13 @@ func testQUERY06_GetRecordWithFutureDate(t *testing.T) func(ctx context.Context,
 		expected := `
 		| event_time | value |
 		|------------|-------|
-		| 5          | 3     |
+		| 5          | 3.000000000000000000 |
 		`
 
-		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   result,
+			Expected: expected,
+		})
 
 		return nil
 	}
@@ -187,14 +193,17 @@ func testQUERY02_GetIndex(t *testing.T) func(ctx context.Context, platform *kwil
 		expected := `
 		| event_time | value |
 		|------------|-------|
-		| 1          | 100   |
-		| 2          | 200   |
-		| 3          | 400   |
-		| 4          | 500   |
-		| 5          | 300   |
+		| 1          | 100.000000000000000000 |
+		| 2          | 200.000000000000000000 |
+		| 3          | 400.000000000000000000 |
+		| 4          | 500.000000000000000000 |
+		| 5          | 300.000000000000000000 |
 		`
 
-		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   result,
+			Expected: expected,
+		})
 
 		return nil
 	}
@@ -226,14 +235,17 @@ func testQUERY03_GetIndexChange(t *testing.T) func(ctx context.Context, platform
 		expected := `
 		| event_time | value |
 		|------------|-------|
-		| 1          | 0     |
-		| 2          | 100   |
-		| 3          | 100   |
-		| 4          | 25    |
-		| 5          | -40   |
+		| 1          | 0.000000000000000000 |
+		| 2          | 100.000000000000000000 |
+		| 3          | 100.000000000000000000 |
+		| 4          | 25.000000000000000000 |
+		| 5          | -40.000000000000000000 |
 		`
 
-		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   result,
+			Expected: expected,
+		})
 
 		return nil
 	}
@@ -263,10 +275,13 @@ func testQUERY05_GetFirstRecord(t *testing.T) func(ctx context.Context, platform
 		expected := `
 		| event_time | value |
 		|------------|-------|
-		| 1          | 1     |
+		| 1          | 1.000000000000000000 |
 		`
 
-		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   result,
+			Expected: expected,
+		})
 
 		return nil
 	}
@@ -289,7 +304,7 @@ func testQUERY07_DuplicateDate(t *testing.T) func(ctx context.Context, platform 
 		err = setup.ExecuteInsertRecord(ctx, platform, streamLocator, setup.InsertRecordInput{
 			EventTime: 3,
 			Value:     10,
-		}, 0)
+		}, 3)
 
 		if err != nil {
 			return errors.Wrap(err, "error inserting record")
@@ -310,14 +325,17 @@ func testQUERY07_DuplicateDate(t *testing.T) func(ctx context.Context, platform 
 		expected := `
 		| event_time | value |
 		|------------|-------|
-		| 1          | 1     |
-		| 2          | 2     |
-		| 3          | 10    |
-		| 4          | 5     |
-		| 5          | 3     |
+		| 1          | 1.000000000000000000 |
+		| 2          | 2.000000000000000000 |
+		| 3          | 10.000000000000000000 |
+		| 4          | 5.000000000000000000 |
+		| 5          | 3.000000000000000000 |
 		`
 
-		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   result,
+			Expected: expected,
+		})
 
 		return nil
 	}
@@ -354,14 +372,17 @@ func testQUERY01_GetRecordWithBaseDate(t *testing.T) func(ctx context.Context, p
 		expected := `
 		| event_time | value |
 		|------------|-------|
-		| 1          | 25    |
-		| 2          | 50    |
-		| 3          | 100   |
-		| 4          | 125   |
-		| 5          | 75    |
+		| 1          | 25.000000000000000000 |
+		| 2          | 50.000000000000000000 |
+		| 3          | 100.000000000000000000 |
+		| 4          | 125.000000000000000000 |
+		| 5          | 75.000000000000000000 |
 		`
 
-		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   result,
+			Expected: expected,
+		})
 
 		return nil
 	}
@@ -385,7 +406,7 @@ func testQUERY07_AdditionalInsertWillFetchLatestRecord(t *testing.T) func(ctx co
 		err = setup.ExecuteInsertRecord(ctx, platform, streamLocator, setup.InsertRecordInput{
 			EventTime: 3,
 			Value:     20,
-		}, 0)
+		}, 3)
 
 		if err != nil {
 			return errors.Wrap(err, "error inserting record")
@@ -406,14 +427,17 @@ func testQUERY07_AdditionalInsertWillFetchLatestRecord(t *testing.T) func(ctx co
 		expected := `
 		| event_time | value |
 		|------------|-------|
-		| 1          | 1     |
-		| 2          | 2     |
-		| 3          | 20    |
-		| 4          | 5     |
-		| 5          | 3     |
+		| 1          | 1.000000000000000000 |
+		| 2          | 2.000000000000000000 |
+		| 3          | 20.000000000000000000 |
+		| 4          | 5.000000000000000000 |
+		| 5          | 3.000000000000000000 |
 		`
 
-		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   result,
+			Expected: expected,
+		})
 
 		return nil
 	}
@@ -490,7 +514,10 @@ func testAGGR03_ComposedStreamWithWeights(t *testing.T) func(ctx context.Context
 			parentStreamId, childStream2Id,
 		)
 
-		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   result,
+			Expected: expected,
+		})
 		return nil
 	}
 }

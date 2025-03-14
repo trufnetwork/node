@@ -1,3 +1,7 @@
+/**
+ * insert_taxonomy: Creates a new taxonomy version for a composed stream.
+ * Validates input arrays, increments version, and inserts child stream relationships.
+ */
 CREATE OR REPLACE ACTION insert_taxonomy(
     $data_provider TEXT,            -- The data provider of the parent stream.
     $stream_id TEXT,                -- The stream ID of the parent stream.
@@ -6,11 +10,16 @@ CREATE OR REPLACE ACTION insert_taxonomy(
     $weights NUMERIC(36,18)[],      -- The weights of the child streams.
     $start_date INT                 -- The start date of the taxonomy.
 ) PUBLIC view returns (result bool) {
-    -- Ensure the wallet is allowed to write
-    if is_wallet_allowed_to_write(@caller, $data_provider, $stream_id) == false {
-        ERROR('wallet not allowed to write');
+    -- ensure it's a composed stream
+    if is_primitive_stream($data_provider, $stream_id) == true {
+        ERROR('stream is not a composed stream');
     }
 
+    -- Ensure the wallet is allowed to write
+    if is_wallet_allowed_to_write($data_provider, $stream_id, @caller) == false {
+        ERROR('wallet not allowed to write');
+    }
+ 
     -- Determine the number of child records provided.
     $num_children := array_length($child_stream_ids);
 
@@ -56,9 +65,10 @@ CREATE OR REPLACE ACTION insert_taxonomy(
     return true;
 };
 
-------------------------------------------------------------
--- Helper action: Get the latest taxonomy version for a parent.
--- When $show_disabled is false, only active (non-disabled) records are considered.
+/**
+ * get_current_version: Helper to find the latest taxonomy version.
+ * When $show_disabled is false, only active (non-disabled) records are considered.
+ */
 CREATE OR REPLACE ACTION get_current_version(
     $data_provider TEXT,
     $stream_id TEXT,

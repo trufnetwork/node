@@ -1,4 +1,7 @@
--- Public action that routes to the correct internal action based on stream type
+/**
+ * get_record: Public facade for retrieving time series data.
+ * Routes to primitive or composed implementation based on stream type.
+ */
 CREATE OR REPLACE ACTION get_record(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -24,7 +27,10 @@ CREATE OR REPLACE ACTION get_record(
     }
 };
 
--- Public action that routes to the correct internal action for last record before timestamp
+/**
+ * get_last_record: Retrieves the most recent record before a timestamp.
+ * Routes to primitive or composed implementation based on stream type.
+ */
 CREATE OR REPLACE ACTION get_last_record(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -45,7 +51,10 @@ CREATE OR REPLACE ACTION get_last_record(
     }
 };
 
--- Public action that routes to the correct internal action for first record
+/**
+ * get_first_record: Retrieves the earliest record after a timestamp.
+ * Routes to primitive or composed implementation based on stream type.
+ */
 CREATE OR REPLACE ACTION get_first_record(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -57,16 +66,23 @@ CREATE OR REPLACE ACTION get_first_record(
 ) {
     -- Check if the stream is primitive or composed
     $is_primitive BOOL := is_primitive_stream($data_provider, $stream_id);
-    
+
     -- Route to the appropriate internal action
     if $is_primitive {
-        RETURN get_first_record_primitive($data_provider, $stream_id, $after, $frozen_at);
+        for $row in get_first_record_primitive($data_provider, $stream_id, $after, $frozen_at) {
+            RETURN NEXT $row.event_time, $row.value;
+        }
     } else {
-        RETURN get_first_record_composed($data_provider, $stream_id, $after, $frozen_at);
+        for $row in get_first_record_composed($data_provider, $stream_id, $after, $frozen_at) {
+            RETURN NEXT $row.event_time, $row.value;
+        }
     }
 };
 
--- Public action that routes to the correct internal action for base value
+/**
+ * get_base_value: Retrieves reference value for index calculations.
+ * Routes to primitive or composed implementation based on stream type.
+ */
 CREATE OR REPLACE ACTION get_base_value(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -84,7 +100,10 @@ CREATE OR REPLACE ACTION get_base_value(
     }
 };
 
--- Public action that routes to the correct internal action for index calculation
+/**
+ * get_index: Calculates indexed values relative to a base value.
+ * Routes to primitive or composed implementation based on stream type.
+ */
 CREATE OR REPLACE ACTION get_index(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -101,8 +120,12 @@ CREATE OR REPLACE ACTION get_index(
     
     -- Route to the appropriate internal action
     if $is_primitive {
-        RETURN get_index_primitive($data_provider, $stream_id, $from, $to, $frozen_at, $base_time);
+        for $row in get_index_primitive($data_provider, $stream_id, $from, $to, $frozen_at, $base_time) {
+            RETURN NEXT $row.event_time, $row.value;
+        }
     } else {
-        RETURN get_index_composed($data_provider, $stream_id, $from, $to, $frozen_at, $base_time);
+        for $row in get_index_composed($data_provider, $stream_id, $from, $to, $frozen_at, $base_time) {
+            RETURN NEXT $row.event_time, $row.value;
+        }
     }
 };

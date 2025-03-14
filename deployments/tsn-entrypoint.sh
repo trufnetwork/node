@@ -7,6 +7,13 @@
 # Run the configuration script
 /app/config.sh
 
+if [ -z "$CONFIG_PATH" ]; then
+    echo "No config path set, using default"
+    CONFIG_PATH="/root/.kwild"
+else
+    echo "Config path set to $CONFIG_PATH"
+fi
+
 exec /app/kwild start --root $CONFIG_PATH \
        --db.read-timeout "60s"\
        --snapshots.enable

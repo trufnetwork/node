@@ -5,6 +5,7 @@ import (
 
 	"github.com/kwilteam/kwil-db/common"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
+	"github.com/pkg/errors"
 	"github.com/trufnetwork/sdk-go/core/types"
 )
 
@@ -25,11 +26,11 @@ func (contractType ContractType) String() string {
 }
 
 // CreateStream parses and creates the dataset for a contract
-func CreateStream(ctx context.Context, platform *kwilTesting.Platform, contractInfo StreamInfo) (*common.CallResult, error) {
+func CreateStream(ctx context.Context, platform *kwilTesting.Platform, contractInfo StreamInfo) error {
 	return UntypedCreateStream(ctx, platform, contractInfo.Locator.StreamId.String(), contractInfo.Locator.DataProvider.Address(), string(contractInfo.Type))
 }
 
-func UntypedCreateStream(ctx context.Context, platform *kwilTesting.Platform, streamId string, dataProvider string, contractType string) (*common.CallResult, error) {
+func UntypedCreateStream(ctx context.Context, platform *kwilTesting.Platform, streamId string, dataProvider string, contractType string) error {
 	// Convert hex string to bytes for the signer
 	var signerBytes []byte
 	if len(dataProvider) > 2 {
@@ -52,7 +53,7 @@ func UntypedCreateStream(ctx context.Context, platform *kwilTesting.Platform, st
 		TxContext: txContext,
 	}
 
-	return platform.Engine.Call(engineContext,
+	r, err := platform.Engine.Call(engineContext,
 		platform.DB,
 		"",
 		"create_stream",
@@ -61,6 +62,14 @@ func UntypedCreateStream(ctx context.Context, platform *kwilTesting.Platform, st
 			return nil
 		},
 	)
+	if err != nil {
+		return errors.Wrap(err, "error in createStream")
+	}
+	if r.Error != nil {
+		return errors.Wrap(r.Error, "error in createStream")
+	}
+
+	return nil
 }
 
 func DeleteStream(ctx context.Context, platform *kwilTesting.Platform, streamLocator types.StreamLocator) (*common.CallResult, error) {
@@ -80,7 +89,10 @@ func DeleteStream(ctx context.Context, platform *kwilTesting.Platform, streamLoc
 		platform.DB,
 		"",
 		"delete_stream",
-		[]any{streamLocator.StreamId.String()},
+		[]any{
+			streamLocator.DataProvider.Address(),
+			streamLocator.StreamId.String(),
+		},
 		func(row *common.Row) error {
 			return nil
 		},

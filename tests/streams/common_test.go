@@ -1,199 +1,173 @@
 package tests
 
-// import (
-// 	"context"
-// 	"testing"
+import (
+	"context"
+	"testing"
 
-// 	"github.com/pkg/errors"
-// 	"github.com/stretchr/testify/assert"
+	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
 
-// 	"github.com/kwilteam/kwil-db/common"
-// 	"github.com/kwilteam/kwil-db/core/types"
-// 	"github.com/kwilteam/kwil-db/core/types/decimal"
-// 	kwilTesting "github.com/kwilteam/kwil-db/testing"
+	kwilTypes "github.com/kwilteam/kwil-db/core/types"
+	kwilTesting "github.com/kwilteam/kwil-db/testing"
 
-// 	"github.com/trufnetwork/node/tests/streams/tests/utils/procedure"
-// 	"github.com/trufnetwork/node/tests/streams/tests/utils/setup"
-// 	"github.com/trufnetwork/sdk-go/core/util"
-// )
+	"github.com/trufnetwork/node/internal/migrations"
 
-// var (
-// 	primitiveContractInfo = setup.ContractInfo{
-// 		Name:     "primitive_stream_test",
-// 		StreamID: util.GenerateStreamId("primitive_stream_test"),
-// 		Deployer: util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000123"),
-// 		Content:  contracts.PrimitiveStreamContent,
-// 		Type:     setup.ContractTypePrimitive,
-// 	}
+	testutils "github.com/trufnetwork/node/tests/streams/utils"
+	"github.com/trufnetwork/node/tests/streams/utils/procedure"
+	"github.com/trufnetwork/node/tests/streams/utils/setup"
+	trufTypes "github.com/trufnetwork/sdk-go/core/types"
+	"github.com/trufnetwork/sdk-go/core/util"
+)
 
-// 	composedContractInfo = setup.ContractInfo{
-// 		Name:     "composed_stream_test",
-// 		StreamID: util.GenerateStreamId("composed_stream_test"),
-// 		Deployer: util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000456"),
-// 		Content:  contracts.ComposedStreamContent,
-// 		Type:     setup.ContractTypeComposed,
-// 	}
-// )
+var defaultDeployer = util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
 
-// func TestCOMMON03DisableMetadata(t *testing.T) {
-// 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
-// 		Name: "disable_metadata",
-// 		FunctionTests: []kwilTesting.TestFunc{
-// 			testDisableMetadata(t, primitiveContractInfo),
-// 			testDisableMetadata(t, composedContractInfo),
-// 		},
-// 	})
-// }
+var (
+	primitiveStreamLocator = trufTypes.StreamLocator{
+		StreamId:     util.GenerateStreamId("primitive_stream_test"),
+		DataProvider: defaultDeployer,
+	}
 
-// func testDisableMetadata(t *testing.T, contractInfo setup.ContractInfo) kwilTesting.TestFunc {
-// 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 		// Set up and initialize the contract
-// 		if err := setup.SetupAndInitializeContract(ctx, platform, contractInfo); err != nil {
-// 			return err
-// 		}
-// 		dbid := setup.GetDBID(contractInfo)
+	composedStreamLocator = trufTypes.StreamLocator{
+		StreamId:     util.GenerateStreamId("composed_stream_test"),
+		DataProvider: defaultDeployer,
+	}
 
-// 		// Insert metadata
-// 		key := "temp_key"
-// 		value := "temporary value"
-// 		valType := "string"
+	primitiveStreamInfo = setup.StreamInfo{
+		Locator: primitiveStreamLocator,
+		Type:    setup.ContractTypePrimitive,
+	}
 
-// 		err := procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
-// 			Platform: platform,
-// 			Deployer: contractInfo.Deployer,
-// 			DBID:     dbid,
-// 			Key:      key,
-// 			Value:    value,
-// 			ValType:  valType,
-// 		})
-// 		if err != nil {
-// 			return errors.Wrapf(err, "Failed to insert metadata key %s", key)
-// 		}
+	composedStreamInfo = setup.StreamInfo{
+		Locator: composedStreamLocator,
+		Type:    setup.ContractTypeComposed,
+	}
+)
 
-// 		// Retrieve the metadata to get the row_id
-// 		result, err := procedure.GetMetadata(ctx, procedure.GetMetadataInput{
-// 			Platform: platform,
-// 			Deployer: contractInfo.Deployer,
-// 			DBID:     dbid,
-// 			Key:      key,
-// 		})
-// 		if err != nil {
-// 			return errors.Wrapf(err, "Failed to get metadata key %s", key)
-// 		}
-// 		rowID := result[0].(*types.UUID)
+func TestCOMMON03DisableMetadata(t *testing.T) {
+	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name:        "disable_metadata",
+		SeedScripts: migrations.GetSeedScriptPaths(),
+		FunctionTests: []kwilTesting.TestFunc{
+			testDisableMetadata(t, primitiveStreamInfo),
+			testDisableMetadata(t, composedStreamInfo),
+		},
+	}, testutils.GetTestOptions())
+}
 
-// 		// Disable the metadata
-// 		err = procedure.DisableMetadata(ctx, procedure.DisableMetadataInput{
-// 			Platform: platform,
-// 			Deployer: contractInfo.Deployer,
-// 			DBID:     dbid,
-// 			RowID:    rowID,
-// 		})
-// 		if err != nil {
-// 			return errors.Wrap(err, "Failed to disable metadata")
-// 		}
+func testDisableMetadata(t *testing.T, streamInfo setup.StreamInfo) kwilTesting.TestFunc {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		platform = procedure.WithSigner(platform, defaultDeployer.Bytes())
+		// Set up and initialize the contract
+		err := setup.CreateStream(ctx, platform, streamInfo)
+		if err != nil {
+			return errors.Wrapf(err, "failed to create stream")
+		}
 
-// 		// Attempt to retrieve the disabled metadata
-// 		_, err = procedure.GetMetadata(ctx, procedure.GetMetadataInput{
-// 			Platform: platform,
-// 			Deployer: contractInfo.Deployer,
-// 			DBID:     dbid,
-// 			Key:      key,
-// 		})
-// 		assert.Error(t, err, "Disabled metadata should not be retrievable")
+		// Insert metadata
+		key := "temp_key"
+		value := "temporary value"
+		valType := "string"
 
-// 		return nil
-// 	}
-// }
+		err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+			Platform: platform,
+			Locator:  streamInfo.Locator,
+			Key:      key,
+			Value:    value,
+			ValType:  valType,
+		})
+		if err != nil {
+			return errors.Wrapf(err, "Failed to insert metadata key %s", key)
+		}
 
-// func TestCOMMON02ReadOnlyMetadataCannotBeModified(t *testing.T) {
-// 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
-// 		Name: "readonly_metadata_cannot_be_modified",
-// 		FunctionTests: []kwilTesting.TestFunc{
-// 			testReadOnlyMetadataCannotBeModified(t, primitiveContractInfo),
-// 			testReadOnlyMetadataCannotBeModified(t, composedContractInfo),
-// 		},
-// 	})
-// }
+		// Retrieve the metadata to get the row_id
+		result, err := procedure.GetMetadata(ctx, procedure.GetMetadataInput{
+			Platform: platform,
+			Locator:  streamInfo.Locator,
+			Key:      key,
+		})
+		if err != nil {
+			return errors.Wrapf(err, "Failed to get metadata key %s", key)
+		}
+		rowID := result[0].(*kwilTypes.UUID)
 
-// func testReadOnlyMetadataCannotBeModified(t *testing.T, contractInfo setup.ContractInfo) kwilTesting.TestFunc {
-// 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 		// Set up and initialize the contract
-// 		if err := setup.SetupAndInitializeContract(ctx, platform, contractInfo); err != nil {
-// 			return err
-// 		}
-// 		dbid := setup.GetDBID(contractInfo)
+		// Disable the metadata
+		err = procedure.DisableMetadata(ctx, procedure.DisableMetadataInput{
+			Platform: platform,
+			Locator:  streamInfo.Locator,
+			RowID:    rowID,
+		})
+		if err != nil {
+			return errors.Wrap(err, "Failed to disable metadata")
+		}
 
-// 		// Attempt to insert metadata with a read-only key
-// 		err := procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
-// 			Platform: platform,
-// 			Deployer: contractInfo.Deployer,
-// 			DBID:     dbid,
-// 			Key:      "type",
-// 			Value:    "modified",
-// 			ValType:  "string",
-// 		})
-// 		assert.Error(t, err, "Should not be able to modify read-only metadata")
-// 		// Attempt to disable read-only metadata
-// 		result, err := procedure.GetMetadata(ctx, procedure.GetMetadataInput{
-// 			Platform: platform,
-// 			Deployer: contractInfo.Deployer,
-// 			DBID:     dbid,
-// 			Key:      "type",
-// 		})
-// 		if err != nil {
-// 			return errors.Wrap(err, "Failed to get read-only metadata")
-// 		}
-// 		rowID := result[0].(*types.UUID)
+		// Attempt to retrieve the disabled metadata
+		result, err = procedure.GetMetadata(ctx, procedure.GetMetadataInput{
+			Platform: platform,
+			Locator:  streamInfo.Locator,
+			Key:      key,
+		})
+		assert.NoError(t, err, "Expect no error when retrieving disabled metadata")
+		assert.Equal(t, 0, len(result), "Should not be able to retrieve disabled metadata")
 
-// 		err = procedure.DisableMetadata(ctx, procedure.DisableMetadataInput{
-// 			Platform: platform,
-// 			Deployer: contractInfo.Deployer,
-// 			DBID:     dbid,
-// 			RowID:    rowID,
-// 		})
-// 		assert.Error(t, err, "Should not be able to disable read-only metadata")
+		return nil
+	}
+}
 
-// 		return nil
-// 	}
-// }
+func TestCOMMON02ReadOnlyMetadataCannotBeModified(t *testing.T) {
+	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name:        "readonly_metadata_cannot_be_modified",
+		SeedScripts: migrations.GetSeedScriptPaths(),
+		FunctionTests: []kwilTesting.TestFunc{
+			testReadOnlyMetadataCannotBeModified(t, primitiveStreamInfo),
+			testReadOnlyMetadataCannotBeModified(t, composedStreamInfo),
+		},
+	}, testutils.GetTestOptions())
+}
 
-// func TestInitializationLogic(t *testing.T) {
-// 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
-// 		Name: "initialization_logic",
-// 		FunctionTests: []kwilTesting.TestFunc{
-// 			testInitializationLogic(t, primitiveContractInfo),
-// 			testInitializationLogic(t, composedContractInfo),
-// 		},
-// 	})
-// }
+func testReadOnlyMetadataCannotBeModified(t *testing.T, streamInfo setup.StreamInfo) kwilTesting.TestFunc {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		platform = procedure.WithSigner(platform, defaultDeployer.Bytes())
+		// Set up and initialize the contract
+		err := setup.CreateStream(ctx, platform, streamInfo)
+		if err != nil {
+			return errors.Wrap(err, "failed to create stream for read-only metadata test")
+		}
 
-// func testInitializationLogic(t *testing.T, contractInfo setup.ContractInfo) kwilTesting.TestFunc {
-// 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 		// Set up and initialize the contract
-// 		if err := setup.SetupAndInitializeContract(ctx, platform, contractInfo); err != nil {
-// 			return err
-// 		}
-// 		dbid := setup.GetDBID(contractInfo)
+		readonlyKeys := []string{"stream_owner", "readonly_key", "taxonomy_version"}
 
-// 		txContext := &common.TxContext{
-// 			Ctx:          ctx,
-// 			BlockContext: &common.BlockContext{Height: 0},
-// 			Signer:       contractInfo.Deployer.Bytes(),
-// 			TxID:         platform.Txid(),
-// 		}
+		for _, key := range readonlyKeys {
+			// Attempt to insert metadata with a read-only key
+			err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+				Platform: platform,
+				Locator:  streamInfo.Locator,
+				Key:      key,
+				Value:    "modified",
+				ValType:  "string",
+			})
+			assert.Error(t, err, "Should not be able to modify read-only metadata")
 
-// 		// Attempt to re-initialize the contract
-// 		_, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
-// 			Procedure: "init",
-// 			Dataset:   dbid,
-// 			Args:      []any{},
-// 		})
-// 		assert.Error(t, err, "Contract should not be re-initializable")
+			// Attempt to disable read-only metadata
+			result, err := procedure.GetMetadata(ctx, procedure.GetMetadataInput{
+				Platform: platform,
+				Locator:  streamInfo.Locator,
+				Key:      "stream_owner",
+			})
+			if err != nil {
+				return errors.Wrap(err, "Failed to get read-only metadata")
+			}
+			rowID := result[0].(*kwilTypes.UUID)
 
-// 		return nil
-// 	}
-// }
+			err = procedure.DisableMetadata(ctx, procedure.DisableMetadataInput{
+				Platform: platform,
+				Locator:  streamInfo.Locator,
+				RowID:    rowID,
+			})
+			assert.Error(t, err, "Should not be able to disable read-only metadata")
+		}
+
+		return nil
+	}
+}
 
 // func TestVisibilitySettings(t *testing.T) {
 // 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{

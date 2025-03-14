@@ -1,5 +1,8 @@
--- get_record returns the value of the primitive stream for a given date range
--- It fills gaps in the primitive stream by using the last value before the given date
+/**
+ * get_record_primitive: Retrieves time series data for primitive streams.
+ * Handles gap filling by using the last value before the requested range.
+ * Validates read permissions and supports time-based filtering.
+ */
 CREATE OR REPLACE ACTION get_record_primitive(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -11,7 +14,7 @@ CREATE OR REPLACE ACTION get_record_primitive(
     value NUMERIC(36,18)
 ) {
     -- Check read access first
-    if is_wallet_allowed_to_read(@caller, $data_provider, $stream_id) == false {
+    if is_allowed_to_read($data_provider, $stream_id, @caller, 0, 0) == false {
         ERROR('wallet not allowed to read');
     }
 
@@ -79,7 +82,10 @@ CREATE OR REPLACE ACTION get_record_primitive(
     ORDER BY event_time ASC;
 };
 
--- get_last_record returns the last record before the given timestamp
+/**
+ * get_last_record_primitive: Finds the most recent record before a timestamp.
+ * Validates read permissions and respects frozen_at parameter.
+ */
 CREATE OR REPLACE ACTION get_last_record_primitive(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -90,7 +96,7 @@ CREATE OR REPLACE ACTION get_last_record_primitive(
     value NUMERIC(36,18)
 ) {
     -- Check read access, since we're querying directly from the primitive_events table
-    if is_wallet_allowed_to_read(@caller, $data_provider, $stream_id) == false {
+    if is_allowed_to_read($data_provider, $stream_id, @caller, 0, 0) == false {
         ERROR('wallet not allowed to read');
     }
     
@@ -111,7 +117,10 @@ CREATE OR REPLACE ACTION get_last_record_primitive(
     }
 };
 
--- get_first_record returns the first record of the primitive stream (optionally after a given timestamp - inclusive)
+/**
+ * get_first_record_primitive: Finds the earliest record after a timestamp.
+ * Validates read permissions and respects frozen_at parameter.
+ */
 CREATE OR REPLACE ACTION get_first_record_primitive(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -122,10 +131,10 @@ CREATE OR REPLACE ACTION get_first_record_primitive(
     value NUMERIC(36,18)
 ) {
     -- Check read access, since we're querying directly from the primitive_events table
-    if is_wallet_allowed_to_read(@caller, $data_provider, $stream_id) == false {
+    if is_allowed_to_read($data_provider, $stream_id, @caller, 0, 0) == false {
         ERROR('wallet not allowed to read');
     }
-    
+
     -- Set default values if parameters are null
     if $after IS NULL {
         $after := 0;
@@ -145,7 +154,11 @@ CREATE OR REPLACE ACTION get_first_record_primitive(
         LIMIT 1;
 };
 
--- get_base_value returns the first nearest value of the primitive stream before the given timestamp
+/**
+ * get_base_value_primitive: Retrieves reference value for index calculations.
+ * Finds value at base_time or nearest available value.
+ * Validates read permissions and respects frozen_at parameter.
+ */
 CREATE OR REPLACE ACTION get_base_value_primitive(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -153,7 +166,7 @@ CREATE OR REPLACE ACTION get_base_value_primitive(
     $frozen_at INT8
 ) PRIVATE view returns (value NUMERIC(36,18)) {
     -- Check read access, since we're querying directly from the primitive_events table
-    if is_wallet_allowed_to_read(@caller, $data_provider, $stream_id) == false {
+    if is_allowed_to_read($data_provider, $stream_id, @caller, 0, 0) == false {
         ERROR('wallet not allowed to read');
     }
     
@@ -203,7 +216,11 @@ CREATE OR REPLACE ACTION get_base_value_primitive(
     ERROR('no base value found');
 };
 
--- get_index calculation is ((current_primitive/base_primitive)*100)
+/**
+ * get_index_primitive: Calculates indexed values relative to a base value.
+ * Uses formula: (current_value/base_value)*100
+ * Validates read permissions and supports default base_time from metadata.
+ */
 CREATE OR REPLACE ACTION get_index_primitive(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -216,7 +233,7 @@ CREATE OR REPLACE ACTION get_index_primitive(
     value NUMERIC(36,18)
 ) {
     -- Check read access
-    if is_wallet_allowed_to_read(@caller, $data_provider, $stream_id) == false {
+    if is_allowed_to_read($data_provider, $stream_id, @caller, 0, 0) == false {
         ERROR('wallet not allowed to read');
     }
     
@@ -239,18 +256,18 @@ CREATE OR REPLACE ACTION get_index_primitive(
             $effective_base_time := $row.value_i;
         }
     }
-    
+
     -- Get the base value
     $base_value NUMERIC(36,18) := get_base_value($data_provider, $stream_id, $effective_base_time, $frozen_at);
-    
+
     -- Check if base value is zero to avoid division by zero
-    if $base_value = 0 {
+    if $base_value = 0::NUMERIC(36,18) {
         ERROR('base value is 0');
     }
-    
+
     -- Calculate the index for each record
     for $row in get_record_primitive($data_provider, $stream_id, $from, $to, $frozen_at) {
-        RETURN NEXT $row.event_time, ($row.value * 100) / $base_value;
+        RETURN NEXT $row.event_time, ($row.value * 100::NUMERIC(36,18)) / $base_value;
     }
     return;
 };
