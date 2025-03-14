@@ -203,8 +203,8 @@ type GetComposedStreamDataInput struct {
 	Platform     *kwilTesting.Platform
 	DataProvider string
 	StreamId     string
-	FromTime     int64
-	ToTime       int64
+	FromTime     *int64
+	ToTime       *int64
 	FrozenAt     *int64
 }
 type ComposedStreamDataResult struct {
@@ -282,12 +282,14 @@ func GetComposedStreamData(ctx context.Context, in GetComposedStreamDataInput) (
 func testQuery1_Child1Only(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		deployer, _ := util.NewEthereumAddressFromBytes(platform.Deployer)
+		fromTime := int64(1)
+		toTime := int64(3)
 		results, err := GetComposedStreamData(ctx, GetComposedStreamDataInput{
 			Platform:     platform,
 			DataProvider: deployer.Address(),
 			StreamId:     parentStreamId.String(),
-			FromTime:     1,
-			ToTime:       3,
+			FromTime:     &fromTime,
+			ToTime:       &toTime,
 		})
 		if err != nil {
 			return err
@@ -311,12 +313,14 @@ func testQuery1_Child1Only(t *testing.T) func(context.Context, *kwilTesting.Plat
 func testQuery2_BothChildren(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		deployer, _ := util.NewEthereumAddressFromBytes(platform.Deployer)
+		fromTime := int64(1)
+		toTime := int64(6)
 		results, err := GetComposedStreamData(ctx, GetComposedStreamDataInput{
 			Platform:     platform,
 			DataProvider: deployer.Address(),
 			StreamId:     parentStreamId.String(),
-			FromTime:     1,
-			ToTime:       6,
+			FromTime:     &fromTime,
+			ToTime:       &toTime,
 		})
 		if err != nil {
 			return err
@@ -340,12 +344,14 @@ func testQuery2_BothChildren(t *testing.T) func(context.Context, *kwilTesting.Pl
 func testQuery3_GapFillAtTime7(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		deployer, _ := util.NewEthereumAddressFromBytes(platform.Deployer)
+		fromTime := int64(7)
+		toTime := int64(7)
 		results, err := GetComposedStreamData(ctx, GetComposedStreamDataInput{
 			Platform:     platform,
 			DataProvider: deployer.Address(),
 			StreamId:     parentStreamId.String(),
-			FromTime:     7,
-			ToTime:       7,
+			FromTime:     &fromTime,
+			ToTime:       &toTime,
 		})
 		if err != nil {
 			return err
@@ -368,11 +374,12 @@ func testQuery3_GapFillAtTime7(t *testing.T) func(ctx context.Context, platform 
 func testQuery4_NoLowerBound(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		deployer, _ := util.NewEthereumAddressFromBytes(platform.Deployer)
+		toTime := int64(3)
 		results, err := GetComposedStreamData(ctx, GetComposedStreamDataInput{
 			Platform:     platform,
 			DataProvider: deployer.Address(),
 			StreamId:     parentStreamId.String(),
-			ToTime:       3,
+			ToTime:       &toTime,
 			FrozenAt:     nil,
 		})
 		if err != nil {
@@ -396,11 +403,12 @@ func testQuery4_NoLowerBound(t *testing.T) func(context.Context, *kwilTesting.Pl
 func testQuery5_NoUpperBound(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		deployer, _ := util.NewEthereumAddressFromBytes(platform.Deployer)
+		fromTime := int64(2)
 		results, err := GetComposedStreamData(ctx, GetComposedStreamDataInput{
 			Platform:     platform,
 			DataProvider: deployer.Address(),
 			StreamId:     parentStreamId.String(),
-			FromTime:     2,
+			FromTime:     &fromTime,
 		})
 		if err != nil {
 			return err
@@ -428,24 +436,25 @@ func testQuery5_NoUpperBound(t *testing.T) func(context.Context, *kwilTesting.Pl
 func testQuery6_ExactFromHit(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		deployer, _ := util.NewEthereumAddressFromBytes(platform.Deployer)
+		fromTime := int64(2)
+		toTime := int64(2)
 		results, err := GetComposedStreamData(ctx, GetComposedStreamDataInput{
 			Platform:     platform,
 			DataProvider: deployer.Address(),
 			StreamId:     parentStreamId.String(),
-			FromTime:     2,
-			ToTime:       2,
+			FromTime:     &fromTime,
+			ToTime:       &toTime,
 		})
 		if err != nil {
 			return err
 		}
 
-		// Both Child1 and Child2 have records exactly at time=2
+		// Both Child1 and Child2 have records exactly at time=2, but only 1 child is active
 		// No anchor from time=1 needed since we have exact matches
 		expected := `
         | event_time | value                     | stream_id              | data_provider                              |
         |------------|---------------------------|------------------------|--------------------------------------------|
         | 2          | 12.000000000000000000     | child1_primitive       | 0x0000000000000000000000000000000000000000 |
-        | 2          | 100.000000000000000000    | child2_primitive       | 0x0000000000000000000000000000000000000000 |
         `
 		return compareResults(t, results, expected)
 	}
@@ -459,12 +468,14 @@ func testQuery6_ExactFromHit(t *testing.T) func(context.Context, *kwilTesting.Pl
 func testQuery7_NoInRangeDataButAnchorBelow(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		deployer, _ := util.NewEthereumAddressFromBytes(platform.Deployer)
+		fromTime := int64(3)
+		toTime := int64(5)
 		results, err := GetComposedStreamData(ctx, GetComposedStreamDataInput{
 			Platform:     platform,
 			DataProvider: deployer.Address(),
 			StreamId:     parentStreamId.String(),
-			FromTime:     3,
-			ToTime:       5,
+			FromTime:     &fromTime,
+			ToTime:       &toTime,
 		})
 		if err != nil {
 			return err
@@ -503,12 +514,14 @@ func testQuery8_FrozenAtBehavior(t *testing.T) func(context.Context, *kwilTestin
 		// Now query with frozen_at = 5, which should get the original record (created_at=1)
 		// and not the newer version (created_at=10)
 		frozenAt := int64(5)
+		fromTime := int64(6)
+		toTime := int64(6)
 		results, err := GetComposedStreamData(ctx, GetComposedStreamDataInput{
 			Platform:     platform,
 			DataProvider: deployer.Address(),
 			StreamId:     parentStreamId.String(),
-			FromTime:     6,
-			ToTime:       6,
+			FromTime:     &fromTime,
+			ToTime:       &toTime,
 			FrozenAt:     &frozenAt,
 		})
 		if err != nil {

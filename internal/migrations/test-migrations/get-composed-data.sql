@@ -1,23 +1,20 @@
 /**
- * get_composed_stream_data: Placeholder for getting composed stream data.
- * Will get all primitive streams involved in a composed stream query, and get their data.
- * To get all the primitive streams, it uses taxonomies table, which we can't forget that has
- * start and end times for taxonomies.
- * But for simplicity, we will assume that any stream in that period to be queried for the whole duration.
+ * get_composed_stream_data: Returns event-time data from all "primitive" child streams
+ * that are active under a composed parent stream in the specified [from..to] window.
  *
- * About data fetching:
- * - we try to get data in the period asked, but also one record before if there's no data in that exact lower bound.
- *
- * The query will return a table with the following columns:
- * - event_time: The timestamp of the composed stream data.
- * - value: The value of the composed stream data.
- * - stream_id: The id of the stream.
- * - data_provider: The data provider of the stream.
-
- * About the query:
- * - If there's no upper bound, it means no upper time filter is applied
- * - If there's no lower bound, it means no lower time filter is applied
+ * Motivation & Key Behaviors:
+ *  1. We use a "taxonomy version" approach to determine which substreams are active
+ *     at any point overlapping [from..to]. If `from` is NULL, we include all versions
+ *     from the earliest start_time; if `to` is NULL, no upper cutoff applies.
+ *  2. We retrieve:
+ *       - One "anchor" record if it exists at or below `from` (to fill in a gap).
+ *       - All actual events in (from..to].
+ *  3. If multiple records exist at the same (stream, event_time), we take only the
+ *     "latest" by `created_at` (version dimension).
+ *  4. The final result includes anchor rows only if there's no actual event at `from`
+ *     or no event in-range at all for that substream.
  */
+
 CREATE OR REPLACE ACTION get_composed_stream_data(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -32,56 +29,68 @@ RETURNS TABLE(
     data_provider TEXT
 ) {
     ---------------------------------------------------------------------------
-    -- 1) Defaults
+    -- 1) Defaults & Basic Checks
     ---------------------------------------------------------------------------
     IF $frozen_at IS NULL {
         $frozen_at := 0;
+    }
+    IF $from IS NOT NULL AND $to IS NOT NULL AND $from > $to {
+        error(format('from: %s > to: %s', $from, $to));
     }
 
     RETURN WITH RECURSIVE
 
     ----------------------------------------------------------------------------
-    -- A) Identify relevant taxonomy via “anchor approach”, so we only pick substreams
-    --    that apply from that anchor up to $to.
+    -- A) Pick the "anchor_time" to locate the earliest relevant taxonomy version
     ----------------------------------------------------------------------------
     anchor_taxonomy AS (
-        SELECT COALESCE(
-            (
-                -- If we have a version <= $from, pick the greatest
-                SELECT MAX(start_time)
-                FROM taxonomies
-                WHERE data_provider = $data_provider
-                  AND stream_id     = $stream_id
-                  AND disabled_at IS NULL
-                  AND start_time <= $from
-            ),
-            (
-                -- Otherwise pick the earliest version after $from (if $from is not null)
-                SELECT MIN(start_time)
-                FROM taxonomies
-                WHERE data_provider = $data_provider
-                  AND stream_id     = $stream_id
-                  AND disabled_at IS NULL
-                  AND $from IS NOT NULL
-            )
-        ) AS anchor_time
+        SELECT CASE
+            WHEN $from IS NULL THEN
+                -- No lower bound => start from the earliest taxonomy version
+                (SELECT MIN(start_time)
+                 FROM taxonomies
+                 WHERE data_provider = $data_provider
+                   AND stream_id     = $stream_id
+                   AND disabled_at IS NULL)
+            ELSE
+                -- If there's a lower bound, pick the latest version <= from,
+                -- or fallback to the earliest version if none qualifies
+                COALESCE(
+                  (SELECT MAX(start_time)
+                   FROM taxonomies
+                   WHERE data_provider = $data_provider
+                     AND stream_id     = $stream_id
+                     AND disabled_at IS NULL
+                     AND start_time <= $from),
+                  (SELECT MIN(start_time)
+                   FROM taxonomies
+                   WHERE data_provider = $data_provider
+                     AND stream_id     = $stream_id
+                     AND disabled_at IS NULL
+                     AND $from IS NOT NULL)
+                )
+        END AS anchor_time
     ),
+
+    ----------------------------------------------------------------------------
+    -- B) Find all taxonomy versions from that anchor_time up to $to
+    ----------------------------------------------------------------------------
     relevant_taxonomies AS (
         SELECT t.*
         FROM taxonomies t
         JOIN anchor_taxonomy a
           ON t.start_time >= a.anchor_time
         WHERE t.data_provider = $data_provider
-          AND t.stream_id    = $stream_id
+          AND t.stream_id     = $stream_id
           AND t.disabled_at IS NULL
           AND ($to IS NULL OR t.start_time <= $to)
     ),
 
     ----------------------------------------------------------------------------
-    -- B) Recursively gather substreams, then filter to "primitive" leaves.
+    -- C) Recursively gather substreams (including nested children).
+    --    Then restrict to "primitive" leaves that store actual events.
     ----------------------------------------------------------------------------
     all_substreams AS (
-        -- anchor: the parent
         SELECT s.data_provider, s.stream_id
         FROM streams s
         WHERE s.data_provider = $data_provider
@@ -89,7 +98,6 @@ RETURNS TABLE(
 
         UNION
 
-        -- children
         SELECT rt.child_data_provider, rt.child_stream_id
         FROM relevant_taxonomies rt
         JOIN all_substreams parent
@@ -106,13 +114,10 @@ RETURNS TABLE(
     ),
 
     ----------------------------------------------------------------------------
-    -- C) For each primitive substream, find:
-    --    1) A single anchor event_time <= $to  (if $from is not null)
-    --    2) All “future” event_times in ($from, $to] (discrete integer times)
+    -- D) Identify anchor row (if any) and future events:
+    --    anchor_events => single greatest time <= from
+    --    future_events => distinct times > from and <= to
     ----------------------------------------------------------------------------
-
-    -- 1) anchor_events: for each substream, the single greatest event_time <= $from
-    --    We only pick the event_time, ignoring the actual "value" for now.
     anchor_events AS (
         SELECT
             ps.data_provider,
@@ -122,14 +127,11 @@ RETURNS TABLE(
         JOIN primitive_events pe
           ON pe.data_provider = ps.data_provider
          AND pe.stream_id    = ps.stream_id
-        WHERE 
-            $from IS NOT NULL
-            AND pe.event_time <= $from
-            AND ($frozen_at = 0 OR pe.created_at <= $frozen_at)
+        WHERE $from IS NOT NULL
+          AND pe.event_time <= $from
+          AND ($frozen_at = 0 OR pe.created_at <= $frozen_at)
         GROUP BY ps.data_provider, ps.stream_id
     ),
-
-    -- 2) future_events: all event_times strictly greater than $from, up to $to
     future_events AS (
         SELECT DISTINCT
             ps.data_provider,
@@ -139,37 +141,27 @@ RETURNS TABLE(
         JOIN primitive_events pe
           ON pe.data_provider = ps.data_provider
          AND pe.stream_id    = ps.stream_id
-        WHERE 
-            ($frozen_at = 0 OR pe.created_at <= $frozen_at)
-            AND pe.event_time > $from
-            AND ($to IS NULL OR pe.event_time <= $to)
+        WHERE ($frozen_at = 0 OR pe.created_at <= $frozen_at)
+          AND ($from IS NULL OR pe.event_time > $from)
+          AND ($to   IS NULL OR pe.event_time <= $to)
     ),
 
     ----------------------------------------------------------------------------
-    -- D) Combine the anchor time + future times to get "effective events" to consider.
+    -- E) Merge anchor + future => "effective_events"
     ----------------------------------------------------------------------------
     effective_events AS (
-        -- 1) anchor if it exists
-        SELECT
-            ae.data_provider,
-            ae.stream_id,
-            ae.anchor_et AS event_time
-        FROM anchor_events ae
-        WHERE ae.anchor_et IS NOT NULL
+        SELECT data_provider, stream_id, anchor_et AS event_time
+        FROM anchor_events
+        WHERE anchor_et IS NOT NULL
 
         UNION
 
-        -- 2) all future times
-        SELECT
-            fe.data_provider,
-            fe.stream_id,
-            fe.event_time
-        FROM future_events fe
+        SELECT data_provider, stream_id, event_time
+        FROM future_events
     ),
 
     ----------------------------------------------------------------------------
-    -- E) Now for each (data_provider, stream_id, event_time) in effective_events,
-    --    pick the *latest* record by created_at. This is like ROW_NUMBER partition logic.
+    -- F) For each (stream, event_time), pick the most recent record by created_at
     ----------------------------------------------------------------------------
     raw_candidates AS (
         SELECT
@@ -188,70 +180,48 @@ RETURNS TABLE(
          AND ee.event_time   = pe.event_time
         WHERE ($frozen_at = 0 OR pe.created_at <= $frozen_at)
     ),
-
-    ----------------------------------------------------------------------------
-    -- F) Filter to rn = 1 => the single best record per event_time
-    ----------------------------------------------------------------------------
     final_candidates AS (
-        SELECT
-            rc.data_provider,
-            rc.stream_id,
-            rc.event_time,
-            rc.value
-        FROM raw_candidates rc
-        WHERE rc.rn = 1
+        SELECT data_provider, stream_id, event_time, value
+        FROM raw_candidates
+        WHERE rn = 1
     ),
 
     ----------------------------------------------------------------------------
-    -- G) Separate anchor from "true in-range" times to replicate the "gap fill" logic
-    --    The anchor event_time might be strictly < $from, or exactly = $from
+    -- G) Apply gap-fill logic: anchor rows vs. true in-range rows
     ----------------------------------------------------------------------------
     anchor_results AS (
-        SELECT
-            fc.data_provider,
-            fc.stream_id,
-            fc.event_time,
-            fc.value
+        SELECT fc.*
         FROM final_candidates fc
         JOIN anchor_events ae
-          ON ae.data_provider = fc.data_provider
-         AND ae.stream_id    = fc.stream_id
-         AND ae.anchor_et    = fc.event_time
+          ON fc.data_provider = ae.data_provider
+         AND fc.stream_id    = ae.stream_id
+         AND fc.event_time   = ae.anchor_et
     ),
     in_range_results AS (
-        SELECT
-            fc.data_provider,
-            fc.stream_id,
-            fc.event_time,
-            fc.value
+        SELECT fc.*
         FROM final_candidates fc
         WHERE ($from IS NULL OR fc.event_time >= $from)
     ),
 
     ----------------------------------------------------------------------------
-    -- H) Decide whether to include the anchor row. It's included if:
-    --   1) There's no in-range record at all, or
-    --   2) The earliest in-range event_time is strictly > anchor's event_time
+    -- H) Include anchor rows if there's no overlapping in-range event at the same time,
+    --    or if that substream has no in-range events at all.
     ----------------------------------------------------------------------------
     combined_results AS (
         SELECT a.*
         FROM anchor_results a
         WHERE
             (
-                -- No in-range record
-                (SELECT COUNT(*) FROM in_range_results r
+                SELECT COUNT(*) FROM in_range_results r
                  WHERE r.data_provider = a.data_provider
                    AND r.stream_id    = a.stream_id
-                ) = 0
-            )
+            ) = 0
             OR
             (
-                -- earliest in-range event_time is strictly > anchor
-                (SELECT MIN(r2.event_time) FROM in_range_results r2
+                SELECT MIN(r2.event_time) FROM in_range_results r2
                  WHERE r2.data_provider = a.data_provider
                    AND r2.stream_id    = a.stream_id
-                ) > a.event_time
-            )
+            ) > a.event_time
 
         UNION ALL
 
@@ -259,7 +229,7 @@ RETURNS TABLE(
     )
 
     ----------------------------------------------------------------------------
-    -- I) Final output
+    -- I) Return final sorted results
     ----------------------------------------------------------------------------
     SELECT
         cr.event_time,
