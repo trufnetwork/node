@@ -24,7 +24,7 @@ import (
 )
 
 /*
-	AGGR07: Varying Taxonomy Weights Test
+	 Varying Taxonomy Weights Test
 
 	This test verifies the correct calculation of weights in a multi-level taxonomy hierarchy
 	with weights changing over time.
