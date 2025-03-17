@@ -33,6 +33,9 @@ CREATE TABLE IF NOT EXISTS streams (
 -- Create indexes separately
 CREATE INDEX IF NOT EXISTS stream_type_composite_idx ON streams (stream_type, data_provider, stream_id);
 
+-- create index to check latest streams
+CREATE INDEX IF NOT EXISTS latest_streams_idx ON streams (created_at, data_provider, stream_id);
+
 CREATE TABLE IF NOT EXISTS taxonomies (
     data_provider TEXT NOT NULL,
     stream_id TEXT NOT NULL,
@@ -64,6 +67,8 @@ CREATE INDEX IF NOT EXISTS child_stream_idx ON taxonomies (data_provider, stream
 -- TODO: Add this back in when we support where clause
 -- CREATE INDEX IF NOT EXISTS active_child_stream_idx ON taxonomies (data_provider, stream_id)
 -- WHERE disabled_at IS NULL;
+-- for now, we just index disabled_at
+CREATE INDEX IF NOT EXISTS disabled_at_idx ON taxonomies (disabled_at);
 
 CREATE TABLE IF NOT EXISTS primitive_events (
     stream_id TEXT NOT NULL,
@@ -82,23 +87,11 @@ CREATE TABLE IF NOT EXISTS primitive_events (
 
 -- For common queries filtering by provider/stream and (optionally) event_time
 CREATE INDEX IF NOT EXISTS pe_provider_stream_time_idx ON primitive_events 
-(data_provider, stream_id, event_time);
+(data_provider, stream_id, event_time, created_at);
 
 -- For queries filtering by provider/stream and created_at (for frozen_at queries)
 CREATE INDEX IF NOT EXISTS pe_provider_stream_created_idx ON primitive_events 
 (data_provider, stream_id, created_at);
-
--- TODO: Add this back in when we support window functions
--- Optimizes the PARTITION BY event_time ORDER BY created_at DESC pattern
--- Good for window functions selecting latest record per time point
--- CREATE INDEX IF NOT EXISTS pe_window_func_idx ON primitive_events 
--- (data_provider, stream_id, event_time, created_at DESC);
-
--- TODO: Add this back in when we support gap-filling queries
--- Supports gap-filling queries that find most recent record BEFORE a timestamp
--- Critical for time-series interpolation and "last known value" lookups
--- CREATE INDEX IF NOT EXISTS pe_gap_filler_idx ON primitive_events 
--- (data_provider, stream_id, event_time DESC, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS metadata (
     row_id UUID NOT NULL,
@@ -130,9 +123,12 @@ CREATE INDEX IF NOT EXISTS stream_ref_idx ON metadata (data_provider, stream_id,
 -- For fetching only by reference when metadata_key is the primary filter
 CREATE INDEX IF NOT EXISTS ref_idx ON metadata (metadata_key, value_ref, data_provider, stream_id);
 
+
 -- TODO: Add this back in when we support where clause
 -- For efficiently querying only active (non-disabled) metadata records
 -- Reduces scan size when disabled records are excluded from results
 -- CREATE INDEX IF NOT EXISTS active_metadata_idx ON metadata 
 -- (data_provider, stream_id, metadata_key)
 -- WHERE disabled_at IS NULL;
+-- for now, we just index disabled_at
+CREATE INDEX IF NOT EXISTS disabled_at_idx ON metadata (disabled_at);
