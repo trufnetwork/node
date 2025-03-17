@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS taxonomies (
         ON DELETE CASCADE,
     -- don't add child data providers as foreign keys, because we want
     -- to allow taxonomies to be adjusted independently of streams existing or being deleted
+    -- we create them as unique index instead
 
     CHECK (weight >= 0),
     CHECK (version >= 0),
@@ -61,7 +62,7 @@ CREATE TABLE IF NOT EXISTS taxonomies (
 );
 
 -- Create indexes separately
-CREATE INDEX IF NOT EXISTS child_stream_idx ON taxonomies (data_provider, stream_id, start_time, version, child_data_provider, child_stream_id);
+CREATE UNIQUE INDEX IF NOT EXISTS child_stream_idx ON taxonomies (data_provider, stream_id, start_time, version, child_data_provider, child_stream_id);
 -- TODO: Add this back in when we support where clause
 -- CREATE INDEX IF NOT EXISTS active_child_stream_idx ON taxonomies (data_provider, stream_id)
 -- WHERE disabled_at IS NULL;

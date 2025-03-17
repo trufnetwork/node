@@ -13,17 +13,54 @@ RETURNS TABLE(
     event_time INT8,
     value NUMERIC(36,18)
 )  {
-    IF $frozen_at IS NULL {
-        $frozen_at := 0;
-    }
     IF $from IS NOT NULL AND $to IS NOT NULL AND $from > $to {
         ERROR(format('from: %s > to: %s', $from, $to));
     }
 
     RETURN WITH RECURSIVE
 
-    -- get the first taxonomy group before or at the lower bound, if it exists
-    anchor_taxonomies AS (
+    -- get the taxonomy versions for the time range
+    selected_taxonomy_versions AS (
+        SELECT 
+            t.data_provider,
+            t.stream_id,
+            t.start_time,
+            t.version,
+            ROW_NUMBER() OVER (PARTITION BY t.start_time ORDER BY t.version DESC) AS rn
+        FROM taxonomies t
+        WHERE t.disabled_at IS NULL
+          AND t.data_provider = $data_provider
+          AND t.stream_id = $stream_id
+          AND (
+              -- for anchor taxonomy (before or at $from)
+              ($from IS NOT NULL AND t.start_time = (
+                  SELECT MAX(start_time)
+                  FROM taxonomies
+                  WHERE data_provider = $data_provider
+                      AND stream_id = $stream_id
+                      AND disabled_at IS NULL
+                      AND start_time <= $from
+              ))
+              OR
+              -- for future taxonomies (after $from and before or at $to)
+              ($from IS NULL OR t.start_time > $from)
+              AND ($to IS NULL OR t.start_time <= $to)
+          )
+    ),
+
+    -- Select latest version for each start_time
+    latest_versions AS (
+        SELECT
+            data_provider,
+            stream_id,
+            start_time,
+            version
+        FROM selected_taxonomy_versions
+        WHERE rn = 1
+    ),
+
+    -- Get all taxonomy entries for the selected versions
+    all_taxonomies AS (
         SELECT
             t.data_provider,
             t.stream_id,
@@ -33,55 +70,12 @@ RETURNS TABLE(
             t.child_data_provider,
             t.child_stream_id
         FROM taxonomies t
+        JOIN latest_versions lv
+          ON t.data_provider = lv.data_provider
+         AND t.stream_id = lv.stream_id
+         AND t.start_time = lv.start_time
+         AND t.version = lv.version
         WHERE t.disabled_at IS NULL
-        AND t.data_provider = $data_provider
-        AND t.stream_id     = $stream_id
-        AND t.start_time = (
-            SELECT MAX(start_time)
-            FROM taxonomies
-            WHERE data_provider = $data_provider
-                AND stream_id = $stream_id
-                AND disabled_at IS NULL
-                AND $from IS NOT NULL AND start_time <= $from
-        )
-    ),
-
-    future_taxonomies AS (
-        SELECT
-            data_provider,
-            stream_id,
-            start_time AS version_start,
-            weight,
-            version,
-            child_data_provider,
-            child_stream_id
-        FROM (
-            SELECT
-                t.data_provider,
-                t.stream_id,
-                t.start_time,
-                t.weight,
-                t.version,
-                t.child_data_provider,
-                t.child_stream_id,
-                ROW_NUMBER() OVER (
-                    PARTITION BY t.start_time
-                    ORDER BY t.version DESC
-                ) AS rn
-            FROM taxonomies t
-            WHERE t.disabled_at IS NULL
-            AND t.data_provider = $data_provider
-            AND t.stream_id     = $stream_id
-            AND ($from IS NULL OR t.start_time > $from)
-            AND ($to IS NULL OR t.start_time <= $to)
-        ) ranked
-        WHERE ranked.rn = 1
-    ),
-
-    all_taxonomies AS (
-        SELECT * FROM anchor_taxonomies
-        UNION ALL
-        SELECT * FROM future_taxonomies
     ),
 
     main_versions AS (
@@ -162,8 +156,14 @@ RETURNS TABLE(
         AND h.version_start <= h.version_end
     ),
 
-    -- Get all distinct event times in our query range
-    all_event_times AS (
+    -- If no event times exist in the range, manually create the requested range
+    query_times AS (
+        SELECT $from AS event_time
+        WHERE $from IS NOT NULL
+        
+        UNION
+        
+        -- Get all distinct event times in our query range
         SELECT DISTINCT event_time
         FROM primitive_events
         WHERE ($from IS NULL OR event_time >= $from)
@@ -179,7 +179,7 @@ RETURNS TABLE(
     -- Get most recent event for each stream at each event_time
     stream_values AS (
         SELECT
-            aet.event_time,
+            qt.event_time,
             ss.data_provider,
             ss.stream_id,
             (
@@ -187,12 +187,12 @@ RETURNS TABLE(
                 FROM primitive_events pe
                 WHERE pe.data_provider = ss.data_provider
                   AND pe.stream_id = ss.stream_id
-                  AND pe.event_time <= aet.event_time
-                  AND ($frozen_at = 0 OR pe.created_at <= $frozen_at)
+                  AND pe.event_time <= qt.event_time
+                  AND ($frozen_at IS NULL OR pe.created_at <= $frozen_at)
                 ORDER BY pe.event_time DESC, pe.created_at DESC
                 LIMIT 1
             ) AS value
-        FROM all_event_times aet
+        FROM query_times qt
         JOIN substreams ss ON 1=1
     ),
 
@@ -228,9 +228,6 @@ RETURNS TABLE(
     FROM aggregated
     ORDER BY event_time;
 };
-
-
-
 /**
  * get_last_record_composed: Placeholder for finding last record in composed stream.
  * Will determine the last record based on child stream values and weights.

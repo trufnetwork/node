@@ -35,6 +35,11 @@ CREATE OR REPLACE ACTION insert_taxonomy(
         error('There must be at least 1 child');
     }
 
+    -- Default start time to 0 if not provided
+    if $start_date IS NULL {
+        $start_date := 0;
+    }
+
     -- Retrieve the current version for this parent and increment it by 1.
     $new_version := get_current_version($data_provider, $stream_id, true) + 1;
 
