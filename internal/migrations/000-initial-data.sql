@@ -52,10 +52,8 @@ CREATE TABLE IF NOT EXISTS taxonomies (
     FOREIGN KEY (data_provider, stream_id)
         REFERENCES streams(data_provider, stream_id)
         ON DELETE CASCADE,
-    FOREIGN KEY (child_data_provider, child_stream_id)
-        REFERENCES streams(data_provider, stream_id)
-        -- we don't want to taxonomies to change if a stream is deleted
-        ON DELETE NO ACTION,
+    -- don't add child data providers as foreign keys, because we want
+    -- to allow taxonomies to be adjusted independently of streams existing or being deleted
 
     CHECK (weight >= 0),
     CHECK (version >= 0),
