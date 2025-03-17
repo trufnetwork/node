@@ -71,12 +71,12 @@ func testAGGR05_NoDuplicateChildStreams(t *testing.T) func(ctx context.Context, 
 			DataProviders: []string{deployer.Address(), deployer.Address()},
 			StreamIds:     []string{stream1.String(), stream1.String()}, // Duplicate stream1
 			Weights:       []string{"1.0", "1.0"},
-			StartTime:     0,
+			StartTime:     nil,
 		})
 
 		// We expect an error because duplicate child streams are not allowed
 		assert.Error(t, err, "Expected error when adding duplicate child stream")
-		assert.Contains(t, err.Error(), "violates foreign key constraint", "Error should mention foreign key constraint")
+		assert.Contains(t, err.Error(), "violates unique constraint")
 
 		return nil
 	}

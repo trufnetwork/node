@@ -51,9 +51,9 @@ func testAGGR06_SingleActiveTaxonomy(t *testing.T) func(ctx context.Context, pla
 			Platform: platform,
 			StreamId: composedStreamId,
 			MarkdownData: `
-			| event_time | value_1 | value_2 |
-			|------------|---------|---------|
-			| 1          | 10      | 20      |
+			| event_time | primitive_1 | primitive_2 |
+			|------------|-------------|-------------|
+			| 1          | 10          | 20          |
 			`,
 			Height: 1,
 		})
@@ -71,6 +71,7 @@ func testAGGR06_SingleActiveTaxonomy(t *testing.T) func(ctx context.Context, pla
 		primitive1StreamId := util.GenerateStreamId("primitive_1")
 		primitive2StreamId := util.GenerateStreamId("primitive_2")
 
+		startTime := int64(1)
 		// Add the first taxonomy version with a start date with only the first child stream defined
 		err = procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
 			Platform:      platform,
@@ -78,7 +79,8 @@ func testAGGR06_SingleActiveTaxonomy(t *testing.T) func(ctx context.Context, pla
 			DataProviders: []string{deployer.Address()},
 			StreamIds:     []string{primitive1StreamId.String()},
 			Weights:       []string{"1.0"},
-			StartTime:     1, // Same start time
+			StartTime:     &startTime, // Same start time
+			Height:        1,
 		})
 		if err != nil {
 			return errors.Wrap(err, "error setting taxonomy for first primitive stream")
@@ -91,19 +93,23 @@ func testAGGR06_SingleActiveTaxonomy(t *testing.T) func(ctx context.Context, pla
 			DataProviders: []string{deployer.Address()},
 			StreamIds:     []string{primitive2StreamId.String()},
 			Weights:       []string{"1.0"},
-			StartTime:     1, // Same start time
+			StartTime:     &startTime, // Same start time
+			Height:        2,
 		})
 		if err != nil {
 			return errors.Wrap(err, "error setting taxonomy for second primitive stream")
 		}
 
+		fromTime := int64(1)
+		toTime := int64(1)
+
 		// Query the composed stream to get the aggregated values
 		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 			Platform:      platform,
 			StreamLocator: composedStreamLocator,
-			FromTime:      1,
-			ToTime:        1,
-			Height:        1,
+			FromTime:      &fromTime,
+			ToTime:        &toTime,
+			Height:        2,
 		})
 		if err != nil {
 			return errors.Wrap(err, "error getting records from composed stream")

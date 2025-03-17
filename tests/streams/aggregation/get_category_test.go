@@ -93,7 +93,7 @@ func setTaxonomyAtTime(ctx context.Context, platform *kwilTesting.Platform, depl
 		DataProviders: dataProviders,
 		StreamIds:     streamIds,
 		Weights:       weights,
-		StartTime:     startTime,
+		StartTime:     &startTime,
 	})
 	if err != nil {
 		return errors.Wrapf(err, "error creating taxonomy for %s at time %d", parent, startTime)

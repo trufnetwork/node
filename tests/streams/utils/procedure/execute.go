@@ -328,11 +328,6 @@ func SetTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 		weightDecimals = append(weightDecimals, valueDecimal)
 	}
 
-	var startDate int64
-	if input.StartTime != 0 {
-		startDate = input.StartTime
-	}
-
 	txContext := &common.TxContext{
 		Ctx:          ctx,
 		BlockContext: &common.BlockContext{Height: input.Height},
@@ -351,7 +346,7 @@ func SetTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 		dataProviderStrings,                        // child data providers
 		primitiveStreamStrings,                     // child stream ids
 		weightDecimals,
-		startDate,
+		input.StartTime,
 	}, func(row *common.Row) error {
 		return nil
 	})

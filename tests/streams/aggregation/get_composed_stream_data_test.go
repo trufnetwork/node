@@ -191,7 +191,7 @@ func defineTaxonomy(
 		DataProviders: dataProviders,
 		StreamIds:     streamIds,
 		Weights:       weights,
-		StartTime:     startTime,
+		StartTime:     &startTime,
 		Height:        1,
 	})
 }

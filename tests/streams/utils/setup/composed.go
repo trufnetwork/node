@@ -81,7 +81,7 @@ func setupComposedAndPrimitives(ctx context.Context, input SetupComposedAndPrimi
 		DataProviders: dataProviders,
 		StreamIds:     streamIds,
 		Weights:       weights,
-		StartTime:     0,
+		StartTime:     nil,
 	}); err != nil {
 		return errors.Wrap(err, "error setting taxonomy for composed stream")
 	}

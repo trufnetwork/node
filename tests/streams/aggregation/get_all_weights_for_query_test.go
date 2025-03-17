@@ -256,7 +256,7 @@ func setTaxonomyWithWeights(
 		DataProviders: childDataProviders,
 		StreamIds:     childStreamIds,
 		Weights:       weights,
-		StartTime:     startTime,
+		StartTime:     &startTime,
 		Height:        0,
 	})
 	if err != nil {

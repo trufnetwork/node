@@ -110,12 +110,13 @@ func testAGGR03_TaxonomyValidityPeriods(t *testing.T) func(ctx context.Context, 
 			DataProviders: []string{deployer.Address()},
 			StreamIds:     []string{primitive1StreamId.String()},
 			Weights:       []string{"1.0"},
-			StartTime:     0, // No start time
+			StartTime:     nil, // No start time
 		})
 		if err != nil {
 			return errors.Wrap(err, "error setting taxonomy for first primitive stream")
 		}
 
+		startTime := int64(5)
 		// 2. Add the second primitive stream with a start date
 		err = procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
 			Platform:      platform,
@@ -123,12 +124,13 @@ func testAGGR03_TaxonomyValidityPeriods(t *testing.T) func(ctx context.Context, 
 			DataProviders: []string{deployer.Address()},
 			StreamIds:     []string{primitive2StreamId.String()},
 			Weights:       []string{"1.0"},
-			StartTime:     5, // With start time
+			StartTime:     &startTime, // With start time
 		})
 		if err != nil {
 			return errors.Wrap(err, "error setting taxonomy for second primitive stream")
 		}
 
+		startTime = int64(10)
 		// 3. Add the first primitive stream again with a later start date
 		err = procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
 			Platform:      platform,
@@ -136,18 +138,20 @@ func testAGGR03_TaxonomyValidityPeriods(t *testing.T) func(ctx context.Context, 
 			DataProviders: []string{deployer.Address()},
 			StreamIds:     []string{primitive1StreamId.String()},
 			Weights:       []string{"1.0"},
-			StartTime:     10, // Later start time
+			StartTime:     &startTime, // Later start time
 		})
 		if err != nil {
 			return errors.Wrap(err, "error setting taxonomy for first primitive stream with later start date")
 		}
 
+		fromTime := int64(1)
+		toTime := int64(10)
 		// Query the composed stream to get the aggregated values
 		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 			Platform:      platform,
 			StreamLocator: composedStreamLocator,
-			FromTime:      1,
-			ToTime:        10,
+			FromTime:      &fromTime,
+			ToTime:        &toTime,
 			Height:        1,
 		})
 		if err != nil {

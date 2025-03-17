@@ -76,12 +76,15 @@ func testAGGR04_MissingDataHandling(t *testing.T) func(ctx context.Context, plat
 			DataProvider: deployer,
 		}
 
+		fromTime := int64(1)
+		toTime := int64(4)
+
 		// Query the composed stream to get the aggregated values
 		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 			Platform:      platform,
 			StreamLocator: composedStreamLocator,
-			FromTime:      1,
-			ToTime:        4,
+			FromTime:      &fromTime,
+			ToTime:        &toTime,
 			Height:        1,
 		})
 		if err != nil {

@@ -64,6 +64,9 @@ func testAGGR01_BasicAggregation(t *testing.T) func(ctx context.Context, platfor
 			return errors.Wrap(err, "error setting up composed stream")
 		}
 
+		fromTime := int64(1)
+		toTime := int64(3)
+
 		// Query the composed stream to get the aggregated values
 		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 			Platform: platform,
@@ -71,8 +74,8 @@ func testAGGR01_BasicAggregation(t *testing.T) func(ctx context.Context, platfor
 				StreamId:     composedStreamId,
 				DataProvider: deployer,
 			},
-			FromTime: 1, // Using integer representation for dates
-			ToTime:   3,
+			FromTime: &fromTime,
+			ToTime:   &toTime,
 			Height:   1,
 		})
 		if err != nil {

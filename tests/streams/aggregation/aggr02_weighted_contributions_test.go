@@ -65,6 +65,9 @@ func testAGGR02_WeightedContributions(t *testing.T) func(ctx context.Context, pl
 			return errors.Wrap(err, "error setting up composed stream with weighted primitives")
 		}
 
+		fromTime := int64(1)
+		toTime := int64(3)
+
 		// Query the composed stream to get the aggregated values
 		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 			Platform: platform,
@@ -72,8 +75,8 @@ func testAGGR02_WeightedContributions(t *testing.T) func(ctx context.Context, pl
 				StreamId:     composedStreamId,
 				DataProvider: deployer,
 			},
-			FromTime: 1,
-			ToTime:   3,
+			FromTime: &fromTime,
+			ToTime:   &toTime,
 			Height:   1,
 		})
 		if err != nil {
