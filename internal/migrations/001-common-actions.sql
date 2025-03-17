@@ -417,3 +417,24 @@ CREATE OR REPLACE ACTION stream_exists(
     }
     return false;
 };
+
+CREATE OR REPLACE ACTION transfer_stream_ownership(
+    $data_provider TEXT,
+    $stream_id TEXT,
+    $new_owner TEXT
+) PUBLIC {
+    if !is_stream_owner($data_provider, $stream_id, @caller) {
+        ERROR('Only stream owner can transfer ownership');
+    }
+
+    -- Check if new owner is a valid ethereum address
+    if LENGTH($new_owner) != 42 OR substring($new_owner, 1, 2) != '0x' {
+        ERROR('Invalid new owner address. Must be a valid Ethereum address: ' || $new_owner);
+    }
+
+    -- Update the stream_owner metadata
+    UPDATE metadata SET value_ref = LOWER($new_owner)
+    WHERE metadata_key = 'stream_owner'
+    AND data_provider = $data_provider
+    AND stream_id = $stream_id;
+};

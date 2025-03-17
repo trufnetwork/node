@@ -38,103 +38,119 @@ var (
 	}
 )
 
-// // TestAUTH01_StreamOwnership tests AUTH01: Stream ownership is clearly defined and can be transferred to another valid wallet.
-// func TestAUTH01_StreamOwnership(t *testing.T) {
-// 	t.Skip("Test skipped: auth stream tests temporarily disabled")
-// 	// Test valid ownership transfer
-// 	t.Run("ValidOwnershipTransfer", func(t *testing.T) {
-// 		kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
-// 			Name: "stream_ownership_transfer_AUTH01",
-// 			FunctionTests: []kwilTesting.TestFunc{
-// 				testStreamOwnershipTransfer(t, primitiveContractInfo),
-// 				testStreamOwnershipTransfer(t, composedContractInfo),
-// 			},
-// 		})
-// 	})
+// TestAUTH01_StreamOwnership tests AUTH01: Stream ownership is clearly defined and can be transferred to another valid wallet.
+func TestAUTH01_StreamOwnership(t *testing.T) {
+	// Test valid ownership transfer
+	t.Run("ValidOwnershipTransfer", func(t *testing.T) {
+		kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+			Name:        "stream_ownership_transfer_AUTH01",
+			SeedScripts: migrations.GetSeedScriptPaths(),
+			FunctionTests: []kwilTesting.TestFunc{
+				testStreamOwnershipTransfer(t),
+			},
+		}, testutils.GetTestOptions())
+	})
 
-// 	// Test invalid address handling
-// 	t.Run("InvalidAddressHandling", func(t *testing.T) {
-// 		kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
-// 			Name: "invalid_address_ownership_transfer_AUTH01",
-// 			FunctionTests: []kwilTesting.TestFunc{
-// 				testInvalidAddressOwnershipTransfer(t, primitiveContractInfo),
-// 				testInvalidAddressOwnershipTransfer(t, composedContractInfo),
-// 			},
-// 		})
-// 	})
-// }
+	//Test invalid address handling
+	t.Run("InvalidAddressHandling", func(t *testing.T) {
+		kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+			Name:        "invalid_address_ownership_transfer_AUTH01",
+			SeedScripts: migrations.GetSeedScriptPaths(),
+			FunctionTests: []kwilTesting.TestFunc{
+				testInvalidAddressOwnershipTransfer(t),
+			},
+		}, testutils.GetTestOptions())
+	})
+}
 
-// func testStreamOwnershipTransfer(t *testing.T, contractInfo setup.ContractInfo) kwilTesting.TestFunc {
-// 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 		// Set up and initialize the contract
-// 		if err := setup.SetupAndInitializeContract(ctx, platform, contractInfo); err != nil {
-// 			return errors.Wrapf(err, "failed to setup and initialize contract %s for ownership transfer test", contractInfo.Name)
-// 		}
-// 		dbid := setup.GetDBID(contractInfo)
+func testStreamOwnershipTransfer(t *testing.T) kwilTesting.TestFunc {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
+		platform.Deployer = deployer.Bytes()
+		streamId := util.GenerateStreamId("ownership_transfer_test")
+		streamLocator := types.StreamLocator{
+			StreamId:     streamId,
+			DataProvider: deployer,
+		}
+		// Set up and initialize the contract
+		if err := setup.CreateStream(ctx, platform, setup.StreamInfo{
+			Locator: streamLocator,
+			Type:    setup.ContractTypeComposed, // We can use composed for all since we're not testing actual values
+		}); err != nil {
+			return errors.Wrapf(err, "failed to setup and initialize contract %s for ownership transfer test", streamLocator.StreamId.String())
+		}
 
-// 		// Transfer ownership
-// 		newOwner := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-// 		err := procedure.TransferStreamOwnership(ctx, procedure.TransferStreamOwnershipInput{
-// 			Platform: platform,
-// 			Deployer: contractInfo.Deployer,
-// 			DBID:     dbid,
-// 			NewOwner: newOwner,
-// 		})
-// 		if err != nil {
-// 			return errors.Wrapf(err, "failed to transfer ownership of contract %s to %s", contractInfo.Name, newOwner)
-// 		}
+		// Transfer ownership
+		newOwner := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		err := procedure.TransferStreamOwnership(ctx, procedure.TransferStreamOwnershipInput{
+			Platform: platform,
+			Locator:  streamLocator,
+			NewOwner: newOwner,
+			Height:   0,
+		})
+		if err != nil {
+			return errors.Wrapf(err, "failed to transfer ownership of contract %s to %s", streamId.String(), newOwner)
+		}
 
-// 		// Attempt to perform an owner-only action with the old owner
-// 		err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
-// 			Platform: platform,
-// 			Deployer: contractInfo.Deployer,
-// 			DBID:     dbid,
-// 			Key:      "new_key",
-// 			Value:    "new_value",
-// 			ValType:  "string",
-// 		})
-// 		assert.Error(t, err, "Old owner should not be able to insert metadata after ownership transfer")
+		// Attempt to perform an owner-only action with the old owner
+		err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+			Platform: platform,
+			Locator:  streamLocator,
+			Key:      "new_key",
+			Value:    "new_value",
+			ValType:  "string",
+			Height:   0,
+		})
+		assert.Error(t, err, "Old owner should not be able to insert metadata after ownership transfer")
 
-// 		// Change platform deployer to the new owner
-// 		newOwnerAddress := util.Unsafe_NewEthereumAddressFromString(newOwner)
-// 		platform.Deployer = newOwnerAddress.Bytes()
+		// Change platform deployer to the new owner
+		newOwnerAddress := util.Unsafe_NewEthereumAddressFromString(newOwner)
+		platform.Deployer = newOwnerAddress.Bytes()
 
-// 		// Attempt to perform an owner-only action with the new owner
-// 		err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
-// 			Platform: platform,
-// 			Deployer: newOwnerAddress,
-// 			DBID:     dbid,
-// 			Key:      "new_key",
-// 			Value:    "new_value",
-// 			ValType:  "string",
-// 		})
-// 		assert.NoError(t, err, "New owner should be able to insert metadata after ownership transfer")
+		// Attempt to perform an owner-only action with the new owner
+		err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+			Platform: platform,
+			Locator:  streamLocator,
+			Key:      "new_key",
+			Value:    "new_value",
+			ValType:  "string",
+			Height:   0,
+		})
+		assert.NoError(t, err, "New owner should be able to insert metadata after ownership transfer")
 
-// 		return nil
-// 	}
-// }
+		return nil
+	}
+}
 
-// func testInvalidAddressOwnershipTransfer(t *testing.T, contractInfo setup.ContractInfo) kwilTesting.TestFunc {
-// 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 		// Set up and initialize the contract
-// 		if err := setup.SetupAndInitializeContract(ctx, platform, contractInfo); err != nil {
-// 			return errors.Wrapf(err, "failed to setup and initialize contract %s for invalid address test", contractInfo.Name)
-// 		}
-// 		dbid := setup.GetDBID(contractInfo)
+func testInvalidAddressOwnershipTransfer(t *testing.T) kwilTesting.TestFunc {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
+		streamId := util.GenerateStreamId("ownership_transfer_test")
+		streamLocator := types.StreamLocator{
+			StreamId:     streamId,
+			DataProvider: deployer,
+		}
+		// Set up and initialize the contract
+		if err := setup.CreateStream(ctx, platform, setup.StreamInfo{
+			Locator: streamLocator,
+			Type:    setup.ContractTypeComposed, // We can use composed for all since we're not testing actual values
+		}); err != nil {
+			return errors.Wrapf(err, "failed to setup and initialize contract %s for invalid address test", streamLocator.StreamId.String())
+		}
 
-// 		// Attempt to transfer ownership to an invalid address
-// 		invalidAddress := "invalid_address"
-// 		err := procedure.TransferStreamOwnership(ctx, procedure.TransferStreamOwnershipInput{
-// 			Platform: platform,
-// 			Deployer: contractInfo.Deployer,
-// 			DBID:     dbid,
-// 			NewOwner: invalidAddress,
-// 		})
-// 		assert.Error(t, err, "Should not accept invalid Ethereum address")
+		// Attempt to transfer ownership to an invalid address
+		invalidAddress := "invalid_address"
+		err := procedure.TransferStreamOwnership(ctx, procedure.TransferStreamOwnershipInput{
+			Platform: platform,
+			Locator:  streamLocator,
+			NewOwner: invalidAddress,
+			Height:   0,
+		})
+		assert.Error(t, err, "Should not accept invalid Ethereum address")
 
-// 		return nil
-// 	}
-// }
+		return nil
+	}
+}
 
 // TestAUTH02_ReadPermissions tests AUTH02: A stream owner can control who is allowed to read data from its stream
 func TestAUTH02_ReadPermissions(t *testing.T) {
