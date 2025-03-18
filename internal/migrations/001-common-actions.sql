@@ -12,9 +12,7 @@ CREATE OR REPLACE ACTION create_stream(
     $current_block INT := @height;
     
     -- Check if caller is a valid ethereum address
-    -- TODO: really check if it's a valid address
-    if LENGTH($data_provider) != 42 
-        OR substring($data_provider, 1, 2) != '0x' {
+    if NOT check_ethereum_address($data_provider) {
         ERROR('Invalid data provider address. Must be a valid Ethereum address: ' || $data_provider);
     }
 
@@ -225,7 +223,24 @@ CREATE OR REPLACE ACTION check_stream_id_format(
 CREATE OR REPLACE ACTION check_ethereum_address(
     $data_provider TEXT
 ) PUBLIC view returns (result BOOL) {
-    return LENGTH($data_provider) = 42 AND substring($data_provider, 1, 2) = '0x';
+    -- Verify the address is exactly 42 characters and starts with "0x"
+    if LENGTH($data_provider) != 42 OR substring($data_provider, 1, 2) != '0x' {
+        return false;
+    }
+
+    -- Iterate through each character after the "0x" prefix.
+    for $i in 3..42 {
+        $c TEXT := substring($data_provider, $i, 1);
+        if NOT (
+            ($c >= '0' AND $c <= '9')
+            OR ($c >= 'a' AND $c <= 'f')
+            OR ($c >= 'A' AND $c <= 'F')
+        ) {
+            return false;
+        }
+    }
+
+    return true;
 };
 
 /**
@@ -428,7 +443,7 @@ CREATE OR REPLACE ACTION transfer_stream_ownership(
     }
 
     -- Check if new owner is a valid ethereum address
-    if LENGTH($new_owner) != 42 OR substring($new_owner, 1, 2) != '0x' {
+    if NOT check_ethereum_address($new_owner) {
         ERROR('Invalid new owner address. Must be a valid Ethereum address: ' || $new_owner);
     }
 
