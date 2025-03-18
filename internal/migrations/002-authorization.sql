@@ -164,7 +164,7 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
         (SELECT COUNT(*) FROM streams_without_permissions) AS unauthorized_count {
         -- error out if there's a missing streams
         if $counts.missing_count > 0 {
-            ERROR('count of inexisting substreams for stream: data_provider=' || $data_provider || ' stream_id=' || $stream_id || ' count=' || $counts.missing_count);
+            ERROR('streams missing for stream: data_provider=' || $data_provider || ' stream_id=' || $stream_id || ' missing_count=' || $counts.missing_count::TEXT);
         }
 
         -- Return false if there are any unauthorized streams

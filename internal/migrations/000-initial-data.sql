@@ -31,7 +31,10 @@ CREATE TABLE IF NOT EXISTS streams (
 );
 
 -- Create indexes separately
-CREATE INDEX IF NOT EXISTS stream_type_composite_idx ON streams (stream_type, data_provider, stream_id);
+CREATE INDEX IF NOT EXISTS streams_type_idx ON streams (stream_type, data_provider, stream_id);
+
+-- create index to check latest streams
+CREATE INDEX IF NOT EXISTS streams_latest_idx ON streams (created_at, data_provider, stream_id);
 
 CREATE TABLE IF NOT EXISTS taxonomies (
     data_provider TEXT NOT NULL,
@@ -49,10 +52,9 @@ CREATE TABLE IF NOT EXISTS taxonomies (
     FOREIGN KEY (data_provider, stream_id)
         REFERENCES streams(data_provider, stream_id)
         ON DELETE CASCADE,
-    FOREIGN KEY (child_data_provider, child_stream_id)
-        REFERENCES streams(data_provider, stream_id)
-        -- we don't want to taxonomies to change if a stream is deleted
-        ON DELETE NO ACTION,
+    -- don't add child data providers as foreign keys, because we want
+    -- to allow taxonomies to be adjusted independently of streams existing or being deleted
+    -- we create them as unique index instead
 
     CHECK (weight >= 0),
     CHECK (version >= 0),
@@ -60,10 +62,24 @@ CREATE TABLE IF NOT EXISTS taxonomies (
 );
 
 -- Create indexes separately
-CREATE INDEX IF NOT EXISTS child_stream_idx ON taxonomies (data_provider, stream_id, start_time, version, child_data_provider, child_stream_id);
+CREATE UNIQUE INDEX IF NOT EXISTS tax_child_uniq_idx ON taxonomies (data_provider, stream_id, start_time, version, child_data_provider, child_stream_id);
 -- TODO: Add this back in when we support where clause
 -- CREATE INDEX IF NOT EXISTS active_child_stream_idx ON taxonomies (data_provider, stream_id)
 -- WHERE disabled_at IS NULL;
+-- for now, we just index disabled_at
+CREATE INDEX IF NOT EXISTS tax_disabled_idx ON taxonomies (disabled_at);
+
+-- For faster taxonomy queries filtering by provider/stream/start_time and disabled status
+CREATE INDEX IF NOT EXISTS tax_dp_stream_start_idx 
+ON taxonomies (data_provider, stream_id, start_time, disabled_at);
+
+-- For efficient recursive lookups
+CREATE INDEX IF NOT EXISTS tax_child_lookup_idx
+ON taxonomies (child_data_provider, child_stream_id);
+
+-- optimizes "get latest taxonomy version"
+CREATE INDEX IF NOT EXISTS tax_latest_version_idx ON taxonomies
+(data_provider, stream_id, start_time DESC, version DESC);
 
 CREATE TABLE IF NOT EXISTS primitive_events (
     stream_id TEXT NOT NULL,
@@ -80,25 +96,13 @@ CREATE TABLE IF NOT EXISTS primitive_events (
 
 /* Create indexes separately for primitive_events */
 
--- For common queries filtering by provider/stream and (optionally) event_time
-CREATE INDEX IF NOT EXISTS pe_provider_stream_time_idx ON primitive_events 
+-- Add optimized index for gap-filling queries
+CREATE INDEX IF NOT EXISTS pe_gap_filling_idx ON primitive_events 
 (data_provider, stream_id, event_time);
 
 -- For queries filtering by provider/stream and created_at (for frozen_at queries)
-CREATE INDEX IF NOT EXISTS pe_provider_stream_created_idx ON primitive_events 
+CREATE INDEX IF NOT EXISTS pe_prov_stream_created_idx ON primitive_events 
 (data_provider, stream_id, created_at);
-
--- TODO: Add this back in when we support window functions
--- Optimizes the PARTITION BY event_time ORDER BY created_at DESC pattern
--- Good for window functions selecting latest record per time point
--- CREATE INDEX IF NOT EXISTS pe_window_func_idx ON primitive_events 
--- (data_provider, stream_id, event_time, created_at DESC);
-
--- TODO: Add this back in when we support gap-filling queries
--- Supports gap-filling queries that find most recent record BEFORE a timestamp
--- Critical for time-series interpolation and "last known value" lookups
--- CREATE INDEX IF NOT EXISTS pe_gap_filler_idx ON primitive_events 
--- (data_provider, stream_id, event_time DESC, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS metadata (
     row_id UUID NOT NULL,
@@ -122,13 +126,14 @@ CREATE TABLE IF NOT EXISTS metadata (
 /* Create indexes separately for metadata */
 
 -- For fetching a specific stream's key-value pairs, or just the latest
-CREATE INDEX IF NOT EXISTS stream_key_created_idx ON metadata (data_provider, stream_id, metadata_key, created_at);
+CREATE INDEX IF NOT EXISTS meta_stream_key_idx ON metadata (data_provider, stream_id, metadata_key, created_at);
 
 -- For fetching a specific stream's key-value pairs by reference
-CREATE INDEX IF NOT EXISTS stream_ref_idx ON metadata (data_provider, stream_id, metadata_key, value_ref);
+CREATE INDEX IF NOT EXISTS meta_stream_ref_idx ON metadata (data_provider, stream_id, metadata_key, value_ref);
 
 -- For fetching only by reference when metadata_key is the primary filter
-CREATE INDEX IF NOT EXISTS ref_idx ON metadata (metadata_key, value_ref, data_provider, stream_id);
+CREATE INDEX IF NOT EXISTS meta_key_ref_idx ON metadata (metadata_key, value_ref, data_provider, stream_id);
+
 
 -- TODO: Add this back in when we support where clause
 -- For efficiently querying only active (non-disabled) metadata records
@@ -136,3 +141,5 @@ CREATE INDEX IF NOT EXISTS ref_idx ON metadata (metadata_key, value_ref, data_pr
 -- CREATE INDEX IF NOT EXISTS active_metadata_idx ON metadata 
 -- (data_provider, stream_id, metadata_key)
 -- WHERE disabled_at IS NULL;
+-- for now, we just index disabled_at
+CREATE INDEX IF NOT EXISTS meta_disabled_idx ON metadata (disabled_at);

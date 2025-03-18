@@ -148,6 +148,16 @@ func testInvalidAddressOwnershipTransfer(t *testing.T) kwilTesting.TestFunc {
 		})
 		assert.Error(t, err, "Should not accept invalid Ethereum address")
 
+		// Attempt to transfer ownership to an address that does not match ethereum address regex pattern
+		invalidAddress = "0x0000000000000000000000000000000000000ZZZ"
+		err = procedure.TransferStreamOwnership(ctx, procedure.TransferStreamOwnershipInput{
+			Platform: platform,
+			Locator:  streamLocator,
+			NewOwner: invalidAddress,
+			Height:   0,
+		})
+		assert.Error(t, err, "Should not accept invalid Ethereum address that does not match regex pattern")
+
 		return nil
 	}
 }

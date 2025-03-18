@@ -50,6 +50,8 @@ This document lists the behaviors that must have automated tests to ensure they 
 - [AGGR04] If a child stream doesn't have data for the given date (including last available data), the composed stream will not count it's weight for that date.
 - [AGGR05] For a single taxonomy version, there can't be duplicated child stream definitions.
 - [AGGR06] Only 1 taxonomy version can be active in a point in time.
+- [AGGR07] Inexistent streams on taxonomies are rejected with errors.
+
 
 ## Other
 

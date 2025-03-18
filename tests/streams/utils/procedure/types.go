@@ -8,21 +8,21 @@ import (
 type GetRecordInput struct {
 	Platform      *kwilTesting.Platform
 	StreamLocator types.StreamLocator
-	FromTime      int64
-	ToTime        int64
-	FrozenAt      int64
+	FromTime      *int64
+	ToTime        *int64
+	FrozenAt      *int64
 	Height        int64
 }
 
 type GetIndexInput struct {
 	Platform      *kwilTesting.Platform
 	StreamLocator types.StreamLocator
-	FromTime      int64
-	ToTime        int64
-	FrozenAt      int64
+	FromTime      *int64
+	ToTime        *int64
+	FrozenAt      *int64
 	Height        int64
-	BaseTime      int64
-	Interval      int
+	BaseTime      *int64
+	Interval      *int
 }
 
 type ResultRow []string
@@ -30,19 +30,19 @@ type ResultRow []string
 type GetIndexChangeInput struct {
 	Platform      *kwilTesting.Platform
 	StreamLocator types.StreamLocator
-	FromTime      int64
-	ToTime        int64
-	FrozenAt      int64
+	FromTime      *int64
+	ToTime        *int64
+	FrozenAt      *int64
 	Height        int64
-	BaseTime      int64
-	Interval      int
+	BaseTime      *int64
+	Interval      *int
 }
 
 type GetFirstRecordInput struct {
 	Platform      *kwilTesting.Platform
 	StreamLocator types.StreamLocator
-	AfterTime     int64
-	FrozenAt      int64
+	AfterTime     *int64
+	FrozenAt      *int64
 	Height        int64
 }
 
@@ -61,7 +61,7 @@ type SetTaxonomyInput struct {
 	DataProviders []string
 	StreamIds     []string
 	Weights       []string
-	StartTime     int64
+	StartTime     *int64
 	Height        int64
 }
 
