@@ -77,6 +77,10 @@ ON taxonomies (data_provider, stream_id, start_time, disabled_at);
 CREATE INDEX IF NOT EXISTS tax_child_lookup_idx
 ON taxonomies (child_data_provider, child_stream_id);
 
+-- optimizes "get latest taxonomy version"
+CREATE INDEX IF NOT EXISTS tax_latest_version_idx ON taxonomies
+(data_provider, stream_id, start_time DESC, version DESC);
+
 CREATE TABLE IF NOT EXISTS primitive_events (
     stream_id TEXT NOT NULL,
     data_provider TEXT NOT NULL,
@@ -92,9 +96,9 @@ CREATE TABLE IF NOT EXISTS primitive_events (
 
 /* Create indexes separately for primitive_events */
 
--- For common queries filtering by provider/stream and (optionally) event_time
-CREATE INDEX IF NOT EXISTS pe_prov_stream_time_idx ON primitive_events 
-(data_provider, stream_id, event_time, created_at);
+-- Add optimized index for gap-filling queries
+CREATE INDEX IF NOT EXISTS pe_gap_filling_idx ON primitive_events 
+(data_provider, stream_id, event_time);
 
 -- For queries filtering by provider/stream and created_at (for frozen_at queries)
 CREATE INDEX IF NOT EXISTS pe_prov_stream_created_idx ON primitive_events 
