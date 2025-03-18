@@ -17,6 +17,11 @@ RETURNS TABLE(
         ERROR(format('from: %s > to: %s', $from, $to));
     }
 
+    -- check if it can be read
+    if !is_allowed_to_read_all($data_provider, $stream_id, @caller, $from, $to) {
+        ERROR('Not allowed to read stream');
+    }
+
     RETURN WITH RECURSIVE
 
     -- get the taxonomy versions for the time range
