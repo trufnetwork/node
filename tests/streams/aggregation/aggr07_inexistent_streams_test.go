@@ -16,27 +16,27 @@ import (
 )
 
 /*
-	AGGR08: When querying a composed stream with non-existent streams in its taxonomy, appropriate errors should be returned.
+	AGGR07: When querying a composed stream with non-existent streams in its taxonomy, appropriate errors should be returned.
 
 	Test cases:
 	1. Querying a composed stream with a non-existent primitive stream in its taxonomy should return an error
 	2. Querying a composed stream with a non-existent composed stream in its taxonomy should return an error
 */
 
-// TestAGGR08_InexistentStreamsRejected tests that querying composed streams with non-existent stream references results in errors
-func TestAGGR08_InexistentStreamsRejected(t *testing.T) {
+// TestAGGR07_InexistentStreamsRejected tests that querying composed streams with non-existent stream references results in errors
+func TestAGGR07_InexistentStreamsRejected(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name:        "aggr08_inexistent_streams_test",
+		Name:        "aggr07_inexistent_streams_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
-			testAGGR08_NonExistentPrimitive(t),
-			testAGGR08_NonExistentComposed(t),
+			testAGGR07_NonExistentPrimitive(t),
+			testAGGR07_NonExistentComposed(t),
 		},
 	}, testutils.GetTestOptions())
 }
 
-// testAGGR08_NonExistentPrimitive tests that querying a composed stream with a non-existent primitive stream in its taxonomy returns an error
-func testAGGR08_NonExistentPrimitive(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+// testAGGR07_NonExistentPrimitive tests that querying a composed stream with a non-existent primitive stream in its taxonomy returns an error
+func testAGGR07_NonExistentPrimitive(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		/*
 		   Test Structure:
@@ -111,8 +111,8 @@ func testAGGR08_NonExistentPrimitive(t *testing.T) func(ctx context.Context, pla
 	}
 }
 
-// testAGGR08_NonExistentComposed tests that querying a composed stream with a non-existent composed stream in its taxonomy returns an error
-func testAGGR08_NonExistentComposed(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+// testAGGR07_NonExistentComposed tests that querying a composed stream with a non-existent composed stream in its taxonomy returns an error
+func testAGGR07_NonExistentComposed(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		/*
 		   Test Structure:

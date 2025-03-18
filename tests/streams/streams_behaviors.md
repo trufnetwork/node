@@ -29,7 +29,6 @@ This document lists the behaviors that must have automated tests to ensure they 
 - [QUERY04] All metadata values are publicly available.
 - [QUERY06] If a point in time is queried, but there's no available data for that point, the closest available data in the past is returned.
 - [QUERY07] Only one data point per date is returned from query (the latest inserted one)
-- [QUERY08] Inexistent streams on taxonomies are rejected with errors.
 
 ## Data Insertion
 
@@ -51,6 +50,8 @@ This document lists the behaviors that must have automated tests to ensure they 
 - [AGGR04] If a child stream doesn't have data for the given date (including last available data), the composed stream will not count it's weight for that date.
 - [AGGR05] For a single taxonomy version, there can't be duplicated child stream definitions.
 - [AGGR06] Only 1 taxonomy version can be active in a point in time.
+- [AGGR07] Inexistent streams on taxonomies are rejected with errors.
+
 
 ## Other
 
