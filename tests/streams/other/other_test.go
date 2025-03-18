@@ -136,12 +136,11 @@ func testAddressValidation(t *testing.T) func(ctx context.Context, platform *kwi
 			return errors.Wrap(err, "valid Ethereum address should be accepted")
 		}
 
-		// Note: not possible to test since it gets added already
 		// Test with invalid address - missing 0x prefix
-		// invalidAddress1 := "0000000000000000000000000000000000000001"
-		// _, err = setup.UntypedCreateStream(ctx, platform, defaultStreamLocator.StreamId.String(), invalidAddress1, string(setup.ContractTypePrimitive))
-		// assert.Error(t, err, "address without 0x prefix should be rejected")
-		// assert.Contains(t, err.Error(), "Invalid data provider address", "error message should indicate invalid address format")
+		invalidAddress1 := "0000000000000000000000000000000000000001"
+		err = setup.UntypedCreateStream(ctx, platform, defaultStreamLocator.StreamId.String(), invalidAddress1, string(setup.ContractTypePrimitive))
+		assert.Error(t, err, "address without 0x prefix should be rejected")
+		assert.Contains(t, err.Error(), "Invalid data provider address", "error message should indicate invalid address format")
 
 		// Test with invalid address - wrong length
 		invalidAddress2 := "0x9"
