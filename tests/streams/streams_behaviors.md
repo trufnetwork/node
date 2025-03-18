@@ -29,6 +29,7 @@ This document lists the behaviors that must have automated tests to ensure they 
 - [QUERY04] All metadata values are publicly available.
 - [QUERY06] If a point in time is queried, but there's no available data for that point, the closest available data in the past is returned.
 - [QUERY07] Only one data point per date is returned from query (the latest inserted one)
+- [QUERY08] Inexistent streams on taxonomies are rejected with errors.
 
 ## Data Insertion
 
