@@ -24,9 +24,7 @@ CREATE OR REPLACE ACTION create_stream(
     }
     
     -- Check if stream_id has valid format (st followed by 30 lowercase alphanumeric chars)
-    -- TODO: only alphanumeric characters be allowed
-    if LENGTH($stream_id) != 32 OR 
-       substring($stream_id, 1, 2) != 'st' {
+    if NOT check_stream_id_format($stream_id) {
         ERROR('Invalid stream_id format. Must start with "st" followed by 30 lowercase alphanumeric characters: ' || $stream_id);
     }
     
@@ -216,7 +214,24 @@ CREATE OR REPLACE ACTION disable_metadata(
 CREATE OR REPLACE ACTION check_stream_id_format(
     $stream_id TEXT
 ) PUBLIC view returns (result BOOL) {
-    return LENGTH($stream_id) = 32 AND substring($stream_id, 1, 2) = 'st';
+    -- Check that the stream_id is exactly 32 characters and starts with "st"
+    if LENGTH($stream_id) != 32 OR substring($stream_id, 1, 2) != 'st' {
+        return false;
+    }
+
+    -- Iterate through each character after the "st" prefix.
+    for $i in 3..32 {
+        $c TEXT := substring($stream_id, $i, 1);
+        if NOT (
+            ($c >= '0' AND $c <= '9')
+            OR ($c >= 'A' AND $c <= 'Z')
+            OR ($c >= 'a' AND $c <= 'z')
+        ) {
+            return false;
+        }
+    }
+
+    return true;
 };
 
 /**

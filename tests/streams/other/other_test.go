@@ -91,16 +91,14 @@ func testStreamIDValidation(t *testing.T) func(ctx context.Context, platform *kw
 		assert.Contains(t, err.Error(), "Invalid stream_id format", "error message should indicate invalid format")
 
 		// Test invalid stream ID - uppercase letters
-		// TODO: Uncomment this once the regex is updated to disallow uppercase letters
-		// err = testutils.ExecuteCreateStream(ctx, platform, "stABCDEF89012345678901234567890", "primitive", defaultCaller)
-		// assert.Error(t, err, "uppercase letters in stream ID should be rejected")
-		// assert.Contains(t, err.Error(), "Invalid stream_id format", "error message should indicate invalid format")
+		err = setup.UntypedCreateStream(ctx, platform, "stABCDEF89012345678901234567890", defaultCaller, string(setup.ContractTypePrimitive))
+		assert.Error(t, err, "uppercase letters in stream ID should be rejected")
+		assert.Contains(t, err.Error(), "Invalid stream_id format", "error message should indicate invalid format")
 
 		// Test invalid stream ID - special characters
-		// TODO: Uncomment this once the regex is updated to disallow special characters
-		// err = testutils.ExecuteCreateStream(ctx, platform, "st12345678901234567890123456-+*&", "primitive", defaultCaller)
-		// assert.Error(t, err, "special characters in stream ID should be rejected")
-		// assert.Contains(t, err.Error(), "Invalid stream_id format", "error message should indicate invalid format")
+		err = setup.UntypedCreateStream(ctx, platform, "st12345678901234567890123456-+*&", defaultCaller, string(setup.ContractTypePrimitive))
+		assert.Error(t, err, "special characters in stream ID should be rejected")
+		assert.Contains(t, err.Error(), "Invalid stream_id format", "error message should indicate invalid format")
 
 		// now let's execute a statement getting all streams
 		rows := []common.Row{}
