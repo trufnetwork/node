@@ -65,7 +65,6 @@ func CheckReadAllPermissions(ctx context.Context, input CheckReadAllPermissionsI
 type CheckComposeAllPermissionsInput struct {
 	Platform *kwilTesting.Platform
 	Locator  trufTypes.StreamLocator
-	Wallet   string
 	Height   int64
 }
 
@@ -92,7 +91,6 @@ func CheckComposeAllPermissions(ctx context.Context, input CheckComposeAllPermis
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "is_allowed_to_compose_all", []any{
 		input.Locator.DataProvider.Address(),
 		input.Locator.StreamId.String(),
-		input.Wallet,
 		nil, // active_from, nil means no restriction
 		nil, // active_to, nil means no restriction
 	}, func(row *common.Row) error {
@@ -216,7 +214,7 @@ func CheckWritePermissions(ctx context.Context, input CheckWritePermissionsInput
 type CheckComposePermissionsInput struct {
 	Platform      *kwilTesting.Platform
 	Locator       trufTypes.StreamLocator
-	ForeignCaller string
+	ChildStreamId string
 	Height        int64
 }
 
@@ -243,7 +241,7 @@ func CheckComposePermissions(ctx context.Context, input CheckComposePermissionsI
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "is_allowed_to_compose", []any{
 		input.Locator.DataProvider.Address(),
 		input.Locator.StreamId.String(),
-		input.ForeignCaller,
+		input.ChildStreamId,
 		nil,
 		nil,
 	}, func(row *common.Row) error {

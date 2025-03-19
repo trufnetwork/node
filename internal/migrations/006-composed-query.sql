@@ -32,7 +32,7 @@ RETURNS TABLE(
     }
 
     -- Check compose permissions
-    if !is_allowed_to_compose($data_provider, $stream_id, @caller, $from, $to) {
+    if !is_allowed_to_compose_all($data_provider, $stream_id, $from, $to) {
         ERROR('Not allowed to compose stream');
     }
 

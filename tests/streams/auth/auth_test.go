@@ -516,18 +516,18 @@ func testComposePermissionControl(t *testing.T, contractInfo setup.StreamInfo) k
 			return errors.Wrapf(err, "failed to setup and initialize primary contract %s for compose permission test", contractInfo.Locator.StreamId.String())
 		}
 
-		// Set up a foreign contract (the one attempting to compose)
-		foreignContractInfo := setup.StreamInfo{
+		// Set up a upper contract (the one attempting to compose)
+		upperStreamInfo := setup.StreamInfo{
 			Locator: types.StreamLocator{
-				StreamId:     util.GenerateStreamId("foreign_stream_test"),
-				DataProvider: util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000abc"),
+				StreamId:     util.GenerateStreamId("upper_stream_test"),
+				DataProvider: contractInfo.Locator.DataProvider,
 			},
 			Type: setup.ContractTypePrimitive,
 		}
 
-		if err := setup.CreateStream(ctx, platform, foreignContractInfo); err != nil {
-			return errors.Wrapf(err, "failed to setup and initialize foreign contract %s for compose permission test",
-				foreignContractInfo.Locator.StreamId.String())
+		if err := setup.CreateStream(ctx, platform, upperStreamInfo); err != nil {
+			return errors.Wrapf(err, "failed to setup and initialize upper stream %s for compose permission test",
+				upperStreamInfo.Locator.StreamId.String())
 		}
 
 		// Set compose_visibility to private (1)
@@ -546,34 +546,34 @@ func testComposePermissionControl(t *testing.T, contractInfo setup.StreamInfo) k
 		canCompose, err := procedure.CheckComposePermissions(ctx, procedure.CheckComposePermissionsInput{
 			Platform:      platform,
 			Locator:       contractInfo.Locator,
-			ForeignCaller: foreignContractInfo.Locator.DataProvider.Address(),
+			ChildStreamId: upperStreamInfo.Locator.StreamId.String(),
 			Height:        0,
 		})
-		assert.False(t, canCompose, "Foreign stream should not be allowed to compose without permission")
+		assert.False(t, canCompose, "Upper stream should not be allowed to compose without permission")
 
 		// Grant compose permission to the foreign stream
 		err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
 			Platform: platform,
 			Locator:  contractInfo.Locator,
 			Key:      "allow_compose_stream",
-			Value:    foreignContractInfo.Locator.DataProvider.Address(),
+			Value:    upperStreamInfo.Locator.StreamId.String(),
 			ValType:  "ref",
 			Height:   0,
 		})
 		if err != nil {
-			return errors.Wrapf(err, "failed to grant compose permission to foreign stream %s for contract %s",
-				foreignContractInfo.Locator.StreamId.String(), contractInfo.Locator.StreamId.String())
+			return errors.Wrapf(err, "failed to grant compose permission to upper stream %s for contract %s",
+				upperStreamInfo.Locator.StreamId.String(), contractInfo.Locator.StreamId.String())
 		}
 
-		// Verify foreign stream can now compose
-		platform.Deployer = foreignContractInfo.Locator.DataProvider.Bytes()
+		// Verify upper stream can now compose
+		platform.Deployer = upperStreamInfo.Locator.DataProvider.Bytes()
 		canCompose, err = procedure.CheckComposePermissions(ctx, procedure.CheckComposePermissionsInput{
 			Platform:      platform,
-			Locator:       contractInfo.Locator,
-			ForeignCaller: foreignContractInfo.Locator.DataProvider.Address(),
+			Locator:       upperStreamInfo.Locator,
+			ChildStreamId: contractInfo.Locator.StreamId.String(),
 			Height:        0,
 		})
-		assert.True(t, canCompose, "Foreign stream should be allowed to compose after permission is granted")
+		assert.True(t, canCompose, "Upper stream should be allowed to compose after permission is granted")
 		assert.NoError(t, err, "No error expected when composing with permission")
 
 		return nil
@@ -594,160 +594,177 @@ func TestAUTH04_NestedComposePermissions(t *testing.T) {
 
 func testNestedComposePermissionControl(t *testing.T) kwilTesting.TestFunc {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Set up addresses for the test
-		dataProvider := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000001")
-		authorizedWallet := util.Unsafe_NewEthereumAddressFromString("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-		unauthorizedWallet := util.Unsafe_NewEthereumAddressFromString("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+		// Use a common data provider.
+		provider := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000002222")
 
-		// Create a hierarchy of streams:
-		// - Index 0: Primitive stream (root)
-		// - Index 1: First-level composed stream
-		// - Index 2: Second-level composed stream
-		streamLocators := []types.StreamLocator{
-			{
-				StreamId:     util.GenerateStreamId("nested_compose_primitive_test"),
-				DataProvider: dataProvider,
-			},
-			{
-				StreamId:     util.GenerateStreamId("nested_compose_level1_test"),
-				DataProvider: dataProvider,
-			},
-			{
-				StreamId:     util.GenerateStreamId("nested_compose_level2_test"),
-				DataProvider: dataProvider,
-			},
+		// Create a three-level chain: parent -> child -> grandchild.
+		parentLocator := types.StreamLocator{
+			StreamId:     util.GenerateStreamId("nested_parent"),
+			DataProvider: provider,
+		}
+		childLocator := types.StreamLocator{
+			StreamId:     util.GenerateStreamId("nested_child"),
+			DataProvider: provider,
+		}
+		grandchildLocator := types.StreamLocator{
+			StreamId:     util.GenerateStreamId("nested_grandchild"),
+			DataProvider: provider,
 		}
 
-		// Use corresponding stream types: root as primitive, and the rest as composed
-		streamTypes := []setup.ContractType{
-			setup.ContractTypePrimitive,
-			setup.ContractTypeComposed,
-			setup.ContractTypeComposed,
+		parentInfo := setup.StreamInfo{
+			Locator: parentLocator,
+			Type:    setup.ContractTypeComposed,
+		}
+		childInfo := setup.StreamInfo{
+			Locator: childLocator,
+			Type:    setup.ContractTypeComposed,
+		}
+		grandchildInfo := setup.StreamInfo{
+			Locator: grandchildLocator,
+			Type:    setup.ContractTypePrimitive,
 		}
 
-		// Set the platform signer to the dataProvider
-		platform = procedure.WithSigner(platform, dataProvider.Bytes())
+		platform = procedure.WithSigner(platform, provider.Bytes())
 
-		// 1. Create all streams in the hierarchy
-		for i, locator := range streamLocators {
-			err := setup.CreateStream(ctx, platform, setup.StreamInfo{
-				Locator: locator,
-				Type:    streamTypes[i],
-			})
-			if err != nil {
-				return errors.Wrapf(err, "failed to create stream %s for nested compose permission test", locator.StreamId.String())
-			}
+		// Create all streams.
+		if err := setup.CreateStream(ctx, platform, parentInfo); err != nil {
+			return errors.Wrap(err, "failed to create parent")
+		}
+		if err := setup.CreateStream(ctx, platform, childInfo); err != nil {
+			return errors.Wrap(err, "failed to create child")
+		}
+		if err := setup.CreateStream(ctx, platform, grandchildInfo); err != nil {
+			return errors.Wrap(err, "failed to create grandchild")
 		}
 
-		// 2. Set up the taxonomy chain:
-		// Link first-level composed stream to the primitive stream
-		err := procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
+		// Set up taxonomy:
+		// Link parent to child.
+		if err := procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
 			Platform:      platform,
-			StreamLocator: streamLocators[1],
-			DataProviders: []string{streamLocators[0].DataProvider.Address()},
-			StreamIds:     []string{streamLocators[0].StreamId.String()},
+			StreamLocator: parentLocator,
+			DataProviders: []string{childLocator.DataProvider.Address()},
+			StreamIds:     []string{childLocator.StreamId.String()},
 			Weights:       []string{"1.0"},
 			StartTime:     nil,
-		})
-		if err != nil {
-			return errors.Wrap(err, "failed to set taxonomy for first-level composed stream")
+		}); err != nil {
+			return errors.Wrap(err, "failed to set taxonomy for child")
 		}
-
-		// Link second-level composed stream to the first-level composed stream
-		err = procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
+		// Link child to grandchild.
+		if err := procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
 			Platform:      platform,
-			StreamLocator: streamLocators[2],
-			DataProviders: []string{streamLocators[1].DataProvider.Address()},
-			StreamIds:     []string{streamLocators[1].StreamId.String()},
+			StreamLocator: childLocator,
+			DataProviders: []string{grandchildLocator.DataProvider.Address()},
+			StreamIds:     []string{grandchildLocator.StreamId.String()},
 			Weights:       []string{"1.0"},
 			StartTime:     nil,
-		})
-		if err != nil {
-			return errors.Wrap(err, "failed to set taxonomy for second-level composed stream")
+		}); err != nil {
+			return errors.Wrap(err, "failed to set taxonomy for grandchild")
 		}
 
-		// 3. Mark the root (primitive) stream as private for composition
-		err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+		// When compose_visibility is not set, the default is public. The chain should be authorized.
+		canComposeAll, err := procedure.CheckComposeAllPermissions(ctx, procedure.CheckComposeAllPermissionsInput{
 			Platform: platform,
-			Locator:  streamLocators[0],
-			Key:      "compose_visibility",
-			Value:    "1", // 1 indicates private compose visibility
-			ValType:  "int",
-			Height:   1,
+			Locator:  parentLocator,
+			Height:   0,
 		})
 		if err != nil {
-			return errors.Wrap(err, "failed to set compose_visibility on primitive stream")
+			return errors.Wrap(err, "failed to check nested compose permissions initially")
 		}
+		assert.True(t, canComposeAll, "Expected nested compose to be allowed when compose_visibility is not set")
 
-		// 4. Grant compose permission to the authorized wallet on the root stream
-		err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+		// For the edge parent -> child:
+		// Mark the child as private.
+		if err := procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
 			Platform: platform,
-			Locator:  streamLocators[0],
-			Key:      "allow_compose_stream",
-			Value:    authorizedWallet.Address(),
-			ValType:  "ref",
-			Height:   2,
-		})
-		if err != nil {
-			return errors.Wrap(err, "failed to grant compose permission on primitive stream")
-		}
-
-		// (Optional) 5. For thoroughness, mark the first-level composed stream as private and grant permission as well.
-		err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
-			Platform: platform,
-			Locator:  streamLocators[1],
+			Locator:  childLocator,
 			Key:      "compose_visibility",
 			Value:    "1",
 			ValType:  "int",
-			Height:   3,
-		})
-		if err != nil {
-			return errors.Wrap(err, "failed to set compose_visibility on first-level composed stream")
+			Height:   0,
+		}); err != nil {
+			return errors.Wrap(err, "failed to set compose_visibility on child")
 		}
 
-		err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+		// Initially, without child's whitelist, nested compose should fail.
+		canComposeAll, err = procedure.CheckComposeAllPermissions(ctx, procedure.CheckComposeAllPermissionsInput{
 			Platform: platform,
-			Locator:  streamLocators[1],
-			Key:      "allow_compose_stream",
-			Value:    authorizedWallet.Address(),
-			ValType:  "ref",
-			Height:   4,
+			Locator:  parentLocator,
+			Height:   0,
 		})
 		if err != nil {
-			return errors.Wrap(err, "failed to grant compose permission on first-level composed stream")
+			return errors.Wrap(err, "failed to check nested compose permissions initially")
+		}
+		assert.False(t, canComposeAll, "Expected nested compose to be disallowed when child's allow_compose_stream metadata (for parent) is missing")
+
+		// Insert child's allow_compose_stream metadata whitelisting the parent.
+		if err := procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+			Platform: platform,
+			Locator:  childLocator,
+			Key:      "allow_compose_stream",
+			Value:    parentLocator.StreamId.String(),
+			ValType:  "ref",
+			Height:   0,
+		}); err != nil {
+			return errors.Wrap(err, "failed to insert allow_compose_stream metadata on child")
 		}
 
-		// Note: The second-level composed stream is left with default (public) compose visibility.
+		// Now the edge parent->child should be authorized.
+		canComposeAll, err = procedure.CheckComposeAllPermissions(ctx, procedure.CheckComposeAllPermissionsInput{
+			Platform: platform,
+			Locator:  parentLocator,
+			Height:   0,
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to check nested compose permissions after parent's whitelist on child")
+		}
+		assert.True(t, canComposeAll, "Expected nested compose to be allowed when child's allow_compose_stream metadata whitelists the parent")
 
-		// 6. Helper function to check nested compose permissions using CheckComposeAllPermissions
-		checkComposePermission := func(locator types.StreamLocator, wallet util.EthereumAddress, expected bool, description string) error {
-			canCompose, err := procedure.CheckComposeAllPermissions(ctx, procedure.CheckComposeAllPermissionsInput{
-				Platform: platform,
-				Locator:  locator,
-				Wallet:   wallet.Address(),
-				Height:   0,
-			})
-			if err != nil {
-				return errors.Wrapf(err, "failed to check nested compose permission for %s on stream %s", wallet.Address(), locator.StreamId.String())
-			}
-			assert.Equal(t, expected, canCompose, description)
-			return nil
+		// For the edge child -> grandchild:
+		// Mark the grandchild as private.
+		if err := procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+			Platform: platform,
+			Locator:  grandchildLocator,
+			Key:      "compose_visibility",
+			Value:    "1",
+			ValType:  "int",
+			Height:   0,
+		}); err != nil {
+			return errors.Wrap(err, "failed to set compose_visibility on grandchild")
 		}
 
-		// 7. Test each stream in the chain:
-		//    - The authorized wallet should be allowed to compose on all streams.
-		//    - The unauthorized wallet should not be allowed.
-		streamNames := []string{"primitive", "first-level composed", "second-level composed"}
-		for i, locator := range streamLocators {
-			if err := checkComposePermission(locator, authorizedWallet, true,
-				fmt.Sprintf("authorized wallet should be allowed to compose on %s stream", streamNames[i])); err != nil {
-				return err
-			}
-			if err := checkComposePermission(locator, unauthorizedWallet, false,
-				fmt.Sprintf("unauthorized wallet should not be allowed to compose on %s stream", streamNames[i])); err != nil {
-				return err
-			}
+		// Without grandchild's whitelist, the nested check should now fail.
+		canComposeAll, err = procedure.CheckComposeAllPermissions(ctx, procedure.CheckComposeAllPermissionsInput{
+			Platform: platform,
+			Locator:  parentLocator,
+			Height:   0,
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to check nested compose permissions after marking grandchild private")
 		}
+		assert.False(t, canComposeAll, "Expected nested compose to be disallowed when grandchild's allow_compose_stream metadata (for child) is missing")
+
+		// Insert grandchild's allow_compose_stream metadata whitelisting the child.
+		if err := procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+			Platform: platform,
+			Locator:  grandchildLocator,
+			Key:      "allow_compose_stream",
+			Value:    childLocator.StreamId.String(),
+			ValType:  "ref",
+			Height:   0,
+		}); err != nil {
+			return errors.Wrap(err, "failed to insert allow_compose_stream metadata on grandchild")
+		}
+
+		// Now the full chain should be authorized.
+		canComposeAll, err = procedure.CheckComposeAllPermissions(ctx, procedure.CheckComposeAllPermissionsInput{
+			Platform: platform,
+			Locator:  parentLocator,
+			Height:   0,
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to check nested compose permissions after all metadata inserted")
+		}
+		assert.True(t, canComposeAll, "Expected nested compose to be allowed when both child's and grandchild's allow_compose_stream metadata are correctly set")
 
 		return nil
 	}
