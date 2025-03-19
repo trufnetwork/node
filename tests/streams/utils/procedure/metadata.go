@@ -62,6 +62,50 @@ func CheckReadAllPermissions(ctx context.Context, input CheckReadAllPermissionsI
 	return allowed, nil
 }
 
+// CheckComposeAllPermissions checks if a wallet is allowed to read from all substreams of a stream
+func CheckComposeAllPermissions(ctx context.Context, input CheckReadAllPermissionsInput) (bool, error) {
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return false, errors.Wrap(err, "failed to create Ethereum address from deployer bytes")
+	}
+
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: input.Height},
+		Signer:       input.Platform.Deployer,
+		Caller:       deployer.Address(),
+		TxID:         input.Platform.Txid(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext: txContext,
+	}
+
+	var allowed bool
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "is_allowed_to_compose", []any{
+		input.Locator.DataProvider.Address(),
+		input.Locator.StreamId.String(),
+		input.Wallet,
+		nil, // active_from, nil means no restriction
+		nil, // active_to, nil means no restriction
+	}, func(row *common.Row) error {
+		if len(row.Values) > 0 {
+			if val, ok := row.Values[0].(bool); ok {
+				allowed = val
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	if r.Error != nil {
+		return false, errors.Wrap(r.Error, "error in is_allowed_to_compose")
+	}
+
+	return allowed, nil
+}
+
 type CheckReadPermissionsInput struct {
 	Platform *kwilTesting.Platform
 	Locator  trufTypes.StreamLocator
@@ -189,10 +233,12 @@ func CheckComposePermissions(ctx context.Context, input CheckComposePermissionsI
 	}
 
 	var allowed bool
-	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "is_stream_allowed_to_compose", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "is_allowed_to_compose", []any{
 		input.Locator.DataProvider.Address(),
 		input.Locator.StreamId.String(),
 		input.ForeignCaller,
+		nil,
+		nil,
 	}, func(row *common.Row) error {
 		if len(row.Values) > 0 {
 			if val, ok := row.Values[0].(bool); ok {
@@ -205,7 +251,7 @@ func CheckComposePermissions(ctx context.Context, input CheckComposePermissionsI
 		return false, err
 	}
 	if r.Error != nil {
-		return false, errors.Wrap(r.Error, "error in is_stream_allowed_to_compose")
+		return false, errors.Wrap(r.Error, "error in is_allowed_to_compose")
 	}
 
 	return allowed, nil

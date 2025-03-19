@@ -79,7 +79,7 @@ ON taxonomies (child_data_provider, child_stream_id);
 
 -- optimizes "get latest taxonomy version"
 CREATE INDEX IF NOT EXISTS tax_latest_version_idx ON taxonomies
-(data_provider, stream_id, start_time DESC, version DESC);
+(data_provider, stream_id, start_time, version);
 
 CREATE TABLE IF NOT EXISTS primitive_events (
     stream_id TEXT NOT NULL,

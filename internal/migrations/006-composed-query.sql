@@ -31,6 +31,11 @@ RETURNS TABLE(
         ERROR('Not allowed to read stream');
     }
 
+    -- Check compose permissions
+    if !is_allowed_to_compose($data_provider, $stream_id, @caller, $from, $to) {
+        ERROR('Not allowed to compose stream');
+    }
+
     RETURN WITH RECURSIVE
 
     -- Find taxonomy versions that apply to our query window
