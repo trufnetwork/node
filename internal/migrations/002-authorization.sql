@@ -64,7 +64,7 @@ CREATE OR REPLACE ACTION is_allowed_to_read(
 CREATE OR REPLACE ACTION is_allowed_to_compose(
     $data_provider TEXT,
     $stream_id TEXT,
-    $child_stream_id TEXT,
+    $composing_stream_id TEXT,
     $active_from INT,
     $active_to INT
 ) PUBLIC view returns (is_allowed BOOL) {
@@ -72,7 +72,7 @@ CREATE OR REPLACE ACTION is_allowed_to_compose(
     if !stream_exists($data_provider, $stream_id) {
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
     }
-    if !stream_exists($data_provider, $child_stream_id) {
+    if !stream_exists($data_provider, $composing_stream_id) {
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $child_stream_id);
     }
     -- Check if the stream is private
@@ -101,7 +101,7 @@ CREATE OR REPLACE ACTION is_allowed_to_compose(
         $data_provider,
         $stream_id,
         'allow_compose_stream',
-        $child_stream_id,
+        $composing_stream_id,
         1,
         0,
         'created_at DESC'

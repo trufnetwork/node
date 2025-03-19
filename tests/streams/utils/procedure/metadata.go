@@ -212,10 +212,10 @@ func CheckWritePermissions(ctx context.Context, input CheckWritePermissionsInput
 }
 
 type CheckComposePermissionsInput struct {
-	Platform      *kwilTesting.Platform
-	Locator       trufTypes.StreamLocator
-	ChildStreamId string
-	Height        int64
+	Platform          *kwilTesting.Platform
+	Locator           trufTypes.StreamLocator
+	ComposingStreamId string
+	Height            int64
 }
 
 // CheckComposePermissions checks if a stream is allowed to compose from another stream
@@ -241,7 +241,7 @@ func CheckComposePermissions(ctx context.Context, input CheckComposePermissionsI
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "is_allowed_to_compose", []any{
 		input.Locator.DataProvider.Address(),
 		input.Locator.StreamId.String(),
-		input.ChildStreamId,
+		input.ComposingStreamId,
 		nil,
 		nil,
 	}, func(row *common.Row) error {

@@ -544,10 +544,10 @@ func testComposePermissionControl(t *testing.T, contractInfo setup.StreamInfo) k
 
 		// Verify foreign stream cannot compose without permission
 		canCompose, err := procedure.CheckComposePermissions(ctx, procedure.CheckComposePermissionsInput{
-			Platform:      platform,
-			Locator:       contractInfo.Locator,
-			ChildStreamId: upperStreamInfo.Locator.StreamId.String(),
-			Height:        0,
+			Platform:          platform,
+			Locator:           contractInfo.Locator,
+			ComposingStreamId: upperStreamInfo.Locator.StreamId.String(),
+			Height:            0,
 		})
 		assert.False(t, canCompose, "Upper stream should not be allowed to compose without permission")
 
@@ -568,10 +568,10 @@ func testComposePermissionControl(t *testing.T, contractInfo setup.StreamInfo) k
 		// Verify upper stream can now compose
 		platform.Deployer = upperStreamInfo.Locator.DataProvider.Bytes()
 		canCompose, err = procedure.CheckComposePermissions(ctx, procedure.CheckComposePermissionsInput{
-			Platform:      platform,
-			Locator:       upperStreamInfo.Locator,
-			ChildStreamId: contractInfo.Locator.StreamId.String(),
-			Height:        0,
+			Platform:          platform,
+			Locator:           upperStreamInfo.Locator,
+			ComposingStreamId: contractInfo.Locator.StreamId.String(),
+			Height:            0,
 		})
 		assert.True(t, canCompose, "Upper stream should be allowed to compose after permission is granted")
 		assert.NoError(t, err, "No error expected when composing with permission")
