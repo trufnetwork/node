@@ -62,8 +62,15 @@ func CheckReadAllPermissions(ctx context.Context, input CheckReadAllPermissionsI
 	return allowed, nil
 }
 
-// CheckComposeAllPermissions checks if a wallet is allowed to read from all substreams of a stream
-func CheckComposeAllPermissions(ctx context.Context, input CheckReadAllPermissionsInput) (bool, error) {
+type CheckComposeAllPermissionsInput struct {
+	Platform *kwilTesting.Platform
+	Locator  trufTypes.StreamLocator
+	Wallet   string
+	Height   int64
+}
+
+// CheckComposeAllPermissions checks if a wallet is allowed to compose from all substreams of a stream
+func CheckComposeAllPermissions(ctx context.Context, input CheckComposeAllPermissionsInput) (bool, error) {
 	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
 	if err != nil {
 		return false, errors.Wrap(err, "failed to create Ethereum address from deployer bytes")
@@ -82,7 +89,7 @@ func CheckComposeAllPermissions(ctx context.Context, input CheckReadAllPermissio
 	}
 
 	var allowed bool
-	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "is_allowed_to_compose", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "is_allowed_to_compose_all", []any{
 		input.Locator.DataProvider.Address(),
 		input.Locator.StreamId.String(),
 		input.Wallet,

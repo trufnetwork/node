@@ -580,6 +580,179 @@ func testComposePermissionControl(t *testing.T, contractInfo setup.StreamInfo) k
 	}
 }
 
+// TestAUTH04_NestedComposePermissions tests AUTH04:
+// The stream owner can control which streams (and their nested substreams) are allowed to compose from the stream.
+func TestAUTH04_NestedComposePermissions(t *testing.T) {
+	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name:        "nested_compose_permission_control_AUTH04",
+		SeedScripts: migrations.GetSeedScriptPaths(),
+		FunctionTests: []kwilTesting.TestFunc{
+			testNestedComposePermissionControl(t),
+		},
+	}, testutils.GetTestOptions())
+}
+
+func testNestedComposePermissionControl(t *testing.T) kwilTesting.TestFunc {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Set up addresses for the test
+		dataProvider := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000001")
+		authorizedWallet := util.Unsafe_NewEthereumAddressFromString("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+		unauthorizedWallet := util.Unsafe_NewEthereumAddressFromString("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+
+		// Create a hierarchy of streams:
+		// - Index 0: Primitive stream (root)
+		// - Index 1: First-level composed stream
+		// - Index 2: Second-level composed stream
+		streamLocators := []types.StreamLocator{
+			{
+				StreamId:     util.GenerateStreamId("nested_compose_primitive_test"),
+				DataProvider: dataProvider,
+			},
+			{
+				StreamId:     util.GenerateStreamId("nested_compose_level1_test"),
+				DataProvider: dataProvider,
+			},
+			{
+				StreamId:     util.GenerateStreamId("nested_compose_level2_test"),
+				DataProvider: dataProvider,
+			},
+		}
+
+		// Use corresponding stream types: root as primitive, and the rest as composed
+		streamTypes := []setup.ContractType{
+			setup.ContractTypePrimitive,
+			setup.ContractTypeComposed,
+			setup.ContractTypeComposed,
+		}
+
+		// Set the platform signer to the dataProvider
+		platform = procedure.WithSigner(platform, dataProvider.Bytes())
+
+		// 1. Create all streams in the hierarchy
+		for i, locator := range streamLocators {
+			err := setup.CreateStream(ctx, platform, setup.StreamInfo{
+				Locator: locator,
+				Type:    streamTypes[i],
+			})
+			if err != nil {
+				return errors.Wrapf(err, "failed to create stream %s for nested compose permission test", locator.StreamId.String())
+			}
+		}
+
+		// 2. Set up the taxonomy chain:
+		// Link first-level composed stream to the primitive stream
+		err := procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
+			Platform:      platform,
+			StreamLocator: streamLocators[1],
+			DataProviders: []string{streamLocators[0].DataProvider.Address()},
+			StreamIds:     []string{streamLocators[0].StreamId.String()},
+			Weights:       []string{"1.0"},
+			StartTime:     nil,
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to set taxonomy for first-level composed stream")
+		}
+
+		// Link second-level composed stream to the first-level composed stream
+		err = procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
+			Platform:      platform,
+			StreamLocator: streamLocators[2],
+			DataProviders: []string{streamLocators[1].DataProvider.Address()},
+			StreamIds:     []string{streamLocators[1].StreamId.String()},
+			Weights:       []string{"1.0"},
+			StartTime:     nil,
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to set taxonomy for second-level composed stream")
+		}
+
+		// 3. Mark the root (primitive) stream as private for composition
+		err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+			Platform: platform,
+			Locator:  streamLocators[0],
+			Key:      "compose_visibility",
+			Value:    "1", // 1 indicates private compose visibility
+			ValType:  "int",
+			Height:   1,
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to set compose_visibility on primitive stream")
+		}
+
+		// 4. Grant compose permission to the authorized wallet on the root stream
+		err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+			Platform: platform,
+			Locator:  streamLocators[0],
+			Key:      "allow_compose_stream",
+			Value:    authorizedWallet.Address(),
+			ValType:  "ref",
+			Height:   2,
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to grant compose permission on primitive stream")
+		}
+
+		// (Optional) 5. For thoroughness, mark the first-level composed stream as private and grant permission as well.
+		err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+			Platform: platform,
+			Locator:  streamLocators[1],
+			Key:      "compose_visibility",
+			Value:    "1",
+			ValType:  "int",
+			Height:   3,
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to set compose_visibility on first-level composed stream")
+		}
+
+		err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+			Platform: platform,
+			Locator:  streamLocators[1],
+			Key:      "allow_compose_stream",
+			Value:    authorizedWallet.Address(),
+			ValType:  "ref",
+			Height:   4,
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to grant compose permission on first-level composed stream")
+		}
+
+		// Note: The second-level composed stream is left with default (public) compose visibility.
+
+		// 6. Helper function to check nested compose permissions using CheckComposeAllPermissions
+		checkComposePermission := func(locator types.StreamLocator, wallet util.EthereumAddress, expected bool, description string) error {
+			canCompose, err := procedure.CheckComposeAllPermissions(ctx, procedure.CheckComposeAllPermissionsInput{
+				Platform: platform,
+				Locator:  locator,
+				Wallet:   wallet.Address(),
+				Height:   0,
+			})
+			if err != nil {
+				return errors.Wrapf(err, "failed to check nested compose permission for %s on stream %s", wallet.Address(), locator.StreamId.String())
+			}
+			assert.Equal(t, expected, canCompose, description)
+			return nil
+		}
+
+		// 7. Test each stream in the chain:
+		//    - The authorized wallet should be allowed to compose on all streams.
+		//    - The unauthorized wallet should not be allowed.
+		streamNames := []string{"primitive", "first-level composed", "second-level composed"}
+		for i, locator := range streamLocators {
+			if err := checkComposePermission(locator, authorizedWallet, true,
+				fmt.Sprintf("authorized wallet should be allowed to compose on %s stream", streamNames[i])); err != nil {
+				return err
+			}
+			if err := checkComposePermission(locator, unauthorizedWallet, false,
+				fmt.Sprintf("unauthorized wallet should not be allowed to compose on %s stream", streamNames[i])); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}
+}
+
 // // TestAUTH05_StreamDeletion tests AUTH05: Stream owners are able to delete their streams and all associated data.
 // func TestAUTH05_StreamDeletion(t *testing.T) {
 // 	t.Skip("Test skipped: auth stream tests temporarily disabled")
