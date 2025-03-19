@@ -222,7 +222,6 @@ CREATE OR REPLACE ACTION check_stream_id_format(
         $c TEXT := substring($stream_id, $i, 1);
         if NOT (
             ($c >= '0' AND $c <= '9')
-            OR ($c >= 'A' AND $c <= 'Z')
             OR ($c >= 'a' AND $c <= 'z')
         ) {
             return false;
