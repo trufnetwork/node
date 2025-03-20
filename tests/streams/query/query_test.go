@@ -52,6 +52,7 @@ func TestQueryStream(t *testing.T) {
 			WithQueryTestSetup(testQUERY01_GetRecordWithBaseDate(t)),
 			WithQueryTestSetup(testQUERY07_AdditionalInsertWillFetchLatestRecord(t)),
 			WithComposedQueryTestSetup(testAGGR03_ComposedStreamWithWeights(t)),
+			WithQueryTestSetup(testBatchInsertAndQueryRecord(t)),
 		},
 	}, testutils.GetTestOptions())
 }
@@ -102,8 +103,8 @@ func testQUERY01_InsertAndGetRecord(t *testing.T) func(ctx context.Context, plat
 				StreamId:     primitiveStreamId,
 				DataProvider: deployer,
 			},
-			FromTime: 1,
-			ToTime:   5,
+			FromTime: func() *int64 { v := int64(1); return &v }(),
+			ToTime:   func() *int64 { v := int64(5); return &v }(),
 		})
 
 		if err != nil {
@@ -144,8 +145,8 @@ func testQUERY06_GetRecordWithFutureDate(t *testing.T) func(ctx context.Context,
 				StreamId:     primitiveStreamId,
 				DataProvider: deployer,
 			},
-			FromTime: 6, // Future date
-			ToTime:   6,
+			FromTime: func() *int64 { v := int64(6); return &v }(), // Future date
+			ToTime:   func() *int64 { v := int64(6); return &v }(),
 		})
 
 		if err != nil {
@@ -182,8 +183,8 @@ func testQUERY02_GetIndex(t *testing.T) func(ctx context.Context, platform *kwil
 				StreamId:     primitiveStreamId,
 				DataProvider: deployer,
 			},
-			FromTime: 1,
-			ToTime:   5,
+			FromTime: func() *int64 { v := int64(1); return &v }(),
+			ToTime:   func() *int64 { v := int64(5); return &v }(),
 		})
 
 		if err != nil {
@@ -224,8 +225,8 @@ func testQUERY03_GetIndexChange(t *testing.T) func(ctx context.Context, platform
 				StreamId:     primitiveStreamId,
 				DataProvider: deployer,
 			},
-			FromTime: 1,
-			ToTime:   5,
+			FromTime: func() *int64 { v := int64(1); return &v }(),
+			ToTime:   func() *int64 { v := int64(5); return &v }(),
 		})
 
 		if err != nil {
@@ -314,8 +315,8 @@ func testQUERY07_DuplicateDate(t *testing.T) func(ctx context.Context, platform 
 		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 			Platform:      platform,
 			StreamLocator: streamLocator,
-			FromTime:      1,
-			ToTime:        5,
+			FromTime:      func() *int64 { v := int64(1); return &v }(),
+			ToTime:        func() *int64 { v := int64(5); return &v }(),
 		})
 
 		if err != nil {
@@ -359,9 +360,9 @@ func testQUERY01_GetRecordWithBaseDate(t *testing.T) func(ctx context.Context, p
 				StreamId:     primitiveStreamId,
 				DataProvider: deployer,
 			},
-			FromTime: 1,
-			ToTime:   5,
-			BaseTime: baseTime,
+			FromTime: func() *int64 { v := int64(1); return &v }(),
+			ToTime:   func() *int64 { v := int64(5); return &v }(),
+			BaseTime: func() *int64 { v := baseTime; return &v }(),
 			Height:   0,
 		})
 
@@ -416,8 +417,8 @@ func testQUERY07_AdditionalInsertWillFetchLatestRecord(t *testing.T) func(ctx co
 		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 			Platform:      platform,
 			StreamLocator: streamLocator,
-			FromTime:      1,
-			ToTime:        5,
+			FromTime:      func() *int64 { v := int64(1); return &v }(),
+			ToTime:        func() *int64 { v := int64(5); return &v }(),
 		})
 
 		if err != nil {
@@ -514,6 +515,67 @@ func testAGGR03_ComposedStreamWithWeights(t *testing.T) func(ctx context.Context
 			parentStreamId, childStream2Id,
 		)
 
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   result,
+			Expected: expected,
+		})
+		return nil
+	}
+}
+
+func testBatchInsertAndQueryRecord(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address")
+		}
+		streamLocator := types.StreamLocator{
+			StreamId:     primitiveStreamId,
+			DataProvider: deployer,
+		}
+
+		// Prepare a batch of records to insert
+		batchData := []setup.InsertRecordInput{
+			{EventTime: 10, Value: 100},
+			{EventTime: 11, Value: 110},
+			{EventTime: 12, Value: 120},
+		}
+
+		primitiveStream := setup.PrimitiveStreamWithData{
+			PrimitiveStreamDefinition: setup.PrimitiveStreamDefinition{
+				StreamLocator: streamLocator,
+			},
+			Data: batchData,
+		}
+
+		// Insert the batch using the new batch insertion action
+		err = setup.InsertPrimitiveDataBatch(ctx, setup.InsertPrimitiveDataInput{
+			Platform:        platform,
+			PrimitiveStream: primitiveStream,
+			Height:          2,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error in batch insertion")
+		}
+
+		// Query the inserted records and check the result
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
+			Platform:      platform,
+			StreamLocator: streamLocator,
+			FromTime:      func() *int64 { v := int64(10); return &v }(),
+			ToTime:        func() *int64 { v := int64(12); return &v }(),
+		})
+		if err != nil {
+			return errors.Wrap(err, "error querying batch inserted records")
+		}
+
+		expected := `
+        | event_time | value |
+        |------------|-------|
+        | 10         | 100.000000000000000000 |
+        | 11         | 110.000000000000000000 |
+        | 12         | 120.000000000000000000 |
+        `
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
 			Actual:   result,
 			Expected: expected,

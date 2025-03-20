@@ -78,8 +78,8 @@ func setupPrimitive(ctx context.Context, setupInput SetupPrimitiveInput) error {
 	// Insert the data
 	if err := insertPrimitiveData(ctx, InsertPrimitiveDataInput{
 		Platform:        setupInput.Platform,
-		primitiveStream: setupInput.PrimitiveStreamWithData,
-		height:          setupInput.Height,
+		PrimitiveStream: setupInput.PrimitiveStreamWithData,
+		Height:          setupInput.Height,
 	}); err != nil {
 		return errors.Wrap(err, "error inserting primitive data")
 	}
@@ -217,20 +217,20 @@ func InsertMarkdownPrimitiveData(ctx context.Context, input InsertMarkdownDataIn
 
 type InsertPrimitiveDataInput struct {
 	Platform        *kwilTesting.Platform
-	primitiveStream PrimitiveStreamWithData
-	height          int64
+	PrimitiveStream PrimitiveStreamWithData
+	Height          int64
 }
 
 func insertPrimitiveData(ctx context.Context, input InsertPrimitiveDataInput) error {
 	args := [][]any{}
-	for _, data := range input.primitiveStream.Data {
+	for _, data := range input.PrimitiveStream.Data {
 		valueDecimal, err := kwilTypes.ParseDecimalExplicit(strconv.FormatFloat(data.Value, 'f', -1, 64), 36, 18)
 		if err != nil {
 			return errors.Wrap(err, "error in insertPrimitiveData")
 		}
 		args = append(args, []any{
-			input.primitiveStream.StreamLocator.DataProvider.Address(),
-			input.primitiveStream.StreamLocator.StreamId.String(),
+			input.PrimitiveStream.StreamLocator.DataProvider.Address(),
+			input.PrimitiveStream.StreamLocator.StreamId.String(),
 			data.EventTime,
 			valueDecimal,
 		})
@@ -238,7 +238,7 @@ func insertPrimitiveData(ctx context.Context, input InsertPrimitiveDataInput) er
 
 	txid := input.Platform.Txid()
 
-	deployer, err := util.NewEthereumAddressFromBytes(input.primitiveStream.StreamLocator.DataProvider.Bytes())
+	deployer, err := util.NewEthereumAddressFromBytes(input.PrimitiveStream.StreamLocator.DataProvider.Bytes())
 	if err != nil {
 		return errors.Wrap(err, "error in insertPrimitiveData")
 	}
@@ -247,7 +247,7 @@ func insertPrimitiveData(ctx context.Context, input InsertPrimitiveDataInput) er
 		txContext := &common.TxContext{
 			Ctx: ctx,
 			BlockContext: &common.BlockContext{
-				Height: input.height,
+				Height: input.Height,
 			},
 			TxID:   txid,
 			Signer: deployer.Bytes(),
@@ -275,14 +275,75 @@ func insertPrimitiveData(ctx context.Context, input InsertPrimitiveDataInput) er
 func ExecuteInsertRecord(ctx context.Context, platform *kwilTesting.Platform, locator types.StreamLocator, input InsertRecordInput, height int64) error {
 	insertPrimitiveDataInput := InsertPrimitiveDataInput{
 		Platform: platform,
-		primitiveStream: PrimitiveStreamWithData{
+		PrimitiveStream: PrimitiveStreamWithData{
 			PrimitiveStreamDefinition: PrimitiveStreamDefinition{
 				StreamLocator: locator,
 			},
 			Data: []InsertRecordInput{input},
 		},
-		height: height,
+		Height: height,
 	}
 
 	return insertPrimitiveData(ctx, insertPrimitiveDataInput)
+}
+
+// InsertPrimitiveDataBatch calls the batch insertion action "insert_records" with arrays of parameters.
+func InsertPrimitiveDataBatch(ctx context.Context, input InsertPrimitiveDataInput) error {
+	dataProviders := []string{}
+	streamIds := []string{}
+	eventTimes := []int64{}
+	values := []*kwilTypes.Decimal{}
+
+	for _, data := range input.PrimitiveStream.Data {
+		// For each record, add the same provider and stream id (they come from the stream locator)
+		dataProviders = append(dataProviders, input.PrimitiveStream.StreamLocator.DataProvider.Address())
+		streamIds = append(streamIds, input.PrimitiveStream.StreamLocator.StreamId.String())
+		eventTimes = append(eventTimes, data.EventTime)
+		valueDecimal, err := kwilTypes.ParseDecimalExplicit(strconv.FormatFloat(data.Value, 'f', -1, 64), 36, 18)
+		if err != nil {
+			return errors.Wrap(err, "error in InsertPrimitiveDataBatch")
+		}
+		values = append(values, valueDecimal)
+	}
+
+	args := []any{
+		dataProviders,
+		streamIds,
+		eventTimes,
+		values,
+	}
+
+	//args = append(args, []any{dataProviders, streamIds, eventTimes, values})
+
+	txid := input.Platform.Txid()
+
+	deployer, err := util.NewEthereumAddressFromBytes(input.PrimitiveStream.StreamLocator.DataProvider.Bytes())
+	if err != nil {
+		return errors.Wrap(err, "error in InsertPrimitiveDataBatch")
+	}
+
+	txContext := &common.TxContext{
+		Ctx: ctx,
+		BlockContext: &common.BlockContext{
+			Height: input.Height,
+		},
+		TxID:   txid,
+		Signer: deployer.Bytes(),
+		Caller: deployer.Address(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext: txContext,
+	}
+
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "insert_records", args, func(row *common.Row) error {
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if r.Error != nil {
+		return errors.Wrap(r.Error, "error in InsertPrimitiveDataBatch")
+	}
+	return nil
 }
