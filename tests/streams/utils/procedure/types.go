@@ -22,7 +22,6 @@ type GetIndexInput struct {
 	FrozenAt      *int64
 	Height        int64
 	BaseTime      *int64
-	Interval      *int
 }
 
 type ResultRow []string
