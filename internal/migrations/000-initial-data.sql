@@ -6,7 +6,7 @@
     
     Tables:
     - streams: Core table storing stream metadata with immutable data provider references
-    - taxonomies: Defines parent-child relationships between streams with versioning
+    - taxonomies: Defines parent-child relationships between streams with group_sequenceing
     - primitive_events: Stores time-series data points for primitive streams
     - metadata: Flexible key-value store for stream configuration and properties
  */
@@ -45,7 +45,8 @@ CREATE TABLE IF NOT EXISTS taxonomies (
     weight NUMERIC(36, 18) NOT NULL,
     created_at INT8 NOT NULL,
     disabled_at INT8,
-    version INT8 NOT NULL,
+    -- group_sequence is the number of taxonomies that have been created for this parent stream
+    group_sequence INT8 NOT NULL,
     start_time INT8 NOT NULL,
 
     PRIMARY KEY (taxonomy_id),
@@ -57,12 +58,12 @@ CREATE TABLE IF NOT EXISTS taxonomies (
     -- we create them as unique index instead
 
     CHECK (weight >= 0),
-    CHECK (version >= 0),
+    CHECK (group_sequence >= 0),
     CHECK (start_time >= 0)
 );
 
 -- Create indexes separately
-CREATE UNIQUE INDEX IF NOT EXISTS tax_child_uniq_idx ON taxonomies (data_provider, stream_id, start_time, version, child_data_provider, child_stream_id);
+CREATE UNIQUE INDEX IF NOT EXISTS tax_child_uniq_idx ON taxonomies (data_provider, stream_id, start_time, group_sequence, child_data_provider, child_stream_id);
 -- TODO: Add this back in when we support where clause
 -- CREATE INDEX IF NOT EXISTS active_child_stream_idx ON taxonomies (data_provider, stream_id)
 -- WHERE disabled_at IS NULL;
@@ -77,9 +78,8 @@ ON taxonomies (data_provider, stream_id, start_time, disabled_at);
 CREATE INDEX IF NOT EXISTS tax_child_lookup_idx
 ON taxonomies (child_data_provider, child_stream_id);
 
--- optimizes "get latest taxonomy version"
-CREATE INDEX IF NOT EXISTS tax_latest_version_idx ON taxonomies
-(data_provider, stream_id, start_time, version);
+-- optimizes "get latest taxonomy group_sequence"
+CREATE INDEX IF NOT EXISTS tax_latest_group_sequence_idx ON taxonomies (data_provider, stream_id, start_time, group_sequence);
 
 CREATE TABLE IF NOT EXISTS primitive_events (
     stream_id TEXT NOT NULL,

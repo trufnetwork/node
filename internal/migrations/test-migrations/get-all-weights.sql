@@ -15,8 +15,8 @@ CREATE OR REPLACE ACTION get_all_weights_for_query(
     weight NUMERIC(36,18)
 ) {
     return WITH RECURSIVE
-      -- 1. Identify relevant taxonomy versions for the target stream
-      latest_version_before AS (
+      -- 1. Identify relevant taxonomy group_sequences for the target stream
+      latest_group_sequence_before AS (
         SELECT MAX(start_time) AS start_time
         FROM taxonomies
         WHERE data_provider = $data_provider
@@ -24,28 +24,28 @@ CREATE OR REPLACE ACTION get_all_weights_for_query(
           AND disabled_at IS NULL
           AND start_time::INT <= $from_time::INT
       ),
-      future_versions AS (
+      future_group_sequences AS (
         SELECT start_time
         FROM taxonomies
         WHERE data_provider = $data_provider
           AND stream_id    = $stream_id
           AND disabled_at IS NULL
           AND start_time::INT > $from_time::INT
-          AND start_time::INT <= $to_time::INT  -- Only consider versions within the query time range
+          AND start_time::INT <= $to_time::INT  -- Only consider group_sequences within the query time range
       ),
-      version_starts AS (
+      group_sequence_starts AS (
         SELECT start_time 
-        FROM latest_version_before
-        WHERE start_time IS NOT NULL  -- Only include if we found a version
+        FROM latest_group_sequence_before
+        WHERE start_time IS NOT NULL  -- Only include if we found a group_sequence
         UNION 
-        SELECT start_time FROM future_versions
+        SELECT start_time FROM future_group_sequences
         UNION
         -- Include to_time+1 as a boundary to ensure proper clamping of intervals
         SELECT ($to_time::INT + 1)::INT AS start_time WHERE $to_time IS NOT NULL
       ),
-      -- Handle the case where no version exists before or at from_time
-      -- but there are future versions - use the earliest future version
-      earliest_future_version AS (
+      -- Handle the case where no group_sequence exists before or at from_time
+      -- but there are future group_sequences - use the earliest future group_sequence
+      earliest_future_group_sequence AS (
         SELECT MIN(start_time) AS start_time
         FROM taxonomies
         WHERE data_provider = $data_provider
@@ -54,18 +54,18 @@ CREATE OR REPLACE ACTION get_all_weights_for_query(
           AND start_time::INT > $from_time::INT
           AND start_time::INT <= $to_time::INT
       ),
-      effective_versions AS (
+      effective_group_sequences AS (
         SELECT start_time
-        FROM version_starts
+        FROM group_sequence_starts
         UNION
-        -- If no version before $from_time, use earliest future version (if any)
+        -- If no group_sequence before $from_time, use earliest future group_sequence (if any)
         SELECT start_time 
-        FROM earliest_future_version
+        FROM earliest_future_group_sequence
         WHERE start_time IS NOT NULL
-          AND NOT EXISTS (SELECT 1 FROM latest_version_before WHERE start_time IS NOT NULL)
+          AND NOT EXISTS (SELECT 1 FROM latest_group_sequence_before WHERE start_time IS NOT NULL)
       ),
-      -- 2. Compute main stream's version segments with end_time as next_version_start - 1
-      main_versions AS (
+      -- 2. Compute main stream's group_sequence segments with end_time as next_group_sequence_start - 1
+      main_group_sequences AS (
         SELECT 
           vs.start_time AS segment_start,
           -- Replace LEAST with CASE WHEN
@@ -74,10 +74,10 @@ CREATE OR REPLACE ACTION get_all_weights_for_query(
             THEN (LEAD(vs.start_time) OVER (ORDER BY vs.start_time) - 1)::INT
             ELSE $to_time::INT
           END AS segment_end
-        FROM effective_versions vs
+        FROM effective_group_sequences vs
         ORDER BY vs.start_time
       ),
-      -- Get all taxonomy entries for the target stream's selected versions (children of the main stream)
+      -- Get all taxonomy entries for the target stream's selected group_sequences (children of the main stream)
       main_taxonomy_entries AS (
         SELECT 
           t.data_provider,
@@ -92,13 +92,13 @@ CREATE OR REPLACE ACTION get_all_weights_for_query(
             ELSE m.segment_end::INT
           END AS segment_end
         FROM taxonomies t
-        JOIN main_versions m 
+        JOIN main_group_sequences m 
           ON t.start_time::INT = m.segment_start::INT
         WHERE t.data_provider = $data_provider
           AND t.stream_id    = $stream_id
           AND t.disabled_at IS NULL
       ),
-      -- Total weight of children for each parent stream in each version (for normalization)
+      -- Total weight of children for each parent stream in each group_sequence (for normalization)
       weight_sums AS (
         SELECT 
           data_provider, 
@@ -110,7 +110,7 @@ CREATE OR REPLACE ACTION get_all_weights_for_query(
         GROUP BY data_provider, stream_id, start_time
       ),
       -- 3. Prepare all taxonomy entries (for all streams) with next_start and total_weight
-      all_versions AS (
+      all_group_sequences AS (
         SELECT 
           data_provider,
           stream_id,
@@ -133,7 +133,7 @@ CREATE OR REPLACE ACTION get_all_weights_for_query(
           v.next_start AS next_start,   -- if v.next_start is null then it remains null
           w.total_weight::NUMERIC(36,18) AS total_weight
         FROM taxonomies t
-        LEFT JOIN all_versions v
+        LEFT JOIN all_group_sequences v
           ON t.data_provider = v.data_provider
          AND t.stream_id    = v.stream_id
          AND t.start_time   = v.start_time
@@ -227,7 +227,7 @@ CREATE OR REPLACE ACTION get_all_weights_for_query(
         JOIN taxonomy_entries te
           ON te.data_provider = parent.data_provider
          AND te.stream_id    = parent.stream_id
-         -- Child version must overlap the parent's current segment
+         -- Child group_sequence must overlap the parent's current segment
          AND te.start_time::INT <= parent.end_time::INT
          AND (te.next_start IS NULL OR te.next_start::INT > parent.start_time::INT)
         WHERE parent.start_time::INT <= $to_time::INT -- Exclude segments that start after $to_time

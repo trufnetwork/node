@@ -14,13 +14,8 @@ CREATE OR REPLACE ACTION get_record_primitive(
     value NUMERIC(36,18)
 ) {
     -- Check read access first
-    if is_allowed_to_read($data_provider, $stream_id, @caller, 0, 0) == false {
+    if is_allowed_to_read($data_provider, $stream_id, @caller, $from, $to) == false {
         ERROR('wallet not allowed to read');
-    }
-
-    -- Set defaults
-    if $frozen_at IS NULL {
-        $frozen_at := 0;
     }
 
     RETURN WITH 
@@ -36,7 +31,7 @@ CREATE OR REPLACE ACTION get_record_primitive(
         FROM primitive_events pe
         WHERE pe.data_provider = $data_provider
             AND pe.stream_id = $stream_id
-            AND ($frozen_at = 0 OR pe.created_at <= $frozen_at)
+            AND ($frozen_at IS NULL OR pe.created_at <= $frozen_at)
             AND ($from IS NULL OR pe.event_time >= $from)
             AND ($to IS NULL OR pe.event_time <= $to)
     ),
@@ -49,7 +44,7 @@ CREATE OR REPLACE ACTION get_record_primitive(
             AND pe.data_provider = $data_provider
             AND pe.stream_id = $stream_id
             AND pe.event_time < $from
-            AND ($frozen_at = 0 OR pe.created_at <= $frozen_at)
+            AND ($frozen_at IS NULL OR pe.created_at <= $frozen_at)
         ORDER BY pe.event_time DESC, pe.created_at DESC
         LIMIT 1
     ),
@@ -96,13 +91,8 @@ CREATE OR REPLACE ACTION get_last_record_primitive(
     value NUMERIC(36,18)
 ) {
     -- Check read access, since we're querying directly from the primitive_events table
-    if is_allowed_to_read($data_provider, $stream_id, @caller, 0, 0) == false {
+    if is_allowed_to_read($data_provider, $stream_id, @caller, NULL, $before) == false {
         ERROR('wallet not allowed to read');
-    }
-    
-    -- Set default values if parameters are null
-    if $frozen_at IS NULL {
-        $frozen_at := 0;
     }
 
     for $row in SELECT pe.event_time, pe.value 
@@ -110,7 +100,7 @@ CREATE OR REPLACE ACTION get_last_record_primitive(
         WHERE pe.data_provider = $data_provider 
         AND pe.stream_id = $stream_id
         AND pe.event_time < $before
-        AND ($frozen_at = 0 OR pe.created_at <= $frozen_at)
+        AND ($frozen_at IS NULL OR pe.created_at <= $frozen_at)
         ORDER BY pe.event_time DESC, pe.created_at DESC
         LIMIT 1 {
         RETURN NEXT $row.event_time, $row.value;
@@ -131,25 +121,16 @@ CREATE OR REPLACE ACTION get_first_record_primitive(
     value NUMERIC(36,18)
 ) {
     -- Check read access, since we're querying directly from the primitive_events table
-    if is_allowed_to_read($data_provider, $stream_id, @caller, 0, 0) == false {
+    if is_allowed_to_read($data_provider, $stream_id, @caller, $after, NULL) == false {
         ERROR('wallet not allowed to read');
-    }
-
-    -- Set default values if parameters are null
-    if $after IS NULL {
-        $after := 0;
-    }
-    
-    if $frozen_at IS NULL {
-        $frozen_at := 0;
     }
     
     RETURN SELECT pe.event_time, pe.value 
         FROM primitive_events pe
         WHERE pe.data_provider = $data_provider 
         AND pe.stream_id = $stream_id
-        AND pe.event_time >= $after
-        AND ($frozen_at = 0 OR pe.created_at <= $frozen_at)
+        AND ($after IS NULL OR pe.event_time >= $after)
+        AND ($frozen_at IS NULL OR pe.created_at <= $frozen_at)
         ORDER BY pe.event_time ASC, pe.created_at DESC
         LIMIT 1;
 };
@@ -166,22 +147,17 @@ CREATE OR REPLACE ACTION get_base_value_primitive(
     $frozen_at INT8
 ) PRIVATE view returns (value NUMERIC(36,18)) {
     -- Check read access, since we're querying directly from the primitive_events table
-    if is_allowed_to_read($data_provider, $stream_id, @caller, 0, 0) == false {
+    if is_allowed_to_read($data_provider, $stream_id, @caller, NULL, $base_time) == false {
         ERROR('wallet not allowed to read');
     }
     
-    -- Set default values if parameters are null
-    if $frozen_at IS NULL {
-        $frozen_at := 0;
-    }
-    
-    -- If $base_time is null or zero, return the first-ever value from the primitive stream
-    if $base_time IS NULL OR $base_time = 0 {
+    -- If $base_time is null, return the first-ever value from the primitive stream
+    if $base_time IS NULL {
         for $row in SELECT pe.value 
             FROM primitive_events pe
             WHERE pe.data_provider = $data_provider 
             AND pe.stream_id = $stream_id
-            AND ($frozen_at = 0 OR pe.created_at <= $frozen_at)
+            AND ($frozen_at IS NULL OR pe.created_at <= $frozen_at)
             ORDER BY pe.event_time ASC, pe.created_at DESC 
             LIMIT 1 {
             return $row.value;
@@ -194,7 +170,7 @@ CREATE OR REPLACE ACTION get_base_value_primitive(
         WHERE pe.data_provider = $data_provider 
         AND pe.stream_id = $stream_id
         AND pe.event_time <= $base_time
-        AND ($frozen_at = 0 OR pe.created_at <= $frozen_at)
+        AND ($frozen_at IS NULL OR pe.created_at <= $frozen_at)
         ORDER BY pe.event_time DESC, pe.created_at DESC 
         LIMIT 1 {
         return $row.value;
@@ -206,7 +182,7 @@ CREATE OR REPLACE ACTION get_base_value_primitive(
         WHERE pe.data_provider = $data_provider 
         AND pe.stream_id = $stream_id
         AND pe.event_time > $base_time
-        AND ($frozen_at = 0 OR pe.created_at <= $frozen_at)
+        AND ($frozen_at IS NULL OR pe.created_at <= $frozen_at)
         ORDER BY pe.event_time ASC, pe.created_at DESC 
         LIMIT 1 {
         return $row.value;
@@ -233,18 +209,13 @@ CREATE OR REPLACE ACTION get_index_primitive(
     value NUMERIC(36,18)
 ) {
     -- Check read access
-    if is_allowed_to_read($data_provider, $stream_id, @caller, 0, 0) == false {
+    if is_allowed_to_read($data_provider, $stream_id, @caller, $from, $to) == false {
         ERROR('wallet not allowed to read');
-    }
-    
-    -- Set default values if parameters are null
-    if $frozen_at IS NULL {
-        $frozen_at := 0;
     }
     
     -- If base_time is not provided, try to get it from metadata
     $effective_base_time INT8 := $base_time;
-    if $effective_base_time IS NULL OR $effective_base_time = 0 {
+    if $effective_base_time IS NULL {
         for $row in SELECT value_i 
             FROM metadata 
             WHERE data_provider = $data_provider 
@@ -258,7 +229,7 @@ CREATE OR REPLACE ACTION get_index_primitive(
     }
 
     -- Get the base value
-    $base_value NUMERIC(36,18) := get_base_value($data_provider, $stream_id, $effective_base_time, $frozen_at);
+    $base_value NUMERIC(36,18) := get_base_value_primitive($data_provider, $stream_id, $effective_base_time, $frozen_at);
 
     -- Check if base value is zero to avoid division by zero
     if $base_value = 0::NUMERIC(36,18) {

@@ -3,14 +3,14 @@
  * that are active under a composed parent stream in the specified [from..to] window.
  *
  * Motivation & Key Behaviors:
- *  1. We use a "taxonomy version" approach to determine which substreams are active
- *     at any point overlapping [from..to]. If `from` is NULL, we include all versions
+ *  1. We use a "taxonomy group_sequence" approach to determine which substreams are active
+ *     at any point overlapping [from..to]. If `from` is NULL, we include all group_sequences
  *     from the earliest start_time; if `to` is NULL, no upper cutoff applies.
  *  2. We retrieve:
  *       - One "anchor" record if it exists at or below `from` (to fill in a gap).
  *       - All actual events in (from..to].
  *  3. If multiple records exist at the same (stream, event_time), we take only the
- *     "latest" by `created_at` (version dimension).
+ *     "latest" by `created_at` (group_sequence dimension).
  *  4. The final result includes anchor rows only if there's no actual event at `from`
  *     or no event in-range at all for that substream.
  */
@@ -41,20 +41,20 @@ RETURNS TABLE(
     RETURN WITH RECURSIVE
 
     ----------------------------------------------------------------------------
-    -- A) Pick the "anchor_time" to locate the earliest relevant taxonomy version
+    -- A) Pick the "anchor_time" to locate the earliest relevant taxonomy group_sequence
     ----------------------------------------------------------------------------
     anchor_taxonomy AS (
         SELECT CASE
             WHEN $from IS NULL THEN
-                -- No lower bound => start from the earliest taxonomy version
+                -- No lower bound => start from the earliest taxonomy group_sequence
                 (SELECT MIN(start_time)
                  FROM taxonomies
                  WHERE data_provider = $data_provider
                    AND stream_id     = $stream_id
                    AND disabled_at IS NULL)
             ELSE
-                -- If there's a lower bound, pick the latest version <= from,
-                -- or fallback to the earliest version if none qualifies
+                -- If there's a lower bound, pick the latest group_sequence <= from,
+                -- or fallback to the earliest group_sequence if none qualifies
                 COALESCE(
                   (SELECT MAX(start_time)
                    FROM taxonomies
@@ -73,7 +73,7 @@ RETURNS TABLE(
     ),
 
     ----------------------------------------------------------------------------
-    -- B) Find all taxonomy versions from that anchor_time up to $to
+    -- B) Find all taxonomy group_sequences from that anchor_time up to $to
     ----------------------------------------------------------------------------
     relevant_taxonomies AS (
         SELECT t.*

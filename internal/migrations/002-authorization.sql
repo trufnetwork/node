@@ -52,8 +52,6 @@ CREATE OR REPLACE ACTION is_allowed_to_read(
         return false;
     }
 
-    NOTICE(FORMAT('is_allowed_to_read: data_provider=%s stream_id=%s wallet_address=%s is_private=%s is_allowed=%s', $data_provider, $stream_id, $lowercase_wallet_address, $is_private, $is_allowed));
-
     return true;
 };
 

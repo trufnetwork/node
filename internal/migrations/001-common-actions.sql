@@ -55,7 +55,7 @@ CREATE OR REPLACE ACTION create_stream(
         VALUES ($current_uuid, $data_provider, $stream_id, 'read_visibility', 0, $current_block);
         
     -- Mark readonly keys
-    $readonly_keys TEXT[] := ['stream_owner', 'readonly_key', 'taxonomy_version'];
+    $readonly_keys TEXT[] := ['stream_owner', 'readonly_key', 'taxonomy_group_sequence'];
     
     for $key IN ARRAY $readonly_keys {
         $current_uuid := uuid_generate_v5($current_uuid, @txid);
