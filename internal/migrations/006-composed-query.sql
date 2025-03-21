@@ -52,7 +52,7 @@ RETURNS TABLE(
        *
        * Partition by (data_provider, stream_id) in LEAD so that
        * any new start_time overshadowing the old version
-       * effectively closes the old row’s interval.
+       * effectively closes the old row's interval.
        *------------------------------------------------------------------*/
       SELECT
           base.data_provider           AS parent_data_provider,
@@ -348,14 +348,16 @@ RETURNS TABLE(
       WHERE pe.created_at   <= $effective_frozen_at
         AND pe.event_time   <= LEAST(si.group_sequence_end, $effective_to)
         -- Anchor: include the latest event at/just before the interval start
-        AND pe.event_time >= GREATEST(si.group_sequence_start, $effective_from)
-        OR pe.event_time = (
-            SELECT MAX(pe2.event_time)
-            FROM primitive_events pe2
-            WHERE pe2.data_provider = pe.data_provider
-        AND pe2.stream_id     = pe.stream_id
-              AND pe2.event_time   <= GREATEST(si.group_sequence_start, $effective_from)
+        AND (
+            pe.event_time >= GREATEST(si.group_sequence_start, $effective_from)
+            OR pe.event_time = (
+                SELECT MAX(pe2.event_time)
+                FROM primitive_events pe2
+                WHERE pe2.data_provider = pe.data_provider
+            AND pe2.stream_id     = pe.stream_id
+                AND pe2.event_time   <= GREATEST(si.group_sequence_start, $effective_from)
             )
+        )
     ),
 
     requested_primitive_records AS (
@@ -479,26 +481,347 @@ CREATE OR REPLACE ACTION get_last_record_composed(
     $stream_id TEXT,
     $before INT8,
     $frozen_at INT8
-) PRIVATE view returns table(
+) PRIVATE VIEW RETURNS TABLE(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
-    -- Check read permissions
-    if !is_allowed_to_read_all($data_provider, $stream_id, @caller, NULL, $before) {
+    -- Define boundary defaults
+    $max_int8 := 9223372036854775000;          -- "Infinity" sentinel for INT8
+    $effective_before := COALESCE($before, $max_int8);  -- Upper bound, default "infinity"
+    $effective_frozen_at := COALESCE($frozen_at, $max_int8);
+
+    -- Check permissions; raises error if unauthorized
+    IF !is_allowed_to_read_all($data_provider, $stream_id, @caller, NULL, $before) {
         ERROR('Not allowed to read stream');
     }
-    
-    $max_int8 INT8 := 9223372036854775000;  -- INT8 max for "infinity"
-    $effective_before INT8 := COALESCE($before, $max_int8);
-    $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
-    
-    -- Define constraints to improve readability
-    if $before IS NULL {
-        $before := $max_int8;
-    }
 
-    ERROR('not implemented');
-;
+    RETURN WITH RECURSIVE
+
+    /*----------------------------------------------------------------------
+     * HIERARCHY: Build a tree of dependent child streams via taxonomies.
+     * We do it in two steps:
+     *   (1) Base Case for (data_provider, stream_id)
+     *   (2) Recursive Step for each discovered child
+     *
+     * We'll attach an effective [start, end] interval to each row.
+     * Overlapping or overshadowed rows are handled by ignoring older
+     * group_sequences at the same start_time and by partitioning LEAD
+     * over (dp, sid) to get the next distinct start_time.
+     *---------------------------------------------------------------------*/
+    hierarchy AS (
+      /*------------------------------------------------------------------
+       * (1) Base Case (Parent-Level)
+       * We gather taxonomies for the PARENT (data_provider, stream_id)
+       * in the requested [anchor, $effective_to] range.
+       *
+       * Partition by (data_provider, stream_id) in LEAD so that
+       * any new start_time overshadowing the old version
+       * effectively closes the old row's interval.
+       *------------------------------------------------------------------*/
+      SELECT
+          base.data_provider           AS parent_data_provider,
+          base.stream_id               AS parent_stream_id,
+          base.child_data_provider,
+          base.child_stream_id,
+          base.weight                  AS raw_weight,
+          base.start_time             AS group_sequence_start,
+          COALESCE(ot.next_start, $max_int8) - 1 AS group_sequence_end
+      FROM (
+          SELECT
+              t.data_provider,
+              t.stream_id,
+              t.child_data_provider,
+              t.child_stream_id,
+              t.start_time,
+              t.group_sequence,
+              t.weight,
+              -- overshadow older group_sequence rows at the same start_time
+              MAX(t.group_sequence) OVER (
+                  PARTITION BY t.data_provider, t.stream_id, t.start_time
+              ) AS max_group_sequence
+          FROM taxonomies t
+          WHERE t.data_provider = $data_provider
+            AND t.stream_id     = $stream_id
+            AND t.disabled_at   IS NULL
+            AND t.start_time <= $effective_before
+            AND t.start_time >= COALESCE(
+                (
+                  -- Find the most recent taxonomy at or before $effective_from
+                  SELECT t2.start_time
+                  FROM taxonomies t2
+                  WHERE t2.data_provider = t.data_provider
+                    AND t2.stream_id     = t.stream_id
+                    AND t2.disabled_at   IS NULL
+                    AND t2.start_time   <= $effective_before
+                  ORDER BY t2.start_time DESC, t2.group_sequence DESC
+                  LIMIT 1
+                ), 0
+            )
+      ) base
+      JOIN (
+          -- Create ordered_times to get the next distinct start_time
+          SELECT
+              dt.data_provider,
+              dt.stream_id,
+              dt.start_time,
+              LEAD(dt.start_time) OVER (
+                  PARTITION BY dt.data_provider, dt.stream_id
+                  ORDER BY dt.start_time
+              ) AS next_start
+          FROM (
+              -- Distinct start_times for each (dp, sid)
+              SELECT DISTINCT
+                  t.data_provider,
+                  t.stream_id,
+                  t.start_time
+              FROM taxonomies t
+              WHERE t.data_provider = $data_provider
+                AND t.stream_id     = $stream_id
+                AND t.disabled_at   IS NULL
+                AND t.start_time   <= $effective_before
+          ) dt
+      ) ot
+        ON base.data_provider = ot.data_provider
+       AND base.stream_id     = ot.stream_id
+       AND base.start_time    = ot.start_time
+      -- Include only the latest group_sequence row for each start_time
+      WHERE base.group_sequence = base.max_group_sequence
+
+      /*--------------------------------------------------------------------
+       * (2) Recursive Step (Child-Level)
+       * For each child discovered, look up that child's own taxonomies
+       * and overshadow older versions for that child.
+       *--------------------------------------------------------------------*/
+      UNION ALL
+      SELECT
+          parent.parent_data_provider,
+          parent.parent_stream_id,
+          child.child_data_provider,
+          child.child_stream_id,
+          (parent.raw_weight * child.weight)::NUMERIC(36,18) AS raw_weight,
+
+          -- Intersection: child's start_time must overlap parent's interval
+          GREATEST(parent.group_sequence_start, child.start_time)   AS group_sequence_start,
+          LEAST(parent.group_sequence_end,   child.group_sequence_end) AS group_sequence_end
+      FROM hierarchy parent
+      JOIN (
+          /* 2a) Same "distinct start_time" fix at child level */
+          SELECT
+              base.data_provider,
+              base.stream_id,
+              base.child_data_provider,
+              base.child_stream_id,
+              base.start_time,
+              base.group_sequence,
+              base.weight,
+              COALESCE(ot.next_start, $max_int8) - 1 AS group_sequence_end
+          FROM (
+              SELECT
+                  t.data_provider,
+                  t.stream_id,
+                  t.child_data_provider,
+                  t.child_stream_id,
+                  t.start_time,
+                  t.group_sequence,
+                  t.weight,
+                  MAX(t.group_sequence) OVER (
+                      PARTITION BY t.data_provider, t.stream_id, t.start_time
+                  ) AS max_group_sequence
+              FROM taxonomies t
+              WHERE t.disabled_at IS NULL
+                AND t.start_time <= $effective_before
+          ) base
+          JOIN (
+              /* Distinct start_times again, child-level */
+              SELECT
+                  dt.data_provider,
+                  dt.stream_id,
+                  dt.start_time,
+                  LEAD(dt.start_time) OVER (
+                      PARTITION BY dt.data_provider, dt.stream_id
+                      ORDER BY dt.start_time
+                  ) AS next_start
+              FROM (
+                  SELECT DISTINCT
+                      t.data_provider,
+                      t.stream_id,
+                      t.start_time
+                  FROM taxonomies t
+                  WHERE t.disabled_at IS NULL
+                    AND t.start_time <= $effective_before
+              ) dt
+          ) ot
+            ON base.data_provider = ot.data_provider
+           AND base.stream_id     = ot.stream_id
+           AND base.start_time    = ot.start_time
+          WHERE base.group_sequence = base.max_group_sequence
+      ) child
+        ON child.data_provider = parent.child_data_provider
+       AND child.stream_id     = parent.child_stream_id
+      -- Overlap check: child's range must intersect parent's range
+      WHERE child.start_time         <= parent.group_sequence_end
+        AND child.group_sequence_end >= parent.group_sequence_start
+    ),
+
+    /*----------------------------------------------------------------------
+     * 3) Identify only LEAF nodes (streams of type 'primitive').
+     * We keep their [start, end] intervals to figure out which events
+     * we actually need. 
+     *--------------------------------------------------------------------*/
+    primitive_weights AS (
+      SELECT
+          h.child_data_provider AS data_provider,
+          h.child_stream_id     AS stream_id,
+          h.raw_weight,
+          h.group_sequence_start,
+          h.group_sequence_end
+      FROM hierarchy h
+      WHERE EXISTS (
+          SELECT 1 FROM streams s
+          WHERE s.data_provider = h.child_data_provider
+            AND s.stream_id     = h.child_stream_id
+            AND s.stream_type   = 'primitive'
+      )
+    ),
+
+    /*----------------------------------------------------------------------
+     * 4) Consolidate intervals. We may have multiple or overlapping
+     * [start, end] intervals for each primitive stream. We'll merge them.
+     *---------------------------------------------------------------------*/
+    ordered_intervals AS (
+      SELECT
+          data_provider,
+          stream_id,
+          group_sequence_start,
+          group_sequence_end,
+          ROW_NUMBER() OVER (
+              PARTITION BY data_provider, stream_id
+              ORDER BY group_sequence_start
+          ) AS rn
+      FROM primitive_weights
+    ),
+
+    group_boundaries AS (
+      SELECT
+          data_provider,
+          stream_id,
+          group_sequence_start,
+          group_sequence_end,
+          rn,
+          CASE
+            WHEN rn = 1 THEN 1  -- first interval is a new group
+            WHEN group_sequence_start > LAG(group_sequence_end) OVER (
+                PARTITION BY data_provider, stream_id
+                ORDER BY group_sequence_start, group_sequence_end DESC
+            ) + 1 THEN 1        -- there's a gap, start a new group
+            ELSE 0              -- same group as previous
+          END AS is_new_group
+      FROM ordered_intervals
+    ),
+
+    groups AS (
+      SELECT
+          data_provider,
+          stream_id,
+          group_sequence_start,
+          group_sequence_end,
+          SUM(is_new_group) OVER (
+              PARTITION BY data_provider, stream_id
+              ORDER BY group_sequence_start
+          ) AS group_id
+      FROM group_boundaries
+    ),
+
+    stream_intervals AS (
+      SELECT
+          data_provider,
+          stream_id,
+          MIN(group_sequence_start) AS group_sequence_start,  -- earliest start in group
+          MAX(group_sequence_end)   AS group_sequence_end     -- latest end in group
+      FROM groups
+      GROUP BY data_provider, stream_id, group_id
+    ),
+
+    /*----------------------------------------------------------------------
+     * 5) For each stream, find the latest event that's at or before the $effective_before
+     * We only need the most recent event for each stream that contributes to the composition
+     *---------------------------------------------------------------------*/
+    latest_events AS (
+      SELECT
+          pe.data_provider,
+          pe.stream_id,
+          pe.event_time,
+          pe.value,
+          pe.created_at,
+          ROW_NUMBER() OVER (
+              PARTITION BY pe.data_provider, pe.stream_id
+              ORDER BY pe.event_time DESC, pe.created_at DESC
+          ) AS rn
+      FROM primitive_events pe
+      JOIN stream_intervals si
+        ON pe.data_provider = si.data_provider
+        AND pe.stream_id = si.stream_id
+      WHERE pe.created_at <= $effective_frozen_at
+        AND pe.event_time <= LEAST(si.group_sequence_end, $effective_before)
+    ),
+
+    latest_values AS (
+      SELECT
+          data_provider,
+          stream_id,
+          event_time,
+          value
+      FROM latest_events
+      WHERE rn = 1  -- Only the most recent event for each stream
+    ),
+
+    /*----------------------------------------------------------------------
+     * 6) Find the latest time point across all contributing streams
+     *---------------------------------------------------------------------*/
+    max_event_time AS (
+      SELECT
+          MAX(event_time) AS max_time
+      FROM latest_values
+    ),
+
+    /*----------------------------------------------------------------------
+     * 7) For each stream, get its value at the max_event_time
+     * or its most recent value if it doesn't have an event exactly at max_time
+     *---------------------------------------------------------------------*/
+    contributing_values AS (
+      SELECT
+          lv.data_provider,
+          lv.stream_id,
+          lv.value,
+          pw.raw_weight
+      FROM latest_values lv
+      JOIN primitive_weights pw
+        ON lv.data_provider = pw.data_provider
+        AND lv.stream_id = pw.stream_id
+        AND met.max_time BETWEEN pw.group_sequence_start AND pw.group_sequence_end
+      JOIN max_event_time met on true -- cross join alternative
+    ),
+
+    /*----------------------------------------------------------------------
+     * 8) Compute the final weighted average value
+     *---------------------------------------------------------------------*/
+    final_result AS (
+      SELECT
+          met.max_time AS event_time,
+          CASE WHEN SUM(cv.raw_weight)::NUMERIC(36,18) = 0::NUMERIC(36,18)
+               THEN 0::NUMERIC(36,18)
+               ELSE SUM(cv.value * cv.raw_weight)::NUMERIC(36,18) / SUM(cv.raw_weight)::NUMERIC(36,18)
+          END AS value
+      FROM contributing_values cv
+      JOIN max_event_time met on true -- cross join alternative
+      GROUP BY met.max_time
+    )
+
+    SELECT
+        event_time,
+        value::NUMERIC(36,18)
+    FROM final_result;
+};
 
 /**
  * get_first_record_composed: Placeholder for finding first record in composed stream.
@@ -520,215 +843,6 @@ CREATE OR REPLACE ACTION get_first_record_composed(
     
     $max_int8 INT8 := 9223372036854775000;  -- INT8 max for "infinity"
     ERROR('not implemented');
-    -- RETURN 
-    -- WITH RECURSIVE
-
-    -- -- Find taxonomy sequences that apply to our query
-    -- selected_taxonomy_sequences AS (
-    --     SELECT 
-    --         t.data_provider,
-    --         t.stream_id,
-    --         t.start_time,
-    --         t.sequence,
-    --         ROW_NUMBER() OVER (PARTITION BY t.start_time ORDER BY t.sequence DESC) AS rn
-    --     FROM taxonomies t
-    --     WHERE t.disabled_at IS NULL
-    --       AND t.data_provider = $data_provider
-    --       AND t.stream_id = $stream_id
-    --       AND ($after IS NULL OR t.start_time >= $after)
-    -- ),
-
-    -- -- Keep only the latest sequence for each time point
-    -- latest_sequences AS (
-    --     SELECT
-    --         data_provider,
-    --         stream_id,
-    --         start_time,
-    --         sequence
-    --     FROM selected_taxonomy_sequences
-    --     WHERE rn = 1
-    -- ),
-
-    -- -- Get the child stream references from selected taxonomy sequences
-    -- all_taxonomies AS (
-    --     SELECT
-    --         t.data_provider,
-    --         t.stream_id,
-    --         t.start_time AS sequence_start,
-    --         t.weight,
-    --         t.sequence,
-    --         t.child_data_provider,
-    --         t.child_stream_id
-    --     FROM taxonomies t
-    --     JOIN latest_sequences lv
-    --       ON t.data_provider = lv.data_provider
-    --      AND t.stream_id = lv.stream_id
-    --      AND t.start_time = lv.start_time
-    --      AND t.sequence = lv.sequence
-    -- ),
-
-    -- -- Calculate validity periods for each taxonomy sequence
-    -- main_sequences AS (
-    --     SELECT 
-    --         data_provider,
-    --         stream_id,
-    --         sequence_start,
-    --         COALESCE(
-    --             LEAD(sequence_start) OVER (
-    --                 PARTITION BY data_provider, stream_id
-    --                 ORDER BY sequence_start
-    --             ) - 1,
-    --             $max_int8
-    --         ) AS sequence_end
-    --     FROM all_taxonomies
-    --     GROUP BY data_provider, stream_id, sequence_start
-    -- ),
-
-    -- -- Connect child streams with their validity periods
-    -- main_direct_children AS (
-    --     SELECT
-    --         t.data_provider,
-    --         t.stream_id,
-    --         m.sequence_start,
-    --         m.sequence_end,
-    --         t.child_data_provider,
-    --         t.child_stream_id,
-    --         t.weight
-    --     FROM all_taxonomies t
-    --     JOIN main_sequences m
-    --     ON t.data_provider = m.data_provider 
-    --     AND t.stream_id = m.stream_id 
-    --     AND t.sequence_start = m.sequence_start
-    -- ),
-
-    -- -- Recursively traverse the hierarchy to find all primitive streams
-    -- hierarchy AS (
-    --     -- Base case: direct children of target stream
-    --     SELECT
-    --         m.child_data_provider AS data_provider,
-    --         m.child_stream_id AS stream_id,
-    --         m.weight AS raw_weight,
-    --         m.sequence_start AS sequence_start,
-    --         m.sequence_end AS sequence_end
-    --     FROM main_direct_children m
-    --     WHERE m.data_provider = $data_provider
-    --       AND m.stream_id = $stream_id
-
-    --     UNION ALL
-
-    --     -- Recursive step: follow each branch down to its leaves
-    --     SELECT
-    --         c.child_data_provider,
-    --         c.child_stream_id,
-    --         (parent.raw_weight * c.weight)::NUMERIC(36,18) AS raw_weight,
-    --         GREATEST(parent.sequence_start, c.sequence_start) AS sequence_start,
-    --         LEAST(parent.sequence_end, c.sequence_end) AS sequence_end
-    --     FROM hierarchy parent
-    --     INNER JOIN main_direct_children c
-    --       ON c.data_provider = parent.data_provider
-    --      AND c.stream_id = parent.stream_id
-    --      -- Only follow connections with overlapping validity periods
-    --      AND c.sequence_start <= parent.sequence_end
-    --      AND c.sequence_end >= parent.sequence_start
-    --     WHERE parent.sequence_start <= parent.sequence_end
-    -- ),
-
-    -- -- Filter to only leaf nodes (primitive streams) in the hierarchy
-    -- primitive_weights AS (
-    --     SELECT h.*
-    --     FROM hierarchy h
-    --     WHERE NOT EXISTS (
-    --         SELECT 1
-    --         FROM taxonomies tx
-    --         WHERE tx.data_provider = h.data_provider
-    --           AND tx.stream_id = h.stream_id
-    --           AND tx.disabled_at IS NULL
-    --           AND tx.start_time <= h.sequence_end
-    --     )
-    --     AND h.sequence_start <= h.sequence_end
-    -- ),
-
-    -- -- Extract unique primitive streams from the hierarchy
-    -- effective_streams AS (
-    --     SELECT DISTINCT data_provider, stream_id
-    --     FROM primitive_weights
-    -- ),
-
-    -- -- Find the earliest event after the specified timestamp for each primitive stream
-    -- earliest_events AS (
-    --     SELECT 
-    --         es.data_provider,
-    --         es.stream_id,
-    --         (
-    --             SELECT MIN(pe.event_time) 
-    --             FROM primitive_events pe
-    --             WHERE pe.data_provider = es.data_provider
-    --               AND pe.stream_id = es.stream_id
-    --               AND ($after IS NULL OR pe.event_time >= $after)
-    --               AND ($frozen_at IS NULL OR pe.created_at <= $frozen_at)
-    --               -- Ensure we get the latest created record at this event_time
-    --               AND pe.created_at = (
-    --                   SELECT MAX(created_at) 
-    --                   FROM primitive_events 
-    --                   WHERE data_provider = pe.data_provider
-    --                     AND stream_id = pe.stream_id
-    --                     AND event_time = pe.event_time
-    --                     AND ($frozen_at IS NULL OR created_at <= $frozen_at)
-    --               )
-    --         ) AS event_time
-    --     FROM effective_streams es
-    -- ),
-
-    -- -- Get the actual values for the earliest events
-    -- primitive_values AS (
-    --     SELECT 
-    --         ee.data_provider,
-    --         ee.stream_id,
-    --         ee.event_time,
-    --         pe.value
-    --     FROM earliest_events ee
-    --     JOIN primitive_events pe ON 
-    --         pe.data_provider = ee.data_provider
-    --         AND pe.stream_id = ee.stream_id
-    --         AND pe.event_time = ee.event_time
-    --         AND ($frozen_at IS NULL OR pe.created_at <= $frozen_at)
-    --     WHERE ee.event_time IS NOT NULL
-    -- ),
-
-    -- -- Apply weights based on taxonomy and time validity
-    -- weighted_values AS (
-    --     SELECT
-    --         pv.event_time,
-    --         (pv.value * pw.raw_weight)::NUMERIC(36,18) AS weighted_value,
-    --         pw.raw_weight
-    --     FROM primitive_values pv
-    --     JOIN primitive_weights pw
-    --       ON pv.data_provider = pw.data_provider
-    --      AND pv.stream_id = pw.stream_id
-    --      AND pv.event_time BETWEEN pw.sequence_start AND pw.sequence_end
-    -- ),
-
-    -- -- Aggregate the values for each time point
-    -- aggregated AS (
-    --     SELECT
-    --         event_time,
-    --         CASE WHEN SUM(raw_weight)::NUMERIC(36,18) = 0::NUMERIC(36,18)
-    --              THEN 0::NUMERIC(36,18)
-    --              ELSE SUM(weighted_value)::NUMERIC(36,18) / SUM(raw_weight)::NUMERIC(36,18)
-    --         END AS value
-    --     FROM weighted_values
-    --     GROUP BY event_time
-    -- ),
-    
-    -- -- Get the earliest aggregated value
-    -- earliest_record AS (
-    --     SELECT event_time, value
-    --     FROM aggregated
-    --     ORDER BY event_time ASC
-    --     LIMIT 1
-    -- )
-
-    -- SELECT event_time, value::NUMERIC(36,18) FROM earliest_record;
 };
 
 /**
