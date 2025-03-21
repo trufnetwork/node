@@ -472,184 +472,39 @@ RETURNS TABLE(
 
 
 
--- NOTE: this action simplifies the logic, and has some hard to solve edge cases
--- but it should cover the majority of use cases, as before is not often used
--- we might revisit this if any user reports the edge cases
--- it's also very non-performant, but given that it's just one value, seems not that bad
+-- NOTE: This function finds the single latest event ignoring overshadow,
+-- then uses get_record_composed() at that time to apply overshadow logic.
+-- It's simplified, may miss certain edge cases, but usually sufficient.
+
 CREATE OR REPLACE ACTION get_last_record_composed(
     $data_provider TEXT,
     $stream_id TEXT,
-    $before INT8,       -- The user-specified upper bound for searching events
-    $frozen_at INT8     -- Only consider events created before this
+    $before INT8,       -- Upper bound for event_time
+    $frozen_at INT8     -- Only consider events created on or before this
 ) PRIVATE VIEW
 RETURNS TABLE(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
     /*
-     * Step 0) Permission checks and boundary defaults
+     * Step 1: Basic setup
      */
-    -- Check read permissions (if your system enforces them)
     IF !is_allowed_to_read_all($data_provider, $stream_id, @caller, NULL, $before) {
         ERROR('Not allowed to read stream');
     }
 
-    -- "Infinity" sentinel
-    max_int8 INT8 := 9223372036854775000;
-    -- If $before is NULL, default to max_int8 (i.e., no real boundary)
-    effective_before INT8 := COALESCE($before, max_int8);
-    -- If $frozen_at is NULL, no limit on created_at
-    effective_frozen_at INT8 := COALESCE($frozen_at, max_int8);
+    $max_int8 INT8 := 9223372036854775000;    -- "Infinity" sentinel
+    $effective_before INT8 := COALESCE($before, $max_int8);
+    $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
 
-    latest_event_time INT8;
+    $latest_event_time INT8;
 
     /*
-     * Step 1) Recursively gather all child references, ignoring overshadow
-     *         exactly like in get_first_record_composed, but for "last"
+     * Step 2: Recursively gather all children (ignoring overshadow),
+     *         then identify primitive leaves.
      */
     for $row in WITH RECURSIVE all_taxonomies AS (
-      /* 1a) Base: direct children of ($data_provider, $stream_id) */
-         SELECT
-           t.data_provider,
-           t.stream_id,
-           t.child_data_provider,
-           t.child_stream_id
-         FROM taxonomies t
-         WHERE t.data_provider = $data_provider
-           AND t.stream_id     = $stream_id
-
-         UNION
-
-         /* 1b) Recursive step: for each discovered child, gather its children */
-         SELECT
-           at.child_data_provider  AS data_provider,
-           at.child_stream_id      AS stream_id,
-           t.child_data_provider,
-           t.child_stream_id
-         FROM all_taxonomies at
-         JOIN taxonomies t
-           ON t.data_provider = at.child_data_provider
-          AND t.stream_id     = at.child_stream_id
-       ),
-
-       /* Step 2) Identify primitive leaves (stream_type='primitive') */
-       primitive_leaves AS (
-         SELECT DISTINCT
-           at.child_data_provider AS data_provider,
-           at.child_stream_id     AS stream_id
-         FROM all_taxonomies at
-         JOIN streams s
-           ON s.data_provider = at.child_data_provider
-          AND s.stream_id     = at.child_stream_id
-          AND s.stream_type   = 'primitive'
-       ),
-
-       /* Step 3) For each primitive leaf, find the single LATEST event_time <= effective_before. 
-                  We keep ROW_NUMBER=1 => the latest event_time (tie-break by created_at DESC). */
-       latest_events AS (
-         SELECT
-           pl.data_provider,
-           pl.stream_id,
-           pe.event_time,
-           pe.value,
-           pe.created_at,
-           ROW_NUMBER() OVER (
-             PARTITION BY pl.data_provider, pl.stream_id
-             ORDER BY pe.event_time DESC, pe.created_at DESC
-           ) AS rn
-         FROM primitive_leaves pl
-         JOIN primitive_events pe
-           ON pe.data_provider = pl.data_provider
-          AND pe.stream_id     = pl.stream_id
-         WHERE pe.event_time   <= effective_before
-           AND pe.created_at   <= effective_frozen_at
-       ),
-
-       /* Keep only row_number=1 => that single latest event per (dp, sid) */
-       latest_values AS (
-         SELECT
-           data_provider,
-           stream_id,
-           event_time,
-           value
-         FROM latest_events
-         WHERE rn = 1
-       ),
-
-       /* Step 4) global_max: find the overall MAX(event_time) among all leaves */
-       global_max AS (
-         SELECT MAX(event_time) AS latest_time
-         FROM latest_values
-       )
-
-       /* Step 5) Return the row(s) with that global latest_time.
-                  We'll just pick the first row we see to store in a variable. */
-       SELECT
-         lv.event_time,
-         lv.value::NUMERIC(36,18)
-       FROM latest_values lv
-       JOIN global_max gm
-         ON lv.event_time = gm.latest_time {
-            latest_event_time := $row.event_time;
-            break;
-         }
-
-    /* Step 6) If we found a latest_event_time, then call get_record_composed() 
-                at that single time to get the overshadow/weight logic. 
-                Return that row. */
-    IF latest_event_time IS DISTINCT FROM NULL {
-        for $row in get_record_composed($data_provider, $stream_id, latest_event_time, latest_event_time, $frozen_at) {
-            return next $row.event_time, $row.value;
-            break;
-        }
-    }
-
-    -- If no events found at all, we do nothing or return no rows.
-
-};
-
-
--- NOTE: this action simplifies the logic, and has some hard to solve edge cases
--- but it should cover the majority of use cases, as after is not often used
--- we might revisit this if any user reports the edge cases
--- it's also very non-performant, but given that it's just one value, seems not that bad
-CREATE OR REPLACE ACTION get_first_record_composed(
-    $data_provider TEXT,
-    $stream_id TEXT,
-    $after INT8,       -- The user-specified lower bound for searching events
-    $frozen_at INT8    -- Only consider events created before this
-) PRIVATE VIEW
-RETURNS TABLE(
-    event_time INT8,
-    value NUMERIC(36,18)
-) {
-    /*----------------------------------------------------------------------
-     * 1) Basic Setup
-     *---------------------------------------------------------------------*/
-    -- Check read permissions (if your system enforces them)
-    IF !is_allowed_to_read_all($data_provider, $stream_id, @caller, $after, NULL) {
-        ERROR('Not allowed to read stream');
-    }
-
-    -- "Infinity" sentinel for bigints
-    max_int8 INT8 := 9223372036854775000;
-    effective_after INT8 := COALESCE($after, 0);  -- default to 0 if NULL
-    effective_frozen_at INT8 := COALESCE($frozen_at, max_int8);
-    
-    $earliest_event_time INT8;
-
-     /*----------------------------------------------------------------------
-     * 2) Recursively gather **all** child references (ignoring overshadow),
-     *    starting from ($data_provider, $stream_id).
-     * 
-     *    For each row in `taxonomies`, we simply store: 
-     *       (dp, sid) -> (child_dp, child_sid).
-     *    Then we recurse into each (child_dp, child_sid).
-     *---------------------------------------------------------------------*/
-    for $row in WITH RECURSIVE all_taxonomies AS (
-      /*------------------------------------------------------------------
-       * 2a) Base case: direct children of ($data_provider, $stream_id)
-       *------------------------------------------------------------------*/
+      /* 2a) Direct children of ($data_provider, $stream_id) */
       SELECT
         t.data_provider,
         t.stream_id,
@@ -661,13 +516,10 @@ RETURNS TABLE(
 
       UNION
 
-      /*------------------------------------------------------------------
-       * 2b) Recursive step: for each discovered (child_dp, child_sid),
-       *     gather that child's own children from `taxonomies`.
-       *------------------------------------------------------------------*/
+      /* 2b) For each discovered child, gather its own children */
       SELECT
-        at.child_data_provider  AS data_provider,
-        at.child_stream_id      AS stream_id,
+        at.child_data_provider AS data_provider,
+        at.child_stream_id     AS stream_id,
         t.child_data_provider,
         t.child_stream_id
       FROM all_taxonomies at
@@ -675,12 +527,8 @@ RETURNS TABLE(
         ON t.data_provider = at.child_data_provider
        AND t.stream_id     = at.child_stream_id
     ),
-
-    /*----------------------------------------------------------------------
-     * 3) Identify which child references are **primitive** streams
-     *    (in your schema, `streams.stream_type='primitive'`).
-     *---------------------------------------------------------------------*/
     primitive_leaves AS (
+      /* Keep only references pointing to primitive streams */
       SELECT DISTINCT
         at.child_data_provider AS data_provider,
         at.child_stream_id     AS stream_id
@@ -690,14 +538,139 @@ RETURNS TABLE(
        AND s.stream_id     = at.child_stream_id
        AND s.stream_type   = 'primitive'
     ),
+    /*
+     * Step 3: In each primitive, pick the single latest event_time <= effective_before.
+     *         ROW_NUMBER=1 => that "latest" champion. Tie-break by created_at DESC.
+     */
+    latest_events AS (
+      SELECT
+        pl.data_provider,
+        pl.stream_id,
+        pe.event_time,
+        pe.value,
+        pe.created_at,
+        ROW_NUMBER() OVER (
+          PARTITION BY pl.data_provider, pl.stream_id
+          ORDER BY pe.event_time DESC, pe.created_at DESC
+        ) AS rn
+      FROM primitive_leaves pl
+      JOIN primitive_events pe
+        ON pe.data_provider = pl.data_provider
+       AND pe.stream_id     = pl.stream_id
+      WHERE pe.event_time   <= $effective_before
+        AND pe.created_at   <= $effective_frozen_at
+    ),
+    latest_values AS (
+      /* Step 4: Filter to rn=1 => the single latest event per (dp, sid) */
+      SELECT
+        data_provider,
+        stream_id,
+        event_time,
+        value
+      FROM latest_events
+      WHERE rn = 1
+    ),
+    global_max AS (
+      /* Step 5: Find the maximum event_time among all leaves */
+      SELECT MAX(event_time) AS latest_time
+      FROM latest_values
+    )
+    /* Step 6: Return the row(s) matching that global latest_time (pick first) */
+    SELECT
+      lv.event_time,
+      lv.value::NUMERIC(36,18)
+    FROM latest_values lv
+    JOIN global_max gm
+      ON lv.event_time = gm.latest_time
+    {
+        $latest_event_time := $row.event_time;
+        break;  -- break out after storing
+    }
 
-    /*----------------------------------------------------------------------
-     * 4) For each primitive stream, find the single **earliest** event
-     *    that has event_time >= effective_after. 
-     *    We'll keep row_number=1 => that earliest time per (dp, sid).
-     *    Tie-break by created_at DESC, so we keep the newest record if 
-     *    multiple exist at exactly the same event_time.
-     *---------------------------------------------------------------------*/
+    /*
+     * Step 7: If we found latest_event_time, call get_record_composed() at
+     *          [latest_event_time, latest_event_time] for overshadow logic.
+     */
+    IF $latest_event_time IS DISTINCT FROM NULL {
+        for $row in get_record_composed($data_provider, $stream_id, $latest_event_time, $latest_event_time, $frozen_at) {
+            return next $row.event_time, $row.value;
+            break;
+        }
+    }
+
+    /* If no events were found, no rows are returned */
+};
+
+-- NOTE: This function finds the single earliest event ignoring overshadow,
+-- then uses get_record_composed() at that time. Simplified, but effective
+-- for most common use cases; may have edge cases and is not highly optimized.
+
+CREATE OR REPLACE ACTION get_first_record_composed(
+    $data_provider TEXT,
+    $stream_id TEXT,
+    $after INT8,       -- Lower bound for event_time
+    $frozen_at INT8    -- Only consider events created on or before this
+) PRIVATE VIEW
+RETURNS TABLE(
+    event_time INT8,
+    value NUMERIC(36,18)
+) {
+    /*
+     * Step 1: Basic setup
+     */
+    IF !is_allowed_to_read_all($data_provider, $stream_id, @caller, $after, NULL) {
+        ERROR('Not allowed to read stream');
+    }
+
+    $max_int8 INT8 := 9223372036854775000;   -- "Infinity" sentinel
+    $effective_after INT8 := COALESCE($after, 0);
+    $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
+
+    $earliest_event_time INT8;
+
+    /*
+     * Step 2: Recursively gather all children (ignoring overshadow),
+     *         then identify primitive leaves.
+     */
+    for $row in WITH RECURSIVE all_taxonomies AS (
+      /* 2a) Direct children of ($data_provider, $stream_id) */
+      SELECT
+        t.data_provider,
+        t.stream_id,
+        t.child_data_provider,
+        t.child_stream_id
+      FROM taxonomies t
+      WHERE t.data_provider = $data_provider
+        AND t.stream_id     = $stream_id
+
+      UNION
+
+      /* 2b) For each discovered child, gather its own children */
+      SELECT
+        at.child_data_provider AS data_provider,
+        at.child_stream_id     AS stream_id,
+        t.child_data_provider,
+        t.child_stream_id
+      FROM all_taxonomies at
+      JOIN taxonomies t
+        ON t.data_provider = at.child_data_provider
+       AND t.stream_id     = at.child_stream_id
+    ),
+    primitive_leaves AS (
+      /* Keep only references pointing to primitive streams */
+      SELECT DISTINCT
+        at.child_data_provider AS data_provider,
+        at.child_stream_id     AS stream_id
+      FROM all_taxonomies at
+      JOIN streams s
+        ON s.data_provider = at.child_data_provider
+       AND s.stream_id     = at.child_stream_id
+       AND s.stream_type   = 'primitive'
+    ),
+    /*
+     * Step 3: In each primitive, pick the single earliest event_time >= effective_after.
+     *         ROW_NUMBER=1 => that "earliest" champion. Tie-break by created_at DESC.
+     */
     earliest_events AS (
       SELECT
         pl.data_provider,
@@ -713,12 +686,11 @@ RETURNS TABLE(
       JOIN primitive_events pe
         ON pe.data_provider = pl.data_provider
        AND pe.stream_id     = pl.stream_id
-      WHERE pe.event_time   >= effective_after
-        AND pe.created_at   <= effective_frozen_at
+      WHERE pe.event_time   >= $effective_after
+        AND pe.created_at   <= $effective_frozen_at
     ),
-
-    -- Filter to only the top row in each partition => earliest event
     earliest_values AS (
+      /* Step 4: Filter to rn=1 => the single earliest event per (dp, sid) */
       SELECT
         data_provider,
         stream_id,
@@ -727,36 +699,34 @@ RETURNS TABLE(
       FROM earliest_events
       WHERE rn = 1
     ),
-
-    /*----------------------------------------------------------------------
-     * 5) Among those earliest events, pick the global minimum event_time
-     *---------------------------------------------------------------------*/
     global_min AS (
+      /* Step 5: Find the minimum event_time among all leaves */
       SELECT MIN(event_time) AS earliest_time
       FROM earliest_values
     )
-
-    /*----------------------------------------------------------------------
-     * 6) Return the row(s) that match that earliest_time
-    *---------------------------------------------------------------------*/
-    SELECT 
+    /* Step 6: Return the row(s) matching that global earliest_time (pick first) */
+    SELECT
       ev.event_time,
       ev.value::NUMERIC(36,18)
     FROM earliest_values ev
     JOIN global_min gm
-      ON ev.event_time = gm.earliest_time {
-        $earliest_event_time := $ev.event_time;
-        break;
-      }
-    -- if distinct from null, we try to return with get_record_composed function
-    if $earliest_event_time IS DISTINCT FROM NULL {
+      ON ev.event_time = gm.earliest_time
+    {
+        $earliest_event_time := $row.event_time;
+        break;  -- break out after storing
+    }
+
+    /*
+     * Step 7: If we have earliest_event_time, call get_record_composed() at
+     *          [earliest_event_time, earliest_event_time].
+     */
+    IF $earliest_event_time IS DISTINCT FROM NULL {
         for $row in get_record_composed($data_provider, $stream_id, $earliest_event_time, $earliest_event_time, $frozen_at) {
             return next $row.event_time, $row.value;
             break;
         }
     }
 };
-
 
 
 /**
@@ -858,6 +828,7 @@ CREATE OR REPLACE ACTION get_base_value_composed(
     -- If no value is found at all, return an error
     ERROR('no base value found');
 };
+
 
 /**
  * get_index_composed: Placeholder for index calculation in composed streams.
