@@ -33,11 +33,11 @@ import (
 
 const primitiveStreamName = "primitive_stream_query_test"
 const composedStreamName = "composed_stream_query_test"
-const singleChildComposedStreamName = "single_child_composed_stream_query_test"
+const primitiveChildStreamName = "primitive_child_stream_query_test"
 
 var primitiveStreamId = util.GenerateStreamId(primitiveStreamName)
 var composedStreamId = util.GenerateStreamId(composedStreamName)
-var singleChildComposedStreamId = util.GenerateStreamId(singleChildComposedStreamName)
+var primitiveChildStreamId = util.GenerateStreamId(primitiveChildStreamName)
 
 func TestQueryStream(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
@@ -61,8 +61,9 @@ func TestQueryStream(t *testing.T) {
 
 // TestConfig holds the configuration for testing streams
 type TestConfig struct {
-	StreamId util.StreamId
-	Name     string
+	WritableStreamId util.StreamId
+	ReadableStreamId util.StreamId
+	Name             string
 }
 
 // WithQueryTestSetup is a helper function that sets up the test environment with a deployer and signer
@@ -93,12 +94,13 @@ func WithQueryTestSetup(testFn func(ctx context.Context, platform *kwilTesting.P
 
 		// Setup a composed stream with a single child (the primitive stream)
 		// This should behave exactly like the primitive stream
+		// it already sets up the primitive stream too
 		err = setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
 			Platform: platform,
-			StreamId: singleChildComposedStreamId,
+			StreamId: composedStreamId,
 			Height:   1,
-			MarkdownData: `
-			| event_time | primitive_stream |
+			MarkdownData: fmt.Sprintf(`
+			| event_time | %s |
 			|------------|------------------|
 			| 1          | 1                |
 			| 2          | 2                |
@@ -106,6 +108,8 @@ func WithQueryTestSetup(testFn func(ctx context.Context, platform *kwilTesting.P
 			| 4          | 5                |
 			| 5          | 3                |
 			`,
+				primitiveChildStreamName,
+			),
 		})
 		if err != nil {
 			return errors.Wrap(err, "error setting up single child composed stream")
@@ -125,12 +129,14 @@ func runTestForAllStreamTypes(t *testing.T, testName string, testFn func(ctx con
 		// Test configurations for each stream type
 		testConfigs := []TestConfig{
 			{
-				StreamId: primitiveStreamId,
-				Name:     "Primitive Stream",
+				WritableStreamId: primitiveStreamId,
+				ReadableStreamId: primitiveStreamId,
+				Name:             "Primitive Stream",
 			},
 			{
-				StreamId: singleChildComposedStreamId,
-				Name:     "Single Child Composed Stream",
+				WritableStreamId: primitiveChildStreamId,
+				ReadableStreamId: composedStreamId,
+				Name:             "Composed Stream",
 			},
 		}
 
@@ -144,13 +150,13 @@ func runTestForAllStreamTypes(t *testing.T, testName string, testFn func(ctx con
 			if err != nil {
 				// Store the error and mark which stream failed
 				errors = append(errors, err)
-				failedStreams = append(failedStreams, fmt.Sprintf("%s (StreamId: %s)", config.Name, config.StreamId.String()))
+				failedStreams = append(failedStreams, fmt.Sprintf("%s (StreamId: %s)", config.Name, config.ReadableStreamId.String()))
 
 				// Log the error to make it visible in the test output
 				t.Errorf("%s test failed for %s (StreamId: %s): %v",
 					testName,
 					config.Name,
-					config.StreamId.String(),
+					config.ReadableStreamId.String(),
 					err)
 			}
 		}
@@ -214,7 +220,7 @@ func testQUERY01_InsertAndGetRecord(t *testing.T) func(ctx context.Context, plat
 		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 			Platform: platform,
 			StreamLocator: types.StreamLocator{
-				StreamId:     config.StreamId,
+				StreamId:     config.ReadableStreamId,
 				DataProvider: deployer,
 			},
 			FromTime: &fromTime,
@@ -223,7 +229,7 @@ func testQUERY01_InsertAndGetRecord(t *testing.T) func(ctx context.Context, plat
 
 		if err != nil {
 			return errors.Wrapf(err, "error getting records from %s (StreamId: %s)",
-				config.Name, config.StreamId.String())
+				config.Name, config.ReadableStreamId.String())
 		}
 
 		expected := `
@@ -255,7 +261,7 @@ func testQUERY06_GetRecordWithFutureDate(t *testing.T) func(ctx context.Context,
 		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 			Platform: platform,
 			StreamLocator: types.StreamLocator{
-				StreamId:     config.StreamId,
+				StreamId:     config.ReadableStreamId,
 				DataProvider: deployer,
 			},
 			FromTime: &fromTime,
@@ -264,7 +270,7 @@ func testQUERY06_GetRecordWithFutureDate(t *testing.T) func(ctx context.Context,
 
 		if err != nil {
 			return errors.Wrapf(err, "error getting records with future date from %s (StreamId: %s)",
-				config.Name, config.StreamId.String())
+				config.Name, config.ReadableStreamId.String())
 		}
 
 		expected := `
@@ -283,7 +289,7 @@ func testQUERY02_GetIndex(t *testing.T) func(ctx context.Context, platform *kwil
 		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
 		if err != nil {
 			return errors.Wrapf(err, "error creating ethereum address for %s (StreamId: %s)",
-				config.Name, config.StreamId.String())
+				config.Name, config.ReadableStreamId.String())
 		}
 
 		fromTime := int64(1)
@@ -293,7 +299,7 @@ func testQUERY02_GetIndex(t *testing.T) func(ctx context.Context, platform *kwil
 		result, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
 			Platform: platform,
 			StreamLocator: types.StreamLocator{
-				StreamId:     config.StreamId,
+				StreamId:     config.ReadableStreamId,
 				DataProvider: deployer,
 			},
 			FromTime: &fromTime,
@@ -302,7 +308,7 @@ func testQUERY02_GetIndex(t *testing.T) func(ctx context.Context, platform *kwil
 
 		if err != nil {
 			return errors.Wrapf(err, "error getting index from %s (StreamId: %s)",
-				config.Name, config.StreamId.String())
+				config.Name, config.ReadableStreamId.String())
 		}
 
 		expected := `
@@ -325,7 +331,7 @@ func testQUERY03_GetIndexChange(t *testing.T) func(ctx context.Context, platform
 		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
 		if err != nil {
 			return errors.Wrapf(err, "error creating ethereum address for %s (StreamId: %s)",
-				config.Name, config.StreamId.String())
+				config.Name, config.ReadableStreamId.String())
 		}
 
 		fromTime := int64(1)
@@ -335,7 +341,7 @@ func testQUERY03_GetIndexChange(t *testing.T) func(ctx context.Context, platform
 		result, err := procedure.GetIndexChange(ctx, procedure.GetIndexChangeInput{
 			Platform: platform,
 			StreamLocator: types.StreamLocator{
-				StreamId:     config.StreamId,
+				StreamId:     config.ReadableStreamId,
 				DataProvider: deployer,
 			},
 			FromTime: &fromTime,
@@ -344,7 +350,7 @@ func testQUERY03_GetIndexChange(t *testing.T) func(ctx context.Context, platform
 
 		if err != nil {
 			return errors.Wrapf(err, "error getting index change from %s (StreamId: %s)",
-				config.Name, config.StreamId.String())
+				config.Name, config.ReadableStreamId.String())
 		}
 
 		expected := `
@@ -367,21 +373,21 @@ func testQUERY05_GetFirstRecord(t *testing.T) func(ctx context.Context, platform
 		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
 		if err != nil {
 			return errors.Wrapf(err, "error creating ethereum address for %s (StreamId: %s)",
-				config.Name, config.StreamId.String())
+				config.Name, config.ReadableStreamId.String())
 		}
 
 		// Get first record
 		result, err := procedure.GetFirstRecord(ctx, procedure.GetFirstRecordInput{
 			Platform: platform,
 			StreamLocator: types.StreamLocator{
-				StreamId:     config.StreamId,
+				StreamId:     config.ReadableStreamId,
 				DataProvider: deployer,
 			},
 		})
 
 		if err != nil {
 			return errors.Wrapf(err, "error getting first record from %s (StreamId: %s)",
-				config.Name, config.StreamId.String())
+				config.Name, config.ReadableStreamId.String())
 		}
 
 		expected := `
@@ -400,39 +406,44 @@ func testQUERY07_DuplicateDate(t *testing.T) func(ctx context.Context, platform 
 		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
 		if err != nil {
 			return errors.Wrapf(err, "error creating ethereum address for %s (StreamId: %s)",
-				config.Name, config.StreamId.String())
+				config.Name, config.ReadableStreamId.String())
 		}
 
 		fromTime := int64(1)
 		toTime := int64(5)
 
 		// Insert a record with a duplicate date - this has to be done to both streams to keep them in sync
-		streamLocator := types.StreamLocator{
-			StreamId:     config.StreamId,
+		writableStreamLocator := types.StreamLocator{
+			StreamId:     config.WritableStreamId,
 			DataProvider: deployer,
 		}
 
-		err = setup.ExecuteInsertRecord(ctx, platform, streamLocator, setup.InsertRecordInput{
+		err = setup.ExecuteInsertRecord(ctx, platform, writableStreamLocator, setup.InsertRecordInput{
 			EventTime: 3,
 			Value:     10,
 		}, 3)
 
 		if err != nil {
 			return errors.Wrapf(err, "error inserting record into %s (StreamId: %s)",
-				config.Name, config.StreamId.String())
+				config.Name, config.WritableStreamId.String())
+		}
+
+		readableStreamLocator := types.StreamLocator{
+			StreamId:     config.ReadableStreamId,
+			DataProvider: deployer,
 		}
 
 		// Get records
 		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 			Platform:      platform,
-			StreamLocator: streamLocator,
+			StreamLocator: readableStreamLocator,
 			FromTime:      &fromTime,
 			ToTime:        &toTime,
 		})
 
 		if err != nil {
 			return errors.Wrapf(err, "error getting records from %s (StreamId: %s) after insert",
-				config.Name, config.StreamId.String())
+				config.Name, config.ReadableStreamId.String())
 		}
 
 		expected := `
@@ -455,7 +466,7 @@ func testQUERY01_GetRecordWithBaseDate(t *testing.T) func(ctx context.Context, p
 		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
 		if err != nil {
 			return errors.Wrapf(err, "error creating ethereum address for %s (StreamId: %s)",
-				config.Name, config.StreamId.String())
+				config.Name, config.ReadableStreamId.String())
 		}
 
 		fromTime := int64(1)
@@ -466,7 +477,7 @@ func testQUERY01_GetRecordWithBaseDate(t *testing.T) func(ctx context.Context, p
 		result, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
 			Platform: platform,
 			StreamLocator: types.StreamLocator{
-				StreamId:     config.StreamId,
+				StreamId:     config.ReadableStreamId,
 				DataProvider: deployer,
 			},
 			FromTime: &fromTime,
@@ -477,7 +488,7 @@ func testQUERY01_GetRecordWithBaseDate(t *testing.T) func(ctx context.Context, p
 
 		if err != nil {
 			return errors.Wrapf(err, "error getting index with base time from %s (StreamId: %s)",
-				config.Name, config.StreamId.String())
+				config.Name, config.ReadableStreamId.String())
 		}
 
 		expected := `
@@ -501,39 +512,44 @@ func testQUERY07_AdditionalInsertWillFetchLatestRecord(t *testing.T) func(ctx co
 		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
 		if err != nil {
 			return errors.Wrapf(err, "error creating ethereum address for %s (StreamId: %s)",
-				config.Name, config.StreamId.String())
+				config.Name, config.ReadableStreamId.String())
 		}
 
 		fromTime := int64(1)
 		toTime := int64(5)
 
 		// Insert a record with a duplicate date
-		streamLocator := types.StreamLocator{
-			StreamId:     config.StreamId,
+		writableStreamLocator := types.StreamLocator{
+			StreamId:     config.WritableStreamId,
 			DataProvider: deployer,
 		}
 
-		err = setup.ExecuteInsertRecord(ctx, platform, streamLocator, setup.InsertRecordInput{
+		err = setup.ExecuteInsertRecord(ctx, platform, writableStreamLocator, setup.InsertRecordInput{
 			EventTime: 3,
 			Value:     20,
 		}, 3)
 
 		if err != nil {
 			return errors.Wrapf(err, "error inserting record into %s (StreamId: %s)",
-				config.Name, config.StreamId.String())
+				config.Name, config.WritableStreamId.String())
+		}
+
+		readableStreamLocator := types.StreamLocator{
+			StreamId:     config.ReadableStreamId,
+			DataProvider: deployer,
 		}
 
 		// Get records
 		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 			Platform:      platform,
-			StreamLocator: streamLocator,
+			StreamLocator: readableStreamLocator,
 			FromTime:      &fromTime,
 			ToTime:        &toTime,
 		})
 
 		if err != nil {
 			return errors.Wrapf(err, "error getting records from %s (StreamId: %s) after insert",
-				config.Name, config.StreamId.String())
+				config.Name, config.ReadableStreamId.String())
 		}
 
 		expected := `
@@ -623,47 +639,13 @@ func testAGGR03_ComposedStreamWithWeights(t *testing.T) func(ctx context.Context
 		)
 
 		composedConfig := TestConfig{
-			StreamId: composedStreamId,
-			Name:     "Composed Stream",
+			ReadableStreamId: composedStreamId,
+			Name:             "Composed Stream",
 		}
 
 		if err := validateTableResult(t, result, expected, composedConfig); err != nil {
 			return errors.Wrapf(err, "error validating composed stream taxonomy (StreamId: %s)",
 				composedStreamId.String())
-		}
-
-		// Also test the taxonomies of the single-child composed stream
-		result, err = procedure.DescribeTaxonomies(ctx, procedure.DescribeTaxonomiesInput{
-			Platform:      platform,
-			StreamId:      singleChildComposedStreamId.String(),
-			DataProvider:  deployer.Address(),
-			LatestVersion: true,
-		})
-		if err != nil {
-			return errors.Wrapf(err, "error getting taxonomies for Single Child Composed Stream (StreamId: %s)",
-				singleChildComposedStreamId.String())
-		}
-
-		parentStreamId = singleChildComposedStreamId.String()
-		childStream := util.GenerateStreamId("primitive_stream")
-		childStreamId := childStream.String()
-
-		expected = fmt.Sprintf(`
-		| data_provider | stream_id | child_data_provider | child_stream_id | weight | created_at | version | start_date |
-		|---------------|-----------|--------------------|-----------------|--------|------------|---------|------------|
-		| 0x0000000000000000000000000000000000000000 | %s | 0x0000000000000000000000000000000000000000 | %s | 1.000000000000000000 | 0 | 1 | 0 |
-		`,
-			parentStreamId, childStreamId,
-		)
-
-		singleChildConfig := TestConfig{
-			StreamId: singleChildComposedStreamId,
-			Name:     "Single Child Composed Stream",
-		}
-
-		if err := validateTableResult(t, result, expected, singleChildConfig); err != nil {
-			return errors.Wrapf(err, "error validating single child composed stream taxonomy (StreamId: %s)",
-				singleChildComposedStreamId.String())
 		}
 
 		return nil
@@ -677,7 +659,7 @@ func validateTableResult(t *testing.T, result []procedure.ResultRow, expected st
 	var capturedError error
 
 	// Run the test inside a subtest so we can capture failures
-	testName := fmt.Sprintf("Validate %s (StreamId: %s)", config.Name, config.StreamId.String())
+	testName := fmt.Sprintf("Validate %s (StreamId: %s)", config.Name, config.ReadableStreamId.String())
 	t.Run(testName, func(t *testing.T) {
 		// Create a helper that will mark the test as failed but not cause an immediate exit
 		oldT := t
@@ -686,7 +668,7 @@ func validateTableResult(t *testing.T, result []procedure.ResultRow, expected st
 			if oldT.Failed() && success {
 				success = false
 				capturedError = fmt.Errorf("table validation failed for %s (StreamId: %s)",
-					config.Name, config.StreamId.String())
+					config.Name, config.ReadableStreamId.String())
 			}
 		}()
 

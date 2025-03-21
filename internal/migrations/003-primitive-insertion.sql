@@ -18,6 +18,11 @@ CREATE OR REPLACE ACTION insert_record(
         ERROR('stream does not exist');
     }
 
+    -- Ensure that the stream is a primitive stream
+    if is_primitive_stream($data_provider, $stream_id) == false {
+        ERROR('stream is not a primitive stream');
+    }
+
     $current_block INT := @height;
 
     -- Insert the new record into the primitive_events table
