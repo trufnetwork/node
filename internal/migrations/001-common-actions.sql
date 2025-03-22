@@ -372,66 +372,212 @@ CREATE OR REPLACE ACTION get_metadata(
  */
 CREATE OR REPLACE ACTION get_category_streams(
     $data_provider TEXT,
-    $stream_id TEXT,
-    $active_from INT,
-    $active_to INT
+    $stream_id     TEXT,
+    $active_from   INT,
+    $active_to     INT
 ) PUBLIC view returns table(data_provider TEXT, stream_id TEXT) {
+    -- Check if stream exists
     if !stream_exists($data_provider, $stream_id) {
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
     }
 
-    if is_primitive_stream($data_provider, $stream_id) == true  {
-        return SELECT $data_provider as data_provider, $stream_id as stream_id;
+    -- Always return itself first
+    RETURN NEXT $data_provider, $stream_id;
+
+    -- For primitive streams, just return the stream itself
+    if is_primitive_stream($data_provider, $stream_id) == true {
+        RETURN;
     }
 
-    -- Get all substreams with proper recursive traversal, including the root stream itself
-    return WITH RECURSIVE 
-        -- effective_taxonomies holds, for every parent-child link that is active,
-        -- the rows that are considered effective given the time window.
-        effective_taxonomies AS (
-        SELECT 
-            t.data_provider,
-            t.stream_id,
-            t.child_data_provider,
-            t.child_stream_id,
-            t.start_time
-        FROM taxonomies t
-        WHERE t.disabled_at IS NULL
-            AND ($active_to IS NULL OR t.start_time <= $active_to)
-            AND (
-            -- (A) For rows before (or at) $active_from: only include the one with the maximum start_time.
-            ($active_from IS NOT NULL 
-                AND t.start_time <= $active_from 
-                AND t.start_time = (
-                    SELECT max(t2.start_time)
+    -- Set boundaries for time intervals
+    $max_int8 INT := 9223372036854775000;
+    $effective_active_from INT := COALESCE($active_from, 0);
+    $effective_active_to INT := COALESCE($active_to, $max_int8);
+
+    -- Get all substreams with proper recursive traversal
+    return WITH RECURSIVE substreams AS (
+        /*------------------------------------------------------------------
+         * (1) Base Case: overshadow logic for ($data_provider, $stream_id).
+         *     - For each distinct start_time, pick the row with the max group_sequence.
+         *     - next_start is used to define [group_sequence_start, group_sequence_end].
+         *------------------------------------------------------------------*/
+        SELECT
+            base.data_provider         AS parent_data_provider,
+            base.stream_id             AS parent_stream_id,
+            base.child_data_provider,
+            base.child_stream_id,
+            
+            -- The interval during which this row is active:
+            base.start_time            AS group_sequence_start,
+            COALESCE(ot.next_start, $max_int8) - 1 AS group_sequence_end
+        FROM (
+            -- Find rows with maximum group_sequence for each start_time
+            SELECT
+                t.data_provider,
+                t.stream_id,
+                t.child_data_provider,
+                t.child_stream_id,
+                t.start_time,
+                t.group_sequence,
+                MAX(t.group_sequence) OVER (
+                    PARTITION BY t.data_provider, t.stream_id, t.start_time
+                ) AS max_group_sequence
+            FROM taxonomies t
+            WHERE t.data_provider = $data_provider
+              AND t.stream_id     = $stream_id
+              AND t.disabled_at   IS NULL
+              AND t.start_time   <= $effective_active_to
+              AND t.start_time   >= COALESCE((
+                    -- Find the most recent taxonomy at or before effective_active_from
+                    SELECT t2.start_time
                     FROM taxonomies t2
                     WHERE t2.data_provider = t.data_provider
-                        AND t2.stream_id = t.stream_id
-                        AND t2.disabled_at IS NULL
-                        AND ($active_to IS NULL OR t2.start_time <= $active_to)
-                        AND t2.start_time <= $active_from
-                )
-            )
-            -- (B) Also include any rows with start_time greater than $active_from.
-            OR ($active_from IS NULL OR t.start_time > $active_from)
-            )
-        ),
-        -- Now recursively gather substreams using the effective taxonomy links.
-        recursive_substreams AS (
-            -- Start with the root stream itself
-            SELECT $data_provider AS data_provider, 
-                   $stream_id AS stream_id
-                UNION
-                -- Then add all child streams
-                SELECT et.child_data_provider,
-                       et.child_stream_id
-                FROM effective_taxonomies et
-                JOIN recursive_substreams rs
-                    ON et.data_provider = rs.data_provider
-                    AND et.stream_id = rs.stream_id
-            )
-        SELECT DISTINCT data_provider, stream_id
-        FROM recursive_substreams;
+                      AND t2.stream_id     = t.stream_id
+                      AND t2.disabled_at   IS NULL
+                      AND t2.start_time   <= $effective_active_from
+                    ORDER BY t2.start_time DESC, t2.group_sequence DESC
+                    LIMIT 1
+                  ), 0
+              )
+        ) base
+        JOIN (
+            /* Distinct start_times for top-level (dp, sid), used for LEAD() */
+            SELECT
+                dt.data_provider,
+                dt.stream_id,
+                dt.start_time,
+                LEAD(dt.start_time) OVER (
+                    PARTITION BY dt.data_provider, dt.stream_id
+                    ORDER BY dt.start_time
+                ) AS next_start
+            FROM (
+                SELECT DISTINCT
+                    t.data_provider,
+                    t.stream_id,
+                    t.start_time
+                FROM taxonomies t
+                WHERE t.data_provider = $data_provider
+                  AND t.stream_id     = $stream_id
+                  AND t.disabled_at   IS NULL
+                  AND t.start_time   <= $effective_active_to
+                  AND t.start_time   >= COALESCE((
+                        SELECT t2.start_time
+                        FROM taxonomies t2
+                        WHERE t2.data_provider = t.data_provider
+                          AND t2.stream_id     = t.stream_id
+                          AND t2.disabled_at   IS NULL
+                          AND t2.start_time   <= $effective_active_from
+                        ORDER BY t2.start_time DESC, t2.group_sequence DESC
+                        LIMIT 1
+                      ), 0
+                  )
+            ) dt
+        ) ot
+          ON base.data_provider = ot.data_provider
+         AND base.stream_id     = ot.stream_id
+         AND base.start_time    = ot.start_time
+        WHERE base.group_sequence = base.max_group_sequence
+
+        UNION
+
+        /*------------------------------------------------------------------
+         * (2) Recursive Child-Level Overshadow:
+         *     For each discovered child, gather overshadow rows for that child
+         *     and produce intervals that overlap the parent's own active interval.
+         *------------------------------------------------------------------*/
+        SELECT
+            parent.parent_data_provider,
+            parent.parent_stream_id,
+            child.child_data_provider,
+            child.child_stream_id,
+
+            -- Intersection of parent's active interval and child's:
+            GREATEST(parent.group_sequence_start, child.start_time)    AS group_sequence_start,
+            LEAST(parent.group_sequence_end, child.group_sequence_end) AS group_sequence_end
+        FROM substreams parent
+        JOIN (
+            /* Child overshadow logic, same pattern as above but for child dp/sid. */
+            SELECT
+                base.data_provider,
+                base.stream_id,
+                base.child_data_provider,
+                base.child_stream_id,
+                base.start_time,
+                COALESCE(ot.next_start, $max_int8) - 1 AS group_sequence_end
+            FROM (
+                SELECT
+                    t.data_provider,
+                    t.stream_id,
+                    t.child_data_provider,
+                    t.child_stream_id,
+                    t.start_time,
+                    t.group_sequence,
+                    MAX(t.group_sequence) OVER (
+                        PARTITION BY t.data_provider, t.stream_id, t.start_time
+                    ) AS max_group_sequence
+                FROM taxonomies t
+                WHERE t.disabled_at IS NULL
+                  AND t.start_time <= $effective_active_to
+                  AND t.start_time >= COALESCE((
+                        -- Most recent taxonomy at or before effective_from
+                        SELECT t2.start_time
+                        FROM taxonomies t2
+                        WHERE t2.data_provider = t.data_provider
+                          AND t2.stream_id     = t.stream_id
+                          AND t2.disabled_at   IS NULL
+                          AND t2.start_time   <= $effective_active_from
+                        ORDER BY t2.start_time DESC, t2.group_sequence DESC
+                        LIMIT 1
+                      ), 0
+                  )
+            ) base
+            JOIN (
+                /* Distinct start_times at child level */
+                SELECT
+                    dt.data_provider,
+                    dt.stream_id,
+                    dt.start_time,
+                    LEAD(dt.start_time) OVER (
+                        PARTITION BY dt.data_provider, dt.stream_id
+                        ORDER BY dt.start_time
+                    ) AS next_start
+                FROM (
+                    SELECT DISTINCT
+                        t.data_provider,
+                        t.stream_id,
+                        t.start_time
+                    FROM taxonomies t
+                    WHERE t.disabled_at   IS NULL
+                      AND t.start_time   <= $effective_active_to
+                      AND t.start_time   >= COALESCE((
+                            SELECT t2.start_time
+                            FROM taxonomies t2
+                            WHERE t2.data_provider = t.data_provider
+                              AND t2.stream_id     = t.stream_id
+                              AND t2.disabled_at   IS NULL
+                              AND t2.start_time   <= $effective_active_from
+                            ORDER BY t2.start_time DESC, t2.group_sequence DESC
+                            LIMIT 1
+                          ), 0
+                      )
+                ) dt
+            ) ot
+              ON base.data_provider = ot.data_provider
+             AND base.stream_id     = ot.stream_id
+             AND base.start_time    = ot.start_time
+            WHERE base.group_sequence = base.max_group_sequence
+        ) child
+          ON child.data_provider = parent.child_data_provider
+         AND child.stream_id     = parent.child_stream_id
+        
+        /* Overlap check: child's interval must intersect parent's */
+        WHERE child.start_time         <= parent.group_sequence_end
+          AND child.group_sequence_end >= parent.group_sequence_start
+    )
+    SELECT DISTINCT 
+        substreams.child_data_provider, 
+        substreams.child_stream_id
+    FROM substreams;
 };
 
 /**
