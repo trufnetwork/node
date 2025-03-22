@@ -6,7 +6,7 @@
     
     Tables:
     - streams: Core table storing stream metadata with immutable data provider references
-    - taxonomies: Defines parent-child relationships between streams with group_sequenceing
+    - taxonomies: Defines parent-child relationships between streams with versioning
     - primitive_events: Stores time-series data points for primitive streams
     - metadata: Flexible key-value store for stream configuration and properties
  */
