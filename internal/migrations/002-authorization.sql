@@ -233,8 +233,10 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
        *     and produce intervals that overlap the parent's own active interval.
        *------------------------------------------------------------------*/
       SELECT
-          parent.parent_data_provider,
-          parent.parent_stream_id,
+          -- promote the child to the parent
+          parent.child_data_provider   AS parent_data_provider,
+          parent.child_stream_id       AS parent_stream_id,
+
           child.child_data_provider,
           child.child_stream_id,
 
@@ -400,6 +402,10 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
     if !stream_exists($data_provider, $stream_id) {
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
     }
+    
+    $max_int8 INT := 9223372036854775000;
+    $effective_active_from INT := COALESCE($active_from, 0);
+    $effective_active_to INT := COALESCE($active_to, $max_int8);
 
     $result BOOL := true;
     -- Check for missing or unauthorized substreams using recursive CTE
@@ -497,8 +503,10 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
         *     and produce intervals that overlap the parent's own active interval.
         *------------------------------------------------------------------*/
         SELECT
-            parent.parent_data_provider,
-            parent.parent_stream_id,
+            -- promote the child to the parent
+            parent.child_data_provider   AS parent_data_provider,
+            parent.child_stream_id       AS parent_stream_id,
+
             child.child_data_provider,
             child.child_stream_id,
 
@@ -587,7 +595,7 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
         ),
     
         parent_child_edges as (
-            SELECT DISTINCT p.data_provider, p.stream_id, p.child_data_provider, p.child_stream_id
+            SELECT DISTINCT p.parent_data_provider, p.parent_stream_id, p.child_data_provider, p.child_stream_id
             FROM substreams p
         ),
         -- Check that all child streams exist.
@@ -601,7 +609,7 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
         ),
         -- For each edge, if the child is private, check that the child whitelists its parent.
         unauthorized_edges AS (
-            SELECT p.data_provider, p.stream_id, p.child_data_provider, p.child_stream_id
+            SELECT p.parent_data_provider, p.parent_stream_id, p.child_data_provider, p.child_stream_id
             FROM parent_child_edges p
             WHERE (
                 SELECT value_i
@@ -612,6 +620,7 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
                   AND m.disabled_at IS NULL
                 ORDER BY m.created_at DESC
                 LIMIT 1
+            -- check if the child is a private stream (compose visibility is 1)
             ) = 1
             AND NOT EXISTS (
                 SELECT 1
@@ -633,11 +642,11 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
                   ' stream_id=' || $stream_id || ' missing_count=' || $counts.missing_count::TEXT);
         }
 
-        -- Return false if there are any unauthorized streams
+        -- only authorized if there are no unauthorized edges
         $result := $counts.unauthorized_count = 0;
     }
 
-    -- If we got here (which we shouldn't), return false as a fallback
+    -- return if it's authorized or not
     return $result;
 };
 

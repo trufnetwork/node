@@ -645,6 +645,7 @@ func testNestedComposePermissionControl(t *testing.T) kwilTesting.TestFunc {
 			DataProviders: []string{childLocator.DataProvider.Address()},
 			StreamIds:     []string{childLocator.StreamId.String()},
 			Weights:       []string{"1.0"},
+			Height:        1,
 			StartTime:     nil,
 		}); err != nil {
 			return errors.Wrap(err, "failed to set taxonomy for child")
@@ -656,6 +657,7 @@ func testNestedComposePermissionControl(t *testing.T) kwilTesting.TestFunc {
 			DataProviders: []string{grandchildLocator.DataProvider.Address()},
 			StreamIds:     []string{grandchildLocator.StreamId.String()},
 			Weights:       []string{"1.0"},
+			Height:        1,
 			StartTime:     nil,
 		}); err != nil {
 			return errors.Wrap(err, "failed to set taxonomy for grandchild")
@@ -665,7 +667,7 @@ func testNestedComposePermissionControl(t *testing.T) kwilTesting.TestFunc {
 		canComposeAll, err := procedure.CheckComposeAllPermissions(ctx, procedure.CheckComposeAllPermissionsInput{
 			Platform: platform,
 			Locator:  parentLocator,
-			Height:   0,
+			Height:   1,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to check nested compose permissions initially")
@@ -680,7 +682,7 @@ func testNestedComposePermissionControl(t *testing.T) kwilTesting.TestFunc {
 			Key:      "compose_visibility",
 			Value:    "1",
 			ValType:  "int",
-			Height:   0,
+			Height:   1,
 		}); err != nil {
 			return errors.Wrap(err, "failed to set compose_visibility on child")
 		}
@@ -689,7 +691,7 @@ func testNestedComposePermissionControl(t *testing.T) kwilTesting.TestFunc {
 		canComposeAll, err = procedure.CheckComposeAllPermissions(ctx, procedure.CheckComposeAllPermissionsInput{
 			Platform: platform,
 			Locator:  parentLocator,
-			Height:   0,
+			Height:   1,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to check nested compose permissions initially")
@@ -703,7 +705,7 @@ func testNestedComposePermissionControl(t *testing.T) kwilTesting.TestFunc {
 			Key:      "allow_compose_stream",
 			Value:    parentLocator.StreamId.String(),
 			ValType:  "ref",
-			Height:   0,
+			Height:   1,
 		}); err != nil {
 			return errors.Wrap(err, "failed to insert allow_compose_stream metadata on child")
 		}
@@ -712,7 +714,7 @@ func testNestedComposePermissionControl(t *testing.T) kwilTesting.TestFunc {
 		canComposeAll, err = procedure.CheckComposeAllPermissions(ctx, procedure.CheckComposeAllPermissionsInput{
 			Platform: platform,
 			Locator:  parentLocator,
-			Height:   0,
+			Height:   1,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to check nested compose permissions after parent's whitelist on child")
@@ -727,7 +729,7 @@ func testNestedComposePermissionControl(t *testing.T) kwilTesting.TestFunc {
 			Key:      "compose_visibility",
 			Value:    "1",
 			ValType:  "int",
-			Height:   0,
+			Height:   1,
 		}); err != nil {
 			return errors.Wrap(err, "failed to set compose_visibility on grandchild")
 		}
@@ -736,7 +738,7 @@ func testNestedComposePermissionControl(t *testing.T) kwilTesting.TestFunc {
 		canComposeAll, err = procedure.CheckComposeAllPermissions(ctx, procedure.CheckComposeAllPermissionsInput{
 			Platform: platform,
 			Locator:  parentLocator,
-			Height:   0,
+			Height:   1,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to check nested compose permissions after marking grandchild private")
@@ -750,7 +752,7 @@ func testNestedComposePermissionControl(t *testing.T) kwilTesting.TestFunc {
 			Key:      "allow_compose_stream",
 			Value:    childLocator.StreamId.String(),
 			ValType:  "ref",
-			Height:   0,
+			Height:   1,
 		}); err != nil {
 			return errors.Wrap(err, "failed to insert allow_compose_stream metadata on grandchild")
 		}
@@ -759,7 +761,7 @@ func testNestedComposePermissionControl(t *testing.T) kwilTesting.TestFunc {
 		canComposeAll, err = procedure.CheckComposeAllPermissions(ctx, procedure.CheckComposeAllPermissionsInput{
 			Platform: platform,
 			Locator:  parentLocator,
-			Height:   0,
+			Height:   1,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to check nested compose permissions after all metadata inserted")
