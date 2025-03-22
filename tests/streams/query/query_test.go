@@ -47,8 +47,7 @@ func TestQueryStream(t *testing.T) {
 			WithQueryTestSetup(testQUERY01_InsertAndGetRecord(t)),
 			WithQueryTestSetup(testQUERY06_GetRecordWithFutureDate(t)),
 			WithQueryTestSetup(testQUERY02_GetIndex(t)),
-			// TODO: get index change is not implemented yet
-			// WithQueryTestSetup(testQUERY03_GetIndexChange(t)),
+			WithQueryTestSetup(testQUERY03_GetIndexChange(t)),
 			WithQueryTestSetup(testQUERY05_GetFirstRecord(t)),
 			WithQueryTestSetup(testQUERY07_DuplicateDate(t)),
 			WithQueryTestSetup(testQUERY01_GetRecordWithBaseDate(t)),
@@ -336,7 +335,7 @@ func testQUERY03_GetIndexChange(t *testing.T) func(ctx context.Context, platform
 
 		fromTime := int64(1)
 		toTime := int64(5)
-
+		interval := int(1)
 		// Get index change
 		result, err := procedure.GetIndexChange(ctx, procedure.GetIndexChangeInput{
 			Platform: platform,
@@ -346,6 +345,7 @@ func testQUERY03_GetIndexChange(t *testing.T) func(ctx context.Context, platform
 			},
 			FromTime: &fromTime,
 			ToTime:   &toTime,
+			Interval: &interval,
 		})
 
 		if err != nil {
@@ -356,7 +356,6 @@ func testQUERY03_GetIndexChange(t *testing.T) func(ctx context.Context, platform
 		expected := `
 		| event_time | value |
 		|------------|-------|
-		| 1          | 0.000000000000000000 |
 		| 2          | 100.000000000000000000 |
 		| 3          | 100.000000000000000000 |
 		| 4          | 25.000000000000000000 |
