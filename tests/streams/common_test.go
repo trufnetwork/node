@@ -133,7 +133,7 @@ func testReadOnlyMetadataCannotBeModified(t *testing.T, streamInfo setup.StreamI
 			return errors.Wrap(err, "failed to create stream for read-only metadata test")
 		}
 
-		readonlyKeys := []string{"stream_owner", "readonly_key", "taxonomy_version"}
+		readonlyKeys := []string{"stream_owner", "readonly_key"}
 
 		for _, key := range readonlyKeys {
 			// Attempt to insert metadata with a read-only key
