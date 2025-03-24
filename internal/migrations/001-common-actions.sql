@@ -371,6 +371,90 @@ CREATE OR REPLACE ACTION get_metadata(
 };
 
 /**
+ * get_latest_metadata: Retrieves the latest metadata for a stream.
+ */
+CREATE OR REPLACE ACTION get_latest_metadata(
+    $data_provider TEXT,
+    $stream_id TEXT,
+    $key TEXT,
+    $ref TEXT
+) PUBLIC view returns table(
+    value_i INT,
+    value_f NUMERIC(36,18),
+    value_b BOOL,
+    value_s TEXT,
+    value_ref TEXT
+) {
+    for $row in get_metadata($data_provider, $stream_id, $key, $ref, 1, 0, 'created_at DESC') {
+        RETURN NEXT $row.value_i, $row.value_f, $row.value_b, $row.value_s, $row.value_ref;
+    }
+};
+
+/**
+ * get_latest_metadata_int: Retrieves the latest metadata value for a stream.
+ */
+CREATE OR REPLACE ACTION get_latest_metadata_int(
+    $data_provider TEXT,
+    $stream_id TEXT,
+    $key TEXT
+) PUBLIC view returns (value INT) {
+    $result INT;
+    for $row in get_latest_metadata($data_provider, $stream_id, $key, NULL) {
+        $result := $row.value_i;
+    }
+    RETURN $result;
+};
+
+/**
+ * get_latest_metadata_ref: Retrieves the latest metadata value for a stream.
+ */
+CREATE OR REPLACE ACTION get_latest_metadata_ref(
+    $data_provider TEXT,
+    $stream_id TEXT,
+    $key TEXT,
+    $ref TEXT
+) PUBLIC view returns (value TEXT) {
+    $result TEXT;
+    for $row in get_latest_metadata($data_provider, $stream_id, $key, $ref) {
+        $result := $row.value_ref;
+    }
+    RETURN $result;
+};
+
+/**
+ * get_latest_metadata_bool: Retrieves the latest metadata value for a stream.
+ */
+CREATE OR REPLACE ACTION get_latest_metadata_bool(
+    $data_provider TEXT,
+    $stream_id TEXT,
+    $key TEXT
+) PUBLIC view returns (value BOOL) {
+    $result BOOL;
+    for $row in get_latest_metadata($data_provider, $stream_id, $key, NULL) {
+        $result := $row.value_b;
+    }
+    RETURN $result;
+};
+
+/**
+ * get_latest_metadata_string: Retrieves the latest metadata value for a stream.
+ */
+CREATE OR REPLACE ACTION get_latest_metadata_string(
+    $data_provider TEXT,
+    $stream_id TEXT,
+    $key TEXT
+) PUBLIC view returns (value TEXT) {
+    $result TEXT;
+    for $row in get_latest_metadata($data_provider, $stream_id, $key, NULL) {
+        $result := $row.value_s;
+    }
+    RETURN $result;
+};
+
+
+
+
+/**
  * get_category_streams: Retrieves all streams in a category (composed stream).
  * For primitive streams, returns just the stream itself.
  * For composed streams, recursively traverses taxonomy to find all substreams.
