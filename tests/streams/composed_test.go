@@ -1,382 +1,365 @@
 package tests
 
-// import (
-// 	"context"
-// 	"strconv"
-// 	"testing"
+import (
+	"context"
+	"testing"
 
-// 	"github.com/trufnetwork/sdk-go/core/types"
+	"github.com/trufnetwork/sdk-go/core/types"
 
-// 	"github.com/kwilteam/kwil-db/common"
-// 	"github.com/kwilteam/kwil-db/core/utils"
-// 	kwilTesting "github.com/kwilteam/kwil-db/testing"
-// 	"github.com/pkg/errors"
-// 	"github.com/stretchr/testify/assert"
-// 	"github.com/trufnetwork/node/tests/streams/tests/utils/procedure"
-// 	"github.com/trufnetwork/node/tests/streams/tests/utils/setup"
-// 	"github.com/trufnetwork/node/tests/streams/tests/utils/table"
-// 	"github.com/trufnetwork/sdk-go/core/util"
-// )
+	kwilTesting "github.com/kwilteam/kwil-db/testing"
+	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
+	"github.com/trufnetwork/node/internal/migrations"
+	testutils "github.com/trufnetwork/node/tests/streams/utils"
+	"github.com/trufnetwork/node/tests/streams/utils/procedure"
+	"github.com/trufnetwork/node/tests/streams/utils/setup"
+	"github.com/trufnetwork/node/tests/streams/utils/table"
+	"github.com/trufnetwork/sdk-go/core/util"
+)
 
-// func TestComposed(t *testing.T) {
-// 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
-// 		Name: "composed_test",
-// 		FunctionTests: []kwilTesting.TestFunc{
-// 			WithComposedTestSetup(testComposedLastAvailable(t)),
-// 			WithComposedTestSetup(testCOMPOSED01SetTaxonomyWithValidData(t)),
-// 			WithComposedTestSetup(testCOMPOSED02OnlyOwnerCanSetTaxonomy(t)),
-// 			WithComposedTestSetup(testCOMPOSED04DisableTaxonomy(t)),
-// 			WithComposedTestSetup(testOnlyOwnerCanDisableTaxonomy(t)),
-// 			WithComposedTestSetup(testCOMPOSED03SetReadOnlyMetadataToComposedStream(t)),
-// 		},
-// 	})
-// }
+var (
+	composedStreamName = "composed_stream"
+	composedStreamId   = util.GenerateStreamId(composedStreamName)
+	composedDeployer   = util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
+)
 
-// func WithComposedTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) kwilTesting.TestFunc {
-// 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 		// Define a valid deployer address
-// 		return testFn(ctx, procedure.WithSigner(platform, composedContractInfo.Deployer.Bytes()))
-// 	}
-// }
+func TestComposed(t *testing.T) {
+	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name:        "composed_test",
+		SeedScripts: migrations.GetSeedScriptPaths(),
+		FunctionTests: []kwilTesting.TestFunc{
+			testComposedLastAvailable(t),
+			testCOMPOSED01SetTaxonomyWithValidData(t),
+			WithComposedTestSetup(testCOMPOSED02OnlyOwnerCanSetTaxonomy(t)),
+			WithComposedTestSetup(testCOMPOSED04DisableTaxonomy(t)),
+			WithComposedTestSetup(testOnlyOwnerCanDisableTaxonomy(t)),
+			WithComposedTestSetup(testCOMPOSED03SetReadOnlyMetadataToComposedStream(t)),
+		},
+	}, testutils.GetTestOptions())
+}
 
-// func testComposedLastAvailable(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 		t.Skip("Test skipped: composed stream tests temporarily disabled")
-// 		composedDBID := utils.GenerateDBID(composedStreamId.String(), platform.Deployer)
+func WithComposedTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) kwilTesting.TestFunc {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Set the platform signer
+		platform = procedure.WithSigner(platform, composedDeployer.Bytes())
 
-// 		// Setup data for the test
-// 		err := setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
-// 			Platform: platform,
-// 			StreamId: composedStreamId.String(),
-// 			Height:   1,
-// 			MarkdownData: `
-// 				| date       | Stream 1 | Stream 2 | Stream 3 |
-// 				| ---------- | -------- | -------- | -------- |
-// 				| 2024-08-29 | 1        |          | 4        |
-// 				| 2024-08-30 |          |          |          |
-// 				| 2024-08-31 |          | 2        | 5        |
-// 				| 2024-09-01 |          |          | 3        |
-// 			`,
-// 			Weights: []string{"1", "2", "3"},
-// 		})
-// 		if err != nil {
-// 			return errors.Wrap(err, "error setting up last available test data")
-// 		}
+		// Create the composed stream
+		err := setup.CreateStream(ctx, platform, setup.StreamInfo{
+			Locator: types.StreamLocator{
+				StreamId:     composedStreamId,
+				DataProvider: composedDeployer,
+			},
+			Type: setup.ContractTypeComposed,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error setting up composed stream")
+		}
 
-// 		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
-// 			Platform: platform,
-// 			DBID:     composedDBID,
-// 			DateFrom: "2024-08-29",
-// 			DateTo:   "2024-09-01",
-// 			Height:   0,
-// 		})
-// 		if err != nil {
-// 			return errors.Wrap(err, "error in testComposedLastAvailable")
-// 		}
+		return testFn(ctx, platform)
+	}
+}
 
-// 		expected := `
-// 		| date       | value                  |
-// 		| ---------- | ---------------------- |
-// 		| 2024-08-29 | 3.250000000000000000   | # 1 & 4
-// 		| 2024-08-30 |                        |
-// 		| 2024-08-31 | 3.333333333333333333   | # 1 & 2 & 5
-// 		| 2024-09-01 | 2.333333333333333333   | # 1 & 2 & 3
-// 		`
+func testComposedLastAvailable(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Setup the deployer since its not using WithComposedTestSetup
+		platform = procedure.WithSigner(platform, composedDeployer.Bytes())
 
-// 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+		// Setup data for the test
+		err := setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
+			Platform: platform,
+			StreamId: composedStreamId,
+			Height:   1,
+			MarkdownData: `
+				| event_time | Stream 1 | Stream 2 | Stream 3 |
+				| ---------- | -------- | -------- | -------- |
+				| 1          | 1        |          | 4        |
+				| 2          |          |          |          |
+				| 3          |          | 2        | 5        |
+				| 4          |          |          | 3        |
+			`,
+			Weights: []string{"1", "2", "3"},
+		})
+		if err != nil {
+			return errors.Wrap(err, "error setting up last available test data")
+		}
 
-// 		return nil
-// 	}
-// }
+		dateFrom := int64(1)
+		dateTo := int64(4)
 
-// func testCOMPOSED01SetTaxonomyWithValidData(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 		t.Skip("Test skipped: composed stream tests temporarily disabled")
-// 		// Initialize contract
-// 		if err := setup.SetupAndInitializeContract(ctx, platform, composedContractInfo); err != nil {
-// 			return err
-// 		}
-// 		dbid := setup.GetDBID(composedContractInfo)
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
+			Platform:      platform,
+			StreamLocator: composedStreamLocator,
+			FromTime:      &dateFrom,
+			ToTime:        &dateTo,
+			Height:        0,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error in testComposedLastAvailable")
+		}
 
-// 		stream1 := util.GenerateStreamId("stream1")
-// 		stream2 := util.GenerateStreamId("stream2")
+		expected := `
+		| event_time | value                  |
+		| ---------- | ---------------------- |
+		| 1          | 3.250000000000000000   | # 1 & 4
+		| 2          |                        |
+		| 3          | 3.333333333333333333   | # 1 & 2 & 5
+		| 4          | 2.333333333333333333   | # 1 & 2 & 3
+		`
 
-// 		// deploy child streams
-// 		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
-// 			Platform: platform,
-// 			StreamId: stream1,
-// 			Height:   1,
-// 			MarkdownData: `
-// 				| date       | value |
-// 				| ---------- | ----- |
-// 				| 2024-01-01 | 5     |
-// 				| 2024-01-05 | 15    |
-// 			`,
-// 		}); err != nil {
-// 			return errors.Wrap(err, "error setting up child stream 1")
-// 		}
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   result,
+			Expected: expected,
+		})
 
-// 		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
-// 			Platform: platform,
-// 			StreamId: stream2,
-// 			Height:   1,
-// 			MarkdownData: `
-// 				| date       | value |
-// 				| ---------- | ----- |
-// 				| 2024-01-01 | 2     |
-// 				| 2024-01-05 | 10    |
-// 			`,
-// 		}); err != nil {
-// 			return errors.Wrap(err, "error setting up child stream 2")
-// 		}
+		return nil
+	}
+}
 
-// 		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
-// 		if err != nil {
-// 			return errors.Wrap(err, "error creating ethereum address from bytes")
-// 		}
+func testCOMPOSED01SetTaxonomyWithValidData(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Setup the deployer since its not using WithComposedTestSetup
+		platform = procedure.WithSigner(platform, composedDeployer.Bytes())
 
-// 		// Set up child streams
-// 		childStreams := types.Taxonomy{
-// 			TaxonomyItems: []types.TaxonomyItem{
-// 				{ChildStream: types.StreamLocator{DataProvider: deployer, StreamId: stream1}, Weight: 1.0},
-// 				{ChildStream: types.StreamLocator{DataProvider: deployer, StreamId: stream2}, Weight: 2.0},
-// 			},
-// 		}
+		// Create the composed stream
+		err := setup.CreateStream(ctx, platform, setup.StreamInfo{
+			Locator: composedStreamLocator,
+			Type:    setup.ContractTypeComposed,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error setting up composed stream")
+		}
 
-// 		// Set taxonomy
-// 		err = setTaxonomy(ctx, platform, dbid, childStreams)
-// 		if err != nil {
-// 			return errors.Wrap(err, "Failed to set taxonomy")
-// 		}
+		stream1 := util.GenerateStreamId("stream1")
+		stream2 := util.GenerateStreamId("stream2")
 
-// 		// Verify taxonomy is applied in get_record
-// 		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
-// 			Platform: platform,
-// 			DBID:     dbid,
-// 			DateFrom: "2024-01-01",
-// 			DateTo:   "2024-01-31",
-// 			Height:   0,
-// 		})
-// 		if err != nil {
-// 			return errors.Wrap(err, "Failed to get record after setting taxonomy")
-// 		}
+		// deploy child streams
+		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+			Platform: platform,
+			StreamId: stream1,
+			Height:   1,
+			MarkdownData: `
+				| event_time | value |
+				| ---------- | ----- |
+				| 1          | 5     |
+				| 5          | 15    |
+			`,
+		}); err != nil {
+			return errors.Wrap(err, "error setting up child stream 1")
+		}
 
-// 		// Expected results based on child streams and weights
-// 		// Assuming child stream1 has weight 1.0 and stream2 has weight 2.0
-// 		// The composed value should be (value_stream1 * 1.0) + (value_stream2 * 2.0)
-// 		expected := `
-// 		| date       | value                  |
-// 		| ---------- | ---------------------- |
-// 		| 2024-01-01 | 3.000000000000000000   | # (5 * 1.0 + 2 * 2.0) / (1.0 + 2.0) = 9.0 / 3.0 = 3.0
-// 		| 2024-01-05 | 11.666666666666666667   | # (15 * 1.0 + 10 * 2.0) / (1.0 + 2.0) = 35.0 / 3.0 = 11.666666666666666667
-// 		`
+		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+			Platform: platform,
+			StreamId: stream2,
+			Height:   1,
+			MarkdownData: `
+				| event_time | value |
+				| ---------- | ----- |
+				| 1          | 2     |
+				| 5          | 10    |
+			`,
+		}); err != nil {
+			return errors.Wrap(err, "error setting up child stream 2")
+		}
 
-// 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+		// Set up child streams
+		err = procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
+			Platform:      platform,
+			StreamLocator: composedStreamLocator,
+			DataProviders: []string{composedDeployer.Address(), composedDeployer.Address()},
+			StreamIds:     []string{stream1.String(), stream2.String()},
+			Weights:       []string{"1.0", "2.0"},
+			Height:        1,
+		})
+		if err != nil {
+			return errors.Wrap(err, "Failed to set taxonomy")
+		}
 
-// 		return nil
-// 	}
-// }
+		// Verify taxonomy is applied in get_record
+		dateFrom := int64(1)
+		dateTo := int64(31)
 
-// func testCOMPOSED02OnlyOwnerCanSetTaxonomy(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 		t.Skip("Test skipped: composed stream tests temporarily disabled")
-// 		// Initialize contract
-// 		if err := setup.SetupAndInitializeContract(ctx, platform, composedContractInfo); err != nil {
-// 			return err
-// 		}
-// 		dbid := setup.GetDBID(composedContractInfo)
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
+			Platform:      platform,
+			StreamLocator: composedStreamLocator,
+			FromTime:      &dateFrom,
+			ToTime:        &dateTo,
+			Height:        0,
+		})
+		if err != nil {
+			return errors.Wrap(err, "Failed to get record after setting taxonomy")
+		}
 
-// 		// Use a non-owner account
-// 		nonOwner := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000001000101")
+		// Expected results based on child streams and weights
+		// Assuming child stream1 has weight 1.0 and stream2 has weight 2.0
+		// The composed value should be (value_stream1 * 1.0) + (value_stream2 * 2.0)
+		expected := `
+		| event_time | value                  |
+		| ---------- | ---------------------- |
+		| 1          | 3.000000000000000000   | # (5 * 1.0 + 2 * 2.0) / (1.0 + 2.0) = 9.0 / 3.0 = 3.0
+		| 5          | 11.666666666666666667   | # (15 * 1.0 + 10 * 2.0) / (1.0 + 2.0) = 35.0 / 3.0 = 11.666666666666666667
+		`
 
-// 		// Attempt to set taxonomy
-// 		childStreams := types.Taxonomy{
-// 			TaxonomyItems: []types.TaxonomyItem{
-// 				{ChildStream: types.StreamLocator{DataProvider: util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000001"), StreamId: util.GenerateStreamId("stream1")}, Weight: 1.0},
-// 			},
-// 		}
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   result,
+			Expected: expected,
+		})
 
-// 		err := setTaxonomy(ctx, procedure.WithSigner(platform, nonOwner.Bytes()), dbid, childStreams)
-// 		assert.Error(t, err, "Non-owner should not be able to set taxonomy")
-// 		assert.Contains(t, err.Error(), "Stream owner only procedure", "Expected owner-only error")
+		return nil
+	}
+}
 
-// 		return nil
-// 	}
-// }
+func testCOMPOSED02OnlyOwnerCanSetTaxonomy(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Create StreamLocator for the composed stream
+		composedStreamLocator := types.StreamLocator{
+			StreamId:     composedStreamId,
+			DataProvider: composedDeployer,
+		}
 
-// func testCOMPOSED04DisableTaxonomy(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 		t.Skip("Test skipped: composed stream tests temporarily disabled")
-// 		// Initialize contract
-// 		if err := setup.SetupAndInitializeContract(ctx, platform, composedContractInfo); err != nil {
-// 			return err
-// 		}
-// 		dbid := setup.GetDBID(composedContractInfo)
+		// Use a non-owner account
+		nonOwner := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000001000101")
+		platform = procedure.WithSigner(platform, nonOwner.Bytes())
 
-// 		//  setup primitive streams
-// 		stream1 := util.GenerateStreamId("stream1")
-// 		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
-// 			Platform: platform,
-// 			StreamId: util.GenerateStreamId("stream1"),
-// 			Height:   1,
-// 			MarkdownData: `
-// 				| date       | value |
-// 				| ---------- | ----- |
-// 				| 2024-01-01 | 5     |
-// 			`,
-// 		}); err != nil {
-// 			return errors.Wrap(err, "error setting up child stream 1")
-// 		}
+		stream1 := util.GenerateStreamId("stream1")
+		// Attempt to set taxonomy with non-owner account
+		err := procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
+			Platform:      platform,
+			StreamLocator: composedStreamLocator,
+			DataProviders: []string{composedDeployer.Address()},
+			StreamIds:     []string{stream1.String()},
+			Weights:       []string{"1.0"},
+			Height:        1,
+		})
 
-// 		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
-// 		if err != nil {
-// 			return errors.Wrap(err, "error creating ethereum address from bytes")
-// 		}
+		assert.Error(t, err, "Non-owner should not be able to set taxonomy")
+		assert.Contains(t, err.Error(), "wallet not allowed to write", "Expected owner-only error")
 
-// 		// Set taxonomy version 1
-// 		childStreams := types.Taxonomy{
-// 			TaxonomyItems: []types.TaxonomyItem{
-// 				{ChildStream: types.StreamLocator{DataProvider: deployer, StreamId: stream1}, Weight: 1.0},
-// 			},
-// 		}
+		return nil
+	}
+}
 
-// 		err = setTaxonomy(ctx, platform, dbid, childStreams)
-// 		if err != nil {
-// 			return errors.Wrap(err, "Failed to set taxonomy version 1")
-// 		}
+func testCOMPOSED04DisableTaxonomy(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Create StreamLocator for the composed stream
+		composedStreamLocator := types.StreamLocator{
+			StreamId:     composedStreamId,
+			DataProvider: composedDeployer,
+		}
 
-// 		// Disable taxonomy version 1
-// 		err = disableTaxonomy(ctx, platform, dbid, 1)
-// 		if err != nil {
-// 			return errors.Wrap(err, "Failed to disable taxonomy version 1")
-// 		}
+		//  setup primitive streams
+		stream1 := util.GenerateStreamId("stream1")
+		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+			Platform: platform,
+			StreamId: stream1,
+			Height:   1,
+			MarkdownData: `
+				| event_time | value |
+				| ---------- | ----- |
+				| 1          | 5     |
+			`,
+		}); err != nil {
+			return errors.Wrap(err, "error setting up child stream 1")
+		}
 
-// 		// Attempt to retrieve data after disabling taxonomy
-// 		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
-// 			Platform: platform,
-// 			DBID:     dbid,
-// 			DateFrom: "2024-01-01",
-// 			DateTo:   "2024-01-31",
-// 			Height:   0,
-// 		})
-// 		if err != nil {
-// 			return errors.Wrap(err, "Failed to get record after disabling taxonomy")
-// 		}
+		// Set taxonomy version 1
+		err := procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
+			Platform:      platform,
+			StreamLocator: composedStreamLocator,
+			DataProviders: []string{composedDeployer.Address()},
+			StreamIds:     []string{stream1.String()},
+			Weights:       []string{"1.0"},
+			Height:        1,
+		})
+		if err != nil {
+			return errors.Wrap(err, "Failed to set taxonomy version 1")
+		}
 
-// 		// Assert that no data is returned or matches expectations
-// 		expected := `
-// 		| date       | value |
-// 		| ---------- | ----- |
-// 		`
+		// Disable taxonomy version 1
+		err = procedure.DisableTaxonomy(ctx, procedure.DisableTaxonomyInput{
+			Platform:      platform,
+			StreamLocator: composedStreamLocator,
+			GroupSequence: 1,
+			Height:        1,
+		})
+		if err != nil {
+			return errors.Wrap(err, "Failed to disable taxonomy version 1")
+		}
 
-// 		table.AssertResultRowsEqualMarkdownTable(t, result, expected)
+		// Attempt to retrieve data after disabling taxonomy
+		dateFrom := int64(1)
+		dateTo := int64(31)
 
-// 		return nil
-// 	}
-// }
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
+			Platform:      platform,
+			StreamLocator: composedStreamLocator,
+			FromTime:      &dateFrom,
+			ToTime:        &dateTo,
+			Height:        0,
+		})
+		if err != nil {
+			return errors.Wrap(err, "Failed to get record after disabling taxonomy")
+		}
 
-// func testOnlyOwnerCanDisableTaxonomy(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 		t.Skip("Test skipped: composed stream tests temporarily disabled")
-// 		// Initialize contract
-// 		if err := setup.SetupAndInitializeContract(ctx, platform, composedContractInfo); err != nil {
-// 			return err
-// 		}
-// 		dbid := setup.GetDBID(composedContractInfo)
+		// Assert that no data is returned or matches expectations
+		expected := `
+		| event_time | value |
+		| ---------- | ----- |
+		`
 
-// 		// Use a non-owner account
-// 		nonOwner := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000001000001")
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   result,
+			Expected: expected,
+		})
 
-// 		// Attempt to disable taxonomy
-// 		err := disableTaxonomy(ctx, procedure.WithSigner(platform, nonOwner.Bytes()), dbid, 1)
-// 		assert.Error(t, err, "Non-owner should not be able to disable taxonomy")
-// 		assert.Contains(t, err.Error(), "Stream owner only procedure", "Expected owner-only error")
+		return nil
+	}
+}
 
-// 		return nil
-// 	}
-// }
+func testOnlyOwnerCanDisableTaxonomy(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Create StreamLocator for the composed stream
+		composedStreamLocator := types.StreamLocator{
+			StreamId:     composedStreamId,
+			DataProvider: composedDeployer,
+		}
 
-// // setTaxonomy sets the taxonomy for a composed stream
-// func setTaxonomy(ctx context.Context, platform *kwilTesting.Platform, dbid string, taxonomies types.Taxonomy) error {
-// 	dataProviders := make([]string, len(taxonomies.TaxonomyItems))
-// 	streamIDs := make([]string, len(taxonomies.TaxonomyItems))
-// 	decimalWeights := make([]string, len(taxonomies.TaxonomyItems))
-// 	for i, cs := range taxonomies.TaxonomyItems {
-// 		dataProviders[i] = cs.ChildStream.DataProvider.Address()
-// 		streamIDs[i] = cs.ChildStream.StreamId.String()
-// 		decimalWeights[i] = strconv.FormatFloat(cs.Weight, 'f', -1, 64)
-// 	}
+		// Use a non-owner account
+		nonOwner := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000001000001")
+		platform = procedure.WithSigner(platform, nonOwner.Bytes())
 
-// 	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
-// 	if err != nil {
-// 		return errors.Wrap(err, "Failed to create Ethereum address from bytes")
-// 	}
+		// Attempt to disable taxonomy with non-owner account
+		err := procedure.DisableTaxonomy(ctx, procedure.DisableTaxonomyInput{
+			Platform:      platform,
+			StreamLocator: composedStreamLocator,
+			GroupSequence: 1,
+			Height:        1,
+		})
 
-// 	var startDate string
-// 	if taxonomies.StartDate != nil {
-// 		startDate = taxonomies.StartDate.String()
-// 	}
+		assert.Error(t, err, "Non-owner should not be able to disable taxonomy")
+		assert.Contains(t, err.Error(), "wallet not allowed to write", "Expected owner-only error")
 
-// 	txContext := &common.TxContext{
-// 		Ctx:          ctx,
-// 		BlockContext: &common.BlockContext{Height: 0},
-// 		Signer:       deployer.Bytes(),
-// 		Caller:       deployer.Address(),
-// 		TxID:         platform.Txid(),
-// 	}
+		return nil
+	}
+}
 
-// 	_, err = platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
-// 		Procedure: "set_taxonomy",
-// 		Dataset:   dbid,
-// 		Args:      []any{dataProviders, streamIDs, decimalWeights, startDate},
-// 	})
-// 	if err != nil {
-// 		return errors.Wrap(err, "Failed to execute set_taxonomy procedure")
-// 	}
-// 	return nil
-// }
+func testCOMPOSED03SetReadOnlyMetadataToComposedStream(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Create StreamLocator for the composed stream
+		composedStreamLocator := types.StreamLocator{
+			StreamId:     composedStreamId,
+			DataProvider: composedDeployer,
+		}
 
-// // disableTaxonomy disables a specific taxonomy version
-// func disableTaxonomy(ctx context.Context, platform *kwilTesting.Platform, dbid string, version int) error {
-// 	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
-// 	if err != nil {
-// 		return errors.Wrap(err, "Failed to create Ethereum address from bytes")
-// 	}
-
-// 	txContext := &common.TxContext{
-// 		Ctx:          ctx,
-// 		BlockContext: &common.BlockContext{Height: 0},
-// 		Signer:       deployer.Bytes(),
-// 		Caller:       deployer.Address(),
-// 		TxID:         platform.Txid(),
-// 	}
-
-// 	_, err = platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
-// 		Procedure: "disable_taxonomy",
-// 		Dataset:   dbid,
-// 		Args:      []any{version},
-// 	})
-// 	if err != nil {
-// 		return errors.Wrap(err, "Failed to execute disable_taxonomy procedure")
-// 	}
-// 	return nil
-// }
-
-// func testCOMPOSED03SetReadOnlyMetadataToComposedStream(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 		t.Skip("Test skipped: composed stream tests temporarily disabled")
-// 		dbid := utils.GenerateDBID(composedStreamId.String(), platform.Deployer)
-
-// 		// Attempt to set metadata
-// 		err := procedure.SetMetadata(ctx, procedure.SetMetadataInput{
-// 			Platform: platform,
-// 			DBID:     dbid,
-// 			Key:      "type",
-// 			Value:    "other",
-// 			ValType:  "string",
-// 			Height:   0,
-// 		})
-// 		assert.Error(t, err, "Cannot insert metadata for read-only key")
-// 		return nil
-// 	}
-// }
+		// Attempt to set metadata
+		err := procedure.SetMetadata(ctx, procedure.SetMetadataInput{
+			Platform:      platform,
+			StreamLocator: composedStreamLocator,
+			Key:           "type",
+			Value:         "other",
+			ValType:       "string",
+			Height:        0,
+		})
+		assert.Error(t, err, "Cannot insert metadata for read-only key")
+		return nil
+	}
+}
