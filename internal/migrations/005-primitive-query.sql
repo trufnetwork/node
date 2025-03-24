@@ -134,3 +134,56 @@ CREATE OR REPLACE ACTION get_first_record_primitive(
         ORDER BY pe.event_time ASC, pe.created_at DESC
         LIMIT 1;
 };
+
+/**
+ * get_index_primitive: Calculates indexed values relative to a base value.
+ */
+CREATE OR REPLACE ACTION get_index_primitive(
+    $data_provider TEXT,
+    $stream_id TEXT,
+    $from INT8,
+    $to INT8,
+    $frozen_at INT8,
+    $base_time INT8
+) PUBLIC view returns table(
+    event_time INT8,
+    value NUMERIC(36,18)
+) {
+    -- Check read permissions
+    if !is_allowed_to_read_all($data_provider, $stream_id, @caller, $from, $to) {
+        ERROR('Not allowed to read stream');
+    }
+    
+    -- If base_time is not provided, try to get it from metadata
+    $effective_base_time INT8 := $base_time;
+    if $effective_base_time IS NULL {
+        $found_metadata := FALSE;
+        for $row in SELECT value_i 
+            FROM metadata 
+            WHERE data_provider = $data_provider 
+            AND stream_id = $stream_id 
+            AND metadata_key = 'default_base_time' 
+            AND disabled_at IS NULL
+            ORDER BY created_at DESC 
+            LIMIT 1 {
+            $effective_base_time := $row.value_i;
+            $found_metadata := TRUE;
+            break;
+        }
+    }
+
+    -- Get the base value
+    $base_value NUMERIC(36,18) := get_base_value($data_provider, $stream_id, $effective_base_time, $frozen_at);
+
+    -- Check if base value is zero to avoid division by zero
+    if $base_value = 0::NUMERIC(36,18) {
+        ERROR('base value is 0');
+    }
+
+    -- Calculate the index for each record through loop and RETURN NEXT
+    -- This avoids nested SQL queries and uses proper action calling patterns
+    for $record in get_record($data_provider, $stream_id, $from, $to, $frozen_at) {
+        $indexed_value NUMERIC(36,18) := ($record.value * 100::NUMERIC(36,18)) / $base_value;
+        RETURN NEXT $record.event_time, $indexed_value;
+    }
+};

@@ -194,42 +194,18 @@ CREATE OR REPLACE ACTION get_index(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
-        -- Check read permissions
-    if !is_allowed_to_read_all($data_provider, $stream_id, @caller, $from, $to) {
-        ERROR('Not allowed to read stream');
-    }
+    -- Check if the stream is primitive or composed
+    $is_primitive BOOL := is_primitive_stream($data_provider, $stream_id);
     
-    -- If base_time is not provided, try to get it from metadata
-    $effective_base_time INT8 := $base_time;
-    if $effective_base_time IS NULL {
-        $found_metadata := FALSE;
-        for $row in SELECT value_i 
-            FROM metadata 
-            WHERE data_provider = $data_provider 
-            AND stream_id = $stream_id 
-            AND metadata_key = 'default_base_time' 
-            AND disabled_at IS NULL
-            ORDER BY created_at DESC 
-            LIMIT 1 {
-            $effective_base_time := $row.value_i;
-            $found_metadata := TRUE;
-            break;
+    -- Route to the appropriate internal action
+    if $is_primitive {
+        for $row in get_index_primitive($data_provider, $stream_id, $from, $to, $frozen_at, $base_time) {
+            RETURN NEXT $row.event_time, $row.value;
         }
-    }
-
-    -- Get the base value
-    $base_value NUMERIC(36,18) := get_base_value($data_provider, $stream_id, $effective_base_time, $frozen_at);
-
-    -- Check if base value is zero to avoid division by zero
-    if $base_value = 0::NUMERIC(36,18) {
-        ERROR('base value is 0');
-    }
-
-    -- Calculate the index for each record through loop and RETURN NEXT
-    -- This avoids nested SQL queries and uses proper action calling patterns
-    for $record in get_record($data_provider, $stream_id, $from, $to, $frozen_at) {
-        $indexed_value NUMERIC(36,18) := ($record.value * 100::NUMERIC(36,18)) / $base_value;
-        RETURN NEXT $record.event_time, $indexed_value;
+    } else {
+        for $row in get_index_composed($data_provider, $stream_id, $from, $to, $frozen_at, $base_time) {
+            RETURN NEXT $row.event_time, $row.value;
+        }
     }
 };
 
@@ -250,75 +226,40 @@ RETURNS TABLE (
     /*
      * 1. Parameter checks
      */
+    
     IF $time_interval IS NULL {
         ERROR('time_interval is required');
     }
 
-    /*
-     * 2. Preallocate arrays to hold up to N rows (avoid array_append in loops).
-     *    We'll do a "max_array_support" as an upper bound. If that’s too small,
-     *    we may raise it.
-     */
-    $max_array_support INT := 5000;
-
-    $numeric_array NUMERIC(36,18)[];
-    $int_array INT8[];
-
-
-    -- it's more performant to fill like this than trying to fill with normal loops,
-    -- as the interpreter adds additional roundtrips
-    for $row_array in 
-    WITH RECURSIVE blanks AS (
-        SELECT 1 as n, NULL::INT8 as int_value, NULL::NUMERIC(36,18) as num_value
-        UNION ALL
-        SELECT n + 1, NULL::INT8 as int_value, NULL::NUMERIC(36,18) as num_value
-        FROM blanks
-        WHERE n < $max_array_support
-    )
-    SELECT array_agg(blanks.int_value) AS int_array, array_agg(blanks.num_value) AS num_array
-    FROM blanks
-    {
-        -- Only returns one row; store the array
-        $int_array := $row_array.int_array;
-        $numeric_array := $row_array.num_array;
-        break;
-    }
-
-
     -- Current arrays
-    $current_dates  INT8[] := $int_array;
-    $current_values NUMERIC(36,18)[] := $numeric_array;
-    $current_count  INT := 0;
+    $current_dates  := []::INT8[];
+    $current_values := []::NUMERIC(36,18)[];
+    $current_count  := 0;
 
     -- Prev arrays
-    $prev_dates  INT8[] := $int_array;
-    $prev_values NUMERIC(36,18)[] := $numeric_array;
-    $prev_count  INT := 0;
-
-    $empty_array INT8[];
-
+    $prev_dates  := []::INT8[];
+    $prev_values := []::NUMERIC(36,18)[];
+    $prev_count  := 0;
 
     /*
      * 3. Gather CURRENT data from get_index(...) into $current_*
      */
+    
     FOR $row IN get_index($data_provider, $stream_id, $from, $to, $frozen_at, $base_time) {
-        IF $current_count >= $max_array_support {
-            ERROR('Too many current data points; raise max_array_support if needed');
-        }
         -- Bump the counter (use 1-based indexing for arrays)
-        $current_count := $current_count + 1;
-        $current_dates[$current_count]  := $row.event_time;
-        $current_values[$current_count] := $row.value;
+        $current_dates := array_append($current_dates, $row.event_time);
+        $current_values := array_append($current_values, $row.value);
     }
+
+    $current_count := array_length($current_dates);
 
     IF $current_count = 0 {
         -- No current data => no output
         RETURN;
-        ERROR('Code execution error; Should not reach here');
     }
 
     /*
-     * 4. We know we’ll need “previous” data from earliest to latest possible.
+     * 4. We know we'll need "previous" data from earliest to latest possible.
      *    The earliest needed is: min(current_date) - time_interval
      *    The latest  needed is: max(current_date) - time_interval
      *
@@ -328,64 +269,74 @@ RETURNS TABLE (
     $earliest_needed := $current_dates[1]  - ($time_interval)::INT8;
     $latest_needed   := $current_dates[$current_count] - ($time_interval)::INT8;
 
-    -- If the user passed $from and $to, it’s possible earliest_needed < from. 
+    -- If the user passed $from and $to, it's possible earliest_needed < from. 
     -- We can use that or just rely on earliest_needed < to. 
     -- We'll just do the direct range here:
     FOR $row IN get_index($data_provider, $stream_id, $earliest_needed, $latest_needed, $frozen_at, $base_time) {
-        IF $prev_count >= $max_array_support {
-            ERROR('Too many previous data points; raise max_array_support if needed');
-        }
-        $prev_count := $prev_count + 1;
-        $prev_dates[$prev_count]  := $row.event_time;
-        $prev_values[$prev_count] := $row.value;
+        $prev_dates := array_append($prev_dates, $row.event_time);
+        $prev_values := array_append($prev_values, $row.value);
     }
+
+    $prev_count := array_length($prev_dates);
 
     IF $prev_count = 0 {
         -- If no previous data at all, then there's nothing to compare => no output
         RETURN;
-        ERROR('Code execution error; Should not reach here');
     }
 
     /*
-     * 5. “Two-pointer” pass:
+     * 5. "Two-pointer" pass:
      *    - i => index in current arrays  (1..$current_count)
      *    - j => index in prev arrays     (1..$prev_count)
      *
      *    Move i from 1..$current_count.
-     *    For each i, move j forward while possible so that 
-     *      prev_dates[j] <= current_dates[i] - interval
+     *    For each i, move j forward while the next item is still ≤ $target
      *    stops once j+1 would exceed that threshold.
      *
-     *    Then prev_dates[j] is the “best match” if it’s ≤ that target.
+     *    Then prev_dates[j] is the "best match" if it's ≤ that target.
      */
 
     $j := 1;  -- pointer for the prev arrays
+    
+    $matches_found := 0;
+    $matches_skipped_prev_gt_target := 0;
+    $matches_skipped_zero_value := 0;
 
     FOR $i IN 1..$current_count {
         $target := $current_dates[$i] - ($time_interval)::INT8;
-
+        
         -- Move j forward while the next item is still ≤ $target
         FOR $k IN $j..$prev_count {
-            IF $k < $prev_count AND $prev_dates[$k + 1] <= $target {
-                $j := $k + 1;  -- we can safely advance
+            $next_index := $k + 1;
+            -- interpreter can't support short circuiting here
+            -- then we split the ifs to avoid out of bounds errors
+            IF $k < $prev_count {
+                IF $prev_dates[$next_index] <= $target {
+                    $j := $next_index;
+                } ELSE {
+                    BREAK;  -- we've gone as far as we can
+                }
             } ELSE {
                 BREAK;  -- we've gone as far as we can
             }
         }
-
-        -- Now if $prev_dates[$j] <= $target, we have a match
-        IF $prev_dates[$j] <= $target {
+        
+        -- Check if the found prev_date is <= target
+        IF $j <= $prev_count AND $prev_dates[$j] <= $target {
             IF $prev_values[$j] != 0::NUMERIC(36,18) {
                 $change := (
                     ($current_values[$i] - $prev_values[$j])
                     * 100::NUMERIC(36,18)
                 ) / $prev_values[$j];
-
+                
                 RETURN NEXT $current_dates[$i], $change;
+                $matches_found := $matches_found + 1;
+            } ELSE {
+                $matches_skipped_zero_value := $matches_skipped_zero_value + 1;
             }
-            -- if it’s zero, skip or output NULL
+        } ELSE {
+            $matches_skipped_prev_gt_target := $matches_skipped_prev_gt_target + 1;
         }
-        -- else no valid previous => skip
     }
+    
 }
-
