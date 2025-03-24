@@ -1,257 +1,192 @@
 package tests
 
-// import (
-// 	"context"
-// 	"testing"
+import (
+	"context"
+	"testing"
 
-// 	"github.com/trufnetwork/node/tests/streams/tests/utils/procedure"
-// 	"github.com/trufnetwork/node/tests/streams/tests/utils/setup"
+	"github.com/pkg/errors"
+	"github.com/trufnetwork/node/internal/migrations"
+	testutils "github.com/trufnetwork/node/tests/streams/utils"
+	"github.com/trufnetwork/node/tests/streams/utils/procedure"
+	"github.com/trufnetwork/node/tests/streams/utils/setup"
+	"github.com/trufnetwork/node/tests/streams/utils/table"
+	"github.com/trufnetwork/sdk-go/core/types"
+	"github.com/trufnetwork/sdk-go/core/util"
 
-// 	"github.com/pkg/errors"
-// 	"github.com/trufnetwork/sdk-go/core/util"
+	kwilTesting "github.com/kwilteam/kwil-db/testing"
+	"github.com/stretchr/testify/assert"
+)
 
-// 	"github.com/kwilteam/kwil-db/common"
-// 	"github.com/kwilteam/kwil-db/core/types/decimal"
-// 	"github.com/kwilteam/kwil-db/core/utils"
-// 	kwilTesting "github.com/kwilteam/kwil-db/testing"
-// 	"github.com/stretchr/testify/assert"
-// )
+var (
+	defaultDeployer = util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
+)
 
-// func TestIndexChange(t *testing.T) {
-// 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
-// 		Name:        "index_change_test",
-// 		SchemaFiles: []string{"../primitive_stream_template.kf"},
-// 		FunctionTests: []kwilTesting.TestFunc{
-// 			withTestIndexChangeSetup(testIndexChange(t)),
-// 			withTestIndexChangeSetup(testYoYIndexChange(t)),
-// 			withTestIndexChangeSetup(testDivisionByZero(t)),
-// 		},
-// 	})
-// }
+func TestIndexChange(t *testing.T) {
+	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name:        "index_change_test",
+		SeedScripts: migrations.GetSeedScriptPaths(),
+		FunctionTests: []kwilTesting.TestFunc{
+			withTestIndexChangeSetup(testIndexChange(t)),
+			withTestIndexChangeSetup(testYoYIndexChange(t)),
+		},
+	}, testutils.GetTestOptions())
+}
 
-// func withTestIndexChangeSetup(test func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 		// setup deployer
-// 		deployer, err := util.NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
-// 		if err != nil {
-// 			return errors.Wrap(err, "error creating ethereum address")
-// 		}
+func withTestIndexChangeSetup(test func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// setup deployer
+		return test(ctx, procedure.WithSigner(platform, defaultDeployer.Bytes()))
+	}
+}
 
-// 		return test(ctx, procedure.WithSigner(platform, deployer.Bytes()))
-// 	}
-// }
+func testIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		streamName := "primitive_stream_db_name"
+		streamId := util.GenerateStreamId(streamName)
 
-// func testIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 		t.Skip("Test skipped: index change tests temporarily disabled")
-// 		streamName := "primitive_stream_db_name"
-// 		streamId := util.GenerateStreamId(streamName)
-// 		dbid := utils.GenerateDBID(streamId.String(), platform.Deployer)
+		// Create StreamLocator for the stream
+		streamLocator := types.StreamLocator{
+			StreamId:     streamId,
+			DataProvider: defaultDeployer,
+		}
 
-// 		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
-// 			Platform: platform,
-// 			StreamId: streamId,
-// 			Height:   0,
+		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+			Platform: platform,
+			StreamId: streamId,
+			Height:   0,
 
-// 			MarkdownData: `
-// 			| date       | value  |
-// 			|------------|--------|
-// 			| 2023-01-01 | 100.00 |
-// 			| 2023-01-02 | 102.00 |
-// 			| 2023-01-03 | 103.00 |
-// 			| 2023-01-04 | 101.00 |
-// 			# add a gap here just to test the logic
-// 			| 2023-01-06 | 106.00 |
-// 			| 2023-01-07 | 105.00 |
-// 			| 2023-01-08 | 108.00 |
-// 			`,
-// 		}); err != nil {
-// 			return errors.Wrap(err, "error setting up primitive stream")
-// 		}
+			MarkdownData: `
+			| event_time | value  |
+			|------------|--------|
+			| 1          | 100.00 |
+			| 2          | 102.00 |
+			| 3          | 103.00 |
+			| 4          | 101.00 |
+			# add a gap here just to test the logic
+			| 6          | 106.00 |
+			| 7          | 105.00 |
+			| 8          | 108.00 |
+			`,
+		}); err != nil {
+			return errors.Wrap(err, "error setting up primitive stream")
+		}
 
-// 		signer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
-// 		if err != nil {
-// 			return errors.Wrap(err, "error creating ethereum address")
-// 		}
+		// Set up parameters for GetIndexChange
+		fromTime := int64(2)
+		toTime := int64(8)
+		interval := 1
 
-// 		txContext := &common.TxContext{
-// 			Ctx:          ctx,
-// 			BlockContext: &common.BlockContext{Height: 0},
-// 			Signer:       signer.Bytes(),
-// 			Caller:       signer.Address(),
-// 			TxID:         platform.Txid(),
-// 		}
+		// Get index change for the specified period
+		result, err := procedure.GetIndexChange(ctx, procedure.GetIndexChangeInput{
+			Platform:      platform,
+			StreamLocator: streamLocator,
+			FromTime:      &fromTime,
+			ToTime:        &toTime,
+			Interval:      &interval,
+			Height:        0,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error getting index change")
+		}
 
-// 		// Get index change for 7 days with 1 day interval
-// 		result, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
-// 			Procedure: "get_index_change",
-// 			Dataset:   dbid,
-// 			Args:      []any{"2023-01-02", "2023-01-08", nil, nil, 1},
-// 		})
-// 		if err != nil {
-// 			return errors.Wrap(err, "error getting index change")
-// 		}
+		// Assert the correct output
+		expected := `
+		| event_time | value                   |
+		| ---------- | ----------------------- |
+		| 2          | 2.000000000000000000    |
+		| 3          | 0.980392156862745098    |
+		| 4          | -1.941747572815533981   |
+		| 6          | 4.950495049504950495    | # it is now using the previous value
+		| 7          | -0.943396226415094340   |
+		| 8          | 2.857142857142857143    |
+		`
 
-// 		// Convert decimal.Decimal values to strings
-// 		convertedResult := make([][]any, len(result.Rows))
-// 		for i, row := range result.Rows {
-// 			convertedRow := make([]any, len(row))
-// 			convertedRow[0] = row[0] // Date remains as string
-// 			if dec, ok := row[1].(*decimal.Decimal); ok {
-// 				convertedRow[1] = dec.String() // Convert to string with 6 decimal places
-// 			} else {
-// 				convertedRow[1] = row[1] // Keep as is if not a decimal.Decimal
-// 			}
-// 			convertedResult[i] = convertedRow
-// 		}
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   result,
+			Expected: expected,
+		})
 
-// 		// Assert the correct output
-// 		expected := [][]any{
-// 			{"2023-01-02", "2.000000000000000000"},
-// 			{"2023-01-03", "0.980392156862745098"},
-// 			{"2023-01-04", "-1.941747572815533981"},
-// 			// remember the gap
-// 			{"2023-01-06", "4.950495049504950495"}, // it is now using the previous value
-// 			{"2023-01-07", "-0.943396226415094340"},
-// 			{"2023-01-08", "2.857142857142857143"},
-// 		}
+		return nil
+	}
+}
 
-// 		assert.Equal(t, expected, convertedResult, "Index change results do not match expected values")
+// testing https://system.docs.trufnetwork.com/backend/cpi-calculations/workflow/yoy-values specification
+func testYoYIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		streamName := "primitive_stream_db_name"
+		streamId := util.GenerateStreamId(streamName)
 
-// 		return nil
-// 	}
-// }
+		// Create StreamLocator for the stream
+		streamLocator := types.StreamLocator{
+			StreamId:     streamId,
+			DataProvider: defaultDeployer,
+		}
 
-// // testing https://system.docs.trufnetwork.com/backend/cpi-calculations/workflow/yoy-values specification
+		/*
+			Here's an example calculation for corn inflation for May 22nd 2023:
 
-// func testYoYIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 		t.Skip("Test skipped: index change tests temporarily disabled")
-// 		streamName := "primitive_stream_db_name"
-// 		streamId := util.GenerateStreamId(streamName)
-// 		dbid := utils.GenerateDBID(streamId.String(), platform.Deployer)
+			- `Date Target`: May 22nd, 2023
+			- `Latest`: We search, starting at May 22nd, 2023, going backward in time, eventually finding an entry at May 1st, 2023
+			- `Year Ago`: We search, starting at May 1st, 2022, going backward in time, eventually finding an entry at April 23rd, 2022
 
-// 		/*
-// 			Here's an example calculation for corn inflation for May 22nd 2023:
+			In this example we would perform our math using April 23rd, 2022 and May 1st, 2023
+		*/
 
-// 			- `Date Target`: May 22nd, 2023
-// 			- `Latest`: We search, starting at May 22nd, 2023, going backward in time, eventually finding an entry at May 1st, 2023
-// 			- `Year Ago`: We search, starting at May 1st, 2022, going backward in time, eventually finding an entry at April 23rd, 2022
+		// Insert test data for two years
+		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+			Platform: platform,
+			Height:   0,
+			StreamId: streamId,
+			MarkdownData: `
+        | event_time | value  |
+        |------------|--------|
+        | 1          | 100.00 |
+        | 113        | 102.00 |
+        | 365        | 105.00 |
+        | 366        | 106.00 |
+        | 486        | 108.00 |
+			`,
+		}); err != nil {
+			return errors.Wrap(err, "error setting up primitive stream")
+		}
 
-// 			In this example we would perform our math using April 23rd, 2022 and May 1st, 2023
-// 		*/
+		// Set up parameters for GetIndexChange
+		fromTime := int64(507) // 2023-05-22
+		toTime := int64(507)   // 2023-05-22
+		interval := 365        // 365 days interval for YoY
 
-// 		// Insert test data for two years
-// 		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
-// 			Platform: platform,
-// 			Height:   0,
-// 			StreamId: streamId,
-// 			MarkdownData: `
-//         | date       | value  |
-//         |------------|--------|
-//         | 2022-01-01 | 100.00 |
-//         | 2022-04-23 | 102.00 |
-//         | 2022-12-31 | 105.00 |
-//         | 2023-01-01 | 106.00 |
-//         | 2023-05-01 | 108.00 |
-// 			`,
-// 		}); err != nil {
-// 			return errors.Wrap(err, "error setting up primitive stream")
-// 		}
+		// Test YoY calculation
+		result, err := procedure.GetIndexChange(ctx, procedure.GetIndexChangeInput{
+			Platform:      platform,
+			StreamLocator: streamLocator,
+			FromTime:      &fromTime,
+			ToTime:        &toTime,
+			Interval:      &interval,
+			Height:        0,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error getting index change")
+		}
 
-// 		signer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
-// 		if err != nil {
-// 			return errors.Wrap(err, "error creating ethereum address")
-// 		}
+		// Check if the date is correct
+		assert.Equal(t, 1, len(result), "Expected 1 row in the result")
+		assert.Equal(t, "486", result[0][0], "Expected event_time to be 486 (2023-05-01)")
 
-// 		txContext := &common.TxContext{
-// 			Ctx:          ctx,
-// 			BlockContext: &common.BlockContext{Height: 0},
-// 			Signer:       signer.Bytes(),
-// 			Caller:       signer.Address(),
-// 			TxID:         platform.Txid(),
-// 		}
+		// 05-01 idx: 8%
+		// 04-23 idx: 2%
+		// YoY% = (index current - index year ago) / index year ago * 100.0
+		// 05-01 yoyChange: 108 - 102 / 102 * 100.0 = 5.882
+		expected := `
+		| event_time | value                   |
+		| ---------- | ----------------------- |
+		| 486        | 5.882352941176470588    |
+		`
 
-// 		// Test YoY calculation
-// 		result, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
-// 			Procedure: "get_index_change",
-// 			Dataset:   dbid,
-// 			Args:      []any{"2023-05-22", "2023-05-22", nil, nil, 365}, // 365 days interval for YoY
-// 		})
-// 		if err != nil {
-// 			return errors.Wrap(err, "error getting index change")
-// 		}
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   result,
+			Expected: expected,
+		})
 
-// 		results := make([][]struct {
-// 			date  string
-// 			value string
-// 		}, len(result.Rows))
-
-// 		for i, row := range result.Rows {
-// 			results[i] = []struct {
-// 				date  string
-// 				value string
-// 			}{{row[0].(string), row[1].(*decimal.Decimal).String()}}
-// 		}
-
-// 		// Check if the date is correct
-// 		latestDate := result.Rows[0][0].(string)
-// 		if latestDate != "2023-05-01" {
-// 			return errors.Errorf("incorrect latest date: got %s, expected 2023-05-01", latestDate)
-// 		}
-
-// 		// 05-01 idx: 8%
-// 		// 04-23 idx: 2%
-// 		// YoY% = (index current - index year ago) / index year ago * 100.0
-// 		// 05-01 yoyChange: 108 - 102 / 102 * 100.0 = 5.882
-// 		// check if 5.882 is in the result
-// 		latestYoyChange := results[0][0].value
-// 		if latestYoyChange != "5.882352941176470588" {
-// 			return errors.Errorf("incorrect latest yoy change: got %s, expected 5.882", latestYoyChange)
-// 		}
-
-// 		return nil
-// 	}
-// }
-
-// // testing division by zero
-// // we expect this error to happen, unless our production data expects a different behavior
-// func testDivisionByZero(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 		t.Skip("Test skipped: index change tests temporarily disabled")
-// 		streamName := "primitive_stream_db_name"
-// 		streamId := util.GenerateStreamId(streamName)
-// 		dbid := utils.GenerateDBID(streamId.String(), platform.Deployer)
-
-// 		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
-// 			Platform: platform,
-// 			Height:   0,
-// 			StreamId: streamId,
-// 			MarkdownData: `
-// 			| date       | value  |
-// 			|------------|--------|
-// 			| 2023-01-01 | 100.00 |
-// 			| 2023-01-02 | 0.00   |
-// 			| 2023-01-03 | 103.00 |
-// 			`,
-// 		}); err != nil {
-// 			return errors.Wrap(err, "error setting up primitive stream")
-// 		}
-
-// 		txContext := &common.TxContext{
-// 			Ctx:          ctx,
-// 			BlockContext: &common.BlockContext{Height: 0},
-// 			Signer:       platform.Deployer,
-// 			TxID:         platform.Txid(),
-// 		}
-
-// 		_, err := platform.Engine.Procedure(txContext, platform.DB, &common.ExecutionData{
-// 			Procedure: "get_index_change",
-// 			Dataset:   dbid,
-// 			Args:      []any{"2023-01-01", "2023-01-03", nil, nil, 1},
-// 		})
-
-// 		assert.Error(t, err, "division by zero")
-// 		return nil
-// 	}
-// }
+		return nil
+	}
+}
