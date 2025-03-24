@@ -14,45 +14,31 @@ CREATE OR REPLACE ACTION is_allowed_to_read(
     if !stream_exists($data_provider, $stream_id) {
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
     }
-    -- Check if the stream is private
-    $is_private BOOL := false;
-    for $row in get_metadata(
-        $data_provider,
-        $stream_id,
-        'read_visibility',
-        null,
-        1,
-        0,
-        'created_at DESC'
-    ) {
-        if $row.value_i = 1 {
-            $is_private := true;
-        }
+    -- if it's the owner, return true
+    if is_stream_owner($data_provider, $stream_id, $wallet_address) {
+        return true;
     }
-    if $is_private = false {
+
+    -- Check if the stream is private
+    $read_visibility INT := get_latest_metadata_int($data_provider, $stream_id, 'read_visibility');
+    -- public by default
+    if $read_visibility IS NULL {
+        $read_visibility := 0;
+    }
+
+    if $read_visibility = 0 {
         -- short circuit if the stream is not private
         return true;
     }
 
     -- Check if the wallet is allowed to read the stream
-    $is_allowed BOOL := false;
-    for $row in get_metadata(
-        $data_provider,
-        $stream_id,
-        'allow_read_wallet',
-        $lowercase_wallet_address,
-        1,
-        0,
-        'created_at DESC'
-    ) {
-        $is_allowed := true;
+    if get_latest_metadata_ref($data_provider, $stream_id, 'allow_read_wallet', $lowercase_wallet_address) IS DISTINCT FROM NULL {
+        -- wallet is allowed to read the stream
+        return true;
     }
 
-    if $is_private = true AND $is_allowed = false {
-        return false;
-    }
-
-    return true;
+    -- none of the above authorized, so return false
+    return false;
 };
 
 /**
@@ -73,47 +59,34 @@ CREATE OR REPLACE ACTION is_allowed_to_compose(
     if !stream_exists($data_provider, $composing_stream_id) {
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $child_stream_id);
     }
-    -- Check if the stream is private
-    $is_private BOOL := false;
-    for $row in get_metadata(
-        $data_provider,
-        $stream_id,
-        'compose_visibility',
-        null,
-        1,
-        0,
-        'created_at DESC'
-    ) {
-        if $row.value_i = 1 {
-            $is_private := true;
-        }
+    
+    -- check if it's from the same data provider
+    $stream_owner := get_latest_metadata_ref($data_provider, $stream_id, 'stream_owner', NULL);
+    $composing_stream_owner := get_latest_metadata_ref($composing_data_provider, $composing_stream_id, 'stream_owner', NULL);
+    if $stream_owner != $composing_stream_owner {
+        ERROR('Composing stream must be from the same data provider: data_provider=' || $data_provider || ' composing_data_provider=' || $composing_data_provider);
     }
-    if $is_private = false {
-        -- short circuit if the stream is not private
+
+    -- Check if the stream is private
+    $compose_visibility INT := get_latest_metadata_int($data_provider, $stream_id, 'compose_visibility');
+    -- public by default
+    if $compose_visibility IS NULL {
+        $compose_visibility := 0;
+    }
+
+    if $compose_visibility = 0 {
+        -- the stream is public for composing
         return true;
     }
 
-    -- Check if the wallet is allowed to read the stream
-    $is_allowed BOOL := false;
-    for $row in get_metadata(
-        $data_provider,
-        $stream_id,
-        'allow_compose_stream',
-        $composing_stream_id,
-        1,
-        0,
-        'created_at DESC'
-    ) {
-        $is_allowed := true;
+    -- Check if the wallet is allowed to compose the stream
+    if get_latest_metadata_ref($data_provider, $stream_id, 'allow_compose_stream', $composing_stream_id) IS DISTINCT FROM NULL {
+        -- wallet is allowed to compose the stream
+        return true;
     }
 
-    if $is_private = true AND $is_allowed = false {
-        return false;
-    }
-
-    NOTICE(FORMAT('is_allowed_to_compose: data_provider=%s stream_id=%s wallet_address=%s is_private=%s is_allowed=%s', $data_provider, $stream_id, $lowercase_wallet_address, $is_private, $is_allowed));
-
-    return true;
+    -- none of the above authorized, so return false
+    return false;
 };
 
 /**
@@ -137,6 +110,7 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
     $effective_active_to INT := COALESCE($active_to, $max_int8);
 
 
+    -- by default, the wallet is allowed to read all
     $result BOOL := true;
     -- Check for missing or unauthorized substreams using recursive CTE
     for $counts in with recursive
@@ -361,6 +335,7 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
         streams_without_permissions as (
             SELECT p.data_provider, p.stream_id 
             FROM private_substreams p
+            -- check if it doesn't have explicit permission
             WHERE NOT EXISTS (
                 SELECT 1
                 FROM metadata m
@@ -370,7 +345,18 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
                     AND LOWER(m.value_ref) = LOWER($wallet_address)
                     AND m.disabled_at IS NULL
                 LIMIT 1
-            )
+            ) 
+            -- check if it's not the owner
+            AND NOT EXISTS (
+                SELECT 1
+                FROM metadata m
+                WHERE m.data_provider = p.data_provider
+                    AND m.stream_id = p.stream_id
+                    AND m.metadata_key = 'stream_owner'
+                    AND m.disabled_at IS NULL
+                    AND LOWER(m.value_ref) = LOWER($wallet_address)
+                LIMIT 1
+            ) 
         )
     SELECT 
         (SELECT COUNT(*) FROM inexisting_substreams) AS missing_count,
@@ -384,7 +370,6 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
         $result := $counts.unauthorized_count = 0;
     }
     
-    -- If we got here (which we shouldn't), return false as a fallback
     return $result;
 };
 
@@ -630,6 +615,26 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
                   AND m2.metadata_key = 'allow_compose_stream'
                   AND m2.disabled_at IS NULL
                   AND m2.value_ref = p.parent_stream_id::text
+                LIMIT 1
+            )
+            -- check if both aren't from the same owner, which could mean that they have permission by default
+            AND (
+                SELECT value_ref
+                FROM metadata m3
+                WHERE m3.data_provider = p.child_data_provider
+                  AND m3.stream_id = p.child_stream_id
+                  AND m3.metadata_key = 'stream_owner'
+                  AND m3.disabled_at IS NULL
+                ORDER BY m3.created_at DESC
+                LIMIT 1
+            ) IS DISTINCT FROM (
+                SELECT value_ref
+                FROM metadata m4
+                WHERE m4.data_provider = p.parent_data_provider
+                  AND m4.stream_id = p.parent_stream_id
+                  AND m4.metadata_key = 'stream_owner'
+                  AND m4.disabled_at IS NULL
+                ORDER BY m4.created_at DESC
                 LIMIT 1
             )
         )
