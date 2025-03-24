@@ -78,3 +78,10 @@ type FilterStreamsByExistenceInput struct {
 	ExistingOnly   *bool
 	Height         int64
 }
+
+type DisableTaxonomyInput struct {
+	Platform      *kwilTesting.Platform
+	StreamLocator types.StreamLocator
+	GroupSequence int
+	Height        int64
+}

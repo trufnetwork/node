@@ -432,7 +432,7 @@ func FilterStreamsByExistence(ctx context.Context, input FilterStreamsByExistenc
 	}
 
 	var resultRows []types.StreamLocator
-	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "filter_streams_by_existence", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "filter_streams", []any{
 		dataProviders,
 		streamIds,
 		input.ExistingOnly,
@@ -459,4 +459,41 @@ func FilterStreamsByExistence(ctx context.Context, input FilterStreamsByExistenc
 	}
 
 	return resultRows, nil
+}
+
+func DisableTaxonomy(ctx context.Context, input DisableTaxonomyInput) error {
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return errors.Wrap(err, "error in DisableTaxonomy")
+	}
+
+	txContext := &common.TxContext{
+		Ctx: ctx,
+		BlockContext: &common.BlockContext{
+			Height: input.Height,
+		},
+		TxID:   input.Platform.Txid(),
+		Signer: input.Platform.Deployer,
+		Caller: deployer.Address(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext: txContext,
+	}
+
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "disable_taxonomy", []any{
+		input.StreamLocator.DataProvider.Address(),
+		input.StreamLocator.StreamId.String(),
+		input.GroupSequence,
+	}, func(row *common.Row) error {
+		return nil
+	})
+	if err != nil {
+		return errors.Wrap(err, "error in DisableTaxonomy")
+	}
+	if r.Error != nil {
+		return errors.Wrap(r.Error, "error in DisableTaxonomy")
+	}
+
+	return nil
 }
