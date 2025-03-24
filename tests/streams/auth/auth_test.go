@@ -817,9 +817,10 @@ func testStreamDeletion(t *testing.T) kwilTesting.TestFunc {
 		}
 
 		// check that the stream exists
-		nonExistentStreams, err := procedure.GetNonexistentStreams(ctx, procedure.GetNonexistentStreamsInput{
+		nonExistentStreams, err := procedure.FilterStreamsByExistence(ctx, procedure.FilterStreamsByExistenceInput{
 			Platform:       platform,
 			StreamLocators: []types.StreamLocator{streamLocator},
+			ExistingOnly:   testutils.Ptr(false),
 		})
 		assert.NoError(t, err, "Error should not be returned when checking contract existence")
 		assert.Equal(t, 0, len(nonExistentStreams), "Stream should exist")
@@ -832,9 +833,10 @@ func testStreamDeletion(t *testing.T) kwilTesting.TestFunc {
 		assert.NoError(t, err, "Error should not be returned when deleting stream")
 
 		// Verify the contract no longer exists
-		nonExistentStreams, err = procedure.GetNonexistentStreams(ctx, procedure.GetNonexistentStreamsInput{
+		nonExistentStreams, err = procedure.FilterStreamsByExistence(ctx, procedure.FilterStreamsByExistenceInput{
 			Platform:       platform,
 			StreamLocators: []types.StreamLocator{streamLocator},
+			ExistingOnly:   testutils.Ptr(false),
 		})
 		// Assert that the stream is not in the list of non-existent streams
 		assert.NoError(t, err, "Error should not be returned when checking contract existence")

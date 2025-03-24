@@ -621,17 +621,25 @@ CREATE OR REPLACE ACTION transfer_stream_ownership(
 };
 
 /**
- * get_nonexistent_streams: Takes arrays of data providers and stream IDs and returns those that don't exist.
+ * filter_streams_by_existence: Filters streams based on existence.
+ * Can return either existing or non-existing streams based on return_existing flag.
+ * Takes arrays of data providers and stream IDs as input.
  */
-CREATE OR REPLACE ACTION get_nonexistent_streams(
+CREATE OR REPLACE ACTION filter_streams_by_existence(
     $data_providers TEXT[],
-    $stream_ids TEXT[]
+    $stream_ids TEXT[],
+    $existing_only BOOL
 ) PUBLIC view returns table(
     data_provider TEXT,
     stream_id TEXT
 ) {
-    $nonexistent_streams_dp TEXT[];
-    $nonexistent_streams_sid TEXT[];
+    $filtered_dp TEXT[];
+    $filtered_sid TEXT[];
+
+    -- default to return existing streams
+    if $existing_only IS NULL {
+        $existing_only := true;
+    }
     
     -- Check that arrays have the same length
     if array_length($data_providers) != array_length($stream_ids) {
@@ -651,15 +659,15 @@ CREATE OR REPLACE ACTION get_nonexistent_streams(
             $exists := true;
         }
         
-        -- If stream doesn't exist, add to results
-        if !$exists {
-            $nonexistent_streams_dp := array_append($nonexistent_streams_dp, $dp);
-            $nonexistent_streams_sid := array_append($nonexistent_streams_sid, $sid);
+        -- Filter based on return_existing flag
+        if ($exists = $existing_only) {
+            $filtered_dp := array_append($filtered_dp, $dp);
+            $filtered_sid := array_append($filtered_sid, $sid);
         }
     }
     
     -- Return results as a table
-    for $i in 1..array_length($nonexistent_streams_dp) {
-        RETURN NEXT $nonexistent_streams_dp[$i], $nonexistent_streams_sid[$i];
+    for $i in 1..array_length($filtered_dp) {
+        RETURN NEXT $filtered_dp[$i], $filtered_sid[$i];
     }
 };

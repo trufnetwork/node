@@ -402,10 +402,12 @@ func GetCategoryStreams(ctx context.Context, input GetCategoryStreamsInput) ([]R
 	return processResultRows(resultRows)
 }
 
-func GetNonexistentStreams(ctx context.Context, input GetNonexistentStreamsInput) ([]types.StreamLocator, error) {
+// FilterStreamsByExistence filters streams based on existence, returning either existing or non-existing streams
+// based on the ReturnExisting flag in the input
+func FilterStreamsByExistence(ctx context.Context, input FilterStreamsByExistenceInput) ([]types.StreamLocator, error) {
 	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
 	if err != nil {
-		return nil, errors.Wrap(err, "error in StreamsExist")
+		return nil, errors.Wrap(err, "error in FilterStreamsByExistence")
 	}
 
 	txContext := &common.TxContext{
@@ -430,29 +432,30 @@ func GetNonexistentStreams(ctx context.Context, input GetNonexistentStreamsInput
 	}
 
 	var resultRows []types.StreamLocator
-	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_nonexistent_streams", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "filter_streams_by_existence", []any{
 		dataProviders,
 		streamIds,
+		input.ExistingOnly,
 	}, func(row *common.Row) error {
 		// return [dataprovider, streamid][]
 		streamLocator := types.StreamLocator{}
 		streamLocator.DataProvider, err = util.NewEthereumAddressFromString(row.Values[0].(string))
 		if err != nil {
-			return errors.Wrap(err, "error in StreamsExist")
+			return errors.Wrap(err, "error in FilterStreamsByExistence")
 		}
 		streamId, err := util.NewStreamId(row.Values[1].(string))
 		if err != nil {
-			return errors.Wrap(err, "error in StreamsExist")
+			return errors.Wrap(err, "error in FilterStreamsByExistence")
 		}
 		streamLocator.StreamId = *streamId
 		resultRows = append(resultRows, streamLocator)
 		return nil
 	})
 	if err != nil {
-		return nil, errors.Wrap(err, "error in StreamsExist")
+		return nil, errors.Wrap(err, "error in FilterStreamsByExistence")
 	}
 	if r.Error != nil {
-		return nil, errors.Wrap(r.Error, "error in StreamsExist")
+		return nil, errors.Wrap(r.Error, "error in FilterStreamsByExistence")
 	}
 
 	return resultRows, nil
