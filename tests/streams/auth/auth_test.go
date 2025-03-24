@@ -805,6 +805,8 @@ func testStreamDeletion(t *testing.T) kwilTesting.TestFunc {
 			DataProvider: dataProvider,
 		}
 
+		platform = procedure.WithSigner(platform, dataProvider.Bytes())
+
 		// Set up and initialize the contract
 		err := setup.CreateStream(ctx, platform, setup.StreamInfo{
 			Locator: streamLocator,
@@ -814,6 +816,14 @@ func testStreamDeletion(t *testing.T) kwilTesting.TestFunc {
 			return errors.Wrap(err, "failed to create stream for deletion test")
 		}
 
+		// check that the stream exists
+		nonExistentStreams, err := procedure.GetNonexistentStreams(ctx, procedure.GetNonexistentStreamsInput{
+			Platform:       platform,
+			StreamLocators: []types.StreamLocator{streamLocator},
+		})
+		assert.NoError(t, err, "Error should not be returned when checking contract existence")
+		assert.Equal(t, 0, len(nonExistentStreams), "Stream should exist")
+
 		// Delete the stream
 		_, err = setup.DeleteStream(ctx, platform, streamLocator)
 		if err != nil {
@@ -822,13 +832,14 @@ func testStreamDeletion(t *testing.T) kwilTesting.TestFunc {
 		assert.NoError(t, err, "Error should not be returned when deleting stream")
 
 		// Verify the contract no longer exists
-		//exists, err := procedure.CheckContractExists(ctx, procedure.CheckContractExistsInput{
-		//	Platform: platform,
-		//	Deployer: contractInfo.Deployer,
-		//	DBID:     dbid,
-		//})
-		//assert.False(t, exists, "Contract should not exist after deletion")
-		//assert.NoError(t, err, "Error should not be returned when checking contract existence")
+		nonExistentStreams, err = procedure.GetNonexistentStreams(ctx, procedure.GetNonexistentStreamsInput{
+			Platform:       platform,
+			StreamLocators: []types.StreamLocator{streamLocator},
+		})
+		// Assert that the stream is not in the list of non-existent streams
+		assert.NoError(t, err, "Error should not be returned when checking contract existence")
+		assert.Equal(t, 1, len(nonExistentStreams), "Stream should be in the list of non-existent streams")
+		assert.Equal(t, streamLocator, nonExistentStreams[0], "Stream should be the only non-existent stream")
 
 		return nil
 	}

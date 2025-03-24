@@ -71,3 +71,9 @@ type GetCategoryStreamsInput struct {
 	ActiveFrom   *int64
 	ActiveTo     *int64
 }
+
+type GetNonexistentStreamsInput struct {
+	Platform       *kwilTesting.Platform
+	StreamLocators []types.StreamLocator
+	Height         int64
+}

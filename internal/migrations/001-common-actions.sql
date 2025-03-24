@@ -283,6 +283,12 @@ CREATE OR REPLACE ACTION is_stream_owner(
     $caller TEXT
 ) PUBLIC view returns (is_owner BOOL) {
     $lower_caller := LOWER($caller);
+
+    -- Check if the stream exists
+    if !stream_exists($data_provider, $stream_id) {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
+
     $result BOOL := false;
     for $row in get_metadata(
         $data_provider,
@@ -612,4 +618,48 @@ CREATE OR REPLACE ACTION transfer_stream_ownership(
     WHERE metadata_key = 'stream_owner'
     AND data_provider = $data_provider
     AND stream_id = $stream_id;
+};
+
+/**
+ * get_nonexistent_streams: Takes arrays of data providers and stream IDs and returns those that don't exist.
+ */
+CREATE OR REPLACE ACTION get_nonexistent_streams(
+    $data_providers TEXT[],
+    $stream_ids TEXT[]
+) PUBLIC view returns table(
+    data_provider TEXT,
+    stream_id TEXT
+) {
+    $nonexistent_streams_dp TEXT[];
+    $nonexistent_streams_sid TEXT[];
+    
+    -- Check that arrays have the same length
+    if array_length($data_providers) != array_length($stream_ids) {
+        ERROR('Data providers and stream IDs arrays must have the same length');
+    }
+    
+    -- Iterate through each stream locator
+    for $i in 1..array_length($data_providers) {
+        $dp := $data_providers[$i];
+        $sid := $stream_ids[$i];
+        
+        -- Check if stream exists
+        $exists := false;
+        for $row in SELECT 1 FROM streams 
+            WHERE LOWER(data_provider) = LOWER($dp) 
+            AND stream_id = $sid {
+            $exists := true;
+        }
+        
+        -- If stream doesn't exist, add to results
+        if !$exists {
+            $nonexistent_streams_dp := array_append($nonexistent_streams_dp, $dp);
+            $nonexistent_streams_sid := array_append($nonexistent_streams_sid, $sid);
+        }
+    }
+    
+    -- Return results as a table
+    for $i in 1..array_length($nonexistent_streams_dp) {
+        RETURN NEXT $nonexistent_streams_dp[$i], $nonexistent_streams_sid[$i];
+    }
 };
