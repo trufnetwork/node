@@ -19,16 +19,14 @@ import (
 	"github.com/trufnetwork/sdk-go/core/util"
 )
 
-var defaultDeployer = util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
-
 var (
 	primitiveStreamLocator = trufTypes.StreamLocator{
-		StreamId:     util.GenerateStreamId("primitive_stream_test"),
+		StreamId:     primitiveStreamId,
 		DataProvider: defaultDeployer,
 	}
 
 	composedStreamLocator = trufTypes.StreamLocator{
-		StreamId:     util.GenerateStreamId("composed_stream_test"),
+		StreamId:     composedStreamId,
 		DataProvider: defaultDeployer,
 	}
 
@@ -169,51 +167,69 @@ func testReadOnlyMetadataCannotBeModified(t *testing.T, streamInfo setup.StreamI
 	}
 }
 
-// func TestVisibilitySettings(t *testing.T) {
-// 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
-// 		Name: "visibility_settings",
-// 		FunctionTests: []kwilTesting.TestFunc{
-// 			testVisibilitySettings(t, primitiveContractInfo),
-// 			testVisibilitySettings(t, composedContractInfo),
-// 		},
-// 	})
-// }
+func TestVisibilitySettings(t *testing.T) {
+	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name: "visibility_settings",
+		FunctionTests: []kwilTesting.TestFunc{
+			testVisibilitySettings(t, primitiveStreamInfo),
+			testVisibilitySettings(t, composedStreamInfo),
+		},
+		SeedScripts: migrations.GetSeedScriptPaths(),
+	}, testutils.GetTestOptions())
+}
 
-// func testVisibilitySettings(t *testing.T, contractInfo setup.ContractInfo) kwilTesting.TestFunc {
-// 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 		// Set up and initialize the contract
-// 		if err := setup.SetupAndInitializeContract(ctx, platform, contractInfo); err != nil {
-// 			return err
-// 		}
-// 		dbid := setup.GetDBID(contractInfo)
+func testVisibilitySettings(t *testing.T, streamInfo setup.StreamInfo) kwilTesting.TestFunc {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		platform = procedure.WithSigner(platform, defaultDeployer.Bytes())
+		// Set up and initialize the contract
+		if err := setup.CreateStream(ctx, platform, streamInfo); err != nil {
+			return err
+		}
 
-// 		// Change read_visibility to private (1)
-// 		err := procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
-// 			Platform: platform,
-// 			Deployer: contractInfo.Deployer,
-// 			DBID:     dbid,
-// 			Key:      "read_visibility",
-// 			Value:    "1",
-// 			ValType:  "int",
-// 		})
-// 		if err != nil {
-// 			return errors.Wrap(err, "Failed to change read_visibility")
-// 		}
+		nonOwner := util.Unsafe_NewEthereumAddressFromString("0xcccccccccccccccccccccccccccccccccccccccc")
 
-// 		// Change deployer to a non-owner
-// 		nonOwner := util.Unsafe_NewEthereumAddressFromString("0xcccccccccccccccccccccccccccccccccccccccc")
-// 		platform.Deployer = nonOwner.Bytes()
+		checkBothActions := func(walletLabel string, wallet string, expectedCanRead bool) {
+			// this checks both all and only one action
+			canRead, err := procedure.CheckReadPermissions(ctx, procedure.CheckReadPermissionsInput{
+				Platform: platform,
+				Locator:  streamInfo.Locator,
+				Wallet:   wallet,
+			})
+			assert.Equal(t, expectedCanRead, canRead, "Wallet %s should %s read (individual action)", walletLabel, expectedCanRead)
+			assert.NoError(t, err, "Error should not be returned when checking read permissions for wallet %s", walletLabel)
 
-// 		// Attempt to read data
-// 		canRead, err := procedure.CheckReadPermissions(ctx, procedure.CheckReadPermissionsInput{
-// 			Platform: platform,
-// 			Deployer: contractInfo.Deployer,
-// 			DBID:     dbid,
-// 			Wallet:   nonOwner.Address(),
-// 		})
-// 		assert.False(t, canRead, "Non-owner should not be able to read when read_visibility is private")
-// 		assert.NoError(t, err, "Error should not be returned when checking read permissions")
+			canRead, err = procedure.CheckReadAllPermissions(ctx, procedure.CheckReadAllPermissionsInput{
+				Platform: platform,
+				Locator:  streamInfo.Locator,
+				Wallet:   wallet,
+			})
+			assert.Equal(t, expectedCanRead, canRead, "Wallet %s should %s read (all action)", walletLabel, expectedCanRead)
+			assert.NoError(t, err, "Error should not be returned when checking read permissions for wallet %s", walletLabel)
+		}
 
-// 		return nil
-// 	}
-// }
+		// check that it's public by default
+		checkBothActions("default deployer", defaultDeployer.Address(), true)
+		checkBothActions("non-owner", nonOwner.Address(), true)
+
+		// Change read_visibility to private (1)
+		err := procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+			Platform: platform,
+			Locator:  streamInfo.Locator,
+			Key:      "read_visibility",
+			Value:    "1",
+			ValType:  "int",
+			Height:   1, // must be after the initial height
+		})
+		if err != nil {
+			return errors.Wrap(err, "Failed to change read_visibility")
+		}
+
+		// Attempt to read data
+		// owner should be able to read
+		checkBothActions("default deployer", defaultDeployer.Address(), true)
+		// non-owner should not be able to read
+		checkBothActions("non-owner", nonOwner.Address(), false)
+
+		return nil
+	}
+}
