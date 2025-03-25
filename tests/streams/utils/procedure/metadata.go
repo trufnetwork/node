@@ -212,10 +212,10 @@ func CheckWritePermissions(ctx context.Context, input CheckWritePermissionsInput
 }
 
 type CheckComposePermissionsInput struct {
-	Platform          *kwilTesting.Platform
-	Locator           trufTypes.StreamLocator
-	ComposingStreamId string
-	Height            int64
+	Platform         *kwilTesting.Platform
+	Locator          trufTypes.StreamLocator
+	ComposingLocator trufTypes.StreamLocator
+	Height           int64
 }
 
 // CheckComposePermissions checks if a stream is allowed to compose from another stream
@@ -241,7 +241,8 @@ func CheckComposePermissions(ctx context.Context, input CheckComposePermissionsI
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "is_allowed_to_compose", []any{
 		input.Locator.DataProvider.Address(),
 		input.Locator.StreamId.String(),
-		input.ComposingStreamId,
+		input.ComposingLocator.DataProvider.Address(),
+		input.ComposingLocator.StreamId.String(),
 		nil,
 		nil,
 	}, func(row *common.Row) error {
@@ -359,8 +360,18 @@ type GetMetadataInput struct {
 	Height   int64
 }
 
+type GetMetadataOutput struct {
+	RowID     *types.UUID
+	ValueI    *int64
+	ValueF    *float64
+	ValueB    *bool
+	ValueS    *string
+	ValueR    *string
+	CreatedAt int64
+}
+
 // GetMetadata retrieves metadata from a contract
-func GetMetadata(ctx context.Context, input GetMetadataInput) ([]any, error) {
+func GetMetadata(ctx context.Context, input GetMetadataInput) ([]GetMetadataOutput, error) {
 	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create Ethereum address from deployer bytes")
@@ -378,7 +389,7 @@ func GetMetadata(ctx context.Context, input GetMetadataInput) ([]any, error) {
 		TxContext: txContext,
 	}
 
-	var results []any
+	var results []GetMetadataOutput
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_metadata", []any{
 		input.Locator.DataProvider.Address(),
 		input.Locator.StreamId.String(),
@@ -388,7 +399,15 @@ func GetMetadata(ctx context.Context, input GetMetadataInput) ([]any, error) {
 		0,
 		"created_at DESC",
 	}, func(row *common.Row) error {
-		results = append(results, row.Values...)
+		results = append(results, GetMetadataOutput{
+			RowID:     safe(row.Values[0], nil, uuidConverter),
+			ValueI:    safe(row.Values[1], nil, int64PtrConverter),
+			ValueF:    safe(row.Values[2], nil, float64PtrConverter),
+			ValueB:    safe(row.Values[3], nil, boolPtrConverter),
+			ValueS:    safe(row.Values[4], nil, stringPtrConverter),
+			ValueR:    safe(row.Values[5], nil, stringPtrConverter),
+			CreatedAt: safe(row.Values[6], int64(0), int64ValueConverter),
+		})
 		return nil
 	})
 	if err != nil {
@@ -442,4 +461,46 @@ func DisableMetadata(ctx context.Context, input DisableMetadataInput) error {
 	}
 
 	return nil
+}
+
+// Replace all the safe* functions with a generic approach
+func safe[T any](v any, defaultVal T, converter func(any) (T, bool)) T {
+	if v == nil {
+		return defaultVal
+	}
+	if result, ok := converter(v); ok {
+		return result
+	}
+	return defaultVal
+}
+
+// Type conversion functions
+func uuidConverter(v any) (*types.UUID, bool) {
+	result, ok := v.(*types.UUID)
+	return result, ok
+}
+
+func int64PtrConverter(v any) (*int64, bool) {
+	result, ok := v.(int64)
+	return &result, ok
+}
+
+func float64PtrConverter(v any) (*float64, bool) {
+	result, ok := v.(float64)
+	return &result, ok
+}
+
+func boolPtrConverter(v any) (*bool, bool) {
+	result, ok := v.(bool)
+	return &result, ok
+}
+
+func stringPtrConverter(v any) (*string, bool) {
+	result, ok := v.(string)
+	return &result, ok
+}
+
+func int64ValueConverter(v any) (int64, bool) {
+	result, ok := v.(int64)
+	return result, ok
 }

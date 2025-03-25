@@ -2,10 +2,12 @@ package tests
 
 import (
 	"context"
+	"sort"
 	"testing"
 
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
+	"github.com/trufnetwork/node/tests/streams/utils/procedure"
 	"github.com/trufnetwork/node/tests/streams/utils/setup"
 
 	"github.com/kwilteam/kwil-db/common"
@@ -217,6 +219,161 @@ func testAnyUserCanCreateStream(t *testing.T) func(ctx context.Context, platform
 			if err != nil {
 				return errors.Wrapf(err, "user %s should be able to create a stream", user)
 			}
+		}
+
+		return nil
+	}
+}
+
+// [OTHER04] Multiple streams can be created in a single transaction.
+// TestMultipleStreamCreation tests that multiple streams can be created in a single transaction using CreateStreams
+func TestMultipleStreamCreation(t *testing.T) {
+	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name: "multiple_stream_creation_test",
+		SeedScripts: []string{
+			"../../../internal/migrations/000-initial-data.sql",
+			"../../../internal/migrations/001-common-actions.sql",
+		},
+		FunctionTests: []kwilTesting.TestFunc{
+			testMultipleStreamCreation(t),
+		},
+	}, testutils.GetTestOptions())
+}
+
+// testMultipleStreamCreation tests that multiple streams can be created in a single transaction
+func testMultipleStreamCreation(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Generate unique stream IDs and prepare stream info
+		deployer, err := util.NewEthereumAddressFromString(defaultCaller)
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address")
+		}
+		platform = procedure.WithSigner(platform, deployer.Bytes())
+		streamInfos := []setup.StreamInfo{
+			{
+				Type: setup.ContractTypePrimitive,
+				Locator: types.StreamLocator{
+					StreamId: *util.NewRawStreamId("st111111111111111111111111111111"),
+				},
+			},
+			{
+				Type: setup.ContractTypeComposed,
+				Locator: types.StreamLocator{
+					StreamId: *util.NewRawStreamId("st222222222222222222222222222222"),
+				},
+			},
+			{
+				Type: setup.ContractTypePrimitive,
+				Locator: types.StreamLocator{
+					StreamId: *util.NewRawStreamId("st333333333333333333333333333333"),
+				},
+			},
+		}
+
+		// Create multiple streams in a single transaction
+		err = setup.CreateStreams(ctx, platform, streamInfos)
+		if err != nil {
+			return errors.Wrap(err, "failed to create multiple streams")
+		}
+
+		// Verify that all streams were created successfully
+		rows := []common.Row{}
+		err = platform.Engine.Execute(&common.EngineContext{
+			TxContext: &common.TxContext{
+				Ctx: ctx,
+			},
+		}, platform.DB, "SELECT stream_id, stream_type FROM streams WHERE data_provider = $address ORDER BY stream_id", map[string]any{
+			"address": deployer.Address(),
+		}, func(row *common.Row) error {
+			rows = append(rows, *row)
+			return nil
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to query streams")
+		}
+
+		// Check that we have the expected number of streams
+		assert.Equal(t, 3, len(rows), "Expected 3 streams to be created")
+
+		// Verify stream IDs and types
+		expectedStreamIds := []string{
+			"st111111111111111111111111111111",
+			"st222222222222222222222222222222",
+			"st333333333333333333333333333333",
+		}
+		expectedTypes := []string{
+			string(setup.ContractTypePrimitive),
+			string(setup.ContractTypeComposed),
+			string(setup.ContractTypePrimitive),
+		}
+
+		// Sort the expectedStreamIds to match the DB query's ORDER BY
+		sort.Strings(expectedStreamIds)
+
+		for i, row := range rows {
+			assert.Equal(t, expectedStreamIds[i], row.Values[0], "Unexpected stream ID")
+			assert.Equal(t, expectedTypes[i], row.Values[1], "Unexpected stream type")
+		}
+
+		// Test creating duplicate streams (should fail)
+		err = setup.CreateStreams(ctx, platform, streamInfos)
+		assert.Error(t, err, "Should not allow duplicate streams")
+		assert.Contains(t, err.Error(), "duplicate key value violates unique constraint", "error message should indicate duplicate streams")
+
+		// Test creating streams with different types but same IDs (should fail)
+		for i := range streamInfos {
+			if streamInfos[i].Type == setup.ContractTypePrimitive {
+				streamInfos[i].Type = setup.ContractTypeComposed
+			} else {
+				streamInfos[i].Type = setup.ContractTypePrimitive
+			}
+		}
+		err = setup.CreateStreams(ctx, platform, streamInfos)
+		assert.Error(t, err, "Should not allow duplicate stream IDs even with different types")
+
+		// Test creating streams with different owners
+		newOwner := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000002")
+		newOwnerPlatform := procedure.WithSigner(platform, newOwner.Bytes())
+		newStreamInfos := []setup.StreamInfo{
+			{
+				Type: setup.ContractTypePrimitive,
+				Locator: types.StreamLocator{
+					StreamId: *util.NewRawStreamId("st444444444444444444444444444444"),
+				},
+			},
+			{
+				Type: setup.ContractTypeComposed,
+				Locator: types.StreamLocator{
+					StreamId: *util.NewRawStreamId("st555555555555555555555555555555"),
+				},
+			},
+		}
+
+		err = setup.CreateStreams(ctx, newOwnerPlatform, newStreamInfos)
+		if err == nil {
+			// Check if the streams were actually created with the correct owner
+			rows = []common.Row{}
+			err = platform.Engine.Execute(&common.EngineContext{
+				TxContext: &common.TxContext{
+					Ctx: ctx,
+				},
+			}, platform.DB, "SELECT * FROM streams WHERE data_provider = $address", map[string]any{
+				"address": deployer.Address(),
+			}, func(row *common.Row) error {
+				rows = append(rows, *row)
+				return nil
+			})
+			if err != nil {
+				return errors.Wrap(err, "failed to query streams")
+			}
+
+			if len(rows) > 0 {
+				t.Log("CreateStreams created streams with specified data provider, not the caller")
+			} else {
+				t.Log("CreateStreams appears to have created streams with the deployer as the data provider")
+			}
+		} else {
+			t.Logf("CreateStreams with different owners failed: %v", err)
 		}
 
 		return nil

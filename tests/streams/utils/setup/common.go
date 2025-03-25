@@ -7,6 +7,7 @@ import (
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
 	"github.com/trufnetwork/sdk-go/core/types"
+	"github.com/trufnetwork/sdk-go/core/util"
 )
 
 type ContractType string
@@ -67,6 +68,50 @@ func UntypedCreateStream(ctx context.Context, platform *kwilTesting.Platform, st
 	}
 	if r.Error != nil {
 		return errors.Wrap(r.Error, "error in createStream")
+	}
+
+	return nil
+}
+
+func CreateStreams(ctx context.Context, platform *kwilTesting.Platform, streamInfos []StreamInfo) error {
+	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+	if err != nil {
+		return errors.Wrap(err, "error creating composed dataset")
+	}
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 0},
+		Signer:       deployer.Bytes(),
+		Caller:       deployer.Address(),
+		TxID:         platform.Txid(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext: txContext,
+	}
+
+	streamIds := make([]string, len(streamInfos))
+	streamTypes := make([]string, len(streamInfos))
+	for i, streamInfo := range streamInfos {
+		streamIds[i] = streamInfo.Locator.StreamId.String()
+		streamTypes[i] = string(streamInfo.Type)
+	}
+
+	// execute create streams call instead of creating one by one
+	r, err := platform.Engine.Call(engineContext,
+		platform.DB,
+		"",
+		"create_streams",
+		[]any{streamIds, streamTypes},
+		func(row *common.Row) error {
+			return nil
+		},
+	)
+	if err != nil {
+		return errors.Wrap(err, "error in createStreams")
+	}
+	if r.Error != nil {
+		return errors.Wrap(r.Error, "error in createStreams")
 	}
 
 	return nil

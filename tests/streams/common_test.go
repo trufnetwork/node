@@ -7,7 +7,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
-	kwilTypes "github.com/kwilteam/kwil-db/core/types"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 
 	"github.com/trufnetwork/node/internal/migrations"
@@ -86,7 +85,7 @@ func testDisableMetadata(t *testing.T, streamInfo setup.StreamInfo) kwilTesting.
 		if err != nil {
 			return errors.Wrapf(err, "Failed to get metadata key %s", key)
 		}
-		rowID := result[0].(*kwilTypes.UUID)
+		rowID := result[0].RowID
 
 		// Disable the metadata
 		err = procedure.DisableMetadata(ctx, procedure.DisableMetadataInput{
@@ -153,7 +152,7 @@ func testReadOnlyMetadataCannotBeModified(t *testing.T, streamInfo setup.StreamI
 			if err != nil {
 				return errors.Wrap(err, "Failed to get read-only metadata")
 			}
-			rowID := result[0].(*kwilTypes.UUID)
+			rowID := result[0].RowID
 
 			err = procedure.DisableMetadata(ctx, procedure.DisableMetadataInput{
 				Platform: platform,
