@@ -48,6 +48,8 @@ CREATE OR REPLACE ACTION insert_taxonomy(
         $child_stream_id_value := $child_stream_ids[$i];
         $weight_value := $weights[$i];
 
+        $taxonomy_id := uuid_generate_kwil(@txid||$data_provider||$stream_id||$child_data_provider_value||$child_stream_id_value||$i::TEXT);
+
         INSERT INTO taxonomies (
             data_provider,
             stream_id,
@@ -62,7 +64,7 @@ CREATE OR REPLACE ACTION insert_taxonomy(
         ) VALUES (
             $data_provider,
             $stream_id,
-            uuid_generate_kwil(@txid||$i::TEXT), -- Generate a new UUID for the taxonomy.
+            $taxonomy_id,
             $child_data_provider_value,
             $child_stream_id_value,
             $weight_value,

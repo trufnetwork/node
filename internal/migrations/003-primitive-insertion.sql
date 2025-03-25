@@ -48,23 +48,57 @@ CREATE OR REPLACE ACTION insert_records(
 
     $current_block INT := @height;
 
-    -- Validate each record in the batch
-    FOR $i IN 1..$num_records {
-        if !is_wallet_allowed_to_write($data_provider[$i], $stream_id[$i], @caller) {
-            ERROR('wallet not allowed to write');
-        }
-        if !stream_exists($data_provider[$i], $stream_id[$i]) {
-            ERROR('stream does not exist');
+    -- Check stream existence in batch
+    for $row in stream_exists_batch($data_provider, $stream_id) {
+        if !$row.stream_exists {
+            ERROR('stream does not exist: data_provider=' || $row.data_provider || ', stream_id=' || $row.stream_id);
         }
     }
 
-    -- Insert all records
-    FOR $i IN 1..$num_records {
-        $stream_id_val TEXT := $stream_id[$i];
-        $data_provider_val TEXT := $data_provider[$i];
-        $event_time_val INT8 := $event_time[$i];
-        $value_val NUMERIC(36,18) := $value[$i];
-        INSERT INTO primitive_events (stream_id, data_provider, event_time, value, created_at)
-        VALUES ($stream_id_val, $data_provider_val, $event_time_val, $value_val, $current_block);
+    -- Check if streams are primitive in batch
+    for $row in is_primitive_stream_batch($data_provider, $stream_id) {
+        if !$row.is_primitive {
+            ERROR('stream is not a primitive stream: data_provider=' || $row.data_provider || ', stream_id=' || $row.stream_id);
+        }
     }
+
+    -- Validate that the wallet is allowed to write to each stream
+    for $row in is_wallet_allowed_to_write_batch($data_provider, $stream_id, @caller) {
+        if !$row.is_allowed {
+            ERROR('wallet not allowed to write to stream: data_provider=' || $row.data_provider || ', stream_id=' || $row.stream_id);
+        }
+    }
+    
+    -- Insert all records using WITH RECURSIVE pattern to avoid round trips
+    WITH RECURSIVE 
+    indexes AS (
+        SELECT 1 AS idx
+        UNION ALL
+        SELECT idx + 1 FROM indexes
+        WHERE idx < $num_records
+    ),
+    record_arrays AS (
+        SELECT 
+            $stream_id AS stream_ids,
+            $data_provider AS data_providers,
+            $event_time AS event_times,
+            $value AS values_array
+    ),
+    arguments AS (
+        SELECT 
+            record_arrays.stream_ids[idx] AS stream_id,
+            record_arrays.data_providers[idx] AS data_provider,
+            record_arrays.event_times[idx] AS event_time,
+            record_arrays.values_array[idx] AS value
+        FROM indexes
+        JOIN record_arrays ON 1=1
+    )
+    INSERT INTO primitive_events (stream_id, data_provider, event_time, value, created_at)
+    SELECT 
+        stream_id, 
+        data_provider, 
+        event_time, 
+        value, 
+        $current_block
+    FROM arguments;
 };

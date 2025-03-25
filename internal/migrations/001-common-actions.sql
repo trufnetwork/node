@@ -37,32 +37,204 @@ CREATE OR REPLACE ACTION create_stream(
     
     -- Add required metadata
     $current_block INT := @height;
-    $current_uuid UUID := uuid_generate_kwil('create_stream_' || @txid || $stream_id);
+    $base_uuid := uuid_generate_kwil('create_stream_' || @txid || $stream_id);
     
     -- Add type metadata
-    $current_uuid := uuid_generate_v5($current_uuid, @txid);
-    INSERT INTO metadata (row_id, data_provider, stream_id, metadata_key, value_s, created_at)
-        VALUES ($current_uuid, $data_provider, $stream_id, 'type', $stream_type, $current_block);
-    
-    -- Add stream_owner metadata
-    $current_uuid := uuid_generate_v5($current_uuid, @txid);
-    INSERT INTO metadata (row_id, data_provider, stream_id, metadata_key, value_ref, created_at)
-        VALUES ($current_uuid, $data_provider, $stream_id, 'stream_owner', LOWER($data_provider), $current_block);
-    
-    -- Add read visibility (public by default)
-    $current_uuid := uuid_generate_v5($current_uuid, @txid);
-    INSERT INTO metadata (row_id, data_provider, stream_id, metadata_key, value_i, created_at)
-        VALUES ($current_uuid, $data_provider, $stream_id, 'read_visibility', 0, $current_block);
-        
-    -- Mark readonly keys
-    $readonly_keys TEXT[] := ['stream_owner', 'readonly_key'];
-    
-    for $key IN ARRAY $readonly_keys {
-        $current_uuid := uuid_generate_v5($current_uuid, @txid);
-        INSERT INTO metadata (row_id, data_provider, stream_id, metadata_key, value_s, created_at)
-            VALUES ($current_uuid, $data_provider, $stream_id, 'readonly_key', $key, $current_block);
-    }
+    $type_uuid := uuid_generate_v5($base_uuid, 'type');
+    $stream_owner_uuid := uuid_generate_v5($base_uuid, 'stream_owner');
+    $read_visibility_uuid := uuid_generate_v5($base_uuid, 'read_visibility');
+    $readonly_key_stream_owner_uuid := uuid_generate_v5($base_uuid, 'readonly_key:stream_owner');
+    $readonly_key_readonly_key_uuid := uuid_generate_v5($base_uuid, 'readonly_key:readonly_key');
+
+    INSERT INTO metadata (row_id, data_provider, stream_id, metadata_key, value_s, value_i, value_ref, created_at) VALUES
+        ($type_uuid,                      $data_provider, $stream_id, 'type',                       $stream_type,   NULL, NULL,                  $current_block),
+        ($stream_owner_uuid,              $data_provider, $stream_id, 'stream_owner',               NULL,           NULL, LOWER($data_provider), $current_block),
+        ($read_visibility_uuid,           $data_provider, $stream_id, 'read_visibility',            NULL,           0,    NULL,                  $current_block),
+        ($readonly_key_stream_owner_uuid, $data_provider, $stream_id, 'readonly_key:stream_owner',  'stream_owner', NULL, NULL,                  $current_block),
+        ($readonly_key_readonly_key_uuid, $data_provider, $stream_id, 'readonly_key:readonly_key',  'readonly_key', NULL, NULL,                  $current_block);
 };
+
+/**
+ * create_streams: Creates multiple streams at once.
+ * Validates stream_id format, data provider address, and stream type.
+ * Sets default metadata including type, owner, visibility, and readonly keys.
+ */
+CREATE OR REPLACE ACTION create_streams(
+    $stream_ids TEXT[],
+    $stream_types TEXT[]
+) PUBLIC {
+    -- Get caller's address (data provider) first
+    $data_provider TEXT := @caller;
+
+    -- Check if caller is a valid ethereum address
+    if NOT check_ethereum_address($data_provider) {
+        ERROR('Invalid data provider address. Must be a valid Ethereum address: ' || $data_provider);
+    }
+
+    -- Check if stream_ids and stream_types arrays have the same length
+    if array_length($stream_ids) != array_length($stream_types) {
+        ERROR('Stream IDs and stream types arrays must have the same length');
+    }
+
+    -- Iterate through each stream ID and type, checking if they have a valid format
+    for $i in 1..array_length($stream_ids) {
+        $stream_id := $stream_ids[$i];
+        $stream_type := $stream_types[$i];
+        if NOT check_stream_id_format($stream_id) {
+            ERROR('Invalid stream_id format. Must start with "st" followed by 30 lowercase alphanumeric characters: ' || $stream_id);
+        }
+        if $stream_type != 'primitive' AND $stream_type != 'composed' {
+            ERROR('Invalid stream type. Must be "primitive" or "composed": ' || $stream_type);
+        }
+    }
+
+    $base_uuid := uuid_generate_kwil('create_streams_' || @txid);
+
+    -- Create the streams
+    WITH RECURSIVE 
+    indexes AS (
+        SELECT 1 AS idx
+        UNION ALL
+        SELECT idx + 1 FROM indexes
+        WHERE idx < array_length($stream_ids)
+    ),
+    stream_arrays AS (
+        SELECT 
+            $stream_ids AS stream_ids,
+            $stream_types AS stream_types
+    ),
+    arguments AS (
+        SELECT 
+            idx,
+            stream_arrays.stream_ids[idx] AS stream_id,
+            stream_arrays.stream_types[idx] AS stream_type
+        FROM indexes
+        JOIN stream_arrays ON 1=1
+    )
+    INSERT INTO streams (data_provider, stream_id, stream_type, created_at)
+    SELECT 
+        $data_provider, 
+        stream_id, 
+        stream_type, 
+        @height
+    FROM arguments;
+ 
+    -- Create metadata for the streams
+    WITH RECURSIVE 
+    indexes AS (
+        SELECT 1 AS idx
+        UNION ALL
+        SELECT idx + 1 FROM indexes
+        WHERE idx < array_length($stream_ids)
+    ),
+    stream_arrays AS (
+        SELECT 
+            $stream_ids AS stream_ids,
+            $stream_types AS stream_types
+    ),
+    stream_metadata AS (
+        SELECT 
+            stream_arrays.stream_ids[idx] AS stream_id,
+            stream_arrays.stream_types[idx] AS stream_type
+        FROM indexes
+        JOIN stream_arrays ON 1=1
+    ),
+    metadata_arguments AS (
+        -- Don't add type metadata here, we will add it when we join both tables
+        SELECT
+            'stream_owner' AS metadata_key,
+            NULL::TEXT AS value_s,
+            NULL::INT AS value_i,
+            LOWER($data_provider) AS value_ref
+        UNION ALL
+        SELECT
+            'read_visibility' AS metadata_key,
+            NULL::TEXT AS value_s,    
+            0::INT AS value_i, -- 0 = public, 1 = private
+            NULL::TEXT AS value_ref
+        UNION ALL
+        SELECT
+            'readonly_key:stream_owner' AS metadata_key,
+            'stream_owner' AS value_s,
+            NULL::INT AS value_i,
+            NULL::TEXT AS value_ref
+        UNION ALL
+        SELECT
+            'readonly_key:readonly_key' AS metadata_key,
+            'readonly_key' AS value_s,
+            NULL::INT AS value_i,
+            NULL::TEXT AS value_ref
+    ),
+    -- Cross join the stream_metadata and metadata_arguments
+    all_arguments AS (
+        SELECT 
+            sm.stream_id,
+            sm.stream_type,
+            ma.metadata_key,
+            ma.value_s,
+            ma.value_i,
+            ma.value_ref
+        FROM stream_metadata sm
+        JOIN metadata_arguments ma ON 1=1
+
+        UNION ALL
+
+        SELECT
+            stream_metadata.stream_id,
+            stream_metadata.stream_type,
+            'type' AS metadata_key,
+            stream_metadata.stream_type AS value_s,
+            NULL::INT AS value_i,
+            NULL::TEXT AS value_ref
+        FROM stream_metadata
+    ),
+    -- Add row number to be able to create deterministic UUIDs
+    args_with_row_number AS (
+        SELECT all_arguments.*, row_number() OVER () AS row_number
+        FROM all_arguments
+    ),
+    args AS (
+        SELECT 
+            uuid_generate_v5($base_uuid, 'metadata' || arg.row_number::TEXT)::UUID as row_id,
+            $data_provider AS data_provider,
+            arg.stream_id,
+            arg.metadata_key,
+            arg.value_s,
+            arg.value_i,
+            arg.value_ref,
+            @height AS created_at
+        FROM args_with_row_number arg
+    )
+    -- catched a bug where it's expected to have the same order of columns
+    -- as the table definition
+    INSERT INTO metadata (
+        row_id,
+        data_provider,
+        stream_id,
+        metadata_key,
+        value_i,
+        value_f,
+        value_b,
+        value_s,
+        value_ref,
+        created_at,
+        disabled_at
+    )
+    SELECT 
+        row_id::UUID,
+        data_provider,
+        stream_id,
+        metadata_key,
+        value_i,
+        NULL::NUMERIC(36,18),
+        NULL::BOOLEAN,
+        value_s,
+        value_ref,
+        created_at,
+        NULL::INT8
+    FROM args;
+};
+
 
 /**
  * insert_metadata: Adds metadata to a stream.
@@ -305,6 +477,76 @@ CREATE OR REPLACE ACTION is_stream_owner(
 };
 
 /**
+ * is_stream_owner_batch: Checks if a wallet is the owner of multiple streams.
+ * Processes arrays of data providers and stream IDs efficiently.
+ * Returns a table indicating ownership status for each stream.
+ */
+CREATE OR REPLACE ACTION is_stream_owner_batch(
+    $data_providers TEXT[],
+    $stream_ids TEXT[],
+    $wallet TEXT
+) PUBLIC view returns table(
+    data_provider TEXT,
+    stream_id TEXT,
+    is_owner BOOL
+) {
+    -- Check that arrays have the same length
+    if array_length($data_providers) != array_length($stream_ids) {
+        ERROR('Data providers and stream IDs arrays must have the same length');
+    }
+
+    -- Check if the wallet is the owner of each stream
+    for $row in stream_exists_batch($data_providers, $stream_ids) {
+        if !$row.stream_exists {
+            ERROR('stream does not exist: data_provider=' || $row.data_provider || ', stream_id=' || $row.stream_id);
+        }
+    }
+    $lowercase_wallet TEXT := LOWER($wallet);
+
+    -- Use WITH RECURSIVE to process each stream efficiently
+    WITH RECURSIVE 
+    indexes AS (
+        SELECT 1 AS idx
+        UNION ALL
+        SELECT idx + 1 FROM indexes
+        WHERE idx < array_length($data_providers)
+    ),
+    stream_arrays AS (
+        SELECT 
+            $data_providers AS data_providers,
+            $stream_ids AS stream_ids
+    ),
+    arguments AS (
+        SELECT 
+            stream_arrays.data_providers[idx] AS data_provider,
+            stream_arrays.stream_ids[idx] AS stream_id
+        FROM indexes
+        JOIN stream_arrays ON 1=1
+    ),
+    -- Check which streams are owned by the wallet
+    ownership_check AS (
+        SELECT 
+            a.data_provider,
+            a.stream_id,
+            CASE WHEN m.value_ref IS NOT NULL AND LOWER(m.value_ref) = $lowercase_wallet THEN true ELSE false END AS is_owner
+        FROM arguments a
+        LEFT JOIN (
+            SELECT data_provider, stream_id, value_ref
+            FROM metadata
+            WHERE metadata_key = 'stream_owner'
+              AND disabled_at IS NULL
+            ORDER BY created_at DESC
+        ) m ON a.data_provider = m.data_provider AND a.stream_id = m.stream_id
+    )
+    -- Combine results
+    SELECT 
+        o.data_provider,
+        o.stream_id,
+        o.is_owner
+    FROM ownership_check o;
+};
+
+/**
  * is_primitive_stream: Determines if a stream is primitive or composed.
  */
 CREATE OR REPLACE ACTION is_primitive_stream(
@@ -317,6 +559,53 @@ CREATE OR REPLACE ACTION is_primitive_stream(
     }
     
     ERROR('Stream not found: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+};
+
+/**
+ * is_primitive_stream_batch: Checks if multiple streams are primitive in a single query.
+ * Returns a table with primitive status for each stream.
+ * Only checks streams that exist - does not error on non-existent streams.
+ */
+CREATE OR REPLACE ACTION is_primitive_stream_batch(
+    $data_providers TEXT[],
+    $stream_ids TEXT[]
+) PUBLIC view returns table(
+    data_provider TEXT,
+    stream_id TEXT,
+    is_primitive BOOL
+) {
+    -- Check that arrays have the same length
+    if array_length($data_providers) != array_length($stream_ids) {
+        ERROR('Data providers and stream IDs arrays must have the same length');
+    }
+
+    -- Use WITH RECURSIVE to process each stream efficiently
+    WITH RECURSIVE 
+    indexes AS (
+        SELECT 1 AS idx
+        UNION ALL
+        SELECT idx + 1 FROM indexes
+        WHERE idx < array_length($data_providers)
+    ),
+    stream_arrays AS (
+        SELECT 
+            $data_providers AS data_providers,
+            $stream_ids AS stream_ids
+    ),
+    arguments AS (
+        SELECT 
+            stream_arrays.data_providers[idx] AS data_provider,
+            stream_arrays.stream_ids[idx] AS stream_id
+        FROM indexes
+        JOIN stream_arrays ON 1=1
+    )
+    -- Check stream type for each stream
+    SELECT 
+        a.data_provider,
+        a.stream_id,
+        COALESCE(s.stream_type = 'primitive', false) AS is_primitive
+    FROM arguments a
+    LEFT JOIN streams s ON a.data_provider = s.data_provider AND a.stream_id = s.stream_id;
 };
 
 /**
@@ -681,6 +970,52 @@ CREATE OR REPLACE ACTION stream_exists(
         return true;
     }
     return false;
+};
+
+/**
+ * stream_exists_batch: Checks existence of multiple streams in a single query.
+ * Returns a table with existence status for each stream.
+ */
+CREATE OR REPLACE ACTION stream_exists_batch(
+    $data_providers TEXT[],
+    $stream_ids TEXT[]
+) PUBLIC view returns table(
+    data_provider TEXT,
+    stream_id TEXT,
+    stream_exists BOOL
+) {
+    -- Check that arrays have the same length
+    if array_length($data_providers) != array_length($stream_ids) {
+        ERROR('Data providers and stream IDs arrays must have the same length');
+    }
+
+    -- Use WITH RECURSIVE to process each stream efficiently
+    WITH RECURSIVE 
+    indexes AS (
+        SELECT 1 AS idx
+        UNION ALL
+        SELECT idx + 1 FROM indexes
+        WHERE idx < array_length($data_providers)
+    ),
+    stream_arrays AS (
+        SELECT 
+            $data_providers AS data_providers,
+            $stream_ids AS stream_ids
+    ),
+    arguments AS (
+        SELECT 
+            stream_arrays.data_providers[idx] AS data_provider,
+            stream_arrays.stream_ids[idx] AS stream_id
+        FROM indexes
+        JOIN stream_arrays ON 1=1
+    )
+    -- Check existence for each stream
+    SELECT 
+        a.data_provider,
+        a.stream_id,
+        CASE WHEN s.data_provider IS NOT NULL THEN true ELSE false END AS stream_exists
+    FROM arguments a
+    LEFT JOIN streams s ON a.data_provider = s.data_provider AND a.stream_id = s.stream_id;
 };
 
 CREATE OR REPLACE ACTION transfer_stream_ownership(

@@ -48,6 +48,7 @@ CREATE OR REPLACE ACTION is_allowed_to_read(
 CREATE OR REPLACE ACTION is_allowed_to_compose(
     $data_provider TEXT,
     $stream_id TEXT,
+    $composing_data_provider TEXT,
     $composing_stream_id TEXT,
     $active_from INT,
     $active_to INT
@@ -56,7 +57,7 @@ CREATE OR REPLACE ACTION is_allowed_to_compose(
     if !stream_exists($data_provider, $stream_id) {
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
     }
-    if !stream_exists($data_provider, $composing_stream_id) {
+    if !stream_exists($composing_data_provider, $composing_stream_id) {
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $child_stream_id);
     }
     
@@ -683,4 +684,103 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_write(
     }
 
     return false;
+};
+
+/**
+ * is_wallet_allowed_to_write_batch: Checks if a wallet can write to multiple streams.
+ * Checks permission for each stream in the provided arrays and returns the valid streams.
+ * Useful for batch operations to validate permissions efficiently.
+ */
+CREATE OR REPLACE ACTION is_wallet_allowed_to_write_batch(
+    $data_providers TEXT[],
+    $stream_ids TEXT[],
+    $wallet TEXT
+) PUBLIC view returns table(
+    data_provider TEXT,
+    stream_id TEXT,
+    is_allowed BOOL
+) {
+    $exist_array BOOLEAN[];
+    $permission_array BOOLEAN[];
+
+    -- Check if the wallet is the stream owner
+    for $row in is_stream_owner_batch($data_providers, $stream_ids, $wallet) {
+        $exist_array := array_append($exist_array, $row.stream_exists);
+    }
+
+    -- Check if the wallet has explicit write permission for each stream
+    for $row in has_write_permission_batch($data_providers, $stream_ids, $wallet) {
+        $permission_array := array_append($permission_array, $row.has_permission);
+    }
+
+    for $idx in array_length($exist_array) {
+        if $exist_array[$idx] AND $permission_array[$idx] {
+            return NEXT $data_providers[$idx], $stream_ids[$idx], true;
+        }
+    }
+};
+
+/**
+ * has_write_permission_batch: Checks if a wallet has explicit write permission for multiple streams.
+ * This doesn't check ownership, nor existence, only explicit permissions via allow_write_wallet metadata.
+ * Returns a table indicating permission status for each stream.
+ */
+CREATE OR REPLACE ACTION has_write_permission_batch(
+    $data_providers TEXT[],
+    $stream_ids TEXT[],
+    $wallet TEXT
+) PUBLIC view returns table(
+    data_provider TEXT,
+    stream_id TEXT,
+    has_permission BOOL
+) {
+    -- Check that arrays have the same length
+    if array_length($data_providers) != array_length($stream_ids) {
+        ERROR('Data providers and stream IDs arrays must have the same length');
+    }
+
+    $lowercase_wallet TEXT := LOWER($wallet);
+
+    -- Use WITH RECURSIVE to process each stream efficiently
+    WITH RECURSIVE 
+    indexes AS (
+        SELECT 1 AS idx
+        UNION ALL
+        SELECT idx + 1 FROM indexes
+        WHERE idx < array_length($data_providers)
+    ),
+    stream_arrays AS (
+        SELECT 
+            $data_providers AS data_providers,
+            $stream_ids AS stream_ids
+    ),
+    arguments AS (
+        SELECT 
+            stream_arrays.data_providers[idx] AS data_provider,
+            stream_arrays.stream_ids[idx] AS stream_id
+        FROM indexes
+        JOIN stream_arrays ON 1=1
+    ),
+    -- Check which streams have explicit write permission for the wallet
+    permission_check AS (
+        SELECT 
+            a.data_provider,
+            a.stream_id,
+            CASE WHEN m.value_ref IS NOT NULL THEN true ELSE false END AS has_permission
+        FROM arguments a
+        LEFT JOIN (
+            SELECT data_provider, stream_id, value_ref
+            FROM metadata
+            WHERE metadata_key = 'allow_write_wallet'
+              AND LOWER(value_ref) = $lowercase_wallet
+              AND disabled_at IS NULL
+            ORDER BY created_at DESC
+        ) m ON a.data_provider = m.data_provider AND a.stream_id = m.stream_id
+    )
+    -- Combine results
+    SELECT 
+        p.data_provider,
+        p.stream_id,
+        p.has_permission
+    FROM permission_check p;
 };
