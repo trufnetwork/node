@@ -50,8 +50,8 @@ CREATE OR REPLACE ACTION create_stream(
         ($type_uuid,                      $data_provider, $stream_id, 'type',                       $stream_type,   NULL, NULL,                  $current_block),
         ($stream_owner_uuid,              $data_provider, $stream_id, 'stream_owner',               NULL,           NULL, LOWER($data_provider), $current_block),
         ($read_visibility_uuid,           $data_provider, $stream_id, 'read_visibility',            NULL,           0,    NULL,                  $current_block),
-        ($readonly_key_stream_owner_uuid, $data_provider, $stream_id, 'readonly_key:stream_owner',  'stream_owner', NULL, NULL,                  $current_block),
-        ($readonly_key_readonly_key_uuid, $data_provider, $stream_id, 'readonly_key:readonly_key',  'readonly_key', NULL, NULL,                  $current_block);
+        ($readonly_key_stream_owner_uuid, $data_provider, $stream_id, 'readonly_key',  'stream_owner', NULL, NULL,                  $current_block),
+        ($readonly_key_readonly_key_uuid, $data_provider, $stream_id, 'readonly_key',  'readonly_key', NULL, NULL,                  $current_block);
 };
 
 /**
