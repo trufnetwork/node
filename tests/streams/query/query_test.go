@@ -54,6 +54,7 @@ func TestQueryStream(t *testing.T) {
 			WithQueryTestSetup(testQUERY07_AdditionalInsertWillFetchLatestRecord(t)),
 			WithComposedQueryTestSetup(testAGGR03_ComposedStreamWithWeights(t)),
 			WithQueryTestSetup(testBatchInsertAndQueryRecord(t)),
+			WithQueryTestSetup(testListStreams(t)),
 		},
 	}, testutils.GetTestOptions())
 }
@@ -739,6 +740,42 @@ func testBatchInsertAndQueryRecord(t *testing.T) func(ctx context.Context, platf
         | 11         | 110.000000000000000000 |
         | 12         | 120.000000000000000000 |
         `
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   result,
+			Expected: expected,
+		})
+		return nil
+	}
+}
+
+func testListStreams(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		dataProviderStr := fmt.Sprintf("0x%x", platform.Deployer)
+		result, err := procedure.ListStreams(ctx, procedure.ListStreamsInput{
+			Platform:     platform,
+			Height:       0,
+			DataProvider: dataProviderStr,
+			Limit:        10,
+			Offset:       0,
+			OrderBy:      "created_at DESC",
+		})
+		if err != nil {
+			return errors.Wrap(err, "error listing streams")
+		}
+
+		expected := fmt.Sprintf(`
+		| data_provider | stream_id | stream_type | created_at |
+		|---------------|-----------|-------------|------------|
+		| %s | %s | primitive   | 1 |
+		| %s | %s | composed    | 1 |
+		| %s | %s | primitive   | 1 |
+		`,
+			dataProviderStr, primitiveChildStreamId.String(),
+			dataProviderStr, composedStreamId.String(),
+			dataProviderStr, primitiveStreamId.String(),
+		)
+
+		// Validate the result
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
 			Actual:   result,
 			Expected: expected,

@@ -1090,3 +1090,43 @@ CREATE OR REPLACE ACTION filter_streams_by_existence(
         RETURN NEXT $filtered_dp[$i], $filtered_sid[$i];
     }
 };
+
+CREATE OR REPLACE ACTION list_streams(
+    $data_provider TEXT,
+    $limit INT,
+    $offset INT,
+    $order_by TEXT
+) PUBLIC view returns table(
+    data_provider TEXT,
+    stream_id TEXT,
+    stream_type TEXT,
+    created_at INT8
+) {
+    if $limit > 5000 {
+        ERROR('Limit exceeds maximum allowed value of 5000');
+    }
+    if $limit IS NULL OR $limit = 0 {
+        $limit := 5000;
+    }
+    if $offset IS NULL OR $offset = 0 {
+        $offset := 0;
+    }
+    if $order_by IS NULL OR $order_by = '' {
+        $order_by := 'created_at DESC';
+    }
+
+    RETURN SELECT data_provider,
+                  stream_id,
+                  stream_type,
+                  created_at
+           FROM streams
+           WHERE $data_provider IS NULL OR $data_provider = '' OR LOWER(data_provider) = LOWER($data_provider)
+           ORDER BY
+               CASE WHEN $order_by = 'created_at DESC' THEN created_at END DESC,
+               CASE WHEN $order_by = 'created_at ASC' THEN created_at END ASC,
+               CASE WHEN $order_by = 'stream_id ASC' THEN stream_id END ASC,
+               CASE WHEN $order_by = 'stream_id DESC' THEN stream_id END DESC,
+               CASE WHEN $order_by = 'stream_type ASC' THEN stream_type END ASC,
+               CASE WHEN $order_by = 'stream_type DESC' THEN stream_type END DESC
+               LIMIT $limit OFFSET $offset;
+};

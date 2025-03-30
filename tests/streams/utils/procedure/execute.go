@@ -497,3 +497,56 @@ func DisableTaxonomy(ctx context.Context, input DisableTaxonomyInput) error {
 
 	return nil
 }
+
+type ListStreamsInput struct {
+	Platform     *kwilTesting.Platform
+	Height       int64
+	DataProvider string
+	Limit        int
+	Offset       int
+	OrderBy      string
+}
+
+func ListStreams(ctx context.Context, input ListStreamsInput) ([]ResultRow, error) {
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return nil, errors.Wrap(err, "error in ListStreams")
+	}
+
+	txContext := &common.TxContext{
+		Ctx: ctx,
+		BlockContext: &common.BlockContext{
+			Height: input.Height,
+		},
+		TxID:   input.Platform.Txid(),
+		Signer: input.Platform.Deployer,
+		Caller: deployer.Address(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext: txContext,
+	}
+
+	var resultRows [][]any
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "list_streams", []any{
+		input.DataProvider,
+		input.Limit,
+		input.Offset,
+		input.OrderBy,
+	}, func(row *common.Row) error {
+		values := make([]any, len(row.Values))
+		for i, v := range row.Values {
+			values[i] = v
+		}
+		resultRows = append(resultRows, values)
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "error in ListStreams")
+	}
+	if r.Error != nil {
+		return nil, errors.Wrap(r.Error, "error in ListStreams")
+	}
+
+	return processResultRows(resultRows)
+}
