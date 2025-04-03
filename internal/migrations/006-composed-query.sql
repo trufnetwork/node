@@ -22,14 +22,14 @@ RETURNS TABLE(
     }
 
     -- -- Check permissions; raises error if unauthorized
-    -- IF !is_allowed_to_read_all($data_provider, $stream_id, @caller, $from, $to) {
-    --     ERROR('Not allowed to read stream');
-    -- }
+    IF !is_allowed_to_read_all($data_provider, $stream_id, @caller, $from, $to) {
+        ERROR('Not allowed to read stream');
+    }
 
-    -- -- Check compose permissions
-    -- if !is_allowed_to_compose_all($data_provider, $stream_id, $from, $to) {
-    --     ERROR('Not allowed to compose stream');
-    -- }
+    -- Check compose permissions
+    if !is_allowed_to_compose_all($data_provider, $stream_id, $from, $to) {
+        ERROR('Not allowed to compose stream');
+    }
 
     RETURN WITH RECURSIVE
 

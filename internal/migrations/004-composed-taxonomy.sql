@@ -9,7 +9,7 @@ CREATE OR REPLACE ACTION insert_taxonomy(
     $child_stream_ids TEXT[],       -- The stream IDs of the child streams.
     $weights NUMERIC(36,18)[],      -- The weights of the child streams.
     $start_date INT                 -- The start date of the taxonomy.
-) PUBLIC view returns (result bool) {
+) PUBLIC {
     -- ensure it's a composed stream
     if is_primitive_stream($data_provider, $stream_id) == true {
         ERROR('stream is not a composed stream');
@@ -74,7 +74,6 @@ CREATE OR REPLACE ACTION insert_taxonomy(
             $start_date          -- Start date of the taxonomy.
         );
     }
-    return true;
 };
 
 /**
