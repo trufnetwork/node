@@ -21,15 +21,15 @@ RETURNS TABLE(
         ERROR(format('Invalid time range: from (%s) > to (%s)', $from, $to));
     }
 
-    -- -- Check permissions; raises error if unauthorized
-    -- IF !is_allowed_to_read_all($data_provider, $stream_id, @caller, $from, $to) {
-    --     ERROR('Not allowed to read stream');
-    -- }
+    -- Check permissions; raises error if unauthorized
+    IF !is_allowed_to_read_all($data_provider, $stream_id, @caller, $from, $to) {
+        ERROR('Not allowed to read stream');
+    }
 
-    -- -- Check compose permissions
-    -- if !is_allowed_to_compose_all($data_provider, $stream_id, $from, $to) {
-    --     ERROR('Not allowed to compose stream');
-    -- }
+    -- Check compose permissions
+    if !is_allowed_to_compose_all($data_provider, $stream_id, $from, $to) {
+        ERROR('Not allowed to compose stream');
+    }
 
     RETURN WITH RECURSIVE
     /*----------------------------------------------------------------------
@@ -658,28 +658,36 @@ RETURNS TABLE(
     ),
 
 
-    -- Step 4: Combine the value deltas and weight deltas
+    -- Step 4: Combine the value deltas and weight deltas, AGGREGATING by time
     combined_deltas AS (
-        SELECT event_time, delta_ws, 0::numeric(36,18) AS delta_sw FROM weighted_value_deltas
-        UNION ALL
-        -- Alias time_point as event_time and select the correctly named weight delta column
-        SELECT time_point as event_time, 0::numeric(72,18) AS delta_ws, effective_delta_sw AS delta_sw FROM effective_weight_deltas
+        SELECT
+            event_time,
+            SUM(delta_ws)::numeric(72,18) as delta_ws,
+            SUM(delta_sw)::numeric(36,18) as delta_sw
+        FROM (
+            SELECT event_time, delta_ws, 0::numeric(36,18) AS delta_sw FROM weighted_value_deltas
+            UNION ALL
+            SELECT time_point as event_time, 0::numeric(72,18) AS delta_ws, effective_delta_sw AS delta_sw FROM effective_weight_deltas
+        ) combined
+        GROUP BY event_time
     ),
 
     /*----------------------------------------------------------------------
      * FINAL DELTAS: Combine regular deltas with boundary adjustment deltas.
+     * At boundary times, the adjustment delta *replaces* any regular delta.
      *---------------------------------------------------------------------*/
     final_deltas AS (
-        SELECT
-            event_time,
-            SUM(delta_ws) as delta_ws,
-            SUM(delta_sw) as delta_sw
-        FROM (
-            SELECT event_time, delta_ws, delta_sw FROM combined_deltas
-            UNION ALL
-            SELECT event_time, delta_ws, delta_sw FROM adjustment_deltas
-        ) all_deltas
-        GROUP BY event_time
+        -- Regular deltas for times that are NOT boundary changes
+        SELECT event_time, delta_ws, delta_sw
+        FROM combined_deltas
+        WHERE event_time NOT IN (SELECT change_time FROM period_change_times)
+
+        UNION ALL
+
+        -- Adjustment deltas ONLY at the boundary change times
+        SELECT event_time, delta_ws, delta_sw
+        FROM adjustment_deltas
+        -- Grouping is already done within adjustment_deltas
     ),
 
     -- Step 5: Calculate the cumulative sum of deltas over time
