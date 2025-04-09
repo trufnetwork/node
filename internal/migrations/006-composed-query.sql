@@ -65,7 +65,6 @@ RETURNS TABLE(
         ERROR('Not allowed to compose stream');
     }
 
-    -- for $row in WITH RECURSIVE
     RETURN WITH RECURSIVE
     /*----------------------------------------------------------------------
      * HIERARCHY CTE: Recursively resolves the dependency tree defined by taxonomies.
@@ -296,18 +295,11 @@ RETURNS TABLE(
         ) as anchor_event
     ),
 
-
     /*----------------------------------------------------------------------
-     * DELTA CALCULATION METHOD: Computes the composed value efficiently.
-     *
-     * Concept: Instead of calculating the full weighted average at every time point,
-     * this method computes the *change* (delta) in the numerator (weighted sum of values, `delta_ws`)
-     * and the *change* in the denominator (sum of weights, `delta_sw`) only when
-     * these values actually change. The final value is derived from the cumulative
-     * sums of these deltas. Special adjustments are made at root taxonomy boundaries.
+     * NEW DELTA CALCULATION METHOD
      *---------------------------------------------------------------------*/
 
-    -- Step 1a: Find the initial state (latest value) of each relevant primitive AT OR BEFORE $effective_from.
+    -- Step 1: Find initial states (value at or before $effective_from)
     initial_primitive_states AS (
         SELECT
             pe.data_provider,
@@ -327,7 +319,7 @@ RETURNS TABLE(
                 ) as rn
             FROM primitive_events pe_inner
             WHERE pe_inner.event_time <= $effective_from -- At or before the start
-              AND EXISTS ( -- Ensure the primitive exists in the resolved hierarchy (derived from taxonomies)
+              AND EXISTS ( -- Ensure the primitive exists in the resolved hierarchy
                   SELECT 1 FROM primitive_weights pw_exists
                   WHERE pw_exists.data_provider = pe_inner.data_provider AND pw_exists.stream_id = pe_inner.stream_id
               )
@@ -336,8 +328,7 @@ RETURNS TABLE(
         WHERE pe.rn = 1 -- Select the latest state
     ),
 
-    -- Step 1b: Find distinct primitive events strictly WITHIN the interval ($from < time <= $to).
-    -- Handles overshadowing based on created_at for events with the same event_time.
+    -- Step 2: Find distinct primitive events strictly WITHIN the interval ($from < time <= $to).
     primitive_events_in_interval AS (
         SELECT
             pe.data_provider,
@@ -369,123 +360,23 @@ RETURNS TABLE(
         WHERE pe.rn = 1 -- Select the latest created_at for each (dp, sid, et)
     ),
 
-    -- Step 1c: Combine initial states and interval events into a single point series per primitive.
+    -- Step 3: Combine initial states and interval events.
     all_primitive_points AS (
-        SELECT
-            ips.data_provider,
-            ips.stream_id,
-            ips.event_time, -- Use the original event time
-            ips.value
-        FROM initial_primitive_states ips
-
+        SELECT data_provider, stream_id, event_time, value FROM initial_primitive_states
         UNION ALL
-
-        SELECT
-            pei.data_provider,
-            pei.stream_id,
-            pei.event_time,
-            pei.value
-        FROM primitive_events_in_interval pei
+        SELECT data_provider, stream_id, event_time, value FROM primitive_events_in_interval
     ),
 
-    -- Step 1d: Calculate the change in value (`delta_value`) for each primitive at its event times.
-    -- Uses LAG to compare the current value with the previous one for the same primitive.
-    -- Filters out points where the value didn't actually change.
+    -- Step 4: Calculate value change (delta_value) for each primitive.
     primitive_event_changes AS (
         SELECT * FROM (
-            SELECT
-                data_provider, stream_id, event_time, value,
-                -- Calculate delta: current value - previous value (or just current value if first)
-                COALESCE(
-                    value - LAG(value) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time),
-                    value
-                )::numeric(36,18) AS delta_value
-            FROM all_primitive_points
-        ) calc
-        WHERE delta_value != 0::numeric(36,18) -- Only keep actual changes
+                          SELECT data_provider, stream_id, event_time, value,
+                                 COALESCE(value - LAG(value) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time), value)::numeric(36,18) AS delta_value
+                          FROM all_primitive_points
+                      ) calc WHERE delta_value != 0::numeric(36,18)
     ),
 
-    -- *** Optimized Weight Calculation and Application ***
-    -- Step 2a: Determine the total weight active for each primitive over time.
-    -- Generates weight change events (+weight at start, -weight at end+1)
-    weight_changes AS (
-        SELECT
-            data_provider,
-            stream_id,
-            group_sequence_start AS change_time,
-            raw_weight           AS weight_delta
-        FROM primitive_weights
-        WHERE raw_weight != 0::numeric(36,18)
-
-        UNION ALL
-
-        SELECT
-            data_provider,
-            stream_id,
-            group_sequence_end + 1 AS change_time, -- Change occurs *after* the end
-            -raw_weight            AS weight_delta
-        FROM primitive_weights
-        WHERE raw_weight != 0::numeric(36,18)
-    ),
-
-    -- Calculate the running total weight for each primitive at each weight change point.
-    weight_timeline AS (
-        SELECT
-            wc1.data_provider,
-            wc1.stream_id,
-            wc1.change_time,
-            -- Calculate cumulative sum using window function
-            (SUM(wc1.weight_delta) OVER (
-                PARTITION BY wc1.data_provider, wc1.stream_id
-                ORDER BY wc1.change_time
-            ))::numeric(36,18) AS total_weight_at_time
-        FROM weight_changes wc1
-    ),
-
-    -- Define continuous segments where each primitive has a constant total weight.
-    primitive_weight_segments AS (
-        SELECT
-            data_provider,
-            stream_id,
-            change_time AS segment_start,
-            -- Segment ends just before the next change time
-            LEAD(change_time, 1, $max_int8) OVER (PARTITION BY data_provider, stream_id ORDER BY change_time ASC) AS segment_end,
-            total_weight_at_time
-        FROM weight_timeline
-        -- Filter out segments where weight is zero, as they don't contribute
-        WHERE total_weight_at_time != 0::numeric(36,18)
-    ),
-
-    -- Step 2b: Join primitive value deltas with their corresponding active weight segment.
-    -- This finds the weight that should be applied to each value change.
-    weighted_event_deltas AS (
-        SELECT
-            pec.event_time,
-            pec.delta_value,
-            -- Find the weight segment active at the time of the value change
-            COALESCE(pws.total_weight_at_time, 0::numeric(36,18))::numeric(36, 18) AS active_weight_sum
-        FROM
-            primitive_event_changes pec
-        LEFT JOIN -- Use LEFT JOIN in case a value change happens outside any active weight segment (should be rare)
-            primitive_weight_segments pws ON pec.data_provider = pws.data_provider
-                                         AND pec.stream_id = pws.stream_id
-                                         AND pec.event_time >= pws.segment_start -- Event time is within the segment
-                                         AND pec.event_time < pws.segment_end    -- Segment end is exclusive
-    ),
-
-    -- Step 2c: Calculate the change in the weighted sum (`delta_ws`) caused by each event.
-    -- This is the core component for the numerator of the weighted average.
-    weighted_value_deltas AS (
-        SELECT
-            event_time,
-            -- Sum the contributions of all primitive value changes occurring at the same time
-            SUM(delta_value * active_weight_sum)::numeric(72, 18) AS delta_ws -- Weighted sum delta
-        FROM weighted_event_deltas
-        GROUP BY event_time
-    ),
-
-    -- Step 2d: Find the first time each primitive contributes a value.
-    -- Used to determine when a primitive's weight becomes *effectively* active.
+    -- Step 5: Find the first time each primitive provides a value. (Added for correctness)
     first_value_times AS (
         SELECT
             data_provider,
@@ -495,174 +386,134 @@ RETURNS TABLE(
         GROUP BY data_provider, stream_id
     ),
 
-    -- Step 2e: Calculate the change in the *effective sum of weights* (`delta_sw`).
-    -- This considers when weights become active based on `first_value_time`.
-    -- This is the core component for the denominator of the weighted average.
-    eff_weight_deltas_unaggr AS (
-        -- Positive delta when a weight interval becomes *effectively* active
+    -- Step 6: Generate effective weight change events based on first value time. (Added for correctness)
+    effective_weight_changes AS (
+        -- Positive delta: Occurs at the LATER of weight definition start OR first value time
         SELECT
-            -- Effective start is the later of the interval start or the first value time
-            GREATEST(pw.group_sequence_start, fvt.first_value_time) AS time_point,
-            pw.raw_weight AS delta,
             pw.data_provider,
-            pw.stream_id
+            pw.stream_id,
+            GREATEST(pw.group_sequence_start, fvt.first_value_time) AS event_time, -- Use effective start time
+            pw.raw_weight AS weight_delta
         FROM primitive_weights pw
-        INNER JOIN first_value_times fvt -- Only consider primitives that have values
-          ON pw.data_provider = fvt.data_provider AND pw.stream_id = fvt.stream_id
-        -- Ensure the effective interval is valid (start <= end)
+        INNER JOIN first_value_times fvt -- Only consider primitives that HAVE values
+            ON pw.data_provider = fvt.data_provider AND pw.stream_id = fvt.stream_id
+        -- Ensure the calculated effective start time is still within the weight's defined interval
         WHERE GREATEST(pw.group_sequence_start, fvt.first_value_time) <= pw.group_sequence_end
           AND pw.raw_weight != 0::numeric(36,18)
 
         UNION ALL
 
-        -- Negative delta when a weight interval becomes *effectively* inactive
+        -- Negative delta: Occurs when the original weight interval ends
         SELECT
-            -- Effective end+1 determines when the weight stops applying
-            pw.group_sequence_end + 1 AS time_point,
-            -pw.raw_weight AS delta,
             pw.data_provider,
-            pw.stream_id
+            pw.stream_id,
+            pw.group_sequence_end + 1 AS event_time,
+            -pw.raw_weight AS weight_delta
         FROM primitive_weights pw
-        INNER JOIN first_value_times fvt
-          ON pw.data_provider = fvt.data_provider AND pw.stream_id = fvt.stream_id
-        -- Ensure the effective interval is valid (start <= end)
+        INNER JOIN first_value_times fvt -- Ensure we only add a negative delta if a positive one was possible
+            ON pw.data_provider = fvt.data_provider AND pw.stream_id = fvt.stream_id
+        -- Check the same validity condition as the positive delta
         WHERE GREATEST(pw.group_sequence_start, fvt.first_value_time) <= pw.group_sequence_end
           AND pw.raw_weight != 0::numeric(36,18)
     ),
 
-    -- Aggregate effective weight changes occurring at the same time point.
-    effective_weight_deltas AS (
+    -- Step 7: Combine value and *effective* weight changes into a unified timeline.
+    unified_events AS (
+        -- Initial values treated as a delta from 0 at their event time
         SELECT
-            time_point,
-            SUM(delta)::numeric(36,18) as effective_delta_sw -- Sum of weights delta
-        FROM eff_weight_deltas_unaggr
-        GROUP BY time_point
-        HAVING SUM(delta)::numeric(36,18) != 0::numeric(36,18) -- Only keep points with actual change
-    ),
+            ips.data_provider,
+            ips.stream_id,
+            ips.event_time,
+            ips.value::numeric(36,18) AS delta_value,
+            0::numeric(36,18) AS weight_delta
+        FROM initial_primitive_states ips
 
-    -- Step 1 (Find V_before): Find the last known value for each primitive just before its weight changes.
-    prim_value_before_wgt_change AS (
+        UNION ALL
+
+        -- Subsequent value changes (deltas)
         SELECT
-            ewdu.time_point,
-            ewdu.data_provider,
-            ewdu.stream_id,
-            ewdu.delta AS weight_change,
-            -- Correlated subquery to find the value just before the weight change time_point
-            (SELECT app.value
-             FROM all_primitive_points app
-             WHERE app.data_provider = ewdu.data_provider
-               AND app.stream_id = ewdu.stream_id
-               AND app.event_time < ewdu.time_point -- Strictly before the change
-             ORDER BY app.event_time DESC -- Get the latest value before the change
-             LIMIT 1
-            ) AS primitive_value_before
-        FROM eff_weight_deltas_unaggr ewdu
-        WHERE ewdu.delta != 0::numeric(36,18) -- Only consider actual weight changes
-    ),
+            pec.data_provider,
+            pec.stream_id,
+            pec.event_time,
+            pec.delta_value,
+            0::numeric(36,18) AS weight_delta
+        FROM primitive_event_changes pec
 
-    -- Step 2 & 3 (Calculate & Aggregate V*dW): Calculate the weighted sum delta arising purely from weight changes
-    -- by multiplying the value before the change by the weight change, then summing per time point.
-    weight_change_deltas AS (
-       SELECT
-           time_point AS event_time,
-           -- Step 2: Calculate V_before * weight_change, handling NULL V_before (means no prior value)
-           SUM(COALESCE(primitive_value_before, 0::numeric(36,18)) * weight_change)::numeric(72, 18) AS delta_ws
-       FROM prim_value_before_wgt_change
-       GROUP BY time_point
-    ),
+        UNION ALL
 
-    -- Step 3: Combine all time points where either the weighted value sum (`delta_ws`)
-    -- or the effective weight sum (`delta_sw`) changes. Also include user-requested times.
-    all_combined_times AS (
-        SELECT event_time as time_point FROM weighted_value_deltas
-        UNION
-        SELECT time_point FROM effective_weight_deltas ewd
-        UNION
-        SELECT event_time as time_point FROM weight_change_deltas -- Add times where V*dW changes
-        UNION
-        SELECT event_time as time_point FROM cleaned_event_times -- Ensures query bounds and anchor are present
-    ),
-
-    -- NOTE: This currently only includes deltas from primitive value changes (delta_ws)
-    -- and effective weight sum changes (delta_sw). It is MISSING the delta_ws component
-    -- that arises purely from weight changes (V * dW). This missing component needs
-    -- to be calculated in `weight_change_deltas` and added here.
-    combined_deltas AS (
+        -- *Effective* Weight changes (deltas)
         SELECT
-            time_point as event_time,
-            SUM(delta_ws)::numeric(72,18) as delta_ws,
-            SUM(delta_sw)::numeric(36,18) as delta_sw
+            ewc.data_provider,
+            ewc.stream_id,
+            ewc.event_time,
+            0::numeric(36,18) AS delta_value,
+            ewc.weight_delta
+        FROM effective_weight_changes ewc -- Use effective changes
+    ),
+
+    -- Step 8: Calculate state timeline and delta contributions using window functions.
+    primitive_state_timeline AS (
+        SELECT
+            data_provider,
+            stream_id,
+            event_time,
+            delta_value,
+            weight_delta,
+            -- Calculate value and weight *before* this event using LAG on cumulative sums
+            COALESCE(LAG(value_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time), 0::numeric(36,18)) as value_before_event,
+            COALESCE(LAG(weight_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time), 0::numeric(36,18)) as weight_before_event
         FROM (
-            -- Weighted value deltas (from primitive value changes)
-            SELECT act.time_point, wvd.delta_ws, 0::numeric(36,18) AS delta_sw
-            FROM weighted_value_deltas wvd
-            JOIN all_combined_times act ON wvd.event_time = act.time_point
-
-            UNION ALL
-
-            -- Effective weight sum deltas (from weight changes)
-            SELECT act.time_point, 0::numeric(72,18) AS delta_ws, ewd.effective_delta_sw AS delta_sw
-            FROM effective_weight_deltas ewd
-            JOIN all_combined_times act ON ewd.time_point = act.time_point
-        ) combined
-        GROUP BY time_point
+            SELECT
+                data_provider,
+                stream_id,
+                event_time,
+                delta_value,
+                weight_delta,
+                -- Cumulative value up to and including this event
+                (SUM(delta_value) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time))::numeric(36,18) as value_after_event,
+                -- Cumulative weight up to and including this event
+                (SUM(weight_delta) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time))::numeric(36,18) as weight_after_event
+            FROM unified_events
+        ) state_calc
     ),
 
-        /*----------------------------------------------------------------------
-     * FINAL_DELTAS CTE: Merges regular deltas with boundary adjustments.
-     *
-     * Purpose: Creates the definitive set of deltas (`delta_ws`, `delta_sw`) for each time point.
-     * Must combine all three components that affect the final composed value:
-     * 1. Changes due to primitive value updates
-     * 2. Changes in the effective weight sum
-     * 3. Changes in the weighted sum due purely to weight changes (V * dW)
-     *---------------------------------------------------------------------*/
-    final_deltas AS (
-        -- Combine all sources of deltas:
-        -- 1. Deltas from primitive value changes (`delta_ws`) and effective weight sum changes (`delta_sw`) from `combined_deltas`.
-        -- 2. Deltas from weighted sum changes due *only* to weight changes (`V*dW`) from `weight_change_deltas`.
-        -- Group by event_time to sum contributions if a time point has multiple delta sources.
+    -- Step 9: Calculate final aggregated deltas per time point.
+    final_deltas AS ( -- Renamed from new_final_deltas to match original naming convention
         SELECT
             event_time,
-            SUM(delta_ws)::numeric(72,18) as delta_ws,
-            SUM(delta_sw)::numeric(36,18) as delta_sw
-        FROM (
-            -- Deltas from combined_deltas (value changes & weight sum changes)
-            SELECT event_time, delta_ws, delta_sw
-            FROM combined_deltas
-
-            UNION ALL
-
-            -- Deltas from weight_change_deltas (V*dW component)
-            SELECT event_time, delta_ws, 0::numeric(36,18) AS delta_sw -- This CTE only calculates delta_ws
-            FROM weight_change_deltas
-        ) all_delta_sources
+            SUM((delta_value * weight_before_event) + (weight_delta * value_before_event))::numeric(72, 18) AS delta_ws,
+            SUM(weight_delta)::numeric(36, 18) AS delta_sw
+        FROM primitive_state_timeline
         GROUP BY event_time
+        HAVING SUM((delta_value * weight_before_event) + (weight_delta * value_before_event))::numeric(72, 18) != 0::numeric(72, 18)
+            OR SUM(weight_delta)::numeric(36, 18) != 0::numeric(36, 18) -- Keep if either delta is non-zero
     ),
 
+    -- Step 10: Combine all time points where any delta might occur or are requested.
+    all_combined_times AS (
+        SELECT time_point FROM (
+            SELECT event_time as time_point FROM final_deltas -- Use times from the new delta calculation
+            UNION
+            SELECT event_time as time_point FROM cleaned_event_times -- Ensures query bounds and anchor are present
+        ) distinct_times
+    ),
 
-    -- Step 5: Calculate the cumulative sum of the final deltas over time.
-    -- `cum_ws` = running total weighted sum (numerator)
-    -- `cum_sw` = running total sum of weights (denominator)
+    -- Step 11: Calculate cumulative values.
     cumulative_values AS (
         SELECT
-            fd.event_time,
-            (SUM(fd.delta_ws) OVER (ORDER BY fd.event_time ASC))::numeric(72,18) as cum_ws,
-            (SUM(fd.delta_sw) OVER (ORDER BY fd.event_time ASC))::numeric(36,18) as cum_sw
-        FROM final_deltas fd
-        -- Include all relevant time points, ensuring rows exist even if delta is zero at that point
-        JOIN all_combined_times act ON fd.event_time = act.time_point
+            act.time_point as event_time, -- Use time_point from all_combined_times
+            (COALESCE((SUM(fd.delta_ws) OVER (ORDER BY act.time_point ASC))::numeric(72,18), 0::numeric(72,18))) as cum_ws, -- Sum based on combined time order
+            (COALESCE((SUM(fd.delta_sw) OVER (ORDER BY act.time_point ASC))::numeric(36,18), 0::numeric(36,18))) as cum_sw  -- Sum based on combined time order
+        FROM all_combined_times act
+        LEFT JOIN final_deltas fd ON fd.event_time = act.time_point -- Left join to keep all times
     ),
 
-    -- Step 6: Compute the aggregated value (Weighted Average) at each time point.
-    -- Handles division by zero if the sum of weights is zero.
+    -- Step 12: Compute the aggregated value (Weighted Average)
     aggregated AS (
-        SELECT
-            cv.event_time,
-            CASE WHEN cv.cum_sw = 0::numeric(36,18) THEN 0::numeric(72,18)
-                 -- Perform division using higher precision for intermediate calculation
-                 ELSE cv.cum_ws / cv.cum_sw::numeric(72,18)
-            END AS value
+        SELECT cv.event_time,
+               CASE WHEN cv.cum_sw = 0::numeric(36,18) THEN 0::numeric(72,18)
+                    ELSE cv.cum_ws / cv.cum_sw::numeric(72,18)
+                   END AS value
         FROM cumulative_values cv
     ),
 
@@ -673,40 +524,28 @@ RETURNS TABLE(
      * no underlying primitive event or taxonomy change occurred, this logic finds
      * the value from the most recent preceding time point where such a change did happen.
      *---------------------------------------------------------------------*/
-    -- Step 7: Identify time points where the *final* composed value or weight sum actually changed.
-    -- These are the "real" event points used as sources for LOCF.
     real_change_times AS (
         SELECT DISTINCT event_time AS time_point
-        FROM final_deltas
-        WHERE delta_ws != 0::numeric(72,18) OR delta_sw != 0::numeric(36,18)
+        FROM final_deltas -- Already filtered for non-zero deltas
     ),
 
-    -- Calculate the anchor time needed for gap filling before the query range starts.
     anchor_time_calc AS (
         SELECT MAX(time_point) as anchor_time
         FROM real_change_times
         WHERE time_point < $effective_from -- Strictly before the requested start
     ),
 
-    -- Step 8: Map each calculated time point in `aggregated` to its effective LOCF source time.
     final_mapping AS (
-        SELECT
-            agg.event_time,
-            agg.value,
-            -- Find the latest "real" change time at or before this aggregated time point
-            (SELECT MAX(rct.time_point)
-             FROM real_change_times rct
-             WHERE rct.time_point <= agg.event_time) AS effective_time,
-            -- Flag indicating if this aggregated time point itself corresponds to a real change
-            EXISTS (SELECT 1 FROM real_change_times rct WHERE rct.time_point = agg.event_time) AS query_time_had_real_change
+        SELECT agg.event_time, agg.value,
+               (SELECT MAX(rct.time_point) FROM real_change_times rct WHERE rct.time_point <= agg.event_time) AS effective_time,
+               EXISTS (SELECT 1 FROM real_change_times rct WHERE rct.time_point = agg.event_time) AS query_time_had_real_change
         FROM aggregated agg
     ),
 
-    -- Filter the mapped results to include only the query range plus the necessary anchor point for LOCF.
     filtered_mapping AS (
         SELECT fm.*
         FROM final_mapping fm
-        JOIN anchor_time_calc atc ON 1=1 -- Make anchor_time available
+                 JOIN anchor_time_calc atc ON 1=1
         WHERE
             -- Include rows within the requested query range [$from, $to]
             (fm.event_time >= $effective_from AND fm.event_time <= $effective_to)
@@ -733,11 +572,4 @@ RETURNS TABLE(
     -- Filter out potential null results if no data exists before the first delta
     WHERE CASE WHEN fm.query_time_had_real_change THEN fm.event_time ELSE fm.effective_time END IS NOT NULL
     ORDER BY 1; -- Order by the final event_time
-    -- SELECT * from weight_timeline {
-    --   NOTICE('weight_timeline' ||
-    --   ' data_provider: ' || $row.data_provider::text || ' ' ||
-    --   ' stream_id: ' || $row.stream_id::text || ' ' ||
-    --   ' change_time: ' || $row.change_time::text || ' ' ||
-    --   ' total_weight_at_time: ' || $row.total_weight_at_time::text);
-    -- }
 };
