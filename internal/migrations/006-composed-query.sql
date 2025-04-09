@@ -326,12 +326,11 @@ RETURNS TABLE(
                     ORDER BY pe_inner.event_time DESC, pe_inner.created_at DESC -- Tie-break by creation time
                 ) as rn
             FROM primitive_events pe_inner
-            JOIN primitive_weights pw_check -- Ensure primitive is relevant and event is within *a* valid weight interval
-              ON pe_inner.data_provider = pw_check.data_provider
-             AND pe_inner.stream_id = pw_check.stream_id
-             AND pe_inner.event_time >= pw_check.group_sequence_start
-             AND pe_inner.event_time <= pw_check.group_sequence_end
             WHERE pe_inner.event_time <= $effective_from -- At or before the start
+              AND EXISTS ( -- Ensure the primitive exists in the resolved hierarchy (derived from taxonomies)
+                  SELECT 1 FROM primitive_weights pw_exists
+                  WHERE pw_exists.data_provider = pe_inner.data_provider AND pw_exists.stream_id = pe_inner.stream_id
+              )
               AND pe_inner.created_at <= $effective_frozen_at
         ) pe
         WHERE pe.rn = 1 -- Select the latest state
