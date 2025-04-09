@@ -419,18 +419,6 @@ RETURNS TABLE(
 
     -- Step 7: Combine value and *effective* weight changes into a unified timeline.
     unified_events AS (
-        -- Initial values treated as a delta from 0 at their event time
-        SELECT
-            ips.data_provider,
-            ips.stream_id,
-            ips.event_time,
-            ips.value::numeric(36,18) AS delta_value,
-            0::numeric(36,18) AS weight_delta
-        FROM initial_primitive_states ips
-
-        UNION ALL
-
-        -- Subsequent value changes (deltas)
         SELECT
             pec.data_provider,
             pec.stream_id,
