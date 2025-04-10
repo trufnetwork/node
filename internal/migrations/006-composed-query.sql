@@ -540,24 +540,64 @@ RETURNS TABLE(
             OR
             -- Include the anchor point row if it exists and matches an aggregated time
             (atc.anchor_time IS NOT NULL AND fm.event_time = atc.anchor_time)
-    )
+    ),
+
+    -- Check if there are any rows from aggregated whose event_time falls directly within the requested range.
+    -- This helps decide whether to include the anchor point row for LOCF purposes.
+    range_check AS (
+        SELECT EXISTS (
+            SELECT 1 FROM final_mapping fm_check -- Check the source data before filtering
+            WHERE fm_check.event_time >= $effective_from
+              AND fm_check.event_time <= $effective_to
+        ) AS range_has_direct_hits
+    ),
+
+    -- Pre-calculate the final event time after applying LOCF
+    locf_applied AS (
+        SELECT
+            fm.*, -- Include all columns from filtered_mapping
+            rc.range_has_direct_hits, -- Include the flag
+            atc.anchor_time, -- Include anchor time
+            CASE 
+                WHEN fm.query_time_had_real_change
+                    THEN fm.event_time 
+                    ELSE fm.effective_time 
+            END as final_event_time
+        FROM filtered_mapping fm
+        JOIN range_check rc ON 1=1
+        JOIN anchor_time_calc atc ON 1=1
+    ),
 
     /*----------------------------------------------------------------------
      * FINAL OUTPUT SELECTION
      *
-     * Applies LOCF: Selects the `effective_time` if the current `event_time`
-     * wasn't a real change point. Casts the value to final precision.
-     * Filters out null times and orders the result.
+     * Selects direct hits within the range plus the anchor point for LOCF if needed.
      *---------------------------------------------------------------------*/
-    SELECT
-        -- Apply LOCF: Use the original time if it had a real change, otherwise use the last real change time.
-        CASE
-            WHEN fm.query_time_had_real_change THEN fm.event_time
-            ELSE fm.effective_time
-        END as event_time,
-        fm.value::NUMERIC(36,18) -- Cast final result back to required precision
-    FROM filtered_mapping fm
-    -- Filter out potential null results if no data exists before the first delta
-    WHERE CASE WHEN fm.query_time_had_real_change THEN fm.event_time ELSE fm.effective_time END IS NOT NULL
-    ORDER BY 1; -- Order by the final event_time
+    -- Use CTEs for clarity, though could be done inline in UNION
+    direct_hits AS (
+        SELECT final_event_time as event_time, value::NUMERIC(36,18) as value
+        FROM locf_applied la
+        WHERE la.event_time >= $effective_from -- Use original event time for range check
+          AND la.event_time <= $effective_to
+          AND la.final_event_time IS NOT NULL
+    ),
+    anchor_hit AS (
+      SELECT final_event_time as event_time, value::NUMERIC(36,18) as value
+      FROM locf_applied la
+      WHERE la.anchor_time IS NOT NULL           -- Anchor must exist
+        AND la.event_time = la.anchor_time       -- This IS the anchor row
+        AND $effective_from > la.anchor_time     -- Query starts after anchor
+        AND la.final_event_time IS NOT NULL
+        AND NOT EXISTS ( -- Crucially, ensure no direct hit exists AT the start time $from
+            SELECT 1 FROM locf_applied dh
+            WHERE dh.event_time = $effective_from
+        )
+    ),
+    result AS (
+        SELECT event_time, value FROM direct_hits
+        UNION ALL -- Use UNION ALL as times should be distinct
+        SELECT event_time, value FROM anchor_hit
+    )
+    SELECT event_time, value FROM result
+    ORDER BY 1;
 };

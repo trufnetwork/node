@@ -543,7 +543,7 @@ RETURNS TABLE(
             bv_calc.data_provider,
             bv_calc.stream_id,
             -- Use COALESCE for safety, though base value should ideally always exist if stream has data.
-            COALESCE(bv_calc.value, 1)::numeric(36,18) AS base_value -- Default to 1 if somehow no base value found to avoid division by zero.
+            COALESCE(bv_calc.value, 1::numeric(36,18))::numeric(36,18) AS base_value -- Default to 1 if somehow no base value found to avoid division by zero.
         FROM (
             SELECT
                 p_base.data_provider,
@@ -581,8 +581,8 @@ RETURNS TABLE(
             calc.delta_value,
             -- Calculate the change in indexed value. Handle potential division by zero if base_value is 0.
             CASE
-                WHEN COALESCE(pbv.base_value, 0) = 0 THEN 0 -- Or handle as error/null depending on requirements
-                ELSE (calc.delta_value * 100 / pbv.base_value)::numeric(36,18)
+                WHEN COALESCE(pbv.base_value, 0::numeric(36,18)) = 0::numeric(36,18) THEN 0::numeric(36,18) -- Or handle as error/null depending on requirements
+                ELSE (calc.delta_value * 100::numeric(36,18) / pbv.base_value)::numeric(36,18)
             END AS delta_indexed_value
         FROM (
             SELECT data_provider, stream_id, event_time, value,
@@ -741,16 +741,63 @@ RETURNS TABLE(
             (fm.event_time >= $effective_from AND fm.event_time <= $effective_to)
             OR
             (atc.anchor_time IS NOT NULL AND fm.event_time = atc.anchor_time)
-    )
+    ),
 
-    -- Final Output Selection
-    SELECT
-        CASE
-            WHEN fm.query_time_had_real_change THEN fm.event_time
-            ELSE fm.effective_time
-        END as event_time,
-        fm.value::NUMERIC(36,18)
-    FROM filtered_mapping fm
-    WHERE CASE WHEN fm.query_time_had_real_change THEN fm.event_time ELSE fm.effective_time END IS NOT NULL
+    -- Check if there are any rows from aggregated whose event_time falls directly within the requested range.
+    -- This helps decide whether to include the anchor point row for LOCF purposes.
+    range_check AS (
+        SELECT EXISTS (
+            SELECT 1 FROM final_mapping fm_check -- Check the source data before filtering
+            WHERE fm_check.event_time >= $effective_from
+              AND fm_check.event_time <= $effective_to
+        ) AS range_has_direct_hits
+    ),
+
+    -- Pre-calculate the final event time after applying LOCF
+    locf_applied AS (
+        SELECT
+            fm.*, -- Include all columns from filtered_mapping
+            rc.range_has_direct_hits, -- Include the flag
+            atc.anchor_time, -- Include anchor time
+            CASE
+                WHEN fm.query_time_had_real_change THEN fm.event_time
+                ELSE fm.effective_time
+            END as final_event_time
+        FROM filtered_mapping fm
+        JOIN range_check rc ON 1=1
+        JOIN anchor_time_calc atc ON 1=1
+    ),
+
+    /*----------------------------------------------------------------------
+     * FINAL OUTPUT SELECTION
+     *
+     * Selects direct hits within the range plus the anchor point for LOCF if needed.
+     *---------------------------------------------------------------------*/
+    -- Use CTEs for clarity, though could be done inline in UNION
+    direct_hits AS (
+        SELECT final_event_time as event_time, value::NUMERIC(36,18) as value
+        FROM locf_applied la
+        WHERE la.event_time >= $effective_from -- Use original event time for range check
+          AND la.event_time <= $effective_to
+          AND la.final_event_time IS NOT NULL
+    ),
+    anchor_hit AS (
+      SELECT final_event_time as event_time, value::NUMERIC(36,18) as value
+      FROM locf_applied la
+      WHERE la.anchor_time IS NOT NULL           -- Anchor must exist
+        AND la.event_time = la.anchor_time       -- This IS the anchor row
+        AND $effective_from > la.anchor_time     -- Query starts after anchor
+        AND la.final_event_time IS NOT NULL
+        AND NOT EXISTS ( -- Crucially, ensure no direct hit exists AT the start time $from
+            SELECT 1 FROM locf_applied dh
+            WHERE dh.event_time = $effective_from
+        )
+    ),
+    result AS (
+        SELECT event_time, value FROM direct_hits
+        UNION ALL -- Use UNION ALL as times should be distinct
+        SELECT event_time, value FROM anchor_hit
+    )
+    SELECT event_time, value FROM result
     ORDER BY 1;
 };
