@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	benchutil "github.com/trufnetwork/node/internal/benchmark/util"
@@ -29,6 +30,13 @@ func runBenchmark(ctx context.Context, platform *kwilTesting.Platform, c Benchma
 		return nil, errors.Wrap(err, "failed to setup schemas")
 	}
 
+	// Triggering the analyze command for the given tables makes the query planner
+	// more accurate and the query execution time more consistent. It makes sure to match a production environment.
+	err = updateQueryPlanner(ctx, platform, []string{"taxonomies", "streams", "primitive_events", "metadata"})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to update query planner")
+	}
+
 	for _, dataPoints := range c.DataPointsSet {
 		for _, procedure := range c.Procedures {
 			result, err := runSingleTest(ctx, RunSingleTestInput{
@@ -46,6 +54,18 @@ func runBenchmark(ctx context.Context, platform *kwilTesting.Platform, c Benchma
 	}
 
 	return results, nil
+}
+
+func updateQueryPlanner(ctx context.Context, platform *kwilTesting.Platform, tables []string) error {
+	full_qualified_tables := make([]string, len(tables))
+	for i, table := range tables {
+		// on main schema by default
+		full_qualified_tables[i] = fmt.Sprintf("main.%s", table)
+	}
+	// we just run the analyze command for the given tables
+	query := fmt.Sprintf("ANALYZE %s;", strings.Join(full_qualified_tables, ", "))
+	_, err := platform.DB.Execute(ctx, query)
+	return err
 }
 
 type RunSingleTestInput struct {
@@ -78,9 +98,10 @@ func runSingleTest(ctx context.Context, input RunSingleTestInput) (Result, error
 	for i := 0; i < input.Case.Samples; i++ {
 		// args for:
 		// get_record: dataProvider, streamId, fromDate, toDate, frozenAt
-		// get_index: fromDate, toDate, frozenAt, baseDate
-		// get_index_change: fromDate, toDate, frozenAt, baseDate, daysInterval
-		args := []any{nthLocator.DataProvider.Address(), nthLocator.StreamId.String(), fromDate, toDate, nil}
+		// get_index: dataProvider, streamId, fromDate, toDate, frozenAt, baseDate
+		// get_index_change: dataProvider, streamId, fromDate, toDate, frozenAt, baseDate, daysInterval
+		locator_args := []any{nthLocator.DataProvider.Address(), nthLocator.StreamId.String()}
+		args := append(locator_args, []any{fromDate, toDate, nil}...)
 		switch input.Procedure {
 		case ProcedureGetIndex:
 			args = append(args, nil) // baseDate
@@ -88,7 +109,13 @@ func runSingleTest(ctx context.Context, input RunSingleTestInput) (Result, error
 			args = append(args, nil) // baseDate
 			args = append(args, 1)   // daysInterval
 		case ProcedureGetFirstRecord:
-			args = []any{nil, nil} // afterDate, frozenAt
+			// we reset as is not the same structure as the other procedures
+			// get_first_record: dataProvider, streamId, afterDate, frozenAt
+			args = append(locator_args, nil, nil) // afterDate, frozenAt
+		case ProcedureGetLastRecord:
+			// we reset as is not the same structure as the other procedures
+			// get_last_record: dataProvider, streamId, beforeDate, frozenAt
+			args = append(locator_args, nil, nil) // beforeDate, frozenAt
 		}
 
 		// FYI: we already tested sleeping for 10 seconds before running to see if

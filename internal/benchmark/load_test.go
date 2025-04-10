@@ -3,6 +3,7 @@ package benchmark
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"os/signal"
 	"strconv"
@@ -110,13 +111,13 @@ func TestBench(t *testing.T) {
 		// {50, math.MaxInt},
 		// {100, math.MaxInt},
 		// {200, math.MaxInt},
-		// {400, math.MaxInt},
+		{400, math.MaxInt},
 		// // 800 streams kills t3.small instances for memory starvation. But probably because it stores the whole tree in memory
 		// //{800, math.MaxInt},
 		// //{1500, math.MaxInt}, // this gives error: Out of shared memory
 
 		// // deep trees = cost of adding depth
-		// {50, 1},
+		{50, 1},
 		// {100, 1},
 		// //{200, 1}, // we can't go deeper than 180, for call stack size issues
 
@@ -124,7 +125,7 @@ func TestBench(t *testing.T) {
 		// {50, 8},
 		// {100, 8},
 		// {200, 8},
-		// {400, 8},
+		{400, 8},
 		// //{800, 8},
 
 		// // to get difference for branching factor
@@ -159,10 +160,11 @@ func TestBench(t *testing.T) {
 					Samples:         samples,
 					DataPointsSet:   specificParams.DataPoints,
 					Procedures: []ProcedureEnum{
-						// ProcedureGetRecord,
+						ProcedureGetRecord,
 						ProcedureGetIndex,
-						// ProcedureGetChangeIndex,
-						// ProcedureGetFirstRecord,
+						ProcedureGetChangeIndex,
+						ProcedureGetFirstRecord,
+						ProcedureGetLastRecord,
 					},
 				},
 					// use pointer, so we can reassign the results channel
