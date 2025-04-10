@@ -49,6 +49,12 @@ func GetRecord(ctx context.Context, input GetRecordInput) ([]ResultRow, error) {
 		resultRows = append(resultRows, values)
 		return nil
 	})
+	if input.PrintLogs != nil && *input.PrintLogs {
+		fmt.Println("getRecord logs:")
+		for _, log := range r.Logs {
+			fmt.Println(log)
+		}
+	}
 	if err != nil {
 		return nil, errors.Wrap(err, "error in getRecord")
 	}
@@ -432,7 +438,7 @@ func FilterStreamsByExistence(ctx context.Context, input FilterStreamsByExistenc
 	}
 
 	var resultRows []types.StreamLocator
-	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "filter_streams", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "filter_streams_by_existence", []any{
 		dataProviders,
 		streamIds,
 		input.ExistingOnly,
