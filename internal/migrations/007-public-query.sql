@@ -45,9 +45,15 @@ CREATE OR REPLACE ACTION get_last_record(
     
     -- Route to the appropriate internal action
     if $is_primitive {
-        RETURN get_last_record_primitive($data_provider, $stream_id, $before, $frozen_at);
+        -- unfortunately, using the query directly creates error, then we use return next
+        for $row in get_last_record_primitive($data_provider, $stream_id, $before, $frozen_at) {
+            RETURN NEXT $row.event_time, $row.value;
+        }
     } else {
-        RETURN get_last_record_composed($data_provider, $stream_id, $before, $frozen_at);
+        -- unfortunately, using the query directly creates error, then we use return next
+        for $row in get_last_record_composed($data_provider, $stream_id, $before, $frozen_at) {
+            RETURN NEXT $row.event_time, $row.value;
+        }
     }
 };
 
