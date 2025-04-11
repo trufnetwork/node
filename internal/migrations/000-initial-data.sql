@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS primitive_events (
     event_time INT8 NOT NULL, -- unix timestamp
     value NUMERIC(36, 18) NOT NULL,
     created_at INT8 NOT NULL, -- based on blockheight
+    truflation_created_at TEXT, -- RFC3339 formatted timestamp, i.e. 2023-10-01T00:00:00Z
 
     PRIMARY KEY (data_provider, stream_id, event_time, created_at),
     FOREIGN KEY (data_provider, stream_id)
