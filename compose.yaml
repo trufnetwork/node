@@ -40,11 +40,12 @@ services:
         - ${CACHE_TO:-type=local,dest=/tmp/buildx-cache-new}/tsn-db
       args:
         - CHAIN_ID=${CHAIN_ID:-tsn-local}
-        - ETHEREUM_ADDRESS=${ETHEREUM_ADDRESS:-0x4710A8D8F0D845da110086812a32De6d90d7ff5C}
     environment:
       CONFIG_PATH: /root/.kwild
       # app.pg-db-host
       KWILD_DB_HOST: kwil-postgres
+      # DB_OWNER must be provided at runtime
+      DB_OWNER: ${DB_OWNER:-0x4710A8D8F0D845da110086812a32De6d90d7ff5C}
     ports:
       - "50051:50051"
       - "50151:50151"

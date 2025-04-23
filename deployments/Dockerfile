@@ -17,8 +17,7 @@ FROM alpine:latest
 
 ARG CHAIN_ID=truflation-staging
 
-# Ethereum address taken from 0001's wallet
-ARG ETHEREUM_ADDRESS=0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf
+# DB_OWNER will be provided as an environment variable at runtime
 
 WORKDIR /app
 
@@ -39,7 +38,7 @@ RUN echo "#!/bin/sh" > /app/config.sh && \
     echo "if [ ! -f /root/.kwild/nodekey.json ]; then" >> /app/config.sh && \
     echo "    echo 'Configuration does not exist';" >> /app/config.sh && \
     echo "    echo 'Creating configuration';" >> /app/config.sh && \
-    echo "    ./kwild setup init --chain-id $CHAIN_ID --db-owner $ETHEREUM_ADDRESS -r /root/.kwil-new;" >> /app/config.sh && \
+    echo "    ./kwild setup init --chain-id $CHAIN_ID --db-owner \$DB_OWNER -r /root/.kwil-new;" >> /app/config.sh && \
     echo "    mkdir -p /root/.kwild;" >> /app/config.sh && \
     echo "    cp /root/.kwil-new/* /root/.kwild;" >> /app/config.sh && \
     echo "    rm -rf /root/.kwil-new;" >> /app/config.sh && \

@@ -40,7 +40,7 @@ WORKDIR /app
 # we don't want to overwrite any existing configuration
 RUN test ! -d /root/.kwild
 
-# Copy the kwil-admin binary from the pre-built stage in Dockerfile
+# Copy the kwild binary from the pre-built stage in Dockerfile
 COPY --from=build-kwil /app/.build/kwild /app/kwild
 RUN chmod +x /app/kwild
 
@@ -51,6 +51,7 @@ RUN echo "set -e" >> /app/entrypoint.sh
 RUN echo "if [ ! -f /root/.kwild/private_key ]; \
  then ./kwild setup init --chain-id $CHAIN_ID -o /root/.kwild;\\" \
     >> /app/entrypoint.sh
+
 # else we print a message
 RUN echo "else echo 'Configuration already exists'; fi" >> /app/entrypoint.sh
 
