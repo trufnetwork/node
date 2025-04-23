@@ -16,7 +16,7 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:?}
       DOMAIN: https://${DOMAIN:?}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS}
-      ALLOW_DEPLOY_DB: true
+      EXTRA_ARGS: "--allow-chain-rpcs"
     volumes:
       - type: bind
         source: ./kgw-config.pkl

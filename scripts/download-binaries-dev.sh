@@ -29,16 +29,19 @@ download_binaries() {
         echo "Unsupported operating system: $OS"
         exit 1
     fi
-    
+   https://www.dropbox.com/scl/fi/fa6dddlo48bv2b6usc1wf/kgw_0.4.1_darwin_amd64.tar.gz?rlkey=bupfsaif9wldyhxomawjdhwum&st=wuscf2ns&dl=0 
+   https://www.dropbox.com/scl/fi/xkyj7ul6dt08jssiva7oh/kgw_0.4.1_darwin_arm64.tar.gz?rlkey=7l9fcfq8im8f01vkuz6lhm06s&st=zcx2thj3&dl=0
+   https://www.dropbox.com/scl/fi/hawzml0uwr2pk8kebqdco/kgw_0.4.1_linux_amd64.tar.gz?rlkey=zkdghw7bn0ml0ojfnvybh4cjg&st=f5qp0zk1&dl=0
+   https://www.dropbox.com/scl/fi/4zi8s03j4fqovo36zrcmd/kgw_0.4.1_linux_arm64.tar.gz?rlkey=zsa7ugpklkrr7vfdw7qdgtak8&st=jfvijppe&dl=0
     # Set the URL for the binary
     if [[ "$OS" == "linux" ]] && [[ "$ARCH" == "amd64" ]]; then
-        URL="https://www.dropbox.com/scl/fi/ibczzxjkol826mlfn8ity/kgw_0.3.4_linux_amd64.tar.gz?rlkey=t67l0o1yue052pupn0ag7vlq9&st=nkm0s1r2&dl=0"
+        URL="https://www.dropbox.com/scl/fi/hawzml0uwr2pk8kebqdco/kgw_0.4.1_linux_amd64.tar.gz?rlkey=zkdghw7bn0ml0ojfnvybh4cjg&st=f5qp0zk1&dl=0"
     elif [[ "$OS" == "linux" ]] && [[ "$ARCH" == "arm64" ]]; then
-        URL="https://www.dropbox.com/scl/fi/q99j4mufe8drfvi4fw38m/kgw_0.3.4_linux_arm64.tar.gz?rlkey=u1gudxremhr7jvrovmw66qmbm&st=yy25ad2o&dl=0"
+        URL="https://www.dropbox.com/scl/fi/4zi8s03j4fqovo36zrcmd/kgw_0.4.1_linux_arm64.tar.gz?rlkey=zsa7ugpklkrr7vfdw7qdgtak8&st=jfvijppe&dl=0"
     elif [[ "$OS" == "darwin" ]] && [[ "$ARCH" == "amd64" ]]; then
-        URL="https://www.dropbox.com/scl/fi/580oatp39osevyqev4e2p/kgw_0.3.4_darwin_amd64.tar.gz?rlkey=qwtjplh8el11nfynzjwrdzew2&st=csca2bxi&dl=0"
+        URL="https://www.dropbox.com/scl/fi/fa6dddlo48bv2b6usc1wf/kgw_0.4.1_darwin_amd64.tar.gz?rlkey=bupfsaif9wldyhxomawjdhwum&st=wuscf2ns&dl=0"
     elif [[ "$OS" == "darwin" ]] && [[ "$ARCH" == "arm64" ]]; then
-        URL="https://www.dropbox.com/scl/fi/tcrpnphqzzpktgnxq6uvm/kgw_0.3.4_darwin_arm64.tar.gz?rlkey=y4bbo05zvm6j27iwxcmq65g5c&st=5ig6coef&dl=0"
+        URL="https://www.dropbox.com/scl/fi/xkyj7ul6dt08jssiva7oh/kgw_0.4.1_darwin_arm64.tar.gz?rlkey=7l9fcfq8im8f01vkuz6lhm06s&st=zcx2thj3&dl=0"
     else
         echo "Unsupported: $OS $ARCH"
         exit 1
