@@ -29,10 +29,7 @@ download_binaries() {
         echo "Unsupported operating system: $OS"
         exit 1
     fi
-   https://www.dropbox.com/scl/fi/fa6dddlo48bv2b6usc1wf/kgw_0.4.1_darwin_amd64.tar.gz?rlkey=bupfsaif9wldyhxomawjdhwum&st=wuscf2ns&dl=0 
-   https://www.dropbox.com/scl/fi/xkyj7ul6dt08jssiva7oh/kgw_0.4.1_darwin_arm64.tar.gz?rlkey=7l9fcfq8im8f01vkuz6lhm06s&st=zcx2thj3&dl=0
-   https://www.dropbox.com/scl/fi/hawzml0uwr2pk8kebqdco/kgw_0.4.1_linux_amd64.tar.gz?rlkey=zkdghw7bn0ml0ojfnvybh4cjg&st=f5qp0zk1&dl=0
-   https://www.dropbox.com/scl/fi/4zi8s03j4fqovo36zrcmd/kgw_0.4.1_linux_arm64.tar.gz?rlkey=zsa7ugpklkrr7vfdw7qdgtak8&st=jfvijppe&dl=0
+
     # Set the URL for the binary
     if [[ "$OS" == "linux" ]] && [[ "$ARCH" == "amd64" ]]; then
         URL="https://www.dropbox.com/scl/fi/hawzml0uwr2pk8kebqdco/kgw_0.4.1_linux_amd64.tar.gz?rlkey=zkdghw7bn0ml0ojfnvybh4cjg&st=f5qp0zk1&dl=0"
