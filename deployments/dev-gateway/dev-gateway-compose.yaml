@@ -24,12 +24,12 @@ services:
       BACKENDS: ${BACKENDS:-tsn-db:8484}
       CHAIN_ID: ${CHAIN_ID:-truflation-staging}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS}
-      ALLOW_DEPLOY_DB: true
       EXPORT_RPC_META_LOG: "true"
       META_LOG_FORMAT: "otel_nested"
       META_LOG_OTEL_PROCESSOR: "batch"
       OTEL_EXPORTER_OTLP_ENDPOINT: "vector:4317"
       META_LOG_OTEL_COLLECTOR_TLS: "false"
+      EXTRA_ARGS: "--allow-chain-rpcs"
     logging:
       driver: "json-file"
       options:

@@ -10,4 +10,4 @@ These files are not required to run TSN locally, however they are useful for tes
 - To generate a new certificate, run `task setup:new-local-cert`
 
 ## Testing
-You may run `kwil-cli utils ping --kwil-provider https://localhost:443` and should receive `pong` as a response.
+You may run `kwil-cli utils ping --provider https://localhost:443` and should receive `pong` as a response.
