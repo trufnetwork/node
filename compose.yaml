@@ -17,7 +17,7 @@ services:
     volumes:
       - ${POSTGRES_VOLUME:-data-kwil-postgres}:/var/lib/postgresql/data
     networks:
-      - tsn-network
+      - tn-network
     logging:
       driver: "json-file"
       options:
@@ -25,21 +25,21 @@ services:
         max-file: "2"
         tag: "{{.Name}}"
 
-  tsn-db:
-    container_name: tsn-db
-    hostname: tsn-db
-    image: "tsn-db:local"
+  tn-db:
+    container_name: tn-db
+    hostname: tn-db
+    image: "tn-db:local"
     restart: unless-stopped
     build:
       context: .
       dockerfile: ./deployments/Dockerfile
       # For local development, if cache is not supported, please comment the following lines
       cache_from:
-        - ${CACHE_FROM:-type=local,src=/tmp/buildx-cache}/tsn-db
+        - ${CACHE_FROM:-type=local,src=/tmp/buildx-cache}/tn-db
       cache_to:
-        - ${CACHE_TO:-type=local,dest=/tmp/buildx-cache-new}/tsn-db
+        - ${CACHE_TO:-type=local,dest=/tmp/buildx-cache-new}/tn-db
       args:
-        - CHAIN_ID=${CHAIN_ID:-tsn-local}
+        - CHAIN_ID=${CHAIN_ID:-trufnetwork-dev}
     environment:
       CONFIG_PATH: /root/.kwild
       # app.pg-db-host
@@ -57,9 +57,9 @@ services:
       kwil-postgres:
         condition: service_healthy
     volumes:
-      - ${TSN_VOLUME:-data-tsn-db}:/root/.kwild
+      - ${TN_VOLUME:-data-tn-db}:/root/.kwild
     networks:
-      - tsn-network
+      - tn-network
     logging:
       driver: "json-file"
       options:
@@ -68,10 +68,10 @@ services:
         tag: "{{.Name}}"
 
 networks:
-  tsn-network:
+  tn-network:
     driver: bridge
-    name: tsn-network
+    name: tn-network
 
 volumes:
   data-kwil-postgres:
-  data-tsn-db:
+  data-tn-db:

@@ -1,7 +1,7 @@
 # TODO: finalize and test this file
 # Auto here means we're not providing configuration files for the deployment
 # the intention is spin up environments for testing only
-name: Deploy TSN Auto Environment
+name: Deploy TN Auto Environment
 
 
 on:
@@ -41,7 +41,7 @@ jobs:
           AWS_ACCESS_KEY: ${{ secrets.AWS_ACCESS_KEY }}
           AWS_SECRET_KEY: ${{ secrets.AWS_SECRET_KEY }}
           GW_SESSION_SECRET: ${{ secrets.GW_SESSION_SECRET }}
-          # PRIVATE_KEY is the private key of the account that will be used to deploy the TSN system contract
+          # PRIVATE_KEY is the private key of the account that will be used to deploy the TN system contract
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
         if: ${{ env.AWS_ACCESS_KEY == '' || env.AWS_SECRET_KEY == '' || env.GW_SESSION_SECRET == '' || env.PRIVATE_KEY == '' }}
         run: |
@@ -106,9 +106,9 @@ jobs:
           export RESTART_HASH=$(date +%s)
 
           # GW_CORS_ALLOW_ORIGINS = Comma separated list of allowed origins
-          cdk deploy --require-approval never TSN-DB-Auto* TSN-Cert* \
-            --parameters TSN-DB-Auto-${{github.event.inputs.SUBDOMAIN}}-Stack:sessionSecret=${{ secrets.GW_SESSION_SECRET }} \
-            --parameters TSN-DB-Auto-${{github.event.inputs.SUBDOMAIN}}-Stack:corsAllowOrigins=${{ secrets.GW_CORS_ALLOW_ORIGINS || '*' }} \
+          cdk deploy --require-approval never TN-DB-Auto* TN-Cert* \
+            --parameters TN-DB-Auto-${{github.event.inputs.SUBDOMAIN}}-Stack:sessionSecret=${{ secrets.GW_SESSION_SECRET }} \
+            --parameters TN-DB-Auto-${{github.event.inputs.SUBDOMAIN}}-Stack:corsAllowOrigins=${{ secrets.GW_CORS_ALLOW_ORIGINS || '*' }} \
             --exclusively \
             --context deploymentStage=DEV \
             --context specialDomain=${{github.event.inputs.SUBDOMAIN}} \

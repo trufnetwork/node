@@ -26,7 +26,7 @@ ARG HOSTNAMES
 RUN test -n "$HOSTNAMES"
 
 # allow overriding chain and DB owner
-ARG CHAIN_ID=${CHAIN_ID:-tsn-local}
+ARG CHAIN_ID=${CHAIN_ID:-trufnetwork-dev}
 
 # Copy the kwild binary from the pre-built stage
 COPY --from=build-kwild /app/.build/kwild /app/kwild

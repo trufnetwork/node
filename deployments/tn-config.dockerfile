@@ -32,7 +32,7 @@ RUN sh ./scripts/download-binaries.sh
 
 FROM busybox:1.35.0-uclibc as created
 
-ARG CHAIN_ID=truflation-staging
+ARG CHAIN_ID=trufnetwork-dev
 
 WORKDIR /app
 

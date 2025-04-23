@@ -15,7 +15,7 @@ FROM busybox:1.35.0-uclibc as busybox
 
 FROM alpine:latest
 
-ARG CHAIN_ID=truflation-staging
+ARG CHAIN_ID=truflation-dev
 
 # DB_OWNER will be provided as an environment variable at runtime
 
@@ -28,7 +28,7 @@ RUN apk add --no-cache postgresql16-client
 COPY --from=build /app/.build/* /app/
 
 # move the entrypoint script to /app
-COPY --from=build /app/deployments/tsn-entrypoint.sh /app/entrypoint.sh
+COPY --from=build /app/deployments/tn-entrypoint.sh /app/entrypoint.sh
 
 RUN chmod +x /app/entrypoint.sh
 

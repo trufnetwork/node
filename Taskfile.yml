@@ -74,7 +74,7 @@ tasks:
         - docker compose -f deployments/indexer/dev-indexer-compose.yaml up -d
     env:
         BACKENDS: tn-db-1:8484,tn-db-2:8484
-        CHAIN_ID: tn-local
+        CHAIN_ID: trufnetwork-dev
         NODE_COMETBFT_ENDPOINT: http://tn-db-1:26657
         KWIL_PG_CONN: postgresql://kwild@kwil-postgres-1:5432/kwild?sslmode=disable
 
@@ -137,6 +137,9 @@ tasks:
     desc: The gateway is not needed for development. However, you might want to test its configuration.
     cmds:
       - docker compose -f deployments/dev-gateway/dev-gateway-compose.yaml up -d
+    env:
+      BACKENDS: tn-db-1:8484,tn-db-2:8484
+      CHAIN_ID: trufnetwork-dev
 
   test:unit:
     desc: Run unit tests

@@ -10,7 +10,7 @@ services:
         source: ./Caddyfile
         target: /etc/caddy/Caddyfile
     networks:
-      - tsn-network
+      - tn-network
     logging:
       driver: "json-file"
       options:
@@ -39,7 +39,7 @@ services:
         volume:
           nocopy: true
     networks:
-      - tsn-network
+      - tn-network
     logging:
       driver: "json-file"
       options:
@@ -52,13 +52,13 @@ services:
     build:
       dockerfile: indexer.dockerfile
     environment:
-      NODE_COMETBFT_ENDPOINT: ${NODE_COMETBFT_ENDPOINT:-http://tsn-db:26657}
+      NODE_COMETBFT_ENDPOINT: ${NODE_COMETBFT_ENDPOINT:-http://tn-db:26657}
       KWIL_PG_CONN: ${KWIL_PG_CONN:-postgresql://kwild@kwil-postgres:5432/kwild?sslmode=disable}
       INDEXER_PG_CONN: "postgresql://postgres:postgres@indexer-postgres:5432/indexer?sslmode=disable"
     ports:
       - "1337:1337"
     networks:
-      - tsn-network
+      - tn-network
     depends_on:
       indexer-postgres:
         condition: service_healthy
@@ -75,9 +75,9 @@ services:
         tag: "{{.Name}}"
 
 networks:
-  tsn-network:
+  tn-network:
     external: true
     driver: bridge
-    name: tsn-network
+    name: tn-network
 volumes:
   data-indexer:

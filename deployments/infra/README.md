@@ -1,6 +1,6 @@
-# TSN-DB Infrastructure
+# TN-DB Infrastructure
 
-This project contains the AWS CDK infrastructure code for deploying TSN-DB nodes, a Kwil Gateway, and an Indexer.
+This project contains the AWS CDK infrastructure code for deploying TN-DB nodes, a Kwil Gateway, and an Indexer.
 
 ## Overview
 
@@ -14,7 +14,7 @@ The `cdk.json` file tells the CDK toolkit how to execute your app.
 
 ### 1. Auto-generated Configuration
 
-This method dynamically generates the TSN node configuration during deployment. It deploys both the launch templates and the instances from these templates.
+This method dynamically generates the TN node configuration during deployment. It deploys both the launch templates and the instances from these templates.
 
 #### Example Command:
 
@@ -22,15 +22,15 @@ This method dynamically generates the TSN node configuration during deployment. 
 PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
 KWIL_ADMIN_BIN_PATH=kwil-admin \
 CHAIN_ID=truflation-dev \
-CDK_DOCKER="<YOUR-DIRECTORY>/tsn/deployments/infra/buildx.sh" \
+CDK_DOCKER="<YOUR-DIRECTORY>/tn/deployments/infra/buildx.sh" \
 cdk deploy --profile <YOUR-AWS-PROFILE> --all --asset-parallelism=false --notices false \
 --context deploymentStage=DEV \
---parameters TSN-DB-Stack-dev:sessionSecret=abab
+--parameters TN-DB-Stack-dev:sessionSecret=abab
 ```
 
 ### 2. Pre-configured Setup
 
-This method uses a pre-existing genesis file and a list of private keys for the TSN nodes. It deploys only the launch templates, not the instances.
+This method uses a pre-existing genesis file and a list of private keys for the TN nodes. It deploys only the launch templates, not the instances.
 
 #### Example Command:
 
@@ -38,11 +38,11 @@ This method uses a pre-existing genesis file and a list of private keys for the 
 PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
 KWIL_ADMIN_BIN_PATH=kwil-admin \
 CHAIN_ID=truflation-dev \
-CDK_DOCKER="<YOUR-DIRECTORY>/tsn/deployments/infra/buildx.sh" \
+CDK_DOCKER="<YOUR-DIRECTORY>/tn/deployments/infra/buildx.sh" \
 NODE_PRIVATE_KEYS="key1,key2,key3" \
 GENESIS_PATH="/path/to/genesis.json" \
-cdk deploy --profile <YOUR-AWS-PROFILE> TSN-From-Config* TSN-Cert* \
---parameters TSN-From-Config-<environment>-Stack:sessionSecret=abab
+cdk deploy --profile <YOUR-AWS-PROFILE> TN-From-Config* TN-Cert* \
+--parameters TN-From-Config-<environment>-Stack:sessionSecret=abab
 ```
 
 ## Redeploying Instances from Launch Templates

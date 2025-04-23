@@ -79,8 +79,8 @@ jobs:
           # when in ACT, also force build to ensure it is working locally
           up-flags: "--wait ${{env.ACT && '--build --force-recreate --no-deps' || ''}}"
         env:
-          CACHE_FROM: "type=gha,scope=truflation/tsn"
-          CACHE_TO: "type=gha,mode=max,scope=truflation/tsn"
+          CACHE_FROM: "type=gha,scope=truflation/tn"
+          CACHE_TO: "type=gha,mode=max,scope=truflation/tn"
 
       # we need it to be manually checked, as above action will always exit with 1 even if it's successful
       - name: Check compose status
@@ -109,8 +109,8 @@ jobs:
           
           # we ensure both containers are exited with 0
           # if you are running locally, make sure any previous postgres volume state is clean
-          # otherwise, tsn-db will error for out for block state being out of sync.
-          expect_status "tsn-db:local" "Up "
+          # otherwise, tn-db will error for out for block state being out of sync.
+          expect_status "tn-db:local" "Up"
 
       - name: Run Tests
         run: |

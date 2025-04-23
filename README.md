@@ -40,24 +40,24 @@ To build and run the TN-DB, you will need the following installed on your system
 
 #### Run With Docker Compose (Recommended)
 
-To run the TSN-DB using Docker Compose, run the following command:
+To run the TN-DB using Docker Compose, run the following command:
 ```
 task compose
 ```
-It will build and start the TSN-DB in Docker containers, which is already seeded.
+It will build and start the TN-DB in Docker containers, which is already seeded.
 
-Alternatively, you can run the following commands to run TSN-DB in Docker containers with similar setup as our the deployed server.
+Alternatively, you can run the following commands to run TN-DB in Docker containers with similar setup as our the deployed server.
 It has 2 nodes, gateway, and indexer enabled.
 ```shell
 task compose-dev
 ```
 Accessing the nodes from gateway will be default to `http://localhost:443` and accessing the indexer will be default to `http://localhost:1337/v0/swagger`.
 
-#### Build and Run the TSN-DB without Docker Compose
+#### Build and Run the TN-DB without Docker Compose
 
-Alternatively, you can build and run the TSN-DB without Docker Compose. 
-This is useful if you want to run the TSN-DB locally without Docker. i.e. for development or debugging purposes.
-To build and run the TSN-DB without Docker Compose, follow the steps below:
+Alternatively, you can build and run the TN-DB without Docker Compose. 
+This is useful if you want to run the TN-DB locally without Docker. i.e. for development or debugging purposes.
+To build and run the TN-DB without Docker Compose, follow the steps below:
 
 ##### Build the binary
 Invoke `task` command to see all available tasks. The `build` task will compile the binary for you. They will be generated in `.build/`:
@@ -115,7 +115,7 @@ If you use Docker Desktop, you can also reset the local deployments by simply de
 
 ##### Configure the kwil-cli
 
-To interact with the the TSN-DB, you will need to configure the kwil-cli.
+To interact with the the TN-DB, you will need to configure the kwil-cli.
 ```shell
 kwil-cli configure
 
@@ -130,11 +130,11 @@ Private Key: <any ethereum private key>
 
 Kwil Gateway (KGW) is a load-balancer with authentication ([authn](https://www.cloudflare.com/learning/access-management/authn-vs-authz/)) capability, which enables data privacy protection for a Proof of Authority (POA) Kwil blockchain networks.
 
-Although we use it on our servers, it's not required to be able to develop on the TSN-DB. However, if you want to run the KGW locally or test it, you can follow the instructions in the [Kwil Gateway Directory](./deployments/dev-gateway/README.md)
+Although we use it on our servers, it's not required to be able to develop on the TN-DB. However, if you want to run the KGW locally or test it, you can follow the instructions in the [Kwil Gateway Directory](./deployments/dev-gateway/README.md)
 
 #### Indexer
 
-Indexer is started by default when you run the TSN-DB using Docker Compose.
+Indexer is started by default when you run the TN-DB using Docker Compose.
 Alternatively, you can start the indexer using the following command:
 ```shell
 task indexer
@@ -149,7 +149,7 @@ For example, you can see the list of transactions by calling the [/chain/transac
 
 ### Genesis File
 
-The genesis file for the TSN-DB is located in the `deployments/networks` directory. It contains the initial configuration for the genesis block of the TSN network.
+The genesis file for the TN-DB is located in the `deployments/networks` directory. It contains the initial configuration for the genesis block of the TN network.
 
 #### Fetching Genesis File
 
@@ -162,7 +162,7 @@ task get-genesis
 
 ## System Contract
 
-System Contract is a contract that stores the accepted streams by TSN Gov. It also serves as an entry point for queries.
+System Contract is a contract that stores the accepted streams by TN Gov. It also serves as an entry point for queries.
 It also serves as an entry point for queries.
 Currently for development purposes, private key 001 will be used to interact with the system contract. 
 It still needs to be updated to use the correct private key.
@@ -206,18 +206,18 @@ contract, the stream must be officialized by the system contract. It can be done
 
 ## Metrics and Monitoring
 
-The TSN-DB includes metrics collection for improved monitoring and performance analysis. When running the development setup using `task compose-dev`, the following monitoring tools are available:
+The TN-DB includes metrics collection for improved monitoring and performance analysis. When running the development setup using `task compose-dev`, the following monitoring tools are available:
 
 - Prometheus: Accessible at `http://localhost:9090`
 - Grafana: Accessible at `http://localhost:3000` (default credentials: admin/admin)
 
-These tools provide insights into the performance and behavior of the TSN-DB system. Prometheus collects and stores metrics, while Grafana offers customizable dashboards for visualization.
+These tools provide insights into the performance and behavior of the TN-DB system. Prometheus collects and stores metrics, while Grafana offers customizable dashboards for visualization.
 
 For more details on the metrics configuration, refer to the files in the `deployments/dev-gateway` directory.
 
 ## Deployment
 
-TSN DB uses GitHub Actions for automated deployments. Both are triggered manually via workflow dispatch.
+TN DB uses GitHub Actions for automated deployments. Both are triggered manually via workflow dispatch.
 
 ### Auto Deployment
 
@@ -227,7 +227,7 @@ The `deploy-auto.yaml` workflow allows for on-demand deployment of test environm
     - `NUMBER_OF_NODES`: Number of nodes to deploy (max 5, default 1)
     - `SUBDOMAIN`: Subdomain for the environment (default 'dev')
 - Deploys to AWS using CDK
-- Uses `RESTART_HASH` to control full redeployment of TSN instances
+- Uses `RESTART_HASH` to control full redeployment of TN instances
 
 ### Staging Deployment
 
@@ -235,7 +235,7 @@ The `deploy-staging.yaml` workflow handles staging environment deployments:
 
 - Requires specific secrets (AWS credentials, session secrets, private keys)
 - Deploys to AWS using CDK
-- Uses existing genesis file and private keys for TSN nodes
+- Uses existing genesis file and private keys for TN nodes
 - Instances are not redeployed on every execution
 
 For detailed configuration and usage, refer to the workflow files in the `.github/workflows/` directory.

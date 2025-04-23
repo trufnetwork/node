@@ -1,6 +1,6 @@
-name: Deploy TSN Tools
+name: Deploy TN Tools
 
-# this workflow should be deploying every TSN tool that needs to be deployed with `main` commits
+# this workflow should be deploying every TN tool that needs to be deployed with `main` commits
 
 on:
   workflow_dispatch:

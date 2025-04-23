@@ -38,25 +38,25 @@ jobs:
       - name: Build for Darwin AMD64
         run: |
           GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o ./.build/kwild ./cmd/kwild/main.go
-          tar -czvf ./.build/tsn_${{ env.VERSION }}_darwin_amd64.tar.gz -C ./.build kwild
+          tar -czvf ./.build/tn_${{ env.VERSION }}_darwin_amd64.tar.gz -C ./.build kwild
           rm -rf ./.build/kwild
 
       - name: Build for Darwin ARM64
         run: |
           GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o ./.build/kwild ./cmd/kwild/main.go
-          tar -czvf ./.build/tsn_${{ env.VERSION }}_darwin_arm64.tar.gz -C ./.build kwild
+          tar -czvf ./.build/tn_${{ env.VERSION }}_darwin_arm64.tar.gz -C ./.build kwild
           rm -rf ./.build/kwild
 
       - name: Build for Linux AMD64
         run: |
           GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ./.build/kwild ./cmd/kwild/main.go
-          tar -czvf ./.build/tsn_${{ env.VERSION }}_linux_amd64.tar.gz -C ./.build kwild
+          tar -czvf ./.build/tn_${{ env.VERSION }}_linux_amd64.tar.gz -C ./.build kwild
           rm -rf ./.build/kwild
 
       - name: Build for Linux ARM64
         run: |
           GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o ./.build/kwild ./cmd/kwild/main.go
-          tar -czvf ./.build/tsn_${{ env.VERSION }}_linux_arm64.tar.gz -C ./.build kwild
+          tar -czvf ./.build/tn_${{ env.VERSION }}_linux_arm64.tar.gz -C ./.build kwild
           rm -rf ./.build/kwild
 
       - name: Release
@@ -64,8 +64,8 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            ./.build/tsn_${{ env.VERSION }}_darwin_amd64.tar.gz
-            ./.build/tsn_${{ env.VERSION }}_darwin_arm64.tar.gz
-            ./.build/tsn_${{ env.VERSION }}_linux_amd64.tar.gz
-            ./.build/tsn_${{ env.VERSION }}_linux_arm64.tar.gz
+            ./.build/tn_${{ env.VERSION }}_darwin_amd64.tar.gz
+            ./.build/tn_${{ env.VERSION }}_darwin_arm64.tar.gz
+            ./.build/tn_${{ env.VERSION }}_linux_amd64.tar.gz
+            ./.build/tn_${{ env.VERSION }}_linux_arm64.tar.gz
           token: ${{ secrets.GITHUB_TOKEN }}
