@@ -38,3 +38,7 @@ scripts/produce_source_maps/all_tables.csv
 scripts/composed_streams.csv
 
 .task
+
+# docker files
+*compose.yaml
+*Dockerfile
