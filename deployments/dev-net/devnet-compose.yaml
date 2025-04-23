@@ -1,127 +1,131 @@
+# Define common YAML anchors for Postgres and tsn-db
+x-postgres-common: &postgres_common
+  environment:
+    - POSTGRES_HOST_AUTH_METHOD=trust
+  healthcheck:
+    test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+    interval: 5s
+    timeout: 5s
+    retries: 5
+  networks:
+    - tsn-network
+  shm_size: 2G
+  restart: unless-stopped
+
+x-postgres-data: &postgres_data
+  type: volume
+  target: /var/lib/postgresql/data
+  volume:
+    nocopy: true
+
+x-tsn-db-build: &tsn_db_build
+  context: ../..
+  dockerfile: ./deployments/Dockerfile
+  args:
+    - CHAIN_ID=${CHAIN_ID:-tsn-local}
+
+x-common-logging: &common_logging
+  driver: "json-file"
+  options:
+    max-size: "100m"
+    max-file: "2"
+    tag: "{{.Name}}"
+
 services:
   kwil-postgres-1:
-    image: "kwildb/postgres:latest"
+    image: "kwildb/postgres:16.8-1"
     ports:
       - "5432:5432"
-    environment:
-      - POSTGRES_HOST_AUTH_METHOD=trust
-    healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    # persis data
+    <<: *postgres_common
     volumes:
-      - type: volume
+      - <<: *postgres_data
         source: data-kwil-postgres-1
-        target: /var/lib/postgresql/data
-        volume:
-          nocopy: true
-    networks:
-      - tsn-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "100m"
-        max-file: "2"
-        tag: "{{.Name}}"
 
   kwil-postgres-2:
-    image: "kwildb/postgres:latest"
+    image: "kwildb/postgres:16.8-1"
     ports:
       - "5433:5432"
-    environment:
-      - POSTGRES_HOST_AUTH_METHOD=trust
-    healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    # persis data
+    <<: *postgres_common
+    volumes:
+      - <<: *postgres_data
+        source: data-kwil-postgres-2
+
+  tsn-conf:
+    container_name: tsn-conf
+    image: "tsn-conf:local"
+    build:
+      context: ../..
+      dockerfile: ./deployments/dev-net/network-conf.dockerfile
+      args:
+        - CHAIN_ID=${CHAIN_ID:-tsn-local}
+        - NUMBER_OF_NODES=2
+        - CONFIG_PATH=/app/config
+        - HOSTNAMES=tsn-db-1,tsn-db-2
     volumes:
       - type: volume
-        source: data-kwil-postgres-2
-        target: /var/lib/postgresql/data
-        volume:
-          nocopy: true
-    networks:
-      - tsn-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "100m"
-        max-file: "2"
-        tag: "{{.Name}}"
+        source: tsn-conf
+        target: /app/config
+    logging: *common_logging
 
   tsn-db-1:
     container_name: tsn-db-1
     hostname: tsn-db-1
-    build:
-      context: ../..
-      dockerfile: ./deployments/Dockerfile
-      cache_from:
-        - ${CACHE_FROM:-type=local,src=/tmp/buildx-cache}/tsn-db
-      cache_to:
-        - ${CACHE_TO:-type=local,dest=/tmp/buildx-cache-new}/tsn-db
-      args:
-        - CHAIN_ID=${CHAIN_ID:-tsn-local}
+    build: *tsn_db_build
     environment:
       - CONFIG_PATH=/root/.kwild/node0/
-      - KWILD_APP_PG_DB_HOST=kwil-postgres-1
+      - KWILD_DB_HOST=kwil-postgres-1
       - KWILD_APP_HOSTNAME=tsn-db-1
       - KWILD_CHAIN_P2P_EXTERNAL_ADDRESS=http://tsn-db-1:26656
+      - DB_OWNER=${DB_OWNER:-0x4710A8D8F0D845da110086812a32De6d90d7ff5C}
     ports:
+      - "50051:50051"
+      - "50151:50151"
+      - "8080:8080"
       - "8484:8484"
+      - "26656:26656"
       - "26657:26657"
     depends_on:
+      tsn-conf:
+        condition: service_completed_successfully
       kwil-postgres-1:
         condition: service_healthy
     networks:
-      - tsn-network
+      tsn-network:
+        aliases:
+          - tsn-db
     volumes:
       - type: volume
+        source: tsn-conf
         target: /root/.kwild
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "100m"
-        max-file: "2"
-        tag: "{{.Name}}"
+    logging: *common_logging
+    restart: unless-stopped
 
   tsn-db-2:
     container_name: tsn-db-2
     hostname: tsn-db-2
-    build:
-      context: ../..
-      dockerfile: ./deployments/Dockerfile
-      cache_from:
-        - ${CACHE_FROM:-type=local,src=/tmp/buildx-cache}/tsn-db
-      cache_to:
-        - ${CACHE_TO:-type=local,dest=/tmp/buildx-cache-new}/tsn-db
-      args:
-        - CHAIN_ID=${CHAIN_ID:-tsn-local}
+    build: *tsn_db_build
     environment:
       - CONFIG_PATH=/root/.kwild/node1/
-      - KWILD_APP_PG_DB_HOST=kwil-postgres-2
+      - KWILD_DB_HOST=kwil-postgres-2
       - KWILD_APP_HOSTNAME=tsn-db-2
       - KWILD_CHAIN_P2P_EXTERNAL_ADDRESS=http://tsn-db-2:26656
+      - DB_OWNER=${DB_OWNER:-0x4710A8D8F0D845da110086812a32De6d90d7ff5C}
     ports:
       - "8485:8484"
       - "26658:26657"
     depends_on:
+      tsn-conf:
+        condition: service_completed_successfully
       kwil-postgres-2:
         condition: service_healthy
     networks:
       - tsn-network
     volumes:
       - type: volume
+        source: tsn-conf
         target: /root/.kwild
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "100m"
-        max-file: "2"
-        tag: "{{.Name}}"
+    logging: *common_logging
+    restart: unless-stopped
 
 networks:
   tsn-network:
@@ -131,3 +135,4 @@ networks:
 volumes:
   data-kwil-postgres-1:
   data-kwil-postgres-2:
+  tsn-conf:
