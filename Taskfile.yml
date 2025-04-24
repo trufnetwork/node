@@ -133,13 +133,21 @@ tasks:
     cmds:
       - sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ./deployments/dev-gateway/certs/localhost.crt
 
-  start:local-gateway:
+  start:devnet-gateway:
     desc: The gateway is not needed for development. However, you might want to test its configuration.
     cmds:
       - docker compose -f deployments/dev-gateway/dev-gateway-compose.yaml up -d
     env:
       BACKENDS: tn-db-1:8484,tn-db-2:8484
       CHAIN_ID: trufnetwork-dev
+
+  start:devnet-indexer:
+    desc: Run the indexer
+    cmds:
+      - docker compose -f deployments/indexer/dev-indexer-compose.yaml up -d
+    env:
+      NODE_RPC_ENDPOINT: http://tn-db-1:8484
+      KWIL_PG_CONN: postgresql://kwild@kwil-postgres-1:5432/kwild?sslmode=disable
 
   test:unit:
     desc: Run unit tests
