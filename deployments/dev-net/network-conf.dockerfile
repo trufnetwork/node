@@ -35,3 +35,11 @@ RUN chmod +x /app/kwild
 # DB OWNER will not be provided to configuration setup
 
 RUN ./kwild setup testnet --chain-id $CHAIN_ID --hostnames $HOSTNAMES -v $NUMBER_OF_NODES -o $CONFIG_PATH
+
+# --consensus.empty-block-timeout 60s by default
+ARG KWILD_CONSENSUS_EMPTY_BLOCK_TIMEOUT=60s
+
+# Update each config.toml in-place with the new timeout via sed
+RUN find "$CONFIG_PATH" -name 'config.toml' -type f -print0 | \
+    xargs -0 -I{} sh -c \
+      "sed -i \"s/^empty_block_timeout[[:space:]]*=[[:space:]]*'.*'/empty_block_timeout = '${KWILD_CONSENSUS_EMPTY_BLOCK_TIMEOUT}'/\" \"{}\""
