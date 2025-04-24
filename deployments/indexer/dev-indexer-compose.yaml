@@ -50,9 +50,10 @@ services:
     hostname: indexer
     restart: unless-stopped
     build:
-      dockerfile: indexer.dockerfile
+      context: ../..
+      dockerfile: deployments/indexer/indexer.dockerfile
     environment:
-      NODE_COMETBFT_ENDPOINT: ${NODE_COMETBFT_ENDPOINT:-http://tn-db:26657}
+      NODE_RPC_ENDPOINT: ${NODE_RPC_ENDPOINT:-http://tn-db-1:8484}
       KWIL_PG_CONN: ${KWIL_PG_CONN:-postgresql://kwild@kwil-postgres:5432/kwild?sslmode=disable}
       INDEXER_PG_CONN: "postgresql://postgres:postgres@indexer-postgres:5432/indexer?sslmode=disable"
     ports:
@@ -62,6 +63,9 @@ services:
     depends_on:
       indexer-postgres:
         condition: service_healthy
+    # debug entrypoint
+    # entrypoint: ["/bin/sh"]
+    # command: ["-c", "sleep infinity"]
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:1337/v0/swagger" ]
       interval: 5s
