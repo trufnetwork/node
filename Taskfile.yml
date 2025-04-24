@@ -75,8 +75,7 @@ tasks:
     env:
         BACKENDS: tn-db-1:8484,tn-db-2:8484
         CHAIN_ID: trufnetwork-dev
-        NODE_COMETBFT_ENDPOINT: http://tn-db-1:26657
-        KWIL_PG_CONN: postgresql://kwild@kwil-postgres-1:5432/kwild?sslmode=disable
+        NODE_RPC_ENDPOINT: http://tn-db-1:8484
 
   compose-dev-down:
     desc: Shutdown dev 2 nodes, gateway, and indexer services
