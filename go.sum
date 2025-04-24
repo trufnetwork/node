@@ -808,6 +808,10 @@ github.com/kwilteam/kwil-db v0.10.1 h1:/j2hdhzAHYHydhwwXlVaR2U0sk97xKdz7b65Ep5S3
 github.com/kwilteam/kwil-db v0.10.1/go.mod h1:snxMarsWxGVVMVzfxu44SYGcMRzbsuyhOITRYQXddjM=
 github.com/kwilteam/kwil-db v0.10.3-0.20250324180314-ebd89428bfee h1:zInBRHw2Kh+a0r3/OszihNv4VZtlTjAUWGSPWxz+tsM=
 github.com/kwilteam/kwil-db v0.10.3-0.20250324180314-ebd89428bfee/go.mod h1:46IO8tO8gCBgETv90Lwscx1wDtYOBMxVHhlO8OAjfdc=
+github.com/kwilteam/kwil-db v0.10.3-0.20250409162525-79eb7768ae34 h1:gXQAwD8R3KVoKwjpgdX9TfDF0QZEPWwNALv4AWRGwNQ=
+github.com/kwilteam/kwil-db v0.10.3-0.20250409162525-79eb7768ae34/go.mod h1:46IO8tO8gCBgETv90Lwscx1wDtYOBMxVHhlO8OAjfdc=
+github.com/kwilteam/kwil-db v0.10.3-0.20250409164132-bfe1bc86142e h1:FefZ0w5lTuBj/RHmOoDu56zYxMeAwiA8MjLlNF5boDo=
+github.com/kwilteam/kwil-db v0.10.3-0.20250409164132-bfe1bc86142e/go.mod h1:46IO8tO8gCBgETv90Lwscx1wDtYOBMxVHhlO8OAjfdc=
 github.com/kwilteam/kwil-db/core v0.4.1-0.20250313184537-d69d72da06a0 h1:MH8qrY4iduve8Cm9lgvSgtrYthv4pMkWWftXuab3PGI=
 github.com/kwilteam/kwil-db/core v0.4.1-0.20250313184537-d69d72da06a0/go.mod h1:clG9Pk1NNs83dbIZZZn/6I+F4C9xntYTHbMFjL1HQ0w=
 github.com/kwilteam/kwil-db/core v0.4.1 h1:6ZOCLBMvO6EnVfsgwP2KxD0yWF2lIvmismSfRZLDXkc=
@@ -816,6 +820,10 @@ github.com/kwilteam/kwil-db/core v0.4.2-0.20250314192345-b2a73db0b1b3 h1:L0kB2nf
 github.com/kwilteam/kwil-db/core v0.4.2-0.20250314192345-b2a73db0b1b3/go.mod h1:clG9Pk1NNs83dbIZZZn/6I+F4C9xntYTHbMFjL1HQ0w=
 github.com/kwilteam/kwil-db/core v0.4.2-0.20250324180314-ebd89428bfee h1:TB4ZzThvQzdwLkv3VQir3/yv67zkc9iAebX1DYUnUrM=
 github.com/kwilteam/kwil-db/core v0.4.2-0.20250324180314-ebd89428bfee/go.mod h1:clG9Pk1NNs83dbIZZZn/6I+F4C9xntYTHbMFjL1HQ0w=
+github.com/kwilteam/kwil-db/core v0.4.2-0.20250409162525-79eb7768ae34 h1:7oatcfsIV51zuB04HcTbb+SGw/WMRVWv/RCngh1cBYA=
+github.com/kwilteam/kwil-db/core v0.4.2-0.20250409162525-79eb7768ae34/go.mod h1:clG9Pk1NNs83dbIZZZn/6I+F4C9xntYTHbMFjL1HQ0w=
+github.com/kwilteam/kwil-db/core v0.4.2-0.20250409164132-bfe1bc86142e h1:SOapANBXm/s9vF2Nv934r6TVhnX79kupcugIZ+KqWXQ=
+github.com/kwilteam/kwil-db/core v0.4.2-0.20250409164132-bfe1bc86142e/go.mod h1:clG9Pk1NNs83dbIZZZn/6I+F4C9xntYTHbMFjL1HQ0w=
 github.com/kwilteam/openzeppelin-merkle-tree-go v0.0.0-20250128210530-6c29061dd35f h1:a603or4yeR3SAU8cHnDDwd4puQNJFRCKxXqC9933stc=
 github.com/kwilteam/openzeppelin-merkle-tree-go v0.0.0-20250128210530-6c29061dd35f/go.mod h1:nTL6dEhIaq+HRALHQ86MMNnySDhTDFao/iNJbJCzFlM=
 github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0SNc=

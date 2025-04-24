@@ -12,6 +12,7 @@ type GetRecordInput struct {
 	ToTime        *int64
 	FrozenAt      *int64
 	Height        int64
+	PrintLogs     *bool
 }
 
 type GetIndexInput struct {

@@ -402,6 +402,9 @@ func testComplexComposedOutOfRange(t *testing.T) func(ctx context.Context, platf
 			return errors.Wrap(err, "error in testComplexComposedOutOfRange")
 		}
 
+		// expect the correct number of rows (one of them is empty)
+		assert.Equal(t, 12, len(result), "Expected 13 rows")
+
 		// We expect the first and last dates to be within our data range
 		firstDate := result[0][0]
 		lastDate := result[len(result)-1][0]
