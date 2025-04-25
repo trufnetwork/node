@@ -2,15 +2,16 @@ package kwil_network
 
 import (
 	"encoding/json"
+	"os"
+	"os/exec"
+	"strconv"
+
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
 	"github.com/trufnetwork/node/infra/lib/kwil-network/peer"
 	"go.uber.org/zap"
-	"os"
-	"os/exec"
-	"strconv"
 )
 
 type GenerateGenesisFileInput struct {
@@ -40,10 +41,10 @@ func GenerateGenesisFile(scope constructs.Construct, input GenerateGenesisFileIn
 			Name:   "validator-" + strconv.Itoa(i),
 		})
 	}
-	// Generate configuration using kwil-admin CLI
-	// kwil-admin setup init -o <tmp-dir> --chain-id <chainId>
+	// Generate configuration using kwild CLI
+	// kwild setup init -o <tmp-dir> --chain-id <chainId>
 	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables](scope)
-	cmd := exec.Command(envVars.KwilAdminBinPath, "setup", "init",
+	cmd := exec.Command(envVars.KwildCliPath, "setup", "init",
 		"--chain-id", input.ChainId,
 		"-o", *tempDir,
 	)

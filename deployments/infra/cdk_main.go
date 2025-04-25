@@ -17,8 +17,10 @@ func init() {
 func main() {
 	app := awscdk.NewApp(nil)
 
+	// CertStack needs the app scope to create the stack
 	certStackExports := stacks.CertStack(app)
 
+	// TSN stacks will initialize their own parameters within their scope
 	stacks.TsnAutoStack(
 		app,
 		config.WithStackSuffix(app, "TSN-DB-Auto"),

@@ -20,11 +20,12 @@ This method dynamically generates the TN node configuration during deployment. I
 
 ```bash
 PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
-KWIL_ADMIN_BIN_PATH=kwil-admin \
+KWILD_CLI_PATH=kwild \
 CHAIN_ID=truflation-dev \
 CDK_DOCKER="<YOUR-DIRECTORY>/tn/deployments/infra/buildx.sh" \
 cdk deploy --profile <YOUR-AWS-PROFILE> --all --asset-parallelism=false --notices false \
---context deploymentStage=DEV \
+--parameters TN-DB-Stack-dev:stage=dev \
+--parameters TN-DB-Stack-dev:devPrefix=<YOUR-DEV-PREFIX> \
 --parameters TN-DB-Stack-dev:sessionSecret=abab
 ```
 
@@ -36,12 +37,14 @@ This method uses a pre-existing genesis file and a list of private keys for the 
 
 ```bash
 PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
-KWIL_ADMIN_BIN_PATH=kwil-admin \
+KWILD_CLI_PATH=kwild \
 CHAIN_ID=truflation-dev \
 CDK_DOCKER="<YOUR-DIRECTORY>/tn/deployments/infra/buildx.sh" \
 NODE_PRIVATE_KEYS="key1,key2,key3" \
 GENESIS_PATH="/path/to/genesis.json" \
 cdk deploy --profile <YOUR-AWS-PROFILE> TN-From-Config* TN-Cert* \
+--parameters TN-From-Config-<environment>-Stack:stage=dev \
+--parameters TN-From-Config-<environment>-Stack:devPrefix=<YOUR-DEV-PREFIX> \
 --parameters TN-From-Config-<environment>-Stack:sessionSecret=abab
 ```
 
@@ -65,9 +68,9 @@ In our stack, the launch templates for the Kwil Gateway (kgw) and Indexer instan
    
    Once the EIP is successfully attached to the new instance and you've verified its operation, terminate the old instance to avoid unnecessary costs.
 
-## Upgrading Nodes (Staging Environment)
+## Upgrading Nodes
 
-For the staging environment, which uses the pre-configured setup, upgrading a node involves the following steps:
+For the prod environment, which uses the pre-configured setup, upgrading a node involves the following steps:
 
 1. Deploy the stack to update the launch template with the new image:
 
@@ -101,7 +104,7 @@ This process ensures that your node is running the latest version of the softwar
 ## Environment Variables
 
 - `PRIVATE_KEY`: Ethereum private key for the admin account
-- `KWIL_ADMIN_BIN_PATH`: Path to kwil-admin binary (use `kwil-admin` if it's in your PATH)
+- `KWILD_CLI_PATH`: Path to the `kwild` CLI binary (use `kwild` if it's in your PATH)
 - `CHAIN_ID`: Chain ID for the Kwil network
 - `CDK_DOCKER`: Path to docker buildx script
 - `NODE_PRIVATE_KEYS`: Comma-separated list of private keys for TSN nodes (only for pre-configured setup)
@@ -113,12 +116,11 @@ Use the `--profile` option to specify your AWS profile.
 
 ## Deployment Stage
 
-Set the deployment stage using the `--context deploymentStage=<STAGE>` option, or by editing the `cdk.json` file. Valid stages are:
-- `DEV`
-- `STAGING`
-- `PROD`
-
-You may also edit the number of nodes for auto-generated configuration in the `cdk.json` file.
+- Stacks use CFN parameters for `stage` and `devPrefix`, not context.
+- Example: `--parameters <stack>:stage=dev [--parameters <stack>:devPrefix=<prefix>]`.
+- Valid stages are:
+- `dev`
+- `prod`
 
 ## Useful Commands
 
@@ -157,7 +159,7 @@ To deploy the Benchmark Stack:
 cdk deploy --profile <YOUR-AWS-PROFILE> TSN-Benchmark-Stack-<environment> --exclusively
 ```
 
-Replace `<environment>` with your target environment (e.g., dev, staging, prod).
+Replace `<environment>` with your target environment (e.g., dev, prod).
 
 ### Usage
 

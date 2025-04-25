@@ -2,10 +2,11 @@ package kwil_network
 
 import (
 	"encoding/json"
+	"os/exec"
+
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/trufnetwork/node/infra/config"
 	"go.uber.org/zap"
-	"os/exec"
 )
 
 type NodeKeys struct {
@@ -26,7 +27,7 @@ type KeyGenOutput struct {
 func GenerateNodeKeys(scope constructs.Construct) NodeKeys {
 	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables](scope)
 
-	cmd := exec.Command(envVars.KwilAdminBinPath, "key", "gen", "--output", "json")
+	cmd := exec.Command(envVars.KwildCliPath, "key", "gen", "--output", "json")
 
 	// read the output of the command. extract from result
 	// and return the NodeKeys struct
@@ -37,8 +38,7 @@ func GenerateNodeKeys(scope constructs.Construct) NodeKeys {
 		zap.L().Panic("Failed to generate node keys", zap.Error(err))
 	}
 
-	err = json.Unmarshal(bytesOutput, &output)
-	if err != nil {
+	if err := json.Unmarshal(bytesOutput, &output); err != nil {
 		zap.L().Panic("Failed to unmarshal node keys", zap.Error(err))
 	}
 
@@ -48,7 +48,7 @@ func GenerateNodeKeys(scope constructs.Construct) NodeKeys {
 func ExtractKeys(scope constructs.Construct, privateKey string) NodeKeys {
 	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables](scope)
 
-	cmd := exec.Command(envVars.KwilAdminBinPath, "key", "info", privateKey, "--output", "json")
+	cmd := exec.Command(envVars.KwildCliPath, "key", "info", privateKey, "--output", "json")
 
 	// read the output of the command. extract from result
 	// and return the NodeKeys struct
@@ -56,12 +56,11 @@ func ExtractKeys(scope constructs.Construct, privateKey string) NodeKeys {
 	bytesOutput, err := cmd.Output()
 
 	if err != nil {
-		panic(err)
+		zap.L().Panic("Failed to extract node keys", zap.Error(err))
 	}
 
-	err = json.Unmarshal(bytesOutput, &output)
-	if err != nil {
-		panic(err)
+	if err := json.Unmarshal(bytesOutput, &output); err != nil {
+		zap.L().Panic("Failed to unmarshal extracted node keys", zap.Error(err))
 	}
 
 	return output.Result

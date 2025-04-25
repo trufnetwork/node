@@ -10,6 +10,7 @@ import (
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
+	domaincfg "github.com/trufnetwork/node/infra/config/domain"
 	kwil_gateway "github.com/trufnetwork/node/infra/lib/kwil-gateway"
 	kwil_indexer_instance "github.com/trufnetwork/node/infra/lib/kwil-indexer"
 	"github.com/trufnetwork/node/infra/lib/tsn/cluster"
@@ -22,17 +23,14 @@ type AttachObservabilityInput struct {
 }
 
 func AttachObservability(scope constructs.Construct, input *AttachObservabilityInput) {
-	// we've been using the same prefix for all observer params to facilitate
-	// the ability to attach the same policy to all observer instances
-	// if we plan to have different params for envs (dev, test, prod), we'll need to
-	// change this
+	// we've been using the same prefix for all observer params
 	paramsPrefix := "/tsn/observer/"
 
-	envName := config.GetDomainStage(scope)
-	// if it's empty, we assign prod domain
-	if envName == "" {
-		envName = "prod"
-	}
+	// Determine stage via CDK parameters and DomainConfig
+	cdkParams := config.NewCDKParams(scope)
+	stageToken := cdkParams.Stage.ValueAsString()
+	stage := domaincfg.StageType(*stageToken)
+	envName := string(stage)
 
 	attachObservability := func(
 		template awsec2.LaunchTemplate,

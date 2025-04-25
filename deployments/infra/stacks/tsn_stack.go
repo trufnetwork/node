@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
-	"github.com/trufnetwork/node/infra/lib/domain_utils"
+	domaincfg "github.com/trufnetwork/node/infra/config/domain"
 	kwil_gateway "github.com/trufnetwork/node/infra/lib/kwil-gateway"
 	kwil_indexer_instance "github.com/trufnetwork/node/infra/lib/kwil-indexer"
 	system_contract "github.com/trufnetwork/node/infra/lib/system-contract"
@@ -37,16 +37,25 @@ type TsnStackOutput struct {
 func TsnStack(stack awscdk.Stack, props *TsnStackProps) TsnStackOutput {
 	cdkParams := config.NewCDKParams(stack)
 
-	// ## Pre-existing resources
+	// ## Pre-existing resources and domain setup
 
-	// default vpc
+	// default VPC lookup
 	defaultVPC := awsec2.Vpc_FromLookup(stack, jsii.String("VPC"), &awsec2.VpcLookupOptions{
 		IsDefault: jsii.Bool(true),
 	})
 
-	// Main Hosted Zone & Domain
-	domain := config.Domain(stack)
-	hostedZone := domain_utils.GetTSNHostedZone(stack)
+	// Initialize HostedDomain using centralized CDK parameters
+	stageToken := cdkParams.Stage.ValueAsString()
+	devPrefix := cdkParams.DevPrefix.ValueAsString()
+	hd := domaincfg.NewHostedDomain(stack, "Domain", &domaincfg.HostedDomainProps{
+		Spec: domaincfg.Spec{
+			Stage:     domaincfg.StageType(*stageToken),
+			Sub:       "",
+			DevPrefix: *devPrefix,
+		},
+	})
+	domain := hd.DomainName
+	hostedZone := hd.Zone
 
 	// ## ASSETS
 	// ### TSN ASSETS
@@ -61,7 +70,7 @@ func TsnStack(stack awscdk.Stack, props *TsnStackProps) TsnStackOutput {
 
 	// TSN config image
 	tsnConfigImageAsset := awss3assets.NewAsset(stack, jsii.String("TsnConfigImageAsset"), &awss3assets.AssetProps{
-		Path: jsii.String("../tsn-config.dockerfile"),
+		Path: jsii.String("../tn-config.dockerfile"),
 	})
 
 	// ### GATEWAY ASSETS
@@ -106,7 +115,7 @@ func TsnStack(stack awscdk.Stack, props *TsnStackProps) TsnStackOutput {
 	// ### GATEWAY INSTANCE
 
 	kgwInstance := kwil_gateway.NewKGWInstance(stack, kwil_gateway.NewKGWInstanceInput{
-		HostedZone:     hostedZone,
+		HostedDomain:   hd,
 		Vpc:            defaultVPC,
 		KGWBinaryAsset: kgwBinaryS3Object,
 		KGWDirAsset:    kgwDirectoryAsset,
@@ -129,8 +138,7 @@ func TsnStack(stack awscdk.Stack, props *TsnStackProps) TsnStackOutput {
 		Vpc:             defaultVPC,
 		TSNInstance:     tsnCluster.Nodes[0],
 		IndexerDirAsset: indexerDirectoryAsset,
-		Domain:          domain,
-		HostedZone:      hostedZone,
+		HostedDomain:    hd,
 		InitElements:    props.InitElements,
 	})
 

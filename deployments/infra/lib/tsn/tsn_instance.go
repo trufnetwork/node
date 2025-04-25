@@ -9,6 +9,7 @@ import (
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
+	domaincfg "github.com/trufnetwork/node/infra/config/domain"
 	peer2 "github.com/trufnetwork/node/infra/lib/kwil-network/peer"
 	"github.com/trufnetwork/node/infra/lib/utils"
 )
@@ -44,6 +45,11 @@ func NewTSNInstance(scope constructs.Construct, input NewTSNInstanceInput) TSNIn
 
 	defaultInstanceUser := jsii.String("ec2-user")
 
+	// Determine instance size based on CDK parameter 'stage'
+	cdkParams := config.NewCDKParams(scope)
+	stageToken := cdkParams.Stage.ValueAsString()
+	stage := domaincfg.StageType(*stageToken)
+
 	initAssetsDir := "/home/ec2-user/init-assets/"
 	mountDataDir := "/data/"
 	tsnConfigZipFile := "tsn-node-config.zip"
@@ -66,14 +72,16 @@ func NewTSNInstance(scope constructs.Construct, input NewTSNInstanceInput) TSNIn
 
 	initData := awsec2.CloudFormationInit_FromElements(elements...)
 
-	// instance size is based on the deployment stage
-	// DEV: t3.small
-	// STAGING, PROD: t3.medium
+	// instance size is based on the deployment stage parameter
+	// TODO this should be just a default, but also an optional parameter to override
+	// DEV: t3.small, PROD: t3.medium
 	var instanceSize awsec2.InstanceSize
-	switch config.DeploymentStage(scope) {
-	case config.DeploymentStage_DEV:
+	switch stage {
+	case domaincfg.StageDev:
 		instanceSize = awsec2.InstanceSize_SMALL
-	case config.DeploymentStage_STAGING, config.DeploymentStage_PROD:
+	case domaincfg.StageProd:
+		instanceSize = awsec2.InstanceSize_MEDIUM
+	default:
 		instanceSize = awsec2.InstanceSize_MEDIUM
 	}
 

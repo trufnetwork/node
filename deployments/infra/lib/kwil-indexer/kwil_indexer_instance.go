@@ -11,6 +11,7 @@ import (
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
+	domain "github.com/trufnetwork/node/infra/config/domain"
 	"github.com/trufnetwork/node/infra/lib/kwil-network/peer"
 	"github.com/trufnetwork/node/infra/lib/tsn"
 	"github.com/trufnetwork/node/infra/lib/utils"
@@ -23,8 +24,7 @@ type NewIndexerInstanceInput struct {
 	Vpc             awsec2.IVpc
 	TSNInstance     tsn.TSNInstance
 	IndexerDirAsset awss3assets.Asset
-	HostedZone      awsroute53.IHostedZone
-	Domain          *string
+	HostedDomain    *domain.HostedDomain
 	InitElements    []awsec2.InitElement
 }
 
@@ -60,12 +60,13 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 		jsii.Bool(true),
 	)
 
-	// Create an A record pointing to the Elastic IP, as EIP doesn't automatically create a DNS record
-	aRecord := awsroute53.NewARecord(scope, jsii.String("IndexerElasticIpDnsRecord"), &awsroute53.ARecordProps{
-		Zone:       input.HostedZone,
-		RecordName: jsii.String("indexer." + *input.Domain),
-		Target:     awsroute53.RecordTarget_FromIpAddresses(indexerElasticIp.AttrPublicIp()),
-	})
+	// Create an A record for the indexer using HostedDomain
+	subdomain := "indexer"
+	input.HostedDomain.AddARecord("IndexerElasticIpDnsRecord", subdomain,
+		awsroute53.RecordTarget_FromIpAddresses(indexerElasticIp.AttrPublicIp()),
+	)
+	// Full DNS name includes subdomain
+	instanceDnsName := jsii.String(input.HostedDomain.FQDN)
 
 	// Create security group
 	instanceSG := awsec2.NewSecurityGroup(scope, jsii.String("IndexerSG"), &awsec2.SecurityGroupProps{
@@ -165,7 +166,7 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 	return IndexerInstance{
 		SecurityGroup:   instanceSG,
 		Role:            role,
-		InstanceDnsName: aRecord.DomainName(),
+		InstanceDnsName: instanceDnsName,
 		ElasticIp:       indexerElasticIp,
 		LaunchTemplate:  launchTemplate,
 	}

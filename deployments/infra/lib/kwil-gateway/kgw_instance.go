@@ -9,6 +9,7 @@ import (
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
+	domain "github.com/trufnetwork/node/infra/config/domain"
 	"github.com/trufnetwork/node/infra/lib/tsn"
 	"github.com/trufnetwork/node/infra/lib/utils"
 )
@@ -22,7 +23,8 @@ type KGWConfig struct {
 }
 
 type NewKGWInstanceInput struct {
-	HostedZone     awsroute53.IHostedZone
+	// HostedDomain encapsulates zone lookup and certificate
+	HostedDomain   *domain.HostedDomain
 	KGWDirAsset    awss3assets.Asset
 	KGWBinaryAsset utils.S3Object
 	Vpc            awsec2.IVpc
@@ -124,19 +126,18 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 		jsii.Bool(true),
 	)
 
-	domain := config.Domain(scope, "kgw")
-
-	// add record to route53
-	awsroute53.NewARecord(scope, jsii.String("KGWARecord"), &awsroute53.ARecordProps{
-		Zone:       input.HostedZone,
-		Target:     awsroute53.RecordTarget_FromIpAddresses(eip.AttrPublicIp()),
-		RecordName: domain,
-	})
+	// Create an A record for the gateway using HostedDomain
+	subdomain := "kgw"
+	input.HostedDomain.AddARecord("KGWARecord", subdomain,
+		awsroute53.RecordTarget_FromIpAddresses(eip.AttrPublicIp()),
+	)
+	// Full DNS name includes subdomain prefix
+	instanceDnsName := jsii.String(input.HostedDomain.FQDN)
 
 	return KGWInstance{
 		SecurityGroup:   instanceSG,
 		Role:            role,
-		InstanceDnsName: domain,
+		InstanceDnsName: instanceDnsName,
 		LaunchTemplate:  launchTemplate,
 		ElasticIp:       eip,
 	}

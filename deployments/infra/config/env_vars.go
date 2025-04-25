@@ -6,10 +6,10 @@ import (
 )
 
 type MainEnvironmentVariables struct {
-	KwilAdminBinPath string `env:"KWIL_ADMIN_BIN_PATH" required:"true"`
-	CdkDocker        string `env:"CDK_DOCKER" required:"true"`
-	ChainId          string `env:"CHAIN_ID" required:"true"`
-	PrivateKey       string `env:"PRIVATE_KEY" required:"true"`
+	KwildCliPath string `env:"KWILD_CLI_PATH" required:"true"`
+	CdkDocker    string `env:"CDK_DOCKER" required:"true"`
+	ChainId      string `env:"CHAIN_ID" required:"true"`
+	PrivateKey   string `env:"PRIVATE_KEY" required:"true"`
 }
 
 type AutoStackEnvironmentVariables struct {

@@ -2,23 +2,16 @@ package config
 
 import (
 	"fmt"
+	"strconv"
+
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
-	"github.com/trufnetwork/node/infra/lib/domain_utils"
-	"go.uber.org/zap"
-	"strconv"
 )
 
 // Stack suffix is intended to be used after the stack name to differentiate between different stages.
 func WithStackSuffix(scope constructs.Construct, stackName string) string {
-	stage := GetDomainStage(scope)
-
-	suffix := "-Stack"
-	if stage != "" {
-		suffix = "-" + string(stage) + suffix
-	}
-
-	return stackName + suffix
+	// Always append the standard suffix
+	return stackName + "-Stack"
 }
 
 // DO NOT modify this function, change EC2 key pair name by 'cdk.json/context/keyPairName'.
@@ -31,60 +24,6 @@ func KeyPairName(scope constructs.Construct) string {
 	}
 
 	return keyPairName
-}
-
-// Deployment stage config
-type DeploymentStageType string
-
-const (
-	DeploymentStage_DEV     DeploymentStageType = "DEV"
-	DeploymentStage_STAGING DeploymentStageType = "STAGING"
-	DeploymentStage_PROD    DeploymentStageType = "PROD"
-)
-
-// DO NOT modify this function, change EKS cluster name by 'cdk-cli-wrapper-dev.sh/--context deploymentStage='.
-func DeploymentStage(scope constructs.Construct) DeploymentStageType {
-	deploymentStage := DeploymentStage_PROD
-
-	ctxValue := scope.Node().TryGetContext(jsii.String("deploymentStage"))
-	if v, ok := ctxValue.(string); ok {
-		deploymentStage = DeploymentStageType(v)
-	}
-
-	return deploymentStage
-}
-
-func GetDomainStage(scope constructs.Construct) string {
-	stageEnvMap := map[DeploymentStageType]string{
-		DeploymentStage_DEV:     "dev",
-		DeploymentStage_STAGING: "staging",
-		DeploymentStage_PROD:    "",
-	}
-
-	// special domain names only work for DEV
-	ctxValue := scope.Node().TryGetContext(jsii.String("specialDomain"))
-
-	if v, ok := ctxValue.(string); ok {
-		if DeploymentStage(scope) != DeploymentStage_DEV {
-			zap.L().Warn("Special domain is used in non-DEV stage", zap.String("specialDomain", v))
-		}
-		stageEnvMap[DeploymentStage_DEV] = v
-	}
-
-	return stageEnvMap[DeploymentStage(scope)]
-}
-
-func Domain(scope constructs.Construct, subdomains ...string) *string {
-	// goes like this: <stage>.<subdomain#...>.<main_domain>
-	stageDomain := GetDomainStage(scope)
-
-	for _, subdomain := range subdomains {
-		stageDomain += "." + subdomain
-	}
-
-	stageDomain += "." + domain_utils.MainDomain
-
-	return jsii.String(stageDomain)
 }
 
 func NumOfNodes(scope constructs.Construct) int {

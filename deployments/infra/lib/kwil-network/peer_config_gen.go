@@ -3,9 +3,10 @@ package kwil_network
 import (
 	"encoding/json"
 	"fmt"
-	"go.uber.org/zap"
 	"os"
 	"os/exec"
+
+	"go.uber.org/zap"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/constructs-go/constructs/v10"
@@ -30,8 +31,8 @@ func GeneratePeerConfig(scope constructs.Construct, input GeneratePeerConfigInpu
 
 	validateGenesisFile(input.GenesisFilePath)
 
-	// Generate configuration using kwil-admin CLI
-	cmd := exec.Command(envVars.KwilAdminBinPath, "setup", "peer",
+	// Generate configuration using kwild CLI
+	cmd := exec.Command(envVars.KwildCliPath, "setup", "peer",
 		"--chain.p2p.external-address", "should-be-overwritten-by-env",
 		"--chain.p2p.persistent-peers", "should-be-overwritten-by-env",
 		"--app.hostname", "should-be-overwritten-by-env",
