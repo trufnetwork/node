@@ -116,7 +116,7 @@ jobs:
 
         env:
           CI: true
-          # used to instantiate configuration
-          KWIL_ADMIN_BIN_PATH: ../../.build/kwil-admin
+          # path to the kwild CLI binary for configuration generation
+          KWILD_CLI_PATH: ../../.build/kwild
           CHAIN_ID: truflation-dev
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
