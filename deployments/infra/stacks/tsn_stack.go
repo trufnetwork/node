@@ -1,7 +1,6 @@
 package stacks
 
 import (
-	"fmt"
 	"strconv"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
@@ -13,7 +12,6 @@ import (
 	domaincfg "github.com/trufnetwork/node/infra/config/domain"
 	kwil_gateway "github.com/trufnetwork/node/infra/lib/kwil-gateway"
 	kwil_indexer_instance "github.com/trufnetwork/node/infra/lib/kwil-indexer"
-	system_contract "github.com/trufnetwork/node/infra/lib/system-contract"
 	"github.com/trufnetwork/node/infra/lib/tsn"
 	"github.com/trufnetwork/node/infra/lib/tsn/cluster"
 	"github.com/trufnetwork/node/infra/lib/utils"
@@ -159,13 +157,6 @@ func TsnStack(stack awscdk.Stack, props *TsnStackProps) TsnStackOutput {
 			IndexerPublicDnsName: indexerInstance.InstanceDnsName,
 		},
 	)
-
-	// to make easier to deploy a contract, we create a lambda that can be manually triggered
-	system_contract.SystemContractDeployer(stack, system_contract.DeployContractResourceOptions{
-		SystemContractPath: jsii.String("../../internal/contracts/system_contract.kf"),
-		PrivateKey:         config.GetEnvironmentVariables[config.MainEnvironmentVariables](stack).PrivateKey,
-		ProviderUrl:        jsii.String(fmt.Sprintf("https://%s", *domain)),
-	})
 
 	// ## Output info
 	// Public ip of each TSN node

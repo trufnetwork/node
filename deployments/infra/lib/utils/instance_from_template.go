@@ -30,7 +30,7 @@ func InstanceFromLaunchTemplateOnPublicSubnetWithElasticIp(
 		SubnetId: subnetId[0],
 	})
 
-	instance.AddDependsOn(input.LaunchTemplate.Node().DefaultChild().(awscdk.CfnResource))
+	instance.AddDependency(input.LaunchTemplate.Node().DefaultChild().(awscdk.CfnResource))
 
 	awsec2.NewCfnEIPAssociation(scope, jsii.Sprintf("%s-eip-association", *id), &awsec2.CfnEIPAssociationProps{
 		InstanceId:   instance.AttrInstanceId(),

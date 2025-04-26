@@ -23,7 +23,7 @@ func (t TsnClusterFromConfigInput) CreateCluster(scope awscdk.Stack, input NewTS
 	// Initialize CDK parameters and HostedDomain for peer FQDNs
 	cdkParams := config.NewCDKParams(scope)
 	stageToken := cdkParams.Stage.ValueAsString()
-	devPrefix := cdkParams.Subdomain.ValueAsString()
+	devPrefix := cdkParams.DevPrefix.ValueAsString()
 	hd := domaincfg.NewHostedDomain(scope, "Domain", &domaincfg.HostedDomainProps{
 		Spec: domaincfg.Spec{
 			Stage:     domaincfg.StageType(*stageToken),

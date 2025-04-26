@@ -19,6 +19,7 @@ type HostedDomainProps struct {
 }
 
 // HostedDomain is a construct that looks up a Route53 hosted zone and provisions an ACM certificate for a given FQDN.
+// It exposes FQDN and DomainName tokens for other stacks to consume.
 type HostedDomain struct {
 	constructs.Construct
 	Zone       awsroute53.IHostedZone
@@ -29,7 +30,7 @@ type HostedDomain struct {
 
 // NewHostedDomain creates or reuses a HostedDomain in the CDK tree, ensuring idempotence per (scope, id).
 func NewHostedDomain(scope constructs.Construct, id string, props *HostedDomainProps) *HostedDomain {
-	// Create the underlying construct node
+	// Create the underlying child Construct under given scope
 	node := constructs.NewConstruct(scope, jsii.String(id))
 	hd := &HostedDomain{Construct: node}
 
@@ -70,10 +71,10 @@ func NewHostedDomain(scope constructs.Construct, id string, props *HostedDomainP
 	// Create the certificate
 	hd.Cert = awscertificatemanager.NewCertificate(certScope, jsii.String("Cert"), certProps)
 
-	// Emit CfnOutputs inside this construct for domain, hosted zone ID, and certificate ARN
-	awscdk.NewCfnOutput(node, jsii.String("Domain"), &awscdk.CfnOutputProps{Value: jsii.String(hd.FQDN)})
-	awscdk.NewCfnOutput(node, jsii.String("HostedZoneId"), &awscdk.CfnOutputProps{Value: hd.Zone.HostedZoneId()})
-	awscdk.NewCfnOutput(node, jsii.String("CertificateArn"), &awscdk.CfnOutputProps{Value: hd.Cert.CertificateArn()})
+	// Emit CfnOutputs inside the underlying construct (hd.Construct) to avoid copying
+	awscdk.NewCfnOutput(hd.Construct, jsii.String("Domain"), &awscdk.CfnOutputProps{Value: jsii.String(hd.FQDN)})
+	awscdk.NewCfnOutput(hd.Construct, jsii.String("HostedZoneId"), &awscdk.CfnOutputProps{Value: hd.Zone.HostedZoneId()})
+	awscdk.NewCfnOutput(hd.Construct, jsii.String("CertificateArn"), &awscdk.CfnOutputProps{Value: hd.Cert.CertificateArn()})
 
 	return hd
 }
@@ -84,7 +85,7 @@ func (h *HostedDomain) AddARecord(id string, sub string, target awsroute53.Recor
 	if sub != "" {
 		recordName = jsii.String(fmt.Sprintf("%s.%s", sub, h.FQDN))
 	}
-	return awsroute53.NewARecord(h, jsii.String(id), &awsroute53.ARecordProps{
+	return awsroute53.NewARecord(h.Construct, jsii.String(id), &awsroute53.ARecordProps{
 		Zone:       h.Zone,
 		RecordName: recordName,
 		Target:     target,

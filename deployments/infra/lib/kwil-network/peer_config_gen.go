@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 
 	"go.uber.org/zap"
 
@@ -25,26 +27,45 @@ type GeneratePeerConfigInput struct {
 func GeneratePeerConfig(scope constructs.Construct, input GeneratePeerConfigInput) string {
 	// Create a temporary directory for the configuration
 	tempDir := awscdk.FileSystem_Mkdtemp(jsii.String("peer-config"))
+	tempDir = jsii.String(*tempDir + "/config")
 
 	// Get environment variables
 	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables](scope)
 
 	validateGenesisFile(input.GenesisFilePath)
 
-	// Generate configuration using kwild CLI
-	cmd := exec.Command(envVars.KwildCliPath, "setup", "peer",
-		"--chain.p2p.external-address", "should-be-overwritten-by-env",
-		"--chain.p2p.persistent-peers", "should-be-overwritten-by-env",
-		"--app.hostname", "should-be-overwritten-by-env",
-		"--app.snapshots.enabled",
-		"--app.snapshots.snapshot-dir", "/root/.kwild/snapshots",
-		"--root-dir", *tempDir,
-		"-g", input.GenesisFilePath,
+	// Initialize the peer config directory with genesis and default files
+	cmd := exec.Command(envVars.KwildCliPath, "setup", "init",
+		"--chain-id", envVars.ChainId,
+		"--root", *tempDir,
+		"--genesis", input.GenesisFilePath,
 	)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		zap.L().Panic("Failed to generate peer config", zap.Error(err), zap.String("output", string(output)))
+	}
+
+	// now override config.toml with the proper peer settings via print-config
+	// compute bootnodes list
+	var bootnodes []string
+	for _, p := range input.Peers {
+		bootnodes = append(bootnodes, *p.Address)
+	}
+	bootStr := strings.Join(bootnodes, ",")
+	printCmd := exec.Command(envVars.KwildCliPath, "print-config",
+		"--p2p.external-address", *input.CurrentPeer.Address,
+		"--p2p.bootnodes", bootStr,
+		"--snapshots.enable",
+		"--root", *tempDir,
+	)
+	cfgBytes, err := printCmd.Output()
+	if err != nil {
+		zap.L().Panic("Failed to generate config.toml", zap.Error(err))
+	}
+	configPath := filepath.Join(*tempDir, "config.toml")
+	if err := os.WriteFile(configPath, cfgBytes, 0644); err != nil {
+		zap.L().Panic("Failed to write config.toml", zap.Error(err))
 	}
 
 	// replace the private key in the generated configuration

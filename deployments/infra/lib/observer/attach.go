@@ -50,9 +50,10 @@ func AttachObservability(scope constructs.Construct, input *AttachObservabilityI
 			Prefix:          paramsPrefix,
 		})
 
+		// Attach SSM read policy using the serviceName (static) for policy ID
 		attachSSMReadAccess(
 			scope,
-			jsii.String(fmt.Sprintf("%s-observer-ssm-policy", instanceName)),
+			jsii.String(*params.ServiceName+"-ObserverSSMPolicy"),
 			template.Role(),
 			paramsPrefix,
 		)
@@ -104,7 +105,8 @@ func attachSSMReadAccess(
 	paramsPrefix string,
 ) {
 	paramString := path.Join("parameter", paramsPrefix, "*")
-	role.AttachInlinePolicy(awsiam.NewPolicy(
+	// Create inline policy under the stack scope using the provided static ID
+	policy := awsiam.NewPolicy(
 		scope,
 		id,
 		&awsiam.PolicyProps{
@@ -122,5 +124,6 @@ func attachSSMReadAccess(
 					}),
 			},
 		},
-	))
+	)
+	role.AttachInlinePolicy(policy)
 }

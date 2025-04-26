@@ -27,6 +27,7 @@ type KeyGenOutput struct {
 func GenerateNodeKeys(scope constructs.Construct) NodeKeys {
 	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables](scope)
 
+	// Generate new keys using kwild CLI
 	cmd := exec.Command(envVars.KwildCliPath, "key", "gen", "--output", "json")
 
 	// read the output of the command. extract from result
@@ -48,6 +49,7 @@ func GenerateNodeKeys(scope constructs.Construct) NodeKeys {
 func ExtractKeys(scope constructs.Construct, privateKey string) NodeKeys {
 	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables](scope)
 
+	// Extract key info using kwild CLI
 	cmd := exec.Command(envVars.KwildCliPath, "key", "info", privateKey, "--output", "json")
 
 	// read the output of the command. extract from result
