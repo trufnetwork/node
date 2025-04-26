@@ -63,9 +63,6 @@ services:
     depends_on:
       indexer-postgres:
         condition: service_healthy
-    # debug entrypoint
-    # entrypoint: ["/bin/sh"]
-    # command: ["-c", "sleep infinity"]
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:1337/v0/swagger" ]
       interval: 5s
