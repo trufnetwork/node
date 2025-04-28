@@ -2,7 +2,6 @@ package kwil_cluster
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awscertificatemanager"
-	"github.com/aws/aws-cdk-go/awscdk/v2/awscloudfront"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
@@ -30,13 +29,12 @@ type KwilClusterProps struct {
 	Assets        KwilAssets
 }
 
-// KwilCluster is a reusable construct for Gateway and Indexer
+// KwilCluster is a reusable construct for Gateway and Indexer without CloudFront
 type KwilCluster struct {
 	constructs.Construct
 
 	Gateway kwil_gateway.KGWInstance
 	Indexer kwil_indexer.IndexerInstance
-	Cdn     awscloudfront.Distribution // only if Cert != nil
 }
 
 // NewKwilCluster provisions the Kwil gateway, indexer, and optional CloudFront
@@ -61,7 +59,7 @@ func NewKwilCluster(scope constructs.Construct, id string, props *KwilClusterPro
 	})
 	kc.Gateway = gw
 
-	// create Indexer instance (using first validator as dependency)
+	// create Indexer instance
 	idx := kwil_indexer.NewIndexerInstance(node, kwil_indexer.NewIndexerInstanceInput{
 		Vpc:             props.Vpc,
 		TNInstance:      props.Validators[0],
@@ -70,18 +68,6 @@ func NewKwilCluster(scope constructs.Construct, id string, props *KwilClusterPro
 		InitElements:    props.InitElements,
 	})
 	kc.Indexer = idx
-
-	// optional CloudFront for gateway/indexer
-	if props.Cert != nil {
-		cf := kwil_gateway.TNCloudfrontInstance(node, jsii.String("TNCloudfront"), kwil_gateway.TNCloudfrontConfig{
-			DomainName:           props.HostedDomain.DomainName,
-			KgwPublicDnsName:     gw.InstanceDnsName,
-			IndexerPublicDnsName: idx.InstanceDnsName,
-			HostedZone:           props.HostedDomain.Zone,
-			Certificate:          props.Cert,
-		})
-		kc.Cdn = cf
-	}
 
 	return kc
 }

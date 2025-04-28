@@ -1,6 +1,8 @@
 package kwil_gateway
 
 import (
+	"strings"
+
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
@@ -10,6 +12,7 @@ import (
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
 	domain "github.com/trufnetwork/node/infra/config/domain"
+	"github.com/trufnetwork/node/infra/lib/constructs/fronting"
 	"github.com/trufnetwork/node/infra/lib/tn"
 	"github.com/trufnetwork/node/infra/lib/utils"
 )
@@ -52,13 +55,23 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 		Description:      jsii.String("TN-DB Instance security group."),
 	})
 
-	// TODO security could be hardened by allowing only specific IPs
-	//   relative to cloudfront distribution IPs
-	instanceSG.AddIngressRule(
-		awsec2.Peer_AnyIpv4(),
-		awsec2.Port_Tcp(jsii.Number(80)),
-		jsii.String("Allow requests to http."),
-		jsii.Bool(false))
+	// Apply fronting ingress rules
+	for _, spec := range fronting.NewApiGatewayFronting().IngressRules() {
+		var peerPeer awsec2.IPeer
+		if strings.HasPrefix(spec.Source, "pl-") {
+			peerPeer = awsec2.Peer_PrefixList(jsii.String(spec.Source))
+		} else if strings.Contains(spec.Source, ":") {
+			peerPeer = awsec2.Peer_Ipv6(jsii.String(spec.Source))
+		} else {
+			peerPeer = awsec2.Peer_Ipv4(jsii.String(spec.Source))
+		}
+		instanceSG.AddIngressRule(
+			peerPeer,
+			awsec2.Port_Tcp(jsii.Number(spec.FromPort)),
+			jsii.String(spec.Description),
+			jsii.Bool(false),
+		)
+	}
 
 	// ssh
 	instanceSG.AddIngressRule(

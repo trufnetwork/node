@@ -25,9 +25,9 @@ We have extracted three reusable L3 constructs under [deployments/infra/lib/cons
     vs := validator_set.NewValidatorSet(stack, "ValidatorSet", &validator_set.ValidatorSetProps{ ... })
     ```
 
-- **KwilCluster**: provisions a Kwil Gateway, an Indexer, and an optional CloudFront distribution.
-  - Props: `Vpc`, `HostedDomain`, `Cert` (optional—if nil, CloudFront is skipped), `CorsOrigins`, `SessionSecret`, `ChainId`, `Validators`, `InitElements`, `KGWDirAsset`, `KGWBinaryAsset`, `IndexerDirAsset`
-  - Outputs: `Gateway kwil_gateway.KGWInstance`, `Indexer kwil_indexer.IndexerInstance`, `Cdn awscloudfront.Distribution`
+- **KwilCluster**: provisions a Kwil Gateway and an Indexer.
+  - Props: `Vpc`, `HostedDomain`, `Cert` (currently passed but not used for fronting), `CorsOrigins`, `SessionSecret`, `ChainId`, `Validators`, `InitElements`, `KGWDirAsset`, `KGWBinaryAsset`, `IndexerDirAsset`
+  - Outputs: `Gateway kwil_gateway.KGWInstance`, `Indexer kwil_indexer.IndexerInstance`
   - Import:
     ```go
     import "github.com/trufnetwork/node/infra/lib/constructs/kwil_cluster"
@@ -49,7 +49,39 @@ We have extracted three reusable L3 constructs under [deployments/infra/lib/cons
     obs := observability_suite.NewObservabilitySuite(stack, "ObservabilitySuite", &observability_suite.ObservabilitySuiteProps{ ... })
     ```
 
+- **Fronting**: pluggable edge proxy for API routing & TLS termination.
+  - Props: `HostedZone`, `Certificate`, `KGWEndpoint`, `IndexerEndpoint`, `RecordName`
+  - Import:
+    ```go
+    import fronting "github.com/trufnetwork/node/infra/lib/constructs/fronting"
+    ```
+  - Usage:
+    ```go
+    ag := fronting.NewApiGatewayFronting()
+    apiDomain := ag.AttachRoutes(stack, "APIGateway", &fronting.FrontingProps{
+      HostedZone:      zone,
+      Certificate:     cert,
+      KGWEndpoint:     kc.Gateway.InstanceDnsName,
+      IndexerEndpoint: kc.Indexer.InstanceDnsName,
+      RecordName:      jsii.String("api."+*prefix),
+    })
+    ```
+
 ## Deployment Methods
+
+### Choosing the front-end
+
+| Context key    | Values             | Default |
+|----------------|--------------------|---------|
+| `frontingType` | `api`, `cloudfront`| `api`   |
+
+* `api` – deploys an **AWS HTTP API** with a **regional ACM certificate** generated automatically in the same region as the stack (e.g. us-east-2).
+* `cloudfront` – retains the legacy CloudFront distribution with an edge certificate in us-east-1.
+
+```bash
+cdk deploy --context frontingType=api            # simplest, scale-to-zero, no hourly ALB
+cdk deploy --context frontingType=cloudfront    # only if you really need CF
+```
 
 ### 1. Auto-generated Configuration
 
@@ -137,7 +169,6 @@ For the prod environment, which uses the pre-configured setup, upgrading a node 
     ```bash
     sudo systemctl restart tn-db-app.service
     ```
-
 This process ensures that your node is running the latest version of the software while maintaining the pre-configured setup.
 
 ## Environment Variables

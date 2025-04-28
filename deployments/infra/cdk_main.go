@@ -17,33 +17,36 @@ func init() {
 func main() {
 	app := awscdk.NewApp(nil)
 
-	// CertStack needs the app scope to create the stack
-	certStackExports := stacks.CertStack(app)
+	// Determine desired fronting type: api or cloudfront
+	frontingType := *app.Node().TryGetContext(jsii.String("frontingType")).(*string)
+	if frontingType == "" {
+		frontingType = "api"
+	}
 
-	// TN stacks will initialize their own parameters within their scope
+	// Only deploy the legacy CertStack if using CloudFront
+	var certExports *stacks.CertStackExports
+	if frontingType == "cloudfront" {
+		exports := stacks.CertStack(app)
+		certExports = &exports
+	}
+
+	// TN-Auto Stack
 	stacks.TnAutoStack(
 		app,
 		config.WithStackSuffix(app, "TN-DB-Auto"),
 		&stacks.TnAutoStackProps{
-			StackProps: awscdk.StackProps{
-				Env:                   utils.CdkEnv(),
-				CrossRegionReferences: jsii.Bool(true),
-				Description:           jsii.String("TN-DB Auto is a stack that uses on-fly generated config files for the TN nodes"),
-			},
-			CertStackExports: certStackExports,
+			StackProps:       awscdk.StackProps{Env: utils.CdkEnv()},
+			CertStackExports: certExports,
 		},
 	)
 
+	// TN-From-Config Stack
 	stacks.TnFromConfigStack(
 		app,
 		config.WithStackSuffix(app, "TN-From-Config"),
 		&stacks.TnFromConfigStackProps{
-			StackProps: awscdk.StackProps{
-				Env:                   utils.CdkEnv(),
-				CrossRegionReferences: jsii.Bool(true),
-				Description:           jsii.String("TN-From-Config is a stack that uses a pre-existing config file for the TN nodes"),
-			},
-			CertStackExports: certStackExports,
+			StackProps:       awscdk.StackProps{Env: utils.CdkEnv()},
+			CertStackExports: certExports,
 		},
 	)
 

@@ -15,16 +15,21 @@ type AddKwilGatewayStartupScriptsOptions struct {
 func AddKwilGatewayStartupScriptsToInstance(options AddKwilGatewayStartupScriptsOptions) *string {
 	config := options.Config
 
+	// Build HTTP backend URLs (host at port 80) for the gateway compose file
 	var nodeAddresses []*string
 	for _, node := range config.Nodes {
-		nodeAddresses = append(nodeAddresses, node.PeerConnection.GetRpcHost())
+		url := awscdk.Fn_Join(jsii.String(""), &[]*string{
+			jsii.String("http://"),
+			node.PeerConnection.GetRpcHost(),
+			jsii.String(":80"),
+		})
+		nodeAddresses = append(nodeAddresses, url)
 	}
 
-	// Create the environment variables for the gateway compose file
 	kgwEnvConfig := KGWEnvConfig{
 		CorsAllowOrigins: config.CorsAllowOrigins,
 		SessionSecret:    config.SessionSecret,
-		Backends:         awscdk.Fn_Join(jsii.String(","), &nodeAddresses),
+		Backends:         awscdk.Fn_Join(jsii.String(","), &nodeAddresses), // nodeAddresses now contains http://host:80
 		ChainId:          config.ChainId,
 		Domain:           config.Domain,
 	}

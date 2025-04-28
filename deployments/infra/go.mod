@@ -12,6 +12,7 @@ require (
 	github.com/aws/constructs-go/constructs/v10 v10.3.0
 	github.com/aws/jsii-runtime-go v1.99.0
 	github.com/caarlos0/env/v11 v11.3.1
+	github.com/stretchr/testify v1.10.0
 	github.com/trufnetwork/node v1.2.0
 	go.uber.org/zap v1.27.0
 )
@@ -21,11 +22,14 @@ replace github.com/trufnetwork/node/infra => ./
 replace github.com/trufnetwork/node => ../../
 
 require (
+	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/fbiville/markdown-table-formatter v0.3.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
+	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/exp v0.0.0-20250218142911-aa4b98e5adaa // indirect
 	golang.org/x/sync v0.11.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
 require (

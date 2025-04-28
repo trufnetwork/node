@@ -9,6 +9,7 @@ import (
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
 	"github.com/trufnetwork/node/infra/config/domain"
+	fronting "github.com/trufnetwork/node/infra/lib/constructs/fronting"
 	"github.com/trufnetwork/node/infra/lib/constructs/kwil_cluster"
 	"github.com/trufnetwork/node/infra/lib/constructs/observability_suite"
 	"github.com/trufnetwork/node/infra/lib/constructs/validator_set"
@@ -19,7 +20,7 @@ import (
 
 type TnAutoStackProps struct {
 	awscdk.StackProps
-	CertStackExports CertStackExports
+	CertStackExports *CertStackExports `json:",omitempty"`
 }
 
 func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps) awscdk.Stack {
@@ -91,6 +92,23 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 		InitElements:  initElements,
 		Assets:        kwilAssets,
 	})
+
+	// Wire up API Gateway fronting with a regional ACM certificate
+	ag := fronting.NewApiGatewayFronting()
+	recordName := jsii.String("api." + *cdkParams.DevPrefix.ValueAsString())
+	// Provision the front-end and retrieve its FQDN and certificate (plugin issues cert)
+	frontRes := ag.AttachRoutes(stack, "APIGateway", &fronting.FrontingProps{
+		HostedZone:          hd.Zone,
+		ImportedCertificate: nil,
+		AdditionalSANs:      nil,
+		KGWEndpoint:         kc.Gateway.InstanceDnsName,
+		IndexerEndpoint:     kc.Indexer.InstanceDnsName,
+		RecordName:          recordName,
+	})
+	// Output the custom domain
+	awscdk.NewCfnOutput(stack, jsii.String("ApiDomain"), &awscdk.CfnOutputProps{Value: frontRes.FQDN})
+	// Output the certificate ARN for operations
+	awscdk.NewCfnOutput(stack, jsii.String("ApiCertArn"), &awscdk.CfnOutputProps{Value: frontRes.Certificate.CertificateArn()})
 
 	if shouldIncludeObserver {
 		_ = observability_suite.NewObservabilitySuite(stack, "ObservabilitySuite", &observability_suite.ObservabilitySuiteProps{
