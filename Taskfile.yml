@@ -65,6 +65,15 @@ tasks:
     desc: Run docker-compose locally
     cmds:
       - docker compose up -d
+    env:
+      DB_OWNER: "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"
+    
+  compose:down:
+    desc: Shutdown docker-compose
+    cmds:
+      - docker compose down
+    env:
+      DB_OWNER: "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"
 
   compose-dev:
     desc: Run docker-compose locally with dev configuration, 2 nodes, gateway, and indexer services
@@ -76,6 +85,7 @@ tasks:
         BACKENDS: tn-db-1:8484,tn-db-2:8484
         CHAIN_ID: trufnetwork-dev
         NODE_RPC_ENDPOINT: http://tn-db-1:8484
+        DB_OWNER: "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"
 
   compose-dev-down:
     desc: Shutdown dev 2 nodes, gateway, and indexer services
@@ -169,6 +179,13 @@ tasks:
     desc: Run benchmark tests and regenerate the report
     cmds:
       - go test -v -timeout 0 ./internal/benchmark
+
+  action-migrate-dev:
+    desc: Run the migration action for all SQL files in the devnet
+    cmds:
+      - bash ./scripts/migrate.sh
+    env:
+      PRIVATE_KEY: "0000000000000000000000000000000000000000000000000000000000000001"
 
   action-migrate:
     desc: Run the migration action for all SQL files
