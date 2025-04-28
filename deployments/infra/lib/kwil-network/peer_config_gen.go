@@ -18,8 +18,8 @@ import (
 )
 
 type GeneratePeerConfigInput struct {
-	CurrentPeer     peer.TSNPeer
-	Peers           []peer.TSNPeer
+	CurrentPeer     peer.TNPeer
+	Peers           []peer.TNPeer
 	GenesisFilePath string
 	PrivateKey      *string
 }

@@ -1,10 +1,10 @@
-# Generating and Viewing Benchmark Reports for TSN-DB
+# Generating and Viewing Benchmark Reports for TN-DB
 
-This document explains how to trigger benchmark tests and view reports for the Truflation Stream Network Database (TSN-DB) using AWS services.
+This document explains how to trigger benchmark tests and view reports for the Truflation Stream Network Database (TN-DB) using AWS services.
 
 ## Deployment
 
-Before running benchmarks, ensure that the TSN-DB infrastructure is properly deployed. For deployment instructions, please refer to the [main README.md](../README.md) in the `infra` directory.
+Before running benchmarks, ensure that the TN-DB infrastructure is properly deployed. For deployment instructions, please refer to the [main README.md](../README.md) in the `infra` directory.
 
 ## Triggering Benchmark Generation
 
@@ -12,7 +12,7 @@ To generate benchmark reports:
 
 1. Log in to the AWS Management Console.
 2. Navigate to AWS Step Functions.
-3. Locate and select the TSN-DB benchmark Step Function (the name should include "TSN-Benchmark").
+3. Locate and select the TN-DB benchmark Step Function (the name should include "TN-Benchmark").
 4. Click "Start execution" to trigger the benchmark process.
 5. Monitor the execution progress. When it completes, check for any errors in the execution details.
 
@@ -66,4 +66,4 @@ If you encounter issues:
 2. Verify that all required AWS resources (EC2, S3, Lambda) have the necessary permissions.
 3. Ensure that the benchmark code in the EC2 instances is up-to-date.
 
-For further assistance, please contact the TSN-DB development team.
+For further assistance, please contact the TN development team.

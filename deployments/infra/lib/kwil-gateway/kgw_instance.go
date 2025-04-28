@@ -10,7 +10,7 @@ import (
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
 	domain "github.com/trufnetwork/node/infra/config/domain"
-	"github.com/trufnetwork/node/infra/lib/tsn"
+	"github.com/trufnetwork/node/infra/lib/tn"
 	"github.com/trufnetwork/node/infra/lib/utils"
 )
 
@@ -19,7 +19,7 @@ type KGWConfig struct {
 	Domain           *string
 	SessionSecret    *string
 	ChainId          *string
-	Nodes            []tsn.TSNInstance
+	Nodes            []tn.TNInstance
 }
 
 type NewKGWInstanceInput struct {
@@ -49,7 +49,7 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 	instanceSG := awsec2.NewSecurityGroup(scope, jsii.String("NodeSG"), &awsec2.SecurityGroupProps{
 		Vpc:              input.Vpc,
 		AllowAllOutbound: jsii.Bool(true),
-		Description:      jsii.String("TSN-DB Instance security group."),
+		Description:      jsii.String("TN-DB Instance security group."),
 	})
 
 	// TODO security could be hardened by allowing only specific IPs
@@ -89,14 +89,19 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 	// comes with pre-installed cloud init requirements
 	AWSLinux2MachineImage := awsec2.MachineImage_LatestAmazonLinux2(nil)
 
+	// prepare default UserData to attach later commands
+	defaultUd := awsec2.UserData_ForLinux(&awsec2.LinuxUserDataOptions{Shebang: jsii.String("#!/bin/bash -xe")})
+	defaultUd.AddCommands(jsii.String("echo 'initializing-kgw'"))
+
 	// Create launch template
 	launchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String("KGWLaunchTemplate"), &awsec2.LaunchTemplateProps{
 		InstanceType:       awsec2.InstanceType_Of(awsec2.InstanceClass_T3, awsec2.InstanceSize_SMALL),
 		MachineImage:       AWSLinux2MachineImage,
 		SecurityGroup:      instanceSG,
-		LaunchTemplateName: jsii.Sprintf("%s/%s", *awscdk.Aws_STACK_NAME(), "KGWLaunchTemplate"),
 		Role:               role,
 		KeyPair:            keyPair,
+		UserData:           defaultUd,
+		LaunchTemplateName: jsii.Sprintf("%s/%s", *awscdk.Aws_STACK_NAME(), "KGWLaunchTemplate"),
 	})
 
 	// first step is to attach the init data to the launch template

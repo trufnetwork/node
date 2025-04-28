@@ -1,9 +1,10 @@
 package utils
 
 import (
-	"github.com/aws/jsii-runtime-go"
 	"os"
 	"strings"
+
+	"github.com/aws/jsii-runtime-go"
 )
 
 type DockerCacheOptions struct {
@@ -19,8 +20,8 @@ func GetBuildxCacheOpts() DockerCacheOptions {
 
 	if os.Getenv("CI") == "true" {
 		cacheType = "gha"
-		cacheFromParams = "scope=truflation/tsn/#IMAGE_NAME"
-		cacheToParams = "mode=max,scope=truflation/tsn/#IMAGE_NAME"
+		cacheFromParams = "scope=truflation/tn/#IMAGE_NAME"
+		cacheToParams = "mode=max,scope=truflation/tn/#IMAGE_NAME"
 	}
 
 	return DockerCacheOptions{

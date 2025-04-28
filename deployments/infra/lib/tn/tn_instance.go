@@ -1,4 +1,4 @@
-package tsn
+package tn
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
@@ -14,33 +14,33 @@ import (
 	"github.com/trufnetwork/node/infra/lib/utils"
 )
 
-type NewTSNInstanceInput struct {
-	Index                 int
-	Id                    string
-	Role                  awsiam.IRole
-	Vpc                   awsec2.IVpc
-	SecurityGroup         awsec2.ISecurityGroup
-	TSNDockerComposeAsset awss3assets.Asset
-	TSNDockerImageAsset   awsecrassets.DockerImageAsset
-	TSNConfigAsset        awss3assets.Asset
-	TSNConfigImageAsset   awss3assets.Asset
-	InitElements          []awsec2.InitElement
-	PeerConnection        peer2.TSNPeer
-	AllPeerConnections    []peer2.TSNPeer
-	KeyPair               awsec2.IKeyPair
+type NewTNInstanceInput struct {
+	Index                int
+	Id                   string
+	Role                 awsiam.IRole
+	Vpc                  awsec2.IVpc
+	SecurityGroup        awsec2.ISecurityGroup
+	TNDockerComposeAsset awss3assets.Asset
+	TNDockerImageAsset   awsecrassets.DockerImageAsset
+	TNConfigAsset        awss3assets.Asset
+	TNConfigImageAsset   awss3assets.Asset
+	InitElements         []awsec2.InitElement
+	PeerConnection       peer2.TNPeer
+	AllPeerConnections   []peer2.TNPeer
+	KeyPair              awsec2.IKeyPair
 }
 
-type TSNInstance struct {
+type TNInstance struct {
 	Index          int
 	LaunchTemplate awsec2.LaunchTemplate
 	SecurityGroup  awsec2.ISecurityGroup
 	Role           awsiam.IRole
 	ElasticIp      awsec2.CfnEIP
-	PeerConnection peer2.TSNPeer
+	PeerConnection peer2.TNPeer
 }
 
-func NewTSNInstance(scope constructs.Construct, input NewTSNInstanceInput) TSNInstance {
-	name := "TSN-Instance-" + input.Id
+func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInstance {
+	name := "TN-Instance-" + input.Id
 	index := input.Index
 
 	defaultInstanceUser := jsii.String("ec2-user")
@@ -52,18 +52,18 @@ func NewTSNInstance(scope constructs.Construct, input NewTSNInstanceInput) TSNIn
 
 	initAssetsDir := "/home/ec2-user/init-assets/"
 	mountDataDir := "/data/"
-	tsnConfigZipFile := "tsn-node-config.zip"
-	tsnComposeFile := "docker-compose.yaml"
-	tsnConfigImageFile := "deployments/tsn-config.dockerfile"
+	tnConfigZipFile := "tn-node-config.zip"
+	tnComposeFile := "docker-compose.yaml"
+	tnConfigImageFile := "deployments/tn-config.dockerfile"
 
 	elements := []awsec2.InitElement{
-		awsec2.InitFile_FromExistingAsset(jsii.String(initAssetsDir+tsnComposeFile), input.TSNDockerComposeAsset, &awsec2.InitFileOptions{
+		awsec2.InitFile_FromExistingAsset(jsii.String(initAssetsDir+tnComposeFile), input.TNDockerComposeAsset, &awsec2.InitFileOptions{
 			Owner: defaultInstanceUser,
 		}),
-		awsec2.InitFile_FromExistingAsset(jsii.String(initAssetsDir+tsnConfigZipFile), input.TSNConfigAsset, &awsec2.InitFileOptions{
+		awsec2.InitFile_FromExistingAsset(jsii.String(initAssetsDir+tnConfigZipFile), input.TNConfigAsset, &awsec2.InitFileOptions{
 			Owner: defaultInstanceUser,
 		}),
-		awsec2.InitFile_FromExistingAsset(jsii.String(initAssetsDir+tsnConfigImageFile), input.TSNConfigImageAsset, &awsec2.InitFileOptions{
+		awsec2.InitFile_FromExistingAsset(jsii.String(initAssetsDir+tnConfigImageFile), input.TNConfigImageAsset, &awsec2.InitFileOptions{
 			Owner: defaultInstanceUser,
 		}),
 	}
@@ -86,7 +86,7 @@ func NewTSNInstance(scope constructs.Construct, input NewTSNInstanceInput) TSNIn
 	}
 
 	AWSLinux2MachineImage := awsec2.MachineImage_LatestAmazonLinux2(nil)
-	tsnLaunchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String(name), &awsec2.LaunchTemplateProps{
+	tnLaunchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String(name), &awsec2.LaunchTemplateProps{
 		InstanceType:       awsec2.InstanceType_Of(awsec2.InstanceClass_T3, instanceSize),
 		MachineImage:       AWSLinux2MachineImage,
 		SecurityGroup:      input.SecurityGroup,
@@ -106,37 +106,37 @@ func NewTSNInstance(scope constructs.Construct, input NewTSNInstanceInput) TSNIn
 
 	// first step is to attach the init data to the launch template
 	utils.AttachInitDataToLaunchTemplate(utils.AttachInitDataToLaunchTemplateInput{
-		LaunchTemplate: tsnLaunchTemplate,
+		LaunchTemplate: tnLaunchTemplate,
 		InitData:       initData,
 		Role:           input.Role,
 		Platform:       awsec2.OperatingSystemType_LINUX,
 	})
 
-	tsnLaunchTemplate.UserData().AddCommands(
+	tnLaunchTemplate.UserData().AddCommands(
 		utils.MountVolumeToPathAndPersist("nvme1n1", "/data")...,
 	)
-	tsnLaunchTemplate.UserData().AddCommands(utils.MoveToPath(initAssetsDir+"*", mountDataDir))
+	tnLaunchTemplate.UserData().AddCommands(utils.MoveToPath(initAssetsDir+"*", mountDataDir))
 
-	node := TSNInstance{
-		LaunchTemplate: tsnLaunchTemplate,
+	node := TNInstance{
+		LaunchTemplate: tnLaunchTemplate,
 		SecurityGroup:  input.SecurityGroup,
 		Role:           input.Role,
 		PeerConnection: input.PeerConnection,
 		Index:          index,
 	}
 
-	scripts := TsnDbStartupScripts(AddStartupScriptsOptions{
-		currentPeer:        input.PeerConnection,
-		allPeers:           input.AllPeerConnections,
-		Region:             input.Vpc.Env().Region,
-		TsnImageAsset:      input.TSNDockerImageAsset,
-		DataDirPath:        jsii.String(mountDataDir),
-		TsnConfigZipPath:   jsii.String(mountDataDir + tsnConfigZipFile),
-		TsnComposePath:     jsii.String(mountDataDir + tsnComposeFile),
-		TsnConfigImagePath: jsii.String(mountDataDir + tsnConfigImageFile),
+	scripts := TnDbStartupScripts(AddStartupScriptsOptions{
+		currentPeer:       input.PeerConnection,
+		allPeers:          input.AllPeerConnections,
+		Region:            input.Vpc.Env().Region,
+		TnImageAsset:      input.TNDockerImageAsset,
+		DataDirPath:       jsii.String(mountDataDir),
+		TnConfigZipPath:   jsii.String(mountDataDir + tnConfigZipFile),
+		TnComposePath:     jsii.String(mountDataDir + tnComposeFile),
+		TnConfigImagePath: jsii.String(mountDataDir + tnConfigImageFile),
 	})
 
-	tsnLaunchTemplate.UserData().AddCommands(scripts)
+	tnLaunchTemplate.UserData().AddCommands(scripts)
 
 	return node
 }

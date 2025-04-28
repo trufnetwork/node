@@ -10,7 +10,7 @@ import (
 	"github.com/aws/jsii-runtime-go"
 )
 
-type TSNCloudfrontConfig struct {
+type TNCloudfrontConfig struct {
 	DomainName           *string
 	KgwPublicDnsName     *string
 	IndexerPublicDnsName *string
@@ -18,10 +18,10 @@ type TSNCloudfrontConfig struct {
 	Certificate          awscertificatemanager.Certificate
 }
 
-// TSNCloudfrontInstance creates a CloudFront distribution for an EC2 instance without using a load balancer.
+// TNCloudfrontInstance creates a CloudFront distribution for an EC2 instance without using a load balancer.
 // and disables caching while forwarding all headers to the instance.
 // it makes easier to use TSL certificate for the domain name.
-func TSNCloudfrontInstance(scope constructs.Construct, id *string, config TSNCloudfrontConfig) awscloudfront.Distribution {
+func TNCloudfrontInstance(scope constructs.Construct, id *string, config TNCloudfrontConfig) awscloudfront.Distribution {
 	// Define the CloudFront distribution
 	distribution := awscloudfront.NewDistribution(scope, id, &awscloudfront.DistributionProps{
 		DefaultBehavior: &awscloudfront.BehaviorOptions{

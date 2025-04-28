@@ -30,7 +30,7 @@ download_binaries() {
     fi
 
     # Set the URL for the binary
-    URL="https://github.com/kwilteam/kwil-db/releases/download/v0.10.0-beta-1/kwild_${OS}_${ARCH}.tar.gz"
+    URL="https://github.com/kwilteam/kwil-db/releases/download/v0.10.2/kwil-db_0.10.2_${OS}_${ARCH}.tar.gz"
 
     echo "Detected platform: ${OS}-${ARCH}"
     echo "Downloading binary from $URL..."
@@ -43,7 +43,7 @@ download_binaries() {
         tar -xzvf kwild.tar.gz './kwild'
         mkdir -p ./.build
         mv ./kwild .build
-        rm ./kwil-db.tar.gz
+        rm "./kwil-db.tar.gz"
 
         chmod +x ./.build/kwild
     else

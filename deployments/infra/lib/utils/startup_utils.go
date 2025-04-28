@@ -1,5 +1,3 @@
-// File: lib/utils/startup_utils.go
-
 package utils
 
 import "encoding/json"

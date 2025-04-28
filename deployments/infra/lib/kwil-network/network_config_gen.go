@@ -28,7 +28,7 @@ type KwilAutoNetworkConfigAssetInput struct {
 
 type KwilNetworkConfig struct {
 	Asset      awss3assets.Asset
-	Connection peer.TSNPeer
+	Connection peer.TNPeer
 }
 
 // KwilNetworkConfigAssetsFromNumberOfNodes generates configuration S3 asset for a network kwil node
@@ -58,11 +58,11 @@ func KwilNetworkConfigAssetsFromNumberOfNodes(scope constructs.Construct, input 
 	env := config.GetEnvironmentVariables[config.MainEnvironmentVariables](scope)
 
 	nodeKeys := make([]NodeKeys, input.NumberOfNodes)
-	peers := make([]peer.TSNPeer, input.NumberOfNodes)
+	peers := make([]peer.TNPeer, input.NumberOfNodes)
 	for i := 0; i < input.NumberOfNodes; i++ {
 		nodeKeys[i] = GenerateNodeKeys(scope)
 		// Construct full peer FQDN using HostedDomain
-		peers[i] = peer.TSNPeer{
+		peers[i] = peer.TNPeer{
 			NodeCometEncodedAddress: nodeKeys[i].NodeId,
 			Address:                 jsii.String(fmt.Sprintf("node-%d.%s", i+1, baseDomain)),
 			NodeHexAddress:          nodeKeys[i].PublicKeyPlainHex,

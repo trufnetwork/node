@@ -1,4 +1,4 @@
-package tsn
+package tn
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
@@ -7,7 +7,7 @@ import (
 	"github.com/trufnetwork/node/infra/lib/utils"
 )
 
-func NewTSNImageAsset(
+func NewTNImageAsset(
 	stack awscdk.Stack,
 ) awsecrassets.DockerImageAsset {
 	// for some reason this is not working, it's not setting the repo correctly
@@ -26,18 +26,18 @@ func NewTSNImageAsset(
 
 	cacheOpts := utils.GetBuildxCacheOpts()
 
-	return awsecrassets.NewDockerImageAsset(stack, jsii.String("TsnImageAsset"), &awsecrassets.DockerImageAssetProps{
+	return awsecrassets.NewDockerImageAsset(stack, jsii.String("TnImageAsset"), &awsecrassets.DockerImageAssetProps{
 		CacheFrom: &[]*awsecrassets.DockerCacheOption{
 			{
 				Type: jsii.String(cacheOpts.CacheType),
 				// the image name here must match from the compose file, then the cache should work
 				// across different workflows
-				Params: utils.UpdateParamsWithImageName(cacheOpts.CacheFromParams, "tsn-db"),
+				Params: utils.UpdateParamsWithImageName(cacheOpts.CacheFromParams, "tn-db"),
 			},
 		},
 		CacheTo: &awsecrassets.DockerCacheOption{
 			Type:   jsii.String(cacheOpts.CacheType),
-			Params: utils.UpdateParamsWithImageName(cacheOpts.CacheToParams, "tsn-db"),
+			Params: utils.UpdateParamsWithImageName(cacheOpts.CacheToParams, "tn-db"),
 		},
 		File:      jsii.String("deployments/Dockerfile"),
 		Directory: jsii.String("../../"),

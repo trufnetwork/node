@@ -1,22 +1,27 @@
 package stacks
 
 import (
+	"fmt"
+
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
+	"github.com/trufnetwork/node/infra/config/domain"
+	"github.com/trufnetwork/node/infra/lib/constructs/kwil_cluster"
+	"github.com/trufnetwork/node/infra/lib/constructs/observability_suite"
+	"github.com/trufnetwork/node/infra/lib/constructs/validator_set"
+	kwil_network "github.com/trufnetwork/node/infra/lib/kwil-network"
 	"github.com/trufnetwork/node/infra/lib/observer"
-	"github.com/trufnetwork/node/infra/lib/tsn/cluster"
-	"github.com/trufnetwork/node/infra/lib/utils"
 )
 
-type TsnAutoStackProps struct {
+type TnAutoStackProps struct {
 	awscdk.StackProps
 	CertStackExports CertStackExports
 }
 
-func TsnAutoStack(scope constructs.Construct, id string, props *TsnAutoStackProps) awscdk.Stack {
+func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps) awscdk.Stack {
 	var sprops awscdk.StackProps
 	if props != nil {
 		sprops = props.StackProps
@@ -39,43 +44,61 @@ func TsnAutoStack(scope constructs.Construct, id string, props *TsnAutoStackProp
 		initElements = append(initElements, initObserver)
 	}
 
-	tsnStack := TsnStack(stack, &TsnStackProps{
-		certStackExports: props.CertStackExports,
-		clusterProvider: cluster.AutoTsnClusterProvider{
-			NumberOfNodes: config.NumOfNodes(stack),
+	vpc := awsec2.Vpc_FromLookup(stack, jsii.String("VPC"), &awsec2.VpcLookupOptions{IsDefault: jsii.Bool(true)})
+	cdkParams := config.NewCDKParams(stack)
+	hd := domain.NewHostedDomain(stack, "HostedDomain", &domain.HostedDomainProps{
+		Spec: domain.Spec{
+			Stage:     domain.StageType(*cdkParams.Stage.ValueAsString()),
+			Sub:       "",
+			DevPrefix: *cdkParams.DevPrefix.ValueAsString(),
 		},
+		EdgeCertificate: false,
+	})
+
+	nodesConfig := kwil_network.KwilNetworkConfigAssetsFromNumberOfNodes(
+		stack,
+		kwil_network.KwilAutoNetworkConfigAssetInput{NumberOfNodes: config.NumOfNodes(stack)},
+	)
+
+	// TN assets via helper
+	tnAssets := validator_set.BuildTNAssets(stack, validator_set.TNAssetOptions{RootDir: "compose"})
+
+	vs := validator_set.NewValidatorSet(stack, "ValidatorSet", &validator_set.ValidatorSetProps{
+		Vpc:          vpc,
+		HostedDomain: hd,
+		NodesConfig:  nodesConfig,
+		KeyPair:      nil,
+		Assets:       tnAssets,
 		InitElements: initElements,
 	})
 
+	// Kwil Cluster assets via helper
+	kwilAssets := kwil_cluster.BuildKwilAssets(stack, kwil_cluster.KwilAssetOptions{
+		RootDir:          ".", // Assuming stack run from infra root
+		BinaryBucketName: "kwil-binaries",
+		BinaryKeyPrefix:  "gateway",
+	})
+
+	kc := kwil_cluster.NewKwilCluster(stack, "KwilCluster", &kwil_cluster.KwilClusterProps{
+		Vpc:           vpc,
+		HostedDomain:  hd,
+		Cert:          props.CertStackExports.DomainCert,
+		CorsOrigins:   cdkParams.CorsAllowOrigins.ValueAsString(),
+		SessionSecret: cdkParams.SessionSecret.ValueAsString(),
+		ChainId:       jsii.String(config.GetEnvironmentVariables[config.MainEnvironmentVariables](stack).ChainId),
+		Validators:    vs.Nodes,
+		InitElements:  initElements,
+		Assets:        kwilAssets,
+	})
+
 	if shouldIncludeObserver {
-		observer.AttachObservability(stack, &observer.AttachObservabilityInput{
-			TSNCluster:      tsnStack.TSNCluster,
-			KGWInstance:     tsnStack.KGWInstance,
-			IndexerInstance: tsnStack.IndexerInstance,
+		_ = observability_suite.NewObservabilitySuite(stack, "ObservabilitySuite", &observability_suite.ObservabilitySuiteProps{
+			Vpc:          vpc,
+			ValidatorSg:  vs.SecurityGroup,
+			GatewaySg:    kc.Gateway.SecurityGroup,
+			ParamsPrefix: jsii.String(fmt.Sprintf("/%s/observer", *cdkParams.Stage.ValueAsString())),
 		})
 	}
 
-	// create kgw and indexer from launch templates
-	// since the intention of tsn_auto_stack is quick development
-	utils.InstanceFromLaunchTemplateOnPublicSubnetWithElasticIp(
-		stack,
-		jsii.String("indexer"),
-		utils.InstanceFromLaunchTemplateOnPublicSubnetInput{
-			LaunchTemplate: tsnStack.IndexerInstance.LaunchTemplate,
-			ElasticIp:      tsnStack.IndexerInstance.ElasticIp,
-			Vpc:            tsnStack.Vpc,
-		},
-	)
-
-	utils.InstanceFromLaunchTemplateOnPublicSubnetWithElasticIp(
-		stack,
-		jsii.String("kgw"),
-		utils.InstanceFromLaunchTemplateOnPublicSubnetInput{
-			LaunchTemplate: tsnStack.KGWInstance.LaunchTemplate,
-			ElasticIp:      tsnStack.KGWInstance.ElasticIp,
-			Vpc:            tsnStack.Vpc,
-		},
-	)
-
-	return tsnStack.Stack
+	return stack
 }

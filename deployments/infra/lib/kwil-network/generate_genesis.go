@@ -15,7 +15,7 @@ import (
 )
 
 type GenerateGenesisFileInput struct {
-	PeerConnections []peer.TSNPeer
+	PeerConnections []peer.TNPeer
 	ChainId         string
 }
 

@@ -20,28 +20,28 @@ func main() {
 	// CertStack needs the app scope to create the stack
 	certStackExports := stacks.CertStack(app)
 
-	// TSN stacks will initialize their own parameters within their scope
-	stacks.TsnAutoStack(
+	// TN stacks will initialize their own parameters within their scope
+	stacks.TnAutoStack(
 		app,
-		config.WithStackSuffix(app, "TSN-DB-Auto"),
-		&stacks.TsnAutoStackProps{
+		config.WithStackSuffix(app, "TN-DB-Auto"),
+		&stacks.TnAutoStackProps{
 			StackProps: awscdk.StackProps{
 				Env:                   utils.CdkEnv(),
 				CrossRegionReferences: jsii.Bool(true),
-				Description:           jsii.String("TSN-DB Auto is a stack that uses on-fly generated config files for the TSN nodes"),
+				Description:           jsii.String("TN-DB Auto is a stack that uses on-fly generated config files for the TN nodes"),
 			},
 			CertStackExports: certStackExports,
 		},
 	)
 
-	stacks.TsnFromConfigStack(
+	stacks.TnFromConfigStack(
 		app,
-		config.WithStackSuffix(app, "TSN-From-Config"),
-		&stacks.TsnFromConfigStackProps{
+		config.WithStackSuffix(app, "TN-From-Config"),
+		&stacks.TnFromConfigStackProps{
 			StackProps: awscdk.StackProps{
 				Env:                   utils.CdkEnv(),
 				CrossRegionReferences: jsii.Bool(true),
-				Description:           jsii.String("TSN-From-Config is a stack that uses a pre-existing config file for the TSN nodes"),
+				Description:           jsii.String("TN-From-Config is a stack that uses a pre-existing config file for the TN nodes"),
 			},
 			CertStackExports: certStackExports,
 		},

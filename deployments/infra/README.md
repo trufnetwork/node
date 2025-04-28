@@ -10,6 +10,45 @@ The infrastructure can be deployed in two ways:
 
 The `cdk.json` file tells the CDK toolkit how to execute your app.
 
+## High-level Constructs
+We have extracted three reusable L3 constructs under [deployments/infra/lib/constructs](https://github.com/trufnetwork/node/tree/main/deployments/infra/lib/constructs) to simplify stack logic:
+
+- **ValidatorSet**: provisions a group of TN validator EC2 instances with Elastic IPs, DNS A records, a shared IAM role, and security group.
+  - Props: `Vpc`, `HostedDomain`, `NodesConfig`, `KeyPair`, `ImageAssets`, `InitElements` (e.g. custom EC2 user-data such as observer bootstrap)
+  - Outputs: `Nodes []tn.TNInstance`, `Role awsiam.IRole`, `SecurityGroup awsec2.SecurityGroup`
+  - Import:
+    ```go
+    import "github.com/trufnetwork/node/infra/lib/constructs/validator_set"
+    ```
+  - Usage:
+    ```go
+    vs := validator_set.NewValidatorSet(stack, "ValidatorSet", &validator_set.ValidatorSetProps{ ... })
+    ```
+
+- **KwilCluster**: provisions a Kwil Gateway, an Indexer, and an optional CloudFront distribution.
+  - Props: `Vpc`, `HostedDomain`, `Cert` (optional—if nil, CloudFront is skipped), `CorsOrigins`, `SessionSecret`, `ChainId`, `Validators`, `InitElements`, `KGWDirAsset`, `KGWBinaryAsset`, `IndexerDirAsset`
+  - Outputs: `Gateway kwil_gateway.KGWInstance`, `Indexer kwil_indexer.IndexerInstance`, `Cdn awscloudfront.Distribution`
+  - Import:
+    ```go
+    import "github.com/trufnetwork/node/infra/lib/constructs/kwil_cluster"
+    ```
+  - Usage:
+    ```go
+    kc := kwil_cluster.NewKwilCluster(stack, "KwilCluster", &kwil_cluster.KwilClusterProps{ ... })
+    ```
+
+- **ObservabilitySuite**: deploys a Vector EC2 instance for logs/metrics ingestion and writes SSM parameters for observer configuration.
+  - Props: `Vpc`, `ValidatorSg`, `GatewaySg`, `ParamsPrefix`
+  - Outputs: `VectorInstance awsec2.Instance`, `ParamPaths []*string`
+  - Import:
+    ```go
+    import "github.com/trufnetwork/node/infra/lib/constructs/observability_suite"
+    ```
+  - Usage:
+    ```go
+    obs := observability_suite.NewObservabilitySuite(stack, "ObservabilitySuite", &observability_suite.ObservabilitySuiteProps{ ... })
+    ```
+
 ## Deployment Methods
 
 ### 1. Auto-generated Configuration
@@ -75,8 +114,8 @@ For the prod environment, which uses the pre-configured setup, upgrading a node 
 1. Deploy the stack to update the launch template with the new image:
 
     ```bash
-    cdk deploy --profile <YOUR-AWS-PROFILE> TSN-From-Config* TSN-Cert* \
-    --parameters TSN-From-Config-<environment>-Stack:sessionSecret=<SESSION-SECRET>
+    cdk deploy --profile <YOUR-AWS-PROFILE> TN-From-Config* TN-Cert* \
+    --parameters TN-From-Config-<environment>-Stack:sessionSecret=<SESSION-SECRET>
     ```
 
 2. After deployment, SSH into the instance you want to upgrade.
@@ -87,16 +126,16 @@ For the prod environment, which uses the pre-configured setup, upgrading a node 
     docker pull <latest-image>
     ```
 
-4. Tag the image as `tsn:local`
+4. Tag the image as `tn:local`
 
     ```bash
-    docker tag <latest-image> tsn:local
+    docker tag <latest-image> tn:local
     ```
 
-5. Restart the systemd service that runs the TSN node:
+5. Restart the systemd service that runs the TN node:
 
     ```bash
-    sudo systemctl restart tsn-db-app.service
+    sudo systemctl restart tn-db-app.service
     ```
 
 This process ensures that your node is running the latest version of the software while maintaining the pre-configured setup.

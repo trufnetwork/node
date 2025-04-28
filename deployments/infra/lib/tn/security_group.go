@@ -1,25 +1,26 @@
-package tsn
+package tn
 
 import (
 	"fmt"
+
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/lib/kwil-network/peer"
 )
 
-type NewTSNSecurityGroupInput struct {
+type NewTNSecurityGroupInput struct {
 	Vpc awsec2.IVpc
 }
 
-func NewTSNSecurityGroup(scope constructs.Construct, input NewTSNSecurityGroupInput) awsec2.SecurityGroup {
-	id := "TSN-DB-SG"
+func NewTNSecurityGroup(scope constructs.Construct, input NewTNSecurityGroupInput) awsec2.SecurityGroup {
+	id := "TN-DB-SG"
 	vpc := input.Vpc
 
 	sg := awsec2.NewSecurityGroup(scope, jsii.String(id), &awsec2.SecurityGroupProps{
 		Vpc:              vpc,
 		AllowAllOutbound: jsii.Bool(true),
-		Description:      jsii.String("TSN-DB Instance security group."),
+		Description:      jsii.String("TN-DB Instance security group."),
 	})
 
 	// These ports are open to the public
@@ -27,10 +28,10 @@ func NewTSNSecurityGroup(scope constructs.Construct, input NewTSNSecurityGroupIn
 		port int
 		name string
 	}{
-		{peer.TsnRPCPort, "TSN RPC port"},
-		{peer.TsnIndexerPort, "TSN Indexer port"},
-		{peer.TsnP2pPort, "TSN P2P port"},
-		{peer.TsnCometBFTRPCPort, "TSN Comet BFT RPC port"},
+		{peer.TnRPCPort, "TN RPC port"},
+		{peer.TnIndexerPort, "TN Indexer port"},
+		{peer.TnP2pPort, "TN P2P port"},
+		{peer.TnCometBFTRPCPort, "TN Comet BFT RPC port"},
 		{22, "SSH port"},
 	}
 

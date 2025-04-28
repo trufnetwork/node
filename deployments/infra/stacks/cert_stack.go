@@ -18,7 +18,7 @@ type CertStackExports struct {
 func CertStack(app awscdk.App) CertStackExports {
 	env := utils.CdkEnv()
 	env.Region = jsii.String("us-east-1")
-	stackName := config.WithStackSuffix(app, "TSN-Cert")
+	stackName := config.WithStackSuffix(app, "TN-Cert")
 	stack := awscdk.NewStack(app, jsii.String(stackName), &awscdk.StackProps{
 		Env:                   env,
 		CrossRegionReferences: jsii.Bool(true),

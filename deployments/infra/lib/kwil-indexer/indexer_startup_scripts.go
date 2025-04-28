@@ -6,7 +6,7 @@ import (
 
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/lib/kwil-network/peer"
-	"github.com/trufnetwork/node/infra/lib/tsn"
+	"github.com/trufnetwork/node/infra/lib/tn"
 	"github.com/trufnetwork/node/infra/lib/utils"
 )
 
@@ -17,28 +17,28 @@ type IndexerEnvConfig struct {
 }
 
 type AddKwilIndexerStartupScriptsOptions struct {
-	TSNInstance          tsn.TSNInstance
+	TNInstance           tn.TNInstance
 	indexerZippedDirPath *string
 }
 
 func AddKwilIndexerStartupScripts(options AddKwilIndexerStartupScriptsOptions) *string {
-	tsnInstance := options.TSNInstance
+	tnInstance := options.TNInstance
 
 	// Create the environment variables for the indexer compose file
 	indexerEnvConfig := IndexerEnvConfig{
-		// note: the tsn p2p port (usually 26656) will be automatically crawled by the indexer
+		// note: the tn p2p port (usually 26656) will be automatically crawled by the indexer
 		NodeCometBftEndpoint: jsii.String(fmt.Sprintf(
 			"http://%s:%s",
-			// public ip so the external elastic ip is used to allow the indexer to connect to the TSN node
-			*tsnInstance.PeerConnection.Address,
-			strconv.Itoa(peer.TsnCometBFTRPCPort),
+			// public ip so the external elastic ip is used to allow the indexer to connect to the TN node
+			*tnInstance.PeerConnection.Address,
+			strconv.Itoa(peer.TNCometBFTRPCPort),
 		)),
 		// postgresql://kwild@<ip>:<psqlport>/kwild?sslmode=disable
 		KwilPgConn: jsii.String(fmt.Sprintf(
 			"postgresql://kwild@%s:%s/kwild?sslmode=disable",
-			// public ip so the external elastic ip is used to allow the indexer to connect to the TSN node
-			*tsnInstance.PeerConnection.Address,
-			strconv.Itoa(peer.TSNPostgresPort),
+			// public ip so the external elastic ip is used to allow the indexer to connect to the TN node
+			*tnInstance.PeerConnection.Address,
+			strconv.Itoa(peer.TNPostgresPort),
 		)),
 		PostgresVolume: jsii.String("/data/postgres"),
 	}
