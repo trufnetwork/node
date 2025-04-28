@@ -69,13 +69,37 @@ CREATE OR REPLACE ACTION insert_records(
         }
     }
 
-    -- Insert all records
-    FOR $i IN 1..$num_records {
-        $stream_id_val TEXT := $stream_id[$i];
-        $data_provider_val TEXT := $data_provider[$i];
-        $event_time_val INT8 := $event_time[$i];
-        $value_val NUMERIC(36,18) := $value[$i];
-        INSERT INTO primitive_events (stream_id, data_provider, event_time, value, created_at)
-        VALUES ($stream_id_val, $data_provider_val, $event_time_val, $value_val, $current_block);
-    }
+    -- Insert all records using WITH RECURSIVE pattern to avoid round trips
+    WITH RECURSIVE 
+    indexes AS (
+        SELECT 1 AS idx
+        UNION ALL
+        SELECT idx + 1 FROM indexes
+        WHERE idx < $num_records
+    ),
+    record_arrays AS (
+        SELECT 
+            $stream_id AS stream_ids,
+            $data_provider AS data_providers,
+            $event_time AS event_times,
+            $value AS values_array
+    ),
+    arguments AS (
+        SELECT 
+            record_arrays.stream_ids[idx] AS stream_id,
+            record_arrays.data_providers[idx] AS data_provider,
+            record_arrays.event_times[idx] AS event_time,
+            record_arrays.values_array[idx] AS value
+        FROM indexes
+        JOIN record_arrays ON 1=1
+    )
+    INSERT INTO primitive_events (stream_id, data_provider, event_time, value, created_at, truflation_created_at)
+    SELECT 
+        stream_id, 
+        data_provider, 
+        event_time, 
+        value, 
+        $current_block,
+        NULL
+    FROM arguments;
 };
