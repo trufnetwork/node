@@ -42,5 +42,13 @@
   "hosted-zone:account=344375646931:domainName=tsn.test.truflation.com:region=us-east-2": {
     "Id": "/hostedzone/Z09916211ACOKBTZWD91W",
     "Name": "tsn.test.truflation.com."
+  },
+  "hosted-zone:account=344375646931:domainName=infra.truf.network:region=us-east-1": {
+    "Id": "/hostedzone/Z05423321GU060GLE37U5",
+    "Name": "infra.truf.network."
+  },
+  "hosted-zone:account=344375646931:domainName=infra.truf.network:region=us-east-2": {
+    "Id": "/hostedzone/Z05423321GU060GLE37U5",
+    "Name": "infra.truf.network."
   }
 }

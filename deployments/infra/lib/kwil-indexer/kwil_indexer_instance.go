@@ -80,7 +80,7 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 		port int
 		name string
 	}{
-		{peer.TNPostgresPort, "TN Postgres port"},
+		{peer.TnPostgresPort, "TN Postgres port"},
 	}
 
 	// allow communication from indexer to TN node

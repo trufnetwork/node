@@ -33,10 +33,10 @@ type KwilAssetOptions struct {
 // BuildKwilAssets packages gateway and indexer directories and binaries
 func BuildKwilAssets(scope constructs.Construct, opts KwilAssetOptions) KwilAssets {
 	gwZip := awss3assets.NewAsset(scope, jsii.String("KGWDir"), &awss3assets.AssetProps{
-		Path: jsii.String(filepath.Join(opts.RootDir, "deployments/gateway")),
+		Path: jsii.String(filepath.Join(opts.RootDir, "deployments/gateway/")),
 	})
 	ixZip := awss3assets.NewAsset(scope, jsii.String("IndexerDir"), &awss3assets.AssetProps{
-		Path: jsii.String(filepath.Join(opts.RootDir, "deployments/indexer")),
+		Path: jsii.String(filepath.Join(opts.RootDir, "deployments/indexer/")),
 	})
 	bin := utils.S3Object{
 		Bucket: awss3.Bucket_FromBucketName(scope, jsii.String("BinaryBucket"), jsii.String(opts.BinaryBucketName)),

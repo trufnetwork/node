@@ -14,6 +14,7 @@ import (
 	"github.com/trufnetwork/node/infra/lib/constructs/validator_set"
 	kwil_network "github.com/trufnetwork/node/infra/lib/kwil-network"
 	"github.com/trufnetwork/node/infra/lib/observer"
+	"github.com/trufnetwork/node/infra/lib/utils"
 )
 
 type TnAutoStackProps struct {
@@ -61,7 +62,7 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 	)
 
 	// TN assets via helper
-	tnAssets := validator_set.BuildTNAssets(stack, validator_set.TNAssetOptions{RootDir: "compose"})
+	tnAssets := validator_set.BuildTNAssets(stack, validator_set.TNAssetOptions{RootDir: utils.GetProjectRootDir()})
 
 	vs := validator_set.NewValidatorSet(stack, "ValidatorSet", &validator_set.ValidatorSetProps{
 		Vpc:          vpc,
@@ -74,7 +75,7 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 
 	// Kwil Cluster assets via helper
 	kwilAssets := kwil_cluster.BuildKwilAssets(stack, kwil_cluster.KwilAssetOptions{
-		RootDir:          ".", // Assuming stack run from infra root
+		RootDir:          utils.GetProjectRootDir(),
 		BinaryBucketName: "kwil-binaries",
 		BinaryKeyPrefix:  "gateway",
 	})

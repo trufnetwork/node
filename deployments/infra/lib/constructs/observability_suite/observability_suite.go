@@ -5,7 +5,6 @@ import (
 	"path"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
-	awsssm "github.com/aws/aws-cdk-go/awscdk/v2/awsssm"
 	"github.com/aws/constructs-go/constructs/v10"
 	jsii "github.com/aws/jsii-runtime-go"
 
@@ -40,7 +39,7 @@ func NewObservabilitySuite(scope constructs.Construct, id string, props *Observa
 	os := &ObservabilitySuite{Construct: node}
 
 	// write parameters to SSM
-	descs, err := utils.GetParameterDescriptors(observer.ObserverParameters{})
+	descs, err := utils.GetParameterDescriptors(&observer.ObserverParameters{})
 	if err != nil {
 		panic(fmt.Errorf("failed to get parameter descriptors: %w", err))
 	}
@@ -48,16 +47,7 @@ func NewObservabilitySuite(scope constructs.Construct, id string, props *Observa
 	for _, desc := range descs {
 		if desc.IsSSMParameter {
 			name := path.Join(*props.ParamsPrefix, desc.SSMPath)
-			typeStr := awsssm.ParameterType_STRING
-			if desc.IsSecure {
-				typeStr = awsssm.ParameterType_SECURE_STRING
-			}
-			param := awsssm.NewStringParameter(node, jsii.String(desc.EnvName), &awsssm.StringParameterProps{
-				ParameterName: jsii.String(name),
-				StringValue:   jsii.String(desc.EnvValue),
-				Type:          typeStr,
-			})
-			paths = append(paths, param.ParameterName())
+			paths = append(paths, jsii.String(name))
 		}
 	}
 	os.ParamPaths = paths
