@@ -15,7 +15,8 @@ func NewAlbFronting() Fronting {
 }
 
 // AttachRoutes is not yet implemented for ALB fronting.
-func (a *albFronting) AttachRoutes(scope constructs.Construct, id string, props *FrontingProps) *string {
+// It panics to indicate ALB fronting is unimplemented, conforming to the Fronting interface.
+func (a *albFronting) AttachRoutes(scope constructs.Construct, id string, props *FrontingProps) FrontingResult {
 	// TODO: create awselasticloadbalancingv2.ApplicationLoadBalancer,
 	//       add HTTP/HTTPS listeners, configure target groups for KGW and Indexer,
 	//       map custom domain with props.RecordName + ZoneName(), and

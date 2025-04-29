@@ -2,8 +2,8 @@ package main
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
-	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
+	"github.com/trufnetwork/node/infra/lib/constructs/fronting"
 	"github.com/trufnetwork/node/infra/lib/utils"
 	"github.com/trufnetwork/node/infra/stacks"
 	"github.com/trufnetwork/node/infra/stacks/benchmark"
@@ -17,15 +17,13 @@ func init() {
 func main() {
 	app := awscdk.NewApp(nil)
 
-	// Determine desired fronting type: api or cloudfront
-	frontingType := *app.Node().TryGetContext(jsii.String("frontingType")).(*string)
-	if frontingType == "" {
-		frontingType = "api"
-	}
+	// Determine desired fronting type via CFN parameter with validation
+	selector := config.NewFrontingSelector(app)
+	frontingType := selector.Kind
 
 	// Only deploy the legacy CertStack if using CloudFront
 	var certExports *stacks.CertStackExports
-	if frontingType == "cloudfront" {
+	if frontingType == fronting.KindCloudFront {
 		exports := stacks.CertStack(app)
 		certExports = &exports
 	}

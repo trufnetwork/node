@@ -10,7 +10,6 @@ import (
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
 	"github.com/trufnetwork/node/infra/config/domain"
-	provider "github.com/trufnetwork/node/infra/lib/cert/provider"
 	fronting "github.com/trufnetwork/node/infra/lib/constructs/fronting"
 	"github.com/trufnetwork/node/infra/lib/constructs/kwil_cluster"
 	"github.com/trufnetwork/node/infra/lib/constructs/observability_suite"
@@ -102,24 +101,22 @@ func TnFromConfigStack(
 		Assets:        kwilAssets,
 	})
 
-	// ------------------------------------------------------------------
-	// Regional ACM cert for the HTTP-API custom domain
-	// ------------------------------------------------------------------
-	fqdn := fmt.Sprintf("api.%s", *hd.Zone.ZoneName())
-	cp := provider.New()
-	cert := cp.Get(stack, "ApiCert", hd.Zone, fqdn, provider.ScopeRegion)
-
 	// Wire up API Gateway fronting
 	ag := fronting.NewApiGatewayFronting()
 	recordName := jsii.String("api." + *cdkParams.DevPrefix.ValueAsString())
-	apiDomain := ag.AttachRoutes(stack, "APIGateway", &fronting.FrontingProps{
-		HostedZone:      hd.Zone,
-		Certificate:     cert,
-		KGWEndpoint:     kc.Gateway.InstanceDnsName,
-		IndexerEndpoint: kc.Indexer.InstanceDnsName,
-		RecordName:      recordName,
+	// Provision the front-end and retrieve its FQDN and certificate (plugin issues cert)
+	frontRes := ag.AttachRoutes(stack, "APIGateway", &fronting.FrontingProps{
+		HostedZone:          hd.Zone,
+		ImportedCertificate: nil,
+		AdditionalSANs:      nil,
+		KGWEndpoint:         kc.Gateway.InstanceDnsName,
+		IndexerEndpoint:     kc.Indexer.InstanceDnsName,
+		RecordName:          recordName,
 	})
-	awscdk.NewCfnOutput(stack, jsii.String("ApiDomain"), &awscdk.CfnOutputProps{Value: apiDomain})
+	// Output the custom domain
+	awscdk.NewCfnOutput(stack, jsii.String("ApiDomain"), &awscdk.CfnOutputProps{Value: frontRes.FQDN})
+	// Output the certificate ARN
+	awscdk.NewCfnOutput(stack, jsii.String("ApiCertArn"), &awscdk.CfnOutputProps{Value: frontRes.Certificate.CertificateArn()})
 
 	// Observability
 	_ = observability_suite.NewObservabilitySuite(stack, "ObservabilitySuite", &observability_suite.ObservabilitySuiteProps{

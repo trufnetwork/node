@@ -14,8 +14,8 @@ func NewCloudFrontFronting() Fronting {
 	return &cloudFront{}
 }
 
-// AttachRoutes is not yet implemented for CloudFront.
-func (c *cloudFront) AttachRoutes(scope constructs.Construct, id string, props *FrontingProps) *string {
+// AttachRoutes is not yet implemented for CloudFront and panics to indicate unimplemented.
+func (c *cloudFront) AttachRoutes(scope constructs.Construct, id string, props *FrontingProps) FrontingResult {
 	// TODO: create awscloudfront.Distribution, ApiMapping, and awsroute53.ARecord
 	panic("CloudFront fronting not implemented yet")
 }
