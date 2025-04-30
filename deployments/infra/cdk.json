@@ -59,6 +59,7 @@
     "@aws-cdk/aws-codepipeline-actions:useNewDefaultBranchForCodeCommitSource": true,
     "@aws-cdk/aws-cloudwatch-actions:changeLambdaPermissionLogicalIdForLambdaAction": true,
     "@aws-cdk/aws-codepipeline:crossAccountKeysDefaultValueToFalse": true,
+    "frontingType": "api",
     "numOfNodes": 2,
     "keyPairName": "tsn-key-pair"
   }

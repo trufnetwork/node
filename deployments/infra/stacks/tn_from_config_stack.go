@@ -45,8 +45,7 @@ func TnFromConfigStack(
 	cdkParams := config.NewCDKParams(stack)
 
 	// Define Fronting Type parameter within stack scope
-	selector := config.NewFrontingSelector(stack) // Get selected kind
-	selectedKind := selector.Kind
+	selectedKind := config.GetFrontingKind(stack) // Use context helper
 
 	// Setup observer init elements
 	initElements := []awsec2.InitElement{}                                     // Base elements

@@ -38,9 +38,6 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 	stage := *cdkParams.Stage.ValueAsString()
 	devPrefix := *cdkParams.DevPrefix.ValueAsString()
 
-	// Define Fronting Type parameter within stack scope
-	_ = config.NewFrontingSelector(stack) // Result not explicitly needed here, but creates the parameter
-
 	initElements := []awsec2.InitElement{} // Base elements only
 	var observerAsset awss3assets.Asset    // Keep asset variable, needed for Attach call
 
@@ -88,8 +85,7 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 	})
 
 	// Create KwilCluster
-	selector := config.NewFrontingSelector(stack) // Get selected kind
-	selectedKind := selector.Kind
+	selectedKind := config.GetFrontingKind(stack) // Use context helper
 	kc := kwil_cluster.NewKwilCluster(stack, "KwilCluster", &kwil_cluster.KwilClusterProps{
 		Vpc:                  vpc,
 		HostedDomain:         hd,
