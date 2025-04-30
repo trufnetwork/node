@@ -12,8 +12,6 @@ import (
 func InstallDockerScript() (string, error) {
 	script, err := renderer.Render(renderer.TplInstallDocker, nil)
 	if err != nil {
-		// log.Printf("Error rendering install_docker.sh.tmpl: %v", err)
-		// return ""
 		return "", fmt.Errorf("render %s: %w", renderer.TplInstallDocker, err)
 	}
 	return script, nil
@@ -70,8 +68,6 @@ type ConfigureDockerInput struct {
 func ConfigureDocker(input ConfigureDockerInput) (string, error) {
 	script, err := renderer.Render(renderer.TplConfigureDocker, input)
 	if err != nil {
-		// log.Printf("Error rendering configure_docker.sh.tmpl: %v", err)
-		// return ""
 		return "", fmt.Errorf("render %s: %w", renderer.TplConfigureDocker, err)
 	}
 	return script, nil

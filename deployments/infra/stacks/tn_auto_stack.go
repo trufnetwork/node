@@ -37,6 +37,8 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 	cdkParams := config.NewCDKParams(stack)
 	stage := *cdkParams.Stage.ValueAsString()
 	devPrefix := *cdkParams.DevPrefix.ValueAsString()
+	// Retrieve Main environment variables including DbOwner
+	autoEnvVars := config.GetEnvironmentVariables[config.AutoStackEnvironmentVariables](stack)
 
 	initElements := []awsec2.InitElement{} // Base elements only
 	var observerAsset awss3assets.Asset    // Keep asset variable, needed for Attach call
@@ -61,7 +63,10 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 
 	peers, genesisAsset := kwil_network.KwilNetworkConfigAssetsFromNumberOfNodes(
 		stack,
-		kwil_network.KwilAutoNetworkConfigAssetInput{NumberOfNodes: config.NumOfNodes(stack)},
+		kwil_network.KwilAutoNetworkConfigAssetInput{
+			NumberOfNodes: config.NumOfNodes(stack),
+			DbOwner:       autoEnvVars.DbOwner, // Pass DbOwner here
+		},
 	)
 
 	// TN assets via helper

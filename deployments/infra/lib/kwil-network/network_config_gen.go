@@ -22,7 +22,9 @@ type NetworkConfigOutput struct {
 }
 
 type KwilAutoNetworkConfigAssetInput struct {
-	NumberOfNodes int
+	NumberOfNodes   int
+	DbOwner         string
+	GenesisFilePath string
 }
 
 type KwilNetworkConfig struct {
@@ -61,22 +63,30 @@ func KwilNetworkConfigAssetsFromNumberOfNodes(scope constructs.Construct, input 
 			NodeCometEncodedAddress: nodeKeys[i].NodeId,
 			Address:                 jsii.String(fmt.Sprintf("node-%d.%s", i+1, baseDomain)),
 			NodeHexAddress:          nodeKeys[i].PublicKeyPlainHex,
-			// Store PrivateKey temporarily if needed for genesis/other setup, but don't expose widely
-			// Consider if GenerateNodeKeys can return a struct holding all keys securely
-			// PrivateKey: nodeKeys[i].PrivateKeyHex, // Example: Add if needed by GenerateGenesisFile directly
 		}
 	}
 
-	// Generate Genesis File (assuming it needs peer info)
-	genesisFilePath := GenerateGenesisFile(scope, GenerateGenesisFileInput{
-		ChainId:         env.ChainId,
-		PeerConnections: peers, // Pass peers to include validators in genesis
-	})
+	var genesisAsset awss3assets.Asset
 
-	// Create Genesis Asset
-	genesisAsset := awss3assets.NewAsset(scope, jsii.String("GenesisFileAsset"), &awss3assets.AssetProps{
-		Path: jsii.String(genesisFilePath), // Path to the generated genesis.json
-	})
+	// Either generate a genesis file or use the provided one
+	if input.GenesisFilePath != "" {
+		genesisAsset = awss3assets.NewAsset(scope, jsii.String("GenesisFileAsset"), &awss3assets.AssetProps{
+			Path: jsii.String(input.GenesisFilePath), // Path to the provided genesis.json
+		})
+	} else if input.DbOwner != "" {
+		genesisFilePath := GenerateGenesisFile(scope, GenerateGenesisFileInput{
+			ChainId:         env.ChainId,
+			PeerConnections: peers, // Pass peers to include validators in genesis
+			DbOwner:         input.DbOwner,
+		})
+
+		// Create Genesis Asset
+		genesisAsset = awss3assets.NewAsset(scope, jsii.String("GenesisFileAsset"), &awss3assets.AssetProps{
+			Path: jsii.String(genesisFilePath), // Path to the generated genesis.json
+		})
+	} else {
+		panic("DbOwner or GenesisFilePath must be provided")
+	}
 
 	// Return the list of peers and the single genesis asset
 	return peers, genesisAsset

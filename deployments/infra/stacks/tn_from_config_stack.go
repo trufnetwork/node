@@ -65,7 +65,10 @@ func TnFromConfigStack(
 	// Generate network configs from number of private keys
 	peers, genesisAsset := kwil_network.KwilNetworkConfigAssetsFromNumberOfNodes(
 		stack,
-		kwil_network.KwilAutoNetworkConfigAssetInput{NumberOfNodes: len(privateKeys)},
+		kwil_network.KwilAutoNetworkConfigAssetInput{
+			NumberOfNodes:   len(privateKeys),
+			GenesisFilePath: cfg.GenesisPath,
+		},
 	)
 
 	// TN assets via helper

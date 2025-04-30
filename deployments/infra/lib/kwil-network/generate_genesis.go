@@ -17,6 +17,7 @@ import (
 type GenerateGenesisFileInput struct {
 	PeerConnections []peer.TNPeer
 	ChainId         string
+	DbOwner         string
 }
 
 // GenerateGenesisFile generates a genesis file, with all peers in the network as validators
@@ -44,10 +45,11 @@ func GenerateGenesisFile(scope constructs.Construct, input GenerateGenesisFileIn
 	}
 	// Generate configuration using kwild CLI
 	// kwild setup init --chain-id <chainId> --root <tmp-dir>
-	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables](scope)
-	cmd := exec.Command(envVars.KwildCliPath, "setup", "init",
+	envVarsMain := config.GetEnvironmentVariables[config.MainEnvironmentVariables](scope)
+	cmd := exec.Command(envVarsMain.KwildCliPath, "setup", "init",
 		"--chain-id", input.ChainId,
 		"--root", *tempDir,
+		"--db-owner", input.DbOwner,
 	)
 
 	// Run the kwild setup command, capturing stdout/stderr
