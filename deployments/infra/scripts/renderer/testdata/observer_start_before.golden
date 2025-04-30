@@ -1,0 +1,93 @@
+
+# Write script content to /opt/observer/start.sh
+cat <<'EOF_SCRIPT_WRAPPER' > "/opt/observer/start.sh"
+# -----------------------------------------------------------------------------
+# ⚠ WARNING: This file is auto-generated from a template. Do not edit directly!
+# -----------------------------------------------------------------------------#!/bin/bash
+# Script to configure and start the observer service on an EC2 instance.
+
+set -euo pipefail
+# set -x # Uncomment for debugging ONLY. Avoid in production due to potential secret leakage.
+
+# --- Configuration ---
+OBSERVER_DIR="/opt/observer"
+PREFIX="/test/prefix"
+AWS_REGION=${AWS::Region}
+
+# Parameterized paths
+ENV_FILE="$OBSERVER_DIR/.env"
+COMPOSE_FILE="$OBSERVER_DIR/observer-compose.yml"
+
+# -----------------------------------------------------------------------------
+# 🚨 AUTO-GENERATED from Go templates – edit the .tmpl, not rendered output 🚨
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# Helper function to fetch parameters from AWS SSM
+# -----------------------------------------------------------------------------
+fetch_parameter() {
+ local param_name="$1"
+ local is_secure="$2"
+ local env_var_name="$3"
+ if [ "$is_secure" = "true" ]; then
+	 value=$(aws ssm get-parameter --name "$param_name" --with-decryption --query "Parameter.Value" --output text --region $AWS_REGION)
+ else
+	 value=$(aws ssm get-parameter --name "$param_name" --query "Parameter.Value" --output text --region $AWS_REGION)
+ fi
+ if [ -z "$value" ]; then
+	 echo "Error: Parameter $param_name not found or empty"
+	 exit 1
+ fi
+ export "$env_var_name=$value"
+}
+
+# -----------------------------------------------------------------------------
+# Fetch parameters from SSM and/or use static defaults, then export them
+# -----------------------------------------------------------------------------
+
+fetch_parameter "/test/prefix/GRAFANA_CLOUD_PROMETHEUS_ENDPOINT" "false" "GRAFANA_CLOUD_PROMETHEUS_ENDPOINT"
+
+fetch_parameter "/test/prefix/GRAFANA_CLOUD_PROMETHEUS_USER" "false" "GRAFANA_CLOUD_PROMETHEUS_USER"
+
+fetch_parameter "/test/prefix/GRAFANA_CLOUD_PROMETHEUS_PASSWORD" "true" "GRAFANA_CLOUD_PROMETHEUS_PASSWORD"
+
+fetch_parameter "/test/prefix/GRAFANA_CLOUD_LOGS_DOMAIN" "false" "GRAFANA_CLOUD_LOGS_DOMAIN"
+
+fetch_parameter "/test/prefix/GRAFANA_CLOUD_LOGS_USER" "false" "GRAFANA_CLOUD_LOGS_USER"
+
+fetch_parameter "/test/prefix/GRAFANA_CLOUD_LOGS_PASSWORD" "true" "GRAFANA_CLOUD_LOGS_PASSWORD"
+
+export INSTANCE_NAME=""
+
+export SERVICE_NAME=""
+
+export ENV=""
+
+
+# -----------------------------------------------------------------------------
+# Write fetched/exported environment variables to .env file for compose
+# -----------------------------------------------------------------------------
+cat << EOF1 > "$ENV_FILE"
+GRAFANA_CLOUD_PROMETHEUS_ENDPOINT=$GRAFANA_CLOUD_PROMETHEUS_ENDPOINT
+GRAFANA_CLOUD_PROMETHEUS_USER=$GRAFANA_CLOUD_PROMETHEUS_USER
+GRAFANA_CLOUD_PROMETHEUS_PASSWORD=$GRAFANA_CLOUD_PROMETHEUS_PASSWORD
+GRAFANA_CLOUD_LOGS_DOMAIN=$GRAFANA_CLOUD_LOGS_DOMAIN
+GRAFANA_CLOUD_LOGS_USER=$GRAFANA_CLOUD_LOGS_USER
+GRAFANA_CLOUD_LOGS_PASSWORD=$GRAFANA_CLOUD_LOGS_PASSWORD
+INSTANCE_NAME=$INSTANCE_NAME
+SERVICE_NAME=$SERVICE_NAME
+ENV=$ENV
+EOF1
+
+chmod 600 $ENV_FILE
+chown ec2-user:ec2-user $ENV_FILE
+
+# -----------------------------------------------------------------------------
+# Start Docker Compose using the generated .env file
+# -----------------------------------------------------------------------------
+docker compose -f $COMPOSE_FILE up -d --wait || true 
+
+EOF_SCRIPT_WRAPPER
+
+# Make script executable
+chmod +x "/opt/observer/start.sh"

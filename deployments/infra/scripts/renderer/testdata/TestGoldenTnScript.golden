@@ -1,0 +1,60 @@
+# -----------------------------------------------------------------------------
+# ⚠ WARNING: This file is auto-generated from a template. Do not edit directly!
+# -----------------------------------------------------------------------------#!/bin/bash
+set -euo pipefail
+
+# Create necessary directories on host
+mkdir -p /data/tn
+mkdir -p /data/postgres
+
+# ECR Login and Image Pulling
+# Retry logic for ECR login and pull in case of transient network issues
+for i in {1..5}; do
+  echo "Attempt $i/5: Logging into ECR and pulling image..."
+  if aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 123456789012.dkr.ecr.us-west-2.amazonaws.com/mock-repo && \
+     docker pull 123456789012.dkr.ecr.us-west-2.amazonaws.com/mock-repo:latest; then
+    echo "ECR login and pull successful."
+    # Tag the image as tn-db:local, as the docker-compose file expects that
+    docker tag 123456789012.dkr.ecr.us-west-2.amazonaws.com/mock-repo:latest tn-db:local
+    break
+  fi
+  if [ $i -eq 5 ]; then
+    echo "ECR login/pull failed after 5 attempts."
+    exit 1
+  fi
+  echo "Attempt $i failed, sleeping for 5 seconds..."
+  sleep 5
+done
+
+# Create and start systemd service for Docker Compose
+SERVICE_NAME=tn-db-app
+SERVICE_DESC="TN Docker Application"
+START_CMD="/bin/bash -c \"docker compose -f /path/to/tn-compose.yml up -d --wait || true\""
+STOP_CMD="/bin/bash -c \"docker compose -f /path/to/tn-compose.yml down\""
+
+# Systemd unit file generation
+# -----------------------------------------------------------------------------
+# 🚨 AUTO-GENERATED from Go templates – edit the .tmpl, not rendered output 🚨
+# -----------------------------------------------------------------------------
+cat <<EOF_SYSD > "/etc/systemd/system/${SERVICE_NAME}.service"
+[Unit]
+Description=${SERVICE_DESC}
+Restart=on-failure
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=${START_CMD}
+ExecStop=${STOP_CMD}
+Environment=HOSTNAME="mock-peer.example.com"
+Environment=POSTGRES_VOLUME="/data/postgres"
+Environment=TN_VOLUME="/data/tn"
+
+
+[Install]
+WantedBy=multi-user.target
+EOF_SYSD
+
+systemctl daemon-reload
+systemctl enable ${SERVICE_NAME}.service
+systemctl start ${SERVICE_NAME}.service

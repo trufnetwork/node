@@ -78,17 +78,21 @@ func AttachObservability(input AttachObservabilityInput) {
 		}
 
 		// Generate the script that fetches SSM params and starts compose
-		startObserverScriptContent := CreateStartObserverScript(CreateStartObserverScriptInput{
+		startObserverScriptContent, err := CreateStartObserverScript(CreateStartObserverScriptInput{
 			Params:          &params,
 			Prefix:          ssmPrefix,
 			ObserverDir:     observerDir,
 			StartScriptPath: startScriptPath,
 		})
+		if err != nil {
+			// Use panic with more context as before
+			panic(fmt.Errorf("create observer start script: %w", err))
+		}
 
 		// 3. Add commands to Launch Template UserData
 		lt := structure.LaunchTemplate
 		lt.UserData().AddCommands(jsii.String(downloadAndUnzipCmd))
-		lt.UserData().AddCommands(jsii.String(startObserverScriptContent))
+		lt.UserData().AddCommands(awscdk.Fn_Sub(jsii.String(startObserverScriptContent), nil))
 		lt.UserData().AddCommands(jsii.String(startScriptPath))
 	}
 

@@ -1,0 +1,83 @@
+{{- /*
+Template: tn_db_startup.sh.tmpl
+Description: Sets up directories, logs into ECR, pulls & tags image,
+             and creates/starts a systemd service for the TN DB compose app.
+Expected variables:
+  .Region           (string): AWS Region for ECR login.
+  .RepoURI          (string): ECR Repository URI.
+  .ImageURI         (string): Full ECR Image URI with tag.
+  .ComposePath      (string): Path to the docker-compose file.
+  .TnDataPath       (string): Host path for TN data volume.
+  .PostgresDataPath (string): Host path for Postgres data volume.
+  .EnvVars          (map[string]string): Environment vars for the systemd service.
+*/ -}}
+# -----------------------------------------------------------------------------
+# ⚠ WARNING: This file is auto-generated from a template. Do not edit directly!
+# -----------------------------------------------------------------------------
+{{- /* Validate required input */ -}}
+{{- if not .Region }}{{ fail "missing required field '.Region'" }}{{- end -}}
+{{- if not .RepoURI }}{{ fail "missing required field '.RepoURI'" }}{{- end -}}
+{{- if not .ImageURI }}{{ fail "missing required field '.ImageURI'" }}{{- end -}}
+{{- if not .ComposePath }}{{ fail "missing required field '.ComposePath'" }}{{- end -}}
+{{- if not .TnDataPath }}{{ fail "missing required field '.TnDataPath'" }}{{- end -}}
+{{- if not .PostgresDataPath }}{{ fail "missing required field '.PostgresDataPath'" }}{{- end -}}
+{{- /* Note: EnvVars/SortedEnvKeys might be intentionally empty */ -}}
+
+#!/bin/bash
+set -euo pipefail
+
+# Create necessary directories on host
+mkdir -p {{ .TnDataPath }}
+mkdir -p {{ .PostgresDataPath }}
+
+# ECR Login and Image Pulling
+# Retry logic for ECR login and pull in case of transient network issues
+for i in {1..5}; do
+  echo "Attempt $i/5: Logging into ECR and pulling image..."
+  if aws ecr get-login-password --region {{ .Region }} | docker login --username AWS --password-stdin {{ .RepoURI }} && \
+     docker pull {{ .ImageURI }}; then
+    echo "ECR login and pull successful."
+    # Tag the image as tn-db:local, as the docker-compose file expects that
+    docker tag {{ .ImageURI }} tn-db:local
+    break
+  fi
+  if [ $i -eq 5 ]; then
+    echo "ECR login/pull failed after 5 attempts."
+    exit 1
+  fi
+  echo "Attempt $i failed, sleeping for 5 seconds..."
+  sleep 5
+done
+
+# Create and start systemd service for Docker Compose
+SERVICE_NAME=tn-db-app
+SERVICE_DESC="TN Docker Application"
+START_CMD="/bin/bash -c \"docker compose -f {{ .ComposePath }} up -d --wait || true\""
+STOP_CMD="/bin/bash -c \"docker compose -f {{ .ComposePath }} down\""
+
+# Systemd unit file generation
+# -----------------------------------------------------------------------------
+# 🚨 AUTO-GENERATED from Go templates – edit the .tmpl, not rendered output 🚨
+# -----------------------------------------------------------------------------
+cat <<EOF_SYSD > "/etc/systemd/system/${SERVICE_NAME}.service"
+[Unit]
+Description=${SERVICE_DESC}
+Restart=on-failure
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=${START_CMD}
+ExecStop=${STOP_CMD}
+{{ range $key := .SortedEnvKeys -}}
+{{ $value := index $.EnvVars $key -}}
+Environment={{ $key }}={{ printf "%q" $value }}
+{{ end }}
+
+[Install]
+WantedBy=multi-user.target
+EOF_SYSD
+
+systemctl daemon-reload
+systemctl enable ${SERVICE_NAME}.service
+systemctl start ${SERVICE_NAME}.service

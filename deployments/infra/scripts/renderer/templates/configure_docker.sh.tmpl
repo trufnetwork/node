@@ -1,0 +1,28 @@
+{{- /*
+Template: configure_docker.sh.tmpl
+Description: Configures the Docker daemon, typically setting data-root.
+Expected variables:
+  .DataRoot    (string): Path for docker data root.
+  .MetricsAddr (string, optional): Address for docker metrics.
+*/ -}}
+# -----------------------------------------------------------------------------
+# ⚠ WARNING: This file is auto-generated from a template. Do not edit directly!
+# -----------------------------------------------------------------------------
+{{- /* Validate required input */ -}}
+{{- if not .DataRoot -}}
+{{- fail "missing required field '.DataRoot'" -}}
+{{- end -}}
+
+#!/bin/bash
+set -euo pipefail
+
+systemctl stop docker
+
+# Configure daemon using dictionary and toJson for proper quoting/escaping
+cat <<EOF > /etc/docker/daemon.json
+{{- $cfg := dict "data-root" .DataRoot -}}
+{{- if .MetricsAddr }}{{ $cfg = merge $cfg (dict "metrics-addr" .MetricsAddr) }}{{ end -}}
+{{ toJson $cfg }}
+EOF
+
+systemctl start docker

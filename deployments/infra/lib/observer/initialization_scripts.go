@@ -3,6 +3,7 @@ package observer
 import (
 	"fmt"
 
+	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/lib/utils"
 )
@@ -27,12 +28,16 @@ func GetObserverScript(input ObserverScriptInput) *string {
 	observerDir := "/home/ec2-user/observer"
 	startScriptPath := "/usr/local/bin/start-observer.sh"
 	script := utils.UnzipFileScript(input.ZippedAssetsDir, observerDir)
-	script += CreateStartObserverScript(CreateStartObserverScriptInput{
+	startObserverScriptContent, err := CreateStartObserverScript(CreateStartObserverScriptInput{
 		Params:          input.Params,
 		Prefix:          input.Prefix,
 		ObserverDir:     observerDir,
 		StartScriptPath: startScriptPath,
 	})
+	if err != nil {
+		panic(err)
+	}
+	script += *awscdk.Fn_Sub(jsii.String(startObserverScriptContent), nil) + "\n"
 	script += utils.CreateSystemdServiceScript(
 		"observer",
 		"Observer Compose",

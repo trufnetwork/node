@@ -1,0 +1,67 @@
+# -----------------------------------------------------------------------------
+# ⚠ WARNING: This file is auto-generated from a template. Do not edit directly!
+# -----------------------------------------------------------------------------#!/bin/bash
+# Script to configure and start the observer service on an EC2 instance.
+
+set -euo pipefail
+# set -x # Uncomment for debugging ONLY. Avoid in production due to potential secret leakage.
+
+# --- Configuration ---
+OBSERVER_DIR="/opt/observer"
+PREFIX="/tsn/prefix"
+AWS_REGION=${AWS::Region}
+
+# Parameterized paths
+ENV_FILE="$OBSERVER_DIR/.env"
+COMPOSE_FILE="$OBSERVER_DIR/observer-compose.yml"
+
+# -----------------------------------------------------------------------------
+# 🚨 AUTO-GENERATED from Go templates – edit the .tmpl, not rendered output 🚨
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# Helper function to fetch parameters from AWS SSM
+# -----------------------------------------------------------------------------
+fetch_parameter() {
+ local param_name="$1"
+ local is_secure="$2"
+ local env_var_name="$3"
+ if [ "$is_secure" = "true" ]; then
+	 value=$(aws ssm get-parameter --name "$param_name" --with-decryption --query "Parameter.Value" --output text --region $AWS_REGION)
+ else
+	 value=$(aws ssm get-parameter --name "$param_name" --query "Parameter.Value" --output text --region $AWS_REGION)
+ fi
+ if [ -z "$value" ]; then
+	 echo "Error: Parameter $param_name not found or empty"
+	 exit 1
+ fi
+ export "$env_var_name=$value"
+}
+
+# -----------------------------------------------------------------------------
+# Fetch parameters from SSM and/or use static defaults, then export them
+# -----------------------------------------------------------------------------
+
+fetch_parameter "/tsn/prefix/FOO" "false" "FOO"
+
+export BAR="static_value"
+
+fetch_parameter "/tsn/prefix//secure/baz" "true" "BAZ_SECURE"
+
+
+# -----------------------------------------------------------------------------
+# Write fetched/exported environment variables to .env file for compose
+# -----------------------------------------------------------------------------
+cat << EOF1 > "$ENV_FILE"
+FOO=$FOO
+BAR=$BAR
+BAZ_SECURE=$BAZ_SECURE
+EOF1
+
+chmod 600 $ENV_FILE
+chown ec2-user:ec2-user $ENV_FILE
+
+# -----------------------------------------------------------------------------
+# Start Docker Compose using the generated .env file
+# -----------------------------------------------------------------------------
+docker compose -f $COMPOSE_FILE up -d --wait || true 

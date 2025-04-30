@@ -2,18 +2,18 @@ package tn
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsecrassets"
 	"github.com/aws/jsii-runtime-go"
 	peer2 "github.com/trufnetwork/node/infra/lib/kwil-network/peer"
 	"github.com/trufnetwork/node/infra/lib/utils"
+	"github.com/trufnetwork/node/infra/scripts/renderer"
 )
 
-const kwildConfigFilename = "config.toml" // Needs to match node.go
-
 type AddStartupScriptsOptions struct {
-	currentPeer       peer2.TNPeer
-	allPeers          []peer2.TNPeer
+	CurrentPeer       peer2.TNPeer
+	AllPeers          []peer2.TNPeer
 	TnImageAsset      awsecrassets.DockerImageAsset
 	TnConfigImagePath *string
 	TnComposePath     *string
@@ -21,56 +21,7 @@ type AddStartupScriptsOptions struct {
 	Region            *string
 }
 
-func TnDbStartupScripts(options AddStartupScriptsOptions) *string {
-	// Define paths
-	tnDataPath := *options.DataDirPath + "tn"             // e.g., /data/tn - This is the host path mounted as /root/.kwild in container
-	postgresDataPath := *options.DataDirPath + "postgres" // e.g., /data/postgres
-
-	// Environment variables needed ONLY by docker-compose/startup script
-	tnConfig := TNEnvConfig{
-		Hostname:       options.currentPeer.Address,
-		TnVolume:       jsii.String(tnDataPath),
-		PostgresVolume: jsii.String(postgresDataPath),
-	}
-
-	// Start building the script
-	script := utils.InstallDockerScript() + "\n"
-	script += utils.ConfigureDocker(utils.ConfigureDockerInput{
-		DataRoot: jsii.String(*options.DataDirPath + "/docker"),
-	}) + "\n"
-
-	// Create necessary directories on host (ensure permissions later if needed)
-	// cfn-init should have already placed config.toml and genesis.json into /data/tn
-	script += fmt.Sprintf("mkdir -p %s\n", tnDataPath)
-	script += fmt.Sprintf("mkdir -p %s\n", postgresDataPath)
-
-	// NOTE: config.toml and genesis.json are now placed by cfn-init via InitFile_FromAsset
-	// into /data/tn/config.toml and /data/tn/genesis.json respectively.
-	// Ensure the ownership/permissions set in InitFile_FromAsset are correct
-	// for the user running the docker container (likely root).
-
-	// ECR Login and Image Pulling
-	script += fmt.Sprintf(`
-# Login to ECR
-aws ecr get-login-password --region %s | docker login --username AWS --password-stdin %s
-# Pull the image
-docker pull %s
-# Tag the image as tn-db:local, as the docker-compose file expects that
-docker tag %s tn-db:local
-`, *options.Region, *options.TnImageAsset.Repository().RepositoryUri(), *options.TnImageAsset.ImageUri(), *options.TnImageAsset.ImageUri())
-
-	// Create and start systemd service for Docker Compose
-	script += utils.CreateSystemdServiceScript(
-		"tn-db-app",
-		"TN Docker Application",
-		fmt.Sprintf("/bin/bash -c \"docker compose -f %s up -d --wait || true\"", *options.TnComposePath),
-		fmt.Sprintf("/bin/bash -c \"docker compose -f %s down\"", *options.TnComposePath),
-		tnConfig.GetDict(), // Pass reduced env vars
-	)
-
-	return &script
-}
-
+// TNEnvConfig holds environment variables specific to the TN DB setup.
 type TNEnvConfig struct {
 	Hostname       *string `env:"HOSTNAME"`
 	TnVolume       *string `env:"TN_VOLUME"`       // Host path mapped to /root/.kwild
@@ -80,4 +31,58 @@ type TNEnvConfig struct {
 // GetDict returns a map of the environment variables and their values
 func (c TNEnvConfig) GetDict() map[string]string {
 	return utils.GetDictFromStruct(c)
+}
+
+func TnDbStartupScripts(options AddStartupScriptsOptions) (*string, error) {
+	// Define paths
+	tnDataPath := *options.DataDirPath + "tn"
+	postgresDataPath := *options.DataDirPath + "postgres"
+
+	// Environment variables needed for the systemd service within the template
+	tnEnvMap := TNEnvConfig{
+		Hostname:       options.CurrentPeer.Address,
+		TnVolume:       jsii.String(tnDataPath),
+		PostgresVolume: jsii.String(postgresDataPath),
+	}.GetDict()
+
+	// Extract and sort keys from the environment map manually
+	sortedKeys := make([]string, 0, len(tnEnvMap))
+	for k := range tnEnvMap {
+		sortedKeys = append(sortedKeys, k)
+	}
+	sort.Strings(sortedKeys)
+
+	// Start building the script with Docker setup
+	installScript, err := utils.InstallDockerScript()
+	if err != nil {
+		return nil, fmt.Errorf("getting install docker script: %w", err)
+	}
+	configureScript, err := utils.ConfigureDocker(utils.ConfigureDockerInput{
+		DataRoot: jsii.String(*options.DataDirPath + "/docker"),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting configure docker script: %w", err)
+	}
+	script := installScript + "\n" + configureScript + "\n"
+
+	// Prepare data for the main template using the DTO from renderer package
+	tplData := renderer.TnStartupData{
+		Region:           *options.Region,
+		RepoURI:          *options.TnImageAsset.Repository().RepositoryUri(),
+		ImageURI:         *options.TnImageAsset.ImageUri(),
+		ComposePath:      *options.TnComposePath,
+		TnDataPath:       tnDataPath,
+		PostgresDataPath: postgresDataPath,
+		EnvVars:          tnEnvMap,
+		SortedEnvKeys:    sortedKeys,
+	}
+
+	// Render the main body template
+	body, err := renderer.Render(renderer.TplTnDBStartup, tplData)
+	if err != nil {
+		return nil, fmt.Errorf("render %s: %w", renderer.TplTnDBStartup, err)
+	}
+
+	script += body
+	return &script, nil
 }

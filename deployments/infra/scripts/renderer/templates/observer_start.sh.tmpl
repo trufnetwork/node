@@ -1,0 +1,87 @@
+{{- /*
+Template: observer_start.sh.tmpl
+Description: Core script body for starting the observer service.
+  - Fetches parameters (SSM or static).
+  - Exports parameters as environment variables.
+  - Writes a .env file.
+  - Starts docker-compose.
+Expected variables:
+  .AwsRegion   (string): AWS Region for SSM calls.
+  .ObserverDir (string): Absolute path to the observer directory.
+  .Prefix      (string): Prefix for SSM parameter paths.
+  .Params      ([]utils.ParameterDescriptor): List of parameters to fetch/set.
+*/ -}}
+# -----------------------------------------------------------------------------
+# ⚠ WARNING: This file is auto-generated from a template. Do not edit directly!
+# -----------------------------------------------------------------------------
+{{- /* Validate required input */ -}}
+{{- if not .ObserverDir }}{{ fail "missing required field '.ObserverDir'" }}{{- end -}}
+{{- if not .Prefix }}{{ fail "missing required field '.Prefix'" }}{{- end -}}
+{{- /* .Params can be empty, so no check needed here */ -}}
+
+#!/bin/bash
+# Script to configure and start the observer service on an EC2 instance.
+
+set -euo pipefail
+# set -x # Uncomment for debugging ONLY. Avoid in production due to potential secret leakage.
+
+# --- Configuration ---
+OBSERVER_DIR="{{ .ObserverDir }}"
+PREFIX="{{ .Prefix }}"
+AWS_REGION=${AWS::Region}
+
+# Parameterized paths
+ENV_FILE="$OBSERVER_DIR/.env"
+COMPOSE_FILE="$OBSERVER_DIR/observer-compose.yml"
+
+# -----------------------------------------------------------------------------
+# 🚨 AUTO-GENERATED from Go templates – edit the .tmpl, not rendered output 🚨
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# Helper function to fetch parameters from AWS SSM
+# -----------------------------------------------------------------------------
+fetch_parameter() {
+ local param_name="$1"
+ local is_secure="$2"
+ local env_var_name="$3"
+ if [ "$is_secure" = "true" ]; then
+	 value=$(aws ssm get-parameter --name "$param_name" --with-decryption --query "Parameter.Value" --output text --region $AWS_REGION)
+ else
+	 value=$(aws ssm get-parameter --name "$param_name" --query "Parameter.Value" --output text --region $AWS_REGION)
+ fi
+ if [ -z "$value" ]; then
+	 echo "Error: Parameter $param_name not found or empty"
+	 exit 1
+ fi
+ export "$env_var_name=$value"
+}
+
+# -----------------------------------------------------------------------------
+# Fetch parameters from SSM and/or use static defaults, then export them
+# -----------------------------------------------------------------------------
+{{ range .Params -}}
+{{- /* Process each parameter descriptor */ -}}
+{{- if .IsSSMParameter }}
+fetch_parameter "{{ $.Prefix }}/{{ .SSMPath }}" "{{ .IsSecure }}" "{{ .EnvName }}"
+{{- else }}
+export {{ .EnvName }}={{ printf "%q" .EnvValue }}
+{{- end }}
+{{ end }}
+
+# -----------------------------------------------------------------------------
+# Write fetched/exported environment variables to .env file for compose
+# -----------------------------------------------------------------------------
+cat << EOF1 > "$ENV_FILE"
+{{ range .Params -}}
+{{ .EnvName }}=${{ .EnvName }}
+{{ end -}}
+EOF1
+
+chmod 600 $ENV_FILE
+chown ec2-user:ec2-user $ENV_FILE
+
+# -----------------------------------------------------------------------------
+# Start Docker Compose using the generated .env file
+# -----------------------------------------------------------------------------
+docker compose -f $COMPOSE_FILE up -d --wait || true 

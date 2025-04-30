@@ -1,33 +1,27 @@
 package utils
 
-import "encoding/json"
+import (
+	"fmt"
 
-// InstallDockerScript returns the script to install and setup Docker
-func InstallDockerScript() string {
-	return `
-# Update the system
-yum update -y
+	"github.com/trufnetwork/node/infra/scripts/renderer"
+)
 
-# Install Docker
-amazon-linux-extras install docker
-
-# Start Docker and enable it to start at boot
-systemctl start docker
-systemctl enable docker
-
-# Add the ec2-user to the docker group (ec2-user is the default user in Amazon Linux 2)
-usermod -aG docker ec2-user
-
-# reload the group
-newgrp docker
-
-mkdir -p /usr/local/lib/docker/cli-plugins/
-curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 -o /usr/local/lib/docker/cli-plugins/docker-compose
-chmod a+x /usr/local/lib/docker/cli-plugins/docker-compose
-`
+// InstallDockerScript renders the script to install Docker and Docker Compose
+// using the TplInstallDocker template.
+// It returns an error if the template rendering fails.
+func InstallDockerScript() (string, error) {
+	script, err := renderer.Render(renderer.TplInstallDocker, nil)
+	if err != nil {
+		// log.Printf("Error rendering install_docker.sh.tmpl: %v", err)
+		// return ""
+		return "", fmt.Errorf("render %s: %w", renderer.TplInstallDocker, err)
+	}
+	return script, nil
 }
 
-// CreateSystemdServiceScript creates a systemd service file
+// CreateSystemdServiceScript creates a systemd service file content.
+// NOTE: This helper was NOT refactored to use templates in this pass.
+// It still uses string concatenation.
 func CreateSystemdServiceScript(
 	serviceName, description, startCommand, stopCommand string,
 	envVars map[string]string,
@@ -57,29 +51,28 @@ systemctl start ` + serviceName + `.service
 `
 }
 
-// UnzipFileScript returns a script to unzip a file
+// UnzipFileScript returns a simple shell command to unzip a file.
+// NOTE: Not template based.
 func UnzipFileScript(zipPath, destPath string) string {
 	return "unzip " + zipPath + " -d " + destPath
 }
 
+// ConfigureDockerInput defines the input for configuring the Docker daemon.
+// Corresponds to the data needed by TplConfigureDocker template.
 type ConfigureDockerInput struct {
 	DataRoot    *string `json:"data-root"`
 	MetricsAddr *string `json:"metrics-addr"`
 }
 
-func ConfigureDocker(input ConfigureDockerInput) string {
-	daemonJson, err := json.Marshal(input)
+// ConfigureDocker renders the script to configure the Docker daemon
+// using the TplConfigureDocker template and the provided input.
+// It returns an error if the template rendering fails.
+func ConfigureDocker(input ConfigureDockerInput) (string, error) {
+	script, err := renderer.Render(renderer.TplConfigureDocker, input)
 	if err != nil {
-		panic(err)
+		// log.Printf("Error rendering configure_docker.sh.tmpl: %v", err)
+		// return ""
+		return "", fmt.Errorf("render %s: %w", renderer.TplConfigureDocker, err)
 	}
-
-	return `
-systemctl stop docker
-
-cat <<EOF > /etc/docker/daemon.json
-` + string(daemonJson) + `
-EOF
-
-systemctl start docker
-`
+	return script, nil
 }

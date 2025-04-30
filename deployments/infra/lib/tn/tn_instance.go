@@ -153,17 +153,19 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 		Index:          index,
 	}
 
-	scripts := TnDbStartupScripts(AddStartupScriptsOptions{
-		currentPeer:       input.PeerConnection,
-		allPeers:          input.AllPeerConnections,
+	scripts, err := TnDbStartupScripts(AddStartupScriptsOptions{
+		CurrentPeer:       input.PeerConnection,
+		AllPeers:          input.AllPeerConnections,
 		Region:            input.Vpc.Env().Region,
 		TnImageAsset:      input.TNDockerImageAsset,
 		DataDirPath:       jsii.String(mountDataDir),
 		TnComposePath:     jsii.String(mountDataDir + tnComposeFile),
 		TnConfigImagePath: jsii.String(mountDataDir + tnConfigImageFile),
 	})
-
-	tnLaunchTemplate.UserData().AddCommands(scripts)
+	if err != nil {
+		panic(err)
+	}
+	tnLaunchTemplate.UserData().AddCommands(awscdk.Fn_Sub(jsii.String(*scripts), nil))
 
 	return node
 }

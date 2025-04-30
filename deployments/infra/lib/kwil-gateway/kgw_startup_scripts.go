@@ -35,11 +35,17 @@ func AddKwilGatewayStartupScriptsToInstance(options AddKwilGatewayStartupScripts
 	}
 
 	script := "#!/bin/bash\nset -e\nset -x\n\n"
-	script += utils.InstallDockerScript() + "\n"
+	installScript, err := utils.InstallDockerScript()
+	if err != nil {
+		panic(err)
+	}
+	script += installScript + "\n"
+
 	// script += utils.ConfigureDocker(utils.ConfigureDockerInput{
 	// // when we want to enable docker metrics on the host
 	// 	MetricsAddr: jsii.String("127.0.0.1:9323"),
 	// }) + "\n"
+
 	script += utils.UnzipFileScript(*options.KGWDirZipPath, "/home/ec2-user/kgw") + "\n"
 	script += `
 unzip ` + *options.kgwBinaryPath + ` kgw_0.3.4_linux_amd64.tar.gz -d /tmp/kgw-pkg

@@ -44,12 +44,20 @@ func AddKwilIndexerStartupScripts(options AddKwilIndexerStartupScriptsOptions) *
 	}
 
 	script := "#!/bin/bash\nset -e\nset -x\n\n"
-	script += utils.InstallDockerScript() + "\n"
-	script += utils.ConfigureDocker(utils.ConfigureDockerInput{
+	installScript, err := utils.InstallDockerScript()
+	if err != nil {
+		panic(err)
+	}
+	script += installScript + "\n"
+	configureScript, err := utils.ConfigureDocker(utils.ConfigureDockerInput{
 		DataRoot: jsii.String("/data/docker"),
 		// when we want to enable docker metrics on the hostr
 		// MetricsAddr: jsii.String("127.0.0.1:9323"),
-	}) + "\n"
+	})
+	if err != nil {
+		panic(err)
+	}
+	script += configureScript + "\n"
 	script += utils.UnzipFileScript(*options.indexerZippedDirPath, "/home/ec2-user/indexer") + "\n"
 	script += utils.CreateSystemdServiceScript(
 		"kwil-indexer",
