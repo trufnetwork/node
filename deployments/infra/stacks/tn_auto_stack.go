@@ -1,17 +1,15 @@
 package stacks
 
 import (
-	"fmt"
-
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
 	"github.com/trufnetwork/node/infra/config/domain"
 	fronting "github.com/trufnetwork/node/infra/lib/constructs/fronting"
 	"github.com/trufnetwork/node/infra/lib/constructs/kwil_cluster"
-	"github.com/trufnetwork/node/infra/lib/constructs/observability_suite"
 	"github.com/trufnetwork/node/infra/lib/constructs/validator_set"
 	kwil_network "github.com/trufnetwork/node/infra/lib/kwil-network"
 	"github.com/trufnetwork/node/infra/lib/observer"
@@ -33,31 +31,36 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 		return stack
 	}
 
-	initElements := []awsec2.InitElement{}
+	// Define CDK params, stage, and prefix early
+	cdkParams := config.NewCDKParams(stack)
+	stage := *cdkParams.Stage.ValueAsString()
+	devPrefix := *cdkParams.DevPrefix.ValueAsString()
+
+	// Define Fronting Type parameter within stack scope
+	_ = config.NewFrontingSelector(stack) // Result not explicitly needed here, but creates the parameter
+
+	initElements := []awsec2.InitElement{} // Base elements only
+	var observerAsset awss3assets.Asset    // Keep asset variable, needed for Attach call
+
 	shouldIncludeObserver := config.GetEnvironmentVariables[config.AutoStackEnvironmentVariables](stack).IncludeObserver
 
 	if shouldIncludeObserver {
-		observerAsset := observer.GetObserverAsset(stack, jsii.String("observer"))
-
-		initObserver := awsec2.InitFile_FromExistingAsset(jsii.String(observer.ObserverZipAssetDir), observerAsset, &awsec2.InitFileOptions{
-			Owner: jsii.String("ec2-user"),
-		})
-
-		initElements = append(initElements, initObserver)
+		// Only get the asset here, don't generate InitElements
+		observerAsset = observer.GetObserverAsset(stack, jsii.String("observer"))
 	}
 
+	// Get default VPC
 	vpc := awsec2.Vpc_FromLookup(stack, jsii.String("VPC"), &awsec2.VpcLookupOptions{IsDefault: jsii.Bool(true)})
-	cdkParams := config.NewCDKParams(stack)
 	hd := domain.NewHostedDomain(stack, "HostedDomain", &domain.HostedDomainProps{
 		Spec: domain.Spec{
-			Stage:     domain.StageType(*cdkParams.Stage.ValueAsString()),
+			Stage:     domain.StageType(stage),
 			Sub:       "",
-			DevPrefix: *cdkParams.DevPrefix.ValueAsString(),
+			DevPrefix: devPrefix,
 		},
 		EdgeCertificate: false,
 	})
 
-	nodesConfig := kwil_network.KwilNetworkConfigAssetsFromNumberOfNodes(
+	peers, genesisAsset := kwil_network.KwilNetworkConfigAssetsFromNumberOfNodes(
 		stack,
 		kwil_network.KwilAutoNetworkConfigAssetInput{NumberOfNodes: config.NumOfNodes(stack)},
 	)
@@ -68,7 +71,8 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 	vs := validator_set.NewValidatorSet(stack, "ValidatorSet", &validator_set.ValidatorSetProps{
 		Vpc:          vpc,
 		HostedDomain: hd,
-		NodesConfig:  nodesConfig,
+		Peers:        peers,
+		GenesisAsset: genesisAsset,
 		KeyPair:      nil,
 		Assets:       tnAssets,
 		InitElements: initElements,
@@ -89,14 +93,12 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 		SessionSecret: cdkParams.SessionSecret.ValueAsString(),
 		ChainId:       jsii.String(config.GetEnvironmentVariables[config.MainEnvironmentVariables](stack).ChainId),
 		Validators:    vs.Nodes,
-		InitElements:  initElements,
+		InitElements:  initElements, // Only pass base elements
 		Assets:        kwilAssets,
 	})
 
-	// Wire up API Gateway fronting with a regional ACM certificate
 	ag := fronting.NewApiGatewayFronting()
-	recordName := jsii.String("api." + *cdkParams.DevPrefix.ValueAsString())
-	// Provision the front-end and retrieve its FQDN and certificate (plugin issues cert)
+	recordName := jsii.String("api." + devPrefix) // Use var
 	frontRes := ag.AttachRoutes(stack, "APIGateway", &fronting.FrontingProps{
 		HostedZone:          hd.Zone,
 		ImportedCertificate: nil,
@@ -105,17 +107,20 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 		IndexerEndpoint:     kc.Indexer.InstanceDnsName,
 		RecordName:          recordName,
 	})
-	// Output the custom domain
 	awscdk.NewCfnOutput(stack, jsii.String("ApiDomain"), &awscdk.CfnOutputProps{Value: frontRes.FQDN})
-	// Output the certificate ARN for operations
 	awscdk.NewCfnOutput(stack, jsii.String("ApiCertArn"), &awscdk.CfnOutputProps{Value: frontRes.Certificate.CertificateArn()})
 
+	// AttachObserverPermissions call will be added here later
 	if shouldIncludeObserver {
-		_ = observability_suite.NewObservabilitySuite(stack, "ObservabilitySuite", &observability_suite.ObservabilitySuiteProps{
-			Vpc:          vpc,
-			ValidatorSg:  vs.SecurityGroup,
-			GatewaySg:    kc.Gateway.SecurityGroup,
-			ParamsPrefix: jsii.String(fmt.Sprintf("/%s/observer", *cdkParams.Stage.ValueAsString())),
+		if observerAsset == nil {
+			panic("Observer asset is nil when observer should be included")
+		}
+		// observer.AttachObserverPermissions(...)
+		observer.AttachObservability(observer.AttachObservabilityInput{
+			Scope:         stack,
+			ValidatorSet:  vs,
+			KwilCluster:   kc,
+			ObserverAsset: observerAsset,
 		})
 	}
 

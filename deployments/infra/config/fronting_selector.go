@@ -36,9 +36,5 @@ func NewFrontingSelector(scope constructs.Construct) FrontingSelector {
 
 	// 3.  Parse & validate
 	val := param.ValueAsString()
-	kind, err := fronting.ParseKind(*val)
-	if err != nil {
-		panic(err) // will only happen if the AllowedValues list and ParseKind diverge
-	}
-	return FrontingSelector{Kind: kind}
+	return FrontingSelector{Kind: fronting.Kind(*val)}
 }

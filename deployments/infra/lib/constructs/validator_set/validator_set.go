@@ -7,13 +7,13 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsroute53"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 
 	"github.com/trufnetwork/node/infra/config"
 	"github.com/trufnetwork/node/infra/config/domain"
-	kwil_network "github.com/trufnetwork/node/infra/lib/kwil-network"
-	peer2 "github.com/trufnetwork/node/infra/lib/kwil-network/peer"
+	peer "github.com/trufnetwork/node/infra/lib/kwil-network/peer"
 	"github.com/trufnetwork/node/infra/lib/tn"
 )
 
@@ -25,7 +25,8 @@ import (
 type ValidatorSetProps struct {
 	Vpc          awsec2.IVpc
 	HostedDomain *domain.HostedDomain
-	NodesConfig  []kwil_network.KwilNetworkConfig
+	Peers        []peer.TNPeer
+	GenesisAsset awss3assets.Asset
 	KeyPair      awsec2.IKeyPair
 	Assets       TNAssets
 	InitElements []awsec2.InitElement
@@ -38,6 +39,7 @@ type ValidatorSet struct {
 	Nodes         []tn.TNInstance
 	Role          awsiam.IRole
 	SecurityGroup awsec2.SecurityGroup
+	GenesisAsset  awss3assets.Asset
 }
 
 // NewValidatorSet provisions validator instances, EIPs, and DNS records
@@ -59,21 +61,23 @@ func NewValidatorSet(scope constructs.Construct, id string, props *ValidatorSetP
 		AssumedBy: awsiam.NewServicePrincipal(jsii.String("ec2.amazonaws.com"), nil),
 	})
 
+	// Grant read access to the genesis asset bucket
+	props.GenesisAsset.Bucket().GrantRead(role, nil)
+
 	// create security group for TN instances
 	sg := tn.NewTNSecurityGroup(node, tn.NewTNSecurityGroupInput{Vpc: props.Vpc})
 
-	// collect peer connections
-	n := len(props.NodesConfig)
-	allPeers := make([]peer2.TNPeer, n)
-	for i, cfg := range props.NodesConfig {
-		allPeers[i] = cfg.Connection
-	}
+	// Use the Peers list directly
+	allPeers := props.Peers // Use the provided peer list
+	n := len(allPeers)
 
 	// provision TN instances and record EIP and DNS
 	instances := make([]tn.TNInstance, n)
 	for i := 0; i < n; i++ {
-		cfg := props.NodesConfig[i]
-		inst := newNode(node, i, role, sg, props, cfg.Connection, allPeers)
+		peerInfo := allPeers[i] // Get current peer
+
+		// The genesis asset details will be passed to tn_instance.go -> tn_startup_scripts.go
+		inst := newNode(node, i, role, sg, props, peerInfo, allPeers, props.GenesisAsset)
 
 		// allocate Elastic IP
 		eip := awsec2.NewCfnEIP(node, jsii.String(fmt.Sprintf("PeerEIP-%d", i)), &awsec2.CfnEIPProps{})
@@ -83,7 +87,7 @@ func NewValidatorSet(scope constructs.Construct, id string, props *ValidatorSetP
 		// create DNS A record
 		awsroute53.NewARecord(node, jsii.String(fmt.Sprintf("PeerARecord-%d", i)), &awsroute53.ARecordProps{
 			Zone:       props.HostedDomain.Zone,
-			RecordName: cfg.Connection.Address,
+			RecordName: peerInfo.Address, // Use peerInfo directly
 			Target:     awsroute53.RecordTarget_FromIpAddresses(eip.AttrPublicIp()),
 		})
 
@@ -94,6 +98,7 @@ func NewValidatorSet(scope constructs.Construct, id string, props *ValidatorSetP
 	vs.Nodes = instances
 	vs.Role = role
 	vs.SecurityGroup = sg
+	vs.GenesisAsset = props.GenesisAsset // Add genesis asset to outputs
 
 	return vs
 }

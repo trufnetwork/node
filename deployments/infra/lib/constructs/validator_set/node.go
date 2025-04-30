@@ -1,15 +1,86 @@
 package validator_set
 
 import (
+	"bytes"
+	"fmt"
+	"path/filepath"
 	"strconv"
+	"text/template"
 
+	"github.com/Masterminds/sprig/v3"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/constructs-go/constructs/v10"
+	"github.com/aws/jsii-runtime-go"
 
-	peer2 "github.com/trufnetwork/node/infra/lib/kwil-network/peer"
+	nodeconfig "github.com/trufnetwork/node/infra/config/node"
+	kwilnetworkpeer "github.com/trufnetwork/node/infra/lib/kwil-network/peer"
 	"github.com/trufnetwork/node/infra/lib/tn"
+	"github.com/trufnetwork/node/infra/lib/utils"
 )
+
+const kwildConfigTemplateFile = "kwild-config.tmpl"
+const kwildConfigDir = "config/node"
+const kwildConfigFilename = "config.toml"
+const kwildGenesisPath = "/root/.kwild/genesis.json"
+
+// populateAndRenderValues gathers config data, populates the Values struct, and renders the TOML template.
+func populateAndRenderValues(scope constructs.Construct, index int, props *ValidatorSetProps, connection kwilnetworkpeer.TNPeer, allPeers []kwilnetworkpeer.TNPeer) *bytes.Buffer {
+	// --- 1. Gather dynamic data ---
+	// Build bootnodes list: <hex_pubkey>#secp256k1@<ip:port>
+	bootnodes := make([]string, 0, len(allPeers)-1)
+	for i, p := range allPeers {
+		if i == index {
+			continue // Skip self
+		}
+		// p.GetExternalP2PAddress(false) returns ip:port
+		addr := *p.GetExternalP2PAddress(false)
+		bootnodes = append(bootnodes, fmt.Sprintf("%s#secp256k1@%s", p.NodeHexAddress, addr))
+	}
+
+	// Get node-specific external address
+	externalAddr := *connection.GetExternalP2PAddress(false)
+
+	// Fetch other dynamic config if needed (e.g., DB creds from Secrets Manager)
+	// dbUser := ...
+	// dbPass := ...
+
+	// --- 2. Populate Values struct starting with defaults ---
+	values := nodeconfig.NewDefaultValues()
+
+	// Override necessary fields with dynamic/node-specific values
+	values.Genesis.Path = kwildGenesisPath            // Set the standard path
+	values.P2P.Bootnodes = bootnodes                  // Set calculated bootnodes
+	values.P2P.External = externalAddr                // Set node-specific external address
+	values.P2P.ListenPort = kwilnetworkpeer.TnP2pPort // Ensure correct P2P port (though default matches)
+	values.RPC.Port = kwilnetworkpeer.TnRPCPort       // Ensure correct RPC port (though default matches)
+	values.DB.Port = kwilnetworkpeer.TnPostgresPort   // Ensure correct DB port (though default matches)
+
+	// Example: Override DB credentials if fetched dynamically
+	// values.DB.User = dbUser
+	// values.DB.Pass = dbPass
+
+	// --- 3. Render Template ---
+	// Use GetProjectRootDir which should reliably find the repo root containing deployments/
+	rootDir := utils.GetProjectRootDir()
+	templatePath := filepath.Join(rootDir, "deployments", "infra", kwildConfigDir, kwildConfigTemplateFile)
+
+	tmpl, err := template.New(filepath.Base(templatePath)).
+		Funcs(sprig.TxtFuncMap()).
+		ParseFiles(templatePath)
+	if err != nil {
+		panic(fmt.Errorf("failed to parse template %s: %w", templatePath, err))
+	}
+
+	var renderedConfig bytes.Buffer
+	err = tmpl.Execute(&renderedConfig, values)
+	if err != nil {
+		panic(fmt.Errorf("failed to execute template %s with values %+v: %w", templatePath, values, err))
+	}
+
+	return &renderedConfig
+}
 
 // newNode builds a single TNInstance using the shared role and security group
 func newNode(
@@ -18,9 +89,22 @@ func newNode(
 	role awsiam.IRole,
 	sg awsec2.SecurityGroup,
 	props *ValidatorSetProps,
-	connection peer2.TNPeer,
-	allPeers []peer2.TNPeer,
+	connection kwilnetworkpeer.TNPeer,
+	allPeers []kwilnetworkpeer.TNPeer,
+	genesisAsset awss3assets.Asset,
 ) tn.TNInstance {
+	// Populate values and render the config template
+	renderedConfig := populateAndRenderValues(scope, index, props, connection, allPeers)
+
+	// Create an S3 asset from the rendered TOML content
+	nodeConfigAsset := awss3assets.NewAsset(scope, jsii.String(fmt.Sprintf("KwildRenderedConfigAsset-%d", index)), &awss3assets.AssetProps{
+		Path: utils.WriteToTempFile(scope, fmt.Sprintf("rendered-config-%d.toml", index), renderedConfig.Bytes()),
+	})
+
+	// Grant the EC2 instance role read access to the asset bucket
+	nodeConfigAsset.Bucket().GrantRead(role, nil)
+
+	// Build the TNInstance, passing the *rendered* config asset details
 	return tn.NewTNInstance(scope, tn.NewTNInstanceInput{
 		Index:                index,
 		Id:                   strconv.Itoa(index),
@@ -29,11 +113,13 @@ func newNode(
 		SecurityGroup:        sg,
 		TNDockerComposeAsset: props.Assets.DockerCompose,
 		TNDockerImageAsset:   props.Assets.DockerImage,
-		TNConfigAsset:        props.NodesConfig[index].Asset,
-		TNConfigImageAsset:   props.Assets.ConfigImage,
-		InitElements:         props.InitElements,
-		PeerConnection:       connection,
-		AllPeerConnections:   allPeers,
-		KeyPair:              props.KeyPair,
+		// Pass the Asset for rendered config and genesis file
+		RenderedConfigAsset: nodeConfigAsset,
+		GenesisAsset:        genesisAsset,
+		TNConfigImageAsset:  props.Assets.ConfigImage,
+		InitElements:        props.InitElements,
+		PeerConnection:      connection,
+		AllPeerConnections:  allPeers,
+		KeyPair:             props.KeyPair,
 	})
 }

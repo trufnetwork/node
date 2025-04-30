@@ -1,88 +1,80 @@
 package tn
 
 import (
-	"github.com/aws/aws-cdk-go/awscdk/v2"
+	"fmt"
+
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsecrassets"
 	"github.com/aws/jsii-runtime-go"
 	peer2 "github.com/trufnetwork/node/infra/lib/kwil-network/peer"
 	"github.com/trufnetwork/node/infra/lib/utils"
 )
 
+const kwildConfigFilename = "config.toml" // Needs to match node.go
+
 type AddStartupScriptsOptions struct {
 	currentPeer       peer2.TNPeer
 	allPeers          []peer2.TNPeer
 	TnImageAsset      awsecrassets.DockerImageAsset
 	TnConfigImagePath *string
-	TnConfigZipPath   *string
 	TnComposePath     *string
 	DataDirPath       *string
 	Region            *string
 }
 
 func TnDbStartupScripts(options AddStartupScriptsOptions) *string {
-	tnConfigExtractedPath := *options.DataDirPath + "tn"
-	postgresDataPath := *options.DataDirPath + "postgres"
-	tnConfigRelativeToCompose := "./tn"
+	// Define paths
+	tnDataPath := *options.DataDirPath + "tn"             // e.g., /data/tn - This is the host path mounted as /root/.kwild in container
+	postgresDataPath := *options.DataDirPath + "postgres" // e.g., /data/postgres
 
-	// create a list of persistent peers
-	var persistentPeersList []*string
-	for _, peer := range options.allPeers {
-		persistentPeersList = append(persistentPeersList, peer.GetExternalP2PAddress(true))
-	}
-
-	// create a string from the list
-	persistentPeers := awscdk.Fn_Join(jsii.String(","), &persistentPeersList)
-
+	// Environment variables needed ONLY by docker-compose/startup script
 	tnConfig := TNEnvConfig{
-		Hostname:           options.currentPeer.Address,
-		ConfTarget:         jsii.String("external"),
-		ExternalConfigPath: jsii.String(tnConfigRelativeToCompose),
-		PersistentPeers:    persistentPeers,
-		ExternalAddress:    jsii.String("http://" + *options.currentPeer.GetExternalP2PAddress(false)),
-		TnVolume:           jsii.String(tnConfigExtractedPath),
-		PostgresVolume:     jsii.String(postgresDataPath),
+		Hostname:       options.currentPeer.Address,
+		TnVolume:       jsii.String(tnDataPath),
+		PostgresVolume: jsii.String(postgresDataPath),
 	}
 
+	// Start building the script
 	script := utils.InstallDockerScript() + "\n"
 	script += utils.ConfigureDocker(utils.ConfigureDockerInput{
 		DataRoot: jsii.String(*options.DataDirPath + "/docker"),
-		// when we want to enable docker metrics on the host
-		// MetricsAddr: jsii.String("127.0.0.1:9323"),
 	}) + "\n"
-	script += utils.UnzipFileScript(*options.TnConfigZipPath, tnConfigExtractedPath) + "\n"
-	// Add ECR login and image pulling
-	script += `
-# Login to ECR
-aws ecr get-login-password --region ` + *options.Region + ` | docker login --username AWS --password-stdin ` + *options.TnImageAsset.Repository().RepositoryUri() + `
-# Pull the image
-docker pull ` + *options.TnImageAsset.ImageUri() + `
-# Tag the image as tn-db:local, as the docker-compose file expects that
-docker tag ` + *options.TnImageAsset.ImageUri() + ` tn-db:local`
 
+	// Create necessary directories on host (ensure permissions later if needed)
+	// cfn-init should have already placed config.toml and genesis.json into /data/tn
+	script += fmt.Sprintf("mkdir -p %s\n", tnDataPath)
+	script += fmt.Sprintf("mkdir -p %s\n", postgresDataPath)
+
+	// NOTE: config.toml and genesis.json are now placed by cfn-init via InitFile_FromAsset
+	// into /data/tn/config.toml and /data/tn/genesis.json respectively.
+	// Ensure the ownership/permissions set in InitFile_FromAsset are correct
+	// for the user running the docker container (likely root).
+
+	// ECR Login and Image Pulling
+	script += fmt.Sprintf(`
+# Login to ECR
+aws ecr get-login-password --region %s | docker login --username AWS --password-stdin %s
+# Pull the image
+docker pull %s
+# Tag the image as tn-db:local, as the docker-compose file expects that
+docker tag %s tn-db:local
+`, *options.Region, *options.TnImageAsset.Repository().RepositoryUri(), *options.TnImageAsset.ImageUri(), *options.TnImageAsset.ImageUri())
+
+	// Create and start systemd service for Docker Compose
 	script += utils.CreateSystemdServiceScript(
 		"tn-db-app",
 		"TN Docker Application",
-		"/bin/bash -c \"docker compose -f "+*options.TnComposePath+" up -d --wait || true\"",
-		"/bin/bash -c \"docker compose -f "+*options.TnComposePath+" down\"",
-		tnConfig.GetDict(),
+		fmt.Sprintf("/bin/bash -c \"docker compose -f %s up -d --wait || true\"", *options.TnComposePath),
+		fmt.Sprintf("/bin/bash -c \"docker compose -f %s down\"", *options.TnComposePath),
+		tnConfig.GetDict(), // Pass reduced env vars
 	)
 
 	return &script
 }
 
 type TNEnvConfig struct {
-	// the hostname of the instance
-	Hostname *string `env:"HOSTNAME"`
-	// created= generated on docker build command; external= copied from the host
-	ConfTarget *string `env:"CONF_TARGET"`
-	// if copied from host, where to copy from
-	ExternalConfigPath *string `env:"EXTERNAL_CONFIG_PATH"`
-	// comma separated list of peers, used for p2p communication
-	PersistentPeers *string `env:"PERSISTENT_PEERS"`
-	// comma separated list of peers, used for p2p communication
-	ExternalAddress *string `env:"EXTERNAL_ADDRESS"`
-	TnVolume        *string `env:"TN_VOLUME"`
-	PostgresVolume  *string `env:"POSTGRES_VOLUME"`
+	Hostname       *string `env:"HOSTNAME"`
+	TnVolume       *string `env:"TN_VOLUME"`       // Host path mapped to /root/.kwild
+	PostgresVolume *string `env:"POSTGRES_VOLUME"` // Host path for postgres data
 }
 
 // GetDict returns a map of the environment variables and their values

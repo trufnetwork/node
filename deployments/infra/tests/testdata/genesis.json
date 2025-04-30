@@ -1,0 +1,34 @@
+{
+    "chain_id": "test-data",
+    "initial_height": 0,
+    "db_owner": "0xBabDe15Df17683E8F73908060B4C1Fbe3B05f042",
+    "validators": [
+      {
+        "pubkey": "0318fee25baf7d1f0220bcf80e2bd19f1a0cf75097cdcdd1245a4dddf9dc45f5b0",
+        "type": "secp256k1",
+        "power": 1
+      },
+      {
+        "pubkey": "02592530bfe441fd1c4f49902589374f21b0d34aeda9cb0e277cf3d3e2078917db",
+        "type": "secp256k1",
+        "power": 1
+      },
+      {
+        "pubkey": "02e733d890a3deec9944ca1fb4f3f8c4ff911fa5edd49edaa89163a746b3d122a2",
+        "type": "secp256k1",
+        "power": 1
+      }
+    ],
+    "migration": {
+      "start_height": 0,
+      "end_height": 0
+    },
+    "leader": {
+      "type": "secp256k1",
+      "key": "0318fee25baf7d1f0220bcf80e2bd19f1a0cf75097cdcdd1245a4dddf9dc45f5b0"
+    },
+    "max_block_size": 6291456,
+    "join_expiry": "168h0m0s",
+    "disabled_gas_costs": true,
+    "max_votes_per_tx": 200
+  }

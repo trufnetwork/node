@@ -3,7 +3,6 @@ package main
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/trufnetwork/node/infra/config"
-	"github.com/trufnetwork/node/infra/lib/constructs/fronting"
 	"github.com/trufnetwork/node/infra/lib/utils"
 	"github.com/trufnetwork/node/infra/stacks"
 	"github.com/trufnetwork/node/infra/stacks/benchmark"
@@ -17,16 +16,8 @@ func init() {
 func main() {
 	app := awscdk.NewApp(nil)
 
-	// Determine desired fronting type via CFN parameter with validation
-	selector := config.NewFrontingSelector(app)
-	frontingType := selector.Kind
-
-	// Only deploy the legacy CertStack if using CloudFront
-	var certExports *stacks.CertStackExports
-	if frontingType == fronting.KindCloudFront {
-		exports := stacks.CertStack(app)
-		certExports = &exports
-	}
+	// Create CertStack unconditionally. Stacks will use it based on their internal logic.
+	certExports := stacks.CertStack(app)
 
 	// TN-Auto Stack
 	stacks.TnAutoStack(
@@ -34,7 +25,7 @@ func main() {
 		config.WithStackSuffix(app, "TN-DB-Auto"),
 		&stacks.TnAutoStackProps{
 			StackProps:       awscdk.StackProps{Env: utils.CdkEnv()},
-			CertStackExports: certExports,
+			CertStackExports: &certExports,
 		},
 	)
 
@@ -44,7 +35,7 @@ func main() {
 		config.WithStackSuffix(app, "TN-From-Config"),
 		&stacks.TnFromConfigStackProps{
 			StackProps:       awscdk.StackProps{Env: utils.CdkEnv()},
-			CertStackExports: certExports,
+			CertStackExports: &certExports,
 		},
 	)
 

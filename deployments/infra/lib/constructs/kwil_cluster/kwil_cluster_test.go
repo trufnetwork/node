@@ -7,15 +7,16 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/assertions"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsecrassets"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awss3"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/jsii-runtime-go"
 	domaincfg "github.com/trufnetwork/node/infra/config/domain"
 	kwil_cluster "github.com/trufnetwork/node/infra/lib/constructs/kwil_cluster"
 	validator_set "github.com/trufnetwork/node/infra/lib/constructs/validator_set"
-	kwil_network "github.com/trufnetwork/node/infra/lib/kwil-network"
 	peer2 "github.com/trufnetwork/node/infra/lib/kwil-network/peer"
 	utils "github.com/trufnetwork/node/infra/lib/utils"
 	"github.com/trufnetwork/node/infra/tests/testdata"
+	testhelpers "github.com/trufnetwork/node/infra/tests/testhelpers"
 )
 
 func TestKwilClusterSynth_NoCert(t *testing.T) {
@@ -45,15 +46,21 @@ func TestKwilClusterSynth_NoCert(t *testing.T) {
 	dockerCompose := awss3assets.NewAsset(stack, jsii.String("ComposeAsset"), &awss3assets.AssetProps{Path: jsii.String(testdata.TestdataPath() + "/README.md")})
 	configImage := awss3assets.NewAsset(stack, jsii.String("ConfigImage"), &awss3assets.AssetProps{Path: jsii.String(testdata.TestdataPath() + "/README.md")})
 
-	// Single-node configuration
-	nodesConfig := []kwil_network.KwilNetworkConfig{
+	// Dummy Genesis Asset
+	genesisAsset := awss3assets.NewAsset(stack, jsii.String("GenesisAsset"), &awss3assets.AssetProps{
+		Path: jsii.String(testdata.TestdataPath() + "/genesis.json"), // Needs a dummy genesis file in testdata
+	})
+
+	// Dummy S3 object for KGW binary to avoid nil bucket panic
+	dummyBucket := awss3.NewBucket(stack, jsii.String("DummyBinaryBucket"), &awss3.BucketProps{})
+	dummyBinaryObj := utils.S3Object{Bucket: dummyBucket, Key: jsii.String("dummy-key")}
+
+	// Single-node peer list
+	testPeers := []peer2.TNPeer{
 		{
-			Asset: dockerCompose,
-			Connection: peer2.TNPeer{
-				NodeCometEncodedAddress: "nodeId",
-				Address:                 jsii.String("test"),
-				NodeHexAddress:          "hex",
-			},
+			NodeCometEncodedAddress: "nodeId0",
+			Address:                 jsii.String("peer0.test.sub"),
+			NodeHexAddress:          "hex0",
 		},
 	}
 
@@ -61,7 +68,8 @@ func TestKwilClusterSynth_NoCert(t *testing.T) {
 	vs := validator_set.NewValidatorSet(stack, "VS", &validator_set.ValidatorSetProps{
 		Vpc:          vpc,
 		HostedDomain: hd,
-		NodesConfig:  nodesConfig,
+		Peers:        testPeers,
+		GenesisAsset: genesisAsset,
 		KeyPair:      nil,
 		Assets: validator_set.TNAssets{
 			DockerImage:   dockerImage,
@@ -71,14 +79,14 @@ func TestKwilClusterSynth_NoCert(t *testing.T) {
 		InitElements: []awsec2.InitElement{},
 	})
 
-	// Prepare dummy Kwil Cluster Assets
+	// Prepare dummy Kwil Cluster Assets using stub assets to avoid nil panics
 	kwilAssets := kwil_cluster.KwilAssets{
 		Gateway: kwil_cluster.GatewayAssets{
-			DirAsset: nil,              // Use nil for tests as they arent synthesized
-			Binary:   utils.S3Object{}, // Empty S3 object
+			DirAsset: testhelpers.DummyAsset(stack, "DummyGatewayDir"),
+			Binary:   dummyBinaryObj,
 		},
 		Indexer: kwil_cluster.IndexerAssets{
-			DirAsset: nil,
+			DirAsset: testhelpers.DummyAsset(stack, "DummyIndexerDir"),
 		},
 	}
 

@@ -2,7 +2,6 @@ package kwil_network
 
 import (
 	"fmt"
-	"strconv"
 
 	awscdk "github.com/aws/aws-cdk-go/awscdk/v2"
 	awss3assets "github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
@@ -31,63 +30,54 @@ type KwilNetworkConfig struct {
 	Connection peer.TNPeer
 }
 
-// KwilNetworkConfigAssetsFromNumberOfNodes generates configuration S3 asset for a network kwil node
-// It may be used as a init file mounted into EC2 instances
-func KwilNetworkConfigAssetsFromNumberOfNodes(scope constructs.Construct, input KwilAutoNetworkConfigAssetInput) []KwilNetworkConfig {
+// KwilNetworkConfigAssetsFromNumberOfNodes generates peer information and the genesis file asset.
+// It no longer generates individual node config files, as that's handled by templating.
+func KwilNetworkConfigAssetsFromNumberOfNodes(scope constructs.Construct, input KwilAutoNetworkConfigAssetInput) ([]peer.TNPeer, awss3assets.Asset) {
 	// Initialize CDK parameters and DomainConfig
 	cdkParams := config.NewCDKParams(scope)
 	stageToken := cdkParams.Stage.ValueAsString()
 	devPrefix := cdkParams.DevPrefix.ValueAsString()
-	// scope should be a Stack for DomainConfig
 	stack, ok := scope.(awscdk.Stack)
 	if !ok {
 		panic(fmt.Sprintf("KwilNetworkConfigAssetsFromNumberOfNodes: expected scope to be awscdk.Stack, got %T", scope))
 	}
-	// Create HostedDomain to centralize domain logic
 	hd := domaincfg.NewHostedDomain(stack, "NetworkDomain", &domaincfg.HostedDomainProps{
 		Spec: domaincfg.Spec{
 			Stage:     domaincfg.StageType(*stageToken),
-			Sub:       "",         // no leaf subdomain here
-			DevPrefix: *devPrefix, // prepend prefix in dev
+			Sub:       "",
+			DevPrefix: *devPrefix,
 		},
 	})
-	// Base domain: use HostedDomain's DomainName
 	baseDomain := *hd.DomainName
 
-	// Retrieve environment variables for chain ID
 	env := config.GetEnvironmentVariables[config.MainEnvironmentVariables](scope)
 
+	// Generate Node Keys and Peer Info
 	nodeKeys := make([]NodeKeys, input.NumberOfNodes)
 	peers := make([]peer.TNPeer, input.NumberOfNodes)
 	for i := 0; i < input.NumberOfNodes; i++ {
-		nodeKeys[i] = GenerateNodeKeys(scope)
-		// Construct full peer FQDN using HostedDomain
+		nodeKeys[i] = GenerateNodeKeys(scope) // Assuming this generates necessary keys
 		peers[i] = peer.TNPeer{
 			NodeCometEncodedAddress: nodeKeys[i].NodeId,
 			Address:                 jsii.String(fmt.Sprintf("node-%d.%s", i+1, baseDomain)),
 			NodeHexAddress:          nodeKeys[i].PublicKeyPlainHex,
+			// Store PrivateKey temporarily if needed for genesis/other setup, but don't expose widely
+			// Consider if GenerateNodeKeys can return a struct holding all keys securely
+			// PrivateKey: nodeKeys[i].PrivateKeyHex, // Example: Add if needed by GenerateGenesisFile directly
 		}
 	}
 
+	// Generate Genesis File (assuming it needs peer info)
 	genesisFilePath := GenerateGenesisFile(scope, GenerateGenesisFileInput{
 		ChainId:         env.ChainId,
-		PeerConnections: peers,
+		PeerConnections: peers, // Pass peers to include validators in genesis
 	})
 
-	assets := make([]KwilNetworkConfig, input.NumberOfNodes)
-	for i := 0; i < input.NumberOfNodes; i++ {
-		cfg := GeneratePeerConfig(scope, GeneratePeerConfigInput{
-			PrivateKey:      jsii.String(nodeKeys[i].PrivateKeyHex),
-			GenesisFilePath: genesisFilePath,
-			Peers:           peers,
-			CurrentPeer:     peers[i],
-		})
+	// Create Genesis Asset
+	genesisAsset := awss3assets.NewAsset(scope, jsii.String("GenesisFileAsset"), &awss3assets.AssetProps{
+		Path: jsii.String(genesisFilePath), // Path to the generated genesis.json
+	})
 
-		assets[i].Asset = awss3assets.NewAsset(scope, jsii.String("KwilNetworkConfigAsset-"+strconv.Itoa(i)), &awss3assets.AssetProps{
-			Path: jsii.String(cfg),
-		})
-		assets[i].Connection = peers[i]
-	}
-
-	return assets
+	// Return the list of peers and the single genesis asset
+	return peers, genesisAsset
 }

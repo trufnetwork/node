@@ -95,7 +95,10 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 			}),
 	}
 
-	elements = append(elements, input.InitElements...)
+	// Append base InitElements if provided
+	if input.InitElements != nil {
+		elements = append(elements, input.InitElements...)
+	}
 
 	initData := awsec2.CloudFormationInit_FromElements(elements...)
 

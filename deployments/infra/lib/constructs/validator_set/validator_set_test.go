@@ -6,13 +6,12 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/assertions"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
-	"github.com/aws/aws-cdk-go/awscdk/v2/awsecrassets"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/jsii-runtime-go"
 	domaincfg "github.com/trufnetwork/node/infra/config/domain"
 	validator_set "github.com/trufnetwork/node/infra/lib/constructs/validator_set"
-	kwil_network "github.com/trufnetwork/node/infra/lib/kwil-network"
 	peer2 "github.com/trufnetwork/node/infra/lib/kwil-network/peer"
+	testutil "github.com/trufnetwork/node/infra/tests/testutil"
 )
 
 func TestValidatorSetSynth(t *testing.T) {
@@ -40,9 +39,7 @@ func TestValidatorSetSynth(t *testing.T) {
 	})
 
 	// Dummy assets for image and config
-	dockerImage := awsecrassets.NewDockerImageAsset(stack, jsii.String("DockerImage"), &awsecrassets.DockerImageAssetProps{
-		Directory: jsii.String("testdata"),
-	})
+	dockerImage := testutil.DummyDockerImageAsset(stack, "DockerImage", t)
 	dockerCompose := awss3assets.NewAsset(stack, jsii.String("ComposeAsset"), &awss3assets.AssetProps{
 		Path: jsii.String("testdata/README.md"),
 	})
@@ -50,22 +47,25 @@ func TestValidatorSetSynth(t *testing.T) {
 		Path: jsii.String("testdata/README.md"),
 	})
 
-	// Single-node configuration
-	nodesConfig := []kwil_network.KwilNetworkConfig{
+	// Dummy Genesis Asset
+	genesisAsset := awss3assets.NewAsset(stack, jsii.String("GenesisAsset"), &awss3assets.AssetProps{
+		Path: jsii.String("testdata/genesis.json"), // Needs a dummy genesis file
+	})
+
+	// Single-node peer list
+	testPeers := []peer2.TNPeer{
 		{
-			Asset: dockerCompose,
-			Connection: peer2.TNPeer{
-				NodeCometEncodedAddress: "nodeId",
-				Address:                 jsii.String("test"),
-				NodeHexAddress:          "hex",
-			},
+			NodeCometEncodedAddress: "nodeId0",
+			Address:                 jsii.String("peer0.test.sub"),
+			NodeHexAddress:          "hex0",
 		},
 	}
 
 	_ = validator_set.NewValidatorSet(stack, "VS", &validator_set.ValidatorSetProps{
 		Vpc:          vpc,
 		HostedDomain: hd,
-		NodesConfig:  nodesConfig,
+		Peers:        testPeers,
+		GenesisAsset: genesisAsset,
 		// Leave KeyPair nil to test default logic
 		Assets: validator_set.TNAssets{
 			DockerImage:   dockerImage,

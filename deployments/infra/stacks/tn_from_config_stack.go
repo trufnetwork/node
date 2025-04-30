@@ -1,7 +1,6 @@
 package stacks
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
@@ -12,7 +11,6 @@ import (
 	"github.com/trufnetwork/node/infra/config/domain"
 	fronting "github.com/trufnetwork/node/infra/lib/constructs/fronting"
 	"github.com/trufnetwork/node/infra/lib/constructs/kwil_cluster"
-	"github.com/trufnetwork/node/infra/lib/constructs/observability_suite"
 	"github.com/trufnetwork/node/infra/lib/constructs/validator_set"
 	kwil_network "github.com/trufnetwork/node/infra/lib/kwil-network"
 	"github.com/trufnetwork/node/infra/lib/observer"
@@ -42,17 +40,18 @@ func TnFromConfigStack(
 	cfg := config.GetEnvironmentVariables[config.ConfigStackEnvironmentVariables](stack)
 	privateKeys := strings.Split(cfg.NodePrivateKeys, ",")
 
-	// Always include observer init
-	observerAsset := observer.GetObserverAsset(stack, jsii.String("observer"))
-	initObserver := awsec2.InitFile_FromExistingAsset(
-		jsii.String(observer.ObserverZipAssetDir), observerAsset,
-		&awsec2.InitFileOptions{Owner: jsii.String("ec2-user")},
-	)
-	initElements := []awsec2.InitElement{initObserver}
+	// Define CDK params, stage, and prefix early
+	cdkParams := config.NewCDKParams(stack)
+
+	// Define Fronting Type parameter within stack scope
+	_ = config.NewFrontingSelector(stack) // Result not explicitly needed here, but creates the parameter
+
+	// Setup observer init elements - REMOVE THIS SECTION
+	initElements := []awsec2.InitElement{}                                     // Base elements
+	observerAsset := observer.GetObserverAsset(stack, jsii.String("observer")) // Keep asset var
 
 	// VPC & domain setup
 	vpc := awsec2.Vpc_FromLookup(stack, jsii.String("VPC"), &awsec2.VpcLookupOptions{IsDefault: jsii.Bool(true)})
-	cdkParams := config.NewCDKParams(stack)
 	hd := domain.NewHostedDomain(stack, "HostedDomain", &domain.HostedDomainProps{
 		Spec: domain.Spec{
 			Stage:     domain.StageType(*cdkParams.Stage.ValueAsString()),
@@ -63,7 +62,7 @@ func TnFromConfigStack(
 	})
 
 	// Generate network configs from number of private keys
-	nodesConfig := kwil_network.KwilNetworkConfigAssetsFromNumberOfNodes(
+	peers, genesisAsset := kwil_network.KwilNetworkConfigAssetsFromNumberOfNodes(
 		stack,
 		kwil_network.KwilAutoNetworkConfigAssetInput{NumberOfNodes: len(privateKeys)},
 	)
@@ -75,10 +74,11 @@ func TnFromConfigStack(
 	vs := validator_set.NewValidatorSet(stack, "ValidatorSet", &validator_set.ValidatorSetProps{
 		Vpc:          vpc,
 		HostedDomain: hd,
-		NodesConfig:  nodesConfig,
+		Peers:        peers,
+		GenesisAsset: genesisAsset,
 		KeyPair:      nil,
 		Assets:       tnAssets,
-		InitElements: initElements,
+		InitElements: initElements, // Only pass base elements
 	})
 
 	// Kwil Cluster assets via helper
@@ -97,7 +97,7 @@ func TnFromConfigStack(
 		SessionSecret: cdkParams.SessionSecret.ValueAsString(),
 		ChainId:       jsii.String(config.GetEnvironmentVariables[config.MainEnvironmentVariables](stack).ChainId),
 		Validators:    vs.Nodes,
-		InitElements:  initElements,
+		InitElements:  initElements, // Only pass base elements
 		Assets:        kwilAssets,
 	})
 
@@ -118,12 +118,14 @@ func TnFromConfigStack(
 	// Output the certificate ARN
 	awscdk.NewCfnOutput(stack, jsii.String("ApiCertArn"), &awscdk.CfnOutputProps{Value: frontRes.Certificate.CertificateArn()})
 
-	// Observability
-	_ = observability_suite.NewObservabilitySuite(stack, "ObservabilitySuite", &observability_suite.ObservabilitySuiteProps{
-		Vpc:          vpc,
-		ValidatorSg:  vs.SecurityGroup,
-		GatewaySg:    kc.Gateway.SecurityGroup,
-		ParamsPrefix: jsii.String(fmt.Sprintf("/%s/observer", *cdkParams.Stage.ValueAsString())),
+	if observerAsset == nil {
+		panic("Observer asset is nil in tn_from_config_stack") // Should not happen
+	}
+	observer.AttachObservability(observer.AttachObservabilityInput{
+		Scope:         stack,
+		ValidatorSet:  vs,
+		KwilCluster:   kc,
+		ObserverAsset: observerAsset,
 	})
 
 	return stack

@@ -22,7 +22,8 @@ type NewTNInstanceInput struct {
 	SecurityGroup        awsec2.ISecurityGroup
 	TNDockerComposeAsset awss3assets.Asset
 	TNDockerImageAsset   awsecrassets.DockerImageAsset
-	TNConfigAsset        awss3assets.Asset
+	RenderedConfigAsset  awss3assets.Asset
+	GenesisAsset         awss3assets.Asset
 	TNConfigImageAsset   awss3assets.Asset
 	InitElements         []awsec2.InitElement
 	PeerConnection       peer2.TNPeer
@@ -52,7 +53,6 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 
 	initAssetsDir := "/home/ec2-user/init-assets/"
 	mountDataDir := "/data/"
-	tnConfigZipFile := "tn-node-config.zip"
 	tnComposeFile := "docker-compose.yaml"
 	tnConfigImageFile := "deployments/tn-config.dockerfile"
 
@@ -60,15 +60,33 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 		awsec2.InitFile_FromExistingAsset(jsii.String(initAssetsDir+tnComposeFile), input.TNDockerComposeAsset, &awsec2.InitFileOptions{
 			Owner: defaultInstanceUser,
 		}),
-		awsec2.InitFile_FromExistingAsset(jsii.String(initAssetsDir+tnConfigZipFile), input.TNConfigAsset, &awsec2.InitFileOptions{
-			Owner: defaultInstanceUser,
-		}),
 		awsec2.InitFile_FromExistingAsset(jsii.String(initAssetsDir+tnConfigImageFile), input.TNConfigImageAsset, &awsec2.InitFileOptions{
 			Owner: defaultInstanceUser,
 		}),
+		awsec2.InitFile_FromExistingAsset(
+			jsii.String("/data/tn/config.toml"),
+			input.RenderedConfigAsset,
+			&awsec2.InitFileOptions{
+				Owner: defaultInstanceUser,
+				Group: defaultInstanceUser,
+				Mode:  jsii.String("000644"),
+			},
+		),
+		awsec2.InitFile_FromExistingAsset(
+			jsii.String("/data/tn/genesis.json"),
+			input.GenesisAsset,
+			&awsec2.InitFileOptions{
+				Owner: defaultInstanceUser,
+				Group: defaultInstanceUser,
+				Mode:  jsii.String("000644"),
+			},
+		),
 	}
 
-	elements = append(elements, input.InitElements...)
+	// Append base InitElements if provided
+	if input.InitElements != nil {
+		elements = append(elements, input.InitElements...)
+	}
 
 	initData := awsec2.CloudFormationInit_FromElements(elements...)
 
@@ -86,6 +104,7 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 	}
 
 	AWSLinux2MachineImage := awsec2.MachineImage_LatestAmazonLinux2(nil)
+	userData := awsec2.UserData_ForLinux(nil)
 	tnLaunchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String(name), &awsec2.LaunchTemplateProps{
 		InstanceType:       awsec2.InstanceType_Of(awsec2.InstanceClass_T3, instanceSize),
 		MachineImage:       AWSLinux2MachineImage,
@@ -102,6 +121,7 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 				}),
 			},
 		},
+		UserData: userData,
 	})
 
 	// first step is to attach the init data to the launch template
@@ -131,7 +151,6 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 		Region:            input.Vpc.Env().Region,
 		TnImageAsset:      input.TNDockerImageAsset,
 		DataDirPath:       jsii.String(mountDataDir),
-		TnConfigZipPath:   jsii.String(mountDataDir + tnConfigZipFile),
 		TnComposePath:     jsii.String(mountDataDir + tnComposeFile),
 		TnConfigImagePath: jsii.String(mountDataDir + tnConfigImageFile),
 	})

@@ -1,0 +1,113 @@
+{{- /* ------------------------------------------------------------------
+     kwild-config.tmpl   – rendered during `cdk synth`
+     ------------------------------------------------------------------ */}}
+
+###########################################################################
+#  STATIC SECTION                                                         #
+###########################################################################
+profile_mode                 = ''
+profile_file                 = ''
+skip_dependency_verification = false
+pg_dump_path                 = 'pg_dump'
+
+###########################################################################
+#  LOGGING                                                                 #
+###########################################################################
+[log]
+level            = '{{ default "info"  .Log.Level }}'
+format           = '{{ default "plain" .Log.Format }}'
+output           = {{ toJson (default (list "stdout" "kwild.log") .Log.Output) }}
+file_roll_size   = {{ default 10_000 .Log.FileRollKB }}
+retain_max_rolls = {{ default 0      .Log.RetainMax }}
+
+###########################################################################
+#  DYNAMIC VALUES (CDK-injected)                                           #
+###########################################################################
+
+genesis_state = '{{ .Genesis.Path }}'
+
+[telemetry]
+enable        = {{ default false           .Telemetry.Enable }}
+otlp_endpoint = '{{ default "127.0.0.1:4318" .Telemetry.Endpoint }}'
+
+[p2p]
+listen             = '0.0.0.0:{{ default 6600 .P2P.ListenPort }}'
+pex                = {{ default true  .P2P.PEX }}
+bootnodes          = {{ toJson .P2P.Bootnodes }}
+target_connections = {{ default 20   .P2P.TargetConnections }}
+external_address   = '{{ .P2P.External }}'
+private            = false
+whitelist          = []
+
+[consensus]
+propose_timeout         = '{{ default "1s"   .Consensus.ProposeTimeout }}'
+empty_block_timeout     = '{{ default "1m0s" .Consensus.EmptyBlockTimeout }}'
+block_proposal_interval = '{{ default "1s"   .Consensus.BlockProposalInterval }}'
+block_ann_interval      = '{{ default "3s"   .Consensus.BlockAnnInterval }}'
+
+[mempool]
+max_size   = 209_715_200
+MaxTxBytes = 4_194_304
+
+[db]
+host            = '{{ default "kwil-postgres" .DB.Host }}'
+port            = '{{ default 5432            .DB.Port }}'
+user            = '{{ default "kwild"         .DB.User }}'
+pass            = '{{ default ""              .DB.Pass }}'
+dbname          = '{{ default "kwild"         .DB.Name }}'
+read_timeout    = '{{ default "45s"           .DB.ReadTimeout }}'
+max_connections = {{   default 60             .DB.MaxConns }}
+
+[store]
+compression = true
+
+[rpc]
+listen               = '0.0.0.0:{{ default 8484  .RPC.Port }}'
+broadcast_tx_timeout = '{{ default "15s"  .RPC.BroadcastTimeout }}'
+timeout              = '{{ default "20s"  .RPC.RequestTimeout }}'
+max_req_size         = {{   default 6_000_000 .RPC.MaxReqSize }}
+private              = {{   default false .RPC.Private }}
+compression          = {{   default true  .RPC.Compression }}
+challenge_expiry     = '30s'
+challenge_rate_limit = 10.0
+disabled_services    = []
+
+[admin]
+enable = true
+listen = '{{ default "/tmp/kwild.socket" .Admin.Listen }}'
+pass   = ''
+notls  = false
+
+###########################################################################
+#  SNAPSHOT / STATE-SYNC                                                  #
+###########################################################################
+[snapshots]
+enable            = {{ default false  .Snapshots.Enable }}
+recurring_height  = {{ default 14400 .Snapshots.RecurringHeight }}
+max_snapshots     = {{ default 3     .Snapshots.MaxSnapshots }}
+
+[state_sync]
+enable            = {{ default false  .StateSync.Enable }}
+trusted_providers = {{ toJson (default (list) .StateSync.TrustedProviders) }}
+discovery_time    = '{{ default "15s" .StateSync.DiscoveryTime }}'
+max_retries       = {{ default 3      .StateSync.MaxRetries }}
+psql_path         = '{{ default "psql" .StateSync.PsqlPath }}'
+
+###########################################################################
+#  EXTENSIONS / MIGRATIONS / CHECKPOINT                                   #
+###########################################################################
+[extensions]
+
+[migrations]
+enable       = {{ default false .Migrations.Enable }}
+migrate_from = '{{ default ""    .Migrations.MigrateFrom }}'
+
+[checkpoint]
+height = {{ default 0 .Checkpoint.Height }}
+hash   = '{{ default "" .Checkpoint.Hash }}'
+
+# ERC-20 bridge placeholders
+[erc20_bridge]
+[erc20_bridge.rpc]
+[erc20_bridge.block_sync_chuck_size]
+[erc20_bridge.signer]
