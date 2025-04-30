@@ -24,16 +24,15 @@ func CertStack(app awscdk.App) CertStackExports {
 		CrossRegionReferences: jsii.Bool(true),
 	})
 
-	// Initialize HostedDomain using centralized CDK parameters
-	params := config.NewCDKParams(stack)
-	stageToken := params.Stage.ValueAsString()
-	devPrefix := params.DevPrefix.ValueAsString()
-	// Build a Domain construct: no leaf Sub, DevPrefix comes from CFN parameter
+	// Read dev prefix from CDK context
+	stage := config.GetStage(stack)
+	devPrefix := config.GetDevPrefix(stack)
+	// Build a Domain construct: no leaf Sub, DevPrefix comes from context
 	hd := domaincfg.NewHostedDomain(stack, "Domain", &domaincfg.HostedDomainProps{
 		Spec: domaincfg.Spec{
-			Stage:     domaincfg.StageType(*stageToken),
+			Stage:     stage,
 			Sub:       "",
-			DevPrefix: *devPrefix,
+			DevPrefix: devPrefix,
 		},
 	})
 	domainCert := hd.Cert

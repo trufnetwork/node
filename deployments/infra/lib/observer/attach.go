@@ -12,7 +12,6 @@ import (
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
-	domaincfg "github.com/trufnetwork/node/infra/config/domain"
 	"github.com/trufnetwork/node/infra/lib/constructs/kwil_cluster"
 	"github.com/trufnetwork/node/infra/lib/constructs/validator_set"
 )
@@ -39,8 +38,8 @@ type ObservableStructure struct {
 // to the launch templates and grants necessary permissions.
 func AttachObservability(input AttachObservabilityInput) {
 	// Derive SSM prefix internally
-	stage := domaincfg.StageType(*input.Params.Stage.ValueAsString())
-	devPrefix := *input.Params.DevPrefix.ValueAsString()
+	stage := config.GetStage(input.Scope)
+	devPrefix := config.GetDevPrefix(input.Scope)
 	envName := string(stage)
 	ssmPrefix := fmt.Sprintf("/tsn/observer/%s/%s", stage, devPrefix)
 

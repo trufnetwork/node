@@ -125,6 +125,5 @@ func newNode(
 		PeerConnection:      input.Connection,
 		AllPeerConnections:  input.AllPeers,
 		KeyPair:             input.Props.KeyPair,
-		Params:              input.Props.CDKParams,
 	})
 }

@@ -41,9 +41,11 @@ func TnFromConfigStack(
 	cfg := config.GetEnvironmentVariables[config.ConfigStackEnvironmentVariables](stack)
 	privateKeys := strings.Split(cfg.NodePrivateKeys, ",")
 
-	// Define CDK params, stage, and prefix early
+	// Define CDK params and stage early, and read dev prefix from context
 	cdkParams := config.NewCDKParams(stack)
 	mainEnvVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables](stack)
+	stage := config.GetStage(stack)
+	devPrefix := config.GetDevPrefix(stack)
 
 	// Define Fronting Type parameter within stack scope
 	selectedKind := config.GetFrontingKind(stack) // Use context helper
@@ -56,9 +58,9 @@ func TnFromConfigStack(
 	vpc := awsec2.Vpc_FromLookup(stack, jsii.String("VPC"), &awsec2.VpcLookupOptions{IsDefault: jsii.Bool(true)})
 	hd := domain.NewHostedDomain(stack, "HostedDomain", &domain.HostedDomainProps{
 		Spec: domain.Spec{
-			Stage:     domain.StageType(*cdkParams.Stage.ValueAsString()),
+			Stage:     stage,
 			Sub:       "",
-			DevPrefix: *cdkParams.DevPrefix.ValueAsString(),
+			DevPrefix: devPrefix,
 		},
 		EdgeCertificate: false,
 	})
@@ -110,9 +112,9 @@ func TnFromConfigStack(
 	// --- Fronting Setup ---
 	// Build Spec for domain subdomains
 	spec := domain.Spec{
-		Stage:     domain.StageType(*cdkParams.Stage.ValueAsString()),
+		Stage:     stage,
 		Sub:       "",
-		DevPrefix: *cdkParams.DevPrefix.ValueAsString(),
+		DevPrefix: devPrefix,
 	}
 
 	if selectedKind == fronting.KindAPI {

@@ -33,10 +33,10 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 		return stack
 	}
 
-	// Define CDK params, stage, and prefix early
+	// Define CDK params and stage early, and read dev prefix from context
 	cdkParams := config.NewCDKParams(stack)
-	stage := *cdkParams.Stage.ValueAsString()
-	devPrefix := *cdkParams.DevPrefix.ValueAsString()
+	stage := config.GetStage(stack)
+	devPrefix := config.GetDevPrefix(stack)
 	// Retrieve Main environment variables including DbOwner
 	autoEnvVars := config.GetEnvironmentVariables[config.AutoStackEnvironmentVariables](stack)
 	mainEnvVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables](stack)

@@ -95,9 +95,9 @@ KWILD_CLI_PATH=kwild \
 CHAIN_ID=truflation-dev \
 CDK_DOCKER="<YOUR-DIRECTORY>/tn/deployments/infra/buildx.sh" \
 cdk deploy --profile <YOUR-AWS-PROFILE> --all --asset-parallelism=false --notices false \
---parameters TN-DB-Stack-dev:stage=dev \
---parameters TN-DB-Stack-dev:devPrefix=<YOUR-DEV-PREFIX> \
---parameters TN-DB-Stack-dev:sessionSecret=abab
+  -c stage=dev \
+  -c devPrefix=<YOUR-DEV-PREFIX> \
+  --parameters TN-DB-Stack-dev:sessionSecret=abab
 ```
 
 ### 2. Pre-configured Setup
@@ -114,9 +114,9 @@ CDK_DOCKER="<YOUR-DIRECTORY>/tn/deployments/infra/buildx.sh" \
 NODE_PRIVATE_KEYS="key1,key2,key3" \
 GENESIS_PATH="/path/to/genesis.json" \
 cdk deploy --profile <YOUR-AWS-PROFILE> TN-From-Config* TN-Cert* \
---parameters TN-From-Config-<environment>-Stack:stage=dev \
---parameters TN-From-Config-<environment>-Stack:devPrefix=<YOUR-DEV-PREFIX> \
---parameters TN-From-Config-<environment>-Stack:sessionSecret=abab
+  -c stage=dev \
+  -c devPrefix=<YOUR-DEV-PREFIX> \
+  --parameters TN-From-Config-<environment>-Stack:sessionSecret=abab
 ```
 
 ## Redeploying Instances from Launch Templates
@@ -186,11 +186,8 @@ Use the `--profile` option to specify your AWS profile.
 
 ## Deployment Stage
 
-- Stacks use CFN parameters for `stage` and `devPrefix`, not context.
-- Example: `--parameters <stack>:stage=dev [--parameters <stack>:devPrefix=<prefix>]`.
-- Valid stages are:
-- `dev`
-- `prod`
+- Stacks now read `stage` and `devPrefix` from CDK context (not CloudFormation parameters).
+- Example: `cdk deploy -c stage=dev -c devPrefix=<prefix>`.
 
 ## Useful Commands
 

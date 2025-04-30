@@ -37,17 +37,17 @@ type KwilNetworkConfig struct {
 // It no longer generates individual node config files, as that's handled by templating.
 func KwilNetworkConfigAssetsFromNumberOfNodes(scope constructs.Construct, input KwilAutoNetworkConfigAssetInput) ([]peer.TNPeer, awss3assets.Asset) {
 	// Initialize CDK parameters and DomainConfig
-	stageToken := input.Params.Stage.ValueAsString()
-	devPrefix := input.Params.DevPrefix.ValueAsString()
+	stage := config.GetStage(scope)
+	devPrefix := config.GetDevPrefix(scope)
 	stack, ok := scope.(awscdk.Stack)
 	if !ok {
 		panic(fmt.Sprintf("KwilNetworkConfigAssetsFromNumberOfNodes: expected scope to be awscdk.Stack, got %T", scope))
 	}
 	hd := domaincfg.NewHostedDomain(stack, "NetworkDomain", &domaincfg.HostedDomainProps{
 		Spec: domaincfg.Spec{
-			Stage:     domaincfg.StageType(*stageToken),
+			Stage:     stage,
 			Sub:       "",
-			DevPrefix: *devPrefix,
+			DevPrefix: devPrefix,
 		},
 	})
 	baseDomain := *hd.DomainName
