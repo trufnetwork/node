@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/jsii-runtime-go"
 	domaincfg "github.com/trufnetwork/node/infra/config/domain"
+	fronting "github.com/trufnetwork/node/infra/lib/constructs/fronting"
 	kwil_cluster "github.com/trufnetwork/node/infra/lib/constructs/kwil_cluster"
 	validator_set "github.com/trufnetwork/node/infra/lib/constructs/validator_set"
 	peer2 "github.com/trufnetwork/node/infra/lib/kwil-network/peer"
@@ -91,15 +92,16 @@ func TestKwilClusterSynth_NoCert(t *testing.T) {
 	}
 
 	_ = kwil_cluster.NewKwilCluster(stack, "KC", &kwil_cluster.KwilClusterProps{
-		Vpc:           vpc,
-		HostedDomain:  hd,
-		Cert:          nil,
-		CorsOrigins:   nil,
-		SessionSecret: nil,
-		ChainId:       nil,
-		Validators:    vs.Nodes,
-		InitElements:  []awsec2.InitElement{},
-		Assets:        kwilAssets,
+		Vpc:                  vpc,
+		HostedDomain:         hd,
+		Cert:                 nil,
+		CorsOrigins:          nil,
+		SessionSecret:        nil,
+		ChainId:              nil,
+		Validators:           vs.Nodes,
+		InitElements:         []awsec2.InitElement{},
+		Assets:               kwilAssets,
+		SelectedFrontingKind: fronting.KindAPI,
 	})
 
 	template := assertions.Template_FromStack(stack, nil)

@@ -24,6 +24,7 @@ type AttachObservabilityInput struct {
 	KwilCluster   *kwil_cluster.KwilCluster   // Changed from AttachObserverPermissionsInput
 	ObserverAsset awss3assets.Asset
 	// SsmPrefix is now derived internally based on scope/stage
+	Params config.CDKParams
 }
 
 // ObservableStructure groups resources that need observer attached.
@@ -38,9 +39,8 @@ type ObservableStructure struct {
 // to the launch templates and grants necessary permissions.
 func AttachObservability(input AttachObservabilityInput) {
 	// Derive SSM prefix internally
-	cdkParams := config.NewCDKParams(input.Scope)
-	stage := domaincfg.StageType(*cdkParams.Stage.ValueAsString())
-	devPrefix := *cdkParams.DevPrefix.ValueAsString()
+	stage := domaincfg.StageType(*input.Params.Stage.ValueAsString())
+	devPrefix := *input.Params.DevPrefix.ValueAsString()
 	envName := string(stage)
 	ssmPrefix := fmt.Sprintf("/tsn/observer/%s/%s", stage, devPrefix)
 

@@ -25,6 +25,7 @@ type KwilAutoNetworkConfigAssetInput struct {
 	NumberOfNodes   int
 	DbOwner         string
 	GenesisFilePath string
+	Params          config.CDKParams
 }
 
 type KwilNetworkConfig struct {
@@ -36,9 +37,8 @@ type KwilNetworkConfig struct {
 // It no longer generates individual node config files, as that's handled by templating.
 func KwilNetworkConfigAssetsFromNumberOfNodes(scope constructs.Construct, input KwilAutoNetworkConfigAssetInput) ([]peer.TNPeer, awss3assets.Asset) {
 	// Initialize CDK parameters and DomainConfig
-	cdkParams := config.NewCDKParams(scope)
-	stageToken := cdkParams.Stage.ValueAsString()
-	devPrefix := cdkParams.DevPrefix.ValueAsString()
+	stageToken := input.Params.Stage.ValueAsString()
+	devPrefix := input.Params.DevPrefix.ValueAsString()
 	stack, ok := scope.(awscdk.Stack)
 	if !ok {
 		panic(fmt.Sprintf("KwilNetworkConfigAssetsFromNumberOfNodes: expected scope to be awscdk.Stack, got %T", scope))

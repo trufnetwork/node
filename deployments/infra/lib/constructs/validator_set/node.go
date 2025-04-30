@@ -82,44 +82,49 @@ func populateAndRenderValues(scope constructs.Construct, index int, props *Valid
 	return &renderedConfig
 }
 
+type NewNodeInput struct {
+	Index        int
+	Role         awsiam.IRole
+	SG           awsec2.SecurityGroup
+	Props        *ValidatorSetProps
+	Connection   kwilnetworkpeer.TNPeer
+	AllPeers     []kwilnetworkpeer.TNPeer
+	GenisisAsset awss3assets.Asset
+}
+
 // newNode builds a single TNInstance using the shared role and security group
 func newNode(
 	scope constructs.Construct,
-	index int,
-	role awsiam.IRole,
-	sg awsec2.SecurityGroup,
-	props *ValidatorSetProps,
-	connection kwilnetworkpeer.TNPeer,
-	allPeers []kwilnetworkpeer.TNPeer,
-	genesisAsset awss3assets.Asset,
+	input NewNodeInput,
 ) tn.TNInstance {
 	// Populate values and render the config template
-	renderedConfig := populateAndRenderValues(scope, index, props, connection, allPeers)
+	renderedConfig := populateAndRenderValues(scope, input.Index, input.Props, input.Connection, input.AllPeers)
 
 	// Create an S3 asset from the rendered TOML content
-	nodeConfigAsset := awss3assets.NewAsset(scope, jsii.String(fmt.Sprintf("KwildRenderedConfigAsset-%d", index)), &awss3assets.AssetProps{
-		Path: utils.WriteToTempFile(scope, fmt.Sprintf("rendered-config-%d.toml", index), renderedConfig.Bytes()),
+	nodeConfigAsset := awss3assets.NewAsset(scope, jsii.String(fmt.Sprintf("KwildRenderedConfigAsset-%d", input.Index)), &awss3assets.AssetProps{
+		Path: utils.WriteToTempFile(scope, fmt.Sprintf("rendered-config-%d.toml", input.Index), renderedConfig.Bytes()),
 	})
 
 	// Grant the EC2 instance role read access to the asset bucket
-	nodeConfigAsset.Bucket().GrantRead(role, nil)
+	nodeConfigAsset.Bucket().GrantRead(input.Role, nil)
 
 	// Build the TNInstance, passing the *rendered* config asset details
 	return tn.NewTNInstance(scope, tn.NewTNInstanceInput{
-		Index:                index,
-		Id:                   strconv.Itoa(index),
-		Role:                 role,
-		Vpc:                  props.Vpc,
-		SecurityGroup:        sg,
-		TNDockerComposeAsset: props.Assets.DockerCompose,
-		TNDockerImageAsset:   props.Assets.DockerImage,
+		Index:                input.Index,
+		Id:                   strconv.Itoa(input.Index),
+		Role:                 input.Role,
+		Vpc:                  input.Props.Vpc,
+		SecurityGroup:        input.SG,
+		TNDockerComposeAsset: input.Props.Assets.DockerCompose,
+		TNDockerImageAsset:   input.Props.Assets.DockerImage,
 		// Pass the Asset for rendered config and genesis file
 		RenderedConfigAsset: nodeConfigAsset,
-		GenesisAsset:        genesisAsset,
-		TNConfigImageAsset:  props.Assets.ConfigImage,
-		InitElements:        props.InitElements,
-		PeerConnection:      connection,
-		AllPeerConnections:  allPeers,
-		KeyPair:             props.KeyPair,
+		GenesisAsset:        input.GenisisAsset,
+		TNConfigImageAsset:  input.Props.Assets.ConfigImage,
+		InitElements:        input.Props.InitElements,
+		PeerConnection:      input.Connection,
+		AllPeerConnections:  input.AllPeers,
+		KeyPair:             input.Props.KeyPair,
+		Params:              input.Props.CDKParams,
 	})
 }

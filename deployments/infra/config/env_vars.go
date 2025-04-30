@@ -6,9 +6,10 @@ import (
 )
 
 type MainEnvironmentVariables struct {
-	KwildCliPath string `env:"KWILD_CLI_PATH" required:"true"`
-	CdkDocker    string `env:"CDK_DOCKER" required:"true"`
-	ChainId      string `env:"CHAIN_ID" required:"true"`
+	KwildCliPath  string `env:"KWILD_CLI_PATH" required:"true"`
+	CdkDocker     string `env:"CDK_DOCKER" required:"true"`
+	ChainId       string `env:"CHAIN_ID" required:"true"`
+	SessionSecret string `env:"SESSION_SECRET" required:"true"`
 }
 
 type AutoStackEnvironmentVariables struct {

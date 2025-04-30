@@ -29,6 +29,7 @@ type NewTNInstanceInput struct {
 	PeerConnection       peer2.TNPeer
 	AllPeerConnections   []peer2.TNPeer
 	KeyPair              awsec2.IKeyPair
+	Params               config.CDKParams
 }
 
 type TNInstance struct {
@@ -47,8 +48,7 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 	defaultInstanceUser := jsii.String("ec2-user")
 
 	// Determine instance size based on CDK parameter 'stage'
-	cdkParams := config.NewCDKParams(scope)
-	stageToken := cdkParams.Stage.ValueAsString()
+	stageToken := input.Params.Stage.ValueAsString()
 	stage := domaincfg.StageType(*stageToken)
 
 	initAssetsDir := "/home/ec2-user/init-assets/"

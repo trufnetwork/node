@@ -30,6 +30,7 @@ type ValidatorSetProps struct {
 	KeyPair      awsec2.IKeyPair
 	Assets       TNAssets
 	InitElements []awsec2.InitElement
+	CDKParams    config.CDKParams
 }
 
 // ValidatorSet is a reusable construct for TN validator nodes
@@ -77,7 +78,15 @@ func NewValidatorSet(scope constructs.Construct, id string, props *ValidatorSetP
 		peerInfo := allPeers[i] // Get current peer
 
 		// The genesis asset details will be passed to tn_instance.go -> tn_startup_scripts.go
-		inst := newNode(node, i, role, sg, props, peerInfo, allPeers, props.GenesisAsset)
+		inst := newNode(node, NewNodeInput{
+			Index:        i,
+			Role:         role,
+			SG:           sg,
+			Props:        props,
+			Connection:   peerInfo,
+			AllPeers:     allPeers,
+			GenisisAsset: props.GenesisAsset,
+		})
 
 		// allocate Elastic IP
 		eip := awsec2.NewCfnEIP(node, jsii.String(fmt.Sprintf("PeerEIP-%d", i)), &awsec2.CfnEIPProps{})

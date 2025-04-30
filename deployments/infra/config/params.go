@@ -12,25 +12,15 @@ const (
 	StageParamName     = "stage"
 	DevPrefixParamName = "devPrefix"
 	CorsParamName      = "corsAllowOrigins"
-	SessionParamName   = "sessionSecret"
 )
 
 type CDKParams struct {
 	Stage            awscdk.CfnParameter
 	DevPrefix        awscdk.CfnParameter
 	CorsAllowOrigins awscdk.CfnParameter
-	SessionSecret    awscdk.CfnParameter
 }
 
-// paramsCache stores CDKParams per construct path to avoid duplicate parameters
-var paramsCache = make(map[string]CDKParams)
-
 func NewCDKParams(scope constructs.Construct) CDKParams {
-	// Use construct path as cache key
-	path := *scope.Node().Path()
-	if existing, found := paramsCache[path]; found {
-		return existing
-	}
 
 	// Create stage parameter
 	stageParam := awscdk.NewCfnParameter(scope, jsii.String(StageParamName), &awscdk.CfnParameterProps{
@@ -56,22 +46,11 @@ func NewCDKParams(scope constructs.Construct) CDKParams {
 		Default:     jsii.String("*"),
 	})
 
-	// Create session secret parameter
-	sessionSecret := awscdk.NewCfnParameter(scope, jsii.String(SessionParamName), &awscdk.CfnParameterProps{
-		Type:        jsii.String("String"),
-		Description: jsii.String("Kwil Gateway session secret"),
-		NoEcho:      jsii.Bool(true),
-	})
-
 	params := CDKParams{
 		Stage:            stageParam,
 		DevPrefix:        devPrefixParam,
 		CorsAllowOrigins: corsAllowOrigins,
-		SessionSecret:    sessionSecret,
 	}
-
-	// Store in cache
-	paramsCache[path] = params
 
 	return params
 }

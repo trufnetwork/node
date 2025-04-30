@@ -22,8 +22,8 @@ type TNAssetOptions struct {
 // BuildTNAssets packages the TN Docker image, compose file, and config file
 func BuildTNAssets(scope constructs.Construct, opts TNAssetOptions) TNAssets {
 	img := awsecrassets.NewDockerImageAsset(scope, jsii.String("TNImage"), &awsecrassets.DockerImageAssetProps{
-		Directory: jsii.String(filepath.Join(opts.RootDir, "deployments")),
-		File:      jsii.String("Dockerfile"),
+		Directory: jsii.String(opts.RootDir),
+		File:      jsii.String("deployments/Dockerfile"),
 		Exclude:   jsii.Strings("infra"),
 	})
 	compose := awss3assets.NewAsset(scope, jsii.String("TNCompose"), &awss3assets.AssetProps{

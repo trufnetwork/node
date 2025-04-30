@@ -39,6 +39,7 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 	devPrefix := *cdkParams.DevPrefix.ValueAsString()
 	// Retrieve Main environment variables including DbOwner
 	autoEnvVars := config.GetEnvironmentVariables[config.AutoStackEnvironmentVariables](stack)
+	mainEnvVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables](stack)
 
 	initElements := []awsec2.InitElement{} // Base elements only
 	var observerAsset awss3assets.Asset    // Keep asset variable, needed for Attach call
@@ -66,6 +67,7 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 		kwil_network.KwilAutoNetworkConfigAssetInput{
 			NumberOfNodes: config.NumOfNodes(stack),
 			DbOwner:       autoEnvVars.DbOwner, // Pass DbOwner here
+			Params:        cdkParams,
 		},
 	)
 
@@ -80,6 +82,7 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 		KeyPair:      nil,
 		Assets:       tnAssets,
 		InitElements: initElements,
+		CDKParams:    cdkParams,
 	})
 
 	// Kwil Cluster assets via helper
@@ -96,12 +99,12 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 		HostedDomain:         hd,
 		Cert:                 props.CertStackExports.DomainCert,
 		CorsOrigins:          cdkParams.CorsAllowOrigins.ValueAsString(),
-		SessionSecret:        cdkParams.SessionSecret.ValueAsString(),
-		ChainId:              jsii.String(config.GetEnvironmentVariables[config.MainEnvironmentVariables](stack).ChainId),
+		SessionSecret:        jsii.String(mainEnvVars.SessionSecret),
+		ChainId:              jsii.String(mainEnvVars.ChainId),
 		Validators:           vs.Nodes,
-		InitElements:         initElements, // Only pass base elements
+		InitElements:         initElements,
 		Assets:               kwilAssets,
-		SelectedFrontingKind: selectedKind, // Pass selected kind
+		SelectedFrontingKind: selectedKind,
 	})
 
 	// --- Fronting Setup ---
@@ -163,6 +166,7 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 			ValidatorSet:  vs,
 			KwilCluster:   kc,
 			ObserverAsset: observerAsset,
+			Params:        cdkParams,
 		})
 	}
 

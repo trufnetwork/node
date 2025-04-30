@@ -43,6 +43,7 @@ func TnFromConfigStack(
 
 	// Define CDK params, stage, and prefix early
 	cdkParams := config.NewCDKParams(stack)
+	mainEnvVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables](stack)
 
 	// Define Fronting Type parameter within stack scope
 	selectedKind := config.GetFrontingKind(stack) // Use context helper
@@ -83,6 +84,7 @@ func TnFromConfigStack(
 		KeyPair:      nil,
 		Assets:       tnAssets,
 		InitElements: initElements, // Only pass base elements
+		CDKParams:    cdkParams,
 	})
 
 	// Kwil Cluster assets via helper
@@ -97,8 +99,8 @@ func TnFromConfigStack(
 		Vpc:                  vpc,
 		HostedDomain:         hd,
 		CorsOrigins:          cdkParams.CorsAllowOrigins.ValueAsString(),
-		SessionSecret:        cdkParams.SessionSecret.ValueAsString(),
-		ChainId:              jsii.String(config.GetEnvironmentVariables[config.MainEnvironmentVariables](stack).ChainId),
+		SessionSecret:        jsii.String(mainEnvVars.SessionSecret),
+		ChainId:              jsii.String(mainEnvVars.ChainId),
 		Validators:           vs.Nodes,
 		InitElements:         initElements, // Only pass base elements
 		Assets:               kwilAssets,
@@ -161,6 +163,7 @@ func TnFromConfigStack(
 		ValidatorSet:  vs,
 		KwilCluster:   kc,
 		ObserverAsset: observerAsset,
+		Params:        cdkParams,
 	})
 
 	return stack
