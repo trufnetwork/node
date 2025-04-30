@@ -32,6 +32,7 @@ func New(kind Kind) Fronting {
 	case KindALB:
 		return NewAlbFronting()
 	default:
+		// ParseKind should prevent this, but panic as a safeguard
 		panic(fmt.Sprintf("unsupported fronting kind %q", kind))
 	}
 }

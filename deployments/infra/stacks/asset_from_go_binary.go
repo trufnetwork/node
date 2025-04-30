@@ -3,10 +3,11 @@ package stacks
 import (
 	"bytes"
 	"fmt"
-	"go.uber.org/zap"
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"go.uber.org/zap"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"

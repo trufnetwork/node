@@ -23,6 +23,7 @@ func (p *defaultProvider) Get(
 	zone awsroute53.IHostedZone,
 	fqdn string,
 	sScope CertScope,
+	additionalSANs []*string,
 ) awscertificatemanager.ICertificate {
 	// Determine the issuance scope: edge cert in us-east-1 or regional
 	var certScope constructs.Construct = scope
@@ -33,9 +34,16 @@ func (p *defaultProvider) Get(
 		})
 		certScope = edgeStack
 	}
-	// Issue the certificate
-	return awscertificatemanager.NewCertificate(certScope, jsii.String(id), &awscertificatemanager.CertificateProps{
+	// Define certificate properties
+	certProps := &awscertificatemanager.CertificateProps{
 		DomainName: jsii.String(fqdn),
 		Validation: awscertificatemanager.CertificateValidation_FromDns(zone),
-	})
+	}
+	// Add SANs if provided
+	if len(additionalSANs) > 0 {
+		certProps.SubjectAlternativeNames = &additionalSANs // Pass directly
+	}
+
+	// Issue the certificate
+	return awscertificatemanager.NewCertificate(certScope, jsii.String(id), certProps)
 }

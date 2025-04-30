@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
@@ -36,5 +37,10 @@ func NewFrontingSelector(scope constructs.Construct) FrontingSelector {
 
 	// 3.  Parse & validate
 	val := param.ValueAsString()
-	return FrontingSelector{Kind: fronting.Kind(*val)}
+	parsedKind, err := fronting.ParseKind(*val) // Use ParseKind for validation
+	if err != nil {
+		// This shouldn't happen if AllowedValues are set correctly, but good practice
+		panic(fmt.Sprintf("Invalid frontingType parameter value: %v", err))
+	}
+	return FrontingSelector{Kind: parsedKind}
 }

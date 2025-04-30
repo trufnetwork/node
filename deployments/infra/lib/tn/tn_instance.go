@@ -103,6 +103,14 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 		instanceSize = awsec2.InstanceSize_MEDIUM
 	}
 
+	var volumeSize int
+	switch stage {
+	case domaincfg.StageDev:
+		volumeSize = 50
+	case domaincfg.StageProd:
+		volumeSize = 400
+	}
+
 	AWSLinux2MachineImage := awsec2.MachineImage_LatestAmazonLinux2(nil)
 	userData := awsec2.UserData_ForLinux(nil)
 	tnLaunchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String(name), &awsec2.LaunchTemplateProps{
@@ -115,7 +123,7 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 		BlockDevices: &[]*awsec2.BlockDevice{
 			{
 				DeviceName: jsii.String("/dev/sda1"),
-				Volume: awsec2.BlockDeviceVolume_Ebs(jsii.Number(50), &awsec2.EbsDeviceOptions{
+				Volume: awsec2.BlockDeviceVolume_Ebs(jsii.Number(volumeSize), &awsec2.EbsDeviceOptions{
 					DeleteOnTermination: jsii.Bool(true),
 					Encrypted:           jsii.Bool(false),
 				}),

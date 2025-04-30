@@ -57,3 +57,10 @@ func (s Spec) fqdnParts() []string {
 func (s Spec) FQDN() *string {
 	return jsii.String(strings.Join(s.fqdnParts(), "."))
 }
+
+// Subdomain returns a fully-qualified subdomain for the given label.
+// It prepends the label to the Spec's FQDN parts, e.g., "gateway.dev.infra…".
+func (s Spec) Subdomain(label string) *string {
+	parts := append([]string{label}, s.fqdnParts()...)
+	return jsii.String(strings.Join(parts, "."))
+}

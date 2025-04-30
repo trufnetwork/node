@@ -19,5 +19,6 @@ const (
 // CertProvider defines how to obtain an ACM certificate for a domain.
 type CertProvider interface {
 	// Get returns an ACM certificate for the given fqdn in the hosted zone under the specified scope.
-	Get(scope constructs.Construct, id string, zone awsroute53.IHostedZone, fqdn string, s CertScope) awscertificatemanager.ICertificate
+	// additionalSANs allows specifying extra SubjectAlternativeNames.
+	Get(scope constructs.Construct, id string, zone awsroute53.IHostedZone, fqdn string, s CertScope, additionalSANs []*string) awscertificatemanager.ICertificate
 }

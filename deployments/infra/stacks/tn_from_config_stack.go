@@ -1,6 +1,7 @@
 package stacks
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
@@ -44,9 +45,10 @@ func TnFromConfigStack(
 	cdkParams := config.NewCDKParams(stack)
 
 	// Define Fronting Type parameter within stack scope
-	_ = config.NewFrontingSelector(stack) // Result not explicitly needed here, but creates the parameter
+	selector := config.NewFrontingSelector(stack) // Get selected kind
+	selectedKind := selector.Kind
 
-	// Setup observer init elements - REMOVE THIS SECTION
+	// Setup observer init elements
 	initElements := []awsec2.InitElement{}                                     // Base elements
 	observerAsset := observer.GetObserverAsset(stack, jsii.String("observer")) // Keep asset var
 
@@ -90,33 +92,64 @@ func TnFromConfigStack(
 
 	// Create KwilCluster
 	kc := kwil_cluster.NewKwilCluster(stack, "KwilCluster", &kwil_cluster.KwilClusterProps{
-		Vpc:           vpc,
-		HostedDomain:  hd,
-		Cert:          props.CertStackExports.DomainCert,
-		CorsOrigins:   cdkParams.CorsAllowOrigins.ValueAsString(),
-		SessionSecret: cdkParams.SessionSecret.ValueAsString(),
-		ChainId:       jsii.String(config.GetEnvironmentVariables[config.MainEnvironmentVariables](stack).ChainId),
-		Validators:    vs.Nodes,
-		InitElements:  initElements, // Only pass base elements
-		Assets:        kwilAssets,
+		Vpc:                  vpc,
+		HostedDomain:         hd,
+		CorsOrigins:          cdkParams.CorsAllowOrigins.ValueAsString(),
+		SessionSecret:        cdkParams.SessionSecret.ValueAsString(),
+		ChainId:              jsii.String(config.GetEnvironmentVariables[config.MainEnvironmentVariables](stack).ChainId),
+		Validators:           vs.Nodes,
+		InitElements:         initElements, // Only pass base elements
+		Assets:               kwilAssets,
+		SelectedFrontingKind: selectedKind, // Pass selected kind
 	})
 
-	// Wire up API Gateway fronting
-	ag := fronting.NewApiGatewayFronting()
-	recordName := jsii.String("api." + *cdkParams.DevPrefix.ValueAsString())
-	// Provision the front-end and retrieve its FQDN and certificate (plugin issues cert)
-	frontRes := ag.AttachRoutes(stack, "APIGateway", &fronting.FrontingProps{
-		HostedZone:          hd.Zone,
-		ImportedCertificate: nil,
-		AdditionalSANs:      nil,
-		KGWEndpoint:         kc.Gateway.InstanceDnsName,
-		IndexerEndpoint:     kc.Indexer.InstanceDnsName,
-		RecordName:          recordName,
-	})
-	// Output the custom domain
-	awscdk.NewCfnOutput(stack, jsii.String("ApiDomain"), &awscdk.CfnOutputProps{Value: frontRes.FQDN})
-	// Output the certificate ARN
-	awscdk.NewCfnOutput(stack, jsii.String("ApiCertArn"), &awscdk.CfnOutputProps{Value: frontRes.Certificate.CertificateArn()})
+	// --- Fronting Setup ---
+	// Build Spec for domain subdomains
+	spec := domain.Spec{
+		Stage:     domain.StageType(*cdkParams.Stage.ValueAsString()),
+		Sub:       "",
+		DevPrefix: *cdkParams.DevPrefix.ValueAsString(),
+	}
+
+	if selectedKind == fronting.KindAPI {
+		// Dual API Gateway setup specific logic
+		gatewayRecord := spec.Subdomain("gateway")
+		indexerRecord := spec.Subdomain("indexer")
+
+		// Get props for shared certificate setup
+		gwProps, idxProps := fronting.GetSharedCertProps(hd.Zone, *gatewayRecord, *indexerRecord)
+
+		// Set endpoints
+		gwProps.Endpoint = kc.Gateway.InstanceDnsName
+		idxProps.Endpoint = kc.Indexer.InstanceDnsName
+
+		// 1. Gateway Fronting (issues cert)
+		gApi := fronting.NewApiGatewayFronting() // Use concrete type here for API GW setup
+		gatewayRes := gApi.AttachRoutes(stack, "GatewayFronting", &gwProps)
+
+		// 2. Indexer Fronting (imports cert)
+		idxProps.ImportedCertificate = gatewayRes.Certificate // Set imported cert
+		iApi := fronting.NewApiGatewayFronting()              // Use concrete type here for API GW setup
+		indexerRes := iApi.AttachRoutes(stack, "IndexerFronting", &idxProps)
+
+		// --- Outputs ---
+		awscdk.NewCfnOutput(stack, jsii.String("GatewayEndpoint"), &awscdk.CfnOutputProps{
+			Value:       gatewayRes.FQDN,
+			Description: jsii.String("Public FQDN for the Kwil Gateway API"),
+		})
+		awscdk.NewCfnOutput(stack, jsii.String("IndexerEndpoint"), &awscdk.CfnOutputProps{
+			Value:       indexerRes.FQDN,
+			Description: jsii.String("Public FQDN for the Kwil Indexer API"),
+		})
+		awscdk.NewCfnOutput(stack, jsii.String("ApiCertArn"), &awscdk.CfnOutputProps{
+			Value:       gatewayRes.Certificate.CertificateArn(),
+			Description: jsii.String("ARN of the regional ACM certificate used for API Gateway TLS"),
+		})
+	} else {
+		// Handle other fronting types (ALB, CloudFront)
+		// Currently, the dual endpoint setup is only implemented for API Gateway
+		panic(fmt.Sprintf("Dual endpoint fronting setup not implemented for type: %s", selectedKind))
+	}
 
 	if observerAsset == nil {
 		panic("Observer asset is nil in tn_from_config_stack") // Should not happen

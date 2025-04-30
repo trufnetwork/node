@@ -7,9 +7,11 @@ import (
 	"github.com/aws/jsii-runtime-go"
 
 	domaincfg "github.com/trufnetwork/node/infra/config/domain"
+	"github.com/trufnetwork/node/infra/lib/constructs/fronting"
 	kwil_gateway "github.com/trufnetwork/node/infra/lib/kwil-gateway"
 	kwil_indexer "github.com/trufnetwork/node/infra/lib/kwil-indexer"
 	"github.com/trufnetwork/node/infra/lib/tn"
+	"github.com/trufnetwork/node/infra/lib/utils"
 )
 
 // KwilClusterProps holds inputs for creating a KwilCluster
@@ -18,15 +20,16 @@ import (
 // InitElements are user-data steps to apply to both instances
 
 type KwilClusterProps struct {
-	Vpc           awsec2.IVpc
-	HostedDomain  *domaincfg.HostedDomain
-	Cert          awscertificatemanager.Certificate // optional
-	CorsOrigins   *string
-	SessionSecret *string
-	ChainId       *string
-	Validators    []tn.TNInstance
-	InitElements  []awsec2.InitElement
-	Assets        KwilAssets
+	Vpc                  awsec2.IVpc
+	HostedDomain         *domaincfg.HostedDomain
+	Cert                 awscertificatemanager.Certificate // optional
+	CorsOrigins          *string
+	SessionSecret        *string
+	ChainId              *string
+	Validators           []tn.TNInstance
+	InitElements         []awsec2.InitElement
+	Assets               KwilAssets
+	SelectedFrontingKind fronting.Kind
 }
 
 // KwilCluster is a reusable construct for Gateway and Indexer without CloudFront
@@ -41,6 +44,10 @@ type KwilCluster struct {
 func NewKwilCluster(scope constructs.Construct, id string, props *KwilClusterProps) *KwilCluster {
 	node := constructs.NewConstruct(scope, jsii.String(id))
 	kc := &KwilCluster{Construct: node}
+
+	// Instantiate selected fronting type to get rules
+	selectedFrontingImpl := fronting.New(props.SelectedFrontingKind)
+	ingressRules := selectedFrontingImpl.IngressRules()
 
 	// create Gateway instance
 	gw := kwil_gateway.NewKGWInstance(node, kwil_gateway.NewKGWInstanceInput{
@@ -58,6 +65,8 @@ func NewKwilCluster(scope constructs.Construct, id string, props *KwilClusterPro
 		InitElements: props.InitElements,
 	})
 	kc.Gateway = gw
+	// Apply ingress rules to Gateway SG
+	utils.ApplyIngressRules(gw.SecurityGroup, ingressRules)
 
 	// create Indexer instance
 	idx := kwil_indexer.NewIndexerInstance(node, kwil_indexer.NewIndexerInstanceInput{
@@ -68,6 +77,8 @@ func NewKwilCluster(scope constructs.Construct, id string, props *KwilClusterPro
 		InitElements:    props.InitElements,
 	})
 	kc.Indexer = idx
+	// Apply ingress rules to Indexer SG
+	utils.ApplyIngressRules(idx.SecurityGroup, ingressRules)
 
 	return kc
 }

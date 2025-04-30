@@ -23,10 +23,9 @@ type FrontingProps struct {
 	ImportedCertificate awscertificatemanager.ICertificate
 	// AdditionalSANs allows passing extra SubjectAlternativeNames when creating a new certificate.
 	AdditionalSANs []*string
-	// Public DNS names of the KGW and Indexer instances.
-	KGWEndpoint     *string
-	IndexerEndpoint *string
-	// The subdomain prefix under HostedZone (e.g. "api.dev").
+	// Endpoint is the public DNS name of the backend service.
+	Endpoint *string
+	// RecordName is the subdomain prefix under HostedZone (e.g. "gateway.dev").
 	RecordName *string
 }
 
@@ -38,4 +37,9 @@ type Fronting interface {
 	AttachRoutes(scope constructs.Construct, id string, props *FrontingProps) FrontingResult
 	// IngressRules returns the set of security-group ingress rules required by this fronting implementation.
 	IngressRules() []IngressSpec
+}
+
+// NewApiGatewayFronting returns a Fronting implemented via HTTP API.
+func NewApiGatewayFronting() Fronting {
+	return &apiGateway{}
 }
