@@ -2,13 +2,11 @@
      kwild-config.tmpl   – rendered during `cdk synth`
      ------------------------------------------------------------------ */}}
 
-###########################################################################
-#  STATIC SECTION                                                         #
-###########################################################################
 profile_mode                 = ''
 profile_file                 = ''
 skip_dependency_verification = false
 pg_dump_path                 = 'pg_dump'
+genesis_state = '{{ .Genesis.Path }}'
 
 ###########################################################################
 #  LOGGING                                                                 #
@@ -20,16 +18,13 @@ output           = {{ toJson (default (list "stdout" "kwild.log") .Log.Output) }
 file_roll_size   = {{ default 10_000 .Log.FileRollKB }}
 retain_max_rolls = {{ default 0      .Log.RetainMax }}
 
-###########################################################################
-#  DYNAMIC VALUES (CDK-injected)                                           #
-###########################################################################
-
-genesis_state = '{{ .Genesis.Path }}'
-
 [telemetry]
 enable        = {{ default false           .Telemetry.Enable }}
 otlp_endpoint = '{{ default "127.0.0.1:4318" .Telemetry.Endpoint }}'
 
+###########################################################################
+#  P2P                                                                    #
+###########################################################################
 [p2p]
 listen             = '0.0.0.0:{{ default 6600 .P2P.ListenPort }}'
 pex                = {{ default true  .P2P.PEX }}
@@ -39,16 +34,25 @@ external_address   = '{{ .P2P.External }}'
 private            = false
 whitelist          = []
 
+###########################################################################
+#  CONSENSUS                                                              #
+###########################################################################
 [consensus]
 propose_timeout         = '{{ default "1s"   .Consensus.ProposeTimeout }}'
 empty_block_timeout     = '{{ default "1m0s" .Consensus.EmptyBlockTimeout }}'
 block_proposal_interval = '{{ default "1s"   .Consensus.BlockProposalInterval }}'
 block_ann_interval      = '{{ default "3s"   .Consensus.BlockAnnInterval }}'
 
+###########################################################################
+#  MEMPOOL                                                                #
+###########################################################################
 [mempool]
 max_size   = 209_715_200
 MaxTxBytes = 4_194_304
 
+###########################################################################
+#  DATABASE                                                               #
+###########################################################################
 [db]
 host            = '{{ default "kwil-postgres" .DB.Host }}'
 port            = '{{ default 5432            .DB.Port }}'
@@ -58,9 +62,15 @@ dbname          = '{{ default "kwild"         .DB.Name }}'
 read_timeout    = '{{ default "45s"           .DB.ReadTimeout }}'
 max_connections = {{   default 60             .DB.MaxConns }}
 
+###########################################################################
+#  BLOCK STORE                                                            #
+###########################################################################
 [store]
 compression = true
 
+###########################################################################
+#  USER RPC                                                               #
+###########################################################################
 [rpc]
 listen               = '0.0.0.0:{{ default 8484  .RPC.Port }}'
 broadcast_tx_timeout = '{{ default "15s"  .RPC.BroadcastTimeout }}'
@@ -72,6 +82,9 @@ challenge_expiry     = '30s'
 challenge_rate_limit = 10.0
 disabled_services    = []
 
+###########################################################################
+#  ADMIN RPC                                                              #
+###########################################################################
 [admin]
 enable = true
 listen = '{{ default "/tmp/kwild.socket" .Admin.Listen }}'

@@ -50,6 +50,7 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 	stage := config.GetStage(scope)
 
 	initAssetsDir := "/home/ec2-user/init-assets/"
+	initTempDir := "/tmp/init-tn-files/" // Temporary directory for init files
 	mountDataDir := "/data/"
 	tnComposeFile := "docker-compose.yaml"
 	tnConfigImageFile := "deployments/tn-config.dockerfile"
@@ -61,8 +62,9 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 		awsec2.InitFile_FromExistingAsset(jsii.String(initAssetsDir+tnConfigImageFile), input.TNConfigImageAsset, &awsec2.InitFileOptions{
 			Owner: defaultInstanceUser,
 		}),
+		// Place config and genesis in a temporary directory first
 		awsec2.InitFile_FromExistingAsset(
-			jsii.String("/data/tn/config.toml"),
+			jsii.String(initTempDir+"config.toml"), // Use temporary path
 			input.RenderedConfigAsset,
 			&awsec2.InitFileOptions{
 				Owner: defaultInstanceUser,
@@ -71,7 +73,7 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 			},
 		),
 		awsec2.InitFile_FromExistingAsset(
-			jsii.String("/data/tn/genesis.json"),
+			jsii.String(initTempDir+"genesis.json"), // Use temporary path
 			input.GenesisAsset,
 			&awsec2.InitFileOptions{
 				Owner: defaultInstanceUser,
@@ -141,6 +143,14 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 	tnLaunchTemplate.UserData().AddCommands(
 		utils.MountVolumeToPathAndPersist("nvme1n1", "/data")...,
 	)
+	// Ensure the target directory exists on the mounted volume and move files
+	tnLaunchTemplate.UserData().AddCommands(
+		jsii.Sprintf("sudo mkdir -p %stn", mountDataDir),
+		jsii.Sprintf("sudo mv %s* %stn/", initTempDir, mountDataDir),
+		jsii.Sprintf("sudo chown %s:%s %stn/*", *defaultInstanceUser, *defaultInstanceUser, mountDataDir),
+		jsii.Sprintf("sudo rm -rf %s", initTempDir), // Clean up temp dir
+	)
+	// Move other assets from initAssetsDir after mount
 	tnLaunchTemplate.UserData().AddCommands(utils.MoveToPath(initAssetsDir+"*", mountDataDir))
 
 	node := TNInstance{
