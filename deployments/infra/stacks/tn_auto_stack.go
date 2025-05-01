@@ -143,20 +143,18 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 		},
 	)
 
-	// --- Fronting Setup ---
-	// Build Spec for domain subdomains
-	spec := domain.Spec{
-		Stage:     domain.StageType(stage),
-		Sub:       "",
-		DevPrefix: devPrefix,
-	}
-
 	if selectedKind == fronting.KindAPI {
 		// Dual API Gateway setup specific logic
+		// Build Spec for domain subdomains - Moved inside the 'if' block as it's only used here
+		spec := domain.Spec{
+			Stage:     domain.StageType(stage),
+			Sub:       "",
+			DevPrefix: devPrefix,
+		}
 		gatewayRecord := spec.Subdomain("gateway")
 		indexerRecord := spec.Subdomain("indexer")
 
-		// Get props for shared certificate setup
+		// Get props for shared certificate setup using full subdomains from spec
 		gwProps, idxProps := fronting.GetSharedCertProps(hd.Zone, *gatewayRecord, *indexerRecord)
 
 		// Set endpoints

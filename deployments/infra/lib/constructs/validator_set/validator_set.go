@@ -62,6 +62,9 @@ func NewValidatorSet(scope constructs.Construct, id string, props *ValidatorSetP
 		AssumedBy: awsiam.NewServicePrincipal(jsii.String("ec2.amazonaws.com"), nil),
 	})
 
+	// Grant pull access to the TN Docker image repository
+	props.Assets.DockerImage.Repository().GrantPull(role)
+
 	// Grant read access to the genesis asset bucket
 	props.GenesisAsset.Bucket().GrantRead(role, nil)
 

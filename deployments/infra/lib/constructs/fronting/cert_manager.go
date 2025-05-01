@@ -2,6 +2,7 @@ package fronting
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2/awscertificatemanager"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsroute53"
@@ -31,24 +32,35 @@ type SharedCertResult struct {
 // GetSharedCertProps prepares FrontingProps for two services sharing a single certificate.
 // It determines which props will issue the certificate (with the other's FQDN as a SAN)
 // and which props will import the resulting certificate.
-// 'primaryRecordName' and 'secondaryRecordName' should be the simple record names (e.g., "gateway.dev").
-func GetSharedCertProps(hostedZone awsroute53.IHostedZone, primaryRecordName, secondaryRecordName string) (primaryProps FrontingProps, secondaryProps FrontingProps) {
+// 'primaryFqdn' and 'secondaryFqdn' should be the fully qualified domain names (e.g., "gateway.dev.infra.truf.network").
+func GetSharedCertProps(hostedZone awsroute53.IHostedZone, primaryFqdn, secondaryFqdn string) (primaryProps FrontingProps, secondaryProps FrontingProps) {
 	zoneName := *hostedZone.ZoneName()
-	secondaryFqdn := fmt.Sprintf("%s.%s", secondaryRecordName, zoneName)
+	zoneSuffix := "." + zoneName
 
-	// Primary issues the cert, including secondary as SAN
+	// Extract the simple label part (e.g., "gateway.dev") by trimming the zone suffix.
+	primaryLabel := strings.TrimSuffix(primaryFqdn, zoneSuffix)
+	secondaryLabel := strings.TrimSuffix(secondaryFqdn, zoneSuffix)
+
+	if primaryLabel == primaryFqdn || secondaryLabel == secondaryFqdn {
+		// This indicates the zone suffix wasn't found, meaning the input FQDN was likely incorrect.
+		panic(fmt.Sprintf("GetSharedCertProps: Input FQDN(s) '%s', '%s' did not end with expected zone suffix '%s'", primaryFqdn, secondaryFqdn, zoneSuffix))
+	}
+
+	// Primary issues the cert, using the primary simple label for its RecordName,
+	// and the full secondary FQDN (passed as input) as a SAN.
 	primaryProps = FrontingProps{
 		HostedZone:     hostedZone,
-		RecordName:     jsii.String(primaryRecordName),
-		AdditionalSANs: []*string{jsii.String(secondaryFqdn)},
+		RecordName:     jsii.String(primaryLabel),             // Use the extracted simple label for Route53 RecordName
+		AdditionalSANs: []*string{jsii.String(secondaryFqdn)}, // Use the full secondary FQDN for SAN
 		// Endpoint needs to be set by caller
 		// ImportedCertificate: nil (default)
 	}
 
-	// Secondary will import the certificate issued by primary
+	// Secondary will import the certificate issued by primary.
+	// Its RecordName should be the secondary simple label.
 	secondaryProps = FrontingProps{
 		HostedZone: hostedZone,
-		RecordName: jsii.String(secondaryRecordName),
+		RecordName: jsii.String(secondaryLabel), // Use the extracted simple label for Route53 RecordName
 		// Endpoint needs to be set by caller
 		// ImportedCertificate needs to be set by caller using primary's result
 		// AdditionalSANs: nil (not needed when importing)
@@ -56,8 +68,6 @@ func GetSharedCertProps(hostedZone awsroute53.IHostedZone, primaryRecordName, se
 
 	return primaryProps, secondaryProps
 }
-
-// --- Original Methods ---
 
 // GetRegional issues or returns a regional ACM certificate for the given domain in this hosted zone.
 // 'additionalSANs' can be provided to include extra SubjectAlternativeNames.

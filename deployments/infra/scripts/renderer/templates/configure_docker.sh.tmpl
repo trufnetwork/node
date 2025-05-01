@@ -20,7 +20,7 @@ systemctl stop docker
 
 # Configure daemon using dictionary and toJson for proper quoting/escaping
 cat <<EOF > /etc/docker/daemon.json
-{{- $cfg := dict "data-root" .DataRoot -}}
+{{ $cfg := dict "data-root" .DataRoot }}
 {{- if .MetricsAddr }}{{ $cfg = merge $cfg (dict "metrics-addr" .MetricsAddr) }}{{ end -}}
 {{ toJson $cfg }}
 EOF

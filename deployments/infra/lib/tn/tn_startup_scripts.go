@@ -58,7 +58,7 @@ func TnDbStartupScripts(options AddStartupScriptsOptions) (*string, error) {
 		return nil, fmt.Errorf("getting install docker script: %w", err)
 	}
 	configureScript, err := utils.ConfigureDocker(utils.ConfigureDockerInput{
-		DataRoot: jsii.String(*options.DataDirPath + "/docker"),
+		DataRoot: jsii.String(*options.DataDirPath + "docker"),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("getting configure docker script: %w", err)
