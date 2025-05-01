@@ -2,6 +2,7 @@ package validator_set
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -24,6 +25,12 @@ const kwildConfigTemplateFile = "kwild-config.tmpl"
 const kwildConfigDir = "config/node"
 const kwildConfigFilename = "config.toml"
 const kwildGenesisPath = "/root/.kwild/genesis.json"
+
+// nodeKeyJson represents the structure of the nodekey.json file kwild expects.
+type nodeKeyJson struct {
+	Key  string `json:"key"`
+	Type string `json:"type"`
+}
 
 // populateAndRenderValues gathers config data, populates the Values struct, and renders the TOML template.
 func populateAndRenderValues(scope constructs.Construct, index int, props *ValidatorSetProps, connection kwilnetworkpeer.TNPeer, allPeers []kwilnetworkpeer.TNPeer) *bytes.Buffer {
@@ -84,13 +91,15 @@ func populateAndRenderValues(scope constructs.Construct, index int, props *Valid
 }
 
 type NewNodeInput struct {
-	Index        int
-	Role         awsiam.IRole
-	SG           awsec2.SecurityGroup
-	Props        *ValidatorSetProps
-	Connection   kwilnetworkpeer.TNPeer
-	AllPeers     []kwilnetworkpeer.TNPeer
-	GenisisAsset awss3assets.Asset
+	Index         int
+	Role          awsiam.IRole
+	SG            awsec2.SecurityGroup
+	Props         *ValidatorSetProps
+	Connection    kwilnetworkpeer.TNPeer
+	PrivateKeyHex string
+	KeyType       string
+	AllPeers      []kwilnetworkpeer.TNPeer
+	GenisisAsset  awss3assets.Asset
 }
 
 // newNode builds a single TNInstance using the shared role and security group
@@ -109,6 +118,32 @@ func newNode(
 	// Grant the EC2 instance role read access to the asset bucket
 	nodeConfigAsset.Bucket().GrantRead(input.Role, nil)
 
+	// --- Generate nodekey.json content and create asset ---
+
+	// 1. Prepare the data structure for nodekey.json
+	nodeKeyData := nodeKeyJson{
+		Key:  input.PrivateKeyHex,
+		Type: input.KeyType,
+	}
+
+	// 2. Marshal the data to JSON bytes
+	nodeKeyJsonBytes, err := json.Marshal(nodeKeyData)
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal nodekey.json for node %d: %v", input.Index, err))
+	}
+
+	// 3. Write the JSON bytes to a temporary file
+	nodeKeyTempFile := utils.WriteToTempFile(scope, fmt.Sprintf("nodekey-%d.json", input.Index), nodeKeyJsonBytes)
+
+	// 4. Create an S3 asset from the temporary JSON file
+	nodeKeyJsonAsset := awss3assets.NewAsset(scope, jsii.String(fmt.Sprintf("NodeKeyJsonAsset-%d", input.Index)), &awss3assets.AssetProps{
+		Path: nodeKeyTempFile,
+	})
+
+	// 5. Grant the EC2 instance role read access to the nodekey.json asset bucket
+	nodeKeyJsonAsset.Bucket().GrantRead(input.Role, nil) // Use the same role as other assets
+	// --- End of nodekey.json asset creation ---
+
 	// Build the TNInstance, passing the *rendered* config asset details
 	return tn.NewTNInstance(scope, tn.NewTNInstanceInput{
 		Index:                input.Index,
@@ -121,6 +156,7 @@ func newNode(
 		// Pass the Asset for rendered config and genesis file
 		RenderedConfigAsset: nodeConfigAsset,
 		GenesisAsset:        input.GenisisAsset,
+		NodeKeyJsonAsset:    nodeKeyJsonAsset,
 		TNConfigImageAsset:  input.Props.Assets.ConfigImage,
 		InitElements:        input.Props.InitElements,
 		PeerConnection:      input.Connection,

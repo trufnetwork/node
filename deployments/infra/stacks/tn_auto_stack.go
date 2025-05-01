@@ -62,7 +62,8 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 		EdgeCertificate: false,
 	})
 
-	peers, genesisAsset := kwil_network.KwilNetworkConfigAssetsFromNumberOfNodes(
+	// Generate network config assets (peers, node keys, genesis)
+	peers, nodeKeys, genesisAsset := kwil_network.KwilNetworkConfigAssetsFromNumberOfNodes(
 		stack,
 		kwil_network.KwilAutoNetworkConfigAssetInput{
 			NumberOfNodes: config.NumOfNodes(stack),
@@ -77,7 +78,8 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 	vs := validator_set.NewValidatorSet(stack, "ValidatorSet", &validator_set.ValidatorSetProps{
 		Vpc:          vpc,
 		HostedDomain: hd,
-		Peers:        peers,
+		Peers:        peers,    // Pass public peer info
+		NodeKeys:     nodeKeys, // Pass node keys (including private)
 		GenesisAsset: genesisAsset,
 		KeyPair:      nil,
 		Assets:       tnAssets,

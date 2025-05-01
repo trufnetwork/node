@@ -13,6 +13,7 @@ import (
 
 	"github.com/trufnetwork/node/infra/config"
 	"github.com/trufnetwork/node/infra/config/domain"
+	kwilnetwork "github.com/trufnetwork/node/infra/lib/kwil-network"
 	peer "github.com/trufnetwork/node/infra/lib/kwil-network/peer"
 	"github.com/trufnetwork/node/infra/lib/tn"
 )
@@ -26,6 +27,7 @@ type ValidatorSetProps struct {
 	Vpc          awsec2.IVpc
 	HostedDomain *domain.HostedDomain
 	Peers        []peer.TNPeer
+	NodeKeys     []kwilnetwork.NodeKeys
 	GenesisAsset awss3assets.Asset
 	KeyPair      awsec2.IKeyPair
 	Assets       TNAssets
@@ -78,17 +80,20 @@ func NewValidatorSet(scope constructs.Construct, id string, props *ValidatorSetP
 	// provision TN instances and record EIP and DNS
 	instances := make([]tn.TNInstance, n)
 	for i := 0; i < n; i++ {
-		peerInfo := allPeers[i] // Get current peer
+		peerInfo := allPeers[i]      // Get current peer
+		nodeKey := props.NodeKeys[i] // Get corresponding node key data
 
 		// The genesis asset details will be passed to tn_instance.go -> tn_startup_scripts.go
 		inst := newNode(node, NewNodeInput{
-			Index:        i,
-			Role:         role,
-			SG:           sg,
-			Props:        props,
-			Connection:   peerInfo,
-			AllPeers:     allPeers,
-			GenisisAsset: props.GenesisAsset,
+			Index:         i,
+			Role:          role,
+			SG:            sg,
+			Props:         props,
+			Connection:    peerInfo,              // Pass public peer info
+			PrivateKeyHex: nodeKey.PrivateKeyHex, // Pass private key hex
+			KeyType:       nodeKey.KeyType,       // Pass key type
+			AllPeers:      allPeers,
+			GenisisAsset:  props.GenesisAsset,
 		})
 
 		// allocate Elastic IP

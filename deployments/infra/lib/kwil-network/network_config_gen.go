@@ -35,7 +35,7 @@ type KwilNetworkConfig struct {
 
 // KwilNetworkConfigAssetsFromNumberOfNodes generates peer information and the genesis file asset.
 // It no longer generates individual node config files, as that's handled by templating.
-func KwilNetworkConfigAssetsFromNumberOfNodes(scope constructs.Construct, input KwilAutoNetworkConfigAssetInput) ([]peer.TNPeer, awss3assets.Asset) {
+func KwilNetworkConfigAssetsFromNumberOfNodes(scope constructs.Construct, input KwilAutoNetworkConfigAssetInput) ([]peer.TNPeer, []NodeKeys, awss3assets.Asset) {
 	// Initialize CDK parameters and DomainConfig
 	stage := config.GetStage(scope)
 	devPrefix := config.GetDevPrefix(scope)
@@ -88,6 +88,6 @@ func KwilNetworkConfigAssetsFromNumberOfNodes(scope constructs.Construct, input 
 		panic("DbOwner or GenesisFilePath must be provided")
 	}
 
-	// Return the list of peers and the single genesis asset
-	return peers, genesisAsset
+	// Return the list of peers, the corresponding node keys, and the single genesis asset
+	return peers, nodeKeys, genesisAsset
 }
