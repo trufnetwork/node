@@ -50,8 +50,8 @@ services:
     hostname: indexer
     restart: unless-stopped
     build:
-      context: ../..
-      dockerfile: deployments/indexer/indexer.dockerfile
+      context: .
+      dockerfile: indexer.dockerfile
     environment:
       NODE_RPC_ENDPOINT: ${NODE_RPC_ENDPOINT:-http://tn-db-1:8484}
       KWIL_PG_CONN: ${KWIL_PG_CONN:-postgresql://kwild@kwil-postgres:5432/kwild?sslmode=disable}
@@ -74,6 +74,8 @@ services:
         max-size: "100m"
         max-file: "2"
         tag: "{{.Name}}"
+    volumes:
+      - ${INDEXER_BINARY_PATH:-../../.build/kwil-indexer}:/app/kwil-indexer
 
 networks:
   tn-network:

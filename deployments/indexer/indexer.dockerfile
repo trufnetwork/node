@@ -1,23 +1,10 @@
-FROM alpine:latest AS build-indexer
+FROM alpine:latest
 
+# install curl
+RUN apk add --no-cache curl
+
+# Set working directory inside the container
 WORKDIR /app
-
-RUN apk update && apk add --no-cache wget
-
-# Copy and run the binary download script to fetch kwil-indexer
-COPY ./scripts/download-binaries-dev.sh ./scripts/download-binaries-dev.sh
-RUN chmod +x ./scripts/download-binaries-dev.sh && \
-    sh ./scripts/download-binaries-dev.sh --indexer
-
-FROM alpine:latest AS runtime
-
-RUN apk add --no-cache curl bash
-
-WORKDIR /app
-
-# Copy the downloaded kwil-indexer from the build stage
-COPY --from=build-indexer /app/.build/kwil-indexer ./kwil-indexer
-RUN chmod +x ./kwil-indexer
 
 # set default env variables
 ENV NODE_RPC_ENDPOINT="http://127.0.0.1:8484"

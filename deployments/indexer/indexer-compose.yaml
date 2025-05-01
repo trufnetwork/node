@@ -48,8 +48,8 @@ services:
   indexer:
     restart: unless-stopped
     build:
-      dockerfile: deployments/indexer/indexer.dockerfile
-      context: ../..
+      dockerfile: indexer.dockerfile
+      context: .
     environment:
       NODE_RPC_ENDPOINT: ${NODE_RPC_ENDPOINT:?NODE_RPC_ENDPOINT is required}
       KWIL_PG_CONN: ${KWIL_PG_CONN:?KWIL_PG_CONN is required}
@@ -66,6 +66,8 @@ services:
       interval: 5s
       retries: 5
       timeout: 5s
+    volumes:
+      - ${INDEXER_BINARY_PATH:-./kwil-indexer}:/app/kwil-indexer
     logging:
       driver: "json-file"
       options:
