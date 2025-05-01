@@ -13,8 +13,10 @@ type MainEnvironmentVariables struct {
 }
 
 type AutoStackEnvironmentVariables struct {
-	IncludeObserver bool   `env:"INCLUDE_OBSERVER" default:"false"`
-	DbOwner         string `env:"DB_OWNER" required:"true"`
+	// IncludeObserver is true if we want to test metrics setup
+	IncludeObserver bool `env:"INCLUDE_OBSERVER" default:"false"`
+	// DB_OWNER must be external, otherwise it will always be unknown
+	DbOwner string `env:"DB_OWNER" required:"true"`
 }
 
 type ConfigStackEnvironmentVariables struct {

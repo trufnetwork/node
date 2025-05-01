@@ -46,9 +46,10 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=${START_CMD}
 ExecStop=${STOP_CMD}
-Environment=HOSTNAME="mock-peer.example.com"
-Environment=POSTGRES_VOLUME="/data/postgres"
-Environment=TN_VOLUME="/data/tn"
+# don't quote the values, otherwise compose may treat this differently
+Environment=HOSTNAME=mock-peer.example.com
+Environment=POSTGRES_VOLUME=/data/postgres
+Environment=TN_VOLUME=/data/tn
 
 
 [Install]

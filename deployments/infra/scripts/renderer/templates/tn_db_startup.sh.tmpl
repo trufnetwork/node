@@ -69,9 +69,10 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=${START_CMD}
 ExecStop=${STOP_CMD}
+# don't quote the values, otherwise compose may treat this differently
 {{ range $key := .SortedEnvKeys -}}
 {{ $value := index $.EnvVars $key -}}
-Environment={{ $key }}={{ printf "%q" $value }}
+Environment={{ $key }}={{ $value }}
 {{ end }}
 
 [Install]
