@@ -1,8 +1,8 @@
-# TSN-DB Benchmark
+# TN-DB Benchmark
 
-This directory contains benchmark tests for the Truflation Stream Network Database (TSN-DB), focusing on evaluating the performance impact of stream composition depth.
+This directory contains benchmark tests for the Truflation Stream Network Database (TN-DB), focusing on evaluating the performance impact of stream composition depth.
 
-This benchmark is part of a larger system used to evaluate TSN-DB performance across different environments and AWS EC2 instance types. The results from these tests are used to generate markdown reports for each instance, providing valuable insights into the system's performance under various conditions.
+This benchmark is part of a larger system used to evaluate TN-DB performance across different environments and AWS EC2 instance types. The results from these tests are used to generate markdown reports for each instance, providing valuable insights into the system's performance under various conditions.
 
 For information on how to trigger these benchmarks and view the resulting reports, please refer to the [Getting Benchmarks](../../infra/docs/getting-benchmarks.md) documentation.
 
@@ -43,7 +43,7 @@ After running, the benchmark will output performance metrics for each test case,
 - Minimum duration
 - Maximum duration
 
-These results help evaluate the efficiency of TSN-DB operations under different conditions.
+These results help evaluate the efficiency of TN-DB operations under different conditions.
 
 ## Note
 
