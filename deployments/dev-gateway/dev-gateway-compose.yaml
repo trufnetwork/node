@@ -4,7 +4,7 @@ services:
     hostname: kwil-gateway
     volumes:
       - type: bind
-        source: ./kgw-config.pkl
+        source: ../gateway/kgw-config.pkl
         target: /app/kgw-config.pkl
       - type: bind
         # if this fails, remember to run task kwil-binaries
@@ -12,8 +12,8 @@ services:
         target: /app/kgw
 
     build:
-      context: .
-      dockerfile: gateway.dockerfile
+      context: ../..
+      dockerfile: deployments/gateway/gateway.dockerfile
 
     ports:
       - "8090:8090"
