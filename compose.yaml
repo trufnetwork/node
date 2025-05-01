@@ -45,14 +45,13 @@ services:
       # app.pg-db-host
       KWILD_DB_HOST: kwil-postgres
       # DB_OWNER must be provided at runtime
-      DB_OWNER: ${DB_OWNER:-0x4710A8D8F0D845da110086812a32De6d90d7ff5C}
+      DB_OWNER: ${DB_OWNER:-}
     ports:
       - "50051:50051"
       - "50151:50151"
-      - "8484:8484"
+      - "${TN_RPC_PORT:-8484}:8484"
       - "8080:8080"
       - "26656:26656"
-      - "26657:26657"
     depends_on:
       kwil-postgres:
         condition: service_healthy

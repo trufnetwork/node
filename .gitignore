@@ -3,6 +3,7 @@
 !.env.example
 .idea
 .cursor
+.repomix
 
 .build/kwild
 # must remain private
