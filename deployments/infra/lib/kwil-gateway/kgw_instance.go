@@ -47,10 +47,10 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 	})
 
 	// Create security group
-	instanceSG := awsec2.NewSecurityGroup(scope, jsii.String("NodeSG"), &awsec2.SecurityGroupProps{
+	instanceSG := awsec2.NewSecurityGroup(scope, jsii.String("KGWNodeSG"), &awsec2.SecurityGroupProps{
 		Vpc:              input.Vpc,
 		AllowAllOutbound: jsii.Bool(true),
-		Description:      jsii.String("TN-DB Instance security group."),
+		Description:      jsii.String("KGW Instance security group."),
 	})
 
 	// Ingress rules are applied by the KwilCluster construct based on selected fronting type.
@@ -62,7 +62,7 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 		jsii.String("Allow ssh."),
 		jsii.Bool(false))
 
-	keyPair := awsec2.KeyPair_FromKeyPairName(scope, jsii.String("KeyPair"), jsii.String(config.KeyPairName(scope)))
+	keyPair := awsec2.KeyPair_FromKeyPairName(scope, jsii.String("KGWKeyPair"), jsii.String(config.KeyPairName(scope)))
 
 	kgwBinaryPath := jsii.String("/home/ec2-user/kgw-binary.zip")
 	kgwDirZipPath := jsii.String("/home/ec2-user/kgw.zip")
@@ -102,7 +102,7 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 		LaunchTemplateName: jsii.Sprintf("%s/%s", *awscdk.Aws_STACK_NAME(), "KGWLaunchTemplate"),
 	})
 
-	// first step is to attach the init data to the launch template
+	// Attach the init data to the launch template Role so cfn-init can run
 	utils.AttachInitDataToLaunchTemplate(utils.AttachInitDataToLaunchTemplateInput{
 		InitData:       initData,
 		LaunchTemplate: launchTemplate,
@@ -110,6 +110,7 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 		Platform:       awsec2.OperatingSystemType_LINUX,
 	})
 
+	// Add startup scripts to UserData AFTER base commands and cfn-init signal config
 	scripts := AddKwilGatewayStartupScriptsToInstance(AddKwilGatewayStartupScriptsOptions{
 		kgwBinaryPath: kgwBinaryPath,
 		Config:        input.Config,
