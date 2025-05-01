@@ -126,8 +126,8 @@ func TnFromConfigStack(
 		gwProps, idxProps := fronting.GetSharedCertProps(hd.Zone, *gatewayRecord, *indexerRecord)
 
 		// Set endpoints
-		gwProps.Endpoint = kc.Gateway.InstanceDnsName
-		idxProps.Endpoint = kc.Indexer.InstanceDnsName
+		gwProps.Endpoint = kc.Gateway.GatewayFqdn
+		idxProps.Endpoint = kc.Indexer.IndexerFqdn
 
 		// 1. Gateway Fronting (issues cert)
 		gApi := fronting.NewApiGatewayFronting() // Use concrete type here for API GW setup

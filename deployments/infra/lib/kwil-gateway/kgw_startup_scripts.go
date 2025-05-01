@@ -21,7 +21,6 @@ func AddKwilGatewayStartupScriptsToInstance(options AddKwilGatewayStartupScripts
 		url := awscdk.Fn_Join(jsii.String(""), &[]*string{
 			jsii.String("http://"),
 			node.PeerConnection.GetRpcHost(),
-			jsii.String(":80"),
 		})
 		nodeAddresses = append(nodeAddresses, url)
 	}
@@ -29,7 +28,7 @@ func AddKwilGatewayStartupScriptsToInstance(options AddKwilGatewayStartupScripts
 	kgwEnvConfig := KGWEnvConfig{
 		CorsAllowOrigins: config.CorsAllowOrigins,
 		SessionSecret:    config.SessionSecret,
-		Backends:         awscdk.Fn_Join(jsii.String(","), &nodeAddresses), // nodeAddresses now contains http://host:80
+		Backends:         awscdk.Fn_Join(jsii.String(","), &nodeAddresses), // nodeAddresses now contains http://host:port
 		ChainId:          config.ChainId,
 		Domain:           config.Domain,
 	}

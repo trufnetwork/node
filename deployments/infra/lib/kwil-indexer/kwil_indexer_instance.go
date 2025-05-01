@@ -32,7 +32,7 @@ type IndexerInstance struct {
 	// security group of the instance to allow communication
 	SecurityGroup awsec2.SecurityGroup
 	// public DNS name is needed for cloudfront
-	InstanceDnsName *string
+	IndexerFqdn *string
 	// if we need to add policies to the role
 	Role awsiam.IRole
 	// launch template of the instance
@@ -62,11 +62,11 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 
 	// Create an A record for the indexer using HostedDomain
 	subdomain := "inner-indexer"
-	input.HostedDomain.AddARecord("IndexerElasticIpDnsRecord", subdomain,
+	aRecord := input.HostedDomain.AddARecord("IndexerElasticIpDnsRecord", subdomain,
 		awsroute53.RecordTarget_FromIpAddresses(indexerElasticIp.AttrPublicIp()),
 	)
 	// Full DNS name includes subdomain
-	instanceDnsName := jsii.String(input.HostedDomain.FQDN)
+	indexerFqdn := aRecord.DomainName()
 
 	// Create security group
 	instanceSG := awsec2.NewSecurityGroup(scope, jsii.String("IndexerSG"), &awsec2.SecurityGroupProps{
@@ -166,10 +166,10 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 	launchTemplate.UserData().AddCommands(scripts)
 
 	return IndexerInstance{
-		SecurityGroup:   instanceSG,
-		Role:            role,
-		InstanceDnsName: instanceDnsName,
-		ElasticIp:       indexerElasticIp,
-		LaunchTemplate:  launchTemplate,
+		SecurityGroup:  instanceSG,
+		Role:           role,
+		IndexerFqdn:    indexerFqdn,
+		ElasticIp:      indexerElasticIp,
+		LaunchTemplate: launchTemplate,
 	}
 }

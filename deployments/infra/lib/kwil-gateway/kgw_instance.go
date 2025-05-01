@@ -33,11 +33,12 @@ type NewKGWInstanceInput struct {
 }
 
 type KGWInstance struct {
-	InstanceDnsName *string
-	SecurityGroup   awsec2.SecurityGroup
-	Role            awsiam.IRole
-	LaunchTemplate  awsec2.LaunchTemplate
-	ElasticIp       awsec2.CfnEIP
+	// Specific FQDN created for the gateway instance's A record (e.g., inner-gateway.dev.infra.truf.network)
+	GatewayFqdn    *string
+	SecurityGroup  awsec2.SecurityGroup
+	Role           awsiam.IRole
+	LaunchTemplate awsec2.LaunchTemplate
+	ElasticIp      awsec2.CfnEIP
 }
 
 func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWInstance {
@@ -129,18 +130,18 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 	)
 
 	// Create an A record for the gateway using HostedDomain
-	subdomain := "kgw"
-	input.HostedDomain.AddARecord("KGWARecord", subdomain,
+	subdomain := "inner-gateway"
+	aRecord := input.HostedDomain.AddARecord("GatewayARecord", subdomain,
 		awsroute53.RecordTarget_FromIpAddresses(eip.AttrPublicIp()),
 	)
 	// Full DNS name includes subdomain prefix
-	instanceDnsName := jsii.String(input.HostedDomain.FQDN)
+	gatewayFqdn := aRecord.DomainName()
 
 	return KGWInstance{
-		SecurityGroup:   instanceSG,
-		Role:            role,
-		InstanceDnsName: instanceDnsName,
-		LaunchTemplate:  launchTemplate,
-		ElasticIp:       eip,
+		SecurityGroup:  instanceSG,
+		Role:           role,
+		GatewayFqdn:    gatewayFqdn,
+		LaunchTemplate: launchTemplate,
+		ElasticIp:      eip,
 	}
 }

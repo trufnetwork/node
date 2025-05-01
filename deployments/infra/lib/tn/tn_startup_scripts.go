@@ -2,13 +2,13 @@ package tn
 
 import (
 	"fmt"
-	"sort"
-
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsecrassets"
 	"github.com/aws/jsii-runtime-go"
 	peer2 "github.com/trufnetwork/node/infra/lib/kwil-network/peer"
 	"github.com/trufnetwork/node/infra/lib/utils"
 	"github.com/trufnetwork/node/infra/scripts/renderer"
+	"sort"
+	"strconv"
 )
 
 type AddStartupScriptsOptions struct {
@@ -26,6 +26,7 @@ type TNEnvConfig struct {
 	Hostname       *string `env:"HOSTNAME"`
 	TnVolume       *string `env:"TN_VOLUME"`       // Host path mapped to /root/.kwild
 	PostgresVolume *string `env:"POSTGRES_VOLUME"` // Host path for postgres data
+	RpcPort        *string `env:"TN_RPC_PORT"`     // Port for the TN RPC
 }
 
 // GetDict returns a map of the environment variables and their values
@@ -43,6 +44,7 @@ func TnDbStartupScripts(options AddStartupScriptsOptions) (*string, error) {
 		Hostname:       options.CurrentPeer.Address,
 		TnVolume:       jsii.String(tnDataPath),
 		PostgresVolume: jsii.String(postgresDataPath),
+		RpcPort:        jsii.String(strconv.Itoa(peer2.TnRPCPort)),
 	}.GetDict()
 
 	// Extract and sort keys from the environment map manually
