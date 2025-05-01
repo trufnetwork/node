@@ -82,7 +82,6 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 				Mode:  jsii.String("000644"),
 			},
 		),
-		// --- Add entry to download nodekey.json to temp dir ---
 		awsec2.InitFile_FromExistingAsset(
 			jsii.String(initTempDir+"nodekey.json"), // Target filename in temp dir
 			input.NodeKeyJsonAsset,                  // Use the new asset passed in input
@@ -92,7 +91,6 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 				Mode:  jsii.String("000600"), // Restrict permissions for the key file
 			},
 		),
-		// --- End of addition ---
 	}
 
 	// Append base InitElements if provided

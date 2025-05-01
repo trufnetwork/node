@@ -118,8 +118,6 @@ func newNode(
 	// Grant the EC2 instance role read access to the asset bucket
 	nodeConfigAsset.Bucket().GrantRead(input.Role, nil)
 
-	// --- Generate nodekey.json content and create asset ---
-
 	// 1. Prepare the data structure for nodekey.json
 	nodeKeyData := nodeKeyJson{
 		Key:  input.PrivateKeyHex,
@@ -142,7 +140,6 @@ func newNode(
 
 	// 5. Grant the EC2 instance role read access to the nodekey.json asset bucket
 	nodeKeyJsonAsset.Bucket().GrantRead(input.Role, nil) // Use the same role as other assets
-	// --- End of nodekey.json asset creation ---
 
 	// Build the TNInstance, passing the *rendered* config asset details
 	return tn.NewTNInstance(scope, tn.NewTNInstanceInput{

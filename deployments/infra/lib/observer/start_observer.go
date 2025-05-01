@@ -5,7 +5,6 @@ import (
 
 	"github.com/trufnetwork/node/infra/lib/utils"
 	"github.com/trufnetwork/node/infra/scripts/renderer"
-	// dto "github.com/trufnetwork/node/infra/scripts/renderer/dto" // DTOs are now in renderer package
 )
 
 type CreateStartObserverScriptInput struct {
