@@ -20,8 +20,6 @@ import (
 
 // ValidatorSetProps holds inputs for creating a ValidatorSet
 // all fields are required unless otherwise documented
-// TODO adjust fields as needed based on spec
-// TODO include Stage if necessary
 
 type ValidatorSetProps struct {
 	Vpc          awsec2.IVpc
