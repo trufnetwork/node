@@ -68,7 +68,7 @@ CREATE OR REPLACE ACTION insert_records(
             ERROR('wallet not allowed to write to stream: data_provider=' || $row.data_provider || ', stream_id=' || $row.stream_id);
         }
     }
-    
+
     -- Insert all records using WITH RECURSIVE pattern to avoid round trips
     WITH RECURSIVE 
     indexes AS (
@@ -93,12 +93,13 @@ CREATE OR REPLACE ACTION insert_records(
         FROM indexes
         JOIN record_arrays ON 1=1
     )
-    INSERT INTO primitive_events (stream_id, data_provider, event_time, value, created_at)
+    INSERT INTO primitive_events (stream_id, data_provider, event_time, value, created_at, truflation_created_at)
     SELECT 
         stream_id, 
         data_provider, 
         event_time, 
         value, 
-        $current_block
+        $current_block,
+        NULL
     FROM arguments;
 };
