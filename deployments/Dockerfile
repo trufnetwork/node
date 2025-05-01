@@ -35,7 +35,7 @@ RUN chmod +x /app/entrypoint.sh
 # create the configuration script; note that we are NOT running it here
 RUN echo "#!/bin/sh" > /app/config.sh && \
     echo "set -e" >> /app/config.sh && \
-    echo "if [ ! -f /root/.kwild/nodekey.json ]; then" >> /app/config.sh && \
+    echo "if [ ! -f /root/.kwild/config.toml ]; then" >> /app/config.sh && \
     echo "    echo 'Configuration does not exist';" >> /app/config.sh && \
     echo "    echo 'Creating configuration';" >> /app/config.sh && \
     echo "    ./kwild setup init --chain-id $CHAIN_ID --db-owner \$DB_OWNER -r /root/.kwil-new;" >> /app/config.sh && \
