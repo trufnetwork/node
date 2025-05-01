@@ -63,8 +63,6 @@ func GenerateNodeKeys(scope constructs.Construct) NodeKeys {
 // ExtractKeys needs similar updates if used.
 // For now, focusing on GenerateNodeKeys.
 func ExtractKeys(scope constructs.Construct, privateKey string) NodeKeys {
-	// ... (needs similar struct update and validation)
-	// Placeholder implementation - update if needed
 	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables](scope)
 	cmd := exec.Command(envVars.KwildCliPath, "key", "info", privateKey, "--output", "json")
 	var output KeyGenOutput
