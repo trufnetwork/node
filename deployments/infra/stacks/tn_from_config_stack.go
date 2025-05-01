@@ -91,9 +91,9 @@ func TnFromConfigStack(
 
 	// Kwil Cluster assets via helper
 	kwilAssets := kwil_cluster.BuildKwilAssets(stack, kwil_cluster.KwilAssetOptions{
-		RootDir:          ".", // Assuming stack run from infra root
-		BinaryBucketName: "kwil-binaries",
-		BinaryKeyPrefix:  "gateway",
+		RootDir:            ".", // Assuming stack run from infra root
+		BinariesBucketName: "kwil-binaries",
+		KGWBinaryKey:       "gateway/kgw-v0.4.1.zip",
 	})
 
 	// Create KwilCluster

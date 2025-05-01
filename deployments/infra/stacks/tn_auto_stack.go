@@ -87,9 +87,9 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 
 	// Kwil Cluster assets via helper
 	kwilAssets := kwil_cluster.BuildKwilAssets(stack, kwil_cluster.KwilAssetOptions{
-		RootDir:          utils.GetProjectRootDir(),
-		BinaryBucketName: "kwil-binaries",
-		BinaryKeyPrefix:  "gateway",
+		RootDir:            utils.GetProjectRootDir(),
+		BinariesBucketName: "kwil-binaries",
+		KGWBinaryKey:       "gateway/kgw-v0.4.1.zip",
 	})
 
 	// Create KwilCluster

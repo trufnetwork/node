@@ -1,9 +1,10 @@
 package peer
 
 import (
+	"strconv"
+
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/jsii-runtime-go"
-	"strconv"
 )
 
 // TnP2pPort is the port used for P2P communication
@@ -15,9 +16,9 @@ const TnCometBFTRPCPort = 26657
 const TnPostgresPort = 5432
 
 type TNPeer struct {
-	Address                 *string
-	NodeCometEncodedAddress string
-	NodeHexAddress          string
+	Address        *string
+	NodeId         string
+	NodeHexAddress string
 }
 
 func (p TNPeer) GetExternalP2PAddress(withId bool) *string {
@@ -34,7 +35,7 @@ func (p TNPeer) GetExternalP2PAddress(withId bool) *string {
 	var result []*string
 	if withId {
 		cometAddressParts := []*string{
-			jsii.String(p.NodeCometEncodedAddress),
+			jsii.String(p.NodeId),
 			jsii.String("@"),
 		}
 

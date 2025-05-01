@@ -28,19 +28,20 @@ const kwildGenesisPath = "/root/.kwild/genesis.json"
 // populateAndRenderValues gathers config data, populates the Values struct, and renders the TOML template.
 func populateAndRenderValues(scope constructs.Construct, index int, props *ValidatorSetProps, connection kwilnetworkpeer.TNPeer, allPeers []kwilnetworkpeer.TNPeer) *bytes.Buffer {
 	// --- 1. Gather dynamic data ---
-	// Build bootnodes list: <hex_pubkey>#secp256k1@<ip:port>
+	// Build bootnodes list: <hex_pubkey>#secp256k1@<hostname:port>
 	bootnodes := make([]string, 0, len(allPeers)-1)
 	for i, p := range allPeers {
 		if i == index {
 			continue // Skip self
 		}
-		// p.GetExternalP2PAddress(false) returns ip:port
-		addr := *p.GetExternalP2PAddress(false)
-		bootnodes = append(bootnodes, fmt.Sprintf("%s#secp256k1@%s", p.NodeHexAddress, addr))
+		// Construct hostname:port string directly using known values
+		hostnamePort := fmt.Sprintf("%s:%d", *p.Address, kwilnetworkpeer.TnP2pPort)
+		// Use the constructed hostnamePort string
+		bootnodes = append(bootnodes, fmt.Sprintf("%s#secp256k1@%s", p.NodeHexAddress, hostnamePort))
 	}
 
-	// Get node-specific external address
-	externalAddr := *connection.GetExternalP2PAddress(false)
+	// Get node-specific external address (using hostname:port)
+	externalAddr := fmt.Sprintf("%s:%d", *connection.Address, kwilnetworkpeer.TnP2pPort)
 
 	// Fetch other dynamic config if needed (e.g., DB creds from Secrets Manager)
 	// dbUser := ...
@@ -52,7 +53,7 @@ func populateAndRenderValues(scope constructs.Construct, index int, props *Valid
 	// Override necessary fields with dynamic/node-specific values
 	values.Genesis.Path = kwildGenesisPath            // Set the standard path
 	values.P2P.Bootnodes = bootnodes                  // Set calculated bootnodes
-	values.P2P.External = externalAddr                // Set node-specific external address
+	values.P2P.External = externalAddr                // Set node-specific external address (hostname:port)
 	values.P2P.ListenPort = kwilnetworkpeer.TnP2pPort // Ensure correct P2P port (though default matches)
 	values.RPC.Port = kwilnetworkpeer.TnRPCPort       // Ensure correct RPC port (though default matches)
 	values.DB.Port = kwilnetworkpeer.TnPostgresPort   // Ensure correct DB port (though default matches)

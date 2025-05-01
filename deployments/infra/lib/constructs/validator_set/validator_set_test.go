@@ -55,9 +55,9 @@ func TestValidatorSetSynth(t *testing.T) {
 	// Single-node peer list
 	testPeers := []peer2.TNPeer{
 		{
-			NodeCometEncodedAddress: "nodeId0",
-			Address:                 jsii.String("peer0.test.sub"),
-			NodeHexAddress:          "hex0",
+			NodeId:         "nodeId0",
+			Address:        jsii.String("peer0.test.sub"),
+			NodeHexAddress: "hex0",
 		},
 	}
 

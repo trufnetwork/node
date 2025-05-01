@@ -82,8 +82,8 @@ func TestGenerateGenesisFile_Snapshot(t *testing.T) {
 	scope := minimalConstruct()
 
 	peers := []peer.TNPeer{
-		{Address: jsii.String("1.2.3.4"), NodeHexAddress: "deadbeef", NodeCometEncodedAddress: "node0"},
-		{Address: jsii.String("5.6.7.8"), NodeHexAddress: "cafebabe", NodeCometEncodedAddress: "node1"},
+		{Address: jsii.String("1.2.3.4"), NodeHexAddress: "deadbeef", NodeId: "node0"},
+		{Address: jsii.String("5.6.7.8"), NodeHexAddress: "cafebabe", NodeId: "node1"},
 	}
 	chainID := "unit-test-chain"
 

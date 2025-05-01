@@ -3,22 +3,24 @@ package kwil_network
 import (
 	"encoding/json"
 	"os/exec"
+	"strings"
 
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/trufnetwork/node/infra/config"
 	"go.uber.org/zap"
 )
 
+// NodeKeys reflects the structure returned by `kwild key gen --output json`
 type NodeKeys struct {
-	PrivateKeyHex         string `json:"private_key_hex"`
-	PrivateKeyBase64      string `json:"private_key_base64"`
-	PublicKeyBase64       string `json:"public_key_base64"`
-	PublicKeyCometizedHex string `json:"public_key_cometized_hex"`
-	PublicKeyPlainHex     string `json:"public_key_plain_hex"`
-	Address               string `json:"address"`
-	NodeId                string `json:"node_id"`
+	KeyType       string `json:"key_type"`         // Added
+	PrivateKeyHex string `json:"private_key_text"` // Was private_key_hex
+	PublicKeyHex  string `json:"public_key_hex"`   // Was public_key_cometized_hex
+	NodeId        string `json:"node_id"`          // Was node_id
+	Address       string `json:"user_address"`     // Was address
+	// Removed: PrivateKeyBase64, PublicKeyBase64, PublicKeyPlainHex
 }
 
+// KeyGenOutput matches the top-level structure of the CLI output.
 type KeyGenOutput struct {
 	Result NodeKeys `json:"result"`
 	Error  string   `json:"error"`
@@ -36,34 +38,49 @@ func GenerateNodeKeys(scope constructs.Construct) NodeKeys {
 	bytesOutput, err := cmd.Output()
 
 	if err != nil {
-		zap.L().Panic("Failed to generate node keys", zap.Error(err))
+		// Add command output to the error message for better debugging
+		zap.L().Panic("Failed to generate node keys", zap.Error(err), zap.String("output", string(bytesOutput)))
 	}
 
-	if err := json.Unmarshal(bytesOutput, &output); err != nil {
-		zap.L().Panic("Failed to unmarshal node keys", zap.Error(err))
+	// Trim potential leading/trailing whitespace/newlines from output
+	trimmedOutput := strings.TrimSpace(string(bytesOutput))
+
+	if err := json.Unmarshal([]byte(trimmedOutput), &output); err != nil {
+		zap.L().Panic("Failed to unmarshal node keys", zap.Error(err), zap.String("raw_output", trimmedOutput))
+	}
+
+	// Basic validation after unmarshaling
+	if output.Error != "" {
+		zap.L().Panic("kwild key gen reported an error", zap.String("error", output.Error))
+	}
+	if output.Result.PublicKeyHex == "" {
+		zap.L().Panic("kwild key gen did not return a public key", zap.Any("result", output.Result))
 	}
 
 	return output.Result
 }
 
+// ExtractKeys needs similar updates if used.
+// For now, focusing on GenerateNodeKeys.
 func ExtractKeys(scope constructs.Construct, privateKey string) NodeKeys {
+	// ... (needs similar struct update and validation)
+	// Placeholder implementation - update if needed
 	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables](scope)
-
-	// Extract key info using kwild CLI
 	cmd := exec.Command(envVars.KwildCliPath, "key", "info", privateKey, "--output", "json")
-
-	// read the output of the command. extract from result
-	// and return the NodeKeys struct
 	var output KeyGenOutput
 	bytesOutput, err := cmd.Output()
-
 	if err != nil {
-		zap.L().Panic("Failed to extract node keys", zap.Error(err))
+		zap.L().Panic("Failed to extract node keys", zap.Error(err), zap.String("output", string(bytesOutput)))
 	}
-
-	if err := json.Unmarshal(bytesOutput, &output); err != nil {
-		zap.L().Panic("Failed to unmarshal extracted node keys", zap.Error(err))
+	trimmedOutput := strings.TrimSpace(string(bytesOutput))
+	if err := json.Unmarshal([]byte(trimmedOutput), &output); err != nil {
+		zap.L().Panic("Failed to unmarshal extracted node keys", zap.Error(err), zap.String("raw_output", trimmedOutput))
 	}
-
+	if output.Error != "" {
+		zap.L().Panic("kwild key info reported an error", zap.String("error", output.Error))
+	}
+	if output.Result.PublicKeyHex == "" {
+		zap.L().Panic("kwild key info did not return a public key", zap.Any("result", output.Result))
+	}
 	return output.Result
 }

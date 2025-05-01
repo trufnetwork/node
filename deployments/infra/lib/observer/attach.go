@@ -91,7 +91,7 @@ func AttachObservability(input AttachObservabilityInput) {
 		// 3. Add commands to Launch Template UserData
 		lt := structure.LaunchTemplate
 		lt.UserData().AddCommands(jsii.String(downloadAndUnzipCmd))
-		lt.UserData().AddCommands(awscdk.Fn_Sub(jsii.String(startObserverScriptContent), nil))
+		lt.UserData().AddCommands(jsii.String(startObserverScriptContent))
 		lt.UserData().AddCommands(jsii.String(startScriptPath))
 	}
 

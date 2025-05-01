@@ -60,9 +60,9 @@ func KwilNetworkConfigAssetsFromNumberOfNodes(scope constructs.Construct, input 
 	for i := 0; i < input.NumberOfNodes; i++ {
 		nodeKeys[i] = GenerateNodeKeys(scope) // Assuming this generates necessary keys
 		peers[i] = peer.TNPeer{
-			NodeCometEncodedAddress: nodeKeys[i].NodeId,
-			Address:                 jsii.String(fmt.Sprintf("node-%d.%s", i+1, baseDomain)),
-			NodeHexAddress:          nodeKeys[i].PublicKeyPlainHex,
+			NodeId:         nodeKeys[i].NodeId,
+			Address:        jsii.String(fmt.Sprintf("node-%d.%s", i+1, baseDomain)),
+			NodeHexAddress: nodeKeys[i].PublicKeyHex,
 		}
 	}
 

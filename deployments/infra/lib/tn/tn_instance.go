@@ -163,7 +163,7 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 	if err != nil {
 		panic(err)
 	}
-	tnLaunchTemplate.UserData().AddCommands(awscdk.Fn_Sub(jsii.String(*scripts), nil))
+	tnLaunchTemplate.UserData().AddCommands(jsii.String(*scripts))
 
 	return node
 }
