@@ -85,7 +85,7 @@ cdk deploy --context frontingType=cloudfront    # only if you really need CF
 
 ### 1. Auto-generated Configuration
 
-This method dynamically generates the TN node configuration during deployment. It deploys both the launch templates and the instances from these templates.
+This method dynamically generates the TN node configuration during deployment. It deploys both the launch templates and the EC2 instances from these templates.
 
 #### Example Command:
 
@@ -121,7 +121,9 @@ cdk deploy --profile <YOUR-AWS-PROFILE> TN-From-Config* TN-Cert* \
 
 ## Redeploying Instances from Launch Templates
 
-In our stack, the launch templates for the Kwil Gateway (kgw) and Indexer instances are created, and the instances themselves are **not** automatically provisioned. This approach provides greater flexibility and control over instance deployment and updates. Below are the steps to redeploy an instance using the launch templates:
+In our stack, the launch templates for the Kwil Gateway (kgw) and Indexer instances are created. For the **TnAutoStack**, the instances themselves are also automatically provisioned. For the **TnFromConfigStack**, the instances are **not** automatically provisioned. This section primarily applies to the `TnFromConfigStack` or manual redeployment scenarios.
+
+Below are the steps to redeploy an instance using the launch templates:
 
 1. **Deploy a New Instance from the Launch Template**
    

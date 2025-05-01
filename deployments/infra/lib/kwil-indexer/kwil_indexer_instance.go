@@ -61,7 +61,7 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 	)
 
 	// Create an A record for the indexer using HostedDomain
-	subdomain := "indexer"
+	subdomain := "inner-indexer"
 	input.HostedDomain.AddARecord("IndexerElasticIpDnsRecord", subdomain,
 		awsroute53.RecordTarget_FromIpAddresses(indexerElasticIp.AttrPublicIp()),
 	)

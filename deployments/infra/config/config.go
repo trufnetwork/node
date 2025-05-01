@@ -17,6 +17,7 @@ const (
 	ContextNumOfNodes  = "numOfNodes"
 	ContextStage       = "stage"
 	ContextDevPrefix   = "devPrefix" // Key for the dev prefix context variable
+	ContextStackSuffix = "stackSuffix"
 )
 
 var devPrefixRegex = regexp.MustCompile(`^[a-zA-Z0-9-]*$`)
@@ -24,7 +25,19 @@ var devPrefixRegex = regexp.MustCompile(`^[a-zA-Z0-9-]*$`)
 // Stack suffix is intended to be used after the stack name to differentiate between different stages.
 func WithStackSuffix(scope constructs.Construct, stackName string) string {
 	// Always append the standard suffix
-	return stackName + "-Stack"
+	stackSuffix := StackSuffix(scope)
+	return stackName + "-" + stackSuffix + "-Stack"
+}
+
+// DO NOT modify this function, change stack suffix by 'cdk.json/context/stackSuffix'.
+func StackSuffix(scope constructs.Construct) string {
+	stackSuffix := "default"
+
+	ctxValue := scope.Node().TryGetContext(jsii.String(ContextStackSuffix))
+	if v, ok := ctxValue.(string); ok && v != "" {
+		stackSuffix = v
+	}
+	return stackSuffix
 }
 
 // DO NOT modify this function, change EC2 key pair name by 'cdk.json/context/keyPairName'.

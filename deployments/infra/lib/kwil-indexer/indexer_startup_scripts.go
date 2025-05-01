@@ -12,7 +12,6 @@ import (
 
 type IndexerEnvConfig struct {
 	NodeCometBftEndpoint *string `env:"NODE_COMETBFT_ENDPOINT"`
-	KwilPgConn           *string `env:"KWIL_PG_CONN"`
 	PostgresVolume       *string `env:"POSTGRES_VOLUME"`
 }
 
@@ -31,14 +30,7 @@ func AddKwilIndexerStartupScripts(options AddKwilIndexerStartupScriptsOptions) *
 			"http://%s:%s",
 			// public ip so the external elastic ip is used to allow the indexer to connect to the TN node
 			*tnInstance.PeerConnection.Address,
-			strconv.Itoa(peer.TnCometBFTRPCPort),
-		)),
-		// postgresql://kwild@<ip>:<psqlport>/kwild?sslmode=disable
-		KwilPgConn: jsii.String(fmt.Sprintf(
-			"postgresql://kwild@%s:%s/kwild?sslmode=disable",
-			// public ip so the external elastic ip is used to allow the indexer to connect to the TN node
-			*tnInstance.PeerConnection.Address,
-			strconv.Itoa(peer.TnPostgresPort),
+			strconv.Itoa(peer.TnRPCPort),
 		)),
 		PostgresVolume: jsii.String("/data/postgres"),
 	}

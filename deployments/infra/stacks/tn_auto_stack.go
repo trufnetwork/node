@@ -85,6 +85,20 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 		CDKParams:    cdkParams,
 	})
 
+	// --- Create EC2 Instances for TN Nodes ---
+	for _, node := range vs.Nodes {
+		instanceId := jsii.Sprintf("TNNodeInstance-%d", node.Index)
+		utils.InstanceFromLaunchTemplateOnPublicSubnetWithElasticIp(
+			stack,      // Scope
+			instanceId, // Unique construct ID for the instance
+			utils.InstanceFromLaunchTemplateOnPublicSubnetInput{
+				LaunchTemplate: node.LaunchTemplate,
+				ElasticIp:      node.ElasticIp,
+				Vpc:            vpc,
+			},
+		)
+	}
+
 	// Kwil Cluster assets via helper
 	kwilAssets := kwil_cluster.BuildKwilAssets(stack, kwil_cluster.KwilAssetOptions{
 		RootDir:            utils.GetProjectRootDir(),
@@ -93,7 +107,7 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 	})
 
 	// Create KwilCluster
-	selectedKind := config.GetFrontingKind(stack) // Use context helper
+	selectedKind := config.GetFrontingKind(stack)
 	kc := kwil_cluster.NewKwilCluster(stack, "KwilCluster", &kwil_cluster.KwilClusterProps{
 		Vpc:                  vpc,
 		HostedDomain:         hd,
@@ -106,6 +120,28 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 		Assets:               kwilAssets,
 		SelectedFrontingKind: selectedKind,
 	})
+
+	// --- Create EC2 Instance for Kwil Gateway ---
+	utils.InstanceFromLaunchTemplateOnPublicSubnetWithElasticIp(
+		stack,                      // Scope
+		jsii.String("KGWInstance"), // Unique construct ID
+		utils.InstanceFromLaunchTemplateOnPublicSubnetInput{
+			LaunchTemplate: kc.Gateway.LaunchTemplate,
+			ElasticIp:      kc.Gateway.ElasticIp,
+			Vpc:            vpc,
+		},
+	)
+
+	// --- Create EC2 Instance for Kwil Indexer ---
+	utils.InstanceFromLaunchTemplateOnPublicSubnetWithElasticIp(
+		stack,                          // Scope
+		jsii.String("IndexerInstance"), // Unique construct ID
+		utils.InstanceFromLaunchTemplateOnPublicSubnetInput{
+			LaunchTemplate: kc.Indexer.LaunchTemplate,
+			ElasticIp:      kc.Indexer.ElasticIp,
+			Vpc:            vpc,
+		},
+	)
 
 	// --- Fronting Setup ---
 	// Build Spec for domain subdomains
