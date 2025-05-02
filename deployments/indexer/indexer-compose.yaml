@@ -52,7 +52,6 @@ services:
       context: .
     environment:
       NODE_RPC_ENDPOINT: ${NODE_RPC_ENDPOINT:?NODE_RPC_ENDPOINT is required}
-      KWIL_PG_CONN: ${KWIL_PG_CONN:?KWIL_PG_CONN is required}
       INDEXER_PG_CONN: "postgresql://postgres:postgres@indexer-postgres:5432/indexer?sslmode=disable"
     ports:
       - "1337:1337"
