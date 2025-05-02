@@ -75,7 +75,8 @@ func (a *apiGateway) AttachRoutes(scope constructs.Construct, id string, props *
 		&awsapigatewayv2integrations.HttpUrlIntegrationProps{
 			Method: awsapigatewayv2.HttpMethod_ANY,
 			ParameterMapping: awsapigatewayv2.NewParameterMapping().
-				AppendHeader(jsii.String("path"), awsapigatewayv2.MappingValue_ContextVariable(jsii.String("request.path"))),
+				AppendHeader(jsii.String("path"), awsapigatewayv2.MappingValue_ContextVariable(jsii.String("request.path"))).
+				OverwritePath(awsapigatewayv2.MappingValue_RequestPath()),
 		},
 	)
 
