@@ -30,6 +30,7 @@ func AttachInitDataToLaunchTemplate(input AttachInitDataToLaunchTemplateInput) {
 			InstanceRole: input.Role,
 			UserData:     ud,
 			Platform:     input.Platform,
+			IncludeRole:  jsii.Bool(true),
 		},
 	)
 }
