@@ -6,6 +6,7 @@ import (
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
@@ -15,6 +16,7 @@ import (
 	"github.com/trufnetwork/node/infra/lib/constructs/validator_set"
 	kwil_network "github.com/trufnetwork/node/infra/lib/kwil-network"
 	"github.com/trufnetwork/node/infra/lib/observer"
+	"github.com/trufnetwork/node/infra/lib/utils"
 )
 
 type TnFromConfigStackProps struct {
@@ -40,10 +42,10 @@ func TnFromConfigStack(
 	// Read environment config for number of nodes
 	cfg := config.GetEnvironmentVariables[config.ConfigStackEnvironmentVariables](stack)
 	privateKeys := strings.Split(cfg.NodePrivateKeys, ",")
+	shouldIncludeObserver := cfg.IncludeObserver // Read the new variable
 
 	// Define CDK params and stage early, and read dev prefix from context
 	cdkParams := config.NewCDKParams(stack)
-	mainEnvVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables](stack)
 	stage := config.GetStage(stack)
 	devPrefix := config.GetDevPrefix(stack)
 
@@ -51,8 +53,11 @@ func TnFromConfigStack(
 	selectedKind := config.GetFrontingKind(stack) // Use context helper
 
 	// Setup observer init elements
-	initElements := []awsec2.InitElement{}                                     // Base elements
-	observerAsset := observer.GetObserverAsset(stack, jsii.String("observer")) // Keep asset var
+	initElements := []awsec2.InitElement{} // Base elements
+	var observerAsset awss3assets.Asset    // Keep asset var, initialize as nil
+	if shouldIncludeObserver {             // Conditionally get the asset
+		observerAsset = observer.GetObserverAsset(stack, jsii.String("observer"))
+	}
 
 	// VPC & domain setup
 	vpc := awsec2.Vpc_FromLookup(stack, jsii.String("VPC"), &awsec2.VpcLookupOptions{IsDefault: jsii.Bool(true)})
@@ -66,16 +71,16 @@ func TnFromConfigStack(
 	})
 
 	// Generate network configs from number of private keys
-	peers, _, genesisAsset := kwil_network.KwilNetworkConfigAssetsFromNumberOfNodes(
+	peers, nodeKeys, genesisAsset := kwil_network.KwilNetworkConfigAssetsFromNumberOfNodes(
 		stack,
 		kwil_network.KwilAutoNetworkConfigAssetInput{
-			NumberOfNodes:   len(privateKeys),
+			PrivateKeys:     privateKeys,
 			GenesisFilePath: cfg.GenesisPath,
 		},
 	)
 
 	// TN assets via helper
-	tnAssets := validator_set.BuildTNAssets(stack, validator_set.TNAssetOptions{RootDir: "compose"})
+	tnAssets := validator_set.BuildTNAssets(stack, validator_set.TNAssetOptions{RootDir: utils.GetProjectRootDir()})
 
 	// Create ValidatorSet
 	vs := validator_set.NewValidatorSet(stack, "ValidatorSet", &validator_set.ValidatorSetProps{
@@ -85,13 +90,14 @@ func TnFromConfigStack(
 		GenesisAsset: genesisAsset,
 		KeyPair:      nil,
 		Assets:       tnAssets,
-		InitElements: initElements, // Only pass base elements
+		InitElements: initElements,
 		CDKParams:    cdkParams,
+		NodeKeys:     nodeKeys,
 	})
 
 	// Kwil Cluster assets via helper
 	kwilAssets := kwil_cluster.BuildKwilAssets(stack, kwil_cluster.KwilAssetOptions{
-		RootDir:            ".", // Assuming stack run from infra root
+		RootDir:            utils.GetProjectRootDir(), // Assuming stack run from infra root
 		BinariesBucketName: "kwil-binaries",
 		KGWBinaryKey:       "gateway/kgw-v0.4.1.zip",
 		IndexerBinaryKey:   "indexer/kwil-indexer_v0.3.0-dev_linux_amd64.zip",
@@ -102,8 +108,8 @@ func TnFromConfigStack(
 		Vpc:                  vpc,
 		HostedDomain:         hd,
 		CorsOrigins:          cdkParams.CorsAllowOrigins.ValueAsString(),
-		SessionSecret:        jsii.String(mainEnvVars.SessionSecret),
-		ChainId:              jsii.String(mainEnvVars.ChainId),
+		SessionSecret:        jsii.String(cfg.SessionSecret),
+		ChainId:              jsii.String(cfg.ChainId),
 		Validators:           vs.Nodes,
 		InitElements:         initElements, // Only pass base elements
 		Assets:               kwilAssets,
@@ -158,16 +164,19 @@ func TnFromConfigStack(
 		panic(fmt.Sprintf("Dual endpoint fronting setup not implemented for type: %s", selectedKind))
 	}
 
-	if observerAsset == nil {
-		panic("Observer asset is nil in tn_from_config_stack") // Should not happen
+	// Conditionally attach observability
+	if shouldIncludeObserver {
+		if observerAsset == nil {
+			panic("Observer asset is nil when observer should be included") // Should not happen
+		}
+		observer.AttachObservability(observer.AttachObservabilityInput{
+			Scope:         stack,
+			ValidatorSet:  vs,
+			KwilCluster:   kc,
+			ObserverAsset: observerAsset,
+			Params:        cdkParams,
+		})
 	}
-	observer.AttachObservability(observer.AttachObservabilityInput{
-		Scope:         stack,
-		ValidatorSet:  vs,
-		KwilCluster:   kc,
-		ObserverAsset: observerAsset,
-		Params:        cdkParams,
-	})
 
 	return stack
 }

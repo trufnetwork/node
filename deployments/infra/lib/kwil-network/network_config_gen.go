@@ -22,7 +22,9 @@ type NetworkConfigOutput struct {
 }
 
 type KwilAutoNetworkConfigAssetInput struct {
-	NumberOfNodes   int
+	NumberOfNodes int
+	// If provided, the private keys will be used to extract the node info
+	PrivateKeys     []string
 	DbOwner         string
 	GenesisFilePath string
 	Params          config.CDKParams
@@ -54,11 +56,35 @@ func KwilNetworkConfigAssetsFromNumberOfNodes(scope constructs.Construct, input 
 
 	env := config.GetEnvironmentVariables[config.MainEnvironmentVariables](scope)
 
-	// Generate Node Keys and Peer Info
-	nodeKeys := make([]NodeKeys, input.NumberOfNodes)
-	peers := make([]peer.TNPeer, input.NumberOfNodes)
-	for i := 0; i < input.NumberOfNodes; i++ {
-		nodeKeys[i] = GenerateNodeKeys(scope)
+	// --- Determine number of nodes ---
+	numNodes := input.NumberOfNodes
+	useProvidedKeys := len(input.PrivateKeys) > 0
+	if useProvidedKeys {
+		if numNodes > 0 && numNodes != len(input.PrivateKeys) {
+			// If both NumberOfNodes and PrivateKeys are provided, their lengths must match
+			panic(fmt.Sprintf("NumberOfNodes (%d) and the number of provided PrivateKeys (%d) must match if both are specified", numNodes, len(input.PrivateKeys)))
+		}
+		numNodes = len(input.PrivateKeys) // Set numNodes based on provided keys
+		if numNodes == 0 {
+			panic("PrivateKeys slice was provided but is empty")
+		}
+	} else if numNodes <= 0 {
+		// If not using provided keys, NumberOfNodes must be positive
+		panic("NumberOfNodes must be positive if PrivateKeys are not provided")
+	}
+
+	// Generate or Extract Node Keys and Peer Info
+	nodeKeys := make([]NodeKeys, numNodes)
+	peers := make([]peer.TNPeer, numNodes)
+	for i := 0; i < numNodes; i++ {
+		if useProvidedKeys {
+			// Use provided private key to extract node info
+			nodeKeys[i] = ExtractKeys(scope, input.PrivateKeys[i])
+		} else {
+			// Generate new keys
+			nodeKeys[i] = GenerateNodeKeys(scope)
+		}
+		// Create peer info (same logic for both cases)
 		peers[i] = peer.TNPeer{
 			NodeId:         nodeKeys[i].NodeId,
 			Address:        jsii.String(fmt.Sprintf("node-%d.%s", i+1, baseDomain)),

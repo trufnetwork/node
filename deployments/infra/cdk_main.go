@@ -22,7 +22,7 @@ func main() {
 	// TN-Auto Stack
 	stacks.TnAutoStack(
 		app,
-		config.WithStackSuffix(app, "TN-DB-Auto"),
+		config.WithStackSuffix(app, "TN-Auto"),
 		&stacks.TnAutoStackProps{
 			StackProps:       awscdk.StackProps{Env: utils.CdkEnv()},
 			CertStackExports: &certExports,

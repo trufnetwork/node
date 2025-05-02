@@ -39,12 +39,11 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 	devPrefix := config.GetDevPrefix(stack)
 	// Retrieve Main environment variables including DbOwner
 	autoEnvVars := config.GetEnvironmentVariables[config.AutoStackEnvironmentVariables](stack)
-	mainEnvVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables](stack)
 
 	initElements := []awsec2.InitElement{} // Base elements only
 	var observerAsset awss3assets.Asset    // Keep asset variable, needed for Attach call
 
-	shouldIncludeObserver := config.GetEnvironmentVariables[config.AutoStackEnvironmentVariables](stack).IncludeObserver
+	shouldIncludeObserver := autoEnvVars.IncludeObserver
 
 	if shouldIncludeObserver {
 		// Only get the asset here, don't generate InitElements
@@ -116,8 +115,8 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 		HostedDomain:         hd,
 		Cert:                 props.CertStackExports.DomainCert,
 		CorsOrigins:          cdkParams.CorsAllowOrigins.ValueAsString(),
-		SessionSecret:        jsii.String(mainEnvVars.SessionSecret),
-		ChainId:              jsii.String(mainEnvVars.ChainId),
+		SessionSecret:        jsii.String(autoEnvVars.SessionSecret),
+		ChainId:              jsii.String(autoEnvVars.ChainId),
 		Validators:           vs.Nodes,
 		InitElements:         initElements,
 		Assets:               kwilAssets,
