@@ -11,17 +11,21 @@ import (
 )
 
 type IndexerEnvConfig struct {
-	NodeRpcEndpoint *string `env:"NODE_RPC_ENDPOINT"`
-	PostgresVolume  *string `env:"POSTGRES_VOLUME"`
+	NodeRpcEndpoint   *string `env:"NODE_RPC_ENDPOINT"`
+	PostgresVolume    *string `env:"POSTGRES_VOLUME"`
+	IndexerBinaryPath *string `env:"INDEXER_BINARY_PATH"`
 }
 
 type AddKwilIndexerStartupScriptsOptions struct {
 	TNInstance           tn.TNInstance
 	indexerZippedDirPath *string
+	indexerBinaryZipPath *string
 }
 
 func AddKwilIndexerStartupScripts(options AddKwilIndexerStartupScriptsOptions) *string {
 	tnInstance := options.TNInstance
+	indexerBinaryDir := "/home/ec2-user/indexer"
+	indexerBinaryPath := fmt.Sprintf("%s/kwil-indexer", indexerBinaryDir)
 
 	// Create the environment variables for the indexer compose file
 	indexerEnvConfig := IndexerEnvConfig{
@@ -32,7 +36,8 @@ func AddKwilIndexerStartupScripts(options AddKwilIndexerStartupScriptsOptions) *
 			*tnInstance.PeerConnection.Address,
 			strconv.Itoa(peer.TnRPCPort),
 		)),
-		PostgresVolume: jsii.String("/data/postgres"),
+		PostgresVolume:    jsii.String("/data/postgres"),
+		IndexerBinaryPath: jsii.String(indexerBinaryPath),
 	}
 
 	script := "#!/bin/bash\nset -e\nset -x\n\n"
@@ -51,6 +56,15 @@ func AddKwilIndexerStartupScripts(options AddKwilIndexerStartupScriptsOptions) *
 	}
 	script += configureScript + "\n"
 	script += utils.UnzipFileScript(*options.indexerZippedDirPath, "/home/ec2-user/indexer") + "\n"
+	// Define the target directory for the binary
+
+	script += fmt.Sprintf("mkdir -p %s\n", indexerBinaryDir)
+	// Unzip the binary zip into the target directory
+	script += utils.UnzipFileScript(*options.indexerBinaryZipPath, indexerBinaryDir) + "\n"
+	// Ensure the binary (assuming name kwil-indexer) is executable
+	script += fmt.Sprintf("chmod +x %s\n", indexerBinaryPath)
+
+	// Assume indexer-compose.yaml will mount indexerBinaryDir/kwil-indexer to the correct path inside the container
 	script += utils.CreateSystemdServiceScript(
 		"kwil-indexer",
 		"Kwil Indexer Compose",

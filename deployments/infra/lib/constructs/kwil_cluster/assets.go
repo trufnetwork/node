@@ -17,6 +17,7 @@ type GatewayAssets struct {
 
 type IndexerAssets struct {
 	DirAsset awss3assets.Asset
+	Binary   utils.S3Object
 }
 
 type KwilAssets struct {
@@ -28,6 +29,7 @@ type KwilAssetOptions struct {
 	RootDir            string // base path for deployments directory
 	BinariesBucketName string
 	KGWBinaryKey       string
+	IndexerBinaryKey   string
 }
 
 // BuildKwilAssets packages gateway and indexer directories and binaries
@@ -38,12 +40,18 @@ func BuildKwilAssets(scope constructs.Construct, opts KwilAssetOptions) KwilAsse
 	ixZip := awss3assets.NewAsset(scope, jsii.String("IndexerDir"), &awss3assets.AssetProps{
 		Path: jsii.String(filepath.Join(opts.RootDir, "deployments/indexer/")),
 	})
-	bin := utils.S3Object{
-		Bucket: awss3.Bucket_FromBucketName(scope, jsii.String("BinaryBucket"), jsii.String(opts.BinariesBucketName)),
+	binBucket := awss3.Bucket_FromBucketName(scope, jsii.String("BinaryBucketImport"), jsii.String(opts.BinariesBucketName))
+
+	kgwBin := utils.S3Object{
+		Bucket: binBucket,
 		Key:    jsii.String(opts.KGWBinaryKey),
 	}
+	ixBin := utils.S3Object{
+		Bucket: binBucket,
+		Key:    jsii.String(opts.IndexerBinaryKey),
+	}
 	return KwilAssets{
-		Gateway: GatewayAssets{DirAsset: gwZip, Binary: bin},
-		Indexer: IndexerAssets{DirAsset: ixZip},
+		Gateway: GatewayAssets{DirAsset: gwZip, Binary: kgwBin},
+		Indexer: IndexerAssets{DirAsset: ixZip, Binary: ixBin},
 	}
 }

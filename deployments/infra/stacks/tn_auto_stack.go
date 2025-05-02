@@ -106,6 +106,7 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 		RootDir:            utils.GetProjectRootDir(),
 		BinariesBucketName: "kwil-binaries",
 		KGWBinaryKey:       "gateway/kgw-v0.4.1.zip",
+		IndexerBinaryKey:   "indexer/kwil-indexer_v0.3.0-dev_linux_amd64.zip",
 	})
 
 	// Create KwilCluster

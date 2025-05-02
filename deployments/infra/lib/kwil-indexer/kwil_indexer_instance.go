@@ -24,8 +24,10 @@ type NewIndexerInstanceInput struct {
 	Vpc             awsec2.IVpc
 	TNInstance      tn.TNInstance
 	IndexerDirAsset awss3assets.Asset
-	HostedDomain    *domain.HostedDomain
-	InitElements    []awsec2.InitElement
+	// IndexerBinaryAsset points to the S3 location of the indexer binary zip
+	IndexerBinaryAsset utils.S3Object
+	HostedDomain       *domain.HostedDomain
+	InitElements       []awsec2.InitElement
 }
 
 type IndexerInstance struct {
@@ -106,12 +108,19 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 	// Get key-pair pointer.
 	keyPair := awsec2.KeyPair_FromKeyPairName(scope, jsii.String("KeyPair-ind"), jsii.String(config.KeyPairName(scope)))
 
-	indexerZippedDirPath := jsii.String("/home/ec2-user/kwil-indexer.zip")
+	indexerDirZipPath := jsii.String("/home/ec2-user/kwil-indexer.zip")
+	// Define path for the downloaded binary zip
+	indexerBinaryZipPath := jsii.String("/home/ec2-user/kwil-indexer-binary.zip")
 
 	elements := []awsec2.InitElement{
-		awsec2.InitFile_FromExistingAsset(jsii.String("/home/ec2-user/kwil-indexer.zip"), input.IndexerDirAsset, &awsec2.InitFileOptions{
+		awsec2.InitFile_FromExistingAsset(indexerDirZipPath, input.IndexerDirAsset, &awsec2.InitFileOptions{
 			Owner: jsii.String("ec2-user"),
 		}),
+		// Add download for the binary zip from S3
+		awsec2.InitFile_FromS3Object(indexerBinaryZipPath, input.IndexerBinaryAsset.Bucket,
+			input.IndexerBinaryAsset.Key, &awsec2.InitFileOptions{
+				Owner: jsii.String("ec2-user"),
+			}),
 	}
 
 	// Append base InitElements if provided
@@ -159,7 +168,9 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 	launchTemplate.UserData().AddCommands(utils.MountVolumeToPathAndPersist("nvme1n1", "/data")...)
 
 	scripts := AddKwilIndexerStartupScripts(AddKwilIndexerStartupScriptsOptions{
-		indexerZippedDirPath: indexerZippedDirPath,
+		// Pass the path to the binary zip to the startup script options
+		indexerBinaryZipPath: indexerBinaryZipPath,
+		indexerZippedDirPath: indexerDirZipPath, // Keep existing dir path for now
 		TNInstance:           input.TNInstance,
 	})
 
