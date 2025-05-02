@@ -1,7 +1,9 @@
 package kwil_network
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 
 	awscdk "github.com/aws/aws-cdk-go/awscdk/v2"
 	awss3assets "github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
@@ -96,6 +98,14 @@ func KwilNetworkConfigAssetsFromNumberOfNodes(scope constructs.Construct, input 
 
 	// Either generate a genesis file or use the provided one
 	if input.GenesisFilePath != "" {
+		// Verify the chain_id in the provided genesis file
+		err := verifyGenesisChainID(input.GenesisFilePath, env.ChainId)
+		if err != nil {
+			// If verification fails, panic
+			panic(fmt.Sprintf("genesis file verification failed: %v", err))
+		}
+
+		// Chain ID matches, proceed to create the asset
 		genesisAsset = awss3assets.NewAsset(scope, jsii.String("GenesisFileAsset"), &awss3assets.AssetProps{
 			Path: jsii.String(input.GenesisFilePath), // Path to the provided genesis.json
 		})
@@ -116,4 +126,40 @@ func KwilNetworkConfigAssetsFromNumberOfNodes(scope constructs.Construct, input 
 
 	// Return the list of peers, the corresponding node keys, and the single genesis asset
 	return peers, nodeKeys, genesisAsset
+}
+
+// verifyGenesisChainID reads a genesis file, parses it, and verifies its chain_id against the expected one.
+func verifyGenesisChainID(genesisFilePath string, expectedChainID string) error {
+	// Read the provided genesis file
+	genesisFileContent, err := os.ReadFile(genesisFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to read provided genesis file %s: %w", genesisFilePath, err)
+	}
+
+	// Unmarshal into a generic map
+	var genesisData map[string]interface{}
+	err = json.Unmarshal(genesisFileContent, &genesisData)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal provided genesis file %s: %w", genesisFilePath, err)
+	}
+
+	// Verify chain_id field existence
+	chainIdFromFileRaw, ok := genesisData["chain_id"]
+	if !ok {
+		return fmt.Errorf("provided genesis file %s is missing 'chain_id' field", genesisFilePath)
+	}
+
+	// Verify chain_id field type
+	chainIdFromFile, ok := chainIdFromFileRaw.(string)
+	if !ok {
+		return fmt.Errorf("provided genesis file %s has 'chain_id' field with unexpected type: %T", genesisFilePath, chainIdFromFileRaw)
+	}
+
+	// Compare chain_ids
+	if chainIdFromFile != expectedChainID {
+		return fmt.Errorf("provided genesis file %s has chain_id '%s' which does not match expected chain_id '%s'", genesisFilePath, chainIdFromFile, expectedChainID)
+	}
+
+	// Chain ID matches
+	return nil
 }
