@@ -15,11 +15,12 @@ import (
 )
 
 type KGWConfig struct {
-	CorsAllowOrigins *string
-	Domain           *string
-	SessionSecret    *string
-	ChainId          *string
-	Nodes            []tn.TNInstance
+	CorsAllowOrigins   *string
+	Domain             *string
+	SessionSecret      *string
+	ChainId            *string
+	Nodes              []tn.TNInstance
+	XffTrustProxyCount *string
 }
 
 type NewKGWInstanceInput struct {

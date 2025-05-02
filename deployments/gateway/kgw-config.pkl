@@ -31,6 +31,11 @@ tsl_key_file = read?("env:TSL_KEY_FILE")
 // default 30 seconds
 read_timeout = read?("env:READ_TIMEOUT")?.toInt()
 
+// env variable for trusting X-Forwarded-For headers
+// default to null if not provided or not an integer
+hidden xff_trust_proxy_count_raw = read?("env:XFF_TRUST_PROXY_COUNT")
+xff_trust_proxy_count = xff_trust_proxy_count_raw?.toIntOrNull()
+
 // env variable boolean values
 allow_deploy_db = read?("env:ALLOW_DEPLOY_DB") == "true"
 

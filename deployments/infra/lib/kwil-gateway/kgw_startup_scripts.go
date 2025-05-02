@@ -26,11 +26,12 @@ func AddKwilGatewayStartupScriptsToInstance(options AddKwilGatewayStartupScripts
 	}
 
 	kgwEnvConfig := KGWEnvConfig{
-		CorsAllowOrigins: config.CorsAllowOrigins,
-		SessionSecret:    config.SessionSecret,
-		Backends:         awscdk.Fn_Join(jsii.String(","), &nodeAddresses), // nodeAddresses now contains http://host:port
-		ChainId:          config.ChainId,
-		Domain:           config.Domain,
+		CorsAllowOrigins:   config.CorsAllowOrigins,
+		SessionSecret:      config.SessionSecret,
+		Backends:           awscdk.Fn_Join(jsii.String(","), &nodeAddresses), // nodeAddresses now contains http://host:port
+		ChainId:            config.ChainId,
+		Domain:             config.Domain,
+		XffTrustProxyCount: config.XffTrustProxyCount,
 	}
 
 	script := "#!/bin/bash\nset -e\nset -x\n\n"
@@ -67,11 +68,12 @@ rm -rf /tmp/kgw-pkg /tmp/kgw-binary
 }
 
 type KGWEnvConfig struct {
-	Domain           *string `env:"DOMAIN"`
-	CorsAllowOrigins *string `env:"CORS_ALLOW_ORIGINS"`
-	SessionSecret    *string `env:"SESSION_SECRET"`
-	Backends         *string `env:"BACKENDS"`
-	ChainId          *string `env:"CHAIN_ID"`
+	Domain             *string `env:"DOMAIN"`
+	CorsAllowOrigins   *string `env:"CORS_ALLOW_ORIGINS"`
+	SessionSecret      *string `env:"SESSION_SECRET"`
+	XffTrustProxyCount *string `env:"XFF_TRUST_PROXY_COUNT"`
+	Backends           *string `env:"BACKENDS"`
+	ChainId            *string `env:"CHAIN_ID"`
 }
 
 // GetDict returns a map of the environment variables and their values
