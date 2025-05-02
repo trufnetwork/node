@@ -186,8 +186,7 @@ tasks:
       - bash ./scripts/migrate.sh
     env:
       PRIVATE_KEY: "0000000000000000000000000000000000000000000000000000000000000001"
-      PROVIDER: https://gateway.dev.infra.truf.network
-      # PROVIDER: http://localhost:8484
+      PROVIDER: http://localhost:8484
 
   action-migrate:
     desc: Run the migration action for all SQL files
