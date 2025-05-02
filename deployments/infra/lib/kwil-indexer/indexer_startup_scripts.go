@@ -11,8 +11,8 @@ import (
 )
 
 type IndexerEnvConfig struct {
-	NodeCometBftEndpoint *string `env:"NODE_COMETBFT_ENDPOINT"`
-	PostgresVolume       *string `env:"POSTGRES_VOLUME"`
+	NodeRpcEndpoint *string `env:"NODE_RPC_ENDPOINT"`
+	PostgresVolume  *string `env:"POSTGRES_VOLUME"`
 }
 
 type AddKwilIndexerStartupScriptsOptions struct {
@@ -26,7 +26,7 @@ func AddKwilIndexerStartupScripts(options AddKwilIndexerStartupScriptsOptions) *
 	// Create the environment variables for the indexer compose file
 	indexerEnvConfig := IndexerEnvConfig{
 		// note: the tn p2p port (usually 26656) will be automatically crawled by the indexer
-		NodeCometBftEndpoint: jsii.String(fmt.Sprintf(
+		NodeRpcEndpoint: jsii.String(fmt.Sprintf(
 			"http://%s:%s",
 			// public ip so the external elastic ip is used to allow the indexer to connect to the TN node
 			*tnInstance.PeerConnection.Address,
