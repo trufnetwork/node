@@ -18,6 +18,7 @@ type GenerateGenesisFileInput struct {
 	PeerConnections []peer.TNPeer
 	ChainId         string
 	DbOwner         string
+	NodeKeys        []NodeKeys
 }
 
 // GenerateGenesisFile generates a genesis file, with all peers in the network as validators
@@ -40,10 +41,10 @@ func GenerateGenesisFile(scope constructs.Construct, input GenerateGenesisFileIn
 
 	// Prepare Validators list
 	var validators []Validator
-	for _, p := range input.PeerConnections {
+	for i, p := range input.PeerConnections {
 		validators = append(validators, Validator{
 			Pubkey: p.NodeHexAddress,
-			Type:   "secp256k1",
+			Type:   input.NodeKeys[i].KeyType,
 			Power:  1,
 		})
 	}

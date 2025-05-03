@@ -16,6 +16,7 @@ import (
 	"github.com/aws/jsii-runtime-go"
 
 	nodeconfig "github.com/trufnetwork/node/infra/config/node"
+	kwil_network "github.com/trufnetwork/node/infra/lib/kwil-network"
 	kwilnetworkpeer "github.com/trufnetwork/node/infra/lib/kwil-network/peer"
 	"github.com/trufnetwork/node/infra/lib/tn"
 	"github.com/trufnetwork/node/infra/lib/utils"
@@ -33,18 +34,23 @@ type nodeKeyJson struct {
 }
 
 // populateAndRenderValues gathers config data, populates the Values struct, and renders the TOML template.
-func populateAndRenderValues(scope constructs.Construct, index int, props *ValidatorSetProps, connection kwilnetworkpeer.TNPeer, allPeers []kwilnetworkpeer.TNPeer) *bytes.Buffer {
+func populateAndRenderValues(scope constructs.Construct, index int, props *ValidatorSetProps, connection kwilnetworkpeer.TNPeer, allPeers []kwilnetworkpeer.TNPeer, allNodeKeys []kwil_network.NodeKeys) *bytes.Buffer {
 	// --- 1. Gather dynamic data ---
-	// Build bootnodes list: <hex_pubkey>#secp256k1@<hostname:port>
+	// Build bootnodes list: <hex_pubkey>#<key_type>@<hostname:port>
 	bootnodes := make([]string, 0, len(allPeers)-1)
 	for i, p := range allPeers {
 		if i == index {
 			continue // Skip self
 		}
+		// Ensure we have a corresponding key (should always be true if lengths match)
+		if i >= len(allNodeKeys) {
+			panic(fmt.Sprintf("Index %d out of bounds for allNodeKeys (length %d) while building bootnodes", i, len(allNodeKeys)))
+		}
+		peerKeyType := allNodeKeys[i].KeyType
 		// Construct hostname:port string directly using known values
 		hostnamePort := fmt.Sprintf("%s:%d", *p.Address, kwilnetworkpeer.TnP2pPort)
-		// Use the constructed hostnamePort string
-		bootnodes = append(bootnodes, fmt.Sprintf("%s#secp256k1@%s", p.NodeHexAddress, hostnamePort))
+		// Use the peer's KeyType and constructed hostnamePort string
+		bootnodes = append(bootnodes, fmt.Sprintf("%s#%s@%s", p.NodeHexAddress, peerKeyType, hostnamePort))
 	}
 
 	// Get node-specific external address (using hostname:port)
@@ -108,7 +114,7 @@ func newNode(
 	input NewNodeInput,
 ) tn.TNInstance {
 	// Populate values and render the config template
-	renderedConfig := populateAndRenderValues(scope, input.Index, input.Props, input.Connection, input.AllPeers)
+	renderedConfig := populateAndRenderValues(scope, input.Index, input.Props, input.Connection, input.AllPeers, input.Props.NodeKeys)
 
 	// Create an S3 asset from the rendered TOML content
 	nodeConfigAsset := awss3assets.NewAsset(scope, jsii.String(fmt.Sprintf("KwildRenderedConfigAsset-%d", input.Index)), &awss3assets.AssetProps{

@@ -12,12 +12,11 @@ import (
 
 // NodeKeys reflects the structure returned by `kwild key gen --output json`
 type NodeKeys struct {
-	KeyType       string `json:"key_type"`         // Added
-	PrivateKeyHex string `json:"private_key_text"` // Was private_key_hex
-	PublicKeyHex  string `json:"public_key_hex"`   // Was public_key_cometized_hex
-	NodeId        string `json:"node_id"`          // Was node_id
-	Address       string `json:"user_address"`     // Was address
-	// Removed: PrivateKeyBase64, PublicKeyBase64, PublicKeyPlainHex
+	KeyType       string `json:"key_type"`
+	PrivateKeyHex string `json:"private_key_text"`
+	PublicKeyHex  string `json:"public_key_hex"`
+	NodeId        string `json:"node_id"`
+	Address       string `json:"user_address"`
 }
 
 // KeyGenOutput matches the top-level structure of the CLI output.

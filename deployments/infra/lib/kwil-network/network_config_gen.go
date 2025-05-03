@@ -114,6 +114,7 @@ func KwilNetworkConfigAssetsFromNumberOfNodes(scope constructs.Construct, input 
 			ChainId:         env.ChainId,
 			PeerConnections: peers, // Pass peers to include validators in genesis
 			DbOwner:         input.DbOwner,
+			NodeKeys:        nodeKeys, // Pass the generated nodeKeys
 		})
 
 		// Create Genesis Asset

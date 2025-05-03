@@ -28,10 +28,11 @@ type AttachObservabilityInput struct {
 
 // ObservableStructure groups resources that need observer attached.
 type ObservableStructure struct {
-	InstanceName   string
-	ServiceName    string
-	LaunchTemplate awsec2.LaunchTemplate
-	Role           awsiam.IRole
+	InstanceName       string
+	UniquePolicyPrefix string
+	ServiceName        string
+	LaunchTemplate     awsec2.LaunchTemplate
+	Role               awsiam.IRole
 }
 
 // AttachObservability attaches observer components (Vector agent, scripts)
@@ -49,7 +50,8 @@ func AttachObservability(input AttachObservabilityInput) {
 		// 1. Grant Permissions
 		attachSSMReadAccess(
 			input.Scope,
-			jsii.String(structure.ServiceName+"-ObserverSSMPolicy"), // Unique policy ID per service
+			jsii.String(structure.UniquePolicyPrefix+"-ObserverSSMPolicy"),
+			structure.UniquePolicyPrefix,
 			structure.Role,
 			ssmPrefix,
 		)
@@ -100,26 +102,29 @@ func AttachObservability(input AttachObservabilityInput) {
 
 	if input.KwilCluster != nil {
 		observableStructures = append(observableStructures, ObservableStructure{
-			InstanceName:   fmt.Sprintf("%s-%s-gateway", stage, devPrefix),
-			ServiceName:    "gateway",
-			LaunchTemplate: input.KwilCluster.Gateway.LaunchTemplate,
-			Role:           input.KwilCluster.Gateway.Role,
+			InstanceName:       fmt.Sprintf("%s-%s-gateway", stage, devPrefix),
+			UniquePolicyPrefix: "Gateway",
+			ServiceName:        "gateway",
+			LaunchTemplate:     input.KwilCluster.Gateway.LaunchTemplate,
+			Role:               input.KwilCluster.Gateway.Role,
 		})
 		observableStructures = append(observableStructures, ObservableStructure{
-			InstanceName:   fmt.Sprintf("%s-%s-indexer", stage, devPrefix),
-			ServiceName:    "indexer",
-			LaunchTemplate: input.KwilCluster.Indexer.LaunchTemplate,
-			Role:           input.KwilCluster.Indexer.Role,
+			InstanceName:       fmt.Sprintf("%s-%s-indexer", stage, devPrefix),
+			UniquePolicyPrefix: "Indexer",
+			ServiceName:        "indexer",
+			LaunchTemplate:     input.KwilCluster.Indexer.LaunchTemplate,
+			Role:               input.KwilCluster.Indexer.Role,
 		})
 	}
 
 	if input.ValidatorSet != nil {
 		for _, tsnInstance := range input.ValidatorSet.Nodes {
 			observableStructures = append(observableStructures, ObservableStructure{
-				InstanceName:   fmt.Sprintf("%s-%s-tn-node-%d", stage, devPrefix, tsnInstance.Index),
-				LaunchTemplate: tsnInstance.LaunchTemplate,
-				ServiceName:    "tn-node",
-				Role:           tsnInstance.Role,
+				InstanceName:       fmt.Sprintf("%s-%s-tn-node-%d", stage, devPrefix, tsnInstance.Index),
+				UniquePolicyPrefix: fmt.Sprintf("TNNode@%d", tsnInstance.Index),
+				LaunchTemplate:     tsnInstance.LaunchTemplate,
+				ServiceName:        "tn-node",
+				Role:               tsnInstance.Role,
 			})
 		}
 	}
@@ -134,8 +139,9 @@ func AttachObservability(input AttachObservabilityInput) {
 func attachSSMReadAccess(
 	scope constructs.Construct,
 	id *string, // Unique ID for the policy construct within the scope
+	policyPrefix string,
 	role awsiam.IRole,
-	ssmPrefix string, // Changed from paramsPrefix for clarity
+	ssmPrefix string,
 ) {
 	paramResourceName := path.Join("parameter", strings.TrimPrefix(ssmPrefix, "/"), "*") // Use path.Join and trim leading slash
 	// Create inline policy under the stack scope using the provided static ID
@@ -143,7 +149,7 @@ func attachSSMReadAccess(
 		scope,
 		id, // Use the unique ID passed in
 		&awsiam.PolicyProps{
-			PolicyName: jsii.Sprintf("%s-ssm-observer-read", role.RoleName()), // Optional: Give policy a meaningful name
+			PolicyName: jsii.Sprintf("%s-ssm-observer-read", policyPrefix), // Optional: Give policy a meaningful name
 			Statements: &[]awsiam.PolicyStatement{
 				awsiam.NewPolicyStatement(
 					&awsiam.PolicyStatementProps{
