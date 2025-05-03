@@ -99,6 +99,9 @@ tasks:
 
   # ─── compose ───────────────────────────────────────────────────────────────────
 
+  # Internal helper task to abstract docker-compose commands.
+  # It takes a list of compose FILES and an ACTION (like 'up -d' or 'down')
+  # and applies the action to each file in the list.
   _compose:
     internal: true
     requires: { vars: [FILES, ACTION] }
@@ -134,6 +137,7 @@ tasks:
           ACTION: down
           FILES: { ref: .SINGLE_STACK_FILES }
 
+  # The devnet environment variables are set here and consumed by compose files.
   devnet:env:
     internal: true
     env:
@@ -161,6 +165,8 @@ tasks:
           ACTION: down
           FILES: { ref: .DEVNET_STACK_FILES }
 
+  # These tasks use specific subsets of the devnet compose files (defined in vars)
+  # to allow starting/stopping individual components like the gateway or indexer.
   devnet:gateway:start:
     desc: The gateway is not needed for development. However, you might want to test its configuration.
     deps: [ devnet:env, build:binaries ]
