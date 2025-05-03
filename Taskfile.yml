@@ -5,6 +5,7 @@ vars:
   DEV_CHAIN_ID: "trufnetwork-dev"
   DEV_NODE_1_ADDRESS: "tn-db-1:8484"
   DEV_NODE_2_ADDRESS: "tn-db-2:8484"
+  DEV_NODE_1_RPC_ENDPOINT: "http://{{.DEV_NODE_1_ADDRESS}}"
 
   # Collection variables for compose files
   SINGLE_STACK_FILES:
@@ -138,7 +139,7 @@ tasks:
     env:
       BACKENDS: "{{.DEV_NODE_1_ADDRESS}},{{.DEV_NODE_2_ADDRESS}}"
       CHAIN_ID: "{{.DEV_CHAIN_ID}}"
-      NODE_RPC_ENDPOINT: "{{.DEV_NODE_1_ADDRESS}}"
+      NODE_RPC_ENDPOINT: "{{.DEV_NODE_1_RPC_ENDPOINT}}"
       DB_OWNER: "{{.DEV_DB_OWNER}}"
     requires: { vars: [ DEV_NODE_1_ADDRESS, DEV_NODE_2_ADDRESS, DEV_CHAIN_ID, DEV_DB_OWNER ] } # Added requires guard for all used vars
   
