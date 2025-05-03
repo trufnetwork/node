@@ -38,7 +38,7 @@ To build and run the TN-DB, you will need the following installed on your system
 5. [Pandas](https://pandas.pydata.org) (optional for running the seed script)
 
 
-### Taskfile in 90 seconds 🚦
+### Taskfile Quickstart 🚦
 
 For full details open **[Taskfile.yml](./Taskfile.yml)**
 
