@@ -9,6 +9,10 @@ CREATE OR REPLACE ACTION get_last_transactions(
         $limit_size := 6;
     }
 
+    IF $limit_size > 100 {
+        ERROR('Limit size cannot exceed 100');
+    }
+
     RETURN SELECT created_at, method FROM (
         SELECT created_at, method, ROW_NUMBER() OVER (PARTITION BY created_at ORDER BY priority ASC) AS rn FROM (
              SELECT created_at, 'deployStream' AS method, 1 AS priority
