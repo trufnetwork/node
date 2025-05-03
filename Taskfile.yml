@@ -1,98 +1,220 @@
 version: "3"
 
+vars:
+  DEV_DB_OWNER: "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"
+  DEV_CHAIN_ID: "trufnetwork-dev"
+  DEV_NODE_1_ADDRESS: "tn-db-1:8484"
+  DEV_NODE_2_ADDRESS: "tn-db-2:8484"
+
+  # Collection variables for compose files
+  SINGLE_STACK_FILES:
+    - compose.yaml
+
+  DEVNET_STACK_FILES:
+    - deployments/dev-net/devnet-compose.yaml
+    - deployments/dev-gateway/dev-gateway-compose.yaml
+    - deployments/indexer/dev-indexer-compose.yaml
+
+  DEVNET_GATEWAY_FILES:
+    - deployments/dev-gateway/dev-gateway-compose.yaml
+
+  DEVNET_INDEXER_FILES:
+    - deployments/indexer/dev-indexer-compose.yaml
+
+  DEVNET_OBSERVER_FILES:
+    - deployments/observer/dev-observer-compose.yml
+
+  BINARIES: [ kwild, kwil-cli ] 
+
+
 tasks:
   default:
+    desc: List all available tasks (same as task -l)
     cmds:
       - task -l
 
+  # ─── build ───────────────────────────────────────────────────────────────────
+
+  build:bin:
+    internal: true
+    env:
+      TARGET: ./.build
+      SOURCE: ./cmd/{{.ITEM}}/main.go
+    cmds:
+      - for: { var: BINARIES }
+        cmd: ./scripts/build/binary {{.ITEM}}
+
   build:
-    desc: Build kwil binaries
-    cmds:
-      - task build:kwild
-      - task build:kwil-cli
-
-  build:kwild:
-    cmds:
-      - ./scripts/build/binary kwild
-    env:
-      TARGET: ./.build
-      SOURCE: ./cmd/kwild/main.go
-
-  build:kwil-cli:
-    cmds:
-      - ./scripts/build/binary kwil-cli
-    env:
-      TARGET: ./.build
-      SOURCE: ./cmd/kwil-cli/main.go
+    desc: Build all kwil binaries
+    deps: [ build:bin ] # Depends on the loop task
 
   build:debug:
     desc: Build kwild binary with debug flags
     cmds:
       - go build -gcflags "all=-N -l" -o ./.build/kwild ./cmd/kwild/main.go
+  
+  build:binaries:
+    desc: Download pre-built helper binaries required by compose stacks
+    cmds:
+      - ./scripts/download-binaries.sh
+    sources:
+      - ./scripts/download-binaries.sh
+
+  build:binaries:dev:
+    desc: Fetch dev-only helper binaries
+    deps:
+      - build:binaries
+    cmds:
+      - ./scripts/download-binaries-dev.sh
+    sources:
+      - ./scripts/download-binaries-dev.sh
 
   build:benchmark:
     desc: Build benchmark binaries
     cmds:
       - go test -v -c -timeout 0 ./internal/benchmark -o ./.build/benchmark
 
-  kwild:
+  # ─── host ─────────────────────────────────────────────────────────────────────
+
+  host:kwild:start:
     desc: Run kwild server
     cmds:
       - .build/kwild start --autogen
 
-  kwild-clean:
+  host:kwild:clean:
     desc: Clean kwild server
     cmds:
       - rm -rf ~/.kwild
 
-  postgres:
+  host:postgres:start:
     desc: Run a postgres container
     cmds:
       - docker start kwil-postgres || docker run -d -p 5432:5432 --name kwil-postgres -e "POSTGRES_HOST_AUTH_METHOD=trust" kwildb/postgres:latest
 
-  indexer:
+  host:indexer:start:
     desc: Run the indexer
     cmds:
       - ./deployments/indexer/kwil-indexer run
 
-  observer-dev:
-    desc: Run the observer development services (vector, prometheus, grafana)
-    cmds:
-      - docker compose -f deployments/observer/dev-observer-compose.yml up -d
+  # ─── compose ───────────────────────────────────────────────────────────────────
 
-  compose:
-    deps: [ kwil-binaries ]
-    desc: Run docker-compose locally
+  _compose:
+    internal: true
+    requires: { vars: [FILES, ACTION] }
+    # common deps
+    deps: [ build:binaries ] # Assuming 'build:binaries' fetches necessary external binaries
     cmds:
-      - docker compose up -d
+      - for: { var: FILES }
+        cmd: docker compose -f {{.ITEM}} {{.ACTION}}
+
+  single:env:
+    desc: Set environment variables for devnet
+    internal: true
     env:
-      DB_OWNER: "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"
+      DB_OWNER: "{{.DEV_DB_OWNER}}"
+      CHAIN_ID: "{{.DEV_CHAIN_ID}}"
+    requires: { vars: [ DEV_DB_OWNER, DEV_CHAIN_ID ] }
+  
+  single:start:
+    desc: Run docker-compose locally (single node stack)
+    deps: [ single:env, build:binaries ]
+    cmds:
+      - task: _compose
+        vars: 
+          ACTION: up -d
+          FILES: { ref: .SINGLE_STACK_FILES }
     
-  compose:down:
-    desc: Shutdown docker-compose
+  single:stop:
+    desc: Shutdown single node environment
+    deps: [ single:env ]
     cmds:
-      - docker compose down
-    env:
-      DB_OWNER: "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"
+      - task: _compose
+        vars: 
+          ACTION: down
+          FILES: { ref: .SINGLE_STACK_FILES }
 
-  compose-dev:
+  devnet:env:
+    internal: true
+    env:
+      BACKENDS: "{{.DEV_NODE_1_ADDRESS}},{{.DEV_NODE_2_ADDRESS}}"
+      CHAIN_ID: "{{.DEV_CHAIN_ID}}"
+      NODE_RPC_ENDPOINT: "{{.DEV_NODE_1_ADDRESS}}"
+      DB_OWNER: "{{.DEV_DB_OWNER}}"
+    requires: { vars: [ DEV_NODE_1_ADDRESS, DEV_NODE_2_ADDRESS, DEV_CHAIN_ID, DEV_DB_OWNER ] } # Added requires guard for all used vars
+  
+  devnet:start:
     desc: Run docker-compose locally with dev configuration, 2 nodes, gateway, and indexer services
+    deps: [ devnet:env, build:binaries ]
     cmds:
-        - docker compose -f deployments/dev-net/devnet-compose.yaml up -d
-        - docker compose -f deployments/dev-gateway/dev-gateway-compose.yaml up -d
-        - docker compose -f deployments/indexer/dev-indexer-compose.yaml up -d
-    env:
-        BACKENDS: tn-db-1:8484,tn-db-2:8484
-        CHAIN_ID: trufnetwork-dev
-        NODE_RPC_ENDPOINT: http://tn-db-1:8484
-        DB_OWNER: "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"
+      - task: _compose
+        vars: 
+          ACTION: up -d
+          FILES: { ref: .DEVNET_STACK_FILES }
 
-  compose-dev-down:
+  devnet:stop:
     desc: Shutdown dev 2 nodes, gateway, and indexer services
+    deps: [ devnet:env ]
     cmds:
-        - docker compose -f deployments/dev-net/devnet-compose.yaml down
-        - docker compose -f deployments/dev-gateway/dev-gateway-compose.yaml down
-        - docker compose -f deployments/indexer/dev-indexer-compose.yaml down
+      - task: _compose
+        vars: 
+          ACTION: down
+          FILES: { ref: .DEVNET_STACK_FILES }
+
+  devnet:gateway:start:
+    desc: The gateway is not needed for development. However, you might want to test its configuration.
+    deps: [ devnet:env, build:binaries ]
+    cmds:
+      - task: _compose
+        vars: 
+          ACTION: up -d
+          FILES: { ref: .DEVNET_GATEWAY_FILES }
+
+  devnet:gateway:stop:
+    desc: Shutdown the gateway
+    deps: [ devnet:env ]
+    cmds:
+      - task: _compose
+        vars: 
+          ACTION: down
+          FILES: { ref: .DEVNET_GATEWAY_FILES }
+
+  devnet:indexer:start:
+    desc: Run the indexer against local devnet
+    deps: [ devnet:env, build:binaries ]
+    cmds:
+      - task: _compose
+        vars: 
+          ACTION: up -d
+          FILES: { ref: .DEVNET_INDEXER_FILES }
+
+  devnet:indexer:stop:
+    desc: Shutdown the indexer
+    deps: [ devnet:env ]
+    cmds:
+      - task: _compose
+        vars: 
+          ACTION: down
+          FILES: { ref: .DEVNET_INDEXER_FILES }
+
+  devnet:observer:start:
+    desc: Run the observer development services (vector, prometheus, grafana)
+    deps: [ devnet:env ]
+    cmds:
+      - task: _compose
+        vars: 
+          ACTION: up -d
+          FILES: { ref: .DEVNET_OBSERVER_FILES }
+
+  devnet:observer:stop:
+    desc: Shutdown the observer
+    deps: [ devnet:env ]
+    cmds:
+      - task: _compose
+        vars: 
+          ACTION: down
+          FILES: { ref: .DEVNET_OBSERVER_FILES }
+
+  # ─── tools ───────────────────────────────────────────────────────────────────
 
   tools:
     desc: Install tools
@@ -110,28 +232,17 @@ tasks:
     cmds:
       - golangci-lint run
 
-  kwil-binaries:
-    cmds:
-      - ./scripts/download-binaries.sh
-    sources:
-      - ./scripts/download-binaries.sh
 
-  kwil-binaries-dev:
-    deps:
-      - kwil-binaries
-    cmds:
-      - ./scripts/download-binaries-dev.sh
-    sources:
-      - ./scripts/download-binaries-dev.sh
+  # ─── setup ───────────────────────────────────────────────────────────────────
 
   # After generating the certs, you need to trust them in your local machine by running the task setup:local-cert (linux) or setup:local-cert-darwin (macOS)
   # leave the fields empty and press enter to use the default values
-  setup:new-local-cert:
+  setup:local-cert:
     desc: Generate a new local cert
     cmds:
       - sudo openssl req -x509 -nodes -days 365 -addext "subjectAltName = DNS:localhost" -newkey rsa:2048 -keyout ./deployments/dev-gateway/certs/localhost.key -out ./deployments/dev-gateway/certs/localhost.crt
 
-  setup:local-cert:
+  setup:trust-local-cert:
     desc: Trust local certs for development
     cmds:
       - sudo cp ./deployments/dev-gateway/certs/localhost.crt /usr/local/share/ca-certificates/localhost.crt
@@ -142,21 +253,7 @@ tasks:
     cmds:
       - sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ./deployments/dev-gateway/certs/localhost.crt
 
-  start:devnet-gateway:
-    desc: The gateway is not needed for development. However, you might want to test its configuration.
-    cmds:
-      - docker compose -f deployments/dev-gateway/dev-gateway-compose.yaml up -d
-    env:
-      BACKENDS: tn-db-1:8484,tn-db-2:8484
-      CHAIN_ID: trufnetwork-dev
-
-  start:devnet-indexer:
-    desc: Run the indexer
-    cmds:
-      - docker compose -f deployments/indexer/dev-indexer-compose.yaml up -d
-    env:
-      NODE_RPC_ENDPOINT: http://tn-db-1:8484
-      KWIL_PG_CONN: postgresql://kwild@kwil-postgres-1:5432/kwild?sslmode=disable
+  # ─── tests ───────────────────────────────────────────────────────────────────
 
   test:unit:
     desc: Run unit tests
@@ -164,31 +261,36 @@ tasks:
       - go test ./internal/contracts/tests/...
 
   coverage:
-    desc: Run coverage
+    desc: Generate HTML & CLI coverage report via scripts/coverage.sh
     cmds:
       - bash ./scripts/coverage.sh
 
+
+  benchmark:
+    desc: Compile & run Go micro-benchmark suite, regenerating ./internal/benchmark report
+    cmds:
+      - go test -v -timeout 0 ./internal/benchmark
+
   get-genesis:
-    desc: Get genesis file from tn-node-operator repo
+    desc: Pull latest staging genesis.json from truf-node-operator (needs READ_TOKEN in .env)
     dotenv: ['.env']
     cmds:
       - |
         curl -f -H "Authorization: token ${READ_TOKEN}" --create-dirs -o ./deployments/network/staging/genesis.json https://raw.githubusercontent.com/trufnetwork/truf-node-operator/main/configs/network/staging/genesis.json
 
-  benchmark:
-    desc: Run benchmark tests and regenerate the report
-    cmds:
-      - go test -v -timeout 0 ./internal/benchmark
+  # ─── actions ───────────────────────────────────────────────────────────────────
 
-  action-migrate-dev:
-    desc: Run the migration action for all SQL files in the devnet
+  action:migrate:
+    desc: Run the migration action for all SQL files. Environment variables should be set in the environment.
     cmds:
       - bash ./scripts/migrate.sh
     env:
-      PRIVATE_KEY: "0000000000000000000000000000000000000000000000000000000000000001"
-      PROVIDER: http://localhost:8484
+      PRIVATE_KEY: "{{.PRIVATE_KEY}}"
+      PROVIDER: "{{.PROVIDER}}"
+    requires: { vars: [PRIVATE_KEY, PROVIDER] }
 
-  action-migrate:
-    desc: Run the migration action for all SQL files
+  action:migrate:dev:
+    desc: Run the migration action for all SQL files in a local network
     cmds:
-      - bash ./scripts/migrate.sh
+      - task: action:migrate
+        vars: { PRIVATE_KEY: 0000000000000000000000000000000000000000000000000000000000000001, PROVIDER: http://localhost:8484 }
