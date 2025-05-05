@@ -812,6 +812,8 @@ github.com/kwilteam/kwil-db v0.10.3-0.20250409162525-79eb7768ae34 h1:gXQAwD8R3KV
 github.com/kwilteam/kwil-db v0.10.3-0.20250409162525-79eb7768ae34/go.mod h1:46IO8tO8gCBgETv90Lwscx1wDtYOBMxVHhlO8OAjfdc=
 github.com/kwilteam/kwil-db v0.10.3-0.20250409164132-bfe1bc86142e h1:FefZ0w5lTuBj/RHmOoDu56zYxMeAwiA8MjLlNF5boDo=
 github.com/kwilteam/kwil-db v0.10.3-0.20250409164132-bfe1bc86142e/go.mod h1:46IO8tO8gCBgETv90Lwscx1wDtYOBMxVHhlO8OAjfdc=
+github.com/kwilteam/kwil-db v0.10.3-0.20250428152603-05d45b415905 h1:IU2+SHZanh/oqr3Zid8gKWll4uD3kNcGDRW6cwsf10o=
+github.com/kwilteam/kwil-db v0.10.3-0.20250428152603-05d45b415905/go.mod h1:46IO8tO8gCBgETv90Lwscx1wDtYOBMxVHhlO8OAjfdc=
 github.com/kwilteam/kwil-db/core v0.4.1-0.20250313184537-d69d72da06a0 h1:MH8qrY4iduve8Cm9lgvSgtrYthv4pMkWWftXuab3PGI=
 github.com/kwilteam/kwil-db/core v0.4.1-0.20250313184537-d69d72da06a0/go.mod h1:clG9Pk1NNs83dbIZZZn/6I+F4C9xntYTHbMFjL1HQ0w=
 github.com/kwilteam/kwil-db/core v0.4.1 h1:6ZOCLBMvO6EnVfsgwP2KxD0yWF2lIvmismSfRZLDXkc=
@@ -824,6 +826,8 @@ github.com/kwilteam/kwil-db/core v0.4.2-0.20250409162525-79eb7768ae34 h1:7oatcfs
 github.com/kwilteam/kwil-db/core v0.4.2-0.20250409162525-79eb7768ae34/go.mod h1:clG9Pk1NNs83dbIZZZn/6I+F4C9xntYTHbMFjL1HQ0w=
 github.com/kwilteam/kwil-db/core v0.4.2-0.20250409164132-bfe1bc86142e h1:SOapANBXm/s9vF2Nv934r6TVhnX79kupcugIZ+KqWXQ=
 github.com/kwilteam/kwil-db/core v0.4.2-0.20250409164132-bfe1bc86142e/go.mod h1:clG9Pk1NNs83dbIZZZn/6I+F4C9xntYTHbMFjL1HQ0w=
+github.com/kwilteam/kwil-db/core v0.4.2-0.20250428152603-05d45b415905 h1:nM7ywVRDcW4r+pZLYcL8i+ZM84cKKmfrWOcQA5oxlYs=
+github.com/kwilteam/kwil-db/core v0.4.2-0.20250428152603-05d45b415905/go.mod h1:clG9Pk1NNs83dbIZZZn/6I+F4C9xntYTHbMFjL1HQ0w=
 github.com/kwilteam/openzeppelin-merkle-tree-go v0.0.0-20250128210530-6c29061dd35f h1:a603or4yeR3SAU8cHnDDwd4puQNJFRCKxXqC9933stc=
 github.com/kwilteam/openzeppelin-merkle-tree-go v0.0.0-20250128210530-6c29061dd35f/go.mod h1:nTL6dEhIaq+HRALHQ86MMNnySDhTDFao/iNJbJCzFlM=
 github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0SNc=
