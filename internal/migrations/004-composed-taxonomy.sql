@@ -10,13 +10,19 @@ CREATE OR REPLACE ACTION insert_taxonomy(
     $weights NUMERIC(36,18)[],      -- The weights of the child streams.
     $start_date INT                 -- The start date of the taxonomy.
 ) PUBLIC {
+    $data_provider := LOWER($data_provider);
+    for $i in 1..array_length($child_data_providers) {
+        $child_data_providers[$i] := LOWER($child_data_providers[$i]);
+    }
+    $lower_caller  := LOWER(@caller);
+
     -- ensure it's a composed stream
     if is_primitive_stream($data_provider, $stream_id) == true {
         ERROR('stream is not a composed stream');
     }
 
     -- Ensure the wallet is allowed to write
-    if is_wallet_allowed_to_write($data_provider, $stream_id, @caller) == false {
+    if is_wallet_allowed_to_write($data_provider, $stream_id, $lower_caller) == false {
         ERROR('wallet not allowed to write');
     }
  
@@ -85,6 +91,8 @@ CREATE OR REPLACE ACTION get_current_group_sequence(
     $stream_id TEXT,
     $show_disabled bool
 ) private view returns (result int) {
+    $data_provider  := LOWER($data_provider);
+
     if $show_disabled == false {
         for $row in SELECT group_sequence
         FROM taxonomies
@@ -122,6 +130,8 @@ CREATE OR REPLACE ACTION describe_taxonomies(
     group_sequence INT,
     start_date INT             -- Aliased from start_time
 ) {
+    $data_provider  := LOWER($data_provider);
+
     if $latest_group_sequence == true {
         $group_sequence := get_current_group_sequence($data_provider, $stream_id, false);
         return SELECT
@@ -162,8 +172,10 @@ CREATE OR REPLACE ACTION disable_taxonomy(
     $stream_id TEXT,
     $group_sequence INT
 ) PUBLIC {
+    $data_provider  := LOWER($data_provider);
+    $lower_caller  := LOWER(@caller);
     -- Ensure the wallet is allowed to write
-    if is_wallet_allowed_to_write($data_provider, $stream_id, @caller) == false {
+    if is_wallet_allowed_to_write($data_provider, $stream_id, $lower_caller) == false {
         ERROR('wallet not allowed to write');
     }
 

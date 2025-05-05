@@ -8,7 +8,7 @@ CREATE OR REPLACE ACTION create_stream(
     $stream_type TEXT
 ) PUBLIC {
     -- Get caller's address (data provider) first
-    $data_provider TEXT := @caller;
+    $data_provider TEXT := LOWER(@caller);
     $current_block INT := @height;
     
     -- Check if caller is a valid ethereum address
@@ -64,7 +64,7 @@ CREATE OR REPLACE ACTION create_streams(
     $stream_types TEXT[]
 ) PUBLIC {
     -- Get caller's address (data provider) first
-    $data_provider TEXT := @caller;
+    $data_provider TEXT := LOWER(@caller);
 
     -- Check if caller is a valid ethereum address
     if NOT check_ethereum_address($data_provider) {
@@ -255,9 +255,11 @@ CREATE OR REPLACE ACTION insert_metadata(
     $value_f DECIMAL(36,18);
     $value_b BOOL;
     $value_ref TEXT;
+    $data_provider := LOWER($data_provider);
+    $lower_caller := LOWER(@caller);
     
     -- Check if caller is the stream owner
-    if !is_stream_owner($data_provider, $stream_id, @caller) {
+    if !is_stream_owner($data_provider, $stream_id, $lower_caller) {
         ERROR('Only stream owner can insert metadata');
     }
     
@@ -331,8 +333,10 @@ CREATE OR REPLACE ACTION disable_metadata(
     $stream_id TEXT,
     $row_id UUID
 ) PUBLIC {
+    $data_provider := LOWER($data_provider);
+    $lower_caller := LOWER(@caller);
     -- Check if caller is the stream owner
-    if !is_stream_owner($data_provider, $stream_id, @caller) {
+    if !is_stream_owner($data_provider, $stream_id, $lower_caller) {
         ERROR('Only stream owner can disable metadata');
     }
     
@@ -438,7 +442,10 @@ CREATE OR REPLACE ACTION delete_stream(
     $data_provider TEXT,
     $stream_id TEXT
 ) PUBLIC {
-     if !is_stream_owner($data_provider, $stream_id, @caller) {
+    $data_provider := LOWER($data_provider);
+    $lower_caller := LOWER(@caller);
+
+    if !is_stream_owner($data_provider, $stream_id, $lower_caller) {
         ERROR('Only stream owner can delete the stream');
     }
 
@@ -454,6 +461,7 @@ CREATE OR REPLACE ACTION is_stream_owner(
     $stream_id TEXT,
     $caller TEXT
 ) PUBLIC view returns (is_owner BOOL) {
+    $data_provider := LOWER($data_provider);
     $lower_caller := LOWER($caller);
 
     -- Check if the stream exists
@@ -490,6 +498,10 @@ CREATE OR REPLACE ACTION is_stream_owner_batch(
     stream_id TEXT,
     is_owner BOOL
 ) {
+    for $i in 1..array_length($data_providers) {
+        $data_providers[$i] := LOWER($data_providers[$i]);
+    }
+
     -- Check that arrays have the same length
     if array_length($data_providers) != array_length($stream_ids) {
         ERROR('Data providers and stream IDs arrays must have the same length');
@@ -553,6 +565,7 @@ CREATE OR REPLACE ACTION is_primitive_stream(
     $data_provider TEXT,
     $stream_id TEXT
 ) PUBLIC view returns (is_primitive BOOL) {
+    $data_provider := LOWER($data_provider);
     for $row in SELECT stream_type FROM streams 
         WHERE data_provider = $data_provider AND stream_id = $stream_id LIMIT 1 {
         return $row.stream_type = 'primitive';
@@ -574,6 +587,10 @@ CREATE OR REPLACE ACTION is_primitive_stream_batch(
     stream_id TEXT,
     is_primitive BOOL
 ) {
+    for $i in 1..array_length($data_providers) {
+        $data_providers[$i] := LOWER($data_providers[$i]);
+    }
+
     -- Check that arrays have the same length
     if array_length($data_providers) != array_length($stream_ids) {
         ERROR('Data providers and stream IDs arrays must have the same length');
@@ -629,6 +646,8 @@ CREATE OR REPLACE ACTION get_metadata(
     value_ref TEXT,
     created_at INT
 ) {
+    $data_provider := LOWER($data_provider);
+
     -- Set default values if parameters are null
     if $limit IS NULL {
         $limit := 100;
@@ -674,6 +693,8 @@ CREATE OR REPLACE ACTION get_latest_metadata(
     value_s TEXT,
     value_ref TEXT
 ) {
+    $data_provider := LOWER($data_provider);
+
     for $row in get_metadata($data_provider, $stream_id, $key, $ref, 1, 0, 'created_at DESC') {
         RETURN NEXT $row.value_i, $row.value_f, $row.value_b, $row.value_s, $row.value_ref;
     }
@@ -687,6 +708,8 @@ CREATE OR REPLACE ACTION get_latest_metadata_int(
     $stream_id TEXT,
     $key TEXT
 ) PUBLIC view returns (value INT) {
+    $data_provider := LOWER($data_provider);
+
     $result INT;
     for $row in get_latest_metadata($data_provider, $stream_id, $key, NULL) {
         $result := $row.value_i;
@@ -703,6 +726,8 @@ CREATE OR REPLACE ACTION get_latest_metadata_ref(
     $key TEXT,
     $ref TEXT
 ) PUBLIC view returns (value TEXT) {
+    $data_provider := LOWER($data_provider);
+
     $result TEXT;
     for $row in get_latest_metadata($data_provider, $stream_id, $key, $ref) {
         $result := $row.value_ref;
@@ -718,6 +743,8 @@ CREATE OR REPLACE ACTION get_latest_metadata_bool(
     $stream_id TEXT,
     $key TEXT
 ) PUBLIC view returns (value BOOL) {
+    $data_provider := LOWER($data_provider);
+
     $result BOOL;
     for $row in get_latest_metadata($data_provider, $stream_id, $key, NULL) {
         $result := $row.value_b;
@@ -733,6 +760,8 @@ CREATE OR REPLACE ACTION get_latest_metadata_string(
     $stream_id TEXT,
     $key TEXT
 ) PUBLIC view returns (value TEXT) {
+    $data_provider := LOWER($data_provider);
+
     $result TEXT;
     for $row in get_latest_metadata($data_provider, $stream_id, $key, NULL) {
         $result := $row.value_s;
@@ -755,6 +784,8 @@ CREATE OR REPLACE ACTION get_category_streams(
     $active_from   INT,
     $active_to     INT
 ) PUBLIC view returns table(data_provider TEXT, stream_id TEXT) {
+    $data_provider := LOWER($data_provider);
+
     -- Check if stream exists
     if !stream_exists($data_provider, $stream_id) {
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
@@ -966,6 +997,8 @@ CREATE OR REPLACE ACTION stream_exists(
     $data_provider TEXT,
     $stream_id TEXT
 ) PUBLIC view returns (result BOOL) {
+    $data_provider := LOWER($data_provider);
+
     for $row in SELECT 1 FROM streams WHERE data_provider = $data_provider AND stream_id = $stream_id {
         return true;
     }
@@ -984,6 +1017,10 @@ CREATE OR REPLACE ACTION stream_exists_batch(
     stream_id TEXT,
     stream_exists BOOL
 ) {
+    for $i in 1..array_length($data_providers) {
+        $data_providers[$i] := LOWER($data_providers[$i]);
+    }
+
     -- Check that arrays have the same length
     if array_length($data_providers) != array_length($stream_ids) {
         ERROR('Data providers and stream IDs arrays must have the same length');
@@ -1023,7 +1060,11 @@ CREATE OR REPLACE ACTION transfer_stream_ownership(
     $stream_id TEXT,
     $new_owner TEXT
 ) PUBLIC {
-    if !is_stream_owner($data_provider, $stream_id, @caller) {
+    $data_provider := LOWER($data_provider);
+    $new_owner := LOWER($new_owner);
+    $lower_caller := LOWER(@caller);
+
+    if !is_stream_owner($data_provider, $stream_id, $lower_caller) {
         ERROR('Only stream owner can transfer ownership');
     }
 
@@ -1052,6 +1093,10 @@ CREATE OR REPLACE ACTION filter_streams_by_existence(
     data_provider TEXT,
     stream_id TEXT
 ) {
+    for $i in 1..array_length($data_providers) {
+        $data_providers[$i] := LOWER($data_providers[$i]);
+    }
+
     $filtered_dp TEXT[];
     $filtered_sid TEXT[];
 
@@ -1102,6 +1147,8 @@ CREATE OR REPLACE ACTION list_streams(
     stream_type TEXT,
     created_at INT8
 ) {
+    @data_provider := LOWER($data_provider);
+
     if $limit > 5000 {
         ERROR('Limit exceeds maximum allowed value of 5000');
     }

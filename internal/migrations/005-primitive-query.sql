@@ -13,8 +13,10 @@ CREATE OR REPLACE ACTION get_record_primitive(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
+    $data_provider  := LOWER($data_provider);
+    $lower_caller TEXT := LOWER(@caller);
     -- Check read access first
-    if is_allowed_to_read($data_provider, $stream_id, @caller, $from, $to) == false {
+    if is_allowed_to_read($data_provider, $stream_id, $lower_caller, $from, $to) == false {
         ERROR('wallet not allowed to read');
     }
 
@@ -81,8 +83,11 @@ CREATE OR REPLACE ACTION get_last_record_primitive(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
+    $data_provider  := LOWER($data_provider);
+    $lower_caller TEXT := LOWER(@caller);
+
     -- Check read access, since we're querying directly from the primitive_events table
-    if is_allowed_to_read($data_provider, $stream_id, @caller, NULL, $before) == false {
+    if is_allowed_to_read($data_provider, $stream_id, $lower_caller, NULL, $before) == false {
         ERROR('wallet not allowed to read');
     }
 
@@ -113,8 +118,10 @@ CREATE OR REPLACE ACTION get_first_record_primitive(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
+    $data_provider  := LOWER($data_provider);
+    $lower_caller TEXT := LOWER(@caller);
     -- Check read access, since we're querying directly from the primitive_events table
-    if is_allowed_to_read($data_provider, $stream_id, @caller, $after, NULL) == false {
+    if is_allowed_to_read($data_provider, $stream_id, $lower_caller, $after, NULL) == false {
         ERROR('wallet not allowed to read');
     }
 
@@ -146,6 +153,8 @@ CREATE OR REPLACE ACTION get_index_primitive(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
+    $data_provider := LOWER($data_provider);
+
     -- Check read permissions
     if !is_allowed_to_read_all($data_provider, $stream_id, @caller, $from, $to) {
         ERROR('Not allowed to read stream');

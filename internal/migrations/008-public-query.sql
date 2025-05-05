@@ -12,6 +12,7 @@ CREATE OR REPLACE ACTION get_record(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
+    $data_provider  := LOWER($data_provider);
     -- Check if the stream is primitive or composed
     $is_primitive BOOL := is_primitive_stream($data_provider, $stream_id);
     
@@ -40,6 +41,7 @@ CREATE OR REPLACE ACTION get_last_record(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
+    $data_provider  := LOWER($data_provider);
     -- Check if the stream is primitive or composed
     $is_primitive BOOL := is_primitive_stream($data_provider, $stream_id);
     
@@ -70,6 +72,7 @@ CREATE OR REPLACE ACTION get_first_record(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
+    $data_provider  := LOWER($data_provider);
     -- Check if the stream is primitive or composed
     $is_primitive BOOL := is_primitive_stream($data_provider, $stream_id);
 
@@ -95,8 +98,10 @@ CREATE OR REPLACE ACTION get_base_value(
     $base_time INT8,
     $frozen_at INT8
 ) PUBLIC view returns (value NUMERIC(36,18)) {
+    $data_provider  := LOWER($data_provider);
+    $lower_caller TEXT := LOWER(@caller);
     -- Check read permissions
-    if !is_allowed_to_read_all($data_provider, $stream_id, @caller, NULL, $base_time) {
+    if !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, NULL, $base_time) {
         ERROR('Not allowed to read stream');
     }
     
@@ -200,6 +205,7 @@ CREATE OR REPLACE ACTION get_index(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
+    $data_provider  := LOWER($data_provider);
     -- Check if the stream is primitive or composed
     $is_primitive BOOL := is_primitive_stream($data_provider, $stream_id);
     
@@ -229,6 +235,7 @@ RETURNS TABLE (
     value NUMERIC(36,18)
 )
 {
+    $data_provider  := LOWER($data_provider);
     /*
      * 1. Parameter checks
      */

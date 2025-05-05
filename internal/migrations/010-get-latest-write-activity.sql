@@ -5,6 +5,7 @@ CREATE OR REPLACE ACTION get_last_transactions(
     created_at INT8,
     method     TEXT
 ) {
+    $data_provider := LOWER($data_provider);
     IF $limit_size IS NULL OR $limit_size <= 0 {
         $limit_size := 6;
     }

@@ -9,6 +9,7 @@ CREATE OR REPLACE ACTION is_allowed_to_read(
     $active_from INT,
     $active_to INT
 ) PUBLIC view returns (is_allowed BOOL) {
+    $data_provider := LOWER($data_provider);
     $lowercase_wallet_address TEXT := LOWER($wallet_address);
     -- Check if the stream exists
     if !stream_exists($data_provider, $stream_id) {
@@ -53,6 +54,8 @@ CREATE OR REPLACE ACTION is_allowed_to_compose(
     $active_from INT,
     $active_to INT
 ) PUBLIC view returns (is_allowed BOOL) {
+    $data_provider := LOWER($data_provider);
+    $composing_data_provider := LOWER($composing_data_provider);
     -- Check if the stream exists
     if !stream_exists($data_provider, $stream_id) {
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
@@ -101,6 +104,9 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
     $active_from INT,
     $active_to INT
 ) PUBLIC view returns (is_allowed BOOL) {
+    $data_provider := LOWER($data_provider);
+    $wallet_address := LOWER($wallet_address);
+
     -- Check if the stream exists
     if !stream_exists($data_provider, $stream_id) {
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
@@ -384,6 +390,8 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
     $active_from INT,
     $active_to INT
 ) PUBLIC view returns (is_allowed BOOL) {
+    $data_provider := LOWER($data_provider);
+
     -- Check if the stream exists
     if !stream_exists($data_provider, $stream_id) {
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
@@ -665,6 +673,9 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_write(
     $stream_id TEXT,
     $wallet TEXT
 ) PUBLIC view returns (result bool) {
+    $data_provider := LOWER($data_provider);
+    $wallet := LOWER($wallet);
+
     -- Check if the wallet is the stream owner
     if is_stream_owner($data_provider, $stream_id, $wallet) {
         return true;
@@ -700,6 +711,11 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_write_batch(
     stream_id TEXT,
     is_allowed BOOL
 ) {
+    for $idx in 1..array_length($data_providers) {
+        $data_providers[$idx] := LOWER($data_providers[$idx]);
+    }
+    $wallet := LOWER($wallet);
+
     $exist_array BOOLEAN[];
     $permission_array BOOLEAN[];
 
@@ -734,6 +750,11 @@ CREATE OR REPLACE ACTION has_write_permission_batch(
     stream_id TEXT,
     has_permission BOOL
 ) {
+    for $idx in 1..array_length($data_providers) {
+        $data_providers[$idx] := LOWER($data_providers[$idx]);
+    }
+    $wallet := LOWER($wallet);
+
     -- Check that arrays have the same length
     if array_length($data_providers) != array_length($stream_ids) {
         ERROR('Data providers and stream IDs arrays must have the same length');

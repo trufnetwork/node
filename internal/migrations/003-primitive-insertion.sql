@@ -8,8 +8,10 @@ CREATE OR REPLACE ACTION insert_record(
     $event_time INT8,
     $value NUMERIC(36,18)
 ) PUBLIC {
+    $data_provider TEXT := LOWER($data_provider);
+    $lower_caller TEXT := LOWER(@caller);
     -- Ensure the wallet is allowed to write
-    if !is_wallet_allowed_to_write($data_provider, $stream_id, @caller) {
+    if !is_wallet_allowed_to_write($data_provider, $stream_id, $lower_caller) {
         ERROR('wallet not allowed to write');
     }
 
@@ -41,6 +43,11 @@ CREATE OR REPLACE ACTION insert_records(
     $event_time INT8[],
     $value NUMERIC(36,18)[]
 ) PUBLIC {
+    for $i in 1..array_length($data_provider) {
+        $data_provider[$i] := LOWER($data_provider[$i]);
+    }
+    $lower_caller TEXT := LOWER(@caller);
+
     $num_records INT := array_length($data_provider);
     if $num_records != array_length($stream_id) or $num_records != array_length($event_time) or $num_records != array_length($value) {
         ERROR('array lengths mismatch');
@@ -63,7 +70,7 @@ CREATE OR REPLACE ACTION insert_records(
     }
 
     -- Validate that the wallet is allowed to write to each stream
-    for $row in is_wallet_allowed_to_write_batch($data_provider, $stream_id, @caller) {
+    for $row in is_wallet_allowed_to_write_batch($data_provider, $stream_id, $lower_caller) {
         if !$row.is_allowed {
             ERROR('wallet not allowed to write to stream: data_provider=' || $row.data_provider || ', stream_id=' || $row.stream_id);
         }

@@ -46,6 +46,8 @@ RETURNS TABLE(
     event_time INT8,
     value NUMERIC(36,18)
 )  {
+    $data_provider  := LOWER($data_provider);
+    $lower_caller TEXT := LOWER(@caller);
     -- Define boundary defaults and effective values
     $max_int8 := 9223372036854775000;          -- "Infinity" sentinel for INT8
     $effective_from := COALESCE($from, 0);      -- Lower bound, default 0
@@ -58,7 +60,7 @@ RETURNS TABLE(
     }
 
     -- Check permissions; raises error if unauthorized
-    IF !is_allowed_to_read_all($data_provider, $stream_id, @caller, $from, $to) {
+    IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, $from, $to) {
         ERROR('Not allowed to read stream');
     }
     IF !is_allowed_to_compose_all($data_provider, $stream_id, $from, $to) {

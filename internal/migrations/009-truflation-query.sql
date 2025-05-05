@@ -9,8 +9,10 @@ CREATE OR REPLACE ACTION truflation_last_deployed_date(
 ) PUBLIC view returns table(
        value TEXT
 ) {
+    $data_provider  := LOWER($data_provider);
+    $lower_caller TEXT := LOWER(@caller);
     -- Check read access first
-    if !is_allowed_to_read($data_provider, $stream_id, @caller, 0, 0) {
+    if !is_allowed_to_read($data_provider, $stream_id, $lower_caller, 0, 0) {
         ERROR('wallet not allowed to read');
     }
 
@@ -38,6 +40,10 @@ CREATE OR REPLACE ACTION truflation_insert_records(
     $value NUMERIC(36,18)[],
     $truflation_created_at TEXT[]
 ) PUBLIC {
+    for $i in 1..array_length($data_provider) {
+        $data_provider[$i] := LOWER($data_provider[$i]);
+    }
+    $lower_caller TEXT := LOWER(@caller);
     $num_records INT := array_length($data_provider);
     if $num_records != array_length($stream_id) or $num_records != array_length($event_time) or $num_records != array_length($value) or $num_records != array_length($truflation_created_at) {
         ERROR('array lengths mismatch');
@@ -60,7 +66,7 @@ CREATE OR REPLACE ACTION truflation_insert_records(
     }
 
     -- Validate that the wallet is allowed to write to each stream
-    for $row in is_wallet_allowed_to_write_batch($data_provider, $stream_id, @caller) {
+    for $row in is_wallet_allowed_to_write_batch($data_provider, $stream_id, $lower_caller) {
         if !$row.is_allowed {
             ERROR('wallet not allowed to write to stream: data_provider=' || $row.data_provider || ', stream_id=' || $row.stream_id);
         }

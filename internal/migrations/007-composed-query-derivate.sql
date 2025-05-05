@@ -12,10 +12,12 @@ RETURNS TABLE(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
+    $data_provider  := LOWER($data_provider);
+    $lower_caller  := LOWER(@caller);
     /*
      * Step 1: Basic setup
      */
-    IF !is_allowed_to_read_all($data_provider, $stream_id, @caller, NULL, $before) {
+    IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, NULL, $before) {
         ERROR('Not allowed to read stream');
     }
 
@@ -146,10 +148,12 @@ RETURNS TABLE(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
+    $data_provider  := LOWER($data_provider);
+    $lower_caller  := LOWER(@caller);
     /*
      * Step 1: Basic setup
      */
-    IF !is_allowed_to_read_all($data_provider, $stream_id, @caller, $after, NULL) {
+    IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, $after, NULL) {
         ERROR('Not allowed to read stream');
     }
 
@@ -271,6 +275,8 @@ RETURNS TABLE(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
+    $data_provider  := LOWER($data_provider);
+    $lower_caller  := LOWER(@caller);
     $max_int8 := 9223372036854775000;
     $effective_from := COALESCE($from, 0);
     $effective_to := COALESCE($to, $max_int8);
@@ -294,7 +300,7 @@ RETURNS TABLE(
     }
 
     -- Permissions check (consider if compose permissions are needed here too)
-    IF !is_allowed_to_read_all($data_provider, $stream_id, @caller, $from, $to) {
+    IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, $from, $to) {
         ERROR('Not allowed to read stream');
     }
     IF !is_allowed_to_compose_all($data_provider, $stream_id, $from, $to) {
