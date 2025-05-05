@@ -1147,7 +1147,7 @@ CREATE OR REPLACE ACTION list_streams(
     stream_type TEXT,
     created_at INT8
 ) {
-    @data_provider := LOWER($data_provider);
+    $data_provider := LOWER($data_provider);
 
     if $limit > 5000 {
         ERROR('Limit exceeds maximum allowed value of 5000');
