@@ -67,6 +67,14 @@ RETURNS TABLE(
         ERROR('Not allowed to compose stream');
     }
 
+        -- for historical consistency, if both from and to are omitted, return the latest record
+    if $from IS NULL AND $to IS NULL {
+        FOR $row IN get_last_record_composed($data_provider, $stream_id, NULL, $effective_frozen_at) {
+            RETURN NEXT $row.event_time, $row.value;
+        }
+        RETURN;
+    }
+
     RETURN WITH RECURSIVE
     /*----------------------------------------------------------------------
      * HIERARCHY CTE: Recursively resolves the dependency tree defined by taxonomies.

@@ -307,6 +307,15 @@ RETURNS TABLE(
         ERROR('Not allowed to compose stream');
     }
 
+    -- for historical consistency, if both from and to are omitted, return the latest record
+    if $from IS NULL AND $to IS NULL {
+        for $row in get_last_record_composed($data_provider, $stream_id, NULL, $effective_frozen_at) {
+            $indexed_value NUMERIC(36,18) := ($row.value * 100::NUMERIC(36,18)) / $base_value;
+            RETURN NEXT $row.event_time, $indexed_value;
+        }
+        RETURN;
+    }
+
 
     -- For detailed explanations of the CTEs below (hierarchy, primitive_weights,
     -- cleaned_event_times, initial_primitive_states, primitive_events_in_interval,
