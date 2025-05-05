@@ -40,10 +40,9 @@ tasks:
     internal: true
     env:
       TARGET: ./.build
-      SOURCE: ./cmd/{{.ITEM}}/main.go
     cmds:
       - for: { var: BINARIES }
-        cmd: ./scripts/build/binary {{.ITEM}}
+        cmd: "SOURCE=./cmd/{{.ITEM}}/main.go ./scripts/build/binary {{.ITEM}}"
 
   build:
     desc: Build all kwil binaries
