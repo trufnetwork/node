@@ -9,6 +9,15 @@ This test file covers the query-related behaviors defined in streams_behaviors.m
 - [QUERY05] Authorized users can query earliest available record (testQUERY05_GetFirstRecord)
 - [QUERY06] If no data for queried date, return closest past data (testQUERY06_GetRecordWithFutureDate)
 - [QUERY07] Only one data point per date returned (testDuplicateDate, testQUERY07_AdditionalInsertWillFetchLatestRecord)
+- If from_time and to_time are omitted from get_record, return only the latest available record (test_GetLatestRecord)
+- If from_time and to_time are omitted from get_index, return only the latest available index (test_GetLatestIndex)
+- If from_time and to_time are omitted from get_index_change, return only the latest available index change (test_GetLatestIndexChange)
+- If to_time is omitted from get_record, return records from from_time to the latest (test_GetRecordFromSpecificTime)
+- If from_time is omitted from get_record, return records from the earliest to to_time (test_GetRecordUntilSpecificTime)
+- If to_time is omitted from get_index, return index from from_time to the latest (test_GetIndexFromSpecificTime)
+- If from_time is omitted from get_index, return index from the earliest to to_time (test_GetIndexUntilSpecificTime)
+- If to_time is omitted from get_index_change, return change from from_time to the latest (test_GetIndexChangeFromSpecificTime)
+- If from_time is omitted from get_index_change, return change from the earliest to to_time (test_GetIndexChangeUntilSpecificTime)
 */
 
 package tests
@@ -16,6 +25,7 @@ package tests
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pkg/errors"
@@ -55,6 +65,15 @@ func TestQueryStream(t *testing.T) {
 			WithComposedQueryTestSetup(testAGGR03_ComposedStreamWithWeights(t)),
 			WithQueryTestSetup(testBatchInsertAndQueryRecord(t)),
 			WithQueryTestSetup(testListStreams(t)),
+			WithQueryTestSetup(test_GetLatestRecord(t)),
+			WithQueryTestSetup(test_GetLatestIndex(t)),
+			WithQueryTestSetup(test_GetLatestIndexChange(t)),
+			WithQueryTestSetup(test_GetRecordFromSpecificTime(t)),
+			WithQueryTestSetup(test_GetRecordUntilSpecificTime(t)),
+			WithQueryTestSetup(test_GetIndexFromSpecificTime(t)),
+			WithQueryTestSetup(test_GetIndexUntilSpecificTime(t)),
+			WithQueryTestSetup(test_GetIndexChangeFromSpecificTime(t)),
+			WithQueryTestSetup(test_GetIndexChangeUntilSpecificTime(t)),
 		},
 	}, testutils.GetTestOptions())
 }
@@ -566,6 +585,350 @@ func testQUERY07_AdditionalInsertWillFetchLatestRecord(t *testing.T) func(ctx co
 	})
 }
 
+// If from_time and to_time are omitted, return only the latest available record.
+func test_GetLatestRecord(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return runTestForAllStreamTypes(t, "GetLatestRecord", func(ctx context.Context, platform *kwilTesting.Platform, config TestConfig) error {
+		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrapf(err, "error creating ethereum address for %s (StreamId: %s)",
+				config.Name, config.ReadableStreamId.String())
+		}
+
+		// Get records without specifying from_time or to_time
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
+			Platform: platform,
+			StreamLocator: types.StreamLocator{
+				StreamId:     config.ReadableStreamId,
+				DataProvider: deployer,
+			},
+			// FromTime and ToTime are omitted
+		})
+
+		if err != nil {
+			return errors.Wrapf(err, "error getting latest record from %s (StreamId: %s)",
+				config.Name, config.ReadableStreamId.String())
+		}
+
+		// The setup inserts records with event_time 1, 2, 3, 4, 5. The latest should be 5.
+		expected := `
+		| event_time | value |
+		|------------|-------|
+		| 5          | 3.000000000000000000 |
+		`
+
+		return validateTableResult(t, result, expected, config)
+	})
+}
+
+// If from_time and to_time are omitted, return only the latest available index.
+func test_GetLatestIndex(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return runTestForAllStreamTypes(t, "GetLatestIndex", func(ctx context.Context, platform *kwilTesting.Platform, config TestConfig) error {
+		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrapf(err, "error creating ethereum address for %s (StreamId: %s)",
+				config.Name, config.ReadableStreamId.String())
+		}
+
+		// Get index without specifying from_time or to_time
+		result, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
+			Platform: platform,
+			StreamLocator: types.StreamLocator{
+				StreamId:     config.ReadableStreamId,
+				DataProvider: deployer,
+			},
+			// FromTime and ToTime are omitted
+		})
+
+		if err != nil {
+			return errors.Wrapf(err, "error getting latest index from %s (StreamId: %s)",
+				config.Name, config.ReadableStreamId.String())
+		}
+
+		// The setup inserts records up to event_time 5 (value 3). First record is time 1 (value 1).
+		// Latest index should be (3/1) * 100 = 300 at time 5.
+		expected := `
+		| event_time | value |
+		|------------|-------|
+		| 5          | 300.000000000000000000 |
+		`
+
+		return validateTableResult(t, result, expected, config)
+	})
+}
+
+// If from_time and to_time are omitted, return only the latest available index change.
+func test_GetLatestIndexChange(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return runTestForAllStreamTypes(t, "GetLatestIndexChange", func(ctx context.Context, platform *kwilTesting.Platform, config TestConfig) error {
+		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrapf(err, "error creating ethereum address for %s (StreamId: %s)",
+				config.Name, config.ReadableStreamId.String())
+		}
+
+		interval := int(1) // Default interval for change calculation
+
+		// Get index change without specifying from_time or to_time
+		result, err := procedure.GetIndexChange(ctx, procedure.GetIndexChangeInput{
+			Platform: platform,
+			StreamLocator: types.StreamLocator{
+				StreamId:     config.ReadableStreamId,
+				DataProvider: deployer,
+			},
+			Interval: &interval,
+			// FromTime and ToTime are omitted
+		})
+
+		if err != nil {
+			return errors.Wrapf(err, "error getting latest index change from %s (StreamId: %s)",
+				config.Name, config.ReadableStreamId.String())
+		}
+
+		// Latest records are time 4 (value 5) and time 5 (value 3).
+		// Index at 4: (5/1)*100 = 500. Index at 5: (3/1)*100 = 300.
+		// Change: ((300 - 500) / 500) * 100 = -40.
+		expected := `
+		| event_time | value |
+		|------------|-------|
+		| 5          | -40.000000000000000000 |
+		`
+
+		return validateTableResult(t, result, expected, config)
+	})
+}
+
+// If to_time is omitted, return records from from_time to the latest.
+func test_GetRecordFromSpecificTime(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return runTestForAllStreamTypes(t, "GetRecordFromSpecificTime", func(ctx context.Context, platform *kwilTesting.Platform, config TestConfig) error {
+		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrapf(err, "error creating ethereum address for %s", config.Name)
+		}
+
+		fromTime := int64(3) // Start from time 3
+
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
+			Platform: platform,
+			StreamLocator: types.StreamLocator{
+				StreamId:     config.ReadableStreamId,
+				DataProvider: deployer,
+			},
+			FromTime: &fromTime,
+			// ToTime is omitted
+		})
+
+		if err != nil {
+			return errors.Wrapf(err, "error getting records with from_time only from %s (StreamId: %s)",
+				config.Name, config.ReadableStreamId.String())
+		}
+
+		// Should return records from time 3, 4, 5
+		expected := `
+		| event_time | value |
+		|------------|-------|
+		| 3          | 4.000000000000000000 |
+		| 4          | 5.000000000000000000 |
+		| 5          | 3.000000000000000000 |
+		`
+
+		return validateTableResult(t, result, expected, config)
+	})
+}
+
+// If from_time is omitted, return records from the earliest to to_time.
+func test_GetRecordUntilSpecificTime(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return runTestForAllStreamTypes(t, "GetRecordUntilSpecificTime", func(ctx context.Context, platform *kwilTesting.Platform, config TestConfig) error {
+		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrapf(err, "error creating ethereum address for %s", config.Name)
+		}
+
+		toTime := int64(3) // End at time 3
+
+		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
+			Platform: platform,
+			StreamLocator: types.StreamLocator{
+				StreamId:     config.ReadableStreamId,
+				DataProvider: deployer,
+			},
+			// FromTime is omitted
+			ToTime: &toTime,
+		})
+
+		if err != nil {
+			return errors.Wrapf(err, "error getting records with to_time only from %s (StreamId: %s)",
+				config.Name, config.ReadableStreamId.String())
+		}
+
+		// Should return records from time 1, 2, 3
+		expected := `
+		| event_time | value |
+		|------------|-------|
+		| 1          | 1.000000000000000000 |
+		| 2          | 2.000000000000000000 |
+		| 3          | 4.000000000000000000 |
+		`
+
+		return validateTableResult(t, result, expected, config)
+	})
+}
+
+// If to_time is omitted, return index from from_time to the latest.
+func test_GetIndexFromSpecificTime(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return runTestForAllStreamTypes(t, "GetIndexFromSpecificTime", func(ctx context.Context, platform *kwilTesting.Platform, config TestConfig) error {
+		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrapf(err, "error creating ethereum address for %s", config.Name)
+		}
+
+		fromTime := int64(3) // Start from time 3
+
+		result, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
+			Platform: platform,
+			StreamLocator: types.StreamLocator{
+				StreamId:     config.ReadableStreamId,
+				DataProvider: deployer,
+			},
+			FromTime: &fromTime,
+			// ToTime is omitted
+		})
+
+		if err != nil {
+			return errors.Wrapf(err, "error getting index with from_time only from %s (StreamId: %s)",
+				config.Name, config.ReadableStreamId.String())
+		}
+
+		// Base is time 1 (value 1). Index values: 3->400, 4->500, 5->300
+		expected := `
+		| event_time | value |
+		|------------|-------|
+		| 3          | 400.000000000000000000 |
+		| 4          | 500.000000000000000000 |
+		| 5          | 300.000000000000000000 |
+		`
+
+		return validateTableResult(t, result, expected, config)
+	})
+}
+
+// If from_time is omitted, return index from the earliest to to_time.
+func test_GetIndexUntilSpecificTime(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return runTestForAllStreamTypes(t, "GetIndexUntilSpecificTime", func(ctx context.Context, platform *kwilTesting.Platform, config TestConfig) error {
+		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrapf(err, "error creating ethereum address for %s", config.Name)
+		}
+
+		toTime := int64(3) // End at time 3
+
+		result, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
+			Platform: platform,
+			StreamLocator: types.StreamLocator{
+				StreamId:     config.ReadableStreamId,
+				DataProvider: deployer,
+			},
+			// FromTime is omitted
+			ToTime: &toTime,
+		})
+
+		if err != nil {
+			return errors.Wrapf(err, "error getting index with to_time only from %s (StreamId: %s)",
+				config.Name, config.ReadableStreamId.String())
+		}
+
+		// Base is time 1 (value 1). Index values: 1->100, 2->200, 3->400
+		expected := `
+		| event_time | value |
+		|------------|-------|
+		| 1          | 100.000000000000000000 |
+		| 2          | 200.000000000000000000 |
+		| 3          | 400.000000000000000000 |
+		`
+
+		return validateTableResult(t, result, expected, config)
+	})
+}
+
+// If to_time is omitted, return index change from from_time to the latest.
+func test_GetIndexChangeFromSpecificTime(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return runTestForAllStreamTypes(t, "GetIndexChangeFromSpecificTime", func(ctx context.Context, platform *kwilTesting.Platform, config TestConfig) error {
+		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrapf(err, "error creating ethereum address for %s", config.Name)
+		}
+
+		fromTime := int64(2) // Start calculation from time 2 (change between 1 and 2)
+		interval := int(1)
+
+		result, err := procedure.GetIndexChange(ctx, procedure.GetIndexChangeInput{
+			Platform: platform,
+			StreamLocator: types.StreamLocator{
+				StreamId:     config.ReadableStreamId,
+				DataProvider: deployer,
+			},
+			FromTime: &fromTime,
+			Interval: &interval,
+			// ToTime is omitted
+		})
+
+		if err != nil {
+			return errors.Wrapf(err, "error getting index change with from_time only from %s (StreamId: %s)",
+				config.Name, config.ReadableStreamId.String())
+		}
+
+		// Changes: 2 vs 1 -> 100%, 3 vs 2 -> 100%, 4 vs 3 -> 25%, 5 vs 4 -> -40%
+		expected := `
+		| event_time | value |
+		|------------|-------|
+		| 2          | 100.000000000000000000 |
+		| 3          | 100.000000000000000000 |
+		| 4          | 25.000000000000000000 |
+		| 5          | -40.000000000000000000 |
+		`
+
+		return validateTableResult(t, result, expected, config)
+	})
+}
+
+// If from_time is omitted, return index change from the earliest to to_time.
+func test_GetIndexChangeUntilSpecificTime(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return runTestForAllStreamTypes(t, "GetIndexChangeUntilSpecificTime", func(ctx context.Context, platform *kwilTesting.Platform, config TestConfig) error {
+		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrapf(err, "error creating ethereum address for %s", config.Name)
+		}
+
+		toTime := int64(4) // End calculation at time 4 (change between 3 and 4)
+		interval := int(1)
+
+		result, err := procedure.GetIndexChange(ctx, procedure.GetIndexChangeInput{
+			Platform: platform,
+			StreamLocator: types.StreamLocator{
+				StreamId:     config.ReadableStreamId,
+				DataProvider: deployer,
+			},
+			// FromTime is omitted
+			ToTime:   &toTime,
+			Interval: &interval,
+		})
+
+		if err != nil {
+			return errors.Wrapf(err, "error getting index change with to_time only from %s (StreamId: %s)",
+				config.Name, config.ReadableStreamId.String())
+		}
+
+		// Changes: 2 vs 1 -> 100%, 3 vs 2 -> 100%, 4 vs 3 -> 25%
+		expected := `
+		| event_time | value |
+		|------------|-------|
+		| 2          | 100.000000000000000000 |
+		| 3          | 100.000000000000000000 |
+		| 4          | 25.000000000000000000 |
+		`
+
+		return validateTableResult(t, result, expected, config)
+	})
+}
+
 // WithComposedQueryTestSetup is a helper function that sets up the test environment with a deployer and signer
 func WithComposedQueryTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
@@ -652,30 +1015,47 @@ func testAGGR03_ComposedStreamWithWeights(t *testing.T) func(ctx context.Context
 	}
 }
 
-// validateTableResult checks if the table result matches the expected format and returns an error if it doesn't
-func validateTableResult(t *testing.T, result []procedure.ResultRow, expected string, config TestConfig) error {
+// FormatResultRows formats the result rows into a markdown-like table body for logging.
+func FormatResultRows(rows []procedure.ResultRow) string {
+	if len(rows) == 0 {
+		return "<empty result set>"
+	}
+	var builder strings.Builder
+	for _, row := range rows {
+		builder.WriteString("| ")
+		builder.WriteString(strings.Join(row, " | "))
+		builder.WriteString(" |\n")
+	}
+	return builder.String()
+}
+
+// validateTableResult checks if the table result matches the expected format and returns an error if it doesn't.
+// If the validation fails, the error message will include the actual result.
+func validateTableResult(t *testing.T, result []procedure.ResultRow, expectedMarkdown string, config TestConfig) error {
 	// Create a subtest with a descriptive name to capture the results
 	success := true
 	var capturedError error
+	var actualResultStr string
 
 	// Run the test inside a subtest so we can capture failures
 	testName := fmt.Sprintf("Validate %s (StreamId: %s)", config.Name, config.ReadableStreamId.String())
 	t.Run(testName, func(t *testing.T) {
 		// Create a helper that will mark the test as failed but not cause an immediate exit
 		oldT := t
-		defer func() {
+		defer func() { // This defer runs when the subtest t.Run finishes
 			// If there was a failure, capture it
-			if oldT.Failed() && success {
+			if oldT.Failed() && success { // Check oldT.Failed() as 't' might not reflect the failure yet
 				success = false
-				capturedError = fmt.Errorf("table validation failed for %s (StreamId: %s)",
-					config.Name, config.ReadableStreamId.String())
+				actualResultStr = FormatResultRows(result)
+				capturedError = fmt.Errorf("table validation failed for %s (StreamId: %s)\nExpected:\n%s\nActual:\n%s",
+					config.Name, config.ReadableStreamId.String(), expectedMarkdown, actualResultStr)
 			}
 		}()
 
 		// Use the standard assertion function with our testing.T
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
 			Actual:   result,
-			Expected: expected,
+			Expected: expectedMarkdown,
 		})
 	})
 
