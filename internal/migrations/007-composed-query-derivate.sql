@@ -309,6 +309,7 @@ RETURNS TABLE(
 
     -- for historical consistency, if both from and to are omitted, return the latest record
     if $from IS NULL AND $to IS NULL {
+        $base_value := internal_get_base_value($data_provider, $stream_id, $effective_base_time, $effective_frozen_at);
         for $row in get_last_record_composed($data_provider, $stream_id, NULL, $effective_frozen_at) {
             $indexed_value NUMERIC(36,18) := ($row.value * 100::NUMERIC(36,18)) / $base_value;
             RETURN NEXT $row.event_time, $indexed_value;
@@ -640,8 +641,11 @@ RETURNS TABLE(
         FROM primitive_weights pw
         INNER JOIN first_value_times fvt
             ON pw.data_provider = fvt.data_provider AND pw.stream_id = fvt.stream_id
-        WHERE GREATEST(pw.group_sequence_start, fvt.first_value_time) <= pw.group_sequence_end
-          AND pw.raw_weight != 0::numeric(36,18)
+        WHERE 
+            GREATEST(pw.group_sequence_start, fvt.first_value_time) <= pw.group_sequence_end
+            AND pw.raw_weight != 0::numeric(36,18)
+            -- don't emit closing delta for open interval
+            AND pw.group_sequence_end < ($max_int8 - 1)
     ),
 
     -- Combine indexed value changes and weight changes.
@@ -815,4 +819,59 @@ RETURNS TABLE(
     )
     SELECT event_time, value FROM result
     ORDER BY 1;
+};
+
+
+-- Returns the base value for a composed stream at or around base_time.
+-- This is a helper function for get_record_composed_index readability.
+CREATE OR REPLACE ACTION internal_get_base_value(
+    $data_provider TEXT,
+    $stream_id     TEXT,
+    $effective_base_time     INT8,   -- already pre-resolved “effective base time”
+    $effective_frozen_at     INT8    -- created_at cutoff (can be NULL ⇢ infinity)
+) PRIVATE VIEW RETURNS (NUMERIC(36,18)) {
+    -- doesn't check for access control, as it's private and not responsible for
+    -- any access control checks
+
+    -- Try to find an exact match at base_time
+    $found_exact := FALSE;
+    $exact_value NUMERIC(36,18);
+    for $row in get_record_composed($data_provider, $stream_id, $effective_base_time, $effective_base_time, $effective_frozen_at) {
+        $exact_value := $row.value;
+        $found_exact := TRUE;
+        break;
+    }
+    
+    if $found_exact {
+        return $exact_value;
+    }
+    
+    -- If no exact match, try to find the closest value before base_time
+    $found_before := FALSE;
+    $before_value NUMERIC(36,18);
+    for $row in get_last_record_composed($data_provider, $stream_id, $effective_base_time, $effective_frozen_at) {
+        $before_value := $row.value;
+        $found_before := TRUE;
+        break;
+    }
+    
+    if $found_before {
+        return $before_value;
+    }
+    
+    -- If no value before, try to find the closest value after base_time
+    $found_after := FALSE;
+    $after_value NUMERIC(36,18);
+    for $row in get_first_record_composed($data_provider, $stream_id, $effective_base_time, $effective_frozen_at) {
+        $after_value := $row.value;
+        $found_after := TRUE;
+        break;
+    }
+    
+    if $found_after {
+        return $after_value;
+    }
+    
+    -- If no value is found at all, return an error
+    ERROR('no base value found');
 };

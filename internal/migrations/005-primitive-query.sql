@@ -168,6 +168,9 @@ CREATE OR REPLACE ACTION get_index_primitive(
     if !is_allowed_to_read_all($data_provider, $stream_id, @caller, $from, $to) {
         ERROR('Not allowed to read stream');
     }
+
+    $max_int8 INT8 := 9223372036854775000;
+    $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
     
     -- If base_time is not provided, try to get it from metadata
     $effective_base_time INT8 := $base_time;

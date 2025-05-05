@@ -425,6 +425,8 @@ RETURNS TABLE(
         -- Check the same validity condition as the positive delta
         WHERE GREATEST(pw.group_sequence_start, fvt.first_value_time) <= pw.group_sequence_end
           AND pw.raw_weight != 0::numeric(36,18)
+          -- don't emit closing delta for open interval
+          AND pw.group_sequence_end < ($max_int8 - 1)
     ),
 
     -- Step 7: Combine value and *effective* weight changes into a unified timeline.
