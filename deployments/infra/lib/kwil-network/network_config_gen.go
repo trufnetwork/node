@@ -30,6 +30,7 @@ type KwilAutoNetworkConfigAssetInput struct {
 	DbOwner         string
 	GenesisFilePath string
 	Params          config.CDKParams
+	BaseDomainFqdn  *string
 }
 
 type KwilNetworkConfig struct {
@@ -41,20 +42,27 @@ type KwilNetworkConfig struct {
 // It no longer generates individual node config files, as that's handled by templating.
 func KwilNetworkConfigAssetsFromNumberOfNodes(scope constructs.Construct, input KwilAutoNetworkConfigAssetInput) ([]peer.TNPeer, []NodeKeys, awss3assets.Asset) {
 	// Initialize CDK parameters and DomainConfig
-	stage := config.GetStage(scope)
-	devPrefix := config.GetDevPrefix(scope)
-	stack, ok := scope.(awscdk.Stack)
-	if !ok {
-		panic(fmt.Sprintf("KwilNetworkConfigAssetsFromNumberOfNodes: expected scope to be awscdk.Stack, got %T", scope))
+	var baseDomain string
+	if input.BaseDomainFqdn != nil && *input.BaseDomainFqdn != "" {
+		baseDomain = *input.BaseDomainFqdn
+	} else {
+		// Fallback to old behavior if BaseDomainFqdn is not provided (for backward compatibility or other stacks)
+		stage := config.GetStage(scope)
+		devPrefix := config.GetDevPrefix(scope)
+		stack, ok := scope.(awscdk.Stack)
+		if !ok {
+			panic(fmt.Sprintf("KwilNetworkConfigAssetsFromNumberOfNodes: expected scope to be awscdk.Stack, got %T", scope))
+		}
+		hd := domaincfg.NewHostedDomain(stack, "NetworkDomainInternalLookup", &domaincfg.HostedDomainProps{
+			Spec: domaincfg.Spec{
+				Stage:     stage,
+				Sub:       "",
+				DevPrefix: devPrefix,
+			},
+		})
+		baseDomain = *hd.DomainName
+		awscdk.Annotations_Of(scope).AddWarning(jsii.String("KwilNetworkConfigAssetsFromNumberOfNodes is using an internal HostedDomain lookup. Consider passing BaseDomainFqdn for consistency."))
 	}
-	hd := domaincfg.NewHostedDomain(stack, "NetworkDomain", &domaincfg.HostedDomainProps{
-		Spec: domaincfg.Spec{
-			Stage:     stage,
-			Sub:       "",
-			DevPrefix: devPrefix,
-		},
-	})
-	baseDomain := *hd.DomainName
 
 	env := config.GetEnvironmentVariables[config.MainEnvironmentVariables](scope)
 

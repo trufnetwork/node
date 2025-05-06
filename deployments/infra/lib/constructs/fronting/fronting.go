@@ -1,6 +1,7 @@
 package fronting
 
 import (
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsapigatewayv2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awscertificatemanager"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsroute53"
 	"github.com/aws/constructs-go/constructs/v10"
@@ -29,6 +30,7 @@ type FrontingResult struct {
 	FQDN        *string                            // The primary FQDN created by the fronting construct.
 	Certificate awscertificatemanager.ICertificate // The ACM certificate used for TLS.
 	AliasTarget awsroute53.IAliasRecordTarget      // The specific alias target properties (e.g., for API GW domain).
+	Api         awsapigatewayv2.IHttpApi           // The underlying HTTP API construct.
 }
 
 // RecordTarget implements the DnsTarget interface.
@@ -54,13 +56,16 @@ type FrontingProps struct {
 	HostedZone awsroute53.IHostedZone
 	// Optional imported ACM certificate; if nil, a new cert is issued.
 	ImportedCertificate awscertificatemanager.ICertificate
-	// SubjectAlternativeNames allows passing Subject Alternative Names when creating a new certificate.
-	// This aligns with AWS ACM terminology.
+	// SubjectAlternativeNames allows passing additional SANs when creating a new certificate.
 	SubjectAlternativeNames []*string
+	// ValidationMethod defines how the certificate (if created) should be validated via DNS (single- or multi-zone).
+	ValidationMethod awscertificatemanager.CertificateValidation
 	// Endpoint is the public DNS name of the backend service.
 	Endpoint *string
 	// RecordName is the subdomain prefix under HostedZone (e.g. "gateway.dev").
 	RecordName *string
+	// PrimaryDomainName is the main domain name for the certificate request (CN).
+	PrimaryDomainName *string
 }
 
 // Fronting abstracts TLS termination + path routing.

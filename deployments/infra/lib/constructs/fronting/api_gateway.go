@@ -90,27 +90,35 @@ func (a *apiGateway) AttachRoutes(scope constructs.Construct, id string, props *
 	if props.RecordName == nil || *props.RecordName == "" {
 		panic(fmt.Sprintf("RecordName is required for apiGateway construct %s", id))
 	}
-	fqdn := *props.RecordName + "." + *zoneName
 
 	var cert awscertificatemanager.ICertificate
-	certMgr := NewCertManager()
-
 	if props.ImportedCertificate != nil {
 		cert = props.ImportedCertificate
 	} else {
-		// Issue a new certificate if one isn't imported.
-		cert = certMgr.GetRegional(
-			scope,
-			id+"Cert",
-			props.HostedZone,
-			fqdn,
-			props.SubjectAlternativeNames,
-		)
+		// Validate required props for certificate issuance
+		if props.ValidationMethod == nil {
+			panic(fmt.Sprintf("ValidationMethod is required in FrontingProps for %s when ImportedCertificate is nil", id))
+		}
+		if props.PrimaryDomainName == nil || *props.PrimaryDomainName == "" {
+			panic(fmt.Sprintf("PrimaryDomainName is required in FrontingProps for %s when ImportedCertificate is nil", id))
+		}
+		// Issue a new certificate with specified validation method
+		certProps := &awscertificatemanager.CertificateProps{
+			DomainName: props.PrimaryDomainName,
+			Validation: props.ValidationMethod,
+		}
+		// Include any SANs if provided
+		if props.SubjectAlternativeNames != nil {
+			certProps.SubjectAlternativeNames = &props.SubjectAlternativeNames
+		}
+		cert = awscertificatemanager.NewCertificate(scope, jsii.String(id+"Cert"), certProps)
 	}
 
+	// The fqdn for the API GW DomainName should still be derived from props.RecordName + props.HostedZone.ZoneName()
+	apiGwFqdn := *props.RecordName + "." + *zoneName
 	domainNameId := id + "DomainName"
 	domainName := awsapigatewayv2.NewDomainName(scope, jsii.String(domainNameId), &awsapigatewayv2.DomainNameProps{
-		DomainName:  jsii.String(fqdn),
+		DomainName:  jsii.String(apiGwFqdn),
 		Certificate: cert,
 	})
 
@@ -134,9 +142,10 @@ func (a *apiGateway) AttachRoutes(scope constructs.Construct, id string, props *
 	})
 
 	return FrontingResult{
-		FQDN:        jsii.String(fqdn),
+		FQDN:        jsii.String(apiGwFqdn),
 		Certificate: cert,
 		AliasTarget: aliasTargetProps,
+		Api:         httpApi,
 	}
 }
 

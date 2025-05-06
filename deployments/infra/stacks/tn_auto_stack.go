@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awscertificatemanager"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/constructs-go/constructs/v10"
@@ -87,12 +88,10 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 		CDKParams:    cdkParams,
 	})
 
-	// --- Instantiate Alternative Domain Manager & SAN Builder ---
-	sanBuilder := altmgr.NewSanListBuilder()
+	// --- Instantiate Alternative Domain Manager ---
 	// The manager handles loading config, registering targets, adding SANs, and creating records.
 	altDomainManager := altmgr.NewAlternativeDomainManager(stack, "AltDomainManager", &altmgr.AlternativeDomainManagerProps{
 		// ConfigFilePath and StackSuffix are read from context within the manager itself.
-		CertSanBuilder: sanBuilder,
 		// AlternativeHostedZoneDomainOverride: nil, // Optionally override config zone here.
 	})
 
@@ -175,82 +174,94 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 
 	if selectedKind == fronting.KindAPI {
 		// Dual API Gateway setup specific logic
-		// Build Spec for domain subdomains - Moved inside the 'if' block as it's only used here
 		spec := domain.Spec{
 			Stage:     domain.StageType(stage),
 			Sub:       "",
 			DevPrefix: devPrefix,
 		}
-		gatewayRecord := spec.Subdomain("gateway")
-		indexerRecord := spec.Subdomain("indexer")
+		gatewayPrimaryFqdn := spec.Subdomain("gateway") // RENAMED from gatewayRecord for clarity
+		indexerPrimaryFqdn := spec.Subdomain("indexer") // RENAMED from indexerRecord for clarity
 
-		// Call the AlternativeDomainManager to populate the sanBuilder with SANs
-		// from its configuration *before* adding local primary/sibling FQDNs.
-		altDomainManager.CollectAndAddConfiguredSansToBuilder()
+		// Build certificate validation using manager helper
 
-		// Add the primary FQDNs for Gateway and Indexer to the SAN list builder.
-		// These will be combined with any SANs already added by the AlternativeDomainManager.
-		sanBuilder.Add(gatewayRecord, indexerRecord)
+		certPrimaryDomain, certSans, certValidation, err := altDomainManager.GetCertificateRequirements(
+			hd.Zone, // Stack's primary hosted zone
+			gatewayPrimaryFqdn,
+			indexerPrimaryFqdn,
+		)
+		if err != nil {
+			panic(fmt.Sprintf("Failed to get certificate requirements from ADM: %v", err))
+		}
 
-		// Get props for shared certificate setup.
-		gwProps, idxProps := fronting.GetSharedCertProps(hd.Zone, *gatewayRecord, *indexerRecord)
+		// Create the single shared certificate based on ADM's requirements
+		sharedCert := awscertificatemanager.NewCertificate(stack, jsii.String("SharedDomainsCert"), &awscertificatemanager.CertificateProps{
+			DomainName:              certPrimaryDomain,
+			SubjectAlternativeNames: &certSans, // Note: Ensure GetCertificateRequirements returns &[]*string or handle accordingly
+			Validation:              certValidation,
+		})
 
-		// Set backend endpoints for the fronting constructs.
+		// Prepare shared fronting props
+		gwProps, idxProps := fronting.GetSharedCertProps(hd.Zone, *gatewayPrimaryFqdn, *indexerPrimaryFqdn)
+		// The certificate itself is now created *before* these props are fully built.
+
+		gwProps.ImportedCertificate = sharedCert // Use the cert we just made for the *primary* API GW domain
+		gwProps.PrimaryDomainName = gatewayPrimaryFqdn
 		gwProps.Endpoint = kc.Gateway.GatewayFqdn
+
+		idxProps.ImportedCertificate = sharedCert // Indexer uses the same cert for its *primary* API GW domain
+		idxProps.PrimaryDomainName = indexerPrimaryFqdn
 		idxProps.Endpoint = kc.Indexer.IndexerFqdn
 
-		// Assign the final consolidated SAN list from the builder to the Gateway props
-		// (which is responsible for creating the shared certificate).
-		gwProps.SubjectAlternativeNames = sanBuilder.List()
-
-		// 1. Gateway Fronting (issues cert)
+		// 1. Gateway Fronting (Attaches primary custom domain & A-record)
 		gApi := fronting.NewApiGatewayFronting()
-		gatewayRes := gApi.AttachRoutes(stack, "GatewayFronting", &gwProps)
+		gatewayFrontingResult := gApi.AttachRoutes(stack, "GatewayFronting", &gwProps)
 
-		// --- Register Gateway Target with Manager ---
-		if gatewayRes.FQDN != nil && *gatewayRes.FQDN != "" {
-			// Pass the whole FrontingResult; it implements DnsTarget.
-			altDomainManager.RegisterTarget(altmgr.TargetGateway, &gatewayRes)
-		} else {
-			awscdk.Annotations_Of(stack).AddWarning(jsii.Sprintf("Gateway primary FQDN is empty. Cannot register target %s.", altmgr.TargetGateway))
-		}
-
-		// 2. Indexer Fronting (imports cert)
-		idxProps.ImportedCertificate = gatewayRes.Certificate
+		// 2. Indexer Fronting (Attaches primary custom domain & A-record)
+		// idxProps.ImportedCertificate = gatewayRes.Certificate //This was old logic if cert created by gwFronting
 		iApi := fronting.NewApiGatewayFronting()
-		indexerRes := iApi.AttachRoutes(stack, "IndexerFronting", &idxProps)
+		indexerFrontingResult := iApi.AttachRoutes(stack, "IndexerFronting", &idxProps)
 
-		// --- Register Indexer Target with Manager ---
-		if indexerRes.FQDN != nil && *indexerRes.FQDN != "" {
-			altDomainManager.RegisterTarget(altmgr.TargetIndexer, &indexerRes)
-		} else {
-			awscdk.Annotations_Of(stack).AddWarning(jsii.Sprintf("Indexer primary FQDN is empty. Cannot register target %s.", altmgr.TargetIndexer))
-		}
+		// --- Register Gateway/Indexer FrontingResults with ADM ---
+		altDomainManager.RegisterTarget(altmgr.TargetGateway, &gatewayFrontingResult)
+		altDomainManager.RegisterTarget(altmgr.TargetIndexer, &indexerFrontingResult)
 
 		// --- Outputs ---
 		awscdk.NewCfnOutput(stack, jsii.String("GatewayEndpoint"), &awscdk.CfnOutputProps{
-			Value:       gatewayRes.FQDN,
+			Value:       gatewayFrontingResult.FQDN,
 			Description: jsii.String("Public FQDN for the Kwil Gateway API"),
 		})
 		awscdk.NewCfnOutput(stack, jsii.String("IndexerEndpoint"), &awscdk.CfnOutputProps{
-			Value:       indexerRes.FQDN,
+			Value:       indexerFrontingResult.FQDN,
 			Description: jsii.String("Public FQDN for the Kwil Indexer API"),
 		})
 		awscdk.NewCfnOutput(stack, jsii.String("ApiCertArn"), &awscdk.CfnOutputProps{
-			Value:       gatewayRes.Certificate.CertificateArn(), // Output the ARN of the shared cert
+			Value:       sharedCert.CertificateArn(), // Output the ARN of the shared cert
 			Description: jsii.String("ARN of the regional ACM certificate used for API Gateway TLS"),
 		})
+
+		// --- Provision all alternative domains using ADM ---
+		err = altDomainManager.ProvisionAlternativeDomains(sharedCert)
+		if err != nil {
+			panic(fmt.Sprintf("Failed to provision alternative domains: %v", err))
+		}
 	} else {
 		// Handle other fronting types (ALB, CloudFront)
 		// Currently, the dual endpoint setup is only implemented for API Gateway
-		panic(fmt.Sprintf("Dual endpoint fronting setup not implemented for type: %s", selectedKind))
+		// If alternative domains are needed for non-API Gateway fronting, ProvisionAlternativeDomains might need adjustments
+		// or to be called with a nil certificate if it can handle that for non-API GW targets.
+		// For now, assuming non-API GW types don't use this specific alternative domain shared cert flow.
+		// If Node alternatives are always desired, ProvisionAlternativeDomains(nil) could be called outside.
+		// However, the user prompt focused on consolidating the existing APIGW alternative logic.
+
+		// If there are non-APIGW targets that need alternative domains (e.g. nodes) and these
+		// should be provisioned regardless of fronting type, this call might need to be
+		// outside this if block, and ProvisionAlternativeDomains would need to handle a nil certificate
+		// gracefully for targets that don't require one (like Nodes).
+		// For now, keeping it tied to the API Gateway fronting path as that was the focus of the refactor.
+		panic(fmt.Sprintf("Dual endpoint fronting setup not implemented for type: %s. Alternative domain provisioning for this type also needs review.", selectedKind))
 	}
 
-	// --- Bind the Alternative Domain Manager ---
-	// This call creates the necessary alternative A records in Route 53 based on the
-	// registered targets and loaded configuration. SANs should have been collected separately
-	// by calling CollectAndAddConfiguredSansToBuilder earlier.
-	altDomainManager.Bind()
+	// altDomainManager.Bind() // REMOVED: Old method, replaced by ProvisionAlternativeDomains
 
 	// AttachObserverPermissions call will be added here later
 	if shouldIncludeObserver {

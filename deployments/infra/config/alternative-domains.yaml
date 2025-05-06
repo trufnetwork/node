@@ -23,3 +23,23 @@ prod: # Configuration applies if CDK context variable 'stackSuffix' is 'prod'.
     "indexer.mainnet.truf.network":
       targetComponentId: "Indexer"
       requiresTlsSan: true
+
+testnet: # Configuration applies if CDK context variable 'stackSuffix' is 'testnet'.
+  alternativeHostedZoneDomain: testnet.truf.network
+
+  alternatives:
+    "node-1.testnet.truf.network":
+      targetComponentId: "Node-1"
+      requiresTlsSan: false
+
+    "node-2.testnet.truf.network":
+      targetComponentId: "Node-2"
+      requiresTlsSan: false
+
+    "gateway.testnet.truf.network":
+      targetComponentId: "Gateway"
+      requiresTlsSan: true
+
+    "indexer.testnet.truf.network":
+      targetComponentId: "Indexer"
+      requiresTlsSan: true
