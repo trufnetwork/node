@@ -46,5 +46,9 @@
   "hosted-zone:account=344375646931:domainName=infra.truf.network:region=us-east-2": {
     "Id": "/hostedzone/Z05423321GU060GLE37U5",
     "Name": "infra.truf.network."
+  },
+  "hosted-zone:account=344375646931:domainName=mainnet.truf.network:region=us-east-2": {
+    "Id": "/hostedzone/Z0458892240U1C5ULSJW9",
+    "Name": "mainnet.truf.network."
   }
 }

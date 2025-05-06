@@ -219,13 +219,9 @@ func (m *AlternativeDomainManager) CollectAndAddConfiguredSansToBuilder() {
 
 	for altFqdn, mapping := range m.stackConfig.Alternatives {
 		if mapping.RequiresTlsSanOrDefault() {
-			// Check if the target component actually exists before adding SAN
-			if _, found := m.dnsTargets[mapping.TargetComponentId]; found {
-				m.annotateInfo("Adding SAN '%s' for target '%s' to certificate builder.", altFqdn, mapping.TargetComponentId)
-				m.props.CertSanBuilder.Add(jsii.String(altFqdn))
-			} else {
-				m.annotateWarning("TargetComponentId '%s' for SAN '%s' not found in registered targets. Skipping SAN addition.", mapping.TargetComponentId, altFqdn)
-			}
+			// ADD SAN unconditionally if requiresTlsSan is true.
+			m.annotateInfo("Adding configured SAN '%s' (target: %s) to certificate builder.", altFqdn, mapping.TargetComponentId)
+			m.props.CertSanBuilder.Add(jsii.String(altFqdn))
 		}
 	}
 }
