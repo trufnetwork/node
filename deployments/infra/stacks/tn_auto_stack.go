@@ -11,6 +11,7 @@ import (
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
 	"github.com/trufnetwork/node/infra/config/domain"
+	"github.com/trufnetwork/node/infra/lib/cdklogger"
 	altmgr "github.com/trufnetwork/node/infra/lib/constructs/alternativedomainmanager"
 	fronting "github.com/trufnetwork/node/infra/lib/constructs/fronting"
 	"github.com/trufnetwork/node/infra/lib/constructs/kwil_cluster"
@@ -41,6 +42,8 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 	devPrefix := config.GetDevPrefix(stack)
 	// Retrieve Main environment variables including DbOwner
 	autoEnvVars := config.GetEnvironmentVariables[config.AutoStackEnvironmentVariables](stack)
+	cdklogger.LogInfo(stack, "", "Loaded environment variables for TnAutoStack. Key vars: DB_OWNER=%s, CHAIN_ID=%s, KWILD_CLI_PATH=%s, CDK_DOCKER=%s, IncludeObserver=%t. SessionSecret is loaded (value masked).",
+		autoEnvVars.DbOwner, autoEnvVars.ChainId, autoEnvVars.KwildCliPath, autoEnvVars.CdkDocker, autoEnvVars.IncludeObserver)
 
 	initElements := []awsec2.InitElement{} // Base elements only
 	var observerAsset awss3assets.Asset    // Keep asset variable, needed for Attach call
@@ -114,9 +117,9 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 		primaryFqdn := node.PeerConnection.Address
 		// Ensure we have the necessary info before creating and registering the target.
 		if primaryFqdn == nil || *primaryFqdn == "" {
-			awscdk.Annotations_Of(stack).AddWarning(jsii.Sprintf("Node %d primary FQDN (PeerConnection.Address) is empty. Cannot register target %s.", node.Index+1, nodeTargetID))
+			cdklogger.LogWarning(stack, "", "Node %d primary FQDN (PeerConnection.Address) is empty. Cannot register target %s.", node.Index+1, nodeTargetID)
 		} else if node.ElasticIp == nil {
-			awscdk.Annotations_Of(stack).AddWarning(jsii.Sprintf("Node %d ElasticIp is nil. Cannot register target %s.", node.Index+1, nodeTargetID))
+			cdklogger.LogWarning(stack, "", "Node %d ElasticIp is nil. Cannot register target %s.", node.Index+1, nodeTargetID)
 		} else {
 			// Create a NodeTarget DnsTarget implementation using the EIP's Ref attribute.
 			nodeTarget := &validator_set.NodeTarget{

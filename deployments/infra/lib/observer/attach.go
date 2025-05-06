@@ -12,6 +12,7 @@ import (
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
+	"github.com/trufnetwork/node/infra/lib/cdklogger"
 	"github.com/trufnetwork/node/infra/lib/constructs/kwil_cluster"
 	"github.com/trufnetwork/node/infra/lib/constructs/validator_set"
 )
@@ -89,6 +90,12 @@ func AttachObservability(input AttachObservabilityInput) {
 			// Use panic with more context as before
 			panic(fmt.Errorf("create observer start script: %w", err))
 		}
+
+		// Log before adding commands
+		// Use structure.InstanceName in the logger's constructID to make the path specific
+		// e.g., /<StackName>/my-dev-tn-node-0/UserData/[ObserverSetup] ...
+		userDataLogConstructID := structure.InstanceName + "/UserData"
+		cdklogger.LogInfo(input.Scope, userDataLogConstructID, "[ObserverSetup] Adding observer asset download, script generation, and service start commands for instance %s (service: %s).", structure.InstanceName, structure.ServiceName)
 
 		// 3. Add commands to Launch Template UserData
 		lt := structure.LaunchTemplate

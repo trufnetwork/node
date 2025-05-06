@@ -7,6 +7,7 @@ import (
 	"github.com/aws/jsii-runtime-go"
 
 	domaincfg "github.com/trufnetwork/node/infra/config/domain"
+	"github.com/trufnetwork/node/infra/lib/cdklogger"
 	"github.com/trufnetwork/node/infra/lib/constructs/fronting"
 	kwil_gateway "github.com/trufnetwork/node/infra/lib/kwil-gateway"
 	kwil_indexer "github.com/trufnetwork/node/infra/lib/kwil-indexer"
@@ -42,15 +43,15 @@ type KwilCluster struct {
 
 // NewKwilCluster provisions the Kwil gateway, indexer, and optional CloudFront
 func NewKwilCluster(scope constructs.Construct, id string, props *KwilClusterProps) *KwilCluster {
-	node := constructs.NewConstruct(scope, jsii.String(id))
-	kc := &KwilCluster{Construct: node}
+	clusterConstruct := constructs.NewConstruct(scope, jsii.String(id)) // Renamed to avoid conflict
+	kc := &KwilCluster{Construct: clusterConstruct}
 
 	// Instantiate selected fronting type to get rules
 	selectedFrontingImpl := fronting.New(props.SelectedFrontingKind)
 	ingressRules := selectedFrontingImpl.IngressRules()
 
 	// create Gateway instance
-	gw := kwil_gateway.NewKGWInstance(node, kwil_gateway.NewKGWInstanceInput{
+	gw := kwil_gateway.NewKGWInstance(clusterConstruct, kwil_gateway.NewKGWInstanceInput{
 		HostedDomain:   props.HostedDomain,
 		Vpc:            props.Vpc,
 		KGWDirAsset:    props.Assets.Gateway.DirAsset,
@@ -71,7 +72,7 @@ func NewKwilCluster(scope constructs.Construct, id string, props *KwilClusterPro
 	utils.ApplyIngressRules(gw.SecurityGroup, ingressRules)
 
 	// create Indexer instance
-	idx := kwil_indexer.NewIndexerInstance(node, kwil_indexer.NewIndexerInstanceInput{
+	idx := kwil_indexer.NewIndexerInstance(clusterConstruct, kwil_indexer.NewIndexerInstanceInput{
 		Vpc:                props.Vpc,
 		TNInstance:         props.Validators[0],
 		IndexerDirAsset:    props.Assets.Indexer.DirAsset,
@@ -82,6 +83,20 @@ func NewKwilCluster(scope constructs.Construct, id string, props *KwilClusterPro
 	kc.Indexer = idx
 	// Apply ingress rules to Indexer SG
 	utils.ApplyIngressRules(idx.SecurityGroup, ingressRules)
+
+	// Log after both Gateway and Indexer FQDNs are available (they are part of gw and idx structs)
+	var gwFqdn, idxFqdn string
+	if kc.Gateway.GatewayFqdn != nil {
+		gwFqdn = *kc.Gateway.GatewayFqdn
+	} else {
+		gwFqdn = "[Not Available]"
+	}
+	if kc.Indexer.IndexerFqdn != nil {
+		idxFqdn = *kc.Indexer.IndexerFqdn
+	} else {
+		idxFqdn = "[Not Available]"
+	}
+	cdklogger.LogInfo(clusterConstruct, "", "Initializing KwilCluster. Gateway endpoint: %s, Indexer endpoint: %s, FrontingType: %s", gwFqdn, idxFqdn, props.SelectedFrontingKind)
 
 	return kc
 }

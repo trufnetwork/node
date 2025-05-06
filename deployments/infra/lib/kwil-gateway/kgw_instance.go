@@ -10,6 +10,7 @@ import (
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
 	domain "github.com/trufnetwork/node/infra/config/domain"
+	"github.com/trufnetwork/node/infra/lib/cdklogger"
 	"github.com/trufnetwork/node/infra/lib/tn"
 	"github.com/trufnetwork/node/infra/lib/utils"
 )
@@ -92,18 +93,28 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 	defaultUd := awsec2.UserData_ForLinux(&awsec2.LinuxUserDataOptions{Shebang: jsii.String("#!/bin/bash -xe")})
 	defaultUd.AddCommands(jsii.String("echo 'initializing-kgw'"))
 
+	ltConstructID := "KGWLaunchTemplate"
+	userDataLogPathPrefix := ltConstructID + "/UserData"
+
 	// Create launch template
-	launchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String("KGWLaunchTemplate"), &awsec2.LaunchTemplateProps{
-		InstanceType:       awsec2.InstanceType_Of(awsec2.InstanceClass_T3, awsec2.InstanceSize_SMALL),
+	launchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String(ltConstructID), &awsec2.LaunchTemplateProps{
+		InstanceType:       awsec2.InstanceType_Of(awsec2.InstanceClass_T3A, awsec2.InstanceSize_SMALL),
 		MachineImage:       AWSLinux2MachineImage,
 		SecurityGroup:      instanceSG,
 		Role:               role,
 		KeyPair:            keyPair,
 		UserData:           defaultUd,
-		LaunchTemplateName: jsii.Sprintf("%s/%s", *awscdk.Aws_STACK_NAME(), "KGWLaunchTemplate"),
+		LaunchTemplateName: jsii.Sprintf("%s/%s", *awscdk.Aws_STACK_NAME(), ltConstructID),
 	})
 
-	// Attach the init data to the launch template Role so cfn-init can run
+	// Log Launch Template creation
+	instanceTypeStr := "T3.SMALL" // Hardcoded as per LaunchTemplateProps
+	amiID := *AWSLinux2MachineImage.GetImage(scope).ImageId
+	roleArn := *role.RoleArn()
+	cdklogger.LogInfo(scope, ltConstructID, "Created Launch Template: InstanceType=%s, MachineImage=%s, Role=%s", instanceTypeStr, amiID, roleArn)
+
+	// UserData Step 1: CloudFormation Init (asset downloads for KGW dir and binary)
+	cdklogger.LogInfo(scope, userDataLogPathPrefix, "[Step 1/3] Adding CloudFormation Init (asset downloads: KGW directory zip, KGW binary zip).")
 	utils.AttachInitDataToLaunchTemplate(utils.AttachInitDataToLaunchTemplateInput{
 		InitData:       initData,
 		LaunchTemplate: launchTemplate,
@@ -111,13 +122,13 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 		Platform:       awsec2.OperatingSystemType_LINUX,
 	})
 
-	// Add startup scripts to UserData AFTER base commands and cfn-init signal config
+	// UserData Steps 2 & 3: Docker installation, app setup (via AddKwilGatewayStartupScriptsToInstance)
+	cdklogger.LogInfo(scope, userDataLogPathPrefix, "[Step 2/3 & 3/3] Adding Docker installation, configuration, asset preparation, and KGW application startup script (systemd service).")
 	scripts := AddKwilGatewayStartupScriptsToInstance(AddKwilGatewayStartupScriptsOptions{
 		kgwBinaryPath: kgwBinaryPath,
 		Config:        input.Config,
 		KGWDirZipPath: kgwDirZipPath,
 	})
-
 	launchTemplate.UserData().AddCommands(scripts)
 
 	// so we can later associate when creating the instance

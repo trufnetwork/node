@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
@@ -20,6 +21,7 @@ import (
 	"go.uber.org/zap"
 
 	// Import the internal buildcmd package
+	"github.com/trufnetwork/node/infra/lib/cdklogger"
 	"github.com/trufnetwork/node/infra/lib/goasset/internal/buildcmd"
 )
 
@@ -139,22 +141,27 @@ func Bundle(scope constructs.Construct, id string, opt buildcmd.Options) awss3as
 		opt:     opt,
 		l:       logger,
 		srcInfo: srcInfo,
+		scope:   scope,
+		assetID: id,
 	}
 
 	// Create the S3 asset
 	asset := awss3assets.NewAsset(scope, jsii.String(id), &awss3assets.AssetProps{
 		Path: jsii.String(sourceDir),
 		Bundling: &awscdk.BundlingOptions{
-			Image: awscdk.DockerImage_FromRegistry(jsii.String("alpine")),
-			Local: bundler,
-			Command: jsii.Strings(
-				"/bin/sh", "-c",
-				"cp -R /asset-input/. /asset-output",
-			),
+			Image:   awscdk.DockerImage_FromRegistry(jsii.String("alpine")),
+			Local:   bundler,
+			Command: jsii.Strings("/bin/sh", "-c", "cp -R /asset-input/. /asset-output"),
 		},
 		AssetHashType: awscdk.AssetHashType_CUSTOM,
 		AssetHash:     jsii.String(customHash),
 	})
+
+	// Log S3 asset creation
+	// Note: S3ObjectUrl might be a token that resolves later.
+	// If direct access to the final URL is needed here, it might require more complex handling
+	// or relying on CDK outputs. For now, logging its tokenized form is informative.
+	cdklogger.LogInfo(scope, id, "Go S3 Asset created. AssetPath (token): %s", *asset.S3ObjectUrl())
 
 	return asset
 }
@@ -204,6 +211,8 @@ type GoBundler struct {
 	opt     buildcmd.Options // Use options from internal package
 	l       *zap.Logger
 	srcInfo os.FileInfo
+	scope   constructs.Construct
+	assetID string
 }
 
 var _ awscdk.ILocalBundling = &GoBundler{}
@@ -212,10 +221,11 @@ var _ awscdk.ILocalBundling = &GoBundler{}
 func (b *GoBundler) TryBundle(outputDir *string, _ *awscdk.BundlingOptions) *bool {
 	if b.srcInfo == nil {
 		b.l.Error("Internal error: GoBundler srcInfo is nil")
+		cdklogger.LogError(b.scope, b.assetID, "Internal error: GoBundler srcInfo is nil prior to build.")
 		return jsii.Bool(false)
 	}
 
-	// Determine target platform (needed for cross-compile check)
+	// Determine target platform (for logging and cross-compile check)
 	goos := runtime.GOOS
 	goarch := runtime.GOARCH
 	if b.opt.Platform != "" {
@@ -226,48 +236,51 @@ func (b *GoBundler) TryBundle(outputDir *string, _ *awscdk.BundlingOptions) *boo
 		} // else: validation should happen in buildcmd.Build or earlier
 	}
 
-	b.l.Info("Starting Go binary bundling",
-		zap.String("srcPath", b.opt.SrcPath),
-		zap.String("outputDir", *outputDir),
-		zap.String("targetPlatform", fmt.Sprintf("%s/%s", goos, goarch)),
-		zap.Bool("isTest", b.opt.IsTest),
-	)
-
 	// P0 Fix: Correct cross-compilation check
-	needsDocker := false // Placeholder for future Docker logic
-	_ = needsDocker
 	if runtime.GOOS != goos || runtime.GOARCH != goarch {
-		needsDocker = true // Mark as needing Docker (even if we don't use it yet)
-		// P4 Fix: Fail fast instead of just warning
 		b.l.Info("Cross-compilation required, delegating to Docker bundling",
 			zap.String("hostPlatform", fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)),
 			zap.String("targetPlatform", fmt.Sprintf("%s/%s", goos, goarch)),
 		)
+		// Log this decision as well
+		cdklogger.LogInfo(b.scope, b.assetID, "Cross-compilation required (host: %s/%s, target: %s/%s). Delegating to Docker bundling.", runtime.GOOS, runtime.GOARCH, goos, goarch)
 		return jsii.Bool(false) // Signal CDK to use Docker image bundling
 	}
 
 	outputPath := filepath.Join(*outputDir, b.opt.OutName)
 
-	// --- Construct the command using the internal helper ---
-	cmd, err := buildcmd.Build(b.opt, outputPath, b.srcInfo)
+	// Construct the command using the internal helper
+	cmd, err := buildcmd.Build(b.opt, outputPath, b.srcInfo) // Returns *exec.Cmd, error
 	if err != nil {
 		b.l.Error("Failed to construct Go build command", zap.Error(err))
+		cdklogger.LogError(b.scope, b.assetID, "Failed to construct Go build command. Error: %s", err.Error())
 		return jsii.Bool(false) // Failed to even create the command
 	}
+
+	// Log before executing
+	logMessageFormat := "Starting Go binary build: SrcPath=%s, OutName=%s, Platform=%s/%s. Command: %s %s"
+	if b.opt.IsTest {
+		logMessageFormat = "Starting Go test binary build: SrcPath(Package)=%s, OutName=%s, Platform=%s/%s. Command: %s %s"
+	}
+	cdklogger.LogInfo(b.scope, b.assetID, logMessageFormat,
+		b.opt.SrcPath, b.opt.OutName, goos, goarch, cmd.Path, strings.Join(cmd.Args, " "))
 
 	// --- Execute Build Command ---
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	b.l.Debug("Executing Go build command",
-		zap.String("command", cmd.Path),
+	b.l.Debug("Executing Go build command details", // More detailed debug log
+		zap.String("commandPath", cmd.Path),
 		zap.Strings("args", cmd.Args),
 		zap.String("cwd", cmd.Dir),
-		zap.Strings("env", filterEnvForLogging(cmd.Env)), // Use helper from this package
+		zap.Strings("env", filterEnvForLogging(cmd.Env)),
 	)
 
+	startTime := time.Now()
 	err = cmd.Run()
+	duration := time.Since(startTime)
+
 	stdoutStr := stdout.String()
 	stderrStr := stderr.String()
 
@@ -276,9 +289,11 @@ func (b *GoBundler) TryBundle(outputDir *string, _ *awscdk.BundlingOptions) *boo
 			zap.Error(err),
 			zap.String("stdout", stdoutStr),
 			zap.String("stderr", stderrStr),
-			zap.String("command", cmd.String()), // Log the full command string
+			zap.String("command", cmd.String()),
 			zap.String("cwd", cmd.Dir),
 		)
+		cdklogger.LogError(b.scope, b.assetID, "Go binary build failed. Error: %s. Stdout: %s, Stderr: %s. Command: %s",
+			err.Error(), stdoutStr, stderrStr, cmd.String())
 		return jsii.Bool(false)
 	}
 
@@ -287,30 +302,33 @@ func (b *GoBundler) TryBundle(outputDir *string, _ *awscdk.BundlingOptions) *boo
 		if cmd.ProcessState != nil {
 			exitCode = cmd.ProcessState.ExitCode()
 		}
-		b.l.Error("Go build command failed",
+		b.l.Error("Go build command finished with non-zero exit code",
 			zap.Int("exitCode", exitCode),
 			zap.String("stdout", stdoutStr),
 			zap.String("stderr", stderrStr),
 			zap.String("command", cmd.String()),
 			zap.String("cwd", cmd.Dir),
 		)
+		cdklogger.LogError(b.scope, b.assetID, "Go build command failed with exit code %d. Stdout: %s, Stderr: %s. Command: %s",
+			exitCode, stdoutStr, stderrStr, cmd.String())
 		return jsii.Bool(false)
 	}
 
 	// Check if the output file actually exists
-	if _, err := os.Stat(outputPath); os.IsNotExist(err) {
+	if _, statErr := os.Stat(outputPath); os.IsNotExist(statErr) {
 		b.l.Error("Go build command succeeded but output file is missing",
 			zap.String("expectedPath", outputPath),
 			zap.String("stdout", stdoutStr),
 			zap.String("stderr", stderrStr),
 		)
+		cdklogger.LogError(b.scope, b.assetID, "Go build succeeded but output file missing: %s. Stdout: %s, Stderr: %s",
+			outputPath, stdoutStr, stderrStr)
 		return jsii.Bool(false)
 	}
 
-	b.l.Info("Go binary built successfully",
-		zap.String("outputPath", outputPath),
-		zap.String("stdout", stdoutStr),
-	)
+	b.l.Info("Go binary built successfully locally", zap.String("outputPath", outputPath), zap.Duration("duration", duration), zap.String("stdout", stdoutStr))
+	cdklogger.LogInfo(b.scope, b.assetID, "Go binary built successfully locally. Output: %s, Duration: %s. Stdout: %s",
+		outputPath, duration.String(), stdoutStr)
 
 	return jsii.Bool(true)
 }

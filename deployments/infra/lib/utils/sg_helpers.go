@@ -6,7 +6,6 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/jsii-runtime-go"
 
-	// Import the fronting package to use its IngressSpec type
 	fronting "github.com/trufnetwork/node/infra/lib/constructs/fronting"
 )
 

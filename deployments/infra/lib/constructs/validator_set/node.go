@@ -17,6 +17,7 @@ import (
 	"github.com/aws/jsii-runtime-go"
 
 	nodeconfig "github.com/trufnetwork/node/infra/config/node"
+	"github.com/trufnetwork/node/infra/lib/cdklogger"
 	fronting "github.com/trufnetwork/node/infra/lib/constructs/fronting"
 	kwil_network "github.com/trufnetwork/node/infra/lib/kwil-network"
 	kwilnetworkpeer "github.com/trufnetwork/node/infra/lib/kwil-network/peer"
@@ -118,10 +119,13 @@ func newNode(
 	// Populate values and render the config template
 	renderedConfig := populateAndRenderValues(scope, input.Index, input.Props, input.Connection, input.AllPeers, input.Props.NodeKeys)
 
+	assetConstructID := fmt.Sprintf("KwildRenderedConfigAsset-%d", input.Index)
 	// Create an S3 asset from the rendered TOML content
-	nodeConfigAsset := awss3assets.NewAsset(scope, jsii.String(fmt.Sprintf("KwildRenderedConfigAsset-%d", input.Index)), &awss3assets.AssetProps{
+	nodeConfigAsset := awss3assets.NewAsset(scope, jsii.String(assetConstructID), &awss3assets.AssetProps{
 		Path: utils.WriteToTempFile(scope, fmt.Sprintf("rendered-config-%d.toml", input.Index), renderedConfig.Bytes()),
 	})
+
+	cdklogger.LogInfo(scope, assetConstructID, "Created S3 asset for Node-%d rendered kwild config. AssetPath (token): %s", input.Index, *nodeConfigAsset.S3ObjectUrl())
 
 	// Grant the EC2 instance role read access to the asset bucket
 	nodeConfigAsset.Bucket().GrantRead(input.Role, nil)

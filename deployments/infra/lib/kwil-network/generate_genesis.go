@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
+	"time"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
+	"github.com/trufnetwork/node/infra/lib/cdklogger"
 	"github.com/trufnetwork/node/infra/lib/kwil-network/peer"
 	"go.uber.org/zap"
 )
@@ -51,21 +54,31 @@ func GenerateGenesisFile(scope constructs.Construct, input GenerateGenesisFileIn
 	// Generate configuration using kwild CLI
 	// kwild setup init --chain-id <chainId> --root <tmp-dir>
 	envVarsMain := config.GetEnvironmentVariables[config.MainEnvironmentVariables](scope)
-	cmd := exec.Command(envVarsMain.KwildCliPath, "setup", "init",
+	args := []string{"setup", "init",
 		"--chain-id", input.ChainId,
 		"--root", *tempDir,
 		"--db-owner", input.DbOwner,
-	)
+	}
+	cmd := exec.Command(envVarsMain.KwildCliPath, args...)
 
+	commandString := envVarsMain.KwildCliPath + " " + strings.Join(args, " ")
+	cdklogger.LogInfo(scope, "GenesisGenerator", "Executing: %s", commandString)
+
+	startTime := time.Now()
 	// Run the kwild setup command, capturing stdout/stderr
 	output, err := cmd.CombinedOutput()
+	duration := time.Since(startTime)
+
 	if err != nil {
 		// Include the captured output for easier debugging
+		cdklogger.LogError(scope, "GenesisGenerator", "Failed to execute 'kwild setup init'. Command: %s, Duration: %s, Error: %s, Output: %s", commandString, duration.String(), err.Error(), string(output))
 		zap.L().Panic("Failed to generate genesis file", zap.Error(err), zap.String("output", string(output)))
 	}
 
-	// Read the genesis file
 	genesisFile := *tempDir + "/genesis.json"
+	cdklogger.LogInfo(scope, "GenesisGenerator", "'kwild setup init' executed successfully. Duration: %s, Output: %s, GenesisFile (temp path): %s", duration.String(), string(output), genesisFile)
+
+	// Read the genesis file
 	genesisFileContent, err := os.ReadFile(genesisFile)
 	if err != nil {
 		zap.L().Panic("Failed to read genesis file", zap.Error(err))

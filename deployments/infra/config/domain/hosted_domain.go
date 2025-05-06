@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsroute53"
 	"github.com/aws/constructs-go/constructs/v10"
 	jsii "github.com/aws/jsii-runtime-go"
+	"github.com/trufnetwork/node/infra/lib/cdklogger"
 )
 
 // HostedDomainProps holds inputs for creating a HostedDomain construct.
@@ -31,8 +32,8 @@ type HostedDomain struct {
 // NewHostedDomain creates or reuses a HostedDomain in the CDK tree, ensuring idempotence per (scope, id).
 func NewHostedDomain(scope constructs.Construct, id string, props *HostedDomainProps) *HostedDomain {
 	// Create the underlying child Construct under given scope
-	node := constructs.NewConstruct(scope, jsii.String(id))
-	hd := &HostedDomain{Construct: node}
+	hdConstruct := constructs.NewConstruct(scope, jsii.String(id))
+	hd := &HostedDomain{Construct: hdConstruct}
 
 	// Determine the full FQDN from Spec
 	hd.FQDN = *props.Spec.FQDN()
@@ -40,12 +41,15 @@ func NewHostedDomain(scope constructs.Construct, id string, props *HostedDomainP
 	hd.DomainName = jsii.String(hd.FQDN)
 
 	// Lookup the existing hosted zone for the fixed root domain
-	hd.Zone = awsroute53.HostedZone_FromLookup(node, jsii.String("Zone"), &awsroute53.HostedZoneProviderProps{
+	hd.Zone = awsroute53.HostedZone_FromLookup(hdConstruct, jsii.String("Zone"), &awsroute53.HostedZoneProviderProps{
 		DomainName: jsii.String(MainDomain),
 	})
 
+	// Log HostedDomain setup details
+	cdklogger.LogInfo(hdConstruct, "", "Setting up hosted domain. FQDN: %s, Zone: %s, EdgeCertificate: %t", hd.FQDN, *hd.Zone.ZoneName(), props.EdgeCertificate)
+
 	// Decide certificate scope: same node or a us-east-1 Stack for edge certs
-	certScope := node
+	certScope := hdConstruct
 	if props.EdgeCertificate {
 		edgeStack := awscdk.NewStack(scope, jsii.String(id+"-EdgeCert"), &awscdk.StackProps{
 			Env: &awscdk.Environment{Region: jsii.String("us-east-1")},

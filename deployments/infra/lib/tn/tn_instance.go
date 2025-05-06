@@ -10,6 +10,7 @@ import (
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
 	domaincfg "github.com/trufnetwork/node/infra/config/domain"
+	"github.com/trufnetwork/node/infra/lib/cdklogger"
 	peer2 "github.com/trufnetwork/node/infra/lib/kwil-network/peer"
 	"github.com/trufnetwork/node/infra/lib/utils"
 )
@@ -123,13 +124,16 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 
 	AWSLinux2MachineImage := awsec2.MachineImage_LatestAmazonLinux2(nil)
 	userData := awsec2.UserData_ForLinux(nil)
-	tnLaunchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String(name), &awsec2.LaunchTemplateProps{
-		InstanceType:       awsec2.InstanceType_Of(awsec2.InstanceClass_T3, instanceSize),
+	ltConstructID := name
+	userDataLogPathPrefix := ltConstructID + "/UserData" // For logging UserData steps under the LT's path
+
+	tnLaunchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String(ltConstructID), &awsec2.LaunchTemplateProps{
+		InstanceType:       awsec2.InstanceType_Of(awsec2.InstanceClass_T3A, instanceSize),
 		MachineImage:       AWSLinux2MachineImage,
 		SecurityGroup:      input.SecurityGroup,
 		Role:               input.Role,
 		KeyPair:            input.KeyPair,
-		LaunchTemplateName: jsii.Sprintf("%s/%s", *awscdk.Aws_STACK_NAME(), name),
+		LaunchTemplateName: jsii.Sprintf("%s/%s", *awscdk.Aws_STACK_NAME(), ltConstructID),
 		BlockDevices: &[]*awsec2.BlockDevice{
 			{
 				DeviceName: jsii.String("/dev/sda1"),
@@ -142,7 +146,14 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 		UserData: userData,
 	})
 
-	// first step is to attach the init data to the launch template
+	// Log Launch Template creation
+	instanceTypeStr := "T3a." + string(instanceSize)
+	amiID := *AWSLinux2MachineImage.GetImage(scope).ImageId
+	roleArn := *input.Role.RoleArn()
+	cdklogger.LogInfo(scope, ltConstructID, "Created Launch Template: InstanceType=%s, MachineImage=%s, Role=%s", instanceTypeStr, amiID, roleArn)
+
+	// UserData Step 1: CloudFormation Init (asset downloads)
+	cdklogger.LogInfo(scope, userDataLogPathPrefix, "[Step 1/4] Adding CloudFormation Init (asset downloads: config, genesis, keys, compose, tn-config-dockerfile).")
 	utils.AttachInitDataToLaunchTemplate(utils.AttachInitDataToLaunchTemplateInput{
 		LaunchTemplate: tnLaunchTemplate,
 		InitData:       initData,
@@ -150,6 +161,8 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 		Platform:       awsec2.OperatingSystemType_LINUX,
 	})
 
+	// UserData Step 2: Volume mount and config file placement
+	cdklogger.LogInfo(scope, userDataLogPathPrefix, "[Step 2/4] Adding volume mount and config file placement commands.")
 	tnLaunchTemplate.UserData().AddCommands(
 		utils.MountVolumeToPathAndPersist("nvme1n1", "/data")...,
 	)
@@ -163,14 +176,8 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 	// Move other assets from initAssetsDir after mount
 	tnLaunchTemplate.UserData().AddCommands(utils.MoveToPath(initAssetsDir+"*", mountDataDir))
 
-	node := TNInstance{
-		LaunchTemplate: tnLaunchTemplate,
-		SecurityGroup:  input.SecurityGroup,
-		Role:           input.Role,
-		PeerConnection: input.PeerConnection,
-		Index:          index,
-	}
-
+	// UserData Steps 3 & 4: Docker installation & app startup (handled by TnDbStartupScripts)
+	cdklogger.LogInfo(scope, userDataLogPathPrefix, "[Step 3/4 & 4/4] Adding Docker installation, configuration, and application startup script (systemd service for TN via TnDbStartupScripts).")
 	scripts, err := TnDbStartupScripts(AddStartupScriptsOptions{
 		CurrentPeer:       input.PeerConnection,
 		AllPeers:          input.AllPeerConnections,
@@ -185,5 +192,12 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 	}
 	tnLaunchTemplate.UserData().AddCommands(jsii.String(*scripts))
 
+	node := TNInstance{
+		LaunchTemplate: tnLaunchTemplate,
+		SecurityGroup:  input.SecurityGroup,
+		Role:           input.Role,
+		PeerConnection: input.PeerConnection,
+		Index:          index,
+	}
 	return node
 }

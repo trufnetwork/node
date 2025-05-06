@@ -12,6 +12,7 @@ import (
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
 	"github.com/trufnetwork/node/infra/config/domain"
+	"github.com/trufnetwork/node/infra/lib/cdklogger"
 	altmgr "github.com/trufnetwork/node/infra/lib/constructs/alternativedomainmanager"
 	fronting "github.com/trufnetwork/node/infra/lib/constructs/fronting"
 	"github.com/trufnetwork/node/infra/lib/constructs/kwil_cluster"
@@ -107,7 +108,7 @@ func TnFromConfigStack(
 		primaryFqdn := node.PeerConnection.Address
 		// Ensure we have the necessary info before creating and registering the target.
 		if primaryFqdn == nil || *primaryFqdn == "" {
-			awscdk.Annotations_Of(stack).AddWarning(jsii.Sprintf("Node %d primary FQDN (PeerConnection.Address) is empty. Cannot register target %s.", node.Index+1, nodeTargetID))
+			cdklogger.LogWarning(stack, "", "Node %d primary FQDN (PeerConnection.Address) is empty. Cannot register target %s.", node.Index+1, nodeTargetID)
 			continue
 		}
 
@@ -117,7 +118,7 @@ func TnFromConfigStack(
 		// This works if ValidatorSet consistently populates NodeInfo.ElasticIp.
 		// A more robust solution might involve ValidatorSet explicitly returning EIP Refs.
 		if node.ElasticIp == nil {
-			awscdk.Annotations_Of(stack).AddWarning(jsii.Sprintf("Node %d ElasticIp is nil in NodeInfo. Cannot register target %s.", node.Index+1, nodeTargetID))
+			cdklogger.LogWarning(stack, "", "Node %d ElasticIp is nil in NodeInfo. Cannot register target %s.", node.Index+1, nodeTargetID)
 		} else {
 			// Create a NodeTarget DnsTarget implementation using the EIP's Ref attribute.
 			nodeTarget := &validator_set.NodeTarget{

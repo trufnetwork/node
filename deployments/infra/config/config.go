@@ -9,6 +9,7 @@ import (
 	"github.com/aws/jsii-runtime-go"
 
 	domaincfg "github.com/trufnetwork/node/infra/config/domain"
+	"github.com/trufnetwork/node/infra/lib/cdklogger"
 )
 
 // Context keys
@@ -73,6 +74,7 @@ func NumOfNodes(scope constructs.Construct) int {
 		}
 	}
 
+	cdklogger.LogInfo(scope, "", "Number of validator nodes: %d (from CDK context '%s')", numOfNodes, ContextNumOfNodes)
 	return numOfNodes
 }
 
@@ -92,6 +94,7 @@ func GetStage(scope constructs.Construct) domaincfg.StageType {
 	stage := domaincfg.StageType(stageStr)
 	switch stage {
 	case domaincfg.StageProd, domaincfg.StageDev:
+		cdklogger.LogInfo(scope, "", "Using stage: '%s' (from CDK context '%s')", stage, ContextStage)
 		return stage // Valid stage
 	default:
 		panic(fmt.Sprintf("Invalid value for context variable '%s': '%s'. Must be '%s' or '%s'.",
@@ -118,6 +121,8 @@ func GetDevPrefix(scope constructs.Construct) string {
 		devPrefix = prefixStr
 	}
 
+	// Log current devPrefix, even if it's the default empty string, to confirm it was processed.
+	cdklogger.LogInfo(scope, "", "DevPrefix: '%s' (from CDK context '%s')", devPrefix, ContextDevPrefix)
 	// Note: Validation that devPrefix is empty for 'prod' stage might be better placed
 	// where both stage and prefix are known, e.g., in domain_config.go or stack logic.
 	return devPrefix

@@ -12,6 +12,7 @@ import (
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
 	domain "github.com/trufnetwork/node/infra/config/domain"
+	"github.com/trufnetwork/node/infra/lib/cdklogger"
 	"github.com/trufnetwork/node/infra/lib/kwil-network/peer"
 	"github.com/trufnetwork/node/infra/lib/tn"
 	"github.com/trufnetwork/node/infra/lib/utils"
@@ -137,15 +138,18 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 	defaultUd := awsec2.UserData_ForLinux(&awsec2.LinuxUserDataOptions{Shebang: jsii.String("#!/bin/bash -xe")})
 	defaultUd.AddCommands(jsii.String("echo 'initializing-indexer'"))
 
+	ltConstructID := "IndexerLaunchTemplate"
+	userDataLogPathPrefix := ltConstructID + "/UserData"
+
 	// Create launch template
-	launchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String("IndexerLaunchTemplate"), &awsec2.LaunchTemplateProps{
-		InstanceType:       awsec2.InstanceType_Of(awsec2.InstanceClass_T3, indexerInstanceSize),
+	launchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String(ltConstructID), &awsec2.LaunchTemplateProps{
+		InstanceType:       awsec2.InstanceType_Of(awsec2.InstanceClass_T3A, indexerInstanceSize),
 		MachineImage:       AWSLinux2MachineImage,
 		SecurityGroup:      instanceSG,
 		Role:               role,
 		KeyPair:            keyPair,
 		UserData:           defaultUd,
-		LaunchTemplateName: jsii.Sprintf("%s/IndexerLaunchTemplate", *awscdk.Aws_STACK_NAME()),
+		LaunchTemplateName: jsii.Sprintf("%s/%s", *awscdk.Aws_STACK_NAME(), ltConstructID),
 		BlockDevices: &[]*awsec2.BlockDevice{
 			{
 				DeviceName: jsii.String("/dev/sda1"),
@@ -157,7 +161,14 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 		},
 	})
 
-	// first step is to attach the init data to the launch template
+	// Log Launch Template creation
+	instanceTypeStr := "T3a." + string(indexerInstanceSize) // indexerInstanceSize is const awsec2.InstanceSize_SMALL
+	amiID := *AWSLinux2MachineImage.GetImage(scope).ImageId
+	roleArn := *role.RoleArn()
+	cdklogger.LogInfo(scope, ltConstructID, "Created Launch Template: InstanceType=%s, MachineImage=%s, Role=%s", instanceTypeStr, amiID, roleArn)
+
+	// UserData Step 1: CloudFormation Init (asset downloads for Indexer dir and binary)
+	cdklogger.LogInfo(scope, userDataLogPathPrefix, "[Step 1/3] Adding CloudFormation Init (asset downloads: Indexer directory zip, Indexer binary zip).")
 	utils.AttachInitDataToLaunchTemplate(utils.AttachInitDataToLaunchTemplateInput{
 		InitData:       initData,
 		LaunchTemplate: launchTemplate,
@@ -165,8 +176,12 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 		Platform:       awsec2.OperatingSystemType_LINUX,
 	})
 
+	// UserData Step 2: Volume Mount (standard for data drive)
+	cdklogger.LogInfo(scope, userDataLogPathPrefix, "[Step 2/3] Adding volume mount command for /data.")
 	launchTemplate.UserData().AddCommands(utils.MountVolumeToPathAndPersist("nvme1n1", "/data")...)
 
+	// UserData Step 3: Docker installation, app setup (via AddKwilIndexerStartupScripts)
+	cdklogger.LogInfo(scope, userDataLogPathPrefix, "[Step 3/3] Adding Docker installation, configuration, asset preparation, and Indexer application startup script (systemd service).")
 	scripts := AddKwilIndexerStartupScripts(AddKwilIndexerStartupScriptsOptions{
 		// Pass the path to the binary zip to the startup script options
 		indexerBinaryZipPath: indexerBinaryZipPath,

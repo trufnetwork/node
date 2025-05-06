@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
+	"github.com/trufnetwork/node/infra/lib/cdklogger"
 )
 
 type (
@@ -28,16 +29,24 @@ type (
 
 // EC2 related functions
 func createLaunchTemplate(scope constructs.Construct, input CreateLaunchTemplateInput) CreateLaunchTemplateOutput {
+	ltConstructID := input.ID
+	AWSLinux2MachineImage := awsec2.MachineImage_LatestAmazonLinux2(nil)
+
 	// Create a new EC2 launch template with specified properties
-	launchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String(input.ID), &awsec2.LaunchTemplateProps{
-		InstanceType: input.InstanceType,
-		// we want to use latest amazon linux
-		MachineImage:  awsec2.MachineImage_LatestAmazonLinux2(nil),
+	launchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String(ltConstructID), &awsec2.LaunchTemplateProps{
+		InstanceType:  input.InstanceType,
+		MachineImage:  AWSLinux2MachineImage,
 		SecurityGroup: input.SecurityGroup,
 		KeyPair:       input.KeyPair,
 		Role:          input.IAMRole,
 		UserData:      awsec2.UserData_ForLinux(nil),
 	})
+
+	// Log Launch Template creation
+	instanceTypeStr := input.InstanceType.ToString()
+	amiID := *AWSLinux2MachineImage.GetImage(scope).ImageId
+	roleArn := *input.IAMRole.RoleArn()
+	cdklogger.LogInfo(scope, ltConstructID, "Created Launch Template: InstanceType=%s, MachineImage=%s, Role=%s", *instanceTypeStr, amiID, roleArn)
 
 	// Check if launchTemplate is nil
 	if launchTemplate == nil {

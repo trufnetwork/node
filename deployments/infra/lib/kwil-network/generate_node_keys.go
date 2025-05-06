@@ -2,12 +2,14 @@ package kwil_network
 
 import (
 	"encoding/json"
+	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/trufnetwork/node/infra/config"
-	"go.uber.org/zap"
+	"github.com/trufnetwork/node/infra/lib/cdklogger"
 )
 
 // NodeKeys reflects the structure returned by `kwild key gen --output json`
@@ -29,55 +31,71 @@ func GenerateNodeKeys(scope constructs.Construct) NodeKeys {
 	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables](scope)
 
 	// Generate new keys using kwild CLI
-	cmd := exec.Command(envVars.KwildCliPath, "key", "gen", "--output", "json")
+	args := []string{"key", "gen", "--output", "json"}
+	commandString := envVars.KwildCliPath + " " + strings.Join(args, " ")
+	cdklogger.LogInfo(scope, "NodeKeyGenerator", "Executing: %s", commandString)
 
-	// read the output of the command. extract from result
-	// and return the NodeKeys struct
-	var output KeyGenOutput
-	bytesOutput, err := cmd.Output()
-
-	if err != nil {
-		// Add command output to the error message for better debugging
-		zap.L().Panic("Failed to generate node keys", zap.Error(err), zap.String("output", string(bytesOutput)))
-	}
-
-	// Trim potential leading/trailing whitespace/newlines from output
+	cmd := exec.Command(envVars.KwildCliPath, args...)
+	startTime := time.Now()
+	bytesOutput, err := cmd.CombinedOutput() // Use CombinedOutput to get stderr as well
+	duration := time.Since(startTime)
 	trimmedOutput := strings.TrimSpace(string(bytesOutput))
 
+	if err != nil {
+		cdklogger.LogError(scope, "NodeKeyGenerator", "Failed to execute 'kwild key gen'. Command: %s, Duration: %s, Error: %s, Output: %s", commandString, duration.String(), err.Error(), trimmedOutput)
+		panic(fmt.Sprintf("Failed to generate node keys via 'kwild key gen': %v. Output: %s", err, trimmedOutput))
+	}
+
+	var output KeyGenOutput
 	if err := json.Unmarshal([]byte(trimmedOutput), &output); err != nil {
-		zap.L().Panic("Failed to unmarshal node keys", zap.Error(err), zap.String("raw_output", trimmedOutput))
+		cdklogger.LogError(scope, "NodeKeyGenerator", "Failed to unmarshal 'kwild key gen' output. Duration: %s, Error: %s, RawOutput: %s", duration.String(), err.Error(), trimmedOutput)
+		panic(fmt.Sprintf("Failed to unmarshal 'kwild key gen' output: %v. RawOutput: %s", err, trimmedOutput))
 	}
 
-	// Basic validation after unmarshaling
 	if output.Error != "" {
-		zap.L().Panic("kwild key gen reported an error", zap.String("error", output.Error))
+		cdklogger.LogError(scope, "NodeKeyGenerator", "'kwild key gen' reported an error. Duration: %s, Error: %s, RawOutput: %s", duration.String(), output.Error, trimmedOutput)
+		panic(fmt.Sprintf("'kwild key gen' reported an error: %s. RawOutput: %s", output.Error, trimmedOutput))
 	}
-	if output.Result.PublicKeyHex == "" {
-		zap.L().Panic("kwild key gen did not return a public key", zap.Any("result", output.Result))
+	if output.Result.PublicKeyHex == "" { // Assuming PublicKeyHex is the correct field name
+		cdklogger.LogError(scope, "NodeKeyGenerator", "'kwild key gen' did not return a public key. Duration: %s, Result: %+v, RawOutput: %s", duration.String(), output.Result, trimmedOutput)
+		panic(fmt.Sprintf("'kwild key gen' did not return a public key. RawOutput: %s", trimmedOutput))
 	}
 
+	cdklogger.LogInfo(scope, "NodeKeyGenerator", "Node keys generated successfully via 'kwild key gen'. Duration: %s, NodeID: %s, PublicKeyHex: %s", duration.String(), output.Result.NodeId, output.Result.PublicKeyHex)
 	return output.Result
 }
 
-// ExtractKeys needs similar updates if used.
-// For now, focusing on GenerateNodeKeys.
 func ExtractKeys(scope constructs.Construct, privateKey string) NodeKeys {
 	envVars := config.GetEnvironmentVariables[config.MainEnvironmentVariables](scope)
-	cmd := exec.Command(envVars.KwildCliPath, "key", "info", privateKey, "--output", "json")
-	var output KeyGenOutput
-	bytesOutput, err := cmd.Output()
-	if err != nil {
-		zap.L().Panic("Failed to extract node keys", zap.Error(err), zap.String("output", string(bytesOutput)))
-	}
+	args := []string{"key", "info", privateKey, "--output", "json"}
+	commandString := envVars.KwildCliPath + " " + strings.Join(args, " ")
+	cdklogger.LogInfo(scope, "NodeKeyExtractor", "Executing: %s", commandString)
+
+	cmd := exec.Command(envVars.KwildCliPath, args...)
+	startTime := time.Now()
+	bytesOutput, err := cmd.CombinedOutput()
+	duration := time.Since(startTime)
 	trimmedOutput := strings.TrimSpace(string(bytesOutput))
-	if err := json.Unmarshal([]byte(trimmedOutput), &output); err != nil {
-		zap.L().Panic("Failed to unmarshal extracted node keys", zap.Error(err), zap.String("raw_output", trimmedOutput))
+
+	if err != nil {
+		cdklogger.LogError(scope, "NodeKeyExtractor", "Failed to execute 'kwild key info'. Command: %s, Duration: %s, Error: %s, Output: %s", commandString, duration.String(), err.Error(), trimmedOutput)
+		panic(fmt.Sprintf("Failed to extract node keys via 'kwild key info': %v. Output: %s", err, trimmedOutput))
 	}
+
+	var output KeyGenOutput
+	if err := json.Unmarshal([]byte(trimmedOutput), &output); err != nil {
+		cdklogger.LogError(scope, "NodeKeyExtractor", "Failed to unmarshal 'kwild key info' output. Duration: %s, Error: %s, RawOutput: %s", duration.String(), err.Error(), trimmedOutput)
+		panic(fmt.Sprintf("Failed to unmarshal 'kwild key info' output: %v. RawOutput: %s", err, trimmedOutput))
+	}
+
 	if output.Error != "" {
-		zap.L().Panic("kwild key info reported an error", zap.String("error", output.Error))
+		cdklogger.LogError(scope, "NodeKeyExtractor", "'kwild key info' reported an error. Duration: %s, Error: %s, RawOutput: %s", duration.String(), output.Error, trimmedOutput)
+		panic(fmt.Sprintf("'kwild key info' reported an error: %s. RawOutput: %s", output.Error, trimmedOutput))
 	}
 	if output.Result.PublicKeyHex == "" {
-		zap.L().Panic("kwild key info did not return a public key", zap.Any("result", output.Result))
+		cdklogger.LogError(scope, "NodeKeyExtractor", "'kwild key info' did not return a public key. Duration: %s, Result: %+v, RawOutput: %s", duration.String(), output.Result, trimmedOutput)
+		panic(fmt.Sprintf("'kwild key info' did not return a public key. RawOutput: %s", trimmedOutput))
 	}
+	cdklogger.LogInfo(scope, "NodeKeyExtractor", "Node keys extracted successfully via 'kwild key info'. Duration: %s, NodeID: %s, PublicKeyHex: %s", duration.String(), output.Result.NodeId, output.Result.PublicKeyHex)
 	return output.Result
 }

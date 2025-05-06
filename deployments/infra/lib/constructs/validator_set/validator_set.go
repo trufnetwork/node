@@ -13,6 +13,7 @@ import (
 
 	"github.com/trufnetwork/node/infra/config"
 	"github.com/trufnetwork/node/infra/config/domain"
+	"github.com/trufnetwork/node/infra/lib/cdklogger"
 	kwilnetwork "github.com/trufnetwork/node/infra/lib/kwil-network"
 	peer "github.com/trufnetwork/node/infra/lib/kwil-network/peer"
 	"github.com/trufnetwork/node/infra/lib/tn"
@@ -45,20 +46,25 @@ type ValidatorSet struct {
 
 // NewValidatorSet provisions validator instances, EIPs, and DNS records
 func NewValidatorSet(scope constructs.Construct, id string, props *ValidatorSetProps) *ValidatorSet {
-	node := constructs.NewConstruct(scope, jsii.String(id))
-	vs := &ValidatorSet{Construct: node}
+	nodeConstruct := constructs.NewConstruct(scope, jsii.String(id))
+	vs := &ValidatorSet{Construct: nodeConstruct}
+
+	// Use the Peers list directly
+	allPeers := props.Peers // Use the provided peer list
+	n := len(allPeers)
+	cdklogger.LogInfo(nodeConstruct, "", "Initializing ValidatorSet for %d peers.", n)
 
 	// handle KeyPair reuse or create default from context
 	if props.KeyPair == nil {
-		keyPairName := config.KeyPairName(node)
+		keyPairName := config.KeyPairName(nodeConstruct)
 		if len(keyPairName) == 0 {
 			panic("KeyPairName is empty")
 		}
-		props.KeyPair = awsec2.KeyPair_FromKeyPairName(node, jsii.String("DefaultKeyPair"), jsii.String(keyPairName))
+		props.KeyPair = awsec2.KeyPair_FromKeyPairName(nodeConstruct, jsii.String("DefaultKeyPair"), jsii.String(keyPairName))
 	}
 
 	// create IAM role for TN instances
-	role := awsiam.NewRole(node, jsii.String("ValidatorSetRole"), &awsiam.RoleProps{
+	role := awsiam.NewRole(nodeConstruct, jsii.String("ValidatorSetRole"), &awsiam.RoleProps{
 		AssumedBy: awsiam.NewServicePrincipal(jsii.String("ec2.amazonaws.com"), nil),
 	})
 
@@ -69,11 +75,7 @@ func NewValidatorSet(scope constructs.Construct, id string, props *ValidatorSetP
 	props.GenesisAsset.Bucket().GrantRead(role, nil)
 
 	// create security group for TN instances
-	sg := tn.NewTNSecurityGroup(node, tn.NewTNSecurityGroupInput{Vpc: props.Vpc})
-
-	// Use the Peers list directly
-	allPeers := props.Peers // Use the provided peer list
-	n := len(allPeers)
+	sg := tn.NewTNSecurityGroup(nodeConstruct, tn.NewTNSecurityGroupInput{Vpc: props.Vpc})
 
 	// provision TN instances and record EIP and DNS
 	instances := make([]tn.TNInstance, n)
@@ -82,7 +84,7 @@ func NewValidatorSet(scope constructs.Construct, id string, props *ValidatorSetP
 		nodeKey := props.NodeKeys[i] // Get corresponding node key data
 
 		// The genesis asset details will be passed to tn_instance.go -> tn_startup_scripts.go
-		inst := newNode(node, NewNodeInput{
+		inst := newNode(nodeConstruct, NewNodeInput{
 			Index:         i,
 			Role:          role,
 			SG:            sg,
@@ -95,12 +97,14 @@ func NewValidatorSet(scope constructs.Construct, id string, props *ValidatorSetP
 		})
 
 		// allocate Elastic IP
-		eip := awsec2.NewCfnEIP(node, jsii.String(fmt.Sprintf("PeerEIP-%d", i)), &awsec2.CfnEIPProps{})
+		eipConstructID := fmt.Sprintf("PeerEIP-%d", i)
+		eip := awsec2.NewCfnEIP(nodeConstruct, jsii.String(eipConstructID), &awsec2.CfnEIPProps{})
+		cdklogger.LogInfo(nodeConstruct, eipConstructID, "Allocated Elastic IP for Validator Node-%d: %s (Ref Token)", i, *eip.Ref())
 		eip.Tags().SetTag(jsii.String("Name"), jsii.String(fmt.Sprintf("%s-PeerEIP-%d", *awscdk.Aws_STACK_NAME(), i)), jsii.Number(10), jsii.Bool(true))
 		inst.ElasticIp = eip
 
 		// create DNS A record
-		awsroute53.NewARecord(node, jsii.String(fmt.Sprintf("PeerARecord-%d", i)), &awsroute53.ARecordProps{
+		awsroute53.NewARecord(nodeConstruct, jsii.String(fmt.Sprintf("PeerARecord-%d", i)), &awsroute53.ARecordProps{
 			Zone:       props.HostedDomain.Zone,
 			RecordName: peerInfo.Address, // Use peerInfo directly
 			Target:     awsroute53.RecordTarget_FromIpAddresses(eip.AttrPublicIp()),
