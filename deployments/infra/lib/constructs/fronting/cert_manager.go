@@ -46,12 +46,10 @@ func GetSharedCertProps(hostedZone awsroute53.IHostedZone, primaryFqdn, secondar
 		panic(fmt.Sprintf("GetSharedCertProps: Input FQDN(s) '%s', '%s' did not end with expected zone suffix '%s'", primaryFqdn, secondaryFqdn, zoneSuffix))
 	}
 
-	// Primary issues the cert, using the primary simple label for its RecordName,
-	// and the full secondary FQDN (passed as input) as a SAN.
+	// Primary issues the cert, using the primary simple label for its RecordName.
 	primaryProps = FrontingProps{
-		HostedZone:     hostedZone,
-		RecordName:     jsii.String(primaryLabel),             // Use the extracted simple label for Route53 RecordName
-		AdditionalSANs: []*string{jsii.String(secondaryFqdn)}, // Use the full secondary FQDN for SAN
+		HostedZone: hostedZone,
+		RecordName: jsii.String(primaryLabel), // Use the extracted simple label for Route53 RecordName
 		// Endpoint needs to be set by caller
 		// ImportedCertificate: nil (default)
 	}

@@ -18,6 +18,9 @@ const (
 	ContextStage       = "stage"
 	ContextDevPrefix   = "devPrefix" // Key for the dev prefix context variable
 	ContextStackSuffix = "stackSuffix"
+	// ContextAltDomainConfigPath defines the CDK context key used to specify the
+	// path to the alternative domains configuration YAML file.
+	ContextAltDomainConfigPath = "altDomainConfigPath"
 )
 
 var devPrefixRegex = regexp.MustCompile(`^[a-zA-Z0-9-]*$`)
@@ -118,4 +121,17 @@ func GetDevPrefix(scope constructs.Construct) string {
 	// Note: Validation that devPrefix is empty for 'prod' stage might be better placed
 	// where both stage and prefix are known, e.g., in domain_config.go or stack logic.
 	return devPrefix
+}
+
+// GetAltDomainConfigPath retrieves the alternative domain configuration file path from CDK context.
+// It looks for the key defined by ContextAltDomainConfigPath.
+// If the context variable is not set or is empty, it returns a default path.
+func GetAltDomainConfigPath(scope constructs.Construct) string {
+	// Default path relative to the CDK application root (e.g., deployments/infra).
+	defaultPath := "config/alternative-domains.yaml"
+	ctxValue := scope.Node().TryGetContext(jsii.String(ContextAltDomainConfigPath))
+	if v, ok := ctxValue.(string); ok && v != "" {
+		return v // Return context value if provided and non-empty.
+	}
+	return defaultPath // Return default path otherwise.
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
 	"github.com/trufnetwork/node/infra/config/domain"
+	altmgr "github.com/trufnetwork/node/infra/lib/constructs/alternativedomainmanager"
 	fronting "github.com/trufnetwork/node/infra/lib/constructs/fronting"
 	"github.com/trufnetwork/node/infra/lib/constructs/kwil_cluster"
 	"github.com/trufnetwork/node/infra/lib/constructs/validator_set"
@@ -51,6 +52,15 @@ func TnFromConfigStack(
 
 	// Define Fronting Type parameter within stack scope
 	selectedKind := config.GetFrontingKind(stack) // Use context helper
+
+	// --- Instantiate Alternative Domain Manager & SAN Builder ---
+	sanBuilder := altmgr.NewSanListBuilder()
+	// The manager handles loading config, registering targets, adding SANs, and creating records.
+	altDomainManager := altmgr.NewAlternativeDomainManager(stack, "AltDomainManager", &altmgr.AlternativeDomainManagerProps{
+		// ConfigFilePath and StackSuffix are read from context within the manager itself.
+		CertSanBuilder: sanBuilder,
+		// AlternativeHostedZoneDomainOverride: nil, // Optionally override config zone here.
+	})
 
 	// Setup observer init elements
 	initElements := []awsec2.InitElement{} // Base elements
@@ -95,6 +105,33 @@ func TnFromConfigStack(
 		NodeKeys:     nodeKeys,
 	})
 
+	// --- Register Node Targets with Manager (After ValidatorSet creation) ---
+	for _, node := range vs.Nodes {
+		nodeTargetID := altmgr.NodeTargetID(node.Index) // Use helper for consistent ID.
+		primaryFqdn := node.PeerConnection.Address
+		// Ensure we have the necessary info before creating and registering the target.
+		if primaryFqdn == nil || *primaryFqdn == "" {
+			awscdk.Annotations_Of(stack).AddWarning(jsii.Sprintf("Node %d primary FQDN (PeerConnection.Address) is empty. Cannot register target %s.", node.Index+1, nodeTargetID))
+			continue
+		}
+
+		// NOTE: Accessing node.ElasticIp.Ref() here assumes that the ValidatorSet construct
+		// internally creates and associates an Elastic IP with each NodeInfo, even though
+		// the EC2 instance itself might be created elsewhere (unlike tn_auto_stack).
+		// This works if ValidatorSet consistently populates NodeInfo.ElasticIp.
+		// A more robust solution might involve ValidatorSet explicitly returning EIP Refs.
+		if node.ElasticIp == nil {
+			awscdk.Annotations_Of(stack).AddWarning(jsii.Sprintf("Node %d ElasticIp is nil in NodeInfo. Cannot register target %s.", node.Index+1, nodeTargetID))
+		} else {
+			// Create a NodeTarget DnsTarget implementation using the EIP's Ref attribute.
+			nodeTarget := &validator_set.NodeTarget{
+				IpAddress:   node.ElasticIp.Ref(), // Ref() resolves to the allocated IP address.
+				PrimaryAddr: primaryFqdn,
+			}
+			altDomainManager.RegisterTarget(nodeTargetID, nodeTarget)
+		}
+	}
+
 	// Kwil Cluster assets via helper
 	kwilAssets := kwil_cluster.BuildKwilAssets(stack, kwil_cluster.KwilAssetOptions{
 		RootDir:            utils.GetProjectRootDir(), // Assuming stack run from infra root
@@ -111,9 +148,9 @@ func TnFromConfigStack(
 		SessionSecret:        jsii.String(cfg.SessionSecret),
 		ChainId:              jsii.String(cfg.ChainId),
 		Validators:           vs.Nodes,
-		InitElements:         initElements, // Only pass base elements
+		InitElements:         initElements,
 		Assets:               kwilAssets,
-		SelectedFrontingKind: selectedKind, // Pass selected kind
+		SelectedFrontingKind: selectedKind,
 	})
 
 	// --- Fronting Setup ---
@@ -129,21 +166,48 @@ func TnFromConfigStack(
 		gatewayRecord := spec.Subdomain("gateway")
 		indexerRecord := spec.Subdomain("indexer")
 
-		// Get props for shared certificate setup
+		// Call the AlternativeDomainManager to populate the sanBuilder with SANs
+		// from its configuration *before* adding local primary/sibling FQDNs.
+		altDomainManager.CollectAndAddConfiguredSansToBuilder()
+
+		// Add the primary FQDNs for Gateway and Indexer to the SAN list builder.
+		// These will be combined with any SANs already added by the AlternativeDomainManager.
+		sanBuilder.Add(gatewayRecord, indexerRecord)
+
+		// Get props for shared certificate setup.
 		gwProps, idxProps := fronting.GetSharedCertProps(hd.Zone, *gatewayRecord, *indexerRecord)
 
-		// Set endpoints
+		// Set backend endpoints for the fronting constructs.
 		gwProps.Endpoint = kc.Gateway.GatewayFqdn
 		idxProps.Endpoint = kc.Indexer.IndexerFqdn
 
+		// Assign the final consolidated SAN list from the builder to the Gateway props
+		// (which is responsible for creating the shared certificate).
+		gwProps.SubjectAlternativeNames = sanBuilder.List()
+
 		// 1. Gateway Fronting (issues cert)
-		gApi := fronting.NewApiGatewayFronting() // Use concrete type here for API GW setup
+		gApi := fronting.NewApiGatewayFronting()
 		gatewayRes := gApi.AttachRoutes(stack, "GatewayFronting", &gwProps)
 
+		// --- Register Gateway Target with Manager ---
+		if gatewayRes.FQDN != nil && *gatewayRes.FQDN != "" {
+			// Pass the whole FrontingResult; it implements DnsTarget.
+			altDomainManager.RegisterTarget(altmgr.TargetGateway, &gatewayRes)
+		} else {
+			awscdk.Annotations_Of(stack).AddWarning(jsii.Sprintf("Gateway primary FQDN is empty. Cannot register target %s.", altmgr.TargetGateway))
+		}
+
 		// 2. Indexer Fronting (imports cert)
-		idxProps.ImportedCertificate = gatewayRes.Certificate // Set imported cert
-		iApi := fronting.NewApiGatewayFronting()              // Use concrete type here for API GW setup
+		idxProps.ImportedCertificate = gatewayRes.Certificate
+		iApi := fronting.NewApiGatewayFronting()
 		indexerRes := iApi.AttachRoutes(stack, "IndexerFronting", &idxProps)
+
+		// --- Register Indexer Target with Manager ---
+		if indexerRes.FQDN != nil && *indexerRes.FQDN != "" {
+			altDomainManager.RegisterTarget(altmgr.TargetIndexer, &indexerRes)
+		} else {
+			awscdk.Annotations_Of(stack).AddWarning(jsii.Sprintf("Indexer primary FQDN is empty. Cannot register target %s.", altmgr.TargetIndexer))
+		}
 
 		// --- Outputs ---
 		awscdk.NewCfnOutput(stack, jsii.String("GatewayEndpoint"), &awscdk.CfnOutputProps{
@@ -163,6 +227,12 @@ func TnFromConfigStack(
 		// Currently, the dual endpoint setup is only implemented for API Gateway
 		panic(fmt.Sprintf("Dual endpoint fronting setup not implemented for type: %s", selectedKind))
 	}
+
+	// --- Bind the Alternative Domain Manager ---
+	// This call creates the necessary alternative A records in Route 53 based on the
+	// registered targets and loaded configuration. SANs should have been collected separately
+	// by calling CollectAndAddConfiguredSansToBuilder earlier.
+	altDomainManager.Bind()
 
 	// Conditionally attach observability
 	if shouldIncludeObserver {

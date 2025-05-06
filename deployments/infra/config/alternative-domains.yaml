@@ -1,0 +1,25 @@
+# Defines alternative domain names for specific deployment stages (identified by stackSuffix).
+prod: # Configuration applies if CDK context variable 'stackSuffix' is 'prod'.
+  # Specifies the Route 53 Hosted Zone where the alternative A records will be created.
+  # This is typically the parent domain (e.g., mainnet.truf.network).
+  alternativeHostedZoneDomain: mainnet.truf.network
+
+  # Maps desired alternative FQDNs to their target CDK constructs and specifies
+  # whether they should be included as Subject Alternative Names (SANs) in TLS certificates.
+  alternatives:
+    "node-1.mainnet.truf.network":
+      targetComponentId: "Node-1"
+      requiresTlsSan: false
+
+    "node-2.mainnet.truf.network":
+      targetComponentId: "Node-2"
+      # If false or omitted (defaults true), this FQDN is not added to the certificate.
+      requiresTlsSan: false
+
+    "gateway.mainnet.truf.network":
+      targetComponentId: "Gateway"
+      requiresTlsSan: true
+
+    "indexer.mainnet.truf.network":
+      targetComponentId: "Indexer"
+      requiresTlsSan: true

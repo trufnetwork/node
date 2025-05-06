@@ -11,11 +11,13 @@ import (
 	"github.com/Masterminds/sprig/v3"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsroute53"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 
 	nodeconfig "github.com/trufnetwork/node/infra/config/node"
+	fronting "github.com/trufnetwork/node/infra/lib/constructs/fronting"
 	kwil_network "github.com/trufnetwork/node/infra/lib/kwil-network"
 	kwilnetworkpeer "github.com/trufnetwork/node/infra/lib/kwil-network/peer"
 	"github.com/trufnetwork/node/infra/lib/tn"
@@ -167,3 +169,33 @@ func newNode(
 		KeyPair:             input.Props.KeyPair,
 	})
 }
+
+// NodeTarget provides an implementation of the fronting.DnsTarget interface
+// specifically for a validator node, using its Elastic IP address as the target.
+type NodeTarget struct {
+	// IpAddress holds the Elastic IP address associated with the node instance.
+	IpAddress *string
+	// PrimaryAddr stores the node's primary, internal FQDN (e.g., node-1.dev.infra.truf.network).
+	PrimaryAddr *string
+}
+
+// RecordTarget implements the fronting.DnsTarget interface.
+// It returns an awsroute53.RecordTarget configured for an IP address list,
+// containing only the node's Elastic IP address.
+func (nt *NodeTarget) RecordTarget() awsroute53.RecordTarget {
+	if nt.IpAddress == nil || *nt.IpAddress == "" {
+		// This indicates an internal error or missing EIP association.
+		panic("NodeTarget IpAddress is nil or empty; cannot create RecordTarget for IP.")
+	}
+	// RecordTarget_FromIpAddresses accepts one or more IP addresses.
+	return awsroute53.RecordTarget_FromIpAddresses(nt.IpAddress)
+}
+
+// PrimaryFQDN implements the fronting.DnsTarget interface.
+// It returns the node's primary, internal FQDN.
+func (nt *NodeTarget) PrimaryFQDN() *string {
+	return nt.PrimaryAddr
+}
+
+// Ensures NodeTarget satisfies the DnsTarget interface at compile time.
+var _ fronting.DnsTarget = (*NodeTarget)(nil)

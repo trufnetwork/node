@@ -98,9 +98,14 @@ func (a *apiGateway) AttachRoutes(scope constructs.Construct, id string, props *
 	if props.ImportedCertificate != nil {
 		cert = props.ImportedCertificate
 	} else {
-		// Issue new certificate for this domain
-		certId := id + "Cert"
-		cert = certMgr.GetRegional(scope, certId, props.HostedZone, fqdn, props.AdditionalSANs)
+		// Issue a new certificate if one isn't imported.
+		cert = certMgr.GetRegional(
+			scope,
+			id+"Cert",
+			props.HostedZone,
+			fqdn,
+			props.SubjectAlternativeNames,
+		)
 	}
 
 	domainNameId := id + "DomainName"
@@ -115,21 +120,23 @@ func (a *apiGateway) AttachRoutes(scope constructs.Construct, id string, props *
 		DomainName: domainName,
 	})
 
+	// Create the alias target properties from the domainName construct
+	aliasTargetProps := awsroute53targets.NewApiGatewayv2DomainProperties(
+		domainName.RegionalDomainName(),
+		domainName.RegionalHostedZoneId(),
+	)
+
 	aRecordId := id + "ARecord"
 	awsroute53.NewARecord(scope, jsii.String(aRecordId), &awsroute53.ARecordProps{
 		Zone:       props.HostedZone,
 		RecordName: props.RecordName,
-		Target: awsroute53.RecordTarget_FromAlias(
-			awsroute53targets.NewApiGatewayv2DomainProperties(
-				domainName.RegionalDomainName(),
-				domainName.RegionalHostedZoneId(),
-			),
-		),
+		Target:     awsroute53.RecordTarget_FromAlias(aliasTargetProps),
 	})
 
 	return FrontingResult{
 		FQDN:        jsii.String(fqdn),
 		Certificate: cert,
+		AliasTarget: aliasTargetProps,
 	}
 }
 
