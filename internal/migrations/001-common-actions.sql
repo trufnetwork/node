@@ -1027,7 +1027,7 @@ CREATE OR REPLACE ACTION stream_exists_batch(
     }
 
     -- Use WITH RECURSIVE to process each stream efficiently
-    WITH RECURSIVE 
+    RETURN WITH RECURSIVE 
     indexes AS (
         SELECT 1 AS idx
         UNION ALL
