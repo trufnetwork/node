@@ -294,6 +294,7 @@ tasks:
     env:
       PRIVATE_KEY: "{{.PRIVATE_KEY}}"
       PROVIDER: "{{.PROVIDER}}"
+      SYNC: "{{.SYNC}}"
     requires: { vars: [PRIVATE_KEY, PROVIDER] }
 
   action:migrate:dev:

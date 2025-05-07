@@ -14,8 +14,24 @@ check_env_var() {
 check_env_var "PRIVATE_KEY"
 check_env_var "PROVIDER"
 
-# Get all .sql files in ./internal/migrations folder and run them with kwil-cli exec-sql --file /path/to/file.sql
-for file in ./internal/migrations/*.sql; do
+# Set SYNC to true by default if not set
+SYNC="${SYNC:-true}"
+
+# Get all .sql files in ./internal/migrations folder
+files=(./internal/migrations/*.sql)
+num_files=${#files[@]}
+
+# Run them with kwil-cli exec-sql
+for i in "${!files[@]}"; do
+    file="${files[$i]}"
     echo "Running $file"
-    kwil-cli exec-sql --file $file --sync --private-key "$PRIVATE_KEY" --provider "$PROVIDER"
+    
+    cmd="kwil-cli exec-sql --file $file --private-key \"$PRIVATE_KEY\" --provider \"$PROVIDER\""
+
+    # Add --sync only for the last file if SYNC is true
+    if [ "$SYNC" = "true" ] && [ $((i + 1)) -eq "$num_files" ]; then
+        cmd="$cmd --sync"
+    fi
+    
+    eval $cmd
 done
