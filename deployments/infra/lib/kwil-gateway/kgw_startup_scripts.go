@@ -30,7 +30,7 @@ func AddKwilGatewayStartupScriptsToInstance(options AddKwilGatewayStartupScripts
 		SessionSecret:      config.SessionSecret,
 		Backends:           awscdk.Fn_Join(jsii.String(","), &nodeAddresses), // nodeAddresses now contains http://host:port
 		ChainId:            config.ChainId,
-		Domain:             config.Domain,
+		Domain:             jsii.String("gateway." + *config.Domain),
 		XffTrustProxyCount: config.XffTrustProxyCount,
 	}
 
