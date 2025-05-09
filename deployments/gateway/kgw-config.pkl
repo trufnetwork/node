@@ -38,6 +38,7 @@ xff_trust_proxy_count = xff_trust_proxy_count_raw?.toIntOrNull()
 
 // env variable boolean values
 allow_deploy_db = read?("env:ALLOW_DEPLOY_DB") == "true"
+allow_adhoc_query = read?("env:ALLOW_ADHOC_QUERY") == "true"
 
 // SPECIAL CASE: BACKENDS
 // we just need to split the string by comma
