@@ -36,6 +36,7 @@ func TestComplexComposed(t *testing.T) {
 			WithTestSetup(testComplexComposedIndexChange(t)),
 			WithTestSetup(testComplexComposedFirstRecord(t)),
 			WithTestSetup(testComplexComposedOutOfRange(t)),
+			WithTestSetup(testComplexComposedIndexLatestValueConsistency(t)),
 		},
 	}, testutils.GetTestOptions())
 }
@@ -375,6 +376,70 @@ func testComplexComposedFirstRecord(t *testing.T) func(ctx context.Context, plat
 			Actual:   result,
 			Expected: expected,
 		})
+
+		return nil
+	}
+}
+
+// testComplexComposedIndexLatestValueConsistency tests that the latest value is consistent
+// it's a regression test for https://github.com/trufnetwork/node/issues/938
+func testComplexComposedIndexLatestValueConsistency(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		composedStreamLocator := types.StreamLocator{
+			StreamId:     composedStreamId, // Assuming composedStreamId is accessible
+			DataProvider: complexComposedDeployer,
+		}
+		latestEventTime := int64(13) // Max event_time in seed data
+
+		// Scenario 1: Call get_index with from=nil, to=nil (SQL Path A - special latest)
+		resultLatestOnly, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
+			Platform:      platform,
+			StreamLocator: composedStreamLocator,
+			FromTime:      nil,
+			ToTime:        nil,
+			// BaseTime, FrozenAt, Height are implicitly nil/0 for this test's purpose
+		})
+		if !assert.NoError(t, err, "GetIndex (latest only) should not return an error") {
+			return errors.Wrap(err, "error in GetIndex (latest only)")
+		}
+
+		if !assert.Equal(t, 1, len(resultLatestOnly), "Expected 1 row for latest only path") {
+			return errors.New("assertion failed: resultLatestOnly row count")
+		}
+		if !assert.Equal(t, fmt.Sprintf("%d", latestEventTime), resultLatestOnly[0][0], "Expected event_time to be latest for latest only path") {
+			return errors.New("assertion failed: resultLatestOnly event_time")
+		}
+		valueFromLatestOnlyPath := resultLatestOnly[0][1]
+
+		// Scenario 2: Call get_index with from=latestEventTime, to=latestEventTime (SQL Path B - ranged)
+		resultLatestRanged, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
+			Platform:      platform,
+			StreamLocator: composedStreamLocator,
+			FromTime:      &latestEventTime,
+			ToTime:        &latestEventTime,
+			// BaseTime, FrozenAt, Height are implicitly nil/0 for this test's purpose
+		})
+		if !assert.NoError(t, err, "GetIndex (latest ranged) should not return an error") {
+			return errors.Wrap(err, "error in GetIndex (latest ranged)")
+		}
+
+		if !assert.Equal(t, 1, len(resultLatestRanged), "Expected 1 row for latest ranged path") {
+			return errors.New("assertion failed: resultLatestRanged row count")
+		}
+		if !assert.Equal(t, fmt.Sprintf("%d", latestEventTime), resultLatestRanged[0][0], "Expected event_time to be latest for latest ranged path") {
+			return errors.New("assertion failed: resultLatestRanged event_time")
+		}
+		valueFromLatestRangedPath := resultLatestRanged[0][1]
+
+		// Verify that the ranged path gives the known correct value for event_time 13 from testComplexComposedIndex
+		expectedValueFromRangedPath := "967.500000000000000000" // This is the value for event_time 13 in testComplexComposedIndex
+		assert.Equal(t, expectedValueFromRangedPath, valueFromLatestRangedPath,
+			"Value from 'ranged' path for event_time %d (%s) does not match expected value (%s) from full range test",
+			latestEventTime, valueFromLatestRangedPath, expectedValueFromRangedPath)
+
+		assert.Equal(t, valueFromLatestOnlyPath, valueFromLatestRangedPath,
+			"Values for latest event_time (%d) should differ. 'Latest only' path gave '%s', 'ranged' path gave '%s'. This demonstrates the inconsistency.",
+			latestEventTime, valueFromLatestOnlyPath, valueFromLatestRangedPath)
 
 		return nil
 	}
