@@ -1152,13 +1152,19 @@ CREATE OR REPLACE ACTION list_streams(
     if $limit > 5000 {
         ERROR('Limit exceeds maximum allowed value of 5000');
     }
-    if $limit IS NULL OR $limit = 0 {
+    if $limit IS NULL {
         $limit := 5000;
     }
-    if $offset IS NULL OR $offset = 0 {
+    if $limit == 0 {
+        $limit := 5000;
+    }
+    if $offset IS NULL {
         $offset := 0;
     }
-    if $order_by IS NULL OR $order_by = '' {
+    if $order_by IS NULL {
+        $order_by := 'created_at DESC';
+    }
+    if $order_by == '' {
         $order_by := 'created_at DESC';
     }
 

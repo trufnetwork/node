@@ -29,10 +29,11 @@ CREATE OR REPLACE ACTION insert_taxonomy(
     -- Determine the number of child records provided.
     $num_children := array_length($child_stream_ids);
 
+    if $num_children IS NULL {
+       $num_children := 0;
+    }
     -- Validate that all child arrays have the same length.
-    if $num_children IS NULL OR $num_children == 0 OR
-    $num_children != array_length($child_data_providers) OR
-    $num_children != array_length($weights) {
+    if $num_children == 0 OR $num_children != array_length($child_data_providers) OR $num_children != array_length($weights) {
         error('All child arrays must be of the same length');
     }
 
