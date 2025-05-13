@@ -307,17 +307,29 @@ RETURNS TABLE(
         ERROR('Not allowed to compose stream');
     }
 
-    -- for historical consistency, if both from and to are omitted, return the latest record
-    if $from IS NULL AND $to IS NULL {
-        $base_value := internal_get_base_value($data_provider, $stream_id, $effective_base_time, $effective_frozen_at);
-        for $row in get_last_record_composed($data_provider, $stream_id, NULL, $effective_frozen_at) {
-            $indexed_value NUMERIC(36,18) := ($row.value * 100::NUMERIC(36,18)) / $base_value;
-            RETURN NEXT $row.event_time, $indexed_value;
+    -- If both $from and $to are NULL, we find the latest event time
+    -- and set $effective_from and $effective_to to this single point.
+    IF $from IS NULL AND $to IS NULL {
+        $actual_latest_event_time INT8;
+        $found_latest_event BOOLEAN := FALSE;
+
+        FOR $last_record_row IN get_last_record_composed($data_provider, $stream_id, NULL, $effective_frozen_at) {
+            $actual_latest_event_time := $last_record_row.event_time;
+            $found_latest_event := TRUE;
+            BREAK;
         }
-        RETURN;
+
+        IF $found_latest_event {
+            $effective_from := $actual_latest_event_time; -- Override
+            $effective_to   := $actual_latest_event_time; -- Override
+        } ELSE {
+            -- No records found in the composed stream, so return empty.
+            RETURN;
+        }
     }
-
-
+    -- If $from and/or $to were provided, $effective_from and $effective_to retain their initial COALESCEd values.
+    -- All paths now proceed to the main CTE logic using the (potentially overridden) $effective_from and $effective_to.
+    
     -- For detailed explanations of the CTEs below (hierarchy, primitive_weights,
     -- cleaned_event_times, initial_primitive_states, primitive_events_in_interval,
     -- all_primitive_points, first_value_times, effective_weight_changes, unified_events),
