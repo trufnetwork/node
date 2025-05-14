@@ -80,6 +80,19 @@ task devnet:start # For the full 2-node devnet with gateway and indexer
 
 Accessing the nodes from gateway will be default to `http://localhost:443` and accessing the indexer will be default to `http://localhost:1337/v0/swagger`.
 
+#### (Optional) Download the Indexer
+
+If you plan to use the indexer when running
+```shell
+task devnet:start
+```
+you must first grab the binary release of the kwil-indexer binary:
+1. Download the appropriate archive for your platform from
+https://github.com/trufnetwork/indexer/releases
+2. Extract it into your .build/ folder
+
+> Note: For local development and testing you can use the “all-zeros” private key: 0000000000000000000000000000000000000000000000000000000000000001
+
 #### Build and Run the TN-DB without Docker Compose
 
 Alternatively, you can build and run the TN-DB without Docker Compose.
