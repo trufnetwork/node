@@ -75,8 +75,10 @@ done
 
 # Download core tool
 download_tool kgw
+chmod +x ./.build/kgw
 
 # Optionally download indexer
 if [[ "$DOWNLOAD_INDEXER" == true ]]; then
     download_tool kwil-indexer
+    chmod +x ./.build/kwil-indexer
 fi
