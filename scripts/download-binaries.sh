@@ -40,10 +40,11 @@ download_binaries() {
     if [[ $? -eq 0 ]]; then
         echo "Binary downloaded successfully"
 
-        tar -xzvf kwild.tar.gz './kwild'
-        mkdir -p ./.build
-        mv ./kwild .build
-        rm "./kwil-db.tar.gz"
+         mkdir -p ./kwild
+         tar -xzvf kwild.tar.gz -C ./kwild
+         mkdir -p ./.build
+         mv ./kwild .build
+         rm ./kwild.tar.gz
 
         chmod +x ./.build/kwild
     else
