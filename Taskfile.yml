@@ -79,7 +79,7 @@ tasks:
   host:kwild:start:
     desc: Run kwild server
     cmds:
-      - .build/kwild/kwild start --autogen
+      - .build/kwild start --autogen
 
   host:kwild:clean:
     desc: Clean kwild server

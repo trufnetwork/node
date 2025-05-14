@@ -40,13 +40,10 @@ download_binaries() {
     if [[ $? -eq 0 ]]; then
         echo "Binary downloaded successfully"
 
-         mkdir -p ./kwild
-         tar -xzvf kwild.tar.gz -C ./kwild
-         mkdir -p ./.build
-         mv ./kwild .build
+         tar -xzvf kwild.tar.gz -C ./.build
          rm ./kwild.tar.gz
 
-        chmod +x ./.build/kwild
+        chmod +x ./.build
     else
         echo "Failed to download binary"
         exit 1
