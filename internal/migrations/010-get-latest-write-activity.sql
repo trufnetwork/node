@@ -6,7 +6,10 @@ CREATE OR REPLACE ACTION get_last_transactions(
     method     TEXT
 ) {
     $data_provider := LOWER($data_provider);
-    IF $limit_size IS NULL OR $limit_size <= 0 {
+    IF $limit_size IS NULL {
+        $limit_size := 6;
+    }
+    IF $limit_size <= 0 {
         $limit_size := 6;
     }
 

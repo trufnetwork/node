@@ -25,7 +25,7 @@ vars:
   DEVNET_OBSERVER_FILES:
     - deployments/observer/dev-observer-compose.yml
 
-  BINARIES: [ kwild, kwil-cli ] 
+  BINARIES: [ kwild, kwil-cli ]
 
 
 tasks:
@@ -123,7 +123,7 @@ tasks:
     deps: [ single:env, build:binaries ]
     cmds:
       - task: _compose
-        vars: 
+        vars:
           ACTION: up -d
           FILES: { ref: .SINGLE_STACK_FILES }
     
@@ -300,4 +300,4 @@ tasks:
     desc: Run the migration action for all SQL files in a local network
     cmds:
       - task: action:migrate
-        vars: { PRIVATE_KEY: 0000000000000000000000000000000000000000000000000000000000000001, PROVIDER: http://localhost:8484 }
+        vars: { PRIVATE_KEY: "0000000000000000000000000000000000000000000000000000000000000001", PROVIDER: http://localhost:8484 }
