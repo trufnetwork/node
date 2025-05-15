@@ -117,15 +117,15 @@ tasks:
       DB_OWNER: "{{.DEV_DB_OWNER}}"
       CHAIN_ID: "{{.DEV_CHAIN_ID}}"
     requires: { vars: [ DEV_DB_OWNER, DEV_CHAIN_ID ] }
-  
+
   single:start:
     desc: Run docker-compose locally (single node stack)
     deps: [ single:env, build:binaries ]
+    env:
+      DB_OWNER: "{{.DEV_DB_OWNER}}"
+      CHAIN_ID: "{{.DEV_CHAIN_ID}}"
     cmds:
-      - task: _compose
-        vars:
-          ACTION: up -d
-          FILES: { ref: .SINGLE_STACK_FILES }
+      - sh -c 'docker compose -f compose.yaml up -d'
     
   single:stop:
     desc: Shutdown single node environment

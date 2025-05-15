@@ -105,7 +105,9 @@ func WithQueryTestSetup(testFn func(ctx context.Context, platform *kwilTesting.P
 			| 3          | 4     |
 			| 4          | 5     |
 			| 5          | 3     |
+			| 6          | 0     |
 			`,
+			//	Note: 0 value should be ignored
 		})
 		if err != nil {
 			return errors.Wrap(err, "error setting up primitive stream")

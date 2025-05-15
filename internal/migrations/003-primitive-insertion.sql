@@ -25,6 +25,11 @@ CREATE OR REPLACE ACTION insert_record(
         ERROR('stream is not a primitive stream');
     }
 
+    -- Skip insertion if value is 0
+    if $value == 0::NUMERIC(36,18) {
+        RETURN;
+    }
+
     $current_block INT := @height;
 
     -- Insert the new record into the primitive_events table
@@ -99,6 +104,7 @@ CREATE OR REPLACE ACTION insert_records(
             record_arrays.values_array[idx] AS value
         FROM indexes
         JOIN record_arrays ON 1=1
+        WHERE record_arrays.values_array[idx] != 0::NUMERIC(36,18)
     )
     INSERT INTO primitive_events (stream_id, data_provider, event_time, value, created_at, truflation_created_at)
     SELECT 
