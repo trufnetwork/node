@@ -17,6 +17,7 @@ services:
       DOMAIN: https://${DOMAIN:?}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS}
       XFF_TRUST_PROXY_COUNT: ${XFF_TRUST_PROXY_COUNT:-}
+      ALLOW_ADHOC_QUERY: ${ALLOW_ADHOC_QUERY:-true}
       EXTRA_ARGS: "--allow-chain-rpcs"
     volumes:
       - type: bind

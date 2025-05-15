@@ -33,6 +33,7 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: "vector:4317"
       META_LOG_OTEL_COLLECTOR_TLS: "false"
       EXTRA_ARGS: "--allow-chain-rpcs"
+      ALLOW_ADHOC_QUERY: ${ALLOW_ADHOC_QUERY:-true}
     logging:
       driver: "json-file"
       options:
