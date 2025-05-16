@@ -56,7 +56,7 @@ func setupComposedAndPrimitives(ctx context.Context, input SetupComposedAndPrimi
 
 	// Deploy and initialize primitive streams
 	for _, primitiveStream := range input.PrimitiveStreamsWithData {
-		if err := setupPrimitive(ctx, SetupPrimitiveInput{
+		if err := SetupPrimitive(ctx, SetupPrimitiveInput{
 			Platform:                input.Platform,
 			Height:                  input.Height,
 			PrimitiveStreamWithData: primitiveStream,

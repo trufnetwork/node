@@ -481,11 +481,19 @@ RETURNS TABLE(
     final_deltas AS ( -- Renamed from new_final_deltas to match original naming convention
         SELECT
             event_time,
-            SUM((delta_value * weight_before_event) + (weight_delta * value_before_event))::numeric(72, 18) AS delta_ws,
+            SUM(
+                (delta_value * weight_before_event) +
+                (value_before_event * weight_delta) +
+                (delta_value * weight_delta)
+            )::numeric(72, 18) AS delta_ws,
             SUM(weight_delta)::numeric(36, 18) AS delta_sw
         FROM primitive_state_timeline
         GROUP BY event_time
-        HAVING SUM((delta_value * weight_before_event) + (weight_delta * value_before_event))::numeric(72, 18) != 0::numeric(72, 18)
+        HAVING SUM(
+                (delta_value * weight_before_event) +
+                (value_before_event * weight_delta) +
+                (delta_value * weight_delta)
+            )::numeric(72, 18) != 0::numeric(72, 18)
             OR SUM(weight_delta)::numeric(36, 18) != 0::numeric(36, 18) -- Keep if either delta is non-zero
     ),
 

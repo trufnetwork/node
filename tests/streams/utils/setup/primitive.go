@@ -41,7 +41,7 @@ type SetupPrimitiveInput struct {
 	PrimitiveStreamWithData PrimitiveStreamWithData
 }
 
-func setupPrimitive(ctx context.Context, setupInput SetupPrimitiveInput) error {
+func SetupPrimitive(ctx context.Context, setupInput SetupPrimitiveInput) error {
 	deployer, err := util.NewEthereumAddressFromBytes(setupInput.Platform.Deployer)
 	if err != nil {
 		return errors.Wrap(err, "error in setupPrimitive")
@@ -130,9 +130,6 @@ func parsePrimitiveMarkdownSetup(input MarkdownPrimitiveSetupInput) (SetupPrimit
 		if err != nil {
 			return SetupPrimitiveInput{}, err
 		}
-		if err != nil {
-			return SetupPrimitiveInput{}, err
-		}
 		primitiveStream.Data = append(primitiveStream.Data, InsertRecordInput{
 			EventTime: eventTimeInt,
 			Value:     valueFloat,
@@ -151,7 +148,7 @@ func SetupPrimitiveFromMarkdown(ctx context.Context, input MarkdownPrimitiveSetu
 	if err != nil {
 		return err
 	}
-	return setupPrimitive(ctx, setup)
+	return SetupPrimitive(ctx, setup)
 }
 
 type InsertMarkdownDataInput struct {

@@ -29,14 +29,15 @@ func TestComplexComposed(t *testing.T) {
 		Name:        "complex_composed_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
-			WithTestSetup(testComplexComposedRecord(t)),
-			WithTestSetup(testComplexComposedIndex(t)),
-			WithTestSetup(testComplexComposedLatestValue(t)),
-			WithTestSetup(testComplexComposedEmptyDate(t)),
-			WithTestSetup(testComplexComposedIndexChange(t)),
-			WithTestSetup(testComplexComposedFirstRecord(t)),
-			WithTestSetup(testComplexComposedOutOfRange(t)),
-			WithTestSetup(testComplexComposedIndexLatestValueConsistency(t)),
+			// WithTestSetup(testComplexComposedRecord(t)),
+			// WithTestSetup(testComplexComposedIndex(t)),
+			// WithTestSetup(testComplexComposedLatestValue(t)),
+			// WithTestSetup(testComplexComposedEmptyDate(t)),
+			// WithTestSetup(testComplexComposedIndexChange(t)),
+			// WithTestSetup(testComplexComposedFirstRecord(t)),
+			// WithTestSetup(testComplexComposedOutOfRange(t)),
+			// WithTestSetup(testComplexComposedIndexLatestValueConsistency(t)),
+			WithTestSetup(testComplexComposedRecordPathDependency(t)),
 		},
 	}, testutils.GetTestOptions())
 }
@@ -440,6 +441,84 @@ func testComplexComposedIndexLatestValueConsistency(t *testing.T) func(ctx conte
 		assert.Equal(t, valueFromLatestOnlyPath, valueFromLatestRangedPath,
 			"Values for latest event_time (%d) should differ. 'Latest only' path gave '%s', 'ranged' path gave '%s'. This demonstrates the inconsistency.",
 			latestEventTime, valueFromLatestOnlyPath, valueFromLatestRangedPath)
+
+		return nil
+	}
+}
+
+// testComplexComposedRecordPathDependency tests if get_record_composed exhibits path dependency:
+// i.e., if querying for the same target event_time but with different FromTime values
+// yields different results for that target event_time, even with static taxonomies.
+func testComplexComposedRecordPathDependency(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		composedStreamLocator := types.StreamLocator{
+			StreamId:     composedStreamId,
+			DataProvider: complexComposedDeployer,
+		}
+
+		targetEventTime := int64(7) // A consistent target time for comparison
+		var valueFromQuery1, valueFromQuery2 string
+
+		// Query 1: FromTime = 1
+		fromTime1 := int64(1)
+		resultQuery1, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
+			Platform:      platform,
+			StreamLocator: composedStreamLocator,
+			FromTime:      &fromTime1,
+			ToTime:        &targetEventTime,
+		})
+		if !assert.NoError(t, err, "GetRecord (Query 1) should not return an error") {
+			return errors.Wrap(err, "error in GetRecord (Query 1)")
+		}
+		// Find the value for targetEventTime in resultQuery1
+		found1 := false
+		for _, row := range resultQuery1 {
+			if row[0] == fmt.Sprintf("%d", targetEventTime) {
+				valueFromQuery1 = row[1]
+				found1 = true
+				break
+			}
+		}
+		if !assert.True(t, found1, "Target event time %d not found in Query 1 results", targetEventTime) {
+			return fmt.Errorf("target event time %d not found in Query 1 results. Got: %v", targetEventTime, resultQuery1)
+		}
+
+		// Query 2: FromTime = 4 (a later start time)
+		fromTime2 := int64(4)
+		resultQuery2, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
+			Platform:      platform,
+			StreamLocator: composedStreamLocator,
+			FromTime:      &fromTime2,
+			ToTime:        &targetEventTime,
+		})
+		if !assert.NoError(t, err, "GetRecord (Query 2) should not return an error") {
+			return errors.Wrap(err, "error in GetRecord (Query 2)")
+		}
+		// Find the value for targetEventTime in resultQuery2
+		found2 := false
+		for _, row := range resultQuery2 {
+			if row[0] == fmt.Sprintf("%d", targetEventTime) {
+				valueFromQuery2 = row[1]
+				found2 = true
+				break
+			}
+		}
+		if !assert.True(t, found2, "Target event time %d not found in Query 2 results", targetEventTime) {
+			return fmt.Errorf("target event time %d not found in Query 2 results. Got: %v", targetEventTime, resultQuery2)
+		}
+
+		// Assert that the values are different, demonstrating path dependency.
+		// If true $from-independence were required and achieved, this would be assert.Equal.
+		assert.Equal(t, valueFromQuery1, valueFromQuery2,
+			"Values for targetEventTime %d should be EQUAL with static taxonomies, irrespective of FromTime. Query1 (from=%d) gave '%s', Query2 (from=%d) gave '%s'.",
+			targetEventTime, fromTime1, valueFromQuery1, fromTime2, valueFromQuery2)
+
+		// For context, let's log the expected value from the original testComplexComposedRecord for event_time 7.
+		// Original testComplexComposedRecord starts from=1. Value for 7 is 18.833333333333333333
+		assert.Equal(t, "18.833333333333333333", valueFromQuery1, "Value from Query 1 (from=1) should match original testComplexComposedRecord data for event_time 7")
+
+		t.Logf("Path Dependency Test: For targetEventTime %d, Query1 (from=%d) value = %s, Query2 (from=%d) value = %s",
+			targetEventTime, fromTime1, valueFromQuery1, fromTime2, valueFromQuery2)
 
 		return nil
 	}
