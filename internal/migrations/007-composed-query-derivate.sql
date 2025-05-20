@@ -436,10 +436,16 @@ RETURNS TABLE(
           )
     ),
 
-    primitive_weights AS (
+    /*----------------------------------------------------------------------
+     * HIERARCHY_PRIMITIVE_PATHS CTE: Filters the hierarchy to find paths ending in leaf nodes (primitives).
+     *
+     * Purpose: Identifies all paths from the root composed stream to any contributing
+     * primitive stream, along with the raw weight and validity interval for that specific path.
+     *--------------------------------------------------------------------*/
+    hierarchy_primitive_paths AS (
       SELECT
-          h.child_data_provider AS data_provider,
-          h.child_stream_id     AS stream_id,
+          h.child_data_provider, -- This is the primitive's data_provider
+          h.child_stream_id,   -- This is the primitive's stream_id
           h.raw_weight,
           h.group_sequence_start,
           h.group_sequence_end
@@ -448,8 +454,19 @@ RETURNS TABLE(
           SELECT 1 FROM streams s
           WHERE s.data_provider = h.child_data_provider
             AND s.stream_id     = h.child_stream_id
-            AND s.stream_type   = 'primitive'
+            AND s.stream_type   = 'primitive' -- Ensure it's a primitive
       )
+    ),
+
+    primitive_weights AS (
+      SELECT
+          hpp.child_data_provider AS data_provider,
+          hpp.child_stream_id     AS stream_id,
+          SUM(hpp.raw_weight)::NUMERIC(36,18) AS raw_weight,
+          MIN(hpp.group_sequence_start) AS group_sequence_start,
+          MAX(hpp.group_sequence_end) AS group_sequence_end
+      FROM hierarchy_primitive_paths hpp
+      GROUP BY hpp.child_data_provider, hpp.child_stream_id
     ),
 
     cleaned_event_times AS (
@@ -839,7 +856,7 @@ RETURNS TABLE(
 CREATE OR REPLACE ACTION internal_get_base_value(
     $data_provider TEXT,
     $stream_id     TEXT,
-    $effective_base_time     INT8,   -- already pre-resolved “effective base time”
+    $effective_base_time     INT8,   -- already pre-resolved "effective base time"
     $effective_frozen_at     INT8    -- created_at cutoff (can be NULL ⇢ infinity)
 ) PRIVATE VIEW RETURNS (NUMERIC(36,18)) {
     -- doesn't check for access control, as it's private and not responsible for

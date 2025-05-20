@@ -219,28 +219,47 @@ RETURNS TABLE(
     ),
 
     /*----------------------------------------------------------------------
-     * PRIMITIVE_WEIGHTS CTE: Filters the hierarchy to find leaf nodes (primitives).
+     * HIERARCHY_PRIMITIVE_PATHS CTE: Filters the hierarchy to find paths ending in leaf nodes (primitives).
      *
-     * Purpose: Extracts the final effective weight and validity interval for each
-     * primitive stream that contributes to the composed result. A primitive may appear
-     * multiple times if its effective weight changes due to taxonomy updates higher
-     * up the tree.
+     * Purpose: Identifies all paths from the root composed stream to any contributing
+     * primitive stream, along with the raw weight and validity interval for that specific path.
      *--------------------------------------------------------------------*/
-    primitive_weights AS (
+    hierarchy_primitive_paths AS (
       SELECT
-          h.child_data_provider AS data_provider,
-          h.child_stream_id     AS stream_id,
+          h.child_data_provider, -- This is the primitive's data_provider
+          h.child_stream_id,   -- This is the primitive's stream_id
           h.raw_weight,
           h.group_sequence_start,
           h.group_sequence_end
       FROM hierarchy h
-      -- Join with streams table to identify primitives
       WHERE EXISTS (
           SELECT 1 FROM streams s
           WHERE s.data_provider = h.child_data_provider
             AND s.stream_id     = h.child_stream_id
-            AND s.stream_type   = 'primitive'
+            AND s.stream_type   = 'primitive' -- Ensure it's a primitive
       )
+    ),
+
+    /*----------------------------------------------------------------------
+     * PRIMITIVE_WEIGHTS CTE: Collapses multiple paths to the same primitive and aggregates their weights.
+     *
+     * Purpose: Ensures each primitive stream is represented once in subsequent calculations.
+     * If a primitive is reachable via multiple taxonomy paths, its `raw_weight`
+     * from those paths are summed, and its effective `group_sequence_start` and
+     * `group_sequence_end` are taken as the minimum and maximum respectively,
+     * creating a single combined representation for the primitive's contribution.
+     * This addresses potential double-counting of a shared primitive's data by
+     * unifying its influence before further processing, as per fix for "double-counting of shared primitive streams".
+     *--------------------------------------------------------------------*/
+    primitive_weights AS (
+      SELECT
+          hpp.child_data_provider AS data_provider,
+          hpp.child_stream_id     AS stream_id,
+          SUM(hpp.raw_weight)::NUMERIC(36,18) AS raw_weight,
+          MIN(hpp.group_sequence_start) AS group_sequence_start,
+          MAX(hpp.group_sequence_end) AS group_sequence_end
+      FROM hierarchy_primitive_paths hpp
+      GROUP BY hpp.child_data_provider, hpp.child_stream_id
     ),
 
     /*----------------------------------------------------------------------
@@ -481,19 +500,11 @@ RETURNS TABLE(
     final_deltas AS ( -- Renamed from new_final_deltas to match original naming convention
         SELECT
             event_time,
-            SUM(
-                (delta_value * weight_before_event) +
-                (value_before_event * weight_delta) +
-                (delta_value * weight_delta)
-            )::numeric(72, 18) AS delta_ws,
+            SUM((delta_value * weight_before_event) + (weight_delta * value_before_event))::numeric(72, 18) AS delta_ws,
             SUM(weight_delta)::numeric(36, 18) AS delta_sw
         FROM primitive_state_timeline
         GROUP BY event_time
-        HAVING SUM(
-                (delta_value * weight_before_event) +
-                (value_before_event * weight_delta) +
-                (delta_value * weight_delta)
-            )::numeric(72, 18) != 0::numeric(72, 18)
+        HAVING SUM((delta_value * weight_before_event) + (weight_delta * value_before_event))::numeric(72, 18) != 0::numeric(72, 18)
             OR SUM(weight_delta)::numeric(36, 18) != 0::numeric(36, 18) -- Keep if either delta is non-zero
     ),
 
