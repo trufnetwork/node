@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"testing"
+
 	"github.com/cockroachdb/apd/v3"
 	"github.com/kwilteam/kwil-db/common"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
@@ -44,7 +46,9 @@ func generateRecords(rangeParams RangeParameters) []setup.InsertRecordInput {
 
 // executeStreamProcedure executes a procedure on the given platform and database.
 // It handles the common setup for procedure execution, including transaction data.
-func executeStreamProcedure(ctx context.Context, platform *kwilTesting.Platform, procedure string, args []any, signer []byte) ([]common.Row, error) {
+func executeStreamProcedure(ctx context.Context, platform *kwilTesting.Platform, logger *testing.T, procedure string, args []any, signer []byte) ([]common.Row, error) {
+	LogPhaseEnter(logger, "executeStreamProcedure", "Procedure: %s, Signer: %s", procedure, BytesToHex(signer))
+	defer LogPhaseExit(logger, time.Now(), "executeStreamProcedure", "Procedure: %s", procedure)
 	txContext := &common.TxContext{
 		Ctx:          ctx,
 		BlockContext: &common.BlockContext{Height: 0},
@@ -70,6 +74,12 @@ func executeStreamProcedure(ctx context.Context, platform *kwilTesting.Platform,
 		return nil, errors.Wrap(call.Error, "failed to execute stream procedure")
 	}
 	return rows, nil
+}
+
+// BytesToHex is a simple utility to convert byte slice to hex string for logging.
+// Added here as it's a small helper often useful in logging byte arrays like signers/addresses.
+func BytesToHex(b []byte) string {
+	return fmt.Sprintf("0x%x", b)
 }
 
 // printResults outputs the benchmark results in a human-readable format.
