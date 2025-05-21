@@ -47,7 +47,7 @@ func generateRecords(rangeParams RangeParameters) []setup.InsertRecordInput {
 // executeStreamProcedure executes a procedure on the given platform and database.
 // It handles the common setup for procedure execution, including transaction data.
 func executeStreamProcedure(ctx context.Context, platform *kwilTesting.Platform, logger *testing.T, procedure string, args []any, signer []byte) ([]common.Row, error) {
-	LogPhaseEnter(logger, "executeStreamProcedure", "Procedure: %s, Signer: %s", procedure, BytesToHex(signer))
+	LogPhaseEnter(logger, "executeStreamProcedure", "Procedure: %s, Signer: %s, Args: %v", procedure, BytesToHex(signer), args)
 	defer LogPhaseExit(logger, time.Now(), "executeStreamProcedure", "Procedure: %s", procedure)
 	txContext := &common.TxContext{
 		Ctx:          ctx,
@@ -71,7 +71,14 @@ func executeStreamProcedure(ctx context.Context, platform *kwilTesting.Platform,
 		return nil, errors.Wrap(err, "failed to execute stream procedure")
 	}
 	if call.Error != nil {
+		// Log the specific call error, even if rows are also empty
+		LogInfo(logger, "[ERROR] executeStreamProcedure - Call Error: %v (Procedure: %s, Args: %v)", call.Error, procedure, args)
 		return nil, errors.Wrap(call.Error, "failed to execute stream procedure")
+	}
+
+	// Log if no rows are returned, this is not necessarily an error from Engine.Call but benchmark treats it as such
+	if len(rows) == 0 {
+		LogInfo(logger, "executeStreamProcedure - No rows returned (Procedure: %s, Args: %v, CallErrorFromEngine: %v, ErrFromEngineCallWrapper: %v)", procedure, args, call.Error, err)
 	}
 	return rows, nil
 }

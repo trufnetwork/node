@@ -79,6 +79,12 @@ func NewTree(input NewTreeInput) Tree {
 }
 
 func CalculateTreeDepth(qtyStreams, branchingFactor int) int {
+	if qtyStreams <= 1 {
+		return 0
+	}
+	if branchingFactor == 1 {
+		return qtyStreams - 1
+	}
 	return int(math.Ceil(math.Log(float64(qtyStreams)) / math.Log(float64(branchingFactor))))
 }
 
