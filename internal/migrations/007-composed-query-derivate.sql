@@ -307,17 +307,29 @@ RETURNS TABLE(
         ERROR('Not allowed to compose stream');
     }
 
-    -- for historical consistency, if both from and to are omitted, return the latest record
-    if $from IS NULL AND $to IS NULL {
-        $base_value := internal_get_base_value($data_provider, $stream_id, $effective_base_time, $effective_frozen_at);
-        for $row in get_last_record_composed($data_provider, $stream_id, NULL, $effective_frozen_at) {
-            $indexed_value NUMERIC(36,18) := ($row.value * 100::NUMERIC(36,18)) / $base_value;
-            RETURN NEXT $row.event_time, $indexed_value;
+    -- If both $from and $to are NULL, we find the latest event time
+    -- and set $effective_from and $effective_to to this single point.
+    IF $from IS NULL AND $to IS NULL {
+        $actual_latest_event_time INT8;
+        $found_latest_event BOOLEAN := FALSE;
+
+        FOR $last_record_row IN get_last_record_composed($data_provider, $stream_id, NULL, $effective_frozen_at) {
+            $actual_latest_event_time := $last_record_row.event_time;
+            $found_latest_event := TRUE;
+            BREAK;
         }
-        RETURN;
+
+        IF $found_latest_event {
+            $effective_from := $actual_latest_event_time; -- Override
+            $effective_to   := $actual_latest_event_time; -- Override
+        } ELSE {
+            -- No records found in the composed stream, so return empty.
+            RETURN;
+        }
     }
-
-
+    -- If $from and/or $to were provided, $effective_from and $effective_to retain their initial COALESCEd values.
+    -- All paths now proceed to the main CTE logic using the (potentially overridden) $effective_from and $effective_to.
+    
     -- For detailed explanations of the CTEs below (hierarchy, primitive_weights,
     -- cleaned_event_times, initial_primitive_states, primitive_events_in_interval,
     -- all_primitive_points, first_value_times, effective_weight_changes, unified_events),
@@ -325,119 +337,166 @@ RETURNS TABLE(
     -- in 006-composed-query.sql. The logic is largely identical.
 
     RETURN WITH RECURSIVE
+    /*----------------------------------------------------------------------
+     * PARENT_DISTINCT_START_TIMES CTE:
+     * (Copied from 006-composed-query.sql)
+     *---------------------------------------------------------------------*/
+    parent_distinct_start_times AS (
+        SELECT DISTINCT
+            data_provider AS parent_dp,
+            stream_id AS parent_sid,
+            start_time
+        FROM taxonomies
+        WHERE disabled_at IS NULL
+    ),
+
+    /*----------------------------------------------------------------------
+     * PARENT_NEXT_STARTS CTE:
+     * (Copied from 006-composed-query.sql)
+     *---------------------------------------------------------------------*/
+    parent_next_starts AS (
+        SELECT
+            parent_dp,
+            parent_sid,
+            start_time,
+            LEAD(start_time) OVER (PARTITION BY parent_dp, parent_sid ORDER BY start_time) as next_start_time
+        FROM parent_distinct_start_times
+    ),
+
+    /*----------------------------------------------------------------------
+     * TAXONOMY_TRUE_SEGMENTS CTE:
+     * (Copied from 006-composed-query.sql)
+     *---------------------------------------------------------------------*/
+    taxonomy_true_segments AS (
+        SELECT
+            t.parent_dp,
+            t.parent_sid,
+            t.child_dp,
+            t.child_sid,
+            t.weight_for_segment,
+            t.segment_start,
+            COALESCE(pns.next_start_time, $max_int8) - 1 AS segment_end
+        FROM (
+            SELECT
+                tx.data_provider AS parent_dp,
+                tx.stream_id AS parent_sid,
+                tx.child_data_provider AS child_dp,
+                tx.child_stream_id AS child_sid,
+                tx.weight AS weight_for_segment,
+                tx.start_time AS segment_start
+            FROM taxonomies tx
+            JOIN (
+                SELECT
+                    data_provider, stream_id, start_time,
+                    MAX(group_sequence) as max_gs
+                FROM taxonomies
+                WHERE disabled_at IS NULL
+                GROUP BY data_provider, stream_id, start_time
+            ) max_gs_filter
+            ON tx.data_provider = max_gs_filter.data_provider
+           AND tx.stream_id = max_gs_filter.stream_id
+           AND tx.start_time = max_gs_filter.start_time
+           AND tx.group_sequence = max_gs_filter.max_gs
+            WHERE tx.disabled_at IS NULL
+        ) t
+        JOIN parent_next_starts pns
+          ON t.parent_dp = pns.parent_dp
+         AND t.parent_sid = pns.parent_sid
+         AND t.segment_start = pns.start_time
+    ),
+
+    /*----------------------------------------------------------------------
+     * HIERARCHY CTE: Recursively resolves the dependency tree.
+     * (Copied and adapted from 006-composed-query.sql)
+     *---------------------------------------------------------------------*/
     hierarchy AS (
+      -- Base Case: Direct children of the root composed stream.
       SELECT
-          t1.data_provider AS parent_data_provider,
-          t1.stream_id AS parent_stream_id,
-          t1.child_data_provider,
-          t1.child_stream_id,
-          t1.weight AS raw_weight,
-          t1.start_time AS group_sequence_start,
-          COALESCE(ot.next_start, $max_int8) - 1 AS group_sequence_end
-      FROM
-          taxonomies t1
-      LEFT JOIN taxonomies t2
-        ON t1.data_provider = t2.data_provider
-       AND t1.stream_id = t2.stream_id
-       AND t1.start_time = t2.start_time
-       AND t1.group_sequence < t2.group_sequence
-       AND t2.disabled_at IS NULL
-      JOIN (
-          SELECT
-              dt.data_provider, dt.stream_id, dt.start_time,
-              LEAD(dt.start_time) OVER (PARTITION BY dt.data_provider, dt.stream_id ORDER BY dt.start_time) AS next_start
-          FROM ( SELECT DISTINCT t_ot.data_provider, t_ot.stream_id, t_ot.start_time FROM taxonomies t_ot
-                 WHERE t_ot.data_provider = $data_provider AND t_ot.stream_id = $stream_id AND t_ot.disabled_at IS NULL AND t_ot.start_time <= $effective_to
-                 AND t_ot.start_time >= COALESCE((SELECT t2_anchor.start_time FROM taxonomies t2_anchor WHERE t2_anchor.data_provider=t_ot.data_provider AND t2_anchor.stream_id=t_ot.stream_id AND t2_anchor.disabled_at IS NULL AND t2_anchor.start_time<=$effective_from ORDER BY t2_anchor.start_time DESC, t2_anchor.group_sequence DESC LIMIT 1),0)
-               ) dt
-      ) ot
-        ON t1.data_provider = ot.data_provider
-       AND t1.stream_id     = ot.stream_id
-       AND t1.start_time    = ot.start_time
-      WHERE
-          t1.data_provider = $data_provider
-      AND t1.stream_id     = $stream_id
-      AND t1.disabled_at   IS NULL
-      AND t2.group_sequence IS NULL
-      AND t1.start_time <= $effective_to
-      AND t1.start_time >= COALESCE(
-            (SELECT t_anchor_base.start_time
-             FROM taxonomies t_anchor_base
-             WHERE t_anchor_base.data_provider = t1.data_provider
-               AND t_anchor_base.stream_id     = t1.stream_id
-               AND t_anchor_base.disabled_at   IS NULL
-               AND t_anchor_base.start_time   <= $effective_from
-             ORDER BY t_anchor_base.start_time DESC, t_anchor_base.group_sequence DESC
-             LIMIT 1
-            ), 0
+          tts.parent_dp AS root_dp,
+          tts.parent_sid AS root_sid,
+          tts.child_dp AS descendant_dp,
+          tts.child_sid AS descendant_sid,
+          tts.weight_for_segment AS raw_weight,
+          tts.segment_start AS path_start,
+          tts.segment_end AS path_end,
+          1 AS level
+      FROM taxonomy_true_segments tts
+      WHERE tts.parent_dp = $data_provider AND tts.parent_sid = $stream_id
+        AND tts.segment_end >= (
+          COALESCE(
+              (SELECT t_anchor_base.start_time FROM taxonomies t_anchor_base
+               WHERE t_anchor_base.data_provider = $data_provider AND t_anchor_base.stream_id = $stream_id
+                 AND t_anchor_base.disabled_at IS NULL AND t_anchor_base.start_time <= $effective_from
+               ORDER BY t_anchor_base.start_time DESC, t_anchor_base.group_sequence DESC LIMIT 1),
+              0
           )
+        )
+        AND tts.segment_start <= $effective_to
 
       UNION ALL
 
+      -- Recursive Step: Children of the children found in the previous level.
       SELECT
-          parent.parent_data_provider,
-          parent.parent_stream_id,
-          t1_child.child_data_provider,
-          t1_child.child_stream_id,
-          (parent.raw_weight * t1_child.weight)::NUMERIC(36,18) AS raw_weight,
-          GREATEST(parent.group_sequence_start, t1_child.start_time) AS group_sequence_start,
-          LEAST(parent.group_sequence_end, (COALESCE(ot_child.next_start, $max_int8) - 1)) AS group_sequence_end
+          h.root_dp,
+          h.root_sid,
+          tts.child_dp AS descendant_dp,
+          tts.child_sid AS descendant_sid,
+          (h.raw_weight * tts.weight_for_segment)::NUMERIC(36,18) AS raw_weight,
+          GREATEST(h.path_start, tts.segment_start) AS path_start,
+          LEAST(h.path_end, tts.segment_end) AS path_end,
+          h.level + 1
       FROM
-          hierarchy parent
-      JOIN taxonomies t1_child
-        ON t1_child.data_provider = parent.child_data_provider
-       AND t1_child.stream_id     = parent.child_stream_id
-      LEFT JOIN taxonomies t2_child
-        ON t1_child.data_provider = t2_child.data_provider
-       AND t1_child.stream_id = t2_child.stream_id
-       AND t1_child.start_time = t2_child.start_time
-       AND t1_child.group_sequence < t2_child.group_sequence
-       AND t2_child.disabled_at IS NULL
-      JOIN (
-          SELECT
-              dt.data_provider, dt.stream_id, dt.start_time,
-              LEAD(dt.start_time) OVER ( PARTITION BY dt.data_provider, dt.stream_id ORDER BY dt.start_time ) AS next_start
-          FROM ( SELECT DISTINCT t_otc.data_provider, t_otc.stream_id, t_otc.start_time FROM taxonomies t_otc
-                 WHERE t_otc.disabled_at IS NULL AND t_otc.start_time <= $effective_to
-                 AND t_otc.start_time >= COALESCE((SELECT MIN(t2_min.start_time) FROM taxonomies t2_min WHERE t2_min.disabled_at IS NULL AND t2_min.start_time <= $effective_from), 0)
-               ) dt
-      ) ot_child
-        ON t1_child.data_provider = ot_child.data_provider
-       AND t1_child.stream_id     = ot_child.stream_id
-       AND t1_child.start_time    = ot_child.start_time
+          hierarchy h
+      JOIN taxonomy_true_segments tts
+          ON h.descendant_dp = tts.parent_dp AND h.descendant_sid = tts.parent_sid
       WHERE
-          t1_child.disabled_at IS NULL
-      AND t2_child.group_sequence IS NULL
-      AND t1_child.start_time <= parent.group_sequence_end
-      AND (COALESCE(ot_child.next_start, $max_int8) - 1) >= parent.group_sequence_start
-      AND t1_child.start_time <= $effective_to
-      AND t1_child.start_time >= COALESCE(
-            (SELECT t_anchor_child.start_time
-             FROM taxonomies t_anchor_child
-             WHERE t_anchor_child.data_provider = t1_child.data_provider
-               AND t_anchor_child.stream_id     = t1_child.stream_id
-               AND t_anchor_child.disabled_at   IS NULL
-               AND t_anchor_child.start_time   <= $effective_from
-             ORDER BY t_anchor_child.start_time DESC, t_anchor_child.group_sequence DESC
-             LIMIT 1
-            ), 0
+          GREATEST(h.path_start, tts.segment_start) <= LEAST(h.path_end, tts.segment_end)
+          AND LEAST(h.path_end, tts.segment_end) >= (
+               COALESCE(
+                  (SELECT t_anchor_base.start_time FROM taxonomies t_anchor_base
+                   WHERE t_anchor_base.data_provider = $data_provider AND t_anchor_base.stream_id = $stream_id
+                     AND t_anchor_base.disabled_at IS NULL AND t_anchor_base.start_time <= $effective_from
+                   ORDER BY t_anchor_base.start_time DESC, t_anchor_base.group_sequence DESC LIMIT 1),
+                  0
+              )
           )
+          AND GREATEST(h.path_start, tts.segment_start) <= $effective_to
+          AND h.level < 10 -- Recursion depth limit
     ),
 
-    primitive_weights AS (
+    /*----------------------------------------------------------------------
+     * HIERARCHY_PRIMITIVE_PATHS CTE: Filters the hierarchy to find paths ending in leaf nodes (primitives).
+     * (Adapted to use new hierarchy CTE output)
+     *--------------------------------------------------------------------*/
+    hierarchy_primitive_paths AS (
       SELECT
-          h.child_data_provider AS data_provider,
-          h.child_stream_id     AS stream_id,
+          h.descendant_dp AS child_data_provider, -- Aliased from descendant_dp
+          h.descendant_sid AS child_stream_id,   -- Aliased from descendant_sid
           h.raw_weight,
-          h.group_sequence_start,
-          h.group_sequence_end
+          h.path_start AS group_sequence_start,    -- Aliased from path_start
+          h.path_end AS group_sequence_end        -- Aliased from path_end
       FROM hierarchy h
       WHERE EXISTS (
           SELECT 1 FROM streams s
-          WHERE s.data_provider = h.child_data_provider
-            AND s.stream_id     = h.child_stream_id
+          WHERE s.data_provider = h.descendant_dp -- Use descendant_dp for matching
+            AND s.stream_id     = h.descendant_sid  -- Use descendant_sid for matching
             AND s.stream_type   = 'primitive'
       )
+    ),
+
+    /*----------------------------------------------------------------------
+     * PRIMITIVE_WEIGHTS CTE: Passes through each distinct segment of a primitive's activity.
+     * (Modified to be a pass-through like in 006-composed-query.sql)
+     *--------------------------------------------------------------------*/
+    primitive_weights AS (
+      SELECT
+          hpp.child_data_provider AS data_provider, -- Keep original expected names
+          hpp.child_stream_id     AS stream_id,
+          hpp.raw_weight,
+          hpp.group_sequence_start,
+          hpp.group_sequence_end
+      FROM hierarchy_primitive_paths hpp
+      -- No GROUP BY, direct pass-through
     ),
 
     cleaned_event_times AS (
@@ -655,7 +714,8 @@ RETURNS TABLE(
             pec.stream_id,
             pec.event_time,
             pec.delta_indexed_value, -- Use delta_indexed_value here
-            0::numeric(36,18) AS weight_delta
+            0::numeric(36,18) AS weight_delta,
+            1 AS event_type_priority -- Value changes first
         FROM primitive_event_changes pec
 
         UNION ALL
@@ -665,7 +725,8 @@ RETURNS TABLE(
             ewc.stream_id,
             ewc.event_time,
             0::numeric(36,18) AS delta_indexed_value, -- Zero indexed value change for weight events
-            ewc.weight_delta
+            ewc.weight_delta,
+            2 AS event_type_priority -- Weight changes second
         FROM effective_weight_changes ewc
     ),
 
@@ -678,8 +739,8 @@ RETURNS TABLE(
             delta_indexed_value,
             weight_delta,
             -- Calculate indexed value and weight *before* this event
-            COALESCE(LAG(indexed_value_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time), 0::numeric(36,18)) as indexed_value_before_event,
-            COALESCE(LAG(weight_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time), 0::numeric(36,18)) as weight_before_event
+            COALESCE(LAG(indexed_value_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as indexed_value_before_event,
+            COALESCE(LAG(weight_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as weight_before_event
         FROM (
             SELECT
                 data_provider,
@@ -687,10 +748,11 @@ RETURNS TABLE(
                 event_time,
                 delta_indexed_value,
                 weight_delta,
+                event_type_priority, -- Select for ordering
                 -- Cumulative indexed value up to and including this event
-                (SUM(delta_indexed_value) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time))::numeric(36,18) as indexed_value_after_event,
+                (SUM(delta_indexed_value) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as indexed_value_after_event,
                 -- Cumulative weight up to and including this event
-                (SUM(weight_delta) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time))::numeric(36,18) as weight_after_event
+                (SUM(weight_delta) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as weight_after_event
             FROM unified_events
         ) state_calc
     ),
@@ -700,11 +762,19 @@ RETURNS TABLE(
         SELECT
             event_time,
             -- Calculate delta for the weighted sum numerator using indexed values
-            SUM((delta_indexed_value * weight_before_event) + (weight_delta * indexed_value_before_event))::numeric(72, 18) AS delta_ws_indexed,
+            SUM(
+                (delta_indexed_value * weight_before_event) +
+                (indexed_value_before_event * weight_delta) +
+                (delta_indexed_value * weight_delta) -- Added missing term for indexed calculation
+            )::numeric(72, 18) AS delta_ws_indexed,
             SUM(weight_delta)::numeric(36, 18) AS delta_sw
         FROM primitive_state_timeline
         GROUP BY event_time
-        HAVING SUM((delta_indexed_value * weight_before_event) + (weight_delta * indexed_value_before_event))::numeric(72, 18) != 0::numeric(72, 18)
+        HAVING SUM(
+                (delta_indexed_value * weight_before_event) +
+                (indexed_value_before_event * weight_delta) +
+                (delta_indexed_value * weight_delta)
+            )::numeric(72, 18) != 0::numeric(72, 18)
             OR SUM(weight_delta)::numeric(36, 18) != 0::numeric(36, 18)
     ),
 
@@ -827,7 +897,7 @@ RETURNS TABLE(
 CREATE OR REPLACE ACTION internal_get_base_value(
     $data_provider TEXT,
     $stream_id     TEXT,
-    $effective_base_time     INT8,   -- already pre-resolved “effective base time”
+    $effective_base_time     INT8,   -- already pre-resolved "effective base time"
     $effective_frozen_at     INT8    -- created_at cutoff (can be NULL ⇢ infinity)
 ) PRIVATE VIEW RETURNS (NUMERIC(36,18)) {
     -- doesn't check for access control, as it's private and not responsible for

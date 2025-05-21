@@ -3,9 +3,9 @@ package benchmark
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"strings"
+	"testing"
 	"time"
 
 	benchutil "github.com/trufnetwork/node/internal/benchmark/util"
@@ -19,10 +19,12 @@ import (
 	"github.com/trufnetwork/sdk-go/core/util"
 )
 
-func runBenchmark(ctx context.Context, platform *kwilTesting.Platform, c BenchmarkCase, tree trees.Tree) ([]Result, error) {
+func runBenchmark(ctx context.Context, platform *kwilTesting.Platform, logger *testing.T, c BenchmarkCase, tree trees.Tree) ([]Result, error) {
+	LogPhaseEnter(logger, "runBenchmark", "Case: %+v, TreeMaxDepth: %d", c, tree.MaxDepth)
+	defer LogPhaseExit(logger, time.Now(), "runBenchmark", "")
 	var results []Result
 
-	err := setupSchemas(ctx, platform, SetupSchemasInput{
+	err := setupSchemas(ctx, platform, logger, SetupSchemasInput{
 		BenchmarkCase: c,
 		Tree:          tree,
 	})
@@ -32,7 +34,7 @@ func runBenchmark(ctx context.Context, platform *kwilTesting.Platform, c Benchma
 
 	// Triggering the analyze command for the given tables makes the query planner
 	// more accurate and the query execution time more consistent. It makes sure to match a production environment.
-	err = updateQueryPlanner(ctx, platform, []string{"taxonomies", "streams", "primitive_events", "metadata"})
+	err = updateQueryPlanner(ctx, platform, logger, []string{"taxonomies", "streams", "primitive_events", "metadata"})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to update query planner")
 	}
@@ -41,6 +43,7 @@ func runBenchmark(ctx context.Context, platform *kwilTesting.Platform, c Benchma
 		for _, procedure := range c.Procedures {
 			result, err := runSingleTest(ctx, RunSingleTestInput{
 				Platform:   platform,
+				Logger:     logger,
 				Case:       c,
 				DataPoints: dataPoints,
 				Procedure:  procedure,
@@ -56,7 +59,9 @@ func runBenchmark(ctx context.Context, platform *kwilTesting.Platform, c Benchma
 	return results, nil
 }
 
-func updateQueryPlanner(ctx context.Context, platform *kwilTesting.Platform, tables []string) error {
+func updateQueryPlanner(ctx context.Context, platform *kwilTesting.Platform, logger *testing.T, tables []string) error {
+	LogPhaseEnter(logger, "updateQueryPlanner", "Tables: %v", tables)
+	defer LogPhaseExit(logger, time.Now(), "updateQueryPlanner", "")
 	full_qualified_tables := make([]string, len(tables))
 	for i, table := range tables {
 		// on main schema by default
@@ -70,6 +75,7 @@ func updateQueryPlanner(ctx context.Context, platform *kwilTesting.Platform, tab
 
 type RunSingleTestInput struct {
 	Platform   *kwilTesting.Platform
+	Logger     *testing.T
 	Case       BenchmarkCase
 	DataPoints int
 	Procedure  ProcedureEnum
@@ -78,6 +84,15 @@ type RunSingleTestInput struct {
 
 // runSingleTest runs a single test for the given input and returns the result.
 func runSingleTest(ctx context.Context, input RunSingleTestInput) (Result, error) {
+	LogPhaseEnter(
+		input.Logger,
+		"runSingleTest",
+		"Procedure: %s, DataPoints: %d, Visibility: %s",
+		input.Procedure,
+		input.DataPoints,
+		visibilityToString(input.Case.Visibility),
+	)
+	defer LogPhaseExit(input.Logger, time.Now(), "runSingleTest", "")
 	// we're querying the index-0 stream because this is the root stream
 	rangeParams := getRangeParameters(input.DataPoints)
 	fromDate := rangeParams.FromDate.Unix()
@@ -122,6 +137,7 @@ func runSingleTest(ctx context.Context, input RunSingleTestInput) (Result, error
 		// the  memory is affected by previous operations, but it's not.
 		// time.Sleep(10 * time.Second)
 
+		LogInfo(input.Logger, "Executing procedure %s, Sample %d/%d", input.Procedure, i+1, input.Case.Samples)
 		collector, err := benchutil.StartDockerMemoryCollector("kwil-testing-postgres")
 		if err != nil {
 			return Result{}, err
@@ -130,12 +146,14 @@ func runSingleTest(ctx context.Context, input RunSingleTestInput) (Result, error
 		// Wait for the collector to receive at least one stats sample
 		if err := collector.WaitForFirstSample(); err != nil {
 			collector.Stop()
+			LogInfo(input.Logger, "Failed to get first sample from memory collector: %v", err)
 			return Result{}, err
 		}
 
+		LogInfo(input.Logger, "Starting actual procedure execution: %s", input.Procedure)
 		start := time.Now()
 		// we read using the reader address to be sure visibility is tested
-		rows, err := executeStreamProcedure(ctx, input.Platform, string(input.Procedure), args, readerAddress.Bytes())
+		rows, err := executeStreamProcedure(ctx, input.Platform, input.Logger, string(input.Procedure), args, readerAddress.Bytes())
 		if err != nil {
 			collector.Stop()
 			return Result{}, err
@@ -168,8 +186,14 @@ type RunBenchmarkInput struct {
 // it returns a result channel to be accumulated by the caller
 func getBenchmarkFn(benchmarkCase BenchmarkCase, resultCh *chan []Result) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// platform.Logger is the *testing.T instance from the test runner
+		logger := platform.Logger.(*testing.T)
+		LogPhaseEnter(logger, "getBenchmarkFn", "Case: %+v", benchmarkCase)
+		defer LogPhaseExit(logger, time.Now(), "getBenchmarkFn", "")
 
-		log.Println("running benchmark", benchmarkCase)
+		// The original log.Println can be removed or kept if desired for a different log stream.
+		// log.Println("running benchmark", benchmarkCase)
+
 		platform = procedure.WithSigner(platform, deployer.Bytes())
 
 		tree := trees.NewTree(trees.NewTreeInput{
@@ -177,18 +201,14 @@ func getBenchmarkFn(benchmarkCase BenchmarkCase, resultCh *chan []Result) func(c
 			BranchingFactor: benchmarkCase.BranchingFactor,
 		})
 
-		// we can't run the benchmark if the tree is too deep, due to postgreSQL limitations
-		if tree.MaxDepth > maxDepth {
-			return fmt.Errorf("tree max depth (%d) is greater than max depth (%d)", tree.MaxDepth, maxDepth)
-		}
-
-		results, err := runBenchmark(ctx, platform, benchmarkCase, tree)
+		results, err := runBenchmark(ctx, platform, logger, benchmarkCase, tree)
 		if err != nil {
 			return errors.Wrap(err, "failed to run benchmark")
 		}
 
 		// if LOG_RESULTS is set, we print the results to the console
 		if os.Getenv("LOG_RESULTS") == "true" {
+			LogInfo(logger, "LOG_RESULTS is true, printing results to console via printResults utility.")
 			printResults(results)
 		}
 

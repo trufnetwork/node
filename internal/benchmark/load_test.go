@@ -24,6 +24,8 @@ import (
 func TestBench(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
+	LogPhaseEnter(t, "TestBench", "Starting main benchmark test function")
+	defer LogPhaseExit(t, time.Now(), "TestBench", "Finished main benchmark test function")
 
 	// notify on interrupt. Otherwise, tests will not stop
 	c := make(chan os.Signal, 1)
@@ -180,13 +182,17 @@ func TestBench(t *testing.T) {
 	var successResults []Result
 
 	for i, groupOfTests := range groupsOfTests {
+		groupName := "benchmark_test_" + strconv.Itoa(i)
+		LogPhaseEnter(t, "TestGroup", "Starting test group %d/%d: %s", i+1, len(groupsOfTests), groupName)
+		groupStartTime := time.Now()
+
 		schemaTest := kwilTesting.SchemaTest{
-			Name:          "benchmark_test_" + strconv.Itoa(i),
+			Name:          groupName,
 			FunctionTests: groupOfTests,
 			SeedScripts:   migrations.GetSeedScriptPaths(),
 		}
 
-		t.Run(schemaTest.Name, func(t *testing.T) {
+		t.Run(schemaTest.Name, func(t *testing.T) { // Note: this 't' shadows the outer 't'. We should use this inner 't' for group-specific logs.
 			const maxRetries = 1
 			var err error
 		RetryFor:
@@ -195,6 +201,7 @@ func TestBench(t *testing.T) {
 				case <-ctx.Done():
 					t.Fatalf("context cancelled")
 				default:
+					LogInfo(t, "Attempt %d/%d for test group %s", attempt, maxRetries, schemaTest.Name)
 					// wrap in a function so we can defer close the results channel
 					func() {
 						resultsCh = make(chan []Result, len(groupOfTests))
@@ -202,11 +209,12 @@ func TestBench(t *testing.T) {
 
 						err = schemaTest.Run(ctx, &kwilTesting.Options{
 							UseTestContainer: true,
-							Logger:           t,
+							Logger:           t, // Pass the correct 't' for this test run
 						})
 					}()
 
 					if err == nil {
+						LogInfo(t, "Test group %s completed successfully on attempt %d.", schemaTest.Name, attempt)
 						for result := range resultsCh {
 							successResults = append(successResults, result...)
 						}
@@ -224,6 +232,7 @@ func TestBench(t *testing.T) {
 				t.Fatalf("Test failed after %d attempts: %s", maxRetries, err)
 			}
 		})
+		LogPhaseExit(t, groupStartTime, "TestGroup", "Finished test group %d/%d: %s", i+1, len(groupsOfTests), groupName)
 	}
 
 	// save results to file

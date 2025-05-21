@@ -77,170 +77,202 @@ RETURNS TABLE(
 
     RETURN WITH RECURSIVE
     /*----------------------------------------------------------------------
-     * HIERARCHY CTE: Recursively resolves the dependency tree defined by taxonomies.
+     * PARENT_DISTINCT_START_TIMES CTE:
+     *
+     * Purpose: Identifies all unique start times at which a parent stream
+     * has at least one taxonomy definition.
+     *---------------------------------------------------------------------*/
+    parent_distinct_start_times AS (
+        SELECT DISTINCT
+            data_provider AS parent_dp,
+            stream_id AS parent_sid,
+            start_time
+        FROM taxonomies
+        WHERE disabled_at IS NULL
+    ),
+
+    /*----------------------------------------------------------------------
+     * PARENT_NEXT_STARTS CTE:
+     *
+     * Purpose: For each unique start time of a parent's definition,
+     * determines the immediately following unique start time for that same parent.
+     * This is used to define the upper bound of a taxonomy segment's validity.
+     *---------------------------------------------------------------------*/
+    parent_next_starts AS (
+        SELECT
+            parent_dp,
+            parent_sid,
+            start_time,
+            LEAD(start_time) OVER (PARTITION BY parent_dp, parent_sid ORDER BY start_time) as next_start_time
+        FROM parent_distinct_start_times
+    ),
+
+    /*----------------------------------------------------------------------
+     * TAXONOMY_TRUE_SEGMENTS CTE:
+     *
+     * Purpose: For every direct parent-child link recorded in the taxonomies table,
+     * determine its true, non-overlapping, active time segments and the specific
+     * weight associated with each segment. This is independent of $effective_from.
+     * Overshadowing for a parent's child configuration (i.e. multiple group_sequences
+     * for the same parent and start_time) is handled by first selecting only those
+     * taxonomy entries belonging to the MAX(group_sequence) for that parent/start_time.
+     * Segment end is then determined by the parent's next distinct definition start_time
+     * from parent_next_starts.
+     *---------------------------------------------------------------------*/
+    taxonomy_true_segments AS (
+        SELECT
+            t.parent_dp,
+            t.parent_sid,
+            t.child_dp,
+            t.child_sid,
+            t.weight_for_segment,
+            t.segment_start,
+            COALESCE(pns.next_start_time, $max_int8) - 1 AS segment_end
+        FROM (
+            -- Select all child links from the latest taxonomy version (highest group_sequence)
+            -- for each parent at each specific start_time.
+            SELECT
+                tx.data_provider AS parent_dp,
+                tx.stream_id AS parent_sid,
+                tx.child_data_provider AS child_dp,
+                tx.child_stream_id AS child_sid,
+                tx.weight AS weight_for_segment,
+                tx.start_time AS segment_start
+            FROM taxonomies tx
+            JOIN (
+                -- Subquery to find the max group_sequence for each parent's start_time.
+                -- This determines the "winning" version of the taxonomy for that parent at that start_time.
+                SELECT
+                    data_provider, stream_id, start_time,
+                    MAX(group_sequence) as max_gs
+                FROM taxonomies
+                WHERE disabled_at IS NULL
+                GROUP BY data_provider, stream_id, start_time
+            ) max_gs_filter
+            ON tx.data_provider = max_gs_filter.data_provider
+           AND tx.stream_id = max_gs_filter.stream_id
+           AND tx.start_time = max_gs_filter.start_time
+           AND tx.group_sequence = max_gs_filter.max_gs -- Only pick rows matching the max group_sequence
+            WHERE tx.disabled_at IS NULL -- Ensure the chosen taxonomy entry itself is not disabled
+        ) t -- Each row 't' is now part of the "winning" taxonomy version for its parent and start_time
+        JOIN parent_next_starts pns -- This correctly defines how long this "winning" version is active
+          ON t.parent_dp = pns.parent_dp
+         AND t.parent_sid = pns.parent_sid
+         AND t.segment_start = pns.start_time
+    ),
+
+    /*----------------------------------------------------------------------
+     * HIERARCHY CTE: Recursively resolves the dependency tree.
      *
      * Purpose: Determines the effective weighted contribution of every stream
      * (down to the primitives) to the root composed stream over time.
-     *
-     * - Calculates the cumulative `raw_weight` for each path from the root to a child.
-     * - Determines the validity interval (`group_sequence_start`, `group_sequence_end`)
-     *   for each weighted relationship, handling overshadowing definitions.
-     * - Filters based on the query time range (`$effective_from`, `$effective_to`)
-     *   and an anchor point before `$effective_from`.
-     *
-     * Overshadowing Logic: Uses a LEFT JOIN anti-join pattern (`t2 IS NULL`) to select
-     * only the taxonomy definition with the highest `group_sequence` for any given
-     * `start_time`, ensuring that later definitions supersede earlier ones.
-     *
-     * Interval Calculation:
-     *   - `group_sequence_end` is derived using `LEAD` to find the next `start_time`
-     *     for the same parent stream.
-     *   - In the recursive step, the effective interval is the intersection
-     *     (GREATEST start, LEAST end) of the parent's and child's intervals.
+     * Calculates cumulative `raw_weight` and intersected `path_start`, `path_end`
+     * for each path. Pruning is applied based on an anchor and $effective_to.
      *---------------------------------------------------------------------*/
     hierarchy AS (
       -- Base Case: Direct children of the root composed stream.
       SELECT
-          t1.data_provider AS parent_data_provider,
-          t1.stream_id AS parent_stream_id,
-          t1.child_data_provider,
-          t1.child_stream_id,
-          t1.weight AS raw_weight,
-          t1.start_time AS group_sequence_start,
-          -- Calculate end time based on the start of the next definition
-          COALESCE(ot.next_start, $max_int8) - 1 AS group_sequence_end
-      FROM
-          taxonomies t1
-      -- Anti-join: Ensures we select the row with the highest group_sequence
-      -- for a given (dp, sid, start_time) by checking if a row t2 with a
-      -- higher sequence exists. We keep t1 only if no such t2 is found.
-      LEFT JOIN taxonomies t2
-        ON t1.data_provider = t2.data_provider
-       AND t1.stream_id = t2.stream_id
-       AND t1.start_time = t2.start_time
-       AND t1.group_sequence < t2.group_sequence -- t2 must have a strictly higher sequence
-       AND t2.disabled_at IS NULL -- Ignore disabled rows for overshadowing comparison
-      -- Join to find the start_time of the next taxonomy definition for this parent
-      JOIN (
-          SELECT
-              dt.data_provider, dt.stream_id, dt.start_time,
-              LEAD(dt.start_time) OVER (PARTITION BY dt.data_provider, dt.stream_id ORDER BY dt.start_time) AS next_start
-          FROM ( -- Select distinct start times within the relevant range plus anchor
-                 SELECT DISTINCT t_ot.data_provider, t_ot.stream_id, t_ot.start_time FROM taxonomies t_ot
-                 WHERE t_ot.data_provider = $data_provider AND t_ot.stream_id = $stream_id AND t_ot.disabled_at IS NULL AND t_ot.start_time <= $effective_to
-                 -- Anchor logic: Find the latest taxonomy start at or before $effective_from
-                 AND t_ot.start_time >= COALESCE((SELECT t2_anchor.start_time FROM taxonomies t2_anchor WHERE t2_anchor.data_provider=t_ot.data_provider AND t2_anchor.stream_id=t_ot.stream_id AND t2_anchor.disabled_at IS NULL AND t2_anchor.start_time<=$effective_from ORDER BY t2_anchor.start_time DESC, t2_anchor.group_sequence DESC LIMIT 1),0)
-               ) dt
-      ) ot
-        ON t1.data_provider = ot.data_provider
-       AND t1.stream_id     = ot.stream_id
-       AND t1.start_time    = ot.start_time
-      WHERE
-          t1.data_provider = $data_provider -- Filter for the specific root stream
-      AND t1.stream_id     = $stream_id
-      AND t1.disabled_at   IS NULL
-      AND t2.group_sequence IS NULL -- Keep t1 only if no row t2 with a higher sequence was found
-      -- Apply time range filter to the taxonomy start time
-      AND t1.start_time <= $effective_to
-      -- Anchor logic: Ensure we include the relevant taxonomy active at $effective_from
-      AND t1.start_time >= COALESCE(
-            (SELECT t_anchor_base.start_time
-             FROM taxonomies t_anchor_base
-             WHERE t_anchor_base.data_provider = t1.data_provider -- Correlated subquery
-               AND t_anchor_base.stream_id     = t1.stream_id     -- Correlated subquery
-               AND t_anchor_base.disabled_at   IS NULL
-               AND t_anchor_base.start_time   <= $effective_from
-             ORDER BY t_anchor_base.start_time DESC, t_anchor_base.group_sequence DESC
-             LIMIT 1
-            ), 0 -- Default to 0 if no anchor found
+          tts.parent_dp AS root_dp,       -- This is $data_provider
+          tts.parent_sid AS root_sid,      -- This is $stream_id
+          tts.child_dp AS descendant_dp,
+          tts.child_sid AS descendant_sid,
+          tts.weight_for_segment AS raw_weight,
+          tts.segment_start AS path_start,
+          tts.segment_end AS path_end,
+          1 AS level
+      FROM taxonomy_true_segments tts
+      WHERE tts.parent_dp = $data_provider AND tts.parent_sid = $stream_id
+        AND tts.segment_end >= ( -- Path segment must end at or after the root's anchor time
+          COALESCE(
+              (SELECT t_anchor_base.start_time FROM taxonomies t_anchor_base
+               WHERE t_anchor_base.data_provider = $data_provider AND t_anchor_base.stream_id = $stream_id
+                 AND t_anchor_base.disabled_at IS NULL AND t_anchor_base.start_time <= $effective_from
+               ORDER BY t_anchor_base.start_time DESC, t_anchor_base.group_sequence DESC LIMIT 1),
+              0 -- Default anchor to 0
           )
+        )
+        AND tts.segment_start <= $effective_to -- Path segment must start at or before query end
 
       UNION ALL
 
       -- Recursive Step: Children of the children found in the previous level.
       SELECT
-          parent.parent_data_provider,
-          parent.parent_stream_id,
-          t1_child.child_data_provider,
-          t1_child.child_stream_id,
+          h.root_dp,
+          h.root_sid,
+          tts.child_dp AS descendant_dp,
+          tts.child_sid AS descendant_sid,
           -- Multiply parent weight by child weight for cumulative effect
-          (parent.raw_weight * t1_child.weight)::NUMERIC(36,18) AS raw_weight,
-          -- Effective interval start is the later of the parent's or child's start
-          GREATEST(parent.group_sequence_start, t1_child.start_time) AS group_sequence_start,
-          -- Effective interval end is the earlier of the parent's or child's end
-          LEAST(parent.group_sequence_end, (COALESCE(ot_child.next_start, $max_int8) - 1)) AS group_sequence_end
+          (h.raw_weight * tts.weight_for_segment)::NUMERIC(36,18) AS raw_weight,
+          -- Effective interval start is the later of the parent's path_start or child's segment_start
+          GREATEST(h.path_start, tts.segment_start) AS path_start,
+          -- Effective interval end is the earlier of the parent's path_end or child's segment_end
+          LEAST(h.path_end, tts.segment_end) AS path_end,
+          h.level + 1
       FROM
-          hierarchy parent -- Result from the previous recursion level
-      -- Join parent with potential child taxonomies
-      JOIN taxonomies t1_child
-        ON t1_child.data_provider = parent.child_data_provider
-       AND t1_child.stream_id     = parent.child_stream_id
-      -- Anti-join for child overshadowing (same pattern as base case)
-      LEFT JOIN taxonomies t2_child
-        ON t1_child.data_provider = t2_child.data_provider
-       AND t1_child.stream_id = t2_child.stream_id
-       AND t1_child.start_time = t2_child.start_time
-       AND t1_child.group_sequence < t2_child.group_sequence -- t2 must be higher
-       AND t2_child.disabled_at IS NULL -- Ignore disabled rows
-      -- Join to get the next start time for the child interval end calculation
-      JOIN (
-          SELECT
-              dt.data_provider, dt.stream_id, dt.start_time,
-              LEAD(dt.start_time) OVER ( PARTITION BY dt.data_provider, dt.stream_id ORDER BY dt.start_time ) AS next_start
-          FROM ( -- Select distinct start times for all potentially relevant children
-                 SELECT DISTINCT t_otc.data_provider, t_otc.stream_id, t_otc.start_time FROM taxonomies t_otc
-                 WHERE t_otc.disabled_at IS NULL AND t_otc.start_time <= $effective_to
-                 -- Anchor logic for children (find earliest relevant start)
-                 AND t_otc.start_time >= COALESCE((SELECT MIN(t2_min.start_time) FROM taxonomies t2_min WHERE t2_min.disabled_at IS NULL AND t2_min.start_time <= $effective_from), 0)
-               ) dt
-      ) ot_child
-        ON t1_child.data_provider = ot_child.data_provider
-       AND t1_child.stream_id     = ot_child.stream_id
-       AND t1_child.start_time    = ot_child.start_time
+          hierarchy h
+      JOIN taxonomy_true_segments tts
+          ON h.descendant_dp = tts.parent_dp AND h.descendant_sid = tts.parent_sid
       WHERE
-          t1_child.disabled_at IS NULL
-      AND t2_child.group_sequence IS NULL -- Keep t1_child only if no higher sequence row found
-      -- Interval Overlap Check: Ensure parent and child intervals overlap
-      AND t1_child.start_time <= parent.group_sequence_end
-      AND (COALESCE(ot_child.next_start, $max_int8) - 1) >= parent.group_sequence_start
-      -- Apply child time range/anchor filters to t1_child
-      AND t1_child.start_time <= $effective_to
-      AND t1_child.start_time >= COALESCE(
-            (SELECT t_anchor_child.start_time
-             FROM taxonomies t_anchor_child
-             WHERE t_anchor_child.data_provider = t1_child.data_provider -- Correlated
-               AND t_anchor_child.stream_id     = t1_child.stream_id     -- Correlated
-               AND t_anchor_child.disabled_at   IS NULL
-               AND t_anchor_child.start_time   <= $effective_from
-             ORDER BY t_anchor_child.start_time DESC, t_anchor_child.group_sequence DESC
-             LIMIT 1
-            ), 0
+          -- Effective intersected path segment must be valid (start <= end)
+          GREATEST(h.path_start, tts.segment_start) <= LEAST(h.path_end, tts.segment_end)
+          -- Intersected segment must end at or after the root's anchor time
+          AND LEAST(h.path_end, tts.segment_end) >= (
+               COALESCE(
+                  (SELECT t_anchor_base.start_time FROM taxonomies t_anchor_base
+                   WHERE t_anchor_base.data_provider = $data_provider AND t_anchor_base.stream_id = $stream_id
+                     AND t_anchor_base.disabled_at IS NULL AND t_anchor_base.start_time <= $effective_from
+                   ORDER BY t_anchor_base.start_time DESC, t_anchor_base.group_sequence DESC LIMIT 1),
+                  0 -- Default anchor to 0
+              )
           )
+          -- Intersected segment must start at or before query end
+          AND GREATEST(h.path_start, tts.segment_start) <= $effective_to
+          AND h.level < 10 -- Recursion depth limit
     ),
 
     /*----------------------------------------------------------------------
-     * PRIMITIVE_WEIGHTS CTE: Filters the hierarchy to find leaf nodes (primitives).
+     * HIERARCHY_PRIMITIVE_PATHS CTE: Filters the hierarchy to find paths ending in leaf nodes (primitives).
      *
-     * Purpose: Extracts the final effective weight and validity interval for each
-     * primitive stream that contributes to the composed result. A primitive may appear
-     * multiple times if its effective weight changes due to taxonomy updates higher
-     * up the tree.
+     * Purpose: Identifies all paths from the root composed stream to any contributing
+     * primitive stream, along with the raw weight and validity interval for that specific path.
+     *--------------------------------------------------------------------*/
+    hierarchy_primitive_paths AS (
+      SELECT
+          h.descendant_dp AS primitive_dp,
+          h.descendant_sid AS primitive_sid,
+          h.raw_weight,
+          h.path_start,
+          h.path_end
+      FROM hierarchy h
+      WHERE EXISTS (
+          SELECT 1 FROM streams s
+          WHERE s.data_provider = h.descendant_dp
+            AND s.stream_id     = h.descendant_sid
+            AND s.stream_type   = 'primitive' -- Ensure it's a primitive
+      )
+    ),
+
+    /*----------------------------------------------------------------------
+     * PRIMITIVE_WEIGHTS CTE: Passes through each distinct segment of a primitive's activity.
+     *
+     * Purpose: Ensures each primitive stream's contribution is processed based on
+     * its specific activity intervals and weights as determined by the hierarchy.
+     * Each row represents a distinct period where a primitive is a child in the
+     * resolved taxonomy, with its corresponding raw_weight and validity interval
+     * (group_sequence_start, group_sequence_end) for that specific path/segment.
+     * This allows downstream CTEs to correctly model changes in a primitive's
+     * effective weight over time, respecting taxonomy overshadowing.
      *--------------------------------------------------------------------*/
     primitive_weights AS (
       SELECT
-          h.child_data_provider AS data_provider,
-          h.child_stream_id     AS stream_id,
-          h.raw_weight,
-          h.group_sequence_start,
-          h.group_sequence_end
-      FROM hierarchy h
-      -- Join with streams table to identify primitives
-      WHERE EXISTS (
-          SELECT 1 FROM streams s
-          WHERE s.data_provider = h.child_data_provider
-            AND s.stream_id     = h.child_stream_id
-            AND s.stream_type   = 'primitive'
-      )
+          hpp.primitive_dp AS data_provider,
+          hpp.primitive_sid AS stream_id,
+          hpp.raw_weight, -- The raw_weight for this specific path segment
+          hpp.path_start AS group_sequence_start, -- The start of this specific path segment
+          hpp.path_end AS group_sequence_end -- The end of this specific path segment
+      FROM hierarchy_primitive_paths hpp
+      -- No GROUP BY. Each row from hierarchy_primitive_paths represents a distinct segment
+      -- of activity for a primitive, which needs to be processed individually.
     ),
 
     /*----------------------------------------------------------------------
@@ -436,7 +468,8 @@ RETURNS TABLE(
             pec.stream_id,
             pec.event_time,
             pec.delta_value,
-            0::numeric(36,18) AS weight_delta
+            0::numeric(36,18) AS weight_delta,
+            1 AS event_type_priority -- Value changes first
         FROM primitive_event_changes pec
 
         UNION ALL
@@ -447,7 +480,8 @@ RETURNS TABLE(
             ewc.stream_id,
             ewc.event_time,
             0::numeric(36,18) AS delta_value,
-            ewc.weight_delta
+            ewc.weight_delta,
+            2 AS event_type_priority -- Weight changes second
         FROM effective_weight_changes ewc -- Use effective changes
     ),
 
@@ -460,8 +494,8 @@ RETURNS TABLE(
             delta_value,
             weight_delta,
             -- Calculate value and weight *before* this event using LAG on cumulative sums
-            COALESCE(LAG(value_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time), 0::numeric(36,18)) as value_before_event,
-            COALESCE(LAG(weight_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time), 0::numeric(36,18)) as weight_before_event
+            COALESCE(LAG(value_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as value_before_event,
+            COALESCE(LAG(weight_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as weight_before_event
         FROM (
             SELECT
                 data_provider,
@@ -469,10 +503,11 @@ RETURNS TABLE(
                 event_time,
                 delta_value,
                 weight_delta,
+                event_type_priority, -- Ensure it's selected for ordering
                 -- Cumulative value up to and including this event
-                (SUM(delta_value) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time))::numeric(36,18) as value_after_event,
+                (SUM(delta_value) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as value_after_event,
                 -- Cumulative weight up to and including this event
-                (SUM(weight_delta) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time))::numeric(36,18) as weight_after_event
+                (SUM(weight_delta) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as weight_after_event
             FROM unified_events
         ) state_calc
     ),
@@ -481,11 +516,19 @@ RETURNS TABLE(
     final_deltas AS ( -- Renamed from new_final_deltas to match original naming convention
         SELECT
             event_time,
-            SUM((delta_value * weight_before_event) + (weight_delta * value_before_event))::numeric(72, 18) AS delta_ws,
+            SUM(
+                (delta_value * weight_before_event) +
+                (value_before_event * weight_delta) +
+                (delta_value * weight_delta) -- Added missing term
+            )::numeric(72, 18) AS delta_ws,
             SUM(weight_delta)::numeric(36, 18) AS delta_sw
         FROM primitive_state_timeline
         GROUP BY event_time
-        HAVING SUM((delta_value * weight_before_event) + (weight_delta * value_before_event))::numeric(72, 18) != 0::numeric(72, 18)
+        HAVING SUM(
+                (delta_value * weight_before_event) +
+                (value_before_event * weight_delta) +
+                (delta_value * weight_delta)
+            )::numeric(72, 18) != 0::numeric(72, 18)
             OR SUM(weight_delta)::numeric(36, 18) != 0::numeric(36, 18) -- Keep if either delta is non-zero
     ),
 

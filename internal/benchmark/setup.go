@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"time"
 
+	"testing"
+
 	"github.com/cockroachdb/apd/v3"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
@@ -27,12 +29,19 @@ type SetupSchemasInput struct {
 func setupSchemas(
 	ctx context.Context,
 	platform *kwilTesting.Platform,
+	logger *testing.T,
 	input SetupSchemasInput,
 ) error {
+	// Log entry to setupSchemas
+	LogPhaseEnter(logger, "setupSchemas", "QtyStreams: %d, BranchingFactor: %d, Visibility: %s", input.BenchmarkCase.QtyStreams, input.BenchmarkCase.BranchingFactor, visibilityToString(input.BenchmarkCase.Visibility))
+	defer LogPhaseExit(logger, time.Now(), "setupSchemas", "")
+
 	deployerAddress := MustNewEthereumAddressFromBytes(platform.Deployer)
 
 	allStreamInfos := []setup.StreamInfo{}
 
+	// Logging number of streams to create
+	LogInfo(logger, "Creating %d streams (will then setup schema for each)", len(input.Tree.Nodes))
 	for _, node := range input.Tree.Nodes {
 		streamId := getStreamId(node.Index)
 		streamInfo := setup.StreamInfo{
@@ -52,6 +61,7 @@ func setupSchemas(
 	}
 
 	if err := setup.CreateStreams(ctx, platform, allStreamInfos); err != nil {
+		LogInfo(logger, "Failed to create streams: %v", err)
 		return errors.Wrap(err, "failed to create stream")
 	}
 
@@ -62,6 +72,7 @@ func setupSchemas(
 			rangeParams: getMaxRangeParams(input.BenchmarkCase.DataPointsSet),
 			owner:       deployerAddress,
 		}); err != nil {
+			LogInfo(logger, "Failed to setup schema for stream %d: %v", i+1, err)
 			return errors.Wrap(err, "failed to setup schema")
 		}
 	}

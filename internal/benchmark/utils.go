@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"testing"
+
 	"github.com/cockroachdb/apd/v3"
 	"github.com/kwilteam/kwil-db/common"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
@@ -44,7 +46,9 @@ func generateRecords(rangeParams RangeParameters) []setup.InsertRecordInput {
 
 // executeStreamProcedure executes a procedure on the given platform and database.
 // It handles the common setup for procedure execution, including transaction data.
-func executeStreamProcedure(ctx context.Context, platform *kwilTesting.Platform, procedure string, args []any, signer []byte) ([]common.Row, error) {
+func executeStreamProcedure(ctx context.Context, platform *kwilTesting.Platform, logger *testing.T, procedure string, args []any, signer []byte) ([]common.Row, error) {
+	LogPhaseEnter(logger, "executeStreamProcedure", "Procedure: %s, Signer: %s, Args: %v", procedure, BytesToHex(signer), args)
+	defer LogPhaseExit(logger, time.Now(), "executeStreamProcedure", "Procedure: %s", procedure)
 	txContext := &common.TxContext{
 		Ctx:          ctx,
 		BlockContext: &common.BlockContext{Height: 0},
@@ -67,9 +71,22 @@ func executeStreamProcedure(ctx context.Context, platform *kwilTesting.Platform,
 		return nil, errors.Wrap(err, "failed to execute stream procedure")
 	}
 	if call.Error != nil {
+		// Log the specific call error, even if rows are also empty
+		LogInfo(logger, "[ERROR] executeStreamProcedure - Call Error: %v (Procedure: %s, Args: %v)", call.Error, procedure, args)
 		return nil, errors.Wrap(call.Error, "failed to execute stream procedure")
 	}
+
+	// Log if no rows are returned, this is not necessarily an error from Engine.Call but benchmark treats it as such
+	if len(rows) == 0 {
+		LogInfo(logger, "executeStreamProcedure - No rows returned (Procedure: %s, Args: %v, CallErrorFromEngine: %v, ErrFromEngineCallWrapper: %v)", procedure, args, call.Error, err)
+	}
 	return rows, nil
+}
+
+// BytesToHex is a simple utility to convert byte slice to hex string for logging.
+// Added here as it's a small helper often useful in logging byte arrays like signers/addresses.
+func BytesToHex(b []byte) string {
+	return fmt.Sprintf("0x%x", b)
 }
 
 // printResults outputs the benchmark results in a human-readable format.
