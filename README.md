@@ -42,16 +42,16 @@ To build and run the TN-DB, you will need the following installed on your system
 
 For full details open **[Taskfile.yml](./Taskfile.yml)**
 
-| What you probably want to do                                   |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| **Spin up a single-node playground**                           | `task single:start` → `task single:stop`                                                                     |
-| **Spin up the full 2-node devnet (nodes + gateway + indexer)** | `task devnet:start` → `task devnet:stop`                                                                     |
-| **Bring up just one devnet piece**                             | `task devnet:gateway:start` / `devnet:indexer:start` / `devnet:observer:start` (each has a matching `:stop`) |
-| **Build project binaries**                                     | `task build` (release) • `task build:debug` (dlv-friendly)                                                   |
-| **Download upstream Kwil helper binaries**                     | `task build:binaries` (auto-runs when any compose task needs them)                                           |
-| **Run unit tests or coverage**                                 | `task test:unit` • `task coverage`                                                                           |
-| **Refresh genesis.json from the operator repo**                | `task get-genesis` (needs `READ_TOKEN` in `.env`)                                                            |
-| **Migrate SQL schemas against any node**                       | `task action:migrate PRIVATE_KEY=<hex> PROVIDER=<url>`                                                       |
+| Task | Command |
+|------|---------|
+| **Spin up a single-node playground** | `task single:start` → `task single:stop` |
+| **Spin up the full 2-node devnet** (nodes + gateway + indexer) | `task devnet:start` → `task devnet:stop` |
+| **Bring up just one devnet piece** | `task devnet:gateway:start` / `devnet:indexer:start` / `devnet:observer:start` (each has a matching `:stop`) |
+| **Build project binaries** | `task build` (release) • `task build:debug` (dlv-friendly) |
+| **Download upstream Kwil helper binaries** | `task build:binaries` (auto-runs when any compose task needs them) |
+| **Run unit tests or coverage** | `task test:unit` • `task coverage` |
+| **Refresh genesis.json from the operator repo** | `task get-genesis` (needs `READ_TOKEN` in `.env`) |
+| **Migrate SQL schemas against any node** | `task action:migrate PRIVATE_KEY=<hex> PROVIDER=<url>` |
 
 ### Patterns to remember
 
