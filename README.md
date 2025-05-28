@@ -36,7 +36,23 @@ To build and run the TN-DB, you will need the following installed on your system
 3. [Docker Compose](https://docs.docker.com/compose)
 4. [Python](https://www.python.org/downloads) (optional for running the seed script)
 5. [Pandas](https://pandas.pydata.org) (optional for running the seed script)
+6. build-essential (for gcc) - install with `sudo apt install build-essential`
 
+Make sure Taskfile is in your PATH:
+```shell
+export PATH=$PATH:$HOME/go/bin
+```
+
+You may also want to add the `.build` directory to your PATH for easier access to the built binaries:
+```shell
+export PATH=$PATH:$(pwd)/.build
+```
+
+If you plan to use Docker, ensure your user is in the docker group:
+```shell
+sudo usermod -aG docker $USER
+```
+Note: You'll need to log out and back in for this change to take effect.
 
 ### Taskfile Quickstart 🚦
 
@@ -65,7 +81,8 @@ For full details open **[Taskfile.yml](./Taskfile.yml)**
 
 To run the TN-DB using Docker Compose, run the following command:
 
-```
+```shell
+task build # Build the binaries first
 task single:start # For a single-node playground
 ```
 
@@ -75,6 +92,7 @@ Alternatively, you can run the following commands to run TN-DB in Docker contain
 It has 2 nodes, gateway, and indexer enabled.
 
 ```shell
+task build # Build the binaries first
 task devnet:start # For the full 2-node devnet with gateway and indexer
 ```
 
@@ -91,7 +109,7 @@ you must first grab the binary release of the kwil-indexer binary:
 https://github.com/trufnetwork/indexer/releases
 2. Extract it into your .build/ folder
 
-> Note: For local development and testing you can use the “all-zeros” private key: 0000000000000000000000000000000000000000000000000000000000000001
+> Note: For local development and testing you can use the "all-zeros" private key: 0000000000000000000000000000000000000000000000000000000000000001
 
 #### Build and Run the TN-DB without Docker Compose
 
@@ -109,41 +127,17 @@ task build # build the binary
 task kwil-binaries # download and extract the kwil binaries
 ```
 
-##### Note for macOS/darwin Users:
-
-If you're using macOS (darwin architecture), you need to perform an additional steps to download the `kwil-cli`.
-
-1. Download the kwil-cli compatible with macOS from the kwil-db GitHub releases page
+Export the kwil-cli to your PATH for easier access:
 
 ```shell
-wget -O kwil-db.tar.gz https://github.com/kwilteam/kwil-db/releases/download/v0.8.4/kwil-db_0.8.4_darwin_amd64.tar.gz
-```
-
-2. Extract the kwil-cli:
-
-```shell
-tar -xzvf kwil-db.tar.gz 'kwil-cli'
-```
-
-3. Move to the `/.build` directory and make the binary executable:
-
-```shell
-mkdir -p ./.build
-mv ./kwil-cli .build
-chmod +x ./.build/kwil-cli
-```
-
-4. Export the kwil-cli before using it:
-
-```shell
-export PATH="$PATH:$HOME/tn/.build"
+export PATH=$PATH:$(pwd)/.build
 ```
 
 ##### Run Postgres
 
-Before running the, you will have to start Postgres. You can start Postgres using the following command:
+Before running the TN-DB, you will have to start Postgres. You can start Postgres using the following command:
 
-```
+```shell
 task host:postgres:start
 ```
 
@@ -220,51 +214,18 @@ After that, you can fetch the latest genesis file using the following command:
 task get-genesis
 ```
 
-## System Contract
-
-System Contract is a contract that stores the accepted streams by TN Gov. It also serves as an entry point for queries.
-It also serves as an entry point for queries.
-Currently for development purposes, private key 001 will be used to interact with the system contract.
-It still needs to be updated to use the correct private key.
-
-### Fetching through System Contract
-
-As our system contract is currently live on our staging server, you can fetch records from the system contract using the following command:
-
+To run migrations on the local development environment, use:
 ```shell
-kwil-cli database call -a=get_unsafe_record -n=tn_system_contract -o=34f9e432b4c70e840bc2021fd161d15ab5e19165 data_provider:4710a8d8f0d845da110086812a32de6d90d7ff5c stream_id:st1b148397e2ea36889efad820e2315d date_from:2024-06-01 date_to:2024-06-17 --private-key 0000000000000000000000000000000000000000000000000000000000000001 --provider https://staging.tn.trufnetwork.com
+task action:migrate:dev
 ```
 
-in this example, we are fetching records from the system contract for the stream `st1b148397e2ea36889efad820e2315d`
-from the data provider `4710a8d8f0d845da110086812a32de6d90d7ff5c` which is Electric Vehicle Index that provided by
-Truflation Data Provider.
-
-The `unsafe` in the `get_unsafe_record` action is used so that the system contract can fetch records from the stream
-contract directly without waiting for the stream contract to be officialized.
-
-list of available actions in the system contract:
-
-- `get_unsafe_record(data_provider, stream_id, date_from, date_to, frozen_at)` - fetch records from the stream contract without waiting for the stream contract to be officialized
-
-- `get_unsafe_index(data_provider, stream_id, date_from, date_to, frozen_at)` - fetch index from the stream contract without waiting for the stream contract to be officialized
-- `get_record(data_provider, stream_id, date_from, date_to, frozen_at)` fetch records from the stream contract, stream needs to be officialized
-- `get_index(data_provider, stream_id, date_from, date_to, frozen_at)` - fetch index from the stream contract, stream needs to be officialized
-- `get_index_change` - fetch index change from the stream contract, which must be officialized
-- `stream_exists(data_provider, stream_id)` - check if the stream exists in the system contract
-- `accept_stream(data_provider, stream_id)` - accept the stream as official, owner only
-- `revoke_stream(data_provider, stream_id)` - revoke official status of the stream, owner only
-
-### Fetching through Contact Directly
+### Fetching through Contract Directly
 
 Currently, users can fetch records from the contract directly.
 
 ```shell
-kwil-cli database call -a=get_record -n=st1b148397e2ea36889efad820e2315d -o=4710a8d8f0d845da110086812a32de6d90d7ff5c date_from:2024-06-01 date_to:2024-06-17 --private-key 0000000000000000000000000000000000000000000000000000000000000001 --provider https://staging.tn.trufnetwork.com
+kwil-cli call-action get_record text:0x4710a8d8f0d845da110086812a32de6d90d7ff5c text:st1b148397e2ea36889efad820e2315d int:null int:null int:null
 ```
-
-Users are able to fetch records from the stream contract without through the system contract to keep it simple at this
-phase, and in the hands of the Truflation as a data provider. Normally, before fetching records from the stream
-contract, the stream must be officialized by the system contract. It can be done by calling the `accept_stream` action in the system contract as the owner of the stream.
 
 ## Metrics and Monitoring
 
