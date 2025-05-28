@@ -850,3 +850,76 @@ func testStreamDeletion(t *testing.T) kwilTesting.TestFunc {
 		return nil
 	}
 }
+
+func TestFilterStreamsByExistence(t *testing.T) {
+	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name: "filter_streams_by_existence_test",
+		SeedScripts: []string{
+			"../../../internal/migrations/000-initial-data.sql",
+			"../../../internal/migrations/001-common-actions.sql",
+		},
+		FunctionTests: []kwilTesting.TestFunc{
+			testFilterStreamsByExistence(t),
+		},
+	}, testutils.GetTestOptions())
+}
+
+func testFilterStreamsByExistence(t *testing.T) kwilTesting.TestFunc {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		dataProvider := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000001")
+		platform = procedure.WithSigner(platform, dataProvider.Bytes())
+
+		// Create two streams, leave one non-existent
+		existingLocator := types.StreamLocator{
+			StreamId:     util.GenerateStreamId("existing_stream"),
+			DataProvider: dataProvider,
+		}
+		nonExistentLocator := types.StreamLocator{
+			StreamId:     util.GenerateStreamId("nonexistent_stream"),
+			DataProvider: dataProvider,
+		}
+
+		// Create only the first stream
+		err := setup.CreateStream(ctx, platform, setup.StreamInfo{
+			Locator: existingLocator,
+			Type:    setup.ContractTypePrimitive,
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to create existing stream")
+		}
+
+		allLocators := []types.StreamLocator{existingLocator, nonExistentLocator}
+
+		// Test 1: Filter for existing streams (ExistingOnly: true)
+		existingStreams, err := procedure.FilterStreamsByExistence(ctx, procedure.FilterStreamsByExistenceInput{
+			Platform:       platform,
+			StreamLocators: allLocators,
+			ExistingOnly:   testutils.Ptr(true),
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, 1, len(existingStreams), "Should return 1 existing stream")
+		assert.Equal(t, existingLocator, existingStreams[0], "Should return the existing stream")
+
+		// Test 2: Filter for non-existing streams (ExistingOnly: false)
+		nonExistingStreams, err := procedure.FilterStreamsByExistence(ctx, procedure.FilterStreamsByExistenceInput{
+			Platform:       platform,
+			StreamLocators: allLocators,
+			ExistingOnly:   testutils.Ptr(false),
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, 1, len(nonExistingStreams), "Should return 1 non-existing stream")
+		assert.Equal(t, nonExistentLocator, nonExistingStreams[0], "Should return the non-existing stream")
+
+		// Test 3: Default behavior (ExistingOnly: nil should default to true)
+		defaultResult, err := procedure.FilterStreamsByExistence(ctx, procedure.FilterStreamsByExistenceInput{
+			Platform:       platform,
+			StreamLocators: allLocators,
+			ExistingOnly:   nil,
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, 1, len(defaultResult), "Default should return existing streams")
+		assert.Equal(t, existingLocator, defaultResult[0], "Default should return the existing stream")
+
+		return nil
+	}
+}
