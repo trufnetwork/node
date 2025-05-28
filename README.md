@@ -197,9 +197,9 @@ task devnet:indexer:start # If running alongside other devnet components via com
 
 You can view the indexer API documentation at http://localhost:1337/v0/swagger.
 
-You can view our deployed indexer at https://staging.tn.trufnetwork.com/v0/swagger.
+You can view our deployed indexer at https://indexer.mainnet.truf.network/v0/swagger.
 There you can see the list of available endpoints and their descriptions.
-For example, you can see the list of transactions by calling the [/chain/transactions](https://staging.tn.trufnetwork.com/v0/chain/transactions) endpoint.
+For example, you can see the list of transactions by calling the [/chain/transactions](https://indexer.mainnet.truf.network/v0/chain/transactions) endpoint.
 
 ### Genesis File
 
