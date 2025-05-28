@@ -1082,8 +1082,9 @@ CREATE OR REPLACE ACTION transfer_stream_ownership(
 
 /**
  * filter_streams_by_existence: Filters streams based on existence.
- * Can return either existing or non-existing streams based on return_existing flag.
+ * Can return either existing or non-existing streams based on existing_only flag.
  * Takes arrays of data providers and stream IDs as input.
+ * Uses efficient WITH RECURSIVE pattern for batch processing.
  */
 CREATE OR REPLACE ACTION filter_streams_by_existence(
     $data_providers TEXT[],
@@ -1097,9 +1098,6 @@ CREATE OR REPLACE ACTION filter_streams_by_existence(
         $data_providers[$i] := LOWER($data_providers[$i]);
     }
 
-    $filtered_dp TEXT[];
-    $filtered_sid TEXT[];
-
     -- default to return existing streams
     if $existing_only IS NULL {
         $existing_only := true;
@@ -1110,30 +1108,41 @@ CREATE OR REPLACE ACTION filter_streams_by_existence(
         ERROR('Data providers and stream IDs arrays must have the same length');
     }
     
-    -- Iterate through each stream locator
-    for $i in 1..array_length($data_providers) {
-        $dp := $data_providers[$i];
-        $sid := $stream_ids[$i];
-        
-        -- Check if stream exists
-        $exists := false;
-        for $row in SELECT 1 FROM streams 
-            WHERE LOWER(data_provider) = LOWER($dp) 
-            AND stream_id = $sid {
-            $exists := true;
-        }
-        
-        -- Filter based on return_existing flag
-        if ($exists = $existing_only) {
-            $filtered_dp := array_append($filtered_dp, $dp);
-            $filtered_sid := array_append($filtered_sid, $sid);
-        }
-    }
-    
-    -- Return results as a table
-    for $i in 1..array_length($filtered_dp) {
-        RETURN NEXT $filtered_dp[$i], $filtered_sid[$i];
-    }
+    -- Use efficient WITH RECURSIVE pattern for batch processing
+    RETURN WITH RECURSIVE 
+    indexes AS (
+        SELECT 1 AS idx
+        UNION ALL
+        SELECT idx + 1 FROM indexes
+        WHERE idx < array_length($data_providers)
+    ),
+    stream_arrays AS (
+        SELECT 
+            $data_providers AS data_providers,
+            $stream_ids AS stream_ids
+    ),
+    arguments AS (
+        SELECT 
+            stream_arrays.data_providers[idx] AS data_provider,
+            stream_arrays.stream_ids[idx] AS stream_id
+        FROM indexes
+        JOIN stream_arrays ON 1=1
+    ),
+    -- Check existence for each stream and filter based on existing_only flag
+    existence_check AS (
+        SELECT 
+            a.data_provider,
+            a.stream_id,
+            CASE WHEN s.data_provider IS NOT NULL THEN true ELSE false END AS stream_exists
+        FROM arguments a
+        LEFT JOIN streams s ON a.data_provider = s.data_provider AND a.stream_id = s.stream_id
+    )
+    -- Filter results based on existing_only flag
+    SELECT 
+        e.data_provider,
+        e.stream_id
+    FROM existence_check e
+    WHERE e.stream_exists = $existing_only;
 };
 
 CREATE OR REPLACE ACTION list_streams(
