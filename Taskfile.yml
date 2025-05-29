@@ -278,11 +278,11 @@ tasks:
       - go test -v -timeout 0 ./internal/benchmark
 
   get-genesis:
-    desc: Pull latest staging genesis.json from truf-node-operator (needs READ_TOKEN in .env)
+    desc: Pull genesis.json from truf-node-operator (needs READ_TOKEN in .env)
     dotenv: ['.env']
     cmds:
       - |
-        curl -f -H "Authorization: token ${READ_TOKEN}" --create-dirs -o ./deployments/network/staging/genesis.json https://raw.githubusercontent.com/trufnetwork/truf-node-operator/main/configs/network/staging/genesis.json
+        curl -f -H "Authorization: token ${READ_TOKEN}" --create-dirs -o ./deployments/network/staging/genesis.json https://raw.githubusercontent.com/trufnetwork/truf-node-operator/main/configs/network/v2/genesis.json
 
   # ─── actions ───────────────────────────────────────────────────────────────────
 
