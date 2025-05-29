@@ -6,7 +6,7 @@ The database for TRUF.NETWORK (TN). It is built on top of the Kwil framework.
 
 Learn more about TRUF.NETWORK at [TRUF.NETWORK](https://truf.network).
 
-Want to join TN as a node operator? Follow the guidelines here: [truf-node-operator](https://github.com/trufnetwork/truf-node-operator)
+Want to join TN as a node operator? Follow the guidelines here: [Node Operator Guide](https://docs.truf.network/node-operator-guide)
 
 ### SDKs
 
