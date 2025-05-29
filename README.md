@@ -1,10 +1,12 @@
 # Truf Network
 
-The database for Truf Network (TN). It is built on top of the Kwil framework.
+The database for TRUF.NETWORK (TN). It is built on top of the Kwil framework.
 
 ## Overview
 
-Learn more about Truflation at [Truflation.com](https://trufnetwork.com). Check our internal components status [here](https://trufnetwork.grafana.net/public-dashboards/6fe3021962bb4fe1a4aebf5baddecab6).
+Learn more about TRUF.NETWORK at [TRUF.NETWORK](https://truf.network).
+
+Want to join TN as a node operator? Follow the guidelines here: [truf-node-operator](https://github.com/trufnetwork/truf-node-operator)
 
 ### SDKs
 
@@ -127,10 +129,21 @@ task build # build the binary
 task kwil-binaries # download and extract the kwil binaries
 ```
 
-Export the kwil-cli to your PATH for easier access:
+You have two options to make the kwil-cli accessible:
 
+1. Add the .build directory to your PATH (replace `/path/to/your/project` with your actual project location):
 ```shell
-export PATH=$PATH:$(pwd)/.build
+export PATH=$PATH:/path/to/your/project/.build
+```
+
+For example, if your project is in `$HOME/trufnetwork/node`, you would use:
+```shell
+export PATH=$PATH:$HOME/trufnetwork/node/.build
+```
+
+2. Or move the binary to your system path (e.g., /usr/local/bin):
+```shell
+sudo mv .build/kwil-cli /usr/local/bin/
 ```
 
 ##### Run Postgres
@@ -252,18 +265,8 @@ The `deploy-auto.yaml` workflow allows for on-demand deployment of test environm
 - Deploys to AWS using CDK
 - Uses `RESTART_HASH` to control full redeployment of TN instances
 
-### Staging Deployment
-
-The `deploy-staging.yaml` workflow handles staging environment deployments:
-
-- Requires specific secrets (AWS credentials, session secrets, private keys)
-- Deploys to AWS using CDK
-- Uses existing genesis file and private keys for TN nodes
-- Instances are not redeployed on every execution
-
 For detailed configuration and usage, refer to the workflow files in the `.github/workflows/` directory.
 
 ## License
 
 The tn-db repository is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for more details.
-
