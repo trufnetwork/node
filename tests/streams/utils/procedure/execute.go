@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	trufTypes "github.com/trufnetwork/sdk-go/core/types"
 	"github.com/trufnetwork/sdk-go/core/util"
 
 	"github.com/kwilteam/kwil-db/common"
@@ -555,4 +556,41 @@ func ListStreams(ctx context.Context, input ListStreamsInput) ([]ResultRow, erro
 	}
 
 	return processResultRows(resultRows)
+}
+
+type GetDatabaseSizeInput struct {
+	Platform *kwilTesting.Platform
+	Locator  trufTypes.StreamLocator
+	Height   int64
+}
+func GetDatabaseSize(ctx context.Context, input GetDatabaseSizeInput) (int64, error) {
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return 0, errors.Wrap(err, "failed to create Ethereum address from deployer bytes")
+	}
+
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: input.Height},
+		Signer:       input.Platform.Deployer,
+		Caller:       deployer.Address(),
+		TxID:         input.Platform.Txid(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext: txContext,
+	}
+	var databaseSize *int64
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_database_size", []any{}, func(row *common.Row) error {
+		databaseSize = safe(row.Values[0], nil, int64PtrConverter);
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	if r.Error != nil {
+		return 0, errors.Wrap(r.Error, "error in get_database_size")
+	}
+
+	return *databaseSize, nil
 }
