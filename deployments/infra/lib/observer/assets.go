@@ -15,7 +15,7 @@ const (
 
 func GetObserverAsset(scope constructs.Construct, id *string) awss3assets.Asset {
 	rootDir := utils.GetProjectRootDir()
-	ObserverAssetsDirRelativePath := filepath.Join(rootDir, "deployments/infra/lib/observer")
+	ObserverAssetsDirRelativePath := filepath.Join(rootDir, "deployments/observer")
 
 	asset := awss3assets.NewAsset(scope, id, &awss3assets.AssetProps{
 		Path: jsii.String(ObserverAssetsDirRelativePath),
