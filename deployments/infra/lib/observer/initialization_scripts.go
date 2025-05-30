@@ -11,6 +11,7 @@ type ObserverScriptInput struct {
 	ZippedAssetsDir string
 	Params          *ObserverParameters
 	Prefix          string
+	AwsRegion       string
 }
 
 // - extract the zip with the compose files
@@ -32,6 +33,7 @@ func GetObserverScript(input ObserverScriptInput) *string {
 		Prefix:          input.Prefix,
 		ObserverDir:     observerDir,
 		StartScriptPath: startScriptPath,
+		AwsRegion:       input.AwsRegion,
 	})
 	if err != nil {
 		panic(err)

@@ -15,6 +15,7 @@ Expected variables:
 # ⚠ WARNING: This file is auto-generated from a template. Do not edit directly!
 # -----------------------------------------------------------------------------
 {{- /* Validate required input */ -}}
+{{- if not .AwsRegion }}{{ fail "missing required field '.AwsRegion'" }}{{- end -}}
 {{- if not .ObserverDir }}{{ fail "missing required field '.ObserverDir'" }}{{- end -}}
 {{- if not .Prefix }}{{ fail "missing required field '.Prefix'" }}{{- end -}}
 {{- /* .Params can be empty, so no check needed here */ -}}
@@ -28,7 +29,7 @@ set -euo pipefail
 # --- Configuration ---
 OBSERVER_DIR="{{ .ObserverDir }}"
 PREFIX="{{ .Prefix }}"
-AWS_REGION=${AWS::Region}
+AWS_REGION="{{ .AwsRegion }}"
 
 # Parameterized paths
 ENV_FILE="$OBSERVER_DIR/.env"

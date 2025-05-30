@@ -35,6 +35,7 @@ type ParameterDescriptor struct {
 
 // ObserverStartData holds the data required by the TplObserverStart template.
 type ObserverStartData struct {
+	AwsRegion   string
 	ObserverDir string
 	Prefix      string
 	Params      []ParameterDescriptor // Use local ParameterDescriptor type

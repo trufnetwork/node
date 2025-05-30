@@ -86,6 +86,7 @@ func AttachObservability(input AttachObservabilityInput) {
 			Prefix:          ssmPrefix,
 			ObserverDir:     observerDir,
 			StartScriptPath: startScriptPath,
+			AwsRegion:       *awscdk.Aws_REGION(),
 		})
 		if err != nil {
 			// Use panic with more context as before
