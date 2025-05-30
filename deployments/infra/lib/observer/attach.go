@@ -141,7 +141,7 @@ func AttachObservability(input AttachObservabilityInput) {
 				InstanceName:       fmt.Sprintf("%s-%s-tn-node-%d", stage, devPrefix, tsnInstance.Index),
 				UniquePolicyPrefix: fmt.Sprintf("TNNode@%d", tsnInstance.Index),
 				LaunchTemplate:     tsnInstance.LaunchTemplate,
-				ServiceName:        "tn-node",
+				ServiceName:        fmt.Sprintf("tn-node-%d-v2", tsnInstance.Index),
 				Role:               tsnInstance.Role,
 			})
 		}
