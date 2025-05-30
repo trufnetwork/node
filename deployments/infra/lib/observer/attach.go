@@ -15,6 +15,7 @@ import (
 	"github.com/trufnetwork/node/infra/lib/cdklogger"
 	"github.com/trufnetwork/node/infra/lib/constructs/kwil_cluster"
 	"github.com/trufnetwork/node/infra/lib/constructs/validator_set"
+	"github.com/trufnetwork/node/infra/lib/utils"
 )
 
 // AttachObservabilityInput defines the inputs for attaching observer components.
@@ -101,7 +102,16 @@ func AttachObservability(input AttachObservabilityInput) {
 		lt := structure.LaunchTemplate
 		lt.UserData().AddCommands(jsii.String(downloadAndUnzipCmd))
 		lt.UserData().AddCommands(jsii.String(startObserverScriptContent))
-		lt.UserData().AddCommands(jsii.String(startScriptPath))
+
+		// Create systemd service for the observer
+		systemdServiceScript := utils.CreateSystemdServiceScript(
+			"observer",
+			"Observer Compose",
+			startScriptPath,
+			fmt.Sprintf("/bin/bash -c \"docker compose -f %s/observer-compose.yml down\"", observerDir),
+			nil, // No additional environment variables needed since they're handled by the start script
+		)
+		lt.UserData().AddCommands(jsii.String(systemdServiceScript))
 	}
 
 	// Gather all structures to attach to
