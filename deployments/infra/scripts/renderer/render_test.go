@@ -89,6 +89,7 @@ func TestGoldenObserverStartIdentical(t *testing.T) {
 		Prefix:          "/test/prefix",
 		ObserverDir:     "/opt/observer",
 		StartScriptPath: "/opt/observer/start.sh",
+		AwsRegion:       "us-west-2",
 	}
 
 	// --- Act: Call the (refactored) function ---
@@ -145,6 +146,7 @@ func TestObserverScript_RenderMatchesGolden(t *testing.T) {
 
 	// --- Arrange: Build the data structure needed by the template ---
 	data := renderer.ObserverStartData{
+		AwsRegion:   "us-west-2",
 		ObserverDir: "/opt/observer",
 		Prefix:      "/tsn/prefix",
 		Params: []renderer.ParameterDescriptor{
@@ -184,6 +186,7 @@ func TestAllTemplatesCanRender(t *testing.T) {
 				}
 			case renderer.TplObserverStart:
 				data = renderer.ObserverStartData{
+					AwsRegion:   "test-region",
 					ObserverDir: "/tmp", Prefix: "/test",
 					Params: []renderer.ParameterDescriptor{},
 				}

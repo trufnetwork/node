@@ -98,6 +98,7 @@ notls  = false
 enable            = {{ default false  .Snapshots.Enable }}
 recurring_height  = {{ default 14400 .Snapshots.RecurringHeight }}
 max_snapshots     = {{ default 3     .Snapshots.MaxSnapshots }}
+chunk_send_timeout = '5m0s'
 
 [state_sync]
 enable            = {{ default false  .StateSync.Enable }}
@@ -105,6 +106,10 @@ trusted_providers = {{ toJson (default (list) .StateSync.TrustedProviders) }}
 discovery_time    = '{{ default "15s" .StateSync.DiscoveryTime }}'
 max_retries       = {{ default 3      .StateSync.MaxRetries }}
 psql_path         = '{{ default "psql" .StateSync.PsqlPath }}'
+catalog_timeout = '30s'
+chunk_timeout = '2m0s'
+metadata_timeout = '1m0s'
+stream_timeout = '5m0s'
 
 ###########################################################################
 #  EXTENSIONS / MIGRATIONS / CHECKPOINT                                   #
@@ -118,6 +123,27 @@ migrate_from = '{{ default ""    .Migrations.MigrateFrom }}'
 [checkpoint]
 height = {{ default 0 .Checkpoint.Height }}
 hash   = '{{ default "" .Checkpoint.Hash }}'
+
+# Block synchronization configuration
+[block_sync]
+# overall timeout for fetching a block
+block_get_timeout = '1m30s'
+# timeout for sending a block to a peer
+block_send_timeout = '45s'
+# timeout for writing block requests
+request_timeout = '2s'
+# timeout for reading block responses
+response_timeout = '20s'
+# timeout between reading chunks of a block
+idle_timeout = '500ms'
+# timeout for writing block announcements
+announce_write_timeout = '5s'
+# timeout for announcement responses
+announce_resp_timeout = '5s'
+# timeout for fetching transactions
+tx_get_timeout = '20s'
+# timeout for transaction announcements
+tx_ann_timeout = '5s'
 
 # ERC-20 bridge placeholders
 [erc20_bridge]

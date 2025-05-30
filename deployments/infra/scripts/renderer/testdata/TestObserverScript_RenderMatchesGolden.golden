@@ -9,7 +9,7 @@ set -euo pipefail
 # --- Configuration ---
 OBSERVER_DIR="/opt/observer"
 PREFIX="/tsn/prefix"
-AWS_REGION=${AWS::Region}
+AWS_REGION="us-west-2"
 
 # Parameterized paths
 ENV_FILE="$OBSERVER_DIR/.env"

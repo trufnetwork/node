@@ -12,6 +12,7 @@ type CreateStartObserverScriptInput struct {
 	Prefix          string
 	ObserverDir     string
 	StartScriptPath string
+	AwsRegion       string
 }
 
 // CreateStartObserverScript creates the script that starts the observer
@@ -40,6 +41,7 @@ func CreateStartObserverScript(input CreateStartObserverScriptInput) (string, er
 
 	// Data for the TplObserverStart template using type from renderer package
 	tplData := renderer.ObserverStartData{
+		AwsRegion:   input.AwsRegion,
 		ObserverDir: input.ObserverDir,
 		Prefix:      input.Prefix,
 		Params:      rendererParams, // Pass the mapped slice

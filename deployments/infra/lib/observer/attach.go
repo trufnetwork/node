@@ -15,6 +15,7 @@ import (
 	"github.com/trufnetwork/node/infra/lib/cdklogger"
 	"github.com/trufnetwork/node/infra/lib/constructs/kwil_cluster"
 	"github.com/trufnetwork/node/infra/lib/constructs/validator_set"
+	"github.com/trufnetwork/node/infra/lib/utils"
 )
 
 // AttachObservabilityInput defines the inputs for attaching observer components.
@@ -43,7 +44,7 @@ func AttachObservability(input AttachObservabilityInput) {
 	stage := config.GetStage(input.Scope)
 	devPrefix := config.GetDevPrefix(input.Scope)
 	envName := string(stage)
-	ssmPrefix := fmt.Sprintf("/tsn/observer/%s/%s", stage, devPrefix)
+	ssmPrefix := "/tsn/observer"
 
 	// Helper function to attach to a single structure
 	attachToNode := func(structure ObservableStructure) {
@@ -85,6 +86,7 @@ func AttachObservability(input AttachObservabilityInput) {
 			Prefix:          ssmPrefix,
 			ObserverDir:     observerDir,
 			StartScriptPath: startScriptPath,
+			AwsRegion:       *awscdk.Aws_REGION(),
 		})
 		if err != nil {
 			// Use panic with more context as before
@@ -101,7 +103,16 @@ func AttachObservability(input AttachObservabilityInput) {
 		lt := structure.LaunchTemplate
 		lt.UserData().AddCommands(jsii.String(downloadAndUnzipCmd))
 		lt.UserData().AddCommands(jsii.String(startObserverScriptContent))
-		lt.UserData().AddCommands(jsii.String(startScriptPath))
+
+		// Create systemd service for the observer
+		systemdServiceScript := utils.CreateSystemdServiceScript(
+			"observer",
+			"Observer Compose",
+			startScriptPath,
+			fmt.Sprintf("/bin/bash -c \"docker compose -f %s/observer-compose.yml down\"", observerDir),
+			nil, // No additional environment variables needed since they're handled by the start script
+		)
+		lt.UserData().AddCommands(jsii.String(systemdServiceScript))
 	}
 
 	// Gather all structures to attach to
@@ -130,7 +141,7 @@ func AttachObservability(input AttachObservabilityInput) {
 				InstanceName:       fmt.Sprintf("%s-%s-tn-node-%d", stage, devPrefix, tsnInstance.Index),
 				UniquePolicyPrefix: fmt.Sprintf("TNNode@%d", tsnInstance.Index),
 				LaunchTemplate:     tsnInstance.LaunchTemplate,
-				ServiceName:        "tn-node",
+				ServiceName:        fmt.Sprintf("tn-node-%d-v2", tsnInstance.Index),
 				Role:               tsnInstance.Role,
 			})
 		}
