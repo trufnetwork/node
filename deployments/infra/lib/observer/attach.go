@@ -44,7 +44,7 @@ func AttachObservability(input AttachObservabilityInput) {
 	stage := config.GetStage(input.Scope)
 	devPrefix := config.GetDevPrefix(input.Scope)
 	envName := string(stage)
-	ssmPrefix := fmt.Sprintf("/tsn/observer/%s/%s", stage, devPrefix)
+	ssmPrefix := "/tsn/observer"
 
 	// Helper function to attach to a single structure
 	attachToNode := func(structure ObservableStructure) {
