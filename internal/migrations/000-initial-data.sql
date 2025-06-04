@@ -144,3 +144,34 @@ CREATE INDEX IF NOT EXISTS meta_key_ref_idx ON metadata (metadata_key, value_ref
 -- WHERE disabled_at IS NULL;
 -- for now, we just index disabled_at
 CREATE INDEX IF NOT EXISTS meta_disabled_idx ON metadata (disabled_at);
+
+
+-- Wallet whitelist table, for who can create streams
+-- CREATE TABLE access_groups (
+--     group_id TEXT PRIMARY KEY,
+--     owned_by TEXT NOT NULL,
+--     created_at INT8 NOT NULL
+-- );
+--
+-- CREATE TABLE access_group_members (
+--     group_id TEXT REFERENCES access_groups(group_id),
+--     wallet TEXT,
+--     PRIMARY KEY (group_id, wallet)
+-- );
+
+
+CREATE TABLE IF NOT EXISTS access_groups (
+    group_id INT8 NOT NULL,
+    owned_by TEXT NOT NULL,
+    created_at INT8 NOT NULL,
+    PRIMARY KEY (group_id)
+);
+
+CREATE TABLE IF NOT EXISTS access_group_members (
+    group_id INT8 NOT NULL,
+    wallet TEXT NOT NULL,
+    PRIMARY KEY (group_id, wallet),
+    FOREIGN KEY (group_id)
+        REFERENCES access_groups(group_id)
+        ON DELETE CASCADE
+);

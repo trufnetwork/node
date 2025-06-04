@@ -7,8 +7,17 @@ CREATE OR REPLACE ACTION create_stream(
     $stream_id TEXT,
     $stream_type TEXT
 ) PUBLIC {
-    -- Get caller's address (data provider) first
+    -- Whitelist check: @caller must be in access_group_members
     $data_provider TEXT := LOWER(@caller);
+    $is_whitelisted BOOL := false;
+    for $row in SELECT 1 FROM access_group_members WHERE wallet = $data_provider LIMIT 1 {
+        $is_whitelisted := true;
+    }
+    if !$is_whitelisted {
+        ERROR('Caller is not whitelisted to create streams');
+    }
+    
+    -- Get caller's address (data provider) first
     $current_block INT := @height;
     
     -- Check if caller is a valid ethereum address
@@ -63,8 +72,18 @@ CREATE OR REPLACE ACTION create_streams(
     $stream_ids TEXT[],
     $stream_types TEXT[]
 ) PUBLIC {
-    -- Get caller's address (data provider) first
+    -- Whitelist check: @caller must be in access_group_members
     $data_provider TEXT := LOWER(@caller);
+    $is_whitelisted BOOL := false;
+    for $row in SELECT 1 FROM access_group_members WHERE wallet = $data_provider LIMIT 1 {
+        $is_whitelisted := true;
+    }
+    if !$is_whitelisted {
+        ERROR('Caller is not whitelisted to create streams');
+    }
+
+    -- Get caller's address (data provider) first
+    $current_block INT := @height;
 
     -- Check if caller is a valid ethereum address
     if NOT check_ethereum_address($data_provider) {
