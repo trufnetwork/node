@@ -1149,7 +1149,8 @@ CREATE OR REPLACE ACTION list_streams(
     $data_provider TEXT,
     $limit INT,
     $offset INT,
-    $order_by TEXT
+    $order_by TEXT,
+    $block_height INT
 ) PUBLIC view returns table(
     data_provider TEXT,
     stream_id TEXT,
@@ -1182,7 +1183,8 @@ CREATE OR REPLACE ACTION list_streams(
                   stream_type,
                   created_at
            FROM streams
-           WHERE $data_provider IS NULL OR $data_provider = '' OR LOWER(data_provider) = LOWER($data_provider)
+           WHERE ($data_provider IS NULL OR $data_provider = '' OR LOWER(data_provider) = LOWER($data_provider))
+           AND created_at > $block_height
            ORDER BY
                CASE WHEN $order_by = 'created_at DESC' THEN created_at END DESC,
                CASE WHEN $order_by = 'created_at ASC' THEN created_at END ASC,

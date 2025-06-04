@@ -1140,6 +1140,7 @@ func testListStreams(t *testing.T) func(ctx context.Context, platform *kwilTesti
 			Limit:        10,
 			Offset:       0,
 			OrderBy:      "created_at DESC",
+			BlockHeight:  0,
 		})
 		if err != nil {
 			return errors.Wrap(err, "error listing streams")

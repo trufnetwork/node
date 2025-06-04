@@ -512,6 +512,7 @@ type ListStreamsInput struct {
 	Limit        int
 	Offset       int
 	OrderBy      string
+	BlockHeight  int
 }
 
 func ListStreams(ctx context.Context, input ListStreamsInput) ([]ResultRow, error) {
@@ -540,6 +541,7 @@ func ListStreams(ctx context.Context, input ListStreamsInput) ([]ResultRow, erro
 		input.Limit,
 		input.Offset,
 		input.OrderBy,
+		input.BlockHeight,
 	}, func(row *common.Row) error {
 		values := make([]any, len(row.Values))
 		for i, v := range row.Values {
