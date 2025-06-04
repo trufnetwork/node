@@ -1,5 +1,5 @@
 # Truf Network
-
+ 
 The database for TRUF.NETWORK (TN). It is built on top of the Kwil framework.
 
 ## Overview
