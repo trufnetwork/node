@@ -36,7 +36,7 @@ We provide official SDKs to integrate and interact with the TN network:
   A comprehensive Go client for deploying and managing TN data streams.
 
 - **TypeScript SDK**  
-  📦 [trufnetwork/sdk-go-js](https://github.com/trufnetwork/sdk-go-js)  
+  📦 [trufnetwork/sdk-js](https://github.com/trufnetwork/sdk-js)  
   A TypeScript library for both Node.js and browser environments.
 
 ### Supported Features:
