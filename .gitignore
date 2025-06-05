@@ -4,6 +4,7 @@
 .idea
 .cursor
 .repomix
+.DS_Store
 
 .build/kwild
 # must remain private
