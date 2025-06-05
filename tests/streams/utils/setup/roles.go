@@ -60,16 +60,16 @@ func CreateTestRole(ctx context.Context, input CreateTestRoleInput) error {
 	})
 }
 
-type AddManagerToRoleInput struct {
-	Platform      *kwilTesting.Platform
-	Owner         string
-	RoleName      string
-	ManagerWallet string
+type AddManagersToRoleInput struct {
+	Platform       *kwilTesting.Platform
+	Owner          string
+	RoleName       string
+	ManagerWallets []string
 }
 
-// AddManagerToRole uses system privileges to directly insert a manager for a role.
+// AddManagersToRole uses system privileges to directly insert managers for a role.
 // This is a test utility for setting up state.
-func AddManagerToRole(ctx context.Context, input AddManagerToRoleInput) error {
+func AddManagersToRole(ctx context.Context, input AddManagersToRoleInput) error {
 	txContext := &common.TxContext{
 		Ctx: ctx,
 		BlockContext: &common.BlockContext{
@@ -86,13 +86,20 @@ func AddManagerToRole(ctx context.Context, input AddManagerToRoleInput) error {
 		InvalidTxCtx:  false,
 	}
 
-	insertManagerSQL := fmt.Sprintf(`
-		INSERT INTO role_managers (owner, role_name, manager_wallet, assigned_at, assigned_by)
-		VALUES ('%s', '%s', '%s', 0, 'system')
-		ON CONFLICT (owner, role_name, manager_wallet) DO NOTHING
-	`, strings.ToLower(input.Owner), input.RoleName, strings.ToLower(input.ManagerWallet))
+	for _, managerWallet := range input.ManagerWallets {
+		insertManagerSQL := fmt.Sprintf(`
+			INSERT INTO role_managers (owner, role_name, manager_wallet, assigned_at, assigned_by)
+			VALUES ('%s', '%s', '%s', 0, 'system')
+			ON CONFLICT (owner, role_name, manager_wallet) DO NOTHING
+		`, strings.ToLower(input.Owner), input.RoleName, strings.ToLower(managerWallet))
 
-	return input.Platform.Engine.Execute(engineContext, input.Platform.DB, insertManagerSQL, nil, func(row *common.Row) error {
-		return nil
-	})
+		err := input.Platform.Engine.Execute(engineContext, input.Platform.DB, insertManagerSQL, nil, func(row *common.Row) error {
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

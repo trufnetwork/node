@@ -87,23 +87,37 @@ type DisableTaxonomyInput struct {
 	Height        int64
 }
 
-type GrantRoleInput struct {
+type GrantRolesInput struct {
 	Platform *kwilTesting.Platform
 	Owner    string
 	RoleName string
-	Wallet   string
+	Wallets  []string
 }
 
-type RevokeRoleInput struct {
+type RevokeRolesInput struct {
 	Platform *kwilTesting.Platform
 	Owner    string
 	RoleName string
-	Wallet   string
+	Wallets  []string
 }
 
-type IsMemberOfInput struct {
+type AreMembersOfInput struct {
 	Platform *kwilTesting.Platform
 	Owner    string
 	RoleName string
-	Wallet   string
+	Wallets  []string
+}
+
+type AddRoleManagersInput struct {
+	Platform       *kwilTesting.Platform
+	OwnerAddress   string
+	RoleName       string
+	ManagerWallets []string
+}
+
+type RemoveRoleManagersInput struct {
+	Platform       *kwilTesting.Platform
+	OwnerAddress   string
+	RoleName       string
+	ManagerWallets []string
 }

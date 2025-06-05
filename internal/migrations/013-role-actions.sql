@@ -1,5 +1,5 @@
 /**
- * grant_role: Assigns a role to a specific wallet.
+ * grant_roles: Assigns a role to a list of wallets.
  *
  * Permissions:
  * - Only the role owner or a designated manager can execute this action.
@@ -9,22 +9,25 @@
  * - Ensures the role exists.
  * - The action is idempotent; granting an existing role membership will not cause an error.
  */
-CREATE OR REPLACE ACTION grant_role(
+CREATE OR REPLACE ACTION grant_roles(
     $owner TEXT,
     $role_name TEXT,
-    $wallet TEXT
+    $wallets TEXT[]
 ) PUBLIC {
     $owner := LOWER($owner);
     $role_name := LOWER($role_name);
-    $wallet := LOWER($wallet);
     $caller := LOWER(@caller);
 
     -- Input validation
-    IF NOT check_ethereum_address($wallet) {
-        ERROR('Invalid wallet address');
-    }
     IF $owner != 'system' AND NOT check_ethereum_address($owner) {
         ERROR('Invalid owner address');
+    }
+
+    FOR $i in 1..array_length($wallets) {
+        IF NOT check_ethereum_address($wallets[$i]) {
+            ERROR('Invalid wallet address in array at index ' || $i::TEXT);
+        }
+        $wallets[$i] := LOWER($wallets[$i]);
     }
 
     -- Check if role exists
@@ -49,19 +52,35 @@ CREATE OR REPLACE ACTION grant_role(
     IF NOT $is_owner AND NOT $is_manager {
         ERROR('Only role owner or a manager can grant roles');
     }
-    
-    -- Idempotency check: if member already exists, do nothing
-    FOR $m IN SELECT 1 FROM role_members WHERE owner = $owner AND role_name = $role_name AND wallet = $wallet LIMIT 1 {
-        RETURN; -- already a member, successfully do nothing
+
+    -- An empty wallet list is a no-op after validation.
+    IF array_length($wallets) = 0 {
+        RETURN;
     }
 
-    -- Insert into role_members
+    -- Insert into role_members using a batch-friendly approach
+    WITH RECURSIVE
+    indexes AS (
+        SELECT 1 AS idx
+        UNION ALL
+        SELECT idx + 1 FROM indexes WHERE idx < array_length($wallets)
+    ),
+    wallet_arrays AS (
+        SELECT $wallets AS wallets
+    ),
+    wallet_list AS (
+        SELECT wallet_arrays.wallets[idx] AS wallet
+        FROM indexes
+        JOIN wallet_arrays ON 1=1
+    )
     INSERT INTO role_members (owner, role_name, wallet, granted_at, granted_by)
-    VALUES ($owner, $role_name, $wallet, @height, $caller);
+    SELECT $owner, $role_name, wallet, @height, $caller
+    FROM wallet_list
+    ON CONFLICT (owner, role_name, wallet) DO NOTHING;
 };
 
 /**
- * revoke_role: Removes a role from a specific wallet.
+ * revoke_roles: Removes a role from a list of wallets.
  *
  * Permissions:
  * - Only the role owner or a designated manager can execute this action.
@@ -69,24 +88,26 @@ CREATE OR REPLACE ACTION grant_role(
  * Validations:
  * - Validates wallet and owner addresses.
  * - Ensures the role exists.
- * - Ensures the wallet is actually a member before attempting revocation.
+ * - Is idempotent; revoking a non-member does not error.
  */
-CREATE OR REPLACE ACTION revoke_role(
+CREATE OR REPLACE ACTION revoke_roles(
     $owner TEXT,
     $role_name TEXT,
-    $wallet TEXT
+    $wallets TEXT[]
 ) PUBLIC {
     $owner := LOWER($owner);
     $role_name := LOWER($role_name);
-    $wallet := LOWER($wallet);
     $caller := LOWER(@caller);
 
     -- Input validation
-    IF NOT check_ethereum_address($wallet) {
-        ERROR('Invalid wallet address');
-    }
     IF $owner != 'system' AND NOT check_ethereum_address($owner) {
         ERROR('Invalid owner address');
+    }
+    FOR $i in 1..array_length($wallets) {
+        IF NOT check_ethereum_address($wallets[$i]) {
+            ERROR('Invalid wallet address in array at index ' || $i::TEXT);
+        }
+        $wallets[$i] := LOWER($wallets[$i]);
     }
 
     -- Check if role exists
@@ -111,39 +132,52 @@ CREATE OR REPLACE ACTION revoke_role(
         ERROR('Only role owner or a manager can revoke roles');
     }
 
-    -- Check if wallet is actually a member
-    $member_exists BOOL := FALSE;
-    FOR $m IN SELECT 1 FROM role_members WHERE owner = $owner AND role_name = $role_name AND wallet = $wallet LIMIT 1 {
-        $member_exists := TRUE;
+    -- An empty wallet list is a no-op after validation.
+    IF array_length($wallets) = 0 {
+        RETURN;
     }
 
-    IF NOT $member_exists {
-        ERROR('Wallet is not a member of role');
-    }
-
-    -- Delete from role_members
-    DELETE FROM role_members WHERE owner = $owner AND role_name = $role_name AND wallet = $wallet;
+    -- Batch delete from role_members using a recursive CTE to unnest the array
+    WITH RECURSIVE
+    indexes AS (
+        SELECT 1 AS idx
+        UNION ALL
+        SELECT idx + 1 FROM indexes WHERE idx < array_length($wallets)
+    ),
+    wallet_arrays AS (
+        SELECT $wallets AS wallets
+    ),
+    wallets_to_delete AS (
+        SELECT wallet_arrays.wallets[idx] as wallet_addr
+        FROM indexes
+        JOIN wallet_arrays ON 1=1
+    )
+    DELETE FROM role_members
+    WHERE owner = $owner AND role_name = $role_name
+    AND wallet IN (SELECT wallet_addr FROM wallets_to_delete);
 };
 
 /**
- * is_member_of: Checks if a wallet is a member of a specific role.
+ * are_members_of: Checks if a list of wallets are members of a specific role.
  * This is a public view action and requires no special permissions.
  */
-CREATE OR REPLACE ACTION is_member_of(
+CREATE OR REPLACE ACTION are_members_of(
     $owner TEXT,
     $role_name TEXT,
-    $wallet TEXT
-) PUBLIC VIEW RETURNS (is_member BOOL) {
+    $wallets TEXT[]
+) PUBLIC VIEW RETURNS TABLE (wallet TEXT, is_member BOOL) {
     $owner := LOWER($owner);
     $role_name := LOWER($role_name);
-    $wallet := LOWER($wallet);
-    
+
     -- Input validation
-    IF NOT check_ethereum_address($wallet) {
-        ERROR('Invalid wallet address');
-    }
     IF $owner != 'system' AND NOT check_ethereum_address($owner) {
         ERROR('Invalid owner address');
+    }
+    FOR $i in 1..array_length($wallets) {
+        IF NOT check_ethereum_address($wallets[$i]) {
+            ERROR('Invalid wallet address in array at index ' || $i::TEXT);
+        }
+        $wallets[$i] := LOWER($wallets[$i]);
     }
 
     -- Check if role exists before checking membership
@@ -155,10 +189,31 @@ CREATE OR REPLACE ACTION is_member_of(
         ERROR('Role does not exist');
     }
 
-    -- Check for membership
-    FOR $m IN SELECT 1 FROM role_members WHERE owner = $owner AND role_name = $role_name AND wallet = $wallet LIMIT 1 {
-        RETURN TRUE;
+    -- An empty wallet list should return an empty result set after validation.
+    IF array_length($wallets) = 0 {
+        RETURN;
     }
 
-    RETURN FALSE;
+    -- Batch check for membership
+    RETURN WITH RECURSIVE
+    indexes AS (
+        SELECT 1 AS idx
+        UNION ALL
+        SELECT idx + 1 FROM indexes WHERE idx < array_length($wallets)
+    ),
+    wallet_arrays AS (
+        SELECT $wallets AS wallets
+    ),
+    arguments AS (
+        SELECT wallet_arrays.wallets[idx] as wallet 
+        FROM indexes
+        JOIN wallet_arrays ON 1=1
+    )
+    SELECT
+        a.wallet,
+        (rm.wallet IS NOT NULL) AS is_member
+    FROM arguments a
+    LEFT JOIN role_members rm ON rm.owner = $owner
+                             AND rm.role_name = $role_name
+                             AND rm.wallet = a.wallet;
 };
