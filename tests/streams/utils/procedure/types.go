@@ -86,3 +86,24 @@ type DisableTaxonomyInput struct {
 	GroupSequence int
 	Height        int64
 }
+
+type GrantRoleInput struct {
+	Platform *kwilTesting.Platform
+	Owner    string
+	RoleName string
+	Wallet   string
+}
+
+type RevokeRoleInput struct {
+	Platform *kwilTesting.Platform
+	Owner    string
+	RoleName string
+	Wallet   string
+}
+
+type IsMemberOfInput struct {
+	Platform *kwilTesting.Platform
+	Owner    string
+	RoleName string
+	Wallet   string
+}
