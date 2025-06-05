@@ -3,31 +3,31 @@
 **TN Node** is the database layer powering **[TRUF.NETWORK](https://truf.network)**, built on top of the Kwil framework.
 
 
-## 📘 Overview
+## Overview
 
 This documentation is intended for node operators, developers and contributors. It includes guides for setup, upgrades, development, and SDK usage.
 
 
-## 📚 Terminology
+## Terminology
 
 For definitions of key terms used throughout this project, refer to the [Terminology Reference](./TERMINOLOGY.md).
 
 
-## ⚙️ Node Operator Guide
+## Node Operator Guide
 
 Learn how to deploy, configure, and maintain a TN node:
 
-👉 [Node Operator Guide](./docs/node-operator-guide.md)
+[Node Operator Guide](./docs/node-operator-guide.md)
 
 
-## 🔧 Node Upgrade Guide
+## Node Upgrade Guide
 
 Steps and best practices for upgrading TN nodes:
 
-👉 [Node Upgrade Guide](./docs/node-upgrade-guide.md)
+[Node Upgrade Guide](./docs/node-upgrade-guide.md)
 
 
-## 🛠 SDKs
+## SDKs
 
 We provide official SDKs to integrate and interact with the TN network:
 
@@ -47,13 +47,13 @@ We provide official SDKs to integrate and interact with the TN network:
 - Configurable node connections
 
 
-## 👩‍💻 Development Guide
+## Development Guide
 
 For contributors and developers building on top of TN:
 
-👉 [Development Guide](./docs/development.md)
+[Development Guide](./docs/development.md)
 
 
-## 📄 License
+## License
 
 This project is licensed under the **Apache License 2.0**. See the [LICENSE](./LICENSE) file for details.
