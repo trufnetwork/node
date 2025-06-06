@@ -219,20 +219,9 @@ For detailed instructions on configuration options more relevant to a production
 
 This will configure your node to use state sync for faster synchronization with the network. Edit the `config.toml` file using the appropriate command for your OS.
 
-#### For Linux (Ubuntu/Debian)
-
 ```bash
 sed -i '/\[state_sync\]/,/^\[/ s/enable = false/enable = true/' ./my-node-config/config.toml
 sed -i 's/trusted_providers = \[\]/trusted_providers = ["0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656"]/' ./my-node-config/config.toml
-```
-
-#### For macOS
-
-The `sed` command on macOS requires a different syntax for in-place editing.
-
-```bash
-sed -i '' '/\[state_sync\]/,/^\[/ s/enable = false/enable = true/' ./my-node-config/config.toml
-sed -i '' 's/trusted_providers = \[\]/trusted_providers = ["0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656"]/' ./my-node-config/config.toml
 ```
 
 ### 4. Set Up PostgreSQL
@@ -248,17 +237,19 @@ docker run -d -p 127.0.0.1:5432:5432 --name tn-postgres \
 ```
 
 > **Warning**: Critical Security Requirements
-> 
+>
 > 1. `kwild` requires a "superuser" role to perform various tasks that require elevated privileges, such as creating triggers and publications for logical replication. The PostgreSQL database cluster should be dedicated to `kwild`, and should not be used for any other purpose.
-> 
+>
 > 2. NEVER expose PostgreSQL port (5432) to the public internet. Always bind to localhost (127.0.0.1) as shown in the example above.
 
 > **Securing PostgreSQL Port on Linux:**
+>
 > 1. Use UFW (Uncomplicated Firewall) to block port 5432:
+>
 >    ```bash
 >    sudo ufw deny 5432/tcp
 >    ```
-> 
+>
 > 2. Verify no external access to port 5432:
 >    ```bash
 >    sudo ss -tulpn | grep 5432
@@ -266,9 +257,9 @@ docker run -d -p 127.0.0.1:5432:5432 --name tn-postgres \
 >    ```
 
 The command above:
+
 - `-v tn-pgdata:/var/lib/postgresql/data`: Creates a persistent volume named 'tn-pgdata' to store database data
 - `--shm-size=1gb`: Allocates 1GB of shared memory for PostgreSQL operations (recommended for better performance)
-
 
 ### 5. Create background services for `kwild` and PostgreSQL
 
@@ -322,6 +313,7 @@ EOF
 ### 6. Run TN Node
 
 Before you proceed, ensure your firewall allows incoming connections on:
+
 - JSON-RPC port (default: 8484)
 - P2P port (default: 6600)
 
@@ -342,16 +334,19 @@ sudo systemctl start kwild
 To become a validator, ensure your node is fully synced with the network:
 
 Use this command to check node sync status. Look for `syncing: false` in the output, and check that your `best_block_height` is close to the current network height.
+
 ```bash
 kwild admin status
 ```
 
 > **Note**: If you see the error `dial unix /tmp/kwild.socket: connect: connection refused`, this is normal during:
+>
 > - Initial database setup
 > - Database restoration
 > - State sync operations
-> 
+>
 > The service will become available once these operations complete. You can monitor the progress using:
+>
 > ```bash
 > sudo journalctl -u kwild -f
 > ```
@@ -363,15 +358,15 @@ To upgrade your node to a validator:
 1. Ensure your node is fully synced with the network.
 2. Submit a validator join request:
 
-    ```bash
-    kwild validators join
-    ```
+   ```bash
+   kwild validators join
+   ```
 
 3. Wait for approval from existing validators. You can check your join request status with:
 
-    ```bash
-    kwild validators list-join-requests
-    ```
+   ```bash
+   kwild validators list-join-requests
+   ```
 
 Existing validators must approve your request. For each existing validator needed to approve:
 
@@ -380,11 +375,13 @@ kwild validators approve <your-node-id>
 ```
 
 The node ID format for validator operations is: `<public key>#<key type>`. For example:
+
 ```bash
 kwild validators approve 03dbe22b9922b5c0f8f60c230446feaa1c132a93caa9dae83b5d4fab16c3404a22#secp256k1
 ```
 
 You can find your node's public key and key type by running:
+
 ```bash
 kwild key info --key-file ./my-node-config/nodekey.json
 ```
@@ -417,6 +414,7 @@ When setting up your node, refer to these files for network-specific parameters 
 Node IDs in TRUF.NETWORK follow the format: `<public key>#<key type>@<IP address>:<port>`
 
 You can find your node ID by running:
+
 ```bash
 kwild key info --key-file ./my-node-config/nodekey.json
 ```
@@ -438,22 +436,26 @@ Welcome to the TRUF.NETWORK! Your participation helps build a more robust and de
 To enable state sync functionality, you'll need `pg_dump` installed. Here's how to install it:
 
 For Ubuntu/Debian:
+
 ```bash
 sudo apt-get update
 sudo apt-get install postgresql-client-16
 ```
 
 For CentOS/RHEL:
+
 ```bash
 sudo yum install postgresql16
 ```
 
 For macOS (using Homebrew):
+
 ```bash
 brew install postgresql@16
 ```
 
 Verify the installation:
+
 ```bash
 pg_dump --version
 ```
@@ -463,21 +465,25 @@ pg_dump --version
 ## Status
 
 Use this command to view node logs in real-time
+
 ```bash
 sudo journalctl -u kwild -f
 ```
 
 This command will provide last 100 lines of logs
+
 ```bash
 sudo journalctl -u kwild -n 100
 ```
 
 To view logs with precise timestamp use
+
 ```bash
 sudo journalctl -u kwild -f --output=short-precise
 ```
 
 Use this command to check service status
+
 ```bash
 sudo systemctl status kwild
 ```
@@ -485,6 +491,7 @@ sudo systemctl status kwild
 ## Docker Container Status
 
 To check the status of your Docker containers:
+
 ```bash
 docker ps
 ```
@@ -492,6 +499,7 @@ docker ps
 ## PostgreSQL Logs
 
 To view PostgreSQL container logs:
+
 ```bash
 docker logs tn-postgres
 ```
@@ -506,6 +514,7 @@ docker exec -it tn-postgres psql -U postgres -d kwild
 ```
 
 Common useful PostgreSQL commands:
+
 ```sql
 -- List all databases
 \l
@@ -520,6 +529,7 @@ Common useful PostgreSQL commands:
 ## System Boot Logs
 
 To view logs since the last system boot:
+
 ```bash
 sudo journalctl -u kwild -b
 ```
@@ -527,10 +537,11 @@ sudo journalctl -u kwild -b
 ## Clean Removal
 
 > **Warning**: The following steps will completely remove your node setup, including all data and configuration. This is irreversible and should only be done if:
+>
 > - You need to start fresh due to configuration issues
 > - You're moving to a different server
 > - You're troubleshooting persistent problems that require a clean slate
-> 
+>
 > Make sure to backup any important data before proceeding.
 
 ### For Linux
