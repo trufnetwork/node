@@ -136,18 +136,20 @@ You have two options to get the `kwild` binary.
     # tar -xzf tn_2.0.1_linux_amd64.tar.gz
     # sudo mv kwild /usr/local/bin/
 
-    # Example for macOS:
+    # Example for macOS Intel:
     # tar -xzf tn_2.0.1_darwin_amd64.tar.gz
     # sudo mv kwild /usr/local/bin/
     ```
 
 2.  **Build from Source**:
 
-    #### For Linux
-
     ```bash
+    # Clone the repository
     git clone https://github.com/trufnetwork/node.git
     cd node
+    # Pull latest changes to ensure we have the most up-to-date code
+    git pull
+    # Build the binary
     task build
     ```
 
@@ -157,24 +159,10 @@ You have two options to get the `kwild` binary.
     sudo mv .build/kwild /usr/local/bin/
     ```
 
-    Apply new docker group:
+    For Linux users, apply new docker group:
 
     ```bash
     newgrp docker
-    ```
-
-    #### For macOS
-
-    ```bash
-    git clone https://github.com/trufnetwork/node.git
-    cd node
-    task build
-    ```
-
-    The built binary will be in the `.build` directory. Move it to your system path:
-
-    ```bash
-    sudo mv .build/kwild /usr/local/bin/
     ```
 
 ### Verify Installation
