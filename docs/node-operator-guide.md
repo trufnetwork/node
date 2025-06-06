@@ -68,11 +68,15 @@ brew install postgresql@16
 To use it from any terminal, you may need to add it to your `PATH`. For `zsh` (the default in modern macOS):
 
 ```bash
+# Apple Silicon (M1/M2) Macs:
 echo 'export PATH="/opt/homebrew/opt/postgresql@16/bin:$PATH"' >> ~/.zshrc
+
+# Intel Macs:
+echo 'export PATH="/usr/local/opt/postgresql@16/bin:$PATH"' >> ~/.zshrc
+
+# Apply changes
 source ~/.zshrc
 ```
-
-> **Note**: If you use Bash, add the export line to `~/.bash_profile` instead. The path may also be `/usr/local/opt/postgresql@16/bin` on Intel-based Macs.
 
 ### 3. Go
 
