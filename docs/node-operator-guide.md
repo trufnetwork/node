@@ -57,7 +57,26 @@ The PostgreSQL client (`psql`) is required for database operations, and the `pg_
 sudo apt-get install -y postgresql-client-16
 ```
 
-3. **Go:** Required for building `kwild` binary
+#### For macOS
+
+You can install the PostgreSQL client using [Homebrew](https://brew.sh/). If you don't have Homebrew, install it first by following the instructions on their website.
+
+```bash
+brew install postgresql@16
+```
+
+To use it from any terminal, you may need to add it to your `PATH`. For `zsh` (the default in modern macOS):
+
+```bash
+echo 'export PATH="/opt/homebrew/opt/postgresql@16/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+> **Note**: If you use Bash, add the export line to `~/.bash_profile` instead. The path may also be `/usr/local/opt/postgresql@16/bin` on Intel-based Macs.
+
+### 3. Go
+
+#### For Linux (Ubuntu/Debian)
 
 ```bash
 LATEST_GO_VERSION=$(curl -sSL https://go.dev/VERSION?m=text | head -n1)
