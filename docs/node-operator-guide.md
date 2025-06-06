@@ -362,15 +362,15 @@ To upgrade your node to a validator:
 1. Ensure your node is fully synced with the network.
 2. Submit a validator join request:
 
-```bash
-kwild validators join
-```
+    ```bash
+    kwild validators join
+    ```
 
 3. Wait for approval from existing validators. You can check your join request status with:
 
-```bash
-kwild validators list-join-requests
-```
+    ```bash
+    kwild validators list-join-requests
+    ```
 
 Existing validators must approve your request. For each existing validator needed to approve:
 
