@@ -121,9 +121,9 @@ This tool is required to build the `kwild` binary from source. The command is th
 go install github.com/go-task/task/v3/cmd/task@latest
 ```
 
-5. **Kwild Binary**
+### 5. Kwild Binary
 
-You have two options to get the `kwild` binary:
+You have two options to get the `kwild` binary.
 
 1. **Download from Releases**:
 
