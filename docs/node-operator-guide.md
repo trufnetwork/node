@@ -145,7 +145,9 @@ You have two options to get the `kwild` binary.
     # sudo mv kwild /usr/local/bin/
     ```
 
-2.  **Build from Source**:
+2.  **Build from Source** (Recommended):
+
+    Building from source is recommended because it ensures you have the latest features and security updates directly from the development branch. It also allows you to verify the code you're running and make any necessary customizations. Most importantly, building from source ensures the binary is compiled specifically for your machine's architecture and operating system, which can lead to better performance and compatibility.
 
     ```bash
     # Clone the repository
