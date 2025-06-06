@@ -325,6 +325,7 @@ Before you proceed, ensure your firewall allows incoming connections on:
 - JSON-RPC port (default: 8484)
 - P2P port (default: 6600)
 
+#### For Linux
 
 ```bash
 sudo systemctl daemon-reload
