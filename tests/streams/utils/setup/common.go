@@ -32,21 +32,17 @@ func CreateStream(ctx context.Context, platform *kwilTesting.Platform, contractI
 }
 
 func UntypedCreateStream(ctx context.Context, platform *kwilTesting.Platform, streamId string, dataProvider string, contractType string) error {
-	// Convert hex string to bytes for the signer
-	var signerBytes []byte
-	if len(dataProvider) > 2 {
-		// Remove 0x prefix if present
-		if dataProvider[:2] == "0x" {
-			signerBytes = []byte(dataProvider[2:])
-		} else {
-			signerBytes = []byte(dataProvider)
-		}
+	// Convert address string to proper bytes using util function
+	addr, err := util.NewEthereumAddressFromString(dataProvider)
+	if err != nil {
+		return errors.Wrap(err, "invalid data provider address")
 	}
+
 	txContext := &common.TxContext{
 		Ctx:          ctx,
 		BlockContext: &common.BlockContext{Height: 0},
-		Signer:       signerBytes,
-		Caller:       dataProvider,
+		Signer:       addr.Bytes(),
+		Caller:       addr.Address(),
 		TxID:         platform.Txid(),
 	}
 

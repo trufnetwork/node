@@ -2,11 +2,12 @@ package setup
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/kwilteam/kwil-db/common"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
+	"github.com/pkg/errors"
+	"github.com/trufnetwork/sdk-go/core/util"
 )
 
 type CreateTestRoleInput struct {
@@ -17,89 +18,107 @@ type CreateTestRoleInput struct {
 }
 
 func CreateTestRole(ctx context.Context, input CreateTestRoleInput) error {
-	input.Platform.Deployer = []byte(input.Owner)
-
 	var callerAddr string
 	if input.Owner == "system" {
 		callerAddr = "0x0000000000000000000000000000000000000000"
 	} else {
-		callerAddr = input.Owner
+		// For user-owned roles, the caller must be the address of the signer.
+		// The platform passed in should already have the correct signer.
+		deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+		if err != nil {
+			return errors.Wrap(err, "invalid deployer on platform for CreateTestRole")
+		}
+		callerAddr = deployer.Address()
+
+		// Also assert that the owner parameter matches the signer's address.
+		if strings.ToLower(callerAddr) != strings.ToLower(input.Owner) {
+			return errors.Errorf("owner parameter (%s) does not match platform signer address (%s)", input.Owner, callerAddr)
+		}
 	}
 
 	txContext := &common.TxContext{
-		Ctx: ctx,
-		BlockContext: &common.BlockContext{
-			Height: 0,
-		},
-		TxID:   input.Platform.Txid(),
-		Signer: input.Platform.Deployer,
-		Caller: callerAddr,
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 0},
+		TxID:         input.Platform.Txid(),
+		Signer:       input.Platform.Deployer,
+		Caller:       callerAddr,
 	}
 
 	engineContext := &common.EngineContext{
 		TxContext:     txContext,
 		OverrideAuthz: true, // Override authorization for system operations
-		InvalidTxCtx:  false,
 	}
 
-	// Determine role type based on owner
 	roleType := "user"
 	if input.Owner == "system" {
 		roleType = "system"
 	}
 
-	// Use direct SQL execution to insert the role - no parameter binding, use direct values
-	insertRoleSQL := fmt.Sprintf(`
+	insertRoleSQL := `
 		INSERT INTO roles (owner, role_name, display_name, role_type, created_at)
-		VALUES ('%s', '%s', '%s', '%s', 0)
+		VALUES ($owner, $role_name, $display_name, $role_type, 0)
 		ON CONFLICT (owner, role_name) DO NOTHING
-	`, strings.ToLower(input.Owner), input.RoleName, input.DisplayName, roleType)
+	`
 
-	return input.Platform.Engine.Execute(engineContext, input.Platform.DB, insertRoleSQL, nil, func(row *common.Row) error {
+	return input.Platform.Engine.Execute(engineContext, input.Platform.DB, insertRoleSQL, map[string]any{
+		"$owner":        strings.ToLower(input.Owner),
+		"$role_name":    strings.ToLower(input.RoleName),
+		"$display_name": input.DisplayName,
+		"$role_type":    roleType,
+	}, func(row *common.Row) error {
 		return nil
 	})
 }
 
-type AddManagersToRoleInput struct {
-	Platform       *kwilTesting.Platform
-	Owner          string
-	RoleName       string
-	ManagerWallets []string
-}
-
-// AddManagersToRole uses system privileges to directly insert managers for a role.
-// This is a test utility for setting up state.
-func AddManagersToRole(ctx context.Context, input AddManagersToRoleInput) error {
+func AddMemberToRoleBypass(ctx context.Context, platform *kwilTesting.Platform, owner, roleName, wallet string) error {
 	txContext := &common.TxContext{
-		Ctx: ctx,
-		BlockContext: &common.BlockContext{
-			Height: 0,
-		},
-		TxID:   input.Platform.Txid(),
-		Signer: []byte("system"),                             // Execute as system
-		Caller: "0x0000000000000000000000000000000000000000", // System's zero address
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 0},
+		TxID:         platform.Txid(),
+		Signer:       []byte("system"),
+		Caller:       "0x0000000000000000000000000000000000000000",
 	}
 
 	engineContext := &common.EngineContext{
 		TxContext:     txContext,
 		OverrideAuthz: true,
-		InvalidTxCtx:  false,
 	}
 
-	for _, managerWallet := range input.ManagerWallets {
-		insertManagerSQL := fmt.Sprintf(`
-			INSERT INTO role_managers (owner, role_name, manager_wallet, assigned_at, assigned_by)
-			VALUES ('%s', '%s', '%s', 0, 'system')
-			ON CONFLICT (owner, role_name, manager_wallet) DO NOTHING
-		`, strings.ToLower(input.Owner), input.RoleName, strings.ToLower(managerWallet))
+	sql := `INSERT INTO role_members (owner, role_name, wallet, granted_at, granted_by)
+			VALUES ($owner, $role_name, $wallet, 0, 'system')
+			ON CONFLICT (owner, role_name, wallet) DO NOTHING`
 
-		err := input.Platform.Engine.Execute(engineContext, input.Platform.DB, insertManagerSQL, nil, func(row *common.Row) error {
-			return nil
-		})
-		if err != nil {
-			return err
-		}
+	return platform.Engine.Execute(engineContext, platform.DB, sql, map[string]any{
+		"$owner":     strings.ToLower(owner),
+		"$role_name": strings.ToLower(roleName),
+		"$wallet":    strings.ToLower(wallet),
+	}, func(row *common.Row) error {
+		return nil
+	})
+}
+
+func SetRoleManagerBypass(ctx context.Context, platform *kwilTesting.Platform, targetOwner, targetRole, managerOwner, managerRole string) error {
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 0},
+		TxID:         platform.Txid(),
+		Signer:       []byte("system"),
+		Caller:       "0x0000000000000000000000000000000000000000",
 	}
 
-	return nil
+	engineContext := &common.EngineContext{
+		TxContext:     txContext,
+		OverrideAuthz: true,
+	}
+
+	sql := `UPDATE roles SET manager_owner = $manager_owner, manager_role_name = $manager_role_name WHERE owner = $owner AND role_name = $role_name`
+
+	return platform.Engine.Execute(engineContext, platform.DB, sql, map[string]any{
+		"$manager_owner":     strings.ToLower(managerOwner),
+		"$manager_role_name": strings.ToLower(managerRole),
+		"$owner":             strings.ToLower(targetOwner),
+		"$role_name":         strings.ToLower(targetRole),
+	}, func(row *common.Row) error {
+		return nil
+	})
 }

@@ -14,9 +14,12 @@ CREATE TABLE IF NOT EXISTS roles (
     role_name TEXT NOT NULL, -- unique by owner name of the role
     display_name TEXT NOT NULL, -- human-readable name for the role
     role_type TEXT NOT NULL, -- system or user
+    manager_owner TEXT, -- optional: owner of the role that can manage this role
+    manager_role_name TEXT, -- optional: name of the role that can manage this role
     created_at INT8 NOT NULL, -- height at which the role was created
 
     PRIMARY KEY (owner, role_name), -- owner and role_name must be unique
+    FOREIGN KEY (manager_owner, manager_role_name) REFERENCES roles(owner, role_name) ON DELETE SET NULL ON UPDATE CASCADE,
 
     CHECK (role_type IN ('system', 'user')),
     CHECK (owner = 'system' OR (owner LIKE '0x%' AND LENGTH(owner) = 42)),
@@ -24,6 +27,7 @@ CREATE TABLE IF NOT EXISTS roles (
 );
 
 CREATE INDEX IF NOT EXISTS roles_type_idx ON roles (role_type);
+CREATE INDEX IF NOT EXISTS roles_manager_idx ON roles (manager_owner, manager_role_name);
 
 CREATE TABLE IF NOT EXISTS role_members (
     owner TEXT NOT NULL, -- owner of the role

@@ -7,8 +7,23 @@ CREATE OR REPLACE ACTION create_stream(
     $stream_id TEXT,
     $stream_type TEXT
 ) PUBLIC {
+    $lower_caller TEXT := LOWER(@caller);
+    $single_caller TEXT[] := [$lower_caller];
+
+    -- Permission Check: Ensure caller has the 'system:network_writer' role.
+    $has_permission BOOL := false;
+    for $row in are_members_of('system', 'network_writer', ARRAY[$lower_caller]) {
+        if $row.wallet = $lower_caller AND $row.is_member {
+            $has_permission := true;
+            break;
+        }
+    }
+    if NOT $has_permission {
+        ERROR('Caller does not have the required system:network_writer role to create a stream.');
+    }
+
     -- Get caller's address (data provider) first
-    $data_provider TEXT := LOWER(@caller);
+    $data_provider TEXT := $lower_caller;
     $current_block INT := @height;
     
     -- Check if caller is a valid ethereum address
@@ -63,8 +78,22 @@ CREATE OR REPLACE ACTION create_streams(
     $stream_ids TEXT[],
     $stream_types TEXT[]
 ) PUBLIC {
+    $lower_caller TEXT := LOWER(@caller);
+    $single_caller TEXT[] := [$lower_caller];
+    -- Permission Check: Ensure caller has the 'system:network_writer' role.
+    $has_permission BOOL := false;
+    for $row in are_members_of('system', 'network_writer', ARRAY[$lower_caller]) {
+        if $row.wallet = $lower_caller AND $row.is_member {
+            $has_permission := true;
+            break;
+        }
+    }
+    if NOT $has_permission {
+        ERROR('Caller does not have the required system:network_writer role to create streams.');
+    }
+
     -- Get caller's address (data provider) first
-    $data_provider TEXT := LOWER(@caller);
+    $data_provider TEXT := $lower_caller;
 
     -- Check if caller is a valid ethereum address
     if NOT check_ethereum_address($data_provider) {
