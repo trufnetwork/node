@@ -217,7 +217,7 @@ func testVisibilitySettings(t *testing.T, streamInfo setup.StreamInfo) kwilTesti
 			Key:      "read_visibility",
 			Value:    "1",
 			ValType:  "int",
-			Height:   1, // must be after the initial height
+			Height:   2, // must be after the initial height
 		})
 		if err != nil {
 			return errors.Wrap(err, "Failed to change read_visibility")
