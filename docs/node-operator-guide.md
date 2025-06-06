@@ -532,7 +532,7 @@ sudo journalctl -u kwild -b
 > 
 > Make sure to backup any important data before proceeding.
 
-To completely remove the node setup:
+### For Linux
 
 ```bash
 # Stop and remove services
