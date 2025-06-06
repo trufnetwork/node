@@ -88,7 +88,7 @@ sudo tar -C /usr/local -xzf "${LATEST_GO_VERSION}.linux-amd64.tar.gz"
 rm "${LATEST_GO_VERSION}.linux-amd64.tar.gz"
 ```
 
-- After installation, add Go to PATH:
+- After installation, add Go to your `PATH`:
 
 ```bash
 grep -qxF 'export GOPATH=$HOME/go' ~/.bashrc \
@@ -103,7 +103,19 @@ grep -qxF 'export PATH=$PATH:/usr/local/go/bin:$GOPATH/bin' ~/.bashrc \
 source ~/.bashrc
 ```
 
-4. **Taskfile (go-task):**
+#### For macOS
+
+The simplest way to install Go on macOS is with Homebrew.
+
+```bash
+brew install go
+```
+
+This will automatically configure the necessary `PATH` environment variables.
+
+### 4. Taskfile (go-task)
+
+This tool is required to build the `kwild` binary from source. The command is the same for both Linux and macOS, and requires Go to be installed.
 
 ```bash
 go install github.com/go-task/task/v3/cmd/task@latest
