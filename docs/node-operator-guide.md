@@ -246,9 +246,6 @@ docker run -d -p 127.0.0.1:5432:5432 --name tn-postgres \
     --shm-size=1gb \
     kwildb/postgres:latest
 ```
-The command above:
-- `-v tn-pgdata:/var/lib/postgresql/data`: Creates a persistent volume named 'tn-pgdata' to store database data
-- `--shm-size=1gb`: Allocates 1GB of shared memory for PostgreSQL operations (recommended for better performance)
 
 > **Warning**: Critical Security Requirements
 > 
@@ -268,8 +265,14 @@ The command above:
 >    # Should only show 127.0.0.1:5432, not 0.0.0.0:5432
 >    ```
 
+The command above:
+- `-v tn-pgdata:/var/lib/postgresql/data`: Creates a persistent volume named 'tn-pgdata' to store database data
+- `--shm-size=1gb`: Allocates 1GB of shared memory for PostgreSQL operations (recommended for better performance)
 
-### 5. Create `systemd` service for `kwild` and PostgreSQL
+
+### 5. Create background services for `kwild` and PostgreSQL
+
+#### For Linux (using `systemd`)
 
 ```bash
 # Create systemd service for kwild
