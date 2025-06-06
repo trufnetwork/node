@@ -125,40 +125,61 @@ go install github.com/go-task/task/v3/cmd/task@latest
 
 You have two options to get the `kwild` binary.
 
-1. **Download from Releases**:
+1.  **Download from Releases**:
 
-- Visit [TRUF.NETWORK Node Releases](https://github.com/trufnetwork/node/releases)
-- Download the latest release for your operating system (e.g., `tn_2.0.1_linux_amd64.tar.gz`)
-- Extract the binary and move it to your system path:
+    - Visit [TRUF.NETWORK Node Releases](https://github.com/trufnetwork/node/releases)
+    - Download the latest release for your operating system and architecture (e.g., `..._linux_amd64.tar.gz` for Linux or `..._darwin_amd64.tar.gz` for macOS on Intel).
+    - Extract the binary and move it to your system path:
 
-```bash
-tar -xzf tn_2.0.1_linux_amd64.tar.gz
-sudo mv kwild /usr/local/bin/
-```
+    ```bash
+    # Example for Linux:
+    # tar -xzf tn_2.0.1_linux_amd64.tar.gz
+    # sudo mv kwild /usr/local/bin/
 
-2. **Build from Source**:
+    # Example for macOS:
+    # tar -xzf tn_2.0.1_darwin_amd64.tar.gz
+    # sudo mv kwild /usr/local/bin/
+    ```
 
-```bash
-git clone https://github.com/trufnetwork/node.git
-cd node
-task build
-```
+2.  **Build from Source**:
 
-The built binary will be in the `.build` directory. Move it to your system path:
+    #### For Linux
 
-```bash
-sudo mv .build/kwild /usr/local/bin/
-```
+    ```bash
+    git clone https://github.com/trufnetwork/node.git
+    cd node
+    task build
+    ```
 
-Apply new docker group:
+    The built binary will be in the `.build` directory. Move it to your system path:
 
-```bash
-newgrp docker
-```
+    ```bash
+    sudo mv .build/kwild /usr/local/bin/
+    ```
 
-## Verify Installation
+    Apply new docker group:
 
-Before you move forward to Node Setup, verify that everything installed correctly and of the right version:
+    ```bash
+    newgrp docker
+    ```
+
+    #### For macOS
+
+    ```bash
+    git clone https://github.com/trufnetwork/node.git
+    cd node
+    task build
+    ```
+
+    The built binary will be in the `.build` directory. Move it to your system path:
+
+    ```bash
+    sudo mv .build/kwild /usr/local/bin/
+    ```
+
+### Verify Installation
+
+Before you move forward to Node Setup, verify that everything installed correctly and is the right version.
 
 ```bash
 docker --version
@@ -173,7 +194,7 @@ kwild version
 
 ### 1. Clone TN Node Operator Repository
 
-From your root directory, clone the TRUF.NETWORK node operator repository:
+From your home directory, clone the TRUF.NETWORK node operator repository:
 
 ```bash
 cd # Return to home directory if not already there
@@ -183,7 +204,7 @@ cd truf-node-operator
 
 ### 2. Generate Initial Configuration
 
-Use `kwild` to create your initial configuration file:
+Use `kwild` to create your initial configuration file. This command is the same for all operating systems.
 
 ```bash
 kwild setup init \
