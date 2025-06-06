@@ -580,6 +580,8 @@ pg_dump --version
 
 ### For Linux
 
+Use this command to view node logs in real-time
+
 ```bash
 sudo journalctl -u kwild -f
 ```
@@ -600,6 +602,32 @@ Use this command to check service status
 
 ```bash
 sudo systemctl status kwild
+```
+
+### For macOS
+
+On macOS, logs are directed to files in `$HOME/truf-node-operator/logs`, and you can use `launchctl` to check service status.
+
+To view `kwild` logs in real-time:
+
+```bash
+tail -f $HOME/truf-node-operator/logs/kwild.log
+```
+
+To view PostgreSQL logs in real-time:
+
+```bash
+tail -f $HOME/truf-node-operator/logs/postgres.log
+```
+
+To check the status of the services (a non-zero status in the second column may indicate an issue):
+
+```bash
+# Check kwild service (PID, Status, Label)
+launchctl list | grep com.trufnetwork.kwild
+
+# Check postgres service
+launchctl list | grep com.trufnetwork.tn-postgres
 ```
 
 ## Docker Container Status
