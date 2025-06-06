@@ -246,30 +246,28 @@ docker run -d -p 127.0.0.1:5432:5432 --name tn-postgres \
     --shm-size=1gb \
     kwildb/postgres:latest
 ```
-
-<Warning>
-**Critical Security Requirements:**
-1. `kwild` requires a "superuser" role to perform various tasks that require elevated privileges, such as creating triggers and publications for logical replication. The PostgreSQL database cluster should be dedicated to `kwild`, and should not be used for any other purpose.
-2. NEVER expose PostgreSQL port (5432) to the public internet. Always bind to localhost (127.0.0.1) as shown in the example above.
-</Warning>
-
-<Tip>
-**Securing PostgreSQL Port:**
-1. Use UFW (Uncomplicated Firewall) to block port 5432:
-   ```bash
-   sudo ufw deny 5432/tcp
-   ```
-
-2. Verify no external access to port 5432:
-   ```bash
-   sudo ss -tulpn | grep 5432
-   # Should only show 127.0.0.1:5432, not 0.0.0.0:5432
-   ```
-</Tip>
-
 The command above:
 - `-v tn-pgdata:/var/lib/postgresql/data`: Creates a persistent volume named 'tn-pgdata' to store database data
 - `--shm-size=1gb`: Allocates 1GB of shared memory for PostgreSQL operations (recommended for better performance)
+
+> **Warning**: Critical Security Requirements
+> 
+> 1. The PostgreSQL database cluster must be dedicated exclusively to `kwild`. The `kwild` service requires superuser privileges to perform essential operations like creating triggers and publications for logical replication. Do not use this database cluster for any other purposes.
+> 
+> 2. For security, the PostgreSQL port (5432) must never be exposed to the public internet. Always bind to localhost (127.0.0.1) as demonstrated in the example above.
+
+> **Securing PostgreSQL Port on Linux:**
+> 1. Use UFW (Uncomplicated Firewall) to block port 5432:
+>    ```bash
+>    sudo ufw deny 5432/tcp
+>    ```
+> 
+> 2. Verify no external access to port 5432:
+>    ```bash
+>    sudo ss -tulpn | grep 5432
+>    # Should only show 127.0.0.1:5432, not 0.0.0.0:5432
+>    ```
+
 
 ### 5. Create `systemd` service for `kwild` and PostgreSQL
 
