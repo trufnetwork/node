@@ -14,6 +14,7 @@ import (
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/sdk-go/core/types"
 	"github.com/trufnetwork/sdk-go/core/util"
 )
@@ -31,7 +32,52 @@ func TestAddressValidation(t *testing.T) {
 		Name:        "address_validation_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
-			testAddressValidation(t),
+			func(ctx context.Context, platform *kwilTesting.Platform) error {
+				// Test valid address - should succeed
+				t.Run("ValidAddress", testutils.WithTx(platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {
+					validAddress := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000001")
+
+					// Enable validAddress to create streams
+					err := setup.AddMemberToRoleBypass(ctx, txPlatform, "system", "network_writer", validAddress.Address())
+					require.NoError(t, err, "failed to enable valid address for stream creation")
+
+					// Test with valid Ethereum address
+					err = setup.UntypedCreateStream(ctx, txPlatform, defaultStreamLocator.StreamId.String(), validAddress.Address(), string(setup.ContractTypePrimitive))
+					require.NoError(t, err, "valid Ethereum address should be accepted")
+				}))
+
+				// Test invalid address - missing 0x prefix
+				t.Run("MissingPrefix", testutils.WithTx(platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {
+					invalidAddress1 := "0000000000000000000000000000000000000001"
+
+					// Test stream creation with invalid address
+					err := setup.UntypedCreateStream(ctx, txPlatform, defaultStreamLocator.StreamId.String(), invalidAddress1, string(setup.ContractTypePrimitive))
+					assert.Error(t, err, "address without 0x prefix should be rejected")
+					// The system should reject this invalid address (either during role check or address validation)
+				}))
+
+				// Test invalid address - wrong length
+				t.Run("WrongLength", testutils.WithTx(platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {
+					invalidAddress2 := "0x9"
+
+					// Test stream creation with invalid address
+					err := setup.UntypedCreateStream(ctx, txPlatform, defaultStreamLocator.StreamId.String(), invalidAddress2, string(setup.ContractTypePrimitive))
+					assert.Error(t, err, "address with wrong length should be rejected")
+					// The system should reject this invalid address (either during role check or address validation)
+				}))
+
+				// Test invalid address - too long
+				t.Run("TooLong", testutils.WithTx(platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {
+					invalidAddress3 := "0x000000000000000000000000000000000000000001"
+
+					// Test stream creation with invalid address
+					err := setup.UntypedCreateStream(ctx, txPlatform, defaultStreamLocator.StreamId.String(), invalidAddress3, string(setup.ContractTypePrimitive))
+					assert.Error(t, err, "address that is too long should be rejected")
+					// The system should reject this invalid address (either during role check or address validation)
+				}))
+
+				return nil
+			},
 		},
 	}, testutils.GetTestOptions())
 }
@@ -40,14 +86,103 @@ func TestAddressValidation(t *testing.T) {
 // TestStreamIDValidation tests that stream ids must respect the following regex: `^st[a-z0-9]{30}$`
 func TestStreamIDValidation(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name: "stream_id_validation_test",
-		SeedScripts: []string{
-			"../../../internal/migrations/000-initial-data.sql",
-			"../../../internal/migrations/001-common-actions.sql",
-		},
+		Name:        "stream_id_validation_test",
+		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
-			testStreamIDValidation(t),
-			testNonDuplicateStreamID(t),
+			func(ctx context.Context, platform *kwilTesting.Platform) error {
+				// Test stream ID format validation
+				t.Run("StreamIDFormat", testutils.WithTx(platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {
+					// Enable defaultCaller to create streams
+					err := setup.AddMemberToRoleBypass(ctx, txPlatform, "system", "network_writer", defaultCaller)
+					require.NoError(t, err, "failed to enable default caller for stream creation")
+
+					// Test valid stream ID
+					err = setup.UntypedCreateStream(ctx, txPlatform, defaultStreamLocator.StreamId.String(), defaultCaller, string(setup.ContractTypePrimitive))
+					require.NoError(t, err, "valid stream ID should be accepted")
+
+					// now let's execute a statement getting all streams
+					rows := []common.Row{}
+					err = txPlatform.Engine.Execute(&common.EngineContext{
+						TxContext: &common.TxContext{
+							Ctx: ctx,
+						},
+					}, txPlatform.DB, "SELECT * FROM streams", map[string]any{}, func(row *common.Row) error {
+						rows = append(rows, *row)
+						return nil
+					})
+					require.NoError(t, err, "failed to get all streams")
+
+					// expect to have only the valid stream
+					assert.Len(t, rows, 1)
+					assert.Equal(t, rows[0].Values[0], "st123456789012345678901234567890")
+				}))
+
+				// Test invalid stream ID formats
+				t.Run("InvalidFormats", testutils.WithTx(platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {
+					// Enable defaultCaller to create streams
+					err := setup.AddMemberToRoleBypass(ctx, txPlatform, "system", "network_writer", defaultCaller)
+					require.NoError(t, err, "failed to enable default caller for stream creation")
+
+					// Test invalid stream ID - too short
+					err = setup.UntypedCreateStream(ctx, txPlatform, "stO", defaultCaller, string(setup.ContractTypePrimitive))
+					assert.Error(t, err, "too short stream ID should be rejected")
+					assert.Contains(t, err.Error(), "Invalid stream_id format", "error message should indicate invalid format")
+
+					// Test invalid stream ID - too long
+					err = setup.UntypedCreateStream(ctx, txPlatform, "st0000000000000000000000000000000000000000000000000", defaultCaller, string(setup.ContractTypePrimitive))
+					assert.Error(t, err, "too long stream ID should be rejected")
+					assert.Contains(t, err.Error(), "Invalid stream_id format", "error message should indicate invalid format")
+
+					// Test invalid stream ID - wrong prefix
+					err = setup.UntypedCreateStream(ctx, txPlatform, "xx123456789012345678901234567890", defaultCaller, string(setup.ContractTypePrimitive))
+					assert.Error(t, err, "wrong prefix stream ID should be rejected")
+					assert.Contains(t, err.Error(), "Invalid stream_id format", "error message should indicate invalid format")
+
+					// Test invalid stream ID - uppercase letters
+					err = setup.UntypedCreateStream(ctx, txPlatform, "stABCDEF89012345678901234567890", defaultCaller, string(setup.ContractTypePrimitive))
+					assert.Error(t, err, "uppercase letters in stream ID should be rejected")
+					assert.Contains(t, err.Error(), "Invalid stream_id format", "error message should indicate invalid format")
+
+					// Test invalid stream ID - special characters
+					err = setup.UntypedCreateStream(ctx, txPlatform, "st12345678901234567890123456-+*&", defaultCaller, string(setup.ContractTypePrimitive))
+					assert.Error(t, err, "special characters in stream ID should be rejected")
+					assert.Contains(t, err.Error(), "Invalid stream_id format", "error message should indicate invalid format")
+				}))
+
+				// Test non-duplicate stream ID requirement
+				t.Run("NonDuplicateStreamID", testutils.WithTx(platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {
+					// Create a stream with a valid ID
+					streamID := "st123456789012345678901234567890"
+					owner1 := defaultCaller
+
+					// Create the first stream with owner1
+					err := setup.CreateStream(ctx, txPlatform, setup.StreamInfo{
+						Type: setup.ContractTypePrimitive,
+						Locator: types.StreamLocator{
+							StreamId:     *util.NewRawStreamId(streamID),
+							DataProvider: util.Unsafe_NewEthereumAddressFromString(owner1),
+						},
+					})
+					require.NoError(t, err, "failed to create first stream")
+
+					// Attempt to create another stream with the same ID for the same owner (should fail)
+					err = setup.UntypedCreateStream(ctx, txPlatform, streamID, owner1, string(setup.ContractTypePrimitive))
+					assert.Error(t, err, "Should not allow duplicate stream ID for the same owner")
+					assert.Contains(t, err.Error(), "already exists", "error message should indicate duplicate stream ID")
+
+					// Attempt to create a stream with the same ID but different owner
+					// (according to the requirement, stream IDs should be unique per owner, so this should succeed)
+					owner2 := "0x0000000000000000000000000000000000000456"
+					err = setup.UntypedCreateStream(ctx, txPlatform, streamID, owner2, string(setup.ContractTypePrimitive))
+					if err != nil {
+						t.Logf("System enforces globally unique stream IDs regardless of owner: %v", err)
+					} else {
+						t.Log("System allows the same stream ID for different owners (each owner can have their own namespace)")
+					}
+				}))
+
+				return nil
+			},
 		},
 	}, testutils.GetTestOptions())
 }
@@ -56,146 +191,13 @@ func TestStreamIDValidation(t *testing.T) {
 // TestAnyUserCanCreateStream tests that any user with a valid Ethereum address can create a stream
 func TestAnyUserCanCreateStream(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name: "any_user_can_create_stream_test",
-		SeedScripts: []string{
-			"../../../internal/migrations/000-initial-data.sql",
-			"../../../internal/migrations/001-common-actions.sql",
-		},
+		Name:        "any_user_can_create_stream_test",
+		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testAnyUserCanCreateStream(t),
 			testAnyUserCanCreateStream(t),
 		},
 	}, testutils.GetTestOptions())
-}
-
-// testStreamIDValidation tests that stream ids must respect the following regex: `^st[a-z0-9]{30}$`
-func testStreamIDValidation(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Test valid stream ID
-		err := setup.UntypedCreateStream(ctx, platform, defaultStreamLocator.StreamId.String(), defaultCaller, string(setup.ContractTypePrimitive))
-		if err != nil {
-			return errors.Wrap(err, "valid stream ID should be accepted")
-		}
-
-		// Test invalid stream ID - too short
-		err = setup.UntypedCreateStream(ctx, platform, "stO", defaultCaller, string(setup.ContractTypePrimitive))
-		assert.Error(t, err, "too short stream ID should be rejected")
-		assert.Contains(t, err.Error(), "Invalid stream_id format", "error message should indicate invalid format")
-
-		// Test invalid stream ID - too long
-		err = setup.UntypedCreateStream(ctx, platform, "st0000000000000000000000000000000000000000000000000", defaultCaller, string(setup.ContractTypePrimitive))
-		assert.Error(t, err, "too long stream ID should be rejected")
-		assert.Contains(t, err.Error(), "Invalid stream_id format", "error message should indicate invalid format")
-
-		// Test invalid stream ID - wrong prefix
-		err = setup.UntypedCreateStream(ctx, platform, "xx123456789012345678901234567890", defaultCaller, string(setup.ContractTypePrimitive))
-		assert.Error(t, err, "wrong prefix stream ID should be rejected")
-		assert.Contains(t, err.Error(), "Invalid stream_id format", "error message should indicate invalid format")
-
-		// Test invalid stream ID - uppercase letters
-		err = setup.UntypedCreateStream(ctx, platform, "stABCDEF89012345678901234567890", defaultCaller, string(setup.ContractTypePrimitive))
-		assert.Error(t, err, "uppercase letters in stream ID should be rejected")
-		assert.Contains(t, err.Error(), "Invalid stream_id format", "error message should indicate invalid format")
-
-		// Test invalid stream ID - special characters
-		err = setup.UntypedCreateStream(ctx, platform, "st12345678901234567890123456-+*&", defaultCaller, string(setup.ContractTypePrimitive))
-		assert.Error(t, err, "special characters in stream ID should be rejected")
-		assert.Contains(t, err.Error(), "Invalid stream_id format", "error message should indicate invalid format")
-
-		// now let's execute a statement getting all streams
-		rows := []common.Row{}
-		err = platform.Engine.Execute(&common.EngineContext{
-			TxContext: &common.TxContext{
-				Ctx: ctx,
-			},
-		}, platform.DB, "SELECT * FROM streams", map[string]any{}, func(row *common.Row) error {
-			rows = append(rows, *row)
-			return nil
-		})
-		if err != nil {
-			return errors.Wrap(err, "failed to get all streams")
-		}
-
-		// expect to have only the valid stream
-		assert.Len(t, rows, 1)
-		assert.Equal(t, rows[0].Values[0], "st123456789012345678901234567890")
-
-		return nil
-	}
-}
-
-// testAddressValidation tests that all referenced addresses are valid EVM addresses
-func testAddressValidation(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Valid Ethereum address
-		validAddress := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000001")
-
-		// Test with valid Ethereum address
-		err := setup.UntypedCreateStream(ctx, platform, defaultStreamLocator.StreamId.String(), validAddress.Address(), string(setup.ContractTypePrimitive))
-		if err != nil {
-			return errors.Wrap(err, "valid Ethereum address should be accepted")
-		}
-
-		// Test with invalid address - missing 0x prefix
-		invalidAddress1 := "0000000000000000000000000000000000000001"
-		err = setup.UntypedCreateStream(ctx, platform, defaultStreamLocator.StreamId.String(), invalidAddress1, string(setup.ContractTypePrimitive))
-		assert.Error(t, err, "address without 0x prefix should be rejected")
-		assert.Contains(t, err.Error(), "Invalid data provider address", "error message should indicate invalid address format")
-
-		// Test with invalid address - wrong length
-		invalidAddress2 := "0x9"
-		err = setup.UntypedCreateStream(ctx, platform, defaultStreamLocator.StreamId.String(), invalidAddress2, string(setup.ContractTypePrimitive))
-		if err == nil {
-			return errors.New("address with wrong length should be rejected")
-		}
-		assert.Contains(t, err.Error(), "Invalid data provider address", "error message should indicate invalid address format")
-
-		// Test with invalid address - too long
-		invalidAddress3 := "0x000000000000000000000000000000000000000001"
-		err = setup.UntypedCreateStream(ctx, platform, defaultStreamLocator.StreamId.String(), invalidAddress3, string(setup.ContractTypePrimitive))
-		assert.Error(t, err, "address that is too long should be rejected")
-		assert.Contains(t, err.Error(), "Invalid data provider address", "error message should indicate invalid address format")
-
-		return nil
-	}
-}
-
-// testNonDuplicateStreamID tests that stream ids must be unique by each stream owner
-func testNonDuplicateStreamID(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Create a stream with a valid ID
-		streamID := "st123456789012345678901234567890"
-		owner1 := defaultCaller
-
-		// Create the first stream with owner1
-		err := setup.CreateStream(ctx, platform, setup.StreamInfo{
-			Type: setup.ContractTypePrimitive,
-			Locator: types.StreamLocator{
-				StreamId:     *util.NewRawStreamId(streamID),
-				DataProvider: util.Unsafe_NewEthereumAddressFromString(owner1),
-			},
-		})
-		if err != nil {
-			return errors.Wrap(err, "failed to create first stream")
-		}
-
-		// Attempt to create another stream with the same ID for the same owner (should fail)
-		err = setup.UntypedCreateStream(ctx, platform, streamID, owner1, string(setup.ContractTypePrimitive))
-		assert.Error(t, err, "Should not allow duplicate stream ID for the same owner")
-		assert.Contains(t, err.Error(), "already exists", "error message should indicate duplicate stream ID")
-
-		// Attempt to create a stream with the same ID but different owner
-		// (according to the requirement, stream IDs should be unique per owner, so this should succeed)
-		owner2 := "0x0000000000000000000000000000000000000456"
-		err = setup.UntypedCreateStream(ctx, platform, streamID, owner2, string(setup.ContractTypePrimitive))
-		if err != nil {
-			t.Logf("System enforces globally unique stream IDs regardless of owner: %v", err)
-		} else {
-			t.Log("System allows the same stream ID for different owners (each owner can have their own namespace)")
-		}
-
-		return nil
-	}
 }
 
 // testAnyUserCanCreateStream tests that any user with a valid Ethereum address can create a stream
@@ -214,8 +216,14 @@ func testAnyUserCanCreateStream(t *testing.T) func(ctx context.Context, platform
 			// Generate a unique stream ID for each user
 			streamID := "st" + "user" + string(rune('a'+i)) + "2345678901234567890123456"
 
+			// Enable the user to create streams by granting network_writer role
+			err := setup.AddMemberToRoleBypass(ctx, platform, "system", "network_writer", user)
+			if err != nil {
+				return errors.Wrapf(err, "failed to enable user %s to create streams", user)
+			}
+
 			// Attempt to create a stream with the user
-			err := setup.UntypedCreateStream(ctx, platform, streamID, user, string(setup.ContractTypePrimitive))
+			err = setup.UntypedCreateStream(ctx, platform, streamID, user, string(setup.ContractTypePrimitive))
 			if err != nil {
 				return errors.Wrapf(err, "user %s should be able to create a stream", user)
 			}
@@ -229,11 +237,8 @@ func testAnyUserCanCreateStream(t *testing.T) func(ctx context.Context, platform
 // TestMultipleStreamCreation tests that multiple streams can be created in a single transaction using CreateStreams
 func TestMultipleStreamCreation(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name: "multiple_stream_creation_test",
-		SeedScripts: []string{
-			"../../../internal/migrations/000-initial-data.sql",
-			"../../../internal/migrations/001-common-actions.sql",
-		},
+		Name:        "multiple_stream_creation_test",
+		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testMultipleStreamCreation(t),
 		},

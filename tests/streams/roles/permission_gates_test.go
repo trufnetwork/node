@@ -79,7 +79,9 @@ func testStreamCreationPermissionGates(t *testing.T, ctx context.Context, platfo
 			platform:    unauthorizedPlatform,
 			userAddress: unauthorizedUser,
 			action: func(p *kwilTesting.Platform, user string) error {
-				return setup.CreateStreams(ctx, p, generateStreamInfos(user, 2))
+				return setup.CreateStreamsWithOptions(ctx, p, generateStreamInfos(user, 2), setup.CreateStreamsOptions{
+					SkipAutoRoleGrant: true,
+				})
 			},
 			expectSuccess: false,
 			expectedError: "Caller does not have the required system:network_writer role",
@@ -99,7 +101,9 @@ func testStreamCreationPermissionGates(t *testing.T, ctx context.Context, platfo
 			platform:    authorizedPlatform,
 			userAddress: authorizedWriter,
 			action: func(p *kwilTesting.Platform, user string) error {
-				return setup.CreateStreams(ctx, p, generateStreamInfos(user, 2))
+				return setup.CreateStreamsWithOptions(ctx, p, generateStreamInfos(user, 2), setup.CreateStreamsOptions{
+					SkipAutoRoleGrant: true,
+				})
 			},
 			expectSuccess: true,
 		},
