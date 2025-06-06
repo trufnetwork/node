@@ -207,9 +207,20 @@ For detailed instructions on configuration options more relevant to a production
 
 This will configure your node to use state sync for faster synchronization with the network. Edit the `config.toml` file using the appropriate command for your OS.
 
+#### For Linux
+
 ```bash
 sed -i '/\[state_sync\]/,/^\[/ s/enable = false/enable = true/' ./my-node-config/config.toml
 sed -i 's/trusted_providers = \[\]/trusted_providers = ["0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656"]/' ./my-node-config/config.toml
+```
+
+#### For macOS
+
+The `sed` command on macOS requires a different syntax for in-place editing.
+
+```bash
+sed -i '' '/\[state_sync\]/,/^\[/ s/enable = false/enable = true/' ./my-node-config/config.toml
+sed -i '' 's/trusted_providers = \[\]/trusted_providers = ["0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656"]/' ./my-node-config/config.toml
 ```
 
 ### 4. Set Up PostgreSQL
@@ -298,6 +309,99 @@ WantedBy=multi-user.target
 EOF
 ```
 
+#### For macOS (using `launchd`)
+
+On macOS, `launchd` is used instead of `systemd` to manage background services. The following steps will create services that start `kwild` and PostgreSQL automatically and keep them running. These services will be created for the current user.
+
+First, create a directory for log files:
+
+```bash
+mkdir -p $HOME/truf-node-operator/logs
+```
+
+**1. Create `kwild` Service**
+
+This creates a `launchd` service file for the `kwild` node. It will be configured to restart automatically if it stops.
+
+```bash
+# Create the launchd plist file for kwild
+tee ~/Library/LaunchAgents/com.trufnetwork.kwild.plist << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.trufnetwork.kwild</string>
+    <key>Description</key>
+    <string>TRUF.NETWORK Node Service</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>WorkingDirectory</key>
+    <string>$(echo $HOME)/truf-node-operator</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$(which kwild)</string>
+        <string>start</string>
+        <string>-r</string>
+        <string>$(echo $HOME)/truf-node-operator/my-node-config</string>
+    </array>
+    <key>StandardOutPath</key>
+    <string>$(echo $HOME)/truf-node-operator/logs/kwild.log</string>
+    <key>StandardErrorPath</key>
+    <string>$(echo $HOME)/truf-node-operator/logs/kwild-error.log</string>
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>65535</integer>
+    </dict>
+</dict>
+</plist>
+EOF
+```
+
+**2. Create PostgreSQL Service**
+
+This creates a `launchd` service file to manage the `tn-postgres` Docker container.
+
+```bash
+# Create the launchd plist file for PostgreSQL
+tee ~/Library/LaunchAgents/com.trufnetwork.tn-postgres.plist << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.trufnetwork.tn-postgres</string>
+    <key>Description</key>
+    <string>TRUF.NETWORK PostgreSQL Service (Docker)</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$(which docker)</string>
+        <string>start</string>
+        <string>-a</string>
+        <string>tn-postgres</string>
+    </array>
+    <key>StandardOutPath</key>
+    <string>$(echo $HOME)/truf-node-operator/logs/postgres.log</string>
+    <key>StandardErrorPath</key>
+    <string>$(echo $HOME)/truf-node-operator/logs/postgres-error.log</string>
+</dict>
+</plist>
+EOF
+```
+
+> **Note:** For these services to work, Docker Desktop must be configured to start on login. You can enable this in Docker Desktop's settings (`Settings > General > Start Docker Desktop when you log in`).
+
 ### 6. Run TN Node
 
 Before you proceed, ensure your firewall allows incoming connections on:
@@ -317,6 +421,20 @@ sudo systemctl start kwild
 
 **Security Warning**: It is recommended to not expose port 5432 publicly in production environments.
 
+#### For macOS
+
+Load the services to enable them to start automatically, then start them manually for the first time.
+
+```bash
+# Load and start PostgreSQL service
+launchctl load ~/Library/LaunchAgents/com.trufnetwork.tn-postgres.plist
+launchctl start com.trufnetwork.tn-postgres
+
+# Load and start kwild service
+launchctl load ~/Library/LaunchAgents/com.trufnetwork.kwild.plist
+launchctl start com.trufnetwork.kwild
+```
+
 ### 7. Verify Node Synchronization
 
 To become a validator, ensure your node is fully synced with the network:
@@ -335,8 +453,16 @@ kwild admin status
 >
 > The service will become available once these operations complete. You can monitor the progress using:
 >
+> **For Linux:**
+>
 > ```bash
 > sudo journalctl -u kwild -f
+> ```
+>
+> **For macOS:**
+>
+> ```bash
+> tail -f $HOME/truf-node-operator/logs/kwild.log
 > ```
 
 ### 8. Become a Validator (Optional)
@@ -450,9 +576,9 @@ pg_dump --version
 
 **Security Warning**: It is recommended to not expose port 5432 publicly in production environments.
 
-## Status
+## Viewing Logs and Status
 
-Use this command to view node logs in real-time
+### For Linux
 
 ```bash
 sudo journalctl -u kwild -f
@@ -548,4 +674,25 @@ docker volume rm tn-pgdata
 
 # Remove node configuration
 rm -rf $HOME/truf-node-operator/my-node-config
+```
+
+### For macOS
+
+```bash
+# Unload services from launchd
+launchctl unload ~/Library/LaunchAgents/com.trufnetwork.kwild.plist
+launchctl unload ~/Library/LaunchAgents/com.trufnetwork.tn-postgres.plist
+
+# Remove service definition files
+rm ~/Library/LaunchAgents/com.trufnetwork.kwild.plist
+rm ~/Library/LaunchAgents/com.trufnetwork.tn-postgres.plist
+
+# Remove Docker resources
+docker stop tn-postgres
+docker rm tn-postgres
+docker volume rm tn-pgdata
+
+# Remove node configuration and logs
+rm -rf $HOME/truf-node-operator/my-node-config
+rm -rf $HOME/truf-node-operator/logs
 ```
