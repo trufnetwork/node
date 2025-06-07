@@ -5,17 +5,22 @@ import (
 	"fmt"
 
 	"github.com/kwilteam/kwil-db/common"
+	"github.com/pkg/errors"
+	"github.com/trufnetwork/sdk-go/core/util"
 )
 
 func GrantRoles(ctx context.Context, input GrantRolesInput) error {
-	caller := string(input.Platform.Deployer)
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return errors.Wrap(err, "failed to create Ethereum address from deployer bytes for GrantRoles")
+	}
 
 	txContext := &common.TxContext{
 		Ctx:          ctx,
 		BlockContext: &common.BlockContext{Height: 0},
 		TxID:         input.Platform.Txid(),
 		Signer:       input.Platform.Deployer,
-		Caller:       caller,
+		Caller:       deployer.Address(),
 	}
 
 	engineContext := &common.EngineContext{
@@ -35,14 +40,17 @@ func GrantRoles(ctx context.Context, input GrantRolesInput) error {
 }
 
 func RevokeRoles(ctx context.Context, input RevokeRolesInput) error {
-	caller := string(input.Platform.Deployer)
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return errors.Wrap(err, "failed to create Ethereum address from deployer bytes for RevokeRoles")
+	}
 
 	txContext := &common.TxContext{
 		Ctx:          ctx,
 		BlockContext: &common.BlockContext{Height: 0},
 		TxID:         input.Platform.Txid(),
 		Signer:       input.Platform.Deployer,
-		Caller:       caller,
+		Caller:       deployer.Address(),
 	}
 
 	engineContext := &common.EngineContext{
@@ -62,14 +70,17 @@ func RevokeRoles(ctx context.Context, input RevokeRolesInput) error {
 }
 
 func AreMembersOf(ctx context.Context, input AreMembersOfInput) (map[string]bool, error) {
-	caller := string(input.Platform.Deployer)
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create Ethereum address from deployer bytes for AreMembersOf")
+	}
 
 	txContext := &common.TxContext{
 		Ctx:          ctx,
 		BlockContext: &common.BlockContext{Height: 0},
 		TxID:         input.Platform.Txid(),
 		Signer:       input.Platform.Deployer,
-		Caller:       caller,
+		Caller:       deployer.Address(),
 	}
 
 	engineContext := &common.EngineContext{
@@ -106,49 +117,25 @@ func AreMembersOf(ctx context.Context, input AreMembersOfInput) (map[string]bool
 	return results, nil
 }
 
-func AddRoleManagers(ctx context.Context, input AddRoleManagersInput) error {
-	caller := string(input.Platform.Deployer)
-
-	txContext := &common.TxContext{
-		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: 0},
-		TxID:         input.Platform.Txid(),
-		Signer:       input.Platform.Deployer,
-		Caller:       caller,
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
-
-	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "add_role_managers", []any{input.OwnerAddress, input.RoleName, input.ManagerWallets}, func(row *common.Row) error {
-		return nil
-	})
+func SetRoleManager(ctx context.Context, input SetRoleManagerInput) error {
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to create Ethereum address from deployer bytes for SetRoleManager")
 	}
-	if r.Error != nil {
-		return r.Error
-	}
-	return nil
-}
-
-func RemoveRoleManagers(ctx context.Context, input RemoveRoleManagersInput) error {
-	caller := string(input.Platform.Deployer)
 
 	txContext := &common.TxContext{
 		Ctx:          ctx,
 		BlockContext: &common.BlockContext{Height: 0},
 		TxID:         input.Platform.Txid(),
 		Signer:       input.Platform.Deployer,
-		Caller:       caller,
+		Caller:       deployer.Address(),
 	}
 
 	engineContext := &common.EngineContext{
 		TxContext: txContext,
 	}
 
-	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "remove_role_managers", []any{input.OwnerAddress, input.RoleName, input.ManagerWallets}, func(row *common.Row) error {
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "set_role_manager", []any{input.Owner, input.RoleName, input.ManagerOwner, input.ManagerRoleName}, func(row *common.Row) error {
 		return nil
 	})
 	if err != nil {

@@ -711,9 +711,8 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_write_batch(
     stream_id TEXT,
     is_allowed BOOL
 ) {
-    for $idx in 1..array_length($data_providers) {
-        $data_providers[$idx] := LOWER($data_providers[$idx]);
-    }
+    -- Use helper function to avoid expensive for-loop roundtrips
+    $data_providers := helper_lowercase_array($data_providers);
     $wallet := LOWER($wallet);
 
     $exist_array BOOLEAN[];
@@ -728,7 +727,7 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_write_batch(
     for $row in has_write_permission_batch($data_providers, $stream_ids, $wallet) {
         $permission_array := array_append($permission_array, $row.has_permission);
     }
-
+    
     for $idx in array_length($exist_array) {
         if $exist_array[$idx] AND $permission_array[$idx] {
             return NEXT $data_providers[$idx], $stream_ids[$idx], true;
@@ -750,9 +749,8 @@ CREATE OR REPLACE ACTION has_write_permission_batch(
     stream_id TEXT,
     has_permission BOOL
 ) {
-    for $idx in 1..array_length($data_providers) {
-        $data_providers[$idx] := LOWER($data_providers[$idx]);
-    }
+    -- Use helper function to avoid expensive for-loop roundtrips
+    $data_providers := helper_lowercase_array($data_providers);
     $wallet := LOWER($wallet);
 
     -- Check that arrays have the same length
@@ -762,8 +760,9 @@ CREATE OR REPLACE ACTION has_write_permission_batch(
 
     $lowercase_wallet TEXT := LOWER($wallet);
 
-    -- Use WITH RECURSIVE to process each stream efficiently
-    WITH RECURSIVE 
+    -- Use WITH RECURSIVE to unnest all pairs, then find unique pairs to check
+    -- This is much more efficient than checking every single pair from input arrays
+    RETURN WITH RECURSIVE 
     indexes AS (
         SELECT 1 AS idx
         UNION ALL
@@ -775,20 +774,24 @@ CREATE OR REPLACE ACTION has_write_permission_batch(
             $data_providers AS data_providers,
             $stream_ids AS stream_ids
     ),
-    arguments AS (
+    all_pairs AS (
         SELECT 
             stream_arrays.data_providers[idx] AS data_provider,
             stream_arrays.stream_ids[idx] AS stream_id
         FROM indexes
         JOIN stream_arrays ON 1=1
     ),
-    -- Check which streams have explicit write permission for the wallet
-    permission_check AS (
+    unique_pairs AS (
+        SELECT DISTINCT data_provider, stream_id
+        FROM all_pairs
+    ),
+    -- Check which unique streams have explicit write permission for the wallet
+    unique_permission_check AS (
         SELECT 
-            a.data_provider,
-            a.stream_id,
+            up.data_provider,
+            up.stream_id,
             CASE WHEN m.value_ref IS NOT NULL THEN true ELSE false END AS has_permission
-        FROM arguments a
+        FROM unique_pairs up
         LEFT JOIN (
             SELECT data_provider, stream_id, value_ref
             FROM metadata
@@ -796,12 +799,13 @@ CREATE OR REPLACE ACTION has_write_permission_batch(
               AND LOWER(value_ref) = $lowercase_wallet
               AND disabled_at IS NULL
             ORDER BY created_at DESC
-        ) m ON a.data_provider = m.data_provider AND a.stream_id = m.stream_id
+        ) m ON up.data_provider = m.data_provider AND up.stream_id = m.stream_id
     )
-    -- Combine results
+    -- Map the permission status back to all original pairs
     SELECT 
-        p.data_provider,
-        p.stream_id,
-        p.has_permission
-    FROM permission_check p;
+        ap.data_provider,
+        ap.stream_id,
+        upc.has_permission
+    FROM all_pairs ap
+    JOIN unique_permission_check upc ON ap.data_provider = upc.data_provider AND ap.stream_id = upc.stream_id;
 };

@@ -1,8 +1,100 @@
 /**
+ * =====================================================================================
+ *                            ROLE-SPECIFIC HELPER ACTIONS
+ * =====================================================================================
+ */
+
+/**
+ * helper_assert_owner_addr: Validates an owner address for the roles context.
+ * It checks if the address is a valid Ethereum address or the special 'system' identifier.
+ */
+CREATE OR REPLACE ACTION helper_assert_owner_addr($owner TEXT) PRIVATE {
+    IF $owner != 'system' AND NOT check_ethereum_address($owner) {
+        ERROR('Invalid owner address: ' || $owner);
+    }
+};
+
+/**
+ * helper_assert_role_exists: Checks if a role exists. Errors if not found.
+ */
+CREATE OR REPLACE ACTION helper_assert_role_exists($owner TEXT, $role_name TEXT) PRIVATE {
+    $role_exists BOOL := FALSE;
+    FOR $r IN SELECT 1 FROM roles WHERE owner = $owner AND role_name = $role_name LIMIT 1 {
+        $role_exists := TRUE;
+    }
+    IF NOT $role_exists {
+        ERROR('Role does not exist: ' || $owner || ':' || $role_name);
+    }
+};
+
+/**
+ * helper_assert_is_role_owner: Ensures the caller is the owner of a role.
+ */
+CREATE OR REPLACE ACTION helper_assert_is_role_owner($owner TEXT, $role_name TEXT) PRIVATE {
+    IF LOWER(@caller) != $owner {
+        ERROR('Caller ' || LOWER(@caller) || ' is not the owner of role ' || $owner || ':' || $role_name);
+    }
+};
+
+/**
+ * helper_assert_can_manage_members: Ensures the caller is the role owner or a member of the manager role.
+ */
+CREATE OR REPLACE ACTION helper_assert_can_manage_members($owner TEXT, $role_name TEXT) PRIVATE {
+    $caller := LOWER(@caller);
+
+    -- First, get the role's owner and manager role details
+    $role_owner TEXT;
+    $manager_owner TEXT;
+    $manager_role_name TEXT;
+    $found_role BOOL := FALSE;
+    FOR $r IN SELECT owner, manager_owner, manager_role_name FROM roles WHERE owner = $owner AND role_name = $role_name LIMIT 1 {
+        $role_owner := $r.owner;
+        $manager_owner := $r.manager_owner;
+        $manager_role_name := $r.manager_role_name;
+        $found_role := TRUE;
+    }
+    IF NOT $found_role {
+        ERROR('Role does not exist: ' || $owner || ':' || $role_name);
+    }
+
+    -- Check if the caller is the direct owner of the role
+    $is_owner BOOL := $caller = $role_owner;
+    IF $is_owner {
+        RETURN;
+    }
+
+    -- If not the owner, check if they are a member of the manager role
+    $is_manager BOOL := FALSE;
+    IF $manager_owner IS NOT NULL AND $manager_role_name IS NOT NULL {
+        -- Query role_members directly to check for membership
+        FOR $r IN SELECT 1 FROM role_members
+            WHERE owner = $manager_owner
+              AND role_name = $manager_role_name
+              AND wallet = $caller
+            LIMIT 1
+        {
+            $is_manager := TRUE;
+        }
+    }
+
+    -- If neither owner nor manager, then error
+    IF NOT $is_manager {
+        ERROR('Caller ' || $caller || ' is not the owner or a member of the manager role for ' || $owner || ':' || $role_name);
+    }
+};
+
+
+/**
+ * =====================================================================================
+ *                              PUBLIC ROLE ACTIONS
+ * =====================================================================================
+ */
+
+/**
  * grant_roles: Assigns a role to a list of wallets.
  *
  * Permissions:
- * - Only the role owner or a designated manager can execute this action.
+ * - Only the role owner or members of the designated manager role can execute this action.
  *
  * Validations:
  * - Validates wallet and owner addresses.
@@ -16,42 +108,10 @@ CREATE OR REPLACE ACTION grant_roles(
 ) PUBLIC {
     $owner := LOWER($owner);
     $role_name := LOWER($role_name);
-    $caller := LOWER(@caller);
 
-    -- Input validation
-    IF $owner != 'system' AND NOT check_ethereum_address($owner) {
-        ERROR('Invalid owner address');
-    }
-
-    FOR $i in 1..array_length($wallets) {
-        IF NOT check_ethereum_address($wallets[$i]) {
-            ERROR('Invalid wallet address in array at index ' || $i::TEXT);
-        }
-        $wallets[$i] := LOWER($wallets[$i]);
-    }
-
-    -- Check if role exists
-    $role_owner TEXT;
-    $found_role BOOL := FALSE;
-    FOR $r IN SELECT owner FROM roles WHERE owner = $owner AND role_name = $role_name LIMIT 1 {
-        $role_owner := $r.owner;
-        $found_role := TRUE;
-    }
-    IF NOT $found_role {
-        ERROR('Role does not exist');
-    }
-
-    -- Permission check: caller must be owner or a manager.
-    -- For system roles (owner='system'), only a manager can grant them as no wallet can be the owner.
-    $is_owner BOOL := $caller = $role_owner;
-    $is_manager BOOL := FALSE;
-    FOR $m IN SELECT 1 FROM role_managers WHERE owner = $owner AND role_name = $role_name AND manager_wallet = $caller LIMIT 1 {
-        $is_manager := TRUE;
-    }
-
-    IF NOT $is_owner AND NOT $is_manager {
-        ERROR('Only role owner or a manager can grant roles');
-    }
+    helper_assert_owner_addr($owner);
+    $wallets := helper_sanitize_wallets($wallets);
+    helper_assert_can_manage_members($owner, $role_name);
 
     -- An empty wallet list is a no-op after validation.
     IF array_length($wallets) = 0 {
@@ -74,7 +134,7 @@ CREATE OR REPLACE ACTION grant_roles(
         JOIN wallet_arrays ON 1=1
     )
     INSERT INTO role_members (owner, role_name, wallet, granted_at, granted_by)
-    SELECT $owner, $role_name, wallet, @height, $caller
+    SELECT $owner, $role_name, wallet, @height, LOWER(@caller)
     FROM wallet_list
     ON CONFLICT (owner, role_name, wallet) DO NOTHING;
 };
@@ -83,7 +143,7 @@ CREATE OR REPLACE ACTION grant_roles(
  * revoke_roles: Removes a role from a list of wallets.
  *
  * Permissions:
- * - Only the role owner or a designated manager can execute this action.
+ * - Only the role owner or members of the designated manager role can execute this action.
  *
  * Validations:
  * - Validates wallet and owner addresses.
@@ -97,40 +157,10 @@ CREATE OR REPLACE ACTION revoke_roles(
 ) PUBLIC {
     $owner := LOWER($owner);
     $role_name := LOWER($role_name);
-    $caller := LOWER(@caller);
 
-    -- Input validation
-    IF $owner != 'system' AND NOT check_ethereum_address($owner) {
-        ERROR('Invalid owner address');
-    }
-    FOR $i in 1..array_length($wallets) {
-        IF NOT check_ethereum_address($wallets[$i]) {
-            ERROR('Invalid wallet address in array at index ' || $i::TEXT);
-        }
-        $wallets[$i] := LOWER($wallets[$i]);
-    }
-
-    -- Check if role exists
-    $role_owner TEXT;
-    $found_role BOOL := FALSE;
-    FOR $r IN SELECT owner FROM roles WHERE owner = $owner AND role_name = $role_name LIMIT 1 {
-        $role_owner := $r.owner;
-        $found_role := TRUE;
-    }
-    IF NOT $found_role {
-        ERROR('Role does not exist');
-    }
-
-    -- Permission check: caller must be owner or a manager.
-    $is_owner BOOL := $caller = $role_owner;
-    $is_manager BOOL := FALSE;
-    FOR $m IN SELECT 1 FROM role_managers WHERE owner = $owner AND role_name = $role_name AND manager_wallet = $caller LIMIT 1 {
-        $is_manager := TRUE;
-    }
-
-    IF NOT $is_owner AND NOT $is_manager {
-        ERROR('Only role owner or a manager can revoke roles');
-    }
+    helper_assert_owner_addr($owner);
+    $wallets := helper_sanitize_wallets($wallets);
+    helper_assert_can_manage_members($owner, $role_name);
 
     -- An empty wallet list is a no-op after validation.
     IF array_length($wallets) = 0 {
@@ -169,25 +199,9 @@ CREATE OR REPLACE ACTION are_members_of(
     $owner := LOWER($owner);
     $role_name := LOWER($role_name);
 
-    -- Input validation
-    IF $owner != 'system' AND NOT check_ethereum_address($owner) {
-        ERROR('Invalid owner address');
-    }
-    FOR $i in 1..array_length($wallets) {
-        IF NOT check_ethereum_address($wallets[$i]) {
-            ERROR('Invalid wallet address in array at index ' || $i::TEXT);
-        }
-        $wallets[$i] := LOWER($wallets[$i]);
-    }
-
-    -- Check if role exists before checking membership
-    $role_exists BOOL := FALSE;
-    FOR $r IN SELECT 1 FROM roles WHERE owner = $owner AND role_name = $role_name LIMIT 1 {
-        $role_exists := TRUE;
-    }
-    IF NOT $role_exists {
-        ERROR('Role does not exist');
-    }
+    helper_assert_owner_addr($owner);
+    $wallets := helper_sanitize_wallets($wallets);
+    helper_assert_role_exists($owner, $role_name);
 
     -- An empty wallet list should return an empty result set after validation.
     IF array_length($wallets) = 0 {

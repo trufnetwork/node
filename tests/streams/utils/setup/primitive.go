@@ -42,37 +42,13 @@ type SetupPrimitiveInput struct {
 }
 
 func SetupPrimitive(ctx context.Context, setupInput SetupPrimitiveInput) error {
-	deployer, err := util.NewEthereumAddressFromBytes(setupInput.Platform.Deployer)
-	if err != nil {
-		return errors.Wrap(err, "error in setupPrimitive")
-	}
-
-	txContext := &common.TxContext{
-		Ctx: ctx,
-		BlockContext: &common.BlockContext{
-			Height: setupInput.Height,
-		},
-		TxID:   setupInput.Platform.Txid(),
-		Signer: deployer.Bytes(),
-		Caller: deployer.Address(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
-
-	// Create the stream using create_stream action
-	r, err := setupInput.Platform.Engine.Call(engineContext, setupInput.Platform.DB, "", "create_stream", []any{
-		setupInput.PrimitiveStreamWithData.StreamLocator.StreamId.String(),
-		"primitive",
-	}, func(row *common.Row) error {
-		return nil
+	// Create the stream using our helper function that handles role management
+	err := CreateStream(ctx, setupInput.Platform, StreamInfo{
+		Locator: setupInput.PrimitiveStreamWithData.StreamLocator,
+		Type:    ContractTypePrimitive,
 	})
 	if err != nil {
 		return errors.Wrap(err, "error in setupPrimitive.CreateStream")
-	}
-	if r.Error != nil {
-		return errors.Wrap(r.Error, "error in setupPrimitive.CreateStream")
 	}
 
 	// Insert the data
