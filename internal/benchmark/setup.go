@@ -455,10 +455,3 @@ func setTaxonomyForComposed(ctx context.Context, platform *kwilTesting.Platform,
 		Weights:       weights,
 	})
 }
-
-func randDate(minDate, maxDate time.Time) time.Time {
-	delta := maxDate.Unix() - minDate.Unix()
-
-	sec := mathrand.Int63n(delta) + minDate.Unix()
-	return time.Unix(sec, 0)
-}
