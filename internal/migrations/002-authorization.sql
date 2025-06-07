@@ -762,7 +762,7 @@ CREATE OR REPLACE ACTION has_write_permission_batch(
 
     -- Use WITH RECURSIVE to unnest all pairs, then find unique pairs to check
     -- This is much more efficient than checking every single pair from input arrays
-    WITH RECURSIVE 
+    RETURN WITH RECURSIVE 
     indexes AS (
         SELECT 1 AS idx
         UNION ALL

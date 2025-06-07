@@ -1168,7 +1168,7 @@ CREATE OR REPLACE ACTION filter_streams_by_existence(
     }
     
     -- Use efficient WITH RECURSIVE pattern with DISTINCT optimization
-    WITH RECURSIVE 
+    RETURN WITH RECURSIVE 
     indexes AS (
         SELECT 1 AS idx
         UNION ALL
