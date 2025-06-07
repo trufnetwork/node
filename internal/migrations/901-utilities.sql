@@ -59,4 +59,42 @@ CREATE OR REPLACE ACTION helper_sanitize_wallets($wallets TEXT[]) PRIVATE VIEW R
         $wallets[$i] := LOWER($wallets[$i]);
     }
     RETURN $wallets;
-}
+};
+
+/**
+ * helper_lowercase_array: Converts an entire TEXT array to lowercase in a single operation.
+ * This avoids expensive for-loops that create thousands of roundtrips.
+ * 
+ * Input:
+ * - $input_array: Array of text strings to convert to lowercase
+ * 
+ * Output:
+ * - Array of lowercase text strings
+ */
+CREATE OR REPLACE ACTION helper_lowercase_array(
+    $input_array TEXT[]
+) PRIVATE VIEW RETURNS (lowercase_array TEXT[]) {
+    -- Use WITH RECURSIVE to process entire array in single SQL operation
+    -- This avoids the expensive for-loop roundtrips
+    for $row in WITH RECURSIVE 
+    indexes AS (
+        SELECT 1 AS idx
+        UNION ALL
+        SELECT idx + 1 FROM indexes
+        WHERE idx < array_length($input_array)
+    ),
+    array_holder AS (
+        SELECT $input_array AS original_array
+    ),
+    unnested_results AS (
+        SELECT 
+            idx,
+            LOWER(array_holder.original_array[idx]) AS lowercase_element
+        FROM indexes
+        JOIN array_holder ON 1=1
+    )
+    SELECT ARRAY_AGG(lowercase_element) AS lowercase_array
+    FROM unnested_results {
+        RETURN $row.lowercase_array;
+    }
+};

@@ -527,9 +527,8 @@ CREATE OR REPLACE ACTION is_stream_owner_batch(
     stream_id TEXT,
     is_owner BOOL
 ) {
-    for $i in 1..array_length($data_providers) {
-        $data_providers[$i] := LOWER($data_providers[$i]);
-    }
+    -- Use helper function to avoid expensive for-loop roundtrips
+    $data_providers := helper_lowercase_array($data_providers);
 
     -- Check that arrays have the same length
     if array_length($data_providers) != array_length($stream_ids) {
@@ -544,7 +543,8 @@ CREATE OR REPLACE ACTION is_stream_owner_batch(
     }
     $lowercase_wallet TEXT := LOWER($wallet);
 
-    -- Use WITH RECURSIVE to process each stream efficiently
+    -- Use WITH RECURSIVE to unnest all pairs, then find unique pairs to check
+    -- This is much more efficient than checking every single pair from input arrays
     WITH RECURSIVE 
     indexes AS (
         SELECT 1 AS idx
@@ -557,34 +557,39 @@ CREATE OR REPLACE ACTION is_stream_owner_batch(
             $data_providers AS data_providers,
             $stream_ids AS stream_ids
     ),
-    arguments AS (
+    all_pairs AS (
         SELECT 
             stream_arrays.data_providers[idx] AS data_provider,
             stream_arrays.stream_ids[idx] AS stream_id
         FROM indexes
         JOIN stream_arrays ON 1=1
     ),
-    -- Check which streams are owned by the wallet
-    ownership_check AS (
+    unique_pairs AS (
+        SELECT DISTINCT data_provider, stream_id
+        FROM all_pairs
+    ),
+    -- Check which unique streams are owned by the wallet
+    unique_ownership_check AS (
         SELECT 
-            a.data_provider,
-            a.stream_id,
+            up.data_provider,
+            up.stream_id,
             CASE WHEN m.value_ref IS NOT NULL AND LOWER(m.value_ref) = $lowercase_wallet THEN true ELSE false END AS is_owner
-        FROM arguments a
+        FROM unique_pairs up
         LEFT JOIN (
             SELECT data_provider, stream_id, value_ref
             FROM metadata
             WHERE metadata_key = 'stream_owner'
               AND disabled_at IS NULL
             ORDER BY created_at DESC
-        ) m ON a.data_provider = m.data_provider AND a.stream_id = m.stream_id
+        ) m ON up.data_provider = m.data_provider AND up.stream_id = m.stream_id
     )
-    -- Combine results
+    -- Map the ownership status back to all original pairs
     SELECT 
-        o.data_provider,
-        o.stream_id,
-        o.is_owner
-    FROM ownership_check o;
+        ap.data_provider,
+        ap.stream_id,
+        uoc.is_owner
+    FROM all_pairs ap
+    JOIN unique_ownership_check uoc ON ap.data_provider = uoc.data_provider AND ap.stream_id = uoc.stream_id;
 };
 
 /**
@@ -616,16 +621,16 @@ CREATE OR REPLACE ACTION is_primitive_stream_batch(
     stream_id TEXT,
     is_primitive BOOL
 ) {
-    for $i in 1..array_length($data_providers) {
-        $data_providers[$i] := LOWER($data_providers[$i]);
-    }
+    -- Use helper function to avoid expensive for-loop roundtrips
+    $data_providers := helper_lowercase_array($data_providers);
 
     -- Check that arrays have the same length
     if array_length($data_providers) != array_length($stream_ids) {
         ERROR('Data providers and stream IDs arrays must have the same length');
     }
 
-    -- Use WITH RECURSIVE to process each stream efficiently
+    -- Use WITH RECURSIVE to unnest all pairs, then find unique pairs to check
+    -- This is much more efficient than checking every single pair from input arrays
     WITH RECURSIVE 
     indexes AS (
         SELECT 1 AS idx
@@ -638,20 +643,33 @@ CREATE OR REPLACE ACTION is_primitive_stream_batch(
             $data_providers AS data_providers,
             $stream_ids AS stream_ids
     ),
-    arguments AS (
-        SELECT 
+    all_pairs AS (
+        SELECT
             stream_arrays.data_providers[idx] AS data_provider,
             stream_arrays.stream_ids[idx] AS stream_id
         FROM indexes
         JOIN stream_arrays ON 1=1
+    ),
+    unique_pairs AS (
+        SELECT DISTINCT data_provider, stream_id
+        FROM all_pairs
+    ),
+    unique_status AS (
+        -- This JOIN to streams table is now only performed on unique pairs
+        SELECT 
+            up.data_provider,
+            up.stream_id,
+            COALESCE(s.stream_type = 'primitive', false) AS is_primitive
+        FROM unique_pairs up
+        LEFT JOIN streams s ON up.data_provider = s.data_provider AND up.stream_id = s.stream_id
     )
-    -- Check stream type for each stream
+    -- Map the primitive status back to all original pairs
     SELECT 
-        a.data_provider,
-        a.stream_id,
-        COALESCE(s.stream_type = 'primitive', false) AS is_primitive
-    FROM arguments a
-    LEFT JOIN streams s ON a.data_provider = s.data_provider AND a.stream_id = s.stream_id;
+        ap.data_provider,
+        ap.stream_id,
+        us.is_primitive
+    FROM all_pairs ap
+    JOIN unique_status us ON ap.data_provider = us.data_provider AND ap.stream_id = us.stream_id;
 };
 
 /**
@@ -1046,17 +1064,17 @@ CREATE OR REPLACE ACTION stream_exists_batch(
     stream_id TEXT,
     stream_exists BOOL
 ) {
-    for $i in 1..array_length($data_providers) {
-        $data_providers[$i] := LOWER($data_providers[$i]);
-    }
+    -- Use helper function to avoid expensive for-loop roundtrips
+    $data_providers := helper_lowercase_array($data_providers);
 
     -- Check that arrays have the same length
     if array_length($data_providers) != array_length($stream_ids) {
         ERROR('Data providers and stream IDs arrays must have the same length');
     }
 
-    -- Use WITH RECURSIVE to process each stream efficiently
-    RETURN WITH RECURSIVE 
+    -- Use WITH RECURSIVE to unnest all pairs, then find unique pairs to check
+    -- This is much more efficient than checking every single pair from input arrays
+    WITH RECURSIVE 
     indexes AS (
         SELECT 1 AS idx
         UNION ALL
@@ -1068,20 +1086,33 @@ CREATE OR REPLACE ACTION stream_exists_batch(
             $data_providers AS data_providers,
             $stream_ids AS stream_ids
     ),
-    arguments AS (
+    all_pairs AS (
         SELECT 
             stream_arrays.data_providers[idx] AS data_provider,
             stream_arrays.stream_ids[idx] AS stream_id
         FROM indexes
         JOIN stream_arrays ON 1=1
+    ),
+    unique_pairs AS (
+        SELECT DISTINCT data_provider, stream_id
+        FROM all_pairs
+    ),
+    unique_existence AS (
+        -- This JOIN to streams table is now only performed on unique pairs
+        SELECT 
+            up.data_provider,
+            up.stream_id,
+            CASE WHEN s.data_provider IS NOT NULL THEN true ELSE false END AS stream_exists
+        FROM unique_pairs up
+        LEFT JOIN streams s ON up.data_provider = s.data_provider AND up.stream_id = s.stream_id
     )
-    -- Check existence for each stream
+    -- Map the existence status back to all original pairs
     SELECT 
-        a.data_provider,
-        a.stream_id,
-        CASE WHEN s.data_provider IS NOT NULL THEN true ELSE false END AS stream_exists
-    FROM arguments a
-    LEFT JOIN streams s ON a.data_provider = s.data_provider AND a.stream_id = s.stream_id;
+        ap.data_provider,
+        ap.stream_id,
+        ue.stream_exists
+    FROM all_pairs ap
+    JOIN unique_existence ue ON ap.data_provider = ue.data_provider AND ap.stream_id = ue.stream_id;
 };
 
 CREATE OR REPLACE ACTION transfer_stream_ownership(
@@ -1123,9 +1154,8 @@ CREATE OR REPLACE ACTION filter_streams_by_existence(
     data_provider TEXT,
     stream_id TEXT
 ) {
-    for $i in 1..array_length($data_providers) {
-        $data_providers[$i] := LOWER($data_providers[$i]);
-    }
+    -- Use helper function to avoid expensive for-loop roundtrips
+    $data_providers := helper_lowercase_array($data_providers);
 
     -- default to return existing streams
     if $existing_only IS NULL {
@@ -1137,8 +1167,8 @@ CREATE OR REPLACE ACTION filter_streams_by_existence(
         ERROR('Data providers and stream IDs arrays must have the same length');
     }
     
-    -- Use efficient WITH RECURSIVE pattern for batch processing
-    RETURN WITH RECURSIVE 
+    -- Use efficient WITH RECURSIVE pattern with DISTINCT optimization
+    WITH RECURSIVE 
     indexes AS (
         SELECT 1 AS idx
         UNION ALL
@@ -1150,28 +1180,32 @@ CREATE OR REPLACE ACTION filter_streams_by_existence(
             $data_providers AS data_providers,
             $stream_ids AS stream_ids
     ),
-    arguments AS (
+    all_pairs AS (
         SELECT 
             stream_arrays.data_providers[idx] AS data_provider,
             stream_arrays.stream_ids[idx] AS stream_id
         FROM indexes
         JOIN stream_arrays ON 1=1
     ),
-    -- Check existence for each stream and filter based on existing_only flag
-    existence_check AS (
+    unique_pairs AS (
+        SELECT DISTINCT data_provider, stream_id
+        FROM all_pairs
+    ),
+    -- Check existence for unique streams only and filter based on existing_only flag
+    unique_existence AS (
         SELECT 
-            a.data_provider,
-            a.stream_id,
+            up.data_provider,
+            up.stream_id,
             CASE WHEN s.data_provider IS NOT NULL THEN true ELSE false END AS stream_exists
-        FROM arguments a
-        LEFT JOIN streams s ON a.data_provider = s.data_provider AND a.stream_id = s.stream_id
+        FROM unique_pairs up
+        LEFT JOIN streams s ON up.data_provider = s.data_provider AND up.stream_id = s.stream_id
+        WHERE (CASE WHEN s.data_provider IS NOT NULL THEN true ELSE false END) = $existing_only
     )
-    -- Filter results based on existing_only flag
+    -- Return only the filtered unique pairs (no need to map back since we're filtering)
     SELECT 
-        e.data_provider,
-        e.stream_id
-    FROM existence_check e
-    WHERE e.stream_exists = $existing_only;
+        ue.data_provider,
+        ue.stream_id
+    FROM unique_existence ue;
 };
 
 CREATE OR REPLACE ACTION list_streams(
