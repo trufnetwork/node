@@ -339,7 +339,6 @@ On macOS, `launchd` is used instead of `systemd` to manage background services. 
 This creates a `launchd` service file for the `kwild` node. It will be configured to restart automatically if it stops.
 
 ```bash
-# Create the launchd plist file for kwild
 cat > ~/Library/LaunchAgents/com.trufnetwork.kwild.plist << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -352,25 +351,25 @@ cat > ~/Library/LaunchAgents/com.trufnetwork.kwild.plist << EOF
         <string>/usr/local/bin/kwild</string>
         <string>start</string>
         <string>-r</string>
-        <string>$HOME/truf-node-operator/my-node-config</string>
+        <string>/Users/angelicawillianto/truf-node-operator/my-node-config</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
         <string>/opt/homebrew/opt/postgresql@16/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
         <key>HOME</key>
-        <string>$HOME</string>
+        <string>/Users/angelicawillianto</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
     <key>WorkingDirectory</key>
-    <string>$HOME/truf-node-operator</string>
+    <string>/Users/angelicawillianto/truf-node-operator</string>
     <key>StandardOutPath</key>
-    <string>$HOME/Library/Logs/kwild.log</string>
+    <string>/Users/angelicawillianto/Library/Logs/kwild.log</string>
     <key>StandardErrorPath</key>
-    <string>$HOME/Library/Logs/kwild.error.log</string>
+    <string>/Users/angelicawillianto/Library/Logs/kwild.error.log</string>
 </dict>
 </plist>
 EOF
@@ -381,7 +380,6 @@ EOF
 This creates a `launchd` service file to manage the `tn-postgres` Docker container.
 
 ```bash
-# Create launchd service for PostgreSQL Docker container
 cat > ~/Library/LaunchAgents/com.trufnetwork.tn-postgres.plist << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -437,11 +435,9 @@ sudo systemctl start kwild
 Load the services to enable them to start automatically, then start them manually for the first time.
 
 ```bash
-# Load and start PostgreSQL service
 launchctl load ~/Library/LaunchAgents/com.trufnetwork.tn-postgres.plist
 launchctl start com.trufnetwork.tn-postgres
 
-# Load and start kwild service
 launchctl load ~/Library/LaunchAgents/com.trufnetwork.kwild.plist
 launchctl start com.trufnetwork.kwild
 ```
@@ -655,6 +651,31 @@ launchctl list | grep com.trufnetwork.kwild
 launchctl list | grep com.trufnetwork.tn-postgres
 ```
 
+#### Understanding launchctl Output Format
+
+The `launchctl list` command shows three columns:
+
+- **Process ID (PID)**: Shows the process ID if the service is running, or "-" if not running
+- **Exit Code**: Shows the exit code if the service has stopped (0 indicates successful termination)
+- **Label**: The service identifier
+
+Expected output when services are running properly:
+
+```
+12345   0   com.trufnetwork.kwild
+12346   0   com.trufnetwork.tn-postgres
+```
+
+If a service is not running, you'll see:
+
+```
+-       0   com.trufnetwork.kwild
+```
+
+### Network Connection Issues
+
+If you see peer disconnection messages like `[WRN] PEERS: Failed to get peers from ...: failed to read and decode peers: stream reset` or `[INF] PEERS: Disconnected from peer ...` in your logs, this usually indicates VPN or firewall issues. Try disabling your VPN temporarily or check your firewall settings to resolve connectivity problems.
+
 ## Docker Container Status
 
 To check the status of your Docker containers:
@@ -732,25 +753,20 @@ rm -rf $HOME/truf-node-operator/my-node-config
 ### For macOS
 
 ```bash
-# Unload services from launchd
 launchctl unload ~/Library/LaunchAgents/com.trufnetwork.kwild.plist
 launchctl unload ~/Library/LaunchAgents/com.trufnetwork.tn-postgres.plist
 
-# Remove service definition files
 rm ~/Library/LaunchAgents/com.trufnetwork.kwild.plist
 rm ~/Library/LaunchAgents/com.trufnetwork.tn-postgres.plist
 
-# Remove log files
 rm -f ~/Library/Logs/kwild.log
 rm -f ~/Library/Logs/kwild.error.log
 rm -f ~/Library/Logs/tn-postgres.log
 rm -f ~/Library/Logs/tn-postgres.error.log
 
-# Remove Docker resources
 docker stop tn-postgres
 docker rm tn-postgres
 docker volume rm tn-pgdata
 
-# Remove node configuration
 rm -rf $HOME/truf-node-operator/my-node-config
 ```
