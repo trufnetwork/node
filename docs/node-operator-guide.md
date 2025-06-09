@@ -334,56 +334,43 @@ EOF
 
 On macOS, `launchd` is used instead of `systemd` to manage background services. The following steps will create services that start `kwild` and PostgreSQL automatically and keep them running. These services will be created for the current user.
 
-First, create a directory for log files:
-
-```bash
-mkdir -p $HOME/truf-node-operator/logs
-```
-
 **1. Create `kwild` Service**
 
 This creates a `launchd` service file for the `kwild` node. It will be configured to restart automatically if it stops.
 
 ```bash
 # Create the launchd plist file for kwild
-tee ~/Library/LaunchAgents/com.trufnetwork.kwild.plist << EOF
+cat > ~/Library/LaunchAgents/com.trufnetwork.kwild.plist << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
     <string>com.trufnetwork.kwild</string>
-    <key>Description</key>
-    <string>TRUF.NETWORK Node Service</string>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>ThrottleInterval</key>
-    <integer>10</integer>
-    <key>WorkingDirectory</key>
-    <string>$(echo $HOME)/truf-node-operator</string>
     <key>ProgramArguments</key>
     <array>
         <string>/usr/local/bin/kwild</string>
         <string>start</string>
         <string>-r</string>
-        <string>$(echo $HOME)/truf-node-operator/my-node-config</string>
+        <string>$HOME/truf-node-operator/my-node-config</string>
     </array>
-    <key>StandardOutPath</key>
-    <string>$(echo $HOME)/truf-node-operator/logs/kwild.log</string>
-    <key>StandardErrorPath</key>
-    <string>$(echo $HOME)/truf-node-operator/logs/kwild-error.log</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/opt/homebrew/opt/postgresql@16/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
+        <string>/opt/homebrew/opt/postgresql@16/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>$HOME</string>
     </dict>
-    <key>SoftResourceLimits</key>
-    <dict>
-        <key>NumberOfFiles</key>
-        <integer>65535</integer>
-    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>WorkingDirectory</key>
+    <string>$HOME/truf-node-operator</string>
+    <key>StandardOutPath</key>
+    <string>$HOME/Library/Logs/kwild.log</string>
+    <key>StandardErrorPath</key>
+    <string>$HOME/Library/Logs/kwild.error.log</string>
 </dict>
 </plist>
 EOF
@@ -394,22 +381,14 @@ EOF
 This creates a `launchd` service file to manage the `tn-postgres` Docker container.
 
 ```bash
-# Create the launchd plist file for PostgreSQL
-tee ~/Library/LaunchAgents/com.trufnetwork.tn-postgres.plist << EOF
+# Create launchd service for PostgreSQL Docker container
+cat > ~/Library/LaunchAgents/com.trufnetwork.tn-postgres.plist << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
     <string>com.trufnetwork.tn-postgres</string>
-    <key>Description</key>
-    <string>TRUF.NETWORK PostgreSQL Service (Docker)</string>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>ThrottleInterval</key>
-    <integer>10</integer>
     <key>ProgramArguments</key>
     <array>
         <string>/usr/local/bin/docker</string>
@@ -417,15 +396,16 @@ tee ~/Library/LaunchAgents/com.trufnetwork.tn-postgres.plist << EOF
         <string>-a</string>
         <string>tn-postgres</string>
     </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>WorkingDirectory</key>
+    <string>$HOME/truf-node-operator</string>
     <key>StandardOutPath</key>
-    <string>$(echo $HOME)/truf-node-operator/logs/postgres.log</string>
+    <string>$HOME/Library/Logs/tn-postgres.log</string>
     <key>StandardErrorPath</key>
-    <string>$(echo $HOME)/truf-node-operator/logs/postgres-error.log</string>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
-    </dict>
+    <string>$HOME/Library/Logs/tn-postgres.error.log</string>
 </dict>
 </plist>
 EOF
@@ -493,7 +473,17 @@ kwild admin status
 > **For macOS:**
 >
 > ```bash
-> tail -f $HOME/truf-node-operator/logs/kwild.log
+> # View kwild logs in real-time
+> tail -f ~/Library/Logs/kwild.log
+>
+> # View kwild error logs in real-time
+> tail -f ~/Library/Logs/kwild.error.log
+>
+> # View last 100 lines of kwild logs
+> tail -n 100 ~/Library/Logs/kwild.log
+>
+> # View PostgreSQL logs in real-time
+> tail -f ~/Library/Logs/tn-postgres.log
 > ```
 
 ### 8. Become a Validator (Optional)
@@ -637,18 +627,22 @@ sudo systemctl status kwild
 
 ### For macOS
 
-On macOS, logs are directed to files in `$HOME/truf-node-operator/logs`, and you can use `launchctl` to check service status.
+On macOS, with our service configuration, logs are written to dedicated log files, making them easy to access and monitor.
 
 To view `kwild` logs in real-time:
 
 ```bash
-tail -f $HOME/truf-node-operator/logs/kwild.log
-```
+# View kwild logs in real-time
+tail -f ~/Library/Logs/kwild.log
 
-To view PostgreSQL logs in real-time:
+# View kwild error logs in real-time
+tail -f ~/Library/Logs/kwild.error.log
 
-```bash
-tail -f $HOME/truf-node-operator/logs/postgres.log
+# View last 100 lines of kwild logs
+tail -n 100 ~/Library/Logs/kwild.log
+
+# View PostgreSQL logs in real-time
+tail -f ~/Library/Logs/tn-postgres.log
 ```
 
 To check the status of the services (a non-zero status in the second column may indicate an issue):
@@ -746,12 +740,17 @@ launchctl unload ~/Library/LaunchAgents/com.trufnetwork.tn-postgres.plist
 rm ~/Library/LaunchAgents/com.trufnetwork.kwild.plist
 rm ~/Library/LaunchAgents/com.trufnetwork.tn-postgres.plist
 
+# Remove log files
+rm -f ~/Library/Logs/kwild.log
+rm -f ~/Library/Logs/kwild.error.log
+rm -f ~/Library/Logs/tn-postgres.log
+rm -f ~/Library/Logs/tn-postgres.error.log
+
 # Remove Docker resources
 docker stop tn-postgres
 docker rm tn-postgres
 docker volume rm tn-pgdata
 
-# Remove node configuration and logs
+# Remove node configuration
 rm -rf $HOME/truf-node-operator/my-node-config
-rm -rf $HOME/truf-node-operator/logs
 ```
