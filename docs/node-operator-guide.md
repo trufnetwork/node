@@ -399,11 +399,11 @@ cat > ~/Library/LaunchAgents/com.trufnetwork.tn-postgres.plist << EOF
     <key>KeepAlive</key>
     <true/>
     <key>WorkingDirectory</key>
-    <string>$HOME/truf-node-operator</string>
+    <string>/Users/angelicawillianto/truf-node-operator</string>
     <key>StandardOutPath</key>
-    <string>$HOME/Library/Logs/tn-postgres.log</string>
+    <string>/Users/angelicawillianto/Library/Logs/tn-postgres.log</string>
     <key>StandardErrorPath</key>
-    <string>$HOME/Library/Logs/tn-postgres.error.log</string>
+    <string>/Users/angelicawillianto/Library/Logs/tn-postgres.error.log</string>
 </dict>
 </plist>
 EOF
