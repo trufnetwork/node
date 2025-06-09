@@ -213,6 +213,10 @@ For detailed instructions on configuration options more relevant to a production
 
 This will configure your node to use state sync for faster synchronization with the network. Edit the `config.toml` file using the appropriate command for your OS.
 
+**Option 1: Scripted Edit**
+
+Run the command for your operating system to perform the edits automatically.
+
 #### For Linux
 
 ```bash
@@ -228,6 +232,17 @@ The `sed` command on macOS requires a different syntax for in-place editing.
 sed -i '' '/\[state_sync\]/,/^\[/ s/enable = false/enable = true/' ./my-node-config/config.toml
 sed -i '' 's/trusted_providers = \[\]/trusted_providers = ["0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656"]/' ./my-node-config/config.toml
 ```
+
+**Option 2: Manual Edit**
+Alternatively, you can manually edit the configuration file.
+
+1.  Open `./my-node-config/config.toml` in a text editor.
+2.  Find the `[state_sync]` section.
+3.  Change `enable = false` to `enable = true`.
+4.  Replace `trusted_providers = []` with the following:
+    ```toml
+    trusted_providers = ["0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656"]
+    ```
 
 ### 4. Set Up PostgreSQL
 
@@ -350,7 +365,7 @@ tee ~/Library/LaunchAgents/com.trufnetwork.kwild.plist << EOF
     <string>$(echo $HOME)/truf-node-operator</string>
     <key>ProgramArguments</key>
     <array>
-        <string>$(which kwild)</string>
+        <string>/usr/local/bin/kwild</string>
         <string>start</string>
         <string>-r</string>
         <string>$(echo $HOME)/truf-node-operator/my-node-config</string>
@@ -359,6 +374,11 @@ tee ~/Library/LaunchAgents/com.trufnetwork.kwild.plist << EOF
     <string>$(echo $HOME)/truf-node-operator/logs/kwild.log</string>
     <key>StandardErrorPath</key>
     <string>$(echo $HOME)/truf-node-operator/logs/kwild-error.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/opt/postgresql@16/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
+    </dict>
     <key>SoftResourceLimits</key>
     <dict>
         <key>NumberOfFiles</key>
@@ -392,7 +412,7 @@ tee ~/Library/LaunchAgents/com.trufnetwork.tn-postgres.plist << EOF
     <integer>10</integer>
     <key>ProgramArguments</key>
     <array>
-        <string>$(which docker)</string>
+        <string>/usr/local/bin/docker</string>
         <string>start</string>
         <string>-a</string>
         <string>tn-postgres</string>
@@ -401,6 +421,11 @@ tee ~/Library/LaunchAgents/com.trufnetwork.tn-postgres.plist << EOF
     <string>$(echo $HOME)/truf-node-operator/logs/postgres.log</string>
     <key>StandardErrorPath</key>
     <string>$(echo $HOME)/truf-node-operator/logs/postgres-error.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
+    </dict>
 </dict>
 </plist>
 EOF
