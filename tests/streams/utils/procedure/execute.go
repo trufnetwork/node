@@ -565,6 +565,7 @@ type GetDatabaseSizeInput struct {
 	Locator  trufTypes.StreamLocator
 	Height   int64
 }
+
 func GetDatabaseSize(ctx context.Context, input GetDatabaseSizeInput) (int64, error) {
 	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
 	if err != nil {
@@ -584,7 +585,7 @@ func GetDatabaseSize(ctx context.Context, input GetDatabaseSizeInput) (int64, er
 	}
 	var databaseSize *int64
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_database_size", []any{}, func(row *common.Row) error {
-		databaseSize = safe(row.Values[0], nil, int64PtrConverter);
+		databaseSize = safe(row.Values[0], nil, int64PtrConverter)
 		return nil
 	})
 	if err != nil {

@@ -108,6 +108,14 @@ type AreMembersOfInput struct {
 	Wallets  []string
 }
 
+type SetRoleManagerInput struct {
+	Platform        *kwilTesting.Platform
+	Owner           string
+	RoleName        string
+	ManagerOwner    *string
+	ManagerRoleName *string
+}
+
 type AddRoleManagersInput struct {
 	Platform       *kwilTesting.Platform
 	OwnerAddress   string

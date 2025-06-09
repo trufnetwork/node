@@ -40,9 +40,8 @@ CREATE OR REPLACE ACTION truflation_insert_records(
     $value NUMERIC(36,18)[],
     $truflation_created_at TEXT[]
 ) PUBLIC {
-    for $i in 1..array_length($data_provider) {
-        $data_provider[$i] := LOWER($data_provider[$i]);
-    }
+    -- Use helper function to avoid expensive for-loop roundtrips
+    $data_providers := helper_lowercase_array($data_provider);
     $lower_caller TEXT := LOWER(@caller);
     $num_records INT := array_length($data_provider);
     if $num_records != array_length($stream_id) or $num_records != array_length($event_time) or $num_records != array_length($value) or $num_records != array_length($truflation_created_at) {
