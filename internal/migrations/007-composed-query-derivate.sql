@@ -46,6 +46,7 @@ RETURNS TABLE(
       FROM taxonomies t
       WHERE t.data_provider = $data_provider
         AND t.stream_id     = $stream_id
+        AND t.disabled_at IS NULL
 
       UNION
 
@@ -59,6 +60,7 @@ RETURNS TABLE(
       JOIN taxonomies t
         ON t.data_provider = at.child_data_provider
        AND t.stream_id     = at.child_stream_id
+       AND t.disabled_at IS NULL
     ),
     primitive_leaves AS (
       /* Keep only references pointing to primitive streams */
@@ -177,6 +179,7 @@ RETURNS TABLE(
       FROM taxonomies t
       WHERE t.data_provider = $data_provider
         AND t.stream_id     = $stream_id
+        AND t.disabled_at IS NULL
 
       UNION
 
@@ -190,6 +193,7 @@ RETURNS TABLE(
       JOIN taxonomies t
         ON t.data_provider = at.child_data_provider
        AND t.stream_id     = at.child_stream_id
+       AND t.disabled_at IS NULL
     ),
     primitive_leaves AS (
       /* Keep only references pointing to primitive streams */
@@ -611,39 +615,53 @@ RETURNS TABLE(
         SELECT data_provider, stream_id, event_time, value FROM primitive_events_in_interval
     ),
 
-    -- Base Value Calculation: Determine the base value for each primitive stream.
-    -- This value is used to normalize raw values into index values (typically 100 at base time).
+    -- Defines the set of primitives that have data points within the requested
+    -- time range and therefore require a base value calculation.
+    distinct_primitives_for_base AS (
+       SELECT DISTINCT data_provider, stream_id
+        FROM all_primitive_points
+    ),
+
+    -- Base Value Calculation: For each distinct primitive, find its base value
+    -- using correlated subqueries for performance. This avoids scanning the
+    -- entire history of each primitive.
+    -- The value is determined with the following priority:
+    --   1. The event at the exact base_time.
+    --   2. The latest event before the base_time.
+    --   3. The earliest event after the base_time.
+    --   4. A default of 1 if no event is found.
     primitive_base_values AS (
         SELECT
-            bv_calc.data_provider,
-            bv_calc.stream_id,
-            -- Use COALESCE for safety, though base value should ideally always exist if stream has data.
-            COALESCE(bv_calc.value, 1::numeric(36,18))::numeric(36,18) AS base_value -- Default to 1 if somehow no base value found to avoid division by zero.
-        FROM (
-            SELECT
-                p_base.data_provider,
-                p_base.stream_id,
-                p_base.value,
-                ROW_NUMBER() OVER (
-                    PARTITION BY p_base.data_provider, p_base.stream_id
-                    ORDER BY
-                        -- Prioritize event exactly at base time
-                        CASE WHEN p_base.event_time = $effective_base_time THEN 0 ELSE 1 END ASC,
-                        -- Then latest event at or before base time
-                        CASE WHEN p_base.event_time <= $effective_base_time THEN p_base.event_time END DESC NULLS LAST,
-                        -- Then earliest event after base time
-                        CASE WHEN p_base.event_time > $effective_base_time THEN p_base.event_time END ASC NULLS LAST,
-                        -- Tie-break by creation time
-                        p_base.created_at DESC
-                ) as rn
-            FROM primitive_events p_base
-            WHERE EXISTS ( -- Ensure the primitive is part of the hierarchy
-                SELECT 1 FROM primitive_weights pw_base
-                WHERE pw_base.data_provider = p_base.data_provider AND pw_base.stream_id = p_base.stream_id
-            )
-            AND p_base.created_at <= $effective_frozen_at
-        ) bv_calc
-        WHERE bv_calc.rn = 1
+            dp.data_provider,
+            dp.stream_id,
+             COALESCE(
+                 -- Priority 1: Exact match
+                 (SELECT pe.value FROM primitive_events pe
+                  WHERE pe.data_provider = dp.data_provider
+                    AND pe.stream_id = dp.stream_id
+                    AND pe.event_time = $effective_base_time
+                    AND pe.created_at <= $effective_frozen_at
+                  ORDER BY pe.created_at DESC LIMIT 1),
+
+                 -- Priority 2: Latest Before
+                 (SELECT pe.value FROM primitive_events pe
+                  WHERE pe.data_provider = dp.data_provider
+                    AND pe.stream_id = dp.stream_id
+                    AND pe.event_time < $effective_base_time
+                    AND pe.created_at <= $effective_frozen_at
+                   ORDER BY pe.event_time DESC, pe.created_at DESC LIMIT 1),
+
+                 -- Priority 3: Earliest After
+                  (SELECT pe.value FROM primitive_events pe
+                   WHERE pe.data_provider = dp.data_provider
+                    AND pe.stream_id = dp.stream_id
+                    AND pe.event_time > $effective_base_time
+                    AND pe.created_at <= $effective_frozen_at
+                   ORDER BY pe.event_time ASC, pe.created_at DESC LIMIT 1),
+
+                  1::numeric(36,18) -- Default value
+             )::numeric(36,18) AS base_value
+        FROM distinct_primitives_for_base dp
     ),
 
     -- Calculate Index Value Change (delta_indexed_value) for each primitive event.
