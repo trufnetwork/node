@@ -715,22 +715,30 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_write_batch(
     $data_providers := helper_lowercase_array($data_providers);
     $wallet := LOWER($wallet);
 
-    $exist_array BOOLEAN[];
+    -- Check that arrays have the same length
+    if array_length($data_providers) != array_length($stream_ids) {
+        ERROR('Data providers and stream IDs arrays must have the same length');
+    }
+
+    $ownership_array BOOLEAN[];
     $permission_array BOOLEAN[];
 
-    -- Check if the wallet is the stream owner
+    -- Check if the wallet is the stream owner for each stream
     for $row in is_stream_owner_batch($data_providers, $stream_ids, $wallet) {
-        $exist_array := array_append($exist_array, $row.stream_exists);
+        $ownership_array := array_append($ownership_array, $row.is_owner);
     }
 
     -- Check if the wallet has explicit write permission for each stream
     for $row in has_write_permission_batch($data_providers, $stream_ids, $wallet) {
         $permission_array := array_append($permission_array, $row.has_permission);
     }
-    
-    for $idx in array_length($exist_array) {
-        if $exist_array[$idx] AND $permission_array[$idx] {
-            return NEXT $data_providers[$idx], $stream_ids[$idx], true;
+    return;
+    -- Return results based on ownership OR permission (logical OR)
+    for $idx in 1..array_length($ownership_array) {
+        if $ownership_array[$idx] OR $permission_array[$idx] {
+            RETURN NEXT $data_providers[$idx], $stream_ids[$idx], true;
+        } else {
+            RETURN NEXT $data_providers[$idx], $stream_ids[$idx], false;
         }
     }
 };
