@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/kwilteam/kwil-db/common"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
@@ -27,31 +26,13 @@ type SetupComposedAndPrimitivesInput struct {
 }
 
 func setupComposedAndPrimitives(ctx context.Context, input SetupComposedAndPrimitivesInput) error {
-	// Create composed stream
-	txContext := &common.TxContext{
-		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: input.Height},
-		Signer:       input.ComposedStreamDefinition.StreamLocator.DataProvider.Bytes(),
-		Caller:       input.ComposedStreamDefinition.StreamLocator.DataProvider.Address(),
-		TxID:         input.Platform.Txid(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
-
-	// Create the composed stream using create_stream action
-	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "create_stream", []any{
-		input.ComposedStreamDefinition.StreamLocator.StreamId.String(),
-		"composed",
-	}, func(row *common.Row) error {
-		return nil
+	// Create composed stream using our helper function that handles role management
+	err := CreateStream(ctx, input.Platform, StreamInfo{
+		Locator: input.ComposedStreamDefinition.StreamLocator,
+		Type:    ContractTypeComposed,
 	})
 	if err != nil {
 		return errors.Wrap(err, "error creating composed stream")
-	}
-	if r.Error != nil {
-		return errors.Wrap(r.Error, "error creating composed stream")
 	}
 
 	// Deploy and initialize primitive streams
@@ -223,31 +204,12 @@ func SetupComposedStream(ctx context.Context, input SetupComposedStreamInput) er
 		return errors.Wrap(err, "error creating ethereum address from bytes")
 	}
 
-	txContext := &common.TxContext{
-		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: input.Height},
-		Signer:       input.Platform.Deployer,
-		Caller:       deployer.Address(),
-		TxID:         input.Platform.Txid(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
-
-	// Create the composed stream using create_stream action
-	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "create_stream", []any{
-		input.StreamId.String(),
-		"composed",
-	}, func(row *common.Row) error {
-		return nil
+	// Use our helper function that handles role management
+	return CreateStream(ctx, input.Platform, StreamInfo{
+		Locator: types.StreamLocator{
+			StreamId:     input.StreamId,
+			DataProvider: deployer,
+		},
+		Type: ContractTypeComposed,
 	})
-	if err != nil {
-		return errors.Wrap(err, "error creating composed stream")
-	}
-	if r.Error != nil {
-		return errors.Wrap(r.Error, "error creating composed stream")
-	}
-
-	return nil
 }

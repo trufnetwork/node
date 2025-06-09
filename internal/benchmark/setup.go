@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/apd/v3"
+	"github.com/kwilteam/kwil-db/common"
+	kwilTypes "github.com/kwilteam/kwil-db/core/types"
 	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
 	"github.com/trufnetwork/node/internal/benchmark/trees"
@@ -18,6 +20,7 @@ import (
 	"github.com/trufnetwork/node/tests/streams/utils/setup"
 	"github.com/trufnetwork/sdk-go/core/types"
 	"github.com/trufnetwork/sdk-go/core/util"
+	"golang.org/x/sync/errgroup"
 )
 
 type SetupSchemasInput struct {
@@ -25,14 +28,13 @@ type SetupSchemasInput struct {
 	Tree          trees.Tree
 }
 
-// Schema setup functions
+// setupSchemas creates streams and sets up their schemas for benchmarking.
 func setupSchemas(
 	ctx context.Context,
 	platform *kwilTesting.Platform,
 	logger *testing.T,
 	input SetupSchemasInput,
 ) error {
-	// Log entry to setupSchemas
 	LogPhaseEnter(logger, "setupSchemas", "QtyStreams: %d, BranchingFactor: %d, Visibility: %s", input.BenchmarkCase.QtyStreams, input.BenchmarkCase.BranchingFactor, visibilityToString(input.BenchmarkCase.Visibility))
 	defer LogPhaseExit(logger, time.Now(), "setupSchemas", "")
 
@@ -40,7 +42,6 @@ func setupSchemas(
 
 	allStreamInfos := []setup.StreamInfo{}
 
-	// Logging number of streams to create
 	LogInfo(logger, "Creating %d streams (will then setup schema for each)", len(input.Tree.Nodes))
 	for _, node := range input.Tree.Nodes {
 		streamId := getStreamId(node.Index)
@@ -65,19 +66,255 @@ func setupSchemas(
 		return errors.Wrap(err, "failed to create stream")
 	}
 
+	// Setup streams in parallel for better performance
+	LogPhaseEnter(logger, "parallelSetupSchemas", "Setting up %d streams in parallel", len(allStreamInfos))
+	parallelStart := time.Now()
+
+	// Separate primitive and composed streams for different handling
+	var primitiveStreams []setup.StreamInfo
+	var primitiveNodes []trees.TreeNode
+	var composedStreams []setup.StreamInfo
+	var composedNodes []trees.TreeNode
+
 	for i, streamInfo := range allStreamInfos {
-		if err := setupSchema(ctx, platform, streamInfo, setupSchemaInput{
-			visibility:  input.BenchmarkCase.Visibility,
-			treeNode:    input.Tree.Nodes[i],
-			rangeParams: getMaxRangeParams(input.BenchmarkCase.DataPointsSet),
-			owner:       deployerAddress,
-		}); err != nil {
-			LogInfo(logger, "Failed to setup schema for stream %d: %v", i+1, err)
-			return errors.Wrap(err, "failed to setup schema")
+		if input.Tree.Nodes[i].IsLeaf {
+			primitiveStreams = append(primitiveStreams, streamInfo)
+			primitiveNodes = append(primitiveNodes, input.Tree.Nodes[i])
+		} else {
+			composedStreams = append(composedStreams, streamInfo)
+			composedNodes = append(composedNodes, input.Tree.Nodes[i])
 		}
 	}
 
+	// Batch all primitive data generation and insertion
+	if len(primitiveStreams) > 0 {
+		LogPhaseEnter(logger, "batchPrimitiveDataGeneration", "Generating data for %d primitive streams", len(primitiveStreams))
+		batchStart := time.Now()
+
+		rangeParams := getMaxRangeParams(input.BenchmarkCase.DataPointsSet)
+
+		// Generate all primitive data in parallel
+		type PrimitiveData struct {
+			StreamInfo setup.StreamInfo
+			Records    []setup.InsertRecordInput
+		}
+
+		primitiveDataChan := make(chan PrimitiveData, len(primitiveStreams))
+
+		g, gCtx := errgroup.WithContext(ctx)
+		g.SetLimit(50) // Limit concurrency to avoid overwhelming system
+
+		for _, streamInfo := range primitiveStreams {
+			streamInfo := streamInfo // capture loop variable
+			g.Go(func() error {
+				records := generateRecords(rangeParams)
+				select {
+				case primitiveDataChan <- PrimitiveData{StreamInfo: streamInfo, Records: records}:
+					return nil
+				case <-gCtx.Done():
+					return gCtx.Err()
+				}
+			})
+		}
+
+		// Close channel when all goroutines complete
+		go func() {
+			g.Wait()
+			close(primitiveDataChan)
+		}()
+
+		if err := g.Wait(); err != nil {
+			return errors.Wrap(err, "failed to generate primitive data in parallel")
+		}
+
+		// Collect all generated data
+		var allPrimitiveData []setup.InsertPrimitiveDataInput
+		for data := range primitiveDataChan {
+			allPrimitiveData = append(allPrimitiveData, setup.InsertPrimitiveDataInput{
+				Platform: platform,
+				Height:   1,
+				PrimitiveStream: setup.PrimitiveStreamWithData{
+					PrimitiveStreamDefinition: setup.PrimitiveStreamDefinition{
+						StreamLocator: data.StreamInfo.Locator,
+					},
+					Data: data.Records,
+				},
+			})
+		}
+
+		LogPhaseExit(logger, batchStart, "batchPrimitiveDataGeneration", "Generated data for %d streams", len(allPrimitiveData))
+
+		// Single batch insert for all primitive data
+		totalRecords := 0
+		for _, data := range allPrimitiveData {
+			totalRecords += len(data.PrimitiveStream.Data)
+		}
+
+		LogPhaseEnter(logger, "batchPrimitiveDataInsertion", "Batch inserting %d total records from %d primitive streams", totalRecords, len(allPrimitiveData))
+		insertStart := time.Now()
+
+		if err := batchInsertAllPrimitiveData(ctx, allPrimitiveData); err != nil {
+			return errors.Wrap(err, "failed to batch insert primitive data")
+		}
+
+		LogPhaseExit(logger, insertStart, "batchPrimitiveDataInsertion", "Completed batch insert of %d records", totalRecords)
+	}
+
+	// Setup composed streams (taxonomy) in parallel
+	if len(composedStreams) > 0 {
+		LogPhaseEnter(logger, "parallelComposedSetup", "Setting up %d composed streams in parallel", len(composedStreams))
+		composedStart := time.Now()
+
+		g, gCtx := errgroup.WithContext(ctx)
+		g.SetLimit(10) // Lower limit for composed streams as they're more DB-intensive
+
+		for i, streamInfo := range composedStreams {
+			i, streamInfo := i, streamInfo // capture loop variables
+			g.Go(func() error {
+				return setupComposedSchema(gCtx, platform, streamInfo, setupSchemaInput{
+					visibility:  input.BenchmarkCase.Visibility,
+					treeNode:    composedNodes[i],
+					rangeParams: getMaxRangeParams(input.BenchmarkCase.DataPointsSet),
+					owner:       deployerAddress,
+				})
+			})
+		}
+
+		if err := g.Wait(); err != nil {
+			return errors.Wrap(err, "failed to setup composed streams in parallel")
+		}
+
+		LogPhaseExit(logger, composedStart, "parallelComposedSetup", "Completed composed stream setup")
+	}
+
+	LogPhaseExit(logger, parallelStart, "parallelSetupSchemas", "Completed parallel setup")
+
 	return nil
+}
+
+// batchInsertAllPrimitiveData performs batch insertion of primitive data across multiple streams.
+func batchInsertAllPrimitiveData(ctx context.Context, allData []setup.InsertPrimitiveDataInput) error {
+	if len(allData) == 0 {
+		return nil
+	}
+
+	type record struct {
+		dataProvider string
+		streamId     string
+		eventTime    int64
+		value        *kwilTypes.Decimal
+	}
+
+	var allRecords []record
+	for _, input := range allData {
+		for _, data := range input.PrimitiveStream.Data {
+			valueDecimal, err := kwilTypes.ParseDecimalExplicit(strconv.FormatFloat(data.Value, 'f', -1, 64), 36, 18)
+			if err != nil {
+				return errors.Wrap(err, "error parsing decimal")
+			}
+			// Filter out zero values to reduce payload size
+			if valueDecimal.IsZero() {
+				continue
+			}
+			allRecords = append(allRecords, record{
+				dataProvider: input.PrimitiveStream.StreamLocator.DataProvider.Address(),
+				streamId:     input.PrimitiveStream.StreamLocator.StreamId.String(),
+				eventTime:    data.EventTime,
+				value:        valueDecimal,
+			})
+		}
+	}
+
+	if len(allRecords) == 0 {
+		return nil
+	}
+
+	platform := allData[0].Platform
+	height := allData[0].Height
+	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+	if err != nil {
+		return errors.Wrap(err, "error creating deployer address")
+	}
+
+	const recordBatchSize = 1000
+	numBatches := (len(allRecords) + recordBatchSize - 1) / recordBatchSize // Ceiling division
+
+	fmt.Printf("[BATCH_INSERT] Processing %d total records in %d batches of up to %d records each\n",
+		len(allRecords), numBatches, recordBatchSize)
+
+	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(10) // Limit concurrent DB connections
+
+	for i := 0; i < len(allRecords); i += recordBatchSize {
+		end := i + recordBatchSize
+		if end > len(allRecords) {
+			end = len(allRecords)
+		}
+		currentBatch := allRecords[i:end]
+
+		g.Go(func() error {
+			if len(currentBatch) == 0 {
+				return nil
+			}
+
+			dataProviders := make([]string, len(currentBatch))
+			streamIds := make([]string, len(currentBatch))
+			eventTimes := make([]int64, len(currentBatch))
+			values := make([]*kwilTypes.Decimal, len(currentBatch))
+
+			for i, r := range currentBatch {
+				dataProviders[i] = r.dataProvider
+				streamIds[i] = r.streamId
+				eventTimes[i] = r.eventTime
+				values[i] = r.value
+			}
+
+			txContext := &common.TxContext{
+				Ctx: gCtx,
+				BlockContext: &common.BlockContext{
+					Height: height,
+				},
+				TxID:   platform.Txid(),
+				Signer: deployer.Bytes(),
+				Caller: deployer.Address(),
+			}
+			engineContext := &common.EngineContext{
+				TxContext: txContext,
+			}
+
+			args := []any{
+				dataProviders,
+				streamIds,
+				eventTimes,
+				values,
+			}
+
+			r, err := platform.Engine.Call(engineContext, platform.DB, "", "insert_records", args, func(row *common.Row) error {
+				return nil
+			})
+			if err != nil {
+				return errors.Wrapf(err, "error in batch insert for a chunk of %d records", len(currentBatch))
+			}
+			if r.Error != nil {
+				return errors.Wrapf(r.Error, "procedure error in batch insert for a chunk of %d records", len(currentBatch))
+			}
+
+			return nil
+		})
+	}
+
+	return g.Wait()
+}
+
+// setupComposedSchema handles the setup of composed streams including visibility and taxonomy.
+func setupComposedSchema(ctx context.Context, platform *kwilTesting.Platform, stream setup.StreamInfo, input setupSchemaInput) error {
+	if input.visibility == util.PrivateVisibility {
+		if err := setVisibilityAndWhitelist(ctx, platform, stream, input.treeNode); err != nil {
+			return errors.Wrap(err, "failed to set visibility and whitelist")
+		}
+	}
+
+	return setTaxonomyForComposed(ctx, platform, stream, input)
 }
 
 type setupSchemaInput struct {
@@ -85,27 +322,6 @@ type setupSchemaInput struct {
 	owner       util.EthereumAddress
 	treeNode    trees.TreeNode
 	rangeParams RangeParameters
-}
-
-func setupSchema(ctx context.Context, platform *kwilTesting.Platform, stream setup.StreamInfo, input setupSchemaInput) error {
-
-	if input.visibility == util.PrivateVisibility {
-		if err := setVisibilityAndWhitelist(ctx, platform, stream, input.treeNode); err != nil {
-			return errors.Wrap(err, "failed to set visibility and whitelist")
-		}
-	}
-
-	// if it's a leaf, then it's a primitive stream
-	if input.treeNode.IsLeaf {
-		if err := insertRecordsForPrimitive(ctx, platform, stream, input.rangeParams); err != nil {
-			return errors.Wrap(err, "failed to insert records for primitive")
-		}
-	} else {
-		if err := setTaxonomyForComposed(ctx, platform, stream, input); err != nil {
-			return errors.Wrap(err, "failed to set taxonomy for composed")
-		}
-	}
-	return nil
 }
 
 func setVisibilityAndWhitelist(ctx context.Context, platform *kwilTesting.Platform, stream setup.StreamInfo, treeNode trees.TreeNode) error {
@@ -117,9 +333,7 @@ func setVisibilityAndWhitelist(ctx context.Context, platform *kwilTesting.Platfo
 		{Key: string(types.AllowReadWalletKey), Value: readerAddress.Address(), ValType: string(types.AllowReadWalletKey.GetType())},
 	}
 
-	// generate more wallets and stream ids, to make a little more realistic result
-	// they shoudln't be influencing too much, if our indexing is correct
-	for _, wallet := range getMockReadWallets(1000) {
+	for _, wallet := range getMockReadWallets(10) {
 		metadataToInsert = append(metadataToInsert, procedure.InsertMetadataInput{
 			Key:     string(types.AllowReadWalletKey),
 			Value:   wallet.Address(),
@@ -127,7 +341,7 @@ func setVisibilityAndWhitelist(ctx context.Context, platform *kwilTesting.Platfo
 		})
 	}
 
-	for _, streamId := range getMockStreamIds(1000) {
+	for _, streamId := range getMockStreamIds(10) {
 		metadataToInsert = append(metadataToInsert, procedure.InsertMetadataInput{
 			Key:     string(types.AllowComposeStreamKey),
 			Value:   streamId.String(),
@@ -135,34 +349,45 @@ func setVisibilityAndWhitelist(ctx context.Context, platform *kwilTesting.Platfo
 		})
 	}
 
-	// for all inputs, add the locator and height
+	// Add locator and height to all metadata inputs
 	for i := range metadataToInsert {
 		metadataToInsert[i].Locator = stream.Locator
 		metadataToInsert[i].Height = 1
 		metadataToInsert[i].Platform = platform
 	}
 
-	for _, input := range metadataToInsert {
-		if err := procedure.InsertMetadata(ctx, input); err != nil {
-			return errors.Wrap(err, "failed to insert metadata")
-		}
+	return batchInsertMetadata(ctx, metadataToInsert)
+}
+
+// batchInsertMetadata inserts metadata records in parallel for better performance.
+func batchInsertMetadata(ctx context.Context, metadataList []procedure.InsertMetadataInput) error {
+	if len(metadataList) == 0 {
+		return nil
 	}
-	return nil
+
+	g := errgroup.Group{}
+	g.SetLimit(5) // Limit concurrent metadata operations
+
+	for _, metadata := range metadataList {
+		metadata := metadata // capture loop variable
+		g.Go(func() error {
+			return procedure.InsertMetadata(ctx, metadata)
+		})
+	}
+
+	return g.Wait()
 }
 
 // getMockReadWallets generates and returns a slice of Ethereum addresses.
-// The number of addresses generated is determined by the parameter `n`.
 func getMockReadWallets(n int) []util.EthereumAddress {
 	wallets := make([]util.EthereumAddress, 0, n)
 	for i := 0; i < n; i++ {
-		// Generate a 20-byte address
 		addrBytes := make([]byte, 20)
 		_, err := rand.Read(addrBytes)
 		if err != nil {
 			panic(fmt.Sprintf("failed to generate random address: %v", err))
 		}
 
-		// Convert to EthereumAddress
 		addr, err := util.NewEthereumAddressFromBytes(addrBytes)
 		if err != nil {
 			panic(fmt.Errorf("failed to create Ethereum address: %w", err))
@@ -174,7 +399,6 @@ func getMockReadWallets(n int) []util.EthereumAddress {
 }
 
 // getMockStreamIds generates and returns a slice of util.StreamId.
-// The number of streamIds generated is determined by the parameter `n`.
 func getMockStreamIds(n int) []util.StreamId {
 	var streamIds []util.StreamId
 	for i := 0; i < n; i++ {
@@ -183,11 +407,7 @@ func getMockStreamIds(n int) []util.StreamId {
 	return streamIds
 }
 
-// insertRecordsForPrimitive inserts records for a primitive stream.
-// - it generates records for the given number of days
-// - it generates a random value for each record
-// - it inserts the records into the stream
-// - we use a bulk insert to speed up the process
+// insertRecordsForPrimitive inserts records for a primitive stream using bulk insert.
 func insertRecordsForPrimitive(ctx context.Context, platform *kwilTesting.Platform, stream setup.StreamInfo, rangeParams RangeParameters) error {
 	records := generateRecords(rangeParams)
 
@@ -202,7 +422,6 @@ func insertRecordsForPrimitive(ctx context.Context, platform *kwilTesting.Platfo
 		},
 	}
 
-	// Execute the bulk insert
 	if err := setup.InsertPrimitiveDataBatch(ctx, input); err != nil {
 		return errors.Wrap(err, "failed to execute bulk insert")
 	}
@@ -215,16 +434,14 @@ type RangeParameters struct {
 	ToDate     time.Time
 }
 
-// setTaxonomyForComposed sets the taxonomy for a composed stream.
-// - it creates a new taxonomy item for each child stream
+// setTaxonomyForComposed sets the taxonomy for a composed stream by defining child relationships.
 func setTaxonomyForComposed(ctx context.Context, platform *kwilTesting.Platform, stream setup.StreamInfo, input setupSchemaInput) error {
-	// Calculate parent and child stream IDs based on the new structure
 	var dataProviders []string
 	var streamIds []string
 	var weights []string
 	for _, childIndex := range input.treeNode.Children {
 		childStreamId := getStreamId(childIndex)
-		randWeight, _ := apd.New(mathrand.Int63n(10), 0).Float64() // can't be so big, otherwise it overflows when multiplying values
+		randWeight, _ := apd.New(mathrand.Int63n(10), 0).Float64()
 		dataProviders = append(dataProviders, stream.Locator.DataProvider.Address())
 		streamIds = append(streamIds, childStreamId.String())
 		weights = append(weights, strconv.FormatFloat(randWeight, 'f', -1, 64))
@@ -237,11 +454,4 @@ func setTaxonomyForComposed(ctx context.Context, platform *kwilTesting.Platform,
 		StreamIds:     streamIds,
 		Weights:       weights,
 	})
-}
-
-func randDate(minDate, maxDate time.Time) time.Time {
-	delta := maxDate.Unix() - minDate.Unix()
-
-	sec := mathrand.Int63n(delta) + minDate.Unix()
-	return time.Unix(sec, 0)
 }

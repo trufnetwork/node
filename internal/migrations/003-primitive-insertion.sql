@@ -48,9 +48,8 @@ CREATE OR REPLACE ACTION insert_records(
     $event_time INT8[],
     $value NUMERIC(36,18)[]
 ) PUBLIC {
-    for $i in 1..array_length($data_provider) {
-        $data_provider[$i] := LOWER($data_provider[$i]);
-    }
+    -- Use helper function to avoid expensive for-loop roundtrips
+    $data_provider := helper_lowercase_array($data_provider);
     $lower_caller TEXT := LOWER(@caller);
 
     $num_records INT := array_length($data_provider);

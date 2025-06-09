@@ -176,12 +176,19 @@ func TestAUTH02_ReadPermissions(t *testing.T) {
 
 func testReadPermissionControl(t *testing.T, streamInfo setup.StreamInfo) kwilTesting.TestFunc {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		platform = procedure.WithSigner(platform, streamInfo.Locator.DataProvider.Bytes())
-		// Set up and initialize the contract
+		// Initialize platform deployer with a valid address to prevent the default kwil "deployer" string issue
+		defaultDeployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
+		platform.Deployer = defaultDeployer.Bytes()
+
+		// Set up and initialize the contract.
+		// No need to change the signer here, CreateStreamWithRoleSetup handles it.
 		err := setup.CreateStream(ctx, platform, streamInfo)
 		if err != nil {
 			return errors.Wrapf(err, "failed to create stream for read permission test")
 		}
+
+		// The owner should now be the data provider of the stream
+		ownerPlatform := procedure.WithSigner(platform, streamInfo.Locator.DataProvider.Bytes())
 
 		// Initially, anyone should be able to read (public visibility)
 		nonOwnerUnauthorized := util.Unsafe_NewEthereumAddressFromString("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
@@ -220,7 +227,7 @@ func testReadPermissionControl(t *testing.T, streamInfo setup.StreamInfo) kwilTe
 
 		// Add non-owner authorized to read whitelist
 		err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
-			Platform: platform,
+			Platform: ownerPlatform,
 			Locator:  streamInfo.Locator,
 			Key:      "allow_read_wallet",
 			Value:    nonOwnerAuthorized.Address(),
@@ -239,7 +246,7 @@ func testReadPermissionControl(t *testing.T, streamInfo setup.StreamInfo) kwilTe
 
 		// Change read_visibility to private (1)
 		err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
-			Platform: platform,
+			Platform: ownerPlatform,
 			Locator:  streamInfo.Locator,
 			Key:      "read_visibility",
 			Value:    "1", // 1 = private
@@ -284,6 +291,10 @@ func TestAUTH02_NestedReadPermissions(t *testing.T) {
 
 func testNestedReadPermissionControl(t *testing.T) kwilTesting.TestFunc {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Initialize platform deployer with a valid address to prevent the default kwil "deployer" string issue
+		defaultDeployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
+		platform.Deployer = defaultDeployer.Bytes()
+
 		// Create addresses for the test
 		dataProvider := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000001")
 		authorizedWallet := util.Unsafe_NewEthereumAddressFromString("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
@@ -594,6 +605,10 @@ func TestAUTH04_NestedComposePermissions(t *testing.T) {
 
 func testNestedComposePermissionControl(t *testing.T) kwilTesting.TestFunc {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Initialize platform deployer with a valid address to prevent the default kwil "deployer" string issue
+		defaultDeployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
+		platform.Deployer = defaultDeployer.Bytes()
+
 		// Use a common data provider.
 		parentOwner := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000002222")
 		childOwner := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000003333")
@@ -790,11 +805,8 @@ func testNestedComposePermissionControl(t *testing.T) kwilTesting.TestFunc {
 
 func TestAUTH05_StreamDeletion(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name: "stream_deletion_test",
-		SeedScripts: []string{
-			"../../../internal/migrations/000-initial-data.sql",
-			"../../../internal/migrations/001-common-actions.sql",
-		},
+		Name:        "stream_deletion_test",
+		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testStreamDeletion(t),
 		},
@@ -803,13 +815,15 @@ func TestAUTH05_StreamDeletion(t *testing.T) {
 
 func testStreamDeletion(t *testing.T) kwilTesting.TestFunc {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		dataProvider := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000001")
+		// Initialize platform deployer with a valid address to prevent the default kwil "deployer" string issue
+		defaultDeployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
+		platform.Deployer = defaultDeployer.Bytes()
+
+		// Create a stream for deletion test
 		streamLocator := types.StreamLocator{
 			StreamId:     util.GenerateStreamId("stream_deletion_test"),
-			DataProvider: dataProvider,
+			DataProvider: util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000123"),
 		}
-
-		platform = procedure.WithSigner(platform, dataProvider.Bytes())
 
 		// Set up and initialize the contract
 		err := setup.CreateStream(ctx, platform, setup.StreamInfo{
@@ -853,11 +867,8 @@ func testStreamDeletion(t *testing.T) kwilTesting.TestFunc {
 
 func TestFilterStreamsByExistence(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name: "filter_streams_by_existence_test",
-		SeedScripts: []string{
-			"../../../internal/migrations/000-initial-data.sql",
-			"../../../internal/migrations/001-common-actions.sql",
-		},
+		Name:        "filter_streams_by_existence_test",
+		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testFilterStreamsByExistence(t),
 		},
@@ -866,6 +877,10 @@ func TestFilterStreamsByExistence(t *testing.T) {
 
 func testFilterStreamsByExistence(t *testing.T) kwilTesting.TestFunc {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Initialize platform deployer with a valid address to prevent the default kwil "deployer" string issue
+		defaultDeployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
+		platform.Deployer = defaultDeployer.Bytes()
+
 		dataProvider := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000001")
 		platform = procedure.WithSigner(platform, dataProvider.Bytes())
 
