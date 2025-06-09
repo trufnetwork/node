@@ -334,6 +334,15 @@ EOF
 
 On macOS, `launchd` is used instead of `systemd` to manage background services. The following steps will create services that start `kwild` and PostgreSQL automatically and keep them running. These services will be created for the current user.
 
+> **Note on Mac Architecture:** The `PATH` environment variable in the `kwild` service file below is configured for Apple Silicon (M1/M2) Macs, where Homebrew installs to `/opt/homebrew`. If you are on an Intel-based Mac, Homebrew installs to `/usr/local`, and you will need to modify the `PATH` string inside the `com.trufnetwork.kwild.plist` file after creating it.
+>
+> **For Intel Macs**, change this line:
+> `<string>/opt/homebrew/opt/postgresql@16/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>`
+> to:
+> `<string>/usr/local/opt/postgresql@16/bin:/usr/local/bin:/usr/bin:/bin</string>`
+
+> **Important for macOS Users:** The following commands create service files with absolute paths to your home directory. Before you proceed, please find your home directory path by running `echo $HOME` in your terminal. You will need to replace all instances of `{REPLACE_WITH_YOUR_HOME}` (including the curly braces) in the following scripts with the output of that command. For example, if `echo $HOME` returns `/Users/johndoe`, you would replace `{REPLACE_WITH_YOUR_HOME}` with `/Users/johndoe`.
+
 **1. Create `kwild` Service**
 
 This creates a `launchd` service file for the `kwild` node. It will be configured to restart automatically if it stops.
@@ -351,25 +360,25 @@ cat > ~/Library/LaunchAgents/com.trufnetwork.kwild.plist << EOF
         <string>/usr/local/bin/kwild</string>
         <string>start</string>
         <string>-r</string>
-        <string>/Users/angelicawillianto/truf-node-operator/my-node-config</string>
+        <string>{REPLACE_WITH_YOUR_HOME}/truf-node-operator/my-node-config</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
         <string>/opt/homebrew/opt/postgresql@16/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
         <key>HOME</key>
-        <string>/Users/angelicawillianto</string>
+        <string>{REPLACE_WITH_YOUR_HOME}</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
     <key>WorkingDirectory</key>
-    <string>/Users/angelicawillianto/truf-node-operator</string>
+    <string>{REPLACE_WITH_YOUR_HOME}/truf-node-operator</string>
     <key>StandardOutPath</key>
-    <string>/Users/angelicawillianto/Library/Logs/kwild.log</string>
+    <string>{REPLACE_WITH_YOUR_HOME}/Library/Logs/kwild.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/angelicawillianto/Library/Logs/kwild.error.log</string>
+    <string>{REPLACE_WITH_YOUR_HOME}/Library/Logs/kwild.error.log</string>
 </dict>
 </plist>
 EOF
@@ -399,11 +408,11 @@ cat > ~/Library/LaunchAgents/com.trufnetwork.tn-postgres.plist << EOF
     <key>KeepAlive</key>
     <true/>
     <key>WorkingDirectory</key>
-    <string>/Users/angelicawillianto/truf-node-operator</string>
+    <string>{REPLACE_WITH_YOUR_HOME}/truf-node-operator</string>
     <key>StandardOutPath</key>
-    <string>/Users/angelicawillianto/Library/Logs/tn-postgres.log</string>
+    <string>{REPLACE_WITH_YOUR_HOME}/Library/Logs/tn-postgres.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/angelicawillianto/Library/Logs/tn-postgres.error.log</string>
+    <string>{REPLACE_WITH_YOUR_HOME}/Library/Logs/tn-postgres.error.log</string>
 </dict>
 </plist>
 EOF
