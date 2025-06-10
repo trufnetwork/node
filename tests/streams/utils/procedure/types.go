@@ -129,3 +129,9 @@ type RemoveRoleManagersInput struct {
 	RoleName       string
 	ManagerWallets []string
 }
+
+type ListRoleMembersInput struct {
+	Platform *kwilTesting.Platform
+	Owner    string
+	RoleName string
+}
