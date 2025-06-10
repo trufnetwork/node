@@ -22,4 +22,4 @@ ON CONFLICT (owner, role_name) DO NOTHING;
 -- Set the network_writer role to be managed by the network_writers_manager role
 UPDATE roles 
 SET manager_owner = 'system', manager_role_name = 'network_writers_manager' 
-WHERE owner = 'system' AND role_name = 'network_writer'; 
+WHERE owner = 'system' AND role_name = 'network_writer';

@@ -35,3 +35,17 @@ for i in "${!files[@]}"; do
     
     eval $cmd
 done
+
+# After all migrations are run, grant the network_writers_manager role to the ADMIN_WALLET if provided.
+# This allows environment-specific wallet assignments without hardcoding them in SQL migrations.
+if [ -n "$ADMIN_WALLET" ]; then
+    # Convert the wallet address to lowercase
+    local_admin_wallet=$(echo "$ADMIN_WALLET" | tr '[:upper:]' '[:lower:]')
+
+    echo "Granting network_writers_manager role to $local_admin_wallet"
+    kwil-cli exec-sql \
+        "INSERT INTO role_members (owner, role_name, wallet, granted_at, granted_by) VALUES ('system', 'network_writers_manager', \$wallet, 0, 'system') ON CONFLICT (owner, role_name, wallet) DO NOTHING;" \
+        --param wallet:text="$local_admin_wallet" \
+        --private-key "$PRIVATE_KEY" \
+        --provider "$PROVIDER" --sync
+fi
