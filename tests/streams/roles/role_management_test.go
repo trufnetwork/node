@@ -152,6 +152,16 @@ func testRoleManagement(t *testing.T, ctx context.Context, platform *kwilTesting
 		require.True(t, members[wallet3], "Wallet3 should still be a member")
 	})
 
+	// Test 5: List role members returns correct slice
+	t.Run("List role members", func(t *testing.T) {
+		wallets, err := procedure.ListRoleMembers(ctx, procedure.ListRoleMembersInput{Platform: platform, Owner: roleOwner, RoleName: roleName})
+		require.NoError(t, err)
+		// Expecting wallet1 and wallet3 (wallet2 revoked)
+		require.Contains(t, wallets, wallet1)
+		require.Contains(t, wallets, wallet3)
+		require.NotContains(t, wallets, wallet2)
+	})
+
 	t.Run("Case insensitivity is handled correctly", func(t *testing.T) {
 		const upperCaseRole = "CASE_TEST_ROLE"
 		const lowerCaseRole = "case_test_role"

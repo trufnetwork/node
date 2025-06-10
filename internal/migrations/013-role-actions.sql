@@ -231,3 +231,33 @@ CREATE OR REPLACE ACTION are_members_of(
                              AND rm.role_name = $role_name
                              AND rm.wallet = a.wallet;
 };
+
+CREATE OR REPLACE ACTION list_role_members(
+    $owner TEXT,
+    $role_name TEXT,
+    $limit INT,
+    $offset INT
+) PUBLIC VIEW RETURNS TABLE (wallet TEXT, granted_at INT8, granted_by TEXT) {
+    $owner := LOWER($owner);
+    $role_name := LOWER($role_name);
+
+    helper_assert_owner_addr($owner);
+    helper_assert_role_exists($owner, $role_name);
+
+    -- Enforce sensible defaults and bounds for pagination
+    IF $limit IS NULL OR $limit <= 0 {
+        $limit := 100;
+    }
+    IF $offset IS NULL OR $offset < 0 {
+        $offset := 0;
+    }
+
+    RETURN SELECT wallet,
+                  granted_at,
+                  granted_by
+           FROM role_members
+           WHERE owner = $owner
+             AND role_name = $role_name
+           ORDER BY granted_at ASC
+           LIMIT $limit OFFSET $offset;
+};

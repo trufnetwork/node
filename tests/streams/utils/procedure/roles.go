@@ -146,3 +146,43 @@ func SetRoleManager(ctx context.Context, input SetRoleManagerInput) error {
 	}
 	return nil
 }
+
+func ListRoleMembers(ctx context.Context, input ListRoleMembersInput) ([]string, error) {
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create Ethereum address from deployer bytes for ListRoleMembers")
+	}
+
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 0},
+		TxID:         input.Platform.Txid(),
+		Signer:       input.Platform.Deployer,
+		Caller:       deployer.Address(),
+	}
+
+	engineContext := &common.EngineContext{TxContext: txContext}
+
+	// capture wallets
+	var wallets []string
+
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "list_role_members", []any{input.Owner, input.RoleName, nil, nil}, func(row *common.Row) error {
+		if len(row.Values) < 1 {
+			return fmt.Errorf("unexpected row values length: %d", len(row.Values))
+		}
+		w, ok := row.Values[0].(string)
+		if !ok {
+			return fmt.Errorf("expected wallet string, got %T", row.Values[0])
+		}
+		wallets = append(wallets, w)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if r.Error != nil {
+		return nil, r.Error
+	}
+
+	return wallets, nil
+}
