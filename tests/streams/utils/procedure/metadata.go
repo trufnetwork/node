@@ -164,16 +164,22 @@ func CheckReadPermissions(ctx context.Context, input CheckReadPermissionsInput) 
 
 type CheckWritePermissionsInput struct {
 	Platform *kwilTesting.Platform
-	Locator  trufTypes.StreamLocator
+	Locators []trufTypes.StreamLocator
 	Wallet   string
 	Height   int64
 }
 
+type CheckWritePermissionsOutput struct {
+	DataProvider string
+	StreamID     string
+	IsAllowed    bool
+}
+
 // CheckWritePermissions checks if a wallet is allowed to write to a contract
-func CheckWritePermissions(ctx context.Context, input CheckWritePermissionsInput) (bool, error) {
+func CheckWritePermissions(ctx context.Context, input CheckWritePermissionsInput) ([]CheckWritePermissionsOutput, error) {
 	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
 	if err != nil {
-		return false, errors.Wrap(err, "failed to create Ethereum address from deployer bytes")
+		return nil, errors.Wrap(err, "failed to create Ethereum address from deployer bytes")
 	}
 
 	txContext := &common.TxContext{
@@ -188,27 +194,38 @@ func CheckWritePermissions(ctx context.Context, input CheckWritePermissionsInput
 		TxContext: txContext,
 	}
 
-	var allowed bool
-	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "is_allowed_to_write_all", []any{
-		input.Locator.DataProvider.Address(),
-		input.Locator.StreamId.String(),
+	dataProviders := make([]string, len(input.Locators))
+	streamIDs := make([]string, len(input.Locators))
+	for i, locator := range input.Locators {
+		dataProviders[i] = locator.DataProvider.Address()
+		streamIDs[i] = locator.StreamId.String()
+	}
+
+	var results []CheckWritePermissionsOutput
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "is_wallet_allowed_to_write_batch", []any{
+		dataProviders,
+		streamIDs,
 		input.Wallet,
 	}, func(row *common.Row) error {
 		if len(row.Values) > 0 {
-			if val, ok := row.Values[0].(bool); ok {
-				allowed = val
+			if val, ok := row.Values[2].(bool); ok {
+				results = append(results, CheckWritePermissionsOutput{
+					DataProvider: row.Values[0].(string),
+					StreamID:     row.Values[1].(string),
+					IsAllowed:    val, // is_allowed
+				})
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	if r.Error != nil {
-		return false, errors.Wrap(r.Error, "error in is_allowed_to_write_all")
+		return nil, errors.Wrap(r.Error, "error in is_wallet_allowed_to_write_batch")
 	}
 
-	return allowed, nil
+	return results, nil
 }
 
 type CheckComposePermissionsInput struct {

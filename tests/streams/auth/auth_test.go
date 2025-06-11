@@ -436,74 +436,72 @@ func testNestedReadPermissionControl(t *testing.T) kwilTesting.TestFunc {
 }
 
 // TestAUTH03_WritePermissions tests AUTH03: The stream owner can control which wallets are allowed to insert data into the stream.
-// func TestAUTH03_WritePermissions(t *testing.T) {
-// 	t.Skip("Test skipped: auth stream tests temporarily disabled")
-// 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
-// 		Name: "write_permission_control_AUTH03",
-// 		FunctionTests: []kwilTesting.TestFunc{
-// 			testWritePermissionControl(t, primitiveStreamInfo),
-// 			testWritePermissionControl(t, composedStreamInfo),
-// 		},
-// 	}, testutils.GetTestOptions())
-// }
+func TestAUTH03_WritePermissions(t *testing.T) {
+	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name: "write_permission_control_AUTH03",
+		FunctionTests: []kwilTesting.TestFunc{
+			testWritePermissionControl(t, primitiveStreamInfo),
+			testWritePermissionControl(t, composedStreamInfo),
+		},
+		SeedScripts: migrations.GetSeedScriptPaths(),
+	}, testutils.GetTestOptions())
+}
 
-// func testWritePermissionControl(t *testing.T, streamInfo setup.StreamInfo) kwilTesting.TestFunc {
-// 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-// 		// Set up and initialize the contract
-// 		_, err := setup.CreateStream(ctx, platform, streamInfo)
-// 		if err != nil {
-// 			return errors.Wrapf(err, "failed to create stream for write permission test")
-// 		}
+func testWritePermissionControl(t *testing.T, streamInfo setup.StreamInfo) kwilTesting.TestFunc {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Initialize platform deployer with a valid address to prevent the default kwil "deployer" string issue
+		platform.Deployer = streamInfo.Locator.DataProvider.Bytes()
 
-// 		// Create a non-owner wallet
-// 		nonOwner := util.Unsafe_NewEthereumAddressFromString("0xdddddddddddddddddddddddddddddddddddddddd")
+		// Set up and initialize the contract
+		err := setup.CreateStream(ctx, platform, streamInfo)
+		if err != nil {
+			return errors.Wrapf(err, "failed to create stream for write permission test")
+		}
 
-// 		// Check if non-owner can write (should be false by default)
-// 		canWrite, err := procedure.CheckWritePermissions(ctx, procedure.CheckWritePermissionsInput{
-// 			Platform:     platform,
-// 			Deployer:     streamInfo.Locator.DataProvider,
-// 			StreamId:     streamInfo.Locator.StreamId.String(),
-// 			DataProvider: streamInfo.Locator.DataProvider.Address(),
-// 			Wallet:       nonOwner.Address(),
-// 		})
-// 		if err != nil {
-// 			return errors.Wrapf(err, "failed to check write permissions")
-// 		}
-// 		assert.Equal(t, false, canWrite, "non-owner should not be able to write by default")
+		// Create a non-owner wallet
+		nonOwner := util.Unsafe_NewEthereumAddressFromString("0xdddddddddddddddddddddddddddddddddddddddd")
 
-// 		// Add non-owner to write whitelist
-// 		err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
-// 			Platform:     platform,
-// 			Deployer:     streamInfo.Locator.DataProvider,
-// 			StreamId:     streamInfo.Locator.StreamId.String(),
-// 			DataProvider: streamInfo.Locator.DataProvider.Address(),
-// 			Key:          "allow_write_wallet",
-// 			Value:        nonOwner.Address(),
-// 			ValType:      "ref",
-// 		})
-// 		if err != nil {
-// 			return errors.Wrapf(err, "failed to add wallet %s to write whitelist for stream",
-// 				nonOwner.Address())
-// 		}
+		// Check if non-owner can write (should be false by default)
+		canWrite, err := procedure.CheckWritePermissions(ctx, procedure.CheckWritePermissionsInput{
+			Platform: platform,
+			Locators: []types.StreamLocator{streamInfo.Locator},
+			Wallet:   nonOwner.Address(),
+		})
+		if err != nil {
+			return errors.Wrapf(err, "failed to check write permissions")
+		}
+		assert.Equal(t, 1, len(canWrite), "should return 1 result")
+		assert.Equal(t, false, canWrite[0].IsAllowed, "non-owner should not be able to write by default")
 
-// 		// Verify non-owner can now write
-// 		canWrite, err = procedure.CheckWritePermissions(ctx, procedure.CheckWritePermissionsInput{
-// 			Platform:     platform,
-// 			Deployer:     streamInfo.Locator.DataProvider,
-// 			StreamId:     streamInfo.Locator.StreamId.String(),
-// 			DataProvider: streamInfo.Locator.DataProvider.Address(),
-// 			Wallet:       nonOwner.Address(),
-// 		})
-// 		if err != nil {
-// 			return errors.Wrapf(err, "failed to check write permissions")
-// 		}
-// 		// TODO: right now, composed contract doesn't have this procedure to check write permission.
-// 		//   however, in the next iteration it should be implemented.
-// 		assert.Equal(t, true, canWrite, "whitelisted wallet should be able to write")
+		// Add non-owner to write whitelist
+		err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+			Platform: platform,
+			Locator:  streamInfo.Locator,
+			Key:      "allow_write_wallet",
+			Value:    nonOwner.Address(),
+			ValType:  "ref",
+			Height:   2,
+		})
+		if err != nil {
+			return errors.Wrapf(err, "failed to add wallet %s to write whitelist for stream",
+				nonOwner.Address())
+		}
 
-// 		return nil
-// 	}
-// }
+		// Verify non-owner can now write
+		canWrite, err = procedure.CheckWritePermissions(ctx, procedure.CheckWritePermissionsInput{
+			Platform: platform,
+			Locators: []types.StreamLocator{streamInfo.Locator},
+			Wallet:   nonOwner.Address(),
+		})
+		if err != nil {
+			return errors.Wrapf(err, "failed to check write permissions")
+		}
+		assert.Equal(t, 1, len(canWrite), "should return 1 result")
+		assert.Equal(t, true, canWrite[0].IsAllowed, "whitelisted wallet should be able to write")
+
+		return nil
+	}
+}
 
 // // TestAUTH04_ComposePermissions tests AUTH04: The stream owner can control which streams are allowed to compose from the stream.
 func TestAUTH04_ComposePermissions(t *testing.T) {
@@ -548,6 +546,7 @@ func testComposePermissionControl(t *testing.T, contractInfo setup.StreamInfo) k
 			Key:      "compose_visibility",
 			Value:    "1",
 			ValType:  "int",
+			Height:   2,
 		})
 		if err != nil {
 			return errors.Wrapf(err, "failed to change compose_visibility to private for contract %s", contractInfo.Locator.StreamId.String())

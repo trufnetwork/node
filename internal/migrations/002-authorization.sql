@@ -700,7 +700,8 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_write(
 /**
  * is_wallet_allowed_to_write_batch: Checks if a wallet can write to multiple streams.
  * Checks permission for each stream in the provided arrays and returns the valid streams.
- * Useful for batch operations to validate permissions efficiently.
+ * Uses WITH RECURSIVE for efficient batch processing, avoiding action-loop anti-patterns.
+ * Combines ownership and explicit permission checks in a single SQL context.
  */
 CREATE OR REPLACE ACTION is_wallet_allowed_to_write_batch(
     $data_providers TEXT[],
@@ -711,36 +712,98 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_write_batch(
     stream_id TEXT,
     is_allowed BOOL
 ) {
-    -- Use helper function to avoid expensive for-loop roundtrips
-    $data_providers := helper_lowercase_array($data_providers);
+    -- Lowercase wallet once
     $wallet := LOWER($wallet);
+    if NOT check_ethereum_address($wallet) {
+        ERROR('Invalid wallet address. Must be a valid Ethereum address: ' || $wallet);
+    }
 
     -- Check that arrays have the same length
     if array_length($data_providers) != array_length($stream_ids) {
         ERROR('Data providers and stream IDs arrays must have the same length');
     }
 
-    $ownership_array BOOLEAN[];
-    $permission_array BOOLEAN[];
+     -- Handle edge case of empty arrays gracefully
+     if array_length($data_providers) = 0 {
+        RETURN; -- Return empty table
+     }
 
-    -- Check if the wallet is the stream owner for each stream
-    for $row in is_stream_owner_batch($data_providers, $stream_ids, $wallet) {
-        $ownership_array := array_append($ownership_array, $row.is_owner);
-    }
-
-    -- Check if the wallet has explicit write permission for each stream
-    for $row in has_write_permission_batch($data_providers, $stream_ids, $wallet) {
-        $permission_array := array_append($permission_array, $row.has_permission);
-    }
-    return;
-    -- Return results based on ownership OR permission (logical OR)
-    for $idx in 1..array_length($ownership_array) {
-        if $ownership_array[$idx] OR $permission_array[$idx] {
-            RETURN NEXT $data_providers[$idx], $stream_ids[$idx], true;
-        } else {
-            RETURN NEXT $data_providers[$idx], $stream_ids[$idx], false;
-        }
-    }
+    -- BEST PRACTICE: Use RETURN WITH RECURSIVE to perform all logic in one SQL batch operation.
+     RETURN WITH RECURSIVE
+     -- 1. Generate indexes 1 to N
+    indexes AS (
+        SELECT 1 AS idx
+        UNION ALL
+        SELECT idx + 1 FROM indexes
+        WHERE idx < array_length($data_providers)
+    ),
+    arguments AS (
+        SELECT
+            $data_providers AS data_providers,
+            $stream_ids AS stream_ids
+    ),
+     -- 2. Unnest the input arrays into pairs, keeping original index for order/duplicates
+    all_pairs AS (
+        SELECT
+            idx,
+            LOWER(arguments.data_providers[idx]) AS data_provider,
+            arguments.stream_ids[idx] AS stream_id
+        FROM indexes
+        JOIN arguments ON 1=1
+    ),
+    -- 3. Get unique pairs to check metadata efficiently
+     unique_pairs AS (
+        SELECT DISTINCT data_provider, stream_id
+        FROM all_pairs
+     ),
+      -- 4. Check both ownership AND permission for each unique pair using subqueries
+     unique_check_results AS (
+       SELECT
+            up.data_provider,
+            up.stream_id,
+             -- Combine the two checks:
+             -- COALESCE handles cases where a subquery might return NULL instead of FALSE
+             COALESCE(
+                 -- Check 1: Is the wallet the LATEST valid owner?
+                 (SELECT LOWER(m_own.value_ref)
+                  FROM metadata m_own
+                  WHERE m_own.data_provider = up.data_provider
+                    AND m_own.stream_id = up.stream_id
+                    AND m_own.metadata_key = 'stream_owner'
+                    AND m_own.disabled_at IS NULL
+                  ORDER BY m_own.created_at DESC -- Get the latest owner record
+                  LIMIT 1
+                 ) = $wallet -- This comparison (NULL = $wallet) results in NULL if no owner found
+               , FALSE) -- COALESCE NULL to FALSE
+            OR -- Logical OR
+            COALESCE(
+                 -- Check 2: Does ANY active permission record exist for the wallet?
+                 EXISTS (
+                    SELECT 1
+                    FROM metadata m_perm
+                    WHERE m_perm.data_provider = up.data_provider
+                       AND m_perm.stream_id = up.stream_id
+                       AND m_perm.metadata_key = 'allow_write_wallet'
+                       AND LOWER(m_perm.value_ref) = $wallet
+                       AND m_perm.disabled_at IS NULL
+                    -- No ORDER BY/LIMIT needed, just checking for existence of any record
+                 )
+             , FALSE) -- COALESCE NULL to FALSE
+            as is_allowed
+       FROM unique_pairs up
+       -- Note: We query metadata table via subqueries, not via LEFT JOIN + GROUP BY
+     )
+     -- 5. Final SELECT: Map the results from unique checks back to all original pairs
+     SELECT
+        ap.data_provider,
+        ap.stream_id,
+        -- JOIN ensures is_allowed is not NULL, but COALESCE is safe
+        COALESCE(ucr.is_allowed, FALSE) AS is_allowed
+     FROM all_pairs ap
+     -- JOIN back to the results calculated for the unique pairs
+     -- this will not return any rows for streams that don't exist
+     JOIN unique_check_results ucr ON ap.data_provider = ucr.data_provider AND ap.stream_id = ucr.stream_id
+     ORDER BY ap.idx; -- Preserve the original input order
 };
 
 /**
