@@ -8,7 +8,7 @@
  * helper_assert_owner_addr: Validates an owner address for the roles context.
  * It checks if the address is a valid Ethereum address or the special 'system' identifier.
  */
-CREATE OR REPLACE ACTION helper_assert_owner_addr($owner TEXT) PRIVATE {
+CREATE OR REPLACE ACTION helper_assert_owner_addr($owner TEXT) PRIVATE VIEW {
     IF $owner != 'system' AND NOT check_ethereum_address($owner) {
         ERROR('Invalid owner address: ' || $owner);
     }
@@ -17,7 +17,7 @@ CREATE OR REPLACE ACTION helper_assert_owner_addr($owner TEXT) PRIVATE {
 /**
  * helper_assert_role_exists: Checks if a role exists. Errors if not found.
  */
-CREATE OR REPLACE ACTION helper_assert_role_exists($owner TEXT, $role_name TEXT) PRIVATE {
+CREATE OR REPLACE ACTION helper_assert_role_exists($owner TEXT, $role_name TEXT) PRIVATE VIEW {
     $role_exists BOOL := FALSE;
     FOR $r IN SELECT 1 FROM roles WHERE owner = $owner AND role_name = $role_name LIMIT 1 {
         $role_exists := TRUE;
@@ -30,7 +30,7 @@ CREATE OR REPLACE ACTION helper_assert_role_exists($owner TEXT, $role_name TEXT)
 /**
  * helper_assert_is_role_owner: Ensures the caller is the owner of a role.
  */
-CREATE OR REPLACE ACTION helper_assert_is_role_owner($owner TEXT, $role_name TEXT) PRIVATE {
+CREATE OR REPLACE ACTION helper_assert_is_role_owner($owner TEXT, $role_name TEXT) PRIVATE VIEW {
     IF LOWER(@caller) != $owner {
         ERROR('Caller ' || LOWER(@caller) || ' is not the owner of role ' || $owner || ':' || $role_name);
     }
@@ -39,7 +39,7 @@ CREATE OR REPLACE ACTION helper_assert_is_role_owner($owner TEXT, $role_name TEX
 /**
  * helper_assert_can_manage_members: Ensures the caller is the role owner or a member of the manager role.
  */
-CREATE OR REPLACE ACTION helper_assert_can_manage_members($owner TEXT, $role_name TEXT) PRIVATE {
+CREATE OR REPLACE ACTION helper_assert_can_manage_members($owner TEXT, $role_name TEXT) PRIVATE VIEW {
     $caller := LOWER(@caller);
 
     -- First, get the role's owner and manager role details
