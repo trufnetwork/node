@@ -9,7 +9,7 @@ require (
 	github.com/docker/docker v27.3.1+incompatible
 	github.com/fbiville/markdown-table-formatter v0.3.0
 	github.com/golang-sql/civil v0.0.0-20220223132316-b832511892a9
-	github.com/kwilteam/kwil-db v0.10.3-0.20250603130850-0726e1d0f1df
+	github.com/kwilteam/kwil-db v0.10.3-0.20250612160426-e09516d1ab51
 	github.com/kwilteam/kwil-db/core v0.4.2-0.20250603130850-0726e1d0f1df
 	github.com/pkg/errors v0.9.1
 	github.com/samber/lo v1.47.0
