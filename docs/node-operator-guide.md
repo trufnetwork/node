@@ -602,6 +602,61 @@ pg_dump --version
 
 **Security Warning**: It is recommended to not expose port 5432 publicly in production environments.
 
+### Missing Logs on Linux (`journalctl` shows no entries)
+
+If you're running `kwild` as a `systemd` service but encounter the following when checking logs:
+
+```bash
+sudo journalctl -u kwild -n 100
+# Output:
+# No journal files were found.
+# -- No entries --
+````
+
+This usually means that your system is not configured to persist logs by default. This behavior is common on some cloud images or **non-LTS Ubuntu releases** such as Ubuntu 24.10 (oracular), which may skip creating the persistent journal directory `/var/log/journal`.
+
+#### ✅ Solution: Enable persistent logging
+
+1. **Configure journald to use persistent storage**:
+
+```bash
+sudo nano /etc/systemd/journald.conf
+```
+
+Add or uncomment the following line under the `[Journal]` section:
+
+```
+Storage=persistent
+```
+
+2. **Restart the journald service** to apply the change:
+
+```bash
+sudo systemctl restart systemd-journald
+```
+
+3. **(Optional)** If logs still do not appear, create the persistent log directory manually:
+
+```bash
+sudo mkdir -p /var/log/journal
+sudo systemd-tmpfiles --create --prefix /var/log/journal
+sudo systemctl restart systemd-journald
+```
+
+4. **Restart the kwild service** so its output is reattached to the journal:
+
+```bash
+sudo systemctl restart kwild
+```
+
+Once complete, you should be able to view `kwild` logs with:
+
+```bash
+sudo journalctl -u kwild -n 100
+```
+
+This setup ensures that logs are written to disk and available after reboot.
+
 ## Viewing Logs and Status
 
 ### For Linux
