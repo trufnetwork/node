@@ -559,6 +559,10 @@ func testComposePermissionControl(t *testing.T, contractInfo setup.StreamInfo) k
 			ComposingLocator: upperStreamInfo.Locator,
 			Height:           0,
 		})
+		if err != nil {
+			return errors.Wrapf(err, "failed to check compose permissions for upper stream %s on contract %s",
+				upperStreamInfo.Locator.StreamId.String(), contractInfo.Locator.StreamId.String())
+		}
 		assert.False(t, canCompose, "Upper stream should not be allowed to compose without permission")
 
 		// Grant compose permission to the foreign stream

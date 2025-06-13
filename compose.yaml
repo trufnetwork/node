@@ -33,11 +33,6 @@ services:
     build:
       context: .
       dockerfile: ./deployments/Dockerfile
-      # For local development, if cache is not supported, please comment the following lines
-      cache_from:
-        - ${CACHE_FROM:-type=local,src=/tmp/buildx-cache}/tn-db
-      cache_to:
-        - ${CACHE_TO:-type=local,dest=/tmp/buildx-cache-new}/tn-db
       args:
         - CHAIN_ID=${CHAIN_ID:-trufnetwork-dev}
     environment:

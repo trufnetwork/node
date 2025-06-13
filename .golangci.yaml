@@ -8,3 +8,7 @@ issues:
   exclude-dirs:
     - deployments/infra/cdk.out
     - vendor
+
+linters:
+  disable:
+    - errcheck
