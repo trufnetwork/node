@@ -183,13 +183,13 @@ CREATE OR REPLACE ACTION create_streams(
             NULL::TEXT AS value_ref
         UNION ALL
         SELECT
-            'readonly_key:stream_owner' AS metadata_key,
+            'readonly_key' AS metadata_key,
             'stream_owner' AS value_s,
             NULL::INT AS value_i,
             NULL::TEXT AS value_ref
         UNION ALL
         SELECT
-            'readonly_key:readonly_key' AS metadata_key,
+            'readonly_key' AS metadata_key,
             'readonly_key' AS value_s,
             NULL::INT AS value_i,
             NULL::TEXT AS value_ref
