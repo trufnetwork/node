@@ -168,7 +168,7 @@ func TestStreamIDValidation(t *testing.T) {
 					// Attempt to create another stream with the same ID for the same owner (should fail)
 					err = setup.UntypedCreateStream(ctx, txPlatform, streamID, owner1, string(setup.ContractTypePrimitive))
 					assert.Error(t, err, "Should not allow duplicate stream ID for the same owner")
-					assert.Contains(t, err.Error(), "already exists", "error message should indicate duplicate stream ID")
+					assert.Contains(t, err.Error(), "duplicate key value violates", "error message should indicate duplicate stream ID")
 
 					// Attempt to create a stream with the same ID but different owner
 					// (according to the requirement, stream IDs should be unique per owner, so this should succeed)
