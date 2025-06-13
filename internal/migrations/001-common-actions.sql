@@ -165,7 +165,7 @@ CREATE OR REPLACE ACTION create_streams(
     ),
     args AS (
         SELECT 
-            uuid_generate_v5($base_uuid, 'metadata' || arg.row_number::TEXT)::UUID as row_id,
+            uuid_generate_v5($base_uuid, 'metadata' || $data_provider || arg.stream_id || arg.metadata_key || arg.row_number::TEXT)::UUID as row_id,
             $data_provider AS data_provider,
             arg.stream_id,
             arg.metadata_key,
