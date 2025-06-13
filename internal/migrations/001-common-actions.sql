@@ -7,66 +7,8 @@ CREATE OR REPLACE ACTION create_stream(
     $stream_id TEXT,
     $stream_type TEXT
 ) PUBLIC {
-    $lower_caller TEXT := LOWER(@caller);
-    $single_caller TEXT[] := [$lower_caller];
-
-    -- Permission Check: Ensure caller has the 'system:network_writer' role.
-    $has_permission BOOL := false;
-    for $row in are_members_of('system', 'network_writer', ARRAY[$lower_caller]) {
-        if $row.wallet = $lower_caller AND $row.is_member {
-            $has_permission := true;
-            break;
-        }
-    }
-    if NOT $has_permission {
-        ERROR('Caller does not have the required system:network_writer role to create a stream.');
-    }
-
-    -- Get caller's address (data provider) first
-    $data_provider TEXT := $lower_caller;
-    $current_block INT := @height;
-    
-    -- Check if caller is a valid ethereum address
-    if NOT check_ethereum_address($data_provider) {
-        ERROR('Invalid data provider address. Must be a valid Ethereum address: ' || $data_provider);
-    }
-
-    -- Check if stream_type is valid
-    if $stream_type != 'primitive' AND $stream_type != 'composed' {
-        ERROR('Invalid stream type. Must be "primitive" or "composed": ' || $stream_type);
-    }
-    
-    -- Check if stream_id has valid format (st followed by 30 lowercase alphanumeric chars)
-    if NOT check_stream_id_format($stream_id) {
-        ERROR('Invalid stream_id format. Must start with "st" followed by 30 lowercase alphanumeric characters: ' || $stream_id);
-    }
-    
-    -- Check if stream already exists
-    for $row in SELECT 1 FROM streams WHERE data_provider = $data_provider AND stream_id = $stream_id LIMIT 1 {
-        ERROR('Stream already exists: ' || $stream_id);
-    }
-    
-    -- Create the stream
-    INSERT INTO streams (data_provider, stream_id, stream_type, created_at)
-    VALUES ($data_provider, $stream_id, $stream_type, $current_block);
-    
-    -- Add required metadata
-    $current_block INT := @height;
-    $base_uuid := uuid_generate_kwil('create_stream_' || @txid || $stream_id);
-    
-    -- Add type metadata
-    $type_uuid := uuid_generate_v5($base_uuid, 'type');
-    $stream_owner_uuid := uuid_generate_v5($base_uuid, 'stream_owner');
-    $read_visibility_uuid := uuid_generate_v5($base_uuid, 'read_visibility');
-    $readonly_key_stream_owner_uuid := uuid_generate_v5($base_uuid, 'readonly_key:stream_owner');
-    $readonly_key_readonly_key_uuid := uuid_generate_v5($base_uuid, 'readonly_key:readonly_key');
-
-    INSERT INTO metadata (row_id, data_provider, stream_id, metadata_key, value_s, value_i, value_ref, created_at) VALUES
-        ($type_uuid,                      $data_provider, $stream_id, 'type',                       $stream_type,   NULL, NULL,                  $current_block),
-        ($stream_owner_uuid,              $data_provider, $stream_id, 'stream_owner',               NULL,           NULL, LOWER($data_provider), $current_block),
-        ($read_visibility_uuid,           $data_provider, $stream_id, 'read_visibility',            NULL,           0,    NULL,                  $current_block),
-        ($readonly_key_stream_owner_uuid, $data_provider, $stream_id, 'readonly_key',  'stream_owner', NULL, NULL,                  $current_block),
-        ($readonly_key_readonly_key_uuid, $data_provider, $stream_id, 'readonly_key',  'readonly_key', NULL, NULL,                  $current_block);
+    -- Delegate to batch implementation for single-stream consistency.
+    create_streams( ARRAY[$stream_id], ARRAY[$stream_type] );
 };
 
 /**
@@ -79,7 +21,6 @@ CREATE OR REPLACE ACTION create_streams(
     $stream_types TEXT[]
 ) PUBLIC {
     $lower_caller TEXT := LOWER(@caller);
-    $single_caller TEXT[] := [$lower_caller];
     -- Permission Check: Ensure caller has the 'system:network_writer' role.
     $has_permission BOOL := false;
     for $row in are_members_of('system', 'network_writer', ARRAY[$lower_caller]) {
