@@ -193,39 +193,6 @@ func runTestForAllStreamTypes(t *testing.T, testName string, testFn func(ctx con
 	}
 }
 
-// Helper functions for testing
-// streamTestingHandler wraps testing.T to include stream information in error messages
-type streamTestingHandler struct {
-	*testing.T
-	StreamName string
-	StreamId   string
-}
-
-// errorCapturingT is a wrapper around testing.T that captures errors instead of failing the test
-type errorCapturingT struct {
-	*testing.T
-	StreamName    string
-	StreamId      string
-	ErrorOccurred bool
-	ErrorMessage  string
-}
-
-// Errorf captures the error message rather than failing the test immediately
-func (e *errorCapturingT) Errorf(format string, args ...interface{}) {
-	e.ErrorOccurred = true
-	e.ErrorMessage = fmt.Sprintf(format, args...)
-	// Also log the error to the main test
-	e.T.Logf("[%s (StreamId: %s)] %s", e.StreamName, e.StreamId, e.ErrorMessage)
-}
-
-// Fatalf captures the error message rather than failing the test immediately
-func (e *errorCapturingT) Fatalf(format string, args ...interface{}) {
-	e.ErrorOccurred = true
-	e.ErrorMessage = fmt.Sprintf(format, args...)
-	// Also log the error to the main test
-	e.T.Logf("[%s (StreamId: %s)] %s", e.StreamName, e.StreamId, e.ErrorMessage)
-}
-
 // [QUERY01] Authorized users (owner and whitelisted wallets) can query records over a specified date range.
 func testQUERY01_InsertAndGetRecord(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return runTestForAllStreamTypes(t, "QUERY01_InsertAndGetRecord", func(ctx context.Context, platform *kwilTesting.Platform, config TestConfig) error {

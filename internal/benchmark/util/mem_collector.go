@@ -20,7 +20,6 @@ type DockerMemoryCollector struct {
 	ctx             context.Context
 	cancel          context.CancelFunc
 	wg              sync.WaitGroup
-	mu              sync.Mutex
 	errChan         chan error
 	firstSampleChan chan struct{}
 }

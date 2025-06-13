@@ -72,14 +72,12 @@ func setupSchemas(
 
 	// Separate primitive and composed streams for different handling
 	var primitiveStreams []setup.StreamInfo
-	var primitiveNodes []trees.TreeNode
 	var composedStreams []setup.StreamInfo
 	var composedNodes []trees.TreeNode
 
 	for i, streamInfo := range allStreamInfos {
 		if input.Tree.Nodes[i].IsLeaf {
 			primitiveStreams = append(primitiveStreams, streamInfo)
-			primitiveNodes = append(primitiveNodes, input.Tree.Nodes[i])
 		} else {
 			composedStreams = append(composedStreams, streamInfo)
 			composedNodes = append(composedNodes, input.Tree.Nodes[i])
@@ -405,27 +403,6 @@ func getMockStreamIds(n int) []util.StreamId {
 		streamIds = append(streamIds, util.GenerateStreamId(fmt.Sprintf("stream-%d", i)))
 	}
 	return streamIds
-}
-
-// insertRecordsForPrimitive inserts records for a primitive stream using bulk insert.
-func insertRecordsForPrimitive(ctx context.Context, platform *kwilTesting.Platform, stream setup.StreamInfo, rangeParams RangeParameters) error {
-	records := generateRecords(rangeParams)
-
-	input := setup.InsertPrimitiveDataInput{
-		Platform: platform,
-		Height:   1,
-		PrimitiveStream: setup.PrimitiveStreamWithData{
-			PrimitiveStreamDefinition: setup.PrimitiveStreamDefinition{
-				StreamLocator: stream.Locator,
-			},
-			Data: records,
-		},
-	}
-
-	if err := setup.InsertPrimitiveDataBatch(ctx, input); err != nil {
-		return errors.Wrap(err, "failed to execute bulk insert")
-	}
-	return nil
 }
 
 type RangeParameters struct {

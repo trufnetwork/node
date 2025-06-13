@@ -22,6 +22,9 @@ import (
 
 // Main benchmark test function
 func TestBench(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping benchmark test in short mode")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	LogPhaseEnter(t, "TestBench", "Starting main benchmark test function")
