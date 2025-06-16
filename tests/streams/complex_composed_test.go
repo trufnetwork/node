@@ -37,6 +37,7 @@ func TestComplexComposed(t *testing.T) {
 			WithTestSetup(testComplexComposedFirstRecord(t)),
 			WithTestSetup(testComplexComposedOutOfRange(t)),
 			WithTestSetup(testComplexComposedIndexLatestValueConsistency(t)),
+			WithTestSetup(testComposedRecordNoDuplicates(t)),
 		},
 	}, testutils.GetTestOptions())
 }
@@ -476,6 +477,135 @@ func testComplexComposedOutOfRange(t *testing.T) func(ctx context.Context, platf
 
 		assert.Equal(t, "1", firstDate, "First date should be the earliest available date")
 		assert.Equal(t, "13", lastDate, "Last date should be the latest available date")
+
+		return nil
+	}
+}
+
+// testComposedRecordNoDuplicates ensures that GetRecord and GetIndex do not return duplicate entries for the same event_time and value
+func testComposedRecordNoDuplicates(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Create unique stream IDs and deployer for this specific test
+		localComposedStreamId := util.GenerateStreamId("local_composed_dedup")
+		localPrimitiveStreamId1 := util.GenerateStreamId("local_primitive_dedup1")
+		localPrimitiveStreamId2 := util.GenerateStreamId("local_primitive_dedup2")
+		localPrimitiveStreamId3 := util.GenerateStreamId("local_primitive_dedup3")
+		localDeployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000DED")
+
+		platform = procedure.WithSigner(platform, localDeployer.Bytes())
+
+		// Setup a composed stream with three primitive children.
+		// Data is staggered and designed to test LOCF and the final DISTINCT on the composed result.
+		err := setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
+			Platform: platform,
+			StreamId: localComposedStreamId,
+			Height:   1,
+			MarkdownData: fmt.Sprintf(`
+				| event_time | %s   | %s   | %s   |
+				| ---------- | ---- | ---- | ---- |
+				| 10         | 100  | 200  | 300  |
+				| 11         | 101  | 200  | 300  |
+				| 12         | 101  | 201  | 300  |
+				| 13         | 101  | 201  | 301  |
+				| 15         | 150  | 250  | 350  |
+				| 16         | 151  | 250  | 350  |
+				| 17         | 151  | 251  | 350  |
+				| 18         | 151  | 251  | 351  |
+			`, localPrimitiveStreamId1.String(), localPrimitiveStreamId2.String(), localPrimitiveStreamId3.String()),
+			Weights: []string{"1", "1", "1"}, // Equal weights for simplicity in calculation
+		})
+		if err != nil {
+			return errors.Wrap(err, "error setting up composed stream for dedup test")
+		}
+
+		composedStreamLocator := types.StreamLocator{
+			StreamId:     localComposedStreamId,
+			DataProvider: localDeployer,
+		}
+
+		// Query a range that includes these events.
+		dateFrom := int64(9) // Start before the first record to ensure anchor/LOCF is considered
+		dateTo := int64(19)  // End after the last record
+
+		// Test GetRecord
+		recordResult, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
+			Platform:      platform,
+			StreamLocator: composedStreamLocator,
+			FromTime:      &dateFrom,
+			ToTime:        &dateTo,
+			Height:        0,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error in GetRecord for dedup test")
+		}
+
+		// Expected GetRecord results (weighted average with LOCF for missing points, weights are 1)
+		// 10: (100+200+300)/3 = 200
+		// 11: (101+200+300)/3 = 601/3 = 200.333333333333333333
+		// 12: (101+201+300)/3 = 602/3 = 200.666666666666666667
+		// 13: (101+201+301)/3 = 603/3 = 201
+		// 15: (150+250+350)/3 = 250
+		// 16: (151+250+350)/3 = 751/3 = 250.333333333333333333
+		// 17: (151+251+350)/3 = 752/3 = 250.666666666666666667
+		// 18: (151+251+351)/3 = 753/3 = 251
+		expectedRecord := `
+		| event_time | value                  |
+		| ---------- | ---------------------- |
+		| 10         | 200.000000000000000000 |
+		| 11         | 200.333333333333333333 |
+		| 12         | 200.666666666666666667 |
+		| 13         | 201.000000000000000000 |
+		| 15         | 250.000000000000000000 |
+		| 16         | 250.333333333333333333 |
+		| 17         | 250.666666666666666667 |
+		| 18         | 251.000000000000000000 |
+		`
+
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   recordResult,
+			Expected: expectedRecord,
+		})
+
+		// Also test GetIndex to ensure consistency
+		// Base value for index is the composed value at time 10: 200
+		indexResult, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
+			Platform:      platform,
+			StreamLocator: composedStreamLocator,
+			FromTime:      &dateFrom,
+			ToTime:        &dateTo,
+			Height:        0,
+			BaseTime:      func() *int64 { bt := int64(10); return &bt }(), // Explicitly set base_time
+		})
+		if err != nil {
+			return errors.Wrap(err, "error in GetIndex for dedup test")
+		}
+
+		// Expected GetIndex values: (current_composed_value / base_composed_value_at_10) * 100
+		// Base is 200
+		// 10: (200 / 200) * 100 = 100
+		// 11: (200.333... / 200) * 100 = 100.166666666666666667
+		// 12: (200.666... / 200) * 100 = 100.333333333333333333
+		// 13: (201 / 200) * 100 = 100.5
+		// 15: (250 / 200) * 100 = 125
+		// 16: (250.333... / 200) * 100 = 125.166666666666666667
+		// 17: (250.666... / 200) * 100 = 125.333333333333333333
+		// 18: (251 / 200) * 100 = 125.5
+		expectedIndex := `
+		| event_time | value                  |
+		| ---------- | ---------------------- |
+		| 10         | 100.000000000000000000 |
+		| 11         | 100.166666666666666667 |
+		| 12         | 100.333333333333333333 |
+		| 13         | 100.500000000000000000 |
+		| 15         | 125.000000000000000000 |
+		| 16         | 125.166666666666666667 |
+		| 17         | 125.333333333333333333 |
+		| 18         | 125.500000000000000000 |
+		`
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   indexResult,
+			Expected: expectedIndex,
+		})
 
 		return nil
 	}

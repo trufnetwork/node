@@ -653,6 +653,6 @@ RETURNS TABLE(
         UNION ALL -- Use UNION ALL as times should be distinct
         SELECT event_time, value FROM anchor_hit
     )
-    SELECT event_time, value FROM result
+    SELECT DISTINCT event_time, value FROM result
     ORDER BY 1;
 };
