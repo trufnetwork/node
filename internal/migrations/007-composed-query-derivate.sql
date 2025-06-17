@@ -293,6 +293,10 @@ RETURNS TABLE(
     } else {
         $effective_base_time := get_latest_metadata_int($data_provider, $stream_id, 'default_base_time');
     }
+    -- Note: Base time logic differs slightly from get_record_composed which defaults to 0.
+    -- Here we might need to query the first actual event if metadata is missing.
+    -- For simplicity and consistency with original get_index, let's keep COALESCE to 0 for now,
+    -- but consider revising if a true 'first event' base is needed when metadata is absent.
     $effective_base_time := COALESCE($effective_base_time, 0);
 
     IF $from IS NOT NULL AND $to IS NOT NULL AND $from > $to {
@@ -307,7 +311,8 @@ RETURNS TABLE(
         ERROR('Not allowed to compose stream');
     }
 
-    -- If both $from and $to are NULL, find the latest event time
+    -- If both $from and $to are NULL, we find the latest event time
+    -- and set $effective_from and $effective_to to this single point.
     IF $from IS NULL AND $to IS NULL {
         $actual_latest_event_time INT8;
         $found_latest_event BOOLEAN := FALSE;
@@ -319,13 +324,23 @@ RETURNS TABLE(
         }
 
         IF $found_latest_event {
-            $effective_from := $actual_latest_event_time;
-            $effective_to   := $actual_latest_event_time;
+            $effective_from := $actual_latest_event_time; -- Override
+            $effective_to   := $actual_latest_event_time; -- Override
         } ELSE {
+            -- No records found in the composed stream, so return empty.
             RETURN;
         }
     }
     
+    -- If $from and/or $to were provided, $effective_from and $effective_to retain their initial COALESCEd values.
+    -- All paths now proceed to the main CTE logic using the (potentially overridden) $effective_from and $effective_to.
+
+    -- For detailed explanations of the CTEs below (hierarchy, primitive_weights,
+    -- cleaned_event_times, initial_primitive_states, primitive_events_in_interval,
+    -- all_primitive_points, first_value_times, effective_weight_changes, unified_events),
+    -- please refer to the comments in the `get_record_composed` action
+    -- in 006-composed-query.sql. The logic is largely identical.
+
     RETURN WITH RECURSIVE
     /*----------------------------------------------------------------------
      * PARENT_DISTINCT_START_TIMES CTE:
@@ -393,8 +408,8 @@ RETURNS TABLE(
     ),
 
     /*----------------------------------------------------------------------
-     * HIERARCHY CTE: FIXED TO USE EFFECTIVE WEIGHTS
-     * This now properly calculates effective weights that preserve 
+     * HIERARCHY CTE: 
+     * Calculates effective weights that preserve 
      * hierarchical normalization instead of just multiplying raw weights.
      *---------------------------------------------------------------------*/
     hierarchy AS (
@@ -477,25 +492,25 @@ RETURNS TABLE(
       FROM hierarchy h
       WHERE EXISTS (
           SELECT 1 FROM streams s
-          WHERE s.data_provider = h.descendant_dp
-            AND s.stream_id     = h.descendant_sid
+          WHERE s.data_provider = h.descendant_dp  -- Use descendant_dp for matching
+            AND s.stream_id     = h.descendant_sid -- Use descendant_sid for matching
             AND s.stream_type   = 'primitive'
       )
     ),
 
     /*----------------------------------------------------------------------
-     * REST OF THE QUERY REMAINS THE SAME
-     * The primitive_weights and subsequent CTEs will now use the corrected
-     * effective weights instead of the flawed raw weight multiplication.
+     * PRIMITIVE_WEIGHTS CTE: Passes through each distinct segment of a primitive's activity.
+     * (Modified to be a pass-through like in 006-composed-query.sql)
      *--------------------------------------------------------------------*/
     primitive_weights AS (
       SELECT
-          hpp.child_data_provider AS data_provider,
+          hpp.child_data_provider AS data_provider, -- Keep original expected names
           hpp.child_stream_id     AS stream_id,
           hpp.raw_weight,
           hpp.group_sequence_start,
           hpp.group_sequence_end
       FROM hierarchy_primitive_paths hpp
+      -- No GROUP BY, direct pass-through
     ),
 
     cleaned_event_times AS (
@@ -610,16 +625,27 @@ RETURNS TABLE(
         SELECT data_provider, stream_id, event_time, value FROM primitive_events_in_interval
     ),
 
+    -- Defines the set of primitives that have data points within the requested
+    -- time range and therefore require a base value calculation.
     distinct_primitives_for_base AS (
        SELECT DISTINCT data_provider, stream_id
         FROM all_primitive_points
     ),
 
+    -- Base Value Calculation: For each distinct primitive, find its base value
+    -- using correlated subqueries for performance. This avoids scanning the
+    -- entire history of each primitive.
+    -- The value is determined with the following priority:
+    --   1. The event at the exact base_time.
+    --   2. The latest event before the base_time.
+    --   3. The earliest event after the base_time.
+    --   4. A default of 1 if no event is found.
     primitive_base_values AS (
         SELECT
             dp.data_provider,
             dp.stream_id,
              COALESCE(
+                -- Priority 1: Exact match
                  (SELECT pe.value FROM primitive_events pe
                   WHERE pe.data_provider = dp.data_provider
                     AND pe.stream_id = dp.stream_id
@@ -627,6 +653,7 @@ RETURNS TABLE(
                     AND pe.created_at <= $effective_frozen_at
                   ORDER BY pe.created_at DESC LIMIT 1),
 
+                -- Priority 2: Latest Before
                  (SELECT pe.value FROM primitive_events pe
                   WHERE pe.data_provider = dp.data_provider
                     AND pe.stream_id = dp.stream_id
@@ -634,6 +661,7 @@ RETURNS TABLE(
                     AND pe.created_at <= $effective_frozen_at
                    ORDER BY pe.event_time DESC, pe.created_at DESC LIMIT 1),
 
+                -- Priority 3: Earliest After
                   (SELECT pe.value FROM primitive_events pe
                    WHERE pe.data_provider = dp.data_provider
                     AND pe.stream_id = dp.stream_id
@@ -641,11 +669,12 @@ RETURNS TABLE(
                     AND pe.created_at <= $effective_frozen_at
                    ORDER BY pe.event_time ASC, pe.created_at DESC LIMIT 1),
 
-                  1::numeric(36,18)
+                  1::numeric(36,18) -- Default value
              )::numeric(36,18) AS base_value
         FROM distinct_primitives_for_base dp
     ),
 
+    -- Calculate Index Value Change (delta_indexed_value) for each primitive event.
     primitive_event_changes AS (
         SELECT
             calc.data_provider,
@@ -653,8 +682,9 @@ RETURNS TABLE(
             calc.event_time,
             calc.value,
             calc.delta_value,
+            -- Calculate the change in indexed value. Handle potential division by zero if base_value is 0.
             CASE
-                WHEN COALESCE(pbv.base_value, 0::numeric(36,18)) = 0::numeric(36,18) THEN 0::numeric(36,18)
+                WHEN COALESCE(pbv.base_value, 0::numeric(36,18)) = 0::numeric(36,18) THEN 0::numeric(36,18) -- Or handle as error/null depending on requirements
                 ELSE (calc.delta_value * 100::numeric(36,18) / pbv.base_value)::numeric(36,18)
             END AS delta_indexed_value
         FROM (
@@ -662,7 +692,7 @@ RETURNS TABLE(
                     COALESCE(value - LAG(value) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time), value)::numeric(36,18) AS delta_value
             FROM all_primitive_points
         ) calc
-        JOIN primitive_base_values pbv
+        JOIN primitive_base_values pbv -- Join to get the base value for normalization
             ON calc.data_provider = pbv.data_provider AND calc.stream_id = pbv.stream_id
         WHERE calc.delta_value != 0::numeric(36,18)
     ),
@@ -701,17 +731,19 @@ RETURNS TABLE(
         WHERE 
             GREATEST(pw.group_sequence_start, fvt.first_value_time) <= pw.group_sequence_end
             AND pw.raw_weight != 0::numeric(36,18)
+            -- don't emit closing delta for open interval
             AND pw.group_sequence_end < ($max_int8 - 1)
     ),
 
+    -- Combine indexed value changes and weight changes.
     unified_events AS (
         SELECT
             pec.data_provider,
             pec.stream_id,
             pec.event_time,
-            pec.delta_indexed_value,
+            pec.delta_indexed_value,  -- Use delta_indexed_value here
             0::numeric(36,18) AS weight_delta,
-            1 AS event_type_priority
+            1 AS event_type_priority -- Value changes first
         FROM primitive_event_changes pec
 
         UNION ALL
@@ -720,12 +752,13 @@ RETURNS TABLE(
             ewc.data_provider,
             ewc.stream_id,
             ewc.event_time,
-            0::numeric(36,18) AS delta_indexed_value,
+            0::numeric(36,18) AS delta_indexed_value, -- Zero indexed value change for weight events
             ewc.weight_delta,
-            2 AS event_type_priority
+            2 AS event_type_priority -- Weight changes second
         FROM effective_weight_changes ewc
     ),
 
+    -- Calculate state timeline using indexed values.
     primitive_state_timeline AS (
         SELECT
             data_provider,
@@ -733,6 +766,7 @@ RETURNS TABLE(
             event_time,
             delta_indexed_value,
             weight_delta,
+            -- Calculate indexed value and weight *before* this event
             COALESCE(LAG(indexed_value_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as indexed_value_before_event,
             COALESCE(LAG(weight_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as weight_before_event
         FROM (
@@ -742,20 +776,24 @@ RETURNS TABLE(
                 event_time,
                 delta_indexed_value,
                 weight_delta,
-                event_type_priority,
+                event_type_priority, -- Select for ordering
+                -- Cumulative indexed value up to and including this event
                 (SUM(delta_indexed_value) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as indexed_value_after_event,
+                -- Cumulative weight up to and including this event
                 (SUM(weight_delta) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as weight_after_event
             FROM unified_events
         ) state_calc
     ),
 
+    -- Calculate final aggregated deltas using indexed values.
     final_deltas AS (
         SELECT
             event_time,
+            -- Calculate delta for the weighted sum numerator using indexed values
             SUM(
                 (delta_indexed_value * weight_before_event) +
                 (indexed_value_before_event * weight_delta) +
-                (delta_indexed_value * weight_delta)
+                (delta_indexed_value * weight_delta) -- Added missing term for indexed calculation
             )::numeric(72, 18) AS delta_ws_indexed,
             SUM(weight_delta)::numeric(36, 18) AS delta_sw
         FROM primitive_state_timeline
@@ -776,6 +814,7 @@ RETURNS TABLE(
         ) distinct_times
     ),
 
+    -- Calculate cumulative sums for indexed weighted sum and sum of weights.
     cumulative_values AS (
         SELECT
             act.time_point as event_time,
@@ -785,14 +824,17 @@ RETURNS TABLE(
         LEFT JOIN final_deltas fd ON fd.event_time = act.time_point
     ),
 
+    -- Compute the final aggregated index value (Weighted Average of Indexed Values)
     aggregated AS (
         SELECT cv.event_time,
                CASE WHEN cv.cum_sw = 0::numeric(36,18) THEN 0::numeric(72,18)
+                    -- Divide cumulative indexed weighted sum by cumulative sum of weights
                     ELSE cv.cum_ws_indexed / cv.cum_sw::numeric(72,18)
                    END AS value
         FROM cumulative_values cv
     ),
 
+    -- LOCF Logic (Identical to get_record_composed)
     real_change_times AS (
         SELECT DISTINCT event_time AS time_point
         FROM final_deltas
@@ -818,19 +860,22 @@ RETURNS TABLE(
             (atc.anchor_time IS NOT NULL AND fm.event_time = atc.anchor_time)
     ),
 
+    -- Check if there are any rows from aggregated whose event_time falls directly within the requested range.
+    -- This helps decide whether to include the anchor point row for LOCF purposes.
     range_check AS (
         SELECT EXISTS (
-            SELECT 1 FROM final_mapping fm_check
+            SELECT 1 FROM final_mapping fm_check  -- Check the source data before filtering
             WHERE fm_check.event_time >= $effective_from
               AND fm_check.event_time <= $effective_to
         ) AS range_has_direct_hits
     ),
 
+    -- Pre-calculate the final event time after applying LOCF
     locf_applied AS (
         SELECT
-            fm.*,
-            rc.range_has_direct_hits,
-            atc.anchor_time,
+            fm.*,  -- Include all columns from filtered_mapping
+            rc.range_has_direct_hits, -- Include the flag
+            atc.anchor_time, -- Include anchor time
             CASE
                 WHEN fm.query_time_had_real_change THEN fm.event_time
                 ELSE fm.effective_time
@@ -840,33 +885,40 @@ RETURNS TABLE(
         JOIN anchor_time_calc atc ON 1=1
     ),
 
+    /*----------------------------------------------------------------------
+     * FINAL OUTPUT SELECTION
+     *
+     * Selects direct hits within the range plus the anchor point for LOCF if needed.
+     *---------------------------------------------------------------------*/
+    -- Use CTEs for clarity, though could be done inline in UNION
     direct_hits AS (
         SELECT final_event_time as event_time, value::NUMERIC(36,18) as value
         FROM locf_applied la
-        WHERE la.event_time >= $effective_from
+        WHERE la.event_time >= $effective_from -- Use original event time for range check
           AND la.event_time <= $effective_to
           AND la.final_event_time IS NOT NULL
     ),
     anchor_hit AS (
       SELECT final_event_time as event_time, value::NUMERIC(36,18) as value
       FROM locf_applied la
-      WHERE la.anchor_time IS NOT NULL
-        AND la.event_time = la.anchor_time
-        AND $effective_from > la.anchor_time
+      WHERE la.anchor_time IS NOT NULL        -- Anchor must exist
+        AND la.event_time = la.anchor_time    -- This IS the anchor row
+        AND $effective_from > la.anchor_time  -- Query starts after anchor
         AND la.final_event_time IS NOT NULL
-        AND NOT EXISTS (
+        AND NOT EXISTS ( -- Crucially, ensure no direct hit exists AT the start time $from
             SELECT 1 FROM locf_applied dh
             WHERE dh.event_time = $effective_from
         )
     ),
     result AS (
         SELECT event_time, value FROM direct_hits
-        UNION ALL
+        UNION ALL  -- Use UNION ALL as times should be distinct
         SELECT event_time, value FROM anchor_hit
     )
     SELECT event_time, value FROM result
     ORDER BY 1;
 };
+
 
 -- Returns the base value for a composed stream at or around base_time.
 -- This is a helper function for get_record_composed_index readability.
