@@ -31,7 +31,7 @@ func CreateTestRole(ctx context.Context, input CreateTestRoleInput) error {
 		callerAddr = deployer.Address()
 
 		// Also assert that the owner parameter matches the signer's address.
-		if strings.ToLower(callerAddr) != strings.ToLower(input.Owner) {
+		if !strings.EqualFold(callerAddr, input.Owner) {
 			return errors.Errorf("owner parameter (%s) does not match platform signer address (%s)", input.Owner, callerAddr)
 		}
 	}

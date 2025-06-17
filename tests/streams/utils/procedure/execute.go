@@ -44,9 +44,7 @@ func GetRecord(ctx context.Context, input GetRecordInput) ([]ResultRow, error) {
 	}, func(row *common.Row) error {
 		// Convert the row values to []any
 		values := make([]any, len(row.Values))
-		for i, v := range row.Values {
-			values[i] = v
-		}
+		copy(values, row.Values)
 		resultRows = append(resultRows, values)
 		return nil
 	})
@@ -97,9 +95,7 @@ func GetIndex(ctx context.Context, input GetIndexInput) ([]ResultRow, error) {
 	}, func(row *common.Row) error {
 		// Convert the row values to []any
 		values := make([]any, len(row.Values))
-		for i, v := range row.Values {
-			values[i] = v
-		}
+		copy(values, row.Values)
 		resultRows = append(resultRows, values)
 		return nil
 	})
@@ -145,9 +141,7 @@ func GetIndexChange(ctx context.Context, input GetIndexChangeInput) ([]ResultRow
 	}, func(row *common.Row) error {
 		// Convert the row values to []any
 		values := make([]any, len(row.Values))
-		for i, v := range row.Values {
-			values[i] = v
-		}
+		copy(values, row.Values)
 		resultRows = append(resultRows, values)
 		return nil
 	})
@@ -190,9 +184,7 @@ func GetFirstRecord(ctx context.Context, input GetFirstRecordInput) ([]ResultRow
 	}, func(row *common.Row) error {
 		// Convert the row values to []any
 		values := make([]any, len(row.Values))
-		for i, v := range row.Values {
-			values[i] = v
-		}
+		copy(values, row.Values)
 		resultRows = append(resultRows, values)
 		return nil
 	})
@@ -299,9 +291,7 @@ func DescribeTaxonomies(ctx context.Context, input DescribeTaxonomiesInput) ([]R
 	}, func(row *common.Row) error {
 		// Convert the row values to []any
 		values := make([]any, len(row.Values))
-		for i, v := range row.Values {
-			values[i] = v
-		}
+		copy(values, row.Values)
 		resultRows = append(resultRows, values)
 		return nil
 	})
@@ -393,9 +383,7 @@ func GetCategoryStreams(ctx context.Context, input GetCategoryStreamsInput) ([]R
 	}, func(row *common.Row) error {
 		// Convert the row values to []any
 		values := make([]any, len(row.Values))
-		for i, v := range row.Values {
-			values[i] = v
-		}
+		copy(values, row.Values)
 		resultRows = append(resultRows, values)
 		return nil
 	})
@@ -544,9 +532,7 @@ func ListStreams(ctx context.Context, input ListStreamsInput) ([]ResultRow, erro
 		input.BlockHeight,
 	}, func(row *common.Row) error {
 		values := make([]any, len(row.Values))
-		for i, v := range row.Values {
-			values[i] = v
-		}
+		copy(values, row.Values)
 		resultRows = append(resultRows, values)
 		return nil
 	})

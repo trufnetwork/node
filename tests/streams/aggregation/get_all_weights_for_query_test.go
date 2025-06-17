@@ -127,9 +127,7 @@ func GetAllWeightsForQuery(ctx context.Context, input GetAllWeightsForQueryInput
 	}, func(row *common.Row) error {
 		// Convert the row values to []any
 		values := make([]any, len(row.Values))
-		for i, v := range row.Values {
-			values[i] = v
-		}
+		copy(values, row.Values)
 		resultRows = append(resultRows, values)
 		return nil
 	})

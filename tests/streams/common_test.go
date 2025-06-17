@@ -166,6 +166,63 @@ func testReadOnlyMetadataCannotBeModified(t *testing.T, streamInfo setup.StreamI
 	}
 }
 
+func TestCOMMON02BReadOnlyMetadataCannotBeModified_Batch(t *testing.T) {
+	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name:        "readonly_metadata_cannot_be_modified_batch",
+		SeedScripts: migrations.GetSeedScriptPaths(),
+		FunctionTests: []kwilTesting.TestFunc{
+			testReadOnlyMetadataCannotBeModifiedBatch(t, primitiveStreamInfo),
+			testReadOnlyMetadataCannotBeModifiedBatch(t, composedStreamInfo),
+		},
+	}, testutils.GetTestOptions())
+}
+
+func testReadOnlyMetadataCannotBeModifiedBatch(t *testing.T, streamInfo setup.StreamInfo) kwilTesting.TestFunc {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Use batch stream creation path (create_streams)
+		platform = procedure.WithSigner(platform, defaultDeployer.Bytes())
+
+		// Create the stream via batch helper (single-element slice)
+		if err := setup.CreateStreams(ctx, platform, []setup.StreamInfo{streamInfo}); err != nil {
+			return errors.Wrap(err, "failed to create stream via batch create_streams")
+		}
+
+		readonlyKeys := []string{"stream_owner", "readonly_key"}
+
+		for _, key := range readonlyKeys {
+			// Attempt to insert metadata with a read-only key
+			err := procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+				Platform: platform,
+				Locator:  streamInfo.Locator,
+				Key:      key,
+				Value:    "modified",
+				ValType:  "string",
+			})
+			assert.Error(t, err, "Should not be able to modify read-only metadata (batch path)")
+
+			// Attempt to disable read-only metadata
+			result, err := procedure.GetMetadata(ctx, procedure.GetMetadataInput{
+				Platform: platform,
+				Locator:  streamInfo.Locator,
+				Key:      "stream_owner",
+			})
+			if err != nil {
+				return errors.Wrap(err, "Failed to get read-only metadata (batch path)")
+			}
+			rowID := result[0].RowID
+
+			err = procedure.DisableMetadata(ctx, procedure.DisableMetadataInput{
+				Platform: platform,
+				Locator:  streamInfo.Locator,
+				RowID:    rowID,
+			})
+			assert.Error(t, err, "Should not be able to disable read-only metadata (batch path)")
+		}
+
+		return nil
+	}
+}
+
 func TestVisibilitySettings(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name: "visibility_settings",
