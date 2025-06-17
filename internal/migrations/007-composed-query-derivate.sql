@@ -303,7 +303,7 @@ RETURNS TABLE(
         ERROR(format('Invalid time range: from (%s) > to (%s)', $from, $to));
     }
 
-    -- Permissions check (consider if compose permissions are needed here too)
+    -- Permissions check
     IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, $from, $to) {
         ERROR('Not allowed to read stream');
     }
@@ -331,9 +331,10 @@ RETURNS TABLE(
             RETURN;
         }
     }
+    
     -- If $from and/or $to were provided, $effective_from and $effective_to retain their initial COALESCEd values.
     -- All paths now proceed to the main CTE logic using the (potentially overridden) $effective_from and $effective_to.
-    
+
     -- For detailed explanations of the CTEs below (hierarchy, primitive_weights,
     -- cleaned_event_times, initial_primitive_states, primitive_events_in_interval,
     -- all_primitive_points, first_value_times, effective_weight_changes, unified_events),
@@ -343,7 +344,6 @@ RETURNS TABLE(
     RETURN WITH RECURSIVE
     /*----------------------------------------------------------------------
      * PARENT_DISTINCT_START_TIMES CTE:
-     * (Copied from 006-composed-query.sql)
      *---------------------------------------------------------------------*/
     parent_distinct_start_times AS (
         SELECT DISTINCT
@@ -356,7 +356,6 @@ RETURNS TABLE(
 
     /*----------------------------------------------------------------------
      * PARENT_NEXT_STARTS CTE:
-     * (Copied from 006-composed-query.sql)
      *---------------------------------------------------------------------*/
     parent_next_starts AS (
         SELECT
@@ -369,7 +368,6 @@ RETURNS TABLE(
 
     /*----------------------------------------------------------------------
      * TAXONOMY_TRUE_SEGMENTS CTE:
-     * (Copied from 006-composed-query.sql)
      *---------------------------------------------------------------------*/
     taxonomy_true_segments AS (
         SELECT
@@ -410,8 +408,9 @@ RETURNS TABLE(
     ),
 
     /*----------------------------------------------------------------------
-     * HIERARCHY CTE: Recursively resolves the dependency tree.
-     * (Copied and adapted from 006-composed-query.sql)
+     * HIERARCHY CTE: 
+     * Calculates effective weights that preserve 
+     * hierarchical normalization instead of just multiplying raw weights.
      *---------------------------------------------------------------------*/
     hierarchy AS (
       -- Base Case: Direct children of the root composed stream.
@@ -421,6 +420,7 @@ RETURNS TABLE(
           tts.child_dp AS descendant_dp,
           tts.child_sid AS descendant_sid,
           tts.weight_for_segment AS raw_weight,
+          tts.weight_for_segment AS effective_weight, -- For level 1, effective = raw
           tts.segment_start AS path_start,
           tts.segment_end AS path_end,
           1 AS level
@@ -439,13 +439,24 @@ RETURNS TABLE(
 
       UNION ALL
 
-      -- Recursive Step: Children of the children found in the previous level.
+      -- Recursive Step: Calculate effective weights properly
       SELECT
           h.root_dp,
           h.root_sid,
           tts.child_dp AS descendant_dp,
           tts.child_sid AS descendant_sid,
           (h.raw_weight * tts.weight_for_segment)::NUMERIC(36,18) AS raw_weight,
+          -- Calculate effective weight = parent_effective_weight × (child_weight / sibling_sum)
+          (h.effective_weight * (
+              tts.weight_for_segment / 
+              -- Calculate sum of sibling weights for normalization
+              (SELECT SUM(sibling_tts.weight_for_segment) 
+               FROM taxonomy_true_segments sibling_tts 
+               WHERE sibling_tts.parent_dp = h.descendant_dp 
+                 AND sibling_tts.parent_sid = h.descendant_sid
+                 AND sibling_tts.segment_start = tts.segment_start
+                 AND sibling_tts.segment_end = tts.segment_end)::NUMERIC(36,18)
+          ))::NUMERIC(36,18) AS effective_weight,
           GREATEST(h.path_start, tts.segment_start) AS path_start,
           LEAST(h.path_end, tts.segment_end) AS path_end,
           h.level + 1
@@ -469,21 +480,20 @@ RETURNS TABLE(
     ),
 
     /*----------------------------------------------------------------------
-     * HIERARCHY_PRIMITIVE_PATHS CTE: Filters the hierarchy to find paths ending in leaf nodes (primitives).
-     * (Adapted to use new hierarchy CTE output)
+     * HIERARCHY_PRIMITIVE_PATHS CTE: Updated to use effective_weight
      *--------------------------------------------------------------------*/
     hierarchy_primitive_paths AS (
       SELECT
-          h.descendant_dp AS child_data_provider, -- Aliased from descendant_dp
-          h.descendant_sid AS child_stream_id,   -- Aliased from descendant_sid
-          h.raw_weight,
-          h.path_start AS group_sequence_start,    -- Aliased from path_start
-          h.path_end AS group_sequence_end        -- Aliased from path_end
+          h.descendant_dp AS child_data_provider,
+          h.descendant_sid AS child_stream_id,
+          h.effective_weight AS raw_weight, -- Use effective_weight instead of raw_weight
+          h.path_start AS group_sequence_start,
+          h.path_end AS group_sequence_end
       FROM hierarchy h
       WHERE EXISTS (
           SELECT 1 FROM streams s
-          WHERE s.data_provider = h.descendant_dp -- Use descendant_dp for matching
-            AND s.stream_id     = h.descendant_sid  -- Use descendant_sid for matching
+          WHERE s.data_provider = h.descendant_dp  -- Use descendant_dp for matching
+            AND s.stream_id     = h.descendant_sid -- Use descendant_sid for matching
             AND s.stream_type   = 'primitive'
       )
     ),
@@ -635,7 +645,7 @@ RETURNS TABLE(
             dp.data_provider,
             dp.stream_id,
              COALESCE(
-                 -- Priority 1: Exact match
+                -- Priority 1: Exact match
                  (SELECT pe.value FROM primitive_events pe
                   WHERE pe.data_provider = dp.data_provider
                     AND pe.stream_id = dp.stream_id
@@ -643,7 +653,7 @@ RETURNS TABLE(
                     AND pe.created_at <= $effective_frozen_at
                   ORDER BY pe.created_at DESC LIMIT 1),
 
-                 -- Priority 2: Latest Before
+                -- Priority 2: Latest Before
                  (SELECT pe.value FROM primitive_events pe
                   WHERE pe.data_provider = dp.data_provider
                     AND pe.stream_id = dp.stream_id
@@ -651,7 +661,7 @@ RETURNS TABLE(
                     AND pe.created_at <= $effective_frozen_at
                    ORDER BY pe.event_time DESC, pe.created_at DESC LIMIT 1),
 
-                 -- Priority 3: Earliest After
+                -- Priority 3: Earliest After
                   (SELECT pe.value FROM primitive_events pe
                    WHERE pe.data_provider = dp.data_provider
                     AND pe.stream_id = dp.stream_id
@@ -731,7 +741,7 @@ RETURNS TABLE(
             pec.data_provider,
             pec.stream_id,
             pec.event_time,
-            pec.delta_indexed_value, -- Use delta_indexed_value here
+            pec.delta_indexed_value,  -- Use delta_indexed_value here
             0::numeric(36,18) AS weight_delta,
             1 AS event_type_priority -- Value changes first
         FROM primitive_event_changes pec
@@ -854,7 +864,7 @@ RETURNS TABLE(
     -- This helps decide whether to include the anchor point row for LOCF purposes.
     range_check AS (
         SELECT EXISTS (
-            SELECT 1 FROM final_mapping fm_check -- Check the source data before filtering
+            SELECT 1 FROM final_mapping fm_check  -- Check the source data before filtering
             WHERE fm_check.event_time >= $effective_from
               AND fm_check.event_time <= $effective_to
         ) AS range_has_direct_hits
@@ -863,7 +873,7 @@ RETURNS TABLE(
     -- Pre-calculate the final event time after applying LOCF
     locf_applied AS (
         SELECT
-            fm.*, -- Include all columns from filtered_mapping
+            fm.*,  -- Include all columns from filtered_mapping
             rc.range_has_direct_hits, -- Include the flag
             atc.anchor_time, -- Include anchor time
             CASE
@@ -891,9 +901,9 @@ RETURNS TABLE(
     anchor_hit AS (
       SELECT final_event_time as event_time, value::NUMERIC(36,18) as value
       FROM locf_applied la
-      WHERE la.anchor_time IS NOT NULL           -- Anchor must exist
-        AND la.event_time = la.anchor_time       -- This IS the anchor row
-        AND $effective_from > la.anchor_time     -- Query starts after anchor
+      WHERE la.anchor_time IS NOT NULL        -- Anchor must exist
+        AND la.event_time = la.anchor_time    -- This IS the anchor row
+        AND $effective_from > la.anchor_time  -- Query starts after anchor
         AND la.final_event_time IS NOT NULL
         AND NOT EXISTS ( -- Crucially, ensure no direct hit exists AT the start time $from
             SELECT 1 FROM locf_applied dh
@@ -902,7 +912,7 @@ RETURNS TABLE(
     ),
     result AS (
         SELECT event_time, value FROM direct_hits
-        UNION ALL -- Use UNION ALL as times should be distinct
+        UNION ALL  -- Use UNION ALL as times should be distinct
         SELECT event_time, value FROM anchor_hit
     )
     SELECT DISTINCT event_time, value FROM result
