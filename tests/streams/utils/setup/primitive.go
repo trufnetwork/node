@@ -320,3 +320,82 @@ func InsertPrimitiveDataBatch(ctx context.Context, input InsertPrimitiveDataInpu
 	}
 	return nil
 }
+
+type InsertTruflationRecordInput struct {
+	EventTime 					int64   `json:"event_time"`
+	Value     					float64 `json:"value"`
+	TruflationCreatedAt string 	`json:"truflation_created_at"`
+}
+
+type TruflationStreamWithData struct {
+	PrimitiveStreamDefinition
+	Data []InsertTruflationRecordInput
+}
+
+type InsertTruflationDataInput struct {
+	Platform        *kwilTesting.Platform
+	PrimitiveStream TruflationStreamWithData
+	Height          int64
+}
+
+// InsertTruflationDataBatch calls the batch insertion action "truflation_insert_records" with arrays of parameters.
+func InsertTruflationDataBatch(ctx context.Context, input InsertTruflationDataInput) error {
+	dataProviders := []string{}
+	streamIds := []string{}
+	eventTimes := []int64{}
+	values := []*kwilTypes.Decimal{}
+	truflationCreatedAts := []string{}
+
+	for _, data := range input.PrimitiveStream.Data {
+		// For each record, add the same provider and stream id (they come from the stream locator)
+		dataProviders = append(dataProviders, input.PrimitiveStream.StreamLocator.DataProvider.Address())
+		streamIds = append(streamIds, input.PrimitiveStream.StreamLocator.StreamId.String())
+		eventTimes = append(eventTimes, data.EventTime)
+		truflationCreatedAts = append(truflationCreatedAts, data.TruflationCreatedAt)
+		valueDecimal, err := kwilTypes.ParseDecimalExplicit(strconv.FormatFloat(data.Value, 'f', -1, 64), 36, 18)
+		if err != nil {
+			return errors.Wrap(err, "error in InsertTruflationDataBatch")
+		}
+		values = append(values, valueDecimal)
+	}
+
+	args := []any{
+		dataProviders,
+		streamIds,
+		eventTimes,
+		values,
+		truflationCreatedAts,
+	}
+
+	txid := input.Platform.Txid()
+
+	deployer, err := util.NewEthereumAddressFromBytes(input.PrimitiveStream.StreamLocator.DataProvider.Bytes())
+	if err != nil {
+		return errors.Wrap(err, "error in InsertTruflationDataBatch")
+	}
+
+	txContext := &common.TxContext{
+		Ctx: ctx,
+		BlockContext: &common.BlockContext{
+			Height: input.Height,
+		},
+		TxID:   txid,
+		Signer: deployer.Bytes(),
+		Caller: deployer.Address(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext: txContext,
+	}
+
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "truflation_insert_records", args, func(row *common.Row) error {
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if r.Error != nil {
+		return errors.Wrap(r.Error, "error in InsertTruflationDataBatch")
+	}
+	return nil
+}
