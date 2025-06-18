@@ -60,7 +60,7 @@ CREATE OR REPLACE ACTION get_record_primitive(
                                 WHEN parse_unix_timestamp(pe.truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 <= $effective_frozen_at 
                                 THEN parse_unix_timestamp(pe.truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
                                 ELSE NULL
-                            END DESC
+                            END DESC, pe.created_at DESC
                     )
                 ELSE
                     ROW_NUMBER() OVER (
@@ -101,7 +101,7 @@ CREATE OR REPLACE ACTION get_record_primitive(
                                     WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 <= $effective_frozen_at 
                                     THEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
                                     ELSE NULL
-                                END DESC
+                                END DESC, created_at DESC
                         )
                     ELSE
                         ROW_NUMBER() OVER (ORDER BY event_time DESC, created_at DESC)
@@ -181,7 +181,7 @@ CREATE OR REPLACE ACTION get_last_record_primitive(
                                     WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 <= $effective_frozen_at 
                                     THEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
                                     ELSE NULL
-                                END DESC
+                                END DESC, created_at DESC
                         )
                     ELSE
                         ROW_NUMBER() OVER (ORDER BY event_time DESC, created_at DESC)
@@ -246,7 +246,7 @@ CREATE OR REPLACE ACTION get_first_record_primitive(
                                     WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 <= $effective_frozen_at 
                                     THEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
                                     ELSE NULL
-                                END DESC
+                                END DESC, created_at DESC
                         )
                     ELSE
                         ROW_NUMBER() OVER (ORDER BY event_time ASC, created_at DESC)
