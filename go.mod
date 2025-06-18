@@ -9,7 +9,7 @@ require (
 	github.com/docker/docker v27.3.1+incompatible
 	github.com/fbiville/markdown-table-formatter v0.3.0
 	github.com/golang-sql/civil v0.0.0-20220223132316-b832511892a9
-	github.com/kwilteam/kwil-db v0.10.3-0.20250616181910-4ca02d0b985b
+	github.com/kwilteam/kwil-db v0.10.3-0.20250617205457-aa9342d29961
 	github.com/kwilteam/kwil-db/core v0.4.2-0.20250616181910-4ca02d0b985b
 	github.com/pkg/errors v0.9.1
 	github.com/samber/lo v1.47.0
@@ -17,6 +17,7 @@ require (
 	github.com/trufnetwork/sdk-go v0.2.1-0.20250306192322-57cbdf7b5b77
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20250218142911-aa4b98e5adaa
+	golang.org/x/sync v0.11.0
 )
 
 replace (
@@ -234,7 +235,6 @@ require (
 	golang.org/x/crypto v0.35.0 // indirect
 	golang.org/x/mod v0.23.0 // indirect
 	golang.org/x/net v0.35.0 // indirect
-	golang.org/x/sync v0.11.0 // indirect
 	golang.org/x/sys v0.30.0 // indirect
 	golang.org/x/term v0.29.0 // indirect
 	golang.org/x/text v0.22.0 // indirect
