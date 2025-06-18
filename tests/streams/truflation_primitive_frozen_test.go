@@ -20,6 +20,7 @@ var (
 	deployerTruflation = util.Unsafe_NewEthereumAddressFromString("0x4710a8d8f0d845da110086812a32de6d90d7ff5c")
 
 	primitiveTruflation = util.GenerateStreamId("truflation_primitive")
+	truflationPrefix = "truflation_"
 )
 
 func TestTruflationFrozen(t *testing.T) {
@@ -59,6 +60,7 @@ func testAllBeforeFrozen(t *testing.T) func(ctx context.Context, platform *kwilT
 			ToTime:        &eventTime10,
 			FrozenAt:      &frozenAt,
 			Height:        0,
+			Prefix: 			 &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record for event_time 10")
@@ -83,6 +85,7 @@ func testAllBeforeFrozen(t *testing.T) func(ctx context.Context, platform *kwilT
 			ToTime:        &eventTime18,
 			FrozenAt:      &frozenAt,
 			Height:        0,
+			Prefix: 			 &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record for event_time 18")
@@ -120,6 +123,7 @@ func testAllAfterFrozen(t *testing.T) func(ctx context.Context, platform *kwilTe
 			ToTime:        &eventTime11,
 			FrozenAt:      &frozenAt,
 			Height:        0,
+			Prefix: 			 &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record for event_time 11")
@@ -144,6 +148,7 @@ func testAllAfterFrozen(t *testing.T) func(ctx context.Context, platform *kwilTe
 			ToTime:        &eventTime19,
 			FrozenAt:      &frozenAt,
 			Height:        0,
+			Prefix: 			 &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record for event_time 19")
@@ -180,6 +185,7 @@ func testMixedBeforeAndAfter(t *testing.T) func(ctx context.Context, platform *k
 			ToTime:        &eventTime12,
 			FrozenAt:      &frozenAt,
 			Height:        0,
+			Prefix: 			 &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record for event_time 12")
@@ -216,6 +222,7 @@ func testBoundaryConditions(t *testing.T) func(ctx context.Context, platform *kw
 			ToTime:        &eventTime13,
 			FrozenAt:      &frozenAt,
 			Height:        0,
+			Prefix: 			 &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record for event_time 13")
@@ -253,6 +260,7 @@ func testSingleRecords(t *testing.T) func(ctx context.Context, platform *kwilTes
 			ToTime:        &eventTime14,
 			FrozenAt:      &frozenAt,
 			Height:        0,
+			Prefix: 			 &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record for event_time 14")
@@ -277,6 +285,7 @@ func testSingleRecords(t *testing.T) func(ctx context.Context, platform *kwilTes
 			ToTime:        &eventTime15,
 			FrozenAt:      &frozenAt,
 			Height:        0,
+			Prefix: 			 &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record for event_time 15")
@@ -351,6 +360,7 @@ func testEdgeCases(t *testing.T) func(ctx context.Context, platform *kwilTesting
 				ToTime:        &tc.eventTime,
 				FrozenAt:      &frozenAt,
 				Height:        0,
+				Prefix: 			 &truflationPrefix,
 			})
 			if err != nil {
 				return errors.Wrapf(err, "failed to get record for event_time %d", tc.eventTime)
@@ -384,6 +394,7 @@ func testSameTimestamps(t *testing.T) func(ctx context.Context, platform *kwilTe
 			ToTime:        &eventTime20,
 			FrozenAt:      &frozenAt,
 			Height:        0,
+			Prefix: 			 &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record for event_time 20")
@@ -408,6 +419,7 @@ func testSameTimestamps(t *testing.T) func(ctx context.Context, platform *kwilTe
 			ToTime:        &eventTime21,
 			FrozenAt:      &frozenAt,
 			Height:        0,
+			Prefix: 			 &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record for event_time 21")
@@ -446,6 +458,7 @@ func testRangeQuery(t *testing.T) func(ctx context.Context, platform *kwilTestin
 			ToTime:        &dateTo,
 			FrozenAt:      &frozenAt,
 			Height:        0,
+			Prefix: 			 &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get range records")
@@ -497,6 +510,7 @@ func testWithoutFrozen(t *testing.T) func(ctx context.Context, platform *kwilTes
 			ToTime:        &testEventTime,
 			FrozenAt:      nil, // No frozen mechanism
 			Height:        0,
+			Prefix: 			 &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record without frozen")
@@ -535,6 +549,7 @@ func testFutureFrozen(t *testing.T) func(ctx context.Context, platform *kwilTest
 			ToTime:        &testEventTime,
 			FrozenAt:      &futureFrozen,
 			Height:        0,
+			Prefix: 			 &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record with future frozen")

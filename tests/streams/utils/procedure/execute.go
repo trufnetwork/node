@@ -34,8 +34,13 @@ func GetRecord(ctx context.Context, input GetRecordInput) ([]ResultRow, error) {
 		TxContext: txContext,
 	}
 
+	prefix := ""
+	if input.Prefix != nil {
+			prefix = *input.Prefix
+	}
+
 	var resultRows [][]any
-	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_record", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", prefix + "get_record", []any{
 		input.StreamLocator.DataProvider.Address(),
 		input.StreamLocator.StreamId.String(),
 		input.FromTime,
