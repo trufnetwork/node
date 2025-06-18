@@ -33,6 +33,7 @@ func TestTruflationFrozen(t *testing.T) {
 			setupTruflationFrozenTest(testBoundaryConditions(t)),
 			setupTruflationFrozenTest(testSingleRecords(t)),
 			setupTruflationFrozenTest(testEdgeCases(t)),
+			setupTruflationFrozenTest(testSameTimestamps(t)),
 			setupTruflationFrozenTest(testRangeQuery(t)),
 			setupTruflationFrozenTest(testWithoutFrozen(t)),
 			setupTruflationFrozenTest(testFutureFrozen(t)),
@@ -321,7 +322,7 @@ func testEdgeCases(t *testing.T) func(ctx context.Context, platform *kwilTesting
 				expected: `
 		| event_time | value  |
 		| ---------- | ------ |
-		| 17         | 171.000000000000000000 |
+		| 17         | 172.000000000000000000 |
 		`,
 			},
 			{
@@ -365,6 +366,67 @@ func testEdgeCases(t *testing.T) func(ctx context.Context, platform *kwilTesting
 	}
 }
 
+// Test Cases 11 & 12: Same timestamps
+func testSameTimestamps(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		frozenAt := int64(1714176000)
+		streamLocator := types.StreamLocator{
+			StreamId:     primitiveTruflation,
+			DataProvider: deployerTruflation,
+		}
+
+		// Test Case 11: Same timestamp before frozen
+		eventTime20 := int64(20)
+		record20, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
+			Platform:      platform,
+			StreamLocator: streamLocator,
+			FromTime:      &eventTime20,
+			ToTime:        &eventTime20,
+			FrozenAt:      &frozenAt,
+			Height:        0,
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to get record for event_time 20")
+		}
+
+		expected20 := `
+		| event_time | value  |
+		| ---------- | ------ |
+		| 20         | 203.000000000000000000 |
+		`
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   record20,
+			Expected: expected20,
+		})
+
+		// Test Case 12: Same timestamp after frozen
+		eventTime21 := int64(21)
+		record21, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
+			Platform:      platform,
+			StreamLocator: streamLocator,
+			FromTime:      &eventTime21,
+			ToTime:        &eventTime21,
+			FrozenAt:      &frozenAt,
+			Height:        0,
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to get record for event_time 21")
+		}
+
+		expected21 := `
+		| event_time | value  |
+		| ---------- | ------ |
+		| 21         | 213.000000000000000000 |
+		`
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   record21,
+			Expected: expected21,
+		})
+
+		return nil
+	}
+}
+
 // Test range query
 func testRangeQuery(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
@@ -399,9 +461,11 @@ func testRangeQuery(t *testing.T) func(ctx context.Context, platform *kwilTestin
 		| 14         | 140.000000000000000000 |
 		| 15         | 150.000000000000000000 |
 		| 16         | 162.000000000000000000 |
-		| 17         | 171.000000000000000000 |
+		| 17         | 172.000000000000000000 |
 		| 18         | 183.000000000000000000 |
 		| 19         | 190.000000000000000000 |
+		| 20         | 203.000000000000000000 |
+		| 21         | 213.000000000000000000 |
 		| 22         | 221.000000000000000000 |
 		| 23         | 232.000000000000000000 |
 		`
@@ -573,10 +637,10 @@ func setupTruflationFrozenTest(testFn func(ctx context.Context, platform *kwilTe
 		insertTestRecord(16, 163, "2025-01-01T00:00:00Z", 21)
 
 		// Test Case 8: Milliseconds precision (if supported)
-		// Expected: Should select value 171 (oldest after frozen)
+		// Expected: Should select value 172 (oldest after frozen)
 		insertTestRecord(17, 170, "2024-04-26T23:59:59.999Z", 22)
-		insertTestRecord(17, 171, "2024-04-27T00:00:00.000Z", 23) // Expected
-		insertTestRecord(17, 172, "2024-04-27T00:00:00.001Z", 24) 
+		insertTestRecord(17, 171, "2024-04-27T00:00:00.000Z", 23) 
+		insertTestRecord(17, 172, "2024-04-27T00:00:00.001Z", 24) // Expected
 
 		// Test Case 9: Multiple records all before frozen
 		// Expected: Should select value 183 (newest before frozen)
@@ -592,13 +656,25 @@ func setupTruflationFrozenTest(testFn func(ctx context.Context, platform *kwilTe
 		insertTestRecord(19, 192, "2024-06-15T15:30:00Z", 31)
 		insertTestRecord(19, 193, "2024-12-31T23:59:59Z", 32)
 
-		// Test Case 11: Sparse data with large gaps
+		// Test Case 11: Same truflation_created_at but different heights
+		// Expected: For before frozen, pick highest height
+		insertTestRecord(20, 200, "2024-04-26T20:00:00Z", 33)
+		insertTestRecord(20, 201, "2024-04-26T20:00:00Z", 34)
+		insertTestRecord(20, 202, "2024-04-26T20:00:00Z", 35)
+		insertTestRecord(20, 203, "2024-04-26T20:00:00Z", 36) // Expected (same timestamp, highest height)
+
+		insertTestRecord(21, 210, "2024-04-28T10:00:00Z", 37) 
+		insertTestRecord(21, 211, "2024-04-28T10:00:00Z", 38)
+		insertTestRecord(21, 212, "2024-04-28T10:00:00Z", 39)
+		insertTestRecord(21, 213, "2024-04-28T10:00:00Z", 40)// Expected (same timestamp, highest height)
+
+		// Test Case 12: Sparse data with large gaps
 		// Expected: Should select value 221 (oldest after frozen)
 		insertTestRecord(22, 220, "2023-06-15T00:00:00Z", 41) // Very old
 		insertTestRecord(22, 221, "2024-07-01T00:00:00Z", 42) // Expected (months after frozen)
 		insertTestRecord(22, 222, "2024-12-25T00:00:00Z", 43) // End of year
 
-		// Test Case 12: Rapid updates around frozen time
+		// Test Case 13: Rapid updates around frozen time
 		// Expected: Should select value 232 (first one after frozen)
 		insertTestRecord(23, 230, "2024-04-26T23:59:57Z", 44)
 		insertTestRecord(23, 231, "2024-04-26T23:59:58Z", 45)
