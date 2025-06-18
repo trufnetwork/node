@@ -13,7 +13,7 @@ type GetRecordInput struct {
 	FrozenAt      *int64
 	Height        int64
 	PrintLogs     *bool
-	Prefix 				*string
+	Prefix        *string
 }
 
 type GetIndexInput struct {
