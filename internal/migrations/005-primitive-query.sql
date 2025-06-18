@@ -2,6 +2,7 @@
  * get_record_primitive: Retrieves time series data for primitive streams.
  * Handles gap filling by using the last value before the requested range.
  * Validates read permissions and supports time-based filtering.
+ * Uses truflation_created_at for frozen mechanism on specific data provider.
  */
 CREATE OR REPLACE ACTION get_record_primitive(
     $data_provider TEXT,
@@ -15,6 +16,8 @@ CREATE OR REPLACE ACTION get_record_primitive(
 ) {
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
+    $frozen_data_provider := '0x4710a8d8f0d845da110086812a32de6d90d7ff5c';
+    
     -- Check read access first
     if is_allowed_to_read($data_provider, $stream_id, $lower_caller, $from, $to) == false {
         ERROR('wallet not allowed to read');
@@ -33,35 +36,84 @@ CREATE OR REPLACE ACTION get_record_primitive(
         RETURN;
     }
 
-
     RETURN WITH
-    -- Get base records within time range
+    -- Get base records within time range with frozen mechanism
     interval_records AS (
         SELECT
             pe.event_time,
             pe.value,
-            ROW_NUMBER() OVER (
-                PARTITION BY pe.event_time
-                ORDER BY pe.created_at DESC
-            ) as rn
+            CASE 
+                WHEN pe.data_provider = $frozen_data_provider THEN
+                    ROW_NUMBER() OVER (
+                        PARTITION BY pe.event_time
+                        ORDER BY 
+                            -- First, records after frozen_at come first
+                            CASE WHEN parse_unix_timestamp(pe.truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at THEN 0 ELSE 1 END,
+                            -- For records after frozen_at: ascending (oldest first)
+                            CASE 
+                                WHEN parse_unix_timestamp(pe.truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at 
+                                THEN parse_unix_timestamp(pe.truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
+                                ELSE NULL
+                            END ASC,
+                            -- For records at/before frozen_at: descending (newest first)
+                            CASE 
+                                WHEN parse_unix_timestamp(pe.truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 <= $effective_frozen_at 
+                                THEN parse_unix_timestamp(pe.truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
+                                ELSE NULL
+                            END DESC
+                    )
+                ELSE
+                    ROW_NUMBER() OVER (
+                        PARTITION BY pe.event_time
+                        ORDER BY pe.created_at DESC
+                    )
+            END as rn
         FROM primitive_events pe
         WHERE pe.data_provider = $data_provider
             AND pe.stream_id = $stream_id
-            AND pe.created_at <= $effective_frozen_at
+            AND (pe.data_provider = $frozen_data_provider OR pe.created_at <= $effective_frozen_at)
             AND pe.event_time > $effective_from
             AND pe.event_time <= $effective_to
     ),
 
-    -- get anchor at or before from date
+    -- get anchor at or before from date with frozen mechanism
     anchor_record AS (
         SELECT pe.event_time, pe.value
-        FROM primitive_events pe
-        WHERE 
-            pe.data_provider = $data_provider
-            AND pe.stream_id = $stream_id
-            AND pe.event_time <= $effective_from
-            AND pe.created_at <= $effective_frozen_at
-        ORDER BY pe.event_time DESC, pe.created_at DESC
+        FROM (
+            SELECT 
+                event_time,
+                value,
+                CASE 
+                    WHEN data_provider = $frozen_data_provider THEN
+                        ROW_NUMBER() OVER (
+                            ORDER BY 
+                                event_time DESC,
+                                -- First, records after frozen_at come first
+                                CASE WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at THEN 0 ELSE 1 END,
+                                -- For records after frozen_at: ascending (oldest first)
+                                CASE 
+                                    WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at 
+                                    THEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
+                                    ELSE NULL
+                                END ASC,
+                                -- For records at/before frozen_at: descending (newest first)
+                                CASE 
+                                    WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 <= $effective_frozen_at 
+                                    THEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
+                                    ELSE NULL
+                                END DESC
+                        )
+                    ELSE
+                        ROW_NUMBER() OVER (ORDER BY event_time DESC, created_at DESC)
+                END as rn
+            FROM primitive_events
+            WHERE 
+                data_provider = $data_provider
+                AND stream_id = $stream_id
+                AND event_time <= $effective_from
+                AND (data_provider = $frozen_data_provider OR created_at <= $effective_frozen_at)
+        ) pe
+        WHERE rn = 1
         LIMIT 1
     ),
 
@@ -82,6 +134,7 @@ CREATE OR REPLACE ACTION get_record_primitive(
 /**
  * get_last_record_primitive: Finds the most recent record before a timestamp.
  * Validates read permissions and respects frozen_at parameter.
+ * Uses truflation_created_at for frozen mechanism on specific data provider.
  */
 CREATE OR REPLACE ACTION get_last_record_primitive(
     $data_provider TEXT,
@@ -94,6 +147,7 @@ CREATE OR REPLACE ACTION get_last_record_primitive(
 ) {
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
+    $frozen_data_provider := '0x4710a8d8f0d845da110086812a32de6d90d7ff5c';
 
     -- Check read access, since we're querying directly from the primitive_events table
     if is_allowed_to_read($data_provider, $stream_id, $lower_caller, NULL, $before) == false {
@@ -105,18 +159,47 @@ CREATE OR REPLACE ACTION get_last_record_primitive(
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
 
     RETURN SELECT pe.event_time, pe.value
-        FROM primitive_events pe
-        WHERE pe.data_provider = $data_provider
-        AND pe.stream_id = $stream_id
-        AND pe.event_time < $effective_before
-        AND pe.created_at <= $effective_frozen_at
-        ORDER BY pe.event_time DESC, pe.created_at DESC
+        FROM (
+            SELECT 
+                event_time,
+                value,
+                CASE 
+                    WHEN data_provider = $frozen_data_provider THEN
+                        ROW_NUMBER() OVER (
+                            ORDER BY 
+                                event_time DESC,
+                                -- First, records after frozen_at come first
+                                CASE WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at THEN 0 ELSE 1 END,
+                                -- For records after frozen_at: ascending (oldest first)
+                                CASE 
+                                    WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at 
+                                    THEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
+                                    ELSE NULL
+                                END ASC,
+                                -- For records at/before frozen_at: descending (newest first)
+                                CASE 
+                                    WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 <= $effective_frozen_at 
+                                    THEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
+                                    ELSE NULL
+                                END DESC
+                        )
+                    ELSE
+                        ROW_NUMBER() OVER (ORDER BY event_time DESC, created_at DESC)
+                END as rn
+            FROM primitive_events
+            WHERE data_provider = $data_provider
+                AND stream_id = $stream_id
+                AND event_time < $effective_before
+                AND (data_provider = $frozen_data_provider OR created_at <= $effective_frozen_at)
+        ) pe
+        WHERE pe.rn = 1
         LIMIT 1;
 };
 
 /**
  * get_first_record_primitive: Finds the earliest record after a timestamp.
  * Validates read permissions and respects frozen_at parameter.
+ * Uses truflation_created_at for frozen mechanism on specific data provider.
  */
 CREATE OR REPLACE ACTION get_first_record_primitive(
     $data_provider TEXT,
@@ -129,6 +212,8 @@ CREATE OR REPLACE ACTION get_first_record_primitive(
 ) {
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
+    $frozen_data_provider := '0x4710a8d8f0d845da110086812a32de6d90d7ff5c';
+    
     -- Check read access, since we're querying directly from the primitive_events table
     if is_allowed_to_read($data_provider, $stream_id, $lower_caller, $after, NULL) == false {
         ERROR('wallet not allowed to read');
@@ -139,17 +224,46 @@ CREATE OR REPLACE ACTION get_first_record_primitive(
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
 
     RETURN SELECT pe.event_time, pe.value
-        FROM primitive_events pe
-        WHERE pe.data_provider = $data_provider
-        AND pe.stream_id = $stream_id
-        AND pe.event_time >= $effective_after
-        AND pe.created_at <= $effective_frozen_at
-        ORDER BY pe.event_time ASC, pe.created_at DESC
+        FROM (
+            SELECT 
+                event_time,
+                value,
+                CASE 
+                    WHEN data_provider = $frozen_data_provider THEN
+                        ROW_NUMBER() OVER (
+                            ORDER BY 
+                                event_time ASC,
+                                -- First, records after frozen_at come first
+                                CASE WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at THEN 0 ELSE 1 END,
+                                -- For records after frozen_at: ascending (oldest first)
+                                CASE 
+                                    WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at 
+                                    THEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
+                                    ELSE NULL
+                                END ASC,
+                                -- For records at/before frozen_at: descending (newest first)
+                                CASE 
+                                    WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 <= $effective_frozen_at 
+                                    THEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
+                                    ELSE NULL
+                                END DESC
+                        )
+                    ELSE
+                        ROW_NUMBER() OVER (ORDER BY event_time ASC, created_at DESC)
+                END as rn
+            FROM primitive_events
+            WHERE data_provider = $data_provider
+                AND stream_id = $stream_id
+                AND event_time >= $effective_after
+                AND (data_provider = $frozen_data_provider OR created_at <= $effective_frozen_at)
+        ) pe
+        WHERE pe.rn = 1
         LIMIT 1;
 };
 
 /**
  * get_index_primitive: Calculates indexed values relative to a base value.
+ * Uses the modified primitive queries which include frozen mechanism.
  */
 CREATE OR REPLACE ACTION get_index_primitive(
     $data_provider TEXT,
@@ -190,7 +304,7 @@ CREATE OR REPLACE ACTION get_index_primitive(
         }
     }
 
-    -- Get the base value
+    -- Get the base value (will use frozen mechanism through get_base_value)
     $base_value NUMERIC(36,18) := get_base_value($data_provider, $stream_id, $effective_base_time, $frozen_at);
 
     -- Check if base value is zero to avoid division by zero
