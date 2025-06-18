@@ -16,7 +16,7 @@ CREATE OR REPLACE ACTION get_record_primitive(
 ) {
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
-    $frozen_data_provider := '0x4710a8d8f0d845da110086812a32de6d90d7ff5c';
+    $truflation_data_provider := '0x4710a8d8f0d845da110086812a32de6d90d7ff5c';
     
     -- Check read access first
     if is_allowed_to_read($data_provider, $stream_id, $lower_caller, $from, $to) == false {
@@ -43,7 +43,7 @@ CREATE OR REPLACE ACTION get_record_primitive(
             pe.event_time,
             pe.value,
             CASE 
-                WHEN pe.data_provider = $frozen_data_provider THEN
+                WHEN pe.data_provider = $truflation_data_provider THEN
                     ROW_NUMBER() OVER (
                         PARTITION BY pe.event_time
                         ORDER BY 
@@ -71,7 +71,7 @@ CREATE OR REPLACE ACTION get_record_primitive(
         FROM primitive_events pe
         WHERE pe.data_provider = $data_provider
             AND pe.stream_id = $stream_id
-            AND (pe.data_provider = $frozen_data_provider OR pe.created_at <= $effective_frozen_at)
+            AND (pe.data_provider = $truflation_data_provider OR pe.created_at <= $effective_frozen_at)
             AND pe.event_time > $effective_from
             AND pe.event_time <= $effective_to
     ),
@@ -84,7 +84,7 @@ CREATE OR REPLACE ACTION get_record_primitive(
                 event_time,
                 value,
                 CASE 
-                    WHEN data_provider = $frozen_data_provider THEN
+                    WHEN data_provider = $truflation_data_provider THEN
                         ROW_NUMBER() OVER (
                             ORDER BY 
                                 event_time DESC,
@@ -111,7 +111,7 @@ CREATE OR REPLACE ACTION get_record_primitive(
                 data_provider = $data_provider
                 AND stream_id = $stream_id
                 AND event_time <= $effective_from
-                AND (data_provider = $frozen_data_provider OR created_at <= $effective_frozen_at)
+                AND (data_provider = $truflation_data_provider OR created_at <= $effective_frozen_at)
         ) pe
         WHERE rn = 1
         LIMIT 1
@@ -147,7 +147,7 @@ CREATE OR REPLACE ACTION get_last_record_primitive(
 ) {
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
-    $frozen_data_provider := '0x4710a8d8f0d845da110086812a32de6d90d7ff5c';
+    $truflation_data_provider := '0x4710a8d8f0d845da110086812a32de6d90d7ff5c';
 
     -- Check read access, since we're querying directly from the primitive_events table
     if is_allowed_to_read($data_provider, $stream_id, $lower_caller, NULL, $before) == false {
@@ -164,7 +164,7 @@ CREATE OR REPLACE ACTION get_last_record_primitive(
                 event_time,
                 value,
                 CASE 
-                    WHEN data_provider = $frozen_data_provider THEN
+                    WHEN data_provider = $truflation_data_provider THEN
                         ROW_NUMBER() OVER (
                             ORDER BY 
                                 event_time DESC,
@@ -190,7 +190,7 @@ CREATE OR REPLACE ACTION get_last_record_primitive(
             WHERE data_provider = $data_provider
                 AND stream_id = $stream_id
                 AND event_time < $effective_before
-                AND (data_provider = $frozen_data_provider OR created_at <= $effective_frozen_at)
+                AND (data_provider = $truflation_data_provider OR created_at <= $effective_frozen_at)
         ) pe
         WHERE pe.rn = 1
         LIMIT 1;
@@ -212,7 +212,7 @@ CREATE OR REPLACE ACTION get_first_record_primitive(
 ) {
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
-    $frozen_data_provider := '0x4710a8d8f0d845da110086812a32de6d90d7ff5c';
+    $truflation_data_provider := '0x4710a8d8f0d845da110086812a32de6d90d7ff5c';
     
     -- Check read access, since we're querying directly from the primitive_events table
     if is_allowed_to_read($data_provider, $stream_id, $lower_caller, $after, NULL) == false {
@@ -229,7 +229,7 @@ CREATE OR REPLACE ACTION get_first_record_primitive(
                 event_time,
                 value,
                 CASE 
-                    WHEN data_provider = $frozen_data_provider THEN
+                    WHEN data_provider = $truflation_data_provider THEN
                         ROW_NUMBER() OVER (
                             ORDER BY 
                                 event_time ASC,
@@ -255,7 +255,7 @@ CREATE OR REPLACE ACTION get_first_record_primitive(
             WHERE data_provider = $data_provider
                 AND stream_id = $stream_id
                 AND event_time >= $effective_after
-                AND (data_provider = $frozen_data_provider OR created_at <= $effective_frozen_at)
+                AND (data_provider = $truflation_data_provider OR created_at <= $effective_frozen_at)
         ) pe
         WHERE pe.rn = 1
         LIMIT 1;
