@@ -89,8 +89,13 @@ func GetIndex(ctx context.Context, input GetIndexInput) ([]ResultRow, error) {
 		TxContext: txContext,
 	}
 
+	prefix := ""
+	if input.Prefix != nil {
+			prefix = *input.Prefix
+	}
+
 	var resultRows [][]any
-	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_index", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", prefix + "get_index", []any{
 		input.StreamLocator.DataProvider.Address(),
 		input.StreamLocator.StreamId.String(),
 		input.FromTime,

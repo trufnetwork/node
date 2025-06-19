@@ -24,6 +24,7 @@ type GetIndexInput struct {
 	FrozenAt      *int64
 	Height        int64
 	BaseTime      *int64
+	Prefix        *string
 }
 
 type ResultRow []string
