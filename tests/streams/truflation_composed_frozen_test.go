@@ -36,6 +36,11 @@ func TestTruflationComposedFrozen(t *testing.T) {
 			setupTruflationFrozenComposedTest(testTruflationComposed1(t)),
 			setupTruflationFrozenComposedTest(testTruflationComposed2(t)),
 			setupTruflationFrozenComposedTest(testTruflationParentComposed(t)),
+			setupTruflationFrozenComposedTest(testTruflationComposed1Index(t)),
+			setupTruflationFrozenComposedTest(testTruflationComposed2Index(t)),
+			setupTruflationFrozenComposedTest(testTruflationParentComposedIndex(t)),
+			setupTruflationFrozenComposedTest(testTruflationIndexWithBaseTime(t)),
+			setupTruflationFrozenComposedTest(testTruflationIndexRangeQuery(t)),
 		},
 	}, testutils.GetTestOptions())
 }
@@ -173,6 +178,14 @@ func setupTruflationFrozenComposedTest(testFn func(ctx context.Context, platform
 		insertTestRecord(truflationFrozenPrimitive2, 11, 220, "2024-04-20T10:00:00Z", 10)
 		insertTestRecord(truflationFrozenPrimitive2, 11, 222, "2024-04-28T10:00:00Z", 11)
 		insertTestRecord(truflationFrozenPrimitive2, 11, 224, "2024-05-01T10:00:00Z", 12)
+
+		// Range test
+		insertTestRecord(truflationFrozenPrimitive1, 12, 120, "2024-04-10T10:00:00Z", 13)
+		insertTestRecord(truflationFrozenPrimitive1, 12, 121, "2024-04-29T10:00:00Z", 14)
+		insertTestRecord(truflationFrozenPrimitive1, 12, 122, "2024-05-05T10:00:00Z", 15)
+		insertTestRecord(truflationFrozenPrimitive2, 12, 230, "2024-04-10T10:00:00Z", 16)
+		insertTestRecord(truflationFrozenPrimitive2, 12, 232, "2024-04-29T10:00:00Z", 17)
+		insertTestRecord(truflationFrozenPrimitive2, 12, 234, "2024-05-05T10:00:00Z", 18)
 
 
 		return testFn(ctx, platform)
@@ -320,6 +333,291 @@ func testTruflationParentComposed(t *testing.T) func(ctx context.Context, platfo
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
 			Actual:   record10,
 			Expected: expected10,
+		})
+
+		return nil
+	}
+}
+
+func testTruflationComposed1Index(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		streamLocator := types.StreamLocator{
+			StreamId:     truflationFrozenComposed1,
+			DataProvider: deployerTruflationComposed,
+		}
+
+		// Test GetIndex with base_time = 10 (event_time 10 as base = 100)
+		baseTime := int64(10)
+		eventTime10 := int64(10)
+		eventTime11 := int64(11)
+		
+		// Test single point at event_time 10 (should be 100 as it's the base)
+		index10, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
+			Platform:      platform,
+			StreamLocator: streamLocator,
+			FromTime:      &eventTime10,
+			ToTime:        &eventTime10,
+			FrozenAt:      &frozenAt,
+			BaseTime:      &baseTime,
+			Height:        0,
+			Prefix:        &truflationComposedPrefix,
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to get index for event_time 10")
+		}
+
+		expected10 := `
+		| event_time | value  |
+		| ---------- | ------ |
+		| 10         | 100.000000000000000000 |
+		`
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   index10,
+			Expected: expected10,
+		})
+
+		// Test single point at event_time 11
+		index11, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
+			Platform:      platform,
+			StreamLocator: streamLocator,
+			FromTime:      &eventTime11,
+			ToTime:        &eventTime11,
+			FrozenAt:      &frozenAt,
+			BaseTime:      &baseTime,
+			Height:        0,
+			Prefix:        &truflationComposedPrefix,
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to get index for event_time 11")
+		}
+
+		expected11 := `
+		| event_time | value  |
+		| ---------- | ------ |
+		| 11         | 108.823529411764705882 |
+		`
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   index11,
+			Expected: expected11,
+		})
+
+		return nil
+	}
+}
+
+func testTruflationComposed2Index(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		streamLocator := types.StreamLocator{
+			StreamId:     truflationFrozenComposed2,
+			DataProvider: deployerTruflationComposed,
+		}
+
+		// Test with base_time = 10
+		baseTime := int64(10)
+		eventTime10 := int64(10)
+		eventTime11 := int64(11)
+		
+		// Test range query from 10 to 11
+		index, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
+			Platform:      platform,
+			StreamLocator: streamLocator,
+			FromTime:      &eventTime10,
+			ToTime:        &eventTime11,
+			FrozenAt:      &frozenAt,
+			BaseTime:      &baseTime,
+			Height:        0,
+			Prefix:        &truflationComposedPrefix,
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to get index range")
+		}
+
+		// Base value: 102 (at time 10)
+		// Value at 10: 102, Index = 100
+		// Value at 11: 111, Index = (111/102)*100 = 108.823529411764706
+		expected := `
+		| event_time | value  |
+		| ---------- | ------ |
+		| 10         | 100.000000000000000000 |
+		| 11         | 108.823529411764705882 |
+		`
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   index,
+			Expected: expected,
+		})
+
+		return nil
+	}
+}
+
+func testTruflationParentComposedIndex(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		streamLocator := types.StreamLocator{
+			StreamId:     truflationFrozenParentComposed,
+			DataProvider: deployerTruflationComposed,
+		}
+
+		// Test with base_time = 10
+		baseTime := int64(10)
+		eventTime11 := int64(11)
+		
+		// Test single point at event_time 11
+		index11, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
+			Platform:      platform,
+			StreamLocator: streamLocator,
+			FromTime:      &eventTime11,
+			ToTime:        &eventTime11,
+			FrozenAt:      &frozenAt,
+			BaseTime:      &baseTime,
+			Height:        0,
+			Prefix:        &truflationComposedPrefix,
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to get parent composed index")
+		}
+
+		expected11 := `
+		| event_time | value  |
+		| ---------- | ------ |
+		| 11         | 108.823529411764705882 |
+		`
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   index11,
+			Expected: expected11,
+		})
+
+		return nil
+	}
+}
+
+func testTruflationIndexWithBaseTime(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		streamLocator := types.StreamLocator{
+			StreamId:     truflationFrozenComposed1,
+			DataProvider: deployerTruflationComposed,
+		}
+
+		// Test with different base_time = 11 (using event 11 as base)
+		baseTime := int64(11)
+		eventTime10 := int64(10)
+		eventTime11 := int64(11)
+		
+		// Get index for both times with base at 11
+		index, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
+			Platform:      platform,
+			StreamLocator: streamLocator,
+			FromTime:      &eventTime10,
+			ToTime:        &eventTime11,
+			FrozenAt:      &frozenAt,
+			BaseTime:      &baseTime,
+			Height:        0,
+			Prefix:        &truflationComposedPrefix,
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to get index with base_time 11")
+		}
+
+		// Calculation for event_time 10 with base_time 11:
+		//
+		// Step 1: Get base values at time 11 (with frozen mechanism):
+		// - Primitive1 base value: 111 (oldest after frozen)
+		// - Primitive2 base value: 222 (oldest after frozen)
+		//
+		// Step 2: Get values at time 10 (with frozen mechanism):
+		// - Primitive1 value: 102 (newest before frozen)
+		// - Primitive2 value: 204 (newest before frozen)
+		//
+		// Step 3: Calculate individual indices:
+		// - Primitive1 index: (102/111) * 100 = 91.891891891891891892
+		// - Primitive2 index: (204/222) * 100 = 91.891891891891891892
+		//
+		// Step 4: Calculate weighted average of indices:
+		// - Composed index: (91.891891891891891892 * 0.6) + (91.891891891891891892 * 0.4)
+		// - Composed index: 55.135135135135135135 + 36.756756756756756757
+		// - Composed index: 91.891891891891891892
+		expected := `
+		| event_time | value  |
+		| ---------- | ------ |
+		| 10         | 91.891891891891891892 |
+		| 11         | 100.000000000000000000 |
+		`
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   index,
+			Expected: expected,
+		})
+
+		return nil
+	}
+}
+
+func testTruflationIndexRangeQuery(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Test composed1 range query from 10 to 12
+		streamLocator := types.StreamLocator{
+			StreamId:     truflationFrozenComposed1,
+			DataProvider: deployerTruflationComposed,
+		}
+
+		baseTime := int64(10)
+		fromTime := int64(10)
+		toTime := int64(12)
+		
+		index, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
+			Platform:      platform,
+			StreamLocator: streamLocator,
+			FromTime:      &fromTime,
+			ToTime:        &toTime,
+			FrozenAt:      &frozenAt,
+			BaseTime:      &baseTime,
+			Height:        0,
+			Prefix:        &truflationComposedPrefix,
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to get index range 10-12")
+		}
+
+		// Base value at time 10: 142.8
+		// Value at 10: 142.8, Index = 100
+		// Value at 11: (((111 / 102) * 0.6) + ((222 / 204) * 0.4)) * 100 = 108.8235~
+		// Value at 12: (((121 / 102) * 0.6) + ((232 / 204) * 0.4)) * 100 =  116.6666~
+		expected := `
+		| event_time | value  |
+		| ---------- | ------ |
+		| 10         | 100.000000000000000000 |
+		| 11         | 108.823529411764705882 |
+		| 12         | 116.666666666666666666 |
+		`
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   index,
+			Expected: expected,
+		})
+
+		// Test without frozen mechanism for comparison
+		indexNoFrozen, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
+			Platform:      platform,
+			StreamLocator: streamLocator,
+			FromTime:      &fromTime,
+			ToTime:        &toTime,
+			FrozenAt:      nil, // No frozen
+			BaseTime:      &baseTime,
+			Height:        0,
+			Prefix:        &truflationComposedPrefix,
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to get index without frozen")
+		}
+
+		// Without frozen, should select latest values (highest height)
+		expectedNoFrozen := `
+		| event_time | value  |
+		| ---------- | ------ |
+		| 10         | 100.000000000000000000 |
+		| 11         | 109.803921568627450980 |
+		| 12         | 117.647058823529411764 |
+		`
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   indexNoFrozen,
+			Expected: expectedNoFrozen,
 		})
 
 		return nil
