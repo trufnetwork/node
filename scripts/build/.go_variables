@@ -45,6 +45,26 @@ fi
 export CGO_ENABLED
 
 GO_LDFLAGS="${GO_LDFLAGS:-}"
+
+# Inject TN repo version and VCS info instead of kwil-db version
+TN_VERSION="${TN_VERSION:-$(git describe --match 'v[0-9]*' --dirty --always --tags | sed 's/^v//')}"
+TN_COMMIT="$(git rev-parse HEAD)"
+
+# Use commit time if clean, current time if dirty
+if git diff-index --quiet HEAD --; then
+    # Clean workspace - use commit time
+    TN_BUILD_TIME="$(git log -1 --format=%cI)"
+else
+    # Dirty workspace - use current build time
+    TN_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+fi
+
+# Override version info to show TN repo instead of kwil-db repo
+GO_LDFLAGS="$GO_LDFLAGS -X github.com/trufnetwork/node/cmd/version.TNVersion=${TN_VERSION}"
+GO_LDFLAGS="$GO_LDFLAGS -X github.com/trufnetwork/node/cmd/version.TNCommit=${TN_COMMIT}"
+GO_LDFLAGS="$GO_LDFLAGS -X github.com/trufnetwork/node/cmd/version.TNBuildTime=${TN_BUILD_TIME}"
+
+
 if [ "$CGO_ENABLED" = "1" ] && [ "$GO_LINKMODE" = "static" ] && [ "$(go env GOOS)" = "linux" ]; then
     GO_LDFLAGS="$GO_LDFLAGS -extldflags=-static"
 fi

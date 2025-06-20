@@ -1,9 +1,10 @@
 package main
 
 import (
-	"github.com/kwilteam/kwil-db/app"
-	"go.uber.org/zap"
 	"os"
+
+	"github.com/trufnetwork/node/app"
+	"go.uber.org/zap"
 )
 
 func main() {
