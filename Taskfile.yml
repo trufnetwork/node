@@ -42,7 +42,7 @@ tasks:
       TARGET: ./.build
     cmds:
       - for: { var: BINARIES }
-        cmd: "SOURCE=./cmd/{{.ITEM}}/main.go ./scripts/build/binary {{.ITEM}}"
+        cmd: "SOURCE=./cmd/{{.ITEM}} ./scripts/build/binary {{.ITEM}}"
 
   build:
     desc: Build all kwil binaries
