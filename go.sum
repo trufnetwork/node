@@ -1183,6 +1183,8 @@ github.com/trufnetwork/kwil-db v0.10.3-0.20250627134326-ca4b77ce1282 h1:rXK1kcJB
 github.com/trufnetwork/kwil-db v0.10.3-0.20250627134326-ca4b77ce1282/go.mod h1:xskYWZKkPSQOpSo7yqcqpZzcqIRw06dRgLb9TwIvtAI=
 github.com/trufnetwork/kwil-db/core v0.4.3-0.20250627134326-ca4b77ce1282 h1:chJTAVK789I9T1FawFKQ7lJShneqm9w7CAgqSgjQ0/A=
 github.com/trufnetwork/kwil-db/core v0.4.3-0.20250627134326-ca4b77ce1282/go.mod h1:HnOsh9+BN13LJCjiH0+XKaJzyjWKf+H9AofFFp90KwQ=
+github.com/trufnetwork/openzeppelin-merkle-tree-go v0.0.2 h1:DCq8MzbWH0wZmICNmMVsSzUHUPl+2vqRhluEABjxl88=
+github.com/trufnetwork/openzeppelin-merkle-tree-go v0.0.2/go.mod h1:Y0MJpPp9QXU5vC6Gpoilql2NkgmGNcbHm9HYC2v2N8s=
 github.com/trufnetwork/sdk-go v0.3.1 h1:sAdRwzoXe8uz8KaKmP3az/DBhmeHIY+BO86W+ZjXw1A=
 github.com/trufnetwork/sdk-go v0.3.1/go.mod h1:vcSgIR+ZRpkUJZ3DWaQVj0YSaPYkfcCPLd332Oo6RUM=
 github.com/urfave/cli v1.22.2/go.mod h1:Gos4lmkARVdJ6EkW0WaNv/tZAAMe9V7XWyB60NtXRu0=
