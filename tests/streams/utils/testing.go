@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/stretchr/testify/require"
+	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 )
 
 // withTx is a higher-order function that wraps a sub-test in its own database transaction.

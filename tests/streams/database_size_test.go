@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"testing"
 
-	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
@@ -61,9 +61,9 @@ func testDatabaseSize(t *testing.T) func(ctx context.Context, platform *kwilTest
 		}
 
 		result, err := procedure.GetDatabaseSize(ctx, procedure.GetDatabaseSizeInput{
-			Platform:      platform,
-			Locator: streamLocator,
-			Height:        0,
+			Platform: platform,
+			Locator:  streamLocator,
+			Height:   0,
 		})
 		if err != nil {
 			return errors.Wrap(err, "error getting database size")

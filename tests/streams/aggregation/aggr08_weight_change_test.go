@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
+	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"

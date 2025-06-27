@@ -14,9 +14,9 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/apd/v3"
-	"github.com/kwilteam/kwil-db/common"
-	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
+	"github.com/trufnetwork/kwil-db/common"
+	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/internal/benchmark/benchexport"
 	"github.com/trufnetwork/node/tests/streams/utils/setup"
 	"github.com/trufnetwork/sdk-go/core/util"

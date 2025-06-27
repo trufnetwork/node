@@ -14,18 +14,18 @@ import (
 	"github.com/trufnetwork/sdk-go/core/types"
 	"github.com/trufnetwork/sdk-go/core/util"
 
-	kwilTesting "github.com/kwilteam/kwil-db/testing"
+	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 )
 
 var (
 	deployerMultiLevel = util.Unsafe_NewEthereumAddressFromString("0x51111111111111ABCDEF0123456789ABCDEF0123")
 
-	primitive1 = util.GenerateStreamId("s_p1")
-	primitive2  = util.GenerateStreamId("s_p2")
-	primitive3 = util.GenerateStreamId("s_p3")
-	primitive4 = util.GenerateStreamId("s_p4")
-	composed1   = util.GenerateStreamId("s_c1")
-	composed2   = util.GenerateStreamId("s_c2")
+	primitive1     = util.GenerateStreamId("s_p1")
+	primitive2     = util.GenerateStreamId("s_p2")
+	primitive3     = util.GenerateStreamId("s_p3")
+	primitive4     = util.GenerateStreamId("s_p4")
+	composed1      = util.GenerateStreamId("s_c1")
+	composed2      = util.GenerateStreamId("s_c2")
 	parentComposed = util.GenerateStreamId("s_pc")
 )
 
@@ -93,7 +93,7 @@ func setupMultiLevelComposedStreams(testFn func(ctx context.Context, platform *k
 				Data: []setup.InsertRecordInput{{EventTime: 100, Value: 20.0}, {EventTime: 300, Value: 45.0}},
 			},
 		}); err != nil {
-			return errors.Wrap(err, "deploying primitive4")	
+			return errors.Wrap(err, "deploying primitive4")
 		}
 
 		// 2. Deploy composed streams
@@ -175,7 +175,7 @@ func testMultiLevelFunc(t *testing.T) func(ctx context.Context, platform *kwilTe
 			Actual:   result2,
 			Expected: expected2,
 		})
-		
+
 		// Parent Composed Index
 		result, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
 			Platform:      platform,

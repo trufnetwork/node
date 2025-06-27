@@ -3,9 +3,9 @@ package setup
 import (
 	"context"
 
-	"github.com/kwilteam/kwil-db/common"
-	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
+	"github.com/trufnetwork/kwil-db/common"
+	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/sdk-go/core/types"
 	"github.com/trufnetwork/sdk-go/core/util"
 )

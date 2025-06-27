@@ -1,8 +1,8 @@
 package app
 
 import (
-	"github.com/kwilteam/kwil-db/app"
 	"github.com/spf13/cobra"
+	"github.com/trufnetwork/kwil-db/app"
 	tnVersion "github.com/trufnetwork/node/cmd/version"
 )
 

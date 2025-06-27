@@ -15,8 +15,8 @@ import (
 	"github.com/trufnetwork/sdk-go/core/types"
 	"github.com/trufnetwork/sdk-go/core/util"
 
-	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/stretchr/testify/assert"
+	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 )
 
 var (

@@ -6,10 +6,10 @@ import (
 
 	"github.com/trufnetwork/sdk-go/core/types"
 
-	"github.com/kwilteam/kwil-db/common"
-	kwilTypes "github.com/kwilteam/kwil-db/core/types"
-	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
+	"github.com/trufnetwork/kwil-db/common"
+	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
+	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	testtable "github.com/trufnetwork/node/tests/streams/utils/table"
 	"github.com/trufnetwork/sdk-go/core/util"
 )
@@ -322,9 +322,9 @@ func InsertPrimitiveDataBatch(ctx context.Context, input InsertPrimitiveDataInpu
 }
 
 type InsertTruflationRecordInput struct {
-	EventTime 					int64   `json:"event_time"`
-	Value     					float64 `json:"value"`
-	TruflationCreatedAt string 	`json:"truflation_created_at"`
+	EventTime           int64   `json:"event_time"`
+	Value               float64 `json:"value"`
+	TruflationCreatedAt string  `json:"truflation_created_at"`
 }
 
 type TruflationStreamWithData struct {

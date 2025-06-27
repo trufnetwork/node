@@ -1,7 +1,7 @@
 package testutils
 
 import (
-	"github.com/kwilteam/kwil-db/testing"
+	"github.com/trufnetwork/kwil-db/testing"
 )
 
 func Ptr[T any](v T) *T {

@@ -13,7 +13,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/trufnetwork/sdk-go/core/types"
 
-	kwilTesting "github.com/kwilteam/kwil-db/testing"
+	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/internal/benchmark/trees"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
 	"github.com/trufnetwork/sdk-go/core/util"

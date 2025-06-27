@@ -14,7 +14,7 @@ import (
 
 	"github.com/pkg/errors"
 
-	kwilTesting "github.com/kwilteam/kwil-db/testing"
+	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
+	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
@@ -18,12 +18,12 @@ import (
 var (
 	deployerTruflationComposed = util.Unsafe_NewEthereumAddressFromString("0x4710a8d8f0d845da110086812a32de6d90d7ff5c")
 
-	truflationFrozenComposed1 = util.GenerateStreamId("truflation_composed1")
-	truflationFrozenPrimitive1 = util.GenerateStreamId("truflation_primitive1")
-	truflationFrozenPrimitive2 = util.GenerateStreamId("truflation_primitive2")
-	truflationFrozenComposed2 = util.GenerateStreamId("truflation_composed2")
+	truflationFrozenComposed1      = util.GenerateStreamId("truflation_composed1")
+	truflationFrozenPrimitive1     = util.GenerateStreamId("truflation_primitive1")
+	truflationFrozenPrimitive2     = util.GenerateStreamId("truflation_primitive2")
+	truflationFrozenComposed2      = util.GenerateStreamId("truflation_composed2")
 	truflationFrozenParentComposed = util.GenerateStreamId("truflation_parent_composed")
-	truflationComposedPrefix = "truflation_"
+	truflationComposedPrefix       = "truflation_"
 
 	frozenAt = int64(1714176000) // 2024-04-27
 )
@@ -76,67 +76,67 @@ func setupTruflationFrozenComposedTest(testFn func(ctx context.Context, platform
 
 		// 2. Deploy composed streams
 		if err := setup.SetupComposedStream(ctx, setup.SetupComposedStreamInput{
-			Platform: platform, 
-			StreamId: truflationFrozenComposed1, 
-			Height: 2,
+			Platform: platform,
+			StreamId: truflationFrozenComposed1,
+			Height:   2,
 		}); err != nil {
 			return errors.Wrap(err, "deploying truflationFrozenComposed1")
 		}
 
 		if err := setup.SetupComposedStream(ctx, setup.SetupComposedStreamInput{
-			Platform: platform, 
-			StreamId: truflationFrozenComposed2, 
-			Height: 2,
+			Platform: platform,
+			StreamId: truflationFrozenComposed2,
+			Height:   2,
 		}); err != nil {
 			return errors.Wrap(err, "deploying truflationFrozenComposed2")
 		}
 
 		if err := setup.SetupComposedStream(ctx, setup.SetupComposedStreamInput{
-			Platform: platform, 
-			StreamId: truflationFrozenParentComposed, 
-			Height: 2,
+			Platform: platform,
+			StreamId: truflationFrozenParentComposed,
+			Height:   2,
 		}); err != nil {
 			return errors.Wrap(err, "deploying parent composed")
 		}
 
 		// 3. Set taxonomies
 		start := int64(1)
-		
+
 		// truflationFrozenComposed1 -> truflationFrozenPrimitive1 (weight 0.6), truflationFrozenPrimitive2 (weight 0.4)
 		if err := procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
-			Platform: platform, 
-			StreamLocator: types.StreamLocator{StreamId: truflationFrozenComposed1, DataProvider: deployerTruflationComposed}, 
-			DataProviders: []string{deployerTruflationComposed.Address(), deployerTruflationComposed.Address()}, 
-			StreamIds: []string{truflationFrozenPrimitive1.String(), truflationFrozenPrimitive2.String()}, 
-			Weights: []string{"0.6", "0.4"}, 
-			StartTime: &start, 
-			Height: 3,
+			Platform:      platform,
+			StreamLocator: types.StreamLocator{StreamId: truflationFrozenComposed1, DataProvider: deployerTruflationComposed},
+			DataProviders: []string{deployerTruflationComposed.Address(), deployerTruflationComposed.Address()},
+			StreamIds:     []string{truflationFrozenPrimitive1.String(), truflationFrozenPrimitive2.String()},
+			Weights:       []string{"0.6", "0.4"},
+			StartTime:     &start,
+			Height:        3,
 		}); err != nil {
 			return errors.Wrap(err, "tax for truflationFrozenComposed1")
 		}
 
 		// truflationFrozenComposed2 -> just truflationFrozenPrimitive1 (weight 1.0) for simpler testing
 		if err := procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
-			Platform: platform, 
-			StreamLocator: types.StreamLocator{StreamId: truflationFrozenComposed2, DataProvider: deployerTruflationComposed}, 
-			DataProviders: []string{deployerTruflationComposed.Address()}, 
-			StreamIds: []string{truflationFrozenPrimitive1.String()}, 
-			Weights: []string{"1.0"}, 
-			StartTime: &start, 
-			Height: 3,
+			Platform:      platform,
+			StreamLocator: types.StreamLocator{StreamId: truflationFrozenComposed2, DataProvider: deployerTruflationComposed},
+			DataProviders: []string{deployerTruflationComposed.Address()},
+			StreamIds:     []string{truflationFrozenPrimitive1.String()},
+			Weights:       []string{"1.0"},
+			StartTime:     &start,
+			Height:        3,
 		}); err != nil {
 			return errors.Wrap(err, "tax for truflationFrozenComposed2")
 		}
 
 		// truflationFrozenParentComposed -> truflationFrozenComposed1 (weight 0.5), truflationFrozenComposed2 (weight 0.5)
 		if err := procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
-			Platform: platform, 
-			StreamLocator: types.StreamLocator{StreamId: truflationFrozenParentComposed, DataProvider: deployerTruflationComposed}, 
-			DataProviders: []string{deployerTruflationComposed.Address(), deployerTruflationComposed.Address()}, 
-			StreamIds: []string{truflationFrozenComposed1.String(), truflationFrozenComposed2.String()}, 
-			Weights: []string{"0.5", "0.5"}, 
-			StartTime: &start, 
-			Height: 3,
+			Platform:      platform,
+			StreamLocator: types.StreamLocator{StreamId: truflationFrozenParentComposed, DataProvider: deployerTruflationComposed},
+			DataProviders: []string{deployerTruflationComposed.Address(), deployerTruflationComposed.Address()},
+			StreamIds:     []string{truflationFrozenComposed1.String(), truflationFrozenComposed2.String()},
+			Weights:       []string{"0.5", "0.5"},
+			StartTime:     &start,
+			Height:        3,
 		}); err != nil {
 			return errors.Wrap(err, "tax for parent composed")
 		}
@@ -164,7 +164,7 @@ func setupTruflationFrozenComposedTest(testFn func(ctx context.Context, platform
 		insertTestRecord(truflationFrozenPrimitive1, 10, 100, "2024-04-01T10:00:00Z", 1)
 		insertTestRecord(truflationFrozenPrimitive1, 10, 101, "2024-04-15T15:30:00Z", 2)
 		insertTestRecord(truflationFrozenPrimitive1, 10, 102, "2024-04-26T23:59:59Z", 3)
-		
+
 		// Test Case 2: Mixed before and after frozen for event_time 11
 		insertTestRecord(truflationFrozenPrimitive1, 11, 110, "2024-04-20T10:00:00Z", 4)
 		insertTestRecord(truflationFrozenPrimitive1, 11, 111, "2024-04-28T10:00:00Z", 5)
@@ -186,7 +186,6 @@ func setupTruflationFrozenComposedTest(testFn func(ctx context.Context, platform
 		insertTestRecord(truflationFrozenPrimitive2, 12, 230, "2024-04-10T10:00:00Z", 16)
 		insertTestRecord(truflationFrozenPrimitive2, 12, 232, "2024-04-29T10:00:00Z", 17)
 		insertTestRecord(truflationFrozenPrimitive2, 12, 234, "2024-05-05T10:00:00Z", 18)
-
 
 		return testFn(ctx, platform)
 	}
@@ -262,7 +261,7 @@ func testTruflationComposed1(t *testing.T) func(ctx context.Context, platform *k
 func testTruflationComposed2(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		truflationFrozenComposed2 := util.GenerateStreamId("truflation_composed2")
-		
+
 		streamLocator := types.StreamLocator{
 			StreamId:     truflationFrozenComposed2,
 			DataProvider: deployerTruflationComposed,
@@ -301,7 +300,7 @@ func testTruflationComposed2(t *testing.T) func(ctx context.Context, platform *k
 func testTruflationParentComposed(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		truflationFrozenParentComposed := util.GenerateStreamId("truflation_parent_composed")
-		
+
 		streamLocator := types.StreamLocator{
 			StreamId:     truflationFrozenParentComposed,
 			DataProvider: deployerTruflationComposed,
@@ -350,7 +349,7 @@ func testTruflationComposed1Index(t *testing.T) func(ctx context.Context, platfo
 		baseTime := int64(10)
 		eventTime10 := int64(10)
 		eventTime11 := int64(11)
-		
+
 		// Test single point at event_time 10 (should be 100 as it's the base)
 		index10, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
 			Platform:      platform,
@@ -416,7 +415,7 @@ func testTruflationComposed2Index(t *testing.T) func(ctx context.Context, platfo
 		baseTime := int64(10)
 		eventTime10 := int64(10)
 		eventTime11 := int64(11)
-		
+
 		// Test range query from 10 to 11
 		index, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
 			Platform:      platform,
@@ -460,7 +459,7 @@ func testTruflationParentComposedIndex(t *testing.T) func(ctx context.Context, p
 		// Test with base_time = 10
 		baseTime := int64(10)
 		eventTime11 := int64(11)
-		
+
 		// Test single point at event_time 11
 		index11, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
 			Platform:      platform,
@@ -501,7 +500,7 @@ func testTruflationIndexWithBaseTime(t *testing.T) func(ctx context.Context, pla
 		baseTime := int64(11)
 		eventTime10 := int64(10)
 		eventTime11 := int64(11)
-		
+
 		// Get index for both times with base at 11
 		index, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
 			Platform:      platform,
@@ -561,7 +560,7 @@ func testTruflationIndexRangeQuery(t *testing.T) func(ctx context.Context, platf
 		baseTime := int64(10)
 		fromTime := int64(10)
 		toTime := int64(12)
-		
+
 		index, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
 			Platform:      platform,
 			StreamLocator: streamLocator,
