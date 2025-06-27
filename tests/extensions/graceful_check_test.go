@@ -27,8 +27,7 @@ import (
 
 const (
 	dockerImageName = "tn-db:local"
-	testChainID     = "trufnetwork-dev"
-	testOwner       = "0x742d35Cc6652C0532925a3b8d6Fd5d607E2B93F1"
+	testChainID     = "truflation-dev"
 )
 
 func TestGracefulCheckExtension(t *testing.T) {
@@ -43,11 +42,6 @@ func TestGracefulCheckExtension(t *testing.T) {
 	privateKey, err := setup.GenerateKey()
 	require.NoError(t, err, "Failed to generate private key")
 
-	// Get the user identifier from the private key to use as DB owner
-	userID, err := setup.CreateAccountIdentifier(privateKey.Public())
-	require.NoError(t, err, "Failed to create account identifier")
-	dbOwner := fmt.Sprintf("0x%x", userID.Identifier)
-
 	// Create test fixture
 	fixture := setup.NewSimpleNodeFixture(t)
 	defer func() {
@@ -56,38 +50,35 @@ func TestGracefulCheckExtension(t *testing.T) {
 		}
 	}()
 
-	// Setup the node with our custom image and the generated user as owner
+	// Setup the node with our custom image and use privateKey as database owner
 	config := &setup.KwilNodeConfig{
-		DBOwnerPubKey: dbOwner,
-		ChainID:       testChainID,
+		DBOwnerPrivateKey: privateKey,
+		ChainID:           testChainID,
 	}
 
 	err = fixture.Setup(ctx, dockerImageName, config)
 	require.NoError(t, err, "Failed to setup test fixture")
 
-	// Check what extensions and namespaces are available
-	client := fixture.Client()
-	namespacesResult, err := client.Query(ctx, "SELECT name FROM info.namespaces", nil, true)
+	// Check what extensions and namespaces are available using read-only client
+	readOnlyClient := fixture.Client()
+	namespacesResult, err := readOnlyClient.Query(ctx, "SELECT name FROM info.namespaces", nil, true)
 	require.NoError(t, err, "Failed to query namespaces")
 	t.Logf("Available namespaces: %v", namespacesResult.Values)
 
-	extensionsResult, err := client.Query(ctx, "SELECT namespace, extension FROM info.extensions", nil, true)
-	if err != nil {
-		t.Logf("Failed to query extensions (might be expected): %v", err)
-	} else {
-		t.Logf("Available extensions: %v", extensionsResult.Values)
-	}
+	// Create a client signed with the DB owner's key for deploying schemas
 
-	// Create a signed client for deploying schemas
-	signedClient, err := fixture.CreateSignedClient(ctx, privateKey)
-	require.NoError(t, err, "Failed to create signed client")
+	dbOwnerClient, err := fixture.CreateDBOwnerClient(ctx)
+	require.NoError(t, err, "Failed to create DB owner client")
+
+	dbOwnerAddress := setup.GetEthereumAddress(privateKey)
+	t.Logf("DB owner address: %s", dbOwnerAddress)
 
 	// Read the schema SQL
 	schemaSQL, err := readSchemaFile()
 	require.NoError(t, err, "Failed to read schema file")
 
 	// Deploy the schema
-	txHash, err := signedClient.ExecuteSQL(ctx, schemaSQL, nil, clientTypes.WithSyncBroadcast(true))
+	txHash, err := dbOwnerClient.ExecuteSQL(ctx, schemaSQL, nil, clientTypes.WithSyncBroadcast(true))
 	require.NoError(t, err, "Failed to deploy schema")
 
 	// Wait for the transaction to be confirmed
@@ -96,50 +87,36 @@ func TestGracefulCheckExtension(t *testing.T) {
 	require.Equal(t, uint32(0), txResp.Result.Code, "Schema deployment failed: %s", txResp.Result.Log)
 
 	// Call the graceful_check action
-	result, err := signedClient.Call(ctx, "hello", "graceful_check", nil)
+	result, err := dbOwnerClient.Call(ctx, "main", "graceful_check", nil)
 	require.NoError(t, err, "Failed to call graceful_check action")
 
 	// Verify the result
 	require.NotNil(t, result, "Call result should not be nil")
 	require.NotNil(t, result.QueryResult, "Query result should not be nil")
 
-	// The hello extension should return "hello"
+	// Expect three greeting rows
 	values := result.QueryResult.Values
-	require.Len(t, values, 1, "Should return exactly one record")
+	require.Len(t, values, 3, "Should return exactly three records")
 
-	record := values[0]
-	require.Len(t, record, 1, "Record should have one field")
-	msg := record[0]
-	assert.Equal(t, "hello", msg, "Extension should return 'hello'")
+	expected := []string{"hello", "hola", "bonjour"}
+	for i, record := range values {
+		require.Len(t, record, 1, "Each record should have one field")
+		assert.Equal(t, expected[i], record[0], "Unexpected greeting at row %d", i)
+	}
 
-	t.Logf("✓ Extension test passed: received expected message '%s'", msg)
+	t.Logf("✓ Extension test passed: received %d greeting messages", len(values))
 }
 
 // ensureDockerImageExists checks if the Docker image exists and builds it if not
 func ensureDockerImageExists(ctx context.Context) error {
-	// Check if image already exists
-	cmd := exec.CommandContext(ctx, "docker", "images", "-q", dockerImageName)
-	output, err := cmd.Output()
-	if err != nil {
-		return fmt.Errorf("failed to check for existing Docker image: %w", err)
-	}
+	// Always rebuild the image to ensure latest extension code is included
+	fmt.Printf("Building (or rebuilding) Docker image %s...\n", dockerImageName)
 
-	// If image exists, we're done
-	if strings.TrimSpace(string(output)) != "" {
-		fmt.Printf("Docker image %s already exists\n", dockerImageName)
-		return nil
-	}
-
-	// Build the image
-	fmt.Printf("Building Docker image %s...\n", dockerImageName)
-
-	// Get the project root directory
 	projectRoot, err := getProjectRoot()
 	if err != nil {
 		return fmt.Errorf("failed to find project root: %w", err)
 	}
 
-	// Build command: docker build -t tn-db:local -f deployments/Dockerfile .
 	buildCmd := exec.CommandContext(ctx, "docker", "build",
 		"-t", dockerImageName,
 		"-f", "deployments/Dockerfile",
@@ -153,7 +130,7 @@ func ensureDockerImageExists(ctx context.Context) error {
 		return fmt.Errorf("failed to build Docker image: %w", err)
 	}
 
-	fmt.Printf("Successfully built Docker image %s\n", dockerImageName)
+	fmt.Printf("Successfully built (or rebuilt) Docker image %s\n", dockerImageName)
 	return nil
 }
 

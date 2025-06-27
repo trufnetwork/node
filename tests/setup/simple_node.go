@@ -3,6 +3,7 @@ package setup
 import (
 	"context"
 	"fmt"
+	"log"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/trufnetwork/kwil-db/core/crypto"
 	"github.com/trufnetwork/kwil-db/core/crypto/auth"
 	"github.com/trufnetwork/kwil-db/core/types"
+	authExt "github.com/trufnetwork/kwil-db/extensions/auth"
 )
 
 // This file provides a simple single-node test fixture for Kwil database testing.
@@ -26,13 +28,14 @@ type SimpleNodeFixture struct {
 	pgContainer testcontainers.Container
 	endpoint    string
 	client      *client.Client
+	config      *KwilNodeConfig
 }
 
 // KwilNodeConfig holds configuration for the kwild node
 type KwilNodeConfig struct {
-	DBOwnerPubKey string
-	ChainID       string
-	Image         string
+	DBOwnerPrivateKey crypto.PrivateKey
+	ChainID           string
+	Image             string
 }
 
 // NewSimpleNodeFixture creates a new simple node fixture
@@ -52,9 +55,12 @@ func (f *SimpleNodeFixture) Setup(ctx context.Context, image string, config *Kwi
 	if config.ChainID == "" {
 		config.ChainID = "kwil-testnet"
 	}
-	if config.DBOwnerPubKey == "" {
-		config.DBOwnerPubKey = "0xabc"
+	if config.DBOwnerPrivateKey == nil {
+		panic("db owner private key is nil")
 	}
+
+	// Store config for later use
+	f.config = config
 
 	// Create a Docker network for container communication
 	networkName := "kwil-test-network"
@@ -96,7 +102,7 @@ func (f *SimpleNodeFixture) Setup(ctx context.Context, image string, config *Kwi
 
 	f.endpoint = fmt.Sprintf("http://%s:%s", kwildHost, kwildPort.Port())
 
-	// Create client
+	// Create read-only client (no signer)
 	f.client, err = client.NewClient(ctx, f.endpoint, &clientTypes.Options{
 		ChainID: config.ChainID,
 	})
@@ -132,6 +138,16 @@ func (f *SimpleNodeFixture) startPostgres(ctx context.Context, networkName strin
 
 // startKwild starts a kwild container
 func (f *SimpleNodeFixture) startKwild(ctx context.Context, image string, config *KwilNodeConfig, networkName, pgHost, pgPort string) (testcontainers.Container, error) {
+	log.Println("Starting kwild container")
+
+	// Get the proper DB owner identifier using the same method as kwild setup init
+	signer := auth.GetUserSigner(config.DBOwnerPrivateKey)
+	dbOwnerIdentifier, err := authExt.GetIdentifierFromSigner(signer)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get DB owner identifier: %w", err)
+	}
+
+	log.Println("db owner identifier:", dbOwnerIdentifier)
 	req := testcontainers.ContainerRequest{
 		Image:        image,
 		ExposedPorts: []string{"8484/tcp"},
@@ -145,7 +161,7 @@ func (f *SimpleNodeFixture) startKwild(ctx context.Context, image string, config
 			"KWILD_DB_NAME": "kwil",
 			// Required for config.sh initialization
 			"CHAIN_ID": config.ChainID,
-			"DB_OWNER": config.DBOwnerPubKey,
+			"DB_OWNER": dbOwnerIdentifier,
 			// Additional configuration overrides
 			"KWILD_APP_JSONRPC_LISTEN_ADDR": "0.0.0.0:8484",
 			"KWILD_APP_P2P_LISTEN_ADDR":     "0.0.0.0:6600",
@@ -197,20 +213,44 @@ func (f *SimpleNodeFixture) Teardown(ctx context.Context) error {
 	return nil
 }
 
-// CreateSignedClient creates a client with a signer for sending transactions
-func (f *SimpleNodeFixture) CreateSignedClient(ctx context.Context, privateKey crypto.PrivateKey) (*client.Client, error) {
-	signer := auth.GetUserSigner(privateKey)
-
-	// Use the same chain ID as the main client
+// CreateClient creates a new client with optional signer
+func (f *SimpleNodeFixture) CreateClient(ctx context.Context, privateKey crypto.PrivateKey) (*client.Client, error) {
+	// Get chain ID from the main client
 	chainInfo, err := f.client.ChainInfo(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get chain info: %w", err)
 	}
 
-	return client.NewClient(ctx, f.endpoint, &clientTypes.Options{
+	options := &clientTypes.Options{
 		ChainID: chainInfo.ChainID,
-		Signer:  signer,
-	})
+	}
+
+	// Add signer if private key provided
+	if privateKey != nil {
+		signer := auth.GetUserSigner(privateKey)
+		options.Signer = signer
+	}
+
+	return client.NewClient(ctx, f.endpoint, options)
+}
+
+// CreateSignedClient creates a client with a signer for sending transactions
+// Deprecated: Use CreateClient instead
+func (f *SimpleNodeFixture) CreateSignedClient(ctx context.Context, privateKey crypto.PrivateKey) (*client.Client, error) {
+	return f.CreateClient(ctx, privateKey)
+}
+
+// CreateDBOwnerClient creates a client signed with the DB owner's private key
+func (f *SimpleNodeFixture) CreateDBOwnerClient(ctx context.Context) (*client.Client, error) {
+	if f.config == nil || f.config.DBOwnerPrivateKey == nil {
+		return nil, fmt.Errorf("no DB owner private key available")
+	}
+	return f.CreateClient(ctx, f.config.DBOwnerPrivateKey)
+}
+
+// CreateReadOnlyClient creates a client without a signer (for queries only)
+func (f *SimpleNodeFixture) CreateReadOnlyClient(ctx context.Context) (*client.Client, error) {
+	return f.CreateClient(ctx, nil)
 }
 
 // WaitForTx waits for a transaction to be confirmed
@@ -224,10 +264,12 @@ func GenerateKey() (crypto.PrivateKey, error) {
 	return pk, err
 }
 
-// CreateAccountIdentifier creates an account identifier from a public key
-func CreateAccountIdentifier(pubKey crypto.PublicKey) (*types.AccountID, error) {
-	return &types.AccountID{
-		Identifier: pubKey.Bytes(),
-		KeyType:    pubKey.Type(),
-	}, nil
+// GetEthereumAddress returns the Ethereum address for a private key using the same method as Kwil
+func GetEthereumAddress(privateKey crypto.PrivateKey) string {
+	signer := auth.GetUserSigner(privateKey)
+	identifier, err := authExt.GetIdentifierFromSigner(signer)
+	if err != nil {
+		panic(fmt.Sprintf("failed to get identifier: %v", err))
+	}
+	return identifier
 }
