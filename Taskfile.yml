@@ -74,6 +74,13 @@ tasks:
     cmds:
       - go test -v -c -timeout 0 ./internal/benchmark -o ./.build/benchmark
 
+  # ─── docker ──────────────────────────────────────────────────────────────────
+
+  docker:build:local:
+    desc: Build Docker image for local development (no version args needed)
+    cmds:
+      - docker build -f deployments/Dockerfile -t tn-db:local .
+
   # ─── host ─────────────────────────────────────────────────────────────────────
 
   host:kwild:start:

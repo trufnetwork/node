@@ -6,8 +6,15 @@ COPY go.mod go.sum ./
 RUN go mod download
 RUN go mod verify
 
-COPY . .
+# we only need app, cmd, and internal dir contents
+# then test modifications won't affect the cached image
+COPY app/ ./app/
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
+COPY extensions/ ./extensions/
+COPY deployments/tn-entrypoint.sh ./deployments/tn-entrypoint.sh
 
+# todo: incorporate task build process, otherwise images will lack information about the build
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /app/.build/kwild /app/cmd/kwild/main.go
 
 FROM busybox:1.35.0-uclibc as busybox
