@@ -2,41 +2,26 @@ package tn_cache
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/log"
 	"github.com/trufnetwork/kwil-db/extensions/hooks"
+
+	"github.com/trufnetwork/node/extensions/tn_cache/config"
+	"github.com/trufnetwork/node/extensions/tn_cache/validation"
 )
 
-const (
-	// ExtensionName is the unique name of the extension
-	ExtensionName = "tn_cache"
-)
+// Use ExtensionName from constants
+const ExtensionName = config.ExtensionName
 
 var (
 	logger log.Logger
 )
 
-// StreamConfig represents the configuration for a single stream to be cached
-type StreamConfig struct {
-	DataProvider string `json:"data_provider"`
-	StreamID     string `json:"stream_id"`
-	CronSchedule string `json:"cron_schedule"`
-	From         int64  `json:"from,omitempty"`
-}
-
-// Config represents the extension's configuration
-type Config struct {
-	Enabled bool           `json:"enabled"`
-	Streams []StreamConfig `json:"streams"`
-}
-
-// ParseConfig parses the extension configuration from the node's config file
-func ParseConfig(service *common.Service) (*Config, error) {
+// ParseConfig parses the extension configuration from the node's config file using the new configuration system
+func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
 	logger = service.Logger.New("tn_cache")
 
 	// Get extension configuration from the node config
@@ -44,34 +29,27 @@ func ParseConfig(service *common.Service) (*Config, error) {
 	if !ok {
 		// Extension is not configured, return default disabled config
 		logger.Debug("extension not configured, disabling")
-		return &Config{Enabled: false}, nil
+		return &config.ProcessedConfig{
+			Enabled:      false,
+			Instructions: []config.InstructionDirective{},
+			Sources:      []string{},
+		}, nil
 	}
 
-	config := &Config{
-		Enabled: false,
-		Streams: []StreamConfig{},
+	// Use the new configuration loader to load and process the configuration
+	loader := config.NewLoader()
+	processedConfig, err := loader.LoadAndProcessFromMap(context.Background(), extConfig)
+	if err != nil {
+		logger.Error("failed to process configuration", "error", err)
+		return nil, fmt.Errorf("configuration processing failed: %w", err)
 	}
 
-	// Parse the enabled flag
-	enabledStr, ok := extConfig["enabled"]
-	if ok {
-		if strings.ToLower(enabledStr) == "true" {
-			config.Enabled = true
-		}
-	}
+	logger.Info("configuration processed successfully",
+		"enabled", processedConfig.Enabled,
+		"instructions_count", len(processedConfig.Instructions),
+		"sources", processedConfig.Sources)
 
-	// Parse streams configuration
-	streamsJSON, ok := extConfig["streams"]
-	if ok && config.Enabled {
-		var streams []StreamConfig
-		if err := json.Unmarshal([]byte(streamsJSON), &streams); err != nil {
-			logger.Error("failed to parse streams configuration", "error", err)
-			return nil, fmt.Errorf("invalid streams configuration: %w", err)
-		}
-		config.Streams = streams
-	}
-
-	return config, nil
+	return processedConfig, nil
 }
 
 func init() {
@@ -91,19 +69,20 @@ func init() {
 // engineReadyHook is called when the engine is ready
 // This is where we initialize our extension
 func engineReadyHook(ctx context.Context, app *common.App) error {
-	config, err := ParseConfig(app.Service)
+	processedConfig, err := ParseConfig(app.Service)
 	if err != nil {
 		return fmt.Errorf("failed to parse config: %w", err)
 	}
 
-	if !config.Enabled {
+	if !processedConfig.Enabled {
 		logger.Info("extension is disabled")
 		return nil
 	}
 
 	logger.Info("initializing extension",
-		"enabled", config.Enabled,
-		"streams_count", len(config.Streams))
+		"enabled", processedConfig.Enabled,
+		"instructions_count", len(processedConfig.Instructions),
+		"sources", processedConfig.Sources)
 
 	// Initialize extension resources
 	err = setupCacheSchema(ctx, app)
@@ -111,9 +90,9 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 		return fmt.Errorf("failed to setup cache schema: %w", err)
 	}
 
-	// Start background processes for each stream group
-	if len(config.Streams) > 0 {
-		go startBackgroundRefreshes(ctx, app, config)
+	// Start background processes for cache instructions
+	if len(processedConfig.Instructions) > 0 {
+		go startBackgroundRefreshes(ctx, app, processedConfig)
 	}
 
 	return nil
@@ -134,28 +113,37 @@ func setupCacheSchema(ctx context.Context, app *common.App) error {
 	return nil
 }
 
-// startBackgroundRefreshes starts background goroutines for scheduled refreshes
-func startBackgroundRefreshes(ctx context.Context, app *common.App, config *Config) {
-	logger.Info("starting background refreshes", "streams_count", len(config.Streams))
+// startBackgroundRefreshes starts background goroutines for scheduled refreshes using cache instructions
+func startBackgroundRefreshes(ctx context.Context, app *common.App, processedConfig *config.ProcessedConfig) {
+	logger.Info("starting background refreshes", "instructions_count", len(processedConfig.Instructions))
 
-	// Group streams by schedule for batch processing
-	scheduleGroups := make(map[string][]StreamConfig)
-	for _, stream := range config.Streams {
-		scheduleGroups[stream.CronSchedule] = append(scheduleGroups[stream.CronSchedule], stream)
+	// Group instructions by schedule for batch processing
+	scheduleGroups := make(map[string][]config.InstructionDirective)
+	for _, instruction := range processedConfig.Instructions {
+		schedule := instruction.Schedule.CronExpr
+		scheduleGroups[schedule] = append(scheduleGroups[schedule], instruction)
 	}
 
 	// Start a goroutine for each schedule group
-	for schedule, streams := range scheduleGroups {
-		go runScheduledRefreshes(ctx, app, schedule, streams)
+	for schedule, instructions := range scheduleGroups {
+		go runScheduledRefreshes(ctx, app, schedule, instructions)
 	}
 }
 
-// runScheduledRefreshes runs refreshes for a group of streams with the same schedule
-func runScheduledRefreshes(ctx context.Context, app *common.App, schedule string, streams []StreamConfig) {
-	logger.Info("started refresh routine", "schedule", schedule, "streams_count", len(streams))
+// runScheduledRefreshes runs refreshes for a group of instructions with the same schedule
+func runScheduledRefreshes(ctx context.Context, app *common.App, schedule string, instructions []config.InstructionDirective) {
+	logger.Info("started refresh routine", 
+		"schedule", schedule, 
+		"instructions_count", len(instructions))
 
-	// In a real implementation, this would use a proper cron library
-	// For simplicity, we're just logging that we would do this
+	// Validate the cron schedule 
+	if err := validation.ValidateCronSchedule(schedule); err != nil {
+		logger.Error("invalid cron schedule", "schedule", schedule, "error", err)
+		return
+	}
+
+	// In a real implementation, this would use the proper cron scheduler
+	// For now, we'll use a simplified ticker for demonstration
 	ticker := time.NewTicker(30 * time.Second) // Simplified for demo
 	defer ticker.Stop()
 
@@ -163,11 +151,13 @@ func runScheduledRefreshes(ctx context.Context, app *common.App, schedule string
 		select {
 		case <-ticker.C:
 			logger.Debug("refresh tick", "schedule", schedule)
-			for _, stream := range streams {
-				if err := refreshStreamCache(ctx, app, stream); err != nil {
-					logger.Error("failed to refresh stream cache",
-						"data_provider", stream.DataProvider,
-						"stream_id", stream.StreamID,
+			for _, instruction := range instructions {
+				if err := refreshCacheInstruction(ctx, app, instruction); err != nil {
+					logger.Error("failed to refresh cache instruction",
+						"instruction_id", instruction.ID,
+						"data_provider", instruction.DataProvider,
+						"stream_id", instruction.StreamID,
+						"type", instruction.Type,
 						"error", err)
 				}
 			}
@@ -178,11 +168,20 @@ func runScheduledRefreshes(ctx context.Context, app *common.App, schedule string
 	}
 }
 
-// refreshStreamCache refreshes the cache for a single stream
-func refreshStreamCache(ctx context.Context, app *common.App, stream StreamConfig) error {
-	logger.Debug("refreshing stream cache",
-		"data_provider", stream.DataProvider,
-		"stream_id", stream.StreamID)
-	// TODO: Placeholder for actual implementation
+// refreshCacheInstruction refreshes the cache for a single instruction directive
+func refreshCacheInstruction(ctx context.Context, app *common.App, instruction config.InstructionDirective) error {
+	logger.Debug("refreshing cache instruction",
+		"instruction_id", instruction.ID,
+		"data_provider", instruction.DataProvider,
+		"stream_id", instruction.StreamID,
+		"type", instruction.Type,
+		"include_children", instruction.IncludeChildren,
+		"source", instruction.Metadata.Source)
+
+	// TODO: Implement actual cache refresh logic based on instruction type
+	// For DirectiveSpecific: refresh cache for specific stream
+	// For DirectiveProviderWildcard: refresh cache for all streams from provider
+	// Consider instruction.IncludeChildren: if true, also cache children of composed streams
+	
 	return nil
 }
