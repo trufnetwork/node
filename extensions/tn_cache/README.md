@@ -4,30 +4,70 @@ The TN_Cache extension provides a node-local caching layer for TRUF.NETWORK spec
 
 ## Configuration
 
-Enable and configure the extension in your `config.toml` file:
+Enable and configure the extension in your node's `config.toml` file.
 
 ```toml
 [extensions.tn_cache]
-# Enable or disable the extension
+# Enable or disable the extension.
 enabled = true
 
-# Stream definitions in JSON format
-streams = '''
+# Optional: Path to a CSV file containing streams to cache.
+# The path is relative to the node's root directory.
+streams_csv_file = "cache_streams.csv"
+
+# Optional: Stream definitions in JSON format.
+# Note: Either use 'streams_inline' OR 'streams_csv_file', not both.
+streams_inline = '''
 [
   {
-    "data_provider": "0x1234567890abcdef",
-    "stream_id": "st1234",
+    "data_provider": "0x1234567890abcdef1234567890abcdef12345678",
+    "stream_id": "st123456789012345678901234567890",
     "cron_schedule": "0 * * * *",  # Hourly refresh
-    "from": 1719849600             # Optional: Only cache data after this timestamp
+    "from": 1719849600,            # Optional: Only cache data after this timestamp
+    "include_children": true       # Optional: Include children of composed streams (default: false)
   },
   {
-    "data_provider": "0xabcdef1234567890",
-    "stream_id": "st5678",
-    "cron_schedule": "0 0 * * *"   # Daily refresh at midnight
+    "data_provider": "0x9876543210fedcba9876543210fedcba98765432",
+    "stream_id": "*",
+    "cron_schedule": "0 0 * * *",
+    "include_children": false
   }
 ]
 '''
 ```
+
+### Configuration Options
+
+-   **`enabled`**: A boolean (`true` or `false`) to enable or disable the extension.
+-   **`streams_csv_file`**: (Optional) A path to a CSV file containing a list of streams to cache. The file must have columns for `data_provider`, `stream_id`, `cron_schedule`, and optional `from` and `include_children` columns.
+-   **`streams_inline`**: (Optional) A JSON-formatted string containing an array of stream objects to cache.
+
+**Note**: `streams_csv_file` and `streams_inline` are **mutually exclusive**. You must use either inline JSON or CSV file configuration, not both. The extension will error if both are provided.
+
+### Stream Definition Fields
+
+Each stream, whether in the JSON string or CSV file, can have the following fields:
+
+-   **`data_provider`**: (Required) The data provider's Ethereum address.
+-   **`stream_id`**: (Required) The ID of the stream. You can use `*` as a wildcard to cache all streams for a given data provider.
+-   **`cron_schedule`**: (Required) A standard cron expression (e.g., `0 * * * *` for hourly) that defines how often the cache should be refreshed. This field is required in both JSON and CSV configurations.
+-   **`from`**: (Optional) A Unix timestamp. If provided, the cache will only store data points with a timestamp greater than or equal to this value.
+-   **`include_children`**: (Optional) A boolean (default: `false`). When `true`, children of composed streams are included in caching. This is useful for hierarchical stream structures where you want to cache not only the parent stream but also its child components.
+
+### CSV File Format
+
+Your CSV file should look like this:
+
+```csv
+data_provider,stream_id,cron_schedule,from,include_children
+0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 * * * *,1719849600,true
+0x9876543210fedcba9876543210fedcba98765432,*,0 0 * * *,1719936000,false
+0xabcdefabcdefabcdefabcdefabcdefabcdefabcd,stcomposedstream123,0 */6 * * *,,true
+```
+
+### Configuration Validation
+
+The extension enforces that `streams_csv_file` and `streams_inline` are mutually exclusive. If both are provided, the extension will fail to start with a clear error message.
 
 ## Features
 
