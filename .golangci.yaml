@@ -9,7 +9,7 @@ output:
 linters:
   settings:
     errcheck:
-      disable-all: true
+      enable-all: false
   exclusions:
     paths:
       - deployments/infra/cdk.out
