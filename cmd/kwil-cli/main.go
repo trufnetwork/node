@@ -1,8 +1,9 @@
 package main
 
 import (
-	"go.uber.org/zap"
 	"os"
+
+	"go.uber.org/zap"
 
 	// NOTE: if extensions are used to build a kwild with new transaction
 	// payload types or serialization methods, the same extension packages that
@@ -11,7 +12,7 @@ import (
 	// concerned with activation heights, it could need to use new functionality
 	// introduced by the consensus extensions.
 
-	root "github.com/kwilteam/kwil-db/cmd/kwil-cli/cmds"
+	root "github.com/trufnetwork/kwil-db/cmd/kwil-cli/cmds"
 )
 
 func init() {

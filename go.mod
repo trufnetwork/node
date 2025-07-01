@@ -1,20 +1,21 @@
 module github.com/trufnetwork/node
 
-go 1.23.0
+go 1.24.1
 
-toolchain go1.23.6
+toolchain go1.24.4
 
 require (
 	github.com/cockroachdb/apd/v3 v3.2.1
 	github.com/docker/docker v27.3.1+incompatible
 	github.com/fbiville/markdown-table-formatter v0.3.0
 	github.com/golang-sql/civil v0.0.0-20220223132316-b832511892a9
-	github.com/kwilteam/kwil-db v0.10.3-0.20250617205457-aa9342d29961
-	github.com/kwilteam/kwil-db/core v0.4.2-0.20250616181910-4ca02d0b985b
 	github.com/pkg/errors v0.9.1
 	github.com/samber/lo v1.47.0
+	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0
-	github.com/trufnetwork/sdk-go v0.2.1-0.20250306192322-57cbdf7b5b77
+	github.com/trufnetwork/kwil-db v0.10.3-0.20250629214713-33a43e717089
+	github.com/trufnetwork/kwil-db/core v0.4.3-0.20250629214713-33a43e717089
+	github.com/trufnetwork/sdk-go v0.3.2-0.20250630062504-841b40cdb709
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20250218142911-aa4b98e5adaa
 	golang.org/x/sync v0.11.0
@@ -123,7 +124,6 @@ require (
 	github.com/knadh/koanf/providers/structs v0.1.0 // indirect
 	github.com/knadh/koanf/v2 v2.1.2 // indirect
 	github.com/koron/go-ssdp v0.0.5 // indirect
-	github.com/kwilteam/openzeppelin-merkle-tree-go v0.0.0-20250128210530-6c29061dd35f // indirect
 	github.com/lib/pq v1.10.9 // indirect
 	github.com/libp2p/go-buffer-pool v0.1.0 // indirect
 	github.com/libp2p/go-cidranger v1.1.0 // indirect
@@ -207,13 +207,13 @@ require (
 	github.com/rs/cors v1.11.1 // indirect
 	github.com/shirou/gopsutil v3.21.4-0.20210419000835-c7a38de76ee5+incompatible // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
-	github.com/spf13/cobra v1.9.1 // indirect
 	github.com/spf13/pflag v1.0.6 // indirect
 	github.com/status-im/keycard-go v0.2.0 // indirect
 	github.com/supranational/blst v0.3.13 // indirect
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7 // indirect
 	github.com/tklauser/go-sysconf v0.3.14 // indirect
 	github.com/tklauser/numcpus v0.9.0 // indirect
+	github.com/trufnetwork/openzeppelin-merkle-tree-go v0.0.2 // indirect
 	github.com/whyrusleeping/go-keyspace v0.0.0-20160322163242-5b898ac5add1 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	go.opencensus.io v0.24.0 // indirect

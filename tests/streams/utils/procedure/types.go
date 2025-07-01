@@ -1,7 +1,7 @@
 package procedure
 
 import (
-	kwilTesting "github.com/kwilteam/kwil-db/testing"
+	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/sdk-go/core/types"
 )
 

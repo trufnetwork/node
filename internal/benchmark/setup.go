@@ -11,10 +11,10 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/apd/v3"
-	"github.com/kwilteam/kwil-db/common"
-	kwilTypes "github.com/kwilteam/kwil-db/core/types"
-	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
+	"github.com/trufnetwork/kwil-db/common"
+	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
+	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/internal/benchmark/trees"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
 	"github.com/trufnetwork/node/tests/streams/utils/setup"

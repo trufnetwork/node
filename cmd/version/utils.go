@@ -3,7 +3,7 @@ package version
 import (
 	"time"
 
-	kwilVersion "github.com/kwilteam/kwil-db/version"
+	kwilVersion "github.com/trufnetwork/kwil-db/version"
 )
 
 // These variables can be overridden at build time with ldflags

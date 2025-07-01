@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/kwilteam/kwil-db/common"
 	"github.com/pkg/errors"
+	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/sdk-go/core/util"
 )
 
