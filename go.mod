@@ -2,6 +2,8 @@ module github.com/trufnetwork/node
 
 go 1.24.1
 
+toolchain go1.24.4
+
 require (
 	github.com/cockroachdb/apd/v3 v3.2.1
 	github.com/docker/docker v28.0.1+incompatible
@@ -12,9 +14,9 @@ require (
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0
 	github.com/testcontainers/testcontainers-go v0.37.0
-	github.com/trufnetwork/kwil-db v0.10.3-0.20250627134326-ca4b77ce1282
-	github.com/trufnetwork/kwil-db/core v0.4.3-0.20250627134326-ca4b77ce1282
-	github.com/trufnetwork/sdk-go v0.3.1
+	github.com/trufnetwork/kwil-db v0.10.3-0.20250629214713-33a43e717089
+	github.com/trufnetwork/kwil-db/core v0.4.3-0.20250629214713-33a43e717089
+	github.com/trufnetwork/sdk-go v0.3.2-0.20250630062504-841b40cdb709
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20250218142911-aa4b98e5adaa
 	golang.org/x/sync v0.13.0
@@ -127,7 +129,6 @@ require (
 	github.com/knadh/koanf/providers/structs v0.1.0 // indirect
 	github.com/knadh/koanf/v2 v2.1.2 // indirect
 	github.com/koron/go-ssdp v0.0.5 // indirect
-	github.com/kwilteam/openzeppelin-merkle-tree-go v0.0.0-20250128210530-6c29061dd35f // indirect
 	github.com/lib/pq v1.10.9 // indirect
 	github.com/libp2p/go-buffer-pool v0.1.0 // indirect
 	github.com/libp2p/go-cidranger v1.1.0 // indirect
