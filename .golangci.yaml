@@ -7,9 +7,6 @@ output:
       colors: true
 
 linters:
-  settings:
-    errcheck:
-      enable-all: false
   exclusions:
     paths:
       - deployments/infra/cdk.out
