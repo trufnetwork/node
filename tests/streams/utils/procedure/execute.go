@@ -36,11 +36,11 @@ func GetRecord(ctx context.Context, input GetRecordInput) ([]ResultRow, error) {
 
 	prefix := ""
 	if input.Prefix != nil {
-			prefix = *input.Prefix
+		prefix = *input.Prefix
 	}
 
 	var resultRows [][]any
-	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", prefix + "get_record", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", prefix+"get_record", []any{
 		input.StreamLocator.DataProvider.Address(),
 		input.StreamLocator.StreamId.String(),
 		input.FromTime,
@@ -91,11 +91,11 @@ func GetIndex(ctx context.Context, input GetIndexInput) ([]ResultRow, error) {
 
 	prefix := ""
 	if input.Prefix != nil {
-			prefix = *input.Prefix
+		prefix = *input.Prefix
 	}
 
 	var resultRows [][]any
-	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", prefix + "get_index", []any{
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", prefix+"get_index", []any{
 		input.StreamLocator.DataProvider.Address(),
 		input.StreamLocator.StreamId.String(),
 		input.FromTime,

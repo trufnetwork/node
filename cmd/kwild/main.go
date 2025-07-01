@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/trufnetwork/node/app"
+	_ "github.com/trufnetwork/node/extensions" // triggers extension registration via blank imports
 	"go.uber.org/zap"
 )
 

@@ -322,9 +322,9 @@ func InsertPrimitiveDataBatch(ctx context.Context, input InsertPrimitiveDataInpu
 }
 
 type InsertTruflationRecordInput struct {
-	EventTime 					int64   `json:"event_time"`
-	Value     					float64 `json:"value"`
-	TruflationCreatedAt string 	`json:"truflation_created_at"`
+	EventTime           int64   `json:"event_time"`
+	Value               float64 `json:"value"`
+	TruflationCreatedAt string  `json:"truflation_created_at"`
 }
 
 type TruflationStreamWithData struct {

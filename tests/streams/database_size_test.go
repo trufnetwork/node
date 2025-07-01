@@ -61,9 +61,9 @@ func testDatabaseSize(t *testing.T) func(ctx context.Context, platform *kwilTest
 		}
 
 		result, err := procedure.GetDatabaseSize(ctx, procedure.GetDatabaseSizeInput{
-			Platform:      platform,
-			Locator: streamLocator,
-			Height:        0,
+			Platform: platform,
+			Locator:  streamLocator,
+			Height:   0,
 		})
 		if err != nil {
 			return errors.Wrap(err, "error getting database size")
