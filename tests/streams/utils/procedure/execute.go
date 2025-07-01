@@ -7,10 +7,10 @@ import (
 	trufTypes "github.com/trufnetwork/sdk-go/core/types"
 	"github.com/trufnetwork/sdk-go/core/util"
 
-	"github.com/kwilteam/kwil-db/common"
-	kwilTypes "github.com/kwilteam/kwil-db/core/types"
-	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
+	"github.com/trufnetwork/kwil-db/common"
+	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
+	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/sdk-go/core/types"
 )
 

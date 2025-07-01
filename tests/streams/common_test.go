@@ -7,7 +7,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
-	kwilTesting "github.com/kwilteam/kwil-db/testing"
+	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 
 	"github.com/trufnetwork/node/internal/migrations"
 

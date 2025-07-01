@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	kwilTesting "github.com/kwilteam/kwil-db/testing"
 	"github.com/pkg/errors"
+	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/internal/migrations"
 	"github.com/trufnetwork/sdk-go/core/util"
 )
