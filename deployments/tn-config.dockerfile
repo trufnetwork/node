@@ -20,7 +20,7 @@ COPY $EXTERNAL_CONFIG_PATH /root/.kwild
 
 CMD ["sh", "-c", "echo 'Configuration copied'"]
 
-FROM golang:1.22.1-alpine3.19 AS build-kwil
+FROM golang:1.24.3-alpine3.21 AS build-kwil
 
 WORKDIR /app
 
