@@ -1,0 +1,58 @@
+package config
+
+// RawConfig represents the raw TOML configuration from the node config file
+type RawConfig struct {
+	Enabled       string `toml:"enabled"`
+	StreamsInline string `toml:"streams_inline,omitempty"` // JSON array as string
+	StreamsCSVFile string `toml:"streams_csv_file,omitempty"` // Path to CSV file
+}
+
+// Note: StreamSpec is now defined in sources package to avoid import cycles
+
+// ProcessedConfig is the final validated, immutable configuration
+// This is what the extension will use at runtime
+type ProcessedConfig struct {
+	Enabled      bool                    `json:"enabled"`
+	Instructions []InstructionDirective  `json:"instructions"`
+	Sources      []string                `json:"sources"` // Track config sources for debugging
+}
+
+// InstructionDirective represents a validated, executable cache instruction
+// This is imported from instructions package to avoid circular dependencies
+type InstructionDirective struct {
+	ID              string        `json:"id"`                        // Unique identifier for this directive
+	Type            DirectiveType `json:"type"`                      // Type of caching directive
+	DataProvider    string        `json:"data_provider"`             // Normalized ethereum address (lowercase)
+	StreamID        string        `json:"stream_id"`                 // Specific stream ID or "*"
+	Schedule        Schedule      `json:"schedule"`                  // Parsed cron schedule
+	TimeRange       TimeRange     `json:"time_range"`                // From/To timestamps
+	IncludeChildren bool          `json:"include_children"`          // Include children of composed streams (default: false)
+	Metadata        Metadata      `json:"metadata"`                  // Source tracking and priority
+}
+
+// DirectiveType defines the type of caching directive
+type DirectiveType string
+
+const (
+	DirectiveSpecific        DirectiveType = "specific"         // Cache a specific stream
+	DirectiveProviderWildcard DirectiveType = "provider_wildcard" // Cache all streams from provider
+)
+
+// Schedule holds both the raw cron expression and its parsed form
+type Schedule struct {
+	CronExpr string `json:"cron_expr"` // Original cron expression
+	// Note: Parsed cron.Schedule is not included here to avoid import cycles
+	// It will be parsed when needed in the execution layer
+}
+
+// TimeRange defines the time boundaries for caching
+// Only 'from' timestamp is used - data is cached from this point forward
+type TimeRange struct {
+	From *int64 `json:"from,omitempty"` // Start timestamp (unix seconds)
+}
+
+// Metadata tracks the source and priority of configuration directives
+type Metadata struct {
+	Source   string `json:"source"`   // Source identifier: "inline", "file:streams.csv"
+	Priority int    `json:"priority"` // Priority for conflict resolution (higher wins)
+}
