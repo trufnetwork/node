@@ -16,11 +16,11 @@ import (
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
 )
 
-// refreshStreamWithRetry refreshes a stream with exponential backoff retry logic using retry-go
-func (s *CacheScheduler) refreshStreamWithRetry(ctx context.Context, directive config.CacheDirective, maxRetries int) error {
+// refreshStreamDataWithRetry refreshes stream data with exponential backoff retry logic using retry-go
+func (s *CacheScheduler) refreshStreamDataWithRetry(ctx context.Context, directive config.CacheDirective, maxRetries int) error {
 	return retry.Do(
 		func() error {
-			return s.refreshStream(ctx, directive)
+			return s.refreshStreamData(ctx, directive)
 		},
 		retry.Attempts(uint(maxRetries+1)),
 		retry.Delay(1*time.Second),
@@ -138,8 +138,8 @@ func parseEventValue(v interface{}) (*types.Decimal, error) {
 	}
 }
 
-// refreshStream refreshes the cache for a single cache directive
-func (s *CacheScheduler) refreshStream(ctx context.Context, directive config.CacheDirective) error {
+// refreshStreamData refreshes the cached data for a single cache directive
+func (s *CacheScheduler) refreshStreamData(ctx context.Context, directive config.CacheDirective) error {
 	s.logger.Debug("refreshing stream",
 		"provider", directive.DataProvider,
 		"stream", directive.StreamID,

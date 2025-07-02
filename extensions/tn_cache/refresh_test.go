@@ -109,7 +109,7 @@ type mockSchedulerForRetry struct {
 	shouldFail  bool
 }
 
-func (m *mockSchedulerForRetry) refreshStream(ctx context.Context, directive config.CacheDirective) error {
+func (m *mockSchedulerForRetry) refreshStreamData(ctx context.Context, directive config.CacheDirective) error {
 	m.attempts++
 	
 	if m.shouldFail && m.attempts <= m.maxAttempts {
@@ -139,7 +139,7 @@ func TestRetryLogic(t *testing.T) {
 				StreamID:     "test",
 			}
 			
-			if err := mock.refreshStream(context.Background(), directive); err != nil {
+			if err := mock.refreshStreamData(context.Background(), directive); err != nil {
 				lastErr = err
 				if attempt < maxRetries {
 					// Would normally wait with backoff here
@@ -171,7 +171,7 @@ func TestRetryLogic(t *testing.T) {
 				StreamID:     "test",
 			}
 			
-			if err := mock.refreshStream(context.Background(), directive); err != nil {
+			if err := mock.refreshStreamData(context.Background(), directive); err != nil {
 				lastErr = err
 				if attempt < maxRetries {
 					continue

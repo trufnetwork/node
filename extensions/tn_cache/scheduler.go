@@ -308,8 +308,8 @@ func (s *CacheScheduler) createJobFunc(directives []config.CacheDirective) func(
 			dir := directive // Capture loop variable
 
 			g.Go(func() error {
-				if err := s.refreshStreamWithCircuitBreaker(ctx, dir); err != nil {
-					s.logger.Error("failed to refresh stream",
+				if err := s.refreshStreamDataWithCircuitBreaker(ctx, dir); err != nil {
+					s.logger.Error("failed to refresh stream data",
 						"provider", dir.DataProvider,
 						"stream", dir.StreamID,
 						"type", dir.Type,
@@ -365,13 +365,13 @@ func (s *CacheScheduler) getCircuitBreaker(streamKey string) *gobreaker.CircuitB
 	return cb
 }
 
-// refreshStreamWithCircuitBreaker wraps stream refresh with circuit breaker
-func (s *CacheScheduler) refreshStreamWithCircuitBreaker(ctx context.Context, directive config.CacheDirective) error {
+// refreshStreamDataWithCircuitBreaker wraps stream data refresh with circuit breaker
+func (s *CacheScheduler) refreshStreamDataWithCircuitBreaker(ctx context.Context, directive config.CacheDirective) error {
 	streamKey := fmt.Sprintf("%s/%s", directive.DataProvider, directive.StreamID)
 	cb := s.getCircuitBreaker(streamKey)
 
 	_, err := cb.Execute(func() (interface{}, error) {
-		return nil, s.refreshStreamWithRetry(ctx, directive, 3)
+		return nil, s.refreshStreamDataWithRetry(ctx, directive, 3)
 	})
 
 	return err
@@ -399,9 +399,9 @@ func (s *CacheScheduler) runInitialRefresh(directives []config.CacheDirective) {
 
 		g.Go(func() error {
 			// Panic recovery is handled by errgroup
-			if err := s.refreshStreamWithCircuitBreaker(ctx, dir); err != nil {
+			if err := s.refreshStreamDataWithCircuitBreaker(ctx, dir); err != nil {
 				// Log error but don't fail the entire group
-				s.logger.Error("failed to perform initial refresh",
+				s.logger.Error("failed to perform initial refresh of stream data",
 					"provider", dir.DataProvider,
 					"stream", dir.StreamID,
 					"error", err)
