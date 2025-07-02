@@ -59,8 +59,8 @@ func TestIncludeChildrenFunctionality(t *testing.T) {
 				processedConfig, err := loader.LoadAndProcess(context.Background(), rawConfig)
 
 				require.NoError(t, err)
-				require.Len(t, processedConfig.Instructions, 1)
-				assert.Equal(t, tc.expectedValue, processedConfig.Instructions[0].IncludeChildren)
+				require.Len(t, processedConfig.Directives, 1)
+				assert.Equal(t, tc.expectedValue, processedConfig.Directives[0].IncludeChildren)
 			})
 		}
 	})
@@ -336,7 +336,7 @@ func TestConfigValidation(t *testing.T) {
 
 			// For non-error cases, verify basic structure
 			if !tt.expectError {
-				assert.NotNil(t, result.Instructions, "Instructions should not be nil")
+				assert.NotNil(t, result.Directives, "Directives should not be nil")
 				assert.NotNil(t, result.Sources, "Sources should not be nil")
 			}
 		})
@@ -359,12 +359,12 @@ func TestWildcardStreamResolution(t *testing.T) {
 
 	require.NoError(t, err)
 	require.True(t, processedConfig.Enabled)
-	require.Len(t, processedConfig.Instructions, 1)
+	require.Len(t, processedConfig.Directives, 1)
 
-	instruction := processedConfig.Instructions[0]
-	assert.Equal(t, tnConfig.DirectiveProviderWildcard, instruction.Type)
-	assert.Equal(t, "*", instruction.StreamID)
-	assert.Equal(t, "0x1234567890abcdef1234567890abcdef12345678", instruction.DataProvider)
+	directive := processedConfig.Directives[0]
+	assert.Equal(t, tnConfig.DirectiveProviderWildcard, directive.Type)
+	assert.Equal(t, "*", directive.StreamID)
+	assert.Equal(t, "0x1234567890abcdef1234567890abcdef12345678", directive.DataProvider)
 }
 
 // TestConfigurationMergeAndDeduplication removed - redundant with TestBasicDeduplication in priority_test.go

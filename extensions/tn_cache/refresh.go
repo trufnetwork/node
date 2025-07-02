@@ -17,10 +17,10 @@ import (
 )
 
 // refreshStreamWithRetry refreshes a stream with exponential backoff retry logic using retry-go
-func (s *CacheScheduler) refreshStreamWithRetry(ctx context.Context, instruction config.InstructionDirective, maxRetries int) error {
+func (s *CacheScheduler) refreshStreamWithRetry(ctx context.Context, directive config.CacheDirective, maxRetries int) error {
 	return retry.Do(
 		func() error {
-			return s.refreshStream(ctx, instruction)
+			return s.refreshStream(ctx, directive)
 		},
 		retry.Attempts(uint(maxRetries+1)),
 		retry.Delay(1*time.Second),
@@ -28,8 +28,8 @@ func (s *CacheScheduler) refreshStreamWithRetry(ctx context.Context, instruction
 		retry.MaxDelay(30*time.Second),
 		retry.OnRetry(func(n uint, err error) {
 			s.logger.Warn("refresh failed, retrying",
-				"provider", instruction.DataProvider,
-				"stream", instruction.StreamID,
+				"provider", directive.DataProvider,
+				"stream", directive.StreamID,
 				"attempt", n,
 				"error", err)
 		}),
@@ -37,8 +37,8 @@ func (s *CacheScheduler) refreshStreamWithRetry(ctx context.Context, instruction
 			// Don't retry non-retryable errors
 			if isNonRetryableError(err) {
 				s.logger.Debug("non-retryable error, not retrying",
-					"provider", instruction.DataProvider,
-					"stream", instruction.StreamID,
+					"provider", directive.DataProvider,
+					"stream", directive.StreamID,
 					"error", err)
 				return false
 			}
@@ -138,21 +138,21 @@ func parseEventValue(v interface{}) (*types.Decimal, error) {
 	}
 }
 
-// refreshStream refreshes the cache for a single instruction directive
-func (s *CacheScheduler) refreshStream(ctx context.Context, instruction config.InstructionDirective) error {
+// refreshStream refreshes the cache for a single cache directive
+func (s *CacheScheduler) refreshStream(ctx context.Context, directive config.CacheDirective) error {
 	s.logger.Debug("refreshing stream",
-		"provider", instruction.DataProvider,
-		"stream", instruction.StreamID,
-		"type", instruction.Type)
+		"provider", directive.DataProvider,
+		"stream", directive.StreamID,
+		"type", directive.Type)
 
 	// Get stream config to check last refresh time for incremental updates
-	streamConfig, err := s.cacheDB.GetStreamConfig(ctx, instruction.DataProvider, instruction.StreamID)
+	streamConfig, err := s.cacheDB.GetStreamConfig(ctx, directive.DataProvider, directive.StreamID)
 	if err != nil {
 		return fmt.Errorf("get stream config: %w", err)
 	}
 
 	// Calculate time range for incremental refresh
-	fromTime := instruction.TimeRange.From
+	fromTime := directive.TimeRange.From
 	if streamConfig != nil && streamConfig.LastRefreshed != "" {
 		// Parse last refresh time for incremental update
 		lastRefresh, err := time.Parse(time.RFC3339, streamConfig.LastRefreshed)
@@ -164,13 +164,13 @@ func (s *CacheScheduler) refreshStream(ctx context.Context, instruction config.I
 	}
 
 	// Fetch data for the specific stream
-	// Note: At this point, all instructions should be DirectiveSpecific because wildcards
+	// Note: At this point, all directives should be DirectiveSpecific because wildcards
 	// are resolved to concrete specifications at scheduler startup. We no longer need to handle wildcards here.
-	if instruction.Type != config.DirectiveSpecific {
-		return fmt.Errorf("unexpected directive type in refresh: %s (should be specific after resolution)", instruction.Type)
+	if directive.Type != config.DirectiveSpecific {
+		return fmt.Errorf("unexpected directive type in refresh: %s (should be specific after resolution)", directive.Type)
 	}
 	
-	events, err := s.fetchSpecificStream(ctx, instruction, fromTime)
+	events, err := s.fetchSpecificStream(ctx, directive, fromTime)
 
 	if err != nil {
 		return fmt.Errorf("fetch stream data: %w", err)
@@ -183,27 +183,27 @@ func (s *CacheScheduler) refreshStream(ctx context.Context, instruction config.I
 		}
 		s.logger.Info("cached events",
 			"count", len(events),
-			"provider", instruction.DataProvider,
-			"stream", instruction.StreamID)
+			"provider", directive.DataProvider,
+			"stream", directive.StreamID)
 	} else {
 		s.logger.Debug("no new events to cache",
-			"provider", instruction.DataProvider,
-			"stream", instruction.StreamID)
+			"provider", directive.DataProvider,
+			"stream", directive.StreamID)
 	}
 
 	return nil
 }
 
 // fetchSpecificStream fetches data for a specific stream
-func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, instruction config.InstructionDirective, fromTime *int64) ([]internal.CachedEvent, error) {
+func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, directive config.CacheDirective, fromTime *int64) ([]internal.CachedEvent, error) {
 	// Determine the action to call based on stream type
 	// For now, we'll use get_record_composed as the primary action
 	action := "get_record_composed"
 
 	// Build arguments for the action call
 	args := []any{
-		instruction.DataProvider,
-		instruction.StreamID,
+		directive.DataProvider,
+		directive.StreamID,
 		fromTime, // from timestamp
 		nil,      // to timestamp (fetch all available)
 		nil,      // frozen_at (not applicable for cache refresh)
@@ -234,8 +234,8 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, instruction co
 				}
 
 				event := internal.CachedEvent{
-					DataProvider: instruction.DataProvider,
-					StreamID:     instruction.StreamID,
+					DataProvider: directive.DataProvider,
+					StreamID:     directive.StreamID,
 					EventTime:    eventTime,
 					Value:        value,
 				}
@@ -252,8 +252,8 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, instruction co
 	s.logger.Debug("fetched stream data",
 		"action", action,
 		"events", len(events),
-		"provider", instruction.DataProvider,
-		"stream", instruction.StreamID)
+		"provider", directive.DataProvider,
+		"stream", directive.StreamID)
 
 	// Log any notices from the action execution
 	if len(result.Logs) > 0 {
@@ -267,19 +267,19 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, instruction co
 // DEPRECATED: This method is no longer used in the regular refresh flow because wildcards
 // are resolved to concrete specifications at scheduler startup. All refresh operations work with specific streams only.
 // Keeping this method for potential future use or manual wildcard data fetching.
-func (s *CacheScheduler) fetchProviderStreams(ctx context.Context, instruction config.InstructionDirective, fromTime *int64) ([]internal.CachedEvent, error) {
+func (s *CacheScheduler) fetchProviderStreams(ctx context.Context, directive config.CacheDirective, fromTime *int64) ([]internal.CachedEvent, error) {
 	s.logger.Debug("fetching data for provider wildcard",
-		"provider", instruction.DataProvider,
-		"wildcard", instruction.StreamID)
+		"provider", directive.DataProvider,
+		"wildcard", directive.StreamID)
 
 	// Get all composed streams for the provider using the proper action
-	composedStreams, err := s.getComposedStreamsForProvider(ctx, instruction.DataProvider)
+	composedStreams, err := s.getComposedStreamsForProvider(ctx, directive.DataProvider)
 	if err != nil {
-		return nil, fmt.Errorf("get composed streams for provider %s: %w", instruction.DataProvider, err)
+		return nil, fmt.Errorf("get composed streams for provider %s: %w", directive.DataProvider, err)
 	}
 
 	if len(composedStreams) == 0 {
-		s.logger.Debug("no composed streams found for provider", "provider", instruction.DataProvider)
+		s.logger.Debug("no composed streams found for provider", "provider", directive.DataProvider)
 		return []internal.CachedEvent{}, nil
 	}
 
@@ -287,21 +287,21 @@ func (s *CacheScheduler) fetchProviderStreams(ctx context.Context, instruction c
 
 	// Fetch data for each composed stream
 	for _, streamID := range composedStreams {
-		// Create a temporary instruction for this specific stream
-		streamInstruction := config.InstructionDirective{
-			DataProvider: instruction.DataProvider,
+		// Create a temporary directive for this specific stream
+		streamDirective := config.CacheDirective{
+			DataProvider: directive.DataProvider,
 			StreamID:     streamID,
 			Type:         config.DirectiveSpecific,
-			TimeRange:    instruction.TimeRange,
-			Schedule:     instruction.Schedule,
+			TimeRange:    directive.TimeRange,
+			Schedule:     directive.Schedule,
 		}
 
 		// Fetch events for this specific stream
-		events, err := s.fetchSpecificStream(ctx, streamInstruction, fromTime)
+		events, err := s.fetchSpecificStream(ctx, streamDirective, fromTime)
 		if err != nil {
 			// Log error but continue with other streams
 			s.logger.Error("failed to fetch data for stream in wildcard",
-				"provider", instruction.DataProvider,
+				"provider", directive.DataProvider,
 				"stream", streamID,
 				"error", err)
 			continue
@@ -311,7 +311,7 @@ func (s *CacheScheduler) fetchProviderStreams(ctx context.Context, instruction c
 	}
 
 	s.logger.Info("fetched wildcard stream data",
-		"provider", instruction.DataProvider,
+		"provider", directive.DataProvider,
 		"streams_queried", len(composedStreams),
 		"total_events", len(allEvents))
 

@@ -33,7 +33,7 @@ func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
 		logger.Debug("extension not configured, disabling")
 		return &config.ProcessedConfig{
 			Enabled:      false,
-			Instructions: []config.InstructionDirective{},
+			Directives: []config.CacheDirective{},
 			Sources:      []string{},
 		}, nil
 	}
@@ -48,7 +48,7 @@ func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
 
 	logger.Info("configuration processed successfully",
 		"enabled", processedConfig.Enabled,
-		"instructions_count", len(processedConfig.Instructions),
+		"directives_count", len(processedConfig.Directives),
 		"sources", processedConfig.Sources)
 
 	return processedConfig, nil
@@ -90,7 +90,7 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 
 	logger.Info("initializing extension",
 		"enabled", processedConfig.Enabled,
-		"instructions_count", len(processedConfig.Instructions),
+		"directives_count", len(processedConfig.Directives),
 		"sources", processedConfig.Sources)
 
 	// Create the CacheDB instance
@@ -102,10 +102,10 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 		return fmt.Errorf("failed to setup cache schema: %w", err)
 	}
 
-	// Initialize scheduler if we have instructions
-	if len(processedConfig.Instructions) > 0 {
+	// Initialize scheduler if we have directives
+	if len(processedConfig.Directives) > 0 {
 		scheduler = NewCacheScheduler(app, cacheDB, logger)
-		if err := scheduler.Start(ctx, processedConfig.Instructions); err != nil {
+		if err := scheduler.Start(ctx, processedConfig.Directives); err != nil {
 			return fmt.Errorf("failed to start scheduler: %w", err)
 		}
 		

@@ -15,9 +15,9 @@ func TestDeduplicateResolvedSpecs(t *testing.T) {
 	cacheDB := internal.NewCacheDB(nil, logger)
 	scheduler := NewCacheScheduler(&common.App{}, cacheDB, logger)
 
-	// Helper to create instruction with optional from timestamp
-	createInstruction := func(provider, streamID string, from *int64, cronExpr string) config.InstructionDirective {
-		return config.InstructionDirective{
+	// Helper to create directive with optional from timestamp
+	createDirective := func(provider, streamID string, from *int64, cronExpr string) config.CacheDirective {
+		return config.CacheDirective{
 			ID:           provider + "_" + streamID,
 			Type:         config.DirectiveSpecific,
 			DataProvider: provider,
@@ -29,27 +29,27 @@ func TestDeduplicateResolvedSpecs(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		input    []config.InstructionDirective
-		expected int // expected number of deduplicated instructions
-		check    func([]config.InstructionDirective) bool
+		input    []config.CacheDirective
+		expected int // expected number of deduplicated directives
+		check    func([]config.CacheDirective) bool
 	}{
 		{
 			name: "no duplicates",
-			input: []config.InstructionDirective{
-				createInstruction("0xabc", "stream1", nil, "0 * * * *"),
-				createInstruction("0xabc", "stream2", nil, "0 * * * *"),
-				createInstruction("0xdef", "stream1", nil, "0 * * * *"),
+			input: []config.CacheDirective{
+				createDirective("0xabc", "stream1", nil, "0 * * * *"),
+				createDirective("0xabc", "stream2", nil, "0 * * * *"),
+				createDirective("0xdef", "stream1", nil, "0 * * * *"),
 			},
 			expected: 3,
 		},
 		{
 			name: "duplicate with earlier timestamp wins",
-			input: []config.InstructionDirective{
-				createInstruction("0xabc", "stream1", ptrInt64(2000), "0 * * * *"),
-				createInstruction("0xabc", "stream1", ptrInt64(1000), "0 0 * * *"), // should win
+			input: []config.CacheDirective{
+				createDirective("0xabc", "stream1", ptrInt64(2000), "0 * * * *"),
+				createDirective("0xabc", "stream1", ptrInt64(1000), "0 0 * * *"), // should win
 			},
 			expected: 1,
-			check: func(result []config.InstructionDirective) bool {
+			check: func(result []config.CacheDirective) bool {
 				return result[0].TimeRange.From != nil && 
 					*result[0].TimeRange.From == 1000 &&
 					result[0].Schedule.CronExpr == "0 0 * * *"
@@ -57,35 +57,35 @@ func TestDeduplicateResolvedSpecs(t *testing.T) {
 		},
 		{
 			name: "duplicate with nil timestamp (0) wins over positive",
-			input: []config.InstructionDirective{
-				createInstruction("0xabc", "stream1", ptrInt64(1000), "0 * * * *"),
-				createInstruction("0xabc", "stream1", nil, "0 0 * * *"), // should win (nil = 0)
+			input: []config.CacheDirective{
+				createDirective("0xabc", "stream1", ptrInt64(1000), "0 * * * *"),
+				createDirective("0xabc", "stream1", nil, "0 0 * * *"), // should win (nil = 0)
 			},
 			expected: 1,
-			check: func(result []config.InstructionDirective) bool {
+			check: func(result []config.CacheDirective) bool {
 				return result[0].TimeRange.From == nil &&
 					result[0].Schedule.CronExpr == "0 0 * * *"
 			},
 		},
 		{
 			name: "duplicate with same timestamp - first wins",
-			input: []config.InstructionDirective{
-				createInstruction("0xabc", "stream1", ptrInt64(1000), "0 * * * *"), // should win
-				createInstruction("0xabc", "stream1", ptrInt64(1000), "0 0 * * *"),
+			input: []config.CacheDirective{
+				createDirective("0xabc", "stream1", ptrInt64(1000), "0 * * * *"), // should win
+				createDirective("0xabc", "stream1", ptrInt64(1000), "0 0 * * *"),
 			},
 			expected: 1,
-			check: func(result []config.InstructionDirective) bool {
+			check: func(result []config.CacheDirective) bool {
 				return result[0].Schedule.CronExpr == "0 * * * *"
 			},
 		},
 		{
 			name: "multiple duplicates across providers",
-			input: []config.InstructionDirective{
-				createInstruction("0xabc", "stream1", ptrInt64(2000), "0 * * * *"),
-				createInstruction("0xabc", "stream1", ptrInt64(1000), "0 0 * * *"), // wins for 0xabc/stream1
-				createInstruction("0xdef", "stream1", ptrInt64(3000), "0 * * * *"),
-				createInstruction("0xdef", "stream1", nil, "*/5 * * * *"),          // wins for 0xdef/stream1
-				createInstruction("0xghi", "stream2", ptrInt64(1500), "0 * * * *"), // unique
+			input: []config.CacheDirective{
+				createDirective("0xabc", "stream1", ptrInt64(2000), "0 * * * *"),
+				createDirective("0xabc", "stream1", ptrInt64(1000), "0 0 * * *"), // wins for 0xabc/stream1
+				createDirective("0xdef", "stream1", ptrInt64(3000), "0 * * * *"),
+				createDirective("0xdef", "stream1", nil, "*/5 * * * *"),          // wins for 0xdef/stream1
+				createDirective("0xghi", "stream2", ptrInt64(1500), "0 * * * *"), // unique
 			},
 			expected: 3,
 		},
@@ -96,7 +96,7 @@ func TestDeduplicateResolvedSpecs(t *testing.T) {
 			result := scheduler.deduplicateResolvedSpecs(tt.input)
 			
 			if len(result) != tt.expected {
-				t.Errorf("expected %d deduplicated instructions, got %d", tt.expected, len(result))
+				t.Errorf("expected %d deduplicated directives, got %d", tt.expected, len(result))
 			}
 			
 			if tt.check != nil && !tt.check(result) {

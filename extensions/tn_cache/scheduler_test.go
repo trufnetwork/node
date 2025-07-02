@@ -99,9 +99,9 @@ func TestCacheScheduler_GroupBySchedule(t *testing.T) {
 	cacheDB := &internal.CacheDB{}
 	scheduler := NewCacheScheduler(mockApp, cacheDB, logger)
 
-	// Create test instructions with different schedules
+	// Create test directives with different schedules
 	from := int64(1640995200)
-	instructions := []config.InstructionDirective{
+	directives := []config.CacheDirective{
 		{
 			ID:           "test1",
 			DataProvider: "provider1",
@@ -126,18 +126,18 @@ func TestCacheScheduler_GroupBySchedule(t *testing.T) {
 	}
 
 	// Test grouping by schedule
-	groups := scheduler.groupBySchedule(instructions)
+	groups := scheduler.groupBySchedule(directives)
 
 	// Verify grouping
 	require.Len(t, groups, 2, "Should have 2 different schedules")
 	
 	hourlyGroup := groups["0 * * * *"]
-	require.Len(t, hourlyGroup, 2, "Hourly group should have 2 instructions")
+	require.Len(t, hourlyGroup, 2, "Hourly group should have 2 directives")
 	assert.Equal(t, "test1", hourlyGroup[0].ID)
 	assert.Equal(t, "test2", hourlyGroup[1].ID)
 
 	dailyGroup := groups["0 0 * * *"]
-	require.Len(t, dailyGroup, 1, "Daily group should have 1 instruction")
+	require.Len(t, dailyGroup, 1, "Daily group should have 1 directive")
 	assert.Equal(t, "test3", dailyGroup[0].ID)
 }
 
@@ -153,9 +153,9 @@ func TestCacheScheduler_CreateJobFunc(t *testing.T) {
 	scheduler.ctx, scheduler.cancel = context.WithCancel(context.Background())
 	defer scheduler.cancel()
 
-	// Create test instruction
+	// Create test directive
 	from := int64(1640995200)
-	instructions := []config.InstructionDirective{
+	directives := []config.CacheDirective{
 		{
 			ID:           "test1",
 			Type:         config.DirectiveSpecific,
@@ -167,7 +167,7 @@ func TestCacheScheduler_CreateJobFunc(t *testing.T) {
 	}
 
 	// Create job function
-	jobFunc := scheduler.createJobFunc(instructions)
+	jobFunc := scheduler.createJobFunc(directives)
 
 	// Test that job function can be called without panicking
 	// Note: This will likely fail due to missing database setup, but shouldn't panic

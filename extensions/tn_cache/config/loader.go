@@ -89,14 +89,14 @@ func (l *Loader) loadAndProcessInternal(ctx context.Context, configMap map[strin
 		return nil, fmt.Errorf("configuration validation failed: %w", err)
 	}
 
-	// Transform to executable instructions
-	instructions, err := l.transformToInstructions(allSpecs)
+	// Transform to cache directives
+	directives, err := l.transformToDirectives(allSpecs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to transform configuration to instructions: %w", err)
+		return nil, fmt.Errorf("failed to transform configuration to directives: %w", err)
 	}
 
-	// Deduplicate and merge instructions
-	finalInstructions := l.deduplicateInstructions(instructions)
+	// Deduplicate and merge directives
+	finalDirectives := l.deduplicateDirectives(directives)
 
 	// Ensure sources is never nil
 	if sourceNames == nil {
@@ -104,9 +104,9 @@ func (l *Loader) loadAndProcessInternal(ctx context.Context, configMap map[strin
 	}
 
 	return &ProcessedConfig{
-		Enabled:      configMap["enabled"] == "true",
-		Instructions: finalInstructions,
-		Sources:      sourceNames,
+		Enabled:    configMap["enabled"] == "true",
+		Directives: finalDirectives,
+		Sources:    sourceNames,
 	}, nil
 }
 

@@ -12,14 +12,13 @@ type RawConfig struct {
 // ProcessedConfig is the final validated, immutable configuration
 // This is what the extension will use at runtime
 type ProcessedConfig struct {
-	Enabled      bool                    `json:"enabled"`
-	Instructions []InstructionDirective  `json:"instructions"`
-	Sources      []string                `json:"sources"` // Track config sources for debugging
+	Enabled    bool              `json:"enabled"`
+	Directives []CacheDirective  `json:"directives"`
+	Sources    []string          `json:"sources"` // Track config sources for debugging
 }
 
-// InstructionDirective represents a validated, executable cache instruction
-// This is imported from instructions package to avoid circular dependencies
-type InstructionDirective struct {
+// CacheDirective represents a validated cache policy for a stream or set of streams
+type CacheDirective struct {
 	ID              string        `json:"id"`                        // Unique identifier for this directive
 	Type            DirectiveType `json:"type"`                      // Type of caching directive
 	DataProvider    string        `json:"data_provider"`             // Normalized ethereum address (lowercase)

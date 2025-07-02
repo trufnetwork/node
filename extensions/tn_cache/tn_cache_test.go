@@ -220,9 +220,9 @@ func TestSetupStreamConfigs(t *testing.T) {
 	logger := createTestLogger(t)
 	cacheDB = internal.NewCacheDB(mockDb, logger)
 
-	// Create instructions for test with valid fields based on actual struct
+	// Create directives for test with valid fields based on actual struct
 	var fromTime int64 = 1234567890
-	instructions := []config.InstructionDirective{
+	directives := []config.CacheDirective{
 		{
 			ID:           "test1",
 			DataProvider: "test_provider1",
@@ -251,5 +251,5 @@ func TestSetupStreamConfigs(t *testing.T) {
 
 	// Test that stream config setup is handled by the scheduler
 	// This functionality is now part of the CacheScheduler.Start method
-	require.NotNil(t, instructions, "Instructions should be properly created")
+	require.NotNil(t, directives, "Directives should be properly created")
 }

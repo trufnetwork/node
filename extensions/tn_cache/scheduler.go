@@ -57,23 +57,23 @@ func NewCacheSchedulerWithNamespace(app *common.App, cacheDB *internal.CacheDB, 
 }
 
 // Start initializes and starts the cache scheduler
-func (s *CacheScheduler) Start(ctx context.Context, instructions []config.InstructionDirective) error {
+func (s *CacheScheduler) Start(ctx context.Context, directives []config.CacheDirective) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.logger.Info("starting cache scheduler", "instructions", len(instructions))
+	s.logger.Info("starting cache scheduler", "directives", len(directives))
 
 	// Create cancellable context
 	s.ctx, s.cancel = context.WithCancel(ctx)
 
 	// Resolve wildcard and IncludeChildren directives to concrete stream specifications
-	resolvedStreamSpecs, err := s.resolveStreamSpecs(s.ctx, instructions)
+	resolvedStreamSpecs, err := s.resolveStreamSpecs(s.ctx, directives)
 	if err != nil {
 		return fmt.Errorf("resolve stream specs: %w", err)
 	}
 
 	s.logger.Info("resolved stream specifications",
-		"original_count", len(instructions),
+		"original_count", len(directives),
 		"resolved_count", len(resolvedStreamSpecs))
 
 	// Store stream configurations in the database
@@ -129,26 +129,26 @@ func (s *CacheScheduler) Stop() error {
 }
 
 // resolveStreamSpecs resolves wildcard and IncludeChildren directives to concrete stream specifications
-func (s *CacheScheduler) resolveStreamSpecs(ctx context.Context, instructions []config.InstructionDirective) ([]config.InstructionDirective, error) {
-	var resolvedSpecs []config.InstructionDirective
+func (s *CacheScheduler) resolveStreamSpecs(ctx context.Context, directives []config.CacheDirective) ([]config.CacheDirective, error) {
+	var resolvedSpecs []config.CacheDirective
 
-	for _, instruction := range instructions {
-		switch instruction.Type {
+	for _, directive := range directives {
+		switch directive.Type {
 		case config.DirectiveSpecific:
 			// Handle IncludeChildren for specific composed streams
-			if instruction.IncludeChildren {
+			if directive.IncludeChildren {
 				// Expand to include child streams using get_category_streams
-				s.logger.Debug("expanding specific instruction with IncludeChildren",
-					"provider", instruction.DataProvider,
-					"stream", instruction.StreamID)
+				s.logger.Debug("expanding specific directive with IncludeChildren",
+					"provider", directive.DataProvider,
+					"stream", directive.StreamID)
 
-				childStreams, err := s.getChildStreamsForComposed(ctx, instruction.DataProvider, instruction.StreamID, instruction.TimeRange.From)
+				childStreams, err := s.getChildStreamsForComposed(ctx, directive.DataProvider, directive.StreamID, directive.TimeRange.From)
 				if err != nil {
-					return nil, fmt.Errorf("expand children for %s/%s: %w", instruction.DataProvider, instruction.StreamID, err)
+					return nil, fmt.Errorf("expand children for %s/%s: %w", directive.DataProvider, directive.StreamID, err)
 				}
 
 				// Add the original stream first
-				resolvedSpecs = append(resolvedSpecs, instruction)
+				resolvedSpecs = append(resolvedSpecs, directive)
 
 				// Add each child stream as a separate specification
 				for _, childKey := range childStreams {
@@ -156,61 +156,61 @@ func (s *CacheScheduler) resolveStreamSpecs(ctx context.Context, instructions []
 					parts := strings.Split(childKey, ":")
 					if len(parts) == 2 {
 						childProvider, childStreamID := parts[0], parts[1]
-						childSpec := config.InstructionDirective{
+						childSpec := config.CacheDirective{
 							ID:           fmt.Sprintf("%s_%s_%s", childProvider, childStreamID, "child_resolved"),
 							Type:         config.DirectiveSpecific,
 							DataProvider: childProvider,
 							StreamID:     childStreamID,
-							Schedule:     instruction.Schedule,
-							TimeRange:    instruction.TimeRange,
+							Schedule:     directive.Schedule,
+							TimeRange:    directive.TimeRange,
 							IncludeChildren: false, // Avoid recursive resolution
 						}
 						resolvedSpecs = append(resolvedSpecs, childSpec)
 					}
 				}
 
-				s.logger.Info("resolved specific instruction with children",
-					"provider", instruction.DataProvider,
-					"stream", instruction.StreamID,
+				s.logger.Info("resolved specific directive with children",
+					"provider", directive.DataProvider,
+					"stream", directive.StreamID,
 					"child_count", len(childStreams))
 			} else {
-				// Keep specific instructions as-is when IncludeChildren is false
-				resolvedSpecs = append(resolvedSpecs, instruction)
+				// Keep specific directives as-is when IncludeChildren is false
+				resolvedSpecs = append(resolvedSpecs, directive)
 			}
 
 		case config.DirectiveProviderWildcard:
 			// Check for mutual exclusivity with IncludeChildren
-			if instruction.IncludeChildren {
+			if directive.IncludeChildren {
 				s.logger.Warn("both provider wildcard and IncludeChildren are set - using wildcard behavior only",
-					"provider", instruction.DataProvider,
-					"wildcard", instruction.StreamID)
+					"provider", directive.DataProvider,
+					"wildcard", directive.StreamID)
 			}
 
 			// Resolve wildcard to all composed streams for the provider
-			s.logger.Debug("resolving wildcard instruction",
-				"provider", instruction.DataProvider,
-				"wildcard", instruction.StreamID)
+			s.logger.Debug("resolving wildcard directive",
+				"provider", directive.DataProvider,
+				"wildcard", directive.StreamID)
 
-			composedStreams, err := s.getComposedStreamsForProvider(ctx, instruction.DataProvider)
+			composedStreams, err := s.getComposedStreamsForProvider(ctx, directive.DataProvider)
 			if err != nil {
-				return nil, fmt.Errorf("resolve wildcard for provider %s: %w", instruction.DataProvider, err)
+				return nil, fmt.Errorf("resolve wildcard for provider %s: %w", directive.DataProvider, err)
 			}
 
 			// Create individual specifications for each composed stream
 			for _, streamID := range composedStreams {
-				streamSpec := config.InstructionDirective{
-					ID:           fmt.Sprintf("%s_%s_%s", instruction.DataProvider, streamID, "resolved"),
+				streamSpec := config.CacheDirective{
+					ID:           fmt.Sprintf("%s_%s_%s", directive.DataProvider, streamID, "resolved"),
 					Type:         config.DirectiveSpecific, // Convert to specific
-					DataProvider: instruction.DataProvider,
+					DataProvider: directive.DataProvider,
 					StreamID:     streamID,
-					Schedule:     instruction.Schedule,
-					TimeRange:    instruction.TimeRange,
+					Schedule:     directive.Schedule,
+					TimeRange:    directive.TimeRange,
 				}
 				resolvedSpecs = append(resolvedSpecs, streamSpec)
 			}
 
-			s.logger.Info("resolved wildcard instruction",
-				"provider", instruction.DataProvider,
+			s.logger.Info("resolved wildcard directive",
+				"provider", directive.DataProvider,
 				"resolved_streams", len(composedStreams))
 		}
 	}
@@ -220,26 +220,26 @@ func (s *CacheScheduler) resolveStreamSpecs(ctx context.Context, instructions []
 }
 
 // storeStreamConfigs persists the stream configurations to the database using batch operations
-func (s *CacheScheduler) storeStreamConfigs(ctx context.Context, instructions []config.InstructionDirective) error {
-	if len(instructions) == 0 {
+func (s *CacheScheduler) storeStreamConfigs(ctx context.Context, directives []config.CacheDirective) error {
+	if len(directives) == 0 {
 		return nil
 	}
 
-	// Convert instructions to stream configs
+	// Convert directives to stream configs
 	var configs []internal.StreamCacheConfig
-	for _, instruction := range instructions {
+	for _, directive := range directives {
 		// Get the from timestamp, defaulting to 0 if not set
 		var fromTimestamp int64
-		if instruction.TimeRange.From != nil {
-			fromTimestamp = *instruction.TimeRange.From
+		if directive.TimeRange.From != nil {
+			fromTimestamp = *directive.TimeRange.From
 		}
 
 		streamConfig := internal.StreamCacheConfig{
-			DataProvider:  instruction.DataProvider,
-			StreamID:      instruction.StreamID,
+			DataProvider:  directive.DataProvider,
+			StreamID:      directive.StreamID,
 			FromTimestamp: fromTimestamp,
 			LastRefreshed: "", // Will be set on first refresh
-			CronSchedule:  instruction.Schedule.CronExpr,
+			CronSchedule:  directive.Schedule.CronExpr,
 		}
 		configs = append(configs, streamConfig)
 	}
@@ -252,25 +252,25 @@ func (s *CacheScheduler) storeStreamConfigs(ctx context.Context, instructions []
 	return nil
 }
 
-// groupBySchedule groups instructions by their cron schedule for batch processing
-func (s *CacheScheduler) groupBySchedule(instructions []config.InstructionDirective) map[string][]config.InstructionDirective {
-	scheduleGroups := make(map[string][]config.InstructionDirective)
-	for _, instruction := range instructions {
-		schedule := instruction.Schedule.CronExpr
-		scheduleGroups[schedule] = append(scheduleGroups[schedule], instruction)
+// groupBySchedule groups directives by their cron schedule for batch processing
+func (s *CacheScheduler) groupBySchedule(directives []config.CacheDirective) map[string][]config.CacheDirective {
+	scheduleGroups := make(map[string][]config.CacheDirective)
+	for _, directive := range directives {
+		schedule := directive.Schedule.CronExpr
+		scheduleGroups[schedule] = append(scheduleGroups[schedule], directive)
 	}
 	return scheduleGroups
 }
 
 // registerScheduledJob registers a cron job for a specific schedule
-func (s *CacheScheduler) registerScheduledJob(schedule string, instructions []config.InstructionDirective) error {
+func (s *CacheScheduler) registerScheduledJob(schedule string, directives []config.CacheDirective) error {
 	// Validate the cron schedule
 	if err := validation.ValidateCronSchedule(schedule); err != nil {
 		return fmt.Errorf("invalid cron schedule %s: %w", schedule, err)
 	}
 
 	// Create the job function
-	jobFunc := s.createJobFunc(instructions)
+	jobFunc := s.createJobFunc(directives)
 
 	// Register the cron job
 	entryID, err := s.cron.AddFunc(schedule, jobFunc)
@@ -281,13 +281,13 @@ func (s *CacheScheduler) registerScheduledJob(schedule string, instructions []co
 	s.jobs[schedule] = entryID
 	s.logger.Info("registered cron job",
 		"schedule", schedule,
-		"streams", len(instructions))
+		"streams", len(directives))
 
 	return nil
 }
 
 // createJobFunc creates a function that will be executed by the cron scheduler
-func (s *CacheScheduler) createJobFunc(instructions []config.InstructionDirective) func() {
+func (s *CacheScheduler) createJobFunc(directives []config.CacheDirective) func() {
 	return func() {
 		// Add panic recovery to prevent node crashes
 		defer func() {
@@ -298,21 +298,21 @@ func (s *CacheScheduler) createJobFunc(instructions []config.InstructionDirectiv
 			}
 		}()
 
-		s.logger.Debug("executing scheduled refresh", "streams", len(instructions))
+		s.logger.Debug("executing scheduled refresh", "streams", len(directives))
 
 		// Use errgroup for better error handling
 		g, ctx := errgroup.WithContext(s.ctx)
 		g.SetLimit(5) // Limit concurrent refreshes
 
-		for _, instruction := range instructions {
-			inst := instruction // Capture loop variable
+		for _, directive := range directives {
+			dir := directive // Capture loop variable
 
 			g.Go(func() error {
-				if err := s.refreshStreamWithCircuitBreaker(ctx, inst); err != nil {
+				if err := s.refreshStreamWithCircuitBreaker(ctx, dir); err != nil {
 					s.logger.Error("failed to refresh stream",
-						"provider", inst.DataProvider,
-						"stream", inst.StreamID,
-						"type", inst.Type,
+						"provider", dir.DataProvider,
+						"stream", dir.StreamID,
+						"type", dir.Type,
 						"error", err)
 				}
 				return nil // Continue with other streams
@@ -366,19 +366,19 @@ func (s *CacheScheduler) getCircuitBreaker(streamKey string) *gobreaker.CircuitB
 }
 
 // refreshStreamWithCircuitBreaker wraps stream refresh with circuit breaker
-func (s *CacheScheduler) refreshStreamWithCircuitBreaker(ctx context.Context, instruction config.InstructionDirective) error {
-	streamKey := fmt.Sprintf("%s/%s", instruction.DataProvider, instruction.StreamID)
+func (s *CacheScheduler) refreshStreamWithCircuitBreaker(ctx context.Context, directive config.CacheDirective) error {
+	streamKey := fmt.Sprintf("%s/%s", directive.DataProvider, directive.StreamID)
 	cb := s.getCircuitBreaker(streamKey)
 
 	_, err := cb.Execute(func() (interface{}, error) {
-		return nil, s.refreshStreamWithRetry(ctx, instruction, 3)
+		return nil, s.refreshStreamWithRetry(ctx, directive, 3)
 	})
 
 	return err
 }
 
 // runInitialRefresh performs an initial refresh of all streams with concurrency control
-func (s *CacheScheduler) runInitialRefresh(instructions []config.InstructionDirective) {
+func (s *CacheScheduler) runInitialRefresh(directives []config.CacheDirective) {
 	// Add panic recovery
 	defer func() {
 		if r := recover(); r != nil {
@@ -388,22 +388,22 @@ func (s *CacheScheduler) runInitialRefresh(instructions []config.InstructionDire
 		}
 	}()
 
-	s.logger.Info("starting initial refresh", "streams", len(instructions))
+	s.logger.Info("starting initial refresh", "streams", len(directives))
 
 	// Use errgroup for structured concurrency
 	g, ctx := errgroup.WithContext(s.ctx)
 	g.SetLimit(5) // Maximum 5 concurrent operations
 
-	for _, instruction := range instructions {
-		inst := instruction // Capture loop variable
+	for _, directive := range directives {
+		dir := directive // Capture loop variable
 
 		g.Go(func() error {
 			// Panic recovery is handled by errgroup
-			if err := s.refreshStreamWithCircuitBreaker(ctx, inst); err != nil {
+			if err := s.refreshStreamWithCircuitBreaker(ctx, dir); err != nil {
 				// Log error but don't fail the entire group
 				s.logger.Error("failed to perform initial refresh",
-					"provider", inst.DataProvider,
-					"stream", inst.StreamID,
+					"provider", dir.DataProvider,
+					"stream", dir.StreamID,
 					"error", err)
 			}
 			return nil // Return nil to continue with other streams
@@ -465,9 +465,9 @@ func (s *CacheScheduler) getComposedStreamsForProvider(ctx context.Context, prov
 }
 
 // deduplicateResolvedSpecs removes duplicate stream specifications, keeping the one with earliest 'from' timestamp
-func (s *CacheScheduler) deduplicateResolvedSpecs(specs []config.InstructionDirective) []config.InstructionDirective {
+func (s *CacheScheduler) deduplicateResolvedSpecs(specs []config.CacheDirective) []config.CacheDirective {
 	// Map to track seen streams: key is "provider:streamID"
-	streamMap := make(map[string]config.InstructionDirective)
+	streamMap := make(map[string]config.CacheDirective)
 	
 	for _, spec := range specs {
 		key := fmt.Sprintf("%s:%s", spec.DataProvider, spec.StreamID)
@@ -518,7 +518,7 @@ func (s *CacheScheduler) deduplicateResolvedSpecs(specs []config.InstructionDire
 	}
 	
 	// Convert map back to slice
-	deduplicated := make([]config.InstructionDirective, 0, len(streamMap))
+	deduplicated := make([]config.CacheDirective, 0, len(streamMap))
 	for _, spec := range streamMap {
 		deduplicated = append(deduplicated, spec)
 	}
