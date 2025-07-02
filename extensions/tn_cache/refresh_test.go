@@ -44,19 +44,20 @@ func TestParseEventTime(t *testing.T) {
 
 func TestParseEventValue(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    interface{}
-		expected float64
-		wantErr  bool
+		name        string
+		input       interface{}
+		expectedStr string
+		wantErr     bool
 	}{
-		{"float64", float64(123.45), 123.45, false},
-		{"float32", float32(123.45), float64(float32(123.45)), false},
-		{"int64", int64(123), 123.0, false},
-		{"int", int(123), 123.0, false},
-		{"string valid", "123.45", 123.45, false},
-		{"string invalid", "not-a-number", 0, true},
-		{"nil", nil, 0, true},
-		{"unsupported type", make(chan int), 0, true},
+		{"float64", float64(123.45), "123.450000000000000000", false},
+		{"float32", float32(123.45), "123.450000000000000000", false}, // float32 gets converted via string
+		{"int64", int64(123), "123.000000000000000000", false},
+		{"int", int(123), "123.000000000000000000", false},
+		{"string valid", "123.45", "123.450000000000000000", false},
+		{"string high precision", "123456789.123456789012345678", "123456789.123456789012345678", false},
+		{"string invalid", "not-a-number", "", true},
+		{"nil", nil, "", true},
+		{"unsupported type", make(chan int), "", true},
 	}
 
 	for _, tt := range tests {
@@ -67,7 +68,12 @@ func TestParseEventValue(t *testing.T) {
 				assert.Error(t, err)
 			} else {
 				assert.NoError(t, err)
-				assert.InDelta(t, tt.expected, result, 0.001)
+				assert.NotNil(t, result, "Result should not be nil")
+				assert.Equal(t, tt.expectedStr, result.String(), "Decimal string representation should match expected")
+				
+				// Verify precision and scale are set correctly
+				assert.Equal(t, uint16(36), result.Precision(), "Precision should be 36")
+				assert.Equal(t, uint16(18), result.Scale(), "Scale should be 18")
 			}
 		})
 	}

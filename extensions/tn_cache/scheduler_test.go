@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/log"
+	"github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
 
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
@@ -24,10 +25,11 @@ func (m *mockEngine) Call(ctx *common.EngineContext, db sql.DB, namespace, actio
 func (m *mockEngine) CallWithoutEngineCtx(ctx context.Context, db sql.DB, namespace, action string, args []any, resultFn func(*common.Row) error) (*common.CallResult, error) {
 	// Mock a successful call with sample data
 	if resultFn != nil {
-		// Simulate returning some sample events
+		// Simulate returning some sample events with decimal(36,18) value
+		testDecimal, _ := types.ParseDecimalExplicit("123.45", 36, 18)
 		row := &common.Row{
 			ColumnNames: []string{"event_time", "value"},
-			Values:      []any{int64(1640995200), float64(123.45)}, // Sample timestamp and value
+			Values:      []any{int64(1640995200), testDecimal}, // Sample timestamp and decimal value
 		}
 		if err := resultFn(row); err != nil {
 			return nil, err

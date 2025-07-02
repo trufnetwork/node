@@ -3,9 +3,12 @@ package internal
 import (
 	"context"
 	"fmt"
+	"math/big"
+	"strconv"
 	"time"
 
 	"github.com/trufnetwork/kwil-db/core/log"
+	"github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
 )
 
@@ -29,7 +32,7 @@ type CachedEvent struct {
 	DataProvider string
 	StreamID     string
 	EventTime    int64
-	Value        float64
+	Value        *types.Decimal // Use high-precision decimal for decimal(36,18) values
 }
 
 // NewCacheDB creates a new CacheDB instance
@@ -305,11 +308,17 @@ func (c *CacheDB) GetEvents(ctx context.Context, dataProvider, streamID string, 
 
 	events := make([]CachedEvent, 0, len(result.Rows))
 	for _, row := range result.Rows {
+		// Parse the value using the same logic as refresh.go
+		value, err := parseEventValueFromDB(row[3])
+		if err != nil {
+			return nil, fmt.Errorf("parse event value: %w", err)
+		}
+		
 		event := CachedEvent{
 			DataProvider: row[0].(string),
 			StreamID:     row[1].(string),
 			EventTime:    row[2].(int64),
-			Value:        row[3].(float64),
+			Value:        value,
 		}
 		events = append(events, event)
 	}
@@ -467,4 +476,50 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 	}
 
 	return len(eventsResult.Rows) > 0 && eventsResult.Rows[0][0].(bool), nil
+}
+
+// parseEventValueFromDB converts database values to *types.Decimal with decimal(36,18) precision
+// This handles values that come back from the database which may be in different formats
+func parseEventValueFromDB(v interface{}) (*types.Decimal, error) {
+	switch val := v.(type) {
+	case *types.Decimal:
+		if val == nil {
+			return nil, fmt.Errorf("nil decimal value")
+		}
+		// Ensure decimal(36,18) precision
+		if err := val.SetPrecisionAndScale(36, 18); err != nil {
+			return nil, fmt.Errorf("set precision and scale: %w", err)
+		}
+		return val, nil
+	case float64:
+		// Convert float64 to decimal(36,18) - note: may lose precision if > 15 digits
+		return types.ParseDecimalExplicit(strconv.FormatFloat(val, 'f', -1, 64), 36, 18)
+	case float32:
+		return types.ParseDecimalExplicit(strconv.FormatFloat(float64(val), 'f', -1, 32), 36, 18)
+	case int64:
+		return types.ParseDecimalExplicit(strconv.FormatInt(val, 10), 36, 18)
+	case int:
+		return types.ParseDecimalExplicit(strconv.Itoa(val), 36, 18)
+	case int32:
+		return types.ParseDecimalExplicit(strconv.FormatInt(int64(val), 10), 36, 18)
+	case uint64:
+		return types.ParseDecimalExplicit(strconv.FormatUint(val, 10), 36, 18)
+	case uint32:
+		return types.ParseDecimalExplicit(strconv.FormatUint(uint64(val), 10), 36, 18)
+	case *big.Int:
+		if val == nil {
+			return nil, fmt.Errorf("nil big.Int value")
+		}
+		return types.ParseDecimalExplicit(val.String(), 36, 18)
+	case string:
+		// Parse string directly as decimal(36,18)
+		return types.ParseDecimalExplicit(val, 36, 18)
+	case []byte:
+		// Handle potential byte array from database
+		return types.ParseDecimalExplicit(string(val), 36, 18)
+	case nil:
+		return nil, fmt.Errorf("nil value")
+	default:
+		return nil, fmt.Errorf("unsupported database value type: %T", v)
+	}
 }

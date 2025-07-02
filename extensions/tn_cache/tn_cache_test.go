@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/core/log"
+	"github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
 
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
@@ -156,7 +157,7 @@ func TestGetCachedData(t *testing.T) {
 		testDataProvider := "test_provider"
 		testStreamID := "test_stream"
 		testEventTime := int64(1234567890)
-		testValue := float64(123.456)
+		testValue, _ := types.ParseDecimalExplicit("123.456", 36, 18)
 
 		mockTx := &mockTx{
 			executeFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {

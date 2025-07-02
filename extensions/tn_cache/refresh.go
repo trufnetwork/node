@@ -96,43 +96,45 @@ func parseEventTime(v interface{}) (int64, error) {
 	}
 }
 
-// parseEventValue converts various types to float64 value
-func parseEventValue(v interface{}) (float64, error) {
+// parseEventValue converts various types to *types.Decimal with decimal(36,18) precision
+func parseEventValue(v interface{}) (*types.Decimal, error) {
 	switch val := v.(type) {
-	case float64:
-		return val, nil
-	case float32:
-		return float64(val), nil
-	case int64:
-		return float64(val), nil
-	case int:
-		return float64(val), nil
-	case int32:
-		return float64(val), nil
-	case uint64:
-		return float64(val), nil
-	case uint32:
-		return float64(val), nil
-	case *big.Int:
-		if val == nil {
-			return 0, fmt.Errorf("nil big.Int value")
-		}
-		f, _ := new(big.Float).SetInt(val).Float64()
-		return f, nil
 	case *types.Decimal:
 		if val == nil {
-			return 0, fmt.Errorf("nil decimal value")
+			return nil, fmt.Errorf("nil decimal value")
 		}
-		return val.Float64()
+		// Ensure decimal(36,18) precision
+		if err := val.SetPrecisionAndScale(36, 18); err != nil {
+			return nil, fmt.Errorf("set precision and scale: %w", err)
+		}
+		return val, nil
+	case float64:
+		// Convert float64 to decimal(36,18) - note: may lose precision if > 15 digits
+		return types.ParseDecimalExplicit(strconv.FormatFloat(val, 'f', -1, 64), 36, 18)
+	case float32:
+		return types.ParseDecimalExplicit(strconv.FormatFloat(float64(val), 'f', -1, 32), 36, 18)
+	case int64:
+		return types.ParseDecimalExplicit(strconv.FormatInt(val, 10), 36, 18)
+	case int:
+		return types.ParseDecimalExplicit(strconv.Itoa(val), 36, 18)
+	case int32:
+		return types.ParseDecimalExplicit(strconv.FormatInt(int64(val), 10), 36, 18)
+	case uint64:
+		return types.ParseDecimalExplicit(strconv.FormatUint(val, 10), 36, 18)
+	case uint32:
+		return types.ParseDecimalExplicit(strconv.FormatUint(uint64(val), 10), 36, 18)
+	case *big.Int:
+		if val == nil {
+			return nil, fmt.Errorf("nil big.Int value")
+		}
+		return types.ParseDecimalExplicit(val.String(), 36, 18)
 	case string:
-		if parsed, err := strconv.ParseFloat(val, 64); err == nil {
-			return parsed, nil
-		}
-		return 0, fmt.Errorf("invalid value string: %v", val)
+		// Parse string directly as decimal(36,18)
+		return types.ParseDecimalExplicit(val, 36, 18)
 	case nil:
-		return 0, fmt.Errorf("nil value")
+		return nil, fmt.Errorf("nil value")
 	default:
-		return 0, fmt.Errorf("unsupported value type: %T", v)
+		return nil, fmt.Errorf("unsupported value type: %T", v)
 	}
 }
 

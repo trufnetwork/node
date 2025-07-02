@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/core/log"
+	"github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
 )
 
@@ -201,18 +202,20 @@ func TestCacheDB_CacheEvents(t *testing.T) {
 	cacheDB := NewCacheDB(mockDb, logger)
 
 	// Test CacheEvents
+	testValue1, _ := types.ParseDecimalExplicit("123.456", 36, 18)
+	testValue2, _ := types.ParseDecimalExplicit("456.789", 36, 18)
 	events := []CachedEvent{
 		{
 			DataProvider: "test_provider",
 			StreamID:     "test_stream",
 			EventTime:    1234567890,
-			Value:        123.456,
+			Value:        testValue1,
 		},
 		{
 			DataProvider: "test_provider",
 			StreamID:     "test_stream",
 			EventTime:    1234567891,
-			Value:        456.789,
+			Value:        testValue2,
 		},
 	}
 
@@ -228,8 +231,8 @@ func TestCacheDB_GetEvents(t *testing.T) {
 	testStreamID := "test_stream"
 	testEventTime1 := int64(1234567890)
 	testEventTime2 := int64(1234567891)
-	testValue1 := float64(123.456)
-	testValue2 := float64(456.789)
+	testValue1, _ := types.ParseDecimalExplicit("123.456", 36, 18)
+	testValue2, _ := types.ParseDecimalExplicit("456.789", 36, 18)
 
 	// Setup mock transaction
 	mockTx := &mockTx{
