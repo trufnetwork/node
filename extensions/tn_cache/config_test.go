@@ -18,89 +18,126 @@ import (
 	"github.com/trufnetwork/node/extensions/tn_cache/config/sources"
 )
 
-// TestIncludeChildrenTransformation tests that include_children is properly transformed
-func TestIncludeChildrenTransformation(t *testing.T) {
-	t.Run("include_children transformation in JSON", func(t *testing.T) {
-		rawConfig := tnConfig.RawConfig{
-			Enabled: "true",
-			StreamsInline: `[
-				{
-					"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
-					"stream_id": "stcomposedstream123",
-					"cron_schedule": "0 * * * *",
-					"from": 1719849600,
-					"include_children": true
-				},
-				{
-					"data_provider": "0x9876543210fedcba9876543210fedcba98765432",
-					"stream_id": "stnormalstream456",
-					"cron_schedule": "0 0 * * *",
-					"include_children": false
+// TestIncludeChildrenFunctionality tests include_children field handling across JSON and CSV formats
+// This consolidates the original TestIncludeChildrenTransformation and TestCSVSource_IncludeChildrenFunctionality
+func TestIncludeChildrenFunctionality(t *testing.T) {
+	t.Run("JSON format", func(t *testing.T) {
+		testCases := []struct {
+			name               string
+			includeChildren    interface{} // can be bool or omitted
+			expectedValue      bool
+		}{
+			{"explicit_true", true, true},
+			{"explicit_false", false, false},
+			{"omitted_defaults_false", nil, false},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				var jsonConfig string
+				if tc.includeChildren == nil {
+					jsonConfig = `[{
+						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
+						"stream_id": "stcomposedstream123",
+						"cron_schedule": "0 * * * *"
+					}]`
+				} else {
+					jsonConfig = fmt.Sprintf(`[{
+						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
+						"stream_id": "stcomposedstream123",
+						"cron_schedule": "0 * * * *",
+						"include_children": %v
+					}]`, tc.includeChildren)
 				}
-			]`,
+
+				rawConfig := tnConfig.RawConfig{
+					Enabled:       "true",
+					StreamsInline: jsonConfig,
+				}
+
+				loader := tnConfig.NewLoader()
+				processedConfig, err := loader.LoadAndProcess(context.Background(), rawConfig)
+
+				require.NoError(t, err)
+				require.Len(t, processedConfig.Instructions, 1)
+				assert.Equal(t, tc.expectedValue, processedConfig.Instructions[0].IncludeChildren)
+			})
 		}
-
-		loader := tnConfig.NewLoader()
-		processedConfig, err := loader.LoadAndProcess(context.Background(), rawConfig)
-
-		require.NoError(t, err)
-		require.NotNil(t, processedConfig)
-		assert.True(t, processedConfig.Enabled)
-		assert.Len(t, processedConfig.Instructions, 2)
-
-		// Find the instruction with include_children=true
-		var composedInstruction, normalInstruction *tnConfig.InstructionDirective
-		for i := range processedConfig.Instructions {
-			if processedConfig.Instructions[i].StreamID == "stcomposedstream123" {
-				composedInstruction = &processedConfig.Instructions[i]
-			} else if processedConfig.Instructions[i].StreamID == "stnormalstream456" {
-				normalInstruction = &processedConfig.Instructions[i]
-			}
-		}
-
-		require.NotNil(t, composedInstruction)
-		require.NotNil(t, normalInstruction)
-
-		// Verify include_children values are correctly transformed
-		assert.True(t, composedInstruction.IncludeChildren, "Composed stream should have include_children=true")
-		assert.False(t, normalInstruction.IncludeChildren, "Normal stream should have include_children=false")
 	})
 
-	t.Run("include_children transformation in CSV", func(t *testing.T) {
-		csvContent := `0x1234567890abcdef1234567890abcdef12345678,stcomposedstream123,0 * * * *,1719849600,true
-0x9876543210fedcba9876543210fedcba98765432,stnormalstream456,0 0 * * *,1719936000,false`
-		csvFile := createTempCSV(t, csvContent)
-		defer cleanup(t, csvFile)
-
-		loader := tnConfig.NewLoader()
-		rawConfig := map[string]string{
-			"enabled":      "true",
-			"streams_csv_file": csvFile,
+	t.Run("CSV format", func(t *testing.T) {
+		testCases := []struct {
+			name             string
+			csvContent       string
+			expectedValues   []bool
+			expectError      bool
+			errorContains    string
+		}{
+			{
+				name:           "explicit_true",
+				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 * * * *,1719849600,true`,
+				expectedValues: []bool{true},
+			},
+			{
+				name:           "explicit_false",
+				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 * * * *,1719849600,false`,
+				expectedValues: []bool{false},
+			},
+			{
+				name:           "omitted_defaults_false",
+				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 * * * *,1719849600`,
+				expectedValues: []bool{false},
+			},
+			{
+				name:           "empty_field_defaults_false",
+				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 * * * *,1719849600,`,
+				expectedValues: []bool{false},
+			},
+			{
+				name:           "without_timestamp_but_with_include_children",
+				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 * * * *,,true`,
+				expectedValues: []bool{true},
+			},
+			{
+				name:           "mixed_values",
+				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 * * * *,1719849600,true
+0x9876543210fedcba9876543210fedcba98765432,ststream2,0 0 * * *,1719936000,false
+0xabcdefabcdefabcdefabcdefabcdefabcdefabcd,ststream3,*/15 * * * *,,true`,
+				expectedValues: []bool{true, false, true},
+			},
+			{
+				name:          "invalid_value",
+				csvContent:    `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 * * * *,1719849600,maybe`,
+				expectError:   true,
+				errorContains: "invalid include_children value",
+			},
 		}
 
-		processedConfig, err := loader.LoadAndProcessFromMap(context.Background(), rawConfig)
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				csvFile := createTempCSV(t, tc.csvContent)
+				defer cleanup(t, csvFile)
 
-		require.NoError(t, err)
-		require.NotNil(t, processedConfig)
-		assert.True(t, processedConfig.Enabled)
-		assert.Len(t, processedConfig.Instructions, 2)
+				source := sources.NewCSVSource(csvFile, "")
+				specs, err := source.Load(context.Background(), map[string]string{})
 
-		// Find the instructions
-		var composedInstruction, normalInstruction *tnConfig.InstructionDirective
-		for i := range processedConfig.Instructions {
-			if processedConfig.Instructions[i].StreamID == "stcomposedstream123" {
-				composedInstruction = &processedConfig.Instructions[i]
-			} else if processedConfig.Instructions[i].StreamID == "stnormalstream456" {
-				normalInstruction = &processedConfig.Instructions[i]
-			}
+				if tc.expectError {
+					require.Error(t, err)
+					if tc.errorContains != "" {
+						assert.Contains(t, err.Error(), tc.errorContains)
+					}
+					return
+				}
+
+				require.NoError(t, err)
+				require.Len(t, specs, len(tc.expectedValues))
+
+				for i, expected := range tc.expectedValues {
+					assert.Equal(t, expected, specs[i].IncludeChildren,
+						"Spec %d: expected include_children=%v, got %v", i, expected, specs[i].IncludeChildren)
+				}
+			})
 		}
-
-		require.NotNil(t, composedInstruction)
-		require.NotNil(t, normalInstruction)
-
-		// Verify include_children values are correctly transformed
-		assert.True(t, composedInstruction.IncludeChildren, "Composed stream should have include_children=true")
-		assert.False(t, normalInstruction.IncludeChildren, "Normal stream should have include_children=false")
 	})
 }
 
@@ -330,93 +367,72 @@ func TestWildcardStreamResolution(t *testing.T) {
 	assert.Equal(t, "0x1234567890abcdef1234567890abcdef12345678", instruction.DataProvider)
 }
 
-// TestConfigurationMergeAndDeduplication tests that duplicate configurations are handled correctly
-func TestConfigurationMergeAndDeduplication(t *testing.T) {
-	rawConfig := tnConfig.RawConfig{
-		Enabled: "true",
-		StreamsInline: `[
-			{
-				"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
-				"stream_id": "st123456789012345678901234567890",
-				"cron_schedule": "0 * * * *"
-			},
-			{
-				"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
-				"stream_id": "st123456789012345678901234567890",
-				"cron_schedule": "0 0 * * *"
-			}
-		]`,
-	}
+// TestConfigurationMergeAndDeduplication removed - redundant with TestBasicDeduplication in priority_test.go
+// Both tests verify the same "first configuration wins" deduplication logic
 
-	loader := tnConfig.NewLoader()
-	processedConfig, err := loader.LoadAndProcess(context.Background(), rawConfig)
-
-	require.NoError(t, err)
-	require.True(t, processedConfig.Enabled)
-	
-	// Should deduplicate to only one instruction (first one wins - simple deduplication)
-	require.Len(t, processedConfig.Instructions, 1)
-	
-	instruction := processedConfig.Instructions[0]
-	assert.Equal(t, tnConfig.DirectiveSpecific, instruction.Type)
-	assert.Equal(t, "0x1234567890abcdef1234567890abcdef12345678", instruction.DataProvider)
-	assert.Equal(t, "st123456789012345678901234567890", instruction.StreamID)
-	// Note: With simplified deduplication, first cron schedule wins: "0 * * * *"
-	assert.Equal(t, "0 * * * *", instruction.Schedule.CronExpr)
-}
-
-// TestCronScheduleValidation tests the cron schedule validation specifically
+// TestCronScheduleValidation tests cron schedule validation across both JSON and CSV formats
+// This consolidates the original TestCronScheduleValidation and TestCSVSource_CronScheduleVariations
 func TestCronScheduleValidation(t *testing.T) {
-	validSchedules := []string{
-		"0 * * * *",      // Every hour
-		"0 0 * * *",      // Daily at midnight
-		"0 0 * * 0",      // Weekly on Sunday
-		"0 0 1 * *",      // Monthly on 1st
-		"*/15 * * * *",   // Every 15 minutes
+	testCases := []struct {
+		name        string
+		schedule    string
+		shouldError bool
+		description string
+	}{
+		// Valid schedules (consolidated from both tests)
+		{"hourly", "0 * * * *", false, "Every hour"},
+		{"daily", "0 0 * * *", false, "Daily at midnight"},
+		{"weekly", "0 0 * * 0", false, "Weekly on Sunday"},
+		{"monthly", "0 0 1 * *", false, "Monthly on 1st"},
+		{"every_15_min", "*/15 * * * *", false, "Every 15 minutes"},
+		{"complex_weekdays", "30 2 * * 1-5", false, "Weekdays at 2:30 AM"},
+		
+		// Invalid schedules
+		{"invalid_text", "invalid", true, "Non-cron text"},
+		{"invalid_minute", "60 * * * *", true, "Invalid minute (60)"},
+		{"too_many_fields", "* * * * * *", true, "Too many fields"},
+		{"too_few_fields", "0", true, "Too few fields"},
+		{"empty", "", true, "Empty schedule"},
 	}
 
-	invalidSchedules := []string{
-		"invalid",
-		"60 * * * *",     // Invalid minute
-		"* * * * * *",    // Too many fields
-		"0",              // Too few fields
-		"",               // Empty
-	}
-
-	for _, schedule := range validSchedules {
-		t.Run("valid_"+schedule, func(t *testing.T) {
+	for _, tc := range testCases {
+		t.Run("json_"+tc.name, func(t *testing.T) {
+			// Test through JSON configuration (full pipeline validation)
 			rawConfig := tnConfig.RawConfig{
 				Enabled: "true",
 				StreamsInline: fmt.Sprintf(`[{
 					"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 					"stream_id": "st123456789012345678901234567890",
 					"cron_schedule": "%s"
-				}]`, schedule),
+				}]`, tc.schedule),
 			}
 
 			loader := tnConfig.NewLoader()
 			_, err := loader.LoadAndProcess(context.Background(), rawConfig)
-			require.NoError(t, err, "Valid cron schedule should not fail: %s", schedule)
-		})
-	}
-
-	for _, schedule := range invalidSchedules {
-		t.Run("invalid_"+schedule, func(t *testing.T) {
-			rawConfig := tnConfig.RawConfig{
-				Enabled: "true",
-				StreamsInline: fmt.Sprintf(`[{
-					"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
-					"stream_id": "st123456789012345678901234567890",
-					"cron_schedule": "%s"
-				}]`, schedule),
+			
+			if tc.shouldError {
+				require.Error(t, err, "Expected error for %s: %s", tc.description, tc.schedule)
+				assert.Contains(t, err.Error(), "cron_schedule validation failed")
+			} else {
+				require.NoError(t, err, "Expected success for %s: %s", tc.description, tc.schedule)
 			}
-
-			loader := tnConfig.NewLoader()
-			_, err := loader.LoadAndProcess(context.Background(), rawConfig)
-			require.Error(t, err, "Invalid cron schedule should fail: %s", schedule)
-			assert.Contains(t, err.Error(), "cron_schedule validation failed", 
-				"Error should indicate cron validation failure")
 		})
+
+		// Only test valid schedules through CSV (CSV source doesn't validate cron syntax)
+		if !tc.shouldError {
+			t.Run("csv_"+tc.name, func(t *testing.T) {
+				csvContent := fmt.Sprintf("0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,%s", tc.schedule)
+				csvFile := createTempCSV(t, csvContent)
+				defer cleanup(t, csvFile)
+
+				source := sources.NewCSVSource(csvFile, "")
+				specs, err := source.Load(context.Background(), map[string]string{})
+				
+				require.NoError(t, err, "CSV loading should succeed for valid cron: %s", tc.schedule)
+				require.Len(t, specs, 1)
+				assert.Equal(t, tc.schedule, specs[0].CronSchedule)
+			})
+		}
 	}
 }
 
@@ -698,128 +714,11 @@ func TestMutualExclusivity(t *testing.T) {
 	})
 }
 
-// TestCSVSource_IncludeChildrenFunctionality tests the include_children field
-func TestCSVSource_IncludeChildrenFunctionality(t *testing.T) {
-	tests := []struct {
-		name                 string
-		csvContent          string
-		expectedSpecs       int
-		expectError         bool
-		errorContains       string
-		expectedChildren    []bool // Expected include_children values for each spec
-	}{
-		{
-			name: "CSV with include_children true",
-			csvContent: `0x1234567890abcdef1234567890abcdef12345678,stcomposedstream123,0 * * * *,1719849600,true`,
-			expectedSpecs: 1,
-			expectError: false,
-			expectedChildren: []bool{true},
-		},
-		{
-			name: "CSV with include_children false",
-			csvContent: `0x1234567890abcdef1234567890abcdef12345678,stcomposedstream123,0 * * * *,1719849600,false`,
-			expectedSpecs: 1,
-			expectError: false,
-			expectedChildren: []bool{false},
-		},
-		{
-			name: "CSV without include_children (defaults to false)",
-			csvContent: `0x1234567890abcdef1234567890abcdef12345678,stcomposedstream123,0 * * * *,1719849600`,
-			expectedSpecs: 1,
-			expectError: false,
-			expectedChildren: []bool{false},
-		},
-		{
-			name: "CSV without timestamp but with include_children",
-			csvContent: `0x1234567890abcdef1234567890abcdef12345678,stcomposedstream123,0 * * * *,,true`,
-			expectedSpecs: 1,
-			expectError: false,
-			expectedChildren: []bool{true},
-		},
-		{
-			name: "Mixed include_children values",
-			csvContent: `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 * * * *,1719849600,true
-0x9876543210fedcba9876543210fedcba98765432,ststream2,0 0 * * *,1719936000,false
-0xabcdefabcdefabcdefabcdefabcdefabcdefabcd,ststream3,*/15 * * * *,,true`,
-			expectedSpecs: 3,
-			expectError: false,
-			expectedChildren: []bool{true, false, true},
-		},
-		{
-			name: "Invalid include_children value",
-			csvContent: `0x1234567890abcdef1234567890abcdef12345678,stcomposedstream123,0 * * * *,1719849600,maybe`,
-			expectedSpecs: 0,
-			expectError: true,
-			errorContains: "invalid include_children value",
-		},
-		{
-			name: "Empty include_children field (should default to false)",
-			csvContent: `0x1234567890abcdef1234567890abcdef12345678,stcomposedstream123,0 * * * *,1719849600,`,
-			expectedSpecs: 1,
-			expectError: false,
-			expectedChildren: []bool{false},
-		},
-	}
+// TestCSVSource_IncludeChildrenFunctionality removed - consolidated into TestIncludeChildrenFunctionality
+// This test was redundant with the comprehensive include_children test above
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			csvFile := createTempCSV(t, tt.csvContent)
-			defer cleanup(t, csvFile)
-
-			source := sources.NewCSVSource(csvFile, "")
-			specs, err := source.Load(context.Background(), map[string]string{})
-
-			if tt.expectError {
-				require.Error(t, err)
-				if tt.errorContains != "" {
-					assert.Contains(t, err.Error(), tt.errorContains)
-				}
-				return
-			}
-
-			require.NoError(t, err)
-			assert.Len(t, specs, tt.expectedSpecs)
-
-			// Validate include_children values
-			for i, spec := range specs {
-				if i < len(tt.expectedChildren) {
-					assert.Equal(t, tt.expectedChildren[i], spec.IncludeChildren, 
-						"Spec %d: expected include_children=%v, got %v", i, tt.expectedChildren[i], spec.IncludeChildren)
-				}
-			}
-		})
-	}
-}
-
-// TestCSVSource_CronScheduleVariations tests different cron schedules
-func TestCSVSource_CronScheduleVariations(t *testing.T) {
-	schedules := []struct {
-		name     string
-		cron     string
-		expected string
-	}{
-		{"hourly", "0 * * * *", "0 * * * *"},
-		{"daily", "0 0 * * *", "0 0 * * *"},
-		{"weekly", "0 0 * * 0", "0 0 * * 0"},
-		{"every_15_min", "*/15 * * * *", "*/15 * * * *"},
-		{"custom", "30 2 * * 1-5", "30 2 * * 1-5"},
-	}
-
-	for _, schedule := range schedules {
-		t.Run(schedule.name, func(t *testing.T) {
-			csvContent := fmt.Sprintf("0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,%s", schedule.cron)
-			csvFile := createTempCSV(t, csvContent)
-			defer cleanup(t, csvFile)
-
-			source := sources.NewCSVSource(csvFile, "")
-			specs, err := source.Load(context.Background(), map[string]string{})
-			
-			require.NoError(t, err)
-			require.Len(t, specs, 1)
-			assert.Equal(t, schedule.expected, specs[0].CronSchedule)
-		})
-	}
-}
+// TestCSVSource_CronScheduleVariations removed - consolidated into TestCronScheduleValidation
+// This test was redundant with the comprehensive cron validation test above
 
 // TestCSVSource_TimestampHandling tests various timestamp scenarios
 func TestCSVSource_TimestampHandling(t *testing.T) {
@@ -900,199 +799,11 @@ func TestCSVSource_TimestampHandling(t *testing.T) {
 	}
 }
 
-// TestCSVSource_Integration tests integration with the main configuration system
-func TestCSVSource_Integration(t *testing.T) {
-	t.Run("CSV source through SourceFactory", func(t *testing.T) {
-		// Create test CSV file
-		csvContent := `0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 0 * * *,1719849600
-0x9876543210fedcba9876543210fedcba98765432,*,0 * * * *`
-		csvFile := createTempCSV(t, csvContent)
-		defer cleanup(t, csvFile)
+// TestCSVSource_Integration removed - redundant with TestCSVSource_BasicFunctionality and TestMutualExclusivity
+// This test duplicated CSV parsing scenarios already covered in more focused unit tests
 
-		// Test SourceFactory creation
-		factory := sources.NewSourceFactory()
-		rawConfig := map[string]string{
-			"streams_csv_file": csvFile,
-		}
-
-		configSources, err := factory.CreateSources(rawConfig)
-		require.NoError(t, err)
-		require.Len(t, configSources, 1)
-
-		// Test source validation
-		source := configSources[0]
-		err = source.Validate(rawConfig)
-		require.NoError(t, err)
-
-		// Test source loading
-		specs, err := source.Load(context.Background(), rawConfig)
-		require.NoError(t, err)
-		assert.Len(t, specs, 2)
-
-		// Verify specs
-		assert.Equal(t, "0x1234567890abcdef1234567890abcdef12345678", specs[0].DataProvider)
-		assert.Equal(t, "st123456789012345678901234567890", specs[0].StreamID)
-		assert.Equal(t, "0 0 * * *", specs[0].CronSchedule)
-		assert.NotNil(t, specs[0].From)
-		assert.Equal(t, int64(1719849600), *specs[0].From)
-
-		assert.Equal(t, "0x9876543210fedcba9876543210fedcba98765432", specs[1].DataProvider)
-		assert.Equal(t, "*", specs[1].StreamID)
-		assert.Equal(t, "0 0 * * *", specs[1].CronSchedule)
-		assert.Nil(t, specs[1].From)
-	})
-
-	t.Run("CSV source with default cron schedule", func(t *testing.T) {
-		csvContent := `0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 * * * *`
-		csvFile := createTempCSV(t, csvContent)
-		defer cleanup(t, csvFile)
-
-		factory := sources.NewSourceFactory()
-		rawConfig := map[string]string{
-			"csv_file": csvFile,
-			// No cron_schedule provided - should use default
-		}
-
-		configSources, err := factory.CreateSources(rawConfig)
-		require.NoError(t, err)
-		require.Len(t, configSources, 1)
-
-		specs, err := configSources[0].Load(context.Background(), rawConfig)
-		require.NoError(t, err)
-		assert.Len(t, specs, 1)
-		assert.Equal(t, "0 * * * *", specs[0].CronSchedule) // Default schedule
-	})
-
-	t.Run("mutually exclusive inline and CSV sources", func(t *testing.T) {
-		csvContent := `0x1111111111111111111111111111111111111111,st111111111111111111111111111111,0 * * * *`
-		csvFile := createTempCSV(t, csvContent)
-		defer cleanup(t, csvFile)
-
-		factory := sources.NewSourceFactory()
-		rawConfig := map[string]string{
-			"streams_inline": `[{
-				"data_provider": "0x2222222222222222222222222222222222222222",
-				"stream_id": "st222222222222222222222222222222",
-				"cron_schedule": "0 0 * * *"
-			}]`,
-			"streams_csv_file":  csvFile,
-			"cron_schedule": "0 * * * *",
-		}
-
-		// Should error when both JSON and CSV are provided
-		_, err := factory.CreateSources(rawConfig)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "cannot specify both 'streams_inline' and 'streams_csv_file'")
-		assert.Contains(t, err.Error(), "use either inline JSON or CSV file, not both")
-	})
-}
-
-// TestCSVSource_LoaderIntegration tests CSV source with the configuration loader
-func TestCSVSource_LoaderIntegration(t *testing.T) {
-	t.Run("full loader integration with CSV", func(t *testing.T) {
-		// Create test CSV file
-		csvContent := `0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 0 * * *,1719849600
-0x9876543210fedcba9876543210fedcba98765432,*,0 0 * * *,1719936000`
-		csvFile := createTempCSV(t, csvContent)
-		defer cleanup(t, csvFile)
-
-		// We need to extend RawConfig to support file-based config
-		// For now, we'll test the sources directly since RawConfig is limited
-		factory := sources.NewSourceFactory()
-		rawConfig := map[string]string{
-			"enabled":      "true",
-			"streams_csv_file": csvFile,
-		}
-
-		configSources, err := factory.CreateSources(rawConfig)
-		require.NoError(t, err)
-		require.Len(t, configSources, 1)
-
-		// Test validation
-		for _, source := range configSources {
-			err := source.Validate(rawConfig)
-			require.NoError(t, err)
-		}
-
-		// Test loading
-		var allSpecs []sources.StreamSpec
-		for _, source := range configSources {
-			specs, err := source.Load(context.Background(), rawConfig)
-			require.NoError(t, err)
-			allSpecs = append(allSpecs, specs...)
-		}
-
-		// Verify loaded specs
-		assert.Len(t, allSpecs, 2)
-		
-		// First spec: specific stream with timestamp
-		assert.Equal(t, "0x1234567890abcdef1234567890abcdef12345678", allSpecs[0].DataProvider)
-		assert.Equal(t, "st123456789012345678901234567890", allSpecs[0].StreamID)
-		assert.Equal(t, "0 0 * * *", allSpecs[0].CronSchedule)
-		assert.NotNil(t, allSpecs[0].From)
-		assert.Equal(t, int64(1719849600), *allSpecs[0].From)
-
-		// Second spec: wildcard stream with timestamp  
-		assert.Equal(t, "0x9876543210fedcba9876543210fedcba98765432", allSpecs[1].DataProvider)
-		assert.Equal(t, "*", allSpecs[1].StreamID)
-		assert.Equal(t, "0 0 * * *", allSpecs[1].CronSchedule)
-		assert.NotNil(t, allSpecs[1].From)
-		assert.Equal(t, int64(1719936000), *allSpecs[1].From)
-	})
-
-	t.Run("CSV validation errors", func(t *testing.T) {
-		tests := []struct {
-			name          string
-			csvContent    string
-			errorContains string
-		}{
-			{
-				name:          "invalid ethereum address format",
-				csvContent:    "invalid_address,st123456789012345678901234567890,0 * * * *",
-				errorContains: "ethereum_address validation failed",
-			},
-			{
-				name:          "invalid stream ID format",
-				csvContent:    "0x1234567890abcdef1234567890abcdef12345678,invalid_stream,0 * * * *",
-				errorContains: "stream_id validation failed",
-			},
-			{
-				name:          "malformed CSV structure",
-				csvContent:    "0x1234567890abcdef1234567890abcdef12345678",
-				errorContains: "insufficient columns",
-			},
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				csvFile := createTempCSV(t, tt.csvContent)
-				defer cleanup(t, csvFile)
-
-				factory := sources.NewSourceFactory()
-				rawConfig := map[string]string{
-					"enabled":       "true",
-					"streams_csv_file":  csvFile,
-					"cron_schedule": "0 * * * *",
-				}
-
-				configSources, err := factory.CreateSources(rawConfig)
-				require.NoError(t, err)
-
-				// The error should occur during loading or validation
-				source := configSources[0]
-				_, err = source.Load(context.Background(), rawConfig)
-				
-				if err == nil {
-					// If loading succeeds, validation should catch the error
-					// We'd need to run it through the full validation pipeline
-					t.Logf("CSV loading succeeded, would need full validation pipeline to catch: %s", tt.errorContains)
-				} else {
-					assert.Contains(t, err.Error(), tt.errorContains)
-				}
-			})
-		}
-	})
-}
+// TestCSVSource_LoaderIntegration removed - redundant with TestCSVSource_BasicFunctionality
+// This test duplicated CSV parsing and validation scenarios already covered in focused unit tests
 
 // TestCSVSource_RealWorldExample demonstrates CSV functionality with a realistic example
 func TestCSVSource_RealWorldExample(t *testing.T) {
@@ -1119,7 +830,7 @@ func TestCSVSource_RealWorldExample(t *testing.T) {
 	// Test with hourly cron schedule for high-frequency data
 	factory := sources.NewSourceFactory()
 	rawConfig := map[string]string{
-		"streams_file": csvFile,
+		"streams_csv_file": csvFile,
 	}
 
 	configSources, err := factory.CreateSources(rawConfig)
