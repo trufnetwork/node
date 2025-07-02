@@ -22,6 +22,11 @@ require (
 	golang.org/x/sync v0.13.0
 )
 
+require (
+	github.com/avast/retry-go/v4 v4.6.1 // indirect
+	github.com/sony/gobreaker v1.0.0 // indirect
+)
+
 replace (
 	google.golang.org/genproto => google.golang.org/genproto v0.0.0-20240213162025-012b6fc9bca9
 	google.golang.org/genproto/googleapis/api => google.golang.org/genproto/googleapis/api v0.0.0-20250218202821-56aae31c358a
