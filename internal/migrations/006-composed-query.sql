@@ -568,8 +568,17 @@ RETURNS TABLE(
      * the value from the most recent preceding time point where such a change did happen.
      *---------------------------------------------------------------------*/
     real_change_times AS (
+        -- 1. Times where the *aggregated* value definitively changes (non-zero deltas)
         SELECT DISTINCT event_time AS time_point
-        FROM final_deltas -- Already filtered for non-zero deltas
+        FROM final_deltas
+
+        UNION
+
+        -- 2. Times where a primitive emits an event inside the requested interval, even if
+        --    the emitted value is identical to its previous value (delta == 0). These are
+        --    required emission points for the composed stream.
+        SELECT DISTINCT event_time
+        FROM primitive_events_in_interval
     ),
 
     anchor_time_calc AS (
