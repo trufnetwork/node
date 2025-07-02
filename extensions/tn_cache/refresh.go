@@ -52,7 +52,7 @@ func (s *CacheScheduler) refreshStreamWithRetry(ctx context.Context, instruction
 // isNonRetryableError determines if an error should not be retried
 func isNonRetryableError(err error) bool {
 	errStr := strings.ToLower(err.Error())
-	
+
 	// Add specific error patterns that shouldn't be retried
 	nonRetryablePatterns := []string{
 		"schema does not exist",
@@ -63,13 +63,13 @@ func isNonRetryableError(err error) bool {
 		"unauthorized",
 		"forbidden",
 	}
-	
+
 	for _, pattern := range nonRetryablePatterns {
 		if strings.Contains(errStr, pattern) {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
@@ -163,16 +163,14 @@ func (s *CacheScheduler) refreshStream(ctx context.Context, instruction config.I
 		}
 	}
 
-	// Fetch data based on instruction type
-	var events []internal.CachedEvent
-	switch instruction.Type {
-	case config.DirectiveSpecific:
-		events, err = s.fetchSpecificStream(ctx, instruction, fromTime)
-	case config.DirectiveProviderWildcard:
-		events, err = s.fetchProviderStreams(ctx, instruction, fromTime)
-	default:
-		return fmt.Errorf("unknown directive type: %s", instruction.Type)
+	// Fetch data for the specific stream
+	// Note: At this point, all instructions should be DirectiveSpecific because wildcards
+	// are resolved to concrete specifications at scheduler startup. We no longer need to handle wildcards here.
+	if instruction.Type != config.DirectiveSpecific {
+		return fmt.Errorf("unexpected directive type in refresh: %s (should be specific after resolution)", instruction.Type)
 	}
+	
+	events, err := s.fetchSpecificStream(ctx, instruction, fromTime)
 
 	if err != nil {
 		return fmt.Errorf("fetch stream data: %w", err)
@@ -183,8 +181,8 @@ func (s *CacheScheduler) refreshStream(ctx context.Context, instruction config.I
 		if err := s.cacheDB.CacheEvents(ctx, events); err != nil {
 			return fmt.Errorf("cache events: %w", err)
 		}
-		s.logger.Info("cached events", 
-			"count", len(events), 
+		s.logger.Info("cached events",
+			"count", len(events),
 			"provider", instruction.DataProvider,
 			"stream", instruction.StreamID)
 	} else {
@@ -201,18 +199,18 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, instruction co
 	// Determine the action to call based on stream type
 	// For now, we'll use get_record_composed as the primary action
 	action := "get_record_composed"
-	
+
 	// Build arguments for the action call
 	args := []any{
 		instruction.DataProvider,
 		instruction.StreamID,
-		fromTime,      // from timestamp
-		nil,           // to timestamp (fetch all available)
-		nil,           // frozen_at (not applicable for cache refresh)
+		fromTime, // from timestamp
+		nil,      // to timestamp (fetch all available)
+		nil,      // frozen_at (not applicable for cache refresh)
 	}
 
 	var events []internal.CachedEvent
-	
+
 	// Call the action with override authorization to bypass permission checks
 	result, err := s.app.Engine.CallWithoutEngineCtx(
 		ctx,
@@ -251,7 +249,7 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, instruction co
 		return nil, fmt.Errorf("call action %s: %w", action, err)
 	}
 
-	s.logger.Debug("fetched stream data", 
+	s.logger.Debug("fetched stream data",
 		"action", action,
 		"events", len(events),
 		"provider", instruction.DataProvider,
@@ -266,21 +264,56 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, instruction co
 }
 
 // fetchProviderStreams fetches data for all streams from a provider (wildcard directive)
+// DEPRECATED: This method is no longer used in the regular refresh flow because wildcards
+// are resolved to concrete specifications at scheduler startup. All refresh operations work with specific streams only.
+// Keeping this method for potential future use or manual wildcard data fetching.
 func (s *CacheScheduler) fetchProviderStreams(ctx context.Context, instruction config.InstructionDirective, fromTime *int64) ([]internal.CachedEvent, error) {
-	// For wildcard directives, we need to:
-	// 1. Get all streams for the provider
-	// 2. Fetch data for each stream individually
-	
-	// This is a simplified implementation - in a real scenario, you might want to:
-	// - Query a streams registry to get all available streams for a provider
-	// - Batch the requests for efficiency
-	// - Handle different stream types appropriately
-
-	s.logger.Warn("provider wildcard refresh not fully implemented",
+	s.logger.Debug("fetching data for provider wildcard",
 		"provider", instruction.DataProvider,
-		"type", instruction.Type)
-	
-	// For now, return empty events - this should be implemented based on
-	// how the TRUF.NETWORK system discovers available streams for a provider
-	return []internal.CachedEvent{}, nil
+		"wildcard", instruction.StreamID)
+
+	// Get all composed streams for the provider using the proper action
+	composedStreams, err := s.getComposedStreamsForProvider(ctx, instruction.DataProvider)
+	if err != nil {
+		return nil, fmt.Errorf("get composed streams for provider %s: %w", instruction.DataProvider, err)
+	}
+
+	if len(composedStreams) == 0 {
+		s.logger.Debug("no composed streams found for provider", "provider", instruction.DataProvider)
+		return []internal.CachedEvent{}, nil
+	}
+
+	var allEvents []internal.CachedEvent
+
+	// Fetch data for each composed stream
+	for _, streamID := range composedStreams {
+		// Create a temporary instruction for this specific stream
+		streamInstruction := config.InstructionDirective{
+			DataProvider: instruction.DataProvider,
+			StreamID:     streamID,
+			Type:         config.DirectiveSpecific,
+			TimeRange:    instruction.TimeRange,
+			Schedule:     instruction.Schedule,
+		}
+
+		// Fetch events for this specific stream
+		events, err := s.fetchSpecificStream(ctx, streamInstruction, fromTime)
+		if err != nil {
+			// Log error but continue with other streams
+			s.logger.Error("failed to fetch data for stream in wildcard",
+				"provider", instruction.DataProvider,
+				"stream", streamID,
+				"error", err)
+			continue
+		}
+
+		allEvents = append(allEvents, events...)
+	}
+
+	s.logger.Info("fetched wildcard stream data",
+		"provider", instruction.DataProvider,
+		"streams_queried", len(composedStreams),
+		"total_events", len(allEvents))
+
+	return allEvents, nil
 }

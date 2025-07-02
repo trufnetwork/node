@@ -85,6 +85,64 @@ func (c *CacheDB) AddStreamConfig(ctx context.Context, config StreamCacheConfig)
 	return nil
 }
 
+// AddStreamConfigs adds or updates multiple stream cache configurations in a single transaction
+func (c *CacheDB) AddStreamConfigs(ctx context.Context, configs []StreamCacheConfig) error {
+	if len(configs) == 0 {
+		return nil // Nothing to do
+	}
+
+	c.logger.Debug("adding multiple stream cache configs", "count", len(configs))
+
+	tx, err := c.db.BeginTx(ctx)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			if rbErr := tx.Rollback(ctx); rbErr != nil {
+				c.logger.Error("failed to rollback transaction", "error", rbErr)
+			}
+		}
+	}()
+
+	// Build a single INSERT statement with multiple VALUES clauses
+	// Using UNNEST to insert multiple rows efficiently
+	var dataProviders, streamIDs, cronSchedules []string
+	var fromTimestamps []int64
+	var lastRefresheds []string
+
+	for _, config := range configs {
+		dataProviders = append(dataProviders, config.DataProvider)
+		streamIDs = append(streamIDs, config.StreamID)
+		fromTimestamps = append(fromTimestamps, config.FromTimestamp)
+		lastRefresheds = append(lastRefresheds, config.LastRefreshed)
+		cronSchedules = append(cronSchedules, config.CronSchedule)
+	}
+
+	// Execute the batch insert
+	_, err = tx.Execute(ctx, `
+		INSERT INTO ext_tn_cache.cached_streams 
+			(data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule)
+		SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::TEXT[], $5::TEXT[])
+		ON CONFLICT (data_provider, stream_id) 
+		DO UPDATE SET
+			from_timestamp = EXCLUDED.from_timestamp,
+			last_refreshed = EXCLUDED.last_refreshed,
+			cron_schedule = EXCLUDED.cron_schedule
+	`, dataProviders, streamIDs, fromTimestamps, lastRefresheds, cronSchedules)
+
+	if err != nil {
+		return fmt.Errorf("batch upsert stream configs: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+
+	c.logger.Info("successfully added stream cache configs", "count", len(configs))
+	return nil
+}
+
 // GetStreamConfig retrieves a stream's cache configuration
 func (c *CacheDB) GetStreamConfig(ctx context.Context, dataProvider, streamID string) (*StreamCacheConfig, error) {
 	c.logger.Debug("getting stream cache config",
@@ -313,7 +371,7 @@ func (c *CacheDB) GetEvents(ctx context.Context, dataProvider, streamID string, 
 		if err != nil {
 			return nil, fmt.Errorf("parse event value: %w", err)
 		}
-		
+
 		event := CachedEvent{
 			DataProvider: row[0].(string),
 			StreamID:     row[1].(string),
