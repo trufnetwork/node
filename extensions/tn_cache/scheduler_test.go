@@ -63,13 +63,13 @@ func TestCacheScheduler_New(t *testing.T) {
 
 	// Test creating scheduler
 	scheduler := NewCacheScheduler(mockApp, cacheDB, logger)
-	
+
 	require.NotNil(t, scheduler, "Scheduler should be created")
 	assert.Equal(t, mockApp, scheduler.app, "App should be set correctly")
 	assert.NotNil(t, scheduler.cron, "Cron scheduler should be initialized")
 	assert.NotNil(t, scheduler.jobs, "Jobs map should be initialized")
 	assert.NotNil(t, scheduler.breakers, "Circuit breakers map should be initialized")
-	assert.Equal(t, "truf_db", scheduler.namespace, "Default namespace should be set")
+	assert.Equal(t, "main", scheduler.namespace, "Default namespace should be set")
 }
 
 func TestCacheScheduler_WithCustomNamespace(t *testing.T) {
@@ -87,7 +87,7 @@ func TestCacheScheduler_WithCustomNamespace(t *testing.T) {
 
 	// Test creating scheduler with custom namespace
 	scheduler := NewCacheSchedulerWithNamespace(mockApp, cacheDB, logger, "custom_db")
-	
+
 	require.NotNil(t, scheduler, "Scheduler should be created")
 	assert.Equal(t, "custom_db", scheduler.namespace, "Custom namespace should be set")
 }
@@ -130,7 +130,7 @@ func TestCacheScheduler_GroupBySchedule(t *testing.T) {
 
 	// Verify grouping
 	require.Len(t, groups, 2, "Should have 2 different schedules")
-	
+
 	hourlyGroup := groups["0 * * * *"]
 	require.Len(t, hourlyGroup, 2, "Hourly group should have 2 directives")
 	assert.Equal(t, "test1", hourlyGroup[0].ID)
@@ -148,7 +148,7 @@ func TestCacheScheduler_ResolutionFlow(t *testing.T) {
 	}
 	logger := log.New(log.WithWriter(nil))
 	cacheDB := &internal.CacheDB{}
-	
+
 	scheduler := NewCacheScheduler(mockApp, cacheDB, logger)
 	scheduler.ctx, scheduler.cancel = context.WithCancel(context.Background())
 	defer scheduler.cancel()
@@ -168,11 +168,11 @@ func TestCacheScheduler_ResolutionFlow(t *testing.T) {
 
 	// Set original directives
 	scheduler.originalDirectives = originalDirectives
-	
+
 	// Verify resolution flow stores original directives
 	assert.Len(t, scheduler.originalDirectives, 1)
 	assert.Equal(t, config.DirectiveProviderWildcard, scheduler.originalDirectives[0].Type)
-	
+
 	// Test getDirectivesForSchedule
 	scheduler.resolvedDirectives = []config.CacheDirective{
 		{
@@ -184,7 +184,7 @@ func TestCacheScheduler_ResolutionFlow(t *testing.T) {
 			TimeRange:    config.TimeRange{From: &from},
 		},
 	}
-	
+
 	directives := scheduler.getDirectivesForSchedule("0 * * * *")
 	assert.Len(t, directives, 1)
 	assert.Equal(t, "stream1", directives[0].StreamID)
@@ -197,7 +197,7 @@ func TestCacheScheduler_CircuitBreaker(t *testing.T) {
 	}
 	logger := log.New(log.WithWriter(nil))
 	cacheDB := &internal.CacheDB{}
-	
+
 	scheduler := NewCacheScheduler(mockApp, cacheDB, logger)
 
 	// Test getting circuit breaker for a stream

@@ -22,7 +22,7 @@ var (
 	scheduler *CacheScheduler
 )
 
-// ParseConfig parses the extension configuration from the node's config file using the new configuration system
+// ParseConfig parses the extension configuration from the node's config file
 func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
 	logger = service.Logger.New("tn_cache")
 
