@@ -581,3 +581,77 @@ func parseEventValueFromDB(v interface{}) (*types.Decimal, error) {
 		return nil, fmt.Errorf("unsupported database value type: %T", v)
 	}
 }
+
+// UpdateStreamConfigsAtomic atomically updates the cached_streams table
+// It adds/updates configs in newConfigs and deletes configs in toDelete
+func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []StreamCacheConfig, toDelete []StreamCacheConfig) error {
+	c.logger.Debug("atomic stream config update",
+		"new_count", len(newConfigs),
+		"delete_count", len(toDelete))
+	
+	tx, err := c.db.BeginTx(ctx)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			if rbErr := tx.Rollback(ctx); rbErr != nil {
+				c.logger.Error("failed to rollback transaction", "error", rbErr)
+			}
+		}
+	}()
+	
+	// Delete removed streams
+	if len(toDelete) > 0 {
+		for _, config := range toDelete {
+			_, err = tx.Execute(ctx, `
+				DELETE FROM ext_tn_cache.cached_streams
+				WHERE data_provider = $1 AND stream_id = $2
+			`, config.DataProvider, config.StreamID)
+			if err != nil {
+				return fmt.Errorf("delete stream config %s/%s: %w", config.DataProvider, config.StreamID, err)
+			}
+		}
+	}
+	
+	// Add/update new streams using batch operation
+	if len(newConfigs) > 0 {
+		var dataProviders, streamIDs, cronSchedules []string
+		var fromTimestamps []int64
+		var lastRefresheds []string
+		
+		for _, config := range newConfigs {
+			dataProviders = append(dataProviders, config.DataProvider)
+			streamIDs = append(streamIDs, config.StreamID)
+			fromTimestamps = append(fromTimestamps, config.FromTimestamp)
+			lastRefresheds = append(lastRefresheds, config.LastRefreshed)
+			cronSchedules = append(cronSchedules, config.CronSchedule)
+		}
+		
+		// Execute the batch upsert
+		_, err = tx.Execute(ctx, `
+			INSERT INTO ext_tn_cache.cached_streams 
+				(data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule)
+			SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::TEXT[], $5::TEXT[])
+			ON CONFLICT (data_provider, stream_id) 
+			DO UPDATE SET
+				from_timestamp = EXCLUDED.from_timestamp,
+				last_refreshed = COALESCE(NULLIF(EXCLUDED.last_refreshed, ''), cached_streams.last_refreshed),
+				cron_schedule = EXCLUDED.cron_schedule
+		`, dataProviders, streamIDs, fromTimestamps, lastRefresheds, cronSchedules)
+		
+		if err != nil {
+			return fmt.Errorf("batch upsert stream configs: %w", err)
+		}
+	}
+	
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+	
+	c.logger.Info("atomic stream config update completed",
+		"added/updated", len(newConfigs),
+		"deleted", len(toDelete))
+	
+	return nil
+}

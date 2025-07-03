@@ -62,6 +62,10 @@ func isNonRetryableError(err error) bool {
 		"context deadline exceeded",
 		"unauthorized",
 		"forbidden",
+		"action does not exist",
+		"invalid stream type",
+		"malformed",
+		"syntax error",
 	}
 
 	for _, pattern := range nonRetryablePatterns {
@@ -246,6 +250,16 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, directive conf
 	)
 
 	if err != nil {
+		// Check if this is a "stream not found" type error
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "not found") || strings.Contains(errStr, "does not exist") || strings.Contains(errStr, "no rows") {
+			s.logger.Warn("stream not found or has no data",
+				"action", action,
+				"provider", directive.DataProvider,
+				"stream", directive.StreamID,
+				"error", err)
+			return []internal.CachedEvent{}, nil // Return empty events, not an error
+		}
 		return nil, fmt.Errorf("call action %s: %w", action, err)
 	}
 
