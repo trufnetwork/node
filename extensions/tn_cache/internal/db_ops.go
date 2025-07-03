@@ -1,6 +1,24 @@
+// Package internal provides database operations for the TN Cache extension.
+//
+// IMPORTANT: Table Ownership Design
+//
+// The TN Cache extension is designed to be the EXCLUSIVE manager of the tables it creates:
+// - ext_tn_cache.cached_events
+// - ext_tn_cache.cached_streams
+//
+// No other system or extension should directly modify these tables. This design assumption
+// allows us to:
+// 1. Use simpler transaction isolation (READ COMMITTED instead of SERIALIZABLE)
+// 2. Cache state in memory for performance without worrying about external changes
+// 3. Make assumptions about data consistency without defensive checks
+//
+// If this assumption changes in the future, the following would need to be revisited:
+// - Transaction isolation levels
+// - Cache invalidation strategies
+// - Concurrent modification handling
 package internal
 
-import (
+import(
 	"context"
 	"fmt"
 	"math/big"
@@ -249,6 +267,7 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 		"stream_id", events[0].StreamID,
 		"count", len(events))
 
+	// Use READ COMMITTED isolation for event caching (default is fine)
 	tx, err := c.db.BeginTx(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -261,8 +280,10 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 		}
 	}()
 
-	// Insert events in batches to avoid parameter limits
-	batchSize := 100
+	// Insert events in batches using UNNEST for efficiency
+	// PostgreSQL has a limit of 65535 parameters, and we use 4 per event
+	// Use 10000 as batch size for safety (40000 parameters)
+	batchSize := 10000
 	for i := 0; i < len(events); i += batchSize {
 		end := i + batchSize
 		if end > len(events) {
@@ -270,29 +291,29 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 		}
 
 		batch := events[i:end]
-		// Build the INSERT query for this batch
-		query := `
+		
+		// Build arrays for UNNEST
+		var dataProviders, streamIDs []string
+		var eventTimes []int64
+		var values []*types.Decimal
+		
+		for _, event := range batch {
+			dataProviders = append(dataProviders, event.DataProvider)
+			streamIDs = append(streamIDs, event.StreamID)
+			eventTimes = append(eventTimes, event.EventTime)
+			values = append(values, event.Value)
+		}
+		
+		// Use UNNEST for efficient batch insert
+		_, err = tx.Execute(ctx, `
 			INSERT INTO ext_tn_cache.cached_events 
 				(data_provider, stream_id, event_time, value)
-			VALUES 
-		`
-		args := make([]interface{}, 0, len(batch)*4)
-		for j, event := range batch {
-			if j > 0 {
-				query += ", "
-			}
-			paramBase := j * 4
-			query += fmt.Sprintf("($%d, $%d, $%d, $%d)",
-				paramBase+1, paramBase+2, paramBase+3, paramBase+4)
-			args = append(args, event.DataProvider, event.StreamID, event.EventTime, event.Value)
-		}
-		query += `
+			SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::DECIMAL(36,18)[])
 			ON CONFLICT (data_provider, stream_id, event_time) 
 			DO UPDATE SET
 				value = EXCLUDED.value
-		`
-
-		_, err = tx.Execute(ctx, query, args...)
+		`, dataProviders, streamIDs, eventTimes, values)
+		
 		if err != nil {
 			return fmt.Errorf("insert events batch: %w", err)
 		}
@@ -600,16 +621,23 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 		}
 	}()
 	
-	// First, delete removed streams
+	// First, delete removed streams using batch operation
 	if len(toDelete) > 0 {
+		var deleteProviders, deleteStreamIDs []string
 		for _, config := range toDelete {
-			_, err = tx.Execute(ctx, `
-				DELETE FROM ext_tn_cache.cached_streams
-				WHERE data_provider = $1 AND stream_id = $2
-			`, config.DataProvider, config.StreamID)
-			if err != nil {
-				return fmt.Errorf("delete stream config %s/%s: %w", config.DataProvider, config.StreamID, err)
-			}
+			deleteProviders = append(deleteProviders, config.DataProvider)
+			deleteStreamIDs = append(deleteStreamIDs, config.StreamID)
+		}
+		
+		// Batch delete using array operations
+		_, err = tx.Execute(ctx, `
+			DELETE FROM ext_tn_cache.cached_streams
+			WHERE (data_provider, stream_id) IN (
+				SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[])
+			)
+		`, deleteProviders, deleteStreamIDs)
+		if err != nil {
+			return fmt.Errorf("batch delete stream configs: %w", err)
 		}
 	}
 	

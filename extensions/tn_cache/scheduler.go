@@ -107,7 +107,7 @@ func (s *CacheScheduler) Start(ctx context.Context, processedConfig *config.Proc
 	scheduleGroups := s.groupBySchedule(resolvedStreamSpecs)
 
 	// Register cron jobs for each unique schedule
-	for schedule, _ := range scheduleGroups {
+	for schedule := range scheduleGroups {
 		if err := s.registerRefreshJob(schedule); err != nil {
 			return fmt.Errorf("register refresh job for schedule %s: %w", schedule, err)
 		}
