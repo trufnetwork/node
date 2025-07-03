@@ -105,7 +105,7 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	// Initialize scheduler if we have directives
 	if len(processedConfig.Directives) > 0 {
 		scheduler = NewCacheScheduler(app, cacheDB, logger)
-		if err := scheduler.Start(ctx, processedConfig.Directives); err != nil {
+		if err := scheduler.Start(ctx, processedConfig); err != nil {
 			return fmt.Errorf("failed to start scheduler: %w", err)
 		}
 		

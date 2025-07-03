@@ -2,9 +2,10 @@ package config
 
 // RawConfig represents the raw TOML configuration from the node config file
 type RawConfig struct {
-	Enabled       string `toml:"enabled"`
-	StreamsInline string `toml:"streams_inline,omitempty"` // JSON array as string
-	StreamsCSVFile string `toml:"streams_csv_file,omitempty"` // Path to CSV file
+	Enabled            string `toml:"enabled"`
+	ResolutionSchedule string `toml:"resolution_schedule,omitempty"` // Cron for re-resolving wildcards/children (default: daily)
+	StreamsInline      string `toml:"streams_inline,omitempty"`      // JSON array as string
+	StreamsCSVFile     string `toml:"streams_csv_file,omitempty"`     // Path to CSV file
 }
 
 // Note: StreamSpec is now defined in sources package to avoid import cycles
@@ -12,9 +13,10 @@ type RawConfig struct {
 // ProcessedConfig is the final validated, immutable configuration
 // This is what the extension will use at runtime
 type ProcessedConfig struct {
-	Enabled    bool              `json:"enabled"`
-	Directives []CacheDirective  `json:"directives"`
-	Sources    []string          `json:"sources"` // Track config sources for debugging
+	Enabled            bool             `json:"enabled"`
+	ResolutionSchedule string           `json:"resolution_schedule"` // Cron expression for re-resolution
+	Directives         []CacheDirective `json:"directives"`
+	Sources            []string         `json:"sources"` // Track config sources for debugging
 }
 
 // CacheDirective represents a validated cache policy for a stream or set of streams

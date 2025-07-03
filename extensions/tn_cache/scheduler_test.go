@@ -141,7 +141,7 @@ func TestCacheScheduler_GroupBySchedule(t *testing.T) {
 	assert.Equal(t, "test3", dailyGroup[0].ID)
 }
 
-func TestCacheScheduler_CreateJobFunc(t *testing.T) {
+func TestCacheScheduler_ResolutionFlow(t *testing.T) {
 	// Create mock dependencies
 	mockApp := &common.App{
 		Engine: &mockEngine{},
@@ -153,11 +153,30 @@ func TestCacheScheduler_CreateJobFunc(t *testing.T) {
 	scheduler.ctx, scheduler.cancel = context.WithCancel(context.Background())
 	defer scheduler.cancel()
 
-	// Create test directive
+	// Create test directives with wildcard
 	from := int64(1640995200)
-	directives := []config.CacheDirective{
+	originalDirectives := []config.CacheDirective{
 		{
 			ID:           "test1",
+			Type:         config.DirectiveProviderWildcard,
+			DataProvider: "provider1",
+			StreamID:     "*",
+			Schedule:     config.Schedule{CronExpr: "0 * * * *"},
+			TimeRange:    config.TimeRange{From: &from},
+		},
+	}
+
+	// Set original directives
+	scheduler.originalDirectives = originalDirectives
+	
+	// Verify resolution flow stores original directives
+	assert.Len(t, scheduler.originalDirectives, 1)
+	assert.Equal(t, config.DirectiveProviderWildcard, scheduler.originalDirectives[0].Type)
+	
+	// Test getDirectivesForSchedule
+	scheduler.resolvedDirectives = []config.CacheDirective{
+		{
+			ID:           "resolved1",
 			Type:         config.DirectiveSpecific,
 			DataProvider: "provider1",
 			StreamID:     "stream1",
@@ -165,16 +184,10 @@ func TestCacheScheduler_CreateJobFunc(t *testing.T) {
 			TimeRange:    config.TimeRange{From: &from},
 		},
 	}
-
-	// Create job function
-	jobFunc := scheduler.createJobFunc(directives)
-
-	// Test that job function can be called without panicking
-	// Note: This will likely fail due to missing database setup, but shouldn't panic
-	require.NotNil(t, jobFunc, "Job function should not be nil")
 	
-	// In a real test, we would set up proper mocks and verify the behavior
-	// For now, we just ensure the function is created successfully
+	directives := scheduler.getDirectivesForSchedule("0 * * * *")
+	assert.Len(t, directives, 1)
+	assert.Equal(t, "stream1", directives[0].StreamID)
 }
 
 func TestCacheScheduler_CircuitBreaker(t *testing.T) {

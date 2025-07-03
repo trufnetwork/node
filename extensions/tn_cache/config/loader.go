@@ -52,6 +52,11 @@ func (l *Loader) LoadAndProcess(ctx context.Context, rawConfig RawConfig) (*Proc
 		configMap["streams_csv_file"] = rawConfig.StreamsCSVFile
 	}
 	
+	// Add resolution_schedule if provided
+	if rawConfig.ResolutionSchedule != "" {
+		configMap["resolution_schedule"] = rawConfig.ResolutionSchedule
+	}
+	
 	return l.loadAndProcessInternal(ctx, configMap)
 }
 
@@ -103,10 +108,22 @@ func (l *Loader) loadAndProcessInternal(ctx context.Context, configMap map[strin
 		sourceNames = []string{}
 	}
 
+	// Get resolution schedule or use default
+	resolutionSchedule := configMap["resolution_schedule"]
+	if resolutionSchedule == "" {
+		resolutionSchedule = DefaultResolutionSchedule
+	}
+	
+	// Validate resolution schedule if provided
+	if err := validation.ValidateCronSchedule(resolutionSchedule); err != nil {
+		return nil, fmt.Errorf("invalid resolution schedule: %w", err)
+	}
+
 	return &ProcessedConfig{
-		Enabled:    configMap["enabled"] == "true",
-		Directives: finalDirectives,
-		Sources:    sourceNames,
+		Enabled:            configMap["enabled"] == "true",
+		ResolutionSchedule: resolutionSchedule,
+		Directives:         finalDirectives,
+		Sources:            sourceNames,
 	}, nil
 }
 
