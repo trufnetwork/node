@@ -18,7 +18,7 @@
 // - Concurrent modification handling
 package internal
 
-import(
+import (
 	"context"
 	"fmt"
 	"math/big"
@@ -291,19 +291,19 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 		}
 
 		batch := events[i:end]
-		
+
 		// Build arrays for UNNEST
 		var dataProviders, streamIDs []string
 		var eventTimes []int64
 		var values []*types.Decimal
-		
+
 		for _, event := range batch {
 			dataProviders = append(dataProviders, event.DataProvider)
 			streamIDs = append(streamIDs, event.StreamID)
 			eventTimes = append(eventTimes, event.EventTime)
 			values = append(values, event.Value)
 		}
-		
+
 		// Use UNNEST for efficient batch insert
 		_, err = tx.Execute(ctx, `
 			INSERT INTO ext_tn_cache.cached_events 
@@ -313,7 +313,7 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 			DO UPDATE SET
 				value = EXCLUDED.value
 		`, dataProviders, streamIDs, eventTimes, values)
-		
+
 		if err != nil {
 			return fmt.Errorf("insert events batch: %w", err)
 		}
@@ -608,7 +608,7 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 	c.logger.Debug("atomic stream config update",
 		"new_count", len(newConfigs),
 		"delete_count", len(toDelete))
-	
+
 	tx, err := c.db.BeginTx(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -620,7 +620,7 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 			}
 		}
 	}()
-	
+
 	// First, delete removed streams using batch operation
 	if len(toDelete) > 0 {
 		var deleteProviders, deleteStreamIDs []string
@@ -628,7 +628,7 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 			deleteProviders = append(deleteProviders, config.DataProvider)
 			deleteStreamIDs = append(deleteStreamIDs, config.StreamID)
 		}
-		
+
 		// Batch delete using array operations
 		_, err = tx.Execute(ctx, `
 			DELETE FROM ext_tn_cache.cached_streams
@@ -640,13 +640,13 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 			return fmt.Errorf("batch delete stream configs: %w", err)
 		}
 	}
-	
+
 	// Then, add/update new streams using batch operation
 	if len(newConfigs) > 0 {
 		var dataProviders, streamIDs, cronSchedules []string
 		var fromTimestamps []int64
 		var lastRefresheds []string
-		
+
 		for _, config := range newConfigs {
 			dataProviders = append(dataProviders, config.DataProvider)
 			streamIDs = append(streamIDs, config.StreamID)
@@ -654,7 +654,7 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 			lastRefresheds = append(lastRefresheds, config.LastRefreshed)
 			cronSchedules = append(cronSchedules, config.CronSchedule)
 		}
-		
+
 		// Execute the batch upsert, preserving last_refreshed if it exists
 		_, err = tx.Execute(ctx, `
 			INSERT INTO ext_tn_cache.cached_streams 
@@ -666,19 +666,19 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 				last_refreshed = COALESCE(NULLIF(EXCLUDED.last_refreshed, ''), cached_streams.last_refreshed),
 				cron_schedule = EXCLUDED.cron_schedule
 		`, dataProviders, streamIDs, fromTimestamps, lastRefresheds, cronSchedules)
-		
+
 		if err != nil {
 			return fmt.Errorf("batch upsert stream configs: %w", err)
 		}
 	}
-	
+
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit transaction: %w", err)
 	}
-	
+
 	c.logger.Info("atomic stream config update completed",
 		"added/updated", len(newConfigs),
 		"deleted", len(toDelete))
-	
+
 	return nil
 }
