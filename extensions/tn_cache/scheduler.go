@@ -16,6 +16,7 @@ import (
 
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
+	"github.com/trufnetwork/node/extensions/tn_cache/internal/errors"
 	"github.com/trufnetwork/node/extensions/tn_cache/validation"
 )
 
@@ -39,6 +40,14 @@ const (
 // This ensures new streams matching patterns are automatically cached without
 // manual intervention, solving the "stale wildcard" problem.
 
+// Circuit breaker configuration constants
+const (
+	DefaultCircuitBreakerMaxRequests  = 3
+	DefaultCircuitBreakerInterval     = 10 * time.Second
+	DefaultCircuitBreakerTimeout      = 60 * time.Second
+	DefaultCircuitBreakerFailureRatio = 0.6
+)
+
 // CacheScheduler manages the scheduled refresh of cache data
 type CacheScheduler struct {
 	app       *common.App
@@ -52,10 +61,10 @@ type CacheScheduler struct {
 	namespace string                               // configurable database namespace
 	breakers  map[string]*gobreaker.CircuitBreaker // circuit breakers per stream
 	breakerMu sync.RWMutex
-	
+
 	// Dynamic resolution fields
-	originalDirectives []config.CacheDirective  // Keep original with wildcards/includeChildren
-	resolvedDirectives []config.CacheDirective  // Current resolved state
+	originalDirectives []config.CacheDirective // Keep original with wildcards/includeChildren
+	resolvedDirectives []config.CacheDirective // Current resolved state
 	resolutionJob      cron.EntryID            // Cron job for resolution
 	resolutionMu       sync.RWMutex            // Protect resolved state
 	lastResolution     time.Time               // Track last resolution time
@@ -71,7 +80,7 @@ func NewCacheScheduler(app *common.App, cacheDB *internal.CacheDB, logger log.Lo
 // NewCacheSchedulerWithNamespace creates a new cache scheduler instance with configurable namespace
 func NewCacheSchedulerWithNamespace(app *common.App, cacheDB *internal.CacheDB, logger log.Logger, namespace string) *CacheScheduler {
 	if namespace == "" {
-		namespace = "truf_db" // Default namespace
+		namespace = "main" // Default namespace
 	}
 
 	return &CacheScheduler{
@@ -98,7 +107,7 @@ func (s *CacheScheduler) Start(ctx context.Context, processedConfig *config.Proc
 
 	// Store original directives for future re-resolution
 	s.originalDirectives = processedConfig.Directives
-	
+
 	// Perform initial resolution
 	resolvedStreamSpecs, err := s.resolveStreamSpecs(s.ctx, s.originalDirectives)
 	if err != nil {
@@ -112,7 +121,7 @@ func (s *CacheScheduler) Start(ctx context.Context, processedConfig *config.Proc
 	// Store resolved directives
 	s.resolvedDirectives = resolvedStreamSpecs
 	s.lastResolution = time.Now()
-	
+
 	// Store stream configurations in the database
 	if err := s.storeStreamConfigs(s.ctx, resolvedStreamSpecs); err != nil {
 		return fmt.Errorf("store stream configs: %w", err)
@@ -124,7 +133,7 @@ func (s *CacheScheduler) Start(ctx context.Context, processedConfig *config.Proc
 			return fmt.Errorf("register resolution job: %w", err)
 		}
 	}
-	
+
 	// Group resolved specifications by schedule for efficient batch processing
 	scheduleGroups := s.groupBySchedule(resolvedStreamSpecs)
 
@@ -208,12 +217,12 @@ func (s *CacheScheduler) resolveStreamSpecs(ctx context.Context, directives []co
 					if len(parts) == 2 {
 						childProvider, childStreamID := parts[0], parts[1]
 						childSpec := config.CacheDirective{
-							ID:           fmt.Sprintf("%s_%s_%s", childProvider, childStreamID, "child_resolved"),
-							Type:         config.DirectiveSpecific,
-							DataProvider: childProvider,
-							StreamID:     childStreamID,
-							Schedule:     directive.Schedule,
-							TimeRange:    directive.TimeRange,
+							ID:              fmt.Sprintf("%s_%s_%s", childProvider, childStreamID, "child_resolved"),
+							Type:            config.DirectiveSpecific,
+							DataProvider:    childProvider,
+							StreamID:        childStreamID,
+							Schedule:        directive.Schedule,
+							TimeRange:       directive.TimeRange,
 							IncludeChildren: false, // Avoid recursive resolution
 						}
 						resolvedSpecs = append(resolvedSpecs, childSpec)
@@ -313,7 +322,6 @@ func (s *CacheScheduler) groupBySchedule(directives []config.CacheDirective) map
 	return scheduleGroups
 }
 
-
 // getCircuitBreaker returns or creates a circuit breaker for a stream
 func (s *CacheScheduler) getCircuitBreaker(streamKey string) *gobreaker.CircuitBreaker {
 	s.breakerMu.RLock()
@@ -335,12 +343,12 @@ func (s *CacheScheduler) getCircuitBreaker(streamKey string) *gobreaker.CircuitB
 
 	cb = gobreaker.NewCircuitBreaker(gobreaker.Settings{
 		Name:        streamKey,
-		MaxRequests: 3,
-		Interval:    10 * time.Second,
-		Timeout:     60 * time.Second,
+		MaxRequests: DefaultCircuitBreakerMaxRequests,
+		Interval:    DefaultCircuitBreakerInterval,
+		Timeout:     DefaultCircuitBreakerTimeout,
 		ReadyToTrip: func(counts gobreaker.Counts) bool {
 			failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
-			return counts.Requests >= 3 && failureRatio >= 0.6
+			return counts.Requests >= DefaultCircuitBreakerMaxRequests && failureRatio >= DefaultCircuitBreakerFailureRatio
 		},
 		OnStateChange: func(name string, from gobreaker.State, to gobreaker.State) {
 			s.logger.Info("circuit breaker state changed",
@@ -417,11 +425,11 @@ func (s *CacheScheduler) getComposedStreamsForProvider(ctx context.Context, prov
 		s.namespace,
 		"list_streams",
 		[]any{
-			provider,  // data_provider
-			5000,      // limit (maximum allowed)
-			0,         // offset
+			provider,    // data_provider
+			5000,        // limit (maximum allowed)
+			0,           // offset
 			"stream_id", // order_by
-			nil,       // block_height (current)
+			nil,         // block_height (current)
 		},
 		func(row *common.Row) error {
 			if len(row.Values) >= 3 {
@@ -438,8 +446,7 @@ func (s *CacheScheduler) getComposedStreamsForProvider(ctx context.Context, prov
 
 	if err != nil {
 		// Check if this is a "provider not found" type error
-		errStr := strings.ToLower(err.Error())
-		if strings.Contains(errStr, "not found") || strings.Contains(errStr, "does not exist") {
+		if errors.IsNotFoundError(err) {
 			s.logger.Warn("provider not found",
 				"provider", provider,
 				"error", err)
@@ -465,21 +472,21 @@ func (s *CacheScheduler) getComposedStreamsForProvider(ctx context.Context, prov
 func (s *CacheScheduler) deduplicateResolvedSpecs(specs []config.CacheDirective) []config.CacheDirective {
 	// Map to track seen streams: key is "provider:streamID"
 	streamMap := make(map[string]config.CacheDirective)
-	
+
 	for _, spec := range specs {
 		key := fmt.Sprintf("%s:%s", spec.DataProvider, spec.StreamID)
-		
+
 		if existing, exists := streamMap[key]; exists {
 			// Compare 'from' timestamps - keep the one with earlier timestamp
 			var existingFrom, newFrom int64
-			
+
 			if existing.TimeRange.From != nil {
 				existingFrom = *existing.TimeRange.From
 			}
 			if spec.TimeRange.From != nil {
 				newFrom = *spec.TimeRange.From
 			}
-			
+
 			// If new spec has earlier 'from' (or same), check schedules
 			if newFrom <= existingFrom {
 				// If timestamps are equal, also log schedule info for debugging
@@ -513,13 +520,13 @@ func (s *CacheScheduler) deduplicateResolvedSpecs(specs []config.CacheDirective)
 			streamMap[key] = spec
 		}
 	}
-	
+
 	// Convert map back to slice
 	deduplicated := make([]config.CacheDirective, 0, len(streamMap))
 	for _, spec := range streamMap {
 		deduplicated = append(deduplicated, spec)
 	}
-	
+
 	// Log summary if deduplication occurred
 	if len(deduplicated) < len(specs) {
 		s.logger.Info("deduplication completed",
@@ -527,7 +534,7 @@ func (s *CacheScheduler) deduplicateResolvedSpecs(specs []config.CacheDirective)
 			"deduplicated_count", len(deduplicated),
 			"removed", len(specs)-len(deduplicated))
 	}
-	
+
 	return deduplicated
 }
 
@@ -535,18 +542,18 @@ func (s *CacheScheduler) deduplicateResolvedSpecs(specs []config.CacheDirective)
 func (s *CacheScheduler) GetResolutionHealth() (status ResolutionStatus, lastRun time.Time, nextRun time.Time, lastError error) {
 	s.resolutionMu.RLock()
 	defer s.resolutionMu.RUnlock()
-	
+
 	status = s.resolutionStatus
 	lastRun = s.lastResolution
 	lastError = s.resolutionErr
-	
+
 	// Calculate next run time if job is scheduled
 	if s.resolutionJob != 0 {
 		if entry := s.cron.Entry(s.resolutionJob); entry.ID != 0 {
 			nextRun = entry.Next
 		}
 	}
-	
+
 	return
 }
 
@@ -554,14 +561,14 @@ func (s *CacheScheduler) GetResolutionHealth() (status ResolutionStatus, lastRun
 func (s *CacheScheduler) GetResolutionMetrics() map[string]interface{} {
 	s.resolutionMu.RLock()
 	defer s.resolutionMu.RUnlock()
-	
+
 	metrics := map[string]interface{}{
 		"original_directives_count": len(s.originalDirectives),
 		"resolved_directives_count": len(s.resolvedDirectives),
 		"last_resolution":           s.lastResolution.Format(time.RFC3339),
 		"resolution_status":         string(s.resolutionStatus),
 	}
-	
+
 	// Count directives by type
 	wildcardCount := 0
 	includeChildrenCount := 0
@@ -573,14 +580,14 @@ func (s *CacheScheduler) GetResolutionMetrics() map[string]interface{} {
 			includeChildrenCount++
 		}
 	}
-	
+
 	metrics["wildcard_directives"] = wildcardCount
 	metrics["include_children_directives"] = includeChildrenCount
-	
+
 	if s.resolutionErr != nil {
 		metrics["last_error"] = s.resolutionErr.Error()
 	}
-	
+
 	return metrics
 }
 
@@ -623,8 +630,7 @@ func (s *CacheScheduler) getChildStreamsForComposed(ctx context.Context, dataPro
 
 	if err != nil {
 		// Check if this is a "stream not found" or "not a composed stream" error
-		errStr := strings.ToLower(err.Error())
-		if strings.Contains(errStr, "not found") || strings.Contains(errStr, "does not exist") || strings.Contains(errStr, "no rows") {
+		if errors.IsNotFoundError(err) {
 			s.logger.Warn("stream not found or not a composed stream",
 				"provider", dataProvider,
 				"stream", streamID,
@@ -654,7 +660,7 @@ func (s *CacheScheduler) registerResolutionJob(schedule string) error {
 	if err := validation.ValidateCronSchedule(schedule); err != nil {
 		return fmt.Errorf("invalid resolution schedule %s: %w", schedule, err)
 	}
-	
+
 	// Create resolution job function
 	jobFunc := func() {
 		// Add panic recovery
@@ -665,21 +671,21 @@ func (s *CacheScheduler) registerResolutionJob(schedule string) error {
 					"stack", string(debug.Stack()))
 			}
 		}()
-		
+
 		if err := s.performGlobalResolution(s.ctx); err != nil {
 			s.logger.Error("global resolution failed", "error", err)
 		}
 	}
-	
+
 	// Register the cron job
 	entryID, err := s.cron.AddFunc(schedule, jobFunc)
 	if err != nil {
 		return fmt.Errorf("add resolution cron job: %w", err)
 	}
-	
+
 	s.resolutionJob = entryID
 	s.logger.Info("registered resolution cron job", "schedule", schedule)
-	
+
 	return nil
 }
 
@@ -689,7 +695,7 @@ func (s *CacheScheduler) registerRefreshJob(schedule string) error {
 	if err := validation.ValidateCronSchedule(schedule); err != nil {
 		return fmt.Errorf("invalid refresh schedule %s: %w", schedule, err)
 	}
-	
+
 	// Create job function that reads current resolved directives
 	jobFunc := func() {
 		// Add panic recovery
@@ -701,23 +707,23 @@ func (s *CacheScheduler) registerRefreshJob(schedule string) error {
 					"stack", string(debug.Stack()))
 			}
 		}()
-		
+
 		// Get current resolved directives for this schedule
 		directives := s.getDirectivesForSchedule(schedule)
 		if len(directives) == 0 {
 			s.logger.Debug("no directives for schedule", "schedule", schedule)
 			return
 		}
-		
+
 		s.logger.Debug("executing scheduled refresh", "schedule", schedule, "streams", len(directives))
-		
+
 		// Use errgroup for better error handling
 		g, ctx := errgroup.WithContext(s.ctx)
 		g.SetLimit(5) // Limit concurrent refreshes
-		
+
 		for _, directive := range directives {
 			dir := directive // Capture loop variable
-			
+
 			g.Go(func() error {
 				if err := s.refreshStreamDataWithCircuitBreaker(ctx, dir); err != nil {
 					s.logger.Error("failed to refresh stream data",
@@ -729,22 +735,22 @@ func (s *CacheScheduler) registerRefreshJob(schedule string) error {
 				return nil // Continue with other streams
 			})
 		}
-		
+
 		if err := g.Wait(); err != nil {
 			s.logger.Error("scheduled refresh group error", "error", err)
 		}
 	}
-	
+
 	// Register the cron job
 	entryID, err := s.cron.AddFunc(schedule, jobFunc)
 	if err != nil {
 		return fmt.Errorf("add refresh cron job: %w", err)
 	}
-	
+
 	s.jobs[schedule] = entryID
 	s.logger.Info("registered refresh cron job",
 		"schedule", schedule)
-	
+
 	return nil
 }
 
@@ -752,14 +758,14 @@ func (s *CacheScheduler) registerRefreshJob(schedule string) error {
 func (s *CacheScheduler) getDirectivesForSchedule(schedule string) []config.CacheDirective {
 	s.resolutionMu.RLock()
 	defer s.resolutionMu.RUnlock()
-	
+
 	var directives []config.CacheDirective
 	for _, directive := range s.resolvedDirectives {
 		if directive.Schedule.CronExpr == schedule {
 			directives = append(directives, directive)
 		}
 	}
-	
+
 	return directives
 }
 
@@ -770,10 +776,10 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 	s.resolutionStatus = ResolutionStatusRunning
 	s.resolutionErr = nil
 	s.resolutionMu.Unlock()
-	
+
 	s.logger.Info("starting global resolution")
 	startTime := time.Now()
-	
+
 	// Resolve original directives to current state
 	newResolvedSpecs, err := s.resolveStreamSpecs(ctx, s.originalDirectives)
 	if err != nil {
@@ -784,7 +790,7 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 		s.resolutionMu.Unlock()
 		return fmt.Errorf("resolve stream specs: %w", err)
 	}
-	
+
 	// Safeguard: if we had resolved directives before but now have none, something went wrong
 	if len(s.resolvedDirectives) > 0 && len(newResolvedSpecs) == 0 {
 		err := fmt.Errorf("resolution would clear all streams (had %d, now 0) - aborting", len(s.resolvedDirectives))
@@ -795,23 +801,23 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 		s.resolutionMu.Unlock()
 		return err
 	}
-	
+
 	// Calculate changes
 	oldSet := make(map[string]bool)
 	newSet := make(map[string]bool)
-	
+
 	s.resolutionMu.RLock()
 	for _, dir := range s.resolvedDirectives {
 		key := fmt.Sprintf("%s:%s", dir.DataProvider, dir.StreamID)
 		oldSet[key] = true
 	}
 	s.resolutionMu.RUnlock()
-	
+
 	for _, dir := range newResolvedSpecs {
 		key := fmt.Sprintf("%s:%s", dir.DataProvider, dir.StreamID)
 		newSet[key] = true
 	}
-	
+
 	// Find added and removed streams
 	var added, removed []string
 	for key := range newSet {
@@ -824,7 +830,7 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 			removed = append(removed, key)
 		}
 	}
-	
+
 	// Update cached_streams table atomically
 	if err := s.updateCachedStreamsTable(ctx, newResolvedSpecs); err != nil {
 		// Update status to failed
@@ -834,7 +840,7 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 		s.resolutionMu.Unlock()
 		return fmt.Errorf("update cached_streams table: %w", err)
 	}
-	
+
 	// Update resolved directives atomically
 	s.resolutionMu.Lock()
 	s.resolvedDirectives = newResolvedSpecs
@@ -842,7 +848,7 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 	s.resolutionStatus = ResolutionStatusCompleted
 	s.resolutionErr = nil
 	s.resolutionMu.Unlock()
-	
+
 	// Log resolution metrics
 	s.logger.Info("global resolution completed",
 		"duration", time.Since(startTime),
@@ -850,14 +856,14 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 		"resolved_count", len(newResolvedSpecs),
 		"added_streams", len(added),
 		"removed_streams", len(removed))
-		
+
 	if len(added) > 0 {
 		s.logger.Debug("streams added", "streams", added)
 	}
 	if len(removed) > 0 {
 		s.logger.Debug("streams removed", "streams", removed)
 	}
-	
+
 	return nil
 }
 
@@ -868,33 +874,33 @@ func (s *CacheScheduler) updateCachedStreamsTable(ctx context.Context, resolvedS
 	if err != nil {
 		return fmt.Errorf("list current stream configs: %w", err)
 	}
-	
+
 	// Build sets for comparison
 	currentSet := make(map[string]internal.StreamCacheConfig)
 	for _, config := range currentConfigs {
 		key := fmt.Sprintf("%s:%s", config.DataProvider, config.StreamID)
 		currentSet[key] = config
 	}
-	
+
 	// Build new configs
 	newConfigs := make([]internal.StreamCacheConfig, 0, len(resolvedSpecs))
 	newSet := make(map[string]bool)
-	
+
 	for _, spec := range resolvedSpecs {
 		key := fmt.Sprintf("%s:%s", spec.DataProvider, spec.StreamID)
 		newSet[key] = true
-		
+
 		// Preserve last_refreshed if stream already exists
 		var lastRefreshed string
 		if existing, exists := currentSet[key]; exists {
 			lastRefreshed = existing.LastRefreshed
 		}
-		
+
 		var fromTimestamp int64
 		if spec.TimeRange.From != nil {
 			fromTimestamp = *spec.TimeRange.From
 		}
-		
+
 		newConfigs = append(newConfigs, internal.StreamCacheConfig{
 			DataProvider:  spec.DataProvider,
 			StreamID:      spec.StreamID,
@@ -903,7 +909,7 @@ func (s *CacheScheduler) updateCachedStreamsTable(ctx context.Context, resolvedS
 			CronSchedule:  spec.Schedule.CronExpr,
 		})
 	}
-	
+
 	// Find streams to delete
 	var toDelete []internal.StreamCacheConfig
 	for key, config := range currentSet {
@@ -911,11 +917,11 @@ func (s *CacheScheduler) updateCachedStreamsTable(ctx context.Context, resolvedS
 			toDelete = append(toDelete, config)
 		}
 	}
-	
+
 	// Apply changes atomically
 	if err := s.cacheDB.UpdateStreamConfigsAtomic(ctx, newConfigs, toDelete); err != nil {
 		return fmt.Errorf("atomic update failed: %w", err)
 	}
-	
+
 	return nil
 }

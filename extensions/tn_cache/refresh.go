@@ -1,3 +1,5 @@
+// Package tn_cache implements stream data caching with robust error handling.
+// See internal/errors/doc.go for the complete error handling philosophy.
 package tn_cache
 
 import (
@@ -5,7 +7,6 @@ import (
 	"fmt"
 	"math/big"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/avast/retry-go/v4"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
+	"github.com/trufnetwork/node/extensions/tn_cache/internal/errors"
 )
 
 // refreshStreamDataWithRetry refreshes stream data with exponential backoff retry logic using retry-go
@@ -35,7 +37,7 @@ func (s *CacheScheduler) refreshStreamDataWithRetry(ctx context.Context, directi
 		}),
 		retry.RetryIf(func(err error) bool {
 			// Don't retry non-retryable errors
-			if isNonRetryableError(err) {
+			if errors.IsNonRetryableError(err) {
 				s.logger.Debug("non-retryable error, not retrying",
 					"provider", directive.DataProvider,
 					"stream", directive.StreamID,
@@ -49,33 +51,6 @@ func (s *CacheScheduler) refreshStreamDataWithRetry(ctx context.Context, directi
 	)
 }
 
-// isNonRetryableError determines if an error should not be retried
-func isNonRetryableError(err error) bool {
-	errStr := strings.ToLower(err.Error())
-
-	// Add specific error patterns that shouldn't be retried
-	nonRetryablePatterns := []string{
-		"schema does not exist",
-		"permission denied",
-		"invalid configuration",
-		"context canceled",
-		"context deadline exceeded",
-		"unauthorized",
-		"forbidden",
-		"action does not exist",
-		"invalid stream type",
-		"malformed",
-		"syntax error",
-	}
-
-	for _, pattern := range nonRetryablePatterns {
-		if strings.Contains(errStr, pattern) {
-			return true
-		}
-	}
-
-	return false
-}
 
 // parseEventTime converts various types to int64 timestamp
 func parseEventTime(v interface{}) (int64, error) {
@@ -251,8 +226,7 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, directive conf
 
 	if err != nil {
 		// Check if this is a "stream not found" type error
-		errStr := strings.ToLower(err.Error())
-		if strings.Contains(errStr, "not found") || strings.Contains(errStr, "does not exist") || strings.Contains(errStr, "no rows") {
+		if errors.IsNotFoundError(err) {
 			s.logger.Warn("stream not found or has no data",
 				"action", action,
 				"provider", directive.DataProvider,

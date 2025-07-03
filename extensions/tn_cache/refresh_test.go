@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
+	errors2 "github.com/trufnetwork/node/extensions/tn_cache/internal/errors"
 )
 
 func TestParseEventTime(t *testing.T) {
@@ -96,7 +97,7 @@ func TestIsNonRetryableError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := isNonRetryableError(tt.err)
+			result := errors2.IsNonRetryableError(tt.err)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
