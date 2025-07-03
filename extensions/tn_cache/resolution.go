@@ -39,6 +39,7 @@ const (
 func (s *CacheScheduler) resolveStreamSpecs(ctx context.Context, directives []config.CacheDirective) ([]config.CacheDirective, error) {
 	var resolvedSpecs []config.CacheDirective
 
+	// Process each directive based on its type
 	for _, directive := range directives {
 		switch directive.Type {
 		case config.DirectiveSpecific:
@@ -64,7 +65,7 @@ func (s *CacheScheduler) resolveStreamSpecs(ctx context.Context, directives []co
 				// Add the original stream first
 				resolvedSpecs = append(resolvedSpecs, directive)
 
-				// Add each child stream as a separate specification
+				// Then add each child stream as a separate specification
 				for _, childKey := range childStreams {
 					// Parse the composite key (provider:streamID)
 					parts := strings.Split(childKey, ":")
@@ -110,7 +111,7 @@ func (s *CacheScheduler) resolveStreamSpecs(ctx context.Context, directives []co
 				return nil, fmt.Errorf("resolve wildcard for provider %s: %w", directive.DataProvider, err)
 			}
 
-			// Create individual specifications for each composed stream
+			// Create individual specifications for each composed stream found
 			for _, streamID := range composedStreams {
 				streamSpec := config.CacheDirective{
 					ID:           fmt.Sprintf("%s_%s_%s", directive.DataProvider, streamID, "resolved"),
@@ -207,7 +208,7 @@ func (s *CacheScheduler) deduplicateResolvedSpecs(specs []config.CacheDirective)
 func (s *CacheScheduler) getComposedStreamsForProvider(ctx context.Context, provider string) ([]string, error) {
 	var composedStreams []string
 
-	// Use the list_streams action to get all streams for the provider
+	// Query all streams for the provider using list_streams action
 	result, err := s.app.Engine.CallWithoutEngineCtx(
 		ctx,
 		s.app.DB,
@@ -222,6 +223,7 @@ func (s *CacheScheduler) getComposedStreamsForProvider(ctx context.Context, prov
 		},
 		func(row *common.Row) error {
 			if len(row.Values) >= 3 {
+				// Extract stream_id and check if it's a composed stream
 				// row.Values: [data_provider, stream_id, stream_type, created_at]
 				if streamID, ok := row.Values[1].(string); ok {
 					if streamType, ok := row.Values[2].(string); ok && streamType == "composed" {
@@ -267,7 +269,7 @@ func (s *CacheScheduler) getChildStreamsForComposed(ctx context.Context, dataPro
 		activeFrom = *fromTime
 	}
 
-	// Use the get_category_streams action to get all child streams
+	// Query child streams using get_category_streams action
 	result, err := s.app.Engine.CallWithoutEngineCtx(
 		ctx,
 		s.app.DB,
@@ -281,6 +283,7 @@ func (s *CacheScheduler) getChildStreamsForComposed(ctx context.Context, dataPro
 		},
 		func(row *common.Row) error {
 			if len(row.Values) >= 2 {
+				// Extract provider and stream_id for each child
 				// row.Values: [data_provider, stream_id]
 				if childProvider, ok := row.Values[0].(string); ok {
 					if childStreamID, ok := row.Values[1].(string); ok {
@@ -329,7 +332,7 @@ func (s *CacheScheduler) GetResolutionHealth() (status ResolutionStatus, lastRun
 	lastRun = s.lastResolution
 	lastError = s.resolutionErr
 
-	// Calculate next run time if job is scheduled
+	// Calculate next run time if resolution job is scheduled
 	if s.resolutionJob != 0 {
 		if entry := s.cron.Entry(s.resolutionJob); entry.ID != 0 {
 			nextRun = entry.Next
@@ -410,7 +413,7 @@ func (s *CacheScheduler) registerResolutionJob(schedule string) error {
 
 // performGlobalResolution re-resolves all wildcards and IncludeChildren directives
 func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
-	// Update status to running
+	// First, update status to running
 	s.resolutionMu.Lock()
 	s.resolutionStatus = ResolutionStatusRunning
 	s.resolutionErr = nil
@@ -419,7 +422,7 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 	s.logger.Info("starting global resolution")
 	startTime := time.Now()
 
-	// Resolve original directives to current state
+	// Resolve original directives to get current state
 	newResolvedSpecs, err := s.resolveStreamSpecs(ctx, s.originalDirectives)
 	if err != nil {
 		// Update status to failed
@@ -441,7 +444,7 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 		return err
 	}
 
-	// Calculate changes
+	// Calculate what streams were added or removed
 	oldSet := make(map[string]bool)
 	newSet := make(map[string]bool)
 
@@ -470,7 +473,7 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 		}
 	}
 
-	// Update cached_streams table atomically
+	// Update database atomically to reflect new state
 	if err := s.updateCachedStreamsTable(ctx, newResolvedSpecs); err != nil {
 		// Update status to failed
 		s.resolutionMu.Lock()
@@ -480,7 +483,7 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 		return fmt.Errorf("update cached_streams table: %w", err)
 	}
 
-	// Update resolved directives atomically
+	// Finally, update in-memory resolved directives
 	s.resolutionMu.Lock()
 	s.resolvedDirectives = newResolvedSpecs
 	s.lastResolution = time.Now()
@@ -508,7 +511,7 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 
 // updateCachedStreamsTable atomically updates the cached_streams table
 func (s *CacheScheduler) updateCachedStreamsTable(ctx context.Context, resolvedSpecs []config.CacheDirective) error {
-	// Get current streams from database
+	// First, get current streams from database
 	currentConfigs, err := s.cacheDB.ListStreamConfigs(ctx)
 	if err != nil {
 		return fmt.Errorf("list current stream configs: %w", err)
@@ -521,7 +524,7 @@ func (s *CacheScheduler) updateCachedStreamsTable(ctx context.Context, resolvedS
 		currentSet[key] = config
 	}
 
-	// Build new configs
+	// Then, build new configurations
 	newConfigs := make([]internal.StreamCacheConfig, 0, len(resolvedSpecs))
 	newSet := make(map[string]bool)
 
@@ -557,7 +560,7 @@ func (s *CacheScheduler) updateCachedStreamsTable(ctx context.Context, resolvedS
 		}
 	}
 
-	// Apply changes atomically
+	// Finally, apply all changes atomically
 	if err := s.cacheDB.UpdateStreamConfigsAtomic(ctx, newConfigs, toDelete); err != nil {
 		return fmt.Errorf("atomic update failed: %w", err)
 	}

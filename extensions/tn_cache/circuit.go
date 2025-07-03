@@ -20,6 +20,7 @@ const (
 
 // getCircuitBreaker returns or creates a circuit breaker for a stream
 func (s *CacheScheduler) getCircuitBreaker(streamKey string) *gobreaker.CircuitBreaker {
+	// First, check if circuit breaker already exists
 	s.breakerMu.RLock()
 	cb, exists := s.breakers[streamKey]
 	s.breakerMu.RUnlock()
@@ -28,7 +29,7 @@ func (s *CacheScheduler) getCircuitBreaker(streamKey string) *gobreaker.CircuitB
 		return cb
 	}
 
-	// Create new circuit breaker
+	// Create new circuit breaker if it doesn't exist
 	s.breakerMu.Lock()
 	defer s.breakerMu.Unlock()
 
@@ -61,8 +62,10 @@ func (s *CacheScheduler) getCircuitBreaker(streamKey string) *gobreaker.CircuitB
 // refreshStreamDataWithCircuitBreaker wraps stream data refresh with circuit breaker
 func (s *CacheScheduler) refreshStreamDataWithCircuitBreaker(ctx context.Context, directive config.CacheDirective) error {
 	streamKey := fmt.Sprintf("%s/%s", directive.DataProvider, directive.StreamID)
+	// Get or create circuit breaker for this stream
 	cb := s.getCircuitBreaker(streamKey)
 
+	// Execute the refresh operation with circuit breaker protection
 	_, err := cb.Execute(func() (interface{}, error) {
 		return nil, s.refreshStreamDataWithRetry(ctx, directive, 3)
 	})

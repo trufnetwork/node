@@ -51,7 +51,6 @@ func (s *CacheScheduler) refreshStreamDataWithRetry(ctx context.Context, directi
 	)
 }
 
-
 // parseEventTime converts various types to int64 timestamp
 func parseEventTime(v interface{}) (int64, error) {
 	switch val := v.(type) {
@@ -124,7 +123,7 @@ func (s *CacheScheduler) refreshStreamData(ctx context.Context, directive config
 		"stream", directive.StreamID,
 		"type", directive.Type)
 
-	// Get stream config to check last refresh time for incremental updates
+	// First, get stream config to check last refresh time for incremental updates
 	streamConfig, err := s.cacheDB.GetStreamConfig(ctx, directive.DataProvider, directive.StreamID)
 	if err != nil {
 		return fmt.Errorf("get stream config: %w", err)
@@ -142,20 +141,20 @@ func (s *CacheScheduler) refreshStreamData(ctx context.Context, directive config
 		}
 	}
 
-	// Fetch data for the specific stream
+	// Then, fetch data for the specific stream
 	// Note: At this point, all directives should be DirectiveSpecific because wildcards
 	// are resolved to concrete specifications at scheduler startup. We no longer need to handle wildcards here.
 	if directive.Type != config.DirectiveSpecific {
 		return fmt.Errorf("unexpected directive type in refresh: %s (should be specific after resolution)", directive.Type)
 	}
-	
+
 	events, err := s.fetchSpecificStream(ctx, directive, fromTime)
 
 	if err != nil {
 		return fmt.Errorf("fetch stream data: %w", err)
 	}
 
-	// Store events with automatic duplicate detection
+	// Finally, store events with automatic duplicate detection
 	if len(events) > 0 {
 		if err := s.cacheDB.CacheEvents(ctx, events); err != nil {
 			return fmt.Errorf("cache events: %w", err)
@@ -190,7 +189,7 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, directive conf
 
 	var events []internal.CachedEvent
 
-	// Call the action with override authorization to bypass permission checks
+	// Execute the action to fetch stream data
 	result, err := s.app.Engine.CallWithoutEngineCtx(
 		ctx,
 		s.app.DB,
@@ -198,7 +197,7 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, directive conf
 		action,
 		args,
 		func(row *common.Row) error {
-			// Parse row into CachedEvent
+			// Parse each row into a CachedEvent
 			if len(row.Values) >= 2 {
 				// Parse event time using utility function
 				eventTime, err := parseEventTime(row.Values[0])
@@ -206,7 +205,7 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, directive conf
 					return fmt.Errorf("parse event_time: %w", err)
 				}
 
-				// Parse value using utility function
+				// Then parse the value using utility function
 				value, err := parseEventValue(row.Values[1])
 				if err != nil {
 					return fmt.Errorf("parse value: %w", err)
@@ -249,59 +248,4 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, directive conf
 	}
 
 	return events, nil
-}
-
-// fetchProviderStreams fetches data for all streams from a provider (wildcard directive)
-// DEPRECATED: This method is no longer used in the regular refresh flow because wildcards
-// are resolved to concrete specifications at scheduler startup. All refresh operations work with specific streams only.
-// Keeping this method for potential future use or manual wildcard data fetching.
-func (s *CacheScheduler) fetchProviderStreams(ctx context.Context, directive config.CacheDirective, fromTime *int64) ([]internal.CachedEvent, error) {
-	s.logger.Debug("fetching data for provider wildcard",
-		"provider", directive.DataProvider,
-		"wildcard", directive.StreamID)
-
-	// Get all composed streams for the provider using the proper action
-	composedStreams, err := s.getComposedStreamsForProvider(ctx, directive.DataProvider)
-	if err != nil {
-		return nil, fmt.Errorf("get composed streams for provider %s: %w", directive.DataProvider, err)
-	}
-
-	if len(composedStreams) == 0 {
-		s.logger.Debug("no composed streams found for provider", "provider", directive.DataProvider)
-		return []internal.CachedEvent{}, nil
-	}
-
-	var allEvents []internal.CachedEvent
-
-	// Fetch data for each composed stream
-	for _, streamID := range composedStreams {
-		// Create a temporary directive for this specific stream
-		streamDirective := config.CacheDirective{
-			DataProvider: directive.DataProvider,
-			StreamID:     streamID,
-			Type:         config.DirectiveSpecific,
-			TimeRange:    directive.TimeRange,
-			Schedule:     directive.Schedule,
-		}
-
-		// Fetch events for this specific stream
-		events, err := s.fetchSpecificStream(ctx, streamDirective, fromTime)
-		if err != nil {
-			// Log error but continue with other streams
-			s.logger.Error("failed to fetch data for stream in wildcard",
-				"provider", directive.DataProvider,
-				"stream", streamID,
-				"error", err)
-			continue
-		}
-
-		allEvents = append(allEvents, events...)
-	}
-
-	s.logger.Info("fetched wildcard stream data",
-		"provider", directive.DataProvider,
-		"streams_queried", len(composedStreams),
-		"total_events", len(allEvents))
-
-	return allEvents, nil
 }

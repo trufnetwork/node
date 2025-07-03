@@ -61,7 +61,7 @@ func (c *CacheDB) AddStreamConfig(ctx context.Context, config StreamCacheConfig)
 		}
 	}()
 
-	// Insert or update the stream config
+	// Insert or update the stream config using UPSERT
 	_, err = tx.Execute(ctx, `
 		INSERT INTO ext_tn_cache.cached_streams 
 			(data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule)
@@ -105,8 +105,7 @@ func (c *CacheDB) AddStreamConfigs(ctx context.Context, configs []StreamCacheCon
 		}
 	}()
 
-	// Build a single INSERT statement with multiple VALUES clauses
-	// Using UNNEST to insert multiple rows efficiently
+	// Build arrays for batch insert using UNNEST for efficiency
 	var dataProviders, streamIDs, cronSchedules []string
 	var fromTimestamps []int64
 	var lastRefresheds []string
@@ -119,7 +118,7 @@ func (c *CacheDB) AddStreamConfigs(ctx context.Context, configs []StreamCacheCon
 		cronSchedules = append(cronSchedules, config.CronSchedule)
 	}
 
-	// Execute the batch insert
+	// Execute the batch insert with UPSERT logic
 	_, err = tx.Execute(ctx, `
 		INSERT INTO ext_tn_cache.cached_streams 
 			(data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule)
@@ -271,7 +270,7 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 		}
 
 		batch := events[i:end]
-		// Build the query for the batch
+		// Build the INSERT query for this batch
 		query := `
 			INSERT INTO ext_tn_cache.cached_events 
 				(data_provider, stream_id, event_time, value)
@@ -299,7 +298,7 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 		}
 	}
 
-	// Update the last refreshed timestamp for the stream
+	// Finally, update the last refreshed timestamp for the stream
 	if len(events) > 0 {
 		event := events[0]
 		now := time.Now().UTC().Format(time.RFC3339)
@@ -488,7 +487,7 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 		}
 	}()
 
-	// First check if the stream is configured for caching
+	// First, check if the stream is configured for caching
 	streamResult, err := tx.Execute(ctx, `
 		SELECT COUNT(*) > 0
 		FROM ext_tn_cache.cached_streams
@@ -507,7 +506,7 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 		return false, nil
 	}
 
-	// Then check if there are events in the cache
+	// Then, check if there are events in the cache
 	var eventsResult *sql.ResultSet
 	if toTime > 0 {
 		eventsResult, err = tx.Execute(ctx, `
@@ -601,7 +600,7 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 		}
 	}()
 	
-	// Delete removed streams
+	// First, delete removed streams
 	if len(toDelete) > 0 {
 		for _, config := range toDelete {
 			_, err = tx.Execute(ctx, `
@@ -614,7 +613,7 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 		}
 	}
 	
-	// Add/update new streams using batch operation
+	// Then, add/update new streams using batch operation
 	if len(newConfigs) > 0 {
 		var dataProviders, streamIDs, cronSchedules []string
 		var fromTimestamps []int64
@@ -628,7 +627,7 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 			cronSchedules = append(cronSchedules, config.CronSchedule)
 		}
 		
-		// Execute the batch upsert
+		// Execute the batch upsert, preserving last_refreshed if it exists
 		_, err = tx.Execute(ctx, `
 			INSERT INTO ext_tn_cache.cached_streams 
 				(data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule)
