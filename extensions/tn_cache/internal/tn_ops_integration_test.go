@@ -3,7 +3,6 @@ package internal
 import (
 	"context"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -28,49 +27,6 @@ func generateTestStreamID(prefix string) util.StreamId {
 	return util.GenerateStreamId(fmt.Sprintf("%s_%d", prefix, timestamp))
 }
 
-// setupComposedStreamData is a helper to setup composed stream test data
-type setupComposedStreamData struct {
-	streamID     util.StreamId
-	columnPrefix string
-	values       [][]int // Each row is [eventTime, val1, val2, ...]
-}
-
-// setupComposedStream creates a composed stream with the given data
-func setupComposedStream(ctx context.Context, platform *kwilTesting.Platform, data setupComposedStreamData) error {
-	// Build markdown table dynamically
-	numCols := len(data.values[0]) - 1 // Exclude event_time
-
-	// Build header
-	header := "| event_time"
-	separator := "|----------"
-	for i := 0; i < numCols; i++ {
-		header += fmt.Sprintf(" | %s_%d", data.columnPrefix, i+1)
-		separator += "|---------"
-	}
-	header += " |"
-	separator += "|"
-
-	// Build rows
-	rows := []string{header, separator}
-	for _, row := range data.values {
-		rowStr := fmt.Sprintf("| %d", row[0])
-		for i := 1; i < len(row); i++ {
-			rowStr += fmt.Sprintf(" | %d", row[i])
-		}
-		rowStr += " |"
-		rows = append(rows, rowStr)
-	}
-
-	markdownData := strings.Join(rows, "\n")
-
-	// Setup the stream
-	return setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
-		Platform:     platform,
-		StreamId:     data.streamID,
-		MarkdownData: markdownData,
-		Height:       1,
-	})
-}
 
 func TestTNOperations_Integration(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
@@ -95,29 +51,36 @@ func testTNOperationsIntegration(t *testing.T) func(ctx context.Context, platfor
 		t.Run("ListComposedStreams", testutils.WithTx(platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {
 			tnOps := NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
 
-			// Create test streams
-			stream1 := setupComposedStreamData{
-				streamID:     generateTestStreamID("test_composed_1"),
-				columnPrefix: "val_a",
-				values: [][]int{
-					{100, 10, 20},
-					{200, 15, 25},
-					{300, 20, 30},
-				},
-			}
+			// Create test streams with unique IDs
+			stream1ID := generateTestStreamID("test_composed_1")
+			stream2ID := generateTestStreamID("test_composed_2")
 
-			stream2 := setupComposedStreamData{
-				streamID:     generateTestStreamID("test_composed_2"),
-				columnPrefix: "val_b",
-				values: [][]int{
-					{100, 100, 200, 300},
-					{200, 150, 250, 350},
-				},
-			}
-
-			// Setup streams
-			require.NoError(t, setupComposedStream(ctx, txPlatform, stream1))
-			require.NoError(t, setupComposedStream(ctx, txPlatform, stream2))
+			// Setup first stream with inline markdown
+			require.NoError(t, setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
+				Platform:     txPlatform,
+				StreamId:     stream1ID,
+				MarkdownData: `
+				| event_time | val_a_1 | val_a_2 |
+				|------------|---------|---------|
+				| 100        | 10      | 20      |
+				| 200        | 15      | 25      |
+				| 300        | 20      | 30      |
+				`,
+				Height:       1,
+			}))
+			
+			// Setup second stream with different structure
+			require.NoError(t, setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
+				Platform:     txPlatform,
+				StreamId:     stream2ID,
+				MarkdownData: `
+				| event_time | val_b_1 | val_b_2 | val_b_3 |
+				|------------|---------|---------|---------|
+				| 100        | 100     | 200     | 300     |
+				| 200        | 150     | 250     | 350     |
+				`,
+				Height:       1,
+			}))
 
 			// Test ListComposedStreams
 			streams, err := tnOps.ListComposedStreams(ctx, deployer.Address())
@@ -127,14 +90,14 @@ func testTNOperationsIntegration(t *testing.T) func(ctx context.Context, platfor
 			assert.GreaterOrEqual(t, len(streams), 2, "Should have at least 2 composed streams")
 
 			// Check that our streams are in the list
-			streamIDs := map[string]bool{stream1.streamID.String(): false, stream2.streamID.String(): false}
+			streamIDs := map[string]bool{stream1ID.String(): false, stream2ID.String(): false}
 			for _, stream := range streams {
 				if _, exists := streamIDs[stream]; exists {
 					streamIDs[stream] = true
 				}
 			}
-			assert.True(t, streamIDs[stream1.streamID.String()], "Should find first composed stream")
-			assert.True(t, streamIDs[stream2.streamID.String()], "Should find second composed stream")
+			assert.True(t, streamIDs[stream1ID.String()], "Should find first composed stream")
+			assert.True(t, streamIDs[stream2ID.String()], "Should find second composed stream")
 		}))
 
 		// Test GetCategoryStreams
@@ -142,25 +105,28 @@ func testTNOperationsIntegration(t *testing.T) func(ctx context.Context, platfor
 			tnOps := NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
 
 			// Create a composed stream with known structure
-			streamData := setupComposedStreamData{
-				streamID:     generateTestStreamID("test_composed_cat"),
-				columnPrefix: "cat_val",
-				values: [][]int{
-					{100, 10, 20},
-					{200, 15, 25},
-				},
-			}
-
-			require.NoError(t, setupComposedStream(ctx, txPlatform, streamData))
+			streamID := generateTestStreamID("test_composed_cat")
+			
+			require.NoError(t, setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
+				Platform:     txPlatform,
+				StreamId:     streamID,
+				MarkdownData: `
+				| event_time | cat_val_1 | cat_val_2 |
+				|------------|-----------|-----------|
+				| 100        | 10        | 20        |
+				| 200        | 15        | 25        |
+				`,
+				Height:       1,
+			}))
 
 			// Get child streams for the composed stream
-			categoryStreams, err := tnOps.GetCategoryStreams(ctx, deployer.Address(), streamData.streamID.String(), 0)
+			categoryStreams, err := tnOps.GetCategoryStreams(ctx, deployer.Address(), streamID.String(), 0)
 			require.NoError(t, err)
 
 			// Filter out the parent stream to get only children
 			var childStreams []CategoryStream
 			for _, cs := range categoryStreams {
-				if cs.StreamID != streamData.streamID.String() {
+				if cs.StreamID != streamID.String() {
 					childStreams = append(childStreams, cs)
 				}
 			}
@@ -182,23 +148,26 @@ func testTNOperationsIntegration(t *testing.T) func(ctx context.Context, platfor
 			tnOps := NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
 
 			// Create composed stream with test data
-			streamData := setupComposedStreamData{
-				streamID:     generateTestStreamID("test_composed_rec"),
-				columnPrefix: "rec_val",
-				values: [][]int{
-					{100, 10, 20},
-					{200, 15, 25},
-					{300, 20, 30},
-				},
-			}
-
-			require.NoError(t, setupComposedStream(ctx, txPlatform, streamData))
+			streamID := generateTestStreamID("test_composed_rec")
+			
+			require.NoError(t, setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
+				Platform:     txPlatform,
+				StreamId:     streamID,
+				MarkdownData: `
+				| event_time | rec_val_1 | rec_val_2 |
+				|------------|-----------|-----------|
+				| 100        | 10        | 20        |
+				| 200        | 15        | 25        |
+				| 300        | 20        | 30        |
+				`,
+				Height:       1,
+			}))
 
 			// Test fetching all records
 			fromTime := int64(100)
 			toTime := int64(300)
 
-			records, err := tnOps.GetRecordComposed(ctx, deployer.Address(), streamData.streamID.String(), &fromTime, &toTime)
+			records, err := tnOps.GetRecordComposed(ctx, deployer.Address(), streamID.String(), &fromTime, &toTime)
 			require.NoError(t, err)
 
 			// Should have 3 records
@@ -222,7 +191,7 @@ func testTNOperationsIntegration(t *testing.T) func(ctx context.Context, platfor
 			fromTime = int64(250) // Between 200 and 300
 			toTime = int64(300)   // Up to 300
 
-			records, err = tnOps.GetRecordComposed(ctx, deployer.Address(), streamData.streamID.String(), &fromTime, &toTime)
+			records, err = tnOps.GetRecordComposed(ctx, deployer.Address(), streamID.String(), &fromTime, &toTime)
 			require.NoError(t, err)
 
 			// Should have 2 records: anchor at 200 and record at 300
@@ -238,21 +207,24 @@ func testTNOperationsIntegration(t *testing.T) func(ctx context.Context, platfor
 			tnOps := NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
 
 			// Create composed stream with 3 columns
-			streamData := setupComposedStreamData{
-				streamID:     generateTestStreamID("test_composed_3ch"),
-				columnPrefix: "ch3_val",
-				values: [][]int{
-					{100, 100, 200, 300},
-					{200, 150, 250, 350},
-				},
-			}
-
-			require.NoError(t, setupComposedStream(ctx, txPlatform, streamData))
+			streamID := generateTestStreamID("test_composed_3ch")
+			
+			require.NoError(t, setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
+				Platform:     txPlatform,
+				StreamId:     streamID,
+				MarkdownData: `
+				| event_time | ch3_val_1 | ch3_val_2 | ch3_val_3 |
+				|------------|-----------|-----------|-----------|
+				| 100        | 100       | 200       | 300       |
+				| 200        | 150       | 250       | 350       |
+				`,
+				Height:       1,
+			}))
 
 			fromTime := int64(100)
 			toTime := int64(200)
 
-			records, err := tnOps.GetRecordComposed(ctx, deployer.Address(), streamData.streamID.String(), &fromTime, &toTime)
+			records, err := tnOps.GetRecordComposed(ctx, deployer.Address(), streamID.String(), &fromTime, &toTime)
 			require.NoError(t, err)
 
 			// Should have 2 records
@@ -374,23 +346,26 @@ func testTNOperationsRealTime(t *testing.T) func(ctx context.Context, platform *
 
 			// Create stream with recent timestamps
 			currentTime := time.Now().Unix()
-			streamData := setupComposedStreamData{
-				streamID:     generateTestStreamID("realtime_composed"),
-				columnPrefix: "rt_val",
-				values: [][]int{
-					{int(currentTime - 300), 100, 200},
-					{int(currentTime - 200), 150, 250},
-					{int(currentTime - 100), 200, 300},
-				},
-			}
-
-			require.NoError(t, setupComposedStream(ctx, txPlatform, streamData))
+			streamID := generateTestStreamID("realtime_composed")
+			
+			require.NoError(t, setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
+				Platform:     txPlatform,
+				StreamId:     streamID,
+				MarkdownData: fmt.Sprintf(`
+				| event_time | rt_val_1 | rt_val_2 |
+				|------------|----------|----------|
+				| %d         | 100      | 200      |
+				| %d         | 150      | 250      |
+				| %d         | 200      | 300      |
+				`, currentTime-300, currentTime-200, currentTime-100),
+				Height:       1,
+			}))
 
 			// Query recent data
 			fromTime := currentTime - 400
 			toTime := currentTime
 
-			records, err := tnOps.GetRecordComposed(ctx, deployer.Address(), streamData.streamID.String(), &fromTime, &toTime)
+			records, err := tnOps.GetRecordComposed(ctx, deployer.Address(), streamID.String(), &fromTime, &toTime)
 			require.NoError(t, err)
 
 			// Should have all 3 records
@@ -417,21 +392,24 @@ func testTNOperationsRealTime(t *testing.T) func(ctx context.Context, platform *
 
 			// Create stream with current timestamp
 			currentTime := time.Now().Unix()
-			streamData := setupComposedStreamData{
-				streamID:     generateTestStreamID("future_test"),
-				columnPrefix: "ft_val",
-				values: [][]int{
-					{int(currentTime - 100), 100, 200},
-				},
-			}
-
-			require.NoError(t, setupComposedStream(ctx, txPlatform, streamData))
+			streamID := generateTestStreamID("future_test")
+			
+			require.NoError(t, setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
+				Platform:     txPlatform,
+				StreamId:     streamID,
+				MarkdownData: fmt.Sprintf(`
+				| event_time | ft_val_1 | ft_val_2 |
+				|------------|----------|----------|
+				| %d         | 100      | 200      |
+				`, currentTime-100),
+				Height:       1,
+			}))
 
 			// Query with future time range
 			fromTime := currentTime + 1000
 			toTime := currentTime + 2000
 
-			records, err := tnOps.GetRecordComposed(ctx, deployer.Address(), streamData.streamID.String(), &fromTime, &toTime)
+			records, err := tnOps.GetRecordComposed(ctx, deployer.Address(), streamID.String(), &fromTime, &toTime)
 			require.NoError(t, err)
 
 			// TN returns the anchor record (last known value) even for future queries

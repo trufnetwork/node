@@ -11,6 +11,11 @@ import (
 	sql "github.com/trufnetwork/kwil-db/node/types/sql"
 )
 
+const (
+	// ExtensionAgentName is the standard name for extension agents accessing TN data
+	ExtensionAgentName = "extension_agent"
+)
+
 // TNOperator defines the interface for TN operations
 type TNOperator interface {
 	// ListComposedStreams returns all composed streams for a given provider
@@ -66,9 +71,11 @@ func (t *TNOperations) ListComposedStreams(ctx context.Context, provider string)
 			BlockContext: &common.BlockContext{
 				Height: 0, // Use height 0 for current state
 			},
-			Signer: []byte("tn_cache_extension"),
-			Caller: "tn_cache_extension",
-			TxID:   fmt.Sprintf("tn_cache_list_%d", time.Now().UnixNano()),
+			// NOTE: Currently using OverrideAuthz to access all streams including private ones
+			// See TestExtensionAgentPermissions for verification
+			Signer: []byte(ExtensionAgentName),
+			Caller: ExtensionAgentName,
+			TxID:   fmt.Sprintf("ext_agent_list_%d", time.Now().UnixNano()),
 		},
 		OverrideAuthz: true, // Read-only operation, no auth needed
 	}
@@ -126,9 +133,9 @@ func (t *TNOperations) GetCategoryStreams(ctx context.Context, provider, streamI
 			BlockContext: &common.BlockContext{
 				Height: 0,
 			},
-			Signer: []byte("tn_cache_extension"),
-			Caller: "tn_cache_extension",
-			TxID:   fmt.Sprintf("tn_cache_category_%d", time.Now().UnixNano()),
+			Signer: []byte(ExtensionAgentName),
+			Caller: ExtensionAgentName,
+			TxID:   fmt.Sprintf("ext_agent_category_%d", time.Now().UnixNano()),
 		},
 		OverrideAuthz: true,
 	}
@@ -190,9 +197,9 @@ func (t *TNOperations) GetRecordComposed(ctx context.Context, provider, streamID
 			BlockContext: &common.BlockContext{
 				Height: 0,
 			},
-			Signer: []byte("tn_cache_extension"),
-			Caller: "tn_cache_extension",
-			TxID:   fmt.Sprintf("tn_cache_record_%d", time.Now().UnixNano()),
+			Signer: []byte(ExtensionAgentName),
+			Caller: ExtensionAgentName,
+			TxID:   fmt.Sprintf("ext_agent_record_%d", time.Now().UnixNano()),
 		},
 		OverrideAuthz: true,
 	}
@@ -270,7 +277,8 @@ func parseEventTime(v interface{}) (int64, error) {
 	}
 }
 
-// parseEventValue converts various types to *types.Decimal
+// parseEventValue converts TN's return types to *types.Decimal
+// TN actions return either *types.Decimal or string for decimal values
 func parseEventValue(v interface{}) (*types.Decimal, error) {
 	switch val := v.(type) {
 	case *types.Decimal:
@@ -285,14 +293,7 @@ func parseEventValue(v interface{}) (*types.Decimal, error) {
 	case string:
 		// Parse string directly as decimal(36,18)
 		return types.ParseDecimalExplicit(val, 36, 18)
-	case float64:
-		// Convert float64 to decimal(36,18)
-		return types.ParseDecimalExplicit(fmt.Sprintf("%f", val), 36, 18)
-	case int64:
-		return types.ParseDecimalExplicit(fmt.Sprintf("%d", val), 36, 18)
-	case int:
-		return types.ParseDecimalExplicit(fmt.Sprintf("%d", val), 36, 18)
 	default:
-		return nil, fmt.Errorf("unsupported value type: %T", v)
+		return nil, fmt.Errorf("unsupported value type: %T (expected *types.Decimal or string)", v)
 	}
 }

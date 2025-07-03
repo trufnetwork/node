@@ -416,14 +416,9 @@ func TestParseEventValue(t *testing.T) {
 		wantErr     bool
 		expectedStr string // Expected string representation of decimal
 	}{
-		// Valid conversions
+		// Valid conversions - only string and *types.Decimal
 		{"string decimal", "123.456", false, "123.456"},
 		{"string integer", "123", false, "123"},
-		{"float64", float64(123.456), false, "123.456000"},
-		{"int64", int64(123), false, "123"},
-		{"int", int(123), false, "123"},
-
-		// Edge cases
 		{"zero string", "0", false, "0"},
 		{"negative string", "-123.456", false, "-123.456"},
 		{"large number", "999999999999999999.999999999999999999", false, "999999999999999999.999999999999999999"},
@@ -432,6 +427,9 @@ func TestParseEventValue(t *testing.T) {
 		{"nil", nil, true, ""},
 		{"empty string", "", true, ""},
 		{"invalid string", "not-a-number", true, ""},
+		{"float64 not supported", float64(123.456), true, ""},
+		{"int64 not supported", int64(123), true, ""},
+		{"int not supported", int(123), true, ""},
 		{"unsupported type array", []int{1, 2, 3}, true, ""},
 		{"unsupported type map", map[string]int{"a": 1}, true, ""},
 	}
