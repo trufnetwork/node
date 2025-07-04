@@ -44,8 +44,34 @@ services:
       # Enable telemetry
       KWILD_TELEMETRY_ENABLE: "true"
       KWILD_TELEMETRY_OTLP_ENDPOINT: "otel-collector:4318"
+      # tn_cache extension configuration
+      KWILD_APP_EXTENSIONS_TN_CACHE_ENABLED: "true"
+      KWILD_APP_EXTENSIONS_TN_CACHE_RESOLUTION_SCHEDULE: "*/30 * * * * *"
+      KWILD_APP_EXTENSIONS_TN_CACHE_STREAMS_INLINE: |
+        [
+          {
+            "data_provider": "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+            "stream_id": "stcomposed1234567890123456789001",
+            "schedule": "*/10 * * * * *",
+            "from_timestamp": 1609459200
+          },
+          {
+            "data_provider": "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+            "stream_id": "stcomposed1234567890123456789002",
+            "schedule": "*/15 * * * * *",
+            "from_timestamp": 1609459200
+          },
+          {
+            "data_provider": "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+            "stream_id": "stcomposed1234567890123456789003",
+            "schedule": "*/20 * * * * *",
+            "from_timestamp": 1609459200
+          }
+        ]
     volumes:
       - ./configs/kwild-config-override.toml:/root/.kwild/config.toml.override:ro
+      - ./configs/custom-entrypoint.sh:/app/custom-entrypoint.sh:ro
+    entrypoint: ["/app/custom-entrypoint.sh"]
     ports:
       - "8484:8484"  # JSON-RPC
       - "8485:8485"  # Admin API
