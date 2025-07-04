@@ -32,9 +32,9 @@ func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
 		// Extension is not configured, return default disabled config
 		logger.Debug("extension not configured, disabling")
 		return &config.ProcessedConfig{
-			Enabled:      false,
+			Enabled:    false,
 			Directives: []config.CacheDirective{},
-			Sources:      []string{},
+			Sources:    []string{},
 		}, nil
 	}
 
@@ -102,13 +102,19 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 		return fmt.Errorf("failed to setup cache schema: %w", err)
 	}
 
+	// Register SQL functions
+	err = registerSQLFunctions(ctx, db)
+	if err != nil {
+		return fmt.Errorf("failed to register SQL functions: %w", err)
+	}
+
 	// Initialize scheduler if we have directives
 	if len(processedConfig.Directives) > 0 {
 		scheduler = NewCacheScheduler(app, cacheDB, logger)
 		if err := scheduler.Start(ctx, processedConfig); err != nil {
 			return fmt.Errorf("failed to start scheduler: %w", err)
 		}
-		
+
 		// Start a goroutine to handle graceful shutdown when context is cancelled
 		go func() {
 			<-ctx.Done()
@@ -228,7 +234,6 @@ func cleanupExtensionSchema(ctx context.Context, db sql.DB) error {
 	return nil
 }
 
-
 // HasCachedData checks if there is cached data for a stream in a time range
 func HasCachedData(ctx context.Context, dataProvider, streamID string, fromTime, toTime int64) (bool, error) {
 	if cacheDB == nil {
@@ -243,4 +248,170 @@ func GetCachedData(ctx context.Context, dataProvider, streamID string, fromTime,
 		return nil, fmt.Errorf("cache extension not initialized")
 	}
 	return cacheDB.GetEvents(ctx, dataProvider, streamID, fromTime, toTime)
+}
+
+// registerSQLFunctions registers all SQL functions for the tn_cache extension
+func registerSQLFunctions(ctx context.Context, db sql.DB) error {
+	logger.Info("registering SQL functions")
+
+	tx, err := db.BeginTx(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			if rbErr := tx.Rollback(ctx); rbErr != nil {
+				logger.Error("failed to rollback transaction", "error", rbErr)
+			}
+		}
+	}()
+
+	// Register is_enabled function
+	if _, err := tx.Execute(ctx, `
+		CREATE OR REPLACE FUNCTION ext_tn_cache.is_enabled()
+		RETURNS BOOLEAN
+		LANGUAGE plpgsql
+		STABLE
+		AS $$
+		BEGIN
+			-- Check if running in a write transaction - ext_tn_cache functions are read-only
+			IF pg_catalog.current_setting('transaction_read_only')::boolean = FALSE THEN
+				RAISE EXCEPTION 'ext_tn_cache functions cannot be used in write transactions';
+			END IF;
+			
+			-- Since this function exists and is callable, the cache is enabled
+			RETURN TRUE;
+		END;
+		$$;
+	`); err != nil {
+		return fmt.Errorf("failed to create is_enabled function: %w", err)
+	}
+
+	// Register has_cached_data function
+	if _, err := tx.Execute(ctx, `
+		CREATE OR REPLACE FUNCTION ext_tn_cache.has_cached_data(
+			p_data_provider TEXT,
+			p_stream_id TEXT,
+			p_from_time BIGINT,
+			p_to_time BIGINT
+		)
+		RETURNS BOOLEAN
+		LANGUAGE plpgsql
+		STABLE
+		AS $$
+		DECLARE
+			event_count INTEGER := 0;
+		BEGIN
+			-- Check if running in a write transaction - ext_tn_cache functions are read-only
+			IF pg_catalog.current_setting('transaction_read_only')::boolean = FALSE THEN
+				RAISE EXCEPTION 'ext_tn_cache functions cannot be used in write transactions';
+			END IF;
+			
+			-- Normalize data provider to lowercase
+			p_data_provider := LOWER(p_data_provider);
+			
+			-- Validate input parameters
+			IF p_data_provider IS NULL OR p_stream_id IS NULL OR p_from_time IS NULL THEN
+				RAISE EXCEPTION 'data_provider, stream_id, and from_time cannot be NULL';
+			END IF;
+			
+			-- Check if data exists in the cache
+			IF p_to_time IS NULL THEN
+				-- No upper bound specified
+				SELECT COUNT(*) INTO event_count
+				FROM ext_tn_cache.cached_events
+				WHERE data_provider = p_data_provider 
+				AND stream_id = p_stream_id 
+				AND event_time >= p_from_time;
+			ELSE
+				-- Upper bound specified
+				SELECT COUNT(*) INTO event_count
+				FROM ext_tn_cache.cached_events
+				WHERE data_provider = p_data_provider 
+				AND stream_id = p_stream_id 
+				AND event_time >= p_from_time 
+				AND event_time <= p_to_time;
+			END IF;
+			
+			-- Return true if we have cached data
+			RETURN event_count > 0;
+		END;
+		$$;
+	`); err != nil {
+		return fmt.Errorf("failed to create has_cached_data function: %w", err)
+	}
+
+	// Register get_cached_data function
+	if _, err := tx.Execute(ctx, `
+		CREATE OR REPLACE FUNCTION ext_tn_cache.get_cached_data(
+			p_data_provider TEXT,
+			p_stream_id TEXT,
+			p_from_time BIGINT,
+			p_to_time BIGINT
+		)
+		RETURNS TABLE(
+			data_provider TEXT,
+			stream_id TEXT,
+			event_time BIGINT,
+			value NUMERIC(36,18)
+		)
+		LANGUAGE plpgsql
+		STABLE
+		AS $$
+		BEGIN
+			-- Check if running in a write transaction - ext_tn_cache functions are read-only
+			IF pg_catalog.current_setting('transaction_read_only')::boolean = FALSE THEN
+				RAISE EXCEPTION 'ext_tn_cache functions cannot be used in write transactions';
+			END IF;
+			
+			-- Normalize data provider to lowercase
+			p_data_provider := LOWER(p_data_provider);
+			
+			-- Validate input parameters
+			IF p_data_provider IS NULL OR p_stream_id IS NULL OR p_from_time IS NULL THEN
+				RAISE EXCEPTION 'data_provider, stream_id, and from_time cannot be NULL';
+			END IF;
+			
+			-- Return the cached data
+			IF p_to_time IS NULL THEN
+				-- No upper bound specified
+				RETURN QUERY
+				SELECT 
+					e.data_provider,
+					e.stream_id,
+					e.event_time,
+					e.value
+				FROM ext_tn_cache.cached_events e
+				WHERE e.data_provider = p_data_provider 
+				AND e.stream_id = p_stream_id 
+				AND e.event_time >= p_from_time
+				ORDER BY e.event_time ASC;
+			ELSE
+				-- Upper bound specified
+				RETURN QUERY
+				SELECT 
+					e.data_provider,
+					e.stream_id,
+					e.event_time,
+					e.value
+				FROM ext_tn_cache.cached_events e
+				WHERE e.data_provider = p_data_provider 
+				AND e.stream_id = p_stream_id 
+				AND e.event_time >= p_from_time 
+				AND e.event_time <= p_to_time
+				ORDER BY e.event_time ASC;
+			END IF;
+		END;
+		$$;
+	`); err != nil {
+		return fmt.Errorf("failed to create get_cached_data function: %w", err)
+	}
+
+	// Commit the transaction
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+
+	logger.Info("SQL functions registered successfully")
+	return nil
 }
