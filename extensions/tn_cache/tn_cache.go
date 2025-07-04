@@ -235,12 +235,12 @@ func handleGetCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 	streamID := inputs[1].(string)
 	fromTime := inputs[2].(int64)
 
-	var toTime *int64
+	var toTime int64
 	if len(inputs) > 3 && inputs[3] != nil {
-		t := inputs[3].(int64)
-		toTime = &t
+		toTime = inputs[3].(int64)
 	}
 
+	// Get database connection
 	db, ok := app.DB.(sql.DB)
 	if !ok {
 		return fmt.Errorf("app.DB is not a sql.DB")
@@ -253,22 +253,59 @@ func handleGetCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 	defer tx.Rollback(ctx.TxContext.Ctx)
 
 	var result *sql.ResultSet
-	if toTime == nil {
-		// No upper bound specified
+
+	if toTime > 0 {
+		// Query with upper bound, including anchor value
 		result, err = tx.Execute(ctx.TxContext.Ctx, `
+			WITH anchor_record AS (
+				SELECT data_provider, stream_id, event_time, value
+				FROM ext_tn_cache.cached_events
+				WHERE data_provider = $1 AND stream_id = $2
+					AND event_time <= $3
+				ORDER BY event_time DESC
+				LIMIT 1
+			),
+			interval_records AS (
+				SELECT data_provider, stream_id, event_time, value
+				FROM ext_tn_cache.cached_events
+				WHERE data_provider = $1 AND stream_id = $2
+					AND event_time > $3 AND event_time <= $4
+			),
+			combined_results AS (
+				SELECT * FROM anchor_record
+				UNION ALL
+				SELECT * FROM interval_records
+			)
 			SELECT data_provider, stream_id, event_time, value
-			FROM ext_tn_cache.cached_events
-			WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3
+			FROM combined_results
 			ORDER BY event_time ASC
-		`, dataProvider, streamID, fromTime)
+		`, dataProvider, streamID, fromTime, toTime)
 	} else {
 		// Upper bound specified
 		result, err = tx.Execute(ctx.TxContext.Ctx, `
+			WITH anchor_record AS (
+				SELECT data_provider, stream_id, event_time, value
+				FROM ext_tn_cache.cached_events
+				WHERE data_provider = $1 AND stream_id = $2
+					AND event_time <= $3
+				ORDER BY event_time DESC
+				LIMIT 1
+			),
+			interval_records AS (
+				SELECT data_provider, stream_id, event_time, value
+				FROM ext_tn_cache.cached_events
+				WHERE data_provider = $1 AND stream_id = $2
+					AND event_time > $3
+			),
+			combined_results AS (
+				SELECT * FROM anchor_record
+				UNION ALL
+				SELECT * FROM interval_records
+			)
 			SELECT data_provider, stream_id, event_time, value
-			FROM ext_tn_cache.cached_events
-			WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3 AND event_time <= $4
+			FROM combined_results
 			ORDER BY event_time ASC
-		`, dataProvider, streamID, fromTime, *toTime)
+		`, dataProvider, streamID, fromTime)
 	}
 
 	if err != nil {
