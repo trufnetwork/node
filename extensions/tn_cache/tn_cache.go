@@ -3,10 +3,13 @@ package tn_cache
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/log"
+	"github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/kwil-db/extensions/hooks"
+	"github.com/trufnetwork/kwil-db/extensions/precompiles"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
 
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
@@ -55,8 +58,66 @@ func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
 }
 
 func init() {
+	// Register precompile functions
+	err := precompiles.RegisterPrecompile("ext_tn_cache", precompiles.Precompile{
+		Methods: []precompiles.Method{
+			{
+				Name:            "is_enabled",
+				AccessModifiers: []precompiles.Modifier{precompiles.PUBLIC, precompiles.VIEW},
+				Parameters:      []precompiles.PrecompileValue{},
+				Returns: &precompiles.MethodReturn{
+					IsTable: false,
+					Fields: []precompiles.PrecompileValue{
+						precompiles.NewPrecompileValue("enabled", types.BoolType, false),
+					},
+				},
+				Handler: handleIsEnabled,
+			},
+			{
+				Name:            "has_cached_data",
+				AccessModifiers: []precompiles.Modifier{precompiles.PUBLIC, precompiles.VIEW},
+				Parameters: []precompiles.PrecompileValue{
+					precompiles.NewPrecompileValue("data_provider", types.TextType, false),
+					precompiles.NewPrecompileValue("stream_id", types.TextType, false),
+					precompiles.NewPrecompileValue("from_time", types.IntType, false),
+					precompiles.NewPrecompileValue("to_time", types.IntType, true),
+				},
+				Returns: &precompiles.MethodReturn{
+					IsTable: false,
+					Fields: []precompiles.PrecompileValue{
+						precompiles.NewPrecompileValue("has_data", types.BoolType, false),
+					},
+				},
+				Handler: handleHasCachedData,
+			},
+			{
+				Name:            "get_cached_data",
+				AccessModifiers: []precompiles.Modifier{precompiles.PUBLIC, precompiles.VIEW},
+				Parameters: []precompiles.PrecompileValue{
+					precompiles.NewPrecompileValue("data_provider", types.TextType, false),
+					precompiles.NewPrecompileValue("stream_id", types.TextType, false),
+					precompiles.NewPrecompileValue("from_time", types.IntType, false),
+					precompiles.NewPrecompileValue("to_time", types.IntType, true),
+				},
+				Returns: &precompiles.MethodReturn{
+					IsTable: true,
+					Fields: []precompiles.PrecompileValue{
+						precompiles.NewPrecompileValue("data_provider", types.TextType, false),
+						precompiles.NewPrecompileValue("stream_id", types.TextType, false),
+						precompiles.NewPrecompileValue("event_time", types.IntType, false),
+						precompiles.NewPrecompileValue("value", types.NumericType, false),
+					},
+				},
+				Handler: handleGetCachedData,
+			},
+		},
+	})
+	if err != nil {
+		panic(fmt.Sprintf("failed to register ext_tn_cache precompile: %v", err))
+	}
+
 	// Register engine ready hook
-	err := hooks.RegisterEngineReadyHook(ExtensionName+"_engine_ready", engineReadyHook)
+	err = hooks.RegisterEngineReadyHook(ExtensionName+"_engine_ready", engineReadyHook)
 	if err != nil {
 		panic(fmt.Sprintf("failed to register engine ready hook: %v", err))
 	}
@@ -66,6 +127,162 @@ func init() {
 	if err != nil {
 		panic(fmt.Sprintf("failed to register end block hook: %v", err))
 	}
+}
+
+// handleIsEnabled handles the is_enabled precompile method
+func handleIsEnabled(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+	// Since this function exists and is callable, the cache is enabled
+	return resultFn([]any{true})
+}
+
+// handleHasCachedData handles the has_cached_data precompile method
+func handleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+	// Extract parameters
+	dataProvider := strings.ToLower(inputs[0].(string))
+	streamID := inputs[1].(string)
+	fromTime := inputs[2].(int64)
+
+	var toTime *int64
+	if len(inputs) > 3 && inputs[3] != nil {
+		t := inputs[3].(int64)
+		toTime = &t
+	}
+
+	// Check cached_streams table to see if we have this stream cached
+	// and if the requested time range is within our cached range
+	db, ok := app.DB.(sql.DB)
+	if !ok {
+		return fmt.Errorf("app.DB is not a sql.DB")
+	}
+
+	tx, err := db.BeginTx(ctx.TxContext.Ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx.TxContext.Ctx)
+
+	// Check if stream is configured and has been refreshed
+	var configuredFromTime *int64
+	var lastRefreshed *string
+
+	result, err := tx.Execute(ctx.TxContext.Ctx, `
+		SELECT from_timestamp, last_refreshed
+		FROM ext_tn_cache.cached_streams
+		WHERE data_provider = $1 AND stream_id = $2
+	`, dataProvider, streamID)
+	if err != nil {
+		return fmt.Errorf("failed to query cached_streams: %w", err)
+	}
+
+	if len(result.Rows) == 0 {
+		// Stream not configured for caching
+		return resultFn([]any{false})
+	}
+
+	row := result.Rows[0]
+	if row[0] != nil {
+		t := row[0].(int64)
+		configuredFromTime = &t
+	}
+	if row[1] != nil {
+		s := row[1].(string)
+		lastRefreshed = &s
+	}
+
+	// If stream hasn't been refreshed yet, no cached data
+	if lastRefreshed == nil {
+		return resultFn([]any{false})
+	}
+
+	// Check if requested from_time is within our cached range
+	if configuredFromTime != nil && fromTime < *configuredFromTime {
+		// Requested time is before what we have cached
+		return resultFn([]any{false})
+	}
+
+	// At this point, we know the stream is configured and has been refreshed
+	// Check if we actually have events in the requested range
+	var eventCount int64
+	if toTime == nil {
+		// No upper bound specified
+		result, err = tx.Execute(ctx.TxContext.Ctx, `
+			SELECT COUNT(*) FROM ext_tn_cache.cached_events
+			WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3
+		`, dataProvider, streamID, fromTime)
+	} else {
+		// Upper bound specified
+		result, err = tx.Execute(ctx.TxContext.Ctx, `
+			SELECT COUNT(*) FROM ext_tn_cache.cached_events
+			WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3 AND event_time <= $4
+		`, dataProvider, streamID, fromTime, *toTime)
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to count cached events: %w", err)
+	}
+
+	if len(result.Rows) > 0 {
+		eventCount = result.Rows[0][0].(int64)
+	}
+
+	return resultFn([]any{eventCount > 0})
+}
+
+// handleGetCachedData handles the get_cached_data precompile method
+func handleGetCachedData(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+	// Extract parameters
+	dataProvider := strings.ToLower(inputs[0].(string))
+	streamID := inputs[1].(string)
+	fromTime := inputs[2].(int64)
+
+	var toTime *int64
+	if len(inputs) > 3 && inputs[3] != nil {
+		t := inputs[3].(int64)
+		toTime = &t
+	}
+
+	db, ok := app.DB.(sql.DB)
+	if !ok {
+		return fmt.Errorf("app.DB is not a sql.DB")
+	}
+
+	tx, err := db.BeginTx(ctx.TxContext.Ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx.TxContext.Ctx)
+
+	var result *sql.ResultSet
+	if toTime == nil {
+		// No upper bound specified
+		result, err = tx.Execute(ctx.TxContext.Ctx, `
+			SELECT data_provider, stream_id, event_time, value
+			FROM ext_tn_cache.cached_events
+			WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3
+			ORDER BY event_time ASC
+		`, dataProvider, streamID, fromTime)
+	} else {
+		// Upper bound specified
+		result, err = tx.Execute(ctx.TxContext.Ctx, `
+			SELECT data_provider, stream_id, event_time, value
+			FROM ext_tn_cache.cached_events
+			WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3 AND event_time <= $4
+			ORDER BY event_time ASC
+		`, dataProvider, streamID, fromTime, *toTime)
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to query cached events: %w", err)
+	}
+
+	// Return each row via resultFn
+	for _, row := range result.Rows {
+		if err := resultFn(row); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // engineReadyHook is called when the engine is ready
@@ -100,12 +317,6 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	err = setupCacheSchema(ctx, db)
 	if err != nil {
 		return fmt.Errorf("failed to setup cache schema: %w", err)
-	}
-
-	// Register SQL functions
-	err = registerSQLFunctions(ctx, db)
-	if err != nil {
-		return fmt.Errorf("failed to register SQL functions: %w", err)
 	}
 
 	// Initialize scheduler if we have directives
@@ -248,170 +459,4 @@ func GetCachedData(ctx context.Context, dataProvider, streamID string, fromTime,
 		return nil, fmt.Errorf("cache extension not initialized")
 	}
 	return cacheDB.GetEvents(ctx, dataProvider, streamID, fromTime, toTime)
-}
-
-// registerSQLFunctions registers all SQL functions for the tn_cache extension
-func registerSQLFunctions(ctx context.Context, db sql.DB) error {
-	logger.Info("registering SQL functions")
-
-	tx, err := db.BeginTx(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			if rbErr := tx.Rollback(ctx); rbErr != nil {
-				logger.Error("failed to rollback transaction", "error", rbErr)
-			}
-		}
-	}()
-
-	// Register is_enabled function
-	if _, err := tx.Execute(ctx, `
-		CREATE OR REPLACE FUNCTION ext_tn_cache.is_enabled()
-		RETURNS BOOLEAN
-		LANGUAGE plpgsql
-		STABLE
-		AS $$
-		BEGIN
-			-- Check if running in a write transaction - ext_tn_cache functions are read-only
-			IF pg_catalog.current_setting('transaction_read_only')::boolean = FALSE THEN
-				RAISE EXCEPTION 'ext_tn_cache functions cannot be used in write transactions';
-			END IF;
-			
-			-- Since this function exists and is callable, the cache is enabled
-			RETURN TRUE;
-		END;
-		$$;
-	`); err != nil {
-		return fmt.Errorf("failed to create is_enabled function: %w", err)
-	}
-
-	// Register has_cached_data function
-	if _, err := tx.Execute(ctx, `
-		CREATE OR REPLACE FUNCTION ext_tn_cache.has_cached_data(
-			p_data_provider TEXT,
-			p_stream_id TEXT,
-			p_from_time BIGINT,
-			p_to_time BIGINT
-		)
-		RETURNS BOOLEAN
-		LANGUAGE plpgsql
-		STABLE
-		AS $$
-		DECLARE
-			event_count INTEGER := 0;
-		BEGIN
-			-- Check if running in a write transaction - ext_tn_cache functions are read-only
-			IF pg_catalog.current_setting('transaction_read_only')::boolean = FALSE THEN
-				RAISE EXCEPTION 'ext_tn_cache functions cannot be used in write transactions';
-			END IF;
-			
-			-- Normalize data provider to lowercase
-			p_data_provider := LOWER(p_data_provider);
-			
-			-- Validate input parameters
-			IF p_data_provider IS NULL OR p_stream_id IS NULL OR p_from_time IS NULL THEN
-				RAISE EXCEPTION 'data_provider, stream_id, and from_time cannot be NULL';
-			END IF;
-			
-			-- Check if data exists in the cache
-			IF p_to_time IS NULL THEN
-				-- No upper bound specified
-				SELECT COUNT(*) INTO event_count
-				FROM ext_tn_cache.cached_events
-				WHERE data_provider = p_data_provider 
-				AND stream_id = p_stream_id 
-				AND event_time >= p_from_time;
-			ELSE
-				-- Upper bound specified
-				SELECT COUNT(*) INTO event_count
-				FROM ext_tn_cache.cached_events
-				WHERE data_provider = p_data_provider 
-				AND stream_id = p_stream_id 
-				AND event_time >= p_from_time 
-				AND event_time <= p_to_time;
-			END IF;
-			
-			-- Return true if we have cached data
-			RETURN event_count > 0;
-		END;
-		$$;
-	`); err != nil {
-		return fmt.Errorf("failed to create has_cached_data function: %w", err)
-	}
-
-	// Register get_cached_data function
-	if _, err := tx.Execute(ctx, `
-		CREATE OR REPLACE FUNCTION ext_tn_cache.get_cached_data(
-			p_data_provider TEXT,
-			p_stream_id TEXT,
-			p_from_time BIGINT,
-			p_to_time BIGINT
-		)
-		RETURNS TABLE(
-			data_provider TEXT,
-			stream_id TEXT,
-			event_time BIGINT,
-			value NUMERIC(36,18)
-		)
-		LANGUAGE plpgsql
-		STABLE
-		AS $$
-		BEGIN
-			-- Check if running in a write transaction - ext_tn_cache functions are read-only
-			IF pg_catalog.current_setting('transaction_read_only')::boolean = FALSE THEN
-				RAISE EXCEPTION 'ext_tn_cache functions cannot be used in write transactions';
-			END IF;
-			
-			-- Normalize data provider to lowercase
-			p_data_provider := LOWER(p_data_provider);
-			
-			-- Validate input parameters
-			IF p_data_provider IS NULL OR p_stream_id IS NULL OR p_from_time IS NULL THEN
-				RAISE EXCEPTION 'data_provider, stream_id, and from_time cannot be NULL';
-			END IF;
-			
-			-- Return the cached data
-			IF p_to_time IS NULL THEN
-				-- No upper bound specified
-				RETURN QUERY
-				SELECT 
-					e.data_provider,
-					e.stream_id,
-					e.event_time,
-					e.value
-				FROM ext_tn_cache.cached_events e
-				WHERE e.data_provider = p_data_provider 
-				AND e.stream_id = p_stream_id 
-				AND e.event_time >= p_from_time
-				ORDER BY e.event_time ASC;
-			ELSE
-				-- Upper bound specified
-				RETURN QUERY
-				SELECT 
-					e.data_provider,
-					e.stream_id,
-					e.event_time,
-					e.value
-				FROM ext_tn_cache.cached_events e
-				WHERE e.data_provider = p_data_provider 
-				AND e.stream_id = p_stream_id 
-				AND e.event_time >= p_from_time 
-				AND e.event_time <= p_to_time
-				ORDER BY e.event_time ASC;
-			END IF;
-		END;
-		$$;
-	`); err != nil {
-		return fmt.Errorf("failed to create get_cached_data function: %w", err)
-	}
-
-	// Commit the transaction
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
-	}
-
-	logger.Info("SQL functions registered successfully")
-	return nil
 }

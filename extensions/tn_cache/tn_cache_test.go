@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/log"
 	"github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
@@ -16,7 +17,6 @@ import (
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
 	testutils "github.com/trufnetwork/node/tests/utils"
 )
-
 
 // createTestLogger creates a logger suitable for testing
 func createTestLogger(t *testing.T) log.Logger {
@@ -31,6 +31,25 @@ type mockService struct {
 
 func (m *mockService) Logger() log.Logger {
 	return m.logger
+}
+
+// createTestEngineContext creates a proper EngineContext for testing
+func createTestEngineContext() *common.EngineContext {
+	return &common.EngineContext{
+		TxContext: &common.TxContext{
+			Ctx: context.Background(),
+			BlockContext: &common.BlockContext{
+				Height: 1,
+				ChainContext: &common.ChainContext{
+					NetworkParameters: &common.NetworkParameters{},
+					MigrationParams:   &common.MigrationContext{},
+				},
+			},
+			Caller:        "test_caller",
+			Signer:        []byte("test_caller"),
+			Authenticator: "test_authenticator",
+		},
+	}
 }
 
 func TestSetupCacheSchema(t *testing.T) {
@@ -222,319 +241,6 @@ func TestSetupStreamConfigs(t *testing.T) {
 	require.NotNil(t, directives, "Directives should be properly created")
 }
 
-// TestRegisterSQLFunctions tests the registration of SQL functions
-func TestRegisterSQLFunctions(t *testing.T) {
-	// Initialize logger for the test
-	logger = createTestLogger(t)
-
-	t.Run("successful registration", func(t *testing.T) {
-		executionCount := 0
-		mockTx := &testutils.MockTx{
-			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-				executionCount++
-				return &sql.ResultSet{
-					Status: sql.CommandTag{RowsAffected: 1},
-				}, nil
-			},
-			CommitFn: func(ctx context.Context) error {
-				return nil
-			},
-			RollbackFn: func(ctx context.Context) error {
-				return nil
-			},
-		}
-
-		mockDb := &testutils.MockDB{
-			BeginTxFn: func(ctx context.Context) (sql.Tx, error) {
-				return mockTx, nil
-			},
-		}
-
-		err := registerSQLFunctions(context.Background(), mockDb)
-		require.NoError(t, err)
-		// Should execute 3 statements (3 ext_tn_cache functions only)
-		assert.Equal(t, 3, executionCount)
-	})
-
-	t.Run("begin transaction fails", func(t *testing.T) {
-		mockDb := &testutils.MockDB{
-			BeginTxFn: func(ctx context.Context) (sql.Tx, error) {
-				return nil, fmt.Errorf("begin transaction failed")
-			},
-		}
-
-		err := registerSQLFunctions(context.Background(), mockDb)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to begin transaction")
-	})
-
-	t.Run("execute fails", func(t *testing.T) {
-		mockTx := &testutils.MockTx{
-			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-				return nil, fmt.Errorf("execute failed")
-			},
-			RollbackFn: func(ctx context.Context) error {
-				return nil
-			},
-		}
-
-		mockDb := &testutils.MockDB{
-			BeginTxFn: func(ctx context.Context) (sql.Tx, error) {
-				return mockTx, nil
-			},
-		}
-
-		err := registerSQLFunctions(context.Background(), mockDb)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to create is_enabled function")
-	})
-
-	t.Run("commit fails", func(t *testing.T) {
-		mockTx := &testutils.MockTx{
-			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-				return &sql.ResultSet{
-					Status: sql.CommandTag{RowsAffected: 1},
-				}, nil
-			},
-			CommitFn: func(ctx context.Context) error {
-				return fmt.Errorf("commit failed")
-			},
-			RollbackFn: func(ctx context.Context) error {
-				return nil
-			},
-		}
-
-		mockDb := &testutils.MockDB{
-			BeginTxFn: func(ctx context.Context) (sql.Tx, error) {
-				return mockTx, nil
-			},
-		}
-
-		err := registerSQLFunctions(context.Background(), mockDb)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "commit transaction")
-	})
-}
-
-// TestSQLFunctionIsEnabled tests the is_enabled SQL function simulation
-func TestSQLFunctionIsEnabled(t *testing.T) {
-	// Initialize logger for the test
-	logger = createTestLogger(t)
-
-	t.Run("ext_tn_cache.is_enabled function returns true", func(t *testing.T) {
-		mockTx := &testutils.MockTx{
-			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-				if stmt == "SELECT ext_tn_cache.is_enabled()" {
-					return &sql.ResultSet{
-						Columns: []string{"is_enabled"},
-						Rows: [][]any{
-							{true},
-						},
-					}, nil
-				}
-				return &sql.ResultSet{}, nil
-			},
-			CommitFn: func(ctx context.Context) error {
-				return nil
-			},
-			RollbackFn: func(ctx context.Context) error {
-				return nil
-			},
-		}
-
-		mockDb := &testutils.MockDB{
-			BeginTxFn: func(ctx context.Context) (sql.Tx, error) {
-				return mockTx, nil
-			},
-		}
-
-		// Simulate calling the ext_tn_cache.is_enabled function
-		tx, err := mockDb.BeginTx(context.Background())
-		require.NoError(t, err)
-
-		result, err := tx.Execute(context.Background(), "SELECT ext_tn_cache.is_enabled()")
-		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
-		assert.Equal(t, true, result.Rows[0][0])
-	})
-}
-
-// TestSQLFunctionHasCachedData tests the has_cached_data SQL function simulation
-func TestSQLFunctionHasCachedData(t *testing.T) {
-	// Initialize logger for the test
-	logger = createTestLogger(t)
-
-	t.Run("ext_tn_cache.has_cached_data works correctly", func(t *testing.T) {
-		mockTx := &testutils.MockTx{
-			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-				if stmt == "SELECT ext_tn_cache.has_cached_data($1, $2, $3, $4)" {
-					return &sql.ResultSet{
-						Columns: []string{"has_cached_data"},
-						Rows: [][]any{
-							{true},
-						},
-					}, nil
-				}
-				return &sql.ResultSet{}, nil
-			},
-			CommitFn: func(ctx context.Context) error {
-				return nil
-			},
-			RollbackFn: func(ctx context.Context) error {
-				return nil
-			},
-		}
-
-		mockDb := &testutils.MockDB{
-			BeginTxFn: func(ctx context.Context) (sql.Tx, error) {
-				return mockTx, nil
-			},
-		}
-
-		// Simulate calling the ext_tn_cache.has_cached_data function
-		tx, err := mockDb.BeginTx(context.Background())
-		require.NoError(t, err)
-
-		result, err := tx.Execute(context.Background(), "SELECT ext_tn_cache.has_cached_data($1, $2, $3, $4)", "test_provider", "test_stream", int64(1234567890), int64(1234567900))
-		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
-		assert.Equal(t, true, result.Rows[0][0])
-	})
-}
-
-// TestSQLFunctionGetCachedData tests the get_cached_data SQL function simulation
-func TestSQLFunctionGetCachedData(t *testing.T) {
-	// Initialize logger for the test
-	logger = createTestLogger(t)
-
-	t.Run("ext_tn_cache.get_cached_data works correctly", func(t *testing.T) {
-		testValue, _ := types.ParseDecimalExplicit("123.456", 36, 18)
-		mockTx := &testutils.MockTx{
-			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-				if stmt == "SELECT * FROM ext_tn_cache.get_cached_data($1, $2, $3, $4)" {
-					return &sql.ResultSet{
-						Columns: []string{"data_provider", "stream_id", "event_time", "value"},
-						Rows: [][]any{
-							{"test_provider", "test_stream", int64(1234567890), testValue},
-						},
-					}, nil
-				}
-				return &sql.ResultSet{}, nil
-			},
-			CommitFn: func(ctx context.Context) error {
-				return nil
-			},
-			RollbackFn: func(ctx context.Context) error {
-				return nil
-			},
-		}
-
-		mockDb := &testutils.MockDB{
-			BeginTxFn: func(ctx context.Context) (sql.Tx, error) {
-				return mockTx, nil
-			},
-		}
-
-		// Simulate calling the ext_tn_cache.get_cached_data function
-		tx, err := mockDb.BeginTx(context.Background())
-		require.NoError(t, err)
-
-		result, err := tx.Execute(context.Background(), "SELECT * FROM ext_tn_cache.get_cached_data($1, $2, $3, $4)", "test_provider", "test_stream", int64(1234567890), int64(1234567900))
-		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
-		assert.Equal(t, "test_provider", result.Rows[0][0])
-		assert.Equal(t, "test_stream", result.Rows[0][1])
-		assert.Equal(t, int64(1234567890), result.Rows[0][2])
-		assert.Equal(t, testValue, result.Rows[0][3])
-	})
-}
-
-// TestSQLFunctionWithNullToTime tests SQL functions with NULL to_time parameter
-func TestSQLFunctionWithNullToTime(t *testing.T) {
-	// Initialize logger for the test
-	logger = createTestLogger(t)
-
-	t.Run("ext_tn_cache.has_cached_data with NULL to_time", func(t *testing.T) {
-		mockTx := &testutils.MockTx{
-			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-				if stmt == "SELECT ext_tn_cache.has_cached_data($1, $2, $3, NULL)" {
-					return &sql.ResultSet{
-						Columns: []string{"has_cached_data"},
-						Rows: [][]any{
-							{true},
-						},
-					}, nil
-				}
-				return &sql.ResultSet{}, nil
-			},
-			CommitFn: func(ctx context.Context) error {
-				return nil
-			},
-			RollbackFn: func(ctx context.Context) error {
-				return nil
-			},
-		}
-
-		mockDb := &testutils.MockDB{
-			BeginTxFn: func(ctx context.Context) (sql.Tx, error) {
-				return mockTx, nil
-			},
-		}
-
-		// Simulate calling the ext_tn_cache.has_cached_data function with NULL to_time
-		tx, err := mockDb.BeginTx(context.Background())
-		require.NoError(t, err)
-
-		result, err := tx.Execute(context.Background(), "SELECT ext_tn_cache.has_cached_data($1, $2, $3, NULL)", "test_provider", "test_stream", int64(1234567890))
-		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
-		assert.Equal(t, true, result.Rows[0][0])
-	})
-
-	t.Run("ext_tn_cache.get_cached_data with NULL to_time", func(t *testing.T) {
-		testValue, _ := types.ParseDecimalExplicit("123.456", 36, 18)
-		mockTx := &testutils.MockTx{
-			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-				if stmt == "SELECT * FROM ext_tn_cache.get_cached_data($1, $2, $3, NULL)" {
-					return &sql.ResultSet{
-						Columns: []string{"data_provider", "stream_id", "event_time", "value"},
-						Rows: [][]any{
-							{"test_provider", "test_stream", int64(1234567890), testValue},
-							{"test_provider", "test_stream", int64(1234567891), testValue},
-							{"test_provider", "test_stream", int64(1234567892), testValue},
-						},
-					}, nil
-				}
-				return &sql.ResultSet{}, nil
-			},
-			CommitFn: func(ctx context.Context) error {
-				return nil
-			},
-			RollbackFn: func(ctx context.Context) error {
-				return nil
-			},
-		}
-
-		mockDb := &testutils.MockDB{
-			BeginTxFn: func(ctx context.Context) (sql.Tx, error) {
-				return mockTx, nil
-			},
-		}
-
-		// Simulate calling the ext_tn_cache.get_cached_data function with NULL to_time
-		tx, err := mockDb.BeginTx(context.Background())
-		require.NoError(t, err)
-
-		result, err := tx.Execute(context.Background(), "SELECT * FROM ext_tn_cache.get_cached_data($1, $2, $3, NULL)", "test_provider", "test_stream", int64(1234567890))
-		require.NoError(t, err)
-		require.Len(t, result.Rows, 3)
-		assert.Equal(t, "test_provider", result.Rows[0][0])
-		assert.Equal(t, "test_stream", result.Rows[0][1])
-		assert.Equal(t, int64(1234567890), result.Rows[0][2])
-		assert.Equal(t, testValue, result.Rows[0][3])
-	})
-}
-
 // TestCleanupExtensionSchema tests the cleanup of extension schema
 func TestCleanupExtensionSchema(t *testing.T) {
 	// Initialize logger for the test
@@ -628,126 +334,53 @@ func TestCleanupExtensionSchema(t *testing.T) {
 	})
 }
 
-// TestWritePathProtection tests that SQL functions fail when called from write transactions
-func TestWritePathProtection(t *testing.T) {
+// TestPrecompileHandlers tests the precompile handler functions directly
+func TestPrecompileHandlers(t *testing.T) {
 	// Initialize logger for the test
 	logger = createTestLogger(t)
 
-	t.Run("ext_tn_cache.is_enabled_fails_in_write_transaction", func(t *testing.T) {
-		mockTx := &testutils.MockTx{
-			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-				if stmt == "SELECT ext_tn_cache.is_enabled()" {
-					return nil, fmt.Errorf("ext_tn_cache functions cannot be used in write transactions")
-				}
-				return &sql.ResultSet{}, nil
-			},
-			CommitFn: func(ctx context.Context) error {
-				return nil
-			},
-			RollbackFn: func(ctx context.Context) error {
-				return nil
-			},
+	t.Run("handleIsEnabled", func(t *testing.T) {
+		var result []any
+		resultFn := func(row []any) error {
+			result = row
+			return nil
 		}
 
-		mockDb := &testutils.MockDB{
-			BeginTxFn: func(ctx context.Context) (sql.Tx, error) {
-				return mockTx, nil
-			},
-		}
+		ctx := createTestEngineContext()
+		app := &common.App{}
 
-		// Simulate calling ext_tn_cache.is_enabled function in a write transaction
-		tx, err := mockDb.BeginTx(context.Background())
+		err := handleIsEnabled(ctx, app, []any{}, resultFn)
 		require.NoError(t, err)
-
-		_, err = tx.Execute(context.Background(), "SELECT ext_tn_cache.is_enabled()")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "ext_tn_cache functions cannot be used in write transactions")
+		require.Len(t, result, 1)
+		assert.Equal(t, true, result[0])
 	})
 
-	t.Run("ext_tn_cache.has_cached_data_fails_in_write_transaction", func(t *testing.T) {
+	t.Run("handleHasCachedData - successful", func(t *testing.T) {
 		mockTx := &testutils.MockTx{
 			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-				if stmt == "SELECT ext_tn_cache.has_cached_data($1, $2, $3, $4)" {
-					return nil, fmt.Errorf("ext_tn_cache functions cannot be used in write transactions")
-				}
-				return &sql.ResultSet{}, nil
-			},
-			CommitFn: func(ctx context.Context) error {
-				return nil
-			},
-			RollbackFn: func(ctx context.Context) error {
-				return nil
-			},
-		}
-
-		mockDb := &testutils.MockDB{
-			BeginTxFn: func(ctx context.Context) (sql.Tx, error) {
-				return mockTx, nil
-			},
-		}
-
-		// Simulate calling ext_tn_cache.has_cached_data function in a write transaction
-		tx, err := mockDb.BeginTx(context.Background())
-		require.NoError(t, err)
-
-		_, err = tx.Execute(context.Background(), "SELECT ext_tn_cache.has_cached_data($1, $2, $3, $4)", "test_provider", "test_stream", int64(1234567890), int64(1234567900))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "ext_tn_cache functions cannot be used in write transactions")
-	})
-
-	t.Run("ext_tn_cache.get_cached_data_fails_in_write_transaction", func(t *testing.T) {
-		mockTx := &testutils.MockTx{
-			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-				if stmt == "SELECT * FROM ext_tn_cache.get_cached_data($1, $2, $3, $4)" {
-					return nil, fmt.Errorf("ext_tn_cache functions cannot be used in write transactions")
-				}
-				return &sql.ResultSet{}, nil
-			},
-			CommitFn: func(ctx context.Context) error {
-				return nil
-			},
-			RollbackFn: func(ctx context.Context) error {
-				return nil
-			},
-		}
-
-		mockDb := &testutils.MockDB{
-			BeginTxFn: func(ctx context.Context) (sql.Tx, error) {
-				return mockTx, nil
-			},
-		}
-
-		// Simulate calling ext_tn_cache.get_cached_data function in a write transaction
-		tx, err := mockDb.BeginTx(context.Background())
-		require.NoError(t, err)
-
-		_, err = tx.Execute(context.Background(), "SELECT * FROM ext_tn_cache.get_cached_data($1, $2, $3, $4)", "test_provider", "test_stream", int64(1234567890), int64(1234567900))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "ext_tn_cache functions cannot be used in write transactions")
-	})
-}
-
-// TestReadOnlyTransactionSuccess tests that SQL functions work correctly in read-only transactions
-func TestReadOnlyTransactionSuccess(t *testing.T) {
-	// Initialize logger for the test
-	logger = createTestLogger(t)
-
-	t.Run("ext_tn_cache.is_enabled returns true in read-only transaction", func(t *testing.T) {
-		mockTx := &testutils.MockTx{
-			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-				if stmt == "SELECT ext_tn_cache.is_enabled()" {
+				if stmt == `
+		SELECT from_timestamp, last_refreshed
+		FROM ext_tn_cache.cached_streams
+		WHERE data_provider = $1 AND stream_id = $2
+	` {
 					return &sql.ResultSet{
-						Columns: []string{"is_enabled"},
 						Rows: [][]any{
-							{true},
+							{int64(1234567890), "2023-01-01T00:00:00Z"},
+						},
+					}, nil
+				}
+				if stmt == `
+			SELECT COUNT(*) FROM ext_tn_cache.cached_events
+			WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3 AND event_time <= $4
+		` {
+					return &sql.ResultSet{
+						Rows: [][]any{
+							{int64(5)},
 						},
 					}, nil
 				}
 				return &sql.ResultSet{}, nil
 			},
-			CommitFn: func(ctx context.Context) error {
-				return nil
-			},
 			RollbackFn: func(ctx context.Context) error {
 				return nil
 			},
@@ -759,196 +392,33 @@ func TestReadOnlyTransactionSuccess(t *testing.T) {
 			},
 		}
 
-		// Simulate calling ext_tn_cache.is_enabled function in a read-only transaction
-		tx, err := mockDb.BeginTx(context.Background())
-		require.NoError(t, err)
+		ctx := createTestEngineContext()
+		app := &common.App{DB: mockDb}
+		inputs := []any{"test_provider", "test_stream", int64(1234567890), int64(1234567900)}
 
-		result, err := tx.Execute(context.Background(), "SELECT ext_tn_cache.is_enabled()")
+		var result []any
+		resultFn := func(row []any) error {
+			result = row
+			return nil
+		}
+
+		err := handleHasCachedData(ctx, app, inputs, resultFn)
 		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
-		assert.Equal(t, true, result.Rows[0][0])
+		require.Len(t, result, 1)
+		assert.Equal(t, true, result[0])
 	})
 
-	t.Run("ext_tn_cache.has_cached_data returns true in read-only transaction", func(t *testing.T) {
-		mockTx := &testutils.MockTx{
-			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-				if stmt == "SELECT ext_tn_cache.has_cached_data($1, $2, $3, $4)" {
-					return &sql.ResultSet{
-						Columns: []string{"has_cached_data"},
-						Rows: [][]any{
-							{true},
-						},
-					}, nil
-				}
-				return &sql.ResultSet{}, nil
-			},
-			CommitFn: func(ctx context.Context) error {
-				return nil
-			},
-			RollbackFn: func(ctx context.Context) error {
-				return nil
-			},
-		}
-
-		mockDb := &testutils.MockDB{
-			BeginTxFn: func(ctx context.Context) (sql.Tx, error) {
-				return mockTx, nil
-			},
-		}
-
-		// Simulate calling ext_tn_cache.has_cached_data function in a read-only transaction
-		tx, err := mockDb.BeginTx(context.Background())
-		require.NoError(t, err)
-
-		result, err := tx.Execute(context.Background(), "SELECT ext_tn_cache.has_cached_data($1, $2, $3, $4)", "test_provider", "test_stream", int64(1234567890), int64(1234567900))
-		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
-		assert.Equal(t, true, result.Rows[0][0])
-	})
-
-	t.Run("ext_tn_cache.get_cached_data returns table in read-only transaction", func(t *testing.T) {
-		testValue, _ := types.ParseDecimalExplicit("654.321", 36, 18)
-		mockTx := &testutils.MockTx{
-			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-				if stmt == "SELECT * FROM ext_tn_cache.get_cached_data($1, $2, $3, $4)" {
-					return &sql.ResultSet{
-						Columns: []string{"data_provider", "stream_id", "event_time", "value"},
-						Rows: [][]any{
-							{"test_provider", "test_stream", int64(1234567890), testValue},
-						},
-					}, nil
-				}
-				return &sql.ResultSet{}, nil
-			},
-			CommitFn: func(ctx context.Context) error {
-				return nil
-			},
-			RollbackFn: func(ctx context.Context) error {
-				return nil
-			},
-		}
-
-		mockDb := &testutils.MockDB{
-			BeginTxFn: func(ctx context.Context) (sql.Tx, error) {
-				return mockTx, nil
-			},
-		}
-
-		// Simulate calling ext_tn_cache.get_cached_data function in a read-only transaction
-		tx, err := mockDb.BeginTx(context.Background())
-		require.NoError(t, err)
-
-		result, err := tx.Execute(context.Background(), "SELECT * FROM ext_tn_cache.get_cached_data($1, $2, $3, $4)", "test_provider", "test_stream", int64(1234567890), int64(1234567900))
-		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
-		assert.Equal(t, "test_provider", result.Rows[0][0])
-		assert.Equal(t, "test_stream", result.Rows[0][1])
-		assert.Equal(t, int64(1234567890), result.Rows[0][2])
-		assert.Equal(t, testValue, result.Rows[0][3])
-	})
-}
-
-// TestSQLFunctionDataTypes tests that SQL functions return expected data types
-func TestSQLFunctionDataTypes(t *testing.T) {
-	// Initialize logger for the test
-	logger = createTestLogger(t)
-
-	t.Run("ext_tn_cache.is_enabled returns boolean", func(t *testing.T) {
-		mockTx := &testutils.MockTx{
-			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-				if stmt == "SELECT ext_tn_cache.is_enabled()" {
-					return &sql.ResultSet{
-						Columns: []string{"is_enabled"},
-						Rows: [][]any{
-							{true}, // Boolean type
-						},
-					}, nil
-				}
-				return &sql.ResultSet{}, nil
-			},
-			CommitFn: func(ctx context.Context) error {
-				return nil
-			},
-			RollbackFn: func(ctx context.Context) error {
-				return nil
-			},
-		}
-
-		mockDb := &testutils.MockDB{
-			BeginTxFn: func(ctx context.Context) (sql.Tx, error) {
-				return mockTx, nil
-			},
-		}
-
-		tx, err := mockDb.BeginTx(context.Background())
-		require.NoError(t, err)
-
-		result, err := tx.Execute(context.Background(), "SELECT ext_tn_cache.is_enabled()")
-		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
-		
-		// Verify the return type is boolean
-		value := result.Rows[0][0]
-		assert.IsType(t, true, value, "ext_tn_cache.is_enabled should return boolean")
-		assert.Equal(t, true, value)
-	})
-
-	t.Run("ext_tn_cache.has_cached_data returns boolean", func(t *testing.T) {
-		mockTx := &testutils.MockTx{
-			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-				if stmt == "SELECT ext_tn_cache.has_cached_data($1, $2, $3, $4)" {
-					return &sql.ResultSet{
-						Columns: []string{"has_cached_data"},
-						Rows: [][]any{
-							{false}, // Boolean type
-						},
-					}, nil
-				}
-				return &sql.ResultSet{}, nil
-			},
-			CommitFn: func(ctx context.Context) error {
-				return nil
-			},
-			RollbackFn: func(ctx context.Context) error {
-				return nil
-			},
-		}
-
-		mockDb := &testutils.MockDB{
-			BeginTxFn: func(ctx context.Context) (sql.Tx, error) {
-				return mockTx, nil
-			},
-		}
-
-		tx, err := mockDb.BeginTx(context.Background())
-		require.NoError(t, err)
-
-		result, err := tx.Execute(context.Background(), "SELECT ext_tn_cache.has_cached_data($1, $2, $3, $4)", "test_provider", "test_stream", int64(1234567890), int64(1234567900))
-		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
-		
-		// Verify the return type is boolean
-		value := result.Rows[0][0]
-		assert.IsType(t, false, value, "ext_tn_cache.has_cached_data should return boolean")
-		assert.Equal(t, false, value)
-	})
-
-	t.Run("ext_tn_cache.get_cached_data returns correct table structure", func(t *testing.T) {
+	t.Run("handleGetCachedData - successful", func(t *testing.T) {
 		testValue, _ := types.ParseDecimalExplicit("123.456", 36, 18)
 		mockTx := &testutils.MockTx{
 			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-				if stmt == "SELECT * FROM ext_tn_cache.get_cached_data($1, $2, $3, $4)" {
-					return &sql.ResultSet{
-						Columns: []string{"data_provider", "stream_id", "event_time", "value"},
-						Rows: [][]any{
-							{"test_provider", "test_stream", int64(1234567890), testValue},
-						},
-					}, nil
-				}
-				return &sql.ResultSet{}, nil
-			},
-			CommitFn: func(ctx context.Context) error {
-				return nil
+				return &sql.ResultSet{
+					Columns: []string{"data_provider", "stream_id", "event_time", "value"},
+					Rows: [][]any{
+						{"test_provider", "test_stream", int64(1234567890), testValue},
+						{"test_provider", "test_stream", int64(1234567891), testValue},
+					},
+				}, nil
 			},
 			RollbackFn: func(ctx context.Context) error {
 				return nil
@@ -961,17 +431,339 @@ func TestSQLFunctionDataTypes(t *testing.T) {
 			},
 		}
 
-		tx, err := mockDb.BeginTx(context.Background())
-		require.NoError(t, err)
+		ctx := createTestEngineContext()
+		app := &common.App{DB: mockDb}
+		inputs := []any{"test_provider", "test_stream", int64(1234567890), int64(1234567900)}
 
-		result, err := tx.Execute(context.Background(), "SELECT * FROM ext_tn_cache.get_cached_data($1, $2, $3, $4)", "test_provider", "test_stream", int64(1234567890), int64(1234567900))
+		var results [][]any
+		resultFn := func(row []any) error {
+			results = append(results, row)
+			return nil
+		}
+
+		err := handleGetCachedData(ctx, app, inputs, resultFn)
 		require.NoError(t, err)
-		require.Len(t, result.Rows, 1)
+		require.Len(t, results, 2)
+		assert.Equal(t, "test_provider", results[0][0])
+		assert.Equal(t, "test_stream", results[0][1])
+		assert.Equal(t, int64(1234567890), results[0][2])
+		assert.Equal(t, testValue, results[0][3])
+	})
+
+	t.Run("handleHasCachedData - stream not configured", func(t *testing.T) {
+		mockTx := &testutils.MockTx{
+			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
+				// Return empty result for stream not configured
+				return &sql.ResultSet{
+					Rows: [][]any{},
+				}, nil
+			},
+			RollbackFn: func(ctx context.Context) error {
+				return nil
+			},
+		}
+
+		mockDb := &testutils.MockDB{
+			BeginTxFn: func(ctx context.Context) (sql.Tx, error) {
+				return mockTx, nil
+			},
+		}
+
+		ctx := createTestEngineContext()
+		app := &common.App{DB: mockDb}
+		inputs := []any{"test_provider", "test_stream", int64(1234567890), int64(1234567900)}
+
+		var result []any
+		resultFn := func(row []any) error {
+			result = row
+			return nil
+		}
+
+		err := handleHasCachedData(ctx, app, inputs, resultFn)
+		require.NoError(t, err)
+		require.Len(t, result, 1)
+		assert.Equal(t, false, result[0])
+	})
+
+	t.Run("handleHasCachedData - stream not refreshed", func(t *testing.T) {
+		mockTx := &testutils.MockTx{
+			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
+				// Return stream config but with null last_refreshed
+				return &sql.ResultSet{
+					Rows: [][]any{
+						{int64(1234567890), nil},
+					},
+				}, nil
+			},
+			RollbackFn: func(ctx context.Context) error {
+				return nil
+			},
+		}
+
+		mockDb := &testutils.MockDB{
+			BeginTxFn: func(ctx context.Context) (sql.Tx, error) {
+				return mockTx, nil
+			},
+		}
+
+		ctx := createTestEngineContext()
+		app := &common.App{DB: mockDb}
+		inputs := []any{"test_provider", "test_stream", int64(1234567890), int64(1234567900)}
+
+		var result []any
+		resultFn := func(row []any) error {
+			result = row
+			return nil
+		}
+
+		err := handleHasCachedData(ctx, app, inputs, resultFn)
+		require.NoError(t, err)
+		require.Len(t, result, 1)
+		assert.Equal(t, false, result[0])
+	})
+
+	t.Run("handleHasCachedData - requested time before cached range", func(t *testing.T) {
+		mockTx := &testutils.MockTx{
+			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
+				// Return stream config with configured from time after requested time
+				return &sql.ResultSet{
+					Rows: [][]any{
+						{int64(1234567900), "2023-01-01T00:00:00Z"}, // from_timestamp > requested fromTime
+					},
+				}, nil
+			},
+			RollbackFn: func(ctx context.Context) error {
+				return nil
+			},
+		}
+
+		mockDb := &testutils.MockDB{
+			BeginTxFn: func(ctx context.Context) (sql.Tx, error) {
+				return mockTx, nil
+			},
+		}
+
+		ctx := createTestEngineContext()
+		app := &common.App{DB: mockDb}
+		inputs := []any{"test_provider", "test_stream", int64(1234567890), int64(1234567900)}
+
+		var result []any
+		resultFn := func(row []any) error {
+			result = row
+			return nil
+		}
+
+		err := handleHasCachedData(ctx, app, inputs, resultFn)
+		require.NoError(t, err)
+		require.Len(t, result, 1)
+		assert.Equal(t, false, result[0])
+	})
+}
+
+// TestPrecompileHandlersWithNullToTime tests precompile handlers with NULL to_time parameter
+func TestPrecompileHandlersWithNullToTime(t *testing.T) {
+	// Initialize logger for the test
+	logger = createTestLogger(t)
+
+	t.Run("handleHasCachedData with NULL to_time", func(t *testing.T) {
+		mockTx := &testutils.MockTx{
+			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
+				if stmt == `
+		SELECT from_timestamp, last_refreshed
+		FROM ext_tn_cache.cached_streams
+		WHERE data_provider = $1 AND stream_id = $2
+	` {
+					return &sql.ResultSet{
+						Rows: [][]any{
+							{int64(1234567890), "2023-01-01T00:00:00Z"},
+						},
+					}, nil
+				}
+				if stmt == `
+			SELECT COUNT(*) FROM ext_tn_cache.cached_events
+			WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3
+		` {
+					return &sql.ResultSet{
+						Rows: [][]any{
+							{int64(3)},
+						},
+					}, nil
+				}
+				return &sql.ResultSet{}, nil
+			},
+			RollbackFn: func(ctx context.Context) error {
+				return nil
+			},
+		}
+
+		mockDb := &testutils.MockDB{
+			BeginTxFn: func(ctx context.Context) (sql.Tx, error) {
+				return mockTx, nil
+			},
+		}
+
+		ctx := createTestEngineContext()
+		app := &common.App{DB: mockDb}
+		inputs := []any{"test_provider", "test_stream", int64(1234567890)} // No to_time
+
+		var result []any
+		resultFn := func(row []any) error {
+			result = row
+			return nil
+		}
+
+		err := handleHasCachedData(ctx, app, inputs, resultFn)
+		require.NoError(t, err)
+		require.Len(t, result, 1)
+		assert.Equal(t, true, result[0])
+	})
+
+	t.Run("handleGetCachedData with NULL to_time", func(t *testing.T) {
+		testValue, _ := types.ParseDecimalExplicit("123.456", 36, 18)
+		mockTx := &testutils.MockTx{
+			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
+				return &sql.ResultSet{
+					Columns: []string{"data_provider", "stream_id", "event_time", "value"},
+					Rows: [][]any{
+						{"test_provider", "test_stream", int64(1234567890), testValue},
+						{"test_provider", "test_stream", int64(1234567891), testValue},
+						{"test_provider", "test_stream", int64(1234567892), testValue},
+					},
+				}, nil
+			},
+			RollbackFn: func(ctx context.Context) error {
+				return nil
+			},
+		}
+
+		mockDb := &testutils.MockDB{
+			BeginTxFn: func(ctx context.Context) (sql.Tx, error) {
+				return mockTx, nil
+			},
+		}
+
+		ctx := createTestEngineContext()
+		app := &common.App{DB: mockDb}
+		inputs := []any{"test_provider", "test_stream", int64(1234567890)} // No to_time
+
+		var results [][]any
+		resultFn := func(row []any) error {
+			results = append(results, row)
+			return nil
+		}
+
+		err := handleGetCachedData(ctx, app, inputs, resultFn)
+		require.NoError(t, err)
+		require.Len(t, results, 3)
+		assert.Equal(t, "test_provider", results[0][0])
+		assert.Equal(t, "test_stream", results[0][1])
+		assert.Equal(t, int64(1234567890), results[0][2])
+		assert.Equal(t, testValue, results[0][3])
+	})
+}
+
+// TestPrecompileDataTypes tests that precompile handlers return expected data types
+func TestPrecompileDataTypes(t *testing.T) {
+	// Initialize logger for the test
+	logger = createTestLogger(t)
+
+	t.Run("handleIsEnabled returns boolean", func(t *testing.T) {
+		var result []any
+		resultFn := func(row []any) error {
+			result = row
+			return nil
+		}
+
+		ctx := createTestEngineContext()
+		app := &common.App{}
+
+		err := handleIsEnabled(ctx, app, []any{}, resultFn)
+		require.NoError(t, err)
+		require.Len(t, result, 1)
+		
+		// Verify the return type is boolean
+		value := result[0]
+		assert.IsType(t, true, value, "handleIsEnabled should return boolean")
+		assert.Equal(t, true, value)
+	})
+
+	t.Run("handleHasCachedData returns boolean", func(t *testing.T) {
+		mockTx := &testutils.MockTx{
+			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
+				return &sql.ResultSet{
+					Rows: [][]any{}, // Empty result means no stream configured
+				}, nil
+			},
+			RollbackFn: func(ctx context.Context) error {
+				return nil
+			},
+		}
+
+		mockDb := &testutils.MockDB{
+			BeginTxFn: func(ctx context.Context) (sql.Tx, error) {
+				return mockTx, nil
+			},
+		}
+
+		ctx := createTestEngineContext()
+		app := &common.App{DB: mockDb}
+		inputs := []any{"test_provider", "test_stream", int64(1234567890), int64(1234567900)}
+
+		var result []any
+		resultFn := func(row []any) error {
+			result = row
+			return nil
+		}
+
+		err := handleHasCachedData(ctx, app, inputs, resultFn)
+		require.NoError(t, err)
+		require.Len(t, result, 1)
+		
+		// Verify the return type is boolean
+		value := result[0]
+		assert.IsType(t, false, value, "handleHasCachedData should return boolean")
+		assert.Equal(t, false, value)
+	})
+
+	t.Run("handleGetCachedData returns correct table structure", func(t *testing.T) {
+		testValue, _ := types.ParseDecimalExplicit("123.456", 36, 18)
+		mockTx := &testutils.MockTx{
+			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
+				return &sql.ResultSet{
+					Columns: []string{"data_provider", "stream_id", "event_time", "value"},
+					Rows: [][]any{
+						{"test_provider", "test_stream", int64(1234567890), testValue},
+					},
+				}, nil
+			},
+			RollbackFn: func(ctx context.Context) error {
+				return nil
+			},
+		}
+
+		mockDb := &testutils.MockDB{
+			BeginTxFn: func(ctx context.Context) (sql.Tx, error) {
+				return mockTx, nil
+			},
+		}
+
+		ctx := createTestEngineContext()
+		app := &common.App{DB: mockDb}
+		inputs := []any{"test_provider", "test_stream", int64(1234567890), int64(1234567900)}
+
+		var results [][]any
+		resultFn := func(row []any) error {
+			results = append(results, row)
+			return nil
+		}
+
+		err := handleGetCachedData(ctx, app, inputs, resultFn)
+		require.NoError(t, err)
+		require.Len(t, results, 1)
 		
 		// Verify the table structure and data types
-		assert.Equal(t, []string{"data_provider", "stream_id", "event_time", "value"}, result.Columns)
-		
-		row := result.Rows[0]
+		row := results[0]
+		require.Len(t, row, 4)
 		assert.IsType(t, "", row[0], "data_provider should be TEXT")
 		assert.IsType(t, "", row[1], "stream_id should be TEXT")
 		assert.IsType(t, int64(0), row[2], "event_time should be INT8")
@@ -983,6 +775,3 @@ func TestSQLFunctionDataTypes(t *testing.T) {
 		assert.Equal(t, testValue, row[3])
 	})
 }
-
-	// Note: The write-path protection is handled at the PostgreSQL function level
-	// using pg_catalog.current_setting('transaction_read_only') checks within each function.
