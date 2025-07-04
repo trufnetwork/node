@@ -14,15 +14,17 @@ import (
 
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
+	"github.com/trufnetwork/node/extensions/tn_cache/metrics"
 )
 
 // Use ExtensionName from constants
 const ExtensionName = config.ExtensionName
 
 var (
-	logger    log.Logger
-	cacheDB   *internal.CacheDB
-	scheduler *CacheScheduler
+	logger         log.Logger
+	cacheDB        *internal.CacheDB
+	scheduler      *CacheScheduler
+	metricsRecorder metrics.MetricsRecorder
 )
 
 // ParseConfig parses the extension configuration from the node's config file
@@ -225,7 +227,15 @@ func handleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 		eventCount = result.Rows[0][0].(int64)
 	}
 
-	return resultFn([]any{eventCount > 0})
+	// Record cache hit/miss metric
+	hasData := eventCount > 0
+	if hasData {
+		metricsRecorder.RecordCacheHit(ctx.TxContext.Ctx, dataProvider, streamID)
+	} else {
+		metricsRecorder.RecordCacheMiss(ctx.TxContext.Ctx, dataProvider, streamID)
+	}
+
+	return resultFn([]any{hasData})
 }
 
 // handleGetCachedData handles the get_cached_data precompile method
@@ -312,6 +322,12 @@ func handleGetCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 		return fmt.Errorf("failed to query cached events: %w", err)
 	}
 
+	// Record metrics for data served
+	rowCount := len(result.Rows)
+	if rowCount > 0 {
+		metricsRecorder.RecordCacheDataServed(ctx.TxContext.Ctx, dataProvider, streamID, rowCount)
+	}
+
 	// Return each row via resultFn
 	for _, row := range result.Rows {
 		if err := resultFn(row); err != nil {
@@ -329,6 +345,9 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	if err != nil {
 		return fmt.Errorf("failed to parse config: %w", err)
 	}
+
+	// Initialize metrics recorder (with auto-detection)
+	metricsRecorder = metrics.NewMetricsRecorder(logger)
 
 	// Get the database from the app
 	db, ok := app.DB.(sql.DB)
@@ -358,7 +377,7 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 
 	// Initialize scheduler if we have directives
 	if len(processedConfig.Directives) > 0 {
-		scheduler = NewCacheScheduler(app, cacheDB, logger)
+		scheduler = NewCacheScheduler(app, cacheDB, logger, metricsRecorder)
 		if err := scheduler.Start(ctx, processedConfig); err != nil {
 			return fmt.Errorf("failed to start scheduler: %w", err)
 		}

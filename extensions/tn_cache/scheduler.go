@@ -15,6 +15,7 @@ import (
 
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
+	"github.com/trufnetwork/node/extensions/tn_cache/metrics"
 	"github.com/trufnetwork/node/extensions/tn_cache/validation"
 )
 
@@ -31,6 +32,7 @@ type CacheScheduler struct {
 	namespace string                               // configurable database namespace
 	breakers  map[string]*gobreaker.CircuitBreaker // circuit breakers per stream
 	breakerMu sync.RWMutex
+	metrics   metrics.MetricsRecorder               // metrics recorder
 
 	// Dynamic resolution fields
 	originalDirectives []config.CacheDirective // Keep original with wildcards/includeChildren
@@ -43,12 +45,12 @@ type CacheScheduler struct {
 }
 
 // NewCacheScheduler creates a new cache scheduler instance
-func NewCacheScheduler(app *common.App, cacheDB *internal.CacheDB, logger log.Logger) *CacheScheduler {
-	return NewCacheSchedulerWithNamespace(app, cacheDB, logger, "")
+func NewCacheScheduler(app *common.App, cacheDB *internal.CacheDB, logger log.Logger, metricsRecorder metrics.MetricsRecorder) *CacheScheduler {
+	return NewCacheSchedulerWithNamespace(app, cacheDB, logger, "", metricsRecorder)
 }
 
 // NewCacheSchedulerWithNamespace creates a new cache scheduler instance with configurable namespace
-func NewCacheSchedulerWithNamespace(app *common.App, cacheDB *internal.CacheDB, logger log.Logger, namespace string) *CacheScheduler {
+func NewCacheSchedulerWithNamespace(app *common.App, cacheDB *internal.CacheDB, logger log.Logger, namespace string, metricsRecorder metrics.MetricsRecorder) *CacheScheduler {
 	if namespace == "" {
 		namespace = "main" // Default namespace
 	}
@@ -62,6 +64,7 @@ func NewCacheSchedulerWithNamespace(app *common.App, cacheDB *internal.CacheDB, 
 		namespace:        namespace,
 		breakers:         make(map[string]*gobreaker.CircuitBreaker),
 		resolutionStatus: ResolutionStatusPending,
+		metrics:          metricsRecorder,
 	}
 }
 
