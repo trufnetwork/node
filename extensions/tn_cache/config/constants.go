@@ -22,9 +22,10 @@ const (
 
 // Configuration field names
 const (
-	ConfigFieldEnabled        = "enabled"
-	ConfigFieldStreamsInline  = "streams_inline"
-	ConfigFieldStreamsCSVFile = "streams_csv_file"
+	ConfigFieldEnabled             = "enabled"
+	ConfigFieldResolutionSchedule  = "resolution_schedule"
+	ConfigFieldStreamsInline       = "streams_inline"
+	ConfigFieldStreamsCSVFile      = "streams_csv_file"
 )
 
 // Error messages
@@ -33,4 +34,10 @@ const (
 	ErrMsgInvalidStreamID        = "invalid stream ID format"
 	ErrMsgInvalidCronSchedule    = "invalid cron schedule"
 	ErrMsgEmptyRequired          = "required field cannot be empty"
+)
+
+// Default values
+const (
+	// DefaultResolutionSchedule is daily at midnight UTC
+	DefaultResolutionSchedule = "0 0 * * *"
 )

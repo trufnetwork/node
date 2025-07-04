@@ -168,16 +168,16 @@ func TestBasicDeduplication(t *testing.T) {
 
 			require.NoError(t, err, "Unexpected error for: %s", tt.description)
 			require.True(t, processedConfig.Enabled)
-			require.Len(t, processedConfig.Instructions, 1, "Should have exactly 1 instruction after deduplication")
+			require.Len(t, processedConfig.Directives, 1, "Should have exactly 1 directive after deduplication")
 
-			instruction := processedConfig.Instructions[0]
-			assert.Equal(t, tt.expectedWins, instruction.Schedule.CronExpr, 
-				"Wrong instruction selected during deduplication for: %s", tt.description)
+			directive := processedConfig.Directives[0]
+			assert.Equal(t, tt.expectedWins, directive.Schedule.CronExpr, 
+				"Wrong directive selected during deduplication for: %s", tt.description)
 
 			t.Logf("✅ Deduplication test passed: %s", tt.description)
-			t.Logf("   Winner: %s", instruction.Schedule.CronExpr)
-			if instruction.TimeRange.From != nil {
-				t.Logf("   From timestamp: %d", *instruction.TimeRange.From)
+			t.Logf("   Winner: %s", directive.Schedule.CronExpr)
+			if directive.TimeRange.From != nil {
+				t.Logf("   From timestamp: %d", *directive.TimeRange.From)
 			} else {
 				t.Logf("   From timestamp: none")
 			}
@@ -201,17 +201,17 @@ func TestTimeRangeSimplification(t *testing.T) {
 	processedConfig, err := loader.LoadAndProcess(context.Background(), rawConfig)
 
 	require.NoError(t, err)
-	require.Len(t, processedConfig.Instructions, 1)
+	require.Len(t, processedConfig.Directives, 1)
 
-	instruction := processedConfig.Instructions[0]
+	directive := processedConfig.Directives[0]
 	
 	// Verify "from" field is properly set
-	require.NotNil(t, instruction.TimeRange.From, "From field should be set")
-	assert.Equal(t, int64(1719849600), *instruction.TimeRange.From, "From timestamp should match")
+	require.NotNil(t, directive.TimeRange.From, "From field should be set")
+	assert.Equal(t, int64(1719849600), *directive.TimeRange.From, "From timestamp should match")
 
 	// Verify TimeRange structure doesn't have "to" field (this will be caught at compile time)
 	// Just verify the range is properly structured
-	assert.IsType(t, tnConfig.TimeRange{}, instruction.TimeRange, "TimeRange should be of correct type")
+	assert.IsType(t, tnConfig.TimeRange{}, directive.TimeRange, "TimeRange should be of correct type")
 	
 	t.Log("✅ TimeRange simplification verified - only 'from' field is supported")
 }

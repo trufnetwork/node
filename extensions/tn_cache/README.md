@@ -11,6 +11,12 @@ Enable and configure the extension in your node's `config.toml` file.
 # Enable or disable the extension.
 enabled = true
 
+# Optional: Schedule for re-resolving wildcards and IncludeChildren (default: daily at midnight)
+# Set to empty string to disable automatic re-resolution
+resolution_schedule = "0 0 * * *"  # Daily at midnight UTC
+# resolution_schedule = "0 * * * *"  # Hourly (for rapidly changing environments)
+# resolution_schedule = ""          # Disable automatic resolution
+
 # Optional: Path to a CSV file containing streams to cache.
 # The path is relative to the node's root directory.
 streams_csv_file = "cache_streams.csv"
@@ -39,6 +45,7 @@ streams_inline = '''
 ### Configuration Options
 
 -   **`enabled`**: A boolean (`true` or `false`) to enable or disable the extension.
+-   **`resolution_schedule`**: (Optional) A cron expression that defines when to re-resolve wildcards and IncludeChildren directives. Default is `0 0 * * *` (daily at midnight UTC). Set to empty string to disable automatic re-resolution.
 -   **`streams_csv_file`**: (Optional) A path to a CSV file containing a list of streams to cache. The file must have columns for `data_provider`, `stream_id`, `cron_schedule`, and optional `from` and `include_children` columns.
 -   **`streams_inline`**: (Optional) A JSON-formatted string containing an array of stream objects to cache.
 
@@ -72,6 +79,7 @@ The extension enforces that `streams_csv_file` and `streams_inline` are mutually
 ## Features
 
 - **Configurable Caching**: Define which streams to cache and on what schedule
+- **Dynamic Resolution**: Automatically detects new streams matching wildcards and new children of composed streams
 - **Isolated from Consensus**: Uses PostgreSQL schemas that are excluded from block hashing
 - **Background Refresh**: Automatically refreshes cache data on configurable schedules
 - **Graceful Handling**: Safely enables/disables without affecting node operation
@@ -79,6 +87,21 @@ The extension enforces that `streams_csv_file` and `streams_inline` are mutually
 ## Implementation Details
 
 The extension creates its own private schema for storing cached data, which is isolated from the consensus state through Kwil-DB's schema filtering mechanism.
+
+### Dynamic Resolution
+
+When using wildcards (`*`) or `include_children`, the extension performs dynamic resolution to handle changes in the stream landscape:
+
+1. **Initial Resolution**: At startup, wildcards and IncludeChildren directives are resolved to concrete streams
+2. **Periodic Re-resolution**: Based on `resolution_schedule` (default: daily), the extension re-resolves:
+   - Wildcard patterns to find new streams
+   - IncludeChildren to detect new child streams
+3. **Atomic Updates**: The `cached_streams` table is updated atomically to ensure no data gaps
+
+This ensures that:
+- New streams created after startup are automatically cached if they match a wildcard
+- New children added to composed streams are automatically included
+- Deleted streams are cleaned up from the cache
 
 ### Cache Schema
 

@@ -52,6 +52,11 @@ func (l *Loader) LoadAndProcess(ctx context.Context, rawConfig RawConfig) (*Proc
 		configMap["streams_csv_file"] = rawConfig.StreamsCSVFile
 	}
 	
+	// Add resolution_schedule if provided
+	if rawConfig.ResolutionSchedule != "" {
+		configMap["resolution_schedule"] = rawConfig.ResolutionSchedule
+	}
+	
 	return l.loadAndProcessInternal(ctx, configMap)
 }
 
@@ -89,24 +94,36 @@ func (l *Loader) loadAndProcessInternal(ctx context.Context, configMap map[strin
 		return nil, fmt.Errorf("configuration validation failed: %w", err)
 	}
 
-	// Transform to executable instructions
-	instructions, err := l.transformToInstructions(allSpecs)
+	// Transform to cache directives
+	directives, err := l.transformToDirectives(allSpecs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to transform configuration to instructions: %w", err)
+		return nil, fmt.Errorf("failed to transform configuration to directives: %w", err)
 	}
 
-	// Deduplicate and merge instructions
-	finalInstructions := l.deduplicateInstructions(instructions)
+	// Deduplicate and merge directives
+	finalDirectives := l.deduplicateDirectives(directives)
 
 	// Ensure sources is never nil
 	if sourceNames == nil {
 		sourceNames = []string{}
 	}
 
+	// Get resolution schedule or use default
+	resolutionSchedule := configMap["resolution_schedule"]
+	if resolutionSchedule == "" {
+		resolutionSchedule = DefaultResolutionSchedule
+	}
+	
+	// Validate resolution schedule if provided
+	if err := validation.ValidateCronSchedule(resolutionSchedule); err != nil {
+		return nil, fmt.Errorf("invalid resolution schedule: %w", err)
+	}
+
 	return &ProcessedConfig{
-		Enabled:      configMap["enabled"] == "true",
-		Instructions: finalInstructions,
-		Sources:      sourceNames,
+		Enabled:            configMap["enabled"] == "true",
+		ResolutionSchedule: resolutionSchedule,
+		Directives:         finalDirectives,
+		Sources:            sourceNames,
 	}, nil
 }
 

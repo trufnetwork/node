@@ -8,9 +8,9 @@ import (
 	"github.com/trufnetwork/node/extensions/tn_cache/validation"
 )
 
-// transformToInstructions converts validated StreamSpecs into executable instructions
-func (l *Loader) transformToInstructions(specs []sources.StreamSpec) ([]InstructionDirective, error) {
-	var directives []InstructionDirective
+// transformToDirectives converts validated StreamSpecs into cache directives
+func (l *Loader) transformToDirectives(specs []sources.StreamSpec) ([]CacheDirective, error) {
+	var directives []CacheDirective
 
 	for i, spec := range specs {
 		directive, err := l.specToDirective(spec, i)
@@ -23,11 +23,11 @@ func (l *Loader) transformToInstructions(specs []sources.StreamSpec) ([]Instruct
 	return directives, nil
 }
 
-// specToDirective converts a single StreamSpec to an InstructionDirective
-func (l *Loader) specToDirective(spec sources.StreamSpec, index int) (InstructionDirective, error) {
+// specToDirective converts a single StreamSpec to a CacheDirective
+func (l *Loader) specToDirective(spec sources.StreamSpec, index int) (CacheDirective, error) {
 	// Validate the cron schedule (parsing will be done later by executor)
 	if err := validation.ValidateCronSchedule(spec.CronSchedule); err != nil {
-		return InstructionDirective{}, fmt.Errorf("invalid cron schedule: %w", err)
+		return CacheDirective{}, fmt.Errorf("invalid cron schedule: %w", err)
 	}
 
 	// Determine directive type based on stream ID
@@ -42,7 +42,7 @@ func (l *Loader) specToDirective(spec sources.StreamSpec, index int) (Instructio
 	// Generate a unique ID for this directive
 	id := generateDirectiveID(normalizedProvider, spec.StreamID, spec.Source, index)
 
-	return InstructionDirective{
+	return CacheDirective{
 		ID:           id,
 		Type:         directiveType,
 		DataProvider: normalizedProvider,
@@ -79,38 +79,38 @@ func generateDirectiveID(dataProvider, streamID, source string, index int) strin
 // Note: Complex priority calculation removed - will be implemented when cache refresh logic is built
 // For now, we only need basic deduplication to prevent exact duplicates (same data_provider + stream_id)
 
-// deduplicateInstructions removes exact duplicate instructions (same data_provider + stream_id)
-func (l *Loader) deduplicateInstructions(instructions []InstructionDirective) []InstructionDirective {
+// deduplicateDirectives removes exact duplicate directives (same data_provider + stream_id)
+func (l *Loader) deduplicateDirectives(directives []CacheDirective) []CacheDirective {
 	// Use a map to track unique cache keys and remove exact duplicates
-	instructionMap := make(map[string]InstructionDirective)
+	directiveMap := make(map[string]CacheDirective)
 
-	for _, instruction := range instructions {
-		cacheKey := instruction.GetCacheKey()
+	for _, directive := range directives {
+		cacheKey := directive.GetCacheKey()
 		
-		// Check if we already have an instruction for this cache key
-		if _, exists := instructionMap[cacheKey]; exists {
+		// Check if we already have a directive for this cache key
+		if _, exists := directiveMap[cacheKey]; exists {
 			// Keep the first one (deterministic behavior) - ignore duplicates
 			// TODO: Implement proper conflict resolution when cache refresh logic is built
 			continue
 		}
-		instructionMap[cacheKey] = instruction
+		directiveMap[cacheKey] = directive
 	}
 
 	// Convert map back to slice
-	var result []InstructionDirective
-	for _, instruction := range instructionMap {
-		result = append(result, instruction)
+	var result []CacheDirective
+	for _, directive := range directiveMap {
+		result = append(result, directive)
 	}
 
 	// Ensure we always return a non-nil slice
 	if result == nil {
-		result = []InstructionDirective{}
+		result = []CacheDirective{}
 	}
 
 	return result
 }
 
 // GetCacheKey returns a unique key for a cache directive (for deduplication)
-func (directive *InstructionDirective) GetCacheKey() string {
+func (directive *CacheDirective) GetCacheKey() string {
 	return directive.DataProvider + ":" + directive.StreamID
 }
