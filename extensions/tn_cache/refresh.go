@@ -16,6 +16,7 @@ import (
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal/errors"
+	"github.com/trufnetwork/node/extensions/tn_cache/metrics"
 )
 
 // refreshStreamDataWithRetry refreshes stream data with exponential backoff retry logic using retry-go
@@ -118,14 +119,21 @@ func parseEventValue(v interface{}) (*types.Decimal, error) {
 
 // refreshStreamData refreshes the cached data for a single cache directive
 func (s *CacheScheduler) refreshStreamData(ctx context.Context, directive config.CacheDirective) error {
+	// Start timing the refresh operation
+	startTime := time.Now()
+	
 	s.logger.Debug("refreshing stream",
 		"provider", directive.DataProvider,
 		"stream", directive.StreamID,
 		"type", directive.Type)
+	
+	// Record refresh start
+	s.metrics.RecordRefreshStart(ctx, directive.DataProvider, directive.StreamID)
 
 	// First, get stream config to check last refresh time for incremental updates
 	streamConfig, err := s.cacheDB.GetStreamConfig(ctx, directive.DataProvider, directive.StreamID)
 	if err != nil {
+		s.metrics.RecordRefreshError(ctx, directive.DataProvider, directive.StreamID, "config_error")
 		return fmt.Errorf("get stream config: %w", err)
 	}
 
@@ -145,18 +153,21 @@ func (s *CacheScheduler) refreshStreamData(ctx context.Context, directive config
 	// Note: At this point, all directives should be DirectiveSpecific because wildcards
 	// are resolved to concrete specifications at scheduler startup. We no longer need to handle wildcards here.
 	if directive.Type != config.DirectiveSpecific {
+		s.metrics.RecordRefreshError(ctx, directive.DataProvider, directive.StreamID, "invalid_directive")
 		return fmt.Errorf("unexpected directive type in refresh: %s (should be specific after resolution)", directive.Type)
 	}
 
 	events, err := s.fetchSpecificStream(ctx, directive, fromTime)
 
 	if err != nil {
+		s.metrics.RecordRefreshError(ctx, directive.DataProvider, directive.StreamID, metrics.ClassifyError(err))
 		return fmt.Errorf("fetch stream data: %w", err)
 	}
 
 	// Finally, store events with automatic duplicate detection
 	if len(events) > 0 {
 		if err := s.cacheDB.CacheEvents(ctx, events); err != nil {
+			s.metrics.RecordRefreshError(ctx, directive.DataProvider, directive.StreamID, "storage_error")
 			return fmt.Errorf("cache events: %w", err)
 		}
 		s.logger.Info("cached events",
@@ -168,6 +179,9 @@ func (s *CacheScheduler) refreshStreamData(ctx context.Context, directive config
 			"provider", directive.DataProvider,
 			"stream", directive.StreamID)
 	}
+
+	// Record successful refresh completion
+	s.metrics.RecordRefreshComplete(ctx, directive.DataProvider, directive.StreamID, time.Since(startTime), len(events))
 
 	return nil
 }

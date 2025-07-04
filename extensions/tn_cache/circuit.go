@@ -3,6 +3,7 @@ package tn_cache
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/sony/gobreaker"
@@ -52,6 +53,17 @@ func (s *CacheScheduler) getCircuitBreaker(streamKey string) *gobreaker.CircuitB
 				"stream", name,
 				"from", from.String(),
 				"to", to.String())
+			
+			// Extract provider and stream from the name (format: "provider/stream")
+			// Note: name is the streamKey which is "provider/stream"
+			parts := strings.Split(name, "/")
+			if len(parts) == 2 {
+				provider := parts[0]
+				stream := parts[1]
+				
+				// Record metric
+				s.metrics.RecordCircuitBreakerStateChange(context.Background(), provider, stream, from, to)
+			}
 		},
 	})
 
