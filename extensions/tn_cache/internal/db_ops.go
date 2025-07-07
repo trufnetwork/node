@@ -25,7 +25,6 @@ import (
 
 	"database/sql"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/trufnetwork/kwil-db/core/log"
 	"github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal/parsing"
@@ -33,10 +32,17 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
+// DBPool interface wraps the database pool methods we use
+type DBPool interface {
+	Begin(ctx context.Context) (pgx.Tx, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // CacheDB handles database operations for the TRUF.NETWORK cache
 type CacheDB struct {
 	logger log.Logger
-	pool   *pgxpool.Pool  // Independent connection pool
+	pool   DBPool  // Independent connection pool
 }
 
 // StreamCacheConfig represents a stream's caching configuration
@@ -56,8 +62,8 @@ type CachedEvent struct {
 	Value        *types.Decimal // Use high-precision decimal for decimal(36,18) values
 }
 
-// NewCacheDB creates a new CacheDB instance with pgxpool
-func NewCacheDB(pool *pgxpool.Pool, logger log.Logger) *CacheDB {
+// NewCacheDB creates a new CacheDB instance with DBPool
+func NewCacheDB(pool DBPool, logger log.Logger) *CacheDB {
 	return &CacheDB{
 		logger: logger.New("tn_cache_db"),
 		pool:   pool,
