@@ -24,6 +24,7 @@ require (
 
 require (
 	github.com/avast/retry-go/v4 v4.6.1 // indirect
+	github.com/pashagolub/pgxmock/v4 v4.8.0 // indirect
 	github.com/sony/gobreaker v1.0.0 // indirect
 )
 
@@ -114,7 +115,7 @@ require (
 	github.com/jackc/pglogrepl v0.0.0-20240307033717-828fbfe908e9 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/pgx/v5 v5.7.2 // indirect
+	github.com/jackc/pgx/v5 v5.7.4 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jackpal/go-nat-pmp v1.0.2 // indirect
 	github.com/jbenet/go-temp-err-catcher v0.1.0 // indirect
