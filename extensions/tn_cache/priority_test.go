@@ -27,19 +27,19 @@ func TestBasicDeduplication(t *testing.T) {
 					{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "st123456789012345678901234567890",
-						"cron_schedule": "0 * * * *",
+						"cron_schedule": "0 0 * * * *",
 						"from": 1719849600
 					},
 					{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678", 
 						"stream_id": "st123456789012345678901234567890",
-						"cron_schedule": "0 0 * * *",
+						"cron_schedule": "0 0 0 * * *",
 						"from": 1719936000
 					}
 				]`,
 			},
 			expectError:  false,
-			expectedWins: "0 * * * *",
+			expectedWins: "0 0 * * * *",
 			description:  "First configuration should win (simplified deduplication - no priority logic)",
 		},
 		{
@@ -50,18 +50,18 @@ func TestBasicDeduplication(t *testing.T) {
 					{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "st123456789012345678901234567890",
-						"cron_schedule": "0 0 * * *"
+						"cron_schedule": "0 0 0 * * *"
 					},
 					{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "st123456789012345678901234567890", 
-						"cron_schedule": "0 * * * *",
+						"cron_schedule": "0 0 * * * *",
 						"from": 1719849600
 					}
 				]`,
 			},
 			expectError:  false,
-			expectedWins: "0 0 * * *",
+			expectedWins: "0 0 0 * * *",
 			description:  "First configuration should win regardless of timestamp presence",
 		},
 		{
@@ -72,19 +72,19 @@ func TestBasicDeduplication(t *testing.T) {
 					{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "st123456789012345678901234567890",
-						"cron_schedule": "0 0 * * *",
+						"cron_schedule": "0 0 0 * * *",
 						"from": 1719849600
 					},
 					{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "st123456789012345678901234567890",
-						"cron_schedule": "0 * * * *",
+						"cron_schedule": "0 0 * * * *",
 						"from": 0
 					}
 				]`,
 			},
 			expectError:  false,
-			expectedWins: "0 0 * * *",
+			expectedWins: "0 0 0 * * *",
 			description:  "First configuration should win regardless of timestamp values",
 		},
 		{
@@ -95,19 +95,19 @@ func TestBasicDeduplication(t *testing.T) {
 					{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "st123456789012345678901234567890",
-						"cron_schedule": "0 0 * * *",
+						"cron_schedule": "0 0 0 * * *",
 						"from": 1719849600
 					},
 					{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "st123456789012345678901234567890",
-						"cron_schedule": "0 * * * *",
+						"cron_schedule": "0 0 * * * *",
 						"from": -1000
 					}
 				]`,
 			},
 			expectError:  false,
-			expectedWins: "0 0 * * *",
+			expectedWins: "0 0 0 * * *",
 			description:  "First configuration should win regardless of timestamp values",
 		},
 		{
@@ -118,19 +118,19 @@ func TestBasicDeduplication(t *testing.T) {
 					{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "st123456789012345678901234567890",
-						"cron_schedule": "0 0 * * *",
+						"cron_schedule": "0 0 0 * * *",
 						"from": 1719849600
 					},
 					{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "st123456789012345678901234567890",
-						"cron_schedule": "0 * * * *",
+						"cron_schedule": "0 0 * * * *",
 						"from": 1719849600
 					}
 				]`,
 			},
 			expectError:  false,
-			expectedWins: "0 0 * * *", // First one wins when priorities are equal (deterministic)
+			expectedWins: "0 0 0 * * *", // First one wins when priorities are equal (deterministic)
 			description:  "When timestamps are identical, fall back to deterministic behavior (first wins)",
 		},
 		{
@@ -141,17 +141,17 @@ func TestBasicDeduplication(t *testing.T) {
 					{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "st123456789012345678901234567890",
-						"cron_schedule": "0 0 * * *"
+						"cron_schedule": "0 0 0 * * *"
 					},
 					{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "st123456789012345678901234567890",
-						"cron_schedule": "0 * * * *"
+						"cron_schedule": "0 0 * * * *"
 					}
 				]`,
 			},
 			expectError:  false,
-			expectedWins: "0 0 * * *", // First one wins when no timestamps (deterministic)
+			expectedWins: "0 0 0 * * *", // First one wins when no timestamps (deterministic)
 			description:  "When neither has timestamps, use deterministic behavior (first wins)",
 		},
 	}
@@ -192,7 +192,7 @@ func TestTimeRangeSimplification(t *testing.T) {
 		StreamsInline: `[{
 			"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 			"stream_id": "st123456789012345678901234567890",
-			"cron_schedule": "0 * * * *",
+			"cron_schedule": "0 0 * * * *",
 			"from": 1719849600
 		}]`,
 	}

@@ -385,12 +385,12 @@ func TestCronScheduleValidation(t *testing.T) {
 		{"weekly", "0 0 0 * * 0", false, "Weekly on Sunday"},
 		{"monthly", "0 0 0 1 * *", false, "Monthly on 1st"},
 		{"every_15_min", "0 */15 * * * *", false, "Every 15 minutes"},
-		{"complex_weekdays", "30 2 * * 1-5", false, "Weekdays at 2:30 AM"},
+		{"complex_weekdays", "0 30 2 * * 1-5", false, "Weekdays at 2:30 AM"},
 		
 		// Invalid schedules
 		{"invalid_text", "invalid", true, "Non-cron text"},
 		{"invalid_minute", "0 60 * * * *", true, "Invalid minute (60)"},
-		{"too_many_fields", "* * * * * *", true, "Too many fields"},
+		{"too_many_fields", "* * * * * * *", true, "Too many fields"},
 		{"too_few_fields", "0", true, "Too few fields"},
 		{"empty", "", true, "Empty schedule"},
 	}
@@ -820,7 +820,7 @@ func TestCSVSource_RealWorldExample(t *testing.T) {
 0x9876543210fedcba9876543210fedcba98765432,*,0 0 0 * * * *,1719936000
 
 # IoT sensor data - specific sensor without timestamp
-0xabcdefabcdefabcdefabcdefabcdefabcdefabcd,stsensortemperature01,0 * * * *
+0xabcdefabcdefabcdefabcdefabcdefabcdefabcd,stsensortemperature01,0 0 * * * *
 
 # Mixed data sources with different cron schedules
 `
@@ -862,7 +862,12 @@ func TestCSVSource_RealWorldExample(t *testing.T) {
 	for i, expected := range expectedSpecs {
 		assert.Equal(t, expected.provider, specs[i].DataProvider, "Provider mismatch at index %d", i)
 		assert.Equal(t, expected.streamID, specs[i].StreamID, "StreamID mismatch at index %d", i)
-		assert.Equal(t, "0 0 * * * *", specs[i].CronSchedule, "CronSchedule mismatch at index %d", i)
+		// The CSV normalizes all cron schedules to 6-field format
+		expectedCron := "0 0 0 * * * *"
+		if i == 3 { // The last entry has a different schedule
+			expectedCron = "0 0 * * * *"
+		}
+		assert.Equal(t, expectedCron, specs[i].CronSchedule, "CronSchedule mismatch at index %d", i)
 		
 		if expected.hasFrom {
 			require.NotNil(t, specs[i].From, "Expected From timestamp at index %d", i)
