@@ -26,6 +26,10 @@ func GetSeedScriptPaths() []string {
 	// Process root directory SQL files
 	for _, entry := range entries {
 		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
+			// Skip extension-based files
+			if entry.Name() == "016-public-query-cache.sql" {
+				continue
+			}
 			// Create absolute path by joining the directory path with the file name
 			seedsFiles = append(seedsFiles, filepath.Join(dir, entry.Name()))
 		}
