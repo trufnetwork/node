@@ -14,7 +14,10 @@ import (
 
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
+	"github.com/trufnetwork/node/extensions/tn_cache/internal/tracing"
 	"github.com/trufnetwork/node/extensions/tn_cache/metrics"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Use ExtensionName from constants
@@ -138,7 +141,7 @@ func handleIsEnabled(ctx *common.EngineContext, app *common.App, inputs []any, r
 }
 
 // handleHasCachedData handles the has_cached_data precompile method
-func handleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+func handleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) (err error) {
 	// Extract parameters
 	dataProvider := strings.ToLower(inputs[0].(string))
 	streamID := inputs[1].(string)
@@ -149,6 +152,21 @@ func handleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 		t := inputs[3].(int64)
 		toTime = &t
 	}
+
+	// Add tracing
+	attrs := []attribute.KeyValue{
+		attribute.Int64("from", fromTime),
+	}
+	if toTime != nil {
+		attrs = append(attrs, attribute.Int64("to", *toTime))
+	}
+	traceCtx, end := tracing.StreamOperation(ctx.TxContext.Ctx, tracing.OpCacheCheck, dataProvider, streamID, attrs...)
+	defer func() {
+		end(err)
+	}()
+	
+	// Update context for tracing
+	ctx.TxContext.Ctx = traceCtx
 
 	// Check cached_streams table to see if we have this stream cached
 	// and if the requested time range is within our cached range
@@ -250,6 +268,30 @@ func handleGetCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 		toTime = inputs[3].(int64)
 	}
 
+	// Add tracing
+	attrs := []attribute.KeyValue{
+		attribute.Int64("from", fromTime),
+	}
+	if toTime > 0 {
+		attrs = append(attrs, attribute.Int64("to", toTime))
+	}
+	traceCtx, end := tracing.StreamOperation(ctx.TxContext.Ctx, tracing.OpCacheGet, dataProvider, streamID, attrs...)
+	
+	// Track results for hit/miss recording
+	var rowCount int
+	defer func() {
+		end(nil)
+		// Record hit/miss in span
+		span := trace.SpanFromContext(traceCtx)
+		span.SetAttributes(
+			attribute.Bool("cache.hit", rowCount > 0),
+			attribute.Int("cache.rows", rowCount),
+		)
+	}()
+	
+	// Update context for tracing
+	ctx.TxContext.Ctx = traceCtx
+
 	// Get database connection
 	db, ok := app.DB.(sql.DB)
 	if !ok {
@@ -323,7 +365,7 @@ func handleGetCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 	}
 
 	// Record metrics for data served
-	rowCount := len(result.Rows)
+	rowCount = len(result.Rows)
 	if rowCount > 0 {
 		metricsRecorder.RecordCacheDataServed(ctx.TxContext.Ctx, dataProvider, streamID, rowCount)
 	}

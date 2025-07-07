@@ -11,6 +11,7 @@ import (
 	"github.com/trufnetwork/kwil-db/core/log"
 	"github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
+	"github.com/trufnetwork/node/extensions/tn_cache/internal/parsing"
 )
 
 // mockEngine implements common.Engine interface for testing
@@ -397,7 +398,7 @@ func TestParseEventTime(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := parseEventTime(tt.input)
+			result, err := parsing.ParseEventTime(tt.input)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -423,20 +424,22 @@ func TestParseEventValue(t *testing.T) {
 		{"negative string", "-123.456", false, "-123.456"},
 		{"large number", "999999999999999999.999999999999999999", false, "999999999999999999.999999999999999999"},
 
+		// Now supported types (previously errors)
+		{"float64 now supported", float64(123.456), false, "123.456000000000000000"},
+		{"int64 now supported", int64(123), false, "123.000000000000000000"},
+		{"int now supported", int(123), false, "123.000000000000000000"},
+
 		// Error cases
 		{"nil", nil, true, ""},
 		{"empty string", "", true, ""},
 		{"invalid string", "not-a-number", true, ""},
-		{"float64 not supported", float64(123.456), true, ""},
-		{"int64 not supported", int64(123), true, ""},
-		{"int not supported", int(123), true, ""},
 		{"unsupported type array", []int{1, 2, 3}, true, ""},
 		{"unsupported type map", map[string]int{"a": 1}, true, ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := parseEventValue(tt.input)
+			result, err := parsing.ParseEventValue(tt.input)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -505,7 +508,7 @@ func TestParseEventValue_Decimal(t *testing.T) {
 			dec, err := tc.setupFunc()
 			require.NoError(t, err, "Setup should not fail")
 
-			result, err := parseEventValue(dec)
+			result, err := parsing.ParseEventValue(dec)
 
 			if tc.wantErr {
 				assert.Error(t, err)

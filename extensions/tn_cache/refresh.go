@@ -5,17 +5,17 @@ package tn_cache
 import (
 	"context"
 	"fmt"
-	"math/big"
-	"strconv"
 	"time"
 
 	"github.com/avast/retry-go/v4"
 	"github.com/trufnetwork/kwil-db/common"
-	"github.com/trufnetwork/kwil-db/core/types"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal/errors"
+	"github.com/trufnetwork/node/extensions/tn_cache/internal/parsing"
+	"github.com/trufnetwork/node/extensions/tn_cache/internal/tracing"
 	"github.com/trufnetwork/node/extensions/tn_cache/metrics"
 )
 
@@ -52,73 +52,16 @@ func (s *CacheScheduler) refreshStreamDataWithRetry(ctx context.Context, directi
 	)
 }
 
-// parseEventTime converts various types to int64 timestamp
-func parseEventTime(v interface{}) (int64, error) {
-	switch val := v.(type) {
-	case int64:
-		return val, nil
-	case int:
-		return int64(val), nil
-	case int32:
-		return int64(val), nil
-	case uint64:
-		return int64(val), nil
-	case uint32:
-		return int64(val), nil
-	case string:
-		if parsed, err := strconv.ParseInt(val, 10, 64); err == nil {
-			return parsed, nil
-		}
-		return 0, fmt.Errorf("invalid timestamp string: %v", val)
-	default:
-		return 0, fmt.Errorf("unsupported timestamp type: %T", v)
-	}
-}
-
-// parseEventValue converts various types to *types.Decimal with decimal(36,18) precision
-func parseEventValue(v interface{}) (*types.Decimal, error) {
-	switch val := v.(type) {
-	case *types.Decimal:
-		if val == nil {
-			return nil, fmt.Errorf("nil decimal value")
-		}
-		// Ensure decimal(36,18) precision
-		if err := val.SetPrecisionAndScale(36, 18); err != nil {
-			return nil, fmt.Errorf("set precision and scale: %w", err)
-		}
-		return val, nil
-	case float64:
-		// Convert float64 to decimal(36,18) - note: may lose precision if > 15 digits
-		return types.ParseDecimalExplicit(strconv.FormatFloat(val, 'f', -1, 64), 36, 18)
-	case float32:
-		return types.ParseDecimalExplicit(strconv.FormatFloat(float64(val), 'f', -1, 32), 36, 18)
-	case int64:
-		return types.ParseDecimalExplicit(strconv.FormatInt(val, 10), 36, 18)
-	case int:
-		return types.ParseDecimalExplicit(strconv.Itoa(val), 36, 18)
-	case int32:
-		return types.ParseDecimalExplicit(strconv.FormatInt(int64(val), 10), 36, 18)
-	case uint64:
-		return types.ParseDecimalExplicit(strconv.FormatUint(val, 10), 36, 18)
-	case uint32:
-		return types.ParseDecimalExplicit(strconv.FormatUint(uint64(val), 10), 36, 18)
-	case *big.Int:
-		if val == nil {
-			return nil, fmt.Errorf("nil big.Int value")
-		}
-		return types.ParseDecimalExplicit(val.String(), 36, 18)
-	case string:
-		// Parse string directly as decimal(36,18)
-		return types.ParseDecimalExplicit(val, 36, 18)
-	case nil:
-		return nil, fmt.Errorf("nil value")
-	default:
-		return nil, fmt.Errorf("unsupported value type: %T", v)
-	}
-}
 
 // refreshStreamData refreshes the cached data for a single cache directive
-func (s *CacheScheduler) refreshStreamData(ctx context.Context, directive config.CacheDirective) error {
+func (s *CacheScheduler) refreshStreamData(ctx context.Context, directive config.CacheDirective) (err error) {
+	// Add tracing
+	ctx, end := tracing.StreamOperation(ctx, tracing.OpRefreshStream, directive.DataProvider, directive.StreamID,
+		attribute.String("type", string(directive.Type)))
+	defer func() {
+		end(err)
+	}()
+
 	// Start timing the refresh operation
 	startTime := time.Now()
 	
@@ -214,13 +157,13 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, directive conf
 			// Parse each row into a CachedEvent
 			if len(row.Values) >= 2 {
 				// Parse event time using utility function
-				eventTime, err := parseEventTime(row.Values[0])
+				eventTime, err := parsing.ParseEventTime(row.Values[0])
 				if err != nil {
 					return fmt.Errorf("parse event_time: %w", err)
 				}
 
 				// Then parse the value using utility function
-				value, err := parseEventValue(row.Values[1])
+				value, err := parsing.ParseEventValue(row.Values[1])
 				if err != nil {
 					return fmt.Errorf("parse value: %w", err)
 				}

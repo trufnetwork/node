@@ -11,10 +11,12 @@ import (
 	"github.com/sony/gobreaker"
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/log"
+	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
+	"github.com/trufnetwork/node/extensions/tn_cache/internal/tracing"
 	"github.com/trufnetwork/node/extensions/tn_cache/metrics"
 	"github.com/trufnetwork/node/extensions/tn_cache/validation"
 )
@@ -237,7 +239,11 @@ func (s *CacheScheduler) registerRefreshJob(schedule string) error {
 	}
 
 	jobFunc := func() {
+		// Add tracing for scheduled job execution
+		ctx, end := tracing.SchedulerOperation(s.ctx, tracing.OpSchedulerJob,
+			attribute.String("schedule", schedule))
 		defer func() {
+			end(nil) // Job errors are logged separately, not returned
 			if r := recover(); r != nil {
 				s.logger.Error("panic in refresh job",
 					"panic", r,
@@ -254,14 +260,14 @@ func (s *CacheScheduler) registerRefreshJob(schedule string) error {
 
 		s.logger.Debug("executing scheduled refresh", "schedule", schedule, "streams", len(directives))
 
-		g, ctx := errgroup.WithContext(s.ctx)
+		g, gCtx := errgroup.WithContext(ctx)
 		g.SetLimit(5) // Limit concurrent refreshes
 
 		for _, directive := range directives {
 			dir := directive // Capture loop variable
 
 			g.Go(func() error {
-				if err := s.refreshStreamDataWithCircuitBreaker(ctx, dir); err != nil {
+				if err := s.refreshStreamDataWithCircuitBreaker(gCtx, dir); err != nil {
 					s.logger.Error("failed to refresh stream data",
 						"provider", dir.DataProvider,
 						"stream", dir.StreamID,

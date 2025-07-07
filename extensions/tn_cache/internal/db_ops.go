@@ -21,13 +21,14 @@ package internal
 import (
 	"context"
 	"fmt"
-	"math/big"
-	"strconv"
 	"time"
 
 	"github.com/trufnetwork/kwil-db/core/log"
 	"github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
+	"github.com/trufnetwork/node/extensions/tn_cache/internal/parsing"
+	"github.com/trufnetwork/node/extensions/tn_cache/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // CacheDB handles database operations for the TRUF.NETWORK cache
@@ -257,10 +258,17 @@ func (c *CacheDB) ListStreamConfigs(ctx context.Context) ([]StreamCacheConfig, e
 }
 
 // CacheEvents stores events in the cache
-func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
+func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) (err error) {
 	if len(events) == 0 {
 		return nil
 	}
+
+	// Add tracing
+	ctx, end := tracing.StreamOperation(ctx, tracing.OpDBCacheEvents, events[0].DataProvider, events[0].StreamID,
+		attribute.Int("count", len(events)))
+	defer func() {
+		end(err)
+	}()
 
 	c.logger.Debug("caching events",
 		"data_provider", events[0].DataProvider,
@@ -342,7 +350,15 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 }
 
 // GetEvents retrieves events from the cache for a specific time range
-func (c *CacheDB) GetEvents(ctx context.Context, dataProvider, streamID string, fromTime, toTime int64) ([]CachedEvent, error) {
+func (c *CacheDB) GetEvents(ctx context.Context, dataProvider, streamID string, fromTime, toTime int64) (events []CachedEvent, err error) {
+	// Add tracing
+	ctx, end := tracing.StreamOperation(ctx, tracing.OpDBGetEvents, dataProvider, streamID,
+		attribute.Int64("from", fromTime),
+		attribute.Int64("to", toTime))
+	defer func() {
+		end(err)
+	}()
+
 	c.logger.Debug("getting cached events",
 		"data_provider", dataProvider,
 		"stream_id", streamID,
@@ -384,10 +400,10 @@ func (c *CacheDB) GetEvents(ctx context.Context, dataProvider, streamID string, 
 		return nil, fmt.Errorf("query events: %w", err)
 	}
 
-	events := make([]CachedEvent, 0, len(result.Rows))
+	events = make([]CachedEvent, 0, len(result.Rows))
 	for _, row := range result.Rows {
-		// Parse the value using the same logic as refresh.go
-		value, err := parseEventValueFromDB(row[3])
+		// Parse the value using the shared parsing logic
+		value, err := parsing.ParseEventValue(row[3])
 		if err != nil {
 			return nil, fmt.Errorf("parse event value: %w", err)
 		}
@@ -489,7 +505,15 @@ func (c *CacheDB) CleanupCache(ctx context.Context) error {
 }
 
 // HasCachedData checks if there is cached data for a stream in a time range
-func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID string, fromTime, toTime int64) (bool, error) {
+func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID string, fromTime, toTime int64) (hasData bool, err error) {
+	// Add tracing
+	ctx, end := tracing.StreamOperation(ctx, tracing.OpDBHasCachedData, dataProvider, streamID,
+		attribute.Int64("from", fromTime),
+		attribute.Int64("to", toTime))
+	defer func() {
+		end(err)
+	}()
+
 	c.logger.Debug("checking for cached data",
 		"data_provider", dataProvider,
 		"stream_id", streamID,
@@ -556,51 +580,6 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 	return len(eventsResult.Rows) > 0 && eventsResult.Rows[0][0].(bool), nil
 }
 
-// parseEventValueFromDB converts database values to *types.Decimal with decimal(36,18) precision
-// This handles values that come back from the database which may be in different formats
-func parseEventValueFromDB(v interface{}) (*types.Decimal, error) {
-	switch val := v.(type) {
-	case *types.Decimal:
-		if val == nil {
-			return nil, fmt.Errorf("nil decimal value")
-		}
-		// Ensure decimal(36,18) precision
-		if err := val.SetPrecisionAndScale(36, 18); err != nil {
-			return nil, fmt.Errorf("set precision and scale: %w", err)
-		}
-		return val, nil
-	case float64:
-		// Convert float64 to decimal(36,18) - note: may lose precision if > 15 digits
-		return types.ParseDecimalExplicit(strconv.FormatFloat(val, 'f', -1, 64), 36, 18)
-	case float32:
-		return types.ParseDecimalExplicit(strconv.FormatFloat(float64(val), 'f', -1, 32), 36, 18)
-	case int64:
-		return types.ParseDecimalExplicit(strconv.FormatInt(val, 10), 36, 18)
-	case int:
-		return types.ParseDecimalExplicit(strconv.Itoa(val), 36, 18)
-	case int32:
-		return types.ParseDecimalExplicit(strconv.FormatInt(int64(val), 10), 36, 18)
-	case uint64:
-		return types.ParseDecimalExplicit(strconv.FormatUint(val, 10), 36, 18)
-	case uint32:
-		return types.ParseDecimalExplicit(strconv.FormatUint(uint64(val), 10), 36, 18)
-	case *big.Int:
-		if val == nil {
-			return nil, fmt.Errorf("nil big.Int value")
-		}
-		return types.ParseDecimalExplicit(val.String(), 36, 18)
-	case string:
-		// Parse string directly as decimal(36,18)
-		return types.ParseDecimalExplicit(val, 36, 18)
-	case []byte:
-		// Handle potential byte array from database
-		return types.ParseDecimalExplicit(string(val), 36, 18)
-	case nil:
-		return nil, fmt.Errorf("nil value")
-	default:
-		return nil, fmt.Errorf("unsupported database value type: %T", v)
-	}
-}
 
 // UpdateStreamConfigsAtomic atomically updates the cached_streams table
 // It adds/updates configs in newConfigs and deletes configs in toDelete

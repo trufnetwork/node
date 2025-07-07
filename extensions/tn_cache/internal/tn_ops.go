@@ -9,6 +9,8 @@ import (
 	"github.com/trufnetwork/kwil-db/core/log"
 	"github.com/trufnetwork/kwil-db/core/types"
 	sql "github.com/trufnetwork/kwil-db/node/types/sql"
+	"github.com/trufnetwork/node/extensions/tn_cache/internal/parsing"
+	"github.com/trufnetwork/node/extensions/tn_cache/internal/tracing"
 )
 
 const (
@@ -58,33 +60,65 @@ func NewTNOperations(engine common.Engine, db sql.DB, namespace string, logger l
 	}
 }
 
+// createEngineContext creates a standard engine context for extension operations
+func (t *TNOperations) createEngineContext(ctx context.Context, operation string) *common.EngineContext {
+	return &common.EngineContext{
+		TxContext: &common.TxContext{
+			Ctx: ctx,
+			BlockContext: &common.BlockContext{
+				Height: 0, // Use height 0 for current state
+			},
+			Signer: []byte(ExtensionAgentName),
+			Caller: ExtensionAgentName,
+			TxID:   fmt.Sprintf("ext_agent_%s_%d", operation, time.Now().UnixNano()),
+		},
+		OverrideAuthz: true, // Read-only operations don't need auth
+	}
+}
+
+// callWithTrace wraps engine calls with tracing
+func (t *TNOperations) callWithTrace(ctx context.Context, engineCtx *common.EngineContext, action string, args []any, processResult func(*common.Row) error) (err error) {
+	// Map action to appropriate operation
+	var op tracing.Operation
+	switch action {
+	case "list_streams":
+		op = tracing.OpTNListStreams
+	case "get_category_streams":
+		op = tracing.OpTNGetCategoryStreams
+	case "get_record_composed":
+		op = tracing.OpTNGetRecordComposed
+	default:
+		// Fallback for unknown actions
+		op = tracing.Operation("tn." + action)
+	}
+	
+	// Start span with action details
+	spanCtx, end := tracing.TNOperation(ctx, op, action)
+	defer func() {
+		end(err)
+	}()
+	
+	// Update engine context with traced context
+	engineCtx.TxContext.Ctx = spanCtx
+	
+	// Call the engine
+	_, err = t.engine.Call(engineCtx, t.db, "", action, args, processResult)
+	return err
+}
+
 // ListComposedStreams returns all composed streams for a given provider
 func (t *TNOperations) ListComposedStreams(ctx context.Context, provider string) ([]string, error) {
 	t.logger.Debug("listing composed streams", "provider", provider)
 
 	var composedStreams []string
 
-	// Create a minimal engine context for read-only operations
-	engineCtx := &common.EngineContext{
-		TxContext: &common.TxContext{
-			Ctx: ctx,
-			BlockContext: &common.BlockContext{
-				Height: 0, // Use height 0 for current state
-			},
-			// NOTE: Currently using OverrideAuthz to access all streams including private ones
-			// See TestExtensionAgentPermissions for verification
-			Signer: []byte(ExtensionAgentName),
-			Caller: ExtensionAgentName,
-			TxID:   fmt.Sprintf("ext_agent_list_%d", time.Now().UnixNano()),
-		},
-		OverrideAuthz: true, // Read-only operation, no auth needed
-	}
+	// Create engine context for this operation
+	engineCtx := t.createEngineContext(ctx, "list_streams")
 
 	// Use the list_streams action to get all streams for the provider
-	_, err := t.engine.Call(
+	err := t.callWithTrace(
+		ctx,
 		engineCtx,
-		t.db,
-		"", // Actions don't use namespace
 		"list_streams",
 		[]any{
 			provider,    // data_provider
@@ -126,25 +160,13 @@ func (t *TNOperations) GetCategoryStreams(ctx context.Context, provider, streamI
 
 	var categoryStreams []CategoryStream
 
-	// Create engine context
-	engineCtx := &common.EngineContext{
-		TxContext: &common.TxContext{
-			Ctx: ctx,
-			BlockContext: &common.BlockContext{
-				Height: 0,
-			},
-			Signer: []byte(ExtensionAgentName),
-			Caller: ExtensionAgentName,
-			TxID:   fmt.Sprintf("ext_agent_category_%d", time.Now().UnixNano()),
-		},
-		OverrideAuthz: true,
-	}
+	// Create engine context for this operation
+	engineCtx := t.createEngineContext(ctx, "get_category_streams")
 
 	// Use the get_category_streams action to get all child streams
-	_, err := t.engine.Call(
+	err := t.callWithTrace(
+		ctx,
 		engineCtx,
-		t.db,
-		"", // Actions don't use namespace
 		"get_category_streams",
 		[]any{
 			provider,   // data_provider
@@ -190,25 +212,13 @@ func (t *TNOperations) GetRecordComposed(ctx context.Context, provider, streamID
 
 	var records []ComposedRecord
 
-	// Create engine context
-	engineCtx := &common.EngineContext{
-		TxContext: &common.TxContext{
-			Ctx: ctx,
-			BlockContext: &common.BlockContext{
-				Height: 0,
-			},
-			Signer: []byte(ExtensionAgentName),
-			Caller: ExtensionAgentName,
-			TxID:   fmt.Sprintf("ext_agent_record_%d", time.Now().UnixNano()),
-		},
-		OverrideAuthz: true,
-	}
+	// Create engine context for this operation
+	engineCtx := t.createEngineContext(ctx, "get_record_composed")
 
 	// Use the get_record_composed action
-	_, err := t.engine.Call(
+	err := t.callWithTrace(
+		ctx,
 		engineCtx,
-		t.db,
-		"", // Actions don't use namespace
 		"get_record_composed",
 		[]any{
 			provider, // data_provider
@@ -220,13 +230,13 @@ func (t *TNOperations) GetRecordComposed(ctx context.Context, provider, streamID
 		func(row *common.Row) error {
 			if len(row.Values) >= 2 {
 				// Parse event time
-				eventTime, err := parseEventTime(row.Values[0])
+				eventTime, err := parsing.ParseEventTime(row.Values[0])
 				if err != nil {
 					return fmt.Errorf("parse event_time: %w", err)
 				}
 
 				// Parse value
-				value, err := parseEventValue(row.Values[1])
+				value, err := parsing.ParseEventValue(row.Values[1])
 				if err != nil {
 					return fmt.Errorf("parse value: %w", err)
 				}
@@ -252,48 +262,3 @@ func (t *TNOperations) GetRecordComposed(ctx context.Context, provider, streamID
 	return records, nil
 }
 
-// parseEventTime converts various types to int64 timestamp
-func parseEventTime(v interface{}) (int64, error) {
-	switch val := v.(type) {
-	case int64:
-		return val, nil
-	case int:
-		return int64(val), nil
-	case int32:
-		return int64(val), nil
-	case uint64:
-		return int64(val), nil
-	case uint32:
-		return int64(val), nil
-	case string:
-		// Try to parse string as int64
-		var timestamp int64
-		if _, err := fmt.Sscanf(val, "%d", &timestamp); err == nil {
-			return timestamp, nil
-		}
-		return 0, fmt.Errorf("invalid timestamp string: %v", val)
-	default:
-		return 0, fmt.Errorf("unsupported timestamp type: %T", v)
-	}
-}
-
-// parseEventValue converts TN's return types to *types.Decimal
-// TN actions return either *types.Decimal or string for decimal values
-func parseEventValue(v interface{}) (*types.Decimal, error) {
-	switch val := v.(type) {
-	case *types.Decimal:
-		if val == nil {
-			return nil, fmt.Errorf("nil decimal value")
-		}
-		// Ensure decimal(36,18) precision
-		if err := val.SetPrecisionAndScale(36, 18); err != nil {
-			return nil, fmt.Errorf("set precision and scale: %w", err)
-		}
-		return val, nil
-	case string:
-		// Parse string directly as decimal(36,18)
-		return types.ParseDecimalExplicit(val, 36, 18)
-	default:
-		return nil, fmt.Errorf("unsupported value type: %T (expected *types.Decimal or string)", v)
-	}
-}
