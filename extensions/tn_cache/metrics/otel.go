@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/sony/gobreaker"
 	"github.com/trufnetwork/kwil-db/core/log"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -23,10 +22,6 @@ type OTELMetrics struct {
 	refreshEvents   metric.Int64Histogram
 	refreshErrors   metric.Int64Counter
 	lastRefresh     metric.Float64Gauge
-
-	// Circuit breaker metrics
-	cbState metric.Int64Gauge
-	cbTrips metric.Int64Counter
 
 	// Resource metrics
 	streamsConfigured metric.Int64Gauge
@@ -100,21 +95,6 @@ func NewOTELMetrics(meter metric.Meter, logger log.Logger) (*OTELMetrics, error)
 	m.lastRefresh, err = meter.Float64Gauge("tn_cache.refresh.last_success",
 		metric.WithDescription("Timestamp of last successful refresh"),
 		metric.WithUnit("s"))
-	if err != nil {
-		return nil, err
-	}
-
-	// Circuit breaker metrics
-	m.cbState, err = meter.Int64Gauge("tn_cache.circuit_breaker.state",
-		metric.WithDescription("Circuit breaker state (0=closed, 1=open, 2=half-open)"),
-		metric.WithUnit("1"))
-	if err != nil {
-		return nil, err
-	}
-
-	m.cbTrips, err = meter.Int64Counter("tn_cache.circuit_breaker.trips",
-		metric.WithDescription("Number of circuit breaker state changes"),
-		metric.WithUnit("1"))
 	if err != nil {
 		return nil, err
 	}
@@ -223,31 +203,6 @@ func (m *OTELMetrics) RecordRefreshError(ctx context.Context, dataProvider, stre
 			attribute.String("data_provider", dataProvider),
 			attribute.String("stream_id", streamID),
 			attribute.String("error_type", errType),
-		))
-}
-
-func (m *OTELMetrics) RecordCircuitBreakerStateChange(ctx context.Context, dataProvider, streamID string, from, to gobreaker.State) {
-	// Map states to numeric values
-	stateValue := int64(0)
-	switch to {
-	case gobreaker.StateOpen:
-		stateValue = 1
-	case gobreaker.StateHalfOpen:
-		stateValue = 2
-	}
-
-	m.cbState.Record(ctx, stateValue,
-		metric.WithAttributes(
-			attribute.String("data_provider", dataProvider),
-			attribute.String("stream_id", streamID),
-		))
-
-	m.cbTrips.Add(ctx, 1,
-		metric.WithAttributes(
-			attribute.String("data_provider", dataProvider),
-			attribute.String("stream_id", streamID),
-			attribute.String("from_state", from.String()),
-			attribute.String("to_state", to.String()),
 		))
 }
 

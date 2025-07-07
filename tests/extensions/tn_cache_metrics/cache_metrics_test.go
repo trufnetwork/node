@@ -84,10 +84,6 @@ func TestCacheMetrics(t *testing.T) {
 	err = testRefreshErrors(ctx, t, tnClient)
 	require.NoError(t, err, "Failed to test refresh errors")
 
-	// Test 5: Generate high load for circuit breaker
-	t.Log("Testing circuit breaker...")
-	err = testCircuitBreaker(ctx, t, tnClient)
-	require.NoError(t, err, "Failed to test circuit breaker")
 
 	t.Log("All tests completed successfully!")
 	t.Log("Metrics should now be visible in Grafana at http://localhost:3000")
@@ -341,23 +337,13 @@ func testRefreshErrors(ctx context.Context, t *testing.T, tnClient *tnclient.Cli
 	// We can't directly trigger them from the test, but they will be recorded
 	// when the refresh scheduler encounters issues (e.g., invalid data, network errors)
 
-	// The circuit breaker and refresh error metrics will be populated by the
+	// The refresh error metrics will be populated by the
 	// background refresh process that runs according to the cron schedules
 
 	t.Log("Refresh errors are tracked by the background scheduler")
 	return nil
 }
 
-// testCircuitBreaker generates high load to potentially trigger circuit breaker
-func testCircuitBreaker(ctx context.Context, t *testing.T, tnClient *tnclient.Client) error {
-	// The circuit breaker is used internally by the cache refresh mechanism
-	// It protects against cascading failures when the TN data source is unavailable
-	// We can't directly trigger it from external queries, but it will be active
-	// during the background refresh operations
-
-	t.Log("Circuit breaker metrics are tracked by the background refresh process")
-	return nil
-}
 
 // waitTxToBeMinedWithSuccess waits for a transaction to be successful
 func waitTxToBeMinedWithSuccess(t *testing.T, ctx context.Context, client *tnclient.Client, txHash kwiltypes.Hash) {

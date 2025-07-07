@@ -39,13 +39,13 @@ func TestIncludeChildrenFunctionality(t *testing.T) {
 					jsonConfig = `[{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "stcomposedstream123",
-						"cron_schedule": "0 * * * *"
+						"cron_schedule": "0 0 * * * *"
 					}]`
 				} else {
 					jsonConfig = fmt.Sprintf(`[{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "stcomposedstream123",
-						"cron_schedule": "0 * * * *",
+						"cron_schedule": "0 0 * * * *",
 						"include_children": %v
 					}]`, tc.includeChildren)
 				}
@@ -75,39 +75,39 @@ func TestIncludeChildrenFunctionality(t *testing.T) {
 		}{
 			{
 				name:           "explicit_true",
-				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 * * * *,1719849600,true`,
+				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 0 * * * *,1719849600,true`,
 				expectedValues: []bool{true},
 			},
 			{
 				name:           "explicit_false",
-				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 * * * *,1719849600,false`,
+				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 0 * * * *,1719849600,false`,
 				expectedValues: []bool{false},
 			},
 			{
 				name:           "omitted_defaults_false",
-				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 * * * *,1719849600`,
+				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 0 * * * *,1719849600`,
 				expectedValues: []bool{false},
 			},
 			{
 				name:           "empty_field_defaults_false",
-				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 * * * *,1719849600,`,
+				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 0 * * * *,1719849600,`,
 				expectedValues: []bool{false},
 			},
 			{
 				name:           "without_timestamp_but_with_include_children",
-				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 * * * *,,true`,
+				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 0 * * * *,,true`,
 				expectedValues: []bool{true},
 			},
 			{
 				name:           "mixed_values",
-				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 * * * *,1719849600,true
-0x9876543210fedcba9876543210fedcba98765432,ststream2,0 0 * * *,1719936000,false
-0xabcdefabcdefabcdefabcdefabcdefabcdefabcd,ststream3,*/15 * * * *,,true`,
+				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 0 * * *,1719849600,true
+0x9876543210fedcba9876543210fedcba98765432,ststream2,0 0 0 * * *,1719936000,false
+0xabcdefabcdefabcdefabcdefabcdefabcdefabcd,ststream3,0 */15 * * * *,,true`,
 				expectedValues: []bool{true, false, true},
 			},
 			{
 				name:          "invalid_value",
-				csvContent:    `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 * * * *,1719849600,maybe`,
+				csvContent:    `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 0 * * * *,1719849600,maybe`,
 				expectError:   true,
 				errorContains: "invalid include_children value",
 			},
@@ -190,7 +190,7 @@ func TestConfigValidation(t *testing.T) {
 					"streams_inline": `[{
 						"data_provider": "not_an_address",
 						"stream_id": "st123456789012345678901234567890",
-						"cron_schedule": "0 * * * *"
+						"cron_schedule": "0 0 * * * *"
 					}]`,
 				},
 			},
@@ -206,7 +206,7 @@ func TestConfigValidation(t *testing.T) {
 					"streams_inline": `[{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "invalid_stream_id",
-						"cron_schedule": "0 * * * *"
+						"cron_schedule": "0 0 * * * *"
 					}]`,
 				},
 			},
@@ -234,7 +234,7 @@ func TestConfigValidation(t *testing.T) {
 					"streams_inline": `[{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "*",
-						"cron_schedule": "0 * * * *"
+						"cron_schedule": "0 0 * * * *"
 					}]`,
 				},
 			},
@@ -249,7 +249,7 @@ func TestConfigValidation(t *testing.T) {
 					"streams_inline": `[{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "stcomposedstream123",
-						"cron_schedule": "0 * * * *",
+						"cron_schedule": "0 0 * * * *",
 						"from": 1719849600,
 						"include_children": true
 					}]`,
@@ -266,7 +266,7 @@ func TestConfigValidation(t *testing.T) {
 					"streams_inline": `[{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "st123456789012345678901234567890",
-						"cron_schedule": "0 0 * * *",
+						"cron_schedule": "0 0 0 * * *",
 						"from": 1719849600
 					}]`,
 				},
@@ -282,7 +282,7 @@ func TestConfigValidation(t *testing.T) {
 					"streams_inline": `[{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "st123456789012345678901234567890",
-						"cron_schedule": "0 * * * *",
+						"cron_schedule": "0 0 * * * *",
 						"from": 9999999999
 					}]`,
 				},
@@ -299,7 +299,7 @@ func TestConfigValidation(t *testing.T) {
 					"streams_inline": `[{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "st123456789012345678901234567890",
-						"cron_schedule": "0 * * * *"
+						"cron_schedule": "0 0 * * * *"
 					}]`,
 					"streams_csv_file": "streams.csv",
 				},
@@ -350,7 +350,7 @@ func TestWildcardStreamResolution(t *testing.T) {
 		StreamsInline: `[{
 			"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 			"stream_id": "*",
-			"cron_schedule": "0 * * * *"
+			"cron_schedule": "0 0 * * * *"
 		}]`,
 	}
 
@@ -380,16 +380,16 @@ func TestCronScheduleValidation(t *testing.T) {
 		description string
 	}{
 		// Valid schedules (consolidated from both tests)
-		{"hourly", "0 * * * *", false, "Every hour"},
-		{"daily", "0 0 * * *", false, "Daily at midnight"},
-		{"weekly", "0 0 * * 0", false, "Weekly on Sunday"},
-		{"monthly", "0 0 1 * *", false, "Monthly on 1st"},
-		{"every_15_min", "*/15 * * * *", false, "Every 15 minutes"},
+		{"hourly", "0 0 * * * *", false, "Every hour"},
+		{"daily", "0 0 0 * * *", false, "Daily at midnight"},
+		{"weekly", "0 0 0 * * 0", false, "Weekly on Sunday"},
+		{"monthly", "0 0 0 1 * *", false, "Monthly on 1st"},
+		{"every_15_min", "0 */15 * * * *", false, "Every 15 minutes"},
 		{"complex_weekdays", "30 2 * * 1-5", false, "Weekdays at 2:30 AM"},
 		
 		// Invalid schedules
 		{"invalid_text", "invalid", true, "Non-cron text"},
-		{"invalid_minute", "60 * * * *", true, "Invalid minute (60)"},
+		{"invalid_minute", "0 60 * * * *", true, "Invalid minute (60)"},
 		{"too_many_fields", "* * * * * *", true, "Too many fields"},
 		{"too_few_fields", "0", true, "Too few fields"},
 		{"empty", "", true, "Empty schedule"},
@@ -474,14 +474,14 @@ func TestCSVSource_BasicFunctionality(t *testing.T) {
 		{
 			name: "valid CSV with three columns",
 			csvContent: `0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 * * * *
-0x9876543210fedcba9876543210fedcba98765432,st987654321098765432109876543210,0 0 * * *`,
+0x9876543210fedcba9876543210fedcba98765432,st987654321098765432109876543210,0 0 0 * * *`,
 			expectedSpecs: 2,
 			expectError:   false,
 		},
 		{
 			name: "valid CSV with four columns (with from timestamp)",
-			csvContent: `0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 * * * *,1719849600
-0x9876543210fedcba9876543210fedcba98765432,st987654321098765432109876543210,0 0 * * *,1719936000`,
+			csvContent: `0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 0 0 * * * *,1719849600
+0x9876543210fedcba9876543210fedcba98765432,st987654321098765432109876543210,0 0 0 * * *,1719936000`,
 			expectedSpecs: 2,
 			expectError:   false,
 		},
@@ -491,7 +491,7 @@ func TestCSVSource_BasicFunctionality(t *testing.T) {
 0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,*/15 * * * *
 
 # Another comment
-0x9876543210fedcba9876543210fedcba98765432,st987654321098765432109876543210,0 0 * * *,1719849600`,
+0x9876543210fedcba9876543210fedcba98765432,st987654321098765432109876543210,0 0 0 * * *,1719849600`,
 			expectedSpecs: 2,
 			expectError:   false,
 		},
@@ -514,14 +514,14 @@ incomplete_row,missing_cron`,
 		},
 		{
 			name: "invalid CSV - bad timestamp",
-			csvContent: `0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 * * * *,invalid_timestamp`,
+			csvContent: `0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 0 0 * * * *,invalid_timestamp`,
 			expectedSpecs: 0,
 			expectError:   true,
 			errorContains: "invalid from timestamp",
 		},
 		{
 			name: "valid CSV with wildcard stream ID",
-			csvContent: `0x1234567890abcdef1234567890abcdef12345678,*,0 0 * * *
+			csvContent: `0x1234567890abcdef1234567890abcdef12345678,*,0 0 0 * * *
 0x9876543210fedcba9876543210fedcba98765432,st987654321098765432109876543210,0 * * * *`,
 			expectedSpecs: 2,
 			expectError:   false,
@@ -661,7 +661,7 @@ func TestMutualExclusivity(t *testing.T) {
 			"streams_inline": `[{
 				"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 				"stream_id": "st123456789012345678901234567890",
-				"cron_schedule": "0 * * * *"
+				"cron_schedule": "0 0 * * * *"
 			}]`,
 			"streams_csv_file": "nonexistent.csv", // File doesn't need to exist for this test
 		}
@@ -678,7 +678,7 @@ func TestMutualExclusivity(t *testing.T) {
 			"streams_inline": `[{
 				"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 				"stream_id": "st123456789012345678901234567890",
-				"cron_schedule": "0 * * * *"
+				"cron_schedule": "0 0 * * * *"
 			}]`,
 		}
 
@@ -774,7 +774,7 @@ func TestCSVSource_TimestampHandling(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			csvContent := fmt.Sprintf("0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 * * * *,%s", tt.timestamp)
+			csvContent := fmt.Sprintf("0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 0 0 * * * *,%s", tt.timestamp)
 			csvFile := createTempCSV(t, csvContent)
 			defer cleanup(t, csvFile)
 
@@ -813,11 +813,11 @@ func TestCSVSource_RealWorldExample(t *testing.T) {
 # Comments starting with # are ignored
 
 # Financial data provider with specific streams
-0x1234567890abcdef1234567890abcdef12345678,stbtcusdprice,0 * * * *,1719849600
-0x1234567890abcdef1234567890abcdef12345678,stethusdprice,0 * * * *,1719849600
+0x1234567890abcdef1234567890abcdef12345678,stbtcusdprice,0 0 0 * * * *,1719849600
+0x1234567890abcdef1234567890abcdef12345678,stethusdprice,0 0 0 * * * *,1719849600
 
 # Weather data provider - all streams
-0x9876543210fedcba9876543210fedcba98765432,*,0 * * * *,1719936000
+0x9876543210fedcba9876543210fedcba98765432,*,0 0 0 * * * *,1719936000
 
 # IoT sensor data - specific sensor without timestamp
 0xabcdefabcdefabcdefabcdefabcdefabcdefabcd,stsensortemperature01,0 * * * *
@@ -862,7 +862,7 @@ func TestCSVSource_RealWorldExample(t *testing.T) {
 	for i, expected := range expectedSpecs {
 		assert.Equal(t, expected.provider, specs[i].DataProvider, "Provider mismatch at index %d", i)
 		assert.Equal(t, expected.streamID, specs[i].StreamID, "StreamID mismatch at index %d", i)
-		assert.Equal(t, "0 * * * *", specs[i].CronSchedule, "CronSchedule mismatch at index %d", i)
+		assert.Equal(t, "0 0 * * * *", specs[i].CronSchedule, "CronSchedule mismatch at index %d", i)
 		
 		if expected.hasFrom {
 			require.NotNil(t, specs[i].From, "Expected From timestamp at index %d", i)

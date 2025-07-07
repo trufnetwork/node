@@ -3,8 +3,6 @@ package metrics
 import (
 	"context"
 	"time"
-
-	"github.com/sony/gobreaker"
 )
 
 // NoOpMetrics is a no-op implementation of MetricsRecorder.
@@ -32,9 +30,6 @@ func (n *NoOpMetrics) RecordRefreshComplete(ctx context.Context, dataProvider, s
 }
 
 func (n *NoOpMetrics) RecordRefreshError(ctx context.Context, dataProvider, streamID string, errType string) {}
-
-func (n *NoOpMetrics) RecordCircuitBreakerStateChange(ctx context.Context, dataProvider, streamID string, from, to gobreaker.State) {
-}
 
 func (n *NoOpMetrics) RecordStreamConfigured(ctx context.Context, count int) {}
 

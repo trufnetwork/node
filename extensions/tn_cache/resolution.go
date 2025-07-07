@@ -15,59 +15,41 @@ import (
 	"github.com/trufnetwork/node/extensions/tn_cache/validation"
 )
 
-// ResolutionStatus represents the current state of stream resolution
-type ResolutionStatus string
 
-const (
-	ResolutionStatusPending   ResolutionStatus = "pending"
-	ResolutionStatusRunning   ResolutionStatus = "running"
-	ResolutionStatusCompleted ResolutionStatus = "completed"
-	ResolutionStatusFailed    ResolutionStatus = "failed"
-)
+// Resolution solves the "stale wildcard" problem:
+// When config says "cache all streams from provider X", new streams
+// created after startup are automatically detected and cached.
+// Database updates are atomic to prevent data gaps during re-resolution.
 
-// Resolution Architecture:
-// 1. Original directives are stored with wildcards and IncludeChildren flags
-// 2. Resolution expands these to concrete stream specifications
-// 3. Resolution runs on a schedule to detect new/removed streams
-// 4. Refresh jobs use the current resolved directives
-// 5. Database updates are atomic to prevent data gaps
-//
-// This ensures new streams matching patterns are automatically cached without
-// manual intervention, solving the "stale wildcard" problem.
-
-// resolveStreamSpecs resolves wildcard and IncludeChildren directives to concrete stream specifications
+// resolveStreamSpecs expands patterns to actual stream IDs by querying the database
 func (s *CacheScheduler) resolveStreamSpecs(ctx context.Context, directives []config.CacheDirective) ([]config.CacheDirective, error) {
 	var resolvedSpecs []config.CacheDirective
 
-	// Process each directive based on its type
 	for _, directive := range directives {
 		switch directive.Type {
 		case config.DirectiveSpecific:
-			// Handle IncludeChildren for specific composed streams
 			if directive.IncludeChildren {
-				// Expand to include child streams using get_category_streams
+				// Query child streams from composed (category) stream
 				s.logger.Debug("expanding specific directive with IncludeChildren",
 					"provider", directive.DataProvider,
 					"stream", directive.StreamID)
 
 				childStreams, err := s.getChildStreamsForComposed(ctx, directive.DataProvider, directive.StreamID, directive.TimeRange.From)
 				if err != nil {
-					// Log but continue with other directives
+					// Non-fatal: parent might not have children yet
 					s.logger.Error("failed to expand children for composed stream",
 						"provider", directive.DataProvider,
 						"stream", directive.StreamID,
 						"error", err)
-					// Include the parent stream even if children expansion fails
+					// Always cache parent even if children lookup fails
 					resolvedSpecs = append(resolvedSpecs, directive)
 					continue
 				}
 
-				// Add the original stream first
 				resolvedSpecs = append(resolvedSpecs, directive)
 
-				// Then add each child stream as a separate specification
 				for _, childKey := range childStreams {
-					// Parse the composite key (provider:streamID)
+					// Child key format: "provider:streamID"
 					parts := strings.Split(childKey, ":")
 					if len(parts) == 2 {
 						childProvider, childStreamID := parts[0], parts[1]
@@ -94,14 +76,12 @@ func (s *CacheScheduler) resolveStreamSpecs(ctx context.Context, directives []co
 			}
 
 		case config.DirectiveProviderWildcard:
-			// Check for mutual exclusivity with IncludeChildren
 			if directive.IncludeChildren {
 				s.logger.Warn("both provider wildcard and IncludeChildren are set - using wildcard behavior only",
 					"provider", directive.DataProvider,
 					"wildcard", directive.StreamID)
 			}
 
-			// Resolve wildcard to all composed streams for the provider
 			s.logger.Debug("resolving wildcard directive",
 				"provider", directive.DataProvider,
 				"wildcard", directive.StreamID)
@@ -111,7 +91,7 @@ func (s *CacheScheduler) resolveStreamSpecs(ctx context.Context, directives []co
 				return nil, fmt.Errorf("resolve wildcard for provider %s: %w", directive.DataProvider, err)
 			}
 
-			// Create individual specifications for each composed stream found
+			// Convert each found stream to a concrete directive
 			for _, streamID := range composedStreams {
 				streamSpec := config.CacheDirective{
 					ID:           fmt.Sprintf("%s_%s_%s", directive.DataProvider, streamID, "resolved"),
@@ -130,20 +110,20 @@ func (s *CacheScheduler) resolveStreamSpecs(ctx context.Context, directives []co
 		}
 	}
 
-	// Deduplicate resolved specifications, keeping ones with earliest 'from' timestamp
+	// Multiple directives might resolve to same stream - keep earliest 'from'
 	return s.deduplicateResolvedSpecs(resolvedSpecs), nil
 }
 
-// deduplicateResolvedSpecs removes duplicate stream specifications, keeping the one with earliest 'from' timestamp
+// deduplicateResolvedSpecs prevents redundant caching when patterns overlap
 func (s *CacheScheduler) deduplicateResolvedSpecs(specs []config.CacheDirective) []config.CacheDirective {
-	// Map to track seen streams: key is "provider:streamID"
+	// Track seen streams by composite key
 	streamMap := make(map[string]config.CacheDirective)
 
 	for _, spec := range specs {
 		key := fmt.Sprintf("%s:%s", spec.DataProvider, spec.StreamID)
 
 		if existing, exists := streamMap[key]; exists {
-			// Compare 'from' timestamps - keep the one with earlier timestamp
+			// Earlier 'from' = more historical data to cache
 			var existingFrom, newFrom int64
 
 			if existing.TimeRange.From != nil {
@@ -153,9 +133,7 @@ func (s *CacheScheduler) deduplicateResolvedSpecs(specs []config.CacheDirective)
 				newFrom = *spec.TimeRange.From
 			}
 
-			// If new spec has earlier 'from' (or same), check schedules
 			if newFrom <= existingFrom {
-				// If timestamps are equal, also log schedule info for debugging
 				if newFrom == existingFrom {
 					s.logger.Warn("duplicate stream with same 'from' timestamp - keeping first occurrence",
 						"provider", spec.DataProvider,
@@ -187,13 +165,11 @@ func (s *CacheScheduler) deduplicateResolvedSpecs(specs []config.CacheDirective)
 		}
 	}
 
-	// Convert map back to slice
 	deduplicated := make([]config.CacheDirective, 0, len(streamMap))
 	for _, spec := range streamMap {
 		deduplicated = append(deduplicated, spec)
 	}
 
-	// Log summary if deduplication occurred
 	if len(deduplicated) < len(specs) {
 		s.logger.Info("deduplication completed",
 			"original_count", len(specs),
@@ -204,7 +180,7 @@ func (s *CacheScheduler) deduplicateResolvedSpecs(specs []config.CacheDirective)
 	return deduplicated
 }
 
-// getComposedStreamsForProvider queries all composed streams for a given provider using list_streams action
+// getComposedStreamsForProvider finds streams that can expand (have children)
 func (s *CacheScheduler) getComposedStreamsForProvider(ctx context.Context, provider string) ([]string, error) {
 	var composedStreams []string
 
@@ -329,58 +305,6 @@ func (s *CacheScheduler) getChildStreamsForComposed(ctx context.Context, dataPro
 	return childStreams, nil
 }
 
-// GetResolutionHealth returns the current resolution status and timing information
-func (s *CacheScheduler) GetResolutionHealth() (status ResolutionStatus, lastRun time.Time, nextRun time.Time, lastError error) {
-	s.resolutionMu.RLock()
-	defer s.resolutionMu.RUnlock()
-
-	status = s.resolutionStatus
-	lastRun = s.lastResolution
-	lastError = s.resolutionErr
-
-	// Calculate next run time if resolution job is scheduled
-	if s.resolutionJob != 0 {
-		if entry := s.cron.Entry(s.resolutionJob); entry.ID != 0 {
-			nextRun = entry.Next
-		}
-	}
-
-	return
-}
-
-// GetResolutionMetrics returns metrics about the current resolution state
-func (s *CacheScheduler) GetResolutionMetrics() map[string]interface{} {
-	s.resolutionMu.RLock()
-	defer s.resolutionMu.RUnlock()
-
-	metrics := map[string]interface{}{
-		"original_directives_count": len(s.originalDirectives),
-		"resolved_directives_count": len(s.resolvedDirectives),
-		"last_resolution":           s.lastResolution.Format(time.RFC3339),
-		"resolution_status":         string(s.resolutionStatus),
-	}
-
-	// Count directives by type
-	wildcardCount := 0
-	includeChildrenCount := 0
-	for _, dir := range s.originalDirectives {
-		if dir.Type == config.DirectiveProviderWildcard {
-			wildcardCount++
-		}
-		if dir.IncludeChildren {
-			includeChildrenCount++
-		}
-	}
-
-	metrics["wildcard_directives"] = wildcardCount
-	metrics["include_children_directives"] = includeChildrenCount
-
-	if s.resolutionErr != nil {
-		metrics["last_error"] = s.resolutionErr.Error()
-	}
-
-	return metrics
-}
 
 // registerResolutionJob registers the cron job for periodic re-resolution
 func (s *CacheScheduler) registerResolutionJob(schedule string) error {
@@ -411,50 +335,36 @@ func (s *CacheScheduler) registerResolutionJob(schedule string) error {
 		return fmt.Errorf("add resolution cron job: %w", err)
 	}
 
-	s.resolutionJob = entryID
+	s.jobs[ResolutionJobKey] = entryID
 	s.logger.Info("registered resolution cron job", "schedule", schedule)
 
 	return nil
 }
 
-// performGlobalResolution re-resolves all wildcards and IncludeChildren directives
+// performGlobalResolution discovers new streams matching patterns
 func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
-	// First, update status to running
-	s.resolutionMu.Lock()
-	s.resolutionStatus = ResolutionStatusRunning
-	s.resolutionErr = nil
-	s.resolutionMu.Unlock()
 
 	s.logger.Info("starting global resolution")
 	startTime := time.Now()
 
-	// Resolve original directives to get current state
+	// Re-expand patterns to catch newly created streams
 	newResolvedSpecs, err := s.resolveStreamSpecs(ctx, s.originalDirectives)
 	if err != nil {
-		// Update status to failed
-		s.resolutionMu.Lock()
-		s.resolutionStatus = ResolutionStatusFailed
-		s.resolutionErr = err
-		s.resolutionMu.Unlock()
 		return fmt.Errorf("resolve stream specs: %w", err)
 	}
 
-	// Safeguard: if we had resolved directives before but now have none, something went wrong
-	if len(s.resolvedDirectives) > 0 && len(newResolvedSpecs) == 0 {
-		err := fmt.Errorf("resolution would clear all streams (had %d, now 0) - aborting", len(s.resolvedDirectives))
-		s.logger.Error("dangerous resolution detected", "error", err)
-		s.resolutionMu.Lock()
-		s.resolutionStatus = ResolutionStatusFailed
-		s.resolutionErr = err
-		s.resolutionMu.Unlock()
-		return err
-	}
-
-	// Calculate what streams were added or removed
 	oldSet := make(map[string]bool)
 	newSet := make(map[string]bool)
 
 	s.resolutionMu.RLock()
+	// Safety: prevent accidental cache wipe from resolution bugs
+	if len(s.resolvedDirectives) > 0 && len(newResolvedSpecs) == 0 {
+		s.resolutionMu.RUnlock()
+		err := fmt.Errorf("resolution would clear all streams (had %d, now 0) - aborting", len(s.resolvedDirectives))
+		s.logger.Error("dangerous resolution detected", "error", err)
+		return err
+	}
+
 	for _, dir := range s.resolvedDirectives {
 		key := fmt.Sprintf("%s:%s", dir.DataProvider, dir.StreamID)
 		oldSet[key] = true
@@ -466,7 +376,7 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 		newSet[key] = true
 	}
 
-	// Find added and removed streams
+	// Diff to log what changed
 	var added, removed []string
 	for key := range newSet {
 		if !oldSet[key] {
@@ -479,25 +389,15 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 		}
 	}
 
-	// Update database atomically to reflect new state
+	// Atomic update prevents half-cached state
 	if err := s.updateCachedStreamsTable(ctx, newResolvedSpecs); err != nil {
-		// Update status to failed
-		s.resolutionMu.Lock()
-		s.resolutionStatus = ResolutionStatusFailed
-		s.resolutionErr = err
-		s.resolutionMu.Unlock()
 		return fmt.Errorf("update cached_streams table: %w", err)
 	}
 
-	// Finally, update in-memory resolved directives
 	s.resolutionMu.Lock()
 	s.resolvedDirectives = newResolvedSpecs
-	s.lastResolution = time.Now()
-	s.resolutionStatus = ResolutionStatusCompleted
-	s.resolutionErr = nil
 	s.resolutionMu.Unlock()
 
-	// Log resolution metrics
 	s.logger.Info("global resolution completed",
 		"duration", time.Since(startTime),
 		"original_count", len(s.originalDirectives),

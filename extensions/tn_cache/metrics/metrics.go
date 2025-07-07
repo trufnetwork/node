@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sony/gobreaker"
 	"github.com/trufnetwork/kwil-db/core/log"
 	"go.opentelemetry.io/otel"
 )
@@ -25,9 +24,6 @@ type MetricsRecorder interface {
 	RecordRefreshStart(ctx context.Context, dataProvider, streamID string)
 	RecordRefreshComplete(ctx context.Context, dataProvider, streamID string, duration time.Duration, eventCount int)
 	RecordRefreshError(ctx context.Context, dataProvider, streamID string, errType string)
-
-	// Circuit breaker metrics
-	RecordCircuitBreakerStateChange(ctx context.Context, dataProvider, streamID string, from, to gobreaker.State)
 
 	// Resource metrics
 	RecordStreamConfigured(ctx context.Context, count int)

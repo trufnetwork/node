@@ -52,7 +52,6 @@ func (s *CacheScheduler) refreshStreamDataWithRetry(ctx context.Context, directi
 	)
 }
 
-
 // refreshStreamData refreshes the cached data for a single cache directive
 func (s *CacheScheduler) refreshStreamData(ctx context.Context, directive config.CacheDirective) (err error) {
 	// Add tracing
@@ -64,37 +63,19 @@ func (s *CacheScheduler) refreshStreamData(ctx context.Context, directive config
 
 	// Start timing the refresh operation
 	startTime := time.Now()
-	
+
 	s.logger.Debug("refreshing stream",
 		"provider", directive.DataProvider,
 		"stream", directive.StreamID,
 		"type", directive.Type)
-	
+
 	// Record refresh start
 	s.metrics.RecordRefreshStart(ctx, directive.DataProvider, directive.StreamID)
 
-	// First, get stream config to check last refresh time for incremental updates
-	streamConfig, err := s.cacheDB.GetStreamConfig(ctx, directive.DataProvider, directive.StreamID)
-	if err != nil {
-		s.metrics.RecordRefreshError(ctx, directive.DataProvider, directive.StreamID, "config_error")
-		return fmt.Errorf("get stream config: %w", err)
-	}
-
-	// Calculate time range for incremental refresh
+	// Always fetch from configured start time - data is mutable
 	fromTime := directive.TimeRange.From
-	if streamConfig != nil && streamConfig.LastRefreshed != "" {
-		// Parse last refresh time for incremental update
-		lastRefresh, err := time.Parse(time.RFC3339, streamConfig.LastRefreshed)
-		if err == nil {
-			// Use last refresh time as starting point for incremental refresh
-			fromUnix := lastRefresh.Unix()
-			fromTime = &fromUnix
-		}
-	}
 
-	// Then, fetch data for the specific stream
-	// Note: At this point, all directives should be DirectiveSpecific because wildcards
-	// are resolved to concrete specifications at scheduler startup. We no longer need to handle wildcards here.
+	// Wildcards already resolved at startup - this should never happen
 	if directive.Type != config.DirectiveSpecific {
 		s.metrics.RecordRefreshError(ctx, directive.DataProvider, directive.StreamID, "invalid_directive")
 		return fmt.Errorf("unexpected directive type in refresh: %s (should be specific after resolution)", directive.Type)
@@ -107,7 +88,7 @@ func (s *CacheScheduler) refreshStreamData(ctx context.Context, directive config
 		return fmt.Errorf("fetch stream data: %w", err)
 	}
 
-	// Finally, store events with automatic duplicate detection
+	// Database handles duplicates via primary key constraint
 	if len(events) > 0 {
 		if err := s.cacheDB.CacheEvents(ctx, events); err != nil {
 			s.metrics.RecordRefreshError(ctx, directive.DataProvider, directive.StreamID, "storage_error")
@@ -123,15 +104,13 @@ func (s *CacheScheduler) refreshStreamData(ctx context.Context, directive config
 			"stream", directive.StreamID)
 	}
 
-	// Record successful refresh completion
 	s.metrics.RecordRefreshComplete(ctx, directive.DataProvider, directive.StreamID, time.Since(startTime), len(events))
 
 	return nil
 }
 
-// fetchSpecificStream fetches data for a specific stream
+// fetchSpecificStream calls get_record_composed action with proper authorization
 func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, directive config.CacheDirective, fromTime *int64) ([]internal.CachedEvent, error) {
-	// Determine the action to call based on stream type
 	// For now, we'll use get_record_composed as the primary action
 	action := "get_record_composed"
 
@@ -148,7 +127,7 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, directive conf
 
 	// Create a proper engine context for the extension to call actions
 	engineCtx := s.createExtensionEngineContext(ctx)
-	
+
 	// Execute the action with proper transaction context
 	// This allows actions like get_record_composed to access @caller
 	result, err := s.app.Engine.Call(
@@ -194,7 +173,7 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, directive conf
 				"error", err)
 			return []internal.CachedEvent{}, nil // Return empty events, not an error
 		}
-		
+
 		return nil, fmt.Errorf("call action %s: %w", action, err)
 	}
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
+	"github.com/trufnetwork/node/extensions/tn_cache/metrics"
 )
 
 // mockEngine implements common.Engine for testing
@@ -62,13 +63,12 @@ func TestCacheScheduler_New(t *testing.T) {
 	var cacheDB *internal.CacheDB
 
 	// Test creating scheduler
-	scheduler := NewCacheScheduler(mockApp, cacheDB, logger)
+	scheduler := NewCacheScheduler(mockApp, cacheDB, logger, metrics.NewNoOpMetrics())
 
 	require.NotNil(t, scheduler, "Scheduler should be created")
 	assert.Equal(t, mockApp, scheduler.app, "App should be set correctly")
 	assert.NotNil(t, scheduler.cron, "Cron scheduler should be initialized")
 	assert.NotNil(t, scheduler.jobs, "Jobs map should be initialized")
-	assert.NotNil(t, scheduler.breakers, "Circuit breakers map should be initialized")
 	assert.Equal(t, "main", scheduler.namespace, "Default namespace should be set")
 }
 
@@ -86,7 +86,7 @@ func TestCacheScheduler_WithCustomNamespace(t *testing.T) {
 	var cacheDB *internal.CacheDB
 
 	// Test creating scheduler with custom namespace
-	scheduler := NewCacheSchedulerWithNamespace(mockApp, cacheDB, logger, "custom_db")
+	scheduler := NewCacheSchedulerWithNamespace(mockApp, cacheDB, logger, "custom_db", metrics.NewNoOpMetrics())
 
 	require.NotNil(t, scheduler, "Scheduler should be created")
 	assert.Equal(t, "custom_db", scheduler.namespace, "Custom namespace should be set")
@@ -97,7 +97,7 @@ func TestCacheScheduler_GroupBySchedule(t *testing.T) {
 	mockApp := &common.App{}
 	logger := log.New(log.WithWriter(nil))
 	cacheDB := &internal.CacheDB{}
-	scheduler := NewCacheScheduler(mockApp, cacheDB, logger)
+	scheduler := NewCacheScheduler(mockApp, cacheDB, logger, metrics.NewNoOpMetrics())
 
 	// Create test directives with different schedules
 	from := int64(1640995200)
@@ -106,21 +106,21 @@ func TestCacheScheduler_GroupBySchedule(t *testing.T) {
 			ID:           "test1",
 			DataProvider: "provider1",
 			StreamID:     "stream1",
-			Schedule:     config.Schedule{CronExpr: "0 * * * *"}, // Hourly
+			Schedule:     config.Schedule{CronExpr: "0 0 * * * *"}, // Hourly
 			TimeRange:    config.TimeRange{From: &from},
 		},
 		{
 			ID:           "test2",
 			DataProvider: "provider2",
 			StreamID:     "stream2",
-			Schedule:     config.Schedule{CronExpr: "0 * * * *"}, // Hourly (same as test1)
+			Schedule:     config.Schedule{CronExpr: "0 0 * * * *"}, // Hourly (same as test1)
 			TimeRange:    config.TimeRange{From: &from},
 		},
 		{
 			ID:           "test3",
 			DataProvider: "provider3",
 			StreamID:     "stream3",
-			Schedule:     config.Schedule{CronExpr: "0 0 * * *"}, // Daily
+			Schedule:     config.Schedule{CronExpr: "0 0 0 * * *"}, // Daily
 			TimeRange:    config.TimeRange{From: &from},
 		},
 	}
@@ -131,12 +131,12 @@ func TestCacheScheduler_GroupBySchedule(t *testing.T) {
 	// Verify grouping
 	require.Len(t, groups, 2, "Should have 2 different schedules")
 
-	hourlyGroup := groups["0 * * * *"]
+	hourlyGroup := groups["0 0 * * * *"]
 	require.Len(t, hourlyGroup, 2, "Hourly group should have 2 directives")
 	assert.Equal(t, "test1", hourlyGroup[0].ID)
 	assert.Equal(t, "test2", hourlyGroup[1].ID)
 
-	dailyGroup := groups["0 0 * * *"]
+	dailyGroup := groups["0 0 0 * * *"]
 	require.Len(t, dailyGroup, 1, "Daily group should have 1 directive")
 	assert.Equal(t, "test3", dailyGroup[0].ID)
 }
@@ -149,7 +149,7 @@ func TestCacheScheduler_ResolutionFlow(t *testing.T) {
 	logger := log.New(log.WithWriter(nil))
 	cacheDB := &internal.CacheDB{}
 
-	scheduler := NewCacheScheduler(mockApp, cacheDB, logger)
+	scheduler := NewCacheScheduler(mockApp, cacheDB, logger, metrics.NewNoOpMetrics())
 	scheduler.ctx, scheduler.cancel = context.WithCancel(context.Background())
 	defer scheduler.cancel()
 
@@ -161,7 +161,7 @@ func TestCacheScheduler_ResolutionFlow(t *testing.T) {
 			Type:         config.DirectiveProviderWildcard,
 			DataProvider: "provider1",
 			StreamID:     "*",
-			Schedule:     config.Schedule{CronExpr: "0 * * * *"},
+			Schedule:     config.Schedule{CronExpr: "0 0 * * * *"},
 			TimeRange:    config.TimeRange{From: &from},
 		},
 	}
@@ -180,37 +180,13 @@ func TestCacheScheduler_ResolutionFlow(t *testing.T) {
 			Type:         config.DirectiveSpecific,
 			DataProvider: "provider1",
 			StreamID:     "stream1",
-			Schedule:     config.Schedule{CronExpr: "0 * * * *"},
+			Schedule:     config.Schedule{CronExpr: "0 0 * * * *"},
 			TimeRange:    config.TimeRange{From: &from},
 		},
 	}
 
-	directives := scheduler.getDirectivesForSchedule("0 * * * *")
+	directives := scheduler.getDirectivesForSchedule("0 0 * * * *")
 	assert.Len(t, directives, 1)
 	assert.Equal(t, "stream1", directives[0].StreamID)
 }
 
-func TestCacheScheduler_CircuitBreaker(t *testing.T) {
-	// Create mock dependencies
-	mockApp := &common.App{
-		Engine: &mockEngine{},
-	}
-	logger := log.New(log.WithWriter(nil))
-	cacheDB := &internal.CacheDB{}
-
-	scheduler := NewCacheScheduler(mockApp, cacheDB, logger)
-
-	// Test getting circuit breaker for a stream
-	streamKey := "provider1/stream1"
-	cb1 := scheduler.getCircuitBreaker(streamKey)
-	require.NotNil(t, cb1, "Circuit breaker should be created")
-
-	// Test getting the same circuit breaker again
-	cb2 := scheduler.getCircuitBreaker(streamKey)
-	assert.Equal(t, cb1, cb2, "Should return the same circuit breaker instance")
-
-	// Test getting circuit breaker for different stream
-	cb3 := scheduler.getCircuitBreaker("provider2/stream2")
-	require.NotNil(t, cb3, "Circuit breaker should be created for new stream")
-	assert.NotEqual(t, cb1, cb3, "Different streams should have different circuit breakers")
-}

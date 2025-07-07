@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
-	"github.com/sony/gobreaker"
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/log"
 	"go.opentelemetry.io/otel/attribute"
@@ -21,7 +20,11 @@ import (
 	"github.com/trufnetwork/node/extensions/tn_cache/validation"
 )
 
-// CacheScheduler manages the scheduled refresh of cache data
+// ResolutionJobKey avoids collision with cron expression keys in jobs map
+const ResolutionJobKey = "__resolution__"
+
+// CacheScheduler orchestrates periodic data fetching from external providers.
+// It resolves wildcards/patterns to concrete streams and manages their refresh schedules.
 type CacheScheduler struct {
 	app       *common.App
 	cacheDB   *internal.CacheDB
@@ -31,122 +34,131 @@ type CacheScheduler struct {
 	mu        sync.RWMutex
 	ctx       context.Context
 	cancel    context.CancelFunc
-	namespace string                               // configurable database namespace
-	breakers  map[string]*gobreaker.CircuitBreaker // circuit breakers per stream
-	breakerMu sync.RWMutex
-	metrics   metrics.MetricsRecorder // metrics recorder
+	namespace string                  // database namespace to query (default: "main")
+	metrics   metrics.MetricsRecorder
 
-	// Dynamic resolution fields
-	originalDirectives []config.CacheDirective // Keep original with wildcards/includeChildren
-	resolvedDirectives []config.CacheDirective // Current resolved state
-	resolutionJob      cron.EntryID            // Cron job for resolution
-	resolutionMu       sync.RWMutex            // Protect resolved state
-	lastResolution     time.Time               // Track last resolution time
-	resolutionStatus   ResolutionStatus        // Current resolution status
-	resolutionErr      error                   // Last resolution error if any
+	// Resolution state - wildcards expand to concrete streams dynamically
+	originalDirectives []config.CacheDirective // Preserved for re-resolution when new streams appear
+	resolvedDirectives []config.CacheDirective // Concrete streams that jobs operate on
+	resolutionMu       sync.RWMutex            // Guards resolvedDirectives during re-resolution
 
-	// Job-specific context management
-	jobContexts   map[string]*jobContext // Job ID -> context info
+	// Job lifecycle - prevents runaway jobs and enables graceful shutdown
+	jobContexts   map[string]context.CancelFunc // Active job cancellation registry
 	jobContextsMu sync.RWMutex
-	jobTimeout    time.Duration // Timeout for individual jobs
+	jobTimeout    time.Duration // Safety limit per job (default: 60m)
 }
 
-// jobContext holds context information for individual scheduled jobs
-type jobContext struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	startTime  time.Time
-	schedule   string
-	streamInfo string // For debugging and monitoring
-}
 
-// NewCacheScheduler creates a new cache scheduler instance
+// NewCacheScheduler creates a scheduler with default "main" namespace
 func NewCacheScheduler(app *common.App, cacheDB *internal.CacheDB, logger log.Logger, metricsRecorder metrics.MetricsRecorder) *CacheScheduler {
 	return NewCacheSchedulerWithNamespace(app, cacheDB, logger, "", metricsRecorder)
 }
 
-// NewCacheSchedulerWithNamespace creates a new cache scheduler instance with configurable namespace
+// NewCacheSchedulerWithNamespace allows targeting specific database namespaces
 func NewCacheSchedulerWithNamespace(app *common.App, cacheDB *internal.CacheDB, logger log.Logger, namespace string, metricsRecorder metrics.MetricsRecorder) *CacheScheduler {
 	if namespace == "" {
 		namespace = "main" // Default namespace
 	}
 
 	return &CacheScheduler{
-		app:              app,
-		cacheDB:          cacheDB,
-		logger:           logger.New("scheduler"),
-		cron:             cron.New(cron.WithSeconds()),
-		jobs:             make(map[string]cron.EntryID),
-		namespace:        namespace,
-		breakers:         make(map[string]*gobreaker.CircuitBreaker),
-		resolutionStatus: ResolutionStatusPending,
-		metrics:          metricsRecorder,
-		jobContexts:      make(map[string]*jobContext),
-		jobTimeout:       60 * time.Minute, // Default job timeout
+		app:         app,
+		cacheDB:     cacheDB,
+		logger:      logger.New("scheduler"),
+		cron:        cron.New(cron.WithSeconds()),
+		jobs:        make(map[string]cron.EntryID),
+		namespace:   namespace,
+		metrics:     metricsRecorder,
+		jobContexts: make(map[string]context.CancelFunc),
+		jobTimeout:  60 * time.Minute, // Default job timeout
 	}
 }
 
-// createJobContext creates a new job-specific context with timeout
-func (s *CacheScheduler) createJobContext(jobID, schedule, streamInfo string) (context.Context, context.CancelFunc) {
+// createJobContext ensures jobs can't run forever and are cancellable on shutdown
+func (s *CacheScheduler) createJobContext(jobID string) (context.Context, context.CancelFunc) {
 	s.jobContextsMu.Lock()
 	defer s.jobContextsMu.Unlock()
 
-	// Create context with timeout derived from scheduler context
+	// Inherits cancellation from scheduler shutdown
 	ctx, cancel := context.WithTimeout(s.ctx, s.jobTimeout)
 
-	// Store job context info
-	s.jobContexts[jobID] = &jobContext{
-		ctx:        ctx,
-		cancel:     cancel,
-		startTime:  time.Now(),
-		schedule:   schedule,
-		streamInfo: streamInfo,
-	}
+	s.jobContexts[jobID] = cancel
 
 	return ctx, cancel
 }
 
-// removeJobContext removes a job context after completion
+// removeJobContext cleans up completed jobs to prevent memory leaks
 func (s *CacheScheduler) removeJobContext(jobID string) {
 	s.jobContextsMu.Lock()
 	defer s.jobContextsMu.Unlock()
 
-	if jc, exists := s.jobContexts[jobID]; exists {
-		// Cancel if not already done
-		jc.cancel()
+	if cancel, exists := s.jobContexts[jobID]; exists {
+		// Defensive: job might have self-cancelled
+		cancel()
 		delete(s.jobContexts, jobID)
-		s.logger.Debug("removed job context",
-			"job_id", jobID,
-			"duration", time.Since(jc.startTime))
 	}
 }
 
-// cancelAllJobContexts cancels all active job contexts
+// cancelAllJobContexts triggers graceful shutdown of running jobs
 func (s *CacheScheduler) cancelAllJobContexts() {
 	s.jobContextsMu.Lock()
 	defer s.jobContextsMu.Unlock()
 
-	for jobID, jc := range s.jobContexts {
-		jc.cancel()
-		s.logger.Info("cancelled job context",
-			"job_id", jobID,
-			"schedule", jc.schedule,
-			"running_time", time.Since(jc.startTime))
+	for jobID, cancel := range s.jobContexts {
+		cancel()
+		s.logger.Info("cancelled job context", "job_id", jobID)
 	}
 
-	// Clear the map
-	s.jobContexts = make(map[string]*jobContext)
+	s.jobContexts = make(map[string]context.CancelFunc)
 }
 
-// getActiveJobCount returns the number of currently active jobs
+// getActiveJobCount helps monitor job backlog during shutdown
 func (s *CacheScheduler) getActiveJobCount() int {
 	s.jobContextsMu.RLock()
 	defer s.jobContextsMu.RUnlock()
 	return len(s.jobContexts)
 }
 
-// createExtensionEngineContext creates a proper EngineContext for the extension
-// to call actions as a system agent with valid transaction context
+// shouldSkipInitialRefresh checks if we should skip refresh on startup based on last refresh time
+// Returns true if the stream was already refreshed within the current cron period
+func (s *CacheScheduler) shouldSkipInitialRefresh(lastRefreshed string, cronSchedule string) bool {
+	if lastRefreshed == "" {
+		// Never refreshed before, don't skip
+		return false
+	}
+
+	lastTime, err := time.Parse(time.RFC3339, lastRefreshed)
+	if err != nil {
+		s.logger.Warn("invalid last refresh time", "time", lastRefreshed, "error", err)
+		return false
+	}
+
+	// Parse cron expression using the same parser as the scheduler
+	parser := cron.NewParser(cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
+	schedule, err := parser.Parse(cronSchedule)
+	if err != nil {
+		s.logger.Warn("invalid cron expression", "schedule", cronSchedule, "error", err)
+		return false
+	}
+
+	now := time.Now()
+	
+	// Calculate when the next refresh would be based on the cron schedule
+	nextScheduled := schedule.Next(lastTime)
+	
+	// If the next scheduled time is still in the future (or equal), we're within the current period
+	if !nextScheduled.Before(now) {
+		s.logger.Debug("skipping initial refresh - already refreshed in current period",
+			"last_refresh", lastTime.Format(time.RFC3339),
+			"next_scheduled", nextScheduled.Format(time.RFC3339),
+			"now", now.Format(time.RFC3339))
+		return true
+	}
+
+	return false
+}
+
+// createExtensionEngineContext enables the extension to query databases
+// as a privileged system agent, bypassing normal authorization
 func (s *CacheScheduler) createExtensionEngineContext(ctx context.Context) *common.EngineContext {
 	// Create a valid block context
 	// In a real implementation, you might want to get this from the chain
@@ -167,15 +179,15 @@ func (s *CacheScheduler) createExtensionEngineContext(ctx context.Context) *comm
 			BlockContext:  blockCtx,
 			TxID:          fmt.Sprintf("tn_cache_%d", time.Now().UnixNano()),
 			Signer:        []byte(internal.ExtensionAgentName),
-			Caller:        internal.ExtensionAgentName, // Extension identifies itself as caller
+			Caller:        internal.ExtensionAgentName, // Required for transaction context validity
 			Authenticator: "system",
 		},
-		OverrideAuthz: true,  // Override authorization for system operations
-		InvalidTxCtx:  false, // Context is valid for accessing system variables
+		OverrideAuthz: true,  // System agent privileges
+		InvalidTxCtx:  false, // Enables access to block height, timestamps, etc.
 	}
 }
 
-// Start initializes and starts the cache scheduler
+// Start begins periodic cache refresh. Must be called before Stop.
 func (s *CacheScheduler) Start(ctx context.Context, processedConfig *config.ProcessedConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -184,10 +196,10 @@ func (s *CacheScheduler) Start(ctx context.Context, processedConfig *config.Proc
 
 	s.ctx, s.cancel = context.WithCancel(ctx)
 
-	// Store original directives for future re-resolution
+	// Preserved to detect new streams matching wildcards later
 	s.originalDirectives = processedConfig.Directives
 
-	// First, resolve wildcard and IncludeChildren directives to concrete stream specifications
+	// Expand wildcards/patterns to actual stream IDs
 	resolvedStreamSpecs, err := s.resolveStreamSpecs(s.ctx, s.originalDirectives)
 	if err != nil {
 		return fmt.Errorf("resolve stream specs: %w", err)
@@ -197,47 +209,39 @@ func (s *CacheScheduler) Start(ctx context.Context, processedConfig *config.Proc
 		"original_count", len(s.originalDirectives),
 		"resolved_count", len(resolvedStreamSpecs))
 
-	// Store the resolved state for use by refresh jobs
 	s.resolvedDirectives = resolvedStreamSpecs
-	s.lastResolution = time.Now()
 
-	// Then, persist stream configurations to the database
+	// Database tracks what we're caching and when last refreshed
 	if err := s.storeStreamConfigs(s.ctx, resolvedStreamSpecs); err != nil {
 		return fmt.Errorf("store stream configs: %w", err)
 	}
 
-	// Set up periodic re-resolution if configured
+	// Re-resolution detects new streams matching patterns
 	if processedConfig.ResolutionSchedule != "" {
 		if err := s.registerResolutionJob(processedConfig.ResolutionSchedule); err != nil {
 			return fmt.Errorf("register resolution job: %w", err)
 		}
 	}
 
-	// Group resolved specifications by schedule for efficient batch processing
+	// Batch streams with same schedule into single cron job
 	scheduleGroups := s.groupBySchedule(resolvedStreamSpecs)
 
-	// Register cron jobs for each unique schedule
 	for schedule := range scheduleGroups {
 		if err := s.registerRefreshJob(schedule); err != nil {
 			return fmt.Errorf("register refresh job for schedule %s: %w", schedule, err)
 		}
 	}
 
-	// Start the cron scheduler
 	s.cron.Start()
 	s.logger.Info("cache scheduler started", "jobs", len(s.jobs))
 
-	// Run initial refresh asynchronously without delay
-	// Now that we have:
-	// 1. Independent connection pool (no more "tx is closed" errors)
-	// 2. Proper EngineContext (no more "invalid transaction context" errors)
-	// We can run the initial refresh immediately
+	// Populate cache immediately instead of waiting for first cron trigger
 	go s.runInitialRefresh(resolvedStreamSpecs)
 
 	return nil
 }
 
-// Stop gracefully shuts down the cache scheduler
+// Stop waits for active jobs to complete (up to 30s timeout)
 func (s *CacheScheduler) Stop() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -309,13 +313,14 @@ func (s *CacheScheduler) groupBySchedule(directives []config.CacheDirective) map
 	return scheduleGroups
 }
 
-// runInitialRefresh performs an initial refresh of all streams with concurrency control
+// runInitialRefresh performs initial refresh only for streams that haven't been refreshed
+// in the current cron period, preventing duplicate refreshes after restarts
 func (s *CacheScheduler) runInitialRefresh(directives []config.CacheDirective) {
 	// Generate unique job ID for initial refresh
 	jobID := fmt.Sprintf("initial_refresh_%d", time.Now().UnixNano())
 
 	// Create job-specific context for initial refresh
-	jobCtx, jobCancel := s.createJobContext(jobID, "initial_refresh", fmt.Sprintf("streams=%d", len(directives)))
+	jobCtx, jobCancel := s.createJobContext(jobID)
 
 	defer func() {
 		// Always remove job context when done
@@ -329,14 +334,54 @@ func (s *CacheScheduler) runInitialRefresh(directives []config.CacheDirective) {
 		}
 	}()
 
+	// First, get all stream configs to check last refresh times
+	streamConfigs, err := s.cacheDB.ListStreamConfigs(jobCtx)
+	if err != nil {
+		s.logger.Error("failed to get stream configs for initial refresh check",
+			"error", err,
+			"job_id", jobID)
+		// Continue anyway - better to refresh than to skip
+		streamConfigs = []internal.StreamCacheConfig{}
+	}
+
+	// Build a map for quick lookup
+	configMap := make(map[string]internal.StreamCacheConfig)
+	for _, config := range streamConfigs {
+		key := fmt.Sprintf("%s:%s", config.DataProvider, config.StreamID)
+		configMap[key] = config
+	}
+
+	// Filter directives to only those that need refresh
+	var needsRefresh []config.CacheDirective
+	var skipped int
+	
+	for _, directive := range directives {
+		key := fmt.Sprintf("%s:%s", directive.DataProvider, directive.StreamID)
+		if config, exists := configMap[key]; exists {
+			if s.shouldSkipInitialRefresh(config.LastRefreshed, directive.Schedule.CronExpr) {
+				skipped++
+				continue
+			}
+		}
+		needsRefresh = append(needsRefresh, directive)
+	}
+
 	s.logger.Info("starting initial refresh",
-		"streams", len(directives),
+		"total_streams", len(directives),
+		"needs_refresh", len(needsRefresh),
+		"skipped", skipped,
 		"job_id", jobID)
+
+	if len(needsRefresh) == 0 {
+		s.logger.Info("no streams need initial refresh", "job_id", jobID)
+		jobCancel()
+		return
+	}
 
 	g, ctx := errgroup.WithContext(jobCtx)
 	g.SetLimit(5) // Maximum 5 concurrent operations
 
-	for _, directive := range directives {
+	for _, directive := range needsRefresh {
 		dir := directive // Capture loop variable to avoid closure issues
 
 		g.Go(func() error {
@@ -347,7 +392,7 @@ func (s *CacheScheduler) runInitialRefresh(directives []config.CacheDirective) {
 			default:
 			}
 
-			if err := s.refreshStreamDataWithCircuitBreaker(ctx, dir); err != nil {
+			if err := s.refreshStreamDataWithRetry(ctx, dir, 3); err != nil {
 				// Log error but don't fail the entire group
 				s.logger.Error("failed to perform initial refresh of stream data",
 					"provider", dir.DataProvider,
@@ -383,7 +428,7 @@ func (s *CacheScheduler) registerRefreshJob(schedule string) error {
 		jobID := fmt.Sprintf("%s_%d", schedule, time.Now().UnixNano())
 
 		// Create job-specific context with timeout
-		jobCtx, jobCancel := s.createJobContext(jobID, schedule, fmt.Sprintf("schedule=%s", schedule))
+		jobCtx, jobCancel := s.createJobContext(jobID)
 		defer func() {
 			// Always remove job context when done
 			s.removeJobContext(jobID)
@@ -440,7 +485,7 @@ func (s *CacheScheduler) registerRefreshJob(schedule string) error {
 				default:
 				}
 
-				if err := s.refreshStreamDataWithCircuitBreaker(gCtx, dir); err != nil {
+				if err := s.refreshStreamDataWithRetry(gCtx, dir, 3); err != nil {
 					s.logger.Error("failed to refresh stream data",
 						"provider", dir.DataProvider,
 						"stream", dir.StreamID,

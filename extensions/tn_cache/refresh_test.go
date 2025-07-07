@@ -10,6 +10,7 @@ import (
 
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
 	errors2 "github.com/trufnetwork/node/extensions/tn_cache/internal/errors"
+	"github.com/trufnetwork/node/extensions/tn_cache/internal/parsing"
 )
 
 func TestParseEventTime(t *testing.T) {
@@ -31,7 +32,7 @@ func TestParseEventTime(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := parseEventTime(tt.input)
+			result, err := parsing.ParseEventTime(tt.input)
 			
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -63,7 +64,7 @@ func TestParseEventValue(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := parseEventValue(tt.input)
+			result, err := parsing.ParseEventValue(tt.input)
 			
 			if tt.wantErr {
 				assert.Error(t, err)

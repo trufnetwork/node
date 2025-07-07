@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sony/gobreaker"
 	"github.com/stretchr/testify/assert"
 	"github.com/trufnetwork/kwil-db/core/log"
 )
@@ -24,7 +23,6 @@ func TestNoOpMetrics(t *testing.T) {
 	metrics.RecordRefreshStart(ctx, "provider1", "stream1")
 	metrics.RecordRefreshComplete(ctx, "provider1", "stream1", 5*time.Second, 50)
 	metrics.RecordRefreshError(ctx, "provider1", "stream1", "timeout")
-	metrics.RecordCircuitBreakerStateChange(ctx, "provider1", "stream1", gobreaker.StateClosed, gobreaker.StateOpen)
 	metrics.RecordStreamConfigured(ctx, 10)
 	metrics.RecordStreamActive(ctx, 8)
 	metrics.RecordCacheSize(ctx, "provider1", "stream1", 1000)
