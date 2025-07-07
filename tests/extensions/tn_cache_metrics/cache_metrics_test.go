@@ -42,7 +42,7 @@ func TestCacheMetrics(t *testing.T) {
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cleanupCancel()
-		
+
 		t.Log("Cleaning up test streams...")
 		if err := cleanupTestStreams(cleanupCtx, t, tnClient); err != nil {
 			t.Logf("Warning: Failed to cleanup test streams: %v", err)
@@ -53,7 +53,7 @@ func TestCacheMetrics(t *testing.T) {
 	t.Log("Granting network_writer role to deployer...")
 	err = grantNetworkWriterRole(ctx, t, deployerWallet)
 	require.NoError(t, err, "Failed to grant network_writer role")
-	
+
 	// Deploy test streams and data
 	t.Log("Deploying test streams...")
 	err = deployTestStreams(ctx, t, tnClient)
@@ -70,6 +70,7 @@ func TestCacheMetrics(t *testing.T) {
 	require.NoError(t, err, "Failed to test cache hits")
 
 	// Test 2: Generate cache misses
+
 	t.Log("Testing cache misses...")
 	err = testCacheMisses(ctx, t, tnClient)
 	require.NoError(t, err, "Failed to test cache misses")
@@ -110,7 +111,7 @@ func deployTestStreams(ctx context.Context, t *testing.T, tnClient *tnclient.Cli
 	if err != nil {
 		return fmt.Errorf("failed to create composed stream ID 3: %w", err)
 	}
-	
+
 	composedStreamId1 := *composedStreamId1Ptr
 	composedStreamId2 := *composedStreamId2Ptr
 	composedStreamId3 := *composedStreamId3Ptr
@@ -124,7 +125,7 @@ func deployTestStreams(ctx context.Context, t *testing.T, tnClient *tnclient.Cli
 	if err != nil {
 		return fmt.Errorf("failed to create child stream ID 2: %w", err)
 	}
-	
+
 	childStreamId1 := *childStreamId1Ptr
 	childStreamId2 := *childStreamId2Ptr
 
@@ -226,15 +227,15 @@ func deployTestStreams(ctx context.Context, t *testing.T, tnClient *tnclient.Cli
 		waitTxToBeMinedWithSuccess(t, ctx, tnClient, txHashTax)
 	}
 
-	t.Logf("Deployed composed streams: %s, %s, %s with data provider: %s", 
+	t.Logf("Deployed composed streams: %s, %s, %s with data provider: %s",
 		composedStreamId1, composedStreamId2, composedStreamId3, signerAddress.Address())
 	t.Logf("Child streams: %s, %s", childStreamId1, childStreamId2)
-	
+
 	// Store the composed stream IDs for use in tests
 	t.Setenv("COMPOSED_STREAM_1", composedStreamId1.String())
 	t.Setenv("COMPOSED_STREAM_2", composedStreamId2.String())
 	t.Setenv("COMPOSED_STREAM_3", composedStreamId3.String())
-	
+
 	return nil
 }
 
@@ -243,7 +244,7 @@ func testCacheHits(ctx context.Context, t *testing.T, tnClient *tnclient.Client)
 	// Get the raw Kwil client from TN client to make direct calls
 	kwilClient := tnClient.GetKwilClient()
 	signerAddress := tnClient.Address()
-	
+
 	// Get the composed stream ID from environment
 	composedStreamId := os.Getenv("COMPOSED_STREAM_1")
 	if composedStreamId == "" {
@@ -253,7 +254,7 @@ func testCacheHits(ctx context.Context, t *testing.T, tnClient *tnclient.Client)
 	// The cache works transparently - when we call get_record on a stream
 	// that has been cached by the scheduler, it will internally check the cache
 	// and generate hit/miss metrics accordingly
-	
+
 	// Query the composed stream multiple times - these should generate cache hits
 	// because the scheduler has already refreshed this stream
 	for i := 0; i < 10; i++ {
@@ -339,10 +340,10 @@ func testRefreshErrors(ctx context.Context, t *testing.T, tnClient *tnclient.Cli
 	// The refresh errors are tracked internally by the cache refresh mechanism
 	// We can't directly trigger them from the test, but they will be recorded
 	// when the refresh scheduler encounters issues (e.g., invalid data, network errors)
-	
-	// The circuit breaker and refresh error metrics will be populated by the 
+
+	// The circuit breaker and refresh error metrics will be populated by the
 	// background refresh process that runs according to the cron schedules
-	
+
 	t.Log("Refresh errors are tracked by the background scheduler")
 	return nil
 }
@@ -353,7 +354,7 @@ func testCircuitBreaker(ctx context.Context, t *testing.T, tnClient *tnclient.Cl
 	// It protects against cascading failures when the TN data source is unavailable
 	// We can't directly trigger it from external queries, but it will be active
 	// during the background refresh operations
-	
+
 	t.Log("Circuit breaker metrics are tracked by the background refresh process")
 	return nil
 }
@@ -370,7 +371,7 @@ func grantNetworkWriterRole(ctx context.Context, t *testing.T, wallet *kwilcrypt
 	// For development, the migration should have already granted network_writers_manager role
 	// to the DEV_DB_OWNER (0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf)
 	// So we use that wallet to grant network_writer role
-	
+
 	// Create a client with the same wallet (which has network_writers_manager role)
 	managerClient, err := tnclient.NewClient(ctx, kwildEndpoint, tnclient.WithSigner(auth.GetUserSigner(wallet)))
 	if err != nil {
@@ -400,10 +401,10 @@ func grantNetworkWriterRole(ctx context.Context, t *testing.T, wallet *kwilcrypt
 	if err != nil {
 		return fmt.Errorf("failed to grant role: %w", err)
 	}
-	
+
 	waitTxToBeMinedWithSuccess(t, ctx, managerClient, txHash)
 	t.Logf("Successfully granted network_writer role to %s", addr.Address())
-	
+
 	return nil
 }
 
@@ -415,19 +416,19 @@ func cleanupTestStreams(ctx context.Context, t *testing.T, tnClient *tnclient.Cl
 		os.Getenv("COMPOSED_STREAM_2"),
 		os.Getenv("COMPOSED_STREAM_3"),
 	}
-	
+
 	// Drop composed streams
 	for _, streamId := range composedStreamIds {
 		if streamId == "" {
 			continue
 		}
-		
+
 		streamIdObj, err := util.NewStreamId(streamId)
 		if err != nil {
 			t.Logf("Warning: Failed to parse stream ID %s: %v", streamId, err)
 			continue
 		}
-		
+
 		// Get raw Kwil client to call drop_stream action
 		kwilClient := tnClient.GetKwilClient()
 		signerAddress := tnClient.Address()
@@ -435,27 +436,27 @@ func cleanupTestStreams(ctx context.Context, t *testing.T, tnClient *tnclient.Cl
 			signerAddress.Address(), // data_provider
 			streamIdObj.String(),    // stream_id
 		}})
-		
+
 		if err != nil {
 			t.Logf("Warning: Failed to drop composed stream %s: %v", streamId, err)
 		} else {
 			t.Logf("Dropped composed stream %s", streamId)
 		}
 	}
-	
+
 	// Drop primitive streams
 	primitiveStreamIds := []string{
 		"stchild1234567890123456789child1",
 		"stchild1234567890123456789child2",
 	}
-	
+
 	for _, streamId := range primitiveStreamIds {
 		streamIdObj, err := util.NewStreamId(streamId)
 		if err != nil {
 			t.Logf("Warning: Failed to parse stream ID %s: %v", streamId, err)
 			continue
 		}
-		
+
 		// Get raw Kwil client to call drop_stream action
 		kwilClient := tnClient.GetKwilClient()
 		signerAddress := tnClient.Address()
@@ -463,13 +464,13 @@ func cleanupTestStreams(ctx context.Context, t *testing.T, tnClient *tnclient.Cl
 			signerAddress.Address(), // data_provider
 			streamIdObj.String(),    // stream_id
 		}})
-		
+
 		if err != nil {
 			t.Logf("Warning: Failed to drop primitive stream %s: %v", streamId, err)
 		} else {
 			t.Logf("Dropped primitive stream %s", streamId)
 		}
 	}
-	
+
 	return nil
 }

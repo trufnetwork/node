@@ -4,6 +4,7 @@ package metrics
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/sony/gobreaker"
@@ -71,10 +72,15 @@ func ClassifyError(err error) string {
 
 	// Add error classification logic here based on your error types
 	// For now, return a generic classification
+	errStr := err.Error()
 	switch {
-	case err.Error() == "context deadline exceeded":
+	case strings.Contains(errStr, "context deadline exceeded"):
 		return "timeout"
-	case err.Error() == "no rows in result set":
+	case strings.Contains(errStr, "context canceled"):
+		return "cancelled"
+	case strings.Contains(errStr, "tx is closed"):
+		return "connection_error"
+	case strings.Contains(errStr, "no rows in result set"):
 		return "not_found"
 	default:
 		return "unknown"

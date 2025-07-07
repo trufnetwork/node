@@ -14,6 +14,7 @@ const (
 	ErrPatternInvalidStreamType   = "invalid stream type"
 	ErrPatternMalformed           = "malformed"
 	ErrPatternSyntaxError         = "syntax error"
+	ErrPatternTxClosed            = "tx is closed"
 )
 
 // Not found error patterns - these indicate missing resources
@@ -36,6 +37,7 @@ var NonRetryableErrorPatterns = []string{
 	ErrPatternInvalidStreamType,
 	ErrPatternMalformed,
 	ErrPatternSyntaxError,
+	ErrPatternTxClosed,
 }
 
 // NotFoundErrorPatterns contains all error patterns that indicate a resource was not found

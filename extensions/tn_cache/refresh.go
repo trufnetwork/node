@@ -146,9 +146,13 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, directive conf
 
 	var events []internal.CachedEvent
 
-	// Execute the action to fetch stream data
-	result, err := s.app.Engine.CallWithoutEngineCtx(
-		ctx,
+	// Create a proper engine context for the extension to call actions
+	engineCtx := s.createExtensionEngineContext(ctx)
+	
+	// Execute the action with proper transaction context
+	// This allows actions like get_record_composed to access @caller
+	result, err := s.app.Engine.Call(
+		engineCtx,
 		s.app.DB,
 		s.namespace, // configurable database namespace
 		action,
@@ -190,6 +194,7 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, directive conf
 				"error", err)
 			return []internal.CachedEvent{}, nil // Return empty events, not an error
 		}
+		
 		return nil, fmt.Errorf("call action %s: %w", action, err)
 	}
 

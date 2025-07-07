@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/log"
@@ -18,6 +19,7 @@ import (
 	"github.com/trufnetwork/node/extensions/tn_cache/metrics"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Use ExtensionName from constants
@@ -28,6 +30,7 @@ var (
 	cacheDB        *internal.CacheDB
 	scheduler      *CacheScheduler
 	metricsRecorder metrics.MetricsRecorder
+	cachePool      *pgxpool.Pool  // Independent connection pool for cache operations
 )
 
 // ParseConfig parses the extension configuration from the node's config file
@@ -403,17 +406,31 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 		return cleanupExtensionSchema(ctx, db)
 	}
 
+	// Wait for database to be ready before proceeding
+	if err := waitForDatabaseReady(ctx, db, 30*time.Second); err != nil {
+		return fmt.Errorf("database not ready: %w", err)
+	}
+
 	logger.Info("initializing extension",
 		"enabled", processedConfig.Enabled,
 		"directives_count", len(processedConfig.Directives),
 		"sources", processedConfig.Sources)
 
-	// Create the CacheDB instance
-	cacheDB = internal.NewCacheDB(db, logger)
-
-	// Initialize extension resources
-	err = setupCacheSchema(ctx, db)
+	// Create independent connection pool for cache operations
+	// This prevents "tx is closed" errors caused by kwil-db's connection lifecycle
+	pool, err := createIndependentConnectionPool(ctx, app.Service)
 	if err != nil {
+		return fmt.Errorf("failed to create connection pool: %w", err)
+	}
+	cachePool = pool
+
+	// Create the CacheDB instance with our independent pool
+	cacheDB = internal.NewCacheDB(pool, logger)
+
+	// Initialize extension resources using the pool for schema setup
+	err = setupCacheSchema(ctx, pool)
+	if err != nil {
+		cachePool.Close()
 		return fmt.Errorf("failed to setup cache schema: %w", err)
 	}
 
@@ -427,9 +444,19 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 		// Start a goroutine to handle graceful shutdown when context is cancelled
 		go func() {
 			<-ctx.Done()
-			logger.Info("context cancelled, stopping scheduler")
-			if err := scheduler.Stop(); err != nil {
-				logger.Error("error stopping scheduler", "error", err)
+			logger.Info("context cancelled, stopping extension")
+			
+			// Stop scheduler first
+			if scheduler != nil {
+				if err := scheduler.Stop(); err != nil {
+					logger.Error("error stopping scheduler", "error", err)
+				}
+			}
+			
+			// Close connection pool
+			if cachePool != nil {
+				cachePool.Close()
+				logger.Info("closed cache connection pool")
 			}
 		}()
 	}
@@ -445,29 +472,23 @@ func endBlockHook(ctx context.Context, app *common.App, block *common.BlockConte
 }
 
 // setupCacheSchema creates the necessary database schema for the cache
-func setupCacheSchema(ctx context.Context, db sql.DB) error {
+func setupCacheSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	logger.Info("setting up cache schema")
 
 	// Begin a transaction to ensure atomicity of schema creation
-	tx, err := db.BeginTx(ctx)
+	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer func() {
-		if err != nil {
-			if rbErr := tx.Rollback(ctx); rbErr != nil {
-				logger.Error("failed to rollback transaction", "error", rbErr)
-			}
-		}
-	}()
+	defer tx.Rollback(ctx)
 
 	// Create schema - private schema not prefixed with ds_, ignored by consensus
-	if _, err := tx.Execute(ctx, `CREATE SCHEMA IF NOT EXISTS ext_tn_cache`); err != nil {
+	if _, err := tx.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS ext_tn_cache`); err != nil {
 		return fmt.Errorf("create schema: %w", err)
 	}
 
 	// Create cached_streams table
-	if _, err := tx.Execute(ctx, `
+	if _, err := tx.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS ext_tn_cache.cached_streams (
 			data_provider TEXT NOT NULL,
 			stream_id TEXT NOT NULL,
@@ -480,14 +501,14 @@ func setupCacheSchema(ctx context.Context, db sql.DB) error {
 	}
 
 	// Create index for efficient querying by cron schedule
-	if _, err := tx.Execute(ctx, `
+	if _, err := tx.Exec(ctx, `
 		CREATE INDEX IF NOT EXISTS idx_cached_streams_cron_schedule 
 		ON ext_tn_cache.cached_streams (cron_schedule)`); err != nil {
 		return fmt.Errorf("create cron schedule index: %w", err)
 	}
 
 	// Create cached_events table
-	if _, err := tx.Execute(ctx, `
+	if _, err := tx.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS ext_tn_cache.cached_events (
 			data_provider TEXT NOT NULL,
 			stream_id TEXT NOT NULL,
@@ -499,7 +520,7 @@ func setupCacheSchema(ctx context.Context, db sql.DB) error {
 	}
 
 	// Create index for efficiently retrieving events by time range
-	if _, err := tx.Execute(ctx, `
+	if _, err := tx.Exec(ctx, `
 		CREATE INDEX IF NOT EXISTS idx_cached_events_time_range 
 		ON ext_tn_cache.cached_events (data_provider, stream_id, event_time)`); err != nil {
 		return fmt.Errorf("create event time range index: %w", err)
@@ -515,6 +536,82 @@ func setupCacheSchema(ctx context.Context, db sql.DB) error {
 }
 
 // cleanupExtensionSchema removes the cache schema when the extension is disabled
+// waitForDatabaseReady validates that the database connection is stable before proceeding
+func waitForDatabaseReady(ctx context.Context, db sql.DB, maxWait time.Duration) error {
+	timeout := time.NewTimer(maxWait)
+	defer timeout.Stop()
+	
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timeout.C:
+			return fmt.Errorf("database not ready after %v", maxWait)
+		case <-ticker.C:
+			// Test database readiness with a simple transaction
+			tx, err := db.BeginTx(ctx)
+			if err != nil {
+				continue // Keep trying
+			}
+			_, err = tx.Execute(ctx, "SELECT 1")
+			if err != nil {
+				tx.Rollback(ctx)
+				continue // Keep trying
+			}
+			tx.Rollback(ctx)
+			return nil // Database is ready
+		}
+	}
+}
+
+// createIndependentConnectionPool creates a dedicated connection pool for cache operations
+func createIndependentConnectionPool(ctx context.Context, service *common.Service) (*pgxpool.Pool, error) {
+	dbConfig := service.LocalConfig.DB
+	
+	// Build connection string using same parameters as main database
+	connStr := fmt.Sprintf("host=%s port=%s user=%s database=%s sslmode=disable",
+		dbConfig.Host, dbConfig.Port, dbConfig.User, dbConfig.DBName)
+	
+	if dbConfig.Pass != "" {
+		connStr += " password=" + dbConfig.Pass
+	}
+	
+	// Parse configuration to customize pool settings
+	poolConfig, err := pgxpool.ParseConfig(connStr)
+	if err != nil {
+		return nil, fmt.Errorf("parse pool config: %w", err)
+	}
+	
+	// Configure pool specifically for cache operations
+	poolConfig.MaxConns = 10 // Dedicated connections for cache operations
+	poolConfig.MinConns = 2  // Keep minimum connections ready
+	poolConfig.MaxConnLifetime = 30 * time.Minute
+	poolConfig.MaxConnIdleTime = 5 * time.Minute
+	
+	// Create the pool
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		return nil, fmt.Errorf("create pool: %w", err)
+	}
+	
+	// Test the connection
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("test connection: %w", err)
+	}
+	conn.Release()
+	
+	logger.Info("created independent connection pool for cache operations",
+		"max_conns", poolConfig.MaxConns,
+		"min_conns", poolConfig.MinConns)
+	
+	return pool, nil
+}
+
 func cleanupExtensionSchema(ctx context.Context, db sql.DB) error {
 	logger.Info("cleaning up cache schema")
 

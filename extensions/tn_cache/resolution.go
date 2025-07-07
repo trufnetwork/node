@@ -208,9 +208,12 @@ func (s *CacheScheduler) deduplicateResolvedSpecs(specs []config.CacheDirective)
 func (s *CacheScheduler) getComposedStreamsForProvider(ctx context.Context, provider string) ([]string, error) {
 	var composedStreams []string
 
+	// Create proper engine context for the extension
+	engineCtx := s.createExtensionEngineContext(ctx)
+	
 	// Query all streams for the provider using list_streams action
-	result, err := s.app.Engine.CallWithoutEngineCtx(
-		ctx,
+	result, err := s.app.Engine.Call(
+		engineCtx,
 		s.app.DB,
 		s.namespace,
 		"list_streams",
@@ -269,9 +272,12 @@ func (s *CacheScheduler) getChildStreamsForComposed(ctx context.Context, dataPro
 		activeFrom = *fromTime
 	}
 
+	// Create proper engine context for the extension
+	engineCtx := s.createExtensionEngineContext(ctx)
+	
 	// Query child streams using get_category_streams action
-	result, err := s.app.Engine.CallWithoutEngineCtx(
-		ctx,
+	result, err := s.app.Engine.Call(
+		engineCtx,
 		s.app.DB,
 		s.namespace,
 		"get_category_streams",

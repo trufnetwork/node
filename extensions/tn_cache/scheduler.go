@@ -34,7 +34,7 @@ type CacheScheduler struct {
 	namespace string                               // configurable database namespace
 	breakers  map[string]*gobreaker.CircuitBreaker // circuit breakers per stream
 	breakerMu sync.RWMutex
-	metrics   metrics.MetricsRecorder               // metrics recorder
+	metrics   metrics.MetricsRecorder // metrics recorder
 
 	// Dynamic resolution fields
 	originalDirectives []config.CacheDirective // Keep original with wildcards/includeChildren
@@ -44,6 +44,20 @@ type CacheScheduler struct {
 	lastResolution     time.Time               // Track last resolution time
 	resolutionStatus   ResolutionStatus        // Current resolution status
 	resolutionErr      error                   // Last resolution error if any
+
+	// Job-specific context management
+	jobContexts   map[string]*jobContext // Job ID -> context info
+	jobContextsMu sync.RWMutex
+	jobTimeout    time.Duration // Timeout for individual jobs
+}
+
+// jobContext holds context information for individual scheduled jobs
+type jobContext struct {
+	ctx        context.Context
+	cancel     context.CancelFunc
+	startTime  time.Time
+	schedule   string
+	streamInfo string // For debugging and monitoring
 }
 
 // NewCacheScheduler creates a new cache scheduler instance
@@ -67,6 +81,97 @@ func NewCacheSchedulerWithNamespace(app *common.App, cacheDB *internal.CacheDB, 
 		breakers:         make(map[string]*gobreaker.CircuitBreaker),
 		resolutionStatus: ResolutionStatusPending,
 		metrics:          metricsRecorder,
+		jobContexts:      make(map[string]*jobContext),
+		jobTimeout:       60 * time.Minute, // Default job timeout
+	}
+}
+
+// createJobContext creates a new job-specific context with timeout
+func (s *CacheScheduler) createJobContext(jobID, schedule, streamInfo string) (context.Context, context.CancelFunc) {
+	s.jobContextsMu.Lock()
+	defer s.jobContextsMu.Unlock()
+
+	// Create context with timeout derived from scheduler context
+	ctx, cancel := context.WithTimeout(s.ctx, s.jobTimeout)
+
+	// Store job context info
+	s.jobContexts[jobID] = &jobContext{
+		ctx:        ctx,
+		cancel:     cancel,
+		startTime:  time.Now(),
+		schedule:   schedule,
+		streamInfo: streamInfo,
+	}
+
+	return ctx, cancel
+}
+
+// removeJobContext removes a job context after completion
+func (s *CacheScheduler) removeJobContext(jobID string) {
+	s.jobContextsMu.Lock()
+	defer s.jobContextsMu.Unlock()
+
+	if jc, exists := s.jobContexts[jobID]; exists {
+		// Cancel if not already done
+		jc.cancel()
+		delete(s.jobContexts, jobID)
+		s.logger.Debug("removed job context",
+			"job_id", jobID,
+			"duration", time.Since(jc.startTime))
+	}
+}
+
+// cancelAllJobContexts cancels all active job contexts
+func (s *CacheScheduler) cancelAllJobContexts() {
+	s.jobContextsMu.Lock()
+	defer s.jobContextsMu.Unlock()
+
+	for jobID, jc := range s.jobContexts {
+		jc.cancel()
+		s.logger.Info("cancelled job context",
+			"job_id", jobID,
+			"schedule", jc.schedule,
+			"running_time", time.Since(jc.startTime))
+	}
+
+	// Clear the map
+	s.jobContexts = make(map[string]*jobContext)
+}
+
+// getActiveJobCount returns the number of currently active jobs
+func (s *CacheScheduler) getActiveJobCount() int {
+	s.jobContextsMu.RLock()
+	defer s.jobContextsMu.RUnlock()
+	return len(s.jobContexts)
+}
+
+// createExtensionEngineContext creates a proper EngineContext for the extension
+// to call actions as a system agent with valid transaction context
+func (s *CacheScheduler) createExtensionEngineContext(ctx context.Context) *common.EngineContext {
+	// Create a valid block context
+	// In a real implementation, you might want to get this from the chain
+	blockCtx := &common.BlockContext{
+		Height:    -1, // System operations don't need a specific height
+		Timestamp: time.Now().Unix(),
+		ChainContext: &common.ChainContext{
+			ChainID:           s.app.Service.GenesisConfig.ChainID,
+			NetworkParameters: &common.NetworkParameters{},
+			MigrationParams:   &common.MigrationContext{},
+		},
+	}
+
+	// Create the engine context with the extension as the caller
+	return &common.EngineContext{
+		TxContext: &common.TxContext{
+			Ctx:           ctx,
+			BlockContext:  blockCtx,
+			TxID:          fmt.Sprintf("tn_cache_%d", time.Now().UnixNano()),
+			Signer:        []byte(internal.ExtensionAgentName),
+			Caller:        internal.ExtensionAgentName, // Extension identifies itself as caller
+			Authenticator: "system",
+		},
+		OverrideAuthz: true,  // Override authorization for system operations
+		InvalidTxCtx:  false, // Context is valid for accessing system variables
 	}
 }
 
@@ -122,7 +227,11 @@ func (s *CacheScheduler) Start(ctx context.Context, processedConfig *config.Proc
 	s.cron.Start()
 	s.logger.Info("cache scheduler started", "jobs", len(s.jobs))
 
-	// Finally, run initial refresh for all resolved streams asynchronously
+	// Run initial refresh asynchronously without delay
+	// Now that we have:
+	// 1. Independent connection pool (no more "tx is closed" errors)
+	// 2. Proper EngineContext (no more "invalid transaction context" errors)
+	// We can run the initial refresh immediately
 	go s.runInitialRefresh(resolvedStreamSpecs)
 
 	return nil
@@ -133,7 +242,11 @@ func (s *CacheScheduler) Stop() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.logger.Info("stopping cache scheduler")
+	s.logger.Info("stopping cache scheduler",
+		"active_jobs", s.getActiveJobCount())
+
+	// Cancel all active job contexts first
+	s.cancelAllJobContexts()
 
 	// Stop accepting new jobs and get a context that's done when all jobs complete
 	cronCtx := s.cron.Stop()
@@ -146,7 +259,8 @@ func (s *CacheScheduler) Stop() error {
 	case <-cronCtx.Done():
 		s.logger.Info("all scheduled jobs completed")
 	case <-time.After(30 * time.Second):
-		s.logger.Warn("timeout waiting for jobs to complete")
+		s.logger.Warn("timeout waiting for jobs to complete",
+			"remaining_jobs", s.getActiveJobCount())
 	}
 
 	s.logger.Info("cache scheduler stopped")
@@ -197,28 +311,48 @@ func (s *CacheScheduler) groupBySchedule(directives []config.CacheDirective) map
 
 // runInitialRefresh performs an initial refresh of all streams with concurrency control
 func (s *CacheScheduler) runInitialRefresh(directives []config.CacheDirective) {
+	// Generate unique job ID for initial refresh
+	jobID := fmt.Sprintf("initial_refresh_%d", time.Now().UnixNano())
+
+	// Create job-specific context for initial refresh
+	jobCtx, jobCancel := s.createJobContext(jobID, "initial_refresh", fmt.Sprintf("streams=%d", len(directives)))
+
 	defer func() {
+		// Always remove job context when done
+		s.removeJobContext(jobID)
+
 		if r := recover(); r != nil {
 			s.logger.Error("panic in initial refresh",
 				"panic", r,
+				"job_id", jobID,
 				"stack", string(debug.Stack()))
 		}
 	}()
 
-	s.logger.Info("starting initial refresh", "streams", len(directives))
+	s.logger.Info("starting initial refresh",
+		"streams", len(directives),
+		"job_id", jobID)
 
-	g, ctx := errgroup.WithContext(s.ctx)
+	g, ctx := errgroup.WithContext(jobCtx)
 	g.SetLimit(5) // Maximum 5 concurrent operations
 
 	for _, directive := range directives {
 		dir := directive // Capture loop variable to avoid closure issues
 
 		g.Go(func() error {
+			// Check context before starting work
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+
 			if err := s.refreshStreamDataWithCircuitBreaker(ctx, dir); err != nil {
 				// Log error but don't fail the entire group
 				s.logger.Error("failed to perform initial refresh of stream data",
 					"provider", dir.DataProvider,
 					"stream", dir.StreamID,
+					"job_id", jobID,
 					"error", err)
 			}
 			return nil // Return nil to continue with other streams
@@ -226,10 +360,16 @@ func (s *CacheScheduler) runInitialRefresh(directives []config.CacheDirective) {
 	}
 
 	if err := g.Wait(); err != nil {
-		s.logger.Error("initial refresh group error", "error", err)
+		s.logger.Error("initial refresh group error",
+			"error", err,
+			"job_id", jobID)
 	}
 
-	s.logger.Info("initial refresh completed")
+	// Cancel job context explicitly when done
+	jobCancel()
+
+	s.logger.Info("initial refresh completed",
+		"job_id", jobID)
 }
 
 // registerRefreshJob registers a cron job for refreshing streams on a schedule
@@ -239,18 +379,40 @@ func (s *CacheScheduler) registerRefreshJob(schedule string) error {
 	}
 
 	jobFunc := func() {
+		// Generate unique job ID for this execution
+		jobID := fmt.Sprintf("%s_%d", schedule, time.Now().UnixNano())
+
+		// Create job-specific context with timeout
+		jobCtx, jobCancel := s.createJobContext(jobID, schedule, fmt.Sprintf("schedule=%s", schedule))
+		defer func() {
+			// Always remove job context when done
+			s.removeJobContext(jobID)
+		}()
+
 		// Add tracing for scheduled job execution
-		ctx, end := tracing.SchedulerOperation(s.ctx, tracing.OpSchedulerJob,
-			attribute.String("schedule", schedule))
+		ctx, end := tracing.SchedulerOperation(jobCtx, tracing.OpSchedulerJob,
+			attribute.String("schedule", schedule),
+			attribute.String("job_id", jobID))
 		defer func() {
 			end(nil) // Job errors are logged separately, not returned
 			if r := recover(); r != nil {
 				s.logger.Error("panic in refresh job",
 					"panic", r,
 					"schedule", schedule,
+					"job_id", jobID,
 					"stack", string(debug.Stack()))
 			}
 		}()
+
+		// Check if context is already cancelled
+		select {
+		case <-jobCtx.Done():
+			s.logger.Warn("job context cancelled before execution",
+				"job_id", jobID,
+				"schedule", schedule)
+			return
+		default:
+		}
 
 		directives := s.getDirectivesForSchedule(schedule)
 		if len(directives) == 0 {
@@ -258,7 +420,11 @@ func (s *CacheScheduler) registerRefreshJob(schedule string) error {
 			return
 		}
 
-		s.logger.Debug("executing scheduled refresh", "schedule", schedule, "streams", len(directives))
+		s.logger.Debug("executing scheduled refresh",
+			"schedule", schedule,
+			"streams", len(directives),
+			"job_id", jobID,
+			"active_jobs", s.getActiveJobCount())
 
 		g, gCtx := errgroup.WithContext(ctx)
 		g.SetLimit(5) // Limit concurrent refreshes
@@ -267,11 +433,19 @@ func (s *CacheScheduler) registerRefreshJob(schedule string) error {
 			dir := directive // Capture loop variable
 
 			g.Go(func() error {
+				// Check context before starting work
+				select {
+				case <-gCtx.Done():
+					return gCtx.Err()
+				default:
+				}
+
 				if err := s.refreshStreamDataWithCircuitBreaker(gCtx, dir); err != nil {
 					s.logger.Error("failed to refresh stream data",
 						"provider", dir.DataProvider,
 						"stream", dir.StreamID,
 						"type", dir.Type,
+						"job_id", jobID,
 						"error", err)
 				}
 				return nil
@@ -279,8 +453,13 @@ func (s *CacheScheduler) registerRefreshJob(schedule string) error {
 		}
 
 		if err := g.Wait(); err != nil {
-			s.logger.Error("scheduled refresh group error", "error", err)
+			s.logger.Error("scheduled refresh group error",
+				"error", err,
+				"job_id", jobID)
 		}
+
+		// Cancel job context explicitly when done
+		jobCancel()
 	}
 
 	entryID, err := s.cron.AddFunc(schedule, jobFunc)
