@@ -1,11 +1,18 @@
 package config
 
+import (
+	"github.com/trufnetwork/kwil-db/core/types"
+)
+
 // RawConfig represents the raw TOML configuration from the node config file
 type RawConfig struct {
 	Enabled            string `toml:"enabled"`
 	ResolutionSchedule string `toml:"resolution_schedule,omitempty"` // Cron for re-resolving wildcards/children (default: daily)
 	StreamsInline      string `toml:"streams_inline,omitempty"`      // JSON array as string
 	StreamsCSVFile     string `toml:"streams_csv_file,omitempty"`     // Path to CSV file
+	
+	// Sync-aware configuration
+	MaxBlockAge types.Duration `toml:"max_block_age,omitempty"` // Max age of block to consider synced (e.g., "1h", "30m"; default: "1h")
 }
 
 // Note: StreamSpec is now defined in sources package to avoid import cycles
@@ -17,6 +24,7 @@ type ProcessedConfig struct {
 	ResolutionSchedule string           `json:"resolution_schedule"` // Cron expression for re-resolution
 	Directives         []CacheDirective `json:"directives"`
 	Sources            []string         `json:"sources"` // Track config sources for debugging
+	MaxBlockAge        int64            `json:"max_block_age"` // Max age in seconds to consider node synced (0 = disabled)
 }
 
 // CacheDirective represents a validated cache policy for a stream or set of streams

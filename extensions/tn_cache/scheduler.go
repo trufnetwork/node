@@ -48,12 +48,38 @@ type CacheScheduler struct {
 	jobContexts   map[string]context.CancelFunc // Active job cancellation registry
 	jobContextsMu sync.RWMutex
 	jobTimeout    time.Duration // Safety limit per job (default: 60m)
+	
+	// Sync-aware caching
+	syncChecker *SyncChecker // Monitors node sync status
 }
 
 
 // NewCacheScheduler creates a scheduler with default "main" namespace
 func NewCacheScheduler(app *common.App, cacheDB *internal.CacheDB, logger log.Logger, metricsRecorder metrics.MetricsRecorder) *CacheScheduler {
 	return NewCacheSchedulerWithNamespace(app, cacheDB, logger, "", metricsRecorder)
+}
+
+// SetSyncChecker sets the sync checker for sync-aware caching
+func (s *CacheScheduler) SetSyncChecker(syncChecker *SyncChecker) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.syncChecker = syncChecker
+}
+
+// canRefresh checks if a refresh operation should proceed
+func (s *CacheScheduler) canRefresh(provider, streamID string) bool {
+	if s.syncChecker == nil {
+		return true
+	}
+	
+	canExecute, reason := s.syncChecker.CanExecute()
+	if !canExecute {
+		s.logger.Debug("skipping refresh due to sync status",
+			"provider", provider,
+			"stream", streamID,
+			"reason", reason)
+	}
+	return canExecute
 }
 
 // NewCacheSchedulerWithNamespace allows targeting specific database namespaces
@@ -406,6 +432,11 @@ func (s *CacheScheduler) runInitialRefresh(directives []config.CacheDirective) {
 			default:
 			}
 
+			// Check sync status
+			if !s.canRefresh(dir.DataProvider, dir.StreamID) {
+				return nil
+			}
+
 			if err := s.refreshStreamDataWithRetry(ctx, dir, 3); err != nil {
 				// Log error but don't fail the entire group
 				s.logger.Error("failed to perform initial refresh of stream data",
@@ -497,6 +528,11 @@ func (s *CacheScheduler) registerRefreshJob(schedule string) error {
 				case <-gCtx.Done():
 					return gCtx.Err()
 				default:
+				}
+
+				// Check sync status
+				if !s.canRefresh(dir.DataProvider, dir.StreamID) {
+					return nil
 				}
 
 				if err := s.refreshStreamDataWithRetry(gCtx, dir, 3); err != nil {

@@ -17,6 +17,11 @@ resolution_schedule = "0 0 0 * * *"  # Daily at midnight UTC (seconds minutes ho
 # resolution_schedule = "0 0 * * * *"  # Hourly (for rapidly changing environments)
 # resolution_schedule = ""            # Disable automatic resolution
 
+# Optional: Maximum block age to consider node synced (default: "1h")
+# Cache operations pause when node is syncing or block age exceeds this threshold
+max_block_age = "1h"   # Examples: "30m", "45s", "2h"
+# max_block_age = "-1"  # Disable sync checking
+
 # Optional: Path to a CSV file containing streams to cache.
 # The path is relative to the node's root directory.
 streams_csv_file = "cache_streams.csv"
@@ -46,6 +51,7 @@ streams_inline = '''
 
 -   **`enabled`**: A boolean (`true` or `false`) to enable or disable the extension.
 -   **`resolution_schedule`**: (Optional) A cron expression with seconds that defines when to re-resolve wildcards and IncludeChildren directives. Uses 6-field format: `second minute hour day month weekday`. Default is `0 0 0 * * *` (daily at midnight UTC). Set to empty string to disable automatic re-resolution.
+-   **`max_block_age`**: (Optional) Maximum age of the latest block to consider the node synced. Default is `"1h"`. Accepts duration strings like `"30m"`, `"45s"`, `"2h"`. Set to `"-1"` to disable sync checking. When the node is syncing or block age exceeds this threshold, cache refresh operations are paused.
 -   **`streams_csv_file`**: (Optional) A path to a CSV file containing a list of streams to cache. The file must have columns for `data_provider`, `stream_id`, `cron_schedule`, and optional `from` and `include_children` columns.
 -   **`streams_inline`**: (Optional) A JSON-formatted string containing an array of stream objects to cache.
 

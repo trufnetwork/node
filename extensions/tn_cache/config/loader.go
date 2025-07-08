@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/trufnetwork/node/extensions/tn_cache/config/sources"
 	"github.com/trufnetwork/node/extensions/tn_cache/validation"
@@ -55,6 +56,11 @@ func (l *Loader) LoadAndProcess(ctx context.Context, rawConfig RawConfig) (*Proc
 	// Add resolution_schedule if provided
 	if rawConfig.ResolutionSchedule != "" {
 		configMap["resolution_schedule"] = rawConfig.ResolutionSchedule
+	}
+	
+	// Add max_block_age if provided
+	if rawConfig.MaxBlockAge != 0 {
+		configMap["max_block_age"] = time.Duration(rawConfig.MaxBlockAge).String()
 	}
 	
 	return l.loadAndProcessInternal(ctx, configMap)
@@ -119,11 +125,23 @@ func (l *Loader) loadAndProcessInternal(ctx context.Context, configMap map[strin
 		return nil, fmt.Errorf("invalid resolution schedule: %w", err)
 	}
 
+	// Parse max_block_age (default to 1 hour)
+	var maxBlockAge int64 = 3600
+	if configMap["max_block_age"] != "" {
+		// Parse duration string using Go's time.ParseDuration (same as types.Duration)
+		dur, err := time.ParseDuration(configMap["max_block_age"])
+		if err != nil {
+			return nil, fmt.Errorf("invalid max_block_age: %w", err)
+		}
+		maxBlockAge = int64(dur.Seconds())
+	}
+
 	return &ProcessedConfig{
 		Enabled:            configMap["enabled"] == "true",
 		ResolutionSchedule: resolutionSchedule,
 		Directives:         finalDirectives,
 		Sources:            sourceNames,
+		MaxBlockAge:        maxBlockAge,
 	}, nil
 }
 

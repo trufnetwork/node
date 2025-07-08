@@ -1,12 +1,11 @@
 package tn_cache
 
 import (
-	"context"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/trufnetwork/kwil-db/core/log"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
 )
 
@@ -44,12 +43,12 @@ func TestCacheSchedulerWrappedDB(t *testing.T) {
 	t.Run("getWrappedDB_returns_sql_DB", func(t *testing.T) {
 		// Create a minimal scheduler for testing
 		scheduler := &CacheScheduler{
-			logger: testLogger,
+			logger: log.DiscardLogger,
 		}
 		
-		// Even with nil cacheDB, it should fall back to app.DB
+		// Even with nil cacheDB, it should return nil (no pool)
 		db := scheduler.getWrappedDB()
-		require.NotNil(t, db)
+		assert.Nil(t, db)
 		
 		// Verify it implements sql.DB
 		var _ sql.DB = db

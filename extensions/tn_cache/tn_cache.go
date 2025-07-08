@@ -35,6 +35,7 @@ var (
 	logger          log.Logger
 	cacheDB         *internal.CacheDB
 	scheduler       *CacheScheduler
+	syncChecker     *SyncChecker // Monitors node sync status
 	metricsRecorder metrics.MetricsRecorder
 	cachePool       *pgxpool.Pool // Independent connection pool for cache operations
 	isEnabled       bool          // Track if extension is enabled
@@ -482,6 +483,16 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	// Initialize scheduler if we have directives
 	if len(processedConfig.Directives) > 0 {
 		scheduler = NewCacheScheduler(app, cacheDB, logger, metricsRecorder)
+		
+		// Initialize sync checker for sync-aware caching
+		syncChecker = NewSyncChecker(logger, processedConfig.MaxBlockAge)
+		syncChecker.Start(ctx)
+		scheduler.SetSyncChecker(syncChecker)
+		
+		if processedConfig.MaxBlockAge > 0 {
+			logger.Info("sync-aware caching enabled", "max_block_age", processedConfig.MaxBlockAge)
+		}
+		
 		if err := scheduler.Start(ctx, processedConfig); err != nil {
 			return fmt.Errorf("failed to start scheduler: %w", err)
 		}
@@ -497,7 +508,13 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 			<-ctx.Done()
 			logger.Info("context cancelled, stopping extension")
 
-			// Stop scheduler first
+			// Stop sync checker first
+			if syncChecker != nil {
+				syncChecker.Stop()
+				logger.Info("stopped sync checker")
+			}
+			
+			// Stop scheduler
 			if scheduler != nil {
 				if err := scheduler.Stop(); err != nil {
 					logger.Error("error stopping scheduler", "error", err)

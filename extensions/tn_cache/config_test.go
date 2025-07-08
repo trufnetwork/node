@@ -275,6 +275,22 @@ func TestConfigValidation(t *testing.T) {
 			description: "Valid configuration with from timestamp should work",
 		},
 		{
+			name: "valid configuration with max_block_age",
+			extConfig: map[string]map[string]string{
+				ExtensionName: {
+					"enabled": "true",
+					"max_block_age": "30m",
+					"streams_inline": `[{
+						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
+						"stream_id": "st123456789012345678901234567890",
+						"cron_schedule": "0 0 * * * *"
+					}]`,
+				},
+			},
+			expectError: false,
+			description: "Configuration with duration string max_block_age should work",
+		},
+		{
 			name: "far future timestamp - fatal error",
 			extConfig: map[string]map[string]string{
 				ExtensionName: {
