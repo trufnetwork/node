@@ -5,6 +5,7 @@
     Actions should be added in separate files for better readability.
     
     Tables:
+    - data_providers: Stores whitelisted data providers
     - streams: Core table storing stream metadata with immutable data provider references
     - taxonomies: Defines parent-child relationships between streams with versioning
     - primitive_events: Stores time-series data points for primitive streams
