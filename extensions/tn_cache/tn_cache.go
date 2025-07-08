@@ -69,7 +69,7 @@ func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
 
 func init() {
 	// Register precompile functions
-	err := precompiles.RegisterPrecompile("ext_tn_cache", precompiles.Precompile{
+	err := precompiles.RegisterPrecompile(constants.PrecompileName, precompiles.Precompile{
 		Methods: []precompiles.Method{
 			{
 				Name:            "is_enabled",
