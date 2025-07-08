@@ -185,17 +185,11 @@ func handleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 		return fmt.Errorf("app.DB is not a sql.DB")
 	}
 
-	tx, err := db.BeginTx(ctx.TxContext.Ctx)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback(ctx.TxContext.Ctx)
-
 	// Check if stream is configured and has been refreshed
 	var configuredFromTime *int64
 	var lastRefreshed *string
 
-	result, err := tx.Execute(ctx.TxContext.Ctx, `
+	result, err := db.Execute(ctx.TxContext.Ctx, `
 		SELECT from_timestamp, last_refreshed
 		FROM `+constants.CacheSchemaName+`.cached_streams
 		WHERE data_provider = $1 AND stream_id = $2
@@ -235,13 +229,13 @@ func handleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 	var eventCount int64
 	if toTime == nil {
 		// No upper bound specified
-		result, err = tx.Execute(ctx.TxContext.Ctx, `
+		result, err = db.Execute(ctx.TxContext.Ctx, `
 			SELECT COUNT(*) FROM `+constants.CacheSchemaName+`.cached_events
 			WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3
 		`, dataProvider, streamID, fromTime)
 	} else {
 		// Upper bound specified
-		result, err = tx.Execute(ctx.TxContext.Ctx, `
+		result, err = db.Execute(ctx.TxContext.Ctx, `
 			SELECT COUNT(*) FROM `+constants.CacheSchemaName+`.cached_events
 			WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3 AND event_time <= $4
 		`, dataProvider, streamID, fromTime, *toTime)
@@ -321,17 +315,12 @@ func handleGetCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 		return fmt.Errorf("app.DB is not a sql.DB")
 	}
 
-	tx, err := db.BeginTx(ctx.TxContext.Ctx)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback(ctx.TxContext.Ctx)
-
 	var result *sql.ResultSet
+	var err error
 
 	if toTime > 0 {
 		// Query with upper bound, including anchor value
-		result, err = tx.Execute(ctx.TxContext.Ctx, `
+		result, err = db.Execute(ctx.TxContext.Ctx, `
 			WITH anchor_record AS (
 				SELECT data_provider, stream_id, event_time, value
 				FROM `+constants.CacheSchemaName+`.cached_events
@@ -357,7 +346,7 @@ func handleGetCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 		`, dataProvider, streamID, fromTime, toTime)
 	} else {
 		// Upper bound specified
-		result, err = tx.Execute(ctx.TxContext.Ctx, `
+		result, err = db.Execute(ctx.TxContext.Ctx, `
 			WITH anchor_record AS (
 				SELECT data_provider, stream_id, event_time, value
 				FROM `+constants.CacheSchemaName+`.cached_events
@@ -581,16 +570,10 @@ func waitForDatabaseReady(ctx context.Context, db sql.DB, maxWait time.Duration)
 			return fmt.Errorf("database not ready after %v", maxWait)
 		case <-ticker.C:
 			// Test database readiness with a simple transaction
-			tx, err := db.BeginTx(ctx)
+			_, err := db.Execute(ctx, "SELECT 1")
 			if err != nil {
 				continue // Keep trying
 			}
-			_, err = tx.Execute(ctx, "SELECT 1")
-			if err != nil {
-				tx.Rollback(ctx)
-				continue // Keep trying
-			}
-			tx.Rollback(ctx)
 			return nil // Database is ready
 		}
 	}
@@ -641,10 +624,10 @@ func createIndependentConnectionPool(ctx context.Context, service *common.Servic
 	return pool, nil
 }
 
-func cleanupExtensionSchema(ctx context.Context, db sql.DB) error {
+func cleanupExtensionSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	logger.Info("cleaning up cache schema")
 
-	tx, err := db.BeginTx(ctx)
+	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
@@ -657,7 +640,7 @@ func cleanupExtensionSchema(ctx context.Context, db sql.DB) error {
 	}()
 
 	// Drop schema CASCADE to remove all tables and indexes
-	if _, err := tx.Execute(ctx, `DROP SCHEMA IF EXISTS `+constants.CacheSchemaName+` CASCADE`); err != nil {
+	if _, err := pool.Exec(ctx, `DROP SCHEMA IF EXISTS `+constants.CacheSchemaName+` CASCADE`); err != nil {
 		return fmt.Errorf("drop schema: %w", err)
 	}
 
