@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS data_providers (
   CHECK (address LIKE '0x%' AND LENGTH(address) = 42)
 );
 
+CREATE UNIQUE INDEX data_providers_address_idx ON data_providers (address);
+
 CREATE TABLE IF NOT EXISTS streams (
     stream_id TEXT NOT NULL,
     -- data_provider != stream_owner
