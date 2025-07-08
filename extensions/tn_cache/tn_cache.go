@@ -26,6 +26,11 @@ import (
 // Use ExtensionName from constants
 const ExtensionName = config.ExtensionName
 
+var TNNumericType = &types.DataType{
+	Name:     types.NumericStr,
+	Metadata: [2]uint16{36, 18}, // 36 digits precision, 18 digits scale
+}
+
 var (
 	logger          log.Logger
 	cacheDB         *internal.CacheDB
@@ -130,7 +135,7 @@ func init() {
 						precompiles.NewPrecompileValue("data_provider", types.TextType, false),
 						precompiles.NewPrecompileValue("stream_id", types.TextType, false),
 						precompiles.NewPrecompileValue("event_time", types.IntType, false),
-						precompiles.NewPrecompileValue("value", types.NumericType, false),
+						precompiles.NewPrecompileValue("value", TNNumericType, false),
 					},
 				},
 				Handler: handleGetCachedData,
@@ -402,6 +407,12 @@ func handleGetCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 
 	// Return each row via resultFn
 	for _, row := range result.Rows {
+		// make sure that the value is a decimal(36, 18)
+		dec, ok := row[3].(*types.Decimal)
+		if !ok {
+			return fmt.Errorf("value is not a decimal. received %T", row[3])
+		}
+		dec.SetPrecisionAndScale(36, 18)
 		if err := resultFn(row); err != nil {
 			return err
 		}
