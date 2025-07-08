@@ -649,7 +649,9 @@ func (c *CacheDB) QueryCachedStreamsWithCounts(ctx context.Context) ([]StreamCou
 	query := `
 		SELECT cs.data_provider, cs.stream_id, COALESCE(ce.event_count, 0) as event_count
 		FROM ` + constants.CacheSchemaName + `.cached_streams cs
-		LEFT
+		LEFT JOIN (
+			SELECT data_provider, stream_id, COUNT(*) as event_count
+			FROM ` + constants.CacheSchemaName + `.cached_events
 			GROUP BY data_provider, stream_id
 		) ce ON cs.data_provider = ce.data_provider AND cs.stream_id = ce.stream_id
 		ORDER BY cs.data_provider, cs.stream_id
