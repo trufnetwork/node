@@ -121,10 +121,12 @@ show_urls() {
     echo "  - Prometheus:   http://localhost:9090"
     echo "  - Grafana:      http://localhost:3000 (admin/admin)"
     echo ""
-    print_status "To view cache metrics:"
+    print_status "To view observability data:"
     echo "  1. Open Grafana at http://localhost:3000"
     echo "  2. Login with admin/admin"
-    echo "  3. Navigate to Dashboards → TN Cache Metrics"
+    echo "  3. Dashboards:"
+    echo "     - TN Cache (metrics)"
+    echo "  4. Explore tab → Select Jaeger datasource for ad-hoc trace queries"
     echo ""
 }
 
