@@ -15,7 +15,6 @@ import (
 	"github.com/trufnetwork/node/extensions/tn_cache/validation"
 )
 
-
 // Resolution solves the "stale wildcard" problem:
 // When config says "cache all streams from provider X", new streams
 // created after startup are automatically detected and cached.
@@ -184,13 +183,15 @@ func (s *CacheScheduler) deduplicateResolvedSpecs(specs []config.CacheDirective)
 func (s *CacheScheduler) getComposedStreamsForProvider(ctx context.Context, provider string) ([]string, error) {
 	var composedStreams []string
 
-	// Create proper engine context for the extension
+	// Create a proper engine context with extension agent as the caller
 	engineCtx := s.createExtensionEngineContext(ctx)
-	
+
 	// Query all streams for the provider using list_streams action
+	// Use Engine.Call with proper context to provide @caller
+	// Use wrapped independent connection pool to avoid "tx is closed" errors
 	result, err := s.app.Engine.Call(
 		engineCtx,
-		s.app.DB,
+		s.getWrappedDB(), // Use wrapped independent connection pool
 		s.namespace,
 		"list_streams",
 		[]any{
@@ -248,13 +249,15 @@ func (s *CacheScheduler) getChildStreamsForComposed(ctx context.Context, dataPro
 		activeFrom = *fromTime
 	}
 
-	// Create proper engine context for the extension
+	// Create a proper engine context with extension agent as the caller
 	engineCtx := s.createExtensionEngineContext(ctx)
-	
+
 	// Query child streams using get_category_streams action
+	// Use Engine.Call with proper context to provide @caller
+	// Use wrapped independent connection pool to avoid "tx is closed" errors
 	result, err := s.app.Engine.Call(
 		engineCtx,
-		s.app.DB,
+		s.getWrappedDB(), // Use wrapped independent connection pool
 		s.namespace,
 		"get_category_streams",
 		[]any{
@@ -304,7 +307,6 @@ func (s *CacheScheduler) getChildStreamsForComposed(ctx context.Context, dataPro
 
 	return childStreams, nil
 }
-
 
 // registerResolutionJob registers the cron job for periodic re-resolution
 func (s *CacheScheduler) registerResolutionJob(schedule string) error {

@@ -7,8 +7,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/robfig/cron/v3"
 	"github.com/trufnetwork/kwil-db/common"
+	"github.com/trufnetwork/kwil-db/node/types/sql"
 	"github.com/trufnetwork/kwil-db/core/log"
 	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/errgroup"
@@ -98,6 +100,18 @@ func (s *CacheScheduler) removeJobContext(jobID string) {
 	}
 }
 
+// getWrappedDB returns a sql.DB interface wrapping the independent connection pool
+// This is used for Engine.Call operations to avoid "tx is closed" errors
+func (s *CacheScheduler) getWrappedDB() sql.DB {
+	// Get the underlying pool from CacheDB
+	if pool, ok := s.cacheDB.GetPool().(*pgxpool.Pool); ok {
+		return newPoolDBWrapper(pool)
+	}
+	// Fallback to app.DB if pool is not available (shouldn't happen)
+	s.logger.Warn("failed to get independent pool, falling back to app.DB")
+	return s.app.DB
+}
+
 // cancelAllJobContexts triggers graceful shutdown of running jobs
 func (s *CacheScheduler) cancelAllJobContexts() {
 	s.jobContextsMu.Lock()
@@ -157,13 +171,12 @@ func (s *CacheScheduler) shouldSkipInitialRefresh(lastRefreshed string, cronSche
 	return false
 }
 
-// createExtensionEngineContext enables the extension to query databases
-// as a privileged system agent, bypassing normal authorization
+// createExtensionEngineContext creates a valid engine context for the extension
+// This allows the extension to act as "extension_agent" with proper @caller
 func (s *CacheScheduler) createExtensionEngineContext(ctx context.Context) *common.EngineContext {
-	// Create a valid block context
-	// In a real implementation, you might want to get this from the chain
+	// Create minimal block context for background operations
 	blockCtx := &common.BlockContext{
-		Height:    -1, // System operations don't need a specific height
+		Height:    1, // Use 1 for background operations
 		Timestamp: time.Now().Unix(),
 		ChainContext: &common.ChainContext{
 			ChainID:           s.app.Service.GenesisConfig.ChainID,
@@ -172,18 +185,19 @@ func (s *CacheScheduler) createExtensionEngineContext(ctx context.Context) *comm
 		},
 	}
 
-	// Create the engine context with the extension as the caller
+	// Create engine context with extension agent as the caller
+	// This grants special permissions in the authorization logic
 	return &common.EngineContext{
 		TxContext: &common.TxContext{
 			Ctx:           ctx,
 			BlockContext:  blockCtx,
 			TxID:          fmt.Sprintf("tn_cache_%d", time.Now().UnixNano()),
 			Signer:        []byte(internal.ExtensionAgentName),
-			Caller:        internal.ExtensionAgentName, // Required for transaction context validity
-			Authenticator: "system",
+			Caller:        internal.ExtensionAgentName, // This becomes @caller = "extension_agent"
+			Authenticator: "extension",
 		},
-		OverrideAuthz: true,  // System agent privileges
-		InvalidTxCtx:  false, // Enables access to block height, timestamps, etc.
+		OverrideAuthz: true,  // Extension operations bypass normal authorization
+		InvalidTxCtx:  false, // Valid context - @caller is available
 	}
 }
 

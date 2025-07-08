@@ -105,7 +105,7 @@ func (s *CacheScheduler) refreshStreamData(ctx context.Context, directive config
 	}
 
 	s.metrics.RecordRefreshComplete(ctx, directive.DataProvider, directive.StreamID, time.Since(startTime), len(events))
-	
+
 	// Update gauge metrics after successful refresh
 	s.updateGaugeMetrics(ctx)
 
@@ -128,15 +128,24 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, directive conf
 
 	var events []internal.CachedEvent
 
-	// Create a proper engine context for the extension to call actions
+	// Create a proper engine context with extension agent as the caller
+	// This provides @caller = "extension_agent" which has special permissions
 	engineCtx := s.createExtensionEngineContext(ctx)
 
-	// Execute the action with proper transaction context
-	// This allows actions like get_record_composed to access @caller
+	s.logger.Debug("calling engine action",
+		"action", action,
+		"provider", directive.DataProvider,
+		"stream", directive.StreamID,
+		"namespace", s.namespace,
+		"caller", internal.ExtensionAgentName)
+
+	// Execute the action with proper engine context
+	// This provides @caller for authorization checks in get_record_composed
+	// Use the wrapped independent connection pool instead of app.DB to avoid "tx is closed" errors
 	result, err := s.app.Engine.Call(
 		engineCtx,
-		s.app.DB,
-		s.namespace, // configurable database namespace
+		s.getWrappedDB(), // Use wrapped independent connection pool
+		s.namespace,      // configurable database namespace
 		action,
 		args,
 		func(row *common.Row) error {

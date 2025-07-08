@@ -35,6 +35,17 @@ var (
 	isEnabled       bool          // Track if extension is enabled
 )
 
+// getWrappedCacheDB returns a sql.DB interface wrapping the independent connection pool
+// This is used instead of app.DB to avoid "tx is closed" errors
+func getWrappedCacheDB() sql.DB {
+	if cachePool != nil {
+		return newPoolDBWrapper(cachePool)
+	}
+	// This should never happen after initialization
+	logger.Error("cache pool is nil, extension not properly initialized")
+	return nil
+}
+
 // ParseConfig parses the extension configuration from the node's config file
 func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
 	logger = service.Logger.New("tn_cache")
@@ -70,6 +81,10 @@ func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
 func init() {
 	// Register precompile functions
 	err := precompiles.RegisterPrecompile(constants.PrecompileName, precompiles.Precompile{
+		// all the methods should be private, as the external user shouldn't be able to call directly
+		// but there's some bug preventing internal calls to private methods (or is it private for the namespace?)
+		//
+		// these actions should be readonly, not to interfere with consensus
 		Methods: []precompiles.Method{
 			{
 				Name:            "is_enabled",
@@ -146,6 +161,8 @@ func handleIsEnabled(ctx *common.EngineContext, app *common.App, inputs []any, r
 }
 
 // handleHasCachedData handles the has_cached_data precompile method
+// handleHasCachedData checks if we have cached data for a stream in the given time range
+// This is a READ-ONLY operation that queries the cache metadata
 func handleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) (err error) {
 	// Check if extension is enabled
 	if !isEnabled {
@@ -310,9 +327,10 @@ func handleGetCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 	ctx.TxContext.Ctx = traceCtx
 
 	// Get database connection
-	db, ok := app.DB.(sql.DB)
-	if !ok {
-		return fmt.Errorf("app.DB is not a sql.DB")
+	// Use our independent connection pool to avoid "tx is closed" errors
+	db := getWrappedCacheDB()
+	if db == nil {
+		return fmt.Errorf("cache database not initialized")
 	}
 
 	var result *sql.ResultSet
@@ -406,7 +424,8 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	// Store the enabled state globally
 	isEnabled = processedConfig.Enabled
 
-	// Get the database from the app
+	// Get the database from the app for initial setup operations
+	// Note: This is only used during initialization. After this, we use our independent pool
 	db, ok := app.DB.(sql.DB)
 	if !ok {
 		return fmt.Errorf("app.DB is not a sql.DB")
@@ -415,7 +434,7 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	// If disabled, ensure schema is cleaned up
 	if !processedConfig.Enabled {
 		logger.Info("extension is disabled, cleaning up any existing schema")
-		return cleanupExtensionSchema(ctx, db)
+		return cleanupExtensionSchema(ctx, cachePool)
 	}
 
 	// Wait for database to be ready before proceeding
@@ -438,6 +457,9 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 
 	// Create the CacheDB instance with our independent pool
 	cacheDB = internal.NewCacheDB(pool, logger)
+
+	// For engine calls, we'll create transactions as needed rather than
+	// trying to wrap the pool. This avoids the "cannot query with scan values" error
 
 	// Initialize extension resources using the pool for schema setup
 	err = setupCacheSchema(ctx, pool)

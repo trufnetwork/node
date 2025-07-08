@@ -104,8 +104,8 @@ run_tests() {
     print_status "Running cache metrics tests..."
     cd "$SCRIPT_DIR"
     
-    # Run the Go test
-    go test -v -run TestCacheMetrics ./... || {
+    # Run the Go tests without cache
+    go test -v -count=1 -run TestCacheMetrics ./... || {
         print_error "Tests failed"
         return 1
     }

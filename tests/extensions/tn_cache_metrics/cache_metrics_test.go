@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +26,7 @@ const (
 // TestCacheMetrics runs a comprehensive test to generate all types of cache metrics
 func TestCacheMetrics(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+
 	defer cancel()
 
 	// Parse deployer private key
@@ -33,6 +35,7 @@ func TestCacheMetrics(t *testing.T) {
 
 	// Create TN client
 	tnClient, err := tnclient.NewClient(ctx, kwildEndpoint, tnclient.WithSigner(auth.GetUserSigner(deployerWallet)))
+
 	if err != nil {
 		t.Skipf("Failed to create TN client (is the test environment running?): %v", err)
 		return
@@ -84,7 +87,6 @@ func TestCacheMetrics(t *testing.T) {
 	err = testRefreshErrors(ctx, t, tnClient)
 	require.NoError(t, err, "Failed to test refresh errors")
 
-
 	t.Log("All tests completed successfully!")
 	t.Log("Metrics should now be visible in Grafana at http://localhost:3000")
 }
@@ -135,7 +137,7 @@ func deployTestStreams(ctx context.Context, t *testing.T, tnClient *tnclient.Cli
 	if err != nil {
 		return fmt.Errorf("failed to deploy primitive streams: %w", err)
 	}
-	waitTxToBeMinedWithSuccess(t, ctx, tnClient, batchDeployTxHash)
+	waitDeployTx(t, ctx, tnClient, batchDeployTxHash)
 
 	// Load primitive actions and insert data into child streams
 	primitiveActions, err := tnClient.LoadPrimitiveActions()
@@ -172,7 +174,7 @@ func deployTestStreams(ctx context.Context, t *testing.T, tnClient *tnclient.Cli
 	if err != nil {
 		return fmt.Errorf("failed to deploy composed streams: %w", err)
 	}
-	waitTxToBeMinedWithSuccess(t, ctx, tnClient, batchDeployComposedTxHash)
+	waitDeployTx(t, ctx, tnClient, batchDeployComposedTxHash)
 
 	// Load composed actions and set taxonomies
 	composedActions, err := tnClient.LoadComposedActions()
@@ -344,11 +346,27 @@ func testRefreshErrors(ctx context.Context, t *testing.T, tnClient *tnclient.Cli
 	return nil
 }
 
-
 // waitTxToBeMinedWithSuccess waits for a transaction to be successful
 func waitTxToBeMinedWithSuccess(t *testing.T, ctx context.Context, client *tnclient.Client, txHash kwiltypes.Hash) {
 	txRes, err := client.WaitForTx(ctx, txHash, time.Second)
 	require.NoError(t, err, "Transaction failed")
+	require.Equal(t, kwiltypes.CodeOk, kwiltypes.TxCode(txRes.Result.Code), "Transaction code not OK: %s", txRes.Result.Log)
+}
+
+// waitDeployTx waits for a deployment transaction to be mined, ignoring duplicate stream errors.
+func waitDeployTx(t *testing.T, ctx context.Context, client *tnclient.Client, txHash kwiltypes.Hash) {
+	txRes, err := client.WaitForTx(ctx, txHash, time.Second)
+	require.NoError(t, err, "Transaction failed")
+
+	if kwiltypes.TxCode(txRes.Result.Code) == kwiltypes.CodeOk {
+		return
+	}
+
+	if strings.Contains(txRes.Result.Log, `duplicate key value violates unique constraint "streams_pkey"`) {
+		t.Logf("Ignoring duplicate stream error for tx %s", txHash)
+		return
+	}
+
 	require.Equal(t, kwiltypes.CodeOk, kwiltypes.TxCode(txRes.Result.Code), "Transaction code not OK: %s", txRes.Result.Log)
 }
 

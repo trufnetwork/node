@@ -47,6 +47,11 @@ type CacheDB struct {
 	pool   DBPool // Independent connection pool
 }
 
+// GetPool returns the underlying database pool
+func (c *CacheDB) GetPool() DBPool {
+	return c.pool
+}
+
 // StreamCacheConfig represents a stream's caching configuration
 type StreamCacheConfig struct {
 	DataProvider  string
