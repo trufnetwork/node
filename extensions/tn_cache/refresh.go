@@ -105,6 +105,9 @@ func (s *CacheScheduler) refreshStreamData(ctx context.Context, directive config
 	}
 
 	s.metrics.RecordRefreshComplete(ctx, directive.DataProvider, directive.StreamID, time.Since(startTime), len(events))
+	
+	// Update gauge metrics after successful refresh
+	s.updateGaugeMetrics(ctx)
 
 	return nil
 }

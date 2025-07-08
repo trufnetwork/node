@@ -26,7 +26,7 @@ type OTELMetrics struct {
 	// Resource metrics
 	streamsConfigured metric.Int64Gauge
 	streamsActive     metric.Int64Gauge
-	cacheEventCount   metric.Int64UpDownCounter
+	cacheEventCount   metric.Int64Gauge
 
 	// Resolution metrics
 	resolutionDuration metric.Float64Histogram
@@ -114,8 +114,8 @@ func NewOTELMetrics(meter metric.Meter, logger log.Logger) (*OTELMetrics, error)
 		return nil, err
 	}
 
-	m.cacheEventCount, err = meter.Int64UpDownCounter("tn_cache.events.total",
-		metric.WithDescription("Total number of cached events"),
+	m.cacheEventCount, err = meter.Int64Gauge("tn_cache.events.total",
+		metric.WithDescription("Total number of cached events per stream"),
 		metric.WithUnit("1"))
 	if err != nil {
 		return nil, err
@@ -215,7 +215,7 @@ func (m *OTELMetrics) RecordStreamActive(ctx context.Context, count int) {
 }
 
 func (m *OTELMetrics) RecordCacheSize(ctx context.Context, dataProvider, streamID string, eventCount int64) {
-	m.cacheEventCount.Add(ctx, eventCount,
+	m.cacheEventCount.Record(ctx, eventCount,
 		metric.WithAttributes(
 			attribute.String("data_provider", dataProvider),
 			attribute.String("stream_id", streamID),

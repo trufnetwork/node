@@ -518,3 +518,34 @@ func (s *CacheScheduler) registerRefreshJob(schedule string) error {
 
 	return nil
 }
+
+// updateGaugeMetrics updates the gauge metrics for active streams and total cached events
+func (s *CacheScheduler) updateGaugeMetrics(ctx context.Context) {
+	// Query active streams and event counts
+	activeStreams := 0
+	totalEvents := int64(0)
+	
+	rows, err := s.cacheDB.QueryCachedStreamsWithCounts(ctx)
+	if err != nil {
+		s.logger.Warn("failed to query cached streams for metrics", "error", err)
+		return
+	}
+	
+	// Clear previous event counts
+	// Record new counts per stream
+	for _, row := range rows {
+		if row.EventCount > 0 {
+			activeStreams++
+			totalEvents += row.EventCount
+			// Update per-stream event count
+			s.metrics.RecordCacheSize(ctx, row.DataProvider, row.StreamID, row.EventCount)
+		}
+	}
+	
+	// Update active streams gauge
+	s.metrics.RecordStreamActive(ctx, activeStreams)
+	
+	s.logger.Debug("updated gauge metrics",
+		"active_streams", activeStreams,
+		"total_events", totalEvents)
+}
