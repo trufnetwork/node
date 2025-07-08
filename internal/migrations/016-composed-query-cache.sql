@@ -1,6 +1,3 @@
--- Load the TN Cache extension
-USE ext_tn_cache AS ext_tn_cache;
-
 /*
  * Calculates the time series for a composed stream within a specified time range.
  *
@@ -73,7 +70,7 @@ RETURNS TABLE(
     -- Check if cache is enabled and frozen_at is null (frozen queries bypass cache)
     $cache_enabled BOOL := false;
     if $frozen_at IS NULL {
-        for $row in ext_tn_cache.is_enabled() {
+        for $row in tn_cache.is_enabled() {
             $cache_enabled := $row.enabled;
             break;
 }
@@ -82,7 +79,7 @@ RETURNS TABLE(
     if $cache_enabled {
         -- Check if we have cached data for this request
         $has_cache BOOL := false;
-for $row in ext_tn_cache.has_cached_data($data_provider, $stream_id, $from, $to) {
+for $row in tn_cache.has_cached_data($data_provider, $stream_id, $from, $to) {
             $has_cache := $row.has_data;
             break;
 }
@@ -90,7 +87,7 @@ for $row in ext_tn_cache.has_cached_data($data_provider, $stream_id, $from, $to)
         if $has_cache {
             -- Cache hit - return cached data
             NOTICE('Cache hit for stream ' || $data_provider || ':' || $stream_id || ' from ' || $from::TEXT || ' to ' || $to::TEXT);
-for $row in ext_tn_cache.get_cached_data($data_provider, $stream_id, $from, $to) {
+for $row in tn_cache.get_cached_data($data_provider, $stream_id, $from, $to) {
                 RETURN NEXT $row.event_time, $row.value;
 }
             return;
@@ -757,7 +754,7 @@ RETURNS TABLE(
     
     -- Check if cache conditions are met
     if $frozen_at IS NULL AND $base_time IS NULL {
-        for $row in ext_tn_cache.is_enabled() {
+        for $row in tn_cache.is_enabled() {
             $cache_enabled := $row.enabled;
             break;
         }
@@ -765,7 +762,7 @@ RETURNS TABLE(
         if $cache_enabled {
             -- Check if we have cached data for this request
             $has_cache BOOL := false;
-            for $row in ext_tn_cache.has_cached_data($data_provider, $stream_id, $from, $to) {
+            for $row in tn_cache.has_cached_data($data_provider, $stream_id, $from, $to) {
                 $has_cache := $row.has_data;
                 break;
             }
@@ -788,7 +785,7 @@ RETURNS TABLE(
         $found_base_value BOOL := false;
         
         -- Try to get base value from cached data
-        for $row in ext_tn_cache.get_cached_data($data_provider, $stream_id, $effective_base_time, $effective_base_time) {
+        for $row in tn_cache.get_cached_data($data_provider, $stream_id, $effective_base_time, $effective_base_time) {
             $base_value := $row.value;
             $found_base_value := true;
             break;
@@ -797,7 +794,7 @@ RETURNS TABLE(
         -- If no exact base value found, get data around base_time
         if !$found_base_value {
             -- Get cached data before base_time
-            for $row in ext_tn_cache.get_cached_data($data_provider, $stream_id, NULL, $effective_base_time) {
+            for $row in tn_cache.get_cached_data($data_provider, $stream_id, NULL, $effective_base_time) {
                 $base_value := $row.value;
                 $found_base_value := true;
                 -- Take the last (closest to base_time) value
@@ -806,7 +803,7 @@ RETURNS TABLE(
         
         -- If still no base value, get data after base_time
         if !$found_base_value {
-            for $row in ext_tn_cache.get_cached_data($data_provider, $stream_id, $effective_base_time, NULL) {
+            for $row in tn_cache.get_cached_data($data_provider, $stream_id, $effective_base_time, NULL) {
                 $base_value := $row.value;
                 $found_base_value := true;
                 break; -- Take the first (closest to base_time) value
@@ -820,13 +817,13 @@ RETURNS TABLE(
         
         -- Calculate index values from cached data
         if $base_value != 0::NUMERIC(36,18) {
-            for $row in ext_tn_cache.get_cached_data($data_provider, $stream_id, $from, $to) {
+            for $row in tn_cache.get_cached_data($data_provider, $stream_id, $from, $to) {
                 $index_value := ($row.value * 100::NUMERIC(36,18)) / $base_value;
                 RETURN NEXT $row.event_time, $index_value;
             }
         } else {
             -- Handle zero base value case
-            for $row in ext_tn_cache.get_cached_data($data_provider, $stream_id, $from, $to) {
+            for $row in tn_cache.get_cached_data($data_provider, $stream_id, $from, $to) {
                 RETURN NEXT $row.event_time, 0::NUMERIC(36,18);
             }
         }

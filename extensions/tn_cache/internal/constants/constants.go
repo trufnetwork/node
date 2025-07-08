@@ -10,6 +10,10 @@ const (
 	StreamIDPrefix = "st"
 	// WildcardStreamID represents a wildcard pattern for all streams
 	WildcardStreamID = "*"
+	// CacheSchemaName is the PostgreSQL schema name for cache tables. Can't be the same as the extension name, because kwil creates a namespace of that name.
+	CacheSchemaName = "ext_tn_cache"
+	// PrecompileName is the name of the precompile function
+	PrecompileName = "tn_cache"
 )
 
 // Error messages
