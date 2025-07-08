@@ -67,7 +67,19 @@ RETURNS TABLE(
         ERROR('Not allowed to compose stream');
     }
 
-        -- for historical consistency, if both from and to are omitted, return the latest record
+    -- Check if cache is enabled and frozen_at is null (frozen queries bypass cache)
+    if $frozen_at IS NULL {
+        $should_use_cache := helper_check_cache($data_provider, $stream_id, $from, $to);
+
+        if $should_use_cache {
+            for $row in tn_cache.get_cached_data($data_provider, $stream_id, $from, $to) {
+                RETURN NEXT $row.event_time, $row.value;
+            }
+            return;
+        }
+    }
+
+    -- for historical consistency, if both from and to are omitted, return the latest record
     if $from IS NULL AND $to IS NULL {
         FOR $row IN get_last_record_composed($data_provider, $stream_id, NULL, $effective_frozen_at) {
             RETURN NEXT $row.event_time, $row.value;
