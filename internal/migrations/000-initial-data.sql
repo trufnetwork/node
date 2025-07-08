@@ -5,11 +5,24 @@
     Actions should be added in separate files for better readability.
     
     Tables:
+    - data_providers: Stores data providers
     - streams: Core table storing stream metadata with immutable data provider references
     - taxonomies: Defines parent-child relationships between streams with versioning
     - primitive_events: Stores time-series data points for primitive streams
     - metadata: Flexible key-value store for stream configuration and properties
  */
+CREATE TABLE IF NOT EXISTS data_providers (
+  id UUID PRIMARY KEY,
+  address TEXT NOT NULL,
+  created_at INT8 NOT NULL,
+
+  -- Constraints
+  -- address is as close as we can get from ethereum addresses
+  CHECK (address LIKE '0x%' AND LENGTH(address) = 42)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS data_providers_address_idx ON data_providers (address);
+
 CREATE TABLE IF NOT EXISTS streams (
     stream_id TEXT NOT NULL,
     -- data_provider != stream_owner
