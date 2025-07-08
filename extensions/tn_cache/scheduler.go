@@ -129,6 +129,11 @@ func (s *CacheScheduler) removeJobContext(jobID string) {
 // getWrappedDB returns a sql.DB interface wrapping the independent connection pool
 // This is used for Engine.Call operations to avoid "tx is closed" errors
 func (s *CacheScheduler) getWrappedDB() sql.DB {
+	// Check if cacheDB is nil
+	if s.cacheDB == nil {
+		return nil
+	}
+	
 	// Get the underlying pool from CacheDB
 	if pool, ok := s.cacheDB.GetPool().(*pgxpool.Pool); ok {
 		return newPoolDBWrapper(pool)

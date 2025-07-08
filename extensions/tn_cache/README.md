@@ -140,8 +140,12 @@ CREATE TABLE IF NOT EXISTS ext_tn_cache.cached_events (
 The extension registers custom SQL functions to allow actions to use the cache:
 
 - `tn_cache.is_enabled()`: Checks if caching is enabled on this node
-- `tn_cache.has_cached_data(data_provider, stream_id, from)`: Checks if data is available in the cache
+- `tn_cache.has_cached_data(data_provider, stream_id, from, to)`: Checks if the cache can answer a query
 - `tn_cache.get_cached_data(data_provider, stream_id, from, to)`: Retrieves cached data
+- `tn_cache.get_cached_last_before(data_provider, stream_id, before)`: Gets the most recent record before a timestamp
+- `tn_cache.get_cached_first_after(data_provider, stream_id, after)`: Gets the earliest record after a timestamp
+
+All cache methods follow TRUF.NETWORK query conventions for how `from` and `to` parameters behave (including NULL handling and anchor records).
 
 ## Usage in SQL Actions
 
@@ -168,5 +172,28 @@ CREATE OR REPLACE ACTION get_record_composed(
     -- Fall back to original computation if cache not used or unavailable
     RETURN WITH RECURSIVE
     SELECT ...;
+};
+
+-- Example using last_before
+CREATE OR REPLACE ACTION get_last_value_before(
+    $data_provider TEXT,
+    $stream_id TEXT,
+    $before INT8,
+    $use_cache BOOLEAN DEFAULT false
+) PRIVATE VIEW RETURNS TABLE(event_time INT8, value NUMERIC(36,18)) {
+    if $use_cache and tn_cache.is_enabled() {
+        for $row in SELECT * FROM tn_cache.get_cached_last_before($data_provider, $stream_id, $before) {
+            return next $row.event_time, $row.value;
+        }
+        return;
+    }
+    
+    -- Fall back to querying primitive_events directly
+    SELECT event_time, value FROM primitive_events
+    WHERE data_provider = $data_provider 
+      AND stream_id = $stream_id
+      AND event_time < COALESCE($before, 9223372036854775000)
+    ORDER BY event_time DESC
+    LIMIT 1;
 };
 ``` 

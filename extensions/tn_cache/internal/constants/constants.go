@@ -22,4 +22,17 @@ const (
 	ErrMsgInvalidStreamID        = "invalid stream ID format"
 	ErrMsgInvalidCronSchedule    = "invalid cron schedule"
 	ErrMsgEmptyRequired          = "required field cannot be empty"
+	ErrMsgExtensionNotEnabled    = "tn_cache extension is not enabled"
+	ErrMsgCacheDBNotInitialized  = "cache database not initialized"
+	ErrMsgValueNotDecimal        = "value is not a decimal. received %T"
+)
+
+// SQL constants
+const (
+	// MaxInt8 is used as default for NULL upper bounds in queries
+	MaxInt8 = int64(9223372036854775000)
+	// DefaultPrecision for NUMERIC type
+	NumericPrecision = 36
+	// DefaultScale for NUMERIC type
+	NumericScale = 18
 )

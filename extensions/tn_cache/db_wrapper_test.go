@@ -44,14 +44,12 @@ func TestCacheSchedulerWrappedDB(t *testing.T) {
 		// Create a minimal scheduler for testing
 		scheduler := &CacheScheduler{
 			logger: log.DiscardLogger,
+			// cacheDB is nil, so getWrappedDB should handle gracefully
 		}
 		
-		// Even with nil cacheDB, it should return nil (no pool)
+		// With nil cacheDB, it should return nil
 		db := scheduler.getWrappedDB()
 		assert.Nil(t, db)
-		
-		// Verify it implements sql.DB
-		var _ sql.DB = db
 	})
 }
 
