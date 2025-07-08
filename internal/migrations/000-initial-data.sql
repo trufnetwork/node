@@ -5,7 +5,7 @@
     Actions should be added in separate files for better readability.
     
     Tables:
-    - data_providers: Stores whitelisted data providers
+    - data_providers: Stores data providers
     - streams: Core table storing stream metadata with immutable data provider references
     - taxonomies: Defines parent-child relationships between streams with versioning
     - primitive_events: Stores time-series data points for primitive streams
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS data_providers (
   CHECK (address LIKE '0x%' AND LENGTH(address) = 42)
 );
 
-CREATE UNIQUE INDEX data_providers_address_idx ON data_providers (address);
+CREATE UNIQUE INDEX IF NOT EXISTS data_providers_address_idx ON data_providers (address);
 
 CREATE TABLE IF NOT EXISTS streams (
     stream_id TEXT NOT NULL,
