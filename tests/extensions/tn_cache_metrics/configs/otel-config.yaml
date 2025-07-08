@@ -9,6 +9,10 @@ exporters:
     endpoint: "0.0.0.0:9464"
     resource_to_telemetry_conversion:
       enabled: true
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
   debug:
     verbosity: detailed
     sampling_initial: 5
@@ -31,8 +35,8 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [batch]
-      exporters: [debug]
+      processors: [batch, attributes]
+      exporters: [debug, otlp/jaeger]
     metrics:
       receivers: [otlp]
       processors: [batch, attributes]

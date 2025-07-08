@@ -125,6 +125,16 @@ services:
     depends_on:
       - prometheus
 
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14250:14250"  # gRPC for model.proto
+    networks:
+      - metrics-net
+
 networks:
   metrics-net:
     driver: bridge
