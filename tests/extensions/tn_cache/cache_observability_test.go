@@ -3,13 +3,11 @@ package tn_cache_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/trufnetwork/kwil-db/common"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
@@ -42,15 +40,15 @@ func TestCacheObservability(t *testing.T) {
 
 				platform = procedure.WithSigner(platform, deployerAddr.Bytes())
 
-				// Setup test data
-				err = setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+				// Setup test data - use composed stream to test cache
+				err = setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
 					Platform: platform,
 					StreamId: streamId,
 					MarkdownData: `
-					| event_time | value |
-					|------------|-------|
-					| 1          | 100   |
-					| 2          | 200   |
+					| event_time | value_1 | value_2 | value_3 |
+					|------------|---------|---------|---------|
+					| 1          | 100     | 200     | 300     |
+					| 2          | 150     | 250     | 350     |
 					`,
 					Height: 1,
 				})
@@ -61,7 +59,8 @@ func TestCacheObservability(t *testing.T) {
 				toTime := int64(2)
 				
 				// First query - should miss cache
-				result, logs := GetRecordWithLogs(ctx, platform, procedure.GetRecordInput{
+				result, err := procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
+					Platform: platform,
 					StreamLocator: types.StreamLocator{
 						StreamId:     streamId,
 						DataProvider: deployerAddr,
@@ -70,11 +69,15 @@ func TestCacheObservability(t *testing.T) {
 					ToTime:   &toTime,
 					Height:   1,
 				})
+				require.NoError(t, err)
 				require.NotNil(t, result)
+				require.NotEmpty(t, result.Rows)
 				
 				// Find cache-related log
 				var cacheLogs []string
-				for _, log := range logs {
+				t.Logf("Total logs from first query: %d", len(result.Logs))
+				for i, log := range result.Logs {
+					t.Logf("Log %d: %s", i, log)
 					if strings.Contains(log, "cache_hit") {
 						cacheLogs = append(cacheLogs, log)
 					}
@@ -90,11 +93,12 @@ func TestCacheObservability(t *testing.T) {
 				// Refresh cache for hit test
 				recordsCached, err := helper.RefreshCache(ctx, deployer, streamId.String())
 				require.NoError(t, err)
-				assert.Equal(t, 2, recordsCached)
+				assert.Equal(t, 2, recordsCached, "Should cache 2 aggregated records")
 
 				// Test 2: Verify cache hit log format
 				cacheLogs = nil // Reset logs
-				result2, logs2 := GetRecordWithLogs(ctx, platform, procedure.GetRecordInput{
+				result2, err := procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
+					Platform: platform,
 					StreamLocator: types.StreamLocator{
 						StreamId:     streamId,
 						DataProvider: deployerAddr,
@@ -103,10 +107,15 @@ func TestCacheObservability(t *testing.T) {
 					ToTime:   &toTime,
 					Height:   1,
 				})
-				require.NotNil(t, result2)
+				require.NoError(t, err, "Cache hit query should not error")
+				
+				require.NotNil(t, result2, "Second query should return results")
+				require.NotEmpty(t, result2.Rows)
 
 				// Find cache log
-				for _, log := range logs2 {
+				t.Logf("Total logs from second query: %d", len(result2.Logs))
+				for i, log := range result2.Logs {
+					t.Logf("Log %d: %s", i, log)
 					if strings.Contains(log, "cache_hit") {
 						cacheLogs = append(cacheLogs, log)
 					}
@@ -126,50 +135,6 @@ func TestCacheObservability(t *testing.T) {
 	}, testutils.GetTestOptionsWithCache(cacheConfig))
 }
 
-// GetRecordWithLogs is a helper that captures logs from the engine call
-func GetRecordWithLogs(ctx context.Context, platform *kwilTesting.Platform, input procedure.GetRecordInput) ([]procedure.ResultRow, []string) {
-	deployer, _ := util.NewEthereumAddressFromBytes(platform.Deployer)
-
-	txContext := &common.TxContext{
-		Ctx: ctx,
-		BlockContext: &common.BlockContext{
-			Height: input.Height,
-		},
-		TxID:   platform.Txid(),
-		Signer: platform.Deployer,
-		Caller: deployer.Address(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
-
-	var resultRows [][]any
-	r, _ := platform.Engine.Call(engineContext, platform.DB, "", "get_record", []any{
-		input.StreamLocator.DataProvider.Address(),
-		input.StreamLocator.StreamId.String(),
-		input.FromTime,
-		input.ToTime,
-		input.FrozenAt,
-	}, func(row *common.Row) error {
-		values := make([]any, len(row.Values))
-		copy(values, row.Values)
-		resultRows = append(resultRows, values)
-		return nil
-	})
-
-	// Process results
-	results := make([]procedure.ResultRow, len(resultRows))
-	for i, row := range resultRows {
-		resultRow := procedure.ResultRow{}
-		for _, value := range row {
-			resultRow = append(resultRow, fmt.Sprintf("%v", value))
-		}
-		results[i] = resultRow
-	}
-
-	return results, r.Logs
-}
 
 // TODO: Add TestCacheMetrics when metrics are exposed
 // This would test:
