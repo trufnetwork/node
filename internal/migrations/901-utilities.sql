@@ -114,7 +114,7 @@ CREATE OR REPLACE ACTION helper_check_cache(
             
             if $has_cache {
                 -- Cache hit - get most recent cached data
-                NOTICE('{"cache_hit": true, "cached_at": ' || $cached_at || '}');
+                NOTICE('{"cache_hit": true, "cached_at": ' || $cached_at::TEXT || '}');
                 $cache_enabled := true;
             } else {
                 -- Cache miss - log and fallback to original logic
