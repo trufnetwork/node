@@ -1,4 +1,4 @@
-package internal
+package internal_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/core/log"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	"github.com/trufnetwork/node/extensions/tn_cache/internal"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
@@ -63,7 +64,7 @@ func testExtensionAgentAccess(t *testing.T) func(ctx context.Context, platform *
 			// Stream is public by default (read_visibility = 0)
 
 			// Test that extension agent can list the stream
-			tnOps := NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
+			tnOps := internal.NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
 
 			// This should work for public streams
 			streams, err := tnOps.ListComposedStreams(ctx, deployer.Address())
@@ -85,7 +86,7 @@ func testExtensionAgentAccess(t *testing.T) func(ctx context.Context, platform *
 			require.NoError(t, err, "Extension agent should be able to get category streams")
 
 			// Filter out parent stream
-			var childStreams []CategoryStream
+			var childStreams []internal.CategoryStream
 			for _, cs := range categoryStreams {
 				if cs.StreamID != publicStreamId.String() {
 					childStreams = append(childStreams, cs)
@@ -141,7 +142,7 @@ func testExtensionAgentAccess(t *testing.T) func(ctx context.Context, platform *
 			require.NoError(t, err)
 			
 			// Try to access the private stream
-			tnOps := NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
+			tnOps := internal.NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
 			fromTime := int64(100)
 			toTime := int64(100)
 			records, err := tnOps.GetRecordComposed(ctx, deployer.Address(), privateStreamId.String(), &fromTime, &toTime)

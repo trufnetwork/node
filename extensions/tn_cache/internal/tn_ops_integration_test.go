@@ -1,4 +1,4 @@
-package internal
+package internal_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/core/log"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	"github.com/trufnetwork/node/extensions/tn_cache/internal"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
@@ -49,7 +50,7 @@ func testTNOperationsIntegration(t *testing.T) func(ctx context.Context, platfor
 
 		// Test 1: ListComposedStreams
 		t.Run("ListComposedStreams", testutils.WithTx(platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {
-			tnOps := NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
+			tnOps := internal.NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
 
 			// Create test streams with unique IDs
 			stream1ID := generateTestStreamID("test_composed_1")
@@ -102,7 +103,7 @@ func testTNOperationsIntegration(t *testing.T) func(ctx context.Context, platfor
 
 		// Test GetCategoryStreams
 		t.Run("GetCategoryStreams", testutils.WithTx(platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {
-			tnOps := NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
+			tnOps := internal.NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
 
 			// Create a composed stream with known structure
 			streamID := generateTestStreamID("test_composed_cat")
@@ -124,7 +125,7 @@ func testTNOperationsIntegration(t *testing.T) func(ctx context.Context, platfor
 			require.NoError(t, err)
 
 			// Filter out the parent stream to get only children
-			var childStreams []CategoryStream
+			var childStreams []internal.CategoryStream
 			for _, cs := range categoryStreams {
 				if cs.StreamID != streamID.String() {
 					childStreams = append(childStreams, cs)
@@ -145,7 +146,7 @@ func testTNOperationsIntegration(t *testing.T) func(ctx context.Context, platfor
 
 		// Test GetRecordComposed
 		t.Run("GetRecordComposed", testutils.WithTx(platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {
-			tnOps := NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
+			tnOps := internal.NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
 
 			// Create composed stream with test data
 			streamID := generateTestStreamID("test_composed_rec")
@@ -204,7 +205,7 @@ func testTNOperationsIntegration(t *testing.T) func(ctx context.Context, platfor
 
 		// Test with composed stream that has 3 children
 		t.Run("GetRecordComposed_ThreeChildren", testutils.WithTx(platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {
-			tnOps := NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
+			tnOps := internal.NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
 
 			// Create composed stream with 3 columns
 			streamID := generateTestStreamID("test_composed_3ch")
@@ -242,7 +243,7 @@ func testTNOperationsIntegration(t *testing.T) func(ctx context.Context, platfor
 
 		// Test error cases
 		t.Run("ErrorCases", testutils.WithTx(platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {
-			tnOps := NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
+			tnOps := internal.NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
 
 			testCases := []struct {
 				name     string
@@ -264,7 +265,7 @@ func testTNOperationsIntegration(t *testing.T) func(ctx context.Context, platfor
 						return tnOps.GetRecordComposed(ctx, deployer.Address(), "non_existent_stream", nil, nil)
 					},
 					isEmpty: func(v interface{}) bool {
-						return len(v.([]ComposedRecord)) == 0
+						return len(v.([]internal.ComposedRecord)) == 0
 					},
 				},
 				{
@@ -273,7 +274,7 @@ func testTNOperationsIntegration(t *testing.T) func(ctx context.Context, platfor
 						return tnOps.GetCategoryStreams(ctx, deployer.Address(), "invalid_stream", 0)
 					},
 					isEmpty: func(v interface{}) bool {
-						return len(v.([]CategoryStream)) == 0
+						return len(v.([]internal.CategoryStream)) == 0
 					},
 				},
 			}
@@ -289,7 +290,7 @@ func testTNOperationsIntegration(t *testing.T) func(ctx context.Context, platfor
 
 		// Test with primitive stream (should not appear in composed streams list)
 		t.Run("PrimitiveStreamExclusion", testutils.WithTx(platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {
-			tnOps := NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
+			tnOps := internal.NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
 
 			// Create a primitive stream
 			primitiveStreamId := generateTestStreamID("test_primitive")
@@ -342,7 +343,7 @@ func testTNOperationsRealTime(t *testing.T) func(ctx context.Context, platform *
 
 		// Test fetching recent data
 		t.Run("FetchRecentData", testutils.WithTx(platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {
-			tnOps := NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
+			tnOps := internal.NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
 
 			// Create stream with recent timestamps
 			currentTime := time.Now().Unix()
@@ -388,7 +389,7 @@ func testTNOperationsRealTime(t *testing.T) func(ctx context.Context, platform *
 
 		// Test with future time range (should return empty)
 		t.Run("FutureTimeRange", testutils.WithTx(platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {
-			tnOps := NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
+			tnOps := internal.NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
 
 			// Create stream with current timestamp
 			currentTime := time.Now().Unix()
