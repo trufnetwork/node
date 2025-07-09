@@ -387,6 +387,7 @@ RETURNS TABLE(
     $cache_enabled BOOL := false;
     $use_cache_for_current_value BOOL := false;
     $use_cache_for_base_value BOOL := false;
+    $base_value NUMERIC(36,18); -- Declare base_value in proper scope
     
     -- Check if cache conditions are met
     if $frozen_at IS NULL {
@@ -403,7 +404,6 @@ RETURNS TABLE(
     -- If using cache, get raw data from cache and calculate index
     if $use_cache_for_base_value {
         -- Get base value from cache (need to get data around base_time)
-        $base_value NUMERIC(36,18);
         $found_base_value BOOL := false;
         
         -- try to get the first before base_time
@@ -430,7 +430,7 @@ RETURNS TABLE(
     } else {
         -- only calculate if we really need
         if $use_cache_for_current_value {
-            $base_value := internal_get_base_value($data_provider, $stream_id, $effective_base_time);
+            $base_value := internal_get_base_value($data_provider, $stream_id, $effective_base_time, $effective_frozen_at);
         }
     }
 
@@ -440,6 +440,7 @@ RETURNS TABLE(
             $index_value := ($row.value * 100::NUMERIC(36,18)) / $base_value;
             RETURN NEXT $row.event_time, $index_value;
         }
+        return;
     }
 
     -- Original logic fallback (cache miss or cache disabled)

@@ -157,6 +157,51 @@ func testCacheBasicFunctionality(t *testing.T, cacheConfig *testutils.CacheOptio
 		require.Len(t, result.Rows, 1, "Should have one row")
 		assert.Equal(t, int64(1), result.Rows[0][0].(int64), "Should have one cached stream configuration")
 
+		// Test get_index cache functionality
+		baseTime := int64(1)
+		
+		// Query original index data from TN
+		originalIndexData, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
+			Platform: platform,
+			StreamLocator: types.StreamLocator{
+				StreamId:     composedStreamId,
+				DataProvider: deployer,
+			},
+			FromTime: &fromTime,
+			ToTime:   &toTime,
+			BaseTime: &baseTime,
+			Height:   1,
+		})
+		require.NoError(t, err)
+		require.Len(t, originalIndexData, 3, "Should have 3 original index records")
+
+		// Query cached index data - cache should be used automatically
+		cachedIndexData, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
+			Platform: platform,
+			StreamLocator: types.StreamLocator{
+				StreamId:     composedStreamId,
+				DataProvider: deployer,
+			},
+			FromTime: &fromTime,
+			ToTime:   &toTime,
+			BaseTime: &baseTime,
+			Height:   1,
+		})
+		require.NoError(t, err)
+		require.Len(t, cachedIndexData, 3, "Should have 3 cached index records")
+
+		// Verify cached index data matches original index data
+		expectedIndexValues := []string{
+			"100.000000000000000000", // (200/200)*100 = 100 (first value as base)
+			"125.000000000000000000", // (250/200)*100 = 125
+			"150.000000000000000000", // (300/200)*100 = 150
+		}
+
+		for i, cached := range cachedIndexData {
+			assert.Equal(t, originalIndexData[i][0], cached[0], "Index event time should match")
+			assert.Equal(t, expectedIndexValues[i], cached[1], "Cached index value should match expected indexed value")
+		}
+
 		return nil
 	}
 }
