@@ -636,7 +636,7 @@ CREATE OR REPLACE ACTION truflation_get_record_composed(
     $to INT8,
     $frozen_at INT8,
     $use_cache BOOL
-) PRIVATE VIEW
+)  PUBLIC VIEW
 RETURNS TABLE(
     event_time INT8,
     value NUMERIC(36,18)
