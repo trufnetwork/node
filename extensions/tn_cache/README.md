@@ -119,7 +119,7 @@ CREATE SCHEMA IF NOT EXISTS ext_tn_cache;
 CREATE TABLE IF NOT EXISTS ext_tn_cache.cached_streams (
     data_provider TEXT NOT NULL,
     stream_id TEXT NOT NULL,
-    from INT8,
+    from_timestamp INT8,
     last_refreshed INT8,
     cron_schedule TEXT,
     PRIMARY KEY (data_provider, stream_id)

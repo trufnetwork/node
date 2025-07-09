@@ -13,6 +13,14 @@ import (
 // poolDBWrapper wraps a pgxpool.Pool to implement the sql.DB interface
 // This allows us to use our independent connection pool with Engine.Call
 //
+// Why we need this wrapper:
+// Kwil-db's app.DB manages transactions internally and extensions share
+// the same transaction context. When multiple extensions or operations
+// compete for write access, the shared transaction can be closed by one
+// operation while another is still using it, causing "tx is closed" errors.
+// By creating an independent connection pool, we isolate cache operations
+// from kwil-db's transaction lifecycle.
+//
 // Note: All cache operations are READ-ONLY. We use regular transactions
 // (BeginTx) instead of read-only transactions (BeginReadTx) because:
 // 1. The cache extension only queries data, never modifies it

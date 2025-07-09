@@ -1,3 +1,8 @@
+// Package tn_cache provides the TrufNetwork cache extension.
+//
+// extension.go manages the singleton Extension instance that holds all
+// cache subsystems (DB, scheduler, metrics). This centralized state
+// allows SQL precompiles and background jobs to access cache functionality.
 package tn_cache
 
 import (
