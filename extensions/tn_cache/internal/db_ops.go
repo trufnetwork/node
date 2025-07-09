@@ -3,8 +3,8 @@
 // IMPORTANT: Table Ownership Design
 //
 // The TN Cache extension is designed to be the EXCLUSIVE manager of the tables it creates:
-// - ext_tn_cache.cached_events
-// - ext_tn_cache.cached_streams
+// - _` + CacheSchemaName + `.cached_events
+// - _` + CacheSchemaName + `.cached_streams
 //
 // No other system or extension should directly modify these tables. This design assumption
 // allows us to:
@@ -21,19 +21,35 @@ package internal
 import (
 	"context"
 	"fmt"
-	"math/big"
-	"strconv"
 	"time"
 
+	"database/sql"
+
+	"github.com/jackc/pgx/v5"
 	"github.com/trufnetwork/kwil-db/core/log"
 	"github.com/trufnetwork/kwil-db/core/types"
-	"github.com/trufnetwork/kwil-db/node/types/sql"
+	"github.com/trufnetwork/node/extensions/tn_cache/internal/constants"
+	"github.com/trufnetwork/node/extensions/tn_cache/internal/parsing"
+	"github.com/trufnetwork/node/extensions/tn_cache/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
 )
+
+// DBPool interface wraps the database pool methods we use
+type DBPool interface {
+	Begin(ctx context.Context) (pgx.Tx, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
 
 // CacheDB handles database operations for the TRUF.NETWORK cache
 type CacheDB struct {
 	logger log.Logger
-	db     sql.DB
+	pool   DBPool // Independent connection pool
+}
+
+// GetPool returns the underlying database pool
+func (c *CacheDB) GetPool() DBPool {
+	return c.pool
 }
 
 // StreamCacheConfig represents a stream's caching configuration
@@ -41,7 +57,7 @@ type StreamCacheConfig struct {
 	DataProvider  string
 	StreamID      string
 	FromTimestamp int64
-	LastRefreshed string
+	LastRefreshed int64
 	CronSchedule  string
 }
 
@@ -53,11 +69,11 @@ type CachedEvent struct {
 	Value        *types.Decimal // Use high-precision decimal for decimal(36,18) values
 }
 
-// NewCacheDB creates a new CacheDB instance
-func NewCacheDB(db sql.DB, logger log.Logger) *CacheDB {
+// NewCacheDB creates a new CacheDB instance with DBPool
+func NewCacheDB(pool DBPool, logger log.Logger) *CacheDB {
 	return &CacheDB{
 		logger: logger.New("tn_cache_db"),
-		db:     db,
+		pool:   pool,
 	}
 }
 
@@ -67,21 +83,15 @@ func (c *CacheDB) AddStreamConfig(ctx context.Context, config StreamCacheConfig)
 		"data_provider", config.DataProvider,
 		"stream_id", config.StreamID)
 
-	tx, err := c.db.BeginTx(ctx)
+	tx, err := c.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer func() {
-		if err != nil {
-			if rbErr := tx.Rollback(ctx); rbErr != nil {
-				c.logger.Error("failed to rollback transaction", "error", rbErr)
-			}
-		}
-	}()
+	defer tx.Rollback(ctx)
 
 	// Insert or update the stream config using UPSERT
-	_, err = tx.Execute(ctx, `
-		INSERT INTO ext_tn_cache.cached_streams 
+	_, err = tx.Exec(ctx, `
+		INSERT INTO `+constants.CacheSchemaName+`.cached_streams 
 			(data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule)
 		VALUES 
 			($1, $2, $3, $4, $5)
@@ -100,6 +110,8 @@ func (c *CacheDB) AddStreamConfig(ctx context.Context, config StreamCacheConfig)
 		return fmt.Errorf("commit transaction: %w", err)
 	}
 
+	c.logger.Debug("stream cache config added successfully")
+
 	return nil
 }
 
@@ -111,7 +123,7 @@ func (c *CacheDB) AddStreamConfigs(ctx context.Context, configs []StreamCacheCon
 
 	c.logger.Debug("adding multiple stream cache configs", "count", len(configs))
 
-	tx, err := c.db.BeginTx(ctx)
+	tx, err := c.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
@@ -125,8 +137,7 @@ func (c *CacheDB) AddStreamConfigs(ctx context.Context, configs []StreamCacheCon
 
 	// Build arrays for batch insert using UNNEST for efficiency
 	var dataProviders, streamIDs, cronSchedules []string
-	var fromTimestamps []int64
-	var lastRefresheds []string
+	var fromTimestamps, lastRefresheds []int64
 
 	for _, config := range configs {
 		dataProviders = append(dataProviders, config.DataProvider)
@@ -137,10 +148,10 @@ func (c *CacheDB) AddStreamConfigs(ctx context.Context, configs []StreamCacheCon
 	}
 
 	// Execute the batch insert with UPSERT logic
-	_, err = tx.Execute(ctx, `
-		INSERT INTO ext_tn_cache.cached_streams 
+	_, err = tx.Exec(ctx, `
+		INSERT INTO `+constants.CacheSchemaName+`.cached_streams 
 			(data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule)
-		SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::TEXT[], $5::TEXT[])
+		SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::INT8[], $5::TEXT[])
 		ON CONFLICT (data_provider, stream_id) 
 		DO UPDATE SET
 			from_timestamp = EXCLUDED.from_timestamp,
@@ -166,101 +177,58 @@ func (c *CacheDB) GetStreamConfig(ctx context.Context, dataProvider, streamID st
 		"data_provider", dataProvider,
 		"stream_id", streamID)
 
-	tx, err := c.db.BeginTx(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("begin transaction: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			if rbErr := tx.Rollback(ctx); rbErr != nil {
-				c.logger.Error("failed to rollback transaction", "error", rbErr)
-			}
-		}
-	}()
-
-	result, err := tx.Execute(ctx, `
-		SELECT data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule
-		FROM ext_tn_cache.cached_streams
-		WHERE data_provider = $1 AND stream_id = $2
-	`, dataProvider, streamID)
-
-	if err != nil {
-		return nil, fmt.Errorf("query stream config: %w", err)
-	}
-
-	if len(result.Rows) == 0 {
-		if err := tx.Commit(ctx); err != nil {
-			return nil, fmt.Errorf("commit transaction: %w", err)
-		}
-		return nil, sql.ErrNoRows
-	}
-
-	row := result.Rows[0]
-	config := &StreamCacheConfig{
-		DataProvider:  row[0].(string),
-		StreamID:      row[1].(string),
-		FromTimestamp: row[2].(int64),
-		LastRefreshed: row[3].(string),
-		CronSchedule:  row[4].(string),
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit transaction: %w", err)
-	}
-
-	return config, nil
+	return c.getStreamConfigPool(ctx, dataProvider, streamID)
 }
 
 // ListStreamConfigs retrieves all stream cache configurations
 func (c *CacheDB) ListStreamConfigs(ctx context.Context) ([]StreamCacheConfig, error) {
 	c.logger.Debug("listing all stream cache configs")
 
-	tx, err := c.db.BeginTx(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("begin transaction: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			if rbErr := tx.Rollback(ctx); rbErr != nil {
-				c.logger.Error("failed to rollback transaction", "error", rbErr)
-			}
-		}
-	}()
-
-	result, err := tx.Execute(ctx, `
+	rows, err := c.pool.Query(ctx, `
 		SELECT data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule
-		FROM ext_tn_cache.cached_streams
+		FROM `+constants.CacheSchemaName+`.cached_streams
 		ORDER BY data_provider, stream_id
 	`)
-
 	if err != nil {
 		return nil, fmt.Errorf("query stream configs: %w", err)
 	}
+	defer rows.Close()
 
-	configs := make([]StreamCacheConfig, 0, len(result.Rows))
-	for _, row := range result.Rows {
-		config := StreamCacheConfig{
-			DataProvider:  row[0].(string),
-			StreamID:      row[1].(string),
-			FromTimestamp: row[2].(int64),
-			LastRefreshed: row[3].(string),
-			CronSchedule:  row[4].(string),
+	var configs []StreamCacheConfig
+	for rows.Next() {
+		var config StreamCacheConfig
+		err := rows.Scan(
+			&config.DataProvider,
+			&config.StreamID,
+			&config.FromTimestamp,
+			&config.LastRefreshed,
+			&config.CronSchedule,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan stream config: %w", err)
 		}
 		configs = append(configs, config)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit transaction: %w", err)
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate stream configs: %w", err)
 	}
 
 	return configs, nil
 }
 
 // CacheEvents stores events in the cache
-func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
+func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) (err error) {
 	if len(events) == 0 {
 		return nil
 	}
+
+	// Add tracing
+	ctx, end := tracing.StreamOperation(ctx, tracing.OpDBCacheEvents, events[0].DataProvider, events[0].StreamID,
+		attribute.Int("count", len(events)))
+	defer func() {
+		end(err)
+	}()
 
 	c.logger.Debug("caching events",
 		"data_provider", events[0].DataProvider,
@@ -268,7 +236,7 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 		"count", len(events))
 
 	// Use READ COMMITTED isolation for event caching (default is fine)
-	tx, err := c.db.BeginTx(ctx)
+	tx, err := c.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
@@ -305,8 +273,8 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 		}
 
 		// Use UNNEST for efficient batch insert
-		_, err = tx.Execute(ctx, `
-			INSERT INTO ext_tn_cache.cached_events 
+		_, err = tx.Exec(ctx, `
+			INSERT INTO `+constants.CacheSchemaName+`.cached_events 
 				(data_provider, stream_id, event_time, value)
 			SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::DECIMAL(36,18)[])
 			ON CONFLICT (data_provider, stream_id, event_time) 
@@ -322,9 +290,9 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 	// Finally, update the last refreshed timestamp for the stream
 	if len(events) > 0 {
 		event := events[0]
-		now := time.Now().UTC().Format(time.RFC3339)
-		_, err = tx.Execute(ctx, `
-			UPDATE ext_tn_cache.cached_streams
+		now := time.Now().Unix()
+		_, err = tx.Exec(ctx, `
+			UPDATE `+constants.CacheSchemaName+`.cached_streams
 			SET last_refreshed = $3
 			WHERE data_provider = $1 AND stream_id = $2
 		`, event.DataProvider, event.StreamID, now)
@@ -342,38 +310,34 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 }
 
 // GetEvents retrieves events from the cache for a specific time range
-func (c *CacheDB) GetEvents(ctx context.Context, dataProvider, streamID string, fromTime, toTime int64) ([]CachedEvent, error) {
+func (c *CacheDB) GetEvents(ctx context.Context, dataProvider, streamID string, fromTime, toTime int64) (events []CachedEvent, err error) {
+	// Add tracing
+	ctx, end := tracing.StreamOperation(ctx, tracing.OpDBGetEvents, dataProvider, streamID,
+		attribute.Int64("from", fromTime),
+		attribute.Int64("to", toTime))
+	defer func() {
+		end(err)
+	}()
+
 	c.logger.Debug("getting cached events",
 		"data_provider", dataProvider,
 		"stream_id", streamID,
 		"from_time", fromTime,
 		"to_time", toTime)
 
-	tx, err := c.db.BeginTx(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("begin transaction: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			if rbErr := tx.Rollback(ctx); rbErr != nil {
-				c.logger.Error("failed to rollback transaction", "error", rbErr)
-			}
-		}
-	}()
-
-	var result *sql.ResultSet
+	var rows pgx.Rows
 	if toTime > 0 {
-		result, err = tx.Execute(ctx, `
+		rows, err = c.pool.Query(ctx, `
 			SELECT data_provider, stream_id, event_time, value
-			FROM ext_tn_cache.cached_events
+			FROM `+constants.CacheSchemaName+`.cached_events
 			WHERE data_provider = $1 AND stream_id = $2
 				AND event_time >= $3 AND event_time <= $4
 			ORDER BY event_time
 		`, dataProvider, streamID, fromTime, toTime)
 	} else {
-		result, err = tx.Execute(ctx, `
+		rows, err = c.pool.Query(ctx, `
 			SELECT data_provider, stream_id, event_time, value
-			FROM ext_tn_cache.cached_events
+			FROM `+constants.CacheSchemaName+`.cached_events
 			WHERE data_provider = $1 AND stream_id = $2
 				AND event_time >= $3
 			ORDER BY event_time
@@ -383,26 +347,30 @@ func (c *CacheDB) GetEvents(ctx context.Context, dataProvider, streamID string, 
 	if err != nil {
 		return nil, fmt.Errorf("query events: %w", err)
 	}
+	defer rows.Close()
 
-	events := make([]CachedEvent, 0, len(result.Rows))
-	for _, row := range result.Rows {
-		// Parse the value using the same logic as refresh.go
-		value, err := parseEventValueFromDB(row[3])
+	events = make([]CachedEvent, 0)
+	for rows.Next() {
+		var event CachedEvent
+		var valueRaw interface{}
+
+		err := rows.Scan(&event.DataProvider, &event.StreamID, &event.EventTime, &valueRaw)
+		if err != nil {
+			return nil, fmt.Errorf("scan event: %w", err)
+		}
+
+		// Parse the value using the shared parsing logic
+		value, err := parsing.ParseEventValue(valueRaw)
 		if err != nil {
 			return nil, fmt.Errorf("parse event value: %w", err)
 		}
+		event.Value = value
 
-		event := CachedEvent{
-			DataProvider: row[0].(string),
-			StreamID:     row[1].(string),
-			EventTime:    row[2].(int64),
-			Value:        value,
-		}
 		events = append(events, event)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit transaction: %w", err)
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate events: %w", err)
 	}
 
 	return events, nil
@@ -414,7 +382,7 @@ func (c *CacheDB) DeleteStreamData(ctx context.Context, dataProvider, streamID s
 		"data_provider", dataProvider,
 		"stream_id", streamID)
 
-	tx, err := c.db.BeginTx(ctx)
+	tx, err := c.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
@@ -427,8 +395,8 @@ func (c *CacheDB) DeleteStreamData(ctx context.Context, dataProvider, streamID s
 	}()
 
 	// Delete events for the stream
-	_, err = tx.Execute(ctx, `
-		DELETE FROM ext_tn_cache.cached_events
+	_, err = tx.Exec(ctx, `
+		DELETE FROM `+constants.CacheSchemaName+`.cached_events
 		WHERE data_provider = $1 AND stream_id = $2
 	`, dataProvider, streamID)
 
@@ -437,8 +405,8 @@ func (c *CacheDB) DeleteStreamData(ctx context.Context, dataProvider, streamID s
 	}
 
 	// Delete stream configuration
-	_, err = tx.Execute(ctx, `
-		DELETE FROM ext_tn_cache.cached_streams
+	_, err = tx.Exec(ctx, `
+		DELETE FROM `+constants.CacheSchemaName+`.cached_streams
 		WHERE data_provider = $1 AND stream_id = $2
 	`, dataProvider, streamID)
 
@@ -457,7 +425,7 @@ func (c *CacheDB) DeleteStreamData(ctx context.Context, dataProvider, streamID s
 func (c *CacheDB) CleanupCache(ctx context.Context) error {
 	c.logger.Debug("cleaning up entire cache")
 
-	tx, err := c.db.BeginTx(ctx)
+	tx, err := c.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
@@ -470,13 +438,13 @@ func (c *CacheDB) CleanupCache(ctx context.Context) error {
 	}()
 
 	// Delete all events
-	_, err = tx.Execute(ctx, `DELETE FROM ext_tn_cache.cached_events`)
+	_, err = tx.Exec(ctx, `DELETE FROM `+constants.CacheSchemaName+`.cached_events`)
 	if err != nil {
 		return fmt.Errorf("delete all events: %w", err)
 	}
 
 	// Delete all stream configurations
-	_, err = tx.Execute(ctx, `DELETE FROM ext_tn_cache.cached_streams`)
+	_, err = tx.Exec(ctx, `DELETE FROM `+constants.CacheSchemaName+`.cached_streams`)
 	if err != nil {
 		return fmt.Errorf("delete all stream configs: %w", err)
 	}
@@ -489,14 +457,22 @@ func (c *CacheDB) CleanupCache(ctx context.Context) error {
 }
 
 // HasCachedData checks if there is cached data for a stream in a time range
-func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID string, fromTime, toTime int64) (bool, error) {
+func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID string, fromTime, toTime int64) (hasData bool, err error) {
+	// Add tracing
+	ctx, end := tracing.StreamOperation(ctx, tracing.OpDBHasCachedData, dataProvider, streamID,
+		attribute.Int64("from", fromTime),
+		attribute.Int64("to", toTime))
+	defer func() {
+		end(err)
+	}()
+
 	c.logger.Debug("checking for cached data",
 		"data_provider", dataProvider,
 		"stream_id", streamID,
 		"from_time", fromTime,
 		"to_time", toTime)
 
-	tx, err := c.db.BeginTx(ctx)
+	tx, err := c.pool.Begin(ctx)
 	if err != nil {
 		return false, fmt.Errorf("begin transaction: %w", err)
 	}
@@ -509,18 +485,19 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 	}()
 
 	// First, check if the stream is configured for caching
-	streamResult, err := tx.Execute(ctx, `
+	var streamExists bool
+	err = tx.QueryRow(ctx, `
 		SELECT COUNT(*) > 0
-		FROM ext_tn_cache.cached_streams
+		FROM `+constants.CacheSchemaName+`.cached_streams
 		WHERE data_provider = $1 AND stream_id = $2
 			AND (from_timestamp IS NULL OR from_timestamp <= $3)
-	`, dataProvider, streamID, fromTime)
+	`, dataProvider, streamID, fromTime).Scan(&streamExists)
 
 	if err != nil {
 		return false, fmt.Errorf("check stream config: %w", err)
 	}
 
-	if len(streamResult.Rows) == 0 || !streamResult.Rows[0][0].(bool) {
+	if !streamExists {
 		if err := tx.Commit(ctx); err != nil {
 			return false, fmt.Errorf("commit transaction: %w", err)
 		}
@@ -528,21 +505,21 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 	}
 
 	// Then, check if there are events in the cache
-	var eventsResult *sql.ResultSet
+	var eventsExist bool
 	if toTime > 0 {
-		eventsResult, err = tx.Execute(ctx, `
+		err = tx.QueryRow(ctx, `
 			SELECT COUNT(*) > 0
-			FROM ext_tn_cache.cached_events
+			FROM `+constants.CacheSchemaName+`.cached_events
 			WHERE data_provider = $1 AND stream_id = $2
 				AND event_time >= $3 AND event_time <= $4
-		`, dataProvider, streamID, fromTime, toTime)
+		`, dataProvider, streamID, fromTime, toTime).Scan(&eventsExist)
 	} else {
-		eventsResult, err = tx.Execute(ctx, `
+		err = tx.QueryRow(ctx, `
 			SELECT COUNT(*) > 0
-			FROM ext_tn_cache.cached_events
+			FROM `+constants.CacheSchemaName+`.cached_events
 			WHERE data_provider = $1 AND stream_id = $2
 				AND event_time >= $3
-		`, dataProvider, streamID, fromTime)
+		`, dataProvider, streamID, fromTime).Scan(&eventsExist)
 	}
 
 	if err != nil {
@@ -553,53 +530,7 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 		return false, fmt.Errorf("commit transaction: %w", err)
 	}
 
-	return len(eventsResult.Rows) > 0 && eventsResult.Rows[0][0].(bool), nil
-}
-
-// parseEventValueFromDB converts database values to *types.Decimal with decimal(36,18) precision
-// This handles values that come back from the database which may be in different formats
-func parseEventValueFromDB(v interface{}) (*types.Decimal, error) {
-	switch val := v.(type) {
-	case *types.Decimal:
-		if val == nil {
-			return nil, fmt.Errorf("nil decimal value")
-		}
-		// Ensure decimal(36,18) precision
-		if err := val.SetPrecisionAndScale(36, 18); err != nil {
-			return nil, fmt.Errorf("set precision and scale: %w", err)
-		}
-		return val, nil
-	case float64:
-		// Convert float64 to decimal(36,18) - note: may lose precision if > 15 digits
-		return types.ParseDecimalExplicit(strconv.FormatFloat(val, 'f', -1, 64), 36, 18)
-	case float32:
-		return types.ParseDecimalExplicit(strconv.FormatFloat(float64(val), 'f', -1, 32), 36, 18)
-	case int64:
-		return types.ParseDecimalExplicit(strconv.FormatInt(val, 10), 36, 18)
-	case int:
-		return types.ParseDecimalExplicit(strconv.Itoa(val), 36, 18)
-	case int32:
-		return types.ParseDecimalExplicit(strconv.FormatInt(int64(val), 10), 36, 18)
-	case uint64:
-		return types.ParseDecimalExplicit(strconv.FormatUint(val, 10), 36, 18)
-	case uint32:
-		return types.ParseDecimalExplicit(strconv.FormatUint(uint64(val), 10), 36, 18)
-	case *big.Int:
-		if val == nil {
-			return nil, fmt.Errorf("nil big.Int value")
-		}
-		return types.ParseDecimalExplicit(val.String(), 36, 18)
-	case string:
-		// Parse string directly as decimal(36,18)
-		return types.ParseDecimalExplicit(val, 36, 18)
-	case []byte:
-		// Handle potential byte array from database
-		return types.ParseDecimalExplicit(string(val), 36, 18)
-	case nil:
-		return nil, fmt.Errorf("nil value")
-	default:
-		return nil, fmt.Errorf("unsupported database value type: %T", v)
-	}
+	return eventsExist, nil
 }
 
 // UpdateStreamConfigsAtomic atomically updates the cached_streams table
@@ -609,7 +540,7 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 		"new_count", len(newConfigs),
 		"delete_count", len(toDelete))
 
-	tx, err := c.db.BeginTx(ctx)
+	tx, err := c.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
@@ -630,8 +561,8 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 		}
 
 		// Batch delete using array operations
-		_, err = tx.Execute(ctx, `
-			DELETE FROM ext_tn_cache.cached_streams
+		_, err = tx.Exec(ctx, `
+			DELETE FROM `+constants.CacheSchemaName+`.cached_streams
 			WHERE (data_provider, stream_id) IN (
 				SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[])
 			)
@@ -644,8 +575,7 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 	// Then, add/update new streams using batch operation
 	if len(newConfigs) > 0 {
 		var dataProviders, streamIDs, cronSchedules []string
-		var fromTimestamps []int64
-		var lastRefresheds []string
+		var fromTimestamps, lastRefresheds []int64
 
 		for _, config := range newConfigs {
 			dataProviders = append(dataProviders, config.DataProvider)
@@ -656,14 +586,14 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 		}
 
 		// Execute the batch upsert, preserving last_refreshed if it exists
-		_, err = tx.Execute(ctx, `
-			INSERT INTO ext_tn_cache.cached_streams 
+		_, err = tx.Exec(ctx, `
+			INSERT INTO `+constants.CacheSchemaName+`.cached_streams 
 				(data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule)
-			SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::TEXT[], $5::TEXT[])
+			SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::INT8[], $5::TEXT[])
 			ON CONFLICT (data_provider, stream_id) 
 			DO UPDATE SET
 				from_timestamp = EXCLUDED.from_timestamp,
-				last_refreshed = COALESCE(NULLIF(EXCLUDED.last_refreshed, ''), cached_streams.last_refreshed),
+				last_refreshed = COALESCE(NULLIF(EXCLUDED.last_refreshed, 0), cached_streams.last_refreshed),
 				cron_schedule = EXCLUDED.cron_schedule
 		`, dataProviders, streamIDs, fromTimestamps, lastRefresheds, cronSchedules)
 
@@ -681,4 +611,74 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 		"deleted", len(toDelete))
 
 	return nil
+}
+
+// getStreamConfigPool retrieves a stream's cache configuration using pool
+func (c *CacheDB) getStreamConfigPool(ctx context.Context, dataProvider, streamID string) (*StreamCacheConfig, error) {
+	row := c.pool.QueryRow(ctx, `
+		SELECT data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule
+		FROM `+constants.CacheSchemaName+`.cached_streams
+		WHERE data_provider = $1 AND stream_id = $2
+	`, dataProvider, streamID)
+
+	var config StreamCacheConfig
+	err := row.Scan(
+		&config.DataProvider,
+		&config.StreamID,
+		&config.FromTimestamp,
+		&config.LastRefreshed,
+		&config.CronSchedule,
+	)
+
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, sql.ErrNoRows
+		}
+		return nil, fmt.Errorf("query stream config: %w", err)
+	}
+
+	return &config, nil
+}
+
+// StreamCountInfo holds stream information with event counts
+type StreamCountInfo struct {
+	DataProvider string
+	StreamID     string
+	EventCount   int64
+}
+
+// QueryCachedStreamsWithCounts returns all cached streams with their event counts
+func (c *CacheDB) QueryCachedStreamsWithCounts(ctx context.Context) ([]StreamCountInfo, error) {
+	query := `
+		SELECT cs.data_provider, cs.stream_id, COALESCE(ce.event_count, 0) as event_count
+		FROM ` + constants.CacheSchemaName + `.cached_streams cs
+		LEFT JOIN (
+			SELECT data_provider, stream_id, COUNT(*) as event_count
+			FROM ` + constants.CacheSchemaName + `.cached_events
+			GROUP BY data_provider, stream_id
+		) ce ON cs.data_provider = ce.data_provider AND cs.stream_id = ce.stream_id
+		ORDER BY cs.data_provider, cs.stream_id
+	`
+
+	rows, err := c.pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query cached streams with counts: %w", err)
+	}
+	defer rows.Close()
+
+	var results []StreamCountInfo
+	for rows.Next() {
+		var info StreamCountInfo
+		err := rows.Scan(&info.DataProvider, &info.StreamID, &info.EventCount)
+		if err != nil {
+			return nil, fmt.Errorf("scan row: %w", err)
+		}
+		results = append(results, info)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration: %w", err)
+	}
+
+	return results, nil
 }

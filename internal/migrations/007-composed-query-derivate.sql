@@ -26,6 +26,39 @@ RETURNS TABLE(
         ERROR('Not allowed to compose stream');
     }
 
+    -- Cache logic: Only use cache if frozen_at is NULL (no time-travel queries)
+    $cache_enabled BOOL := false;
+    $use_cache BOOL := false;
+    
+    -- Check if cache conditions are met
+    if $frozen_at IS NULL {
+        $use_cache := helper_check_cache($data_provider, $stream_id, NULL, $before);
+    }
+
+    -- If using cache, get the most recent cached record
+    if $use_cache {
+        -- Get cached data up to the before time and return the most recent
+        $latest_cached_time INT8;
+        $latest_cached_value NUMERIC(36,18);
+        $found_cached_data BOOL := false;
+        
+        -- Get all cached data up to $before and find the latest
+        for $row in tn_cache.get_cached_data($data_provider, $stream_id, NULL, $before) {
+            $latest_cached_time := $row.event_time;
+            $latest_cached_value := $row.value;
+            $found_cached_data := true;
+            -- The cache should return data ordered by event_time, so the last row is the most recent
+        }
+        
+        if $found_cached_data {
+            RETURN NEXT $latest_cached_time, $latest_cached_value;
+        }
+        
+        RETURN;
+    }
+
+    -- Original logic fallback (cache miss or cache disabled)
+
     $max_int8 INT8 := 9223372036854775000;    -- "Infinity" sentinel
     $effective_before INT8 := COALESCE($before, $max_int8);
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
@@ -158,6 +191,44 @@ RETURNS TABLE(
     IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, $after, NULL) {
         ERROR('Not allowed to read stream');
     }
+
+    -- Check compose permissions
+    if !is_allowed_to_compose_all($data_provider, $stream_id, $after, NULL) {
+        ERROR('Not allowed to compose stream');
+    }
+
+    -- Cache logic: Only use cache if frozen_at is NULL (no time-travel queries)
+    $cache_enabled BOOL := false;
+    $use_cache BOOL := false;
+    
+    -- Check if cache conditions are met
+    if $frozen_at IS NULL {
+        $use_cache := helper_check_cache($data_provider, $stream_id, $after, NULL);
+    }
+
+    -- If using cache, get the earliest cached record
+    if $use_cache {
+        -- Get cached data from the after time and return the earliest
+        $earliest_cached_time INT8;
+        $earliest_cached_value NUMERIC(36,18);
+        $found_cached_data BOOL := false;
+        
+        -- Get all cached data from $after and find the earliest
+        for $row in tn_cache.get_cached_data($data_provider, $stream_id, $after, NULL) {
+            $earliest_cached_time := $row.event_time;
+            $earliest_cached_value := $row.value;
+            $found_cached_data := true;
+            break; -- The cache should return data ordered by event_time, so the first row is the earliest
+        }
+        
+        if $found_cached_data {
+            RETURN NEXT $earliest_cached_time, $earliest_cached_value;
+        }
+        
+        RETURN;
+    }
+
+    -- Original logic fallback (cache miss or cache disabled)
 
     $max_int8 INT8 := 9223372036854775000;   -- "Infinity" sentinel
     $effective_after INT8 := COALESCE($after, 0);
@@ -303,13 +374,75 @@ RETURNS TABLE(
         ERROR(format('Invalid time range: from (%s) > to (%s)', $from, $to));
     }
 
-    -- Permissions check
+    -- Permissions check (must be done before cache logic)
     IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, $from, $to) {
         ERROR('Not allowed to read stream');
     }
     IF !is_allowed_to_compose_all($data_provider, $stream_id, $from, $to) {
         ERROR('Not allowed to compose stream');
     }
+
+    -- Cache logic: Only use cache if frozen_at is NULL and base_time is not provided
+    -- (cache bypass conditions)
+    $cache_enabled BOOL := false;
+    $use_cache_for_current_value BOOL := false;
+    $use_cache_for_base_value BOOL := false;
+    
+    -- Check if cache conditions are met
+    if $frozen_at IS NULL {
+        $use_cache_for_current_value := helper_check_cache($data_provider, $stream_id, $from, $to);
+
+        -- if we cant use for current, we certainly can't use for base
+        if !$use_cache_for_current_value {
+            $use_cache_for_base_value := false;
+        } else {
+            $use_cache_for_base_value := helper_check_cache($data_provider, $stream_id, $effective_base_time, $effective_base_time);
+        }
+    }
+
+    -- If using cache, get raw data from cache and calculate index
+    if $use_cache_for_base_value {
+        -- Get base value from cache (need to get data around base_time)
+        $base_value NUMERIC(36,18);
+        $found_base_value BOOL := false;
+        
+        -- try to get the first before base_time
+        for $row in tn_cache.get_cached_last_before($data_provider, $stream_id, $effective_base_time) {
+                $base_value := $row.value;
+                $found_base_value := true;
+                break; -- Take the last (closest to base_time) value
+        }
+
+        
+        -- If still no base value, get data after base_time
+        if !$found_base_value {
+            for $row in tn_cache.get_cached_first_after($data_provider, $stream_id, $effective_base_time) {
+                $base_value := $row.value;
+                $found_base_value := true;
+                break; -- Take the first (closest to base_time) value
+            }
+        }
+        
+        -- Default base value if nothing found
+        if !$found_base_value {
+            $base_value := 1::NUMERIC(36,18);
+        }
+    } else {
+        -- only calculate if we really need
+        if $use_cache_for_current_value {
+            $base_value := internal_get_base_value($data_provider, $stream_id, $effective_base_time);
+        }
+    }
+
+    if $use_cache_for_current_value {
+        -- Calculate index values from cached data
+        for $row in tn_cache.get_cached_data($data_provider, $stream_id, $from, $to) {
+            $index_value := ($row.value * 100::NUMERIC(36,18)) / $base_value;
+            RETURN NEXT $row.event_time, $index_value;
+        }
+    }
+
+    -- Original logic fallback (cache miss or cache disabled)
 
     -- If both $from and $to are NULL, we find the latest event time
     -- and set $effective_from and $effective_to to this single point.
@@ -978,7 +1111,7 @@ CREATE OR REPLACE ACTION internal_get_base_value(
     if $found_after {
         return $after_value;
     }
-    
-    -- If no value is found at all, return an error
-    ERROR('no base value found');
+
+    -- if no value is found, return 1
+    return 1::NUMERIC(36,18);
 };

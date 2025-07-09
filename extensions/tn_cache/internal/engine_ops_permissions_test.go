@@ -1,4 +1,4 @@
-package internal
+package internal_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/core/log"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	"github.com/trufnetwork/node/extensions/tn_cache/internal"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
@@ -63,10 +64,10 @@ func testExtensionAgentAccess(t *testing.T) func(ctx context.Context, platform *
 			// Stream is public by default (read_visibility = 0)
 
 			// Test that extension agent can list the stream
-			tnOps := NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
+			engineOps := internal.NewEngineOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
 
 			// This should work for public streams
-			streams, err := tnOps.ListComposedStreams(ctx, deployer.Address())
+			streams, err := engineOps.ListComposedStreams(ctx, deployer.Address())
 			require.NoError(t, err, "Extension agent should be able to list streams")
 
 			// Verify our public stream is in the list
@@ -81,11 +82,11 @@ func testExtensionAgentAccess(t *testing.T) func(ctx context.Context, platform *
 
 			// Test that extension agent can get category streams
 			// Note: Private visibility affects reading data, not listing components/taxonomy
-			categoryStreams, err := tnOps.GetCategoryStreams(ctx, deployer.Address(), publicStreamId.String(), 0)
+			categoryStreams, err := engineOps.GetCategoryStreams(ctx, deployer.Address(), publicStreamId.String(), 0)
 			require.NoError(t, err, "Extension agent should be able to get category streams")
 
 			// Filter out parent stream
-			var childStreams []CategoryStream
+			var childStreams []internal.CategoryStream
 			for _, cs := range categoryStreams {
 				if cs.StreamID != publicStreamId.String() {
 					childStreams = append(childStreams, cs)
@@ -96,7 +97,7 @@ func testExtensionAgentAccess(t *testing.T) func(ctx context.Context, platform *
 			// Test that extension agent can get records
 			fromTime := int64(100)
 			toTime := int64(200)
-			records, err := tnOps.GetRecordComposed(ctx, deployer.Address(), publicStreamId.String(), &fromTime, &toTime)
+			records, err := engineOps.GetRecordComposed(ctx, deployer.Address(), publicStreamId.String(), &fromTime, &toTime)
 			require.NoError(t, err, "Extension agent should be able to get records")
 			
 			// Debug: Check what we got
@@ -141,10 +142,10 @@ func testExtensionAgentAccess(t *testing.T) func(ctx context.Context, platform *
 			require.NoError(t, err)
 			
 			// Try to access the private stream
-			tnOps := NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
+			engineOps := internal.NewEngineOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
 			fromTime := int64(100)
 			toTime := int64(100)
-			records, err := tnOps.GetRecordComposed(ctx, deployer.Address(), privateStreamId.String(), &fromTime, &toTime)
+			records, err := engineOps.GetRecordComposed(ctx, deployer.Address(), privateStreamId.String(), &fromTime, &toTime)
 			
 			// Extension agent can access private streams due to SQL authorization check
 			require.NoError(t, err, "Extension agent should be able to access private streams")

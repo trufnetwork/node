@@ -19,7 +19,7 @@
 //   - Network timeouts
 //   - Temporary connection issues
 //   - Resource temporarily unavailable
-//     These errors are retried with exponential backoff and circuit breaker protection.
+//     These errors are retried with exponential backoff.
 //
 // 3. Not-Found Errors (Graceful Degradation):
 //   - Stream not found

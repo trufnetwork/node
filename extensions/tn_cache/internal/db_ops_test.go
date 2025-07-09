@@ -2,112 +2,51 @@ package internal
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/pashagolub/pgxmock/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/core/log"
 	"github.com/trufnetwork/kwil-db/core/types"
-	"github.com/trufnetwork/kwil-db/node/types/sql"
 )
 
-// mockDB implements sql.DB interface for testing
-type mockDB struct {
-	executeFn func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error)
-	beginTxFn func(ctx context.Context) (sql.Tx, error)
-}
-
-func (m *mockDB) Execute(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-	return m.executeFn(ctx, stmt, args...)
-}
-
-func (m *mockDB) BeginTx(ctx context.Context) (sql.Tx, error) {
-	return m.beginTxFn(ctx)
-}
-
-// mockTx implements sql.Tx interface for testing
-type mockTx struct {
-	executeFn   func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error)
-	beginTxFn   func(ctx context.Context) (sql.Tx, error)
-	rollbackFn  func(ctx context.Context) error
-	commitFn    func(ctx context.Context) error
-	statements  []string
-	commitCalls int
-}
-
-func (m *mockTx) Execute(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-	m.statements = append(m.statements, stmt)
-	return m.executeFn(ctx, stmt, args...)
-}
-
-func (m *mockTx) BeginTx(ctx context.Context) (sql.Tx, error) {
-	return m.beginTxFn(ctx)
-}
-
-func (m *mockTx) Rollback(ctx context.Context) error {
-	return m.rollbackFn(ctx)
-}
-
-func (m *mockTx) Commit(ctx context.Context) error {
-	m.commitCalls++
-	return m.commitFn(ctx)
-}
-
-// createTestLogger creates a logger suitable for testing
-func createTestLogger(t *testing.T) log.Logger {
-	return log.New(log.WithWriter(io.Discard))
-}
-
 func TestCacheDB_AddStreamConfig(t *testing.T) {
-	// Setup mock transaction
-	mockTx := &mockTx{
-		executeFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-			return &sql.ResultSet{
-				Status: sql.CommandTag{RowsAffected: 1},
-			}, nil
-		},
-		commitFn: func(ctx context.Context) error {
-			return nil
-		},
-		rollbackFn: func(ctx context.Context) error {
-			return nil
-		},
-		beginTxFn: func(ctx context.Context) (sql.Tx, error) {
-			return nil, fmt.Errorf("should not be called")
-		},
-	}
+	// Create mock pool
+	mockPool, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	defer mockPool.Close()
 
-	// Setup mock DB
-	mockDb := &mockDB{
-		beginTxFn: func(ctx context.Context) (sql.Tx, error) {
-			return mockTx, nil
-		},
-		executeFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-			return nil, fmt.Errorf("should not be called")
-		},
-	}
+	// Set up expectations
+	mockPool.ExpectBegin()
+	mockPool.ExpectExec(`INSERT INTO ext_tn_cache\.cached_streams`).
+		WithArgs("test_provider", "test_stream", int64(1234567890), pgxmock.AnyArg(), "0 */5 * * * *").
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mockPool.ExpectCommit()
 
-	// Create CacheDB with mock DB
-	logger := createTestLogger(t)
-	cacheDB := NewCacheDB(mockDb, logger)
+	// Create CacheDB with mock pool
+	logger := log.New(log.WithWriter(io.Discard))
+	cacheDB := NewCacheDB(mockPool, logger)
 
 	// Test AddStreamConfig
 	config := StreamCacheConfig{
 		DataProvider:  "test_provider",
 		StreamID:      "test_stream",
 		FromTimestamp: 1234567890,
-		LastRefreshed: time.Now().UTC().Format(time.RFC3339),
-		CronSchedule:  "*/5 * * * *",
+		LastRefreshed: time.Now().Unix(),
+		CronSchedule:  "0 */5 * * * *",
 	}
 
-	err := cacheDB.AddStreamConfig(context.Background(), config)
+	err = cacheDB.AddStreamConfig(context.Background(), config)
 	require.NoError(t, err)
-	assert.Equal(t, 1, mockTx.commitCalls)
-	assert.Contains(t, mockTx.statements[0], "INSERT INTO ext_tn_cache.cached_streams")
+
+	// Verify all expectations were met
+	err = mockPool.ExpectationsWereMet()
+	require.NoError(t, err)
 }
 
 func TestCacheDB_GetStreamConfig(t *testing.T) {
@@ -115,46 +54,25 @@ func TestCacheDB_GetStreamConfig(t *testing.T) {
 	testDataProvider := "test_provider"
 	testStreamID := "test_stream"
 	testFromTimestamp := int64(1234567890)
-	testLastRefreshed := time.Now().UTC().Format(time.RFC3339)
-	testCronSchedule := "*/5 * * * *"
+	testLastRefreshed := time.Now().Unix()
+	testCronSchedule := "0 */5 * * * *"
 
-	// Setup mock transaction
-	mockTx := &mockTx{
-		executeFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-			if len(args) >= 2 && args[0] == testDataProvider && args[1] == testStreamID {
-				return &sql.ResultSet{
-					Columns: []string{"data_provider", "stream_id", "from_timestamp", "last_refreshed", "cron_schedule"},
-					Rows: [][]any{
-						{testDataProvider, testStreamID, testFromTimestamp, testLastRefreshed, testCronSchedule},
-					},
-				}, nil
-			}
-			return &sql.ResultSet{Rows: [][]any{}}, nil
-		},
-		commitFn: func(ctx context.Context) error {
-			return nil
-		},
-		rollbackFn: func(ctx context.Context) error {
-			return nil
-		},
-		beginTxFn: func(ctx context.Context) (sql.Tx, error) {
-			return nil, fmt.Errorf("should not be called")
-		},
-	}
+	// Create mock pool
+	mockPool, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	defer mockPool.Close()
 
-	// Setup mock DB
-	mockDb := &mockDB{
-		beginTxFn: func(ctx context.Context) (sql.Tx, error) {
-			return mockTx, nil
-		},
-		executeFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-			return nil, fmt.Errorf("should not be called")
-		},
-	}
+	// Set up expectations for QueryRow
+	rows := pgxmock.NewRows([]string{"data_provider", "stream_id", "from_timestamp", "last_refreshed", "cron_schedule"}).
+		AddRow(testDataProvider, testStreamID, testFromTimestamp, testLastRefreshed, testCronSchedule)
+	
+	mockPool.ExpectQuery(`SELECT data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule`).
+		WithArgs(testDataProvider, testStreamID).
+		WillReturnRows(rows)
 
-	// Create CacheDB with mock DB
-	logger := createTestLogger(t)
-	cacheDB := NewCacheDB(mockDb, logger)
+	// Create CacheDB with mock pool
+	logger := log.New(log.WithWriter(io.Discard))
+	cacheDB := NewCacheDB(mockPool, logger)
 
 	// Test GetStreamConfig
 	config, err := cacheDB.GetStreamConfig(context.Background(), testDataProvider, testStreamID)
@@ -165,43 +83,45 @@ func TestCacheDB_GetStreamConfig(t *testing.T) {
 	assert.Equal(t, testFromTimestamp, config.FromTimestamp)
 	assert.Equal(t, testLastRefreshed, config.LastRefreshed)
 	assert.Equal(t, testCronSchedule, config.CronSchedule)
-	assert.Equal(t, 1, mockTx.commitCalls)
+
+	// Verify all expectations were met
+	err = mockPool.ExpectationsWereMet()
+	require.NoError(t, err)
+}
+
+func TestCacheDB_GetStreamConfig_NotFound(t *testing.T) {
+	// Create mock pool
+	mockPool, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	defer mockPool.Close()
+
+	// Set up expectations for QueryRow with no results
+	mockPool.ExpectQuery(`SELECT data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule`).
+		WithArgs("unknown_provider", "unknown_stream").
+		WillReturnError(sql.ErrNoRows)
+
+	// Create CacheDB with mock pool
+	logger := log.New(log.WithWriter(io.Discard))
+	cacheDB := NewCacheDB(mockPool, logger)
+
+	// Test GetStreamConfig with non-existent stream
+	config, err := cacheDB.GetStreamConfig(context.Background(), "unknown_provider", "unknown_stream")
+	assert.Error(t, err)
+	assert.Nil(t, config)
+	assert.Contains(t, err.Error(), "sql: no rows in result set")
+
+	// Verify all expectations were met
+	err = mockPool.ExpectationsWereMet()
+	require.NoError(t, err)
 }
 
 func TestCacheDB_CacheEvents(t *testing.T) {
-	// Setup mock transaction
-	mockTx := &mockTx{
-		executeFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-			return &sql.ResultSet{
-				Status: sql.CommandTag{RowsAffected: 1},
-			}, nil
-		},
-		commitFn: func(ctx context.Context) error {
-			return nil
-		},
-		rollbackFn: func(ctx context.Context) error {
-			return nil
-		},
-		beginTxFn: func(ctx context.Context) (sql.Tx, error) {
-			return nil, fmt.Errorf("should not be called")
-		},
-	}
+	// Create mock pool
+	mockPool, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	defer mockPool.Close()
 
-	// Setup mock DB
-	mockDb := &mockDB{
-		beginTxFn: func(ctx context.Context) (sql.Tx, error) {
-			return mockTx, nil
-		},
-		executeFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-			return nil, fmt.Errorf("should not be called")
-		},
-	}
-
-	// Create CacheDB with mock DB
-	logger := createTestLogger(t)
-	cacheDB := NewCacheDB(mockDb, logger)
-
-	// Test CacheEvents
+	// Test data
 	testValue1, _ := types.ParseDecimalExplicit("123.456", 36, 18)
 	testValue2, _ := types.ParseDecimalExplicit("456.789", 36, 18)
 	events := []CachedEvent{
@@ -219,230 +139,268 @@ func TestCacheDB_CacheEvents(t *testing.T) {
 		},
 	}
 
-	err := cacheDB.CacheEvents(context.Background(), events)
+	// Set up expectations
+	mockPool.ExpectBegin()
+	mockPool.ExpectExec(`INSERT INTO ext_tn_cache\.cached_events`).
+		WithArgs(
+			[]string{"test_provider", "test_provider"},
+			[]string{"test_stream", "test_stream"},
+			[]int64{1234567890, 1234567891},
+			[]*types.Decimal{testValue1, testValue2},
+		).
+		WillReturnResult(pgxmock.NewResult("INSERT", 2))
+	mockPool.ExpectExec(`UPDATE ext_tn_cache\.cached_streams`).
+		WithArgs("test_provider", "test_stream", pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	mockPool.ExpectCommit()
+
+	// Create CacheDB with mock pool
+	logger := log.New(log.WithWriter(io.Discard))
+	cacheDB := NewCacheDB(mockPool, logger)
+
+	// Test CacheEvents
+	err = cacheDB.CacheEvents(context.Background(), events)
 	require.NoError(t, err)
-	assert.Equal(t, 1, mockTx.commitCalls)
-	assert.Len(t, mockTx.statements, 2) // Insert events + update last_refreshed
+
+	// Verify all expectations were met
+	err = mockPool.ExpectationsWereMet()
+	require.NoError(t, err)
 }
 
 func TestCacheDB_GetEvents(t *testing.T) {
 	// Define test data
 	testDataProvider := "test_provider"
 	testStreamID := "test_stream"
-	testEventTime1 := int64(1234567890)
-	testEventTime2 := int64(1234567891)
 	testValue1, _ := types.ParseDecimalExplicit("123.456", 36, 18)
 	testValue2, _ := types.ParseDecimalExplicit("456.789", 36, 18)
 
-	// Setup mock transaction
-	mockTx := &mockTx{
-		executeFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-			if len(args) >= 2 && args[0] == testDataProvider && args[1] == testStreamID {
-				return &sql.ResultSet{
-					Columns: []string{"data_provider", "stream_id", "event_time", "value"},
-					Rows: [][]any{
-						{testDataProvider, testStreamID, testEventTime1, testValue1},
-						{testDataProvider, testStreamID, testEventTime2, testValue2},
-					},
-				}, nil
-			}
-			return &sql.ResultSet{Rows: [][]any{}}, nil
-		},
-		commitFn: func(ctx context.Context) error {
-			return nil
-		},
-		rollbackFn: func(ctx context.Context) error {
-			return nil
-		},
-		beginTxFn: func(ctx context.Context) (sql.Tx, error) {
-			return nil, fmt.Errorf("should not be called")
-		},
-	}
+	// Create mock pool
+	mockPool, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	defer mockPool.Close()
 
-	// Setup mock DB
-	mockDb := &mockDB{
-		beginTxFn: func(ctx context.Context) (sql.Tx, error) {
-			return mockTx, nil
-		},
-		executeFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-			return nil, fmt.Errorf("should not be called")
-		},
-	}
+	// Set up expectations
+	rows := pgxmock.NewRows([]string{"data_provider", "stream_id", "event_time", "value"}).
+		AddRow(testDataProvider, testStreamID, int64(1234567890), testValue1).
+		AddRow(testDataProvider, testStreamID, int64(1234567891), testValue2)
 
-	// Create CacheDB with mock DB
-	logger := createTestLogger(t)
-	cacheDB := NewCacheDB(mockDb, logger)
+	mockPool.ExpectQuery(`SELECT data_provider, stream_id, event_time, value`).
+		WithArgs(testDataProvider, testStreamID, int64(1234567890), int64(1234567900)).
+		WillReturnRows(rows)
+
+	// Create CacheDB with mock pool
+	logger := log.New(log.WithWriter(io.Discard))
+	cacheDB := NewCacheDB(mockPool, logger)
 
 	// Test GetEvents
-	events, err := cacheDB.GetEvents(context.Background(), testDataProvider, testStreamID, 0, 0)
+	events, err := cacheDB.GetEvents(context.Background(), testDataProvider, testStreamID, 1234567890, 1234567900)
 	require.NoError(t, err)
 	require.Len(t, events, 2)
+
 	assert.Equal(t, testDataProvider, events[0].DataProvider)
 	assert.Equal(t, testStreamID, events[0].StreamID)
-	assert.Equal(t, testEventTime1, events[0].EventTime)
-	assert.Equal(t, testValue1, events[0].Value)
-	assert.Equal(t, testEventTime2, events[1].EventTime)
-	assert.Equal(t, testValue2, events[1].Value)
-	assert.Equal(t, 1, mockTx.commitCalls)
+	assert.Equal(t, int64(1234567890), events[0].EventTime)
+	assert.Equal(t, testValue1.String(), events[0].Value.String())
+
+	assert.Equal(t, testDataProvider, events[1].DataProvider)
+	assert.Equal(t, testStreamID, events[1].StreamID)
+	assert.Equal(t, int64(1234567891), events[1].EventTime)
+	assert.Equal(t, testValue2.String(), events[1].Value.String())
+
+	// Verify all expectations were met
+	err = mockPool.ExpectationsWereMet()
+	require.NoError(t, err)
+}
+
+func TestCacheDB_ListStreamConfigs(t *testing.T) {
+	// Create mock pool
+	mockPool, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	defer mockPool.Close()
+
+	// Set up expectations
+	rows := pgxmock.NewRows([]string{"data_provider", "stream_id", "from_timestamp", "last_refreshed", "cron_schedule"}).
+		AddRow("provider1", "stream1", int64(1234567890), int64(1672531200), "0 0 * * * *").
+		AddRow("provider2", "stream2", int64(1234567891), int64(1672617600), "0 */5 * * * *")
+
+	mockPool.ExpectQuery(`SELECT data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule`).
+		WillReturnRows(rows)
+
+	// Create CacheDB with mock pool
+	logger := log.New(log.WithWriter(io.Discard))
+	cacheDB := NewCacheDB(mockPool, logger)
+
+	// Test ListStreamConfigs
+	configs, err := cacheDB.ListStreamConfigs(context.Background())
+	require.NoError(t, err)
+	require.Len(t, configs, 2)
+
+	assert.Equal(t, "provider1", configs[0].DataProvider)
+	assert.Equal(t, "stream1", configs[0].StreamID)
+	assert.Equal(t, int64(1234567890), configs[0].FromTimestamp)
+
+	assert.Equal(t, "provider2", configs[1].DataProvider)
+	assert.Equal(t, "stream2", configs[1].StreamID)
+	assert.Equal(t, int64(1234567891), configs[1].FromTimestamp)
+
+	// Verify all expectations were met
+	err = mockPool.ExpectationsWereMet()
+	require.NoError(t, err)
 }
 
 func TestCacheDB_HasCachedData(t *testing.T) {
-	// Define test data
-	testDataProvider := "test_provider"
-	testStreamID := "test_stream"
-	fromTime := int64(1234567890)
+	// Create mock pool
+	mockPool, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	defer mockPool.Close()
 
-	tests := []struct {
-		name            string
-		hasStreamConfig bool
-		hasEvents       bool
-		expectedResult  bool
-	}{
-		{
-			name:            "has stream config and events",
-			hasStreamConfig: true,
-			hasEvents:       true,
-			expectedResult:  true,
-		},
-		{
-			name:            "has stream config but no events",
-			hasStreamConfig: true,
-			hasEvents:       false,
-			expectedResult:  false,
-		},
-		{
-			name:            "no stream config",
-			hasStreamConfig: false,
-			hasEvents:       false,
-			expectedResult:  false,
-		},
-	}
+	// Set up expectations
+	mockPool.ExpectBegin()
+	
+	// First query checks if stream is configured
+	mockPool.ExpectQuery(`SELECT COUNT\(\*\) > 0`).
+		WithArgs("test_provider", "test_stream", int64(1234567890)).
+		WillReturnRows(pgxmock.NewRows([]string{"exists"}).AddRow(true))
+	
+	// Second query checks if events exist
+	mockPool.ExpectQuery(`SELECT COUNT\(\*\) > 0`).
+		WithArgs("test_provider", "test_stream", int64(1234567890), int64(1234567900)).
+		WillReturnRows(pgxmock.NewRows([]string{"exists"}).AddRow(true))
+	
+	mockPool.ExpectCommit()
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			// Setup mock transaction
-			streamConfigIdx := 0
-			eventsIdx := 0
-			mockTx := &mockTx{
-				executeFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-					if streamConfigIdx == 0 {
-						streamConfigIdx++
-						return &sql.ResultSet{
-							Rows: [][]any{
-								{tc.hasStreamConfig},
-							},
-						}, nil
-					}
-					if eventsIdx == 0 && tc.hasStreamConfig {
-						eventsIdx++
-						return &sql.ResultSet{
-							Rows: [][]any{
-								{tc.hasEvents},
-							},
-						}, nil
-					}
-					return &sql.ResultSet{Rows: [][]any{}}, nil
-				},
-				commitFn: func(ctx context.Context) error {
-					return nil
-				},
-				rollbackFn: func(ctx context.Context) error {
-					return nil
-				},
-				beginTxFn: func(ctx context.Context) (sql.Tx, error) {
-					return nil, fmt.Errorf("should not be called")
-				},
-			}
+	// Create CacheDB with mock pool
+	logger := log.New(log.WithWriter(io.Discard))
+	cacheDB := NewCacheDB(mockPool, logger)
 
-			// Setup mock DB
-			mockDb := &mockDB{
-				beginTxFn: func(ctx context.Context) (sql.Tx, error) {
-					return mockTx, nil
-				},
-				executeFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-					return nil, fmt.Errorf("should not be called")
-				},
-			}
+	// Test HasCachedData
+	hasData, err := cacheDB.HasCachedData(context.Background(), "test_provider", "test_stream", 1234567890, 1234567900)
+	require.NoError(t, err)
+	assert.True(t, hasData)
 
-			// Create CacheDB with mock DB
-			logger := createTestLogger(t)
-			cacheDB := NewCacheDB(mockDb, logger)
-
-			// Test HasCachedData
-			result, err := cacheDB.HasCachedData(context.Background(), testDataProvider, testStreamID, fromTime, 0)
-			require.NoError(t, err)
-			assert.Equal(t, tc.expectedResult, result)
-			assert.Equal(t, 1, mockTx.commitCalls)
-		})
-	}
+	// Verify all expectations were met
+	err = mockPool.ExpectationsWereMet()
+	require.NoError(t, err)
 }
 
-func TestCacheDB_ErrorHandling(t *testing.T) {
-	// Test transaction begin error
-	t.Run("transaction begin error", func(t *testing.T) {
-		mockDb := &mockDB{
-			beginTxFn: func(ctx context.Context) (sql.Tx, error) {
-				return nil, fmt.Errorf("transaction error")
-			},
-		}
+func TestCacheDB_DeleteStreamData(t *testing.T) {
+	// Create mock pool
+	mockPool, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	defer mockPool.Close()
 
-		logger := createTestLogger(t)
-		cacheDB := NewCacheDB(mockDb, logger)
+	// Set up expectations
+	mockPool.ExpectBegin()
+	mockPool.ExpectExec(`DELETE FROM ext_tn_cache\.cached_events`).
+		WithArgs("test_provider", "test_stream").
+		WillReturnResult(pgxmock.NewResult("DELETE", 10))
+	mockPool.ExpectExec(`DELETE FROM ext_tn_cache\.cached_streams`).
+		WithArgs("test_provider", "test_stream").
+		WillReturnResult(pgxmock.NewResult("DELETE", 1))
+	mockPool.ExpectCommit()
 
-		_, err := cacheDB.GetStreamConfig(context.Background(), "provider", "stream")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "begin transaction")
-	})
+	// Create CacheDB with mock pool
+	logger := log.New(log.WithWriter(io.Discard))
+	cacheDB := NewCacheDB(mockPool, logger)
 
-	// Test transaction execute error
-	t.Run("execute error", func(t *testing.T) {
-		mockTx := &mockTx{
-			executeFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-				return nil, fmt.Errorf("execute error")
-			},
-			rollbackFn: func(ctx context.Context) error {
-				return nil
-			},
-		}
+	// Test DeleteStreamData
+	err = cacheDB.DeleteStreamData(context.Background(), "test_provider", "test_stream")
+	require.NoError(t, err)
 
-		mockDb := &mockDB{
-			beginTxFn: func(ctx context.Context) (sql.Tx, error) {
-				return mockTx, nil
-			},
-		}
+	// Verify all expectations were met
+	err = mockPool.ExpectationsWereMet()
+	require.NoError(t, err)
+}
 
-		logger := createTestLogger(t)
-		cacheDB := NewCacheDB(mockDb, logger)
+func TestCacheDB_UpdateStreamConfigsAtomic(t *testing.T) {
+	// Create mock pool
+	mockPool, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	defer mockPool.Close()
 
-		_, err := cacheDB.GetStreamConfig(context.Background(), "provider", "stream")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "query stream config")
-	})
+	newConfigs := []StreamCacheConfig{
+		{
+			DataProvider:  "provider1",
+			StreamID:      "stream1",
+			FromTimestamp: 1234567890,
+			LastRefreshed: 1672531200, // 2023-01-01T00:00:00Z
+			CronSchedule:  "0 0 * * * *",
+		},
+	}
 
-	// Test fatal DB error
-	t.Run("fatal DB error", func(t *testing.T) {
-		mockTx := &mockTx{
-			executeFn: func(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
-				pgErr := &pgconn.PgError{
-					Code: "XX000", // Internal error
-				}
-				return nil, pgErr
-			},
-			rollbackFn: func(ctx context.Context) error {
-				return nil
-			},
-		}
+	toDelete := []StreamCacheConfig{
+		{
+			DataProvider: "provider2",
+			StreamID:     "stream2",
+		},
+	}
 
-		mockDb := &mockDB{
-			beginTxFn: func(ctx context.Context) (sql.Tx, error) {
-				return mockTx, nil
-			},
-		}
+	// Set up expectations
+	mockPool.ExpectBegin()
+	
+	// Delete query
+	mockPool.ExpectExec(`DELETE FROM ext_tn_cache\.cached_streams`).
+		WithArgs([]string{"provider2"}, []string{"stream2"}).
+		WillReturnResult(pgxmock.NewResult("DELETE", 1))
+	
+	// Insert/Update query
+	mockPool.ExpectExec(`INSERT INTO ext_tn_cache\.cached_streams`).
+		WithArgs(
+			[]string{"provider1"},
+			[]string{"stream1"},
+			[]int64{1234567890},
+			[]int64{1672531200},
+			[]string{"0 0 * * * *"},
+		).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	
+	mockPool.ExpectCommit()
 
-		logger := createTestLogger(t)
-		cacheDB := NewCacheDB(mockDb, logger)
+	// Create CacheDB with mock pool
+	logger := log.New(log.WithWriter(io.Discard))
+	cacheDB := NewCacheDB(mockPool, logger)
 
-		_, err := cacheDB.GetStreamConfig(context.Background(), "provider", "stream")
-		require.Error(t, err)
-	})
+	// Test UpdateStreamConfigsAtomic
+	err = cacheDB.UpdateStreamConfigsAtomic(context.Background(), newConfigs, toDelete)
+	require.NoError(t, err)
+
+	// Verify all expectations were met
+	err = mockPool.ExpectationsWereMet()
+	require.NoError(t, err)
+}
+
+// TestCacheDB_TransactionRollback tests that transactions are properly rolled back on error
+func TestCacheDB_TransactionRollback(t *testing.T) {
+	// Create mock pool
+	mockPool, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	defer mockPool.Close()
+
+	// Set up expectations
+	mockPool.ExpectBegin()
+	mockPool.ExpectExec(`INSERT INTO ext_tn_cache\.cached_streams`).
+		WithArgs("test_provider", "test_stream", int64(1234567890), pgxmock.AnyArg(), "0 */5 * * * *").
+		WillReturnError(fmt.Errorf("constraint violation"))
+	mockPool.ExpectRollback()
+
+	// Create CacheDB with mock pool
+	logger := log.New(log.WithWriter(io.Discard))
+	cacheDB := NewCacheDB(mockPool, logger)
+
+	// Test AddStreamConfig with error
+	config := StreamCacheConfig{
+		DataProvider:  "test_provider",
+		StreamID:      "test_stream",
+		FromTimestamp: 1234567890,
+		LastRefreshed: time.Now().Unix(),
+		CronSchedule:  "0 */5 * * * *",
+	}
+
+	err = cacheDB.AddStreamConfig(context.Background(), config)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "constraint violation")
+
+	// Verify all expectations were met
+	err = mockPool.ExpectationsWereMet()
+	require.NoError(t, err)
 }

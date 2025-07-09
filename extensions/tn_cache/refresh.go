@@ -5,17 +5,18 @@ package tn_cache
 import (
 	"context"
 	"fmt"
-	"math/big"
-	"strconv"
 	"time"
 
 	"github.com/avast/retry-go/v4"
 	"github.com/trufnetwork/kwil-db/common"
-	"github.com/trufnetwork/kwil-db/core/types"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal/errors"
+	"github.com/trufnetwork/node/extensions/tn_cache/internal/parsing"
+	"github.com/trufnetwork/node/extensions/tn_cache/internal/tracing"
+	"github.com/trufnetwork/node/extensions/tn_cache/metrics"
 )
 
 // refreshStreamDataWithRetry refreshes stream data with exponential backoff retry logic using retry-go
@@ -51,112 +52,46 @@ func (s *CacheScheduler) refreshStreamDataWithRetry(ctx context.Context, directi
 	)
 }
 
-// parseEventTime converts various types to int64 timestamp
-func parseEventTime(v interface{}) (int64, error) {
-	switch val := v.(type) {
-	case int64:
-		return val, nil
-	case int:
-		return int64(val), nil
-	case int32:
-		return int64(val), nil
-	case uint64:
-		return int64(val), nil
-	case uint32:
-		return int64(val), nil
-	case string:
-		if parsed, err := strconv.ParseInt(val, 10, 64); err == nil {
-			return parsed, nil
-		}
-		return 0, fmt.Errorf("invalid timestamp string: %v", val)
-	default:
-		return 0, fmt.Errorf("unsupported timestamp type: %T", v)
-	}
-}
-
-// parseEventValue converts various types to *types.Decimal with decimal(36,18) precision
-func parseEventValue(v interface{}) (*types.Decimal, error) {
-	switch val := v.(type) {
-	case *types.Decimal:
-		if val == nil {
-			return nil, fmt.Errorf("nil decimal value")
-		}
-		// Ensure decimal(36,18) precision
-		if err := val.SetPrecisionAndScale(36, 18); err != nil {
-			return nil, fmt.Errorf("set precision and scale: %w", err)
-		}
-		return val, nil
-	case float64:
-		// Convert float64 to decimal(36,18) - note: may lose precision if > 15 digits
-		return types.ParseDecimalExplicit(strconv.FormatFloat(val, 'f', -1, 64), 36, 18)
-	case float32:
-		return types.ParseDecimalExplicit(strconv.FormatFloat(float64(val), 'f', -1, 32), 36, 18)
-	case int64:
-		return types.ParseDecimalExplicit(strconv.FormatInt(val, 10), 36, 18)
-	case int:
-		return types.ParseDecimalExplicit(strconv.Itoa(val), 36, 18)
-	case int32:
-		return types.ParseDecimalExplicit(strconv.FormatInt(int64(val), 10), 36, 18)
-	case uint64:
-		return types.ParseDecimalExplicit(strconv.FormatUint(val, 10), 36, 18)
-	case uint32:
-		return types.ParseDecimalExplicit(strconv.FormatUint(uint64(val), 10), 36, 18)
-	case *big.Int:
-		if val == nil {
-			return nil, fmt.Errorf("nil big.Int value")
-		}
-		return types.ParseDecimalExplicit(val.String(), 36, 18)
-	case string:
-		// Parse string directly as decimal(36,18)
-		return types.ParseDecimalExplicit(val, 36, 18)
-	case nil:
-		return nil, fmt.Errorf("nil value")
-	default:
-		return nil, fmt.Errorf("unsupported value type: %T", v)
-	}
-}
-
 // refreshStreamData refreshes the cached data for a single cache directive
-func (s *CacheScheduler) refreshStreamData(ctx context.Context, directive config.CacheDirective) error {
+func (s *CacheScheduler) refreshStreamData(ctx context.Context, directive config.CacheDirective) (err error) {
+	// Add tracing
+	ctx, end := tracing.StreamOperation(ctx, tracing.OpRefreshStream, directive.DataProvider, directive.StreamID,
+		attribute.String("type", string(directive.Type)))
+	defer func() {
+		end(err)
+	}()
+
+	// Start timing the refresh operation
+	startTime := time.Now()
+
 	s.logger.Debug("refreshing stream",
 		"provider", directive.DataProvider,
 		"stream", directive.StreamID,
 		"type", directive.Type)
 
-	// First, get stream config to check last refresh time for incremental updates
-	streamConfig, err := s.cacheDB.GetStreamConfig(ctx, directive.DataProvider, directive.StreamID)
-	if err != nil {
-		return fmt.Errorf("get stream config: %w", err)
-	}
+	// Record refresh start
+	s.metrics.RecordRefreshStart(ctx, directive.DataProvider, directive.StreamID)
 
-	// Calculate time range for incremental refresh
+	// Always fetch from configured start time - data is mutable
 	fromTime := directive.TimeRange.From
-	if streamConfig != nil && streamConfig.LastRefreshed != "" {
-		// Parse last refresh time for incremental update
-		lastRefresh, err := time.Parse(time.RFC3339, streamConfig.LastRefreshed)
-		if err == nil {
-			// Use last refresh time as starting point for incremental refresh
-			fromUnix := lastRefresh.Unix()
-			fromTime = &fromUnix
-		}
-	}
 
-	// Then, fetch data for the specific stream
-	// Note: At this point, all directives should be DirectiveSpecific because wildcards
-	// are resolved to concrete specifications at scheduler startup. We no longer need to handle wildcards here.
+	// Wildcards already resolved at startup - this should never happen
 	if directive.Type != config.DirectiveSpecific {
+		s.metrics.RecordRefreshError(ctx, directive.DataProvider, directive.StreamID, "invalid_directive")
 		return fmt.Errorf("unexpected directive type in refresh: %s (should be specific after resolution)", directive.Type)
 	}
 
 	events, err := s.fetchSpecificStream(ctx, directive, fromTime)
 
 	if err != nil {
+		s.metrics.RecordRefreshError(ctx, directive.DataProvider, directive.StreamID, metrics.ClassifyError(err))
 		return fmt.Errorf("fetch stream data: %w", err)
 	}
 
-	// Finally, store events with automatic duplicate detection
+	// Database handles duplicates via primary key constraint
 	if len(events) > 0 {
 		if err := s.cacheDB.CacheEvents(ctx, events); err != nil {
+			s.metrics.RecordRefreshError(ctx, directive.DataProvider, directive.StreamID, "storage_error")
 			return fmt.Errorf("cache events: %w", err)
 		}
 		s.logger.Info("cached events",
@@ -169,14 +104,24 @@ func (s *CacheScheduler) refreshStreamData(ctx context.Context, directive config
 			"stream", directive.StreamID)
 	}
 
+	s.metrics.RecordRefreshComplete(ctx, directive.DataProvider, directive.StreamID, time.Since(startTime), len(events))
+
+	// Update gauge metrics after successful refresh
+	s.updateGaugeMetrics(ctx)
+
 	return nil
 }
 
-// fetchSpecificStream fetches data for a specific stream
+// fetchSpecificStream calls get_record_composed action with proper authorization
 func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, directive config.CacheDirective, fromTime *int64) ([]internal.CachedEvent, error) {
-	// Determine the action to call based on stream type
 	// For now, we'll use get_record_composed as the primary action
 	action := "get_record_composed"
+
+	// if from is nil, we should set to 0, meaning it's all available
+	if fromTime == nil {
+		fromTime = new(int64)
+		*fromTime = 0
+	}
 
 	// Build arguments for the action call
 	args := []any{
@@ -189,24 +134,37 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, directive conf
 
 	var events []internal.CachedEvent
 
-	// Execute the action to fetch stream data
-	result, err := s.app.Engine.CallWithoutEngineCtx(
-		ctx,
-		s.app.DB,
-		s.namespace, // configurable database namespace
+	// Create a proper engine context with extension agent as the caller
+	// This provides @caller = "extension_agent" which has special permissions
+	engineCtx := s.createExtensionEngineContext(ctx)
+
+	s.logger.Debug("calling engine action",
+		"action", action,
+		"provider", directive.DataProvider,
+		"stream", directive.StreamID,
+		"namespace", s.namespace,
+		"caller", internal.ExtensionAgentName)
+
+	// Execute the action with proper engine context
+	// This provides @caller for authorization checks in get_record_composed
+	// Use the wrapped independent connection pool instead of app.DB to avoid "tx is closed" errors
+	result, err := s.app.Engine.Call(
+		engineCtx,
+		s.getWrappedDB(), // Use wrapped independent connection pool
+		s.namespace,      // configurable database namespace
 		action,
 		args,
 		func(row *common.Row) error {
 			// Parse each row into a CachedEvent
 			if len(row.Values) >= 2 {
 				// Parse event time using utility function
-				eventTime, err := parseEventTime(row.Values[0])
+				eventTime, err := parsing.ParseEventTime(row.Values[0])
 				if err != nil {
 					return fmt.Errorf("parse event_time: %w", err)
 				}
 
 				// Then parse the value using utility function
-				value, err := parseEventValue(row.Values[1])
+				value, err := parsing.ParseEventValue(row.Values[1])
 				if err != nil {
 					return fmt.Errorf("parse value: %w", err)
 				}
@@ -233,6 +191,7 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, directive conf
 				"error", err)
 			return []internal.CachedEvent{}, nil // Return empty events, not an error
 		}
+
 		return nil, fmt.Errorf("call action %s: %w", action, err)
 	}
 

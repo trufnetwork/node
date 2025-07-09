@@ -11,6 +11,7 @@ import (
 	"github.com/trufnetwork/kwil-db/core/log"
 	"github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
+	"github.com/trufnetwork/node/extensions/tn_cache/internal/parsing"
 )
 
 // mockEngine implements common.Engine interface for testing
@@ -83,9 +84,9 @@ func assertEngineCall(t *testing.T, expectedAction string, expectedProvider stri
 	}
 }
 
-// createTestTNOps creates a TNOperations instance with a discard logger
-func createTestTNOps(engine common.Engine) *TNOperations {
-	return NewTNOperations(engine, nil, "main", log.New(log.WithWriter(io.Discard)))
+// createTestEngineOps creates an EngineOperations instance with a discard logger
+func createTestEngineOps(engine common.Engine) *EngineOperations {
+	return NewEngineOperations(engine, nil, "main", log.New(log.WithWriter(io.Discard)))
 }
 
 type mockEngine struct {
@@ -111,7 +112,7 @@ func (m *mockEngine) ExecuteWithoutEngineCtx(ctx context.Context, db sql.DB, stm
 	return nil
 }
 
-func TestTNOperations_ListComposedStreams(t *testing.T) {
+func TestEngineOperations_ListComposedStreams(t *testing.T) {
 	tests := []struct {
 		name          string
 		provider      string
@@ -179,8 +180,8 @@ func TestTNOperations_ListComposedStreams(t *testing.T) {
 			}
 
 			// Execute test
-			tnOps := createTestTNOps(engine)
-			streams, err := tnOps.ListComposedStreams(context.Background(), tt.provider)
+			engineOps := createTestEngineOps(engine)
+			streams, err := engineOps.ListComposedStreams(context.Background(), tt.provider)
 
 			// Assertions
 			require.NoError(t, err)
@@ -190,7 +191,7 @@ func TestTNOperations_ListComposedStreams(t *testing.T) {
 	}
 }
 
-func TestTNOperations_GetCategoryStreams(t *testing.T) {
+func TestEngineOperations_GetCategoryStreams(t *testing.T) {
 	tests := []struct {
 		name          string
 		provider      string
@@ -248,8 +249,8 @@ func TestTNOperations_GetCategoryStreams(t *testing.T) {
 			}
 
 			// Execute test
-			tnOps := createTestTNOps(engine)
-			children, err := tnOps.GetCategoryStreams(context.Background(), tt.provider, tt.streamID, tt.activeFrom)
+			engineOps := createTestEngineOps(engine)
+			children, err := engineOps.GetCategoryStreams(context.Background(), tt.provider, tt.streamID, tt.activeFrom)
 
 			// Assertions
 			require.NoError(t, err)
@@ -266,7 +267,7 @@ func TestTNOperations_GetCategoryStreams(t *testing.T) {
 	}
 }
 
-func TestTNOperations_GetRecordComposed(t *testing.T) {
+func TestEngineOperations_GetRecordComposed(t *testing.T) {
 	// Common test time values
 	fromTime := int64(1000)
 	toTime := int64(2000)
@@ -347,8 +348,8 @@ func TestTNOperations_GetRecordComposed(t *testing.T) {
 			}
 
 			// Execute test
-			tnOps := createTestTNOps(engine)
-			records, err := tnOps.GetRecordComposed(context.Background(), tt.provider, tt.streamID, tt.from, tt.to)
+			engineOps := createTestEngineOps(engine)
+			records, err := engineOps.GetRecordComposed(context.Background(), tt.provider, tt.streamID, tt.from, tt.to)
 
 			// Assertions
 			if tt.expectError {
@@ -397,7 +398,7 @@ func TestParseEventTime(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := parseEventTime(tt.input)
+			result, err := parsing.ParseEventTime(tt.input)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -423,20 +424,22 @@ func TestParseEventValue(t *testing.T) {
 		{"negative string", "-123.456", false, "-123.456"},
 		{"large number", "999999999999999999.999999999999999999", false, "999999999999999999.999999999999999999"},
 
+		// Now supported types (previously errors)
+		{"float64 now supported", float64(123.456), false, "123.456000000000000000"},
+		{"int64 now supported", int64(123), false, "123.000000000000000000"},
+		{"int now supported", int(123), false, "123.000000000000000000"},
+
 		// Error cases
 		{"nil", nil, true, ""},
 		{"empty string", "", true, ""},
 		{"invalid string", "not-a-number", true, ""},
-		{"float64 not supported", float64(123.456), true, ""},
-		{"int64 not supported", int64(123), true, ""},
-		{"int not supported", int(123), true, ""},
 		{"unsupported type array", []int{1, 2, 3}, true, ""},
 		{"unsupported type map", map[string]int{"a": 1}, true, ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := parseEventValue(tt.input)
+			result, err := parsing.ParseEventValue(tt.input)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -505,7 +508,7 @@ func TestParseEventValue_Decimal(t *testing.T) {
 			dec, err := tc.setupFunc()
 			require.NoError(t, err, "Setup should not fail")
 
-			result, err := parseEventValue(dec)
+			result, err := parsing.ParseEventValue(dec)
 
 			if tc.wantErr {
 				assert.Error(t, err)
