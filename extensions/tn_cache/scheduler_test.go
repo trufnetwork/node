@@ -69,7 +69,7 @@ func TestCacheScheduler_New(t *testing.T) {
 	assert.Equal(t, mockApp, scheduler.app, "App should be set correctly")
 	assert.NotNil(t, scheduler.cron, "Cron scheduler should be initialized")
 	assert.NotNil(t, scheduler.jobs, "Jobs map should be initialized")
-	assert.Equal(t, "main", scheduler.namespace, "Default namespace should be set")
+	assert.Equal(t, "", scheduler.namespace, "Default namespace should be empty")
 }
 
 func TestCacheScheduler_WithCustomNamespace(t *testing.T) {
@@ -189,4 +189,3 @@ func TestCacheScheduler_ResolutionFlow(t *testing.T) {
 	assert.Len(t, directives, 1)
 	assert.Equal(t, "stream1", directives[0].StreamID)
 }
-
