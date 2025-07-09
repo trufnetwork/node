@@ -10,8 +10,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/robfig/cron/v3"
 	"github.com/trufnetwork/kwil-db/common"
-	"github.com/trufnetwork/kwil-db/node/types/sql"
 	"github.com/trufnetwork/kwil-db/core/log"
+	"github.com/trufnetwork/kwil-db/node/types/sql"
 	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/errgroup"
 
@@ -36,7 +36,7 @@ type CacheScheduler struct {
 	mu        sync.RWMutex
 	ctx       context.Context
 	cancel    context.CancelFunc
-	namespace string                  // database namespace to query (default: "main")
+	namespace string // database namespace to query (default: "main")
 	metrics   metrics.MetricsRecorder
 
 	// Resolution state - wildcards expand to concrete streams dynamically
@@ -48,11 +48,10 @@ type CacheScheduler struct {
 	jobContexts   map[string]context.CancelFunc // Active job cancellation registry
 	jobContextsMu sync.RWMutex
 	jobTimeout    time.Duration // Safety limit per job (default: 60m)
-	
+
 	// Sync-aware caching
 	syncChecker *SyncChecker // Monitors node sync status
 }
-
 
 // NewCacheScheduler creates a scheduler with default "main" namespace
 func NewCacheScheduler(app *common.App, cacheDB *internal.CacheDB, logger log.Logger, metricsRecorder metrics.MetricsRecorder) *CacheScheduler {
@@ -71,7 +70,7 @@ func (s *CacheScheduler) canRefresh(provider, streamID string) bool {
 	if s.syncChecker == nil {
 		return true
 	}
-	
+
 	canExecute, reason := s.syncChecker.CanExecute()
 	if !canExecute {
 		s.logger.Debug("skipping refresh due to sync status",
@@ -84,8 +83,11 @@ func (s *CacheScheduler) canRefresh(provider, streamID string) bool {
 
 // NewCacheSchedulerWithNamespace allows targeting specific database namespaces
 func NewCacheSchedulerWithNamespace(app *common.App, cacheDB *internal.CacheDB, logger log.Logger, namespace string, metricsRecorder metrics.MetricsRecorder) *CacheScheduler {
+	// Keep namespace as-is, including empty string for global namespace
 	if namespace == "" {
-		namespace = "main" // Default namespace
+		logger.New("scheduler").Debug("using global namespace (empty string)")
+	} else {
+		logger.New("scheduler").Debug("using namespace", "namespace", namespace)
 	}
 
 	return &CacheScheduler{
@@ -129,18 +131,20 @@ func (s *CacheScheduler) removeJobContext(jobID string) {
 // getWrappedDB returns a sql.DB interface wrapping the independent connection pool
 // This is used for Engine.Call operations to avoid "tx is closed" errors
 func (s *CacheScheduler) getWrappedDB() sql.DB {
+	// Check for test injection first
+	if db := getTestDB(); db != nil {
+		return db
+	}
 	// Check if cacheDB is nil
 	if s.cacheDB == nil {
 		return nil
 	}
-	
+
 	// Get the underlying pool from CacheDB
 	if pool, ok := s.cacheDB.GetPool().(*pgxpool.Pool); ok {
 		return newPoolDBWrapper(pool)
 	}
-	// Fallback to app.DB if pool is not available (shouldn't happen)
-	s.logger.Warn("failed to get independent pool, falling back to app.DB")
-	return s.app.DB
+	panic("cacheDB is nil")
 }
 
 // cancelAllJobContexts triggers graceful shutdown of running jobs
@@ -165,17 +169,13 @@ func (s *CacheScheduler) getActiveJobCount() int {
 
 // shouldSkipInitialRefresh checks if we should skip refresh on startup based on last refresh time
 // Returns true if the stream was already refreshed within the current cron period
-func (s *CacheScheduler) shouldSkipInitialRefresh(lastRefreshed string, cronSchedule string) bool {
-	if lastRefreshed == "" {
+func (s *CacheScheduler) shouldSkipInitialRefresh(lastRefreshed int64, cronSchedule string) bool {
+	if lastRefreshed == 0 {
 		// Never refreshed before, don't skip
 		return false
 	}
 
-	lastTime, err := time.Parse(time.RFC3339, lastRefreshed)
-	if err != nil {
-		s.logger.Warn("invalid last refresh time", "time", lastRefreshed, "error", err)
-		return false
-	}
+	lastTime := time.Unix(lastRefreshed, 0)
 
 	// Parse cron expression using the same parser as the scheduler
 	parser := cron.NewParser(cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
@@ -186,10 +186,10 @@ func (s *CacheScheduler) shouldSkipInitialRefresh(lastRefreshed string, cronSche
 	}
 
 	now := time.Now()
-	
+
 	// Calculate when the next refresh would be based on the cron schedule
 	nextScheduled := schedule.Next(lastTime)
-	
+
 	// If the next scheduled time is still in the future (or equal), we're within the current period
 	if !nextScheduled.Before(now) {
 		s.logger.Debug("skipping initial refresh - already refreshed in current period",
@@ -209,11 +209,15 @@ func (s *CacheScheduler) createExtensionEngineContext(ctx context.Context) *comm
 	blockCtx := &common.BlockContext{
 		Height:    1, // Use 1 for background operations
 		Timestamp: time.Now().Unix(),
-		ChainContext: &common.ChainContext{
+	}
+
+	// Add chain context if available (may be nil in test environments)
+	if s.app.Service != nil && s.app.Service.GenesisConfig != nil {
+		blockCtx.ChainContext = &common.ChainContext{
 			ChainID:           s.app.Service.GenesisConfig.ChainID,
 			NetworkParameters: &common.NetworkParameters{},
 			MigrationParams:   &common.MigrationContext{},
-		},
+		}
 	}
 
 	// Create engine context with extension agent as the caller
@@ -334,7 +338,7 @@ func (s *CacheScheduler) storeStreamConfigs(ctx context.Context, directives []co
 			DataProvider:  directive.DataProvider,
 			StreamID:      directive.StreamID,
 			FromTimestamp: fromTimestamp,
-			LastRefreshed: "", // Will be set on first refresh
+			LastRefreshed: 0, // Will be set on first refresh
 			CronSchedule:  directive.Schedule.CronExpr,
 		}
 		configs = append(configs, streamConfig)
@@ -399,7 +403,7 @@ func (s *CacheScheduler) runInitialRefresh(directives []config.CacheDirective) {
 	// Filter directives to only those that need refresh
 	var needsRefresh []config.CacheDirective
 	var skipped int
-	
+
 	for _, directive := range directives {
 		key := fmt.Sprintf("%s:%s", directive.DataProvider, directive.StreamID)
 		if config, exists := configMap[key]; exists {
@@ -439,8 +443,16 @@ func (s *CacheScheduler) runInitialRefresh(directives []config.CacheDirective) {
 
 			// Check sync status
 			if !s.canRefresh(dir.DataProvider, dir.StreamID) {
+				s.logger.Warn("skipping refresh - sync check failed",
+					"provider", dir.DataProvider,
+					"stream", dir.StreamID)
 				return nil
 			}
+
+			s.logger.Info("starting refresh for stream",
+				"provider", dir.DataProvider,
+				"stream", dir.StreamID,
+				"job_id", jobID)
 
 			if err := s.refreshStreamDataWithRetry(ctx, dir, 3); err != nil {
 				// Log error but don't fail the entire group
@@ -449,6 +461,10 @@ func (s *CacheScheduler) runInitialRefresh(directives []config.CacheDirective) {
 					"stream", dir.StreamID,
 					"job_id", jobID,
 					"error", err)
+			} else {
+				s.logger.Info("stream refresh finished",
+					"provider", dir.DataProvider,
+					"stream", dir.StreamID)
 			}
 			return nil // Return nil to continue with other streams
 		})
@@ -579,13 +595,13 @@ func (s *CacheScheduler) updateGaugeMetrics(ctx context.Context) {
 	// Query active streams and event counts
 	activeStreams := 0
 	totalEvents := int64(0)
-	
+
 	rows, err := s.cacheDB.QueryCachedStreamsWithCounts(ctx)
 	if err != nil {
 		s.logger.Warn("failed to query cached streams for metrics", "error", err)
 		return
 	}
-	
+
 	// Clear previous event counts
 	// Record new counts per stream
 	for _, row := range rows {
@@ -596,10 +612,10 @@ func (s *CacheScheduler) updateGaugeMetrics(ctx context.Context) {
 			s.metrics.RecordCacheSize(ctx, row.DataProvider, row.StreamID, row.EventCount)
 		}
 	}
-	
+
 	// Update active streams gauge
 	s.metrics.RecordStreamActive(ctx, activeStreams)
-	
+
 	s.logger.Debug("updated gauge metrics",
 		"active_streams", activeStreams,
 		"total_events", totalEvents)

@@ -14,6 +14,7 @@ import (
 	"github.com/trufnetwork/kwil-db/node/types/sql"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	kwilconfig "github.com/trufnetwork/kwil-db/config"
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal/constants"
@@ -56,6 +57,10 @@ var (
 // getWrappedCacheDB returns a sql.DB interface wrapping the independent connection pool
 // This is used instead of app.DB to avoid "tx is closed" errors
 func getWrappedCacheDB() sql.DB {
+	// Check for test injection first
+	if db := getTestDB(); db != nil {
+		return db
+	}
 	if cachePool != nil {
 		return newPoolDBWrapper(cachePool)
 	}
@@ -64,15 +69,39 @@ func getWrappedCacheDB() sql.DB {
 	return nil
 }
 
+// getExtensionNames returns the names of configured extensions for debugging
+func getExtensionNames(extensions map[string]map[string]string) []string {
+	var names []string
+	for name := range extensions {
+		names = append(names, name)
+	}
+	return names
+}
+
 // ParseConfig parses the extension configuration from the node's config file
 func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
-	logger = service.Logger.New("tn_cache")
+	if logger == nil {
+		logger = service.Logger.New("tn_cache")
+	}
 
-	// Get extension configuration from the node config
-	extConfig, ok := service.LocalConfig.Extensions[ExtensionName]
+	// Check for test configuration override first
+	var extConfig map[string]string
+	var ok bool
+
+	if testConfig := getTestConfig(); testConfig != nil {
+		extConfig = testConfig
+		ok = true
+		logger.Debug("using test configuration override")
+	} else {
+		// Get extension configuration from the node config
+		extConfig, ok = service.LocalConfig.Extensions[ExtensionName]
+	}
+
 	if !ok {
 		// Extension is not configured, return default disabled config
-		logger.Debug("extension not configured, disabling")
+		logger.Debug("extension not configured, disabling",
+			"extension_name", ExtensionName,
+			"available_extensions", getExtensionNames(service.LocalConfig.Extensions))
 		return &config.ProcessedConfig{
 			Enabled:    false,
 			Directives: []config.CacheDirective{},
@@ -97,8 +126,38 @@ func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
 }
 
 func init() {
-	// Register precompile functions
-	err := precompiles.RegisterPrecompile(constants.PrecompileName, precompiles.Precompile{
+	// Register precompile using initializer to receive metadata from test framework
+	err := precompiles.RegisterInitializer(constants.PrecompileName, initializeExtension)
+	if err != nil {
+		panic(fmt.Sprintf("failed to register ext_tn_cache initializer: %v", err))
+	}
+
+	// Register engine ready hook
+	err = hooks.RegisterEngineReadyHook(ExtensionName+"_engine_ready", engineReadyHook)
+	if err != nil {
+		panic(fmt.Sprintf("failed to register engine ready hook: %v", err))
+	}
+
+	// Register end block hook
+	err = hooks.RegisterEndBlockHook(ExtensionName+"_end_block", endBlockHook)
+	if err != nil {
+		panic(fmt.Sprintf("failed to register end block hook: %v", err))
+	}
+}
+
+// initializeExtension is called by the framework with metadata during initialization
+func initializeExtension(ctx context.Context, service *common.Service, db sql.DB, alias string, metadata map[string]any) (precompiles.Precompile, error) {
+	// Initialize logger if not already done
+	if logger == nil {
+		logger = service.Logger.New("tn_cache")
+	}
+
+	// Note: We intentionally ignore metadata here because tn_cache is a node-level
+	// extension, not a per-instance precompile. Configuration should come from
+	// service.LocalConfig.Extensions in the engineReadyHook.
+
+	// Return the precompile definition
+	return precompiles.Precompile{
 		// all the methods should be private, as the external user shouldn't be able to call directly
 		// but there's some bug preventing internal calls to private methods (or is it private for the namespace?)
 		//
@@ -129,6 +188,7 @@ func init() {
 					IsTable: false,
 					Fields: []precompiles.PrecompileValue{
 						precompiles.NewPrecompileValue("has_data", types.BoolType, false),
+						precompiles.NewPrecompileValue("cached_at", types.IntType, false),
 					},
 				},
 				Handler: handleHasCachedData,
@@ -188,22 +248,7 @@ func init() {
 				Handler: handleGetCachedFirstAfter,
 			},
 		},
-	})
-	if err != nil {
-		panic(fmt.Sprintf("failed to register ext_tn_cache precompile: %v", err))
-	}
-
-	// Register engine ready hook
-	err = hooks.RegisterEngineReadyHook(ExtensionName+"_engine_ready", engineReadyHook)
-	if err != nil {
-		panic(fmt.Sprintf("failed to register engine ready hook: %v", err))
-	}
-
-	// Register end block hook
-	err = hooks.RegisterEndBlockHook(ExtensionName+"_end_block", endBlockHook)
-	if err != nil {
-		panic(fmt.Sprintf("failed to register end block hook: %v", err))
-	}
+	}, nil
 }
 
 // Common validation and helper functions
@@ -316,10 +361,13 @@ func handleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 
 	// Check if stream is configured and has been refreshed
 	var configuredFromTime *int64
-	var lastRefreshed *string
+	var lastRefreshed *int64
+	var lastRefreshedTimestamp int64
 
 	result, err := db.Execute(ctx.TxContext.Ctx, `
-		SELECT from_timestamp, last_refreshed
+		SELECT 
+			from_timestamp, 
+			COALESCE(last_refreshed, 0) as last_refreshed
 		FROM `+constants.CacheSchemaName+`.cached_streams
 		WHERE data_provider = $1 AND stream_id = $2
 	`, dataProvider, streamID)
@@ -329,7 +377,7 @@ func handleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 
 	if len(result.Rows) == 0 {
 		// Stream not configured for caching
-		return resultFn([]any{false})
+		return resultFn([]any{false, int64(0)})
 	}
 
 	row := result.Rows[0]
@@ -338,13 +386,15 @@ func handleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 		configuredFromTime = &t
 	}
 	if row[1] != nil {
-		s := row[1].(string)
-		lastRefreshed = &s
+		lastRefreshedTimestamp = row[1].(int64)
+		if lastRefreshedTimestamp > 0 {
+			lastRefreshed = &lastRefreshedTimestamp
+		}
 	}
 
 	// If stream hasn't been refreshed yet, no cached data
-	if lastRefreshed == nil {
-		return resultFn([]any{false})
+	if lastRefreshedTimestamp == 0 {
+		return resultFn([]any{false, int64(0)})
 	}
 
 	// Special case: if both from and to are NULL, user wants latest value only
@@ -363,7 +413,7 @@ func handleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 		if len(result.Rows) > 0 && result.Rows[0][0] != nil {
 			hasData = result.Rows[0][0].(bool)
 		}
-		return resultFn([]any{hasData})
+		return resultFn([]any{hasData, lastRefreshedTimestamp})
 	}
 
 	// If from is NULL but to is not, treat from as 0 (beginning of time)
@@ -376,7 +426,7 @@ func handleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 	// Only check if we have a configured from_time and the request specifies a from_time
 	if configuredFromTime != nil && effectiveFrom < *configuredFromTime {
 		// Requested time is before what we have cached
-		return resultFn([]any{false})
+		return resultFn([]any{false, int64(0)})
 	}
 
 	// At this point, we know the stream is configured and has been refreshed
@@ -410,17 +460,16 @@ func handleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 		metricsRecorder.RecordCacheHit(ctx.TxContext.Ctx, dataProvider, streamID)
 
 		// Calculate and record data age since we already have lastRefreshed
-		if lastRefreshed != nil {
-			if refreshTime, err := time.Parse(time.RFC3339, *lastRefreshed); err == nil {
-				dataAge := time.Since(refreshTime).Seconds()
-				metricsRecorder.RecordCacheDataAge(ctx.TxContext.Ctx, dataProvider, streamID, dataAge)
-			}
+		if lastRefreshed != nil && *lastRefreshed > 0 {
+			refreshTime := time.Unix(*lastRefreshed, 0)
+			dataAge := time.Since(refreshTime).Seconds()
+			metricsRecorder.RecordCacheDataAge(ctx.TxContext.Ctx, dataProvider, streamID, dataAge)
 		}
 	} else {
 		metricsRecorder.RecordCacheMiss(ctx.TxContext.Ctx, dataProvider, streamID)
 	}
 
-	return resultFn([]any{hasData})
+	return resultFn([]any{hasData, lastRefreshedTimestamp})
 }
 
 // handleGetCachedData handles the get_cached_data precompile method
@@ -564,22 +613,22 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	// Store the enabled state globally
 	isEnabled = processedConfig.Enabled
 
-	// Get the database from the app for initial setup operations
-	// Note: This is only used during initialization. After this, we use our independent pool
-	db, ok := app.DB.(sql.DB)
-	if !ok {
-		return fmt.Errorf("app.DB is not a sql.DB")
-	}
-
 	// If disabled, ensure schema is cleaned up
 	if !processedConfig.Enabled {
-		logger.Info("extension is disabled, cleaning up any existing schema")
-		return cleanupExtensionSchema(ctx, cachePool)
-	}
+		logger.Info("extension is disabled")
+		// In test environments, we might not have proper DB config
+		// Try to create a pool for cleanup, but don't fail if we can't
+		tempPool, err := createIndependentConnectionPool(ctx, app.Service)
+		if err != nil {
+			// If we can't create a pool, we can't clean up - just log and return
+			logger.Debug("skipping schema cleanup - no database connection", "error", err)
+			return nil
+		}
+		defer tempPool.Close()
 
-	// Wait for database to be ready before proceeding
-	if err := waitForDatabaseReady(ctx, db, 30*time.Second); err != nil {
-		return fmt.Errorf("database not ready: %w", err)
+		// Only try to clean up if we have a valid pool
+		logger.Info("cleaning up any existing schema")
+		return cleanupExtensionSchema(ctx, tempPool)
 	}
 
 	logger.Info("initializing extension",
@@ -587,25 +636,43 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 		"directives_count", len(processedConfig.Directives),
 		"sources", processedConfig.Sources)
 
-	// Create independent connection pool for cache operations
-	// This prevents "tx is closed" errors caused by kwil-db's connection lifecycle
-	pool, err := createIndependentConnectionPool(ctx, app.Service)
-	if err != nil {
-		return fmt.Errorf("failed to create connection pool: %w", err)
-	}
-	cachePool = pool
+	// Check if test has injected a DB - if so, skip pool creation
+	if pool := getTestDBPool(); pool != nil {
+		logger.Info("using test-injected database connection")
+		cacheDB = internal.NewCacheDB(pool, logger)
+		// Skip pool creation and database ready check
+	} else {
+		// Create independent connection pool for cache operations
+		// This prevents "tx is closed" errors caused by kwil-db's connection lifecycle
+		pool, err := createIndependentConnectionPool(ctx, app.Service)
+		if err != nil {
+			return fmt.Errorf("failed to create connection pool: %w", err)
+		}
+		cachePool = pool
 
-	// Create the CacheDB instance with our independent pool
-	cacheDB = internal.NewCacheDB(pool, logger)
+		// Create the CacheDB instance with our independent pool
+		cacheDB = internal.NewCacheDB(pool, logger)
+		
+		// Wait for database to be ready before proceeding
+		if err := waitForDatabaseReady(ctx, pool, 30*time.Second); err != nil {
+			return fmt.Errorf("database not ready: %w", err)
+		}
+	}
 
 	// For engine calls, we'll create transactions as needed rather than
 	// trying to wrap the pool. This avoids the "cannot query with scan values" error
 
-	// Initialize extension resources using the pool for schema setup
-	err = setupCacheSchema(ctx, pool)
-	if err != nil {
-		cachePool.Close()
-		return fmt.Errorf("failed to setup cache schema: %w", err)
+	// Initialize extension resources using the appropriate connection
+	if getTestDB() != nil {
+		// For tests, assume schema is already set up by test framework
+		logger.Info("skipping schema setup in test mode")
+	} else {
+		// Initialize extension resources using the pool for schema setup
+		err = setupCacheSchema(ctx, cachePool)
+		if err != nil {
+			cachePool.Close()
+			return fmt.Errorf("failed to setup cache schema: %w", err)
+		}
 	}
 
 	// Initialize scheduler if we have directives
@@ -689,7 +756,7 @@ func setupCacheSchema(ctx context.Context, pool *pgxpool.Pool) error {
 			data_provider TEXT NOT NULL,
 			stream_id TEXT NOT NULL,
 			from_timestamp INT8,
-			last_refreshed TEXT,
+			last_refreshed INT8,
 			cron_schedule TEXT,
 			PRIMARY KEY (data_provider, stream_id)
 		)`); err != nil {
@@ -733,7 +800,7 @@ func setupCacheSchema(ctx context.Context, pool *pgxpool.Pool) error {
 
 // cleanupExtensionSchema removes the cache schema when the extension is disabled
 // waitForDatabaseReady validates that the database connection is stable before proceeding
-func waitForDatabaseReady(ctx context.Context, db sql.DB, maxWait time.Duration) error {
+func waitForDatabaseReady(ctx context.Context, pool *pgxpool.Pool, maxWait time.Duration) error {
 	timeout := time.NewTimer(maxWait)
 	defer timeout.Stop()
 
@@ -747,10 +814,9 @@ func waitForDatabaseReady(ctx context.Context, db sql.DB, maxWait time.Duration)
 		case <-timeout.C:
 			return fmt.Errorf("database not ready after %v", maxWait)
 		case <-ticker.C:
-			// Test database readiness with a simple transaction
-			_, err := db.Execute(ctx, "SELECT 1")
+			_, err := pool.Exec(ctx, "SELECT 1")
 			if err != nil {
-				continue // Keep trying
+				continue
 			}
 			return nil // Database is ready
 		}
@@ -759,7 +825,14 @@ func waitForDatabaseReady(ctx context.Context, db sql.DB, maxWait time.Duration)
 
 // createIndependentConnectionPool creates a dedicated connection pool for cache operations
 func createIndependentConnectionPool(ctx context.Context, service *common.Service) (*pgxpool.Pool, error) {
-	dbConfig := service.LocalConfig.DB
+	// Check for test database configuration override first
+	var dbConfig kwilconfig.DBConfig
+	if testDBConfig := getTestDBConfig(); testDBConfig != nil {
+		dbConfig = *testDBConfig
+		logger.Debug("using test database configuration override")
+	} else {
+		dbConfig = service.LocalConfig.DB
+	}
 
 	// Build connection string using same parameters as main database
 	connStr := fmt.Sprintf("host=%s port=%s user=%s database=%s sslmode=disable",
@@ -803,6 +876,11 @@ func createIndependentConnectionPool(ctx context.Context, service *common.Servic
 }
 
 func cleanupExtensionSchema(ctx context.Context, pool *pgxpool.Pool) error {
+	if pool == nil {
+		logger.Warn("cannot cleanup schema: pool is nil")
+		return nil
+	}
+
 	logger.Info("cleaning up cache schema")
 
 	tx, err := pool.Begin(ctx)
@@ -818,11 +896,11 @@ func cleanupExtensionSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	}()
 
 	// Drop schema CASCADE to remove all tables and indexes
-	if _, err := pool.Exec(ctx, `DROP SCHEMA IF EXISTS `+constants.CacheSchemaName+` CASCADE`); err != nil {
+	if _, err = tx.Exec(ctx, `DROP SCHEMA IF EXISTS `+constants.CacheSchemaName+` CASCADE`); err != nil {
 		return fmt.Errorf("drop schema: %w", err)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
+	if err = tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit transaction: %w", err)
 	}
 

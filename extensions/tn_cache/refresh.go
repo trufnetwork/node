@@ -117,6 +117,12 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, directive conf
 	// For now, we'll use get_record_composed as the primary action
 	action := "get_record_composed"
 
+	// if from is nil, we should set to 0, meaning it's all available
+	if fromTime == nil {
+		fromTime = new(int64)
+		*fromTime = 0
+	}
+
 	// Build arguments for the action call
 	args := []any{
 		directive.DataProvider,

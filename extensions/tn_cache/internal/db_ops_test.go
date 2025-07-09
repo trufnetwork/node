@@ -37,7 +37,7 @@ func TestCacheDB_AddStreamConfig(t *testing.T) {
 		DataProvider:  "test_provider",
 		StreamID:      "test_stream",
 		FromTimestamp: 1234567890,
-		LastRefreshed: time.Now().UTC().Format(time.RFC3339),
+		LastRefreshed: time.Now().Unix(),
 		CronSchedule:  "0 */5 * * * *",
 	}
 
@@ -54,7 +54,7 @@ func TestCacheDB_GetStreamConfig(t *testing.T) {
 	testDataProvider := "test_provider"
 	testStreamID := "test_stream"
 	testFromTimestamp := int64(1234567890)
-	testLastRefreshed := time.Now().UTC().Format(time.RFC3339)
+	testLastRefreshed := time.Now().Unix()
 	testCronSchedule := "0 */5 * * * *"
 
 	// Create mock pool
@@ -220,8 +220,8 @@ func TestCacheDB_ListStreamConfigs(t *testing.T) {
 
 	// Set up expectations
 	rows := pgxmock.NewRows([]string{"data_provider", "stream_id", "from_timestamp", "last_refreshed", "cron_schedule"}).
-		AddRow("provider1", "stream1", int64(1234567890), "2023-01-01T00:00:00Z", "0 0 * * * *").
-		AddRow("provider2", "stream2", int64(1234567891), "2023-01-02T00:00:00Z", "0 */5 * * * *")
+		AddRow("provider1", "stream1", int64(1234567890), int64(1672531200), "0 0 * * * *").
+		AddRow("provider2", "stream2", int64(1234567891), int64(1672617600), "0 */5 * * * *")
 
 	mockPool.ExpectQuery(`SELECT data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule`).
 		WillReturnRows(rows)
@@ -323,7 +323,7 @@ func TestCacheDB_UpdateStreamConfigsAtomic(t *testing.T) {
 			DataProvider:  "provider1",
 			StreamID:      "stream1",
 			FromTimestamp: 1234567890,
-			LastRefreshed: "2023-01-01T00:00:00Z",
+			LastRefreshed: 1672531200, // 2023-01-01T00:00:00Z
 			CronSchedule:  "0 0 * * * *",
 		},
 	}
@@ -349,7 +349,7 @@ func TestCacheDB_UpdateStreamConfigsAtomic(t *testing.T) {
 			[]string{"provider1"},
 			[]string{"stream1"},
 			[]int64{1234567890},
-			[]string{"2023-01-01T00:00:00Z"},
+			[]int64{1672531200},
 			[]string{"0 0 * * * *"},
 		).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
@@ -392,7 +392,7 @@ func TestCacheDB_TransactionRollback(t *testing.T) {
 		DataProvider:  "test_provider",
 		StreamID:      "test_stream",
 		FromTimestamp: 1234567890,
-		LastRefreshed: time.Now().UTC().Format(time.RFC3339),
+		LastRefreshed: time.Now().Unix(),
 		CronSchedule:  "0 */5 * * * *",
 	}
 

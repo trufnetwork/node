@@ -65,13 +65,13 @@ func (w *poolDBWrapper) Execute(ctx context.Context, stmt string, args ...any) (
 		if err != nil {
 			return nil, fmt.Errorf("scan row values: %w", err)
 		}
-		
+
 		// Use kwil-db's decoding logic
 		decodedValues, err := pg.DecodeFromPG(values, oids, oidToDataType)
 		if err != nil {
 			return nil, fmt.Errorf("decode values: %w", err)
 		}
-		
+
 		resultRows = append(resultRows, decodedValues)
 	}
 
@@ -105,6 +105,7 @@ type poolTxWrapper struct {
 
 var _ sql.Tx = &poolTxWrapper{}
 var _ sql.QueryScanner = &poolTxWrapper{}
+var _ sql.AccessModer = &poolTxWrapper{}
 
 // Execute implements sql.Executor for transactions
 func (t *poolTxWrapper) Execute(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
@@ -133,13 +134,13 @@ func (t *poolTxWrapper) Execute(ctx context.Context, stmt string, args ...any) (
 		if err != nil {
 			return nil, fmt.Errorf("scan row values: %w", err)
 		}
-		
+
 		// Use kwil-db's decoding logic
 		decodedValues, err := pg.DecodeFromPG(values, oids, oidToDataType)
 		if err != nil {
 			return nil, fmt.Errorf("decode values: %w", err)
 		}
-		
+
 		resultRows = append(resultRows, decodedValues)
 	}
 
@@ -242,3 +243,7 @@ func (w *poolDBWrapper) QueryScanFn(ctx context.Context, stmt string, scans []an
 	return nil
 }
 
+// AccessMode implements sql.AccessModer
+func (t *poolTxWrapper) AccessMode() sql.AccessMode {
+	return sql.ReadOnly
+}

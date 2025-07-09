@@ -57,7 +57,7 @@ type StreamCacheConfig struct {
 	DataProvider  string
 	StreamID      string
 	FromTimestamp int64
-	LastRefreshed string
+	LastRefreshed int64
 	CronSchedule  string
 }
 
@@ -137,8 +137,7 @@ func (c *CacheDB) AddStreamConfigs(ctx context.Context, configs []StreamCacheCon
 
 	// Build arrays for batch insert using UNNEST for efficiency
 	var dataProviders, streamIDs, cronSchedules []string
-	var fromTimestamps []int64
-	var lastRefresheds []string
+	var fromTimestamps, lastRefresheds []int64
 
 	for _, config := range configs {
 		dataProviders = append(dataProviders, config.DataProvider)
@@ -152,7 +151,7 @@ func (c *CacheDB) AddStreamConfigs(ctx context.Context, configs []StreamCacheCon
 	_, err = tx.Exec(ctx, `
 		INSERT INTO `+constants.CacheSchemaName+`.cached_streams 
 			(data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule)
-		SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::TEXT[], $5::TEXT[])
+		SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::INT8[], $5::TEXT[])
 		ON CONFLICT (data_provider, stream_id) 
 		DO UPDATE SET
 			from_timestamp = EXCLUDED.from_timestamp,
@@ -291,7 +290,7 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) (err er
 	// Finally, update the last refreshed timestamp for the stream
 	if len(events) > 0 {
 		event := events[0]
-		now := time.Now().UTC().Format(time.RFC3339)
+		now := time.Now().Unix()
 		_, err = tx.Exec(ctx, `
 			UPDATE `+constants.CacheSchemaName+`.cached_streams
 			SET last_refreshed = $3
@@ -576,8 +575,7 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 	// Then, add/update new streams using batch operation
 	if len(newConfigs) > 0 {
 		var dataProviders, streamIDs, cronSchedules []string
-		var fromTimestamps []int64
-		var lastRefresheds []string
+		var fromTimestamps, lastRefresheds []int64
 
 		for _, config := range newConfigs {
 			dataProviders = append(dataProviders, config.DataProvider)
@@ -591,7 +589,7 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 		_, err = tx.Exec(ctx, `
 			INSERT INTO `+constants.CacheSchemaName+`.cached_streams 
 				(data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule)
-			SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::TEXT[], $5::TEXT[])
+			SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::INT8[], $5::TEXT[])
 			ON CONFLICT (data_provider, stream_id) 
 			DO UPDATE SET
 				from_timestamp = EXCLUDED.from_timestamp,

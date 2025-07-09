@@ -441,7 +441,7 @@ func (s *CacheScheduler) updateCachedStreamsTable(ctx context.Context, resolvedS
 		newSet[key] = true
 
 		// Preserve last_refreshed if stream already exists
-		var lastRefreshed string
+		var lastRefreshed int64
 		if existing, exists := currentSet[key]; exists {
 			lastRefreshed = existing.LastRefreshed
 		}
