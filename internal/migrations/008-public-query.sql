@@ -7,7 +7,8 @@ CREATE OR REPLACE ACTION get_record(
     $stream_id TEXT,
     $from INT8,
     $to INT8,
-    $frozen_at INT8
+    $frozen_at INT8,
+    $use_cache BOOL
 ) PUBLIC view returns table(
     event_time INT8,
     value NUMERIC(36,18)
@@ -22,7 +23,7 @@ CREATE OR REPLACE ACTION get_record(
             RETURN NEXT $row.event_time, $row.value;
         }
     } else {
-        for $row in get_record_composed($data_provider, $stream_id, $from, $to, $frozen_at) {
+        for $row in get_record_composed($data_provider, $stream_id, $from, $to, $frozen_at, $use_cache) {
             RETURN NEXT $row.event_time, $row.value;
         }
     }
@@ -36,7 +37,8 @@ CREATE OR REPLACE ACTION get_last_record(
     $data_provider TEXT,
     $stream_id TEXT,
     $before INT8,
-    $frozen_at INT8
+    $frozen_at INT8,
+    $use_cache BOOL
 ) PUBLIC view returns table(
     event_time INT8,
     value NUMERIC(36,18)
@@ -53,7 +55,7 @@ CREATE OR REPLACE ACTION get_last_record(
         }
     } else {
         -- unfortunately, using the query directly creates error, then we use return next
-        for $row in get_last_record_composed($data_provider, $stream_id, $before, $frozen_at) {
+        for $row in get_last_record_composed($data_provider, $stream_id, $before, $frozen_at, $use_cache) {
             RETURN NEXT $row.event_time, $row.value;
         }
     }
@@ -67,7 +69,8 @@ CREATE OR REPLACE ACTION get_first_record(
     $data_provider TEXT,
     $stream_id TEXT,
     $after INT8,
-    $frozen_at INT8
+    $frozen_at INT8,
+    $use_cache BOOL
 ) PUBLIC view returns table(
     event_time INT8,
     value NUMERIC(36,18)
@@ -82,7 +85,7 @@ CREATE OR REPLACE ACTION get_first_record(
             RETURN NEXT $row.event_time, $row.value;
         }
     } else {
-        for $row in get_first_record_composed($data_provider, $stream_id, $after, $frozen_at) {
+        for $row in get_first_record_composed($data_provider, $stream_id, $after, $frozen_at, $use_cache) {
             RETURN NEXT $row.event_time, $row.value;
         }
     }
@@ -96,7 +99,8 @@ CREATE OR REPLACE ACTION get_base_value(
     $data_provider TEXT,
     $stream_id TEXT,
     $base_time INT8,
-    $frozen_at INT8
+    $frozen_at INT8,
+    $use_cache BOOL
 ) PUBLIC view returns (value NUMERIC(36,18)) {
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
@@ -131,7 +135,7 @@ CREATE OR REPLACE ACTION get_base_value(
             -- Execute the function and store results in variables
             $first_time INT8;
             $first_value NUMERIC(36,18);
-            for $record in get_first_record($data_provider, $stream_id, NULL, $frozen_at) {
+            for $record in get_first_record($data_provider, $stream_id, NULL, $frozen_at, $use_cache) {
                 $first_time := $record.event_time;
                 $first_value := $record.value;
                 $found := TRUE;
@@ -150,7 +154,7 @@ CREATE OR REPLACE ACTION get_base_value(
     -- Try to find an exact match at base_time
     $found_exact := FALSE;
     $exact_value NUMERIC(36,18);
-    for $row in get_record($data_provider, $stream_id, $effective_base_time, $effective_base_time, $frozen_at) {
+    for $row in get_record($data_provider, $stream_id, $effective_base_time, $effective_base_time, $frozen_at, $use_cache) {
         $exact_value := $row.value;
         $found_exact := TRUE;
         break;
@@ -163,7 +167,7 @@ CREATE OR REPLACE ACTION get_base_value(
     -- If no exact match, try to find the closest value before base_time
     $found_before := FALSE;
     $before_value NUMERIC(36,18);
-    for $row in get_last_record($data_provider, $stream_id, $effective_base_time, $frozen_at) {
+    for $row in get_last_record($data_provider, $stream_id, $effective_base_time, $frozen_at, $use_cache) {
         $before_value := $row.value;
         $found_before := TRUE;
         break;
@@ -176,7 +180,7 @@ CREATE OR REPLACE ACTION get_base_value(
     -- If no value before, try to find the closest value after base_time
     $found_after := FALSE;
     $after_value NUMERIC(36,18);
-    for $row in get_first_record($data_provider, $stream_id, $effective_base_time, $frozen_at) {
+    for $row in get_first_record($data_provider, $stream_id, $effective_base_time, $frozen_at, $use_cache) {
         $after_value := $row.value;
         $found_after := TRUE;
         break;
@@ -200,7 +204,8 @@ CREATE OR REPLACE ACTION get_index(
     $from INT8,
     $to INT8,
     $frozen_at INT8,
-    $base_time INT8
+    $base_time INT8,
+    $use_cache BOOL
 ) PUBLIC view returns table(
     event_time INT8,
     value NUMERIC(36,18)
@@ -215,7 +220,7 @@ CREATE OR REPLACE ACTION get_index(
             RETURN NEXT $row.event_time, $row.value;
         }
     } else {
-        for $row in get_index_composed($data_provider, $stream_id, $from, $to, $frozen_at, $base_time) {
+        for $row in get_index_composed($data_provider, $stream_id, $from, $to, $frozen_at, $base_time, $use_cache) {
             RETURN NEXT $row.event_time, $row.value;
         }
     }
@@ -228,7 +233,8 @@ CREATE OR REPLACE ACTION get_index_change(
     $to INT8,
     $frozen_at INT8,
     $base_time INT8,
-    $time_interval INT
+    $time_interval INT,
+    $use_cache BOOL
 ) PUBLIC VIEW
 RETURNS TABLE (
     event_time INT8,
@@ -258,7 +264,7 @@ RETURNS TABLE (
      * 3. Gather CURRENT data from get_index(...) into $current_*
      */
     
-    FOR $row IN get_index($data_provider, $stream_id, $from, $to, $frozen_at, $base_time) {
+    FOR $row IN get_index($data_provider, $stream_id, $from, $to, $frozen_at, $base_time, $use_cache) {
         -- Bump the counter (use 1-based indexing for arrays)
         $current_dates := array_append($current_dates, $row.event_time);
         $current_values := array_append($current_values, $row.value);
@@ -285,7 +291,7 @@ RETURNS TABLE (
     -- If the user passed $from and $to, it's possible earliest_needed < from. 
     -- We can use that or just rely on earliest_needed < to. 
     -- We'll just do the direct range here:
-    FOR $row IN get_index($data_provider, $stream_id, $earliest_needed, $latest_needed, $frozen_at, $base_time) {
+    FOR $row IN get_index($data_provider, $stream_id, $earliest_needed, $latest_needed, $frozen_at, $base_time, $use_cache) {
         $prev_dates := array_append($prev_dates, $row.event_time);
         $prev_values := array_append($prev_values, $row.value);
     }
