@@ -13,23 +13,23 @@ type Operation string
 // Cache operation constants - define all traced operations in one place
 const (
 	// Entry point operations (precompile handlers)
-	OpCacheCheck Operation = "cache.check"      // has_cached_data precompile
-	OpCacheGet   Operation = "cache.get"        // get_cached_data precompile
-	
+	OpCacheCheck Operation = "cache.check" // has_cached_data precompile
+	OpCacheGet   Operation = "cache.get"   // get_cached_data precompile
+
 	// Scheduler operations
-	OpSchedulerJob     Operation = "scheduler.job"      // Cron job execution
-	OpSchedulerRefresh Operation = "scheduler.refresh"  // Stream refresh operation
-	
+	OpSchedulerJob     Operation = "scheduler.job"     // Cron job execution
+	OpSchedulerRefresh Operation = "scheduler.refresh" // Stream refresh operation
+
 	// Database operations
-	OpDBCacheEvents    Operation = "db.cache_events"     // Store events in cache
-	OpDBGetEvents      Operation = "db.get_events"       // Retrieve cached events
-	OpDBHasCachedData  Operation = "db.has_cached_data"  // Check cache existence
-	
+	OpDBCacheEvents   Operation = "db.cache_events"    // Store events in cache
+	OpDBGetEvents     Operation = "db.get_events"      // Retrieve cached events
+	OpDBHasCachedData Operation = "db.has_cached_data" // Check cache existence
+
 	// TrufNetwork API operations
 	OpTNListStreams        Operation = "tn.list_streams"         // List all streams
 	OpTNGetCategoryStreams Operation = "tn.get_category_streams" // Get child streams
 	OpTNGetRecordComposed  Operation = "tn.get_record_composed"  // Get composed records
-	
+
 	// Stream operations
 	OpRefreshStream Operation = "refresh.stream" // Refresh single stream data
 )
