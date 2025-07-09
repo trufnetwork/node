@@ -272,9 +272,10 @@ func testCacheHits(ctx context.Context, t *testing.T, tnClient *tnclient.Client)
 			int64(1609459200),       // from_time
 			int64(1609459400),       // to_time
 			nil,                     // frozen_at
+			true,                    // use_cache
 		}
 
-		// Call get_record - it will internally use cache if available
+		// Call get_record - it will use cache since use_cache is true
 		result, err := kwilClient.Call(ctx, "", "get_record", args)
 		if err != nil {
 			return fmt.Errorf("query %d failed: %w", i, err)
@@ -347,6 +348,7 @@ func testCacheMisses(ctx context.Context, t *testing.T, tnClient *tnclient.Clien
 			int64(1609459000),       // from_time (before cached range)
 			int64(1609459100),       // to_time (before cached range)
 			nil,                     // frozen_at
+			true,                    // use_cache
 		}
 
 		// This should generate a cache miss because the time range is not cached
@@ -368,6 +370,7 @@ func testCacheMisses(ctx context.Context, t *testing.T, tnClient *tnclient.Clien
 			int64(1609459200),       // from_time
 			int64(1609459400),       // to_time
 			nil,                     // frozen_at
+			true,                    // use_cache
 		}
 
 		// This will generate cache misses because the stream is not configured for caching

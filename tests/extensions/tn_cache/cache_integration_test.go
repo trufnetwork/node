@@ -94,6 +94,7 @@ func testCacheBasicFunctionality(t *testing.T, cacheConfig *testutils.CacheOptio
 		fromTime := int64(1)
 		toTime := int64(3)
 
+		useCache := true
 		originalData, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 			Platform: platform,
 			StreamLocator: types.StreamLocator{
@@ -103,6 +104,7 @@ func testCacheBasicFunctionality(t *testing.T, cacheConfig *testutils.CacheOptio
 			FromTime: &fromTime,
 			ToTime:   &toTime,
 			Height:   1,
+			UseCache: &useCache,
 		})
 		require.NoError(t, err)
 		require.Len(t, originalData, 3, "Should have 3 original records")

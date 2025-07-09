@@ -2,7 +2,9 @@ package procedure
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	trufTypes "github.com/trufnetwork/sdk-go/core/types"
 	"github.com/trufnetwork/sdk-go/core/util"
@@ -16,8 +18,10 @@ import (
 
 // GetRecordResult contains the full result of a GetRecord call
 type GetRecordResult struct {
-	Rows []ResultRow
-	Logs []string
+	Rows     []ResultRow
+	Logs     []string
+	CacheHit bool      // Whether the result came from cache
+	CachedAt *int64    // Timestamp when data was cached (only set on cache hit)
 }
 
 // GetRecordWithLogs executes get_record and returns full result including logs
@@ -46,6 +50,12 @@ func GetRecordWithLogs(ctx context.Context, input GetRecordInput) (*GetRecordRes
 		prefix = *input.Prefix
 	}
 
+	// Set default use_cache to false if not specified
+	useCache := false
+	if input.UseCache != nil {
+		useCache = *input.UseCache
+	}
+
 	var resultRows [][]any
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", prefix+"get_record", []any{
 		input.StreamLocator.DataProvider.Address(),
@@ -53,6 +63,7 @@ func GetRecordWithLogs(ctx context.Context, input GetRecordInput) (*GetRecordRes
 		input.FromTime,
 		input.ToTime,
 		input.FrozenAt,
+		useCache,
 	}, func(row *common.Row) error {
 		// Convert the row values to []any
 		values := make([]any, len(row.Values))
@@ -73,9 +84,32 @@ func GetRecordWithLogs(ctx context.Context, input GetRecordInput) (*GetRecordRes
 		return nil, err
 	}
 
+	// Parse cache information from logs
+	var cacheHit bool
+	var cachedAt *int64
+	for _, log := range r.Logs {
+		if strings.Contains(log, "cache_hit") {
+			var logData map[string]interface{}
+			if err := json.Unmarshal([]byte(log), &logData); err == nil {
+				if hit, ok := logData["cache_hit"].(bool); ok {
+					cacheHit = hit
+				}
+				if cacheHit && logData["cached_at"] != nil {
+					if timestamp, ok := logData["cached_at"].(float64); ok {
+						timestampInt := int64(timestamp)
+						cachedAt = &timestampInt
+					}
+				}
+			}
+			break
+		}
+	}
+
 	return &GetRecordResult{
-		Rows: processedRows,
-		Logs: r.Logs,
+		Rows:     processedRows,
+		Logs:     r.Logs,
+		CacheHit: cacheHit,
+		CachedAt: cachedAt,
 	}, nil
 }
 
@@ -123,6 +157,12 @@ func GetIndexWithLogs(ctx context.Context, input GetIndexInput) (*GetRecordResul
 		prefix = *input.Prefix
 	}
 
+	// Set default use_cache to false if not specified
+	useCache := false
+	if input.UseCache != nil {
+		useCache = *input.UseCache
+	}
+
 	var resultRows [][]any
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", prefix+"get_index", []any{
 		input.StreamLocator.DataProvider.Address(),
@@ -131,6 +171,7 @@ func GetIndexWithLogs(ctx context.Context, input GetIndexInput) (*GetRecordResul
 		input.ToTime,
 		input.FrozenAt,
 		input.BaseTime,
+		useCache,
 	}, func(row *common.Row) error {
 		// Convert the row values to []any
 		values := make([]any, len(row.Values))
@@ -186,6 +227,12 @@ func GetIndexChange(ctx context.Context, input GetIndexChangeInput) ([]ResultRow
 		TxContext: txContext,
 	}
 
+	// Set default use_cache to false if not specified
+	useCache := false
+	if input.UseCache != nil {
+		useCache = *input.UseCache
+	}
+
 	var resultRows [][]any
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_index_change", []any{
 		input.StreamLocator.DataProvider.Address(),
@@ -195,6 +242,7 @@ func GetIndexChange(ctx context.Context, input GetIndexChangeInput) ([]ResultRow
 		input.FrozenAt,
 		input.BaseTime,
 		input.Interval,
+		useCache,
 	}, func(row *common.Row) error {
 		// Convert the row values to []any
 		values := make([]any, len(row.Values))
@@ -232,12 +280,19 @@ func GetFirstRecord(ctx context.Context, input GetFirstRecordInput) ([]ResultRow
 		TxContext: txContext,
 	}
 
+	// Set default use_cache to false if not specified
+	useCache := false
+	if input.UseCache != nil {
+		useCache = *input.UseCache
+	}
+
 	var resultRows [][]any
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_first_record", []any{
 		input.StreamLocator.DataProvider.Address(),
 		input.StreamLocator.StreamId.String(),
 		input.AfterTime,
 		input.FrozenAt,
+		useCache,
 	}, func(row *common.Row) error {
 		// Convert the row values to []any
 		values := make([]any, len(row.Values))

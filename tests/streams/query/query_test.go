@@ -285,6 +285,7 @@ func testQUERY02_GetIndex(t *testing.T) func(ctx context.Context, platform *kwil
 
 		// Get index
 		result, err := procedure.GetIndex(ctx, procedure.GetIndexInput{
+
 			Platform: platform,
 			StreamLocator: types.StreamLocator{
 				StreamId:     config.ReadableStreamId,

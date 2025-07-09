@@ -59,6 +59,7 @@ func TestCacheObservability(t *testing.T) {
 				toTime := int64(2)
 				
 				// First query - should miss cache
+				useCache := true
 				result, err := procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
 					Platform: platform,
 					StreamLocator: types.StreamLocator{
@@ -68,6 +69,7 @@ func TestCacheObservability(t *testing.T) {
 					FromTime: &fromTime,
 					ToTime:   &toTime,
 					Height:   1,
+					UseCache: &useCache,
 				})
 				require.NoError(t, err)
 				require.NotNil(t, result)
@@ -97,6 +99,7 @@ func TestCacheObservability(t *testing.T) {
 
 				// Test 2: Verify cache hit log format
 				cacheLogs = nil // Reset logs
+				useCache := true
 				result2, err := procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
 					Platform: platform,
 					StreamLocator: types.StreamLocator{
@@ -106,6 +109,7 @@ func TestCacheObservability(t *testing.T) {
 					FromTime: &fromTime,
 					ToTime:   &toTime,
 					Height:   1,
+					UseCache: &useCache,
 				})
 				require.NoError(t, err, "Cache hit query should not error")
 				
