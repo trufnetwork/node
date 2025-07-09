@@ -47,7 +47,7 @@ RETURNS TABLE(
         $found_cached_data BOOL := false;
         
         -- Get all cached data up to $before and find the latest
-        for $row in tn_cache.get_cached_data($data_provider, $stream_id, NULL, $before) {
+        for $row in tn_cache.get_cached_last_before($data_provider, $stream_id, $before) {
             $latest_cached_time := $row.event_time;
             $latest_cached_value := $row.value;
             $found_cached_data := true;
@@ -222,7 +222,7 @@ RETURNS TABLE(
         $found_cached_data BOOL := false;
         
         -- Get all cached data from $after and find the earliest
-        for $row in tn_cache.get_cached_data($data_provider, $stream_id, $after, NULL) {
+        for $row in tn_cache.get_cached_first_after($data_provider, $stream_id, $after) {
             $earliest_cached_time := $row.event_time;
             $earliest_cached_value := $row.value;
             $found_cached_data := true;
