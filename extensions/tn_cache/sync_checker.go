@@ -38,6 +38,9 @@ type SyncChecker struct {
 func NewSyncChecker(logger log.Logger, maxBlockAge int64) *SyncChecker {
 	if maxBlockAge == 0 {
 		maxBlockAge = DefaultMaxBlockAge
+	} else if maxBlockAge < -1 {
+		logger.Warn("invalid max_block_age value, using default", "provided", maxBlockAge, "default", DefaultMaxBlockAge)
+		maxBlockAge = DefaultMaxBlockAge
 	}
 	return &SyncChecker{
 		logger:      logger.New("sync_checker"),
@@ -112,27 +115,59 @@ func (sc *SyncChecker) monitor(ctx context.Context) {
 	}
 }
 
-// updateStatus queries current sync status from health endpoint
+// updateStatus queries current sync status from health endpoint with retry logic
 func (sc *SyncChecker) updateStatus(ctx context.Context) {
+	// Retry configuration
+	const maxRetries = 3
+	initialBackoff := 100 * time.Millisecond
+	
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff: 100ms, 200ms, 400ms
+			backoff := initialBackoff * time.Duration(1<<(attempt-1))
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
+		}
+		
+		err := sc.doUpdateStatus(ctx)
+		if err == nil {
+			// Success
+			return
+		}
+		
+		lastErr = err
+		// Log retry attempts
+		if attempt < maxRetries-1 {
+			sc.logger.Debug("retrying health check", "attempt", attempt+1, "error", err)
+		}
+	}
+	
+	// All retries failed
+	sc.logger.Debug("health check failed after retries", "error", lastErr)
+}
+
+// doUpdateStatus performs the actual status update request
+func (sc *SyncChecker) doUpdateStatus(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	
 	req, err := http.NewRequestWithContext(ctx, "GET", sc.endpoint, nil)
 	if err != nil {
-		sc.logger.Debug("failed to create health request", "error", err)
-		return
+		return fmt.Errorf("failed to create health request: %w", err)
 	}
 	
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		sc.logger.Debug("health check failed", "error", err)
-		return
+		return fmt.Errorf("health check failed: %w", err)
 	}
 	defer resp.Body.Close()
 	
 	if resp.StatusCode != http.StatusOK {
-		sc.logger.Debug("health endpoint error", "status", resp.StatusCode)
-		return
+		return fmt.Errorf("health endpoint error: status %d", resp.StatusCode)
 	}
 	
 	var health struct {
@@ -145,16 +180,28 @@ func (sc *SyncChecker) updateStatus(ctx context.Context) {
 	}
 	
 	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
-		sc.logger.Debug("failed to decode health response", "error", err)
-		return
+		return fmt.Errorf("failed to decode health response: %w", err)
 	}
 	
 	// Update atomic fields
 	sc.isSyncing.Store(health.Services.User.Syncing)
 	// Convert milliseconds to seconds
 	blockTimeSeconds := health.Services.User.BlockTime / 1000
+	
+	// Validate block time
+	currentTime := time.Now().Unix()
+	if blockTimeSeconds < 0 {
+		sc.logger.Warn("invalid negative block time", "block_time_ms", health.Services.User.BlockTime)
+		return fmt.Errorf("invalid negative block time: %d ms", health.Services.User.BlockTime)
+	}
+	// Allow up to 5 minutes in the future to account for clock drift
+	if blockTimeSeconds > currentTime+300 {
+		sc.logger.Warn("block time too far in future", "block_time", blockTimeSeconds, "current_time", currentTime)
+		return fmt.Errorf("block time too far in future: %d", blockTimeSeconds)
+	}
+	
 	sc.blockTime.Store(blockTimeSeconds)
-	sc.lastChecked.Store(time.Now().Unix())
+	sc.lastChecked.Store(currentTime)
 	
 	if health.Services.User.Syncing {
 		sc.logger.Debug("node is syncing")
@@ -162,6 +209,8 @@ func (sc *SyncChecker) updateStatus(ctx context.Context) {
 		age := time.Now().Unix() - blockTimeSeconds
 		sc.logger.Debug("sync status", "block_age", age, "max_age", sc.maxBlockAge)
 	}
+	
+	return nil
 }
 
 

@@ -3,6 +3,8 @@ package tn_cache
 import (
 	"context"
 	"fmt"
+	"math"
+	"strings"
 	
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -141,7 +143,11 @@ func (t *noOpTx) Exec(ctx context.Context, sql string, arguments ...any) (pgconn
 	if err != nil {
 		return pgconn.CommandTag{}, err
 	}
-	return pgconn.NewCommandTag(fmt.Sprintf("UPDATE %d", len(result.Rows))), nil
+	
+	// For test purposes, return a simple command tag
+	// The exact format is rarely checked in tests
+	rowsAffected := len(result.Rows)
+	return pgconn.NewCommandTag(fmt.Sprintf("OK %d", rowsAffected)), nil
 }
 
 func (t *noOpTx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
@@ -253,17 +259,81 @@ func (r *simpleRows) Conn() *pgx.Conn { return nil }
 // scanValue handles type conversion for common cases
 func scanValue(dest, src any) error {
 	if src == nil {
+		// Handle nil values for pointers
+		switch d := dest.(type) {
+		case *string:
+			*d = ""
+		case *int:
+			*d = 0
+		case *int64:
+			*d = 0
+		case *bool:
+			*d = false
+		case *[]byte:
+			*d = nil
+		case *interface{}:
+			*d = nil
+		}
 		return nil
 	}
 	
 	switch d := dest.(type) {
 	case *string:
-		*d = fmt.Sprintf("%v", src)
+		switch s := src.(type) {
+		case string:
+			*d = s
+		case []byte:
+			*d = string(s)
+		default:
+			*d = fmt.Sprintf("%v", src)
+		}
+	case *[]byte:
+		switch s := src.(type) {
+		case []byte:
+			*d = s
+		case string:
+			*d = []byte(s)
+		default:
+			return fmt.Errorf("cannot scan %T into *[]byte", src)
+		}
+	case *bool:
+		switch s := src.(type) {
+		case bool:
+			*d = s
+		case int:
+			*d = s != 0
+		case int64:
+			*d = s != 0
+		case string:
+			// Handle common boolean string representations
+			switch strings.ToLower(s) {
+			case "true", "t", "yes", "y", "1":
+				*d = true
+			case "false", "f", "no", "n", "0":
+				*d = false
+			default:
+				return fmt.Errorf("cannot scan string %q into *bool", s)
+			}
+		default:
+			return fmt.Errorf("cannot scan %T into *bool", src)
+		}
 	case *int64:
 		switch s := src.(type) {
 		case int64:
 			*d = s
 		case int:
+			*d = int64(s)
+		case int32:
+			*d = int64(s)
+		case uint:
+			*d = int64(s)
+		case uint32:
+			*d = int64(s)
+		case uint64:
+			// Check for overflow
+			if s > math.MaxInt64 {
+				return fmt.Errorf("uint64 value %d overflows int64", s)
+			}
 			*d = int64(s)
 		default:
 			return fmt.Errorf("cannot scan %T into *int64", src)
@@ -273,9 +343,73 @@ func scanValue(dest, src any) error {
 		case int:
 			*d = s
 		case int64:
+			// Check for overflow on 32-bit systems
+			if s > math.MaxInt || s < math.MinInt {
+				return fmt.Errorf("int64 value %d overflows int", s)
+			}
+			*d = int(s)
+		case int32:
+			*d = int(s)
+		case uint:
+			// Check for overflow
+			if s > uint(math.MaxInt) {
+				return fmt.Errorf("uint value %d overflows int", s)
+			}
+			*d = int(s)
+		case uint32:
+			// Check for overflow on 32-bit systems
+			if s > math.MaxInt32 {
+				return fmt.Errorf("uint32 value %d overflows int", s)
+			}
 			*d = int(s)
 		default:
 			return fmt.Errorf("cannot scan %T into *int", src)
+		}
+	case *uint:
+		switch s := src.(type) {
+		case uint:
+			*d = s
+		case uint64:
+			// Check for overflow on 32-bit systems
+			if s > uint64(^uint(0)) {
+				return fmt.Errorf("uint64 value %d overflows uint", s)
+			}
+			*d = uint(s)
+		case uint32:
+			*d = uint(s)
+		case int:
+			if s < 0 {
+				return fmt.Errorf("negative int value %d cannot be scanned into uint", s)
+			}
+			*d = uint(s)
+		case int64:
+			if s < 0 {
+				return fmt.Errorf("negative int64 value %d cannot be scanned into uint", s)
+			}
+			*d = uint(s)
+		default:
+			return fmt.Errorf("cannot scan %T into *uint", src)
+		}
+	case *uint64:
+		switch s := src.(type) {
+		case uint64:
+			*d = s
+		case uint:
+			*d = uint64(s)
+		case uint32:
+			*d = uint64(s)
+		case int:
+			if s < 0 {
+				return fmt.Errorf("negative int value %d cannot be scanned into uint64", s)
+			}
+			*d = uint64(s)
+		case int64:
+			if s < 0 {
+				return fmt.Errorf("negative int64 value %d cannot be scanned into uint64", s)
+			}
+			*d = uint64(s)
+		default:
+			return fmt.Errorf("cannot scan %T into *uint64", src)
 		}
 	default:
 		// For other types, try direct assignment

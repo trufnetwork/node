@@ -135,7 +135,7 @@ func (t *EngineOperations) callWithTrace(ctx context.Context, engineCtx *common.
 	engineCtx.TxContext.Ctx = spanCtx
 	
 	// Call the engine
-	_, err = t.engine.Call(engineCtx, t.db, "", action, args, processResult)
+	_, err = t.engine.Call(engineCtx, t.db, t.namespace, action, args, processResult)
 	return err
 }
 

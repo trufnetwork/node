@@ -2,6 +2,7 @@ package parsing
 
 import (
 	"fmt"
+	"math"
 	"math/big"
 	"strconv"
 
@@ -18,6 +19,9 @@ func ParseEventTime(v interface{}) (int64, error) {
 	case int32:
 		return int64(val), nil
 	case uint64:
+		if val > math.MaxInt64 {
+			return 0, fmt.Errorf("uint64 value %d exceeds max int64", val)
+		}
 		return int64(val), nil
 	case uint32:
 		return int64(val), nil

@@ -144,7 +144,8 @@ func (s *CacheScheduler) getWrappedDB() sql.DB {
 	if pool, ok := s.cacheDB.GetPool().(*pgxpool.Pool); ok {
 		return newPoolDBWrapper(pool)
 	}
-	panic("cacheDB is nil")
+	// Return nil if we can't get a valid pool
+	return nil
 }
 
 // cancelAllJobContexts triggers graceful shutdown of running jobs

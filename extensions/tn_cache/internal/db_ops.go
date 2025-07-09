@@ -593,7 +593,7 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 			ON CONFLICT (data_provider, stream_id) 
 			DO UPDATE SET
 				from_timestamp = EXCLUDED.from_timestamp,
-				last_refreshed = COALESCE(NULLIF(EXCLUDED.last_refreshed, ''), cached_streams.last_refreshed),
+				last_refreshed = COALESCE(NULLIF(EXCLUDED.last_refreshed, 0), cached_streams.last_refreshed),
 				cron_schedule = EXCLUDED.cron_schedule
 		`, dataProviders, streamIDs, fromTimestamps, lastRefresheds, cronSchedules)
 
