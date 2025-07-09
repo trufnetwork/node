@@ -3,7 +3,6 @@ package tn_cache
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/trufnetwork/kwil-db/common"
@@ -18,32 +17,21 @@ import (
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal/constants"
-	"github.com/trufnetwork/node/extensions/tn_cache/internal/tracing"
 	"github.com/trufnetwork/node/extensions/tn_cache/metrics"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // Constants
 const (
 	ExtensionName = config.ExtensionName
-
-	// SQL constants
-	maxInt8          = int64(9223372036854775000) // Default for NULL upper bounds
-	numericPrecision = 36
-	numericScale     = 18
-
-	// Error messages
-	errExtensionNotEnabled   = "tn_cache extension is not enabled"
-	errCacheDBNotInitialized = "cache database not initialized"
-	errValueNotDecimal       = "value is not a decimal. received %T"
 )
 
 var TNNumericType = &types.DataType{
 	Name:     types.NumericStr,
-	Metadata: [2]uint16{numericPrecision, numericScale},
+	Metadata: [2]uint16{36, 18}, // precision, scale
 }
 
+// Global variables removed - now using Extension struct
+/*
 var (
 	logger          log.Logger
 	cacheDB         *internal.CacheDB
@@ -53,6 +41,7 @@ var (
 	cachePool       *pgxpool.Pool // Independent connection pool for cache operations
 	isEnabled       bool          // Track if extension is enabled
 )
+*/
 
 // getWrappedCacheDB returns a sql.DB interface wrapping the independent connection pool
 // This is used instead of app.DB to avoid "tx is closed" errors
@@ -61,11 +50,17 @@ func getWrappedCacheDB() sql.DB {
 	if db := getTestDB(); db != nil {
 		return db
 	}
-	if cachePool != nil {
-		return newPoolDBWrapper(cachePool)
+	ext := GetExtension()
+	if ext != nil && ext.CachePool() != nil {
+		// Type assert to *pgxpool.Pool for production use
+		if pool, ok := ext.CachePool().(*pgxpool.Pool); ok {
+			return newPoolDBWrapper(pool)
+		}
 	}
 	// This should never happen after initialization
-	logger.Error("cache pool is nil, extension not properly initialized")
+	if ext != nil && ext.Logger() != nil {
+		ext.Logger().Error("cache pool is nil, extension not properly initialized")
+	}
 	return nil
 }
 
@@ -80,9 +75,8 @@ func getExtensionNames(extensions map[string]map[string]string) []string {
 
 // ParseConfig parses the extension configuration from the node's config file
 func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
-	if logger == nil {
-		logger = service.Logger.New("tn_cache")
-	}
+	// Use temporary logger for parsing
+	tempLogger := service.Logger.New("tn_cache")
 
 	// Check for test configuration override first
 	var extConfig map[string]string
@@ -91,7 +85,7 @@ func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
 	if testConfig := getTestConfig(); testConfig != nil {
 		extConfig = testConfig
 		ok = true
-		logger.Debug("using test configuration override")
+		tempLogger.Debug("using test configuration override")
 	} else {
 		// Get extension configuration from the node config
 		extConfig, ok = service.LocalConfig.Extensions[ExtensionName]
@@ -99,7 +93,7 @@ func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
 
 	if !ok {
 		// Extension is not configured, return default disabled config
-		logger.Debug("extension not configured, disabling",
+		tempLogger.Debug("extension not configured, disabling",
 			"extension_name", ExtensionName,
 			"available_extensions", getExtensionNames(service.LocalConfig.Extensions))
 		return &config.ProcessedConfig{
@@ -113,11 +107,11 @@ func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
 	loader := config.NewLoader()
 	processedConfig, err := loader.LoadAndProcessFromMap(context.Background(), extConfig)
 	if err != nil {
-		logger.Error("failed to process configuration", "error", err)
+		tempLogger.Error("failed to process configuration", "error", err)
 		return nil, fmt.Errorf("configuration processing failed: %w", err)
 	}
 
-	logger.Info("configuration processed successfully",
+	tempLogger.Info("configuration processed successfully",
 		"enabled", processedConfig.Enabled,
 		"directives_count", len(processedConfig.Directives),
 		"sources", processedConfig.Sources)
@@ -147,9 +141,11 @@ func init() {
 
 // initializeExtension is called by the framework with metadata during initialization
 func initializeExtension(ctx context.Context, service *common.Service, db sql.DB, alias string, metadata map[string]any) (precompiles.Precompile, error) {
-	// Initialize logger if not already done
-	if logger == nil {
-		logger = service.Logger.New("tn_cache")
+	// Initialize extension instance if not already done
+	if GetExtension() == nil {
+		SetExtension(&Extension{
+			logger: service.Logger.New("tn_cache"),
+		})
 	}
 
 	// Note: We intentionally ignore metadata here because tn_cache is a node-level
@@ -173,7 +169,7 @@ func initializeExtension(ctx context.Context, service *common.Service, db sql.DB
 						precompiles.NewPrecompileValue("enabled", types.BoolType, false),
 					},
 				},
-				Handler: handleIsEnabled,
+				Handler: HandleIsEnabled,
 			},
 			{
 				Name:            "has_cached_data",
@@ -191,7 +187,7 @@ func initializeExtension(ctx context.Context, service *common.Service, db sql.DB
 						precompiles.NewPrecompileValue("cached_at", types.IntType, false),
 					},
 				},
-				Handler: handleHasCachedData,
+				Handler: HandleHasCachedData,
 			},
 			{
 				Name:            "get_cached_data",
@@ -211,7 +207,7 @@ func initializeExtension(ctx context.Context, service *common.Service, db sql.DB
 						precompiles.NewPrecompileValue("value", TNNumericType, false),
 					},
 				},
-				Handler: handleGetCachedData,
+				Handler: HandleGetCachedData,
 			},
 			{
 				Name:            "get_cached_last_before",
@@ -228,7 +224,7 @@ func initializeExtension(ctx context.Context, service *common.Service, db sql.DB
 						precompiles.NewPrecompileValue("value", TNNumericType, false),
 					},
 				},
-				Handler: handleGetCachedLastBefore,
+				Handler: HandleGetCachedLastBefore,
 			},
 			{
 				Name:            "get_cached_first_after",
@@ -245,359 +241,13 @@ func initializeExtension(ctx context.Context, service *common.Service, db sql.DB
 						precompiles.NewPrecompileValue("value", TNNumericType, false),
 					},
 				},
-				Handler: handleGetCachedFirstAfter,
+				Handler: HandleGetCachedFirstAfter,
 			},
 		},
 	}, nil
 }
 
-// Common validation and helper functions
-func checkExtensionEnabled() error {
-	if !isEnabled {
-		return fmt.Errorf(errExtensionNotEnabled)
-	}
-	return nil
-}
-
-func checkCacheDB() (sql.DB, error) {
-	db := getWrappedCacheDB()
-	if db == nil {
-		return nil, fmt.Errorf(errCacheDBNotInitialized)
-	}
-	return db, nil
-}
-
-func extractTimeParameter(input interface{}) *int64 {
-	if input == nil {
-		return nil
-	}
-	t := input.(int64)
-	return &t
-}
-
-func normalizeDataProvider(input string) string {
-	return strings.ToLower(input)
-}
-
-func ensureDecimalValue(value interface{}) (*types.Decimal, error) {
-	dec, ok := value.(*types.Decimal)
-	if !ok {
-		return nil, fmt.Errorf(errValueNotDecimal, value)
-	}
-	dec.SetPrecisionAndScale(numericPrecision, numericScale)
-	return dec, nil
-}
-
-// processSingleRowResult handles the common pattern of returning a single (event_time, value) row
-func processSingleRowResult(result *sql.ResultSet, resultFn func([]any) error) error {
-	if len(result.Rows) > 0 {
-		row := result.Rows[0]
-		dec, err := ensureDecimalValue(row[1])
-		if err != nil {
-			return err
-		}
-		return resultFn([]any{row[0], dec})
-	}
-	// No record found - this is not an error, just no data
-	return nil
-}
-
-// createStreamOperationContext sets up tracing for stream operations
-func createStreamOperationContext(ctx context.Context, op tracing.Operation, dataProvider, streamID string, attrs ...attribute.KeyValue) (context.Context, func(error)) {
-	return tracing.StreamOperation(ctx, op, dataProvider, streamID, attrs...)
-}
-
-// buildTimeAttributes creates tracing attributes for time parameters
-func buildTimeAttributes(fromTime, toTime *int64) []attribute.KeyValue {
-	var attrs []attribute.KeyValue
-	if fromTime != nil {
-		attrs = append(attrs, attribute.Int64("from", *fromTime))
-	}
-	if toTime != nil {
-		attrs = append(attrs, attribute.Int64("to", *toTime))
-	}
-	return attrs
-}
-
-// handleIsEnabled handles the is_enabled precompile method
-func handleIsEnabled(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
-	return resultFn([]any{isEnabled})
-}
-
-// fromTimeOrZero returns the fromTime value or 0 if nil
-func fromTimeOrZero(fromTime *int64) int64 {
-	if fromTime == nil {
-		return 0
-	}
-	return *fromTime
-}
-
-// handleHasCachedData handles the has_cached_data precompile method
-// handleHasCachedData checks if we have cached data for a stream in the given time range
-// This is a READ-ONLY operation that queries the cache metadata
-func handleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) (err error) {
-	if err := checkExtensionEnabled(); err != nil {
-		return err
-	}
-
-	// Extract parameters
-	dataProvider := normalizeDataProvider(inputs[0].(string))
-	streamID := inputs[1].(string)
-	fromTime := extractTimeParameter(inputs[2])
-	toTime := extractTimeParameter(inputs[3])
-
-	// Set up tracing
-	attrs := buildTimeAttributes(fromTime, toTime)
-	traceCtx, end := createStreamOperationContext(ctx.TxContext.Ctx, tracing.OpCacheCheck, dataProvider, streamID, attrs...)
-	defer func() { end(err) }()
-	ctx.TxContext.Ctx = traceCtx
-
-	// Check cached_streams table to see if we have this stream cached
-	// and if the requested time range is within our cached range
-	db, ok := app.DB.(sql.DB)
-	if !ok {
-		return fmt.Errorf("app.DB is not a sql.DB")
-	}
-
-	// Check if stream is configured and has been refreshed
-	var configuredFromTime *int64
-	var lastRefreshed *int64
-	var lastRefreshedTimestamp int64
-
-	result, err := db.Execute(ctx.TxContext.Ctx, `
-		SELECT 
-			from_timestamp, 
-			COALESCE(last_refreshed, 0) as last_refreshed
-		FROM `+constants.CacheSchemaName+`.cached_streams
-		WHERE data_provider = $1 AND stream_id = $2
-	`, dataProvider, streamID)
-	if err != nil {
-		return fmt.Errorf("failed to query cached_streams: %w", err)
-	}
-
-	if len(result.Rows) == 0 {
-		// Stream not configured for caching
-		return resultFn([]any{false, int64(0)})
-	}
-
-	row := result.Rows[0]
-	if row[0] != nil {
-		t := row[0].(int64)
-		configuredFromTime = &t
-	}
-	if row[1] != nil {
-		lastRefreshedTimestamp = row[1].(int64)
-		if lastRefreshedTimestamp > 0 {
-			lastRefreshed = &lastRefreshedTimestamp
-		}
-	}
-
-	// If stream hasn't been refreshed yet, no cached data
-	if lastRefreshedTimestamp == 0 {
-		return resultFn([]any{false, int64(0)})
-	}
-
-	// Special case: if both from and to are NULL, user wants latest value only
-	// We can serve this if we have ANY data cached
-	if fromTime == nil && toTime == nil {
-		// Just check if we have any data at all
-		result, err = db.Execute(ctx.TxContext.Ctx, `
-			SELECT COUNT(*) > 0 FROM `+constants.CacheSchemaName+`.cached_events
-			WHERE data_provider = $1 AND stream_id = $2
-			LIMIT 1
-		`, dataProvider, streamID)
-		if err != nil {
-			return fmt.Errorf("failed to check for any cached events: %w", err)
-		}
-		hasData := false
-		if len(result.Rows) > 0 && result.Rows[0][0] != nil {
-			hasData = result.Rows[0][0].(bool)
-		}
-		return resultFn([]any{hasData, lastRefreshedTimestamp})
-	}
-
-	// If from is NULL but to is not, treat from as 0 (beginning of time)
-	effectiveFrom := int64(0)
-	if fromTime != nil {
-		effectiveFrom = *fromTime
-	}
-
-	// Check if requested from_time is within our cached range
-	// Only check if we have a configured from_time and the request specifies a from_time
-	if configuredFromTime != nil && effectiveFrom < *configuredFromTime {
-		// Requested time is before what we have cached
-		return resultFn([]any{false, int64(0)})
-	}
-
-	// At this point, we know the stream is configured and has been refreshed
-	// Check if we actually have events in the requested range
-	var eventCount int64
-	if toTime == nil {
-		// No upper bound specified - to is treated as max_int8 (end of time)
-		result, err = db.Execute(ctx.TxContext.Ctx, `
-			SELECT COUNT(*) FROM `+constants.CacheSchemaName+`.cached_events
-			WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3
-		`, dataProvider, streamID, effectiveFrom)
-	} else {
-		// Upper bound specified
-		result, err = db.Execute(ctx.TxContext.Ctx, `
-			SELECT COUNT(*) FROM `+constants.CacheSchemaName+`.cached_events
-			WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3 AND event_time <= $4
-		`, dataProvider, streamID, effectiveFrom, *toTime)
-	}
-
-	if err != nil {
-		return fmt.Errorf("failed to count cached events: %w", err)
-	}
-
-	if len(result.Rows) > 0 {
-		eventCount = result.Rows[0][0].(int64)
-	}
-
-	// Record cache hit/miss metric
-	hasData := eventCount > 0
-	if hasData {
-		metricsRecorder.RecordCacheHit(ctx.TxContext.Ctx, dataProvider, streamID)
-
-		// Calculate and record data age since we already have lastRefreshed
-		if lastRefreshed != nil && *lastRefreshed > 0 {
-			refreshTime := time.Unix(*lastRefreshed, 0)
-			dataAge := time.Since(refreshTime).Seconds()
-			metricsRecorder.RecordCacheDataAge(ctx.TxContext.Ctx, dataProvider, streamID, dataAge)
-		}
-	} else {
-		metricsRecorder.RecordCacheMiss(ctx.TxContext.Ctx, dataProvider, streamID)
-	}
-
-	return resultFn([]any{hasData, lastRefreshedTimestamp})
-}
-
-// handleGetCachedData handles the get_cached_data precompile method
-func handleGetCachedData(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
-	if err := checkExtensionEnabled(); err != nil {
-		return err
-	}
-
-	// Extract parameters
-	dataProvider := normalizeDataProvider(inputs[0].(string))
-	streamID := inputs[1].(string)
-	fromTime := extractTimeParameter(inputs[2])
-	toTime := extractTimeParameter(inputs[3])
-
-	// Set up tracing
-	attrs := buildTimeAttributes(fromTime, toTime)
-	traceCtx, end := createStreamOperationContext(ctx.TxContext.Ctx, tracing.OpCacheGet, dataProvider, streamID, attrs...)
-
-	// Track results for hit/miss recording
-	var rowCount int
-	defer func() {
-		end(nil)
-		// Record hit/miss in span
-		span := trace.SpanFromContext(traceCtx)
-		span.SetAttributes(
-			attribute.Bool("cache.hit", rowCount > 0),
-			attribute.Int("cache.rows", rowCount),
-		)
-	}()
-
-	// Update context for tracing
-	ctx.TxContext.Ctx = traceCtx
-
-	// Get database connection
-	db, err := checkCacheDB()
-	if err != nil {
-		return err
-	}
-
-	var result *sql.ResultSet
-
-	// Special case: if both from and to are NULL, return latest value only
-	if fromTime == nil && toTime == nil {
-		result, err = db.Execute(ctx.TxContext.Ctx, `
-			SELECT data_provider, stream_id, event_time, value
-			FROM `+constants.CacheSchemaName+`.cached_events
-			WHERE data_provider = $1 AND stream_id = $2
-			ORDER BY event_time DESC
-			LIMIT 1
-		`, dataProvider, streamID)
-	} else if toTime != nil {
-		// Both bounds specified OR from is NULL with to specified
-		result, err = db.Execute(ctx.TxContext.Ctx, `
-			WITH anchor_record AS (
-				SELECT data_provider, stream_id, event_time, value
-				FROM `+constants.CacheSchemaName+`.cached_events
-				WHERE data_provider = $1 AND stream_id = $2
-					AND event_time <= $3
-				ORDER BY event_time DESC
-				LIMIT 1
-			),
-			interval_records AS (
-				SELECT data_provider, stream_id, event_time, value
-				FROM `+constants.CacheSchemaName+`.cached_events
-				WHERE data_provider = $1 AND stream_id = $2
-					AND event_time > $3 AND event_time <= $4
-			),
-			combined_results AS (
-				SELECT * FROM anchor_record
-				UNION ALL
-				SELECT * FROM interval_records
-			)
-			SELECT data_provider, stream_id, event_time, value
-			FROM combined_results
-			ORDER BY event_time ASC
-		`, dataProvider, streamID, fromTimeOrZero(fromTime), *toTime)
-	} else {
-		// Only from specified, to is NULL (treat as max_int8)
-		result, err = db.Execute(ctx.TxContext.Ctx, `
-			WITH anchor_record AS (
-				SELECT data_provider, stream_id, event_time, value
-				FROM `+constants.CacheSchemaName+`.cached_events
-				WHERE data_provider = $1 AND stream_id = $2
-					AND event_time <= $3
-				ORDER BY event_time DESC
-				LIMIT 1
-			),
-			interval_records AS (
-				SELECT data_provider, stream_id, event_time, value
-				FROM `+constants.CacheSchemaName+`.cached_events
-				WHERE data_provider = $1 AND stream_id = $2
-					AND event_time > $3
-			),
-			combined_results AS (
-				SELECT * FROM anchor_record
-				UNION ALL
-				SELECT * FROM interval_records
-			)
-			SELECT data_provider, stream_id, event_time, value
-			FROM combined_results
-			ORDER BY event_time ASC
-		`, dataProvider, streamID, fromTimeOrZero(fromTime))
-	}
-
-	if err != nil {
-		return fmt.Errorf("failed to query cached events: %w", err)
-	}
-
-	// Record metrics for data served
-	rowCount = len(result.Rows)
-	if rowCount > 0 {
-		metricsRecorder.RecordCacheDataServed(ctx.TxContext.Ctx, dataProvider, streamID, rowCount)
-	}
-
-	// Return each row via resultFn
-	for _, row := range result.Rows {
-		// Ensure value is properly formatted
-		_, err := ensureDecimalValue(row[3])
-		if err != nil {
-			return err
-		}
-		if err := resultFn(row); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
+// All helper functions have been moved to handlers.go where they are used
 
 // engineReadyHook is called when the engine is ready
 // This is where we initialize our extension
@@ -607,51 +257,63 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 		return fmt.Errorf("failed to parse config: %w", err)
 	}
 
-	// Initialize metrics recorder (with auto-detection)
-	metricsRecorder = metrics.NewMetricsRecorder(logger)
+	// Get the extension instance
+	ext := GetExtension()
+	if ext == nil {
+		// In some environments (like tests), initializeExtension might not be called
+		// Create a minimal extension instance
+		logger := app.Service.Logger.New("tn_cache")
+		SetExtension(&Extension{
+			logger: logger,
+		})
+		ext = GetExtension()
+	}
 
-	// Store the enabled state globally
-	isEnabled = processedConfig.Enabled
+	// Initialize metrics recorder (with auto-detection)
+	metricsRecorder := metrics.NewMetricsRecorder(ext.logger)
+
+	// Update the extension with enabled state
+	ext.isEnabled = processedConfig.Enabled
 
 	// If disabled, ensure schema is cleaned up
 	if !processedConfig.Enabled {
-		logger.Info("extension is disabled")
+		ext.logger.Info("extension is disabled")
 		// In test environments, we might not have proper DB config
 		// Try to create a pool for cleanup, but don't fail if we can't
-		tempPool, err := createIndependentConnectionPool(ctx, app.Service)
+		tempPool, err := createIndependentConnectionPool(ctx, app.Service, ext.logger)
 		if err != nil {
 			// If we can't create a pool, we can't clean up - just log and return
-			logger.Debug("skipping schema cleanup - no database connection", "error", err)
+			ext.logger.Debug("skipping schema cleanup - no database connection", "error", err)
 			return nil
 		}
 		defer tempPool.Close()
 
 		// Only try to clean up if we have a valid pool
-		logger.Info("cleaning up any existing schema")
-		return cleanupExtensionSchema(ctx, tempPool)
+		ext.logger.Info("cleaning up any existing schema")
+		return cleanupExtensionSchema(ctx, tempPool, ext.logger)
 	}
 
-	logger.Info("initializing extension",
+	ext.logger.Info("initializing extension",
 		"enabled", processedConfig.Enabled,
 		"directives_count", len(processedConfig.Directives),
 		"sources", processedConfig.Sources)
 
 	// Check if test has injected a DB - if so, skip pool creation
 	if pool := getTestDBPool(); pool != nil {
-		logger.Info("using test-injected database connection")
-		cacheDB = internal.NewCacheDB(pool, logger)
+		ext.logger.Info("using test-injected database connection")
+		ext.cacheDB = internal.NewCacheDB(pool, ext.logger)
 		// Skip pool creation and database ready check
 	} else {
 		// Create independent connection pool for cache operations
 		// This prevents "tx is closed" errors caused by kwil-db's connection lifecycle
-		pool, err := createIndependentConnectionPool(ctx, app.Service)
+		pool, err := createIndependentConnectionPool(ctx, app.Service, ext.logger)
 		if err != nil {
 			return fmt.Errorf("failed to create connection pool: %w", err)
 		}
-		cachePool = pool
+		ext.cachePool = pool
 
 		// Create the CacheDB instance with our independent pool
-		cacheDB = internal.NewCacheDB(pool, logger)
+		ext.cacheDB = internal.NewCacheDB(pool, ext.logger)
 		
 		// Wait for database to be ready before proceeding
 		if err := waitForDatabaseReady(ctx, pool, 30*time.Second); err != nil {
@@ -665,30 +327,34 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	// Initialize extension resources using the appropriate connection
 	if getTestDB() != nil {
 		// For tests, assume schema is already set up by test framework
-		logger.Info("skipping schema setup in test mode")
+		ext.logger.Info("skipping schema setup in test mode")
 	} else {
 		// Initialize extension resources using the pool for schema setup
-		err = setupCacheSchema(ctx, cachePool)
-		if err != nil {
-			cachePool.Close()
-			return fmt.Errorf("failed to setup cache schema: %w", err)
+		if pool, ok := ext.cachePool.(*pgxpool.Pool); ok {
+			err = setupCacheSchema(ctx, pool, ext.logger)
+			if err != nil {
+				pool.Close()
+				return fmt.Errorf("failed to setup cache schema: %w", err)
+			}
+		} else {
+			return fmt.Errorf("cache pool is not a *pgxpool.Pool")
 		}
 	}
 
 	// Initialize scheduler if we have directives
 	if len(processedConfig.Directives) > 0 {
-		scheduler = NewCacheScheduler(app, cacheDB, logger, metricsRecorder)
+		ext.scheduler = NewCacheScheduler(app, ext.cacheDB, ext.logger, metricsRecorder)
 
 		// Initialize sync checker for sync-aware caching
-		syncChecker = NewSyncChecker(logger, processedConfig.MaxBlockAge)
-		syncChecker.Start(ctx)
-		scheduler.SetSyncChecker(syncChecker)
+		ext.syncChecker = NewSyncChecker(ext.logger, processedConfig.MaxBlockAge)
+		ext.syncChecker.Start(ctx)
+		ext.scheduler.SetSyncChecker(ext.syncChecker)
 
 		if processedConfig.MaxBlockAge > 0 {
-			logger.Info("sync-aware caching enabled", "max_block_age", processedConfig.MaxBlockAge)
+			ext.logger.Info("sync-aware caching enabled", "max_block_age", processedConfig.MaxBlockAge)
 		}
 
-		if err := scheduler.Start(ctx, processedConfig); err != nil {
+		if err := ext.scheduler.Start(ctx, processedConfig); err != nil {
 			return fmt.Errorf("failed to start scheduler: %w", err)
 		}
 
@@ -696,33 +362,38 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 		metricsRecorder.RecordStreamConfigured(ctx, len(processedConfig.Directives))
 
 		// Query actual active streams on startup (cache persists across restarts)
-		scheduler.updateGaugeMetrics(ctx)
+		ext.scheduler.updateGaugeMetrics(ctx)
 
 		// Start a goroutine to handle graceful shutdown when context is cancelled
 		go func() {
 			<-ctx.Done()
-			logger.Info("context cancelled, stopping extension")
+			ext.logger.Info("context cancelled, stopping extension")
 
 			// Stop sync checker first
-			if syncChecker != nil {
-				syncChecker.Stop()
-				logger.Info("stopped sync checker")
+			if ext.syncChecker != nil {
+				ext.syncChecker.Stop()
+				ext.logger.Info("stopped sync checker")
 			}
 
 			// Stop scheduler
-			if scheduler != nil {
-				if err := scheduler.Stop(); err != nil {
-					logger.Error("error stopping scheduler", "error", err)
+			if ext.scheduler != nil {
+				if err := ext.scheduler.Stop(); err != nil {
+					ext.logger.Error("error stopping scheduler", "error", err)
 				}
 			}
 
 			// Close connection pool
-			if cachePool != nil {
-				cachePool.Close()
-				logger.Info("closed cache connection pool")
+			if ext.cachePool != nil {
+				if pool, ok := ext.cachePool.(*pgxpool.Pool); ok {
+					pool.Close()
+					ext.logger.Info("closed cache connection pool")
+				}
 			}
 		}()
 	}
+
+	// Update the extension with all initialized components
+	ext.metricsRecorder = metricsRecorder
 
 	return nil
 }
@@ -735,7 +406,7 @@ func endBlockHook(ctx context.Context, app *common.App, block *common.BlockConte
 }
 
 // setupCacheSchema creates the necessary database schema for the cache
-func setupCacheSchema(ctx context.Context, pool *pgxpool.Pool) error {
+func setupCacheSchema(ctx context.Context, pool *pgxpool.Pool, logger log.Logger) error {
 	logger.Info("setting up cache schema")
 
 	// Begin a transaction to ensure atomicity of schema creation
@@ -824,7 +495,7 @@ func waitForDatabaseReady(ctx context.Context, pool *pgxpool.Pool, maxWait time.
 }
 
 // createIndependentConnectionPool creates a dedicated connection pool for cache operations
-func createIndependentConnectionPool(ctx context.Context, service *common.Service) (*pgxpool.Pool, error) {
+func createIndependentConnectionPool(ctx context.Context, service *common.Service, logger log.Logger) (*pgxpool.Pool, error) {
 	// Check for test database configuration override first
 	var dbConfig kwilconfig.DBConfig
 	if testDBConfig := getTestDBConfig(); testDBConfig != nil {
@@ -875,7 +546,7 @@ func createIndependentConnectionPool(ctx context.Context, service *common.Servic
 	return pool, nil
 }
 
-func cleanupExtensionSchema(ctx context.Context, pool *pgxpool.Pool) error {
+func cleanupExtensionSchema(ctx context.Context, pool *pgxpool.Pool, logger log.Logger) error {
 	if pool == nil {
 		logger.Warn("cannot cleanup schema: pool is nil")
 		return nil
@@ -910,114 +581,22 @@ func cleanupExtensionSchema(ctx context.Context, pool *pgxpool.Pool) error {
 
 // HasCachedData checks if there is cached data for a stream in a time range
 func HasCachedData(ctx context.Context, dataProvider, streamID string, fromTime, toTime int64) (bool, error) {
-	if cacheDB == nil {
+	ext := GetExtension()
+	if ext == nil || ext.cacheDB == nil {
 		return false, fmt.Errorf("cache extension not initialized")
 	}
-	return cacheDB.HasCachedData(ctx, dataProvider, streamID, fromTime, toTime)
+	return ext.cacheDB.HasCachedData(ctx, dataProvider, streamID, fromTime, toTime)
 }
 
 // GetCachedData retrieves cached data for a stream
 func GetCachedData(ctx context.Context, dataProvider, streamID string, fromTime, toTime int64) ([]internal.CachedEvent, error) {
-	if cacheDB == nil {
+	ext := GetExtension()
+	if ext == nil || ext.cacheDB == nil {
 		return nil, fmt.Errorf("cache extension not initialized")
 	}
-	return cacheDB.GetEvents(ctx, dataProvider, streamID, fromTime, toTime)
+	return ext.cacheDB.GetEvents(ctx, dataProvider, streamID, fromTime, toTime)
 }
 
-// handleGetCachedLastBefore handles the get_cached_last_before precompile method
-// Returns the most recent record before a given timestamp
-func handleGetCachedLastBefore(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
-	if err := checkExtensionEnabled(); err != nil {
-		return err
-	}
+// handleGetCachedLastBefore moved to handlers.go
 
-	// Extract parameters
-	dataProvider := normalizeDataProvider(inputs[0].(string))
-	streamID := inputs[1].(string)
-	before := extractTimeParameter(inputs[2])
-
-	// Set up tracing
-	var attrs []attribute.KeyValue
-	if before != nil {
-		attrs = append(attrs, attribute.Int64("before", *before))
-	}
-	traceCtx, end := createStreamOperationContext(ctx.TxContext.Ctx, tracing.OpCacheGet, dataProvider, streamID, attrs...)
-	defer end(nil)
-	ctx.TxContext.Ctx = traceCtx
-
-	// Get database connection
-	db, err := checkCacheDB()
-	if err != nil {
-		return err
-	}
-
-	// Default to max_int8 if before is NULL
-	effectiveBefore := maxInt8
-	if before != nil {
-		effectiveBefore = *before
-	}
-
-	// Query for the last record before the timestamp
-	result, err := db.Execute(ctx.TxContext.Ctx, `
-		SELECT event_time, value
-		FROM `+constants.CacheSchemaName+`.cached_events
-		WHERE data_provider = $1 AND stream_id = $2 AND event_time < $3
-		ORDER BY event_time DESC
-		LIMIT 1
-	`, dataProvider, streamID, effectiveBefore)
-
-	if err != nil {
-		return fmt.Errorf("failed to query cached events: %w", err)
-	}
-
-	return processSingleRowResult(result, resultFn)
-}
-
-// handleGetCachedFirstAfter handles the get_cached_first_after precompile method
-// Returns the earliest record after a given timestamp
-func handleGetCachedFirstAfter(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
-	if err := checkExtensionEnabled(); err != nil {
-		return err
-	}
-
-	// Extract parameters
-	dataProvider := normalizeDataProvider(inputs[0].(string))
-	streamID := inputs[1].(string)
-	after := extractTimeParameter(inputs[2])
-
-	// Set up tracing
-	var attrs []attribute.KeyValue
-	if after != nil {
-		attrs = append(attrs, attribute.Int64("after", *after))
-	}
-	traceCtx, end := createStreamOperationContext(ctx.TxContext.Ctx, tracing.OpCacheGet, dataProvider, streamID, attrs...)
-	defer end(nil)
-	ctx.TxContext.Ctx = traceCtx
-
-	// Get database connection
-	db, err := checkCacheDB()
-	if err != nil {
-		return err
-	}
-
-	// Default to 0 if after is NULL
-	effectiveAfter := int64(0)
-	if after != nil {
-		effectiveAfter = *after
-	}
-
-	// Query for the first record after the timestamp
-	result, err := db.Execute(ctx.TxContext.Ctx, `
-		SELECT event_time, value
-		FROM `+constants.CacheSchemaName+`.cached_events
-		WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3
-		ORDER BY event_time ASC
-		LIMIT 1
-	`, dataProvider, streamID, effectiveAfter)
-
-	if err != nil {
-		return fmt.Errorf("failed to query cached events: %w", err)
-	}
-
-	return processSingleRowResult(result, resultFn)
-}
+// handleGetCachedFirstAfter moved to handlers.go

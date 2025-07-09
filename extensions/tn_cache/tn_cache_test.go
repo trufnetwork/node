@@ -53,11 +53,11 @@ func createTestEngineContext() *common.EngineContext {
 func TestHasCachedData(t *testing.T) {
 	// Test when cache is not initialized
 	t.Run("cache not initialized", func(t *testing.T) {
-		// Save current cacheDB and restore after test
-		oldCacheDB := cacheDB
-		defer func() { cacheDB = oldCacheDB }()
-		
-		cacheDB = nil
+		// Save current extension and restore after test
+		oldExt := GetExtension()
+		defer func() { SetExtension(oldExt) }()
+
+		SetExtension(nil)
 
 		_, err := HasCachedData(context.Background(), "test", "test", 0, 0)
 		require.Error(t, err)
@@ -66,9 +66,9 @@ func TestHasCachedData(t *testing.T) {
 
 	// Test when cache is initialized
 	t.Run("cache initialized", func(t *testing.T) {
-		// Save current cacheDB and restore after test
-		oldCacheDB := cacheDB
-		defer func() { cacheDB = oldCacheDB }()
+		// Save current extension and restore after test
+		oldExt := GetExtension()
+		defer func() { SetExtension(oldExt) }()
 
 		// Create mock pool
 		mockPool, err := pgxmock.NewPool()
@@ -86,7 +86,11 @@ func TestHasCachedData(t *testing.T) {
 		mockPool.ExpectCommit()
 
 		logger := createTestLogger(t)
-		cacheDB = internal.NewCacheDB(mockPool, logger)
+		cacheDB := internal.NewCacheDB(mockPool, logger)
+
+		// Create extension with the mock DB
+		ext := NewExtension(logger, cacheDB, nil, nil, metrics.NewNoOpMetrics(), mockPool, true)
+		SetExtension(ext)
 
 		// Test with cache initialized
 		hasData, err := HasCachedData(context.Background(), "test_provider", "test_stream", 1000, 2000)
@@ -100,9 +104,9 @@ func TestHasCachedData(t *testing.T) {
 }
 
 func TestGetCachedData(t *testing.T) {
-	// Save current cacheDB and restore after test
-	oldCacheDB := cacheDB
-	defer func() { cacheDB = oldCacheDB }()
+	// Save current extension and restore after test
+	oldExt := GetExtension()
+	defer func() { SetExtension(oldExt) }()
 
 	// Create mock pool
 	mockPool, err := pgxmock.NewPool()
@@ -123,7 +127,11 @@ func TestGetCachedData(t *testing.T) {
 		WillReturnRows(rows)
 
 	logger := createTestLogger(t)
-	cacheDB = internal.NewCacheDB(mockPool, logger)
+	cacheDB := internal.NewCacheDB(mockPool, logger)
+
+	// Create extension with the mock DB
+	ext := NewExtension(logger, cacheDB, nil, nil, metrics.NewNoOpMetrics(), mockPool, true)
+	SetExtension(ext)
 
 	// Test GetCachedData
 	ctx := context.Background()
@@ -136,7 +144,7 @@ func TestGetCachedData(t *testing.T) {
 	assert.Equal(t, "test_stream", events[0].StreamID)
 	assert.Equal(t, int64(1000), events[0].EventTime)
 	assert.Equal(t, testValue1.String(), events[0].Value.String())
-	
+
 	assert.Equal(t, "test_provider", events[1].DataProvider)
 	assert.Equal(t, "test_stream", events[1].StreamID)
 	assert.Equal(t, int64(1500), events[1].EventTime)
@@ -149,8 +157,8 @@ func TestGetCachedData(t *testing.T) {
 
 func TestGetCachedData_NoData(t *testing.T) {
 	// Save current cacheDB and restore after test
-	oldCacheDB := cacheDB
-	defer func() { cacheDB = oldCacheDB }()
+	oldExt := GetExtension()
+	defer func() { SetExtension(oldExt) }()
 
 	// Create mock pool
 	mockPool, err := pgxmock.NewPool()
@@ -163,7 +171,9 @@ func TestGetCachedData_NoData(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"data_provider", "stream_id", "event_time", "value"}))
 
 	logger := createTestLogger(t)
-	cacheDB = internal.NewCacheDB(mockPool, logger)
+	cacheDB := internal.NewCacheDB(mockPool, logger)
+	ext := NewExtension(logger, cacheDB, nil, nil, metrics.NewNoOpMetrics(), mockPool, true)
+	SetExtension(ext)
 
 	// Test GetCachedData with no data
 	ctx := context.Background()
@@ -175,7 +185,6 @@ func TestGetCachedData_NoData(t *testing.T) {
 	err = mockPool.ExpectationsWereMet()
 	require.NoError(t, err)
 }
-
 
 // Test the extension initialization
 // TODO: This test needs to be updated to match the current extension initialization
@@ -232,9 +241,9 @@ func TestLoadConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			loader := config.NewLoader()
 			processedConfig, err := loader.LoadAndProcess(context.Background(), config.RawConfig{
-				Enabled:          tt.rawConfig["enabled"],
-				StreamsInline:    tt.rawConfig["streams_inline"],
-				StreamsCSVFile:   tt.rawConfig["streams_csv_file"],
+				Enabled:            tt.rawConfig["enabled"],
+				StreamsInline:      tt.rawConfig["streams_inline"],
+				StreamsCSVFile:     tt.rawConfig["streams_csv_file"],
 				ResolutionSchedule: tt.rawConfig["resolution_schedule"],
 			})
 
@@ -274,7 +283,7 @@ func TestSchedulerCreation(t *testing.T) {
 	// Create scheduler
 	scheduler := NewCacheScheduler(app, cacheDB, logger, metrics.NewNoOpMetrics())
 	require.NotNil(t, scheduler)
-	
+
 	// Verify scheduler was created with correct fields
 	assert.NotNil(t, scheduler.app)
 	assert.NotNil(t, scheduler.cacheDB)

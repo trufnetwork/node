@@ -84,9 +84,9 @@ func assertEngineCall(t *testing.T, expectedAction string, expectedProvider stri
 	}
 }
 
-// createTestTNOps creates a TNOperations instance with a discard logger
-func createTestTNOps(engine common.Engine) *TNOperations {
-	return NewTNOperations(engine, nil, "main", log.New(log.WithWriter(io.Discard)))
+// createTestEngineOps creates an EngineOperations instance with a discard logger
+func createTestEngineOps(engine common.Engine) *EngineOperations {
+	return NewEngineOperations(engine, nil, "main", log.New(log.WithWriter(io.Discard)))
 }
 
 type mockEngine struct {
@@ -112,7 +112,7 @@ func (m *mockEngine) ExecuteWithoutEngineCtx(ctx context.Context, db sql.DB, stm
 	return nil
 }
 
-func TestTNOperations_ListComposedStreams(t *testing.T) {
+func TestEngineOperations_ListComposedStreams(t *testing.T) {
 	tests := []struct {
 		name          string
 		provider      string
@@ -180,8 +180,8 @@ func TestTNOperations_ListComposedStreams(t *testing.T) {
 			}
 
 			// Execute test
-			tnOps := createTestTNOps(engine)
-			streams, err := tnOps.ListComposedStreams(context.Background(), tt.provider)
+			engineOps := createTestEngineOps(engine)
+			streams, err := engineOps.ListComposedStreams(context.Background(), tt.provider)
 
 			// Assertions
 			require.NoError(t, err)
@@ -191,7 +191,7 @@ func TestTNOperations_ListComposedStreams(t *testing.T) {
 	}
 }
 
-func TestTNOperations_GetCategoryStreams(t *testing.T) {
+func TestEngineOperations_GetCategoryStreams(t *testing.T) {
 	tests := []struct {
 		name          string
 		provider      string
@@ -249,8 +249,8 @@ func TestTNOperations_GetCategoryStreams(t *testing.T) {
 			}
 
 			// Execute test
-			tnOps := createTestTNOps(engine)
-			children, err := tnOps.GetCategoryStreams(context.Background(), tt.provider, tt.streamID, tt.activeFrom)
+			engineOps := createTestEngineOps(engine)
+			children, err := engineOps.GetCategoryStreams(context.Background(), tt.provider, tt.streamID, tt.activeFrom)
 
 			// Assertions
 			require.NoError(t, err)
@@ -267,7 +267,7 @@ func TestTNOperations_GetCategoryStreams(t *testing.T) {
 	}
 }
 
-func TestTNOperations_GetRecordComposed(t *testing.T) {
+func TestEngineOperations_GetRecordComposed(t *testing.T) {
 	// Common test time values
 	fromTime := int64(1000)
 	toTime := int64(2000)
@@ -348,8 +348,8 @@ func TestTNOperations_GetRecordComposed(t *testing.T) {
 			}
 
 			// Execute test
-			tnOps := createTestTNOps(engine)
-			records, err := tnOps.GetRecordComposed(context.Background(), tt.provider, tt.streamID, tt.from, tt.to)
+			engineOps := createTestEngineOps(engine)
+			records, err := engineOps.GetRecordComposed(context.Background(), tt.provider, tt.streamID, tt.from, tt.to)
 
 			// Assertions
 			if tt.expectError {

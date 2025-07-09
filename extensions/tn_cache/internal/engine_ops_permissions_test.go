@@ -64,10 +64,10 @@ func testExtensionAgentAccess(t *testing.T) func(ctx context.Context, platform *
 			// Stream is public by default (read_visibility = 0)
 
 			// Test that extension agent can list the stream
-			tnOps := internal.NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
+			engineOps := internal.NewEngineOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
 
 			// This should work for public streams
-			streams, err := tnOps.ListComposedStreams(ctx, deployer.Address())
+			streams, err := engineOps.ListComposedStreams(ctx, deployer.Address())
 			require.NoError(t, err, "Extension agent should be able to list streams")
 
 			// Verify our public stream is in the list
@@ -82,7 +82,7 @@ func testExtensionAgentAccess(t *testing.T) func(ctx context.Context, platform *
 
 			// Test that extension agent can get category streams
 			// Note: Private visibility affects reading data, not listing components/taxonomy
-			categoryStreams, err := tnOps.GetCategoryStreams(ctx, deployer.Address(), publicStreamId.String(), 0)
+			categoryStreams, err := engineOps.GetCategoryStreams(ctx, deployer.Address(), publicStreamId.String(), 0)
 			require.NoError(t, err, "Extension agent should be able to get category streams")
 
 			// Filter out parent stream
@@ -97,7 +97,7 @@ func testExtensionAgentAccess(t *testing.T) func(ctx context.Context, platform *
 			// Test that extension agent can get records
 			fromTime := int64(100)
 			toTime := int64(200)
-			records, err := tnOps.GetRecordComposed(ctx, deployer.Address(), publicStreamId.String(), &fromTime, &toTime)
+			records, err := engineOps.GetRecordComposed(ctx, deployer.Address(), publicStreamId.String(), &fromTime, &toTime)
 			require.NoError(t, err, "Extension agent should be able to get records")
 			
 			// Debug: Check what we got
@@ -142,10 +142,10 @@ func testExtensionAgentAccess(t *testing.T) func(ctx context.Context, platform *
 			require.NoError(t, err)
 			
 			// Try to access the private stream
-			tnOps := internal.NewTNOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
+			engineOps := internal.NewEngineOperations(txPlatform.Engine, txPlatform.DB, "main", logger)
 			fromTime := int64(100)
 			toTime := int64(100)
-			records, err := tnOps.GetRecordComposed(ctx, deployer.Address(), privateStreamId.String(), &fromTime, &toTime)
+			records, err := engineOps.GetRecordComposed(ctx, deployer.Address(), privateStreamId.String(), &fromTime, &toTime)
 			
 			// Extension agent can access private streams due to SQL authorization check
 			require.NoError(t, err, "Extension agent should be able to access private streams")

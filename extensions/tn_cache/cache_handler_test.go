@@ -58,8 +58,8 @@ func TestNewPrecompileMethods(t *testing.T) {
 	// This test verifies at compile time that the handler functions exist
 	// and have the correct signatures by referencing them
 	handlers := []interface{}{
-		handleGetCachedLastBefore,
-		handleGetCachedFirstAfter,
+		HandleGetCachedLastBefore,
+		HandleGetCachedFirstAfter,
 	}
 	
 	// Just verify they're not nil (they exist)

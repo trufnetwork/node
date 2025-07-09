@@ -16,11 +16,12 @@ type TestHelper struct{}
 // This is only available in test builds and allows tests to trigger cache
 // refresh without waiting for the scheduler
 func (TestHelper) RefreshCacheSync(ctx context.Context, dataProvider, streamID string) (int, error) {
-	if !isEnabled {
+	ext := GetExtension()
+	if ext == nil || !ext.IsEnabled() {
 		return 0, fmt.Errorf("tn_cache extension is not enabled")
 	}
 
-	if scheduler == nil {
+	if ext.Scheduler() == nil {
 		return 0, fmt.Errorf("scheduler not initialized")
 	}
 
@@ -35,7 +36,7 @@ func (TestHelper) RefreshCacheSync(ctx context.Context, dataProvider, streamID s
 	}
 
 	// Use the scheduler's refresh method with retry
-	err := scheduler.refreshStreamDataWithRetry(ctx, directive, 3)
+	err := ext.Scheduler().refreshStreamDataWithRetry(ctx, directive, 3)
 	if err != nil {
 		return 0, fmt.Errorf("failed to refresh stream: %w", err)
 	}
@@ -73,7 +74,8 @@ func (TestHelper) WaitForInitialization(ctx context.Context, timeout time.Durati
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			if isEnabled && cacheDB != nil && scheduler != nil && cachePool != nil {
+			ext := GetExtension()
+			if ext != nil && ext.IsEnabled() && ext.CacheDB() != nil && ext.Scheduler() != nil && ext.CachePool() != nil {
 				return nil
 			}
 			if time.Now().After(deadline) {
@@ -85,7 +87,8 @@ func (TestHelper) WaitForInitialization(ctx context.Context, timeout time.Durati
 
 // IsInitialized checks if the extension is fully initialized
 func (TestHelper) IsInitialized() bool {
-	return isEnabled && cacheDB != nil && scheduler != nil && cachePool != nil
+	ext := GetExtension()
+	return ext != nil && ext.IsEnabled() && ext.CacheDB() != nil && ext.Scheduler() != nil && ext.CachePool() != nil
 }
 
 // GetTestHelper returns a test helper instance

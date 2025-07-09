@@ -1,3 +1,29 @@
+// Package internal provides internal utilities for the TN cache extension.
+//
+// This file contains the engine operations abstraction layer that allows
+// the cache extension to interact with TrufNetwork's data through the Kwil
+// engine rather than direct database access.
+//
+// Why we need engine operations:
+// 1. Access to Actions: The TrufNetwork schema defines actions (stored procedures)
+//    like 'get_category_streams' and 'get_record_composed' that contain business
+//    logic and permissions. These can only be called through the Kwil engine.
+// 2. Permission Model: Actions enforce TrufNetwork's permission model, ensuring
+//    that data access respects user roles and stream visibility rules.
+// 3. Business Logic: Actions contain important business logic for composing
+//    streams, calculating aggregates, and transforming data that would be
+//    complex to replicate with direct SQL.
+//
+// When to use engine operations vs direct DB access:
+// - Use engine operations when:
+//   * Calling TrufNetwork-defined actions
+//   * Need to respect the permission model
+//   * Accessing composed/calculated data
+// - Use direct DB access (CacheDB) when:
+//   * Reading/writing to cache-specific tables
+//   * Need better performance for bulk operations
+//   * Working with extension-private data
+
 package internal
 
 import (
@@ -18,8 +44,9 @@ const (
 	ExtensionAgentName = "extension_agent"
 )
 
-// TNOperator defines the interface for TN operations
-type TNOperator interface {
+// EngineOperator defines the interface for operations that must go through
+// the Kwil engine to access TrufNetwork actions and respect permissions.
+type EngineOperator interface {
 	// ListComposedStreams returns all composed streams for a given provider
 	ListComposedStreams(ctx context.Context, provider string) ([]string, error)
 
@@ -42,17 +69,19 @@ type ComposedRecord struct {
 	Value     *types.Decimal
 }
 
-// TNOperations implements TNOperator interface
-type TNOperations struct {
+// EngineOperations implements the EngineOperator interface by calling
+// TrufNetwork actions through the Kwil engine. This ensures all data
+// access respects the defined permission model and business logic.
+type EngineOperations struct {
 	engine    common.Engine
 	db        sql.DB
 	namespace string
 	logger    log.Logger
 }
 
-// NewTNOperations creates a new TNOperations instance
-func NewTNOperations(engine common.Engine, db sql.DB, namespace string, logger log.Logger) *TNOperations {
-	return &TNOperations{
+// NewEngineOperations creates a new EngineOperations instance
+func NewEngineOperations(engine common.Engine, db sql.DB, namespace string, logger log.Logger) *EngineOperations {
+	return &EngineOperations{
 		engine:    engine,
 		db:        db,
 		namespace: namespace,
@@ -61,7 +90,9 @@ func NewTNOperations(engine common.Engine, db sql.DB, namespace string, logger l
 }
 
 // createEngineContext creates a standard engine context for extension operations
-func (t *TNOperations) createEngineContext(ctx context.Context, operation string) *common.EngineContext {
+// createEngineContext creates an engine context for executing actions.
+// It sets up the proper caller context as the extension agent.
+func (t *EngineOperations) createEngineContext(ctx context.Context, operation string) *common.EngineContext {
 	return &common.EngineContext{
 		TxContext: &common.TxContext{
 			Ctx: ctx,
@@ -77,7 +108,9 @@ func (t *TNOperations) createEngineContext(ctx context.Context, operation string
 }
 
 // callWithTrace wraps engine calls with tracing
-func (t *TNOperations) callWithTrace(ctx context.Context, engineCtx *common.EngineContext, action string, args []any, processResult func(*common.Row) error) (err error) {
+// callWithTrace executes an action through the engine with proper tracing.
+// It handles the engine call protocol and processes results row by row.
+func (t *EngineOperations) callWithTrace(ctx context.Context, engineCtx *common.EngineContext, action string, args []any, processResult func(*common.Row) error) (err error) {
 	// Map action to appropriate operation
 	var op tracing.Operation
 	switch action {
@@ -107,7 +140,10 @@ func (t *TNOperations) callWithTrace(ctx context.Context, engineCtx *common.Engi
 }
 
 // ListComposedStreams returns all composed streams for a given provider
-func (t *TNOperations) ListComposedStreams(ctx context.Context, provider string) ([]string, error) {
+// ListComposedStreams calls the 'list_composed_streams' action through the engine.
+// This action contains logic to identify which streams are composed (have child streams)
+// rather than primitive data streams.
+func (t *EngineOperations) ListComposedStreams(ctx context.Context, provider string) ([]string, error) {
 	t.logger.Debug("listing composed streams", "provider", provider)
 
 	var composedStreams []string
@@ -152,7 +188,10 @@ func (t *TNOperations) ListComposedStreams(ctx context.Context, provider string)
 }
 
 // GetCategoryStreams returns child streams for a composed stream
-func (t *TNOperations) GetCategoryStreams(ctx context.Context, provider, streamID string, activeFrom int64) ([]CategoryStream, error) {
+// GetCategoryStreams calls the 'get_category_streams' action through the engine.
+// This action returns the child streams that compose a parent stream, respecting
+// the temporal validity (active_from) of the composition relationships.
+func (t *EngineOperations) GetCategoryStreams(ctx context.Context, provider, streamID string, activeFrom int64) ([]CategoryStream, error) {
 	t.logger.Debug("getting category streams",
 		"provider", provider,
 		"stream", streamID,
@@ -203,7 +242,10 @@ func (t *TNOperations) GetCategoryStreams(ctx context.Context, provider, streamI
 }
 
 // GetRecordComposed fetches records from a composed stream
-func (t *TNOperations) GetRecordComposed(ctx context.Context, provider, streamID string, from, to *int64) ([]ComposedRecord, error) {
+// GetRecordComposed calls the 'get_record_composed' action through the engine.
+// This action handles the complex logic of aggregating data from child streams
+// into composed values, including weighted averages and other calculations.
+func (t *EngineOperations) GetRecordComposed(ctx context.Context, provider, streamID string, from, to *int64) ([]ComposedRecord, error) {
 	t.logger.Debug("getting composed records",
 		"provider", provider,
 		"stream", streamID,
