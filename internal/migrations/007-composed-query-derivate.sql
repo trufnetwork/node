@@ -386,6 +386,7 @@ RETURNS TABLE(
     -- (cache bypass conditions)
     $cache_enabled BOOL := false;
     $use_cache_for_current_value BOOL := false;
+    $use_cache_for_base_value BOOL := false;
     
     -- Check if cache conditions are met
     if $frozen_at IS NULL {
