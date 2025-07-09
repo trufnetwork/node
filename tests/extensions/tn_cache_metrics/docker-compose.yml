@@ -39,6 +39,7 @@ services:
       KWILD_TELEMETRY_OTLP_ENDPOINT: "otel-collector:4318"
       # tn_cache extension configuration
       KWILD_APP_EXTENSIONS_TN_CACHE_ENABLED: "true"
+      KWILD_APP_EXTENSIONS_TN_CACHE_MAX_BLOCK_AGE: "1h"  # Allow 1 hour old blocks for test environment
       KWILD_APP_EXTENSIONS_TN_CACHE_RESOLUTION_SCHEDULE: "*/30 * * * * *"
       KWILD_APP_EXTENSIONS_TN_CACHE_STREAMS_INLINE: |
         [

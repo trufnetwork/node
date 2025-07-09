@@ -136,8 +136,12 @@ func (sc *SyncChecker) updateStatus(ctx context.Context) {
 	}
 	
 	var health struct {
-		Syncing   bool  `json:"syncing"`
-		BlockTime int64 `json:"block_time"`
+		Services struct {
+			User struct {
+				Syncing   bool  `json:"syncing"`
+				BlockTime int64 `json:"block_time"`
+			} `json:"user"`
+		} `json:"services"`
 	}
 	
 	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
@@ -146,14 +150,16 @@ func (sc *SyncChecker) updateStatus(ctx context.Context) {
 	}
 	
 	// Update atomic fields
-	sc.isSyncing.Store(health.Syncing)
-	sc.blockTime.Store(health.BlockTime)
+	sc.isSyncing.Store(health.Services.User.Syncing)
+	// Convert milliseconds to seconds
+	blockTimeSeconds := health.Services.User.BlockTime / 1000
+	sc.blockTime.Store(blockTimeSeconds)
 	sc.lastChecked.Store(time.Now().Unix())
 	
-	if health.Syncing {
+	if health.Services.User.Syncing {
 		sc.logger.Debug("node is syncing")
 	} else if sc.maxBlockAge > 0 {
-		age := time.Now().Unix() - health.BlockTime
+		age := time.Now().Unix() - blockTimeSeconds
 		sc.logger.Debug("sync status", "block_age", age, "max_age", sc.maxBlockAge)
 	}
 }

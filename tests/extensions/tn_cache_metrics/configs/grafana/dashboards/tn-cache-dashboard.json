@@ -102,7 +102,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(tn_cache_hits_total[5m])) / (sum(rate(tn_cache_hits_total[5m])) + sum(rate(tn_cache_misses_total[5m]))) * 100",
+          "expr": "sum(rate(tn_cache_hits_total[5m])) / (sum(rate(tn_cache_hits_total[5m])) + sum(rate(tn_cache_misses_total[5m])) or vector(0)) * 100 or 100",
           "refId": "A"
         }
       ],
@@ -447,7 +447,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "rate(tn_cache_hits_total[5m]) / (rate(tn_cache_hits_total[5m]) + rate(tn_cache_misses_total[5m])) * 100",
+          "expr": "(rate(tn_cache_hits_total{data_provider=~\"$data_provider\",stream_id=~\"$stream_id\"}[5m]) / (rate(tn_cache_hits_total{data_provider=~\"$data_provider\",stream_id=~\"$stream_id\"}[5m]) + (rate(tn_cache_misses_total{data_provider=~\"$data_provider\",stream_id=~\"$stream_id\"}[5m]) or vector(0)))) * 100 or vector(100)",
           "refId": "A",
           "legendFormat": "{{data_provider}}/{{stream_id}}"
         }
