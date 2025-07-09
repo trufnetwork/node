@@ -124,16 +124,16 @@ func (t *EngineOperations) callWithTrace(ctx context.Context, engineCtx *common.
 		// Fallback for unknown actions
 		op = tracing.Operation("tn." + action)
 	}
-	
+
 	// Start span with action details
 	spanCtx, end := tracing.TNOperation(ctx, op, action)
 	defer func() {
 		end(err)
 	}()
-	
+
 	// Update engine context with traced context
 	engineCtx.TxContext.Ctx = spanCtx
-	
+
 	// Call the engine
 	_, err = t.engine.Call(engineCtx, t.db, t.namespace, action, args, processResult)
 	return err
@@ -268,6 +268,7 @@ func (t *EngineOperations) GetRecordComposed(ctx context.Context, provider, stre
 			from,     // from timestamp
 			to,       // to timestamp
 			nil,      // frozen_at (not applicable for cache refresh)
+			false,    // don't use cache to get new data
 		},
 		func(row *common.Row) error {
 			if len(row.Values) >= 2 {
@@ -303,4 +304,3 @@ func (t *EngineOperations) GetRecordComposed(ctx context.Context, provider, stre
 
 	return records, nil
 }
-

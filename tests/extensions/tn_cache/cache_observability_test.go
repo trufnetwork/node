@@ -57,7 +57,7 @@ func TestCacheObservability(t *testing.T) {
 				// Test 1: Verify cache miss log format
 				fromTime := int64(1)
 				toTime := int64(2)
-				
+
 				// First query - should miss cache
 				useCache := true
 				result, err := procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
@@ -74,7 +74,7 @@ func TestCacheObservability(t *testing.T) {
 				require.NoError(t, err)
 				require.NotNil(t, result)
 				require.NotEmpty(t, result.Rows)
-				
+
 				// Find cache-related log
 				var cacheLogs []string
 				t.Logf("Total logs from first query: %d", len(result.Logs))
@@ -99,7 +99,7 @@ func TestCacheObservability(t *testing.T) {
 
 				// Test 2: Verify cache hit log format
 				cacheLogs = nil // Reset logs
-				useCache := true
+				useCache = true
 				result2, err := procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
 					Platform: platform,
 					StreamLocator: types.StreamLocator{
@@ -112,7 +112,7 @@ func TestCacheObservability(t *testing.T) {
 					UseCache: &useCache,
 				})
 				require.NoError(t, err, "Cache hit query should not error")
-				
+
 				require.NotNil(t, result2, "Second query should return results")
 				require.NotEmpty(t, result2.Rows)
 
@@ -176,7 +176,6 @@ func TestCacheObservability(t *testing.T) {
 		},
 	}, testutils.GetTestOptionsWithCache(cacheConfig))
 }
-
 
 // TODO: Add TestCacheMetrics when metrics are exposed
 // This would test:
