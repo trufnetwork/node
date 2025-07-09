@@ -31,8 +31,12 @@ func TestSyncChecker_CanExecute(t *testing.T) {
 			name:        "syncing blocks execution",
 			maxBlockAge: 3600,
 			health: map[string]any{
-				"syncing":    true,
-				"block_time": time.Now().Unix(),
+				"services": map[string]any{
+					"user": map[string]any{
+						"syncing":    true,
+						"block_time": time.Now().Unix() * 1000, // Convert to milliseconds
+					},
+				},
 			},
 			wantOK:     false,
 			wantReason: "node is syncing",
@@ -41,8 +45,12 @@ func TestSyncChecker_CanExecute(t *testing.T) {
 			name:        "old block blocks execution",
 			maxBlockAge: 3600,
 			health: map[string]any{
-				"syncing":    false,
-				"block_time": time.Now().Unix() - 7200, // 2 hours old
+				"services": map[string]any{
+					"user": map[string]any{
+						"syncing":    false,
+						"block_time": (time.Now().Unix() - 7200) * 1000, // 2 hours old, in milliseconds
+					},
+				},
 			},
 			wantOK:     false,
 			wantReason: "block too old",
@@ -51,8 +59,12 @@ func TestSyncChecker_CanExecute(t *testing.T) {
 			name:        "recent block allows execution",
 			maxBlockAge: 3600,
 			health: map[string]any{
-				"syncing":    false,
-				"block_time": time.Now().Unix() - 1800, // 30 minutes old
+				"services": map[string]any{
+					"user": map[string]any{
+						"syncing":    false,
+						"block_time": (time.Now().Unix() - 1800) * 1000, // 30 minutes old, in milliseconds
+					},
+				},
 			},
 			wantOK:     true,
 			wantReason: "",
@@ -61,8 +73,12 @@ func TestSyncChecker_CanExecute(t *testing.T) {
 			name:        "network halt scenario - synced but old block",
 			maxBlockAge: 3600,
 			health: map[string]any{
-				"syncing":    false, // Not actively syncing
-				"block_time": time.Now().Unix() - 7200, // Old block during halt
+				"services": map[string]any{
+					"user": map[string]any{
+						"syncing":    false, // Not actively syncing
+						"block_time": (time.Now().Unix() - 7200) * 1000, // Old block during halt, in milliseconds
+					},
+				},
 			},
 			wantOK:     false, // Still blocks because block is too old
 			wantReason: "block too old",

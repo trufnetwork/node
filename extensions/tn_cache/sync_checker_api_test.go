@@ -2,6 +2,7 @@ package tn_cache
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,15 +14,22 @@ import (
 
 // TestSyncCheckerMillisecondsConversion verifies sync checker handles API's millisecond timestamps
 func TestSyncCheckerMillisecondsConversion(t *testing.T) {
+	// Use current time minus 30 minutes for a valid recent block.
+	// The sync checker validates blocks against maxBlockAge (3600s = 1 hour).
+	// 30 minutes (1800s) ensures we're well within the valid range while
+	// providing buffer for test execution timing variations.
+	currentTime := time.Now().Unix()
+	recentBlockTime := (currentTime - 1800) * 1000 // 30 minutes ago in milliseconds
+	
 	// Real API response with millisecond timestamp
-	healthResponse := `{
+	healthResponse := fmt.Sprintf(`{
 		"services": {
 			"user": {
-				"block_time": 1752082707307,
+				"block_time": %d,
 				"syncing": false
 			}
 		}
-	}`
+	}`, recentBlockTime)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(healthResponse))
@@ -38,7 +46,8 @@ func TestSyncCheckerMillisecondsConversion(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Verify milliseconds converted to seconds
-	require.Equal(t, int64(1752082707), sc.blockTime.Load())
+	expectedBlockTime := recentBlockTime / 1000
+	require.Equal(t, expectedBlockTime, sc.blockTime.Load())
 	
 	// Should allow execution with recent block
 	canExecute, _ := sc.CanExecute()
