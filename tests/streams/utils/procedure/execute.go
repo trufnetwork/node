@@ -14,7 +14,14 @@ import (
 	"github.com/trufnetwork/sdk-go/core/types"
 )
 
-func GetRecord(ctx context.Context, input GetRecordInput) ([]ResultRow, error) {
+// GetRecordResult contains the full result of a GetRecord call
+type GetRecordResult struct {
+	Rows []ResultRow
+	Logs []string
+}
+
+// GetRecordWithLogs executes get_record and returns full result including logs
+func GetRecordWithLogs(ctx context.Context, input GetRecordInput) (*GetRecordResult, error) {
 	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
 	if err != nil {
 		return nil, errors.Wrap(err, "error in getRecord")
@@ -53,12 +60,7 @@ func GetRecord(ctx context.Context, input GetRecordInput) ([]ResultRow, error) {
 		resultRows = append(resultRows, values)
 		return nil
 	})
-	if input.PrintLogs != nil && *input.PrintLogs {
-		fmt.Println("getRecord logs:")
-		for _, log := range r.Logs {
-			fmt.Println(log)
-		}
-	}
+
 	if err != nil {
 		return nil, errors.Wrap(err, "error in getRecord")
 	}
@@ -66,7 +68,33 @@ func GetRecord(ctx context.Context, input GetRecordInput) ([]ResultRow, error) {
 		return nil, errors.Wrap(r.Error, "error in getRecord")
 	}
 
-	return processResultRows(resultRows)
+	processedRows, err := processResultRows(resultRows)
+	if err != nil {
+		return nil, err
+	}
+
+	return &GetRecordResult{
+		Rows: processedRows,
+		Logs: r.Logs,
+	}, nil
+}
+
+// GetRecord executes get_record and returns results
+func GetRecord(ctx context.Context, input GetRecordInput) ([]ResultRow, error) {
+	result, err := GetRecordWithLogs(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+
+	// Print logs if requested
+	if input.PrintLogs != nil && *input.PrintLogs {
+		fmt.Println("getRecord logs:")
+		for _, log := range result.Logs {
+			fmt.Println(log)
+		}
+	}
+
+	return result.Rows, nil
 }
 
 func GetIndex(ctx context.Context, input GetIndexInput) ([]ResultRow, error) {
