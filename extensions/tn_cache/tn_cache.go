@@ -267,8 +267,6 @@ func initializeExtension(ctx context.Context, service *common.Service, db sql.DB
 	}, nil
 }
 
-// All helper functions have been moved to handlers.go where they are used
-
 // engineReadyHook is called when the engine is ready
 // This is where we initialize our extension
 func engineReadyHook(ctx context.Context, app *common.App) error {
@@ -635,7 +633,3 @@ func GetCachedData(ctx context.Context, dataProvider, streamID string, fromTime,
 	}
 	return ext.cacheDB.GetEvents(ctx, dataProvider, streamID, fromTime, toTime)
 }
-
-// handleGetCachedLastBefore moved to handlers.go
-
-// handleGetCachedFirstAfter moved to handlers.go

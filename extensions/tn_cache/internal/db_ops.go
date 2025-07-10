@@ -29,7 +29,6 @@ import (
 	"github.com/trufnetwork/kwil-db/core/log"
 	"github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal/constants"
-	"github.com/trufnetwork/node/extensions/tn_cache/internal/parsing"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal/tracing"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -505,19 +504,11 @@ func (c *CacheDB) GetEvents(ctx context.Context, dataProvider, streamID string, 
 	events = make([]CachedEvent, 0)
 	for rows.Next() {
 		var event CachedEvent
-		var valueRaw interface{}
 
-		err := rows.Scan(&event.DataProvider, &event.StreamID, &event.EventTime, &valueRaw)
+		err := rows.Scan(&event.DataProvider, &event.StreamID, &event.EventTime, &event.Value)
 		if err != nil {
 			return nil, fmt.Errorf("scan event: %w", err)
 		}
-
-		// Parse the value using the shared parsing logic
-		value, err := parsing.ParseEventValue(valueRaw)
-		if err != nil {
-			return nil, fmt.Errorf("parse event value: %w", err)
-		}
-		event.Value = value
 
 		events = append(events, event)
 	}
@@ -573,19 +564,11 @@ func (c *CacheDB) GetIndexEvents(ctx context.Context, dataProvider, streamID str
 	events = make([]CachedIndexEvent, 0)
 	for rows.Next() {
 		var event CachedIndexEvent
-		var valueRaw interface{}
 
-		err := rows.Scan(&event.DataProvider, &event.StreamID, &event.EventTime, &valueRaw)
+		err := rows.Scan(&event.DataProvider, &event.StreamID, &event.EventTime, &event.Value)
 		if err != nil {
 			return nil, fmt.Errorf("scan index event: %w", err)
 		}
-
-		// Parse the index value using the shared parsing logic
-		value, err := parsing.ParseEventValue(valueRaw)
-		if err != nil {
-			return nil, fmt.Errorf("parse index value: %w", err)
-		}
-		event.Value = value
 
 		events = append(events, event)
 	}
