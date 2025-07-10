@@ -31,9 +31,6 @@ func TestCacheObservability(t *testing.T) {
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			func(ctx context.Context, platform *kwilTesting.Platform) error {
-				// TODO: Remove this once we fix the bug in index cache
-				t.Skip("Skipping cache_observability_test with cache as we have a bug in index cache")
-
 				// Cache is already set up by the wrapper, but we need the helper for RefreshCache
 				helper := testutils.SetupCacheTest(ctx, platform, cacheConfig)
 				defer helper.Cleanup()
@@ -137,7 +134,6 @@ func TestCacheObservability(t *testing.T) {
 				assert.NotNil(t, hitLog["cached_at"], "Cache hit should include cached_at timestamp")
 
 				// Test 3: Verify get_index cache miss log format
-				baseTime := int64(1)
 				cacheLogs = nil // Reset logs
 				indexResult, err := procedure.GetIndexWithLogs(ctx, procedure.GetIndexInput{
 					Platform: platform,
@@ -145,9 +141,9 @@ func TestCacheObservability(t *testing.T) {
 						StreamId:     streamId,
 						DataProvider: deployerAddr,
 					},
+					UseCache: &useCache,
 					FromTime: &fromTime,
 					ToTime:   &toTime,
-					BaseTime: &baseTime,
 					Height:   1,
 				})
 				require.NoError(t, err)
