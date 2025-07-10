@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,9 +42,6 @@ func TestCacheIntegration(t *testing.T) {
 
 func testCacheBasicFunctionality(t *testing.T, cacheConfig *testutils.CacheOptions) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// TODO: Remove this once we fix the bug in index cache
-		t.Skip("Skipping testCacheBasicFunctionality with cache as we have a bug in index cache")
-
 		// Cache is already set up by the wrapper, but we need the helper for RefreshCache
 		helper := testutils.SetupCacheTest(ctx, platform, cacheConfig)
 		defer helper.Cleanup()
@@ -195,10 +193,15 @@ func testCacheBasicFunctionality(t *testing.T, cacheConfig *testutils.CacheOptio
 		require.Len(t, cachedIndexData, 3, "Should have 3 cached index records")
 
 		// Verify cached index data matches original index data
+		// Index is calculated as weighted average of individual stream indices
+		// Stream 1: base=100, values=[100,150,200] -> indices=[100,150,200]
+		// Stream 2: base=200, values=[200,250,300] -> indices=[100,125,150]
+		// Stream 3: base=300, values=[300,350,400] -> indices=[100,116.67,133.33]
+		// Weighted avg (1:2:3): [100, 130.56, 161.11]
 		expectedIndexValues := []string{
-			"100.000000000000000000", // (200/200)*100 = 100 (first value as base)
-			"125.000000000000000000", // (250/200)*100 = 125
-			"150.000000000000000000", // (300/200)*100 = 150
+			"100.000000000000000000", // All streams start at 100% of their base
+			"130.555555555555555556", // Weighted average of individual indices
+			"161.111111111111111111", // Weighted average of individual indices
 		}
 
 		for i, cached := range cachedIndexData {
@@ -207,5 +210,207 @@ func testCacheBasicFunctionality(t *testing.T, cacheConfig *testutils.CacheOptio
 		}
 
 		return nil
+	}
+}
+
+// TestCacheIncludeChildrenForNestedComposed tests cache functionality with include_children option
+// for composed streams that have other composed streams as children
+func TestCacheIncludeChildrenForNestedComposed(t *testing.T) {
+	parentComposedId := util.GenerateStreamId("cache_test_parent_composed")
+	deployer := "0x0000000000000000000000000000000000000123"
+
+	// Create cache configuration with include_children enabled for parent
+	cacheConfig := testutils.NewCacheOptions().
+		WithEnabled().
+		WithMaxBlockAge(-1*time.Second). // Disable sync checking for tests
+		WithComposedStream(deployer, parentComposedId.String(), "0 0 0 31 2 *", true)
+
+	// Run the test with cache enabled
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name:        "cache_include_children_test",
+		SeedScripts: migrations.GetSeedScriptPaths(),
+		FunctionTests: []kwilTesting.TestFunc{
+			testCacheIncludeChildren(t, cacheConfig),
+		},
+	}, testutils.GetTestOptionsWithCache(cacheConfig))
+}
+
+func testCacheIncludeChildren(t *testing.T, cacheConfig *testutils.CacheOptions) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		helper := testutils.SetupCacheTest(ctx, platform, cacheConfig)
+		defer helper.Cleanup()
+
+		deployer, err := util.NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
+		require.NoError(t, err)
+
+		platform = procedure.WithSigner(platform, deployer.Bytes())
+
+		// Setup hierarchical stream structure:
+		// Parent Composed -> Child Composed 1 & 2 -> Primitives 1-4
+		childComposed1Id := util.GenerateStreamId("cache_test_child_composed_1")
+		childComposed2Id := util.GenerateStreamId("cache_test_child_composed_2")
+		parentComposedId := util.GenerateStreamId("cache_test_parent_composed")
+
+		// Setup child composed 1 with primitives using markdown
+		err = setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
+			Platform: platform,
+			StreamId: childComposed1Id,
+			MarkdownData: `
+			| event_time | primitive_1 | primitive_2 |
+			|------------|-------------|-------------|
+			| 1          | 10          | 20          |
+			| 2          | 15          | 25          |
+			| 3          | 20          | 30          |
+			`,
+			Weights: []string{"0.5", "0.5"},
+			Height:  1,
+		})
+		require.NoError(t, err, "Setup child composed 1 failed")
+
+		// Setup child composed 2 with primitives using markdown
+		err = setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
+			Platform: platform,
+			StreamId: childComposed2Id,
+			MarkdownData: `
+			| event_time | primitive_3 | primitive_4 |
+			|------------|-------------|-------------|
+			| 1          | 30          | 40          |
+			| 2          | 35          | 45          |
+			| 3          | 40          | 50          |
+			`,
+			Weights: []string{"0.5", "0.5"},
+			Height:  1,
+		})
+		require.NoError(t, err, "Setup child composed 2 failed")
+
+		// Setup parent composed stream
+		err = setup.SetupComposedStream(ctx, setup.SetupComposedStreamInput{
+			Platform: platform,
+			StreamId: parentComposedId,
+			Height:   1,
+		})
+		require.NoError(t, err, "Setup parent composed stream failed")
+
+		// Set parent taxonomy to include both child composed streams
+		startTime := int64(0)
+		err = procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
+			Platform:      platform,
+			StreamLocator: types.StreamLocator{StreamId: parentComposedId, DataProvider: deployer},
+			DataProviders: []string{deployer.Address(), deployer.Address()},
+			StreamIds:     []string{childComposed1Id.String(), childComposed2Id.String()},
+			Weights:       []string{"0.5", "0.5"},
+			StartTime:     &startTime,
+			Height:        1,
+		})
+		require.NoError(t, err, "Set taxonomy for parent composed failed")
+
+		// Verify parent stream exists in cache config
+		verifyCacheStreamExists(t, ctx, platform, deployer.Address(), parentComposedId.String())
+
+		// Trigger stream resolution to process include_children directive
+		// This will discover the child composed streams and add them to the cache
+		err = helper.TriggerStreamResolution(ctx)
+		require.NoError(t, err, "Failed to refresh stream list")
+
+		// Refresh cache - should cache parent and auto-resolve children
+		recordsCached, err := helper.RefreshCache(ctx, deployer.Address(), parentComposedId.String())
+		require.NoError(t, err)
+		assert.Equal(t, 3, recordsCached, "should cache 3 parent records")
+
+		// Verify child streams were automatically added to cache
+		verifyChildStreamsInCache(t, ctx, platform, deployer.Address(), childComposed1Id.String(), childComposed2Id.String())
+
+		// Refresh cache for child streams to populate their data
+		_, err = helper.RefreshCache(ctx, deployer.Address(), childComposed1Id.String())
+		require.NoError(t, err, "Failed to refresh child composed 1 cache")
+
+		_, err = helper.RefreshCache(ctx, deployer.Address(), childComposed2Id.String())
+		require.NoError(t, err, "Failed to refresh child composed 2 cache")
+
+		// Verify all composed streams have cached data (primitives should not)
+		verifyCachedEventCounts(t, ctx, platform, deployer.Address(), map[string]int64{
+			parentComposedId.String(): 3,
+			childComposed1Id.String(): 3,
+			childComposed2Id.String(): 3,
+		})
+
+		// Test data correctness with cache
+		verifyParentDataFromCache(t, ctx, platform, deployer, parentComposedId)
+
+		return nil
+	}
+}
+
+// Helper functions for better readability
+
+func verifyCacheStreamExists(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, dataProvider, streamId string) {
+	result, err := platform.DB.Execute(ctx,
+		`SELECT COUNT(*) FROM ext_tn_cache.cached_streams
+		 WHERE data_provider = $1 AND stream_id = $2`,
+		dataProvider,
+		streamId,
+	)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1, "Should have one row")
+	count := result.Rows[0][0].(int64)
+	assert.Equal(t, int64(1), count, "Stream should exist in cache config")
+}
+
+func verifyChildStreamsInCache(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, dataProvider, childId1, childId2 string) {
+	result, err := platform.DB.Execute(ctx,
+		`SELECT stream_id FROM ext_tn_cache.cached_streams
+		 WHERE data_provider = $1 AND stream_id IN ($2, $3)
+		 ORDER BY stream_id`,
+		dataProvider,
+		childId1,
+		childId2,
+	)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 2, "Should have both child streams in cache config after include_children resolution")
+}
+
+func verifyCachedEventCounts(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, dataProvider string, expectedCounts map[string]int64) {
+	for streamId, expectedCount := range expectedCounts {
+		result, err := platform.DB.Execute(ctx,
+			`SELECT COUNT(*) FROM ext_tn_cache.cached_events 
+			 WHERE data_provider = $1 AND stream_id = $2`,
+			dataProvider,
+			streamId,
+		)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+		count := result.Rows[0][0].(int64)
+		assert.Equal(t, expectedCount, count, "Stream %s should have %d cached events", streamId, expectedCount)
+	}
+}
+
+func verifyParentDataFromCache(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, deployer util.EthereumAddress, parentComposedId util.StreamId) {
+	fromTime := int64(1)
+	toTime := int64(3)
+	useCache := true
+
+	parentData, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
+		Platform: platform,
+		StreamLocator: types.StreamLocator{
+			StreamId:     parentComposedId,
+			DataProvider: deployer,
+		},
+		FromTime: &fromTime,
+		ToTime:   &toTime,
+		Height:   1,
+		UseCache: &useCache,
+	})
+	require.NoError(t, err)
+	require.Len(t, parentData, 3, "Should get 3 parent records from cache")
+
+	// Expected: average of averages
+	// Child1: (10+20)/2=15, (15+25)/2=20, (20+30)/2=25
+	// Child2: (30+40)/2=35, (35+45)/2=40, (40+50)/2=45
+	// Parent: (15+35)/2=25, (20+40)/2=30, (25+45)/2=35
+	expectedValues := []string{"25.000000000000000000", "30.000000000000000000", "35.000000000000000000"}
+
+	for i, record := range parentData {
+		assert.Equal(t, strconv.Itoa(i+1), record[0], "Event time should match")
+		assert.Equal(t, expectedValues[i], record[1], "Parent value should be average of children")
 	}
 }
