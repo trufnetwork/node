@@ -40,7 +40,8 @@ CREATE OR REPLACE ACTION get_record_composed(
     $stream_id TEXT,      -- Target composed stream
     $from INT8,           -- Start of requested time range (inclusive)
     $to INT8,             -- End of requested time range (inclusive)
-    $frozen_at INT8       -- Created-at cutoff: only consider events created before this
+    $frozen_at INT8,      -- Created-at cutoff: only consider events created before this
+    $use_cache BOOL       -- Whether to use cache (default: false)
 ) PRIVATE VIEW
 RETURNS TABLE(
     event_time INT8,
@@ -67,8 +68,11 @@ RETURNS TABLE(
         ERROR('Not allowed to compose stream');
     }
 
+    -- Set default value for use_cache
+    $effective_use_cache := COALESCE($use_cache, false);
+    
     -- Check if cache is enabled and frozen_at is null (frozen queries bypass cache)
-    if $frozen_at IS NULL {
+    if $effective_use_cache AND $frozen_at IS NULL {
         $should_use_cache := helper_check_cache($data_provider, $stream_id, $from, $to);
 
         if $should_use_cache {
@@ -81,7 +85,7 @@ RETURNS TABLE(
 
     -- for historical consistency, if both from and to are omitted, return the latest record
     if $from IS NULL AND $to IS NULL {
-        FOR $row IN get_last_record_composed($data_provider, $stream_id, NULL, $effective_frozen_at) {
+        FOR $row IN get_last_record_composed($data_provider, $stream_id, NULL, $effective_frozen_at, $use_cache) {
             RETURN NEXT $row.event_time, $row.value;
         }
         RETURN;

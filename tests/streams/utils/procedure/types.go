@@ -14,6 +14,7 @@ type GetRecordInput struct {
 	Height        int64
 	PrintLogs     *bool
 	Prefix        *string
+	UseCache      *bool
 }
 
 type GetIndexInput struct {
@@ -25,6 +26,7 @@ type GetIndexInput struct {
 	Height        int64
 	BaseTime      *int64
 	Prefix        *string
+	UseCache      *bool
 }
 
 type ResultRow []string
@@ -38,6 +40,7 @@ type GetIndexChangeInput struct {
 	Height        int64
 	BaseTime      *int64
 	Interval      *int
+	UseCache      *bool
 }
 
 type GetFirstRecordInput struct {
@@ -46,6 +49,7 @@ type GetFirstRecordInput struct {
 	AfterTime     *int64
 	FrozenAt      *int64
 	Height        int64
+	UseCache      *bool
 }
 
 type SetMetadataInput struct {

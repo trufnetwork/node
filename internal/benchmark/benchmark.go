@@ -112,25 +112,29 @@ func runSingleTest(ctx context.Context, input RunSingleTestInput) (Result, error
 
 	for i := 0; i < input.Case.Samples; i++ {
 		// args for:
-		// get_record: dataProvider, streamId, fromDate, toDate, frozenAt
-		// get_index: dataProvider, streamId, fromDate, toDate, frozenAt, baseDate
-		// get_index_change: dataProvider, streamId, fromDate, toDate, frozenAt, baseDate, daysInterval
+		// get_record: dataProvider, streamId, fromDate, toDate, frozenAt, useCache
+		// get_index: dataProvider, streamId, fromDate, toDate, frozenAt, baseDate, useCache
+		// get_index_change: dataProvider, streamId, fromDate, toDate, frozenAt, baseDate, daysInterval, useCache
 		locator_args := []any{nthLocator.DataProvider.Address(), nthLocator.StreamId.String()}
 		args := append(locator_args, []any{fromDate, toDate, nil}...)
 		switch input.Procedure {
+		case ProcedureGetRecord:
+			args = append(args, false) // useCache
 		case ProcedureGetIndex:
-			args = append(args, nil) // baseDate
+			args = append(args, nil)   // baseDate
+			args = append(args, false) // useCache
 		case ProcedureGetChangeIndex:
-			args = append(args, nil) // baseDate
-			args = append(args, 1)   // daysInterval
+			args = append(args, nil)   // baseDate
+			args = append(args, 1)     // daysInterval
+			args = append(args, false) // useCache
 		case ProcedureGetFirstRecord:
 			// we reset as is not the same structure as the other procedures
-			// get_first_record: dataProvider, streamId, afterDate, frozenAt
-			args = append(locator_args, nil, nil) // afterDate, frozenAt
+			// get_first_record: dataProvider, streamId, afterDate, frozenAt, useCache
+			args = append(locator_args, nil, nil, false) // afterDate, frozenAt, useCache
 		case ProcedureGetLastRecord:
 			// we reset as is not the same structure as the other procedures
-			// get_last_record: dataProvider, streamId, beforeDate, frozenAt
-			args = append(locator_args, nil, nil) // beforeDate, frozenAt
+			// get_last_record: dataProvider, streamId, beforeDate, frozenAt, useCache
+			args = append(locator_args, nil, nil, false) // beforeDate, frozenAt, useCache
 		}
 
 		// FYI: we already tested sleeping for 10 seconds before running to see if

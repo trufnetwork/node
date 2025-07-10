@@ -130,6 +130,7 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, directive conf
 		fromTime, // from timestamp
 		nil,      // to timestamp (fetch all available)
 		nil,      // frozen_at (not applicable for cache refresh)
+		false,    // don't use cache to get new data
 	}
 
 	var events []internal.CachedEvent
