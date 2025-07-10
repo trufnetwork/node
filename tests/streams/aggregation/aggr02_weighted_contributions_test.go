@@ -6,6 +6,7 @@ import (
 
 	"github.com/pkg/errors"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	"github.com/trufnetwork/node/extensions/tn_cache"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
@@ -27,16 +28,19 @@ import (
 
 // TestAGGR02_WeightedContributions tests AGGR02: Each child stream's contribution is weighted, and these weights can vary over time.
 func TestAGGR02_WeightedContributions(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	// Cache all streams from this deployer
+	cacheConfig := testutils.TestCache("0x0000000000000000000000000000000000000123", "*")
+
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr02_weighted_contributions_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
-			testAGGR02_WeightedContributions(t),
+			wrapTestWithCacheModes(t, "AGGR02_WeightedContributions", testAGGR02_WeightedContributions),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache(cacheConfig))
 }
 
-func testAGGR02_WeightedContributions(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testAGGR02_WeightedContributions(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Create a composed stream with 3 child primitive streams with different weights
 		composedStreamId := util.GenerateStreamId("weighted_composed_stream_test")
@@ -65,11 +69,22 @@ func testAGGR02_WeightedContributions(t *testing.T) func(ctx context.Context, pl
 			return errors.Wrap(err, "error setting up composed stream with weighted primitives")
 		}
 
+		// Set up cache (only when useCache is true)
+		if useCache {
+			recordsCached, err := tn_cache.GetTestHelper().RefreshStreamCacheSync(ctx, deployer.Address(), composedStreamId.String())
+			if err != nil {
+				return errors.Wrap(err, "error refreshing cache")
+			}
+			if recordsCached == 0 {
+				return errors.New("no records cached")
+			}
+		}
+
 		fromTime := int64(1)
 		toTime := int64(3)
 
 		// Query the composed stream to get the aggregated values
-		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
+		result, err := procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
 			Platform: platform,
 			StreamLocator: types.StreamLocator{
 				StreamId:     composedStreamId,
@@ -78,6 +93,7 @@ func testAGGR02_WeightedContributions(t *testing.T) func(ctx context.Context, pl
 			FromTime: &fromTime,
 			ToTime:   &toTime,
 			Height:   1,
+			UseCache: &useCache,
 		})
 		if err != nil {
 			return errors.Wrap(err, "error getting records from composed stream")
@@ -97,7 +113,7 @@ func testAGGR02_WeightedContributions(t *testing.T) func(ctx context.Context, pl
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
-			Actual:   result,
+			Actual:   result.Rows,
 			Expected: expected,
 		})
 

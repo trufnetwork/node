@@ -6,6 +6,7 @@ import (
 
 	"github.com/pkg/errors"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	"github.com/trufnetwork/node/extensions/tn_cache"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
@@ -37,16 +38,18 @@ import (
 
 // TestAGGR09_DuplicateValues tests AGGR09: Duplicate values from multiple child streams are both counted in aggregation.
 func TestAGGR09_DuplicateValues(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	cacheConfig := testutils.TestCache("0x0000000000000000000000000000000000000123", "*")
+
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr09_duplicate_values_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
-			testAGGR09_DuplicateValues(t),
+			wrapTestWithCacheModes(t, "AGGR09_DuplicateValues", testAGGR09_DuplicateValues),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache(cacheConfig))
 }
 
-func testAGGR09_DuplicateValues(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testAGGR09_DuplicateValues(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Create a composed stream with 2 child primitive streams
 		composedStreamId := util.GenerateStreamId("composed_stream_duplicate_test")
@@ -64,6 +67,7 @@ func testAGGR09_DuplicateValues(t *testing.T) func(ctx context.Context, platform
 			MarkdownData: `
 			| event_time | value_1 | value_2 |
 			|------------|---------|---------|
+
 			| 1          | 10      | 10      |
 			| 2          |         | 10      |
 			`,
@@ -74,11 +78,22 @@ func testAGGR09_DuplicateValues(t *testing.T) func(ctx context.Context, platform
 			return errors.Wrap(err, "error setting up composed stream")
 		}
 
+		// Set up cache (only when useCache is true)
+		if useCache {
+			recordsCached, err := tn_cache.GetTestHelper().RefreshStreamCacheSync(ctx, deployer.Address(), composedStreamId.String())
+			if err != nil {
+				return errors.Wrap(err, "error refreshing cache")
+			}
+			if recordsCached == 0 {
+				return errors.New("no records cached")
+			}
+		}
+
 		fromTime := int64(1)
 		toTime := int64(2)
 
 		// Query the composed stream to get the aggregated values
-		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
+		result, err := procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
 			Platform: platform,
 			StreamLocator: types.StreamLocator{
 				StreamId:     composedStreamId,
@@ -87,6 +102,7 @@ func testAGGR09_DuplicateValues(t *testing.T) func(ctx context.Context, platform
 			FromTime: &fromTime,
 			ToTime:   &toTime,
 			Height:   1,
+			UseCache: &useCache,
 		})
 		if err != nil {
 			return errors.Wrap(err, "error getting records from composed stream")
@@ -103,7 +119,7 @@ func testAGGR09_DuplicateValues(t *testing.T) func(ctx context.Context, platform
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
-			Actual:   result,
+			Actual:   result.Rows,
 			Expected: expected,
 		})
 

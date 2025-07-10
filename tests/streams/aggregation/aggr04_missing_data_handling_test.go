@@ -6,6 +6,7 @@ import (
 
 	"github.com/pkg/errors"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	"github.com/trufnetwork/node/extensions/tn_cache"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
@@ -30,16 +31,18 @@ import (
 
 // TestAGGR04_MissingDataHandling tests AGGR04: If a child stream doesn't have data for the given date (including last available data), the composed stream will not count it's weight for that date.
 func TestAGGR04_MissingDataHandling(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	cacheConfig := testutils.TestCache("0x0000000000000000000000000000000000000123", "*")
+
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr04_missing_data_handling_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
-			testAGGR04_MissingDataHandling(t),
+			wrapTestWithCacheModes(t, "AGGR04_MissingDataHandling", testAGGR04_MissingDataHandling),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache(cacheConfig))
 }
 
-func testAGGR04_MissingDataHandling(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testAGGR04_MissingDataHandling(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Create a composed stream with 2 child primitive streams
 		composedStreamId := util.GenerateStreamId("composed_stream_test")
@@ -70,22 +73,31 @@ func testAGGR04_MissingDataHandling(t *testing.T) func(ctx context.Context, plat
 			return errors.Wrap(err, "error setting up composed stream")
 		}
 
-		// Create StreamLocator for the composed stream
-		composedStreamLocator := types.StreamLocator{
-			StreamId:     composedStreamId,
-			DataProvider: deployer,
+		// Set up cache (only when useCache is true)
+		if useCache {
+			recordsCached, err := tn_cache.GetTestHelper().RefreshStreamCacheSync(ctx, deployer.Address(), composedStreamId.String())
+			if err != nil {
+				return errors.Wrap(err, "error refreshing cache")
+			}
+			if recordsCached == 0 {
+				return errors.New("no records cached")
+			}
 		}
 
 		fromTime := int64(1)
 		toTime := int64(4)
 
 		// Query the composed stream to get the aggregated values
-		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
-			Platform:      platform,
-			StreamLocator: composedStreamLocator,
-			FromTime:      &fromTime,
-			ToTime:        &toTime,
-			Height:        1,
+		result, err := procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
+			Platform: platform,
+			StreamLocator: types.StreamLocator{
+				StreamId:     composedStreamId,
+				DataProvider: deployer,
+			},
+			FromTime: &fromTime,
+			ToTime:   &toTime,
+			Height:   1,
+			UseCache: &useCache,
 		})
 		if err != nil {
 			return errors.Wrap(err, "error getting records from composed stream")
@@ -106,7 +118,7 @@ func testAGGR04_MissingDataHandling(t *testing.T) func(ctx context.Context, plat
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
-			Actual:   result,
+			Actual:   result.Rows,
 			Expected: expected,
 		})
 

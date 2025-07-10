@@ -6,6 +6,7 @@ import (
 
 	"github.com/pkg/errors"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	"github.com/trufnetwork/node/extensions/tn_cache"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
@@ -31,16 +32,18 @@ import (
 
 // TestAGGR03_TaxonomyValidityPeriods tests AGGR03: Taxonomies define the mapping of child streams, including a period of validity for each weight. (start_date and end_date, otherwise not set)
 func TestAGGR03_TaxonomyValidityPeriods(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	cacheConfig := testutils.TestCache("0x0000000000000000000000000000000000000123", "*")
+
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr03_taxonomy_validity_periods_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
-			testAGGR03_TaxonomyValidityPeriods(t),
+			wrapTestWithCacheModes(t, "AGGR03_TaxonomyValidityPeriods", testAGGR03_TaxonomyValidityPeriods),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache(cacheConfig))
 }
 
-func testAGGR03_TaxonomyValidityPeriods(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testAGGR03_TaxonomyValidityPeriods(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Create a composed stream and 2 primitive streams
 		composedStreamId := util.GenerateStreamId("composed_stream_test")
@@ -144,15 +147,31 @@ func testAGGR03_TaxonomyValidityPeriods(t *testing.T) func(ctx context.Context, 
 			return errors.Wrap(err, "error setting taxonomy for first primitive stream with later start date")
 		}
 
+		// Set up cache (only when useCache is true)
+		if useCache {
+			recordsCached, err := tn_cache.GetTestHelper().RefreshStreamCacheSync(ctx, deployer.Address(), composedStreamId.String())
+			if err != nil {
+				return errors.Wrap(err, "error refreshing cache")
+			}
+			if recordsCached == 0 {
+				return errors.New("no records cached")
+			}
+		}
+
 		fromTime := int64(1)
 		toTime := int64(10)
+
 		// Query the composed stream to get the aggregated values
-		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
-			Platform:      platform,
-			StreamLocator: composedStreamLocator,
-			FromTime:      &fromTime,
-			ToTime:        &toTime,
-			Height:        1,
+		result, err := procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
+			Platform: platform,
+			StreamLocator: types.StreamLocator{
+				StreamId:     composedStreamId,
+				DataProvider: deployer,
+			},
+			FromTime: &fromTime,
+			ToTime:   &toTime,
+			Height:   1,
+			UseCache: &useCache,
 		})
 		if err != nil {
 			return errors.Wrap(err, "error getting records from composed stream")
@@ -171,7 +190,7 @@ func testAGGR03_TaxonomyValidityPeriods(t *testing.T) func(ctx context.Context, 
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
-			Actual:   result,
+			Actual:   result.Rows,
 			Expected: expected,
 		})
 
