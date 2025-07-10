@@ -123,6 +123,33 @@ func WithTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platfo
 	}
 }
 
+// checkCacheHit is a DRY helper that executes a procedure twice when useCache is true,
+// verifying that the second call hits the cache
+type procedureFunc func() ([]procedure.ResultRow, error)
+type procedureWithLogsFunc func() (*procedure.GetRecordResult, error)
+
+func checkCacheHit(t *testing.T, useCache bool, callProcedure procedureFunc, callProcedureWithLogs procedureWithLogsFunc) ([]procedure.ResultRow, error) {
+	if useCache {
+		// First call should populate cache
+		_, err := callProcedure()
+		if err != nil {
+			return nil, errors.Wrap(err, "error in first call to populate cache")
+		}
+
+		// Second call should hit cache
+		resultWithLogs, err := callProcedureWithLogs()
+		if err != nil {
+			return nil, errors.Wrap(err, "error in second call to check cache")
+		}
+
+		// Check cache hit
+		assert.True(t, resultWithLogs.CacheHit, "Expected cache hit on second call with useCache=true")
+		return resultWithLogs.Rows, nil
+	} else {
+		return callProcedure()
+	}
+}
+
 func testComplexComposedRecord(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Create StreamLocator for the composed stream
@@ -134,16 +161,30 @@ func testComplexComposedRecord(t *testing.T, useCache bool) func(ctx context.Con
 		dateFrom := int64(1)
 		dateTo := int64(13)
 
-		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
-			Platform:      platform,
-			StreamLocator: composedStreamLocator,
-			FromTime:      &dateFrom,
-			ToTime:        &dateTo,
-			Height:        0,
-			UseCache:      &useCache,
-		})
+		result, err := checkCacheHit(t, useCache,
+			func() ([]procedure.ResultRow, error) {
+				return procedure.GetRecord(ctx, procedure.GetRecordInput{
+					Platform:      platform,
+					StreamLocator: composedStreamLocator,
+					FromTime:      &dateFrom,
+					ToTime:        &dateTo,
+					Height:        0,
+					UseCache:      &useCache,
+				})
+			},
+			func() (*procedure.GetRecordResult, error) {
+				return procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
+					Platform:      platform,
+					StreamLocator: composedStreamLocator,
+					FromTime:      &dateFrom,
+					ToTime:        &dateTo,
+					Height:        0,
+					UseCache:      &useCache,
+				})
+			},
+		)
 		if err != nil {
-			return errors.Wrap(err, "error in testComplexComposedRecord")
+			return err
 		}
 
 		expected := `
@@ -237,16 +278,30 @@ func testComplexComposedLatestValue(t *testing.T, useCache bool) func(ctx contex
 		dateFrom := int64(13)
 		dateTo := int64(13)
 
-		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
-			Platform:      platform,
-			StreamLocator: composedStreamLocator,
-			FromTime:      &dateFrom,
-			ToTime:        &dateTo,
-			Height:        0,
-			UseCache:      &useCache,
-		})
+		result, err := checkCacheHit(t, useCache,
+			func() ([]procedure.ResultRow, error) {
+				return procedure.GetRecord(ctx, procedure.GetRecordInput{
+					Platform:      platform,
+					StreamLocator: composedStreamLocator,
+					FromTime:      &dateFrom,
+					ToTime:        &dateTo,
+					Height:        0,
+					UseCache:      &useCache,
+				})
+			},
+			func() (*procedure.GetRecordResult, error) {
+				return procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
+					Platform:      platform,
+					StreamLocator: composedStreamLocator,
+					FromTime:      &dateFrom,
+					ToTime:        &dateTo,
+					Height:        0,
+					UseCache:      &useCache,
+				})
+			},
+		)
 		if err != nil {
-			return errors.Wrap(err, "error in testComplexComposedLatestValue")
+			return err
 		}
 
 		expected := `
@@ -275,16 +330,30 @@ func testComplexComposedEmptyDate(t *testing.T, useCache bool) func(ctx context.
 		dateFrom := int64(12)
 		dateTo := int64(12)
 
-		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
-			Platform:      platform,
-			StreamLocator: composedStreamLocator,
-			FromTime:      &dateFrom,
-			ToTime:        &dateTo,
-			Height:        0,
-			UseCache:      &useCache,
-		})
+		result, err := checkCacheHit(t, useCache,
+			func() ([]procedure.ResultRow, error) {
+				return procedure.GetRecord(ctx, procedure.GetRecordInput{
+					Platform:      platform,
+					StreamLocator: composedStreamLocator,
+					FromTime:      &dateFrom,
+					ToTime:        &dateTo,
+					Height:        0,
+					UseCache:      &useCache,
+				})
+			},
+			func() (*procedure.GetRecordResult, error) {
+				return procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
+					Platform:      platform,
+					StreamLocator: composedStreamLocator,
+					FromTime:      &dateFrom,
+					ToTime:        &dateTo,
+					Height:        0,
+					UseCache:      &useCache,
+				})
+			},
+		)
 		if err != nil {
-			return errors.Wrap(err, "error in testComplexComposedEmptyDate")
+			return err
 		}
 
 		expected := `
@@ -319,17 +388,32 @@ func testComplexComposedIndexChange(t *testing.T, useCache bool) func(ctx contex
 		dateTo := int64(13)
 		interval := 1
 
-		result, err := procedure.GetIndexChange(ctx, procedure.GetIndexChangeInput{
-			Platform:      platform,
-			StreamLocator: composedStreamLocator,
-			FromTime:      &dateFrom,
-			ToTime:        &dateTo,
-			Interval:      &interval,
-			Height:        0,
-			UseCache:      &useCache,
-		})
+		result, err := checkCacheHit(t, useCache,
+			func() ([]procedure.ResultRow, error) {
+				return procedure.GetIndexChange(ctx, procedure.GetIndexChangeInput{
+					Platform:      platform,
+					StreamLocator: composedStreamLocator,
+					FromTime:      &dateFrom,
+					ToTime:        &dateTo,
+					Interval:      &interval,
+					Height:        0,
+					UseCache:      &useCache,
+				})
+			},
+			func() (*procedure.GetRecordResult, error) {
+				return procedure.GetIndexChangeWithLogs(ctx, procedure.GetIndexChangeInput{
+					Platform:      platform,
+					StreamLocator: composedStreamLocator,
+					FromTime:      &dateFrom,
+					ToTime:        &dateTo,
+					Interval:      &interval,
+					Height:        0,
+					UseCache:      &useCache,
+				})
+			},
+		)
 		if err != nil {
-			return errors.Wrap(err, "error in testComplexComposedIndexChange")
+			return err
 		}
 
 		// Expected values should be calculated based on the index changes
@@ -372,14 +456,29 @@ func testComplexComposedFirstRecord(t *testing.T, useCache bool) func(ctx contex
 		}
 
 		// no after date is provided
-		result, err := procedure.GetFirstRecord(ctx, procedure.GetFirstRecordInput{
-			Platform:      platform,
-			StreamLocator: composedStreamLocator,
-			AfterTime:     nil,
-			Height:        0,
-			UseCache:      &useCache,
-		})
-		assert.NoError(t, err, "Expected no error for valid date")
+		result, err := checkCacheHit(t, useCache,
+			func() ([]procedure.ResultRow, error) {
+				return procedure.GetFirstRecord(ctx, procedure.GetFirstRecordInput{
+					Platform:      platform,
+					StreamLocator: composedStreamLocator,
+					AfterTime:     nil,
+					Height:        0,
+					UseCache:      &useCache,
+				})
+			},
+			func() (*procedure.GetRecordResult, error) {
+				return procedure.GetFirstRecordWithLogs(ctx, procedure.GetFirstRecordInput{
+					Platform:      platform,
+					StreamLocator: composedStreamLocator,
+					AfterTime:     nil,
+					Height:        0,
+					UseCache:      &useCache,
+				})
+			},
+		)
+		if err != nil {
+			return err
+		}
 
 		expected := `
 		| event_time | value  |
@@ -394,14 +493,29 @@ func testComplexComposedFirstRecord(t *testing.T, useCache bool) func(ctx contex
 
 		// an after date is provided having partial data on it (some children having data, others not)
 		afterDate := int64(5)
-		result, err = procedure.GetFirstRecord(ctx, procedure.GetFirstRecordInput{
-			Platform:      platform,
-			StreamLocator: composedStreamLocator,
-			AfterTime:     &afterDate,
-			Height:        0,
-			UseCache:      &useCache,
-		})
-		assert.NoError(t, err, "Expected no error for valid date")
+		result, err = checkCacheHit(t, useCache,
+			func() ([]procedure.ResultRow, error) {
+				return procedure.GetFirstRecord(ctx, procedure.GetFirstRecordInput{
+					Platform:      platform,
+					StreamLocator: composedStreamLocator,
+					AfterTime:     &afterDate,
+					Height:        0,
+					UseCache:      &useCache,
+				})
+			},
+			func() (*procedure.GetRecordResult, error) {
+				return procedure.GetFirstRecordWithLogs(ctx, procedure.GetFirstRecordInput{
+					Platform:      platform,
+					StreamLocator: composedStreamLocator,
+					AfterTime:     &afterDate,
+					Height:        0,
+					UseCache:      &useCache,
+				})
+			},
+		)
+		if err != nil {
+			return err
+		}
 
 		expected = `
 		| event_time | value  |
@@ -416,14 +530,29 @@ func testComplexComposedFirstRecord(t *testing.T, useCache bool) func(ctx contex
 
 		// date after the last record is provided
 		afterDate = int64(14)
-		result, err = procedure.GetFirstRecord(ctx, procedure.GetFirstRecordInput{
-			Platform:      platform,
-			StreamLocator: composedStreamLocator,
-			AfterTime:     &afterDate,
-			Height:        0,
-			UseCache:      &useCache,
-		})
-		assert.NoError(t, err, "Expected no error for valid date")
+		result, err = checkCacheHit(t, useCache,
+			func() ([]procedure.ResultRow, error) {
+				return procedure.GetFirstRecord(ctx, procedure.GetFirstRecordInput{
+					Platform:      platform,
+					StreamLocator: composedStreamLocator,
+					AfterTime:     &afterDate,
+					Height:        0,
+					UseCache:      &useCache,
+				})
+			},
+			func() (*procedure.GetRecordResult, error) {
+				return procedure.GetFirstRecordWithLogs(ctx, procedure.GetFirstRecordInput{
+					Platform:      platform,
+					StreamLocator: composedStreamLocator,
+					AfterTime:     &afterDate,
+					Height:        0,
+					UseCache:      &useCache,
+				})
+			},
+		)
+		if err != nil {
+			return err
+		}
 
 		expected = `
 		| event_time | value  |
@@ -521,16 +650,30 @@ func testComplexComposedOutOfRange(t *testing.T, useCache bool) func(ctx context
 		dateFrom := int64(0) // Before first record
 		dateTo := int64(14)  // After last record
 
-		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
-			Platform:      platform,
-			StreamLocator: composedStreamLocator,
-			FromTime:      &dateFrom,
-			ToTime:        &dateTo,
-			Height:        0,
-			UseCache:      &useCache,
-		})
+		result, err := checkCacheHit(t, useCache,
+			func() ([]procedure.ResultRow, error) {
+				return procedure.GetRecord(ctx, procedure.GetRecordInput{
+					Platform:      platform,
+					StreamLocator: composedStreamLocator,
+					FromTime:      &dateFrom,
+					ToTime:        &dateTo,
+					Height:        0,
+					UseCache:      &useCache,
+				})
+			},
+			func() (*procedure.GetRecordResult, error) {
+				return procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
+					Platform:      platform,
+					StreamLocator: composedStreamLocator,
+					FromTime:      &dateFrom,
+					ToTime:        &dateTo,
+					Height:        0,
+					UseCache:      &useCache,
+				})
+			},
+		)
 		if err != nil {
-			return errors.Wrap(err, "error in testComplexComposedOutOfRange")
+			return err
 		}
 
 		// expect the correct number of rows (one of them is empty)
@@ -593,16 +736,30 @@ func testComposedRecordNoDuplicates(t *testing.T, useCache bool) func(ctx contex
 		dateTo := int64(19)  // End after the last record
 
 		// Test GetRecord
-		recordResult, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
-			Platform:      platform,
-			StreamLocator: composedStreamLocator,
-			FromTime:      &dateFrom,
-			ToTime:        &dateTo,
-			Height:        0,
-			UseCache:      &useCache,
-		})
+		recordResult, err := checkCacheHit(t, useCache,
+			func() ([]procedure.ResultRow, error) {
+				return procedure.GetRecord(ctx, procedure.GetRecordInput{
+					Platform:      platform,
+					StreamLocator: composedStreamLocator,
+					FromTime:      &dateFrom,
+					ToTime:        &dateTo,
+					Height:        0,
+					UseCache:      &useCache,
+				})
+			},
+			func() (*procedure.GetRecordResult, error) {
+				return procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
+					Platform:      platform,
+					StreamLocator: composedStreamLocator,
+					FromTime:      &dateFrom,
+					ToTime:        &dateTo,
+					Height:        0,
+					UseCache:      &useCache,
+				})
+			},
+		)
 		if err != nil {
-			return errors.Wrap(err, "error in GetRecord for dedup test")
+			return err
 		}
 
 		// Expected GetRecord results (weighted average with LOCF for missing points, weights are 1)
