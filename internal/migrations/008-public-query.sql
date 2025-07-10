@@ -19,6 +19,7 @@ CREATE OR REPLACE ACTION get_record(
     
     -- Route to the appropriate internal action
     if $is_primitive {
+        -- Primitives: No cache (direct queries, no computation)
         for $row in get_record_primitive($data_provider, $stream_id, $from, $to, $frozen_at) {
             RETURN NEXT $row.event_time, $row.value;
         }
@@ -49,6 +50,7 @@ CREATE OR REPLACE ACTION get_last_record(
     
     -- Route to the appropriate internal action
     if $is_primitive {
+        -- Primitives: No cache (direct queries, no computation)
         -- unfortunately, using the query directly creates error, then we use return next
         for $row in get_last_record_primitive($data_provider, $stream_id, $before, $frozen_at) {
             RETURN NEXT $row.event_time, $row.value;
@@ -81,6 +83,7 @@ CREATE OR REPLACE ACTION get_first_record(
 
     -- Route to the appropriate internal action
     if $is_primitive {
+        -- Primitives: No cache (direct queries, no computation)
         for $row in get_first_record_primitive($data_provider, $stream_id, $after, $frozen_at) {
             RETURN NEXT $row.event_time, $row.value;
         }
@@ -135,7 +138,7 @@ CREATE OR REPLACE ACTION get_base_value(
             -- Execute the function and store results in variables
             $first_time INT8;
             $first_value NUMERIC(36,18);
-            for $record in get_first_record($data_provider, $stream_id, NULL, $frozen_at, $use_cache) {
+            for $record in get_first_record($data_provider, $stream_id, NULL, $frozen_at, $use_cache) {  -- Cache passed here, but primitives don't use it
                 $first_time := $record.event_time;
                 $first_value := $record.value;
                 $found := TRUE;
@@ -216,6 +219,7 @@ CREATE OR REPLACE ACTION get_index(
     
     -- Route to the appropriate internal action
     if $is_primitive {
+        -- Primitives: No cache (direct queries, no computation)
         for $row in get_index_primitive($data_provider, $stream_id, $from, $to, $frozen_at, $base_time) {
             RETURN NEXT $row.event_time, $row.value;
         }

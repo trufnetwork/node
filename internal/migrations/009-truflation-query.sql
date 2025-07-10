@@ -124,6 +124,7 @@ CREATE OR REPLACE ACTION truflation_get_record_primitive(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
+    -- Note: No cache; direct queries without computation
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
     
@@ -238,6 +239,7 @@ CREATE OR REPLACE ACTION truflation_last_rc_primitive(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
+    -- Note: No cache; direct queries without computation
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
 
@@ -295,6 +297,7 @@ CREATE OR REPLACE ACTION truflation_first_rc_primitive(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
+   -- Note: No cache; direct queries without computation
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
     
@@ -357,6 +360,7 @@ CREATE OR REPLACE ACTION truflation_get_index(
     
     -- Route to the appropriate internal action
     if $is_primitive {
+        -- Primitives: No cache (direct queries, no computation)
         for $row in truflation_get_index_primitive($data_provider, $stream_id, $from, $to, $frozen_at, $base_time) {
             RETURN NEXT $row.event_time, $row.value;
         }
@@ -381,6 +385,7 @@ CREATE OR REPLACE ACTION truflation_get_index_primitive(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
+    -- Note: No cache; direct queries without computation
     $data_provider := LOWER($data_provider);
 
     -- Check read permissions
@@ -454,6 +459,7 @@ CREATE OR REPLACE ACTION truflation_get_record(
     
     -- Route to the appropriate internal action
     if $is_primitive {
+        -- Primitives: No cache (direct queries, no computation)
         for $row in truflation_get_record_primitive($data_provider, $stream_id, $from, $to, $frozen_at) {
             RETURN NEXT $row.event_time, $row.value;
         }
@@ -484,6 +490,7 @@ CREATE OR REPLACE ACTION truflation_get_last_record(
     
     -- Route to the appropriate internal action
     if $is_primitive {
+        -- Primitives: No cache (direct queries, no computation)
         -- unfortunately, using the query directly creates error, then we use return next
         for $row in truflation_last_rc_primitive($data_provider, $stream_id, $before, $frozen_at) {
             RETURN NEXT $row.event_time, $row.value;
@@ -516,6 +523,7 @@ CREATE OR REPLACE ACTION truflation_get_first_record(
 
     -- Route to the appropriate internal action
     if $is_primitive {
+        -- Primitives: No cache (direct queries, no computation)
         for $row in truflation_first_rc_primitive($data_provider, $stream_id, $after, $frozen_at) {
             RETURN NEXT $row.event_time, $row.value;
         }
