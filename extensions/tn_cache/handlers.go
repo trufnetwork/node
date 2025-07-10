@@ -486,7 +486,7 @@ func HandleGetCachedIndexData(ctx *common.EngineContext, app *common.App, inputs
 	// Set up tracing
 	attrs := buildTimeAttributes(fromTime, toTime)
 	attrs = append(attrs, attribute.String("type", "index"))
-	traceCtx, end := createStreamOperationContext(ctx.TxContext.Ctx, tracing.OpGetCachedData, dataProvider, streamID, attrs...)
+	traceCtx, end := createStreamOperationContext(ctx.TxContext.Ctx, tracing.OpCacheGet, dataProvider, streamID, attrs...)
 	defer func() { end(err) }()
 	ctx.TxContext.Ctx = traceCtx
 

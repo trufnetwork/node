@@ -14,7 +14,7 @@ type Operation string
 const (
 	// Entry point operations (precompile handlers)
 	OpCacheCheck Operation = "cache.check" // has_cached_data precompile
-	OpCacheGet   Operation = "cache.get"   // get_cached_data precompile
+	OpCacheGet   Operation = "cache.get"   // get_cached_data and get_cached_index_data precompile
 
 	// Scheduler operations
 	OpSchedulerJob     Operation = "scheduler.job"     // Cron job execution
