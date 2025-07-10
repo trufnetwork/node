@@ -122,6 +122,8 @@ CREATE OR REPLACE ACTION helper_check_cache(
             -- Cache miss - log and fallback to original logic
             NOTICE('{"cache_hit": false}');
         }
+    } else {
+        NOTICE('{"cache_disabled": true}');
     }
     RETURN $cache_hit;
 }

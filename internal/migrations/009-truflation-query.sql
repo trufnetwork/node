@@ -671,18 +671,18 @@ RETURNS TABLE(
     }
 
     -- Set default value for use_cache
-    $effective_use_cache := COALESCE($use_cache, false);
-    
-    -- Check if cache is enabled and frozen_at is null (frozen queries bypass cache)
-    if $effective_use_cache AND $frozen_at IS NULL {
-        $should_use_cache := helper_check_cache($data_provider, $stream_id, $from, $to);
+    $effective_enable_cache := COALESCE($use_cache, false);
+    $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL; -- frozen queries bypass cache
 
-        if $should_use_cache {
-            for $row in tn_cache.get_cached_data($data_provider, $stream_id, $from, $to) {
-                RETURN NEXT $row.event_time, $row.value;
-            }
-            return;
+    if $effective_enable_cache {
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $from, $to);
+    }
+    
+    if $effective_enable_cache {
+        for $row in tn_cache.get_cached_data($data_provider, $stream_id, $from, $to) {
+            RETURN NEXT $row.event_time, $row.value;
         }
+        return;
     }
 
     -- for historical consistency, if both from and to are omitted, return the latest record
@@ -1226,36 +1226,21 @@ RETURNS TABLE(
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
 
     -- Set default value for use_cache
-    $effective_use_cache := COALESCE($use_cache, false);
-    
-    -- Cache logic: Only use cache if frozen_at is NULL (no time-travel queries)
-    $cache_enabled BOOL := false;
-    $should_use_cache BOOL := false;
-    
-    -- Check if cache conditions are met
-    if $effective_use_cache AND $frozen_at IS NULL {
-        $should_use_cache := helper_check_cache($data_provider, $stream_id, NULL, $before);
+    $effective_enable_cache := COALESCE($use_cache, false);
+    $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL; -- frozen queries bypass cache
+
+    if $effective_enable_cache {
+        -- we use before as to, because if we have data for that, it automatically means
+        -- that we can answer this query
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $before, NULL);
     }
 
     -- If using cache, get the most recent cached record
-    if $should_use_cache {
+    if $effective_enable_cache {
         -- Get cached data up to the before time and return the most recent
-        $latest_cached_time INT8;
-        $latest_cached_value NUMERIC(36,18);
-        $found_cached_data BOOL := false;
-        
-        -- Get all cached data up to $before and find the latest
         for $row in tn_cache.get_cached_last_before($data_provider, $stream_id, $before) {
-            $latest_cached_time := $row.event_time;
-            $latest_cached_value := $row.value;
-            $found_cached_data := true;
-            -- The cache should return data ordered by event_time, so the last row is the most recent
+            RETURN NEXT $row.event_time, $row.value;
         }
-        
-        if $found_cached_data {
-            RETURN NEXT $latest_cached_time, $latest_cached_value;
-        }
-        
         RETURN;
     }
 
@@ -1407,36 +1392,21 @@ RETURNS TABLE(
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
 
     -- Set default value for use_cache
-    $effective_use_cache := COALESCE($use_cache, false);
-    
-    -- Cache logic: Only use cache if frozen_at is NULL (no time-travel queries)
-    $cache_enabled BOOL := false;
-    $should_use_cache BOOL := false;
-    
-    -- Check if cache conditions are met
-    if $effective_use_cache AND $frozen_at IS NULL {
-        $should_use_cache := helper_check_cache($data_provider, $stream_id, $after, NULL);
+    $effective_enable_cache := COALESCE($use_cache, false);
+    $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL; -- frozen queries bypass cache
+
+    if $effective_enable_cache {
+        -- we use after as from, because if we have data for that, it automatically means
+        -- that we can answer this query
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $after, NULL);
     }
 
     -- If using cache, get the earliest cached record
-    if $should_use_cache {
+    if $effective_enable_cache {
         -- Get cached data from the after time and return the earliest
-        $earliest_cached_time INT8;
-        $earliest_cached_value NUMERIC(36,18);
-        $found_cached_data BOOL := false;
-        
-        -- Get cached data starting from $after
         for $row in tn_cache.get_cached_first_after($data_provider, $stream_id, $after) {
-            $earliest_cached_time := $row.event_time;
-            $earliest_cached_value := $row.value;
-            $found_cached_data := true;
-            break; -- Take the first record since cache returns ordered data
+            RETURN NEXT $row.event_time, $row.value;
         }
-        
-        if $found_cached_data {
-            RETURN NEXT $earliest_cached_time, $earliest_cached_value;
-        }
-        
         RETURN;
     }
 
@@ -1599,66 +1569,19 @@ RETURNS TABLE(
         ERROR('Not allowed to compose stream');
     }
 
-    -- Set default value for use_cache
-    $effective_use_cache := COALESCE($use_cache, false);
-    
-    -- Cache logic: Only use cache if frozen_at is NULL and base_time is not provided
-    -- (cache bypass conditions)
-    $cache_enabled BOOL := false;
-    $use_cache_for_current_value BOOL := false;
-    $use_cache_for_base_value BOOL := false;
-    
-    -- Check if cache conditions are met
-    if $effective_use_cache AND $frozen_at IS NULL {
-        $use_cache_for_current_value := helper_check_cache($data_provider, $stream_id, $from, $to);
+    -- Set default value for enable_cache
+    $effective_enable_cache := COALESCE($use_cache, false);
+    $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL AND $base_time IS NULL; -- frozen queries and arbitrary base time bypass cache
 
-        -- if we cant use for current, we certainly can't use for base
-        if !$use_cache_for_current_value {
-            $use_cache_for_base_value := false;
-        } else {
-            $use_cache_for_base_value := helper_check_cache($data_provider, $stream_id, $effective_base_time, $effective_base_time);
-        }
+    if $effective_enable_cache {
+        -- Check if we have pre-calculated index values in cache
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $from, $to);
     }
 
-    -- If using cache, get raw data from cache and calculate index
-    if $use_cache_for_base_value {
-        -- Get base value from cache (need to get data around base_time)
-        $base_value NUMERIC(36,18);
-        $found_base_value BOOL := false;
-        
-        -- try to get the first before base_time
-        for $row in tn_cache.get_cached_last_before($data_provider, $stream_id, $effective_base_time) {
-                $base_value := $row.value;
-                $found_base_value := true;
-                break; -- Take the last (closest to base_time) value
-        }
-
-        
-        -- If still no base value, get data after base_time
-        if !$found_base_value {
-            for $row in tn_cache.get_cached_first_after($data_provider, $stream_id, $effective_base_time) {
-                $base_value := $row.value;
-                $found_base_value := true;
-                break; -- Take the first (closest to base_time) value
-            }
-        }
-        
-        -- Default base value if nothing found
-        if !$found_base_value {
-            $base_value := 1::NUMERIC(36,18);
-        }
-    } else {
-        -- only calculate if we really need
-        if $use_cache_for_current_value {
-            $base_value := truflation_get_base_value($data_provider, $stream_id, $effective_base_time, $effective_frozen_at, $use_cache);
-        }
-    }
-
-    if $use_cache_for_current_value {
-        -- Calculate index values from cached data
-        for $row in tn_cache.get_cached_data($data_provider, $stream_id, $from, $to) {
-            $index_value := ($row.value * 100::NUMERIC(36,18)) / $base_value;
-            RETURN NEXT $row.event_time, $index_value;
+    -- If using pre-calculated index cache, return directly
+    if $effective_enable_cache {
+        for $row in tn_cache.get_cached_index_data($data_provider, $stream_id, $from, $to) {
+            RETURN NEXT $row.event_time, $row.value;
         }
         RETURN;
     }
@@ -1683,9 +1606,7 @@ RETURNS TABLE(
     }
 
     -- Get the base value for index calculation (non-cache path)
-    if !$use_cache_for_current_value {
-        $base_value := truflation_get_base_value($data_provider, $stream_id, $effective_base_time, $effective_frozen_at, $use_cache);
-    }
+    $base_value := truflation_get_base_value($data_provider, $stream_id, $effective_base_time, $effective_frozen_at, false);
 
     RETURN WITH RECURSIVE
     parent_distinct_start_times AS (
