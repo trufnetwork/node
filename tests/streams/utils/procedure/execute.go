@@ -97,7 +97,8 @@ func GetRecord(ctx context.Context, input GetRecordInput) ([]ResultRow, error) {
 	return result.Rows, nil
 }
 
-func GetIndex(ctx context.Context, input GetIndexInput) ([]ResultRow, error) {
+// GetIndexWithLogs executes get_index and returns full result including logs
+func GetIndexWithLogs(ctx context.Context, input GetIndexInput) (*GetRecordResult, error) {
 	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
 	if err != nil {
 		return nil, errors.Wrap(err, "error in getIndex")
@@ -137,6 +138,7 @@ func GetIndex(ctx context.Context, input GetIndexInput) ([]ResultRow, error) {
 		resultRows = append(resultRows, values)
 		return nil
 	})
+
 	if err != nil {
 		return nil, errors.Wrap(err, "error in getIndex")
 	}
@@ -144,7 +146,24 @@ func GetIndex(ctx context.Context, input GetIndexInput) ([]ResultRow, error) {
 		return nil, errors.Wrap(r.Error, "error in getIndex")
 	}
 
-	return processResultRows(resultRows)
+	processedRows, err := processResultRows(resultRows)
+	if err != nil {
+		return nil, err
+	}
+
+	return &GetRecordResult{
+		Rows: processedRows,
+		Logs: r.Logs,
+	}, nil
+}
+
+func GetIndex(ctx context.Context, input GetIndexInput) ([]ResultRow, error) {
+	result, err := GetIndexWithLogs(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+
+	return result.Rows, nil
 }
 
 func GetIndexChange(ctx context.Context, input GetIndexChangeInput) ([]ResultRow, error) {

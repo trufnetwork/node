@@ -129,6 +129,44 @@ func TestCacheObservability(t *testing.T) {
 				assert.Equal(t, true, hitLog["cache_hit"], "Second query should be cache hit")
 				assert.NotNil(t, hitLog["cached_at"], "Cache hit should include cached_at timestamp")
 
+				// Test 3: Verify get_index cache miss log format
+				baseTime := int64(1)
+				cacheLogs = nil // Reset logs
+				indexResult, err := procedure.GetIndexWithLogs(ctx, procedure.GetIndexInput{
+					Platform: platform,
+					StreamLocator: types.StreamLocator{
+						StreamId:     streamId,
+						DataProvider: deployerAddr,
+					},
+					FromTime: &fromTime,
+					ToTime:   &toTime,
+					BaseTime: &baseTime,
+					Height:   1,
+				})
+				require.NoError(t, err)
+				require.NotNil(t, indexResult)
+				require.NotEmpty(t, indexResult.Rows)
+
+				// Find cache-related logs for index query
+				t.Logf("Total logs from index query: %d", len(indexResult.Logs))
+				for i, log := range indexResult.Logs {
+					t.Logf("Index Log %d: %s", i, log)
+					if strings.Contains(log, "cache_hit") {
+						cacheLogs = append(cacheLogs, log)
+					}
+				}
+
+				// Verify index cache hit logs are valid JSON with timestamp
+				// get_index can generate multiple cache hit logs (for base value and current values)
+				require.GreaterOrEqual(t, len(cacheLogs), 1, "Should have at least one index cache hit log")
+				for i, logStr := range cacheLogs {
+					var indexHitLog map[string]interface{}
+					err = json.Unmarshal([]byte(logStr), &indexHitLog)
+					assert.NoError(t, err, "Index cache hit log %d should be valid JSON", i)
+					assert.Equal(t, true, indexHitLog["cache_hit"], "Index query %d should be cache hit", i)
+					assert.NotNil(t, indexHitLog["cached_at"], "Index cache hit %d should include cached_at timestamp", i)
+				}
+
 				return nil
 			},
 		},

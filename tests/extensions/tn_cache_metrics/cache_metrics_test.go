@@ -72,11 +72,21 @@ func TestCacheMetrics(t *testing.T) {
 	err = testCacheHits(ctx, t, tnClient)
 	require.NoError(t, err, "Failed to test cache hits")
 
+	// Test 1.5: Generate index cache hits
+	t.Log("Testing index cache hits...")
+	err = testIndexCacheHits(ctx, t, tnClient)
+	require.NoError(t, err, "Failed to test index cache hits")
+
 	// Test 2: Generate cache misses
 
 	t.Log("Testing cache misses...")
 	err = testCacheMisses(ctx, t, tnClient)
 	require.NoError(t, err, "Failed to test cache misses")
+
+	// Test 2.5: Generate index cache misses
+	t.Log("Testing index cache misses...")
+	err = testIndexCacheMisses(ctx, t, tnClient)
+	require.NoError(t, err, "Failed to test index cache misses")
 
 	// Test 3: Wait for refresh cycles
 	t.Log("Waiting for cache refresh cycles...")
@@ -281,6 +291,47 @@ func testCacheHits(ctx context.Context, t *testing.T, tnClient *tnclient.Client)
 	return nil
 }
 
+// testIndexCacheHits generates cache hit metrics by calling get_index on cached streams
+func testIndexCacheHits(ctx context.Context, t *testing.T, tnClient *tnclient.Client) error {
+	// Get the raw Kwil client from TN client to make direct calls
+	kwilClient := tnClient.GetKwilClient()
+	signerAddress := tnClient.Address()
+
+	// Get the composed stream ID from environment
+	composedStreamId := os.Getenv("COMPOSED_STREAM_1")
+	if composedStreamId == "" {
+		return fmt.Errorf("COMPOSED_STREAM_1 not set")
+	}
+
+	// Query the composed stream multiple times with get_index - these should generate cache hits
+	// because the scheduler has already refreshed this stream
+	for i := 0; i < 5; i++ {
+		args := []any{
+			signerAddress.Address(), // data_provider
+			composedStreamId,        // stream_id
+			int64(1609459200),       // from_time
+			int64(1609459400),       // to_time
+			nil,                     // frozen_at
+			int64(1609459200),       // base_time
+		}
+
+		// Call get_index - it will internally use cache if available
+		result, err := kwilClient.Call(ctx, "", "get_index", args)
+		if err != nil {
+			return fmt.Errorf("index query %d failed: %w", i, err)
+		}
+
+		if result != nil && result.QueryResult != nil && len(result.QueryResult.Values) > 0 {
+			t.Logf("Index query %d returned %d rows", i, len(result.QueryResult.Values))
+		}
+
+		// Small delay between queries
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	return nil
+}
+
 // testCacheMisses generates cache miss metrics
 func testCacheMisses(ctx context.Context, t *testing.T, tnClient *tnclient.Client) error {
 	kwilClient := tnClient.GetKwilClient()
@@ -325,6 +376,60 @@ func testCacheMisses(ctx context.Context, t *testing.T, tnClient *tnclient.Clien
 			t.Logf("Uncached stream query %d error: %v", i, err)
 		} else if result != nil && result.QueryResult != nil {
 			t.Logf("Uncached stream query %d returned %d rows", i, len(result.QueryResult.Values))
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	return nil
+}
+
+// testIndexCacheMisses generates cache miss metrics for get_index calls
+func testIndexCacheMisses(ctx context.Context, t *testing.T, tnClient *tnclient.Client) error {
+	kwilClient := tnClient.GetKwilClient()
+	signerAddress := tnClient.Address()
+
+	// Test 1: Query for time ranges outside the cached range with get_index
+	// The cache only has data from 1609459200 onwards, so query before that
+	composedStreamId := os.Getenv("COMPOSED_STREAM_1")
+	if composedStreamId != "" {
+		args := []any{
+			signerAddress.Address(), // data_provider
+			composedStreamId,        // stream_id
+			int64(1609459000),       // from_time (before cached range)
+			int64(1609459100),       // to_time (before cached range)
+			nil,                     // frozen_at
+			int64(1609459000),       // base_time
+		}
+
+		// This should generate a cache miss because the time range is not cached
+		result, err := kwilClient.Call(ctx, "", "get_index", args)
+		if err != nil {
+			t.Logf("Index query outside cached range error: %v", err)
+		} else if result != nil && result.QueryResult != nil {
+			t.Logf("Index query outside cached range returned %d rows", len(result.QueryResult.Values))
+		}
+	}
+
+	// Test 2: Query for streams that are not configured for caching with get_index
+	// These streams exist but are not in the cache configuration
+	uncachedStreamId := "stuncached123456789012345678900"
+	for i := 0; i < 3; i++ {
+		args := []any{
+			signerAddress.Address(), // data_provider
+			uncachedStreamId,        // stream_id not in cache config
+			int64(1609459200),       // from_time
+			int64(1609459400),       // to_time
+			nil,                     // frozen_at
+			int64(1609459200),       // base_time
+		}
+
+		// This will generate cache misses because the stream is not configured for caching
+		result, err := kwilClient.Call(ctx, "", "get_index", args)
+		if err != nil {
+			t.Logf("Uncached stream index query %d error: %v", i, err)
+		} else if result != nil && result.QueryResult != nil {
+			t.Logf("Uncached stream index query %d returned %d rows", i, len(result.QueryResult.Values))
 		}
 
 		time.Sleep(100 * time.Millisecond)
