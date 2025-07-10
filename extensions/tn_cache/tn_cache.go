@@ -243,6 +243,26 @@ func initializeExtension(ctx context.Context, service *common.Service, db sql.DB
 				},
 				Handler: HandleGetCachedFirstAfter,
 			},
+			{
+				Name:            "get_cached_index_data",
+				AccessModifiers: []precompiles.Modifier{precompiles.PUBLIC, precompiles.VIEW},
+				Parameters: []precompiles.PrecompileValue{
+					precompiles.NewPrecompileValue("data_provider", types.TextType, false),
+					precompiles.NewPrecompileValue("stream_id", types.TextType, false),
+					precompiles.NewPrecompileValue("from_time", types.IntType, true), // nullable like standard queries
+					precompiles.NewPrecompileValue("to_time", types.IntType, true),
+				},
+				Returns: &precompiles.MethodReturn{
+					IsTable: true,
+					Fields: []precompiles.PrecompileValue{
+						precompiles.NewPrecompileValue("data_provider", types.TextType, false),
+						precompiles.NewPrecompileValue("stream_id", types.TextType, false),
+						precompiles.NewPrecompileValue("event_time", types.IntType, false),
+						precompiles.NewPrecompileValue("value", TNNumericType, false),
+					},
+				},
+				Handler: HandleGetCachedIndexData,
+			},
 		},
 	}, nil
 }
@@ -314,7 +334,7 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 
 		// Create the CacheDB instance with our independent pool
 		ext.cacheDB = internal.NewCacheDB(pool, ext.logger)
-		
+
 		// Wait for database to be ready before proceeding
 		if err := waitForDatabaseReady(ctx, pool, 30*time.Second); err != nil {
 			return fmt.Errorf("database not ready: %w", err)
@@ -458,6 +478,25 @@ func setupCacheSchema(ctx context.Context, pool *pgxpool.Pool, logger log.Logger
 		CREATE INDEX IF NOT EXISTS idx_cached_events_time_range 
 		ON `+constants.CacheSchemaName+`.cached_events (data_provider, stream_id, event_time)`); err != nil {
 		return fmt.Errorf("create event time range index: %w", err)
+	}
+
+	// Create cached_index_events table for storing pre-calculated index values
+	if _, err := tx.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS `+constants.CacheSchemaName+`.cached_index_events (
+			data_provider TEXT NOT NULL,
+			stream_id TEXT NOT NULL,
+			event_time INT8 NOT NULL,
+			value NUMERIC(36, 18) NOT NULL,
+			PRIMARY KEY (data_provider, stream_id, event_time)
+		)`); err != nil {
+		return fmt.Errorf("create cached_index_events table: %w", err)
+	}
+
+	// Create index for efficiently retrieving index events by time range
+	if _, err := tx.Exec(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_cached_index_events_time_range 
+		ON `+constants.CacheSchemaName+`.cached_index_events (data_provider, stream_id, event_time)`); err != nil {
+		return fmt.Errorf("create index event time range index: %w", err)
 	}
 
 	// Commit the transaction

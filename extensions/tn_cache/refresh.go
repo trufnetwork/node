@@ -5,6 +5,7 @@ package tn_cache
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/avast/retry-go/v4"
@@ -81,21 +82,50 @@ func (s *CacheScheduler) refreshStreamData(ctx context.Context, directive config
 		return fmt.Errorf("unexpected directive type in refresh: %s (should be specific after resolution)", directive.Type)
 	}
 
-	events, err := s.fetchSpecificStream(ctx, directive, fromTime)
+	// Fetch both regular and index events concurrently
+	var events []internal.CachedEvent
+	var indexEvents []internal.CachedIndexEvent
+	var fetchErr error
+	var indexFetchErr error
 
-	if err != nil {
-		s.metrics.RecordRefreshError(ctx, directive.DataProvider, directive.StreamID, metrics.ClassifyError(err))
-		return fmt.Errorf("fetch stream data: %w", err)
+	// Create a wait group to fetch both types concurrently
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Fetch regular events
+	go func() {
+		defer wg.Done()
+		events, fetchErr = s.fetchSpecificStream(ctx, directive, fromTime)
+	}()
+
+	// Fetch index events
+	go func() {
+		defer wg.Done()
+		indexEvents, indexFetchErr = s.fetchSpecificIndexStream(ctx, directive, fromTime)
+	}()
+
+	// Wait for both fetches to complete
+	wg.Wait()
+
+	// Check for errors
+	if fetchErr != nil {
+		s.metrics.RecordRefreshError(ctx, directive.DataProvider, directive.StreamID, metrics.ClassifyError(fetchErr))
+		return fmt.Errorf("fetch stream data: %w", fetchErr)
+	}
+	if indexFetchErr != nil {
+		s.metrics.RecordRefreshError(ctx, directive.DataProvider, directive.StreamID, metrics.ClassifyError(indexFetchErr))
+		return fmt.Errorf("fetch index stream data: %w", indexFetchErr)
 	}
 
-	// Database handles duplicates via primary key constraint
-	if len(events) > 0 {
-		if err := s.cacheDB.CacheEvents(ctx, events); err != nil {
+	// Cache both types of events atomically
+	if len(events) > 0 || len(indexEvents) > 0 {
+		if err := s.cacheDB.CacheEventsWithIndex(ctx, events, indexEvents); err != nil {
 			s.metrics.RecordRefreshError(ctx, directive.DataProvider, directive.StreamID, "storage_error")
-			return fmt.Errorf("cache events: %w", err)
+			return fmt.Errorf("cache events with index: %w", err)
 		}
 		s.logger.Info("cached events",
-			"count", len(events),
+			"raw_count", len(events),
+			"index_count", len(indexEvents),
 			"provider", directive.DataProvider,
 			"stream", directive.StreamID)
 	} else {
@@ -208,4 +238,99 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, directive conf
 	}
 
 	return events, nil
+}
+
+// fetchSpecificIndexStream calls get_index_composed action with proper authorization
+func (s *CacheScheduler) fetchSpecificIndexStream(ctx context.Context, directive config.CacheDirective, fromTime *int64) ([]internal.CachedIndexEvent, error) {
+	action := "get_index_composed"
+
+	// if from is nil, we should set to 0, meaning it's all available
+	if fromTime == nil {
+		fromTime = new(int64)
+		*fromTime = 0
+	}
+
+	// Build arguments for the action call
+	args := []any{
+		directive.DataProvider,
+		directive.StreamID,
+		fromTime, // from timestamp
+		nil,      // to timestamp (fetch all available)
+		nil,      // frozen_at (not applicable for cache refresh)
+		nil,      // base_time (NULL to use default)
+		false,    // don't use cache to get new data
+	}
+
+	var indexEvents []internal.CachedIndexEvent
+
+	// Create a proper engine context with extension agent as the caller
+	engineCtx := s.createExtensionEngineContext(ctx)
+
+	s.logger.Debug("calling engine action for index",
+		"action", action,
+		"provider", directive.DataProvider,
+		"stream", directive.StreamID,
+		"namespace", s.namespace,
+		"caller", internal.ExtensionAgentName)
+
+	// Execute the action with proper engine context
+	result, err := s.app.Engine.Call(
+		engineCtx,
+		s.getWrappedDB(),
+		s.namespace,
+		action,
+		args,
+		func(row *common.Row) error {
+			// Parse each row into a CachedIndexEvent
+			if len(row.Values) >= 2 {
+				// Parse event time
+				eventTime, err := parsing.ParseEventTime(row.Values[0])
+				if err != nil {
+					return fmt.Errorf("parse event_time: %w", err)
+				}
+
+				// Parse the index value
+				indexValue, err := parsing.ParseEventValue(row.Values[1])
+				if err != nil {
+					return fmt.Errorf("parse index value: %w", err)
+				}
+
+				event := internal.CachedIndexEvent{
+					DataProvider: directive.DataProvider,
+					StreamID:     directive.StreamID,
+					EventTime:    eventTime,
+					Value:        indexValue,
+				}
+				indexEvents = append(indexEvents, event)
+			}
+			return nil
+		},
+	)
+
+	if err != nil {
+		// Check if this is a "stream not found" type error
+		if errors.IsNotFoundError(err) {
+			s.logger.Warn("stream not found or has no index data",
+				"action", action,
+				"provider", directive.DataProvider,
+				"stream", directive.StreamID,
+				"error", err)
+			return []internal.CachedIndexEvent{}, nil // Return empty events, not an error
+		}
+
+		return nil, fmt.Errorf("call action %s: %w", action, err)
+	}
+
+	s.logger.Debug("fetched index stream data",
+		"action", action,
+		"events", len(indexEvents),
+		"provider", directive.DataProvider,
+		"stream", directive.StreamID)
+
+	// Log any notices from the action execution
+	if len(result.Logs) > 0 {
+		s.logger.Debug("action logs", "logs", result.FormatLogs())
+	}
+
+	return indexEvents, nil
 }

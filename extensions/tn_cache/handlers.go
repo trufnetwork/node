@@ -470,3 +470,54 @@ func HandleGetCachedFirstAfter(ctx *common.EngineContext, app *common.App, input
 
 	return processSingleRowResult(result, resultFn)
 }
+
+// HandleGetCachedIndexData retrieves cached index values for a stream
+func HandleGetCachedIndexData(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) (err error) {
+	if err := checkExtensionEnabled(); err != nil {
+		return err
+	}
+
+	// Extract parameters
+	dataProvider := normalizeDataProvider(inputs[0].(string))
+	streamID := inputs[1].(string)
+	fromTime := extractTimeParameter(inputs[2])
+	toTime := extractTimeParameter(inputs[3])
+
+	// Set up tracing
+	attrs := buildTimeAttributes(fromTime, toTime)
+	attrs = append(attrs, attribute.String("type", "index"))
+	traceCtx, end := createStreamOperationContext(ctx.TxContext.Ctx, tracing.OpGetCachedData, dataProvider, streamID, attrs...)
+	defer func() { end(err) }()
+	ctx.TxContext.Ctx = traceCtx
+
+	ext := GetExtension()
+	if ext == nil || ext.cacheDB == nil {
+		return fmt.Errorf(errCacheDBNotInitialized)
+	}
+
+	// Determine effective time range
+	effectiveFromTime := fromTimeOrZero(fromTime)
+	effectiveToTime := int64(0)
+	if toTime != nil {
+		effectiveToTime = *toTime
+	}
+
+	// Get index events from cache
+	indexEvents, err := ext.cacheDB.GetIndexEvents(traceCtx, dataProvider, streamID, effectiveFromTime, effectiveToTime)
+	if err != nil {
+		return fmt.Errorf("get index events: %w", err)
+	}
+
+	// Return the data in the expected format
+	for _, event := range indexEvents {
+		dec, err := ensureDecimalValue(event.Value)
+		if err != nil {
+			return err
+		}
+		if err := resultFn([]any{event.DataProvider, event.StreamID, event.EventTime, dec}); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
