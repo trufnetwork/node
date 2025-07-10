@@ -538,7 +538,17 @@ func (c *CacheDB) GetIndexEvents(ctx context.Context, dataProvider, streamID str
 		"to_time", toTime)
 
 	var rows pgx.Rows
-	if toTime > 0 {
+
+	// Special case: latest value only (both fromTime and toTime are 0)
+	if fromTime == 0 && toTime == 0 {
+		rows, err = c.pool.Query(ctx, `
+			SELECT data_provider, stream_id, event_time, value
+			FROM `+constants.CacheSchemaName+`.cached_index_events
+			WHERE data_provider = $1 AND stream_id = $2
+			ORDER BY event_time DESC
+			LIMIT 1
+		`, dataProvider, streamID)
+	} else if toTime > 0 {
 		rows, err = c.pool.Query(ctx, `
 			SELECT data_provider, stream_id, event_time, value
 			FROM `+constants.CacheSchemaName+`.cached_index_events
@@ -725,32 +735,61 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 	}
 
 	// Then, check if there are events in the cache
-	var eventsExist bool
-	if toTime > 0 {
-		err = tx.QueryRow(ctx, `
-			SELECT COUNT(*) > 0
-			FROM `+constants.CacheSchemaName+`.cached_events
-			WHERE data_provider = $1 AND stream_id = $2
-				AND event_time >= $3 AND event_time <= $4
-		`, dataProvider, streamID, fromTime, toTime).Scan(&eventsExist)
+	var eventCount int64
+	if toTime == 0 {
+		// No upper bound specified - to is treated as max_int8 (end of time)
+		result, err := tx.Query(ctx, `
+			SELECT COUNT(*) FROM `+constants.CacheSchemaName+`.cached_events
+			WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3
+		`, dataProvider, streamID, fromTime)
+		if err != nil {
+			return false, fmt.Errorf("failed to count cached events: %w", err)
+		}
+
+		if result.Next() {
+			err := result.Scan(&eventCount)
+			if err != nil {
+				return false, fmt.Errorf("failed to scan event count: %w", err)
+			}
+		}
 	} else {
-		err = tx.QueryRow(ctx, `
-			SELECT COUNT(*) > 0
-			FROM `+constants.CacheSchemaName+`.cached_events
-			WHERE data_provider = $1 AND stream_id = $2
-				AND event_time >= $3
-		`, dataProvider, streamID, fromTime).Scan(&eventsExist)
+		// Upper bound specified
+		result, err := tx.Query(ctx, `
+			SELECT COUNT(*) FROM `+constants.CacheSchemaName+`.cached_events
+			WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3 AND event_time <= $4
+		`, dataProvider, streamID, fromTime, toTime)
+		if err != nil {
+			return false, fmt.Errorf("failed to count cached events: %w", err)
+		}
+
+		if result.Next() {
+			err := result.Scan(&eventCount)
+			if err != nil {
+				return false, fmt.Errorf("failed to scan event count: %w", err)
+			}
+		}
 	}
 
-	if err != nil {
-		return false, fmt.Errorf("check events: %w", err)
+	hasData = eventCount > 0
+
+	// If no direct events found, check for an anchor record (last event before fromTime)
+	if !hasData && fromTime != 0 {
+		anchorResult, err := tx.Query(ctx, `
+			SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
+			WHERE data_provider = $1 AND stream_id = $2 AND event_time < $3
+			LIMIT 1
+		`, dataProvider, streamID, fromTime)
+		if err != nil {
+			return false, fmt.Errorf("failed to query anchor record: %w", err)
+		}
+		hasData = anchorResult.Next()
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("commit transaction: %w", err)
 	}
 
-	return eventsExist, nil
+	return hasData, nil
 }
 
 // UpdateStreamConfigsAtomic atomically updates the cached_streams table
