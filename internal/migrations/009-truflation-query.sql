@@ -801,7 +801,7 @@ RETURNS TABLE(
               )
           )
           AND GREATEST(h.path_start, tts.segment_start) <= $effective_to
-          AND h.level < 10
+          AND h.level < 1000 -- Recursion depth limit to prevent taxonomy recursion attacks
     ),
 
     hierarchy_primitive_paths AS (
@@ -1804,7 +1804,7 @@ RETURNS TABLE(
               )
           )
           AND GREATEST(h.path_start, tts.segment_start) <= $effective_to
-          AND h.level < 10
+          AND h.level < 1000 -- Recursion depth limit to prevent taxonomy recursion attacks
     ),
 
     hierarchy_primitive_paths AS (

@@ -243,7 +243,7 @@ RETURNS TABLE(
           )
           -- Intersected segment must start at or before query end
           AND GREATEST(h.path_start, tts.segment_start) <= $effective_to
-          AND h.level < 10 -- Recursion depth limit
+          AND h.level < 1000 -- Recursion depth limit to prevent taxonomy recursion attacks
     ),
 
     /*----------------------------------------------------------------------
