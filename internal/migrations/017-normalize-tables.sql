@@ -49,3 +49,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS tax_child_unique_idx ON taxonomies (stream_ref
 CREATE INDEX IF NOT EXISTS tax_stream_start_idx ON taxonomies (stream_ref, start_time, disabled_at);
 CREATE INDEX IF NOT EXISTS tax_child_stream_idx ON taxonomies (child_stream_ref);
 CREATE INDEX IF NOT EXISTS tax_latest_sequence_idx ON taxonomies (stream_ref, start_time, group_sequence);
+
+/*----------------------------------------------------------------------
+ * Primitive Events
+ *---------------------------------------------------------------------*/
+
+ALTER TABLE primitive_events
+ADD COLUMN stream_ref UUID;
+
+ALTER TABLE primitive_events
+ADD CONSTRAINT fk_primitive_stream_ref
+FOREIGN KEY (stream_ref) REFERENCES streams(id) ON DELETE CASCADE;
+
+CREATE INDEX IF NOT EXISTS pe_gap_fill_idx ON primitive_events (stream_ref, event_time);
+CREATE INDEX IF NOT EXISTS pe_stream_created_idx ON primitive_events (stream_ref, created_at);
