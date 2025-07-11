@@ -83,7 +83,7 @@ func (s *CacheScheduler) canRefresh(provider, streamID string) bool {
 }
 
 type NewCacheSchedulerParams struct {
-	App             *common.App
+	Service         *common.Service
 	CacheDB         *internal.CacheDB
 	EngineOps       *internal.EngineOperations
 	Logger          log.Logger
@@ -102,7 +102,7 @@ func NewCacheScheduler(params NewCacheSchedulerParams) *CacheScheduler {
 	}
 
 	return &CacheScheduler{
-		kwilService:      params.App.Service,
+		kwilService:      params.Service,
 		cacheDB:          params.CacheDB,
 		engineOperations: params.EngineOps,
 		logger:           params.Logger.New("scheduler"),

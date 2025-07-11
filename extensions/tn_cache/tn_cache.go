@@ -245,66 +245,61 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 		panic("extension not initialized")
 	}
 
+	return SetupCacheExtension(ctx, processedConfig, ext, &app.Engine, app.Service)
+}
+
+func SetupCacheExtension(ctx context.Context, config *config.ProcessedConfig, ext *Extension, engine *common.Engine, service *common.Service) error {
 	// Initialize metrics recorder (with auto-detection)
 	metricsRecorder := metrics.NewMetricsRecorder(ext.logger)
 
 	// Update the extension with enabled state
-	ext.isEnabled = processedConfig.Enabled
+	ext.isEnabled = config.Enabled
 
 	// Create independent connection pool for cache operations
 	// This prevents "tx is closed" errors caused by kwil-db's connection lifecycle
-	pool, err := createIndependentConnectionPool(ctx, app.Service, ext.logger)
+	pool, err := createIndependentConnectionPool(ctx, service, ext.logger)
 	if err != nil {
 		return fmt.Errorf("failed to create connection pool: %w", err)
 	}
-	ext.cachePool = pool
+	defer pool.Close()
+	ext.db = utilities.NewPoolDBWrapper(pool)
 
 	// If disabled, ensure schema is cleaned up
-	if !processedConfig.Enabled {
+	if !config.Enabled {
 		ext.logger.Info("extension is disabled")
 		ext.logger.Info("cleaning up any existing schema")
 		return ext.CacheDB().CleanupExtensionSchema(ctx)
 	}
 
 	ext.logger.Info("initializing extension",
-		"enabled", processedConfig.Enabled,
-		"directives_count", len(processedConfig.Directives),
-		"sources", processedConfig.Sources)
+		"enabled", config.Enabled,
+		"directives_count", len(config.Directives),
+		"sources", config.Sources)
 
 	// if we have no directives, we can skip the rest of the initialization
-	if len(processedConfig.Directives) == 0 {
+	if len(config.Directives) == 0 {
 		ext.logger.Warn("no directives found, skipping extension initialization")
 		return nil
 	}
 
-	// Create the CacheDB instance with our independent pool
-	cacheDB := internal.NewCacheDB(pool, ext.logger)
+	// Create the CacheDB instance
+	cacheDB := internal.NewCacheDB(ext.db, ext.logger)
 
 	// Wait for database to be ready before proceeding
 	if err := cacheDB.WaitForDatabaseReady(ctx, 30*time.Second); err != nil {
 		return fmt.Errorf("database not ready: %w", err)
 	}
 
-	// For engine calls, we'll create transactions as needed rather than
-	// trying to wrap the pool. This avoids the "cannot query with scan values" error
-
-	// Initialize extension resources using the pool for schema setup
-	if pool, ok := ext.cachePool.(*pgxpool.Pool); ok {
-		err = cacheDB.SetupCacheSchema(ctx)
-		if err != nil {
-			pool.Close()
-			return fmt.Errorf("failed to setup cache schema: %w", err)
-		}
-	} else {
-		return fmt.Errorf("cache pool is not a *pgxpool.Pool")
+	// Initialize extension resources
+	err = cacheDB.SetupCacheSchema(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to setup cache schema: %w", err)
 	}
 
-	// create a wrapper around our pool for engine operations
-	db := utilities.NewPoolDBWrapper(pool)
-	engineOps := internal.NewEngineOperations(app.Engine, db, "", ext.logger)
+	engineOps := internal.NewEngineOperations(engine, ext.db, "", ext.logger)
 
 	ext.scheduler = scheduler.NewCacheScheduler(scheduler.NewCacheSchedulerParams{
-		App:             app,
+		Service:         service,
 		CacheDB:         cacheDB,
 		EngineOps:       engineOps,
 		Logger:          ext.logger,
@@ -314,19 +309,19 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	})
 
 	// Initialize sync checker for sync-aware caching
-	ext.syncChecker = syncschecker.NewSyncChecker(ext.logger, processedConfig.MaxBlockAge)
+	ext.syncChecker = syncschecker.NewSyncChecker(ext.logger, config.MaxBlockAge)
 	ext.syncChecker.Start(ctx)
 
-	if processedConfig.MaxBlockAge > 0 {
-		ext.logger.Info("sync-aware caching enabled", "max_block_age", processedConfig.MaxBlockAge)
+	if config.MaxBlockAge > 0 {
+		ext.logger.Info("sync-aware caching enabled", "max_block_age", config.MaxBlockAge)
 	}
 
-	if err := ext.scheduler.Start(ctx, processedConfig); err != nil {
+	if err := ext.scheduler.Start(ctx, config); err != nil {
 		return fmt.Errorf("failed to start scheduler: %w", err)
 	}
 
 	// Record initial gauge metrics
-	metricsRecorder.RecordStreamConfigured(ctx, len(processedConfig.Directives))
+	metricsRecorder.RecordStreamConfigured(ctx, len(config.Directives))
 
 	// Query actual active streams on startup (cache persists across restarts)
 	ext.scheduler.UpdateGaugeMetrics(ctx)
@@ -350,11 +345,9 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 		}
 
 		// Close connection pool
-		if ext.cachePool != nil {
-			if pool, ok := ext.cachePool.(*pgxpool.Pool); ok {
-				pool.Close()
-				ext.logger.Info("closed cache connection pool")
-			}
+		if ext.db != nil {
+			pool.Close()
+			ext.logger.Info("closed cache connection pool")
 		}
 	}()
 

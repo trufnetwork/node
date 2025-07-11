@@ -283,7 +283,7 @@ func TestSchedulerCreation(t *testing.T) {
 
 	// Create scheduler
 	scheduler := scheduler.NewCacheScheduler(scheduler.NewCacheSchedulerParams{
-		App:             app,
+		Service:         service,
 		CacheDB:         cacheDB,
 		EngineOps:       nil,
 		Logger:          logger,
