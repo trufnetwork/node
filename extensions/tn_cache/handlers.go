@@ -3,12 +3,14 @@ package tn_cache
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
+	"github.com/trufnetwork/node/extensions/tn_cache/internal"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal/constants"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal/tracing"
 	"go.opentelemetry.io/otel/attribute"
@@ -39,15 +41,6 @@ func checkExtensionEnabled() error {
 		return fmt.Errorf(errExtensionNotEnabled)
 	}
 	return nil
-}
-
-// checkCacheDB returns the cached database connection
-func checkCacheDB() (sql.DB, error) {
-	db := getWrappedCacheDB()
-	if db == nil {
-		return nil, fmt.Errorf(errCacheDBNotInitialized)
-	}
-	return db, nil
 }
 
 // Helper functions for handlers
@@ -279,95 +272,75 @@ func HandleGetCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 	// Update context for tracing
 	ctx.TxContext.Ctx = traceCtx
 
-	// Get database connection
-	db, err := checkCacheDB()
+	// Obtain CacheDB instance
+	cacheDB, err := checkCacheDB()
 	if err != nil {
 		return err
 	}
 
-	var result *sql.ResultSet
+	// Helper to emit a single CachedEvent
+	emit := func(ev *internal.CachedEvent) error {
+		dec, err := ensureDecimalValue(ev.Value)
+		if err != nil {
+			return err
+		}
+		return resultFn([]any{ev.DataProvider, ev.StreamID, ev.EventTime, dec})
+	}
 
-	// Special case: if both from and to are NULL, return latest value only
+	effectiveFrom := int64(0)
+	if fromTime != nil {
+		effectiveFrom = *fromTime
+	}
+
+	// Case 1: latest value only (both bounds nil)
 	if fromTime == nil && toTime == nil {
-		result, err = db.Execute(ctx.TxContext.Ctx, `
-			SELECT data_provider, stream_id, event_time, value
-			FROM `+constants.CacheSchemaName+`.cached_events
-			WHERE data_provider = $1 AND stream_id = $2
-			ORDER BY event_time DESC
-			LIMIT 1
-		`, dataProvider, streamID)
-	} else if toTime != nil {
-		// Both bounds specified OR from is NULL with to specified
-		result, err = db.Execute(ctx.TxContext.Ctx, `
-			WITH anchor_record AS (
-				SELECT data_provider, stream_id, event_time, value
-				FROM `+constants.CacheSchemaName+`.cached_events
-				WHERE data_provider = $1 AND stream_id = $2
-					AND event_time <= $3
-				ORDER BY event_time DESC
-				LIMIT 1
-			),
-			interval_records AS (
-				SELECT data_provider, stream_id, event_time, value
-				FROM `+constants.CacheSchemaName+`.cached_events
-				WHERE data_provider = $1 AND stream_id = $2
-					AND event_time > $3 AND event_time <= $4
-			),
-			combined_results AS (
-				SELECT * FROM anchor_record
-				UNION ALL
-				SELECT * FROM interval_records
-			)
-			SELECT data_provider, stream_id, event_time, value
-			FROM combined_results
-			ORDER BY event_time ASC
-		`, dataProvider, streamID, fromTimeOrZero(fromTime), *toTime)
-	} else {
-		// Only from specified, to is NULL (treat as max_int8)
-		result, err = db.Execute(ctx.TxContext.Ctx, `
-			WITH anchor_record AS (
-				SELECT data_provider, stream_id, event_time, value
-				FROM `+constants.CacheSchemaName+`.cached_events
-				WHERE data_provider = $1 AND stream_id = $2
-					AND event_time <= $3
-				ORDER BY event_time DESC
-				LIMIT 1
-			),
-			interval_records AS (
-				SELECT data_provider, stream_id, event_time, value
-				FROM `+constants.CacheSchemaName+`.cached_events
-				WHERE data_provider = $1 AND stream_id = $2
-					AND event_time > $3
-			),
-			combined_results AS (
-				SELECT * FROM anchor_record
-				UNION ALL
-				SELECT * FROM interval_records
-			)
-			SELECT data_provider, stream_id, event_time, value
-			FROM combined_results
-			ORDER BY event_time ASC
-		`, dataProvider, streamID, fromTimeOrZero(fromTime))
+		event, err := cacheDB.GetLastEventBefore(traceCtx, dataProvider, streamID, math.MaxInt64)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				return nil // no data
+			}
+			return fmt.Errorf("get latest cached event: %w", err)
+		}
+		rowCount = 1
+		GetExtension().MetricsRecorder().RecordCacheDataServed(ctx.TxContext.Ctx, dataProvider, streamID, rowCount)
+		return emit(event)
 	}
 
+	// Case 2/3: range queries with anchor logic
+	var combined []*internal.CachedEvent
+
+	// anchor record (<= effectiveFrom)
+	anchor, err := cacheDB.GetLastEventBefore(traceCtx, dataProvider, streamID, effectiveFrom+1)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("get anchor event: %w", err)
+	}
+	if err == nil {
+		combined = append(combined, anchor)
+	}
+
+	effectiveTo := int64(0)
+	if toTime != nil {
+		effectiveTo = *toTime
+	}
+
+	events, err := cacheDB.GetCachedEvents(traceCtx, dataProvider, streamID, effectiveFrom, effectiveTo)
 	if err != nil {
-		return fmt.Errorf("failed to query cached events: %w", err)
+		return fmt.Errorf("get interval events: %w", err)
 	}
 
-	// Record metrics for data served
-	rowCount = len(result.Rows)
+	for _, ev := range events {
+		if ev.EventTime > effectiveFrom {
+			combined = append(combined, &ev)
+		}
+	}
+
+	rowCount = len(combined)
 	if rowCount > 0 {
 		GetExtension().MetricsRecorder().RecordCacheDataServed(ctx.TxContext.Ctx, dataProvider, streamID, rowCount)
 	}
 
-	// Return each row via resultFn
-	for _, row := range result.Rows {
-		// Ensure value is properly formatted
-		_, err := ensureDecimalValue(row[3])
-		if err != nil {
-			return err
-		}
-		if err := resultFn(row); err != nil {
+	for _, ev := range combined {
+		if err := emit(ev); err != nil {
 			return err
 		}
 	}
@@ -395,8 +368,8 @@ func HandleGetCachedLastBefore(ctx *common.EngineContext, app *common.App, input
 	defer end(nil)
 	ctx.TxContext.Ctx = traceCtx
 
-	// Get database connection
-	db, err := checkCacheDB()
+	// Obtain CacheDB instance
+	cacheDB, err := checkCacheDB()
 	if err != nil {
 		return err
 	}
@@ -407,20 +380,19 @@ func HandleGetCachedLastBefore(ctx *common.EngineContext, app *common.App, input
 		effectiveBefore = *before
 	}
 
-	// Query for the last record before the timestamp
-	result, err := db.Execute(ctx.TxContext.Ctx, `
-		SELECT event_time, value
-		FROM `+constants.CacheSchemaName+`.cached_events
-		WHERE data_provider = $1 AND stream_id = $2 AND event_time < $3
-		ORDER BY event_time DESC
-		LIMIT 1
-	`, dataProvider, streamID, effectiveBefore)
-
+	event, err := cacheDB.GetLastEventBefore(traceCtx, dataProvider, streamID, effectiveBefore)
 	if err != nil {
-		return fmt.Errorf("failed to query cached events: %w", err)
+		if err == sql.ErrNoRows {
+			return nil // no data to return
+		}
+		return fmt.Errorf("get last event before: %w", err)
 	}
 
-	return processSingleRowResult(result, resultFn)
+	dec, err := ensureDecimalValue(event.Value)
+	if err != nil {
+		return err
+	}
+	return resultFn([]any{event.EventTime, dec})
 }
 
 // HandleGetCachedFirstAfter handles the get_cached_first_after precompile method
@@ -443,8 +415,8 @@ func HandleGetCachedFirstAfter(ctx *common.EngineContext, app *common.App, input
 	defer end(nil)
 	ctx.TxContext.Ctx = traceCtx
 
-	// Get database connection
-	db, err := checkCacheDB()
+	// Obtain CacheDB instance
+	cacheDB, err := checkCacheDB()
 	if err != nil {
 		return err
 	}
@@ -455,20 +427,19 @@ func HandleGetCachedFirstAfter(ctx *common.EngineContext, app *common.App, input
 		effectiveAfter = *after
 	}
 
-	// Query for the first record after the timestamp
-	result, err := db.Execute(ctx.TxContext.Ctx, `
-		SELECT event_time, value
-		FROM `+constants.CacheSchemaName+`.cached_events
-		WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3
-		ORDER BY event_time ASC
-		LIMIT 1
-	`, dataProvider, streamID, effectiveAfter)
-
+	event, err := cacheDB.GetFirstEventAfter(traceCtx, dataProvider, streamID, effectiveAfter)
 	if err != nil {
-		return fmt.Errorf("failed to query cached events: %w", err)
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		return fmt.Errorf("get first event after: %w", err)
 	}
 
-	return processSingleRowResult(result, resultFn)
+	dec, err := ensureDecimalValue(event.Value)
+	if err != nil {
+		return err
+	}
+	return resultFn([]any{event.EventTime, dec})
 }
 
 // HandleGetCachedIndexData retrieves cached index values for a stream
@@ -503,7 +474,7 @@ func HandleGetCachedIndexData(ctx *common.EngineContext, app *common.App, inputs
 	}
 
 	// Get index events from cache
-	indexEvents, err := ext.cacheDB.GetIndexEvents(traceCtx, dataProvider, streamID, effectiveFromTime, effectiveToTime)
+	indexEvents, err := ext.cacheDB.GetCachedIndex(traceCtx, dataProvider, streamID, effectiveFromTime, effectiveToTime)
 	if err != nil {
 		return fmt.Errorf("get index events: %w", err)
 	}
@@ -514,10 +485,19 @@ func HandleGetCachedIndexData(ctx *common.EngineContext, app *common.App, inputs
 		if err != nil {
 			return err
 		}
-		if err := resultFn([]any{event.DataProvider, event.StreamID, event.EventTime, dec}); err != nil {
+		if err := resultFn([]any{event.EventTime, dec}); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+// checkCacheDB returns the CacheDB instance or an error if the cache DB is not initialised.
+func checkCacheDB() (*internal.CacheDB, error) {
+	ext := GetExtension()
+	if ext == nil || ext.CacheDB() == nil {
+		return nil, fmt.Errorf(errCacheDBNotInitialized)
+	}
+	return ext.CacheDB(), nil
 }

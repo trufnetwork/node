@@ -65,7 +65,7 @@ func TestCacheDB_GetStreamConfig(t *testing.T) {
 	// Set up expectations for QueryRow
 	rows := pgxmock.NewRows([]string{"data_provider", "stream_id", "from_timestamp", "last_refreshed", "cron_schedule"}).
 		AddRow(testDataProvider, testStreamID, testFromTimestamp, testLastRefreshed, testCronSchedule)
-	
+
 	mockPool.ExpectQuery(`SELECT data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule`).
 		WithArgs(testDataProvider, testStreamID).
 		WillReturnRows(rows)
@@ -193,7 +193,7 @@ func TestCacheDB_GetEvents(t *testing.T) {
 	cacheDB := NewCacheDB(mockPool, logger)
 
 	// Test GetEvents
-	events, err := cacheDB.GetEvents(context.Background(), testDataProvider, testStreamID, 1234567890, 1234567900)
+	events, err := cacheDB.GetCachedEvents(context.Background(), testDataProvider, testStreamID, 1234567890, 1234567900)
 	require.NoError(t, err)
 	require.Len(t, events, 2)
 
@@ -256,17 +256,17 @@ func TestCacheDB_HasCachedData(t *testing.T) {
 
 	// Set up expectations
 	mockPool.ExpectBegin()
-	
+
 	// First query checks if stream is configured
 	mockPool.ExpectQuery(`SELECT COUNT\(\*\) > 0`).
 		WithArgs("test_provider", "test_stream", int64(1234567890)).
 		WillReturnRows(pgxmock.NewRows([]string{"exists"}).AddRow(true))
-	
+
 	// Second query checks if events exist
-	mockPool.ExpectQuery(`SELECT COUNT\(\*\) > 0`).
+	mockPool.ExpectQuery(`SELECT COUNT\(\*\) FROM ext_tn_cache\.cached_events`).
 		WithArgs("test_provider", "test_stream", int64(1234567890), int64(1234567900)).
-		WillReturnRows(pgxmock.NewRows([]string{"exists"}).AddRow(true))
-	
+		WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(int64(5)))
+
 	mockPool.ExpectCommit()
 
 	// Create CacheDB with mock pool
@@ -294,6 +294,9 @@ func TestCacheDB_DeleteStreamData(t *testing.T) {
 	mockPool.ExpectExec(`DELETE FROM ext_tn_cache\.cached_events`).
 		WithArgs("test_provider", "test_stream").
 		WillReturnResult(pgxmock.NewResult("DELETE", 10))
+	mockPool.ExpectExec(`DELETE FROM ext_tn_cache\.cached_index_events`).
+		WithArgs("test_provider", "test_stream").
+		WillReturnResult(pgxmock.NewResult("DELETE", 0))
 	mockPool.ExpectExec(`DELETE FROM ext_tn_cache\.cached_streams`).
 		WithArgs("test_provider", "test_stream").
 		WillReturnResult(pgxmock.NewResult("DELETE", 1))
@@ -337,12 +340,12 @@ func TestCacheDB_UpdateStreamConfigsAtomic(t *testing.T) {
 
 	// Set up expectations
 	mockPool.ExpectBegin()
-	
+
 	// Delete query
 	mockPool.ExpectExec(`DELETE FROM ext_tn_cache\.cached_streams`).
 		WithArgs([]string{"provider2"}, []string{"stream2"}).
 		WillReturnResult(pgxmock.NewResult("DELETE", 1))
-	
+
 	// Insert/Update query
 	mockPool.ExpectExec(`INSERT INTO ext_tn_cache\.cached_streams`).
 		WithArgs(
@@ -353,7 +356,7 @@ func TestCacheDB_UpdateStreamConfigsAtomic(t *testing.T) {
 			[]string{"0 0 * * * *"},
 		).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
-	
+
 	mockPool.ExpectCommit()
 
 	// Create CacheDB with mock pool

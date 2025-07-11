@@ -1,4 +1,4 @@
-package tn_cache
+package scheduler
 
 import (
 	"testing"
@@ -14,7 +14,13 @@ import (
 func TestDeduplicateResolvedSpecs(t *testing.T) {
 	logger := log.New(log.WithWriter(nil)) // Discard logs during tests
 	cacheDB := internal.NewCacheDB(nil, logger)
-	scheduler := NewCacheScheduler(&common.App{}, cacheDB, logger, metrics.NewNoOpMetrics())
+	scheduler := NewCacheScheduler(NewCacheSchedulerParams{
+		App:             &common.App{},
+		CacheDB:         cacheDB,
+		EngineOps:       nil,
+		Logger:          logger,
+		MetricsRecorder: metrics.NewNoOpMetrics(),
+	})
 
 	// Helper to create directive with optional from timestamp
 	createDirective := func(provider, streamID string, from *int64, cronExpr string) config.CacheDirective {
@@ -51,7 +57,7 @@ func TestDeduplicateResolvedSpecs(t *testing.T) {
 			},
 			expected: 1,
 			check: func(result []config.CacheDirective) bool {
-				return result[0].TimeRange.From != nil && 
+				return result[0].TimeRange.From != nil &&
 					*result[0].TimeRange.From == 1000 &&
 					result[0].Schedule.CronExpr == "0 0 0 * * *"
 			},
@@ -95,11 +101,11 @@ func TestDeduplicateResolvedSpecs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := scheduler.deduplicateResolvedSpecs(tt.input)
-			
+
 			if len(result) != tt.expected {
 				t.Errorf("expected %d deduplicated directives, got %d", tt.expected, len(result))
 			}
-			
+
 			if tt.check != nil && !tt.check(result) {
 				t.Error("deduplication did not produce expected result")
 			}

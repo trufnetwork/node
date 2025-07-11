@@ -1,4 +1,4 @@
-package tn_cache
+package scheduler
 
 import (
 	"context"
@@ -63,10 +63,17 @@ func TestCacheScheduler_New(t *testing.T) {
 	var cacheDB *internal.CacheDB
 
 	// Test creating scheduler
-	scheduler := NewCacheScheduler(mockApp, cacheDB, logger, metrics.NewNoOpMetrics())
+	scheduler := NewCacheScheduler(NewCacheSchedulerParams{
+		App:             mockApp,
+		CacheDB:         cacheDB,
+		EngineOps:       nil,
+		Logger:          logger,
+		MetricsRecorder: metrics.NewNoOpMetrics(),
+		Namespace:       "",
+	})
 
 	require.NotNil(t, scheduler, "Scheduler should be created")
-	assert.Equal(t, mockApp, scheduler.app, "App should be set correctly")
+	assert.Equal(t, mockApp.Service, scheduler.kwilService, "App should be set correctly")
 	assert.NotNil(t, scheduler.cron, "Cron scheduler should be initialized")
 	assert.NotNil(t, scheduler.jobs, "Jobs map should be initialized")
 	assert.Equal(t, "", scheduler.namespace, "Default namespace should be empty")
@@ -86,7 +93,14 @@ func TestCacheScheduler_WithCustomNamespace(t *testing.T) {
 	var cacheDB *internal.CacheDB
 
 	// Test creating scheduler with custom namespace
-	scheduler := NewCacheSchedulerWithNamespace(mockApp, cacheDB, logger, "custom_db", metrics.NewNoOpMetrics())
+	scheduler := NewCacheScheduler(NewCacheSchedulerParams{
+		App:             mockApp,
+		CacheDB:         cacheDB,
+		EngineOps:       nil,
+		Logger:          logger,
+		MetricsRecorder: metrics.NewNoOpMetrics(),
+		Namespace:       "custom_db",
+	})
 
 	require.NotNil(t, scheduler, "Scheduler should be created")
 	assert.Equal(t, "custom_db", scheduler.namespace, "Custom namespace should be set")
@@ -97,7 +111,14 @@ func TestCacheScheduler_GroupBySchedule(t *testing.T) {
 	mockApp := &common.App{}
 	logger := log.New(log.WithWriter(nil))
 	cacheDB := &internal.CacheDB{}
-	scheduler := NewCacheScheduler(mockApp, cacheDB, logger, metrics.NewNoOpMetrics())
+	scheduler := NewCacheScheduler(NewCacheSchedulerParams{
+		App:             mockApp,
+		CacheDB:         cacheDB,
+		EngineOps:       nil,
+		Logger:          logger,
+		MetricsRecorder: metrics.NewNoOpMetrics(),
+		Namespace:       "",
+	})
 
 	// Create test directives with different schedules
 	from := int64(1640995200)
@@ -149,7 +170,14 @@ func TestCacheScheduler_ResolutionFlow(t *testing.T) {
 	logger := log.New(log.WithWriter(nil))
 	cacheDB := &internal.CacheDB{}
 
-	scheduler := NewCacheScheduler(mockApp, cacheDB, logger, metrics.NewNoOpMetrics())
+	scheduler := NewCacheScheduler(NewCacheSchedulerParams{
+		App:             mockApp,
+		CacheDB:         cacheDB,
+		EngineOps:       nil,
+		Logger:          logger,
+		MetricsRecorder: metrics.NewNoOpMetrics(),
+		Namespace:       "",
+	})
 	scheduler.ctx, scheduler.cancel = context.WithCancel(context.Background())
 	defer scheduler.cancel()
 

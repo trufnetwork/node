@@ -1,4 +1,4 @@
-package tn_cache
+package scheduler
 
 import (
 	"context"
@@ -33,7 +33,7 @@ func TestParseEventTime(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := parsing.ParseEventTime(tt.input)
-			
+
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -65,14 +65,14 @@ func TestParseEventValue(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := parsing.ParseEventValue(tt.input)
-			
+
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
 				assert.NoError(t, err)
 				assert.NotNil(t, result, "Result should not be nil")
 				assert.Equal(t, tt.expectedStr, result.String(), "Decimal string representation should match expected")
-				
+
 				// Verify precision and scale are set correctly
 				assert.Equal(t, uint16(36), result.Precision(), "Precision should be 36")
 				assert.Equal(t, uint16(18), result.Scale(), "Scale should be 18")
@@ -113,34 +113,34 @@ type mockSchedulerForRetry struct {
 
 func (m *mockSchedulerForRetry) refreshStreamData(ctx context.Context, directive config.CacheDirective) error {
 	m.attempts++
-	
+
 	if m.shouldFail && m.attempts <= m.maxAttempts {
 		return errors.New("simulated temporary failure")
 	}
-	
+
 	return nil
 }
 
 func TestRetryLogic(t *testing.T) {
 	// This test demonstrates the retry logic concept
 	// In practice, we'd need more sophisticated mocking for the actual scheduler
-	
+
 	t.Run("eventually succeeds", func(t *testing.T) {
 		mock := &mockSchedulerForRetry{
 			maxAttempts: 2, // Fail first 2 attempts, succeed on 3rd
 			shouldFail:  true,
 		}
-		
+
 		// Simulate retry logic
 		maxRetries := 3
 		var lastErr error
-		
+
 		for attempt := 0; attempt <= maxRetries; attempt++ {
 			directive := config.CacheDirective{
 				DataProvider: "test",
 				StreamID:     "test",
 			}
-			
+
 			if err := mock.refreshStreamData(context.Background(), directive); err != nil {
 				lastErr = err
 				if attempt < maxRetries {
@@ -152,27 +152,27 @@ func TestRetryLogic(t *testing.T) {
 				break
 			}
 		}
-		
+
 		require.NoError(t, lastErr, "Should eventually succeed")
 		assert.Equal(t, 3, mock.attempts, "Should attempt 3 times")
 	})
-	
+
 	t.Run("fails after max retries", func(t *testing.T) {
 		mock := &mockSchedulerForRetry{
 			maxAttempts: 10, // Always fail
 			shouldFail:  true,
 		}
-		
+
 		// Simulate retry logic
 		maxRetries := 2
 		var lastErr error
-		
+
 		for attempt := 0; attempt <= maxRetries; attempt++ {
 			directive := config.CacheDirective{
 				DataProvider: "test",
 				StreamID:     "test",
 			}
-			
+
 			if err := mock.refreshStreamData(context.Background(), directive); err != nil {
 				lastErr = err
 				if attempt < maxRetries {
@@ -183,7 +183,7 @@ func TestRetryLogic(t *testing.T) {
 				break
 			}
 		}
-		
+
 		require.Error(t, lastErr, "Should fail after max retries")
 		assert.Equal(t, 3, mock.attempts, "Should attempt 3 times total")
 	})
@@ -192,7 +192,7 @@ func TestRetryLogic(t *testing.T) {
 func TestNamespaceConfiguration(t *testing.T) {
 	// Test namespace configuration logic without creating actual scheduler instances
 	// This tests the logic that would be used in the constructor
-	
+
 	t.Run("default namespace logic", func(t *testing.T) {
 		namespace := ""
 		if namespace == "" {

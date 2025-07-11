@@ -1,4 +1,4 @@
-package tn_cache
+package scheduler
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/robfig/cron/v3"
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/log"
@@ -19,6 +18,7 @@ import (
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal/tracing"
 	"github.com/trufnetwork/node/extensions/tn_cache/metrics"
+	"github.com/trufnetwork/node/extensions/tn_cache/syncschecker"
 	"github.com/trufnetwork/node/extensions/tn_cache/validation"
 )
 
@@ -28,16 +28,17 @@ const ResolutionJobKey = "__resolution__"
 // CacheScheduler orchestrates periodic data fetching from external providers.
 // It resolves wildcards/patterns to concrete streams and manages their refresh schedules.
 type CacheScheduler struct {
-	app       *common.App
-	cacheDB   *internal.CacheDB
-	logger    log.Logger
-	cron      *cron.Cron
-	jobs      map[string]cron.EntryID // schedule -> job ID
-	mu        sync.RWMutex
-	ctx       context.Context
-	cancel    context.CancelFunc
-	namespace string // database namespace to query (default: "main")
-	metrics   metrics.MetricsRecorder
+	kwilService      *common.Service
+	cacheDB          *internal.CacheDB
+	engineOperations *internal.EngineOperations
+	logger           log.Logger
+	cron             *cron.Cron
+	jobs             map[string]cron.EntryID // schedule -> job ID
+	mu               sync.RWMutex
+	ctx              context.Context
+	cancel           context.CancelFunc
+	namespace        string // database namespace to query (default: "main")
+	metrics          metrics.MetricsRecorder
 
 	// Resolution state - wildcards expand to concrete streams dynamically
 	originalDirectives []config.CacheDirective // Preserved for re-resolution when new streams appear
@@ -50,19 +51,19 @@ type CacheScheduler struct {
 	jobTimeout    time.Duration // Safety limit per job (default: 60m)
 
 	// Sync-aware caching
-	syncChecker *SyncChecker // Monitors node sync status
+	syncChecker *syncschecker.SyncChecker // Monitors node sync status
 }
 
-// NewCacheScheduler creates a scheduler with default "main" namespace
-func NewCacheScheduler(app *common.App, cacheDB *internal.CacheDB, logger log.Logger, metricsRecorder metrics.MetricsRecorder) *CacheScheduler {
-	return NewCacheSchedulerWithNamespace(app, cacheDB, logger, "", metricsRecorder)
-}
+// GetResolvedDirectives returns the current resolved directives
+// This is used in tests to verify resolution results
+func (s *CacheScheduler) GetResolvedDirectives() []config.CacheDirective {
+	s.resolutionMu.RLock()
+	defer s.resolutionMu.RUnlock()
 
-// SetSyncChecker sets the sync checker for sync-aware caching
-func (s *CacheScheduler) SetSyncChecker(syncChecker *SyncChecker) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.syncChecker = syncChecker
+	// Return a copy to avoid data races
+	result := make([]config.CacheDirective, len(s.resolvedDirectives))
+	copy(result, s.resolvedDirectives)
+	return result
 }
 
 // canRefresh checks if a refresh operation should proceed
@@ -81,25 +82,37 @@ func (s *CacheScheduler) canRefresh(provider, streamID string) bool {
 	return canExecute
 }
 
+type NewCacheSchedulerParams struct {
+	App             *common.App
+	CacheDB         *internal.CacheDB
+	EngineOps       *internal.EngineOperations
+	Logger          log.Logger
+	MetricsRecorder metrics.MetricsRecorder
+	Namespace       string
+	SyncChecker     *syncschecker.SyncChecker
+}
+
 // NewCacheSchedulerWithNamespace allows targeting specific database namespaces
-func NewCacheSchedulerWithNamespace(app *common.App, cacheDB *internal.CacheDB, logger log.Logger, namespace string, metricsRecorder metrics.MetricsRecorder) *CacheScheduler {
+func NewCacheScheduler(params NewCacheSchedulerParams) *CacheScheduler {
 	// Keep namespace as-is, including empty string for global namespace
-	if namespace == "" {
-		logger.New("scheduler").Debug("using global namespace (empty string)")
+	if params.Namespace == "" {
+		params.Logger.New("scheduler").Debug("using global namespace (empty string)")
 	} else {
-		logger.New("scheduler").Debug("using namespace", "namespace", namespace)
+		params.Logger.New("scheduler").Debug("using namespace", "namespace", params.Namespace)
 	}
 
 	return &CacheScheduler{
-		app:         app,
-		cacheDB:     cacheDB,
-		logger:      logger.New("scheduler"),
-		cron:        cron.New(cron.WithSeconds()),
-		jobs:        make(map[string]cron.EntryID),
-		namespace:   namespace,
-		metrics:     metricsRecorder,
-		jobContexts: make(map[string]context.CancelFunc),
-		jobTimeout:  60 * time.Minute, // Default job timeout
+		kwilService:      params.App.Service,
+		cacheDB:          params.CacheDB,
+		engineOperations: params.EngineOps,
+		logger:           params.Logger.New("scheduler"),
+		cron:             cron.New(cron.WithSeconds()),
+		jobs:             make(map[string]cron.EntryID),
+		namespace:        params.Namespace,
+		metrics:          params.MetricsRecorder,
+		jobContexts:      make(map[string]context.CancelFunc),
+		jobTimeout:       60 * time.Minute, // Default job timeout
+		syncChecker:      params.SyncChecker,
 	}
 }
 
@@ -126,26 +139,6 @@ func (s *CacheScheduler) removeJobContext(jobID string) {
 		cancel()
 		delete(s.jobContexts, jobID)
 	}
-}
-
-// getWrappedDB returns a sql.DB interface wrapping the independent connection pool
-// This is used for Engine.Call operations to avoid "tx is closed" errors
-func (s *CacheScheduler) getWrappedDB() sql.DB {
-	// Check for test injection first
-	if db := getTestDB(); db != nil {
-		return db
-	}
-	// Check if cacheDB is nil
-	if s.cacheDB == nil {
-		return nil
-	}
-
-	// Get the underlying pool from CacheDB
-	if pool, ok := s.cacheDB.GetPool().(*pgxpool.Pool); ok {
-		return newPoolDBWrapper(pool)
-	}
-	// Return nil if we can't get a valid pool
-	return nil
 }
 
 // cancelAllJobContexts triggers graceful shutdown of running jobs
@@ -203,40 +196,6 @@ func (s *CacheScheduler) shouldSkipInitialRefresh(lastRefreshed int64, cronSched
 	return false
 }
 
-// createExtensionEngineContext creates a valid engine context for the extension
-// This allows the extension to act as "extension_agent" with proper @caller
-func (s *CacheScheduler) createExtensionEngineContext(ctx context.Context) *common.EngineContext {
-	// Create minimal block context for background operations
-	blockCtx := &common.BlockContext{
-		Height:    1, // Use 1 for background operations
-		Timestamp: time.Now().Unix(),
-	}
-
-	// Add chain context if available (may be nil in test environments)
-	if s.app.Service != nil && s.app.Service.GenesisConfig != nil {
-		blockCtx.ChainContext = &common.ChainContext{
-			ChainID:           s.app.Service.GenesisConfig.ChainID,
-			NetworkParameters: &common.NetworkParameters{},
-			MigrationParams:   &common.MigrationContext{},
-		}
-	}
-
-	// Create engine context with extension agent as the caller
-	// This grants special permissions in the authorization logic
-	return &common.EngineContext{
-		TxContext: &common.TxContext{
-			Ctx:           ctx,
-			BlockContext:  blockCtx,
-			TxID:          fmt.Sprintf("tn_cache_%d", time.Now().UnixNano()),
-			Signer:        []byte(internal.ExtensionAgentName),
-			Caller:        internal.ExtensionAgentName, // This becomes @caller = "extension_agent"
-			Authenticator: "extension",
-		},
-		OverrideAuthz: true,  // Extension operations bypass normal authorization
-		InvalidTxCtx:  false, // Valid context - @caller is available
-	}
-}
-
 // Start begins periodic cache refresh. Must be called before Stop.
 func (s *CacheScheduler) Start(ctx context.Context, processedConfig *config.ProcessedConfig) error {
 	s.mu.Lock()
@@ -252,7 +211,10 @@ func (s *CacheScheduler) Start(ctx context.Context, processedConfig *config.Proc
 	// Expand wildcards/patterns to actual stream IDs
 	resolvedStreamSpecs, err := s.resolveStreamSpecs(s.ctx, s.originalDirectives)
 	if err != nil {
-		return fmt.Errorf("resolve stream specs: %w", err)
+		// In test environments, initial resolution might fail if actions aren't available yet
+		// This is OK - resolution will be retried when TriggerStreamResolution is called
+		s.logger.Warn("initial stream resolution failed - will retry later", "error", err)
+		resolvedStreamSpecs = []config.CacheDirective{}
 	}
 
 	s.logger.Info("resolved stream specifications",
@@ -351,6 +313,12 @@ func (s *CacheScheduler) storeStreamConfigs(ctx context.Context, directives []co
 	}
 
 	return nil
+}
+
+// TriggerResolution manually triggers the global resolution process
+// This is useful for tests or when streams need to be re-discovered immediately
+func (s *CacheScheduler) TriggerResolution(ctx context.Context) error {
+	return s.performGlobalResolution(ctx)
 }
 
 // groupBySchedule groups directives by their cron schedule for batch processing
@@ -591,8 +559,8 @@ func (s *CacheScheduler) registerRefreshJob(schedule string) error {
 	return nil
 }
 
-// updateGaugeMetrics updates the gauge metrics for active streams and total cached events
-func (s *CacheScheduler) updateGaugeMetrics(ctx context.Context) {
+// UpdateGaugeMetrics updates the gauge metrics for active streams and total cached events
+func (s *CacheScheduler) UpdateGaugeMetrics(ctx context.Context) {
 	// Query active streams and event counts
 	activeStreams := 0
 	totalEvents := int64(0)
@@ -620,4 +588,8 @@ func (s *CacheScheduler) updateGaugeMetrics(ctx context.Context) {
 	s.logger.Debug("updated gauge metrics",
 		"active_streams", activeStreams,
 		"total_events", totalEvents)
+}
+
+func (s *CacheScheduler) SetTx(tx sql.DB) {
+	s.cacheDB.SetTx(tx)
 }

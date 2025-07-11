@@ -1,4 +1,4 @@
-package tn_cache
+package syncschecker
 
 import (
 	"context"

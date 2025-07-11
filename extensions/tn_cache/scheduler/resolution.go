@@ -1,4 +1,4 @@
-package tn_cache
+package scheduler
 
 import (
 	"context"
@@ -6,8 +6,6 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
-
-	"github.com/trufnetwork/kwil-db/common"
 
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
@@ -183,37 +181,13 @@ func (s *CacheScheduler) deduplicateResolvedSpecs(specs []config.CacheDirective)
 func (s *CacheScheduler) getComposedStreamsForProvider(ctx context.Context, provider string) ([]string, error) {
 	var composedStreams []string
 
-	// Create a proper engine context with extension agent as the caller
-	engineCtx := s.createExtensionEngineContext(ctx)
+	// Normalize provider address to lowercase for consistent matching
+	provider = strings.ToLower(provider)
 
-	// Query all streams for the provider using list_streams action
-	// Use Engine.Call with proper context to provide @caller
-	// Use wrapped independent connection pool to avoid "tx is closed" errors
-	result, err := s.app.Engine.Call(
-		engineCtx,
-		s.getWrappedDB(), // Use wrapped independent connection pool
-		s.namespace,
-		"list_streams",
-		[]any{
-			provider,    // data_provider
-			5000,        // limit (maximum allowed)
-			0,           // offset
-			"stream_id", // order_by
-			nil,         // block_height (current)
-		},
-		func(row *common.Row) error {
-			if len(row.Values) >= 3 {
-				// Extract stream_id and check if it's a composed stream
-				// row.Values: [data_provider, stream_id, stream_type, created_at]
-				if streamID, ok := row.Values[1].(string); ok {
-					if streamType, ok := row.Values[2].(string); ok && streamType == "composed" {
-						composedStreams = append(composedStreams, streamID)
-					}
-				}
-			}
-			return nil
-		},
-	)
+	s.logger.Info("starting resolution query",
+		"provider", provider)
+
+	composedStreams, err := s.engineOperations.ListComposedStreams(ctx, provider)
 
 	if err != nil {
 		// Check if this is a "provider not found" type error
@@ -226,15 +200,9 @@ func (s *CacheScheduler) getComposedStreamsForProvider(ctx context.Context, prov
 		return nil, fmt.Errorf("query composed streams for provider %s: %w", provider, err)
 	}
 
-	s.logger.Debug("found composed streams",
+	s.logger.Debug("resolution query complete",
 		"provider", provider,
-		"count", len(composedStreams),
-		"streams", composedStreams)
-
-	// Log any notices from the query execution
-	if len(result.Logs) > 0 {
-		s.logger.Debug("query logs", "logs", result.FormatLogs())
-	}
+		"found_count", len(composedStreams))
 
 	return composedStreams, nil
 }
@@ -249,60 +217,13 @@ func (s *CacheScheduler) getChildStreamsForComposed(ctx context.Context, dataPro
 		activeFrom = *fromTime
 	}
 
-	// Create a proper engine context with extension agent as the caller
-	engineCtx := s.createExtensionEngineContext(ctx)
-
-	// Query child streams using get_category_streams action
-	// Use Engine.Call with proper context to provide @caller
-	// Use wrapped independent connection pool to avoid "tx is closed" errors
-	result, err := s.app.Engine.Call(
-		engineCtx,
-		s.getWrappedDB(), // Use wrapped independent connection pool
-		s.namespace,
-		"get_category_streams",
-		[]any{
-			dataProvider, // data_provider
-			streamID,     // stream_id
-			activeFrom,   // active_from
-			nil,          // active_to (get all)
-		},
-		func(row *common.Row) error {
-			if len(row.Values) >= 2 {
-				// Extract provider and stream_id for each child
-				// row.Values: [data_provider, stream_id]
-				if childProvider, ok := row.Values[0].(string); ok {
-					if childStreamID, ok := row.Values[1].(string); ok {
-						// Create a composite key for the child stream
-						childKey := fmt.Sprintf("%s:%s", childProvider, childStreamID)
-						childStreams = append(childStreams, childKey)
-					}
-				}
-			}
-			return nil
-		},
-	)
-
+	categoryStreams, err := s.engineOperations.GetCategoryStreams(ctx, dataProvider, streamID, activeFrom)
 	if err != nil {
-		// Check if this is a "stream not found" or "not a composed stream" error
-		if errors.IsNotFoundError(err) {
-			s.logger.Warn("stream not found or not a composed stream",
-				"provider", dataProvider,
-				"stream", streamID,
-				"error", err)
-			return []string{}, nil // Return empty list, not an error
-		}
-		return nil, fmt.Errorf("query child streams for %s/%s: %w", dataProvider, streamID, err)
+		return nil, fmt.Errorf("query child streams for composed stream %s: %w", streamID, err)
 	}
 
-	s.logger.Debug("found child streams",
-		"provider", dataProvider,
-		"stream", streamID,
-		"count", len(childStreams),
-		"children", childStreams)
-
-	// Log any notices from the query execution
-	if len(result.Logs) > 0 {
-		s.logger.Debug("query logs", "logs", result.FormatLogs())
+	for _, categoryStream := range categoryStreams {
+		childStreams = append(childStreams, fmt.Sprintf("%s:%s", categoryStream.DataProvider, categoryStream.StreamID))
 	}
 
 	return childStreams, nil

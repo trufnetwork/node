@@ -15,6 +15,7 @@ import (
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
 	"github.com/trufnetwork/node/extensions/tn_cache/metrics"
+	"github.com/trufnetwork/node/extensions/tn_cache/scheduler"
 )
 
 // createTestLogger creates a logger suitable for testing
@@ -59,7 +60,7 @@ func TestHasCachedData(t *testing.T) {
 
 		SetExtension(nil)
 
-		_, err := HasCachedData(context.Background(), "test", "test", 0, 0)
+		_, err := GetExtension().CacheDB().HasCachedData(context.Background(), "test", "test", 0, 0)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not initialized")
 	})
@@ -80,20 +81,20 @@ func TestHasCachedData(t *testing.T) {
 		mockPool.ExpectQuery(`SELECT COUNT\(\*\) > 0`).
 			WithArgs("test_provider", "test_stream", int64(1000)).
 			WillReturnRows(pgxmock.NewRows([]string{"exists"}).AddRow(true))
-		mockPool.ExpectQuery(`SELECT COUNT\(\*\) > 0`).
+		mockPool.ExpectQuery(`SELECT COUNT\(\*\) FROM ext_tn_cache\.cached_events`).
 			WithArgs("test_provider", "test_stream", int64(1000), int64(2000)).
-			WillReturnRows(pgxmock.NewRows([]string{"exists"}).AddRow(true))
+			WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(int64(5)))
 		mockPool.ExpectCommit()
 
 		logger := createTestLogger(t)
 		cacheDB := internal.NewCacheDB(mockPool, logger)
 
 		// Create extension with the mock DB
-		ext := NewExtension(logger, cacheDB, nil, nil, metrics.NewNoOpMetrics(), mockPool, true)
+		ext := NewExtension(logger, cacheDB, nil, nil, metrics.NewNoOpMetrics(), nil, mockPool, true)
 		SetExtension(ext)
 
 		// Test with cache initialized
-		hasData, err := HasCachedData(context.Background(), "test_provider", "test_stream", 1000, 2000)
+		hasData, err := ext.CacheDB().HasCachedData(context.Background(), "test_provider", "test_stream", 1000, 2000)
 		require.NoError(t, err)
 		assert.True(t, hasData)
 
@@ -130,12 +131,12 @@ func TestGetCachedData(t *testing.T) {
 	cacheDB := internal.NewCacheDB(mockPool, logger)
 
 	// Create extension with the mock DB
-	ext := NewExtension(logger, cacheDB, nil, nil, metrics.NewNoOpMetrics(), mockPool, true)
+	ext := NewExtension(logger, cacheDB, nil, nil, metrics.NewNoOpMetrics(), nil, mockPool, true)
 	SetExtension(ext)
 
 	// Test GetCachedData
 	ctx := context.Background()
-	events, err := GetCachedData(ctx, "test_provider", "test_stream", 1000, 2000)
+	events, err := ext.CacheDB().GetCachedEvents(ctx, "test_provider", "test_stream", 1000, 2000)
 	require.NoError(t, err)
 	assert.Len(t, events, 2)
 
@@ -172,12 +173,12 @@ func TestGetCachedData_NoData(t *testing.T) {
 
 	logger := createTestLogger(t)
 	cacheDB := internal.NewCacheDB(mockPool, logger)
-	ext := NewExtension(logger, cacheDB, nil, nil, metrics.NewNoOpMetrics(), mockPool, true)
+	ext := NewExtension(logger, cacheDB, nil, nil, metrics.NewNoOpMetrics(), nil, mockPool, true)
 	SetExtension(ext)
 
 	// Test GetCachedData with no data
 	ctx := context.Background()
-	events, err := GetCachedData(ctx, "test_provider", "test_stream", 1000, 2000)
+	events, err := ext.CacheDB().GetCachedEvents(ctx, "test_provider", "test_stream", 1000, 2000)
 	require.NoError(t, err)
 	assert.Len(t, events, 0)
 
@@ -281,12 +282,13 @@ func TestSchedulerCreation(t *testing.T) {
 	cacheDB := internal.NewCacheDB(mockPool, logger)
 
 	// Create scheduler
-	scheduler := NewCacheScheduler(app, cacheDB, logger, metrics.NewNoOpMetrics())
-	require.NotNil(t, scheduler)
+	scheduler := scheduler.NewCacheScheduler(scheduler.NewCacheSchedulerParams{
+		App:             app,
+		CacheDB:         cacheDB,
+		EngineOps:       nil,
+		Logger:          logger,
+		MetricsRecorder: metrics.NewNoOpMetrics(),
+	})
+	require.NotNil(t, scheduler, "Scheduler should be created")
 
-	// Verify scheduler was created with correct fields
-	assert.NotNil(t, scheduler.app)
-	assert.NotNil(t, scheduler.cacheDB)
-	assert.NotNil(t, scheduler.logger)
-	assert.NotNil(t, scheduler.metrics)
 }

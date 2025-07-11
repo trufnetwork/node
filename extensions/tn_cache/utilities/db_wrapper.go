@@ -1,4 +1,4 @@
-package tn_cache
+package utilities
 
 import (
 	"context"
@@ -34,8 +34,8 @@ var _ sql.DB = &poolDBWrapper{}
 var _ sql.AccessModer = &poolDBWrapper{}
 var _ sql.QueryScanner = &poolDBWrapper{}
 
-// newPoolDBWrapper creates a new wrapper around the pgxpool
-func newPoolDBWrapper(pool *pgxpool.Pool) sql.DB {
+// NewPoolDBWrapper creates a new wrapper around the pgxpool
+func NewPoolDBWrapper(pool *pgxpool.Pool) sql.DB {
 	return &poolDBWrapper{pool: pool}
 }
 

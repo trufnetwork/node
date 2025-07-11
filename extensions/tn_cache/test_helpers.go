@@ -12,10 +12,10 @@ import (
 // TestHelper provides test-only functions for the tn_cache extension
 type TestHelper struct{}
 
-// RefreshCacheSync synchronously refreshes the cache for a specific stream
+// RefreshStreamCacheSync synchronously refreshes the cache for a specific stream
 // This is only available in test builds and allows tests to trigger cache
 // refresh without waiting for the scheduler
-func (TestHelper) RefreshCacheSync(ctx context.Context, dataProvider, streamID string) (int, error) {
+func (TestHelper) RefreshStreamCacheSync(ctx context.Context, dataProvider, streamID string) (int, error) {
 	ext := GetExtension()
 	if ext == nil || !ext.IsEnabled() {
 		return 0, fmt.Errorf("tn_cache extension is not enabled")
@@ -36,18 +36,20 @@ func (TestHelper) RefreshCacheSync(ctx context.Context, dataProvider, streamID s
 	}
 
 	// Use the scheduler's refresh method with retry
-	err := ext.Scheduler().refreshStreamDataWithRetry(ctx, directive, 3)
+	err := ext.Scheduler().RefreshStreamData(ctx, directive)
 	if err != nil {
 		return 0, fmt.Errorf("failed to refresh stream: %w", err)
 	}
 
 	// Get the count of cached records
-	db := getWrappedCacheDB()
+	db := GetExtension().CacheDB()
 	if db == nil {
 		return 0, fmt.Errorf("failed to get cache database connection")
 	}
 
-	result, err := db.Execute(ctx, `
+	pool := ext.CachePool()
+
+	rows, err := pool.Query(ctx, `
 		SELECT COUNT(*) FROM `+constants.CacheSchemaName+`.cached_events 
 		WHERE data_provider = $1 AND stream_id = $2`,
 		dataProvider, streamID)
@@ -55,11 +57,12 @@ func (TestHelper) RefreshCacheSync(ctx context.Context, dataProvider, streamID s
 		return 0, fmt.Errorf("failed to count cached records: %w", err)
 	}
 
-	if len(result.Rows) > 0 {
-		return int(result.Rows[0][0].(int64)), nil
+	var count int64
+	if err := rows.Scan(&count); err != nil {
+		return 0, fmt.Errorf("failed to scan count: %w", err)
 	}
 
-	return 0, nil
+	return int(count), nil
 }
 
 // WaitForInitialization waits for the extension to be fully initialized
@@ -89,6 +92,30 @@ func (TestHelper) WaitForInitialization(ctx context.Context, timeout time.Durati
 func (TestHelper) IsInitialized() bool {
 	ext := GetExtension()
 	return ext != nil && ext.IsEnabled() && ext.CacheDB() != nil && ext.Scheduler() != nil && ext.CachePool() != nil
+}
+
+// TriggerResolution triggers the cache extension's stream resolution process
+// to re-discover streams matching the configured cache directives (wildcards, etc).
+// This is essential for tests that create new streams dynamically, as these streams
+// won't be picked up by the periodic resolution schedule.
+func (TestHelper) TriggerResolution(ctx context.Context) error {
+	ext := GetExtension()
+	if ext == nil || !ext.IsEnabled() {
+		return fmt.Errorf("tn_cache extension is not enabled")
+	}
+
+	scheduler := ext.Scheduler()
+	if scheduler == nil {
+		return fmt.Errorf("scheduler not initialized")
+	}
+
+	// Trigger the global resolution process
+	err := scheduler.TriggerResolution(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to trigger stream resolution: %w", err)
+	}
+
+	return nil
 }
 
 // GetTestHelper returns a test helper instance

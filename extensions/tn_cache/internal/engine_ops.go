@@ -54,7 +54,10 @@ type EngineOperator interface {
 	GetCategoryStreams(ctx context.Context, provider, streamID string, activeFrom int64) ([]CategoryStream, error)
 
 	// GetRecordComposed fetches records from a composed stream
-	GetRecordComposed(ctx context.Context, provider, streamID string, from, to *int64) ([]ComposedRecord, error)
+	GetRecordComposed(ctx context.Context, provider, streamID string, from, to *int64) ([]EventRecord, error)
+
+	// GetIndexComposed fetches index events from a composed stream
+	GetIndexComposed(ctx context.Context, provider, streamID string, from, to *int64) ([]EventRecord, error)
 }
 
 // CategoryStream represents a child stream in a category
@@ -64,7 +67,7 @@ type CategoryStream struct {
 }
 
 // ComposedRecord represents a record from a composed stream
-type ComposedRecord struct {
+type EventRecord struct {
 	EventTime int64
 	Value     *types.Decimal
 }
@@ -87,6 +90,11 @@ func NewEngineOperations(engine common.Engine, db sql.DB, namespace string, logg
 		namespace: namespace,
 		logger:    logger.New("tn_ops"),
 	}
+}
+
+// SetTx sets the underlying database pool
+func (e *EngineOperations) SetTx(tx sql.DB) {
+	e.db = tx
 }
 
 // createEngineContext creates a standard engine context for extension operations
@@ -120,6 +128,8 @@ func (t *EngineOperations) callWithTrace(ctx context.Context, engineCtx *common.
 		op = tracing.OpTNGetCategoryStreams
 	case "get_record_composed":
 		op = tracing.OpTNGetRecordComposed
+	case "get_index_composed":
+		op = tracing.OpTNGetIndexComposed
 	default:
 		// Fallback for unknown actions
 		op = tracing.Operation("tn." + action)
@@ -245,14 +255,20 @@ func (t *EngineOperations) GetCategoryStreams(ctx context.Context, provider, str
 // GetRecordComposed calls the 'get_record_composed' action through the engine.
 // This action handles the complex logic of aggregating data from child streams
 // into composed values, including weighted averages and other calculations.
-func (t *EngineOperations) GetRecordComposed(ctx context.Context, provider, streamID string, from, to *int64) ([]ComposedRecord, error) {
+func (t *EngineOperations) GetRecordComposed(ctx context.Context, provider, streamID string, from, to *int64) ([]EventRecord, error) {
 	t.logger.Debug("getting composed records",
 		"provider", provider,
 		"stream", streamID,
 		"from", from,
 		"to", to)
 
-	var records []ComposedRecord
+	// if from is nil, we should set to 0, meaning it's all available
+	if from == nil {
+		from = new(int64)
+		*from = 0
+	}
+
+	var records []EventRecord
 
 	// Create engine context for this operation
 	engineCtx := t.createEngineContext(ctx, "get_record_composed")
@@ -284,7 +300,7 @@ func (t *EngineOperations) GetRecordComposed(ctx context.Context, provider, stre
 					return fmt.Errorf("parse value: %w", err)
 				}
 
-				records = append(records, ComposedRecord{
+				records = append(records, EventRecord{
 					EventTime: eventTime,
 					Value:     value,
 				})
@@ -303,4 +319,67 @@ func (t *EngineOperations) GetRecordComposed(ctx context.Context, provider, stre
 		"count", len(records))
 
 	return records, nil
+}
+
+// GetIndexComposed fetches index events from a composed stream
+func (t *EngineOperations) GetIndexComposed(ctx context.Context, provider, streamID string, from, to *int64) ([]EventRecord, error) {
+	t.logger.Debug("getting composed index records", "provider", provider, "stream", streamID)
+
+	var indexEvents []EventRecord
+	action := "get_index_composed"
+
+	// Create engine context for this operation
+	engineCtx := t.createEngineContext(ctx, action)
+
+	// Build arguments for the action call
+	args := []any{
+		provider,
+		streamID,
+		from,  // from timestamp
+		to,    // to timestamp (fetch all available)
+		nil,   // frozen_at (not applicable for cache refresh)
+		nil,   // base_time (NULL to use default)
+		false, // don't use cache to get new data
+	}
+
+	err := t.callWithTrace(
+		ctx,
+		engineCtx,
+		action,
+		args,
+		func(row *common.Row) error {
+			// Parse each row into a CachedIndexEvent
+			if len(row.Values) >= 2 {
+				// Parse event time
+				eventTime, err := parsing.ParseEventTime(row.Values[0])
+				if err != nil {
+					return fmt.Errorf("parse event_time: %w", err)
+				}
+
+				// Parse the index value
+				indexValue, err := parsing.ParseEventValue(row.Values[1])
+				if err != nil {
+					return fmt.Errorf("parse index value: %w", err)
+				}
+
+				indexEvents = append(indexEvents, EventRecord{
+					EventTime: eventTime,
+					Value:     indexValue,
+				})
+			}
+			return nil
+		},
+	)
+
+	if err != nil {
+		return nil, fmt.Errorf("call action %s: %w", action, err)
+	}
+
+	t.logger.Debug("fetched index stream data",
+		"action", action,
+		"events", len(indexEvents),
+		"provider", provider,
+		"stream", streamID)
+
+	return indexEvents, nil
 }

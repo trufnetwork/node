@@ -6,19 +6,24 @@
 package tn_cache
 
 import (
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/trufnetwork/kwil-db/core/log"
+	"github.com/trufnetwork/kwil-db/node/types/sql"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
 	"github.com/trufnetwork/node/extensions/tn_cache/metrics"
+	"github.com/trufnetwork/node/extensions/tn_cache/scheduler"
+	"github.com/trufnetwork/node/extensions/tn_cache/syncschecker"
 )
 
 type Extension struct {
-	logger          log.Logger
-	cacheDB         *internal.CacheDB
-	scheduler       *CacheScheduler
-	syncChecker     *SyncChecker
-	metricsRecorder metrics.MetricsRecorder
-	cachePool       interface{} // Can be *pgxpool.Pool or pgxmock.PgxPoolIface for testing
-	isEnabled       bool
+	logger           log.Logger
+	scheduler        *scheduler.CacheScheduler
+	syncChecker      *syncschecker.SyncChecker
+	metricsRecorder  metrics.MetricsRecorder
+	cachePool        interface{} // Can be *pgxpool.Pool or pgxmock.PgxPoolIface for testing
+	isEnabled        bool
+	cacheDB          *internal.CacheDB
+	engineOperations *internal.EngineOperations
 }
 
 var extensionInstance *Extension
@@ -31,24 +36,32 @@ func SetExtension(ext *Extension) {
 	extensionInstance = ext
 }
 
-func NewExtension(logger log.Logger, cacheDB *internal.CacheDB, scheduler *CacheScheduler,
-	syncChecker *SyncChecker, metricsRecorder metrics.MetricsRecorder,
+func NewExtension(logger log.Logger, cacheDB *internal.CacheDB, scheduler *scheduler.CacheScheduler,
+	syncChecker *syncschecker.SyncChecker, metricsRecorder metrics.MetricsRecorder, engineOperations *internal.EngineOperations,
 	cachePool interface{}, isEnabled bool) *Extension {
 	return &Extension{
-		logger:          logger,
-		cacheDB:         cacheDB,
-		scheduler:       scheduler,
-		syncChecker:     syncChecker,
-		metricsRecorder: metricsRecorder,
-		cachePool:       cachePool,
-		isEnabled:       isEnabled,
+		logger:           logger,
+		scheduler:        scheduler,
+		syncChecker:      syncChecker,
+		metricsRecorder:  metricsRecorder,
+		cachePool:        cachePool,
+		isEnabled:        isEnabled,
+		cacheDB:          cacheDB,
+		engineOperations: engineOperations,
 	}
 }
 
-func (e *Extension) Logger() log.Logger                    { return e.logger }
-func (e *Extension) CacheDB() *internal.CacheDB            { return e.cacheDB }
-func (e *Extension) Scheduler() *CacheScheduler            { return e.scheduler }
-func (e *Extension) SyncChecker() *SyncChecker             { return e.syncChecker }
-func (e *Extension) MetricsRecorder() metrics.MetricsRecorder { return e.metricsRecorder }
-func (e *Extension) CachePool() interface{}                 { return e.cachePool }
-func (e *Extension) IsEnabled() bool                       { return e.isEnabled }
+// useful for testing, when we want all the extension's methods to use the same transaction
+func (e *Extension) SetTx(tx sql.DB) {
+	e.cacheDB.SetTx(tx)
+	e.engineOperations.SetTx(tx)
+}
+
+func (e *Extension) Logger() log.Logger                           { return e.logger }
+func (e *Extension) Scheduler() *scheduler.CacheScheduler         { return e.scheduler }
+func (e *Extension) SyncChecker() *syncschecker.SyncChecker       { return e.syncChecker }
+func (e *Extension) MetricsRecorder() metrics.MetricsRecorder     { return e.metricsRecorder }
+func (e *Extension) CachePool() *pgxpool.Pool                     { return e.cachePool.(*pgxpool.Pool) }
+func (e *Extension) CacheDB() *internal.CacheDB                   { return e.cacheDB }
+func (e *Extension) EngineOperations() *internal.EngineOperations { return e.engineOperations }
+func (e *Extension) IsEnabled() bool                              { return e.isEnabled }

@@ -1,4 +1,4 @@
-package tn_cache
+package syncschecker
 
 import (
 	"context"
@@ -20,7 +20,7 @@ func TestSyncCheckerMillisecondsConversion(t *testing.T) {
 	// providing buffer for test execution timing variations.
 	currentTime := time.Now().Unix()
 	recentBlockTime := (currentTime - 1800) * 1000 // 30 minutes ago in milliseconds
-	
+
 	// Real API response with millisecond timestamp
 	healthResponse := fmt.Sprintf(`{
 		"services": {
@@ -48,7 +48,7 @@ func TestSyncCheckerMillisecondsConversion(t *testing.T) {
 	// Verify milliseconds converted to seconds
 	expectedBlockTime := recentBlockTime / 1000
 	require.Equal(t, expectedBlockTime, sc.blockTime.Load())
-	
+
 	// Should allow execution with recent block
 	canExecute, _ := sc.CanExecute()
 	require.True(t, canExecute)
