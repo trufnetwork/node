@@ -49,48 +49,39 @@ func (m *mockEngine) ExecuteWithoutEngineCtx(ctx context.Context, db sql.DB, sta
 	return nil
 }
 
-func TestCacheScheduler_New(t *testing.T) {
-	// Create test logger
-	logger := log.New(log.WithWriter(nil)) // Discard logs during tests
-
-	// Create mock CacheDB (nil for this test)
-	var cacheDB *internal.CacheDB
-
-	// Test creating scheduler
-	scheduler := NewCacheScheduler(NewCacheSchedulerParams{
-		Service:         &common.Service{},
-		CacheDB:         cacheDB,
-		EngineOps:       nil,
-		Logger:          logger,
-		MetricsRecorder: metrics.NewNoOpMetrics(),
-		Namespace:       "",
-	})
-
-	require.NotNil(t, scheduler, "Scheduler should be created")
-	assert.NotNil(t, scheduler.cron, "Cron scheduler should be initialized")
-	assert.NotNil(t, scheduler.jobs, "Jobs map should be initialized")
-	assert.Equal(t, "", scheduler.namespace, "Default namespace should be empty")
-}
-
-func TestCacheScheduler_WithCustomNamespace(t *testing.T) {
-	// Create test logger
+func TestCacheScheduler_Creation(t *testing.T) {
 	logger := log.New(log.WithWriter(nil))
-
-	// Create mock CacheDB
 	var cacheDB *internal.CacheDB
 
-	// Test creating scheduler with custom namespace
-	scheduler := NewCacheScheduler(NewCacheSchedulerParams{
-		Service:         &common.Service{},
-		CacheDB:         cacheDB,
-		EngineOps:       nil,
-		Logger:          logger,
-		MetricsRecorder: metrics.NewNoOpMetrics(),
-		Namespace:       "custom_db",
+	t.Run("default namespace", func(t *testing.T) {
+		scheduler := NewCacheScheduler(NewCacheSchedulerParams{
+			Service:         &common.Service{},
+			CacheDB:         cacheDB,
+			EngineOps:       nil,
+			Logger:          logger,
+			MetricsRecorder: metrics.NewNoOpMetrics(),
+			Namespace:       "",
+		})
+
+		require.NotNil(t, scheduler)
+		assert.NotNil(t, scheduler.cron)
+		assert.NotNil(t, scheduler.jobs)
+		assert.Equal(t, "", scheduler.namespace)
 	})
 
-	require.NotNil(t, scheduler, "Scheduler should be created")
-	assert.Equal(t, "custom_db", scheduler.namespace, "Custom namespace should be set")
+	t.Run("custom namespace", func(t *testing.T) {
+		scheduler := NewCacheScheduler(NewCacheSchedulerParams{
+			Service:         &common.Service{},
+			CacheDB:         cacheDB,
+			EngineOps:       nil,
+			Logger:          logger,
+			MetricsRecorder: metrics.NewNoOpMetrics(),
+			Namespace:       "custom_db",
+		})
+
+		require.NotNil(t, scheduler)
+		assert.Equal(t, "custom_db", scheduler.namespace)
+	})
 }
 
 func TestCacheScheduler_GroupBySchedule(t *testing.T) {

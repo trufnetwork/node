@@ -32,13 +32,15 @@ const (
 
 // HandleIsEnabled handles the is_enabled precompile method
 func HandleIsEnabled(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
-	return resultFn([]any{GetExtension().IsEnabled()})
+	ext := GetExtension()
+	enabled := ext != nil && ext.IsEnabled()
+	return resultFn([]any{enabled})
 }
 
 // checkExtensionEnabled checks if the extension is enabled
 func checkExtensionEnabled() error {
-	if !GetExtension().IsEnabled() {
-		return fmt.Errorf(errExtensionNotEnabled)
+	if _, err := safeGetExtension(); err != nil {
+		return fmt.Errorf("tn_cache extension not available: %w", err)
 	}
 	return nil
 }
@@ -225,17 +227,19 @@ func HandleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 	// Record cache hit/miss metric
 	hasData := eventCount > 0
 	ext := GetExtension()
-	if hasData {
-		ext.MetricsRecorder().RecordCacheHit(ctx.TxContext.Ctx, dataProvider, streamID)
+	if ext != nil && ext.IsEnabled() {
+		if hasData {
+			ext.MetricsRecorder().RecordCacheHit(ctx.TxContext.Ctx, dataProvider, streamID)
 
-		// Calculate and record data age since we already have lastRefreshed
-		if lastRefreshed != nil && *lastRefreshed > 0 {
-			refreshTime := time.Unix(*lastRefreshed, 0)
-			dataAge := time.Since(refreshTime).Seconds()
-			ext.MetricsRecorder().RecordCacheDataAge(ctx.TxContext.Ctx, dataProvider, streamID, dataAge)
+			// Calculate and record data age since we already have lastRefreshed
+			if lastRefreshed != nil && *lastRefreshed > 0 {
+				refreshTime := time.Unix(*lastRefreshed, 0)
+				dataAge := time.Since(refreshTime).Seconds()
+				ext.MetricsRecorder().RecordCacheDataAge(ctx.TxContext.Ctx, dataProvider, streamID, dataAge)
+			}
+		} else {
+			ext.MetricsRecorder().RecordCacheMiss(ctx.TxContext.Ctx, dataProvider, streamID)
 		}
-	} else {
-		ext.MetricsRecorder().RecordCacheMiss(ctx.TxContext.Ctx, dataProvider, streamID)
 	}
 
 	return resultFn([]any{hasData, lastRefreshedTimestamp})
@@ -302,7 +306,9 @@ func HandleGetCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 			return fmt.Errorf("get latest cached event: %w", err)
 		}
 		rowCount = 1
-		GetExtension().MetricsRecorder().RecordCacheDataServed(ctx.TxContext.Ctx, dataProvider, streamID, rowCount)
+		if ext := GetExtension(); ext != nil && ext.IsEnabled() {
+			ext.MetricsRecorder().RecordCacheDataServed(ctx.TxContext.Ctx, dataProvider, streamID, rowCount)
+		}
 		return emit(event)
 	}
 
@@ -336,7 +342,9 @@ func HandleGetCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 
 	rowCount = len(combined)
 	if rowCount > 0 {
-		GetExtension().MetricsRecorder().RecordCacheDataServed(ctx.TxContext.Ctx, dataProvider, streamID, rowCount)
+		if ext := GetExtension(); ext != nil && ext.IsEnabled() {
+			ext.MetricsRecorder().RecordCacheDataServed(ctx.TxContext.Ctx, dataProvider, streamID, rowCount)
+		}
 	}
 
 	for _, ev := range combined {
@@ -461,8 +469,11 @@ func HandleGetCachedIndexData(ctx *common.EngineContext, app *common.App, inputs
 	defer func() { end(err) }()
 	ctx.TxContext.Ctx = traceCtx
 
-	ext := GetExtension()
-	if ext == nil || ext.cacheDB == nil {
+	ext, err := safeGetExtension()
+	if err != nil {
+		return fmt.Errorf("extension unavailable: %w", err)
+	}
+	if ext.cacheDB == nil {
 		return fmt.Errorf(errCacheDBNotInitialized)
 	}
 
@@ -495,8 +506,11 @@ func HandleGetCachedIndexData(ctx *common.EngineContext, app *common.App, inputs
 
 // checkCacheDB returns the CacheDB instance or an error if the cache DB is not initialised.
 func checkCacheDB() (*internal.CacheDB, error) {
-	ext := GetExtension()
-	if ext == nil || ext.CacheDB() == nil {
+	ext, err := safeGetExtension()
+	if err != nil {
+		return nil, fmt.Errorf("extension unavailable: %w", err)
+	}
+	if ext.CacheDB() == nil {
 		return nil, fmt.Errorf(errCacheDBNotInitialized)
 	}
 	return ext.CacheDB(), nil

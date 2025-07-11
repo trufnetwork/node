@@ -81,6 +81,27 @@ func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
 	return processedConfig, nil
 }
 
+// safeGetExtension returns the extension instance with proper error handling
+func safeGetExtension() (*Extension, error) {
+	ext := GetExtension()
+	if ext == nil {
+		return nil, fmt.Errorf("tn_cache extension not initialized")
+	}
+	if !ext.IsEnabled() {
+		return nil, fmt.Errorf("tn_cache extension is disabled")
+	}
+	return ext, nil
+}
+
+// withSafeExtension provides a safe wrapper for extension operations
+func withSafeExtension(fn func(*Extension) error) error {
+	ext, err := safeGetExtension()
+	if err != nil {
+		return fmt.Errorf("extension unavailable: %w", err)
+	}
+	return fn(ext)
+}
+
 func InitializeExtension() {
 	// Register precompile using initializer to receive metadata from test framework. This should happen before the engine is ready.
 	err := precompiles.RegisterInitializer(constants.PrecompileName, initializeExtension)
@@ -97,14 +118,15 @@ func InitializeExtension() {
 
 // initializeExtension is called by the framework with metadata during initialization
 func initializeExtension(ctx context.Context, service *common.Service, db sql.DB, alias string, metadata map[string]any) (precompiles.Precompile, error) {
-	// Initialize extension instance if not already done
-	if GetExtension() == nil {
+	// Get the extension instance (lazy initialization ensures it exists)
+	ext := GetExtension()
+	
+	// Update with proper logger if not already set
+	if ext.logger == nil {
 		logger := service.Logger.New("tn_cache")
 		SetExtension(&Extension{
 			logger: logger,
 		})
-	} else {
-		panic("extension already initialized, and this should not happen")
 	}
 
 	// Note: We intentionally ignore metadata here because tn_cache is a node-level
@@ -235,7 +257,8 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	// Get the extension instance
 	ext := GetExtension()
 	if ext == nil {
-		panic("extension not initialized")
+		app.Service.Logger.Info("tn_cache extension not initialized, skipping engine ready hook")
+		return nil
 	}
 
 	return SetupCacheExtension(ctx, processedConfig, ext, app.Engine, app.Service)

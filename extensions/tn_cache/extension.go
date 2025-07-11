@@ -6,6 +6,8 @@
 package tn_cache
 
 import (
+	"sync"
+
 	"github.com/trufnetwork/kwil-db/core/log"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
@@ -25,9 +27,19 @@ type Extension struct {
 	engineOperations *internal.EngineOperations
 }
 
-var extensionInstance *Extension
+var (
+	extensionInstance *Extension
+	once              sync.Once
+)
 
 func GetExtension() *Extension {
+	once.Do(func() {
+		// Minimal fallback init - full init happens in engine ready hook
+		extensionInstance = &Extension{
+			logger:    log.New(log.WithLevel(log.LevelInfo)),
+			isEnabled: false, // Default disabled state
+		}
+	})
 	return extensionInstance
 }
 

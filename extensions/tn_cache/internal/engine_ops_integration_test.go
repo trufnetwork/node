@@ -29,13 +29,15 @@ func generateTestStreamID(prefix string) util.StreamId {
 }
 
 func TestEngineOperations_Integration(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "engine_ops_integration_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testEngineOperationsIntegration(t),
 		},
-	}, testutils.GetTestOptions())
+	}, &testutils.Options{
+		Cache: testutils.SimpleCache("test_provider", "test_stream"),
+	})
 }
 
 func testEngineOperationsIntegration(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {

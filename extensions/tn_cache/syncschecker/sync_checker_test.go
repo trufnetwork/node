@@ -3,12 +3,14 @@ package syncschecker
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/core/log"
 )
 
@@ -20,6 +22,13 @@ func TestSyncChecker_CanExecute(t *testing.T) {
 		wantOK      bool
 		wantReason  string
 	}{
+		{
+			name:        "zero gets default value",
+			maxBlockAge: 0, // Should use DefaultMaxBlockAge
+			health:      nil,
+			wantOK:      true,
+			wantReason:  "",
+		},
 		{
 			name:        "negative disables checking",
 			maxBlockAge: -1,
@@ -100,6 +109,13 @@ func TestSyncChecker_CanExecute(t *testing.T) {
 			logger := log.DiscardLogger
 			sc := NewSyncChecker(logger, tt.maxBlockAge)
 			
+			// Verify default value handling
+			if tt.maxBlockAge == 0 {
+				assert.Equal(t, int64(DefaultMaxBlockAge), sc.maxBlockAge, "Zero should use default")
+			} else {
+				assert.Equal(t, tt.maxBlockAge, sc.maxBlockAge, "Custom value should be preserved")
+			}
+			
 			// If server exists, update endpoint and populate state
 			if server != nil {
 				sc.endpoint = server.URL
@@ -119,14 +135,46 @@ func TestSyncChecker_CanExecute(t *testing.T) {
 	}
 }
 
-func TestSyncChecker_DefaultMaxBlockAge(t *testing.T) {
-	logger := log.DiscardLogger
-	
-	// Test that 0 gets replaced with default
-	sc := NewSyncChecker(logger, 0)
-	assert.Equal(t, int64(DefaultMaxBlockAge), sc.maxBlockAge)
-	
-	// Test that custom value is preserved
-	sc = NewSyncChecker(logger, 1800)
-	assert.Equal(t, int64(1800), sc.maxBlockAge)
+// TestSyncChecker_DefaultMaxBlockAge merged into TestSyncChecker_CanExecute
+
+// TestSyncCheckerMillisecondsConversion verifies sync checker handles API's millisecond timestamps
+func TestSyncCheckerMillisecondsConversion(t *testing.T) {
+	// Use current time minus 30 minutes for a valid recent block.
+	// The sync checker validates blocks against maxBlockAge (3600s = 1 hour).
+	// 30 minutes (1800s) ensures we're well within the valid range while
+	// providing buffer for test execution timing variations.
+	currentTime := time.Now().Unix()
+	recentBlockTime := (currentTime - 1800) * 1000 // 30 minutes ago in milliseconds
+
+	// Real API response with millisecond timestamp
+	healthResponse := fmt.Sprintf(`{
+		"services": {
+			"user": {
+				"block_time": %d,
+				"syncing": false
+			}
+		}
+	}`, recentBlockTime)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(healthResponse))
+	}))
+	defer server.Close()
+
+	sc := NewSyncChecker(log.New(log.WithWriter(nil)), 3600)
+	sc.endpoint = server.URL
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sc.Start(ctx)
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify milliseconds converted to seconds
+	expectedBlockTime := recentBlockTime / 1000
+	require.Equal(t, expectedBlockTime, sc.blockTime.Load())
+
+	// Should allow execution with recent block
+	canExecute, _ := sc.CanExecute()
+	require.True(t, canExecute)
 }

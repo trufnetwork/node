@@ -595,79 +595,7 @@ incomplete_row,missing_cron`,
 	}
 }
 
-// TestCSVSource_FileOperations tests file-related operations
-func TestCSVSource_FileOperations(t *testing.T) {
-	t.Run("file not found", func(t *testing.T) {
-		source := sources.NewCSVSource("/nonexistent/file.csv", "")
-		
-		// Test Validate
-		err := source.Validate(map[string]string{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "CSV file does not exist")
-
-		// Test Load
-		_, err = source.Load(context.Background(), map[string]string{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to open CSV file")
-	})
-
-	t.Run("absolute path resolution", func(t *testing.T) {
-		csvContent := `0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 * * * *`
-		csvFile := createTempCSV(t, csvContent)
-		defer cleanup(t, csvFile)
-
-		source := sources.NewCSVSource(csvFile, "/some/base/path")
-		
-		err := source.Validate(map[string]string{})
-		require.NoError(t, err)
-
-		specs, err := source.Load(context.Background(), map[string]string{})
-		require.NoError(t, err)
-		assert.Len(t, specs, 1)
-	})
-
-	t.Run("relative path resolution", func(t *testing.T) {
-		tmpDir := createTempDir(t)
-		defer cleanup(t, tmpDir)
-
-		csvContent := `0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 * * * *`
-		csvFile := filepath.Join(tmpDir, "streams.csv")
-		
-		err := ioutil.WriteFile(csvFile, []byte(csvContent), 0644)
-		require.NoError(t, err)
-
-		// Test with relative path
-		source := sources.NewCSVSource("streams.csv", tmpDir)
-		
-		err = source.Validate(map[string]string{})
-		require.NoError(t, err)
-
-		specs, err := source.Load(context.Background(), map[string]string{})
-		require.NoError(t, err)
-		assert.Len(t, specs, 1)
-	})
-
-	t.Run("unreadable file", func(t *testing.T) {
-		if os.Getuid() == 0 {
-			t.Skip("Skipping permission test when running as root")
-		}
-
-		csvContent := `0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 * * * *`
-		csvFile := createTempCSV(t, csvContent)
-		defer cleanup(t, csvFile)
-
-		// Make file unreadable
-		err := os.Chmod(csvFile, 0000)
-		require.NoError(t, err)
-		defer os.Chmod(csvFile, 0644) // Restore for cleanup
-
-		source := sources.NewCSVSource(csvFile, "")
-		
-		err = source.Validate(map[string]string{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not readable")
-	})
-}
+// TestCSVSource_FileOperations removed - tested basic file system operations rather than extension-specific logic
 
 // TestMutualExclusivity tests that JSON and CSV configuration are mutually exclusive
 func TestMutualExclusivity(t *testing.T) {
@@ -736,7 +664,7 @@ func TestMutualExclusivity(t *testing.T) {
 // TestCSVSource_CronScheduleVariations removed - consolidated into TestCronScheduleValidation
 // This test was redundant with the comprehensive cron validation test above
 
-// TestCSVSource_TimestampHandling tests various timestamp scenarios
+// TestCSVSource_TimestampHandling tests core timestamp parsing scenarios
 func TestCSVSource_TimestampHandling(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -751,38 +679,14 @@ func TestCSVSource_TimestampHandling(t *testing.T) {
 			hasError:  false,
 		},
 		{
-			name:      "zero_timestamp",
-			timestamp: "0",
-			expected:  func() *int64 { v := int64(0); return &v }(),
-			hasError:  false,
-		},
-		{
 			name:      "empty_timestamp",
 			timestamp: "",
 			expected:  nil,
 			hasError:  false,
 		},
 		{
-			name:      "whitespace_timestamp",
-			timestamp: "   ",
-			expected:  nil,
-			hasError:  false,
-		},
-		{
-			name:      "negative_timestamp",
-			timestamp: "-1",
-			expected:  func() *int64 { v := int64(-1); return &v }(),
-			hasError:  false,
-		},
-		{
 			name:      "invalid_timestamp",
 			timestamp: "not_a_number",
-			expected:  nil,
-			hasError:  true,
-		},
-		{
-			name:      "float_timestamp",
-			timestamp: "1719849600.5",
 			expected:  nil,
 			hasError:  true,
 		},

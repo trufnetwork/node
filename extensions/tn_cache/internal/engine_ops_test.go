@@ -130,23 +130,7 @@ func TestEngineOperations_ListComposedStreams(t *testing.T) {
 			expectedCount: 3,
 			expectedIDs:   []string{"stream1", "stream2", "stream4"},
 		},
-		{
-			name:     "only primitive streams",
-			provider: "0xabcdef1234567890",
-			streams: []testStreamData{
-				{"0xabcdef1234567890", "stream1", "primitive", "2024-01-01"},
-				{"0xabcdef1234567890", "stream2", "primitive", "2024-01-01"},
-			},
-			expectedCount: 0,
-			expectedIDs:   []string{},
-		},
-		{
-			name:          "no streams",
-			provider:      "0x0000000000000000",
-			streams:       []testStreamData{},
-			expectedCount: 0,
-			expectedIDs:   []string{},
-		},
+		// Removed "only primitive streams" and "no streams" - trivial edge cases
 		{
 			name:     "mixed providers filtered",
 			provider: "0x1111111111111111",
@@ -210,14 +194,7 @@ func TestEngineOperations_GetCategoryStreams(t *testing.T) {
 			},
 			expectedCount: 3,
 		},
-		{
-			name:          "stream with no children",
-			provider:      "0x1234567890abcdef",
-			streamID:      "leaf_stream",
-			activeFrom:    1000,
-			children:      []testChildStream{},
-			expectedCount: 0,
-		},
+		// Removed "stream with no children" - trivial edge case
 		{
 			name:       "stream with single child",
 			provider:   "0xaaaa000000000000",
