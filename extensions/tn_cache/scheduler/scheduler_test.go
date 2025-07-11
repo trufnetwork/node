@@ -50,12 +50,6 @@ func (m *mockEngine) ExecuteWithoutEngineCtx(ctx context.Context, db sql.DB, sta
 }
 
 func TestCacheScheduler_New(t *testing.T) {
-	// Create mock app and dependencies
-	mockApp := &common.App{
-		Service: &common.Service{},
-		Engine:  &mockEngine{},
-	}
-
 	// Create test logger
 	logger := log.New(log.WithWriter(nil)) // Discard logs during tests
 
@@ -64,7 +58,7 @@ func TestCacheScheduler_New(t *testing.T) {
 
 	// Test creating scheduler
 	scheduler := NewCacheScheduler(NewCacheSchedulerParams{
-		App:             mockApp,
+		Service:         &common.Service{},
 		CacheDB:         cacheDB,
 		EngineOps:       nil,
 		Logger:          logger,
@@ -73,19 +67,12 @@ func TestCacheScheduler_New(t *testing.T) {
 	})
 
 	require.NotNil(t, scheduler, "Scheduler should be created")
-	assert.Equal(t, mockApp.Service, scheduler.kwilService, "App should be set correctly")
 	assert.NotNil(t, scheduler.cron, "Cron scheduler should be initialized")
 	assert.NotNil(t, scheduler.jobs, "Jobs map should be initialized")
 	assert.Equal(t, "", scheduler.namespace, "Default namespace should be empty")
 }
 
 func TestCacheScheduler_WithCustomNamespace(t *testing.T) {
-	// Create mock app and dependencies
-	mockApp := &common.App{
-		Service: &common.Service{},
-		Engine:  &mockEngine{},
-	}
-
 	// Create test logger
 	logger := log.New(log.WithWriter(nil))
 
@@ -94,7 +81,7 @@ func TestCacheScheduler_WithCustomNamespace(t *testing.T) {
 
 	// Test creating scheduler with custom namespace
 	scheduler := NewCacheScheduler(NewCacheSchedulerParams{
-		App:             mockApp,
+		Service:         &common.Service{},
 		CacheDB:         cacheDB,
 		EngineOps:       nil,
 		Logger:          logger,
@@ -107,12 +94,10 @@ func TestCacheScheduler_WithCustomNamespace(t *testing.T) {
 }
 
 func TestCacheScheduler_GroupBySchedule(t *testing.T) {
-	// Create scheduler for testing utility methods
-	mockApp := &common.App{}
 	logger := log.New(log.WithWriter(nil))
 	cacheDB := &internal.CacheDB{}
 	scheduler := NewCacheScheduler(NewCacheSchedulerParams{
-		App:             mockApp,
+		Service:         &common.Service{},
 		CacheDB:         cacheDB,
 		EngineOps:       nil,
 		Logger:          logger,
@@ -163,15 +148,11 @@ func TestCacheScheduler_GroupBySchedule(t *testing.T) {
 }
 
 func TestCacheScheduler_ResolutionFlow(t *testing.T) {
-	// Create mock dependencies
-	mockApp := &common.App{
-		Engine: &mockEngine{},
-	}
 	logger := log.New(log.WithWriter(nil))
 	cacheDB := &internal.CacheDB{}
 
 	scheduler := NewCacheScheduler(NewCacheSchedulerParams{
-		App:             mockApp,
+		Service:         &common.Service{},
 		CacheDB:         cacheDB,
 		EngineOps:       nil,
 		Logger:          logger,

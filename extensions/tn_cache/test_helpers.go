@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
-	"github.com/trufnetwork/node/extensions/tn_cache/internal/constants"
 )
 
 // TestHelper provides test-only functions for the tn_cache extension
@@ -41,28 +40,26 @@ func (TestHelper) RefreshStreamCacheSync(ctx context.Context, dataProvider, stre
 		return 0, fmt.Errorf("failed to refresh stream: %w", err)
 	}
 
-	// Get the count of cached records
-	db := GetExtension().CacheDB()
-	if db == nil {
+	// Get the count of cached records using the CacheDB interface
+	cacheDB := GetExtension().CacheDB()
+	if cacheDB == nil {
 		return 0, fmt.Errorf("failed to get cache database connection")
 	}
 
-	pool := ext.CachePool()
-
-	rows, err := pool.Query(ctx, `
-		SELECT COUNT(*) FROM `+constants.CacheSchemaName+`.cached_events 
-		WHERE data_provider = $1 AND stream_id = $2`,
-		dataProvider, streamID)
+	// Use the QueryCachedStreamsWithCounts method to get the count
+	streamInfos, err := cacheDB.QueryCachedStreamsWithCounts(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("failed to count cached records: %w", err)
+		return 0, fmt.Errorf("failed to query cached streams: %w", err)
 	}
 
-	var count int64
-	if err := rows.Scan(&count); err != nil {
-		return 0, fmt.Errorf("failed to scan count: %w", err)
+	// Find the specific stream
+	for _, info := range streamInfos {
+		if info.DataProvider == dataProvider && info.StreamID == streamID {
+			return int(info.EventCount), nil
+		}
 	}
 
-	return int(count), nil
+	return 0, nil
 }
 
 // WaitForInitialization waits for the extension to be fully initialized
@@ -78,7 +75,7 @@ func (TestHelper) WaitForInitialization(ctx context.Context, timeout time.Durati
 			return ctx.Err()
 		case <-ticker.C:
 			ext := GetExtension()
-			if ext != nil && ext.IsEnabled() && ext.CacheDB() != nil && ext.Scheduler() != nil && ext.CachePool() != nil {
+			if ext != nil && ext.IsEnabled() && ext.CacheDB() != nil && ext.Scheduler() != nil {
 				return nil
 			}
 			if time.Now().After(deadline) {
@@ -91,7 +88,7 @@ func (TestHelper) WaitForInitialization(ctx context.Context, timeout time.Durati
 // IsInitialized checks if the extension is fully initialized
 func (TestHelper) IsInitialized() bool {
 	ext := GetExtension()
-	return ext != nil && ext.IsEnabled() && ext.CacheDB() != nil && ext.Scheduler() != nil && ext.CachePool() != nil
+	return ext != nil && ext.IsEnabled() && ext.CacheDB() != nil && ext.Scheduler() != nil
 }
 
 // TriggerResolution triggers the cache extension's stream resolution process

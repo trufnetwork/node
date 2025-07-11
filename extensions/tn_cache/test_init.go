@@ -3,14 +3,12 @@ package tn_cache
 import (
 	kwilconfig "github.com/trufnetwork/kwil-db/config"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
-	"github.com/trufnetwork/node/extensions/tn_cache/internal"
 )
 
 // testConfig holds all test-related configuration in one place
 type testConfig struct {
 	config   map[string]string
 	dbConfig *kwilconfig.DBConfig
-	dbPool   internal.DBPool
 	sqlDB    sql.DB
 }
 
@@ -30,7 +28,7 @@ func SetTestDBConfiguration(dbConfig kwilconfig.DBConfig) {
 // SetTestDB allows tests to inject their own database connection
 // that will be used instead of creating a new pool
 func SetTestDB(db sql.DB) {
-
+	testOverrides.sqlDB = db
 }
 
 // getTestConfig returns test configuration if set
@@ -46,9 +44,4 @@ func getTestDBConfig() *kwilconfig.DBConfig {
 // getTestDB returns the injected test database if set
 func getTestDB() sql.DB {
 	return testOverrides.sqlDB
-}
-
-// getTestDBPool returns the test DB pool adapter if set
-func getTestDBPool() internal.DBPool {
-	return testOverrides.dbPool
 }

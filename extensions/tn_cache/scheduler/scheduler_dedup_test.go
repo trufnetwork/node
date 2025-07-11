@@ -15,7 +15,7 @@ func TestDeduplicateResolvedSpecs(t *testing.T) {
 	logger := log.New(log.WithWriter(nil)) // Discard logs during tests
 	cacheDB := internal.NewCacheDB(nil, logger)
 	scheduler := NewCacheScheduler(NewCacheSchedulerParams{
-		App:             &common.App{},
+		Service:         &common.Service{},
 		CacheDB:         cacheDB,
 		EngineOps:       nil,
 		Logger:          logger,

@@ -13,7 +13,6 @@ import (
 	"github.com/trufnetwork/kwil-db/node/types/sql"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	kwilconfig "github.com/trufnetwork/kwil-db/config"
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal/constants"
@@ -51,14 +50,8 @@ func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
 	var extConfig map[string]string
 	var ok bool
 
-	if testConfig := getTestConfig(); testConfig != nil {
-		extConfig = testConfig
-		ok = true
-		tempLogger.Debug("using test configuration override")
-	} else {
-		// Get extension configuration from the node config
-		extConfig, ok = service.LocalConfig.Extensions[ExtensionName]
-	}
+	// Get extension configuration from the node config
+	extConfig, ok = service.LocalConfig.Extensions[ExtensionName]
 
 	if !ok {
 		// Extension is not configured, return default disabled config
@@ -245,10 +238,10 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 		panic("extension not initialized")
 	}
 
-	return SetupCacheExtension(ctx, processedConfig, ext, &app.Engine, app.Service)
+	return SetupCacheExtension(ctx, processedConfig, ext, app.Engine, app.Service)
 }
 
-func SetupCacheExtension(ctx context.Context, config *config.ProcessedConfig, ext *Extension, engine *common.Engine, service *common.Service) error {
+func SetupCacheExtension(ctx context.Context, config *config.ProcessedConfig, ext *Extension, engine common.Engine, service *common.Service) error {
 	// Initialize metrics recorder (with auto-detection)
 	metricsRecorder := metrics.NewMetricsRecorder(ext.logger)
 
@@ -359,14 +352,8 @@ func SetupCacheExtension(ctx context.Context, config *config.ProcessedConfig, ex
 
 // createIndependentConnectionPool creates a dedicated connection pool for cache operations
 func createIndependentConnectionPool(ctx context.Context, service *common.Service, logger log.Logger) (*pgxpool.Pool, error) {
-	// Check for test database configuration override first
-	var dbConfig kwilconfig.DBConfig
-	if testDBConfig := getTestDBConfig(); testDBConfig != nil {
-		dbConfig = *testDBConfig
-		logger.Debug("using test database configuration override")
-	} else {
-		dbConfig = service.LocalConfig.DB
-	}
+	// Use database configuration from service
+	dbConfig := service.LocalConfig.DB
 
 	// Build connection string using same parameters as main database
 	connStr := fmt.Sprintf("host=%s port=%s user=%s database=%s sslmode=disable",

@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/trufnetwork/kwil-db/core/log"
 	"github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
@@ -60,7 +59,7 @@ type CachedEvent struct {
 	Value        *types.Decimal // Use high-precision decimal for decimal(36,18) values
 }
 
-// NewCacheDB creates a new CacheDB instance with DBPool
+// NewCacheDB creates a new CacheDB instance with sql.DB
 func NewCacheDB(db sql.DB, logger log.Logger) *CacheDB {
 	return &CacheDB{
 		logger: logger.New("tn_cache_db"),
@@ -175,7 +174,7 @@ func (c *CacheDB) GetStreamConfig(ctx context.Context, dataProvider, streamID st
 func (c *CacheDB) ListStreamConfigs(ctx context.Context) ([]StreamCacheConfig, error) {
 	c.logger.Debug("listing all stream cache configs")
 
-	rows, err := c.db.Execute(ctx, `
+	results, err := c.db.Execute(ctx, `
 		SELECT data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule
 		FROM `+constants.CacheSchemaName+`.cached_streams
 		ORDER BY data_provider, stream_id
@@ -185,23 +184,44 @@ func (c *CacheDB) ListStreamConfigs(ctx context.Context) ([]StreamCacheConfig, e
 	}
 
 	var configs []StreamCacheConfig
-	for rows.NextRow() {
-		var config StreamCacheConfig
-		err := rows.Scan(
-			&config.DataProvider,
-			&config.StreamID,
-			&config.FromTimestamp,
-			&config.LastRefreshed,
-			&config.CronSchedule,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("scan stream config: %w", err)
+	for _, row := range results.Rows {
+		if len(row) != 5 {
+			return nil, fmt.Errorf("expected 5 columns, got %d", len(row))
+		}
+		
+		dataProvider, ok := row[0].(string)
+		if !ok {
+			return nil, fmt.Errorf("failed to convert data_provider to string")
+		}
+		
+		streamID, ok := row[1].(string)
+		if !ok {
+			return nil, fmt.Errorf("failed to convert stream_id to string")
+		}
+		
+		fromTimestamp, ok := row[2].(int64)
+		if !ok {
+			return nil, fmt.Errorf("failed to convert from_timestamp to int64")
+		}
+		
+		lastRefreshed, ok := row[3].(int64)
+		if !ok {
+			return nil, fmt.Errorf("failed to convert last_refreshed to int64")
+		}
+		
+		cronSchedule, ok := row[4].(string)
+		if !ok {
+			return nil, fmt.Errorf("failed to convert cron_schedule to string")
+		}
+		
+		config := StreamCacheConfig{
+			DataProvider:  dataProvider,
+			StreamID:      streamID,
+			FromTimestamp: fromTimestamp,
+			LastRefreshed: lastRefreshed,
+			CronSchedule:  cronSchedule,
 		}
 		configs = append(configs, config)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate stream configs: %w", err)
 	}
 
 	return configs, nil
@@ -460,9 +480,9 @@ func (c *CacheDB) GetCachedEvents(ctx context.Context, dataProvider, streamID st
 		"from_time", fromTime,
 		"to_time", toTime)
 
-	var rows pgx.Rows
+	var results *sql.ResultSet
 	if toTime > 0 {
-		rows, err = c.db.Execute(ctx, `
+		results, err = c.db.Execute(ctx, `
 			SELECT data_provider, stream_id, event_time, value
 			FROM `+constants.CacheSchemaName+`.cached_events
 			WHERE data_provider = $1 AND stream_id = $2
@@ -470,7 +490,7 @@ func (c *CacheDB) GetCachedEvents(ctx context.Context, dataProvider, streamID st
 			ORDER BY event_time
 		`, dataProvider, streamID, fromTime, toTime)
 	} else {
-		rows, err = c.db.Execute(ctx, `
+		results, err = c.db.Execute(ctx, `
 			SELECT data_provider, stream_id, event_time, value
 			FROM `+constants.CacheSchemaName+`.cached_events
 			WHERE data_provider = $1 AND stream_id = $2
@@ -482,22 +502,40 @@ func (c *CacheDB) GetCachedEvents(ctx context.Context, dataProvider, streamID st
 	if err != nil {
 		return nil, fmt.Errorf("query events: %w", err)
 	}
-	defer rows.Close()
 
-	events = make([]CachedEvent, 0)
-	for rows.Next() {
-		var event CachedEvent
-
-		err := rows.Scan(&event.DataProvider, &event.StreamID, &event.EventTime, &event.Value)
-		if err != nil {
-			return nil, fmt.Errorf("scan event: %w", err)
+	events = make([]CachedEvent, 0, len(results.Rows))
+	for _, row := range results.Rows {
+		if len(row) != 4 {
+			return nil, fmt.Errorf("expected 4 columns, got %d", len(row))
 		}
-
+		
+		dataProvider, ok := row[0].(string)
+		if !ok {
+			return nil, fmt.Errorf("failed to convert data_provider to string")
+		}
+		
+		streamID, ok := row[1].(string)
+		if !ok {
+			return nil, fmt.Errorf("failed to convert stream_id to string")
+		}
+		
+		eventTime, ok := row[2].(int64)
+		if !ok {
+			return nil, fmt.Errorf("failed to convert event_time to int64")
+		}
+		
+		value, ok := row[3].(*types.Decimal)
+		if !ok {
+			return nil, fmt.Errorf("failed to convert value to *types.Decimal")
+		}
+		
+		event := CachedEvent{
+			DataProvider: dataProvider,
+			StreamID:     streamID,
+			EventTime:    eventTime,
+			Value:        value,
+		}
 		events = append(events, event)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate events: %w", err)
 	}
 
 	return events, nil
@@ -520,11 +558,11 @@ func (c *CacheDB) GetCachedIndex(ctx context.Context, dataProvider, streamID str
 		"from_time", fromTime,
 		"to_time", toTime)
 
-	var rows pgx.Rows
+	var results *sql.ResultSet
 
 	// Special case: latest value only (both fromTime and toTime are 0)
 	if fromTime == 0 && toTime == 0 {
-		rows, err = c.db.Execute(ctx, `
+		results, err = c.db.Execute(ctx, `
 			SELECT data_provider, stream_id, event_time, value
 			FROM `+constants.CacheSchemaName+`.cached_index_events
 			WHERE data_provider = $1 AND stream_id = $2
@@ -532,7 +570,7 @@ func (c *CacheDB) GetCachedIndex(ctx context.Context, dataProvider, streamID str
 			LIMIT 1
 		`, dataProvider, streamID)
 	} else if toTime > 0 {
-		rows, err = c.db.Execute(ctx, `
+		results, err = c.db.Execute(ctx, `
 			SELECT data_provider, stream_id, event_time, value
 			FROM `+constants.CacheSchemaName+`.cached_index_events
 			WHERE data_provider = $1 AND stream_id = $2
@@ -540,7 +578,7 @@ func (c *CacheDB) GetCachedIndex(ctx context.Context, dataProvider, streamID str
 			ORDER BY event_time
 		`, dataProvider, streamID, fromTime, toTime)
 	} else {
-		rows, err = c.db.Execute(ctx, `
+		results, err = c.db.Execute(ctx, `
 			SELECT data_provider, stream_id, event_time, value
 			FROM `+constants.CacheSchemaName+`.cached_index_events
 			WHERE data_provider = $1 AND stream_id = $2
@@ -552,22 +590,40 @@ func (c *CacheDB) GetCachedIndex(ctx context.Context, dataProvider, streamID str
 	if err != nil {
 		return nil, fmt.Errorf("query index events: %w", err)
 	}
-	defer rows.Close()
 
-	events = make([]CachedEvent, 0)
-	for rows.Next() {
-		var event CachedEvent
-
-		err := rows.Scan(&event.DataProvider, &event.StreamID, &event.EventTime, &event.Value)
-		if err != nil {
-			return nil, fmt.Errorf("scan index event: %w", err)
+	events = make([]CachedEvent, 0, len(results.Rows))
+	for _, row := range results.Rows {
+		if len(row) != 4 {
+			return nil, fmt.Errorf("expected 4 columns, got %d", len(row))
 		}
-
+		
+		dataProvider, ok := row[0].(string)
+		if !ok {
+			return nil, fmt.Errorf("failed to convert data_provider to string")
+		}
+		
+		streamID, ok := row[1].(string)
+		if !ok {
+			return nil, fmt.Errorf("failed to convert stream_id to string")
+		}
+		
+		eventTime, ok := row[2].(int64)
+		if !ok {
+			return nil, fmt.Errorf("failed to convert event_time to int64")
+		}
+		
+		value, ok := row[3].(*types.Decimal)
+		if !ok {
+			return nil, fmt.Errorf("failed to convert value to *types.Decimal")
+		}
+		
+		event := CachedEvent{
+			DataProvider: dataProvider,
+			StreamID:     streamID,
+			EventTime:    eventTime,
+			Value:        value,
+		}
 		events = append(events, event)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate index events: %w", err)
 	}
 
 	return events, nil
@@ -698,16 +754,24 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 	}()
 
 	// First, check if the stream is configured for caching
-	var streamExists bool
-	err = tx.Execute(ctx, `
+	results, err := tx.Execute(ctx, `
 		SELECT COUNT(*) > 0
 		FROM `+constants.CacheSchemaName+`.cached_streams
 		WHERE data_provider = $1 AND stream_id = $2
 			AND (from_timestamp IS NULL OR from_timestamp <= $3)
-	`, dataProvider, streamID, fromTime).Scan(&streamExists)
+	`, dataProvider, streamID, fromTime)
 
 	if err != nil {
 		return false, fmt.Errorf("check stream config: %w", err)
+	}
+
+	if len(results.Rows) == 0 || len(results.Rows[0]) != 1 {
+		return false, fmt.Errorf("unexpected result structure for stream exists check")
+	}
+
+	streamExists, ok := results.Rows[0][0].(bool)
+	if !ok {
+		return false, fmt.Errorf("failed to convert stream exists result to bool")
 	}
 
 	if !streamExists {
@@ -721,7 +785,7 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 	var eventCount int64
 	if toTime == 0 {
 		// No upper bound specified - to is treated as max_int8 (end of time)
-		result, err := tx.Execute(ctx, `
+		results, err := tx.Execute(ctx, `
 			SELECT COUNT(*) FROM `+constants.CacheSchemaName+`.cached_events
 			WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3
 		`, dataProvider, streamID, fromTime)
@@ -729,15 +793,17 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 			return false, fmt.Errorf("failed to count cached events: %w", err)
 		}
 
-		if result.Next() {
-			err := result.Scan(&eventCount)
-			if err != nil {
-				return false, fmt.Errorf("failed to scan event count: %w", err)
-			}
+		if len(results.Rows) == 0 || len(results.Rows[0]) != 1 {
+			return false, fmt.Errorf("unexpected result structure for event count")
+		}
+
+		eventCount, ok = results.Rows[0][0].(int64)
+		if !ok {
+			return false, fmt.Errorf("failed to convert event count to int64")
 		}
 	} else {
 		// Upper bound specified
-		result, err := tx.Execute(ctx, `
+		results, err := tx.Execute(ctx, `
 			SELECT COUNT(*) FROM `+constants.CacheSchemaName+`.cached_events
 			WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3 AND event_time <= $4
 		`, dataProvider, streamID, fromTime, toTime)
@@ -745,11 +811,13 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 			return false, fmt.Errorf("failed to count cached events: %w", err)
 		}
 
-		if result.Next() {
-			err := result.Scan(&eventCount)
-			if err != nil {
-				return false, fmt.Errorf("failed to scan event count: %w", err)
-			}
+		if len(results.Rows) == 0 || len(results.Rows[0]) != 1 {
+			return false, fmt.Errorf("unexpected result structure for event count")
+		}
+
+		eventCount, ok = results.Rows[0][0].(int64)
+		if !ok {
+			return false, fmt.Errorf("failed to convert event count to int64")
 		}
 	}
 
@@ -757,7 +825,7 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 
 	// If no direct events found, check for an anchor record (last event before fromTime)
 	if !hasData && fromTime != 0 {
-		anchorResult, err := tx.Execute(ctx, `
+		anchorResults, err := tx.Execute(ctx, `
 			SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
 			WHERE data_provider = $1 AND stream_id = $2 AND event_time < $3
 			LIMIT 1
@@ -765,7 +833,7 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 		if err != nil {
 			return false, fmt.Errorf("failed to query anchor record: %w", err)
 		}
-		hasData = anchorResult.Next()
+		hasData = len(anchorResults.Rows) > 0
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -857,29 +925,63 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 
 // getStreamConfigPool retrieves a stream's cache configuration using pool
 func (c *CacheDB) getStreamConfigPool(ctx context.Context, dataProvider, streamID string) (*StreamCacheConfig, error) {
-	row := c.db.Execute(ctx, `
+	results, err := c.db.Execute(ctx, `
 		SELECT data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule
 		FROM `+constants.CacheSchemaName+`.cached_streams
 		WHERE data_provider = $1 AND stream_id = $2
 	`, dataProvider, streamID)
 
-	var config StreamCacheConfig
-	err := row.Scan(
-		&config.DataProvider,
-		&config.StreamID,
-		&config.FromTimestamp,
-		&config.LastRefreshed,
-		&config.CronSchedule,
-	)
-
 	if err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, sql.ErrNoRows
-		}
 		return nil, fmt.Errorf("query stream config: %w", err)
 	}
 
-	return &config, nil
+	if len(results.Rows) == 0 {
+		return nil, sql.ErrNoRows
+	}
+
+	if len(results.Rows) != 1 {
+		return nil, fmt.Errorf("expected 1 row, got %d", len(results.Rows))
+	}
+
+	row := results.Rows[0]
+	if len(row) != 5 {
+		return nil, fmt.Errorf("expected 5 columns, got %d", len(row))
+	}
+
+	dataProviderResult, ok := row[0].(string)
+	if !ok {
+		return nil, fmt.Errorf("failed to convert data_provider to string")
+	}
+
+	streamIDResult, ok := row[1].(string)
+	if !ok {
+		return nil, fmt.Errorf("failed to convert stream_id to string")
+	}
+
+	fromTimestamp, ok := row[2].(int64)
+	if !ok {
+		return nil, fmt.Errorf("failed to convert from_timestamp to int64")
+	}
+
+	lastRefreshed, ok := row[3].(int64)
+	if !ok {
+		return nil, fmt.Errorf("failed to convert last_refreshed to int64")
+	}
+
+	cronSchedule, ok := row[4].(string)
+	if !ok {
+		return nil, fmt.Errorf("failed to convert cron_schedule to string")
+	}
+
+	config := &StreamCacheConfig{
+		DataProvider:  dataProviderResult,
+		StreamID:      streamIDResult,
+		FromTimestamp: fromTimestamp,
+		LastRefreshed: lastRefreshed,
+		CronSchedule:  cronSchedule,
+	}
+
+	return config, nil
 }
 
 // StreamCountInfo holds stream information with event counts
@@ -902,27 +1004,41 @@ func (c *CacheDB) QueryCachedStreamsWithCounts(ctx context.Context) ([]StreamCou
 		ORDER BY cs.data_provider, cs.stream_id
 	`
 
-	rows, err := c.db.Execute(ctx, query)
+	results, err := c.db.Execute(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query cached streams with counts: %w", err)
 	}
-	defer rows.Close()
 
-	var results []StreamCountInfo
-	for rows.Next() {
-		var info StreamCountInfo
-		err := rows.Scan(&info.DataProvider, &info.StreamID, &info.EventCount)
-		if err != nil {
-			return nil, fmt.Errorf("scan row: %w", err)
+	var streamInfos []StreamCountInfo
+	for _, row := range results.Rows {
+		if len(row) != 3 {
+			return nil, fmt.Errorf("expected 3 columns, got %d", len(row))
 		}
-		results = append(results, info)
+		
+		dataProvider, ok := row[0].(string)
+		if !ok {
+			return nil, fmt.Errorf("failed to convert data_provider to string")
+		}
+		
+		streamID, ok := row[1].(string)
+		if !ok {
+			return nil, fmt.Errorf("failed to convert stream_id to string")
+		}
+		
+		eventCount, ok := row[2].(int64)
+		if !ok {
+			return nil, fmt.Errorf("failed to convert event_count to int64")
+		}
+		
+		info := StreamCountInfo{
+			DataProvider: dataProvider,
+			StreamID:     streamID,
+			EventCount:   eventCount,
+		}
+		streamInfos = append(streamInfos, info)
 	}
 
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("rows iteration: %w", err)
-	}
-
-	return results, nil
+	return streamInfos, nil
 }
 
 // SetupCacheSchema creates the necessary database schema for the cache
@@ -1057,12 +1173,14 @@ func (c *CacheDB) WaitForDatabaseReady(ctx context.Context, maxWait time.Duratio
 		case <-timeout.C:
 			return fmt.Errorf("database not ready after %v", maxWait)
 		case <-ticker.C:
-			rows, err := c.db.Execute(ctx, "SELECT 1")
+			results, err := c.db.Execute(ctx, "SELECT 1")
 			if err != nil {
 				continue
 			}
-			rows.Close()
-			return nil // Database is ready
+			// No need to close results - it's not a streaming result
+			if len(results.Rows) > 0 {
+				return nil // Database is ready
+			}
 		}
 	}
 }
@@ -1081,7 +1199,7 @@ func (c *CacheDB) GetLastEventBefore(ctx context.Context, dataProvider, streamID
 		"stream_id", streamID,
 		"before", before)
 
-	row := c.db.Execute(ctx, `
+	results, err := c.db.Execute(ctx, `
 		SELECT data_provider, stream_id, event_time, value
 		FROM `+constants.CacheSchemaName+`.cached_events
 		WHERE data_provider = $1 AND stream_id = $2 AND event_time < $3
@@ -1089,15 +1207,51 @@ func (c *CacheDB) GetLastEventBefore(ctx context.Context, dataProvider, streamID
 		LIMIT 1
 	`, dataProvider, streamID, before)
 
-	var e CachedEvent
-	if err = row.Scan(&e.DataProvider, &e.StreamID, &e.EventTime, &e.Value); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, sql.ErrNoRows
-		}
+	if err != nil {
 		return nil, fmt.Errorf("query last event before: %w", err)
 	}
 
-	return &e, nil
+	if len(results.Rows) == 0 {
+		return nil, sql.ErrNoRows
+	}
+
+	if len(results.Rows) != 1 {
+		return nil, fmt.Errorf("expected 1 row, got %d", len(results.Rows))
+	}
+
+	row := results.Rows[0]
+	if len(row) != 4 {
+		return nil, fmt.Errorf("expected 4 columns, got %d", len(row))
+	}
+
+	dataProviderResult, ok := row[0].(string)
+	if !ok {
+		return nil, fmt.Errorf("failed to convert data_provider to string")
+	}
+
+	streamIDResult, ok := row[1].(string)
+	if !ok {
+		return nil, fmt.Errorf("failed to convert stream_id to string")
+	}
+
+	eventTime, ok := row[2].(int64)
+	if !ok {
+		return nil, fmt.Errorf("failed to convert event_time to int64")
+	}
+
+	value, ok := row[3].(*types.Decimal)
+	if !ok {
+		return nil, fmt.Errorf("failed to convert value to *types.Decimal")
+	}
+
+	e := &CachedEvent{
+		DataProvider: dataProviderResult,
+		StreamID:     streamIDResult,
+		EventTime:    eventTime,
+		Value:        value,
+	}
+
+	return e, nil
 }
 
 // GetFirstEventAfter retrieves the first event at or after the specified timestamp.
@@ -1113,7 +1267,7 @@ func (c *CacheDB) GetFirstEventAfter(ctx context.Context, dataProvider, streamID
 		"stream_id", streamID,
 		"after", after)
 
-	row := c.db.Execute(ctx, `
+	results, err := c.db.Execute(ctx, `
 		SELECT data_provider, stream_id, event_time, value
 		FROM `+constants.CacheSchemaName+`.cached_events
 		WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3
@@ -1121,13 +1275,49 @@ func (c *CacheDB) GetFirstEventAfter(ctx context.Context, dataProvider, streamID
 		LIMIT 1
 	`, dataProvider, streamID, after)
 
-	var e CachedEvent
-	if err = row.Scan(&e.DataProvider, &e.StreamID, &e.EventTime, &e.Value); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, sql.ErrNoRows
-		}
+	if err != nil {
 		return nil, fmt.Errorf("query first event after: %w", err)
 	}
 
-	return &e, nil
+	if len(results.Rows) == 0 {
+		return nil, sql.ErrNoRows
+	}
+
+	if len(results.Rows) != 1 {
+		return nil, fmt.Errorf("expected 1 row, got %d", len(results.Rows))
+	}
+
+	row := results.Rows[0]
+	if len(row) != 4 {
+		return nil, fmt.Errorf("expected 4 columns, got %d", len(row))
+	}
+
+	dataProviderResult, ok := row[0].(string)
+	if !ok {
+		return nil, fmt.Errorf("failed to convert data_provider to string")
+	}
+
+	streamIDResult, ok := row[1].(string)
+	if !ok {
+		return nil, fmt.Errorf("failed to convert stream_id to string")
+	}
+
+	eventTime, ok := row[2].(int64)
+	if !ok {
+		return nil, fmt.Errorf("failed to convert event_time to int64")
+	}
+
+	value, ok := row[3].(*types.Decimal)
+	if !ok {
+		return nil, fmt.Errorf("failed to convert value to *types.Decimal")
+	}
+
+	e := &CachedEvent{
+		DataProvider: dataProviderResult,
+		StreamID:     streamIDResult,
+		EventTime:    eventTime,
+		Value:        value,
+	}
+
+	return e, nil
 }
