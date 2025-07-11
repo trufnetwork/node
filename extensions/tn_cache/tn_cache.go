@@ -49,9 +49,14 @@ func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
 	// Check for test configuration override first
 	var extConfig map[string]string
 	var ok bool
-
-	// Get extension configuration from the node config
-	extConfig, ok = service.LocalConfig.Extensions[ExtensionName]
+	if testCfg := getTestConfig(); testCfg != nil {
+		extConfig = testCfg
+		tempLogger.Info("using test configuration override")
+		ok = true
+	} else {
+		// Get extension configuration from the node config
+		extConfig, ok = service.LocalConfig.Extensions[ExtensionName]
+	}
 
 	if !ok {
 		// Extension is not configured, return default disabled config
@@ -104,7 +109,7 @@ func withSafeExtension(fn func(*Extension) error) error {
 
 func InitializeExtension() {
 	// Register precompile using initializer to receive metadata from test framework. This should happen before the engine is ready.
-	err := precompiles.RegisterInitializer(constants.PrecompileName, initializeExtension)
+	err := precompiles.RegisterInitializer(constants.PrecompileName, InitializeCachePrecompile)
 	if err != nil {
 		panic(fmt.Sprintf("failed to register ext_tn_cache initializer: %v", err))
 	}
@@ -116,11 +121,11 @@ func InitializeExtension() {
 	}
 }
 
-// initializeExtension is called by the framework with metadata during initialization
-func initializeExtension(ctx context.Context, service *common.Service, db sql.DB, alias string, metadata map[string]any) (precompiles.Precompile, error) {
+// InitializeCachePrecompile is called by the framework with metadata during initialization
+func InitializeCachePrecompile(ctx context.Context, service *common.Service, db sql.DB, alias string, metadata map[string]any) (precompiles.Precompile, error) {
 	// Get the extension instance (lazy initialization ensures it exists)
 	ext := GetExtension()
-	
+
 	// Update with proper logger if not already set
 	if ext.logger == nil {
 		logger := service.Logger.New("tn_cache")
@@ -271,14 +276,19 @@ func SetupCacheExtension(ctx context.Context, config *config.ProcessedConfig, ex
 	// Update the extension with enabled state
 	ext.isEnabled = config.Enabled
 
-	// Create independent connection pool for cache operations
-	// This prevents "tx is closed" errors caused by kwil-db's connection lifecycle
-	pool, err := createIndependentConnectionPool(ctx, service, ext.logger)
-	if err != nil {
-		return fmt.Errorf("failed to create connection pool: %w", err)
+	// Check for test overrides first
+	if testDB := getTestDB(); testDB != nil {
+		ext.db = testDB
+		ext.logger.Info("using injected test database connection")
+	} else {
+		// Create independent connection pool for cache operations
+		// This prevents "tx is closed" errors caused by kwil-db's connection lifecycle
+		pool, err := createIndependentConnectionPool(ctx, service, ext.logger)
+		if err != nil {
+			return fmt.Errorf("failed to create connection pool: %w", err)
+		}
+		ext.db = utilities.NewPoolDBWrapper(pool)
 	}
-	defer pool.Close()
-	ext.db = utilities.NewPoolDBWrapper(pool)
 
 	// If disabled, ensure schema is cleaned up
 	if !config.Enabled {
@@ -307,7 +317,7 @@ func SetupCacheExtension(ctx context.Context, config *config.ProcessedConfig, ex
 	}
 
 	// Initialize extension resources
-	err = cacheDB.SetupCacheSchema(ctx)
+	err := cacheDB.SetupCacheSchema(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to setup cache schema: %w", err)
 	}
@@ -362,8 +372,12 @@ func SetupCacheExtension(ctx context.Context, config *config.ProcessedConfig, ex
 
 		// Close connection pool
 		if ext.db != nil {
-			pool.Close()
-			ext.logger.Info("closed cache connection pool")
+			if wrapper, ok := ext.db.(*utilities.PoolDBWrapper); ok {
+				wrapper.Close()
+				ext.logger.Info("closed cache connection pool")
+			} else {
+				ext.logger.Warn("unexpected db type, skipping pool close")
+			}
 		}
 	}()
 
@@ -375,7 +389,7 @@ func SetupCacheExtension(ctx context.Context, config *config.ProcessedConfig, ex
 
 // createIndependentConnectionPool creates a dedicated connection pool for cache operations
 func createIndependentConnectionPool(ctx context.Context, service *common.Service, logger log.Logger) (*pgxpool.Pool, error) {
-	// Use database configuration from service
+	// Check for test DB config override first
 	dbConfig := service.LocalConfig.DB
 
 	// Build connection string using same parameters as main database
