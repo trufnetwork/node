@@ -176,7 +176,7 @@ func SimpleCache(dataProvider, streamID string) *CacheOptions {
 func TestCache(dataProvider, streamID string) *CacheOptions {
 	return NewCacheOptions().
 		WithEnabled().
-		WithMaxBlockAge(-1*time.Second).                   // Disable sync checking for tests
+		WithMaxBlockAge(-1*time.Second).                 // Disable sync checking for tests
 		WithStream(dataProvider, streamID, "0 0 31 2 *") // Only on Feb 31st (never happens)
 }
 
@@ -184,7 +184,7 @@ func TestCache(dataProvider, streamID string) *CacheOptions {
 func ProductionCache() *CacheOptions {
 	return NewCacheOptions().
 		WithEnabled().
-		WithMaxBlockAge(1 * time.Hour).       // Default 1 hour
+		WithMaxBlockAge(1 * time.Hour).     // Default 1 hour
 		WithResolutionSchedule("0 0 * * *") // Re-resolve daily at midnight
 }
 
@@ -385,7 +385,7 @@ func RunSchemaTest(t *testing.T, s kwilTesting.SchemaTest, options *Options) {
 		// Fallback: Enabled, no auto-refresh for tests
 		cacheConfig = NewCacheOptions().
 			WithEnabled().
-			WithMaxBlockAge(-1 * time.Second).     // Disable sync check
+			WithMaxBlockAge(-1 * time.Second).   // Disable sync check
 			WithResolutionSchedule("0 0 31 2 *") // Never auto-resolve
 	} else if options != nil && options.Cache != nil {
 		cacheConfig = options.Cache
@@ -452,11 +452,15 @@ func wrapWithCacheSetup(ctx context.Context, originalFuncs []kwilTesting.TestFun
 			}
 
 			// Stop the scheduler to clean up background tasks
-			if stopErr := ext.Scheduler().Stop(); stopErr != nil {
-				mockService.Logger.Error("failed to stop scheduler after test", "error", stopErr)
+			if ext.Scheduler() != nil {
+				if stopErr := ext.Scheduler().Stop(); stopErr != nil {
+					mockService.Logger.Error("failed to stop scheduler after test", "error", stopErr)
+				}
 			}
 
-			ext.SyncChecker().Stop()
+			if ext.SyncChecker() != nil {
+				ext.SyncChecker().Stop()
+			}
 
 			defer ext.Close()
 

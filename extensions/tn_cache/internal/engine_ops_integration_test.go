@@ -35,7 +35,7 @@ func TestEngineOperations_Integration(t *testing.T) {
 		FunctionTests: []kwilTesting.TestFunc{
 			testEngineOperationsIntegration(t),
 		},
-	}, nil)
+	}, testutils.GetTestOptionsWithCache(testutils.NewCacheOptions().WithEnabled().WithMaxBlockAge(-1*time.Second)))
 }
 
 func testEngineOperationsIntegration(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
