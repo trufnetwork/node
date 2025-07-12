@@ -55,6 +55,11 @@ func NewSyncChecker(logger log.Logger, maxBlockAge int64) *SyncChecker {
 func (sc *SyncChecker) Start(ctx context.Context) {
 	sc.logger.Info("starting sync checker", "max_block_age", sc.maxBlockAge)
 
+	if sc.maxBlockAge <= 0 {
+		sc.logger.Info("sync checking disabled - skipping monitoring")
+		return
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	sc.cancel = cancel
 
