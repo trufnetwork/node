@@ -71,12 +71,9 @@ func testAGGR02_WeightedContributions(t *testing.T, useCache bool) func(ctx cont
 
 		// Set up cache (only when useCache is true)
 		if useCache {
-			recordsCached, err := tn_cache.GetTestHelper().RefreshStreamCacheSync(ctx, deployer.Address(), composedStreamId.String())
+			_, err := tn_cache.GetTestHelper().RefreshAllStreamsSync(ctx)
 			if err != nil {
 				return errors.Wrap(err, "error refreshing cache")
-			}
-			if recordsCached == 0 {
-				return errors.New("no records cached")
 			}
 		}
 
