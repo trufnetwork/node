@@ -276,6 +276,8 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 		return fmt.Errorf("resolve stream specs: %w", err)
 	}
 
+	s.logger.Info("resolved streams count", "count", len(newResolvedSpecs))
+
 	oldSet := make(map[string]bool)
 	newSet := make(map[string]bool)
 

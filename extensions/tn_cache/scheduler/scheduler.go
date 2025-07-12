@@ -248,7 +248,7 @@ func (s *CacheScheduler) Start(ctx context.Context, processedConfig *config.Proc
 	s.logger.Info("cache scheduler started", "jobs", len(s.jobs))
 
 	// Populate cache immediately instead of waiting for first cron trigger
-	go s.runInitialRefresh(resolvedStreamSpecs)
+	s.runInitialRefresh(resolvedStreamSpecs)
 
 	return nil
 }
@@ -452,6 +452,91 @@ func (s *CacheScheduler) runInitialRefresh(directives []config.CacheDirective) {
 		"job_id", jobID)
 }
 
+// RunFullRefreshSync performs a synchronous full refresh: resolution + data refresh for all streams
+// Returns the total number of records cached across all streams after refresh
+func (s *CacheScheduler) RunFullRefreshSync(ctx context.Context) (int, error) {
+	s.resolutionMu.RLock()
+	directives := make([]config.CacheDirective, len(s.resolvedDirectives))
+	copy(directives, s.resolvedDirectives)
+	s.resolutionMu.RUnlock()
+
+	// First, perform resolution to pick up any new streams
+	if err := s.performGlobalResolution(ctx); err != nil {
+		return 0, fmt.Errorf("resolution failed: %w", err)
+	}
+
+	// Generate unique job ID
+	jobID := fmt.Sprintf("full_refresh_%d", time.Now().UnixNano())
+
+	// Create job context
+	jobCtx, jobCancel := s.createJobContext(jobID)
+	defer s.removeJobContext(jobID)
+
+	// Get current configs for skip checks
+	streamConfigs, err := s.cacheDB.ListStreamConfigs(jobCtx)
+	if err != nil {
+		s.logger.Warn("failed to get stream configs for full refresh", "error", err)
+		streamConfigs = []internal.StreamCacheConfig{}
+	}
+
+	configMap := make(map[string]internal.StreamCacheConfig)
+	for _, config := range streamConfigs {
+		key := fmt.Sprintf("%s:%s", config.DataProvider, config.StreamID)
+		configMap[key] = config
+	}
+
+	var needsRefresh []config.CacheDirective
+	for _, dir := range directives {
+		key := fmt.Sprintf("%s:%s", dir.DataProvider, dir.StreamID)
+		if conf, exists := configMap[key]; exists {
+			if s.shouldSkipInitialRefresh(conf.LastRefreshed, dir.Schedule.CronExpr) {
+				continue
+			}
+		}
+		needsRefresh = append(needsRefresh, dir)
+	}
+
+	if len(needsRefresh) == 0 {
+		s.logger.Info("no streams need refresh")
+		jobCancel()
+		return s.getTotalCachedRecords(jobCtx)
+	}
+
+	g, gCtx := errgroup.WithContext(jobCtx)
+	g.SetLimit(5)
+
+	for _, dir := range needsRefresh {
+		d := dir
+		g.Go(func() error {
+			if !s.canRefresh(d.DataProvider, d.StreamID) {
+				return nil
+			}
+			return s.refreshStreamDataWithRetry(gCtx, d, 3)
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		jobCancel()
+		return 0, err
+	}
+
+	jobCancel()
+	return s.getTotalCachedRecords(jobCtx)
+}
+
+// Helper to get total cached records
+func (s *CacheScheduler) getTotalCachedRecords(ctx context.Context) (int, error) {
+	infos, err := s.cacheDB.QueryCachedStreamsWithCounts(ctx)
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	for _, info := range infos {
+		total += int(info.EventCount)
+	}
+	return total, nil
+}
+
 // registerRefreshJob registers a cron job for refreshing streams on a schedule
 func (s *CacheScheduler) registerRefreshJob(schedule string) error {
 	if err := validation.ValidateCronSchedule(schedule); err != nil {
@@ -592,4 +677,11 @@ func (s *CacheScheduler) UpdateGaugeMetrics(ctx context.Context) {
 
 func (s *CacheScheduler) SetTx(tx sql.DB) {
 	s.cacheDB.SetTx(tx)
+}
+
+// GetCurrentDirectives returns the current directives
+func (s *CacheScheduler) GetCurrentDirectives() []config.CacheDirective {
+	s.resolutionMu.RLock()
+	defer s.resolutionMu.RUnlock()
+	return s.resolvedDirectives
 }

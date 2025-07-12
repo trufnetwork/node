@@ -10,7 +10,6 @@ import (
 
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
 	errors2 "github.com/trufnetwork/node/extensions/tn_cache/internal/errors"
-	"github.com/trufnetwork/node/extensions/tn_cache/internal/parsing"
 )
 
 // TestParseEventTime removed - tests basic type conversions (Go stdlib) rather than custom logic

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,9 +22,9 @@ import (
 func TestIncludeChildrenFunctionality(t *testing.T) {
 	t.Run("JSON format", func(t *testing.T) {
 		testCases := []struct {
-			name               string
-			includeChildren    interface{} // can be bool or omitted
-			expectedValue      bool
+			name            string
+			includeChildren interface{} // can be bool or omitted
+			expectedValue   bool
 		}{
 			{"explicit_true", true, true},
 			{"explicit_false", false, false},
@@ -67,11 +66,11 @@ func TestIncludeChildrenFunctionality(t *testing.T) {
 
 	t.Run("CSV format", func(t *testing.T) {
 		testCases := []struct {
-			name             string
-			csvContent       string
-			expectedValues   []bool
-			expectError      bool
-			errorContains    string
+			name           string
+			csvContent     string
+			expectedValues []bool
+			expectError    bool
+			errorContains  string
 		}{
 			{
 				name:           "explicit_true",
@@ -99,8 +98,8 @@ func TestIncludeChildrenFunctionality(t *testing.T) {
 				expectedValues: []bool{true},
 			},
 			{
-				name:           "mixed_values",
-				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 0 * * *,1719849600,true
+				name: "mixed_values",
+				csvContent: `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 0 * * *,1719849600,true
 0x9876543210fedcba9876543210fedcba98765432,ststream2,0 0 0 * * *,1719936000,false
 0xabcdefabcdefabcdefabcdefabcdefabcdefabcd,ststream3,0 */15 * * * *,,true`,
 				expectedValues: []bool{true, false, true},
@@ -144,15 +143,15 @@ func TestIncludeChildrenFunctionality(t *testing.T) {
 // TestConfigValidation tests high-ROI validation scenarios that prevent node failures
 func TestConfigValidation(t *testing.T) {
 	tests := []struct {
-		name           string
-		extConfig      map[string]map[string]string
-		expectError    bool
-		errorContains  string
-		description    string
+		name          string
+		extConfig     map[string]map[string]string
+		expectError   bool
+		errorContains string
+		description   string
 	}{
 		{
-			name: "no config - graceful handling",
-			extConfig: map[string]map[string]string{},
+			name:        "no config - graceful handling",
+			extConfig:   map[string]map[string]string{},
 			expectError: false,
 			description: "Missing config should be handled gracefully",
 		},
@@ -178,9 +177,9 @@ func TestConfigValidation(t *testing.T) {
 					}]`,
 				},
 			},
-			expectError: true,
+			expectError:   true,
 			errorContains: "cron_schedule validation failed",
-			description: "Invalid cron schedules should fail with clear error",
+			description:   "Invalid cron schedules should fail with clear error",
 		},
 		{
 			name: "invalid ethereum address - fatal error",
@@ -194,9 +193,9 @@ func TestConfigValidation(t *testing.T) {
 					}]`,
 				},
 			},
-			expectError: true,
+			expectError:   true,
 			errorContains: "ethereum_address validation failed",
-			description: "Invalid ethereum addresses should fail with clear error",
+			description:   "Invalid ethereum addresses should fail with clear error",
 		},
 		{
 			name: "invalid stream ID - fatal error",
@@ -210,21 +209,21 @@ func TestConfigValidation(t *testing.T) {
 					}]`,
 				},
 			},
-			expectError: true,
+			expectError:   true,
 			errorContains: "stream_id validation failed",
-			description: "Invalid stream IDs should fail with clear error",
+			description:   "Invalid stream IDs should fail with clear error",
 		},
 		{
 			name: "corrupted JSON - fatal error",
 			extConfig: map[string]map[string]string{
 				ExtensionName: {
-					"enabled": "true",
+					"enabled":        "true",
 					"streams_inline": `[{invalid json}]`,
 				},
 			},
-			expectError: true,
+			expectError:   true,
 			errorContains: "streams configuration is not valid JSON",
-			description: "Corrupted JSON should fail with clear error",
+			description:   "Corrupted JSON should fail with clear error",
 		},
 		{
 			name: "valid wildcard configuration",
@@ -278,7 +277,7 @@ func TestConfigValidation(t *testing.T) {
 			name: "valid configuration with max_block_age",
 			extConfig: map[string]map[string]string{
 				ExtensionName: {
-					"enabled": "true",
+					"enabled":       "true",
 					"max_block_age": "30m",
 					"streams_inline": `[{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
@@ -303,9 +302,9 @@ func TestConfigValidation(t *testing.T) {
 					}]`,
 				},
 			},
-			expectError: true,
+			expectError:   true,
 			errorContains: "time_range validation failed",
-			description: "Far future timestamps should fail",
+			description:   "Far future timestamps should fail",
 		},
 		{
 			name: "both JSON and CSV provided - should error",
@@ -320,9 +319,9 @@ func TestConfigValidation(t *testing.T) {
 					"streams_csv_file": "streams.csv",
 				},
 			},
-			expectError: true,
+			expectError:   true,
 			errorContains: "cannot specify both 'streams_inline' and 'streams_csv_file'",
-			description: "Providing both JSON and CSV should fail with clear error",
+			description:   "Providing both JSON and CSV should fail with clear error",
 		},
 	}
 
@@ -341,7 +340,7 @@ func TestConfigValidation(t *testing.T) {
 			if tt.expectError {
 				require.Error(t, err, "Expected error for test: %s", tt.description)
 				if tt.errorContains != "" {
-					assert.Contains(t, err.Error(), tt.errorContains, 
+					assert.Contains(t, err.Error(), tt.errorContains,
 						"Error should contain expected text for test: %s", tt.description)
 				}
 				return
@@ -402,7 +401,7 @@ func TestCronScheduleValidation(t *testing.T) {
 		{"monthly", "0 0 0 1 * *", false, "Monthly on 1st"},
 		{"every_15_min", "0 */15 * * * *", false, "Every 15 minutes"},
 		{"complex_weekdays", "0 30 2 * * 1-5", false, "Weekdays at 2:30 AM"},
-		
+
 		// Invalid schedules
 		{"invalid_text", "invalid", true, "Non-cron text"},
 		{"invalid_minute", "0 60 * * * *", true, "Invalid minute (60)"},
@@ -425,7 +424,7 @@ func TestCronScheduleValidation(t *testing.T) {
 
 			loader := tnConfig.NewLoader()
 			_, err := loader.LoadAndProcess(context.Background(), rawConfig)
-			
+
 			if tc.shouldError {
 				require.Error(t, err, "Expected error for %s: %s", tc.description, tc.schedule)
 				assert.Contains(t, err.Error(), "cron_schedule validation failed")
@@ -443,7 +442,7 @@ func TestCronScheduleValidation(t *testing.T) {
 
 				source := sources.NewCSVSource(csvFile, "")
 				specs, err := source.Load(context.Background(), map[string]string{})
-				
+
 				require.NoError(t, err, "CSV loading should succeed for valid cron: %s", tc.schedule)
 				require.Len(t, specs, 1)
 				assert.Equal(t, tc.schedule, specs[0].CronSchedule)
@@ -529,8 +528,8 @@ incomplete_row,missing_cron`,
 			errorContains: "cannot be empty",
 		},
 		{
-			name: "invalid CSV - bad timestamp",
-			csvContent: `0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 0 0 * * * *,invalid_timestamp`,
+			name:          "invalid CSV - bad timestamp",
+			csvContent:    `0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 0 0 * * * *,invalid_timestamp`,
 			expectedSpecs: 0,
 			expectError:   true,
 			errorContains: "invalid from timestamp",
@@ -724,4 +723,3 @@ func TestCSVSource_TimestampHandling(t *testing.T) {
 
 // TestCSVSource_LoaderIntegration removed - redundant with TestCSVSource_BasicFunctionality
 // This test duplicated CSV parsing and validation scenarios already covered in focused unit tests
-

@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"time"
-
-	"github.com/trufnetwork/node/extensions/tn_cache/config"
 )
 
 // TestHelper provides test-only functions for the tn_cache extension
@@ -13,7 +11,9 @@ type TestHelper struct{}
 
 // RefreshStreamCacheSync synchronously refreshes the cache for a specific stream
 // RequireExtension fails the test if extension is not available
-func RequireExtension(t interface{ Fatalf(format string, args ...interface{}) }) *Extension {
+func RequireExtension(t interface {
+	Fatalf(format string, args ...interface{})
+}) *Extension {
 	ext := GetExtension()
 	if ext == nil {
 		t.Fatalf("tn_cache extension not initialized - test requires extension")
@@ -22,55 +22,6 @@ func RequireExtension(t interface{ Fatalf(format string, args ...interface{}) })
 		t.Fatalf("tn_cache extension not enabled - test requires enabled extension")
 	}
 	return ext
-}
-
-// This is only available in test builds and allows tests to trigger cache
-// refresh without waiting for the scheduler
-func (TestHelper) RefreshStreamCacheSync(ctx context.Context, dataProvider, streamID string) (int, error) {
-	ext, err := safeGetExtension()
-	if err != nil {
-		return 0, fmt.Errorf("tn_cache extension not available: %w", err)
-	}
-
-	if ext.Scheduler() == nil {
-		return 0, fmt.Errorf("scheduler not initialized")
-	}
-
-	// Create a directive for this specific stream
-	directive := config.CacheDirective{
-		DataProvider: dataProvider,
-		StreamID:     streamID,
-		Type:         config.DirectiveSpecific,
-		TimeRange: config.TimeRange{
-			From: nil, // Use configured from_timestamp
-		},
-	}
-
-	// Use the scheduler's refresh method with retry
-	if err := ext.Scheduler().RefreshStreamData(ctx, directive); err != nil {
-		return 0, fmt.Errorf("failed to refresh stream: %w", err)
-	}
-
-	// Get the count of cached records using the CacheDB interface
-	cacheDB := ext.CacheDB()
-	if cacheDB == nil {
-		return 0, fmt.Errorf("failed to get cache database connection")
-	}
-
-	// Use the QueryCachedStreamsWithCounts method to get the count
-	streamInfos, err := cacheDB.QueryCachedStreamsWithCounts(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("failed to query cached streams: %w", err)
-	}
-
-	// Find the specific stream
-	for _, info := range streamInfos {
-		if info.DataProvider == dataProvider && info.StreamID == streamID {
-			return int(info.EventCount), nil
-		}
-	}
-
-	return 0, nil
 }
 
 // WaitForInitialization waits for the extension to be fully initialized
@@ -117,9 +68,11 @@ func (TestHelper) TriggerResolution(ctx context.Context) error {
 	}
 
 	// Trigger the global resolution process
+	ext.logger.Info("Triggering resolution start")
 	if err := scheduler.TriggerResolution(ctx); err != nil {
 		return fmt.Errorf("failed to trigger stream resolution: %w", err)
 	}
+	ext.logger.Info("Triggering resolution complete")
 
 	return nil
 }
@@ -128,4 +81,51 @@ func (TestHelper) TriggerResolution(ctx context.Context) error {
 // This is the public API for tests to access test-only functionality
 func GetTestHelper() *TestHelper {
 	return &TestHelper{}
+}
+
+// RefreshAllStreamsSync synchronously triggers resolution and refreshes all configured streams
+func (TestHelper) RefreshAllStreamsSync(ctx context.Context) (int, error) {
+	ext, err := safeGetExtension()
+	if err != nil {
+		return 0, fmt.Errorf("tn_cache extension not available: %w", err)
+	}
+
+	scheduler := ext.Scheduler()
+	if scheduler == nil {
+		return 0, fmt.Errorf("scheduler not initialized")
+	}
+
+	// First, trigger resolution to discover any new streams
+	if err := scheduler.TriggerResolution(ctx); err != nil {
+		return 0, fmt.Errorf("failed to trigger resolution: %w", err)
+	}
+
+	// Now get all current cached streams
+	cacheDB := ext.CacheDB()
+	if cacheDB == nil {
+		return 0, fmt.Errorf("failed to get cache database connection")
+	}
+
+	directives := scheduler.GetCurrentDirectives()
+
+	totalRecords := 0
+	for _, directive := range directives {
+		if err := scheduler.RefreshStreamData(ctx, directive); err != nil {
+			return 0, fmt.Errorf("failed to refresh stream %s:%s: %w", directive.DataProvider, directive.StreamID, err)
+		}
+
+		// Update count - re-query single stream count
+		updatedInfos, err := cacheDB.QueryCachedStreamsWithCounts(ctx)
+		if err != nil {
+			return 0, fmt.Errorf("failed to query updated counts: %w", err)
+		}
+		for _, updated := range updatedInfos {
+			if updated.DataProvider == directive.DataProvider && updated.StreamID == directive.StreamID {
+				totalRecords += int(updated.EventCount)
+				break
+			}
+		}
+	}
+
+	return totalRecords, nil
 }

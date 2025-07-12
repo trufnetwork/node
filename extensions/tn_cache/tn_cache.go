@@ -266,125 +266,130 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 		return nil
 	}
 
-	return SetupCacheExtension(ctx, processedConfig, ext, app.Engine, app.Service)
+	ext, err = SetupCacheExtension(ctx, processedConfig, app.Engine, app.Service)
+	if err != nil {
+		return fmt.Errorf("failed to setup cache extension: %w", err)
+	}
+
+	SetExtension(ext)
+
+	return nil
 }
 
-func SetupCacheExtension(ctx context.Context, config *config.ProcessedConfig, ext *Extension, engine common.Engine, service *common.Service) error {
+func SetupCacheExtension(ctx context.Context, config *config.ProcessedConfig, engine common.Engine, service *common.Service) (*Extension, error) {
 	// Initialize metrics recorder (with auto-detection)
-	metricsRecorder := metrics.NewMetricsRecorder(ext.logger)
-
-	// Update the extension with enabled state
-	ext.isEnabled = config.Enabled
+	metricsRecorder := metrics.NewMetricsRecorder(service.Logger)
 
 	// Check for test overrides first
+	var db sql.DB
 	if testDB := getTestDB(); testDB != nil {
-		ext.db = testDB
-		ext.logger.Info("using injected test database connection")
+		db = testDB
+		service.Logger.Info("using injected test database connection")
 	} else {
 		// Create independent connection pool for cache operations
 		// This prevents "tx is closed" errors caused by kwil-db's connection lifecycle
-		pool, err := createIndependentConnectionPool(ctx, service, ext.logger)
+		pool, err := createIndependentConnectionPool(ctx, service, service.Logger)
 		if err != nil {
-			return fmt.Errorf("failed to create connection pool: %w", err)
+			return nil, fmt.Errorf("failed to create connection pool: %w", err)
 		}
-		ext.db = utilities.NewPoolDBWrapper(pool)
+		db = utilities.NewPoolDBWrapper(pool)
 	}
 
 	// If disabled, ensure schema is cleaned up
 	if !config.Enabled {
-		ext.logger.Info("extension is disabled")
-		ext.logger.Info("cleaning up any existing schema")
-		return ext.CacheDB().CleanupExtensionSchema(ctx)
+		service.Logger.Info("extension is disabled")
+		service.Logger.Info("cleaning up any existing schema")
+		cacheDB := internal.NewCacheDB(db, service.Logger)
+		return NewExtension(service.Logger, cacheDB, nil, nil, metricsRecorder, nil, db, config.Enabled), cacheDB.CleanupExtensionSchema(ctx)
 	}
 
-	ext.logger.Info("initializing extension",
+	service.Logger.Info("initializing extension",
 		"enabled", config.Enabled,
 		"directives_count", len(config.Directives),
 		"sources", config.Sources)
 
 	// if we have no directives, we can skip the rest of the initialization
 	if len(config.Directives) == 0 {
-		ext.logger.Warn("no directives found, skipping extension initialization")
-		return nil
+		service.Logger.Warn("no directives found, skipping extension initialization")
+		return NewExtension(service.Logger, nil, nil, nil, metricsRecorder, nil, db, config.Enabled), nil
 	}
 
 	// Create the CacheDB instance
-	cacheDB := internal.NewCacheDB(ext.db, ext.logger)
+	cacheDB := internal.NewCacheDB(db, service.Logger)
 
 	// Wait for database to be ready before proceeding
 	if err := cacheDB.WaitForDatabaseReady(ctx, 30*time.Second); err != nil {
-		return fmt.Errorf("database not ready: %w", err)
+		return nil, fmt.Errorf("database not ready: %w", err)
 	}
 
 	// Initialize extension resources
 	err := cacheDB.SetupCacheSchema(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to setup cache schema: %w", err)
+		return nil, fmt.Errorf("failed to setup cache schema: %w", err)
 	}
 
-	engineOps := internal.NewEngineOperations(engine, ext.db, "", ext.logger)
+	engineOps := internal.NewEngineOperations(engine, db, "main", service.Logger)
 
-	ext.scheduler = scheduler.NewCacheScheduler(scheduler.NewCacheSchedulerParams{
+	// Initialize sync checker for sync-aware caching
+	syncChecker := syncschecker.NewSyncChecker(service.Logger, config.MaxBlockAge)
+	syncChecker.Start(ctx)
+
+	scheduler := scheduler.NewCacheScheduler(scheduler.NewCacheSchedulerParams{
 		Service:         service,
 		CacheDB:         cacheDB,
 		EngineOps:       engineOps,
-		Logger:          ext.logger,
+		Logger:          service.Logger,
 		MetricsRecorder: metricsRecorder,
 		Namespace:       "",
-		SyncChecker:     ext.syncChecker,
+		SyncChecker:     syncChecker,
 	})
 
-	// Initialize sync checker for sync-aware caching
-	ext.syncChecker = syncschecker.NewSyncChecker(ext.logger, config.MaxBlockAge)
-	ext.syncChecker.Start(ctx)
-
 	if config.MaxBlockAge > 0 {
-		ext.logger.Info("sync-aware caching enabled", "max_block_age", config.MaxBlockAge)
+		service.Logger.Info("sync-aware caching enabled", "max_block_age", config.MaxBlockAge)
 	}
 
-	if err := ext.scheduler.Start(ctx, config); err != nil {
-		return fmt.Errorf("failed to start scheduler: %w", err)
+	if err := scheduler.Start(ctx, config); err != nil {
+		return nil, fmt.Errorf("failed to start scheduler: %w", err)
 	}
 
 	// Record initial gauge metrics
 	metricsRecorder.RecordStreamConfigured(ctx, len(config.Directives))
 
 	// Query actual active streams on startup (cache persists across restarts)
-	ext.scheduler.UpdateGaugeMetrics(ctx)
+	scheduler.UpdateGaugeMetrics(ctx)
 
 	// Start a goroutine to handle graceful shutdown when context is cancelled
 	go func() {
 		<-ctx.Done()
-		ext.logger.Info("context cancelled, stopping extension")
+		service.Logger.Info("context cancelled, stopping extension")
 
 		// Stop sync checker first
-		if ext.syncChecker != nil {
-			ext.syncChecker.Stop()
-			ext.logger.Info("stopped sync checker")
+		if syncChecker != nil {
+			syncChecker.Stop()
+			service.Logger.Info("stopped sync checker")
 		}
 
 		// Stop scheduler
-		if ext.scheduler != nil {
-			if err := ext.scheduler.Stop(); err != nil {
-				ext.logger.Error("error stopping scheduler", "error", err)
+		if scheduler != nil {
+			if err := scheduler.Stop(); err != nil {
+				service.Logger.Error("error stopping scheduler", "error", err)
 			}
 		}
 
 		// Close connection pool
-		if ext.db != nil {
-			if wrapper, ok := ext.db.(*utilities.PoolDBWrapper); ok {
+		if db != nil {
+			if wrapper, ok := db.(*utilities.PoolDBWrapper); ok {
 				wrapper.Close()
-				ext.logger.Info("closed cache connection pool")
+				service.Logger.Info("closed cache connection pool")
 			} else {
-				ext.logger.Warn("unexpected db type, skipping pool close")
+				service.Logger.Warn("unexpected db type, skipping pool close")
 			}
 		}
 	}()
 
-	// Update the extension with all initialized components
-	ext.metricsRecorder = metricsRecorder
+	ext := NewExtension(service.Logger, cacheDB, scheduler, syncChecker, metricsRecorder, engineOps, db, config.Enabled)
 
-	return nil
+	return ext, nil
 }
 
 // createIndependentConnectionPool creates a dedicated connection pool for cache operations
