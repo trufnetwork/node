@@ -223,7 +223,7 @@ func TestCacheIncludeChildrenForNestedComposed(t *testing.T) {
 	cacheConfig := testutils.NewCacheOptions().
 		WithEnabled().
 		WithMaxBlockAge(-1*time.Second). // Disable sync checking for tests
-		WithComposedStream(deployer, parentComposedId.String(), "0 0 0 31 2 *", true)
+		WithComposedStream(deployer, parentComposedId.String(), "0 0 31 2 *", true)
 
 	// Run the test with cache enabled
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
