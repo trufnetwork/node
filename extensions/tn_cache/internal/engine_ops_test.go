@@ -313,7 +313,13 @@ func TestEngineOperations_GetRecordComposed(t *testing.T) {
 					assert.Equal(t, "get_record_composed", action)
 					assert.Equal(t, tt.provider, args[0])
 					assert.Equal(t, tt.streamID, args[1])
-					assert.Equal(t, tt.from, args[2])
+
+					expected_from := tt.from
+					if expected_from == nil {
+						zero := int64(0)
+						expected_from = &zero
+					}
+					assert.Equal(t, expected_from, args[2])
 					assert.Equal(t, tt.to, args[3])
 					assert.Nil(t, args[4]) // frozen_at
 
