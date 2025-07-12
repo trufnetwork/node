@@ -88,7 +88,16 @@ func (l *Loader) deduplicateDirectives(directives []CacheDirective) []CacheDirec
 		cacheKey := directive.GetCacheKey()
 		
 		// Check if we already have a directive for this cache key
-		if _, exists := directiveMap[cacheKey]; exists {
+		if existing, exists := directiveMap[cacheKey]; exists {
+			// Log warning about duplicate directive
+			l.logger.Warn("duplicate cache directive detected, keeping first occurrence",
+				"cache_key", cacheKey,
+				"data_provider", directive.DataProvider,
+				"stream_id", directive.StreamID,
+				"kept_source", existing.Metadata.Source,
+				"ignored_source", directive.Metadata.Source,
+				"kept_schedule", existing.Schedule.CronExpr,
+				"ignored_schedule", directive.Schedule.CronExpr)
 			// Keep the first one (deterministic behavior) - ignore duplicates
 			// TODO: Implement proper conflict resolution when cache refresh logic is built
 			continue

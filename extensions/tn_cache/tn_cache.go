@@ -51,7 +51,7 @@ func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
 	var ok bool
 	if testCfg := getTestConfig(); testCfg != nil {
 		extConfig = testCfg
-		tempLogger.Info("using test configuration override")
+		// Using test configuration override
 		ok = true
 	} else {
 		// Get extension configuration from the node config
@@ -60,9 +60,7 @@ func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
 
 	if !ok {
 		// Extension is not configured, return default disabled config
-		tempLogger.Debug("extension not configured, disabling",
-			"extension_name", ExtensionName,
-			"available_extensions", getExtensionNames(service.LocalConfig.Extensions))
+		// Extension not configured, returning disabled config
 		return &config.ProcessedConfig{
 			Enabled:    false,
 			Directives: []config.CacheDirective{},
@@ -71,17 +69,14 @@ func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
 	}
 
 	// Use the new configuration loader to load and process the configuration
-	loader := config.NewLoader()
+	loader := config.NewLoader(tempLogger)
 	processedConfig, err := loader.LoadAndProcessFromMap(context.Background(), extConfig)
 	if err != nil {
 		tempLogger.Error("failed to process configuration", "error", err)
 		return nil, fmt.Errorf("configuration processing failed: %w", err)
 	}
 
-	tempLogger.Info("configuration processed successfully",
-		"enabled", processedConfig.Enabled,
-		"directives_count", len(processedConfig.Directives),
-		"sources", processedConfig.Sources)
+	// Configuration processed successfully
 
 	return processedConfig, nil
 }
@@ -96,15 +91,6 @@ func safeGetExtension() (*Extension, error) {
 		return nil, fmt.Errorf("tn_cache extension is disabled")
 	}
 	return ext, nil
-}
-
-// withSafeExtension provides a safe wrapper for extension operations
-func withSafeExtension(fn func(*Extension) error) error {
-	ext, err := safeGetExtension()
-	if err != nil {
-		return fmt.Errorf("extension unavailable: %w", err)
-	}
-	return fn(ext)
 }
 
 func InitializeExtension() {

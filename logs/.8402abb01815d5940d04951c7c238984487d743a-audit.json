@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "/home/outerlook/Documents/usher/trufnetwork/node/logs/.8402abb01815d5940d04951c7c238984487d743a-audit.json",
+    "files": [
+        {
+            "date": 1752258486745,
+            "name": "/home/outerlook/Documents/usher/trufnetwork/node/logs/mcp-puppeteer-2025-07-11.log",
+            "hash": "0c303b6c9afd90b7886dc724e990338a127f550c4ec7e96eb0a19bc2b246ff7d"
+        }
+    ],
+    "hashType": "sha256"
+}

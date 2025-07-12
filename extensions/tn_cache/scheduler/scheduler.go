@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -124,6 +125,16 @@ func (s *CacheScheduler) createJobContext(jobID string) (context.Context, contex
 	// Inherits cancellation from scheduler shutdown
 	ctx, cancel := context.WithTimeout(s.ctx, s.jobTimeout)
 
+	// Monitor for timeout in a separate goroutine
+	go func() {
+		<-ctx.Done()
+		if ctx.Err() == context.DeadlineExceeded {
+			s.logger.Warn("job timeout exceeded",
+				"job_id", jobID,
+				"timeout", s.jobTimeout)
+		}
+	}()
+
 	s.jobContexts[jobID] = cancel
 
 	return ctx, cancel
@@ -146,9 +157,13 @@ func (s *CacheScheduler) cancelAllJobContexts() {
 	s.jobContextsMu.Lock()
 	defer s.jobContextsMu.Unlock()
 
-	for jobID, cancel := range s.jobContexts {
+	jobCount := len(s.jobContexts)
+	for _, cancel := range s.jobContexts {
 		cancel()
-		s.logger.Info("cancelled job context", "job_id", jobID)
+	}
+
+	if jobCount > 0 {
+		s.logger.Info("cancelled all job contexts", "count", jobCount)
 	}
 
 	s.jobContexts = make(map[string]context.CancelFunc)
@@ -355,7 +370,7 @@ func (s *CacheScheduler) runInitialRefresh(directives []config.CacheDirective) {
 	// First, get all stream configs to check last refresh times
 	streamConfigs, err := s.cacheDB.ListStreamConfigs(jobCtx)
 	if err != nil {
-		s.logger.Error("failed to get stream configs for initial refresh check",
+		s.logger.Warn("failed to get stream configs for initial refresh check",
 			"error", err,
 			"job_id", jobID)
 		// Continue anyway - better to refresh than to skip
@@ -399,6 +414,15 @@ func (s *CacheScheduler) runInitialRefresh(directives []config.CacheDirective) {
 	g, ctx := errgroup.WithContext(jobCtx)
 	g.SetLimit(5) // Maximum 5 concurrent operations
 
+	// Track refresh results
+	var (
+		successCount  int32
+		failureCount  int32
+		skippedCount  int32
+		failedStreams []string
+		mu            sync.Mutex
+	)
+
 	for _, directive := range needsRefresh {
 		dir := directive // Capture loop variable to avoid closure issues
 
@@ -412,18 +436,23 @@ func (s *CacheScheduler) runInitialRefresh(directives []config.CacheDirective) {
 
 			// Check sync status
 			if !s.canRefresh(dir.DataProvider, dir.StreamID) {
-				s.logger.Warn("skipping refresh - sync check failed",
+				atomic.AddInt32(&skippedCount, 1)
+				s.logger.Debug("skipping refresh - sync check failed",
 					"provider", dir.DataProvider,
 					"stream", dir.StreamID)
 				return nil
 			}
 
-			s.logger.Info("starting refresh for stream",
+			s.logger.Debug("starting refresh for stream",
 				"provider", dir.DataProvider,
 				"stream", dir.StreamID,
 				"job_id", jobID)
 
 			if err := s.refreshStreamDataWithRetry(ctx, dir, 3); err != nil {
+				atomic.AddInt32(&failureCount, 1)
+				mu.Lock()
+				failedStreams = append(failedStreams, fmt.Sprintf("%s:%s", dir.DataProvider, dir.StreamID))
+				mu.Unlock()
 				// Log error but don't fail the entire group
 				s.logger.Error("failed to perform initial refresh of stream data",
 					"provider", dir.DataProvider,
@@ -431,9 +460,7 @@ func (s *CacheScheduler) runInitialRefresh(directives []config.CacheDirective) {
 					"job_id", jobID,
 					"error", err)
 			} else {
-				s.logger.Info("stream refresh finished",
-					"provider", dir.DataProvider,
-					"stream", dir.StreamID)
+				atomic.AddInt32(&successCount, 1)
 			}
 			return nil // Return nil to continue with other streams
 		})
@@ -448,8 +475,18 @@ func (s *CacheScheduler) runInitialRefresh(directives []config.CacheDirective) {
 	// Cancel job context explicitly when done
 	jobCancel()
 
+	// Log summary of refresh results
 	s.logger.Info("initial refresh completed",
-		"job_id", jobID)
+		"job_id", jobID,
+		"success", successCount,
+		"failed", failureCount,
+		"skipped", skippedCount)
+
+	if failureCount > 0 {
+		s.logger.Warn("some streams failed to refresh",
+			"failed_streams", failedStreams,
+			"count", failureCount)
+	}
 }
 
 // RunFullRefreshSync performs a synchronous full refresh: resolution + data refresh for all streams
@@ -669,10 +706,6 @@ func (s *CacheScheduler) UpdateGaugeMetrics(ctx context.Context) {
 
 	// Update active streams gauge
 	s.metrics.RecordStreamActive(ctx, activeStreams)
-
-	s.logger.Debug("updated gauge metrics",
-		"active_streams", activeStreams,
-		"total_events", totalEvents)
 }
 
 func (s *CacheScheduler) SetTx(tx sql.DB) {

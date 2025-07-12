@@ -147,7 +147,7 @@ func (sc *SyncChecker) updateStatus(ctx context.Context) {
 	}
 
 	// All retries failed
-	sc.logger.Debug("health check failed after retries", "error", lastErr)
+	sc.logger.Warn("health check failed after retries", "error", lastErr)
 }
 
 // doUpdateStatus performs the actual status update request
@@ -202,13 +202,6 @@ func (sc *SyncChecker) doUpdateStatus(ctx context.Context) error {
 
 	sc.blockTime.Store(blockTimeSeconds)
 	sc.lastChecked.Store(currentTime)
-
-	if health.Services.User.Syncing {
-		sc.logger.Debug("node is syncing")
-	} else if sc.maxBlockAge > 0 {
-		age := time.Now().Unix() - blockTimeSeconds
-		sc.logger.Debug("sync status", "block_age", age, "max_age", sc.maxBlockAge)
-	}
 
 	return nil
 }

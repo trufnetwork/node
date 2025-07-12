@@ -54,7 +54,7 @@ func TestIncludeChildrenFunctionality(t *testing.T) {
 					StreamsInline: jsonConfig,
 				}
 
-				loader := tnConfig.NewLoader()
+				loader := tnConfig.NewLoader(log.NewStdoutLogger())
 				processedConfig, err := loader.LoadAndProcess(context.Background(), rawConfig)
 
 				require.NoError(t, err)
@@ -369,7 +369,7 @@ func TestWildcardStreamResolution(t *testing.T) {
 		}]`,
 	}
 
-	loader := tnConfig.NewLoader()
+	loader := tnConfig.NewLoader(log.NewStdoutLogger())
 	processedConfig, err := loader.LoadAndProcess(context.Background(), rawConfig)
 
 	require.NoError(t, err)
@@ -422,7 +422,7 @@ func TestCronScheduleValidation(t *testing.T) {
 				}]`, tc.schedule),
 			}
 
-			loader := tnConfig.NewLoader()
+			loader := tnConfig.NewLoader(log.NewStdoutLogger())
 			_, err := loader.LoadAndProcess(context.Background(), rawConfig)
 
 			if tc.shouldError {
