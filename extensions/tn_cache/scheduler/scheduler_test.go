@@ -1,8 +1,9 @@
-package tn_cache
+package scheduler
 
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,55 +50,52 @@ func (m *mockEngine) ExecuteWithoutEngineCtx(ctx context.Context, db sql.DB, sta
 	return nil
 }
 
-func TestCacheScheduler_New(t *testing.T) {
-	// Create mock app and dependencies
-	mockApp := &common.App{
-		Service: &common.Service{},
-		Engine:  &mockEngine{},
-	}
-
-	// Create test logger
-	logger := log.New(log.WithWriter(nil)) // Discard logs during tests
-
-	// Create mock CacheDB (nil for this test)
-	var cacheDB *internal.CacheDB
-
-	// Test creating scheduler
-	scheduler := NewCacheScheduler(mockApp, cacheDB, logger, metrics.NewNoOpMetrics())
-
-	require.NotNil(t, scheduler, "Scheduler should be created")
-	assert.Equal(t, mockApp, scheduler.app, "App should be set correctly")
-	assert.NotNil(t, scheduler.cron, "Cron scheduler should be initialized")
-	assert.NotNil(t, scheduler.jobs, "Jobs map should be initialized")
-	assert.Equal(t, "", scheduler.namespace, "Default namespace should be empty")
-}
-
-func TestCacheScheduler_WithCustomNamespace(t *testing.T) {
-	// Create mock app and dependencies
-	mockApp := &common.App{
-		Service: &common.Service{},
-		Engine:  &mockEngine{},
-	}
-
-	// Create test logger
+func TestCacheScheduler_Creation(t *testing.T) {
 	logger := log.New(log.WithWriter(nil))
-
-	// Create mock CacheDB
 	var cacheDB *internal.CacheDB
 
-	// Test creating scheduler with custom namespace
-	scheduler := NewCacheSchedulerWithNamespace(mockApp, cacheDB, logger, "custom_db", metrics.NewNoOpMetrics())
+	t.Run("default namespace", func(t *testing.T) {
+		scheduler := NewCacheScheduler(NewCacheSchedulerParams{
+			Service:         &common.Service{},
+			CacheDB:         cacheDB,
+			EngineOps:       nil,
+			Logger:          logger,
+			MetricsRecorder: metrics.NewNoOpMetrics(),
+			Namespace:       "",
+		})
 
-	require.NotNil(t, scheduler, "Scheduler should be created")
-	assert.Equal(t, "custom_db", scheduler.namespace, "Custom namespace should be set")
+		require.NotNil(t, scheduler)
+		assert.NotNil(t, scheduler.cron)
+		assert.NotNil(t, scheduler.jobs)
+		assert.Equal(t, "", scheduler.namespace)
+	})
+
+	t.Run("custom namespace", func(t *testing.T) {
+		scheduler := NewCacheScheduler(NewCacheSchedulerParams{
+			Service:         &common.Service{},
+			CacheDB:         cacheDB,
+			EngineOps:       nil,
+			Logger:          logger,
+			MetricsRecorder: metrics.NewNoOpMetrics(),
+			Namespace:       "custom_db",
+		})
+
+		require.NotNil(t, scheduler)
+		assert.Equal(t, "custom_db", scheduler.namespace)
+	})
 }
 
 func TestCacheScheduler_GroupBySchedule(t *testing.T) {
-	// Create scheduler for testing utility methods
-	mockApp := &common.App{}
 	logger := log.New(log.WithWriter(nil))
 	cacheDB := &internal.CacheDB{}
-	scheduler := NewCacheScheduler(mockApp, cacheDB, logger, metrics.NewNoOpMetrics())
+	scheduler := NewCacheScheduler(NewCacheSchedulerParams{
+		Service:         &common.Service{},
+		CacheDB:         cacheDB,
+		EngineOps:       nil,
+		Logger:          logger,
+		MetricsRecorder: metrics.NewNoOpMetrics(),
+		Namespace:       "",
+	})
 
 	// Create test directives with different schedules
 	from := int64(1640995200)
@@ -120,7 +118,7 @@ func TestCacheScheduler_GroupBySchedule(t *testing.T) {
 			ID:           "test3",
 			DataProvider: "provider3",
 			StreamID:     "stream3",
-			Schedule:     config.Schedule{CronExpr: "0 0 0 * * *"}, // Daily
+			Schedule:     config.Schedule{CronExpr: "0 0 * * *"}, // Daily
 			TimeRange:    config.TimeRange{From: &from},
 		},
 	}
@@ -136,20 +134,23 @@ func TestCacheScheduler_GroupBySchedule(t *testing.T) {
 	assert.Equal(t, "test1", hourlyGroup[0].ID)
 	assert.Equal(t, "test2", hourlyGroup[1].ID)
 
-	dailyGroup := groups["0 0 0 * * *"]
+	dailyGroup := groups["0 0 * * *"]
 	require.Len(t, dailyGroup, 1, "Daily group should have 1 directive")
 	assert.Equal(t, "test3", dailyGroup[0].ID)
 }
 
 func TestCacheScheduler_ResolutionFlow(t *testing.T) {
-	// Create mock dependencies
-	mockApp := &common.App{
-		Engine: &mockEngine{},
-	}
 	logger := log.New(log.WithWriter(nil))
 	cacheDB := &internal.CacheDB{}
 
-	scheduler := NewCacheScheduler(mockApp, cacheDB, logger, metrics.NewNoOpMetrics())
+	scheduler := NewCacheScheduler(NewCacheSchedulerParams{
+		Service:         &common.Service{},
+		CacheDB:         cacheDB,
+		EngineOps:       nil,
+		Logger:          logger,
+		MetricsRecorder: metrics.NewNoOpMetrics(),
+		Namespace:       "",
+	})
 	scheduler.ctx, scheduler.cancel = context.WithCancel(context.Background())
 	defer scheduler.cancel()
 
@@ -188,4 +189,89 @@ func TestCacheScheduler_ResolutionFlow(t *testing.T) {
 	directives := scheduler.getDirectivesForSchedule("0 0 * * * *")
 	assert.Len(t, directives, 1)
 	assert.Equal(t, "stream1", directives[0].StreamID)
+}
+
+func TestCacheScheduler_ConcurrentExecution(t *testing.T) {
+	logger := log.New(log.WithWriter(nil))
+	
+	// Mock components
+	cacheDB := &internal.CacheDB{}
+	
+	scheduler := NewCacheScheduler(NewCacheSchedulerParams{
+		Service:         &common.Service{},
+		CacheDB:         cacheDB,
+		EngineOps:       nil,
+		Logger:          logger,
+		MetricsRecorder: metrics.NewNoOpMetrics(),
+		Namespace:       "",
+	})
+
+	// Verify gocron scheduler is created
+	assert.NotNil(t, scheduler.cron, "gocron scheduler should be initialized")
+	assert.NotNil(t, scheduler.jobs, "jobs map should be initialized")
+	
+	// Test job timeout configuration
+	assert.Equal(t, 60*time.Minute, scheduler.jobTimeout, "default job timeout should be 60 minutes")
+	
+	// Test concurrent job context management
+	ctx, cancel := context.WithCancel(context.Background())
+	scheduler.ctx = ctx
+	scheduler.cancel = cancel
+	defer cancel()
+	
+	// Create multiple job contexts concurrently
+	jobIDs := []string{"job1", "job2", "job3"}
+	for _, jobID := range jobIDs {
+		jobCtx, _ := scheduler.createJobContext(jobID)
+		assert.NotNil(t, jobCtx, "job context should be created")
+	}
+	
+	// Verify active job count
+	assert.Equal(t, 3, scheduler.getActiveJobCount(), "should have 3 active jobs")
+	
+	// Test concurrent job removal
+	for _, jobID := range jobIDs {
+		scheduler.removeJobContext(jobID)
+	}
+	
+	assert.Equal(t, 0, scheduler.getActiveJobCount(), "should have 0 active jobs after removal")
+}
+
+func TestCacheScheduler_StopWithTimeout(t *testing.T) {
+	logger := log.New(log.WithWriter(nil))
+	cacheDB := &internal.CacheDB{}
+	
+	scheduler := NewCacheScheduler(NewCacheSchedulerParams{
+		Service:         &common.Service{},
+		CacheDB:         cacheDB,
+		EngineOps:       nil,
+		Logger:          logger,
+		MetricsRecorder: metrics.NewNoOpMetrics(),
+		Namespace:       "",
+	})
+	
+	ctx, cancel := context.WithCancel(context.Background())
+	scheduler.ctx = ctx
+	scheduler.cancel = cancel
+	
+	// Create a long-running job context
+	jobCtx, jobCancel := scheduler.createJobContext("long_job")
+	
+	// Start a goroutine that simulates a long-running job
+	go func() {
+		<-jobCtx.Done()
+		// Simulate some cleanup time
+		time.Sleep(50 * time.Millisecond)
+		jobCancel()
+		scheduler.removeJobContext("long_job")
+	}()
+	
+	// Ensure job is registered
+	time.Sleep(10 * time.Millisecond)
+	assert.Equal(t, 1, scheduler.getActiveJobCount(), "should have 1 active job")
+	
+	// Stop should wait for the job to complete
+	err := scheduler.Stop()
+	assert.NoError(t, err, "stop should complete without error")
+	assert.Equal(t, 0, scheduler.getActiveJobCount(), "should have 0 active jobs after stop")
 }

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/trufnetwork/sdk-go/core/util"
+	testutils "github.com/trufnetwork/node/tests/streams/utils"
 )
 
 type (
@@ -15,14 +16,18 @@ type (
 		Visibility      util.VisibilityEnum
 		Samples         int
 		Procedures      []ProcedureEnum
+		CacheEnabled    bool                      // Whether to enable cache for this benchmark case
+		CacheConfig     *testutils.CacheOptions  // Optional custom cache configuration
 	}
 	Result struct {
-		Case          BenchmarkCase
-		MaxDepth      int
-		MemoryUsage   uint64
-		Procedure     ProcedureEnum
-		DataPoints    int
-		CaseDurations []time.Duration
+		Case                   BenchmarkCase
+		MaxDepth              int
+		MemoryUsage           uint64
+		Procedure             ProcedureEnum
+		DataPoints            int
+		CaseDurations         []time.Duration
+		CacheVerified         bool          // Whether cache verification passed
+		CachePerformanceDelta time.Duration // Performance difference: cached - non-cached
 	}
 )
 

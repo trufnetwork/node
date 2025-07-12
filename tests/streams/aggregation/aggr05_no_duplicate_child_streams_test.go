@@ -26,16 +26,18 @@ import (
 
 // TestAGGR05_NoDuplicateChildStreams tests AGGR05: For a single taxonomy version, there can't be duplicated child stream definitions.
 func TestAGGR05_NoDuplicateChildStreams(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	cacheConfig := testutils.TestCache("0x0000000000000000000000000000000000000123", "*")
+
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr05_no_duplicate_child_streams_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
-			testAGGR05_NoDuplicateChildStreams(t),
+			wrapTestWithCacheModes(t, "AGGR05_NoDuplicateChildStreams", testAGGR05_NoDuplicateChildStreams),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache(cacheConfig))
 }
 
-func testAGGR05_NoDuplicateChildStreams(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testAGGR05_NoDuplicateChildStreams(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		deployer, err := util.NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
 		if err != nil {
@@ -57,6 +59,12 @@ func testAGGR05_NoDuplicateChildStreams(t *testing.T) func(ctx context.Context, 
 
 		// Create a stream ID reference (without actually deploying the stream)
 		stream1 := util.GenerateStreamId("stream1")
+
+		// Set up cache (only when useCache is true)
+		if useCache {
+			// Note: This test doesn't actually need cache refresh since it's testing constraint violations
+			// The cache setup is handled by the test framework
+		}
 
 		// Create StreamLocator for the composed stream
 		composedStreamLocator := types.StreamLocator{

@@ -16,16 +16,39 @@ import (
 	"github.com/trufnetwork/sdk-go/core/types"
 )
 
-// GetRecordResult contains the full result of a GetRecord call
-type GetRecordResult struct {
+// GetDataResult contains the full result of a GetRecord call
+type GetDataResult struct {
 	Rows     []ResultRow
 	Logs     []string
-	CacheHit bool      // Whether the result came from cache
-	CachedAt *int64    // Timestamp when data was cached (only set on cache hit)
+	CacheHit bool   // Whether the result came from cache
+	CachedAt *int64 // Timestamp when data was cached (only set on cache hit)
+}
+
+// parseCacheInfoFromLogs parses cache hit information from procedure logs
+// Returns true if any log shows cache_hit=true
+func parseCacheInfoFromLogs(logs []string) (cacheHit bool, cachedAt *int64) {
+	for _, log := range logs {
+		if strings.Contains(log, "cache_hit") {
+			var logData map[string]interface{}
+			if err := json.Unmarshal([]byte(log), &logData); err == nil {
+				if hit, ok := logData["cache_hit"].(bool); ok && hit {
+					cacheHit = true
+					if logData["cached_at"] != nil {
+						if timestamp, ok := logData["cached_at"].(float64); ok {
+							timestampInt := int64(timestamp)
+							cachedAt = &timestampInt
+						}
+					}
+					// Don't break - continue checking other logs in case there are multiple
+				}
+			}
+		}
+	}
+	return
 }
 
 // GetRecordWithLogs executes get_record and returns full result including logs
-func GetRecordWithLogs(ctx context.Context, input GetRecordInput) (*GetRecordResult, error) {
+func GetRecordWithLogs(ctx context.Context, input GetRecordInput) (*GetDataResult, error) {
 	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
 	if err != nil {
 		return nil, errors.Wrap(err, "error in getRecord")
@@ -85,27 +108,9 @@ func GetRecordWithLogs(ctx context.Context, input GetRecordInput) (*GetRecordRes
 	}
 
 	// Parse cache information from logs
-	var cacheHit bool
-	var cachedAt *int64
-	for _, log := range r.Logs {
-		if strings.Contains(log, "cache_hit") {
-			var logData map[string]interface{}
-			if err := json.Unmarshal([]byte(log), &logData); err == nil {
-				if hit, ok := logData["cache_hit"].(bool); ok {
-					cacheHit = hit
-				}
-				if cacheHit && logData["cached_at"] != nil {
-					if timestamp, ok := logData["cached_at"].(float64); ok {
-						timestampInt := int64(timestamp)
-						cachedAt = &timestampInt
-					}
-				}
-			}
-			break
-		}
-	}
+	cacheHit, cachedAt := parseCacheInfoFromLogs(r.Logs)
 
-	return &GetRecordResult{
+	return &GetDataResult{
 		Rows:     processedRows,
 		Logs:     r.Logs,
 		CacheHit: cacheHit,
@@ -132,7 +137,7 @@ func GetRecord(ctx context.Context, input GetRecordInput) ([]ResultRow, error) {
 }
 
 // GetIndexWithLogs executes get_index and returns full result including logs
-func GetIndexWithLogs(ctx context.Context, input GetIndexInput) (*GetRecordResult, error) {
+func GetIndexWithLogs(ctx context.Context, input GetIndexInput) (*GetDataResult, error) {
 	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
 	if err != nil {
 		return nil, errors.Wrap(err, "error in getIndex")
@@ -192,9 +197,14 @@ func GetIndexWithLogs(ctx context.Context, input GetIndexInput) (*GetRecordResul
 		return nil, err
 	}
 
-	return &GetRecordResult{
-		Rows: processedRows,
-		Logs: r.Logs,
+	// Parse cache information from logs
+	cacheHit, cachedAt := parseCacheInfoFromLogs(r.Logs)
+
+	return &GetDataResult{
+		Rows:     processedRows,
+		Logs:     r.Logs,
+		CacheHit: cacheHit,
+		CachedAt: cachedAt,
 	}, nil
 }
 
@@ -207,7 +217,8 @@ func GetIndex(ctx context.Context, input GetIndexInput) ([]ResultRow, error) {
 	return result.Rows, nil
 }
 
-func GetIndexChange(ctx context.Context, input GetIndexChangeInput) ([]ResultRow, error) {
+// GetIndexChangeWithLogs executes get_index_change and returns full result including logs
+func GetIndexChangeWithLogs(ctx context.Context, input GetIndexChangeInput) (*GetDataResult, error) {
 	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
 	if err != nil {
 		return nil, errors.Wrap(err, "error in getIndexChange")
@@ -257,10 +268,32 @@ func GetIndexChange(ctx context.Context, input GetIndexChangeInput) ([]ResultRow
 		return nil, errors.Wrap(r.Error, "error in getIndexChange")
 	}
 
-	return processResultRows(resultRows)
+	processedRows, err := processResultRows(resultRows)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse cache information from logs
+	cacheHit, cachedAt := parseCacheInfoFromLogs(r.Logs)
+
+	return &GetDataResult{
+		Rows:     processedRows,
+		Logs:     r.Logs,
+		CacheHit: cacheHit,
+		CachedAt: cachedAt,
+	}, nil
 }
 
-func GetFirstRecord(ctx context.Context, input GetFirstRecordInput) ([]ResultRow, error) {
+func GetIndexChange(ctx context.Context, input GetIndexChangeInput) ([]ResultRow, error) {
+	result, err := GetIndexChangeWithLogs(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	return result.Rows, nil
+}
+
+// GetFirstRecordWithLogs executes get_first_record and returns full result including logs
+func GetFirstRecordWithLogs(ctx context.Context, input GetFirstRecordInput) (*GetDataResult, error) {
 	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
 	if err != nil {
 		return nil, errors.Wrap(err, "error in getFirstRecord")
@@ -307,7 +340,28 @@ func GetFirstRecord(ctx context.Context, input GetFirstRecordInput) ([]ResultRow
 		return nil, errors.Wrap(r.Error, "error in getFirstRecord")
 	}
 
-	return processResultRows(resultRows)
+	processedRows, err := processResultRows(resultRows)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse cache information from logs
+	cacheHit, cachedAt := parseCacheInfoFromLogs(r.Logs)
+
+	return &GetDataResult{
+		Rows:     processedRows,
+		Logs:     r.Logs,
+		CacheHit: cacheHit,
+		CachedAt: cachedAt,
+	}, nil
+}
+
+func GetFirstRecord(ctx context.Context, input GetFirstRecordInput) ([]ResultRow, error) {
+	result, err := GetFirstRecordWithLogs(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	return result.Rows, nil
 }
 
 func SetMetadata(ctx context.Context, input SetMetadataInput) error {

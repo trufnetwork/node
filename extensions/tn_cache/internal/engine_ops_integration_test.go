@@ -28,15 +28,14 @@ func generateTestStreamID(prefix string) util.StreamId {
 	return util.GenerateStreamId(fmt.Sprintf("%s_%d", prefix, timestamp))
 }
 
-
 func TestEngineOperations_Integration(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "engine_ops_integration_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testEngineOperationsIntegration(t),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache(testutils.NewCacheOptions().WithEnabled().WithMaxBlockAge(-1*time.Second)))
 }
 
 func testEngineOperationsIntegration(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
@@ -58,8 +57,8 @@ func testEngineOperationsIntegration(t *testing.T) func(ctx context.Context, pla
 
 			// Setup first stream with inline markdown
 			require.NoError(t, setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
-				Platform:     txPlatform,
-				StreamId:     stream1ID,
+				Platform: txPlatform,
+				StreamId: stream1ID,
 				MarkdownData: `
 				| event_time | val_a_1 | val_a_2 |
 				|------------|---------|---------|
@@ -67,20 +66,20 @@ func testEngineOperationsIntegration(t *testing.T) func(ctx context.Context, pla
 				| 200        | 15      | 25      |
 				| 300        | 20      | 30      |
 				`,
-				Height:       1,
+				Height: 1,
 			}))
-			
+
 			// Setup second stream with different structure
 			require.NoError(t, setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
-				Platform:     txPlatform,
-				StreamId:     stream2ID,
+				Platform: txPlatform,
+				StreamId: stream2ID,
 				MarkdownData: `
 				| event_time | val_b_1 | val_b_2 | val_b_3 |
 				|------------|---------|---------|---------|
 				| 100        | 100     | 200     | 300     |
 				| 200        | 150     | 250     | 350     |
 				`,
-				Height:       1,
+				Height: 1,
 			}))
 
 			// Test ListComposedStreams
@@ -107,17 +106,17 @@ func testEngineOperationsIntegration(t *testing.T) func(ctx context.Context, pla
 
 			// Create a composed stream with known structure
 			streamID := generateTestStreamID("test_composed_cat")
-			
+
 			require.NoError(t, setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
-				Platform:     txPlatform,
-				StreamId:     streamID,
+				Platform: txPlatform,
+				StreamId: streamID,
 				MarkdownData: `
 				| event_time | cat_val_1 | cat_val_2 |
 				|------------|-----------|-----------|
 				| 100        | 10        | 20        |
 				| 200        | 15        | 25        |
 				`,
-				Height:       1,
+				Height: 1,
 			}))
 
 			// Get child streams for the composed stream
@@ -150,10 +149,10 @@ func testEngineOperationsIntegration(t *testing.T) func(ctx context.Context, pla
 
 			// Create composed stream with test data
 			streamID := generateTestStreamID("test_composed_rec")
-			
+
 			require.NoError(t, setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
-				Platform:     txPlatform,
-				StreamId:     streamID,
+				Platform: txPlatform,
+				StreamId: streamID,
 				MarkdownData: `
 				| event_time | rec_val_1 | rec_val_2 |
 				|------------|-----------|-----------|
@@ -161,7 +160,7 @@ func testEngineOperationsIntegration(t *testing.T) func(ctx context.Context, pla
 				| 200        | 15        | 25        |
 				| 300        | 20        | 30        |
 				`,
-				Height:       1,
+				Height: 1,
 			}))
 
 			// Test fetching all records
@@ -209,17 +208,17 @@ func testEngineOperationsIntegration(t *testing.T) func(ctx context.Context, pla
 
 			// Create composed stream with 3 columns
 			streamID := generateTestStreamID("test_composed_3ch")
-			
+
 			require.NoError(t, setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
-				Platform:     txPlatform,
-				StreamId:     streamID,
+				Platform: txPlatform,
+				StreamId: streamID,
 				MarkdownData: `
 				| event_time | ch3_val_1 | ch3_val_2 | ch3_val_3 |
 				|------------|-----------|-----------|-----------|
 				| 100        | 100       | 200       | 300       |
 				| 200        | 150       | 250       | 350       |
 				`,
-				Height:       1,
+				Height: 1,
 			}))
 
 			fromTime := int64(100)
@@ -265,7 +264,7 @@ func testEngineOperationsIntegration(t *testing.T) func(ctx context.Context, pla
 						return engineOps.GetRecordComposed(ctx, deployer.Address(), "non_existent_stream", nil, nil)
 					},
 					isEmpty: func(v interface{}) bool {
-						return len(v.([]internal.ComposedRecord)) == 0
+						return len(v.([]internal.EventRecord)) == 0
 					},
 				},
 				{
@@ -348,10 +347,10 @@ func testEngineOperationsRealTime(t *testing.T) func(ctx context.Context, platfo
 			// Create stream with recent timestamps
 			currentTime := time.Now().Unix()
 			streamID := generateTestStreamID("realtime_composed")
-			
+
 			require.NoError(t, setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
-				Platform:     txPlatform,
-				StreamId:     streamID,
+				Platform: txPlatform,
+				StreamId: streamID,
 				MarkdownData: fmt.Sprintf(`
 				| event_time | rt_val_1 | rt_val_2 |
 				|------------|----------|----------|
@@ -359,7 +358,7 @@ func testEngineOperationsRealTime(t *testing.T) func(ctx context.Context, platfo
 				| %d         | 150      | 250      |
 				| %d         | 200      | 300      |
 				`, currentTime-300, currentTime-200, currentTime-100),
-				Height:       1,
+				Height: 1,
 			}))
 
 			// Query recent data
@@ -394,16 +393,16 @@ func testEngineOperationsRealTime(t *testing.T) func(ctx context.Context, platfo
 			// Create stream with current timestamp
 			currentTime := time.Now().Unix()
 			streamID := generateTestStreamID("future_test")
-			
+
 			require.NoError(t, setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
-				Platform:     txPlatform,
-				StreamId:     streamID,
+				Platform: txPlatform,
+				StreamId: streamID,
 				MarkdownData: fmt.Sprintf(`
 				| event_time | ft_val_1 | ft_val_2 |
 				|------------|----------|----------|
 				| %d         | 100      | 200      |
 				`, currentTime-100),
-				Height:       1,
+				Height: 1,
 			}))
 
 			// Query with future time range

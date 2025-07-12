@@ -1,4 +1,4 @@
-package tn_cache
+package utilities
 
 import (
 	"context"
@@ -26,23 +26,23 @@ import (
 // 1. The cache extension only queries data, never modifies it
 // 2. Using regular transactions simplifies the interface implementation
 // 3. PostgreSQL will optimize read-only queries automatically
-type poolDBWrapper struct {
-	pool *pgxpool.Pool
+type PoolDBWrapper struct {
+	Pool *pgxpool.Pool
 }
 
-var _ sql.DB = &poolDBWrapper{}
-var _ sql.AccessModer = &poolDBWrapper{}
-var _ sql.QueryScanner = &poolDBWrapper{}
+var _ sql.DB = &PoolDBWrapper{}
+var _ sql.AccessModer = &PoolDBWrapper{}
+var _ sql.QueryScanner = &PoolDBWrapper{}
 
-// newPoolDBWrapper creates a new wrapper around the pgxpool
-func newPoolDBWrapper(pool *pgxpool.Pool) sql.DB {
-	return &poolDBWrapper{pool: pool}
+// NewPoolDBWrapper creates a new wrapper around the pgxpool
+func NewPoolDBWrapper(pool *pgxpool.Pool) sql.DB {
+	return &PoolDBWrapper{Pool: pool}
 }
 
 // Execute implements sql.Executor
-func (w *poolDBWrapper) Execute(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
+func (w *PoolDBWrapper) Execute(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
 	// Acquire a connection to get the type map
-	conn, err := w.pool.Acquire(ctx)
+	conn, err := w.Pool.Acquire(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("acquire connection: %w", err)
 	}
@@ -98,8 +98,8 @@ func (w *poolDBWrapper) Execute(ctx context.Context, stmt string, args ...any) (
 }
 
 // BeginTx implements sql.TxMaker
-func (w *poolDBWrapper) BeginTx(ctx context.Context) (sql.Tx, error) {
-	pgxTx, err := w.pool.Begin(ctx)
+func (w *PoolDBWrapper) BeginTx(ctx context.Context) (sql.Tx, error) {
+	pgxTx, err := w.Pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin transaction: %w", err)
 	}
@@ -213,15 +213,15 @@ func (t *poolTxWrapper) QueryScanFn(ctx context.Context, stmt string, scans []an
 }
 
 // AccessMode implements sql.AccessModer
-func (w *poolDBWrapper) AccessMode() sql.AccessMode {
+func (w *PoolDBWrapper) AccessMode() sql.AccessMode {
 	return sql.ReadOnly
 }
 
 // QueryScanFn implements sql.QueryScanner
 // This is required for Engine.Call to work with row-by-row callbacks
-func (w *poolDBWrapper) QueryScanFn(ctx context.Context, stmt string, scans []any, fn func() error, args ...any) error {
+func (w *PoolDBWrapper) QueryScanFn(ctx context.Context, stmt string, scans []any, fn func() error, args ...any) error {
 	// Acquire a connection from the pool
-	conn, err := w.pool.Acquire(ctx)
+	conn, err := w.Pool.Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("acquire connection: %w", err)
 	}
@@ -254,4 +254,9 @@ func (w *poolDBWrapper) QueryScanFn(ctx context.Context, stmt string, scans []an
 // AccessMode implements sql.AccessModer
 func (t *poolTxWrapper) AccessMode() sql.AccessMode {
 	return sql.ReadOnly
+}
+
+// Close closes the underlying connection pool
+func (w *PoolDBWrapper) Close() {
+	w.Pool.Close()
 }

@@ -6,7 +6,9 @@ import (
 	"testing"
 
 	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	"github.com/trufnetwork/node/extensions/tn_cache"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
@@ -35,16 +37,18 @@ import (
 
 // TestAGGR08_WeightChangeEventPoints tests that weight changes create event points in the composed stream
 func TestAGGR08_WeightChangeEventPoints(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	cacheConfig := testutils.TestCache("0x0000000000000000000000000000000000000123", "*")
+
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr08_weight_change_event_points_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
-			testAGGR08_WeightChangeEventPoints(t),
+			wrapTestWithCacheModes(t, "AGGR08_WeightChangeEventPoints", testAGGR08_WeightChangeEventPoints),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache(cacheConfig))
 }
 
-func testAGGR08_WeightChangeEventPoints(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testAGGR08_WeightChangeEventPoints(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Create a composed stream with 2 child primitive streams
 		composedStreamId := util.GenerateStreamId("weight_events_composed")
@@ -62,6 +66,7 @@ func testAGGR08_WeightChangeEventPoints(t *testing.T) func(ctx context.Context, 
 			MarkdownData: `
 			| event_time | primitive_1 | primitive_2 |
 			|------------|-------------|-------------|
+
 			| 1          | 10          | 100         |
 			| 10         | 20          | 200         |
 			`,
@@ -111,20 +116,35 @@ func testAGGR08_WeightChangeEventPoints(t *testing.T) func(ctx context.Context, 
 			return errors.Wrap(err, "error setting updated taxonomy")
 		}
 
+		// Set up cache (only when useCache is true)
+		if useCache {
+			_, err := tn_cache.GetTestHelper().RefreshAllStreamsSync(ctx)
+			if err != nil {
+				return errors.Wrap(err, "error refreshing cache")
+			}
+		}
+
 		// Test Section 1: Verify weight change creates data point on the day of change
 		// and query the entire range to verify all event points
 		// 1. Day 1: Original data with original weights (10*0.3 + 100*0.7) = 73
 		// 2. Day 5: Weight change creates an event point (10*0.7 + 100*0.3) = 37
 		// 3. Day 10: New data with new weights (20*0.7 + 200*0.3) = 74
-		query1result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
-			Platform:      platform,
-			StreamLocator: composedStreamLocator,
-			FromTime:      &day1,
-			ToTime:        &day10,
-			Height:        10,
+		query1result, err := procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
+			Platform: platform,
+			StreamLocator: types.StreamLocator{
+				StreamId:     composedStreamId,
+				DataProvider: deployer,
+			},
+			FromTime: &day1,
+			ToTime:   &day10,
+			Height:   10,
+			UseCache: &useCache,
 		})
 		if err != nil {
 			return errors.Wrap(err, "error getting record for query 1")
+		}
+		if useCache {
+			assert.True(t, query1result.CacheHit, "Expected cache hit for query 1")
 		}
 
 		// Verify query 1 result (weight change day)
@@ -136,7 +156,7 @@ func testAGGR08_WeightChangeEventPoints(t *testing.T) func(ctx context.Context, 
 		| 10         | 74    |
 		`
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
-			Actual:   query1result,
+			Actual:   query1result.Rows,
 			Expected: query1expected,
 			ColumnTransformers: map[string]func(string) string{
 				"value": addDecimalZeros(18),
@@ -146,15 +166,22 @@ func testAGGR08_WeightChangeEventPoints(t *testing.T) func(ctx context.Context, 
 		// Test Section 2: Verify that querying from a day with no data (day 6)
 		// also includes the latest data point before that day (day 5)
 		// This demonstrates the gap filling behavior with the weight change point
-		query2result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
-			Platform:      platform,
-			StreamLocator: composedStreamLocator,
-			FromTime:      &day6,
-			ToTime:        &day10,
-			Height:        10,
+		query2result, err := procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
+			Platform: platform,
+			StreamLocator: types.StreamLocator{
+				StreamId:     composedStreamId,
+				DataProvider: deployer,
+			},
+			FromTime: &day6,
+			ToTime:   &day10,
+			Height:   10,
+			UseCache: &useCache,
 		})
 		if err != nil {
 			return errors.Wrap(err, "error getting record for query 2")
+		}
+		if useCache {
+			assert.True(t, query2result.CacheHit, "Expected cache hit for query 2")
 		}
 
 		// Verify result includes day 5 data point (which is before the query range)
@@ -166,7 +193,7 @@ func testAGGR08_WeightChangeEventPoints(t *testing.T) func(ctx context.Context, 
 		| 10         | 74    |
 		`
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
-			Actual:   query2result,
+			Actual:   query2result.Rows,
 			Expected: day6expected,
 			ColumnTransformers: map[string]func(string) string{
 				"value": addDecimalZeros(18),

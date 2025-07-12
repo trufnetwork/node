@@ -40,3 +40,9 @@ func (n *NoOpMetrics) RecordCacheSize(ctx context.Context, dataProvider, streamI
 func (n *NoOpMetrics) RecordResolutionDuration(ctx context.Context, duration time.Duration, streamCount int) {}
 
 func (n *NoOpMetrics) RecordResolutionError(ctx context.Context, errType string) {}
+
+func (n *NoOpMetrics) RecordResolutionStreamDiscovered(ctx context.Context, dataProvider, streamID string) {}
+
+func (n *NoOpMetrics) RecordResolutionStreamRemoved(ctx context.Context, dataProvider, streamID string) {}
+
+func (n *NoOpMetrics) RecordRefreshSkipped(ctx context.Context, dataProvider, streamID, reason string) {}

@@ -26,9 +26,8 @@ func ValidateCronSchedule(schedule string) error {
 		return fmt.Errorf("cron schedule cannot be empty")
 	}
 
-	// Parse using cron parser with seconds (6 fields: second minute hour day month weekday)
-	// This matches the scheduler's cron.WithSeconds() configuration
-	parser := cron.NewParser(cron.Second | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+	// Use 5-field parser to match scheduler's expectation (no seconds)
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 	_, err := parser.Parse(schedule)
 	if err != nil {
 		return fmt.Errorf("invalid cron schedule '%s': %w", schedule, err)
@@ -43,7 +42,7 @@ func ParseCronSchedule(schedule string) (cron.Schedule, error) {
 		return nil, err
 	}
 
-	parser := cron.NewParser(cron.Second | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 	parsed, err := parser.Parse(schedule)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse validated cron schedule '%s': %w", schedule, err)

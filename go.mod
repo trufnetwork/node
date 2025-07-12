@@ -9,8 +9,9 @@ require (
 	github.com/cockroachdb/apd/v3 v3.2.1
 	github.com/docker/docker v28.0.1+incompatible
 	github.com/fbiville/markdown-table-formatter v0.3.0
+	github.com/go-co-op/gocron v1.37.0
 	github.com/golang-sql/civil v0.0.0-20220223132316-b832511892a9
-	github.com/pashagolub/pgxmock/v4 v4.8.0
+	github.com/hashicorp/go-retryablehttp v0.7.8
 	github.com/pkg/errors v0.9.1
 	github.com/samber/lo v1.47.0
 	github.com/spf13/cobra v1.9.1
@@ -29,7 +30,9 @@ require (
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.22.0 // indirect
+	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
+	go.uber.org/atomic v1.11.0 // indirect
 )
 
 replace (

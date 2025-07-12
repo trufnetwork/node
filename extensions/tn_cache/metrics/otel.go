@@ -29,8 +29,13 @@ type OTELMetrics struct {
 	cacheEventCount   metric.Int64Gauge
 
 	// Resolution metrics
-	resolutionDuration metric.Float64Histogram
-	resolutionErrors   metric.Int64Counter
+	resolutionDuration         metric.Float64Histogram
+	resolutionErrors           metric.Int64Counter
+	resolutionStreamsDiscovered metric.Int64Counter
+	resolutionStreamsRemoved   metric.Int64Counter
+
+	// Refresh skip metrics
+	refreshSkipped metric.Int64Counter
 
 	logger log.Logger
 }
@@ -136,6 +141,27 @@ func NewOTELMetrics(meter metric.Meter, logger log.Logger) (*OTELMetrics, error)
 		return nil, err
 	}
 
+	m.resolutionStreamsDiscovered, err = meter.Int64Counter("tn_cache.resolution.streams_discovered",
+		metric.WithDescription("Number of streams discovered during resolution"),
+		metric.WithUnit("1"))
+	if err != nil {
+		return nil, err
+	}
+
+	m.resolutionStreamsRemoved, err = meter.Int64Counter("tn_cache.resolution.streams_removed",
+		metric.WithDescription("Number of streams removed during resolution"),
+		metric.WithUnit("1"))
+	if err != nil {
+		return nil, err
+	}
+
+	m.refreshSkipped, err = meter.Int64Counter("tn_cache.refresh.skipped",
+		metric.WithDescription("Number of refresh operations skipped"),
+		metric.WithUnit("1"))
+	if err != nil {
+		return nil, err
+	}
+
 	return m, nil
 }
 
@@ -233,5 +259,30 @@ func (m *OTELMetrics) RecordResolutionError(ctx context.Context, errType string)
 	m.resolutionErrors.Add(ctx, 1,
 		metric.WithAttributes(
 			attribute.String("error_type", errType),
+		))
+}
+
+func (m *OTELMetrics) RecordResolutionStreamDiscovered(ctx context.Context, dataProvider, streamID string) {
+	m.resolutionStreamsDiscovered.Add(ctx, 1,
+		metric.WithAttributes(
+			attribute.String("data_provider", dataProvider),
+			attribute.String("stream_id", streamID),
+		))
+}
+
+func (m *OTELMetrics) RecordResolutionStreamRemoved(ctx context.Context, dataProvider, streamID string) {
+	m.resolutionStreamsRemoved.Add(ctx, 1,
+		metric.WithAttributes(
+			attribute.String("data_provider", dataProvider),
+			attribute.String("stream_id", streamID),
+		))
+}
+
+func (m *OTELMetrics) RecordRefreshSkipped(ctx context.Context, dataProvider, streamID, reason string) {
+	m.refreshSkipped.Add(ctx, 1,
+		metric.WithAttributes(
+			attribute.String("data_provider", dataProvider),
+			attribute.String("stream_id", streamID),
+			attribute.String("reason", reason),
 		))
 }

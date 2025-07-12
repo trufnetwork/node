@@ -314,6 +314,7 @@ func testIndexCacheHits(ctx context.Context, t *testing.T, tnClient *tnclient.Cl
 			int64(1609459400),       // to_time
 			nil,                     // frozen_at
 			int64(1609459200),       // base_time
+			true,                    // use_cache
 		}
 
 		// Call get_index - it will internally use cache if available
@@ -403,6 +404,7 @@ func testIndexCacheMisses(ctx context.Context, t *testing.T, tnClient *tnclient.
 			int64(1609459100),       // to_time (before cached range)
 			nil,                     // frozen_at
 			int64(1609459000),       // base_time
+			true,                    // use_cache
 		}
 
 		// This should generate a cache miss because the time range is not cached
@@ -425,6 +427,7 @@ func testIndexCacheMisses(ctx context.Context, t *testing.T, tnClient *tnclient.
 			int64(1609459400),       // to_time
 			nil,                     // frozen_at
 			int64(1609459200),       // base_time
+			true,                    // use_cache
 		}
 
 		// This will generate cache misses because the stream is not configured for caching

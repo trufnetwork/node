@@ -13,11 +13,13 @@ import (
 	"github.com/trufnetwork/kwil-db/node/types/sql"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	kwilconfig "github.com/trufnetwork/kwil-db/config"
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal/constants"
 	"github.com/trufnetwork/node/extensions/tn_cache/metrics"
+	"github.com/trufnetwork/node/extensions/tn_cache/scheduler"
+	"github.com/trufnetwork/node/extensions/tn_cache/syncschecker"
+	"github.com/trufnetwork/node/extensions/tn_cache/utilities"
 )
 
 // Constants
@@ -28,40 +30,6 @@ const (
 var TNNumericType = &types.DataType{
 	Name:     types.NumericStr,
 	Metadata: [2]uint16{36, 18}, // precision, scale
-}
-
-// Global variables removed - now using Extension struct
-/*
-var (
-	logger          log.Logger
-	cacheDB         *internal.CacheDB
-	scheduler       *CacheScheduler
-	syncChecker     *SyncChecker // Monitors node sync status
-	metricsRecorder metrics.MetricsRecorder
-	cachePool       *pgxpool.Pool // Independent connection pool for cache operations
-	isEnabled       bool          // Track if extension is enabled
-)
-*/
-
-// getWrappedCacheDB returns a sql.DB interface wrapping the independent connection pool
-// This is used instead of app.DB to avoid "tx is closed" errors
-func getWrappedCacheDB() sql.DB {
-	// Check for test injection first
-	if db := getTestDB(); db != nil {
-		return db
-	}
-	ext := GetExtension()
-	if ext != nil && ext.CachePool() != nil {
-		// Type assert to *pgxpool.Pool for production use
-		if pool, ok := ext.CachePool().(*pgxpool.Pool); ok {
-			return newPoolDBWrapper(pool)
-		}
-	}
-	// This should never happen after initialization
-	if ext != nil && ext.Logger() != nil {
-		ext.Logger().Error("cache pool is nil, extension not properly initialized")
-	}
-	return nil
 }
 
 // getExtensionNames returns the names of configured extensions for debugging
@@ -81,11 +49,10 @@ func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
 	// Check for test configuration override first
 	var extConfig map[string]string
 	var ok bool
-
-	if testConfig := getTestConfig(); testConfig != nil {
-		extConfig = testConfig
+	if testCfg := getTestConfig(); testCfg != nil {
+		extConfig = testCfg
+		// Using test configuration override
 		ok = true
-		tempLogger.Debug("using test configuration override")
 	} else {
 		// Get extension configuration from the node config
 		extConfig, ok = service.LocalConfig.Extensions[ExtensionName]
@@ -93,9 +60,7 @@ func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
 
 	if !ok {
 		// Extension is not configured, return default disabled config
-		tempLogger.Debug("extension not configured, disabling",
-			"extension_name", ExtensionName,
-			"available_extensions", getExtensionNames(service.LocalConfig.Extensions))
+		// Extension not configured, returning disabled config
 		return &config.ProcessedConfig{
 			Enabled:    false,
 			Directives: []config.CacheDirective{},
@@ -104,24 +69,33 @@ func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
 	}
 
 	// Use the new configuration loader to load and process the configuration
-	loader := config.NewLoader()
+	loader := config.NewLoader(tempLogger)
 	processedConfig, err := loader.LoadAndProcessFromMap(context.Background(), extConfig)
 	if err != nil {
 		tempLogger.Error("failed to process configuration", "error", err)
 		return nil, fmt.Errorf("configuration processing failed: %w", err)
 	}
 
-	tempLogger.Info("configuration processed successfully",
-		"enabled", processedConfig.Enabled,
-		"directives_count", len(processedConfig.Directives),
-		"sources", processedConfig.Sources)
+	// Configuration processed successfully
 
 	return processedConfig, nil
 }
 
-func init() {
-	// Register precompile using initializer to receive metadata from test framework
-	err := precompiles.RegisterInitializer(constants.PrecompileName, initializeExtension)
+// safeGetExtension returns the extension instance with proper error handling
+func safeGetExtension() (*Extension, error) {
+	ext := GetExtension()
+	if ext == nil {
+		return nil, fmt.Errorf("tn_cache extension not initialized")
+	}
+	if !ext.IsEnabled() {
+		return nil, fmt.Errorf("tn_cache extension is disabled")
+	}
+	return ext, nil
+}
+
+func InitializeExtension() {
+	// Register precompile using initializer to receive metadata from test framework. This should happen before the engine is ready.
+	err := precompiles.RegisterInitializer(constants.PrecompileName, InitializeCachePrecompile)
 	if err != nil {
 		panic(fmt.Sprintf("failed to register ext_tn_cache initializer: %v", err))
 	}
@@ -131,21 +105,18 @@ func init() {
 	if err != nil {
 		panic(fmt.Sprintf("failed to register engine ready hook: %v", err))
 	}
-
-	// Register end block hook
-	err = hooks.RegisterEndBlockHook(ExtensionName+"_end_block", endBlockHook)
-	if err != nil {
-		panic(fmt.Sprintf("failed to register end block hook: %v", err))
-	}
 }
 
-// initializeExtension is called by the framework with metadata during initialization
-func initializeExtension(ctx context.Context, service *common.Service, db sql.DB, alias string, metadata map[string]any) (precompiles.Precompile, error) {
-	// Initialize extension instance if not already done
-	if GetExtension() == nil {
-		SetExtension(&Extension{
+// InitializeCachePrecompile is called by the framework with metadata during initialization
+func InitializeCachePrecompile(ctx context.Context, service *common.Service, db sql.DB, alias string, metadata map[string]any) (precompiles.Precompile, error) {
+	// Get the extension instance (lazy initialization ensures it exists)
+	ext := GetExtension()
+
+	if ext == nil {
+		ext = &Extension{
 			logger: service.Logger.New("tn_cache"),
-		})
+		}
+		SetExtension(ext)
 	}
 
 	// Note: We intentionally ignore metadata here because tn_cache is a node-level
@@ -243,11 +214,27 @@ func initializeExtension(ctx context.Context, service *common.Service, db sql.DB
 				},
 				Handler: HandleGetCachedFirstAfter,
 			},
+			{
+				Name:            "get_cached_index_data",
+				AccessModifiers: []precompiles.Modifier{precompiles.PUBLIC, precompiles.VIEW},
+				Parameters: []precompiles.PrecompileValue{
+					precompiles.NewPrecompileValue("data_provider", types.TextType, false),
+					precompiles.NewPrecompileValue("stream_id", types.TextType, false),
+					precompiles.NewPrecompileValue("from_time", types.IntType, true), // nullable like standard queries
+					precompiles.NewPrecompileValue("to_time", types.IntType, true),
+				},
+				Returns: &precompiles.MethodReturn{
+					IsTable: true,
+					Fields: []precompiles.PrecompileValue{
+						precompiles.NewPrecompileValue("event_time", types.IntType, false),
+						precompiles.NewPrecompileValue("value", TNNumericType, false),
+					},
+				},
+				Handler: HandleGetCachedIndexData,
+			},
 		},
 	}, nil
 }
-
-// All helper functions have been moved to handlers.go where they are used
 
 // engineReadyHook is called when the engine is ready
 // This is where we initialize our extension
@@ -260,250 +247,109 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	// Get the extension instance
 	ext := GetExtension()
 	if ext == nil {
-		// In some environments (like tests), initializeExtension might not be called
-		// Create a minimal extension instance
-		logger := app.Service.Logger.New("tn_cache")
-		SetExtension(&Extension{
-			logger: logger,
-		})
-		ext = GetExtension()
+		app.Service.Logger.Info("tn_cache extension not initialized, skipping engine ready hook")
+		return nil
 	}
 
+	ext, err = SetupCacheExtension(ctx, processedConfig, app.Engine, app.Service)
+	if err != nil {
+		return fmt.Errorf("failed to setup cache extension: %w", err)
+	}
+
+	SetExtension(ext)
+
+	return nil
+}
+
+func SetupCacheExtension(ctx context.Context, config *config.ProcessedConfig, engine common.Engine, service *common.Service) (*Extension, error) {
 	// Initialize metrics recorder (with auto-detection)
-	metricsRecorder := metrics.NewMetricsRecorder(ext.logger)
+	metricsRecorder := metrics.NewMetricsRecorder(service.Logger)
 
-	// Update the extension with enabled state
-	ext.isEnabled = processedConfig.Enabled
-
-	// If disabled, ensure schema is cleaned up
-	if !processedConfig.Enabled {
-		ext.logger.Info("extension is disabled")
-		// In test environments, we might not have proper DB config
-		// Try to create a pool for cleanup, but don't fail if we can't
-		tempPool, err := createIndependentConnectionPool(ctx, app.Service, ext.logger)
-		if err != nil {
-			// If we can't create a pool, we can't clean up - just log and return
-			ext.logger.Debug("skipping schema cleanup - no database connection", "error", err)
-			return nil
-		}
-		defer tempPool.Close()
-
-		// Only try to clean up if we have a valid pool
-		ext.logger.Info("cleaning up any existing schema")
-		return cleanupExtensionSchema(ctx, tempPool, ext.logger)
-	}
-
-	ext.logger.Info("initializing extension",
-		"enabled", processedConfig.Enabled,
-		"directives_count", len(processedConfig.Directives),
-		"sources", processedConfig.Sources)
-
-	// Check if test has injected a DB - if so, skip pool creation
-	if pool := getTestDBPool(); pool != nil {
-		ext.logger.Info("using test-injected database connection")
-		ext.cacheDB = internal.NewCacheDB(pool, ext.logger)
-		// Skip pool creation and database ready check
+	// Check for test overrides first
+	var db sql.DB
+	if testDB := getTestDB(); testDB != nil {
+		db = testDB
+		service.Logger.Info("using injected test database connection")
 	} else {
 		// Create independent connection pool for cache operations
 		// This prevents "tx is closed" errors caused by kwil-db's connection lifecycle
-		pool, err := createIndependentConnectionPool(ctx, app.Service, ext.logger)
+		pool, err := createIndependentConnectionPool(ctx, service, service.Logger)
 		if err != nil {
-			return fmt.Errorf("failed to create connection pool: %w", err)
+			return nil, fmt.Errorf("failed to create connection pool: %w", err)
 		}
-		ext.cachePool = pool
-
-		// Create the CacheDB instance with our independent pool
-		ext.cacheDB = internal.NewCacheDB(pool, ext.logger)
-		
-		// Wait for database to be ready before proceeding
-		if err := waitForDatabaseReady(ctx, pool, 30*time.Second); err != nil {
-			return fmt.Errorf("database not ready: %w", err)
-		}
+		db = utilities.NewPoolDBWrapper(pool)
 	}
 
-	// For engine calls, we'll create transactions as needed rather than
-	// trying to wrap the pool. This avoids the "cannot query with scan values" error
-
-	// Initialize extension resources using the appropriate connection
-	if getTestDB() != nil {
-		// For tests, assume schema is already set up by test framework
-		ext.logger.Info("skipping schema setup in test mode")
-	} else {
-		// Initialize extension resources using the pool for schema setup
-		if pool, ok := ext.cachePool.(*pgxpool.Pool); ok {
-			err = setupCacheSchema(ctx, pool, ext.logger)
-			if err != nil {
-				pool.Close()
-				return fmt.Errorf("failed to setup cache schema: %w", err)
-			}
-		} else {
-			return fmt.Errorf("cache pool is not a *pgxpool.Pool")
-		}
+	// If disabled, ensure schema is cleaned up
+	if !config.Enabled {
+		service.Logger.Info("extension is disabled")
+		service.Logger.Info("cleaning up any existing schema")
+		cacheDB := internal.NewCacheDB(db, service.Logger)
+		return NewExtension(service.Logger, cacheDB, nil, nil, metricsRecorder, nil, db, config.Enabled), cacheDB.CleanupExtensionSchema(ctx)
 	}
 
-	// Initialize scheduler if we have directives
-	if len(processedConfig.Directives) > 0 {
-		ext.scheduler = NewCacheScheduler(app, ext.cacheDB, ext.logger, metricsRecorder)
+	service.Logger.Info("initializing extension",
+		"enabled", config.Enabled,
+		"directives_count", len(config.Directives),
+		"sources", config.Sources)
 
-		// Initialize sync checker for sync-aware caching
-		ext.syncChecker = NewSyncChecker(ext.logger, processedConfig.MaxBlockAge)
-		ext.syncChecker.Start(ctx)
-		ext.scheduler.SetSyncChecker(ext.syncChecker)
-
-		if processedConfig.MaxBlockAge > 0 {
-			ext.logger.Info("sync-aware caching enabled", "max_block_age", processedConfig.MaxBlockAge)
-		}
-
-		if err := ext.scheduler.Start(ctx, processedConfig); err != nil {
-			return fmt.Errorf("failed to start scheduler: %w", err)
-		}
-
-		// Record initial gauge metrics
-		metricsRecorder.RecordStreamConfigured(ctx, len(processedConfig.Directives))
-
-		// Query actual active streams on startup (cache persists across restarts)
-		ext.scheduler.updateGaugeMetrics(ctx)
-
-		// Start a goroutine to handle graceful shutdown when context is cancelled
-		go func() {
-			<-ctx.Done()
-			ext.logger.Info("context cancelled, stopping extension")
-
-			// Stop sync checker first
-			if ext.syncChecker != nil {
-				ext.syncChecker.Stop()
-				ext.logger.Info("stopped sync checker")
-			}
-
-			// Stop scheduler
-			if ext.scheduler != nil {
-				if err := ext.scheduler.Stop(); err != nil {
-					ext.logger.Error("error stopping scheduler", "error", err)
-				}
-			}
-
-			// Close connection pool
-			if ext.cachePool != nil {
-				if pool, ok := ext.cachePool.(*pgxpool.Pool); ok {
-					pool.Close()
-					ext.logger.Info("closed cache connection pool")
-				}
-			}
-		}()
+	// if we have no directives, we can skip the rest of the initialization
+	if len(config.Directives) == 0 {
+		service.Logger.Warn("no directives found, skipping extension initialization")
+		return NewExtension(service.Logger, nil, nil, nil, metricsRecorder, nil, db, config.Enabled), nil
 	}
 
-	// Update the extension with all initialized components
-	ext.metricsRecorder = metricsRecorder
+	// Create the CacheDB instance
+	cacheDB := internal.NewCacheDB(db, service.Logger)
 
-	return nil
-}
+	// Wait for database to be ready before proceeding
+	if err := cacheDB.WaitForDatabaseReady(ctx, 30*time.Second); err != nil {
+		return nil, fmt.Errorf("database not ready: %w", err)
+	}
 
-// endBlockHook is called at the end of each block
-func endBlockHook(ctx context.Context, app *common.App, block *common.BlockContext) error {
-	// This hook can be used for block-based processing or metrics collection
-	// For now, we're not doing anything at end of block
-	return nil
-}
-
-// setupCacheSchema creates the necessary database schema for the cache
-func setupCacheSchema(ctx context.Context, pool *pgxpool.Pool, logger log.Logger) error {
-	logger.Info("setting up cache schema")
-
-	// Begin a transaction to ensure atomicity of schema creation
-	tx, err := pool.Begin(ctx)
+	// Initialize extension resources
+	err := cacheDB.SetupCacheSchema(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	// Create schema - private schema not prefixed with ds_, ignored by consensus
-	if _, err := tx.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS `+constants.CacheSchemaName); err != nil {
-		return fmt.Errorf("create schema: %w", err)
+		return nil, fmt.Errorf("failed to setup cache schema: %w", err)
 	}
 
-	// Create cached_streams table
-	if _, err := tx.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS `+constants.CacheSchemaName+`.cached_streams (
-			data_provider TEXT NOT NULL,
-			stream_id TEXT NOT NULL,
-			from_timestamp INT8,
-			last_refreshed INT8,
-			cron_schedule TEXT,
-			PRIMARY KEY (data_provider, stream_id)
-		)`); err != nil {
-		return fmt.Errorf("create cached_streams table: %w", err)
+	engineOps := internal.NewEngineOperations(engine, db, "main", service.Logger)
+
+	// Initialize sync checker for sync-aware caching
+	syncChecker := syncschecker.NewSyncChecker(service.Logger, config.MaxBlockAge)
+	syncChecker.Start(ctx)
+
+	scheduler := scheduler.NewCacheScheduler(scheduler.NewCacheSchedulerParams{
+		Service:         service,
+		CacheDB:         cacheDB,
+		EngineOps:       engineOps,
+		Logger:          service.Logger,
+		MetricsRecorder: metricsRecorder,
+		Namespace:       "",
+		SyncChecker:     syncChecker,
+	})
+
+	if config.MaxBlockAge > 0 {
+		service.Logger.Info("sync-aware caching enabled", "max_block_age", config.MaxBlockAge)
 	}
 
-	// Create index for efficient querying by cron schedule
-	if _, err := tx.Exec(ctx, `
-		CREATE INDEX IF NOT EXISTS idx_cached_streams_cron_schedule 
-		ON `+constants.CacheSchemaName+`.cached_streams (cron_schedule)`); err != nil {
-		return fmt.Errorf("create cron schedule index: %w", err)
+	if err := scheduler.Start(ctx, config); err != nil {
+		return nil, fmt.Errorf("failed to start scheduler: %w", err)
 	}
 
-	// Create cached_events table
-	if _, err := tx.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS `+constants.CacheSchemaName+`.cached_events (
-			data_provider TEXT NOT NULL,
-			stream_id TEXT NOT NULL,
-			event_time INT8 NOT NULL,
-			value NUMERIC(36, 18) NOT NULL,
-			PRIMARY KEY (data_provider, stream_id, event_time)
-		)`); err != nil {
-		return fmt.Errorf("create cached_events table: %w", err)
-	}
+	// Record initial gauge metrics
+	metricsRecorder.RecordStreamConfigured(ctx, len(config.Directives))
 
-	// Create index for efficiently retrieving events by time range
-	if _, err := tx.Exec(ctx, `
-		CREATE INDEX IF NOT EXISTS idx_cached_events_time_range 
-		ON `+constants.CacheSchemaName+`.cached_events (data_provider, stream_id, event_time)`); err != nil {
-		return fmt.Errorf("create event time range index: %w", err)
-	}
+	// Query actual active streams on startup (cache persists across restarts)
+	scheduler.UpdateGaugeMetrics(ctx)
 
-	// Commit the transaction
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
-	}
-
-	logger.Info("cache schema setup complete")
-	return nil
-}
-
-// cleanupExtensionSchema removes the cache schema when the extension is disabled
-// waitForDatabaseReady validates that the database connection is stable before proceeding
-func waitForDatabaseReady(ctx context.Context, pool *pgxpool.Pool, maxWait time.Duration) error {
-	timeout := time.NewTimer(maxWait)
-	defer timeout.Stop()
-
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-timeout.C:
-			return fmt.Errorf("database not ready after %v", maxWait)
-		case <-ticker.C:
-			_, err := pool.Exec(ctx, "SELECT 1")
-			if err != nil {
-				continue
-			}
-			return nil // Database is ready
-		}
-	}
+	return NewExtension(service.Logger, cacheDB, scheduler, syncChecker, metricsRecorder, engineOps, db, config.Enabled), nil
 }
 
 // createIndependentConnectionPool creates a dedicated connection pool for cache operations
 func createIndependentConnectionPool(ctx context.Context, service *common.Service, logger log.Logger) (*pgxpool.Pool, error) {
-	// Check for test database configuration override first
-	var dbConfig kwilconfig.DBConfig
-	if testDBConfig := getTestDBConfig(); testDBConfig != nil {
-		dbConfig = *testDBConfig
-		logger.Debug("using test database configuration override")
-	} else {
-		dbConfig = service.LocalConfig.DB
-	}
+	// Check for test DB config override first
+	dbConfig := service.LocalConfig.DB
 
 	// Build connection string using same parameters as main database
 	connStr := fmt.Sprintf("host=%s port=%s user=%s database=%s sslmode=disable",
@@ -545,58 +391,3 @@ func createIndependentConnectionPool(ctx context.Context, service *common.Servic
 
 	return pool, nil
 }
-
-func cleanupExtensionSchema(ctx context.Context, pool *pgxpool.Pool, logger log.Logger) error {
-	if pool == nil {
-		logger.Warn("cannot cleanup schema: pool is nil")
-		return nil
-	}
-
-	logger.Info("cleaning up cache schema")
-
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			if rbErr := tx.Rollback(ctx); rbErr != nil {
-				logger.Error("failed to rollback transaction", "error", rbErr)
-			}
-		}
-	}()
-
-	// Drop schema CASCADE to remove all tables and indexes
-	if _, err = tx.Exec(ctx, `DROP SCHEMA IF EXISTS `+constants.CacheSchemaName+` CASCADE`); err != nil {
-		return fmt.Errorf("drop schema: %w", err)
-	}
-
-	if err = tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
-	}
-
-	logger.Info("cache schema cleaned up successfully")
-	return nil
-}
-
-// HasCachedData checks if there is cached data for a stream in a time range
-func HasCachedData(ctx context.Context, dataProvider, streamID string, fromTime, toTime int64) (bool, error) {
-	ext := GetExtension()
-	if ext == nil || ext.cacheDB == nil {
-		return false, fmt.Errorf("cache extension not initialized")
-	}
-	return ext.cacheDB.HasCachedData(ctx, dataProvider, streamID, fromTime, toTime)
-}
-
-// GetCachedData retrieves cached data for a stream
-func GetCachedData(ctx context.Context, dataProvider, streamID string, fromTime, toTime int64) ([]internal.CachedEvent, error) {
-	ext := GetExtension()
-	if ext == nil || ext.cacheDB == nil {
-		return nil, fmt.Errorf("cache extension not initialized")
-	}
-	return ext.cacheDB.GetEvents(ctx, dataProvider, streamID, fromTime, toTime)
-}
-
-// handleGetCachedLastBefore moved to handlers.go
-
-// handleGetCachedFirstAfter moved to handlers.go
