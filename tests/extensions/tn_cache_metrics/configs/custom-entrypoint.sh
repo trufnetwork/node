@@ -17,5 +17,5 @@ exec /app/kwild start --root $CONFIG_PATH \
        -- \
        --extensions.tn_cache.enabled "true" \
        --extensions.tn_cache.max_block_age "0" \
-       --extensions.tn_cache.resolution_schedule "0 0 0 * * *" \
-       --extensions.tn_cache.streams_inline '[{"data_provider":"0x7e5f4552091a69125d5dfcb7b8c2659029395bdf","stream_id":"stcomposed1234567890123456789001","cron_schedule":"0 */1 * * * *","from":1609459200},{"data_provider":"0x7e5f4552091a69125d5dfcb7b8c2659029395bdf","stream_id":"stcomposed1234567890123456789002","cron_schedule":"0 */2 * * * *","from":1609459200},{"data_provider":"0x7e5f4552091a69125d5dfcb7b8c2659029395bdf","stream_id":"stcomposed1234567890123456789003","cron_schedule":"0 */3 * * * *","from":1609459200}]'
+       --extensions.tn_cache.resolution_schedule "0 0 * * *" \
+       --extensions.tn_cache.streams_inline '[{"data_provider":"0x7e5f4552091a69125d5dfcb7b8c2659029395bdf","stream_id":"stcomposed1234567890123456789001","cron_schedule":"*/1 * * * *","from":1609459200},{"data_provider":"0x7e5f4552091a69125d5dfcb7b8c2659029395bdf","stream_id":"stcomposed1234567890123456789002","cron_schedule":"*/2 * * * *","from":1609459200},{"data_provider":"0x7e5f4552091a69125d5dfcb7b8c2659029395bdf","stream_id":"stcomposed1234567890123456789003","cron_schedule":"*/3 * * * *","from":1609459200}]'
