@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/config"
+	"github.com/trufnetwork/kwil-db/core/log"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 
@@ -110,11 +113,11 @@ func (c *CacheOptions) WithWildcardProvider(dataProvider, cronSchedule string) *
 }
 
 // Build converts the options into the metadata map for the extension
-func (c *CacheOptions) Build() map[string]any {
-	metadata := make(map[string]any)
+func (c *CacheOptions) Build() map[string]string {
+	metadata := make(map[string]string)
 
 	// Always set enabled status
-	metadata["enabled"] = c.enabled
+	metadata["enabled"] = strconv.FormatBool(c.enabled)
 
 	// Only add other options if cache is enabled
 	if c.enabled {
@@ -196,7 +199,7 @@ func ProductionCache() *CacheOptions {
 
 // GetTestOptions returns the common test options with optional cache configuration
 // By default, cache is DISABLED to maintain backward compatibility
-// 
+//
 // DEPRECATED: This returns *kwilTesting.Options for backward compatibility.
 // New tests should use GetTestOptionsWithCache() or the testutils.RunSchemaTest wrapper.
 func GetTestOptions(cacheOpts ...*CacheOptions) *kwilTesting.Options {
@@ -216,20 +219,21 @@ func GetTestOptionsWithCache(cacheOpts ...*CacheOptions) *Options {
 		},
 		DisableCache: true, // Default to disabled for backward compatibility
 	}
-	
+
 	// If cache options are provided, enable cache with those options
 	if len(cacheOpts) > 0 && cacheOpts[0] != nil {
 		opts.Cache = cacheOpts[0]
 		opts.DisableCache = false
 	}
-	
+
 	return opts
 }
 
 // CacheTestHelper provides utilities for cache-enabled tests
 type CacheTestHelper struct {
-	cacheConfig *CacheOptions
-	platform    *kwilTesting.Platform
+	cacheConfig          *CacheOptions
+	platform             *kwilTesting.Platform
+	*tn_cache.TestHelper // Embedded core helper
 }
 
 // SetupCacheTest is a helper to set up cache configuration and test DB injection
@@ -254,24 +258,17 @@ func SetupCacheTest(ctx context.Context, platform *kwilTesting.Platform, cacheCo
 	}
 	tn_cache.SetTestConfiguration(configMap)
 
-	return &CacheTestHelper{
+	helper := &CacheTestHelper{
 		cacheConfig: cacheConfig,
 		platform:    platform,
 	}
+	helper.TestHelper = tn_cache.GetTestHelper()
+	return helper
 }
 
 // Cleanup should be called with defer to clean up test injection
 func (h *CacheTestHelper) Cleanup() {
 	tn_cache.SetTestDB(nil)
-}
-
-// RefreshCache manually triggers a cache refresh for a stream
-func (h *CacheTestHelper) RefreshCache(ctx context.Context, dataProvider, streamID string) (int, error) {
-	helper := tn_cache.GetTestHelper()
-	if helper == nil {
-		return 0, fmt.Errorf("cache test helper not available")
-	}
-	return helper.RefreshCacheSync(ctx, dataProvider, streamID)
 }
 
 // IsCacheEnabled returns whether the cache is enabled
@@ -282,6 +279,22 @@ func (h *CacheTestHelper) IsCacheEnabled() bool {
 // GetDB returns the test database for direct queries
 func (h *CacheTestHelper) GetDB() sql.DB {
 	return h.platform.DB
+}
+
+// SetDB sets the test database for direct queries
+func (h *CacheTestHelper) SetDB(db sql.DB) {
+	h.platform.DB = db
+	tn_cache.SetTestDB(db)
+
+	// Also ensure the scheduler uses the correct namespace for tests
+	// In tests, the seed scripts create actions without namespace prefix,
+	// which means they go into the test database's default namespace.
+	// Since Engine.Call with empty string looks in "main", but tests might not have "main",
+	// we need to figure out the right namespace.
+	//
+	// For now, we'll keep the default empty namespace and let the resolution
+	// be retried when TriggerStreamResolution is called.
+	// The initial resolution failure is logged but not fatal.
 }
 
 // WithCache is a test wrapper that sets up and tears down cache configuration
@@ -295,8 +308,6 @@ func WithCache(t *testing.T, ctx context.Context, platform *kwilTesting.Platform
 	defer helper.Cleanup()
 	testFunc(helper)
 }
-
-// Helper functions for creating Options
 
 // DefaultOptions returns options with cache enabled by default
 func DefaultOptions() *Options {
@@ -326,4 +337,107 @@ func OptionsWithoutCache() *Options {
 		},
 		DisableCache: true,
 	}
+}
+
+// RunInTx runs the provided test function within a database transaction.
+// It automatically sets the cache DB to the transaction DB before running the function,
+// then restores the original DB after. This ensures cache operations see uncommitted changes
+// made within the transaction (e.g., newly created streams).
+//
+// Usage:
+//
+//	helper.RunInTx(t, func(t *testing.T, txPlatform *kwilTesting.Platform) {
+//	    // Your test code here - create streams, trigger resolution, etc.
+//	})
+func (h *CacheTestHelper) RunInTx(t *testing.T, testFn func(t *testing.T, txPlatform *kwilTesting.Platform)) {
+	WithTx(h.platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {
+		// Save original DB and set tx DB
+		originalDB := h.GetDB()
+		h.SetDB(txPlatform.DB)
+		defer h.SetDB(originalDB) // Restore after
+
+		testFn(t, txPlatform)
+	})(t)
+}
+
+// RunSchemaTest is a wrapper around kwilTesting.RunSchemaTest that automatically
+// handles cache setup. By default, cache is enabled with a test fallback.
+func RunSchemaTest(t *testing.T, s kwilTesting.SchemaTest, options *Options) {
+	// Convert to kwilTesting.Options
+	kwilOpts := &kwilTesting.Options{
+		UseTestContainer: true,
+		Logger:           t,
+	}
+	if options != nil && options.Options != nil {
+		kwilOpts = options.Options
+	}
+
+	// Default to enabled with fallback (as original schema.go)
+	var cacheConfig *CacheOptions
+	if options == nil || (options.Cache == nil && !options.DisableCache) {
+		// Fallback: Enabled, no auto-refresh for tests
+		cacheConfig = NewCacheOptions().
+			WithEnabled().
+			WithMaxBlockAge(-1 * time.Second).     // Disable sync check
+			WithResolutionSchedule("0 0 0 31 2 *") // Never auto-resolve
+	} else if options != nil && options.Cache != nil {
+		cacheConfig = options.Cache
+	}
+
+	// Run with wrapper
+	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name:          s.Name,
+		SeedScripts:   s.SeedScripts,
+		FunctionTests: wrapWithCacheSetup(context.Background(), s.FunctionTests, cacheConfig, kwilOpts),
+	}, kwilOpts)
+}
+
+// wrapWithCacheSetup wraps test functions with full cache initialization
+func wrapWithCacheSetup(ctx context.Context, originalFuncs []kwilTesting.TestFunc, cacheConfig *CacheOptions, opts *kwilTesting.Options) []kwilTesting.TestFunc {
+	if cacheConfig == nil || !cacheConfig.enabled {
+		return originalFuncs
+	}
+
+	wrapped := make([]kwilTesting.TestFunc, len(originalFuncs))
+	for i, fn := range originalFuncs {
+		originalFn := fn
+		wrapped[i] = func(ctx context.Context, platform *kwilTesting.Platform) error {
+			// Partial setup (DB config, injection, config map)
+			helper := SetupCacheTest(ctx, platform, cacheConfig)
+			defer helper.Cleanup()
+
+			// Full init (restore original schema.go logic)
+			mockService := &common.Service{
+				Logger: log.NewStdoutLogger(),
+				LocalConfig: &config.Config{
+					DB: config.DBConfig{
+						Host:   "localhost",
+						Port:   "52853",
+						User:   "kwild",
+						Pass:   "kwild",
+						DBName: "kwil_test_db",
+					},
+					Extensions: map[string]map[string]string{
+						tn_cache.ExtensionName: cacheConfig.Build(),
+					},
+				},
+			}
+
+			processedConfig, err := tn_cache.ParseConfig(mockService)
+			if err != nil {
+				return fmt.Errorf("failed to parse config: %w", err)
+			}
+
+			ext, err := tn_cache.SetupCacheExtension(ctx, processedConfig, platform.Engine, mockService)
+			if err != nil {
+				return fmt.Errorf("failed to setup extension: %w", err)
+			}
+			tn_cache.SetExtension(ext)
+			defer tn_cache.SetExtension(nil) // Cleanup
+
+			// Run original test
+			return originalFn(ctx, platform)
+		}
+	}
+	return wrapped
 }
