@@ -19,6 +19,9 @@ type SavedResults struct {
 	Visibility      string `json:"visibility"`
 	Samples         int    `json:"samples"`
 	UnixOnly        bool   `json:"unix_only"`
+	CacheEnabled    bool   `json:"cache_enabled"`    // Whether cache was enabled for this test
+	CacheVerified   bool   `json:"cache_verified"`   // Whether cache verification passed
+	CacheDeltaMs    int64  `json:"cache_delta_ms"`   // Performance difference: cached - non-cached (ms)
 }
 
 // SaveOrAppendToCSV saves a slice of any struct type to a CSV file, using JSON tags for headers.
