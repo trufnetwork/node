@@ -14,7 +14,6 @@ import (
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal/errors"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal/tracing"
-	"github.com/trufnetwork/node/extensions/tn_cache/metrics"
 )
 
 // refreshStreamDataWithRetry refreshes stream data with exponential backoff retry logic using retry-go
@@ -51,72 +50,60 @@ func (s *CacheScheduler) refreshStreamDataWithRetry(ctx context.Context, directi
 }
 
 // RefreshStreamData refreshes the cached data for a single cache directive
-func (s *CacheScheduler) RefreshStreamData(ctx context.Context, directive config.CacheDirective) (err error) {
-	// Add tracing
-	ctx, end := tracing.StreamOperation(ctx, tracing.OpRefreshStream, directive.DataProvider, directive.StreamID,
-		attribute.String("type", string(directive.Type)))
-	defer func() {
-		end(err)
-	}()
+func (s *CacheScheduler) RefreshStreamData(ctx context.Context, directive config.CacheDirective) error {
+	// Use middleware for tracing and refresh metrics
+	_, err := tracing.TracedWithRefreshMetrics(ctx, tracing.OpRefreshStream, directive.DataProvider, directive.StreamID, s.metrics,
+		func(traceCtx context.Context) (any, int, error) {
+			s.logger.Debug("refreshing stream",
+				"provider", directive.DataProvider,
+				"stream", directive.StreamID,
+				"type", directive.Type)
 
-	// Start timing the refresh operation
-	startTime := time.Now()
+			// Always fetch from configured start time - data is mutable
+			fromTime := directive.TimeRange.From
 
-	s.logger.Debug("refreshing stream",
-		"provider", directive.DataProvider,
-		"stream", directive.StreamID,
-		"type", directive.Type)
+			// Wildcards already resolved at startup - this should never happen
+			if directive.Type != config.DirectiveSpecific {
+				return nil, 0, fmt.Errorf("unexpected directive type in refresh: %s (should be specific after resolution)", directive.Type)
+			}
 
-	// Record refresh start
-	s.metrics.RecordRefreshStart(ctx, directive.DataProvider, directive.StreamID)
+			// Fetch events sequentially to ensure consistency
+			// Fetch regular events first
+			events, fetchErr := s.fetchSpecificStream(traceCtx, directive, fromTime)
+			if fetchErr != nil {
+				return nil, 0, fmt.Errorf("fetch stream data: %w", fetchErr)
+			}
 
-	// Always fetch from configured start time - data is mutable
-	fromTime := directive.TimeRange.From
+			// Then fetch index events
+			indexEvents, indexFetchErr := s.fetchSpecificIndexStream(traceCtx, directive, fromTime)
+			if indexFetchErr != nil {
+				return nil, 0, fmt.Errorf("fetch index stream data: %w", indexFetchErr)
+			}
 
-	// Wildcards already resolved at startup - this should never happen
-	if directive.Type != config.DirectiveSpecific {
-		s.metrics.RecordRefreshError(ctx, directive.DataProvider, directive.StreamID, "invalid_directive")
-		return fmt.Errorf("unexpected directive type in refresh: %s (should be specific after resolution)", directive.Type)
-	}
+			// Cache both types of events atomically
+			totalEvents := len(events) + len(indexEvents)
+			if totalEvents > 0 {
+				if err := s.cacheDB.CacheEventsWithIndex(traceCtx, events, indexEvents); err != nil {
+					return nil, 0, fmt.Errorf("cache events with index: %w", err)
+				}
+				s.logger.Info("cached events",
+					"raw_count", len(events),
+					"index_count", len(indexEvents),
+					"provider", directive.DataProvider,
+					"stream", directive.StreamID)
+			} else {
+				s.logger.Debug("no new events to cache",
+					"provider", directive.DataProvider,
+					"stream", directive.StreamID)
+			}
 
-	// Fetch events sequentially to ensure consistency
-	// Fetch regular events first
-	events, fetchErr := s.fetchSpecificStream(ctx, directive, fromTime)
-	if fetchErr != nil {
-		s.metrics.RecordRefreshError(ctx, directive.DataProvider, directive.StreamID, metrics.ClassifyError(fetchErr))
-		return fmt.Errorf("fetch stream data: %w", fetchErr)
-	}
+			// Update gauge metrics after successful refresh
+			s.UpdateGaugeMetrics(traceCtx)
 
-	// Then fetch index events
-	indexEvents, indexFetchErr := s.fetchSpecificIndexStream(ctx, directive, fromTime)
-	if indexFetchErr != nil {
-		s.metrics.RecordRefreshError(ctx, directive.DataProvider, directive.StreamID, metrics.ClassifyError(indexFetchErr))
-		return fmt.Errorf("fetch index stream data: %w", indexFetchErr)
-	}
+			return nil, totalEvents, nil
+		}, attribute.String("type", string(directive.Type)))
 
-	// Cache both types of events atomically
-	if len(events) > 0 || len(indexEvents) > 0 {
-		if err := s.cacheDB.CacheEventsWithIndex(ctx, events, indexEvents); err != nil {
-			s.metrics.RecordRefreshError(ctx, directive.DataProvider, directive.StreamID, "storage_error")
-			return fmt.Errorf("cache events with index: %w", err)
-		}
-		s.logger.Info("cached events",
-			"raw_count", len(events),
-			"index_count", len(indexEvents),
-			"provider", directive.DataProvider,
-			"stream", directive.StreamID)
-	} else {
-		s.logger.Debug("no new events to cache",
-			"provider", directive.DataProvider,
-			"stream", directive.StreamID)
-	}
-
-	s.metrics.RecordRefreshComplete(ctx, directive.DataProvider, directive.StreamID, time.Since(startTime), len(events))
-
-	// Update gauge metrics after successful refresh
-	s.UpdateGaugeMetrics(ctx)
-
-	return nil
+	return err
 }
 
 // fetchSpecificStream calls get_record_composed action with proper authorization

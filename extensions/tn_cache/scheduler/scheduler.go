@@ -638,35 +638,33 @@ func (s *CacheScheduler) registerRefreshJob(schedule string) error {
 			s.removeJobContext(jobID)
 		}()
 
-		// Add tracing for scheduled job execution
-		_, end := tracing.SchedulerOperation(jobCtx, tracing.OpSchedulerJob,
-			attribute.String("schedule", schedule),
-			attribute.String("job_id", jobID))
-		defer func() {
-			end(nil) // Job errors are logged separately, not returned
-			if r := recover(); r != nil {
-				s.logger.Error("panic in refresh job",
-					"panic", r,
-					"schedule", schedule,
-					"job_id", jobID,
-					"stack", string(debug.Stack()))
-			}
-		}()
+		// Use middleware for tracing
+		tracing.TracedSchedulerOperation(jobCtx, tracing.OpSchedulerJob,
+			func(traceCtx context.Context) (any, error) {
+				defer func() {
+					if r := recover(); r != nil {
+						s.logger.Error("panic in refresh job",
+							"panic", r,
+							"schedule", schedule,
+							"job_id", jobID,
+							"stack", string(debug.Stack()))
+					}
+				}()
 
-		// Check if context is already cancelled
-		select {
-		case <-jobCtx.Done():
-			s.logger.Warn("job context cancelled before execution",
-				"job_id", jobID,
-				"schedule", schedule)
-			return
-		default:
-		}
+				// Check if context is already cancelled
+				select {
+				case <-traceCtx.Done():
+					s.logger.Warn("job context cancelled before execution",
+						"job_id", jobID,
+						"schedule", schedule)
+					return nil, nil
+				default:
+				}
 
 		directives := s.getDirectivesForSchedule(schedule)
 		if len(directives) == 0 {
 			s.logger.Debug("no directives for schedule", "schedule", schedule)
-			return
+			return nil, nil
 		}
 
 		s.logger.Debug("executing scheduled refresh",
@@ -720,8 +718,10 @@ func (s *CacheScheduler) registerRefreshJob(schedule string) error {
 		// Wait for all workers to complete
 		wg.Wait()
 
-		// Cancel job context explicitly when done
-		jobCancel()
+				// Cancel job context explicitly when done
+				jobCancel()
+				return nil, nil
+			}, attribute.String("schedule", schedule), attribute.String("job_id", jobID))
 	}
 
 	job, err := s.cron.Cron(schedule).Do(jobFunc)

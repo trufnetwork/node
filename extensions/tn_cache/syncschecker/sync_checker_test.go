@@ -172,7 +172,10 @@ func TestSyncCheckerMillisecondsConversion(t *testing.T) {
 
 	// Verify milliseconds converted to seconds
 	expectedBlockTime := recentBlockTime / 1000
-	require.Equal(t, expectedBlockTime, sc.blockTime.Load())
+	sc.status.mu.Lock()
+	actualBlockTime := sc.status.blockTime
+	sc.status.mu.Unlock()
+	require.Equal(t, expectedBlockTime, actualBlockTime)
 
 	// Should allow execution with recent block
 	canExecute, _ := sc.CanExecute()

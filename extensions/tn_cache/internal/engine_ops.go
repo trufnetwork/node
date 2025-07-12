@@ -118,7 +118,7 @@ func (t *EngineOperations) createEngineContext(ctx context.Context, operation st
 // callWithTrace wraps engine calls with tracing
 // callWithTrace executes an action through the engine with proper tracing.
 // It handles the engine call protocol and processes results row by row.
-func (t *EngineOperations) callWithTrace(ctx context.Context, engineCtx *common.EngineContext, action string, args []any, processResult func(*common.Row) error) (err error) {
+func (t *EngineOperations) callWithTrace(ctx context.Context, engineCtx *common.EngineContext, action string, args []any, processResult func(*common.Row) error) error {
 	// Map action to appropriate operation
 	var op tracing.Operation
 	switch action {
@@ -135,17 +135,17 @@ func (t *EngineOperations) callWithTrace(ctx context.Context, engineCtx *common.
 		op = tracing.Operation("tn." + action)
 	}
 
-	// Start span with action details
-	spanCtx, end := tracing.TNOperation(ctx, op, action)
-	defer func() {
-		end(err)
-	}()
+	// Use middleware for tracing
+	_, err := tracing.TracedTNOperation(ctx, op, action,
+		func(traceCtx context.Context) (any, error) {
+			// Update engine context with traced context
+			engineCtx.TxContext.Ctx = traceCtx
 
-	// Update engine context with traced context
-	engineCtx.TxContext.Ctx = spanCtx
-
-	// Call the engine
-	_, err = t.engine.Call(engineCtx, t.db, t.namespace, action, args, processResult)
+			// Call the engine
+			_, err := t.engine.Call(engineCtx, t.db, t.namespace, action, args, processResult)
+			return nil, err
+		})
+	
 	return err
 }
 
