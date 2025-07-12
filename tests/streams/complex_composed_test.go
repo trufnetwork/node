@@ -26,7 +26,7 @@ var (
 
 func TestComplexComposed(t *testing.T) {
 	// Run with cache setup (will test both with and without cache)
-	cacheConfig := testutils.TestCache(complexComposedDeployer.Address(), composedStreamId.String())
+	cacheConfig := testutils.TestCache(complexComposedDeployer.Address(), "*")
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "complex_composed_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
@@ -45,29 +45,29 @@ func TestComplexComposed(t *testing.T) {
 }
 
 // wrapTestWithCacheModes wraps a test function to run it twice - once with cache disabled and once enabled
-func wrapTestWithCacheModes(t *testing.T, testName string, testFunc func(*testing.T, bool) func(context.Context, *kwilTesting.Platform) error) func(context.Context, *kwilTesting.Platform) error {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Run without cache
-		t.Run(testName+"_without_cache", testutils.WithTx(platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {
-			err := testFunc(t, false)(ctx, platform)
-			if err != nil {
-				t.Fatalf("Test failed without cache: %v", err)
-			}
-		}))
-
-		// Run with cache
-		t.Run(testName+"_with_cache", testutils.WithTx(platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {
-			err := testFunc(t, true)(ctx, platform)
-			if err != nil {
-				t.Fatalf("Test failed with cache: %v", err)
-			}
-		}))
-
+func wrapTestWithCacheModes(t *testing.T, testName string, testFunc func(*testing.T, bool) func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error) func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
+		t.Run(testName+"_without_cache", func(t *testing.T) {
+			helper.RunInTx(t, func(t *testing.T, txPlatform *kwilTesting.Platform) {
+				err := testFunc(t, false)(ctx, txPlatform, helper)
+				if err != nil {
+					t.Fatalf("Test failed without cache: %v", err)
+				}
+			})
+		})
+		t.Run(testName+"_with_cache", func(t *testing.T) {
+			helper.RunInTx(t, func(t *testing.T, txPlatform *kwilTesting.Platform) {
+				err := testFunc(t, true)(ctx, txPlatform, helper)
+				if err != nil {
+					t.Fatalf("Test failed with cache: %v", err)
+				}
+			})
+		})
 		return nil
 	}
 }
 
-func WithTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func WithTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Set the platform signer
 		platform = procedure.WithSigner(platform, complexComposedDeployer.Bytes())
@@ -105,12 +105,12 @@ func WithTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platfo
 		}
 
 		// Always set up cache (it will be used based on the UseCache parameter in queries)
-		cacheConfig := testutils.TestCache(complexComposedDeployer.Address(), composedStreamId.String())
+		cacheConfig := testutils.TestCache(complexComposedDeployer.Address(), "*")
 		helper := testutils.SetupCacheTest(ctx, platform, cacheConfig)
 		defer helper.Cleanup()
 
 		// Refresh cache
-		recordsCached, err := helper.RefreshCache(ctx, complexComposedDeployer.Address(), composedStreamId.String())
+		recordsCached, err := helper.RefreshAllStreamsSync(ctx)
 		if err != nil {
 			return errors.Wrap(err, "error refreshing cache")
 		}
@@ -119,39 +119,30 @@ func WithTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platfo
 		}
 
 		// Run the actual test function
-		return testFn(ctx, platform)
+		return testFn(ctx, platform, helper)
 	}
 }
 
 // checkCacheHit is a DRY helper that executes a procedure twice when useCache is true,
 // verifying that the second call hits the cache
-type procedureFunc func() ([]procedure.ResultRow, error)
-type procedureWithLogsFunc func() (*procedure.GetRecordResult, error)
+type procedureWithLogsFunc func() (*procedure.GetDataResult, error)
 
-func checkCacheHit(t *testing.T, useCache bool, callProcedure procedureFunc, callProcedureWithLogs procedureWithLogsFunc) ([]procedure.ResultRow, error) {
-	if useCache {
-		// First call should populate cache
-		_, err := callProcedure()
-		if err != nil {
-			return nil, errors.Wrap(err, "error in first call to populate cache")
-		}
-
-		// Second call should hit cache
-		resultWithLogs, err := callProcedureWithLogs()
-		if err != nil {
-			return nil, errors.Wrap(err, "error in second call to check cache")
-		}
-
-		// Check cache hit
-		assert.True(t, resultWithLogs.CacheHit, "Expected cache hit on second call with useCache=true")
-		return resultWithLogs.Rows, nil
-	} else {
-		return callProcedure()
+func checkCacheHit(t *testing.T, useCache bool, callProcedureWithLogs procedureWithLogsFunc) ([]procedure.ResultRow, error) {
+	resultWithLogs, err := callProcedureWithLogs()
+	if err != nil {
+		return nil, errors.Wrap(err, "error in call to check cache")
 	}
+
+	if useCache {
+		assert.True(t, resultWithLogs.CacheHit, "Expected cache hit on call with useCache=true")
+	} else {
+		assert.False(t, resultWithLogs.CacheHit, "Expected cache miss on call with useCache=false")
+	}
+	return resultWithLogs.Rows, nil
 }
 
-func testComplexComposedRecord(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform) error {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testComplexComposedRecord(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
 		// Create StreamLocator for the composed stream
 		composedStreamLocator := types.StreamLocator{
 			StreamId:     composedStreamId,
@@ -162,17 +153,7 @@ func testComplexComposedRecord(t *testing.T, useCache bool) func(ctx context.Con
 		dateTo := int64(13)
 
 		result, err := checkCacheHit(t, useCache,
-			func() ([]procedure.ResultRow, error) {
-				return procedure.GetRecord(ctx, procedure.GetRecordInput{
-					Platform:      platform,
-					StreamLocator: composedStreamLocator,
-					FromTime:      &dateFrom,
-					ToTime:        &dateTo,
-					Height:        0,
-					UseCache:      &useCache,
-				})
-			},
-			func() (*procedure.GetRecordResult, error) {
+			func() (*procedure.GetDataResult, error) {
 				return procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
 					Platform:      platform,
 					StreamLocator: composedStreamLocator,
@@ -213,13 +194,8 @@ func testComplexComposedRecord(t *testing.T, useCache bool) func(ctx context.Con
 	}
 }
 
-func testComplexComposedIndex(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform) error {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		if useCache {
-			// TODO: Remove this once we fix the bug in index cache
-			t.Skip("Skipping testComplexComposedIndex with cache as we have a bug in index cache")
-		}
-
+func testComplexComposedIndex(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
 		// Create StreamLocator for the composed stream
 		composedStreamLocator := types.StreamLocator{
 			StreamId:     composedStreamId,
@@ -267,8 +243,8 @@ func testComplexComposedIndex(t *testing.T, useCache bool) func(ctx context.Cont
 	}
 }
 
-func testComplexComposedLatestValue(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform) error {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testComplexComposedLatestValue(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
 		// Create StreamLocator for the composed stream
 		composedStreamLocator := types.StreamLocator{
 			StreamId:     composedStreamId,
@@ -279,17 +255,7 @@ func testComplexComposedLatestValue(t *testing.T, useCache bool) func(ctx contex
 		dateTo := int64(13)
 
 		result, err := checkCacheHit(t, useCache,
-			func() ([]procedure.ResultRow, error) {
-				return procedure.GetRecord(ctx, procedure.GetRecordInput{
-					Platform:      platform,
-					StreamLocator: composedStreamLocator,
-					FromTime:      &dateFrom,
-					ToTime:        &dateTo,
-					Height:        0,
-					UseCache:      &useCache,
-				})
-			},
-			func() (*procedure.GetRecordResult, error) {
+			func() (*procedure.GetDataResult, error) {
 				return procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
 					Platform:      platform,
 					StreamLocator: composedStreamLocator,
@@ -319,8 +285,8 @@ func testComplexComposedLatestValue(t *testing.T, useCache bool) func(ctx contex
 	}
 }
 
-func testComplexComposedEmptyDate(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform) error {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testComplexComposedEmptyDate(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
 		// Create StreamLocator for the composed stream
 		composedStreamLocator := types.StreamLocator{
 			StreamId:     composedStreamId,
@@ -331,17 +297,7 @@ func testComplexComposedEmptyDate(t *testing.T, useCache bool) func(ctx context.
 		dateTo := int64(12)
 
 		result, err := checkCacheHit(t, useCache,
-			func() ([]procedure.ResultRow, error) {
-				return procedure.GetRecord(ctx, procedure.GetRecordInput{
-					Platform:      platform,
-					StreamLocator: composedStreamLocator,
-					FromTime:      &dateFrom,
-					ToTime:        &dateTo,
-					Height:        0,
-					UseCache:      &useCache,
-				})
-			},
-			func() (*procedure.GetRecordResult, error) {
+			func() (*procedure.GetDataResult, error) {
 				return procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
 					Platform:      platform,
 					StreamLocator: composedStreamLocator,
@@ -371,13 +327,8 @@ func testComplexComposedEmptyDate(t *testing.T, useCache bool) func(ctx context.
 	}
 }
 
-func testComplexComposedIndexChange(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform) error {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		if useCache {
-			// TODO: Remove this once we fix the bug in index cache
-			t.Skip("Skipping testComplexComposedIndexChange with cache as we have a bug in index cache")
-		}
-
+func testComplexComposedIndexChange(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
 		// Create StreamLocator for the composed stream
 		composedStreamLocator := types.StreamLocator{
 			StreamId:     composedStreamId,
@@ -389,18 +340,8 @@ func testComplexComposedIndexChange(t *testing.T, useCache bool) func(ctx contex
 		interval := 1
 
 		result, err := checkCacheHit(t, useCache,
-			func() ([]procedure.ResultRow, error) {
-				return procedure.GetIndexChange(ctx, procedure.GetIndexChangeInput{
-					Platform:      platform,
-					StreamLocator: composedStreamLocator,
-					FromTime:      &dateFrom,
-					ToTime:        &dateTo,
-					Interval:      &interval,
-					Height:        0,
-					UseCache:      &useCache,
-				})
-			},
-			func() (*procedure.GetRecordResult, error) {
+
+			func() (*procedure.GetDataResult, error) {
 				return procedure.GetIndexChangeWithLogs(ctx, procedure.GetIndexChangeInput{
 					Platform:      platform,
 					StreamLocator: composedStreamLocator,
@@ -447,8 +388,8 @@ func testComplexComposedIndexChange(t *testing.T, useCache bool) func(ctx contex
 // - no after date is provided
 // - an after date is provided having partial data on it (some children having data, others not)
 // - an after date after the last record is provided
-func testComplexComposedFirstRecord(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform) error {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testComplexComposedFirstRecord(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
 		// Create StreamLocator for the composed stream
 		composedStreamLocator := types.StreamLocator{
 			StreamId:     composedStreamId,
@@ -457,16 +398,8 @@ func testComplexComposedFirstRecord(t *testing.T, useCache bool) func(ctx contex
 
 		// no after date is provided
 		result, err := checkCacheHit(t, useCache,
-			func() ([]procedure.ResultRow, error) {
-				return procedure.GetFirstRecord(ctx, procedure.GetFirstRecordInput{
-					Platform:      platform,
-					StreamLocator: composedStreamLocator,
-					AfterTime:     nil,
-					Height:        0,
-					UseCache:      &useCache,
-				})
-			},
-			func() (*procedure.GetRecordResult, error) {
+
+			func() (*procedure.GetDataResult, error) {
 				return procedure.GetFirstRecordWithLogs(ctx, procedure.GetFirstRecordInput{
 					Platform:      platform,
 					StreamLocator: composedStreamLocator,
@@ -494,16 +427,8 @@ func testComplexComposedFirstRecord(t *testing.T, useCache bool) func(ctx contex
 		// an after date is provided having partial data on it (some children having data, others not)
 		afterDate := int64(5)
 		result, err = checkCacheHit(t, useCache,
-			func() ([]procedure.ResultRow, error) {
-				return procedure.GetFirstRecord(ctx, procedure.GetFirstRecordInput{
-					Platform:      platform,
-					StreamLocator: composedStreamLocator,
-					AfterTime:     &afterDate,
-					Height:        0,
-					UseCache:      &useCache,
-				})
-			},
-			func() (*procedure.GetRecordResult, error) {
+
+			func() (*procedure.GetDataResult, error) {
 				return procedure.GetFirstRecordWithLogs(ctx, procedure.GetFirstRecordInput{
 					Platform:      platform,
 					StreamLocator: composedStreamLocator,
@@ -531,16 +456,8 @@ func testComplexComposedFirstRecord(t *testing.T, useCache bool) func(ctx contex
 		// date after the last record is provided
 		afterDate = int64(14)
 		result, err = checkCacheHit(t, useCache,
-			func() ([]procedure.ResultRow, error) {
-				return procedure.GetFirstRecord(ctx, procedure.GetFirstRecordInput{
-					Platform:      platform,
-					StreamLocator: composedStreamLocator,
-					AfterTime:     &afterDate,
-					Height:        0,
-					UseCache:      &useCache,
-				})
-			},
-			func() (*procedure.GetRecordResult, error) {
+
+			func() (*procedure.GetDataResult, error) {
 				return procedure.GetFirstRecordWithLogs(ctx, procedure.GetFirstRecordInput{
 					Platform:      platform,
 					StreamLocator: composedStreamLocator,
@@ -570,13 +487,8 @@ func testComplexComposedFirstRecord(t *testing.T, useCache bool) func(ctx contex
 
 // testComplexComposedIndexLatestValueConsistency tests that the latest value is consistent
 // it's a regression test for https://github.com/trufnetwork/node/issues/938
-func testComplexComposedIndexLatestValueConsistency(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform) error {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		if useCache {
-			// TODO: Remove this once we fix the bug in index cache
-			t.Skip("Skipping testComplexComposedIndexLatestValueConsistency with cache as we have a bug in index cache")
-		}
-
+func testComplexComposedIndexLatestValueConsistency(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
 		composedStreamLocator := types.StreamLocator{
 			StreamId:     composedStreamId, // Assuming composedStreamId is accessible
 			DataProvider: complexComposedDeployer,
@@ -639,8 +551,8 @@ func testComplexComposedIndexLatestValueConsistency(t *testing.T, useCache bool)
 	}
 }
 
-func testComplexComposedOutOfRange(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform) error {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testComplexComposedOutOfRange(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
 		// Create StreamLocator for the composed stream
 		composedStreamLocator := types.StreamLocator{
 			StreamId:     composedStreamId,
@@ -651,17 +563,8 @@ func testComplexComposedOutOfRange(t *testing.T, useCache bool) func(ctx context
 		dateTo := int64(14)  // After last record
 
 		result, err := checkCacheHit(t, useCache,
-			func() ([]procedure.ResultRow, error) {
-				return procedure.GetRecord(ctx, procedure.GetRecordInput{
-					Platform:      platform,
-					StreamLocator: composedStreamLocator,
-					FromTime:      &dateFrom,
-					ToTime:        &dateTo,
-					Height:        0,
-					UseCache:      &useCache,
-				})
-			},
-			func() (*procedure.GetRecordResult, error) {
+
+			func() (*procedure.GetDataResult, error) {
 				return procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
 					Platform:      platform,
 					StreamLocator: composedStreamLocator,
@@ -691,16 +594,15 @@ func testComplexComposedOutOfRange(t *testing.T, useCache bool) func(ctx context
 }
 
 // testComposedRecordNoDuplicates ensures that GetRecord and GetIndex do not return duplicate entries for the same event_time and value
-func testComposedRecordNoDuplicates(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform) error {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testComposedRecordNoDuplicates(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
+		platform = procedure.WithSigner(platform, complexComposedDeployer.Bytes())
+
 		// Create unique stream IDs and deployer for this specific test
 		localComposedStreamId := util.GenerateStreamId("local_composed_dedup")
 		localPrimitiveStreamId1 := util.GenerateStreamId("local_primitive_dedup1")
 		localPrimitiveStreamId2 := util.GenerateStreamId("local_primitive_dedup2")
 		localPrimitiveStreamId3 := util.GenerateStreamId("local_primitive_dedup3")
-		localDeployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000DED")
-
-		platform = procedure.WithSigner(platform, localDeployer.Bytes())
 
 		// Setup a composed stream with three primitive children.
 		// Data is staggered and designed to test LOCF and the final DISTINCT on the composed result.
@@ -726,9 +628,17 @@ func testComposedRecordNoDuplicates(t *testing.T, useCache bool) func(ctx contex
 			return errors.Wrap(err, "error setting up composed stream for dedup test")
 		}
 
+		// Refresh cache for the newly created stream if cache is being used
+		if useCache {
+			_, err := helper.RefreshAllStreamsSync(ctx)
+			if err != nil {
+				return errors.Wrap(err, "error refreshing cache")
+			}
+		}
+
 		composedStreamLocator := types.StreamLocator{
 			StreamId:     localComposedStreamId,
-			DataProvider: localDeployer,
+			DataProvider: complexComposedDeployer,
 		}
 
 		// Query a range that includes these events.
@@ -737,17 +647,7 @@ func testComposedRecordNoDuplicates(t *testing.T, useCache bool) func(ctx contex
 
 		// Test GetRecord
 		recordResult, err := checkCacheHit(t, useCache,
-			func() ([]procedure.ResultRow, error) {
-				return procedure.GetRecord(ctx, procedure.GetRecordInput{
-					Platform:      platform,
-					StreamLocator: composedStreamLocator,
-					FromTime:      &dateFrom,
-					ToTime:        &dateTo,
-					Height:        0,
-					UseCache:      &useCache,
-				})
-			},
-			func() (*procedure.GetRecordResult, error) {
+			func() (*procedure.GetDataResult, error) {
 				return procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
 					Platform:      platform,
 					StreamLocator: composedStreamLocator,
