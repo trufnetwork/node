@@ -112,12 +112,11 @@ func InitializeCachePrecompile(ctx context.Context, service *common.Service, db 
 	// Get the extension instance (lazy initialization ensures it exists)
 	ext := GetExtension()
 
-	// Update with proper logger if not already set
-	if ext.logger == nil {
-		logger := service.Logger.New("tn_cache")
-		SetExtension(&Extension{
-			logger: logger,
-		})
+	if ext == nil {
+		ext = &Extension{
+			logger: service.Logger.New("tn_cache"),
+		}
+		SetExtension(ext)
 	}
 
 	// Note: We intentionally ignore metadata here because tn_cache is a node-level
@@ -344,38 +343,7 @@ func SetupCacheExtension(ctx context.Context, config *config.ProcessedConfig, en
 	// Query actual active streams on startup (cache persists across restarts)
 	scheduler.UpdateGaugeMetrics(ctx)
 
-	// Start a goroutine to handle graceful shutdown when context is cancelled
-	go func() {
-		<-ctx.Done()
-		service.Logger.Info("context cancelled, stopping extension")
-
-		// Stop sync checker first
-		if syncChecker != nil {
-			syncChecker.Stop()
-			service.Logger.Info("stopped sync checker")
-		}
-
-		// Stop scheduler
-		if scheduler != nil {
-			if err := scheduler.Stop(); err != nil {
-				service.Logger.Error("error stopping scheduler", "error", err)
-			}
-		}
-
-		// Close connection pool
-		if db != nil {
-			if wrapper, ok := db.(*utilities.PoolDBWrapper); ok {
-				wrapper.Close()
-				service.Logger.Info("closed cache connection pool")
-			} else {
-				service.Logger.Warn("unexpected db type, skipping pool close")
-			}
-		}
-	}()
-
-	ext := NewExtension(service.Logger, cacheDB, scheduler, syncChecker, metricsRecorder, engineOps, db, config.Enabled)
-
-	return ext, nil
+	return NewExtension(service.Logger, cacheDB, scheduler, syncChecker, metricsRecorder, engineOps, db, config.Enabled), nil
 }
 
 // createIndependentConnectionPool creates a dedicated connection pool for cache operations
