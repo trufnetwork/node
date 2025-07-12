@@ -401,7 +401,7 @@ func wrapWithCacheSetup(ctx context.Context, originalFuncs []kwilTesting.TestFun
 	wrapped := make([]kwilTesting.TestFunc, len(originalFuncs))
 	for i, fn := range originalFuncs {
 		originalFn := fn
-		wrapped[i] = func(ctx context.Context, platform *kwilTesting.Platform) error {
+		wrapped[i] = func(ctx context.Context, platform *kwilTesting.Platform) (testErr error) {
 			// Partial setup (DB config, injection, config map)
 			helper := SetupCacheTest(ctx, platform, cacheConfig)
 			defer helper.Cleanup()
@@ -425,18 +425,35 @@ func wrapWithCacheSetup(ctx context.Context, originalFuncs []kwilTesting.TestFun
 
 			processedConfig, err := tn_cache.ParseConfig(mockService)
 			if err != nil {
-				return fmt.Errorf("failed to parse config: %w", err)
+				testErr = fmt.Errorf("failed to parse config: %w", err)
+				return
 			}
 
 			ext, err := tn_cache.SetupCacheExtension(ctx, processedConfig, platform.Engine, mockService)
 			if err != nil {
-				return fmt.Errorf("failed to setup extension: %w", err)
+				testErr = fmt.Errorf("failed to setup extension: %w", err)
+				return
 			}
 			tn_cache.SetExtension(ext)
 			defer tn_cache.SetExtension(nil) // Cleanup
 
 			// Run original test
-			return originalFn(ctx, platform)
+			err = originalFn(ctx, platform)
+			if err != nil {
+				testErr = err
+				return
+			}
+
+			// Stop the scheduler to clean up background tasks
+			if stopErr := ext.Scheduler().Stop(); stopErr != nil {
+				mockService.Logger.Error("failed to stop scheduler after test", "error", stopErr)
+			}
+
+			ext.SyncChecker().Stop()
+
+			defer ext.Close()
+
+			return
 		}
 	}
 	return wrapped

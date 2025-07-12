@@ -14,6 +14,7 @@ import (
 	"github.com/trufnetwork/node/extensions/tn_cache/metrics"
 	"github.com/trufnetwork/node/extensions/tn_cache/scheduler"
 	"github.com/trufnetwork/node/extensions/tn_cache/syncschecker"
+	"github.com/trufnetwork/node/extensions/tn_cache/utilities"
 )
 
 type Extension struct {
@@ -59,6 +60,16 @@ func NewExtension(logger log.Logger, cacheDB *internal.CacheDB, scheduler *sched
 		isEnabled:        isEnabled,
 		cacheDB:          cacheDB,
 		engineOperations: engineOperations,
+	}
+}
+
+// Close closes the extension's connection pool if it's a PoolDBWrapper
+func (e *Extension) Close() {
+	if e.db != nil {
+		if wrapper, ok := e.db.(*utilities.PoolDBWrapper); ok {
+			wrapper.Close()
+			e.logger.Info("closed cache connection pool")
+		}
 	}
 }
 
