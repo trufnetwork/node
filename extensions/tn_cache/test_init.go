@@ -2,9 +2,7 @@ package tn_cache
 
 import (
 	kwilconfig "github.com/trufnetwork/kwil-db/config"
-	"github.com/trufnetwork/kwil-db/extensions/precompiles"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
-	"github.com/trufnetwork/node/extensions/tn_cache/internal/constants"
 )
 
 // testConfig holds all test-related configuration in one place
@@ -47,14 +45,3 @@ func getTestDBConfig() *kwilconfig.DBConfig {
 func getTestDB() sql.DB {
 	return testOverrides.sqlDB
 }
-
-// init registers tn_cache precompiles globally for tests
-func init() {
-	err := precompiles.RegisterInitializer(constants.PrecompileName, InitializeCachePrecompile)
-	if err != nil {
-		panic("failed to register tn_cache precompiles: " + err.Error())
-	}
-}
-
-// Expose if needed (add to tn_cache.go, but since user wants test-file only, replicate minimally)
-// func GetPrecompileDefinition() precompiles.Precompile { return ... }  // But avoid if possible

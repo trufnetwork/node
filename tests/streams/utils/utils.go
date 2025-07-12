@@ -11,12 +11,21 @@ import (
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/config"
 	"github.com/trufnetwork/kwil-db/core/log"
+	"github.com/trufnetwork/kwil-db/extensions/precompiles"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 
 	// make sure the extension is loaded
 	"github.com/trufnetwork/node/extensions/tn_cache"
 )
+
+// init registers tn_cache precompiles globally for tests
+func init() {
+	err := precompiles.RegisterInitializer(tn_cache.ExtensionName, tn_cache.InitializeCachePrecompile)
+	if err != nil {
+		panic("failed to register tn_cache precompiles: " + err.Error())
+	}
+}
 
 func Ptr[T any](v T) *T {
 	return &v
@@ -168,7 +177,7 @@ func TestCache(dataProvider, streamID string) *CacheOptions {
 	return NewCacheOptions().
 		WithEnabled().
 		WithMaxBlockAge(-1*time.Second).                   // Disable sync checking for tests
-		WithStream(dataProvider, streamID, "0 0 0 31 2 *") // Only on Feb 31st (never happens)
+		WithStream(dataProvider, streamID, "0 0 31 2 *") // Only on Feb 31st (never happens)
 }
 
 // ProductionCache returns cache options suitable for production with daily updates
@@ -176,7 +185,7 @@ func ProductionCache() *CacheOptions {
 	return NewCacheOptions().
 		WithEnabled().
 		WithMaxBlockAge(1 * time.Hour).       // Default 1 hour
-		WithResolutionSchedule("0 0 0 * * *") // Re-resolve daily at midnight
+		WithResolutionSchedule("0 0 * * *") // Re-resolve daily at midnight
 }
 
 // Example usage:
@@ -191,10 +200,10 @@ func ProductionCache() *CacheOptions {
 //   cache := testutils.NewCacheOptions().
 //     WithEnabled().
 //     WithMaxBlockAge(30 * time.Minute).
-//     WithStream("0x123...", "stream1", "0 0 * * * *").        // Hourly
-//     WithStreamFromTime("0x456...", "stream2", "0 */30 * * * *", 1700000000). // Every 30 min from timestamp
-//     WithComposedStream("0x789...", "composed1", "0 0 0 * * *", true).        // Daily with children
-//     WithWildcardProvider("0xabc...", "0 0 */6 * * *")                        // All streams every 6 hours
+//     WithStream("0x123...", "stream1", "0 * * * *").        // Hourly
+//     WithStreamFromTime("0x456...", "stream2", "*/30 * * * *", 1700000000). // Every 30 min from timestamp
+//     WithComposedStream("0x789...", "composed1", "0 0 * * *", true).        // Daily with children
+//     WithWildcardProvider("0xabc...", "0 */6 * * *")                        // All streams every 6 hours
 //   testutils.GetTestOptions(cache)
 
 // GetTestOptions returns the common test options with optional cache configuration
@@ -211,13 +220,11 @@ func GetTestOptions(cacheOpts ...*CacheOptions) *kwilTesting.Options {
 }
 
 // GetTestOptionsWithCache returns the extended options for use with testutils.RunSchemaTest
-// By default, cache is DISABLED to maintain backward compatibility
 func GetTestOptionsWithCache(cacheOpts ...*CacheOptions) *Options {
 	opts := &Options{
 		Options: &kwilTesting.Options{
 			UseTestContainer: true,
 		},
-		DisableCache: true, // Default to disabled for backward compatibility
 	}
 
 	// If cache options are provided, enable cache with those options
@@ -379,7 +386,7 @@ func RunSchemaTest(t *testing.T, s kwilTesting.SchemaTest, options *Options) {
 		cacheConfig = NewCacheOptions().
 			WithEnabled().
 			WithMaxBlockAge(-1 * time.Second).     // Disable sync check
-			WithResolutionSchedule("0 0 0 31 2 *") // Never auto-resolve
+			WithResolutionSchedule("0 0 31 2 *") // Never auto-resolve
 	} else if options != nil && options.Cache != nil {
 		cacheConfig = options.Cache
 	}
