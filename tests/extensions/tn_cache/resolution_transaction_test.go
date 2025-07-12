@@ -51,7 +51,7 @@ func TestResolutionInTransaction(t *testing.T) {
 					require.NoError(t, err)
 
 					// Trigger resolution to discover the new stream
-					err = helper.TriggerStreamResolution(ctx)
+					err = helper.TriggerResolution(ctx)
 					require.NoError(t, err)
 
 					// Verify the stream was discovered and cached
@@ -78,9 +78,9 @@ func TestResolutionInTransaction(t *testing.T) {
 					assert.True(t, found, "Newly created stream should be resolved by wildcard")
 
 					// Refresh cache for the discovered stream
-					err = helper.RefreshCacheForStream(ctx, deployer.Address(), streamId.String())
+					_, err = helper.RefreshAllStreamsSync(ctx)
 					require.NoError(t, err)
-				})(t)
+				})
 
 				return nil
 			},

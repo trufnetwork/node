@@ -93,7 +93,7 @@ func TestCacheObservability(t *testing.T) {
 				assert.Equal(t, false, missLog["cache_hit"], "First query should be cache miss")
 
 				// Refresh cache for hit test
-				recordsCached, err := helper.RefreshCache(ctx, deployer, streamId.String())
+				recordsCached, err := helper.RefreshAllStreamsSync(ctx)
 				require.NoError(t, err)
 				assert.Equal(t, 2, recordsCached, "Should cache 2 aggregated records")
 

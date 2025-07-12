@@ -112,7 +112,7 @@ func testCacheBasicFunctionality(t *testing.T, cacheConfig *testutils.CacheOptio
 		// No need to commit since we're using the same DB connection now
 
 		// Refresh the cache to populate it with our test data
-		recordsCached, err := helper.RefreshCache(ctx, deployer.Address(), composedStreamId.String())
+		recordsCached, err := helper.RefreshAllStreamsSync(ctx)
 		require.NoError(t, err, "should be able to refresh cache")
 		assert.Equal(t, 3, recordsCached, "should cache 3 records")
 
@@ -307,24 +307,19 @@ func testCacheIncludeChildren(t *testing.T, cacheConfig *testutils.CacheOptions)
 		// Verify parent stream exists in cache config
 		verifyCacheStreamExists(t, ctx, platform, deployer.Address(), parentComposedId.String())
 
-		// Trigger stream resolution to process include_children directive
-		// This will discover the child composed streams and add them to the cache
-		err = helper.TriggerStreamResolution(ctx)
-		require.NoError(t, err, "Failed to refresh stream list")
-
 		// Refresh cache - should cache parent and auto-resolve children
-		recordsCached, err := helper.RefreshCache(ctx, deployer.Address(), parentComposedId.String())
+		recordsCached, err := helper.RefreshAllStreamsSync(ctx)
 		require.NoError(t, err)
-		assert.Equal(t, 3, recordsCached, "should cache 3 parent records")
+		assert.Equal(t, 9, recordsCached, "should cache 9 records (3 parent + 3 child1 + 3 child2)")
 
 		// Verify child streams were automatically added to cache
 		verifyChildStreamsInCache(t, ctx, platform, deployer.Address(), childComposed1Id.String(), childComposed2Id.String())
 
 		// Refresh cache for child streams to populate their data
-		_, err = helper.RefreshCache(ctx, deployer.Address(), childComposed1Id.String())
+		_, err = helper.RefreshAllStreamsSync(ctx)
 		require.NoError(t, err, "Failed to refresh child composed 1 cache")
 
-		_, err = helper.RefreshCache(ctx, deployer.Address(), childComposed2Id.String())
+		_, err = helper.RefreshAllStreamsSync(ctx)
 		require.NoError(t, err, "Failed to refresh child composed 2 cache")
 
 		// Verify all composed streams have cached data (primitives should not)
