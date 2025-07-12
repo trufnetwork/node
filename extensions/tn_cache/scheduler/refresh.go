@@ -5,7 +5,6 @@ package scheduler
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/avast/retry-go/v4"
@@ -80,36 +79,16 @@ func (s *CacheScheduler) RefreshStreamData(ctx context.Context, directive config
 		return fmt.Errorf("unexpected directive type in refresh: %s (should be specific after resolution)", directive.Type)
 	}
 
-	// Fetch both regular and index events concurrently
-	var events []internal.CachedEvent
-	var indexEvents []internal.CachedEvent
-	var fetchErr error
-	var indexFetchErr error
-
-	// Create a wait group to fetch both types concurrently
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	// Fetch regular events
-	go func() {
-		defer wg.Done()
-		events, fetchErr = s.fetchSpecificStream(ctx, directive, fromTime)
-	}()
-
-	// Fetch index events
-	go func() {
-		defer wg.Done()
-		indexEvents, indexFetchErr = s.fetchSpecificIndexStream(ctx, directive, fromTime)
-	}()
-
-	// Wait for both fetches to complete
-	wg.Wait()
-
-	// Check for errors
+	// Fetch events sequentially to ensure consistency
+	// Fetch regular events first
+	events, fetchErr := s.fetchSpecificStream(ctx, directive, fromTime)
 	if fetchErr != nil {
 		s.metrics.RecordRefreshError(ctx, directive.DataProvider, directive.StreamID, metrics.ClassifyError(fetchErr))
 		return fmt.Errorf("fetch stream data: %w", fetchErr)
 	}
+
+	// Then fetch index events
+	indexEvents, indexFetchErr := s.fetchSpecificIndexStream(ctx, directive, fromTime)
 	if indexFetchErr != nil {
 		s.metrics.RecordRefreshError(ctx, directive.DataProvider, directive.StreamID, metrics.ClassifyError(indexFetchErr))
 		return fmt.Errorf("fetch index stream data: %w", indexFetchErr)

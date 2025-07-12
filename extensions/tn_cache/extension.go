@@ -65,6 +65,17 @@ func NewExtension(logger log.Logger, cacheDB *internal.CacheDB, scheduler *sched
 
 // Close closes the extension's connection pool if it's a PoolDBWrapper
 func (e *Extension) Close() {
+	// Stop scheduler first to prevent new jobs
+	if e.scheduler != nil {
+		e.scheduler.Stop()
+	}
+	
+	// Stop sync checker
+	if e.syncChecker != nil {
+		e.syncChecker.Stop()
+	}
+	
+	// Then close the connection pool
 	if e.db != nil {
 		if wrapper, ok := e.db.(*utilities.PoolDBWrapper); ok {
 			wrapper.Close()

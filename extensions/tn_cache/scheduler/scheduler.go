@@ -290,8 +290,13 @@ func (s *CacheScheduler) Stop() error {
 	case <-cronCtx.Done():
 		s.logger.Info("all scheduled jobs completed")
 	case <-time.After(30 * time.Second):
+		remainingJobs := s.getActiveJobCount()
 		s.logger.Warn("timeout waiting for jobs to complete",
-			"remaining_jobs", s.getActiveJobCount())
+			"remaining_jobs", remainingJobs)
+		// Clear job contexts to prevent memory leak
+		s.jobContextsMu.Lock()
+		s.jobContexts = make(map[string]context.CancelFunc)
+		s.jobContextsMu.Unlock()
 	}
 
 	s.logger.Info("cache scheduler stopped")
