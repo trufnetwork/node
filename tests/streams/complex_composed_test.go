@@ -427,7 +427,6 @@ func testComplexComposedFirstRecord(t *testing.T, useCache bool) func(ctx contex
 		// an after date is provided having partial data on it (some children having data, others not)
 		afterDate := int64(5)
 		result, err = checkCacheHit(t, useCache,
-
 			func() (*procedure.GetDataResult, error) {
 				return procedure.GetFirstRecordWithLogs(ctx, procedure.GetFirstRecordInput{
 					Platform:      platform,
@@ -456,7 +455,6 @@ func testComplexComposedFirstRecord(t *testing.T, useCache bool) func(ctx contex
 		// date after the last record is provided
 		afterDate = int64(14)
 		result, err = checkCacheHit(t, useCache,
-
 			func() (*procedure.GetDataResult, error) {
 				return procedure.GetFirstRecordWithLogs(ctx, procedure.GetFirstRecordInput{
 					Platform:      platform,
