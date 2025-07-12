@@ -265,7 +265,7 @@ func TestConfigValidation(t *testing.T) {
 					"streams_inline": `[{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "st123456789012345678901234567890",
-						"cron_schedule": "0 0 0 * * *",
+						"cron_schedule": "0 0 * * *",
 						"from": 1719849600
 					}]`,
 				},
@@ -395,17 +395,17 @@ func TestCronScheduleValidation(t *testing.T) {
 		description string
 	}{
 		// Valid schedules (consolidated from both tests)
-		{"hourly", "0 0 * * * *", false, "Every hour"},
-		{"daily", "0 0 0 * * *", false, "Daily at midnight"},
-		{"weekly", "0 0 0 * * 0", false, "Weekly on Sunday"},
-		{"monthly", "0 0 0 1 * *", false, "Monthly on 1st"},
-		{"every_15_min", "0 */15 * * * *", false, "Every 15 minutes"},
-		{"complex_weekdays", "0 30 2 * * 1-5", false, "Weekdays at 2:30 AM"},
+		{"hourly", "0 * * * *", false, "Every hour"},
+		{"daily", "0 0 * * *", false, "Daily at midnight"},
+		{"weekly", "0 0 * * 0", false, "Weekly on Sunday"},
+		{"monthly", "0 0 1 * *", false, "Monthly on 1st"},
+		{"every_15_min", "*/15 * * * *", false, "Every 15 minutes"},
+		{"complex_weekdays", "30 2 * * 1-5", false, "Weekdays at 2:30 AM"},
 
 		// Invalid schedules
 		{"invalid_text", "invalid", true, "Non-cron text"},
-		{"invalid_minute", "0 60 * * * *", true, "Invalid minute (60)"},
-		{"too_many_fields", "* * * * * * *", true, "Too many fields"},
+		{"invalid_minute", "60 * * * *", true, "Invalid minute (60)"},
+		{"too_many_fields", "* * * * * *", true, "Too many fields"},
 		{"too_few_fields", "0", true, "Too few fields"},
 		{"empty", "", true, "Empty schedule"},
 	}

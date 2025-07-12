@@ -13,8 +13,8 @@ enabled = true
 
 # Optional: Schedule for re-resolving wildcards and IncludeChildren (default: daily at midnight)
 # Set to empty string to disable automatic re-resolution
-resolution_schedule = "0 0 0 * * *"  # Daily at midnight UTC (seconds minutes hours day month weekday)
-# resolution_schedule = "0 0 * * * *"  # Hourly (for rapidly changing environments)
+resolution_schedule = "0 0 * * *"  # Daily at midnight UTC (minutes hours day month weekday)
+# resolution_schedule = "0 * * * *"  # Hourly (for rapidly changing environments)
 # resolution_schedule = ""            # Disable automatic resolution
 
 # Optional: Maximum block age to consider node synced (default: "1h")
@@ -40,7 +40,7 @@ streams_inline = '''
   {
     "data_provider": "0x9876543210fedcba9876543210fedcba98765432",
     "stream_id": "*",
-    "cron_schedule": "0 0 0 * * *",  # Daily at midnight
+    "cron_schedule": "0 0 * * *",  # Daily at midnight
     "include_children": false
   }
 ]

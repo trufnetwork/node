@@ -661,62 +661,62 @@ func (s *CacheScheduler) registerRefreshJob(schedule string) error {
 				default:
 				}
 
-		directives := s.getDirectivesForSchedule(schedule)
-		if len(directives) == 0 {
-			s.logger.Debug("no directives for schedule", "schedule", schedule)
-			return nil, nil
-		}
-
-		s.logger.Debug("executing scheduled refresh",
-			"schedule", schedule,
-			"streams", len(directives),
-			"job_id", jobID,
-			"active_jobs", s.getActiveJobCount())
-
-		// Use worker pool for concurrent refresh in scheduled jobs too
-		const workerCount = 5
-		workChan := make(chan config.CacheDirective, len(directives))
-		var wg sync.WaitGroup
-
-		// Start workers
-		for i := 0; i < workerCount; i++ {
-			wg.Add(1)
-			go func(workerID int) {
-				defer wg.Done()
-				for directive := range workChan {
-					// Check context before starting work
-					select {
-					case <-jobCtx.Done():
-						return
-					default:
-					}
-
-					// Check sync status
-					if !s.canRefresh(directive.DataProvider, directive.StreamID) {
-						continue
-					}
-
-					if err := s.refreshStreamDataWithRetry(jobCtx, directive, 3); err != nil {
-						s.logger.Error("failed to refresh stream data",
-							"provider", directive.DataProvider,
-							"stream", directive.StreamID,
-							"type", directive.Type,
-							"job_id", jobID,
-							"worker_id", workerID,
-							"error", err)
-					}
+				directives := s.getDirectivesForSchedule(schedule)
+				if len(directives) == 0 {
+					s.logger.Debug("no directives for schedule", "schedule", schedule)
+					return nil, nil
 				}
-			}(i)
-		}
 
-		// Queue work items
-		for _, directive := range directives {
-			workChan <- directive
-		}
-		close(workChan)
+				s.logger.Debug("executing scheduled refresh",
+					"schedule", schedule,
+					"streams", len(directives),
+					"job_id", jobID,
+					"active_jobs", s.getActiveJobCount())
 
-		// Wait for all workers to complete
-		wg.Wait()
+				// Use worker pool for concurrent refresh in scheduled jobs too
+				const workerCount = 5
+				workChan := make(chan config.CacheDirective, len(directives))
+				var wg sync.WaitGroup
+
+				// Start workers
+				for i := 0; i < workerCount; i++ {
+					wg.Add(1)
+					go func(workerID int) {
+						defer wg.Done()
+						for directive := range workChan {
+							// Check context before starting work
+							select {
+							case <-jobCtx.Done():
+								return
+							default:
+							}
+
+							// Check sync status
+							if !s.canRefresh(directive.DataProvider, directive.StreamID) {
+								continue
+							}
+
+							if err := s.refreshStreamDataWithRetry(jobCtx, directive, 3); err != nil {
+								s.logger.Error("failed to refresh stream data",
+									"provider", directive.DataProvider,
+									"stream", directive.StreamID,
+									"type", directive.Type,
+									"job_id", jobID,
+									"worker_id", workerID,
+									"error", err)
+							}
+						}
+					}(i)
+				}
+
+				// Queue work items
+				for _, directive := range directives {
+					workChan <- directive
+				}
+				close(workChan)
+
+				// Wait for all workers to complete
+				wg.Wait()
 
 				// Cancel job context explicitly when done
 				jobCancel()

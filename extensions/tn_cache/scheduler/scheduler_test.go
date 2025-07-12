@@ -118,7 +118,7 @@ func TestCacheScheduler_GroupBySchedule(t *testing.T) {
 			ID:           "test3",
 			DataProvider: "provider3",
 			StreamID:     "stream3",
-			Schedule:     config.Schedule{CronExpr: "0 0 0 * * *"}, // Daily
+			Schedule:     config.Schedule{CronExpr: "0 0 * * *"}, // Daily
 			TimeRange:    config.TimeRange{From: &from},
 		},
 	}
@@ -134,7 +134,7 @@ func TestCacheScheduler_GroupBySchedule(t *testing.T) {
 	assert.Equal(t, "test1", hourlyGroup[0].ID)
 	assert.Equal(t, "test2", hourlyGroup[1].ID)
 
-	dailyGroup := groups["0 0 0 * * *"]
+	dailyGroup := groups["0 0 * * *"]
 	require.Len(t, dailyGroup, 1, "Daily group should have 1 directive")
 	assert.Equal(t, "test3", dailyGroup[0].ID)
 }

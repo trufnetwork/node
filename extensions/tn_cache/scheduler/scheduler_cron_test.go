@@ -36,10 +36,10 @@ func TestCronPeriodDetection(t *testing.T) {
 		shouldSkip bool
 	}{
 		// Core cases that prove the logic works
-		{"hourly - within period", "0 0 * * * *", "14:30", "14:45", true},
-		{"hourly - past period", "0 0 * * * *", "14:30", "15:01", false},
-		{"5min - within period", "0 */5 * * * *", "14:47", "14:48", true},
-		{"5min - past period", "0 */5 * * * *", "14:42", "14:48", false},
+		{"hourly - within period", "0 * * * *", "14:30", "14:45", true},
+		{"hourly - past period", "0 * * * *", "14:30", "15:01", false},
+		{"5min - within period", "*/5 * * * *", "14:47", "14:48", true},
+		{"5min - past period", "*/5 * * * *", "14:42", "14:48", false},
 	}
 
 	for _, tt := range tests {
