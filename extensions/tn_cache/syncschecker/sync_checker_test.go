@@ -84,7 +84,7 @@ func TestSyncChecker_CanExecute(t *testing.T) {
 			health: map[string]any{
 				"services": map[string]any{
 					"user": map[string]any{
-						"syncing":    false, // Not actively syncing
+						"syncing":    false,                             // Not actively syncing
 						"block_time": (time.Now().Unix() - 7200) * 1000, // Old block during halt, in milliseconds
 					},
 				},
@@ -108,14 +108,14 @@ func TestSyncChecker_CanExecute(t *testing.T) {
 			// Create sync checker
 			logger := log.DiscardLogger
 			sc := NewSyncChecker(logger, tt.maxBlockAge)
-			
+
 			// Verify default value handling
 			if tt.maxBlockAge == 0 {
 				assert.Equal(t, int64(DefaultMaxBlockAge), sc.maxBlockAge, "Zero should use default")
 			} else {
 				assert.Equal(t, tt.maxBlockAge, sc.maxBlockAge, "Custom value should be preserved")
 			}
-			
+
 			// If server exists, update endpoint and populate state
 			if server != nil {
 				sc.endpoint = server.URL
