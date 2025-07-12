@@ -11,6 +11,7 @@ import (
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal/errors"
+	"github.com/trufnetwork/node/extensions/tn_cache/metrics"
 	"github.com/trufnetwork/node/extensions/tn_cache/validation"
 )
 
@@ -361,6 +362,15 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 	s.logger.Info("starting global resolution")
 	startTime := time.Now()
 
+	// Defer recording resolution duration
+	defer func() {
+		duration := time.Since(startTime)
+		s.resolutionMu.RLock()
+		streamCount := len(s.resolvedDirectives)
+		s.resolutionMu.RUnlock()
+		s.metrics.RecordResolutionDuration(ctx, duration, streamCount)
+	}()
+
 	// Create channels for resolution processing
 	const workerCount = 3
 	directiveChan := make(chan config.CacheDirective, len(s.originalDirectives))
@@ -399,6 +409,9 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 
 	// Check for errors
 	if err := <-errChan; err != nil {
+		// Record resolution error metric
+		errType := metrics.ClassifyError(err)
+		s.metrics.RecordResolutionError(ctx, errType)
 		return err
 	}
 
@@ -422,6 +435,8 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 		s.resolutionMu.RUnlock()
 		err := fmt.Errorf("resolution would clear all streams (had %d, now 0) - aborting", len(s.resolvedDirectives))
 		s.logger.Error("dangerous resolution detected", "error", err)
+		// Record this as a resolution error
+		s.metrics.RecordResolutionError(ctx, "dangerous_clear")
 		return err
 	}
 
@@ -449,8 +464,25 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 		}
 	}
 
+	// Record metrics for discovered and removed streams
+	for _, key := range added {
+		parts := strings.Split(key, ":")
+		if len(parts) == 2 {
+			s.metrics.RecordResolutionStreamDiscovered(ctx, parts[0], parts[1])
+		}
+	}
+	for _, key := range removed {
+		parts := strings.Split(key, ":")
+		if len(parts) == 2 {
+			s.metrics.RecordResolutionStreamRemoved(ctx, parts[0], parts[1])
+		}
+	}
+
 	// Atomic update prevents half-cached state
 	if err := s.updateCachedStreamsTable(ctx, newResolvedSpecs); err != nil {
+		// Record resolution error metric
+		errType := metrics.ClassifyError(err)
+		s.metrics.RecordResolutionError(ctx, errType)
 		return fmt.Errorf("update cached_streams table: %w", err)
 	}
 

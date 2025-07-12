@@ -80,6 +80,8 @@ func (s *CacheScheduler) canRefresh(provider, streamID string) bool {
 			"provider", provider,
 			"stream", streamID,
 			"reason", reason)
+		// Record the skip metric
+		s.metrics.RecordRefreshSkipped(s.ctx, provider, streamID, reason)
 	}
 	return canExecute
 }
