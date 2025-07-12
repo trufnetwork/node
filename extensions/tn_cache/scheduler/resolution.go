@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
@@ -17,6 +18,96 @@ import (
 // When config says "cache all streams from provider X", new streams
 // created after startup are automatically detected and cached.
 // Database updates are atomic to prevent data gaps during re-resolution.
+
+// resolveStreamSpecsSingle processes a single directive and returns resolved specs
+func (s *CacheScheduler) resolveStreamSpecsSingle(ctx context.Context, directive config.CacheDirective) ([]config.CacheDirective, error) {
+	var resolvedSpecs []config.CacheDirective
+
+	switch directive.Type {
+	case config.DirectiveSpecific:
+		if directive.IncludeChildren {
+			// Query child streams from composed (category) stream
+			s.logger.Debug("expanding specific directive with IncludeChildren",
+				"provider", directive.DataProvider,
+				"stream", directive.StreamID)
+
+			childStreams, err := s.getChildStreamsForComposed(ctx, directive.DataProvider, directive.StreamID, directive.TimeRange.From)
+			if err != nil {
+				// Non-fatal: parent might not have children yet
+				s.logger.Error("failed to expand children for composed stream",
+					"provider", directive.DataProvider,
+					"stream", directive.StreamID,
+					"error", err)
+				// Always cache parent even if children lookup fails
+				resolvedSpecs = append(resolvedSpecs, directive)
+				return resolvedSpecs, nil
+			}
+
+			resolvedSpecs = append(resolvedSpecs, directive)
+
+			for _, childKey := range childStreams {
+				// Child key format: "provider:streamID"
+				parts := strings.Split(childKey, ":")
+				if len(parts) == 2 {
+					childProvider, childStreamID := parts[0], parts[1]
+					childSpec := config.CacheDirective{
+						ID:              fmt.Sprintf("%s_%s_%s", childProvider, childStreamID, "child_resolved"),
+						Type:            config.DirectiveSpecific,
+						DataProvider:    childProvider,
+						StreamID:        childStreamID,
+						Schedule:        directive.Schedule,
+						TimeRange:       directive.TimeRange,
+						IncludeChildren: false, // Avoid recursive resolution
+					}
+					resolvedSpecs = append(resolvedSpecs, childSpec)
+				}
+			}
+
+			s.logger.Info("resolved specific directive with children",
+				"provider", directive.DataProvider,
+				"stream", directive.StreamID,
+				"child_count", len(childStreams))
+		} else {
+			// Keep specific directives as-is when IncludeChildren is false
+			resolvedSpecs = append(resolvedSpecs, directive)
+		}
+
+	case config.DirectiveProviderWildcard:
+		if directive.IncludeChildren {
+			s.logger.Warn("both provider wildcard and IncludeChildren are set - using wildcard behavior only",
+				"provider", directive.DataProvider,
+				"wildcard", directive.StreamID)
+		}
+
+		s.logger.Debug("resolving wildcard directive",
+			"provider", directive.DataProvider,
+			"wildcard", directive.StreamID)
+
+		composedStreams, err := s.getComposedStreamsForProvider(ctx, directive.DataProvider)
+		if err != nil {
+			return nil, fmt.Errorf("resolve wildcard for provider %s: %w", directive.DataProvider, err)
+		}
+
+		// Convert each found stream to a concrete directive
+		for _, streamID := range composedStreams {
+			streamSpec := config.CacheDirective{
+				ID:           fmt.Sprintf("%s_%s_%s", directive.DataProvider, streamID, "resolved"),
+				Type:         config.DirectiveSpecific, // Convert to specific
+				DataProvider: directive.DataProvider,
+				StreamID:     streamID,
+				Schedule:     directive.Schedule,
+				TimeRange:    directive.TimeRange,
+			}
+			resolvedSpecs = append(resolvedSpecs, streamSpec)
+		}
+
+		s.logger.Info("resolved wildcard directive",
+			"provider", directive.DataProvider,
+			"resolved_streams", len(composedStreams))
+	}
+
+	return resolvedSpecs, nil
+}
 
 // resolveStreamSpecs expands patterns to actual stream IDs by querying the database
 func (s *CacheScheduler) resolveStreamSpecs(ctx context.Context, directives []config.CacheDirective) ([]config.CacheDirective, error) {
@@ -253,12 +344,12 @@ func (s *CacheScheduler) registerResolutionJob(schedule string) error {
 	}
 
 	// Register the cron job
-	entryID, err := s.cron.AddFunc(schedule, jobFunc)
+	job, err := s.cron.Cron(schedule).Do(jobFunc)
 	if err != nil {
 		return fmt.Errorf("add resolution cron job: %w", err)
 	}
 
-	s.jobs[ResolutionJobKey] = entryID
+	s.jobs[ResolutionJobKey] = job
 	s.logger.Info("registered resolution cron job", "schedule", schedule)
 
 	return nil
@@ -270,11 +361,55 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 	s.logger.Info("starting global resolution")
 	startTime := time.Now()
 
-	// Re-expand patterns to catch newly created streams
-	newResolvedSpecs, err := s.resolveStreamSpecs(ctx, s.originalDirectives)
-	if err != nil {
-		return fmt.Errorf("resolve stream specs: %w", err)
+	// Create channels for resolution processing
+	const workerCount = 3
+	directiveChan := make(chan config.CacheDirective, len(s.originalDirectives))
+	resultChan := make(chan []config.CacheDirective, len(s.originalDirectives))
+	errChan := make(chan error, workerCount)
+
+	var wg sync.WaitGroup
+
+	// Start worker goroutines for concurrent resolution
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for directive := range directiveChan {
+				// Process each directive
+				resolvedSpecs, err := s.resolveStreamSpecsSingle(ctx, directive)
+				if err != nil {
+					errChan <- fmt.Errorf("worker %d: resolve directive %s: %w", workerID, directive.ID, err)
+					return
+				}
+				resultChan <- resolvedSpecs
+			}
+		}(i)
 	}
+
+	// Queue directives for processing
+	for _, directive := range s.originalDirectives {
+		directiveChan <- directive
+	}
+	close(directiveChan)
+
+	// Wait for workers to complete
+	wg.Wait()
+	close(resultChan)
+	close(errChan)
+
+	// Check for errors
+	if err := <-errChan; err != nil {
+		return err
+	}
+
+	// Collect all results
+	var allResolvedSpecs []config.CacheDirective
+	for specs := range resultChan {
+		allResolvedSpecs = append(allResolvedSpecs, specs...)
+	}
+
+	// Deduplicate results
+	newResolvedSpecs := s.deduplicateResolvedSpecs(allResolvedSpecs)
 
 	s.logger.Info("resolved streams count", "count", len(newResolvedSpecs))
 

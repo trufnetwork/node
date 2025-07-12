@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -188,4 +189,89 @@ func TestCacheScheduler_ResolutionFlow(t *testing.T) {
 	directives := scheduler.getDirectivesForSchedule("0 0 * * * *")
 	assert.Len(t, directives, 1)
 	assert.Equal(t, "stream1", directives[0].StreamID)
+}
+
+func TestCacheScheduler_ConcurrentExecution(t *testing.T) {
+	logger := log.New(log.WithWriter(nil))
+	
+	// Mock components
+	cacheDB := &internal.CacheDB{}
+	
+	scheduler := NewCacheScheduler(NewCacheSchedulerParams{
+		Service:         &common.Service{},
+		CacheDB:         cacheDB,
+		EngineOps:       nil,
+		Logger:          logger,
+		MetricsRecorder: metrics.NewNoOpMetrics(),
+		Namespace:       "",
+	})
+
+	// Verify gocron scheduler is created
+	assert.NotNil(t, scheduler.cron, "gocron scheduler should be initialized")
+	assert.NotNil(t, scheduler.jobs, "jobs map should be initialized")
+	
+	// Test job timeout configuration
+	assert.Equal(t, 60*time.Minute, scheduler.jobTimeout, "default job timeout should be 60 minutes")
+	
+	// Test concurrent job context management
+	ctx, cancel := context.WithCancel(context.Background())
+	scheduler.ctx = ctx
+	scheduler.cancel = cancel
+	defer cancel()
+	
+	// Create multiple job contexts concurrently
+	jobIDs := []string{"job1", "job2", "job3"}
+	for _, jobID := range jobIDs {
+		jobCtx, _ := scheduler.createJobContext(jobID)
+		assert.NotNil(t, jobCtx, "job context should be created")
+	}
+	
+	// Verify active job count
+	assert.Equal(t, 3, scheduler.getActiveJobCount(), "should have 3 active jobs")
+	
+	// Test concurrent job removal
+	for _, jobID := range jobIDs {
+		scheduler.removeJobContext(jobID)
+	}
+	
+	assert.Equal(t, 0, scheduler.getActiveJobCount(), "should have 0 active jobs after removal")
+}
+
+func TestCacheScheduler_StopWithTimeout(t *testing.T) {
+	logger := log.New(log.WithWriter(nil))
+	cacheDB := &internal.CacheDB{}
+	
+	scheduler := NewCacheScheduler(NewCacheSchedulerParams{
+		Service:         &common.Service{},
+		CacheDB:         cacheDB,
+		EngineOps:       nil,
+		Logger:          logger,
+		MetricsRecorder: metrics.NewNoOpMetrics(),
+		Namespace:       "",
+	})
+	
+	ctx, cancel := context.WithCancel(context.Background())
+	scheduler.ctx = ctx
+	scheduler.cancel = cancel
+	
+	// Create a long-running job context
+	jobCtx, jobCancel := scheduler.createJobContext("long_job")
+	
+	// Start a goroutine that simulates a long-running job
+	go func() {
+		<-jobCtx.Done()
+		// Simulate some cleanup time
+		time.Sleep(50 * time.Millisecond)
+		jobCancel()
+		scheduler.removeJobContext("long_job")
+	}()
+	
+	// Ensure job is registered
+	time.Sleep(10 * time.Millisecond)
+	assert.Equal(t, 1, scheduler.getActiveJobCount(), "should have 1 active job")
+	
+	// Stop should wait for the job to complete
+	err := scheduler.Stop()
+	assert.NoError(t, err, "stop should complete without error")
+	assert.Equal(t, 0, scheduler.getActiveJobCount(), "should have 0 active jobs after stop")
 }

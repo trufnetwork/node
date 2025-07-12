@@ -8,12 +8,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/go-co-op/gocron"
 	"github.com/robfig/cron/v3"
+
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/log"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
 	"go.opentelemetry.io/otel/attribute"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
@@ -33,8 +34,8 @@ type CacheScheduler struct {
 	cacheDB          *internal.CacheDB
 	engineOperations *internal.EngineOperations
 	logger           log.Logger
-	cron             *cron.Cron
-	jobs             map[string]cron.EntryID // schedule -> job ID
+	cron             *gocron.Scheduler
+	jobs             map[string]*gocron.Job
 	mu               sync.RWMutex
 	ctx              context.Context
 	cancel           context.CancelFunc
@@ -107,8 +108,8 @@ func NewCacheScheduler(params NewCacheSchedulerParams) *CacheScheduler {
 		cacheDB:          params.CacheDB,
 		engineOperations: params.EngineOps,
 		logger:           params.Logger.New("scheduler"),
-		cron:             cron.New(cron.WithSeconds()),
-		jobs:             make(map[string]cron.EntryID),
+		cron:             gocron.NewScheduler(time.UTC),
+		jobs:             make(map[string]*gocron.Job),
 		namespace:        params.Namespace,
 		metrics:          params.MetricsRecorder,
 		jobContexts:      make(map[string]context.CancelFunc),
@@ -259,7 +260,7 @@ func (s *CacheScheduler) Start(ctx context.Context, processedConfig *config.Proc
 		}
 	}
 
-	s.cron.Start()
+	s.cron.StartAsync()
 	s.logger.Info("cache scheduler started", "jobs", len(s.jobs))
 
 	// Populate cache immediately instead of waiting for first cron trigger
@@ -276,31 +277,41 @@ func (s *CacheScheduler) Stop() error {
 	s.logger.Info("stopping cache scheduler",
 		"active_jobs", s.getActiveJobCount())
 
-	// Cancel all active job contexts first
-	s.cancelAllJobContexts()
+	// Stop accepting new jobs
+	s.cron.Stop()
 
-	// Stop accepting new jobs and get a context that's done when all jobs complete
-	cronCtx := s.cron.Stop()
-
+	// Cancel scheduler context to signal shutdown
 	if s.cancel != nil {
 		s.cancel()
 	}
 
-	select {
-	case <-cronCtx.Done():
-		s.logger.Info("all scheduled jobs completed")
-	case <-time.After(30 * time.Second):
-		remainingJobs := s.getActiveJobCount()
-		s.logger.Warn("timeout waiting for jobs to complete",
-			"remaining_jobs", remainingJobs)
-		// Clear job contexts to prevent memory leak
-		s.jobContextsMu.Lock()
-		s.jobContexts = make(map[string]context.CancelFunc)
-		s.jobContextsMu.Unlock()
-	}
+	// Wait for active jobs with timeout
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer waitCancel()
 
-	s.logger.Info("cache scheduler stopped")
-	return nil
+	// Poll for active jobs to complete
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-waitCtx.Done():
+			// Timeout - force cancel remaining jobs
+			activeCount := s.getActiveJobCount()
+			if activeCount > 0 {
+				s.logger.Warn("timeout waiting for jobs to complete, force cancelling",
+					"remaining_jobs", activeCount)
+				s.cancelAllJobContexts()
+			}
+			s.logger.Info("cache scheduler stopped (timeout)")
+			return nil
+		case <-ticker.C:
+			if s.getActiveJobCount() == 0 {
+				s.logger.Info("all jobs completed, cache scheduler stopped")
+				return nil
+			}
+		}
+	}
 }
 
 // storeStreamConfigs persists the stream configurations to the database using batch operations
@@ -416,9 +427,6 @@ func (s *CacheScheduler) runInitialRefresh(directives []config.CacheDirective) {
 		return
 	}
 
-	g, ctx := errgroup.WithContext(jobCtx)
-	g.SetLimit(5) // Maximum 5 concurrent operations
-
 	// Track refresh results
 	var (
 		successCount  int32
@@ -428,54 +436,67 @@ func (s *CacheScheduler) runInitialRefresh(directives []config.CacheDirective) {
 		mu            sync.Mutex
 	)
 
-	for _, directive := range needsRefresh {
-		dir := directive // Capture loop variable to avoid closure issues
+	// Use worker pool pattern for concurrent refresh
+	const workerCount = 5
+	workChan := make(chan config.CacheDirective, len(needsRefresh))
+	var wg sync.WaitGroup
 
-		g.Go(func() error {
-			// Check context before starting work
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
+	// Start workers
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for directive := range workChan {
+				// Check context before starting work
+				select {
+				case <-jobCtx.Done():
+					return
+				default:
+				}
 
-			// Check sync status
-			if !s.canRefresh(dir.DataProvider, dir.StreamID) {
-				atomic.AddInt32(&skippedCount, 1)
-				s.logger.Debug("skipping refresh - sync check failed",
-					"provider", dir.DataProvider,
-					"stream", dir.StreamID)
-				return nil
-			}
+				// Check sync status
+				if !s.canRefresh(directive.DataProvider, directive.StreamID) {
+					atomic.AddInt32(&skippedCount, 1)
+					s.logger.Debug("skipping refresh - sync check failed",
+						"provider", directive.DataProvider,
+						"stream", directive.StreamID,
+						"worker_id", workerID)
+					continue
+				}
 
-			s.logger.Debug("starting refresh for stream",
-				"provider", dir.DataProvider,
-				"stream", dir.StreamID,
-				"job_id", jobID)
-
-			if err := s.refreshStreamDataWithRetry(ctx, dir, 3); err != nil {
-				atomic.AddInt32(&failureCount, 1)
-				mu.Lock()
-				failedStreams = append(failedStreams, fmt.Sprintf("%s:%s", dir.DataProvider, dir.StreamID))
-				mu.Unlock()
-				// Log error but don't fail the entire group
-				s.logger.Error("failed to perform initial refresh of stream data",
-					"provider", dir.DataProvider,
-					"stream", dir.StreamID,
+				s.logger.Debug("starting refresh for stream",
+					"provider", directive.DataProvider,
+					"stream", directive.StreamID,
 					"job_id", jobID,
-					"error", err)
-			} else {
-				atomic.AddInt32(&successCount, 1)
+					"worker_id", workerID)
+
+				if err := s.refreshStreamDataWithRetry(jobCtx, directive, 3); err != nil {
+					atomic.AddInt32(&failureCount, 1)
+					mu.Lock()
+					failedStreams = append(failedStreams, fmt.Sprintf("%s:%s", directive.DataProvider, directive.StreamID))
+					mu.Unlock()
+					// Log error but don't fail the entire group
+					s.logger.Error("failed to perform initial refresh of stream data",
+						"provider", directive.DataProvider,
+						"stream", directive.StreamID,
+						"job_id", jobID,
+						"worker_id", workerID,
+						"error", err)
+				} else {
+					atomic.AddInt32(&successCount, 1)
+				}
 			}
-			return nil // Return nil to continue with other streams
-		})
+		}(i)
 	}
 
-	if err := g.Wait(); err != nil {
-		s.logger.Error("initial refresh group error",
-			"error", err,
-			"job_id", jobID)
+	// Queue work items
+	for _, directive := range needsRefresh {
+		workChan <- directive
 	}
+	close(workChan)
+
+	// Wait for all workers to complete
+	wg.Wait()
 
 	// Cancel job context explicitly when done
 	jobCancel()
@@ -544,20 +565,41 @@ func (s *CacheScheduler) RunFullRefreshSync(ctx context.Context) (int, error) {
 		return s.getTotalCachedRecords(jobCtx)
 	}
 
-	g, gCtx := errgroup.WithContext(jobCtx)
-	g.SetLimit(5)
+	// Use worker pool for concurrent refresh
+	const workerCount = 5
+	workChan := make(chan config.CacheDirective, len(needsRefresh))
+	errChan := make(chan error, len(needsRefresh))
+	var wg sync.WaitGroup
 
-	for _, dir := range needsRefresh {
-		d := dir
-		g.Go(func() error {
-			if !s.canRefresh(d.DataProvider, d.StreamID) {
-				return nil
+	// Start workers
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for dir := range workChan {
+				if !s.canRefresh(dir.DataProvider, dir.StreamID) {
+					continue
+				}
+				if err := s.refreshStreamDataWithRetry(jobCtx, dir, 3); err != nil {
+					errChan <- err
+					return
+				}
 			}
-			return s.refreshStreamDataWithRetry(gCtx, d, 3)
-		})
+		}()
 	}
 
-	if err := g.Wait(); err != nil {
+	// Queue work items
+	for _, dir := range needsRefresh {
+		workChan <- dir
+	}
+	close(workChan)
+
+	// Wait for all workers to complete
+	wg.Wait()
+	close(errChan)
+
+	// Check for errors
+	if err := <-errChan; err != nil {
 		jobCancel()
 		return 0, err
 	}
@@ -597,7 +639,7 @@ func (s *CacheScheduler) registerRefreshJob(schedule string) error {
 		}()
 
 		// Add tracing for scheduled job execution
-		ctx, end := tracing.SchedulerOperation(jobCtx, tracing.OpSchedulerJob,
+		_, end := tracing.SchedulerOperation(jobCtx, tracing.OpSchedulerJob,
 			attribute.String("schedule", schedule),
 			attribute.String("job_id", jobID))
 		defer func() {
@@ -633,53 +675,61 @@ func (s *CacheScheduler) registerRefreshJob(schedule string) error {
 			"job_id", jobID,
 			"active_jobs", s.getActiveJobCount())
 
-		g, gCtx := errgroup.WithContext(ctx)
-		g.SetLimit(5) // Limit concurrent refreshes
+		// Use worker pool for concurrent refresh in scheduled jobs too
+		const workerCount = 5
+		workChan := make(chan config.CacheDirective, len(directives))
+		var wg sync.WaitGroup
 
+		// Start workers
+		for i := 0; i < workerCount; i++ {
+			wg.Add(1)
+			go func(workerID int) {
+				defer wg.Done()
+				for directive := range workChan {
+					// Check context before starting work
+					select {
+					case <-jobCtx.Done():
+						return
+					default:
+					}
+
+					// Check sync status
+					if !s.canRefresh(directive.DataProvider, directive.StreamID) {
+						continue
+					}
+
+					if err := s.refreshStreamDataWithRetry(jobCtx, directive, 3); err != nil {
+						s.logger.Error("failed to refresh stream data",
+							"provider", directive.DataProvider,
+							"stream", directive.StreamID,
+							"type", directive.Type,
+							"job_id", jobID,
+							"worker_id", workerID,
+							"error", err)
+					}
+				}
+			}(i)
+		}
+
+		// Queue work items
 		for _, directive := range directives {
-			dir := directive // Capture loop variable
-
-			g.Go(func() error {
-				// Check context before starting work
-				select {
-				case <-gCtx.Done():
-					return gCtx.Err()
-				default:
-				}
-
-				// Check sync status
-				if !s.canRefresh(dir.DataProvider, dir.StreamID) {
-					return nil
-				}
-
-				if err := s.refreshStreamDataWithRetry(gCtx, dir, 3); err != nil {
-					s.logger.Error("failed to refresh stream data",
-						"provider", dir.DataProvider,
-						"stream", dir.StreamID,
-						"type", dir.Type,
-						"job_id", jobID,
-						"error", err)
-				}
-				return nil
-			})
+			workChan <- directive
 		}
+		close(workChan)
 
-		if err := g.Wait(); err != nil {
-			s.logger.Error("scheduled refresh group error",
-				"error", err,
-				"job_id", jobID)
-		}
+		// Wait for all workers to complete
+		wg.Wait()
 
 		// Cancel job context explicitly when done
 		jobCancel()
 	}
 
-	entryID, err := s.cron.AddFunc(schedule, jobFunc)
+	job, err := s.cron.Cron(schedule).Do(jobFunc)
 	if err != nil {
-		return fmt.Errorf("add refresh cron job: %w", err)
+		return fmt.Errorf("failed to register refresh job: %w", err)
 	}
 
-	s.jobs[schedule] = entryID
+	s.jobs[schedule] = job
 	s.logger.Info("registered refresh cron job",
 		"schedule", schedule)
 
