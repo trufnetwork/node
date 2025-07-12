@@ -16,12 +16,12 @@ import (
 	"github.com/trufnetwork/sdk-go/core/types"
 )
 
-// GetRecordResult contains the full result of a GetRecord call
-type GetRecordResult struct {
+// GetDataResult contains the full result of a GetRecord call
+type GetDataResult struct {
 	Rows     []ResultRow
 	Logs     []string
-	CacheHit bool      // Whether the result came from cache
-	CachedAt *int64    // Timestamp when data was cached (only set on cache hit)
+	CacheHit bool   // Whether the result came from cache
+	CachedAt *int64 // Timestamp when data was cached (only set on cache hit)
 }
 
 // parseCacheInfoFromLogs parses cache hit information from procedure logs
@@ -48,7 +48,7 @@ func parseCacheInfoFromLogs(logs []string) (cacheHit bool, cachedAt *int64) {
 }
 
 // GetRecordWithLogs executes get_record and returns full result including logs
-func GetRecordWithLogs(ctx context.Context, input GetRecordInput) (*GetRecordResult, error) {
+func GetRecordWithLogs(ctx context.Context, input GetRecordInput) (*GetDataResult, error) {
 	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
 	if err != nil {
 		return nil, errors.Wrap(err, "error in getRecord")
@@ -110,7 +110,7 @@ func GetRecordWithLogs(ctx context.Context, input GetRecordInput) (*GetRecordRes
 	// Parse cache information from logs
 	cacheHit, cachedAt := parseCacheInfoFromLogs(r.Logs)
 
-	return &GetRecordResult{
+	return &GetDataResult{
 		Rows:     processedRows,
 		Logs:     r.Logs,
 		CacheHit: cacheHit,
@@ -137,7 +137,7 @@ func GetRecord(ctx context.Context, input GetRecordInput) ([]ResultRow, error) {
 }
 
 // GetIndexWithLogs executes get_index and returns full result including logs
-func GetIndexWithLogs(ctx context.Context, input GetIndexInput) (*GetRecordResult, error) {
+func GetIndexWithLogs(ctx context.Context, input GetIndexInput) (*GetDataResult, error) {
 	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
 	if err != nil {
 		return nil, errors.Wrap(err, "error in getIndex")
@@ -200,7 +200,7 @@ func GetIndexWithLogs(ctx context.Context, input GetIndexInput) (*GetRecordResul
 	// Parse cache information from logs
 	cacheHit, cachedAt := parseCacheInfoFromLogs(r.Logs)
 
-	return &GetRecordResult{
+	return &GetDataResult{
 		Rows:     processedRows,
 		Logs:     r.Logs,
 		CacheHit: cacheHit,
@@ -218,7 +218,7 @@ func GetIndex(ctx context.Context, input GetIndexInput) ([]ResultRow, error) {
 }
 
 // GetIndexChangeWithLogs executes get_index_change and returns full result including logs
-func GetIndexChangeWithLogs(ctx context.Context, input GetIndexChangeInput) (*GetRecordResult, error) {
+func GetIndexChangeWithLogs(ctx context.Context, input GetIndexChangeInput) (*GetDataResult, error) {
 	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
 	if err != nil {
 		return nil, errors.Wrap(err, "error in getIndexChange")
@@ -276,7 +276,7 @@ func GetIndexChangeWithLogs(ctx context.Context, input GetIndexChangeInput) (*Ge
 	// Parse cache information from logs
 	cacheHit, cachedAt := parseCacheInfoFromLogs(r.Logs)
 
-	return &GetRecordResult{
+	return &GetDataResult{
 		Rows:     processedRows,
 		Logs:     r.Logs,
 		CacheHit: cacheHit,
@@ -293,7 +293,7 @@ func GetIndexChange(ctx context.Context, input GetIndexChangeInput) ([]ResultRow
 }
 
 // GetFirstRecordWithLogs executes get_first_record and returns full result including logs
-func GetFirstRecordWithLogs(ctx context.Context, input GetFirstRecordInput) (*GetRecordResult, error) {
+func GetFirstRecordWithLogs(ctx context.Context, input GetFirstRecordInput) (*GetDataResult, error) {
 	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
 	if err != nil {
 		return nil, errors.Wrap(err, "error in getFirstRecord")
@@ -348,7 +348,7 @@ func GetFirstRecordWithLogs(ctx context.Context, input GetFirstRecordInput) (*Ge
 	// Parse cache information from logs
 	cacheHit, cachedAt := parseCacheInfoFromLogs(r.Logs)
 
-	return &GetRecordResult{
+	return &GetDataResult{
 		Rows:     processedRows,
 		Logs:     r.Logs,
 		CacheHit: cacheHit,
