@@ -68,20 +68,6 @@ func ensureDecimalValue(value interface{}) (*types.Decimal, error) {
 	return dec, nil
 }
 
-// processSingleRowResult handles the common pattern of returning a single (event_time, value) row
-func processSingleRowResult(result *sql.ResultSet, resultFn func([]any) error) error {
-	if len(result.Rows) > 0 {
-		row := result.Rows[0]
-		dec, err := ensureDecimalValue(row[1])
-		if err != nil {
-			return err
-		}
-		return resultFn([]any{row[0], dec})
-	}
-	// No record found - this is not an error, just no data
-	return nil
-}
-
 // createStreamOperationContext sets up tracing for stream operations
 func createStreamOperationContext(ctx context.Context, op tracing.Operation, dataProvider, streamID string, attrs ...attribute.KeyValue) (context.Context, func(error)) {
 	return tracing.StreamOperation(ctx, op, dataProvider, streamID, attrs...)
@@ -171,20 +157,8 @@ func HandleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 
 	// Special case: if both from and to are NULL, user wants latest value only
 	if fromTime == nil && toTime == nil {
-		// Just check if we have any data at all
-		result, err = db.Execute(ctx.TxContext.Ctx, `
-			SELECT COUNT(*) > 0 FROM `+constants.CacheSchemaName+`.cached_events
-			WHERE data_provider = $1 AND stream_id = $2
-			LIMIT 1
-		`, dataProvider, streamID)
-		if err != nil {
-			return fmt.Errorf("failed to check for any cached events: %w", err)
-		}
-		hasData := false
-		if len(result.Rows) > 0 && result.Rows[0][0] != nil {
-			hasData = result.Rows[0][0].(bool)
-		}
-		return resultFn([]any{hasData, lastRefreshedTimestamp})
+		// We consider it cached if the stream has been refreshed, even if empty
+		return resultFn([]any{true, lastRefreshedTimestamp})
 	}
 
 	// If from is NULL but to is not, treat from as 0 (beginning of time)
@@ -199,33 +173,12 @@ func HandleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 		return resultFn([]any{false, int64(0)})
 	}
 
-	// At this point, we know the stream is configured and has been refreshed
-	// Check if we actually have events in the requested range
-	var eventCount int64
-	if toTime == nil {
-		// No upper bound specified - to is treated as max_int8 (end of time)
-		result, err = db.Execute(ctx.TxContext.Ctx, `
-			SELECT COUNT(*) FROM `+constants.CacheSchemaName+`.cached_events
-			WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3
-		`, dataProvider, streamID, effectiveFrom)
-	} else {
-		// Upper bound specified
-		result, err = db.Execute(ctx.TxContext.Ctx, `
-			SELECT COUNT(*) FROM `+constants.CacheSchemaName+`.cached_events
-			WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3 AND event_time <= $4
-		`, dataProvider, streamID, effectiveFrom, *toTime)
-	}
+	// At this point, we know the stream is configured, has been refreshed,
+	// and the requested range starts after our configured from time
+	// We consider it cached even if there are no events in the range
 
-	if err != nil {
-		return fmt.Errorf("failed to count cached events: %w", err)
-	}
-
-	if len(result.Rows) > 0 {
-		eventCount = result.Rows[0][0].(int64)
-	}
-
-	// Record cache hit/miss metric
-	hasData := eventCount > 0
+	// Record cache hit metric (since we're considering it cached)
+	hasData := true
 	ext := GetExtension()
 	if ext != nil && ext.IsEnabled() {
 		if hasData {
