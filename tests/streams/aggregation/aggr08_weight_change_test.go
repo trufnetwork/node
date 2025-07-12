@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/extensions/tn_cache"
 	"github.com/trufnetwork/node/internal/migrations"
@@ -142,6 +143,9 @@ func testAGGR08_WeightChangeEventPoints(t *testing.T, useCache bool) func(ctx co
 		if err != nil {
 			return errors.Wrap(err, "error getting record for query 1")
 		}
+		if useCache {
+			assert.True(t, query1result.CacheHit, "Expected cache hit for query 1")
+		}
 
 		// Verify query 1 result (weight change day)
 		query1expected := `
@@ -175,6 +179,9 @@ func testAGGR08_WeightChangeEventPoints(t *testing.T, useCache bool) func(ctx co
 		})
 		if err != nil {
 			return errors.Wrap(err, "error getting record for query 2")
+		}
+		if useCache {
+			assert.True(t, query2result.CacheHit, "Expected cache hit for query 2")
 		}
 
 		// Verify result includes day 5 data point (which is before the query range)

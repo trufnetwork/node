@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/extensions/tn_cache"
 	"github.com/trufnetwork/node/internal/migrations"
@@ -103,6 +104,9 @@ func testAGGR09_DuplicateValues(t *testing.T, useCache bool) func(ctx context.Co
 		})
 		if err != nil {
 			return errors.Wrap(err, "error getting records from composed stream")
+		}
+		if useCache {
+			assert.True(t, result.CacheHit, "Expected cache hit")
 		}
 
 		// Verify the results
