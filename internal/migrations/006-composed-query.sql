@@ -41,7 +41,7 @@ CREATE OR REPLACE ACTION get_record_composed(
     $from INT8,           -- Start of requested time range (inclusive)
     $to INT8,             -- End of requested time range (inclusive)
     $frozen_at INT8,      -- Created-at cutoff: only consider events created before this
-    $use_cache BOOL       -- Whether to use cache (default: false)
+    $use_cache BOOL DEFAULT false  -- Whether to use cache (default: false)
 ) PRIVATE VIEW
 RETURNS TABLE(
     event_time INT8,
@@ -86,7 +86,7 @@ RETURNS TABLE(
 
     -- for historical consistency, if both from and to are omitted, return the latest record
     if $from IS NULL AND $to IS NULL {
-        FOR $row IN get_last_record_composed($data_provider, $stream_id, NULL, $effective_frozen_at, $use_cache) {
+        FOR $row IN get_last_record_composed($data_provider, $stream_id, NULL, $effective_frozen_at, $effective_use_cache) {
             RETURN NEXT $row.event_time, $row.value;
         }
         RETURN;

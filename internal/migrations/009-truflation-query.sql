@@ -349,7 +349,7 @@ CREATE OR REPLACE ACTION truflation_get_index(
     $to INT8,
     $frozen_at INT8,
     $base_time INT8,
-    $use_cache BOOL
+    $use_cache BOOL DEFAULT false
 ) PUBLIC view returns table(
     event_time INT8,
     value NUMERIC(36,18)
@@ -448,7 +448,7 @@ CREATE OR REPLACE ACTION truflation_get_record(
     $from INT8,
     $to INT8,
     $frozen_at INT8,
-    $use_cache BOOL
+    $use_cache BOOL DEFAULT false
 ) PUBLIC view returns table(
     event_time INT8,
     value NUMERIC(36,18)
@@ -479,7 +479,7 @@ CREATE OR REPLACE ACTION truflation_get_last_record(
     $stream_id TEXT,
     $before INT8,
     $frozen_at INT8,
-    $use_cache BOOL
+    $use_cache BOOL DEFAULT false
 ) PUBLIC view returns table(
     event_time INT8,
     value NUMERIC(36,18)
@@ -512,7 +512,7 @@ CREATE OR REPLACE ACTION truflation_get_first_record(
     $stream_id TEXT,
     $after INT8,
     $frozen_at INT8,
-    $use_cache BOOL
+    $use_cache BOOL DEFAULT false
 ) PUBLIC view returns table(
     event_time INT8,
     value NUMERIC(36,18)
@@ -543,7 +543,7 @@ CREATE OR REPLACE ACTION truflation_get_base_value(
     $stream_id TEXT,
     $base_time INT8,
     $frozen_at INT8,
-    $use_cache BOOL
+    $use_cache BOOL DEFAULT false
 ) PUBLIC view returns (value NUMERIC(36,18)) {
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
@@ -643,7 +643,7 @@ CREATE OR REPLACE ACTION truflation_get_record_composed(
     $from INT8,         
     $to INT8,
     $frozen_at INT8,
-    $use_cache BOOL
+    $use_cache BOOL DEFAULT false
 )  PUBLIC VIEW
 RETURNS TABLE(
     event_time INT8,
@@ -1201,7 +1201,7 @@ CREATE OR REPLACE ACTION truflation_last_rc_composed(
     $stream_id TEXT,
     $before INT8,
     $frozen_at INT8,
-    $use_cache BOOL
+    $use_cache BOOL DEFAULT false
 ) PRIVATE VIEW
 RETURNS TABLE(
     event_time INT8,
@@ -1372,7 +1372,7 @@ CREATE OR REPLACE ACTION truflation_first_rc_composed(
     $stream_id TEXT,
     $after INT8,
     $frozen_at INT8,
-    $use_cache BOOL
+    $use_cache BOOL DEFAULT false
 ) PRIVATE VIEW
 RETURNS TABLE(
     event_time INT8,
@@ -1535,7 +1535,7 @@ CREATE OR REPLACE ACTION truflation_get_index_composed(
     $to INT8,
     $frozen_at INT8,
     $base_time INT8,
-    $use_cache BOOL
+    $use_cache BOOL DEFAULT false
 ) PRIVATE VIEW
 RETURNS TABLE(
     event_time INT8,
