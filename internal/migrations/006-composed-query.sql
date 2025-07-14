@@ -86,7 +86,8 @@ RETURNS TABLE(
 
     -- for historical consistency, if both from and to are omitted, return the latest record
     if $from IS NULL AND $to IS NULL {
-        FOR $row IN get_last_record_composed($data_provider, $stream_id, NULL, $effective_frozen_at, $effective_use_cache) {
+        -- here we use the original $use_cache parameter, as it was the user's intent
+        FOR $row IN get_last_record_composed($data_provider, $stream_id, NULL, $effective_frozen_at, $use_cache) {
             RETURN NEXT $row.event_time, $row.value;
         }
         RETURN;
