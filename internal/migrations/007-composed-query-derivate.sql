@@ -7,7 +7,7 @@ CREATE OR REPLACE ACTION get_last_record_composed(
     $stream_id TEXT,
     $before INT8,       -- Upper bound for event_time
     $frozen_at INT8,    -- Only consider events created on or before this
-    $use_cache BOOL     -- Whether to use cache (default: false)
+    $use_cache BOOL DEFAULT false     -- Whether to use cache (default: false)
 ) PRIVATE VIEW
 RETURNS TABLE(
     event_time INT8,
@@ -182,7 +182,7 @@ CREATE OR REPLACE ACTION get_first_record_composed(
     $stream_id TEXT,
     $after INT8,       -- Lower bound for event_time
     $frozen_at INT8,   -- Only consider events created on or before this
-    $use_cache BOOL    -- Whether to use cache (default: false)
+    $use_cache BOOL DEFAULT false    -- Whether to use cache (default: false)
 ) PRIVATE VIEW
 RETURNS TABLE(
     event_time INT8,
@@ -353,7 +353,7 @@ CREATE OR REPLACE ACTION get_index_composed(
     $to INT8,
     $frozen_at INT8,
     $base_time INT8,
-    $use_cache BOOL     -- Whether to use cache (default: false)
+    $use_cache BOOL DEFAULT false     -- Whether to use cache (default: false)
 ) PRIVATE VIEW
 RETURNS TABLE(
     event_time INT8,

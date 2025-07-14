@@ -20,8 +20,8 @@ import (
 type GetRecordResult struct {
 	Rows     []ResultRow
 	Logs     []string
-	CacheHit bool      // Whether the result came from cache
-	CachedAt *int64    // Timestamp when data was cached (only set on cache hit)
+	CacheHit bool   // Whether the result came from cache
+	CachedAt *int64 // Timestamp when data was cached (only set on cache hit)
 }
 
 // GetRecordWithLogs executes get_record and returns full result including logs
@@ -50,33 +50,45 @@ func GetRecordWithLogs(ctx context.Context, input GetRecordInput) (*GetRecordRes
 		prefix = *input.Prefix
 	}
 
-	// Set default use_cache to false if not specified
-	useCache := false
-	if input.UseCache != nil {
-		useCache = *input.UseCache
-	}
-
 	var resultRows [][]any
-	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", prefix+"get_record", []any{
-		input.StreamLocator.DataProvider.Address(),
-		input.StreamLocator.StreamId.String(),
-		input.FromTime,
-		input.ToTime,
-		input.FrozenAt,
-		useCache,
-	}, func(row *common.Row) error {
-		// Convert the row values to []any
-		values := make([]any, len(row.Values))
-		copy(values, row.Values)
-		resultRows = append(resultRows, values)
-		return nil
-	})
+	var callResult *common.CallResult
+
+	if input.UseCache == nil {
+		// Call with 5 parameters (omit use_cache entirely)
+		callResult, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", prefix+"get_record", []any{
+			input.StreamLocator.DataProvider.Address(),
+			input.StreamLocator.StreamId.String(),
+			input.FromTime,
+			input.ToTime,
+			input.FrozenAt,
+		}, func(row *common.Row) error {
+			values := make([]any, len(row.Values))
+			copy(values, row.Values)
+			resultRows = append(resultRows, values)
+			return nil
+		})
+	} else {
+		// Call with 6 parameters (include use_cache)
+		callResult, err = input.Platform.Engine.Call(engineContext, input.Platform.DB, "", prefix+"get_record", []any{
+			input.StreamLocator.DataProvider.Address(),
+			input.StreamLocator.StreamId.String(),
+			input.FromTime,
+			input.ToTime,
+			input.FrozenAt,
+			*input.UseCache,
+		}, func(row *common.Row) error {
+			values := make([]any, len(row.Values))
+			copy(values, row.Values)
+			resultRows = append(resultRows, values)
+			return nil
+		})
+	}
 
 	if err != nil {
 		return nil, errors.Wrap(err, "error in getRecord")
 	}
-	if r.Error != nil {
-		return nil, errors.Wrap(r.Error, "error in getRecord")
+	if callResult.Error != nil {
+		return nil, errors.Wrap(callResult.Error, "error in getRecord")
 	}
 
 	processedRows, err := processResultRows(resultRows)
@@ -87,7 +99,7 @@ func GetRecordWithLogs(ctx context.Context, input GetRecordInput) (*GetRecordRes
 	// Parse cache information from logs
 	var cacheHit bool
 	var cachedAt *int64
-	for _, log := range r.Logs {
+	for _, log := range callResult.Logs {
 		if strings.Contains(log, "cache_hit") {
 			var logData map[string]interface{}
 			if err := json.Unmarshal([]byte(log), &logData); err == nil {
@@ -107,7 +119,7 @@ func GetRecordWithLogs(ctx context.Context, input GetRecordInput) (*GetRecordRes
 
 	return &GetRecordResult{
 		Rows:     processedRows,
-		Logs:     r.Logs,
+		Logs:     callResult.Logs,
 		CacheHit: cacheHit,
 		CachedAt: cachedAt,
 	}, nil

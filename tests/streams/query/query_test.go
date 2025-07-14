@@ -74,6 +74,7 @@ func TestQueryStream(t *testing.T) {
 			WithQueryTestSetup(test_GetIndexUntilSpecificTime(t)),
 			WithQueryTestSetup(test_GetIndexChangeFromSpecificTime(t)),
 			WithQueryTestSetup(test_GetIndexChangeUntilSpecificTime(t)),
+			WithQueryTestSetup(testBackwardCompatibility_GetRecord(t)),
 		},
 	}, testutils.GetTestOptions())
 }
@@ -1133,4 +1134,70 @@ func testListStreams(t *testing.T) func(ctx context.Context, platform *kwilTesti
 		})
 		return nil
 	}
+}
+
+// testBackwardCompatibility_GetRecord tests that omitting use_cache produces the same result as explicitly setting it to false
+func testBackwardCompatibility_GetRecord(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return runTestForAllStreamTypes(t, "BackwardCompatibility_GetRecord", func(ctx context.Context, platform *kwilTesting.Platform, config TestConfig) error {
+		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrapf(err, "error creating ethereum address for %s", config.Name)
+		}
+
+		fromTime := int64(1)
+		toTime := int64(3)
+
+		// Test 1: Call with UseCache explicitly set to false (uses 6 parameters)
+		resultWithExplicitFalse, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
+			Platform: platform,
+			StreamLocator: types.StreamLocator{
+				StreamId:     config.ReadableStreamId,
+				DataProvider: deployer,
+			},
+			FromTime: &fromTime,
+			ToTime:   &toTime,
+			UseCache: func() *bool { v := false; return &v }(), // Explicitly set to false (6 params)
+		})
+		if err != nil {
+			return errors.Wrapf(err, "error getting records with explicit false from %s", config.Name)
+		}
+
+		// Test 2: Call with UseCache omitted (should default to false - uses 5 parameters)
+		resultWithOmitted, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
+			Platform: platform,
+			StreamLocator: types.StreamLocator{
+				StreamId:     config.ReadableStreamId,
+				DataProvider: deployer,
+			},
+			FromTime: &fromTime,
+			ToTime:   &toTime,
+			UseCache: nil, // Explicitly nil - should use 5 parameters and default to false
+		})
+		if err != nil {
+			return errors.Wrapf(err, "error getting records with omitted use_cache from %s", config.Name)
+		}
+
+		// Test 3: Compare results - they should be identical
+		if len(resultWithExplicitFalse) != len(resultWithOmitted) {
+			return fmt.Errorf("backward compatibility failed for %s: different number of rows. Explicit false: %d, Omitted: %d",
+				config.Name, len(resultWithExplicitFalse), len(resultWithOmitted))
+		}
+
+		for i, explicitRow := range resultWithExplicitFalse {
+			omittedRow := resultWithOmitted[i]
+			if len(explicitRow) != len(omittedRow) {
+				return fmt.Errorf("backward compatibility failed for %s: row %d has different column count. Explicit: %d, Omitted: %d",
+					config.Name, i, len(explicitRow), len(omittedRow))
+			}
+			for j, explicitValue := range explicitRow {
+				omittedValue := omittedRow[j]
+				if explicitValue != omittedValue {
+					return fmt.Errorf("backward compatibility failed for %s: row %d, column %d differs. Explicit: %s, Omitted: %s",
+						config.Name, i, j, explicitValue, omittedValue)
+				}
+			}
+		}
+
+		return nil
+	})
 }
