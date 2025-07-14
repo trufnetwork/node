@@ -839,4 +839,15 @@ rm -rf $HOME/truf-node-operator/my-node-config
 
 We recommend enabling RPC private mode to prevent arbitrary SQL executions. Note that this does not enable unauthorized write executions, but activating it reduces the risk of unintended SQL-based DoS attacks.
 
+To enable it, add or update the following in your `config.toml` file:
+
+```toml
+[rpc]
+
+# Enforce data privacy: authenticate JSON-RPC call requests using challenge-based
+# authentication. the node will only accept JSON-RPC requests that has a valid signed
+# challenge response. This also disables ad hoc queries, and no raw transaction retrieval.
+private = true
+```
+
 For more details, see the [Kwil Private RPC documentation](http://docs.kwil.com/docs/node/private-rpc).
