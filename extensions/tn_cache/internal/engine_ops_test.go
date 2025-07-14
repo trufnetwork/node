@@ -49,7 +49,7 @@ func createMockStreams(streams []testStreamData) func(action string, args []any,
 		for _, stream := range streams {
 			// Only return streams matching the requested provider
 			if provider == "" || stream.provider == provider {
-				fn(&common.Row{Values: []any{stream.provider, stream.streamID, stream.streamType, stream.createdAt}})
+				_ = fn(&common.Row{Values: []any{stream.provider, stream.streamID, stream.streamType, stream.createdAt}})
 			}
 		}
 	}
@@ -59,7 +59,7 @@ func createMockStreams(streams []testStreamData) func(action string, args []any,
 func createMockChildStreams(children []testChildStream) func(action string, args []any, fn func(*common.Row) error) {
 	return func(action string, args []any, fn func(*common.Row) error) {
 		for _, child := range children {
-			fn(&common.Row{Values: []any{child.provider, child.streamID}})
+			_ = fn(&common.Row{Values: []any{child.provider, child.streamID}})
 		}
 	}
 }
@@ -68,7 +68,7 @@ func createMockChildStreams(children []testChildStream) func(action string, args
 func createMockRecords(records []testRecord) func(action string, args []any, fn func(*common.Row) error) {
 	return func(action string, args []any, fn func(*common.Row) error) {
 		for _, record := range records {
-			fn(&common.Row{Values: []any{record.eventTime, record.value}})
+			_ = fn(&common.Row{Values: []any{record.eventTime, record.value}})
 		}
 	}
 }

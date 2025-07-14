@@ -3,7 +3,6 @@ package tn_cache
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"testing"
 
@@ -453,7 +452,7 @@ func TestCronScheduleValidation(t *testing.T) {
 
 // CSV Test Helper Functions
 func createTempCSV(t *testing.T, content string) string {
-	tmpFile, err := ioutil.TempFile("", "test_streams_*.csv")
+	tmpFile, err := os.CreateTemp("", "test_streams_*.csv")
 	require.NoError(t, err)
 	defer tmpFile.Close()
 
@@ -464,7 +463,7 @@ func createTempCSV(t *testing.T, content string) string {
 }
 
 func createTempDir(t *testing.T) string {
-	tmpDir, err := ioutil.TempDir("", "test_csv_config_*")
+	tmpDir, err := os.MkdirTemp("", "test_csv_config_*")
 	require.NoError(t, err)
 	return tmpDir
 }

@@ -1,14 +1,15 @@
-version: "2"
-
 output:
-  formats:
-    text:
-      path: stdout
-      colors: true
+  format: colored-line-number
+
+run:
+  skip-dirs:
+    - deployments/infra/cdk.out
+    - vendor
 
 linters:
-  exclusions:
-    paths:
-      - deployments/infra/cdk.out
-      - vendor
-  
+  enable-all: false
+  enable:
+    - errcheck
+    - ineffassign
+    - unused
+    - staticcheck

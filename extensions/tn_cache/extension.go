@@ -67,7 +67,7 @@ func NewExtension(logger log.Logger, cacheDB *internal.CacheDB, scheduler *sched
 func (e *Extension) Close() {
 	// Stop scheduler first to prevent new jobs
 	if e.scheduler != nil {
-		e.scheduler.Stop()
+		_ = e.scheduler.Stop()
 	}
 	
 	// Stop sync checker

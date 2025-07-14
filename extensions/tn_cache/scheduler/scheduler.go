@@ -643,7 +643,7 @@ func (s *CacheScheduler) registerRefreshJob(schedule string) error {
 		}()
 
 		// Use middleware for tracing
-		tracing.TracedSchedulerOperation(jobCtx, tracing.OpSchedulerJob,
+		_, _ = tracing.TracedSchedulerOperation(jobCtx, tracing.OpSchedulerJob,
 			func(traceCtx context.Context) (any, error) {
 				defer func() {
 					if r := recover(); r != nil {

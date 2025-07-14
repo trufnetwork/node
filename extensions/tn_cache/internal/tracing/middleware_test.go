@@ -283,7 +283,7 @@ func BenchmarkDirectOperation(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Direct operation without middleware for comparison
-		func(traceCtx context.Context) (int, error) {
+		_, _ = func(traceCtx context.Context) (int, error) {
 			return i, nil
 		}(ctx)
 	}

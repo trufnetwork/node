@@ -160,7 +160,7 @@ func TracedWithCacheMetrics[T any](ctx context.Context, op Operation, provider, 
 			Context:  ctx,
 			Recorder: recorder,
 		}
-		WithCacheMetrics(metricsConfig, func() (int, error) {
+		_, _ = WithCacheMetrics(metricsConfig, func() (int, error) {
 			return count, nil
 		})
 	}

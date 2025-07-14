@@ -74,7 +74,7 @@ func (c *CacheDB) AddStreamConfig(ctx context.Context, config StreamCacheConfig)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Insert or update the stream config using UPSERT
 	_, err = tx.Execute(ctx, `
@@ -1032,7 +1032,7 @@ func (c *CacheDB) SetupCacheSchema(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Create schema - private schema not prefixed with ds_, ignored by consensus
 	if _, err := tx.Execute(ctx, `CREATE SCHEMA IF NOT EXISTS `+constants.CacheSchemaName); err != nil {

@@ -63,7 +63,9 @@ func ensureDecimalValue(value interface{}) (*types.Decimal, error) {
 	if !ok {
 		return nil, fmt.Errorf(errValueNotDecimal, value)
 	}
-	dec.SetPrecisionAndScale(numericPrecision, numericScale)
+	if err := dec.SetPrecisionAndScale(numericPrecision, numericScale); err != nil {
+		return nil, fmt.Errorf("failed to set precision and scale: %w", err)
+	}
 	return dec, nil
 }
 
@@ -138,7 +140,7 @@ func HandleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 				hasData := true
 				if ext := GetExtension(); ext != nil && ext.IsEnabled() {
 					ext.MetricsRecorder().RecordCacheHit(traceCtx, dataProvider, streamID)
-					
+
 					// Calculate and record data age
 					refreshTime := time.Unix(config.LastRefreshed, 0)
 					dataAge := time.Since(refreshTime).Seconds()
@@ -438,7 +440,7 @@ func HandleGetCachedIndexData(ctx *common.EngineContext, app *common.App, inputs
 				return nil, 0, fmt.Errorf("extension unavailable: %w", err)
 			}
 			if ext.cacheDB == nil {
-				return nil, 0, fmt.Errorf(errCacheDBNotInitialized)
+				return nil, 0, fmt.Errorf("%s", errCacheDBNotInitialized)
 			}
 
 			// Determine effective time range
@@ -478,7 +480,7 @@ func checkCacheDB() (*internal.CacheDB, error) {
 		return nil, fmt.Errorf("extension unavailable: %w", err)
 	}
 	if ext.CacheDB() == nil {
-		return nil, fmt.Errorf(errCacheDBNotInitialized)
+		return nil, fmt.Errorf("%s", errCacheDBNotInitialized)
 	}
 	return ext.CacheDB(), nil
 }

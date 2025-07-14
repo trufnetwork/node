@@ -57,8 +57,7 @@ func TestMetricsRecorder(t *testing.T) {
 		
 		for _, tc := range testCases {
 			t.Run(tc.errMsg, func(t *testing.T) {
-				err := assert.AnError
-				err = &testError{msg: tc.errMsg}
+				err := &testError{msg: tc.errMsg}
 				result := metrics.ClassifyError(err)
 				assert.Equal(t, tc.expected, result)
 			})

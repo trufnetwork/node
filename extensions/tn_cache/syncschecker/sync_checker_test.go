@@ -100,7 +100,7 @@ func TestSyncChecker_CanExecute(t *testing.T) {
 			var server *httptest.Server
 			if tt.health != nil {
 				server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					json.NewEncoder(w).Encode(tt.health)
+					_ = json.NewEncoder(w).Encode(tt.health)
 				}))
 				defer server.Close()
 			}
@@ -157,7 +157,7 @@ func TestSyncCheckerMillisecondsConversion(t *testing.T) {
 	}`, recentBlockTime)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(healthResponse))
+		_, _ = w.Write([]byte(healthResponse))
 	}))
 	defer server.Close()
 
