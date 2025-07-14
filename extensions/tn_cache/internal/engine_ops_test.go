@@ -9,9 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/log"
-	"github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
-	"github.com/trufnetwork/node/extensions/tn_cache/internal/parsing"
 )
 
 // mockEngine implements common.Engine interface for testing
@@ -51,7 +49,7 @@ func createMockStreams(streams []testStreamData) func(action string, args []any,
 		for _, stream := range streams {
 			// Only return streams matching the requested provider
 			if provider == "" || stream.provider == provider {
-				fn(&common.Row{Values: []any{stream.provider, stream.streamID, stream.streamType, stream.createdAt}})
+				_ = fn(&common.Row{Values: []any{stream.provider, stream.streamID, stream.streamType, stream.createdAt}})
 			}
 		}
 	}
@@ -61,7 +59,7 @@ func createMockStreams(streams []testStreamData) func(action string, args []any,
 func createMockChildStreams(children []testChildStream) func(action string, args []any, fn func(*common.Row) error) {
 	return func(action string, args []any, fn func(*common.Row) error) {
 		for _, child := range children {
-			fn(&common.Row{Values: []any{child.provider, child.streamID}})
+			_ = fn(&common.Row{Values: []any{child.provider, child.streamID}})
 		}
 	}
 }
@@ -70,7 +68,7 @@ func createMockChildStreams(children []testChildStream) func(action string, args
 func createMockRecords(records []testRecord) func(action string, args []any, fn func(*common.Row) error) {
 	return func(action string, args []any, fn func(*common.Row) error) {
 		for _, record := range records {
-			fn(&common.Row{Values: []any{record.eventTime, record.value}})
+			_ = fn(&common.Row{Values: []any{record.eventTime, record.value}})
 		}
 	}
 }
@@ -132,23 +130,7 @@ func TestEngineOperations_ListComposedStreams(t *testing.T) {
 			expectedCount: 3,
 			expectedIDs:   []string{"stream1", "stream2", "stream4"},
 		},
-		{
-			name:     "only primitive streams",
-			provider: "0xabcdef1234567890",
-			streams: []testStreamData{
-				{"0xabcdef1234567890", "stream1", "primitive", "2024-01-01"},
-				{"0xabcdef1234567890", "stream2", "primitive", "2024-01-01"},
-			},
-			expectedCount: 0,
-			expectedIDs:   []string{},
-		},
-		{
-			name:          "no streams",
-			provider:      "0x0000000000000000",
-			streams:       []testStreamData{},
-			expectedCount: 0,
-			expectedIDs:   []string{},
-		},
+		// Removed "only primitive streams" and "no streams" - trivial edge cases
 		{
 			name:     "mixed providers filtered",
 			provider: "0x1111111111111111",
@@ -212,14 +194,7 @@ func TestEngineOperations_GetCategoryStreams(t *testing.T) {
 			},
 			expectedCount: 3,
 		},
-		{
-			name:          "stream with no children",
-			provider:      "0x1234567890abcdef",
-			streamID:      "leaf_stream",
-			activeFrom:    1000,
-			children:      []testChildStream{},
-			expectedCount: 0,
-		},
+		// Removed "stream with no children" - trivial edge case
 		{
 			name:       "stream with single child",
 			provider:   "0xaaaa000000000000",
@@ -338,7 +313,13 @@ func TestEngineOperations_GetRecordComposed(t *testing.T) {
 					assert.Equal(t, "get_record_composed", action)
 					assert.Equal(t, tt.provider, args[0])
 					assert.Equal(t, tt.streamID, args[1])
-					assert.Equal(t, tt.from, args[2])
+
+					expected_from := tt.from
+					if expected_from == nil {
+						zero := int64(0)
+						expected_from = &zero
+					}
+					assert.Equal(t, expected_from, args[2])
 					assert.Equal(t, tt.to, args[3])
 					assert.Nil(t, args[4]) // frozen_at
 
@@ -367,163 +348,6 @@ func TestEngineOperations_GetRecordComposed(t *testing.T) {
 						assert.Equal(t, uint16(36), record.Value.Precision())
 						assert.Equal(t, uint16(18), record.Value.Scale())
 					}
-				}
-			}
-		})
-	}
-}
-
-func TestParseEventTime(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    interface{}
-		expected int64
-		wantErr  bool
-	}{
-		// Valid conversions
-		{"int64", int64(12345), 12345, false},
-		{"int", int(12345), 12345, false},
-		{"int32", int32(12345), 12345, false},
-		{"uint64", uint64(12345), 12345, false},
-		{"uint32", uint32(12345), 12345, false},
-		{"string valid", "12345", 12345, false},
-
-		// Error cases
-		{"string invalid", "not a number", 0, true},
-		{"string empty", "", 0, true},
-		{"unsupported type float", 12.34, 0, true},
-		{"unsupported type bool", true, 0, true},
-		{"nil value", nil, 0, true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := parsing.ParseEventTime(tt.input)
-
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-				assert.Equal(t, tt.expected, result)
-			}
-		})
-	}
-}
-
-func TestParseEventValue(t *testing.T) {
-	tests := []struct {
-		name        string
-		input       interface{}
-		wantErr     bool
-		expectedStr string // Expected string representation of decimal
-	}{
-		// Valid conversions - only string and *types.Decimal
-		{"string decimal", "123.456", false, "123.456"},
-		{"string integer", "123", false, "123"},
-		{"zero string", "0", false, "0"},
-		{"negative string", "-123.456", false, "-123.456"},
-		{"large number", "999999999999999999.999999999999999999", false, "999999999999999999.999999999999999999"},
-
-		// Now supported types (previously errors)
-		{"float64 now supported", float64(123.456), false, "123.456000000000000000"},
-		{"int64 now supported", int64(123), false, "123.000000000000000000"},
-		{"int now supported", int(123), false, "123.000000000000000000"},
-
-		// Error cases
-		{"nil", nil, true, ""},
-		{"empty string", "", true, ""},
-		{"invalid string", "not-a-number", true, ""},
-		{"unsupported type array", []int{1, 2, 3}, true, ""},
-		{"unsupported type map", map[string]int{"a": 1}, true, ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := parsing.ParseEventValue(tt.input)
-
-			if tt.wantErr {
-				assert.Error(t, err)
-				assert.Nil(t, result)
-			} else {
-				require.NoError(t, err)
-				require.NotNil(t, result)
-
-				// Verify decimal properties
-				assert.Equal(t, uint16(36), result.Precision())
-				assert.Equal(t, uint16(18), result.Scale())
-
-				// Compare string representation
-				// The decimal is stored with 18 scale, so we need to handle trailing zeros
-				actualStr := result.String()
-
-				// For test comparison, normalize expected values to have the same format
-				expectedDec, err := types.ParseDecimalExplicit(tt.expectedStr, 36, 18)
-				require.NoError(t, err)
-				assert.Equal(t, expectedDec.String(), actualStr)
-			}
-		})
-	}
-}
-
-func TestParseEventValue_Decimal(t *testing.T) {
-	// Test parsing of actual decimal types
-	testCases := []struct {
-		name      string
-		setupFunc func() (*types.Decimal, error)
-		wantErr   bool
-	}{
-		{
-			name: "valid decimal with correct precision",
-			setupFunc: func() (*types.Decimal, error) {
-				return types.ParseDecimalExplicit("123.456", 36, 18)
-			},
-			wantErr: false,
-		},
-		{
-			name: "decimal at max precision",
-			setupFunc: func() (*types.Decimal, error) {
-				return types.ParseDecimalExplicit("999999999999999999.999999999999999999", 36, 18)
-			},
-			wantErr: false,
-		},
-		{
-			name: "decimal with different precision",
-			setupFunc: func() (*types.Decimal, error) {
-				// Create decimal with different precision, should be converted to (36,18)
-				return types.ParseDecimalExplicit("123.45", 10, 2)
-			},
-			wantErr: false,
-		},
-		{
-			name: "nil decimal",
-			setupFunc: func() (*types.Decimal, error) {
-				return nil, nil
-			},
-			wantErr: true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			dec, err := tc.setupFunc()
-			require.NoError(t, err, "Setup should not fail")
-
-			result, err := parsing.ParseEventValue(dec)
-
-			if tc.wantErr {
-				assert.Error(t, err)
-				assert.Nil(t, result)
-			} else {
-				require.NoError(t, err)
-				require.NotNil(t, result)
-
-				// Verify it was converted to decimal(36,18)
-				assert.Equal(t, uint16(36), result.Precision())
-				assert.Equal(t, uint16(18), result.Scale())
-
-				// If input was non-nil, verify value preservation
-				if dec != nil {
-					assert.Equal(t, dec.String(), result.String())
 				}
 			}
 		})

@@ -1,80 +1,77 @@
-package metrics
+package metrics_test
 
 import (
 	"context"
-	"io"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/trufnetwork/kwil-db/core/log"
+	"github.com/trufnetwork/node/extensions/tn_cache/metrics"
 )
 
-func TestNoOpMetrics(t *testing.T) {
-	// Test that NoOpMetrics implements the interface and doesn't panic
-	metrics := NewNoOpMetrics()
+func TestMetricsRecorder(t *testing.T) {
 	ctx := context.Background()
-
-	// These should all be no-ops and not panic
-	metrics.RecordCacheHit(ctx, "provider1", "stream1")
-	metrics.RecordCacheMiss(ctx, "provider1", "stream1")
-	metrics.RecordCacheDataServed(ctx, "provider1", "stream1", 100)
-	metrics.RecordCacheDataAge(ctx, "provider1", "stream1", 3600.0)
-	metrics.RecordRefreshStart(ctx, "provider1", "stream1")
-	metrics.RecordRefreshComplete(ctx, "provider1", "stream1", 5*time.Second, 50)
-	metrics.RecordRefreshError(ctx, "provider1", "stream1", "timeout")
-	metrics.RecordStreamConfigured(ctx, 10)
-	metrics.RecordStreamActive(ctx, 8)
-	metrics.RecordCacheSize(ctx, "provider1", "stream1", 1000)
-	metrics.RecordResolutionDuration(ctx, 2*time.Second, 5)
-	metrics.RecordResolutionError(ctx, "not_found")
-
-	// If we get here without panics, the test passes
-	assert.True(t, true)
-}
-
-func TestMetricsRecorderFactory(t *testing.T) {
-	// Test that the factory returns a valid MetricsRecorder
-	logger := log.New(log.WithWriter(io.Discard))
-	metrics := NewMetricsRecorder(logger)
-
-	// The factory should return either NoOpMetrics or OTELMetrics
-	// In test environments, it might return either depending on OTEL availability
-	assert.NotNil(t, metrics, "NewMetricsRecorder should not return nil")
+	logger := log.NewStdoutLogger()
 	
-	// Verify it implements the interface by calling a method
-	ctx := context.Background()
-	// This should not panic regardless of which implementation is returned
-	metrics.RecordCacheHit(ctx, "test", "test")
+	// Create metrics recorder (will use no-op since OTEL is not initialized in tests)
+	recorder := metrics.NewMetricsRecorder(logger)
+	assert.NotNil(t, recorder)
+	
+	// Test that all new metrics methods can be called without errors
+	t.Run("RefreshSkipped", func(t *testing.T) {
+		// Should not panic
+		recorder.RecordRefreshSkipped(ctx, "provider1", "stream1", "not_synced")
+		recorder.RecordRefreshSkipped(ctx, "provider2", "stream2", "schedule_miss")
+	})
+	
+	t.Run("ResolutionMetrics", func(t *testing.T) {
+		// Should not panic
+		recorder.RecordResolutionDuration(ctx, 100*time.Millisecond, 10)
+		recorder.RecordResolutionError(ctx, "timeout")
+		recorder.RecordResolutionStreamDiscovered(ctx, "provider1", "new_stream")
+		recorder.RecordResolutionStreamRemoved(ctx, "provider1", "old_stream")
+	})
+	
+	t.Run("ErrorClassification", func(t *testing.T) {
+		testCases := []struct {
+			errMsg   string
+			expected string
+		}{
+			{"context deadline exceeded", "timeout"},
+			{"context canceled", "cancelled"},
+			{"tx is closed", "connection_error"},
+			{"connection refused", "connection_error"},
+			{"no rows in result set", "not_found"},
+			{"not found", "not_found"},
+			{"permission denied", "permission_denied"},
+			{"unauthorized", "permission_denied"},
+			{"invalid input", "validation_error"},
+			{"validation failed", "validation_error"},
+			{"failed to resolve", "resolution_error"},
+			{"resolution error", "resolution_error"},
+			{"database error", "database_error"},
+			{"sql: no rows", "database_error"},
+			{"unknown error", "unknown"},
+		}
+		
+		for _, tc := range testCases {
+			t.Run(tc.errMsg, func(t *testing.T) {
+				err := &testError{msg: tc.errMsg}
+				result := metrics.ClassifyError(err)
+				assert.Equal(t, tc.expected, result)
+			})
+		}
+		
+		// Test nil error
+		assert.Equal(t, "none", metrics.ClassifyError(nil))
+	})
 }
 
-func TestClassifyError(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      error
-		expected string
-	}{
-		{
-			name:     "nil error",
-			err:      nil,
-			expected: "none",
-		},
-		{
-			name:     "context deadline exceeded",
-			err:      context.DeadlineExceeded,
-			expected: "timeout",
-		},
-		{
-			name:     "generic error",
-			err:      assert.AnError,
-			expected: "unknown",
-		},
-	}
+type testError struct {
+	msg string
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ClassifyError(tt.err)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
+func (e *testError) Error() string {
+	return e.msg
 }

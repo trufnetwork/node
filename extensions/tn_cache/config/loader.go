@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/trufnetwork/kwil-db/core/log"
 	"github.com/trufnetwork/node/extensions/tn_cache/config/sources"
 	"github.com/trufnetwork/node/extensions/tn_cache/validation"
 )
@@ -13,21 +14,24 @@ import (
 type Loader struct {
 	validator     *validation.RuleSet
 	sourceFactory *sources.SourceFactory
+	logger        log.Logger
 }
 
 // NewLoader creates a new configuration loader with default validation rules
-func NewLoader() *Loader {
+func NewLoader(logger log.Logger) *Loader {
 	return &Loader{
 		validator:     validation.DefaultRules(),
 		sourceFactory: sources.NewSourceFactory(),
+		logger:        logger,
 	}
 }
 
 // NewLoaderWithValidation creates a new configuration loader with custom validation rules
-func NewLoaderWithValidation(validator *validation.RuleSet) *Loader {
+func NewLoaderWithValidation(validator *validation.RuleSet, logger log.Logger) *Loader {
 	return &Loader{
 		validator:     validator,
 		sourceFactory: sources.NewSourceFactory(),
+		logger:        logger,
 	}
 }
 

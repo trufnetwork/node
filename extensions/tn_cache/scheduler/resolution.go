@@ -1,17 +1,17 @@
-package tn_cache
+package scheduler
 
 import (
 	"context"
 	"fmt"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
-
-	"github.com/trufnetwork/kwil-db/common"
 
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal/errors"
+	"github.com/trufnetwork/node/extensions/tn_cache/metrics"
 	"github.com/trufnetwork/node/extensions/tn_cache/validation"
 )
 
@@ -19,6 +19,96 @@ import (
 // When config says "cache all streams from provider X", new streams
 // created after startup are automatically detected and cached.
 // Database updates are atomic to prevent data gaps during re-resolution.
+
+// resolveStreamSpecsSingle processes a single directive and returns resolved specs
+func (s *CacheScheduler) resolveStreamSpecsSingle(ctx context.Context, directive config.CacheDirective) ([]config.CacheDirective, error) {
+	var resolvedSpecs []config.CacheDirective
+
+	switch directive.Type {
+	case config.DirectiveSpecific:
+		if directive.IncludeChildren {
+			// Query child streams from composed (category) stream
+			s.logger.Debug("expanding specific directive with IncludeChildren",
+				"provider", directive.DataProvider,
+				"stream", directive.StreamID)
+
+			childStreams, err := s.getChildStreamsForComposed(ctx, directive.DataProvider, directive.StreamID, directive.TimeRange.From)
+			if err != nil {
+				// Non-fatal: parent might not have children yet
+				s.logger.Error("failed to expand children for composed stream",
+					"provider", directive.DataProvider,
+					"stream", directive.StreamID,
+					"error", err)
+				// Always cache parent even if children lookup fails
+				resolvedSpecs = append(resolvedSpecs, directive)
+				return resolvedSpecs, nil
+			}
+
+			resolvedSpecs = append(resolvedSpecs, directive)
+
+			for _, childKey := range childStreams {
+				// Child key format: "provider:streamID"
+				parts := strings.Split(childKey, ":")
+				if len(parts) == 2 {
+					childProvider, childStreamID := parts[0], parts[1]
+					childSpec := config.CacheDirective{
+						ID:              fmt.Sprintf("%s_%s_%s", childProvider, childStreamID, "child_resolved"),
+						Type:            config.DirectiveSpecific,
+						DataProvider:    childProvider,
+						StreamID:        childStreamID,
+						Schedule:        directive.Schedule,
+						TimeRange:       directive.TimeRange,
+						IncludeChildren: false, // Avoid recursive resolution
+					}
+					resolvedSpecs = append(resolvedSpecs, childSpec)
+				}
+			}
+
+			s.logger.Info("resolved specific directive with children",
+				"provider", directive.DataProvider,
+				"stream", directive.StreamID,
+				"child_count", len(childStreams))
+		} else {
+			// Keep specific directives as-is when IncludeChildren is false
+			resolvedSpecs = append(resolvedSpecs, directive)
+		}
+
+	case config.DirectiveProviderWildcard:
+		if directive.IncludeChildren {
+			s.logger.Warn("both provider wildcard and IncludeChildren are set - using wildcard behavior only",
+				"provider", directive.DataProvider,
+				"wildcard", directive.StreamID)
+		}
+
+		s.logger.Debug("resolving wildcard directive",
+			"provider", directive.DataProvider,
+			"wildcard", directive.StreamID)
+
+		composedStreams, err := s.getComposedStreamsForProvider(ctx, directive.DataProvider)
+		if err != nil {
+			return nil, fmt.Errorf("resolve wildcard for provider %s: %w", directive.DataProvider, err)
+		}
+
+		// Convert each found stream to a concrete directive
+		for _, streamID := range composedStreams {
+			streamSpec := config.CacheDirective{
+				ID:           fmt.Sprintf("%s_%s_%s", directive.DataProvider, streamID, "resolved"),
+				Type:         config.DirectiveSpecific, // Convert to specific
+				DataProvider: directive.DataProvider,
+				StreamID:     streamID,
+				Schedule:     directive.Schedule,
+				TimeRange:    directive.TimeRange,
+			}
+			resolvedSpecs = append(resolvedSpecs, streamSpec)
+		}
+
+		s.logger.Info("resolved wildcard directive",
+			"provider", directive.DataProvider,
+			"resolved_streams", len(composedStreams))
+	}
+
+	return resolvedSpecs, nil
+}
 
 // resolveStreamSpecs expands patterns to actual stream IDs by querying the database
 func (s *CacheScheduler) resolveStreamSpecs(ctx context.Context, directives []config.CacheDirective) ([]config.CacheDirective, error) {
@@ -183,37 +273,13 @@ func (s *CacheScheduler) deduplicateResolvedSpecs(specs []config.CacheDirective)
 func (s *CacheScheduler) getComposedStreamsForProvider(ctx context.Context, provider string) ([]string, error) {
 	var composedStreams []string
 
-	// Create a proper engine context with extension agent as the caller
-	engineCtx := s.createExtensionEngineContext(ctx)
+	// Normalize provider address to lowercase for consistent matching
+	provider = strings.ToLower(provider)
 
-	// Query all streams for the provider using list_streams action
-	// Use Engine.Call with proper context to provide @caller
-	// Use wrapped independent connection pool to avoid "tx is closed" errors
-	result, err := s.app.Engine.Call(
-		engineCtx,
-		s.getWrappedDB(), // Use wrapped independent connection pool
-		s.namespace,
-		"list_streams",
-		[]any{
-			provider,    // data_provider
-			5000,        // limit (maximum allowed)
-			0,           // offset
-			"stream_id", // order_by
-			nil,         // block_height (current)
-		},
-		func(row *common.Row) error {
-			if len(row.Values) >= 3 {
-				// Extract stream_id and check if it's a composed stream
-				// row.Values: [data_provider, stream_id, stream_type, created_at]
-				if streamID, ok := row.Values[1].(string); ok {
-					if streamType, ok := row.Values[2].(string); ok && streamType == "composed" {
-						composedStreams = append(composedStreams, streamID)
-					}
-				}
-			}
-			return nil
-		},
-	)
+	s.logger.Info("starting resolution query",
+		"provider", provider)
+
+	composedStreams, err := s.engineOperations.ListComposedStreams(ctx, provider)
 
 	if err != nil {
 		// Check if this is a "provider not found" type error
@@ -226,15 +292,9 @@ func (s *CacheScheduler) getComposedStreamsForProvider(ctx context.Context, prov
 		return nil, fmt.Errorf("query composed streams for provider %s: %w", provider, err)
 	}
 
-	s.logger.Debug("found composed streams",
+	s.logger.Debug("resolution query complete",
 		"provider", provider,
-		"count", len(composedStreams),
-		"streams", composedStreams)
-
-	// Log any notices from the query execution
-	if len(result.Logs) > 0 {
-		s.logger.Debug("query logs", "logs", result.FormatLogs())
-	}
+		"found_count", len(composedStreams))
 
 	return composedStreams, nil
 }
@@ -249,60 +309,13 @@ func (s *CacheScheduler) getChildStreamsForComposed(ctx context.Context, dataPro
 		activeFrom = *fromTime
 	}
 
-	// Create a proper engine context with extension agent as the caller
-	engineCtx := s.createExtensionEngineContext(ctx)
-
-	// Query child streams using get_category_streams action
-	// Use Engine.Call with proper context to provide @caller
-	// Use wrapped independent connection pool to avoid "tx is closed" errors
-	result, err := s.app.Engine.Call(
-		engineCtx,
-		s.getWrappedDB(), // Use wrapped independent connection pool
-		s.namespace,
-		"get_category_streams",
-		[]any{
-			dataProvider, // data_provider
-			streamID,     // stream_id
-			activeFrom,   // active_from
-			nil,          // active_to (get all)
-		},
-		func(row *common.Row) error {
-			if len(row.Values) >= 2 {
-				// Extract provider and stream_id for each child
-				// row.Values: [data_provider, stream_id]
-				if childProvider, ok := row.Values[0].(string); ok {
-					if childStreamID, ok := row.Values[1].(string); ok {
-						// Create a composite key for the child stream
-						childKey := fmt.Sprintf("%s:%s", childProvider, childStreamID)
-						childStreams = append(childStreams, childKey)
-					}
-				}
-			}
-			return nil
-		},
-	)
-
+	categoryStreams, err := s.engineOperations.GetCategoryStreams(ctx, dataProvider, streamID, activeFrom)
 	if err != nil {
-		// Check if this is a "stream not found" or "not a composed stream" error
-		if errors.IsNotFoundError(err) {
-			s.logger.Warn("stream not found or not a composed stream",
-				"provider", dataProvider,
-				"stream", streamID,
-				"error", err)
-			return []string{}, nil // Return empty list, not an error
-		}
-		return nil, fmt.Errorf("query child streams for %s/%s: %w", dataProvider, streamID, err)
+		return nil, fmt.Errorf("query child streams for composed stream %s: %w", streamID, err)
 	}
 
-	s.logger.Debug("found child streams",
-		"provider", dataProvider,
-		"stream", streamID,
-		"count", len(childStreams),
-		"children", childStreams)
-
-	// Log any notices from the query execution
-	if len(result.Logs) > 0 {
-		s.logger.Debug("query logs", "logs", result.FormatLogs())
+	for _, categoryStream := range categoryStreams {
+		childStreams = append(childStreams, fmt.Sprintf("%s:%s", categoryStream.DataProvider, categoryStream.StreamID))
 	}
 
 	return childStreams, nil
@@ -332,12 +345,12 @@ func (s *CacheScheduler) registerResolutionJob(schedule string) error {
 	}
 
 	// Register the cron job
-	entryID, err := s.cron.AddFunc(schedule, jobFunc)
+	job, err := s.cron.Cron(schedule).Do(jobFunc)
 	if err != nil {
 		return fmt.Errorf("add resolution cron job: %w", err)
 	}
 
-	s.jobs[ResolutionJobKey] = entryID
+	s.jobs[ResolutionJobKey] = job
 	s.logger.Info("registered resolution cron job", "schedule", schedule)
 
 	return nil
@@ -349,11 +362,79 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 	s.logger.Info("starting global resolution")
 	startTime := time.Now()
 
-	// Re-expand patterns to catch newly created streams
-	newResolvedSpecs, err := s.resolveStreamSpecs(ctx, s.originalDirectives)
-	if err != nil {
-		return fmt.Errorf("resolve stream specs: %w", err)
+	// Defer recording resolution duration
+	defer func() {
+		duration := time.Since(startTime)
+		s.resolutionMu.RLock()
+		streamCount := len(s.resolvedDirectives)
+		s.resolutionMu.RUnlock()
+		s.metrics.RecordResolutionDuration(ctx, duration, streamCount)
+	}()
+
+	// Create channels for resolution processing
+	const workerCount = 3
+	directiveChan := make(chan config.CacheDirective, len(s.originalDirectives))
+	resultChan := make(chan []config.CacheDirective, len(s.originalDirectives))
+	errChan := make(chan error, workerCount)
+
+	var wg sync.WaitGroup
+
+	// Start worker goroutines for concurrent resolution
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for directive := range directiveChan {
+				// Process each directive
+				resolvedSpecs, err := s.resolveStreamSpecsSingle(ctx, directive)
+				if err != nil {
+					errChan <- fmt.Errorf("worker %d: resolve directive %s: %w", workerID, directive.ID, err)
+					return
+				}
+				resultChan <- resolvedSpecs
+			}
+		}(i)
 	}
+
+	// Queue directives for processing
+	for _, directive := range s.originalDirectives {
+		directiveChan <- directive
+	}
+	close(directiveChan)
+
+	// Wait for workers to complete
+	wg.Wait()
+	close(resultChan)
+	close(errChan)
+
+	// Check for errors - collect all errors from workers
+	var errors []error
+	for err := range errChan {
+		if err != nil {
+			errors = append(errors, err)
+		}
+	}
+	if len(errors) > 0 {
+		// Record resolution error metric for first error
+		errType := metrics.ClassifyError(errors[0])
+		s.metrics.RecordResolutionError(ctx, errType)
+		// Return aggregated error
+		if len(errors) == 1 {
+			return errors[0]
+		}
+		return fmt.Errorf("multiple resolution errors (%d): first error: %w", len(errors), errors[0])
+	}
+
+	// Collect all results
+	var allResolvedSpecs []config.CacheDirective
+	for specs := range resultChan {
+		allResolvedSpecs = append(allResolvedSpecs, specs...)
+	}
+
+	// Deduplicate results
+	newResolvedSpecs := s.deduplicateResolvedSpecs(allResolvedSpecs)
+
+	s.logger.Info("resolved streams count", "count", len(newResolvedSpecs))
 
 	oldSet := make(map[string]bool)
 	newSet := make(map[string]bool)
@@ -364,6 +445,8 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 		s.resolutionMu.RUnlock()
 		err := fmt.Errorf("resolution would clear all streams (had %d, now 0) - aborting", len(s.resolvedDirectives))
 		s.logger.Error("dangerous resolution detected", "error", err)
+		// Record this as a resolution error
+		s.metrics.RecordResolutionError(ctx, "dangerous_clear")
 		return err
 	}
 
@@ -391,8 +474,25 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 		}
 	}
 
+	// Record metrics for discovered and removed streams
+	for _, key := range added {
+		parts := strings.Split(key, ":")
+		if len(parts) == 2 {
+			s.metrics.RecordResolutionStreamDiscovered(ctx, parts[0], parts[1])
+		}
+	}
+	for _, key := range removed {
+		parts := strings.Split(key, ":")
+		if len(parts) == 2 {
+			s.metrics.RecordResolutionStreamRemoved(ctx, parts[0], parts[1])
+		}
+	}
+
 	// Atomic update prevents half-cached state
 	if err := s.updateCachedStreamsTable(ctx, newResolvedSpecs); err != nil {
+		// Record resolution error metric
+		errType := metrics.ClassifyError(err)
+		s.metrics.RecordResolutionError(ctx, errType)
 		return fmt.Errorf("update cached_streams table: %w", err)
 	}
 

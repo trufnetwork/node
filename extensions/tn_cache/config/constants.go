@@ -38,6 +38,6 @@ const (
 
 // Default values
 const (
-	// DefaultResolutionSchedule is daily at midnight UTC (6 fields: second minute hour day month weekday)
-	DefaultResolutionSchedule = "0 0 0 * * *"
+	// DefaultResolutionSchedule is daily at midnight UTC (5 fields: minute hour day month weekday)
+	DefaultResolutionSchedule = "0 0 * * *"
 )

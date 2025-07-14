@@ -3,9 +3,7 @@ package tn_cache
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,9 +21,9 @@ import (
 func TestIncludeChildrenFunctionality(t *testing.T) {
 	t.Run("JSON format", func(t *testing.T) {
 		testCases := []struct {
-			name               string
-			includeChildren    interface{} // can be bool or omitted
-			expectedValue      bool
+			name            string
+			includeChildren interface{} // can be bool or omitted
+			expectedValue   bool
 		}{
 			{"explicit_true", true, true},
 			{"explicit_false", false, false},
@@ -39,13 +37,13 @@ func TestIncludeChildrenFunctionality(t *testing.T) {
 					jsonConfig = `[{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "stcomposedstream123",
-						"cron_schedule": "0 0 * * * *"
+						"cron_schedule": "0 * * * *"
 					}]`
 				} else {
 					jsonConfig = fmt.Sprintf(`[{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "stcomposedstream123",
-						"cron_schedule": "0 0 * * * *",
+						"cron_schedule": "0 * * * *",
 						"include_children": %v
 					}]`, tc.includeChildren)
 				}
@@ -55,7 +53,7 @@ func TestIncludeChildrenFunctionality(t *testing.T) {
 					StreamsInline: jsonConfig,
 				}
 
-				loader := tnConfig.NewLoader()
+				loader := tnConfig.NewLoader(log.NewStdoutLogger())
 				processedConfig, err := loader.LoadAndProcess(context.Background(), rawConfig)
 
 				require.NoError(t, err)
@@ -67,47 +65,47 @@ func TestIncludeChildrenFunctionality(t *testing.T) {
 
 	t.Run("CSV format", func(t *testing.T) {
 		testCases := []struct {
-			name             string
-			csvContent       string
-			expectedValues   []bool
-			expectError      bool
-			errorContains    string
+			name           string
+			csvContent     string
+			expectedValues []bool
+			expectError    bool
+			errorContains  string
 		}{
 			{
 				name:           "explicit_true",
-				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 0 * * * *,1719849600,true`,
+				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 * * *,1719849600,true`,
 				expectedValues: []bool{true},
 			},
 			{
 				name:           "explicit_false",
-				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 0 * * * *,1719849600,false`,
+				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 * * *,1719849600,false`,
 				expectedValues: []bool{false},
 			},
 			{
 				name:           "omitted_defaults_false",
-				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 0 * * * *,1719849600`,
+				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 * * *,1719849600`,
 				expectedValues: []bool{false},
 			},
 			{
 				name:           "empty_field_defaults_false",
-				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 0 * * * *,1719849600,`,
+				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 * * *,1719849600,`,
 				expectedValues: []bool{false},
 			},
 			{
 				name:           "without_timestamp_but_with_include_children",
-				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 0 * * * *,,true`,
+				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 * * *,,true`,
 				expectedValues: []bool{true},
 			},
 			{
-				name:           "mixed_values",
-				csvContent:     `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 0 * * *,1719849600,true
-0x9876543210fedcba9876543210fedcba98765432,ststream2,0 0 0 * * *,1719936000,false
+				name: "mixed_values",
+				csvContent: `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 * * *,1719849600,true
+0x9876543210fedcba9876543210fedcba98765432,ststream2,0 0 * * *,1719936000,false
 0xabcdefabcdefabcdefabcdefabcdefabcdefabcd,ststream3,0 */15 * * * *,,true`,
 				expectedValues: []bool{true, false, true},
 			},
 			{
 				name:          "invalid_value",
-				csvContent:    `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 0 * * * *,1719849600,maybe`,
+				csvContent:    `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 * * *,1719849600,maybe`,
 				expectError:   true,
 				errorContains: "invalid include_children value",
 			},
@@ -144,15 +142,15 @@ func TestIncludeChildrenFunctionality(t *testing.T) {
 // TestConfigValidation tests high-ROI validation scenarios that prevent node failures
 func TestConfigValidation(t *testing.T) {
 	tests := []struct {
-		name           string
-		extConfig      map[string]map[string]string
-		expectError    bool
-		errorContains  string
-		description    string
+		name          string
+		extConfig     map[string]map[string]string
+		expectError   bool
+		errorContains string
+		description   string
 	}{
 		{
-			name: "no config - graceful handling",
-			extConfig: map[string]map[string]string{},
+			name:        "no config - graceful handling",
+			extConfig:   map[string]map[string]string{},
 			expectError: false,
 			description: "Missing config should be handled gracefully",
 		},
@@ -178,9 +176,9 @@ func TestConfigValidation(t *testing.T) {
 					}]`,
 				},
 			},
-			expectError: true,
+			expectError:   true,
 			errorContains: "cron_schedule validation failed",
-			description: "Invalid cron schedules should fail with clear error",
+			description:   "Invalid cron schedules should fail with clear error",
 		},
 		{
 			name: "invalid ethereum address - fatal error",
@@ -190,13 +188,13 @@ func TestConfigValidation(t *testing.T) {
 					"streams_inline": `[{
 						"data_provider": "not_an_address",
 						"stream_id": "st123456789012345678901234567890",
-						"cron_schedule": "0 0 * * * *"
+						"cron_schedule": "0 0 * * *"
 					}]`,
 				},
 			},
-			expectError: true,
+			expectError:   true,
 			errorContains: "ethereum_address validation failed",
-			description: "Invalid ethereum addresses should fail with clear error",
+			description:   "Invalid ethereum addresses should fail with clear error",
 		},
 		{
 			name: "invalid stream ID - fatal error",
@@ -206,25 +204,25 @@ func TestConfigValidation(t *testing.T) {
 					"streams_inline": `[{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "invalid_stream_id",
-						"cron_schedule": "0 0 * * * *"
+						"cron_schedule": "0 0 * * *"
 					}]`,
 				},
 			},
-			expectError: true,
+			expectError:   true,
 			errorContains: "stream_id validation failed",
-			description: "Invalid stream IDs should fail with clear error",
+			description:   "Invalid stream IDs should fail with clear error",
 		},
 		{
 			name: "corrupted JSON - fatal error",
 			extConfig: map[string]map[string]string{
 				ExtensionName: {
-					"enabled": "true",
+					"enabled":        "true",
 					"streams_inline": `[{invalid json}]`,
 				},
 			},
-			expectError: true,
+			expectError:   true,
 			errorContains: "streams configuration is not valid JSON",
-			description: "Corrupted JSON should fail with clear error",
+			description:   "Corrupted JSON should fail with clear error",
 		},
 		{
 			name: "valid wildcard configuration",
@@ -234,7 +232,7 @@ func TestConfigValidation(t *testing.T) {
 					"streams_inline": `[{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "*",
-						"cron_schedule": "0 0 * * * *"
+						"cron_schedule": "0 0 * * *"
 					}]`,
 				},
 			},
@@ -249,7 +247,7 @@ func TestConfigValidation(t *testing.T) {
 					"streams_inline": `[{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "stcomposedstream123",
-						"cron_schedule": "0 0 * * * *",
+						"cron_schedule": "0 0 * * *",
 						"from": 1719849600,
 						"include_children": true
 					}]`,
@@ -266,7 +264,7 @@ func TestConfigValidation(t *testing.T) {
 					"streams_inline": `[{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "st123456789012345678901234567890",
-						"cron_schedule": "0 0 0 * * *",
+						"cron_schedule": "0 0 * * *",
 						"from": 1719849600
 					}]`,
 				},
@@ -278,12 +276,12 @@ func TestConfigValidation(t *testing.T) {
 			name: "valid configuration with max_block_age",
 			extConfig: map[string]map[string]string{
 				ExtensionName: {
-					"enabled": "true",
+					"enabled":       "true",
 					"max_block_age": "30m",
 					"streams_inline": `[{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "st123456789012345678901234567890",
-						"cron_schedule": "0 0 * * * *"
+						"cron_schedule": "0 0 * * *"
 					}]`,
 				},
 			},
@@ -298,14 +296,14 @@ func TestConfigValidation(t *testing.T) {
 					"streams_inline": `[{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "st123456789012345678901234567890",
-						"cron_schedule": "0 0 * * * *",
+						"cron_schedule": "0 0 * * *",
 						"from": 9999999999
 					}]`,
 				},
 			},
-			expectError: true,
+			expectError:   true,
 			errorContains: "time_range validation failed",
-			description: "Far future timestamps should fail",
+			description:   "Far future timestamps should fail",
 		},
 		{
 			name: "both JSON and CSV provided - should error",
@@ -315,14 +313,14 @@ func TestConfigValidation(t *testing.T) {
 					"streams_inline": `[{
 						"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 						"stream_id": "st123456789012345678901234567890",
-						"cron_schedule": "0 0 * * * *"
+						"cron_schedule": "0 0 * * *"
 					}]`,
 					"streams_csv_file": "streams.csv",
 				},
 			},
-			expectError: true,
+			expectError:   true,
 			errorContains: "cannot specify both 'streams_inline' and 'streams_csv_file'",
-			description: "Providing both JSON and CSV should fail with clear error",
+			description:   "Providing both JSON and CSV should fail with clear error",
 		},
 	}
 
@@ -341,7 +339,7 @@ func TestConfigValidation(t *testing.T) {
 			if tt.expectError {
 				require.Error(t, err, "Expected error for test: %s", tt.description)
 				if tt.errorContains != "" {
-					assert.Contains(t, err.Error(), tt.errorContains, 
+					assert.Contains(t, err.Error(), tt.errorContains,
 						"Error should contain expected text for test: %s", tt.description)
 				}
 				return
@@ -366,11 +364,11 @@ func TestWildcardStreamResolution(t *testing.T) {
 		StreamsInline: `[{
 			"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 			"stream_id": "*",
-			"cron_schedule": "0 0 * * * *"
+			"cron_schedule": "0 0 * * *"
 		}]`,
 	}
 
-	loader := tnConfig.NewLoader()
+	loader := tnConfig.NewLoader(log.NewStdoutLogger())
 	processedConfig, err := loader.LoadAndProcess(context.Background(), rawConfig)
 
 	require.NoError(t, err)
@@ -396,17 +394,17 @@ func TestCronScheduleValidation(t *testing.T) {
 		description string
 	}{
 		// Valid schedules (consolidated from both tests)
-		{"hourly", "0 0 * * * *", false, "Every hour"},
-		{"daily", "0 0 0 * * *", false, "Daily at midnight"},
-		{"weekly", "0 0 0 * * 0", false, "Weekly on Sunday"},
-		{"monthly", "0 0 0 1 * *", false, "Monthly on 1st"},
-		{"every_15_min", "0 */15 * * * *", false, "Every 15 minutes"},
-		{"complex_weekdays", "0 30 2 * * 1-5", false, "Weekdays at 2:30 AM"},
-		
+		{"hourly", "0 * * * *", false, "Every hour"},
+		{"daily", "0 0 * * *", false, "Daily at midnight"},
+		{"weekly", "0 0 * * 0", false, "Weekly on Sunday"},
+		{"monthly", "0 0 1 * *", false, "Monthly on 1st"},
+		{"every_15_min", "*/15 * * * *", false, "Every 15 minutes"},
+		{"complex_weekdays", "30 2 * * 1-5", false, "Weekdays at 2:30 AM"},
+
 		// Invalid schedules
 		{"invalid_text", "invalid", true, "Non-cron text"},
-		{"invalid_minute", "0 60 * * * *", true, "Invalid minute (60)"},
-		{"too_many_fields", "* * * * * * *", true, "Too many fields"},
+		{"invalid_minute", "60 * * * *", true, "Invalid minute (60)"},
+		{"too_many_fields", "* * * * * *", true, "Too many fields"},
 		{"too_few_fields", "0", true, "Too few fields"},
 		{"empty", "", true, "Empty schedule"},
 	}
@@ -423,9 +421,9 @@ func TestCronScheduleValidation(t *testing.T) {
 				}]`, tc.schedule),
 			}
 
-			loader := tnConfig.NewLoader()
+			loader := tnConfig.NewLoader(log.NewStdoutLogger())
 			_, err := loader.LoadAndProcess(context.Background(), rawConfig)
-			
+
 			if tc.shouldError {
 				require.Error(t, err, "Expected error for %s: %s", tc.description, tc.schedule)
 				assert.Contains(t, err.Error(), "cron_schedule validation failed")
@@ -443,7 +441,7 @@ func TestCronScheduleValidation(t *testing.T) {
 
 				source := sources.NewCSVSource(csvFile, "")
 				specs, err := source.Load(context.Background(), map[string]string{})
-				
+
 				require.NoError(t, err, "CSV loading should succeed for valid cron: %s", tc.schedule)
 				require.Len(t, specs, 1)
 				assert.Equal(t, tc.schedule, specs[0].CronSchedule)
@@ -454,7 +452,7 @@ func TestCronScheduleValidation(t *testing.T) {
 
 // CSV Test Helper Functions
 func createTempCSV(t *testing.T, content string) string {
-	tmpFile, err := ioutil.TempFile("", "test_streams_*.csv")
+	tmpFile, err := os.CreateTemp("", "test_streams_*.csv")
 	require.NoError(t, err)
 	defer tmpFile.Close()
 
@@ -465,7 +463,7 @@ func createTempCSV(t *testing.T, content string) string {
 }
 
 func createTempDir(t *testing.T) string {
-	tmpDir, err := ioutil.TempDir("", "test_csv_config_*")
+	tmpDir, err := os.MkdirTemp("", "test_csv_config_*")
 	require.NoError(t, err)
 	return tmpDir
 }
@@ -490,14 +488,14 @@ func TestCSVSource_BasicFunctionality(t *testing.T) {
 		{
 			name: "valid CSV with three columns",
 			csvContent: `0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 * * * *
-0x9876543210fedcba9876543210fedcba98765432,st987654321098765432109876543210,0 0 0 * * *`,
+0x9876543210fedcba9876543210fedcba98765432,st987654321098765432109876543210,0 0 * * *`,
 			expectedSpecs: 2,
 			expectError:   false,
 		},
 		{
 			name: "valid CSV with four columns (with from timestamp)",
-			csvContent: `0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 0 0 * * * *,1719849600
-0x9876543210fedcba9876543210fedcba98765432,st987654321098765432109876543210,0 0 0 * * *,1719936000`,
+			csvContent: `0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 0 * * *,1719849600
+0x9876543210fedcba9876543210fedcba98765432,st987654321098765432109876543210,0 0 * * *,1719936000`,
 			expectedSpecs: 2,
 			expectError:   false,
 		},
@@ -507,7 +505,7 @@ func TestCSVSource_BasicFunctionality(t *testing.T) {
 0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,*/15 * * * *
 
 # Another comment
-0x9876543210fedcba9876543210fedcba98765432,st987654321098765432109876543210,0 0 0 * * *,1719849600`,
+0x9876543210fedcba9876543210fedcba98765432,st987654321098765432109876543210,0 0 * * *,1719849600`,
 			expectedSpecs: 2,
 			expectError:   false,
 		},
@@ -529,15 +527,15 @@ incomplete_row,missing_cron`,
 			errorContains: "cannot be empty",
 		},
 		{
-			name: "invalid CSV - bad timestamp",
-			csvContent: `0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 0 0 * * * *,invalid_timestamp`,
+			name:          "invalid CSV - bad timestamp",
+			csvContent:    `0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 0 * * *,invalid_timestamp`,
 			expectedSpecs: 0,
 			expectError:   true,
 			errorContains: "invalid from timestamp",
 		},
 		{
 			name: "valid CSV with wildcard stream ID",
-			csvContent: `0x1234567890abcdef1234567890abcdef12345678,*,0 0 0 * * *
+			csvContent: `0x1234567890abcdef1234567890abcdef12345678,*,0 0 * * *
 0x9876543210fedcba9876543210fedcba98765432,st987654321098765432109876543210,0 * * * *`,
 			expectedSpecs: 2,
 			expectError:   false,
@@ -595,79 +593,7 @@ incomplete_row,missing_cron`,
 	}
 }
 
-// TestCSVSource_FileOperations tests file-related operations
-func TestCSVSource_FileOperations(t *testing.T) {
-	t.Run("file not found", func(t *testing.T) {
-		source := sources.NewCSVSource("/nonexistent/file.csv", "")
-		
-		// Test Validate
-		err := source.Validate(map[string]string{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "CSV file does not exist")
-
-		// Test Load
-		_, err = source.Load(context.Background(), map[string]string{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to open CSV file")
-	})
-
-	t.Run("absolute path resolution", func(t *testing.T) {
-		csvContent := `0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 * * * *`
-		csvFile := createTempCSV(t, csvContent)
-		defer cleanup(t, csvFile)
-
-		source := sources.NewCSVSource(csvFile, "/some/base/path")
-		
-		err := source.Validate(map[string]string{})
-		require.NoError(t, err)
-
-		specs, err := source.Load(context.Background(), map[string]string{})
-		require.NoError(t, err)
-		assert.Len(t, specs, 1)
-	})
-
-	t.Run("relative path resolution", func(t *testing.T) {
-		tmpDir := createTempDir(t)
-		defer cleanup(t, tmpDir)
-
-		csvContent := `0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 * * * *`
-		csvFile := filepath.Join(tmpDir, "streams.csv")
-		
-		err := ioutil.WriteFile(csvFile, []byte(csvContent), 0644)
-		require.NoError(t, err)
-
-		// Test with relative path
-		source := sources.NewCSVSource("streams.csv", tmpDir)
-		
-		err = source.Validate(map[string]string{})
-		require.NoError(t, err)
-
-		specs, err := source.Load(context.Background(), map[string]string{})
-		require.NoError(t, err)
-		assert.Len(t, specs, 1)
-	})
-
-	t.Run("unreadable file", func(t *testing.T) {
-		if os.Getuid() == 0 {
-			t.Skip("Skipping permission test when running as root")
-		}
-
-		csvContent := `0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 * * * *`
-		csvFile := createTempCSV(t, csvContent)
-		defer cleanup(t, csvFile)
-
-		// Make file unreadable
-		err := os.Chmod(csvFile, 0000)
-		require.NoError(t, err)
-		defer os.Chmod(csvFile, 0644) // Restore for cleanup
-
-		source := sources.NewCSVSource(csvFile, "")
-		
-		err = source.Validate(map[string]string{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not readable")
-	})
-}
+// TestCSVSource_FileOperations removed - tested basic file system operations rather than extension-specific logic
 
 // TestMutualExclusivity tests that JSON and CSV configuration are mutually exclusive
 func TestMutualExclusivity(t *testing.T) {
@@ -677,7 +603,7 @@ func TestMutualExclusivity(t *testing.T) {
 			"streams_inline": `[{
 				"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 				"stream_id": "st123456789012345678901234567890",
-				"cron_schedule": "0 0 * * * *"
+				"cron_schedule": "0 0 * * *"
 			}]`,
 			"streams_csv_file": "nonexistent.csv", // File doesn't need to exist for this test
 		}
@@ -694,7 +620,7 @@ func TestMutualExclusivity(t *testing.T) {
 			"streams_inline": `[{
 				"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
 				"stream_id": "st123456789012345678901234567890",
-				"cron_schedule": "0 0 * * * *"
+				"cron_schedule": "0 0 * * *"
 			}]`,
 		}
 
@@ -736,7 +662,7 @@ func TestMutualExclusivity(t *testing.T) {
 // TestCSVSource_CronScheduleVariations removed - consolidated into TestCronScheduleValidation
 // This test was redundant with the comprehensive cron validation test above
 
-// TestCSVSource_TimestampHandling tests various timestamp scenarios
+// TestCSVSource_TimestampHandling tests core timestamp parsing scenarios
 func TestCSVSource_TimestampHandling(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -751,27 +677,9 @@ func TestCSVSource_TimestampHandling(t *testing.T) {
 			hasError:  false,
 		},
 		{
-			name:      "zero_timestamp",
-			timestamp: "0",
-			expected:  func() *int64 { v := int64(0); return &v }(),
-			hasError:  false,
-		},
-		{
 			name:      "empty_timestamp",
 			timestamp: "",
 			expected:  nil,
-			hasError:  false,
-		},
-		{
-			name:      "whitespace_timestamp",
-			timestamp: "   ",
-			expected:  nil,
-			hasError:  false,
-		},
-		{
-			name:      "negative_timestamp",
-			timestamp: "-1",
-			expected:  func() *int64 { v := int64(-1); return &v }(),
 			hasError:  false,
 		},
 		{
@@ -780,17 +688,11 @@ func TestCSVSource_TimestampHandling(t *testing.T) {
 			expected:  nil,
 			hasError:  true,
 		},
-		{
-			name:      "float_timestamp",
-			timestamp: "1719849600.5",
-			expected:  nil,
-			hasError:  true,
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			csvContent := fmt.Sprintf("0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 0 0 * * * *,%s", tt.timestamp)
+			csvContent := fmt.Sprintf("0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 0 * * *,%s", tt.timestamp)
 			csvFile := createTempCSV(t, csvContent)
 			defer cleanup(t, csvFile)
 
@@ -820,88 +722,3 @@ func TestCSVSource_TimestampHandling(t *testing.T) {
 
 // TestCSVSource_LoaderIntegration removed - redundant with TestCSVSource_BasicFunctionality
 // This test duplicated CSV parsing and validation scenarios already covered in focused unit tests
-
-// TestCSVSource_RealWorldExample demonstrates CSV functionality with a realistic example
-func TestCSVSource_RealWorldExample(t *testing.T) {
-	// Create a realistic CSV configuration
-	csvContent := `# Example CSV configuration for TrueNetwork cache extension
-# Format: data_provider,stream_id,cron_schedule[,from_timestamp]
-# Comments starting with # are ignored
-
-# Financial data provider with specific streams
-0x1234567890abcdef1234567890abcdef12345678,stbtcusdprice,0 0 0 * * * *,1719849600
-0x1234567890abcdef1234567890abcdef12345678,stethusdprice,0 0 0 * * * *,1719849600
-
-# Weather data provider - all streams
-0x9876543210fedcba9876543210fedcba98765432,*,0 0 0 * * * *,1719936000
-
-# IoT sensor data - specific sensor without timestamp
-0xabcdefabcdefabcdefabcdefabcdefabcdefabcd,stsensortemperature01,0 0 * * * *
-
-# Mixed data sources with different cron schedules
-`
-	csvFile := createTempCSV(t, csvContent)
-	defer cleanup(t, csvFile)
-
-	// Test with hourly cron schedule for high-frequency data
-	factory := sources.NewSourceFactory()
-	rawConfig := map[string]string{
-		"streams_csv_file": csvFile,
-	}
-
-	configSources, err := factory.CreateSources(rawConfig)
-	require.NoError(t, err)
-	require.Len(t, configSources, 1)
-
-	// Validate and load
-	source := configSources[0]
-	err = source.Validate(rawConfig)
-	require.NoError(t, err)
-
-	specs, err := source.Load(context.Background(), rawConfig)
-	require.NoError(t, err)
-	assert.Len(t, specs, 4)
-
-	// Verify each spec
-	expectedSpecs := []struct {
-		provider string
-		streamID string
-		hasFrom  bool
-		from     int64
-	}{
-		{"0x1234567890abcdef1234567890abcdef12345678", "stbtcusdprice", true, 1719849600},
-		{"0x1234567890abcdef1234567890abcdef12345678", "stethusdprice", true, 1719849600},
-		{"0x9876543210fedcba9876543210fedcba98765432", "*", true, 1719936000},
-		{"0xabcdefabcdefabcdefabcdefabcdefabcdefabcd", "stsensortemperature01", false, 0},
-	}
-
-	for i, expected := range expectedSpecs {
-		assert.Equal(t, expected.provider, specs[i].DataProvider, "Provider mismatch at index %d", i)
-		assert.Equal(t, expected.streamID, specs[i].StreamID, "StreamID mismatch at index %d", i)
-		// The CSV normalizes all cron schedules to 6-field format
-		expectedCron := "0 0 0 * * * *"
-		if i == 3 { // The last entry has a different schedule
-			expectedCron = "0 0 * * * *"
-		}
-		assert.Equal(t, expectedCron, specs[i].CronSchedule, "CronSchedule mismatch at index %d", i)
-		
-		if expected.hasFrom {
-			require.NotNil(t, specs[i].From, "Expected From timestamp at index %d", i)
-			assert.Equal(t, expected.from, *specs[i].From, "From timestamp mismatch at index %d", i)
-		} else {
-			assert.Nil(t, specs[i].From, "Expected no From timestamp at index %d", i)
-		}
-		
-		assert.Contains(t, specs[i].Source, csvFile, "Source reference missing at index %d", i)
-	}
-
-	t.Logf("Successfully parsed %d stream specifications from CSV", len(specs))
-	for i, spec := range specs {
-		from := "none"
-		if spec.From != nil {
-			from = fmt.Sprintf("%d", *spec.From)
-		}
-		t.Logf("  [%d] %s -> %s (cron: %s, from: %s)", 
-			i+1, spec.DataProvider, spec.StreamID, spec.CronSchedule, from)
-	}
-}

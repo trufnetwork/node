@@ -5,7 +5,9 @@ import (
 	"testing"
 
 	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	"github.com/trufnetwork/node/extensions/tn_cache"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
@@ -27,16 +29,19 @@ import (
 
 // TestAGGR01_BasicAggregation tests AGGR01: A composed stream aggregates data from multiple child streams (which may be either primitive or composed).
 func TestAGGR01_BasicAggregation(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	// Cache all streams from this deployer
+	cacheConfig := testutils.TestCache("0x0000000000000000000000000000000000000123", "*")
+
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr01_basic_aggregation_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
-			testAGGR01_BasicAggregation(t),
+			wrapTestWithCacheModes(t, "AGGR01_BasicAggregation", testAGGR01_BasicAggregation),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache(cacheConfig))
 }
 
-func testAGGR01_BasicAggregation(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testAGGR01_BasicAggregation(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Create a composed stream with 3 child primitive streams
 		composedStreamId := util.GenerateStreamId("composed_stream_test")
@@ -64,11 +69,19 @@ func testAGGR01_BasicAggregation(t *testing.T) func(ctx context.Context, platfor
 			return errors.Wrap(err, "error setting up composed stream")
 		}
 
+		// Set up cache (only when useCache is true)
+		if useCache {
+			_, err := tn_cache.GetTestHelper().RefreshAllStreamsSync(ctx)
+			if err != nil {
+				return errors.Wrap(err, "error refreshing cache")
+			}
+		}
+
 		fromTime := int64(1)
 		toTime := int64(3)
 
 		// Query the composed stream to get the aggregated values
-		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
+		result, err := procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
 			Platform: platform,
 			StreamLocator: types.StreamLocator{
 				StreamId:     composedStreamId,
@@ -77,9 +90,15 @@ func testAGGR01_BasicAggregation(t *testing.T) func(ctx context.Context, platfor
 			FromTime: &fromTime,
 			ToTime:   &toTime,
 			Height:   1,
+			UseCache: &useCache,
 		})
+		// here we should have a helper that, if useCache was used, we also check if we had a hit
+		// ...
 		if err != nil {
 			return errors.Wrap(err, "error getting records from composed stream")
+		}
+		if useCache {
+			assert.True(t, result.CacheHit, "Expected cache hit")
 		}
 
 		// Verify the results
@@ -93,7 +112,7 @@ func testAGGR01_BasicAggregation(t *testing.T) func(ctx context.Context, platfor
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
-			Actual:   result,
+			Actual:   result.Rows,
 			Expected: expected,
 		})
 

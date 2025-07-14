@@ -33,6 +33,11 @@ type MetricsRecorder interface {
 	// Resolution metrics
 	RecordResolutionDuration(ctx context.Context, duration time.Duration, streamCount int)
 	RecordResolutionError(ctx context.Context, errType string)
+	RecordResolutionStreamDiscovered(ctx context.Context, dataProvider, streamID string)
+	RecordResolutionStreamRemoved(ctx context.Context, dataProvider, streamID string)
+
+	// Refresh skip metrics
+	RecordRefreshSkipped(ctx context.Context, dataProvider, streamID, reason string)
 }
 
 // NewMetricsRecorder creates a metrics recorder instance.
@@ -74,10 +79,18 @@ func ClassifyError(err error) string {
 		return "timeout"
 	case strings.Contains(errStr, "context canceled"):
 		return "cancelled"
-	case strings.Contains(errStr, "tx is closed"):
+	case strings.Contains(errStr, "tx is closed") || strings.Contains(errStr, "connection"):
 		return "connection_error"
-	case strings.Contains(errStr, "no rows in result set"):
+	case strings.Contains(errStr, "no rows in result set") || strings.Contains(errStr, "not found"):
 		return "not_found"
+	case strings.Contains(errStr, "permission denied") || strings.Contains(errStr, "unauthorized"):
+		return "permission_denied"
+	case strings.Contains(errStr, "invalid") || strings.Contains(errStr, "validation"):
+		return "validation_error"
+	case strings.Contains(errStr, "resolve") || strings.Contains(errStr, "resolution"):
+		return "resolution_error"
+	case strings.Contains(errStr, "database") || strings.Contains(errStr, "sql"):
+		return "database_error"
 	default:
 		return "unknown"
 	}

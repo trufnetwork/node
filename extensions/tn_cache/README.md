@@ -13,8 +13,8 @@ enabled = true
 
 # Optional: Schedule for re-resolving wildcards and IncludeChildren (default: daily at midnight)
 # Set to empty string to disable automatic re-resolution
-resolution_schedule = "0 0 0 * * *"  # Daily at midnight UTC (seconds minutes hours day month weekday)
-# resolution_schedule = "0 0 * * * *"  # Hourly (for rapidly changing environments)
+resolution_schedule = "0 0 * * *"  # Daily at midnight UTC (minute hour day month weekday)
+# resolution_schedule = "0 * * * *"  # Hourly (for rapidly changing environments)
 # resolution_schedule = ""            # Disable automatic resolution
 
 # Optional: Maximum block age to consider node synced (default: "1h")
@@ -33,14 +33,14 @@ streams_inline = '''
   {
     "data_provider": "0x1234567890abcdef1234567890abcdef12345678",
     "stream_id": "st123456789012345678901234567890",
-    "cron_schedule": "0 0 * * * *",  # Hourly refresh (seconds minutes hours day month weekday)
+    "cron_schedule": "0 * * * *",    # Hourly refresh (minute hour day month weekday)
     "from": 1719849600,            # Optional: Only cache data after this timestamp
     "include_children": true       # Optional: Include children of composed streams (default: false)
   },
   {
     "data_provider": "0x9876543210fedcba9876543210fedcba98765432",
     "stream_id": "*",
-    "cron_schedule": "0 0 0 * * *",  # Daily at midnight
+    "cron_schedule": "0 0 * * *",  # Daily at midnight
     "include_children": false
   }
 ]
@@ -50,7 +50,7 @@ streams_inline = '''
 ### Configuration Options
 
 -   **`enabled`**: A boolean (`true` or `false`) to enable or disable the extension.
--   **`resolution_schedule`**: (Optional) A cron expression with seconds that defines when to re-resolve wildcards and IncludeChildren directives. Uses 6-field format: `second minute hour day month weekday`. Default is `0 0 0 * * *` (daily at midnight UTC). Set to empty string to disable automatic re-resolution.
+-   **`resolution_schedule`**: (Optional) A cron expression that defines when to re-resolve wildcards and IncludeChildren directives. Uses standard 5-field format: `minute hour day month weekday`. Default is `0 0 * * *` (daily at midnight UTC). Set to empty string to disable automatic re-resolution.
 -   **`max_block_age`**: (Optional) Maximum age of the latest block to consider the node synced. Default is `"1h"`. Accepts duration strings like `"30m"`, `"45s"`, `"2h"`. Set to `"-1"` to disable sync checking. When the node is syncing or block age exceeds this threshold, cache refresh operations are paused.
 -   **`streams_csv_file`**: (Optional) A path to a CSV file containing a list of streams to cache. The file must have columns for `data_provider`, `stream_id`, `cron_schedule`, and optional `from` and `include_children` columns.
 -   **`streams_inline`**: (Optional) A JSON-formatted string containing an array of stream objects to cache.
@@ -63,9 +63,9 @@ Each stream, whether in the JSON string or CSV file, can have the following fiel
 
 -   **`data_provider`**: (Required) The data provider's Ethereum address.
 -   **`stream_id`**: (Required) The ID of the stream. You can use `*` as a wildcard to cache all streams for a given data provider.
--   **`cron_schedule`**: (Required) A cron expression with seconds (6 fields: second minute hour day month weekday, e.g., `0 0 * * * *` for hourly) that defines how often the cache should be refreshed. This field is required in both JSON and CSV configurations.
+-   **`cron_schedule`**: (Required) A cron expression using standard 5-field format (minute hour day month weekday, e.g., `0 * * * *` for hourly) that defines how often the cache should be refreshed. This field is required in both JSON and CSV configurations.
 -   **`from`**: (Optional) A Unix timestamp. If provided, the cache will only store data points with a timestamp greater than or equal to this value.
--   **`include_children`**: (Optional) A boolean (default: `false`). When `true`, children of composed streams are included in caching. This is useful for hierarchical stream structures where you want to cache not only the parent stream but also its child components.
+-   **`include_children`**: (Optional) A boolean (default: `false`). When `true`, children of composed (category) streams are included in caching. This is useful for hierarchical stream structures where you want to cache not only the parent composed stream but also its child components. Only applies to composed streams.
 
 ### CSV File Format
 
@@ -73,9 +73,9 @@ Your CSV file should look like this:
 
 ```csv
 data_provider,stream_id,cron_schedule,from,include_children
-0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 0 * * * *,1719849600,true
-0x9876543210fedcba9876543210fedcba98765432,*,0 0 0 * * *,1719936000,false
-0xabcdefabcdefabcdefabcdefabcdefabcdefabcd,stcomposedstream123,0 0 */6 * * *,,true
+0x1234567890abcdef1234567890abcdef12345678,st123456789012345678901234567890,0 * * * *,1719849600,true
+0x9876543210fedcba9876543210fedcba98765432,*,0 0 * * *,1719936000,false
+0xabcdefabcdefabcdefabcdefabcdefabcdefabcd,stcomposedstream123,0 */6 * * *,,true
 ```
 
 ### Configuration Validation
@@ -89,6 +89,8 @@ The extension enforces that `streams_csv_file` and `streams_inline` are mutually
 - **Isolated from Consensus**: Uses PostgreSQL schemas that are excluded from block hashing
 - **Background Refresh**: Automatically refreshes cache data on configurable schedules
 - **Graceful Handling**: Safely enables/disables without affecting node operation
+- **Sync-Aware Caching**: Pauses cache operations when node is syncing or blocks are too old (configurable via `max_block_age`)
+- **Comprehensive Metrics**: Tracks cache hits/misses, refresh performance, resolution effectiveness, and skipped operations for monitoring
 
 ## Implementation Details
 
@@ -133,6 +135,17 @@ CREATE TABLE IF NOT EXISTS ext_tn_cache.cached_events (
     value NUMERIC(36, 18) NOT NULL,
     PRIMARY KEY (data_provider, stream_id, event_time)
 );
+
+-- Store cached index values
+CREATE TABLE IF NOT EXISTS ext_tn_cache.cached_index_events (
+    data_provider TEXT NOT NULL,
+    stream_id TEXT NOT NULL,
+    event_time INT8 NOT NULL,
+    value NUMERIC(36, 18) NOT NULL,
+    index_end_time INT8 NOT NULL,
+    PRIMARY KEY (data_provider, stream_id, event_time)
+);
+CREATE INDEX idx_cached_index_events_time_range ON ext_tn_cache.cached_index_events(data_provider, stream_id, event_time, index_end_time);
 ```
 
 ## SQL Functions
@@ -144,6 +157,7 @@ The extension registers custom SQL functions to allow actions to use the cache:
 - `tn_cache.get_cached_data(data_provider, stream_id, from, to)`: Retrieves cached data
 - `tn_cache.get_cached_last_before(data_provider, stream_id, before)`: Gets the most recent record before a timestamp
 - `tn_cache.get_cached_first_after(data_provider, stream_id, after)`: Gets the earliest record after a timestamp
+- `tn_cache.get_cached_index_data(data_provider, stream_id, from, to)`: Retrieves cached index values with their time ranges
 
 All cache methods follow TRUF.NETWORK query conventions for how `from` and `to` parameters behave (including NULL handling and anchor records).
 
@@ -195,5 +209,22 @@ CREATE OR REPLACE ACTION get_last_value_before(
       AND event_time < COALESCE($before, 9223372036854775000)
     ORDER BY event_time DESC
     LIMIT 1;
+};
+
+-- Example using index cache
+CREATE OR REPLACE ACTION get_index_values(
+    $data_provider TEXT,
+    $stream_id TEXT,
+    $from INT8,
+    $to INT8,
+    $use_cache BOOLEAN DEFAULT false
+) PRIVATE VIEW RETURNS TABLE(event_time INT8, value NUMERIC(36,18), index_end_time INT8) {
+    if $use_cache and tn_cache.is_enabled() {
+        -- Index cache includes both the index value and its validity period
+        return SELECT * FROM tn_cache.get_cached_index_data($data_provider, $stream_id, $from, $to);
+    }
+    
+    -- Fall back to computing index values
+    -- Your index calculation logic here
 };
 ``` 

@@ -14,7 +14,7 @@ type Operation string
 const (
 	// Entry point operations (precompile handlers)
 	OpCacheCheck Operation = "cache.check" // has_cached_data precompile
-	OpCacheGet   Operation = "cache.get"   // get_cached_data precompile
+	OpCacheGet   Operation = "cache.get"   // get_cached_data and get_cached_index_data precompile
 
 	// Scheduler operations
 	OpSchedulerJob     Operation = "scheduler.job"     // Cron job execution
@@ -29,6 +29,7 @@ const (
 	OpTNListStreams        Operation = "tn.list_streams"         // List all streams
 	OpTNGetCategoryStreams Operation = "tn.get_category_streams" // Get child streams
 	OpTNGetRecordComposed  Operation = "tn.get_record_composed"  // Get composed records
+	OpTNGetIndexComposed   Operation = "tn.get_index_composed"   // Get composed index events
 
 	// Stream operations
 	OpRefreshStream Operation = "refresh.stream" // Refresh single stream data
@@ -101,6 +102,12 @@ var Operations = map[Operation]OperationInfo{
 	OpTNGetRecordComposed: {
 		Name:        OpTNGetRecordComposed,
 		Description: "Get composed records from TrufNetwork",
+		Required:    []string{"action"},
+		Optional:    []string{},
+	},
+	OpTNGetIndexComposed: {
+		Name:        OpTNGetIndexComposed,
+		Description: "Get composed index events from TrufNetwork",
 		Required:    []string{"action"},
 		Optional:    []string{},
 	},
