@@ -834,3 +834,9 @@ docker volume rm tn-pgdata
 
 rm -rf $HOME/truf-node-operator/my-node-config
 ```
+
+## Security Recommendations
+
+We recommend enabling RPC private mode to prevent arbitrary SQL executions. Note that this does not enable unauthorized write executions, but activating it reduces the risk of unintended SQL-based DoS attacks.
+
+For more details, see the [Kwil Private RPC documentation](http://docs.kwil.com/docs/node/private-rpc).
