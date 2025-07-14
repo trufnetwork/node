@@ -11,16 +11,18 @@ Expected variables:
   .Prefix      (string): Prefix for SSM parameter paths.
   .Params      ([]utils.ParameterDescriptor): List of parameters to fetch/set.
 */ -}}
+#!/bin/bash
+
 # -----------------------------------------------------------------------------
 # ⚠ WARNING: This file is auto-generated from a template. Do not edit directly!
 # -----------------------------------------------------------------------------
+
 {{- /* Validate required input */ -}}
 {{- if not .AwsRegion }}{{ fail "missing required field '.AwsRegion'" }}{{- end -}}
 {{- if not .ObserverDir }}{{ fail "missing required field '.ObserverDir'" }}{{- end -}}
 {{- if not .Prefix }}{{ fail "missing required field '.Prefix'" }}{{- end -}}
 {{- /* .Params can be empty, so no check needed here */ -}}
 
-#!/bin/bash
 # Script to configure and start the observer service on an EC2 instance.
 
 set -euo pipefail

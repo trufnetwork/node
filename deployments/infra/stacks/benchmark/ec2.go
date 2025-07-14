@@ -30,7 +30,7 @@ type (
 // EC2 related functions
 func createLaunchTemplate(scope constructs.Construct, input CreateLaunchTemplateInput) CreateLaunchTemplateOutput {
 	ltConstructID := input.ID
-	AWSLinux2MachineImage := awsec2.MachineImage_LatestAmazonLinux2(nil)
+	AWSLinux2MachineImage := awsec2.MachineImage_LatestAmazonLinux2023(nil)
 
 	// Create a new EC2 launch template with specified properties
 	launchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String(ltConstructID), &awsec2.LaunchTemplateProps{
@@ -69,8 +69,8 @@ func createLaunchTemplate(scope constructs.Construct, input CreateLaunchTemplate
 	// install docker
 	userData.AddCommands(
 		*jsii.Strings(
-			"sudo yum update -y",
-			"sudo yum install -y docker",
+			"sudo dnf update -y",
+			"sudo dnf install -y docker",
 			"sudo service docker start",
 			"sudo usermod -a -G docker ec2-user",
 			"newgrp docker",
