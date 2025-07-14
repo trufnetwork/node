@@ -325,6 +325,12 @@ func (t *EngineOperations) GetRecordComposed(ctx context.Context, provider, stre
 func (t *EngineOperations) GetIndexComposed(ctx context.Context, provider, streamID string, from, to *int64) ([]EventRecord, error) {
 	t.logger.Debug("getting composed index records", "provider", provider, "stream", streamID)
 
+	// if from is nil, we should set to 0, meaning it's all available
+	if from == nil {
+		from = new(int64)
+		*from = 0
+	}
+
 	var indexEvents []EventRecord
 	action := "get_index_composed"
 

@@ -407,12 +407,22 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 	close(resultChan)
 	close(errChan)
 
-	// Check for errors
-	if err := <-errChan; err != nil {
-		// Record resolution error metric
-		errType := metrics.ClassifyError(err)
+	// Check for errors - collect all errors from workers
+	var errors []error
+	for err := range errChan {
+		if err != nil {
+			errors = append(errors, err)
+		}
+	}
+	if len(errors) > 0 {
+		// Record resolution error metric for first error
+		errType := metrics.ClassifyError(errors[0])
 		s.metrics.RecordResolutionError(ctx, errType)
-		return err
+		// Return aggregated error
+		if len(errors) == 1 {
+			return errors[0]
+		}
+		return fmt.Errorf("multiple resolution errors (%d): first error: %w", len(errors), errors[0])
 	}
 
 	// Collect all results

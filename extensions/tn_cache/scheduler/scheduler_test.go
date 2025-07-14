@@ -104,14 +104,14 @@ func TestCacheScheduler_GroupBySchedule(t *testing.T) {
 			ID:           "test1",
 			DataProvider: "provider1",
 			StreamID:     "stream1",
-			Schedule:     config.Schedule{CronExpr: "0 0 * * * *"}, // Hourly
+			Schedule:     config.Schedule{CronExpr: "0 * * * *"}, // Hourly
 			TimeRange:    config.TimeRange{From: &from},
 		},
 		{
 			ID:           "test2",
 			DataProvider: "provider2",
 			StreamID:     "stream2",
-			Schedule:     config.Schedule{CronExpr: "0 0 * * * *"}, // Hourly (same as test1)
+			Schedule:     config.Schedule{CronExpr: "0 * * * *"}, // Hourly (same as test1)
 			TimeRange:    config.TimeRange{From: &from},
 		},
 		{
@@ -129,7 +129,7 @@ func TestCacheScheduler_GroupBySchedule(t *testing.T) {
 	// Verify grouping
 	require.Len(t, groups, 2, "Should have 2 different schedules")
 
-	hourlyGroup := groups["0 0 * * * *"]
+	hourlyGroup := groups["0 * * * *"]
 	require.Len(t, hourlyGroup, 2, "Hourly group should have 2 directives")
 	assert.Equal(t, "test1", hourlyGroup[0].ID)
 	assert.Equal(t, "test2", hourlyGroup[1].ID)
@@ -162,7 +162,7 @@ func TestCacheScheduler_ResolutionFlow(t *testing.T) {
 			Type:         config.DirectiveProviderWildcard,
 			DataProvider: "provider1",
 			StreamID:     "*",
-			Schedule:     config.Schedule{CronExpr: "0 0 * * * *"},
+			Schedule:     config.Schedule{CronExpr: "0 * * * *"},
 			TimeRange:    config.TimeRange{From: &from},
 		},
 	}
@@ -181,12 +181,12 @@ func TestCacheScheduler_ResolutionFlow(t *testing.T) {
 			Type:         config.DirectiveSpecific,
 			DataProvider: "provider1",
 			StreamID:     "stream1",
-			Schedule:     config.Schedule{CronExpr: "0 0 * * * *"},
+			Schedule:     config.Schedule{CronExpr: "0 * * * *"},
 			TimeRange:    config.TimeRange{From: &from},
 		},
 	}
 
-	directives := scheduler.getDirectivesForSchedule("0 0 * * * *")
+	directives := scheduler.getDirectivesForSchedule("0 * * * *")
 	assert.Len(t, directives, 1)
 	assert.Equal(t, "stream1", directives[0].StreamID)
 }

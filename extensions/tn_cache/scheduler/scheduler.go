@@ -131,11 +131,13 @@ func (s *CacheScheduler) createJobContext(jobID string) (context.Context, contex
 	// Monitor for timeout in a separate goroutine
 	go func() {
 		<-ctx.Done()
+		// Only log if it was actually a timeout, not a cancellation
 		if ctx.Err() == context.DeadlineExceeded {
 			s.logger.Warn("job timeout exceeded",
 				"job_id", jobID,
 				"timeout", s.jobTimeout)
 		}
+		// Exit goroutine on any context completion
 	}()
 
 	s.jobContexts[jobID] = cancel

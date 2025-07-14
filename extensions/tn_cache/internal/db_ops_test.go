@@ -96,7 +96,7 @@ func TestCacheDB_UpdateStreamConfigsAtomic(t *testing.T) {
 			StreamID:      "stream1",
 			FromTimestamp: 1234567890,
 			LastRefreshed: 1672531200, // 2023-01-01T00:00:00Z
-			CronSchedule:  "0 0 * * * *",
+			CronSchedule:  "0 * * * *",
 		},
 	}
 
