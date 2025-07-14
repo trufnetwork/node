@@ -77,3 +77,23 @@ SET child_stream_ref = s.id
 FROM streams s 
 WHERE taxonomies.child_data_provider = s.data_provider 
 AND taxonomies.child_stream_id = s.stream_id;
+
+/*----------------------------------------------------------------------
+ * Primitive Events
+ *---------------------------------------------------------------------*/
+
+ALTER TABLE primitive_events
+ADD COLUMN stream_ref UUID;
+
+ALTER TABLE primitive_events
+ADD CONSTRAINT fk_primitive_stream_ref
+FOREIGN KEY (stream_ref) REFERENCES streams(id) ON DELETE CASCADE;
+
+CREATE INDEX IF NOT EXISTS pe_gap_fill_idx ON primitive_events (stream_ref, event_time);
+CREATE INDEX IF NOT EXISTS pe_stream_created_idx ON primitive_events (stream_ref, created_at);
+
+UPDATE primitive_events 
+SET stream_ref = s.id
+FROM streams s 
+WHERE primitive_events.data_provider = s.data_provider 
+AND primitive_events.stream_id = s.stream_id;
