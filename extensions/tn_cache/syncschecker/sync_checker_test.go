@@ -25,9 +25,16 @@ func TestSyncChecker_CanExecute(t *testing.T) {
 		{
 			name:        "zero gets default value",
 			maxBlockAge: 0, // Should use DefaultMaxBlockAge
-			health:      nil,
-			wantOK:      true,
-			wantReason:  "",
+			health: map[string]any{
+				"services": map[string]any{
+					"user": map[string]any{
+						"syncing":    false,
+						"block_time": (time.Now().Unix() - 1800) * 1000, // 30 minutes old, in milliseconds
+					},
+				},
+			},
+			wantOK:     true,
+			wantReason: "",
 		},
 		{
 			name:        "negative disables checking",
@@ -62,7 +69,7 @@ func TestSyncChecker_CanExecute(t *testing.T) {
 				},
 			},
 			wantOK:     false,
-			wantReason: "block too old",
+			wantReason: "exceeds max",
 		},
 		{
 			name:        "recent block allows execution",
@@ -90,7 +97,7 @@ func TestSyncChecker_CanExecute(t *testing.T) {
 				},
 			},
 			wantOK:     false, // Still blocks because block is too old
-			wantReason: "block too old",
+			wantReason: "exceeds max",
 		},
 	}
 
