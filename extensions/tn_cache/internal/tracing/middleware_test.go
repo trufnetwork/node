@@ -84,7 +84,7 @@ func TestTracedDatabaseOperation(t *testing.T) {
 }
 
 func TestWithCacheMetrics(t *testing.T) {
-	t.Run("cache hit", func(t *testing.T) {
+	t.Run("data served with count", func(t *testing.T) {
 		config := tracing.MetricsConfig{
 			Provider: "provider1",
 			StreamID: "stream1",
@@ -99,7 +99,7 @@ func TestWithCacheMetrics(t *testing.T) {
 		assert.Equal(t, 5, count)
 	})
 
-	t.Run("cache miss", func(t *testing.T) {
+	t.Run("data served with no data", func(t *testing.T) {
 		config := tracing.MetricsConfig{
 			Provider: "provider1",
 			StreamID: "stream1",
@@ -107,7 +107,7 @@ func TestWithCacheMetrics(t *testing.T) {
 		}
 
 		count, err := tracing.WithCacheMetrics(config, func() (int, error) {
-			return 0, nil
+			return 0, nil // Empty result
 		})
 
 		assert.NoError(t, err)
@@ -167,7 +167,7 @@ func TestWithRefreshMetrics(t *testing.T) {
 }
 
 func TestTracedWithCacheMetrics(t *testing.T) {
-	t.Run("combined tracing and metrics", func(t *testing.T) {
+	t.Run("combined tracing and data served metrics", func(t *testing.T) {
 		ctx := context.Background()
 		expectedResult := "data"
 		expectedCount := 10
@@ -176,6 +176,19 @@ func TestTracedWithCacheMetrics(t *testing.T) {
 			func(traceCtx context.Context) (string, int, error) {
 				assert.NotNil(t, traceCtx)
 				return expectedResult, expectedCount, nil
+			})
+
+		assert.NoError(t, err)
+		assert.Equal(t, expectedResult, result)
+	})
+
+	t.Run("combined tracing and data served - empty result", func(t *testing.T) {
+		ctx := context.Background()
+		expectedResult := "data"
+
+		result, err := tracing.TracedWithCacheMetrics(ctx, tracing.OpCacheGet, "provider1", "stream1", nil,
+			func(traceCtx context.Context) (string, int, error) {
+				return expectedResult, 0, nil // 0 count
 			})
 
 		assert.NoError(t, err)

@@ -11,7 +11,6 @@ import (
 	"github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
-	"github.com/trufnetwork/node/extensions/tn_cache/internal/constants"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal/tracing"
 	"github.com/trufnetwork/node/extensions/tn_cache/metrics"
 	"go.opentelemetry.io/otel/attribute"
@@ -68,7 +67,6 @@ func ensureDecimalValue(value interface{}) (*types.Decimal, error) {
 	return dec, nil
 }
 
-
 // buildTimeAttributes creates tracing attributes for time parameters
 func buildTimeAttributes(fromTime, toTime *int64) []attribute.KeyValue {
 	var attrs []attribute.KeyValue
@@ -107,54 +105,46 @@ func HandleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 		func(traceCtx context.Context) ([]any, error) {
 			ctx.TxContext.Ctx = traceCtx
 
-			// Check cached_streams table to see if we have this stream cached
-			db, ok := app.DB.(sql.DB)
-			if !ok {
-				return nil, fmt.Errorf("app.DB is not a sql.DB")
-			}
-
-			// Check if stream is configured and has been refreshed
-			var configuredFromTime *int64
-			var lastRefreshed *int64
-			var lastRefreshedTimestamp int64
-
-			result, err := db.Execute(traceCtx, `
-				SELECT 
-					from_timestamp, 
-					COALESCE(last_refreshed, 0) as last_refreshed
-				FROM `+constants.CacheSchemaName+`.cached_streams
-				WHERE data_provider = $1 AND stream_id = $2
-			`, dataProvider, streamID)
+			// Get CacheDB instance
+			cacheDB, err := checkCacheDB()
 			if err != nil {
-				return nil, fmt.Errorf("failed to query cached_streams: %w", err)
+				return nil, err
 			}
 
-			if len(result.Rows) == 0 {
-				// Stream not configured for caching
-				return []any{false, int64(0)}, nil
-			}
-
-			row := result.Rows[0]
-			if row[0] != nil {
-				t := row[0].(int64)
-				configuredFromTime = &t
-			}
-			if row[1] != nil {
-				lastRefreshedTimestamp = row[1].(int64)
-				if lastRefreshedTimestamp > 0 {
-					lastRefreshed = &lastRefreshedTimestamp
+			// Get stream configuration using CacheDB abstraction
+			config, err := cacheDB.GetStreamConfig(traceCtx, dataProvider, streamID)
+			if err != nil {
+				if err == sql.ErrNoRows {
+					// Stream not configured for caching
+					if ext := GetExtension(); ext != nil && ext.IsEnabled() {
+						ext.MetricsRecorder().RecordCacheMiss(traceCtx, dataProvider, streamID)
+					}
+					return []any{false, int64(0)}, nil
 				}
+				return nil, fmt.Errorf("failed to get stream config: %w", err)
 			}
 
 			// If stream hasn't been refreshed yet, no cached data
-			if lastRefreshedTimestamp == 0 {
+			if config.LastRefreshed == 0 {
+				if ext := GetExtension(); ext != nil && ext.IsEnabled() {
+					ext.MetricsRecorder().RecordCacheMiss(traceCtx, dataProvider, streamID)
+				}
 				return []any{false, int64(0)}, nil
 			}
 
 			// Special case: if both from and to are NULL, user wants latest value only
 			if fromTime == nil && toTime == nil {
 				// We consider it cached if the stream has been refreshed, even if empty
-				return []any{true, lastRefreshedTimestamp}, nil
+				hasData := true
+				if ext := GetExtension(); ext != nil && ext.IsEnabled() {
+					ext.MetricsRecorder().RecordCacheHit(traceCtx, dataProvider, streamID)
+					
+					// Calculate and record data age
+					refreshTime := time.Unix(config.LastRefreshed, 0)
+					dataAge := time.Since(refreshTime).Seconds()
+					ext.MetricsRecorder().RecordCacheDataAge(traceCtx, dataProvider, streamID, dataAge)
+				}
+				return []any{hasData, config.LastRefreshed}, nil
 			}
 
 			// If from is NULL but to is not, treat from as 0 (beginning of time)
@@ -164,33 +154,30 @@ func HandleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 			}
 
 			// Check if requested from_time is within our cached range
-			if configuredFromTime != nil && effectiveFrom < *configuredFromTime {
+			if effectiveFrom < config.FromTimestamp {
 				// Requested time is before what we have cached
+				if ext := GetExtension(); ext != nil && ext.IsEnabled() {
+					ext.MetricsRecorder().RecordCacheMiss(traceCtx, dataProvider, streamID)
+				}
 				return []any{false, int64(0)}, nil
 			}
 
 			// At this point, we know the stream is configured, has been refreshed,
 			// and the requested range starts after our configured from time
 			// We consider it cached even if there are no events in the range
-
-			// Record metrics outside of tracing context
 			hasData := true
-			if ext := GetExtension(); ext != nil && ext.IsEnabled() {
-				if hasData {
-					ext.MetricsRecorder().RecordCacheHit(traceCtx, dataProvider, streamID)
 
-					// Calculate and record data age since we already have lastRefreshed
-					if lastRefreshed != nil && *lastRefreshed > 0 {
-						refreshTime := time.Unix(*lastRefreshed, 0)
-						dataAge := time.Since(refreshTime).Seconds()
-						ext.MetricsRecorder().RecordCacheDataAge(traceCtx, dataProvider, streamID, dataAge)
-					}
-				} else {
-					ext.MetricsRecorder().RecordCacheMiss(traceCtx, dataProvider, streamID)
-				}
+			// Record metrics for cache hit/miss decision
+			if ext := GetExtension(); ext != nil && ext.IsEnabled() {
+				ext.MetricsRecorder().RecordCacheHit(traceCtx, dataProvider, streamID)
+
+				// Calculate and record data age
+				refreshTime := time.Unix(config.LastRefreshed, 0)
+				dataAge := time.Since(refreshTime).Seconds()
+				ext.MetricsRecorder().RecordCacheDataAge(traceCtx, dataProvider, streamID, dataAge)
 			}
 
-			return []any{hasData, lastRefreshedTimestamp}, nil
+			return []any{hasData, config.LastRefreshed}, nil
 		}, attrs...)
 
 	if err != nil {
@@ -223,6 +210,9 @@ func HandleGetCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 		func(traceCtx context.Context) (any, int, error) {
 			// Update context for tracing
 			ctx.TxContext.Ctx = traceCtx
+
+			// This handler assumes the caller has already verified cache availability
+			// via HandleHasCachedData. We proceed directly to fetching data.
 
 			// Obtain CacheDB instance
 			cacheDB, err := checkCacheDB()
@@ -429,17 +419,26 @@ func HandleGetCachedIndexData(ctx *common.EngineContext, app *common.App, inputs
 	// Use middleware for tracing
 	attrs := buildTimeAttributes(fromTime, toTime)
 	attrs = append(attrs, attribute.String("type", "index"))
-	
-	_, err := tracing.TracedOperation(ctx.TxContext.Ctx, tracing.OpCacheGet, dataProvider, streamID,
-		func(traceCtx context.Context) (any, error) {
+
+	ext := GetExtension()
+	var recorder metrics.MetricsRecorder
+	if ext != nil && ext.IsEnabled() {
+		recorder = ext.MetricsRecorder()
+	}
+
+	_, err := tracing.TracedWithCacheMetrics(ctx.TxContext.Ctx, tracing.OpCacheGet, dataProvider, streamID, recorder,
+		func(traceCtx context.Context) (any, int, error) {
 			ctx.TxContext.Ctx = traceCtx
+
+			// This handler assumes the caller has already verified cache availability
+			// via HandleHasCachedData. We proceed directly to fetching data.
 
 			ext, err := safeGetExtension()
 			if err != nil {
-				return nil, fmt.Errorf("extension unavailable: %w", err)
+				return nil, 0, fmt.Errorf("extension unavailable: %w", err)
 			}
 			if ext.cacheDB == nil {
-				return nil, fmt.Errorf(errCacheDBNotInitialized)
+				return nil, 0, fmt.Errorf(errCacheDBNotInitialized)
 			}
 
 			// Determine effective time range
@@ -452,21 +451,21 @@ func HandleGetCachedIndexData(ctx *common.EngineContext, app *common.App, inputs
 			// Get index events from cache
 			indexEvents, err := ext.cacheDB.GetCachedIndex(traceCtx, dataProvider, streamID, effectiveFromTime, effectiveToTime)
 			if err != nil {
-				return nil, fmt.Errorf("get index events: %w", err)
+				return nil, 0, fmt.Errorf("get index events: %w", err)
 			}
 
 			// Return the data in the expected format
 			for _, event := range indexEvents {
 				dec, err := ensureDecimalValue(event.Value)
 				if err != nil {
-					return nil, err
+					return nil, 0, err
 				}
 				if err := resultFn([]any{event.EventTime, dec}); err != nil {
-					return nil, err
+					return nil, 0, err
 				}
 			}
 
-			return nil, nil
+			return nil, len(indexEvents), nil
 		}, attrs...)
 
 	return err

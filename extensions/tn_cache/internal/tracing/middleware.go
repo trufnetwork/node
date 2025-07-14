@@ -87,13 +87,9 @@ type MetricsConfig struct {
 	Recorder metrics.MetricsRecorder // Optional metrics recorder
 }
 
-// WithCacheMetrics wraps an operation and records cache hit/miss metrics based on row count.
-// DO NOT MERGE: will fix before merging
-// Note: This approach has a limitation - it cannot distinguish between:
-// 1. A configured stream with no data (should be a cache hit)
-// 2. An unconfigured stream (should be a cache miss)
-// Both cases return count=0, so we treat empty results as cache misses.
-// For accurate hit/miss detection, use HandleHasCachedData which checks stream configuration.
+// WithCacheMetrics wraps an operation and records data served metrics.
+// This should only be used for data fetching operations after cache hit/miss
+// has already been determined and recorded by HandleHasCachedData.
 func WithCacheMetrics(config MetricsConfig, fn func() (int, error)) (int, error) {
 	if config.Recorder == nil {
 		return fn()
@@ -101,15 +97,9 @@ func WithCacheMetrics(config MetricsConfig, fn func() (int, error)) (int, error)
 
 	count, err := fn()
 
-	// Record metrics based on result
+	// Record data served metrics on successful fetch
 	if err == nil {
-		if count > 0 {
-			config.Recorder.RecordCacheHit(config.Context, config.Provider, config.StreamID)
-			config.Recorder.RecordCacheDataServed(config.Context, config.Provider, config.StreamID, count)
-		} else {
-			// Note: This may incorrectly report cache miss for configured streams with no data
-			config.Recorder.RecordCacheMiss(config.Context, config.Provider, config.StreamID)
-		}
+		config.Recorder.RecordCacheDataServed(config.Context, config.Provider, config.StreamID, count)
 	}
 
 	return count, err
@@ -139,8 +129,9 @@ func WithRefreshMetrics(config MetricsConfig, fn func() (int, error)) (int, erro
 	return count, err
 }
 
-// TracedWithCacheMetrics combines tracing and cache metrics in a single middleware.
-// The function should return (result, rowCount, error) where rowCount determines hit/miss.
+// TracedWithCacheMetrics combines tracing and cache data served metrics.
+// The function should return (result, rowCount, error).
+// This assumes cache hit/miss has already been determined by HandleHasCachedData.
 func TracedWithCacheMetrics[T any](ctx context.Context, op Operation, provider, streamID string,
 	recorder metrics.MetricsRecorder, fn func(context.Context) (T, int, error), attrs ...attribute.KeyValue) (T, error) {
 	var result T
@@ -155,14 +146,13 @@ func TracedWithCacheMetrics[T any](ctx context.Context, op Operation, provider, 
 			if span := trace.SpanFromContext(traceCtx); span.IsRecording() {
 				span.SetAttributes(
 					attribute.Int("cache.rows", count),
-					attribute.Bool("cache.hit", count > 0),
 				)
 			}
 
 			return result, fnErr
 		}, attrs...)
 
-	// Record cache metrics
+	// Record data served metrics
 	if err == nil && recorder != nil {
 		metricsConfig := MetricsConfig{
 			Provider: provider,
