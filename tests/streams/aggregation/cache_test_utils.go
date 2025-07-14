@@ -21,7 +21,7 @@ func wrapTestWithCacheModes(t *testing.T, testName string, testFunc func(*testin
 
 		// Run with cache
 		t.Run(testName+"_with_cache", testutils.WithTx(platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {
-			err := testFunc(t, true)(ctx, platform)
+			err := testFunc(t, true)(ctx, txPlatform)
 			if err != nil {
 				t.Fatalf("Test failed with cache: %v", err)
 			}
