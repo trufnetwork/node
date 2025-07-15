@@ -53,7 +53,7 @@ CREATE OR REPLACE ACTION get_stream_ids(
             s.id AS stream_ref
         FROM indexes
         JOIN input_arrays ON 1=1
-        LEFT JOIN streams s
+        JOIN streams s
           ON s.data_provider = input_arrays.data_providers[idx] 
           AND s.stream_id = input_arrays.stream_ids[idx]
     )
