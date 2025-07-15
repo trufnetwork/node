@@ -60,6 +60,21 @@ CREATE OR REPLACE ACTION create_streams(
 
     $base_uuid := uuid_generate_kwil('create_streams_' || @txid);
 
+    -- Get the data provider id
+    $data_provider_id UUID;
+    $dp_found BOOL := false;
+    for $data_provider_row in SELECT id
+        FROM data_providers
+        WHERE address = $data_provider
+        LIMIT 1 {
+        $dp_found := true;
+        $data_provider_id := $data_provider_row.id;
+    }
+
+    if $dp_found = false {
+        ERROR('Metadata record not found');
+    }
+    
     -- Create the streams
     WITH RECURSIVE 
     indexes AS (
@@ -76,14 +91,17 @@ CREATE OR REPLACE ACTION create_streams(
     arguments AS (
         SELECT 
             idx,
+            uuid_generate_kwil($data_provider || stream_arrays.stream_ids[idx]) AS id,
             stream_arrays.stream_ids[idx] AS stream_id,
             stream_arrays.stream_types[idx] AS stream_type
         FROM indexes
         JOIN stream_arrays ON 1=1
     )
-    INSERT INTO streams (data_provider, stream_id, stream_type, created_at)
-    SELECT 
-        $data_provider, 
+    INSERT INTO streams (id, data_provider_id, data_provider, stream_id, stream_type, created_at)
+    SELECT
+        id,
+        $data_provider_id,
+        $data_provider,
         stream_id, 
         stream_type, 
         @height
