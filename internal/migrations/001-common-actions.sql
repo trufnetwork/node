@@ -28,6 +28,41 @@ CREATE OR REPLACE ACTION create_data_provider(
     INSERT INTO data_providers (id, address, created_at) VALUES (uuid_generate_kwil($data_provider), $data_provider, @height);
 };
 
+CREATE OR REPLACE ACTION get_stream_ids(
+    $data_providers TEXT[],
+    $stream_ids TEXT[]
+) PRIVATE VIEW RETURNS (stream_ids UUID[]) {
+    -- Use WITH RECURSIVE to process stream ids lookup in single SQL operation
+    -- This avoids the expensive for-loop roundtrips
+    for $row in WITH RECURSIVE 
+    indexes AS (
+        SELECT 1 AS idx
+        UNION ALL
+        SELECT idx + 1 FROM indexes
+        WHERE idx < array_length($data_provider)
+    ),
+    input_arrays AS (
+        SELECT 
+            $data_providers AS data_providers,
+            $stream_ids AS stream_ids
+    ),
+    stream_lookups AS (
+        SELECT 
+            input_arrays.data_providers[idx] AS data_provider,
+            input_arrays.stream_ids[idx] AS stream_id,
+            s.id AS stream_ref
+        FROM indexes
+        JOIN input_arrays ON 1=1
+        LEFT JOIN streams s
+          ON s.data_provider = input_arrays.data_providers[idx] 
+          AND s.stream_id = input_arrays.stream_ids[idx]
+    )
+    SELECT ARRAY_AGG(stream_ref) AS stream_refs
+    FROM stream_lookups {
+      return $row.stream_refs;
+    }
+};
+
 /**
  * create_stream: Creates a new stream with required metadata.
  * Validates stream_id format, data provider address, and stream type.
