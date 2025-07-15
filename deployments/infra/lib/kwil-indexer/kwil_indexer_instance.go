@@ -132,7 +132,7 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 	initData := awsec2.CloudFormationInit_FromElements(elements...)
 
 	// comes with pre-installed cloud init requirements
-	AWSLinux2MachineImage := awsec2.MachineImage_LatestAmazonLinux2(nil)
+	AWSLinux2MachineImage := awsec2.MachineImage_LatestAmazonLinux2023(nil)
 
 	// prepare default UserData to attach later commands
 	defaultUd := awsec2.UserData_ForLinux(&awsec2.LinuxUserDataOptions{Shebang: jsii.String("#!/bin/bash -xe")})

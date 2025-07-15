@@ -20,9 +20,8 @@ func InstallCertbotOnInstance(instance awsec2.Instance) {
 set -e
 set -x
 
-amazon-linux-extras install epel -y
-yum-config-manager --enable epel*
-yum install certbot python-certbot-dns-route53 -y
+dnf install epel-release -y
+dnf install certbot python-certbot-dns-route53 -y
 `
 
 	instance.AddUserData(jsii.String(certbotInstallScript))
