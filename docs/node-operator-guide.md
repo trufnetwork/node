@@ -806,9 +806,9 @@ rm -rf $HOME/truf-node-operator/my-node-config
 
 ## Security Recommendations
 
-We recommend enabling RPC private mode to prevent arbitrary SQL executions. Note that this does not enable unauthorized write executions, but activating it reduces the risk of unintended SQL-based DoS attacks.
+We've enabled RPC private mode in the init command above to prevent arbitrary SQL executions. This reduces the risk of unintended SQL-based DoS attacks without enabling unauthorized writes.
 
-To enable it, add or update the following in your `config.toml` file:
+If you need to modify this setting, edit your `config.toml`:
 
 ```toml
 [rpc]
