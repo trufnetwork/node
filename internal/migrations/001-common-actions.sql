@@ -47,9 +47,7 @@ CREATE OR REPLACE ACTION get_stream_ids(
             $stream_ids AS stream_ids
     ),
     stream_lookups AS (
-        SELECT 
-            input_arrays.data_providers[idx] AS data_provider,
-            input_arrays.stream_ids[idx] AS stream_id,
+        SELECT
             s.id AS stream_ref
         FROM indexes
         JOIN input_arrays ON 1=1
