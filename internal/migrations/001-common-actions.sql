@@ -1,4 +1,34 @@
 /**
+ * create_data_provider: Register new data provider
+ */
+CREATE OR REPLACE ACTION create_data_provider(
+    $address TEXT
+) PUBLIC {
+    $lower_caller TEXT := LOWER(@caller);
+    -- Permission Check: Ensure caller has the 'system:network_writer' role.
+    $has_permission BOOL := false;
+    for $row in are_members_of('system', 'network_writer', ARRAY[$lower_caller]) {
+        if $row.wallet = $lower_caller AND $row.is_member {
+            $has_permission := true;
+            break;
+        }
+    }
+    if NOT $has_permission {
+        ERROR('Caller does not have the required system:network_writer role to create data provider.');
+    }
+
+    -- Get caller's address (data provider) first
+    $data_provider TEXT := $lower_caller;
+
+    -- Check if caller is a valid ethereum address
+    if NOT check_ethereum_address($data_provider) {
+        ERROR('Invalid data provider address. Must be a valid Ethereum address: ' || $data_provider);
+    }
+
+    INSERT INTO data_providers (id, address, created_at) VALUES (uuid_generate_kwil($data_provider), $data_provider, @height);
+};
+
+/**
  * create_stream: Creates a new stream with required metadata.
  * Validates stream_id format, data provider address, and stream type.
  * Sets default metadata including type, owner, visibility, and readonly keys.
