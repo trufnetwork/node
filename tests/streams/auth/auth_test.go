@@ -131,6 +131,11 @@ func testInvalidAddressOwnershipTransfer(t *testing.T) kwilTesting.TestFunc {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
 		streamId := util.GenerateStreamId("ownership_transfer_test")
+		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+
 		streamLocator := types.StreamLocator{
 			StreamId:     streamId,
 			DataProvider: deployer,
@@ -145,7 +150,7 @@ func testInvalidAddressOwnershipTransfer(t *testing.T) kwilTesting.TestFunc {
 
 		// Attempt to transfer ownership to an invalid address
 		invalidAddress := "invalid_address"
-		err := procedure.TransferStreamOwnership(ctx, procedure.TransferStreamOwnershipInput{
+		err = procedure.TransferStreamOwnership(ctx, procedure.TransferStreamOwnershipInput{
 			Platform: platform,
 			Locator:  streamLocator,
 			NewOwner: invalidAddress,
@@ -185,7 +190,7 @@ func testReadPermissionControl(t *testing.T, streamInfo setup.StreamInfo) kwilTe
 		defaultDeployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
 		platform.Deployer = defaultDeployer.Bytes()
 
-		err := setup.CreateDataProvider(ctx, platform, defaultDeployer.Address())
+		err := setup.CreateDataProvider(ctx, platform, streamInfo.Locator.DataProvider.Address())
 		if err != nil {
 			return errors.Wrap(err, "error registering data provider")
 		}
@@ -646,6 +651,19 @@ func testNestedComposePermissionControl(t *testing.T) kwilTesting.TestFunc {
 		childOwner := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000003333")
 		grandchildOwner := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000004444")
 
+		err = setup.CreateDataProvider(ctx, platform, parentOwner.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+		err = setup.CreateDataProvider(ctx, platform, childOwner.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+		err = setup.CreateDataProvider(ctx, platform, grandchildOwner.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+
 		// Create a three-level chain: parent -> child -> grandchild.
 		parentLocator := types.StreamLocator{
 			StreamId:     util.GenerateStreamId("nested_parent"),
@@ -848,7 +866,7 @@ func TestAUTH05_StreamDeletion(t *testing.T) {
 func testStreamDeletion(t *testing.T) kwilTesting.TestFunc {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Initialize platform deployer with a valid address to prevent the default kwil "deployer" string issue
-		defaultDeployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
+		defaultDeployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
 		platform.Deployer = defaultDeployer.Bytes()
 
 		err := setup.CreateDataProvider(ctx, platform, defaultDeployer.Address())

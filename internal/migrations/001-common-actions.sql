@@ -102,7 +102,7 @@ CREATE OR REPLACE ACTION create_streams(
     }
 
     if $dp_found = false {
-        ERROR('Data provider not found');
+        ERROR('Data provider not found: ' || $data_provider);
     }
     
     -- Create the streams
