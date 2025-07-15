@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
@@ -77,6 +78,10 @@ func testCacheHitScenario(t *testing.T) func(ctx context.Context, platform *kwil
 		require.NoError(t, err)
 
 		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
 
 		// Create composed stream with test data
 		// This creates 3 child streams with values that average to the expected cached values
@@ -154,6 +159,10 @@ func testCacheMissScenario(t *testing.T) func(ctx context.Context, platform *kwi
 		require.NoError(t, err)
 
 		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
 
 		// Create composed stream with test data
 		// This will trigger expensive computation since no cache exists
@@ -225,6 +234,10 @@ func testFrozenQueryBypassesCache(t *testing.T) func(ctx context.Context, platfo
 		require.NoError(t, err)
 
 		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
 
 		// Create composed stream with test data
 		// This data represents the historical state that should be preserved
@@ -295,6 +308,10 @@ func testCacheDisabledFallback(t *testing.T) func(ctx context.Context, platform 
 		require.NoError(t, err)
 
 		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
 
 		// Create composed stream with test data (2 child streams for simpler calculation)
 		err = setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{

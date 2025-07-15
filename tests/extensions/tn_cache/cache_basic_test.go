@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
@@ -42,6 +43,11 @@ func testCacheBasicFunctionality(t *testing.T) func(ctx context.Context, platfor
 		require.NoError(t, err)
 
 		platform = procedure.WithSigner(platform, deployer.Bytes())
+
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
 
 		// Setup composed stream with test data
 		err = setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
