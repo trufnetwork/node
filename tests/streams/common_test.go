@@ -55,7 +55,11 @@ func testDisableMetadata(t *testing.T, streamInfo setup.StreamInfo) kwilTesting.
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		platform = procedure.WithSigner(platform, defaultDeployer.Bytes())
 		// Set up and initialize the contract
-		err := setup.CreateStream(ctx, platform, streamInfo)
+		err := setup.CreateDataProvider(ctx, platform, defaultDeployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+		err = setup.CreateStream(ctx, platform, streamInfo)
 		if err != nil {
 			return errors.Wrapf(err, "failed to create stream")
 		}
@@ -125,7 +129,11 @@ func testReadOnlyMetadataCannotBeModified(t *testing.T, streamInfo setup.StreamI
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		platform = procedure.WithSigner(platform, defaultDeployer.Bytes())
 		// Set up and initialize the contract
-		err := setup.CreateStream(ctx, platform, streamInfo)
+		err := setup.CreateDataProvider(ctx, platform, defaultDeployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+		err = setup.CreateStream(ctx, platform, streamInfo)
 		if err != nil {
 			return errors.Wrap(err, "failed to create stream for read-only metadata test")
 		}
@@ -181,6 +189,11 @@ func testReadOnlyMetadataCannotBeModifiedBatch(t *testing.T, streamInfo setup.St
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Use batch stream creation path (create_streams)
 		platform = procedure.WithSigner(platform, defaultDeployer.Bytes())
+
+		err := setup.CreateDataProvider(ctx, platform, defaultDeployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
 
 		// Create the stream via batch helper (single-element slice)
 		if err := setup.CreateStreams(ctx, platform, []setup.StreamInfo{streamInfo}); err != nil {
@@ -238,6 +251,10 @@ func testVisibilitySettings(t *testing.T, streamInfo setup.StreamInfo) kwilTesti
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		platform = procedure.WithSigner(platform, defaultDeployer.Bytes())
 		// Set up and initialize the contract
+		err := setup.CreateDataProvider(ctx, platform, defaultDeployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
 		if err := setup.CreateStream(ctx, platform, streamInfo); err != nil {
 			return err
 		}
@@ -268,7 +285,7 @@ func testVisibilitySettings(t *testing.T, streamInfo setup.StreamInfo) kwilTesti
 		checkBothActions("non-owner", nonOwner.Address(), true)
 
 		// Change read_visibility to private (1)
-		err := procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+		err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
 			Platform: platform,
 			Locator:  streamInfo.Locator,
 			Key:      "read_visibility",

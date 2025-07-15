@@ -71,6 +71,13 @@ CREATE OR REPLACE ACTION truflation_insert_records(
         }
     }
 
+    -- Get stream reference for all streams
+    $stream_refs := []::UUID[];
+    for $i in 1..array_length($data_provider) {
+      $id := get_stream_id($data_provider[$i], $stream_id[$i]);
+      $stream_refs := array_append($stream_refs, $id);
+    }
+
     -- Insert all records using WITH RECURSIVE pattern to avoid round trips
     WITH RECURSIVE
     indexes AS (
@@ -85,7 +92,8 @@ CREATE OR REPLACE ACTION truflation_insert_records(
             $data_provider AS data_providers,
             $event_time AS event_times,
             $value AS values_array,
-            $truflation_created_at AS truflation_created_at_array
+            $truflation_created_at AS truflation_created_at_array,
+            $stream_refs AS stream_refs_array
     ),
     arguments AS (
         SELECT
@@ -93,18 +101,20 @@ CREATE OR REPLACE ACTION truflation_insert_records(
             record_arrays.data_providers[idx] AS data_provider,
             record_arrays.event_times[idx] AS event_time,
             record_arrays.values_array[idx] AS value,
-            record_arrays.truflation_created_at_array[idx] AS truflation_created_at
+            record_arrays.truflation_created_at_array[idx] AS truflation_created_at,
+            record_arrays.stream_refs_array[idx] AS stream_ref
         FROM indexes
         JOIN record_arrays ON 1=1
     )
-    INSERT INTO primitive_events (stream_id, data_provider, event_time, value, created_at, truflation_created_at)
+    INSERT INTO primitive_events (stream_id, data_provider, event_time, value, created_at, truflation_created_at, stream_ref)
     SELECT
         stream_id,
         data_provider,
         event_time,
         value,
         $current_block,
-        truflation_created_at
+        truflation_created_at,
+        stream_ref
     FROM arguments;
 };
 

@@ -1,4 +1,34 @@
 /**
+ * create_data_provider: Register new data provider
+ */
+CREATE OR REPLACE ACTION create_data_provider(
+    $address TEXT
+) PUBLIC {
+    $lower_caller TEXT := LOWER(@caller);
+    -- Permission Check: Ensure caller has the 'system:network_writer' role.
+    $has_permission BOOL := false;
+    for $row in are_members_of('system', 'network_writer', ARRAY[$lower_caller]) {
+        if $row.wallet = $lower_caller AND $row.is_member {
+            $has_permission := true;
+            break;
+        }
+    }
+    if NOT $has_permission {
+        ERROR('Caller does not have the required system:network_writer role to create data provider.');
+    }
+
+    -- Get caller's address (data provider) first
+    $data_provider TEXT := $lower_caller;
+
+    -- Check if caller is a valid ethereum address
+    if NOT check_ethereum_address($data_provider) {
+        ERROR('Invalid data provider address. Must be a valid Ethereum address: ' || $data_provider);
+    }
+
+    INSERT INTO data_providers (id, address, created_at) VALUES (uuid_generate_kwil($data_provider), $data_provider, @height);
+};
+
+/**
  * create_stream: Creates a new stream with required metadata.
  * Validates stream_id format, data provider address, and stream type.
  * Sets default metadata including type, owner, visibility, and readonly keys.
@@ -60,6 +90,21 @@ CREATE OR REPLACE ACTION create_streams(
 
     $base_uuid := uuid_generate_kwil('create_streams_' || @txid);
 
+    -- Get the data provider id
+    $data_provider_id UUID;
+    $dp_found BOOL := false;
+    for $data_provider_row in SELECT id
+        FROM data_providers
+        WHERE address = $data_provider
+        LIMIT 1 {
+        $dp_found := true;
+        $data_provider_id := $data_provider_row.id;
+    }
+
+    if $dp_found = false {
+        ERROR('Data provider not found: ' || $data_provider);
+    }
+    
     -- Create the streams
     WITH RECURSIVE 
     indexes AS (
@@ -76,14 +121,17 @@ CREATE OR REPLACE ACTION create_streams(
     arguments AS (
         SELECT 
             idx,
+            uuid_generate_kwil($data_provider || stream_arrays.stream_ids[idx]) AS id,
             stream_arrays.stream_ids[idx] AS stream_id,
             stream_arrays.stream_types[idx] AS stream_type
         FROM indexes
         JOIN stream_arrays ON 1=1
     )
-    INSERT INTO streams (data_provider, stream_id, stream_type, created_at)
-    SELECT 
-        $data_provider, 
+    INSERT INTO streams (id, data_provider_id, data_provider, stream_id, stream_type, created_at)
+    SELECT
+        id,
+        $data_provider_id,
+        $data_provider,
         stream_id, 
         stream_type, 
         @height
@@ -172,8 +220,10 @@ CREATE OR REPLACE ACTION create_streams(
             arg.value_s,
             arg.value_i,
             arg.value_ref,
-            @height AS created_at
+            @height AS created_at,
+            s.id AS stream_ref
         FROM args_with_row_number arg
+        JOIN streams s ON s.data_provider = $data_provider AND s.stream_id = arg.stream_id
     )
     -- catched a bug where it's expected to have the same order of columns
     -- as the table definition
@@ -188,7 +238,8 @@ CREATE OR REPLACE ACTION create_streams(
         value_s,
         value_ref,
         created_at,
-        disabled_at
+        disabled_at,
+        stream_ref
     )
     SELECT 
         row_id::UUID,
@@ -201,10 +252,28 @@ CREATE OR REPLACE ACTION create_streams(
         value_s,
         value_ref,
         created_at,
-        NULL::INT8
+        NULL::INT8,
+        stream_ref::UUID
     FROM args;
 };
 
+CREATE OR REPLACE ACTION get_stream_id(
+  $data_provider_address TEXT,
+  $stream_id TEXT
+) PRIVATE returns (id UUID) {
+  $id UUID;
+  $found BOOL := false;
+  for $stream_row in SELECT id
+      FROM streams
+      WHERE stream_id = $stream_id 
+      AND data_provider = $data_provider_address
+      LIMIT 1 {
+      $found := true;
+      $id := $stream_row.id;
+  }
+
+  return $id;
+};
 
 /**
  * insert_metadata: Adds metadata to a stream.
@@ -266,6 +335,7 @@ CREATE OR REPLACE ACTION insert_metadata(
     $uuid_key TEXT := @txid || $key || $value;
     $uuid UUID := uuid_generate_kwil($uuid_key);
     $current_block INT := @height;
+    $stream_ref UUID := get_stream_id($data_provider, $stream_id);
     
     -- Insert the metadata
     INSERT INTO metadata (
@@ -278,7 +348,8 @@ CREATE OR REPLACE ACTION insert_metadata(
         value_s, 
         value_b, 
         value_ref, 
-        created_at
+        created_at,
+        stream_ref
     ) VALUES (
         $uuid, 
         $data_provider, 
@@ -289,7 +360,8 @@ CREATE OR REPLACE ACTION insert_metadata(
         $value_s, 
         $value_b, 
         LOWER($value_ref), 
-        $current_block
+        $current_block,
+        $stream_ref
     );
 };
 

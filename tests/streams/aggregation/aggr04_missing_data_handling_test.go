@@ -48,7 +48,11 @@ func testAGGR04_MissingDataHandling(t *testing.T) func(ctx context.Context, plat
 			return errors.Wrap(err, "error creating ethereum address")
 		}
 		platform = procedure.WithSigner(platform, deployer.Bytes())
-
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+		
 		// Setup the composed stream with 2 primitive streams
 		// One stream has data for all 4 days
 		// The other starts only on the 2nd day, and on 3rd day is missing too (has data on 2nd and 4th day)

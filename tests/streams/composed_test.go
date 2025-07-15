@@ -43,8 +43,13 @@ func WithComposedTestSetup(testFn func(ctx context.Context, platform *kwilTestin
 		// Set the platform signer
 		platform = procedure.WithSigner(platform, composedDeployer.Bytes())
 
+		err := setup.CreateDataProvider(ctx, platform, composedDeployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+
 		// Create the composed stream
-		err := setup.CreateStream(ctx, platform, setup.StreamInfo{
+		err = setup.CreateStream(ctx, platform, setup.StreamInfo{
 			Locator: types.StreamLocator{
 				StreamId:     composedStreamId,
 				DataProvider: composedDeployer,
@@ -64,8 +69,13 @@ func testComposedLastAvailable(t *testing.T) func(ctx context.Context, platform 
 		// Setup the deployer since its not using WithComposedTestSetup
 		platform = procedure.WithSigner(platform, composedDeployer.Bytes())
 
+		err := setup.CreateDataProvider(ctx, platform, composedDeployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+
 		// Setup data for the test
-		err := setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
+		err = setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
 			Platform: platform,
 			StreamId: composedStreamId,
 			Height:   1,
@@ -120,8 +130,13 @@ func testCOMPOSED01SetTaxonomyWithValidData(t *testing.T) func(ctx context.Conte
 		// Setup the deployer since its not using WithComposedTestSetup
 		platform = procedure.WithSigner(platform, composedDeployer.Bytes())
 
+		err := setup.CreateDataProvider(ctx, platform, composedDeployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+
 		// Create the composed stream
-		err := setup.CreateStream(ctx, platform, setup.StreamInfo{
+		err = setup.CreateStream(ctx, platform, setup.StreamInfo{
 			Locator: composedStreamLocator,
 			Type:    setup.ContractTypeComposed,
 		})
@@ -220,9 +235,14 @@ func testCOMPOSED02OnlyOwnerCanSetTaxonomy(t *testing.T) func(ctx context.Contex
 		nonOwner := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000001000101")
 		platform = procedure.WithSigner(platform, nonOwner.Bytes())
 
+		err := setup.CreateDataProvider(ctx, platform, nonOwner.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+
 		stream1 := util.GenerateStreamId("stream1")
 		// Attempt to set taxonomy with non-owner account
-		err := procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
+		err = procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
 			Platform:      platform,
 			StreamLocator: composedStreamLocator,
 			DataProviders: []string{composedDeployer.Address()},

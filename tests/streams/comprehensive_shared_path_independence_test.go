@@ -48,6 +48,11 @@ func setupComprehensiveSharedStreams(testFn func(ctx context.Context, platform *
 		platform = procedure.WithSigner(platform, deployerSharedComplex.Bytes())
 		start := int64(0)
 
+		err := setup.CreateDataProvider(ctx, platform, deployerSharedComplex.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+
 		// 1. Deploy primitives
 		if err := setup.SetupPrimitive(ctx, setup.SetupPrimitiveInput{
 			Platform: platform,
