@@ -49,10 +49,13 @@ CREATE OR REPLACE ACTION insert_taxonomy(
 
     -- Retrieve the current group_sequence for this parent and increment it by 1.
     $new_group_sequence := get_current_group_sequence($data_provider, $stream_id, true) + 1;
+    
+    $stream_ref := get_stream_id($data_provider, $stream_id);
 
     FOR $i IN 1..$num_children {
         $child_data_provider_value := $child_data_providers[$i];
         $child_stream_id_value := $child_stream_ids[$i];
+        $child_stream_ref := get_stream_id($child_data_provider_value, $child_stream_id_value);
         $weight_value := $weights[$i];
 
         $taxonomy_id := uuid_generate_kwil(@txid||$data_provider||$stream_id||$child_data_provider_value||$child_stream_id_value||$i::TEXT);
@@ -67,7 +70,9 @@ CREATE OR REPLACE ACTION insert_taxonomy(
             created_at,
             disabled_at,
             group_sequence,
-            start_time
+            start_time,
+            stream_ref,
+            child_stream_ref
         ) VALUES (
             $data_provider,
             $stream_id,
@@ -78,7 +83,9 @@ CREATE OR REPLACE ACTION insert_taxonomy(
             @height,             -- Use the current block height for created_at.
             NULL,               -- New record is active.
             $new_group_sequence,          -- Use the new group_sequence for all child records.
-            $start_date          -- Start date of the taxonomy.
+            $start_date,          -- Start date of the taxonomy.
+            $stream_ref,
+            $child_stream_ref
         );
     }
 };

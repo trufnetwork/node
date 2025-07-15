@@ -45,6 +45,10 @@ func TestQUERY04MetadataInsertionAndRetrieval(t *testing.T) {
 func WithMetadataTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		platform = procedure.WithSigner(platform, primitiveContractInfo.Locator.DataProvider.Bytes())
+		err := setup.CreateDataProvider(ctx, platform, primitiveContractInfo.Locator.DataProvider.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
 		if err := setup.CreateStream(ctx, platform, primitiveContractInfo); err != nil {
 			return err
 		}

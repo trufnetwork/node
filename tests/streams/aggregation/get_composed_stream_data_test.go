@@ -91,6 +91,11 @@ func WithTestSetup(
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
 		platform = procedure.WithSigner(platform, deployer.Bytes())
 
+		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+
 		// Create parent (composed)
 		if err := setup.CreateStream(ctx, platform, setup.StreamInfo{
 			Locator: types.StreamLocator{

@@ -123,6 +123,11 @@ func WithCategoryTestSetup(testFn func(ctx context.Context, platform *kwilTestin
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
 		platform = procedure.WithSigner(platform, deployer.Bytes())
 
+		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+
 		// Create all streams
 		streams := []string{
 			"1c",
