@@ -72,11 +72,7 @@ CREATE OR REPLACE ACTION truflation_insert_records(
     }
 
     -- Get stream reference for all streams
-    $stream_refs := []::UUID[];
-    for $i in 1..array_length($data_provider) {
-      $id := get_stream_id($data_provider[$i], $stream_id[$i]);
-      $stream_refs := array_append($stream_refs, $id);
-    }
+    $stream_refs := get_stream_ids($data_provider, $stream_id);
 
     -- Insert all records using WITH RECURSIVE pattern to avoid round trips
     WITH RECURSIVE
