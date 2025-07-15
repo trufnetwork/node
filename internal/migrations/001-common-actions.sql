@@ -72,7 +72,7 @@ CREATE OR REPLACE ACTION create_streams(
     }
 
     if $dp_found = false {
-        ERROR('Metadata record not found');
+        ERROR('Data provider not found');
     }
     
     -- Create the streams
