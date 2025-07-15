@@ -98,3 +98,32 @@ CREATE OR REPLACE ACTION helper_lowercase_array(
         RETURN $row.lowercase_array;
     }
 };
+
+
+CREATE OR REPLACE ACTION helper_check_cache(
+    $data_provider TEXT,
+    $stream_id TEXT,
+    $from INT8,
+    $to INT8
+) PRIVATE VIEW RETURNS (cache_hit BOOL) {
+    $is_caching_enabled BOOL := tn_cache.is_enabled();
+    $cache_hit := false;
+
+    if $is_caching_enabled {
+        $has_cached_data BOOL := false;
+        $cached_at INT8;
+        $has_cached_data, $cached_at := tn_cache.has_cached_data($data_provider, $stream_id, $from, $to);
+        
+        if $has_cached_data {
+            -- Cache hit - get most recent cached data
+            NOTICE('{"cache_hit": true, "cached_at": ' || $cached_at::TEXT || '}');
+            $cache_hit := true;
+        } else {
+            -- Cache miss - log and fallback to original logic
+            NOTICE('{"cache_hit": false}');
+        }
+    } else {
+        NOTICE('{"cache_disabled": true}');
+    }
+    RETURN $cache_hit;
+}

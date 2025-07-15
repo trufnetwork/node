@@ -93,8 +93,13 @@ func BytesToHex(b []byte) string {
 func printResults(results []Result) {
 	fmt.Println("Benchmark Results:")
 	for _, r := range results {
+		cacheInfo := "No Cache"
+		if r.Case.CacheEnabled {
+			cacheInfo = fmt.Sprintf("Cache Enabled (Verified: %t, Delta: %v)", r.CacheVerified, r.CachePerformanceDelta)
+		}
+		
 		fmt.Printf(
-			"Qty Streams: %d, Branching Factor: %d, Data Points: %d, Visibility: %s, Procedure: %s, Samples: %d, Memory Usage: %s\n",
+			"Qty Streams: %d, Branching Factor: %d, Data Points: %d, Visibility: %s, Procedure: %s, Samples: %d, Memory Usage: %s, Cache: %s\n",
 			r.Case.QtyStreams,
 			r.Case.BranchingFactor,
 			r.DataPoints,
@@ -102,6 +107,7 @@ func printResults(results []Result) {
 			string(r.Procedure),
 			r.Case.Samples,
 			formatMemoryUsage(r.MemoryUsage),
+			cacheInfo,
 		)
 		fmt.Printf("  Mean Duration: %v\n", Average(r.CaseDurations))
 		fmt.Printf("  Min Duration: %v\n", slices.Min(r.CaseDurations))
@@ -129,6 +135,10 @@ func saveResults(results []Result, filePath string) error {
 			DataPoints:      r.DataPoints,                            // n_of_dates
 			DurationMs:      Average(r.CaseDurations).Milliseconds(), // duration_ms
 			Visibility:      visibilityToString(r.Case.Visibility),   // visibility
+			UnixOnly:        false,                                   // legacy field, always false
+			CacheEnabled:    r.Case.CacheEnabled,                     // whether cache was enabled
+			CacheVerified:   r.CacheVerified,                         // whether cache verification passed
+			CacheDeltaMs:    r.CachePerformanceDelta.Milliseconds(),  // performance difference
 		}
 	}
 	// Save as CSV

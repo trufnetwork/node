@@ -185,13 +185,17 @@ func GetAllWeightsForQuery(ctx context.Context, input GetAllWeightsForQueryInput
 
 // TestAGGR07_VaryingTaxonomyWeights tests the correct calculation of weights in a multi-level taxonomy hierarchy
 func TestAGGR07_VaryingTaxonomyWeights(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	// Run with cache setup
+	deployerAddress := "0x0000000000000000000000000000000000000000"
+	cacheConfig := testutils.TestCache(deployerAddress, streamAId.String())
+
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr07_varying_taxonomy_weights_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
-			testAGGR07_VaryingTaxonomyWeights(t),
+			wrapTestWithCacheModes(t, "AGGR07_VaryingTaxonomyWeights", testAGGR07_VaryingTaxonomyWeights),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache(cacheConfig))
 }
 
 // Helper function to set a taxonomy with specific weights
@@ -446,7 +450,7 @@ func FormatTaxonomyDump(entries []TaxonomyEntry) string {
 }
 
 // testAGGR07_VaryingTaxonomyWeights implements the main test for varying taxonomy weights
-func testAGGR07_VaryingTaxonomyWeights(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testAGGR07_VaryingTaxonomyWeights(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
 		platform = procedure.WithSigner(platform, deployer.Bytes())

@@ -20,7 +20,7 @@ var (
 	deployerTruflation = util.Unsafe_NewEthereumAddressFromString("0x4710a8d8f0d845da110086812a32de6d90d7ff5c")
 
 	primitiveTruflation = util.GenerateStreamId("truflation_primitive")
-	truflationPrefix = "truflation_"
+	truflationPrefix    = "truflation_"
 )
 
 func TestTruflationFrozen(t *testing.T) {
@@ -60,7 +60,7 @@ func testAllBeforeFrozen(t *testing.T) func(ctx context.Context, platform *kwilT
 			ToTime:        &eventTime10,
 			FrozenAt:      &frozenAt,
 			Height:        0,
-			Prefix: 			 &truflationPrefix,
+			Prefix:        &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record for event_time 10")
@@ -85,7 +85,7 @@ func testAllBeforeFrozen(t *testing.T) func(ctx context.Context, platform *kwilT
 			ToTime:        &eventTime18,
 			FrozenAt:      &frozenAt,
 			Height:        0,
-			Prefix: 			 &truflationPrefix,
+			Prefix:        &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record for event_time 18")
@@ -123,7 +123,7 @@ func testAllAfterFrozen(t *testing.T) func(ctx context.Context, platform *kwilTe
 			ToTime:        &eventTime11,
 			FrozenAt:      &frozenAt,
 			Height:        0,
-			Prefix: 			 &truflationPrefix,
+			Prefix:        &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record for event_time 11")
@@ -148,7 +148,7 @@ func testAllAfterFrozen(t *testing.T) func(ctx context.Context, platform *kwilTe
 			ToTime:        &eventTime19,
 			FrozenAt:      &frozenAt,
 			Height:        0,
-			Prefix: 			 &truflationPrefix,
+			Prefix:        &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record for event_time 19")
@@ -185,7 +185,7 @@ func testMixedBeforeAndAfter(t *testing.T) func(ctx context.Context, platform *k
 			ToTime:        &eventTime12,
 			FrozenAt:      &frozenAt,
 			Height:        0,
-			Prefix: 			 &truflationPrefix,
+			Prefix:        &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record for event_time 12")
@@ -222,7 +222,7 @@ func testBoundaryConditions(t *testing.T) func(ctx context.Context, platform *kw
 			ToTime:        &eventTime13,
 			FrozenAt:      &frozenAt,
 			Height:        0,
-			Prefix: 			 &truflationPrefix,
+			Prefix:        &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record for event_time 13")
@@ -260,7 +260,7 @@ func testSingleRecords(t *testing.T) func(ctx context.Context, platform *kwilTes
 			ToTime:        &eventTime14,
 			FrozenAt:      &frozenAt,
 			Height:        0,
-			Prefix: 			 &truflationPrefix,
+			Prefix:        &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record for event_time 14")
@@ -285,7 +285,7 @@ func testSingleRecords(t *testing.T) func(ctx context.Context, platform *kwilTes
 			ToTime:        &eventTime15,
 			FrozenAt:      &frozenAt,
 			Height:        0,
-			Prefix: 			 &truflationPrefix,
+			Prefix:        &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record for event_time 15")
@@ -360,7 +360,7 @@ func testEdgeCases(t *testing.T) func(ctx context.Context, platform *kwilTesting
 				ToTime:        &tc.eventTime,
 				FrozenAt:      &frozenAt,
 				Height:        0,
-				Prefix: 			 &truflationPrefix,
+				Prefix:        &truflationPrefix,
 			})
 			if err != nil {
 				return errors.Wrapf(err, "failed to get record for event_time %d", tc.eventTime)
@@ -394,7 +394,7 @@ func testSameTimestamps(t *testing.T) func(ctx context.Context, platform *kwilTe
 			ToTime:        &eventTime20,
 			FrozenAt:      &frozenAt,
 			Height:        0,
-			Prefix: 			 &truflationPrefix,
+			Prefix:        &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record for event_time 20")
@@ -419,7 +419,7 @@ func testSameTimestamps(t *testing.T) func(ctx context.Context, platform *kwilTe
 			ToTime:        &eventTime21,
 			FrozenAt:      &frozenAt,
 			Height:        0,
-			Prefix: 			 &truflationPrefix,
+			Prefix:        &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record for event_time 21")
@@ -450,7 +450,7 @@ func testRangeQuery(t *testing.T) func(ctx context.Context, platform *kwilTestin
 
 		dateFrom := int64(10)
 		dateTo := int64(23)
-		
+
 		rangeRecords, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 			Platform:      platform,
 			StreamLocator: streamLocator,
@@ -458,12 +458,12 @@ func testRangeQuery(t *testing.T) func(ctx context.Context, platform *kwilTestin
 			ToTime:        &dateTo,
 			FrozenAt:      &frozenAt,
 			Height:        0,
-			Prefix: 			 &truflationPrefix,
+			Prefix:        &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get range records")
 		}
-		
+
 		expectedRangeTable := `
 		| event_time | value  |
 		| ---------- | ------ |
@@ -482,7 +482,7 @@ func testRangeQuery(t *testing.T) func(ctx context.Context, platform *kwilTestin
 		| 22         | 221.000000000000000000 |
 		| 23         | 232.000000000000000000 |
 		`
-		
+
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
 			Actual:   rangeRecords,
 			Expected: expectedRangeTable,
@@ -502,7 +502,7 @@ func testWithoutFrozen(t *testing.T) func(ctx context.Context, platform *kwilTes
 
 		// Test event_time 12 without frozen (should get latest)
 		testEventTime := int64(12)
-		
+
 		recordWithoutFrozen, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 			Platform:      platform,
 			StreamLocator: streamLocator,
@@ -510,18 +510,18 @@ func testWithoutFrozen(t *testing.T) func(ctx context.Context, platform *kwilTes
 			ToTime:        &testEventTime,
 			FrozenAt:      nil, // No frozen mechanism
 			Height:        0,
-			Prefix: 			 &truflationPrefix,
+			Prefix:        &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record without frozen")
 		}
-		
+
 		expectedWithoutFrozen := `
 		| event_time | value  |
 		| ---------- | ------ |
 		| 12         | 125.000000000000000000 |
 		`
-		
+
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
 			Actual:   recordWithoutFrozen,
 			Expected: expectedWithoutFrozen,
@@ -541,7 +541,7 @@ func testFutureFrozen(t *testing.T) func(ctx context.Context, platform *kwilTest
 
 		futureFrozen := int64(1893456000) // Some date in 2030
 		testEventTime := int64(12)
-		
+
 		recordFutureFrozen, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 			Platform:      platform,
 			StreamLocator: streamLocator,
@@ -549,18 +549,18 @@ func testFutureFrozen(t *testing.T) func(ctx context.Context, platform *kwilTest
 			ToTime:        &testEventTime,
 			FrozenAt:      &futureFrozen,
 			Height:        0,
-			Prefix: 			 &truflationPrefix,
+			Prefix:        &truflationPrefix,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to get record with future frozen")
 		}
-		
+
 		expectedFutureFrozen := `
 		| event_time | value  |
 		| ---------- | ------ |
 		| 12         | 125.000000000000000000 |
 		`
-		
+
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
 			Actual:   recordFutureFrozen,
 			Expected: expectedFutureFrozen,
@@ -594,16 +594,16 @@ func setupTruflationFrozenTest(testFn func(ctx context.Context, platform *kwilTe
 
 		insertTestRecord := func(eventTime int64, value float64, truflationCreatedAt string, height int64) error {
 			return setup.InsertTruflationDataBatch(ctx, setup.InsertTruflationDataInput{
-					Platform:        platform,
-					PrimitiveStream: setup.TruflationStreamWithData{
-							PrimitiveStreamDefinition: setup.PrimitiveStreamDefinition{
-									StreamLocator: streamLocator,
-							},
-							Data: []setup.InsertTruflationRecordInput{
-									{EventTime: eventTime, Value: value, TruflationCreatedAt: truflationCreatedAt},
-							},
+				Platform: platform,
+				PrimitiveStream: setup.TruflationStreamWithData{
+					PrimitiveStreamDefinition: setup.PrimitiveStreamDefinition{
+						StreamLocator: streamLocator,
 					},
-					Height: height,
+					Data: []setup.InsertTruflationRecordInput{
+						{EventTime: eventTime, Value: value, TruflationCreatedAt: truflationCreatedAt},
+					},
+				},
+				Height: height,
 			})
 		}
 
@@ -654,7 +654,7 @@ func setupTruflationFrozenTest(testFn func(ctx context.Context, platform *kwilTe
 		// Test Case 8: Milliseconds precision (if supported)
 		// Expected: Should select value 172 (oldest after frozen)
 		insertTestRecord(17, 170, "2024-04-26T23:59:59.999Z", 22)
-		insertTestRecord(17, 171, "2024-04-27T00:00:00.000Z", 23) 
+		insertTestRecord(17, 171, "2024-04-27T00:00:00.000Z", 23)
 		insertTestRecord(17, 172, "2024-04-27T00:00:00.001Z", 24) // Expected
 
 		// Test Case 9: Multiple records all before frozen
@@ -678,10 +678,10 @@ func setupTruflationFrozenTest(testFn func(ctx context.Context, platform *kwilTe
 		insertTestRecord(20, 202, "2024-04-26T20:00:00Z", 35)
 		insertTestRecord(20, 203, "2024-04-26T20:00:00Z", 36) // Expected (same timestamp, highest height)
 
-		insertTestRecord(21, 210, "2024-04-28T10:00:00Z", 37) 
+		insertTestRecord(21, 210, "2024-04-28T10:00:00Z", 37)
 		insertTestRecord(21, 211, "2024-04-28T10:00:00Z", 38)
 		insertTestRecord(21, 212, "2024-04-28T10:00:00Z", 39)
-		insertTestRecord(21, 213, "2024-04-28T10:00:00Z", 40)// Expected (same timestamp, highest height)
+		insertTestRecord(21, 213, "2024-04-28T10:00:00Z", 40) // Expected (same timestamp, highest height)
 
 		// Test Case 12: Sparse data with large gaps
 		// Expected: Should select value 221 (oldest after frozen)

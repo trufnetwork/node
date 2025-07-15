@@ -5,7 +5,9 @@ import (
 	"testing"
 
 	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	"github.com/trufnetwork/node/extensions/tn_cache"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
@@ -27,16 +29,18 @@ import (
 
 // TestAGGR06_SingleActiveTaxonomy tests AGGR06: Only 1 taxonomy version can be active in a point in time.
 func TestAGGR06_SingleActiveTaxonomy(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	cacheConfig := testutils.TestCache("0x0000000000000000000000000000000000000123", "*")
+
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr06_single_active_taxonomy_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
-			testAGGR06_SingleActiveTaxonomy(t),
+			wrapTestWithCacheModes(t, "AGGR06_SingleActiveTaxonomy", testAGGR06_SingleActiveTaxonomy),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache(cacheConfig))
 }
 
-func testAGGR06_SingleActiveTaxonomy(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testAGGR06_SingleActiveTaxonomy(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Create a composed stream with 2 child primitive streams
 		composedStreamId := util.GenerateStreamId("composed_stream_test")
@@ -53,6 +57,7 @@ func testAGGR06_SingleActiveTaxonomy(t *testing.T) func(ctx context.Context, pla
 			MarkdownData: `
 			| event_time | primitive_1 | primitive_2 |
 			|------------|-------------|-------------|
+
 			| 1          | 10          | 20          |
 			`,
 			Height: 1,
@@ -100,19 +105,34 @@ func testAGGR06_SingleActiveTaxonomy(t *testing.T) func(ctx context.Context, pla
 			return errors.Wrap(err, "error setting taxonomy for second primitive stream")
 		}
 
+		// Set up cache (only when useCache is true)
+		if useCache {
+			_, err := tn_cache.GetTestHelper().RefreshAllStreamsSync(ctx)
+			if err != nil {
+				return errors.Wrap(err, "error refreshing cache")
+			}
+		}
+
 		fromTime := int64(1)
 		toTime := int64(1)
 
 		// Query the composed stream to get the aggregated values
-		result, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
-			Platform:      platform,
-			StreamLocator: composedStreamLocator,
-			FromTime:      &fromTime,
-			ToTime:        &toTime,
-			Height:        2,
+		result, err := procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
+			Platform: platform,
+			StreamLocator: types.StreamLocator{
+				StreamId:     composedStreamId,
+				DataProvider: deployer,
+			},
+			FromTime: &fromTime,
+			ToTime:   &toTime,
+			Height:   2,
+			UseCache: &useCache,
 		})
 		if err != nil {
 			return errors.Wrap(err, "error getting records from composed stream")
+		}
+		if useCache {
+			assert.True(t, result.CacheHit, "Expected cache hit")
 		}
 
 		// Verify the results - we expect to get the value from the second taxonomy (value_2)
@@ -124,32 +144,9 @@ func testAGGR06_SingleActiveTaxonomy(t *testing.T) func(ctx context.Context, pla
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
-			Actual:   result,
+			Actual:   result.Rows,
 			Expected: expected,
 		})
-
-		// TODO: Add TimeActive and OnlyActive to describe_taxonomies, otherwise we can't test it
-		// // Verify the taxonomy versions by checking describe_taxonomies
-		// taxonomyResult, err := procedure.DescribeTaxonomies(ctx, procedure.DescribeTaxonomiesInput{
-		// 	Platform:      platform,
-		// 	StreamLocator: composedStreamLocator,
-		// 	// TODO: Add TimeActive and OnlyActive to describe_taxonomies, otherwise we can't test it
-		// 	// TimeActive:  1,
-		// 	// OnlyActive:  true,
-		// })
-		// if err != nil {
-		// 	return errors.Wrap(err, "error describing taxonomies")
-		// }
-
-		// // We expect only the latest taxonomy version to be active
-		// if len(taxonomyResult) != 1 {
-		// 	return errors.Errorf("expected 1 active taxonomy, got %d", len(taxonomyResult))
-		// }
-
-		// // The active taxonomy should be for primitive_2
-		// if taxonomyResult[0][0] != primitive2StreamId.String() {
-		// 	return errors.Errorf("expected active taxonomy to be for primitive_2, got %s", taxonomyResult[0][0])
-		// }
 
 		return nil
 	}

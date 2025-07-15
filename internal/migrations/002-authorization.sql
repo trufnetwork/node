@@ -11,6 +11,12 @@ CREATE OR REPLACE ACTION is_allowed_to_read(
 ) PUBLIC view returns (is_allowed BOOL) {
     $data_provider := LOWER($data_provider);
     $lowercase_wallet_address TEXT := LOWER($wallet_address);
+    
+    -- Extension agent has unrestricted read access for caching purposes
+    if $wallet_address = 'extension_agent' {
+        return true;
+    }
+    
     -- Check if the stream exists
     if !stream_exists($data_provider, $stream_id) {
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
@@ -106,6 +112,11 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
 ) PUBLIC view returns (is_allowed BOOL) {
     $data_provider := LOWER($data_provider);
     $wallet_address := LOWER($wallet_address);
+    
+    -- Extension agent has unrestricted read access for caching purposes
+    if $wallet_address = 'extension_agent' {
+        return true;
+    }
 
     -- Check if the stream exists
     if !stream_exists($data_provider, $stream_id) {

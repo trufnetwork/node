@@ -6,7 +6,8 @@ CREATE OR REPLACE ACTION get_last_record_composed(
     $data_provider TEXT,
     $stream_id TEXT,
     $before INT8,       -- Upper bound for event_time
-    $frozen_at INT8     -- Only consider events created on or before this
+    $frozen_at INT8,    -- Only consider events created on or before this
+    $use_cache BOOL DEFAULT false     -- Whether to use cache (default: false)
 ) PRIVATE VIEW
 RETURNS TABLE(
     event_time INT8,
@@ -25,6 +26,26 @@ RETURNS TABLE(
     if !is_allowed_to_compose_all($data_provider, $stream_id, NULL, $before) {
         ERROR('Not allowed to compose stream');
     }
+
+    -- Set default value for enable_cache
+    $effective_enable_cache := COALESCE($use_cache, false);
+    $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL; -- frozen queries bypass cache
+
+    if $effective_enable_cache {
+        -- we use before as from, because if we have data for that, it automatically means
+        -- that we can answer this query
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $before, NULL);
+    }
+
+    -- If using cache, get the most recent cached record
+    if $effective_enable_cache {
+        for $row in tn_cache.get_cached_last_before($data_provider, $stream_id, $before) {
+            RETURN NEXT $row.event_time, $row.value;
+        }
+        RETURN;
+    }
+
+    -- Original logic fallback (cache miss or cache disabled)
 
     $max_int8 INT8 := 9223372036854775000;    -- "Infinity" sentinel
     $effective_before INT8 := COALESCE($before, $max_int8);
@@ -127,7 +148,7 @@ RETURNS TABLE(
      *          [latest_event_time, latest_event_time] for overshadow logic.
      */
     IF $latest_event_time IS DISTINCT FROM NULL {
-        for $row in get_record_composed($data_provider, $stream_id, $latest_event_time, $latest_event_time, $frozen_at) {
+        for $row in get_record_composed($data_provider, $stream_id, $latest_event_time, $latest_event_time, $frozen_at, $use_cache) {
             return next $row.event_time, $row.value;
             break;
         }
@@ -144,7 +165,8 @@ CREATE OR REPLACE ACTION get_first_record_composed(
     $data_provider TEXT,
     $stream_id TEXT,
     $after INT8,       -- Lower bound for event_time
-    $frozen_at INT8    -- Only consider events created on or before this
+    $frozen_at INT8,   -- Only consider events created on or before this
+    $use_cache BOOL DEFAULT false    -- Whether to use cache (default: false)
 ) PRIVATE VIEW
 RETURNS TABLE(
     event_time INT8,
@@ -158,6 +180,33 @@ RETURNS TABLE(
     IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, $after, NULL) {
         ERROR('Not allowed to read stream');
     }
+
+    -- Check compose permissions
+    if !is_allowed_to_compose_all($data_provider, $stream_id, $after, NULL) {
+        ERROR('Not allowed to compose stream');
+    }
+
+    -- Set default value for enable_cache
+    $effective_enable_cache := COALESCE($use_cache, false);
+    $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL; -- frozen queries bypass cache
+
+    if $effective_enable_cache {
+        -- we use after as to, because if we have data for that, it automatically means
+        -- that we can answer this query
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $after, NULL);
+    }
+
+    -- If using cache, get the earliest cached record
+    if $effective_enable_cache {
+        -- Get cached data from the after time and return the earliest
+        for $row in tn_cache.get_cached_first_after($data_provider, $stream_id, $after) {
+            RETURN NEXT $row.event_time, $row.value;
+        }
+
+        RETURN;
+    }
+
+    -- Original logic fallback (cache miss or cache disabled)
 
     $max_int8 INT8 := 9223372036854775000;   -- "Infinity" sentinel
     $effective_after INT8 := COALESCE($after, 0);
@@ -260,7 +309,7 @@ RETURNS TABLE(
      *          [earliest_event_time, earliest_event_time].
      */
     IF $earliest_event_time IS DISTINCT FROM NULL {
-        for $row in get_record_composed($data_provider, $stream_id, $earliest_event_time, $earliest_event_time, $frozen_at) {
+        for $row in get_record_composed($data_provider, $stream_id, $earliest_event_time, $earliest_event_time, $frozen_at, $use_cache) {
             return next $row.event_time, $row.value;
             break;
         }
@@ -273,7 +322,8 @@ CREATE OR REPLACE ACTION get_index_composed(
     $from INT8,
     $to INT8,
     $frozen_at INT8,
-    $base_time INT8
+    $base_time INT8,
+    $use_cache BOOL DEFAULT false     -- Whether to use cache (default: false)
 ) PRIVATE VIEW
 RETURNS TABLE(
     event_time INT8,
@@ -303,7 +353,7 @@ RETURNS TABLE(
         ERROR(format('Invalid time range: from (%s) > to (%s)', $from, $to));
     }
 
-    -- Permissions check
+    -- Permissions check (must be done before cache logic)
     IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, $from, $to) {
         ERROR('Not allowed to read stream');
     }
@@ -311,13 +361,33 @@ RETURNS TABLE(
         ERROR('Not allowed to compose stream');
     }
 
+    -- Set default value for enable_cache
+    $effective_enable_cache := COALESCE($use_cache, false);
+    -- frozen queries and arbitrary base time bypass cache
+    $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL AND $base_time IS NULL;
+
+    if $effective_enable_cache {
+        -- Check if we have pre-calculated index values in cache
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $from, $to);
+    }
+
+    -- If using pre-calculated index cache, return directly
+    if $effective_enable_cache {
+        for $row in tn_cache.get_cached_index_data($data_provider, $stream_id, $from, $to) {
+            RETURN NEXT $row.event_time, $row.value;
+        }
+        RETURN;
+    }
+
+    -- Original logic fallback (cache miss or cache disabled, or custom base_time)
+
     -- If both $from and $to are NULL, we find the latest event time
     -- and set $effective_from and $effective_to to this single point.
     IF $from IS NULL AND $to IS NULL {
         $actual_latest_event_time INT8;
         $found_latest_event BOOLEAN := FALSE;
 
-        FOR $last_record_row IN get_last_record_composed($data_provider, $stream_id, NULL, $effective_frozen_at) {
+        FOR $last_record_row IN get_last_record_composed($data_provider, $stream_id, NULL, $effective_frozen_at, $use_cache) {
             $actual_latest_event_time := $last_record_row.event_time;
             $found_latest_event := TRUE;
             BREAK;
@@ -476,7 +546,7 @@ RETURNS TABLE(
               )
           )
           AND GREATEST(h.path_start, tts.segment_start) <= $effective_to
-          AND h.level < 10 -- Recursion depth limit
+          AND h.level < 1000 -- Recursion depth limit to prevent taxonomy recursion attacks
     ),
 
     /*----------------------------------------------------------------------
@@ -836,8 +906,17 @@ RETURNS TABLE(
 
     -- LOCF Logic (Identical to get_record_composed)
     real_change_times AS (
+        -- 1. Times where the *aggregated* value definitively changes (non-zero deltas)
         SELECT DISTINCT event_time AS time_point
         FROM final_deltas
+
+        UNION
+
+        -- 2. Times where a primitive emits an event inside the requested interval, even if
+        --    the emitted value is identical to its previous value (delta == 0). These are
+        --    required emission points for the composed stream.
+        SELECT DISTINCT event_time
+        FROM primitive_events_in_interval
     ),
     anchor_time_calc AS (
         SELECT MAX(time_point) as anchor_time
@@ -926,7 +1005,8 @@ CREATE OR REPLACE ACTION internal_get_base_value(
     $data_provider TEXT,
     $stream_id     TEXT,
     $effective_base_time     INT8,   -- already pre-resolved "effective base time"
-    $effective_frozen_at     INT8    -- created_at cutoff (can be NULL ⇢ infinity)
+    $effective_frozen_at     INT8,   -- created_at cutoff (can be NULL ⇢ infinity)
+    $use_cache     BOOL              -- Whether to use cache (passed through to called functions)
 ) PRIVATE VIEW RETURNS (NUMERIC(36,18)) {
     -- doesn't check for access control, as it's private and not responsible for
     -- any access control checks
@@ -934,7 +1014,7 @@ CREATE OR REPLACE ACTION internal_get_base_value(
     -- Try to find an exact match at base_time
     $found_exact := FALSE;
     $exact_value NUMERIC(36,18);
-    for $row in get_record_composed($data_provider, $stream_id, $effective_base_time, $effective_base_time, $effective_frozen_at) {
+    for $row in get_record_composed($data_provider, $stream_id, $effective_base_time, $effective_base_time, $effective_frozen_at, $use_cache) {
         $exact_value := $row.value;
         $found_exact := TRUE;
         break;
@@ -947,7 +1027,7 @@ CREATE OR REPLACE ACTION internal_get_base_value(
     -- If no exact match, try to find the closest value before base_time
     $found_before := FALSE;
     $before_value NUMERIC(36,18);
-    for $row in get_last_record_composed($data_provider, $stream_id, $effective_base_time, $effective_frozen_at) {
+    for $row in get_last_record_composed($data_provider, $stream_id, $effective_base_time, $effective_frozen_at, $use_cache) {
         $before_value := $row.value;
         $found_before := TRUE;
         break;
@@ -960,7 +1040,7 @@ CREATE OR REPLACE ACTION internal_get_base_value(
     -- If no value before, try to find the closest value after base_time
     $found_after := FALSE;
     $after_value NUMERIC(36,18);
-    for $row in get_first_record_composed($data_provider, $stream_id, $effective_base_time, $effective_frozen_at) {
+    for $row in get_first_record_composed($data_provider, $stream_id, $effective_base_time, $effective_frozen_at, $use_cache) {
         $after_value := $row.value;
         $found_after := TRUE;
         break;
@@ -969,7 +1049,7 @@ CREATE OR REPLACE ACTION internal_get_base_value(
     if $found_after {
         return $after_value;
     }
-    
-    -- If no value is found at all, return an error
-    ERROR('no base value found');
+
+    -- if no value is found, return 1
+    return 1::NUMERIC(36,18);
 };
