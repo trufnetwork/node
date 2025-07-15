@@ -39,7 +39,7 @@ CREATE OR REPLACE ACTION get_stream_ids(
         SELECT 1 AS idx
         UNION ALL
         SELECT idx + 1 FROM indexes
-        WHERE idx < array_length($data_provider)
+        WHERE idx < array_length($data_providers)
     ),
     input_arrays AS (
         SELECT 
