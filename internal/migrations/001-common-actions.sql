@@ -220,8 +220,10 @@ CREATE OR REPLACE ACTION create_streams(
             arg.value_s,
             arg.value_i,
             arg.value_ref,
-            @height AS created_at
+            @height AS created_at,
+            s.id AS stream_ref
         FROM args_with_row_number arg
+        JOIN streams s ON s.data_provider = $data_provider AND s.stream_id = arg.stream_id
     )
     -- catched a bug where it's expected to have the same order of columns
     -- as the table definition
@@ -236,7 +238,8 @@ CREATE OR REPLACE ACTION create_streams(
         value_s,
         value_ref,
         created_at,
-        disabled_at
+        disabled_at,
+        stream_ref
     )
     SELECT 
         row_id::UUID,
@@ -249,10 +252,28 @@ CREATE OR REPLACE ACTION create_streams(
         value_s,
         value_ref,
         created_at,
-        NULL::INT8
+        NULL::INT8,
+        stream_ref::UUID
     FROM args;
 };
 
+CREATE OR REPLACE ACTION get_stream_id(
+  $data_provider_address TEXT,
+  $stream_id TEXT
+) PRIVATE returns (id UUID) {
+  $id UUID;
+  $found BOOL := false;
+  for $stream_row in SELECT id
+      FROM streams
+      WHERE stream_id = $stream_id 
+      AND data_provider = $data_provider_address
+      LIMIT 1 {
+      $found := true;
+      $id := $stream_row.id;
+  }
+
+  return $id;
+};
 
 /**
  * insert_metadata: Adds metadata to a stream.
@@ -314,6 +335,7 @@ CREATE OR REPLACE ACTION insert_metadata(
     $uuid_key TEXT := @txid || $key || $value;
     $uuid UUID := uuid_generate_kwil($uuid_key);
     $current_block INT := @height;
+    $stream_ref UUID := get_stream_id($data_provider, $stream_id);
     
     -- Insert the metadata
     INSERT INTO metadata (
@@ -326,7 +348,8 @@ CREATE OR REPLACE ACTION insert_metadata(
         value_s, 
         value_b, 
         value_ref, 
-        created_at
+        created_at,
+        stream_ref
     ) VALUES (
         $uuid, 
         $data_provider, 
@@ -337,7 +360,8 @@ CREATE OR REPLACE ACTION insert_metadata(
         $value_s, 
         $value_b, 
         LOWER($value_ref), 
-        $current_block
+        $current_block,
+        $stream_ref
     );
 };
 
