@@ -141,6 +141,7 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
        *     - next_start is used to define [group_sequence_start, group_sequence_end].
        *------------------------------------------------------------------*/
       SELECT
+      
           base.data_provider         AS parent_data_provider,
           base.stream_id             AS parent_stream_id,
           base.child_data_provider,
