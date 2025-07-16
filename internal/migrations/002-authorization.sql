@@ -126,7 +126,7 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
     $max_int8 INT := 9223372036854775000;
     $effective_active_from INT := COALESCE($active_from, 0);
     $effective_active_to INT := COALESCE($active_to, $max_int8);
-
+    $stream_ref := get_stream_id($data_provider, $stream_id);
 
     -- by default, the wallet is allowed to read all
     $result BOOL := true;
@@ -141,11 +141,8 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
        *     - next_start is used to define [group_sequence_start, group_sequence_end].
        *------------------------------------------------------------------*/
       SELECT
-      
-          base.data_provider         AS parent_data_provider,
-          base.stream_id             AS parent_stream_id,
-          base.child_data_provider,
-          base.child_stream_id,
+          base.stream_ref,
+          base.child_stream_ref,
 
           -- The interval during which this row is active:
           base.start_time            AS group_sequence_start,
@@ -153,26 +150,22 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
 
       FROM (
           SELECT
-              t.data_provider,
-              t.stream_id,
-              t.child_data_provider,
-              t.child_stream_id,
+              t.stream_ref,
+              t.child_stream_ref,
               t.start_time,
               t.group_sequence,
               MAX(t.group_sequence) OVER (
-                  PARTITION BY t.data_provider, t.stream_id, t.start_time
+                  PARTITION BY t.stream_ref, t.start_time
               ) AS max_group_sequence
           FROM taxonomies t
-          WHERE t.data_provider = $data_provider
-            AND t.stream_id     = $stream_id
-            AND t.disabled_at   IS NULL
+          WHERE t.stream_ref    = $stream_ref
+            AND t.disabled_at  IS NULL
             AND t.start_time   <= $effective_active_to
             AND t.start_time   >= COALESCE((
                   -- Find the most recent taxonomy at or before effective_active_from
                   SELECT t2.start_time
                   FROM taxonomies t2
-                  WHERE t2.data_provider = t.data_provider
-                    AND t2.stream_id     = t.stream_id
+                  WHERE t2.stream_ref = t.stream_ref
                     AND t2.disabled_at   IS NULL
                     AND t2.start_time   <= $effective_active_from
                   ORDER BY t2.start_time DESC, t2.group_sequence DESC
@@ -183,28 +176,24 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
       JOIN (
           /* Distinct start_times for top-level (dp, sid), used for LEAD() */
           SELECT
-              dt.data_provider,
-              dt.stream_id,
+              dt.stream_ref,
               dt.start_time,
               LEAD(dt.start_time) OVER (
-                  PARTITION BY dt.data_provider, dt.stream_id
+                  PARTITION BY dt.stream_ref
                   ORDER BY dt.start_time
               ) AS next_start
           FROM (
               SELECT DISTINCT
-                  t.data_provider,
-                  t.stream_id,
+                  t.stream_ref,
                   t.start_time
               FROM taxonomies t
-              WHERE t.data_provider = $data_provider
-                AND t.stream_id     = $stream_id
+              WHERE t.stream_ref = $stream_ref
                 AND t.disabled_at   IS NULL
                 AND t.start_time   <= $effective_active_to
                 AND t.start_time   >= COALESCE((
                       SELECT t2.start_time
                       FROM taxonomies t2
-                      WHERE t2.data_provider = t.data_provider
-                        AND t2.stream_id     = t.stream_id
+                      WHERE t2.stream_ref = t.stream_ref
                         AND t2.disabled_at   IS NULL
                         AND t2.start_time   <= $effective_active_from
                       ORDER BY t2.start_time DESC, t2.group_sequence DESC
@@ -213,8 +202,7 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
                 )
           ) dt
       ) ot
-        ON base.data_provider = ot.data_provider
-       AND base.stream_id     = ot.stream_id
+        ON base.stream_ref = ot.stream_ref
        AND base.start_time    = ot.start_time
       WHERE base.group_sequence = base.max_group_sequence
 
@@ -227,11 +215,8 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
        *------------------------------------------------------------------*/
       SELECT
           -- promote the child to the parent
-          parent.child_data_provider   AS parent_data_provider,
-          parent.child_stream_id       AS parent_stream_id,
-
-          child.child_data_provider,
-          child.child_stream_id,
+          parent.child_stream_ref,
+          child.child_stream_ref,
 
           -- Intersection of parent's active interval and child's:
           GREATEST(parent.group_sequence_start, child.start_time)   AS group_sequence_start,
@@ -241,22 +226,18 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
       JOIN (
           /* Child overshadow logic, same pattern as above but for child dp/sid. */
           SELECT
-              base.data_provider,
-              base.stream_id,
-              base.child_data_provider,
-              base.child_stream_id,
+              base.stream_ref,
+              base.child_stream_ref,
               base.start_time,
               COALESCE(ot.next_start, $max_int8) - 1 AS group_sequence_end
           FROM (
               SELECT
-                  t.data_provider,
-                  t.stream_id,
-                  t.child_data_provider,
-                  t.child_stream_id,
+                  t.stream_ref,
+                  t.child_stream_ref,
                   t.start_time,
                   t.group_sequence,
                   MAX(t.group_sequence) OVER (
-                      PARTITION BY t.data_provider, t.stream_id, t.start_time
+                      PARTITION BY t.stream_ref, t.start_time
                   ) AS max_group_sequence
               FROM taxonomies t
               WHERE t.disabled_at IS NULL
@@ -265,8 +246,7 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
                       -- Most recent taxonomy at or before effective_from
                       SELECT t2.start_time
                       FROM taxonomies t2
-                      WHERE t2.data_provider = t.data_provider
-                        AND t2.stream_id     = t.stream_id
+                      WHERE t2.stream_ref = t.stream_ref
                         AND t2.disabled_at   IS NULL
                         AND t2.start_time   <= $effective_active_from
                       ORDER BY t2.start_time DESC, t2.group_sequence DESC
@@ -277,17 +257,15 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
           JOIN (
               /* Distinct start_times at child level */
               SELECT
-                  dt.data_provider,
-                  dt.stream_id,
+                  dt.stream_ref,
                   dt.start_time,
                   LEAD(dt.start_time) OVER (
-                      PARTITION BY dt.data_provider, dt.stream_id
+                      PARTITION BY dt.stream_ref
                       ORDER BY dt.start_time
                   ) AS next_start
               FROM (
                   SELECT DISTINCT
-                      t.data_provider,
-                      t.stream_id,
+                      t.stream_ref,
                       t.start_time
                   FROM taxonomies t
                   WHERE t.disabled_at   IS NULL
@@ -295,8 +273,7 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
                     AND t.start_time   >= COALESCE((
                           SELECT t2.start_time
                           FROM taxonomies t2
-                          WHERE t2.data_provider = t.data_provider
-                            AND t2.stream_id     = t.stream_id
+                          WHERE t2.stream_ref = t.stream_ref
                             AND t2.disabled_at   IS NULL
                             AND t2.start_time   <= $effective_active_from
                           ORDER BY t2.start_time DESC, t2.group_sequence DESC
@@ -305,13 +282,11 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
                     )
               ) dt
           ) ot
-            ON base.data_provider = ot.data_provider
-           AND base.stream_id     = ot.stream_id
+            ON base.stream_ref = ot.stream_ref
            AND base.start_time    = ot.start_time
           WHERE base.group_sequence = base.max_group_sequence
       ) child
-        ON child.data_provider = parent.child_data_provider
-       AND child.stream_id     = parent.child_stream_id
+        ON child.stream_ref = parent.child_stream_ref
       /* Overlap check: child's interval must intersect parent's */
       WHERE child.start_time         <= parent.group_sequence_end
         AND child.group_sequence_end >= parent.group_sequence_start
@@ -319,64 +294,79 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
 
     -- select distinct child union parent
     all_streams as (
-        -- merge root stream with substreams
-        SELECT DISTINCT child_data_provider AS data_provider, child_stream_id AS stream_id
+    -- merge root stream with substreams
+        SELECT DISTINCT child_stream_ref as stream_ref
         FROM substreams
         UNION
-        SELECT $data_provider AS data_provider, $stream_id AS stream_id
+        SELECT (
+            SELECT s.id 
+            FROM streams s
+            JOIN data_providers dp ON s.data_provider_id = dp.id
+            WHERE dp.address = $data_provider AND s.stream_id = $stream_id
+        ) as stream_ref
     ),
-    
+
     -- Find substreams that don't exist
-        inexisting_substreams as (
-            SELECT rs.data_provider, rs.stream_id 
-            FROM all_streams rs
-            LEFT JOIN streams s 
-                ON rs.data_provider = s.data_provider 
-                AND rs.stream_id = s.stream_id
-            WHERE s.data_provider IS NULL
-        ),
-        -- Find substreams that are private
-        private_substreams as (
-            SELECT rs.data_provider, rs.stream_id 
-            FROM all_streams rs
-            WHERE (
-                SELECT value_i
-                FROM metadata m
-                WHERE m.data_provider = rs.data_provider
-                    AND m.stream_id = rs.stream_id
-                    AND m.metadata_key = 'read_visibility'
-                    AND m.disabled_at IS NULL
-                ORDER BY m.created_at DESC
-                LIMIT 1
-            ) = 1  -- 1 indicates private visibility
-        ),
-        -- Find private streams where the wallet doesn't have access
-        streams_without_permissions as (
-            SELECT p.data_provider, p.stream_id 
-            FROM private_substreams p
-            -- check if it doesn't have explicit permission
-            WHERE NOT EXISTS (
-                SELECT 1
-                FROM metadata m
-                WHERE m.data_provider = p.data_provider
-                    AND m.stream_id = p.stream_id
-                    AND m.metadata_key = 'allow_read_wallet'
-                    AND LOWER(m.value_ref) = LOWER($wallet_address)
-                    AND m.disabled_at IS NULL
-                LIMIT 1
-            ) 
-            -- check if it's not the owner
-            AND NOT EXISTS (
-                SELECT 1
-                FROM metadata m
-                WHERE m.data_provider = p.data_provider
-                    AND m.stream_id = p.stream_id
-                    AND m.metadata_key = 'stream_owner'
-                    AND m.disabled_at IS NULL
-                    AND LOWER(m.value_ref) = LOWER($wallet_address)
-                LIMIT 1
-            ) 
-        )
+    inexisting_substreams as (
+        SELECT 
+            dp.address as data_provider, 
+            s.stream_id 
+        FROM all_streams rs
+        LEFT JOIN streams s ON s.id = rs.stream_ref
+        LEFT JOIN data_providers dp ON s.data_provider_id = dp.id
+        WHERE s.id IS NULL
+    ),
+
+    -- Find substreams that are private
+    private_substreams as (
+        SELECT 
+            dp.address as data_provider, 
+            s.stream_id 
+        FROM all_streams rs
+        JOIN streams s ON s.id = rs.stream_ref
+        JOIN data_providers dp ON s.data_provider_id = dp.id
+        WHERE (
+            SELECT value_i
+            FROM metadata m
+            WHERE m.stream_ref = rs.stream_ref
+                AND m.metadata_key = 'read_visibility'
+                AND m.disabled_at IS NULL
+            ORDER BY m.created_at DESC
+            LIMIT 1
+        ) = 1  -- 1 indicates private visibility
+    ),
+
+    -- Find private streams where the wallet doesn't have access
+    streams_without_permissions as (
+        SELECT p.data_provider, p.stream_id 
+        FROM private_substreams p
+        -- check if it doesn't have explicit permission
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM metadata m
+            JOIN streams s ON m.stream_ref = s.id
+            JOIN data_providers dp ON s.data_provider_id = dp.id
+            WHERE dp.address = p.data_provider
+                AND s.stream_id = p.stream_id
+                AND m.metadata_key = 'allow_read_wallet'
+                AND LOWER(m.value_ref) = LOWER($wallet_address)
+                AND m.disabled_at IS NULL
+            LIMIT 1
+        ) 
+        -- check if it's not the owner
+        AND NOT EXISTS (
+            SELECT 1
+            FROM metadata m
+            JOIN streams s ON m.stream_ref = s.id
+            JOIN data_providers dp ON s.data_provider_id = dp.id
+            WHERE dp.address = p.data_provider
+                AND s.stream_id = p.stream_id
+                AND m.metadata_key = 'stream_owner'
+                AND m.disabled_at IS NULL
+                AND LOWER(m.value_ref) = LOWER($wallet_address)
+            LIMIT 1
+        ) 
+    )
     SELECT 
         (SELECT COUNT(*) FROM inexisting_substreams) AS missing_count,
         (SELECT COUNT(*) FROM streams_without_permissions) AS unauthorized_count {
@@ -764,58 +754,62 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_write_batch(
         JOIN arguments ON 1=1
     ),
     -- 3. Get unique pairs to check metadata efficiently
-     unique_pairs AS (
-        SELECT DISTINCT data_provider, stream_id
-        FROM all_pairs
-     ),
-      -- 4. Check both ownership AND permission for each unique pair using subqueries
-     unique_check_results AS (
-       SELECT
+    unique_pairs AS (
+      SELECT DISTINCT data_provider, stream_id
+      FROM all_pairs
+    ),
+    -- 4. Check both ownership AND permission for each unique pair using subqueries
+    unique_check_results AS (
+      SELECT
             up.data_provider,
             up.stream_id,
-             -- Combine the two checks:
-             -- COALESCE handles cases where a subquery might return NULL instead of FALSE
-             COALESCE(
-                 -- Check 1: Is the wallet the LATEST valid owner?
-                 (SELECT LOWER(m_own.value_ref)
+            -- Combine the two checks:
+            -- COALESCE handles cases where a subquery might return NULL instead of FALSE
+            COALESCE(
+                -- Check 1: Is the wallet the LATEST valid owner?
+                (SELECT LOWER(m_own.value_ref)
                   FROM metadata m_own
-                  WHERE m_own.data_provider = up.data_provider
-                    AND m_own.stream_id = up.stream_id
+                  JOIN streams s_own ON m_own.stream_ref = s_own.id
+                  JOIN data_providers dp_own ON s_own.data_provider_id = dp_own.id
+                  WHERE dp_own.address = up.data_provider
+                    AND s_own.stream_id = up.stream_id
                     AND m_own.metadata_key = 'stream_owner'
                     AND m_own.disabled_at IS NULL
                   ORDER BY m_own.created_at DESC -- Get the latest owner record
                   LIMIT 1
-                 ) = $wallet -- This comparison (NULL = $wallet) results in NULL if no owner found
-               , FALSE) -- COALESCE NULL to FALSE
+                ) = $wallet -- This comparison (NULL = $wallet) results in NULL if no owner found
+              , FALSE) -- COALESCE NULL to FALSE
             OR -- Logical OR
             COALESCE(
-                 -- Check 2: Does ANY active permission record exist for the wallet?
-                 EXISTS (
+                -- Check 2: Does ANY active permission record exist for the wallet?
+                EXISTS (
                     SELECT 1
                     FROM metadata m_perm
-                    WHERE m_perm.data_provider = up.data_provider
-                       AND m_perm.stream_id = up.stream_id
-                       AND m_perm.metadata_key = 'allow_write_wallet'
-                       AND LOWER(m_perm.value_ref) = $wallet
-                       AND m_perm.disabled_at IS NULL
+                    JOIN streams s_perm ON m_perm.stream_ref = s_perm.id
+                    JOIN data_providers dp_perm ON s_perm.data_provider_id = dp_perm.id
+                    WHERE dp_perm.address = up.data_provider
+                      AND s_perm.stream_id = up.stream_id
+                      AND m_perm.metadata_key = 'allow_write_wallet'
+                      AND LOWER(m_perm.value_ref) = $wallet
+                      AND m_perm.disabled_at IS NULL
                     -- No ORDER BY/LIMIT needed, just checking for existence of any record
-                 )
-             , FALSE) -- COALESCE NULL to FALSE
+                )
+            , FALSE) -- COALESCE NULL to FALSE
             as is_allowed
-       FROM unique_pairs up
-       -- Note: We query metadata table via subqueries, not via LEFT JOIN + GROUP BY
-     )
-     -- 5. Final SELECT: Map the results from unique checks back to all original pairs
-     SELECT
+      FROM unique_pairs up
+      -- Note: We query metadata table via subqueries, not via LEFT JOIN + GROUP BY
+    )
+    -- 5. Final SELECT: Map the results from unique checks back to all original pairs
+    SELECT
         ap.data_provider,
         ap.stream_id,
         -- JOIN ensures is_allowed is not NULL, but COALESCE is safe
         COALESCE(ucr.is_allowed, FALSE) AS is_allowed
-     FROM all_pairs ap
-     -- JOIN back to the results calculated for the unique pairs
-     -- this will not return any rows for streams that don't exist
-     JOIN unique_check_results ucr ON ap.data_provider = ucr.data_provider AND ap.stream_id = ucr.stream_id
-     ORDER BY ap.idx; -- Preserve the original input order
+    FROM all_pairs ap
+    -- JOIN back to the results calculated for the unique pairs
+    -- this will not return any rows for streams that don't exist
+    JOIN unique_check_results ucr ON ap.data_provider = ucr.data_provider AND ap.stream_id = ucr.stream_id
+    ORDER BY ap.idx; -- Preserve the original input order
 };
 
 /**
@@ -876,12 +870,14 @@ CREATE OR REPLACE ACTION has_write_permission_batch(
             CASE WHEN m.value_ref IS NOT NULL THEN true ELSE false END AS has_permission
         FROM unique_pairs up
         LEFT JOIN (
-            SELECT data_provider, stream_id, value_ref
-            FROM metadata
-            WHERE metadata_key = 'allow_write_wallet'
-              AND LOWER(value_ref) = $lowercase_wallet
-              AND disabled_at IS NULL
-            ORDER BY created_at DESC
+            SELECT dp.address as data_provider, s.stream_id, m.value_ref
+            FROM metadata m
+            JOIN streams s ON m.stream_ref = s.id
+            JOIN data_providers dp ON s.data_provider_id = dp.id
+            WHERE m.metadata_key = 'allow_write_wallet'
+              AND LOWER(m.value_ref) = $lowercase_wallet
+              AND m.disabled_at IS NULL
+            ORDER BY m.created_at DESC
         ) m ON up.data_provider = m.data_provider AND up.stream_id = m.stream_id
     )
     -- Map the permission status back to all original pairs
