@@ -402,6 +402,7 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
     $max_int8 INT := 9223372036854775000;
     $effective_active_from INT := COALESCE($active_from, 0);
     $effective_active_to INT := COALESCE($active_to, $max_int8);
+    $stream_ref := get_stream_id($data_provider, $stream_id);
 
     $result BOOL := true;
     -- Check for missing or unauthorized substreams using recursive CTE
@@ -572,23 +573,24 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
         ),
         -- Check that all child streams exist.
         inexisting_substreams AS (
-            SELECT DISTINCT p.stream_ref
+            SELECT DISTINCT p.child_stream_ref
             FROM parent_child_edges p
             LEFT JOIN streams s
-              ON p.stream_ref = s.id
+              ON p.child_stream_ref = s.id
             WHERE s.id IS NULL
         ),
         -- For each edge, if the child is private, check that the child whitelists its parent.
         unauthorized_edges AS (
-            SELECT p.parent_data_provider, p.parent_stream_id, p.child_data_provider, p.child_stream_id
+            SELECT p.stream_ref, p.child_stream_ref
             FROM parent_child_edges p
+            JOIN streams parent_s ON p.stream_ref = parent_s.id
+            JOIN data_providers parent_dp ON parent_s.data_provider_id = parent_dp.id
+            JOIN streams child_s ON p.child_stream_ref = child_s.id
+            JOIN data_providers child_dp ON child_s.data_provider_id = child_dp.id
             WHERE (
                 SELECT value_i
                 FROM metadata m
-                JOIN streams s ON m.stream_ref = s.id
-                JOIN data_providers dp ON s.data_provider_id = dp.id
-                WHERE dp.address = p.child_data_provider
-                  AND s.stream_id = p.child_stream_id
+                WHERE m.stream_ref = p.child_stream_ref
                   AND m.metadata_key = 'compose_visibility'
                   AND m.disabled_at IS NULL
                 ORDER BY m.created_at DESC
@@ -598,23 +600,17 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
             AND NOT EXISTS (
                 SELECT 1
                 FROM metadata m2
-                JOIN streams s2 ON m2.stream_ref = s2.id
-                JOIN data_providers dp2 ON s2.data_provider_id = dp2.id
-                WHERE dp2.address = p.child_data_provider
-                  AND s2.stream_id = p.child_stream_id
+                WHERE m2.stream_ref = p.child_stream_ref
                   AND m2.metadata_key = 'allow_compose_stream'
                   AND m2.disabled_at IS NULL
-                  AND m2.value_ref = p.parent_stream_id::text
+                  AND m2.value_ref = parent_s.stream_id::text
                 LIMIT 1
             )
             -- check if both aren't from the same owner, which could mean that they have permission by default
             AND (
                 SELECT value_ref
                 FROM metadata m3
-                JOIN streams s3 ON m3.stream_ref = s3.id
-                JOIN data_providers dp3 ON s3.data_provider_id = dp3.id
-                WHERE dp3.address = p.child_data_provider
-                  AND s3.stream_id = p.child_stream_id
+                WHERE m3.stream_ref = p.child_stream_ref
                   AND m3.metadata_key = 'stream_owner'
                   AND m3.disabled_at IS NULL
                 ORDER BY m3.created_at DESC
@@ -622,10 +618,7 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
             ) IS DISTINCT FROM (
                 SELECT value_ref
                 FROM metadata m4
-                JOIN streams s4 ON m4.stream_ref = s4.id
-                JOIN data_providers dp4 ON s4.data_provider_id = dp4.id
-                WHERE dp4.address = p.parent_data_provider
-                  AND s4.stream_id = p.parent_stream_id
+                WHERE m4.stream_ref = p.stream_ref
                   AND m4.metadata_key = 'stream_owner'
                   AND m4.disabled_at IS NULL
                 ORDER BY m4.created_at DESC
