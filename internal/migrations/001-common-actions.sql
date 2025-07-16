@@ -17,15 +17,14 @@ CREATE OR REPLACE ACTION create_data_provider(
         ERROR('Caller does not have the required system:network_writer role to create data provider.');
     }
 
-    -- Get caller's address (data provider) first
-    $data_provider TEXT := $lower_caller;
+    $lower_address TEXT := LOWER($address);
 
-    -- Check if caller is a valid ethereum address
-    if NOT check_ethereum_address($data_provider) {
-        ERROR('Invalid data provider address. Must be a valid Ethereum address: ' || $data_provider);
+    -- Check if address provided is a valid ethereum address
+    if NOT check_ethereum_address($lower_address) {
+        ERROR('Invalid data provider address. Must be a valid Ethereum address: ' || $address);
     }
 
-    INSERT INTO data_providers (id, address, created_at) VALUES (uuid_generate_kwil($data_provider), $data_provider, @height);
+    INSERT INTO data_providers (id, address, created_at) VALUES (uuid_generate_kwil($lower_address), $lower_address, @height);
 };
 
 CREATE OR REPLACE ACTION get_stream_ids(
@@ -418,16 +417,15 @@ CREATE OR REPLACE ACTION disable_metadata(
     $current_block INT := @height;
     $found BOOL := false;
     $metadata_key TEXT;
+    $stream_ref UUID := get_stream_id($data_provider, $stream_id);
     
     -- Get the metadata key first to avoid nested queries
     for $metadata_row in SELECT metadata_key
         FROM metadata
         WHERE row_id = $row_id 
-        AND data_provider = $data_provider
-        AND stream_id = $stream_id
+        AND stream_ref = $stream_ref
         AND disabled_at IS NULL
         LIMIT 1 {
-        
         $found := true;
         $metadata_key := $metadata_row.metadata_key;
     }
@@ -439,8 +437,7 @@ CREATE OR REPLACE ACTION disable_metadata(
     -- In a separate step, check if the key is read-only
     $is_readonly BOOL := false;
     for $readonly_row in SELECT * FROM metadata 
-        WHERE data_provider = $data_provider 
-        AND stream_id = $stream_id 
+        WHERE stream_ref = $stream_ref
         AND metadata_key = 'readonly_key' 
         AND value_s = $metadata_key LIMIT 1 {
         $is_readonly := true;
@@ -453,8 +450,7 @@ CREATE OR REPLACE ACTION disable_metadata(
     -- Update the metadata to mark it as disabled
     UPDATE metadata SET disabled_at = $current_block
     WHERE row_id = $row_id
-    AND data_provider = $data_provider
-    AND stream_id = $stream_id;
+    AND stream_ref = $stream_ref
 };
 
 /**
@@ -524,7 +520,9 @@ CREATE OR REPLACE ACTION delete_stream(
         ERROR('Only stream owner can delete the stream');
     }
 
-    DELETE FROM streams WHERE data_provider = $data_provider AND stream_id = $stream_id;
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+
+    DELETE FROM streams WHERE id = $stream_ref;
 };
 
 /**
@@ -622,11 +620,13 @@ CREATE OR REPLACE ACTION is_stream_owner_batch(
             CASE WHEN m.value_ref IS NOT NULL AND LOWER(m.value_ref) = $lowercase_wallet THEN true ELSE false END AS is_owner
         FROM unique_pairs up
         LEFT JOIN (
-            SELECT data_provider, stream_id, value_ref
-            FROM metadata
-            WHERE metadata_key = 'stream_owner'
-              AND disabled_at IS NULL
-            ORDER BY created_at DESC
+          SELECT dp.address as data_provider, s.stream_id, md.value_ref
+          FROM metadata md
+          JOIN streams s ON md.stream_ref = s.id
+          JOIN data_providers dp ON s.data_provider_id = dp.id
+          WHERE md.metadata_key = 'stream_owner'
+            AND md.disabled_at IS NULL
+          ORDER BY md.created_at DESC
         ) m ON up.data_provider = m.data_provider AND up.stream_id = m.stream_id
     )
     -- Map the ownership status back to all original pairs
@@ -646,8 +646,9 @@ CREATE OR REPLACE ACTION is_primitive_stream(
     $stream_id TEXT
 ) PUBLIC view returns (is_primitive BOOL) {
     $data_provider := LOWER($data_provider);
-    for $row in SELECT stream_type FROM streams 
-        WHERE data_provider = $data_provider AND stream_id = $stream_id LIMIT 1 {
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+    for $row in SELECT stream_type FROM streams
+        WHERE stream_ref = $stream_ref LIMIT 1 {
         return $row.stream_type = 'primitive';
     }
     
@@ -707,7 +708,9 @@ CREATE OR REPLACE ACTION is_primitive_stream_batch(
             up.stream_id,
             COALESCE(s.stream_type = 'primitive', false) AS is_primitive
         FROM unique_pairs up
-        LEFT JOIN streams s ON up.data_provider = s.data_provider AND up.stream_id = s.stream_id
+        LEFT JOIN streams s ON s.data_provider_id = (
+            SELECT id FROM data_providers WHERE address = up.data_provider
+        ) AND s.stream_id = up.stream_id
     )
     -- Map the primitive status back to all original pairs
     SELECT 
@@ -740,6 +743,7 @@ CREATE OR REPLACE ACTION get_metadata(
     created_at INT
 ) {
     $data_provider := LOWER($data_provider);
+    $stream_ref := get_stream_id($data_provider, $stream_id);
 
     -- Set default values if parameters are null
     if $limit IS NULL {
@@ -763,8 +767,7 @@ CREATE OR REPLACE ACTION get_metadata(
            WHERE metadata_key = $key
             AND disabled_at IS NULL
             AND ($ref IS NULL OR LOWER(value_ref) = LOWER($ref))
-            AND stream_id = $stream_id
-            AND data_provider = $data_provider
+            AND stream_ref = $stream_ref
        ORDER BY
                CASE WHEN $order_by = 'created_at DESC' THEN created_at END DESC,
                CASE WHEN $order_by = 'created_at ASC' THEN created_at END ASC
@@ -862,9 +865,6 @@ CREATE OR REPLACE ACTION get_latest_metadata_string(
     RETURN $result;
 };
 
-
-
-
 /**
  * get_category_streams: Retrieves all streams in a category (composed stream).
  * For primitive streams, returns just the stream itself.
@@ -896,6 +896,7 @@ CREATE OR REPLACE ACTION get_category_streams(
     $max_int8 INT := 9223372036854775000;
     $effective_active_from INT := COALESCE($active_from, 0);
     $effective_active_to INT := COALESCE($active_to, $max_int8);
+    $stream_ref UUID := get_stream_id($data_provider, $stream_id);
 
     -- Get all substreams with proper recursive traversal
     return WITH RECURSIVE substreams AS (
@@ -905,10 +906,8 @@ CREATE OR REPLACE ACTION get_category_streams(
          *     - next_start is used to define [group_sequence_start, group_sequence_end].
          *------------------------------------------------------------------*/
         SELECT
-            base.data_provider         AS parent_data_provider,
-            base.stream_id             AS parent_stream_id,
-            base.child_data_provider,
-            base.child_stream_id,
+            base.stream_ref,
+            base.child_stream_ref,
             
             -- The interval during which this row is active:
             base.start_time            AS group_sequence_start,
@@ -916,26 +915,22 @@ CREATE OR REPLACE ACTION get_category_streams(
         FROM (
             -- Find rows with maximum group_sequence for each start_time
             SELECT
-                t.data_provider,
-                t.stream_id,
-                t.child_data_provider,
-                t.child_stream_id,
+                t.stream_ref,
+                t.child_stream_ref,
                 t.start_time,
                 t.group_sequence,
                 MAX(t.group_sequence) OVER (
-                    PARTITION BY t.data_provider, t.stream_id, t.start_time
+                    PARTITION BY t.stream_ref, t.start_time
                 ) AS max_group_sequence
             FROM taxonomies t
-            WHERE t.data_provider = $data_provider
-              AND t.stream_id     = $stream_id
-              AND t.disabled_at   IS NULL
+            WHERE t.stream_ref   = $stream_ref
+              AND t.disabled_at  IS NULL
               AND t.start_time   <= $effective_active_to
               AND t.start_time   >= COALESCE((
                     -- Find the most recent taxonomy at or before effective_active_from
                     SELECT t2.start_time
                     FROM taxonomies t2
-                    WHERE t2.data_provider = t.data_provider
-                      AND t2.stream_id     = t.stream_id
+                    WHERE t2.stream_ref = t.stream_ref
                       AND t2.disabled_at   IS NULL
                       AND t2.start_time   <= $effective_active_from
                     ORDER BY t2.start_time DESC, t2.group_sequence DESC
@@ -946,28 +941,24 @@ CREATE OR REPLACE ACTION get_category_streams(
         JOIN (
             /* Distinct start_times for top-level (dp, sid), used for LEAD() */
             SELECT
-                dt.data_provider,
-                dt.stream_id,
+                dt.stream_ref,
                 dt.start_time,
                 LEAD(dt.start_time) OVER (
-                    PARTITION BY dt.data_provider, dt.stream_id
+                    PARTITION BY dt.stream_ref
                     ORDER BY dt.start_time
                 ) AS next_start
             FROM (
                 SELECT DISTINCT
-                    t.data_provider,
-                    t.stream_id,
+                    t.stream_ref,
                     t.start_time
                 FROM taxonomies t
-                WHERE t.data_provider = $data_provider
-                  AND t.stream_id     = $stream_id
+                WHERE t.stream_ref = $stream_ref
                   AND t.disabled_at   IS NULL
                   AND t.start_time   <= $effective_active_to
                   AND t.start_time   >= COALESCE((
                         SELECT t2.start_time
                         FROM taxonomies t2
-                        WHERE t2.data_provider = t.data_provider
-                          AND t2.stream_id     = t.stream_id
+                        WHERE t2.stream_ref = t.stream_ref
                           AND t2.disabled_at   IS NULL
                           AND t2.start_time   <= $effective_active_from
                         ORDER BY t2.start_time DESC, t2.group_sequence DESC
@@ -976,8 +967,7 @@ CREATE OR REPLACE ACTION get_category_streams(
                   )
             ) dt
         ) ot
-          ON base.data_provider = ot.data_provider
-         AND base.stream_id     = ot.stream_id
+          ON base.stream_ref = ot.stream_ref
          AND base.start_time    = ot.start_time
         WHERE base.group_sequence = base.max_group_sequence
 
@@ -989,10 +979,8 @@ CREATE OR REPLACE ACTION get_category_streams(
          *     and produce intervals that overlap the parent's own active interval.
          *------------------------------------------------------------------*/
         SELECT
-            parent.parent_data_provider,
-            parent.parent_stream_id,
-            child.child_data_provider,
-            child.child_stream_id,
+            parent.stream_ref,
+            child.child_stream_ref,
 
             -- Intersection of parent's active interval and child's:
             GREATEST(parent.group_sequence_start, child.start_time)    AS group_sequence_start,
@@ -1001,22 +989,18 @@ CREATE OR REPLACE ACTION get_category_streams(
         JOIN (
             /* Child overshadow logic, same pattern as above but for child dp/sid. */
             SELECT
-                base.data_provider,
-                base.stream_id,
-                base.child_data_provider,
-                base.child_stream_id,
+                base.stream_ref,
+                base.child_stream_ref,
                 base.start_time,
                 COALESCE(ot.next_start, $max_int8) - 1 AS group_sequence_end
             FROM (
                 SELECT
-                    t.data_provider,
-                    t.stream_id,
-                    t.child_data_provider,
-                    t.child_stream_id,
+                    t.stream_ref,
+                    t.child_stream_ref,
                     t.start_time,
                     t.group_sequence,
                     MAX(t.group_sequence) OVER (
-                        PARTITION BY t.data_provider, t.stream_id, t.start_time
+                        PARTITION BY t.stream_ref, t.start_time
                     ) AS max_group_sequence
                 FROM taxonomies t
                 WHERE t.disabled_at IS NULL
@@ -1025,8 +1009,7 @@ CREATE OR REPLACE ACTION get_category_streams(
                         -- Most recent taxonomy at or before effective_from
                         SELECT t2.start_time
                         FROM taxonomies t2
-                        WHERE t2.data_provider = t.data_provider
-                          AND t2.stream_id     = t.stream_id
+                        WHERE t2.stream_ref = t.stream_ref
                           AND t2.disabled_at   IS NULL
                           AND t2.start_time   <= $effective_active_from
                         ORDER BY t2.start_time DESC, t2.group_sequence DESC
@@ -1037,17 +1020,15 @@ CREATE OR REPLACE ACTION get_category_streams(
             JOIN (
                 /* Distinct start_times at child level */
                 SELECT
-                    dt.data_provider,
-                    dt.stream_id,
+                    dt.stream_ref,
                     dt.start_time,
                     LEAD(dt.start_time) OVER (
-                        PARTITION BY dt.data_provider, dt.stream_id
+                        PARTITION BY dt.stream_ref
                         ORDER BY dt.start_time
                     ) AS next_start
                 FROM (
                     SELECT DISTINCT
-                        t.data_provider,
-                        t.stream_id,
+                        t.stream_ref,
                         t.start_time
                     FROM taxonomies t
                     WHERE t.disabled_at   IS NULL
@@ -1055,8 +1036,7 @@ CREATE OR REPLACE ACTION get_category_streams(
                       AND t.start_time   >= COALESCE((
                             SELECT t2.start_time
                             FROM taxonomies t2
-                            WHERE t2.data_provider = t.data_provider
-                              AND t2.stream_id     = t.stream_id
+                            WHERE t2.stream_ref = t.stream_ref
                               AND t2.disabled_at   IS NULL
                               AND t2.start_time   <= $effective_active_from
                             ORDER BY t2.start_time DESC, t2.group_sequence DESC
@@ -1065,22 +1045,22 @@ CREATE OR REPLACE ACTION get_category_streams(
                       )
                 ) dt
             ) ot
-              ON base.data_provider = ot.data_provider
-             AND base.stream_id     = ot.stream_id
+              ON base.stream_ref = ot.stream_ref
              AND base.start_time    = ot.start_time
             WHERE base.group_sequence = base.max_group_sequence
         ) child
-          ON child.data_provider = parent.child_data_provider
-         AND child.stream_id     = parent.child_stream_id
+          ON child.stream_ref = parent.child_stream_ref
         
         /* Overlap check: child's interval must intersect parent's */
         WHERE child.start_time         <= parent.group_sequence_end
           AND child.group_sequence_end >= parent.group_sequence_start
     )
     SELECT DISTINCT 
-        substreams.child_data_provider, 
-        substreams.child_stream_id
-    FROM substreams;
+        child_dp.address as child_data_provider, 
+        child_s.stream_id as child_stream_id
+    FROM substreams sub
+    JOIN streams child_s ON sub.child_stream_ref = child_s.id
+    JOIN data_providers child_dp ON child_s.data_provider_id = child_dp.id;
 };
 
 /**
@@ -1091,8 +1071,9 @@ CREATE OR REPLACE ACTION stream_exists(
     $stream_id TEXT
 ) PUBLIC view returns (result BOOL) {
     $data_provider := LOWER($data_provider);
+    $stream_ref := get_stream_id($data_provider, $stream_id);
 
-    for $row in SELECT 1 FROM streams WHERE data_provider = $data_provider AND stream_id = $stream_id {
+    for $row in SELECT 1 FROM streams WHERE id = $stream_ref {
         return true;
     }
     return false;
@@ -1150,7 +1131,8 @@ CREATE OR REPLACE ACTION stream_exists_batch(
             up.stream_id,
             CASE WHEN s.data_provider IS NOT NULL THEN true ELSE false END AS stream_exists
         FROM unique_pairs up
-        LEFT JOIN streams s ON up.data_provider = s.data_provider AND up.stream_id = s.stream_id
+        LEFT JOIN data_providers dp ON dp.address = up.data_provider
+        LEFT JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = up.stream_id
     )
     -- Map the existence status back to all original pairs
     SELECT 
@@ -1169,6 +1151,7 @@ CREATE OR REPLACE ACTION transfer_stream_ownership(
     $data_provider := LOWER($data_provider);
     $new_owner := LOWER($new_owner);
     $lower_caller := LOWER(@caller);
+    $stream_ref := get_stream_id($data_provider, $stream_id);
 
     if !is_stream_owner($data_provider, $stream_id, $lower_caller) {
         ERROR('Only stream owner can transfer ownership');
@@ -1182,8 +1165,7 @@ CREATE OR REPLACE ACTION transfer_stream_ownership(
     -- Update the stream_owner metadata
     UPDATE metadata SET value_ref = LOWER($new_owner)
     WHERE metadata_key = 'stream_owner'
-    AND data_provider = $data_provider
-    AND stream_id = $stream_id;
+    AND stream_ref = $stream_ref;
 };
 
 /**
@@ -1242,10 +1224,11 @@ CREATE OR REPLACE ACTION filter_streams_by_existence(
         SELECT 
             up.data_provider,
             up.stream_id,
-            CASE WHEN s.data_provider IS NOT NULL THEN true ELSE false END AS stream_exists
+            CASE WHEN s.id IS NOT NULL THEN true ELSE false END AS stream_exists
         FROM unique_pairs up
-        LEFT JOIN streams s ON up.data_provider = s.data_provider AND up.stream_id = s.stream_id
-        WHERE (CASE WHEN s.data_provider IS NOT NULL THEN true ELSE false END) = $existing_only
+        LEFT JOIN data_providers dp ON dp.address = up.data_provider
+        LEFT JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = up.stream_id
+        WHERE (CASE WHEN s.id IS NOT NULL THEN true ELSE false END) = $existing_only
     )
     -- Return only the filtered unique pairs (no need to map back since we're filtering)
     SELECT 
@@ -1287,14 +1270,16 @@ CREATE OR REPLACE ACTION list_streams(
         $order_by := 'created_at DESC';
     }
 
-    RETURN SELECT data_provider,
-                  stream_id,
-                  stream_type,
-                  created_at
-           FROM streams
-           WHERE ($data_provider IS NULL OR $data_provider = '' OR LOWER(data_provider) = LOWER($data_provider))
-           AND created_at > $block_height
-           ORDER BY
+    RETURN  SELECT 
+              dp.address as data_provider,
+              s.stream_id,
+              s.stream_type,
+              s.created_at
+            FROM streams s
+            JOIN data_providers dp ON s.data_provider_id = dp.id
+            WHERE ($data_provider IS NULL OR $data_provider = '' OR LOWER(dp.address) = LOWER($data_provider))
+            AND created_at > $block_height
+            ORDER BY
                CASE WHEN $order_by = 'created_at DESC' THEN created_at END DESC,
                CASE WHEN $order_by = 'created_at ASC' THEN created_at END ASC,
                CASE WHEN $order_by = 'stream_id ASC' THEN stream_id END ASC,
