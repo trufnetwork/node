@@ -295,6 +295,9 @@ tasks:
 
   action:migrate:
     desc: Run the migration action for all SQL files. Environment variables should be set in the environment.
+    vars:
+      PRIVATE_KEY: "{{.PRIVATE_KEY}}"
+      PROVIDER: "{{.PROVIDER}}"
     cmds:
       - bash ./scripts/migrate.sh
     env:
@@ -306,9 +309,13 @@ tasks:
 
   action:migrate:dev:
     desc: Run the migration action for all SQL files in a local network
+    vars:
+      PRIVATE_KEY: "0000000000000000000000000000000000000000000000000000000000000001"
+      PROVIDER: "http://localhost:8484"
     cmds:
       - task: action:migrate
         vars:
-          PRIVATE_KEY: "0000000000000000000000000000000000000000000000000000000000000001"
-          PROVIDER: "http://localhost:8484"
+          PRIVATE_KEY: "{{.PRIVATE_KEY}}"
+          PROVIDER: "{{.PROVIDER}}"
           ADMIN_WALLET: "{{.DEV_DB_OWNER}}"
+      - kwil-cli exec-action grant_roles text:system text:network_writer text[]:{{.DEV_DB_OWNER}} --private-key {{.PRIVATE_KEY}} --provider {{.PROVIDER}} --sync
