@@ -50,9 +50,9 @@ CREATE OR REPLACE ACTION get_stream_ids(
             s.id AS stream_ref
         FROM indexes
         JOIN input_arrays ON 1=1
-        JOIN streams s
-          ON s.data_provider = input_arrays.data_providers[idx] 
-          AND s.stream_id = input_arrays.stream_ids[idx]
+        JOIN data_providers dp ON dp.address = input_arrays.data_providers[idx]
+        JOIN streams s ON s.data_provider_id = dp.id 
+                      AND s.stream_id = input_arrays.stream_ids[idx]
     )
     SELECT ARRAY_AGG(stream_ref) AS stream_refs
     FROM stream_lookups {
@@ -295,10 +295,11 @@ CREATE OR REPLACE ACTION get_stream_id(
 ) PRIVATE returns (id UUID) {
   $id UUID;
   $found BOOL := false;
-  for $stream_row in SELECT id
-      FROM streams
-      WHERE stream_id = $stream_id 
-      AND data_provider = $data_provider_address
+  FOR $stream_row IN SELECT s.id
+      FROM streams s
+      JOIN data_providers dp ON s.data_provider_id = dp.id
+      WHERE s.stream_id = $stream_id 
+      AND dp.address = $data_provider_address
       LIMIT 1 {
       $found := true;
       $id := $stream_row.id;
@@ -450,7 +451,7 @@ CREATE OR REPLACE ACTION disable_metadata(
     -- Update the metadata to mark it as disabled
     UPDATE metadata SET disabled_at = $current_block
     WHERE row_id = $row_id
-    AND stream_ref = $stream_ref
+    AND stream_ref = $stream_ref;
 };
 
 /**
@@ -648,7 +649,7 @@ CREATE OR REPLACE ACTION is_primitive_stream(
     $data_provider := LOWER($data_provider);
     $stream_ref := get_stream_id($data_provider, $stream_id);
     for $row in SELECT stream_type FROM streams
-        WHERE stream_ref = $stream_ref LIMIT 1 {
+        WHERE id = $stream_ref LIMIT 1 {
         return $row.stream_type = 'primitive';
     }
     
@@ -1278,10 +1279,10 @@ CREATE OR REPLACE ACTION list_streams(
             FROM streams s
             JOIN data_providers dp ON s.data_provider_id = dp.id
             WHERE ($data_provider IS NULL OR $data_provider = '' OR LOWER(dp.address) = LOWER($data_provider))
-            AND created_at > $block_height
+            AND s.created_at > $block_height
             ORDER BY
-               CASE WHEN $order_by = 'created_at DESC' THEN created_at END DESC,
-               CASE WHEN $order_by = 'created_at ASC' THEN created_at END ASC,
+               CASE WHEN $order_by = 'created_at DESC' THEN s.created_at END DESC,
+               CASE WHEN $order_by = 'created_at ASC' THEN s.created_at END ASC,
                CASE WHEN $order_by = 'stream_id ASC' THEN stream_id END ASC,
                CASE WHEN $order_by = 'stream_id DESC' THEN stream_id END DESC,
                CASE WHEN $order_by = 'stream_type ASC' THEN stream_type END ASC,
