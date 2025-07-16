@@ -415,10 +415,8 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
         *     - next_start is used to define [group_sequence_start, group_sequence_end].
         *------------------------------------------------------------------*/
         SELECT
-            base.data_provider         AS parent_data_provider,
-            base.stream_id             AS parent_stream_id,
-            base.child_data_provider,
-            base.child_stream_id,
+            base.stream_ref,
+            base.child_stream_ref,
 
             -- The interval during which this row is active:
             base.start_time            AS group_sequence_start,
@@ -426,26 +424,22 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
 
         FROM (
             SELECT
-                t.data_provider,
-                t.stream_id,
-                t.child_data_provider,
-                t.child_stream_id,
+                t.stream_ref,
+                t.child_stream_ref,
                 t.start_time,
                 t.group_sequence,
                 MAX(t.group_sequence) OVER (
-                    PARTITION BY t.data_provider, t.stream_id, t.start_time
+                    PARTITION BY t.stream_ref, t.start_time
                 ) AS max_group_sequence
             FROM taxonomies t
-            WHERE t.data_provider = $data_provider
-                AND t.stream_id     = $stream_id
+            WHERE t.stream_ref = $stream_ref
                 AND t.disabled_at   IS NULL
                 AND t.start_time   <= $effective_active_to
                 AND t.start_time   >= COALESCE((
                     -- Find the most recent taxonomy at or before effective_active_from
                     SELECT t2.start_time
                     FROM taxonomies t2
-                    WHERE t2.data_provider = t.data_provider
-                        AND t2.stream_id     = t.stream_id
+                    WHERE t2.stream_ref = t.stream_ref
                         AND t2.disabled_at   IS NULL
                         AND t2.start_time   <= $effective_active_from
                     ORDER BY t2.start_time DESC, t2.group_sequence DESC
@@ -456,28 +450,24 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
         JOIN (
             /* Distinct start_times for top-level (dp, sid), used for LEAD() */
             SELECT
-                dt.data_provider,
-                dt.stream_id,
+                dt.stream_ref,
                 dt.start_time,
                 LEAD(dt.start_time) OVER (
-                    PARTITION BY dt.data_provider, dt.stream_id
+                    PARTITION BY dt.stream_ref
                     ORDER BY dt.start_time
                 ) AS next_start
             FROM (
                 SELECT DISTINCT
-                    t.data_provider,
-                    t.stream_id,
+                    t.stream_ref,
                     t.start_time
                 FROM taxonomies t
-                WHERE t.data_provider = $data_provider
-                    AND t.stream_id     = $stream_id
+                WHERE t.stream_ref = $stream_ref
                     AND t.disabled_at   IS NULL
                     AND t.start_time   <= $effective_active_to
                     AND t.start_time   >= COALESCE((
                         SELECT t2.start_time
                         FROM taxonomies t2
-                        WHERE t2.data_provider = t.data_provider
-                            AND t2.stream_id     = t.stream_id
+                        WHERE t2.stream_ref = t.stream_ref
                             AND t2.disabled_at   IS NULL
                             AND t2.start_time   <= $effective_active_from
                         ORDER BY t2.start_time DESC, t2.group_sequence DESC
@@ -486,8 +476,7 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
                     )
             ) dt
         ) ot
-            ON base.data_provider = ot.data_provider
-        AND base.stream_id     = ot.stream_id
+        ON base.stream_ref = ot.stream_ref
         AND base.start_time    = ot.start_time
         WHERE base.group_sequence = base.max_group_sequence
 
@@ -500,11 +489,8 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
         *------------------------------------------------------------------*/
         SELECT
             -- promote the child to the parent
-            parent.child_data_provider   AS parent_data_provider,
-            parent.child_stream_id       AS parent_stream_id,
-
-            child.child_data_provider,
-            child.child_stream_id,
+            parent.child_stream_ref,
+            child.child_stream_ref,
 
             -- Intersection of parent's active interval and child's:
             GREATEST(parent.group_sequence_start, child.start_time)   AS group_sequence_start,
@@ -514,22 +500,18 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
         JOIN (
             /* Child overshadow logic, same pattern as above but for child dp/sid. */
             SELECT
-                base.data_provider,
-                base.stream_id,
-                base.child_data_provider,
-                base.child_stream_id,
+                base.stream_ref,
+                base.child_stream_ref,
                 base.start_time,
                 COALESCE(ot.next_start, $max_int8) - 1 AS group_sequence_end
             FROM (
                 SELECT
-                    t.data_provider,
-                    t.stream_id,
-                    t.child_data_provider,
-                    t.child_stream_id,
+                    t.stream_ref,
+                    t.child_stream_ref,
                     t.start_time,
                     t.group_sequence,
                     MAX(t.group_sequence) OVER (
-                        PARTITION BY t.data_provider, t.stream_id, t.start_time
+                        PARTITION BY t.stream_ref, t.start_time
                     ) AS max_group_sequence
                 FROM taxonomies t
                 WHERE t.disabled_at IS NULL
@@ -538,8 +520,7 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
                         -- Most recent taxonomy at or before effective_from
                         SELECT t2.start_time
                         FROM taxonomies t2
-                        WHERE t2.data_provider = t.data_provider
-                            AND t2.stream_id     = t.stream_id
+                        WHERE t2.stream_ref = t.stream_ref
                             AND t2.disabled_at   IS NULL
                             AND t2.start_time   <= $effective_active_from
                         ORDER BY t2.start_time DESC, t2.group_sequence DESC
@@ -550,17 +531,15 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
             JOIN (
                 /* Distinct start_times at child level */
                 SELECT
-                    dt.data_provider,
-                    dt.stream_id,
+                    dt.stream_ref,
                     dt.start_time,
                     LEAD(dt.start_time) OVER (
-                        PARTITION BY dt.data_provider, dt.stream_id
+                        PARTITION BY dt.stream_ref
                         ORDER BY dt.start_time
                     ) AS next_start
                 FROM (
                     SELECT DISTINCT
-                        t.data_provider,
-                        t.stream_id,
+                        t.stream_ref,
                         t.start_time
                     FROM taxonomies t
                     WHERE t.disabled_at   IS NULL
@@ -568,8 +547,7 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
                         AND t.start_time   >= COALESCE((
                             SELECT t2.start_time
                             FROM taxonomies t2
-                            WHERE t2.data_provider = t.data_provider
-                                AND t2.stream_id     = t.stream_id
+                            WHERE t2.stream_ref = t.stream_ref
                                 AND t2.disabled_at   IS NULL
                                 AND t2.start_time   <= $effective_active_from
                             ORDER BY t2.start_time DESC, t2.group_sequence DESC
@@ -578,30 +556,27 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
                         )
                 ) dt
             ) ot
-                ON base.data_provider = ot.data_provider
-            AND base.stream_id     = ot.stream_id
+            ON base.stream_ref = ot.stream_ref
             AND base.start_time    = ot.start_time
             WHERE base.group_sequence = base.max_group_sequence
         ) child
-            ON child.data_provider = parent.child_data_provider
-        AND child.stream_id     = parent.child_stream_id
+            ON child.stream_ref = parent.child_stream_ref
         /* Overlap check: child's interval must intersect parent's */
         WHERE child.start_time         <= parent.group_sequence_end
             AND child.group_sequence_end >= parent.group_sequence_start
         ),
     
         parent_child_edges as (
-            SELECT DISTINCT p.parent_data_provider, p.parent_stream_id, p.child_data_provider, p.child_stream_id
+            SELECT DISTINCT p.stream_ref, p.child_stream_ref
             FROM substreams p
         ),
         -- Check that all child streams exist.
         inexisting_substreams AS (
-            SELECT DISTINCT p.child_data_provider, p.child_stream_id
+            SELECT DISTINCT p.stream_ref
             FROM parent_child_edges p
             LEFT JOIN streams s
-              ON p.child_data_provider = s.data_provider
-             AND p.child_stream_id = s.stream_id
-            WHERE s.data_provider IS NULL
+              ON p.stream_ref = s.id
+            WHERE s.id IS NULL
         ),
         -- For each edge, if the child is private, check that the child whitelists its parent.
         unauthorized_edges AS (
@@ -610,8 +585,10 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
             WHERE (
                 SELECT value_i
                 FROM metadata m
-                WHERE m.data_provider = p.child_data_provider
-                  AND m.stream_id = p.child_stream_id
+                JOIN streams s ON m.stream_ref = s.id
+                JOIN data_providers dp ON s.data_provider_id = dp.id
+                WHERE dp.address = p.child_data_provider
+                  AND s.stream_id = p.child_stream_id
                   AND m.metadata_key = 'compose_visibility'
                   AND m.disabled_at IS NULL
                 ORDER BY m.created_at DESC
@@ -621,8 +598,10 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
             AND NOT EXISTS (
                 SELECT 1
                 FROM metadata m2
-                WHERE m2.data_provider = p.child_data_provider
-                  AND m2.stream_id = p.child_stream_id
+                JOIN streams s2 ON m2.stream_ref = s2.id
+                JOIN data_providers dp2 ON s2.data_provider_id = dp2.id
+                WHERE dp2.address = p.child_data_provider
+                  AND s2.stream_id = p.child_stream_id
                   AND m2.metadata_key = 'allow_compose_stream'
                   AND m2.disabled_at IS NULL
                   AND m2.value_ref = p.parent_stream_id::text
@@ -632,8 +611,10 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
             AND (
                 SELECT value_ref
                 FROM metadata m3
-                WHERE m3.data_provider = p.child_data_provider
-                  AND m3.stream_id = p.child_stream_id
+                JOIN streams s3 ON m3.stream_ref = s3.id
+                JOIN data_providers dp3 ON s3.data_provider_id = dp3.id
+                WHERE dp3.address = p.child_data_provider
+                  AND s3.stream_id = p.child_stream_id
                   AND m3.metadata_key = 'stream_owner'
                   AND m3.disabled_at IS NULL
                 ORDER BY m3.created_at DESC
@@ -641,29 +622,31 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
             ) IS DISTINCT FROM (
                 SELECT value_ref
                 FROM metadata m4
-                WHERE m4.data_provider = p.parent_data_provider
-                  AND m4.stream_id = p.parent_stream_id
+                JOIN streams s4 ON m4.stream_ref = s4.id
+                JOIN data_providers dp4 ON s4.data_provider_id = dp4.id
+                WHERE dp4.address = p.parent_data_provider
+                  AND s4.stream_id = p.parent_stream_id
                   AND m4.metadata_key = 'stream_owner'
                   AND m4.disabled_at IS NULL
                 ORDER BY m4.created_at DESC
                 LIMIT 1
             )
         )
-    SELECT
-        (SELECT COUNT(*) FROM inexisting_substreams) AS missing_count,
-        (SELECT COUNT(*) FROM unauthorized_edges) AS unauthorized_count {
-        -- error out if there's a missing streams
-        if $counts.missing_count > 0 {
-            ERROR('Missing child streams for stream: data_provider=' || $data_provider ||
-                  ' stream_id=' || $stream_id || ' missing_count=' || $counts.missing_count::TEXT);
+        SELECT
+            (SELECT COUNT(*) FROM inexisting_substreams) AS missing_count,
+            (SELECT COUNT(*) FROM unauthorized_edges) AS unauthorized_count {
+            -- error out if there's a missing streams
+            if $counts.missing_count > 0 {
+                ERROR('Missing child streams for stream: data_provider=' || $data_provider ||
+                      ' stream_id=' || $stream_id || ' missing_count=' || $counts.missing_count::TEXT);
+            }
+
+            -- only authorized if there are no unauthorized edges
+            $result := $counts.unauthorized_count = 0;
         }
 
-        -- only authorized if there are no unauthorized edges
-        $result := $counts.unauthorized_count = 0;
-    }
-
-    -- return if it's authorized or not
-    return $result;
+        -- return if it's authorized or not
+        return $result;
 };
 
 /**
