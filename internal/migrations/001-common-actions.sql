@@ -21,7 +21,7 @@ CREATE OR REPLACE ACTION create_data_provider(
 
     -- Check if address provided is a valid ethereum address
     if NOT check_ethereum_address($lower_address) {
-        ERROR('Invalid data provider address. Must be a valid Ethereum address: ' || $address);
+        ERROR('Invalid data provider address. Must be a valid Ethereum address: ' || $lower_address);
     }
 
     INSERT INTO data_providers (id, address, created_at) VALUES (uuid_generate_kwil($lower_address), $lower_address, @height);
@@ -255,7 +255,8 @@ CREATE OR REPLACE ACTION create_streams(
             @height AS created_at,
             s.id AS stream_ref
         FROM args_with_row_number arg
-        JOIN streams s ON s.data_provider = $data_provider AND s.stream_id = arg.stream_id
+        JOIN data_providers dp ON dp.address = $data_provider
+        JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = arg.stream_id
     )
     -- catched a bug where it's expected to have the same order of columns
     -- as the table definition
@@ -349,12 +350,13 @@ CREATE OR REPLACE ACTION insert_metadata(
     } else {
         ERROR(FORMAT('Unknown type used "%s". Valid types = "float" | "bool" | "int" | "ref" | "string"', $val_type));
     }
+
+    $stream_ref := get_stream_id($data_provider, $stream_id);
     
     -- Check if the key is read-only
     $is_readonly BOOL := false;
     for $row in SELECT * FROM metadata 
-        WHERE data_provider = $data_provider 
-        AND stream_id = $stream_id 
+        WHERE stream_ref = $stream_ref
         AND metadata_key = 'readonly_key' 
         AND value_s = $key LIMIT 1 {
         $is_readonly := true;
