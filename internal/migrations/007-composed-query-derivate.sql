@@ -41,21 +41,21 @@ RETURNS TABLE(
   for $row in WITH RECURSIVE all_taxonomies AS (
     /* 2a) Direct children of $stream_ref */
     SELECT
-      t.parent_stream_ref,
+      t.stream_ref,
       t.child_stream_ref
     FROM taxonomies t
-    WHERE t.parent_stream_ref = $stream_ref
+    WHERE t.stream_ref = $stream_ref
       AND t.disabled_at IS NULL
 
     UNION
 
     /* 2b) For each discovered child, gather its own children */
     SELECT
-      at.child_stream_ref AS parent_stream_ref,
+      at.child_stream_ref AS stream_ref,
       t.child_stream_ref
     FROM all_taxonomies at
     JOIN taxonomies t
-      ON t.parent_stream_ref = at.child_stream_ref
+      ON t.stream_ref = at.child_stream_ref
     AND t.disabled_at IS NULL
   ),
   primitive_leaves AS (
@@ -165,21 +165,21 @@ RETURNS TABLE(
   for $row in WITH RECURSIVE all_taxonomies AS (
   /* 2a) Direct children of $stream_ref */
   SELECT
-    t.parent_stream_ref,
+    t.stream_ref,
     t.child_stream_ref
   FROM taxonomies t
-  WHERE t.parent_stream_ref = $stream_ref
+  WHERE t.stream_ref = $stream_ref
     AND t.disabled_at IS NULL
 
   UNION
 
   /* 2b) For each discovered child, gather its own children */
   SELECT
-    at.child_stream_ref AS parent_stream_ref,
+    at.child_stream_ref AS stream_ref,
     t.child_stream_ref
   FROM all_taxonomies at
   JOIN taxonomies t
-    ON t.parent_stream_ref = at.child_stream_ref
+    ON t.stream_ref = at.child_stream_ref
     AND t.disabled_at IS NULL
   ),
   primitive_leaves AS (
@@ -330,7 +330,7 @@ RETURNS TABLE(
   *---------------------------------------------------------------------*/
   parent_distinct_start_times AS (
       SELECT DISTINCT
-          parent_stream_ref,
+          stream_ref,
           start_time
       FROM taxonomies
       WHERE disabled_at IS NULL
@@ -341,9 +341,9 @@ RETURNS TABLE(
   *---------------------------------------------------------------------*/
   parent_next_starts AS (
       SELECT
-          parent_stream_ref,
+          stream_ref,
           start_time,
-          LEAD(start_time) OVER (PARTITION BY parent_stream_ref ORDER BY start_time) as next_start_time
+          LEAD(start_time) OVER (PARTITION BY stream_ref ORDER BY start_time) as next_start_time
       FROM parent_distinct_start_times
   ),
 
@@ -352,33 +352,33 @@ RETURNS TABLE(
   *---------------------------------------------------------------------*/
   taxonomy_true_segments AS (
       SELECT
-          t.parent_stream_ref,
+          t.stream_ref,
           t.child_stream_ref,
           t.weight_for_segment,
           t.segment_start,
           COALESCE(pns.next_start_time, $max_int8) - 1 AS segment_end
       FROM (
           SELECT
-              tx.parent_stream_ref,
+              tx.stream_ref,
               tx.child_stream_ref,
               tx.weight AS weight_for_segment,
               tx.start_time AS segment_start
           FROM taxonomies tx
           JOIN (
               SELECT
-                  parent_stream_ref, start_time,
+                  stream_ref, start_time,
                   MAX(group_sequence) as max_gs
               FROM taxonomies
               WHERE disabled_at IS NULL
-              GROUP BY parent_stream_ref, start_time
+              GROUP BY stream_ref, start_time
           ) max_gs_filter
-          ON tx.parent_stream_ref = max_gs_filter.parent_stream_ref
+          ON tx.stream_ref = max_gs_filter.stream_ref
         AND tx.start_time = max_gs_filter.start_time
         AND tx.group_sequence = max_gs_filter.max_gs
           WHERE tx.disabled_at IS NULL
       ) t
       JOIN parent_next_starts pns
-        ON t.parent_stream_ref = pns.parent_stream_ref
+        ON t.stream_ref = pns.stream_ref
       AND t.segment_start = pns.start_time
   ),
 
@@ -390,7 +390,7 @@ RETURNS TABLE(
   hierarchy AS (
     -- Base Case: Direct children of the root composed stream.
     SELECT
-        tts.parent_stream_ref AS root_stream_ref,
+        tts.stream_ref AS root_stream_ref,
         tts.child_stream_ref AS descendant_stream_ref,
         tts.weight_for_segment AS raw_weight,
         tts.weight_for_segment AS effective_weight, -- For level 1, effective = raw
@@ -398,11 +398,11 @@ RETURNS TABLE(
         tts.segment_end AS path_end,
         1 AS level
     FROM taxonomy_true_segments tts
-    WHERE tts.parent_stream_ref = $stream_ref
+    WHERE tts.stream_ref = $stream_ref
       AND tts.segment_end >= (
         COALESCE(
             (SELECT t_anchor_base.start_time FROM taxonomies t_anchor_base
-            WHERE t_anchor_base.parent_stream_ref = $stream_ref
+            WHERE t_anchor_base.stream_ref = $stream_ref
               AND t_anchor_base.disabled_at IS NULL AND t_anchor_base.start_time <= $effective_from
             ORDER BY t_anchor_base.start_time DESC, t_anchor_base.group_sequence DESC LIMIT 1),
             0
@@ -423,7 +423,7 @@ RETURNS TABLE(
             -- Calculate sum of sibling weights for normalization
             (SELECT SUM(sibling_tts.weight_for_segment) 
             FROM taxonomy_true_segments sibling_tts 
-            WHERE sibling_tts.parent_stream_ref = h.descendant_stream_ref
+            WHERE sibling_tts.stream_ref = h.descendant_stream_ref
               AND sibling_tts.segment_start = tts.segment_start
               AND sibling_tts.segment_end = tts.segment_end)::NUMERIC(36,18)
         ))::NUMERIC(36,18) AS effective_weight,
@@ -433,13 +433,13 @@ RETURNS TABLE(
     FROM
         hierarchy h
     JOIN taxonomy_true_segments tts
-        ON h.descendant_stream_ref = tts.parent_stream_ref
+        ON h.descendant_stream_ref = tts.stream_ref
     WHERE
         GREATEST(h.path_start, tts.segment_start) <= LEAST(h.path_end, tts.segment_end)
         AND LEAST(h.path_end, tts.segment_end) >= (
             COALESCE(
                 (SELECT t_anchor_base.start_time FROM taxonomies t_anchor_base
-                WHERE t_anchor_base.parent_stream_ref = $stream_ref
+                WHERE t_anchor_base.stream_ref = $stream_ref
                   AND t_anchor_base.disabled_at IS NULL AND t_anchor_base.start_time <= $effective_from
                 ORDER BY t_anchor_base.start_time DESC, t_anchor_base.group_sequence DESC LIMIT 1),
                 0
