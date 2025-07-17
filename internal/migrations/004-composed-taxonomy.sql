@@ -99,13 +99,13 @@ CREATE OR REPLACE ACTION get_current_group_sequence(
     $stream_id TEXT,
     $show_disabled bool
 ) private view returns (result int) {
-    $data_provider  := LOWER($data_provider);
+    $data_provider := LOWER($data_provider);
+    $stream_ref := get_stream_id($data_provider, $stream_id);
 
     if $show_disabled == false {
         for $row in SELECT group_sequence
         FROM taxonomies
-        WHERE data_provider = $data_provider
-        AND stream_id = $stream_id
+        WHERE stream_ref = $stream_ref
         AND disabled_at IS NULL
         ORDER BY group_sequence DESC
         LIMIT 1 {
@@ -114,8 +114,7 @@ CREATE OR REPLACE ACTION get_current_group_sequence(
     } else {
         for $row in SELECT group_sequence
         FROM taxonomies
-        WHERE data_provider = $data_provider
-        AND stream_id = $stream_id
+        WHERE stream_ref = $stream_ref
         ORDER BY group_sequence DESC
         LIMIT 1 {
             return $row.group_sequence;
@@ -139,38 +138,45 @@ CREATE OR REPLACE ACTION describe_taxonomies(
     start_date INT             -- Aliased from start_time
 ) {
     $data_provider  := LOWER($data_provider);
+    $stream_ref := get_stream_id($data_provider, $stream_id);
 
     if $latest_group_sequence == true {
         $group_sequence := get_current_group_sequence($data_provider, $stream_id, false);
         return SELECT
-            t.data_provider,
-            t.stream_id,
-            t.child_data_provider,
-            t.child_stream_id,
+            parent_dp.address as data_provider,
+            parent_s.stream_id,
+            child_dp.address as child_data_provider,
+            child_s.stream_id as child_stream_id,
             t.weight,
             t.created_at,
             t.group_sequence,
             t.start_time AS start_date
         FROM taxonomies t
+        JOIN streams parent_s ON t.stream_ref = parent_s.id
+        JOIN data_providers parent_dp ON parent_s.data_provider_id = parent_dp.id
+        JOIN streams child_s ON t.child_stream_ref = child_s.id
+        JOIN data_providers child_dp ON child_s.data_provider_id = child_dp.id
         WHERE t.disabled_at IS NULL
-            AND t.data_provider = $data_provider
-            AND t.stream_id = $stream_id
+            AND t.stream_ref = $stream_ref
             AND t.group_sequence = $group_sequence
         ORDER BY t.created_at DESC;
     } else {
         return SELECT
-            t.data_provider,
-            t.stream_id,
-            t.child_data_provider,
-            t.child_stream_id,
+            parent_dp.address as data_provider,
+            parent_s.stream_id,
+            child_dp.address as child_data_provider,
+            child_s.stream_id as child_stream_id,
             t.weight,
             t.created_at,
             t.group_sequence,
             t.start_time AS start_date
         FROM taxonomies t
+        JOIN streams parent_s ON t.stream_ref = parent_s.id
+        JOIN data_providers parent_dp ON parent_s.data_provider_id = parent_dp.id
+        JOIN streams child_s ON t.child_stream_ref = child_s.id
+        JOIN data_providers child_dp ON child_s.data_provider_id = child_dp.id
         WHERE t.disabled_at IS NULL
-            AND t.data_provider = $data_provider
-            AND t.stream_id = $stream_id
+            AND t.stream_ref = $stream_ref
         ORDER BY t.group_sequence DESC;
     }
 };
@@ -187,9 +193,10 @@ CREATE OR REPLACE ACTION disable_taxonomy(
         ERROR('wallet not allowed to write');
     }
 
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+
     UPDATE taxonomies
     SET disabled_at = @height
-    WHERE data_provider = $data_provider
-    AND stream_id = $stream_id
+    WHERE stream_ref = $stream_ref
     AND group_sequence = $group_sequence;
 };
