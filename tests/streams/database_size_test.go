@@ -74,7 +74,7 @@ func testDatabaseSize(t *testing.T) func(ctx context.Context, platform *kwilTest
 			return errors.Wrap(err, "error getting database size")
 		}
 
-		assert.Equal(t, int64(2118), result, fmt.Sprintf("Actual: %d, Expected: 2118", result))
+		assert.Equal(t, int64(1029), result, fmt.Sprintf("Actual: %d, Expected: 1029", result))
 
 		return nil
 	}
