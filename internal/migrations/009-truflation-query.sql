@@ -21,10 +21,11 @@ CREATE OR REPLACE ACTION truflation_last_deployed_date(
         ERROR('stream is not a primitive stream');
     }
 
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+
     RETURN SELECT truflation_created_at
            FROM primitive_events
-           WHERE data_provider = $data_provider
-             AND stream_id = $stream_id
+           WHERE stream_ref = $stream_ref
            ORDER BY truflation_created_at DESC LIMIT 1;
 };
 
