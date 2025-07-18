@@ -53,6 +53,7 @@ RETURNS TABLE(
     $effective_from := COALESCE($from, 0);      -- Lower bound, default 0
     $effective_to := COALESCE($to, $max_int8);  -- Upper bound, default "infinity"
     $effective_frozen_at := COALESCE($frozen_at, $max_int8);
+    $stream_ref := get_stream_id($data_provider, $stream_id);
 
     -- Validate time range
     IF $from IS NOT NULL AND $to IS NOT NULL AND $from > $to {
@@ -75,7 +76,7 @@ RETURNS TABLE(
         RETURN;
     }
 
-    RETURN WITH RECURSIVE
+ RETURN WITH RECURSIVE
     /*----------------------------------------------------------------------
      * PARENT_DISTINCT_START_TIMES CTE:
      *
@@ -84,11 +85,10 @@ RETURNS TABLE(
      *---------------------------------------------------------------------*/
     parent_distinct_start_times AS (
         SELECT DISTINCT
-            data_provider AS parent_dp,
-            stream_id AS parent_sid,
-            start_time
-        FROM taxonomies
-        WHERE disabled_at IS NULL
+            t.stream_ref,
+            t.start_time
+        FROM taxonomies t
+        WHERE t.disabled_at IS NULL
     ),
 
     /*----------------------------------------------------------------------
@@ -100,10 +100,9 @@ RETURNS TABLE(
      *---------------------------------------------------------------------*/
     parent_next_starts AS (
         SELECT
-            parent_dp,
-            parent_sid,
+            stream_ref,
             start_time,
-            LEAD(start_time) OVER (PARTITION BY parent_dp, parent_sid ORDER BY start_time) as next_start_time
+            LEAD(start_time) OVER (PARTITION BY stream_ref ORDER BY start_time) as next_start_time
         FROM parent_distinct_start_times
     ),
 
@@ -121,10 +120,8 @@ RETURNS TABLE(
      *---------------------------------------------------------------------*/
     taxonomy_true_segments AS (
         SELECT
-            t.parent_dp,
-            t.parent_sid,
-            t.child_dp,
-            t.child_sid,
+            t.stream_ref,
+            t.child_stream_ref,
             t.weight_for_segment,
             t.segment_start,
             COALESCE(pns.next_start_time, $max_int8) - 1 AS segment_end
@@ -132,10 +129,8 @@ RETURNS TABLE(
             -- Select all child links from the latest taxonomy version (highest group_sequence)
             -- for each parent at each specific start_time.
             SELECT
-                tx.data_provider AS parent_dp,
-                tx.stream_id AS parent_sid,
-                tx.child_data_provider AS child_dp,
-                tx.child_stream_id AS child_sid,
+                tx.stream_ref,
+                tx.child_stream_ref,
                 tx.weight AS weight_for_segment,
                 tx.start_time AS segment_start
             FROM taxonomies tx
@@ -143,21 +138,19 @@ RETURNS TABLE(
                 -- Subquery to find the max group_sequence for each parent's start_time.
                 -- This determines the "winning" version of the taxonomy for that parent at that start_time.
                 SELECT
-                    data_provider, stream_id, start_time,
+                    stream_ref, start_time,
                     MAX(group_sequence) as max_gs
                 FROM taxonomies
                 WHERE disabled_at IS NULL
-                GROUP BY data_provider, stream_id, start_time
+                GROUP BY stream_ref, start_time
             ) max_gs_filter
-            ON tx.data_provider = max_gs_filter.data_provider
-           AND tx.stream_id = max_gs_filter.stream_id
+            ON tx.stream_ref = max_gs_filter.stream_ref
            AND tx.start_time = max_gs_filter.start_time
            AND tx.group_sequence = max_gs_filter.max_gs -- Only pick rows matching the max group_sequence
             WHERE tx.disabled_at IS NULL -- Ensure the chosen taxonomy entry itself is not disabled
         ) t -- Each row 't' is now part of the "winning" taxonomy version for its parent and start_time
         JOIN parent_next_starts pns -- This correctly defines how long this "winning" version is active
-          ON t.parent_dp = pns.parent_dp
-         AND t.parent_sid = pns.parent_sid
+          ON t.stream_ref = pns.stream_ref
          AND t.segment_start = pns.start_time
     ),
 
@@ -172,20 +165,18 @@ RETURNS TABLE(
     hierarchy AS (
       -- Base Case: Direct children of the root composed stream.
       SELECT
-          tts.parent_dp AS root_dp,       -- This is $data_provider
-          tts.parent_sid AS root_sid,      -- This is $stream_id
-          tts.child_dp AS descendant_dp,
-          tts.child_sid AS descendant_sid,
+          tts.stream_ref AS root_stream_ref,
+          tts.child_stream_ref AS descendant_stream_ref,
           tts.weight_for_segment AS raw_weight,
           tts.segment_start AS path_start,
           tts.segment_end AS path_end,
           1 AS level
       FROM taxonomy_true_segments tts
-      WHERE tts.parent_dp = $data_provider AND tts.parent_sid = $stream_id
+      WHERE tts.stream_ref = $stream_ref
         AND tts.segment_end >= ( -- Path segment must end at or after the root's anchor time
           COALESCE(
               (SELECT t_anchor_base.start_time FROM taxonomies t_anchor_base
-               WHERE t_anchor_base.data_provider = $data_provider AND t_anchor_base.stream_id = $stream_id
+               WHERE t_anchor_base.stream_ref = $stream_ref
                  AND t_anchor_base.disabled_at IS NULL AND t_anchor_base.start_time <= $effective_from
                ORDER BY t_anchor_base.start_time DESC, t_anchor_base.group_sequence DESC LIMIT 1),
               0 -- Default anchor to 0
@@ -197,10 +188,8 @@ RETURNS TABLE(
 
       -- Recursive Step: Children of the children found in the previous level.
       SELECT
-          h.root_dp,
-          h.root_sid,
-          tts.child_dp AS descendant_dp,
-          tts.child_sid AS descendant_sid,
+          h.root_stream_ref,
+          tts.child_stream_ref AS descendant_stream_ref,
           -- Multiply parent weight by child weight for cumulative effect
           (h.raw_weight * tts.weight_for_segment)::NUMERIC(36,18) AS raw_weight,
           -- Effective interval start is the later of the parent's path_start or child's segment_start
@@ -211,7 +200,7 @@ RETURNS TABLE(
       FROM
           hierarchy h
       JOIN taxonomy_true_segments tts
-          ON h.descendant_dp = tts.parent_dp AND h.descendant_sid = tts.parent_sid
+          ON h.descendant_stream_ref = tts.stream_ref
       WHERE
           -- Effective intersected path segment must be valid (start <= end)
           GREATEST(h.path_start, tts.segment_start) <= LEAST(h.path_end, tts.segment_end)
@@ -219,7 +208,7 @@ RETURNS TABLE(
           AND LEAST(h.path_end, tts.segment_end) >= (
                COALESCE(
                   (SELECT t_anchor_base.start_time FROM taxonomies t_anchor_base
-                   WHERE t_anchor_base.data_provider = $data_provider AND t_anchor_base.stream_id = $stream_id
+                   WHERE t_anchor_base.stream_ref = $stream_ref
                      AND t_anchor_base.disabled_at IS NULL AND t_anchor_base.start_time <= $effective_from
                    ORDER BY t_anchor_base.start_time DESC, t_anchor_base.group_sequence DESC LIMIT 1),
                   0 -- Default anchor to 0
@@ -238,17 +227,15 @@ RETURNS TABLE(
      *--------------------------------------------------------------------*/
     hierarchy_primitive_paths AS (
       SELECT
-          h.descendant_dp AS primitive_dp,
-          h.descendant_sid AS primitive_sid,
+          h.descendant_stream_ref AS primitive_stream_ref,
           h.raw_weight,
           h.path_start,
           h.path_end
       FROM hierarchy h
       WHERE EXISTS (
           SELECT 1 FROM streams s
-          WHERE s.data_provider = h.descendant_dp
-            AND s.stream_id     = h.descendant_sid
-            AND s.stream_type   = 'primitive' -- Ensure it's a primitive
+          WHERE s.id = h.descendant_stream_ref
+            AND s.stream_type = 'primitive' -- Ensure it's a primitive
       )
     ),
 
@@ -265,8 +252,7 @@ RETURNS TABLE(
      *--------------------------------------------------------------------*/
     primitive_weights AS (
       SELECT
-          hpp.primitive_dp AS data_provider,
-          hpp.primitive_sid AS stream_id,
+          hpp.primitive_stream_ref,
           hpp.raw_weight, -- The raw_weight for this specific path segment
           hpp.path_start AS group_sequence_start, -- The start of this specific path segment
           hpp.path_end AS group_sequence_end -- The end of this specific path segment
@@ -289,8 +275,7 @@ RETURNS TABLE(
             SELECT pe.event_time
             FROM primitive_events pe
             JOIN primitive_weights pw -- Only events from relevant primitives during their active weight interval
-              ON pe.data_provider = pw.data_provider
-             AND pe.stream_id = pw.stream_id
+              ON pe.stream_ref = pw.primitive_stream_ref
              AND pe.event_time >= pw.group_sequence_start
              AND pe.event_time <= pw.group_sequence_end
             WHERE pe.event_time > $effective_from
@@ -317,8 +302,7 @@ RETURNS TABLE(
                 SELECT pe.event_time
                 FROM primitive_events pe
                 JOIN primitive_weights pw -- Check relevance against weight intervals
-                  ON pe.data_provider = pw.data_provider
-                 AND pe.stream_id = pw.stream_id
+                  ON pe.stream_ref = pw.primitive_stream_ref
                  AND pe.event_time >= pw.group_sequence_start
                  AND pe.event_time <= pw.group_sequence_end
                 WHERE pe.event_time <= $effective_from
@@ -344,26 +328,24 @@ RETURNS TABLE(
     -- Step 1: Find initial states (value at or before $effective_from)
     initial_primitive_states AS (
         SELECT
-            pe.data_provider,
-            pe.stream_id,
+            pe.stream_ref,
             pe.event_time, -- Keep the actual time of the initial event
             pe.value
         FROM (
             -- Use ROW_NUMBER to find the latest event per primitive before/at $from
             SELECT
-                pe_inner.data_provider,
-                pe_inner.stream_id,
+                pe_inner.stream_ref,
                 pe_inner.event_time,
                 pe_inner.value,
                 ROW_NUMBER() OVER (
-                    PARTITION BY pe_inner.data_provider, pe_inner.stream_id
+                    PARTITION BY pe_inner.stream_ref
                     ORDER BY pe_inner.event_time DESC, pe_inner.created_at DESC -- Tie-break by creation time
                 ) as rn
             FROM primitive_events pe_inner
             WHERE pe_inner.event_time <= $effective_from -- At or before the start
               AND EXISTS ( -- Ensure the primitive exists in the resolved hierarchy
                   SELECT 1 FROM primitive_weights pw_exists
-                  WHERE pw_exists.data_provider = pe_inner.data_provider AND pw_exists.stream_id = pe_inner.stream_id
+                  WHERE pw_exists.primitive_stream_ref = pe_inner.stream_ref
               )
               AND pe_inner.created_at <= $effective_frozen_at
         ) pe
@@ -373,47 +355,44 @@ RETURNS TABLE(
     -- Step 2: Find distinct primitive events strictly WITHIN the interval ($from < time <= $to).
     primitive_events_in_interval AS (
         SELECT
-            pe.data_provider,
-            pe.stream_id,
+            pe.stream_ref,
             pe.event_time,
             pe.value
         FROM (
              -- Use ROW_NUMBER to pick the latest created_at for duplicate event_times
              SELECT
-                pe_inner.data_provider,
-                pe_inner.stream_id,
+                pe_inner.stream_ref,
                 pe_inner.event_time,
                 pe_inner.created_at,
                 pe_inner.value,
                 ROW_NUMBER() OVER (
-                    PARTITION BY pe_inner.data_provider, pe_inner.stream_id, pe_inner.event_time
+                    PARTITION BY pe_inner.stream_ref, pe_inner.event_time
                     ORDER BY pe_inner.created_at DESC
                 ) as rn
             FROM primitive_events pe_inner
             JOIN primitive_weights pw_check -- Ensure validity against *a* taxonomy interval
-                ON pe_inner.data_provider = pw_check.data_provider
-               AND pe_inner.stream_id = pw_check.stream_id
+                ON pe_inner.stream_ref = pw_check.primitive_stream_ref
                AND pe_inner.event_time >= pw_check.group_sequence_start
                AND pe_inner.event_time <= pw_check.group_sequence_end
             WHERE pe_inner.event_time > $effective_from -- Strictly after start
                 AND pe_inner.event_time <= $effective_to    -- At or before end
                 AND pe_inner.created_at <= $effective_frozen_at
         ) pe
-        WHERE pe.rn = 1 -- Select the latest created_at for each (dp, sid, et)
+        WHERE pe.rn = 1 -- Select the latest created_at for each (stream_ref, et)
     ),
 
     -- Step 3: Combine initial states and interval events.
     all_primitive_points AS (
-        SELECT data_provider, stream_id, event_time, value FROM initial_primitive_states
+        SELECT stream_ref, event_time, value FROM initial_primitive_states
         UNION ALL
-        SELECT data_provider, stream_id, event_time, value FROM primitive_events_in_interval
+        SELECT stream_ref, event_time, value FROM primitive_events_in_interval
     ),
 
     -- Step 4: Calculate value change (delta_value) for each primitive.
     primitive_event_changes AS (
         SELECT * FROM (
-                          SELECT data_provider, stream_id, event_time, value,
-                                 COALESCE(value - LAG(value) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time), value)::numeric(36,18) AS delta_value
+                          SELECT stream_ref, event_time, value,
+                                 COALESCE(value - LAG(value) OVER (PARTITION BY stream_ref ORDER BY event_time), value)::numeric(36,18) AS delta_value
                           FROM all_primitive_points
                       ) calc WHERE delta_value != 0::numeric(36,18)
     ),
@@ -421,24 +400,22 @@ RETURNS TABLE(
     -- Step 5: Find the first time each primitive provides a value. (Added for correctness)
     first_value_times AS (
         SELECT
-            data_provider,
-            stream_id,
+            stream_ref,
             MIN(event_time) as first_value_time
         FROM all_primitive_points -- Based on combined initial state and interval events
-        GROUP BY data_provider, stream_id
+        GROUP BY stream_ref
     ),
 
     -- Step 6: Generate effective weight change events based on first value time. (Added for correctness)
     effective_weight_changes AS (
         -- Positive delta: Occurs at the LATER of weight definition start OR first value time
         SELECT
-            pw.data_provider,
-            pw.stream_id,
+            pw.primitive_stream_ref as stream_ref,
             GREATEST(pw.group_sequence_start, fvt.first_value_time) AS event_time, -- Use effective start time
             pw.raw_weight AS weight_delta
         FROM primitive_weights pw
         INNER JOIN first_value_times fvt -- Only consider primitives that HAVE values
-            ON pw.data_provider = fvt.data_provider AND pw.stream_id = fvt.stream_id
+            ON pw.primitive_stream_ref = fvt.stream_ref
         -- Ensure the calculated effective start time is still within the weight's defined interval
         WHERE GREATEST(pw.group_sequence_start, fvt.first_value_time) <= pw.group_sequence_end
           AND pw.raw_weight != 0::numeric(36,18)
@@ -447,13 +424,12 @@ RETURNS TABLE(
 
         -- Negative delta: Occurs when the original weight interval ends
         SELECT
-            pw.data_provider,
-            pw.stream_id,
+            pw.primitive_stream_ref as stream_ref,
             pw.group_sequence_end + 1 AS event_time,
             -pw.raw_weight AS weight_delta
         FROM primitive_weights pw
         INNER JOIN first_value_times fvt -- Ensure we only add a negative delta if a positive one was possible
-            ON pw.data_provider = fvt.data_provider AND pw.stream_id = fvt.stream_id
+            ON pw.primitive_stream_ref = fvt.stream_ref
         -- Check the same validity condition as the positive delta
         WHERE GREATEST(pw.group_sequence_start, fvt.first_value_time) <= pw.group_sequence_end
           AND pw.raw_weight != 0::numeric(36,18)
@@ -464,8 +440,7 @@ RETURNS TABLE(
     -- Step 7: Combine value and *effective* weight changes into a unified timeline.
     unified_events AS (
         SELECT
-            pec.data_provider,
-            pec.stream_id,
+            pec.stream_ref,
             pec.event_time,
             pec.delta_value,
             0::numeric(36,18) AS weight_delta,
@@ -476,8 +451,7 @@ RETURNS TABLE(
 
         -- *Effective* Weight changes (deltas)
         SELECT
-            ewc.data_provider,
-            ewc.stream_id,
+            ewc.stream_ref,
             ewc.event_time,
             0::numeric(36,18) AS delta_value,
             ewc.weight_delta,
@@ -488,26 +462,24 @@ RETURNS TABLE(
     -- Step 8: Calculate state timeline and delta contributions using window functions.
     primitive_state_timeline AS (
         SELECT
-            data_provider,
-            stream_id,
+            stream_ref,
             event_time,
             delta_value,
             weight_delta,
             -- Calculate value and weight *before* this event using LAG on cumulative sums
-            COALESCE(LAG(value_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as value_before_event,
-            COALESCE(LAG(weight_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as weight_before_event
+            COALESCE(LAG(value_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY stream_ref ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as value_before_event,
+            COALESCE(LAG(weight_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY stream_ref ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as weight_before_event
         FROM (
             SELECT
-                data_provider,
-                stream_id,
+                stream_ref,
                 event_time,
                 delta_value,
                 weight_delta,
                 event_type_priority, -- Ensure it's selected for ordering
                 -- Cumulative value up to and including this event
-                (SUM(delta_value) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as value_after_event,
+                (SUM(delta_value) OVER (PARTITION BY stream_ref ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as value_after_event,
                 -- Cumulative weight up to and including this event
-                (SUM(weight_delta) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as weight_after_event
+                (SUM(weight_delta) OVER (PARTITION BY stream_ref ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as weight_after_event
             FROM unified_events
         ) state_calc
     ),
