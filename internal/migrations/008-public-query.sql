@@ -107,13 +107,13 @@ CREATE OR REPLACE ACTION get_base_value(
     
     -- If base_time is null, try to get it from metadata
     $effective_base_time INT8 := $base_time;
+    $stream_ref := get_stream_id($data_provider, $stream_id);
     if $effective_base_time IS NULL {
         -- First try to get base_time from metadata
         $found_metadata := FALSE;
         for $row in SELECT value_i 
             FROM metadata 
-            WHERE data_provider = $data_provider 
-            AND stream_id = $stream_id 
+            WHERE stream_ref = $stream_ref 
             AND metadata_key = 'default_base_time' 
             AND disabled_at IS NULL
             ORDER BY created_at DESC 
