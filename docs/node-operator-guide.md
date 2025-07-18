@@ -460,6 +460,29 @@ kwild admin status
 > tail -f ~/Library/Logs/tn-postgres.log
 > ```
 
+### Cache Extension (tn_cache)
+
+The `tn_cache` extension provides **node-local caching** for expensive stream queries, making reads on deep composed streams as fast as on simple primitive streams while remaining isolated from network consensus.  Enabling it is optional and **affects only your node**.
+
+**Quick enable**
+
+```toml
+[extensions.tn_cache]
+enabled = true
+# add stream configs here – see detailed guide for examples
+```
+
+After editing `config.toml`, restart `kwild` for the change to take effect.
+
+**Caveats (when cache is ignored)**
+- `frozen_at` or `base_time` parameters set → falls back to full computation
+- Primitive streams (`*_primitive` actions) are never cached
+- `get_index_change` relies on underlying cache via `get_index`; same rules apply
+
+For complete configuration options (stream lists, schedules, metrics, troubleshooting) see the operator-focused section of the tn_cache documentation:
+
+[extensions/tn_cache/README.md#operations--monitoring](../extensions/tn_cache/README.md#operations--monitoring)
+
 ### 7. Become a Validator (Optional)
 
 To upgrade your node to a validator:
@@ -597,7 +620,6 @@ Add or uncomment the following line under the `[Journal]` section:
 ```
 Storage=persistent
 ```
-
 2. **Restart the journald service** to apply the change:
 
 ```bash
@@ -694,8 +716,7 @@ The `launchctl list` command shows three columns:
 
 Expected output when services are running properly:
 
-```
-12345   0   com.trufnetwork.kwild
+```12345   0   com.trufnetwork.kwild
 12346   0   com.trufnetwork.tn-postgres
 ```
 
@@ -820,3 +841,6 @@ private = true
 ```
 
 For more details, see the [Kwil Private RPC documentation](http://docs.kwil.com/docs/node/private-rpc).
+
+
+

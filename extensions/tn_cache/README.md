@@ -227,4 +227,72 @@ CREATE OR REPLACE ACTION get_index_values(
     -- Fall back to computing index values
     -- Your index calculation logic here
 };
-``` 
+```
+
+## Operations & Monitoring (for Node Operators)
+
+### 1. Overview
+The `tn_cache` extension accelerates **read-only** stream queries by storing results in a private PostgreSQL schema (`ext_tn_cache`). Caching is completely local – enabling or disabling it **does not affect consensus** or other nodes.
+
+### 2. Lifecycle
+| Phase | What happens |
+|-------|--------------|
+| **Startup** | Parses `config.toml`, resolves wildcards/`include_children`, stores directives in `ext_tn_cache.cached_streams`, performs an initial refresh (skips if refreshed this cron period). |
+| **Runtime** | Background scheduler refreshes streams on their `cron_schedule`.  If the node is syncing or the last block age exceeds `max_block_age`, refreshes are **paused**.  Wildcards / children are re-resolved on `resolution_schedule` (default daily). |
+| **Shutdown / Disable** | Setting `enabled = false` and restarting cleans up the cache schema safely.  Cached data persists across restarts while enabled. |
+
+### 3. Minimal Configuration Recap
+Enable in `config.toml`:
+```toml
+[extensions.tn_cache]
+enabled = true
+# ONE of the blocks below
+# inline JSON
+streams_inline = '''[ { "data_provider":"0xabc...", "stream_id":"st123...", "cron_schedule":"0 * * * *" } ]'''
+# or CSV file, relative to node root
+# streams_csv_file = "cache_streams.csv"
+```
+Optional fields:
+- `resolution_schedule` (cron, default `0 0 * * *`)
+- `max_block_age` (duration, default `1h`, set `-1` to disable sync-check)
+
+### 4. Metrics & Telemetry
+`tn_cache` exposes OpenTelemetry metrics automatically **when Kwil telemetry is enabled**:
+```toml
+[telemetry]
+enable = true
+otlp_endpoint = "localhost:4318" # OTLP/HTTP collector (Grafana Agent, etc.)
+```
+If the OTEL pipeline is unavailable, metrics fall back to **no-op**, incurring zero overhead (log entry: `OpenTelemetry not available, metrics disabled`).
+
+All metric names are prefixed **`tn_cache.`** (e.g., `tn_cache.hits`, `tn_cache.refresh.duration`). For the authoritative list, inspect your collector/Prometheus scrape or see `metrics.go` in the extension source. Typical categories track hits/misses, data age/volume served, refresh durations/errors, and stream discovery.
+
+### 5. Troubleshooting Quick Reference
+| Symptom | Likely Cause / Fix |
+|---------|-------------------|
+| Startup fails: `configuration validation failed` | Invalid cron, duplicate `streams_inline` & `streams_csv_file`, malformed JSON.  Fix config, restart. |
+| No cache hits | Refresh not yet run or `from` timestamp ahead of data.  Check logs for `refreshing stream`, verify cron, time-range. |
+| Refresh skipped with reason `node is syncing` | Node still syncing or `max_block_age` too low.  Wait or set `max_block_age = "-1"`. |
+| Metrics absent | Telemetry disabled or collector down.  Enable `[telemetry]` section and ensure OTLP endpoint reachable. |
+| High `refresh.duration` | Large datasets or slow DB.  Tune cron schedule, ensure PostgreSQL resources. |
+
+For detailed schema and developer integration (SQL functions), see earlier sections of this README. 
+
+### 6. Caveats & Limitations
+
+These edge-cases cause actions to **bypass the cache and recompute on the fly** (even if `use_cache = true`):
+
+| Action(s) | Parameter / Condition | Effect |
+|-----------|----------------------|--------|
+| `get_record_composed`, `get_index_composed`, `get_index_change` | `frozen_at IS NOT NULL` | Cache disabled – a historical *frozen* snapshot must be computed exactly. |
+| same | `base_time IS NOT NULL` | Cache disabled – custom base time changes the whole index curve. |
+| same | `tn_cache` disabled on node, or `enabled = false` in `config.toml` | Falls back to full computation. |
+| *primitive* versions (`*_primitive`) | Any call | Never cached – primitives read directly from `primitive_events`. |
+
+Additional notes:
+
+1. **`get_index_change` uses the cache indirectly**. It calls `get_index(...)`, which in turn calls `get_index_composed`. If the above conditions permit caching, the underlying composed call will fetch from `tn_cache`; otherwise it recomputes.
+2. If cache is bypassed, the action still completes successfully – you only lose the performance benefit.
+3. You can trace a cache miss via `NOTICE` statements (e.g., `{"cache_hit": false}`) when running queries.
+
+Keep these caveats in mind when benchmarking or debugging cache behaviour. 
