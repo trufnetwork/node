@@ -116,7 +116,7 @@ func TestIncludeChildrenFunctionality(t *testing.T) {
 				csvFile := createTempCSV(t, tc.csvContent)
 				defer cleanup(t, csvFile)
 
-				source := sources.NewCSVSource(csvFile, "")
+				source := sources.NewCSVSource(csvFile, "", log.DiscardLogger)
 				specs, err := source.Load(context.Background(), map[string]string{})
 
 				if tc.expectError {
@@ -439,7 +439,7 @@ func TestCronScheduleValidation(t *testing.T) {
 				csvFile := createTempCSV(t, csvContent)
 				defer cleanup(t, csvFile)
 
-				source := sources.NewCSVSource(csvFile, "")
+				source := sources.NewCSVSource(csvFile, "", log.DiscardLogger)
 				specs, err := source.Load(context.Background(), map[string]string{})
 
 				require.NoError(t, err, "CSV loading should succeed for valid cron: %s", tc.schedule)
@@ -565,7 +565,7 @@ incomplete_row,missing_cron`,
 			defer cleanup(t, csvFile)
 
 			// Create CSV source
-			source := sources.NewCSVSource(csvFile, "")
+			source := sources.NewCSVSource(csvFile, "", log.DiscardLogger)
 
 			// Test Load method
 			rawConfig := map[string]string{}
@@ -598,7 +598,7 @@ incomplete_row,missing_cron`,
 // TestMutualExclusivity tests that JSON and CSV configuration are mutually exclusive
 func TestMutualExclusivity(t *testing.T) {
 	t.Run("both JSON and CSV provided to SourceFactory", func(t *testing.T) {
-		factory := sources.NewSourceFactory()
+		factory := sources.NewSourceFactory(log.DiscardLogger)
 		rawConfig := map[string]string{
 			"streams_inline": `[{
 				"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
@@ -615,7 +615,7 @@ func TestMutualExclusivity(t *testing.T) {
 	})
 
 	t.Run("only JSON provided - should work", func(t *testing.T) {
-		factory := sources.NewSourceFactory()
+		factory := sources.NewSourceFactory(log.DiscardLogger)
 		rawConfig := map[string]string{
 			"streams_inline": `[{
 				"data_provider": "0x1234567890abcdef1234567890abcdef12345678",
@@ -634,7 +634,7 @@ func TestMutualExclusivity(t *testing.T) {
 		csvFile := createTempCSV(t, csvContent)
 		defer cleanup(t, csvFile)
 
-		factory := sources.NewSourceFactory()
+		factory := sources.NewSourceFactory(log.DiscardLogger)
 		rawConfig := map[string]string{
 			"streams_csv_file": csvFile,
 		}
@@ -645,7 +645,7 @@ func TestMutualExclusivity(t *testing.T) {
 	})
 
 	t.Run("neither JSON nor CSV provided - should work (empty config)", func(t *testing.T) {
-		factory := sources.NewSourceFactory()
+		factory := sources.NewSourceFactory(log.DiscardLogger)
 		rawConfig := map[string]string{
 			"enabled": "true",
 		}
@@ -696,7 +696,7 @@ func TestCSVSource_TimestampHandling(t *testing.T) {
 			csvFile := createTempCSV(t, csvContent)
 			defer cleanup(t, csvFile)
 
-			source := sources.NewCSVSource(csvFile, "")
+			source := sources.NewCSVSource(csvFile, "", log.DiscardLogger)
 			specs, err := source.Load(context.Background(), map[string]string{})
 
 			if tt.hasError {

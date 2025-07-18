@@ -9,19 +9,23 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/trufnetwork/kwil-db/core/log"
 )
 
 // CSVSource handles stream configurations loaded from CSV files
 type CSVSource struct {
 	filePath string
 	basePath string // Base path for resolving relative file paths
+	logger   log.Logger
 }
 
 // NewCSVSource creates a new CSV configuration source
-func NewCSVSource(filePath, basePath string) *CSVSource {
+func NewCSVSource(filePath, basePath string, logger log.Logger) *CSVSource {
 	return &CSVSource{
 		filePath: filePath,
 		basePath: basePath,
+		logger:   logger,
 	}
 }
 
@@ -33,7 +37,11 @@ func (s *CSVSource) Name() string {
 // Load reads the CSV file and returns StreamSpec objects
 func (s *CSVSource) Load(ctx context.Context, rawConfig map[string]string) ([]StreamSpec, error) {
 	resolvedPath := s.resolveFilePath()
-	
+
+	if s.logger != nil {
+		s.logger.Info("Loading streams from CSV file", "resolved_path", resolvedPath, "original_path", s.filePath, "base_path", s.basePath)
+	}
+
 	file, err := os.Open(resolvedPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open CSV file %s: %w", resolvedPath, err)
@@ -42,8 +50,8 @@ func (s *CSVSource) Load(ctx context.Context, rawConfig map[string]string) ([]St
 
 	reader := csv.NewReader(file)
 	reader.TrimLeadingSpace = true
-	reader.Comment = '#'           // Allow comments in CSV files
-	reader.FieldsPerRecord = -1    // Allow variable number of fields per record
+	reader.Comment = '#'        // Allow comments in CSV files
+	reader.FieldsPerRecord = -1 // Allow variable number of fields per record
 
 	var specs []StreamSpec
 	lineNumber := 0
@@ -59,18 +67,23 @@ func (s *CSVSource) Load(ctx context.Context, rawConfig map[string]string) ([]St
 
 		lineNumber++
 
-		// Skip empty lines
+		// Skip empty lines and lines that are all whitespace
 		if len(record) == 0 || (len(record) == 1 && strings.TrimSpace(record[0]) == "") {
 			continue
 		}
 
-		// Parse the record into a StreamSpec
 		spec, err := s.parseCSVRecord(record, lineNumber)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing CSV file %s at line %d: %w", resolvedPath, lineNumber, err)
 		}
 
+		// Set source for debugging
+		spec.Source = fmt.Sprintf("file:%s", resolvedPath)
 		specs = append(specs, spec)
+	}
+
+	if s.logger != nil {
+		s.logger.Info("Successfully loaded stream specifications from CSV", "file", resolvedPath, "count", len(specs))
 	}
 
 	return specs, nil
@@ -79,7 +92,7 @@ func (s *CSVSource) Load(ctx context.Context, rawConfig map[string]string) ([]St
 // Validate checks if the CSV file exists and is readable
 func (s *CSVSource) Validate(rawConfig map[string]string) error {
 	resolvedPath := s.resolveFilePath()
-	
+
 	// Check if file exists
 	if _, err := os.Stat(resolvedPath); os.IsNotExist(err) {
 		return fmt.Errorf("CSV file does not exist: %s", resolvedPath)
@@ -102,11 +115,11 @@ func (s *CSVSource) resolveFilePath() string {
 	if filepath.IsAbs(s.filePath) {
 		return s.filePath
 	}
-	
+
 	if s.basePath == "" {
 		return s.filePath
 	}
-	
+
 	return filepath.Join(s.basePath, s.filePath)
 }
 

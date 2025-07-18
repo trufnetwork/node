@@ -21,7 +21,7 @@ type Loader struct {
 func NewLoader(logger log.Logger) *Loader {
 	return &Loader{
 		validator:     validation.DefaultRules(),
-		sourceFactory: sources.NewSourceFactory(),
+		sourceFactory: sources.NewSourceFactory(logger),
 		logger:        logger,
 	}
 }
@@ -30,7 +30,7 @@ func NewLoader(logger log.Logger) *Loader {
 func NewLoaderWithValidation(validator *validation.RuleSet, logger log.Logger) *Loader {
 	return &Loader{
 		validator:     validator,
-		sourceFactory: sources.NewSourceFactory(),
+		sourceFactory: sources.NewSourceFactory(logger),
 		logger:        logger,
 	}
 }
@@ -46,27 +46,27 @@ func (l *Loader) LoadAndProcess(ctx context.Context, rawConfig RawConfig) (*Proc
 	configMap := map[string]string{
 		"enabled": rawConfig.Enabled,
 	}
-	
+
 	// Add streams_inline if provided
 	if rawConfig.StreamsInline != "" {
 		configMap["streams_inline"] = rawConfig.StreamsInline
 	}
-	
+
 	// Add streams_csv_file if provided
 	if rawConfig.StreamsCSVFile != "" {
 		configMap["streams_csv_file"] = rawConfig.StreamsCSVFile
 	}
-	
+
 	// Add resolution_schedule if provided
 	if rawConfig.ResolutionSchedule != "" {
 		configMap["resolution_schedule"] = rawConfig.ResolutionSchedule
 	}
-	
+
 	// Add max_block_age if provided
 	if rawConfig.MaxBlockAge != 0 {
 		configMap["max_block_age"] = time.Duration(rawConfig.MaxBlockAge).String()
 	}
-	
+
 	return l.loadAndProcessInternal(ctx, configMap)
 }
 
@@ -123,7 +123,7 @@ func (l *Loader) loadAndProcessInternal(ctx context.Context, configMap map[strin
 	if resolutionSchedule == "" {
 		resolutionSchedule = DefaultResolutionSchedule
 	}
-	
+
 	// Validate resolution schedule if provided
 	if err := validation.ValidateCronSchedule(resolutionSchedule); err != nil {
 		return nil, fmt.Errorf("invalid resolution schedule: %w", err)

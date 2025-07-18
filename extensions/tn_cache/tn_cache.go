@@ -32,15 +32,6 @@ var TNNumericType = &types.DataType{
 	Metadata: [2]uint16{36, 18}, // precision, scale
 }
 
-// getExtensionNames returns the names of configured extensions for debugging
-func getExtensionNames(extensions map[string]map[string]string) []string {
-	var names []string
-	for name := range extensions {
-		names = append(names, name)
-	}
-	return names
-}
-
 // ParseConfig parses the extension configuration from the node's config file
 func ParseConfig(service *common.Service) (*config.ProcessedConfig, error) {
 	// Use temporary logger for parsing

@@ -69,12 +69,12 @@ func (e *Extension) Close() {
 	if e.scheduler != nil {
 		_ = e.scheduler.Stop()
 	}
-	
+
 	// Stop sync checker
 	if e.syncChecker != nil {
 		e.syncChecker.Stop()
 	}
-	
+
 	// Then close the connection pool
 	if e.db != nil {
 		if wrapper, ok := e.db.(*utilities.PoolDBWrapper); ok {
