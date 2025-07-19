@@ -3,6 +3,9 @@ package config
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -243,7 +246,7 @@ func TestLoadAndProcessResolutionSchedule(t *testing.T) {
 			}
 
 			processedConfig, err := loader.LoadAndProcessFromMap(context.Background(), testConfig)
-			
+
 			if tc.expectError {
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), "invalid resolution schedule")
@@ -253,4 +256,47 @@ func TestLoadAndProcessResolutionSchedule(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCSVPathResolution tests CSV path resolution
+func TestCSVPathResolution(t *testing.T) {
+	// Save original args
+	originalArgs := os.Args
+	defer func() { os.Args = originalArgs }()
+
+	// Create a temporary "root" directory
+	tempRoot, err := os.MkdirTemp("", "test-root-")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempRoot)
+
+	// Create a temporary CSV file inside the temp root
+	tempCSV := filepath.Join(tempRoot, "test_streams.csv")
+	err = os.WriteFile(tempCSV, []byte("0x1234567890abcdef1234567890abcdef12345678,stream1,0 * * * *\n"), 0644)
+	require.NoError(t, err)
+
+	// Mock os.Args to infer the temp root as basePath
+	os.Args = []string{"kwild", "--root", tempRoot, "start"}
+
+	// Create loader (which will infer basePath via factory)
+	var logBuf bytes.Buffer
+	logger := log.New(log.WithLevel(log.LevelDebug), log.WithWriter(&logBuf))
+	loader := NewLoader(logger)
+
+	// Test config with relative CSV path (should resolve to tempRoot/test_streams.csv)
+	testConfig := map[string]string{
+		"enabled":          "true",
+		"streams_csv_file": "test_streams.csv", // Relative to inferred basePath
+	}
+
+	processedConfig, err := loader.LoadAndProcessFromMap(context.Background(), testConfig)
+	require.NoError(t, err)
+
+	// Verify we loaded 1 spec from the CSV
+	require.Len(t, processedConfig.Directives, 1)
+	assert.Equal(t, "stream1", processedConfig.Directives[0].StreamID)
+
+	// Verify logging used the resolved path
+	logOutput := logBuf.String()
+	assert.Contains(t, logOutput, fmt.Sprintf("resolved_path=%s", tempCSV))
+	assert.Contains(t, logOutput, "Successfully loaded stream specifications from CSV")
 }
