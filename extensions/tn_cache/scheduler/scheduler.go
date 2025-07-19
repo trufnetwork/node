@@ -248,27 +248,10 @@ func (s *CacheScheduler) Start(ctx context.Context, processedConfig *config.Proc
 		return fmt.Errorf("store stream configs: %w", err)
 	}
 
-	// Re-resolution detects new streams matching patterns
-	if processedConfig.ResolutionSchedule != "" {
-		if err := s.registerResolutionJob(processedConfig.ResolutionSchedule); err != nil {
-			return fmt.Errorf("register resolution job: %w", err)
-		}
-	}
+	// Start asynchronous initialization once node is synced
+	go s.waitUntilSyncedAndStart(processedConfig, resolvedStreamSpecs)
 
-	// Batch streams with same schedule into single cron job
-	scheduleGroups := s.groupBySchedule(resolvedStreamSpecs)
-
-	for schedule := range scheduleGroups {
-		if err := s.registerRefreshJob(schedule); err != nil {
-			return fmt.Errorf("register refresh job for schedule %s: %w", schedule, err)
-		}
-	}
-
-	s.cron.StartAsync()
-	s.logger.Info("cache scheduler started", "jobs", len(s.jobs))
-
-	// Populate cache immediately instead of waiting for first cron trigger
-	s.runInitialRefresh(resolvedStreamSpecs)
+	s.logger.Info("scheduler initialization deferred until node is synced")
 
 	return nil
 }
@@ -776,4 +759,55 @@ func (s *CacheScheduler) GetCurrentDirectives() []config.CacheDirective {
 	s.resolutionMu.RLock()
 	defer s.resolutionMu.RUnlock()
 	return s.resolvedDirectives
+}
+
+// waitUntilSyncedAndStart waits until SyncChecker (or absence thereof) allows execution, then performs initial refresh,
+// registers cron jobs, and starts the scheduler.
+func (s *CacheScheduler) waitUntilSyncedAndStart(procCfg *config.ProcessedConfig, directives []config.CacheDirective) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			if s.syncChecker == nil {
+				// Sync checking disabled – proceed immediately
+				s.startJobs(procCfg, directives)
+				return
+			}
+			s.syncChecker.Start(s.ctx)
+			if ok, _ := s.syncChecker.CanExecute(); ok {
+				s.startJobs(procCfg, directives)
+				return
+			}
+		}
+	}
+}
+
+// startJobs runs initial refresh, registers resolution & refresh cron jobs, then starts gocron.
+func (s *CacheScheduler) startJobs(procCfg *config.ProcessedConfig, directives []config.CacheDirective) {
+	s.logger.Info("node synced – starting cache scheduler jobs")
+
+	// Run initial refresh (respecting skip logic)
+	s.runInitialRefresh(directives)
+
+	// Register resolution job if configured
+	if procCfg.ResolutionSchedule != "" {
+		if err := s.registerResolutionJob(procCfg.ResolutionSchedule); err != nil {
+			s.logger.Warn("failed to register resolution job", "error", err)
+		}
+	}
+
+	// Register refresh cron jobs per schedule
+	scheduleGroups := s.groupBySchedule(directives)
+	for schedule := range scheduleGroups {
+		if err := s.registerRefreshJob(schedule); err != nil {
+			s.logger.Warn("failed to register refresh job", "schedule", schedule, "error", err)
+		}
+	}
+
+	s.cron.StartAsync()
+	s.logger.Info("cache scheduler started", "jobs", len(s.jobs))
 }

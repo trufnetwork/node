@@ -12,7 +12,7 @@ import (
 	"github.com/trufnetwork/kwil-db/extensions/precompiles"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/pgxpool" // for admin.Status
 	"github.com/trufnetwork/node/extensions/tn_cache/config"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal"
 	"github.com/trufnetwork/node/extensions/tn_cache/internal/constants"
@@ -306,7 +306,6 @@ func SetupCacheExtension(ctx context.Context, config *config.ProcessedConfig, en
 
 	engineOps := internal.NewEngineOperations(engine, db, "main", service.Logger)
 
-	// Initialize sync checker for sync-aware caching
 	syncChecker := syncschecker.NewSyncChecker(service.Logger, config.MaxBlockAge)
 	syncChecker.Start(ctx)
 

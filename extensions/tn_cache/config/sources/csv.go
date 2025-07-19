@@ -72,6 +72,11 @@ func (s *CSVSource) Load(ctx context.Context, rawConfig map[string]string) ([]St
 			continue
 		}
 
+		// Skip header if present
+		if lineNumber == 1 && isHeader(record) {
+			continue
+		}
+
 		spec, err := s.parseCSVRecord(record, lineNumber)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing CSV file %s at line %d: %w", resolvedPath, lineNumber, err)
@@ -121,6 +126,16 @@ func (s *CSVSource) resolveFilePath() string {
 	}
 
 	return filepath.Join(s.basePath, s.filePath)
+}
+
+// isHeader checks if the record matches the expected CSV header
+func isHeader(record []string) bool {
+	if len(record) < 3 {
+		return false
+	}
+	return strings.TrimSpace(record[0]) == "data_provider" &&
+		strings.TrimSpace(record[1]) == "stream_id" &&
+		strings.TrimSpace(record[2]) == "cron_schedule"
 }
 
 // parseCSVRecord converts a CSV record into a StreamSpec
