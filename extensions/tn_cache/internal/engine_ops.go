@@ -145,7 +145,7 @@ func (t *EngineOperations) callWithTrace(ctx context.Context, engineCtx *common.
 			_, err := t.engine.Call(engineCtx, t.db, t.namespace, action, args, processResult)
 			return nil, err
 		})
-	
+
 	return err
 }
 
@@ -284,7 +284,8 @@ func (t *EngineOperations) GetRecordComposed(ctx context.Context, provider, stre
 			from,     // from timestamp
 			to,       // to timestamp
 			nil,      // frozen_at (not applicable for cache refresh)
-			false,    // don't use cache to get new data
+			// false,    // don't use cache to get new data
+			// It's false by default. let's omit to be ok with new and old version of actions
 		},
 		func(row *common.Row) error {
 			if len(row.Values) >= 2 {
@@ -341,11 +342,12 @@ func (t *EngineOperations) GetIndexComposed(ctx context.Context, provider, strea
 	args := []any{
 		provider,
 		streamID,
-		from,  // from timestamp
-		to,    // to timestamp (fetch all available)
-		nil,   // frozen_at (not applicable for cache refresh)
-		nil,   // base_time (NULL to use default)
-		false, // don't use cache to get new data
+		from, // from timestamp
+		to,   // to timestamp (fetch all available)
+		nil,  // frozen_at (not applicable for cache refresh)
+		nil,  // base_time (NULL to use default)
+		// It's false by default. let's omit to be ok with new and old version of actions
+		// false, // don't use cache to get new data
 	}
 
 	err := t.callWithTrace(
