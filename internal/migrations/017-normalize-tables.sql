@@ -66,7 +66,7 @@ CREATE INDEX IF NOT EXISTS tax_latest_sequence_idx ON taxonomies (stream_ref, st
 
 -- Update parent_stream_ref
 UPDATE taxonomies 
-SET parent_stream_ref = s.id
+SET stream_ref = s.id
 FROM streams s 
 WHERE taxonomies.data_provider = s.data_provider 
 AND taxonomies.stream_id = s.stream_id;
