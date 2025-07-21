@@ -50,6 +50,10 @@ func testAGGR02_WeightedContributions(t *testing.T, useCache bool) func(ctx cont
 			return errors.Wrap(err, "error creating ethereum address")
 		}
 		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
 
 		// Setup the composed stream with 3 primitive streams with different weights
 		err = setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{

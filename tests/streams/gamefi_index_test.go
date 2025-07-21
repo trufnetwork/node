@@ -114,8 +114,13 @@ func WithGamefiTestSetup(testFn func(ctx context.Context, platform *kwilTesting.
 		// Set the platform signer
 		platform = procedure.WithSigner(platform, gamefiDeployer.Bytes())
 
+		err := setup.CreateDataProvider(ctx, platform, gamefiDeployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+
 		// 1. Setup Dappradar GameFi Index (primitive stream)
-		err := setup.SetupPrimitive(ctx, setup.SetupPrimitiveInput{
+		err = setup.SetupPrimitive(ctx, setup.SetupPrimitiveInput{
 			Platform: platform,
 			Height:   1,
 			PrimitiveStreamWithData: setup.PrimitiveStreamWithData{
@@ -272,6 +277,11 @@ func WithGamefiProportionalTestSetup(testFn func(ctx context.Context, platform *
 		// Set the platform signer
 		platform = procedure.WithSigner(platform, gamefiDeployer.Bytes())
 
+		err := setup.CreateDataProvider(ctx, platform, gamefiDeployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+
 		// Calculate proportional values
 		dappradarProportionalBaseValue := dappradarBaseValue * dappradarScaleFactor
 		dappradarProportionalCurrentValue := dappradarCurrentValue * dappradarScaleFactor
@@ -279,7 +289,7 @@ func WithGamefiProportionalTestSetup(testFn func(ctx context.Context, platform *
 		coingeckoProportionalCurrentValue := coingeckoCurrentValue * coingeckoScaleFactor
 
 		// 1. Setup Dappradar GameFi Index (primitive stream) - scaled down by 1000
-		err := setup.SetupPrimitive(ctx, setup.SetupPrimitiveInput{
+		err = setup.SetupPrimitive(ctx, setup.SetupPrimitiveInput{
 			Platform: platform,
 			Height:   1,
 			PrimitiveStreamWithData: setup.PrimitiveStreamWithData{

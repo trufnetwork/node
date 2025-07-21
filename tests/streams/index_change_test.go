@@ -35,6 +35,10 @@ func TestIndexChange(t *testing.T) {
 func withTestIndexChangeSetup(test func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// setup deployer
+		err := setup.CreateDataProvider(ctx, platform, defaultDeployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
 		return test(ctx, procedure.WithSigner(platform, defaultDeployer.Bytes()))
 	}
 }

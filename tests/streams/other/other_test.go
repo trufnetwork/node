@@ -42,6 +42,9 @@ func TestAddressValidation(t *testing.T) {
 					require.NoError(t, err, "failed to enable valid address for stream creation")
 
 					// Test with valid Ethereum address
+					err = setup.CreateDataProvider(ctx, platform, defaultStreamLocator.DataProvider.Address())
+					require.NoError(t, err, "error registering data provider")
+
 					err = setup.UntypedCreateStream(ctx, txPlatform, defaultStreamLocator.StreamId.String(), validAddress.Address(), string(setup.ContractTypePrimitive))
 					require.NoError(t, err, "valid Ethereum address should be accepted")
 				}))
@@ -95,6 +98,9 @@ func TestStreamIDValidation(t *testing.T) {
 					// Enable defaultCaller to create streams
 					err := setup.AddMemberToRoleBypass(ctx, txPlatform, "system", "network_writer", defaultCaller)
 					require.NoError(t, err, "failed to enable default caller for stream creation")
+
+					err = setup.CreateDataProvider(ctx, platform, defaultStreamLocator.DataProvider.Address())
+					require.NoError(t, err, "error registering data provider")
 
 					// Test valid stream ID
 					err = setup.UntypedCreateStream(ctx, txPlatform, defaultStreamLocator.StreamId.String(), defaultCaller, string(setup.ContractTypePrimitive))
@@ -155,8 +161,11 @@ func TestStreamIDValidation(t *testing.T) {
 					streamID := "st123456789012345678901234567890"
 					owner1 := defaultCaller
 
+					err := setup.CreateDataProvider(ctx, platform, owner1)
+					require.NoError(t, err, "error registering data provider")
+
 					// Create the first stream with owner1
-					err := setup.CreateStream(ctx, txPlatform, setup.StreamInfo{
+					err = setup.CreateStream(ctx, txPlatform, setup.StreamInfo{
 						Type: setup.ContractTypePrimitive,
 						Locator: types.StreamLocator{
 							StreamId:     *util.NewRawStreamId(streamID),
@@ -222,6 +231,11 @@ func testAnyUserCanCreateStream(t *testing.T) func(ctx context.Context, platform
 				return errors.Wrapf(err, "failed to enable user %s to create streams", user)
 			}
 
+			err = setup.CreateDataProvider(ctx, platform, user)
+			if err != nil {
+				return errors.Wrapf(err, "error registering data provider")
+			}
+
 			// Attempt to create a stream with the user
 			err = setup.UntypedCreateStream(ctx, platform, streamID, user, string(setup.ContractTypePrimitive))
 			if err != nil {
@@ -254,6 +268,11 @@ func testMultipleStreamCreation(t *testing.T) func(ctx context.Context, platform
 			return errors.Wrap(err, "error creating ethereum address")
 		}
 		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrapf(err, "error registering data provider")
+		}
+
 		streamInfos := []setup.StreamInfo{
 			{
 				Type: setup.ContractTypePrimitive,

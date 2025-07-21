@@ -574,6 +574,11 @@ func setupTruflationFrozenTest(testFn func(ctx context.Context, platform *kwilTe
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		platform = procedure.WithSigner(platform, deployerTruflation.Bytes())
 
+		err := setup.CreateDataProvider(ctx, platform, deployerTruflation.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+
 		// 1. Deploy primitive
 		if err := setup.SetupPrimitive(ctx, setup.SetupPrimitiveInput{
 			Platform: platform,
