@@ -197,6 +197,7 @@ RETURNS TABLE(
     $max_int8 INT8 := 9223372036854775000;   -- "Infinity" sentinel
     $effective_after INT8 := COALESCE($after, 0);
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
+    $stream_ref := get_stream_id($data_provider, $stream_id);
 
     $earliest_event_time INT8;
 
@@ -204,70 +205,59 @@ RETURNS TABLE(
      * Step 2: Recursively gather all children (ignoring overshadow),
      *         then identify primitive leaves.
      */
-    for $row in WITH RECURSIVE all_taxonomies AS (
-      /* 2a) Direct children of ($data_provider, $stream_id) */
+   for $row in WITH RECURSIVE all_taxonomies AS (
+      /* 2a) Direct children of $stream_ref */
       SELECT
-        t.data_provider,
-        t.stream_id,
-        t.child_data_provider,
-        t.child_stream_id
+        t.stream_ref,
+        t.child_stream_ref
       FROM taxonomies t
-      WHERE t.data_provider = $data_provider
-        AND t.stream_id     = $stream_id
+      WHERE t.stream_ref = $stream_ref
         AND t.disabled_at IS NULL
 
       UNION
 
       /* 2b) For each discovered child, gather its own children */
       SELECT
-        at.child_data_provider AS data_provider,
-        at.child_stream_id     AS stream_id,
-        t.child_data_provider,
-        t.child_stream_id
+        at.child_stream_ref AS stream_ref,
+        t.child_stream_ref
       FROM all_taxonomies at
       JOIN taxonomies t
-        ON t.data_provider = at.child_data_provider
-       AND t.stream_id     = at.child_stream_id
-       AND t.disabled_at IS NULL
+        ON t.stream_ref = at.child_stream_ref
+      AND t.disabled_at IS NULL
     ),
     primitive_leaves AS (
       /* Keep only references pointing to primitive streams */
       SELECT DISTINCT
-        at.child_data_provider AS data_provider,
-        at.child_stream_id     AS stream_id
+        at.child_stream_ref AS stream_ref
       FROM all_taxonomies at
       JOIN streams s
-        ON s.data_provider = at.child_data_provider
-       AND s.stream_id     = at.child_stream_id
-       AND s.stream_type   = 'primitive'
+        ON s.id = at.child_stream_ref
+      AND s.stream_type = 'primitive'
     ),
     /*
-     * Step 3: In each primitive, pick the single earliest event_time >= effective_after.
-     *         ROW_NUMBER=1 => that "earliest" champion. Tie-break by created_at DESC.
-     */
+    * Step 3: In each primitive, pick the single earliest event_time >= effective_after.
+    *         ROW_NUMBER=1 => that "earliest" champion. Tie-break by created_at DESC.
+    */
     earliest_events AS (
       SELECT
-        pl.data_provider,
-        pl.stream_id,
+        pl.stream_ref,
         pe.event_time,
         pe.value,
         pe.created_at,
         ROW_NUMBER() OVER (
-          PARTITION BY pl.data_provider, pl.stream_id
+          PARTITION BY pl.stream_ref
           ORDER BY pe.event_time ASC, pe.created_at DESC
         ) AS rn
       FROM primitive_leaves pl
       JOIN primitive_events pe
-        ON pe.data_provider = pl.data_provider
-       AND pe.stream_id     = pl.stream_id
+        ON pe.stream_ref = pl.stream_ref
       WHERE pe.event_time   >= $effective_after
         AND pe.created_at   <= $effective_frozen_at
     ),
     earliest_values AS (
-      /* Step 4: Filter to rn=1 => the single earliest event per (dp, sid) */
+      /* Step 4: Filter to rn=1 => the single earliest event per stream_ref */
       SELECT
-        data_provider,
-        stream_id,
+        stream_ref,
         event_time,
         value
       FROM earliest_events
@@ -291,9 +281,9 @@ RETURNS TABLE(
     }
 
     /*
-     * Step 7: If we have earliest_event_time, call get_record_composed() at
-     *          [earliest_event_time, earliest_event_time].
-     */
+    * Step 7: If we have earliest_event_time, call get_record_composed() at
+    *          [earliest_event_time, earliest_event_time].
+    */
     IF $earliest_event_time IS DISTINCT FROM NULL {
         for $row in get_record_composed($data_provider, $stream_id, $earliest_event_time, $earliest_event_time, $frozen_at, $use_cache) {
             return next $row.event_time, $row.value;
