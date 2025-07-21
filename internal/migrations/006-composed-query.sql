@@ -40,7 +40,8 @@ CREATE OR REPLACE ACTION get_record_composed(
     $stream_id TEXT,      -- Target composed stream
     $from INT8,           -- Start of requested time range (inclusive)
     $to INT8,             -- End of requested time range (inclusive)
-    $frozen_at INT8       -- Created-at cutoff: only consider events created before this
+    $frozen_at INT8,      -- Created-at cutoff: only consider events created before this
+    $use_cache BOOL DEFAULT false  -- Whether to use cache (default: false)
 ) PRIVATE VIEW
 RETURNS TABLE(
     event_time INT8,
@@ -68,9 +69,26 @@ RETURNS TABLE(
         ERROR('Not allowed to compose stream');
     }
 
-        -- for historical consistency, if both from and to are omitted, return the latest record
+    -- Set default value for enable_cache
+    $effective_enable_cache := COALESCE($use_cache, false);
+    $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL; -- frozen queries bypass cache
+
+    if $effective_enable_cache {
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $from, $to);
+    }
+    
+    -- Check if cache is enabled and frozen_at is null (frozen queries bypass cache)
+    if $effective_enable_cache {
+        for $row in tn_cache.get_cached_data($data_provider, $stream_id, $from, $to) {
+            RETURN NEXT $row.event_time, $row.value;
+        }
+        return;
+    }
+
+    -- for historical consistency, if both from and to are omitted, return the latest record
     if $from IS NULL AND $to IS NULL {
-        FOR $row IN get_last_record_composed($data_provider, $stream_id, NULL, $effective_frozen_at) {
+        -- here we use the original $use_cache parameter, as it was the user's intent
+        FOR $row IN get_last_record_composed($data_provider, $stream_id, NULL, $effective_frozen_at, $use_cache) {
             RETURN NEXT $row.event_time, $row.value;
         }
         RETURN;
@@ -216,7 +234,7 @@ RETURNS TABLE(
           )
           -- Intersected segment must start at or before query end
           AND GREATEST(h.path_start, tts.segment_start) <= $effective_to
-          AND h.level < 10 -- Recursion depth limit
+          AND h.level < 1000 -- Recursion depth limit to prevent taxonomy recursion attacks
     ),
 
     /*----------------------------------------------------------------------

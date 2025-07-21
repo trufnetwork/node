@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/trufnetwork/sdk-go/core/types"
 
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	"github.com/trufnetwork/node/extensions/tn_cache"
 	"github.com/trufnetwork/node/internal/benchmark/trees"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
 	"github.com/trufnetwork/sdk-go/core/util"
@@ -30,6 +32,26 @@ func runBenchmark(ctx context.Context, platform *kwilTesting.Platform, logger *t
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to setup schemas")
+	}
+
+	// Refresh cache if enabled
+	if c.CacheEnabled {
+		helper := tn_cache.GetTestHelper()
+		if helper == nil {
+			return nil, errors.New("tn_cache test helper not available - check extension init")
+		}
+		ext := tn_cache.GetExtension()
+		if ext == nil || !ext.IsEnabled() {
+			return nil, errors.New("tn_cache extension not enabled - config mismatch")
+		}
+		recordsCached, err := helper.RefreshAllStreamsSync(ctx)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to refresh cache after setup")
+		}
+		if recordsCached == 0 {
+			return nil, errors.New("cache refresh populated 0 records")
+		}
+		LogInfo(logger, "Cache refreshed with %d records", recordsCached)
 	}
 
 	// Triggering the analyze command for the given tables makes the query planner
@@ -87,57 +109,29 @@ func runSingleTest(ctx context.Context, input RunSingleTestInput) (Result, error
 	LogPhaseEnter(
 		input.Logger,
 		"runSingleTest",
-		"Procedure: %s, DataPoints: %d, Visibility: %s",
+		"Procedure: %s, DataPoints: %d, Visibility: %s, CacheEnabled: %t",
 		input.Procedure,
 		input.DataPoints,
 		visibilityToString(input.Case.Visibility),
+		input.Case.CacheEnabled,
 	)
 	defer LogPhaseExit(input.Logger, time.Now(), "runSingleTest", "")
-	// we're querying the index-0 stream because this is the root stream
-	rangeParams := getRangeParameters(input.DataPoints)
-	fromDate := rangeParams.FromDate.Unix()
-	toDate := rangeParams.ToDate.Unix()
 
-	nthLocator := types.StreamLocator{
-		DataProvider: *MustEthereumAddressFromBytes(input.Platform.Deployer),
-		StreamId:     *getStreamId(0),
-	}
 	result := Result{
-		Case:          input.Case,
-		Procedure:     input.Procedure,
-		DataPoints:    input.DataPoints,
-		MaxDepth:      input.Tree.MaxDepth,
-		CaseDurations: make([]time.Duration, input.Case.Samples),
+		Case:                  input.Case,
+		Procedure:             input.Procedure,
+		DataPoints:            input.DataPoints,
+		MaxDepth:              input.Tree.MaxDepth,
+		CaseDurations:         make([]time.Duration, input.Case.Samples),
+		CacheVerified:         false,
+		CachePerformanceDelta: 0,
 	}
 
 	for i := 0; i < input.Case.Samples; i++ {
-		// args for:
-		// get_record: dataProvider, streamId, fromDate, toDate, frozenAt
-		// get_index: dataProvider, streamId, fromDate, toDate, frozenAt, baseDate
-		// get_index_change: dataProvider, streamId, fromDate, toDate, frozenAt, baseDate, daysInterval
-		locator_args := []any{nthLocator.DataProvider.Address(), nthLocator.StreamId.String()}
-		args := append(locator_args, []any{fromDate, toDate, nil}...)
-		switch input.Procedure {
-		case ProcedureGetIndex:
-			args = append(args, nil) // baseDate
-		case ProcedureGetChangeIndex:
-			args = append(args, nil) // baseDate
-			args = append(args, 1)   // daysInterval
-		case ProcedureGetFirstRecord:
-			// we reset as is not the same structure as the other procedures
-			// get_first_record: dataProvider, streamId, afterDate, frozenAt
-			args = append(locator_args, nil, nil) // afterDate, frozenAt
-		case ProcedureGetLastRecord:
-			// we reset as is not the same structure as the other procedures
-			// get_last_record: dataProvider, streamId, beforeDate, frozenAt
-			args = append(locator_args, nil, nil) // beforeDate, frozenAt
-		}
+		// Build args with appropriate cache setting for this benchmark case
+		args := buildProcedureArgs(input, input.Case.CacheEnabled)
 
-		// FYI: we already tested sleeping for 10 seconds before running to see if
-		// the  memory is affected by previous operations, but it's not.
-		// time.Sleep(10 * time.Second)
-
-		LogInfo(input.Logger, "Executing procedure %s, Sample %d/%d", input.Procedure, i+1, input.Case.Samples)
+		LogInfo(input.Logger, "Executing procedure %s, Sample %d/%d (cache: %t)", input.Procedure, i+1, input.Case.Samples, input.Case.CacheEnabled)
 		collector, err := benchutil.StartDockerMemoryCollector("kwil-testing-postgres")
 		if err != nil {
 			return Result{}, err
@@ -165,6 +159,30 @@ func runSingleTest(ctx context.Context, input RunSingleTestInput) (Result, error
 		}
 		result.CaseDurations[i] = time.Since(start)
 
+		// Cache verification (only on first sample to avoid redundancy)
+		if input.Case.CacheEnabled && i == 0 {
+			// Re-run with opposite cache setting for comparison
+			argsNonCache := buildProcedureArgs(input, false)
+			LogInfo(input.Logger, "Running cache verification for %s", input.Procedure)
+			nonCacheStart := time.Now()
+			rowsNonCache, err := executeStreamProcedure(ctx, input.Platform, input.Logger, string(input.Procedure), argsNonCache, readerAddress.Bytes())
+			nonCacheDuration := time.Since(nonCacheStart)
+
+			if err != nil {
+				LogInfo(input.Logger, "Cache verification failed - non-cache execution error: %v", err)
+				result.CacheVerified = false
+			} else if !reflect.DeepEqual(rows, rowsNonCache) {
+				LogInfo(input.Logger, "Cache verification failed - results don't match for %s", input.Procedure)
+				LogInfo(input.Logger, "Cached rows: %d, Non-cached rows: %d", len(rows), len(rowsNonCache))
+				result.CacheVerified = false
+				return Result{}, errors.New("cached results do not match non-cached results")
+			} else {
+				result.CacheVerified = true
+				result.CachePerformanceDelta = result.CaseDurations[i] - nonCacheDuration
+				LogInfo(input.Logger, "Cache verification passed for %s (delta: %v)", input.Procedure, result.CachePerformanceDelta)
+			}
+		}
+
 		collector.Stop()
 		result.MemoryUsage, err = collector.GetMaxMemoryUsage()
 		if err != nil {
@@ -173,6 +191,39 @@ func runSingleTest(ctx context.Context, input RunSingleTestInput) (Result, error
 	}
 
 	return result, nil
+}
+
+// buildProcedureArgs constructs the argument list for a procedure call with the specified cache setting
+func buildProcedureArgs(input RunSingleTestInput, useCache bool) []any {
+	rangeParams := getRangeParameters(input.DataPoints)
+	fromDate := rangeParams.FromDate.Unix()
+	toDate := rangeParams.ToDate.Unix()
+
+	nthLocator := types.StreamLocator{
+		DataProvider: *MustEthereumAddressFromBytes(input.Platform.Deployer),
+		StreamId:     *getStreamId(0),
+	}
+
+	locator_args := []any{nthLocator.DataProvider.Address(), nthLocator.StreamId.String()}
+	args := append(locator_args, []any{fromDate, toDate, nil}...)
+
+	switch input.Procedure {
+	case ProcedureGetRecord:
+		args = append(args, useCache)
+	case ProcedureGetIndex:
+		args = append(args, nil) // baseDate
+		args = append(args, useCache)
+	case ProcedureGetChangeIndex:
+		args = append(args, nil) // baseDate
+		args = append(args, 1)   // daysInterval
+		args = append(args, useCache)
+	case ProcedureGetFirstRecord:
+		args = append(locator_args, nil, nil, useCache) // afterDate, frozenAt, useCache
+	case ProcedureGetLastRecord:
+		args = append(locator_args, nil, nil, useCache) // beforeDate, frozenAt, useCache
+	}
+
+	return args
 }
 
 type RunBenchmarkInput struct {
@@ -190,9 +241,6 @@ func getBenchmarkFn(benchmarkCase BenchmarkCase, resultCh *chan []Result) func(c
 		logger := platform.Logger.(*testing.T)
 		LogPhaseEnter(logger, "getBenchmarkFn", "Case: %+v", benchmarkCase)
 		defer LogPhaseExit(logger, time.Now(), "getBenchmarkFn", "")
-
-		// The original log.Println can be removed or kept if desired for a different log stream.
-		// log.Println("running benchmark", benchmarkCase)
 
 		platform = procedure.WithSigner(platform, deployer.Bytes())
 

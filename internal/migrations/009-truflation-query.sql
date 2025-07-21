@@ -130,6 +130,7 @@ CREATE OR REPLACE ACTION truflation_get_record_primitive(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
+    -- Note: No cache; direct queries without computation
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
     
@@ -244,6 +245,7 @@ CREATE OR REPLACE ACTION truflation_last_rc_primitive(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
+    -- Note: No cache; direct queries without computation
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
 
@@ -301,6 +303,7 @@ CREATE OR REPLACE ACTION truflation_first_rc_primitive(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
+   -- Note: No cache; direct queries without computation
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
     
@@ -351,7 +354,8 @@ CREATE OR REPLACE ACTION truflation_get_index(
     $from INT8,
     $to INT8,
     $frozen_at INT8,
-    $base_time INT8
+    $base_time INT8,
+    $use_cache BOOL DEFAULT false
 ) PUBLIC view returns table(
     event_time INT8,
     value NUMERIC(36,18)
@@ -362,11 +366,12 @@ CREATE OR REPLACE ACTION truflation_get_index(
     
     -- Route to the appropriate internal action
     if $is_primitive {
+        -- Primitives: No cache (direct queries, no computation)
         for $row in truflation_get_index_primitive($data_provider, $stream_id, $from, $to, $frozen_at, $base_time) {
             RETURN NEXT $row.event_time, $row.value;
         }
     } else {
-        for $row in truflation_get_index_composed($data_provider, $stream_id, $from, $to, $frozen_at, $base_time) {
+        for $row in truflation_get_index_composed($data_provider, $stream_id, $from, $to, $frozen_at, $base_time, $use_cache) {
             RETURN NEXT $row.event_time, $row.value;
         }
     }
@@ -386,6 +391,7 @@ CREATE OR REPLACE ACTION truflation_get_index_primitive(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
+    -- Note: No cache; direct queries without computation
     $data_provider := LOWER($data_provider);
 
     -- Check read permissions
@@ -415,7 +421,7 @@ CREATE OR REPLACE ACTION truflation_get_index_primitive(
     }
 
     -- Get the base value (will use frozen mechanism through truflation_get_base_value)
-    $base_value NUMERIC(36,18) := truflation_get_base_value($data_provider, $stream_id, $effective_base_time, $frozen_at);
+    $base_value NUMERIC(36,18) := truflation_get_base_value($data_provider, $stream_id, $effective_base_time, $frozen_at, false);
 
     -- Check if base value is zero to avoid division by zero
     if $base_value = 0::NUMERIC(36,18) {
@@ -447,7 +453,8 @@ CREATE OR REPLACE ACTION truflation_get_record(
     $stream_id TEXT,
     $from INT8,
     $to INT8,
-    $frozen_at INT8
+    $frozen_at INT8,
+    $use_cache BOOL DEFAULT false
 ) PUBLIC view returns table(
     event_time INT8,
     value NUMERIC(36,18)
@@ -458,11 +465,12 @@ CREATE OR REPLACE ACTION truflation_get_record(
     
     -- Route to the appropriate internal action
     if $is_primitive {
+        -- Primitives: No cache (direct queries, no computation)
         for $row in truflation_get_record_primitive($data_provider, $stream_id, $from, $to, $frozen_at) {
             RETURN NEXT $row.event_time, $row.value;
         }
     } else {
-        for $row in truflation_get_record_composed($data_provider, $stream_id, $from, $to, $frozen_at) {
+        for $row in truflation_get_record_composed($data_provider, $stream_id, $from, $to, $frozen_at, $use_cache) {
             RETURN NEXT $row.event_time, $row.value;
         }
     }
@@ -476,7 +484,8 @@ CREATE OR REPLACE ACTION truflation_get_last_record(
     $data_provider TEXT,
     $stream_id TEXT,
     $before INT8,
-    $frozen_at INT8
+    $frozen_at INT8,
+    $use_cache BOOL DEFAULT false
 ) PUBLIC view returns table(
     event_time INT8,
     value NUMERIC(36,18)
@@ -487,13 +496,14 @@ CREATE OR REPLACE ACTION truflation_get_last_record(
     
     -- Route to the appropriate internal action
     if $is_primitive {
+        -- Primitives: No cache (direct queries, no computation)
         -- unfortunately, using the query directly creates error, then we use return next
         for $row in truflation_last_rc_primitive($data_provider, $stream_id, $before, $frozen_at) {
             RETURN NEXT $row.event_time, $row.value;
         }
     } else {
         -- unfortunately, using the query directly creates error, then we use return next
-        for $row in truflation_last_rc_composed($data_provider, $stream_id, $before, $frozen_at) {
+        for $row in truflation_last_rc_composed($data_provider, $stream_id, $before, $frozen_at, $use_cache) {
             RETURN NEXT $row.event_time, $row.value;
         }
     }
@@ -507,7 +517,8 @@ CREATE OR REPLACE ACTION truflation_get_first_record(
     $data_provider TEXT,
     $stream_id TEXT,
     $after INT8,
-    $frozen_at INT8
+    $frozen_at INT8,
+    $use_cache BOOL DEFAULT false
 ) PUBLIC view returns table(
     event_time INT8,
     value NUMERIC(36,18)
@@ -518,11 +529,12 @@ CREATE OR REPLACE ACTION truflation_get_first_record(
 
     -- Route to the appropriate internal action
     if $is_primitive {
+        -- Primitives: No cache (direct queries, no computation)
         for $row in truflation_first_rc_primitive($data_provider, $stream_id, $after, $frozen_at) {
             RETURN NEXT $row.event_time, $row.value;
         }
     } else {
-        for $row in truflation_first_rc_composed($data_provider, $stream_id, $after, $frozen_at) {
+        for $row in truflation_first_rc_composed($data_provider, $stream_id, $after, $frozen_at, $use_cache) {
             RETURN NEXT $row.event_time, $row.value;
         }
     }
@@ -536,7 +548,8 @@ CREATE OR REPLACE ACTION truflation_get_base_value(
     $data_provider TEXT,
     $stream_id TEXT,
     $base_time INT8,
-    $frozen_at INT8
+    $frozen_at INT8,
+    $use_cache BOOL DEFAULT false
 ) PUBLIC view returns (value NUMERIC(36,18)) {
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
@@ -571,7 +584,7 @@ CREATE OR REPLACE ACTION truflation_get_base_value(
             -- Execute the function and store results in variables
             $first_time INT8;
             $first_value NUMERIC(36,18);
-            for $record in truflation_get_first_record($data_provider, $stream_id, NULL, $frozen_at) {
+            for $record in truflation_get_first_record($data_provider, $stream_id, NULL, $frozen_at, $use_cache) {
                 $first_time := $record.event_time;
                 $first_value := $record.value;
                 $found := TRUE;
@@ -590,7 +603,7 @@ CREATE OR REPLACE ACTION truflation_get_base_value(
     -- Try to find an exact match at base_time
     $found_exact := FALSE;
     $exact_value NUMERIC(36,18);
-    for $row in truflation_get_record($data_provider, $stream_id, $effective_base_time, $effective_base_time, $frozen_at) {
+    for $row in truflation_get_record($data_provider, $stream_id, $effective_base_time, $effective_base_time, $frozen_at, $use_cache) {
         $exact_value := $row.value;
         $found_exact := TRUE;
         break;
@@ -603,7 +616,7 @@ CREATE OR REPLACE ACTION truflation_get_base_value(
     -- If no exact match, try to find the closest value before base_time
     $found_before := FALSE;
     $before_value NUMERIC(36,18);
-    for $row in truflation_get_last_record($data_provider, $stream_id, $effective_base_time, $frozen_at) {
+    for $row in truflation_get_last_record($data_provider, $stream_id, $effective_base_time, $frozen_at, $use_cache) {
         $before_value := $row.value;
         $found_before := TRUE;
         break;
@@ -616,7 +629,7 @@ CREATE OR REPLACE ACTION truflation_get_base_value(
     -- If no value before, try to find the closest value after base_time
     $found_after := FALSE;
     $after_value NUMERIC(36,18);
-    for $row in truflation_get_first_record($data_provider, $stream_id, $effective_base_time, $frozen_at) {
+    for $row in truflation_get_first_record($data_provider, $stream_id, $effective_base_time, $frozen_at, $use_cache) {
         $after_value := $row.value;
         $found_after := TRUE;
         break;
@@ -635,8 +648,9 @@ CREATE OR REPLACE ACTION truflation_get_record_composed(
     $stream_id TEXT,
     $from INT8,         
     $to INT8,
-    $frozen_at INT8
-) PUBLIC VIEW
+    $frozen_at INT8,
+    $use_cache BOOL DEFAULT false
+)  PUBLIC VIEW
 RETURNS TABLE(
     event_time INT8,
     value NUMERIC(36,18)
@@ -662,9 +676,24 @@ RETURNS TABLE(
         ERROR('Not allowed to compose stream');
     }
 
+    -- Set default value for use_cache
+    $effective_enable_cache := COALESCE($use_cache, false);
+    $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL; -- frozen queries bypass cache
+
+    if $effective_enable_cache {
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $from, $to);
+    }
+    
+    if $effective_enable_cache {
+        for $row in tn_cache.get_cached_data($data_provider, $stream_id, $from, $to) {
+            RETURN NEXT $row.event_time, $row.value;
+        }
+        return;
+    }
+
     -- for historical consistency, if both from and to are omitted, return the latest record
     if $from IS NULL AND $to IS NULL {
-        FOR $row IN truflation_last_rc_composed($data_provider, $stream_id, NULL, $effective_frozen_at) {
+        FOR $row IN truflation_last_rc_composed($data_provider, $stream_id, NULL, $effective_frozen_at, $use_cache) {
             RETURN NEXT $row.event_time, $row.value;
         }
         RETURN;
@@ -778,7 +807,7 @@ RETURNS TABLE(
               )
           )
           AND GREATEST(h.path_start, tts.segment_start) <= $effective_to
-          AND h.level < 10
+          AND h.level < 100 -- Recursion depth limit to prevent taxonomy recursion attacks
     ),
 
     hierarchy_primitive_paths AS (
@@ -1177,7 +1206,8 @@ CREATE OR REPLACE ACTION truflation_last_rc_composed(
     $data_provider TEXT,
     $stream_id TEXT,
     $before INT8,
-    $frozen_at INT8
+    $frozen_at INT8,
+    $use_cache BOOL DEFAULT false
 ) PRIVATE VIEW
 RETURNS TABLE(
     event_time INT8,
@@ -1200,6 +1230,25 @@ RETURNS TABLE(
     $max_int8 INT8 := 9223372036854775000;    -- "Infinity" sentinel
     $effective_before INT8 := COALESCE($before, $max_int8);
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
+
+    -- Set default value for use_cache
+    $effective_enable_cache := COALESCE($use_cache, false);
+    $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL; -- frozen queries bypass cache
+
+    if $effective_enable_cache {
+        -- we use before as to, because if we have data for that, it automatically means
+        -- that we can answer this query
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $before, NULL);
+    }
+
+    -- If using cache, get the most recent cached record
+    if $effective_enable_cache {
+        -- Get cached data up to the before time and return the most recent
+        for $row in tn_cache.get_cached_last_before($data_provider, $stream_id, $before) {
+            RETURN NEXT $row.event_time, $row.value;
+        }
+        RETURN;
+    }
 
     $latest_event_time INT8;
 
@@ -1312,7 +1361,7 @@ RETURNS TABLE(
      *          [latest_event_time, latest_event_time] for overshadow logic.
      */
     IF $latest_event_time IS DISTINCT FROM NULL {
-        for $row in truflation_get_record_composed($data_provider, $stream_id, $latest_event_time, $latest_event_time, $frozen_at) {
+        for $row in truflation_get_record_composed($data_provider, $stream_id, $latest_event_time, $latest_event_time, $frozen_at, $use_cache) {
             return next $row.event_time, $row.value;
             break;
         }
@@ -1328,7 +1377,8 @@ CREATE OR REPLACE ACTION truflation_first_rc_composed(
     $data_provider TEXT,
     $stream_id TEXT,
     $after INT8,
-    $frozen_at INT8 
+    $frozen_at INT8,
+    $use_cache BOOL DEFAULT false
 ) PRIVATE VIEW
 RETURNS TABLE(
     event_time INT8,
@@ -1346,6 +1396,25 @@ RETURNS TABLE(
     $max_int8 INT8 := 9223372036854775000;   -- "Infinity" sentinel
     $effective_after INT8 := COALESCE($after, 0);
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
+
+    -- Set default value for use_cache
+    $effective_enable_cache := COALESCE($use_cache, false);
+    $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL; -- frozen queries bypass cache
+
+    if $effective_enable_cache {
+        -- we use after as from, because if we have data for that, it automatically means
+        -- that we can answer this query
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $after, NULL);
+    }
+
+    -- If using cache, get the earliest cached record
+    if $effective_enable_cache {
+        -- Get cached data from the after time and return the earliest
+        for $row in tn_cache.get_cached_first_after($data_provider, $stream_id, $after) {
+            RETURN NEXT $row.event_time, $row.value;
+        }
+        RETURN;
+    }
 
     $earliest_event_time INT8;
 
@@ -1458,7 +1527,7 @@ RETURNS TABLE(
      *          [earliest_event_time, earliest_event_time].
      */
     IF $earliest_event_time IS DISTINCT FROM NULL {
-        for $row in truflation_get_record_composed($data_provider, $stream_id, $earliest_event_time, $earliest_event_time, $frozen_at) {
+        for $row in truflation_get_record_composed($data_provider, $stream_id, $earliest_event_time, $earliest_event_time, $frozen_at, $use_cache) {
             return next $row.event_time, $row.value;
             break;
         }
@@ -1471,7 +1540,8 @@ CREATE OR REPLACE ACTION truflation_get_index_composed(
     $from INT8,
     $to INT8,
     $frozen_at INT8,
-    $base_time INT8
+    $base_time INT8,
+    $use_cache BOOL DEFAULT false
 ) PRIVATE VIEW
 RETURNS TABLE(
     event_time INT8,
@@ -1505,12 +1575,29 @@ RETURNS TABLE(
         ERROR('Not allowed to compose stream');
     }
 
+    -- Set default value for enable_cache
+    $effective_enable_cache := COALESCE($use_cache, false);
+    $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL AND $base_time IS NULL; -- frozen queries and arbitrary base time bypass cache
+
+    if $effective_enable_cache {
+        -- Check if we have pre-calculated index values in cache
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $from, $to);
+    }
+
+    -- If using pre-calculated index cache, return directly
+    if $effective_enable_cache {
+        for $row in tn_cache.get_cached_index_data($data_provider, $stream_id, $from, $to) {
+            RETURN NEXT $row.event_time, $row.value;
+        }
+        RETURN;
+    }
+
     -- If both $from and $to are NULL, we find the latest event time
     IF $from IS NULL AND $to IS NULL {
         $actual_latest_event_time INT8;
         $found_latest_event BOOLEAN := FALSE;
 
-        FOR $last_record_row IN truflation_last_rc_composed($data_provider, $stream_id, NULL, $effective_frozen_at) {
+        FOR $last_record_row IN truflation_last_rc_composed($data_provider, $stream_id, NULL, $effective_frozen_at, $use_cache) {
             $actual_latest_event_time := $last_record_row.event_time;
             $found_latest_event := TRUE;
             BREAK;
@@ -1523,6 +1610,9 @@ RETURNS TABLE(
             RETURN;
         }
     }
+
+    -- Get the base value for index calculation (non-cache path)
+    $base_value := truflation_get_base_value($data_provider, $stream_id, $effective_base_time, $effective_frozen_at, false);
 
     RETURN WITH RECURSIVE
     parent_distinct_start_times AS (
@@ -1641,7 +1731,7 @@ RETURNS TABLE(
               )
           )
           AND GREATEST(h.path_start, tts.segment_start) <= $effective_to
-          AND h.level < 10
+          AND h.level < 100 -- Recursion depth limit to prevent taxonomy recursion attacks
     ),
 
     hierarchy_primitive_paths AS (

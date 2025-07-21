@@ -18,8 +18,7 @@ func SetupNitroEnclaveService(instance awsec2.Instance) {
 	nitroEnclaveInstallScript := `#!/bin/bash
 # Install the AWS Nitro Enclaves CLI, to be able to use the ACM agent
 # for certificate management with nginx
-sudo amazon-linux-extras enable aws-nitro-enclaves-cli
-sudo yum install aws-nitro-enclaves-acm -y
+sudo dnf install aws-nitro-enclaves-acm -y
 
 
 # Start the ACM agent

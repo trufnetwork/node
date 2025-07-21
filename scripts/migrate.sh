@@ -25,7 +25,7 @@ num_files=${#files[@]}
 for i in "${!files[@]}"; do
     file="${files[$i]}"
     echo "Running $file"
-    
+        
     cmd="kwil-cli exec-sql --file $file --private-key \"$PRIVATE_KEY\" --provider \"$PROVIDER\""
 
     # Add --sync only for the last file if SYNC is true

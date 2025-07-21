@@ -25,31 +25,20 @@ import (
 
 // TestAGGR07_InexistentStreamsRejected tests that querying composed streams with non-existent stream references results in errors
 func TestAGGR07_InexistentStreamsRejected(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	cacheConfig := testutils.TestCache("0x0000000000000000000000000000000000000123", "*")
+
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr07_inexistent_streams_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
-			testAGGR07_NonExistentPrimitive(t),
-			testAGGR07_NonExistentComposed(t),
+			wrapTestWithCacheModes(t, "AGGR07_InexistentStreams", testAGGR07_InexistentStreams),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache(cacheConfig))
 }
 
-// testAGGR07_NonExistentPrimitive tests that querying a composed stream with a non-existent primitive stream in its taxonomy returns an error
-func testAGGR07_NonExistentPrimitive(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testAGGR07_InexistentStreams(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		/*
-		   Test Structure:
-
-		   ComposedStream
-		        ↓
-		   NonExistentPrimitiveStream (doesn't actually exist)
-
-		   Expected behavior:
-		   1. Creating the ComposedStream succeeds
-		   2. Setting a taxonomy that references a non-existent primitive stream succeeds
-		   3. Querying the ComposedStream fails with an error since it references a non-existent stream
-		*/
+		// Test 1: Non-existent primitive stream
 
 		// Create a composed stream to use for the test
 		composedStreamId := util.GenerateStreamId("composed_stream_test")
@@ -96,44 +85,32 @@ func testAGGR07_NonExistentPrimitive(t *testing.T) func(ctx context.Context, pla
 			return errors.Wrap(err, "error setting taxonomy with non-existent primitive stream")
 		}
 
+		// Set up cache (only when useCache is true)
+		if useCache {
+			// Note: This test doesn't actually need cache refresh since we're testing error cases
+			// The cache setup is handled by the test framework
+		}
+
 		// Now try to query the composed stream
 		fromTime := int64(1)
 		toTime := int64(3)
-		_, err = procedure.GetRecord(ctx, procedure.GetRecordInput{
+		_, err = procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
 			Platform:      platform,
 			StreamLocator: composedStreamLocator,
 			FromTime:      &fromTime,
 			ToTime:        &toTime,
 			Height:        1,
+			UseCache:      &useCache,
 		})
 
 		// We expect an error when querying because the primitive stream doesn't exist
 		assert.Error(t, err, "Expected error when querying composed stream with non-existent primitive stream")
 		assert.Contains(t, err.Error(), "streams missing for stream", "Error should indicate the stream was not found")
 
-		return nil
-	}
-}
+		// Test 2: Non-existent composed stream
 
-// testAGGR07_NonExistentComposed tests that querying a composed stream with a non-existent composed stream in its taxonomy returns an error
-func testAGGR07_NonExistentComposed(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		/*
-		   Test Structure:
-
-		   RootComposedStream
-		        ↓
-		   NonExistentComposedStream (doesn't actually exist)
-
-		   Expected behavior:
-		   1. Creating the RootComposedStream succeeds
-		   2. Setting a taxonomy that references a non-existent composed stream succeeds
-		   3. Querying the RootComposedStream fails with an error since it references a non-existent stream
-		*/
-
-		// Create a composed stream to use for the test
 		rootComposedStreamId := util.GenerateStreamId("root_composed_stream_test")
-		deployer, err := util.NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
+		deployer, err = util.NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
 		if err != nil {
 			return errors.Wrap(err, "error creating ethereum address")
 		}
@@ -177,14 +154,13 @@ func testAGGR07_NonExistentComposed(t *testing.T) func(ctx context.Context, plat
 		}
 
 		// Now try to query the composed stream
-		fromTime := int64(1)
-		toTime := int64(3)
-		_, err = procedure.GetRecord(ctx, procedure.GetRecordInput{
+		_, err = procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
 			Platform:      platform,
 			StreamLocator: rootStreamLocator,
 			FromTime:      &fromTime,
 			ToTime:        &toTime,
 			Height:        1,
+			UseCache:      &useCache,
 		})
 
 		// We expect an error when querying because the composed stream doesn't exist

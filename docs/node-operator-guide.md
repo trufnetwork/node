@@ -204,47 +204,16 @@ Use `kwild` to create your initial configuration file. This command is the same 
 kwild setup init \
   --genesis ./configs/network/v2/genesis.json \
   --root ./my-node-config \
-  --p2p.bootnodes "4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656,0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656"
-```
+  --p2p.bootnodes "4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656,0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656" \
+  --state-sync.enable \
+  --state-sync.trusted-providers "0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656" \
+  --rpc.private
+
+These flags enable state sync for faster initial synchronization using snapshots from the specified trusted provider, and enable private RPC mode for enhanced security.
 
 For detailed instructions on configuration options more relevant to a production setup, refer to our [Configuration Guide](https://github.com/trufnetwork/truf-node-operator/blob/main/docs/creating-config.md).
 
-### 3. Enable State Sync
-
-This will configure your node to use state sync for faster synchronization with the network. Edit the `config.toml` file using the appropriate command for your OS.
-
-**Option 1: Scripted Edit**
-
-Run the command for your operating system to perform the edits automatically.
-
-#### For Linux
-
-```bash
-sed -i '/\[state_sync\]/,/^\[/ s/enable = false/enable = true/' ./my-node-config/config.toml
-sed -i 's/trusted_providers = \[\]/trusted_providers = ["0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656"]/' ./my-node-config/config.toml
-```
-
-#### For macOS
-
-The `sed` command on macOS requires a different syntax for in-place editing.
-
-```bash
-sed -i '' '/\[state_sync\]/,/^\[/ s/enable = false/enable = true/' ./my-node-config/config.toml
-sed -i '' 's/trusted_providers = \[\]/trusted_providers = ["0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656"]/' ./my-node-config/config.toml
-```
-
-**Option 2: Manual Edit**
-Alternatively, you can manually edit the configuration file.
-
-1.  Open `./my-node-config/config.toml` in a text editor.
-2.  Find the `[state_sync]` section.
-3.  Change `enable = false` to `enable = true`.
-4.  Replace `trusted_providers = []` with the following:
-    ```toml
-    trusted_providers = ["0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656"]
-    ```
-
-### 4. Set Up PostgreSQL
+### 3. Set Up PostgreSQL
 
 For a quick setup, run Kwil's pre-configured PostgreSQL Docker image. The command is the same for Linux and macOS. For macOS, ensure Docker Desktop is running.
 
@@ -281,7 +250,7 @@ The command above:
 - `-v tn-pgdata:/var/lib/postgresql/data`: Creates a persistent volume named 'tn-pgdata' to store database data
 - `--shm-size=1gb`: Allocates 1GB of shared memory for PostgreSQL operations (recommended for better performance)
 
-### 5. Create background services for `kwild` and PostgreSQL
+### 4. Create background services for `kwild` and PostgreSQL
 
 #### For Linux (using `systemd`)
 
@@ -420,7 +389,7 @@ EOF
 
 > **Note:** For these services to work, Docker Desktop must be configured to start on login. You can enable this in Docker Desktop's settings (`Settings > General > Start Docker Desktop when you log in`).
 
-### 6. Run TN Node
+### 5. Run TN Node
 
 Before you proceed, ensure your firewall allows incoming connections on:
 
@@ -451,7 +420,7 @@ launchctl load ~/Library/LaunchAgents/com.trufnetwork.kwild.plist
 launchctl start com.trufnetwork.kwild
 ```
 
-### 7. Verify Node Synchronization
+### 6. Verify Node Synchronization
 
 To become a validator, ensure your node is fully synced with the network:
 
@@ -491,7 +460,30 @@ kwild admin status
 > tail -f ~/Library/Logs/tn-postgres.log
 > ```
 
-### 8. Become a Validator (Optional)
+### Cache Extension (tn_cache)
+
+The `tn_cache` extension provides **node-local caching** for expensive stream queries, making reads on deep composed streams as fast as on simple primitive streams while remaining isolated from network consensus.  Enabling it is optional and **affects only your node**.
+
+**Quick enable**
+
+```toml
+[extensions.tn_cache]
+enabled = true
+# add stream configs here – see detailed guide for examples
+```
+
+After editing `config.toml`, restart `kwild` for the change to take effect.
+
+**Caveats (when cache is ignored)**
+- `frozen_at` or `base_time` parameters set → falls back to full computation
+- Primitive streams (`*_primitive` actions) are never cached
+- `get_index_change` relies on underlying cache via `get_index`; same rules apply
+
+For complete configuration options (stream lists, schedules, metrics, troubleshooting) see the operator-focused section of the tn_cache documentation:
+
+[extensions/tn_cache/README.md#operations--monitoring](../extensions/tn_cache/README.md#operations--monitoring)
+
+### 7. Become a Validator (Optional)
 
 To upgrade your node to a validator:
 
@@ -530,7 +522,7 @@ Note: If you used a different directory name during setup (not `./my-node-config
 
 You can always reach out to the community for help with the validator process.
 
-### 9. Submit Your Node to Available Node List (Optional)
+### 8. Submit Your Node to Available Node List (Optional)
 
 To help others discover your node:
 
@@ -628,7 +620,6 @@ Add or uncomment the following line under the `[Journal]` section:
 ```
 Storage=persistent
 ```
-
 2. **Restart the journald service** to apply the change:
 
 ```bash
@@ -725,8 +716,7 @@ The `launchctl list` command shows three columns:
 
 Expected output when services are running properly:
 
-```
-12345   0   com.trufnetwork.kwild
+```12345   0   com.trufnetwork.kwild
 12346   0   com.trufnetwork.tn-postgres
 ```
 
@@ -834,3 +824,23 @@ docker volume rm tn-pgdata
 
 rm -rf $HOME/truf-node-operator/my-node-config
 ```
+
+## Security Recommendations
+
+We've enabled RPC private mode in the init command above to prevent arbitrary SQL executions. This reduces the risk of unintended SQL-based DoS attacks without enabling unauthorized writes.
+
+If you need to modify this setting, edit your `config.toml`:
+
+```toml
+[rpc]
+
+# Enforce data privacy: authenticate JSON-RPC call requests using challenge-based
+# authentication. the node will only accept JSON-RPC requests that has a valid signed
+# challenge response. This also disables ad hoc queries, and no raw transaction retrieval.
+private = true
+```
+
+For more details, see the [Kwil Private RPC documentation](http://docs.kwil.com/docs/node/private-rpc).
+
+
+

@@ -122,7 +122,7 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 		volumeSize = 400
 	}
 
-	AWSLinux2MachineImage := awsec2.MachineImage_LatestAmazonLinux2(nil)
+	AWSLinux2MachineImage := awsec2.MachineImage_LatestAmazonLinux2023(nil)
 	userData := awsec2.UserData_ForLinux(nil)
 	ltConstructID := name
 	userDataLogPathPrefix := ltConstructID + "/UserData" // For logging UserData steps under the LT's path

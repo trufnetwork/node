@@ -1,0 +1,145 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: kwildb/postgres:16.8-1
+    environment:
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - metrics-net
+
+  kwild:
+    image: tn-db:metrics-test
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Database connection
+      KWILD_DB_HOST: postgres
+      KWILD_DB_PORT: 5432
+      # Node configuration
+      CHAIN_ID: tn-metrics-test
+      DB_OWNER: "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"
+      # Network configuration
+      KWILD_APP_JSONRPC_LISTEN_ADDR: "0.0.0.0:8484"
+      KWILD_APP_P2P_LISTEN_ADDR: "0.0.0.0:6600"
+      KWILD_APP_ADMIN_LISTEN_ADDR: "0.0.0.0:8485"
+      # Logging
+      KWILD_LOG_LEVEL: "debug"
+      KWILD_LOG_FORMAT: "plain"
+      # Enable telemetry
+      KWILD_TELEMETRY_ENABLE: "true"
+      KWILD_TELEMETRY_OTLP_ENDPOINT: "otel-collector:4318"
+      # tn_cache extension configuration
+      KWILD_APP_EXTENSIONS_TN_CACHE_ENABLED: "true"
+      KWILD_APP_EXTENSIONS_TN_CACHE_MAX_BLOCK_AGE: "1h"  # Allow 1 hour old blocks for test environment
+      KWILD_APP_EXTENSIONS_TN_CACHE_RESOLUTION_SCHEDULE: "*/30 * * * * *"
+      KWILD_APP_EXTENSIONS_TN_CACHE_STREAMS_INLINE: |
+        [
+          {
+            "data_provider": "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+            "stream_id": "stcomposed1234567890123456789001",
+            "schedule": "*/10 * * * * *",
+            "from_timestamp": 1609459200
+          },
+          {
+            "data_provider": "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+            "stream_id": "stcomposed1234567890123456789002",
+            "schedule": "*/15 * * * * *",
+            "from_timestamp": 1609459200
+          },
+          {
+            "data_provider": "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+            "stream_id": "stcomposed1234567890123456789003",
+            "schedule": "*/20 * * * * *",
+            "from_timestamp": 1609459200
+          }
+        ]
+    volumes:
+      - ./configs/kwild-config-override.toml:/root/.kwild/config.toml.override:ro
+      - ./configs/custom-entrypoint.sh:/app/custom-entrypoint.sh:ro
+    entrypoint: ["/app/custom-entrypoint.sh"]
+    ports:
+      - "8484:8484"  # JSON-RPC
+      - "8485:8485"  # Admin API
+      - "6600:6600"  # P2P
+    networks:
+      - metrics-net
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8484/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    command: ["--config=/etc/otel-config.yaml"]
+    volumes:
+      - ./configs/otel-config.yaml:/etc/otel-config.yaml:ro
+    ports:
+      - "4318:4318"   # OTLP HTTP
+      - "9464:9464"   # Prometheus exporter
+    networks:
+      - metrics-net
+
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - metrics-net
+    depends_on:
+      - otel-collector
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - ./configs/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./configs/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - metrics-net
+    depends_on:
+      - prometheus
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14250:14250"  # gRPC for model.proto
+    networks:
+      - metrics-net
+
+networks:
+  metrics-net:
+    driver: bridge
+
+volumes:
+  prometheus-data:
+  grafana-data:

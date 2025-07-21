@@ -13,6 +13,7 @@ CREATE OR REPLACE ACTION get_record_primitive(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
+    -- Note: No cache; direct queries without computation
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
     -- Check read access first
@@ -91,6 +92,7 @@ CREATE OR REPLACE ACTION get_last_record_primitive(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
+    -- Note: No cache; direct queries without computation
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
 
@@ -126,6 +128,7 @@ CREATE OR REPLACE ACTION get_first_record_primitive(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
+    -- Note: No cache; direct queries without computation
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
     -- Check read access, since we're querying directly from the primitive_events table
@@ -161,6 +164,7 @@ CREATE OR REPLACE ACTION get_index_primitive(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
+    -- Note: No cache; direct queries without computation
     $data_provider := LOWER($data_provider);
 
     -- Check read permissions
@@ -190,7 +194,8 @@ CREATE OR REPLACE ACTION get_index_primitive(
     }
 
     -- Get the base value
-    $base_value NUMERIC(36,18) := get_base_value($data_provider, $stream_id, $effective_base_time, $frozen_at);
+    -- use cache is false as has no effect for primitive streams
+    $base_value NUMERIC(36,18) := get_base_value($data_provider, $stream_id, $effective_base_time, $frozen_at, false);
 
     -- Check if base value is zero to avoid division by zero
     if $base_value = 0::NUMERIC(36,18) {

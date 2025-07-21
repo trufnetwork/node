@@ -24,7 +24,7 @@ func TestSaveOrAppendToCSV(t *testing.T) {
 	content, err := os.ReadFile(tempFile.Name())
 	assert.NoError(t, err)
 
-	expectedContent := "procedure,branching_factor,qty_streams,data_points,duration_ms,visibility,samples,unix_only\nTest1,1,7,100,100,Public,10,false\nTest2,2,14,200,200,Private,10,false\n"
+	expectedContent := "procedure,branching_factor,qty_streams,data_points,duration_ms,visibility,samples,unix_only,cache_enabled,cache_verified,cache_delta_ms\nTest1,1,7,100,100,Public,10,false,false,false,0\nTest2,2,14,200,200,Private,10,false,false,false,0\n"
 	assert.Equal(t, expectedContent, string(content))
 }
 

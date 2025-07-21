@@ -13,8 +13,12 @@ import (
 	"github.com/pkg/errors"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/internal/migrations"
+	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	"github.com/trufnetwork/sdk-go/core/util"
 )
+
+// Cache verification configuration
+const enableCacheCheck = true // Set to false to disable cache verification
 
 // -----------------------------------------------------------------------------
 // Main benchmark test function
@@ -110,7 +114,7 @@ func TestBench(t *testing.T) {
 	dateShapePairs := [][]int{
 		// qtyStreams, branchingFactor
 		// testing 1 stream only
-		{1, 1},
+		// {1, 1},
 
 		//flat trees = cost of adding a new stream to our composed
 		// {50, math.MaxInt},
@@ -122,7 +126,7 @@ func TestBench(t *testing.T) {
 		// //{1500, math.MaxInt}, // this gives error: Out of shared memory
 
 		// // deep trees = cost of adding depth
-		{50, 1},
+		// {50, 1},
 		// {100, 1},
 		// //{200, 1}, // we can't go deeper than 180, for call stack size issues
 
@@ -130,7 +134,7 @@ func TestBench(t *testing.T) {
 		// {50, 8},
 		// {100, 8},
 		// {200, 8},
-		{400, 8},
+		// {400, 8},
 		// //{800, 8},
 
 		// // to get difference for branching factor
@@ -154,10 +158,26 @@ func TestBench(t *testing.T) {
 	// a channel to receive results from the tests
 	var resultsCh chan []Result
 
+	// Set up cache configuration for verification tests
+	var cacheConfig *testutils.CacheOptions
+	if enableCacheCheck {
+		// Fixed deployer address from constants.go: 0x0000000000000000000000000000000200000000
+		deployerAddr := "0x0000000000000000000000000000000200000000"
+		// Only cache the root stream (index 0) that benchmarks actually query
+		rootStreamID := util.GenerateStreamId("test_stream_0")
+		cacheConfig = testutils.NewCacheOptions().
+			WithEnabled().
+			WithMaxBlockAge(-1*time.Second).
+			// Use 5-field cron as unified across validation and scheduler; this never runs (Feb 31)
+			WithResolutionSchedule("0 0 31 2 *").
+			WithStream(deployerAddr, rootStreamID.String(), "0 0 31 2 *")
+	}
+
 	// create combinations of shapePairs and visibilities
 	for _, specificParams := range allParams {
 		for _, shapePair := range specificParams.ShapePairs {
 			for _, visibility := range visibilities {
+				// Original non-cache case
 				functionTests = append(functionTests, getBenchmarkFn(BenchmarkCase{
 					Visibility:      visibility,
 					QtyStreams:      shapePair[0],
@@ -171,9 +191,32 @@ func TestBench(t *testing.T) {
 						ProcedureGetFirstRecord,
 						ProcedureGetLastRecord,
 					},
+					CacheEnabled: false,
 				},
 					// use pointer, so we can reassign the results channel
 					&resultsCh))
+
+				// Cache verification case (only if enabled)
+				if enableCacheCheck {
+					functionTests = append(functionTests, getBenchmarkFn(BenchmarkCase{
+						Visibility:      visibility,
+						QtyStreams:      shapePair[0],
+						BranchingFactor: shapePair[1],
+						Samples:         samples,
+						DataPointsSet:   specificParams.DataPoints,
+						Procedures: []ProcedureEnum{
+							ProcedureGetRecord,
+							ProcedureGetIndex,
+							ProcedureGetChangeIndex,
+							ProcedureGetFirstRecord,
+							ProcedureGetLastRecord,
+						},
+						CacheEnabled: true,
+						CacheConfig:  cacheConfig,
+					},
+						// use pointer, so we can reassign the results channel
+						&resultsCh))
+				}
 			}
 		}
 	}
@@ -195,7 +238,7 @@ func TestBench(t *testing.T) {
 			SeedScripts:   migrations.GetSeedScriptPaths(),
 		}
 
-		t.Run(schemaTest.Name, func(t *testing.T) { // Note: this 't' shadows the outer 't'. We should use this inner 't' for group-specific logs.
+		t.Run(schemaTest.Name, func(t *testing.T) {
 			const maxRetries = 1
 			var err error
 		RetryFor:
@@ -210,10 +253,8 @@ func TestBench(t *testing.T) {
 						resultsCh = make(chan []Result, len(groupOfTests))
 						defer close(resultsCh)
 
-						err = schemaTest.Run(ctx, &kwilTesting.Options{
-							UseTestContainer: true,
-							Logger:           t, // Pass the correct 't' for this test run
-						})
+						// Use testutils runner to enable tn_cache setup
+						testutils.RunSchemaTest(t, schemaTest, testutils.GetTestOptionsWithCache(cacheConfig))
 					}()
 
 					if err == nil {

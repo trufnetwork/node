@@ -33,7 +33,7 @@ var rootStreamId = util.GenerateStreamId(rootStreamName)
 
 // Helper function to get category streams and assert results against expected
 func getCategoryAndAssert(t *testing.T, ctx context.Context, platform *kwilTesting.Platform,
-	fromTime, toTime *int64, expectedTable string, timeDescription string) error {
+	fromTime, toTime *int64, expectedTable string, timeDescription string, useCache bool) error {
 
 	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
 	if err != nil {
@@ -103,22 +103,21 @@ func setTaxonomyAtTime(ctx context.Context, platform *kwilTesting.Platform, depl
 }
 
 func TestCategoryStreams(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	// Run with cache setup
+	deployerAddress := "0x0000000000000000000000000000000000000000"
+	cacheConfig := testutils.TestCache(deployerAddress, rootStreamId.String())
+
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "category_streams_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
-			WithCategoryTestSetup(testGetAllSubstreams(t)),
-			WithCategoryTestSetup(testGetSubstreamsAtTime0(t)),
-			WithCategoryTestSetup(testGetSubstreamsAtTime5(t)),
-			WithCategoryTestSetup(testGetSubstreamsAtTime6(t)),
-			WithCategoryTestSetup(testGetSubstreamsAtTime10(t)),
-			WithCategoryTestSetup(testGetSubstreamsTimeRange6To10(t)),
+			wrapTestWithCacheModes(t, "CategoryStreams", testCategoryStreams),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache(cacheConfig))
 }
 
-// WithCategoryTestSetup is a helper function that sets up the test environment with streams and taxonomies
-func WithCategoryTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
+// testCategoryStreams is the main test function that runs with cache modes
+func testCategoryStreams(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
 		platform = procedure.WithSigner(platform, deployer.Bytes())
@@ -226,15 +225,38 @@ func WithCategoryTestSetup(testFn func(ctx context.Context, platform *kwilTestin
 			}
 		}
 
-		// Run the actual test function
-		return testFn(ctx, platform)
+		// Set up cache (only when useCache is true)
+		if useCache {
+			// Note: This test doesn't query stream data directly, only category relationships
+			// The cache functionality is handled by the test framework
+		}
+
+		// Run all the test functions
+		testFunctions := []struct {
+			name     string
+			testFunc func() error
+		}{
+			{"GetAllSubstreams", func() error { return testGetAllSubstreams(t, ctx, platform, useCache) }},
+			{"GetSubstreamsAtTime0", func() error { return testGetSubstreamsAtTime0(t, ctx, platform, useCache) }},
+			{"GetSubstreamsAtTime5", func() error { return testGetSubstreamsAtTime5(t, ctx, platform, useCache) }},
+			{"GetSubstreamsAtTime6", func() error { return testGetSubstreamsAtTime6(t, ctx, platform, useCache) }},
+			{"GetSubstreamsAtTime10", func() error { return testGetSubstreamsAtTime10(t, ctx, platform, useCache) }},
+			{"GetSubstreamsTimeRange6To10", func() error { return testGetSubstreamsTimeRange6To10(t, ctx, platform, useCache) }},
+		}
+
+		for _, tf := range testFunctions {
+			if err := tf.testFunc(); err != nil {
+				return errors.Wrapf(err, "test %s failed", tf.name)
+			}
+		}
+
+		return nil
 	}
 }
 
 // Test getting all substreams without time constraints
-func testGetAllSubstreams(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		expected := `
+func testGetAllSubstreams(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, useCache bool) error {
+	expected := `
 		| data_provider                              | stream_id |
 		|--------------------------------------------|-----------|
 		| 0x0000000000000000000000000000000000000000 | 1c        |
@@ -248,18 +270,16 @@ func testGetAllSubstreams(t *testing.T) func(ctx context.Context, platform *kwil
 		| 0x0000000000000000000000000000000000000000 | 1.5p      |
 		`
 
-		return getCategoryAndAssert(t, ctx, platform, nil, nil, expected, "without time constraints")
-	}
+	return getCategoryAndAssert(t, ctx, platform, nil, nil, expected, "without time constraints", useCache)
 }
 
 // Test getting substreams at time 0
-func testGetSubstreamsAtTime0(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Get substreams at time 0
-		activeFrom := int64(0)
-		activeTo := int64(0)
+func testGetSubstreamsAtTime0(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, useCache bool) error {
+	// Get substreams at time 0
+	activeFrom := int64(0)
+	activeTo := int64(0)
 
-		expected := `
+	expected := `
 		| data_provider                              | stream_id |
 		|--------------------------------------------|-----------|
 		| 0x0000000000000000000000000000000000000000 | 1c        |
@@ -272,18 +292,16 @@ func testGetSubstreamsAtTime0(t *testing.T) func(ctx context.Context, platform *
 		| 0x0000000000000000000000000000000000000000 | 1.4c      |
 		`
 
-		return getCategoryAndAssert(t, ctx, platform, &activeFrom, &activeTo, expected, "at time 0")
-	}
+	return getCategoryAndAssert(t, ctx, platform, &activeFrom, &activeTo, expected, "at time 0", useCache)
 }
 
 // Test getting substreams at time 5
-func testGetSubstreamsAtTime5(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Get substreams at time 5
-		activeFrom := int64(5)
-		activeTo := int64(5)
+func testGetSubstreamsAtTime5(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, useCache bool) error {
+	// Get substreams at time 5
+	activeFrom := int64(5)
+	activeTo := int64(5)
 
-		expected := `
+	expected := `
 		| data_provider                              | stream_id |
 		|--------------------------------------------|-----------|
 		| 0x0000000000000000000000000000000000000000 | 1c        |
@@ -291,18 +309,16 @@ func testGetSubstreamsAtTime5(t *testing.T) func(ctx context.Context, platform *
 		| 0x0000000000000000000000000000000000000000 | 1.1.1p    |
 		`
 
-		return getCategoryAndAssert(t, ctx, platform, &activeFrom, &activeTo, expected, "at time 5")
-	}
+	return getCategoryAndAssert(t, ctx, platform, &activeFrom, &activeTo, expected, "at time 5", useCache)
 }
 
 // Test getting substreams at time 6
-func testGetSubstreamsAtTime6(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Get substreams at time 6
-		activeFrom := int64(6)
-		activeTo := int64(6)
+func testGetSubstreamsAtTime6(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, useCache bool) error {
+	// Get substreams at time 6
+	activeFrom := int64(6)
+	activeTo := int64(6)
 
-		expected := `
+	expected := `
 		| data_provider                              | stream_id |
 		|--------------------------------------------|-----------|
 		| 0x0000000000000000000000000000000000000000 | 1c        |
@@ -310,36 +326,32 @@ func testGetSubstreamsAtTime6(t *testing.T) func(ctx context.Context, platform *
 		| 0x0000000000000000000000000000000000000000 | 1.1.1p    |
 		`
 
-		return getCategoryAndAssert(t, ctx, platform, &activeFrom, &activeTo, expected, "at time 6")
-	}
+	return getCategoryAndAssert(t, ctx, platform, &activeFrom, &activeTo, expected, "at time 6", useCache)
 }
 
 // Test getting substreams at time 10
-func testGetSubstreamsAtTime10(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Get substreams at time 10
-		activeFrom := int64(10)
-		activeTo := int64(10)
+func testGetSubstreamsAtTime10(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, useCache bool) error {
+	// Get substreams at time 10
+	activeFrom := int64(10)
+	activeTo := int64(10)
 
-		expected := `
+	expected := `
 		| data_provider                              | stream_id |
 		|--------------------------------------------|-----------|
 		| 0x0000000000000000000000000000000000000000 | 1c        |
 		| 0x0000000000000000000000000000000000000000 | 1.5p      |
 		`
 
-		return getCategoryAndAssert(t, ctx, platform, &activeFrom, &activeTo, expected, "at time 10")
-	}
+	return getCategoryAndAssert(t, ctx, platform, &activeFrom, &activeTo, expected, "at time 10", useCache)
 }
 
 // Test getting substreams in time range 6 to 10
-func testGetSubstreamsTimeRange6To10(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Get substreams in time range 6 to 10
-		activeFrom := int64(6)
-		activeTo := int64(10)
+func testGetSubstreamsTimeRange6To10(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, useCache bool) error {
+	// Get substreams in time range 6 to 10
+	activeFrom := int64(6)
+	activeTo := int64(10)
 
-		expected := `
+	expected := `
 		| data_provider                              | stream_id |
 		|--------------------------------------------|-----------|
 		| 0x0000000000000000000000000000000000000000 | 1c        |
@@ -348,6 +360,5 @@ func testGetSubstreamsTimeRange6To10(t *testing.T) func(ctx context.Context, pla
 		| 0x0000000000000000000000000000000000000000 | 1.5p      |
 		`
 
-		return getCategoryAndAssert(t, ctx, platform, &activeFrom, &activeTo, expected, "in time range 6 to 10")
-	}
+	return getCategoryAndAssert(t, ctx, platform, &activeFrom, &activeTo, expected, "in time range 6 to 10", useCache)
 }

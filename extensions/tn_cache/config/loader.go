@@ -3,7 +3,9 @@ package config
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/trufnetwork/kwil-db/core/log"
 	"github.com/trufnetwork/node/extensions/tn_cache/config/sources"
 	"github.com/trufnetwork/node/extensions/tn_cache/validation"
 )
@@ -12,21 +14,24 @@ import (
 type Loader struct {
 	validator     *validation.RuleSet
 	sourceFactory *sources.SourceFactory
+	logger        log.Logger
 }
 
 // NewLoader creates a new configuration loader with default validation rules
-func NewLoader() *Loader {
+func NewLoader(logger log.Logger) *Loader {
 	return &Loader{
 		validator:     validation.DefaultRules(),
-		sourceFactory: sources.NewSourceFactory(),
+		sourceFactory: sources.NewSourceFactory(logger),
+		logger:        logger,
 	}
 }
 
 // NewLoaderWithValidation creates a new configuration loader with custom validation rules
-func NewLoaderWithValidation(validator *validation.RuleSet) *Loader {
+func NewLoaderWithValidation(validator *validation.RuleSet, logger log.Logger) *Loader {
 	return &Loader{
 		validator:     validator,
-		sourceFactory: sources.NewSourceFactory(),
+		sourceFactory: sources.NewSourceFactory(logger),
+		logger:        logger,
 	}
 }
 
@@ -41,22 +46,27 @@ func (l *Loader) LoadAndProcess(ctx context.Context, rawConfig RawConfig) (*Proc
 	configMap := map[string]string{
 		"enabled": rawConfig.Enabled,
 	}
-	
+
 	// Add streams_inline if provided
 	if rawConfig.StreamsInline != "" {
 		configMap["streams_inline"] = rawConfig.StreamsInline
 	}
-	
+
 	// Add streams_csv_file if provided
 	if rawConfig.StreamsCSVFile != "" {
 		configMap["streams_csv_file"] = rawConfig.StreamsCSVFile
 	}
-	
+
 	// Add resolution_schedule if provided
 	if rawConfig.ResolutionSchedule != "" {
 		configMap["resolution_schedule"] = rawConfig.ResolutionSchedule
 	}
-	
+
+	// Add max_block_age if provided
+	if rawConfig.MaxBlockAge != 0 {
+		configMap["max_block_age"] = time.Duration(rawConfig.MaxBlockAge).String()
+	}
+
 	return l.loadAndProcessInternal(ctx, configMap)
 }
 
@@ -113,10 +123,21 @@ func (l *Loader) loadAndProcessInternal(ctx context.Context, configMap map[strin
 	if resolutionSchedule == "" {
 		resolutionSchedule = DefaultResolutionSchedule
 	}
-	
+
 	// Validate resolution schedule if provided
 	if err := validation.ValidateCronSchedule(resolutionSchedule); err != nil {
 		return nil, fmt.Errorf("invalid resolution schedule: %w", err)
+	}
+
+	// Parse max_block_age (default to 1 hour)
+	var maxBlockAge int64 = 3600
+	if configMap["max_block_age"] != "" {
+		// Parse duration string using Go's time.ParseDuration (same as types.Duration)
+		dur, err := time.ParseDuration(configMap["max_block_age"])
+		if err != nil {
+			return nil, fmt.Errorf("invalid max_block_age: %w", err)
+		}
+		maxBlockAge = int64(dur.Seconds())
 	}
 
 	return &ProcessedConfig{
@@ -124,6 +145,7 @@ func (l *Loader) loadAndProcessInternal(ctx context.Context, configMap map[strin
 		ResolutionSchedule: resolutionSchedule,
 		Directives:         finalDirectives,
 		Sources:            sourceNames,
+		MaxBlockAge:        maxBlockAge,
 	}, nil
 }
 

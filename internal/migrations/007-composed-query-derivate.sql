@@ -6,7 +6,8 @@ CREATE OR REPLACE ACTION get_last_record_composed(
     $data_provider TEXT,
     $stream_id TEXT,
     $before INT8,       -- Upper bound for event_time
-    $frozen_at INT8     -- Only consider events created on or before this
+    $frozen_at INT8,    -- Only consider events created on or before this
+    $use_cache BOOL DEFAULT false     -- Whether to use cache (default: false)
 ) PRIVATE VIEW
 RETURNS TABLE(
     event_time INT8,
@@ -23,10 +24,25 @@ RETURNS TABLE(
       ERROR('Not allowed to read stream');
   }
 
-  -- Check compose permissions
-  if !is_allowed_to_compose_all($data_provider, $stream_id, NULL, $before) {
-      ERROR('Not allowed to compose stream');
+  -- Set default value for enable_cache
+  $effective_enable_cache := COALESCE($use_cache, false);
+  $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL; -- frozen queries bypass cache
+
+  if $effective_enable_cache {
+      -- we use before as from, because if we have data for that, it automatically means
+      -- that we can answer this query
+      $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $before, NULL);
   }
+
+  -- If using cache, get the most recent cached record
+  if $effective_enable_cache {
+      for $row in tn_cache.get_cached_last_before($data_provider, $stream_id, $before) {
+          RETURN NEXT $row.event_time, $row.value;
+      }
+      RETURN;
+  }
+
+  -- Original logic fallback (cache miss or cache disabled)
 
   $max_int8 INT8 := 9223372036854775000;    -- "Infinity" sentinel
   $effective_before INT8 := COALESCE($before, $max_int8);
@@ -118,7 +134,7 @@ RETURNS TABLE(
   *          [latest_event_time, latest_event_time] for overshadow logic.
   */
   IF $latest_event_time IS DISTINCT FROM NULL {
-      for $row in get_record_composed($data_provider, $stream_id, $latest_event_time, $latest_event_time, $frozen_at) {
+      for $row in get_record_composed($data_provider, $stream_id, $latest_event_time, $latest_event_time, $frozen_at, $use_cache) {
           return next $row.event_time, $row.value;
           break;
       }
@@ -135,118 +151,155 @@ CREATE OR REPLACE ACTION get_first_record_composed(
     $data_provider TEXT,
     $stream_id TEXT,
     $after INT8,       -- Lower bound for event_time
-    $frozen_at INT8    -- Only consider events created on or before this
+    $frozen_at INT8,   -- Only consider events created on or before this
+    $use_cache BOOL DEFAULT false    -- Whether to use cache (default: false)
 ) PRIVATE VIEW
 RETURNS TABLE(
     event_time INT8,
     value NUMERIC(36,18)
 ) {
-  $data_provider  := LOWER($data_provider);
-  $lower_caller  := LOWER(@caller);
-  /*
-  * Step 1: Basic setup
-  */
-  $stream_ref := get_stream_id($data_provider, $stream_id);
-
-  IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, $after, NULL) {
-    ERROR('Not allowed to read stream');
-  }
-
-  $max_int8 INT8 := 9223372036854775000;   -- "Infinity" sentinel
-  $effective_after INT8 := COALESCE($after, 0);
-  $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
-
-  $earliest_event_time INT8;
-
-  /*
-  * Step 2: Recursively gather all children (ignoring overshadow),
-  *         then identify primitive leaves.
-  */
-  for $row in WITH RECURSIVE all_taxonomies AS (
-  /* 2a) Direct children of $stream_ref */
-  SELECT
-    t.stream_ref,
-    t.child_stream_ref
-  FROM taxonomies t
-  WHERE t.stream_ref = $stream_ref
-    AND t.disabled_at IS NULL
-
-  UNION
-
-  /* 2b) For each discovered child, gather its own children */
-  SELECT
-    at.child_stream_ref AS stream_ref,
-    t.child_stream_ref
-  FROM all_taxonomies at
-  JOIN taxonomies t
-    ON t.stream_ref = at.child_stream_ref
-    AND t.disabled_at IS NULL
-  ),
-  primitive_leaves AS (
-  /* Keep only references pointing to primitive streams */
-  SELECT DISTINCT
-    at.child_stream_ref AS stream_ref
-  FROM all_taxonomies at
-  JOIN streams s
-    ON s.id = at.child_stream_ref
-    AND s.stream_type = 'primitive'
-  ),
-  /*
-  * Step 3: In each primitive, pick the single earliest event_time >= effective_after.
-  *         ROW_NUMBER=1 => that "earliest" champion. Tie-break by created_at DESC.
-  */
-  earliest_events AS (
-  SELECT
-    pl.stream_ref,
-    pe.event_time,
-    pe.value,
-    pe.created_at,
-    ROW_NUMBER() OVER (
-      PARTITION BY pl.stream_ref
-      ORDER BY pe.event_time ASC, pe.created_at DESC
-    ) AS rn
-  FROM primitive_leaves pl
-  JOIN primitive_events pe
-    ON pe.stream_ref = pl.stream_ref
-  WHERE pe.event_time   >= $effective_after
-    AND pe.created_at   <= $effective_frozen_at
-  ),
-  earliest_values AS (
-  /* Step 4: Filter to rn=1 => the single earliest event per stream_ref */
-  SELECT
-    stream_ref,
-    event_time,
-    value
-  FROM earliest_events
-  WHERE rn = 1
-  ),
-  global_min AS (
-  /* Step 5: Find the minimum event_time among all leaves */
-  SELECT MIN(event_time) AS earliest_time
-  FROM earliest_values
-  )
-  /* Step 6: Return the row(s) matching that global earliest_time (pick first) */
-  SELECT
-  ev.event_time,
-  ev.value::NUMERIC(36,18)
-  FROM earliest_values ev
-  JOIN global_min gm
-  ON ev.event_time = gm.earliest_time
-  {
-    $earliest_event_time := $row.event_time;
-    break;  -- break out after storing
-  }
-
-  /*
-  * Step 7: If we have earliest_event_time, call get_record_composed() at
-  *          [earliest_event_time, earliest_event_time].
-  */
-  IF $earliest_event_time IS DISTINCT FROM NULL {
-    for $row in get_record_composed($data_provider, $stream_id, $earliest_event_time, $earliest_event_time, $frozen_at) {
-        return next $row.event_time, $row.value;
-        break;
+    $data_provider  := LOWER($data_provider);
+    $lower_caller  := LOWER(@caller);
+    /*
+     * Step 1: Basic setup
+     */
+    IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, $after, NULL) {
+        ERROR('Not allowed to read stream');
     }
-  }
+
+    -- Check compose permissions
+    if !is_allowed_to_compose_all($data_provider, $stream_id, $after, NULL) {
+        ERROR('Not allowed to compose stream');
+    }
+
+    -- Set default value for enable_cache
+    $effective_enable_cache := COALESCE($use_cache, false);
+    $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL; -- frozen queries bypass cache
+
+    if $effective_enable_cache {
+        -- we use after as to, because if we have data for that, it automatically means
+        -- that we can answer this query
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $after, NULL);
+    }
+
+    -- If using cache, get the earliest cached record
+    if $effective_enable_cache {
+        -- Get cached data from the after time and return the earliest
+        for $row in tn_cache.get_cached_first_after($data_provider, $stream_id, $after) {
+            RETURN NEXT $row.event_time, $row.value;
+        }
+
+        RETURN;
+    }
+
+    -- Original logic fallback (cache miss or cache disabled)
+
+    $max_int8 INT8 := 9223372036854775000;   -- "Infinity" sentinel
+    $effective_after INT8 := COALESCE($after, 0);
+    $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
+
+    $earliest_event_time INT8;
+
+    /*
+     * Step 2: Recursively gather all children (ignoring overshadow),
+     *         then identify primitive leaves.
+     */
+    for $row in WITH RECURSIVE all_taxonomies AS (
+      /* 2a) Direct children of ($data_provider, $stream_id) */
+      SELECT
+        t.data_provider,
+        t.stream_id,
+        t.child_data_provider,
+        t.child_stream_id
+      FROM taxonomies t
+      WHERE t.data_provider = $data_provider
+        AND t.stream_id     = $stream_id
+        AND t.disabled_at IS NULL
+
+      UNION
+
+      /* 2b) For each discovered child, gather its own children */
+      SELECT
+        at.child_data_provider AS data_provider,
+        at.child_stream_id     AS stream_id,
+        t.child_data_provider,
+        t.child_stream_id
+      FROM all_taxonomies at
+      JOIN taxonomies t
+        ON t.data_provider = at.child_data_provider
+       AND t.stream_id     = at.child_stream_id
+       AND t.disabled_at IS NULL
+    ),
+    primitive_leaves AS (
+      /* Keep only references pointing to primitive streams */
+      SELECT DISTINCT
+        at.child_data_provider AS data_provider,
+        at.child_stream_id     AS stream_id
+      FROM all_taxonomies at
+      JOIN streams s
+        ON s.data_provider = at.child_data_provider
+       AND s.stream_id     = at.child_stream_id
+       AND s.stream_type   = 'primitive'
+    ),
+    /*
+     * Step 3: In each primitive, pick the single earliest event_time >= effective_after.
+     *         ROW_NUMBER=1 => that "earliest" champion. Tie-break by created_at DESC.
+     */
+    earliest_events AS (
+      SELECT
+        pl.data_provider,
+        pl.stream_id,
+        pe.event_time,
+        pe.value,
+        pe.created_at,
+        ROW_NUMBER() OVER (
+          PARTITION BY pl.data_provider, pl.stream_id
+          ORDER BY pe.event_time ASC, pe.created_at DESC
+        ) AS rn
+      FROM primitive_leaves pl
+      JOIN primitive_events pe
+        ON pe.data_provider = pl.data_provider
+       AND pe.stream_id     = pl.stream_id
+      WHERE pe.event_time   >= $effective_after
+        AND pe.created_at   <= $effective_frozen_at
+    ),
+    earliest_values AS (
+      /* Step 4: Filter to rn=1 => the single earliest event per (dp, sid) */
+      SELECT
+        data_provider,
+        stream_id,
+        event_time,
+        value
+      FROM earliest_events
+      WHERE rn = 1
+    ),
+    global_min AS (
+      /* Step 5: Find the minimum event_time among all leaves */
+      SELECT MIN(event_time) AS earliest_time
+      FROM earliest_values
+    )
+    /* Step 6: Return the row(s) matching that global earliest_time (pick first) */
+    SELECT
+      ev.event_time,
+      ev.value::NUMERIC(36,18)
+    FROM earliest_values ev
+    JOIN global_min gm
+      ON ev.event_time = gm.earliest_time
+    {
+        $earliest_event_time := $row.event_time;
+        break;  -- break out after storing
+    }
+
+    /*
+     * Step 7: If we have earliest_event_time, call get_record_composed() at
+     *          [earliest_event_time, earliest_event_time].
+     */
+    IF $earliest_event_time IS DISTINCT FROM NULL {
+        for $row in get_record_composed($data_provider, $stream_id, $earliest_event_time, $earliest_event_time, $frozen_at, $use_cache) {
+            return next $row.event_time, $row.value;
+            break;
+        }
+    }
 };
 
 CREATE OR REPLACE ACTION get_index_composed(
@@ -255,7 +308,8 @@ CREATE OR REPLACE ACTION get_index_composed(
     $from INT8,
     $to INT8,
     $frozen_at INT8,
-    $base_time INT8
+    $base_time INT8,
+    $use_cache BOOL DEFAULT false     -- Whether to use cache (default: false)
 ) PRIVATE VIEW
 RETURNS TABLE(
     event_time INT8,
@@ -286,7 +340,7 @@ RETURNS TABLE(
       ERROR(format('Invalid time range: from (%s) > to (%s)', $from, $to));
   }
 
-  -- Permissions check
+  -- Permissions check (must be done before cache logic)
   IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, $from, $to) {
       ERROR('Not allowed to read stream');
   }
@@ -294,25 +348,45 @@ RETURNS TABLE(
       ERROR('Not allowed to compose stream');
   }
 
+  -- Set default value for enable_cache
+  $effective_enable_cache := COALESCE($use_cache, false);
+  -- frozen queries and arbitrary base time bypass cache
+  $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL AND $base_time IS NULL;
+
+  if $effective_enable_cache {
+      -- Check if we have pre-calculated index values in cache
+      $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $from, $to);
+  }
+
+  -- If using pre-calculated index cache, return directly
+  if $effective_enable_cache {
+      for $row in tn_cache.get_cached_index_data($data_provider, $stream_id, $from, $to) {
+          RETURN NEXT $row.event_time, $row.value;
+      }
+      RETURN;
+  }
+
+  -- Original logic fallback (cache miss or cache disabled, or custom base_time)
+
   -- If both $from and $to are NULL, we find the latest event time
   -- and set $effective_from and $effective_to to this single point.
   IF $from IS NULL AND $to IS NULL {
       $actual_latest_event_time INT8;
       $found_latest_event BOOLEAN := FALSE;
 
-      FOR $last_record_row IN get_last_record_composed($data_provider, $stream_id, NULL, $effective_frozen_at) {
+      FOR $last_record_row IN get_last_record_composed($data_provider, $stream_id, NULL, $effective_frozen_at, $use_cache) {
           $actual_latest_event_time := $last_record_row.event_time;
           $found_latest_event := TRUE;
           BREAK;
       }
 
-      IF $found_latest_event {
-          $effective_from := $actual_latest_event_time; -- Override
-          $effective_to   := $actual_latest_event_time; -- Override
-      } ELSE {
-          -- No records found in the composed stream, so return empty.
-          RETURN;
-      }
+    IF $found_latest_event {
+        $effective_from := $actual_latest_event_time; -- Override
+        $effective_to   := $actual_latest_event_time; -- Override
+    } ELSE {
+        -- No records found in the composed stream, so return empty.
+        RETURN;
+    }
   }
 
   -- If $from and/or $to were provided, $effective_from and $effective_to retain their initial COALESCEd values.
@@ -883,7 +957,8 @@ CREATE OR REPLACE ACTION internal_get_base_value(
     $data_provider TEXT,
     $stream_id     TEXT,
     $effective_base_time     INT8,   -- already pre-resolved "effective base time"
-    $effective_frozen_at     INT8    -- created_at cutoff (can be NULL ⇢ infinity)
+    $effective_frozen_at     INT8,   -- created_at cutoff (can be NULL ⇢ infinity)
+    $use_cache     BOOL              -- Whether to use cache (passed through to called functions)
 ) PRIVATE VIEW RETURNS (NUMERIC(36,18)) {
     -- doesn't check for access control, as it's private and not responsible for
     -- any access control checks
@@ -891,7 +966,7 @@ CREATE OR REPLACE ACTION internal_get_base_value(
     -- Try to find an exact match at base_time
     $found_exact := FALSE;
     $exact_value NUMERIC(36,18);
-    for $row in get_record_composed($data_provider, $stream_id, $effective_base_time, $effective_base_time, $effective_frozen_at) {
+    for $row in get_record_composed($data_provider, $stream_id, $effective_base_time, $effective_base_time, $effective_frozen_at, $use_cache) {
         $exact_value := $row.value;
         $found_exact := TRUE;
         break;
@@ -904,7 +979,7 @@ CREATE OR REPLACE ACTION internal_get_base_value(
     -- If no exact match, try to find the closest value before base_time
     $found_before := FALSE;
     $before_value NUMERIC(36,18);
-    for $row in get_last_record_composed($data_provider, $stream_id, $effective_base_time, $effective_frozen_at) {
+    for $row in get_last_record_composed($data_provider, $stream_id, $effective_base_time, $effective_frozen_at, $use_cache) {
         $before_value := $row.value;
         $found_before := TRUE;
         break;
@@ -917,7 +992,7 @@ CREATE OR REPLACE ACTION internal_get_base_value(
     -- If no value before, try to find the closest value after base_time
     $found_after := FALSE;
     $after_value NUMERIC(36,18);
-    for $row in get_first_record_composed($data_provider, $stream_id, $effective_base_time, $effective_frozen_at) {
+    for $row in get_first_record_composed($data_provider, $stream_id, $effective_base_time, $effective_frozen_at, $use_cache) {
         $after_value := $row.value;
         $found_after := TRUE;
         break;
@@ -926,7 +1001,7 @@ CREATE OR REPLACE ACTION internal_get_base_value(
     if $found_after {
         return $after_value;
     }
-    
-    -- If no value is found at all, return an error
-    ERROR('no base value found');
+
+    -- if no value is found, return 1
+    return 1::NUMERIC(36,18);
 };
