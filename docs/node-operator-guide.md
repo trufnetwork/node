@@ -208,6 +208,7 @@ kwild setup init \
   --state-sync.enable \
   --state-sync.trusted-providers "0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656" \
   --rpc.private
+```
 
 These flags enable state sync for faster initial synchronization using snapshots from the specified trusted provider, and enable private RPC mode for enhanced security.
 
