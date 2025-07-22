@@ -776,6 +776,89 @@ To view logs since the last system boot:
 sudo journalctl -u kwild -b
 ```
 
+## Resetting Your Node Instance
+
+Sometimes you may need to reset your node to sync from a specific point or recover from an inconsistent state. This is different from a complete removal - you preserve your configuration but reset the blockchain data.
+
+### When to Reset Your Node
+
+- Network fork or critical incident requiring new genesis
+- Database corruption or inconsistent state
+- Joining the network from a specific block height
+- Following network recovery procedures
+
+### Reset Procedure
+
+1. **Stop and disable services**:
+   ```bash
+   # For Linux
+   sudo systemctl stop kwild tn-postgres
+   sudo systemctl disable kwild tn-postgres
+   sudo systemctl daemon-reload
+   
+   # For macOS
+   launchctl stop com.trufnetwork.kwild
+   launchctl stop com.trufnetwork.tn-postgres
+   ```
+
+2. **Backup your node configuration** (optional but recommended):
+   ```bash
+   cp -r ~/truf-node-operator/my-node-config ~/truf-node-operator/my-node-config.backup.$(date +%Y%m%d_%H%M%S)
+   ```
+
+3. **Remove PostgreSQL data**:
+   ```bash
+   # Remove Docker resources
+   docker stop tn-postgres
+   docker rm tn-postgres
+   docker volume rm tn-pgdata
+   ```
+
+4. **Update genesis file** (required for network forks):
+   ```bash
+   # Pull latest changes
+   cd ~/truf-node-operator
+   git pull
+   
+   # Copy the new genesis file to your node config (only if there's a new genesis)
+   cp ./configs/network/v2/genesis.json ./my-node-config/genesis.json
+   ```
+
+5. **Recreate PostgreSQL**:
+   ```bash
+   docker run -d -p 127.0.0.1:5432:5432 --name tn-postgres \
+       -e "POSTGRES_HOST_AUTH_METHOD=trust" \
+       -v tn-pgdata:/var/lib/postgresql/data \
+       --shm-size=1gb \
+       kwildb/postgres:latest
+   ```
+
+6. **Re-enable and start services**:
+   ```bash
+   # For Linux
+   sudo systemctl enable tn-postgres kwild
+   sudo systemctl start tn-postgres
+   sudo systemctl start kwild
+   
+   # For macOS
+   launchctl start com.trufnetwork.tn-postgres
+   launchctl start com.trufnetwork.kwild
+   ```
+
+7. **Monitor synchronization**:
+   ```bash
+   kwild admin status
+   ```
+   Wait for `syncing: false` and ensure your `best_block_height` is advancing.
+
+### Important Notes
+
+- This process preserves your node identity (nodekey.json) and configuration files
+- Your validator status (if applicable) is preserved
+- The node will resync from the genesis block specified in the new genesis.json
+- State sync (if enabled in your config) allows fast resynchronization
+- For critical network incidents, always check the [Node Upgrade Guide](node-upgrade-guide.md#breaking-changes--migrations) for specific instructions
+
 ## Clean Removal
 
 > **Warning**: The following steps will completely remove your node setup, including all data and configuration. This is irreversible and should only be done if:
@@ -800,7 +883,8 @@ docker stop tn-postgres
 docker rm tn-postgres
 docker volume rm tn-pgdata
 
-# Remove node configuration
+# Remove node configuration (optional - only if you want to regenerate nodekey)
+# This will create a new node identity on next init
 rm -rf $HOME/truf-node-operator/my-node-config
 ```
 
@@ -822,6 +906,8 @@ docker stop tn-postgres
 docker rm tn-postgres
 docker volume rm tn-pgdata
 
+# Remove node configuration (optional - only if you want to regenerate nodekey)
+# This will create a new node identity on next init
 rm -rf $HOME/truf-node-operator/my-node-config
 ```
 

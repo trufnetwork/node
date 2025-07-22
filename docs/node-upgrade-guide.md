@@ -98,10 +98,30 @@ If the release notes specify a new official Postgres image (e.g. `kwildb/postgre
 
 ---
 
-## Breaking Changes & Migrations (TBD)
+## Breaking Changes & Migrations
 
 When a new version introduces consensus-breaking changes, a simple binary replacement is **not sufficient**.  
 These scenarios require a **network migration** (offline or zero-downtime) and coordination with the core team.
+
+### Network Fork Recovery
+
+When the network requires a fork due to consensus changes or critical issues, you'll need to reset your node with a new genesis file.
+
+**Prerequisites:**
+- Check official announcements for specific migration instructions
+- Ensure you have the latest `truf-node-operator` repository (`git pull`)
+
+**Recovery Steps:**
+
+Follow the **[Resetting Your Node Instance](node-operator-guide.md#resetting-your-node-instance)** procedure in the Node Operator Guide. The process preserves your node identity and configuration while syncing with the new network state.
+
+**What's Preserved During Network Forks:**
+- Node identity (nodekey) and validator status
+- All custom configuration settings
+- Chain ID continuity
+- Historical data up to the fork point
+
+### Other Migration Types
 
 See:
 * [Migrations overview](/docs/node/migrations)
