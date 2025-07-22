@@ -801,30 +801,55 @@ Sometimes you may need to reset your node to sync from a specific point or recov
    launchctl stop com.trufnetwork.tn-postgres
    ```
 
-2. **Backup your node configuration** (optional but recommended):
+2. **Backup node identity and configuration** (to preserve them):
    ```bash
-   cp -r ~/truf-node-operator/my-node-config ~/truf-node-operator/my-node-config.backup.$(date +%Y%m%d_%H%M%S)
+   # Create backup directory
+   mkdir -p ~/truf-node-operator/backup.$(date +%Y%m%d_%H%M%S)
+   
+   # Backup nodekey to preserve node identity
+   cp ~/truf-node-operator/my-node-config/nodekey.json ~/truf-node-operator/backup.$(date +%Y%m%d_%H%M%S)/
+   
+   # Backup config.toml if you want to preserve custom settings (optional)
+   cp ~/truf-node-operator/my-node-config/config.toml ~/truf-node-operator/backup.$(date +%Y%m%d_%H%M%S)/
    ```
 
-3. **Remove PostgreSQL data**:
+3. **Remove PostgreSQL data and node configuration**:
    ```bash
    # Remove Docker resources
    docker stop tn-postgres
    docker rm tn-postgres
    docker volume rm tn-pgdata
+   
+   # Remove entire node configuration directory
+   rm -rf ~/truf-node-operator/my-node-config
    ```
 
-4. **Update genesis file** (required for network forks):
+4. **Regenerate node configuration**:
    ```bash
-   # Pull latest changes
+   # Pull latest changes (for network forks)
    cd ~/truf-node-operator
    git pull
    
-   # Copy the new genesis file to your node config (only if there's a new genesis)
-   cp ./configs/network/v2/genesis.json ./my-node-config/genesis.json
+   # Reinitialize configuration
+   kwild setup init \
+     --genesis ./configs/network/v2/genesis.json \
+     --root ./my-node-config \
+     --p2p.bootnodes "4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656,0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656" \
+     --state-sync.enable \
+     --state-sync.trusted-providers "0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656" \
+     --rpc.private
    ```
 
-5. **Recreate PostgreSQL**:
+5. **Restore node identity and custom configuration**:
+   ```bash
+   # Restore nodekey to preserve node identity
+   cp ~/truf-node-operator/backup.*/nodekey.json ~/truf-node-operator/my-node-config/
+   
+   # Restore config.toml if you want to keep custom settings (optional)
+   cp ~/truf-node-operator/backup.*/config.toml ~/truf-node-operator/my-node-config/
+   ```
+
+6. **Recreate PostgreSQL**:
    ```bash
    docker run -d -p 127.0.0.1:5432:5432 --name tn-postgres \
        -e "POSTGRES_HOST_AUTH_METHOD=trust" \
@@ -833,7 +858,7 @@ Sometimes you may need to reset your node to sync from a specific point or recov
        kwildb/postgres:latest
    ```
 
-6. **Re-enable and start services**:
+7. **Re-enable and start services**:
    ```bash
    # For Linux
    sudo systemctl enable tn-postgres kwild
@@ -845,7 +870,7 @@ Sometimes you may need to reset your node to sync from a specific point or recov
    launchctl start com.trufnetwork.kwild
    ```
 
-7. **Monitor synchronization**:
+8. **Monitor synchronization**:
    ```bash
    kwild admin status
    ```
