@@ -860,7 +860,10 @@ Sometimes you may need to reset your node to sync from a specific point or recov
    kwild version
    ```
 
-6. **Restore node identity and custom configuration**:
+6. **Restore node identity and custom configuration** *(optional)*:
+   
+   > **Note**: Skip this step if you want to start with a completely fresh node identity and default configuration. Only restore if you need to preserve your existing validator status or custom settings.
+   
    ```bash
    # Restore nodekey to preserve node identity
    cp ~/truf-node-operator/backup-reset/nodekey.json ~/truf-node-operator/my-node-config/
