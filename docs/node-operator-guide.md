@@ -163,6 +163,7 @@ You have two options to get the `kwild` binary.
 
     ```bash
     sudo mv .build/kwild /usr/local/bin/
+    sudo chmod +x /usr/local/bin/kwild
     ```
 
     For Linux users, apply new docker group:
@@ -804,13 +805,13 @@ Sometimes you may need to reset your node to sync from a specific point or recov
 2. **Backup node identity and configuration** (to preserve them):
    ```bash
    # Create backup directory
-   mkdir -p ~/truf-node-operator/backup.$(date +%Y%m%d_%H%M%S)
+   mkdir -p ~/truf-node-operator/backup-reset
    
    # Backup nodekey to preserve node identity
-   cp ~/truf-node-operator/my-node-config/nodekey.json ~/truf-node-operator/backup.$(date +%Y%m%d_%H%M%S)/
+   cp ~/truf-node-operator/my-node-config/nodekey.json ~/truf-node-operator/backup-reset/
    
    # Backup config.toml if you want to preserve custom settings (optional)
-   cp ~/truf-node-operator/my-node-config/config.toml ~/truf-node-operator/backup.$(date +%Y%m%d_%H%M%S)/
+   cp ~/truf-node-operator/my-node-config/config.toml ~/truf-node-operator/backup-reset/
    ```
 
 3. **Remove PostgreSQL data and node configuration**:
@@ -840,16 +841,35 @@ Sometimes you may need to reset your node to sync from a specific point or recov
      --rpc.private
    ```
 
-5. **Restore node identity and custom configuration**:
+5. **Update kwild binary** *(optional but recommended)*:
    ```bash
-   # Restore nodekey to preserve node identity
-   cp ~/truf-node-operator/backup.*/nodekey.json ~/truf-node-operator/my-node-config/
+   # Option 1: Download latest release
+   curl -L "https://github.com/trufnetwork/node/releases/latest/download/tn_<VERSION>_linux_amd64.tar.gz" \
+       -o kwild.tgz
+   tar -xzf kwild.tgz kwild
+   sudo mv kwild /usr/local/bin/kwild
+   sudo chmod +x /usr/local/bin/kwild
    
-   # Restore config.toml if you want to keep custom settings (optional)
-   cp ~/truf-node-operator/backup.*/config.toml ~/truf-node-operator/my-node-config/
+   # Option 2: Build from source
+   cd ~/node # assuming you cloned the node repository here, please adjust if different
+   git pull && task build
+   sudo mv .build/kwild /usr/local/bin/kwild
+   sudo chmod +x /usr/local/bin/kwild
+   
+   # Verify version
+   kwild version
    ```
 
-6. **Recreate PostgreSQL**:
+6. **Restore node identity and custom configuration**:
+   ```bash
+   # Restore nodekey to preserve node identity
+   cp ~/truf-node-operator/backup-reset/nodekey.json ~/truf-node-operator/my-node-config/
+   
+   # Restore config.toml if you want to keep custom settings (optional)
+   cp ~/truf-node-operator/backup-reset/config.toml ~/truf-node-operator/my-node-config/
+   ```
+
+7. **Recreate PostgreSQL**:
    ```bash
    docker run -d -p 127.0.0.1:5432:5432 --name tn-postgres \
        -e "POSTGRES_HOST_AUTH_METHOD=trust" \
@@ -858,7 +878,7 @@ Sometimes you may need to reset your node to sync from a specific point or recov
        kwildb/postgres:latest
    ```
 
-7. **Re-enable and start services**:
+8. **Re-enable and start services**:
    ```bash
    # For Linux
    sudo systemctl enable tn-postgres kwild
@@ -870,7 +890,7 @@ Sometimes you may need to reset your node to sync from a specific point or recov
    launchctl start com.trufnetwork.kwild
    ```
 
-8. **Monitor synchronization**:
+9. **Monitor synchronization**:
    ```bash
    kwild admin status
    ```
