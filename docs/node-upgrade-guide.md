@@ -103,6 +103,12 @@ If the release notes specify a new official Postgres image (e.g. `kwildb/postgre
 When a new version introduces consensus-breaking changes, a simple binary replacement is **not sufficient**.  
 These scenarios require a **network migration** (offline or zero-downtime) and coordination with the core team.
 
+### Creating your own fork
+
+If you want to create your own fork (as opposed to recovering from another node's network fork), you can follow the [Offline migrations guide](https://docs.kwil.com/docs/node/migrations/offline-migrations) to create a new genesis file and a snapshot of the database.
+
+Then you'll be able to follow the [Resetting Your Node Instance](node-operator-guide.md#resetting-your-node-instance) procedure to reset your node and sync with the new genesis file and database snapshot. It's important to also update the `config.toml` file to point to the new snapshot by updating the `genesis_state` parameter.
+
 ### Network Fork Recovery
 
 When the network requires a fork due to consensus changes or critical issues, you'll need to reset your node with a new genesis file.
@@ -125,7 +131,6 @@ Follow the **[Resetting Your Node Instance](node-operator-guide.md#resetting-you
 
 See:
 * [Migrations overview](https://docs.kwil.com/docs/node/migrations)
-* [Offline migrations guide](https://docs.kwil.com/docs/node/migrations/offline-migrations)
 * [Zero-downtime migrations guide](https://docs.kwil.com/docs/node/migrations/zero-downtime-migrations)
 
 If your target version mentions a *migration required* flag in the release notes, **contact the TRUF.NETWORK team before proceeding**.
