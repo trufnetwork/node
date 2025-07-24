@@ -124,9 +124,9 @@ Follow the **[Resetting Your Node Instance](node-operator-guide.md#resetting-you
 ### Other Migration Types
 
 See:
-* [Migrations overview](/docs/node/migrations)
-* [Offline migrations guide](/docs/node/migrations/offline-migrations)
-* [Zero-downtime migrations guide](/docs/node/migrations/zero-downtime-migrations)
+* [Migrations overview](https://docs.kwil.com/docs/node/migrations)
+* [Offline migrations guide](https://docs.kwil.com/docs/node/migrations/offline-migrations)
+* [Zero-downtime migrations guide](https://docs.kwil.com/docs/node/migrations/zero-downtime-migrations)
 
 If your target version mentions a *migration required* flag in the release notes, **contact the TRUF.NETWORK team before proceeding**.
 
