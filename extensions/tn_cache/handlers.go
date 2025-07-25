@@ -121,17 +121,17 @@ func HandleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 					if ext := GetExtension(); ext != nil && ext.IsEnabled() {
 						ext.MetricsRecorder().RecordCacheMiss(traceCtx, dataProvider, streamID)
 					}
-					return []any{false, int64(0)}, nil
+					return []any{false, int64(0), int64(0)}, nil
 				}
 				return nil, fmt.Errorf("failed to get stream config: %w", err)
 			}
 
 			// If stream hasn't been refreshed yet, no cached data
-			if config.LastRefreshed == 0 {
+			if config.CacheRefreshedAtTimestamp == 0 {
 				if ext := GetExtension(); ext != nil && ext.IsEnabled() {
 					ext.MetricsRecorder().RecordCacheMiss(traceCtx, dataProvider, streamID)
 				}
-				return []any{false, int64(0)}, nil
+				return []any{false, int64(0), int64(0)}, nil
 			}
 
 			// Special case: if both from and to are NULL, user wants latest value only
@@ -142,11 +142,11 @@ func HandleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 					ext.MetricsRecorder().RecordCacheHit(traceCtx, dataProvider, streamID)
 
 					// Calculate and record data age
-					refreshTime := time.Unix(config.LastRefreshed, 0)
+					refreshTime := time.Unix(config.CacheRefreshedAtTimestamp, 0)
 					dataAge := time.Since(refreshTime).Seconds()
 					ext.MetricsRecorder().RecordCacheDataAge(traceCtx, dataProvider, streamID, dataAge)
 				}
-				return []any{hasData, config.LastRefreshed}, nil
+				return []any{hasData, config.CacheRefreshedAtTimestamp, config.CacheHeight}, nil
 			}
 
 			// If from is NULL but to is not, treat from as 0 (beginning of time)
@@ -161,7 +161,7 @@ func HandleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 				if ext := GetExtension(); ext != nil && ext.IsEnabled() {
 					ext.MetricsRecorder().RecordCacheMiss(traceCtx, dataProvider, streamID)
 				}
-				return []any{false, int64(0)}, nil
+				return []any{false, int64(0), int64(0)}, nil
 			}
 
 			// At this point, we know the stream is configured, has been refreshed,
@@ -174,12 +174,12 @@ func HandleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 				ext.MetricsRecorder().RecordCacheHit(traceCtx, dataProvider, streamID)
 
 				// Calculate and record data age
-				refreshTime := time.Unix(config.LastRefreshed, 0)
+				refreshTime := time.Unix(config.CacheRefreshedAtTimestamp, 0)
 				dataAge := time.Since(refreshTime).Seconds()
 				ext.MetricsRecorder().RecordCacheDataAge(traceCtx, dataProvider, streamID, dataAge)
 			}
 
-			return []any{hasData, config.LastRefreshed}, nil
+			return []any{hasData, config.CacheRefreshedAtTimestamp, config.CacheHeight}, nil
 		}, attrs...)
 
 	if err != nil {

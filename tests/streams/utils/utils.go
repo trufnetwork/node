@@ -374,9 +374,16 @@ func RunSchemaTest(t *testing.T, s kwilTesting.SchemaTest, options *Options) {
 	kwilOpts := &kwilTesting.Options{
 		UseTestContainer: true,
 		Logger:           t,
+		SetupMetaStore:   true, // Enable kwild_chain schema for blockchain height testing
+		InitialHeight:    1,    // Set initial blockchain height for tests (match production default)
 	}
 	if options != nil && options.Options != nil {
 		kwilOpts = options.Options
+		// Ensure meta store is always enabled for cache extension tests
+		kwilOpts.SetupMetaStore = true
+		if kwilOpts.InitialHeight <= 0 {
+			kwilOpts.InitialHeight = 1 // Default test height matches production
+		}
 	}
 
 	// Default to enabled with fallback (as original schema.go)

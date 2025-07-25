@@ -540,10 +540,11 @@ func (s *CacheScheduler) updateCachedStreamsTable(ctx context.Context, resolvedS
 		key := fmt.Sprintf("%s:%s", spec.DataProvider, spec.StreamID)
 		newSet[key] = true
 
-		// Preserve last_refreshed if stream already exists
-		var lastRefreshed int64
+		// Preserve refresh data if stream already exists
+		var cacheRefreshedAtTimestamp, cacheHeight int64
 		if existing, exists := currentSet[key]; exists {
-			lastRefreshed = existing.LastRefreshed
+			cacheRefreshedAtTimestamp = existing.CacheRefreshedAtTimestamp
+			cacheHeight = existing.CacheHeight
 		}
 
 		var fromTimestamp int64
@@ -552,11 +553,12 @@ func (s *CacheScheduler) updateCachedStreamsTable(ctx context.Context, resolvedS
 		}
 
 		newConfigs = append(newConfigs, internal.StreamCacheConfig{
-			DataProvider:  spec.DataProvider,
-			StreamID:      spec.StreamID,
-			FromTimestamp: fromTimestamp,
-			LastRefreshed: lastRefreshed,
-			CronSchedule:  spec.Schedule.CronExpr,
+			DataProvider:              spec.DataProvider,
+			StreamID:                  spec.StreamID,
+			FromTimestamp:             fromTimestamp,
+			CacheRefreshedAtTimestamp: cacheRefreshedAtTimestamp,
+			CacheHeight:               cacheHeight,
+			CronSchedule:              spec.Schedule.CronExpr,
 		})
 	}
 

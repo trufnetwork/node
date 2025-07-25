@@ -316,11 +316,12 @@ func (s *CacheScheduler) storeStreamConfigs(ctx context.Context, directives []co
 		}
 
 		streamConfig := internal.StreamCacheConfig{
-			DataProvider:  directive.DataProvider,
-			StreamID:      directive.StreamID,
-			FromTimestamp: fromTimestamp,
-			LastRefreshed: 0, // Will be set on first refresh
-			CronSchedule:  directive.Schedule.CronExpr,
+			DataProvider:              directive.DataProvider,
+			StreamID:                  directive.StreamID,
+			FromTimestamp:             fromTimestamp,
+			CacheRefreshedAtTimestamp: 0, // Will be set on first refresh
+			CacheHeight:               0, // Will be set on first refresh
+			CronSchedule:              directive.Schedule.CronExpr,
 		}
 		configs = append(configs, streamConfig)
 	}
@@ -394,7 +395,7 @@ func (s *CacheScheduler) runInitialRefresh(directives []config.CacheDirective) {
 	for _, directive := range directives {
 		key := fmt.Sprintf("%s:%s", directive.DataProvider, directive.StreamID)
 		if config, exists := configMap[key]; exists {
-			if s.shouldSkipInitialRefresh(config.LastRefreshed, directive.Schedule.CronExpr) {
+			if s.shouldSkipInitialRefresh(config.CacheRefreshedAtTimestamp, directive.Schedule.CronExpr) {
 				skipped++
 				continue
 			}
@@ -539,7 +540,7 @@ func (s *CacheScheduler) RunFullRefreshSync(ctx context.Context) (int, error) {
 	for _, dir := range directives {
 		key := fmt.Sprintf("%s:%s", dir.DataProvider, dir.StreamID)
 		if conf, exists := configMap[key]; exists {
-			if s.shouldSkipInitialRefresh(conf.LastRefreshed, dir.Schedule.CronExpr) {
+			if s.shouldSkipInitialRefresh(conf.CacheRefreshedAtTimestamp, dir.Schedule.CronExpr) {
 				continue
 			}
 		}
