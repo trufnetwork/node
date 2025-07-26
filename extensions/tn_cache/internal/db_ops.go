@@ -105,7 +105,7 @@ func (c *CacheDB) AddStreamConfig(ctx context.Context, config StreamCacheConfig)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Insert or update the stream config using UPSERT
+	// Insert or update the stream config using UPSERT, preserving existing values if new values are zero
 	_, err = tx.Execute(ctx, `
 		INSERT INTO `+constants.CacheSchemaName+`.cached_streams 
 			(data_provider, stream_id, from_timestamp, cache_refreshed_at_timestamp, cache_height, cron_schedule)
@@ -114,8 +114,8 @@ func (c *CacheDB) AddStreamConfig(ctx context.Context, config StreamCacheConfig)
 		ON CONFLICT (data_provider, stream_id) 
 		DO UPDATE SET
 			from_timestamp = EXCLUDED.from_timestamp,
-			cache_refreshed_at_timestamp = EXCLUDED.cache_refreshed_at_timestamp,
-			cache_height = EXCLUDED.cache_height,
+			cache_refreshed_at_timestamp = COALESCE(NULLIF(EXCLUDED.cache_refreshed_at_timestamp, 0), cached_streams.cache_refreshed_at_timestamp),
+			cache_height = COALESCE(NULLIF(EXCLUDED.cache_height, 0), cached_streams.cache_height),
 			cron_schedule = EXCLUDED.cron_schedule
 	`, config.DataProvider, config.StreamID, config.FromTimestamp, config.CacheRefreshedAtTimestamp, config.CacheHeight, config.CronSchedule)
 
@@ -161,7 +161,7 @@ func (c *CacheDB) AddStreamConfigs(ctx context.Context, configs []StreamCacheCon
 		cronSchedules = append(cronSchedules, config.CronSchedule)
 	}
 
-	// Execute the batch insert with UPSERT logic
+	// Execute the batch insert with UPSERT logic, preserving existing values if new values are zero
 	_, err = tx.Execute(ctx, `
 		INSERT INTO `+constants.CacheSchemaName+`.cached_streams 
 			(data_provider, stream_id, from_timestamp, cache_refreshed_at_timestamp, cache_height, cron_schedule)
@@ -169,8 +169,8 @@ func (c *CacheDB) AddStreamConfigs(ctx context.Context, configs []StreamCacheCon
 		ON CONFLICT (data_provider, stream_id) 
 		DO UPDATE SET
 			from_timestamp = EXCLUDED.from_timestamp,
-			cache_refreshed_at_timestamp = EXCLUDED.cache_refreshed_at_timestamp,
-			cache_height = EXCLUDED.cache_height,
+			cache_refreshed_at_timestamp = COALESCE(NULLIF(EXCLUDED.cache_refreshed_at_timestamp, 0), cached_streams.cache_refreshed_at_timestamp),
+			cache_height = COALESCE(NULLIF(EXCLUDED.cache_height, 0), cached_streams.cache_height),
 			cron_schedule = EXCLUDED.cron_schedule
 	`, dataProviders, streamIDs, fromTimestamps, cacheRefreshedAtTimestamps, cacheHeights, cronSchedules)
 
