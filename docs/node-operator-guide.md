@@ -784,7 +784,7 @@ Sometimes you may need to reset your node to sync from a specific point or recov
 
 ### When to Reset Your Node
 
-- Network fork or critical incident requiring new genesis
+- Network fork or critical incident requiring new genesis (follow the [Node Upgrade Guide](node-upgrade-guide.md#network-fork-recovery) if you intend to create a fork)
 - Database corruption or inconsistent state
 - Joining the network from a specific block height
 - Following network recovery procedures
@@ -841,6 +841,8 @@ Sometimes you may need to reset your node to sync from a specific point or recov
      --state-sync.trusted-providers "0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656" \
      --rpc.private
    ```
+
+   > **Note**: If you are also using a new snapshot, you'll need to update the `genesis_state` parameter in the `config.toml` file to point to the new snapshot.
 
 5. **Update kwild binary** *(optional but recommended)*:
    ```bash
