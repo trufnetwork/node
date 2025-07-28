@@ -40,16 +40,29 @@ If you manage `kwild` with another init system or inside Docker Compose, use the
        -o kwild.tgz
    tar -xzf kwild.tgz kwild
    ```
+   Note: This extracts the `kwild` binary to your current directory.
 
    Or, **build from source** in your clone:
    ```bash
    git pull && task build
    ```
-2. **Replace** the old binary (adjust path if you installed elsewhere):
+   Note: This builds the binary to `.build/kwild` in your repository directory.
+
+2. **Replace** the old binary (adjust paths based on where you downloaded/built and where kwild is installed):
+   
+   If you built from source:
+   ```bash
+   sudo mv .build/kwild /usr/local/bin/kwild
+   sudo chmod +x /usr/local/bin/kwild
+   ```
+   
+   If you downloaded the binary:
    ```bash
    sudo mv kwild /usr/local/bin/kwild
    sudo chmod +x /usr/local/bin/kwild
    ```
+   
+   Note: Adjust the source path if you downloaded/built in a different location, and the destination path if your kwild binary is installed elsewhere (e.g., `/usr/bin/kwild`, `~/bin/kwild`, etc.).
 3. Check the version:
    ```bash
    kwild version
