@@ -121,18 +121,19 @@ These scenarios require a **network migration** (offline or zero-downtime) and c
 If you want to create your own fork (as opposed to recovering from another node's network fork), you can follow the [Offline migrations guide](https://docs.kwil.com/docs/node/migrations/offline-migrations) until **step 2** to create a new genesis file and a snapshot of the database. 
 
 After you create the new genesis file, beware that the content still points to the old network configuration, please open the generated genesis file and confirm about:
-1. `db_owner`: this can be your own address, because you need the private key to be able to do admin actions.
+1. `db_owner`: admin address
 
-for testnet, please fill with `0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf`, your private key will be `0000000000000000000000000000000000000000000000000000000000000001`
+- Testnet example: `0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf`  
+- Corresponding test key: `0000…001`
 
-2. `validators`: `pubkey` and `type`, need to match the node that you are defining as the validators, either the validator will tell you about the detail, or if you want to create your own network, please fill with your key.
+2. `validators`: every entry’s `pubkey` and `type` must match the validator nodes you will run, either the validator will tell you the details or for a single-validator test network you can reuse your own key.
 
-3. `leader`: the same as validators, if you have more than 1, select the node which you point as the leader.
+3. `leader`: choose which validator starts as leader. In a single-validator setup this is the same key as in step 2.
 
 Then you'll be able to follow the [Resetting Your Node Instance](node-operator-guide.md#resetting-your-node-instance) procedure to reset your node and sync with the new genesis file and database snapshot. It's important to also update the `config.toml` file to point to the new snapshot by updating the `genesis_state` parameter.
 
 note: 
-- You can use this command to see your own keys, `kwild key info -o ./new-node-config/nodekey.json`
+- You can use this command to see your node address and keys, `kwild key info -o ./new-node-config/nodekey.json`
 - Please be careful about the directory you use for new network / fork, don't use the old directory / content or you will generate the wrong data / encounter errors.
 
 ### Network Fork Recovery
