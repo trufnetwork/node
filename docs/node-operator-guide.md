@@ -550,8 +550,10 @@ Node IDs in TRUF.NETWORK follow the format: `<public key>#<key type>@<IP address
 You can find your node ID by running:
 
 ```bash
-kwild key info --key-file ./my-node-config/nodekey.json
+kwild key info -o ./my-node-config/nodekey.json
 ```
+
+note: You can also access the user address, public / private key for defining your genesis file.
 
 ## Additional Resources
 
@@ -842,7 +844,10 @@ Sometimes you may need to reset your node to sync from a specific point or recov
      --rpc.private
    ```
 
-   > **Note**: If you are also using a new snapshot, you'll need to update the `genesis_state` parameter in the `config.toml` file to point to the new snapshot.
+   > **Note**: 
+    - If you are also using a new snapshot, you'll need to update the `genesis_state` parameter in the `config.toml` file to point to the new snapshot.
+    - `p2p.bootnodes`, will define peer nodes, if you have none then please delete from command
+    - `trusted-providers`, will define the main provider of the distributed data, if you are the provider, then please delete from command
 
 5. **Update kwild binary** *(optional but recommended)*:
    ```bash

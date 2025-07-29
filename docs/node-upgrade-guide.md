@@ -118,9 +118,18 @@ These scenarios require a **network migration** (offline or zero-downtime) and c
 
 ### Creating your own fork
 
-If you want to create your own fork (as opposed to recovering from another node's network fork), you can follow the [Offline migrations guide](https://docs.kwil.com/docs/node/migrations/offline-migrations) to create a new genesis file and a snapshot of the database.
+If you want to create your own fork (as opposed to recovering from another node's network fork), you can follow the [Offline migrations guide](https://docs.kwil.com/docs/node/migrations/offline-migrations) until **step 2** to create a new genesis file and a snapshot of the database. 
+
+After you create the new genesis file, beware that the content still points to the old network configuration, please open the generated genesis file and confirm about:
+1. `db_owner`: this can be your own address, because you need the private key to be able to do admin actions.
+2. `validators`: `pubkey` and `type`, need to match the node that you are defining as the validators, either the validator will tell you about the detail, or if you want to create your own network, please fill with your key.
+3. `leader`: the same as validators, if you have more than 1, select the node which you point as the leader.
 
 Then you'll be able to follow the [Resetting Your Node Instance](node-operator-guide.md#resetting-your-node-instance) procedure to reset your node and sync with the new genesis file and database snapshot. It's important to also update the `config.toml` file to point to the new snapshot by updating the `genesis_state` parameter.
+
+note: 
+- You can use this command to see your own keys, `kwild key info -o ./new-node-config/nodekey.json`
+- Please be careful about the directory you use for new network / fork, don't use the old directory / content or you will generate the wrong data / encounter errors.
 
 ### Network Fork Recovery
 
