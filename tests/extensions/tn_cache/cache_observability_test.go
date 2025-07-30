@@ -20,7 +20,7 @@ import (
 
 // TestCacheObservability verifies cache monitoring and logging functionality:
 // - JSON formatted cache hit/miss logs
-// - Proper log fields (cache_hit, cached_at)
+// - Proper log fields (cache_hit, cached_at_height, current_height)
 // - Log capture mechanism works correctly
 func TestCacheObservability(t *testing.T) {
 	deployer := "0x0000000000000000000000000000000000000123"
@@ -130,13 +130,23 @@ func TestCacheObservability(t *testing.T) {
 					}
 				}
 
-				// Verify cache hit log is valid JSON with timestamp
+				// Verify cache hit log is valid JSON with height
 				require.Len(t, cacheLogs, 1, "Should have one cache hit log")
 				var hitLog map[string]interface{}
 				err = json.Unmarshal([]byte(cacheLogs[0]), &hitLog)
 				assert.NoError(t, err, "Cache hit log should be valid JSON")
 				assert.Equal(t, true, hitLog["cache_hit"], "Second query should be cache hit")
-				assert.NotNil(t, hitLog["cached_at"], "Cache hit should include cached_at timestamp")
+				assert.NotNil(t, hitLog["cache_height"], "Cache hit should include cache_height")
+				assert.NotNil(t, hitLog["cache_refreshed_at_timestamp"], "Cache hit should include cache_refreshed_at_timestamp")
+
+				// Verify height values are valid
+				cacheHeight, ok := hitLog["cache_height"].(float64)
+				assert.True(t, ok, "cache_height should be a number")
+				assert.Greater(t, cacheHeight, float64(0), "cache_height should be positive")
+
+				refreshTimestamp, ok := hitLog["cache_refreshed_at_timestamp"].(float64)
+				assert.True(t, ok, "cache_refreshed_at_timestamp should be a number")
+				assert.Greater(t, refreshTimestamp, float64(0), "cache_refreshed_at_timestamp should be positive")
 
 				// Test 3: Verify get_index cache miss log format
 				cacheLogs = nil // Reset logs
@@ -164,7 +174,7 @@ func TestCacheObservability(t *testing.T) {
 					}
 				}
 
-				// Verify index cache hit logs are valid JSON with timestamp
+				// Verify index cache hit logs are valid JSON with height
 				// get_index can generate multiple cache hit logs (for base value and current values)
 				require.GreaterOrEqual(t, len(cacheLogs), 1, "Should have at least one index cache hit log")
 				for i, logStr := range cacheLogs {
@@ -172,7 +182,17 @@ func TestCacheObservability(t *testing.T) {
 					err = json.Unmarshal([]byte(logStr), &indexHitLog)
 					assert.NoError(t, err, "Index cache hit log %d should be valid JSON", i)
 					assert.Equal(t, true, indexHitLog["cache_hit"], "Index query %d should be cache hit", i)
-					assert.NotNil(t, indexHitLog["cached_at"], "Index cache hit %d should include cached_at timestamp", i)
+					assert.NotNil(t, indexHitLog["cache_height"], "Index cache hit %d should include cache_height", i)
+					assert.NotNil(t, indexHitLog["cache_refreshed_at_timestamp"], "Index cache hit %d should include cache_refreshed_at_timestamp", i)
+
+					// Verify height values are valid for index
+					cacheHeight, ok := indexHitLog["cache_height"].(float64)
+					assert.True(t, ok, "Index cache_height %d should be a number", i)
+					assert.Greater(t, cacheHeight, float64(0), "Index cache_height %d should be positive", i)
+
+					refreshTimestamp, ok := indexHitLog["cache_refreshed_at_timestamp"].(float64)
+					assert.True(t, ok, "Index cache_refreshed_at_timestamp %d should be a number", i)
+					assert.Greater(t, refreshTimestamp, float64(0), "Index cache_refreshed_at_timestamp %d should be positive", i)
 				}
 
 				return nil

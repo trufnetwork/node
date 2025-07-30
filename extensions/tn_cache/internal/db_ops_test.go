@@ -92,11 +92,12 @@ func TestCacheDB_UpdateStreamConfigsAtomic(t *testing.T) {
 
 	newConfigs := []StreamCacheConfig{
 		{
-			DataProvider:  "provider1",
-			StreamID:      "stream1",
-			FromTimestamp: 1234567890,
-			LastRefreshed: 1672531200, // 2023-01-01T00:00:00Z
-			CronSchedule:  "0 * * * *",
+			DataProvider:              "provider1",
+			StreamID:                  "stream1",
+			FromTimestamp:             1234567890,
+			CacheRefreshedAtTimestamp: 1672531200, // 2023-01-01T00:00:00Z
+			CacheHeight:               100,
+			CronSchedule:              "0 * * * *",
 		},
 	}
 

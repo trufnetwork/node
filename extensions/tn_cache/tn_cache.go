@@ -146,7 +146,8 @@ func InitializeCachePrecompile(ctx context.Context, service *common.Service, db 
 					IsTable: false,
 					Fields: []precompiles.PrecompileValue{
 						precompiles.NewPrecompileValue("has_data", types.BoolType, false),
-						precompiles.NewPrecompileValue("cached_at", types.IntType, false),
+						precompiles.NewPrecompileValue("cache_refreshed_at_timestamp", types.IntType, false),
+						precompiles.NewPrecompileValue("cache_height", types.IntType, false),
 					},
 				},
 				Handler: HandleHasCachedData,

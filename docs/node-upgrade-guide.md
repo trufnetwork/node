@@ -40,16 +40,29 @@ If you manage `kwild` with another init system or inside Docker Compose, use the
        -o kwild.tgz
    tar -xzf kwild.tgz kwild
    ```
+   Note: This extracts the `kwild` binary to your current directory.
 
    Or, **build from source** in your clone:
    ```bash
    git pull && task build
    ```
-2. **Replace** the old binary (adjust path if you installed elsewhere):
+   Note: This builds the binary to `.build/kwild` in your repository directory.
+
+2. **Replace** the old binary (adjust paths based on where you downloaded/built and where kwild is installed):
+   
+   If you built from source:
+   ```bash
+   sudo mv .build/kwild /usr/local/bin/kwild
+   sudo chmod +x /usr/local/bin/kwild
+   ```
+   
+   If you downloaded the binary:
    ```bash
    sudo mv kwild /usr/local/bin/kwild
    sudo chmod +x /usr/local/bin/kwild
    ```
+   
+   Note: Adjust the source path if you downloaded/built in a different location, and the destination path if your kwild binary is installed elsewhere (e.g., `/usr/bin/kwild`, `~/bin/kwild`, etc.).
 3. Check the version:
    ```bash
    kwild version
@@ -98,15 +111,54 @@ If the release notes specify a new official Postgres image (e.g. `kwildb/postgre
 
 ---
 
-## Breaking Changes & Migrations (TBD)
+## Breaking Changes & Migrations
 
 When a new version introduces consensus-breaking changes, a simple binary replacement is **not sufficient**.  
 These scenarios require a **network migration** (offline or zero-downtime) and coordination with the core team.
 
+### Creating your own fork
+
+If you want to create your own fork (as opposed to recovering from another node's network fork), you can follow the [Offline migrations guide](https://docs.kwil.com/docs/node/migrations/offline-migrations) until **step 2** to create a new genesis file and a snapshot of the database. 
+
+After you create the new genesis file, beware that the content still points to the old network configuration, please open the generated genesis file and confirm about:
+1. `db_owner`: admin address
+
+- Testnet example: `0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf`  
+- Corresponding test key: `0000…001`
+
+2. `validators`: every entry’s `pubkey` and `type` must match the validator nodes you will run, either the validator will tell you the details or for a single-validator test network you can reuse your own key.
+
+3. `leader`: choose which validator starts as leader. In a single-validator setup this is the same key as in step 2.
+
+Then you'll be able to follow the [Resetting Your Node Instance](node-operator-guide.md#resetting-your-node-instance) procedure to reset your node and sync with the new genesis file and database snapshot. It's important to also update the `config.toml` file to point to the new snapshot by updating the `genesis_state` parameter.
+
+note: 
+- You can use this command to see your node address and keys, `kwild key info -o ./new-node-config/nodekey.json`
+- Please be careful about the directory you use for new network / fork, don't use the old directory / content or you will generate the wrong data / encounter errors.
+
+### Network Fork Recovery
+
+When the network requires a fork due to consensus changes or critical issues, you'll need to reset your node with a new genesis file.
+
+**Prerequisites:**
+- Check official announcements for specific migration instructions
+- Ensure you have the latest `truf-node-operator` repository (`git pull`)
+
+**Recovery Steps:**
+
+Follow the **[Resetting Your Node Instance](node-operator-guide.md#resetting-your-node-instance)** procedure in the Node Operator Guide. The process preserves your node identity and configuration while syncing with the new network state.
+
+**What's Preserved During Network Forks:**
+- Node identity (nodekey) and validator status
+- All custom configuration settings
+- Chain ID continuity
+- Historical data up to the fork point
+
+### Other Migration Types
+
 See:
-* [Migrations overview](/docs/node/migrations)
-* [Offline migrations guide](/docs/node/migrations/offline-migrations)
-* [Zero-downtime migrations guide](/docs/node/migrations/zero-downtime-migrations)
+* [Migrations overview](https://docs.kwil.com/docs/node/migrations)
+* [Zero-downtime migrations guide](https://docs.kwil.com/docs/node/migrations/zero-downtime-migrations)
 
 If your target version mentions a *migration required* flag in the release notes, **contact the TRUF.NETWORK team before proceeding**.
 

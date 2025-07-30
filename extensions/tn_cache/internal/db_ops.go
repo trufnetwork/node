@@ -44,11 +44,12 @@ func (c *CacheDB) SetTx(tx sql.DB) {
 
 // StreamCacheConfig represents a stream's caching configuration
 type StreamCacheConfig struct {
-	DataProvider  string
-	StreamID      string
-	FromTimestamp int64
-	LastRefreshed int64
-	CronSchedule  string
+	DataProvider              string
+	StreamID                  string
+	FromTimestamp             int64
+	CacheRefreshedAtTimestamp int64 // Internal use: when cache was refreshed
+	CacheHeight               int64 // User-facing: blockchain height during refresh
+	CronSchedule              string
 }
 
 // CachedEvent represents a cached event from a stream
@@ -67,6 +68,34 @@ func NewCacheDB(db sql.DB, logger log.Logger) *CacheDB {
 	}
 }
 
+// GetCurrentBlockHeight queries the blockchain state directly from kwild_chain.chain
+func (c *CacheDB) GetCurrentBlockHeight(ctx context.Context) (int64, error) {
+	results, err := c.db.Execute(ctx, `
+		SELECT height 
+		FROM kwild_chain.chain 
+		ORDER BY height DESC 
+		LIMIT 1
+	`)
+	if err != nil {
+		return 0, fmt.Errorf("query blockchain height: %w", err)
+	}
+
+	if len(results.Rows) == 0 {
+		return 0, fmt.Errorf("no blockchain state found in kwild_chain.chain")
+	}
+
+	height, ok := results.Rows[0][0].(int64)
+	if !ok {
+		return 0, fmt.Errorf("failed to convert height to int64")
+	}
+
+	if height <= 0 {
+		return 0, fmt.Errorf("invalid blockchain height: %d", height)
+	}
+
+	return height, nil
+}
+
 // AddStreamConfig adds or updates a stream's cache configuration
 func (c *CacheDB) AddStreamConfig(ctx context.Context, config StreamCacheConfig) error {
 
@@ -76,18 +105,19 @@ func (c *CacheDB) AddStreamConfig(ctx context.Context, config StreamCacheConfig)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Insert or update the stream config using UPSERT
+	// Insert or update the stream config using UPSERT, preserving existing values if new values are zero
 	_, err = tx.Execute(ctx, `
 		INSERT INTO `+constants.CacheSchemaName+`.cached_streams 
-			(data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule)
+			(data_provider, stream_id, from_timestamp, cache_refreshed_at_timestamp, cache_height, cron_schedule)
 		VALUES 
-			($1, $2, $3, $4, $5)
+			($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (data_provider, stream_id) 
 		DO UPDATE SET
 			from_timestamp = EXCLUDED.from_timestamp,
-			last_refreshed = EXCLUDED.last_refreshed,
+			cache_refreshed_at_timestamp = COALESCE(NULLIF(EXCLUDED.cache_refreshed_at_timestamp, 0), cached_streams.cache_refreshed_at_timestamp),
+			cache_height = COALESCE(NULLIF(EXCLUDED.cache_height, 0), cached_streams.cache_height),
 			cron_schedule = EXCLUDED.cron_schedule
-	`, config.DataProvider, config.StreamID, config.FromTimestamp, config.LastRefreshed, config.CronSchedule)
+	`, config.DataProvider, config.StreamID, config.FromTimestamp, config.CacheRefreshedAtTimestamp, config.CacheHeight, config.CronSchedule)
 
 	if err != nil {
 		return fmt.Errorf("upsert stream config: %w", err)
@@ -120,27 +150,29 @@ func (c *CacheDB) AddStreamConfigs(ctx context.Context, configs []StreamCacheCon
 
 	// Build arrays for batch insert using UNNEST for efficiency
 	var dataProviders, streamIDs, cronSchedules []string
-	var fromTimestamps, lastRefresheds []int64
+	var fromTimestamps, cacheRefreshedAtTimestamps, cacheHeights []int64
 
 	for _, config := range configs {
 		dataProviders = append(dataProviders, config.DataProvider)
 		streamIDs = append(streamIDs, config.StreamID)
 		fromTimestamps = append(fromTimestamps, config.FromTimestamp)
-		lastRefresheds = append(lastRefresheds, config.LastRefreshed)
+		cacheRefreshedAtTimestamps = append(cacheRefreshedAtTimestamps, config.CacheRefreshedAtTimestamp)
+		cacheHeights = append(cacheHeights, config.CacheHeight)
 		cronSchedules = append(cronSchedules, config.CronSchedule)
 	}
 
-	// Execute the batch insert with UPSERT logic
+	// Execute the batch insert with UPSERT logic, preserving existing values if new values are zero
 	_, err = tx.Execute(ctx, `
 		INSERT INTO `+constants.CacheSchemaName+`.cached_streams 
-			(data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule)
-		SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::INT8[], $5::TEXT[])
+			(data_provider, stream_id, from_timestamp, cache_refreshed_at_timestamp, cache_height, cron_schedule)
+		SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::INT8[], $5::INT8[], $6::TEXT[])
 		ON CONFLICT (data_provider, stream_id) 
 		DO UPDATE SET
 			from_timestamp = EXCLUDED.from_timestamp,
-			last_refreshed = EXCLUDED.last_refreshed,
+			cache_refreshed_at_timestamp = COALESCE(NULLIF(EXCLUDED.cache_refreshed_at_timestamp, 0), cached_streams.cache_refreshed_at_timestamp),
+			cache_height = COALESCE(NULLIF(EXCLUDED.cache_height, 0), cached_streams.cache_height),
 			cron_schedule = EXCLUDED.cron_schedule
-	`, dataProviders, streamIDs, fromTimestamps, lastRefresheds, cronSchedules)
+	`, dataProviders, streamIDs, fromTimestamps, cacheRefreshedAtTimestamps, cacheHeights, cronSchedules)
 
 	if err != nil {
 		return fmt.Errorf("batch upsert stream configs: %w", err)
@@ -165,7 +197,7 @@ func (c *CacheDB) ListStreamConfigs(ctx context.Context) ([]StreamCacheConfig, e
 	c.logger.Debug("listing all stream cache configs")
 
 	results, err := c.db.Execute(ctx, `
-		SELECT data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule
+		SELECT data_provider, stream_id, from_timestamp, cache_refreshed_at_timestamp, cache_height, cron_schedule
 		FROM `+constants.CacheSchemaName+`.cached_streams
 		ORDER BY data_provider, stream_id
 	`)
@@ -175,8 +207,8 @@ func (c *CacheDB) ListStreamConfigs(ctx context.Context) ([]StreamCacheConfig, e
 
 	var configs []StreamCacheConfig
 	for _, row := range results.Rows {
-		if len(row) != 5 {
-			return nil, fmt.Errorf("expected 5 columns, got %d", len(row))
+		if len(row) != 6 {
+			return nil, fmt.Errorf("expected 6 columns, got %d", len(row))
 		}
 
 		dataProvider, ok := row[0].(string)
@@ -194,22 +226,28 @@ func (c *CacheDB) ListStreamConfigs(ctx context.Context) ([]StreamCacheConfig, e
 			return nil, fmt.Errorf("failed to convert from_timestamp to int64")
 		}
 
-		lastRefreshed, ok := row[3].(int64)
+		cacheRefreshedAtTimestamp, ok := row[3].(int64)
 		if !ok {
-			return nil, fmt.Errorf("failed to convert last_refreshed to int64")
+			return nil, fmt.Errorf("failed to convert cache_refreshed_at_timestamp to int64")
 		}
 
-		cronSchedule, ok := row[4].(string)
+		cacheHeight, ok := row[4].(int64)
+		if !ok {
+			return nil, fmt.Errorf("failed to convert cache_height to int64")
+		}
+
+		cronSchedule, ok := row[5].(string)
 		if !ok {
 			return nil, fmt.Errorf("failed to convert cron_schedule to string")
 		}
 
 		config := StreamCacheConfig{
-			DataProvider:  dataProvider,
-			StreamID:      streamID,
-			FromTimestamp: fromTimestamp,
-			LastRefreshed: lastRefreshed,
-			CronSchedule:  cronSchedule,
+			DataProvider:              dataProvider,
+			StreamID:                  streamID,
+			FromTimestamp:             fromTimestamp,
+			CacheRefreshedAtTimestamp: cacheRefreshedAtTimestamp,
+			CacheHeight:               cacheHeight,
+			CronSchedule:              cronSchedule,
 		}
 		configs = append(configs, config)
 	}
@@ -283,18 +321,25 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 				}
 			}
 
-			// Finally, update the last refreshed timestamp for the stream
+			// Finally, update the refresh timestamp and blockchain height for the stream
 			if len(events) > 0 {
 				event := events[0]
+
+				// Get current blockchain height
+				currentHeight, err := c.GetCurrentBlockHeight(traceCtx)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get current blockchain height: %w", err)
+				}
+
 				now := time.Now().Unix()
 				_, err = tx.Execute(traceCtx, `
 					UPDATE `+constants.CacheSchemaName+`.cached_streams
-					SET last_refreshed = $3
+					SET cache_refreshed_at_timestamp = $3, cache_height = $4
 					WHERE data_provider = $1 AND stream_id = $2
-				`, event.DataProvider, event.StreamID, now)
+				`, event.DataProvider, event.StreamID, now, currentHeight)
 
 				if err != nil {
-					return nil, fmt.Errorf("update last refreshed: %w", err)
+					return nil, fmt.Errorf("update refresh timestamp and height: %w", err)
 				}
 			}
 
@@ -347,32 +392,32 @@ func (c *CacheDB) CacheEventsWithIndex(ctx context.Context, events []CachedEvent
 				}
 			}()
 
-	// Cache raw events if provided
-	if len(events) > 0 {
-		// Insert events in batches using UNNEST for efficiency
-		batchSize := 10000
-		for i := 0; i < len(events); i += batchSize {
-			end := i + batchSize
-			if end > len(events) {
-				end = len(events)
-			}
+			// Cache raw events if provided
+			if len(events) > 0 {
+				// Insert events in batches using UNNEST for efficiency
+				batchSize := 10000
+				for i := 0; i < len(events); i += batchSize {
+					end := i + batchSize
+					if end > len(events) {
+						end = len(events)
+					}
 
-			batch := events[i:end]
+					batch := events[i:end]
 
-			// Build arrays for UNNEST
-			var dataProviders, streamIDs []string
-			var eventTimes []int64
-			var values []*types.Decimal
+					// Build arrays for UNNEST
+					var dataProviders, streamIDs []string
+					var eventTimes []int64
+					var values []*types.Decimal
 
-			for _, event := range batch {
-				dataProviders = append(dataProviders, event.DataProvider)
-				streamIDs = append(streamIDs, event.StreamID)
-				eventTimes = append(eventTimes, event.EventTime)
-				values = append(values, event.Value)
-			}
+					for _, event := range batch {
+						dataProviders = append(dataProviders, event.DataProvider)
+						streamIDs = append(streamIDs, event.StreamID)
+						eventTimes = append(eventTimes, event.EventTime)
+						values = append(values, event.Value)
+					}
 
-			// Use UNNEST for efficient batch insert
-			_, err = tx.Execute(traceCtx, `
+					// Use UNNEST for efficient batch insert
+					_, err = tx.Execute(traceCtx, `
 				INSERT INTO `+constants.CacheSchemaName+`.cached_events 
 					(data_provider, stream_id, event_time, value)
 				SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::DECIMAL(36,18)[])
@@ -381,38 +426,38 @@ func (c *CacheDB) CacheEventsWithIndex(ctx context.Context, events []CachedEvent
 					value = EXCLUDED.value
 			`, dataProviders, streamIDs, eventTimes, values)
 
-			if err != nil {
-				return nil, fmt.Errorf("insert events batch: %w", err)
-			}
-		}
-	}
-
-	// Cache index events if provided
-	if len(indexEvents) > 0 {
-		// Insert index events in batches
-		batchSize := 10000
-		for i := 0; i < len(indexEvents); i += batchSize {
-			end := i + batchSize
-			if end > len(indexEvents) {
-				end = len(indexEvents)
+					if err != nil {
+						return nil, fmt.Errorf("insert events batch: %w", err)
+					}
+				}
 			}
 
-			batch := indexEvents[i:end]
+			// Cache index events if provided
+			if len(indexEvents) > 0 {
+				// Insert index events in batches
+				batchSize := 10000
+				for i := 0; i < len(indexEvents); i += batchSize {
+					end := i + batchSize
+					if end > len(indexEvents) {
+						end = len(indexEvents)
+					}
 
-			// Build arrays for UNNEST
-			var dataProviders, streamIDs []string
-			var eventTimes []int64
-			var indexValues []*types.Decimal
+					batch := indexEvents[i:end]
 
-			for _, event := range batch {
-				dataProviders = append(dataProviders, event.DataProvider)
-				streamIDs = append(streamIDs, event.StreamID)
-				eventTimes = append(eventTimes, event.EventTime)
-				indexValues = append(indexValues, event.Value)
-			}
+					// Build arrays for UNNEST
+					var dataProviders, streamIDs []string
+					var eventTimes []int64
+					var indexValues []*types.Decimal
 
-			// Use UNNEST for efficient batch insert
-			_, err = tx.Execute(traceCtx, `
+					for _, event := range batch {
+						dataProviders = append(dataProviders, event.DataProvider)
+						streamIDs = append(streamIDs, event.StreamID)
+						eventTimes = append(eventTimes, event.EventTime)
+						indexValues = append(indexValues, event.Value)
+					}
+
+					// Use UNNEST for efficient batch insert
+					_, err = tx.Execute(traceCtx, `
 				INSERT INTO `+constants.CacheSchemaName+`.cached_index_events 
 					(data_provider, stream_id, event_time, value)
 				SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::DECIMAL(36,18)[])
@@ -421,23 +466,29 @@ func (c *CacheDB) CacheEventsWithIndex(ctx context.Context, events []CachedEvent
 					value = EXCLUDED.value
 			`, dataProviders, streamIDs, eventTimes, indexValues)
 
-			if err != nil {
-				return nil, fmt.Errorf("insert index events batch: %w", err)
+					if err != nil {
+						return nil, fmt.Errorf("insert index events batch: %w", err)
+					}
+				}
 			}
-		}
-	}
 
-			// Update the last refreshed timestamp for the stream
+			// Update the refresh timestamp and blockchain height for the stream
 			if primaryProvider != "" && primaryStreamID != "" {
+				// Get current blockchain height
+				currentHeight, err := c.GetCurrentBlockHeight(traceCtx)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get current blockchain height: %w", err)
+				}
+
 				now := time.Now().Unix()
 				_, err = tx.Execute(traceCtx, `
 					UPDATE `+constants.CacheSchemaName+`.cached_streams
-					SET last_refreshed = $3
+					SET cache_refreshed_at_timestamp = $3, cache_height = $4
 					WHERE data_provider = $1 AND stream_id = $2
-				`, primaryProvider, primaryStreamID, now)
+				`, primaryProvider, primaryStreamID, now, currentHeight)
 
 				if err != nil {
-					return nil, fmt.Errorf("update last refreshed: %w", err)
+					return nil, fmt.Errorf("update refresh timestamp and height: %w", err)
 				}
 			}
 
@@ -447,8 +498,8 @@ func (c *CacheDB) CacheEventsWithIndex(ctx context.Context, events []CachedEvent
 
 			return nil, nil
 		}, attribute.Int("raw_count", len(events)),
-			attribute.Int("index_count", len(indexEvents)))
-	
+		attribute.Int("index_count", len(indexEvents)))
+
 	return err
 }
 
@@ -485,38 +536,38 @@ func (c *CacheDB) GetCachedEvents(ctx context.Context, dataProvider, streamID st
 			}
 
 			events := make([]CachedEvent, 0, len(results.Rows))
-	for _, row := range results.Rows {
-		if len(row) != 4 {
-			return nil, fmt.Errorf("expected 4 columns, got %d", len(row))
-		}
+			for _, row := range results.Rows {
+				if len(row) != 4 {
+					return nil, fmt.Errorf("expected 4 columns, got %d", len(row))
+				}
 
-		dataProvider, ok := row[0].(string)
-		if !ok {
-			return nil, fmt.Errorf("failed to convert data_provider to string")
-		}
+				dataProvider, ok := row[0].(string)
+				if !ok {
+					return nil, fmt.Errorf("failed to convert data_provider to string")
+				}
 
-		streamID, ok := row[1].(string)
-		if !ok {
-			return nil, fmt.Errorf("failed to convert stream_id to string")
-		}
+				streamID, ok := row[1].(string)
+				if !ok {
+					return nil, fmt.Errorf("failed to convert stream_id to string")
+				}
 
-		eventTime, ok := row[2].(int64)
-		if !ok {
-			return nil, fmt.Errorf("failed to convert event_time to int64")
-		}
+				eventTime, ok := row[2].(int64)
+				if !ok {
+					return nil, fmt.Errorf("failed to convert event_time to int64")
+				}
 
-		value, ok := row[3].(*types.Decimal)
-		if !ok {
-			return nil, fmt.Errorf("failed to convert value to *types.Decimal")
-		}
+				value, ok := row[3].(*types.Decimal)
+				if !ok {
+					return nil, fmt.Errorf("failed to convert value to *types.Decimal")
+				}
 
-		event := CachedEvent{
-			DataProvider: dataProvider,
-			StreamID:     streamID,
-			EventTime:    eventTime,
-			Value:        value,
-		}
-		events = append(events, event)
+				event := CachedEvent{
+					DataProvider: dataProvider,
+					StreamID:     streamID,
+					EventTime:    eventTime,
+					Value:        value,
+				}
+				events = append(events, event)
 			}
 
 			// Log slow queries or large result sets
@@ -609,8 +660,8 @@ func (c *CacheDB) GetCachedIndex(ctx context.Context, dataProvider, streamID str
 
 			return events, nil
 		}, attribute.Int64("from", fromTime),
-			attribute.Int64("to", toTime),
-			attribute.String("type", "index"))
+		attribute.Int64("to", toTime),
+		attribute.String("type", "index"))
 }
 
 // DeleteStreamData deletes all cached events for a stream
@@ -822,7 +873,7 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 
 			return hasData, nil
 		}, attribute.Int64("from", fromTime),
-			attribute.Int64("to", toTime))
+		attribute.Int64("to", toTime))
 }
 
 // UpdateStreamConfigsAtomic atomically updates the cached_streams table
@@ -867,27 +918,29 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 	// Then, add/update new streams using batch operation
 	if len(newConfigs) > 0 {
 		var dataProviders, streamIDs, cronSchedules []string
-		var fromTimestamps, lastRefresheds []int64
+		var fromTimestamps, cacheRefreshedAtTimestamps, cacheHeights []int64
 
 		for _, config := range newConfigs {
 			dataProviders = append(dataProviders, config.DataProvider)
 			streamIDs = append(streamIDs, config.StreamID)
 			fromTimestamps = append(fromTimestamps, config.FromTimestamp)
-			lastRefresheds = append(lastRefresheds, config.LastRefreshed)
+			cacheRefreshedAtTimestamps = append(cacheRefreshedAtTimestamps, config.CacheRefreshedAtTimestamp)
+			cacheHeights = append(cacheHeights, config.CacheHeight)
 			cronSchedules = append(cronSchedules, config.CronSchedule)
 		}
 
-		// Execute the batch upsert, preserving last_refreshed if it exists
+		// Execute the batch upsert, preserving existing values if new values are zero
 		_, err = tx.Execute(ctx, `
 			INSERT INTO `+constants.CacheSchemaName+`.cached_streams 
-				(data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule)
-			SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::INT8[], $5::TEXT[])
+				(data_provider, stream_id, from_timestamp, cache_refreshed_at_timestamp, cache_height, cron_schedule)
+			SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::INT8[], $5::INT8[], $6::TEXT[])
 			ON CONFLICT (data_provider, stream_id) 
 			DO UPDATE SET
 				from_timestamp = EXCLUDED.from_timestamp,
-				last_refreshed = COALESCE(NULLIF(EXCLUDED.last_refreshed, 0), cached_streams.last_refreshed),
+				cache_refreshed_at_timestamp = COALESCE(NULLIF(EXCLUDED.cache_refreshed_at_timestamp, 0), cached_streams.cache_refreshed_at_timestamp),
+				cache_height = COALESCE(NULLIF(EXCLUDED.cache_height, 0), cached_streams.cache_height),
 				cron_schedule = EXCLUDED.cron_schedule
-		`, dataProviders, streamIDs, fromTimestamps, lastRefresheds, cronSchedules)
+		`, dataProviders, streamIDs, fromTimestamps, cacheRefreshedAtTimestamps, cacheHeights, cronSchedules)
 
 		if err != nil {
 			return fmt.Errorf("batch upsert stream configs: %w", err)
@@ -908,7 +961,7 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 // getStreamConfigPool retrieves a stream's cache configuration using pool
 func (c *CacheDB) getStreamConfigPool(ctx context.Context, dataProvider, streamID string) (*StreamCacheConfig, error) {
 	results, err := c.db.Execute(ctx, `
-		SELECT data_provider, stream_id, from_timestamp, last_refreshed, cron_schedule
+		SELECT data_provider, stream_id, from_timestamp, cache_refreshed_at_timestamp, cache_height, cron_schedule
 		FROM `+constants.CacheSchemaName+`.cached_streams
 		WHERE data_provider = $1 AND stream_id = $2
 	`, dataProvider, streamID)
@@ -926,8 +979,8 @@ func (c *CacheDB) getStreamConfigPool(ctx context.Context, dataProvider, streamI
 	}
 
 	row := results.Rows[0]
-	if len(row) != 5 {
-		return nil, fmt.Errorf("expected 5 columns, got %d", len(row))
+	if len(row) != 6 {
+		return nil, fmt.Errorf("expected 6 columns, got %d", len(row))
 	}
 
 	dataProviderResult, ok := row[0].(string)
@@ -945,22 +998,28 @@ func (c *CacheDB) getStreamConfigPool(ctx context.Context, dataProvider, streamI
 		return nil, fmt.Errorf("failed to convert from_timestamp to int64")
 	}
 
-	lastRefreshed, ok := row[3].(int64)
+	cacheRefreshedAtTimestamp, ok := row[3].(int64)
 	if !ok {
-		return nil, fmt.Errorf("failed to convert last_refreshed to int64")
+		return nil, fmt.Errorf("failed to convert cache_refreshed_at_timestamp to int64")
 	}
 
-	cronSchedule, ok := row[4].(string)
+	cacheHeight, ok := row[4].(int64)
+	if !ok {
+		return nil, fmt.Errorf("failed to convert cache_height to int64")
+	}
+
+	cronSchedule, ok := row[5].(string)
 	if !ok {
 		return nil, fmt.Errorf("failed to convert cron_schedule to string")
 	}
 
 	config := &StreamCacheConfig{
-		DataProvider:  dataProviderResult,
-		StreamID:      streamIDResult,
-		FromTimestamp: fromTimestamp,
-		LastRefreshed: lastRefreshed,
-		CronSchedule:  cronSchedule,
+		DataProvider:              dataProviderResult,
+		StreamID:                  streamIDResult,
+		FromTimestamp:             fromTimestamp,
+		CacheRefreshedAtTimestamp: cacheRefreshedAtTimestamp,
+		CacheHeight:               cacheHeight,
+		CronSchedule:              cronSchedule,
 	}
 
 	return config, nil
@@ -1045,7 +1104,8 @@ func (c *CacheDB) SetupCacheSchema(ctx context.Context) error {
 			data_provider TEXT NOT NULL,
 			stream_id TEXT NOT NULL,
 			from_timestamp INT8,
-			last_refreshed INT8,
+			cache_refreshed_at_timestamp INT8,
+			cache_height INT8,
 			cron_schedule TEXT,
 			PRIMARY KEY (data_provider, stream_id)
 		)`); err != nil {
@@ -1226,7 +1286,7 @@ func (c *CacheDB) GetLastEventBefore(ctx context.Context, dataProvider, streamID
 
 			return e, nil
 		}, attribute.Int64("before", before),
-			attribute.String("query", "last_before"))
+		attribute.String("query", "last_before"))
 }
 
 // GetFirstEventAfter retrieves the first event at or after the specified timestamp.
@@ -1289,5 +1349,5 @@ func (c *CacheDB) GetFirstEventAfter(ctx context.Context, dataProvider, streamID
 
 			return e, nil
 		}, attribute.Int64("after", after),
-			attribute.String("query", "first_after"))
+		attribute.String("query", "first_after"))
 }

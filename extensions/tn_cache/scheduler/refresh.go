@@ -80,6 +80,14 @@ func (s *CacheScheduler) RefreshStreamData(ctx context.Context, directive config
 				return nil, 0, fmt.Errorf("fetch index stream data: %w", indexFetchErr)
 			}
 
+			// Get current blockchain height for cache metadata
+			height, heightErr := s.cacheDB.GetCurrentBlockHeight(traceCtx)
+			if heightErr != nil {
+				s.logger.Warn("failed to get current block height, using default",
+					"error", heightErr)
+				height = 1 // Use default height if query fails
+			}
+
 			// Cache both types of events atomically
 			totalEvents := len(events) + len(indexEvents)
 			if totalEvents > 0 {
@@ -90,7 +98,8 @@ func (s *CacheScheduler) RefreshStreamData(ctx context.Context, directive config
 					"raw_count", len(events),
 					"index_count", len(indexEvents),
 					"provider", directive.DataProvider,
-					"stream", directive.StreamID)
+					"stream", directive.StreamID,
+					"height", height)
 			} else {
 				s.logger.Debug("no new events to cache",
 					"provider", directive.DataProvider,
