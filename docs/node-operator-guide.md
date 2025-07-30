@@ -470,7 +470,7 @@ The `tn_cache` extension provides **node-local caching** for expensive stream qu
 
 ```toml
 [extensions.tn_cache]
-enabled = true
+enabled = "true"
 # add stream configs here – see detailed guide for examples
 ```
 
