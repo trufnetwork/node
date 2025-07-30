@@ -3,8 +3,8 @@
  *---------------------------------------------------------------------*/
 
 ALTER TABLE streams
-ADD COLUMN id UUID,
-ADD COLUMN data_provider_id UUID;
+ADD COLUMN id INT,
+ADD COLUMN data_provider_id INT;
 
 -- reference data_provider_id to data_providers table
 ALTER TABLE streams
@@ -19,7 +19,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS streams_id_idx ON streams(id);
  *---------------------------------------------------------------------*/
 
 ALTER TABLE metadata
-ADD COLUMN stream_ref UUID;
+ADD COLUMN stream_ref INT;
 
 ALTER TABLE metadata
 ADD CONSTRAINT fk_metadata_stream_ref
@@ -34,8 +34,8 @@ CREATE INDEX IF NOT EXISTS meta_key_ref_to_stream_idx ON metadata(metadata_key, 
  *---------------------------------------------------------------------*/
 
 ALTER TABLE taxonomies
-ADD COLUMN stream_ref UUID,
-ADD COLUMN child_stream_ref UUID;
+ADD COLUMN stream_ref INT,
+ADD COLUMN child_stream_ref INT;
 
 ALTER TABLE taxonomies
 ADD CONSTRAINT fk_taxonomies_stream_ref
@@ -55,7 +55,7 @@ CREATE INDEX IF NOT EXISTS tax_latest_sequence_idx ON taxonomies (stream_ref, st
  *---------------------------------------------------------------------*/
 
 ALTER TABLE primitive_events
-ADD COLUMN stream_ref UUID;
+ADD COLUMN stream_ref INT;
 
 ALTER TABLE primitive_events
 ADD CONSTRAINT fk_primitive_stream_ref

@@ -12,7 +12,7 @@
     - metadata: Flexible key-value store for stream configuration and properties
  */
 CREATE TABLE IF NOT EXISTS data_providers (
-  id UUID PRIMARY KEY,
+  id INT PRIMARY KEY,
   address TEXT NOT NULL,
   created_at INT8 NOT NULL,
 

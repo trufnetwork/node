@@ -31,7 +31,7 @@ CREATE OR REPLACE ACTION insert_record(
     }
 
     $current_block INT := @height;
-    $stream_ref UUID := get_stream_id($data_provider, $stream_id);
+    $stream_ref INT := get_stream_id($data_provider, $stream_id);
 
     -- Insert the new record into the primitive_events table
     INSERT INTO primitive_events (stream_id, data_provider, event_time, value, created_at, stream_ref)

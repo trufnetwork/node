@@ -24,13 +24,19 @@ CREATE OR REPLACE ACTION create_data_provider(
         ERROR('Invalid data provider address. Must be a valid Ethereum address: ' || $lower_address);
     }
 
-    INSERT INTO data_providers (id, address, created_at) VALUES (uuid_generate_kwil($lower_address), $lower_address, @height);
+    INSERT INTO data_providers (id, address, created_at) 
+    SELECT 
+        COALESCE(MAX(id), 0) + 1,
+        $lower_address,
+        @height
+    FROM data_providers
+    ON CONFLICT DO NOTHING;
 };
 
 CREATE OR REPLACE ACTION get_stream_ids(
     $data_providers TEXT[],
     $stream_ids TEXT[]
-) PRIVATE VIEW RETURNS (stream_ids UUID[]) {
+) PRIVATE VIEW RETURNS (stream_ids INT[]) {
     -- Use WITH RECURSIVE to process stream ids lookup in single SQL operation
     -- This avoids the expensive for-loop roundtrips
     for $row in WITH RECURSIVE 
@@ -123,7 +129,7 @@ CREATE OR REPLACE ACTION create_streams(
     $base_uuid := uuid_generate_kwil('create_streams_' || @txid);
 
     -- Get the data provider id
-    $data_provider_id UUID;
+    $data_provider_id INT;
     $dp_found BOOL := false;
     for $data_provider_row in SELECT id
         FROM data_providers
@@ -151,13 +157,20 @@ CREATE OR REPLACE ACTION create_streams(
             $stream_types AS stream_types
     ),
     arguments AS (
+      SELECT 
+          idx,
+          stream_arrays.stream_ids[idx] AS stream_id,
+          stream_arrays.stream_types[idx] AS stream_type
+      FROM indexes
+      JOIN stream_arrays ON 1=1
+    ),
+    sequential_ids AS (
         SELECT 
             idx,
-            uuid_generate_kwil($data_provider || stream_arrays.stream_ids[idx]) AS id,
-            stream_arrays.stream_ids[idx] AS stream_id,
-            stream_arrays.stream_types[idx] AS stream_type
-        FROM indexes
-        JOIN stream_arrays ON 1=1
+            stream_id,
+            stream_type,
+            ROW_NUMBER() OVER (ORDER BY idx) + COALESCE((SELECT MAX(id) FROM streams), 0) AS id
+        FROM arguments
     )
     INSERT INTO streams (id, data_provider_id, data_provider, stream_id, stream_type, created_at)
     SELECT
@@ -167,7 +180,7 @@ CREATE OR REPLACE ACTION create_streams(
         stream_id, 
         stream_type, 
         @height
-    FROM arguments;
+    FROM sequential_ids;
  
     -- Create metadata for the streams
     WITH RECURSIVE 
@@ -286,15 +299,15 @@ CREATE OR REPLACE ACTION create_streams(
         value_ref,
         created_at,
         NULL::INT8,
-        stream_ref::UUID
+        stream_ref
     FROM args;
 };
 
 CREATE OR REPLACE ACTION get_stream_id(
   $data_provider_address TEXT,
   $stream_id TEXT
-) PRIVATE returns (id UUID) {
-  $id UUID;
+) PRIVATE returns (id INT) {
+  $id INT;
   $found BOOL := false;
   FOR $stream_row IN SELECT s.id
       FROM streams s
@@ -370,7 +383,7 @@ CREATE OR REPLACE ACTION insert_metadata(
     $uuid_key TEXT := @txid || $key || $value;
     $uuid UUID := uuid_generate_kwil($uuid_key);
     $current_block INT := @height;
-    $stream_ref UUID := get_stream_id($data_provider, $stream_id);
+    $stream_ref INT := get_stream_id($data_provider, $stream_id);
     
     -- Insert the metadata
     INSERT INTO metadata (
@@ -420,7 +433,7 @@ CREATE OR REPLACE ACTION disable_metadata(
     $current_block INT := @height;
     $found BOOL := false;
     $metadata_key TEXT;
-    $stream_ref UUID := get_stream_id($data_provider, $stream_id);
+    $stream_ref INT := get_stream_id($data_provider, $stream_id);
     
     -- Get the metadata key first to avoid nested queries
     for $metadata_row in SELECT metadata_key
@@ -899,7 +912,7 @@ CREATE OR REPLACE ACTION get_category_streams(
     $max_int8 INT := 9223372036854775000;
     $effective_active_from INT := COALESCE($active_from, 0);
     $effective_active_to INT := COALESCE($active_to, $max_int8);
-    $stream_ref UUID := get_stream_id($data_provider, $stream_id);
+    $stream_ref INT := get_stream_id($data_provider, $stream_id);
 
     -- Get all substreams with proper recursive traversal
     return WITH RECURSIVE substreams AS (

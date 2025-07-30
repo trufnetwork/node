@@ -600,6 +600,10 @@ func testComplexComposedOutOfRange(t *testing.T, useCache bool) func(ctx context
 func testComposedRecordNoDuplicates(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
 		platform = procedure.WithSigner(platform, complexComposedDeployer.Bytes())
+		err := setup.CreateDataProvider(ctx, platform, complexComposedDeployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
 
 		// Create unique stream IDs and deployer for this specific test
 		localComposedStreamId := util.GenerateStreamId("local_composed_dedup")
@@ -609,7 +613,7 @@ func testComposedRecordNoDuplicates(t *testing.T, useCache bool) func(ctx contex
 		localDeployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000DED")
 
 		platform = procedure.WithSigner(platform, localDeployer.Bytes())
-		err := setup.CreateDataProvider(ctx, platform, localDeployer.Address())
+		err = setup.CreateDataProvider(ctx, platform, localDeployer.Address())
 		if err != nil {
 			return errors.Wrap(err, "error registering data provider")
 		}
@@ -648,7 +652,7 @@ func testComposedRecordNoDuplicates(t *testing.T, useCache bool) func(ctx contex
 
 		composedStreamLocator := types.StreamLocator{
 			StreamId:     localComposedStreamId,
-			DataProvider: complexComposedDeployer,
+			DataProvider: localDeployer,
 		}
 
 		// Query a range that includes these events.
