@@ -92,9 +92,13 @@ func WithQueryTestSetup(testFn func(ctx context.Context, platform *kwilTesting.P
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
 
 		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrapf(err, "error registering data provider")
+		}
 
 		// Setup initial data for primitive stream
-		err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+		err = setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
 			Platform: platform,
 			StreamId: primitiveStreamId,
 			Height:   1,
@@ -905,9 +909,13 @@ func WithComposedQueryTestSetup(testFn func(ctx context.Context, platform *kwilT
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
 		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrapf(err, "error registering data provider")
+		}
 
 		// Setup initial data
-		err := setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
+		err = setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
 			Platform: platform,
 			StreamId: composedStreamId,
 			MarkdownData: `

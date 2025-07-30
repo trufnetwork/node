@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
@@ -39,6 +40,10 @@ func TestCacheObservability(t *testing.T) {
 				require.NoError(t, err)
 
 				platform = procedure.WithSigner(platform, deployerAddr.Bytes())
+				err = setup.CreateDataProvider(ctx, platform, deployerAddr.Address())
+				if err != nil {
+					return errors.Wrap(err, "error registering data provider")
+				}
 
 				// Setup test data - use composed stream to test cache
 				err = setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{

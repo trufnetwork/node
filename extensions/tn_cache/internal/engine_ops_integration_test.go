@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/core/log"
@@ -45,6 +46,11 @@ func testEngineOperationsIntegration(t *testing.T) func(ctx context.Context, pla
 		require.NoError(t, err)
 
 		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+		
 		logger := log.NewStdoutLogger().New("tn_ops_test")
 
 		// Test 1: ListComposedStreams
@@ -338,6 +344,11 @@ func testEngineOperationsRealTime(t *testing.T) func(ctx context.Context, platfo
 		require.NoError(t, err)
 
 		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+		
 		logger := log.NewStdoutLogger()
 
 		// Test fetching recent data

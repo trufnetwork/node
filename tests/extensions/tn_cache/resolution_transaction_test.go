@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
@@ -29,6 +30,11 @@ func TestResolutionInTransaction(t *testing.T) {
 				platform = procedure.WithSigner(platform, deployer.Bytes())
 				helper := testutils.SetupCacheTest(ctx, platform, cacheConfig)
 				defer helper.Cleanup()
+
+				err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+				if err != nil {
+					return errors.Wrap(err, "error registering data provider")
+				}
 
 				// Test within transaction
 				testutils.WithTx(platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {

@@ -6,10 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/kwil-db/node/meta"
+	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
@@ -39,6 +40,10 @@ func TestCacheHeightTracking(t *testing.T) {
 				require.NoError(t, err)
 
 				platform = procedure.WithSigner(platform, deployerAddr.Bytes())
+				err = setup.CreateDataProvider(ctx, platform, deployerAddr.Address())
+				if err != nil {
+					return errors.Wrap(err, "error registering data provider")
+				}
 
 				// Setup test data - use composed stream to test cache (like other working tests)
 				err = setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
