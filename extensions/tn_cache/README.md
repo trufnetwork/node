@@ -9,7 +9,7 @@ Enable and configure the extension in your node's `config.toml` file.
 ```toml
 [extensions.tn_cache]
 # Enable or disable the extension.
-enabled = true
+enabled = "true"
 
 # Optional: Schedule for re-resolving wildcards and IncludeChildren (default: daily at midnight)
 # Set to empty string to disable automatic re-resolution
@@ -239,13 +239,13 @@ The `tn_cache` extension accelerates **read-only** stream queries by storing res
 |-------|--------------|
 | **Startup** | Parses `config.toml`, resolves wildcards/`include_children`, stores directives in `ext_tn_cache.cached_streams`, performs an initial refresh (skips if refreshed this cron period). |
 | **Runtime** | Background scheduler refreshes streams on their `cron_schedule`.  If the node is syncing or the last block age exceeds `max_block_age`, refreshes are **paused**.  Wildcards / children are re-resolved on `resolution_schedule` (default daily). |
-| **Shutdown / Disable** | Setting `enabled = false` and restarting cleans up the cache schema safely.  Cached data persists across restarts while enabled. |
+| **Shutdown / Disable** | Setting `enabled = "false"` and restarting cleans up the cache schema safely.  Cached data persists across restarts while enabled. |
 
 ### 3. Minimal Configuration Recap
 Enable in `config.toml`:
 ```toml
 [extensions.tn_cache]
-enabled = true
+enabled = "true"
 # ONE of the blocks below
 # inline JSON
 streams_inline = '''[ { "data_provider":"0xabc...", "stream_id":"st123...", "cron_schedule":"0 * * * *" } ]'''
@@ -286,7 +286,7 @@ These edge-cases cause actions to **bypass the cache and recompute on the fly** 
 |-----------|----------------------|--------|
 | `get_record_composed`, `get_index_composed`, `get_index_change` | `frozen_at IS NOT NULL` | Cache disabled – a historical *frozen* snapshot must be computed exactly. |
 | same | `base_time IS NOT NULL` | Cache disabled – custom base time changes the whole index curve. |
-| same | `tn_cache` disabled on node, or `enabled = false` in `config.toml` | Falls back to full computation. |
+| same | `tn_cache` disabled on node, or `enabled = "false"` in `config.toml` | Falls back to full computation. |
 | *primitive* versions (`*_primitive`) | Any call | Never cached – primitives read directly from `primitive_events`. |
 
 Additional notes:
