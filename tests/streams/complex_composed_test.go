@@ -610,13 +610,6 @@ func testComposedRecordNoDuplicates(t *testing.T, useCache bool) func(ctx contex
 		localPrimitiveStreamId1 := util.GenerateStreamId("local_primitive_dedup1")
 		localPrimitiveStreamId2 := util.GenerateStreamId("local_primitive_dedup2")
 		localPrimitiveStreamId3 := util.GenerateStreamId("local_primitive_dedup3")
-		localDeployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000DED")
-
-		platform = procedure.WithSigner(platform, localDeployer.Bytes())
-		err = setup.CreateDataProvider(ctx, platform, localDeployer.Address())
-		if err != nil {
-			return errors.Wrap(err, "error registering data provider")
-		}
 
 		// Setup a composed stream with three primitive children.
 		// Data is staggered and designed to test LOCF and the final DISTINCT on the composed result.
@@ -652,7 +645,7 @@ func testComposedRecordNoDuplicates(t *testing.T, useCache bool) func(ctx contex
 
 		composedStreamLocator := types.StreamLocator{
 			StreamId:     localComposedStreamId,
-			DataProvider: localDeployer,
+			DataProvider: complexComposedDeployer,
 		}
 
 		// Query a range that includes these events.
