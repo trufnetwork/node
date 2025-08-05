@@ -110,10 +110,6 @@ CREATE TABLE IF NOT EXISTS primitive_events (
 
 /* Create indexes separately for primitive_events */
 
--- Add optimized index for gap-filling queries
-CREATE INDEX IF NOT EXISTS pe_gap_filling_idx ON primitive_events 
-(data_provider, stream_id, event_time);
-
 -- For queries filtering by provider/stream and created_at (for frozen_at queries)
 CREATE INDEX IF NOT EXISTS pe_prov_stream_created_idx ON primitive_events 
 (data_provider, stream_id, created_at);
