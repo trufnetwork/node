@@ -49,6 +49,10 @@ func testAGGR06_SingleActiveTaxonomy(t *testing.T, useCache bool) func(ctx conte
 			return errors.Wrap(err, "error creating ethereum address")
 		}
 		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
 
 		// Setup the composed stream with 2 primitive streams
 		err = setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{

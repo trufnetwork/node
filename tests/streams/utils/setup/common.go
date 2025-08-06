@@ -188,3 +188,46 @@ func DeleteStream(ctx context.Context, platform *kwilTesting.Platform, streamLoc
 		},
 	)
 }
+
+func CreateDataProvider(ctx context.Context, platform *kwilTesting.Platform, address string) (error) {
+	addr, err := util.NewEthereumAddressFromString(address)
+	if err != nil {
+		return errors.Wrap(err, "invalid data provider address")
+	}
+	
+	// Grant the data provider the network_writer role
+	err = AddMemberToRoleBypass(ctx, platform, "system", "network_writer", addr.Address())
+	if err != nil {
+		return errors.Wrap(err, "failed to enable stream deployer")
+	}
+	
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 1},
+		Signer:       addr.Bytes(),
+		Caller:       addr.Address(),
+		TxID:         platform.Txid(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext: txContext,
+	}
+
+	r, err := platform.Engine.Call(engineContext,
+		platform.DB,
+		"",
+		"create_data_provider",
+		[]any{addr.Address()},
+		func(row *common.Row) error {
+			return nil
+		},
+	)
+	if err != nil {
+		return errors.Wrap(err, "error in createDataProvider")
+	}
+	if r.Error != nil {
+		return errors.Wrap(r.Error, "error in createDataProvider")
+	}
+
+	return nil
+}

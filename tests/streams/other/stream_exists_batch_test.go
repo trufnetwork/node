@@ -37,6 +37,11 @@ func testStreamExistsBatchDirect(t *testing.T) func(ctx context.Context, platfor
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
 		platform = procedure.WithSigner(platform, deployer.Bytes())
 
+		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+
 		// Create one real stream and keep another id unused to test the false path.
 		existingStreamID := util.GenerateStreamId("existing_stream")
 		nonExistingStreamID := util.GenerateStreamId("nonexistent_stream")

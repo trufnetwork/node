@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/core/log"
@@ -19,8 +20,8 @@ import (
 	"github.com/trufnetwork/sdk-go/core/util"
 )
 
-// TestExtensionAgentPermissions verifies that the extension agent can access both public 
-// and private streams for caching purposes. The SQL authorization functions check if 
+// TestExtensionAgentPermissions verifies that the extension agent can access both public
+// and private streams for caching purposes. The SQL authorization functions check if
 // wallet_address = 'extension_agent' and grant unrestricted access.
 func TestExtensionAgentPermissions(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
@@ -39,6 +40,11 @@ func testExtensionAgentAccess(t *testing.T) func(ctx context.Context, platform *
 		require.NoError(t, err)
 
 		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+		
 		logger := log.NewStdoutLogger().New("extension_agent_test")
 
 		// Test 1: Verify extension agent can access public streams
