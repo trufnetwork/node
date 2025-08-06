@@ -141,3 +141,21 @@ type ListRoleMembersInput struct {
 	Owner    string
 	RoleName string
 }
+
+type ListTaxonomiesByHeightInput struct {
+	Platform   *kwilTesting.Platform
+	FromHeight *int64
+	ToHeight   *int64
+	Limit      *int
+	Offset     *int
+	LatestOnly *bool
+	Height     int64
+}
+
+type GetTaxonomiesForStreamsInput struct {
+	Platform      *kwilTesting.Platform
+	DataProviders []string
+	StreamIds     []string
+	LatestOnly    *bool
+	Height        int64
+}
