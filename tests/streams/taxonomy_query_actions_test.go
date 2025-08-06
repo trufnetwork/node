@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pkg/errors"
@@ -16,6 +17,18 @@ import (
 	"github.com/trufnetwork/sdk-go/core/util"
 )
 
+// Column index constants for taxonomy query results
+const (
+	colDataProvider      = 0
+	colStreamId          = 1
+	colChildDataProvider = 2
+	colChildStreamId     = 3
+	colWeight           = 4
+	colCreatedAt        = 5
+	colGroupSequence    = 6
+	colStartTime        = 7
+)
+
 // TestTaxonomyQueryActions tests the new taxonomy query actions
 func TestTaxonomyQueryActions(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
@@ -27,6 +40,12 @@ func TestTaxonomyQueryActions(t *testing.T) {
 			testListTaxonomiesByHeightPagination(t),
 			testGetTaxonomiesForStreams(t),
 			testGetTaxonomiesForStreamsLatestOnly(t),
+			// Comprehensive column testing
+			testTaxonomyQueryResultColumns(t),
+			// Error condition tests
+			testListTaxonomiesByHeightInvalidRange(t),
+			testListTaxonomiesByHeightInvalidPagination(t),
+			testGetTaxonomiesForStreamsMismatchedArrays(t),
 		},
 	}, testutils.GetTestOptionsWithCache().Options)
 }
@@ -266,11 +285,11 @@ func testListTaxonomiesByHeightWithLatestOnly(t *testing.T) kwilTesting.TestFunc
 
 		// Verify all results are from the latest taxonomy
 		for _, row := range result {
-			if row[5] != "400" { // created_at column
-				return errors.Errorf("expected created_at=400, got %s", row[5])
+			if row[colCreatedAt] != "400" {
+				return errors.Errorf("expected created_at=400, got %s", row[colCreatedAt])
 			}
-			if row[6] != "2" { // group_sequence column  
-				return errors.Errorf("expected group_sequence=2, got %s", row[6])
+			if row[colGroupSequence] != "2" {
+				return errors.Errorf("expected group_sequence=2, got %s", row[colGroupSequence])
 			}
 		}
 
@@ -567,8 +586,274 @@ func testGetTaxonomiesForStreamsLatestOnly(t *testing.T) kwilTesting.TestFunc {
 		}
 
 		// Verify it's the latest one (weight 0.7)
-		if result[0][4] != "0.700000000000000000" { // weight column
-			return errors.Errorf("expected weight 0.700000000000000000, got %s", result[0][4])
+		if result[0][colWeight] != "0.700000000000000000" {
+			return errors.Errorf("expected weight 0.700000000000000000, got %s", result[0][colWeight])
+		}
+
+		return nil
+	}
+}
+
+// testTaxonomyQueryResultColumns tests that all 8 columns are returned correctly with proper values
+func testTaxonomyQueryResultColumns(t *testing.T) kwilTesting.TestFunc {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Setup deployer
+		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000199")
+		platform = procedure.WithSigner(platform, deployer.Bytes())
+
+		// Create test streams
+		composedStreamId := util.GenerateStreamId("column_test_composed")
+		childStreamId := util.GenerateStreamId("column_test_child")
+
+		// Setup streams
+		err := setup.SetupComposedStream(ctx, setup.SetupComposedStreamInput{
+			Platform: platform,
+			StreamId: composedStreamId,
+			Height:   2000,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error setting up composed stream")
+		}
+
+		err = setup.SetupPrimitive(ctx, setup.SetupPrimitiveInput{
+			Platform: platform,
+			Height:   2000,
+			PrimitiveStreamWithData: setup.PrimitiveStreamWithData{
+				PrimitiveStreamDefinition: setup.PrimitiveStreamDefinition{
+					StreamLocator: types.StreamLocator{
+						StreamId:     childStreamId,
+						DataProvider: deployer,
+					},
+				},
+				Data: []setup.InsertRecordInput{},
+			},
+		})
+		if err != nil {
+			return errors.Wrap(err, "error setting up child stream")
+		}
+
+		composedStreamLocator := types.StreamLocator{
+			StreamId:     composedStreamId,
+			DataProvider: deployer,
+		}
+
+		// Create taxonomy with known values
+		expectedWeight := "0.753000000000000000"
+		expectedStartTime := int64(0)
+		expectedHeight := int64(2100)
+
+		err = procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
+			Platform:      platform,
+			StreamLocator: composedStreamLocator,
+			DataProviders: []string{deployer.Address()},
+			StreamIds:     []string{childStreamId.String()},
+			Weights:       []string{"0.753"},
+			StartTime:     &expectedStartTime,
+			Height:        expectedHeight,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error setting taxonomy")
+		}
+
+		// Query the taxonomy
+		result, err := procedure.ListTaxonomiesByHeight(ctx, procedure.ListTaxonomiesByHeightInput{
+			Platform:   platform,
+			FromHeight: nil,
+			ToHeight:   nil,
+			Limit:      nil,
+			Offset:     nil,
+			LatestOnly: nil,
+			Height:     2200,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error listing taxonomies")
+		}
+
+		if len(result) == 0 {
+			return errors.New("expected at least 1 taxonomy result")
+		}
+
+		// Test all 8 columns with expected values
+		row := result[0]
+
+		// Column 0: data_provider (TEXT)
+		if row[colDataProvider] != deployer.Address() {
+			return errors.Errorf("col %d (data_provider): expected %s, got %s", 
+				colDataProvider, deployer.Address(), row[colDataProvider])
+		}
+
+		// Column 1: stream_id (TEXT)  
+		if row[colStreamId] != composedStreamId.String() {
+			return errors.Errorf("col %d (stream_id): expected %s, got %s", 
+				colStreamId, composedStreamId.String(), row[colStreamId])
+		}
+
+		// Column 2: child_data_provider (TEXT)
+		if row[colChildDataProvider] != deployer.Address() {
+			return errors.Errorf("col %d (child_data_provider): expected %s, got %s", 
+				colChildDataProvider, deployer.Address(), row[colChildDataProvider])
+		}
+
+		// Column 3: child_stream_id (TEXT)
+		if row[colChildStreamId] != childStreamId.String() {
+			return errors.Errorf("col %d (child_stream_id): expected %s, got %s", 
+				colChildStreamId, childStreamId.String(), row[colChildStreamId])
+		}
+
+		// Column 4: weight (NUMERIC as string)
+		if row[colWeight] != expectedWeight {
+			return errors.Errorf("col %d (weight): expected %s, got %s", 
+				colWeight, expectedWeight, row[colWeight])
+		}
+
+		// Column 5: created_at (INT8 as string)
+		if row[colCreatedAt] != fmt.Sprintf("%d", expectedHeight) {
+			return errors.Errorf("col %d (created_at): expected %d, got %s", 
+				colCreatedAt, expectedHeight, row[colCreatedAt])
+		}
+
+		// Column 6: group_sequence (INT8 as string)
+		expectedGroupSequence := "1" // First taxonomy for this stream
+		if row[colGroupSequence] != expectedGroupSequence {
+			return errors.Errorf("col %d (group_sequence): expected %s, got %s", 
+				colGroupSequence, expectedGroupSequence, row[colGroupSequence])
+		}
+
+		// Column 7: start_time (INT8 as string)
+		if row[colStartTime] != fmt.Sprintf("%d", expectedStartTime) {
+			return errors.Errorf("col %d (start_time): expected %d, got %s", 
+				colStartTime, expectedStartTime, row[colStartTime])
+		}
+
+		// Verify row has exactly 8 columns
+		if len(row) != 8 {
+			return errors.Errorf("expected exactly 8 columns, got %d", len(row))
+		}
+
+		return nil
+	}
+}
+
+// testListTaxonomiesByHeightInvalidRange tests error handling for invalid height ranges
+func testListTaxonomiesByHeightInvalidRange(t *testing.T) kwilTesting.TestFunc {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Setup deployer
+		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000200")
+		platform = procedure.WithSigner(platform, deployer.Bytes())
+
+		// Test case 1: from_height > to_height should fail
+		fromHeight := int64(1000)
+		toHeight := int64(500)
+
+		_, err := procedure.ListTaxonomiesByHeight(ctx, procedure.ListTaxonomiesByHeightInput{
+			Platform:   platform,
+			FromHeight: &fromHeight,
+			ToHeight:   &toHeight,
+			Limit:      nil,
+			Offset:     nil,
+			LatestOnly: nil,
+			Height:     1100,
+		})
+
+		if err == nil {
+			return errors.New("expected error for invalid height range (from_height > to_height), but got none")
+		}
+
+		// Verify the error message contains expected text
+		expectedError := "Invalid height range"
+		if !strings.Contains(err.Error(), expectedError) {
+			return errors.Errorf("expected error message to contain '%s', got: %s", expectedError, err.Error())
+		}
+
+		return nil
+	}
+}
+
+// testListTaxonomiesByHeightInvalidPagination tests error handling for invalid pagination parameters  
+func testListTaxonomiesByHeightInvalidPagination(t *testing.T) kwilTesting.TestFunc {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Setup deployer
+		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000201")
+		platform = procedure.WithSigner(platform, deployer.Bytes())
+
+		// Test case 1: negative limit should be handled gracefully
+		negativeLimit := -10
+		result, err := procedure.ListTaxonomiesByHeight(ctx, procedure.ListTaxonomiesByHeightInput{
+			Platform:   platform,
+			FromHeight: nil,
+			ToHeight:   nil,
+			Limit:      &negativeLimit,
+			Offset:     nil,
+			LatestOnly: nil,
+			Height:     1200,
+		})
+
+		// Should not error since we now validate and set to 0 instead of erroring
+		if err != nil {
+			return errors.Wrap(err, "unexpected error with negative limit")
+		}
+
+		// With limit = 0 (converted from negative), should return empty results
+		if len(result) != 0 {
+			return errors.Errorf("expected empty results with negative limit (converted to 0), got %d results", len(result))
+		}
+
+		// Test case 2: negative offset should be handled gracefully
+		negativeOffset := -5
+		result2, err := procedure.ListTaxonomiesByHeight(ctx, procedure.ListTaxonomiesByHeightInput{
+			Platform:   platform,
+			FromHeight: nil,
+			ToHeight:   nil,
+			Limit:      nil,
+			Offset:     &negativeOffset,
+			LatestOnly: nil,
+			Height:     1200,
+		})
+
+		// Should not error, but should behave like offset 0
+		if err != nil {
+			return errors.Wrap(err, "unexpected error with negative offset")
+		}
+
+		// Negative offset should be treated as 0, so results should be same as no offset
+		_ = result2 // We just verify it doesn't crash
+
+		return nil
+	}
+}
+
+// testGetTaxonomiesForStreamsMismatchedArrays tests error handling for mismatched array lengths
+func testGetTaxonomiesForStreamsMismatchedArrays(t *testing.T) kwilTesting.TestFunc {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Setup deployer
+		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000202")
+		platform = procedure.WithSigner(platform, deployer.Bytes())
+
+		// Test case: mismatched array lengths should fail
+		dataProviders := []string{
+			deployer.Address(),
+			deployer.Address(),
+		}
+		streamIds := []string{
+			"stream1", // Only one stream ID, but two data providers
+		}
+
+		_, err := procedure.GetTaxonomiesForStreams(ctx, procedure.GetTaxonomiesForStreamsInput{
+			Platform:      platform,
+			DataProviders: dataProviders,
+			StreamIds:     streamIds,
+			LatestOnly:    nil,
+			Height:        1300,
+		})
+
+		if err == nil {
+			return errors.New("expected error for mismatched array lengths, but got none")
+		}
+
+		// Verify the error message contains expected text
+		expectedError := "must have the same length"
+		if !strings.Contains(err.Error(), expectedError) {
+			return errors.Errorf("expected error message to contain '%s', got: %s", expectedError, err.Error())
 		}
 
 		return nil

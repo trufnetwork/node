@@ -51,11 +51,19 @@ CREATE OR REPLACE ACTION list_taxonomies_by_height(
     group_sequence INT8,
     start_time INT8
 ) {
-    -- Set defaults for pagination
+    -- Set defaults for pagination and validate values
     if $limit IS NULL {
         $limit := 1000;
     }
     if $offset IS NULL {
+        $offset := 0;
+    }
+    
+    -- Ensure non-negative values for PostgreSQL compatibility
+    if $limit < 0 {
+        $limit := 0;
+    }
+    if $offset < 0 {
         $offset := 0;
     }
     if $latest_only IS NULL {
@@ -81,7 +89,7 @@ CREATE OR REPLACE ACTION list_taxonomies_by_height(
     
     -- Validate height range
     if $effective_from > $effective_to {
-        ERROR('Invalid height range: from_height (' || $effective_from || ') > to_height (' || $effective_to || ')');
+        ERROR('Invalid height range: from_height (' || $effective_from::TEXT || ') > to_height (' || $effective_to::TEXT || ')');
     }
     
     if $latest_only {
@@ -126,7 +134,7 @@ CREATE OR REPLACE ACTION list_taxonomies_by_height(
             AND slg.max_created_at = t.created_at 
             AND slg.max_group_sequence = t.group_sequence
         WHERE t.disabled_at IS NULL
-        ORDER BY t.created_at ASC, t.data_provider ASC, t.stream_id ASC, t.child_data_provider ASC, t.child_stream_id ASC
+        ORDER BY t.created_at ASC, t.group_sequence ASC, t.data_provider ASC, t.stream_id ASC, t.child_data_provider ASC, t.child_stream_id ASC
         LIMIT $limit OFFSET $offset;
     } else {
         -- Return all taxonomies within height range
@@ -143,7 +151,7 @@ CREATE OR REPLACE ACTION list_taxonomies_by_height(
         WHERE t.created_at >= $effective_from
           AND t.created_at <= $effective_to
           AND t.disabled_at IS NULL
-        ORDER BY t.created_at ASC
+        ORDER BY t.created_at ASC, t.group_sequence ASC
         LIMIT $limit OFFSET $offset;
     }
 };
@@ -177,7 +185,7 @@ CREATE OR REPLACE ACTION get_taxonomies_for_streams(
     group_sequence INT8,
     start_time INT8
 ) {
-    -- Use helper function to avoid expensive for-loop roundtrips
+    -- Use existing helper function from 901-utilities.sql to avoid expensive for-loop roundtrips
     $data_providers := helper_lowercase_array($data_providers);
     
     -- Set default for latest_only
@@ -274,12 +282,8 @@ CREATE OR REPLACE ACTION get_taxonomies_for_streams(
                 stream_arrays.stream_ids[idx] AS stream_id
             FROM indexes
             JOIN stream_arrays ON 1=1
-        ),
-        unique_pairs AS (
-            SELECT DISTINCT data_provider, stream_id
-            FROM all_pairs
         )
-        SELECT 
+        SELECT DISTINCT
             ap.data_provider,
             ap.stream_id,
             t.child_data_provider,
@@ -289,8 +293,8 @@ CREATE OR REPLACE ACTION get_taxonomies_for_streams(
             t.group_sequence,
             t.start_time
         FROM all_pairs ap
-        JOIN unique_pairs up ON ap.data_provider = up.data_provider AND ap.stream_id = up.stream_id
-        JOIN taxonomies t ON up.data_provider = t.data_provider AND up.stream_id = t.stream_id
-        WHERE t.disabled_at IS NULL;
+        JOIN taxonomies t ON ap.data_provider = t.data_provider AND ap.stream_id = t.stream_id
+        WHERE t.disabled_at IS NULL
+        ORDER BY t.created_at ASC, t.group_sequence ASC;
     }
 };
