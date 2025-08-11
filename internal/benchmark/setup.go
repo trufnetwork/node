@@ -40,6 +40,12 @@ func setupSchemas(
 
 	deployerAddress := MustNewEthereumAddressFromBytes(platform.Deployer)
 
+	// Register the deployer as a data provider
+	err := setup.CreateDataProvider(ctx, platform, deployerAddress.Address())
+	if err != nil {
+		return errors.Wrap(err, "failed to create data provider")
+	}
+
 	allStreamInfos := []setup.StreamInfo{}
 
 	LogInfo(logger, "Creating %d streams (will then setup schema for each)", len(input.Tree.Nodes))
