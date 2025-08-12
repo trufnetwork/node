@@ -58,14 +58,14 @@ CREATE OR REPLACE ACTION insert_taxonomy(
         $child_stream_ref := get_stream_id($child_data_provider_value, $child_stream_id_value);
         $weight_value := $weights[$i];
 
+        if $child_stream_ref IS NULL {
+            ERROR('child stream does not exist: ' || $child_data_provider_value || ':' || $child_stream_id_value);
+        }
+
         $taxonomy_id := uuid_generate_kwil(@txid||$data_provider||$stream_id||$child_data_provider_value||$child_stream_id_value||$i::TEXT);
 
         INSERT INTO taxonomies (
-            data_provider,
-            stream_id,
             taxonomy_id,
-            child_data_provider,
-            child_stream_id,
             weight,
             created_at,
             disabled_at,
@@ -74,11 +74,7 @@ CREATE OR REPLACE ACTION insert_taxonomy(
             stream_ref,
             child_stream_ref
         ) VALUES (
-            $data_provider,
-            $stream_id,
             $taxonomy_id,
-            $child_data_provider_value,
-            $child_stream_id_value,
             $weight_value,
             @height,             -- Use the current block height for created_at.
             NULL,               -- New record is active.

@@ -93,61 +93,66 @@ CREATE OR REPLACE ACTION list_taxonomies_by_height(
     }
     
     if $latest_only {
-        -- Return only latest group_sequence per stream within height range
-        -- Get all child relationships for the latest taxonomy set of each stream
+        -- Return only latest group_sequence per stream within height range using normalized refs
         RETURN WITH stream_latest_info AS (
             SELECT 
-                t.data_provider,
-                t.stream_id,
-                MAX(t.created_at) as max_created_at
+                t.stream_ref,
+                MAX(t.created_at) AS max_created_at
             FROM taxonomies t
             WHERE t.created_at >= $effective_from
               AND t.created_at <= $effective_to
               AND t.disabled_at IS NULL
-            GROUP BY t.data_provider, t.stream_id
+            GROUP BY t.stream_ref
         ),
         stream_latest_group AS (
             SELECT 
-                sli.data_provider,
-                sli.stream_id,
+                sli.stream_ref,
                 sli.max_created_at,
-                MAX(t.group_sequence) as max_group_sequence
+                MAX(t.group_sequence) AS max_group_sequence
             FROM stream_latest_info sli
-            JOIN taxonomies t ON sli.data_provider = t.data_provider 
-                AND sli.stream_id = t.stream_id 
-                AND sli.max_created_at = t.created_at
+            JOIN taxonomies t 
+              ON t.stream_ref = sli.stream_ref 
+             AND t.created_at = sli.max_created_at
             WHERE t.disabled_at IS NULL
-            GROUP BY sli.data_provider, sli.stream_id, sli.max_created_at
+            GROUP BY sli.stream_ref, sli.max_created_at
         )
         SELECT 
-            t.data_provider,
-            t.stream_id,
-            t.child_data_provider,
-            t.child_stream_id,
+            dp.address AS data_provider,
+            s.stream_id,
+            dpc.address AS child_data_provider,
+            sc.stream_id AS child_stream_id,
             t.weight,
             t.created_at,
             t.group_sequence,
             t.start_time
         FROM stream_latest_group slg
-        JOIN taxonomies t ON slg.data_provider = t.data_provider 
-            AND slg.stream_id = t.stream_id 
-            AND slg.max_created_at = t.created_at 
-            AND slg.max_group_sequence = t.group_sequence
+        JOIN taxonomies t 
+          ON t.stream_ref = slg.stream_ref 
+         AND t.created_at = slg.max_created_at 
+         AND t.group_sequence = slg.max_group_sequence
+        JOIN streams s ON s.id = t.stream_ref
+        JOIN data_providers dp ON dp.id = s.data_provider_id
+        JOIN streams sc ON sc.id = t.child_stream_ref
+        JOIN data_providers dpc ON dpc.id = sc.data_provider_id
         WHERE t.disabled_at IS NULL
-        ORDER BY t.created_at ASC, t.group_sequence ASC, t.data_provider ASC, t.stream_id ASC, t.child_data_provider ASC, t.child_stream_id ASC
+        ORDER BY t.created_at ASC, t.group_sequence ASC, dp.address ASC, s.stream_id ASC, dpc.address ASC, sc.stream_id ASC
         LIMIT $limit OFFSET $offset;
     } else {
-        -- Return all taxonomies within height range
+        -- Return all taxonomies within height range using normalized refs
         RETURN SELECT 
-            t.data_provider,
-            t.stream_id,
-            t.child_data_provider,
-            t.child_stream_id,
+            dp.address AS data_provider,
+            s.stream_id,
+            dpc.address AS child_data_provider,
+            sc.stream_id AS child_stream_id,
             t.weight,
             t.created_at,
             t.group_sequence,
             t.start_time
         FROM taxonomies t
+        JOIN streams s ON s.id = t.stream_ref
+        JOIN data_providers dp ON dp.id = s.data_provider_id
+        JOIN streams sc ON sc.id = t.child_stream_ref
+        JOIN data_providers dpc ON dpc.id = sc.data_provider_id
         WHERE t.created_at >= $effective_from
           AND t.created_at <= $effective_to
           AND t.disabled_at IS NULL
@@ -185,21 +190,18 @@ CREATE OR REPLACE ACTION get_taxonomies_for_streams(
     group_sequence INT8,
     start_time INT8
 ) {
-    -- Use existing helper function from 901-utilities.sql to avoid expensive for-loop roundtrips
+    -- Normalize inputs
     $data_providers := helper_lowercase_array($data_providers);
-    
-    -- Set default for latest_only
+
     if $latest_only IS NULL {
         $latest_only := false;
     }
-    
-    -- Validate array lengths match
+
     if array_length($data_providers) != array_length($stream_ids) {
         ERROR('Data providers and stream IDs arrays must have the same length');
     }
-    
+
     if $latest_only {
-        -- Return only latest group_sequence per stream
         RETURN WITH RECURSIVE 
         indexes AS (
             SELECT 1 AS idx
@@ -223,47 +225,53 @@ CREATE OR REPLACE ACTION get_taxonomies_for_streams(
             SELECT DISTINCT data_provider, stream_id
             FROM all_pairs
         ),
+        target_streams AS (
+            SELECT 
+                s.id AS stream_ref
+            FROM unique_pairs up
+            JOIN data_providers dp ON dp.address = up.data_provider
+            JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = up.stream_id
+        ),
         stream_latest_info AS (
             SELECT 
-                up.data_provider,
-                up.stream_id,
+                t.stream_ref,
                 MAX(t.created_at) as max_created_at
-            FROM unique_pairs up
-            JOIN taxonomies t ON up.data_provider = t.data_provider AND up.stream_id = t.stream_id
+            FROM taxonomies t
+            JOIN target_streams ts ON ts.stream_ref = t.stream_ref
             WHERE t.disabled_at IS NULL
-            GROUP BY up.data_provider, up.stream_id
+            GROUP BY t.stream_ref
         ),
         stream_latest_group AS (
             SELECT 
-                sli.data_provider,
-                sli.stream_id,
+                sli.stream_ref,
                 sli.max_created_at,
                 MAX(t.group_sequence) as max_group_sequence
             FROM stream_latest_info sli
-            JOIN taxonomies t ON sli.data_provider = t.data_provider 
-                AND sli.stream_id = t.stream_id 
-                AND sli.max_created_at = t.created_at
+            JOIN taxonomies t ON t.stream_ref = sli.stream_ref 
+                              AND t.created_at = sli.max_created_at
             WHERE t.disabled_at IS NULL
-            GROUP BY sli.data_provider, sli.stream_id, sli.max_created_at
+            GROUP BY sli.stream_ref, sli.max_created_at
         )
         SELECT 
-            ap.data_provider,
-            ap.stream_id,
-            t.child_data_provider,
-            t.child_stream_id,
+            dp.address AS data_provider,
+            s.stream_id,
+            dpc.address AS child_data_provider,
+            sc.stream_id AS child_stream_id,
             t.weight,
             t.created_at,
             t.group_sequence,
             t.start_time
-        FROM all_pairs ap
-        JOIN stream_latest_group slg ON ap.data_provider = slg.data_provider AND ap.stream_id = slg.stream_id
-        JOIN taxonomies t ON slg.data_provider = t.data_provider 
-            AND slg.stream_id = t.stream_id 
-            AND slg.max_created_at = t.created_at 
-            AND slg.max_group_sequence = t.group_sequence
+        FROM stream_latest_group slg
+        JOIN taxonomies t 
+          ON t.stream_ref = slg.stream_ref 
+         AND t.created_at = slg.max_created_at 
+         AND t.group_sequence = slg.max_group_sequence
+        JOIN streams s ON s.id = t.stream_ref
+        JOIN data_providers dp ON dp.id = s.data_provider_id
+        JOIN streams sc ON sc.id = t.child_stream_ref
+        JOIN data_providers dpc ON dpc.id = sc.data_provider_id
         WHERE t.disabled_at IS NULL;
     } else {
-        -- Return all taxonomies for specified streams
         RETURN WITH RECURSIVE 
         indexes AS (
             SELECT 1 AS idx
@@ -282,18 +290,26 @@ CREATE OR REPLACE ACTION get_taxonomies_for_streams(
                 stream_arrays.stream_ids[idx] AS stream_id
             FROM indexes
             JOIN stream_arrays ON 1=1
+        ),
+        unique_pairs AS (
+            SELECT DISTINCT data_provider, stream_id
+            FROM all_pairs
         )
         SELECT DISTINCT
-            ap.data_provider,
-            ap.stream_id,
-            t.child_data_provider,
-            t.child_stream_id,
+            dp.address AS data_provider,
+            s.stream_id,
+            dpc.address AS child_data_provider,
+            sc.stream_id AS child_stream_id,
             t.weight,
             t.created_at,
             t.group_sequence,
             t.start_time
-        FROM all_pairs ap
-        JOIN taxonomies t ON ap.data_provider = t.data_provider AND ap.stream_id = t.stream_id
+        FROM unique_pairs up
+        JOIN data_providers dp ON dp.address = up.data_provider
+        JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = up.stream_id
+        JOIN taxonomies t ON t.stream_ref = s.id
+        JOIN streams sc ON sc.id = t.child_stream_ref
+        JOIN data_providers dpc ON dpc.id = sc.data_provider_id
         WHERE t.disabled_at IS NULL
         ORDER BY t.created_at ASC, t.group_sequence ASC;
     }
