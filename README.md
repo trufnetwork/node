@@ -12,6 +12,10 @@ This documentation is intended for node operators, developers and contributors. 
 
 For definitions of key terms used throughout this project, refer to the [Terminology Reference](./TERMINOLOGY.md).
 
+## Schema
+
+[Schema](./docs/schema.md)
+
 
 ## Node Operator Guide
 
