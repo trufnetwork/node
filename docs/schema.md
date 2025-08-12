@@ -8,7 +8,7 @@ This database schema manages data streams with taxonomies, events, and metadata 
 ## Tables
 
 ### `data_providers`
-External data sources and their connection details.
+Whitelisted data providers.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -17,7 +17,7 @@ External data sources and their connection details.
 | `created_at` | | Record creation timestamp |
 
 ### `streams`
-Core data streams from various providers.
+Data streams from various providers.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -39,7 +39,7 @@ Time-series event data for streams.
 | `truflation_created_at` | | External system timestamp |
 
 ### `taxonomies`
-Hierarchical classification system for organizing streams.
+Hierarchical classification system for composed streams.
 
 | Field | Type | Description |
 |-------|------|-------------|
