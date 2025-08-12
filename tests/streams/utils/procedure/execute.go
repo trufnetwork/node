@@ -761,3 +761,85 @@ func GetDatabaseSize(ctx context.Context, input GetDatabaseSizeInput) (int64, er
 
 	return *databaseSize, nil
 }
+
+// ListTaxonomiesByHeight executes list_taxonomies_by_height action
+func ListTaxonomiesByHeight(ctx context.Context, input ListTaxonomiesByHeightInput) ([]ResultRow, error) {
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return nil, errors.Wrap(err, "error in ListTaxonomiesByHeight.NewEthereumAddressFromBytes")
+	}
+
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: input.Height},
+		Signer:       input.Platform.Deployer,
+		Caller:       deployer.Address(),
+		TxID:         input.Platform.Txid(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext: txContext,
+	}
+
+	var resultRows [][]any
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "list_taxonomies_by_height", []any{
+		input.FromHeight,
+		input.ToHeight,
+		input.Limit,
+		input.Offset,
+		input.LatestOnly,
+	}, func(row *common.Row) error {
+		values := make([]any, len(row.Values))
+		copy(values, row.Values)
+		resultRows = append(resultRows, values)
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "error in ListTaxonomiesByHeight.Call")
+	}
+	if r.Error != nil {
+		return nil, errors.Wrap(r.Error, "error in ListTaxonomiesByHeight.Call")
+	}
+
+	return processResultRows(resultRows)
+}
+
+// GetTaxonomiesForStreams executes get_taxonomies_for_streams action
+func GetTaxonomiesForStreams(ctx context.Context, input GetTaxonomiesForStreamsInput) ([]ResultRow, error) {
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return nil, errors.Wrap(err, "error in GetTaxonomiesForStreams.NewEthereumAddressFromBytes")
+	}
+
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: input.Height},
+		Signer:       input.Platform.Deployer,
+		Caller:       deployer.Address(),
+		TxID:         input.Platform.Txid(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext: txContext,
+	}
+
+	var resultRows [][]any
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_taxonomies_for_streams", []any{
+		input.DataProviders,
+		input.StreamIds,
+		input.LatestOnly,
+	}, func(row *common.Row) error {
+		values := make([]any, len(row.Values))
+		copy(values, row.Values)
+		resultRows = append(resultRows, values)
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "error in GetTaxonomiesForStreams.Call")
+	}
+	if r.Error != nil {
+		return nil, errors.Wrap(r.Error, "error in GetTaxonomiesForStreams.Call")
+	}
+
+	return processResultRows(resultRows)
+}
