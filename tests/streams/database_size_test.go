@@ -37,8 +37,13 @@ func WithTestDatabaseSizeSetup(testFn func(ctx context.Context, platform *kwilTe
 		// Set the platform signer
 		platform = procedure.WithSigner(platform, deployer.Bytes())
 
+		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+
 		// Create the composed stream
-		err := setup.CreateStream(ctx, platform, setup.StreamInfo{
+		err = setup.CreateStream(ctx, platform, setup.StreamInfo{
 			Locator: types.StreamLocator{
 				StreamId:     streamId,
 				DataProvider: deployer,
@@ -69,7 +74,7 @@ func testDatabaseSize(t *testing.T) func(ctx context.Context, platform *kwilTest
 			return errors.Wrap(err, "error getting database size")
 		}
 
-		assert.Equal(t, int64(2118), result, fmt.Sprintf("Actual: %d, Expected: 2118", result))
+		assert.Equal(t, int64(1029), result, fmt.Sprintf("Actual: %d, Expected: 1029", result))
 
 		return nil
 	}

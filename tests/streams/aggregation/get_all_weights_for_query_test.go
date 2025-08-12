@@ -455,6 +455,11 @@ func testAGGR07_VaryingTaxonomyWeights(t *testing.T, useCache bool) func(ctx con
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
 		platform = procedure.WithSigner(platform, deployer.Bytes())
 
+		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+
 		// 1. Create all streams
 		streams := []string{
 			streamAName,
@@ -497,7 +502,7 @@ func testAGGR07_VaryingTaxonomyWeights(t *testing.T, useCache bool) func(ctx con
 
 		// 2. Set up initial taxonomies (Time 0)
 		// Stream A → B (60%), C (40%)
-		err := setTaxonomyWithWeights(ctx, platform, streamAName, map[string]string{
+		err = setTaxonomyWithWeights(ctx, platform, streamAName, map[string]string{
 			streamBName: "0.6",
 			streamCName: "0.4",
 		}, initialSetupTime)

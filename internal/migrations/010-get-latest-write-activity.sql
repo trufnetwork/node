@@ -18,25 +18,32 @@ CREATE OR REPLACE ACTION get_last_transactions(
     }
 
     RETURN SELECT created_at, method FROM (
-        SELECT created_at, method, ROW_NUMBER() OVER (PARTITION BY created_at ORDER BY priority ASC) AS rn FROM (
-             SELECT created_at, 'deployStream' AS method, 1 AS priority
-             FROM streams
-             WHERE COALESCE($data_provider, '') = '' OR data_provider = $data_provider
-             UNION ALL
-             SELECT created_at, 'insertRecords', 2
-             FROM primitive_events
-             WHERE COALESCE($data_provider, '') = '' OR data_provider = $data_provider
-             UNION ALL
-             SELECT created_at, 'setTaxonomies', 3
-             FROM taxonomies
-             WHERE COALESCE($data_provider, '') = '' OR data_provider = $data_provider
-             UNION ALL
-             SELECT created_at, 'setMetadata', 4
-             FROM metadata
-             WHERE COALESCE($data_provider, '') = '' OR data_provider = $data_provider
-         ) AS combined
-    ) AS ranked
-    WHERE rn = 1
-    ORDER BY created_at DESC
-    LIMIT $limit_size;
+      SELECT created_at, method, ROW_NUMBER() OVER (PARTITION BY created_at ORDER BY priority ASC) AS rn FROM (
+          SELECT s.created_at, 'deployStream' AS method, 1 AS priority
+          FROM streams s
+          JOIN data_providers dp ON s.data_provider_id = dp.id
+          WHERE COALESCE($data_provider, '') = '' OR dp.address = $data_provider
+          UNION ALL
+          SELECT pe.created_at, 'insertRecords', 2
+          FROM primitive_events pe
+          JOIN streams s ON pe.stream_ref = s.id
+          JOIN data_providers dp ON s.data_provider_id = dp.id
+          WHERE COALESCE($data_provider, '') = '' OR dp.address = $data_provider
+          UNION ALL
+          SELECT t.created_at, 'setTaxonomies', 3
+          FROM taxonomies t
+          JOIN streams s ON t.stream_ref = s.id
+          JOIN data_providers dp ON s.data_provider_id = dp.id
+          WHERE COALESCE($data_provider, '') = '' OR dp.address = $data_provider
+          UNION ALL
+          SELECT m.created_at, 'setMetadata', 4
+          FROM metadata m
+          JOIN streams s ON m.stream_ref = s.id
+          JOIN data_providers dp ON s.data_provider_id = dp.id
+          WHERE COALESCE($data_provider, '') = '' OR dp.address = $data_provider
+      ) AS combined
+  ) AS ranked
+  WHERE rn = 1
+  ORDER BY created_at DESC
+  LIMIT $limit_size;
 }

@@ -43,8 +43,13 @@ func TestMultiLevelComposedStreams(t *testing.T) {
 
 func setupMultiLevelComposedStreams(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		platform = procedure.WithSigner(platform, deployerSharedComplex.Bytes())
+		platform = procedure.WithSigner(platform, deployerMultiLevel.Bytes())
 		start := int64(0)
+
+		err := setup.CreateDataProvider(ctx, platform, deployerMultiLevel.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
 
 		// 1. Deploy primitives
 		if err := setup.SetupPrimitive(ctx, setup.SetupPrimitiveInput{

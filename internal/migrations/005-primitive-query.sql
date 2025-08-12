@@ -34,6 +34,7 @@ CREATE OR REPLACE ACTION get_record_primitive(
         RETURN;
     }
 
+    $stream_ref := get_stream_id($data_provider, $stream_id);
 
     RETURN WITH
     -- Get base records within time range
@@ -46,8 +47,7 @@ CREATE OR REPLACE ACTION get_record_primitive(
                 ORDER BY pe.created_at DESC
             ) as rn
         FROM primitive_events pe
-        WHERE pe.data_provider = $data_provider
-            AND pe.stream_id = $stream_id
+        WHERE pe.stream_ref = $stream_ref
             AND pe.created_at <= $effective_frozen_at
             AND pe.event_time > $effective_from
             AND pe.event_time <= $effective_to
@@ -58,8 +58,7 @@ CREATE OR REPLACE ACTION get_record_primitive(
         SELECT pe.event_time, pe.value
         FROM primitive_events pe
         WHERE 
-            pe.data_provider = $data_provider
-            AND pe.stream_id = $stream_id
+            pe.stream_ref = $stream_ref
             AND pe.event_time <= $effective_from
             AND pe.created_at <= $effective_frozen_at
         ORDER BY pe.event_time DESC, pe.created_at DESC
@@ -105,11 +104,11 @@ CREATE OR REPLACE ACTION get_last_record_primitive(
     $max_int8 INT8 := 9223372036854775000;
     $effective_before INT8 := COALESCE($before, $max_int8);
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
+    $stream_ref := get_stream_id($data_provider, $stream_id);
 
     RETURN SELECT pe.event_time, pe.value
         FROM primitive_events pe
-        WHERE pe.data_provider = $data_provider
-        AND pe.stream_id = $stream_id
+        WHERE pe.stream_ref = $stream_ref
         AND pe.event_time < $effective_before
         AND pe.created_at <= $effective_frozen_at
         ORDER BY pe.event_time DESC, pe.created_at DESC
@@ -140,11 +139,11 @@ CREATE OR REPLACE ACTION get_first_record_primitive(
     $max_int8 INT8 := 9223372036854775000;
     $effective_after INT8 := COALESCE($after, 0);
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
+    $stream_ref := get_stream_id($data_provider, $stream_id);
 
     RETURN SELECT pe.event_time, pe.value
         FROM primitive_events pe
-        WHERE pe.data_provider = $data_provider
-        AND pe.stream_id = $stream_id
+        WHERE pe.stream_ref = $stream_ref
         AND pe.event_time >= $effective_after
         AND pe.created_at <= $effective_frozen_at
         ORDER BY pe.event_time ASC, pe.created_at DESC
@@ -175,6 +174,7 @@ CREATE OR REPLACE ACTION get_index_primitive(
 
     $max_int8 INT8 := 9223372036854775000;
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
+    $stream_ref := get_stream_id($data_provider, $stream_id);
     
     -- If base_time is not provided, try to get it from metadata
     $effective_base_time INT8 := $base_time;
@@ -182,8 +182,7 @@ CREATE OR REPLACE ACTION get_index_primitive(
         $found_metadata := FALSE;
         for $row in SELECT value_i 
             FROM metadata 
-            WHERE data_provider = $data_provider 
-            AND stream_id = $stream_id 
+            WHERE stream_ref = $stream_ref
             AND metadata_key = 'default_base_time' 
             AND disabled_at IS NULL
             ORDER BY created_at DESC 

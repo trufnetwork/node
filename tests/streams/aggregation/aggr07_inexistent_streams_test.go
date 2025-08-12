@@ -47,6 +47,10 @@ func testAGGR07_InexistentStreams(t *testing.T, useCache bool) func(ctx context.
 			return errors.Wrap(err, "error creating ethereum address")
 		}
 		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
 
 		// Setup the composed stream
 		err = setup.SetupComposedStream(ctx, setup.SetupComposedStreamInput{
@@ -106,6 +110,15 @@ func testAGGR07_InexistentStreams(t *testing.T, useCache bool) func(ctx context.
 		// Test 2: Non-existent composed stream
 
 		rootComposedStreamId := util.GenerateStreamId("root_composed_stream_test")
+		deployer, err = util.NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address")
+		}
+		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
 
 		// Setup the root composed stream
 		err = setup.SetupComposedStream(ctx, setup.SetupComposedStreamInput{

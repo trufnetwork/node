@@ -72,8 +72,13 @@ func WithTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platfo
 		// Set the platform signer
 		platform = procedure.WithSigner(platform, complexComposedDeployer.Bytes())
 
+		err := setup.CreateDataProvider(ctx, platform, complexComposedDeployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+
 		// Deploy the contracts here
-		err := setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
+		err = setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
 			Platform: platform,
 			StreamId: composedStreamId,
 			Height:   1,
@@ -595,6 +600,10 @@ func testComplexComposedOutOfRange(t *testing.T, useCache bool) func(ctx context
 func testComposedRecordNoDuplicates(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
 		platform = procedure.WithSigner(platform, complexComposedDeployer.Bytes())
+		err := setup.CreateDataProvider(ctx, platform, complexComposedDeployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
 
 		// Create unique stream IDs and deployer for this specific test
 		localComposedStreamId := util.GenerateStreamId("local_composed_dedup")
@@ -604,7 +613,7 @@ func testComposedRecordNoDuplicates(t *testing.T, useCache bool) func(ctx contex
 
 		// Setup a composed stream with three primitive children.
 		// Data is staggered and designed to test LOCF and the final DISTINCT on the composed result.
-		err := setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
+		err = setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
 			Platform: platform,
 			StreamId: localComposedStreamId,
 			Height:   1,
