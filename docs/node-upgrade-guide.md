@@ -104,6 +104,94 @@ kwild admin status
 
 ---
 
+## 6. (New Feature) Enable Peer Blacklisting
+
+Starting with recent versions, kwil-db includes peer blacklisting functionality to improve network stability and give operators better control over problematic peers.
+
+### What Blacklisting Provides
+
+- **Manual peer control** - Block specific peers via CLI commands
+- **Persistent storage** - Blacklist survives node restarts
+- **Automatic protection** - Auto-blacklist peers that exhaust connection retries (when enabled)
+- **Better network health** - Prevent resource waste from problematic peers
+
+### Enable Blacklist (Recommended)
+
+**Option 1: Automated (append to config)**
+
+Use this bash command to automatically append the blacklist configuration to the end of your `config.toml` file if the blacklist section doesn't already exist:
+
+```bash
+# Stop your node first
+sudo systemctl stop kwild
+
+# Add blacklist configuration to end of config.toml
+# Note: Adjust the path if you used a different directory during setup
+cat >> ~/truf-node-operator/my-node-config/config.toml << 'EOF'
+
+# peer blacklisting configuration
+[p2p.blacklist]
+# enable peer blacklisting functionality
+enable = true
+# automatically blacklist peers that exhaust connection retries
+auto_blacklist_on_max_retries = true
+# duration to blacklist retry-exhausted peers (nanoseconds: 3600000000000 = 1 hour)
+auto_blacklist_duration = 3600000000000
+EOF
+
+# Restart node
+sudo systemctl start kwild
+```
+
+This bash heredoc command (`cat >> file << 'EOF'`) safely appends the configuration block to the bottom of your config file without modifying existing sections.
+
+**Note**: The path above assumes you followed the standard [Node Operator Guide](https://github.com/trufnetwork/node/blob/main/docs/node-operator-guide.md) which uses `~/truf-node-operator/my-node-config/`. If you created your configuration in a different location, adjust the path accordingly.
+
+**Option 2: Manual Configuration**
+
+Edit your `~/truf-node-operator/my-node-config/config.toml` and add this section if it doesn't exist (adjust path if you used a different directory):
+
+```toml
+# peer blacklisting configuration
+[p2p.blacklist]
+# enable peer blacklisting functionality
+enable = true
+# automatically blacklist peers that exhaust connection retries
+auto_blacklist_on_max_retries = true
+# duration to blacklist retry-exhausted peers (nanoseconds: 3600000000000 = 1 hour)
+auto_blacklist_duration = 3600000000000
+```
+
+### Using Blacklist Commands
+
+Once enabled, you can manage peer blacklists:
+
+```bash
+# Block a problematic peer permanently
+kwild blacklist add 12D3KooWExample... --reason "connection_issues"
+
+# Block a peer temporarily (1 hour)
+kwild blacklist add 12D3KooWExample... --reason "temporary_ban" --duration "1h"
+
+# List blacklisted peers
+kwild blacklist list
+
+# Remove a peer from blacklist
+kwild blacklist remove 12D3KooWExample...
+```
+
+### Verification
+
+Check that blacklist is working:
+```bash
+# Should show blacklist section in config
+kwild print-config | grep -A 5 "blacklist"
+
+# Test CLI access
+kwild blacklist list
+```
+---
+
 ## What About PostgreSQL & Other Components?
 
 *Minor* Kwil releases do **not** require a database upgrade.  
