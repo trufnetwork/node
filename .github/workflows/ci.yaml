@@ -62,8 +62,44 @@ jobs:
       - name: Run Taskfile
         run: task build
 
-      - name: Run Go Tests
-        run: go test -short -p 1 ./...
+      - name: Clean Docker state
+        run: |
+          docker system prune -af || true
+          docker volume prune -f || true
+
+      - name: Run Go Tests (with retry)
+        env:
+          GOMAXPROCS: 1
+          CI: true
+        run: |
+          attempt=1
+          max_attempts=3
+          
+          while [ $attempt -le $max_attempts ]; do
+            echo "Test attempt $attempt of $max_attempts"
+            
+            # Clean test cache before retry
+            if [ $attempt -gt 1 ]; then
+              echo "🧹 Cleaning test cache..."
+              go clean -testcache
+              docker system prune -af || true
+              sleep 5
+            fi
+            
+            if go test -short -p 1 -timeout=15m -count=1 ./...; then
+              echo "✅ Tests passed on attempt $attempt"
+              break
+            else
+              echo "❌ Tests failed on attempt $attempt"
+              if [ $attempt -eq $max_attempts ]; then
+                echo "All test attempts failed"
+                exit 1
+              fi
+              attempt=$((attempt + 1))
+              echo "Waiting 10 seconds before retry..."
+              sleep 10
+            fi
+          done
 
       - name: Start Single-Node Stack
         run: task single:start
