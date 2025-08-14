@@ -135,8 +135,8 @@ cat >> ~/truf-node-operator/my-node-config/config.toml << 'EOF'
 enable = true
 # automatically blacklist peers that exhaust connection retries
 auto_blacklist_on_max_retries = true
-# duration to blacklist retry-exhausted peers (nanoseconds: 3600000000000 = 1 hour)
-auto_blacklist_duration = 3600000000000
+# duration to blacklist peers that exhaust connection retries (0 = permanent)
+auto_blacklist_duration = "1h"
 EOF
 
 # Restart node
@@ -158,9 +158,17 @@ Edit your `~/truf-node-operator/my-node-config/config.toml` and add this section
 enable = true
 # automatically blacklist peers that exhaust connection retries
 auto_blacklist_on_max_retries = true
-# duration to blacklist retry-exhausted peers (nanoseconds: 3600000000000 = 1 hour)
-auto_blacklist_duration = 3600000000000
+# duration to blacklist peers that exhaust connection retries (0 = permanent)
+auto_blacklist_duration = "1h"
 ```
+
+**Supported duration formats:**
+- `"30s"` - 30 seconds
+- `"5m"` - 5 minutes
+- `"1h"` - 1 hour (default)
+- `"2h30m"` - 2 hours and 30 minutes
+- `"1h30m45s"` - 1 hour, 30 minutes, and 45 seconds
+- `"0s"` or `"0"` - Permanent blacklist
 
 ### Using Blacklist Commands
 
