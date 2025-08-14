@@ -64,45 +64,49 @@ jobs:
 
       - name: Run Go Tests (with retry)
         run: |
+          set -o errexit -o nounset -o pipefail
+
           attempt=1
           max_attempts=3
-          
+          backoff=10
+
+          # Ensure Docker daemon is ready before first attempt
+          until docker info >/dev/null 2>&1; do
+            echo "🐳 Waiting for Docker daemon to be ready..."
+            sleep 2
+          done
+
           while [ $attempt -le $max_attempts ]; do
             echo "Test attempt $attempt of $max_attempts"
-            
-            # Clean everything before retry
+
+            # Clean test cache and dangling Docker state only on retries
             if [ $attempt -gt 1 ]; then
-              echo "Cleaning up for retry..."
+              echo "🧹 Cleaning test cache..."
               go clean -testcache
-              
-              # Stop all containers
-              docker stop $(docker ps -aq) 2>/dev/null || true
-              docker rm $(docker ps -aq) 2>/dev/null || true
-              
-              # Clean Docker resources
               docker system prune -af || true
-              docker volume prune -f || true
-              docker network prune -f || true
-              
-              # Kill any remaining processes that might be holding ports
-              sudo pkill -f kwil || true
-              sudo pkill -f postgres || true
-              
-              sleep 10
+              sleep 5
             fi
-            
-            if go test -short -p 1 -timeout=15m -count=1 ./...; then
-              echo "Tests passed on attempt $attempt"
+
+            if go test -v -short -p 1 -timeout=15m -count=1 ./...; then
+              echo "✅ Tests passed on attempt $attempt"
               break
             else
-              echo "Tests failed on attempt $attempt"
+              echo "❌ Tests failed on attempt $attempt"
+              # Surface Docker diagnostics to make exit 125 debuggable
+              echo "::group::Docker diagnostics"
+              docker ps -a || true
+              docker system df || true
+              docker info || true
+              echo "::endgroup::"
+
               if [ $attempt -eq $max_attempts ]; then
                 echo "All test attempts failed"
                 exit 1
               fi
               attempt=$((attempt + 1))
-              echo "⏳ Waiting 10 seconds before retry..."
-              sleep 10
+              echo "Waiting ${backoff}s before retry..."
+              sleep "$backoff"
+              backoff=$((backoff * 2))
             fi
           done
 
