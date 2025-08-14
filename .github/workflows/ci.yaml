@@ -62,15 +62,7 @@ jobs:
       - name: Run Taskfile
         run: task build
 
-      - name: Clean Docker state
-        run: |
-          docker system prune -af || true
-          docker volume prune -f || true
-
       - name: Run Go Tests (with retry)
-        env:
-          GOMAXPROCS: 1
-          CI: true
         run: |
           attempt=1
           max_attempts=3
@@ -78,25 +70,38 @@ jobs:
           while [ $attempt -le $max_attempts ]; do
             echo "Test attempt $attempt of $max_attempts"
             
-            # Clean test cache before retry
+            # Clean everything before retry
             if [ $attempt -gt 1 ]; then
-              echo "🧹 Cleaning test cache..."
+              echo "Cleaning up for retry..."
               go clean -testcache
+              
+              # Stop all containers
+              docker stop $(docker ps -aq) 2>/dev/null || true
+              docker rm $(docker ps -aq) 2>/dev/null || true
+              
+              # Clean Docker resources
               docker system prune -af || true
-              sleep 5
+              docker volume prune -f || true
+              docker network prune -f || true
+              
+              # Kill any remaining processes that might be holding ports
+              sudo pkill -f kwil || true
+              sudo pkill -f postgres || true
+              
+              sleep 10
             fi
             
             if go test -short -p 1 -timeout=15m -count=1 ./...; then
-              echo "✅ Tests passed on attempt $attempt"
+              echo "Tests passed on attempt $attempt"
               break
             else
-              echo "❌ Tests failed on attempt $attempt"
+              echo "Tests failed on attempt $attempt"
               if [ $attempt -eq $max_attempts ]; then
                 echo "All test attempts failed"
                 exit 1
               fi
               attempt=$((attempt + 1))
-              echo "Waiting 10 seconds before retry..."
+              echo "⏳ Waiting 10 seconds before retry..."
               sleep 10
             fi
           done
