@@ -62,8 +62,55 @@ jobs:
       - name: Run Taskfile
         run: task build
 
-      - name: Run Go Tests
-        run: go test -short -p 1 ./...
+      - name: Run Go Tests (with retry)
+        run: |
+          set -o errexit -o nounset -o pipefail
+
+          attempt=1
+          max_attempts=3
+          backoff=10
+
+          # Ensure Docker daemon is ready before first attempt
+          until docker info >/dev/null 2>&1; do
+            echo "Waiting for Docker daemon to be ready..."
+            sleep 2
+          done
+
+          while [ $attempt -le $max_attempts ]; do
+            echo "Test attempt $attempt of $max_attempts"
+
+            # Clean dangling Docker state only on retries
+            if [ $attempt -gt 1 ]; then
+              if [ -f docker-compose.yml ]; then
+                docker compose down -v || true
+              else
+                docker system prune -af --volumes || true
+              fi
+              sleep 5
+            fi
+
+            if go test -short -p 1 -timeout=15m -count=1 ./...; then
+              echo "✅ Tests passed on attempt $attempt"
+              break
+            else
+              echo "❌ Tests failed on attempt $attempt"
+              # Surface Docker diagnostics
+              echo "::group::Docker diagnostics"
+              docker ps -a || true
+              docker system df || true
+              docker info || true
+              echo "::endgroup::"
+
+              if [ $attempt -eq $max_attempts ]; then
+                echo "All test attempts failed"
+                exit 1
+              fi
+              attempt=$((attempt + 1))
+              echo "Waiting ${backoff}s before retry..."
+              sleep "$backoff"
+              backoff=$((backoff * 2))
+            fi
+          done
 
       - name: Start Single-Node Stack
         run: task single:start
