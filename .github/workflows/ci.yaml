@@ -72,18 +72,20 @@ jobs:
 
           # Ensure Docker daemon is ready before first attempt
           until docker info >/dev/null 2>&1; do
-            echo "🐳 Waiting for Docker daemon to be ready..."
+            echo "Waiting for Docker daemon to be ready..."
             sleep 2
           done
 
           while [ $attempt -le $max_attempts ]; do
             echo "Test attempt $attempt of $max_attempts"
 
-            # Clean test cache and dangling Docker state only on retries
+            # Clean dangling Docker state only on retries
             if [ $attempt -gt 1 ]; then
-              echo "🧹 Cleaning test cache..."
-              go clean -testcache
-              docker system prune -af || true
+              if [ -f docker-compose.yml ]; then
+                docker compose down -v || true
+              else
+                docker system prune -af --volumes || true
+              fi
               sleep 5
             fi
 
@@ -92,7 +94,7 @@ jobs:
               break
             else
               echo "❌ Tests failed on attempt $attempt"
-              # Surface Docker diagnostics to make exit 125 debuggable
+              # Surface Docker diagnostics
               echo "::group::Docker diagnostics"
               docker ps -a || true
               docker system df || true
