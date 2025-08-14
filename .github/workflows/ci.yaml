@@ -87,7 +87,7 @@ jobs:
               sleep 5
             fi
 
-            if go test -v -short -p 1 -timeout=15m -count=1 ./...; then
+            if go test -short -p 1 -timeout=15m -count=1 ./...; then
               echo "✅ Tests passed on attempt $attempt"
               break
             else
