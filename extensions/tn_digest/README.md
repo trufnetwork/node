@@ -12,7 +12,7 @@
 ### Prerequisites
 - Node key file exists at `<root>/nodekey.json` (used to sign digest txs).
 - User JSON‑RPC is enabled (`[rpc].listen` set). If set to `0.0.0.0:<port>`, the extension internally uses `127.0.0.1:<port>` for client requests.
-- Schema contains `digest_config` table (see SQL below).
+- Schema contains `digest_config` table.
 
 ### Enable/Disable and Schedule
 - The extension reads a single row in `digest_config` (id = 1):
@@ -20,14 +20,9 @@
   - `digest_schedule` (cron string): when jobs run.
 - Default if row missing: disabled, schedule `0 */6 * * *` (every 6 hours).
 
-Minimal SQL to seed/adjust:
+Minimal SQL to adjust:
 ```sql
--- Ensure a row exists (disabled, 6-hour schedule)
-INSERT INTO digest_config (id, enabled, digest_schedule, updated_at_height)
-SELECT 1, false, '0 */6 * * *', 0
-WHERE NOT EXISTS (SELECT 1 FROM digest_config WHERE id = 1);
-
--- Enable and set to every 10 minutes
+-- Enable and set to every 10 minutes (assuming row id=1 is managed externally)
 UPDATE digest_config SET enabled = true, digest_schedule = '*/10 * * * *' WHERE id = 1;
 ```
 
@@ -41,8 +36,10 @@ UPDATE digest_config SET enabled = true, digest_schedule = '*/10 * * * *' WHERE 
 ```toml
 [extensions.tn_digest]
 reload_interval_blocks = "1000"   # default 1000; set to small values for faster reconciling
+# optional explicit RPC URL (overrides [rpc].listen normalization)
+# rpc_url = "https://127.0.0.1:8484"
 ```
-- RPC listen (must be enabled):
+- RPC listen (must be enabled if `rpc_url` not set):
 ```toml
 [rpc]
 listen = "0.0.0.0:8484"           # the extension will connect to 127.0.0.1:8484 internally

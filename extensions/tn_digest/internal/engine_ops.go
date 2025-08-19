@@ -3,6 +3,7 @@ package internal
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/crypto/auth"
@@ -46,26 +47,18 @@ func (e *EngineOperations) LoadDigestConfig(ctx context.Context) (bool, string, 
 			return nil
 		})
 	if err != nil {
-		// tolerate missing table; extension will use defaults
-		e.logger.Warn("failed to read digest_config; using defaults", "error", err)
-		return false, "", nil
+		msg := err.Error()
+		// tolerate missing table; everything else should surface to caller
+		if strings.Contains(msg, "digest_config") && (strings.Contains(msg, "does not exist") || strings.Contains(msg, "undefined") || strings.Contains(msg, "not found")) {
+			e.logger.Info("digest_config table not found; using defaults")
+			return false, "", nil
+		}
+		return false, "", err
 	}
 	if !found {
 		return false, "", nil
 	}
 	return enabled, schedule, nil
-}
-
-// EnsureDefaultDigestConfig inserts a default disabled row if none exists, using owner exec.
-func (e *EngineOperations) EnsureDefaultDigestConfig(ctx context.Context) error {
-	stmt := `INSERT INTO digest_config (id, enabled, digest_schedule, updated_at_height)
-	         SELECT 1, false, '0 */6 * * *', 0
-	         WHERE NOT EXISTS (SELECT 1 FROM digest_config WHERE id = 1)`
-	if err := e.engine.ExecuteWithoutEngineCtx(ctx, e.db, stmt, nil, nil); err != nil {
-		// Ignore errors (e.g., table missing); will be retried on next start or after migrations
-		e.logger.Debug("ensure default digest_config failed (ignored)", "error", err)
-	}
-	return nil
 }
 
 // BuildAndBroadcastAutoDigestTx builds an ActionExecution tx for auto_digest and broadcasts it using the node signer

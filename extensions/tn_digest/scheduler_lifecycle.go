@@ -71,6 +71,17 @@ func wireSignerAndBroadcaster(app *common.App, ext *Extension) {
 	}
 	// Broadcaster (JSON-RPC user service)
 	if ext.Broadcaster() == nil {
+		// Optional override: [extensions.tn_digest].rpc_url
+		if m, ok := app.Service.LocalConfig.Extensions[ExtensionName]; ok {
+			if rpcURL := m["rpc_url"]; rpcURL != "" {
+				if u, err := normalizeListenAddressForClient(rpcURL); err == nil {
+					ext.SetBroadcaster(makeBroadcasterFromURL(u))
+					return
+				} else {
+					ext.Logger().Warn("invalid extensions.tn_digest.rpc_url; falling back to [rpc].listen", "error", err)
+				}
+			}
+		}
 		listen := app.Service.LocalConfig.RPC.ListenAddress
 		if listen == "" {
 			ext.Logger().Warn("RPC listen address is empty; cannot create broadcaster")
