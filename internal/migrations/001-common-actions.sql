@@ -53,27 +53,15 @@ CREATE OR REPLACE ACTION get_stream_ids(
     ),
     stream_lookups AS (
         SELECT
-            idx,
             s.id AS stream_ref
         FROM indexes
         JOIN input_arrays ON 1=1
         JOIN data_providers dp ON dp.address = input_arrays.data_providers[idx]
         JOIN streams s ON s.data_provider_id = dp.id 
                       AND s.stream_id = input_arrays.stream_ids[idx]
-    ),
-    build_array AS (
-        SELECT 1 AS current_idx, ARRAY[]::INT[] AS result
-        UNION ALL
-        SELECT 
-            ba.current_idx + 1,
-            array_append(ba.result, sl.stream_ref)
-        FROM build_array ba
-        JOIN stream_lookups sl ON sl.idx = ba.current_idx
-        WHERE ba.current_idx <= array_length($data_providers)
     )
-    SELECT result AS stream_refs
-    FROM build_array
-    WHERE current_idx = array_length($data_providers) + 1 {
+    SELECT ARRAY_AGG(stream_ref) AS stream_refs
+    FROM stream_lookups {
       return $row.stream_refs;
     }
 };
@@ -314,7 +302,7 @@ CREATE OR REPLACE ACTION create_streams(
 CREATE OR REPLACE ACTION get_stream_id(
   $data_provider_address TEXT,
   $stream_id TEXT
-) PRIVATE VIEW returns (id INT) {
+) PRIVATE returns (id INT) {
   $id INT;
   $found BOOL := false;
   FOR $stream_row IN SELECT s.id
