@@ -110,6 +110,8 @@ func resetExtensionForTest() *Extension {
 	// prerequisites so scheduler can be created during tests
 	ext.SetNodeSigner(mockSigner{})
 	ext.SetBroadcaster(mockBroadcaster{})
+	// minimal engine ops
+	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, &fakeDB{}, log.New()))
 	SetExtension(ext)
 	return ext
 }

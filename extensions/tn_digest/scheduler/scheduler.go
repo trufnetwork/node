@@ -62,6 +62,9 @@ func (s *DigestScheduler) Start(ctx context.Context, cronExpr string) error {
 
 	s.ctx, s.cancel = context.WithCancel(ctx)
 
+	// Clear any existing jobs to avoid duplicates on (re)start
+	s.cron.Clear()
+
 	jobFunc := func() {
 		defer func() {
 			if r := recover(); r != nil {

@@ -49,11 +49,15 @@ var (
 )
 
 func GetExtension() *Extension {
-	once.Do(func() {
-		extensionInstance = &Extension{
-			logger: log.New(log.WithLevel(log.LevelInfo)),
-		}
-	})
+	if extensionInstance == nil {
+		once.Do(func() {
+			if extensionInstance == nil {
+				extensionInstance = &Extension{
+					logger: log.New(log.WithLevel(log.LevelInfo)),
+				}
+			}
+		})
+	}
 	return extensionInstance
 }
 
