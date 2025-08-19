@@ -1,7 +1,7 @@
 -- Stub auto_digest action for tn_digest extension bootstrap
 -- No-op, deterministic, read-only; used to verify wiring and scheduler calls
 
-CREATE OR REPLACE ACTION auto_digest() PRIVATE VIEW RETURNS TABLE(
+CREATE OR REPLACE ACTION auto_digest() RETURNS TABLE(
     processed_days INT8,
     has_more BOOL,
     total_deleted_rows INT8
@@ -12,5 +12,3 @@ CREATE OR REPLACE ACTION auto_digest() PRIVATE VIEW RETURNS TABLE(
     -- }
     RETURN SELECT 0::INT8, false::BOOL, 0::INT8;
 };
-
-
