@@ -33,9 +33,9 @@ CREATE OR REPLACE ACTION insert_record(
     $current_block INT := @height;
     $stream_ref INT := get_stream_id($data_provider, $stream_id);
 
-    -- Insert the new record into the primitive_events table
-    INSERT INTO primitive_events (stream_id, data_provider, event_time, value, created_at, stream_ref)
-    VALUES ($stream_id, $data_provider, $event_time, $value, $current_block, $stream_ref);
+    -- Insert the new record into the primitive_events table (normalized: use stream_ref)
+    INSERT INTO primitive_events (event_time, value, created_at, truflation_created_at, stream_ref)
+    VALUES ($event_time, $value, $current_block, NULL, $stream_ref);
 };
 
 
@@ -111,10 +111,8 @@ CREATE OR REPLACE ACTION insert_records(
         JOIN record_arrays ON 1=1
         WHERE record_arrays.values_array[idx] != 0::NUMERIC(36,18)
     )
-    INSERT INTO primitive_events (stream_id, data_provider, event_time, value, created_at, truflation_created_at, stream_ref)
+    INSERT INTO primitive_events (event_time, value, created_at, truflation_created_at, stream_ref)
     SELECT 
-        stream_id, 
-        data_provider, 
         event_time, 
         value, 
         $current_block,

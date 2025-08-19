@@ -61,8 +61,22 @@ func testAGGR05_NoDuplicateChildStreams(t *testing.T, useCache bool) func(ctx co
 			return errors.Wrap(err, "error setting up composed stream")
 		}
 
-		// Create a stream ID reference (without actually deploying the stream)
+		// Create a stream ID reference and deploy it (required for testing duplicates)
 		stream1 := util.GenerateStreamId("stream1")
+
+		// Deploy stream1 so it exists (required for testing duplicates)
+		if err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+			Platform: platform,
+			StreamId: stream1,
+			Height:   1,
+			MarkdownData: `
+				| event_time | value |
+				| ---------- | ----- |
+				| 1          | 5     |
+			`,
+		}); err != nil {
+			return errors.Wrap(err, "error setting up child stream 1")
+		}
 
 		// Set up cache (only when useCache is true)
 		if useCache {
@@ -86,7 +100,7 @@ func testAGGR05_NoDuplicateChildStreams(t *testing.T, useCache bool) func(ctx co
 			StartTime:     nil,
 		})
 
-		// We expect an error because duplicate child streams are not allowed
+		// We expect a DB uniqueness error (duplicates should be enforced at DB level)
 		assert.Error(t, err, "Expected error when adding duplicate child stream")
 		assert.Contains(t, err.Error(), "violates unique constraint")
 

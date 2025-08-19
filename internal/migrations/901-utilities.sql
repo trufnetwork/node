@@ -92,9 +92,20 @@ CREATE OR REPLACE ACTION helper_lowercase_array(
             LOWER(array_holder.original_array[idx]) AS lowercase_element
         FROM indexes
         JOIN array_holder ON 1=1
+    ),
+    build_array AS (
+        SELECT 1 AS current_idx, ARRAY[]::TEXT[] AS result
+        UNION ALL
+        SELECT 
+            ba.current_idx + 1,
+            array_append(ba.result, ur.lowercase_element)
+        FROM build_array ba
+        JOIN unnested_results ur ON ur.idx = ba.current_idx
+        WHERE ba.current_idx <= array_length($input_array)
     )
-    SELECT ARRAY_AGG(lowercase_element) AS lowercase_array
-    FROM unnested_results {
+    SELECT result AS lowercase_array
+    FROM build_array
+    WHERE current_idx = array_length($input_array) + 1 {
         RETURN $row.lowercase_array;
     }
 };

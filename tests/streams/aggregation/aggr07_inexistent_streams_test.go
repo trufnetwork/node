@@ -16,14 +16,14 @@ import (
 )
 
 /*
-	AGGR07: When querying a composed stream with non-existent streams in its taxonomy, appropriate errors should be returned.
+	AGGR07: When setting a taxonomy with non-existent streams, appropriate errors should be returned.
 
 	Test cases:
-	1. Querying a composed stream with a non-existent primitive stream in its taxonomy should return an error
-	2. Querying a composed stream with a non-existent composed stream in its taxonomy should return an error
+	1. Setting a taxonomy with a non-existent primitive stream should return an error
+	2. Setting a taxonomy with a non-existent composed stream should return an error
 */
 
-// TestAGGR07_InexistentStreamsRejected tests that querying composed streams with non-existent stream references results in errors
+// TestAGGR07_InexistentStreamsRejected tests that setting taxonomies with non-existent stream references results in errors
 func TestAGGR07_InexistentStreamsRejected(t *testing.T) {
 	cacheConfig := testutils.TestCache("0x0000000000000000000000000000000000000123", "*")
 
@@ -71,8 +71,8 @@ func testAGGR07_InexistentStreams(t *testing.T, useCache bool) func(ctx context.
 			DataProvider: deployer,
 		}
 
-		// Set a taxonomy with a non-existent primitive stream
-		// This should succeed since we're only registering the taxonomy, not querying it
+		// Try to set a taxonomy with a non-existent primitive stream
+		// This should now fail immediately since we check for stream existence
 		err = procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
 			Platform:      platform,
 			StreamLocator: composedStreamLocator,
@@ -81,31 +81,10 @@ func testAGGR07_InexistentStreams(t *testing.T, useCache bool) func(ctx context.
 			Weights:       []string{"1.0"},
 			StartTime:     nil,
 		})
-		if err != nil {
-			return errors.Wrap(err, "error setting taxonomy with non-existent primitive stream")
-		}
 
-		// Set up cache (only when useCache is true)
-		if useCache {
-			// Note: This test doesn't actually need cache refresh since we're testing error cases
-			// The cache setup is handled by the test framework
-		}
-
-		// Now try to query the composed stream
-		fromTime := int64(1)
-		toTime := int64(3)
-		_, err = procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
-			Platform:      platform,
-			StreamLocator: composedStreamLocator,
-			FromTime:      &fromTime,
-			ToTime:        &toTime,
-			Height:        1,
-			UseCache:      &useCache,
-		})
-
-		// We expect an error when querying because the primitive stream doesn't exist
-		assert.Error(t, err, "Expected error when querying composed stream with non-existent primitive stream")
-		assert.Contains(t, err.Error(), "streams missing for stream", "Error should indicate the stream was not found")
+		// We expect an error when setting taxonomy because the primitive stream doesn't exist
+		assert.Error(t, err, "Expected error when setting taxonomy with non-existent primitive stream")
+		assert.Contains(t, err.Error(), "child stream does not exist", "Error should indicate the child stream was not found")
 
 		// Test 2: Non-existent composed stream
 
@@ -139,8 +118,8 @@ func testAGGR07_InexistentStreams(t *testing.T, useCache bool) func(ctx context.
 			DataProvider: deployer,
 		}
 
-		// Set a taxonomy with a non-existent composed stream
-		// This should succeed since we're only registering the taxonomy, not querying it
+		// Try to set a taxonomy with a non-existent composed stream
+		// This should now fail immediately since we check for stream existence
 		err = procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
 			Platform:      platform,
 			StreamLocator: rootStreamLocator,
@@ -149,23 +128,10 @@ func testAGGR07_InexistentStreams(t *testing.T, useCache bool) func(ctx context.
 			Weights:       []string{"1.0"},
 			StartTime:     nil,
 		})
-		if err != nil {
-			return errors.Wrap(err, "error setting taxonomy with non-existent composed stream")
-		}
 
-		// Now try to query the composed stream
-		_, err = procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
-			Platform:      platform,
-			StreamLocator: rootStreamLocator,
-			FromTime:      &fromTime,
-			ToTime:        &toTime,
-			Height:        1,
-			UseCache:      &useCache,
-		})
-
-		// We expect an error when querying because the composed stream doesn't exist
-		assert.Error(t, err, "Expected error when querying composed stream with non-existent composed stream")
-		assert.Contains(t, err.Error(), "streams missing for stream", "Error should indicate the stream was not found")
+		// We expect an error when setting taxonomy because the composed stream doesn't exist
+		assert.Error(t, err, "Expected error when setting taxonomy with non-existent composed stream")
+		assert.Contains(t, err.Error(), "child stream does not exist", "Error should indicate the child stream was not found")
 
 		return nil
 	}

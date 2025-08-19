@@ -275,8 +275,6 @@ CREATE OR REPLACE ACTION create_streams(
     -- as the table definition
     INSERT INTO metadata (
         row_id,
-        data_provider,
-        stream_id,
         metadata_key,
         value_i,
         value_f,
@@ -289,8 +287,6 @@ CREATE OR REPLACE ACTION create_streams(
     )
     SELECT 
         row_id::UUID,
-        data_provider,
-        stream_id,
         metadata_key,
         value_i,
         NULL::NUMERIC(36,18),
@@ -388,8 +384,6 @@ CREATE OR REPLACE ACTION insert_metadata(
     -- Insert the metadata
     INSERT INTO metadata (
         row_id, 
-        data_provider, 
-        stream_id, 
         metadata_key, 
         value_i, 
         value_f, 
@@ -400,8 +394,6 @@ CREATE OR REPLACE ACTION insert_metadata(
         stream_ref
     ) VALUES (
         $uuid, 
-        $data_provider, 
-        $stream_id, 
         $key, 
         $value_i, 
         $value_f, 

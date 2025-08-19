@@ -23,10 +23,10 @@ const (
 	colStreamId          = 1
 	colChildDataProvider = 2
 	colChildStreamId     = 3
-	colWeight           = 4
-	colCreatedAt        = 5
-	colGroupSequence    = 6
-	colStartTime        = 7
+	colWeight            = 4
+	colCreatedAt         = 5
+	colGroupSequence     = 6
+	colStartTime         = 7
 )
 
 // TestTaxonomyQueryActions tests the new taxonomy query actions
@@ -56,9 +56,11 @@ func testListTaxonomiesByHeight(t *testing.T) kwilTesting.TestFunc {
 		// Setup deployer
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
 		platform = procedure.WithSigner(platform, deployer.Bytes())
+
+		// Register data provider
 		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
 		if err != nil {
-			return errors.Wrap(err, "error registering data provider")
+			return errors.Wrap(err, "error creating data provider")
 		}
 
 		// Create test streams
@@ -184,9 +186,11 @@ func testListTaxonomiesByHeightWithLatestOnly(t *testing.T) kwilTesting.TestFunc
 		// Setup deployer
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000124")
 		platform = procedure.WithSigner(platform, deployer.Bytes())
+
+		// Register data provider
 		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
 		if err != nil {
-			return errors.Wrap(err, "error registering data provider")
+			return errors.Wrap(err, "error creating data provider")
 		}
 
 		// Create test streams
@@ -311,9 +315,11 @@ func testListTaxonomiesByHeightPagination(t *testing.T) kwilTesting.TestFunc {
 		// Setup deployer
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000125")
 		platform = procedure.WithSigner(platform, deployer.Bytes())
+
+		// Register data provider
 		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
 		if err != nil {
-			return errors.Wrap(err, "error registering data provider")
+			return errors.Wrap(err, "error creating data provider")
 		}
 
 		// Create multiple taxonomies for pagination testing
@@ -322,7 +328,7 @@ func testListTaxonomiesByHeightPagination(t *testing.T) kwilTesting.TestFunc {
 			childStreamId := util.GenerateStreamId(fmt.Sprintf("child_paging_%d", i))
 
 			// Setup streams
-			err := setup.SetupComposedStream(ctx, setup.SetupComposedStreamInput{
+			err = setup.SetupComposedStream(ctx, setup.SetupComposedStreamInput{
 				Platform: platform,
 				StreamId: composedStreamId,
 				Height:   500 + int64(i)*10,
@@ -419,9 +425,11 @@ func testGetTaxonomiesForStreams(t *testing.T) kwilTesting.TestFunc {
 		// Setup deployer
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000126")
 		platform = procedure.WithSigner(platform, deployer.Bytes())
+
+		// Register data provider
 		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
 		if err != nil {
-			return errors.Wrap(err, "error registering data provider")
+			return errors.Wrap(err, "error creating data provider")
 		}
 
 		// Create test streams
@@ -519,9 +527,11 @@ func testGetTaxonomiesForStreamsLatestOnly(t *testing.T) kwilTesting.TestFunc {
 		// Setup deployer
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000127")
 		platform = procedure.WithSigner(platform, deployer.Bytes())
+
+		// Register data provider
 		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
 		if err != nil {
-			return errors.Wrap(err, "error registering data provider")
+			return errors.Wrap(err, "error creating data provider")
 		}
 
 		// Create test stream
@@ -620,9 +630,11 @@ func testTaxonomyQueryResultColumns(t *testing.T) kwilTesting.TestFunc {
 		// Setup deployer
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000199")
 		platform = procedure.WithSigner(platform, deployer.Bytes())
+
+		// Register data provider
 		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
 		if err != nil {
-			return errors.Wrap(err, "error registering data provider")
+			return errors.Wrap(err, "error creating data provider")
 		}
 
 		// Create test streams
@@ -702,50 +714,50 @@ func testTaxonomyQueryResultColumns(t *testing.T) kwilTesting.TestFunc {
 
 		// Column 0: data_provider (TEXT)
 		if row[colDataProvider] != deployer.Address() {
-			return errors.Errorf("col %d (data_provider): expected %s, got %s", 
+			return errors.Errorf("col %d (data_provider): expected %s, got %s",
 				colDataProvider, deployer.Address(), row[colDataProvider])
 		}
 
-		// Column 1: stream_id (TEXT)  
+		// Column 1: stream_id (TEXT)
 		if row[colStreamId] != composedStreamId.String() {
-			return errors.Errorf("col %d (stream_id): expected %s, got %s", 
+			return errors.Errorf("col %d (stream_id): expected %s, got %s",
 				colStreamId, composedStreamId.String(), row[colStreamId])
 		}
 
 		// Column 2: child_data_provider (TEXT)
 		if row[colChildDataProvider] != deployer.Address() {
-			return errors.Errorf("col %d (child_data_provider): expected %s, got %s", 
+			return errors.Errorf("col %d (child_data_provider): expected %s, got %s",
 				colChildDataProvider, deployer.Address(), row[colChildDataProvider])
 		}
 
 		// Column 3: child_stream_id (TEXT)
 		if row[colChildStreamId] != childStreamId.String() {
-			return errors.Errorf("col %d (child_stream_id): expected %s, got %s", 
+			return errors.Errorf("col %d (child_stream_id): expected %s, got %s",
 				colChildStreamId, childStreamId.String(), row[colChildStreamId])
 		}
 
 		// Column 4: weight (NUMERIC as string)
 		if row[colWeight] != expectedWeight {
-			return errors.Errorf("col %d (weight): expected %s, got %s", 
+			return errors.Errorf("col %d (weight): expected %s, got %s",
 				colWeight, expectedWeight, row[colWeight])
 		}
 
 		// Column 5: created_at (INT8 as string)
 		if row[colCreatedAt] != fmt.Sprintf("%d", expectedHeight) {
-			return errors.Errorf("col %d (created_at): expected %d, got %s", 
+			return errors.Errorf("col %d (created_at): expected %d, got %s",
 				colCreatedAt, expectedHeight, row[colCreatedAt])
 		}
 
 		// Column 6: group_sequence (INT8 as string)
 		expectedGroupSequence := "1" // First taxonomy for this stream
 		if row[colGroupSequence] != expectedGroupSequence {
-			return errors.Errorf("col %d (group_sequence): expected %s, got %s", 
+			return errors.Errorf("col %d (group_sequence): expected %s, got %s",
 				colGroupSequence, expectedGroupSequence, row[colGroupSequence])
 		}
 
 		// Column 7: start_time (INT8 as string)
 		if row[colStartTime] != fmt.Sprintf("%d", expectedStartTime) {
-			return errors.Errorf("col %d (start_time): expected %d, got %s", 
+			return errors.Errorf("col %d (start_time): expected %d, got %s",
 				colStartTime, expectedStartTime, row[colStartTime])
 		}
 
@@ -764,9 +776,11 @@ func testListTaxonomiesByHeightInvalidRange(t *testing.T) kwilTesting.TestFunc {
 		// Setup deployer
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000200")
 		platform = procedure.WithSigner(platform, deployer.Bytes())
+
+		// Register data provider (needed for role but we won't create streams)
 		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
 		if err != nil {
-			return errors.Wrap(err, "error registering data provider")
+			return errors.Wrap(err, "error creating data provider")
 		}
 
 		// Test case 1: from_height > to_height should fail
@@ -797,15 +811,17 @@ func testListTaxonomiesByHeightInvalidRange(t *testing.T) kwilTesting.TestFunc {
 	}
 }
 
-// testListTaxonomiesByHeightInvalidPagination tests error handling for invalid pagination parameters  
+// testListTaxonomiesByHeightInvalidPagination tests error handling for invalid pagination parameters
 func testListTaxonomiesByHeightInvalidPagination(t *testing.T) kwilTesting.TestFunc {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Setup deployer
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000201")
 		platform = procedure.WithSigner(platform, deployer.Bytes())
+
+		// Register data provider (needed for role)
 		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
 		if err != nil {
-			return errors.Wrap(err, "error registering data provider")
+			return errors.Wrap(err, "error creating data provider")
 		}
 
 		// Test case 1: negative limit should be handled gracefully
@@ -860,9 +876,11 @@ func testGetTaxonomiesForStreamsMismatchedArrays(t *testing.T) kwilTesting.TestF
 		// Setup deployer
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000202")
 		platform = procedure.WithSigner(platform, deployer.Bytes())
+
+		// Register data provider (needed for role)
 		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
 		if err != nil {
-			return errors.Wrap(err, "error registering data provider")
+			return errors.Wrap(err, "error creating data provider")
 		}
 
 		// Test case: mismatched array lengths should fail

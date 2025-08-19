@@ -40,6 +40,7 @@ func TestComplexComposed(t *testing.T) {
 			WithTestSetup(wrapTestWithCacheModes(t, "ComplexComposedOutOfRange", testComplexComposedOutOfRange)),
 			WithTestSetup(wrapTestWithCacheModes(t, "ComplexComposedIndexLatestValueConsistency", testComplexComposedIndexLatestValueConsistency)),
 			WithTestSetup(wrapTestWithCacheModes(t, "ComposedRecordNoDuplicates", testComposedRecordNoDuplicates)),
+			WithTestSetup(wrapTestWithCacheModes(t, "ComplexComposedRecord_TruflationVariant", testComplexComposedRecordTruflationVariant)),
 		},
 	}, testutils.GetTestOptionsWithCache(cacheConfig))
 }
@@ -189,6 +190,63 @@ func testComplexComposedRecord(t *testing.T, useCache bool) func(ctx context.Con
 		| 11         | 29.833333333333333333 |
 		| 13         | 34.333333333333333333 |
 		`
+
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   result,
+			Expected: expected,
+		})
+
+		return nil
+	}
+}
+
+// testComplexComposedRecordTruflationVariant runs the same composed record test but through the
+// Truflation-prefixed actions to ensure parity and frozen logic compatibility when no frozen_at is set.
+func testComplexComposedRecordTruflationVariant(t *testing.T, useCache bool) func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
+		// Create StreamLocator for the composed stream
+		composedStreamLocator := types.StreamLocator{
+			StreamId:     composedStreamId,
+			DataProvider: complexComposedDeployer,
+		}
+
+		dateFrom := int64(1)
+		dateTo := int64(13)
+
+		result, err := checkCacheHit(t, useCache,
+			func() (*procedure.GetDataResult, error) {
+				return procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
+					Platform:      platform,
+					StreamLocator: composedStreamLocator,
+					FromTime:      &dateFrom,
+					ToTime:        &dateTo,
+					Height:        0,
+					Prefix:        &truflationComposedPrefix,
+					UseCache:      &useCache,
+				})
+			},
+		)
+		if err != nil {
+			return err
+		}
+
+		// Expect identical values to the non-Truflation path when frozen_at is not provided
+		expected := `
+        | event_time | value  |
+        | ---------- | ------ |
+        | 1          | 3.000000000000000000  |
+        | 2          | 5.333333333333333333  |
+        | 3          | 6.833333333333333333  |
+        | 4          | 7.833333333333333333  |
+        | 5          | 11.333333333333333333 |
+        | 6          | 16.833333333333333333 |
+        | 7          | 18.833333333333333333 |
+        | 8          | 19.833333333333333333 |
+        | 9          | 20.833333333333333333 |
+        | 10         | 26.833333333333333333 |
+        | 11         | 29.833333333333333333 |
+        | 13         | 34.333333333333333333 |
+        `
 
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
 			Actual:   result,
