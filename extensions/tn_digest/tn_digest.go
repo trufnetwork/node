@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 
@@ -111,9 +112,18 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 			if !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "https://") {
 				endpoint = "http://" + endpoint
 			}
-			if u, err := url.Parse(endpoint); err != nil {
+			u, err := url.Parse(endpoint)
+			if err != nil {
 				logger.Warn("invalid RPC listen address; cannot create broadcaster", "addr", listen, "error", err)
 			} else {
+				// Normalize 0.0.0.0 (and ::) to a loopback address for client connectivity
+				host, port, herr := net.SplitHostPort(u.Host)
+				if herr == nil {
+					if host == "0.0.0.0" || host == "::" || host == "[::]" {
+						host = "127.0.0.1"
+						u.Host = net.JoinHostPort(host, port)
+					}
+				}
 				userClient := rpcuser.NewClient(u)
 				bcast := txBroadcasterFunc(func(bctx context.Context, tx *types.Transaction, sync uint8) (types.Hash, *types.TxResult, error) {
 					// Accept to mempool; not waiting for commit here
