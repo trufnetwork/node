@@ -81,12 +81,20 @@ func (s *DigestScheduler) Start(ctx context.Context, cronExpr string) error {
 			}
 		}()
 
-		if s.engineOps == nil || s.broadcaster == nil || s.signer == nil || s.kwilService == nil || s.kwilService.GenesisConfig == nil {
+		// Snapshot dependencies under lock to avoid races with setters.
+		s.mu.Lock()
+		engineOps := s.engineOps
+		broadcaster := s.broadcaster
+		signer := s.signer
+		kwilService := s.kwilService
+		s.mu.Unlock()
+
+		if engineOps == nil || broadcaster == nil || signer == nil || kwilService == nil || kwilService.GenesisConfig == nil {
 			s.logger.Warn("digest job prerequisites missing; skipping run")
 			return
 		}
-		chainID := s.kwilService.GenesisConfig.ChainID
-		if err := s.engineOps.BuildAndBroadcastAutoDigestTx(jobCtx, chainID, s.signer, s.broadcaster.BroadcastTx); err != nil {
+		chainID := kwilService.GenesisConfig.ChainID
+		if err := engineOps.BuildAndBroadcastAutoDigestTx(jobCtx, chainID, signer, broadcaster.BroadcastTx); err != nil {
 			s.logger.Warn("auto_digest broadcast failed", "error", err)
 			return
 		}
@@ -123,7 +131,7 @@ func (s *DigestScheduler) Stop() error {
 
 // RunOnce executes the digest job payload once (for tests and manual triggering).
 func (s *DigestScheduler) RunOnce(ctx context.Context) error {
-	if s.broadcaster == nil || s.signer == nil || s.kwilService == nil || s.kwilService.GenesisConfig == nil {
+	if s.engineOps == nil || s.broadcaster == nil || s.signer == nil || s.kwilService == nil || s.kwilService.GenesisConfig == nil {
 		return fmt.Errorf("missing prerequisites to run digest once")
 	}
 	chainID := s.kwilService.GenesisConfig.ChainID
