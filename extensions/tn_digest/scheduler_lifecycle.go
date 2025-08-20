@@ -52,7 +52,7 @@ func (e *Extension) stopSchedulerIfRunning() {
 
 // wireSignerAndBroadcaster fills in signer and broadcaster if not already set.
 func wireSignerAndBroadcaster(app *common.App, ext *Extension) {
-	if app.Service == nil || app.Service.LocalConfig == nil {
+	if app == nil || app.Service == nil || app.Service.LocalConfig == nil {
 		return
 	}
 	// Signer (from node key file)

@@ -11,9 +11,11 @@ func isCurrentLeader(app *common.App, block *common.BlockContext) bool {
 	if block == nil || block.ChainContext == nil || block.ChainContext.NetworkParameters == nil || app.Service == nil || app.Service.Identity == nil {
 		return false
 	}
-	leaderPk := block.ChainContext.NetworkParameters.Leader
-	if leaderPk.PublicKey == nil {
+	leaderBytes := block.ChainContext.NetworkParameters.Leader.Bytes()
+	if len(leaderBytes) == 0 {
+		// warn that leader is not set
+		app.Service.Logger.Warn("leader is not set")
 		return false
 	}
-	return bytes.Equal(leaderPk.Bytes(), app.Service.Identity)
+	return bytes.Equal(leaderBytes, app.Service.Identity)
 }

@@ -95,9 +95,8 @@ func endBlockHook(ctx context.Context, app *common.App, block *common.BlockConte
 				// created scheduler, continue to start below
 			}
 			if ext.Scheduler() == nil { // still missing due to missing prereqs
-				return nil
-			}
-			if err := ext.startScheduler(ctx); err != nil {
+				ext.Logger().Debug("tn_digest: prerequisites missing; deferring start until broadcaster/signer/engine/service are available")
+			} else if err := ext.startScheduler(ctx); err != nil {
 				ext.Logger().Warn("failed to start tn_digest scheduler on leader acquire", "error", err)
 			} else {
 				ext.Logger().Info("tn_digest started (leader)", "schedule", ext.Schedule())
@@ -130,14 +129,15 @@ func endBlockHook(ctx context.Context, app *common.App, block *common.BlockConte
 						ext.Logger().Info("tn_digest stopped due to config disabled")
 					} else if isLeader {
 						// enabled and leader -> (re)start with new schedule
-						if ext.Scheduler() == nil {
-							if !ext.ensureSchedulerWithService(app.Service) {
-								return nil
+						if ext.Scheduler() == nil && !ext.ensureSchedulerWithService(app.Service) {
+							ext.Logger().Debug("tn_digest: prerequisites missing; deferring (re)start after config update")
+						} else if err := func() error {
+							// stop if existing, then start
+							if ext.Scheduler() != nil {
+								ext.stopSchedulerIfRunning()
 							}
-						} else {
-							ext.stopSchedulerIfRunning()
-						}
-						if err := ext.startScheduler(ctx); err != nil {
+							return ext.startScheduler(ctx)
+						}(); err != nil {
 							ext.Logger().Warn("failed to (re)start tn_digest scheduler after config update", "error", err)
 						} else {
 							ext.Logger().Info("tn_digest (re)started with new schedule", "schedule", ext.Schedule())

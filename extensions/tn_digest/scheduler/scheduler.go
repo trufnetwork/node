@@ -52,19 +52,28 @@ func NewDigestScheduler(params NewDigestSchedulerParams) *DigestScheduler {
 	}
 }
 
-func (s *DigestScheduler) SetSigner(sig auth.Signer)       { s.signer = sig }
-func (s *DigestScheduler) SetBroadcaster(tx txBroadcaster) { s.broadcaster = tx }
+func (s *DigestScheduler) SetSigner(sig auth.Signer) {
+	s.mu.Lock()
+	s.signer = sig
+	s.mu.Unlock()
+}
 
 // Start registers a single cron job with the provided cron expression.
 func (s *DigestScheduler) Start(ctx context.Context, cronExpr string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Cancel any previous context to avoid leaks on restarts.
+	if s.cancel != nil {
+		s.cancel()
+	}
 	s.ctx, s.cancel = context.WithCancel(ctx)
 
 	// Clear any existing jobs to avoid duplicates on (re)start
 	s.cron.Clear()
 
+	// Capture the current context to avoid races if Start is called again.
+	jobCtx := s.ctx
 	jobFunc := func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -72,20 +81,28 @@ func (s *DigestScheduler) Start(ctx context.Context, cronExpr string) error {
 			}
 		}()
 
-		if s.broadcaster == nil || s.signer == nil || s.kwilService == nil || s.kwilService.GenesisConfig == nil {
+		if s.engineOps == nil || s.broadcaster == nil || s.signer == nil || s.kwilService == nil || s.kwilService.GenesisConfig == nil {
 			s.logger.Warn("digest job prerequisites missing; skipping run")
 			return
 		}
 		chainID := s.kwilService.GenesisConfig.ChainID
-		if err := s.engineOps.BuildAndBroadcastAutoDigestTx(s.ctx, chainID, s.signer, s.broadcaster.BroadcastTx); err != nil {
+		if err := s.engineOps.BuildAndBroadcastAutoDigestTx(jobCtx, chainID, s.signer, s.broadcaster.BroadcastTx); err != nil {
 			s.logger.Warn("auto_digest broadcast failed", "error", err)
 			return
 		}
 		s.logger.Info("auto_digest tx broadcasted")
 	}
 
-	if _, err := s.cron.Cron(cronExpr).Do(jobFunc); err != nil {
-		return fmt.Errorf("register digest job: %w", err)
+	if j, err := s.cron.Cron(cronExpr).Do(jobFunc); err != nil {
+		// Fallback for schedules that include seconds.
+		if j2, err2 := s.cron.CronWithSeconds(cronExpr).Do(jobFunc); err2 != nil {
+			return fmt.Errorf("register digest job: %w", err)
+		} else {
+			j2.SingletonMode()
+		}
+	} else {
+		// Prevent overlapping runs.
+		j.SingletonMode()
 	}
 
 	s.cron.StartAsync()

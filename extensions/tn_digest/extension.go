@@ -60,7 +60,6 @@ func GetExtension() *Extension {
 	}
 	return extensionInstance
 }
-
 func SetExtension(ext *Extension) { extensionInstance = ext }
 
 func NewExtension(logger log.Logger, sched *scheduler.DigestScheduler) *Extension {
@@ -87,6 +86,12 @@ func (e *Extension) SetConfig(enabled bool, schedule string) {
 func (e *Extension) ConfigEnabled() bool { return e.enabled }
 func (e *Extension) Schedule() string    { return e.schedule }
 func (e *Extension) SetScheduler(s *scheduler.DigestScheduler) {
+	if e.scheduler == s {
+		return
+	}
+	if e.scheduler != nil {
+		_ = e.scheduler.Stop()
+	}
 	e.scheduler = s
 }
 
