@@ -18,9 +18,6 @@ CREATE TABLE IF NOT EXISTS primitive_event_type (
         REFERENCES streams(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_pet_stream_time 
-    ON primitive_event_type(stream_ref, event_time);
-
 CREATE TABLE IF NOT EXISTS pending_prune_days (
     stream_ref INT NOT NULL,
     day_index INT NOT NULL,
