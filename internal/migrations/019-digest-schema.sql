@@ -2,8 +2,9 @@
  * DIGEST SCHEMA MIGRATION
  * 
  * Creates the two essential tables needed for the digest system:
- * - primitive_event_type: Marks which records are CLOSE/HIGH/LOW after digest
- * - pending_prune_days: Queue of days needing digest processing
+ * - primitive_event_type: Marks which records are CLOSE/HIGH/LOW or combination of them after digest
+ * - pending_prune_days: Simple queue of days needing digest processing
+ *   (row presence = pending, row deletion = complete)
  */
 
 CREATE TABLE IF NOT EXISTS primitive_event_type (
@@ -22,12 +23,10 @@ CREATE INDEX IF NOT EXISTS idx_pet_stream_time
 CREATE TABLE IF NOT EXISTS pending_prune_days (
     stream_ref INT NOT NULL,
     day_index INT NOT NULL,
-    status INT4 NOT NULL DEFAULT 0,
     
     CONSTRAINT pk_pending_prune_days PRIMARY KEY (stream_ref, day_index),
     CONSTRAINT fk_ppd_stream_ref FOREIGN KEY (stream_ref) 
         REFERENCES streams(id) ON DELETE CASCADE,
-    CONSTRAINT chk_ppd_status_valid CHECK (status IN (0, 1)),
     CONSTRAINT chk_ppd_day_index_valid CHECK (day_index >= 0)
 );
 
