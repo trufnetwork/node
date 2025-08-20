@@ -138,4 +138,35 @@ CREATE OR REPLACE ACTION helper_check_cache(
         NOTICE('{"cache_disabled": true}');
     }
     RETURN $cache_hit;
-}
+};
+
+-- Enqueue pending prune days for a batch of records, filtering out zero values
+CREATE OR REPLACE ACTION helper_enqueue_prune_days(
+    $stream_refs INT[],
+    $event_times INT8[],
+    $values NUMERIC(36,18)[]
+) PRIVATE {
+    IF array_length($event_times) IS NULL OR array_length($event_times) = 0 {
+        RETURN;
+    }
+
+    WITH RECURSIVE 
+    indexes AS (
+        SELECT 1 AS idx
+        UNION ALL
+        SELECT idx + 1 FROM indexes WHERE idx < array_length($event_times)
+    ),
+    array_holder AS (
+        SELECT $stream_refs AS stream_refs, $event_times AS event_times, $values AS values_array
+    )
+    INSERT INTO pending_prune_days (stream_ref, day_index)
+    SELECT DISTINCT 
+        array_holder.stream_refs[indexes.idx] AS stream_ref,
+        (array_holder.event_times[indexes.idx] / 86400)::INT AS day_index
+    FROM indexes
+    JOIN array_holder ON 1=1
+    WHERE array_holder.stream_refs[indexes.idx] IS NOT NULL
+      AND array_holder.event_times[indexes.idx] >= 0::INT8
+      AND array_holder.values_array[indexes.idx] != 0::NUMERIC(36,18)
+    ON CONFLICT (stream_ref, day_index) DO NOTHING;
+};

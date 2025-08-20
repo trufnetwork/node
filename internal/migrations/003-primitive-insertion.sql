@@ -8,34 +8,12 @@ CREATE OR REPLACE ACTION insert_record(
     $event_time INT8,
     $value NUMERIC(36,18)
 ) PUBLIC {
-    $data_provider TEXT := LOWER($data_provider);
-    $lower_caller TEXT := LOWER(@caller);
-    -- Ensure the wallet is allowed to write
-    if !is_wallet_allowed_to_write($data_provider, $stream_id, $lower_caller) {
-        ERROR('wallet not allowed to write');
-    }
-
-    -- Ensure that the stream/contract is existent
-    if !stream_exists($data_provider, $stream_id) {
-        ERROR('stream does not exist');
-    }
-
-    -- Ensure that the stream is a primitive stream
-    if is_primitive_stream($data_provider, $stream_id) == false {
-        ERROR('stream is not a primitive stream');
-    }
-
-    -- Skip insertion if value is 0
-    if $value == 0::NUMERIC(36,18) {
-        RETURN;
-    }
-
-    $current_block INT := @height;
-    $stream_ref INT := get_stream_id($data_provider, $stream_id);
-
-    -- Insert the new record into the primitive_events table (normalized: use stream_ref)
-    INSERT INTO primitive_events (event_time, value, created_at, truflation_created_at, stream_ref)
-    VALUES ($event_time, $value, $current_block, NULL, $stream_ref);
+    insert_records(
+        ARRAY[$data_provider],
+        ARRAY[$stream_id],
+        ARRAY[$event_time],
+        ARRAY[$value]
+    );
 };
 
 
@@ -119,4 +97,11 @@ CREATE OR REPLACE ACTION insert_records(
         NULL,
         stream_ref
     FROM arguments;
+
+    -- Enqueue days for pruning using helper (idempotent, distinct per day)
+    helper_enqueue_prune_days(
+        $stream_refs,
+        $event_time,
+        $value
+    );
 };
