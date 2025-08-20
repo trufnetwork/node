@@ -166,6 +166,7 @@ CREATE OR REPLACE ACTION helper_enqueue_prune_days(
     FROM indexes
     JOIN array_holder ON 1=1
     WHERE array_holder.stream_refs[indexes.idx] IS NOT NULL
+      AND array_holder.event_times[indexes.idx] >= 0::INT8
       AND array_holder.values_array[indexes.idx] != 0::NUMERIC(36,18)
     ON CONFLICT (stream_ref, day_index) DO NOTHING;
 };

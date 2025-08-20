@@ -100,7 +100,7 @@ CREATE OR REPLACE ACTION insert_records(
 
     -- Enqueue days for pruning using helper (idempotent, distinct per day)
     helper_enqueue_prune_days(
-        get_stream_ids($data_provider, $stream_id),
+        $stream_refs,
         $event_time,
         $value
     );
