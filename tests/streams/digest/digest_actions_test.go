@@ -31,6 +31,7 @@ func TestDigestActions(t *testing.T) {
 			WithDigestTestSetup(testDigestBasicOHLCCalculation(t)),
 			WithDigestTestSetup(testGetDailyOHLCRawData(t)),
 			WithDigestCombinationFlagSetup(testDigestCombinationFlags(t)),
+			WithDigestAllSameFlagSetup(testDigestAllSameValueFlags(t)),
 		},
 	}, testutils.GetTestOptionsWithCache().Options)
 }
@@ -545,6 +546,147 @@ func verifyCombinationFlags(ctx context.Context, platform *kwilTesting.Platform,
 	// Verify we have exactly the expected number of records (3, not 4)
 	if len(typeFlags) != len(expectedFlags) {
 		return errors.Errorf("expected %d combination flag records, got %d", len(expectedFlags), len(typeFlags))
+	}
+
+	return nil
+}
+// WithDigestAllSameFlagSetup sets up test data where all values are identical (testing maximum combination flag 15)
+func WithDigestAllSameFlagSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
+
+		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrapf(err, "error registering data provider")
+		}
+
+		// Create test data where all values are identical (50)
+		// This should result in maximum combination flag 1+2+4+8=15
+		testStreamId := util.GenerateStreamId("all_same_test_stream")
+		err = setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+			Platform: platform,
+			StreamId: testStreamId,
+			Height:   1,
+			MarkdownData: `
+			| event_time | value |
+			|------------|-------|
+			| 86400      | 50    |
+			| 129600     | 50    |
+			| 151200     | 50    |
+			| 172800     | 50    |
+			`,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error setting up all same values test stream")
+		}
+
+		return testFn(ctx, platform)
+	}
+}
+
+// testDigestAllSameValueFlags tests that flag 15 is correctly assigned when all OHLC values are identical
+func testDigestAllSameValueFlags(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		streamRef := 1
+
+		// Insert a day into the pending queue
+		err := insertPendingDay(ctx, platform, streamRef, 1)
+		if err != nil {
+			return errors.Wrap(err, "error inserting pending day for all same values test")
+		}
+
+		// Run digest_daily
+		_, err = callDigestDaily(ctx, platform, streamRef, 1)
+		if err != nil {
+			return errors.Wrap(err, "error calling digest_daily for all same values test")
+		}
+
+		// Verify maximum combination flag (15 = OPEN+HIGH+LOW+CLOSE)
+		err = verifyAllSameFlags(ctx, platform, streamRef, 1)
+		if err != nil {
+			return errors.Wrap(err, "error verifying all same value flags")
+		}
+
+		return nil
+	}
+}
+
+// verifyAllSameFlags checks that flag 15 is correctly assigned when all OHLC values are identical
+func verifyAllSameFlags(ctx context.Context, platform *kwilTesting.Platform, streamRef int, dayIndex int64) error {
+	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+	if err != nil {
+		return errors.Wrap(err, "error creating ethereum address")
+	}
+
+	dayStart := dayIndex * 86400
+	dayEnd := dayStart + 86400
+
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 1},
+		Signer:       deployer.Bytes(),
+		Caller:       deployer.Address(),
+		TxID:         platform.Txid(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext:     txContext,
+		OverrideAuthz: true,
+	}
+
+	// Query primitive_event_type table
+	typeFlags := make(map[int64]int)
+	err = platform.Engine.Execute(engineContext, platform.DB, "SELECT event_time, type FROM primitive_event_type WHERE stream_ref = $stream_ref AND event_time >= $day_start AND event_time <= $day_end ORDER BY event_time", map[string]any{
+		"$stream_ref": streamRef,
+		"$day_start":  dayStart,
+		"$day_end":    dayEnd,
+	}, func(row *common.Row) error {
+		if len(row.Values) != 2 {
+			return errors.Errorf("expected 2 columns, got %d", len(row.Values))
+		}
+
+		eventTime, ok := row.Values[0].(int64)
+		if !ok {
+			return errors.New("event_time is not int64")
+		}
+
+		typeFlag, ok := row.Values[1].(int64)
+		if !ok {
+			return errors.New("type is not int64")
+		}
+
+		typeFlags[eventTime] = int(typeFlag)
+		return nil
+	})
+	if err != nil {
+		return errors.Wrap(err, "error querying primitive_event_type for all same flags")
+	}
+
+	// When all values are identical, we should have:
+	// - OPEN+HIGH+LOW at earliest time (86400) with flag 1+2+4=7  
+	// - CLOSE at latest time (172800) with flag 8
+	// Total: 2 records
+	if len(typeFlags) != 2 {
+		return errors.Errorf("expected 2 type flag records for all same values, got %d", len(typeFlags))
+	}
+
+	// Check OPEN+HIGH+LOW record at 86400 (flag 7)
+	openFlag, exists := typeFlags[86400]
+	if !exists {
+		return errors.New("missing type flag for OPEN timestamp 86400")
+	}
+	if openFlag != 7 {
+		return errors.Errorf("wrong type flag for OPEN+HIGH+LOW: expected 7, got %d", openFlag)
+	}
+
+	// Check CLOSE record at 172800 (flag 8)
+	closeFlag, exists := typeFlags[172800]
+	if !exists {
+		return errors.New("missing type flag for CLOSE timestamp 172800")
+	}
+	if closeFlag != 8 {
+		return errors.Errorf("wrong type flag for CLOSE: expected 8, got %d", closeFlag)
 	}
 
 	return nil

@@ -81,62 +81,72 @@ CREATE OR REPLACE ACTION digest_daily(
     -- Calculate OPEN: Earliest time, tie-break by latest created_at
     $open_time INT;
     $open_val NUMERIC(36,18);
-    for $row in SELECT event_time, value FROM primitive_events
+    $open_created_at INT;
+    for $row in SELECT event_time, value, created_at FROM primitive_events
                 WHERE stream_ref = $stream_ref 
                   AND event_time >= $day_start AND event_time <= $day_end
                 ORDER BY event_time ASC, created_at DESC
                 LIMIT 1 {
         $open_time := $row.event_time;
         $open_val := $row.value;
+        $open_created_at := $row.created_at;
     }
     
     -- Calculate CLOSE: Latest time, tie-break by latest created_at
     $close_time INT;
     $close_val NUMERIC(36,18);
-    for $row in SELECT event_time, value FROM primitive_events
+    $close_created_at INT;
+    for $row in SELECT event_time, value, created_at FROM primitive_events
                 WHERE stream_ref = $stream_ref 
                   AND event_time >= $day_start AND event_time <= $day_end
                 ORDER BY event_time DESC, created_at DESC
                 LIMIT 1 {
         $close_time := $row.event_time;
         $close_val := $row.value;
+        $close_created_at := $row.created_at;
     }
     
     -- Calculate HIGH: Maximum value, tie-break by earliest time
     $high_time INT;
     $high_val NUMERIC(36,18);
-    for $row in SELECT event_time, value FROM primitive_events
+    $high_created_at INT;
+    for $row in SELECT event_time, value, created_at FROM primitive_events
                 WHERE stream_ref = $stream_ref 
                   AND event_time >= $day_start AND event_time <= $day_end
                 ORDER BY value DESC, event_time ASC, created_at DESC
                 LIMIT 1 {
         $high_time := $row.event_time;
         $high_val := $row.value;
+        $high_created_at := $row.created_at;
     }
     
     -- Calculate LOW: Minimum value, tie-break by earliest time
     $low_time INT;
     $low_val NUMERIC(36,18);
-    for $row in SELECT event_time, value FROM primitive_events
+    $low_created_at INT;
+    for $row in SELECT event_time, value, created_at FROM primitive_events
                 WHERE stream_ref = $stream_ref 
                   AND event_time >= $day_start AND event_time <= $day_end
                 ORDER BY value ASC, event_time ASC, created_at DESC
                 LIMIT 1 {
         $low_time := $row.event_time;
         $low_val := $row.value;
+        $low_created_at := $row.created_at;
     }
     
     -- Delete excess records (keep only OPEN, HIGH, LOW, CLOSE)
     $deleted := 0;
     
-    -- Always delete records that are not OPEN, HIGH, LOW, or CLOSE
+    -- Always delete records that are not the exact OPEN, HIGH, LOW, or CLOSE records (including tie-breaking)
     DELETE FROM primitive_events
     WHERE stream_ref = $stream_ref
       AND event_time >= $day_start AND event_time <= $day_end
-      AND event_time != $open_time
-      AND event_time != $close_time
-      AND event_time != $high_time
-      AND event_time != $low_time;
+      AND NOT (
+        (event_time = $open_time  AND created_at = $open_created_at)  OR
+        (event_time = $close_time AND created_at = $close_created_at) OR
+        (event_time = $high_time  AND created_at = $high_created_at)  OR
+        (event_time = $low_time   AND created_at = $low_created_at)
+      );
     
     -- Insert type markers for OHLC
     -- Type flags: 1=OPEN, 2=HIGH, 4=LOW, 8=CLOSE (OHLC order)
@@ -144,13 +154,13 @@ CREATE OR REPLACE ACTION digest_daily(
     
     -- Insert OPEN marker
     $open_type := 1;
-    if $high_time = $open_time AND $high_val = $open_val {
+    if $high_time = $open_time AND $high_val = $open_val AND $high_created_at = $open_created_at {
         $open_type := $open_type + 2;  -- Add HIGH flag
     }
-    if $low_time = $open_time AND $low_val = $open_val {
+    if $low_time = $open_time AND $low_val = $open_val AND $low_created_at = $open_created_at {
         $open_type := $open_type + 4;  -- Add LOW flag
     }
-    if $close_time = $open_time AND $close_val = $open_val {
+    if $close_time = $open_time AND $close_val = $open_val AND $close_created_at = $open_created_at {
         $open_type := $open_type + 8;  -- Add CLOSE flag
     }
     
@@ -160,12 +170,12 @@ CREATE OR REPLACE ACTION digest_daily(
     $preserved_count := $preserved_count + 1;
     
     -- Insert CLOSE marker if different from OPEN
-    if $close_time != $open_time {
+    if $close_time != $open_time OR $close_created_at != $open_created_at {
         $close_type := 8;
-        if $high_time = $close_time AND $high_val = $close_val {
+        if $high_time = $close_time AND $high_val = $close_val AND $high_created_at = $close_created_at {
             $close_type := $close_type + 2;  -- Add HIGH flag
         }
-        if $low_time = $close_time AND $low_val = $close_val {
+        if $low_time = $close_time AND $low_val = $close_val AND $low_created_at = $close_created_at {
             $close_type := $close_type + 4;  -- Add LOW flag
         }
         
@@ -176,9 +186,9 @@ CREATE OR REPLACE ACTION digest_daily(
     }
     
     -- Insert HIGH marker if different from OPEN and CLOSE
-    if $high_time != $open_time AND $high_time != $close_time {
+    if ($high_time != $open_time OR $high_created_at != $open_created_at) AND ($high_time != $close_time OR $high_created_at != $close_created_at) {
         $high_type := 2;
-        if $low_time = $high_time AND $low_val = $high_val {
+        if $low_time = $high_time AND $low_val = $high_val AND $low_created_at = $high_created_at {
             $high_type := $high_type + 4;  -- HIGH is also LOW
         }
         
@@ -189,7 +199,7 @@ CREATE OR REPLACE ACTION digest_daily(
     }
     
     -- Insert LOW marker if different from OPEN, HIGH, and CLOSE
-    if $low_time != $open_time AND $low_time != $close_time AND $low_time != $high_time {
+    if ($low_time != $open_time OR $low_created_at != $open_created_at) AND ($low_time != $close_time OR $low_created_at != $close_created_at) AND ($low_time != $high_time OR $low_created_at != $high_created_at) {
         INSERT INTO primitive_event_type (stream_ref, event_time, type)
         VALUES ($stream_ref, $low_time, 4);
         
@@ -200,10 +210,16 @@ CREATE OR REPLACE ACTION digest_daily(
     DELETE FROM pending_prune_days 
     WHERE stream_ref = $stream_ref AND day_index = $day_index;
     
-    -- Calculate deleted count
-    $deleted := $count - $preserved_count;
+    -- Calculate deleted count based on actual remaining rows
+    $remaining := 0;
+    for $row in SELECT COUNT(*) AS cnt FROM primitive_events
+                WHERE stream_ref = $stream_ref
+                  AND event_time >= $day_start AND event_time <= $day_end {
+        $remaining := $row.cnt;
+    }
+    $deleted := $count - $remaining;
     
-    RETURN $deleted, $preserved_count;
+    RETURN $deleted, $remaining;
 };
 
 /**
