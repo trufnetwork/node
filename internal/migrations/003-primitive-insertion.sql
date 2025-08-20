@@ -90,9 +90,7 @@ CREATE OR REPLACE ACTION insert_records(
         $current_block,
         NULL,
         stream_ref
-    FROM arguments
-    -- this aligns to the order of our indexes
-    ORDER BY stream_ref, event_time;
+    FROM arguments;
 
     -- Enqueue days for pruning using helper (idempotent, distinct per day)
     helper_enqueue_prune_days(

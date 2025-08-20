@@ -33,39 +33,6 @@ CREATE OR REPLACE ACTION create_data_provider(
     ON CONFLICT DO NOTHING;
 };
 
-CREATE OR REPLACE ACTION get_stream_ids(
-    $data_providers TEXT[],
-    $stream_ids TEXT[]
-) PRIVATE VIEW RETURNS (stream_ids INT[]) {
-    -- Use WITH RECURSIVE to process stream ids lookup in single SQL operation
-    -- This avoids the expensive for-loop roundtrips
-    for $row in WITH RECURSIVE 
-    indexes AS (
-        SELECT 1 AS idx
-        UNION ALL
-        SELECT idx + 1 FROM indexes
-        WHERE idx < array_length($data_providers)
-    ),
-    input_arrays AS (
-        SELECT 
-            $data_providers AS data_providers,
-            $stream_ids AS stream_ids
-    ),
-    stream_lookups AS (
-        SELECT
-            s.id AS stream_ref
-        FROM indexes
-        JOIN input_arrays ON 1=1
-        JOIN data_providers dp ON dp.address = input_arrays.data_providers[idx]
-        JOIN streams s ON s.data_provider_id = dp.id 
-                      AND s.stream_id = input_arrays.stream_ids[idx]
-    )
-    SELECT ARRAY_AGG(stream_ref) AS stream_refs
-    FROM stream_lookups {
-      return $row.stream_refs;
-    }
-};
-
 /**
  * create_stream: Creates a new stream with required metadata.
  * Validates stream_id format, data provider address, and stream type.
@@ -1169,7 +1136,7 @@ CREATE OR REPLACE ACTION stream_exists(
 CREATE OR REPLACE ACTION stream_exists_batch_priv(
     $stream_refs INT[]
 ) PRIVATE VIEW RETURNS (result BOOL) {
-    RETURN WITH RECURSIVE
+    for $row in WITH RECURSIVE
     idx AS (
         SELECT 1 AS i
         UNION ALL
@@ -1188,19 +1155,17 @@ CREATE OR REPLACE ACTION stream_exists_batch_priv(
         SELECT stream_ref
         FROM expanded_all
         WHERE stream_ref IS NOT NULL
-    ),
-    counts AS (
-        SELECT COUNT(*) AS total_all,
-               SUM(CASE WHEN stream_ref IS NULL THEN 1 ELSE 0 END) AS null_count
-        FROM expanded_all
-    ),
-    exists_counts AS (
-        SELECT COUNT(s.id) AS existing_count
-        FROM expanded e
-        LEFT JOIN streams s ON s.id = e.stream_ref
     )
-    SELECT (counts.null_count = 0 AND exists_counts.existing_count = counts.total_all) AS result
-    FROM counts, exists_counts;
+    SELECT (
+        (SELECT COUNT(*) FROM expanded_all WHERE stream_ref IS NULL) = 0
+        AND
+        (SELECT COUNT(*) FROM expanded e JOIN streams s ON s.id = e.stream_ref)
+        =
+        (SELECT COUNT(*) FROM expanded_all)
+    ) AS result {
+        return $row.result;
+    }
+    return false;
 };
 
 /**
@@ -1212,7 +1177,7 @@ CREATE OR REPLACE ACTION stream_exists_batch_priv(
 CREATE OR REPLACE ACTION is_primitive_stream_batch_priv(
     $stream_refs INT[]
 ) PRIVATE VIEW RETURNS (result BOOL) {
-    RETURN WITH RECURSIVE
+    for $row in WITH RECURSIVE
     idx AS (
         SELECT 1 AS i
         UNION ALL
@@ -1231,19 +1196,17 @@ CREATE OR REPLACE ACTION is_primitive_stream_batch_priv(
         SELECT stream_ref
         FROM expanded_all
         WHERE stream_ref IS NOT NULL
-    ),
-    counts AS (
-        SELECT COUNT(*) AS total_all,
-               SUM(CASE WHEN stream_ref IS NULL THEN 1 ELSE 0 END) AS null_count
-        FROM expanded_all
-    ),
-    prim_counts AS (
-        SELECT SUM(CASE WHEN s.stream_type = 'primitive' THEN 1 ELSE 0 END) AS primitive_count
-        FROM expanded e
-        LEFT JOIN streams s ON s.id = e.stream_ref
     )
-    SELECT (counts.null_count = 0 AND prim_counts.primitive_count = counts.total_all) AS result
-    FROM counts, prim_counts;
+    SELECT (
+        (SELECT COUNT(*) FROM expanded_all WHERE stream_ref IS NULL) = 0
+        AND
+        (SELECT COUNT(*) FROM expanded e JOIN streams s ON s.id = e.stream_ref WHERE s.stream_type = 'primitive')
+        =
+        (SELECT COUNT(*) FROM expanded_all)
+    ) AS result {
+        return $row.result;
+    }
+    return false;
 };
 
 /**

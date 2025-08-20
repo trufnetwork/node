@@ -97,6 +97,16 @@ CREATE OR REPLACE ACTION is_allowed_to_read_priv(
     return false;
 };
 
+-- Legacy compatibility wrapper used by composed queries
+CREATE OR REPLACE ACTION is_allowed_to_read_all_priv(
+    $stream_ref INT,
+    $wallet_address TEXT,
+    $active_from INT,
+    $active_to INT
+) PRIVATE view returns (is_allowed BOOL) {
+    return is_allowed_to_read_priv($stream_ref, $wallet_address, $active_from, $active_to);
+};
+
 /**
  * is_allowed_to_compose: Checks if a wallet can compose a stream.
  * Considers compose visibility and explicit compose permissions.
@@ -695,6 +705,28 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
         return $result;
 };
 
+-- Legacy compatibility wrapper used by composed queries (stream_ref variant)
+CREATE OR REPLACE ACTION is_allowed_to_compose_all_priv(
+    $stream_ref INT,
+    $active_from INT,
+    $active_to INT
+) PRIVATE view returns (is_allowed BOOL) {
+    -- Reuse the existing stream_ref-based core by translating to the public logic
+    -- Extract provider/stream_id from stream_ref for reuse of existing implementation
+    $data_provider TEXT;
+    $stream_id TEXT;
+    for $row in SELECT dp.address as data_provider, s.stream_id
+                FROM streams s JOIN data_providers dp ON s.data_provider_id = dp.id
+                WHERE s.id = $stream_ref LIMIT 1 {
+        $data_provider := $row.data_provider;
+        $stream_id := $row.stream_id;
+    }
+    if $data_provider IS NULL {
+        return false;
+    }
+    return is_allowed_to_compose_all($data_provider, $stream_id, $active_from, $active_to);
+};
+
 /**
  * wallet_write_batch_priv: Private batch version that uses stream refs directly.
  * Checks if a wallet can write to multiple streams using their stream references.
@@ -706,7 +738,7 @@ CREATE OR REPLACE ACTION wallet_write_batch_priv(
     $wallet TEXT
 ) PRIVATE VIEW RETURNS (result BOOL) {
     $lowercase_wallet TEXT := LOWER($wallet);
-    RETURN WITH RECURSIVE
+    for $row in WITH RECURSIVE
     idx AS (
         SELECT 1 AS i
         UNION ALL
@@ -746,18 +778,15 @@ CREATE OR REPLACE ACTION wallet_write_batch_priv(
                     ) THEN 1 ELSE 0 END AS can_write
         FROM expanded e
         JOIN streams s ON s.id = e.stream_ref
-    ),
-    counts AS (
-        SELECT COUNT(*) AS total_all,
-               SUM(CASE WHEN stream_ref IS NULL THEN 1 ELSE 0 END) AS null_count
-        FROM expanded_all
-    ),
-    allowed_counts AS (
-        SELECT SUM(can_write) AS allowed_count
-        FROM allowed
     )
-    SELECT (counts.null_count = 0 AND allowed_counts.allowed_count = counts.total_all) AS result
-    FROM counts, allowed_counts;
+    SELECT (
+        (SELECT COUNT(*) FROM expanded_all WHERE stream_ref IS NULL) = 0
+        AND
+        (SELECT COUNT(*) FROM allowed WHERE can_write = 1) = (SELECT COUNT(*) FROM expanded_all)
+    ) AS result {
+        return $row.result;
+    }
+    return false;
 };
 
 /**
