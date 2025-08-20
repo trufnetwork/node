@@ -537,6 +537,25 @@ CREATE OR REPLACE ACTION delete_stream(
  * is_stream_owner: Checks if caller is the owner of a stream.
  * Uses stream_owner metadata to determine ownership.
  */
+CREATE OR REPLACE ACTION is_stream_owner_priv(
+    $stream_ref INT,
+    $caller TEXT
+) PRIVATE view returns (is_owner BOOL) {
+    -- Check if the caller is the owner by looking at the latest stream_owner metadata
+    for $row in SELECT COALESCE(
+        (SELECT LOWER(m.value_ref) = LOWER($caller)
+         FROM metadata m
+         WHERE m.stream_ref = $stream_ref
+           AND m.metadata_key = 'stream_owner'
+           AND m.disabled_at IS NULL
+         ORDER BY m.created_at DESC
+         LIMIT 1), false
+    ) as result {
+        return $row.result;
+    }
+    return false;
+};
+
 CREATE OR REPLACE ACTION is_stream_owner(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -550,19 +569,9 @@ CREATE OR REPLACE ACTION is_stream_owner(
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
     }
 
-    $result BOOL := false;
-    for $row in get_metadata(
-        $data_provider,
-        $stream_id,
-        'stream_owner',
-        $lower_caller,
-        1,
-        0,
-        'created_at DESC'
-    ) {
-        $result := true;
-    }
-    return $result;
+    -- Convert to stream ref and check ownership
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+    return is_stream_owner_priv($stream_ref, $lower_caller);
 };
 
 /**
@@ -733,15 +742,14 @@ CREATE OR REPLACE ACTION is_primitive_stream_batch(
  * get_metadata: Retrieves metadata for a stream with pagination and filtering.
  * Supports ordering by creation time and filtering by key and reference.
  */
-CREATE OR REPLACE ACTION get_metadata(
-    $data_provider TEXT,
-    $stream_id TEXT,
+CREATE OR REPLACE ACTION get_metadata_priv(
+    $stream_ref INT,
     $key TEXT,
     $ref TEXT,
     $limit INT,
     $offset INT,
     $order_by TEXT
-) PUBLIC view returns table(
+) PRIVATE view returns table(
     row_id uuid,
     value_i int,
     value_f NUMERIC(36,18),
@@ -750,9 +758,6 @@ CREATE OR REPLACE ACTION get_metadata(
     value_ref TEXT,
     created_at INT
 ) {
-    $data_provider := LOWER($data_provider);
-    $stream_ref := get_stream_id($data_provider, $stream_id);
-
     -- Set default values if parameters are null
     if $limit IS NULL {
         $limit := 100;
@@ -782,9 +787,47 @@ CREATE OR REPLACE ACTION get_metadata(
        LIMIT $limit OFFSET $offset;
 };
 
+CREATE OR REPLACE ACTION get_metadata(
+    $data_provider TEXT,
+    $stream_id TEXT,
+    $key TEXT,
+    $ref TEXT,
+    $limit INT,
+    $offset INT,
+    $order_by TEXT
+) PUBLIC view returns table(
+    row_id uuid,
+    value_i int,
+    value_f NUMERIC(36,18),
+    value_b bool,
+    value_s TEXT,
+    value_ref TEXT,
+    created_at INT
+) {
+    $data_provider := LOWER($data_provider);
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+    return get_metadata_priv($stream_ref, $key, $ref, $limit, $offset, $order_by);
+};
+
 /**
  * get_latest_metadata: Retrieves the latest metadata for a stream.
  */
+CREATE OR REPLACE ACTION get_latest_metadata_priv(
+    $stream_ref INT,
+    $key TEXT,
+    $ref TEXT
+) PRIVATE view returns table(
+    value_i INT,
+    value_f NUMERIC(36,18),
+    value_b BOOL,
+    value_s TEXT,
+    value_ref TEXT
+) {
+    for $row in get_metadata_priv($stream_ref, $key, $ref, 1, 0, 'created_at DESC') {
+        RETURN NEXT $row.value_i, $row.value_f, $row.value_b, $row.value_s, $row.value_ref;
+    }
+};
+
 CREATE OR REPLACE ACTION get_latest_metadata(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -798,8 +841,9 @@ CREATE OR REPLACE ACTION get_latest_metadata(
     value_ref TEXT
 ) {
     $data_provider := LOWER($data_provider);
+    $stream_ref := get_stream_id($data_provider, $stream_id);
 
-    for $row in get_metadata($data_provider, $stream_id, $key, $ref, 1, 0, 'created_at DESC') {
+    for $row in get_latest_metadata_priv($stream_ref, $key, $ref) {
         RETURN NEXT $row.value_i, $row.value_f, $row.value_b, $row.value_s, $row.value_ref;
     }
 };
@@ -807,23 +851,42 @@ CREATE OR REPLACE ACTION get_latest_metadata(
 /**
  * get_latest_metadata_int: Retrieves the latest metadata value for a stream.
  */
+CREATE OR REPLACE ACTION get_latest_metadata_int_priv(
+    $stream_ref INT,
+    $key TEXT
+) PRIVATE view returns (value INT) {
+    $result INT;
+    for $row in get_latest_metadata_priv($stream_ref, $key, NULL) {
+        $result := $row.value_i;
+    }
+    RETURN $result;
+};
+
 CREATE OR REPLACE ACTION get_latest_metadata_int(
     $data_provider TEXT,
     $stream_id TEXT,
     $key TEXT
 ) PUBLIC view returns (value INT) {
     $data_provider := LOWER($data_provider);
-
-    $result INT;
-    for $row in get_latest_metadata($data_provider, $stream_id, $key, NULL) {
-        $result := $row.value_i;
-    }
-    RETURN $result;
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+    return get_latest_metadata_int_priv($stream_ref, $key);
 };
 
 /**
  * get_latest_metadata_ref: Retrieves the latest metadata value for a stream.
  */
+CREATE OR REPLACE ACTION get_latest_metadata_ref_priv(
+    $stream_ref INT,
+    $key TEXT,
+    $ref TEXT
+) PRIVATE view returns (value TEXT) {
+    $result TEXT;
+    for $row in get_latest_metadata_priv($stream_ref, $key, $ref) {
+        $result := $row.value_ref;
+    }
+    RETURN $result;
+};
+
 CREATE OR REPLACE ACTION get_latest_metadata_ref(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -831,46 +894,56 @@ CREATE OR REPLACE ACTION get_latest_metadata_ref(
     $ref TEXT
 ) PUBLIC view returns (value TEXT) {
     $data_provider := LOWER($data_provider);
-
-    $result TEXT;
-    for $row in get_latest_metadata($data_provider, $stream_id, $key, $ref) {
-        $result := $row.value_ref;
-    }
-    RETURN $result;
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+    return get_latest_metadata_ref_priv($stream_ref, $key, $ref);
 };
 
 /**
  * get_latest_metadata_bool: Retrieves the latest metadata value for a stream.
  */
+CREATE OR REPLACE ACTION get_latest_metadata_bool_priv(
+    $stream_ref INT,
+    $key TEXT
+) PRIVATE view returns (value BOOL) {
+    $result BOOL;
+    for $row in get_latest_metadata_priv($stream_ref, $key, NULL) {
+        $result := $row.value_b;
+    }
+    RETURN $result;
+};
+
 CREATE OR REPLACE ACTION get_latest_metadata_bool(
     $data_provider TEXT,
     $stream_id TEXT,
     $key TEXT
 ) PUBLIC view returns (value BOOL) {
     $data_provider := LOWER($data_provider);
-
-    $result BOOL;
-    for $row in get_latest_metadata($data_provider, $stream_id, $key, NULL) {
-        $result := $row.value_b;
-    }
-    RETURN $result;
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+    return get_latest_metadata_bool_priv($stream_ref, $key);
 };
 
 /**
  * get_latest_metadata_string: Retrieves the latest metadata value for a stream.
  */
+CREATE OR REPLACE ACTION get_latest_metadata_string_priv(
+    $stream_ref INT,
+    $key TEXT
+) PRIVATE view returns (value TEXT) {
+    $result TEXT;
+    for $row in get_latest_metadata_priv($stream_ref, $key, NULL) {
+        $result := $row.value_s;
+    }
+    RETURN $result;
+};
+
 CREATE OR REPLACE ACTION get_latest_metadata_string(
     $data_provider TEXT,
     $stream_id TEXT,
     $key TEXT
 ) PUBLIC view returns (value TEXT) {
     $data_provider := LOWER($data_provider);
-
-    $result TEXT;
-    for $row in get_latest_metadata($data_provider, $stream_id, $key, NULL) {
-        $result := $row.value_s;
-    }
-    RETURN $result;
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+    return get_latest_metadata_string_priv($stream_ref, $key);
 };
 
 /**
@@ -1085,6 +1158,92 @@ CREATE OR REPLACE ACTION stream_exists(
         return true;
     }
     return false;
+};
+
+/**
+ * stream_exists_batch_priv: Private version that uses stream refs directly.
+ * Checks if multiple streams exist using their stream references.
+ * Handles null stream refs (skips them as they indicate non-existent streams).
+ * Returns true if all non-null streams exist, false otherwise.
+ */
+CREATE OR REPLACE ACTION stream_exists_batch_priv(
+    $stream_refs INT[]
+) PRIVATE VIEW RETURNS (result BOOL) {
+    RETURN WITH RECURSIVE
+    idx AS (
+        SELECT 1 AS i
+        UNION ALL
+        SELECT i + 1 FROM idx
+        WHERE i < array_length($stream_refs)
+    ),
+    arr AS (
+        SELECT $stream_refs AS refs
+    ),
+    expanded_all AS (
+        SELECT arr.refs[i] AS stream_ref
+        FROM idx
+        JOIN arr ON 1=1
+    ),
+    expanded AS (
+        SELECT stream_ref
+        FROM expanded_all
+        WHERE stream_ref IS NOT NULL
+    ),
+    counts AS (
+        SELECT COUNT(*) AS total_all,
+               SUM(CASE WHEN stream_ref IS NULL THEN 1 ELSE 0 END) AS null_count
+        FROM expanded_all
+    ),
+    exists_counts AS (
+        SELECT COUNT(s.id) AS existing_count
+        FROM expanded e
+        LEFT JOIN streams s ON s.id = e.stream_ref
+    )
+    SELECT (counts.null_count = 0 AND exists_counts.existing_count = counts.total_all) AS result
+    FROM counts, exists_counts;
+};
+
+/**
+ * is_primitive_stream_batch_priv: Private version that uses stream refs directly.
+ * Checks if multiple streams are primitive using their stream references.
+ * Handles null stream refs (skips them as they indicate non-existent streams).
+ * Returns true if all non-null streams are primitive, false otherwise.
+ */
+CREATE OR REPLACE ACTION is_primitive_stream_batch_priv(
+    $stream_refs INT[]
+) PRIVATE VIEW RETURNS (result BOOL) {
+    RETURN WITH RECURSIVE
+    idx AS (
+        SELECT 1 AS i
+        UNION ALL
+        SELECT i + 1 FROM idx
+        WHERE i < array_length($stream_refs)
+    ),
+    arr AS (
+        SELECT $stream_refs AS refs
+    ),
+    expanded_all AS (
+        SELECT arr.refs[i] AS stream_ref
+        FROM idx
+        JOIN arr ON 1=1
+    ),
+    expanded AS (
+        SELECT stream_ref
+        FROM expanded_all
+        WHERE stream_ref IS NOT NULL
+    ),
+    counts AS (
+        SELECT COUNT(*) AS total_all,
+               SUM(CASE WHEN stream_ref IS NULL THEN 1 ELSE 0 END) AS null_count
+        FROM expanded_all
+    ),
+    prim_counts AS (
+        SELECT SUM(CASE WHEN s.stream_type = 'primitive' THEN 1 ELSE 0 END) AS primitive_count
+        FROM expanded e
+        LEFT JOIN streams s ON s.id = e.stream_ref
+    )
+    SELECT (counts.null_count = 0 AND prim_counts.primitive_count = counts.total_all) AS result
+    FROM counts, prim_counts;
 };
 
 /**

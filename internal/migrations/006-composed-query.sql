@@ -54,18 +54,18 @@ RETURNS TABLE(
     $effective_from := COALESCE($from, 0);      -- Lower bound, default 0
     $effective_to := COALESCE($to, $max_int8);  -- Upper bound, default "infinity"
     $effective_frozen_at := COALESCE($frozen_at, $max_int8);
-    $stream_ref := get_stream_id($data_provider, $stream_id);
-
     -- Validate time range
     IF $from IS NOT NULL AND $to IS NOT NULL AND $from > $to {
         ERROR(format('Invalid time range: from (%s) > to (%s)', $from, $to));
     }
 
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+
     -- Check permissions; raises error if unauthorized
-    IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, $from, $to) {
+    IF !is_allowed_to_read_all_priv($stream_ref, $lower_caller, $from, $to) {
         ERROR('Not allowed to read stream');
     }
-    IF !is_allowed_to_compose_all($data_provider, $stream_id, $from, $to) {
+    IF !is_allowed_to_compose_all_priv($stream_ref, $from, $to) {
         ERROR('Not allowed to compose stream');
     }
 

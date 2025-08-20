@@ -38,29 +38,23 @@ CREATE OR REPLACE ACTION insert_records(
 
     $current_block INT := @height;
 
-    -- Check stream existence in batch
-    for $row in stream_exists_batch($data_provider, $stream_id) {
-        if !$row.stream_exists {
-            ERROR('stream does not exist: data_provider=' || $row.data_provider || ', stream_id=' || $row.stream_id);
-        }
-    }
-
-    -- Check if streams are primitive in batch
-    for $row in is_primitive_stream_batch($data_provider, $stream_id) {
-        if !$row.is_primitive {
-            ERROR('stream is not a primitive stream: data_provider=' || $row.data_provider || ', stream_id=' || $row.stream_id);
-        }
-    }
-
-    -- Validate that the wallet is allowed to write to each stream
-    for $row in is_wallet_allowed_to_write_batch($data_provider, $stream_id, $lower_caller) {
-        if !$row.is_allowed {
-            ERROR('wallet not allowed to write to stream: data_provider=' || $row.data_provider || ', stream_id=' || $row.stream_id);
-        }
-    }
-
-    -- Get stream reference for all streams
+    -- Get stream reference for all streams early for better performance
     $stream_refs := get_stream_ids($data_provider, $stream_id);
+
+    -- Check stream existence using stream refs (handles nulls for non-existent streams)
+    if !stream_exists_batch_priv($stream_refs) {
+        ERROR('one or more streams do not exist');
+    }
+
+    -- Check if streams are primitive using stream refs
+    if !is_primitive_stream_batch_priv($stream_refs) {
+        ERROR('one or more streams are not primitive streams');
+    }
+
+    -- Validate that the wallet is allowed to write to each stream using stream refs
+    if !wallet_write_batch_priv($stream_refs, $lower_caller) {
+        ERROR('wallet not allowed to write to one or more streams');
+    }
 
     -- Insert all records using WITH RECURSIVE pattern to avoid round trips
     WITH RECURSIVE 
@@ -96,7 +90,9 @@ CREATE OR REPLACE ACTION insert_records(
         $current_block,
         NULL,
         stream_ref
-    FROM arguments;
+    FROM arguments
+    -- this aligns to the order of our indexes
+    ORDER BY stream_ref, event_time;
 
     -- Enqueue days for pruning using helper (idempotent, distinct per day)
     helper_enqueue_prune_days(

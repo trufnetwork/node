@@ -11,8 +11,10 @@ CREATE OR REPLACE ACTION truflation_last_deployed_date(
 ) {
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+
     -- Check read access first
-    if !is_allowed_to_read($data_provider, $stream_id, $lower_caller, 0, 0) {
+    if !is_allowed_to_read_priv($stream_ref, $lower_caller, 0, 0) {
         ERROR('wallet not allowed to read');
     }
 
@@ -20,8 +22,6 @@ CREATE OR REPLACE ACTION truflation_last_deployed_date(
     if !is_primitive_stream($data_provider, $stream_id) {
         ERROR('stream is not a primitive stream');
     }
-
-    $stream_ref := get_stream_id($data_provider, $stream_id);
 
     RETURN SELECT truflation_created_at
            FROM primitive_events
@@ -140,12 +140,12 @@ CREATE OR REPLACE ACTION truflation_get_record_primitive(
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
     
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+
     -- Check read access first
-    if is_allowed_to_read($data_provider, $stream_id, $lower_caller, $from, $to) == false {
+    if is_allowed_to_read_priv($stream_ref, $lower_caller, $from, $to) == false {
         ERROR('wallet not allowed to read');
     }
-
-    $stream_ref := get_stream_id($data_provider, $stream_id);
     $max_int8 INT8 := 9223372036854775000;
     $effective_from INT8 := COALESCE($from, 0);
     $effective_to INT8 := COALESCE($to, $max_int8);
@@ -254,12 +254,12 @@ CREATE OR REPLACE ACTION truflation_last_rc_primitive(
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
 
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+
     -- Check read access, since we're querying directly from the primitive_events table
-    if is_allowed_to_read($data_provider, $stream_id, $lower_caller, NULL, $before) == false {
+    if is_allowed_to_read_priv($stream_ref, $lower_caller, NULL, $before) == false {
         ERROR('wallet not allowed to read');
     }
-
-    $stream_ref := get_stream_id($data_provider, $stream_id);
     $max_int8 INT8 := 9223372036854775000;
     $effective_before INT8 := COALESCE($before, $max_int8);
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
@@ -312,12 +312,12 @@ CREATE OR REPLACE ACTION truflation_first_rc_primitive(
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
     
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+
     -- Check read access, since we're querying directly from the primitive_events table
-    if is_allowed_to_read($data_provider, $stream_id, $lower_caller, $after, NULL) == false {
+    if is_allowed_to_read_priv($stream_ref, $lower_caller, $after, NULL) == false {
         ERROR('wallet not allowed to read');
     }
-
-    $stream_ref := get_stream_id($data_provider, $stream_id);
     $max_int8 INT8 := 9223372036854775000;
     $effective_after INT8 := COALESCE($after, 0);
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
@@ -1587,7 +1587,7 @@ RETURNS TABLE(
     if $base_time is not null {
         $effective_base_time := $base_time;
     } else {
-        $effective_base_time := get_latest_metadata_int($data_provider, $stream_id, 'default_base_time');
+        $effective_base_time := get_latest_metadata_int_priv($stream_ref, 'default_base_time');
     }
     $effective_base_time := COALESCE($effective_base_time, 0);
 

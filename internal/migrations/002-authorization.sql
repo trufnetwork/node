@@ -11,23 +11,27 @@ CREATE OR REPLACE ACTION is_allowed_to_read(
 ) PUBLIC view returns (is_allowed BOOL) {
     $data_provider := LOWER($data_provider);
     $lowercase_wallet_address TEXT := LOWER($wallet_address);
-    
+
     -- Extension agent has unrestricted read access for caching purposes
     if $wallet_address = 'extension_agent' {
         return true;
     }
-    
+
     -- Check if the stream exists
     if !stream_exists($data_provider, $stream_id) {
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
     }
+
+    -- Convert to stream ref once for better performance
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+
     -- if it's the owner, return true
-    if is_stream_owner($data_provider, $stream_id, $wallet_address) {
+    if is_stream_owner_priv($stream_ref, $wallet_address) {
         return true;
     }
 
     -- Check if the stream is private
-    $read_visibility INT := get_latest_metadata_int($data_provider, $stream_id, 'read_visibility');
+    $read_visibility INT := get_latest_metadata_int_priv($stream_ref, 'read_visibility');
     -- public by default
     if $read_visibility IS NULL {
         $read_visibility := 0;
@@ -39,7 +43,52 @@ CREATE OR REPLACE ACTION is_allowed_to_read(
     }
 
     -- Check if the wallet is allowed to read the stream
-    if get_latest_metadata_ref($data_provider, $stream_id, 'allow_read_wallet', $lowercase_wallet_address) IS DISTINCT FROM NULL {
+    if get_latest_metadata_ref_priv($stream_ref, 'allow_read_wallet', $lowercase_wallet_address) IS DISTINCT FROM NULL {
+        -- wallet is allowed to read the stream
+        return true;
+    }
+
+    -- none of the above authorized, so return false
+    return false;
+};
+
+/**
+ * is_allowed_to_read_priv: Private version that uses stream ref directly.
+ * Checks if a wallet can read a specific stream using stream reference.
+ * This is the core implementation called by the public version.
+ */
+CREATE OR REPLACE ACTION is_allowed_to_read_priv(
+    $stream_ref INT,
+    $wallet_address TEXT,
+    $active_from INT,
+    $active_to INT
+) PRIVATE view returns (is_allowed BOOL) {
+    $lowercase_wallet_address TEXT := LOWER($wallet_address);
+
+    -- Extension agent has unrestricted read access for caching purposes
+    if $wallet_address = 'extension_agent' {
+        return true;
+    }
+
+    -- if it's the owner, return true
+    if is_stream_owner_priv($stream_ref, $wallet_address) {
+        return true;
+    }
+
+    -- Check if the stream is private
+    $read_visibility INT := get_latest_metadata_int_priv($stream_ref, 'read_visibility');
+    -- public by default
+    if $read_visibility IS NULL {
+        $read_visibility := 0;
+    }
+
+    if $read_visibility = 0 {
+        -- short circuit if the stream is not private
+        return true;
+    }
+
+    -- Check if the wallet is allowed to read the stream
+    if get_latest_metadata_ref_priv($stream_ref, 'allow_read_wallet', $lowercase_wallet_address) IS DISTINCT FROM NULL {
         -- wallet is allowed to read the stream
         return true;
     }
@@ -69,16 +118,20 @@ CREATE OR REPLACE ACTION is_allowed_to_compose(
     if !stream_exists($composing_data_provider, $composing_stream_id) {
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $child_stream_id);
     }
-    
+
+    -- Convert to stream refs once for better performance
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+    $composing_stream_ref := get_stream_id($composing_data_provider, $composing_stream_id);
+
     -- check if it's from the same data provider
-    $stream_owner := get_latest_metadata_ref($data_provider, $stream_id, 'stream_owner', NULL);
-    $composing_stream_owner := get_latest_metadata_ref($composing_data_provider, $composing_stream_id, 'stream_owner', NULL);
+    $stream_owner := get_latest_metadata_ref_priv($stream_ref, 'stream_owner', NULL);
+    $composing_stream_owner := get_latest_metadata_ref_priv($composing_stream_ref, 'stream_owner', NULL);
     if $stream_owner != $composing_stream_owner {
         ERROR('Composing stream must be from the same data provider: data_provider=' || $data_provider || ' composing_data_provider=' || $composing_data_provider);
     }
 
     -- Check if the stream is private
-    $compose_visibility INT := get_latest_metadata_int($data_provider, $stream_id, 'compose_visibility');
+    $compose_visibility INT := get_latest_metadata_int_priv($stream_ref, 'compose_visibility');
     -- public by default
     if $compose_visibility IS NULL {
         $compose_visibility := 0;
@@ -90,7 +143,7 @@ CREATE OR REPLACE ACTION is_allowed_to_compose(
     }
 
     -- Check if the wallet is allowed to compose the stream
-    if get_latest_metadata_ref($data_provider, $stream_id, 'allow_compose_stream', $composing_stream_id) IS DISTINCT FROM NULL {
+    if get_latest_metadata_ref_priv($stream_ref, 'allow_compose_stream', $composing_stream_id) IS DISTINCT FROM NULL {
         -- wallet is allowed to compose the stream
         return true;
     }
@@ -640,6 +693,71 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
 
         -- return if it's authorized or not
         return $result;
+};
+
+/**
+ * wallet_write_batch_priv: Private batch version that uses stream refs directly.
+ * Checks if a wallet can write to multiple streams using their stream references.
+ * Handles null stream refs (skips them as they indicate non-existent streams).
+ * Returns true if the wallet can write to all non-null streams, false otherwise.
+ */
+CREATE OR REPLACE ACTION wallet_write_batch_priv(
+    $stream_refs INT[],
+    $wallet TEXT
+) PRIVATE VIEW RETURNS (result BOOL) {
+    $lowercase_wallet TEXT := LOWER($wallet);
+    RETURN WITH RECURSIVE
+    idx AS (
+        SELECT 1 AS i
+        UNION ALL
+        SELECT i + 1 FROM idx
+        WHERE i < array_length($stream_refs)
+    ),
+    arr AS (
+        SELECT $stream_refs AS refs
+    ),
+    expanded_all AS (
+        SELECT arr.refs[i] AS stream_ref
+        FROM idx
+        JOIN arr ON 1=1
+    ),
+    expanded AS (
+        SELECT stream_ref
+        FROM expanded_all
+        WHERE stream_ref IS NOT NULL
+    ),
+    allowed AS (
+        SELECT e.stream_ref,
+               CASE WHEN EXISTS (
+                        SELECT 1 FROM metadata m
+                        WHERE m.stream_ref = e.stream_ref
+                          AND m.metadata_key = 'stream_owner'
+                          AND LOWER(m.value_ref) = $lowercase_wallet
+                          AND m.disabled_at IS NULL
+                        ORDER BY m.created_at DESC
+                        LIMIT 1
+                    ) OR EXISTS (
+                        SELECT 1 FROM metadata m2
+                        WHERE m2.stream_ref = e.stream_ref
+                          AND m2.metadata_key = 'allow_write_wallet'
+                          AND LOWER(m2.value_ref) = $lowercase_wallet
+                          AND m2.disabled_at IS NULL
+                        LIMIT 1
+                    ) THEN 1 ELSE 0 END AS can_write
+        FROM expanded e
+        JOIN streams s ON s.id = e.stream_ref
+    ),
+    counts AS (
+        SELECT COUNT(*) AS total_all,
+               SUM(CASE WHEN stream_ref IS NULL THEN 1 ELSE 0 END) AS null_count
+        FROM expanded_all
+    ),
+    allowed_counts AS (
+        SELECT SUM(can_write) AS allowed_count
+        FROM allowed
+    )
+    SELECT (counts.null_count = 0 AND allowed_counts.allowed_count = counts.total_all) AS result
+    FROM counts, allowed_counts;
 };
 
 /**

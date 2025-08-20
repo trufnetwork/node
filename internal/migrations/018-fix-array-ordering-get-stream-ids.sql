@@ -16,24 +16,47 @@ CREATE OR REPLACE ACTION get_stream_ids(
             $data_providers AS data_providers,
             $stream_ids AS stream_ids
     ),
-    stream_lookups AS (
+    -- Unnest to all pairs with original index for order reconstruction
+    all_pairs AS (
         SELECT
             idx,
-            s.id AS stream_ref
+            LOWER(input_arrays.data_providers[idx]) AS data_provider,
+            input_arrays.stream_ids[idx] AS stream_id
         FROM indexes
         JOIN input_arrays ON 1=1
-        JOIN data_providers dp ON dp.address = input_arrays.data_providers[idx]
+    ),
+    -- Deduplicate lookups to avoid repeated joins per identical pair
+    unique_pairs AS (
+        SELECT DISTINCT data_provider, stream_id
+        FROM all_pairs
+    ),
+    -- Perform a single lookup per unique pair
+    unique_lookup AS (
+        SELECT
+            up.data_provider,
+            up.stream_id,
+            s.id AS stream_ref
+        FROM unique_pairs up
+        JOIN data_providers dp ON dp.address = up.data_provider
         JOIN streams s ON s.data_provider_id = dp.id
-                      AND s.stream_id = input_arrays.stream_ids[idx]
+                      AND s.stream_id = up.stream_id
+    ),
+    -- Map back to original order using idx
+    mapped AS (
+        SELECT ap.idx, ul.stream_ref
+        FROM all_pairs ap
+        JOIN unique_lookup ul
+          ON ul.data_provider = ap.data_provider
+         AND ul.stream_id = ap.stream_id
     ),
     build_array AS (
         SELECT 1 AS current_idx, ARRAY[]::INT[] AS result
         UNION ALL
         SELECT
             ba.current_idx + 1,
-            array_append(ba.result, sl.stream_ref)
+            array_append(ba.result, m.stream_ref)
         FROM build_array ba
-        JOIN stream_lookups sl ON sl.idx = ba.current_idx
+        JOIN mapped m ON m.idx = ba.current_idx
         WHERE ba.current_idx <= array_length($data_providers)
     )
     SELECT result AS stream_refs

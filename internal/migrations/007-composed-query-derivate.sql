@@ -318,7 +318,7 @@ RETURNS TABLE(
   if $base_time is not null {
       $effective_base_time := $base_time;
   } else {
-      $effective_base_time := get_latest_metadata_int($data_provider, $stream_id, 'default_base_time');
+      $effective_base_time := get_latest_metadata_int_priv($stream_ref, 'default_base_time');
   }
   -- Note: Base time logic differs slightly from get_record_composed which defaults to 0.
   -- Here we might need to query the first actual event if metadata is missing.
