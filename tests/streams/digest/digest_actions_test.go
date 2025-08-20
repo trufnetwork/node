@@ -153,6 +153,7 @@ func WithDigestCombinationFlagSetup(testFn func(ctx context.Context, platform *k
 
 		// Create test data where OPEN = LOW (both are 10 at earliest time)
 		// This should result in combination flag 1+4=5
+		// Use day 2 timestamps to avoid conflict with basic test (day 1)
 		testStreamId := util.GenerateStreamId("combination_test_stream")
 		err = setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
 			Platform: platform,
@@ -161,10 +162,10 @@ func WithDigestCombinationFlagSetup(testFn func(ctx context.Context, platform *k
 			MarkdownData: `
 			| event_time | value |
 			|------------|-------|
-			| 86400      | 10    |
-			| 129600     | 50    |
-			| 151200     | 100   |
-			| 172800     | 75    |
+			| 172800     | 10    |
+			| 216000     | 50    |
+			| 237600     | 100   |
+			| 259200     | 75    |
 			`,
 		})
 		if err != nil {
@@ -180,20 +181,20 @@ func testDigestCombinationFlags(t *testing.T) func(ctx context.Context, platform
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		streamRef := 1
 
-		// Insert a day into the pending queue
-		err := insertPendingDay(ctx, platform, streamRef, 1)
+		// Insert a day into the pending queue (day 2 to avoid primary key conflict)
+		err := insertPendingDay(ctx, platform, streamRef, 2)
 		if err != nil {
 			return errors.Wrap(err, "error inserting pending day for combination test")
 		}
 
 		// Run digest_daily
-		_, err = callDigestDaily(ctx, platform, streamRef, 1)
+		_, err = callDigestDaily(ctx, platform, streamRef, 2)
 		if err != nil {
 			return errors.Wrap(err, "error calling digest_daily for combination test")
 		}
 
 		// Verify combination flags
-		err = verifyCombinationFlags(ctx, platform, streamRef, 1)
+		err = verifyCombinationFlags(ctx, platform, streamRef, 2)
 		if err != nil {
 			return errors.Wrap(err, "error verifying combination flags")
 		}
@@ -222,7 +223,7 @@ func insertPendingDay(ctx context.Context, platform *kwilTesting.Platform, strea
 		OverrideAuthz: true, // Override authorization for system operations in tests
 	}
 
-	err = platform.Engine.Execute(engineContext, platform.DB, "INSERT INTO pending_prune_days (stream_ref, day_index) VALUES ($stream_ref, $day_index)", map[string]any{
+	err = platform.Engine.Execute(engineContext, platform.DB, "INSERT INTO pending_prune_days (stream_ref, day_index) VALUES ($stream_ref, $day_index) ON CONFLICT DO NOTHING", map[string]any{
 		"$stream_ref": streamRef,
 		"$day_index":  dayIndex,
 	}, func(row *common.Row) error {
@@ -521,15 +522,15 @@ func verifyCombinationFlags(ctx context.Context, platform *kwilTesting.Platform,
 		return errors.Wrap(err, "error querying primitive_event_type for combination flags")
 	}
 
-	// Expected combination flags based on test data:
-	// 86400 (10)  = OPEN + LOW -> flag 1+4=5 (earliest time AND minimum value)
-	// 151200 (100) = HIGH -> flag 2 (maximum value)
-	// 172800 (75) = CLOSE -> flag 8 (latest time)
-	// Note: 129600 (50) should be deleted as it's not OHLC
+	// Expected combination flags based on test data (day 2):
+	// 172800 (10)  = OPEN + LOW -> flag 1+4=5 (earliest time AND minimum value)
+	// 237600 (100) = HIGH -> flag 2 (maximum value)
+	// 259200 (75) = CLOSE -> flag 8 (latest time)
+	// Note: 216000 (50) should be deleted as it's not OHLC
 	expectedFlags := map[int64]int{
-		86400:  5, // OPEN + LOW (1+4)
-		151200: 2, // HIGH
-		172800: 8, // CLOSE
+		172800: 5, // OPEN + LOW (1+4)
+		237600: 2, // HIGH
+		259200: 8, // CLOSE
 	}
 
 	// Verify all expected flags are present and correct
@@ -550,6 +551,7 @@ func verifyCombinationFlags(ctx context.Context, platform *kwilTesting.Platform,
 
 	return nil
 }
+
 // WithDigestAllSameFlagSetup sets up test data where all values are identical (testing maximum combination flag 15)
 func WithDigestAllSameFlagSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
@@ -563,6 +565,7 @@ func WithDigestAllSameFlagSetup(testFn func(ctx context.Context, platform *kwilT
 
 		// Create test data where all values are identical (50)
 		// This should result in maximum combination flag 1+2+4+8=15
+		// Use day 3 timestamps to avoid conflict with other tests
 		testStreamId := util.GenerateStreamId("all_same_test_stream")
 		err = setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
 			Platform: platform,
@@ -571,10 +574,10 @@ func WithDigestAllSameFlagSetup(testFn func(ctx context.Context, platform *kwilT
 			MarkdownData: `
 			| event_time | value |
 			|------------|-------|
-			| 86400      | 50    |
-			| 129600     | 50    |
-			| 151200     | 50    |
-			| 172800     | 50    |
+			| 259200     | 50    |
+			| 302400     | 50    |
+			| 324000     | 50    |
+			| 345600     | 50    |
 			`,
 		})
 		if err != nil {
@@ -590,20 +593,20 @@ func testDigestAllSameValueFlags(t *testing.T) func(ctx context.Context, platfor
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		streamRef := 1
 
-		// Insert a day into the pending queue
-		err := insertPendingDay(ctx, platform, streamRef, 1)
+		// Insert a day into the pending queue (day 3 to avoid primary key conflict)
+		err := insertPendingDay(ctx, platform, streamRef, 3)
 		if err != nil {
 			return errors.Wrap(err, "error inserting pending day for all same values test")
 		}
 
 		// Run digest_daily
-		_, err = callDigestDaily(ctx, platform, streamRef, 1)
+		_, err = callDigestDaily(ctx, platform, streamRef, 3)
 		if err != nil {
 			return errors.Wrap(err, "error calling digest_daily for all same values test")
 		}
 
 		// Verify maximum combination flag (15 = OPEN+HIGH+LOW+CLOSE)
-		err = verifyAllSameFlags(ctx, platform, streamRef, 1)
+		err = verifyAllSameFlags(ctx, platform, streamRef, 3)
 		if err != nil {
 			return errors.Wrap(err, "error verifying all same value flags")
 		}
@@ -663,27 +666,27 @@ func verifyAllSameFlags(ctx context.Context, platform *kwilTesting.Platform, str
 		return errors.Wrap(err, "error querying primitive_event_type for all same flags")
 	}
 
-	// When all values are identical, we should have:
-	// - OPEN+HIGH+LOW at earliest time (86400) with flag 1+2+4=7  
-	// - CLOSE at latest time (172800) with flag 8
+	// When all values are identical, we should have (day 3):
+	// - OPEN+HIGH+LOW at earliest time (259200) with flag 1+2+4=7
+	// - CLOSE at latest time (345600) with flag 8
 	// Total: 2 records
 	if len(typeFlags) != 2 {
 		return errors.Errorf("expected 2 type flag records for all same values, got %d", len(typeFlags))
 	}
 
-	// Check OPEN+HIGH+LOW record at 86400 (flag 7)
-	openFlag, exists := typeFlags[86400]
+	// Check OPEN+HIGH+LOW record at 259200 (flag 7)
+	openFlag, exists := typeFlags[259200]
 	if !exists {
-		return errors.New("missing type flag for OPEN timestamp 86400")
+		return errors.New("missing type flag for OPEN timestamp 259200")
 	}
 	if openFlag != 7 {
 		return errors.Errorf("wrong type flag for OPEN+HIGH+LOW: expected 7, got %d", openFlag)
 	}
 
-	// Check CLOSE record at 172800 (flag 8)
-	closeFlag, exists := typeFlags[172800]
+	// Check CLOSE record at 345600 (flag 8)
+	closeFlag, exists := typeFlags[345600]
 	if !exists {
-		return errors.New("missing type flag for CLOSE timestamp 172800")
+		return errors.New("missing type flag for CLOSE timestamp 345600")
 	}
 	if closeFlag != 8 {
 		return errors.Errorf("wrong type flag for CLOSE: expected 8, got %d", closeFlag)
