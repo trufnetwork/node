@@ -111,6 +111,13 @@ CREATE OR REPLACE ACTION truflation_insert_records(
         truflation_created_at,
         stream_ref
     FROM arguments;
+
+    -- Enqueue days for pruning (idempotent, distinct), filtering out zero values
+    helper_enqueue_prune_days(
+        $stream_refs,
+        $event_time,
+        $value
+    );
 };
 
 
