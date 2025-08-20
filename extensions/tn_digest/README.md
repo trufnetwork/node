@@ -1,18 +1,23 @@
 # tn_digest extension
 
 ## What it does (brief)
-- Periodically calls a Kuneiform action `main.auto_digest()` via a real, signed transaction.
-- Runs only when this node is the block leader (leader‑gated scheduler).
-- Reads enable/schedule from on‑chain table `digest_config` and reconciles changes automatically.
+- Periodically calls a Kuneiform action `main.auto_digest()` via real, signed transactions.
+- Runs only when this node is the block leader (leader-gated scheduler with consensus checks).
+- Reads enable/schedule from on-chain table `digest_config` and reconciles changes every N blocks.
+- Uses singleton scheduler to prevent overlapping jobs and supports both 5-field and 6-field cron expressions.
 
 ---
 
 ## Operators
 
 ### Prerequisites
-- Node key file exists at `<root>/nodekey.json` (used to sign digest txs).
-- User JSON‑RPC is enabled (`[rpc].listen` set). If set to `0.0.0.0:<port>`, the extension internally uses `127.0.0.1:<port>` for client requests.
-- Schema contains `digest_config` table.
+- Node key file exists at `<root>/nodekey.json` (used to sign digest transactions).
+- User JSON‑RPC is enabled via `[rpc].listen`. The extension automatically normalizes the address:
+  - `0.0.0.0:<port>` → connects to `127.0.0.1:<port>`
+  - `[::]:<port>` or `:::<port>` → connects to `127.0.0.1:<port>`
+  - Empty hosts → connects to `127.0.0.1:<port>`
+  - Specific addresses → used as-is
+- Schema contains `digest_config` table (created by migration but not auto-seeded).
 
 ### Enable/Disable and Schedule
 - The extension reads a single row in `digest_config` (id = 1):
@@ -22,7 +27,11 @@
 
 Minimal SQL to adjust:
 ```sql
--- Enable and set to every 10 minutes (assuming row id=1 is managed externally)
+-- First-time setup: ensure the single row exists
+INSERT INTO digest_config (id, enabled, digest_schedule)
+VALUES (1, true, '*/10 * * * *');
+
+-- Subsequent changes
 UPDATE digest_config SET enabled = true, digest_schedule = '*/10 * * * *' WHERE id = 1;
 ```
 
@@ -42,13 +51,18 @@ reload_interval_blocks = "1000"   # default 1000; set to small values for faster
 - RPC listen (must be enabled if `rpc_url` not set):
 ```toml
 [rpc]
-listen = "0.0.0.0:8484"           # the extension will connect to 127.0.0.1:8484 internally
+listen = "0.0.0.0:8484"           # extension connects to 127.0.0.1:8484 internally
 ```
 
 ### Observability
-- Logs when scheduler starts/stops and on broadcast failures.
-- If prerequisites are missing (key file, RPC address), warnings are logged and the job is skipped.
+- Logs when scheduler starts/stops, leader transitions, and config reloads.
+- Logs detailed warnings when prerequisites are missing (broadcaster, signer, engine, service).
+- Logs broadcast failures and transaction hashes on success.
+- The extension gracefully handles missing `digest_config` table without crashing.
 
 ### Security Notes
-- Transactions are signed with the node’s key and broadcast via local JSON‑RPC.
-- Ensure JSON‑RPC service exposure complies with your security posture (TLS, firewall, etc.).
+- Transactions are signed with the node's private key and broadcast via local JSON-RPC.
+- Supports different broadcast modes: async (fire-and-forget) or sync (wait for acceptance/commit).
+- The extension only runs when the node is the consensus leader (enforced via on-chain leader checks).
+- Ensure JSON-RPC service exposure complies with your security posture (TLS, firewall, etc.).
+- The `auto_digest` action should implement its own access controls if needed.
