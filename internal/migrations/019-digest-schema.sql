@@ -5,6 +5,7 @@
  * - primitive_event_type: Marks which records are CLOSE/HIGH/LOW or combination of them after digest
  * - pending_prune_days: Simple queue of days needing digest processing
  *   (row presence = pending, row deletion = complete)
+ * - digest_config: Configuration for the digest system
  */
 
 CREATE TABLE IF NOT EXISTS primitive_event_type (
@@ -32,3 +33,13 @@ CREATE TABLE IF NOT EXISTS pending_prune_days (
 
 CREATE INDEX IF NOT EXISTS idx_ppd_processing_order 
     ON pending_prune_days(day_index, stream_ref);
+
+-- Create single-row config table
+CREATE TABLE IF NOT EXISTS digest_config (
+    id INT8 PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    enabled BOOL NOT NULL DEFAULT false,
+    digest_schedule TEXT NOT NULL,
+    updated_at_height INT8 NOT NULL DEFAULT 0
+);
+
+
