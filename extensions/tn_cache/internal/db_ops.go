@@ -786,10 +786,12 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 
 			// First, check if the stream is configured for caching
 			results, err := tx.Execute(traceCtx, `
-				SELECT COUNT(*) > 0
-				FROM `+constants.CacheSchemaName+`.cached_streams
-				WHERE data_provider = $1 AND stream_id = $2
-					AND (from_timestamp IS NULL OR from_timestamp <= $3)
+				SELECT EXISTS (
+					SELECT 1
+					FROM `+constants.CacheSchemaName+`.cached_streams
+					WHERE data_provider = $1 AND stream_id = $2
+						AND (from_timestamp IS NULL OR from_timestamp <= $3)
+				)
 			`, dataProvider, streamID, fromTime)
 
 			if err != nil {
@@ -813,46 +815,48 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 			}
 
 			// Then, check if there are events in the cache
-			var eventCount int64
+			var hasData bool
 			if toTime == 0 {
 				// No upper bound specified - to is treated as max_int8 (end of time)
 				results, err := tx.Execute(traceCtx, `
-					SELECT COUNT(*) FROM `+constants.CacheSchemaName+`.cached_events
-					WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3
+					SELECT EXISTS (
+						SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
+						WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3
+					)
 				`, dataProvider, streamID, fromTime)
 				if err != nil {
-					return false, fmt.Errorf("failed to count cached events: %w", err)
+					return false, fmt.Errorf("failed to check cached events existence: %w", err)
 				}
 
 				if len(results.Rows) == 0 || len(results.Rows[0]) != 1 {
-					return false, fmt.Errorf("unexpected result structure for event count")
+					return false, fmt.Errorf("unexpected result structure for event existence check")
 				}
 
-				eventCount, ok = results.Rows[0][0].(int64)
+				hasData, ok = results.Rows[0][0].(bool)
 				if !ok {
-					return false, fmt.Errorf("failed to convert event count to int64")
+					return false, fmt.Errorf("failed to convert event existence result to bool")
 				}
 			} else {
 				// Upper bound specified
 				results, err := tx.Execute(traceCtx, `
-					SELECT COUNT(*) FROM `+constants.CacheSchemaName+`.cached_events
-					WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3 AND event_time <= $4
+					SELECT EXISTS (
+						SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
+						WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3 AND event_time <= $4
+					)
 				`, dataProvider, streamID, fromTime, toTime)
 				if err != nil {
-					return false, fmt.Errorf("failed to count cached events: %w", err)
+					return false, fmt.Errorf("failed to check cached events existence: %w", err)
 				}
 
 				if len(results.Rows) == 0 || len(results.Rows[0]) != 1 {
-					return false, fmt.Errorf("unexpected result structure for event count")
+					return false, fmt.Errorf("unexpected result structure for event existence check")
 				}
 
-				eventCount, ok = results.Rows[0][0].(int64)
+				hasData, ok = results.Rows[0][0].(bool)
 				if !ok {
-					return false, fmt.Errorf("failed to convert event count to int64")
+					return false, fmt.Errorf("failed to convert event existence result to bool")
 				}
 			}
-
-			hasData := eventCount > 0
 
 			// If no direct events found, check for an anchor record (last event before fromTime)
 			if !hasData && fromTime != 0 {
