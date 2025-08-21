@@ -269,7 +269,7 @@ CREATE OR REPLACE ACTION create_streams(
 CREATE OR REPLACE ACTION get_stream_id(
   $data_provider_address TEXT,
   $stream_id TEXT
-) PRIVATE returns (id INT) {
+) PUBLIC returns (id INT) {
   $id INT;
   $found BOOL := false;
   FOR $stream_row IN SELECT s.id
