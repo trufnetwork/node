@@ -390,14 +390,45 @@ RETURNS TABLE(
 
   RETURN WITH RECURSIVE
   /*----------------------------------------------------------------------
+  * ANCHOR CTE: Compute the anchor time once for reuse throughout the query
+  *
+  * Purpose: Find the latest taxonomy start_time at or before $effective_from
+  * for the target stream to establish a baseline for filtering.
+  *---------------------------------------------------------------------*/
+  anchor AS (
+      SELECT COALESCE(
+          (SELECT t_anchor_base.start_time FROM taxonomies t_anchor_base
+           WHERE t_anchor_base.stream_ref = $stream_ref
+             AND t_anchor_base.disabled_at IS NULL AND t_anchor_base.start_time <= $effective_from
+           ORDER BY t_anchor_base.start_time DESC, t_anchor_base.group_sequence DESC LIMIT 1),
+          0 -- Default anchor to 0
+      ) AS anchor_time
+  ),
+
+  /*----------------------------------------------------------------------
+  * RELEVANT_PARENTS CTE: Find all streams in the subtree of the target stream
+  *---------------------------------------------------------------------*/
+  relevant_parents AS (
+      -- Base case: the target stream itself
+      SELECT $stream_ref AS stream_ref
+      UNION ALL
+      -- Recursive case: traverse descendants (children of already discovered streams)
+      SELECT DISTINCT t.child_stream_ref
+      FROM taxonomies t
+      JOIN relevant_parents rp ON t.stream_ref = rp.stream_ref
+      WHERE t.disabled_at IS NULL
+  ),
+
+  /*----------------------------------------------------------------------
   * PARENT_DISTINCT_START_TIMES CTE:
   *---------------------------------------------------------------------*/
   parent_distinct_start_times AS (
       SELECT DISTINCT
-          stream_ref,
-          start_time
-      FROM taxonomies
-      WHERE disabled_at IS NULL
+          t.stream_ref,
+          t.start_time
+      FROM taxonomies t
+      JOIN relevant_parents rp ON t.stream_ref = rp.stream_ref
+      WHERE t.disabled_at IS NULL
   ),
 
   /*----------------------------------------------------------------------
@@ -463,15 +494,7 @@ RETURNS TABLE(
         1 AS level
     FROM taxonomy_true_segments tts
     WHERE tts.stream_ref = $stream_ref
-      AND tts.segment_end >= (
-        COALESCE(
-            (SELECT t_anchor_base.start_time FROM taxonomies t_anchor_base
-            WHERE t_anchor_base.stream_ref = $stream_ref
-              AND t_anchor_base.disabled_at IS NULL AND t_anchor_base.start_time <= $effective_from
-            ORDER BY t_anchor_base.start_time DESC, t_anchor_base.group_sequence DESC LIMIT 1),
-            0
-        )
-      )
+      AND tts.segment_end >= (SELECT anchor_time FROM anchor)
       AND tts.segment_start <= $effective_to
 
     UNION ALL
@@ -500,15 +523,7 @@ RETURNS TABLE(
         ON h.descendant_stream_ref = tts.stream_ref
     WHERE
         GREATEST(h.path_start, tts.segment_start) <= LEAST(h.path_end, tts.segment_end)
-        AND LEAST(h.path_end, tts.segment_end) >= (
-            COALESCE(
-                (SELECT t_anchor_base.start_time FROM taxonomies t_anchor_base
-                WHERE t_anchor_base.stream_ref = $stream_ref
-                  AND t_anchor_base.disabled_at IS NULL AND t_anchor_base.start_time <= $effective_from
-                ORDER BY t_anchor_base.start_time DESC, t_anchor_base.group_sequence DESC LIMIT 1),
-                0
-            )
-        )
+        AND LEAST(h.path_end, tts.segment_end) >= (SELECT anchor_time FROM anchor)
         AND GREATEST(h.path_start, tts.segment_start) <= $effective_to
         AND h.level < 10 -- Recursion depth limit
   ),

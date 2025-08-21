@@ -41,27 +41,17 @@ CREATE OR REPLACE ACTION get_stream_ids(
         JOIN streams s ON s.data_provider_id = dp.id
                       AND s.stream_id = up.stream_id
     ),
-    -- Map back to original order using idx
+    -- Map back to original order using idx for efficient aggregation
     mapped AS (
-        SELECT ap.idx, ul.stream_ref
+        SELECT ap.idx, COALESCE(ul.stream_ref, NULL) AS stream_ref
         FROM all_pairs ap
-        JOIN unique_lookup ul
+        LEFT JOIN unique_lookup ul
           ON ul.data_provider = ap.data_provider
          AND ul.stream_id = ap.stream_id
-    ),
-    build_array AS (
-        SELECT 1 AS current_idx, ARRAY[]::INT[] AS result
-        UNION ALL
-        SELECT
-            ba.current_idx + 1,
-            array_append(ba.result, m.stream_ref)
-        FROM build_array ba
-        JOIN mapped m ON m.idx = ba.current_idx
-        WHERE ba.current_idx <= array_length($data_providers)
+        ORDER BY ap.idx
     )
-    SELECT result AS stream_refs
-    FROM build_array
-    WHERE current_idx = array_length($data_providers) + 1 {
+    SELECT ARRAY_AGG(stream_ref) AS stream_refs
+    FROM mapped {
       return $row.stream_refs;
     }
 };

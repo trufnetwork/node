@@ -412,7 +412,7 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
             WHERE dp.address = p.data_provider
                 AND s.stream_id = p.stream_id
                 AND m.metadata_key = 'allow_read_wallet'
-                AND LOWER(m.value_ref) = LOWER($wallet_address)
+                AND m.value_ref = $wallet_address
                 AND m.disabled_at IS NULL
             LIMIT 1
         ) 
@@ -426,20 +426,20 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
                 AND s.stream_id = p.stream_id
                 AND m.metadata_key = 'stream_owner'
                 AND m.disabled_at IS NULL
-                AND LOWER(m.value_ref) = LOWER($wallet_address)
+                AND m.value_ref = $wallet_address
             LIMIT 1
         ) 
     )
-    SELECT 
-        (SELECT COUNT(*) FROM inexisting_substreams) AS missing_count,
-        (SELECT COUNT(*) FROM streams_without_permissions) AS unauthorized_count {
+    SELECT
+        EXISTS (SELECT 1 FROM inexisting_substreams) AS has_missing,
+        EXISTS (SELECT 1 FROM streams_without_permissions) AS has_unauthorized {
         -- error out if there's a missing streams
-        if $counts.missing_count > 0 {
-            ERROR('streams missing for stream: data_provider=' || $data_provider || ' stream_id=' || $stream_id || ' missing_count=' || $counts.missing_count::TEXT);
+        if $counts.has_missing {
+            ERROR('streams missing for stream: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
         }
 
         -- Return false if there are any unauthorized streams
-        $result := $counts.unauthorized_count = 0;
+        $result := NOT $counts.has_unauthorized;
     }
     
     return $result;
@@ -689,16 +689,16 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
             )
         )
         SELECT
-            (SELECT COUNT(*) FROM inexisting_substreams) AS missing_count,
-            (SELECT COUNT(*) FROM unauthorized_edges) AS unauthorized_count {
+            EXISTS (SELECT 1 FROM inexisting_substreams) AS has_missing,
+            EXISTS (SELECT 1 FROM unauthorized_edges) AS has_unauthorized {
             -- error out if there's a missing streams
-            if $counts.missing_count > 0 {
+            if $counts.has_missing {
                 ERROR('Missing child streams for stream: data_provider=' || $data_provider ||
-                      ' stream_id=' || $stream_id || ' missing_count=' || $counts.missing_count::TEXT);
+                      ' stream_id=' || $stream_id);
             }
 
             -- only authorized if there are no unauthorized edges
-            $result := $counts.unauthorized_count = 0;
+            $result := NOT $counts.has_unauthorized;
         }
 
         -- return if it's authorized or not
@@ -748,41 +748,47 @@ CREATE OR REPLACE ACTION wallet_write_batch_priv(
     arr AS (
         SELECT $stream_refs AS refs
     ),
-    expanded_all AS (
-        SELECT arr.refs[i] AS stream_ref
+    unique_refs AS (
+        SELECT DISTINCT arr.refs[i] AS stream_ref
         FROM idx
         JOIN arr ON 1=1
+        WHERE arr.refs[i] IS NOT NULL
     ),
-    expanded AS (
-        SELECT stream_ref
-        FROM expanded_all
-        WHERE stream_ref IS NOT NULL
+    latest_owner_time AS (
+        SELECT m.stream_ref, MAX(m.created_at) AS created_at
+        FROM metadata m
+        JOIN unique_refs u ON u.stream_ref = m.stream_ref
+        WHERE m.metadata_key = 'stream_owner' AND m.disabled_at IS NULL
+        GROUP BY m.stream_ref
+    ),
+    owners AS (
+        SELECT m.stream_ref, m.value_ref AS owner
+        FROM metadata m
+        JOIN latest_owner_time lo
+          ON lo.stream_ref = m.stream_ref AND lo.created_at = m.created_at
+        WHERE m.metadata_key = 'stream_owner'
+    ),
+    allowed_by_perm AS (
+        SELECT DISTINCT m.stream_ref
+        FROM metadata m
+        JOIN unique_refs u ON u.stream_ref = m.stream_ref
+        WHERE m.metadata_key = 'allow_write_wallet'
+          AND m.disabled_at IS NULL
+          AND LOWER(m.value_ref) = $lowercase_wallet
     ),
     allowed AS (
-        SELECT e.stream_ref,
-               CASE WHEN EXISTS (
-                        SELECT 1 FROM metadata m
-                        WHERE m.stream_ref = e.stream_ref
-                          AND m.metadata_key = 'stream_owner'
-                          AND LOWER(m.value_ref) = $lowercase_wallet
-                          AND m.disabled_at IS NULL
-                        ORDER BY m.created_at DESC
-                        LIMIT 1
-                    ) OR EXISTS (
-                        SELECT 1 FROM metadata m2
-                        WHERE m2.stream_ref = e.stream_ref
-                          AND m2.metadata_key = 'allow_write_wallet'
-                          AND LOWER(m2.value_ref) = $lowercase_wallet
-                          AND m2.disabled_at IS NULL
-                        LIMIT 1
-                    ) THEN 1 ELSE 0 END AS can_write
-        FROM expanded e
-        JOIN streams s ON s.id = e.stream_ref
+        SELECT u.stream_ref,
+               CASE WHEN o.owner = $lowercase_wallet THEN 1
+                    WHEN ap.stream_ref IS NOT NULL THEN 1
+                    ELSE 0 END AS can_write
+        FROM unique_refs u
+        LEFT JOIN owners o ON o.stream_ref = u.stream_ref
+        LEFT JOIN allowed_by_perm ap ON ap.stream_ref = u.stream_ref
     )
-    SELECT (
-        (SELECT COUNT(*) FROM expanded_all WHERE stream_ref IS NULL) = 0
-        AND
-        (SELECT COUNT(*) FROM allowed WHERE can_write = 1) = (SELECT COUNT(*) FROM expanded_all)
+    SELECT NOT EXISTS (
+        SELECT 1
+        FROM allowed
+        WHERE can_write = 0
     ) AS result {
         return $row.result;
     }
@@ -799,23 +805,18 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_write(
     $wallet TEXT
 ) PUBLIC view returns (result bool) {
     $data_provider := LOWER($data_provider);
-    $wallet := LOWER($wallet);
+    $lower_wallet := LOWER($wallet);
+
+    -- Resolve stream ref once
+    $stream_ref := get_stream_id($data_provider, $stream_id);
 
     -- Check if the wallet is the stream owner
-    if is_stream_owner($data_provider, $stream_id, $wallet) {
+    if is_stream_owner_priv($stream_ref, $lower_wallet) {
         return true;
     }
 
-    -- Check if the wallet is explicitly allowed to write via metadata permissions
-    for $row in get_metadata(
-        $data_provider,
-        $stream_id,
-        'allow_write_wallet',
-        $wallet,
-        1,
-        0,
-        'created_at DESC'
-    ) {
+    -- Check if the wallet is explicitly allowed to write via metadata permissions (latest row)
+    if get_latest_metadata_ref_priv($stream_ref, 'allow_write_wallet', $lower_wallet) IS DISTINCT FROM NULL {
         return true;
     }
 
@@ -890,7 +891,7 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_write_batch(
             -- COALESCE handles cases where a subquery might return NULL instead of FALSE
             COALESCE(
                 -- Check 1: Is the wallet the LATEST valid owner?
-                (SELECT LOWER(m_own.value_ref)
+                (SELECT m_own.value_ref
                   FROM metadata m_own
                   JOIN streams s_own ON m_own.stream_ref = s_own.id
                   JOIN data_providers dp_own ON s_own.data_provider_id = dp_own.id
@@ -913,7 +914,7 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_write_batch(
                     WHERE dp_perm.address = up.data_provider
                       AND s_perm.stream_id = up.stream_id
                       AND m_perm.metadata_key = 'allow_write_wallet'
-                      AND LOWER(m_perm.value_ref) = $wallet
+                      AND m_perm.value_ref = $wallet
                       AND m_perm.disabled_at IS NULL
                     -- No ORDER BY/LIMIT needed, just checking for existence of any record
                 )
@@ -998,7 +999,7 @@ CREATE OR REPLACE ACTION has_write_permission_batch(
             JOIN streams s ON m.stream_ref = s.id
             JOIN data_providers dp ON s.data_provider_id = dp.id
             WHERE m.metadata_key = 'allow_write_wallet'
-              AND LOWER(m.value_ref) = $lowercase_wallet
+              AND m.value_ref = $lowercase_wallet
               AND m.disabled_at IS NULL
             ORDER BY m.created_at DESC
         ) m ON up.data_provider = m.data_provider AND up.stream_id = m.stream_id

@@ -601,7 +601,7 @@ CREATE OR REPLACE ACTION is_stream_owner_batch(
         SELECT 
             up.data_provider,
             up.stream_id,
-            CASE WHEN m.value_ref IS NOT NULL AND LOWER(m.value_ref) = $lowercase_wallet THEN true ELSE false END AS is_owner
+            CASE WHEN m.value_ref IS NOT NULL AND m.value_ref = $lowercase_wallet THEN true ELSE false END AS is_owner
         FROM unique_pairs up
         LEFT JOIN (
           SELECT dp.address as data_provider, s.stream_id, md.value_ref
@@ -773,7 +773,22 @@ CREATE OR REPLACE ACTION get_metadata(
 ) {
     $data_provider := LOWER($data_provider);
     $stream_ref := get_stream_id($data_provider, $stream_id);
-    return get_metadata_priv($stream_ref, $key, $ref, $limit, $offset, $order_by);
+    for $row in get_metadata_priv($stream_ref, $key, $ref, $limit, $offset, $order_by) {
+        RETURN NEXT $row.row_id, $row.value_i, $row.value_f, $row.value_b, $row.value_s, $row.value_ref, $row.created_at;
+    }
+};
+
+-- Compatibility wrapper that returns single value from get_metadata_priv (for functions expecting single value)
+CREATE OR REPLACE ACTION get_metadata_priv_single(
+    $stream_ref INT,
+    $key TEXT,
+    $ref TEXT
+) PRIVATE view returns (value TEXT) {
+    $result TEXT := NULL;
+    for $row in get_metadata_priv($stream_ref, $key, $ref, 1, 0, 'created_at DESC') {
+        $result := $row.value_ref;
+    }
+    RETURN $result;
 };
 
 /**
@@ -822,7 +837,7 @@ CREATE OR REPLACE ACTION get_latest_metadata_int_priv(
     $stream_ref INT,
     $key TEXT
 ) PRIVATE view returns (value INT) {
-    $result INT;
+    $result INT := NULL;
     for $row in get_latest_metadata_priv($stream_ref, $key, NULL) {
         $result := $row.value_i;
     }
@@ -847,7 +862,7 @@ CREATE OR REPLACE ACTION get_latest_metadata_ref_priv(
     $key TEXT,
     $ref TEXT
 ) PRIVATE view returns (value TEXT) {
-    $result TEXT;
+    $result TEXT := NULL;
     for $row in get_latest_metadata_priv($stream_ref, $key, $ref) {
         $result := $row.value_ref;
     }
@@ -872,7 +887,7 @@ CREATE OR REPLACE ACTION get_latest_metadata_bool_priv(
     $stream_ref INT,
     $key TEXT
 ) PRIVATE view returns (value BOOL) {
-    $result BOOL;
+    $result BOOL := NULL;
     for $row in get_latest_metadata_priv($stream_ref, $key, NULL) {
         $result := $row.value_b;
     }
@@ -896,7 +911,7 @@ CREATE OR REPLACE ACTION get_latest_metadata_string_priv(
     $stream_ref INT,
     $key TEXT
 ) PRIVATE view returns (value TEXT) {
-    $result TEXT;
+    $result TEXT := NULL;
     for $row in get_latest_metadata_priv($stream_ref, $key, NULL) {
         $result := $row.value_s;
     }
@@ -1146,22 +1161,17 @@ CREATE OR REPLACE ACTION stream_exists_batch_priv(
     arr AS (
         SELECT $stream_refs AS refs
     ),
-    expanded_all AS (
-        SELECT arr.refs[i] AS stream_ref
+    unique_refs AS (
+        SELECT DISTINCT arr.refs[i] AS stream_ref
         FROM idx
         JOIN arr ON 1=1
-    ),
-    expanded AS (
-        SELECT stream_ref
-        FROM expanded_all
-        WHERE stream_ref IS NOT NULL
+        WHERE arr.refs[i] IS NOT NULL
     )
-    SELECT (
-        (SELECT COUNT(*) FROM expanded_all WHERE stream_ref IS NULL) = 0
-        AND
-        (SELECT COUNT(*) FROM expanded e JOIN streams s ON s.id = e.stream_ref)
-        =
-        (SELECT COUNT(*) FROM expanded_all)
+    SELECT NOT EXISTS (
+        SELECT 1
+        FROM unique_refs u
+        LEFT JOIN streams s ON s.id = u.stream_ref
+        WHERE s.id IS NULL
     ) AS result {
         return $row.result;
     }
@@ -1187,22 +1197,17 @@ CREATE OR REPLACE ACTION is_primitive_stream_batch_priv(
     arr AS (
         SELECT $stream_refs AS refs
     ),
-    expanded_all AS (
-        SELECT arr.refs[i] AS stream_ref
+    unique_refs AS (
+        SELECT DISTINCT arr.refs[i] AS stream_ref
         FROM idx
         JOIN arr ON 1=1
-    ),
-    expanded AS (
-        SELECT stream_ref
-        FROM expanded_all
-        WHERE stream_ref IS NOT NULL
+        WHERE arr.refs[i] IS NOT NULL
     )
-    SELECT (
-        (SELECT COUNT(*) FROM expanded_all WHERE stream_ref IS NULL) = 0
-        AND
-        (SELECT COUNT(*) FROM expanded e JOIN streams s ON s.id = e.stream_ref WHERE s.stream_type = 'primitive')
-        =
-        (SELECT COUNT(*) FROM expanded_all)
+    SELECT NOT EXISTS (
+        SELECT 1
+        FROM unique_refs u
+        JOIN streams s ON s.id = u.stream_ref
+        WHERE s.stream_type != 'primitive'
     ) AS result {
         return $row.result;
     }

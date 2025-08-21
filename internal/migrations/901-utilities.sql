@@ -74,38 +74,27 @@ CREATE OR REPLACE ACTION helper_sanitize_wallets($wallets TEXT[]) PRIVATE VIEW R
 CREATE OR REPLACE ACTION helper_lowercase_array(
     $input_array TEXT[]
 ) PRIVATE VIEW RETURNS (lowercase_array TEXT[]) {
-    -- Use WITH RECURSIVE to process entire array in single SQL operation
-    -- This avoids the expensive for-loop roundtrips
-    for $row in WITH RECURSIVE 
-    indexes AS (
-        SELECT 1 AS idx
-        UNION ALL
-        SELECT idx + 1 FROM indexes
-        WHERE idx < array_length($input_array)
-    ),
-    array_holder AS (
-        SELECT $input_array AS original_array
-    ),
-    unnested_results AS (
-        SELECT 
-            idx,
-            LOWER(array_holder.original_array[idx]) AS lowercase_element
-        FROM indexes
-        JOIN array_holder ON 1=1
-    ),
-    build_array AS (
-        SELECT 1 AS current_idx, ARRAY[]::TEXT[] AS result
-        UNION ALL
-        SELECT 
-            ba.current_idx + 1,
-            array_append(ba.result, ur.lowercase_element)
-        FROM build_array ba
-        JOIN unnested_results ur ON ur.idx = ba.current_idx
-        WHERE ba.current_idx <= array_length($input_array)
-    )
-    SELECT result AS lowercase_array
-    FROM build_array
-    WHERE current_idx = array_length($input_array) + 1 {
+                -- Use O(n) approach with proper array handling
+            for $row in WITH RECURSIVE
+            indexes AS (
+                SELECT 1 AS idx
+                UNION ALL
+                SELECT idx + 1 FROM indexes
+                WHERE idx < array_length($input_array)
+            ),
+            array_holder AS (
+                SELECT $input_array AS original_array
+            ),
+            unnested_results AS (
+                SELECT
+                    idx,
+                    LOWER(array_holder.original_array[idx]) AS lowercase_element
+                FROM indexes
+                JOIN array_holder ON 1=1
+                ORDER BY idx
+            )
+            SELECT ARRAY_AGG(lowercase_element) AS lowercase_array
+            FROM unnested_results {
         RETURN $row.lowercase_array;
     }
 };
