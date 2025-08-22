@@ -90,8 +90,6 @@ CREATE OR REPLACE ACTION truflation_insert_records(
     ),
     record_arrays AS (
         SELECT
-            $stream_id AS stream_ids,
-            $data_provider AS data_providers,
             $event_time AS event_times,
             $value AS values_array,
             $truflation_created_at AS truflation_created_at_array,
@@ -99,8 +97,6 @@ CREATE OR REPLACE ACTION truflation_insert_records(
     ),
     arguments AS (
         SELECT
-            record_arrays.stream_ids[idx] AS stream_id,
-            record_arrays.data_providers[idx] AS data_provider,
             record_arrays.event_times[idx] AS event_time,
             record_arrays.values_array[idx] AS value,
             record_arrays.truflation_created_at_array[idx] AS truflation_created_at,
