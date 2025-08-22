@@ -1292,7 +1292,7 @@ RETURNS TABLE(
       SELECT t.child_stream_ref
       FROM taxonomies t
       WHERE t.stream_ref = $stream_ref AND t.disabled_at IS NULL
-      UNION ALL
+      UNION
       SELECT t.child_stream_ref
       FROM taxonomies t
       JOIN descendants d ON t.stream_ref = d.child_stream_ref
@@ -1442,7 +1442,7 @@ RETURNS TABLE(
       SELECT t.child_stream_ref
       FROM taxonomies t
       WHERE t.stream_ref = $stream_ref AND t.disabled_at IS NULL
-      UNION ALL
+      UNION
       SELECT t.child_stream_ref
       FROM taxonomies t
       JOIN descendants d ON t.stream_ref = d.child_stream_ref
