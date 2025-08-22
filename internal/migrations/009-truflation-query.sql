@@ -416,15 +416,26 @@ CREATE OR REPLACE ACTION truflation_get_index_primitive(
     $data_provider := LOWER($data_provider);
     $stream_ref := get_stream_id($data_provider, $stream_id);
 
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR(
+          'Stream does not exist: data_provider=' 
+          || $data_provider 
+          || ' stream_id=' 
+          || $stream_id
+        );
+    }
+
     -- Check read permissions
     if !is_allowed_to_read_all_core($stream_ref, LOWER(@caller), $from, $to) {
-        ERROR('Not allowed to read stream');
+                ERROR('Not allowed to read stream');
     }
 
     $max_int8 INT8 := 9223372036854775000;
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
     
     -- If base_time is not provided, try to get it from metadata
+
     $effective_base_time INT8 := $base_time;
     if $effective_base_time IS NULL {
         $found_metadata := FALSE;
@@ -575,11 +586,20 @@ CREATE OR REPLACE ACTION truflation_get_base_value(
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
     $stream_ref := get_stream_id($data_provider, $stream_id);
+
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR(
+            'Stream does not exist: data_provider=' || $data_provider
+            || ' stream_id=' || $stream_id
+        );
+    }
+
     -- Check read permissions
     if !is_allowed_to_read_all_core($stream_ref, $lower_caller, NULL, $base_time) {
         ERROR('Not allowed to read stream');
     }
-    
+
     -- If base_time is null, try to get it from metadata
     $effective_base_time INT8 := $base_time;
     if $effective_base_time IS NULL {
@@ -1221,6 +1241,15 @@ RETURNS TABLE(
      * Step 1: Basic setup
      */
     $stream_ref := get_stream_id($data_provider, $stream_id);
+    IF $stream_ref IS NULL {
+        ERROR(
+          'Stream does not exist: data_provider='
+          || $data_provider
+          || ' stream_id='
+          || $stream_id
+        );
+    }
+
     IF !is_allowed_to_read_all_core($stream_ref, $lower_caller, NULL, $before) {
         ERROR('Not allowed to read stream');
     }
@@ -1367,6 +1396,15 @@ RETURNS TABLE(
      * Step 1: Basic setup
      */
     $stream_ref := get_stream_id($data_provider, $stream_id);
+    IF $stream_ref IS NULL {
+        ERROR(
+          'Stream does not exist: data_provider='
+          || $data_provider
+          || ' stream_id='
+          || $stream_id
+        );
+    }
+
     IF !is_allowed_to_read_all_core($stream_ref, $lower_caller, $after, NULL) {
         ERROR('Not allowed to read stream');
     }
@@ -1624,34 +1662,37 @@ RETURNS TABLE(
 
     taxonomy_true_segments AS (
         SELECT
-            t.stream_ref,
-            t.child_stream_ref,
-            t.weight_for_segment,
-            t.segment_start,
+            tx.stream_ref,
+            tx.child_stream_ref,
+            tx.weight_for_segment,
+            tx.segment_start,
             COALESCE(pns.next_start_time, $max_int8) - 1 AS segment_end
         FROM (
             SELECT
-                tx.stream_ref,
-                tx.child_stream_ref,
-                tx.weight AS weight_for_segment,
-                tx.start_time AS segment_start
-            FROM taxonomies tx
-            JOIN (
-                SELECT
-                    t.stream_ref, t.start_time,
-                    MAX(t.group_sequence) as max_gs
-                FROM taxonomies t
-                WHERE t.disabled_at IS NULL
-                GROUP BY t.stream_ref, t.start_time
-            ) max_gs_filter
+                t.stream_ref,
+                t.child_stream_ref,
+                t.weight_for_segment,
+                t.segment_start,
+                t.start_time,
+                t.group_sequence
+            FROM taxonomies t
+            WHERE t.disabled_at IS NULL
+        ) tx
+        JOIN (
+            SELECT
+                t.stream_ref,
+                t.start_time,
+                MAX(t.group_sequence) as max_gs
+            FROM taxonomies t
+            WHERE t.disabled_at IS NULL
+            GROUP BY t.stream_ref, t.start_time
+        ) max_gs_filter
             ON tx.stream_ref = max_gs_filter.stream_ref
            AND tx.start_time = max_gs_filter.start_time
            AND tx.group_sequence = max_gs_filter.max_gs
-            WHERE tx.disabled_at IS NULL
-        ) t
         JOIN parent_next_starts pns
-          ON t.stream_ref = pns.stream_ref
-         AND t.segment_start = pns.start_time
+          ON tx.stream_ref = pns.stream_ref
+         AND tx.segment_start = pns.start_time
     ),
 
     hierarchy AS (
@@ -1676,11 +1717,13 @@ RETURNS TABLE(
           (h.raw_weight * tts.weight_for_segment)::NUMERIC(36,18) AS raw_weight,
           (h.effective_weight * (
               tts.weight_for_segment /
-              (SELECT SUM(sibling_tts.weight_for_segment)
-               FROM taxonomy_true_segments sibling_tts
-               WHERE sibling_tts.stream_ref = h.descendant_stream_ref
-                 AND sibling_tts.segment_start = tts.segment_start
-                 AND sibling_tts.segment_end = tts.segment_end)::NUMERIC(36,18)
+              NULLIF((
+                  SELECT SUM(sibling_tts.weight_for_segment)
+                  FROM taxonomy_true_segments sibling_tts
+                  WHERE sibling_tts.stream_ref = h.descendant_stream_ref
+                    AND sibling_tts.segment_start = tts.segment_start
+                    AND sibling_tts.segment_end = tts.segment_end
+              )::NUMERIC(36,18), 0)
           ))::NUMERIC(36,18) AS effective_weight,
           GREATEST(h.path_start, tts.segment_start) AS path_start,
           LEAST(h.path_end, tts.segment_end) AS path_end,
