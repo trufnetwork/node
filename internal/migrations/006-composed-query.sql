@@ -61,11 +61,16 @@ RETURNS TABLE(
 
     $stream_ref := get_stream_id($data_provider, $stream_id);
 
+    -- Fail-fast guard: ensure stream exists before calling _core functions
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
+
     -- Check permissions; raises error if unauthorized
-    IF !is_allowed_to_read_all_priv($stream_ref, $lower_caller, $from, $to) {
+    IF !is_allowed_to_read_all_core($stream_ref, $lower_caller, $from, $to) {
         ERROR('Not allowed to read stream');
     }
-    IF !is_allowed_to_compose_all_priv($stream_ref, $from, $to) {
+    IF !is_allowed_to_compose_all_core($stream_ref, $from, $to) {
         ERROR('Not allowed to compose stream');
     }
 

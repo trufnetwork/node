@@ -24,7 +24,7 @@ CREATE OR REPLACE ACTION get_record_primitive(
     }
 
     -- Check read access first
-    if is_allowed_to_read_priv($stream_ref, $lower_caller, $from, $to) == false {
+    if is_allowed_to_read_core($stream_ref, $lower_caller, $from, $to) == false {
         ERROR('wallet not allowed to read');
     }
 
@@ -114,7 +114,7 @@ CREATE OR REPLACE ACTION get_last_record_primitive(
     }
 
     -- Check read access, since we're querying directly from the primitive_events table
-    if is_allowed_to_read_priv($stream_ref, $lower_caller, NULL, $before) == false {
+    if is_allowed_to_read_core($stream_ref, $lower_caller, NULL, $before) == false {
         ERROR('wallet not allowed to read');
     }
 
@@ -155,7 +155,7 @@ CREATE OR REPLACE ACTION get_first_record_primitive(
     }
 
     -- Check read access, since we're querying directly from the primitive_events table
-    if is_allowed_to_read_priv($stream_ref, $lower_caller, $after, NULL) == false {
+    if is_allowed_to_read_core($stream_ref, $lower_caller, $after, NULL) == false {
         ERROR('wallet not allowed to read');
     }
 
@@ -188,15 +188,16 @@ CREATE OR REPLACE ACTION get_index_primitive(
 ) {
     -- Note: No cache; direct queries without computation
     $data_provider := LOWER($data_provider);
+    -- Resolve stream ref first for permission check
+    $stream_ref := get_stream_id($data_provider, $stream_id);
 
     -- Check read permissions
-    if !is_allowed_to_read_all($data_provider, $stream_id, @caller, $from, $to) {
+    if !is_allowed_to_read_all_core($stream_ref, LOWER(@caller), $from, $to) {
         ERROR('Not allowed to read stream');
     }
 
     $max_int8 INT8 := 9223372036854775000;
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
-    $stream_ref := get_stream_id($data_provider, $stream_id);
     
     -- If base_time is not provided, try to get it from metadata
     $effective_base_time INT8 := $base_time;

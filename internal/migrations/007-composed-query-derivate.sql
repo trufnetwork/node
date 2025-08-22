@@ -20,7 +20,7 @@ RETURNS TABLE(
   */
   $stream_ref := get_stream_id($data_provider, $stream_id);
 
-  IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, NULL, $before) {
+  IF !is_allowed_to_read_all_core($stream_ref, $lower_caller, NULL, $before) {
       ERROR('Not allowed to read stream');
   }
 
@@ -163,12 +163,12 @@ RETURNS TABLE(
     /*
      * Step 1: Basic setup
      */
-    IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, $after, NULL) {
+    IF !is_allowed_to_read_all_core($stream_ref, $lower_caller, $after, NULL) {
         ERROR('Not allowed to read stream');
     }
 
     -- Check compose permissions
-    if !is_allowed_to_compose_all($data_provider, $stream_id, $after, NULL) {
+    if !is_allowed_to_compose_all_core($stream_ref, $after, NULL) {
         ERROR('Not allowed to compose stream');
     }
 
@@ -313,12 +313,17 @@ RETURNS TABLE(
   $effective_frozen_at := COALESCE($frozen_at, $max_int8);
   $stream_ref := get_stream_id($data_provider, $stream_id);
 
+  -- Fail-fast guard: ensure stream exists before calling _core function
+  IF $stream_ref IS NULL {
+      ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+  }
+
   -- Base time determination: Use parameter, metadata, or first event time.
   $effective_base_time INT8;
   if $base_time is not null {
       $effective_base_time := $base_time;
   } else {
-      $effective_base_time := get_latest_metadata_int_priv($stream_ref, 'default_base_time');
+      $effective_base_time := get_latest_metadata_int_core($stream_ref, 'default_base_time');
   }
   -- Note: Base time logic differs slightly from get_record_composed which defaults to 0.
   -- Here we might need to query the first actual event if metadata is missing.
@@ -331,10 +336,10 @@ RETURNS TABLE(
   }
 
   -- Permissions check (must be done before cache logic)
-  IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, $from, $to) {
+  IF !is_allowed_to_read_all_core($stream_ref, $lower_caller, $from, $to) {
       ERROR('Not allowed to read stream');
   }
-  IF !is_allowed_to_compose_all($data_provider, $stream_id, $from, $to) {
+  IF !is_allowed_to_compose_all_core($stream_ref, $from, $to) {
       ERROR('Not allowed to compose stream');
   }
 

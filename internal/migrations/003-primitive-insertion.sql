@@ -42,17 +42,17 @@ CREATE OR REPLACE ACTION insert_records(
     $stream_refs := get_stream_ids($data_provider, $stream_id);
 
     -- Check stream existence using stream refs (handles nulls for non-existent streams)
-    if !stream_exists_batch_priv($stream_refs) {
+    if !stream_exists_batch_core($stream_refs) {
         ERROR('one or more streams do not exist');
     }
 
     -- Check if streams are primitive using stream refs
-    if !is_primitive_stream_batch_priv($stream_refs) {
+    if !is_primitive_stream_batch_core($stream_refs) {
         ERROR('one or more streams are not primitive streams');
     }
 
     -- Validate that the wallet is allowed to write to each stream using stream refs
-    if !wallet_write_batch_priv($stream_refs, $lower_caller) {
+    if !wallet_write_batch_core($stream_refs, $lower_caller) {
         ERROR('wallet not allowed to write to one or more streams');
     }
 

@@ -19,7 +19,7 @@ CREATE OR REPLACE ACTION truflation_last_deployed_date(
     }
 
     -- Check read access first
-    if !is_allowed_to_read_priv($stream_ref, $lower_caller, 0, 0) {
+    if !is_allowed_to_read_core($stream_ref, $lower_caller, 0, 0) {
         ERROR('wallet not allowed to read');
     }
 
@@ -56,10 +56,13 @@ CREATE OR REPLACE ACTION truflation_insert_records(
 
     $current_block INT := @height;
 
-    -- Check stream existence in batch
-    for $row in stream_exists_batch($data_provider, $stream_id) {
-        if !$row.stream_exists {
-            ERROR('stream does not exist: data_provider=' || $row.data_provider || ', stream_id=' || $row.stream_id);
+    -- Get stream reference for all streams (get_stream_ids returns NULL for non-existent streams)
+    $stream_refs := get_stream_ids($data_provider, $stream_id);
+
+    -- Check stream existence using stream refs (NULL values indicate non-existent streams)
+    for $i in 1..array_length($stream_refs) {
+        if $stream_refs[$i] IS NULL {
+            ERROR('stream does not exist: data_provider=' || $data_provider[$i] || ', stream_id=' || $stream_id[$i]);
         }
     }
 
@@ -76,9 +79,6 @@ CREATE OR REPLACE ACTION truflation_insert_records(
             ERROR('wallet not allowed to write to stream: data_provider=' || $row.data_provider || ', stream_id=' || $row.stream_id);
         }
     }
-
-    -- Get stream reference for all streams
-    $stream_refs := get_stream_ids($data_provider, $stream_id);
 
     -- Insert all records using WITH RECURSIVE pattern to avoid round trips
     WITH RECURSIVE
@@ -153,7 +153,7 @@ CREATE OR REPLACE ACTION truflation_get_record_primitive(
     }
 
     -- Check read access first
-    if is_allowed_to_read_priv($stream_ref, $lower_caller, $from, $to) == false {
+    if is_allowed_to_read_core($stream_ref, $lower_caller, $from, $to) == false {
         ERROR('wallet not allowed to read');
     }
     $max_int8 INT8 := 9223372036854775000;
@@ -272,7 +272,7 @@ CREATE OR REPLACE ACTION truflation_last_rc_primitive(
     }
 
     -- Check read access, since we're querying directly from the primitive_events table
-    if is_allowed_to_read_priv($stream_ref, $lower_caller, NULL, $before) == false {
+    if is_allowed_to_read_core($stream_ref, $lower_caller, NULL, $before) == false {
         ERROR('wallet not allowed to read');
     }
     $max_int8 INT8 := 9223372036854775000;
@@ -335,7 +335,7 @@ CREATE OR REPLACE ACTION truflation_first_rc_primitive(
     }
 
     -- Check read access, since we're querying directly from the primitive_events table
-    if is_allowed_to_read_priv($stream_ref, $lower_caller, $after, NULL) == false {
+    if is_allowed_to_read_core($stream_ref, $lower_caller, $after, NULL) == false {
         ERROR('wallet not allowed to read');
     }
     $max_int8 INT8 := 9223372036854775000;
@@ -421,7 +421,7 @@ CREATE OR REPLACE ACTION truflation_get_index_primitive(
     $stream_ref := get_stream_id($data_provider, $stream_id);
 
     -- Check read permissions
-    if !is_allowed_to_read_all($data_provider, $stream_id, @caller, $from, $to) {
+    if !is_allowed_to_read_all_core($stream_ref, LOWER(@caller), $from, $to) {
         ERROR('Not allowed to read stream');
     }
 
@@ -580,7 +580,7 @@ CREATE OR REPLACE ACTION truflation_get_base_value(
     $lower_caller TEXT := LOWER(@caller);
     $stream_ref := get_stream_id($data_provider, $stream_id);
     -- Check read permissions
-    if !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, NULL, $base_time) {
+    if !is_allowed_to_read_all_core($stream_ref, $lower_caller, NULL, $base_time) {
         ERROR('Not allowed to read stream');
     }
     
@@ -695,10 +695,10 @@ RETURNS TABLE(
     }
 
     -- Check permissions; raises error if unauthorized
-    IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, $from, $to) {
+    IF !is_allowed_to_read_all_core($stream_ref, $lower_caller, $from, $to) {
         ERROR('Not allowed to read stream');
     }
-    IF !is_allowed_to_compose_all($data_provider, $stream_id, $from, $to) {
+    IF !is_allowed_to_compose_all_core($stream_ref, $from, $to) {
         ERROR('Not allowed to compose stream');
     }
 
@@ -759,47 +759,35 @@ RETURNS TABLE(
     -- Parent distinct start times and other CTEs remain the same...
     parent_distinct_start_times AS (
         SELECT DISTINCT
-            dp.address AS parent_dp,
-            s.stream_id AS parent_sid,
+            t.stream_ref,
             t.start_time
         FROM taxonomies t
-        JOIN streams s ON t.stream_ref = s.id
-        JOIN data_providers dp ON s.data_provider_id = dp.id
         JOIN relevant_parents rp ON t.stream_ref = rp.stream_ref
         WHERE t.disabled_at IS NULL
     ),
 
     parent_next_starts AS (
         SELECT
-            parent_dp,
-            parent_sid,
+            stream_ref,
             start_time,
-            LEAD(start_time) OVER (PARTITION BY parent_dp, parent_sid ORDER BY start_time) as next_start_time
+            LEAD(start_time) OVER (PARTITION BY stream_ref ORDER BY start_time) as next_start_time
         FROM parent_distinct_start_times
     ),
 
     taxonomy_true_segments AS (
         SELECT
-            t.parent_dp,
-            t.parent_sid,
-            t.child_dp,
-            t.child_sid,
+            t.stream_ref,
+            t.child_stream_ref,
             t.weight_for_segment,
             t.segment_start,
             COALESCE(pns.next_start_time, $max_int8) - 1 AS segment_end
         FROM (
             SELECT
-                parent_dp.address AS parent_dp,
-                parent_s.stream_id AS parent_sid,
-                child_dp.address AS child_dp,
-                child_s.stream_id AS child_sid,
+                tx.stream_ref,
+                tx.child_stream_ref,
                 tx.weight AS weight_for_segment,
                 tx.start_time AS segment_start
             FROM taxonomies tx
-            JOIN streams parent_s ON tx.stream_ref = parent_s.id
-            JOIN data_providers parent_dp ON parent_s.data_provider_id = parent_dp.id
-            JOIN streams child_s ON tx.child_stream_ref = child_s.id
-            JOIN data_providers child_dp ON child_s.data_provider_id = child_dp.id
             JOIN (
                 SELECT
                     t.stream_ref, t.start_time,
@@ -814,33 +802,28 @@ RETURNS TABLE(
             WHERE tx.disabled_at IS NULL
         ) t
         JOIN parent_next_starts pns
-          ON t.parent_dp = pns.parent_dp
-         AND t.parent_sid = pns.parent_sid
+          ON t.stream_ref = pns.stream_ref
          AND t.segment_start = pns.start_time
     ),
 
     hierarchy AS (
       SELECT
-          tts.parent_dp AS root_dp,
-          tts.parent_sid AS root_sid,
-          tts.child_dp AS descendant_dp,
-          tts.child_sid AS descendant_sid,
+          tts.stream_ref AS root_stream_ref,
+          tts.child_stream_ref AS descendant_stream_ref,
           tts.weight_for_segment AS raw_weight,
           tts.segment_start AS path_start,
           tts.segment_end AS path_end,
           1 AS level
       FROM taxonomy_true_segments tts
-      WHERE tts.parent_dp = $data_provider AND tts.parent_sid = $stream_id
+      WHERE tts.stream_ref = $stream_ref
         AND tts.segment_end >= (SELECT anchor_time FROM anchor)
         AND tts.segment_start <= $effective_to
 
       UNION ALL
 
       SELECT
-          h.root_dp,
-          h.root_sid,
-          tts.child_dp AS descendant_dp,
-          tts.child_sid AS descendant_sid,
+          h.root_stream_ref,
+          tts.child_stream_ref AS descendant_stream_ref,
           (h.raw_weight * tts.weight_for_segment)::NUMERIC(36,18) AS raw_weight,
           GREATEST(h.path_start, tts.segment_start) AS path_start,
           LEAST(h.path_end, tts.segment_end) AS path_end,
@@ -848,7 +831,7 @@ RETURNS TABLE(
       FROM
           hierarchy h
       JOIN taxonomy_true_segments tts
-          ON h.descendant_dp = tts.parent_dp AND h.descendant_sid = tts.parent_sid
+          ON h.descendant_stream_ref = tts.stream_ref
       WHERE
           GREATEST(h.path_start, tts.segment_start) <= LEAST(h.path_end, tts.segment_end)
           AND LEAST(h.path_end, tts.segment_end) >= (SELECT anchor_time FROM anchor)
@@ -858,41 +841,25 @@ RETURNS TABLE(
 
     hierarchy_primitive_paths AS (
       SELECT
-          h.descendant_dp AS primitive_dp,
-          h.descendant_sid AS primitive_sid,
+          h.descendant_stream_ref AS primitive_stream_ref,
           h.raw_weight,
           h.path_start,
           h.path_end
       FROM hierarchy h
       WHERE EXISTS (
-          SELECT 1
-          FROM streams s
-          JOIN data_providers dp2 ON dp2.id = s.data_provider_id
-          WHERE dp2.address = h.descendant_dp
-            AND s.stream_id = h.descendant_sid
+          SELECT 1 FROM streams s
+          WHERE s.id = h.descendant_stream_ref
             AND s.stream_type = 'primitive'
       )
     ),
 
     primitive_weights AS (
       SELECT
-          hpp.primitive_dp AS data_provider,
-          hpp.primitive_sid AS stream_id,
+          hpp.primitive_stream_ref,
           hpp.raw_weight,
           hpp.path_start AS group_sequence_start,
           hpp.path_end AS group_sequence_end
       FROM hierarchy_primitive_paths hpp
-    ),
-
-    primitive_weights_ref AS (
-      SELECT
-        s.id AS primitive_stream_ref,
-        pw.raw_weight,
-        pw.group_sequence_start,
-        pw.group_sequence_end
-      FROM primitive_weights pw
-      JOIN data_providers dp ON dp.address = pw.data_provider
-      JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = pw.stream_id
     ),
 
     cleaned_event_times AS (
@@ -901,8 +868,8 @@ RETURNS TABLE(
             -- 1. Primitive event times strictly within the requested range
             SELECT pe.event_time
             FROM primitive_events pe
-            JOIN primitive_weights_ref pwr
-              ON pe.stream_ref = pwr.primitive_stream_ref
+            JOIN primitive_weights pwr
+              ON pe.stream_ref = pw.primitive_stream_ref
              AND pe.event_time >= pwr.group_sequence_start
              AND pe.event_time <= pwr.group_sequence_end
             WHERE pe.event_time > $effective_from
@@ -912,7 +879,7 @@ RETURNS TABLE(
 
             -- 2. Taxonomy start times (weight changes) strictly within the range
             SELECT pwr.group_sequence_start AS event_time
-            FROM primitive_weights_ref pwr
+            FROM primitive_weights pwr
             WHERE pwr.group_sequence_start > $effective_from
               AND pwr.group_sequence_start <= $effective_to
         ) all_times_in_range
@@ -925,8 +892,8 @@ RETURNS TABLE(
             FROM (
                 SELECT pe.event_time
                 FROM primitive_events pe
-                JOIN primitive_weights_ref pwr
-                  ON pe.stream_ref = pwr.primitive_stream_ref
+                JOIN primitive_weights pwr
+                  ON pe.stream_ref = pw.primitive_stream_ref
                  AND pe.event_time >= pwr.group_sequence_start
                  AND pe.event_time <= pwr.group_sequence_end
                 WHERE pe.event_time <= $effective_from
@@ -934,7 +901,7 @@ RETURNS TABLE(
                 UNION
 
                 SELECT pwr.group_sequence_start AS event_time
-                FROM primitive_weights_ref pwr
+                FROM primitive_weights pwr
                 WHERE pwr.group_sequence_start <= $effective_from
 
             ) all_times_before
@@ -975,7 +942,7 @@ RETURNS TABLE(
             ) pe_inner
             WHERE pe_inner.event_time <= $effective_from
               AND EXISTS (
-                  SELECT 1 FROM primitive_weights_ref pwr_exists
+                  SELECT 1 FROM primitive_weights pwr_exists
                   WHERE pwr_exists.primitive_stream_ref = pe_inner.stream_ref
               )
         ) pe
@@ -1014,8 +981,8 @@ RETURNS TABLE(
                     parse_unix_timestamp(pe_calc.truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 AS truf_ts
                 FROM primitive_events pe_calc
             ) pe_inner
-            JOIN primitive_weights_ref pwr
-               ON pe_inner.stream_ref = pwr.primitive_stream_ref
+            JOIN primitive_weights pwr
+               ON pe_inner.stream_ref = pw.primitive_stream_ref
               AND pe_inner.event_time >= pwr.group_sequence_start
               AND pe_inner.event_time <= pwr.group_sequence_end
             WHERE pe_inner.event_time > $effective_from
@@ -1270,12 +1237,13 @@ RETURNS TABLE(
     /*
      * Step 1: Basic setup
      */
-    IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, NULL, $before) {
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+    IF !is_allowed_to_read_all_core($stream_ref, $lower_caller, NULL, $before) {
         ERROR('Not allowed to read stream');
     }
 
     -- Check compose permissions
-    if !is_allowed_to_compose_all($data_provider, $stream_id, NULL, $before) {
+    if !is_allowed_to_compose_all_core($stream_ref, NULL, $before) {
         ERROR('Not allowed to compose stream');
     }
 
@@ -1445,7 +1413,8 @@ RETURNS TABLE(
     /*
      * Step 1: Basic setup
      */
-    IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, $after, NULL) {
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+    IF !is_allowed_to_read_all_core($stream_ref, $lower_caller, $after, NULL) {
         ERROR('Not allowed to read stream');
     }
 
@@ -1617,12 +1586,17 @@ RETURNS TABLE(
     -- Resolve referenced stream once for anchor filters
     $stream_ref := get_stream_id($data_provider, $stream_id);
 
+    -- Fail-fast guard: ensure stream exists before calling _core function
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
+
     -- Base time determination: Use parameter, metadata, or first event time.
     $effective_base_time INT8;
     if $base_time is not null {
         $effective_base_time := $base_time;
     } else {
-        $effective_base_time := get_latest_metadata_int_priv($stream_ref, 'default_base_time');
+        $effective_base_time := get_latest_metadata_int_core($stream_ref, 'default_base_time');
     }
     $effective_base_time := COALESCE($effective_base_time, 0);
 
@@ -1631,10 +1605,10 @@ RETURNS TABLE(
     }
 
     -- Permissions check
-    IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, $from, $to) {
+    IF !is_allowed_to_read_all_core($stream_ref, $lower_caller, $from, $to) {
         ERROR('Not allowed to read stream');
     }
-    IF !is_allowed_to_compose_all($data_provider, $stream_id, $from, $to) {
+    IF !is_allowed_to_compose_all_core($stream_ref, $from, $to) {
         ERROR('Not allowed to compose stream');
     }
 
@@ -1710,47 +1684,35 @@ RETURNS TABLE(
 
     parent_distinct_start_times AS (
         SELECT DISTINCT
-            dp.address AS parent_dp,
-            s.stream_id AS parent_sid,
+            t.stream_ref,
             t.start_time
         FROM taxonomies t
-        JOIN streams s ON t.stream_ref = s.id
-        JOIN data_providers dp ON s.data_provider_id = dp.id
         JOIN relevant_parents rp ON t.stream_ref = rp.stream_ref
         WHERE t.disabled_at IS NULL
     ),
 
     parent_next_starts AS (
         SELECT
-            parent_dp,
-            parent_sid,
+            stream_ref,
             start_time,
-            LEAD(start_time) OVER (PARTITION BY parent_dp, parent_sid ORDER BY start_time) as next_start_time
+            LEAD(start_time) OVER (PARTITION BY stream_ref ORDER BY start_time) as next_start_time
         FROM parent_distinct_start_times
     ),
 
     taxonomy_true_segments AS (
         SELECT
-            t.parent_dp,
-            t.parent_sid,
-            t.child_dp,
-            t.child_sid,
+            t.stream_ref,
+            t.child_stream_ref,
             t.weight_for_segment,
             t.segment_start,
             COALESCE(pns.next_start_time, $max_int8) - 1 AS segment_end
         FROM (
             SELECT
-                parent_dp.address AS parent_dp,
-                parent_s.stream_id AS parent_sid,
-                child_dp.address AS child_dp,
-                child_s.stream_id AS child_sid,
+                tx.stream_ref,
+                tx.child_stream_ref,
                 tx.weight AS weight_for_segment,
                 tx.start_time AS segment_start
             FROM taxonomies tx
-            JOIN streams parent_s ON tx.stream_ref = parent_s.id
-            JOIN data_providers parent_dp ON parent_s.data_provider_id = parent_dp.id
-            JOIN streams child_s ON tx.child_stream_ref = child_s.id
-            JOIN data_providers child_dp ON child_s.data_provider_id = child_dp.id
             JOIN (
                 SELECT
                     t.stream_ref, t.start_time,
@@ -1765,41 +1727,35 @@ RETURNS TABLE(
             WHERE tx.disabled_at IS NULL
         ) t
         JOIN parent_next_starts pns
-          ON t.parent_dp = pns.parent_dp
-         AND t.parent_sid = pns.parent_sid
+          ON t.stream_ref = pns.stream_ref
          AND t.segment_start = pns.start_time
     ),
 
     hierarchy AS (
       SELECT
-          tts.parent_dp AS root_dp,
-          tts.parent_sid AS root_sid,
-          tts.child_dp AS descendant_dp,
-          tts.child_sid AS descendant_sid,
+          tts.stream_ref AS root_stream_ref,
+          tts.child_stream_ref AS descendant_stream_ref,
           tts.weight_for_segment AS raw_weight,
           tts.weight_for_segment AS effective_weight,
           tts.segment_start AS path_start,
           tts.segment_end AS path_end,
           1 AS level
       FROM taxonomy_true_segments tts
-      WHERE tts.parent_dp = $data_provider AND tts.parent_sid = $stream_id
+      WHERE tts.stream_ref = $stream_ref
         AND tts.segment_end >= (SELECT anchor_time FROM anchor)
         AND tts.segment_start <= $effective_to
 
       UNION ALL
 
       SELECT
-          h.root_dp,
-          h.root_sid,
-          tts.child_dp AS descendant_dp,
-          tts.child_sid AS descendant_sid,
+          h.root_stream_ref,
+          tts.child_stream_ref AS descendant_stream_ref,
           (h.raw_weight * tts.weight_for_segment)::NUMERIC(36,18) AS raw_weight,
           (h.effective_weight * (
-              tts.weight_for_segment / 
-              (SELECT SUM(sibling_tts.weight_for_segment) 
-               FROM taxonomy_true_segments sibling_tts 
-               WHERE sibling_tts.parent_dp = h.descendant_dp 
-                 AND sibling_tts.parent_sid = h.descendant_sid
+              tts.weight_for_segment /
+              (SELECT SUM(sibling_tts.weight_for_segment)
+               FROM taxonomy_true_segments sibling_tts
+               WHERE sibling_tts.stream_ref = h.descendant_stream_ref
                  AND sibling_tts.segment_start = tts.segment_start
                  AND sibling_tts.segment_end = tts.segment_end)::NUMERIC(36,18)
           ))::NUMERIC(36,18) AS effective_weight,
@@ -1809,7 +1765,7 @@ RETURNS TABLE(
       FROM
           hierarchy h
       JOIN taxonomy_true_segments tts
-          ON h.descendant_dp = tts.parent_dp AND h.descendant_sid = tts.parent_sid
+          ON h.descendant_stream_ref = tts.stream_ref
       WHERE
           GREATEST(h.path_start, tts.segment_start) <= LEAST(h.path_end, tts.segment_end)
           AND LEAST(h.path_end, tts.segment_end) >= (SELECT anchor_time FROM anchor)
@@ -1819,40 +1775,25 @@ RETURNS TABLE(
 
     hierarchy_primitive_paths AS (
       SELECT
-          h.descendant_dp AS child_data_provider,
-          h.descendant_sid AS child_stream_id,
+          h.descendant_stream_ref AS primitive_stream_ref,
           h.effective_weight AS raw_weight,
           h.path_start AS group_sequence_start,
           h.path_end AS group_sequence_end
       FROM hierarchy h
       WHERE EXISTS (
           SELECT 1 FROM streams s
-          JOIN data_providers dp2 ON dp2.id = s.data_provider_id
-          WHERE dp2.address = h.descendant_dp
-            AND s.stream_id = h.descendant_sid
+          WHERE s.id = h.descendant_stream_ref
             AND s.stream_type = 'primitive'
       )
     ),
 
     primitive_weights AS (
       SELECT
-          hpp.child_data_provider AS data_provider,
-          hpp.child_stream_id     AS stream_id,
+          hpp.primitive_stream_ref,
           hpp.raw_weight,
           hpp.group_sequence_start,
           hpp.group_sequence_end
       FROM hierarchy_primitive_paths hpp
-    ),
-
-    primitive_weights_ref AS (
-      SELECT
-        s.id AS primitive_stream_ref,
-        pw.raw_weight,
-        pw.group_sequence_start,
-        pw.group_sequence_end
-      FROM primitive_weights pw
-      JOIN data_providers dp ON dp.address = pw.data_provider
-      JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = pw.stream_id
     ),
 
     cleaned_event_times AS (
@@ -1860,8 +1801,8 @@ RETURNS TABLE(
         FROM (
             SELECT pe.event_time
             FROM primitive_events pe
-            JOIN primitive_weights_ref pwr
-              ON pe.stream_ref = pwr.primitive_stream_ref
+            JOIN primitive_weights pwr
+              ON pe.stream_ref = pw.primitive_stream_ref
              AND pe.event_time >= pwr.group_sequence_start
              AND pe.event_time <= pwr.group_sequence_end
             WHERE pe.event_time > $effective_from
@@ -1870,7 +1811,7 @@ RETURNS TABLE(
             UNION
 
             SELECT pwr.group_sequence_start AS event_time
-            FROM primitive_weights_ref pwr
+            FROM primitive_weights pwr
             WHERE pwr.group_sequence_start > $effective_from
               AND pwr.group_sequence_start <= $effective_to
         ) all_times_in_range
@@ -1882,8 +1823,8 @@ RETURNS TABLE(
             FROM (
                 SELECT pe.event_time
                 FROM primitive_events pe
-                JOIN primitive_weights_ref pwr
-                  ON pe.stream_ref = pwr.primitive_stream_ref
+                JOIN primitive_weights pwr
+                  ON pe.stream_ref = pw.primitive_stream_ref
                  AND pe.event_time >= pwr.group_sequence_start
                  AND pe.event_time <= pwr.group_sequence_end
                 WHERE pe.event_time <= $effective_from
@@ -1891,7 +1832,7 @@ RETURNS TABLE(
                 UNION
 
                 SELECT pwr.group_sequence_start AS event_time
-                FROM primitive_weights_ref pwr
+                FROM primitive_weights pwr
                 WHERE pwr.group_sequence_start <= $effective_from
 
             ) all_times_before
@@ -1932,7 +1873,7 @@ RETURNS TABLE(
             ) pe_inner
             WHERE pe_inner.event_time <= $effective_from
               AND EXISTS (
-                  SELECT 1 FROM primitive_weights_ref pwr_exists
+                  SELECT 1 FROM primitive_weights pwr_exists
                   WHERE pwr_exists.primitive_stream_ref = pe_inner.stream_ref
               )
         ) pe
@@ -1971,8 +1912,8 @@ RETURNS TABLE(
                     parse_unix_timestamp(pe_calc.truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 AS truf_ts
                 FROM primitive_events pe_calc
             ) pe_inner
-            JOIN primitive_weights_ref pwr
-               ON pe_inner.stream_ref = pwr.primitive_stream_ref
+            JOIN primitive_weights pwr
+               ON pe_inner.stream_ref = pw.primitive_stream_ref
               AND pe_inner.event_time >= pwr.group_sequence_start
               AND pe_inner.event_time <= pwr.group_sequence_end
             WHERE pe_inner.event_time > $effective_from
