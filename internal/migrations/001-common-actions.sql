@@ -510,7 +510,8 @@ CREATE OR REPLACE ACTION is_stream_owner_priv(
 ) PRIVATE view returns (is_owner BOOL) {
     -- Check if the caller is the owner by looking at the latest stream_owner metadata
     for $row in SELECT COALESCE(
-        (SELECT LOWER(m.value_ref) = LOWER($caller)
+        -- do not use LOWER here, or it will break the index lookup
+        (SELECT m.value_ref = LOWER($caller)
          FROM metadata m
          WHERE m.stream_ref = $stream_ref
            AND m.metadata_key = 'stream_owner'
@@ -746,7 +747,8 @@ CREATE OR REPLACE ACTION get_metadata_priv(
         FROM metadata
            WHERE metadata_key = $key
             AND disabled_at IS NULL
-            AND ($ref IS NULL OR LOWER(value_ref) = LOWER($ref))
+            -- do not use LOWER on value_ref, or it will break the index lookup
+            AND ($ref IS NULL OR value_ref = LOWER($ref))
             AND stream_ref = $stream_ref
        ORDER BY
                CASE WHEN $order_by = 'created_at DESC' THEN created_at END DESC,
@@ -1412,7 +1414,8 @@ CREATE OR REPLACE ACTION list_streams(
               s.created_at
             FROM streams s
             JOIN data_providers dp ON s.data_provider_id = dp.id
-            WHERE ($data_provider IS NULL OR $data_provider = '' OR LOWER(dp.address) = LOWER($data_provider))
+            -- do not use LOWER on dp.address, or it will break the index lookup
+            WHERE ($data_provider IS NULL OR $data_provider = '' OR dp.address = LOWER($data_provider))
             AND s.created_at > $block_height
             ORDER BY
                CASE WHEN $order_by = 'created_at DESC' THEN s.created_at END DESC,

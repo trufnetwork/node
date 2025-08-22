@@ -774,7 +774,8 @@ CREATE OR REPLACE ACTION wallet_write_batch_priv(
         JOIN unique_refs u ON u.stream_ref = m.stream_ref
         WHERE m.metadata_key = 'allow_write_wallet'
           AND m.disabled_at IS NULL
-          AND LOWER(m.value_ref) = $lowercase_wallet
+          -- do not use LOWER on value_ref, or it will break the index lookup
+          AND m.value_ref = $lowercase_wallet
     ),
     allowed AS (
         SELECT u.stream_ref,
