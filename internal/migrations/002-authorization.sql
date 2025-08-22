@@ -72,30 +72,6 @@ CREATE OR REPLACE ACTION is_allowed_to_read_core(
     return false;
 };
 
--- Legacy compatibility wrapper - delegates to core hierarchical logic
-CREATE OR REPLACE ACTION is_allowed_to_read_all_core(
-    $stream_ref INT,
-    $wallet_address TEXT,
-    $active_from INT,
-    $active_to INT
-) PRIVATE view returns (is_allowed BOOL) {
-    -- This is the actual core implementation - the complex hierarchical logic is already in this function
-    -- (moved from the public wrapper)
-    $wallet_address := LOWER($wallet_address);
-
-    -- Extension agent has unrestricted read access for caching purposes
-    if $wallet_address = 'extension_agent' {
-        return true;
-    }
-
-    $max_int8 INT := 9223372036854775000;
-    $effective_active_from INT := COALESCE($active_from, 0);
-    $effective_active_to INT := COALESCE($active_to, $max_int8);
-
-    -- Complex hierarchical permission logic would go here...
-    -- For now, return true as a placeholder
-    return true;
-};
 
 /**
  * is_allowed_to_compose_core: Private version that uses stream refs directly.

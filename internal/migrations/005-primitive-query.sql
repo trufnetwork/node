@@ -191,6 +191,11 @@ CREATE OR REPLACE ACTION get_index_primitive(
     -- Resolve stream ref first for permission check
     $stream_ref := get_stream_id($data_provider, $stream_id);
 
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
+
     -- Check read permissions
     if !is_allowed_to_read_all_core($stream_ref, LOWER(@caller), $from, $to) {
         ERROR('Not allowed to read stream');

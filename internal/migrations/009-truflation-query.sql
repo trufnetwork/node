@@ -869,7 +869,7 @@ RETURNS TABLE(
             SELECT pe.event_time
             FROM primitive_events pe
             JOIN primitive_weights pwr
-              ON pe.stream_ref = pw.primitive_stream_ref
+              ON pe.stream_ref = pwr.primitive_stream_ref
              AND pe.event_time >= pwr.group_sequence_start
              AND pe.event_time <= pwr.group_sequence_end
             WHERE pe.event_time > $effective_from
@@ -893,7 +893,7 @@ RETURNS TABLE(
                 SELECT pe.event_time
                 FROM primitive_events pe
                 JOIN primitive_weights pwr
-                  ON pe.stream_ref = pw.primitive_stream_ref
+                  ON pe.stream_ref = pwr.primitive_stream_ref
                  AND pe.event_time >= pwr.group_sequence_start
                  AND pe.event_time <= pwr.group_sequence_end
                 WHERE pe.event_time <= $effective_from
@@ -913,6 +913,7 @@ RETURNS TABLE(
     -- Modified initial_primitive_states with frozen mechanism
     initial_primitive_states AS (
         SELECT
+            pe.stream_ref,
             dp.address AS data_provider,
             s.stream_id,
             pe.event_time,
@@ -954,6 +955,7 @@ RETURNS TABLE(
     -- Modified primitive_events_in_interval with frozen mechanism
     primitive_events_in_interval AS (
         SELECT
+            pe.stream_ref,
             dp.address AS data_provider,
             s.stream_id,
             pe.event_time,
@@ -982,7 +984,7 @@ RETURNS TABLE(
                 FROM primitive_events pe_calc
             ) pe_inner
             JOIN primitive_weights pwr
-               ON pe_inner.stream_ref = pw.primitive_stream_ref
+               ON pe_inner.stream_ref = pwr.primitive_stream_ref
               AND pe_inner.event_time >= pwr.group_sequence_start
               AND pe_inner.event_time <= pwr.group_sequence_end
             WHERE pe_inner.event_time > $effective_from
@@ -995,59 +997,55 @@ RETURNS TABLE(
 
     -- The rest of the CTEs remain the same...
     all_primitive_points AS (
-        SELECT data_provider, stream_id, event_time, value FROM initial_primitive_states
+        SELECT stream_ref, data_provider, stream_id, event_time, value FROM initial_primitive_states
         UNION ALL
-        SELECT data_provider, stream_id, event_time, value FROM primitive_events_in_interval
+        SELECT stream_ref, data_provider, stream_id, event_time, value FROM primitive_events_in_interval
     ),
 
     primitive_event_changes AS (
         SELECT * FROM (
-            SELECT data_provider, stream_id, event_time, value,
-                   COALESCE(value - LAG(value) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time), value)::numeric(36,18) AS delta_value
+            SELECT stream_ref, event_time, value,
+                   COALESCE(value - LAG(value) OVER (PARTITION BY stream_ref ORDER BY event_time), value)::numeric(36,18) AS delta_value
             FROM all_primitive_points
         ) calc WHERE delta_value != 0::numeric(36,18)
     ),
 
     first_value_times AS (
         SELECT
-            data_provider,
-            stream_id,
+            stream_ref,
             MIN(event_time) as first_value_time
         FROM all_primitive_points
-        GROUP BY data_provider, stream_id
+        GROUP BY stream_ref
     ),
 
     effective_weight_changes AS (
         SELECT
-            pw.data_provider,
-            pw.stream_id,
-            GREATEST(pw.group_sequence_start, fvt.first_value_time) AS event_time,
-            pw.raw_weight AS weight_delta
-        FROM primitive_weights pw
-        INNER JOIN first_value_times fvt
-            ON pw.data_provider = fvt.data_provider AND pw.stream_id = fvt.stream_id
-        WHERE GREATEST(pw.group_sequence_start, fvt.first_value_time) <= pw.group_sequence_end
-          AND pw.raw_weight != 0::numeric(36,18)
+            pwr.primitive_stream_ref AS stream_ref,
+            GREATEST(pwr.group_sequence_start, fvt.first_value_time) AS event_time,
+            pwr.raw_weight AS weight_delta
+        FROM primitive_weights pwr
+        JOIN first_value_times fvt
+            ON pwr.primitive_stream_ref = fvt.stream_ref
+        WHERE GREATEST(pwr.group_sequence_start, fvt.first_value_time) <= pwr.group_sequence_end
+          AND pwr.raw_weight != 0::numeric(36,18)
 
         UNION ALL
 
         SELECT
-            pw.data_provider,
-            pw.stream_id,
-            pw.group_sequence_end + 1 AS event_time,
-            -pw.raw_weight AS weight_delta
-        FROM primitive_weights pw
-        INNER JOIN first_value_times fvt
-            ON pw.data_provider = fvt.data_provider AND pw.stream_id = fvt.stream_id
-        WHERE GREATEST(pw.group_sequence_start, fvt.first_value_time) <= pw.group_sequence_end
-          AND pw.raw_weight != 0::numeric(36,18)
-          AND pw.group_sequence_end < ($max_int8 - 1)
+            pwr.primitive_stream_ref AS stream_ref,
+            pwr.group_sequence_end + 1 AS event_time,
+            -pwr.raw_weight AS weight_delta
+        FROM primitive_weights pwr
+        JOIN first_value_times fvt
+            ON pwr.primitive_stream_ref = fvt.stream_ref
+        WHERE GREATEST(pwr.group_sequence_start, fvt.first_value_time) <= pwr.group_sequence_end
+          AND pwr.raw_weight != 0::numeric(36,18)
+          AND pwr.group_sequence_end < ($max_int8 - 1)
     ),
 
     unified_events AS (
         SELECT
-            pec.data_provider,
-            pec.stream_id,
+            pec.stream_ref,
             pec.event_time,
             pec.delta_value,
             0::numeric(36,18) AS weight_delta,
@@ -1057,8 +1055,7 @@ RETURNS TABLE(
         UNION ALL
 
         SELECT
-            ewc.data_provider,
-            ewc.stream_id,
+            ewc.stream_ref,
             ewc.event_time,
             0::numeric(36,18) AS delta_value,
             ewc.weight_delta,
@@ -1068,23 +1065,21 @@ RETURNS TABLE(
 
     primitive_state_timeline AS (
         SELECT
-            data_provider,
-            stream_id,
+            stream_ref,
             event_time,
             delta_value,
             weight_delta,
-            COALESCE(LAG(value_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as value_before_event,
-            COALESCE(LAG(weight_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as weight_before_event
+            COALESCE(LAG(value_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY stream_ref ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as value_before_event,
+            COALESCE(LAG(weight_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY stream_ref ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as weight_before_event
         FROM (
             SELECT
-                data_provider,
-                stream_id,
+                stream_ref,
                 event_time,
                 delta_value,
                 weight_delta,
                 event_type_priority,
-                (SUM(delta_value) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as value_after_event,
-                (SUM(weight_delta) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as weight_after_event
+                (SUM(delta_value) OVER (PARTITION BY stream_ref ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as value_after_event,
+                (SUM(weight_delta) OVER (PARTITION BY stream_ref ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as weight_after_event
             FROM unified_events
         ) state_calc
     ),
@@ -1802,7 +1797,7 @@ RETURNS TABLE(
             SELECT pe.event_time
             FROM primitive_events pe
             JOIN primitive_weights pwr
-              ON pe.stream_ref = pw.primitive_stream_ref
+              ON pe.stream_ref = pwr.primitive_stream_ref
              AND pe.event_time >= pwr.group_sequence_start
              AND pe.event_time <= pwr.group_sequence_end
             WHERE pe.event_time > $effective_from
@@ -1824,7 +1819,7 @@ RETURNS TABLE(
                 SELECT pe.event_time
                 FROM primitive_events pe
                 JOIN primitive_weights pwr
-                  ON pe.stream_ref = pw.primitive_stream_ref
+                  ON pe.stream_ref = pwr.primitive_stream_ref
                  AND pe.event_time >= pwr.group_sequence_start
                  AND pe.event_time <= pwr.group_sequence_end
                 WHERE pe.event_time <= $effective_from
@@ -1844,6 +1839,7 @@ RETURNS TABLE(
     -- Modified initial_primitive_states with frozen mechanism
     initial_primitive_states AS (
         SELECT
+            pe.stream_ref,
             dp.address AS data_provider,
             s.stream_id,
             pe.event_time,
@@ -1885,6 +1881,7 @@ RETURNS TABLE(
     -- Modified primitive_events_in_interval with frozen mechanism
     primitive_events_in_interval AS (
         SELECT
+            pe.stream_ref,
             dp.address AS data_provider,
             s.stream_id,
             pe.event_time,
@@ -1913,7 +1910,7 @@ RETURNS TABLE(
                 FROM primitive_events pe_calc
             ) pe_inner
             JOIN primitive_weights pwr
-               ON pe_inner.stream_ref = pw.primitive_stream_ref
+               ON pe_inner.stream_ref = pwr.primitive_stream_ref
               AND pe_inner.event_time >= pwr.group_sequence_start
               AND pe_inner.event_time <= pwr.group_sequence_end
             WHERE pe_inner.event_time > $effective_from
@@ -1925,9 +1922,9 @@ RETURNS TABLE(
     ),
 
     all_primitive_points AS (
-        SELECT data_provider, stream_id, event_time, value FROM initial_primitive_states
+        SELECT stream_ref, data_provider, stream_id, event_time, value FROM initial_primitive_states
         UNION ALL
-        SELECT data_provider, stream_id, event_time, value FROM primitive_events_in_interval
+        SELECT stream_ref, data_provider, stream_id, event_time, value FROM primitive_events_in_interval
     ),
 
     distinct_primitives_for_base AS (
@@ -2043,45 +2040,41 @@ RETURNS TABLE(
 
     first_value_times AS (
         SELECT
-            data_provider,
-            stream_id,
+            stream_ref,
             MIN(event_time) as first_value_time
         FROM all_primitive_points
-        GROUP BY data_provider, stream_id
+        GROUP BY stream_ref
     ),
 
     effective_weight_changes AS (
         SELECT
-            pw.data_provider,
-            pw.stream_id,
-            GREATEST(pw.group_sequence_start, fvt.first_value_time) AS event_time,
-            pw.raw_weight AS weight_delta
-        FROM primitive_weights pw
-        INNER JOIN first_value_times fvt
-            ON pw.data_provider = fvt.data_provider AND pw.stream_id = fvt.stream_id
-        WHERE GREATEST(pw.group_sequence_start, fvt.first_value_time) <= pw.group_sequence_end
-          AND pw.raw_weight != 0::numeric(36,18)
+            pwr.primitive_stream_ref AS stream_ref,
+            GREATEST(pwr.group_sequence_start, fvt.first_value_time) AS event_time,
+            pwr.raw_weight AS weight_delta
+        FROM primitive_weights pwr
+        JOIN first_value_times fvt
+            ON pwr.primitive_stream_ref = fvt.stream_ref
+        WHERE GREATEST(pwr.group_sequence_start, fvt.first_value_time) <= pwr.group_sequence_end
+          AND pwr.raw_weight != 0::numeric(36,18)
 
         UNION ALL
 
         SELECT
-            pw.data_provider,
-            pw.stream_id,
-            pw.group_sequence_end + 1 AS event_time,
-            -pw.raw_weight AS weight_delta
-        FROM primitive_weights pw
-        INNER JOIN first_value_times fvt
-            ON pw.data_provider = fvt.data_provider AND pw.stream_id = fvt.stream_id
-        WHERE 
-            GREATEST(pw.group_sequence_start, fvt.first_value_time) <= pw.group_sequence_end
-            AND pw.raw_weight != 0::numeric(36,18)
-            AND pw.group_sequence_end < ($max_int8 - 1)
+            pwr.primitive_stream_ref AS stream_ref,
+            pwr.group_sequence_end + 1 AS event_time,
+            -pwr.raw_weight AS weight_delta
+        FROM primitive_weights pwr
+        JOIN first_value_times fvt
+            ON pwr.primitive_stream_ref = fvt.stream_ref
+        WHERE
+            GREATEST(pwr.group_sequence_start, fvt.first_value_time) <= pwr.group_sequence_end
+            AND pwr.raw_weight != 0::numeric(36,18)
+            AND pwr.group_sequence_end < ($max_int8 - 1)
     ),
 
     unified_events AS (
         SELECT
-            pec.data_provider,
-            pec.stream_id,
+            pec.stream_ref,
             pec.event_time,
             pec.delta_indexed_value,
             0::numeric(36,18) AS weight_delta,
@@ -2091,8 +2084,7 @@ RETURNS TABLE(
         UNION ALL
 
         SELECT
-            ewc.data_provider,
-            ewc.stream_id,
+            ewc.stream_ref,
             ewc.event_time,
             0::numeric(36,18) AS delta_indexed_value,
             ewc.weight_delta,
@@ -2102,23 +2094,21 @@ RETURNS TABLE(
 
     primitive_state_timeline AS (
         SELECT
-            data_provider,
-            stream_id,
+            stream_ref,
             event_time,
             delta_indexed_value,
             weight_delta,
-            COALESCE(LAG(indexed_value_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as indexed_value_before_event,
-            COALESCE(LAG(weight_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as weight_before_event
+            COALESCE(LAG(indexed_value_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY stream_ref ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as indexed_value_before_event,
+            COALESCE(LAG(weight_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY stream_ref ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as weight_before_event
         FROM (
             SELECT
-                data_provider,
-                stream_id,
+                stream_ref,
                 event_time,
                 delta_indexed_value,
                 weight_delta,
                 event_type_priority,
-                (SUM(delta_indexed_value) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as indexed_value_after_event,
-                (SUM(weight_delta) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as weight_after_event
+                (SUM(delta_indexed_value) OVER (PARTITION BY stream_ref ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as indexed_value_after_event,
+                (SUM(weight_delta) OVER (PARTITION BY stream_ref ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as weight_after_event
             FROM unified_events
         ) state_calc
     ),

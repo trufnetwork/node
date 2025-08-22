@@ -20,6 +20,11 @@ RETURNS TABLE(
   */
   $stream_ref := get_stream_id($data_provider, $stream_id);
 
+  -- Fail fast if stream doesn't exist
+  IF $stream_ref IS NULL {
+      ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+  }
+
   IF !is_allowed_to_read_all_core($stream_ref, $lower_caller, NULL, $before) {
       ERROR('Not allowed to read stream');
   }
@@ -163,6 +168,13 @@ RETURNS TABLE(
     /*
      * Step 1: Basic setup
      */
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
+
     IF !is_allowed_to_read_all_core($stream_ref, $lower_caller, $after, NULL) {
         ERROR('Not allowed to read stream');
     }
@@ -197,7 +209,6 @@ RETURNS TABLE(
     $max_int8 INT8 := 9223372036854775000;   -- "Infinity" sentinel
     $effective_after INT8 := COALESCE($after, 0);
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
-    $stream_ref := get_stream_id($data_provider, $stream_id);
 
     $earliest_event_time INT8;
 
@@ -569,20 +580,20 @@ RETURNS TABLE(
       FROM (
           SELECT pe.event_time
           FROM primitive_events pe
-          JOIN primitive_weights pw
-            ON pe.stream_ref = pw.primitive_stream_ref
-          AND pe.event_time >= pw.group_sequence_start
-          AND pe.event_time <= pw.group_sequence_end
+          JOIN primitive_weights pwr
+            ON pe.stream_ref = pwr.primitive_stream_ref
+          AND pe.event_time >= pwr.group_sequence_start
+          AND pe.event_time <= pwr.group_sequence_end
           WHERE pe.event_time > $effective_from
             AND pe.event_time <= $effective_to
             AND pe.created_at <= $effective_frozen_at
 
           UNION
 
-          SELECT pw.group_sequence_start AS event_time
-          FROM primitive_weights pw
-          WHERE pw.group_sequence_start > $effective_from
-            AND pw.group_sequence_start <= $effective_to
+          SELECT pwr.group_sequence_start AS event_time
+          FROM primitive_weights pwr
+          WHERE pwr.group_sequence_start > $effective_from
+            AND pwr.group_sequence_start <= $effective_to
       ) all_times_in_range
 
       UNION
@@ -592,18 +603,18 @@ RETURNS TABLE(
           FROM (
               SELECT pe.event_time
               FROM primitive_events pe
-              JOIN primitive_weights pw
-                ON pe.stream_ref = pw.primitive_stream_ref
-              AND pe.event_time >= pw.group_sequence_start
-              AND pe.event_time <= pw.group_sequence_end
+              JOIN primitive_weights pwr
+                ON pe.stream_ref = pwr.primitive_stream_ref
+              AND pe.event_time >= pwr.group_sequence_start
+              AND pe.event_time <= pwr.group_sequence_end
               WHERE pe.event_time <= $effective_from
                 AND pe.created_at <= $effective_frozen_at
 
               UNION
 
-              SELECT pw.group_sequence_start AS event_time
-              FROM primitive_weights pw
-              WHERE pw.group_sequence_start <= $effective_from
+              SELECT pwr.group_sequence_start AS event_time
+              FROM primitive_weights pwr
+              WHERE pwr.group_sequence_start <= $effective_from
 
           ) all_times_before
           ORDER BY event_time DESC
@@ -652,10 +663,10 @@ RETURNS TABLE(
                   ORDER BY pe_inner.created_at DESC
               ) as rn
           FROM primitive_events pe_inner
-          JOIN primitive_weights pw_check
-              ON pe_inner.stream_ref = pw_check.primitive_stream_ref
-            AND pe_inner.event_time >= pw_check.group_sequence_start
-            AND pe_inner.event_time <= pw_check.group_sequence_end
+          JOIN primitive_weights pwr
+              ON pe_inner.stream_ref = pwr.primitive_stream_ref
+            AND pe_inner.event_time >= pwr.group_sequence_start
+            AND pe_inner.event_time <= pwr.group_sequence_end
           WHERE pe_inner.event_time > $effective_from
               AND pe_inner.event_time <= $effective_to
               AND pe_inner.created_at <= $effective_frozen_at
