@@ -13,7 +13,7 @@ CREATE OR REPLACE ACTION is_allowed_to_read(
     $lowercase_wallet_address TEXT := LOWER($wallet_address);
 
     -- Extension agent has unrestricted read access for caching purposes
-    if $wallet_address = 'extension_agent' {
+    if $lowercase_wallet_address = 'extension_agent' {
         return true;
     }
 
@@ -26,7 +26,7 @@ CREATE OR REPLACE ACTION is_allowed_to_read(
     $stream_ref := get_stream_id($data_provider, $stream_id);
 
     -- if it's the owner, return true
-    if is_stream_owner_priv($stream_ref, $wallet_address) {
+    if is_stream_owner_priv($stream_ref, $lowercase_wallet_address) {
         return true;
     }
 
@@ -66,12 +66,12 @@ CREATE OR REPLACE ACTION is_allowed_to_read_priv(
     $lowercase_wallet_address TEXT := LOWER($wallet_address);
 
     -- Extension agent has unrestricted read access for caching purposes
-    if $wallet_address = 'extension_agent' {
+    if $lowercase_wallet_address = 'extension_agent' {
         return true;
     }
 
     -- if it's the owner, return true
-    if is_stream_owner_priv($stream_ref, $wallet_address) {
+    if is_stream_owner_priv($stream_ref, $lowercase_wallet_address) {
         return true;
     }
 
@@ -126,7 +126,7 @@ CREATE OR REPLACE ACTION is_allowed_to_compose(
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
     }
     if !stream_exists($composing_data_provider, $composing_stream_id) {
-        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $child_stream_id);
+        ERROR('Stream does not exist: data_provider=' || $composing_data_provider || ' stream_id=' || $composing_stream_id);
     }
 
     -- Convert to stream refs once for better performance

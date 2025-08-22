@@ -32,6 +32,8 @@ CREATE OR REPLACE ACTION get_stream_ids(
     SELECT stream_ref
     FROM direct_lookup
     ORDER BY idx {
+        -- the faster alternative would be to return the aggregated array,
+        -- however we can't make this efficiently without ARRAY_AGG(x ORDER BY y.column)
       $stream_refs = array_append($stream_refs, $row.stream_ref);
     }
     return $stream_refs;
