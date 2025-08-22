@@ -13,6 +13,11 @@ CREATE OR REPLACE ACTION truflation_last_deployed_date(
     $lower_caller TEXT := LOWER(@caller);
     $stream_ref := get_stream_id($data_provider, $stream_id);
 
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
+
     -- Check read access first
     if !is_allowed_to_read_priv($stream_ref, $lower_caller, 0, 0) {
         ERROR('wallet not allowed to read');
@@ -139,8 +144,13 @@ CREATE OR REPLACE ACTION truflation_get_record_primitive(
     -- Note: No cache; direct queries without computation
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
-    
+
     $stream_ref := get_stream_id($data_provider, $stream_id);
+
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
 
     -- Check read access first
     if is_allowed_to_read_priv($stream_ref, $lower_caller, $from, $to) == false {
@@ -256,6 +266,11 @@ CREATE OR REPLACE ACTION truflation_last_rc_primitive(
 
     $stream_ref := get_stream_id($data_provider, $stream_id);
 
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
+
     -- Check read access, since we're querying directly from the primitive_events table
     if is_allowed_to_read_priv($stream_ref, $lower_caller, NULL, $before) == false {
         ERROR('wallet not allowed to read');
@@ -311,8 +326,13 @@ CREATE OR REPLACE ACTION truflation_first_rc_primitive(
    -- Note: No cache; direct queries without computation
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
-    
+
     $stream_ref := get_stream_id($data_provider, $stream_id);
+
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
 
     -- Check read access, since we're querying directly from the primitive_events table
     if is_allowed_to_read_priv($stream_ref, $lower_caller, $after, NULL) == false {

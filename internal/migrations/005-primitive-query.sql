@@ -18,6 +18,11 @@ CREATE OR REPLACE ACTION get_record_primitive(
     $lower_caller TEXT := LOWER(@caller);
     $stream_ref := get_stream_id($data_provider, $stream_id);
 
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
+
     -- Check read access first
     if is_allowed_to_read_priv($stream_ref, $lower_caller, $from, $to) == false {
         ERROR('wallet not allowed to read');
@@ -36,7 +41,10 @@ CREATE OR REPLACE ACTION get_record_primitive(
         RETURN;
     }
 
-    $stream_ref := get_stream_id($data_provider, $stream_id);
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
 
     RETURN WITH
     -- Get base records within time range
@@ -100,6 +108,11 @@ CREATE OR REPLACE ACTION get_last_record_primitive(
 
     $stream_ref := get_stream_id($data_provider, $stream_id);
 
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
+
     -- Check read access, since we're querying directly from the primitive_events table
     if is_allowed_to_read_priv($stream_ref, $lower_caller, NULL, $before) == false {
         ERROR('wallet not allowed to read');
@@ -135,6 +148,11 @@ CREATE OR REPLACE ACTION get_first_record_primitive(
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
     $stream_ref := get_stream_id($data_provider, $stream_id);
+
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
 
     -- Check read access, since we're querying directly from the primitive_events table
     if is_allowed_to_read_priv($stream_ref, $lower_caller, $after, NULL) == false {

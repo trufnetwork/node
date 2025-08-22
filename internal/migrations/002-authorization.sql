@@ -730,8 +730,8 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all_priv(
 /**
  * wallet_write_batch_priv: Private batch version that uses stream refs directly.
  * Checks if a wallet can write to multiple streams using their stream references.
- * Handles null stream refs (skips them as they indicate non-existent streams).
- * Returns true if the wallet can write to all non-null streams, false otherwise.
+ * Returns false if any stream refs are null (indicating non-existent streams).
+ * Returns true only if the wallet can write to all existing streams.
  */
 CREATE OR REPLACE ACTION wallet_write_batch_priv(
     $stream_refs INT[],
@@ -786,11 +786,21 @@ CREATE OR REPLACE ACTION wallet_write_batch_priv(
         LEFT JOIN owners o ON o.stream_ref = u.stream_ref
         LEFT JOIN allowed_by_perm ap ON ap.stream_ref = u.stream_ref
     )
-    SELECT NOT EXISTS (
-        SELECT 1
-        FROM allowed
-        WHERE can_write = 0
-    ) AS result {
+    -- Return false if any nulls exist, otherwise return write permission check result
+    SELECT CASE
+        WHEN EXISTS (
+            SELECT 1
+            FROM idx
+            JOIN arr ON 1=1
+            WHERE arr.refs[i] IS NULL
+        ) THEN false
+        ELSE NOT EXISTS (
+            SELECT 1
+            FROM allowed
+            WHERE can_write = 0
+        )
+    END AS result
+    FROM (SELECT 1) dummy {
         return $row.result;
     }
     return false;

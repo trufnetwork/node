@@ -1147,8 +1147,8 @@ CREATE OR REPLACE ACTION stream_exists(
 /**
  * stream_exists_batch_priv: Private version that uses stream refs directly.
  * Checks if multiple streams exist using their stream references.
- * Handles null stream refs (skips them as they indicate non-existent streams).
- * Returns true if all non-null streams exist, false otherwise.
+ * Returns false if any stream refs are null (indicating non-existent streams).
+ * Returns true only if all streams exist and no stream refs are null.
  */
 CREATE OR REPLACE ACTION stream_exists_batch_priv(
     $stream_refs INT[]
@@ -1169,12 +1169,22 @@ CREATE OR REPLACE ACTION stream_exists_batch_priv(
         JOIN arr ON 1=1
         WHERE arr.refs[i] IS NOT NULL
     )
-    SELECT NOT EXISTS (
-        SELECT 1
-        FROM unique_refs u
-        LEFT JOIN streams s ON s.id = u.stream_ref
-        WHERE s.id IS NULL
-    ) AS result {
+    -- Return false if any nulls exist, otherwise return existence check result
+    SELECT CASE
+        WHEN EXISTS (
+            SELECT 1
+            FROM idx
+            JOIN arr ON 1=1
+            WHERE arr.refs[i] IS NULL
+        ) THEN false
+        ELSE NOT EXISTS (
+            SELECT 1
+            FROM unique_refs u
+            LEFT JOIN streams s ON s.id = u.stream_ref
+            WHERE s.id IS NULL
+        )
+    END AS result
+    FROM (SELECT 1) dummy {
         return $row.result;
     }
     return false;
@@ -1183,8 +1193,8 @@ CREATE OR REPLACE ACTION stream_exists_batch_priv(
 /**
  * is_primitive_stream_batch_priv: Private version that uses stream refs directly.
  * Checks if multiple streams are primitive using their stream references.
- * Handles null stream refs (skips them as they indicate non-existent streams).
- * Returns true if all non-null streams are primitive, false otherwise.
+ * Returns false if any stream refs are null (indicating non-existent streams).
+ * Returns true only if all streams exist and are primitive.
  */
 CREATE OR REPLACE ACTION is_primitive_stream_batch_priv(
     $stream_refs INT[]
@@ -1205,12 +1215,22 @@ CREATE OR REPLACE ACTION is_primitive_stream_batch_priv(
         JOIN arr ON 1=1
         WHERE arr.refs[i] IS NOT NULL
     )
-    SELECT NOT EXISTS (
-        SELECT 1
-        FROM unique_refs u
-        JOIN streams s ON s.id = u.stream_ref
-        WHERE s.stream_type != 'primitive'
-    ) AS result {
+    -- Return false if any nulls exist, otherwise return primitive check result
+    SELECT CASE
+        WHEN EXISTS (
+            SELECT 1
+            FROM idx
+            JOIN arr ON 1=1
+            WHERE arr.refs[i] IS NULL
+        ) THEN false
+        ELSE NOT EXISTS (
+            SELECT 1
+            FROM unique_refs u
+            JOIN streams s ON s.id = u.stream_ref
+            WHERE s.stream_type != 'primitive'
+        )
+    END AS result
+    FROM (SELECT 1) dummy {
         return $row.result;
     }
     return false;
