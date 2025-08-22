@@ -57,7 +57,7 @@ CREATE OR REPLACE ACTION truflation_insert_records(
     $current_block INT := @height;
 
     -- Get stream reference for all streams (get_stream_ids returns NULL for non-existent streams)
-    $stream_refs := get_stream_ids($data_provider, $stream_id);
+    $stream_refs := get_stream_ids($data_providers, $stream_id);
 
     -- Check stream existence using stream refs (NULL values indicate non-existent streams)
     for $i in 1..array_length($stream_refs) {
@@ -67,14 +67,14 @@ CREATE OR REPLACE ACTION truflation_insert_records(
     }
 
     -- Check if streams are primitive in batch
-    for $row in is_primitive_stream_batch($data_provider, $stream_id) {
+    for $row in is_primitive_stream_batch($data_providers, $stream_id) {
         if !$row.is_primitive {
             ERROR('stream is not a primitive stream: data_provider=' || $row.data_provider || ', stream_id=' || $row.stream_id);
         }
     }
 
     -- Validate that the wallet is allowed to write to each stream
-    for $row in is_wallet_allowed_to_write_batch($data_provider, $stream_id, $lower_caller) {
+    for $row in is_wallet_allowed_to_write_batch($data_providers, $stream_id, $lower_caller) {
         if !$row.is_allowed {
             ERROR('wallet not allowed to write to stream: data_provider=' || $row.data_provider || ', stream_id=' || $row.stream_id);
         }
@@ -914,8 +914,6 @@ RETURNS TABLE(
     initial_primitive_states AS (
         SELECT
             pe.stream_ref,
-            dp.address AS data_provider,
-            s.stream_id,
             pe.event_time,
             pe.value
         FROM (
@@ -947,8 +945,6 @@ RETURNS TABLE(
                   WHERE pwr_exists.primitive_stream_ref = pe_inner.stream_ref
               )
         ) pe
-        JOIN streams s ON pe.stream_ref = s.id
-        JOIN data_providers dp ON s.data_provider_id = dp.id
         WHERE pe.rn = 1
     ),
 
@@ -956,8 +952,6 @@ RETURNS TABLE(
     primitive_events_in_interval AS (
         SELECT
             pe.stream_ref,
-            dp.address AS data_provider,
-            s.stream_id,
             pe.event_time,
             pe.value
         FROM (
@@ -990,16 +984,14 @@ RETURNS TABLE(
             WHERE pe_inner.event_time > $effective_from
               AND pe_inner.event_time <= $effective_to
         ) pe
-        JOIN streams s ON pe.stream_ref = s.id
-        JOIN data_providers dp ON s.data_provider_id = dp.id
         WHERE pe.rn = 1
     ),
 
     -- The rest of the CTEs remain the same...
     all_primitive_points AS (
-        SELECT stream_ref, data_provider, stream_id, event_time, value FROM initial_primitive_states
+        SELECT stream_ref, event_time, value FROM initial_primitive_states
         UNION ALL
-        SELECT stream_ref, data_provider, stream_id, event_time, value FROM primitive_events_in_interval
+        SELECT stream_ref, event_time, value FROM primitive_events_in_interval
     ),
 
     primitive_event_changes AS (
@@ -1271,47 +1263,21 @@ RETURNS TABLE(
      * Step 2: Recursively gather all children (ignoring overshadow),
      *         then identify primitive leaves.
      */
-    for $row in WITH RECURSIVE all_taxonomies AS (
-      /* 2a) Direct children of ($data_provider, $stream_id) */
-      SELECT
-        dp.address AS data_provider,
-        s.stream_id,
-        cdp.address AS child_data_provider,
-        cs.stream_id AS child_stream_id
+    for $row in WITH RECURSIVE descendants AS (
+      SELECT t.child_stream_ref
       FROM taxonomies t
-      JOIN streams s ON t.stream_ref = s.id
-      JOIN data_providers dp ON s.data_provider_id = dp.id
-      JOIN streams cs ON t.child_stream_ref = cs.id
-      JOIN data_providers cdp ON cs.data_provider_id = cdp.id
-      WHERE dp.address = $data_provider
-        AND s.stream_id = $stream_id
-        AND t.disabled_at IS NULL
-
-      UNION
-
-      /* 2b) For each discovered child, gather its own children */
-      SELECT
-        at.child_data_provider AS data_provider,
-        at.child_stream_id     AS stream_id,
-        cdp.address AS child_data_provider,
-        cs.stream_id AS child_stream_id
-      FROM all_taxonomies at
-      JOIN streams s ON s.data_provider_id = (SELECT id FROM data_providers WHERE address = at.child_data_provider)
-        AND s.stream_id = at.child_stream_id
-      JOIN taxonomies t ON t.stream_ref = s.id
-      JOIN streams cs ON t.child_stream_ref = cs.id
-      JOIN data_providers cdp ON cs.data_provider_id = cdp.id
+      WHERE t.stream_ref = $stream_ref AND t.disabled_at IS NULL
+      UNION ALL
+      SELECT t.child_stream_ref
+      FROM taxonomies t
+      JOIN descendants d ON t.stream_ref = d.child_stream_ref
       WHERE t.disabled_at IS NULL
     ),
     primitive_leaves AS (
-      /* Keep only references pointing to primitive streams */
-      SELECT DISTINCT
-        at.child_data_provider AS data_provider,
-        at.child_stream_id     AS stream_id
-      FROM all_taxonomies at
-      JOIN streams s ON s.data_provider_id = (SELECT id FROM data_providers WHERE address = at.child_data_provider)
-        AND s.stream_id = at.child_stream_id
-        AND s.stream_type = 'primitive'
+      SELECT DISTINCT s.id AS stream_ref
+      FROM streams s
+      WHERE s.stream_type = 'primitive'
+        AND s.id IN (SELECT child_stream_ref FROM descendants)
     ),
     /*
      * Step 3: In each primitive, pick the single latest event_time <= effective_before.
@@ -1319,14 +1285,13 @@ RETURNS TABLE(
      */
     latest_events AS (
       SELECT
-        pl.data_provider,
-        pl.stream_id,
+        pl.stream_ref,
         pe_wrap.event_time,
         pe_wrap.value,
         pe_wrap.created_at,
         ROW_NUMBER() OVER (
-          PARTITION BY pl.data_provider, pl.stream_id
-          ORDER BY 
+          PARTITION BY pl.stream_ref
+          ORDER BY
             pe_wrap.event_time DESC,
             CASE WHEN pe_wrap.truf_ts > $effective_frozen_at THEN 0 ELSE 1 END,
             CASE WHEN pe_wrap.truf_ts > $effective_frozen_at THEN pe_wrap.truf_ts ELSE NULL END ASC,
@@ -1334,10 +1299,8 @@ RETURNS TABLE(
             pe_wrap.created_at DESC
         ) AS rn
       FROM primitive_leaves pl
-      JOIN streams s_pl ON s_pl.stream_id = pl.stream_id
-      JOIN data_providers dp_pl ON dp_pl.address = pl.data_provider AND dp_pl.id = s_pl.data_provider_id
       JOIN (
-        SELECT 
+        SELECT
           pe.stream_ref,
           pe.event_time,
           pe.value,
@@ -1345,14 +1308,13 @@ RETURNS TABLE(
           parse_unix_timestamp(pe.truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 AS truf_ts
         FROM primitive_events pe
       ) pe_wrap
-        ON pe_wrap.stream_ref = s_pl.id
+        ON pe_wrap.stream_ref = pl.stream_ref
       WHERE pe_wrap.event_time <= $effective_before
     ),
     latest_values AS (
-      /* Step 4: Filter to rn=1 => the single latest event per (dp, sid) */
+      /* Step 4: Filter to rn=1 => the single latest event per stream_ref */
       SELECT
-        data_provider,
-        stream_id,
+        stream_ref,
         event_time,
         value
       FROM latest_events
@@ -1442,47 +1404,21 @@ RETURNS TABLE(
      * Step 2: Recursively gather all children (ignoring overshadow),
      *         then identify primitive leaves.
      */
-    for $row in WITH RECURSIVE all_taxonomies AS (
-      /* 2a) Direct children of ($data_provider, $stream_id) */
-      SELECT
-        dp.address AS data_provider,
-        s.stream_id,
-        cdp.address AS child_data_provider,
-        cs.stream_id AS child_stream_id
+    for $row in WITH RECURSIVE descendants AS (
+      SELECT t.child_stream_ref
       FROM taxonomies t
-      JOIN streams s ON t.stream_ref = s.id
-      JOIN data_providers dp ON s.data_provider_id = dp.id
-      JOIN streams cs ON t.child_stream_ref = cs.id
-      JOIN data_providers cdp ON cs.data_provider_id = cdp.id
-      WHERE dp.address = $data_provider
-        AND s.stream_id = $stream_id
-        AND t.disabled_at IS NULL
-
-      UNION
-
-      /* 2b) For each discovered child, gather its own children */
-      SELECT
-        at.child_data_provider AS data_provider,
-        at.child_stream_id     AS stream_id,
-        cdp.address AS child_data_provider,
-        cs.stream_id AS child_stream_id
-      FROM all_taxonomies at
-      JOIN streams s ON s.data_provider_id = (SELECT id FROM data_providers WHERE address = at.child_data_provider)
-        AND s.stream_id = at.child_stream_id
-      JOIN taxonomies t ON t.stream_ref = s.id
-      JOIN streams cs ON t.child_stream_ref = cs.id
-      JOIN data_providers cdp ON cs.data_provider_id = cdp.id
+      WHERE t.stream_ref = $stream_ref AND t.disabled_at IS NULL
+      UNION ALL
+      SELECT t.child_stream_ref
+      FROM taxonomies t
+      JOIN descendants d ON t.stream_ref = d.child_stream_ref
       WHERE t.disabled_at IS NULL
     ),
     primitive_leaves AS (
-      /* Keep only references pointing to primitive streams */
-      SELECT DISTINCT
-        at.child_data_provider AS data_provider,
-        at.child_stream_id     AS stream_id
-      FROM all_taxonomies at
-      JOIN streams s ON s.data_provider_id = (SELECT id FROM data_providers WHERE address = at.child_data_provider)
-        AND s.stream_id = at.child_stream_id
-        AND s.stream_type = 'primitive'
+      SELECT DISTINCT s.id AS stream_ref
+      FROM streams s
+      WHERE s.stream_type = 'primitive'
+        AND s.id IN (SELECT child_stream_ref FROM descendants)
     ),
     /*
      * Step 3: In each primitive, pick the single earliest event_time >= effective_after.
@@ -1490,14 +1426,13 @@ RETURNS TABLE(
      */
     earliest_events AS (
       SELECT
-        pl.data_provider,
-        pl.stream_id,
+        pl.stream_ref,
         pe_wrap.event_time,
         pe_wrap.value,
         pe_wrap.created_at,
         ROW_NUMBER() OVER (
-          PARTITION BY pl.data_provider, pl.stream_id
-          ORDER BY 
+          PARTITION BY pl.stream_ref
+          ORDER BY
             pe_wrap.event_time ASC,
             CASE WHEN pe_wrap.truf_ts > $effective_frozen_at THEN 0 ELSE 1 END,
             CASE WHEN pe_wrap.truf_ts > $effective_frozen_at THEN pe_wrap.truf_ts ELSE NULL END ASC,
@@ -1505,10 +1440,8 @@ RETURNS TABLE(
             pe_wrap.created_at DESC
         ) AS rn
       FROM primitive_leaves pl
-      JOIN streams s_pl ON s_pl.stream_id = pl.stream_id
-      JOIN data_providers dp_pl ON dp_pl.address = pl.data_provider AND dp_pl.id = s_pl.data_provider_id
       JOIN (
-        SELECT 
+        SELECT
           pe.stream_ref,
           pe.event_time,
           pe.value,
@@ -1516,14 +1449,13 @@ RETURNS TABLE(
           parse_unix_timestamp(pe.truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 AS truf_ts
         FROM primitive_events pe
       ) pe_wrap
-        ON pe_wrap.stream_ref = s_pl.id
+        ON pe_wrap.stream_ref = pl.stream_ref
       WHERE pe_wrap.event_time >= $effective_after
     ),
     earliest_values AS (
-      /* Step 4: Filter to rn=1 => the single earliest event per (dp, sid) */
+      /* Step 4: Filter to rn=1 => the single earliest event per stream_ref */
       SELECT
-        data_provider,
-        stream_id,
+        stream_ref,
         event_time,
         value
       FROM earliest_events
@@ -1840,8 +1772,6 @@ RETURNS TABLE(
     initial_primitive_states AS (
         SELECT
             pe.stream_ref,
-            dp.address AS data_provider,
-            s.stream_id,
             pe.event_time,
             pe.value
         FROM (
@@ -1873,8 +1803,6 @@ RETURNS TABLE(
                   WHERE pwr_exists.primitive_stream_ref = pe_inner.stream_ref
               )
         ) pe
-        JOIN streams s ON pe.stream_ref = s.id
-        JOIN data_providers dp ON s.data_provider_id = dp.id
         WHERE pe.rn = 1
     ),
 
@@ -1882,8 +1810,6 @@ RETURNS TABLE(
     primitive_events_in_interval AS (
         SELECT
             pe.stream_ref,
-            dp.address AS data_provider,
-            s.stream_id,
             pe.event_time,
             pe.value
         FROM (
@@ -1916,111 +1842,78 @@ RETURNS TABLE(
             WHERE pe_inner.event_time > $effective_from
               AND pe_inner.event_time <= $effective_to
         ) pe
-        JOIN streams s ON pe.stream_ref = s.id
-        JOIN data_providers dp ON s.data_provider_id = dp.id
         WHERE pe.rn = 1
     ),
 
     all_primitive_points AS (
-        SELECT stream_ref, data_provider, stream_id, event_time, value FROM initial_primitive_states
+        SELECT stream_ref, event_time, value FROM initial_primitive_states
         UNION ALL
-        SELECT stream_ref, data_provider, stream_id, event_time, value FROM primitive_events_in_interval
+        SELECT stream_ref, event_time, value FROM primitive_events_in_interval
     ),
 
     distinct_primitives_for_base AS (
-       SELECT DISTINCT data_provider, stream_id
+        SELECT DISTINCT stream_ref
         FROM all_primitive_points
     ),
 
     -- Modified primitive_base_values with frozen mechanism
     primitive_base_values AS (
         SELECT
-            dp.data_provider,
-            dp.stream_id,
-             COALESCE(
-                -- Priority 1: Exact match with frozen mechanism
-                 (SELECT pe.value FROM (
-                     SELECT value,
-                            ROW_NUMBER() OVER (
-                                ORDER BY 
-                                    CASE WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at THEN 0 ELSE 1 END,
-                                    CASE 
-                                        WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at 
-                                        THEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
-                                        ELSE NULL
-                                    END ASC,
-                                    CASE 
-                                        WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 <= $effective_frozen_at 
-                                        THEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
-                                        ELSE NULL
-                                    END DESC,
-                                    created_at DESC
-                            ) as rn
-                     FROM primitive_events
-                     WHERE stream_ref = js.id
-                       AND event_time = $effective_base_time
-                 ) pe WHERE pe.rn = 1),
-
-                -- Priority 2: Latest Before with frozen mechanism
-                 (SELECT pe.value FROM (
-                     SELECT value,
-                            ROW_NUMBER() OVER (
-                                ORDER BY 
-                                    event_time DESC,
-                                    CASE WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at THEN 0 ELSE 1 END,
-                                    CASE 
-                                        WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at 
-                                        THEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
-                                        ELSE NULL
-                                    END ASC,
-                                    CASE 
-                                        WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 <= $effective_frozen_at 
-                                        THEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
-                                        ELSE NULL
-                                    END DESC,
-                                    created_at DESC
-                            ) as rn
-                     FROM primitive_events
-                     WHERE stream_ref = js.id
-                       AND event_time < $effective_base_time
-                 ) pe WHERE pe.rn = 1),
-
-                -- Priority 3: Earliest After with frozen mechanism
-                  (SELECT pe.value FROM (
-                      SELECT value,
-                             ROW_NUMBER() OVER (
-                                 ORDER BY 
-                                     event_time ASC,
-                                     CASE WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at THEN 0 ELSE 1 END,
-                                     CASE 
-                                         WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at 
-                                         THEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
-                                         ELSE NULL
-                                     END ASC,
-                                     CASE 
-                                         WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 <= $effective_frozen_at 
-                                         THEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
-                                         ELSE NULL
-                                     END DESC,
-                                     created_at DESC
-                             ) as rn
-                      FROM primitive_events
-                      WHERE stream_ref = js.id
-                        AND event_time > $effective_base_time
-                  ) pe WHERE pe.rn = 1),
-
-                  1::numeric(36,18) -- Default value
-             )::numeric(36,18) AS base_value
+            dp.stream_ref,
+            COALESCE(
+                /* exact at base_time */
+                (SELECT pe.value FROM (
+                    SELECT value,
+                           ROW_NUMBER() OVER (
+                             ORDER BY
+                               CASE WHEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at THEN 0 ELSE 1 END,
+                               CASE WHEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at THEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 ELSE NULL END ASC,
+                               CASE WHEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 <= $effective_frozen_at THEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 ELSE NULL END DESC,
+                               created_at DESC
+                           ) AS rn
+                    FROM primitive_events
+                    WHERE stream_ref = dp.stream_ref
+                      AND event_time = $effective_base_time
+                ) pe WHERE pe.rn = 1),
+                /* latest before base_time */
+                (SELECT pe.value FROM (
+                    SELECT value,
+                           ROW_NUMBER() OVER (
+                             ORDER BY
+                               event_time DESC,
+                               CASE WHEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at THEN 0 ELSE 1 END,
+                               CASE WHEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at THEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 ELSE NULL END ASC,
+                               CASE WHEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 <= $effective_frozen_at THEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 ELSE NULL END DESC,
+                               created_at DESC
+                           ) AS rn
+                    FROM primitive_events
+                    WHERE stream_ref = dp.stream_ref
+                      AND event_time < $effective_base_time
+                ) pe WHERE pe.rn = 1),
+                /* earliest after base_time */
+                (SELECT pe.value FROM (
+                    SELECT value,
+                           ROW_NUMBER() OVER (
+                             ORDER BY
+                               event_time ASC,
+                               CASE WHEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at THEN 0 ELSE 1 END,
+                               CASE WHEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at THEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 ELSE NULL END ASC,
+                               CASE WHEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 <= $effective_frozen_at THEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 ELSE NULL END DESC,
+                               created_at DESC
+                           ) AS rn
+                    FROM primitive_events
+                    WHERE stream_ref = dp.stream_ref
+                      AND event_time > $effective_base_time
+                ) pe WHERE pe.rn = 1),
+                1::numeric(36,18)
+            )::numeric(36,18) AS base_value
         FROM distinct_primitives_for_base dp
-        JOIN data_providers jdp ON jdp.address = dp.data_provider
-        JOIN streams js ON js.data_provider_id = jdp.id AND js.stream_id = dp.stream_id
     ),
 
     -- The rest remains the same since it's just calculations on the selected values
     primitive_event_changes AS (
         SELECT
-            calc.data_provider,
-            calc.stream_id,
+            calc.stream_ref,
             calc.event_time,
             calc.value,
             calc.delta_value,
@@ -2029,12 +1922,12 @@ RETURNS TABLE(
                 ELSE (calc.delta_value * 100::numeric(36,18) / pbv.base_value)::numeric(36,18)
             END AS delta_indexed_value
         FROM (
-            SELECT data_provider, stream_id, event_time, value,
-                    COALESCE(value - LAG(value) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time), value)::numeric(36,18) AS delta_value
+            SELECT stream_ref, event_time, value,
+                   COALESCE(value - LAG(value) OVER (PARTITION BY stream_ref ORDER BY event_time), value)::numeric(36,18) AS delta_value
             FROM all_primitive_points
         ) calc
         JOIN primitive_base_values pbv
-            ON calc.data_provider = pbv.data_provider AND calc.stream_id = pbv.stream_id
+          ON calc.stream_ref = pbv.stream_ref
         WHERE calc.delta_value != 0::numeric(36,18)
     ),
 
