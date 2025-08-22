@@ -153,7 +153,7 @@ CREATE OR REPLACE ACTION truflation_get_record_primitive(
         ERROR('wallet not allowed to read');
     }
     $max_int8 INT8 := 9223372036854775000;
-    $effective_from INT8 := COALESCE($from, 0);
+    $effective_from INT8 := COALESCE($from, 0::INT8);
     $effective_to INT8 := COALESCE($to, $max_int8);
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
 
@@ -794,15 +794,15 @@ RETURNS TABLE(
         SELECT
             t.stream_ref,
             t.child_stream_ref,
-            t.weight_for_segment,
-            t.segment_start,
+            t.weight AS weight_for_segment,
+            t.start_time AS segment_start,
             COALESCE(pns.next_start_time, $max_int8) - 1 AS segment_end
         FROM (
             SELECT
                 tx.stream_ref,
                 tx.child_stream_ref,
-                tx.weight AS weight_for_segment,
-                tx.start_time AS segment_start
+                tx.weight,
+                tx.start_time
             FROM taxonomies tx
             JOIN (
                 SELECT
@@ -819,7 +819,7 @@ RETURNS TABLE(
         ) t
         JOIN parent_next_starts pns
           ON t.stream_ref = pns.stream_ref
-         AND t.segment_start = pns.start_time
+         AND t.start_time = pns.start_time
     ),
 
     hierarchy AS (
@@ -1664,15 +1664,14 @@ RETURNS TABLE(
         SELECT
             tx.stream_ref,
             tx.child_stream_ref,
-            tx.weight_for_segment,
-            tx.segment_start,
-            COALESCE(pns.next_start_time, $max_int8) - 1 AS segment_end
+            tx.weight AS weight_for_segment,
+            tx.start_time AS segment_start,
+            COALESCE(pns.next_start_time, $max_int8) - 1::INT8 AS segment_end
         FROM (
             SELECT
                 t.stream_ref,
                 t.child_stream_ref,
-                t.weight_for_segment,
-                t.segment_start,
+                t.weight,
                 t.start_time,
                 t.group_sequence
             FROM taxonomies t
@@ -1692,7 +1691,7 @@ RETURNS TABLE(
            AND tx.group_sequence = max_gs_filter.max_gs
         JOIN parent_next_starts pns
           ON tx.stream_ref = pns.stream_ref
-         AND tx.segment_start = pns.start_time
+         AND tx.start_time = pns.start_time
     ),
 
     hierarchy AS (
@@ -1723,7 +1722,7 @@ RETURNS TABLE(
                   WHERE sibling_tts.stream_ref = h.descendant_stream_ref
                     AND sibling_tts.segment_start = tts.segment_start
                     AND sibling_tts.segment_end = tts.segment_end
-              )::NUMERIC(36,18), 0)
+              )::NUMERIC(36,18), 0::NUMERIC(36,18))
           ))::NUMERIC(36,18) AS effective_weight,
           GREATEST(h.path_start, tts.segment_start) AS path_start,
           LEAST(h.path_end, tts.segment_end) AS path_end,
@@ -1993,7 +1992,7 @@ RETURNS TABLE(
 
         SELECT
             pwr.primitive_stream_ref AS stream_ref,
-            pwr.group_sequence_end + 1 AS event_time,
+            (pwr.group_sequence_end + 1::INT8) AS event_time,
             -pwr.raw_weight AS weight_delta
         FROM primitive_weights pwr
         JOIN first_value_times fvt
@@ -2001,7 +2000,7 @@ RETURNS TABLE(
         WHERE
             GREATEST(pwr.group_sequence_start, fvt.first_value_time) <= pwr.group_sequence_end
             AND pwr.raw_weight != 0::numeric(36,18)
-            AND pwr.group_sequence_end < ($max_int8 - 1)
+            AND pwr.group_sequence_end < ($max_int8 - 1::INT8)
     ),
 
     unified_events AS (
