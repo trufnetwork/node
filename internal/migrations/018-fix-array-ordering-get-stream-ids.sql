@@ -1,9 +1,8 @@
 CREATE OR REPLACE ACTION get_stream_ids(
     $data_providers TEXT[],
     $stream_ids TEXT[]
-) PRIVATE VIEW RETURNS (stream_ids INT[]) {
-    -- Use WITH RECURSIVE to process stream ids lookup in single SQL operation
-    -- This avoids the expensive for-loop roundtrips
+) PUBLIC VIEW RETURNS (stream_ids INT[]) {
+    $stream_refs int[];
     for $row in WITH RECURSIVE
     indexes AS (
         SELECT 1 AS idx
@@ -16,29 +15,27 @@ CREATE OR REPLACE ACTION get_stream_ids(
             $data_providers AS data_providers,
             $stream_ids AS stream_ids
     ),
-    stream_lookups AS (
+    all_pairs AS (
         SELECT
             idx,
-            s.id AS stream_ref
+            LOWER(input_arrays.data_providers[idx]) AS data_provider,
+            input_arrays.stream_ids[idx] AS stream_id
         FROM indexes
         JOIN input_arrays ON 1=1
-        JOIN data_providers dp ON dp.address = input_arrays.data_providers[idx]
-        JOIN streams s ON s.data_provider_id = dp.id
-                      AND s.stream_id = input_arrays.stream_ids[idx]
     ),
-    build_array AS (
-        SELECT 1 AS current_idx, ARRAY[]::INT[] AS result
-        UNION ALL
-        SELECT
-            ba.current_idx + 1,
-            array_append(ba.result, sl.stream_ref)
-        FROM build_array ba
-        JOIN stream_lookups sl ON sl.idx = ba.current_idx
-        WHERE ba.current_idx <= array_length($data_providers)
+    direct_lookup AS (
+        SELECT ap.idx, s.id AS stream_ref
+        FROM all_pairs ap
+        LEFT JOIN data_providers dp ON dp.address = ap.data_provider
+        LEFT JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = ap.stream_id
     )
-    SELECT result AS stream_refs
-    FROM build_array
-    WHERE current_idx = array_length($data_providers) + 1 {
-      return $row.stream_refs;
+    SELECT stream_ref
+    FROM direct_lookup
+    ORDER BY idx {
+        -- the faster alternative would be to return the aggregated array,
+        -- however we can't make this efficiently without ARRAY_AGG(x ORDER BY y.column)
+      $stream_refs = array_append($stream_refs, $row.stream_ref);
     }
+    return $stream_refs;
 };
+

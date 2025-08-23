@@ -20,7 +20,12 @@ RETURNS TABLE(
   */
   $stream_ref := get_stream_id($data_provider, $stream_id);
 
-  IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, NULL, $before) {
+  -- Fail fast if stream doesn't exist
+  IF $stream_ref IS NULL {
+      ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+  }
+
+  IF !is_allowed_to_read_all_core($stream_ref, $lower_caller, NULL, $before) {
       ERROR('Not allowed to read stream');
   }
 
@@ -163,12 +168,19 @@ RETURNS TABLE(
     /*
      * Step 1: Basic setup
      */
-    IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, $after, NULL) {
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
+
+    IF !is_allowed_to_read_all_core($stream_ref, $lower_caller, $after, NULL) {
         ERROR('Not allowed to read stream');
     }
 
     -- Check compose permissions
-    if !is_allowed_to_compose_all($data_provider, $stream_id, $after, NULL) {
+    if !is_allowed_to_compose_all_core($stream_ref, $after, NULL) {
         ERROR('Not allowed to compose stream');
     }
 
@@ -197,7 +209,6 @@ RETURNS TABLE(
     $max_int8 INT8 := 9223372036854775000;   -- "Infinity" sentinel
     $effective_after INT8 := COALESCE($after, 0);
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
-    $stream_ref := get_stream_id($data_provider, $stream_id);
 
     $earliest_event_time INT8;
 
@@ -313,12 +324,17 @@ RETURNS TABLE(
   $effective_frozen_at := COALESCE($frozen_at, $max_int8);
   $stream_ref := get_stream_id($data_provider, $stream_id);
 
+  -- Fail-fast guard: ensure stream exists before calling _core function
+  IF $stream_ref IS NULL {
+      ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+  }
+
   -- Base time determination: Use parameter, metadata, or first event time.
   $effective_base_time INT8;
   if $base_time is not null {
       $effective_base_time := $base_time;
   } else {
-      $effective_base_time := get_latest_metadata_int($data_provider, $stream_id, 'default_base_time');
+      $effective_base_time := get_latest_metadata_int_core($stream_ref, 'default_base_time');
   }
   -- Note: Base time logic differs slightly from get_record_composed which defaults to 0.
   -- Here we might need to query the first actual event if metadata is missing.
@@ -331,10 +347,10 @@ RETURNS TABLE(
   }
 
   -- Permissions check (must be done before cache logic)
-  IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, $from, $to) {
+  IF !is_allowed_to_read_all_core($stream_ref, $lower_caller, $from, $to) {
       ERROR('Not allowed to read stream');
   }
-  IF !is_allowed_to_compose_all($data_provider, $stream_id, $from, $to) {
+  IF !is_allowed_to_compose_all_core($stream_ref, $from, $to) {
       ERROR('Not allowed to compose stream');
   }
 
@@ -390,14 +406,45 @@ RETURNS TABLE(
 
   RETURN WITH RECURSIVE
   /*----------------------------------------------------------------------
+  * ANCHOR CTE: Compute the anchor time once for reuse throughout the query
+  *
+  * Purpose: Find the latest taxonomy start_time at or before $effective_from
+  * for the target stream to establish a baseline for filtering.
+  *---------------------------------------------------------------------*/
+  anchor AS (
+      SELECT COALESCE(
+          (SELECT t_anchor_base.start_time FROM taxonomies t_anchor_base
+           WHERE t_anchor_base.stream_ref = $stream_ref
+             AND t_anchor_base.disabled_at IS NULL AND t_anchor_base.start_time <= $effective_from
+           ORDER BY t_anchor_base.start_time DESC, t_anchor_base.group_sequence DESC LIMIT 1),
+          0 -- Default anchor to 0
+      ) AS anchor_time
+  ),
+
+  /*----------------------------------------------------------------------
+  * RELEVANT_PARENTS CTE: Find all streams in the subtree of the target stream
+  *---------------------------------------------------------------------*/
+  relevant_parents AS (
+      -- Base case: the target stream itself
+      SELECT $stream_ref AS stream_ref
+      UNION ALL
+      -- Recursive case: traverse descendants (children of already discovered streams)
+      SELECT DISTINCT t.child_stream_ref
+      FROM taxonomies t
+      JOIN relevant_parents rp ON t.stream_ref = rp.stream_ref
+      WHERE t.disabled_at IS NULL
+  ),
+
+  /*----------------------------------------------------------------------
   * PARENT_DISTINCT_START_TIMES CTE:
   *---------------------------------------------------------------------*/
   parent_distinct_start_times AS (
       SELECT DISTINCT
-          stream_ref,
-          start_time
-      FROM taxonomies
-      WHERE disabled_at IS NULL
+          t.stream_ref,
+          t.start_time
+      FROM taxonomies t
+      JOIN relevant_parents rp ON t.stream_ref = rp.stream_ref
+      WHERE t.disabled_at IS NULL
   ),
 
   /*----------------------------------------------------------------------
@@ -463,15 +510,7 @@ RETURNS TABLE(
         1 AS level
     FROM taxonomy_true_segments tts
     WHERE tts.stream_ref = $stream_ref
-      AND tts.segment_end >= (
-        COALESCE(
-            (SELECT t_anchor_base.start_time FROM taxonomies t_anchor_base
-            WHERE t_anchor_base.stream_ref = $stream_ref
-              AND t_anchor_base.disabled_at IS NULL AND t_anchor_base.start_time <= $effective_from
-            ORDER BY t_anchor_base.start_time DESC, t_anchor_base.group_sequence DESC LIMIT 1),
-            0
-        )
-      )
+      AND tts.segment_end >= (SELECT anchor_time FROM anchor)
       AND tts.segment_start <= $effective_to
 
     UNION ALL
@@ -500,15 +539,7 @@ RETURNS TABLE(
         ON h.descendant_stream_ref = tts.stream_ref
     WHERE
         GREATEST(h.path_start, tts.segment_start) <= LEAST(h.path_end, tts.segment_end)
-        AND LEAST(h.path_end, tts.segment_end) >= (
-            COALESCE(
-                (SELECT t_anchor_base.start_time FROM taxonomies t_anchor_base
-                WHERE t_anchor_base.stream_ref = $stream_ref
-                  AND t_anchor_base.disabled_at IS NULL AND t_anchor_base.start_time <= $effective_from
-                ORDER BY t_anchor_base.start_time DESC, t_anchor_base.group_sequence DESC LIMIT 1),
-                0
-            )
-        )
+        AND LEAST(h.path_end, tts.segment_end) >= (SELECT anchor_time FROM anchor)
         AND GREATEST(h.path_start, tts.segment_start) <= $effective_to
         AND h.level < 10 -- Recursion depth limit
   ),
@@ -549,20 +580,20 @@ RETURNS TABLE(
       FROM (
           SELECT pe.event_time
           FROM primitive_events pe
-          JOIN primitive_weights pw
-            ON pe.stream_ref = pw.primitive_stream_ref
-          AND pe.event_time >= pw.group_sequence_start
-          AND pe.event_time <= pw.group_sequence_end
+          JOIN primitive_weights pwr
+            ON pe.stream_ref = pwr.primitive_stream_ref
+          AND pe.event_time >= pwr.group_sequence_start
+          AND pe.event_time <= pwr.group_sequence_end
           WHERE pe.event_time > $effective_from
             AND pe.event_time <= $effective_to
             AND pe.created_at <= $effective_frozen_at
 
           UNION
 
-          SELECT pw.group_sequence_start AS event_time
-          FROM primitive_weights pw
-          WHERE pw.group_sequence_start > $effective_from
-            AND pw.group_sequence_start <= $effective_to
+          SELECT pwr.group_sequence_start AS event_time
+          FROM primitive_weights pwr
+          WHERE pwr.group_sequence_start > $effective_from
+            AND pwr.group_sequence_start <= $effective_to
       ) all_times_in_range
 
       UNION
@@ -572,18 +603,18 @@ RETURNS TABLE(
           FROM (
               SELECT pe.event_time
               FROM primitive_events pe
-              JOIN primitive_weights pw
-                ON pe.stream_ref = pw.primitive_stream_ref
-              AND pe.event_time >= pw.group_sequence_start
-              AND pe.event_time <= pw.group_sequence_end
+              JOIN primitive_weights pwr
+                ON pe.stream_ref = pwr.primitive_stream_ref
+              AND pe.event_time >= pwr.group_sequence_start
+              AND pe.event_time <= pwr.group_sequence_end
               WHERE pe.event_time <= $effective_from
                 AND pe.created_at <= $effective_frozen_at
 
               UNION
 
-              SELECT pw.group_sequence_start AS event_time
-              FROM primitive_weights pw
-              WHERE pw.group_sequence_start <= $effective_from
+              SELECT pwr.group_sequence_start AS event_time
+              FROM primitive_weights pwr
+              WHERE pwr.group_sequence_start <= $effective_from
 
           ) all_times_before
           ORDER BY event_time DESC
@@ -632,10 +663,10 @@ RETURNS TABLE(
                   ORDER BY pe_inner.created_at DESC
               ) as rn
           FROM primitive_events pe_inner
-          JOIN primitive_weights pw_check
-              ON pe_inner.stream_ref = pw_check.primitive_stream_ref
-            AND pe_inner.event_time >= pw_check.group_sequence_start
-            AND pe_inner.event_time <= pw_check.group_sequence_end
+          JOIN primitive_weights pwr
+              ON pe_inner.stream_ref = pwr.primitive_stream_ref
+            AND pe_inner.event_time >= pwr.group_sequence_start
+            AND pe_inner.event_time <= pwr.group_sequence_end
           WHERE pe_inner.event_time > $effective_from
               AND pe_inner.event_time <= $effective_to
               AND pe_inner.created_at <= $effective_frozen_at

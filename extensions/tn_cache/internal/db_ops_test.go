@@ -64,8 +64,8 @@ func TestCacheDB_HasCachedData(t *testing.T) {
 		}
 		// Second query: check if events exist
 		return &kwilsql.ResultSet{
-			Columns: []string{"count"},
-			Rows:    [][]interface{}{{int64(5)}},
+			Columns: []string{"exists"},
+			Rows:    [][]interface{}{{true}},
 		}, nil
 	}
 

@@ -64,19 +64,25 @@ CREATE OR REPLACE ACTION helper_sanitize_wallets($wallets TEXT[]) PRIVATE VIEW R
 /**
  * helper_lowercase_array: Converts an entire TEXT array to lowercase in a single operation.
  * This avoids expensive for-loops that create thousands of roundtrips.
- * 
+ *
  * Input:
  * - $input_array: Array of text strings to convert to lowercase
- * 
+ *
  * Output:
  * - Array of lowercase text strings
  */
 CREATE OR REPLACE ACTION helper_lowercase_array(
     $input_array TEXT[]
 ) PRIVATE VIEW RETURNS (lowercase_array TEXT[]) {
-    -- Use WITH RECURSIVE to process entire array in single SQL operation
-    -- This avoids the expensive for-loop roundtrips
-    for $row in WITH RECURSIVE 
+    $lowercase_array TEXT[];
+
+    -- handle empty array
+    IF array_length($input_array) = 0 {
+        RETURN $input_array;
+    }
+
+    -- Use O(n) approach with proper array handling and ordering
+    for $row in WITH RECURSIVE
     indexes AS (
         SELECT 1 AS idx
         UNION ALL
@@ -87,27 +93,21 @@ CREATE OR REPLACE ACTION helper_lowercase_array(
         SELECT $input_array AS original_array
     ),
     unnested_results AS (
-        SELECT 
+        SELECT
             idx,
             LOWER(array_holder.original_array[idx]) AS lowercase_element
         FROM indexes
         JOIN array_holder ON 1=1
-    ),
-    build_array AS (
-        SELECT 1 AS current_idx, ARRAY[]::TEXT[] AS result
-        UNION ALL
-        SELECT 
-            ba.current_idx + 1,
-            array_append(ba.result, ur.lowercase_element)
-        FROM build_array ba
-        JOIN unnested_results ur ON ur.idx = ba.current_idx
-        WHERE ba.current_idx <= array_length($input_array)
     )
-    SELECT result AS lowercase_array
-    FROM build_array
-    WHERE current_idx = array_length($input_array) + 1 {
-        RETURN $row.lowercase_array;
+    SELECT lowercase_element
+    FROM unnested_results
+    ORDER BY idx {
+        -- the faster alternative would be to return the aggregated array,
+        -- however we can't make this efficiently without ARRAY_AGG(x ORDER BY y.column)
+        $lowercase_array = array_append($lowercase_array, $row.lowercase_element);
     }
+
+    RETURN $lowercase_array;
 };
 
 

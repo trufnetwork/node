@@ -33,39 +33,6 @@ CREATE OR REPLACE ACTION create_data_provider(
     ON CONFLICT DO NOTHING;
 };
 
-CREATE OR REPLACE ACTION get_stream_ids(
-    $data_providers TEXT[],
-    $stream_ids TEXT[]
-) PRIVATE VIEW RETURNS (stream_ids INT[]) {
-    -- Use WITH RECURSIVE to process stream ids lookup in single SQL operation
-    -- This avoids the expensive for-loop roundtrips
-    for $row in WITH RECURSIVE 
-    indexes AS (
-        SELECT 1 AS idx
-        UNION ALL
-        SELECT idx + 1 FROM indexes
-        WHERE idx < array_length($data_providers)
-    ),
-    input_arrays AS (
-        SELECT 
-            $data_providers AS data_providers,
-            $stream_ids AS stream_ids
-    ),
-    stream_lookups AS (
-        SELECT
-            s.id AS stream_ref
-        FROM indexes
-        JOIN input_arrays ON 1=1
-        JOIN data_providers dp ON dp.address = input_arrays.data_providers[idx]
-        JOIN streams s ON s.data_provider_id = dp.id 
-                      AND s.stream_id = input_arrays.stream_ids[idx]
-    )
-    SELECT ARRAY_AGG(stream_ref) AS stream_refs
-    FROM stream_lookups {
-      return $row.stream_refs;
-    }
-};
-
 /**
  * create_stream: Creates a new stream with required metadata.
  * Validates stream_id format, data provider address, and stream type.
@@ -302,7 +269,7 @@ CREATE OR REPLACE ACTION create_streams(
 CREATE OR REPLACE ACTION get_stream_id(
   $data_provider_address TEXT,
   $stream_id TEXT
-) PRIVATE returns (id INT) {
+) PUBLIC returns (id INT) {
   $id INT;
   $found BOOL := false;
   FOR $stream_row IN SELECT s.id
@@ -537,6 +504,26 @@ CREATE OR REPLACE ACTION delete_stream(
  * is_stream_owner: Checks if caller is the owner of a stream.
  * Uses stream_owner metadata to determine ownership.
  */
+CREATE OR REPLACE ACTION is_stream_owner_core(
+    $stream_ref INT,
+    $caller TEXT
+) PRIVATE view returns (is_owner BOOL) {
+    -- Check if the caller is the owner by looking at the latest stream_owner metadata
+    for $row in SELECT COALESCE(
+        -- do not use LOWER here, or it will break the index lookup
+        (SELECT m.value_ref = LOWER($caller)
+         FROM metadata m
+         WHERE m.stream_ref = $stream_ref
+           AND m.metadata_key = 'stream_owner'
+           AND m.disabled_at IS NULL
+         ORDER BY m.created_at DESC
+         LIMIT 1), false
+    ) as result {
+        return $row.result;
+    }
+    return false;
+};
+
 CREATE OR REPLACE ACTION is_stream_owner(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -545,24 +532,12 @@ CREATE OR REPLACE ACTION is_stream_owner(
     $data_provider := LOWER($data_provider);
     $lower_caller := LOWER($caller);
 
-    -- Check if the stream exists
-    if !stream_exists($data_provider, $stream_id) {
+    -- Check if the stream exists (get_stream_id returns NULL if stream doesn't exist)
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+    IF $stream_ref IS NULL {
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
     }
-
-    $result BOOL := false;
-    for $row in get_metadata(
-        $data_provider,
-        $stream_id,
-        'stream_owner',
-        $lower_caller,
-        1,
-        0,
-        'created_at DESC'
-    ) {
-        $result := true;
-    }
-    return $result;
+    return is_stream_owner_core($stream_ref, $lower_caller);
 };
 
 /**
@@ -625,7 +600,7 @@ CREATE OR REPLACE ACTION is_stream_owner_batch(
         SELECT 
             up.data_provider,
             up.stream_id,
-            CASE WHEN m.value_ref IS NOT NULL AND LOWER(m.value_ref) = $lowercase_wallet THEN true ELSE false END AS is_owner
+            CASE WHEN m.value_ref IS NOT NULL AND m.value_ref = $lowercase_wallet THEN true ELSE false END AS is_owner
         FROM unique_pairs up
         LEFT JOIN (
           SELECT dp.address as data_provider, s.stream_id, md.value_ref
@@ -733,15 +708,14 @@ CREATE OR REPLACE ACTION is_primitive_stream_batch(
  * get_metadata: Retrieves metadata for a stream with pagination and filtering.
  * Supports ordering by creation time and filtering by key and reference.
  */
-CREATE OR REPLACE ACTION get_metadata(
-    $data_provider TEXT,
-    $stream_id TEXT,
+CREATE OR REPLACE ACTION get_metadata_core(
+    $stream_ref INT,
     $key TEXT,
     $ref TEXT,
     $limit INT,
     $offset INT,
     $order_by TEXT
-) PUBLIC view returns table(
+) PRIVATE view returns table(
     row_id uuid,
     value_i int,
     value_f NUMERIC(36,18),
@@ -750,9 +724,6 @@ CREATE OR REPLACE ACTION get_metadata(
     value_ref TEXT,
     created_at INT
 ) {
-    $data_provider := LOWER($data_provider);
-    $stream_ref := get_stream_id($data_provider, $stream_id);
-
     -- Set default values if parameters are null
     if $limit IS NULL {
         $limit := 100;
@@ -774,7 +745,8 @@ CREATE OR REPLACE ACTION get_metadata(
         FROM metadata
            WHERE metadata_key = $key
             AND disabled_at IS NULL
-            AND ($ref IS NULL OR LOWER(value_ref) = LOWER($ref))
+            -- do not use LOWER on value_ref, or it will break the index lookup
+            AND ($ref IS NULL OR value_ref = LOWER($ref))
             AND stream_ref = $stream_ref
        ORDER BY
                CASE WHEN $order_by = 'created_at DESC' THEN created_at END DESC,
@@ -782,9 +754,62 @@ CREATE OR REPLACE ACTION get_metadata(
        LIMIT $limit OFFSET $offset;
 };
 
+CREATE OR REPLACE ACTION get_metadata(
+    $data_provider TEXT,
+    $stream_id TEXT,
+    $key TEXT,
+    $ref TEXT,
+    $limit INT,
+    $offset INT,
+    $order_by TEXT
+) PUBLIC view returns table(
+    row_id uuid,
+    value_i int,
+    value_f NUMERIC(36,18),
+    value_b bool,
+    value_s TEXT,
+    value_ref TEXT,
+    created_at INT
+) {
+    $data_provider := LOWER($data_provider);
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+    for $row in get_metadata_core($stream_ref, $key, $ref, $limit, $offset, $order_by) {
+        RETURN NEXT $row.row_id, $row.value_i, $row.value_f, $row.value_b, $row.value_s, $row.value_ref, $row.created_at;
+    }
+};
+
+-- Compatibility wrapper that returns single value from get_metadata_core (for functions expecting single value)
+CREATE OR REPLACE ACTION get_metadata_priv_single(
+    $stream_ref INT,
+    $key TEXT,
+    $ref TEXT
+) PRIVATE view returns (value TEXT) {
+    $result TEXT := NULL;
+    for $row in get_metadata_core($stream_ref, $key, $ref, 1, 0, 'created_at DESC') {
+        $result := $row.value_ref;
+    }
+    RETURN $result;
+};
+
 /**
  * get_latest_metadata: Retrieves the latest metadata for a stream.
  */
+CREATE OR REPLACE ACTION get_latest_metadata_core(
+    $stream_ref INT,
+    $key TEXT,
+    $ref TEXT
+) PRIVATE view returns table(
+    value_i INT,
+    value_f NUMERIC(36,18),
+    value_b BOOL,
+    value_s TEXT,
+    value_ref TEXT
+) {
+    for $row in get_metadata_core($stream_ref, $key, $ref, 1, 0, 'created_at DESC') {
+        RETURN NEXT $row.value_i, $row.value_f, $row.value_b, $row.value_s, $row.value_ref;
+    }
+};
+
 CREATE OR REPLACE ACTION get_latest_metadata(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -798,8 +823,9 @@ CREATE OR REPLACE ACTION get_latest_metadata(
     value_ref TEXT
 ) {
     $data_provider := LOWER($data_provider);
+    $stream_ref := get_stream_id($data_provider, $stream_id);
 
-    for $row in get_metadata($data_provider, $stream_id, $key, $ref, 1, 0, 'created_at DESC') {
+    for $row in get_latest_metadata_core($stream_ref, $key, $ref) {
         RETURN NEXT $row.value_i, $row.value_f, $row.value_b, $row.value_s, $row.value_ref;
     }
 };
@@ -807,23 +833,42 @@ CREATE OR REPLACE ACTION get_latest_metadata(
 /**
  * get_latest_metadata_int: Retrieves the latest metadata value for a stream.
  */
+CREATE OR REPLACE ACTION get_latest_metadata_int_core(
+    $stream_ref INT,
+    $key TEXT
+) PRIVATE view returns (value INT) {
+    $result INT := NULL;
+    for $row in get_latest_metadata_core($stream_ref, $key, NULL) {
+        $result := $row.value_i;
+    }
+    RETURN $result;
+};
+
 CREATE OR REPLACE ACTION get_latest_metadata_int(
     $data_provider TEXT,
     $stream_id TEXT,
     $key TEXT
 ) PUBLIC view returns (value INT) {
     $data_provider := LOWER($data_provider);
-
-    $result INT;
-    for $row in get_latest_metadata($data_provider, $stream_id, $key, NULL) {
-        $result := $row.value_i;
-    }
-    RETURN $result;
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+    return get_latest_metadata_int_core($stream_ref, $key);
 };
 
 /**
  * get_latest_metadata_ref: Retrieves the latest metadata value for a stream.
  */
+CREATE OR REPLACE ACTION get_latest_metadata_ref_core(
+    $stream_ref INT,
+    $key TEXT,
+    $ref TEXT
+) PRIVATE view returns (value TEXT) {
+    $result TEXT := NULL;
+    for $row in get_latest_metadata_core($stream_ref, $key, $ref) {
+        $result := $row.value_ref;
+    }
+    RETURN $result;
+};
+
 CREATE OR REPLACE ACTION get_latest_metadata_ref(
     $data_provider TEXT,
     $stream_id TEXT,
@@ -831,46 +876,56 @@ CREATE OR REPLACE ACTION get_latest_metadata_ref(
     $ref TEXT
 ) PUBLIC view returns (value TEXT) {
     $data_provider := LOWER($data_provider);
-
-    $result TEXT;
-    for $row in get_latest_metadata($data_provider, $stream_id, $key, $ref) {
-        $result := $row.value_ref;
-    }
-    RETURN $result;
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+    return get_latest_metadata_ref_core($stream_ref, $key, $ref);
 };
 
 /**
  * get_latest_metadata_bool: Retrieves the latest metadata value for a stream.
  */
+CREATE OR REPLACE ACTION get_latest_metadata_bool_core(
+    $stream_ref INT,
+    $key TEXT
+) PRIVATE view returns (value BOOL) {
+    $result BOOL := NULL;
+    for $row in get_latest_metadata_core($stream_ref, $key, NULL) {
+        $result := $row.value_b;
+    }
+    RETURN $result;
+};
+
 CREATE OR REPLACE ACTION get_latest_metadata_bool(
     $data_provider TEXT,
     $stream_id TEXT,
     $key TEXT
 ) PUBLIC view returns (value BOOL) {
     $data_provider := LOWER($data_provider);
-
-    $result BOOL;
-    for $row in get_latest_metadata($data_provider, $stream_id, $key, NULL) {
-        $result := $row.value_b;
-    }
-    RETURN $result;
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+    return get_latest_metadata_bool_core($stream_ref, $key);
 };
 
 /**
  * get_latest_metadata_string: Retrieves the latest metadata value for a stream.
  */
+CREATE OR REPLACE ACTION get_latest_metadata_string_core(
+    $stream_ref INT,
+    $key TEXT
+) PRIVATE view returns (value TEXT) {
+    $result TEXT := NULL;
+    for $row in get_latest_metadata_core($stream_ref, $key, NULL) {
+        $result := $row.value_s;
+    }
+    RETURN $result;
+};
+
 CREATE OR REPLACE ACTION get_latest_metadata_string(
     $data_provider TEXT,
     $stream_id TEXT,
     $key TEXT
 ) PUBLIC view returns (value TEXT) {
     $data_provider := LOWER($data_provider);
-
-    $result TEXT;
-    for $row in get_latest_metadata($data_provider, $stream_id, $key, NULL) {
-        $result := $row.value_s;
-    }
-    RETURN $result;
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+    return get_latest_metadata_string_core($stream_ref, $key);
 };
 
 /**
@@ -887,8 +942,9 @@ CREATE OR REPLACE ACTION get_category_streams(
 ) PUBLIC view returns table(data_provider TEXT, stream_id TEXT) {
     $data_provider := LOWER($data_provider);
 
-    -- Check if stream exists
-    if !stream_exists($data_provider, $stream_id) {
+    -- Check if stream exists (get_stream_id returns NULL if stream doesn't exist)
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+    IF $stream_ref IS NULL {
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
     }
 
@@ -904,7 +960,6 @@ CREATE OR REPLACE ACTION get_category_streams(
     $max_int8 INT := 9223372036854775000;
     $effective_active_from INT := COALESCE($active_from, 0);
     $effective_active_to INT := COALESCE($active_to, $max_int8);
-    $stream_ref INT := get_stream_id($data_provider, $stream_id);
 
     -- Get all substreams with proper recursive traversal
     return WITH RECURSIVE substreams AS (
@@ -1083,6 +1138,98 @@ CREATE OR REPLACE ACTION stream_exists(
 
     for $row in SELECT 1 FROM streams WHERE id = $stream_ref {
         return true;
+    }
+    return false;
+};
+
+/**
+ * stream_exists_batch_core: Private version that uses stream refs directly.
+ * Checks if multiple streams exist using their stream references.
+ * Returns false if any stream refs are null (indicating non-existent streams).
+ * Returns true only if all streams exist and no stream refs are null.
+ */
+CREATE OR REPLACE ACTION stream_exists_batch_core(
+    $stream_refs INT[]
+) PRIVATE VIEW RETURNS (result BOOL) {
+    for $row in WITH RECURSIVE
+    idx AS (
+        SELECT 1 AS i
+        UNION ALL
+        SELECT i + 1 FROM idx
+        WHERE i < array_length($stream_refs)
+    ),
+    arr AS (
+        SELECT $stream_refs AS refs
+    ),
+    unique_refs AS (
+        SELECT DISTINCT arr.refs[i] AS stream_ref
+        FROM idx
+        JOIN arr ON 1=1
+        WHERE arr.refs[i] IS NOT NULL
+    )
+    -- Return false if any nulls exist, otherwise return existence check result
+    SELECT CASE
+        WHEN EXISTS (
+            SELECT 1
+            FROM idx
+            JOIN arr ON 1=1
+            WHERE arr.refs[i] IS NULL
+        ) THEN false
+        ELSE NOT EXISTS (
+            SELECT 1
+            FROM unique_refs u
+            LEFT JOIN streams s ON s.id = u.stream_ref
+            WHERE s.id IS NULL
+        )
+    END AS result
+    FROM (SELECT 1) dummy {
+        return $row.result;
+    }
+    return false;
+};
+
+/**
+ * is_primitive_stream_batch_core: Private version that uses stream refs directly.
+ * Checks if multiple streams are primitive using their stream references.
+ * Returns false if any stream refs are null (indicating non-existent streams).
+ * Returns true only if all streams exist and are primitive.
+ */
+CREATE OR REPLACE ACTION is_primitive_stream_batch_core(
+    $stream_refs INT[]
+) PRIVATE VIEW RETURNS (result BOOL) {
+    for $row in WITH RECURSIVE
+    idx AS (
+        SELECT 1 AS i
+        UNION ALL
+        SELECT i + 1 FROM idx
+        WHERE i < array_length($stream_refs)
+    ),
+    arr AS (
+        SELECT $stream_refs AS refs
+    ),
+    unique_refs AS (
+        SELECT DISTINCT arr.refs[i] AS stream_ref
+        FROM idx
+        JOIN arr ON 1=1
+        WHERE arr.refs[i] IS NOT NULL
+    )
+    -- Return false if any nulls exist, otherwise return primitive check result
+    SELECT CASE
+        WHEN EXISTS (
+            SELECT 1
+            FROM idx
+            JOIN arr ON 1=1
+            WHERE arr.refs[i] IS NULL
+        ) THEN false
+        ELSE NOT EXISTS (
+            SELECT 1
+            FROM unique_refs u
+            JOIN streams s ON s.id = u.stream_ref
+            WHERE s.stream_type != 'primitive'
+        )
+    END AS result
+    FROM (SELECT 1) dummy {
+        return $row.result;
     }
     return false;
 };
@@ -1285,7 +1432,8 @@ CREATE OR REPLACE ACTION list_streams(
               s.created_at
             FROM streams s
             JOIN data_providers dp ON s.data_provider_id = dp.id
-            WHERE ($data_provider IS NULL OR $data_provider = '' OR LOWER(dp.address) = LOWER($data_provider))
+            -- do not use LOWER on dp.address, or it will break the index lookup
+            WHERE ($data_provider IS NULL OR $data_provider = '' OR dp.address = LOWER($data_provider))
             AND s.created_at > $block_height
             ORDER BY
                CASE WHEN $order_by = 'created_at DESC' THEN s.created_at END DESC,

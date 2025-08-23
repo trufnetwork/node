@@ -16,8 +16,15 @@ CREATE OR REPLACE ACTION get_record_primitive(
     -- Note: No cache; direct queries without computation
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
+
     -- Check read access first
-    if is_allowed_to_read($data_provider, $stream_id, $lower_caller, $from, $to) == false {
+    if is_allowed_to_read_core($stream_ref, $lower_caller, $from, $to) == false {
         ERROR('wallet not allowed to read');
     }
 
@@ -34,7 +41,10 @@ CREATE OR REPLACE ACTION get_record_primitive(
         RETURN;
     }
 
-    $stream_ref := get_stream_id($data_provider, $stream_id);
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
 
     RETURN WITH
     -- Get base records within time range
@@ -96,15 +106,21 @@ CREATE OR REPLACE ACTION get_last_record_primitive(
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
 
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
+
     -- Check read access, since we're querying directly from the primitive_events table
-    if is_allowed_to_read($data_provider, $stream_id, $lower_caller, NULL, $before) == false {
+    if is_allowed_to_read_core($stream_ref, $lower_caller, NULL, $before) == false {
         ERROR('wallet not allowed to read');
     }
 
     $max_int8 INT8 := 9223372036854775000;
     $effective_before INT8 := COALESCE($before, $max_int8);
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
-    $stream_ref := get_stream_id($data_provider, $stream_id);
 
     RETURN SELECT pe.event_time, pe.value
         FROM primitive_events pe
@@ -131,15 +147,21 @@ CREATE OR REPLACE ACTION get_first_record_primitive(
     -- Note: No cache; direct queries without computation
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
+
     -- Check read access, since we're querying directly from the primitive_events table
-    if is_allowed_to_read($data_provider, $stream_id, $lower_caller, $after, NULL) == false {
+    if is_allowed_to_read_core($stream_ref, $lower_caller, $after, NULL) == false {
         ERROR('wallet not allowed to read');
     }
 
     $max_int8 INT8 := 9223372036854775000;
     $effective_after INT8 := COALESCE($after, 0);
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
-    $stream_ref := get_stream_id($data_provider, $stream_id);
 
     RETURN SELECT pe.event_time, pe.value
         FROM primitive_events pe
@@ -166,15 +188,21 @@ CREATE OR REPLACE ACTION get_index_primitive(
 ) {
     -- Note: No cache; direct queries without computation
     $data_provider := LOWER($data_provider);
+    -- Resolve stream ref first for permission check
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
 
     -- Check read permissions
-    if !is_allowed_to_read_all($data_provider, $stream_id, @caller, $from, $to) {
+    if !is_allowed_to_read_all_core($stream_ref, LOWER(@caller), $from, $to) {
         ERROR('Not allowed to read stream');
     }
 
     $max_int8 INT8 := 9223372036854775000;
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
-    $stream_ref := get_stream_id($data_provider, $stream_id);
     
     -- If base_time is not provided, try to get it from metadata
     $effective_base_time INT8 := $base_time;
