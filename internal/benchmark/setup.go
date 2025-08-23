@@ -170,7 +170,7 @@ func setupSchemas(
 		composedStart := time.Now()
 
 		g, gCtx := errgroup.WithContext(ctx)
-		g.SetLimit(10) // Lower limit for composed streams as they're more DB-intensive
+		g.SetLimit(2) // Lower limit for composed streams as they're more DB-intensive
 
 		for i, streamInfo := range composedStreams {
 			i, streamInfo := i, streamInfo // capture loop variables
@@ -246,9 +246,7 @@ func batchInsertAllPrimitiveData(ctx context.Context, allData []setup.InsertPrim
 	fmt.Printf("[BATCH_INSERT] Processing %d total records in %d batches of up to %d records each\n",
 		len(allRecords), numBatches, recordBatchSize)
 
-	g, gCtx := errgroup.WithContext(ctx)
-	g.SetLimit(10) // Limit concurrent DB connections
-
+	// Process sequentially to avoid concurrent queries on the same tx/conn (prevents "conn busy").
 	for i := 0; i < len(allRecords); i += recordBatchSize {
 		end := i + recordBatchSize
 		if end > len(allRecords) {
@@ -256,58 +254,54 @@ func batchInsertAllPrimitiveData(ctx context.Context, allData []setup.InsertPrim
 		}
 		currentBatch := allRecords[i:end]
 
-		g.Go(func() error {
-			if len(currentBatch) == 0 {
-				return nil
-			}
+		if len(currentBatch) == 0 {
+			continue
+		}
 
-			dataProviders := make([]string, len(currentBatch))
-			streamIds := make([]string, len(currentBatch))
-			eventTimes := make([]int64, len(currentBatch))
-			values := make([]*kwilTypes.Decimal, len(currentBatch))
+		dataProviders := make([]string, len(currentBatch))
+		streamIds := make([]string, len(currentBatch))
+		eventTimes := make([]int64, len(currentBatch))
+		values := make([]*kwilTypes.Decimal, len(currentBatch))
 
-			for i, r := range currentBatch {
-				dataProviders[i] = r.dataProvider
-				streamIds[i] = r.streamId
-				eventTimes[i] = r.eventTime
-				values[i] = r.value
-			}
+		for i, r := range currentBatch {
+			dataProviders[i] = r.dataProvider
+			streamIds[i] = r.streamId
+			eventTimes[i] = r.eventTime
+			values[i] = r.value
+		}
 
-			txContext := &common.TxContext{
-				Ctx: gCtx,
-				BlockContext: &common.BlockContext{
-					Height: height,
-				},
-				TxID:   platform.Txid(),
-				Signer: deployer.Bytes(),
-				Caller: deployer.Address(),
-			}
-			engineContext := &common.EngineContext{
-				TxContext: txContext,
-			}
+		txContext := &common.TxContext{
+			Ctx: ctx,
+			BlockContext: &common.BlockContext{
+				Height: height,
+			},
+			TxID:   platform.Txid(),
+			Signer: deployer.Bytes(),
+			Caller: deployer.Address(),
+		}
+		engineContext := &common.EngineContext{
+			TxContext: txContext,
+		}
 
-			args := []any{
-				dataProviders,
-				streamIds,
-				eventTimes,
-				values,
-			}
+		args := []any{
+			dataProviders,
+			streamIds,
+			eventTimes,
+			values,
+		}
 
-			r, err := platform.Engine.Call(engineContext, platform.DB, "", "insert_records", args, func(row *common.Row) error {
-				return nil
-			})
-			if err != nil {
-				return errors.Wrapf(err, "error in batch insert for a chunk of %d records", len(currentBatch))
-			}
-			if r.Error != nil {
-				return errors.Wrapf(r.Error, "procedure error in batch insert for a chunk of %d records", len(currentBatch))
-			}
-
+		r, err := platform.Engine.Call(engineContext, platform.DB, "", "insert_records", args, func(row *common.Row) error {
 			return nil
 		})
+		if err != nil {
+			return errors.Wrapf(err, "error in batch insert for a chunk of %d records", len(currentBatch))
+		}
+		if r.Error != nil {
+			return errors.Wrapf(r.Error, "procedure error in batch insert for a chunk of %d records", len(currentBatch))
+		}
 	}
 
-	return g.Wait()
+	return nil
 }
 
 // setupComposedSchema handles the setup of composed streams including visibility and taxonomy.

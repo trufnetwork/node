@@ -107,14 +107,21 @@ CREATE OR REPLACE ACTION get_base_value(
 ) PUBLIC view returns (value NUMERIC(36,18)) {
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
+    -- Resolve stream ref first for permission check
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
+
     -- Check read permissions
-    if !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, NULL, $base_time) {
+    if !is_allowed_to_read_all_core($stream_ref, $lower_caller, NULL, $base_time) {
         ERROR('Not allowed to read stream');
     }
-    
+
     -- If base_time is null, try to get it from metadata
     $effective_base_time INT8 := $base_time;
-    $stream_ref := get_stream_id($data_provider, $stream_id);
     if $effective_base_time IS NULL {
         -- First try to get base_time from metadata
         $found_metadata := FALSE;

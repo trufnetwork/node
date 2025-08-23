@@ -11,8 +11,15 @@ CREATE OR REPLACE ACTION truflation_last_deployed_date(
 ) {
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
+
     -- Check read access first
-    if !is_allowed_to_read($data_provider, $stream_id, $lower_caller, 0, 0) {
+    if !is_allowed_to_read_core($stream_ref, $lower_caller, 0, 0) {
         ERROR('wallet not allowed to read');
     }
 
@@ -20,8 +27,6 @@ CREATE OR REPLACE ACTION truflation_last_deployed_date(
     if !is_primitive_stream($data_provider, $stream_id) {
         ERROR('stream is not a primitive stream');
     }
-
-    $stream_ref := get_stream_id($data_provider, $stream_id);
 
     RETURN SELECT truflation_created_at
            FROM primitive_events
@@ -51,29 +56,29 @@ CREATE OR REPLACE ACTION truflation_insert_records(
 
     $current_block INT := @height;
 
-    -- Check stream existence in batch
-    for $row in stream_exists_batch($data_provider, $stream_id) {
-        if !$row.stream_exists {
-            ERROR('stream does not exist: data_provider=' || $row.data_provider || ', stream_id=' || $row.stream_id);
+    -- Get stream reference for all streams (get_stream_ids returns NULL for non-existent streams)
+    $stream_refs := get_stream_ids($data_providers, $stream_id);
+
+    -- Check stream existence using stream refs (NULL values indicate non-existent streams)
+    for $i in 1..array_length($stream_refs) {
+        if $stream_refs[$i] IS NULL {
+            ERROR('stream does not exist: data_provider=' || $data_provider[$i] || ', stream_id=' || $stream_id[$i]);
         }
     }
 
     -- Check if streams are primitive in batch
-    for $row in is_primitive_stream_batch($data_provider, $stream_id) {
+    for $row in is_primitive_stream_batch($data_providers, $stream_id) {
         if !$row.is_primitive {
             ERROR('stream is not a primitive stream: data_provider=' || $row.data_provider || ', stream_id=' || $row.stream_id);
         }
     }
 
     -- Validate that the wallet is allowed to write to each stream
-    for $row in is_wallet_allowed_to_write_batch($data_provider, $stream_id, $lower_caller) {
+    for $row in is_wallet_allowed_to_write_batch($data_providers, $stream_id, $lower_caller) {
         if !$row.is_allowed {
             ERROR('wallet not allowed to write to stream: data_provider=' || $row.data_provider || ', stream_id=' || $row.stream_id);
         }
     }
-
-    -- Get stream reference for all streams
-    $stream_refs := get_stream_ids($data_provider, $stream_id);
 
     -- Insert all records using WITH RECURSIVE pattern to avoid round trips
     WITH RECURSIVE
@@ -85,8 +90,6 @@ CREATE OR REPLACE ACTION truflation_insert_records(
     ),
     record_arrays AS (
         SELECT
-            $stream_id AS stream_ids,
-            $data_provider AS data_providers,
             $event_time AS event_times,
             $value AS values_array,
             $truflation_created_at AS truflation_created_at_array,
@@ -94,8 +97,6 @@ CREATE OR REPLACE ACTION truflation_insert_records(
     ),
     arguments AS (
         SELECT
-            record_arrays.stream_ids[idx] AS stream_id,
-            record_arrays.data_providers[idx] AS data_provider,
             record_arrays.event_times[idx] AS event_time,
             record_arrays.values_array[idx] AS value,
             record_arrays.truflation_created_at_array[idx] AS truflation_created_at,
@@ -139,15 +140,20 @@ CREATE OR REPLACE ACTION truflation_get_record_primitive(
     -- Note: No cache; direct queries without computation
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
-    
-    -- Check read access first
-    if is_allowed_to_read($data_provider, $stream_id, $lower_caller, $from, $to) == false {
-        ERROR('wallet not allowed to read');
-    }
 
     $stream_ref := get_stream_id($data_provider, $stream_id);
+
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
+
+    -- Check read access first
+    if is_allowed_to_read_core($stream_ref, $lower_caller, $from, $to) == false {
+        ERROR('wallet not allowed to read');
+    }
     $max_int8 INT8 := 9223372036854775000;
-    $effective_from INT8 := COALESCE($from, 0);
+    $effective_from INT8 := COALESCE($from, 0::INT8);
     $effective_to INT8 := COALESCE($to, $max_int8);
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
 
@@ -254,12 +260,17 @@ CREATE OR REPLACE ACTION truflation_last_rc_primitive(
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
 
-    -- Check read access, since we're querying directly from the primitive_events table
-    if is_allowed_to_read($data_provider, $stream_id, $lower_caller, NULL, $before) == false {
-        ERROR('wallet not allowed to read');
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
     }
 
-    $stream_ref := get_stream_id($data_provider, $stream_id);
+    -- Check read access, since we're querying directly from the primitive_events table
+    if is_allowed_to_read_core($stream_ref, $lower_caller, NULL, $before) == false {
+        ERROR('wallet not allowed to read');
+    }
     $max_int8 INT8 := 9223372036854775000;
     $effective_before INT8 := COALESCE($before, $max_int8);
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
@@ -311,13 +322,18 @@ CREATE OR REPLACE ACTION truflation_first_rc_primitive(
    -- Note: No cache; direct queries without computation
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
-    
-    -- Check read access, since we're querying directly from the primitive_events table
-    if is_allowed_to_read($data_provider, $stream_id, $lower_caller, $after, NULL) == false {
-        ERROR('wallet not allowed to read');
-    }
 
     $stream_ref := get_stream_id($data_provider, $stream_id);
+
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
+
+    -- Check read access, since we're querying directly from the primitive_events table
+    if is_allowed_to_read_core($stream_ref, $lower_caller, $after, NULL) == false {
+        ERROR('wallet not allowed to read');
+    }
     $max_int8 INT8 := 9223372036854775000;
     $effective_after INT8 := COALESCE($after, 0);
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
@@ -400,15 +416,26 @@ CREATE OR REPLACE ACTION truflation_get_index_primitive(
     $data_provider := LOWER($data_provider);
     $stream_ref := get_stream_id($data_provider, $stream_id);
 
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR(
+          'Stream does not exist: data_provider=' 
+          || $data_provider 
+          || ' stream_id=' 
+          || $stream_id
+        );
+    }
+
     -- Check read permissions
-    if !is_allowed_to_read_all($data_provider, $stream_id, @caller, $from, $to) {
-        ERROR('Not allowed to read stream');
+    if !is_allowed_to_read_all_core($stream_ref, LOWER(@caller), $from, $to) {
+                ERROR('Not allowed to read stream');
     }
 
     $max_int8 INT8 := 9223372036854775000;
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
     
     -- If base_time is not provided, try to get it from metadata
+
     $effective_base_time INT8 := $base_time;
     if $effective_base_time IS NULL {
         $found_metadata := FALSE;
@@ -559,11 +586,20 @@ CREATE OR REPLACE ACTION truflation_get_base_value(
     $data_provider  := LOWER($data_provider);
     $lower_caller TEXT := LOWER(@caller);
     $stream_ref := get_stream_id($data_provider, $stream_id);
+
+    -- Fail fast if stream doesn't exist
+    IF $stream_ref IS NULL {
+        ERROR(
+            'Stream does not exist: data_provider=' || $data_provider
+            || ' stream_id=' || $stream_id
+        );
+    }
+
     -- Check read permissions
-    if !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, NULL, $base_time) {
+    if !is_allowed_to_read_all_core($stream_ref, $lower_caller, NULL, $base_time) {
         ERROR('Not allowed to read stream');
     }
-    
+
     -- If base_time is null, try to get it from metadata
     $effective_base_time INT8 := $base_time;
     if $effective_base_time IS NULL {
@@ -675,10 +711,10 @@ RETURNS TABLE(
     }
 
     -- Check permissions; raises error if unauthorized
-    IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, $from, $to) {
+    IF !is_allowed_to_read_all_core($stream_ref, $lower_caller, $from, $to) {
         ERROR('Not allowed to read stream');
     }
-    IF !is_allowed_to_compose_all($data_provider, $stream_id, $from, $to) {
+    IF !is_allowed_to_compose_all_core($stream_ref, $from, $to) {
         ERROR('Not allowed to compose stream');
     }
 
@@ -706,49 +742,68 @@ RETURNS TABLE(
     }
 
     RETURN WITH RECURSIVE
+    /*----------------------------------------------------------------------
+    * ANCHOR CTE: Compute the anchor time once for reuse throughout the query
+    *
+    * Purpose: Find the latest taxonomy start_time at or before $effective_from
+    * for the target stream to establish a baseline for filtering.
+    *---------------------------------------------------------------------*/
+    anchor AS (
+        SELECT COALESCE(
+            (SELECT t_anchor_base.start_time FROM taxonomies t_anchor_base
+             WHERE t_anchor_base.stream_ref = $stream_ref
+               AND t_anchor_base.disabled_at IS NULL AND t_anchor_base.start_time <= $effective_from
+             ORDER BY t_anchor_base.start_time DESC, t_anchor_base.group_sequence DESC LIMIT 1),
+            0 -- Default anchor to 0
+        ) AS anchor_time
+    ),
+
+    /*----------------------------------------------------------------------
+    * RELEVANT_PARENTS CTE: Find all streams in the subtree of the target stream
+    *---------------------------------------------------------------------*/
+    relevant_parents AS (
+        -- Base case: the target stream itself
+        SELECT $stream_ref AS stream_ref
+        UNION ALL
+        -- Recursive case: traverse descendants (children of already discovered streams)
+        SELECT DISTINCT t.child_stream_ref
+        FROM taxonomies t
+        JOIN relevant_parents rp ON t.stream_ref = rp.stream_ref
+        WHERE t.disabled_at IS NULL
+    ),
+
     -- Parent distinct start times and other CTEs remain the same...
     parent_distinct_start_times AS (
         SELECT DISTINCT
-            dp.address AS parent_dp,
-            s.stream_id AS parent_sid,
+            t.stream_ref,
             t.start_time
         FROM taxonomies t
-        JOIN streams s ON t.stream_ref = s.id
-        JOIN data_providers dp ON s.data_provider_id = dp.id
+        JOIN relevant_parents rp ON t.stream_ref = rp.stream_ref
         WHERE t.disabled_at IS NULL
     ),
 
     parent_next_starts AS (
         SELECT
-            parent_dp,
-            parent_sid,
+            stream_ref,
             start_time,
-            LEAD(start_time) OVER (PARTITION BY parent_dp, parent_sid ORDER BY start_time) as next_start_time
+            LEAD(start_time) OVER (PARTITION BY stream_ref ORDER BY start_time) as next_start_time
         FROM parent_distinct_start_times
     ),
 
     taxonomy_true_segments AS (
         SELECT
-            t.parent_dp,
-            t.parent_sid,
-            t.child_dp,
-            t.child_sid,
-            t.weight_for_segment,
-            t.segment_start,
+            t.stream_ref,
+            t.child_stream_ref,
+            t.weight AS weight_for_segment,
+            t.start_time AS segment_start,
             COALESCE(pns.next_start_time, $max_int8) - 1 AS segment_end
         FROM (
             SELECT
-                parent_dp.address AS parent_dp,
-                parent_s.stream_id AS parent_sid,
-                child_dp.address AS child_dp,
-                child_s.stream_id AS child_sid,
-                tx.weight AS weight_for_segment,
-                tx.start_time AS segment_start
+                tx.stream_ref,
+                tx.child_stream_ref,
+                tx.weight,
+                tx.start_time
             FROM taxonomies tx
-            JOIN streams parent_s ON tx.stream_ref = parent_s.id
-            JOIN data_providers parent_dp ON parent_s.data_provider_id = parent_dp.id
-            JOIN streams child_s ON tx.child_stream_ref = child_s.id
-            JOIN data_providers child_dp ON child_s.data_provider_id = child_dp.id
             JOIN (
                 SELECT
                     t.stream_ref, t.start_time,
@@ -763,41 +818,28 @@ RETURNS TABLE(
             WHERE tx.disabled_at IS NULL
         ) t
         JOIN parent_next_starts pns
-          ON t.parent_dp = pns.parent_dp
-         AND t.parent_sid = pns.parent_sid
-         AND t.segment_start = pns.start_time
+          ON t.stream_ref = pns.stream_ref
+         AND t.start_time = pns.start_time
     ),
 
     hierarchy AS (
       SELECT
-          tts.parent_dp AS root_dp,
-          tts.parent_sid AS root_sid,
-          tts.child_dp AS descendant_dp,
-          tts.child_sid AS descendant_sid,
+          tts.stream_ref AS root_stream_ref,
+          tts.child_stream_ref AS descendant_stream_ref,
           tts.weight_for_segment AS raw_weight,
           tts.segment_start AS path_start,
           tts.segment_end AS path_end,
           1 AS level
       FROM taxonomy_true_segments tts
-      WHERE tts.parent_dp = $data_provider AND tts.parent_sid = $stream_id
-        AND tts.segment_end >= (
-          COALESCE(
-              (SELECT t_anchor_base.start_time FROM taxonomies t_anchor_base
-               WHERE t_anchor_base.stream_ref = $stream_ref
-                 AND t_anchor_base.disabled_at IS NULL AND t_anchor_base.start_time <= $effective_from
-               ORDER BY t_anchor_base.start_time DESC, t_anchor_base.group_sequence DESC LIMIT 1),
-              0
-          )
-        )
+      WHERE tts.stream_ref = $stream_ref
+        AND tts.segment_end >= (SELECT anchor_time FROM anchor)
         AND tts.segment_start <= $effective_to
 
       UNION ALL
 
       SELECT
-          h.root_dp,
-          h.root_sid,
-          tts.child_dp AS descendant_dp,
-          tts.child_sid AS descendant_sid,
+          h.root_stream_ref,
+          tts.child_stream_ref AS descendant_stream_ref,
           (h.raw_weight * tts.weight_for_segment)::NUMERIC(36,18) AS raw_weight,
           GREATEST(h.path_start, tts.segment_start) AS path_start,
           LEAST(h.path_end, tts.segment_end) AS path_end,
@@ -805,59 +847,35 @@ RETURNS TABLE(
       FROM
           hierarchy h
       JOIN taxonomy_true_segments tts
-          ON h.descendant_dp = tts.parent_dp AND h.descendant_sid = tts.parent_sid
+          ON h.descendant_stream_ref = tts.stream_ref
       WHERE
           GREATEST(h.path_start, tts.segment_start) <= LEAST(h.path_end, tts.segment_end)
-          AND LEAST(h.path_end, tts.segment_end) >= (
-               COALESCE(
-                  (SELECT t_anchor_base.start_time FROM taxonomies t_anchor_base
-                   WHERE t_anchor_base.stream_ref = $stream_ref
-                     AND t_anchor_base.disabled_at IS NULL AND t_anchor_base.start_time <= $effective_from
-                   ORDER BY t_anchor_base.start_time DESC, t_anchor_base.group_sequence DESC LIMIT 1),
-                  0
-              )
-          )
+          AND LEAST(h.path_end, tts.segment_end) >= (SELECT anchor_time FROM anchor)
           AND GREATEST(h.path_start, tts.segment_start) <= $effective_to
           AND h.level < 100 -- Recursion depth limit to prevent taxonomy recursion attacks
     ),
 
     hierarchy_primitive_paths AS (
       SELECT
-          h.descendant_dp AS primitive_dp,
-          h.descendant_sid AS primitive_sid,
+          h.descendant_stream_ref AS primitive_stream_ref,
           h.raw_weight,
           h.path_start,
           h.path_end
       FROM hierarchy h
       WHERE EXISTS (
-          SELECT 1
-          FROM streams s
-          JOIN data_providers dp2 ON dp2.id = s.data_provider_id
-          WHERE dp2.address = h.descendant_dp
-            AND s.stream_id = h.descendant_sid
+          SELECT 1 FROM streams s
+          WHERE s.id = h.descendant_stream_ref
             AND s.stream_type = 'primitive'
       )
     ),
 
     primitive_weights AS (
       SELECT
-          hpp.primitive_dp AS data_provider,
-          hpp.primitive_sid AS stream_id,
+          hpp.primitive_stream_ref,
           hpp.raw_weight,
           hpp.path_start AS group_sequence_start,
           hpp.path_end AS group_sequence_end
       FROM hierarchy_primitive_paths hpp
-    ),
-
-    primitive_weights_ref AS (
-      SELECT
-        s.id AS primitive_stream_ref,
-        pw.raw_weight,
-        pw.group_sequence_start,
-        pw.group_sequence_end
-      FROM primitive_weights pw
-      JOIN data_providers dp ON dp.address = pw.data_provider
-      JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = pw.stream_id
     ),
 
     cleaned_event_times AS (
@@ -866,7 +884,7 @@ RETURNS TABLE(
             -- 1. Primitive event times strictly within the requested range
             SELECT pe.event_time
             FROM primitive_events pe
-            JOIN primitive_weights_ref pwr
+            JOIN primitive_weights pwr
               ON pe.stream_ref = pwr.primitive_stream_ref
              AND pe.event_time >= pwr.group_sequence_start
              AND pe.event_time <= pwr.group_sequence_end
@@ -877,7 +895,7 @@ RETURNS TABLE(
 
             -- 2. Taxonomy start times (weight changes) strictly within the range
             SELECT pwr.group_sequence_start AS event_time
-            FROM primitive_weights_ref pwr
+            FROM primitive_weights pwr
             WHERE pwr.group_sequence_start > $effective_from
               AND pwr.group_sequence_start <= $effective_to
         ) all_times_in_range
@@ -890,7 +908,7 @@ RETURNS TABLE(
             FROM (
                 SELECT pe.event_time
                 FROM primitive_events pe
-                JOIN primitive_weights_ref pwr
+                JOIN primitive_weights pwr
                   ON pe.stream_ref = pwr.primitive_stream_ref
                  AND pe.event_time >= pwr.group_sequence_start
                  AND pe.event_time <= pwr.group_sequence_end
@@ -899,7 +917,7 @@ RETURNS TABLE(
                 UNION
 
                 SELECT pwr.group_sequence_start AS event_time
-                FROM primitive_weights_ref pwr
+                FROM primitive_weights pwr
                 WHERE pwr.group_sequence_start <= $effective_from
 
             ) all_times_before
@@ -911,8 +929,7 @@ RETURNS TABLE(
     -- Modified initial_primitive_states with frozen mechanism
     initial_primitive_states AS (
         SELECT
-            dp.address AS data_provider,
-            s.stream_id,
+            pe.stream_ref,
             pe.event_time,
             pe.value
         FROM (
@@ -940,20 +957,17 @@ RETURNS TABLE(
             ) pe_inner
             WHERE pe_inner.event_time <= $effective_from
               AND EXISTS (
-                  SELECT 1 FROM primitive_weights_ref pwr_exists
+                  SELECT 1 FROM primitive_weights pwr_exists
                   WHERE pwr_exists.primitive_stream_ref = pe_inner.stream_ref
               )
         ) pe
-        JOIN streams s ON pe.stream_ref = s.id
-        JOIN data_providers dp ON s.data_provider_id = dp.id
         WHERE pe.rn = 1
     ),
 
     -- Modified primitive_events_in_interval with frozen mechanism
     primitive_events_in_interval AS (
         SELECT
-            dp.address AS data_provider,
-            s.stream_id,
+            pe.stream_ref,
             pe.event_time,
             pe.value
         FROM (
@@ -979,73 +993,67 @@ RETURNS TABLE(
                     parse_unix_timestamp(pe_calc.truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 AS truf_ts
                 FROM primitive_events pe_calc
             ) pe_inner
-            JOIN primitive_weights_ref pwr
+            JOIN primitive_weights pwr
                ON pe_inner.stream_ref = pwr.primitive_stream_ref
               AND pe_inner.event_time >= pwr.group_sequence_start
               AND pe_inner.event_time <= pwr.group_sequence_end
             WHERE pe_inner.event_time > $effective_from
               AND pe_inner.event_time <= $effective_to
         ) pe
-        JOIN streams s ON pe.stream_ref = s.id
-        JOIN data_providers dp ON s.data_provider_id = dp.id
         WHERE pe.rn = 1
     ),
 
     -- The rest of the CTEs remain the same...
     all_primitive_points AS (
-        SELECT data_provider, stream_id, event_time, value FROM initial_primitive_states
+        SELECT stream_ref, event_time, value FROM initial_primitive_states
         UNION ALL
-        SELECT data_provider, stream_id, event_time, value FROM primitive_events_in_interval
+        SELECT stream_ref, event_time, value FROM primitive_events_in_interval
     ),
 
     primitive_event_changes AS (
         SELECT * FROM (
-            SELECT data_provider, stream_id, event_time, value,
-                   COALESCE(value - LAG(value) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time), value)::numeric(36,18) AS delta_value
+            SELECT stream_ref, event_time, value,
+                   COALESCE(value - LAG(value) OVER (PARTITION BY stream_ref ORDER BY event_time), value)::numeric(36,18) AS delta_value
             FROM all_primitive_points
         ) calc WHERE delta_value != 0::numeric(36,18)
     ),
 
     first_value_times AS (
         SELECT
-            data_provider,
-            stream_id,
+            stream_ref,
             MIN(event_time) as first_value_time
         FROM all_primitive_points
-        GROUP BY data_provider, stream_id
+        GROUP BY stream_ref
     ),
 
     effective_weight_changes AS (
         SELECT
-            pw.data_provider,
-            pw.stream_id,
-            GREATEST(pw.group_sequence_start, fvt.first_value_time) AS event_time,
-            pw.raw_weight AS weight_delta
-        FROM primitive_weights pw
-        INNER JOIN first_value_times fvt
-            ON pw.data_provider = fvt.data_provider AND pw.stream_id = fvt.stream_id
-        WHERE GREATEST(pw.group_sequence_start, fvt.first_value_time) <= pw.group_sequence_end
-          AND pw.raw_weight != 0::numeric(36,18)
+            pwr.primitive_stream_ref AS stream_ref,
+            GREATEST(pwr.group_sequence_start, fvt.first_value_time) AS event_time,
+            pwr.raw_weight AS weight_delta
+        FROM primitive_weights pwr
+        JOIN first_value_times fvt
+            ON pwr.primitive_stream_ref = fvt.stream_ref
+        WHERE GREATEST(pwr.group_sequence_start, fvt.first_value_time) <= pwr.group_sequence_end
+          AND pwr.raw_weight != 0::numeric(36,18)
 
         UNION ALL
 
         SELECT
-            pw.data_provider,
-            pw.stream_id,
-            pw.group_sequence_end + 1 AS event_time,
-            -pw.raw_weight AS weight_delta
-        FROM primitive_weights pw
-        INNER JOIN first_value_times fvt
-            ON pw.data_provider = fvt.data_provider AND pw.stream_id = fvt.stream_id
-        WHERE GREATEST(pw.group_sequence_start, fvt.first_value_time) <= pw.group_sequence_end
-          AND pw.raw_weight != 0::numeric(36,18)
-          AND pw.group_sequence_end < ($max_int8 - 1)
+            pwr.primitive_stream_ref AS stream_ref,
+            pwr.group_sequence_end + 1 AS event_time,
+            -pwr.raw_weight AS weight_delta
+        FROM primitive_weights pwr
+        JOIN first_value_times fvt
+            ON pwr.primitive_stream_ref = fvt.stream_ref
+        WHERE GREATEST(pwr.group_sequence_start, fvt.first_value_time) <= pwr.group_sequence_end
+          AND pwr.raw_weight != 0::numeric(36,18)
+          AND pwr.group_sequence_end < ($max_int8 - 1)
     ),
 
     unified_events AS (
         SELECT
-            pec.data_provider,
-            pec.stream_id,
+            pec.stream_ref,
             pec.event_time,
             pec.delta_value,
             0::numeric(36,18) AS weight_delta,
@@ -1055,8 +1063,7 @@ RETURNS TABLE(
         UNION ALL
 
         SELECT
-            ewc.data_provider,
-            ewc.stream_id,
+            ewc.stream_ref,
             ewc.event_time,
             0::numeric(36,18) AS delta_value,
             ewc.weight_delta,
@@ -1066,23 +1073,21 @@ RETURNS TABLE(
 
     primitive_state_timeline AS (
         SELECT
-            data_provider,
-            stream_id,
+            stream_ref,
             event_time,
             delta_value,
             weight_delta,
-            COALESCE(LAG(value_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as value_before_event,
-            COALESCE(LAG(weight_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as weight_before_event
+            COALESCE(LAG(value_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY stream_ref ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as value_before_event,
+            COALESCE(LAG(weight_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY stream_ref ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as weight_before_event
         FROM (
             SELECT
-                data_provider,
-                stream_id,
+                stream_ref,
                 event_time,
                 delta_value,
                 weight_delta,
                 event_type_priority,
-                (SUM(delta_value) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as value_after_event,
-                (SUM(weight_delta) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as weight_after_event
+                (SUM(delta_value) OVER (PARTITION BY stream_ref ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as value_after_event,
+                (SUM(weight_delta) OVER (PARTITION BY stream_ref ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as weight_after_event
             FROM unified_events
         ) state_calc
     ),
@@ -1235,12 +1240,22 @@ RETURNS TABLE(
     /*
      * Step 1: Basic setup
      */
-    IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, NULL, $before) {
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+    IF $stream_ref IS NULL {
+        ERROR(
+          'Stream does not exist: data_provider='
+          || $data_provider
+          || ' stream_id='
+          || $stream_id
+        );
+    }
+
+    IF !is_allowed_to_read_all_core($stream_ref, $lower_caller, NULL, $before) {
         ERROR('Not allowed to read stream');
     }
 
     -- Check compose permissions
-    if !is_allowed_to_compose_all($data_provider, $stream_id, NULL, $before) {
+    if !is_allowed_to_compose_all_core($stream_ref, NULL, $before) {
         ERROR('Not allowed to compose stream');
     }
 
@@ -1273,47 +1288,21 @@ RETURNS TABLE(
      * Step 2: Recursively gather all children (ignoring overshadow),
      *         then identify primitive leaves.
      */
-    for $row in WITH RECURSIVE all_taxonomies AS (
-      /* 2a) Direct children of ($data_provider, $stream_id) */
-      SELECT
-        dp.address AS data_provider,
-        s.stream_id,
-        cdp.address AS child_data_provider,
-        cs.stream_id AS child_stream_id
+    for $row in WITH RECURSIVE descendants AS (
+      SELECT t.child_stream_ref
       FROM taxonomies t
-      JOIN streams s ON t.stream_ref = s.id
-      JOIN data_providers dp ON s.data_provider_id = dp.id
-      JOIN streams cs ON t.child_stream_ref = cs.id
-      JOIN data_providers cdp ON cs.data_provider_id = cdp.id
-      WHERE dp.address = $data_provider
-        AND s.stream_id = $stream_id
-        AND t.disabled_at IS NULL
-
+      WHERE t.stream_ref = $stream_ref AND t.disabled_at IS NULL
       UNION
-
-      /* 2b) For each discovered child, gather its own children */
-      SELECT
-        at.child_data_provider AS data_provider,
-        at.child_stream_id     AS stream_id,
-        cdp.address AS child_data_provider,
-        cs.stream_id AS child_stream_id
-      FROM all_taxonomies at
-      JOIN streams s ON s.data_provider_id = (SELECT id FROM data_providers WHERE address = at.child_data_provider)
-        AND s.stream_id = at.child_stream_id
-      JOIN taxonomies t ON t.stream_ref = s.id
-      JOIN streams cs ON t.child_stream_ref = cs.id
-      JOIN data_providers cdp ON cs.data_provider_id = cdp.id
+      SELECT t.child_stream_ref
+      FROM taxonomies t
+      JOIN descendants d ON t.stream_ref = d.child_stream_ref
       WHERE t.disabled_at IS NULL
     ),
     primitive_leaves AS (
-      /* Keep only references pointing to primitive streams */
-      SELECT DISTINCT
-        at.child_data_provider AS data_provider,
-        at.child_stream_id     AS stream_id
-      FROM all_taxonomies at
-      JOIN streams s ON s.data_provider_id = (SELECT id FROM data_providers WHERE address = at.child_data_provider)
-        AND s.stream_id = at.child_stream_id
-        AND s.stream_type = 'primitive'
+      SELECT DISTINCT s.id AS stream_ref
+      FROM streams s
+      WHERE s.stream_type = 'primitive'
+        AND s.id IN (SELECT child_stream_ref FROM descendants)
     ),
     /*
      * Step 3: In each primitive, pick the single latest event_time <= effective_before.
@@ -1321,14 +1310,13 @@ RETURNS TABLE(
      */
     latest_events AS (
       SELECT
-        pl.data_provider,
-        pl.stream_id,
+        pl.stream_ref,
         pe_wrap.event_time,
         pe_wrap.value,
         pe_wrap.created_at,
         ROW_NUMBER() OVER (
-          PARTITION BY pl.data_provider, pl.stream_id
-          ORDER BY 
+          PARTITION BY pl.stream_ref
+          ORDER BY
             pe_wrap.event_time DESC,
             CASE WHEN pe_wrap.truf_ts > $effective_frozen_at THEN 0 ELSE 1 END,
             CASE WHEN pe_wrap.truf_ts > $effective_frozen_at THEN pe_wrap.truf_ts ELSE NULL END ASC,
@@ -1336,10 +1324,8 @@ RETURNS TABLE(
             pe_wrap.created_at DESC
         ) AS rn
       FROM primitive_leaves pl
-      JOIN streams s_pl ON s_pl.stream_id = pl.stream_id
-      JOIN data_providers dp_pl ON dp_pl.address = pl.data_provider AND dp_pl.id = s_pl.data_provider_id
       JOIN (
-        SELECT 
+        SELECT
           pe.stream_ref,
           pe.event_time,
           pe.value,
@@ -1347,14 +1333,13 @@ RETURNS TABLE(
           parse_unix_timestamp(pe.truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 AS truf_ts
         FROM primitive_events pe
       ) pe_wrap
-        ON pe_wrap.stream_ref = s_pl.id
+        ON pe_wrap.stream_ref = pl.stream_ref
       WHERE pe_wrap.event_time <= $effective_before
     ),
     latest_values AS (
-      /* Step 4: Filter to rn=1 => the single latest event per (dp, sid) */
+      /* Step 4: Filter to rn=1 => the single latest event per stream_ref */
       SELECT
-        data_provider,
-        stream_id,
+        stream_ref,
         event_time,
         value
       FROM latest_events
@@ -1410,7 +1395,17 @@ RETURNS TABLE(
     /*
      * Step 1: Basic setup
      */
-    IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, $after, NULL) {
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+    IF $stream_ref IS NULL {
+        ERROR(
+          'Stream does not exist: data_provider='
+          || $data_provider
+          || ' stream_id='
+          || $stream_id
+        );
+    }
+
+    IF !is_allowed_to_read_all_core($stream_ref, $lower_caller, $after, NULL) {
         ERROR('Not allowed to read stream');
     }
 
@@ -1443,47 +1438,21 @@ RETURNS TABLE(
      * Step 2: Recursively gather all children (ignoring overshadow),
      *         then identify primitive leaves.
      */
-    for $row in WITH RECURSIVE all_taxonomies AS (
-      /* 2a) Direct children of ($data_provider, $stream_id) */
-      SELECT
-        dp.address AS data_provider,
-        s.stream_id,
-        cdp.address AS child_data_provider,
-        cs.stream_id AS child_stream_id
+    for $row in WITH RECURSIVE descendants AS (
+      SELECT t.child_stream_ref
       FROM taxonomies t
-      JOIN streams s ON t.stream_ref = s.id
-      JOIN data_providers dp ON s.data_provider_id = dp.id
-      JOIN streams cs ON t.child_stream_ref = cs.id
-      JOIN data_providers cdp ON cs.data_provider_id = cdp.id
-      WHERE dp.address = $data_provider
-        AND s.stream_id = $stream_id
-        AND t.disabled_at IS NULL
-
+      WHERE t.stream_ref = $stream_ref AND t.disabled_at IS NULL
       UNION
-
-      /* 2b) For each discovered child, gather its own children */
-      SELECT
-        at.child_data_provider AS data_provider,
-        at.child_stream_id     AS stream_id,
-        cdp.address AS child_data_provider,
-        cs.stream_id AS child_stream_id
-      FROM all_taxonomies at
-      JOIN streams s ON s.data_provider_id = (SELECT id FROM data_providers WHERE address = at.child_data_provider)
-        AND s.stream_id = at.child_stream_id
-      JOIN taxonomies t ON t.stream_ref = s.id
-      JOIN streams cs ON t.child_stream_ref = cs.id
-      JOIN data_providers cdp ON cs.data_provider_id = cdp.id
+      SELECT t.child_stream_ref
+      FROM taxonomies t
+      JOIN descendants d ON t.stream_ref = d.child_stream_ref
       WHERE t.disabled_at IS NULL
     ),
     primitive_leaves AS (
-      /* Keep only references pointing to primitive streams */
-      SELECT DISTINCT
-        at.child_data_provider AS data_provider,
-        at.child_stream_id     AS stream_id
-      FROM all_taxonomies at
-      JOIN streams s ON s.data_provider_id = (SELECT id FROM data_providers WHERE address = at.child_data_provider)
-        AND s.stream_id = at.child_stream_id
-        AND s.stream_type = 'primitive'
+      SELECT DISTINCT s.id AS stream_ref
+      FROM streams s
+      WHERE s.stream_type = 'primitive'
+        AND s.id IN (SELECT child_stream_ref FROM descendants)
     ),
     /*
      * Step 3: In each primitive, pick the single earliest event_time >= effective_after.
@@ -1491,14 +1460,13 @@ RETURNS TABLE(
      */
     earliest_events AS (
       SELECT
-        pl.data_provider,
-        pl.stream_id,
+        pl.stream_ref,
         pe_wrap.event_time,
         pe_wrap.value,
         pe_wrap.created_at,
         ROW_NUMBER() OVER (
-          PARTITION BY pl.data_provider, pl.stream_id
-          ORDER BY 
+          PARTITION BY pl.stream_ref
+          ORDER BY
             pe_wrap.event_time ASC,
             CASE WHEN pe_wrap.truf_ts > $effective_frozen_at THEN 0 ELSE 1 END,
             CASE WHEN pe_wrap.truf_ts > $effective_frozen_at THEN pe_wrap.truf_ts ELSE NULL END ASC,
@@ -1506,10 +1474,8 @@ RETURNS TABLE(
             pe_wrap.created_at DESC
         ) AS rn
       FROM primitive_leaves pl
-      JOIN streams s_pl ON s_pl.stream_id = pl.stream_id
-      JOIN data_providers dp_pl ON dp_pl.address = pl.data_provider AND dp_pl.id = s_pl.data_provider_id
       JOIN (
-        SELECT 
+        SELECT
           pe.stream_ref,
           pe.event_time,
           pe.value,
@@ -1517,14 +1483,13 @@ RETURNS TABLE(
           parse_unix_timestamp(pe.truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 AS truf_ts
         FROM primitive_events pe
       ) pe_wrap
-        ON pe_wrap.stream_ref = s_pl.id
+        ON pe_wrap.stream_ref = pl.stream_ref
       WHERE pe_wrap.event_time >= $effective_after
     ),
     earliest_values AS (
-      /* Step 4: Filter to rn=1 => the single earliest event per (dp, sid) */
+      /* Step 4: Filter to rn=1 => the single earliest event per stream_ref */
       SELECT
-        data_provider,
-        stream_id,
+        stream_ref,
         event_time,
         value
       FROM earliest_events
@@ -1582,12 +1547,17 @@ RETURNS TABLE(
     -- Resolve referenced stream once for anchor filters
     $stream_ref := get_stream_id($data_provider, $stream_id);
 
+    -- Fail-fast guard: ensure stream exists before calling _core function
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
+
     -- Base time determination: Use parameter, metadata, or first event time.
     $effective_base_time INT8;
     if $base_time is not null {
         $effective_base_time := $base_time;
     } else {
-        $effective_base_time := get_latest_metadata_int($data_provider, $stream_id, 'default_base_time');
+        $effective_base_time := get_latest_metadata_int_core($stream_ref, 'default_base_time');
     }
     $effective_base_time := COALESCE($effective_base_time, 0);
 
@@ -1596,10 +1566,10 @@ RETURNS TABLE(
     }
 
     -- Permissions check
-    IF !is_allowed_to_read_all($data_provider, $stream_id, $lower_caller, $from, $to) {
+    IF !is_allowed_to_read_all_core($stream_ref, $lower_caller, $from, $to) {
         ERROR('Not allowed to read stream');
     }
-    IF !is_allowed_to_compose_all($data_provider, $stream_id, $from, $to) {
+    IF !is_allowed_to_compose_all_core($stream_ref, $from, $to) {
         ERROR('Not allowed to compose stream');
     }
 
@@ -1643,107 +1613,116 @@ RETURNS TABLE(
     $base_value := truflation_get_base_value($data_provider, $stream_id, $effective_base_time, $effective_frozen_at, false);
 
     RETURN WITH RECURSIVE
+    /*----------------------------------------------------------------------
+    * ANCHOR CTE: Compute the anchor time once for reuse throughout the query
+    *
+    * Purpose: Find the latest taxonomy start_time at or before $effective_from
+    * for the target stream to establish a baseline for filtering.
+    *---------------------------------------------------------------------*/
+    anchor AS (
+        SELECT COALESCE(
+            (SELECT t_anchor_base.start_time FROM taxonomies t_anchor_base
+             WHERE t_anchor_base.stream_ref = $stream_ref
+               AND t_anchor_base.disabled_at IS NULL AND t_anchor_base.start_time <= $effective_from
+             ORDER BY t_anchor_base.start_time DESC, t_anchor_base.group_sequence DESC LIMIT 1),
+            0 -- Default anchor to 0
+        ) AS anchor_time
+    ),
+
+    /*----------------------------------------------------------------------
+    * RELEVANT_PARENTS CTE: Find all streams in the subtree of the target stream
+    *---------------------------------------------------------------------*/
+    relevant_parents AS (
+        -- Base case: the target stream itself
+        SELECT $stream_ref AS stream_ref
+        UNION ALL
+        -- Recursive case: traverse descendants (children of already discovered streams)
+        SELECT DISTINCT t.child_stream_ref
+        FROM taxonomies t
+        JOIN relevant_parents rp ON t.stream_ref = rp.stream_ref
+        WHERE t.disabled_at IS NULL
+    ),
+
     parent_distinct_start_times AS (
         SELECT DISTINCT
-            dp.address AS parent_dp,
-            s.stream_id AS parent_sid,
+            t.stream_ref,
             t.start_time
         FROM taxonomies t
-        JOIN streams s ON t.stream_ref = s.id
-        JOIN data_providers dp ON s.data_provider_id = dp.id
+        JOIN relevant_parents rp ON t.stream_ref = rp.stream_ref
         WHERE t.disabled_at IS NULL
     ),
 
     parent_next_starts AS (
         SELECT
-            parent_dp,
-            parent_sid,
+            stream_ref,
             start_time,
-            LEAD(start_time) OVER (PARTITION BY parent_dp, parent_sid ORDER BY start_time) as next_start_time
+            LEAD(start_time) OVER (PARTITION BY stream_ref ORDER BY start_time) as next_start_time
         FROM parent_distinct_start_times
     ),
 
     taxonomy_true_segments AS (
         SELECT
-            t.parent_dp,
-            t.parent_sid,
-            t.child_dp,
-            t.child_sid,
-            t.weight_for_segment,
-            t.segment_start,
-            COALESCE(pns.next_start_time, $max_int8) - 1 AS segment_end
+            tx.stream_ref,
+            tx.child_stream_ref,
+            tx.weight AS weight_for_segment,
+            tx.start_time AS segment_start,
+            COALESCE(pns.next_start_time, $max_int8) - 1::INT8 AS segment_end
         FROM (
             SELECT
-                parent_dp.address AS parent_dp,
-                parent_s.stream_id AS parent_sid,
-                child_dp.address AS child_dp,
-                child_s.stream_id AS child_sid,
-                tx.weight AS weight_for_segment,
-                tx.start_time AS segment_start
-            FROM taxonomies tx
-            JOIN streams parent_s ON tx.stream_ref = parent_s.id
-            JOIN data_providers parent_dp ON parent_s.data_provider_id = parent_dp.id
-            JOIN streams child_s ON tx.child_stream_ref = child_s.id
-            JOIN data_providers child_dp ON child_s.data_provider_id = child_dp.id
-            JOIN (
-                SELECT
-                    t.stream_ref, t.start_time,
-                    MAX(t.group_sequence) as max_gs
-                FROM taxonomies t
-                WHERE t.disabled_at IS NULL
-                GROUP BY t.stream_ref, t.start_time
-            ) max_gs_filter
+                t.stream_ref,
+                t.child_stream_ref,
+                t.weight,
+                t.start_time,
+                t.group_sequence
+            FROM taxonomies t
+            WHERE t.disabled_at IS NULL
+        ) tx
+        JOIN (
+            SELECT
+                t.stream_ref,
+                t.start_time,
+                MAX(t.group_sequence) as max_gs
+            FROM taxonomies t
+            WHERE t.disabled_at IS NULL
+            GROUP BY t.stream_ref, t.start_time
+        ) max_gs_filter
             ON tx.stream_ref = max_gs_filter.stream_ref
            AND tx.start_time = max_gs_filter.start_time
            AND tx.group_sequence = max_gs_filter.max_gs
-            WHERE tx.disabled_at IS NULL
-        ) t
         JOIN parent_next_starts pns
-          ON t.parent_dp = pns.parent_dp
-         AND t.parent_sid = pns.parent_sid
-         AND t.segment_start = pns.start_time
+          ON tx.stream_ref = pns.stream_ref
+         AND tx.start_time = pns.start_time
     ),
 
     hierarchy AS (
       SELECT
-          tts.parent_dp AS root_dp,
-          tts.parent_sid AS root_sid,
-          tts.child_dp AS descendant_dp,
-          tts.child_sid AS descendant_sid,
+          tts.stream_ref AS root_stream_ref,
+          tts.child_stream_ref AS descendant_stream_ref,
           tts.weight_for_segment AS raw_weight,
           tts.weight_for_segment AS effective_weight,
           tts.segment_start AS path_start,
           tts.segment_end AS path_end,
           1 AS level
       FROM taxonomy_true_segments tts
-      WHERE tts.parent_dp = $data_provider AND tts.parent_sid = $stream_id
-        AND tts.segment_end >= (
-          COALESCE(
-              (SELECT t_anchor_base.start_time FROM taxonomies t_anchor_base
-               WHERE t_anchor_base.stream_ref = $stream_ref
-                 AND t_anchor_base.disabled_at IS NULL AND t_anchor_base.start_time <= $effective_from
-               ORDER BY t_anchor_base.start_time DESC, t_anchor_base.group_sequence DESC LIMIT 1),
-              0
-          )
-        )
+      WHERE tts.stream_ref = $stream_ref
+        AND tts.segment_end >= (SELECT anchor_time FROM anchor)
         AND tts.segment_start <= $effective_to
 
       UNION ALL
 
       SELECT
-          h.root_dp,
-          h.root_sid,
-          tts.child_dp AS descendant_dp,
-          tts.child_sid AS descendant_sid,
+          h.root_stream_ref,
+          tts.child_stream_ref AS descendant_stream_ref,
           (h.raw_weight * tts.weight_for_segment)::NUMERIC(36,18) AS raw_weight,
           (h.effective_weight * (
-              tts.weight_for_segment / 
-              (SELECT SUM(sibling_tts.weight_for_segment) 
-               FROM taxonomy_true_segments sibling_tts 
-               WHERE sibling_tts.parent_dp = h.descendant_dp 
-                 AND sibling_tts.parent_sid = h.descendant_sid
-                 AND sibling_tts.segment_start = tts.segment_start
-                 AND sibling_tts.segment_end = tts.segment_end)::NUMERIC(36,18)
+              tts.weight_for_segment /
+              NULLIF((
+                  SELECT SUM(sibling_tts.weight_for_segment)
+                  FROM taxonomy_true_segments sibling_tts
+                  WHERE sibling_tts.stream_ref = h.descendant_stream_ref
+                    AND sibling_tts.segment_start = tts.segment_start
+                    AND sibling_tts.segment_end = tts.segment_end
+              )::NUMERIC(36,18), 0::NUMERIC(36,18))
           ))::NUMERIC(36,18) AS effective_weight,
           GREATEST(h.path_start, tts.segment_start) AS path_start,
           LEAST(h.path_end, tts.segment_end) AS path_end,
@@ -1751,58 +1730,35 @@ RETURNS TABLE(
       FROM
           hierarchy h
       JOIN taxonomy_true_segments tts
-          ON h.descendant_dp = tts.parent_dp AND h.descendant_sid = tts.parent_sid
+          ON h.descendant_stream_ref = tts.stream_ref
       WHERE
           GREATEST(h.path_start, tts.segment_start) <= LEAST(h.path_end, tts.segment_end)
-          AND LEAST(h.path_end, tts.segment_end) >= (
-               COALESCE(
-                  (SELECT t_anchor_base.start_time FROM taxonomies t_anchor_base
-                   WHERE t_anchor_base.stream_ref = $stream_ref
-                     AND t_anchor_base.disabled_at IS NULL AND t_anchor_base.start_time <= $effective_from
-                   ORDER BY t_anchor_base.start_time DESC, t_anchor_base.group_sequence DESC LIMIT 1),
-                  0
-              )
-          )
+          AND LEAST(h.path_end, tts.segment_end) >= (SELECT anchor_time FROM anchor)
           AND GREATEST(h.path_start, tts.segment_start) <= $effective_to
           AND h.level < 100 -- Recursion depth limit to prevent taxonomy recursion attacks
     ),
 
     hierarchy_primitive_paths AS (
       SELECT
-          h.descendant_dp AS child_data_provider,
-          h.descendant_sid AS child_stream_id,
+          h.descendant_stream_ref AS primitive_stream_ref,
           h.effective_weight AS raw_weight,
           h.path_start AS group_sequence_start,
           h.path_end AS group_sequence_end
       FROM hierarchy h
       WHERE EXISTS (
           SELECT 1 FROM streams s
-          JOIN data_providers dp2 ON dp2.id = s.data_provider_id
-          WHERE dp2.address = h.descendant_dp
-            AND s.stream_id = h.descendant_sid
+          WHERE s.id = h.descendant_stream_ref
             AND s.stream_type = 'primitive'
       )
     ),
 
     primitive_weights AS (
       SELECT
-          hpp.child_data_provider AS data_provider,
-          hpp.child_stream_id     AS stream_id,
+          hpp.primitive_stream_ref,
           hpp.raw_weight,
           hpp.group_sequence_start,
           hpp.group_sequence_end
       FROM hierarchy_primitive_paths hpp
-    ),
-
-    primitive_weights_ref AS (
-      SELECT
-        s.id AS primitive_stream_ref,
-        pw.raw_weight,
-        pw.group_sequence_start,
-        pw.group_sequence_end
-      FROM primitive_weights pw
-      JOIN data_providers dp ON dp.address = pw.data_provider
-      JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = pw.stream_id
     ),
 
     cleaned_event_times AS (
@@ -1810,7 +1766,7 @@ RETURNS TABLE(
         FROM (
             SELECT pe.event_time
             FROM primitive_events pe
-            JOIN primitive_weights_ref pwr
+            JOIN primitive_weights pwr
               ON pe.stream_ref = pwr.primitive_stream_ref
              AND pe.event_time >= pwr.group_sequence_start
              AND pe.event_time <= pwr.group_sequence_end
@@ -1820,7 +1776,7 @@ RETURNS TABLE(
             UNION
 
             SELECT pwr.group_sequence_start AS event_time
-            FROM primitive_weights_ref pwr
+            FROM primitive_weights pwr
             WHERE pwr.group_sequence_start > $effective_from
               AND pwr.group_sequence_start <= $effective_to
         ) all_times_in_range
@@ -1832,7 +1788,7 @@ RETURNS TABLE(
             FROM (
                 SELECT pe.event_time
                 FROM primitive_events pe
-                JOIN primitive_weights_ref pwr
+                JOIN primitive_weights pwr
                   ON pe.stream_ref = pwr.primitive_stream_ref
                  AND pe.event_time >= pwr.group_sequence_start
                  AND pe.event_time <= pwr.group_sequence_end
@@ -1841,7 +1797,7 @@ RETURNS TABLE(
                 UNION
 
                 SELECT pwr.group_sequence_start AS event_time
-                FROM primitive_weights_ref pwr
+                FROM primitive_weights pwr
                 WHERE pwr.group_sequence_start <= $effective_from
 
             ) all_times_before
@@ -1853,8 +1809,7 @@ RETURNS TABLE(
     -- Modified initial_primitive_states with frozen mechanism
     initial_primitive_states AS (
         SELECT
-            dp.address AS data_provider,
-            s.stream_id,
+            pe.stream_ref,
             pe.event_time,
             pe.value
         FROM (
@@ -1882,20 +1837,17 @@ RETURNS TABLE(
             ) pe_inner
             WHERE pe_inner.event_time <= $effective_from
               AND EXISTS (
-                  SELECT 1 FROM primitive_weights_ref pwr_exists
+                  SELECT 1 FROM primitive_weights pwr_exists
                   WHERE pwr_exists.primitive_stream_ref = pe_inner.stream_ref
               )
         ) pe
-        JOIN streams s ON pe.stream_ref = s.id
-        JOIN data_providers dp ON s.data_provider_id = dp.id
         WHERE pe.rn = 1
     ),
 
     -- Modified primitive_events_in_interval with frozen mechanism
     primitive_events_in_interval AS (
         SELECT
-            dp.address AS data_provider,
-            s.stream_id,
+            pe.stream_ref,
             pe.event_time,
             pe.value
         FROM (
@@ -1921,118 +1873,85 @@ RETURNS TABLE(
                     parse_unix_timestamp(pe_calc.truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 AS truf_ts
                 FROM primitive_events pe_calc
             ) pe_inner
-            JOIN primitive_weights_ref pwr
+            JOIN primitive_weights pwr
                ON pe_inner.stream_ref = pwr.primitive_stream_ref
               AND pe_inner.event_time >= pwr.group_sequence_start
               AND pe_inner.event_time <= pwr.group_sequence_end
             WHERE pe_inner.event_time > $effective_from
               AND pe_inner.event_time <= $effective_to
         ) pe
-        JOIN streams s ON pe.stream_ref = s.id
-        JOIN data_providers dp ON s.data_provider_id = dp.id
         WHERE pe.rn = 1
     ),
 
     all_primitive_points AS (
-        SELECT data_provider, stream_id, event_time, value FROM initial_primitive_states
+        SELECT stream_ref, event_time, value FROM initial_primitive_states
         UNION ALL
-        SELECT data_provider, stream_id, event_time, value FROM primitive_events_in_interval
+        SELECT stream_ref, event_time, value FROM primitive_events_in_interval
     ),
 
     distinct_primitives_for_base AS (
-       SELECT DISTINCT data_provider, stream_id
+        SELECT DISTINCT stream_ref
         FROM all_primitive_points
     ),
 
     -- Modified primitive_base_values with frozen mechanism
     primitive_base_values AS (
         SELECT
-            dp.data_provider,
-            dp.stream_id,
-             COALESCE(
-                -- Priority 1: Exact match with frozen mechanism
-                 (SELECT pe.value FROM (
-                     SELECT value,
-                            ROW_NUMBER() OVER (
-                                ORDER BY 
-                                    CASE WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at THEN 0 ELSE 1 END,
-                                    CASE 
-                                        WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at 
-                                        THEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
-                                        ELSE NULL
-                                    END ASC,
-                                    CASE 
-                                        WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 <= $effective_frozen_at 
-                                        THEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
-                                        ELSE NULL
-                                    END DESC,
-                                    created_at DESC
-                            ) as rn
-                     FROM primitive_events
-                     WHERE stream_ref = js.id
-                       AND event_time = $effective_base_time
-                 ) pe WHERE pe.rn = 1),
-
-                -- Priority 2: Latest Before with frozen mechanism
-                 (SELECT pe.value FROM (
-                     SELECT value,
-                            ROW_NUMBER() OVER (
-                                ORDER BY 
-                                    event_time DESC,
-                                    CASE WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at THEN 0 ELSE 1 END,
-                                    CASE 
-                                        WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at 
-                                        THEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
-                                        ELSE NULL
-                                    END ASC,
-                                    CASE 
-                                        WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 <= $effective_frozen_at 
-                                        THEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
-                                        ELSE NULL
-                                    END DESC,
-                                    created_at DESC
-                            ) as rn
-                     FROM primitive_events
-                     WHERE stream_ref = js.id
-                       AND event_time < $effective_base_time
-                 ) pe WHERE pe.rn = 1),
-
-                -- Priority 3: Earliest After with frozen mechanism
-                  (SELECT pe.value FROM (
-                      SELECT value,
-                             ROW_NUMBER() OVER (
-                                 ORDER BY 
-                                     event_time ASC,
-                                     CASE WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at THEN 0 ELSE 1 END,
-                                     CASE 
-                                         WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at 
-                                         THEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
-                                         ELSE NULL
-                                     END ASC,
-                                     CASE 
-                                         WHEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 <= $effective_frozen_at 
-                                         THEN parse_unix_timestamp(truflation_created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8
-                                         ELSE NULL
-                                     END DESC,
-                                     created_at DESC
-                             ) as rn
-                      FROM primitive_events
-                      WHERE stream_ref = js.id
-                        AND event_time > $effective_base_time
-                  ) pe WHERE pe.rn = 1),
-
-                  1::numeric(36,18) -- Default value
-             )::numeric(36,18) AS base_value
+            dp.stream_ref,
+            COALESCE(
+                /* exact at base_time */
+                (SELECT pe.value FROM (
+                    SELECT value,
+                           ROW_NUMBER() OVER (
+                             ORDER BY
+                               CASE WHEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at THEN 0 ELSE 1 END,
+                               CASE WHEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at THEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 ELSE NULL END ASC,
+                               CASE WHEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 <= $effective_frozen_at THEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 ELSE NULL END DESC,
+                               created_at DESC
+                           ) AS rn
+                    FROM primitive_events
+                    WHERE stream_ref = dp.stream_ref
+                      AND event_time = $effective_base_time
+                ) pe WHERE pe.rn = 1),
+                /* latest before base_time */
+                (SELECT pe.value FROM (
+                    SELECT value,
+                           ROW_NUMBER() OVER (
+                             ORDER BY
+                               event_time DESC,
+                               CASE WHEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at THEN 0 ELSE 1 END,
+                               CASE WHEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at THEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 ELSE NULL END ASC,
+                               CASE WHEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 <= $effective_frozen_at THEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 ELSE NULL END DESC,
+                               created_at DESC
+                           ) AS rn
+                    FROM primitive_events
+                    WHERE stream_ref = dp.stream_ref
+                      AND event_time < $effective_base_time
+                ) pe WHERE pe.rn = 1),
+                /* earliest after base_time */
+                (SELECT pe.value FROM (
+                    SELECT value,
+                           ROW_NUMBER() OVER (
+                             ORDER BY
+                               event_time ASC,
+                               CASE WHEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at THEN 0 ELSE 1 END,
+                               CASE WHEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 > $effective_frozen_at THEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 ELSE NULL END ASC,
+                               CASE WHEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 <= $effective_frozen_at THEN parse_unix_timestamp(truflation_created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')::INT8 ELSE NULL END DESC,
+                               created_at DESC
+                           ) AS rn
+                    FROM primitive_events
+                    WHERE stream_ref = dp.stream_ref
+                      AND event_time > $effective_base_time
+                ) pe WHERE pe.rn = 1),
+                1::numeric(36,18)
+            )::numeric(36,18) AS base_value
         FROM distinct_primitives_for_base dp
-        JOIN data_providers jdp ON jdp.address = dp.data_provider
-        JOIN streams js ON js.data_provider_id = jdp.id AND js.stream_id = dp.stream_id
     ),
 
     -- The rest remains the same since it's just calculations on the selected values
     primitive_event_changes AS (
         SELECT
-            calc.data_provider,
-            calc.stream_id,
+            calc.stream_ref,
             calc.event_time,
             calc.value,
             calc.delta_value,
@@ -2041,56 +1960,52 @@ RETURNS TABLE(
                 ELSE (calc.delta_value * 100::numeric(36,18) / pbv.base_value)::numeric(36,18)
             END AS delta_indexed_value
         FROM (
-            SELECT data_provider, stream_id, event_time, value,
-                    COALESCE(value - LAG(value) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time), value)::numeric(36,18) AS delta_value
+            SELECT stream_ref, event_time, value,
+                   COALESCE(value - LAG(value) OVER (PARTITION BY stream_ref ORDER BY event_time), value)::numeric(36,18) AS delta_value
             FROM all_primitive_points
         ) calc
         JOIN primitive_base_values pbv
-            ON calc.data_provider = pbv.data_provider AND calc.stream_id = pbv.stream_id
+          ON calc.stream_ref = pbv.stream_ref
         WHERE calc.delta_value != 0::numeric(36,18)
     ),
 
     first_value_times AS (
         SELECT
-            data_provider,
-            stream_id,
+            stream_ref,
             MIN(event_time) as first_value_time
         FROM all_primitive_points
-        GROUP BY data_provider, stream_id
+        GROUP BY stream_ref
     ),
 
     effective_weight_changes AS (
         SELECT
-            pw.data_provider,
-            pw.stream_id,
-            GREATEST(pw.group_sequence_start, fvt.first_value_time) AS event_time,
-            pw.raw_weight AS weight_delta
-        FROM primitive_weights pw
-        INNER JOIN first_value_times fvt
-            ON pw.data_provider = fvt.data_provider AND pw.stream_id = fvt.stream_id
-        WHERE GREATEST(pw.group_sequence_start, fvt.first_value_time) <= pw.group_sequence_end
-          AND pw.raw_weight != 0::numeric(36,18)
+            pwr.primitive_stream_ref AS stream_ref,
+            GREATEST(pwr.group_sequence_start, fvt.first_value_time) AS event_time,
+            pwr.raw_weight AS weight_delta
+        FROM primitive_weights pwr
+        JOIN first_value_times fvt
+            ON pwr.primitive_stream_ref = fvt.stream_ref
+        WHERE GREATEST(pwr.group_sequence_start, fvt.first_value_time) <= pwr.group_sequence_end
+          AND pwr.raw_weight != 0::numeric(36,18)
 
         UNION ALL
 
         SELECT
-            pw.data_provider,
-            pw.stream_id,
-            pw.group_sequence_end + 1 AS event_time,
-            -pw.raw_weight AS weight_delta
-        FROM primitive_weights pw
-        INNER JOIN first_value_times fvt
-            ON pw.data_provider = fvt.data_provider AND pw.stream_id = fvt.stream_id
-        WHERE 
-            GREATEST(pw.group_sequence_start, fvt.first_value_time) <= pw.group_sequence_end
-            AND pw.raw_weight != 0::numeric(36,18)
-            AND pw.group_sequence_end < ($max_int8 - 1)
+            pwr.primitive_stream_ref AS stream_ref,
+            (pwr.group_sequence_end + 1::INT8) AS event_time,
+            -pwr.raw_weight AS weight_delta
+        FROM primitive_weights pwr
+        JOIN first_value_times fvt
+            ON pwr.primitive_stream_ref = fvt.stream_ref
+        WHERE
+            GREATEST(pwr.group_sequence_start, fvt.first_value_time) <= pwr.group_sequence_end
+            AND pwr.raw_weight != 0::numeric(36,18)
+            AND pwr.group_sequence_end < ($max_int8 - 1::INT8)
     ),
 
     unified_events AS (
         SELECT
-            pec.data_provider,
-            pec.stream_id,
+            pec.stream_ref,
             pec.event_time,
             pec.delta_indexed_value,
             0::numeric(36,18) AS weight_delta,
@@ -2100,8 +2015,7 @@ RETURNS TABLE(
         UNION ALL
 
         SELECT
-            ewc.data_provider,
-            ewc.stream_id,
+            ewc.stream_ref,
             ewc.event_time,
             0::numeric(36,18) AS delta_indexed_value,
             ewc.weight_delta,
@@ -2111,23 +2025,21 @@ RETURNS TABLE(
 
     primitive_state_timeline AS (
         SELECT
-            data_provider,
-            stream_id,
+            stream_ref,
             event_time,
             delta_indexed_value,
             weight_delta,
-            COALESCE(LAG(indexed_value_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as indexed_value_before_event,
-            COALESCE(LAG(weight_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as weight_before_event
+            COALESCE(LAG(indexed_value_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY stream_ref ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as indexed_value_before_event,
+            COALESCE(LAG(weight_after_event, 1, 0::numeric(36,18)) OVER (PARTITION BY stream_ref ORDER BY event_time ASC, event_type_priority ASC), 0::numeric(36,18)) as weight_before_event
         FROM (
             SELECT
-                data_provider,
-                stream_id,
+                stream_ref,
                 event_time,
                 delta_indexed_value,
                 weight_delta,
                 event_type_priority,
-                (SUM(delta_indexed_value) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as indexed_value_after_event,
-                (SUM(weight_delta) OVER (PARTITION BY data_provider, stream_id ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as weight_after_event
+                (SUM(delta_indexed_value) OVER (PARTITION BY stream_ref ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as indexed_value_after_event,
+                (SUM(weight_delta) OVER (PARTITION BY stream_ref ORDER BY event_time ASC, event_type_priority ASC))::numeric(36,18) as weight_after_event
             FROM unified_events
         ) state_calc
     ),

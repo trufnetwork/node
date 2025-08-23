@@ -11,23 +11,47 @@ CREATE OR REPLACE ACTION is_allowed_to_read(
 ) PUBLIC view returns (is_allowed BOOL) {
     $data_provider := LOWER($data_provider);
     $lowercase_wallet_address TEXT := LOWER($wallet_address);
-    
+
     -- Extension agent has unrestricted read access for caching purposes
-    if $wallet_address = 'extension_agent' {
+    if $lowercase_wallet_address = 'extension_agent' {
         return true;
     }
-    
-    -- Check if the stream exists
-    if !stream_exists($data_provider, $stream_id) {
+
+    -- Resolve stream ref (get_stream_id returns NULL if stream doesn't exist)
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+    IF $stream_ref IS NULL {
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
     }
+
+    -- Delegate to private version (core logic)
+    return is_allowed_to_read_core($stream_ref, $lowercase_wallet_address, $active_from, $active_to);
+};
+
+/**
+ * is_allowed_to_read_core: Private version that uses stream ref directly.
+ * Checks if a wallet can read a specific stream using stream reference.
+ * This is the core implementation called by the public version.
+ */
+CREATE OR REPLACE ACTION is_allowed_to_read_core(
+    $stream_ref INT,
+    $wallet_address TEXT,
+    $active_from INT,
+    $active_to INT
+) PRIVATE view returns (is_allowed BOOL) {
+    $lowercase_wallet_address TEXT := LOWER($wallet_address);
+
+    -- Extension agent has unrestricted read access for caching purposes
+    if $lowercase_wallet_address = 'extension_agent' {
+        return true;
+    }
+
     -- if it's the owner, return true
-    if is_stream_owner($data_provider, $stream_id, $wallet_address) {
+    if is_stream_owner_core($stream_ref, $lowercase_wallet_address) {
         return true;
     }
 
     -- Check if the stream is private
-    $read_visibility INT := get_latest_metadata_int($data_provider, $stream_id, 'read_visibility');
+    $read_visibility INT := get_latest_metadata_int_core($stream_ref, 'read_visibility');
     -- public by default
     if $read_visibility IS NULL {
         $read_visibility := 0;
@@ -39,8 +63,55 @@ CREATE OR REPLACE ACTION is_allowed_to_read(
     }
 
     -- Check if the wallet is allowed to read the stream
-    if get_latest_metadata_ref($data_provider, $stream_id, 'allow_read_wallet', $lowercase_wallet_address) IS DISTINCT FROM NULL {
+    if get_latest_metadata_ref_core($stream_ref, 'allow_read_wallet', $lowercase_wallet_address) IS DISTINCT FROM NULL {
         -- wallet is allowed to read the stream
+        return true;
+    }
+
+    -- none of the above authorized, so return false
+    return false;
+};
+
+
+/**
+ * is_allowed_to_compose_core: Private version that uses stream refs directly.
+ * Checks if one stream can compose another stream using stream references.
+ * This is the core implementation called by the public version.
+ */
+CREATE OR REPLACE ACTION is_allowed_to_compose_core(
+    $stream_ref INT,
+    $composing_stream_ref INT,
+    $active_from INT,
+    $active_to INT
+) PRIVATE view returns (is_allowed BOOL) {
+    -- check if it's from the same data provider
+    $stream_owner := get_latest_metadata_ref_core($stream_ref, 'stream_owner', NULL);
+    $composing_stream_owner := get_latest_metadata_ref_core($composing_stream_ref, 'stream_owner', NULL);
+    if $stream_owner != $composing_stream_owner {
+        ERROR('Composing stream must be from the same data provider');
+    }
+
+    -- Check if the stream is private
+    $compose_visibility INT := get_latest_metadata_int_core($stream_ref, 'compose_visibility');
+    -- public by default
+    if $compose_visibility IS NULL {
+        $compose_visibility := 0;
+    }
+
+    if $compose_visibility = 0 {
+        -- the stream is public for composing
+        return true;
+    }
+
+    -- Get composing stream ID for permission check
+    $composing_stream_id TEXT;
+    for $row in SELECT s.stream_id FROM streams s WHERE s.id = $composing_stream_ref LIMIT 1 {
+        $composing_stream_id := $row.stream_id;
+    }
+
+    -- Check if the wallet is allowed to compose the stream
+    if get_latest_metadata_ref_core($stream_ref, 'allow_compose_stream', $composing_stream_id) IS DISTINCT FROM NULL {
+        -- wallet is allowed to compose the stream
         return true;
     }
 
@@ -62,71 +133,43 @@ CREATE OR REPLACE ACTION is_allowed_to_compose(
 ) PUBLIC view returns (is_allowed BOOL) {
     $data_provider := LOWER($data_provider);
     $composing_data_provider := LOWER($composing_data_provider);
-    -- Check if the stream exists
-    if !stream_exists($data_provider, $stream_id) {
+
+    -- Resolve stream refs (get_stream_id returns NULL if stream doesn't exist)
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+    IF $stream_ref IS NULL {
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
     }
-    if !stream_exists($composing_data_provider, $composing_stream_id) {
-        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $child_stream_id);
-    }
-    
-    -- check if it's from the same data provider
-    $stream_owner := get_latest_metadata_ref($data_provider, $stream_id, 'stream_owner', NULL);
-    $composing_stream_owner := get_latest_metadata_ref($composing_data_provider, $composing_stream_id, 'stream_owner', NULL);
-    if $stream_owner != $composing_stream_owner {
-        ERROR('Composing stream must be from the same data provider: data_provider=' || $data_provider || ' composing_data_provider=' || $composing_data_provider);
+
+    $composing_stream_ref := get_stream_id($composing_data_provider, $composing_stream_id);
+    IF $composing_stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $composing_data_provider || ' stream_id=' || $composing_stream_id);
     }
 
-    -- Check if the stream is private
-    $compose_visibility INT := get_latest_metadata_int($data_provider, $stream_id, 'compose_visibility');
-    -- public by default
-    if $compose_visibility IS NULL {
-        $compose_visibility := 0;
-    }
-
-    if $compose_visibility = 0 {
-        -- the stream is public for composing
-        return true;
-    }
-
-    -- Check if the wallet is allowed to compose the stream
-    if get_latest_metadata_ref($data_provider, $stream_id, 'allow_compose_stream', $composing_stream_id) IS DISTINCT FROM NULL {
-        -- wallet is allowed to compose the stream
-        return true;
-    }
-
-    -- none of the above authorized, so return false
-    return false;
+    -- Delegate to private version (core logic)
+    return is_allowed_to_compose_core($stream_ref, $composing_stream_ref, $active_from, $active_to);
 };
 
 /**
- * is_allowed_to_read_all: Checks if a wallet can read a stream and all its substreams.
- * Uses recursive CTE to traverse taxonomy hierarchy and check permissions.
+ * is_allowed_to_read_all_core: Core private implementation for hierarchical read permissions.
+ * Checks if a wallet can read a stream and all its substreams using stream reference.
+ * This contains the complex recursive CTE logic for checking hierarchical permissions.
  */
-CREATE OR REPLACE ACTION is_allowed_to_read_all(
-    $data_provider TEXT,
-    $stream_id TEXT,
+CREATE OR REPLACE ACTION is_allowed_to_read_all_core(
+    $stream_ref INT,
     $wallet_address TEXT,
     $active_from INT,
     $active_to INT
-) PUBLIC view returns (is_allowed BOOL) {
-    $data_provider := LOWER($data_provider);
+) PRIVATE view returns (is_allowed BOOL) {
     $wallet_address := LOWER($wallet_address);
-    
+
     -- Extension agent has unrestricted read access for caching purposes
     if $wallet_address = 'extension_agent' {
         return true;
     }
 
-    -- Check if the stream exists
-    if !stream_exists($data_provider, $stream_id) {
-        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
-    }
-
     $max_int8 INT := 9223372036854775000;
     $effective_active_from INT := COALESCE($active_from, 0);
     $effective_active_to INT := COALESCE($active_to, $max_int8);
-    $stream_ref := get_stream_id($data_provider, $stream_id);
 
     -- by default, the wallet is allowed to read all
     $result BOOL := true;
@@ -298,12 +341,7 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
         SELECT DISTINCT child_stream_ref as stream_ref
         FROM substreams
         UNION
-        SELECT (
-            SELECT s.id 
-            FROM streams s
-            JOIN data_providers dp ON s.data_provider_id = dp.id
-            WHERE dp.address = $data_provider AND s.stream_id = $stream_id
-        ) as stream_ref
+        SELECT $stream_ref as stream_ref
     ),
 
     -- Find substreams that don't exist
@@ -349,7 +387,7 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
             WHERE dp.address = p.data_provider
                 AND s.stream_id = p.stream_id
                 AND m.metadata_key = 'allow_read_wallet'
-                AND LOWER(m.value_ref) = LOWER($wallet_address)
+                AND m.value_ref = $wallet_address
                 AND m.disabled_at IS NULL
             LIMIT 1
         ) 
@@ -363,46 +401,67 @@ CREATE OR REPLACE ACTION is_allowed_to_read_all(
                 AND s.stream_id = p.stream_id
                 AND m.metadata_key = 'stream_owner'
                 AND m.disabled_at IS NULL
-                AND LOWER(m.value_ref) = LOWER($wallet_address)
+                AND m.value_ref = $wallet_address
             LIMIT 1
         ) 
     )
-    SELECT 
-        (SELECT COUNT(*) FROM inexisting_substreams) AS missing_count,
-        (SELECT COUNT(*) FROM streams_without_permissions) AS unauthorized_count {
+    SELECT
+        EXISTS (SELECT 1 FROM inexisting_substreams) AS has_missing,
+        EXISTS (SELECT 1 FROM streams_without_permissions) AS has_unauthorized {
         -- error out if there's a missing streams
-        if $counts.missing_count > 0 {
-            ERROR('streams missing for stream: data_provider=' || $data_provider || ' stream_id=' || $stream_id || ' missing_count=' || $counts.missing_count::TEXT);
+        if $counts.has_missing {
+            ERROR('streams missing for stream with id=' || $stream_ref);
         }
 
         -- Return false if there are any unauthorized streams
-        $result := $counts.unauthorized_count = 0;
+        $result := NOT $counts.has_unauthorized;
     }
-    
+
     return $result;
 };
 
 /**
- * is_allowed_to_compose_all: Checks if a wallet can compose a stream and all its substreams.
+ * is_allowed_to_read_all: Checks if a wallet can read a stream and all its substreams.
  * Uses recursive CTE to traverse taxonomy hierarchy and check permissions.
  */
-CREATE OR REPLACE ACTION is_allowed_to_compose_all(
+CREATE OR REPLACE ACTION is_allowed_to_read_all(
     $data_provider TEXT,
     $stream_id TEXT,
+    $wallet_address TEXT,
     $active_from INT,
     $active_to INT
 ) PUBLIC view returns (is_allowed BOOL) {
     $data_provider := LOWER($data_provider);
+    $wallet_address := LOWER($wallet_address);
 
-    -- Check if the stream exists
-    if !stream_exists($data_provider, $stream_id) {
+    -- Extension agent has unrestricted read access for caching purposes
+    if $wallet_address = 'extension_agent' {
+        return true;
+    }
+
+    -- Resolve stream ref (get_stream_id returns NULL if stream doesn't exist)
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+    IF $stream_ref IS NULL {
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
     }
-    
+
+    -- Delegate to private version (core logic)
+    return is_allowed_to_read_all_core($stream_ref, $wallet_address, $active_from, $active_to);
+};
+
+/**
+ * is_allowed_to_compose_all_core: Core private implementation for hierarchical compose permissions.
+ * Checks if a stream can compose another stream and all its substreams using stream reference.
+ * This contains the complex recursive CTE logic for checking hierarchical permissions.
+ */
+CREATE OR REPLACE ACTION is_allowed_to_compose_all_core(
+    $stream_ref INT,
+    $active_from INT,
+    $active_to INT
+) PRIVATE view returns (is_allowed BOOL) {
     $max_int8 INT := 9223372036854775000;
     $effective_active_from INT := COALESCE($active_from, 0);
     $effective_active_to INT := COALESCE($active_to, $max_int8);
-    $stream_ref := get_stream_id($data_provider, $stream_id);
 
     $result BOOL := true;
     -- Check for missing or unauthorized substreams using recursive CTE
@@ -626,20 +685,122 @@ CREATE OR REPLACE ACTION is_allowed_to_compose_all(
             )
         )
         SELECT
-            (SELECT COUNT(*) FROM inexisting_substreams) AS missing_count,
-            (SELECT COUNT(*) FROM unauthorized_edges) AS unauthorized_count {
+            EXISTS (SELECT 1 FROM inexisting_substreams) AS has_missing,
+            EXISTS (SELECT 1 FROM unauthorized_edges) AS has_unauthorized {
             -- error out if there's a missing streams
-            if $counts.missing_count > 0 {
-                ERROR('Missing child streams for stream: data_provider=' || $data_provider ||
-                      ' stream_id=' || $stream_id || ' missing_count=' || $counts.missing_count::TEXT);
+            if $counts.has_missing {
+                ERROR('Missing child streams for stream with id=' || $stream_ref);
             }
 
             -- only authorized if there are no unauthorized edges
-            $result := $counts.unauthorized_count = 0;
+            $result := NOT $counts.has_unauthorized;
         }
 
         -- return if it's authorized or not
         return $result;
+};
+
+/**
+ * is_allowed_to_compose_all: Checks if a wallet can compose a stream and all its substreams.
+ * Uses recursive CTE to traverse taxonomy hierarchy and check permissions.
+ */
+CREATE OR REPLACE ACTION is_allowed_to_compose_all(
+    $data_provider TEXT,
+    $stream_id TEXT,
+    $active_from INT,
+    $active_to INT
+) PUBLIC view returns (is_allowed BOOL) {
+    $data_provider := LOWER($data_provider);
+
+    -- Resolve stream ref (get_stream_id returns NULL if stream doesn't exist)
+    $stream_ref := get_stream_id($data_provider, $stream_id);
+    IF $stream_ref IS NULL {
+        ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
+    }
+
+    -- Delegate to private version (core logic)
+    return is_allowed_to_compose_all_core($stream_ref, $active_from, $active_to);
+};
+
+
+
+/**
+ * wallet_write_batch_core: Private batch version that uses stream refs directly.
+ * Checks if a wallet can write to multiple streams using their stream references.
+ * Returns false if any stream refs are null (indicating non-existent streams).
+ * Returns true only if the wallet can write to all existing streams.
+ */
+CREATE OR REPLACE ACTION wallet_write_batch_core(
+    $stream_refs INT[],
+    $wallet TEXT
+) PRIVATE VIEW RETURNS (result BOOL) {
+    $lowercase_wallet TEXT := LOWER($wallet);
+    for $row in WITH RECURSIVE
+    idx AS (
+        SELECT 1 AS i
+        UNION ALL
+        SELECT i + 1 FROM idx
+        WHERE i < array_length($stream_refs)
+    ),
+    arr AS (
+        SELECT $stream_refs AS refs
+    ),
+    unique_refs AS (
+        SELECT DISTINCT arr.refs[i] AS stream_ref
+        FROM idx
+        JOIN arr ON 1=1
+        WHERE arr.refs[i] IS NOT NULL
+    ),
+    latest_owner_time AS (
+        SELECT m.stream_ref, MAX(m.created_at) AS created_at
+        FROM metadata m
+        JOIN unique_refs u ON u.stream_ref = m.stream_ref
+        WHERE m.metadata_key = 'stream_owner' AND m.disabled_at IS NULL
+        GROUP BY m.stream_ref
+    ),
+    owners AS (
+        SELECT m.stream_ref, m.value_ref AS owner
+        FROM metadata m
+        JOIN latest_owner_time lo
+          ON lo.stream_ref = m.stream_ref AND lo.created_at = m.created_at
+        WHERE m.metadata_key = 'stream_owner'
+    ),
+    allowed_by_perm AS (
+        SELECT DISTINCT m.stream_ref
+        FROM metadata m
+        JOIN unique_refs u ON u.stream_ref = m.stream_ref
+        WHERE m.metadata_key = 'allow_write_wallet'
+          AND m.disabled_at IS NULL
+          -- do not use LOWER on value_ref, or it will break the index lookup
+          AND m.value_ref = $lowercase_wallet
+    ),
+    allowed AS (
+        SELECT u.stream_ref,
+               CASE WHEN o.owner = $lowercase_wallet THEN 1
+                    WHEN ap.stream_ref IS NOT NULL THEN 1
+                    ELSE 0 END AS can_write
+        FROM unique_refs u
+        LEFT JOIN owners o ON o.stream_ref = u.stream_ref
+        LEFT JOIN allowed_by_perm ap ON ap.stream_ref = u.stream_ref
+    )
+    -- Return false if any nulls exist, otherwise return write permission check result
+    SELECT CASE
+        WHEN EXISTS (
+            SELECT 1
+            FROM idx
+            JOIN arr ON 1=1
+            WHERE arr.refs[i] IS NULL
+        ) THEN false
+        ELSE NOT EXISTS (
+            SELECT 1
+            FROM allowed
+            WHERE can_write = 0
+        )
+    END AS result
+    FROM (SELECT 1) dummy {
+        return $row.result;
+    }
+    return false;
 };
 
 /**
@@ -652,23 +813,18 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_write(
     $wallet TEXT
 ) PUBLIC view returns (result bool) {
     $data_provider := LOWER($data_provider);
-    $wallet := LOWER($wallet);
+    $lower_wallet := LOWER($wallet);
+
+    -- Resolve stream ref once
+    $stream_ref := get_stream_id($data_provider, $stream_id);
 
     -- Check if the wallet is the stream owner
-    if is_stream_owner($data_provider, $stream_id, $wallet) {
+    if is_stream_owner_core($stream_ref, $lower_wallet) {
         return true;
     }
 
-    -- Check if the wallet is explicitly allowed to write via metadata permissions
-    for $row in get_metadata(
-        $data_provider,
-        $stream_id,
-        'allow_write_wallet',
-        $wallet,
-        1,
-        0,
-        'created_at DESC'
-    ) {
+    -- Check if the wallet is explicitly allowed to write via metadata permissions (latest row)
+    if get_latest_metadata_ref_core($stream_ref, 'allow_write_wallet', $lower_wallet) IS DISTINCT FROM NULL {
         return true;
     }
 
@@ -743,7 +899,7 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_write_batch(
             -- COALESCE handles cases where a subquery might return NULL instead of FALSE
             COALESCE(
                 -- Check 1: Is the wallet the LATEST valid owner?
-                (SELECT LOWER(m_own.value_ref)
+                (SELECT m_own.value_ref
                   FROM metadata m_own
                   JOIN streams s_own ON m_own.stream_ref = s_own.id
                   JOIN data_providers dp_own ON s_own.data_provider_id = dp_own.id
@@ -766,7 +922,7 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_write_batch(
                     WHERE dp_perm.address = up.data_provider
                       AND s_perm.stream_id = up.stream_id
                       AND m_perm.metadata_key = 'allow_write_wallet'
-                      AND LOWER(m_perm.value_ref) = $wallet
+                      AND m_perm.value_ref = $wallet
                       AND m_perm.disabled_at IS NULL
                     -- No ORDER BY/LIMIT needed, just checking for existence of any record
                 )
@@ -851,7 +1007,7 @@ CREATE OR REPLACE ACTION has_write_permission_batch(
             JOIN streams s ON m.stream_ref = s.id
             JOIN data_providers dp ON s.data_provider_id = dp.id
             WHERE m.metadata_key = 'allow_write_wallet'
-              AND LOWER(m.value_ref) = $lowercase_wallet
+              AND m.value_ref = $lowercase_wallet
               AND m.disabled_at IS NULL
             ORDER BY m.created_at DESC
         ) m ON up.data_provider = m.data_provider AND up.stream_id = m.stream_id
