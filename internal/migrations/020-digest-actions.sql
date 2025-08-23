@@ -111,14 +111,15 @@ CREATE OR REPLACE ACTION batch_digest(
         $day_start := $day_index * 86400;
         $day_end := $day_start + 86400;
         
-        -- Count records for this candidate
+        -- Check if candidate has sufficient records (>1)
         $record_count := 0;
-        for $count_row in SELECT COUNT(*) as cnt FROM primitive_events
-                          WHERE stream_ref = $stream_ref
-                            AND event_time >= $day_start AND event_time <= $day_end {
-            $record_count := $count_row.cnt;
+        for $row in SELECT 1 FROM primitive_events
+            WHERE stream_ref = $stream_ref
+              AND event_time >= $day_start AND event_time <= $day_end
+                LIMIT 2 {
+            $record_count := $record_count + 1;
         }
-        
+
         -- Only process candidates with sufficient data (>1 record)
         if $record_count > 1 {
             -- Calculate OHLC values
