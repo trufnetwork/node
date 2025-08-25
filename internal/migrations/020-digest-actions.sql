@@ -58,7 +58,6 @@ CREATE OR REPLACE ACTION batch_digest(
     $total_processed := 0;
     $total_deleted := 0;
     $total_preserved := 0;
-    $total_before_delete := 0;
     
     -- Step 1: Use UNNEST for bulk candidate validation and filtering
     $valid_stream_refs INT[] := ARRAY[]::INT[];
@@ -203,21 +202,8 @@ CREATE OR REPLACE ACTION batch_digest(
         
         -- Step 2b: BULK DELETION using WITH RECURSIVE
         if array_length($ohlc_stream_refs) > 0 {
-            -- First count records that will be deleted (before deletion)
-            $total_before_delete := 0;
-            for $i in 1..array_length($ohlc_stream_refs) {
-                $stream_ref := $ohlc_stream_refs[$i];
-                $day_start := $ohlc_day_starts[$i];
-                $day_end := $ohlc_day_ends[$i];
-                
-                for $count_row in SELECT COUNT(*) as cnt FROM primitive_events
-                                 WHERE stream_ref = $stream_ref
-                                   AND event_time >= $day_start AND event_time <= $day_end {
-                    $total_before_delete := $total_before_delete + $count_row.cnt;
-                }
-            }
             
-            -- CAPPED DELETE excess records using single batch with LIMIT
+            -- CAPPED DELETE excess records - actual deletion after counting
             WITH RECURSIVE
             delete_indexes AS (
                 SELECT 1 AS idx
@@ -444,28 +430,97 @@ CREATE OR REPLACE ACTION batch_digest(
                   AND cleanup_arrays.day_indexes_array[idx] IS NOT NULL
             );
             
-            -- Calculate final statistics accurately using before/after counts
-            -- $total_processed is already calculated correctly in the OHLC loop above
-
-            -- Count actual preserved records after digest operation (after deletion)
-            $total_after_delete := 0;
-            if array_length($ohlc_stream_refs) > 0 {
-                for $i in 1..array_length($ohlc_stream_refs) {
-                    $stream_ref := $ohlc_stream_refs[$i];
-                    $day_start := $ohlc_day_starts[$i];
-                    $day_end := $ohlc_day_ends[$i];
-                    
-                    for $count_row in SELECT COUNT(*) as cnt FROM primitive_events
-                                     WHERE stream_ref = $stream_ref
-                                       AND event_time >= $day_start AND event_time <= $day_end {
-                        $total_after_delete := $total_after_delete + $count_row.cnt;
-                    }
-                }
+            -- Calculate accurate statistics from candidate sets (addresses double-counting issue)
+            -- Count exact number of rows that were actually deleted in this transaction
+            for $delete_count_row in 
+            WITH RECURSIVE
+            delete_indexes AS (
+                SELECT 1 AS idx
+                UNION ALL
+                SELECT idx + 1 FROM delete_indexes
+                WHERE idx <= array_length($ohlc_stream_refs)::INT
+            ),
+            delete_arrays AS (
+                SELECT 
+                    $ohlc_stream_refs AS stream_refs_array,
+                    $ohlc_day_starts AS day_starts_array,
+                    $ohlc_day_ends AS day_ends_array,
+                    $ohlc_open_times AS open_times_array,
+                    $ohlc_open_created_ats AS open_created_ats_array,
+                    $ohlc_close_times AS close_times_array,
+                    $ohlc_close_created_ats AS close_created_ats_array,
+                    $ohlc_high_times AS high_times_array,
+                    $ohlc_high_created_ats AS high_created_ats_array,
+                    $ohlc_low_times AS low_times_array,
+                    $ohlc_low_created_ats AS low_created_ats_array
+            ),
+            delete_targets AS (
+                SELECT 
+                    delete_arrays.stream_refs_array[idx] AS stream_ref,
+                    delete_arrays.day_starts_array[idx] AS day_start,
+                    delete_arrays.day_ends_array[idx] AS day_end,
+                    delete_arrays.open_times_array[idx] AS open_time,
+                    delete_arrays.open_created_ats_array[idx] AS open_created_at,
+                    delete_arrays.close_times_array[idx] AS close_time,
+                    delete_arrays.close_created_ats_array[idx] AS close_created_at,
+                    delete_arrays.high_times_array[idx] AS high_time,
+                    delete_arrays.high_created_ats_array[idx] AS high_created_at,
+                    delete_arrays.low_times_array[idx] AS low_time,
+                    delete_arrays.low_created_ats_array[idx] AS low_created_at
+                FROM delete_indexes
+                JOIN delete_arrays ON 1=1
+            ),
+            keep_set AS (
+                -- Create aggregated keep-set of all OHLC rows that must be preserved
+                SELECT DISTINCT dt.stream_ref, dt.open_time as event_time, dt.open_created_at as created_at
+                FROM delete_targets dt
+                WHERE dt.open_time IS NOT NULL AND dt.open_created_at IS NOT NULL
+                
+                UNION
+                
+                SELECT DISTINCT dt.stream_ref, dt.close_time as event_time, dt.close_created_at as created_at  
+                FROM delete_targets dt
+                WHERE dt.close_time IS NOT NULL AND dt.close_created_at IS NOT NULL
+                
+                UNION
+                
+                SELECT DISTINCT dt.stream_ref, dt.high_time as event_time, dt.high_created_at as created_at
+                FROM delete_targets dt
+                WHERE dt.high_time IS NOT NULL AND dt.high_created_at IS NOT NULL
+                
+                UNION
+                
+                SELECT DISTINCT dt.stream_ref, dt.low_time as event_time, dt.low_created_at as created_at
+                FROM delete_targets dt
+                WHERE dt.low_time IS NOT NULL AND dt.low_created_at IS NOT NULL
+            ),
+            delete_candidates AS (
+                SELECT pe.stream_ref, pe.event_time, pe.created_at
+                FROM primitive_events pe
+                WHERE EXISTS (
+                    SELECT 1 FROM delete_targets dt
+                    WHERE pe.stream_ref = dt.stream_ref
+                      AND pe.event_time >= dt.day_start 
+                      AND pe.event_time <= dt.day_end
+                      AND dt.stream_ref IS NOT NULL
+                      AND dt.day_start IS NOT NULL
+                      AND dt.day_end IS NOT NULL
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM keep_set ks
+                    WHERE ks.stream_ref = pe.stream_ref
+                      AND ks.event_time = pe.event_time
+                      AND ks.created_at = pe.created_at
+                )
+                ORDER BY pe.stream_ref, pe.event_time, pe.created_at
+                LIMIT $delete_cap
+            )
+            SELECT 
+                (SELECT COUNT(*) FROM delete_candidates) as deleted_count,
+                (SELECT COUNT(*) FROM keep_set) as preserved_count {
+                
+                $total_deleted := $delete_count_row.deleted_count;
+                $total_preserved := $delete_count_row.preserved_count;
             }
-            
-            -- Calculate actual deleted count: before - after
-            $total_preserved := $total_after_delete;
-            $total_deleted := $total_before_delete - $total_after_delete;
         }
     }
     
