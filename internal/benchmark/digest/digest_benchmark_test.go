@@ -1,0 +1,608 @@
+package digest
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/knadh/koanf/providers/env"
+	"github.com/knadh/koanf/v2"
+	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	utils "github.com/trufnetwork/node/tests/streams/utils"
+	"github.com/trufnetwork/node/tests/streams/utils/procedure"
+	"github.com/trufnetwork/sdk-go/core/util"
+
+	"github.com/trufnetwork/node/internal/migrations"
+)
+
+// TestBenchDigest_Smoke runs the smoke test suite for basic digest functionality validation.
+// This is the fastest test suite, focusing on core functionality rather than performance.
+func TestBenchDigest_Smoke(t *testing.T) {
+	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name:        "digest_benchmark_smoke",
+		SeedScripts: migrations.GetSeedScriptPaths(),
+		FunctionTests: []kwilTesting.TestFunc{
+			WithDigestBenchmarkSetup(testDigestSmokeSuite(t)),
+		},
+	}, utils.GetTestOptions())
+}
+
+// TestBenchDigest_Medium runs the medium test suite for scaling analysis.
+// This tests performance characteristics across different scales.
+func TestBenchDigest_Medium(t *testing.T) {
+	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name:        "digest_benchmark_medium",
+		SeedScripts: migrations.GetSeedScriptPaths(),
+		FunctionTests: []kwilTesting.TestFunc{
+			WithDigestBenchmarkSetup(testDigestMediumSuite(t)),
+		},
+	}, utils.GetTestOptions())
+}
+
+// TestBenchDigest_Extreme runs the extreme test suite for stress testing.
+// This tests maximum scale performance with large data sets.
+func TestBenchDigest_Extreme(t *testing.T) {
+	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name:        "digest_benchmark_extreme",
+		SeedScripts: migrations.GetSeedScriptPaths(),
+		FunctionTests: []kwilTesting.TestFunc{
+			WithDigestBenchmarkSetup(testDigestExtremeSuite(t)),
+		},
+	}, utils.GetTestOptions())
+}
+
+// TestBenchDigest_Custom runs a custom test suite based on environment variables.
+// This allows for flexible test configuration without code changes.
+func TestBenchDigest_Custom(t *testing.T) {
+	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name:        "digest_benchmark_custom",
+		SeedScripts: migrations.GetSeedScriptPaths(),
+		FunctionTests: []kwilTesting.TestFunc{
+			WithDigestBenchmarkSetup(testDigestCustomSuite(t)),
+		},
+	}, utils.GetTestOptions())
+}
+
+// WithDigestBenchmarkSetup sets up the testing environment for digest benchmarks.
+// This wrapper function handles common setup tasks required for all digest tests.
+func WithDigestBenchmarkSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Create a proper deployer address and set it on the platform
+		deployer, err := util.NewEthereumAddressFromString(DefaultDataProviderAddress)
+		if err != nil {
+			return fmt.Errorf("failed to create deployer address: %w", err)
+		}
+		platform.Deployer = deployer.Bytes()
+		platform = procedure.WithSigner(platform, deployer.Bytes())
+
+		// Note: Stream creation and data setup is handled in the individual test functions
+		// This wrapper only sets up the platform environment
+
+		return testFn(ctx, platform)
+	}
+}
+
+// testDigestSmokeSuite runs the smoke test cases for basic validation.
+func testDigestSmokeSuite(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		runner := NewBenchmarkRunner(platform, t)
+
+		// Use very small test cases for fast smoke test
+		smokeCases := []DigestBenchmarkCase{
+			{Streams: 2, DaysPerStream: 1, RecordsPerDay: 2, BatchSize: 10, Pattern: PatternRandom, Samples: 1},
+			{Streams: 3, DaysPerStream: 1, RecordsPerDay: 2, BatchSize: 10, Pattern: PatternRandom, Samples: 1},
+		}
+
+		t.Logf("Running smoke test suite with %d cases", len(smokeCases))
+
+		// Setup minimal benchmark data for smoke tests
+		t.Logf("Setting up benchmark data...")
+		setupStart := time.Now()
+
+		setupCase := DigestBenchmarkCase{
+			Streams:       5, // Very small for fast smoke test
+			DaysPerStream: 1, // Single day
+			RecordsPerDay: 5, // Very few records
+			BatchSize:     DefaultBatchSize,
+			Pattern:       PatternRandom,
+			Samples:       1,
+		}
+		setupInput := DigestSetupInput{
+			Platform: platform,
+			Case:     setupCase,
+		}
+
+		if err := SetupBenchmarkData(ctx, setupInput); err != nil {
+			return fmt.Errorf("failed to setup benchmark data: %w", err)
+		}
+
+		setupDuration := time.Since(setupStart)
+		t.Logf("Benchmark data setup completed in %v", setupDuration)
+
+		// Run benchmark cases
+		t.Logf("Running benchmark cases...")
+		benchmarkStart := time.Now()
+
+		results, err := runner.RunMultipleCases(ctx, smokeCases)
+		if err != nil {
+			return fmt.Errorf("smoke test suite failed: %w", err)
+		}
+
+		benchmarkDuration := time.Since(benchmarkStart)
+		t.Logf("Benchmark execution completed in %v", benchmarkDuration)
+
+		// Export results
+		t.Logf("Exporting results...")
+		var allResults []DigestRunResult
+		for _, caseResults := range results {
+			allResults = append(allResults, caseResults...)
+		}
+
+		outputFile := ResultsFileSmoke
+		if err := SaveDigestResultsCSV(allResults, outputFile); err != nil {
+			t.Logf("Warning: failed to save results to %s: %v", outputFile, err)
+		} else {
+			t.Logf("Smoke test results saved to %s", outputFile)
+		}
+
+		// Log summary
+		totalDuration := time.Since(setupStart)
+		t.Logf("Smoke test completed successfully - processed %d total results in %v", len(allResults), totalDuration)
+
+		return nil
+	}
+}
+
+// testDigestMediumSuite runs the medium test cases for scaling analysis.
+func testDigestMediumSuite(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		runner := NewBenchmarkRunner(platform, t)
+
+		// Use predefined medium test cases
+		mediumCases := MediumTestCases
+
+		t.Logf("Running medium test suite with %d cases", len(mediumCases))
+
+		// Setup benchmark data for medium tests
+		setupCase := DigestBenchmarkCase{
+			Streams:       10000, // Maximum streams needed for medium tests
+			DaysPerStream: 30,    // Maximum days per stream for medium tests
+			RecordsPerDay: 50,    // Records per day for medium tests
+			BatchSize:     DefaultBatchSize,
+			Pattern:       PatternRandom,
+			Samples:       DefaultSamples,
+		}
+		setupInput := DigestSetupInput{
+			Platform: platform,
+			Case:     setupCase,
+		}
+
+		if err := SetupBenchmarkData(ctx, setupInput); err != nil {
+			return fmt.Errorf("failed to setup benchmark data: %w", err)
+		}
+
+		results, err := runner.RunMultipleCases(ctx, mediumCases)
+		if err != nil {
+			return fmt.Errorf("medium test suite failed: %w", err)
+		}
+
+		// Export results
+		var allResults []DigestRunResult
+		for _, caseResults := range results {
+			allResults = append(allResults, caseResults...)
+		}
+
+		outputFile := ResultsFileMedium
+		if err := SaveDigestResultsCSV(allResults, outputFile); err != nil {
+			t.Logf("Warning: failed to save results to %s: %v", outputFile, err)
+		} else {
+			t.Logf("Medium test results saved to %s", outputFile)
+		}
+
+		// Create summary report
+		summaryFile := strings.Replace(outputFile, ".csv", "_summary.md", 1)
+		if err := ExportResultsSummary(allResults, summaryFile); err != nil {
+			t.Logf("Warning: failed to create summary report: %v", err)
+		} else {
+			t.Logf("Summary report created at %s", summaryFile)
+		}
+
+		t.Logf("Medium test completed successfully - processed %d total results", len(allResults))
+
+		return nil
+	}
+}
+
+// testDigestExtremeSuite runs the extreme test cases for stress testing.
+func testDigestExtremeSuite(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		runner := NewBenchmarkRunner(platform, t)
+
+		// Use predefined extreme test cases (focus on scaling days rather than streams for candidate volume)
+		extremeCases := ExtremeTestCases
+
+		t.Logf("Running extreme test suite with %d cases", len(extremeCases))
+		t.Logf("Warning: Extreme tests may take significant time and resources")
+
+		// Setup benchmark data for extreme tests
+		setupCase := DigestBenchmarkCase{
+			Streams:       100000, // Maximum streams needed for extreme tests
+			DaysPerStream: 90,     // Maximum days per stream for extreme tests
+			RecordsPerDay: 4,      // Records per day for extreme tests
+			BatchSize:     DefaultBatchSize,
+			Pattern:       PatternRandom,
+			Samples:       2,
+		}
+		setupInput := DigestSetupInput{
+			Platform: platform,
+			Case:     setupCase,
+		}
+
+		if err := SetupBenchmarkData(ctx, setupInput); err != nil {
+			return fmt.Errorf("failed to setup benchmark data: %w", err)
+		}
+
+		results, err := runner.RunMultipleCases(ctx, extremeCases)
+		if err != nil {
+			return fmt.Errorf("extreme test suite failed: %w", err)
+		}
+
+		// Export results
+		var allResults []DigestRunResult
+		for _, caseResults := range results {
+			allResults = append(allResults, caseResults...)
+		}
+
+		outputFile := ResultsFileExtreme
+		if err := SaveDigestResultsCSV(allResults, outputFile); err != nil {
+			t.Logf("Warning: failed to save results to %s: %v", outputFile, err)
+		} else {
+			t.Logf("Extreme test results saved to %s", outputFile)
+		}
+
+		// Create summary report
+		summaryFile := strings.Replace(outputFile, ".csv", "_summary.md", 1)
+		if err := ExportResultsSummary(allResults, summaryFile); err != nil {
+			t.Logf("Warning: failed to create summary report: %v", err)
+		} else {
+			t.Logf("Summary report created at %s", summaryFile)
+		}
+
+		t.Logf("Extreme test completed successfully - processed %d total results", len(allResults))
+
+		return nil
+	}
+}
+
+// CustomBenchmarkConfig holds configuration for custom benchmark runs.
+type CustomBenchmarkConfig struct {
+	Streams     []int    `koanf:"streams"`
+	Days        []int    `koanf:"days"`
+	Records     []int    `koanf:"records"`
+	BatchSizes  []int    `koanf:"batch_sizes"`
+	Patterns    []string `koanf:"patterns"`
+	Samples     int      `koanf:"samples"`
+	ResultsPath string   `koanf:"results_path"`
+}
+
+// DefaultCustomConfig returns the default configuration for custom benchmarks.
+func DefaultCustomConfig() CustomBenchmarkConfig {
+	return CustomBenchmarkConfig{
+		Streams:     []int{100, 1000, 10000},
+		Days:        []int{1, 30},
+		Records:     []int{2, 50},
+		BatchSizes:  []int{10, 50, 200},
+		Patterns:    []string{"random", "dups50", "monotonic"},
+		Samples:     3,
+		ResultsPath: ResultsFileCustom,
+	}
+}
+
+// LoadCustomConfig loads benchmark configuration from environment variables using koanf.
+func LoadCustomConfig() (CustomBenchmarkConfig, error) {
+	k := koanf.New(".")
+
+	// Load default configuration
+	config := DefaultCustomConfig()
+
+	// Override with environment variables
+	if err := k.Load(env.Provider(EnvPrefixDigest, ".", func(s string) string {
+		// Convert DIGEST_STREAMS -> streams, etc.
+		return strings.ToLower(strings.TrimPrefix(s, EnvPrefixDigest))
+	}), nil); err != nil {
+		return config, fmt.Errorf("error loading env config: %w", err)
+	}
+
+	// Parse comma-separated integer lists
+	if streamsStr := k.String(EnvKeyStreams); streamsStr != "" {
+		if streams, err := parseIntList(streamsStr); err != nil {
+			return config, fmt.Errorf("error parsing streams: %w", err)
+		} else {
+			config.Streams = streams
+		}
+	}
+
+	if daysStr := k.String(EnvKeyDays); daysStr != "" {
+		if days, err := parseIntList(daysStr); err != nil {
+			return config, fmt.Errorf("error parsing days: %w", err)
+		} else {
+			config.Days = days
+		}
+	}
+
+	if recordsStr := k.String(EnvKeyRecords); recordsStr != "" {
+		if records, err := parseIntList(recordsStr); err != nil {
+			return config, fmt.Errorf("error parsing records: %w", err)
+		} else {
+			config.Records = records
+		}
+	}
+
+	if batchSizesStr := k.String(EnvKeyBatchSizes); batchSizesStr != "" {
+		if batchSizes, err := parseIntList(batchSizesStr); err != nil {
+			return config, fmt.Errorf("error parsing batch_sizes: %w", err)
+		} else {
+			config.BatchSizes = batchSizes
+		}
+	}
+
+	// Parse simple values
+	if samples := k.Int(EnvKeySamples); samples > 0 {
+		config.Samples = samples
+	}
+
+	if resultsPath := k.String(EnvKeyResults); resultsPath != "" {
+		config.ResultsPath = resultsPath
+	}
+
+	return config, nil
+}
+
+// parseIntList parses a comma-separated string into a slice of integers.
+func parseIntList(s string) ([]int, error) {
+	if s == "" {
+		return []int{}, nil
+	}
+
+	parts := strings.Split(s, ",")
+	result := make([]int, 0, len(parts))
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		val, err := strconv.Atoi(part)
+		if err != nil {
+			return nil, fmt.Errorf("invalid integer '%s': %w", part, err)
+		}
+		result = append(result, val)
+	}
+
+	return result, nil
+}
+
+// testDigestCustomSuite runs custom test cases based on environment variables.
+func testDigestCustomSuite(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		runner := NewBenchmarkRunner(platform, t)
+
+		// Load configuration using koanf
+		config, err := LoadCustomConfig()
+		if err != nil {
+			t.Logf("Warning: Failed to load custom config, using defaults: %v", err)
+			config = DefaultCustomConfig()
+		}
+
+		// Generate all combinations using lo functions for cleaner code
+		var customCases []DigestBenchmarkCase
+
+		// Use nested loops to generate all combinations
+		for _, streams := range config.Streams {
+			for _, days := range config.Days {
+				for _, records := range config.Records {
+					for _, batchSize := range config.BatchSizes {
+						for _, pattern := range config.Patterns {
+							customCases = append(customCases, DigestBenchmarkCase{
+								Streams:          streams,
+								DaysPerStream:    days,
+								RecordsPerDay:    records,
+								BatchSize:        batchSize,
+								Pattern:          pattern,
+								Samples:          config.Samples,
+								IdempotencyCheck: false, // Disable for performance in large runs
+							})
+						}
+					}
+				}
+			}
+		}
+
+		t.Logf("Running custom test suite with %d cases", len(customCases))
+		t.Logf("Configuration: streams=%v, days=%v, records=%v, batch_sizes=%v, patterns=%v, samples=%d",
+			config.Streams, config.Days, config.Records, config.BatchSizes, config.Patterns, config.Samples)
+
+		results, err := runner.RunMultipleCases(ctx, customCases)
+		if err != nil {
+			return fmt.Errorf("custom test suite failed: %w", err)
+		}
+
+		// Export results
+		var allResults []DigestRunResult
+		for _, caseResults := range results {
+			allResults = append(allResults, caseResults...)
+		}
+
+		if err := SaveDigestResultsCSV(allResults, config.ResultsPath); err != nil {
+			t.Logf("Warning: failed to save results to %s: %v", config.ResultsPath, err)
+		} else {
+			t.Logf("Custom test results saved to %s", config.ResultsPath)
+		}
+
+		// Create summary report
+		summaryFile := strings.Replace(config.ResultsPath, ".csv", "_summary.md", 1)
+		if err := ExportResultsSummary(allResults, summaryFile); err != nil {
+			t.Logf("Warning: failed to create summary report: %v", err)
+		} else {
+			t.Logf("Summary report created at %s", summaryFile)
+		}
+
+		t.Logf("Custom test completed successfully - processed %d total results", len(allResults))
+
+		return nil
+	}
+}
+
+// Environment variable parsing is now handled by koanf in LoadCustomConfig()
+
+// Test utilities for validation and debugging
+
+// TestDigestTypes validates that all digest types are properly defined and consistent.
+func TestDigestTypes(t *testing.T) {
+	// Test that all required patterns are supported
+	patterns := []string{"random", "dups50", "monotonic", "equal", "time_dup"}
+
+	for _, pattern := range patterns {
+		benchmarkCase := DigestBenchmarkCase{
+			Streams:       1,
+			DaysPerStream: 1,
+			RecordsPerDay: 10,
+			BatchSize:     5,
+			Pattern:       pattern,
+			Samples:       1,
+		}
+
+		if err := ValidateBenchmarkCase(benchmarkCase); err != nil {
+			t.Errorf("Pattern %s validation failed: %v", pattern, err)
+		}
+	}
+
+	t.Logf("All %d digest patterns validated successfully", len(patterns))
+}
+
+// TestDigestResultValidation validates result validation logic.
+func TestDigestResultValidation(t *testing.T) {
+	// Test valid result
+	validResult := DigestRunResult{
+		Case: DigestBenchmarkCase{
+			Streams:       100,
+			DaysPerStream: 30,
+			RecordsPerDay: 50,
+			BatchSize:     10,
+			Pattern:       "random",
+			Samples:       3,
+		},
+		Candidates:         3000,
+		ProcessedDays:      3000,
+		TotalDeletedRows:   147000,
+		TotalPreservedRows: 3000,
+		Duration:           1000000000, // 1 second
+		MemoryMaxBytes:     104857600,  // 100 MB
+	}
+
+	if err := ValidateResult(validResult); err != nil {
+		t.Errorf("Valid result failed validation: %v", err)
+	}
+
+	// Test invalid result (negative values)
+	invalidResult := validResult
+	invalidResult.Candidates = -1
+
+	if err := ValidateResult(invalidResult); err == nil {
+		t.Error("Invalid result should have failed validation")
+	}
+
+	t.Log("Result validation logic works correctly")
+}
+
+// TestDigestCSVExport tests the CSV export functionality.
+func TestDigestCSVExport(t *testing.T) {
+	// Create test results
+	results := []DigestRunResult{
+		{
+			Case: DigestBenchmarkCase{
+				Streams:       100,
+				DaysPerStream: 1,
+				RecordsPerDay: 50,
+				BatchSize:     50,
+				Pattern:       "random",
+				Samples:       1,
+			},
+			Candidates:         100,
+			ProcessedDays:      100,
+			TotalDeletedRows:   4900,
+			TotalPreservedRows: 200,
+			Duration:           234000000, // 234ms
+			MemoryMaxBytes:     12582912,  // 12 MB
+		},
+	}
+
+	// Test CSV export
+	tempFile := "/tmp/test_digest_results.csv"
+	defer os.Remove(tempFile)
+
+	if err := SaveDigestResultsCSV(results, tempFile); err != nil {
+		t.Fatalf("Failed to save CSV: %v", err)
+	}
+
+	// Test CSV loading
+	loaded, err := LoadDigestResultsCSV(tempFile)
+	if err != nil {
+		t.Fatalf("Failed to load CSV: %v", err)
+	}
+
+	if len(loaded) != len(results) {
+		t.Errorf("Expected %d results, got %d", len(results), len(loaded))
+	}
+
+	// Test CSV validation
+	if err := ValidateCSVFile(tempFile); err != nil {
+		t.Errorf("CSV validation failed: %v", err)
+	}
+
+	t.Log("CSV export/import functionality works correctly")
+}
+
+// BenchmarkDigestSliceCandidates benchmarks the candidate slicing performance.
+func BenchmarkDigestSliceCandidates(b *testing.B) {
+	// Setup test data
+	streamRefs := make([]int, 10000)
+	dayIdxs := make([]int, 10000)
+	for i := range streamRefs {
+		streamRefs[i] = i % 1000
+		dayIdxs[i] = i % 365
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		SliceCandidates(streamRefs, dayIdxs, 50)
+	}
+}
+
+// BenchmarkDigestAggregation benchmarks result aggregation performance.
+func BenchmarkDigestAggregation(b *testing.B) {
+	// Setup test data
+	results := make([]DigestRunResult, 100)
+	for i := range results {
+		results[i] = DigestRunResult{
+			Candidates:         100,
+			ProcessedDays:      100,
+			TotalDeletedRows:   5000,
+			TotalPreservedRows: 200,
+			Duration:           100000000, // 100ms
+			MemoryMaxBytes:     10485760,  // 10 MB
+		}
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		AggregateResults(results)
+	}
+}
