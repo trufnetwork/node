@@ -34,7 +34,8 @@
  */
 CREATE OR REPLACE ACTION batch_digest(
     $stream_refs INT[],
-    $day_indexes INT[]
+    $day_indexes INT[],
+    $delete_cap INT DEFAULT 10000
 ) PUBLIC RETURNS TABLE(
     processed_days INT,
     total_deleted_rows INT,
@@ -216,7 +217,7 @@ CREATE OR REPLACE ACTION batch_digest(
                 }
             }
             
-            -- BULK DELETE excess records using WITH RECURSIVE + UNNEST
+            -- CAPPED DELETE excess records using single batch with LIMIT
             WITH RECURSIVE
             delete_indexes AS (
                 SELECT 1 AS idx
@@ -253,26 +254,60 @@ CREATE OR REPLACE ACTION batch_digest(
                     delete_arrays.low_created_ats_array[idx] AS low_created_at
                 FROM delete_indexes
                 JOIN delete_arrays ON 1=1
+            ),
+            keep_set AS (
+                -- Create aggregated keep-set of all OHLC rows that must be preserved
+                SELECT DISTINCT dt.stream_ref, dt.open_time as event_time, dt.open_created_at as created_at
+                FROM delete_targets dt
+                WHERE dt.open_time IS NOT NULL AND dt.open_created_at IS NOT NULL
+                
+                UNION
+                
+                SELECT DISTINCT dt.stream_ref, dt.close_time as event_time, dt.close_created_at as created_at  
+                FROM delete_targets dt
+                WHERE dt.close_time IS NOT NULL AND dt.close_created_at IS NOT NULL
+                
+                UNION
+                
+                SELECT DISTINCT dt.stream_ref, dt.high_time as event_time, dt.high_created_at as created_at
+                FROM delete_targets dt
+                WHERE dt.high_time IS NOT NULL AND dt.high_created_at IS NOT NULL
+                
+                UNION
+                
+                SELECT DISTINCT dt.stream_ref, dt.low_time as event_time, dt.low_created_at as created_at
+                FROM delete_targets dt
+                WHERE dt.low_time IS NOT NULL AND dt.low_created_at IS NOT NULL
+            ),
+            delete_candidates AS (
+                SELECT pe.stream_ref, pe.event_time, pe.created_at
+                FROM primitive_events pe
+                WHERE EXISTS (
+                    SELECT 1 FROM delete_targets dt
+                    WHERE pe.stream_ref = dt.stream_ref
+                      AND pe.event_time >= dt.day_start 
+                      AND pe.event_time <= dt.day_end
+                      AND dt.stream_ref IS NOT NULL
+                      AND dt.day_start IS NOT NULL
+                      AND dt.day_end IS NOT NULL
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM keep_set ks
+                    WHERE ks.stream_ref = pe.stream_ref
+                      AND ks.event_time = pe.event_time
+                      AND ks.created_at = pe.created_at
+                )
+                ORDER BY pe.stream_ref, pe.event_time, pe.created_at
+                LIMIT $delete_cap
             )
             DELETE FROM primitive_events 
             WHERE EXISTS (
-                SELECT 1 FROM delete_targets dt
-                WHERE primitive_events.stream_ref = dt.stream_ref
-                  AND primitive_events.event_time >= dt.day_start 
-                  AND primitive_events.event_time <= dt.day_end
-                  AND dt.stream_ref IS NOT NULL
-                  AND dt.day_start IS NOT NULL
-                  AND dt.day_end IS NOT NULL
-                  AND NOT (
-                    -- Keep only OHLC records (calculated in bulk above)
-                    (dt.open_time IS NOT NULL AND primitive_events.event_time = dt.open_time  AND primitive_events.created_at = dt.open_created_at)  OR
-                    (dt.close_time IS NOT NULL AND primitive_events.event_time = dt.close_time AND primitive_events.created_at = dt.close_created_at) OR
-                    (dt.high_time IS NOT NULL AND primitive_events.event_time = dt.high_time  AND primitive_events.created_at = dt.high_created_at)  OR
-                    (dt.low_time IS NOT NULL AND primitive_events.event_time = dt.low_time   AND primitive_events.created_at = dt.low_created_at)
-                  )
+                SELECT 1 FROM delete_candidates dc
+                WHERE primitive_events.stream_ref = dc.stream_ref
+                  AND primitive_events.event_time = dc.event_time
+                  AND primitive_events.created_at = dc.created_at
             );
             
-            -- BULK DELETE type markers using WITH RECURSIVE
+            -- CAPPED DELETE type markers using single batch with LIMIT
             WITH RECURSIVE
             marker_indexes AS (
                 SELECT 1 AS idx
@@ -285,17 +320,28 @@ CREATE OR REPLACE ACTION batch_digest(
                     $ohlc_stream_refs AS stream_refs_array,
                     $ohlc_day_starts AS day_starts_array,
                     $ohlc_day_ends AS day_ends_array
+            ),
+            marker_delete_candidates AS (
+                SELECT pet.stream_ref, pet.event_time
+                FROM primitive_event_type pet
+                WHERE EXISTS (
+                    SELECT 1 FROM marker_indexes
+                    JOIN marker_arrays ON 1=1
+                    WHERE pet.stream_ref = marker_arrays.stream_refs_array[idx]
+                      AND pet.event_time >= marker_arrays.day_starts_array[idx]
+                      AND pet.event_time <= marker_arrays.day_ends_array[idx]
+                      AND marker_arrays.stream_refs_array[idx] IS NOT NULL
+                      AND marker_arrays.day_starts_array[idx] IS NOT NULL
+                      AND marker_arrays.day_ends_array[idx] IS NOT NULL
+                )
+                ORDER BY pet.stream_ref, pet.event_time
+                LIMIT $delete_cap
             )
             DELETE FROM primitive_event_type
             WHERE EXISTS (
-                SELECT 1 FROM marker_indexes
-                JOIN marker_arrays ON 1=1
-                WHERE primitive_event_type.stream_ref = marker_arrays.stream_refs_array[idx]
-                  AND primitive_event_type.event_time >= marker_arrays.day_starts_array[idx]
-                  AND primitive_event_type.event_time <= marker_arrays.day_ends_array[idx]
-                  AND marker_arrays.stream_refs_array[idx] IS NOT NULL
-                  AND marker_arrays.day_starts_array[idx] IS NOT NULL
-                  AND marker_arrays.day_ends_array[idx] IS NOT NULL
+                SELECT 1 FROM marker_delete_candidates mdc
+                WHERE primitive_event_type.stream_ref = mdc.stream_ref
+                  AND primitive_event_type.event_time = mdc.event_time
             );
             
             -- Step 2c: BULK INSERT type markers using WITH RECURSIVE + UNNEST
