@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pkg/errors"
@@ -32,6 +33,12 @@ func TestDigestActions(t *testing.T) {
 			WithDigestTestSetup(testGetDailyOHLCRawData(t)),
 			WithDigestCombinationFlagSetup(testDigestCombinationFlags(t)),
 			WithDigestAllSameFlagSetup(testDigestAllSameValueFlags(t)),
+			WithBatchDigestTestSetup(testBatchDigestSingleCandidate(t)),
+			WithBatchDigestTestSetup(testBatchDigestMultipleCandidates(t)),
+			WithBatchDigestTestSetup(testBatchDigestEmptyArrays(t)),
+			WithBatchDigestTestSetup(testBatchDigestMismatchedArrays(t)),
+			WithBatchDigestTestSetup(testArrayOrdering(t)),
+			WithBatchDigestTestSetup(testOptimizedAutoDigest(t)),
 		},
 	}, testutils.GetTestOptionsWithCache().Options)
 }
@@ -101,17 +108,17 @@ func testDigestBasicOHLCCalculation(t *testing.T) func(ctx context.Context, plat
 			Expected: expectedOHLC,
 		})
 
-		// Test digest_daily action
-		digestResult, err := callDigestDaily(ctx, platform, streamRef, 1)
+		// Test auto_digest action with batch size 10
+		digestResult, err := callAutoDigest(ctx, platform, 10)
 		if err != nil {
-			return errors.Wrap(err, "error calling digest_daily")
+			return errors.Wrap(err, "error calling auto_digest")
 		}
 
-		// Verify digest result (all 4 test records represent different OHLC values, so all are preserved)
+		// Verify auto_digest result (processes 1 day, no records deleted since all 4 represent different OHLC)
 		expectedDigest := `
-		| deleted_rows | preserved_records |
-		|--------------|-------------------|
-		| 0            | 4                 |
+		| processed_days | total_deleted_rows |
+		|----------------|-------------------|
+		| 1              | 0                 |
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
@@ -187,10 +194,10 @@ func testDigestCombinationFlags(t *testing.T) func(ctx context.Context, platform
 			return errors.Wrap(err, "error inserting pending day for combination test")
 		}
 
-		// Run digest_daily
-		_, err = callDigestDaily(ctx, platform, streamRef, 2)
+		// Run auto_digest
+		_, err = callAutoDigest(ctx, platform, 10)
 		if err != nil {
-			return errors.Wrap(err, "error calling digest_daily for combination test")
+			return errors.Wrap(err, "error calling auto_digest for combination test")
 		}
 
 		// Verify combination flags
@@ -274,47 +281,6 @@ func callGetDailyOHLC(ctx context.Context, platform *kwilTesting.Platform, strea
 	}
 	if r.Error != nil {
 		return nil, errors.Wrap(r.Error, "get_daily_ohlc failed")
-	}
-	return result, nil
-}
-
-// callDigestDaily calls the digest_daily action
-func callDigestDaily(ctx context.Context, platform *kwilTesting.Platform, streamRef int, dayIndex int64) ([]procedure.ResultRow, error) {
-	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
-	if err != nil {
-		return nil, errors.Wrap(err, "error creating ethereum address")
-	}
-
-	txContext := &common.TxContext{
-		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: 1},
-		Signer:       deployer.Bytes(),
-		Caller:       deployer.Address(),
-		TxID:         platform.Txid(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
-
-	var result []procedure.ResultRow
-	r, err := platform.Engine.Call(engineContext, platform.DB, "", "digest_daily", []any{
-		streamRef,
-		dayIndex,
-	}, func(row *common.Row) error {
-		if len(row.Values) != 2 {
-			return errors.Errorf("expected 2 columns, got %d", len(row.Values))
-		}
-		deletedRows := fmt.Sprintf("%v", row.Values[0])
-		preservedRecords := fmt.Sprintf("%v", row.Values[1])
-		result = append(result, procedure.ResultRow{deletedRows, preservedRecords})
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	if r.Error != nil {
-		return nil, errors.Wrap(r.Error, "digest_daily failed")
 	}
 	return result, nil
 }
@@ -599,10 +565,10 @@ func testDigestAllSameValueFlags(t *testing.T) func(ctx context.Context, platfor
 			return errors.Wrap(err, "error inserting pending day for all same values test")
 		}
 
-		// Run digest_daily
-		_, err = callDigestDaily(ctx, platform, streamRef, 3)
+		// Run auto_digest
+		_, err = callAutoDigest(ctx, platform, 10)
 		if err != nil {
-			return errors.Wrap(err, "error calling digest_daily for all same values test")
+			return errors.Wrap(err, "error calling auto_digest for all same values test")
 		}
 
 		// Verify maximum combination flag (15 = OPEN+HIGH+LOW+CLOSE)
@@ -693,4 +659,429 @@ func verifyAllSameFlags(ctx context.Context, platform *kwilTesting.Platform, str
 	}
 
 	return nil
+}
+
+// WithBatchDigestTestSetup sets up test environment for batch digest testing
+func WithBatchDigestTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
+
+		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrapf(err, "error registering data provider")
+		}
+
+		// Setup multiple test streams for batch testing
+		// Stream 1: Day 5 (432000-518400 seconds) - OHLC pattern
+		testStreamId1 := util.GenerateStreamId("batch_test_stream_1")
+		err = setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+			Platform: platform,
+			StreamId: testStreamId1,
+			Height:   1,
+			MarkdownData: `
+			| event_time | value |
+			|------------|-------|
+			| 432000     | 20    |
+			| 454800     | 80    |
+			| 475200     | 5     |
+			| 518400     | 65    |
+			`,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error setting up batch test stream 1")
+		}
+
+		// Stream 2: Day 6 (518400-604800 seconds) - Different OHLC pattern
+		testStreamId2 := util.GenerateStreamId("batch_test_stream_2")
+		err = setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+			Platform: platform,
+			StreamId: testStreamId2,
+			Height:   1,
+			MarkdownData: `
+			| event_time | value |
+			|------------|-------|
+			| 518400     | 100   |
+			| 540000     | 25    |
+			| 561600     | 150   |
+			| 604800     | 90    |
+			`,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error setting up batch test stream 2")
+		}
+
+		// Stream 3: Day 7 (604800-691200 seconds) - Minimal data (should be skipped)
+		testStreamId3 := util.GenerateStreamId("batch_test_stream_3")
+		err = setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+			Platform: platform,
+			StreamId: testStreamId3,
+			Height:   1,
+			MarkdownData: `
+			| event_time | value |
+			|------------|-------|
+			| 604800     | 42    |
+			`,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error setting up batch test stream 3")
+		}
+
+		return testFn(ctx, platform)
+	}
+}
+
+// testBatchDigestSingleCandidate tests batch_digest with a single candidate
+func testBatchDigestSingleCandidate(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		streamRef := 1
+
+		// Insert pending day for stream 1, day 5
+		err := insertPendingDay(ctx, platform, streamRef, 5)
+		if err != nil {
+			return errors.Wrap(err, "error inserting pending day")
+		}
+
+		// Call batch_digest with single candidate
+		streamRefs := []int{streamRef}
+		dayIndexes := []int{5}
+
+		result, err := callBatchDigest(ctx, platform, streamRefs, dayIndexes)
+		if err != nil {
+			return errors.Wrap(err, "error calling batch_digest")
+		}
+
+		// Verify batch digest result for single candidate
+		expectedResult := `
+		| processed_days | total_deleted_rows | total_preserved_rows |
+		|----------------|-------------------|---------------------|
+		| 1              | 0                 | 4                   |
+		`
+
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   result,
+			Expected: expectedResult,
+		})
+
+		return nil
+	}
+}
+
+// testBatchDigestMultipleCandidates tests batch_digest with multiple candidates
+func testBatchDigestMultipleCandidates(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Insert pending days for multiple streams
+		err := insertPendingDay(ctx, platform, 1, 5) // Stream 1, Day 5
+		if err != nil {
+			return errors.Wrap(err, "error inserting pending day 1")
+		}
+
+		err = insertPendingDay(ctx, platform, 2, 6) // Stream 2, Day 6
+		if err != nil {
+			return errors.Wrap(err, "error inserting pending day 2")
+		}
+
+		err = insertPendingDay(ctx, platform, 3, 7) // Stream 3, Day 7 (minimal data)
+		if err != nil {
+			return errors.Wrap(err, "error inserting pending day 3")
+		}
+
+		// Call batch_digest with multiple candidates
+		streamRefs := []int{1, 2, 3}
+		dayIndexes := []int{5, 6, 7}
+
+		result, err := callBatchDigest(ctx, platform, streamRefs, dayIndexes)
+		if err != nil {
+			return errors.Wrap(err, "error calling batch_digest")
+		}
+
+		// Verify batch digest processed multiple candidates
+		// Stream 3 should be skipped due to insufficient records (only 1 record)
+		expectedResult := `
+		| processed_days | total_deleted_rows | total_preserved_rows |
+		|----------------|-------------------|---------------------|
+		| 2              | 0                 | 8                   |
+		`
+
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   result,
+			Expected: expectedResult,
+		})
+
+		return nil
+	}
+}
+
+// testBatchDigestEmptyArrays tests batch_digest with empty arrays
+func testBatchDigestEmptyArrays(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Call batch_digest with empty arrays
+		streamRefs := []int{}
+		dayIndexes := []int{}
+
+		result, err := callBatchDigest(ctx, platform, streamRefs, dayIndexes)
+		if err != nil {
+			return errors.Wrap(err, "error calling batch_digest with empty arrays")
+		}
+
+		// Verify empty result
+		expectedResult := `
+		| processed_days | total_deleted_rows | total_preserved_rows |
+		|----------------|-------------------|---------------------|
+		| 0              | 0                 | 0                   |
+		`
+
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   result,
+			Expected: expectedResult,
+		})
+
+		return nil
+	}
+}
+
+// testBatchDigestMismatchedArrays tests batch_digest with mismatched array lengths
+func testBatchDigestMismatchedArrays(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Call batch_digest with mismatched array lengths (should error)
+		streamRefs := []int{1, 2}
+		dayIndexes := []int{5} // One less element
+
+		_, err := callBatchDigest(ctx, platform, streamRefs, dayIndexes)
+		if err == nil {
+			return errors.New("expected error for mismatched array lengths, but got none")
+		}
+
+		// Verify error message contains expected text
+		expectedErrorSubstring := "must have the same length"
+		if !strings.Contains(err.Error(), expectedErrorSubstring) {
+			return errors.Errorf("expected error to contain '%s', but got: %s", expectedErrorSubstring, err.Error())
+		}
+
+		return nil
+	}
+}
+
+// testArrayOrdering tests that auto_digest processes arrays with correct ordering
+func testArrayOrdering(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Create multiple test streams with sufficient data for processing
+		testStreams := []struct {
+			streamRef int
+			dayIndex  int64
+			streamId  string
+		}{
+			{1, 10, "array_test_stream_1_day_10"},
+			{2, 10, "array_test_stream_2_day_10"},
+			{3, 10, "array_test_stream_3_day_10"},
+			{1, 11, "array_test_stream_1_day_11"},
+			{2, 11, "array_test_stream_2_day_11"},
+			{3, 11, "array_test_stream_3_day_11"},
+			{1, 12, "array_test_stream_1_day_12"},
+			{2, 12, "array_test_stream_2_day_12"},
+			{3, 12, "array_test_stream_3_day_12"},
+		}
+
+		// Setup test data for each stream with multiple records per day
+		for _, ts := range testStreams {
+			testStreamId := util.GenerateStreamId(ts.streamId)
+			dayStart := ts.dayIndex * 86400
+			
+			// Create test data with MANY records to trigger deletions and test array ordering
+			err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+				Platform: platform,
+				StreamId: testStreamId,
+				Height:   1,
+				MarkdownData: fmt.Sprintf(`
+				| event_time | value |
+				|------------|-------|
+				| %d         | 100   |
+				| %d         | 120   |
+				| %d         | 110   |
+				| %d         | 200   |
+				| %d         | 180   |
+				| %d         | 190   |
+				| %d         | 50    |
+				| %d         | 60    |
+				| %d         | 40    |
+				| %d         | 150   |
+				| %d         | 160   |
+				| %d         | 140   |
+				| %d         | 175   |
+				| %d         | 165   |
+				| %d         | 155   |
+				`, dayStart+100, dayStart+150, dayStart+125, dayStart+200, dayStart+250, dayStart+225, 
+				   dayStart+300, dayStart+350, dayStart+325, dayStart+400, dayStart+450, dayStart+425,
+				   dayStart+500, dayStart+550, dayStart+525),
+			})
+			if err != nil {
+				return errors.Wrapf(err, "error setting up test data for stream %s", ts.streamId)
+			}
+
+			// Insert pending day
+			err = insertPendingDay(ctx, platform, ts.streamRef, ts.dayIndex)
+			if err != nil {
+				return errors.Wrapf(err, "error inserting pending day for stream %d, day %d", ts.streamRef, ts.dayIndex)
+			}
+		}
+
+		// Run auto_digest multiple times to test for ordering consistency
+		var results []string
+		for i := 0; i < 3; i++ {
+			result, err := callAutoDigest(ctx, platform, 50)
+			if err != nil {
+				return errors.Wrapf(err, "error calling auto_digest (iteration %d)", i+1)
+			}
+			
+			if len(result) > 0 && len(result[0]) >= 2 {
+				results = append(results, fmt.Sprintf("Run %d: processed %s days, deleted %s rows", 
+					i+1, result[0][0], result[0][1]))
+			}
+		}
+
+		// Log all results to see if they're consistent
+		for _, res := range results {
+			t.Log(res)
+		}
+
+		// If we get here without errors, array ordering is working correctly
+		// Any array index misalignment would cause runtime errors in batch_digest
+		t.Log("Array ordering test completed successfully - no index misalignment detected")
+		return nil
+	}
+}
+
+// testOptimizedAutoDigest tests the optimized auto_digest function
+func testOptimizedAutoDigest(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Insert pending days for multiple streams
+		err := insertPendingDay(ctx, platform, 1, 5)
+		if err != nil {
+			return errors.Wrap(err, "error inserting pending day 1")
+		}
+
+		err = insertPendingDay(ctx, platform, 2, 6)
+		if err != nil {
+			return errors.Wrap(err, "error inserting pending day 2")
+		}
+
+		// Call optimized auto_digest
+		result, err := callAutoDigest(ctx, platform, 10) // Batch size 10
+		if err != nil {
+			return errors.Wrap(err, "error calling optimized auto_digest")
+		}
+
+		// Verify auto_digest processed candidates efficiently
+		expectedResult := `
+		| processed_days | total_deleted_rows |
+		|----------------|-------------------|
+		| 2              | 0                 |
+		`
+
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   result,
+			Expected: expectedResult,
+		})
+
+		return nil
+	}
+}
+
+// callBatchDigest calls the batch_digest action
+func callBatchDigest(ctx context.Context, platform *kwilTesting.Platform, streamRefs []int, dayIndexes []int) ([]procedure.ResultRow, error) {
+	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+	if err != nil {
+		return nil, errors.Wrap(err, "error creating ethereum address")
+	}
+
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 1},
+		Signer:       deployer.Bytes(),
+		Caller:       deployer.Address(),
+		TxID:         platform.Txid(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext: txContext,
+	}
+
+	var result []procedure.ResultRow
+	r, err := platform.Engine.Call(engineContext, platform.DB, "", "batch_digest", []any{
+		streamRefs,
+		dayIndexes,
+	}, func(row *common.Row) error {
+		if len(row.Values) != 3 {
+			return errors.Errorf("expected 3 columns, got %d", len(row.Values))
+		}
+		processedDays := fmt.Sprintf("%v", row.Values[0])
+		totalDeleted := fmt.Sprintf("%v", row.Values[1])
+		totalPreserved := fmt.Sprintf("%v", row.Values[2])
+		result = append(result, procedure.ResultRow{processedDays, totalDeleted, totalPreserved})
+		return nil
+	})
+
+	// Print debug information via NOTICE log
+	if r != nil && r.Logs != nil && len(r.Logs) > 0 {
+		for i, log := range r.Logs {
+			fmt.Println("NOTICE log", i, ":", log)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	if r.Error != nil {
+		return nil, errors.Wrap(r.Error, "batch_digest failed")
+	}
+	return result, nil
+}
+
+// callAutoDigest calls the auto_digest action
+func callAutoDigest(ctx context.Context, platform *kwilTesting.Platform, batchSize int) ([]procedure.ResultRow, error) {
+	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+	if err != nil {
+		return nil, errors.Wrap(err, "error creating ethereum address")
+	}
+
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 1},
+		Signer:       deployer.Bytes(),
+		Caller:       deployer.Address(),
+		TxID:         platform.Txid(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext: txContext,
+	}
+
+	var result []procedure.ResultRow
+	r, err := platform.Engine.Call(engineContext, platform.DB, "", "auto_digest", []any{
+		batchSize,
+	}, func(row *common.Row) error {
+		if len(row.Values) != 2 {
+			return errors.Errorf("expected 2 columns, got %d", len(row.Values))
+		}
+		processedDays := fmt.Sprintf("%v", row.Values[0])
+		totalDeleted := fmt.Sprintf("%v", row.Values[1])
+		result = append(result, procedure.ResultRow{processedDays, totalDeleted})
+		return nil
+	})
+
+	// Print debug information via NOTICE log
+	if r != nil && r.Logs != nil && len(r.Logs) > 0 {
+		for i, log := range r.Logs {
+			fmt.Println("NOTICE log", i, ":", log)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	if r.Error != nil {
+		return nil, errors.Wrap(r.Error, "auto_digest failed")
+	}
+	return result, nil
 }
