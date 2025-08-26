@@ -261,63 +261,89 @@ func ExecuteInsertRecord(ctx context.Context, platform *kwilTesting.Platform, lo
 }
 
 // InsertPrimitiveDataBatch calls the batch insertion action "insert_records" with arrays of parameters.
+// This is now a wrapper around InsertPrimitiveDataMultiBatch for backward compatibility.
 func InsertPrimitiveDataBatch(ctx context.Context, input InsertPrimitiveDataInput) error {
-	dataProviders := []string{}
-	streamIds := []string{}
-	eventTimes := []int64{}
-	values := []*kwilTypes.Decimal{}
+	// Convert single stream input to multi-stream format
+	multiInput := InsertMultiPrimitiveDataInput{
+		Platform: input.Platform,
+		Height:   input.Height,
+		Streams:  []PrimitiveStreamWithData{input.PrimitiveStream},
+	}
 
-	for _, data := range input.PrimitiveStream.Data {
-		// For each record, add the same provider and stream id (they come from the stream locator)
-		dataProviders = append(dataProviders, input.PrimitiveStream.StreamLocator.DataProvider.Address())
-		streamIds = append(streamIds, input.PrimitiveStream.StreamLocator.StreamId.String())
-		eventTimes = append(eventTimes, data.EventTime)
-		valueDecimal, err := kwilTypes.ParseDecimalExplicit(strconv.FormatFloat(data.Value, 'f', -1, 64), 36, 18)
-		if err != nil {
-			return errors.Wrap(err, "error in InsertPrimitiveDataBatch")
+	// Delegate to the multi-stream implementation
+	return InsertPrimitiveDataMultiBatch(ctx, multiInput)
+}
+
+// InsertMultiPrimitiveDataInput allows batching records for multiple streams in one or few engine calls
+type InsertMultiPrimitiveDataInput struct {
+	Platform *kwilTesting.Platform
+	Height   int64
+	Streams  []PrimitiveStreamWithData
+}
+
+// InsertPrimitiveDataMultiBatch inserts records for multiple streams using the insert_records action.
+// It groups records by data provider to minimize calls and ensure correct signing.
+func InsertPrimitiveDataMultiBatch(ctx context.Context, input InsertMultiPrimitiveDataInput) error {
+	if len(input.Streams) == 0 {
+		return nil
+	}
+
+	// Group records by provider address
+	type grouped struct {
+		dataProviders []string
+		streamIds     []string
+		eventTimes    []int64
+		values        []*kwilTypes.Decimal
+	}
+
+	byProvider := map[string]*grouped{}
+
+	for _, ps := range input.Streams {
+		provider := ps.StreamLocator.DataProvider.Address()
+		g, ok := byProvider[provider]
+		if !ok {
+			g = &grouped{}
+			byProvider[provider] = g
 		}
-		values = append(values, valueDecimal)
+		for _, rec := range ps.Data {
+			dec, err := kwilTypes.ParseDecimalExplicit(strconv.FormatFloat(rec.Value, 'f', -1, 64), 36, 18)
+			if err != nil {
+				return errors.Wrap(err, "parse decimal in InsertPrimitiveDataMultiBatch")
+			}
+			g.dataProviders = append(g.dataProviders, provider)
+			g.streamIds = append(g.streamIds, ps.StreamLocator.StreamId.String())
+			g.eventTimes = append(g.eventTimes, rec.EventTime)
+			g.values = append(g.values, dec)
+		}
 	}
-
-	args := []any{
-		dataProviders,
-		streamIds,
-		eventTimes,
-		values,
-	}
-
-	//args = append(args, []any{dataProviders, streamIds, eventTimes, values})
 
 	txid := input.Platform.Txid()
 
-	deployer, err := util.NewEthereumAddressFromBytes(input.PrimitiveStream.StreamLocator.DataProvider.Bytes())
-	if err != nil {
-		return errors.Wrap(err, "error in InsertPrimitiveDataBatch")
+	// Execute one call per provider group with correct signer
+	for provider, g := range byProvider {
+		signerAddr := util.Unsafe_NewEthereumAddressFromString(provider)
+
+		txContext := &common.TxContext{
+			Ctx: ctx,
+			BlockContext: &common.BlockContext{
+				Height: input.Height,
+			},
+			TxID:   txid,
+			Signer: signerAddr.Bytes(),
+			Caller: signerAddr.Address(),
+		}
+		engineContext := &common.EngineContext{TxContext: txContext}
+
+		args := []any{g.dataProviders, g.streamIds, g.eventTimes, g.values}
+		r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "insert_records", args, func(row *common.Row) error { return nil })
+		if err != nil {
+			return errors.Wrapf(err, "insert_records call failed for provider %s", provider)
+		}
+		if r.Error != nil {
+			return errors.Wrapf(r.Error, "insert_records result failed for provider %s", provider)
+		}
 	}
 
-	txContext := &common.TxContext{
-		Ctx: ctx,
-		BlockContext: &common.BlockContext{
-			Height: input.Height,
-		},
-		TxID:   txid,
-		Signer: deployer.Bytes(),
-		Caller: deployer.Address(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
-
-	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "insert_records", args, func(row *common.Row) error {
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	if r.Error != nil {
-		return errors.Wrap(r.Error, "error in InsertPrimitiveDataBatch")
-	}
 	return nil
 }
 
