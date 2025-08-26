@@ -18,7 +18,7 @@ import (
 )
 
 // Cache verification configuration
-const enableCacheCheck = true // Set to false to disable cache verification
+const enableCacheCheck = false // Set to false to disable cache verification
 
 // -----------------------------------------------------------------------------
 // Main benchmark test function

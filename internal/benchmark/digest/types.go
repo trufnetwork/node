@@ -19,6 +19,9 @@ type DigestBenchmarkCase struct {
 	// BatchSize specifies the number of candidates to process in each batch_digest call
 	BatchSize int
 
+	// DeleteCap specifies the maximum number of rows that can be deleted in a single batch_digest call
+	DeleteCap int
+
 	// Pattern specifies the data pattern to generate ("random", "dups50", "monotonic", "equal", "time_dup")
 	Pattern string
 

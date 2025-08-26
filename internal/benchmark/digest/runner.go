@@ -46,7 +46,7 @@ func SliceCandidates(streamRefs []int, dayIdxs []int, batchSize int) []Candidate
 
 // RunBatchDigestOnce executes batch_digest for a single batch of candidates.
 // Returns processed days, deleted rows, and preserved rows counts.
-func RunBatchDigestOnce(ctx context.Context, platform interface{}, streamRefs []int, dayIdxs []int) (processedDays, totalDeleted, totalPreserved int, err error) {
+func RunBatchDigestOnce(ctx context.Context, platform interface{}, streamRefs []int, dayIdxs []int, deleteCap int) (processedDays, totalDeleted, totalPreserved int, err error) {
 	kwilPlatform, ok := platform.(*kwilTesting.Platform)
 	if !ok {
 		return 0, 0, 0, errors.New("invalid platform type")
@@ -69,6 +69,7 @@ func RunBatchDigestOnce(ctx context.Context, platform interface{}, streamRefs []
 	r, err := kwilPlatform.Engine.Call(engineContext, kwilPlatform.DB, "", "batch_digest", []any{
 		streamRefs,
 		dayIdxs,
+		deleteCap,
 	}, func(row *common.Row) error {
 		if len(row.Values) != 3 {
 			return errors.Errorf("expected 3 columns, got %d", len(row.Values))
@@ -106,7 +107,7 @@ func RunBatchDigestOnce(ctx context.Context, platform interface{}, streamRefs []
 // MeasureBatchDigest measures performance metrics for a batch_digest execution.
 // Returns a DigestRunResult with timing, memory, and throughput metrics.
 // The collector parameter can be nil if memory monitoring is disabled.
-func MeasureBatchDigest(ctx context.Context, platform interface{}, streamRefs []int, dayIdxs []int, collector *benchutil.DockerMemoryCollector) (DigestRunResult, error) {
+func MeasureBatchDigest(ctx context.Context, platform interface{}, streamRefs []int, dayIdxs []int, deleteCap int, collector *benchutil.DockerMemoryCollector) (DigestRunResult, error) {
 	kwilPlatform, ok := platform.(*kwilTesting.Platform)
 	if !ok {
 		return DigestRunResult{}, errors.New("invalid platform type")
@@ -114,7 +115,7 @@ func MeasureBatchDigest(ctx context.Context, platform interface{}, streamRefs []
 
 	// Execute the batch digest and measure timing
 	startTime := time.Now()
-	processedDays, totalDeleted, totalPreserved, err := RunBatchDigestOnce(ctx, kwilPlatform, streamRefs, dayIdxs)
+	processedDays, totalDeleted, totalPreserved, err := RunBatchDigestOnce(ctx, kwilPlatform, streamRefs, dayIdxs, deleteCap)
 	duration := time.Since(startTime)
 
 	if err != nil {
@@ -240,7 +241,7 @@ func RunCase(ctx context.Context, platform interface{}, c DigestBenchmarkCase) (
 
 		// Run each batch in the sample (without individual memory collectors)
 		for _, candidateBatch := range batches {
-			result, err := MeasureBatchDigest(ctx, platform, candidateBatch.StreamRefs, candidateBatch.DayIdxs, collector)
+			result, err := MeasureBatchDigest(ctx, platform, candidateBatch.StreamRefs, candidateBatch.DayIdxs, c.DeleteCap, collector)
 			if err != nil {
 				return nil, errors.Wrapf(err, "failed to measure batch for sample %d", sample)
 			}
@@ -360,13 +361,13 @@ func VerifyIdempotency(ctx context.Context, platform interface{}, c DigestBenchm
 	}
 
 	// Run digest once
-	firstProcessed, firstDeleted, firstPreserved, err := RunBatchDigestOnce(ctx, kwilPlatform, streamRefs, dayIdxs)
+	firstProcessed, firstDeleted, firstPreserved, err := RunBatchDigestOnce(ctx, kwilPlatform, streamRefs, dayIdxs, c.DeleteCap)
 	if err != nil {
 		return false, errors.Wrap(err, "error in first digest run")
 	}
 
 	// Run digest again on the same candidates
-	secondProcessed, secondDeleted, secondPreserved, err := RunBatchDigestOnce(ctx, kwilPlatform, streamRefs, dayIdxs)
+	secondProcessed, secondDeleted, secondPreserved, err := RunBatchDigestOnce(ctx, kwilPlatform, streamRefs, dayIdxs, c.DeleteCap)
 	if err != nil {
 		return false, errors.Wrap(err, "error in second digest run")
 	}

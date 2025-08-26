@@ -33,6 +33,7 @@ func TestBenchDigest_Smoke(t *testing.T) {
 
 // TestBenchDigest_Medium runs the medium test suite for scaling analysis.
 // This tests performance characteristics across different scales.
+// Uses delete cap focused approach with realistic dataset to expose indexing issues.
 func TestBenchDigest_Medium(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "digest_benchmark_medium",
@@ -43,14 +44,15 @@ func TestBenchDigest_Medium(t *testing.T) {
 	}, utils.GetTestOptions())
 }
 
-// TestBenchDigest_Extreme runs the extreme test suite for stress testing.
+// TestBenchDigest_Big runs the big test suite for stress testing.
 // This tests maximum scale performance with large data sets.
-func TestBenchDigest_Extreme(t *testing.T) {
+// Uses delete cap focused approach with big dataset to expose scaling limits.
+func TestBenchDigest_Big(t *testing.T) {
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name:        "digest_benchmark_extreme",
+		Name:        "digest_benchmark_big",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
-			WithDigestBenchmarkSetup(testDigestExtremeSuite(t)),
+			WithDigestBenchmarkSetup(testDigestBigSuite(t)),
 		},
 	}, utils.GetTestOptions())
 }
@@ -63,6 +65,24 @@ func TestBenchDigest_Custom(t *testing.T) {
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			WithDigestBenchmarkSetup(testDigestCustomSuite(t)),
+		},
+	}, utils.GetTestOptions())
+}
+
+// TestBenchDigest_DeleteCap runs the delete cap focused test suite.
+// This creates maximum streams once and tests different delete cap values under transactions.
+//
+// PURPOSE: The large dataset (25k streams × 12 days × 24 records/day) creates a realistic
+// production-like environment that exposes indexing and performance issues. The delete
+// cap parameter (1K, 10K, 100K, 1M) is what actually controls the processing volume, allowing
+// us to measure how the system performs with different batch sizes while maintaining
+// realistic data distribution patterns that match production usage (~600k records/day).
+func TestBenchDigest_DeleteCap(t *testing.T) {
+	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name:        "digest_benchmark_delete_cap",
+		SeedScripts: migrations.GetSeedScriptPaths(),
+		FunctionTests: []kwilTesting.TestFunc{
+			WithDigestBenchmarkSetup(testDigestDeleteCapSuite(t)),
 		},
 	}, utils.GetTestOptions())
 }
@@ -196,8 +216,8 @@ func testDigestSmokeSuite(t *testing.T) func(ctx context.Context, platform *kwil
 
 		// Use very small test cases for fast smoke test
 		smokeCases := []DigestBenchmarkCase{
-			{Streams: 2, DaysPerStream: 1, RecordsPerDay: 2, BatchSize: 10, Pattern: PatternRandom, Samples: 1},
-			{Streams: 3, DaysPerStream: 1, RecordsPerDay: 2, BatchSize: 10, Pattern: PatternRandom, Samples: 1},
+			{Streams: 2, DaysPerStream: 1, RecordsPerDay: 2, BatchSize: 10, DeleteCap: DefaultDeleteCap, Pattern: PatternRandom, Samples: 1},
+			{Streams: 3, DaysPerStream: 1, RecordsPerDay: 2, BatchSize: 10, DeleteCap: DefaultDeleteCap, Pattern: PatternRandom, Samples: 1},
 		}
 
 		t.Logf("Running smoke test suite with %d cases", len(smokeCases))
@@ -211,6 +231,7 @@ func testDigestSmokeSuite(t *testing.T) func(ctx context.Context, platform *kwil
 			DaysPerStream: 1, // Single day
 			RecordsPerDay: 5, // Very few records
 			BatchSize:     DefaultBatchSize,
+			DeleteCap:     DefaultDeleteCap,
 			Pattern:       PatternRandom,
 			Samples:       1,
 		}
@@ -263,36 +284,40 @@ func testDigestSmokeSuite(t *testing.T) func(ctx context.Context, platform *kwil
 // testDigestMediumSuite runs the medium test cases for scaling analysis.
 func testDigestMediumSuite(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Use predefined medium test cases
+		// Use medium-scale test cases
 		mediumCases := MediumTestCases
 
-		t.Logf("Running medium test suite with %d cases", len(mediumCases))
+		t.Logf("Running medium test suite with delete cap variations (%d cases)", len(mediumCases))
+		t.Logf("This suite creates maximum streams once and tests delete cap variations under transactions")
+		t.Logf("Focus: Delete cap behavior (1K/10K/100K/1M) with realistic data volume for indexing performance testing")
 
-		// 1) Global setup ONCE (superset): create 10k streams, 30 days, 50 records
-		globalSetup := DigestBenchmarkCase{
-			Streams:       10000,
-			DaysPerStream: 30,
-			RecordsPerDay: 50,
+		// 1) Global setup ONCE with maximum streams (superset for all cases)
+		// Use the case with the most streams as our global setup
+		maxStreamsCase := DigestBenchmarkCase{
+			Streams:       10000,                   // Maximum streams needed for delete cap tests
+			DaysPerStream: 30,                      // Maximum days needed
+			RecordsPerDay: ProductionRecordsPerDay, // Production records per day
 			BatchSize:     DefaultBatchSize,
+			DeleteCap:     DefaultDeleteCap,
 			Pattern:       PatternRandom,
 			Samples:       1,
 		}
-		t.Logf("Performing global setup with superset: %+v", globalSetup)
-		if err := SetupBenchmarkData(ctx, DigestSetupInput{Platform: platform, Case: globalSetup}); err != nil {
+		t.Logf("Performing global setup with superset: %+v", maxStreamsCase)
+		if err := SetupBenchmarkData(ctx, DigestSetupInput{Platform: platform, Case: maxStreamsCase}); err != nil {
 			return fmt.Errorf("global setup failed: %w", err)
 		}
 
-		// 2) Per-case execution inside a transaction, reusing global data, and preparing just pending_prune_days to match the case
+		// 2) Per-case execution inside a transaction with different delete caps
 		results := make(map[string][]DigestRunResult)
 		for i, testCase := range mediumCases {
-			t.Logf("Running case %d/%d with transactional pending_prune_days: %+v", i+1, len(mediumCases), testCase)
+			t.Logf("Running medium case %d/%d with delete_cap=%d: %+v", i+1, len(mediumCases), testCase.DeleteCap, testCase)
 
-			if err := runCaseUsingExistingData(ctx, platform, testCase, func(txPlatform *kwilTesting.Platform, caseResults []DigestRunResult) {
-				caseKey := fmt.Sprintf("streams_%d_days_%d_records_%d_batch_%d_pattern_%s",
-					testCase.Streams, testCase.DaysPerStream, testCase.RecordsPerDay, testCase.BatchSize, testCase.Pattern)
+			if err := runCaseWithDeleteCap(ctx, platform, testCase, func(txPlatform *kwilTesting.Platform, caseResults []DigestRunResult) {
+				caseKey := fmt.Sprintf("streams_%d_days_%d_records_%d_batch_%d_deletecap_%d_pattern_%s",
+					testCase.Streams, testCase.DaysPerStream, testCase.RecordsPerDay, testCase.BatchSize, testCase.DeleteCap, testCase.Pattern)
 				results[caseKey] = caseResults
 			}); err != nil {
-				return fmt.Errorf("failed to run case %d: %w", i, err)
+				return fmt.Errorf("failed to run medium case %d: %w", i, err)
 			}
 		}
 
@@ -323,40 +348,47 @@ func testDigestMediumSuite(t *testing.T) func(ctx context.Context, platform *kwi
 	}
 }
 
-// testDigestExtremeSuite runs the extreme test cases for stress testing.
-func testDigestExtremeSuite(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+// testDigestBigSuite runs the big test cases for stress testing.
+func testDigestBigSuite(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Use predefined extreme test cases (focus on scaling days rather than streams for candidate volume)
-		extremeCases := ExtremeTestCases
+		// Use big-scale test cases
+		bigCases := BigTestCases
 
-		t.Logf("Running extreme test suite with %d cases", len(extremeCases))
-		t.Logf("Warning: Extreme tests may take significant time and resources")
+		t.Logf("Running big test suite with delete cap variations (%d cases)", len(bigCases))
+		t.Logf("Warning: Big tests may take significant time and resources")
+		t.Logf("This suite creates maximum streams once and tests delete cap variations under transactions")
+		t.Logf("Strategy: Large dataset exposes scaling issues, delete cap (1K/10K/100K/1M) controls actual processing volume")
 
-		// 1) Global setup ONCE (superset): create 100k streams, 90 days, 4 records
-		globalSetup := DigestBenchmarkCase{
-			Streams:       100000,
-			DaysPerStream: 90,
-			RecordsPerDay: 4,
+		// 1) Global setup ONCE with maximum streams (superset for all cases)
+		// This big dataset creates the most challenging environment to expose
+		// performance and scaling issues that only appear at production scale.
+		// The delete cap (not the total data size) controls actual deletion volume.
+		maxStreamsCase := DigestBenchmarkCase{
+			Streams:       50000,                   // Scaled down for manageability while maintaining big conditions
+			DaysPerStream: 60,                      // Long history to test temporal query patterns
+			RecordsPerDay: ProductionRecordsPerDay, // Production-like data density (24 records/day)
 			BatchSize:     DefaultBatchSize,
+			DeleteCap:     DefaultDeleteCap, // This will be overridden per test case
 			Pattern:       PatternRandom,
 			Samples:       1,
 		}
-		t.Logf("Performing global setup with superset: %+v", globalSetup)
-		if err := SetupBenchmarkData(ctx, DigestSetupInput{Platform: platform, Case: globalSetup}); err != nil {
+		t.Logf("Performing global setup with superset: %+v", maxStreamsCase)
+		t.Logf("Note: Big dataset tests system limits, but delete cap controls actual processing volume")
+		if err := SetupBenchmarkData(ctx, DigestSetupInput{Platform: platform, Case: maxStreamsCase}); err != nil {
 			return fmt.Errorf("global setup failed: %w", err)
 		}
 
-		// 2) Per-case execution inside a transaction, reusing global data, and preparing just pending_prune_days to match the case
+		// 2) Per-case execution inside a transaction with different delete caps
 		results := make(map[string][]DigestRunResult)
-		for i, testCase := range extremeCases {
-			t.Logf("Running extreme case %d/%d with transactional pending_prune_days: %+v", i+1, len(extremeCases), testCase)
+		for i, testCase := range bigCases {
+			t.Logf("Running big case %d/%d with delete_cap=%d: %+v", i+1, len(bigCases), testCase.DeleteCap, testCase)
 
-			if err := runCaseUsingExistingData(ctx, platform, testCase, func(txPlatform *kwilTesting.Platform, caseResults []DigestRunResult) {
-				caseKey := fmt.Sprintf("streams_%d_days_%d_records_%d_batch_%d_pattern_%s",
-					testCase.Streams, testCase.DaysPerStream, testCase.RecordsPerDay, testCase.BatchSize, testCase.Pattern)
+			if err := runCaseWithDeleteCap(ctx, platform, testCase, func(txPlatform *kwilTesting.Platform, caseResults []DigestRunResult) {
+				caseKey := fmt.Sprintf("streams_%d_days_%d_records_%d_batch_%d_deletecap_%d_pattern_%s",
+					testCase.Streams, testCase.DaysPerStream, testCase.RecordsPerDay, testCase.BatchSize, testCase.DeleteCap, testCase.Pattern)
 				results[caseKey] = caseResults
 			}); err != nil {
-				return fmt.Errorf("failed to run extreme case %d: %w", i, err)
+				return fmt.Errorf("failed to run big case %d: %w", i, err)
 			}
 		}
 
@@ -366,11 +398,11 @@ func testDigestExtremeSuite(t *testing.T) func(ctx context.Context, platform *kw
 			allResults = append(allResults, caseResults...)
 		}
 
-		outputFile := ResultsFileExtreme
+		outputFile := "digest_big_results.csv"
 		if err := SaveDigestResultsCSV(allResults, outputFile); err != nil {
 			t.Logf("Warning: failed to save results to %s: %v", outputFile, err)
 		} else {
-			t.Logf("Extreme test results saved to %s", outputFile)
+			t.Logf("Big test results saved to %s", outputFile)
 		}
 
 		// Create summary report
@@ -381,7 +413,7 @@ func testDigestExtremeSuite(t *testing.T) func(ctx context.Context, platform *kw
 			t.Logf("Summary report created at %s", summaryFile)
 		}
 
-		t.Logf("Extreme test completed successfully - processed %d total results", len(allResults))
+		t.Logf("Big test completed successfully - processed %d total results", len(allResults))
 
 		return nil
 	}
@@ -496,6 +528,146 @@ func parseIntList(s string) ([]int, error) {
 	return result, nil
 }
 
+// testDigestDeleteCapSuite runs delete cap focused test cases.
+// This creates maximum streams once and tests different delete cap values under transactions.
+//
+// KEY INSIGHT: The multiple streams and days create a realistic dataset that exposes
+// indexing and performance issues that smaller datasets might miss. The delete cap
+// parameter (1K, 10K, 1M) is what actually controls how many records get processed/deleted, not
+// the total data volume. The dataset uses production-like patterns (24 records/day) to ensure
+// we're testing in conditions similar to production while focusing the performance measurement
+// on the delete cap behavior.
+func testDigestDeleteCapSuite(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Use medium-scale test cases (same as medium suite for consistency)
+		deleteCapCases := MediumTestCases
+
+		t.Logf("Running delete cap test suite with %d cases", len(deleteCapCases))
+		t.Logf("This suite creates maximum streams once and tests delete cap variations under transactions")
+		t.Logf("Note: Large dataset ensures realistic indexing/query patterns, but delete cap (1K/10K/100K/1M) controls actual deletion volume")
+
+		// 1) Global setup ONCE with maximum streams (superset for all cases)
+		// This creates a realistic dataset that exceeds what we'll actually delete,
+		// ensuring we test with production-like data volumes and indexing patterns.
+		// The delete cap (not the total data size) controls actual deletion volume.
+		maxStreamsCase := DigestBenchmarkCase{
+			Streams:       10000,                   // Creates realistic stream diversity for indexing tests
+			DaysPerStream: 30,                      // Sufficient history to test temporal patterns
+			RecordsPerDay: ProductionRecordsPerDay, // Production-like data density (24 records/day)
+			BatchSize:     DefaultBatchSize,
+			DeleteCap:     DefaultDeleteCap, // This will be overridden per test case
+			Pattern:       PatternRandom,
+			Samples:       1,
+		}
+		t.Logf("Performing global setup with superset: %+v", maxStreamsCase)
+		t.Logf("Note: This large dataset ensures realistic indexing/query patterns for performance testing")
+		if err := SetupBenchmarkData(ctx, DigestSetupInput{Platform: platform, Case: maxStreamsCase}); err != nil {
+			return fmt.Errorf("global setup failed: %w", err)
+		}
+
+		// 2) Per-case execution inside a transaction with different delete caps
+		results := make(map[string][]DigestRunResult)
+		for i, testCase := range deleteCapCases {
+			t.Logf("Running delete cap case %d/%d with delete_cap=%d: %+v", i+1, len(deleteCapCases), testCase.DeleteCap, testCase)
+
+			if err := runCaseWithDeleteCap(ctx, platform, testCase, func(txPlatform *kwilTesting.Platform, caseResults []DigestRunResult) {
+				caseKey := fmt.Sprintf("streams_%d_days_%d_records_%d_batch_%d_deletecap_%d_pattern_%s",
+					testCase.Streams, testCase.DaysPerStream, testCase.RecordsPerDay, testCase.BatchSize, testCase.DeleteCap, testCase.Pattern)
+				results[caseKey] = caseResults
+			}); err != nil {
+				return fmt.Errorf("failed to run delete cap case %d: %w", i, err)
+			}
+		}
+
+		// Export results
+		var allResults []DigestRunResult
+		for _, caseResults := range results {
+			allResults = append(allResults, caseResults...)
+		}
+
+		outputFile := "digest_delete_cap_results.csv"
+		if err := SaveDigestResultsCSV(allResults, outputFile); err != nil {
+			t.Logf("Warning: failed to save results to %s: %v", outputFile, err)
+		} else {
+			t.Logf("Delete cap test results saved to %s", outputFile)
+		}
+
+		// Create summary report
+		summaryFile := strings.Replace(outputFile, ".csv", "_summary.md", 1)
+		if err := ExportResultsSummary(allResults, summaryFile); err != nil {
+			t.Logf("Warning: failed to create summary report: %v", err)
+		} else {
+			t.Logf("Summary report created at %s", summaryFile)
+		}
+
+		t.Logf("Delete cap test completed successfully - processed %d total results", len(allResults))
+
+		return nil
+	}
+}
+
+// runCaseWithDeleteCap runs a benchmark case with a specific delete cap inside a transaction.
+// It uses existing streams and data, only varying the delete cap parameter.
+//
+// KEY BEHAVIOR: Even with large datasets (e.g., 10k streams × 30 days), the delete cap
+// parameter controls how many records actually get processed. For example:
+//   - With delete_cap=1000, only ~1k records will be deleted regardless of dataset size
+//   - With delete_cap=10000, only ~10k records will be deleted regardless of dataset size
+//   - With delete_cap=1000000, only ~1M records will be deleted regardless of dataset size
+//   - The large dataset ensures realistic indexing/query patterns and exposes performance
+//     issues that smaller datasets might miss
+func runCaseWithDeleteCap(ctx context.Context, platform *kwilTesting.Platform, testCase DigestBenchmarkCase, resultHandler func(*kwilTesting.Platform, []DigestRunResult)) error {
+	// Create a nested transaction
+	tx, err := platform.DB.BeginTx(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Create a tx-scoped platform
+	txPlatform := &kwilTesting.Platform{
+		Engine:   platform.Engine,
+		DB:       tx,
+		Deployer: platform.Deployer,
+		Logger:   platform.Logger,
+	}
+
+	// Build candidates for this case using existing streams
+	streamRefs, err := getStreamRefsUpTo(ctx, txPlatform, testCase.Streams)
+	if err != nil {
+		return fmt.Errorf("failed to get stream refs: %w", err)
+	}
+	if len(streamRefs) < testCase.Streams {
+		return fmt.Errorf("insufficient streams available: need %d, got %d", testCase.Streams, len(streamRefs))
+	}
+
+	// Prepare pending_prune_days for this case only
+	totalCandidates := testCase.Streams * testCase.DaysPerStream
+	streamRefCandidates := make([]int, totalCandidates)
+	dayIdxCandidates := make([]int, totalCandidates)
+	idx := 0
+	for _, streamRef := range streamRefs[:testCase.Streams] {
+		for day := 0; day < testCase.DaysPerStream; day++ {
+			streamRefCandidates[idx] = streamRef
+			dayIdxCandidates[idx] = day
+			idx++
+		}
+	}
+	if err := InsertPendingPruneDays(ctx, txPlatform, streamRefCandidates, dayIdxCandidates); err != nil {
+		return fmt.Errorf("failed to insert pending prune days: %w", err)
+	}
+
+	// Run the benchmark for this case using the tx platform with the specific delete cap
+	runner := NewBenchmarkRunner(txPlatform, nil)
+	caseResults, err := runner.RunBenchmarkCase(ctx, testCase)
+	if err != nil {
+		return fmt.Errorf("failed to run benchmark case: %w", err)
+	}
+
+	resultHandler(txPlatform, caseResults)
+	return nil
+}
+
 // testDigestCustomSuite runs custom test cases based on environment variables.
 func testDigestCustomSuite(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
@@ -522,6 +694,7 @@ func testDigestCustomSuite(t *testing.T) func(ctx context.Context, platform *kwi
 								DaysPerStream:    days,
 								RecordsPerDay:    records,
 								BatchSize:        batchSize,
+								DeleteCap:        DefaultDeleteCap,
 								Pattern:          pattern,
 								Samples:          config.Samples,
 								IdempotencyCheck: false, // Disable for performance in large runs
@@ -582,6 +755,7 @@ func TestDigestTypes(t *testing.T) {
 			DaysPerStream: 1,
 			RecordsPerDay: 10,
 			BatchSize:     5,
+			DeleteCap:     DefaultDeleteCap,
 			Pattern:       pattern,
 			Samples:       1,
 		}
@@ -603,6 +777,7 @@ func TestDigestResultValidation(t *testing.T) {
 			DaysPerStream: 30,
 			RecordsPerDay: 50,
 			BatchSize:     10,
+			DeleteCap:     DefaultDeleteCap,
 			Pattern:       "random",
 			Samples:       3,
 		},
@@ -639,6 +814,7 @@ func TestDigestCSVExport(t *testing.T) {
 				DaysPerStream: 1,
 				RecordsPerDay: 50,
 				BatchSize:     50,
+				DeleteCap:     DefaultDeleteCap,
 				Pattern:       "random",
 				Samples:       1,
 			},

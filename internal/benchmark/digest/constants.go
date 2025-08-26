@@ -50,6 +50,25 @@ const (
 	// Increased from 1000 to 5000 to reduce GC pressure from array copies
 	DefaultBatchSize = 5000
 
+	// DefaultDeleteCap is the default maximum number of rows that can be deleted in a single batch_digest call
+	// This matches the default value in the batch_digest SQL function
+	DefaultDeleteCap = 10000
+
+	// DeleteCapSmall is 1K - for testing small batch performance
+	DeleteCapSmall = 1000
+
+	// DeleteCapMedium is 10K - for testing medium batch performance
+	DeleteCapMedium = 10000
+
+	// DeleteCapLarge is 1M - for testing large batch performance
+	DeleteCapLarge = 1000000
+
+	// DeleteCapXL is 100K - for testing extra large batch performance
+	DeleteCapXL = 100000
+
+	// ProductionRecordsPerDay is the realistic number of records per day in production
+	ProductionRecordsPerDay = 24
+
 	// DefaultSamples is the default number of samples per benchmark case
 	DefaultSamples = 3
 
@@ -145,26 +164,37 @@ const (
 // Pre-defined benchmark cases for different test suites
 var (
 	// SmokeTestCases defines the benchmark cases for smoke testing
+	// Quick tests with small data to verify basic functionality
 	SmokeTestCases = []DigestBenchmarkCase{
-		{Streams: 100, DaysPerStream: 1, RecordsPerDay: 50, BatchSize: 50, Pattern: PatternRandom, Samples: 1},
-		{Streams: 1000, DaysPerStream: 1, RecordsPerDay: 50, BatchSize: 50, Pattern: PatternRandom, Samples: 1},
-		{Streams: 10000, DaysPerStream: 1, RecordsPerDay: 50, BatchSize: 50, Pattern: PatternRandom, Samples: 1},
+		{Streams: 10, DaysPerStream: 1, RecordsPerDay: ProductionRecordsPerDay, BatchSize: 100, DeleteCap: DeleteCapSmall, Pattern: PatternRandom, Samples: 1}, // 1K cap - fast smoke test
 	}
 
-	// MediumTestCases defines the benchmark cases for medium-scale testing
+	// MediumTestCases defines test cases for medium-scale testing
+	// Tests delete cap variations (1K, 10K, 100K, 1M) with realistic production data
+	//
+	// IMPORTANT: The 25k streams × 12 days are NOT intended to test deleting all that data.
+	// They create a realistic environment with substantial data volume (~7.2M total records)
+	// to expose indexing and performance issues. The delete cap controls actual processing,
+	// giving us ~600k records/day for realistic medium-scale processing scenarios.
 	MediumTestCases = []DigestBenchmarkCase{
-		{Streams: 10000, DaysPerStream: 1, RecordsPerDay: 2, BatchSize: 100, Pattern: PatternRandom, Samples: DefaultSamples},
-		{Streams: 10000, DaysPerStream: 1, RecordsPerDay: 2, BatchSize: 500, Pattern: PatternRandom, Samples: DefaultSamples},
-		{Streams: 10000, DaysPerStream: 1, RecordsPerDay: 2, BatchSize: 1000, Pattern: PatternRandom, Samples: DefaultSamples},
-		{Streams: 10000, DaysPerStream: 30, RecordsPerDay: 2, BatchSize: 500, Pattern: PatternRandom, Samples: DefaultSamples},
-		{Streams: 10000, DaysPerStream: 1, RecordsPerDay: 50, BatchSize: 1000, Pattern: PatternRandom, Samples: DefaultSamples},
+		{Streams: 25000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, BatchSize: 5000, DeleteCap: DeleteCapSmall, Pattern: PatternRandom, Samples: DefaultSamples},  // 1K cap - tests small batch performance (~600k records/day)
+		{Streams: 25000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, BatchSize: 5000, DeleteCap: DeleteCapMedium, Pattern: PatternRandom, Samples: DefaultSamples}, // 10K cap - tests medium batch performance (~600k records/day)
+		{Streams: 25000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, BatchSize: 5000, DeleteCap: DeleteCapXL, Pattern: PatternRandom, Samples: DefaultSamples},     // 100K cap - tests extra large batch performance (~600k records/day)
+		{Streams: 25000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, BatchSize: 5000, DeleteCap: DeleteCapLarge, Pattern: PatternRandom, Samples: DefaultSamples},  // 1M cap - tests large batch performance (~600k records/day)
 	}
 
-	// ExtremeTestCases defines the benchmark cases for extreme-scale testing
-	ExtremeTestCases = []DigestBenchmarkCase{
-		{Streams: 100000, DaysPerStream: 1, RecordsPerDay: 4, BatchSize: 200, Pattern: PatternRandom, Samples: 2},
-		{Streams: 100000, DaysPerStream: 30, RecordsPerDay: 4, BatchSize: 200, Pattern: PatternRandom, Samples: 2},
-		{Streams: 100000, DaysPerStream: 90, RecordsPerDay: 4, BatchSize: 200, Pattern: PatternRandom, Samples: 2},
+	// BigTestCases defines test cases for big-scale testing
+	// Tests delete cap behavior at big scales with large datasets
+	//
+	// IMPORTANT: The 50k streams × 12 days are NOT intended to test deleting all that data.
+	// They create a big environment to stress-test the system and expose performance
+	// issues that only appear at scale. The delete cap controls actual processing,
+	// giving us ~1.2M records/day for realistic large-scale processing scenarios.
+	BigTestCases = []DigestBenchmarkCase{
+		{Streams: 50000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, BatchSize: 5000, DeleteCap: DeleteCapSmall, Pattern: PatternRandom, Samples: 2},  // 1K cap - tests small batch with big data (~1.2M records/day)
+		{Streams: 50000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, BatchSize: 5000, DeleteCap: DeleteCapMedium, Pattern: PatternRandom, Samples: 2}, // 10K cap - tests medium batch with big data (~1.2M records/day)
+		{Streams: 50000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, BatchSize: 5000, DeleteCap: DeleteCapXL, Pattern: PatternRandom, Samples: 2},     // 100K cap - tests extra large batch with big data (~1.2M records/day)
+		{Streams: 50000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, BatchSize: 5000, DeleteCap: DeleteCapLarge, Pattern: PatternRandom, Samples: 2},  // 1M cap - tests large batch with big data (~1.2M records/day)
 	}
 )
 

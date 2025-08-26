@@ -10,15 +10,19 @@ require (
 	github.com/docker/docker v28.0.1+incompatible
 	github.com/fbiville/markdown-table-formatter v0.3.0
 	github.com/go-co-op/gocron v1.37.0
+	github.com/gocarina/gocsv v0.0.0-20240520201108-78e41c74b4b1
 	github.com/golang-sql/civil v0.0.0-20220223132316-b832511892a9
 	github.com/hashicorp/go-retryablehttp v0.7.8
+	github.com/montanaflynn/stats v0.7.1
+	github.com/panjf2000/ants/v2 v2.10.0
 	github.com/pkg/errors v0.9.1
+	github.com/remeh/sizedwaitgroup v1.0.0
 	github.com/samber/lo v1.47.0
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0
 	github.com/testcontainers/testcontainers-go v0.37.0
-	github.com/trufnetwork/kwil-db v0.10.3-0.20250825143650-0504e34154ce
-	github.com/trufnetwork/kwil-db/core v0.4.3-0.20250825143650-0504e34154ce
+	github.com/trufnetwork/kwil-db v0.10.3-0.20250825142932-2b3197aeaf9a
+	github.com/trufnetwork/kwil-db/core v0.4.3-0.20250825142932-2b3197aeaf9a
 	github.com/trufnetwork/sdk-go v0.3.2-0.20250630062504-841b40cdb709
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20250218142911-aa4b98e5adaa
