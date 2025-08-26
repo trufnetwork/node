@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strconv"
 	"time"
 
 	"github.com/montanaflynn/stats"
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
 	"github.com/trufnetwork/kwil-db/common"
+	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/tests/streams/utils/setup"
 	"github.com/trufnetwork/sdk-go/core/types"
@@ -62,15 +64,43 @@ func InsertPrimitiveDataInBatches(ctx context.Context, platform *kwilTesting.Pla
 		return nil
 	}
 
+	streamId := locator.StreamId.String()
+	totalRecords := len(records)
+
 	// Split records into batches for efficient processing
 	batchSize := InsertBatchSize
 	batches := lo.Chunk(records, batchSize)
+	totalBatches := len(batches)
+
+	// Only log if we have multiple batches to avoid spam
+	if totalBatches > 1 {
+		fmt.Printf("    Stream (%s): Processing %d records in %d batches\n",
+			streamId[:8]+"...", totalRecords, totalBatches)
+	}
+
+	streamStart := time.Now()
 
 	// Process batches sequentially to avoid connection pool exhaustion
 	for i, batch := range batches {
+		batchStart := time.Now()
+
 		if err := insertBatch(ctx, platform, locator, batch, i); err != nil {
+			fmt.Printf("    ❌ Stream (%s) batch %d/%d failed after %v: %v\n",
+				streamId[:8]+"...", i+1, totalBatches, time.Since(batchStart), err)
 			return errors.Wrapf(err, "failed to insert batch %d", i)
 		}
+
+		// Only log progress for large batch operations
+		if totalBatches > 5 && (i+1)%(totalBatches/5) == 0 {
+			fmt.Printf("    Stream (%s): %d/%d batches completed\n",
+				streamId[:8]+"...", i+1, totalBatches)
+		}
+	}
+
+	streamDuration := time.Since(streamStart)
+	if totalBatches > 1 {
+		fmt.Printf("    ✅ Stream (%s) completed in %v (%d batches, %.0f records/sec)\n",
+			streamId[:8]+"...", streamDuration, totalBatches, float64(totalRecords)/streamDuration.Seconds())
 	}
 
 	return nil
@@ -622,57 +652,49 @@ func (t *TimeDupPattern) GetPatternName() string {
 	return "time_dup"
 }
 
-// InsertDataForMultipleStreams efficiently inserts data for multiple streams in parallel batches.
-// This optimizes performance by processing multiple streams simultaneously rather than sequentially.
+// InsertDataForMultipleStreams efficiently inserts data for multiple streams simultaneously.
+// This processes all streams at once since primitives are already batched internally.
 func InsertDataForMultipleStreams(ctx context.Context, platform *kwilTesting.Platform, streamLocators []types.StreamLocator, daysPerStream, recordsPerDay int, pattern string) error {
 	if len(streamLocators) == 0 {
 		return nil
 	}
 
-	// Group streams into batches to avoid overwhelming the database
-	const streamsPerBatch = 50 // Process 50 streams at a time
-	streamBatches := lo.Chunk(streamLocators, streamsPerBatch)
+	totalRecords := len(streamLocators) * daysPerStream * recordsPerDay
+	fmt.Printf("  📊 Inserting %d total records across %d streams (%d days × %d records/day each)\n",
+		totalRecords, len(streamLocators), daysPerStream, recordsPerDay)
 
-	totalProcessed := 0
-	for batchIdx, streamBatch := range streamBatches {
-		batchStart := time.Now()
+	start := time.Now()
 
-		// Prepare data for all streams in this batch
-		streamData := make([]struct {
+	streamData := make([]struct {
+		Locator types.StreamLocator
+		Records []InsertRecordInput
+	}, len(streamLocators))
+
+	// Generate data for all streams in parallel
+	for i, stream := range streamLocators {
+		var allRecords []InsertRecordInput
+		for day := 0; day < daysPerStream; day++ {
+			dayStart := int64(day * DaySeconds)
+			records := GeneratePatternRecords(pattern, dayStart, recordsPerDay)
+			allRecords = append(allRecords, records...)
+		}
+		streamData[i] = struct {
 			Locator types.StreamLocator
 			Records []InsertRecordInput
-		}, len(streamBatch))
-
-		// Generate data for all streams in parallel
-		for i, stream := range streamBatch {
-			var allRecords []InsertRecordInput
-			for day := 0; day < daysPerStream; day++ {
-				dayStart := int64(day * DaySeconds)
-				records := GeneratePatternRecords(pattern, dayStart, recordsPerDay)
-				allRecords = append(allRecords, records...)
-			}
-			streamData[i] = struct {
-				Locator types.StreamLocator
-				Records []InsertRecordInput
-			}{
-				Locator: stream,
-				Records: allRecords,
-			}
+		}{
+			Locator: stream,
+			Records: allRecords,
 		}
-
-		// Insert data for all streams in this batch simultaneously
-		if err := insertBatchForMultipleStreams(ctx, platform, streamData); err != nil {
-			return errors.Wrapf(err, "failed to insert batch %d", batchIdx)
-		}
-
-		batchDuration := time.Since(batchStart)
-		fmt.Printf("    Batch %d/%d: %d streams, %d total records inserted in %v\n",
-			batchIdx+1, len(streamBatches), len(streamBatch),
-			len(streamBatch)*daysPerStream*recordsPerDay, batchDuration)
-
-		totalProcessed += len(streamBatch)
-		fmt.Printf("    Progress: %d/%d streams processed\n", totalProcessed, len(streamLocators))
 	}
+
+	// Insert data for all streams simultaneously
+	if err := insertBatchForMultipleStreams(ctx, platform, streamData); err != nil {
+		return errors.Wrap(err, "failed to insert data for multiple streams")
+	}
+
+	totalDuration := time.Since(start)
+	fmt.Printf("  ✅ Data insertion completed in %v (%.0f records/sec)\n",
+		totalDuration, float64(totalRecords)/totalDuration.Seconds())
 
 	return nil
 }
@@ -682,13 +704,37 @@ func insertBatchForMultipleStreams(ctx context.Context, platform *kwilTesting.Pl
 	Locator types.StreamLocator
 	Records []InsertRecordInput
 }) error {
+	totalStreams := len(streamData)
+	totalBatches := 0
+	totalRecords := 0
+
+	fmt.Printf("  Preparing batches for %d streams...\n", totalStreams)
+
 	// Create primitive streams with data
 	var streams []setup.PrimitiveStreamWithData
 
-	for _, data := range streamData {
+	// Progress logging interval - log every 10% or every 1000 streams (whichever is larger)
+	logInterval := totalStreams / 10 // 10% progress
+	if logInterval < 1000 {
+		logInterval = 1000 // Minimum 1000 streams between logs
+	}
+	if totalStreams < 100 {
+		logInterval = totalStreams / 10
+		if logInterval == 0 {
+			logInterval = 1
+		}
+	}
+
+	for streamIdx, data := range streamData {
+		streamRecords := len(data.Records)
+		totalRecords += streamRecords
+
 		// Split records into batches for each stream
 		recordBatches := lo.Chunk(data.Records, InsertBatchSize)
+		streamBatches := len(recordBatches)
+		totalBatches += streamBatches
 
+		// Convert all batches for this stream
 		for _, batch := range recordBatches {
 			// Convert records to setup format
 			var records []setup.InsertRecordInput
@@ -709,16 +755,158 @@ func insertBatchForMultipleStreams(ctx context.Context, platform *kwilTesting.Pl
 
 			streams = append(streams, primitiveStream)
 		}
+
+		// Progress logging - only log every Nth stream
+		if (streamIdx+1)%logInterval == 0 || streamIdx == totalStreams-1 {
+			fmt.Printf("    Progress: %d/%d streams processed (%d batches, %d records so far)\n",
+				streamIdx+1, totalStreams, totalBatches, totalRecords)
+		}
 	}
 
-	// Use the new multi-stream batch function
+	fmt.Printf("  ✅ Batch preparation complete: %d total primitive batches, %d total records\n",
+		totalBatches, totalRecords)
+
+	// Execute all batches in a single multi-stream operation with progress logging
+	fmt.Printf("  📦 Executing database insertion (%d primitive batches, %d records)...\n",
+		len(streams), totalRecords)
+	batchStart := time.Now()
+
 	multiInput := setup.InsertMultiPrimitiveDataInput{
 		Platform: platform,
 		Height:   1,
 		Streams:  streams,
 	}
 
-	return setup.InsertPrimitiveDataMultiBatch(ctx, multiInput)
+	err := insertMultiPrimitiveDataWithLogging(ctx, multiInput)
+	batchDuration := time.Since(batchStart)
+
+	if err != nil {
+		fmt.Printf("  ❌ Database insertion failed after %v: %v\n", batchDuration, err)
+		return err
+	}
+
+	fmt.Printf("  ✅ Database insertion completed in %v (%.0f records/sec)\n",
+		batchDuration, float64(totalRecords)/batchDuration.Seconds())
+	return nil
+}
+
+// insertMultiPrimitiveDataWithLogging inserts data in batches of InsertBatchSize, not by provider
+func insertMultiPrimitiveDataWithLogging(ctx context.Context, input setup.InsertMultiPrimitiveDataInput) error {
+	if len(input.Streams) == 0 {
+		return nil
+	}
+
+	// Collect all records with their stream information
+	type recordWithStream struct {
+		streamId  string
+		provider  string
+		eventTime int64
+		value     float64
+	}
+
+	var allRecords []recordWithStream
+	totalRecords := 0
+
+	for _, ps := range input.Streams {
+		provider := ps.StreamLocator.DataProvider.Address()
+		streamId := ps.StreamLocator.StreamId.String()
+
+		for _, rec := range ps.Data {
+			allRecords = append(allRecords, recordWithStream{
+				streamId:  streamId,
+				provider:  provider,
+				eventTime: rec.EventTime,
+				value:     rec.Value,
+			})
+		}
+		totalRecords += len(ps.Data)
+	}
+
+	fmt.Printf("    🔍 Processing %d records in batches of %d...\n", totalRecords, InsertBatchSize)
+
+	// Process records in batches of InsertBatchSize
+	batches := lo.Chunk(allRecords, InsertBatchSize)
+	totalBatches := len(batches)
+	processedRecords := 0
+
+	fmt.Printf("    📦 Created %d batches from %d records\n", totalBatches, totalRecords)
+
+	for i, batch := range batches {
+		batchStart := time.Now()
+
+		// Group this batch by provider (each batch might span multiple providers)
+		batchProviderGroups := make(map[string]*struct {
+			dataProviders []string
+			streamIds     []string
+			eventTimes    []int64
+			values        []*kwilTypes.Decimal
+		})
+
+		for _, rec := range batch {
+			g, ok := batchProviderGroups[rec.provider]
+			if !ok {
+				g = &struct {
+					dataProviders []string
+					streamIds     []string
+					eventTimes    []int64
+					values        []*kwilTypes.Decimal
+				}{}
+				batchProviderGroups[rec.provider] = g
+			}
+
+			dec, err := kwilTypes.ParseDecimalExplicit(strconv.FormatFloat(rec.value, 'f', -1, 64), 36, 18)
+			if err != nil {
+				return errors.Wrap(err, "parse decimal in insertMultiPrimitiveDataWithLogging")
+			}
+
+			g.dataProviders = append(g.dataProviders, rec.provider)
+			g.streamIds = append(g.streamIds, rec.streamId)
+			g.eventTimes = append(g.eventTimes, rec.eventTime)
+			g.values = append(g.values, dec)
+		}
+
+		fmt.Printf("      📤 Batch %d/%d: Processing %d records from %d providers...\n",
+			i+1, totalBatches, len(batch), len(batchProviderGroups))
+
+		// Insert this batch using direct database calls
+		txid := input.Platform.Txid()
+
+		for provider, g := range batchProviderGroups {
+			signerAddr := util.Unsafe_NewEthereumAddressFromString(provider)
+
+			txContext := &common.TxContext{
+				Ctx: ctx,
+				BlockContext: &common.BlockContext{
+					Height: input.Height,
+				},
+				TxID:   txid,
+				Signer: signerAddr.Bytes(),
+				Caller: signerAddr.Address(),
+			}
+			engineContext := &common.EngineContext{TxContext: txContext}
+
+			args := []any{g.dataProviders, g.streamIds, g.eventTimes, g.values}
+			r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "insert_records", args, func(row *common.Row) error { return nil })
+			if err != nil {
+				fmt.Printf("      ❌ Batch %d/%d provider %s failed: %v\n", i+1, totalBatches, provider[:12], err)
+				return errors.Wrapf(err, "insert_records call failed for provider %s", provider)
+			}
+			if r.Error != nil {
+				fmt.Printf("      ❌ Batch %d/%d provider %s result failed: %v\n", i+1, totalBatches, provider[:12], r.Error)
+				return errors.Wrapf(r.Error, "insert_records result failed for provider %s", provider)
+			}
+		}
+
+		batchDuration := time.Since(batchStart)
+		processedRecords += len(batch)
+
+		fmt.Printf("      ✅ Batch %d/%d completed in %v (%d/%d total records, %.0f records/sec)\n",
+			i+1, totalBatches, batchDuration, processedRecords, totalRecords,
+			float64(len(batch))/batchDuration.Seconds())
+	}
+
+	fmt.Printf("    🎉 All %d batches processed successfully\n", totalBatches)
+	return nil
 }
 
 // SetupBenchmarkData is the main setup function that orchestrates the entire data setup process.
