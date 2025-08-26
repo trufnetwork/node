@@ -15,10 +15,10 @@ import (
 // SavedDigestResult represents a single row in the CSV export.
 // This structure uses JSON tags for CSV header generation and follows the existing benchexport pattern.
 type SavedDigestResult struct {
-	Streams           int     `json:"streams"`
-	DaysPerStream     int     `json:"days_per_stream"`
-	RecordsPerDay     int     `json:"records_per_day"`
-	BatchSize         int     `json:"batch_size"`
+	Streams       int `json:"streams"`
+	DaysPerStream int `json:"days_per_stream"`
+	RecordsPerDay int `json:"records_per_day"`
+
 	Pattern           string  `json:"pattern"`
 	Samples           int     `json:"samples"`
 	Candidates        int     `json:"candidates"`
@@ -41,9 +41,9 @@ func convertSavedResultToRunResult(saved SavedDigestResult) DigestRunResult {
 			Streams:       saved.Streams,
 			DaysPerStream: saved.DaysPerStream,
 			RecordsPerDay: saved.RecordsPerDay,
-			BatchSize:     saved.BatchSize,
-			Pattern:       saved.Pattern,
-			Samples:       saved.Samples,
+
+			Pattern: saved.Pattern,
+			Samples: saved.Samples,
 		},
 		Candidates:           saved.Candidates,
 		ProcessedDays:        saved.ProcessedDays,
@@ -61,10 +61,10 @@ func convertSavedResultToRunResult(saved SavedDigestResult) DigestRunResult {
 // This handles the transformation from internal types to export format.
 func ConvertToSavedResult(result DigestRunResult) SavedDigestResult {
 	saved := SavedDigestResult{
-		Streams:           result.Case.Streams,
-		DaysPerStream:     result.Case.DaysPerStream,
-		RecordsPerDay:     result.Case.RecordsPerDay,
-		BatchSize:         result.Case.BatchSize,
+		Streams:       result.Case.Streams,
+		DaysPerStream: result.Case.DaysPerStream,
+		RecordsPerDay: result.Case.RecordsPerDay,
+
 		Pattern:           result.Case.Pattern,
 		Samples:           result.Case.Samples,
 		Candidates:        result.Candidates,
@@ -185,7 +185,7 @@ func ExportResultsSummary(results []DigestRunResult, filePath string) error {
 			fmt.Sprintf("%d", result.Case.Streams),
 			fmt.Sprintf("%d", result.Case.DaysPerStream),
 			fmt.Sprintf("%d", result.Case.RecordsPerDay),
-			fmt.Sprintf("%d", result.Case.BatchSize),
+
 			result.Case.Pattern,
 			fmt.Sprintf("%d", result.Case.Samples),
 			fmt.Sprintf("%d", result.Candidates),
@@ -234,11 +234,10 @@ func ExportResultsSummary(results []DigestRunResult, filePath string) error {
 func countUniqueCases(results []DigestRunResult) int {
 	caseMap := make(map[string]bool)
 	for _, result := range results {
-		key := fmt.Sprintf("%d_%d_%d_%d_%s_%d",
+		key := fmt.Sprintf("%d_%d_%d_%s_%d",
 			result.Case.Streams,
 			result.Case.DaysPerStream,
 			result.Case.RecordsPerDay,
-			result.Case.BatchSize,
 			result.Case.Pattern,
 			result.Case.Samples,
 		)
@@ -353,9 +352,7 @@ func validateSavedResult(result SavedDigestResult) error {
 	if result.RecordsPerDay <= 0 {
 		return errors.New("records_per_day must be positive")
 	}
-	if result.BatchSize <= 0 {
-		return errors.New("batch_size must be positive")
-	}
+
 	if result.Samples <= 0 {
 		return errors.New("samples must be positive")
 	}

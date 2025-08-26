@@ -46,9 +46,7 @@ var (
 
 // Benchmark configuration constants
 const (
-	// DefaultBatchSize is the default batch size for digest operations
-	// Increased from 1000 to 5000 to reduce GC pressure from array copies
-	DefaultBatchSize = 5000
+	InsertBatchSize = 100000
 
 	// DefaultDeleteCap is the default maximum number of rows that can be deleted in a single batch_digest call
 	// This matches the default value in the batch_digest SQL function
@@ -60,11 +58,11 @@ const (
 	// DeleteCapMedium is 10K - for testing medium batch performance
 	DeleteCapMedium = 10000
 
-	// DeleteCapLarge is 1M - for testing large batch performance
-	DeleteCapLarge = 1000000
+	// DeleteCapLarge is 100K - for testing large batch performance
+	DeleteCapLarge = 100000
 
-	// DeleteCapXL is 100K - for testing extra large batch performance
-	DeleteCapXL = 100000
+	// DeleteCapXL is 1M - for testing extra large batch performance
+	DeleteCapXL = 1000000
 
 	// ProductionRecordsPerDay is the realistic number of records per day in production
 	ProductionRecordsPerDay = 24
@@ -166,7 +164,7 @@ var (
 	// SmokeTestCases defines the benchmark cases for smoke testing
 	// Quick tests with small data to verify basic functionality
 	SmokeTestCases = []DigestBenchmarkCase{
-		{Streams: 10, DaysPerStream: 1, RecordsPerDay: ProductionRecordsPerDay, BatchSize: 100, DeleteCap: DeleteCapSmall, Pattern: PatternRandom, Samples: 1}, // 1K cap - fast smoke test
+		{Streams: 10, DaysPerStream: 1, RecordsPerDay: ProductionRecordsPerDay, DeleteCap: DeleteCapSmall, Pattern: PatternRandom, Samples: 1}, // 1K cap - fast smoke test
 	}
 
 	// MediumTestCases defines test cases for medium-scale testing
@@ -177,10 +175,10 @@ var (
 	// to expose indexing and performance issues. The delete cap controls actual processing,
 	// giving us ~600k records/day for realistic medium-scale processing scenarios.
 	MediumTestCases = []DigestBenchmarkCase{
-		{Streams: 25000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, BatchSize: 5000, DeleteCap: DeleteCapSmall, Pattern: PatternRandom, Samples: DefaultSamples},  // 1K cap - tests small batch performance (~600k records/day)
-		{Streams: 25000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, BatchSize: 5000, DeleteCap: DeleteCapMedium, Pattern: PatternRandom, Samples: DefaultSamples}, // 10K cap - tests medium batch performance (~600k records/day)
-		{Streams: 25000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, BatchSize: 5000, DeleteCap: DeleteCapXL, Pattern: PatternRandom, Samples: DefaultSamples},     // 100K cap - tests extra large batch performance (~600k records/day)
-		{Streams: 25000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, BatchSize: 5000, DeleteCap: DeleteCapLarge, Pattern: PatternRandom, Samples: DefaultSamples},  // 1M cap - tests large batch performance (~600k records/day)
+		{Streams: 25000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, DeleteCap: DeleteCapSmall, Pattern: PatternRandom, Samples: DefaultSamples},  // 1K cap - tests small batch performance (~600k records/day)
+		{Streams: 25000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, DeleteCap: DeleteCapMedium, Pattern: PatternRandom, Samples: DefaultSamples}, // 10K cap - tests medium batch performance (~600k records/day)
+		{Streams: 25000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, DeleteCap: DeleteCapLarge, Pattern: PatternRandom, Samples: DefaultSamples},  // 100K cap - tests large batch performance (~600k records/day)
+		{Streams: 25000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, DeleteCap: DeleteCapXL, Pattern: PatternRandom, Samples: DefaultSamples},     // 1M cap - tests extra large batch performance (~600k records/day)
 	}
 
 	// BigTestCases defines test cases for big-scale testing
@@ -191,10 +189,10 @@ var (
 	// issues that only appear at scale. The delete cap controls actual processing,
 	// giving us ~1.2M records/day for realistic large-scale processing scenarios.
 	BigTestCases = []DigestBenchmarkCase{
-		{Streams: 50000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, BatchSize: 5000, DeleteCap: DeleteCapSmall, Pattern: PatternRandom, Samples: 2},  // 1K cap - tests small batch with big data (~1.2M records/day)
-		{Streams: 50000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, BatchSize: 5000, DeleteCap: DeleteCapMedium, Pattern: PatternRandom, Samples: 2}, // 10K cap - tests medium batch with big data (~1.2M records/day)
-		{Streams: 50000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, BatchSize: 5000, DeleteCap: DeleteCapXL, Pattern: PatternRandom, Samples: 2},     // 100K cap - tests extra large batch with big data (~1.2M records/day)
-		{Streams: 50000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, BatchSize: 5000, DeleteCap: DeleteCapLarge, Pattern: PatternRandom, Samples: 2},  // 1M cap - tests large batch with big data (~1.2M records/day)
+		{Streams: 50000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, DeleteCap: DeleteCapSmall, Pattern: PatternRandom, Samples: 2},  // 1K cap - tests small batch with big data (~1.2M records/day)
+		{Streams: 50000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, DeleteCap: DeleteCapMedium, Pattern: PatternRandom, Samples: 2}, // 10K cap - tests medium batch with big data (~1.2M records/day)
+		{Streams: 50000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, DeleteCap: DeleteCapLarge, Pattern: PatternRandom, Samples: 2},  // 100K cap - tests large batch with big data (~1.2M records/day)
+		{Streams: 50000, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, DeleteCap: DeleteCapXL, Pattern: PatternRandom, Samples: 2},     // 1M cap - tests extra large batch with big data (~1.2M records/day)
 	}
 )
 
@@ -203,13 +201,13 @@ const (
 	// EnvPrefixDigest is the environment variables prefix for custom config
 	EnvPrefixDigest = "DIGEST_"
 
-	EnvKeyStreams    = "streams"
-	EnvKeyDays       = "days"
-	EnvKeyRecords    = "records"
-	EnvKeyBatchSizes = "batch_sizes"
-	EnvKeyPatterns   = "patterns"
-	EnvKeySamples    = "samples"
-	EnvKeyResults    = "results_path"
+	EnvKeyStreams = "streams"
+	EnvKeyDays    = "days"
+	EnvKeyRecords = "records"
+
+	EnvKeyPatterns = "patterns"
+	EnvKeySamples  = "samples"
+	EnvKeyResults  = "results_path"
 )
 
 // Common SQL queries

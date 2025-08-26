@@ -13,37 +13,6 @@ import (
 	benchutil "github.com/trufnetwork/node/internal/benchmark/util"
 )
 
-// SliceCandidates splits large candidate arrays into optimal batch sizes.
-// This prevents UNNEST + WITH RECURSIVE degradation by keeping batches manageable.
-func SliceCandidates(streamRefs []int, dayIdxs []int, batchSize int) []CandidateBatch {
-	if len(streamRefs) != len(dayIdxs) {
-		// Handle error case - arrays must be same length
-		return nil
-	}
-
-	if len(streamRefs) == 0 {
-		return []CandidateBatch{}
-	}
-
-	var batches []CandidateBatch
-
-	for i := 0; i < len(streamRefs); i += batchSize {
-		end := i + batchSize
-		if end > len(streamRefs) {
-			end = len(streamRefs)
-		}
-
-		batch := CandidateBatch{
-			StreamRefs: streamRefs[i:end],
-			DayIdxs:    dayIdxs[i:end],
-		}
-
-		batches = append(batches, batch)
-	}
-
-	return batches
-}
-
 // RunBatchDigestOnce executes batch_digest for a single batch of candidates.
 // Returns processed days, deleted rows, and preserved rows counts.
 func RunBatchDigestOnce(ctx context.Context, platform interface{}, streamRefs []int, dayIdxs []int, deleteCap int) (processedDays, totalDeleted, totalPreserved int, err error) {
@@ -180,13 +149,12 @@ func RunCase(ctx context.Context, platform interface{}, c DigestBenchmarkCase) (
 		}
 	}
 
-	// Slice candidates into optimal batches
-	batches := SliceCandidates(streamRefs, dayIdxs, c.BatchSize)
+	// Send all candidates in one call - DeleteCap controls actual processing
 
 	for sample := 0; sample < c.Samples; sample++ {
 		var sampleResults []DigestRunResult
 
-		// Start memory monitoring for this sample (shared across all batches in the sample)
+		// Start memory monitoring for this sample
 		var collector *benchutil.DockerMemoryCollector
 		if enableMemoryMonitoring := os.Getenv("ENABLE_MEMORY_MONITORING"); enableMemoryMonitoring != "false" {
 			fmt.Printf("Attempting to start Docker memory monitoring for container '%s' (sample %d/%d)...\n", DockerPostgresContainer, sample+1, c.Samples)
@@ -239,19 +207,17 @@ func RunCase(ctx context.Context, platform interface{}, c DigestBenchmarkCase) (
 			fmt.Println("Memory monitoring disabled via ENABLE_MEMORY_MONITORING=false")
 		}
 
-		// Run each batch in the sample (without individual memory collectors)
-		for _, candidateBatch := range batches {
-			result, err := MeasureBatchDigest(ctx, platform, candidateBatch.StreamRefs, candidateBatch.DayIdxs, c.DeleteCap, collector)
-			if err != nil {
-				return nil, errors.Wrapf(err, "failed to measure batch for sample %d", sample)
-			}
-
-			// Update result with case information
-			result.Case = c
-			result.Candidates = len(candidateBatch.StreamRefs)
-
-			sampleResults = append(sampleResults, result)
+		// Run single batch with all candidates - DeleteCap controls processing
+		result, err := MeasureBatchDigest(ctx, platform, streamRefs, dayIdxs, c.DeleteCap, collector)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to measure batch for sample %d", sample)
 		}
+
+		// Update result with case information
+		result.Case = c
+		result.Candidates = len(streamRefs)
+
+		sampleResults = append(sampleResults, result)
 
 		// Aggregate results for this sample
 		if len(sampleResults) > 0 {
@@ -532,8 +498,8 @@ func (r *BenchmarkRunner) RunMultipleCases(ctx context.Context, cases []DigestBe
 	results := make(map[string][]DigestRunResult)
 
 	for _, c := range cases {
-		caseKey := fmt.Sprintf("streams_%d_days_%d_records_%d_batch_%d_pattern_%s",
-			c.Streams, c.DaysPerStream, c.RecordsPerDay, c.BatchSize, c.Pattern)
+		caseKey := fmt.Sprintf("streams_%d_days_%d_records_%d_deletecap_%d_pattern_%s",
+			c.Streams, c.DaysPerStream, c.RecordsPerDay, c.DeleteCap, c.Pattern)
 
 		r.logInfo("Running case: %s", caseKey)
 

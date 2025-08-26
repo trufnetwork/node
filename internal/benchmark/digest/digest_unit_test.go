@@ -8,74 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSliceCandidates tests the candidate slicing functionality.
-func TestSliceCandidates(t *testing.T) {
-	tests := []struct {
-		name       string
-		streamRefs []int
-		dayIdxs    []int
-		batchSize  int
-		expected   int // number of batches
-	}{
-		{
-			name:       "empty_input",
-			streamRefs: []int{},
-			dayIdxs:    []int{},
-			batchSize:  10,
-			expected:   0,
-		},
-		{
-			name:       "single_batch",
-			streamRefs: []int{1, 2, 3},
-			dayIdxs:    []int{0, 1, 2},
-			batchSize:  10,
-			expected:   1,
-		},
-		{
-			name:       "multiple_batches",
-			streamRefs: []int{1, 2, 3, 4, 5},
-			dayIdxs:    []int{0, 1, 2, 3, 4},
-			batchSize:  2,
-			expected:   3, // 2, 2, 1
-		},
-		{
-			name:       "mismatched_lengths",
-			streamRefs: []int{1, 2, 3},
-			dayIdxs:    []int{0, 1}, // different length
-			batchSize:  2,
-			expected:   0, // should return nil
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := SliceCandidates(tt.streamRefs, tt.dayIdxs, tt.batchSize)
-
-			if tt.expected == 0 && len(result) == 0 {
-				// Expected empty result
-				return
-			}
-
-			if tt.expected == 0 {
-				t.Errorf("expected empty result but got %d batches", len(result))
-				return
-			}
-
-			assert.Equal(t, tt.expected, len(result), "number of batches should match")
-
-			// Verify batch structure
-			for i, candidateBatch := range result {
-				assert.Greater(t, len(candidateBatch.StreamRefs), 0, "batch %d should not be empty", i)
-
-				// Each batch should have the same structure
-				assert.Equal(t, len(candidateBatch.StreamRefs), len(candidateBatch.DayIdxs),
-					"stream refs and day idxs should have same length in batch")
-				assert.LessOrEqual(t, len(candidateBatch.StreamRefs), tt.batchSize,
-					"batch size should not exceed requested size")
-			}
-		})
-	}
-}
+// TestSliceCandidates was removed - batching functionality is no longer used.
+// All candidates are now processed in a single call to batch_digest.
 
 // TestAggregateResults tests the result aggregation functionality.
 func TestAggregateResults(t *testing.T) {
@@ -97,9 +31,9 @@ func TestAggregateResults(t *testing.T) {
 						Streams:       10,
 						DaysPerStream: 5,
 						RecordsPerDay: 100,
-						BatchSize:     50,
-						Pattern:       "random",
-						Samples:       3,
+
+						Pattern: "random",
+						Samples: 3,
 					},
 					Candidates:           50,
 					ProcessedDays:        25,
@@ -117,9 +51,9 @@ func TestAggregateResults(t *testing.T) {
 					Streams:       10,
 					DaysPerStream: 5,
 					RecordsPerDay: 100,
-					BatchSize:     50,
-					Pattern:       "random",
-					Samples:       3,
+
+					Pattern: "random",
+					Samples: 3,
 				},
 				Candidates:           50,
 				ProcessedDays:        25,
@@ -213,9 +147,9 @@ func TestValidateBenchmarkCase(t *testing.T) {
 				Streams:       10,
 				DaysPerStream: 5,
 				RecordsPerDay: 100,
-				BatchSize:     50,
-				Pattern:       "random",
-				Samples:       3,
+
+				Pattern: "random",
+				Samples: 3,
 			},
 			wantErr: false,
 		},
@@ -225,9 +159,9 @@ func TestValidateBenchmarkCase(t *testing.T) {
 				Streams:       0,
 				DaysPerStream: 5,
 				RecordsPerDay: 100,
-				BatchSize:     50,
-				Pattern:       "random",
-				Samples:       3,
+
+				Pattern: "random",
+				Samples: 3,
 			},
 			wantErr: true,
 		},
@@ -237,9 +171,9 @@ func TestValidateBenchmarkCase(t *testing.T) {
 				Streams:       10,
 				DaysPerStream: 0,
 				RecordsPerDay: 100,
-				BatchSize:     50,
-				Pattern:       "random",
-				Samples:       3,
+
+				Pattern: "random",
+				Samples: 3,
 			},
 			wantErr: true,
 		},
@@ -249,9 +183,9 @@ func TestValidateBenchmarkCase(t *testing.T) {
 				Streams:       10,
 				DaysPerStream: 5,
 				RecordsPerDay: 0,
-				BatchSize:     50,
-				Pattern:       "random",
-				Samples:       3,
+
+				Pattern: "random",
+				Samples: 3,
 			},
 			wantErr: true,
 		},
@@ -261,9 +195,9 @@ func TestValidateBenchmarkCase(t *testing.T) {
 				Streams:       10,
 				DaysPerStream: 5,
 				RecordsPerDay: 100,
-				BatchSize:     0,
-				Pattern:       "random",
-				Samples:       3,
+
+				Pattern: "random",
+				Samples: 3,
 			},
 			wantErr: true,
 		},
@@ -273,9 +207,9 @@ func TestValidateBenchmarkCase(t *testing.T) {
 				Streams:       10,
 				DaysPerStream: 5,
 				RecordsPerDay: 100,
-				BatchSize:     50,
-				Pattern:       PatternRandom,
-				Samples:       3,
+
+				Pattern: PatternRandom,
+				Samples: 3,
 			},
 			wantErr: false,
 		},
@@ -285,9 +219,9 @@ func TestValidateBenchmarkCase(t *testing.T) {
 				Streams:       10,
 				DaysPerStream: 5,
 				RecordsPerDay: 100,
-				BatchSize:     50,
-				Pattern:       "random",
-				Samples:       0,
+
+				Pattern: "random",
+				Samples: 0,
 			},
 			wantErr: true,
 		},
@@ -383,9 +317,9 @@ func TestConvertToSavedResult(t *testing.T) {
 			Streams:       10,
 			DaysPerStream: 5,
 			RecordsPerDay: 100,
-			BatchSize:     50,
-			Pattern:       "random",
-			Samples:       3,
+
+			Pattern: "random",
+			Samples: 3,
 		},
 		Candidates:           50,
 		ProcessedDays:        25,
@@ -404,7 +338,7 @@ func TestConvertToSavedResult(t *testing.T) {
 	assert.Equal(t, input.Case.Streams, result.Streams)
 	assert.Equal(t, input.Case.DaysPerStream, result.DaysPerStream)
 	assert.Equal(t, input.Case.RecordsPerDay, result.RecordsPerDay)
-	assert.Equal(t, input.Case.BatchSize, result.BatchSize)
+	// BatchSize was removed - we now send all candidates in one call
 	assert.Equal(t, input.Case.Pattern, result.Pattern)
 	assert.Equal(t, input.Case.Samples, result.Samples)
 	assert.Equal(t, input.Candidates, result.Candidates)
@@ -430,15 +364,15 @@ func TestDataGenerationPatterns(t *testing.T) {
 				Streams:       5,
 				DaysPerStream: 2,
 				RecordsPerDay: 10,
-				BatchSize:     5,
-				Pattern:       pattern,
-				Samples:       1,
+
+				Pattern: pattern,
+				Samples: 1,
 			}
 
 			// Should not panic when creating the case
 			err := ValidateBenchmarkCase(c)
 			// Pattern validation may not be implemented, so we just check that basic validation passes
-			if c.Streams > 0 && c.DaysPerStream > 0 && c.RecordsPerDay > 0 && c.BatchSize > 0 && c.Samples > 0 {
+			if c.Streams > 0 && c.DaysPerStream > 0 && c.RecordsPerDay > 0 && c.Samples > 0 {
 				// These should be valid if the pattern validation isn't implemented
 				assert.NoError(t, err, "basic validation should pass for pattern %s", pattern)
 			}
@@ -466,7 +400,7 @@ func TestConstants(t *testing.T) {
 	// Test that resource limits are reasonable
 	assert.Greater(t, MaxWorkers, 0, "MaxWorkers should be positive")
 	assert.Greater(t, MaxConcurrency, 0, "MaxConcurrency should be positive")
-	assert.Greater(t, DefaultBatchSize, 0, "DefaultBatchSize should be positive")
+	// BatchSize was removed - we now send all candidates in one call
 	assert.Greater(t, DefaultSamples, 0, "DefaultSamples should be positive")
 
 	// Test that test configurations are reasonable
@@ -482,9 +416,9 @@ func TestBenchmarkCaseCreation(t *testing.T) {
 		Streams:       SmokeTestStreams,
 		DaysPerStream: SmokeTestDays,
 		RecordsPerDay: SmokeTestRecords,
-		BatchSize:     DefaultBatchSize,
-		Pattern:       PatternRandom,
-		Samples:       DefaultSamples,
+
+		Pattern: PatternRandom,
+		Samples: DefaultSamples,
 	}
 
 	err := ValidateBenchmarkCase(c)
@@ -494,7 +428,7 @@ func TestBenchmarkCaseCreation(t *testing.T) {
 	assert.Greater(t, c.Streams, 0, "streams should be positive")
 	assert.Greater(t, c.DaysPerStream, 0, "days per stream should be positive")
 	assert.Greater(t, c.RecordsPerDay, 0, "records per day should be positive")
-	assert.Greater(t, c.BatchSize, 0, "batch size should be positive")
+	// BatchSize validation removed - we now send all candidates in one call
 	assert.Greater(t, c.Samples, 0, "samples should be positive")
 	assert.NotEmpty(t, c.Pattern, "pattern should not be empty")
 }

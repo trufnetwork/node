@@ -16,9 +16,6 @@ type DigestBenchmarkCase struct {
 	// RecordsPerDay specifies the number of records to generate per stream per day
 	RecordsPerDay int
 
-	// BatchSize specifies the number of candidates to process in each batch_digest call
-	BatchSize int
-
 	// DeleteCap specifies the maximum number of rows that can be deleted in a single batch_digest call
 	DeleteCap int
 
@@ -64,16 +61,6 @@ type DigestRunResult struct {
 
 	// WALBytes contains the WAL (Write-Ahead Log) growth in bytes (optional metric)
 	WALBytes *int64
-}
-
-// CandidateBatch represents a batch of candidates to be processed together.
-// This structure helps optimize batch processing by grouping related candidates.
-type CandidateBatch struct {
-	// StreamRefs contains the stream reference IDs for this batch
-	StreamRefs []int
-
-	// DayIdxs contains the day indices for this batch
-	DayIdxs []int
 }
 
 // DigestBenchmarkPattern defines the interface for different data generation patterns.

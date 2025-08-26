@@ -63,7 +63,7 @@ func InsertPrimitiveDataInBatches(ctx context.Context, platform *kwilTesting.Pla
 	}
 
 	// Split records into batches for efficient processing
-	batchSize := DefaultBatchSize
+	batchSize := InsertBatchSize
 	batches := lo.Chunk(records, batchSize)
 
 	// Process batches sequentially to avoid connection pool exhaustion
@@ -687,7 +687,7 @@ func insertBatchForMultipleStreams(ctx context.Context, platform *kwilTesting.Pl
 
 	for _, data := range streamData {
 		// Split records into batches for each stream
-		recordBatches := lo.Chunk(data.Records, DefaultBatchSize)
+		recordBatches := lo.Chunk(data.Records, InsertBatchSize)
 
 		for _, batch := range recordBatches {
 			// Convert records to setup format
@@ -864,9 +864,7 @@ func ValidateBenchmarkCase(c DigestBenchmarkCase) error {
 	if c.RecordsPerDay <= 0 {
 		return errors.New("records_per_day must be positive")
 	}
-	if c.BatchSize <= 0 {
-		return errors.New("batch_size must be positive")
-	}
+
 	if c.Samples <= 0 {
 		return errors.New("samples must be positive")
 	}
@@ -954,39 +952,4 @@ func AnalyzeDataPatterns(records []InsertRecordInput) (map[string]float64, error
 	analysis["unique_ratio"] = float64(len(uniqueValues)) / float64(len(values))
 
 	return analysis, nil
-}
-
-// OptimizeBatchSize suggests optimal batch sizes based on data analysis.
-// This uses statistical analysis to recommend efficient processing parameters.
-func OptimizeBatchSize(c DigestBenchmarkCase, analysis map[string]float64) int {
-	baseBatchSize := 50
-
-	// Adjust based on data uniqueness (more unique values = larger batches)
-	if uniqueRatio, exists := analysis["unique_ratio"]; exists {
-		if uniqueRatio > 0.8 {
-			// High uniqueness - can use larger batches
-			baseBatchSize = 200
-		} else if uniqueRatio < 0.3 {
-			// Low uniqueness - use smaller batches for better memory efficiency
-			baseBatchSize = 25
-		}
-	}
-
-	// Adjust based on standard deviation (more variation = smaller batches for precision)
-	if stdDev, exists := analysis["std_dev"]; exists && analysis["mean"] > 0 {
-		coefficientOfVariation := stdDev / analysis["mean"]
-		if coefficientOfVariation > 1.0 {
-			// High variation - smaller batches for better control
-			baseBatchSize = int(float64(baseBatchSize) * 0.7)
-		}
-	}
-
-	// Ensure reasonable bounds
-	if baseBatchSize < 10 {
-		baseBatchSize = 10
-	} else if baseBatchSize > 500 {
-		baseBatchSize = 500
-	}
-
-	return baseBatchSize
 }
