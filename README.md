@@ -50,6 +50,9 @@ We provide official SDKs to integrate and interact with the TN network:
 - Composed stream creation and updates
 - Configurable node connections
 
+## MCP Server
+
+Learn how to query data through AI Clients: [TRUF.NETWORK MCP](./docs/mcp-server.md)
 
 ## Development Guide
 
