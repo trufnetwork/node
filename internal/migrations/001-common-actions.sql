@@ -81,16 +81,12 @@ CREATE OR REPLACE ACTION create_streams(
         ERROR('Stream IDs and stream types arrays must have the same length');
     }
 
-    -- Iterate through each stream ID and type, checking if they have a valid format
-    for $i in 1..array_length($stream_ids) {
-        $stream_id := $stream_ids[$i];
-        $stream_type := $stream_types[$i];
-        if NOT check_stream_id_format($stream_id) {
-            ERROR('Invalid stream_id format. Must start with "st" followed by 30 lowercase alphanumeric characters: ' || $stream_id);
-        }
-        if $stream_type != 'primitive' AND $stream_type != 'composed' {
-            ERROR('Invalid stream type. Must be "primitive" or "composed": ' || $stream_type);
-        }
+    -- Unified batch validation for both stream IDs and types
+    -- This returns only invalid entries with specific error reasons
+    for $validation_result in validate_stream_creation_batch($stream_ids, $stream_types) {
+        ERROR('Stream at position ' || $validation_result.index_position || ' is invalid: ' ||
+              $validation_result.stream_id || ' (' || $validation_result.stream_type || ') - ' ||
+              $validation_result.error_reason);
     }
 
     $base_uuid := uuid_generate_kwil('create_streams_' || @txid);
@@ -110,136 +106,19 @@ CREATE OR REPLACE ACTION create_streams(
         ERROR('Data provider not found: ' || $data_provider);
     }
     
-    -- Create the streams
-    WITH RECURSIVE 
-    indexes AS (
-        SELECT 1 AS idx
-        UNION ALL
-        SELECT idx + 1 FROM indexes
-        WHERE idx < array_length($stream_ids)
-    ),
-    stream_arrays AS (
-        SELECT 
-            $stream_ids AS stream_ids,
-            $stream_types AS stream_types
-    ),
-    arguments AS (
-      SELECT 
-          idx,
-          stream_arrays.stream_ids[idx] AS stream_id,
-          stream_arrays.stream_types[idx] AS stream_type
-      FROM indexes
-      JOIN stream_arrays ON 1=1
-    ),
-    sequential_ids AS (
-        SELECT 
-            idx,
-            stream_id,
-            stream_type,
-            ROW_NUMBER() OVER (ORDER BY idx) + COALESCE((SELECT MAX(id) FROM streams), 0) AS id
-        FROM arguments
-    )
+    -- Create the streams using UNNEST for optimal performance
     INSERT INTO streams (id, data_provider_id, data_provider, stream_id, stream_type, created_at)
     SELECT
-        id,
+        ROW_NUMBER() OVER (ORDER BY t.stream_id) + COALESCE((SELECT MAX(id) FROM streams), 0) AS id,
         $data_provider_id,
         $data_provider,
-        stream_id, 
-        stream_type, 
+        t.stream_id,
+        t.stream_type,
         @height
-    FROM sequential_ids;
+    FROM UNNEST($stream_ids, $stream_types) AS t(stream_id, stream_type);
  
-    -- Create metadata for the streams
-    WITH RECURSIVE 
-    indexes AS (
-        SELECT 1 AS idx
-        UNION ALL
-        SELECT idx + 1 FROM indexes
-        WHERE idx < array_length($stream_ids)
-    ),
-    stream_arrays AS (
-        SELECT 
-            $stream_ids AS stream_ids,
-            $stream_types AS stream_types
-    ),
-    stream_metadata AS (
-        SELECT 
-            stream_arrays.stream_ids[idx] AS stream_id,
-            stream_arrays.stream_types[idx] AS stream_type
-        FROM indexes
-        JOIN stream_arrays ON 1=1
-    ),
-    metadata_arguments AS (
-        -- Don't add type metadata here, we will add it when we join both tables
-        SELECT
-            'stream_owner' AS metadata_key,
-            NULL::TEXT AS value_s,
-            NULL::INT AS value_i,
-            LOWER($data_provider) AS value_ref
-        UNION ALL
-        SELECT
-            'read_visibility' AS metadata_key,
-            NULL::TEXT AS value_s,    
-            0::INT AS value_i, -- 0 = public, 1 = private
-            NULL::TEXT AS value_ref
-        UNION ALL
-        SELECT
-            'readonly_key' AS metadata_key,
-            'stream_owner' AS value_s,
-            NULL::INT AS value_i,
-            NULL::TEXT AS value_ref
-        UNION ALL
-        SELECT
-            'readonly_key' AS metadata_key,
-            'readonly_key' AS value_s,
-            NULL::INT AS value_i,
-            NULL::TEXT AS value_ref
-    ),
-    -- Cross join the stream_metadata and metadata_arguments
-    all_arguments AS (
-        SELECT 
-            sm.stream_id,
-            sm.stream_type,
-            ma.metadata_key,
-            ma.value_s,
-            ma.value_i,
-            ma.value_ref
-        FROM stream_metadata sm
-        JOIN metadata_arguments ma ON 1=1
-
-        UNION ALL
-
-        SELECT
-            stream_metadata.stream_id,
-            stream_metadata.stream_type,
-            'type' AS metadata_key,
-            stream_metadata.stream_type AS value_s,
-            NULL::INT AS value_i,
-            NULL::TEXT AS value_ref
-        FROM stream_metadata
-    ),
-    -- Add row number to be able to create deterministic UUIDs
-    args_with_row_number AS (
-        SELECT all_arguments.*, row_number() OVER () AS row_number
-        FROM all_arguments
-    ),
-    args AS (
-        SELECT 
-            uuid_generate_v5($base_uuid, 'metadata' || $data_provider || arg.stream_id || arg.metadata_key || arg.row_number::TEXT)::UUID as row_id,
-            $data_provider AS data_provider,
-            arg.stream_id,
-            arg.metadata_key,
-            arg.value_s,
-            arg.value_i,
-            arg.value_ref,
-            @height AS created_at,
-            s.id AS stream_ref
-        FROM args_with_row_number arg
-        JOIN data_providers dp ON dp.address = $data_provider
-        JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = arg.stream_id
-    )
-    -- catched a bug where it's expected to have the same order of columns
-    -- as the table definition
+    -- Create metadata for the streams using UNNEST for optimal performance
+    -- Insert stream_owner metadata
     INSERT INTO metadata (
         row_id,
         metadata_key,
@@ -252,38 +131,135 @@ CREATE OR REPLACE ACTION create_streams(
         disabled_at,
         stream_ref
     )
-    SELECT 
-        row_id::UUID,
+    SELECT
+        uuid_generate_v5($base_uuid, 'metadata' || $data_provider || t.stream_id || 'stream_owner' || '1')::UUID,
+        'stream_owner'::TEXT,
+        NULL::INT,
+        NULL::NUMERIC(36,18),
+        NULL::BOOL,
+        NULL::TEXT,
+        LOWER($data_provider)::TEXT,
+        @height,
+        NULL::INT,
+        s.id
+    FROM UNNEST($stream_ids, $stream_types) AS t(stream_id, stream_type)
+    JOIN data_providers dp ON dp.address = $data_provider
+    JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = t.stream_id;
+
+    -- Insert read_visibility metadata
+    INSERT INTO metadata (
+        row_id,
         metadata_key,
         value_i,
-        NULL::NUMERIC(36,18),
-        NULL::BOOLEAN,
+        value_f,
+        value_b,
         value_s,
         value_ref,
         created_at,
-        NULL::INT8,
+        disabled_at,
         stream_ref
-    FROM args;
+    )
+    SELECT
+        uuid_generate_v5($base_uuid, 'metadata' || $data_provider || t.stream_id || 'read_visibility' || '2')::UUID,
+        'read_visibility'::TEXT,
+        0::INT,
+        NULL::NUMERIC(36,18),
+        NULL::BOOL,
+        NULL::TEXT,
+        NULL::TEXT,
+        @height,
+        NULL::INT,
+        s.id
+    FROM UNNEST($stream_ids, $stream_types) AS t(stream_id, stream_type)
+    JOIN data_providers dp ON dp.address = $data_provider
+    JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = t.stream_id;
+
+    -- Insert readonly_key metadata (stream_owner)
+    INSERT INTO metadata (
+        row_id,
+        metadata_key,
+        value_i,
+        value_f,
+        value_b,
+        value_s,
+        value_ref,
+        created_at,
+        disabled_at,
+        stream_ref
+    )
+    SELECT
+        uuid_generate_v5($base_uuid, 'metadata' || $data_provider || t.stream_id || 'readonly_key' || '3')::UUID,
+        'readonly_key'::TEXT,
+        NULL::INT,
+        NULL::NUMERIC(36,18),
+        NULL::BOOL,
+        'stream_owner'::TEXT,
+        NULL::TEXT,
+        @height,
+        NULL::INT,
+        s.id
+    FROM UNNEST($stream_ids, $stream_types) AS t(stream_id, stream_type)
+    JOIN data_providers dp ON dp.address = $data_provider
+    JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = t.stream_id;
+
+    -- Insert readonly_key metadata (readonly_key)
+    INSERT INTO metadata (
+        row_id,
+        metadata_key,
+        value_i,
+        value_f,
+        value_b,
+        value_s,
+        value_ref,
+        created_at,
+        disabled_at,
+        stream_ref
+    )
+    SELECT
+        uuid_generate_v5($base_uuid, 'metadata' || $data_provider || t.stream_id || 'readonly_key' || '4')::UUID,
+        'readonly_key'::TEXT,
+        NULL::INT,
+        NULL::NUMERIC(36,18),
+        NULL::BOOL,
+        'readonly_key'::TEXT,
+        NULL::TEXT,
+        @height,
+        NULL::INT,
+        s.id
+    FROM UNNEST($stream_ids, $stream_types) AS t(stream_id, stream_type)
+    JOIN data_providers dp ON dp.address = $data_provider
+    JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = t.stream_id;
+
+    -- Insert type metadata
+    INSERT INTO metadata (
+        row_id,
+        metadata_key,
+        value_i,
+        value_f,
+        value_b,
+        value_s,
+        value_ref,
+        created_at,
+        disabled_at,
+        stream_ref
+    )
+    SELECT
+        uuid_generate_v5($base_uuid, 'metadata' || $data_provider || t.stream_id || 'type' || '5')::UUID,
+        'type'::TEXT,
+        NULL::INT,
+        NULL::NUMERIC(36,18),
+        NULL::BOOL,
+        t.stream_type,
+        NULL::TEXT,
+        @height,
+        NULL::INT,
+        s.id
+    FROM UNNEST($stream_ids, $stream_types) AS t(stream_id, stream_type)
+    JOIN data_providers dp ON dp.address = $data_provider
+    JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = t.stream_id;
+
 };
 
-CREATE OR REPLACE ACTION get_stream_id(
-  $data_provider_address TEXT,
-  $stream_id TEXT
-) PUBLIC returns (id INT) {
-  $id INT;
-  $found BOOL := false;
-  FOR $stream_row IN SELECT s.id
-      FROM streams s
-      JOIN data_providers dp ON s.data_provider_id = dp.id
-      WHERE s.stream_id = $stream_id 
-      AND dp.address = $data_provider_address
-      LIMIT 1 {
-      $found := true;
-      $id := $stream_row.id;
-  }
-
-  return $id;
-};
 
 /**
  * insert_metadata: Adds metadata to a stream.
@@ -454,6 +430,75 @@ CREATE OR REPLACE ACTION check_stream_id_format(
 };
 
 /**
+ * validate_stream_ids_format_batch: Validates multiple stream ID formats efficiently.
+ * Returns all stream IDs with their validation status and error details.
+ */
+CREATE OR REPLACE ACTION validate_stream_ids_format_batch(
+    $stream_ids TEXT[]
+) PUBLIC view returns table(
+    stream_id TEXT,
+    is_valid BOOL,
+    error_reason TEXT
+) {
+    -- Pure SQL validation using supported functions only
+    RETURN SELECT
+        t.stream_id,
+        CASE
+            WHEN LENGTH(t.stream_id) != 32 THEN false
+            WHEN substring(t.stream_id, 1, 2) != 'st' THEN false
+            -- Check characters 3-32 are lowercase alphanumeric using basic string functions
+            WHEN LENGTH(trim(lower(substring(t.stream_id, 3, 30)), '0123456789abcdefghijklmnopqrstuvwxyz')) != 0 THEN false
+            ELSE true
+        END AS is_valid,
+        CASE
+            WHEN LENGTH(t.stream_id) != 32 THEN 'Invalid length (must be 32 characters)'
+            WHEN substring(t.stream_id, 1, 2) != 'st' THEN 'Must start with "st"'
+            -- Check characters 3-32 are lowercase alphanumeric using basic string functions
+            WHEN LENGTH(trim(lower(substring(t.stream_id, 3, 30)), '0123456789abcdefghijklmnopqrstuvwxyz')) != 0 THEN 'Characters 3-32 must be lowercase alphanumeric'
+            ELSE NULL
+        END AS error_reason
+    FROM UNNEST($stream_ids) AS t(stream_id);
+};
+
+/**
+ * validate_stream_creation_batch: Validates both stream IDs and types for creation.
+ * Returns invalid entries with specific error reasons.
+ */
+CREATE OR REPLACE ACTION validate_stream_creation_batch(
+    $stream_ids TEXT[],
+    $stream_types TEXT[]
+) PUBLIC view returns table(
+    index_position INT,
+    stream_id TEXT,
+    stream_type TEXT,
+    error_reason TEXT
+) {
+    -- Pure SQL validation using supported functions only
+    for $row in SELECT
+        ROW_NUMBER() OVER () AS index_position,
+        t.stream_id,
+        t.stream_type,
+        CASE
+            WHEN LENGTH(t.stream_id) != 32 THEN 'Stream ID: Invalid length (must be 32 characters)'
+            WHEN substring(t.stream_id, 1, 2) != 'st' THEN 'Stream ID: Must start with "st"'
+            -- Check characters 3-32 are lowercase alphanumeric using basic string functions
+            WHEN LENGTH(trim(lower(substring(t.stream_id, 3, 30)), '0123456789abcdefghijklmnopqrstuvwxyz')) != 0 THEN 'Stream ID: Characters 3-32 must be lowercase alphanumeric'
+            WHEN t.stream_type != 'primitive' AND t.stream_type != 'composed' THEN 'Stream Type: Must be "primitive" or "composed"'
+            ELSE ''
+        END AS error_reason
+    FROM UNNEST($stream_ids, $stream_types) AS t(stream_id, stream_type)
+    WHERE LENGTH(t.stream_id) != 32
+       OR substring(t.stream_id, 1, 2) != 'st'
+       -- Check characters 3-32 are lowercase alphanumeric using basic string functions
+       OR LENGTH(trim(lower(substring(t.stream_id, 3, 30)), '0123456789abcdefghijklmnopqrstuvwxyz')) != 0
+       OR (t.stream_type != 'primitive' AND t.stream_type != 'composed') {
+        RETURN NEXT $row.index_position, $row.stream_id, $row.stream_type, $row.error_reason;
+    }
+};
+
+
+
+/**
  * check_ethereum_address: Validates Ethereum address format.
  */
 CREATE OR REPLACE ACTION check_ethereum_address(
@@ -570,55 +615,21 @@ CREATE OR REPLACE ACTION is_stream_owner_batch(
     }
     $lowercase_wallet TEXT := LOWER($wallet);
 
-    -- Use WITH RECURSIVE to unnest all pairs, then find unique pairs to check
-    -- This is much more efficient than checking every single pair from input arrays
-    WITH RECURSIVE 
-    indexes AS (
-        SELECT 1 AS idx
-        UNION ALL
-        SELECT idx + 1 FROM indexes
-        WHERE idx < array_length($data_providers)
-    ),
-    stream_arrays AS (
-        SELECT 
-            $data_providers AS data_providers,
-            $stream_ids AS stream_ids
-    ),
-    all_pairs AS (
-        SELECT 
-            stream_arrays.data_providers[idx] AS data_provider,
-            stream_arrays.stream_ids[idx] AS stream_id
-        FROM indexes
-        JOIN stream_arrays ON 1=1
-    ),
-    unique_pairs AS (
-        SELECT DISTINCT data_provider, stream_id
-        FROM all_pairs
-    ),
-    -- Check which unique streams are owned by the wallet
-    unique_ownership_check AS (
-        SELECT 
-            up.data_provider,
-            up.stream_id,
-            CASE WHEN m.value_ref IS NOT NULL AND m.value_ref = $lowercase_wallet THEN true ELSE false END AS is_owner
-        FROM unique_pairs up
-        LEFT JOIN (
-          SELECT dp.address as data_provider, s.stream_id, md.value_ref
-          FROM metadata md
-          JOIN streams s ON md.stream_ref = s.id
-          JOIN data_providers dp ON s.data_provider_id = dp.id
-          WHERE md.metadata_key = 'stream_owner'
-            AND md.disabled_at IS NULL
-          ORDER BY md.created_at DESC
-        ) m ON up.data_provider = m.data_provider AND up.stream_id = m.stream_id
-    )
-    -- Map the ownership status back to all original pairs
-    SELECT 
-        ap.data_provider,
-        ap.stream_id,
-        uoc.is_owner
-    FROM all_pairs ap
-    JOIN unique_ownership_check uoc ON ap.data_provider = uoc.data_provider AND ap.stream_id = uoc.stream_id;
+    -- Use UNNEST for optimal performance - direct array processing without recursion
+    SELECT
+        t.data_provider,
+        t.stream_id,
+        CASE WHEN m.value_ref IS NOT NULL AND m.value_ref = $lowercase_wallet THEN true ELSE false END AS is_owner
+    FROM UNNEST($data_providers, $stream_ids) AS t(data_provider, stream_id)
+    LEFT JOIN (
+        SELECT dp.address as data_provider, s.stream_id, md.value_ref
+        FROM metadata md
+        JOIN streams s ON md.stream_ref = s.id
+        JOIN data_providers dp ON s.data_provider_id = dp.id
+        WHERE md.metadata_key = 'stream_owner'
+          AND md.disabled_at IS NULL
+        ORDER BY md.created_at DESC
+    ) m ON t.data_provider = m.data_provider AND t.stream_id = m.stream_id;
 };
 
 /**
@@ -659,49 +670,14 @@ CREATE OR REPLACE ACTION is_primitive_stream_batch(
         ERROR('Data providers and stream IDs arrays must have the same length');
     }
 
-    -- Use WITH RECURSIVE to unnest all pairs, then find unique pairs to check
-    -- This is much more efficient than checking every single pair from input arrays
-    WITH RECURSIVE 
-    indexes AS (
-        SELECT 1 AS idx
-        UNION ALL
-        SELECT idx + 1 FROM indexes
-        WHERE idx < array_length($data_providers)
-    ),
-    stream_arrays AS (
-        SELECT 
-            $data_providers AS data_providers,
-            $stream_ids AS stream_ids
-    ),
-    all_pairs AS (
-        SELECT
-            stream_arrays.data_providers[idx] AS data_provider,
-            stream_arrays.stream_ids[idx] AS stream_id
-        FROM indexes
-        JOIN stream_arrays ON 1=1
-    ),
-    unique_pairs AS (
-        SELECT DISTINCT data_provider, stream_id
-        FROM all_pairs
-    ),
-    unique_status AS (
-        -- This JOIN to streams table is now only performed on unique pairs
-        SELECT 
-            up.data_provider,
-            up.stream_id,
-            COALESCE(s.stream_type = 'primitive', false) AS is_primitive
-        FROM unique_pairs up
-        LEFT JOIN streams s ON s.data_provider_id = (
-            SELECT id FROM data_providers WHERE address = up.data_provider
-        ) AND s.stream_id = up.stream_id
-    )
-    -- Map the primitive status back to all original pairs
-    SELECT 
-        ap.data_provider,
-        ap.stream_id,
-        us.is_primitive
-    FROM all_pairs ap
-    JOIN unique_status us ON ap.data_provider = us.data_provider AND ap.stream_id = us.stream_id;
+    -- Use UNNEST for optimal performance - direct array processing without recursion
+    SELECT
+        t.data_provider,
+        t.stream_id,
+        COALESCE(s.stream_type = 'primitive', false) AS is_primitive
+    FROM UNNEST($data_providers, $stream_ids) AS t(data_provider, stream_id)
+    LEFT JOIN data_providers dp ON dp.address = t.data_provider
+    LEFT JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = t.stream_id;
 };
 
 /**
@@ -1197,35 +1173,19 @@ CREATE OR REPLACE ACTION stream_exists_batch_core(
 CREATE OR REPLACE ACTION is_primitive_stream_batch_core(
     $stream_refs INT[]
 ) PRIVATE VIEW RETURNS (result BOOL) {
-    for $row in WITH RECURSIVE
-    idx AS (
-        SELECT 1 AS i
-        UNION ALL
-        SELECT i + 1 FROM idx
-        WHERE i < array_length($stream_refs)
-    ),
-    arr AS (
-        SELECT $stream_refs AS refs
-    ),
-    unique_refs AS (
-        SELECT DISTINCT arr.refs[i] AS stream_ref
-        FROM idx
-        JOIN arr ON 1=1
-        WHERE arr.refs[i] IS NOT NULL
-    )
-    -- Return false if any nulls exist, otherwise return primitive check result
-    SELECT CASE
+    -- Use UNNEST for optimal performance - direct array processing without recursion
+    for $row in SELECT CASE
         WHEN EXISTS (
             SELECT 1
-            FROM idx
-            JOIN arr ON 1=1
-            WHERE arr.refs[i] IS NULL
+            FROM UNNEST($stream_refs) AS t(stream_ref)
+            WHERE t.stream_ref IS NULL
         ) THEN false
         ELSE NOT EXISTS (
             SELECT 1
-            FROM unique_refs u
-            JOIN streams s ON s.id = u.stream_ref
+            FROM UNNEST($stream_refs) AS t(stream_ref)
+            JOIN streams s ON s.id = t.stream_ref
             WHERE s.stream_type != 'primitive'
+              AND t.stream_ref IS NOT NULL
         )
     END AS result
     FROM (SELECT 1) dummy {
@@ -1254,48 +1214,14 @@ CREATE OR REPLACE ACTION stream_exists_batch(
         ERROR('Data providers and stream IDs arrays must have the same length');
     }
 
-    -- Use WITH RECURSIVE to unnest all pairs, then find unique pairs to check
-    -- This is much more efficient than checking every single pair from input arrays
-    RETURN WITH RECURSIVE 
-    indexes AS (
-        SELECT 1 AS idx
-        UNION ALL
-        SELECT idx + 1 FROM indexes
-        WHERE idx < array_length($data_providers)
-    ),
-    stream_arrays AS (
-        SELECT 
-            $data_providers AS data_providers,
-            $stream_ids AS stream_ids
-    ),
-    all_pairs AS (
-        SELECT 
-            stream_arrays.data_providers[idx] AS data_provider,
-            stream_arrays.stream_ids[idx] AS stream_id
-        FROM indexes
-        JOIN stream_arrays ON 1=1
-    ),
-    unique_pairs AS (
-        SELECT DISTINCT data_provider, stream_id
-        FROM all_pairs
-    ),
-    unique_existence AS (
-        -- This JOIN to streams table is now only performed on unique pairs
-        SELECT 
-            up.data_provider,
-            up.stream_id,
-            CASE WHEN s.data_provider IS NOT NULL THEN true ELSE false END AS stream_exists
-        FROM unique_pairs up
-        LEFT JOIN data_providers dp ON dp.address = up.data_provider
-        LEFT JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = up.stream_id
-    )
-    -- Map the existence status back to all original pairs
-    SELECT 
-        ap.data_provider,
-        ap.stream_id,
-        ue.stream_exists
-    FROM all_pairs ap
-    JOIN unique_existence ue ON ap.data_provider = ue.data_provider AND ap.stream_id = ue.stream_id;
+    -- Use UNNEST for optimal performance - direct array processing without recursion
+    RETURN SELECT
+        t.data_provider,
+        t.stream_id,
+        CASE WHEN s.data_provider IS NOT NULL THEN true ELSE false END AS stream_exists
+    FROM UNNEST($data_providers, $stream_ids) AS t(data_provider, stream_id)
+    LEFT JOIN data_providers dp ON dp.address = t.data_provider
+    LEFT JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = t.stream_id;
 };
 
 CREATE OR REPLACE ACTION transfer_stream_ownership(

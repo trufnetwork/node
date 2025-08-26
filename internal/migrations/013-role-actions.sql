@@ -118,24 +118,10 @@ CREATE OR REPLACE ACTION grant_roles(
         RETURN;
     }
 
-    -- Insert into role_members using a batch-friendly approach
-    WITH RECURSIVE
-    indexes AS (
-        SELECT 1 AS idx
-        UNION ALL
-        SELECT idx + 1 FROM indexes WHERE idx < array_length($wallets)
-    ),
-    wallet_arrays AS (
-        SELECT $wallets AS wallets
-    ),
-    wallet_list AS (
-        SELECT wallet_arrays.wallets[idx] AS wallet
-        FROM indexes
-        JOIN wallet_arrays ON 1=1
-    )
+    -- Insert into role_members using UNNEST for optimal performance
     INSERT INTO role_members (owner, role_name, wallet, granted_at, granted_by)
-    SELECT $owner, $role_name, wallet, @height, LOWER(@caller)
-    FROM wallet_list
+    SELECT $owner, $role_name, t.wallet, @height, LOWER(@caller)
+    FROM UNNEST($wallets) AS t(wallet)
     ON CONFLICT (owner, role_name, wallet) DO NOTHING;
 };
 
@@ -167,24 +153,10 @@ CREATE OR REPLACE ACTION revoke_roles(
         RETURN;
     }
 
-    -- Batch delete from role_members using a recursive CTE to unnest the array
-    WITH RECURSIVE
-    indexes AS (
-        SELECT 1 AS idx
-        UNION ALL
-        SELECT idx + 1 FROM indexes WHERE idx < array_length($wallets)
-    ),
-    wallet_arrays AS (
-        SELECT $wallets AS wallets
-    ),
-    wallets_to_delete AS (
-        SELECT wallet_arrays.wallets[idx] as wallet_addr
-        FROM indexes
-        JOIN wallet_arrays ON 1=1
-    )
+    -- Batch delete from role_members using UNNEST for optimal performance
     DELETE FROM role_members
     WHERE owner = $owner AND role_name = $role_name
-    AND wallet IN (SELECT wallet_addr FROM wallets_to_delete);
+    AND wallet IN (SELECT t.wallet FROM UNNEST($wallets) AS t(wallet));
 };
 
 /**

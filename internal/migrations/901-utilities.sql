@@ -81,33 +81,7 @@ CREATE OR REPLACE ACTION helper_lowercase_array(
         RETURN $input_array;
     }
 
-    -- Use O(n) approach with proper array handling and ordering
-    for $row in WITH RECURSIVE
-    indexes AS (
-        SELECT 1 AS idx
-        UNION ALL
-        SELECT idx + 1 FROM indexes
-        WHERE idx < array_length($input_array)
-    ),
-    array_holder AS (
-        SELECT $input_array AS original_array
-    ),
-    unnested_results AS (
-        SELECT
-            idx,
-            LOWER(array_holder.original_array[idx]) AS lowercase_element
-        FROM indexes
-        JOIN array_holder ON 1=1
-    )
-    SELECT lowercase_element
-    FROM unnested_results
-    ORDER BY idx {
-        -- the faster alternative would be to return the aggregated array,
-        -- however we can't make this efficiently without ARRAY_AGG(x ORDER BY y.column)
-        $lowercase_array = array_append($lowercase_array, $row.lowercase_element);
-    }
-
-    RETURN $lowercase_array;
+    RETURN SELECT array_agg(LOWER(e)) FROM UNNEST($input_array) AS t(e);
 };
 
 
@@ -150,23 +124,13 @@ CREATE OR REPLACE ACTION helper_enqueue_prune_days(
         RETURN;
     }
 
-    WITH RECURSIVE 
-    indexes AS (
-        SELECT 1 AS idx
-        UNION ALL
-        SELECT idx + 1 FROM indexes WHERE idx < array_length($event_times)
-    ),
-    array_holder AS (
-        SELECT $stream_refs AS stream_refs, $event_times AS event_times, $values AS values_array
-    )
     INSERT INTO pending_prune_days (stream_ref, day_index)
-    SELECT DISTINCT 
-        array_holder.stream_refs[indexes.idx] AS stream_ref,
-        (array_holder.event_times[indexes.idx] / 86400)::INT AS day_index
-    FROM indexes
-    JOIN array_holder ON 1=1
-    WHERE array_holder.stream_refs[indexes.idx] IS NOT NULL
-      AND array_holder.event_times[indexes.idx] >= 0::INT8
-      AND array_holder.values_array[indexes.idx] != 0::NUMERIC(36,18)
+    SELECT DISTINCT
+        t.stream_ref,
+        (t.event_time / 86400)::INT AS day_index
+    FROM UNNEST($stream_refs, $event_times, $values) AS t(stream_ref, event_time, value)
+    WHERE t.stream_ref IS NOT NULL
+      AND t.event_time >= 0::INT8
+      AND t.value != 0::NUMERIC(36,18)
     ON CONFLICT (stream_ref, day_index) DO NOTHING;
 };

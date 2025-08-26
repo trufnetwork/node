@@ -56,41 +56,16 @@ CREATE OR REPLACE ACTION insert_records(
         ERROR('wallet not allowed to write to one or more streams');
     }
 
-    -- Insert all records using WITH RECURSIVE pattern to avoid round trips
-    WITH RECURSIVE 
-    indexes AS (
-        SELECT 1 AS idx
-        UNION ALL
-        SELECT idx + 1 FROM indexes
-        WHERE idx < $num_records
-    ),
-    record_arrays AS (
-        SELECT 
-            $stream_id AS stream_ids,
-            $data_provider AS data_providers,
-            $event_time AS event_times,
-            $value AS values_array,
-            $stream_refs AS stream_refs_array
-    ),
-    arguments AS (
-        SELECT 
-            record_arrays.stream_ids[idx] AS stream_id,
-            record_arrays.data_providers[idx] AS data_provider,
-            record_arrays.event_times[idx] AS event_time,
-            record_arrays.values_array[idx] AS value,
-            record_arrays.stream_refs_array[idx] AS stream_ref
-        FROM indexes
-        JOIN record_arrays ON 1=1
-        WHERE record_arrays.values_array[idx] != 0::NUMERIC(36,18)
-    )
+    -- Insert all records using UNNEST to expand arrays efficiently
     INSERT INTO primitive_events (event_time, value, created_at, truflation_created_at, stream_ref)
-    SELECT 
-        event_time, 
-        value, 
+    SELECT
+        unnested.event_time,
+        unnested.value,
         $current_block,
         NULL,
-        stream_ref
-    FROM arguments;
+        unnested.stream_ref
+    FROM UNNEST($event_time, $value, $stream_refs) AS unnested(event_time, value, stream_ref)
+    WHERE unnested.value != 0::NUMERIC(36,18);
 
     -- Enqueue days for pruning using helper (idempotent, distinct per day)
     helper_enqueue_prune_days(

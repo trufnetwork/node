@@ -969,54 +969,21 @@ CREATE OR REPLACE ACTION has_write_permission_batch(
 
     $lowercase_wallet TEXT := LOWER($wallet);
 
-    -- Use WITH RECURSIVE to unnest all pairs, then find unique pairs to check
-    -- This is much more efficient than checking every single pair from input arrays
-    RETURN WITH RECURSIVE 
-    indexes AS (
-        SELECT 1 AS idx
-        UNION ALL
-        SELECT idx + 1 FROM indexes
-        WHERE idx < array_length($data_providers)
-    ),
-    stream_arrays AS (
-        SELECT 
-            $data_providers AS data_providers,
-            $stream_ids AS stream_ids
-    ),
-    all_pairs AS (
-        SELECT 
-            stream_arrays.data_providers[idx] AS data_provider,
-            stream_arrays.stream_ids[idx] AS stream_id
-        FROM indexes
-        JOIN stream_arrays ON 1=1
-    ),
-    unique_pairs AS (
-        SELECT DISTINCT data_provider, stream_id
-        FROM all_pairs
-    ),
-    -- Check which unique streams have explicit write permission for the wallet
-    unique_permission_check AS (
-        SELECT 
-            up.data_provider,
-            up.stream_id,
-            CASE WHEN m.value_ref IS NOT NULL THEN true ELSE false END AS has_permission
-        FROM unique_pairs up
-        LEFT JOIN (
-            SELECT dp.address as data_provider, s.stream_id, m.value_ref
-            FROM metadata m
-            JOIN streams s ON m.stream_ref = s.id
-            JOIN data_providers dp ON s.data_provider_id = dp.id
-            WHERE m.metadata_key = 'allow_write_wallet'
-              AND m.value_ref = $lowercase_wallet
-              AND m.disabled_at IS NULL
-            ORDER BY m.created_at DESC
-        ) m ON up.data_provider = m.data_provider AND up.stream_id = m.stream_id
-    )
-    -- Map the permission status back to all original pairs
-    SELECT 
-        ap.data_provider,
-        ap.stream_id,
-        upc.has_permission
-    FROM all_pairs ap
-    JOIN unique_permission_check upc ON ap.data_provider = upc.data_provider AND ap.stream_id = upc.stream_id;
+    -- Use UNNEST for optimal performance - direct array processing without recursion
+    RETURN
+    SELECT
+        t.data_provider,
+        t.stream_id,
+        CASE WHEN m.value_ref IS NOT NULL THEN true ELSE false END AS has_permission
+    FROM UNNEST($data_providers, $stream_ids) AS t(data_provider, stream_id)
+    LEFT JOIN (
+        SELECT dp.address as data_provider, s.stream_id, m.value_ref
+        FROM metadata m
+        JOIN streams s ON m.stream_ref = s.id
+        JOIN data_providers dp ON s.data_provider_id = dp.id
+        WHERE m.metadata_key = 'allow_write_wallet'
+          AND m.value_ref = $lowercase_wallet
+          AND m.disabled_at IS NULL
+        ORDER BY m.created_at DESC
+    ) m ON t.data_provider = m.data_provider AND t.stream_id = m.stream_id;
 };

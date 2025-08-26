@@ -10,7 +10,7 @@ CREATE OR REPLACE ACTION insert_taxonomy(
     $weights NUMERIC(36,18)[],      -- The weights of the child streams.
     $start_date INT                 -- The start date of the taxonomy.
 ) PUBLIC {
-    $data_provider := LOWER($data_provider);
+     $data_provider := LOWER($data_provider);
     for $i in 1..array_length($child_data_providers) {
         $child_data_providers[$i] := LOWER($child_data_providers[$i]);
     }
@@ -51,6 +51,13 @@ CREATE OR REPLACE ACTION insert_taxonomy(
     $new_group_sequence := get_current_group_sequence($data_provider, $stream_id, true) + 1;
     
     $stream_ref := get_stream_id($data_provider, $stream_id);
+
+    for $i in 1..$num_children {
+        $child_data_provider_value := $child_data_providers[$i];
+        $child_stream_id_value := $child_stream_ids[$i];
+        $child_stream_ref := get_stream_id($child_data_provider_value, $child_stream_id_value);
+        $weight_value := $weights[$i];
+    }
 
     FOR $i IN 1..$num_children {
         $child_data_provider_value := $child_data_providers[$i];
