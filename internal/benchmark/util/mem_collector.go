@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
@@ -51,6 +52,14 @@ func (c *DockerMemoryCollector) collectStats() {
 	}
 	defer cli.Close()
 	cli.NegotiateAPIVersion(c.ctx)
+
+	// Test Docker connectivity by listing containers
+	_, err = cli.ContainerList(c.ctx, container.ListOptions{All: false})
+	if err != nil {
+		c.errChan <- fmt.Errorf("error connecting to Docker daemon: %w (check if Docker is running)", err)
+		close(c.firstSampleChan) // Ensure channel is closed
+		return
+	}
 
 	containerID, err := c.getContainerID(cli)
 	if err != nil {
@@ -103,15 +112,31 @@ func (c *DockerMemoryCollector) getContainerID(cli *client.Client) (string, erro
 	if err != nil {
 		return "", err
 	}
+
+	// Log available containers for debugging
+	if len(containers) == 0 {
+		return "", fmt.Errorf("no containers found - docker may not be running or accessible")
+	}
+
 	for _, container := range containers {
 		for _, name := range container.Names {
 			// Trim leading '/' from container names
-			if strings.TrimPrefix(name, "/") == c.containerName {
+			cleanName := strings.TrimPrefix(name, "/")
+			if cleanName == c.containerName {
 				return container.ID, nil
 			}
 		}
 	}
-	return "", fmt.Errorf("container %s not found", c.containerName)
+
+	// Log available container names for debugging
+	var availableNames []string
+	for _, container := range containers {
+		for _, name := range container.Names {
+			availableNames = append(availableNames, strings.TrimPrefix(name, "/"))
+		}
+	}
+
+	return "", fmt.Errorf("container %s not found among available containers: %v", c.containerName, availableNames)
 }
 
 // WaitForFirstSample waits until the first stats sample has been received.
@@ -119,9 +144,11 @@ func (c *DockerMemoryCollector) WaitForFirstSample() error {
 	// Check for errors that might have occurred
 	select {
 	case err := <-c.errChan:
-		return err
+		return fmt.Errorf("docker memory collector error: %w", err)
 	case <-c.firstSampleChan:
 		return nil
+	case <-time.After(10 * time.Second):
+		return fmt.Errorf("timeout waiting for first docker stats sample for container %s (check if container exists and docker is accessible). Try setting ENABLE_MEMORY_MONITORING=false to disable memory monitoring", c.containerName)
 	case <-c.ctx.Done():
 		return c.ctx.Err()
 	}

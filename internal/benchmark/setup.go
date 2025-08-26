@@ -12,8 +12,6 @@ import (
 
 	"github.com/cockroachdb/apd/v3"
 	"github.com/pkg/errors"
-	"github.com/trufnetwork/kwil-db/common"
-	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/internal/benchmark/trees"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
@@ -157,8 +155,9 @@ func setupSchemas(
 		LogPhaseEnter(logger, "batchPrimitiveDataInsertion", "Batch inserting %d total records from %d primitive streams", totalRecords, len(allPrimitiveData))
 		insertStart := time.Now()
 
-		if err := batchInsertAllPrimitiveData(ctx, allPrimitiveData); err != nil {
-			return errors.Wrap(err, "failed to batch insert primitive data")
+		// Group records into batches of at least 10K records and use InsertPrimitiveDataMultiBatch for each batch
+		if err := batchInsertUsingMultiBatchWithGroups(ctx, platform, allPrimitiveData); err != nil {
+			return errors.Wrap(err, "failed to batch insert primitive data using multi-batch with groups")
 		}
 
 		LogPhaseExit(logger, insertStart, "batchPrimitiveDataInsertion", "Completed batch insert of %d records", totalRecords)
@@ -196,35 +195,32 @@ func setupSchemas(
 	return nil
 }
 
-// batchInsertAllPrimitiveData performs batch insertion of primitive data across multiple streams.
-func batchInsertAllPrimitiveData(ctx context.Context, allData []setup.InsertPrimitiveDataInput) error {
+// batchInsertUsingMultiBatchWithGroups groups records into batches of at least 10K records and uses InsertPrimitiveDataMultiBatch for each batch
+func batchInsertUsingMultiBatchWithGroups(ctx context.Context, platform *kwilTesting.Platform, allData []setup.InsertPrimitiveDataInput) error {
 	if len(allData) == 0 {
 		return nil
 	}
 
+	const minBatchSize = 1000
+
+	// Collect all records from all streams
 	type record struct {
-		dataProvider string
-		streamId     string
-		eventTime    int64
-		value        *kwilTypes.Decimal
+		streamLocator types.StreamLocator
+		eventTime     int64
+		value         float64
 	}
 
 	var allRecords []record
 	for _, input := range allData {
 		for _, data := range input.PrimitiveStream.Data {
-			valueDecimal, err := kwilTypes.ParseDecimalExplicit(strconv.FormatFloat(data.Value, 'f', -1, 64), 36, 18)
-			if err != nil {
-				return errors.Wrap(err, "error parsing decimal")
-			}
 			// Filter out zero values to reduce payload size
-			if valueDecimal.IsZero() {
+			if data.Value == 0.0 {
 				continue
 			}
 			allRecords = append(allRecords, record{
-				dataProvider: input.PrimitiveStream.StreamLocator.DataProvider.Address(),
-				streamId:     input.PrimitiveStream.StreamLocator.StreamId.String(),
-				eventTime:    data.EventTime,
-				value:        valueDecimal,
+				streamLocator: input.PrimitiveStream.StreamLocator,
+				eventTime:     data.EventTime,
+				value:         data.Value,
 			})
 		}
 	}
@@ -233,22 +229,17 @@ func batchInsertAllPrimitiveData(ctx context.Context, allData []setup.InsertPrim
 		return nil
 	}
 
-	platform := allData[0].Platform
+	// Calculate number of batches needed (each with at least minBatchSize records)
+	numBatches := (len(allRecords) + minBatchSize - 1) / minBatchSize
+
+	fmt.Printf("[MULTI_BATCH_GROUPS] Processing %d total records in %d batches of at least %d records each\n",
+		len(allRecords), numBatches, minBatchSize)
+
 	height := allData[0].Height
-	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
-	if err != nil {
-		return errors.Wrap(err, "error creating deployer address")
-	}
 
-	const recordBatchSize = 1000
-	numBatches := (len(allRecords) + recordBatchSize - 1) / recordBatchSize // Ceiling division
-
-	fmt.Printf("[BATCH_INSERT] Processing %d total records in %d batches of up to %d records each\n",
-		len(allRecords), numBatches, recordBatchSize)
-
-	// Process sequentially to avoid concurrent queries on the same tx/conn (prevents "conn busy").
-	for i := 0; i < len(allRecords); i += recordBatchSize {
-		end := i + recordBatchSize
+	// Process each batch
+	for i := 0; i < len(allRecords); i += minBatchSize {
+		end := i + minBatchSize
 		if end > len(allRecords) {
 			end = len(allRecords)
 		}
@@ -258,47 +249,48 @@ func batchInsertAllPrimitiveData(ctx context.Context, allData []setup.InsertPrim
 			continue
 		}
 
-		dataProviders := make([]string, len(currentBatch))
-		streamIds := make([]string, len(currentBatch))
-		eventTimes := make([]int64, len(currentBatch))
-		values := make([]*kwilTypes.Decimal, len(currentBatch))
-
-		for i, r := range currentBatch {
-			dataProviders[i] = r.dataProvider
-			streamIds[i] = r.streamId
-			eventTimes[i] = r.eventTime
-			values[i] = r.value
+		// Group records by stream for this batch
+		streamRecords := make(map[string][]setup.InsertRecordInput)
+		for _, r := range currentBatch {
+			streamKey := r.streamLocator.StreamId.String()
+			streamRecords[streamKey] = append(streamRecords[streamKey], setup.InsertRecordInput{
+				EventTime: r.eventTime,
+				Value:     r.value,
+			})
 		}
 
-		txContext := &common.TxContext{
-			Ctx: ctx,
-			BlockContext: &common.BlockContext{
-				Height: height,
-			},
-			TxID:   platform.Txid(),
-			Signer: deployer.Bytes(),
-			Caller: deployer.Address(),
-		}
-		engineContext := &common.EngineContext{
-			TxContext: txContext,
+		// Create InsertMultiPrimitiveDataInput for this batch
+		multiInput := setup.InsertMultiPrimitiveDataInput{
+			Platform: platform,
+			Height:   height,
+			Streams:  make([]setup.PrimitiveStreamWithData, 0, len(streamRecords)),
 		}
 
-		args := []any{
-			dataProviders,
-			streamIds,
-			eventTimes,
-			values,
+		// Convert map to slice
+		for streamIdStr, records := range streamRecords {
+			// Find the original stream locator for this stream ID
+			var streamLocator types.StreamLocator
+			for _, r := range currentBatch {
+				if r.streamLocator.StreamId.String() == streamIdStr {
+					streamLocator = r.streamLocator
+					break
+				}
+			}
+
+			multiInput.Streams = append(multiInput.Streams, setup.PrimitiveStreamWithData{
+				PrimitiveStreamDefinition: setup.PrimitiveStreamDefinition{
+					StreamLocator: streamLocator,
+				},
+				Data: records,
+			})
 		}
 
-		r, err := platform.Engine.Call(engineContext, platform.DB, "", "insert_records", args, func(row *common.Row) error {
-			return nil
-		})
-		if err != nil {
-			return errors.Wrapf(err, "error in batch insert for a chunk of %d records", len(currentBatch))
+		// Use InsertPrimitiveDataMultiBatch for this batch
+		if err := setup.InsertPrimitiveDataMultiBatch(ctx, multiInput); err != nil {
+			return errors.Wrapf(err, "error in multi-batch insert for group %d with %d records", i/minBatchSize+1, len(currentBatch))
 		}
-		if r.Error != nil {
-			return errors.Wrapf(r.Error, "procedure error in batch insert for a chunk of %d records", len(currentBatch))
-		}
+
+		fmt.Printf("[MULTI_BATCH_GROUPS] Completed group %d/%d with %d records\n", i/minBatchSize+1, numBatches, len(currentBatch))
 	}
 
 	return nil
@@ -424,11 +416,17 @@ func setTaxonomyForComposed(ctx context.Context, platform *kwilTesting.Platform,
 		weights = append(weights, strconv.FormatFloat(randWeight, 'f', -1, 64))
 	}
 
-	return procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
+	err := procedure.SetTaxonomy(ctx, procedure.SetTaxonomyInput{
 		Platform:      platform,
 		StreamLocator: stream.Locator,
 		DataProviders: dataProviders,
 		StreamIds:     streamIds,
 		Weights:       weights,
 	})
+
+	if err != nil {
+		return errors.Wrap(err, "failed to set taxonomy")
+	}
+
+	return err
 }

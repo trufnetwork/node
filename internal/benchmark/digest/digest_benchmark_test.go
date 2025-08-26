@@ -86,6 +86,109 @@ func WithDigestBenchmarkSetup(testFn func(ctx context.Context, platform *kwilTes
 	}
 }
 
+// runTestCaseInTransaction runs a single test case in its own nested transaction.
+// Inspired by the WithTx pattern, this provides perfect test isolation.
+func runTestCaseInTransaction(ctx context.Context, platform *kwilTesting.Platform, testCase DigestBenchmarkCase, resultHandler func(*kwilTesting.Platform, []DigestRunResult)) error {
+	// Create a nested transaction (inspired by WithTx pattern)
+	tx, err := platform.DB.BeginTx(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) // Automatically cleans up all changes
+
+	// Create a new platform scoped to this transaction
+	txPlatform := &kwilTesting.Platform{
+		Engine:   platform.Engine,
+		DB:       tx, // Use the transaction-specific DB connection
+		Deployer: platform.Deployer,
+		Logger:   platform.Logger,
+	}
+
+	// Set up the deployer on the transaction platform
+	deployer, err := util.NewEthereumAddressFromString(DefaultDataProviderAddress)
+	if err != nil {
+		return fmt.Errorf("failed to create deployer address: %w", err)
+	}
+	txPlatform.Deployer = deployer.Bytes()
+	txPlatform = procedure.WithSigner(txPlatform, deployer.Bytes())
+
+	// Setup benchmark data for this specific test case
+	setupInput := DigestSetupInput{
+		Platform: txPlatform,
+		Case:     testCase,
+	}
+
+	if err := SetupBenchmarkData(ctx, setupInput); err != nil {
+		return fmt.Errorf("failed to setup benchmark data: %w", err)
+	}
+
+	// Run this specific test case
+	runner := NewBenchmarkRunner(txPlatform, nil) // No logger needed for transaction
+	caseResults, err := runner.RunBenchmarkCase(ctx, testCase)
+	if err != nil {
+		return fmt.Errorf("failed to run benchmark case: %w", err)
+	}
+
+	// Pass results back via callback (before transaction rollback)
+	resultHandler(txPlatform, caseResults)
+
+	return nil
+}
+
+// runCaseUsingExistingData runs a benchmark case inside a transaction, reusing globally prepared data.
+// It only prepares the pending_prune_days for the specific case within the transaction and rolls back after.
+func runCaseUsingExistingData(ctx context.Context, platform *kwilTesting.Platform, testCase DigestBenchmarkCase, resultHandler func(*kwilTesting.Platform, []DigestRunResult)) error {
+	// Create a nested transaction
+	tx, err := platform.DB.BeginTx(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Create a tx-scoped platform
+	txPlatform := &kwilTesting.Platform{
+		Engine:   platform.Engine,
+		DB:       tx,
+		Deployer: platform.Deployer,
+		Logger:   platform.Logger,
+	}
+
+	// Build candidates for this case using existing streams
+	streamRefs, err := getStreamRefsUpTo(ctx, txPlatform, testCase.Streams)
+	if err != nil {
+		return fmt.Errorf("failed to get stream refs: %w", err)
+	}
+	if len(streamRefs) < testCase.Streams {
+		return fmt.Errorf("insufficient streams available: need %d, got %d", testCase.Streams, len(streamRefs))
+	}
+
+	// Prepare pending_prune_days for this case only
+	totalCandidates := testCase.Streams * testCase.DaysPerStream
+	streamRefCandidates := make([]int, totalCandidates)
+	dayIdxCandidates := make([]int, totalCandidates)
+	idx := 0
+	for _, streamRef := range streamRefs[:testCase.Streams] {
+		for day := 0; day < testCase.DaysPerStream; day++ {
+			streamRefCandidates[idx] = streamRef
+			dayIdxCandidates[idx] = day
+			idx++
+		}
+	}
+	if err := InsertPendingPruneDays(ctx, txPlatform, streamRefCandidates, dayIdxCandidates); err != nil {
+		return fmt.Errorf("failed to insert pending prune days: %w", err)
+	}
+
+	// Run the benchmark for this case using the tx platform
+	runner := NewBenchmarkRunner(txPlatform, nil)
+	caseResults, err := runner.RunBenchmarkCase(ctx, testCase)
+	if err != nil {
+		return fmt.Errorf("failed to run benchmark case: %w", err)
+	}
+
+	resultHandler(txPlatform, caseResults)
+	return nil
+}
+
 // testDigestSmokeSuite runs the smoke test cases for basic validation.
 func testDigestSmokeSuite(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
@@ -160,34 +263,37 @@ func testDigestSmokeSuite(t *testing.T) func(ctx context.Context, platform *kwil
 // testDigestMediumSuite runs the medium test cases for scaling analysis.
 func testDigestMediumSuite(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		runner := NewBenchmarkRunner(platform, t)
-
 		// Use predefined medium test cases
 		mediumCases := MediumTestCases
 
 		t.Logf("Running medium test suite with %d cases", len(mediumCases))
 
-		// Setup benchmark data for medium tests
-		setupCase := DigestBenchmarkCase{
-			Streams:       10000, // Maximum streams needed for medium tests
-			DaysPerStream: 30,    // Maximum days per stream for medium tests
-			RecordsPerDay: 50,    // Records per day for medium tests
+		// 1) Global setup ONCE (superset): create 10k streams, 30 days, 50 records
+		globalSetup := DigestBenchmarkCase{
+			Streams:       10000,
+			DaysPerStream: 30,
+			RecordsPerDay: 50,
 			BatchSize:     DefaultBatchSize,
 			Pattern:       PatternRandom,
-			Samples:       DefaultSamples,
+			Samples:       1,
 		}
-		setupInput := DigestSetupInput{
-			Platform: platform,
-			Case:     setupCase,
-		}
-
-		if err := SetupBenchmarkData(ctx, setupInput); err != nil {
-			return fmt.Errorf("failed to setup benchmark data: %w", err)
+		t.Logf("Performing global setup with superset: %+v", globalSetup)
+		if err := SetupBenchmarkData(ctx, DigestSetupInput{Platform: platform, Case: globalSetup}); err != nil {
+			return fmt.Errorf("global setup failed: %w", err)
 		}
 
-		results, err := runner.RunMultipleCases(ctx, mediumCases)
-		if err != nil {
-			return fmt.Errorf("medium test suite failed: %w", err)
+		// 2) Per-case execution inside a transaction, reusing global data, and preparing just pending_prune_days to match the case
+		results := make(map[string][]DigestRunResult)
+		for i, testCase := range mediumCases {
+			t.Logf("Running case %d/%d with transactional pending_prune_days: %+v", i+1, len(mediumCases), testCase)
+
+			if err := runCaseUsingExistingData(ctx, platform, testCase, func(txPlatform *kwilTesting.Platform, caseResults []DigestRunResult) {
+				caseKey := fmt.Sprintf("streams_%d_days_%d_records_%d_batch_%d_pattern_%s",
+					testCase.Streams, testCase.DaysPerStream, testCase.RecordsPerDay, testCase.BatchSize, testCase.Pattern)
+				results[caseKey] = caseResults
+			}); err != nil {
+				return fmt.Errorf("failed to run case %d: %w", i, err)
+			}
 		}
 
 		// Export results
@@ -220,35 +326,38 @@ func testDigestMediumSuite(t *testing.T) func(ctx context.Context, platform *kwi
 // testDigestExtremeSuite runs the extreme test cases for stress testing.
 func testDigestExtremeSuite(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		runner := NewBenchmarkRunner(platform, t)
-
 		// Use predefined extreme test cases (focus on scaling days rather than streams for candidate volume)
 		extremeCases := ExtremeTestCases
 
 		t.Logf("Running extreme test suite with %d cases", len(extremeCases))
 		t.Logf("Warning: Extreme tests may take significant time and resources")
 
-		// Setup benchmark data for extreme tests
-		setupCase := DigestBenchmarkCase{
-			Streams:       100000, // Maximum streams needed for extreme tests
-			DaysPerStream: 90,     // Maximum days per stream for extreme tests
-			RecordsPerDay: 4,      // Records per day for extreme tests
+		// 1) Global setup ONCE (superset): create 100k streams, 90 days, 4 records
+		globalSetup := DigestBenchmarkCase{
+			Streams:       100000,
+			DaysPerStream: 90,
+			RecordsPerDay: 4,
 			BatchSize:     DefaultBatchSize,
 			Pattern:       PatternRandom,
-			Samples:       2,
+			Samples:       1,
 		}
-		setupInput := DigestSetupInput{
-			Platform: platform,
-			Case:     setupCase,
-		}
-
-		if err := SetupBenchmarkData(ctx, setupInput); err != nil {
-			return fmt.Errorf("failed to setup benchmark data: %w", err)
+		t.Logf("Performing global setup with superset: %+v", globalSetup)
+		if err := SetupBenchmarkData(ctx, DigestSetupInput{Platform: platform, Case: globalSetup}); err != nil {
+			return fmt.Errorf("global setup failed: %w", err)
 		}
 
-		results, err := runner.RunMultipleCases(ctx, extremeCases)
-		if err != nil {
-			return fmt.Errorf("extreme test suite failed: %w", err)
+		// 2) Per-case execution inside a transaction, reusing global data, and preparing just pending_prune_days to match the case
+		results := make(map[string][]DigestRunResult)
+		for i, testCase := range extremeCases {
+			t.Logf("Running extreme case %d/%d with transactional pending_prune_days: %+v", i+1, len(extremeCases), testCase)
+
+			if err := runCaseUsingExistingData(ctx, platform, testCase, func(txPlatform *kwilTesting.Platform, caseResults []DigestRunResult) {
+				caseKey := fmt.Sprintf("streams_%d_days_%d_records_%d_batch_%d_pattern_%s",
+					testCase.Streams, testCase.DaysPerStream, testCase.RecordsPerDay, testCase.BatchSize, testCase.Pattern)
+				results[caseKey] = caseResults
+			}); err != nil {
+				return fmt.Errorf("failed to run extreme case %d: %w", i, err)
+			}
 		}
 
 		// Export results
