@@ -1053,6 +1053,10 @@ func ValidateBenchmarkCase(c DigestBenchmarkCase) error {
 		return errors.New("records_per_day must be positive")
 	}
 
+	if c.DeleteCap <= 0 {
+		return errors.New("delete_cap must be positive")
+	}
+
 	if c.Samples <= 0 {
 		return errors.New("samples must be positive")
 	}

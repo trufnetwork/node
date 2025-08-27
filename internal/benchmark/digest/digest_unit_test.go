@@ -9,7 +9,7 @@ import (
 )
 
 // TestSliceCandidates was removed - batching functionality is no longer used.
-// All candidates are now processed in a single call to batch_digest.
+// All candidates are now processed in a single call to auto_digest.
 
 // TestAggregateResults tests the result aggregation functionality.
 func TestAggregateResults(t *testing.T) {
@@ -147,6 +147,7 @@ func TestValidateBenchmarkCase(t *testing.T) {
 				Streams:       10,
 				DaysPerStream: 5,
 				RecordsPerDay: 100,
+				DeleteCap:     1000,
 
 				Pattern: "random",
 				Samples: 3,
@@ -159,6 +160,7 @@ func TestValidateBenchmarkCase(t *testing.T) {
 				Streams:       0,
 				DaysPerStream: 5,
 				RecordsPerDay: 100,
+				DeleteCap:     1000,
 
 				Pattern: "random",
 				Samples: 3,
@@ -171,6 +173,7 @@ func TestValidateBenchmarkCase(t *testing.T) {
 				Streams:       10,
 				DaysPerStream: 0,
 				RecordsPerDay: 100,
+				DeleteCap:     1000,
 
 				Pattern: "random",
 				Samples: 3,
@@ -183,6 +186,7 @@ func TestValidateBenchmarkCase(t *testing.T) {
 				Streams:       10,
 				DaysPerStream: 5,
 				RecordsPerDay: 0,
+				DeleteCap:     1000,
 
 				Pattern: "random",
 				Samples: 3,
@@ -195,6 +199,7 @@ func TestValidateBenchmarkCase(t *testing.T) {
 				Streams:       10,
 				DaysPerStream: 5,
 				RecordsPerDay: 100,
+				DeleteCap:     0,
 
 				Pattern: "random",
 				Samples: 3,
@@ -207,6 +212,7 @@ func TestValidateBenchmarkCase(t *testing.T) {
 				Streams:       10,
 				DaysPerStream: 5,
 				RecordsPerDay: 100,
+				DeleteCap:     1000,
 
 				Pattern: PatternRandom,
 				Samples: 3,
@@ -219,6 +225,7 @@ func TestValidateBenchmarkCase(t *testing.T) {
 				Streams:       10,
 				DaysPerStream: 5,
 				RecordsPerDay: 100,
+				DeleteCap:     1000,
 
 				Pattern: "random",
 				Samples: 0,
@@ -338,7 +345,6 @@ func TestConvertToSavedResult(t *testing.T) {
 	assert.Equal(t, input.Case.Streams, result.Streams)
 	assert.Equal(t, input.Case.DaysPerStream, result.DaysPerStream)
 	assert.Equal(t, input.Case.RecordsPerDay, result.RecordsPerDay)
-	// BatchSize was removed - we now send all candidates in one call
 	assert.Equal(t, input.Case.Pattern, result.Pattern)
 	assert.Equal(t, input.Case.Samples, result.Samples)
 	assert.Equal(t, input.Candidates, result.Candidates)
@@ -400,7 +406,7 @@ func TestConstants(t *testing.T) {
 	// Test that resource limits are reasonable
 	assert.Greater(t, MaxWorkers, 0, "MaxWorkers should be positive")
 	assert.Greater(t, MaxConcurrency, 0, "MaxConcurrency should be positive")
-	// BatchSize was removed - we now send all candidates in one call
+	// DeleteCap controls processing - we now use auto_digest which sends all candidates in one call
 	assert.Greater(t, DefaultSamples, 0, "DefaultSamples should be positive")
 
 	// Test that test configurations are reasonable
@@ -428,7 +434,7 @@ func TestBenchmarkCaseCreation(t *testing.T) {
 	assert.Greater(t, c.Streams, 0, "streams should be positive")
 	assert.Greater(t, c.DaysPerStream, 0, "days per stream should be positive")
 	assert.Greater(t, c.RecordsPerDay, 0, "records per day should be positive")
-	// BatchSize validation removed - we now send all candidates in one call
+	// DeleteCap controls processing - we now use auto_digest which sends all candidates in one call
 	assert.Greater(t, c.Samples, 0, "samples should be positive")
 	assert.NotEmpty(t, c.Pattern, "pattern should not be empty")
 }

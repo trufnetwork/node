@@ -16,7 +16,7 @@ type DigestBenchmarkCase struct {
 	// RecordsPerDay specifies the number of records to generate per stream per day
 	RecordsPerDay int
 
-	// DeleteCap specifies the maximum number of rows that can be deleted in a single batch_digest call
+	// DeleteCap specifies the maximum number of rows that can be deleted in a single auto_digest call
 	DeleteCap int
 
 	// Pattern specifies the data pattern to generate ("random", "dups50", "monotonic", "equal", "time_dup")
@@ -47,7 +47,7 @@ type DigestRunResult struct {
 	// TotalPreservedRows contains the total number of rows preserved (OHLC records)
 	TotalPreservedRows int
 
-	// Duration contains the total execution time for the batch_digest operation
+	// Duration contains the total execution time for the auto_digest operation
 	Duration time.Duration
 
 	// MemoryMaxBytes contains the peak memory usage in bytes during execution

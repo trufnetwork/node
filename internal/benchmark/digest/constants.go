@@ -48,8 +48,8 @@ var (
 const (
 	InsertBatchSize = 100000
 
-	// DefaultDeleteCap is the default maximum number of rows that can be deleted in a single batch_digest call
-	// This matches the default value in the batch_digest SQL function
+	// DefaultDeleteCap is the default maximum number of rows that can be deleted in a single auto_digest call
+	// This matches the default value in the auto_digest SQL function
 	DefaultDeleteCap = 10000
 
 	// DeleteCapSmall is 1K - for testing small batch performance

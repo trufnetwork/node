@@ -13,9 +13,10 @@ import (
 	benchutil "github.com/trufnetwork/node/internal/benchmark/util"
 )
 
-// RunBatchDigestOnce executes batch_digest for a single batch of candidates.
+// RunBatchDigestOnce executes auto_digest for a batch of pending prune days.
 // Returns processed days, deleted rows, and preserved rows counts.
-func RunBatchDigestOnce(ctx context.Context, platform interface{}, streamRefs []int, dayIdxs []int, deleteCap int) (processedDays, totalDeleted, totalPreserved int, err error) {
+// Note: auto_digest doesn't return preserved_rows, so we estimate it as deleted_rows for now.
+func RunBatchDigestOnce(ctx context.Context, platform interface{}, batchSize int, deleteCap int) (processedDays, totalDeleted, totalPreserved int, err error) {
 	kwilPlatform, ok := platform.(*kwilTesting.Platform)
 	if !ok {
 		return 0, 0, 0, errors.New("invalid platform type")
@@ -34,61 +35,59 @@ func RunBatchDigestOnce(ctx context.Context, platform interface{}, streamRefs []
 		TxContext: txContext,
 	}
 
-	// Call the batch_digest action
-	r, err := kwilPlatform.Engine.Call(engineContext, kwilPlatform.DB, "", "batch_digest", []any{
-		streamRefs,
-		dayIdxs,
+	// Call the auto_digest action
+	r, err := kwilPlatform.Engine.Call(engineContext, kwilPlatform.DB, "", "auto_digest", []any{
+		batchSize,
 		deleteCap,
 	}, func(row *common.Row) error {
 		if len(row.Values) != 3 {
 			return errors.Errorf("expected 3 columns, got %d", len(row.Values))
 		}
 
-		// Parse the results
-		var processed, deleted, preserved int
+		// Parse the results - auto_digest returns (processed_days, total_deleted_rows, has_more)
+		var processed, deleted int
 		if processedVal, ok := row.Values[0].(int64); ok {
 			processed = int(processedVal)
 		}
 		if deletedVal, ok := row.Values[1].(int64); ok {
 			deleted = int(deletedVal)
 		}
-		if preservedVal, ok := row.Values[2].(int64); ok {
-			preserved = int(preservedVal)
-		}
 
 		processedDays = processed
 		totalDeleted = deleted
-		totalPreserved = preserved
+		// auto_digest doesn't return preserved_rows, estimate as 0 for now
+		// In a real scenario, this could be calculated separately if needed
+		totalPreserved = 0
 
 		return nil
 	})
 
 	if err != nil {
-		return 0, 0, 0, errors.Wrap(err, "error calling batch_digest")
+		return 0, 0, 0, errors.Wrap(err, "error calling auto_digest")
 	}
 	if r.Error != nil {
-		return 0, 0, 0, errors.Wrap(r.Error, "batch_digest procedure error")
+		return 0, 0, 0, errors.Wrap(r.Error, "auto_digest procedure error")
 	}
 
 	return processedDays, totalDeleted, totalPreserved, nil
 }
 
-// MeasureBatchDigest measures performance metrics for a batch_digest execution.
+// MeasureBatchDigest measures performance metrics for an auto_digest execution.
 // Returns a DigestRunResult with timing, memory, and throughput metrics.
 // The collector parameter can be nil if memory monitoring is disabled.
-func MeasureBatchDigest(ctx context.Context, platform interface{}, streamRefs []int, dayIdxs []int, deleteCap int, collector *benchutil.DockerMemoryCollector) (DigestRunResult, error) {
+func MeasureBatchDigest(ctx context.Context, platform interface{}, batchSize int, deleteCap int, collector *benchutil.DockerMemoryCollector) (DigestRunResult, error) {
 	kwilPlatform, ok := platform.(*kwilTesting.Platform)
 	if !ok {
 		return DigestRunResult{}, errors.New("invalid platform type")
 	}
 
-	// Execute the batch digest and measure timing
+	// Execute the auto digest and measure timing
 	startTime := time.Now()
-	processedDays, totalDeleted, totalPreserved, err := RunBatchDigestOnce(ctx, kwilPlatform, streamRefs, dayIdxs, deleteCap)
+	processedDays, totalDeleted, totalPreserved, err := RunBatchDigestOnce(ctx, kwilPlatform, batchSize, deleteCap)
 	duration := time.Since(startTime)
 
 	if err != nil {
-		return DigestRunResult{}, errors.Wrap(err, "batch digest execution failed")
+		return DigestRunResult{}, errors.Wrap(err, "auto digest execution failed")
 	}
 
 	// Get memory usage (0 if monitoring is disabled)
@@ -111,7 +110,7 @@ func MeasureBatchDigest(ctx context.Context, platform interface{}, streamRefs []
 
 	// Create result
 	result := DigestRunResult{
-		Candidates:           len(streamRefs),
+		Candidates:           batchSize,
 		ProcessedDays:        processedDays,
 		TotalDeletedRows:     totalDeleted,
 		TotalPreservedRows:   totalPreserved,
@@ -134,30 +133,10 @@ func RunCase(ctx context.Context, platform interface{}, c DigestBenchmarkCase) (
 	}
 
 	var results []DigestRunResult
-	// Use actual DB stream refs (not synthetic 1..N)
-	kwilPlatform, ok := platform.(*kwilTesting.Platform)
-	if !ok {
-		return nil, errors.New("invalid platform type")
-	}
-	actualRefs, err := getStreamRefsUpTo(ctx, kwilPlatform, c.Streams)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get stream refs")
-	}
-	if len(actualRefs) < c.Streams {
-		return nil, errors.Errorf("insufficient streams available: need %d, got %d", c.Streams, len(actualRefs))
-	}
-	// Build (stream_ref, day_idx) candidates for selected refs
-	totalCandidates := c.Streams * c.DaysPerStream
-	streamRefs := make([]int, totalCandidates)
-	dayIdxs := make([]int, totalCandidates)
-	idx := 0
-	for _, ref := range actualRefs[:c.Streams] {
-		for day := 0; day < c.DaysPerStream; day++ {
-			streamRefs[idx] = ref
-			dayIdxs[idx] = day
-			idx++
-		}
-	}
+	// With auto_digest, we don't need to generate explicit candidates
+	// auto_digest will pick candidates from pending_prune_days table
+	// Use all candidates in one batch, DeleteCap controls actual processing
+	batchSize := c.Streams * c.DaysPerStream
 
 	// Send all candidates in one call - DeleteCap controls actual processing
 
@@ -217,15 +196,15 @@ func RunCase(ctx context.Context, platform interface{}, c DigestBenchmarkCase) (
 			fmt.Println("Memory monitoring disabled via ENABLE_MEMORY_MONITORING=false")
 		}
 
-		// Run single batch with all candidates - DeleteCap controls processing
-		result, err := MeasureBatchDigest(ctx, platform, streamRefs, dayIdxs, c.DeleteCap, collector)
+		// Run auto_digest with batch size - DeleteCap controls processing
+		result, err := MeasureBatchDigest(ctx, platform, batchSize, c.DeleteCap, collector)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to measure batch for sample %d", sample)
 		}
 
 		// Update result with case information
 		result.Case = c
-		result.Candidates = len(streamRefs)
+		result.Candidates = batchSize
 
 		sampleResults = append(sampleResults, result)
 
@@ -323,27 +302,18 @@ func VerifyIdempotency(ctx context.Context, platform interface{}, c DigestBenchm
 		return false, errors.New("invalid platform type")
 	}
 
-	// Generate candidates for idempotency test
-	streamRefs := make([]int, c.Streams*c.DaysPerStream)
-	dayIdxs := make([]int, c.Streams*c.DaysPerStream)
-
-	idx := 0
-	for stream := 1; stream <= c.Streams; stream++ {
-		for day := 0; day < c.DaysPerStream; day++ {
-			streamRefs[idx] = stream
-			dayIdxs[idx] = day
-			idx++
-		}
-	}
+	// With auto_digest, use batch size for idempotency test
+	// auto_digest will pick candidates from pending_prune_days
+	batchSize := c.Streams * c.DaysPerStream
 
 	// Run digest once
-	firstProcessed, firstDeleted, firstPreserved, err := RunBatchDigestOnce(ctx, kwilPlatform, streamRefs, dayIdxs, c.DeleteCap)
+	firstProcessed, firstDeleted, firstPreserved, err := RunBatchDigestOnce(ctx, kwilPlatform, batchSize, c.DeleteCap)
 	if err != nil {
 		return false, errors.Wrap(err, "error in first digest run")
 	}
 
 	// Run digest again on the same candidates
-	secondProcessed, secondDeleted, secondPreserved, err := RunBatchDigestOnce(ctx, kwilPlatform, streamRefs, dayIdxs, c.DeleteCap)
+	secondProcessed, secondDeleted, secondPreserved, err := RunBatchDigestOnce(ctx, kwilPlatform, batchSize, c.DeleteCap)
 	if err != nil {
 		return false, errors.Wrap(err, "error in second digest run")
 	}
