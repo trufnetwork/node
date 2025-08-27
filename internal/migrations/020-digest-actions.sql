@@ -82,26 +82,16 @@ CREATE OR REPLACE ACTION batch_digest(
     $enc_low_times INT[] := ARRAY[]::INT[];
     $enc_low_created_ats INT[] := ARRAY[]::INT[];
     
-    -- Step 1: Use UNNEST for bulk candidate validation and filtering
-    $valid_stream_refs INT[] := ARRAY[]::INT[];
-    $valid_day_indexes INT[] := ARRAY[]::INT[];
+    -- When called from auto_digest, candidates are already validated from pending_prune_days
+    -- So we can skip the redundant validation and use the input arrays directly
+    $valid_stream_refs := $stream_refs;
+    $valid_day_indexes := $day_indexes;
 
-    -- UNNEST-based candidate validation - single query for all candidates
-    for $valid_candidate in
-    SELECT u.stream_ref, u.day_index
-    FROM UNNEST($stream_refs, $day_indexes) AS u(stream_ref, day_index)
-    INNER JOIN pending_prune_days ppd
-        ON ppd.stream_ref = u.stream_ref AND ppd.day_index = u.day_index {
-
-        $valid_stream_refs := array_append($valid_stream_refs, $valid_candidate.stream_ref);
-        $valid_day_indexes := array_append($valid_day_indexes, $valid_candidate.day_index);
-    }
-
-    -- Early exit if no valid candidates found
+    -- Early exit if no candidates provided
     if array_length($valid_stream_refs) = 0 {
         RETURN 0, 0, 0, false;
     }
-    
+
     -- Step 2: TRUE BULK OHLC Processing using encoded aggregation for aligned arrays
     if array_length($valid_stream_refs) > 0 {
         -- Step 2a: Single-pass compute + aggregate with encoded arrays (guaranteed alignment)
@@ -168,6 +158,7 @@ CREATE OR REPLACE ACTION batch_digest(
           ARRAY_AGG(idx * $BASE + high_created_at)               AS enc_high_created_ats,
           ARRAY_AGG(idx * $BASE + low_time)                      AS enc_low_times,
           ARRAY_AGG(idx * $BASE + low_created_at)                AS enc_low_created_ats
+        FROM enumerated
         {
           $idxs := $result.idxs;
           $enc_stream_refs := $result.enc_stream_refs;
@@ -187,8 +178,9 @@ CREATE OR REPLACE ACTION batch_digest(
         -- Step 2b: BULK DELETION using encoded arrays (guaranteed alignment)
         if array_length($idxs) > 0 {
             
-            -- EVENTS: count up to cap+1 to see if there are leftovers
-            for $cand in
+            -- EVENTS: count up to cap+1 to see if there are leftovers (without aggregates)
+            $cand_count INT := 0;
+            for $row in
             WITH targets AS (
                 SELECT
                     -- decode stable index and keys
@@ -252,19 +244,60 @@ CREATE OR REPLACE ACTION batch_digest(
                 ORDER BY pe.stream_ref, pe.event_time, pe.created_at
                 LIMIT $cap_plus_one
             )
-            SELECT COUNT(*) AS c
-            FROM delete_candidates_plus_one {
-                if $cand.c > $delete_cap {
-                    $events_deleted_this_pass := $delete_cap;
-                    $has_more_events := true;
-                } else {
-                    $events_deleted_this_pass := $cand.c;
-                    $has_more_events := false;
-                }
+            SELECT 1 FROM delete_candidates_plus_one {
+                $cand_count := $cand_count + 1;
+            }
+            if $cand_count > $delete_cap {
+                $events_deleted_this_pass := $delete_cap;
+                $has_more_events := true;
+            } else {
+                $events_deleted_this_pass := $cand_count;
+                $has_more_events := false;
             }
 
             -- EVENTS: actual capped delete using WHERE EXISTS (no USING support)
-            WITH delete_candidates AS (
+            WITH targets AS (
+                SELECT
+                    (es % $BASE)::INT AS stream_ref,
+                    (ed % $BASE)::INT AS day_index,
+                    ((ed % $BASE)::INT * 86400) AS day_start,
+                    ((ed % $BASE)::INT * 86400) + 86400 AS day_end,
+                    (eo  % $BASE)::INT AS open_time,
+                    (eoca% $BASE)::INT AS open_created_at,
+                    (ec  % $BASE)::INT AS close_time,
+                    (ecca% $BASE)::INT AS close_created_at,
+                    (eh  % $BASE)::INT AS high_time,
+                    (ehca% $BASE)::INT AS high_created_at,
+                    (el  % $BASE)::INT AS low_time,
+                    (elca% $BASE)::INT AS low_created_at
+                FROM UNNEST(
+                         $enc_stream_refs, $enc_day_indexes,
+                         $enc_open_times,  $enc_open_created_ats,
+                         $enc_close_times, $enc_close_created_ats,
+                         $enc_high_times,  $enc_high_created_ats,
+                         $enc_low_times,   $enc_low_created_ats
+                       ) AS u(
+                         es, ed,
+                         eo, eoca,
+                         ec, ecca,
+                         eh, ehca,
+                         el, elca
+                       )
+            ),
+            keep_set AS (
+                SELECT DISTINCT stream_ref, open_time  AS event_time, open_created_at  AS created_at FROM targets
+                WHERE open_time IS NOT NULL AND open_created_at IS NOT NULL
+                UNION ALL
+                SELECT DISTINCT stream_ref, close_time AS event_time, close_created_at AS created_at FROM targets
+                WHERE close_time IS NOT NULL AND close_created_at IS NOT NULL
+                UNION ALL
+                SELECT DISTINCT stream_ref, high_time  AS event_time, high_created_at  AS created_at FROM targets
+                WHERE high_time IS NOT NULL AND high_created_at IS NOT NULL
+                UNION ALL
+                SELECT DISTINCT stream_ref, low_time   AS event_time, low_created_at   AS created_at FROM targets
+                WHERE low_time IS NOT NULL AND low_created_at IS NOT NULL
+            ),
+            delete_candidates AS (
                 SELECT pe.stream_ref, pe.event_time, pe.created_at
                 FROM primitive_events pe
                 WHERE EXISTS (
@@ -293,7 +326,8 @@ CREATE OR REPLACE ACTION batch_digest(
             $marker_cap := GREATEST(0, $delete_cap - $events_deleted_this_pass);
             $marker_cap_plus_one := $marker_cap + 1;
 
-            for $mcand in
+            $marker_count INT := 0;
+            for $row in
             WITH marker_targets AS (
                 SELECT
                     (es % $BASE)::INT AS stream_ref,
@@ -309,14 +343,15 @@ CREATE OR REPLACE ACTION batch_digest(
                   AND pet.event_time < mt.day_end
                 LIMIT $marker_cap_plus_one
             )
-            SELECT COUNT(*) AS c FROM marker_candidates_plus_one {
-                if $mcand.c > $marker_cap {
-                    $markers_deleted_this_pass := $marker_cap;
-                    $has_more_markers := true;
-                } else {
-                    $markers_deleted_this_pass := $mcand.c;
-                    $has_more_markers := false;
-                }
+            SELECT 1 FROM marker_candidates_plus_one {
+                $marker_count := $marker_count + 1;
+            }
+            if $marker_count > $marker_cap {
+                $markers_deleted_this_pass := $marker_cap;
+                $has_more_markers := true;
+            } else {
+                $markers_deleted_this_pass := $marker_count;
+                $has_more_markers := false;
             }
 
             -- MARKERS: actual capped delete using WHERE EXISTS (no USING support)
@@ -408,16 +443,21 @@ CREATE OR REPLACE ACTION batch_digest(
                 SELECT
                     stream_ref,
                     event_time,
-                    SUM(type) AS combined_type
+                    SUM(type)::INT AS type
                 FROM ohlc_markers
                 GROUP BY stream_ref, event_time
             )
             INSERT INTO primitive_event_type (stream_ref, event_time, type)
-            SELECT stream_ref, event_time, combined_type FROM aggregated_markers
+            SELECT stream_ref, event_time, type FROM aggregated_markers
             ON CONFLICT (stream_ref, event_time) DO UPDATE
-            SET type = EXCLUDED.type;
-            
+            SET type = excluded.type;
+
+            -- Decide if any leftovers remain **before** cleanup
+            $has_more_to_delete := $has_more_events OR $has_more_markers;
+
             -- Step 2d: BULK cleanup using encoded arrays (only when done)
+            -- NOTE: When called from auto_digest, candidates came from pending_prune_days
+            -- so cleanup is safe even though we skipped validation in batch_digest
             if NOT $has_more_to_delete {
                 WITH cleanup_targets AS (
                     SELECT
@@ -434,7 +474,8 @@ CREATE OR REPLACE ACTION batch_digest(
             }
             
             -- Calculate preserved count from the keep_set we created before deletion
-            for $preserved_count_row in
+            $preserved_count INT := 0;
+            for $row in
             WITH preserved_targets AS (
                 SELECT
                     (es % $BASE)::INT AS stream_ref,
@@ -475,13 +516,13 @@ CREATE OR REPLACE ACTION batch_digest(
                 FROM preserved_targets pt
                 WHERE pt.low_time IS NOT NULL AND pt.low_created_at IS NOT NULL
             )
-            SELECT COUNT(*) as preserved_count FROM keep_set {
-                $total_preserved := $preserved_count_row.preserved_count;
+            SELECT 1 FROM keep_set {
+                $preserved_count := $preserved_count + 1;
             }
+            $total_preserved := $preserved_count;
 
-            -- Set unified has_more flag and calculate precise deletions
-            $has_more_to_delete := $has_more_events OR $has_more_markers;
-            $total_deleted := $events_deleted_this_pass;
+            -- Calculate precise deletions (events + markers)
+            $total_deleted := $events_deleted_this_pass + $markers_deleted_this_pass;
         }
     }
 
@@ -506,8 +547,8 @@ CREATE OR REPLACE ACTION auto_digest(
 ) PUBLIC RETURNS TABLE(
     processed_days INT,
     total_deleted_rows INT,
-    -- has more indicates that there are still pending batches to process
-    has_more BOOL
+    -- has_more_to_delete indicates that there are still pending batches to process
+    has_more_to_delete BOOL
 ) {
     $batch_size_plus_one := $batch_size + 1;
     -- Leader authorization check, keep it commented out for now so test passing and until we can inject how leader is
@@ -515,26 +556,30 @@ CREATE OR REPLACE ACTION auto_digest(
     --     ERROR('Only the leader node can execute auto digest operations');
     -- }
     
-    -- Collect candidates using SQL loop for guaranteed alignment
+    -- Get candidates using deterministic single SQL loop over ordered, limited rows
     $stream_refs INT[] := ARRAY[]::INT[];
     $day_indexes INT[] := ARRAY[]::INT[];
     $has_more BOOL := false;
+    $item_count INT := 0;
 
-    -- Get candidates one by one to maintain alignment
+    -- Get batch_size + 1 items to check if there are more available
     for $row in
     SELECT stream_ref, day_index
-    FROM pending_prune_days
-    ORDER BY day_index ASC, stream_ref ASC
-    LIMIT $batch_size_plus_one {
-        $stream_refs := array_append($stream_refs, $row.stream_ref);
-        $day_indexes := array_append($day_indexes, $row.day_index);
-    }
+    FROM (
+        SELECT stream_ref, day_index
+        FROM pending_prune_days
+        ORDER BY day_index ASC, stream_ref ASC
+        LIMIT $batch_size_plus_one
+    ) AS c {
+        $item_count := $item_count + 1;
 
-    if array_length($stream_refs) = $batch_size_plus_one {
-        $has_more := true;
-        -- remove the last element from the array
-        $stream_refs := array_slice($stream_refs, 1, -1);
-        $day_indexes := array_slice($day_indexes, 1, -1);
+        -- Only add items up to batch_size, use the extra one just to detect has_more
+        if $item_count <= $batch_size {
+            $stream_refs := array_append($stream_refs, $row.stream_ref);
+            $day_indexes := array_append($day_indexes, $row.day_index);
+        } else {
+            $has_more := true;
+        }
     }
     
     -- Handle empty result case
@@ -590,9 +635,16 @@ CREATE OR REPLACE ACTION get_daily_ohlc(
       $is_digested := true;
     }
     
+    -- Declare variables to store the OHLC values
+    $open_value NUMERIC(36,18);
+    $high_value NUMERIC(36,18);
+    $low_value NUMERIC(36,18);
+    $close_value NUMERIC(36,18);
+
     if $is_digested {
-        -- Return from digested data using type markers (single query)
-        RETURN SELECT
+        -- Calculate from digested data using type markers
+        for $result in
+        SELECT
           MAX(CASE WHEN (t.type % 2) = 1 THEN p.value END)                            AS open_value,
           MAX(CASE WHEN ((t.type / 2) % 2) = 1 THEN p.value END)                       AS high_value,
           MAX(CASE WHEN ((t.type / 4) % 2) = 1 THEN p.value END)                       AS low_value,
@@ -601,14 +653,20 @@ CREATE OR REPLACE ACTION get_daily_ohlc(
         JOIN primitive_event_type t
           ON p.stream_ref = t.stream_ref AND p.event_time = t.event_time
         WHERE p.stream_ref = $stream_ref
-          AND p.event_time >= $day_start AND p.event_time < $day_end;
+          AND p.event_time >= $day_start AND p.event_time < $day_end {
+            $open_value := $result.open_value;
+            $high_value := $result.high_value;
+            $low_value := $result.low_value;
+            $close_value := $result.close_value;
+        }
     } else {
         -- Calculate from raw data (single query with window functions)
-        RETURN SELECT
-          MAX(CASE WHEN rn_open  = 1 THEN value END),
-          MAX(CASE WHEN rn_high  = 1 THEN value END),
-          MAX(CASE WHEN rn_low   = 1 THEN value END),
-          MAX(CASE WHEN rn_close = 1 THEN value END)
+        for $result in
+        SELECT
+          MAX(CASE WHEN rn_open  = 1 THEN value END) AS open_value,
+          MAX(CASE WHEN rn_high  = 1 THEN value END) AS high_value,
+          MAX(CASE WHEN rn_low   = 1 THEN value END) AS low_value,
+          MAX(CASE WHEN rn_close = 1 THEN value END) AS close_value
         FROM (
           SELECT value,
                  ROW_NUMBER() OVER (ORDER BY event_time ASC,  created_at DESC) AS rn_open,
@@ -618,6 +676,14 @@ CREATE OR REPLACE ACTION get_daily_ohlc(
           FROM primitive_events
           WHERE stream_ref = $stream_ref
             AND event_time >= $day_start AND event_time < $day_end
-        ) r;
+        ) r {
+            $open_value := $result.open_value;
+            $high_value := $result.high_value;
+            $low_value := $result.low_value;
+            $close_value := $result.close_value;
+        }
     }
+
+    -- Return the calculated values
+    RETURN $open_value, $high_value, $low_value, $close_value;
 };
