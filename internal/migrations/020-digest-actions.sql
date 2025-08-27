@@ -39,7 +39,8 @@ CREATE OR REPLACE ACTION batch_digest(
 ) PUBLIC RETURNS TABLE(
     processed_days INT,
     total_deleted_rows INT,
-    total_preserved_rows INT
+    total_preserved_rows INT,
+    has_more_to_delete BOOL
 ) {
     -- Leader authorization check, keep it commented out for now so test passing and until we can inject how leader is
     -- if @caller != @leader {
@@ -52,12 +53,18 @@ CREATE OR REPLACE ACTION batch_digest(
     }
     
     if array_length($stream_refs) = 0 {
-        RETURN 0, 0, 0;
+        RETURN 0, 0, 0, false;
     }
     
     $total_processed := 0;
     $total_deleted := 0;
     $total_preserved := 0;
+    $has_more_to_delete BOOL := false;
+    $has_more_events BOOL := false;
+    $has_more_markers BOOL := false;
+    $events_deleted_this_pass INT := 0;
+    $markers_deleted_this_pass INT := 0;
+    $cap_plus_one INT := $delete_cap + 1;
     
     -- Step 1: Use UNNEST for bulk candidate validation and filtering
     $valid_stream_refs INT[] := ARRAY[]::INT[];
@@ -203,39 +210,87 @@ CREATE OR REPLACE ACTION batch_digest(
         -- Step 2b: BULK DELETION using WITH RECURSIVE
         if array_length($ohlc_stream_refs) > 0 {
             
-            -- Count total records in day range for deletion calculation
-            $pre_delete_count := 0;
-            for $count_row in
+            -- EVENTS: count up to cap+1 to see if there are leftovers
+            for $cand in
             WITH RECURSIVE
-            count_indexes AS (
+            delete_indexes AS (
                 SELECT 1 AS idx
                 UNION ALL
-                SELECT idx + 1 FROM count_indexes
+                SELECT idx + 1 FROM delete_indexes
                 WHERE idx <= array_length($ohlc_stream_refs)::INT
             ),
-            count_arrays AS (
-                SELECT 
+            delete_arrays AS (
+                SELECT
                     $ohlc_stream_refs AS stream_refs_array,
-                    $ohlc_day_starts AS day_starts_array,
-                    $ohlc_day_ends AS day_ends_array
+                    $ohlc_day_starts  AS day_starts_array,
+                    $ohlc_day_ends    AS day_ends_array,
+                    $ohlc_open_times  AS open_times_array,
+                    $ohlc_open_created_ats AS open_created_ats_array,
+                    $ohlc_close_times AS close_times_array,
+                    $ohlc_close_created_ats AS close_created_ats_array,
+                    $ohlc_high_times AS high_times_array,
+                    $ohlc_high_created_ats AS high_created_ats_array,
+                    $ohlc_low_times   AS low_times_array,
+                    $ohlc_low_created_ats AS low_created_ats_array
+            ),
+            delete_targets AS (
+                SELECT
+                    delete_arrays.stream_refs_array[idx] AS stream_ref,
+                    delete_arrays.day_starts_array[idx]  AS day_start,
+                    delete_arrays.day_ends_array[idx]    AS day_end,
+                    delete_arrays.open_times_array[idx]  AS open_time,
+                    delete_arrays.open_created_ats_array[idx]  AS open_created_at,
+                    delete_arrays.close_times_array[idx] AS close_time,
+                    delete_arrays.close_created_ats_array[idx] AS close_created_at,
+                    delete_arrays.high_times_array[idx]  AS high_time,
+                    delete_arrays.high_created_ats_array[idx]  AS high_created_at,
+                    delete_arrays.low_times_array[idx]   AS low_time,
+                    delete_arrays.low_created_ats_array[idx]   AS low_created_at
+                FROM delete_indexes
+                JOIN delete_arrays ON 1=1
+            ),
+            keep_set AS (
+                SELECT DISTINCT dt.stream_ref, dt.open_time  AS event_time, dt.open_created_at  AS created_at FROM delete_targets dt
+                WHERE dt.open_time  IS NOT NULL AND dt.open_created_at  IS NOT NULL
+                UNION
+                SELECT DISTINCT dt.stream_ref, dt.close_time AS event_time, dt.close_created_at AS created_at FROM delete_targets dt
+                WHERE dt.close_time IS NOT NULL AND dt.close_created_at IS NOT NULL
+                UNION
+                SELECT DISTINCT dt.stream_ref, dt.high_time  AS event_time, dt.high_created_at  AS created_at FROM delete_targets dt
+                WHERE dt.high_time  IS NOT NULL AND dt.high_created_at  IS NOT NULL
+                UNION
+                SELECT DISTINCT dt.stream_ref, dt.low_time   AS event_time, dt.low_created_at   AS created_at FROM delete_targets dt
+                WHERE dt.low_time   IS NOT NULL AND dt.low_created_at   IS NOT NULL
+            ),
+            delete_candidates_plus_one AS (
+                SELECT pe.stream_ref, pe.event_time, pe.created_at
+                FROM primitive_events pe
+                WHERE EXISTS (
+                    SELECT 1 FROM delete_targets dt
+                    WHERE pe.stream_ref = dt.stream_ref
+                      AND pe.event_time >= dt.day_start
+                      AND pe.event_time <  dt.day_end
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM keep_set ks
+                    WHERE ks.stream_ref = pe.stream_ref
+                      AND ks.event_time = pe.event_time
+                      AND ks.created_at = pe.created_at
+                )
+                ORDER BY pe.stream_ref, pe.event_time, pe.created_at
+                LIMIT $cap_plus_one
             )
-            SELECT COUNT(*) as total_records
-            FROM primitive_events pe
-            WHERE EXISTS (
-                SELECT 1 FROM count_indexes
-                JOIN count_arrays ON 1=1
-                WHERE pe.stream_ref = count_arrays.stream_refs_array[idx]
-                  AND pe.event_time >= count_arrays.day_starts_array[idx]
-                  AND pe.event_time < count_arrays.day_ends_array[idx]
-                  AND count_arrays.stream_refs_array[idx] IS NOT NULL
-                  AND count_arrays.day_starts_array[idx] IS NOT NULL
-                  AND count_arrays.day_ends_array[idx] IS NOT NULL
-            ) {
-                $pre_delete_count := $count_row.total_records;
+            SELECT COUNT(*) AS c
+            FROM delete_candidates_plus_one {
+                if $cand.c > $delete_cap {
+                    $events_deleted_this_pass := $delete_cap;
+                    $has_more_events := true;
+                } else {
+                    $events_deleted_this_pass := $cand.c;
+                    $has_more_events := false;
+                }
             }
-            
-            
-            -- CAPPED DELETE excess records - actual deletion after counting
+
+            -- EVENTS: actual capped delete (unchanged logic, but LIMIT is now justified)
             WITH RECURSIVE
             delete_indexes AS (
                 SELECT 1 AS idx
@@ -325,7 +380,11 @@ CREATE OR REPLACE ACTION batch_digest(
                   AND primitive_events.created_at = dc.created_at
             );
             
-            -- CAPPED DELETE type markers using single batch with LIMIT
+            -- MARKERS: cap+1 probe
+            $marker_cap := $delete_cap;
+            $marker_cap_plus_one := $marker_cap + 1;
+
+            for $mcand in
             WITH RECURSIVE
             marker_indexes AS (
                 SELECT 1 AS idx
@@ -334,7 +393,47 @@ CREATE OR REPLACE ACTION batch_digest(
                 WHERE idx <= array_length($ohlc_stream_refs)::INT
             ),
             marker_arrays AS (
-                SELECT 
+                SELECT
+                    $ohlc_stream_refs AS stream_refs_array,
+                    $ohlc_day_starts AS day_starts_array,
+                    $ohlc_day_ends AS day_ends_array
+            ),
+            marker_candidates_plus_one AS (
+                SELECT pet.stream_ref, pet.event_time
+                FROM primitive_event_type pet
+                WHERE EXISTS (
+                    SELECT 1 FROM marker_indexes
+                    JOIN marker_arrays ON 1=1
+                    WHERE pet.stream_ref = marker_arrays.stream_refs_array[idx]
+                      AND pet.event_time >= marker_arrays.day_starts_array[idx]
+                      AND pet.event_time < marker_arrays.day_ends_array[idx]
+                      AND marker_arrays.stream_refs_array[idx] IS NOT NULL
+                      AND marker_arrays.day_starts_array[idx] IS NOT NULL
+                      AND marker_arrays.day_ends_array[idx] IS NOT NULL
+                )
+                ORDER BY pet.stream_ref, pet.event_time
+                LIMIT $marker_cap_plus_one
+            )
+            SELECT COUNT(*) AS c FROM marker_candidates_plus_one {
+                if $mcand.c > $marker_cap {
+                    $markers_deleted_this_pass := $marker_cap;
+                    $has_more_markers := true;
+                } else {
+                    $markers_deleted_this_pass := $mcand.c;
+                    $has_more_markers := false;
+                }
+            }
+
+            -- MARKERS: actual capped delete
+            WITH RECURSIVE
+            marker_indexes AS (
+                SELECT 1 AS idx
+                UNION ALL
+                SELECT idx + 1 FROM marker_indexes
+                WHERE idx <= array_length($ohlc_stream_refs)::INT
+            ),
+            marker_arrays AS (
+                SELECT
                     $ohlc_stream_refs AS stream_refs_array,
                     $ohlc_day_starts AS day_starts_array,
                     $ohlc_day_ends AS day_ends_array
@@ -353,7 +452,7 @@ CREATE OR REPLACE ACTION batch_digest(
                       AND marker_arrays.day_ends_array[idx] IS NOT NULL
                 )
                 ORDER BY pet.stream_ref, pet.event_time
-                LIMIT $delete_cap
+                LIMIT $marker_cap
             )
             DELETE FROM primitive_event_type
             WHERE EXISTS (
@@ -437,33 +536,36 @@ CREATE OR REPLACE ACTION batch_digest(
             )
             INSERT INTO primitive_event_type (stream_ref, event_time, type)
             SELECT stream_ref, event_time, combined_type FROM aggregated_markers
-            ON CONFLICT (stream_ref, event_time) DO NOTHING;
+            ON CONFLICT (stream_ref, event_time) DO UPDATE
+            SET type = EXCLUDED.type;
             
-            -- Step 2d: BULK cleanup using WITH RECURSIVE
-            WITH RECURSIVE
-            cleanup_indexes AS (
-                SELECT 1 AS idx
-                UNION ALL
-                SELECT idx + 1 FROM cleanup_indexes
-                WHERE idx <= array_length($valid_stream_refs)::INT
-            ),
-            cleanup_arrays AS (
-                SELECT 
-                    $valid_stream_refs AS stream_refs_array,
-                    $valid_day_indexes AS day_indexes_array
-            )
-            DELETE FROM pending_prune_days 
-            WHERE EXISTS (
-                SELECT 1 FROM cleanup_indexes
-                JOIN cleanup_arrays ON 1=1
-                WHERE pending_prune_days.stream_ref = cleanup_arrays.stream_refs_array[idx]
-                  AND pending_prune_days.day_index = cleanup_arrays.day_indexes_array[idx]
-                  AND cleanup_arrays.stream_refs_array[idx] IS NOT NULL
-                  AND cleanup_arrays.day_indexes_array[idx] IS NOT NULL
-            );
+            -- Step 2d: BULK cleanup using WITH RECURSIVE (only when done)
+            if NOT $has_more_to_delete {
+                WITH RECURSIVE
+                cleanup_indexes AS (
+                    SELECT 1 AS idx
+                    UNION ALL
+                    SELECT idx + 1 FROM cleanup_indexes
+                    WHERE idx <= array_length($valid_stream_refs)::INT
+                ),
+                cleanup_arrays AS (
+                    SELECT
+                        $valid_stream_refs AS stream_refs_array,
+                        $valid_day_indexes AS day_indexes_array
+                )
+                DELETE FROM pending_prune_days
+                WHERE EXISTS (
+                    SELECT 1 FROM cleanup_indexes
+                    JOIN cleanup_arrays ON 1=1
+                    WHERE pending_prune_days.stream_ref = cleanup_arrays.stream_refs_array[idx]
+                      AND pending_prune_days.day_index = cleanup_arrays.day_indexes_array[idx]
+                      AND cleanup_arrays.stream_refs_array[idx] IS NOT NULL
+                      AND cleanup_arrays.day_indexes_array[idx] IS NOT NULL
+                );
+            }
             
             -- Calculate preserved count from the keep_set we created before deletion
-            for $preserved_count_row in 
+            for $preserved_count_row in
             WITH RECURSIVE
             preserved_indexes AS (
                 SELECT 1 AS idx
@@ -472,7 +574,7 @@ CREATE OR REPLACE ACTION batch_digest(
                 WHERE idx <= array_length($ohlc_stream_refs)::INT
             ),
             preserved_arrays AS (
-                SELECT 
+                SELECT
                     $ohlc_stream_refs AS stream_refs_array,
                     $ohlc_open_times AS open_times_array,
                     $ohlc_open_created_ats AS open_created_ats_array,
@@ -484,7 +586,7 @@ CREATE OR REPLACE ACTION batch_digest(
                     $ohlc_low_created_ats AS low_created_ats_array
             ),
             preserved_targets AS (
-                SELECT 
+                SELECT
                     preserved_arrays.stream_refs_array[idx] AS stream_ref,
                     preserved_arrays.open_times_array[idx] AS open_time,
                     preserved_arrays.open_created_ats_array[idx] AS open_created_at,
@@ -502,7 +604,7 @@ CREATE OR REPLACE ACTION batch_digest(
                 FROM preserved_targets pt
                 WHERE pt.open_time IS NOT NULL AND pt.open_created_at IS NOT NULL
                 UNION
-                SELECT DISTINCT pt.stream_ref, pt.close_time as event_time, pt.close_created_at as created_at  
+                SELECT DISTINCT pt.stream_ref, pt.close_time as event_time, pt.close_created_at as created_at
                 FROM preserved_targets pt
                 WHERE pt.close_time IS NOT NULL AND pt.close_created_at IS NOT NULL
                 UNION
@@ -516,15 +618,18 @@ CREATE OR REPLACE ACTION batch_digest(
             )
             SELECT COUNT(*) as preserved_count FROM keep_set {
                 $total_preserved := $preserved_count_row.preserved_count;
-                $total_deleted := $pre_delete_count - $total_preserved;  -- Calculate deletion
             }
+
+            -- Set unified has_more flag and calculate precise deletions
+            $has_more_to_delete := $has_more_events OR $has_more_markers;
+            $total_deleted := $events_deleted_this_pass;
         }
     }
 
     -- Uncomment for debugging
     -- NOTICE('Batch digest completed: Processed '|| $total_processed::TEXT ||' days, Deleted '|| $total_deleted::TEXT ||' rows, Preserved '|| $total_preserved::TEXT ||' rows');
     
-    RETURN $total_processed, $total_deleted, $total_preserved;
+    RETURN $total_processed, $total_deleted, $total_preserved, $has_more_to_delete;
 };
 
 /**
@@ -533,11 +638,19 @@ CREATE OR REPLACE ACTION batch_digest(
  * Now uses the efficient batch_digest internally for better performance
  */
 CREATE OR REPLACE ACTION auto_digest(
-    $batch_size INT DEFAULT 50
+    -- in production, we'll probably have many streams with 24 records per day, so we'll estimate a default 
+    -- counting 2x this value as the batch size.
+    -- if on production we discover, by using the total_deleted_rows, that this batch size is too small, we can
+    -- increase it. The objective is to keep as efficient as possible, aligned to the estimated delete cap.
+    $batch_size INT DEFAULT 800, -- 10K / 24 = 416 pairs (x2 to account that not all streams will have 24 records per day)
+    $delete_cap INT DEFAULT 10000
 ) PUBLIC RETURNS TABLE(
     processed_days INT,
-    total_deleted_rows INT
+    total_deleted_rows INT,
+    -- has more indicates that there are still pending batches to process
+    has_more BOOL
 ) {
+    $batch_size_plus_one := $batch_size + 1;
     -- Leader authorization check, keep it commented out for now so test passing and until we can inject how leader is
     -- if @caller != @leader {
     --     ERROR('Only the leader node can execute auto digest operations');
@@ -546,7 +659,9 @@ CREATE OR REPLACE ACTION auto_digest(
     -- Collect candidates using array aggregation for batch processing
     $stream_refs INT[];
     $day_indexes INT[];
-    
+    $has_more BOOL := false;
+
+    -- get the first batch of candidates
     for $candidates in 
     SELECT 
         ARRAY_AGG(stream_ref) as stream_refs,
@@ -554,27 +669,39 @@ CREATE OR REPLACE ACTION auto_digest(
     FROM (
         SELECT stream_ref, day_index FROM pending_prune_days
         ORDER BY day_index ASC, stream_ref ASC
-        LIMIT $batch_size
+        LIMIT $batch_size_plus_one
     ) AS ordered_candidates {
         $stream_refs := $candidates.stream_refs;
         $day_indexes := $candidates.day_indexes;
     }
+
+    if array_length($stream_refs) = $batch_size_plus_one {
+        $has_more := true;
+        -- remove the last element from the array
+        $stream_refs := array_slice($stream_refs, 1, -1);
+        $day_indexes := array_slice($day_indexes, 1, -1);
+    }
     
     -- Handle empty result case
     if $stream_refs IS NULL OR array_length($stream_refs) = 0 {
-        RETURN 0, 0;
+        RETURN 0, 0, $has_more;
     }
     
     -- Process using optimized batch_digest
     $processed := 0;
     $total_deleted := 0;
     
-    for $result in batch_digest($stream_refs, $day_indexes) {
+    for $result in batch_digest($stream_refs, $day_indexes, $delete_cap) {
         $processed := $result.processed_days;
         $total_deleted := $result.total_deleted_rows;
+
+        if $result.has_more_to_delete {
+            $has_more := true;
+            RETURN $processed, $total_deleted, $has_more;
+        }
     }
 
-    RETURN $processed, $total_deleted;
+    RETURN $processed, $total_deleted, $has_more;
 };
 
 /**
