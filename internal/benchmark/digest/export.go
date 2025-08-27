@@ -172,7 +172,7 @@ func ExportResultsSummary(results []DigestRunResult, filePath string) error {
 
 	caseTable := tablewriter.NewWriter(file)
 	caseTable.SetHeader([]string{
-		"Streams", "Days/Stream", "Records/Day", "Batch Size",
+		"Streams", "Days/Stream", "Records/Day", "Delete Cap",
 		"Pattern", "Samples", "Candidates", "Duration", "Days/sec", "Memory MB",
 	})
 	caseTable.SetBorder(true)
@@ -185,6 +185,7 @@ func ExportResultsSummary(results []DigestRunResult, filePath string) error {
 			fmt.Sprintf("%d", result.Case.Streams),
 			fmt.Sprintf("%d", result.Case.DaysPerStream),
 			fmt.Sprintf("%d", result.Case.RecordsPerDay),
+			fmt.Sprintf("%d", result.Case.DeleteCap),
 
 			result.Case.Pattern,
 			fmt.Sprintf("%d", result.Case.Samples),

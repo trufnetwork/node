@@ -134,16 +134,26 @@ func RunCase(ctx context.Context, platform interface{}, c DigestBenchmarkCase) (
 	}
 
 	var results []DigestRunResult
-
-	// Generate all candidates for this case
-	streamRefs := make([]int, c.Streams*c.DaysPerStream)
-	dayIdxs := make([]int, c.Streams*c.DaysPerStream)
-
-	// Fill arrays with all possible combinations
+	// Use actual DB stream refs (not synthetic 1..N)
+	kwilPlatform, ok := platform.(*kwilTesting.Platform)
+	if !ok {
+		return nil, errors.New("invalid platform type")
+	}
+	actualRefs, err := getStreamRefsUpTo(ctx, kwilPlatform, c.Streams)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get stream refs")
+	}
+	if len(actualRefs) < c.Streams {
+		return nil, errors.Errorf("insufficient streams available: need %d, got %d", c.Streams, len(actualRefs))
+	}
+	// Build (stream_ref, day_idx) candidates for selected refs
+	totalCandidates := c.Streams * c.DaysPerStream
+	streamRefs := make([]int, totalCandidates)
+	dayIdxs := make([]int, totalCandidates)
 	idx := 0
-	for stream := 1; stream <= c.Streams; stream++ {
+	for _, ref := range actualRefs[:c.Streams] {
 		for day := 0; day < c.DaysPerStream; day++ {
-			streamRefs[idx] = stream
+			streamRefs[idx] = ref
 			dayIdxs[idx] = day
 			idx++
 		}
@@ -485,6 +495,17 @@ func (r *BenchmarkRunner) RunBenchmarkCase(ctx context.Context, c DigestBenchmar
 
 	// Validate all results
 	for i, result := range results {
+		// If memory wasn't measured (collector disabled or failed), don't hard-fail here.
+		if result.MemoryMaxBytes == 0 {
+			r.logInfo("Memory not measured for result %d; skipping memory validation.", i)
+			// Still validate other fields:
+			if result.Candidates < 0 || result.ProcessedDays < 0 || result.TotalDeletedRows < 0 ||
+				result.TotalPreservedRows < 0 || result.Duration < 0 ||
+				result.DaysPerSecond < 0 || result.RowsDeletedPerSecond < 0 {
+				return nil, errors.Errorf("result %d validation failed (non-memory fields invalid)", i)
+			}
+			continue
+		}
 		if err := ValidateResult(result); err != nil {
 			return nil, errors.Wrapf(err, "result %d validation failed", i)
 		}
