@@ -65,7 +65,8 @@ CREATE OR REPLACE ACTION insert_records(
         NULL,
         unnested.stream_ref
     FROM UNNEST($event_time, $value, $stream_refs) AS unnested(event_time, value, stream_ref)
-    WHERE unnested.value != 0::NUMERIC(36,18);
+    WHERE unnested.value != 0::NUMERIC(36,18)
+    ORDER BY unnested.stream_ref, unnested.event_time, $current_block;  -- matches (stream_ref, event_time, created_at)
 
     -- Enqueue days for pruning using helper (idempotent, distinct per day)
     helper_enqueue_prune_days(

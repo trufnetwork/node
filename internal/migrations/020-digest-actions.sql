@@ -67,7 +67,8 @@ CREATE OR REPLACE ACTION batch_digest(
     $cap_plus_one INT := $delete_cap + 1;
 
     -- Encoding constants and arrays for aligned aggregation
-    $BASE INT := 10000000000000000; -- 1e16 (safe for epoch microseconds)
+    -- safe until year 2286
+    $BASE INT := 1000000000; -- 1e10
     $idxs INT[] := ARRAY[]::INT[];
 
     $enc_stream_refs INT[] := ARRAY[]::INT[];
@@ -178,7 +179,7 @@ CREATE OR REPLACE ACTION batch_digest(
         -- Step 2b: BULK DELETION using encoded arrays (guaranteed alignment)
         if array_length($idxs) > 0 {
             
-            -- EVENTS: count up to cap+1 to see if there are leftovers (without aggregates)
+            -- EVENTS: count up to cap+1 to see if there are leftovers (using COUNT(*))
             $cand_count INT := 0;
             for $row in
             WITH targets AS (
@@ -244,8 +245,8 @@ CREATE OR REPLACE ACTION batch_digest(
                 ORDER BY pe.stream_ref, pe.event_time, pe.created_at
                 LIMIT $cap_plus_one
             )
-            SELECT 1 FROM delete_candidates_plus_one {
-                $cand_count := $cand_count + 1;
+            SELECT COUNT(*) AS n FROM delete_candidates_plus_one {
+                $cand_count := $row.n;
             }
             if $cand_count > $delete_cap {
                 $events_deleted_this_pass := $delete_cap;
@@ -343,8 +344,8 @@ CREATE OR REPLACE ACTION batch_digest(
                   AND pet.event_time < mt.day_end
                 LIMIT $marker_cap_plus_one
             )
-            SELECT 1 FROM marker_candidates_plus_one {
-                $marker_count := $marker_count + 1;
+            SELECT COUNT(*) AS n FROM marker_candidates_plus_one {
+                $marker_count := $row.n;
             }
             if $marker_count > $marker_cap {
                 $markers_deleted_this_pass := $marker_cap;
@@ -516,8 +517,8 @@ CREATE OR REPLACE ACTION batch_digest(
                 FROM preserved_targets pt
                 WHERE pt.low_time IS NOT NULL AND pt.low_created_at IS NOT NULL
             )
-            SELECT 1 FROM keep_set {
-                $preserved_count := $preserved_count + 1;
+            SELECT COUNT(*) AS n FROM keep_set {
+                $preserved_count := $row.n;
             }
             $total_preserved := $preserved_count;
 

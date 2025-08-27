@@ -599,8 +599,7 @@ CREATE OR REPLACE ACTION is_stream_owner_batch(
     stream_id TEXT,
     is_owner BOOL
 ) {
-    -- Use helper function to avoid expensive for-loop roundtrips
-    $data_providers := helper_lowercase_array($data_providers);
+    -- Lowercase data providers directly using UNNEST for efficiency
 
     -- Check that arrays have the same length
     if array_length($data_providers) != array_length($stream_ids) {
@@ -615,11 +614,11 @@ CREATE OR REPLACE ACTION is_stream_owner_batch(
     }
     $lowercase_wallet TEXT := LOWER($wallet);
 
-    -- Use UNNEST for optimal performance - direct array processing without recursion
+    -- Use UNNEST for optimal performance with direct LOWER operations
     SELECT
         t.data_provider,
         t.stream_id,
-        CASE WHEN m.value_ref IS NOT NULL AND m.value_ref = $lowercase_wallet THEN true ELSE false END AS is_owner
+        CASE WHEN m.value_ref IS NOT NULL AND m.value_ref = $wallet THEN true ELSE false END AS is_owner
     FROM UNNEST($data_providers, $stream_ids) AS t(data_provider, stream_id)
     LEFT JOIN (
         SELECT dp.address as data_provider, s.stream_id, md.value_ref
@@ -629,7 +628,7 @@ CREATE OR REPLACE ACTION is_stream_owner_batch(
         WHERE md.metadata_key = 'stream_owner'
           AND md.disabled_at IS NULL
         ORDER BY md.created_at DESC
-    ) m ON t.data_provider = m.data_provider AND t.stream_id = m.stream_id;
+    ) m ON LOWER(t.data_provider) = m.data_provider AND t.stream_id = m.stream_id;
 };
 
 /**
@@ -662,21 +661,20 @@ CREATE OR REPLACE ACTION is_primitive_stream_batch(
     stream_id TEXT,
     is_primitive BOOL
 ) {
-    -- Use helper function to avoid expensive for-loop roundtrips
-    $data_providers := helper_lowercase_array($data_providers);
+    -- Lowercase data providers directly using UNNEST for efficiency
 
     -- Check that arrays have the same length
     if array_length($data_providers) != array_length($stream_ids) {
         ERROR('Data providers and stream IDs arrays must have the same length');
     }
 
-    -- Use UNNEST for optimal performance - direct array processing without recursion
+    -- Use UNNEST for optimal performance with direct LOWER operations
     SELECT
         t.data_provider,
         t.stream_id,
         COALESCE(s.stream_type = 'primitive', false) AS is_primitive
     FROM UNNEST($data_providers, $stream_ids) AS t(data_provider, stream_id)
-    LEFT JOIN data_providers dp ON dp.address = t.data_provider
+    LEFT JOIN data_providers dp ON dp.address = LOWER(t.data_provider)
     LEFT JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = t.stream_id;
 };
 
@@ -1127,35 +1125,17 @@ CREATE OR REPLACE ACTION stream_exists(
 CREATE OR REPLACE ACTION stream_exists_batch_core(
     $stream_refs INT[]
 ) PRIVATE VIEW RETURNS (result BOOL) {
-    for $row in WITH RECURSIVE
-    idx AS (
-        SELECT 1 AS i
-        UNION ALL
-        SELECT i + 1 FROM idx
-        WHERE i < array_length($stream_refs)
-    ),
-    arr AS (
-        SELECT $stream_refs AS refs
-    ),
-    unique_refs AS (
-        SELECT DISTINCT arr.refs[i] AS stream_ref
-        FROM idx
-        JOIN arr ON 1=1
-        WHERE arr.refs[i] IS NOT NULL
-    )
-    -- Return false if any nulls exist, otherwise return existence check result
-    SELECT CASE
+    -- Use UNNEST for efficient batch processing
+    for $row in SELECT CASE
         WHEN EXISTS (
-            SELECT 1
-            FROM idx
-            JOIN arr ON 1=1
-            WHERE arr.refs[i] IS NULL
+            SELECT 1 FROM UNNEST($stream_refs) AS t(stream_ref) WHERE t.stream_ref IS NULL
         ) THEN false
         ELSE NOT EXISTS (
             SELECT 1
-            FROM unique_refs u
-            LEFT JOIN streams s ON s.id = u.stream_ref
+            FROM UNNEST($stream_refs) AS t(stream_ref)
+            LEFT JOIN streams s ON s.id = t.stream_ref
             WHERE s.id IS NULL
+              AND t.stream_ref IS NOT NULL
         )
     END AS result
     FROM (SELECT 1) dummy {
@@ -1206,21 +1186,20 @@ CREATE OR REPLACE ACTION stream_exists_batch(
     stream_id TEXT,
     stream_exists BOOL
 ) {
-    -- Use helper function to avoid expensive for-loop roundtrips
-    $data_providers := helper_lowercase_array($data_providers);
+    -- Lowercase data providers directly using UNNEST for efficiency
 
     -- Check that arrays have the same length
     if array_length($data_providers) != array_length($stream_ids) {
         ERROR('Data providers and stream IDs arrays must have the same length');
     }
 
-    -- Use UNNEST for optimal performance - direct array processing without recursion
+    -- Use UNNEST for optimal performance with direct LOWER operations
     RETURN SELECT
         t.data_provider,
         t.stream_id,
         CASE WHEN s.data_provider IS NOT NULL THEN true ELSE false END AS stream_exists
     FROM UNNEST($data_providers, $stream_ids) AS t(data_provider, stream_id)
-    LEFT JOIN data_providers dp ON dp.address = t.data_provider
+    LEFT JOIN data_providers dp ON dp.address = LOWER(t.data_provider)
     LEFT JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = t.stream_id;
 };
 
@@ -1263,8 +1242,7 @@ CREATE OR REPLACE ACTION filter_streams_by_existence(
     data_provider TEXT,
     stream_id TEXT
 ) {
-    -- Use helper function to avoid expensive for-loop roundtrips
-    $data_providers := helper_lowercase_array($data_providers);
+    -- Lowercase data providers directly using UNNEST for efficiency
 
     -- default to return existing streams
     if $existing_only IS NULL {
@@ -1276,46 +1254,14 @@ CREATE OR REPLACE ACTION filter_streams_by_existence(
         ERROR('Data providers and stream IDs arrays must have the same length');
     }
     
-    -- Use efficient WITH RECURSIVE pattern with DISTINCT optimization
-    RETURN WITH RECURSIVE 
-    indexes AS (
-        SELECT 1 AS idx
-        UNION ALL
-        SELECT idx + 1 FROM indexes
-        WHERE idx < array_length($data_providers)
-    ),
-    stream_arrays AS (
-        SELECT 
-            $data_providers AS data_providers,
-            $stream_ids AS stream_ids
-    ),
-    all_pairs AS (
-        SELECT 
-            stream_arrays.data_providers[idx] AS data_provider,
-            stream_arrays.stream_ids[idx] AS stream_id
-        FROM indexes
-        JOIN stream_arrays ON 1=1
-    ),
-    unique_pairs AS (
-        SELECT DISTINCT data_provider, stream_id
-        FROM all_pairs
-    ),
-    -- Check existence for unique streams only and filter based on existing_only flag
-    unique_existence AS (
-        SELECT 
-            up.data_provider,
-            up.stream_id,
-            CASE WHEN s.id IS NOT NULL THEN true ELSE false END AS stream_exists
-        FROM unique_pairs up
-        LEFT JOIN data_providers dp ON dp.address = up.data_provider
-        LEFT JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = up.stream_id
-        WHERE (CASE WHEN s.id IS NOT NULL THEN true ELSE false END) = $existing_only
-    )
-    -- Return only the filtered unique pairs (no need to map back since we're filtering)
-    SELECT 
-        ue.data_provider,
-        ue.stream_id
-    FROM unique_existence ue;
+    -- Use UNNEST for efficient batch processing
+    RETURN SELECT
+        t.data_provider,
+        t.stream_id
+    FROM UNNEST($data_providers, $stream_ids) AS t(data_provider, stream_id)
+    LEFT JOIN data_providers dp ON dp.address = LOWER(t.data_provider)
+    LEFT JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = t.stream_id
+    WHERE (CASE WHEN s.id IS NOT NULL THEN true ELSE false END) = $existing_only;
 };
 
 CREATE OR REPLACE ACTION list_streams(
