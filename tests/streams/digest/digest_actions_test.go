@@ -886,7 +886,7 @@ func testArrayOrdering(t *testing.T) func(ctx context.Context, platform *kwilTes
 		for _, ts := range testStreams {
 			testStreamId := util.GenerateStreamId(ts.streamId)
 			dayStart := ts.dayIndex * 86400
-			
+
 			// Create test data with MANY records to trigger deletions and test array ordering
 			err := setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
 				Platform: platform,
@@ -910,9 +910,9 @@ func testArrayOrdering(t *testing.T) func(ctx context.Context, platform *kwilTes
 				| %d         | 175   |
 				| %d         | 165   |
 				| %d         | 155   |
-				`, dayStart+100, dayStart+150, dayStart+125, dayStart+200, dayStart+250, dayStart+225, 
-				   dayStart+300, dayStart+350, dayStart+325, dayStart+400, dayStart+450, dayStart+425,
-				   dayStart+500, dayStart+550, dayStart+525),
+				`, dayStart+100, dayStart+150, dayStart+125, dayStart+200, dayStart+250, dayStart+225,
+					dayStart+300, dayStart+350, dayStart+325, dayStart+400, dayStart+450, dayStart+425,
+					dayStart+500, dayStart+550, dayStart+525),
 			})
 			if err != nil {
 				return errors.Wrapf(err, "error setting up test data for stream %s", ts.streamId)
@@ -932,9 +932,9 @@ func testArrayOrdering(t *testing.T) func(ctx context.Context, platform *kwilTes
 			if err != nil {
 				return errors.Wrapf(err, "error calling auto_digest (iteration %d)", i+1)
 			}
-			
+
 			if len(result) > 0 && len(result[0]) >= 2 {
-				results = append(results, fmt.Sprintf("Run %d: processed %s days, deleted %s rows", 
+				results = append(results, fmt.Sprintf("Run %d: processed %s days, deleted %s rows",
 					i+1, result[0][0], result[0][1]))
 			}
 		}
