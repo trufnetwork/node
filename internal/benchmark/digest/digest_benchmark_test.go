@@ -191,8 +191,8 @@ func testDigestMediumSuite(t *testing.T) func(ctx context.Context, platform *kwi
 		// 1) Global setup ONCE with maximum streams (superset for all cases)
 		// Use the case with the most streams as our global setup
 		maxStreamsCase := DigestBenchmarkCase{
-			Streams:       10000,                   // Maximum streams needed for delete cap tests
-			DaysPerStream: 30,                      // Maximum days needed
+			Streams:       25000,                   // Maximum streams needed for MediumTestCases (25k streams)
+			DaysPerStream: 12,                      // Match MediumTestCases days
 			RecordsPerDay: ProductionRecordsPerDay, // Production records per day
 
 			DeleteCap: DefaultDeleteCap,
