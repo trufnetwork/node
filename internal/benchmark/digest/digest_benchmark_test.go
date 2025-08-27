@@ -380,6 +380,10 @@ func LoadCustomConfig() (CustomBenchmarkConfig, error) {
 		}
 	}
 
+	if patternsStr := k.String(EnvKeyPatterns); patternsStr != "" {
+		config.Patterns = parseStringList(patternsStr)
+	}
+
 	// Parse simple values
 	if samples := k.Int(EnvKeySamples); samples > 0 {
 		config.Samples = samples
@@ -415,6 +419,22 @@ func parseIntList(s string) ([]int, error) {
 	}
 
 	return result, nil
+}
+
+// parseStringList parses a comma-separated string into a slice of strings.
+func parseStringList(s string) []string {
+	if s == "" {
+		return []string{}
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // testDigestDeleteCapSuite runs delete cap focused test cases.
