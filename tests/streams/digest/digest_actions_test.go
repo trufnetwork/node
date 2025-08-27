@@ -39,6 +39,7 @@ func TestDigestActions(t *testing.T) {
 			WithBatchDigestTestSetup(testBatchDigestMismatchedArrays(t)),
 			WithBatchDigestTestSetup(testArrayOrdering(t)),
 			WithBatchDigestTestSetup(testOptimizedAutoDigest(t)),
+			WithDeletionTestSetup(testDigestDeletionLogic(t)),
 		},
 	}, testutils.GetTestOptionsWithCache().Options)
 }
@@ -68,7 +69,7 @@ func WithDigestTestSetup(testFn func(ctx context.Context, platform *kwilTesting.
 			| 86400      | 50    |
 			| 129600     | 10    |
 			| 151200     | 100   |
-			| 172800     | 75    |
+			| 172799     | 75    |
 			`,
 		})
 		if err != nil {
@@ -114,7 +115,7 @@ func testDigestBasicOHLCCalculation(t *testing.T) func(ctx context.Context, plat
 			return errors.Wrap(err, "error calling auto_digest")
 		}
 
-		// Verify auto_digest result (processes 1 day, no records deleted since all 4 represent different OHLC)
+		// Verify auto_digest result (processes 1 day with simplified exclusive boundaries)
 		expectedDigest := `
 		| processed_days | total_deleted_rows |
 		|----------------|-------------------|
@@ -172,7 +173,7 @@ func WithDigestCombinationFlagSetup(testFn func(ctx context.Context, platform *k
 			| 172800     | 10    |
 			| 216000     | 50    |
 			| 237600     | 100   |
-			| 259200     | 75    |
+			| 259199     | 75    |
 			`,
 		})
 		if err != nil {
@@ -303,8 +304,8 @@ func testGetDailyOHLCRawData(t *testing.T) func(ctx context.Context, platform *k
 				StreamId:     digestTestStreamId,
 				DataProvider: deployer,
 			},
-			FromTime: func() *int64 { v := int64(172800); return &v }(),
-			ToTime:   func() *int64 { v := int64(172800); return &v }(),
+			FromTime: func() *int64 { v := int64(172799); return &v }(),
+			ToTime:   func() *int64 { v := int64(172799); return &v }(),
 		})
 
 		if err != nil {
@@ -315,7 +316,7 @@ func testGetDailyOHLCRawData(t *testing.T) func(ctx context.Context, platform *k
 		expected := `
 		| event_time | value |
 		|------------|-------|
-		| 172800     | 75.000000000000000000 |
+		| 172799     | 75.000000000000000000 |
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
@@ -331,7 +332,7 @@ func testGetDailyOHLCRawData(t *testing.T) func(ctx context.Context, platform *k
 				DataProvider: deployer,
 			},
 			FromTime: func() *int64 { v := int64(86400); return &v }(),
-			ToTime:   func() *int64 { v := int64(172800); return &v }(),
+			ToTime:   func() *int64 { v := int64(172799); return &v }(),
 		})
 
 		if err != nil {
@@ -344,7 +345,7 @@ func testGetDailyOHLCRawData(t *testing.T) func(ctx context.Context, platform *k
 		| 86400      | 50.000000000000000000 |
 		| 129600     | 10.000000000000000000 |
 		| 151200     | 100.000000000000000000 |
-		| 172800     | 75.000000000000000000 |
+		| 172799     | 75.000000000000000000 |
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
@@ -406,16 +407,17 @@ func verifyOHLCTypeFlags(ctx context.Context, platform *kwilTesting.Platform, st
 		return errors.Wrap(err, "error querying primitive_event_type")
 	}
 
-	// Expected type flags based on our test data:
+	// Expected type flags for Day 1 only (boundary shifted record belongs to Day 2):
 	// 86400 (50)  = OPEN  -> flag 1
 	// 129600 (10) = LOW   -> flag 4
 	// 151200 (100) = HIGH -> flag 2
-	// 172800 (75) = CLOSE -> flag 8
+	// 172799 (75) = CLOSE -> flag 8
+	// Note: 172801 belongs to Day 2 and is outside Day 1's range
 	expectedFlags := map[int64]int{
 		86400:  1, // OPEN
 		129600: 4, // LOW
 		151200: 2, // HIGH
-		172800: 8, // CLOSE
+		172799: 8, // CLOSE
 	}
 
 	// Verify all expected flags are present and correct
@@ -491,12 +493,12 @@ func verifyCombinationFlags(ctx context.Context, platform *kwilTesting.Platform,
 	// Expected combination flags based on test data (day 2):
 	// 172800 (10)  = OPEN + LOW -> flag 1+4=5 (earliest time AND minimum value)
 	// 237600 (100) = HIGH -> flag 2 (maximum value)
-	// 259200 (75) = CLOSE -> flag 8 (latest time)
+	// 259199 (75) = CLOSE -> flag 8 (latest time)
 	// Note: 216000 (50) should be deleted as it's not OHLC
 	expectedFlags := map[int64]int{
 		172800: 5, // OPEN + LOW (1+4)
 		237600: 2, // HIGH
-		259200: 8, // CLOSE
+		259199: 8, // CLOSE
 	}
 
 	// Verify all expected flags are present and correct
@@ -543,7 +545,7 @@ func WithDigestAllSameFlagSetup(testFn func(ctx context.Context, platform *kwilT
 			| 259200     | 50    |
 			| 302400     | 50    |
 			| 324000     | 50    |
-			| 345600     | 50    |
+			| 345599     | 50    |
 			`,
 		})
 		if err != nil {
@@ -634,7 +636,7 @@ func verifyAllSameFlags(ctx context.Context, platform *kwilTesting.Platform, str
 
 	// When all values are identical, we should have (day 3):
 	// - OPEN+HIGH+LOW at earliest time (259200) with flag 1+2+4=7
-	// - CLOSE at latest time (345600) with flag 8
+	// - CLOSE at latest time (345599) with flag 8
 	// Total: 2 records
 	if len(typeFlags) != 2 {
 		return errors.Errorf("expected 2 type flag records for all same values, got %d", len(typeFlags))
@@ -649,10 +651,10 @@ func verifyAllSameFlags(ctx context.Context, platform *kwilTesting.Platform, str
 		return errors.Errorf("wrong type flag for OPEN+HIGH+LOW: expected 7, got %d", openFlag)
 	}
 
-	// Check CLOSE record at 345600 (flag 8)
-	closeFlag, exists := typeFlags[345600]
+	// Check CLOSE record at 345599 (flag 8)
+	closeFlag, exists := typeFlags[345599]
 	if !exists {
-		return errors.New("missing type flag for CLOSE timestamp 345600")
+		return errors.New("missing type flag for CLOSE timestamp 345599")
 	}
 	if closeFlag != 8 {
 		return errors.Errorf("wrong type flag for CLOSE: expected 8, got %d", closeFlag)
@@ -682,10 +684,10 @@ func WithBatchDigestTestSetup(testFn func(ctx context.Context, platform *kwilTes
 			MarkdownData: `
 			| event_time | value |
 			|------------|-------|
-			| 432000     | 20    |
+			| 432001     | 20    |
 			| 454800     | 80    |
 			| 475200     | 5     |
-			| 518400     | 65    |
+			| 518399     | 65    |
 			`,
 		})
 		if err != nil {
@@ -701,10 +703,10 @@ func WithBatchDigestTestSetup(testFn func(ctx context.Context, platform *kwilTes
 			MarkdownData: `
 			| event_time | value |
 			|------------|-------|
-			| 518400     | 100   |
+			| 518401     | 100   |
 			| 540000     | 25    |
 			| 561600     | 150   |
-			| 604800     | 90    |
+			| 604799     | 90    |
 			`,
 		})
 		if err != nil {
@@ -720,7 +722,7 @@ func WithBatchDigestTestSetup(testFn func(ctx context.Context, platform *kwilTes
 			MarkdownData: `
 			| event_time | value |
 			|------------|-------|
-			| 604800     | 42    |
+			| 604801     | 42    |
 			`,
 		})
 		if err != nil {
@@ -796,11 +798,11 @@ func testBatchDigestMultipleCandidates(t *testing.T) func(ctx context.Context, p
 		}
 
 		// Verify batch digest processed multiple candidates
-		// Stream 3 should be skipped due to insufficient records (only 1 record)
+		// Stream 3 now included with single record (gets type flag 15 - all OHLC values)
 		expectedResult := `
 		| processed_days | total_deleted_rows | total_preserved_rows |
 		|----------------|-------------------|---------------------|
-		| 2              | 0                 | 8                   |
+		| 3              | 0                 | 9                   |
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
@@ -816,8 +818,8 @@ func testBatchDigestMultipleCandidates(t *testing.T) func(ctx context.Context, p
 func testBatchDigestEmptyArrays(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Call batch_digest with empty arrays
-		streamRefs := []int{}
-		dayIndexes := []int{}
+		var streamRefs []int
+		var dayIndexes []int
 
 		result, err := callBatchDigest(ctx, platform, streamRefs, dayIndexes)
 		if err != nil {
@@ -971,11 +973,11 @@ func testOptimizedAutoDigest(t *testing.T) func(ctx context.Context, platform *k
 			return errors.Wrap(err, "error calling optimized auto_digest")
 		}
 
-		// Verify auto_digest processed candidates efficiently
+		// Verify auto_digest processed candidates efficiently with simplified boundaries
 		expectedResult := `
 		| processed_days | total_deleted_rows |
 		|----------------|-------------------|
-		| 2              | 0                 |
+		| 3              | 0                 |
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
@@ -1031,7 +1033,7 @@ func callBatchDigest(ctx context.Context, platform *kwilTesting.Platform, stream
 	if err != nil {
 		return nil, err
 	}
-	if r.Error != nil {
+	if r != nil && r.Error != nil {
 		return nil, errors.Wrap(r.Error, "batch_digest failed")
 	}
 	return result, nil
@@ -1080,8 +1082,163 @@ func callAutoDigest(ctx context.Context, platform *kwilTesting.Platform, batchSi
 		return nil, err
 	}
 
-	if r.Error != nil {
+	if r != nil && r.Error != nil {
 		return nil, errors.Wrap(r.Error, "auto_digest failed")
 	}
 	return result, nil
+}
+
+// WithDeletionTestSetup sets up test environment with excess data to verify deletion logic
+func WithDeletionTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
+
+		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrapf(err, "error registering data provider")
+		}
+
+		// Create test data with MANY intermediate records that should be deleted
+		// Day 8 (691200-777600): 10 records with clear OHLC pattern
+		// OPEN=100 (earliest), HIGH=200 (max), LOW=50 (min), CLOSE=150 (latest)
+		// 6 intermediate records should be deleted: 110, 120, 130, 140, 160, 180
+		testStreamId := util.GenerateStreamId("deletion_test_stream")
+		err = setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+			Platform: platform,
+			StreamId: testStreamId,
+			Height:   1,
+			MarkdownData: `
+			| event_time | value |
+			|------------|-------|
+			| 691200     | 100   |
+			| 705600     | 110   |
+			| 720000     | 120   |
+			| 734400     | 50    |
+			| 748800     | 130   |
+			| 763200     | 200   |
+			| 770000     | 140   |
+			| 774000     | 160   |
+			| 776000     | 180   |
+			| 777599     | 150   |
+			`,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error setting up deletion test stream")
+		}
+
+		return testFn(ctx, platform)
+	}
+}
+
+// testDigestDeletionLogic tests that intermediate records are actually deleted
+func testDigestDeletionLogic(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		streamRef := 1
+
+		// Insert pending day for deletion test (day 8)
+		err := insertPendingDay(ctx, platform, streamRef, 8)
+		if err != nil {
+			return errors.Wrap(err, "error inserting pending day for deletion test")
+		}
+
+		// Count records before digest
+		beforeCount, err := countPrimitiveEvents(ctx, platform, streamRef, 8)
+		if err != nil {
+			return errors.Wrap(err, "error counting records before digest")
+		}
+		t.Logf("Records before digest: %d", beforeCount)
+
+		// Call batch_digest to process the day with excess records
+		streamRefs := []int{streamRef}
+		dayIndexes := []int{8}
+
+		result, err := callBatchDigest(ctx, platform, streamRefs, dayIndexes)
+		if err != nil {
+			return errors.Wrap(err, "error calling batch_digest for deletion test")
+		}
+
+		// Count records after digest
+		afterCount, err := countPrimitiveEvents(ctx, platform, streamRef, 8)
+		if err != nil {
+			return errors.Wrap(err, "error counting records after digest")
+		}
+		t.Logf("Records after digest: %d (deleted: %d)", afterCount, beforeCount-afterCount)
+
+		// Deletion WORKS! (6 records deleted: 10→4) and SQL now reports correct count ✅
+		expectedResult := `
+		| processed_days | total_deleted_rows | total_preserved_rows |
+		|----------------|-------------------|---------------------|
+		| 1              | 6                 | 4                   |
+		`
+
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   result,
+			Expected: expectedResult,
+		})
+
+		// Verify OHLC values are still correct after deletion
+		ohlcResult, err := callGetDailyOHLC(ctx, platform, streamRef, 8)
+		if err != nil {
+			return errors.Wrap(err, "error calling get_daily_ohlc after deletion")
+		}
+
+		// Expected OHLC: OPEN=100 (earliest), HIGH=200 (max), LOW=50 (min), CLOSE=150 (latest)
+		expectedOHLC := `
+		| open_value | high_value | low_value | close_value |
+		|------------|------------|-----------|-------------|
+		| 100.000000000000000000 | 200.000000000000000000 | 50.000000000000000000 | 150.000000000000000000 |
+		`
+
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   ohlcResult,
+			Expected: expectedOHLC,
+		})
+
+		return nil
+	}
+}
+
+// countPrimitiveEvents counts records in primitive_events table for a specific stream/day
+func countPrimitiveEvents(ctx context.Context, platform *kwilTesting.Platform, streamRef int, dayIndex int64) (int, error) {
+	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+	if err != nil {
+		return 0, errors.Wrap(err, "error creating ethereum address")
+	}
+
+	dayStart := dayIndex * 86400
+	dayEnd := dayStart + 86400
+
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 1},
+		Signer:       deployer.Bytes(),
+		Caller:       deployer.Address(),
+		TxID:         platform.Txid(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext:     txContext,
+		OverrideAuthz: true,
+	}
+
+	var count int
+	err = platform.Engine.Execute(engineContext, platform.DB, "SELECT COUNT(*) FROM primitive_events WHERE stream_ref = $stream_ref AND event_time >= $day_start AND event_time < $day_end", map[string]any{
+		"$stream_ref": streamRef,
+		"$day_start":  dayStart,
+		"$day_end":    dayEnd,
+	}, func(row *common.Row) error {
+		if len(row.Values) != 1 {
+			return errors.Errorf("expected 1 column, got %d", len(row.Values))
+		}
+
+		if countVal, ok := row.Values[0].(int64); ok {
+			count = int(countVal)
+		} else {
+			return errors.New("count is not int64")
+		}
+		return nil
+	})
+
+	return count, err
 }
