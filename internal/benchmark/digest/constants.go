@@ -46,7 +46,7 @@ var (
 
 // Benchmark configuration constants
 const (
-	InsertBatchSize = 100000
+	InsertBatchSize = 20000
 
 	// DefaultDeleteCap is the default maximum number of rows that can be deleted in a single auto_digest call
 	// This matches the default value in the auto_digest SQL function
