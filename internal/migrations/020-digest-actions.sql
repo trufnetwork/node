@@ -65,208 +65,181 @@ CREATE OR REPLACE ACTION batch_digest(
     $events_deleted_this_pass INT := 0;
     $markers_deleted_this_pass INT := 0;
     $cap_plus_one INT := $delete_cap + 1;
+
+    -- Encoding constants and arrays for aligned aggregation
+    $BASE INT := 10000000000000000; -- 1e16 (safe for epoch microseconds)
+    $idxs INT[] := ARRAY[]::INT[];
+
+    $enc_stream_refs INT[] := ARRAY[]::INT[];
+    $enc_day_indexes INT[] := ARRAY[]::INT[];
+
+    $enc_open_times INT[] := ARRAY[]::INT[];
+    $enc_open_created_ats INT[] := ARRAY[]::INT[];
+    $enc_close_times INT[] := ARRAY[]::INT[];
+    $enc_close_created_ats INT[] := ARRAY[]::INT[];
+    $enc_high_times INT[] := ARRAY[]::INT[];
+    $enc_high_created_ats INT[] := ARRAY[]::INT[];
+    $enc_low_times INT[] := ARRAY[]::INT[];
+    $enc_low_created_ats INT[] := ARRAY[]::INT[];
     
     -- Step 1: Use UNNEST for bulk candidate validation and filtering
     $valid_stream_refs INT[] := ARRAY[]::INT[];
     $valid_day_indexes INT[] := ARRAY[]::INT[];
-    
+
     -- UNNEST-based candidate validation - single query for all candidates
-    for $valid_candidate in 
+    for $valid_candidate in
     SELECT u.stream_ref, u.day_index
     FROM UNNEST($stream_refs, $day_indexes) AS u(stream_ref, day_index)
-    INNER JOIN pending_prune_days ppd 
+    INNER JOIN pending_prune_days ppd
         ON ppd.stream_ref = u.stream_ref AND ppd.day_index = u.day_index {
-        
+
         $valid_stream_refs := array_append($valid_stream_refs, $valid_candidate.stream_ref);
         $valid_day_indexes := array_append($valid_day_indexes, $valid_candidate.day_index);
     }
+
+    -- Early exit if no valid candidates found
+    if array_length($valid_stream_refs) = 0 {
+        RETURN 0, 0, 0, false;
+    }
     
-    -- Step 2: TRUE BULK OHLC Processing using UNNEST for ALL streams simultaneously
+    -- Step 2: TRUE BULK OHLC Processing using encoded aggregation for aligned arrays
     if array_length($valid_stream_refs) > 0 {
-        -- Build arrays for bulk processing with UNNEST
-        $ohlc_stream_refs INT[] := ARRAY[]::INT[];
-        $ohlc_day_starts INT[] := ARRAY[]::INT[];
-        $ohlc_day_ends INT[] := ARRAY[]::INT[];
-        $ohlc_open_times INT[] := ARRAY[]::INT[];
-        $ohlc_open_created_ats INT[] := ARRAY[]::INT[];
-        $ohlc_close_times INT[] := ARRAY[]::INT[];
-        $ohlc_close_created_ats INT[] := ARRAY[]::INT[];
-        $ohlc_high_times INT[] := ARRAY[]::INT[];
-        $ohlc_high_created_ats INT[] := ARRAY[]::INT[];
-        $ohlc_low_times INT[] := ARRAY[]::INT[];
-        $ohlc_low_created_ats INT[] := ARRAY[]::INT[];
-        
-        -- Step 2a: Bulk OHLC calculation for ALL streams using single query with UNNEST
-        for $bulk_ohlc in
-        WITH RECURSIVE stream_days AS (
-            -- Use UNNEST to create table of all stream/day combinations
+        -- Step 2a: Single-pass compute + aggregate with encoded arrays (guaranteed alignment)
+        for $result in WITH stream_days AS (
             SELECT u.stream_ref, u.day_index,
-                   (u.day_index * 86400) as day_start,
-                   ((u.day_index * 86400) + 86400) as day_end
+                   (u.day_index * 86400) AS day_start,
+                   ((u.day_index * 86400) + 86400) AS day_end
             FROM UNNEST($valid_stream_refs, $valid_day_indexes) AS u(stream_ref, day_index)
         ),
-        stream_record_counts AS (
-            -- Count records for each stream in single query
+        day_events AS (
             SELECT sd.stream_ref, sd.day_index, sd.day_start, sd.day_end,
-                   COUNT(pe.event_time) as record_count
+                   pe.event_time, pe.created_at, pe.value
             FROM stream_days sd
-            LEFT JOIN primitive_events pe ON pe.stream_ref = sd.stream_ref
-                AND pe.event_time >= sd.day_start AND pe.event_time < sd.day_end
-            GROUP BY sd.stream_ref, sd.day_index, sd.day_start, sd.day_end
-            HAVING COUNT(pe.event_time) >= 1  -- Only streams with >=1 record
+            JOIN primitive_events pe
+              ON pe.stream_ref = sd.stream_ref
+             AND pe.event_time >= sd.day_start
+             AND pe.event_time <  sd.day_end
+        ),
+        ranked AS (
+            SELECT
+              stream_ref, day_index, day_start, day_end, event_time, created_at, value,
+              ROW_NUMBER() OVER (PARTITION BY stream_ref, day_index
+                                 ORDER BY event_time ASC, created_at DESC) AS rn_open,
+              ROW_NUMBER() OVER (PARTITION BY stream_ref, day_index
+                                 ORDER BY event_time DESC, created_at DESC) AS rn_close,
+              ROW_NUMBER() OVER (PARTITION BY stream_ref, day_index
+                                 ORDER BY value DESC, event_time ASC, created_at DESC) AS rn_high,
+              ROW_NUMBER() OVER (PARTITION BY stream_ref, day_index
+                                 ORDER BY value ASC, event_time ASC, created_at DESC) AS rn_low
+            FROM day_events
+        ),
+        ohlc AS (
+            SELECT
+              stream_ref, day_index, day_start, day_end,
+              MAX(CASE WHEN rn_open  = 1 THEN event_time  END) AS open_time,
+              MAX(CASE WHEN rn_open  = 1 THEN created_at  END) AS open_created_at,
+              MAX(CASE WHEN rn_close = 1 THEN event_time  END) AS close_time,
+              MAX(CASE WHEN rn_close = 1 THEN created_at  END) AS close_created_at,
+              MAX(CASE WHEN rn_high  = 1 THEN event_time  END) AS high_time,
+              MAX(CASE WHEN rn_high  = 1 THEN created_at  END) AS high_created_at,
+              MAX(CASE WHEN rn_low   = 1 THEN event_time  END) AS low_time,
+              MAX(CASE WHEN rn_low   = 1 THEN created_at  END) AS low_created_at,
+              COUNT(*) AS record_count
+            FROM ranked
+            GROUP BY stream_ref, day_index, day_start, day_end
+            HAVING COUNT(*) >= 2  -- Only include days with multiple records for pruning
+        ),
+        enumerated AS (
+            SELECT o.*,
+                   ROW_NUMBER() OVER (ORDER BY stream_ref, day_index) AS idx
+            FROM ohlc o
         )
-        SELECT 
-            cr.stream_ref,
-            cr.day_index,
-            cr.day_start,
-            cr.day_end,
-            cr.record_count,
-            -- OPEN: Earliest time
-            (
-                SELECT pe.event_time
-                FROM primitive_events pe
-                WHERE pe.stream_ref = cr.stream_ref
-                  AND pe.event_time >= cr.day_start AND pe.event_time < cr.day_end
-                ORDER BY pe.event_time ASC, pe.created_at DESC
-                LIMIT 1
-            ) as open_time,
-            (
-                SELECT pe.created_at
-                FROM primitive_events pe
-                WHERE pe.stream_ref = cr.stream_ref
-                  AND pe.event_time >= cr.day_start AND pe.event_time < cr.day_end
-                ORDER BY pe.event_time ASC, pe.created_at DESC
-                LIMIT 1
-            ) as open_created_at,
-            -- CLOSE: Latest time
-            (
-                SELECT pe.event_time
-                FROM primitive_events pe
-                WHERE pe.stream_ref = cr.stream_ref
-                  AND pe.event_time >= cr.day_start AND pe.event_time < cr.day_end
-                ORDER BY pe.event_time DESC, pe.created_at DESC
-                LIMIT 1
-            ) as close_time,
-            (
-                SELECT pe.created_at
-                FROM primitive_events pe
-                WHERE pe.stream_ref = cr.stream_ref
-                  AND pe.event_time >= cr.day_start AND pe.event_time < cr.day_end
-                ORDER BY pe.event_time DESC, pe.created_at DESC
-                LIMIT 1
-            ) as close_created_at,
-            -- HIGH: Maximum value
-            (
-                SELECT pe.event_time
-                FROM primitive_events pe
-                WHERE pe.stream_ref = cr.stream_ref
-                  AND pe.event_time >= cr.day_start AND pe.event_time < cr.day_end
-                ORDER BY pe.value DESC, pe.event_time ASC, pe.created_at DESC
-                LIMIT 1
-            ) as high_time,
-            (
-                SELECT pe.created_at
-                FROM primitive_events pe
-                WHERE pe.stream_ref = cr.stream_ref
-                  AND pe.event_time >= cr.day_start AND pe.event_time < cr.day_end
-                ORDER BY pe.value DESC, pe.event_time ASC, pe.created_at DESC
-                LIMIT 1
-            ) as high_created_at,
-            -- LOW: Minimum value
-            (
-                SELECT pe.event_time
-                FROM primitive_events pe
-                WHERE pe.stream_ref = cr.stream_ref
-                  AND pe.event_time >= cr.day_start AND pe.event_time < cr.day_end
-                ORDER BY pe.value ASC, pe.event_time ASC, pe.created_at DESC
-                LIMIT 1
-            ) as low_time,
-            (
-                SELECT pe.created_at
-                FROM primitive_events pe
-                WHERE pe.stream_ref = cr.stream_ref
-                  AND pe.event_time >= cr.day_start AND pe.event_time < cr.day_end
-                ORDER BY pe.value ASC, pe.event_time ASC, pe.created_at DESC
-                LIMIT 1
-            ) as low_created_at
-        FROM stream_record_counts cr
-        ORDER BY cr.stream_ref, cr.day_index {
-            -- Collect OHLC data for bulk operations
-            $ohlc_stream_refs := array_append($ohlc_stream_refs, $bulk_ohlc.stream_ref);
-            $ohlc_day_starts := array_append($ohlc_day_starts, $bulk_ohlc.day_start);
-            $ohlc_day_ends := array_append($ohlc_day_ends, $bulk_ohlc.day_end);
-            $ohlc_open_times := array_append($ohlc_open_times, $bulk_ohlc.open_time);
-            $ohlc_open_created_ats := array_append($ohlc_open_created_ats, $bulk_ohlc.open_created_at);
-            $ohlc_close_times := array_append($ohlc_close_times, $bulk_ohlc.close_time);
-            $ohlc_close_created_ats := array_append($ohlc_close_created_ats, $bulk_ohlc.close_created_at);
-            $ohlc_high_times := array_append($ohlc_high_times, $bulk_ohlc.high_time);
-            $ohlc_high_created_ats := array_append($ohlc_high_created_ats, $bulk_ohlc.high_created_at);
-            $ohlc_low_times := array_append($ohlc_low_times, $bulk_ohlc.low_time);
-            $ohlc_low_created_ats := array_append($ohlc_low_created_ats, $bulk_ohlc.low_created_at);
-            
-            $total_processed := $total_processed + 1;
+        SELECT
+          ARRAY_AGG(idx)                                         AS idxs,
+
+          ARRAY_AGG(idx * $BASE + stream_ref)                    AS enc_stream_refs,
+          ARRAY_AGG(idx * $BASE + day_index)                     AS enc_day_indexes,
+
+          ARRAY_AGG(idx * $BASE + open_time)                     AS enc_open_times,
+          ARRAY_AGG(idx * $BASE + open_created_at)               AS enc_open_created_ats,
+          ARRAY_AGG(idx * $BASE + close_time)                    AS enc_close_times,
+          ARRAY_AGG(idx * $BASE + close_created_at)              AS enc_close_created_ats,
+          ARRAY_AGG(idx * $BASE + high_time)                     AS enc_high_times,
+          ARRAY_AGG(idx * $BASE + high_created_at)               AS enc_high_created_ats,
+          ARRAY_AGG(idx * $BASE + low_time)                      AS enc_low_times,
+          ARRAY_AGG(idx * $BASE + low_created_at)                AS enc_low_created_ats
+        {
+          $idxs := $result.idxs;
+          $enc_stream_refs := $result.enc_stream_refs;
+          $enc_day_indexes := $result.enc_day_indexes;
+          $enc_open_times := $result.enc_open_times;
+          $enc_open_created_ats := $result.enc_open_created_ats;
+          $enc_close_times := $result.enc_close_times;
+          $enc_close_created_ats := $result.enc_close_created_ats;
+          $enc_high_times := $result.enc_high_times;
+          $enc_high_created_ats := $result.enc_high_created_ats;
+          $enc_low_times := $result.enc_low_times;
+          $enc_low_created_ats := $result.enc_low_created_ats;
         }
-        
-        -- Step 2b: BULK DELETION using WITH RECURSIVE
-        if array_length($ohlc_stream_refs) > 0 {
+
+        $total_processed := array_length($idxs);
+
+        -- Step 2b: BULK DELETION using encoded arrays (guaranteed alignment)
+        if array_length($idxs) > 0 {
             
             -- EVENTS: count up to cap+1 to see if there are leftovers
             for $cand in
-            WITH RECURSIVE
-            delete_indexes AS (
-                SELECT 1 AS idx
-                UNION ALL
-                SELECT idx + 1 FROM delete_indexes
-                WHERE idx <= array_length($ohlc_stream_refs)::INT
-            ),
-            delete_arrays AS (
+            WITH targets AS (
                 SELECT
-                    $ohlc_stream_refs AS stream_refs_array,
-                    $ohlc_day_starts  AS day_starts_array,
-                    $ohlc_day_ends    AS day_ends_array,
-                    $ohlc_open_times  AS open_times_array,
-                    $ohlc_open_created_ats AS open_created_ats_array,
-                    $ohlc_close_times AS close_times_array,
-                    $ohlc_close_created_ats AS close_created_ats_array,
-                    $ohlc_high_times AS high_times_array,
-                    $ohlc_high_created_ats AS high_created_ats_array,
-                    $ohlc_low_times   AS low_times_array,
-                    $ohlc_low_created_ats AS low_created_ats_array
-            ),
-            delete_targets AS (
-                SELECT
-                    delete_arrays.stream_refs_array[idx] AS stream_ref,
-                    delete_arrays.day_starts_array[idx]  AS day_start,
-                    delete_arrays.day_ends_array[idx]    AS day_end,
-                    delete_arrays.open_times_array[idx]  AS open_time,
-                    delete_arrays.open_created_ats_array[idx]  AS open_created_at,
-                    delete_arrays.close_times_array[idx] AS close_time,
-                    delete_arrays.close_created_ats_array[idx] AS close_created_at,
-                    delete_arrays.high_times_array[idx]  AS high_time,
-                    delete_arrays.high_created_ats_array[idx]  AS high_created_at,
-                    delete_arrays.low_times_array[idx]   AS low_time,
-                    delete_arrays.low_created_ats_array[idx]   AS low_created_at
-                FROM delete_indexes
-                JOIN delete_arrays ON 1=1
+                    -- decode stable index and keys
+                    (es % $BASE)::INT AS stream_ref,
+                    (ed % $BASE)::INT AS day_index,
+
+                    -- compute day window
+                    ((ed % $BASE)::INT * 86400) AS day_start,
+                    ((ed % $BASE)::INT * 86400) + 86400 AS day_end,
+
+                    -- decode OHLC times & created_ats (needed for keep_set)
+                    (eo  % $BASE)::INT AS open_time,
+                    (eoca% $BASE)::INT AS open_created_at,
+                    (ec  % $BASE)::INT AS close_time,
+                    (ecca% $BASE)::INT AS close_created_at,
+                    (eh  % $BASE)::INT AS high_time,
+                    (ehca% $BASE)::INT AS high_created_at,
+                    (el  % $BASE)::INT AS low_time,
+                    (elca% $BASE)::INT AS low_created_at
+                FROM UNNEST(
+                         $enc_stream_refs, $enc_day_indexes,
+                         $enc_open_times,  $enc_open_created_ats,
+                         $enc_close_times, $enc_close_created_ats,
+                         $enc_high_times,  $enc_high_created_ats,
+                         $enc_low_times,   $enc_low_created_ats
+                       ) AS u(
+                         es, ed,
+                         eo, eoca,
+                         ec, ecca,
+                         eh, ehca,
+                         el, elca
+                       )
             ),
             keep_set AS (
-                SELECT DISTINCT dt.stream_ref, dt.open_time  AS event_time, dt.open_created_at  AS created_at FROM delete_targets dt
-                WHERE dt.open_time  IS NOT NULL AND dt.open_created_at  IS NOT NULL
-                UNION
-                SELECT DISTINCT dt.stream_ref, dt.close_time AS event_time, dt.close_created_at AS created_at FROM delete_targets dt
-                WHERE dt.close_time IS NOT NULL AND dt.close_created_at IS NOT NULL
-                UNION
-                SELECT DISTINCT dt.stream_ref, dt.high_time  AS event_time, dt.high_created_at  AS created_at FROM delete_targets dt
-                WHERE dt.high_time  IS NOT NULL AND dt.high_created_at  IS NOT NULL
-                UNION
-                SELECT DISTINCT dt.stream_ref, dt.low_time   AS event_time, dt.low_created_at   AS created_at FROM delete_targets dt
-                WHERE dt.low_time   IS NOT NULL AND dt.low_created_at   IS NOT NULL
+                SELECT DISTINCT stream_ref, open_time  AS event_time, open_created_at  AS created_at FROM targets
+                WHERE open_time IS NOT NULL AND open_created_at IS NOT NULL
+                UNION ALL
+                SELECT DISTINCT stream_ref, close_time AS event_time, close_created_at AS created_at FROM targets
+                WHERE close_time IS NOT NULL AND close_created_at IS NOT NULL
+                UNION ALL
+                SELECT DISTINCT stream_ref, high_time  AS event_time, high_created_at  AS created_at FROM targets
+                WHERE high_time IS NOT NULL AND high_created_at IS NOT NULL
+                UNION ALL
+                SELECT DISTINCT stream_ref, low_time   AS event_time, low_created_at   AS created_at FROM targets
+                WHERE low_time IS NOT NULL AND low_created_at IS NOT NULL
             ),
             delete_candidates_plus_one AS (
                 SELECT pe.stream_ref, pe.event_time, pe.created_at
                 FROM primitive_events pe
                 WHERE EXISTS (
-                    SELECT 1 FROM delete_targets dt
+                    SELECT 1 FROM targets dt
                     WHERE pe.stream_ref = dt.stream_ref
                       AND pe.event_time >= dt.day_start
                       AND pe.event_time <  dt.day_end
@@ -290,128 +263,50 @@ CREATE OR REPLACE ACTION batch_digest(
                 }
             }
 
-            -- EVENTS: actual capped delete (unchanged logic, but LIMIT is now justified)
-            WITH RECURSIVE
-            delete_indexes AS (
-                SELECT 1 AS idx
-                UNION ALL
-                SELECT idx + 1 FROM delete_indexes
-                WHERE idx <= array_length($ohlc_stream_refs)::INT
-            ),
-            delete_arrays AS (
-                SELECT 
-                    $ohlc_stream_refs AS stream_refs_array,
-                    $ohlc_day_starts AS day_starts_array,
-                    $ohlc_day_ends AS day_ends_array,
-                    $ohlc_open_times AS open_times_array,
-                    $ohlc_open_created_ats AS open_created_ats_array,
-                    $ohlc_close_times AS close_times_array,
-                    $ohlc_close_created_ats AS close_created_ats_array,
-                    $ohlc_high_times AS high_times_array,
-                    $ohlc_high_created_ats AS high_created_ats_array,
-                    $ohlc_low_times AS low_times_array,
-                    $ohlc_low_created_ats AS low_created_ats_array
-            ),
-            delete_targets AS (
-                SELECT 
-                    delete_arrays.stream_refs_array[idx] AS stream_ref,
-                    delete_arrays.day_starts_array[idx] AS day_start,
-                    delete_arrays.day_ends_array[idx] AS day_end,
-                    delete_arrays.open_times_array[idx] AS open_time,
-                    delete_arrays.open_created_ats_array[idx] AS open_created_at,
-                    delete_arrays.close_times_array[idx] AS close_time,
-                    delete_arrays.close_created_ats_array[idx] AS close_created_at,
-                    delete_arrays.high_times_array[idx] AS high_time,
-                    delete_arrays.high_created_ats_array[idx] AS high_created_at,
-                    delete_arrays.low_times_array[idx] AS low_time,
-                    delete_arrays.low_created_ats_array[idx] AS low_created_at
-                FROM delete_indexes
-                JOIN delete_arrays ON 1=1
-            ),
-            keep_set AS (
-                -- Create aggregated keep-set of all OHLC rows that must be preserved
-                SELECT DISTINCT dt.stream_ref, dt.open_time as event_time, dt.open_created_at as created_at
-                FROM delete_targets dt
-                WHERE dt.open_time IS NOT NULL AND dt.open_created_at IS NOT NULL
-                
-                UNION
-                
-                SELECT DISTINCT dt.stream_ref, dt.close_time as event_time, dt.close_created_at as created_at  
-                FROM delete_targets dt
-                WHERE dt.close_time IS NOT NULL AND dt.close_created_at IS NOT NULL
-                
-                UNION
-                
-                SELECT DISTINCT dt.stream_ref, dt.high_time as event_time, dt.high_created_at as created_at
-                FROM delete_targets dt
-                WHERE dt.high_time IS NOT NULL AND dt.high_created_at IS NOT NULL
-                
-                UNION
-                
-                SELECT DISTINCT dt.stream_ref, dt.low_time as event_time, dt.low_created_at as created_at
-                FROM delete_targets dt
-                WHERE dt.low_time IS NOT NULL AND dt.low_created_at IS NOT NULL
-            ),
-            delete_candidates AS (
+            -- EVENTS: actual capped delete using WHERE EXISTS (no USING support)
+            WITH delete_candidates AS (
                 SELECT pe.stream_ref, pe.event_time, pe.created_at
                 FROM primitive_events pe
                 WHERE EXISTS (
-                    SELECT 1 FROM delete_targets dt
+                    SELECT 1 FROM targets dt
                     WHERE pe.stream_ref = dt.stream_ref
-                      AND pe.event_time >= dt.day_start 
-                      AND pe.event_time < dt.day_end
-                      AND dt.stream_ref IS NOT NULL
-                      AND dt.day_start IS NOT NULL
-                      AND dt.day_end IS NOT NULL
+                      AND pe.event_time >= dt.day_start
+                      AND pe.event_time <  dt.day_end
                 ) AND NOT EXISTS (
                     SELECT 1 FROM keep_set ks
                     WHERE ks.stream_ref = pe.stream_ref
                       AND ks.event_time = pe.event_time
                       AND ks.created_at = pe.created_at
                 )
-                ORDER BY pe.stream_ref, pe.event_time, pe.created_at
                 LIMIT $delete_cap
             )
-            DELETE FROM primitive_events 
+            DELETE FROM primitive_events
             WHERE EXISTS (
-                SELECT 1 FROM delete_candidates dc
+                SELECT 1
+                FROM delete_candidates dc
                 WHERE primitive_events.stream_ref = dc.stream_ref
                   AND primitive_events.event_time = dc.event_time
                   AND primitive_events.created_at = dc.created_at
             );
             
-            -- MARKERS: cap+1 probe
-            $marker_cap := $delete_cap;
+            -- MARKERS: cap+1 probe (adjust cap based on events already deleted)
+            $marker_cap := GREATEST(0, $delete_cap - $events_deleted_this_pass);
             $marker_cap_plus_one := $marker_cap + 1;
 
             for $mcand in
-            WITH RECURSIVE
-            marker_indexes AS (
-                SELECT 1 AS idx
-                UNION ALL
-                SELECT idx + 1 FROM marker_indexes
-                WHERE idx <= array_length($ohlc_stream_refs)::INT
-            ),
-            marker_arrays AS (
+            WITH marker_targets AS (
                 SELECT
-                    $ohlc_stream_refs AS stream_refs_array,
-                    $ohlc_day_starts AS day_starts_array,
-                    $ohlc_day_ends AS day_ends_array
+                    (es % $BASE)::INT AS stream_ref,
+                    ((ed % $BASE)::INT * 86400) AS day_start,
+                    ((ed % $BASE)::INT * 86400) + 86400 AS day_end
+                FROM UNNEST($enc_stream_refs, $enc_day_indexes) AS u(es, ed)
             ),
             marker_candidates_plus_one AS (
                 SELECT pet.stream_ref, pet.event_time
                 FROM primitive_event_type pet
-                WHERE EXISTS (
-                    SELECT 1 FROM marker_indexes
-                    JOIN marker_arrays ON 1=1
-                    WHERE pet.stream_ref = marker_arrays.stream_refs_array[idx]
-                      AND pet.event_time >= marker_arrays.day_starts_array[idx]
-                      AND pet.event_time < marker_arrays.day_ends_array[idx]
-                      AND marker_arrays.stream_refs_array[idx] IS NOT NULL
-                      AND marker_arrays.day_starts_array[idx] IS NOT NULL
-                      AND marker_arrays.day_ends_array[idx] IS NOT NULL
-                )
-                ORDER BY pet.stream_ref, pet.event_time
+                JOIN marker_targets mt ON pet.stream_ref = mt.stream_ref
+                WHERE pet.event_time >= mt.day_start
+                  AND pet.event_time < mt.day_end
                 LIMIT $marker_cap_plus_one
             )
             SELECT COUNT(*) AS c FROM marker_candidates_plus_one {
@@ -424,110 +319,93 @@ CREATE OR REPLACE ACTION batch_digest(
                 }
             }
 
-            -- MARKERS: actual capped delete
-            WITH RECURSIVE
-            marker_indexes AS (
-                SELECT 1 AS idx
-                UNION ALL
-                SELECT idx + 1 FROM marker_indexes
-                WHERE idx <= array_length($ohlc_stream_refs)::INT
-            ),
-            marker_arrays AS (
+            -- MARKERS: actual capped delete using WHERE EXISTS (no USING support)
+            WITH marker_targets AS (
                 SELECT
-                    $ohlc_stream_refs AS stream_refs_array,
-                    $ohlc_day_starts AS day_starts_array,
-                    $ohlc_day_ends AS day_ends_array
+                    (es % $BASE)::INT AS stream_ref,
+                    ((ed % $BASE)::INT * 86400) AS day_start,
+                    ((ed % $BASE)::INT * 86400) + 86400 AS day_end
+                FROM UNNEST($enc_stream_refs, $enc_day_indexes) AS u(es, ed)
             ),
             marker_delete_candidates AS (
                 SELECT pet.stream_ref, pet.event_time
                 FROM primitive_event_type pet
-                WHERE EXISTS (
-                    SELECT 1 FROM marker_indexes
-                    JOIN marker_arrays ON 1=1
-                    WHERE pet.stream_ref = marker_arrays.stream_refs_array[idx]
-                      AND pet.event_time >= marker_arrays.day_starts_array[idx]
-                      AND pet.event_time < marker_arrays.day_ends_array[idx]
-                      AND marker_arrays.stream_refs_array[idx] IS NOT NULL
-                      AND marker_arrays.day_starts_array[idx] IS NOT NULL
-                      AND marker_arrays.day_ends_array[idx] IS NOT NULL
-                )
-                ORDER BY pet.stream_ref, pet.event_time
+                JOIN marker_targets mt ON pet.stream_ref = mt.stream_ref
+                WHERE pet.event_time >= mt.day_start
+                  AND pet.event_time < mt.day_end
                 LIMIT $marker_cap
             )
             DELETE FROM primitive_event_type
             WHERE EXISTS (
-                SELECT 1 FROM marker_delete_candidates mdc
+                SELECT 1
+                FROM marker_delete_candidates mdc
                 WHERE primitive_event_type.stream_ref = mdc.stream_ref
                   AND primitive_event_type.event_time = mdc.event_time
             );
             
-            -- Step 2c: BULK INSERT type markers using WITH RECURSIVE + UNNEST
-            WITH RECURSIVE
-            marker_indexes AS (
-                SELECT 1 AS idx
-                UNION ALL
-                SELECT idx + 1 FROM marker_indexes
-                WHERE idx <= array_length($ohlc_stream_refs)::INT
-            ),
-            marker_arrays AS (
-                SELECT 
-                    $ohlc_stream_refs AS stream_refs_array,
-                    $ohlc_open_times AS open_times_array,
-                    $ohlc_open_created_ats AS open_created_ats_array,
-                    $ohlc_close_times AS close_times_array,
-                    $ohlc_close_created_ats AS close_created_ats_array,
-                    $ohlc_high_times AS high_times_array,
-                    $ohlc_high_created_ats AS high_created_ats_array,
-                    $ohlc_low_times AS low_times_array,
-                    $ohlc_low_created_ats AS low_created_ats_array
+            -- Step 2c: BULK INSERT type markers using encoded arrays
+            WITH marker_targets AS (
+                SELECT
+                    (es % $BASE)::INT AS stream_ref,
+                    (eo  % $BASE)::INT AS open_time,
+                    (eoca% $BASE)::INT AS open_created_at,
+                    (ec  % $BASE)::INT AS close_time,
+                    (ecca% $BASE)::INT AS close_created_at,
+                    (eh  % $BASE)::INT AS high_time,
+                    (ehca% $BASE)::INT AS high_created_at,
+                    (el  % $BASE)::INT AS low_time,
+                    (elca% $BASE)::INT AS low_created_at
+                FROM UNNEST(
+                         $enc_stream_refs,
+                         $enc_open_times, $enc_open_created_ats,
+                         $enc_close_times, $enc_close_created_ats,
+                         $enc_high_times, $enc_high_created_ats,
+                         $enc_low_times, $enc_low_created_ats
+                       ) AS u(es,
+                              eo, eoca,
+                              ec, ecca,
+                              eh, ehca,
+                              el, elca)
             ),
             ohlc_markers AS (
                 -- Use DISTINCT to handle overlapping OHLC points and calculate combined type flags
                 SELECT DISTINCT
-                    marker_arrays.stream_refs_array[idx] AS stream_ref,
-                    marker_arrays.open_times_array[idx] AS event_time,
+                    stream_ref,
+                    open_time AS event_time,
                     1 AS type  -- OPEN flag
-                FROM marker_indexes
-                JOIN marker_arrays ON 1=1
-                WHERE marker_arrays.stream_refs_array[idx] IS NOT NULL
-                  AND marker_arrays.open_times_array[idx] IS NOT NULL
-                
-                UNION
-                
+                FROM marker_targets
+                WHERE open_time IS NOT NULL
+
+                UNION ALL
+
                 SELECT DISTINCT
-                    marker_arrays.stream_refs_array[idx] AS stream_ref,
-                    marker_arrays.close_times_array[idx] AS event_time,
+                    stream_ref,
+                    close_time AS event_time,
                     8 AS type  -- CLOSE flag
-                FROM marker_indexes
-                JOIN marker_arrays ON 1=1
-                WHERE marker_arrays.stream_refs_array[idx] IS NOT NULL
-                  AND marker_arrays.close_times_array[idx] IS NOT NULL
-                
-                UNION
-                
+                FROM marker_targets
+                WHERE close_time IS NOT NULL
+
+                UNION ALL
+
                 SELECT DISTINCT
-                    marker_arrays.stream_refs_array[idx] AS stream_ref,
-                    marker_arrays.high_times_array[idx] AS event_time,
+                    stream_ref,
+                    high_time AS event_time,
                     2 AS type  -- HIGH flag
-                FROM marker_indexes
-                JOIN marker_arrays ON 1=1
-                WHERE marker_arrays.stream_refs_array[idx] IS NOT NULL
-                  AND marker_arrays.high_times_array[idx] IS NOT NULL
-                
-                UNION
-                
+                FROM marker_targets
+                WHERE high_time IS NOT NULL
+
+                UNION ALL
+
                 SELECT DISTINCT
-                    marker_arrays.stream_refs_array[idx] AS stream_ref,
-                    marker_arrays.low_times_array[idx] AS event_time,
+                    stream_ref,
+                    low_time AS event_time,
                     4 AS type  -- LOW flag
-                FROM marker_indexes
-                JOIN marker_arrays ON 1=1
-                WHERE marker_arrays.stream_refs_array[idx] IS NOT NULL
-                  AND marker_arrays.low_times_array[idx] IS NOT NULL
+                FROM marker_targets
+                WHERE low_time IS NOT NULL
             ),
             aggregated_markers AS (
                 -- Aggregate the flags for each unique (stream_ref, event_time) pair
-                SELECT 
+                SELECT
                     stream_ref,
                     event_time,
                     SUM(type) AS combined_type
@@ -539,79 +417,60 @@ CREATE OR REPLACE ACTION batch_digest(
             ON CONFLICT (stream_ref, event_time) DO UPDATE
             SET type = EXCLUDED.type;
             
-            -- Step 2d: BULK cleanup using WITH RECURSIVE (only when done)
+            -- Step 2d: BULK cleanup using encoded arrays (only when done)
             if NOT $has_more_to_delete {
-                WITH RECURSIVE
-                cleanup_indexes AS (
-                    SELECT 1 AS idx
-                    UNION ALL
-                    SELECT idx + 1 FROM cleanup_indexes
-                    WHERE idx <= array_length($valid_stream_refs)::INT
-                ),
-                cleanup_arrays AS (
+                WITH cleanup_targets AS (
                     SELECT
-                        $valid_stream_refs AS stream_refs_array,
-                        $valid_day_indexes AS day_indexes_array
+                        (es % $BASE)::INT AS stream_ref,
+                        (ed % $BASE)::INT AS day_index
+                    FROM UNNEST($enc_stream_refs, $enc_day_indexes) AS u(es, ed)
                 )
                 DELETE FROM pending_prune_days
                 WHERE EXISTS (
-                    SELECT 1 FROM cleanup_indexes
-                    JOIN cleanup_arrays ON 1=1
-                    WHERE pending_prune_days.stream_ref = cleanup_arrays.stream_refs_array[idx]
-                      AND pending_prune_days.day_index = cleanup_arrays.day_indexes_array[idx]
-                      AND cleanup_arrays.stream_refs_array[idx] IS NOT NULL
-                      AND cleanup_arrays.day_indexes_array[idx] IS NOT NULL
+                    SELECT 1 FROM cleanup_targets ct
+                    WHERE pending_prune_days.stream_ref = ct.stream_ref
+                      AND pending_prune_days.day_index = ct.day_index
                 );
             }
             
             -- Calculate preserved count from the keep_set we created before deletion
             for $preserved_count_row in
-            WITH RECURSIVE
-            preserved_indexes AS (
-                SELECT 1 AS idx
-                UNION ALL
-                SELECT idx + 1 FROM preserved_indexes
-                WHERE idx <= array_length($ohlc_stream_refs)::INT
-            ),
-            preserved_arrays AS (
+            WITH preserved_targets AS (
                 SELECT
-                    $ohlc_stream_refs AS stream_refs_array,
-                    $ohlc_open_times AS open_times_array,
-                    $ohlc_open_created_ats AS open_created_ats_array,
-                    $ohlc_close_times AS close_times_array,
-                    $ohlc_close_created_ats AS close_created_ats_array,
-                    $ohlc_high_times AS high_times_array,
-                    $ohlc_high_created_ats AS high_created_ats_array,
-                    $ohlc_low_times AS low_times_array,
-                    $ohlc_low_created_ats AS low_created_ats_array
-            ),
-            preserved_targets AS (
-                SELECT
-                    preserved_arrays.stream_refs_array[idx] AS stream_ref,
-                    preserved_arrays.open_times_array[idx] AS open_time,
-                    preserved_arrays.open_created_ats_array[idx] AS open_created_at,
-                    preserved_arrays.close_times_array[idx] AS close_time,
-                    preserved_arrays.close_created_ats_array[idx] AS close_created_at,
-                    preserved_arrays.high_times_array[idx] AS high_time,
-                    preserved_arrays.high_created_ats_array[idx] AS high_created_at,
-                    preserved_arrays.low_times_array[idx] AS low_time,
-                    preserved_arrays.low_created_ats_array[idx] AS low_created_at
-                FROM preserved_indexes
-                JOIN preserved_arrays ON 1=1
+                    (es % $BASE)::INT AS stream_ref,
+                    (eo  % $BASE)::INT AS open_time,
+                    (eoca% $BASE)::INT AS open_created_at,
+                    (ec  % $BASE)::INT AS close_time,
+                    (ecca% $BASE)::INT AS close_created_at,
+                    (eh  % $BASE)::INT AS high_time,
+                    (ehca% $BASE)::INT AS high_created_at,
+                    (el  % $BASE)::INT AS low_time,
+                    (elca% $BASE)::INT AS low_created_at
+                FROM UNNEST(
+                         $enc_stream_refs,
+                         $enc_open_times, $enc_open_created_ats,
+                         $enc_close_times, $enc_close_created_ats,
+                         $enc_high_times, $enc_high_created_ats,
+                         $enc_low_times, $enc_low_created_ats
+                       ) AS u(es,
+                              eo, eoca,
+                              ec, ecca,
+                              eh, ehca,
+                              el, elca)
             ),
             keep_set AS (
                 SELECT DISTINCT pt.stream_ref, pt.open_time as event_time, pt.open_created_at as created_at
                 FROM preserved_targets pt
                 WHERE pt.open_time IS NOT NULL AND pt.open_created_at IS NOT NULL
-                UNION
+                UNION ALL
                 SELECT DISTINCT pt.stream_ref, pt.close_time as event_time, pt.close_created_at as created_at
                 FROM preserved_targets pt
                 WHERE pt.close_time IS NOT NULL AND pt.close_created_at IS NOT NULL
-                UNION
+                UNION ALL
                 SELECT DISTINCT pt.stream_ref, pt.high_time as event_time, pt.high_created_at as created_at
                 FROM preserved_targets pt
                 WHERE pt.high_time IS NOT NULL AND pt.high_created_at IS NOT NULL
-                UNION
+                UNION ALL
                 SELECT DISTINCT pt.stream_ref, pt.low_time as event_time, pt.low_created_at as created_at
                 FROM preserved_targets pt
                 WHERE pt.low_time IS NOT NULL AND pt.low_created_at IS NOT NULL
@@ -656,23 +515,19 @@ CREATE OR REPLACE ACTION auto_digest(
     --     ERROR('Only the leader node can execute auto digest operations');
     -- }
     
-    -- Collect candidates using array aggregation for batch processing
-    $stream_refs INT[];
-    $day_indexes INT[];
+    -- Collect candidates using SQL loop for guaranteed alignment
+    $stream_refs INT[] := ARRAY[]::INT[];
+    $day_indexes INT[] := ARRAY[]::INT[];
     $has_more BOOL := false;
 
-    -- get the first batch of candidates
-    for $candidates in 
-    SELECT 
-        ARRAY_AGG(stream_ref) as stream_refs,
-        ARRAY_AGG(day_index) as day_indexes
-    FROM (
-        SELECT stream_ref, day_index FROM pending_prune_days
-        ORDER BY day_index ASC, stream_ref ASC
-        LIMIT $batch_size_plus_one
-    ) AS ordered_candidates {
-        $stream_refs := $candidates.stream_refs;
-        $day_indexes := $candidates.day_indexes;
+    -- Get candidates one by one to maintain alignment
+    for $row in
+    SELECT stream_ref, day_index
+    FROM pending_prune_days
+    ORDER BY day_index ASC, stream_ref ASC
+    LIMIT $batch_size_plus_one {
+        $stream_refs := array_append($stream_refs, $row.stream_ref);
+        $day_indexes := array_append($day_indexes, $row.day_index);
     }
 
     if array_length($stream_refs) = $batch_size_plus_one {
@@ -721,97 +576,48 @@ CREATE OR REPLACE ACTION get_daily_ohlc(
     $day_start := $day * 86400;
     $day_end := $day_start + 86400;
     
-    -- Check if this day has been digested
+    -- Check if this day has been digested (ensure markers correspond to existing events)
     $is_digested BOOL := false;
-    for $row in SELECT 1 FROM primitive_event_type
-                WHERE stream_ref = $stream_ref 
-                  AND event_time >= $day_start AND event_time < $day_end {
-        $is_digested := true;
+    for $unused in
+    SELECT 1
+    FROM primitive_event_type t
+    JOIN primitive_events p
+      ON p.stream_ref = t.stream_ref
+     AND p.event_time = t.event_time
+    WHERE t.stream_ref = $stream_ref
+      AND p.event_time >= $day_start AND p.event_time < $day_end
+    LIMIT 1 {
+      $is_digested := true;
     }
     
     if $is_digested {
-        -- Return from digested data using type markers
-        $open_value NUMERIC(36,18);
-        $high_value NUMERIC(36,18);
-        $low_value NUMERIC(36,18);
-        $close_value NUMERIC(36,18);
-        
-        -- Get OPEN value (type includes 1)
-        for $row in SELECT p.value FROM primitive_events p
-                    JOIN primitive_event_type t ON p.stream_ref = t.stream_ref AND p.event_time = t.event_time
-                    WHERE p.stream_ref = $stream_ref
-                      AND p.event_time >= $day_start AND p.event_time < $day_end
-                      AND (t.type % 2) = 1 {
-            $open_value := $row.value;
-        }
-        
-        -- Get HIGH value (type includes 2)
-        for $row in SELECT p.value FROM primitive_events p
-                    JOIN primitive_event_type t ON p.stream_ref = t.stream_ref AND p.event_time = t.event_time
-                    WHERE p.stream_ref = $stream_ref
-                      AND p.event_time >= $day_start AND p.event_time < $day_end
-                      AND ((t.type / 2) % 2) = 1 {
-            $high_value := $row.value;
-        }
-        
-        -- Get LOW value (type includes 4)
-        for $row in SELECT p.value FROM primitive_events p
-                    JOIN primitive_event_type t ON p.stream_ref = t.stream_ref AND p.event_time = t.event_time
-                    WHERE p.stream_ref = $stream_ref
-                      AND p.event_time >= $day_start AND p.event_time < $day_end
-                      AND ((t.type / 4) % 2) = 1 {
-            $low_value := $row.value;
-        }
-        
-        -- Get CLOSE value (type includes 8)
-        for $row in SELECT p.value FROM primitive_events p
-                    JOIN primitive_event_type t ON p.stream_ref = t.stream_ref AND p.event_time = t.event_time
-                    WHERE p.stream_ref = $stream_ref
-                      AND p.event_time >= $day_start AND p.event_time < $day_end
-                      AND ((t.type / 8) % 2) = 1 {
-            $close_value := $row.value;
-        }
-        
-        RETURN $open_value, $high_value, $low_value, $close_value;
+        -- Return from digested data using type markers (single query)
+        RETURN SELECT
+          MAX(CASE WHEN (t.type % 2) = 1 THEN p.value END)                            AS open_value,
+          MAX(CASE WHEN ((t.type / 2) % 2) = 1 THEN p.value END)                       AS high_value,
+          MAX(CASE WHEN ((t.type / 4) % 2) = 1 THEN p.value END)                       AS low_value,
+          MAX(CASE WHEN ((t.type / 8) % 2) = 1 THEN p.value END)                       AS close_value
+        FROM primitive_events p
+        JOIN primitive_event_type t
+          ON p.stream_ref = t.stream_ref AND p.event_time = t.event_time
+        WHERE p.stream_ref = $stream_ref
+          AND p.event_time >= $day_start AND p.event_time < $day_end;
     } else {
-        -- Calculate from raw data
-        $open_value NUMERIC(36,18);
-        $high_value NUMERIC(36,18);
-        $low_value NUMERIC(36,18);
-        $close_value NUMERIC(36,18);
-        
-        -- OPEN: Earliest time value, tie-break by latest created_at
-        for $row in SELECT value FROM primitive_events
-                    WHERE stream_ref = $stream_ref 
-                      AND event_time >= $day_start AND event_time < $day_end
-                    ORDER BY event_time ASC, created_at DESC
-                    LIMIT 1 {
-            $open_value := $row.value;
-        }
-        
-        -- CLOSE: Latest time value
-        for $row in SELECT value FROM primitive_events
-                    WHERE stream_ref = $stream_ref 
-                      AND event_time >= $day_start AND event_time < $day_end
-                    ORDER BY event_time DESC, created_at DESC
-                    LIMIT 1 {
-            $close_value := $row.value;
-        }
-        
-        -- HIGH: Maximum value
-        for $row in SELECT MAX(value) as max_val FROM primitive_events
-                    WHERE stream_ref = $stream_ref
-                      AND event_time >= $day_start AND event_time < $day_end {
-            $high_value := $row.max_val;
-        }
-        
-        -- LOW: Minimum value
-        for $row in SELECT MIN(value) as min_val FROM primitive_events
-                    WHERE stream_ref = $stream_ref
-                      AND event_time >= $day_start AND event_time < $day_end {
-            $low_value := $row.min_val;
-        }
-        
-        RETURN $open_value, $high_value, $low_value, $close_value;
+        -- Calculate from raw data (single query with window functions)
+        RETURN SELECT
+          MAX(CASE WHEN rn_open  = 1 THEN value END),
+          MAX(CASE WHEN rn_high  = 1 THEN value END),
+          MAX(CASE WHEN rn_low   = 1 THEN value END),
+          MAX(CASE WHEN rn_close = 1 THEN value END)
+        FROM (
+          SELECT value,
+                 ROW_NUMBER() OVER (ORDER BY event_time ASC,  created_at DESC) AS rn_open,
+                 ROW_NUMBER() OVER (ORDER BY value DESC,    event_time ASC, created_at DESC) AS rn_high,
+                 ROW_NUMBER() OVER (ORDER BY value ASC,     event_time ASC, created_at DESC) AS rn_low,
+                 ROW_NUMBER() OVER (ORDER BY event_time DESC, created_at DESC) AS rn_close
+          FROM primitive_events
+          WHERE stream_ref = $stream_ref
+            AND event_time >= $day_start AND event_time < $day_end
+        ) r;
     }
 };
