@@ -142,7 +142,7 @@ func createBenchmarkSuiteFunc(t *testing.T, scale DigestBenchmarkScale) func(con
 			allResults = append(allResults, caseResults...)
 		}
 
-		outputFile := fmt.Sprintf("digest_%s_results.csv", scale.Name)
+		outputFile := fmt.Sprintf("bench_results/digest_%s_results.csv", scale.Name)
 		if err := SaveDigestResultsCSV(allResults, outputFile); err != nil {
 			t.Logf("Warning: failed to save results to %s: %v", outputFile, err)
 		} else {
@@ -150,7 +150,7 @@ func createBenchmarkSuiteFunc(t *testing.T, scale DigestBenchmarkScale) func(con
 		}
 
 		// Create summary report
-		summaryFile := strings.Replace(outputFile, ".csv", "_summary.md", 1)
+		summaryFile := fmt.Sprintf("bench_results/digest_%s_results_summary.md", scale.Name)
 		if err := ExportResultsSummary(allResults, summaryFile); err != nil {
 			t.Logf("Warning: failed to create summary report: %v", err)
 		} else {
@@ -296,12 +296,12 @@ func TestDigestResultValidation(t *testing.T) {
 			Pattern:   "random",
 			Samples:   3,
 		},
-		Candidates:         3000,
-		ProcessedDays:      3000,
-		TotalDeletedRows:   147000,
-		TotalPreservedRows: 3000,
-		Duration:           1000000000, // 1 second
-		MemoryMaxBytes:     104857600,  // 100 MB
+		Candidates:       3000,
+		ProcessedDays:    3000,
+		TotalDeletedRows: 147000,
+
+		Duration:       1000000000, // 1 second
+		MemoryMaxBytes: 104857600,  // 100 MB
 	}
 
 	if err := ValidateResult(validResult); err != nil {
@@ -333,12 +333,12 @@ func TestDigestCSVExport(t *testing.T) {
 				Pattern:   "random",
 				Samples:   1,
 			},
-			Candidates:         100,
-			ProcessedDays:      100,
-			TotalDeletedRows:   4900,
-			TotalPreservedRows: 200,
-			Duration:           234000000, // 234ms
-			MemoryMaxBytes:     12582912,  // 12 MB
+			Candidates:       100,
+			ProcessedDays:    100,
+			TotalDeletedRows: 4900,
+
+			Duration:       234000000, // 234ms
+			MemoryMaxBytes: 12582912,  // 12 MB
 		},
 	}
 
@@ -368,18 +368,72 @@ func TestDigestCSVExport(t *testing.T) {
 	t.Log("CSV export/import functionality works correctly")
 }
 
+// TestDigestMarkdownExport tests the improved markdown table export functionality.
+func TestDigestMarkdownExport(t *testing.T) {
+	// Create test results with realistic data
+	results := []DigestRunResult{
+		{
+			Case: DigestBenchmarkCase{
+				Streams:       25000,
+				DaysPerStream: 12,
+				RecordsPerDay: 24,
+				DeleteCap:     1000,
+				Pattern:       "random",
+				Samples:       3,
+			},
+			Candidates:           300000,
+			ProcessedDays:        300000,
+			TotalDeletedRows:     1000,
+			Duration:             946942286,          // ~947ms
+			MemoryMaxBytes:       4650 * 1024 * 1024, // 4650 MB
+			StreamDaysPerSecond:  64.42,
+			RowsDeletedPerSecond: 1000 / (946942286 / 1e9), // Calculate from duration
+		},
+		{
+			Case: DigestBenchmarkCase{
+				Streams:       25000,
+				DaysPerStream: 12,
+				RecordsPerDay: 24,
+				DeleteCap:     10000,
+				Pattern:       "random",
+				Samples:       3,
+			},
+			Candidates:           300000,
+			ProcessedDays:        300000,
+			TotalDeletedRows:     10000,
+			Duration:             979084756,          // ~979ms
+			MemoryMaxBytes:       4657 * 1024 * 1024, // 4657 MB
+			StreamDaysPerSecond:  634.27,
+			RowsDeletedPerSecond: 10000 / (979084756 / 1e9), // Calculate from duration
+		},
+	}
+
+	// Test markdown export to bench_results directory
+	summaryFile := "bench_results/test_markdown_summary.md"
+	if err := ExportResultsSummary(results, summaryFile); err != nil {
+		t.Fatalf("Failed to export markdown summary: %v", err)
+	}
+
+	// Verify file was created
+	if _, err := os.Stat(summaryFile); os.IsNotExist(err) {
+		t.Fatalf("Summary file was not created: %s", summaryFile)
+	}
+
+	t.Logf("Improved markdown summary exported to %s", summaryFile)
+}
+
 // BenchmarkDigestAggregation benchmarks result aggregation performance.
 func BenchmarkDigestAggregation(b *testing.B) {
 	// Setup test data
 	results := make([]DigestRunResult, 100)
 	for i := range results {
 		results[i] = DigestRunResult{
-			Candidates:         100,
-			ProcessedDays:      100,
-			TotalDeletedRows:   5000,
-			TotalPreservedRows: 200,
-			Duration:           100000000, // 100ms
-			MemoryMaxBytes:     10485760,  // 10 MB
+			Candidates:       100,
+			ProcessedDays:    100,
+			TotalDeletedRows: 5000,
+
+			Duration:       100000000, // 100ms
+			MemoryMaxBytes: 10485760,  // 10 MB
 		}
 	}
 

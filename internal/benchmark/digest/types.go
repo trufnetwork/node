@@ -44,17 +44,14 @@ type DigestRunResult struct {
 	// TotalDeletedRows contains the total number of rows deleted during digest processing
 	TotalDeletedRows int
 
-	// TotalPreservedRows contains the total number of rows preserved (OHLC records)
-	TotalPreservedRows int
-
 	// Duration contains the total execution time for the auto_digest operation
 	Duration time.Duration
 
 	// MemoryMaxBytes contains the peak memory usage in bytes during execution
 	MemoryMaxBytes uint64
 
-	// DaysPerSecond contains the throughput metric: processed_days per second
-	DaysPerSecond float64
+	// StreamDaysPerSecond contains the throughput metric: processed stream-days per second
+	StreamDaysPerSecond float64
 
 	// RowsDeletedPerSecond contains the throughput metric: deleted_rows per second
 	RowsDeletedPerSecond float64

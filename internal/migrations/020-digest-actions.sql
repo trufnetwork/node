@@ -522,22 +522,24 @@ CREATE OR REPLACE ACTION batch_digest(
 
 /**
  * auto_digest: Batch process multiple pending days (optimized version)
- * 
+ *
  * Now uses the efficient batch_digest internally for better performance
  */
 CREATE OR REPLACE ACTION auto_digest(
-    -- in production, we'll probably have many streams with 24 records per day, so we'll estimate a default 
-    -- counting 2x this value as the batch size.
-    -- if on production we discover, by using the total_deleted_rows, that this batch size is too small, we can
-    -- increase it. The objective is to keep as efficient as possible, aligned to the estimated delete cap.
-    $batch_size INT DEFAULT 800, -- 10K / 24 = 416 pairs (x2 to account that not all streams will have 24 records per day)
-    $delete_cap INT DEFAULT 10000
+    $delete_cap INT DEFAULT 10000,
+    -- Expected records per stream per day, used to calculate optimal batch size
+    -- Default of 24 represents typical hourly data collection (24 hours per day)
+    $expected_records_per_stream INT DEFAULT 24
 ) PUBLIC RETURNS TABLE(
     processed_days INT,
     total_deleted_rows INT,
     -- has_more_to_delete indicates that there are still pending batches to process
     has_more_to_delete BOOL
 ) {
+    -- Calculate batch size dynamically without decimal types to avoid numeric metadata issues
+    -- Formula: floor((delete_cap * 3) / (expected_records_per_stream * 2))
+    -- Equivalent to: (delete_cap / expected_records_per_stream) * 1.5
+    $batch_size := (($delete_cap * 3) / ($expected_records_per_stream * 2));
     $batch_size_plus_one := $batch_size + 1;
     -- Leader authorization check, keep it commented out for now so test passing and until we can inject how leader is
     -- if @caller != @leader {

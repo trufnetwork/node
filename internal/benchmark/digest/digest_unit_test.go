@@ -31,13 +31,13 @@ func TestAggregateResults(t *testing.T) {
 						Pattern:       PatternRandom,
 						Samples:       3,
 					},
-					Candidates:           50,
-					ProcessedDays:        25,
-					TotalDeletedRows:     1000,
-					TotalPreservedRows:   2000,
+					Candidates:       50,
+					ProcessedDays:    25,
+					TotalDeletedRows: 1000,
+
 					Duration:             5 * time.Second,
 					MemoryMaxBytes:       1024 * 1024 * 100, // 100MB
-					DaysPerSecond:        5.0,
+					StreamDaysPerSecond:  5.0,
 					RowsDeletedPerSecond: 200.0,
 				},
 			},
@@ -50,13 +50,13 @@ func TestAggregateResults(t *testing.T) {
 					Pattern:       PatternRandom,
 					Samples:       3,
 				},
-				Candidates:           50,
-				ProcessedDays:        25,
-				TotalDeletedRows:     1000,
-				TotalPreservedRows:   2000,
+				Candidates:       50,
+				ProcessedDays:    25,
+				TotalDeletedRows: 1000,
+
 				Duration:             5 * time.Second,
 				MemoryMaxBytes:       1024 * 1024 * 100, // 100MB
-				DaysPerSecond:        5.0,
+				StreamDaysPerSecond:  5.0,
 				RowsDeletedPerSecond: 200.0,
 			},
 		},
@@ -64,34 +64,34 @@ func TestAggregateResults(t *testing.T) {
 			name: "multiple_results_aggregation",
 			results: []DigestRunResult{
 				{
-					Candidates:           30,
-					ProcessedDays:        15,
-					TotalDeletedRows:     500,
-					TotalPreservedRows:   1000,
+					Candidates:       30,
+					ProcessedDays:    15,
+					TotalDeletedRows: 500,
+
 					Duration:             3 * time.Second,
 					MemoryMaxBytes:       50 * 1024 * 1024, // 50MB
-					DaysPerSecond:        5.0,
+					StreamDaysPerSecond:  5.0,
 					RowsDeletedPerSecond: 166.67,
 				},
 				{
-					Candidates:           20,
-					ProcessedDays:        10,
-					TotalDeletedRows:     300,
-					TotalPreservedRows:   800,
+					Candidates:       20,
+					ProcessedDays:    10,
+					TotalDeletedRows: 300,
+
 					Duration:             2 * time.Second,
 					MemoryMaxBytes:       75 * 1024 * 1024, // 75MB
-					DaysPerSecond:        5.0,
+					StreamDaysPerSecond:  5.0,
 					RowsDeletedPerSecond: 150.0,
 				},
 			},
 			expected: DigestRunResult{
-				Candidates:           50,               // 30 + 20
-				ProcessedDays:        25,               // 15 + 10
-				TotalDeletedRows:     800,              // 500 + 300
-				TotalPreservedRows:   1800,             // 1000 + 800
+				Candidates:       50,  // 30 + 20
+				ProcessedDays:    25,  // 15 + 10
+				TotalDeletedRows: 800, // 500 + 300
+
 				Duration:             5 * time.Second,  // 3 + 2
 				MemoryMaxBytes:       75 * 1024 * 1024, // max(50MB, 75MB)
-				DaysPerSecond:        5.0,              // 25 / 5
+				StreamDaysPerSecond:  5.0,              // 25 / 5
 				RowsDeletedPerSecond: 160.0,            // 800 / 5
 			},
 		},
@@ -109,14 +109,14 @@ func TestAggregateResults(t *testing.T) {
 			assert.Equal(t, tt.expected.Candidates, result.Candidates)
 			assert.Equal(t, tt.expected.ProcessedDays, result.ProcessedDays)
 			assert.Equal(t, tt.expected.TotalDeletedRows, result.TotalDeletedRows)
-			assert.Equal(t, tt.expected.TotalPreservedRows, result.TotalPreservedRows)
+
 			assert.Equal(t, tt.expected.Duration, result.Duration)
 			assert.Equal(t, tt.expected.MemoryMaxBytes, result.MemoryMaxBytes)
 
 			// Verify throughput calculations
 			if result.Duration.Seconds() > 0 {
-				expectedDaysPerSec := float64(result.ProcessedDays) / result.Duration.Seconds()
-				assert.InDelta(t, expectedDaysPerSec, result.DaysPerSecond, 0.1)
+				expectedStreamDaysPerSec := float64(result.ProcessedDays) / result.Duration.Seconds()
+				assert.InDelta(t, expectedStreamDaysPerSec, result.StreamDaysPerSecond, 0.1)
 
 				expectedRowsPerSec := float64(result.TotalDeletedRows) / result.Duration.Seconds()
 				assert.InDelta(t, expectedRowsPerSec, result.RowsDeletedPerSecond, 0.1)
@@ -197,13 +197,13 @@ func TestValidateBenchmarkCase(t *testing.T) {
 // TestValidateResult tests result validation used in benchmark execution.
 func TestValidateResult(t *testing.T) {
 	validResult := DigestRunResult{
-		Candidates:           50,
-		ProcessedDays:        25,
-		TotalDeletedRows:     1000,
-		TotalPreservedRows:   2000,
+		Candidates:       50,
+		ProcessedDays:    25,
+		TotalDeletedRows: 1000,
+
 		Duration:             5 * time.Second,
 		MemoryMaxBytes:       100 * 1024 * 1024,
-		DaysPerSecond:        5.0,
+		StreamDaysPerSecond:  5.0,
 		RowsDeletedPerSecond: 200.0,
 	}
 

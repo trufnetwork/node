@@ -24,9 +24,8 @@ type SavedDigestResult struct {
 	Candidates        int     `json:"candidates"`
 	ProcessedDays     int     `json:"processed_days"`
 	TotalDeleted      int     `json:"total_deleted"`
-	TotalPreserved    int     `json:"total_preserved"`
 	DurationMs        int64   `json:"duration_ms"`
-	DaysPerSec        float64 `json:"days_per_sec"`
+	StreamDaysPerSec  float64 `json:"stream_days_per_sec"`
 	RowsDeletedPerSec float64 `json:"rows_deleted_per_sec"`
 	MemoryMB          uint64  `json:"memory_mb"`
 	WalBytes          *int64  `json:"wal_bytes,omitempty"` // Optional WAL tracking
@@ -48,10 +47,9 @@ func convertSavedResultToRunResult(saved SavedDigestResult) DigestRunResult {
 		Candidates:           saved.Candidates,
 		ProcessedDays:        saved.ProcessedDays,
 		TotalDeletedRows:     saved.TotalDeleted,
-		TotalPreservedRows:   saved.TotalPreserved,
 		Duration:             time.Duration(saved.DurationMs) * time.Millisecond,
 		MemoryMaxBytes:       saved.MemoryMB * 1024 * 1024, // Convert MB back to bytes
-		DaysPerSecond:        saved.DaysPerSec,
+		StreamDaysPerSecond:  saved.StreamDaysPerSec,
 		RowsDeletedPerSecond: saved.RowsDeletedPerSec,
 		WALBytes:             saved.WalBytes,
 	}
@@ -70,9 +68,8 @@ func ConvertToSavedResult(result DigestRunResult) SavedDigestResult {
 		Candidates:        result.Candidates,
 		ProcessedDays:     result.ProcessedDays,
 		TotalDeleted:      result.TotalDeletedRows,
-		TotalPreserved:    result.TotalPreservedRows,
 		DurationMs:        result.Duration.Milliseconds(),
-		DaysPerSec:        result.DaysPerSecond,
+		StreamDaysPerSec:  result.StreamDaysPerSecond,
 		RowsDeletedPerSec: result.RowsDeletedPerSecond,
 		MemoryMB:          result.MemoryMaxBytes / 1024 / 1024, // Convert bytes to MB
 		WalBytes:          result.WALBytes,
@@ -152,12 +149,13 @@ func ExportResultsSummary(results []DigestRunResult, filePath string) error {
 	fmt.Fprintf(file, "# Digest Benchmark Results Summary\n\n")
 	fmt.Fprintf(file, "Generated at: %s\n\n", time.Now().Format(time.RFC3339))
 
-	// Write summary statistics using tablewriter
+	// Write summary statistics using tablewriter with markdown formatting
 	fmt.Fprintf(file, "## Summary Statistics\n\n")
 
 	summaryTable := tablewriter.NewWriter(file)
 	summaryTable.SetHeader([]string{"Metric", "Value"})
-	summaryTable.SetBorder(false)
+	summaryTable.SetBorders(tablewriter.Border{Left: true, Top: false, Right: true, Bottom: false})
+	summaryTable.SetCenterSeparator("|")
 	summaryTable.Append([]string{"Total Results", fmt.Sprintf("%d", len(results))})
 	summaryTable.Append([]string{"Unique Cases", fmt.Sprintf("%d", countUniqueCases(results))})
 	summaryTable.Append([]string{"Total Candidates", fmt.Sprintf("%d", sumCandidates(results))})
@@ -167,20 +165,21 @@ func ExportResultsSummary(results []DigestRunResult, filePath string) error {
 	summaryTable.Append([]string{"Peak Memory Usage", fmt.Sprintf("%d MB", peakMemoryMB(results))})
 	summaryTable.Render()
 
-	// Write per-case breakdown using tablewriter
+	// Write per-case breakdown using tablewriter with markdown formatting
 	fmt.Fprintf(file, "\n## Per-Case Breakdown\n\n")
 
 	caseTable := tablewriter.NewWriter(file)
 	caseTable.SetHeader([]string{
 		"Streams", "Days/Stream", "Records/Day", "Delete Cap",
-		"Pattern", "Samples", "Candidates", "Duration", "Days/sec", "Memory MB",
+		"Pattern", "Samples", "Candidates", "Duration", "Stream-Days/sec", "Records/sec", "Memory MB",
 	})
-	caseTable.SetBorder(true)
-	caseTable.SetRowSeparator("-")
-	caseTable.SetColumnSeparator("|")
-	caseTable.SetCenterSeparator("+")
+	caseTable.SetBorders(tablewriter.Border{Left: true, Top: false, Right: true, Bottom: false})
+	caseTable.SetCenterSeparator("|")
 
 	for _, result := range results {
+		// Calculate records per second: records/day * stream-days/second
+		recordsPerSecond := float64(result.Case.RecordsPerDay) * result.StreamDaysPerSecond
+
 		caseTable.Append([]string{
 			fmt.Sprintf("%d", result.Case.Streams),
 			fmt.Sprintf("%d", result.Case.DaysPerStream),
@@ -191,7 +190,8 @@ func ExportResultsSummary(results []DigestRunResult, filePath string) error {
 			fmt.Sprintf("%d", result.Case.Samples),
 			fmt.Sprintf("%d", result.Candidates),
 			result.Duration.String(),
-			fmt.Sprintf("%.2f", result.DaysPerSecond),
+			fmt.Sprintf("%.2f", result.StreamDaysPerSecond),
+			fmt.Sprintf("%.0f", recordsPerSecond),
 			fmt.Sprintf("%d", result.MemoryMaxBytes/1024/1024),
 		})
 	}
@@ -208,22 +208,32 @@ func ExportResultsSummary(results []DigestRunResult, filePath string) error {
 		maxDuration := lo.Max(durations)
 		avgDuration := lo.Mean(lo.Map(durations, func(d time.Duration, _ int) float64 { return float64(d.Nanoseconds()) }))
 
-		throughputs := lo.Map(results, func(r DigestRunResult, _ int) float64 { return r.DaysPerSecond })
+		throughputs := lo.Map(results, func(r DigestRunResult, _ int) float64 { return r.StreamDaysPerSecond })
 		maxThroughput := lo.Max(throughputs)
+
+		// Calculate records per second statistics
+		recordRates := lo.Map(results, func(r DigestRunResult, _ int) float64 {
+			return float64(r.Case.RecordsPerDay) * r.StreamDaysPerSecond
+		})
+		maxRecordRate := lo.Max(recordRates)
 
 		fmt.Fprintf(file, "### Duration Statistics\n")
 		fmt.Fprintf(file, "- Min Duration: %v\n", minDuration)
 		fmt.Fprintf(file, "- Max Duration: %v\n", maxDuration)
 		fmt.Fprintf(file, "- Avg Duration: %v\n", time.Duration(avgDuration))
-		fmt.Fprintf(file, "- Max Throughput: %.2f days/sec\n", maxThroughput)
+		fmt.Fprintf(file, "- Max Stream-Days/sec: %.2f\n", maxThroughput)
+		fmt.Fprintf(file, "- Max Records/sec: %.0f\n", maxRecordRate)
 
 		// Pattern performance comparison
 		patternGroups := lo.GroupBy(results, func(r DigestRunResult) string { return r.Case.Pattern })
 		if len(patternGroups) > 1 {
 			fmt.Fprintf(file, "\n### Pattern Performance Comparison\n")
 			for pattern, patternResults := range patternGroups {
-				avgThroughput := lo.Mean(lo.Map(patternResults, func(r DigestRunResult, _ int) float64 { return r.DaysPerSecond }))
-				fmt.Fprintf(file, "- %s: %.2f days/sec (avg)\n", pattern, avgThroughput)
+				avgThroughput := lo.Mean(lo.Map(patternResults, func(r DigestRunResult, _ int) float64 { return r.StreamDaysPerSecond }))
+				avgRecordRate := lo.Mean(lo.Map(patternResults, func(r DigestRunResult, _ int) float64 {
+					return float64(r.Case.RecordsPerDay) * r.StreamDaysPerSecond
+				}))
+				fmt.Fprintf(file, "- %s: %.2f stream-days/sec, %.0f records/sec (avg)\n", pattern, avgThroughput, avgRecordRate)
 			}
 		}
 	}
@@ -414,7 +424,7 @@ func GenerateStatisticalAnalysisReport(results []DigestRunResult, filePath strin
 
 	// Extract metrics for statistical analysis
 	durations := lo.Map(results, func(r DigestRunResult, _ int) float64 { return float64(r.Duration.Milliseconds()) })
-	throughputs := lo.Map(results, func(r DigestRunResult, _ int) float64 { return r.DaysPerSecond })
+	throughputs := lo.Map(results, func(r DigestRunResult, _ int) float64 { return r.StreamDaysPerSecond })
 	memoryUsages := lo.Map(results, func(r DigestRunResult, _ int) float64 { return float64(r.MemoryMaxBytes) / 1024 / 1024 })
 
 	// Duration statistics
@@ -436,15 +446,15 @@ func GenerateStatisticalAnalysisReport(results []DigestRunResult, filePath strin
 	}
 
 	// Throughput statistics
-	fmt.Fprintf(file, "\n## Throughput Analysis (days/second)\n\n")
+	fmt.Fprintf(file, "\n## Throughput Analysis (stream-days/second)\n\n")
 	if mean, err := stats.Mean(throughputs); err == nil {
-		fmt.Fprintf(file, "- Mean: %.2f days/sec\n", mean)
+		fmt.Fprintf(file, "- Mean: %.2f stream-days/sec\n", mean)
 	}
 	if max, err := stats.Max(throughputs); err == nil {
-		fmt.Fprintf(file, "- Maximum: %.2f days/sec\n", max)
+		fmt.Fprintf(file, "- Maximum: %.2f stream-days/sec\n", max)
 	}
 	if min, err := stats.Min(throughputs); err == nil {
-		fmt.Fprintf(file, "- Minimum: %.2f days/sec\n", min)
+		fmt.Fprintf(file, "- Minimum: %.2f stream-days/sec\n", min)
 	}
 
 	// Memory usage statistics
@@ -461,11 +471,11 @@ func GenerateStatisticalAnalysisReport(results []DigestRunResult, filePath strin
 	patternGroups := lo.GroupBy(results, func(r DigestRunResult) string { return r.Case.Pattern })
 
 	patternTable := tablewriter.NewWriter(file)
-	patternTable.SetHeader([]string{"Pattern", "Count", "Avg Throughput", "Avg Duration", "Peak Memory"})
+	patternTable.SetHeader([]string{"Pattern", "Count", "Avg Throughput (stream-days/sec)", "Avg Duration", "Peak Memory"})
 	patternTable.SetBorder(true)
 
 	for pattern, patternResults := range patternGroups {
-		patternThroughputs := lo.Map(patternResults, func(r DigestRunResult, _ int) float64 { return r.DaysPerSecond })
+		patternThroughputs := lo.Map(patternResults, func(r DigestRunResult, _ int) float64 { return r.StreamDaysPerSecond })
 		patternDurations := lo.Map(patternResults, func(r DigestRunResult, _ int) float64 { return float64(r.Duration.Milliseconds()) })
 		patternMemories := lo.Map(patternResults, func(r DigestRunResult, _ int) float64 { return float64(r.MemoryMaxBytes) / 1024 / 1024 })
 
@@ -491,14 +501,14 @@ func GenerateStatisticalAnalysisReport(results []DigestRunResult, filePath strin
 	bestPattern := ""
 	bestThroughput := 0.0
 	for pattern, patternResults := range patternGroups {
-		avgThroughput, _ := stats.Mean(lo.Map(patternResults, func(r DigestRunResult, _ int) float64 { return r.DaysPerSecond }))
+		avgThroughput, _ := stats.Mean(lo.Map(patternResults, func(r DigestRunResult, _ int) float64 { return r.StreamDaysPerSecond }))
 		if avgThroughput > bestThroughput {
 			bestThroughput = avgThroughput
 			bestPattern = pattern
 		}
 	}
 
-	fmt.Fprintf(file, "- **Best Pattern**: %s (%.2f days/sec average)\n", bestPattern, bestThroughput)
+	fmt.Fprintf(file, "- **Best Pattern**: %s (%.2f stream-days/sec average)\n", bestPattern, bestThroughput)
 
 	// Duration variability analysis
 	if stdDev, err := stats.StandardDeviation(durations); err == nil {

@@ -14,18 +14,17 @@ import (
 )
 
 // RunBatchDigestOnce executes auto_digest for a batch of pending prune days.
-// Returns processed days, deleted rows, and preserved rows counts.
-// Note: auto_digest doesn't return preserved_rows, so we estimate it as deleted_rows for now.
-func RunBatchDigestOnce(ctx context.Context, platform interface{}, batchSize int, deleteCap int) (processedDays, totalDeleted, totalPreserved int, err error) {
+// Returns processed days and deleted rows counts.
+func RunBatchDigestOnce(ctx context.Context, platform interface{}, batchSize int, deleteCap int, expectedRecordsPerStream int) (processedDays, totalDeleted int, err error) {
 	kwilPlatform, ok := platform.(*kwilTesting.Platform)
 	if !ok {
-		return 0, 0, 0, errors.New("invalid platform type")
+		return 0, 0, errors.New("invalid platform type")
 	}
 
 	// Get the deployer for signing via shared helper
 	dep, err := GetDeployerOrDefault(kwilPlatform)
 	if err != nil {
-		return 0, 0, 0, errors.Wrap(err, "failed to get deployer")
+		return 0, 0, errors.Wrap(err, "failed to get deployer")
 	}
 
 	// Create transaction context
@@ -37,8 +36,8 @@ func RunBatchDigestOnce(ctx context.Context, platform interface{}, batchSize int
 
 	// Call the auto_digest action
 	r, err := kwilPlatform.Engine.Call(engineContext, kwilPlatform.DB, "", "auto_digest", []any{
-		batchSize,
 		deleteCap,
+		expectedRecordsPerStream,
 	}, func(row *common.Row) error {
 		if len(row.Values) != 3 {
 			return errors.Errorf("expected 3 columns, got %d", len(row.Values))
@@ -55,27 +54,24 @@ func RunBatchDigestOnce(ctx context.Context, platform interface{}, batchSize int
 
 		processedDays = processed
 		totalDeleted = deleted
-		// auto_digest doesn't return preserved_rows, estimate as 0 for now
-		// In a real scenario, this could be calculated separately if needed
-		totalPreserved = 0
 
 		return nil
 	})
 
 	if err != nil {
-		return 0, 0, 0, errors.Wrap(err, "error calling auto_digest")
+		return 0, 0, errors.Wrap(err, "error calling auto_digest")
 	}
 	if r.Error != nil {
-		return 0, 0, 0, errors.Wrap(r.Error, "auto_digest procedure error")
+		return 0, 0, errors.Wrap(r.Error, "auto_digest procedure error")
 	}
 
-	return processedDays, totalDeleted, totalPreserved, nil
+	return processedDays, totalDeleted, nil
 }
 
 // MeasureBatchDigest measures performance metrics for an auto_digest execution.
 // Returns a DigestRunResult with timing, memory, and throughput metrics.
 // The collector parameter can be nil if memory monitoring is disabled.
-func MeasureBatchDigest(ctx context.Context, platform interface{}, batchSize int, deleteCap int, collector *benchutil.DockerMemoryCollector) (DigestRunResult, error) {
+func MeasureBatchDigest(ctx context.Context, platform interface{}, batchSize int, deleteCap int, expectedRecordsPerStream int, collector *benchutil.DockerMemoryCollector) (DigestRunResult, error) {
 	kwilPlatform, ok := platform.(*kwilTesting.Platform)
 	if !ok {
 		return DigestRunResult{}, errors.New("invalid platform type")
@@ -83,7 +79,7 @@ func MeasureBatchDigest(ctx context.Context, platform interface{}, batchSize int
 
 	// Execute the auto digest and measure timing
 	startTime := time.Now()
-	processedDays, totalDeleted, totalPreserved, err := RunBatchDigestOnce(ctx, kwilPlatform, batchSize, deleteCap)
+	processedDays, totalDeleted, err := RunBatchDigestOnce(ctx, kwilPlatform, batchSize, deleteCap, expectedRecordsPerStream)
 	duration := time.Since(startTime)
 
 	if err != nil {
@@ -102,9 +98,9 @@ func MeasureBatchDigest(ctx context.Context, platform interface{}, batchSize int
 	}
 
 	// Calculate throughput metrics
-	var daysPerSecond, rowsDeletedPerSecond float64
+	var streamDaysPerSecond, rowsDeletedPerSecond float64
 	if duration.Seconds() > 0 {
-		daysPerSecond = float64(processedDays) / duration.Seconds()
+		streamDaysPerSecond = float64(processedDays) / duration.Seconds()
 		rowsDeletedPerSecond = float64(totalDeleted) / duration.Seconds()
 	}
 
@@ -113,10 +109,9 @@ func MeasureBatchDigest(ctx context.Context, platform interface{}, batchSize int
 		Candidates:           batchSize,
 		ProcessedDays:        processedDays,
 		TotalDeletedRows:     totalDeleted,
-		TotalPreservedRows:   totalPreserved,
 		Duration:             duration,
 		MemoryMaxBytes:       maxMemory,
-		DaysPerSecond:        daysPerSecond,
+		StreamDaysPerSecond:  streamDaysPerSecond,
 		RowsDeletedPerSecond: rowsDeletedPerSecond,
 		WALBytes:             nil, // TODO: Implement WAL tracking
 	}
@@ -217,7 +212,7 @@ func RunCase(ctx context.Context, platform interface{}, c DigestBenchmarkCase) (
 		}
 
 		// Run auto_digest with batch size - DeleteCap controls processing
-		result, err := MeasureBatchDigest(ctx, samplePlatform, batchSize, c.DeleteCap, collector)
+		result, err := MeasureBatchDigest(ctx, samplePlatform, batchSize, c.DeleteCap, c.RecordsPerDay, collector)
 		if err != nil {
 			// Rollback nested tx on error before returning
 			_ = nestedTx.Rollback(ctx)
@@ -334,13 +329,13 @@ func VerifyIdempotency(ctx context.Context, platform interface{}, c DigestBenchm
 	batchSize := c.Streams * c.DaysPerStream
 
 	// Run digest once
-	firstProcessed, firstDeleted, firstPreserved, err := RunBatchDigestOnce(ctx, kwilPlatform, batchSize, c.DeleteCap)
+	firstProcessed, firstDeleted, err := RunBatchDigestOnce(ctx, kwilPlatform, batchSize, c.DeleteCap, c.RecordsPerDay)
 	if err != nil {
 		return false, errors.Wrap(err, "error in first digest run")
 	}
 
 	// Run digest again on the same candidates
-	secondProcessed, secondDeleted, secondPreserved, err := RunBatchDigestOnce(ctx, kwilPlatform, batchSize, c.DeleteCap)
+	secondProcessed, secondDeleted, err := RunBatchDigestOnce(ctx, kwilPlatform, batchSize, c.DeleteCap, c.RecordsPerDay)
 	if err != nil {
 		return false, errors.Wrap(err, "error in second digest run")
 	}
@@ -352,12 +347,9 @@ func VerifyIdempotency(ctx context.Context, platform interface{}, c DigestBenchm
 	if secondDeleted != 0 {
 		return false, fmt.Errorf("second run deleted %d rows, expected 0", secondDeleted)
 	}
-	if secondPreserved != 0 {
-		return false, fmt.Errorf("second run preserved %d rows, expected 0", secondPreserved)
-	}
 
-	fmt.Printf("Idempotency verified: first run (%d processed, %d deleted, %d preserved), second run (0, 0, 0)\n",
-		firstProcessed, firstDeleted, firstPreserved)
+	fmt.Printf("Idempotency verified: first run (%d processed, %d deleted), second run (0, 0)\n",
+		firstProcessed, firstDeleted)
 
 	return true, nil
 }
@@ -373,7 +365,7 @@ func AggregateResults(results []DigestRunResult) DigestRunResult {
 		Case:                 results[0].Case,
 		Duration:             0,
 		MemoryMaxBytes:       0,
-		DaysPerSecond:        0,
+		StreamDaysPerSecond:  0,
 		RowsDeletedPerSecond: 0,
 	}
 
@@ -385,7 +377,6 @@ func AggregateResults(results []DigestRunResult) DigestRunResult {
 		aggregated.Candidates += result.Candidates
 		aggregated.ProcessedDays += result.ProcessedDays
 		aggregated.TotalDeletedRows += result.TotalDeletedRows
-		aggregated.TotalPreservedRows += result.TotalPreservedRows
 
 		// Aggregate timing
 		totalDuration += result.Duration
@@ -410,7 +401,7 @@ func AggregateResults(results []DigestRunResult) DigestRunResult {
 
 	// Calculate throughput metrics
 	if aggregated.Duration.Seconds() > 0 {
-		aggregated.DaysPerSecond = float64(aggregated.ProcessedDays) / aggregated.Duration.Seconds()
+		aggregated.StreamDaysPerSecond = float64(aggregated.ProcessedDays) / aggregated.Duration.Seconds()
 		aggregated.RowsDeletedPerSecond = float64(aggregated.TotalDeletedRows) / aggregated.Duration.Seconds()
 	}
 
@@ -418,10 +409,10 @@ func AggregateResults(results []DigestRunResult) DigestRunResult {
 }
 
 // CalculateThroughputMetrics calculates derived throughput metrics for a result.
-// This includes days/second, rows deleted/second, and memory efficiency metrics.
+// This includes stream-days/second, rows deleted/second, and memory efficiency metrics.
 func CalculateThroughputMetrics(result *DigestRunResult) {
 	if result.Duration.Seconds() > 0 {
-		result.DaysPerSecond = float64(result.ProcessedDays) / result.Duration.Seconds()
+		result.StreamDaysPerSecond = float64(result.ProcessedDays) / result.Duration.Seconds()
 		result.RowsDeletedPerSecond = float64(result.TotalDeletedRows) / result.Duration.Seconds()
 	}
 }
@@ -438,9 +429,6 @@ func ValidateResult(result DigestRunResult) error {
 	if result.TotalDeletedRows < 0 {
 		return errors.New("total_deleted_rows cannot be negative")
 	}
-	if result.TotalPreservedRows < 0 {
-		return errors.New("total_preserved_rows cannot be negative")
-	}
 	if result.Duration < 0 {
 		return errors.New("duration cannot be negative")
 	}
@@ -449,8 +437,8 @@ func ValidateResult(result DigestRunResult) error {
 	}
 
 	// Validate throughput metrics make sense
-	if result.DaysPerSecond < 0 {
-		return errors.New("days_per_second cannot be negative")
+	if result.StreamDaysPerSecond < 0 {
+		return errors.New("stream_days_per_second cannot be negative")
 	}
 	if result.RowsDeletedPerSecond < 0 {
 		return errors.New("rows_deleted_per_second cannot be negative")
@@ -497,8 +485,8 @@ func (r *BenchmarkRunner) RunBenchmarkCase(ctx context.Context, c DigestBenchmar
 			r.logInfo("Memory not measured for result %d; skipping memory validation.", i)
 			// Still validate other fields:
 			if result.Candidates < 0 || result.ProcessedDays < 0 || result.TotalDeletedRows < 0 ||
-				result.TotalPreservedRows < 0 || result.Duration < 0 ||
-				result.DaysPerSecond < 0 || result.RowsDeletedPerSecond < 0 {
+				result.Duration < 0 ||
+				result.StreamDaysPerSecond < 0 || result.RowsDeletedPerSecond < 0 {
 				return nil, errors.Errorf("result %d validation failed (non-memory fields invalid)", i)
 			}
 			continue
