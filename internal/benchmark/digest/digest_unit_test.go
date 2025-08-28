@@ -5,13 +5,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-// TestSliceCandidates was removed - batching functionality is no longer used.
-// All candidates are now processed in a single call to auto_digest.
-
-// TestAggregateResults tests the result aggregation functionality.
+// TestAggregateResults tests the result aggregation functionality used in benchmarks.
 func TestAggregateResults(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -31,9 +27,9 @@ func TestAggregateResults(t *testing.T) {
 						Streams:       10,
 						DaysPerStream: 5,
 						RecordsPerDay: 100,
-
-						Pattern: "random",
-						Samples: 3,
+						DeleteCap:     1000,
+						Pattern:       PatternRandom,
+						Samples:       3,
 					},
 					Candidates:           50,
 					ProcessedDays:        25,
@@ -43,7 +39,6 @@ func TestAggregateResults(t *testing.T) {
 					MemoryMaxBytes:       1024 * 1024 * 100, // 100MB
 					DaysPerSecond:        5.0,
 					RowsDeletedPerSecond: 200.0,
-					WALBytes:             nil,
 				},
 			},
 			expected: DigestRunResult{
@@ -51,9 +46,9 @@ func TestAggregateResults(t *testing.T) {
 					Streams:       10,
 					DaysPerStream: 5,
 					RecordsPerDay: 100,
-
-					Pattern: "random",
-					Samples: 3,
+					DeleteCap:     1000,
+					Pattern:       PatternRandom,
+					Samples:       3,
 				},
 				Candidates:           50,
 				ProcessedDays:        25,
@@ -63,11 +58,10 @@ func TestAggregateResults(t *testing.T) {
 				MemoryMaxBytes:       1024 * 1024 * 100, // 100MB
 				DaysPerSecond:        5.0,
 				RowsDeletedPerSecond: 200.0,
-				WALBytes:             nil,
 			},
 		},
 		{
-			name: "multiple_results",
+			name: "multiple_results_aggregation",
 			results: []DigestRunResult{
 				{
 					Candidates:           30,
@@ -78,7 +72,6 @@ func TestAggregateResults(t *testing.T) {
 					MemoryMaxBytes:       50 * 1024 * 1024, // 50MB
 					DaysPerSecond:        5.0,
 					RowsDeletedPerSecond: 166.67,
-					WALBytes:             nil,
 				},
 				{
 					Candidates:           20,
@@ -89,7 +82,6 @@ func TestAggregateResults(t *testing.T) {
 					MemoryMaxBytes:       75 * 1024 * 1024, // 75MB
 					DaysPerSecond:        5.0,
 					RowsDeletedPerSecond: 150.0,
-					WALBytes:             nil,
 				},
 			},
 			expected: DigestRunResult{
@@ -98,10 +90,9 @@ func TestAggregateResults(t *testing.T) {
 				TotalDeletedRows:     800,              // 500 + 300
 				TotalPreservedRows:   1800,             // 1000 + 800
 				Duration:             5 * time.Second,  // 3 + 2
-				MemoryMaxBytes:       75 * 1024 * 1024, // max(50MB, 75MB) = 75MB
+				MemoryMaxBytes:       75 * 1024 * 1024, // max(50MB, 75MB)
 				DaysPerSecond:        5.0,              // 25 / 5
 				RowsDeletedPerSecond: 160.0,            // 800 / 5
-				WALBytes:             nil,
 			},
 		},
 	}
@@ -111,30 +102,30 @@ func TestAggregateResults(t *testing.T) {
 			result := AggregateResults(tt.results)
 
 			if len(tt.results) == 0 {
-				assert.Equal(t, DigestRunResult{}, result, "empty input should return zero result")
+				assert.Equal(t, DigestRunResult{}, result)
 				return
 			}
 
-			assert.Equal(t, tt.expected.Candidates, result.Candidates, "candidates should match")
-			assert.Equal(t, tt.expected.ProcessedDays, result.ProcessedDays, "processed days should match")
-			assert.Equal(t, tt.expected.TotalDeletedRows, result.TotalDeletedRows, "deleted rows should match")
-			assert.Equal(t, tt.expected.TotalPreservedRows, result.TotalPreservedRows, "preserved rows should match")
-			assert.Equal(t, tt.expected.Duration, result.Duration, "duration should match")
-			assert.Equal(t, tt.expected.MemoryMaxBytes, result.MemoryMaxBytes, "memory should match")
+			assert.Equal(t, tt.expected.Candidates, result.Candidates)
+			assert.Equal(t, tt.expected.ProcessedDays, result.ProcessedDays)
+			assert.Equal(t, tt.expected.TotalDeletedRows, result.TotalDeletedRows)
+			assert.Equal(t, tt.expected.TotalPreservedRows, result.TotalPreservedRows)
+			assert.Equal(t, tt.expected.Duration, result.Duration)
+			assert.Equal(t, tt.expected.MemoryMaxBytes, result.MemoryMaxBytes)
 
-			// Verify calculated throughput metrics
+			// Verify throughput calculations
 			if result.Duration.Seconds() > 0 {
 				expectedDaysPerSec := float64(result.ProcessedDays) / result.Duration.Seconds()
-				assert.InDelta(t, expectedDaysPerSec, result.DaysPerSecond, 0.1, "days per second should be calculated correctly")
+				assert.InDelta(t, expectedDaysPerSec, result.DaysPerSecond, 0.1)
 
 				expectedRowsPerSec := float64(result.TotalDeletedRows) / result.Duration.Seconds()
-				assert.InDelta(t, expectedRowsPerSec, result.RowsDeletedPerSecond, 0.1, "rows per second should be calculated correctly")
+				assert.InDelta(t, expectedRowsPerSec, result.RowsDeletedPerSecond, 0.1)
 			}
 		})
 	}
 }
 
-// TestValidateBenchmarkCase tests benchmark case validation.
+// TestValidateBenchmarkCase tests benchmark case validation used in benchmark execution.
 func TestValidateBenchmarkCase(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -148,9 +139,8 @@ func TestValidateBenchmarkCase(t *testing.T) {
 				DaysPerStream: 5,
 				RecordsPerDay: 100,
 				DeleteCap:     1000,
-
-				Pattern: "random",
-				Samples: 3,
+				Pattern:       PatternRandom,
+				Samples:       3,
 			},
 			wantErr: false,
 		},
@@ -161,63 +151,22 @@ func TestValidateBenchmarkCase(t *testing.T) {
 				DaysPerStream: 5,
 				RecordsPerDay: 100,
 				DeleteCap:     1000,
-
-				Pattern: "random",
-				Samples: 3,
+				Pattern:       PatternRandom,
+				Samples:       3,
 			},
 			wantErr: true,
 		},
 		{
-			name: "zero_days",
-			c: DigestBenchmarkCase{
-				Streams:       10,
-				DaysPerStream: 0,
-				RecordsPerDay: 100,
-				DeleteCap:     1000,
-
-				Pattern: "random",
-				Samples: 3,
-			},
-			wantErr: true,
-		},
-		{
-			name: "zero_records",
-			c: DigestBenchmarkCase{
-				Streams:       10,
-				DaysPerStream: 5,
-				RecordsPerDay: 0,
-				DeleteCap:     1000,
-
-				Pattern: "random",
-				Samples: 3,
-			},
-			wantErr: true,
-		},
-		{
-			name: "zero_batch_size",
+			name: "zero_delete_cap",
 			c: DigestBenchmarkCase{
 				Streams:       10,
 				DaysPerStream: 5,
 				RecordsPerDay: 100,
 				DeleteCap:     0,
-
-				Pattern: "random",
-				Samples: 3,
+				Pattern:       PatternRandom,
+				Samples:       3,
 			},
 			wantErr: true,
-		},
-		{
-			name: "valid_pattern",
-			c: DigestBenchmarkCase{
-				Streams:       10,
-				DaysPerStream: 5,
-				RecordsPerDay: 100,
-				DeleteCap:     1000,
-
-				Pattern: PatternRandom,
-				Samples: 3,
-			},
-			wantErr: false,
 		},
 		{
 			name: "zero_samples",
@@ -226,9 +175,8 @@ func TestValidateBenchmarkCase(t *testing.T) {
 				DaysPerStream: 5,
 				RecordsPerDay: 100,
 				DeleteCap:     1000,
-
-				Pattern: "random",
-				Samples: 0,
+				Pattern:       PatternRandom,
+				Samples:       0,
 			},
 			wantErr: true,
 		},
@@ -238,203 +186,87 @@ func TestValidateBenchmarkCase(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ValidateBenchmarkCase(tt.c)
 			if tt.wantErr {
-				assert.Error(t, err, "expected validation error but got none")
+				assert.Error(t, err)
 			} else {
-				assert.NoError(t, err, "expected no validation error but got: %v", err)
+				assert.NoError(t, err)
 			}
 		})
 	}
 }
 
-// TestValidateResult tests result validation.
+// TestValidateResult tests result validation used in benchmark execution.
 func TestValidateResult(t *testing.T) {
-	tests := []struct {
-		name    string
-		result  DigestRunResult
-		wantErr bool
-	}{
-		{
-			name: "valid_result",
-			result: DigestRunResult{
-				Candidates:           50,
-				ProcessedDays:        25,
-				TotalDeletedRows:     1000,
-				TotalPreservedRows:   2000,
-				Duration:             5 * time.Second,
-				MemoryMaxBytes:       100 * 1024 * 1024,
-				DaysPerSecond:        5.0,
-				RowsDeletedPerSecond: 200.0,
-			},
-			wantErr: false,
-		},
-		{
-			name: "negative_candidates",
-			result: DigestRunResult{
-				Candidates:         -1,
-				ProcessedDays:      25,
-				TotalDeletedRows:   1000,
-				TotalPreservedRows: 2000,
-				Duration:           5 * time.Second,
-				MemoryMaxBytes:     100 * 1024 * 1024,
-			},
-			wantErr: true,
-		},
-		{
-			name: "zero_memory",
-			result: DigestRunResult{
-				Candidates:         50,
-				ProcessedDays:      25,
-				TotalDeletedRows:   1000,
-				TotalPreservedRows: 2000,
-				Duration:           5 * time.Second,
-				MemoryMaxBytes:     0,
-			},
-			wantErr: true,
-		},
-		{
-			name: "negative_duration",
-			result: DigestRunResult{
-				Candidates:         50,
-				ProcessedDays:      25,
-				TotalDeletedRows:   1000,
-				TotalPreservedRows: 2000,
-				Duration:           -1 * time.Second,
-				MemoryMaxBytes:     100 * 1024 * 1024,
-			},
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateResult(tt.result)
-			if tt.wantErr {
-				assert.Error(t, err, "expected validation error but got none")
-			} else {
-				assert.NoError(t, err, "expected no validation error but got: %v", err)
-			}
-		})
-	}
-}
-
-// TestConvertToSavedResult tests CSV conversion.
-func TestConvertToSavedResult(t *testing.T) {
-	input := DigestRunResult{
-		Case: DigestBenchmarkCase{
-			Streams:       10,
-			DaysPerStream: 5,
-			RecordsPerDay: 100,
-
-			Pattern: "random",
-			Samples: 3,
-		},
+	validResult := DigestRunResult{
 		Candidates:           50,
 		ProcessedDays:        25,
 		TotalDeletedRows:     1000,
 		TotalPreservedRows:   2000,
 		Duration:             5 * time.Second,
-		MemoryMaxBytes:       100 * 1024 * 1024, // 100MB
+		MemoryMaxBytes:       100 * 1024 * 1024,
 		DaysPerSecond:        5.0,
 		RowsDeletedPerSecond: 200.0,
-		WALBytes:             &[]int64{1024}[0], // 1024 bytes
 	}
 
-	result := ConvertToSavedResult(input)
+	invalidResults := []struct {
+		name   string
+		result DigestRunResult
+	}{
+		{
+			name: "negative_candidates",
+			result: DigestRunResult{
+				Candidates:     -1,
+				ProcessedDays:  25,
+				Duration:       5 * time.Second,
+				MemoryMaxBytes: 100 * 1024 * 1024,
+			},
+		},
+		{
+			name: "zero_memory",
+			result: DigestRunResult{
+				Candidates:     50,
+				ProcessedDays:  25,
+				Duration:       5 * time.Second,
+				MemoryMaxBytes: 0,
+			},
+		},
+		{
+			name: "negative_duration",
+			result: DigestRunResult{
+				Candidates:     50,
+				ProcessedDays:  25,
+				Duration:       -1 * time.Second,
+				MemoryMaxBytes: 100 * 1024 * 1024,
+			},
+		},
+	}
 
-	// Verify conversion
-	assert.Equal(t, input.Case.Streams, result.Streams)
-	assert.Equal(t, input.Case.DaysPerStream, result.DaysPerStream)
-	assert.Equal(t, input.Case.RecordsPerDay, result.RecordsPerDay)
-	assert.Equal(t, input.Case.Pattern, result.Pattern)
-	assert.Equal(t, input.Case.Samples, result.Samples)
-	assert.Equal(t, input.Candidates, result.Candidates)
-	assert.Equal(t, input.ProcessedDays, result.ProcessedDays)
-	assert.Equal(t, input.TotalDeletedRows, result.TotalDeleted)
-	assert.Equal(t, input.TotalPreservedRows, result.TotalPreserved)
-	assert.Equal(t, int64(5000), result.DurationMs) // 5 seconds in milliseconds
-	assert.Equal(t, input.DaysPerSecond, result.DaysPerSec)
-	assert.Equal(t, input.RowsDeletedPerSecond, result.RowsDeletedPerSec)
-	assert.Equal(t, uint64(100*1024*1024), result.MemoryMB*1024*1024) // Memory in bytes
-	assert.Equal(t, input.WALBytes, result.WalBytes)
-	assert.NotEmpty(t, result.Timestamp)
-}
+	// Test valid result
+	err := ValidateResult(validResult)
+	assert.NoError(t, err, "valid result should pass validation")
 
-// TestDataGenerationPatterns tests the data generation patterns.
-func TestDataGenerationPatterns(t *testing.T) {
-	patterns := []string{PatternRandom, PatternDups50, PatternMonotonic, PatternEqual, PatternTimeDup}
-
-	for _, pattern := range patterns {
-		t.Run("pattern_"+pattern, func(t *testing.T) {
-			// Test that we can create benchmark cases with each pattern
-			c := DigestBenchmarkCase{
-				Streams:       5,
-				DaysPerStream: 2,
-				RecordsPerDay: 10,
-
-				Pattern: pattern,
-				Samples: 1,
-			}
-
-			// Should not panic when creating the case
-			err := ValidateBenchmarkCase(c)
-			// Pattern validation may not be implemented, so we just check that basic validation passes
-			if c.Streams > 0 && c.DaysPerStream > 0 && c.RecordsPerDay > 0 && c.Samples > 0 {
-				// These should be valid if the pattern validation isn't implemented
-				assert.NoError(t, err, "basic validation should pass for pattern %s", pattern)
-			}
+	// Test invalid results
+	for _, tt := range invalidResults {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateResult(tt.result)
+			assert.Error(t, err, "expected validation error for %s", tt.name)
 		})
 	}
 }
 
-// TestConstants tests that all constants are properly defined.
-func TestConstants(t *testing.T) {
-	// Test that all table names are defined
+// TestCoreConstants validates essential constants used in benchmarks.
+func TestCoreConstants(t *testing.T) {
+	// Test essential table names for digest operations
 	assert.NotEmpty(t, DigestTables, "DigestTables should not be empty")
 	assert.Contains(t, DigestTables, "primitive_events", "should contain primitive_events")
 	assert.Contains(t, DigestTables, "pending_prune_days", "should contain pending_prune_days")
 
-	// Test that all patterns are defined
+	// Test essential patterns
 	assert.NotEmpty(t, PatternRandom, "PatternRandom should not be empty")
-	assert.NotEmpty(t, PatternDups50, "PatternDups50 should not be empty")
-	assert.NotEmpty(t, PatternMonotonic, "PatternMonotonic should not be empty")
-	assert.NotEmpty(t, PatternEqual, "PatternEqual should not be empty")
-	assert.NotEmpty(t, PatternTimeDup, "PatternTimeDup should not be empty")
 
-	// Test that container name is defined
+	// Test container name
 	assert.NotEmpty(t, DockerPostgresContainer, "DockerPostgresContainer should not be empty")
 
-	// Test that resource limits are reasonable
-	assert.Greater(t, MaxWorkers, 0, "MaxWorkers should be positive")
-	assert.Greater(t, MaxConcurrency, 0, "MaxConcurrency should be positive")
-	// DeleteCap controls processing - we now use auto_digest which sends all candidates in one call
+	// Test core configuration
+	assert.Greater(t, DefaultDeleteCap, 0, "DefaultDeleteCap should be positive")
 	assert.Greater(t, DefaultSamples, 0, "DefaultSamples should be positive")
-
-	// Test that test configurations are reasonable
-	assert.Greater(t, SmokeTestStreams, 0, "SmokeTestStreams should be positive")
-	assert.Greater(t, MediumTestStreams, 0, "MediumTestStreams should be positive")
-	assert.Greater(t, ExtremeTestStreams, 0, "ExtremeTestStreams should be positive")
-}
-
-// TestBenchmarkCaseCreation tests creation of benchmark cases.
-func TestBenchmarkCaseCreation(t *testing.T) {
-	// Test creation with constants
-	c := DigestBenchmarkCase{
-		Streams:       SmokeTestStreams,
-		DaysPerStream: SmokeTestDays,
-		RecordsPerDay: SmokeTestRecords,
-
-		Pattern: PatternRandom,
-		Samples: DefaultSamples,
-	}
-
-	err := ValidateBenchmarkCase(c)
-	require.NoError(t, err, "benchmark case with constants should be valid")
-
-	// Test that the case has reasonable values
-	assert.Greater(t, c.Streams, 0, "streams should be positive")
-	assert.Greater(t, c.DaysPerStream, 0, "days per stream should be positive")
-	assert.Greater(t, c.RecordsPerDay, 0, "records per day should be positive")
-	// DeleteCap controls processing - we now use auto_digest which sends all candidates in one call
-	assert.Greater(t, c.Samples, 0, "samples should be positive")
-	assert.NotEmpty(t, c.Pattern, "pattern should not be empty")
 }

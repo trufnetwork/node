@@ -132,6 +132,12 @@ func RunCase(ctx context.Context, platform interface{}, c DigestBenchmarkCase) (
 		return nil, errors.Wrap(err, "invalid benchmark case")
 	}
 
+	// Ensure kwil testing platform for nested transactions per sample
+	kwilPlatform, ok := platform.(*kwilTesting.Platform)
+	if !ok {
+		return nil, errors.New("invalid platform type")
+	}
+
 	var results []DigestRunResult
 	// With auto_digest, we don't need to generate explicit candidates
 	// auto_digest will pick candidates from pending_prune_days table
@@ -196,9 +202,25 @@ func RunCase(ctx context.Context, platform interface{}, c DigestBenchmarkCase) (
 			fmt.Println("Memory monitoring disabled via ENABLE_MEMORY_MONITORING=false")
 		}
 
-		// Run auto_digest with batch size - DeleteCap controls processing
-		result, err := MeasureBatchDigest(ctx, platform, batchSize, c.DeleteCap, collector)
+		// Begin nested transaction (savepoint) for this sample
+		nestedTx, err := kwilPlatform.DB.BeginTx(ctx)
 		if err != nil {
+			return nil, errors.Wrapf(err, "failed to begin nested transaction for sample %d", sample)
+		}
+
+		// Create a platform bound to the nested transaction
+		samplePlatform := &kwilTesting.Platform{
+			Engine:   kwilPlatform.Engine,
+			DB:       nestedTx,
+			Deployer: kwilPlatform.Deployer,
+			Logger:   kwilPlatform.Logger,
+		}
+
+		// Run auto_digest with batch size - DeleteCap controls processing
+		result, err := MeasureBatchDigest(ctx, samplePlatform, batchSize, c.DeleteCap, collector)
+		if err != nil {
+			// Rollback nested tx on error before returning
+			_ = nestedTx.Rollback(ctx)
 			return nil, errors.Wrapf(err, "failed to measure batch for sample %d", sample)
 		}
 
@@ -207,6 +229,11 @@ func RunCase(ctx context.Context, platform interface{}, c DigestBenchmarkCase) (
 		result.Candidates = batchSize
 
 		sampleResults = append(sampleResults, result)
+
+		// Always rollback the nested transaction to reset state for next sample
+		if err := nestedTx.Rollback(ctx); err != nil {
+			return nil, errors.Wrapf(err, "failed to rollback nested transaction for sample %d", sample)
+		}
 
 		// Aggregate results for this sample
 		if len(sampleResults) > 0 {
