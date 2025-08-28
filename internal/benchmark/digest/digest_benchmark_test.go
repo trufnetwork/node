@@ -43,11 +43,11 @@ var benchmarkScales = map[string]DigestBenchmarkScale{
 	"exact_fit": {
 		Name:         "exact_fit",
 		Description:  "exact fit testing - data volume matches delete cap exactly",
-		SetupStreams: 200,
-		SetupDays:    1,
+		SetupStreams: 347,
+		SetupDays:    12,
 		TestCases: []DigestBenchmarkCase{
-			{Streams: 200, DaysPerStream: 1, RecordsPerDay: 500, DeleteCap: 10000, Pattern: PatternRandom, Samples: 3, IdempotencyCheck: true},
-			{Streams: 200, DaysPerStream: 1, RecordsPerDay: 500, DeleteCap: 100000, Pattern: PatternRandom, Samples: 3, IdempotencyCheck: true},
+			{Streams: 347, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, DeleteCap: 10000, Pattern: PatternRandom, Samples: DefaultSamples, IdempotencyCheck: true},
+			{Streams: 347, DaysPerStream: 12, RecordsPerDay: ProductionRecordsPerDay, DeleteCap: 100000, Pattern: PatternRandom, Samples: DefaultSamples, IdempotencyCheck: true},
 		},
 	},
 	"with_excess": {
