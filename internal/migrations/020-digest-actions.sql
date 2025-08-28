@@ -66,22 +66,21 @@ CREATE OR REPLACE ACTION batch_digest(
     $markers_deleted_this_pass INT := 0;
     $cap_plus_one INT := $delete_cap + 1;
 
-    -- Encoding constants and arrays for aligned aggregation
-    -- safe until year 2286
-    $BASE INT := 1000000000; -- 1e10
-    $idxs INT[] := ARRAY[]::INT[];
+    -- Aggregated arrays for aligned processing
+    $agg_stream_refs INT[] := ARRAY[]::INT[];
+    $agg_day_indexes INT[] := ARRAY[]::INT[];
 
-    $enc_stream_refs INT[] := ARRAY[]::INT[];
-    $enc_day_indexes INT[] := ARRAY[]::INT[];
+    $agg_open_times INT[] := ARRAY[]::INT[];
+    $agg_open_created_ats INT[] := ARRAY[]::INT[];
 
-    $enc_open_times INT[] := ARRAY[]::INT[];
-    $enc_open_created_ats INT[] := ARRAY[]::INT[];
-    $enc_close_times INT[] := ARRAY[]::INT[];
-    $enc_close_created_ats INT[] := ARRAY[]::INT[];
-    $enc_high_times INT[] := ARRAY[]::INT[];
-    $enc_high_created_ats INT[] := ARRAY[]::INT[];
-    $enc_low_times INT[] := ARRAY[]::INT[];
-    $enc_low_created_ats INT[] := ARRAY[]::INT[];
+    $agg_close_times INT[] := ARRAY[]::INT[];
+    $agg_close_created_ats INT[] := ARRAY[]::INT[];
+
+    $agg_high_times INT[] := ARRAY[]::INT[];
+    $agg_high_created_ats INT[] := ARRAY[]::INT[];
+
+    $agg_low_times INT[] := ARRAY[]::INT[];
+    $agg_low_created_ats INT[] := ARRAY[]::INT[];
     
     -- When called from auto_digest, candidates are already validated from pending_prune_days
     -- So we can skip the redundant validation and use the input arrays directly
@@ -93,10 +92,11 @@ CREATE OR REPLACE ACTION batch_digest(
         RETURN 0, 0, 0, false;
     }
 
-    -- Step 2: TRUE BULK OHLC Processing using encoded aggregation for aligned arrays
+    -- Step 2: BULK OHLC Processing using ordered ARRAY_AGG for aligned arrays
     if array_length($valid_stream_refs) > 0 {
-        -- Step 2a: Single-pass compute + aggregate with encoded arrays (guaranteed alignment)
-        for $result in WITH stream_days AS (
+        -- Step 2a: Single-pass compute + aggregate with ordered ARRAY_AGG (guaranteed alignment)
+        for $result in
+        WITH stream_days AS (
             SELECT u.stream_ref, u.day_index,
                    (u.day_index * 86400) AS day_start,
                    ((u.day_index * 86400) + 86400) AS day_end
@@ -140,93 +140,90 @@ CREATE OR REPLACE ACTION batch_digest(
             GROUP BY stream_ref, day_index, day_start, day_end
             HAVING COUNT(*) >= 2  -- Only include days with multiple records for pruning
         ),
-        enumerated AS (
-            SELECT o.*,
-                   ROW_NUMBER() OVER (ORDER BY stream_ref, day_index) AS idx
-            FROM ohlc o
+        agg AS (
+            SELECT
+              ARRAY_AGG(stream_ref        ORDER BY stream_ref, day_index) AS stream_refs,
+              ARRAY_AGG(day_index         ORDER BY stream_ref, day_index) AS day_indexes,
+
+              ARRAY_AGG(open_time         ORDER BY stream_ref, day_index) AS open_times,
+              ARRAY_AGG(open_created_at   ORDER BY stream_ref, day_index) AS open_created_ats,
+
+              ARRAY_AGG(close_time        ORDER BY stream_ref, day_index) AS close_times,
+              ARRAY_AGG(close_created_at  ORDER BY stream_ref, day_index) AS close_created_ats,
+
+              ARRAY_AGG(high_time         ORDER BY stream_ref, day_index) AS high_times,
+              ARRAY_AGG(high_created_at   ORDER BY stream_ref, day_index) AS high_created_ats,
+
+              ARRAY_AGG(low_time          ORDER BY stream_ref, day_index) AS low_times,
+              ARRAY_AGG(low_created_at    ORDER BY stream_ref, day_index) AS low_created_ats
+            FROM ohlc
         )
-        SELECT
-          ARRAY_AGG(idx)                                         AS idxs,
-
-          ARRAY_AGG(idx * $BASE + stream_ref)                    AS enc_stream_refs,
-          ARRAY_AGG(idx * $BASE + day_index)                     AS enc_day_indexes,
-
-          ARRAY_AGG(idx * $BASE + open_time)                     AS enc_open_times,
-          ARRAY_AGG(idx * $BASE + open_created_at)               AS enc_open_created_ats,
-          ARRAY_AGG(idx * $BASE + close_time)                    AS enc_close_times,
-          ARRAY_AGG(idx * $BASE + close_created_at)              AS enc_close_created_ats,
-          ARRAY_AGG(idx * $BASE + high_time)                     AS enc_high_times,
-          ARRAY_AGG(idx * $BASE + high_created_at)               AS enc_high_created_ats,
-          ARRAY_AGG(idx * $BASE + low_time)                      AS enc_low_times,
-          ARRAY_AGG(idx * $BASE + low_created_at)                AS enc_low_created_ats
-        FROM enumerated
+        SELECT *
+        FROM agg
         {
-          $idxs := $result.idxs;
-          $enc_stream_refs := $result.enc_stream_refs;
-          $enc_day_indexes := $result.enc_day_indexes;
-          $enc_open_times := $result.enc_open_times;
-          $enc_open_created_ats := $result.enc_open_created_ats;
-          $enc_close_times := $result.enc_close_times;
-          $enc_close_created_ats := $result.enc_close_created_ats;
-          $enc_high_times := $result.enc_high_times;
-          $enc_high_created_ats := $result.enc_high_created_ats;
-          $enc_low_times := $result.enc_low_times;
-          $enc_low_created_ats := $result.enc_low_created_ats;
+          $agg_stream_refs       := $result.stream_refs;
+          $agg_day_indexes       := $result.day_indexes;
+
+          $agg_open_times        := $result.open_times;
+          $agg_open_created_ats  := $result.open_created_ats;
+
+          $agg_close_times       := $result.close_times;
+          $agg_close_created_ats := $result.close_created_ats;
+
+          $agg_high_times        := $result.high_times;
+          $agg_high_created_ats  := $result.high_created_ats;
+
+          $agg_low_times         := $result.low_times;
+          $agg_low_created_ats   := $result.low_created_ats;
         }
 
-        $total_processed := array_length($idxs);
+        $total_processed := COALESCE(array_length($agg_stream_refs), 0);
 
-        -- Step 2b: BULK DELETION using encoded arrays (guaranteed alignment)
-        if array_length($idxs) > 0 {
+        -- Step 2b: BULK DELETION using aligned arrays (guaranteed alignment)
+        if array_length($agg_stream_refs) > 0 {
             
             -- EVENTS: count up to cap+1 to see if there are leftovers (using COUNT(*))
             $cand_count INT := 0;
             for $row in
             WITH targets AS (
                 SELECT
-                    -- decode stable index and keys
-                    (es % $BASE)::INT AS stream_ref,
-                    (ed % $BASE)::INT AS day_index,
+                    u.stream_ref,
+                    u.day_index,
+                    (u.day_index * 86400)        AS day_start,
+                    (u.day_index * 86400) + 86400 AS day_end,
 
-                    -- compute day window
-                    ((ed % $BASE)::INT * 86400) AS day_start,
-                    ((ed % $BASE)::INT * 86400) + 86400 AS day_end,
-
-                    -- decode OHLC times & created_ats (needed for keep_set)
-                    (eo  % $BASE)::INT AS open_time,
-                    (eoca% $BASE)::INT AS open_created_at,
-                    (ec  % $BASE)::INT AS close_time,
-                    (ecca% $BASE)::INT AS close_created_at,
-                    (eh  % $BASE)::INT AS high_time,
-                    (ehca% $BASE)::INT AS high_created_at,
-                    (el  % $BASE)::INT AS low_time,
-                    (elca% $BASE)::INT AS low_created_at
+                    u.open_time,         u.open_created_at,
+                    u.close_time,        u.close_created_at,
+                    u.high_time,         u.high_created_at,
+                    u.low_time,          u.low_created_at
                 FROM UNNEST(
-                         $enc_stream_refs, $enc_day_indexes,
-                         $enc_open_times,  $enc_open_created_ats,
-                         $enc_close_times, $enc_close_created_ats,
-                         $enc_high_times,  $enc_high_created_ats,
-                         $enc_low_times,   $enc_low_created_ats
+                         $agg_stream_refs,
+                         $agg_day_indexes,
+                         $agg_open_times,        $agg_open_created_ats,
+                         $agg_close_times,       $agg_close_created_ats,
+                         $agg_high_times,        $agg_high_created_ats,
+                         $agg_low_times,         $agg_low_created_ats
                        ) AS u(
-                         es, ed,
-                         eo, eoca,
-                         ec, ecca,
-                         eh, ehca,
-                         el, elca
+                         stream_ref,
+                         day_index,
+                         open_time,        open_created_at,
+                         close_time,       close_created_at,
+                         high_time,        high_created_at,
+                         low_time,         low_created_at
                        )
             ),
             keep_set AS (
                 SELECT DISTINCT stream_ref, open_time  AS event_time, open_created_at  AS created_at FROM targets
-                WHERE open_time IS NOT NULL AND open_created_at IS NOT NULL
+                WHERE open_time  IS NOT NULL
                 UNION ALL
                 SELECT DISTINCT stream_ref, close_time AS event_time, close_created_at AS created_at FROM targets
-                WHERE close_time IS NOT NULL AND close_created_at IS NOT NULL
+                WHERE close_time IS NOT NULL
                 UNION ALL
                 SELECT DISTINCT stream_ref, high_time  AS event_time, high_created_at  AS created_at FROM targets
-                WHERE high_time IS NOT NULL AND high_created_at IS NOT NULL
+                WHERE high_time  IS NOT NULL
                 UNION ALL
                 SELECT DISTINCT stream_ref, low_time   AS event_time, low_created_at   AS created_at FROM targets
-                WHERE low_time IS NOT NULL AND low_created_at IS NOT NULL
+                WHERE low_time   IS NOT NULL
             ),
             delete_candidates_plus_one AS (
                 SELECT pe.stream_ref, pe.event_time, pe.created_at
@@ -259,44 +256,42 @@ CREATE OR REPLACE ACTION batch_digest(
             -- EVENTS: actual capped delete using WHERE EXISTS (no USING support)
             WITH targets AS (
                 SELECT
-                    (es % $BASE)::INT AS stream_ref,
-                    (ed % $BASE)::INT AS day_index,
-                    ((ed % $BASE)::INT * 86400) AS day_start,
-                    ((ed % $BASE)::INT * 86400) + 86400 AS day_end,
-                    (eo  % $BASE)::INT AS open_time,
-                    (eoca% $BASE)::INT AS open_created_at,
-                    (ec  % $BASE)::INT AS close_time,
-                    (ecca% $BASE)::INT AS close_created_at,
-                    (eh  % $BASE)::INT AS high_time,
-                    (ehca% $BASE)::INT AS high_created_at,
-                    (el  % $BASE)::INT AS low_time,
-                    (elca% $BASE)::INT AS low_created_at
+                    u.stream_ref,
+                    u.day_index,
+                    (u.day_index * 86400)        AS day_start,
+                    (u.day_index * 86400) + 86400 AS day_end,
+                    u.open_time,         u.open_created_at,
+                    u.close_time,        u.close_created_at,
+                    u.high_time,         u.high_created_at,
+                    u.low_time,          u.low_created_at
                 FROM UNNEST(
-                         $enc_stream_refs, $enc_day_indexes,
-                         $enc_open_times,  $enc_open_created_ats,
-                         $enc_close_times, $enc_close_created_ats,
-                         $enc_high_times,  $enc_high_created_ats,
-                         $enc_low_times,   $enc_low_created_ats
+                         $agg_stream_refs,
+                         $agg_day_indexes,
+                         $agg_open_times,        $agg_open_created_ats,
+                         $agg_close_times,       $agg_close_created_ats,
+                         $agg_high_times,        $agg_high_created_ats,
+                         $agg_low_times,         $agg_low_created_ats
                        ) AS u(
-                         es, ed,
-                         eo, eoca,
-                         ec, ecca,
-                         eh, ehca,
-                         el, elca
+                         stream_ref,
+                         day_index,
+                         open_time,        open_created_at,
+                         close_time,       close_created_at,
+                         high_time,        high_created_at,
+                         low_time,         low_created_at
                        )
             ),
             keep_set AS (
                 SELECT DISTINCT stream_ref, open_time  AS event_time, open_created_at  AS created_at FROM targets
-                WHERE open_time IS NOT NULL AND open_created_at IS NOT NULL
+                WHERE open_time  IS NOT NULL
                 UNION ALL
                 SELECT DISTINCT stream_ref, close_time AS event_time, close_created_at AS created_at FROM targets
-                WHERE close_time IS NOT NULL AND close_created_at IS NOT NULL
+                WHERE close_time IS NOT NULL
                 UNION ALL
                 SELECT DISTINCT stream_ref, high_time  AS event_time, high_created_at  AS created_at FROM targets
-                WHERE high_time IS NOT NULL AND high_created_at IS NOT NULL
+                WHERE high_time  IS NOT NULL
                 UNION ALL
                 SELECT DISTINCT stream_ref, low_time   AS event_time, low_created_at   AS created_at FROM targets
-                WHERE low_time IS NOT NULL AND low_created_at IS NOT NULL
+                WHERE low_time   IS NOT NULL
             ),
             delete_candidates AS (
                 SELECT pe.stream_ref, pe.event_time, pe.created_at
@@ -331,10 +326,10 @@ CREATE OR REPLACE ACTION batch_digest(
             for $row in
             WITH marker_targets AS (
                 SELECT
-                    (es % $BASE)::INT AS stream_ref,
-                    ((ed % $BASE)::INT * 86400) AS day_start,
-                    ((ed % $BASE)::INT * 86400) + 86400 AS day_end
-                FROM UNNEST($enc_stream_refs, $enc_day_indexes) AS u(es, ed)
+                    u.stream_ref,
+                    (u.day_index * 86400)        AS day_start,
+                    (u.day_index * 86400) + 86400 AS day_end
+                FROM UNNEST($agg_stream_refs, $agg_day_indexes) AS u(stream_ref, day_index)
             ),
             marker_candidates_plus_one AS (
                 SELECT pet.stream_ref, pet.event_time
@@ -358,10 +353,10 @@ CREATE OR REPLACE ACTION batch_digest(
             -- MARKERS: actual capped delete using WHERE EXISTS (no USING support)
             WITH marker_targets AS (
                 SELECT
-                    (es % $BASE)::INT AS stream_ref,
-                    ((ed % $BASE)::INT * 86400) AS day_start,
-                    ((ed % $BASE)::INT * 86400) + 86400 AS day_end
-                FROM UNNEST($enc_stream_refs, $enc_day_indexes) AS u(es, ed)
+                    u.stream_ref,
+                    (u.day_index * 86400)        AS day_start,
+                    (u.day_index * 86400) + 86400 AS day_end
+                FROM UNNEST($agg_stream_refs, $agg_day_indexes) AS u(stream_ref, day_index)
             ),
             marker_delete_candidates AS (
                 SELECT pet.stream_ref, pet.event_time
@@ -379,29 +374,25 @@ CREATE OR REPLACE ACTION batch_digest(
                   AND primitive_event_type.event_time = mdc.event_time
             );
             
-            -- Step 2c: BULK INSERT type markers using encoded arrays
+            -- Step 2c: BULK INSERT type markers using aligned arrays
             WITH marker_targets AS (
                 SELECT
-                    (es % $BASE)::INT AS stream_ref,
-                    (eo  % $BASE)::INT AS open_time,
-                    (eoca% $BASE)::INT AS open_created_at,
-                    (ec  % $BASE)::INT AS close_time,
-                    (ecca% $BASE)::INT AS close_created_at,
-                    (eh  % $BASE)::INT AS high_time,
-                    (ehca% $BASE)::INT AS high_created_at,
-                    (el  % $BASE)::INT AS low_time,
-                    (elca% $BASE)::INT AS low_created_at
+                    u.stream_ref,
+                    u.open_time,         u.open_created_at,
+                    u.close_time,        u.close_created_at,
+                    u.high_time,         u.high_created_at,
+                    u.low_time,          u.low_created_at
                 FROM UNNEST(
-                         $enc_stream_refs,
-                         $enc_open_times, $enc_open_created_ats,
-                         $enc_close_times, $enc_close_created_ats,
-                         $enc_high_times, $enc_high_created_ats,
-                         $enc_low_times, $enc_low_created_ats
-                       ) AS u(es,
-                              eo, eoca,
-                              ec, ecca,
-                              eh, ehca,
-                              el, elca)
+                         $agg_stream_refs,
+                         $agg_open_times, $agg_open_created_ats,
+                         $agg_close_times, $agg_close_created_ats,
+                         $agg_high_times, $agg_high_created_ats,
+                         $agg_low_times, $agg_low_created_ats
+                       ) AS u(stream_ref,
+                              open_time, open_created_at,
+                              close_time, close_created_at,
+                              high_time, high_created_at,
+                              low_time, low_created_at)
             ),
             ohlc_markers AS (
                 -- Use DISTINCT to handle overlapping OHLC points and calculate combined type flags
@@ -456,15 +447,15 @@ CREATE OR REPLACE ACTION batch_digest(
             -- Decide if any leftovers remain **before** cleanup
             $has_more_to_delete := $has_more_events OR $has_more_markers;
 
-            -- Step 2d: BULK cleanup using encoded arrays (only when done)
+            -- Step 2d: BULK cleanup using aligned arrays (only when done)
             -- NOTE: When called from auto_digest, candidates came from pending_prune_days
             -- so cleanup is safe even though we skipped validation in batch_digest
             if NOT $has_more_to_delete {
                 WITH cleanup_targets AS (
                     SELECT
-                        (es % $BASE)::INT AS stream_ref,
-                        (ed % $BASE)::INT AS day_index
-                    FROM UNNEST($enc_stream_refs, $enc_day_indexes) AS u(es, ed)
+                        u.stream_ref,
+                        u.day_index
+                    FROM UNNEST($agg_stream_refs, $agg_day_indexes) AS u(stream_ref, day_index)
                 )
                 DELETE FROM pending_prune_days
                 WHERE EXISTS (
@@ -479,43 +470,39 @@ CREATE OR REPLACE ACTION batch_digest(
             for $row in
             WITH preserved_targets AS (
                 SELECT
-                    (es % $BASE)::INT AS stream_ref,
-                    (eo  % $BASE)::INT AS open_time,
-                    (eoca% $BASE)::INT AS open_created_at,
-                    (ec  % $BASE)::INT AS close_time,
-                    (ecca% $BASE)::INT AS close_created_at,
-                    (eh  % $BASE)::INT AS high_time,
-                    (ehca% $BASE)::INT AS high_created_at,
-                    (el  % $BASE)::INT AS low_time,
-                    (elca% $BASE)::INT AS low_created_at
+                    u.stream_ref,
+                    u.open_time,         u.open_created_at,
+                    u.close_time,        u.close_created_at,
+                    u.high_time,         u.high_created_at,
+                    u.low_time,          u.low_created_at
                 FROM UNNEST(
-                         $enc_stream_refs,
-                         $enc_open_times, $enc_open_created_ats,
-                         $enc_close_times, $enc_close_created_ats,
-                         $enc_high_times, $enc_high_created_ats,
-                         $enc_low_times, $enc_low_created_ats
-                       ) AS u(es,
-                              eo, eoca,
-                              ec, ecca,
-                              eh, ehca,
-                              el, elca)
+                         $agg_stream_refs,
+                         $agg_open_times, $agg_open_created_ats,
+                         $agg_close_times, $agg_close_created_ats,
+                         $agg_high_times, $agg_high_created_ats,
+                         $agg_low_times, $agg_low_created_ats
+                       ) AS u(stream_ref,
+                              open_time, open_created_at,
+                              close_time, close_created_at,
+                              high_time, high_created_at,
+                              low_time, low_created_at)
             ),
             keep_set AS (
                 SELECT DISTINCT pt.stream_ref, pt.open_time as event_time, pt.open_created_at as created_at
                 FROM preserved_targets pt
-                WHERE pt.open_time IS NOT NULL AND pt.open_created_at IS NOT NULL
+                WHERE pt.open_time IS NOT NULL
                 UNION ALL
                 SELECT DISTINCT pt.stream_ref, pt.close_time as event_time, pt.close_created_at as created_at
                 FROM preserved_targets pt
-                WHERE pt.close_time IS NOT NULL AND pt.close_created_at IS NOT NULL
+                WHERE pt.close_time IS NOT NULL
                 UNION ALL
                 SELECT DISTINCT pt.stream_ref, pt.high_time as event_time, pt.high_created_at as created_at
                 FROM preserved_targets pt
-                WHERE pt.high_time IS NOT NULL AND pt.high_created_at IS NOT NULL
+                WHERE pt.high_time IS NOT NULL
                 UNION ALL
                 SELECT DISTINCT pt.stream_ref, pt.low_time as event_time, pt.low_created_at as created_at
                 FROM preserved_targets pt
-                WHERE pt.low_time IS NOT NULL AND pt.low_created_at IS NOT NULL
+                WHERE pt.low_time IS NOT NULL
             )
             SELECT COUNT(*) AS n FROM keep_set {
                 $preserved_count := $row.n;
@@ -557,30 +544,45 @@ CREATE OR REPLACE ACTION auto_digest(
     --     ERROR('Only the leader node can execute auto digest operations');
     -- }
     
-    -- Get candidates using deterministic single SQL loop over ordered, limited rows
+    -- Get candidates using efficient ARRAY_AGG batch collection
     $stream_refs INT[] := ARRAY[]::INT[];
     $day_indexes INT[] := ARRAY[]::INT[];
     $has_more BOOL := false;
-    $item_count INT := 0;
 
     -- Get batch_size + 1 items to check if there are more available
-    for $row in
-    SELECT stream_ref, day_index
-    FROM (
+    -- Use ARRAY_AGG for efficient batch collection in a single query
+    for $result in
+    WITH candidates AS (
         SELECT stream_ref, day_index
         FROM pending_prune_days
         ORDER BY day_index ASC, stream_ref ASC
         LIMIT $batch_size_plus_one
-    ) AS c {
-        $item_count := $item_count + 1;
-
-        -- Only add items up to batch_size, use the extra one just to detect has_more
-        if $item_count <= $batch_size {
-            $stream_refs := array_append($stream_refs, $row.stream_ref);
-            $day_indexes := array_append($day_indexes, $row.day_index);
-        } else {
-            $has_more := true;
-        }
+    ),
+    aggregated AS (
+        SELECT
+            ARRAY_AGG(stream_ref ORDER BY day_index ASC, stream_ref ASC) AS all_stream_refs,
+            ARRAY_AGG(day_index ORDER BY day_index ASC, stream_ref ASC) AS all_day_indexes,
+            COUNT(*) AS total_count
+        FROM candidates
+    )
+    SELECT
+        CASE WHEN total_count > $batch_size
+             THEN all_stream_refs[1:$batch_size]
+             ELSE all_stream_refs
+        END AS stream_refs,
+        CASE WHEN total_count > $batch_size
+             THEN all_day_indexes[1:$batch_size]
+             ELSE all_day_indexes
+        END AS day_indexes,
+        CASE WHEN total_count > $batch_size
+             THEN true
+             ELSE false
+        END AS has_more_flag
+    FROM aggregated
+    {
+        $stream_refs := $result.stream_refs;
+        $day_indexes := $result.day_indexes;
+        $has_more := $result.has_more_flag;
     }
     
     -- Handle empty result case
