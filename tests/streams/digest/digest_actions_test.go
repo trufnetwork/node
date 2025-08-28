@@ -109,7 +109,7 @@ func testDigestBasicOHLCCalculation(t *testing.T) func(ctx context.Context, plat
 			Expected: expectedOHLC,
 		})
 
-		// Test auto_digest action with batch size 10
+		// Test auto_digest action with delete cap 10
 		digestResult, err := callAutoDigest(ctx, platform, 10)
 		if err != nil {
 			return errors.Wrap(err, "error calling auto_digest")
@@ -117,9 +117,9 @@ func testDigestBasicOHLCCalculation(t *testing.T) func(ctx context.Context, plat
 
 		// Verify auto_digest result (processes 1 day with simplified exclusive boundaries)
 		expectedDigest := `
-		| processed_days | total_deleted_rows |
-		|----------------|-------------------|
-		| 1              | 0                 |
+		| processed_days | total_deleted_rows | has_more_to_delete |
+		|----------------|-------------------|--------------------|
+		| 1              | 0                 | false              |
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
@@ -195,7 +195,7 @@ func testDigestCombinationFlags(t *testing.T) func(ctx context.Context, platform
 			return errors.Wrap(err, "error inserting pending day for combination test")
 		}
 
-		// Run auto_digest
+		// Run auto_digest with delete cap 10
 		_, err = callAutoDigest(ctx, platform, 10)
 		if err != nil {
 			return errors.Wrap(err, "error calling auto_digest for combination test")
@@ -567,7 +567,7 @@ func testDigestAllSameValueFlags(t *testing.T) func(ctx context.Context, platfor
 			return errors.Wrap(err, "error inserting pending day for all same values test")
 		}
 
-		// Run auto_digest
+		// Run auto_digest with delete cap 10
 		_, err = callAutoDigest(ctx, platform, 10)
 		if err != nil {
 			return errors.Wrap(err, "error calling auto_digest for all same values test")
@@ -755,9 +755,9 @@ func testBatchDigestSingleCandidate(t *testing.T) func(ctx context.Context, plat
 
 		// Verify batch digest result for single candidate
 		expectedResult := `
-		| processed_days | total_deleted_rows | total_preserved_rows |
-		|----------------|-------------------|---------------------|
-		| 1              | 0                 | 4                   |
+		| processed_days | total_deleted_rows | total_preserved_rows | has_more_to_delete |
+		|----------------|-------------------|---------------------|-------------------|
+		| 1              | 0                 | 4                   | false             |
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
@@ -800,9 +800,9 @@ func testBatchDigestMultipleCandidates(t *testing.T) func(ctx context.Context, p
 		// Verify batch digest processed multiple candidates
 		// Stream 3 now included with single record (gets type flag 15 - all OHLC values)
 		expectedResult := `
-		| processed_days | total_deleted_rows | total_preserved_rows |
-		|----------------|-------------------|---------------------|
-		| 3              | 0                 | 9                   |
+		| processed_days | total_deleted_rows | total_preserved_rows | has_more_to_delete |
+		|----------------|-------------------|---------------------|-------------------|
+		| 3              | 0                 | 9                   | false             |
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
@@ -828,9 +828,9 @@ func testBatchDigestEmptyArrays(t *testing.T) func(ctx context.Context, platform
 
 		// Verify empty result
 		expectedResult := `
-		| processed_days | total_deleted_rows | total_preserved_rows |
-		|----------------|-------------------|---------------------|
-		| 0              | 0                 | 0                   |
+		| processed_days | total_deleted_rows | total_preserved_rows | has_more_to_delete |
+		|----------------|-------------------|---------------------|-------------------|
+		| 0              | 0                 | 0                   | false             |
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
@@ -930,7 +930,7 @@ func testArrayOrdering(t *testing.T) func(ctx context.Context, platform *kwilTes
 		// Run auto_digest multiple times to test for ordering consistency
 		var results []string
 		for i := 0; i < 3; i++ {
-			result, err := callAutoDigest(ctx, platform, 50)
+			result, err := callAutoDigest(ctx, platform, 50) // delete cap 50
 			if err != nil {
 				return errors.Wrapf(err, "error calling auto_digest (iteration %d)", i+1)
 			}
@@ -967,17 +967,23 @@ func testOptimizedAutoDigest(t *testing.T) func(ctx context.Context, platform *k
 			return errors.Wrap(err, "error inserting pending day 2")
 		}
 
-		// Call optimized auto_digest
-		result, err := callAutoDigest(ctx, platform, 10) // Batch size 10
+		// Include the single-record day so the optimized flow covers it
+		err = insertPendingDay(ctx, platform, 3, 7)
+		if err != nil {
+			return errors.Wrap(err, "error inserting pending day 3")
+		}
+
+		// Call optimized auto_digest — use a cap large enough to capture all 3 at once
+		result, err := callAutoDigest(ctx, platform, 50) // or keep 10: GREATEST(1, ...) still works, but may require multiple passes
 		if err != nil {
 			return errors.Wrap(err, "error calling optimized auto_digest")
 		}
 
-		// Verify auto_digest processed candidates efficiently with simplified boundaries
+		// Verify auto_digest processed all three candidates in one pass
 		expectedResult := `
-		| processed_days | total_deleted_rows |
-		|----------------|-------------------|
-		| 3              | 0                 |
+		| processed_days | total_deleted_rows | has_more_to_delete |
+		|----------------|-------------------|--------------------|
+		| 3              | 0                 | false              |
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
@@ -1013,13 +1019,14 @@ func callBatchDigest(ctx context.Context, platform *kwilTesting.Platform, stream
 		streamRefs,
 		dayIndexes,
 	}, func(row *common.Row) error {
-		if len(row.Values) != 3 {
-			return errors.Errorf("expected 3 columns, got %d", len(row.Values))
+		if len(row.Values) != 4 {
+			return errors.Errorf("expected 4 columns, got %d", len(row.Values))
 		}
 		processedDays := fmt.Sprintf("%v", row.Values[0])
 		totalDeleted := fmt.Sprintf("%v", row.Values[1])
 		totalPreserved := fmt.Sprintf("%v", row.Values[2])
-		result = append(result, procedure.ResultRow{processedDays, totalDeleted, totalPreserved})
+		hasMore := fmt.Sprintf("%v", row.Values[3])
+		result = append(result, procedure.ResultRow{processedDays, totalDeleted, totalPreserved, hasMore})
 		return nil
 	})
 
@@ -1040,7 +1047,7 @@ func callBatchDigest(ctx context.Context, platform *kwilTesting.Platform, stream
 }
 
 // callAutoDigest calls the auto_digest action
-func callAutoDigest(ctx context.Context, platform *kwilTesting.Platform, batchSize int) ([]procedure.ResultRow, error) {
+func callAutoDigest(ctx context.Context, platform *kwilTesting.Platform, deleteCap int) ([]procedure.ResultRow, error) {
 	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
 	if err != nil {
 		return nil, errors.Wrap(err, "error creating ethereum address")
@@ -1060,14 +1067,16 @@ func callAutoDigest(ctx context.Context, platform *kwilTesting.Platform, batchSi
 
 	var result []procedure.ResultRow
 	r, err := platform.Engine.Call(engineContext, platform.DB, "", "auto_digest", []any{
-		batchSize,
+		deleteCap,
+		24, // expected_records_per_stream (default)
 	}, func(row *common.Row) error {
-		if len(row.Values) != 2 {
-			return errors.Errorf("expected 2 columns, got %d", len(row.Values))
+		if len(row.Values) != 3 {
+			return errors.Errorf("expected 3 columns, got %d", len(row.Values))
 		}
 		processedDays := fmt.Sprintf("%v", row.Values[0])
 		totalDeleted := fmt.Sprintf("%v", row.Values[1])
-		result = append(result, procedure.ResultRow{processedDays, totalDeleted})
+		hasMore := fmt.Sprintf("%v", row.Values[2])
+		result = append(result, procedure.ResultRow{processedDays, totalDeleted, hasMore})
 		return nil
 	})
 
@@ -1167,9 +1176,9 @@ func testDigestDeletionLogic(t *testing.T) func(ctx context.Context, platform *k
 
 		// Deletion WORKS! (6 records deleted: 10→4) and SQL now reports correct count ✅
 		expectedResult := `
-		| processed_days | total_deleted_rows | total_preserved_rows |
-		|----------------|-------------------|---------------------|
-		| 1              | 6                 | 4                   |
+		| processed_days | total_deleted_rows | total_preserved_rows | has_more_to_delete |
+		|----------------|-------------------|---------------------|-------------------|
+		| 1              | 6                 | 4                   | false             |
 		`
 
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
