@@ -67,20 +67,20 @@ CREATE OR REPLACE ACTION batch_digest(
     $cap_plus_one INT := $delete_cap + 1;
 
     -- Aggregated arrays for aligned processing
-    $agg_stream_refs INT[] := ARRAY[]::INT[];
-    $agg_day_indexes INT[] := ARRAY[]::INT[];
+    $agg_stream_refs INT[];
+    $agg_day_indexes INT[];
 
-    $agg_open_times INT[] := ARRAY[]::INT[];
-    $agg_open_created_ats INT[] := ARRAY[]::INT[];
+    $agg_open_times INT[];
+    $agg_open_created_ats INT[];
 
-    $agg_close_times INT[] := ARRAY[]::INT[];
-    $agg_close_created_ats INT[] := ARRAY[]::INT[];
+    $agg_close_times INT[];
+    $agg_close_created_ats INT[];
 
-    $agg_high_times INT[] := ARRAY[]::INT[];
-    $agg_high_created_ats INT[] := ARRAY[]::INT[];
+    $agg_high_times INT[];
+    $agg_high_created_ats INT[];
 
-    $agg_low_times INT[] := ARRAY[]::INT[];
-    $agg_low_created_ats INT[] := ARRAY[]::INT[];
+    $agg_low_times INT[];
+    $agg_low_created_ats INT[];
     
     -- When called from auto_digest, candidates are already validated from pending_prune_days
     -- So we can skip the redundant validation and use the input arrays directly
@@ -138,7 +138,7 @@ CREATE OR REPLACE ACTION batch_digest(
               COUNT(*) AS record_count
             FROM ranked
             GROUP BY stream_ref, day_index, day_start, day_end
-            HAVING COUNT(*) >= 2  -- Only include days with multiple records for pruning
+            HAVING COUNT(*) >= 1  -- Include days with a single record as valid candidates
         ),
         agg AS (
             SELECT
@@ -503,8 +503,12 @@ CREATE OR REPLACE ACTION batch_digest(
                 SELECT DISTINCT pt.stream_ref, pt.low_time as event_time, pt.low_created_at as created_at
                 FROM preserved_targets pt
                 WHERE pt.low_time IS NOT NULL
+            ),
+            keep_unique AS (
+                SELECT DISTINCT stream_ref, event_time, created_at
+                FROM keep_set
             )
-            SELECT COUNT(*) AS n FROM keep_set {
+            SELECT COUNT(*) AS n FROM keep_unique {
                 $preserved_count := $row.n;
             }
             $total_preserved := $preserved_count;
@@ -536,10 +540,10 @@ CREATE OR REPLACE ACTION auto_digest(
     -- has_more_to_delete indicates that there are still pending batches to process
     has_more_to_delete BOOL
 ) {
-    -- Calculate batch size dynamically without decimal types to avoid numeric metadata issues
+    -- Calculate batch size dynamically
     -- Formula: floor((delete_cap * 3) / (expected_records_per_stream * 2))
-    -- Equivalent to: (delete_cap / expected_records_per_stream) * 1.5
-    $batch_size := (($delete_cap * 3) / ($expected_records_per_stream * 2));
+    -- Equivalent to: (delete_cap / expected_records_per_stream) * 1.5 (but ensuring we don't use float like types)
+    $batch_size := GREATEST(1, (($delete_cap * 3) / ($expected_records_per_stream * 2)));
     $batch_size_plus_one := $batch_size + 1;
     -- Leader authorization check, keep it commented out for now so test passing and until we can inject how leader is
     -- if @caller != @leader {
@@ -547,8 +551,9 @@ CREATE OR REPLACE ACTION auto_digest(
     -- }
     
     -- Get candidates using efficient ARRAY_AGG batch collection
-    $stream_refs INT[] := ARRAY[]::INT[];
-    $day_indexes INT[] := ARRAY[]::INT[];
+    $stream_refs INT[];
+    $day_indexes INT[];
+    -- will help our user determine if they need to call auto_digest again
     $has_more BOOL := false;
 
     -- Get batch_size + 1 items to check if there are more available
