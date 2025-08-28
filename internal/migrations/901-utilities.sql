@@ -50,15 +50,32 @@ CREATE OR REPLACE ACTION helper_split_string(
 
 /**
  * helper_sanitize_wallets: Validates and sanitizes an array of wallet addresses.
+ * Uses generate_subscripts to preserve order and avoid expensive for-loops.
  */
 CREATE OR REPLACE ACTION helper_sanitize_wallets($wallets TEXT[]) PRIVATE VIEW RETURNS (sanitized_wallets TEXT[]) {
+    -- Handle empty array
+    IF array_length($wallets) = 0 {
+        RETURN $wallets;
+    }
+
+    -- Validate each wallet address first
     FOR $i in 1..array_length($wallets) {
         IF NOT check_ethereum_address($wallets[$i]) {
-            ERROR('Invalid wallet address in array at index ' || $i::TEXT);
+            ERROR('Invalid wallet address at index ' || $i::TEXT);
         }
-        $wallets[$i] := LOWER($wallets[$i]);
     }
-    RETURN $wallets;
+
+    -- Then sanitize all at once using generate_subscripts for efficiency
+    for $result in WITH sanitized AS (
+        SELECT
+            gs.idx,
+            LOWER($wallets[gs.idx]) AS sanitized_wallet
+        FROM generate_subscripts($wallets) AS gs(idx)
+    )
+    SELECT array_agg(sanitized_wallet ORDER BY idx) AS sanitized_wallets
+    FROM sanitized {
+        RETURN $result.sanitized_wallets;
+    }
 };
 
 /**
@@ -81,7 +98,13 @@ CREATE OR REPLACE ACTION helper_lowercase_array(
         RETURN $input_array;
     }
 
-    RETURN SELECT array_agg(LOWER(e)) FROM UNNEST($input_array) AS t(e);
+    -- Use generate_subscripts to create indices and preserve input array order
+    RETURN SELECT array_agg(lowered ORDER BY row_num) FROM (
+        SELECT
+            LOWER($input_array[gs.idx]) AS lowered,
+            gs.idx AS row_num
+        FROM generate_subscripts($input_array) AS gs(idx)
+    ) t;
 };
 
 

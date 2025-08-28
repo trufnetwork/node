@@ -253,17 +253,17 @@ CREATE OR REPLACE ACTION get_taxonomies_for_streams(
             s.stream_id,
             dpc.address AS child_data_provider,
             sc.stream_id AS child_stream_id,
-            t.weight,
-            t.created_at,
-            t.group_sequence,
-            t.start_time
+            tax.weight,
+            tax.created_at,
+            tax.group_sequence,
+            tax.start_time
         FROM UNNEST($data_providers, $stream_ids) AS t(data_provider, stream_id)
         JOIN data_providers dp ON dp.address = LOWER(t.data_provider)
         JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = t.stream_id
-        JOIN taxonomies t ON t.stream_ref = s.id
-        JOIN streams sc ON sc.id = t.child_stream_ref
+        JOIN taxonomies tax ON tax.stream_ref = s.id
+        JOIN streams sc ON sc.id = tax.child_stream_ref
         JOIN data_providers dpc ON dpc.id = sc.data_provider_id
-        WHERE t.disabled_at IS NULL
-        ORDER BY t.created_at ASC, t.group_sequence ASC;
+        WHERE tax.disabled_at IS NULL
+        ORDER BY tax.created_at ASC, tax.group_sequence ASC;
     }
 };

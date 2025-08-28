@@ -81,12 +81,18 @@ CREATE OR REPLACE ACTION create_streams(
         ERROR('Stream IDs and stream types arrays must have the same length');
     }
 
-    -- Unified batch validation for both stream IDs and types
-    -- This returns only invalid entries with specific error reasons
-    for $validation_result in validate_stream_creation_batch($stream_ids, $stream_types) {
-        ERROR('Stream at position ' || $validation_result.index_position || ' is invalid: ' ||
-              $validation_result.stream_id || ' (' || $validation_result.stream_type || ') - ' ||
-              $validation_result.error_reason);
+    -- Validate stream IDs
+    for $validation_result in validate_stream_ids_format_batch($stream_ids) {
+        if NOT $validation_result.is_valid {
+            ERROR('Invalid stream_id format: ' || $validation_result.stream_id || ' - ' ||
+                  $validation_result.error_reason);
+        }
+    }
+
+    -- Validate stream types using dedicated private function
+    for $validation_result in validate_stream_types_batch($stream_types) {
+        ERROR('Invalid stream type at position ' || $validation_result.position || ': ' ||
+              $validation_result.stream_type || ' - ' || $validation_result.error_reason);
     }
 
     $base_uuid := uuid_generate_kwil('create_streams_' || @txid);
@@ -455,48 +461,40 @@ CREATE OR REPLACE ACTION validate_stream_ids_format_batch(
             WHEN substring(t.stream_id, 1, 2) != 'st' THEN 'Must start with "st"'
             -- Check characters 3-32 are lowercase alphanumeric using basic string functions
             WHEN LENGTH(trim(lower(substring(t.stream_id, 3, 30)), '0123456789abcdefghijklmnopqrstuvwxyz')) != 0 THEN 'Characters 3-32 must be lowercase alphanumeric'
-            ELSE NULL
+            ELSE ''
         END AS error_reason
     FROM UNNEST($stream_ids) AS t(stream_id);
 };
 
 /**
- * validate_stream_creation_batch: Validates both stream IDs and types for creation.
- * Returns invalid entries with specific error reasons.
+ * validate_stream_types_batch: Validates multiple stream types efficiently.
+ * Returns invalid stream types with their positions and error details.
  */
-CREATE OR REPLACE ACTION validate_stream_creation_batch(
-    $stream_ids TEXT[],
+CREATE OR REPLACE ACTION validate_stream_types_batch(
     $stream_types TEXT[]
-) PUBLIC view returns table(
-    index_position INT,
-    stream_id TEXT,
+) PRIVATE view returns table(
+    position INT,
     stream_type TEXT,
     error_reason TEXT
 ) {
-    -- Pure SQL validation using supported functions only
-    for $row in SELECT
-        ROW_NUMBER() OVER () AS index_position,
-        t.stream_id,
-        t.stream_type,
+    -- Use CTE with row_number() since WITH ORDINALITY is not supported in Kuneiform
+    RETURN WITH indexed_types AS (
+        SELECT
+            row_number() OVER () as idx,
+            stream_type
+        FROM UNNEST($stream_types) AS t(stream_type)
+    )
+    SELECT
+        idx as position,
+        stream_type,
         CASE
-            WHEN LENGTH(t.stream_id) != 32 THEN 'Stream ID: Invalid length (must be 32 characters)'
-            WHEN substring(t.stream_id, 1, 2) != 'st' THEN 'Stream ID: Must start with "st"'
-            -- Check characters 3-32 are lowercase alphanumeric using basic string functions
-            WHEN LENGTH(trim(lower(substring(t.stream_id, 3, 30)), '0123456789abcdefghijklmnopqrstuvwxyz')) != 0 THEN 'Stream ID: Characters 3-32 must be lowercase alphanumeric'
-            WHEN t.stream_type != 'primitive' AND t.stream_type != 'composed' THEN 'Stream Type: Must be "primitive" or "composed"'
+            WHEN stream_type NOT IN ('primitive', 'composed') THEN
+                'Stream type must be "primitive" or "composed"'
             ELSE ''
         END AS error_reason
-    FROM UNNEST($stream_ids, $stream_types) AS t(stream_id, stream_type)
-    WHERE LENGTH(t.stream_id) != 32
-       OR substring(t.stream_id, 1, 2) != 'st'
-       -- Check characters 3-32 are lowercase alphanumeric using basic string functions
-       OR LENGTH(trim(lower(substring(t.stream_id, 3, 30)), '0123456789abcdefghijklmnopqrstuvwxyz')) != 0
-       OR (t.stream_type != 'primitive' AND t.stream_type != 'composed') {
-        RETURN NEXT $row.index_position, $row.stream_id, $row.stream_type, $row.error_reason;
-    }
+    FROM indexed_types
+    WHERE stream_type NOT IN ('primitive', 'composed');
 };
-
-
 
 /**
  * check_ethereum_address: Validates Ethereum address format.

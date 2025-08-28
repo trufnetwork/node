@@ -7,10 +7,14 @@ CREATE OR REPLACE ACTION get_stream_ids(
   }
 
   RETURN
-  SELECT array_agg(s.id)
-  FROM UNNEST($data_providers, $stream_ids) AS t(dp, sid)
-  LEFT JOIN data_providers d ON d.address = LOWER(dp)
-  LEFT JOIN streams s ON s.data_provider_id = d.id AND s.stream_id = sid;
+  WITH joined AS (
+    SELECT gs.idx, s.id AS stream_id_resolved
+    FROM generate_subscripts($data_providers) AS gs(idx)
+    LEFT JOIN data_providers d ON d.address = LOWER($data_providers[gs.idx])
+    LEFT JOIN streams s ON s.data_provider_id = d.id AND s.stream_id = $stream_ids[gs.idx]
+  )
+  SELECT array_agg(stream_id_resolved ORDER BY idx)
+  FROM joined;
 };
 
 CREATE OR REPLACE ACTION get_stream_id(
