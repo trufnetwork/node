@@ -50,7 +50,7 @@ CREATE OR REPLACE ACTION helper_split_string(
 
 /**
  * helper_sanitize_wallets: Validates and sanitizes an array of wallet addresses.
- * Uses generate_subscripts to preserve order and avoid expensive for-loops.
+ * Uses unnest with ordinality to preserve order and avoid expensive for-loops.
  */
 CREATE OR REPLACE ACTION helper_sanitize_wallets($wallets TEXT[]) PRIVATE VIEW RETURNS (sanitized_wallets TEXT[]) {
     -- Handle empty array
@@ -65,14 +65,14 @@ CREATE OR REPLACE ACTION helper_sanitize_wallets($wallets TEXT[]) PRIVATE VIEW R
         }
     }
 
-    -- Then sanitize all at once using generate_subscripts for efficiency
+    -- Then sanitize all at once using unnest with ordinality for efficiency
     for $result in WITH sanitized AS (
         SELECT
-            gs.idx,
-            LOWER($wallets[gs.idx]) AS sanitized_wallet
-        FROM generate_subscripts($wallets) AS gs(idx)
+            ord,
+            LOWER(wallet) AS sanitized_wallet
+        FROM unnest($wallets) WITH ORDINALITY AS u(wallet, ord)
     )
-    SELECT array_agg(sanitized_wallet ORDER BY idx) AS sanitized_wallets
+    SELECT array_agg(sanitized_wallet ORDER BY ord) AS sanitized_wallets
     FROM sanitized {
         RETURN $result.sanitized_wallets;
     }
@@ -98,12 +98,12 @@ CREATE OR REPLACE ACTION helper_lowercase_array(
         RETURN $input_array;
     }
 
-    -- Use generate_subscripts to create indices and preserve input array order
-    RETURN SELECT array_agg(lowered ORDER BY row_num) FROM (
+    -- Use unnest with ordinality to preserve input array order
+    RETURN SELECT array_agg(lowered ORDER BY ord) FROM (
         SELECT
-            LOWER($input_array[gs.idx]) AS lowered,
-            gs.idx AS row_num
-        FROM generate_subscripts($input_array) AS gs(idx)
+            LOWER(item) AS lowered,
+            ord
+        FROM unnest($input_array) WITH ORDINALITY AS u(item, ord)
     ) t;
 };
 
