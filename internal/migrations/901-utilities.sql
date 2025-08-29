@@ -50,15 +50,32 @@ CREATE OR REPLACE ACTION helper_split_string(
 
 /**
  * helper_sanitize_wallets: Validates and sanitizes an array of wallet addresses.
+ * Uses unnest with ordinality to preserve order and avoid expensive for-loops.
  */
 CREATE OR REPLACE ACTION helper_sanitize_wallets($wallets TEXT[]) PRIVATE VIEW RETURNS (sanitized_wallets TEXT[]) {
+    -- Handle empty array
+    IF array_length($wallets) = 0 {
+        RETURN $wallets;
+    }
+
+    -- Validate each wallet address first
     FOR $i in 1..array_length($wallets) {
         IF NOT check_ethereum_address($wallets[$i]) {
-            ERROR('Invalid wallet address in array at index ' || $i::TEXT);
+            ERROR('Invalid wallet address at index ' || $i::TEXT);
         }
-        $wallets[$i] := LOWER($wallets[$i]);
     }
-    RETURN $wallets;
+
+    -- Then sanitize all at once using unnest with ordinality for efficiency
+    for $result in WITH sanitized AS (
+        SELECT
+            ord,
+            LOWER(wallet) AS sanitized_wallet
+        FROM unnest($wallets) WITH ORDINALITY AS u(wallet, ord)
+    )
+    SELECT array_agg(sanitized_wallet ORDER BY ord) AS sanitized_wallets
+    FROM sanitized {
+        RETURN $result.sanitized_wallets;
+    }
 };
 
 /**
@@ -76,38 +93,18 @@ CREATE OR REPLACE ACTION helper_lowercase_array(
 ) PRIVATE VIEW RETURNS (lowercase_array TEXT[]) {
     $lowercase_array TEXT[];
 
-    -- handle empty array
-    IF array_length($input_array) = 0 {
+    -- handle NULL or empty array
+    IF $input_array IS NULL OR array_length($input_array) = 0 {
         RETURN $input_array;
     }
 
-    -- Use O(n) approach with proper array handling and ordering
-    for $row in WITH RECURSIVE
-    indexes AS (
-        SELECT 1 AS idx
-        UNION ALL
-        SELECT idx + 1 FROM indexes
-        WHERE idx < array_length($input_array)
-    ),
-    array_holder AS (
-        SELECT $input_array AS original_array
-    ),
-    unnested_results AS (
+    -- Use unnest with ordinality to preserve input array order
+    RETURN SELECT array_agg(lowered ORDER BY ord) FROM (
         SELECT
-            idx,
-            LOWER(array_holder.original_array[idx]) AS lowercase_element
-        FROM indexes
-        JOIN array_holder ON 1=1
-    )
-    SELECT lowercase_element
-    FROM unnested_results
-    ORDER BY idx {
-        -- the faster alternative would be to return the aggregated array,
-        -- however we can't make this efficiently without ARRAY_AGG(x ORDER BY y.column)
-        $lowercase_array = array_append($lowercase_array, $row.lowercase_element);
-    }
-
-    RETURN $lowercase_array;
+            LOWER(item) AS lowered,
+            ord
+        FROM unnest($input_array) WITH ORDINALITY AS u(item, ord)
+    ) t;
 };
 
 
@@ -146,27 +143,21 @@ CREATE OR REPLACE ACTION helper_enqueue_prune_days(
     $event_times INT8[],
     $values NUMERIC(36,18)[]
 ) PRIVATE {
-    IF array_length($event_times) IS NULL OR array_length($event_times) = 0 {
-        RETURN;
-    }
+    IF COALESCE(array_length($event_times), 0) = 0 {  
+         RETURN;  
+     }  
+    IF COALESCE(array_length($stream_refs), 0) != COALESCE(array_length($event_times), 0)  
+       OR COALESCE(array_length($event_times), 0) != COALESCE(array_length($values), 0) {  
+        ERROR('helper_enqueue_prune_days: array lengths mismatch');  
+    } 
 
-    WITH RECURSIVE 
-    indexes AS (
-        SELECT 1 AS idx
-        UNION ALL
-        SELECT idx + 1 FROM indexes WHERE idx < array_length($event_times)
-    ),
-    array_holder AS (
-        SELECT $stream_refs AS stream_refs, $event_times AS event_times, $values AS values_array
-    )
     INSERT INTO pending_prune_days (stream_ref, day_index)
-    SELECT DISTINCT 
-        array_holder.stream_refs[indexes.idx] AS stream_ref,
-        (array_holder.event_times[indexes.idx] / 86400)::INT AS day_index
-    FROM indexes
-    JOIN array_holder ON 1=1
-    WHERE array_holder.stream_refs[indexes.idx] IS NOT NULL
-      AND array_holder.event_times[indexes.idx] >= 0::INT8
-      AND array_holder.values_array[indexes.idx] != 0::NUMERIC(36,18)
+    SELECT DISTINCT
+        t.stream_ref,
+        (t.event_time / 86400)::INT AS day_index
+    FROM UNNEST($stream_refs, $event_times, $values) AS t(stream_ref, event_time, value)
+    WHERE t.stream_ref IS NOT NULL
+      AND t.event_time >= 0::INT8
+      AND t.value != 0::NUMERIC(36,18)
     ON CONFLICT (stream_ref, day_index) DO NOTHING;
 };

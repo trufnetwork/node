@@ -1,41 +1,46 @@
 CREATE OR REPLACE ACTION get_stream_ids(
-    $data_providers TEXT[],
-    $stream_ids TEXT[]
+  $data_providers TEXT[],
+  $stream_ids     TEXT[]
 ) PUBLIC VIEW RETURNS (stream_ids INT[]) {
-    $stream_refs int[];
-    for $row in WITH RECURSIVE
-    indexes AS (
-        SELECT 1 AS idx
-        UNION ALL
-        SELECT idx + 1 FROM indexes
-        WHERE idx < array_length($data_providers)
-    ),
-    input_arrays AS (
-        SELECT
-            $data_providers AS data_providers,
-            $stream_ids AS stream_ids
-    ),
-    all_pairs AS (
-        SELECT
-            idx,
-            LOWER(input_arrays.data_providers[idx]) AS data_provider,
-            input_arrays.stream_ids[idx] AS stream_id
-        FROM indexes
-        JOIN input_arrays ON 1=1
-    ),
-    direct_lookup AS (
-        SELECT ap.idx, s.id AS stream_ref
-        FROM all_pairs ap
-        LEFT JOIN data_providers dp ON dp.address = ap.data_provider
-        LEFT JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = ap.stream_id
-    )
-    SELECT stream_ref
-    FROM direct_lookup
-    ORDER BY idx {
-        -- the faster alternative would be to return the aggregated array,
-        -- however we can't make this efficiently without ARRAY_AGG(x ORDER BY y.column)
-      $stream_refs = array_append($stream_refs, $row.stream_ref);
-    }
-    return $stream_refs;
+  -- Check that arrays have the same length
+  IF COALESCE(array_length($data_providers), 0) != COALESCE(array_length($stream_ids), 0) {  
+    ERROR(  
+      'array lengths mismatch: data_providers='  
+      || COALESCE(array_length($data_providers), 0)::TEXT  
+      || ', stream_ids='  
+      || COALESCE(array_length($stream_ids), 0)::TEXT  
+    );  
+  }  
+
+  RETURN
+  WITH idx AS (
+    SELECT
+      ord AS idx,
+      LOWER(dp) AS dp,   -- compute once
+      sid       AS sid
+    FROM unnest($data_providers, $stream_ids) WITH ORDINALITY AS u(dp, sid, ord)
+  ),
+  joined AS (
+    SELECT i.idx, s.id AS stream_id_resolved
+    FROM idx i
+    LEFT JOIN data_providers d
+      ON d.address = i.dp
+    LEFT JOIN streams s
+      ON s.data_provider_id = d.id
+     AND s.stream_id       = i.sid
+  )
+  SELECT COALESCE(array_agg(stream_id_resolved ORDER BY idx), ARRAY[]::INT[])
+  FROM joined;
 };
 
+
+CREATE OR REPLACE ACTION get_stream_id(
+  $data_provider_address TEXT,
+  $stream_id TEXT
+) PUBLIC returns (id INT) {
+  $ids := get_stream_ids(ARRAY[$data_provider_address], ARRAY[$stream_id]);
+  if array_length($ids) = 0 {
+    return NULL;
+  }
+  return $ids[1];
+};

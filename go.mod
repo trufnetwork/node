@@ -10,15 +10,17 @@ require (
 	github.com/docker/docker v28.0.1+incompatible
 	github.com/fbiville/markdown-table-formatter v0.3.0
 	github.com/go-co-op/gocron v1.37.0
+	github.com/gocarina/gocsv v0.0.0-20240520201108-78e41c74b4b1
 	github.com/golang-sql/civil v0.0.0-20220223132316-b832511892a9
 	github.com/hashicorp/go-retryablehttp v0.7.8
+	github.com/montanaflynn/stats v0.7.1
 	github.com/pkg/errors v0.9.1
 	github.com/samber/lo v1.47.0
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0
 	github.com/testcontainers/testcontainers-go v0.37.0
-	github.com/trufnetwork/kwil-db v0.10.3-0.20250825143650-0504e34154ce
-	github.com/trufnetwork/kwil-db/core v0.4.3-0.20250825143650-0504e34154ce
+	github.com/trufnetwork/kwil-db v0.10.3-0.20250829040222-799cf48f758e
+	github.com/trufnetwork/kwil-db/core v0.4.3-0.20250829040222-799cf48f758e
 	github.com/trufnetwork/sdk-go v0.3.2-0.20250630062504-841b40cdb709
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20250218142911-aa4b98e5adaa
@@ -192,7 +194,7 @@ require (
 	github.com/multiformats/go-multistream v0.6.0 // indirect
 	github.com/multiformats/go-varint v0.0.7 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/olekukonko/tablewriter v0.0.6-0.20230925090304-df64c4bbad77 // indirect
+	github.com/olekukonko/tablewriter v0.0.6-0.20230925090304-df64c4bbad77
 	github.com/onsi/ginkgo/v2 v2.22.2 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect

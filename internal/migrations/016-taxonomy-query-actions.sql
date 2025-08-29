@@ -80,7 +80,7 @@ CREATE OR REPLACE ACTION list_taxonomies_by_height(
     if $from_height IS NULL AND $to_height IS NULL {
         -- Special case: return latest set of taxonomies
         -- Use a reasonable lookback window to find recent taxonomies
-        $effective_from := $current_block - 1000;
+        $effective_from := GREATEST($current_block - 1000, 0);
         $effective_to := $current_block;
     } else {
         $effective_from := COALESCE($from_height, 0);
@@ -190,50 +190,26 @@ CREATE OR REPLACE ACTION get_taxonomies_for_streams(
     group_sequence INT8,
     start_time INT8
 ) {
-    -- Normalize inputs
-    $data_providers := helper_lowercase_array($data_providers);
+    -- Data providers will be lowercased directly in queries using LOWER()
 
     if $latest_only IS NULL {
         $latest_only := false;
     }
 
-    if array_length($data_providers) != array_length($stream_ids) {
+    if COALESCE(array_length($data_providers), 0) != COALESCE(array_length($stream_ids), 0) {
         ERROR('Data providers and stream IDs arrays must have the same length');
     }
 
     if $latest_only {
-        RETURN WITH RECURSIVE 
-        indexes AS (
-            SELECT 1 AS idx
-            UNION ALL
-            SELECT idx + 1 FROM indexes
-            WHERE idx < array_length($data_providers)
-        ),
-        stream_arrays AS (
-            SELECT 
-                $data_providers AS data_providers,
-                $stream_ids AS stream_ids
-        ),
-        all_pairs AS (
-            SELECT 
-                stream_arrays.data_providers[idx] AS data_provider,
-                stream_arrays.stream_ids[idx] AS stream_id
-            FROM indexes
-            JOIN stream_arrays ON 1=1
-        ),
-        unique_pairs AS (
-            SELECT DISTINCT data_provider, stream_id
-            FROM all_pairs
-        ),
-        target_streams AS (
-            SELECT 
+        RETURN WITH target_streams AS (
+            SELECT DISTINCT
                 s.id AS stream_ref
-            FROM unique_pairs up
-            JOIN data_providers dp ON dp.address = up.data_provider
-            JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = up.stream_id
+            FROM UNNEST($data_providers, $stream_ids) AS t(data_provider, stream_id)
+            JOIN data_providers dp ON dp.address = LOWER(t.data_provider)
+            JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = t.stream_id
         ),
         stream_latest_info AS (
-            SELECT 
+            SELECT
                 t.stream_ref,
                 MAX(t.created_at) as max_created_at
             FROM taxonomies t
@@ -242,17 +218,17 @@ CREATE OR REPLACE ACTION get_taxonomies_for_streams(
             GROUP BY t.stream_ref
         ),
         stream_latest_group AS (
-            SELECT 
+            SELECT
                 sli.stream_ref,
                 sli.max_created_at,
                 MAX(t.group_sequence) as max_group_sequence
             FROM stream_latest_info sli
-            JOIN taxonomies t ON t.stream_ref = sli.stream_ref 
+            JOIN taxonomies t ON t.stream_ref = sli.stream_ref
                               AND t.created_at = sli.max_created_at
             WHERE t.disabled_at IS NULL
             GROUP BY sli.stream_ref, sli.max_created_at
         )
-        SELECT 
+        SELECT
             dp.address AS data_provider,
             s.stream_id,
             dpc.address AS child_data_provider,
@@ -262,9 +238,9 @@ CREATE OR REPLACE ACTION get_taxonomies_for_streams(
             t.group_sequence,
             t.start_time
         FROM stream_latest_group slg
-        JOIN taxonomies t 
-          ON t.stream_ref = slg.stream_ref 
-         AND t.created_at = slg.max_created_at 
+        JOIN taxonomies t
+          ON t.stream_ref = slg.stream_ref
+         AND t.created_at = slg.max_created_at
          AND t.group_sequence = slg.max_group_sequence
         JOIN streams s ON s.id = t.stream_ref
         JOIN data_providers dp ON dp.id = s.data_provider_id
@@ -272,45 +248,22 @@ CREATE OR REPLACE ACTION get_taxonomies_for_streams(
         JOIN data_providers dpc ON dpc.id = sc.data_provider_id
         WHERE t.disabled_at IS NULL;
     } else {
-        RETURN WITH RECURSIVE 
-        indexes AS (
-            SELECT 1 AS idx
-            UNION ALL
-            SELECT idx + 1 FROM indexes
-            WHERE idx < array_length($data_providers)
-        ),
-        stream_arrays AS (
-            SELECT 
-                $data_providers AS data_providers,
-                $stream_ids AS stream_ids
-        ),
-        all_pairs AS (
-            SELECT 
-                stream_arrays.data_providers[idx] AS data_provider,
-                stream_arrays.stream_ids[idx] AS stream_id
-            FROM indexes
-            JOIN stream_arrays ON 1=1
-        ),
-        unique_pairs AS (
-            SELECT DISTINCT data_provider, stream_id
-            FROM all_pairs
-        )
-        SELECT DISTINCT
+        RETURN SELECT DISTINCT
             dp.address AS data_provider,
             s.stream_id,
             dpc.address AS child_data_provider,
             sc.stream_id AS child_stream_id,
-            t.weight,
-            t.created_at,
-            t.group_sequence,
-            t.start_time
-        FROM unique_pairs up
-        JOIN data_providers dp ON dp.address = up.data_provider
-        JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = up.stream_id
-        JOIN taxonomies t ON t.stream_ref = s.id
-        JOIN streams sc ON sc.id = t.child_stream_ref
+            tax.weight,
+            tax.created_at,
+            tax.group_sequence,
+            tax.start_time
+        FROM UNNEST($data_providers, $stream_ids) AS t(data_provider, stream_id)
+        JOIN data_providers dp ON dp.address = LOWER(t.data_provider)
+        JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = t.stream_id
+        JOIN taxonomies tax ON tax.stream_ref = s.id
+        JOIN streams sc ON sc.id = tax.child_stream_ref
         JOIN data_providers dpc ON dpc.id = sc.data_provider_id
-        WHERE t.disabled_at IS NULL
-        ORDER BY t.created_at ASC, t.group_sequence ASC;
+        WHERE tax.disabled_at IS NULL
+        ORDER BY tax.created_at ASC, tax.group_sequence ASC;
     }
 };
