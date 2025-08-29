@@ -80,7 +80,7 @@ CREATE OR REPLACE ACTION list_taxonomies_by_height(
     if $from_height IS NULL AND $to_height IS NULL {
         -- Special case: return latest set of taxonomies
         -- Use a reasonable lookback window to find recent taxonomies
-        $effective_from := $current_block - 1000;
+        $effective_from := GREATEST($current_block - 1000, 0);
         $effective_to := $current_block;
     } else {
         $effective_from := COALESCE($from_height, 0);
@@ -196,7 +196,7 @@ CREATE OR REPLACE ACTION get_taxonomies_for_streams(
         $latest_only := false;
     }
 
-    if array_length($data_providers) != array_length($stream_ids) {
+    if COALESCE(array_length($data_providers), 0) != COALESCE(array_length($stream_ids), 0) {
         ERROR('Data providers and stream IDs arrays must have the same length');
     }
 

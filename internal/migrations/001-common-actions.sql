@@ -613,19 +613,23 @@ CREATE OR REPLACE ACTION is_stream_owner_batch(
     $lowercase_wallet TEXT := LOWER($wallet);
 
     -- Use UNNEST for optimal performance with direct LOWER operations
-    SELECT
+    RETURN SELECT
         t.data_provider,
         t.stream_id,
-        CASE WHEN m.value_ref IS NOT NULL AND m.value_ref = $wallet THEN true ELSE false END AS is_owner
+        CASE WHEN m.value_ref IS NOT NULL AND m.value_ref = $lowercase_wallet THEN true ELSE false END AS is_owner
     FROM UNNEST($data_providers, $stream_ids) AS t(data_provider, stream_id)
     LEFT JOIN (
-        SELECT dp.address as data_provider, s.stream_id, md.value_ref
-        FROM metadata md
-        JOIN streams s ON md.stream_ref = s.id
+        SELECT dp.address as data_provider, s.stream_id, latest.value_ref
+        FROM (
+            SELECT md.stream_ref, md.value_ref,
+                   ROW_NUMBER() OVER (PARTITION BY md.stream_ref ORDER BY md.created_at DESC, md.row_id DESC) AS rn
+            FROM metadata md
+            WHERE md.metadata_key = 'stream_owner'
+              AND md.disabled_at IS NULL
+        ) latest
+        JOIN streams s ON latest.stream_ref = s.id
         JOIN data_providers dp ON s.data_provider_id = dp.id
-        WHERE md.metadata_key = 'stream_owner'
-          AND md.disabled_at IS NULL
-        ORDER BY md.created_at DESC
+        WHERE latest.rn = 1
     ) m ON LOWER(t.data_provider) = m.data_provider AND t.stream_id = m.stream_id;
 };
 
@@ -667,7 +671,7 @@ CREATE OR REPLACE ACTION is_primitive_stream_batch(
     }
 
     -- Use UNNEST for optimal performance with direct LOWER operations
-    SELECT
+    RETURN SELECT
         t.data_provider,
         t.stream_id,
         COALESCE(s.stream_type = 'primitive', false) AS is_primitive

@@ -93,8 +93,8 @@ CREATE OR REPLACE ACTION helper_lowercase_array(
 ) PRIVATE VIEW RETURNS (lowercase_array TEXT[]) {
     $lowercase_array TEXT[];
 
-    -- handle empty array
-    IF array_length($input_array) = 0 {
+    -- handle NULL or empty array
+    IF $input_array IS NULL OR array_length($input_array) = 0 {
         RETURN $input_array;
     }
 
@@ -143,9 +143,13 @@ CREATE OR REPLACE ACTION helper_enqueue_prune_days(
     $event_times INT8[],
     $values NUMERIC(36,18)[]
 ) PRIVATE {
-    IF array_length($event_times) IS NULL OR array_length($event_times) = 0 {
-        RETURN;
-    }
+    IF COALESCE(array_length($event_times), 0) = 0 {  
+         RETURN;  
+     }  
+    IF COALESCE(array_length($stream_refs), 0) != COALESCE(array_length($event_times), 0)  
+       OR COALESCE(array_length($event_times), 0) != COALESCE(array_length($values), 0) {  
+        ERROR('helper_enqueue_prune_days: array lengths mismatch');  
+    } 
 
     INSERT INTO pending_prune_days (stream_ref, day_index)
     SELECT DISTINCT

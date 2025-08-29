@@ -745,17 +745,20 @@ CREATE OR REPLACE ACTION wallet_write_batch_core(
             SELECT 1
             FROM UNNEST($stream_refs) AS t(stream_ref)
             LEFT JOIN (
-                SELECT m.stream_ref, m.value_ref AS owner
-                FROM metadata m
-                WHERE m.metadata_key = 'stream_owner'
-                  AND m.disabled_at IS NULL
-                  AND m.created_at = (
-                      SELECT MAX(m2.created_at)
-                      FROM metadata m2
-                      WHERE m2.stream_ref = m.stream_ref
-                        AND m2.metadata_key = 'stream_owner'
-                        AND m2.disabled_at IS NULL
-                  )
+                SELECT stream_ref, value_ref AS owner
+                FROM (
+                    SELECT
+                        m.stream_ref,
+                        m.value_ref,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY m.stream_ref
+                            ORDER BY m.created_at DESC, m.row_id DESC
+                        ) AS rn
+                    FROM metadata m
+                    WHERE m.metadata_key = 'stream_owner'
+                      AND m.disabled_at IS NULL
+                ) latest_owner
+                WHERE rn = 1
             ) o ON o.stream_ref = t.stream_ref
             LEFT JOIN (
                 SELECT DISTINCT m.stream_ref
@@ -837,36 +840,54 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_write_batch(
     RETURN SELECT
         t.data_provider,
         t.stream_id,
-        COALESCE(
-            -- Check 1: Is the wallet the LATEST valid owner?
-            (SELECT m_own.value_ref
-              FROM metadata m_own
-              JOIN streams s_own ON m_own.stream_ref = s_own.id
-              JOIN data_providers dp_own ON s_own.data_provider_id = dp_own.id
-              WHERE dp_own.address = t.data_provider
-                AND s_own.stream_id = t.stream_id
-                AND m_own.metadata_key = 'stream_owner'
-                AND m_own.disabled_at IS NULL
-              ORDER BY m_own.created_at DESC
-              LIMIT 1
-            ) = $wallet
-        , FALSE)
-        OR
-        COALESCE(
-            -- Check 2: Does ANY active permission record exist for the wallet?
-            EXISTS (
-                SELECT 1
-                FROM metadata m_perm
-                JOIN streams s_perm ON m_perm.stream_ref = s_perm.id
-                JOIN data_providers dp_perm ON s_perm.data_provider_id = dp_perm.id
-                WHERE dp_perm.address = t.data_provider
-                  AND s_perm.stream_id = t.stream_id
-                  AND m_perm.metadata_key = 'allow_write_wallet'
-                  AND m_perm.value_ref = $wallet
-                  AND m_perm.disabled_at IS NULL
-            )
-        , FALSE) AS is_allowed
-    FROM UNNEST($data_providers, $stream_ids) AS t(data_provider, stream_id);
+        (o.owner = $wallet) OR (p.has_perm) AS is_allowed
+    FROM UNNEST($data_providers, $stream_ids) AS t(data_provider, stream_id)
+    LEFT JOIN (
+        -- Precompute the latest owner per stream_ref
+        SELECT
+            dp.address            AS data_provider,
+            s.stream_id           AS stream_id,
+            latest.value_ref      AS owner
+        FROM (
+            SELECT
+                stream_ref,
+                value_ref
+            FROM (
+                SELECT
+                    m.stream_ref,
+                    m.value_ref,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY m.stream_ref
+                        ORDER BY m.created_at DESC, m.row_id DESC
+                    ) AS rn
+                FROM metadata m
+                WHERE
+                    m.metadata_key = 'stream_owner'
+                    AND m.disabled_at IS NULL
+            ) x
+            WHERE rn = 1
+        ) latest
+        JOIN streams s ON s.id = latest.stream_ref
+        JOIN data_providers dp ON dp.id = s.data_provider_id
+    ) o
+      ON LOWER(t.data_provider) = o.data_provider
+     AND t.stream_id         = o.stream_id
+    LEFT JOIN (
+        -- Precompute whether the wallet has write permission
+        SELECT DISTINCT
+            dp.address      AS data_provider,
+            s.stream_id     AS stream_id,
+            true             AS has_perm
+        FROM metadata m
+        JOIN streams s ON s.id = m.stream_ref
+        JOIN data_providers dp ON dp.id = s.data_provider_id
+        WHERE
+            m.metadata_key = 'allow_write_wallet'
+            AND m.value_ref = $wallet
+            AND m.disabled_at IS NULL
+    ) p
+      ON LOWER(t.data_provider) = p.data_provider
+     AND t.stream_id         = p.stream_id;
 };
 
 /**
@@ -895,16 +916,16 @@ CREATE OR REPLACE ACTION has_write_permission_batch(
     RETURN SELECT
         t.data_provider,
         t.stream_id,
-        CASE WHEN m.value_ref IS NOT NULL THEN true ELSE false END AS has_permission
-    FROM UNNEST($data_providers, $stream_ids) AS t(data_provider, stream_id)
-    LEFT JOIN (
-        SELECT dp.address as data_provider, s.stream_id, m.value_ref
-        FROM metadata m
-        JOIN streams s ON m.stream_ref = s.id
-        JOIN data_providers dp ON s.data_provider_id = dp.id
-        WHERE m.metadata_key = 'allow_write_wallet'
-          AND m.value_ref = $wallet
-          AND m.disabled_at IS NULL
-        ORDER BY m.created_at DESC
-    ) m ON LOWER(t.data_provider) = m.data_provider AND t.stream_id = m.stream_id;
+        EXISTS (
+            SELECT 1
+            FROM metadata m
+            JOIN streams s ON m.stream_ref = s.id
+            JOIN data_providers dp ON s.data_provider_id = dp.id
+            WHERE dp.address = LOWER(t.data_provider)
+              AND s.stream_id = t.stream_id
+              AND m.metadata_key = 'allow_write_wallet'
+              AND m.value_ref = $wallet
+              AND m.disabled_at IS NULL
+        ) AS has_permission
+    FROM UNNEST($data_providers, $stream_ids) AS t(data_provider, stream_id);
 };

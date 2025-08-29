@@ -250,10 +250,27 @@ func batchInsertUsingMultiBatchWithGroups(ctx context.Context, platform *kwilTes
 		}
 
 		// Group records by stream for this batch
-		streamRecords := make(map[string][]setup.InsertRecordInput)
+		type streamKey struct {
+			provider string
+			id       string
+		}
+		type streamData struct {
+			locator types.StreamLocator
+			records []setup.InsertRecordInput
+		}
+		streamRecords := make(map[streamKey]*streamData)
 		for _, r := range currentBatch {
-			streamKey := r.streamLocator.StreamId.String()
-			streamRecords[streamKey] = append(streamRecords[streamKey], setup.InsertRecordInput{
+			k := streamKey{
+				provider: r.streamLocator.DataProvider.Address(),
+				id:       r.streamLocator.StreamId.String(),
+			}
+			if streamRecords[k] == nil {
+				streamRecords[k] = &streamData{
+					locator: r.streamLocator,
+					records: make([]setup.InsertRecordInput, 0),
+				}
+			}
+			streamRecords[k].records = append(streamRecords[k].records, setup.InsertRecordInput{
 				EventTime: r.eventTime,
 				Value:     r.value,
 			})
@@ -267,21 +284,12 @@ func batchInsertUsingMultiBatchWithGroups(ctx context.Context, platform *kwilTes
 		}
 
 		// Convert map to slice
-		for streamIdStr, records := range streamRecords {
-			// Find the original stream locator for this stream ID
-			var streamLocator types.StreamLocator
-			for _, r := range currentBatch {
-				if r.streamLocator.StreamId.String() == streamIdStr {
-					streamLocator = r.streamLocator
-					break
-				}
-			}
-
+		for _, streamData := range streamRecords {
 			multiInput.Streams = append(multiInput.Streams, setup.PrimitiveStreamWithData{
 				PrimitiveStreamDefinition: setup.PrimitiveStreamDefinition{
-					StreamLocator: streamLocator,
+					StreamLocator: streamData.locator,
 				},
-				Data: records,
+				Data: streamData.records,
 			})
 		}
 

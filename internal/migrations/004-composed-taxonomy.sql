@@ -32,14 +32,12 @@ CREATE OR REPLACE ACTION insert_taxonomy(
     if $num_children IS NULL {
        $num_children := 0;
     }
-    -- Validate that all child arrays have the same length.
-    if $num_children == 0 OR $num_children != array_length($child_data_providers) OR $num_children != array_length($weights) {
-        error('All child arrays must be of the same length');
+    if $num_children != array_length($child_data_providers) OR $num_children != array_length($weights) {
+        ERROR('All child arrays must be of the same length');
     }
-
-    -- ensure there is at least 1 child, otherwise we might have silent bugs, with the user thinking he added something
+    -- ensure there is at least 1 child, otherwise we might have silent bugs
     if $num_children == 0 {
-        error('There must be at least 1 child');
+        ERROR('There must be at least 1 child');
     }
 
     -- Default start time to 0 if not provided
@@ -51,12 +49,8 @@ CREATE OR REPLACE ACTION insert_taxonomy(
     $new_group_sequence := get_current_group_sequence($data_provider, $stream_id, true) + 1;
     
     $stream_ref := get_stream_id($data_provider, $stream_id);
-
-    for $i in 1..$num_children {
-        $child_data_provider_value := $child_data_providers[$i];
-        $child_stream_id_value := $child_stream_ids[$i];
-        $child_stream_ref := get_stream_id($child_data_provider_value, $child_stream_id_value);
-        $weight_value := $weights[$i];
+    if $stream_ref IS NULL {
+        ERROR('parent stream does not exist: ' || $data_provider || ':' || $stream_id);
     }
 
     FOR $i IN 1..$num_children {

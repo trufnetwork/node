@@ -4,13 +4,15 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
+	"path/filepath"
 	"testing"
 
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	utils "github.com/trufnetwork/node/tests/streams/utils"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
 	"github.com/trufnetwork/sdk-go/core/util"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 
 	"github.com/trufnetwork/node/internal/migrations"
 )
@@ -146,7 +148,7 @@ func createBenchmarkSuiteFunc(t *testing.T, scale DigestBenchmarkScale) func(con
 		if err := SaveDigestResultsCSV(allResults, outputFile); err != nil {
 			t.Logf("Warning: failed to save results to %s: %v", outputFile, err)
 		} else {
-			t.Logf("%s test results saved to %s", strings.Title(scale.Name), outputFile)
+			t.Logf("%s test results saved to %s", cases.Title(language.English).String(scale.Name), outputFile)
 		}
 
 		// Create summary report
@@ -157,7 +159,7 @@ func createBenchmarkSuiteFunc(t *testing.T, scale DigestBenchmarkScale) func(con
 			t.Logf("Summary report created at %s", summaryFile)
 		}
 
-		t.Logf("%s test completed successfully - processed %d total results", strings.Title(scale.Name), len(allResults))
+		t.Logf("%s test completed successfully - processed %d total results", cases.Title(language.English).String(scale.Name), len(allResults))
 		return nil
 	}
 }
@@ -343,8 +345,8 @@ func TestDigestCSVExport(t *testing.T) {
 	}
 
 	// Test CSV export
-	tempFile := "/tmp/test_digest_results.csv"
-	defer os.Remove(tempFile)
+	tempDir := t.TempDir()
+	tempFile := filepath.Join(tempDir, "test_digest_results.csv")
 
 	if err := SaveDigestResultsCSV(results, tempFile); err != nil {
 		t.Fatalf("Failed to save CSV: %v", err)
@@ -408,8 +410,9 @@ func TestDigestMarkdownExport(t *testing.T) {
 		},
 	}
 
-	// Test markdown export to bench_results directory
-	summaryFile := "bench_results/test_markdown_summary.md"
+	// Test markdown export to temp directory
+	tempDir := t.TempDir()
+	summaryFile := filepath.Join(tempDir, "test_markdown_summary.md")
 	if err := ExportResultsSummary(results, summaryFile); err != nil {
 		t.Fatalf("Failed to export markdown summary: %v", err)
 	}

@@ -453,7 +453,7 @@ CREATE OR REPLACE ACTION batch_digest(
                     SELECT
                         u.stream_ref,
                         u.day_index
-                    FROM UNNEST($agg_stream_refs, $agg_day_indexes) AS u(stream_ref, day_index)
+                    FROM UNNEST($valid_stream_refs, $valid_day_indexes) AS u(stream_ref, day_index)
                 )
                 DELETE FROM pending_prune_days
                 WHERE EXISTS (

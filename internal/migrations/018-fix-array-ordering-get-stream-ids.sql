@@ -2,9 +2,15 @@ CREATE OR REPLACE ACTION get_stream_ids(
   $data_providers TEXT[],
   $stream_ids     TEXT[]
 ) PUBLIC VIEW RETURNS (stream_ids INT[]) {
-  IF array_length($data_providers) != array_length($stream_ids) {
-    ERROR('array lengths mismatch');
-  }
+  -- Check that arrays have the same length
+  IF COALESCE(array_length($data_providers), 0) != COALESCE(array_length($stream_ids), 0) {  
+    ERROR(  
+      'array lengths mismatch: data_providers='  
+      || COALESCE(array_length($data_providers), 0)::TEXT  
+      || ', stream_ids='  
+      || COALESCE(array_length($stream_ids), 0)::TEXT  
+    );  
+  }  
 
   RETURN
   WITH idx AS (

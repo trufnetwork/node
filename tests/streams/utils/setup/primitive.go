@@ -321,6 +321,10 @@ func InsertPrimitiveDataMultiBatch(ctx context.Context, input InsertMultiPrimiti
 
 	// Execute one call per provider group with correct signer
 	for provider, g := range byProvider {
+		if len(g.dataProviders) != len(g.streamIds) || len(g.streamIds) != len(g.eventTimes) || len(g.eventTimes) != len(g.values) {
+			return errors.Errorf("array length mismatch for provider %s: dp=%d sid=%d ts=%d val=%d",
+				provider, len(g.dataProviders), len(g.streamIds), len(g.eventTimes), len(g.values))
+		}
 		signerAddr := util.Unsafe_NewEthereumAddressFromString(provider)
 
 		txContext := &common.TxContext{

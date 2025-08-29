@@ -93,14 +93,12 @@ func SaveDigestResultsCSV(results []DigestRunResult, filePath string) error {
 	}
 
 	// Reuse existing benchexport functionality
-	return saveOrAppendToCSVUsingBenchexport(savedResults, filePath)
+	return saveToCSVUsingBenchexport(savedResults, filePath)
 }
 
-// saveOrAppendToCSVUsingBenchexport saves data using gocsv for robust CSV handling.
+// saveToCSVUsingBenchexport saves data using gocsv for robust CSV handling.
 // This provides better error handling and automatic type conversion.
-func saveOrAppendToCSVUsingBenchexport(data []SavedDigestResult, filePath string) error {
-	// Open file in create/truncate mode for now (simplified approach)
-	// TODO: Implement proper append functionality when needed
+func saveToCSVUsingBenchexport(data []SavedDigestResult, filePath string) error {
 	file, err := os.Create(filePath)
 	if err != nil {
 		return errors.Wrapf(err, "error creating file %s", filePath)

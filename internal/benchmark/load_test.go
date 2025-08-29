@@ -17,8 +17,15 @@ import (
 	"github.com/trufnetwork/sdk-go/core/util"
 )
 
-// Cache verification configuration
-const enableCacheCheck = false // Set to false to disable cache verification
+// Cache verification configuration (env override: BENCH_ENABLE_CACHE=true|1)
+var enableCacheCheck = func() bool {
+	env := os.Getenv("BENCH_ENABLE_CACHE")
+	// if not set, default to true
+	if env == "" {
+		return true
+	}
+	return env == "1" || env == "true" || env == "TRUE"
+}()
 
 // -----------------------------------------------------------------------------
 // Main benchmark test function
@@ -37,6 +44,7 @@ func TestBench(t *testing.T) {
 	// notify on interrupt. Otherwise, tests will not stop
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
+	defer signal.Stop(c)
 	go func() {
 		for range c {
 			fmt.Println("interrupt signal received")
@@ -248,17 +256,15 @@ func TestBench(t *testing.T) {
 					t.Fatalf("context cancelled")
 				default:
 					LogInfo(t, "Attempt %d/%d for test group %s", attempt, maxRetries, schemaTest.Name)
-					// wrap in a function so we can defer close the results channel
-					func() {
-						resultsCh = make(chan []Result, len(groupOfTests))
-						defer close(resultsCh)
+					resultsCh = make(chan []Result, len(groupOfTests))
 
-						// Use testutils runner to enable tn_cache setup
-						testutils.RunSchemaTest(t, schemaTest, testutils.GetTestOptionsWithCache(cacheConfig))
-					}()
+					// Use testutils runner to enable tn_cache setup
+					testutils.RunSchemaTest(t, schemaTest, testutils.GetTestOptionsWithCache(cacheConfig))
 
 					if err == nil {
 						LogInfo(t, "Test group %s completed successfully on attempt %d.", schemaTest.Name, attempt)
+						// Close channel after RunSchemaTest completes and drain any remaining results
+						close(resultsCh)
 						for result := range resultsCh {
 							successResults = append(successResults, result...)
 						}
@@ -267,6 +273,8 @@ func TestBench(t *testing.T) {
 					}
 
 					t.Logf("Attempt %d failed: %s", attempt, err)
+					// Close channel on error to prevent leaks
+					close(resultsCh)
 					if attempt < maxRetries {
 						time.Sleep(time.Second * time.Duration(attempt)) // Exponential backoff
 					}
