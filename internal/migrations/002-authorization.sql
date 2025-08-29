@@ -840,14 +840,20 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_write_batch(
     RETURN SELECT
         t.data_provider,
         t.stream_id,
-        COALESCE(o.owner = $wallet, false) OR COALESCE(p.has_perm, false) AS is_allowed
-    FROM UNNEST($data_providers, $stream_ids) AS t(data_provider, stream_id)
-    LEFT JOIN (
-        -- Precompute the latest owner per stream_ref
+        COALESCE(o.owner = $wallet, false)
+        OR COALESCE(p.has_perm, false) AS is_allowed
+    FROM (
         SELECT
-            dp.address            AS data_provider,
-            s.stream_id           AS stream_id,
-            latest.value_ref      AS owner
+            LOWER(dp)    AS data_provider,
+            sid           AS stream_id
+        FROM UNNEST($data_providers, $stream_ids) AS u(dp, sid)
+    ) t
+    LEFT JOIN (
+        -- Precompute the latest owner per stream_ref, but only for our inputs
+        SELECT
+            dp.address       AS data_provider,
+            s.stream_id      AS stream_id,
+            latest.value_ref AS owner
         FROM (
             SELECT
                 stream_ref,
@@ -864,6 +870,19 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_write_batch(
                 WHERE
                     m.metadata_key = 'stream_owner'
                     AND m.disabled_at IS NULL
+                    -- only streams/providers in inputs
+                    AND EXISTS (
+                        SELECT 1
+                        FROM (
+                            SELECT LOWER(dp) AS data_provider, sid AS stream_id
+                            FROM UNNEST($data_providers, $stream_ids) AS u(dp, sid)
+                        ) i
+                        JOIN streams si ON si.id = m.stream_ref
+                        JOIN data_providers dpi ON dpi.id = si.data_provider_id
+                        WHERE
+                            dpi.address = i.data_provider
+                            AND si.stream_id = i.stream_id
+                    )
             ) x
             WHERE rn = 1
         ) latest
@@ -871,13 +890,13 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_write_batch(
         JOIN data_providers dp ON dp.id = s.data_provider_id
     ) o
       ON LOWER(t.data_provider) = o.data_provider
-     AND t.stream_id         = o.stream_id
+     AND t.stream_id          = o.stream_id
     LEFT JOIN (
-        -- Precompute whether the wallet has write permission
+        -- Precompute whether the wallet has write permission, but only for our inputs
         SELECT DISTINCT
-            dp.address      AS data_provider,
-            s.stream_id     AS stream_id,
-            true             AS has_perm
+            dp.address  AS data_provider,
+            s.stream_id AS stream_id,
+            true        AS has_perm
         FROM metadata m
         JOIN streams s ON s.id = m.stream_ref
         JOIN data_providers dp ON dp.id = s.data_provider_id
@@ -885,9 +904,20 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_write_batch(
             m.metadata_key = 'allow_write_wallet'
             AND m.value_ref = $wallet
             AND m.disabled_at IS NULL
+            -- only streams/providers in inputs
+            AND EXISTS (
+                SELECT 1
+                FROM (
+                    SELECT LOWER(dp) AS data_provider, sid AS stream_id
+                    FROM UNNEST($data_providers, $stream_ids) AS u(dp, sid)
+                ) i
+                WHERE
+                    dp.address  = i.data_provider
+                    AND s.stream_id = i.stream_id
+            )
     ) p
       ON LOWER(t.data_provider) = p.data_provider
-     AND t.stream_id         = p.stream_id;
+     AND t.stream_id          = p.stream_id;
 };
 
 /**
