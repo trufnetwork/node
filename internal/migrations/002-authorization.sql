@@ -840,7 +840,7 @@ CREATE OR REPLACE ACTION is_wallet_allowed_to_write_batch(
     RETURN SELECT
         t.data_provider,
         t.stream_id,
-        (o.owner = $wallet) OR (p.has_perm) AS is_allowed
+        COALESCE(o.owner = $wallet, false) OR COALESCE(p.has_perm, false) AS is_allowed
     FROM UNNEST($data_providers, $stream_ids) AS t(data_provider, stream_id)
     LEFT JOIN (
         -- Precompute the latest owner per stream_ref
