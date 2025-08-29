@@ -76,6 +76,9 @@ func TestBenchDigest_Smoke(t *testing.T) {
 // Measures performance when data volume matches delete cap exactly (optimal scenarios).
 // IDE will show individual run gutter for this test.
 func TestBenchDigest_ExactFit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping benchmark test in short mode")
+	}
 	runDigestBenchmarkScale(t, benchmarkScales["exact_fit"])
 }
 
@@ -83,6 +86,9 @@ func TestBenchDigest_ExactFit(t *testing.T) {
 // Tests performance with excess data beyond processing capacity (real-world scenarios).
 // IDE will show individual run gutter for this test.
 func TestBenchDigest_WithExcess(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping benchmark test in short mode")
+	}
 	runDigestBenchmarkScale(t, benchmarkScales["with_excess"])
 }
 
