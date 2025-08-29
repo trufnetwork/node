@@ -3,6 +3,7 @@ package digest
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/gocarina/gocsv"
@@ -99,6 +100,12 @@ func SaveDigestResultsCSV(results []DigestRunResult, filePath string) error {
 // saveToCSVUsingBenchexport saves data using gocsv for robust CSV handling.
 // This provides better error handling and automatic type conversion.
 func saveToCSVUsingBenchexport(data []SavedDigestResult, filePath string) error {
+	// Ensure the directory exists
+	dir := filepath.Dir(filePath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return errors.Wrapf(err, "error creating directory %s", dir)
+	}
+
 	file, err := os.Create(filePath)
 	if err != nil {
 		return errors.Wrapf(err, "error creating file %s", filePath)
@@ -135,6 +142,12 @@ func LoadDigestResultsCSV(filePath string) ([]SavedDigestResult, error) {
 func ExportResultsSummary(results []DigestRunResult, filePath string) error {
 	if len(results) == 0 {
 		return errors.New("no results to summarize")
+	}
+
+	// Ensure the directory exists
+	dir := filepath.Dir(filePath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return errors.Wrapf(err, "error creating directory %s", dir)
 	}
 
 	file, err := os.Create(filePath)
