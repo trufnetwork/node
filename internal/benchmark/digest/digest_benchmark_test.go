@@ -101,7 +101,23 @@ func createBenchmarkSuiteFunc(t *testing.T, scale DigestBenchmarkScale) func(con
 		}
 
 		testCases := scale.TestCases
-		setupRecords := scale.TestCases[0].RecordsPerDay
+		// Ensure setup covers the largest case and all cases agree on RecordsPerDay
+		maxStreams, maxDays := 0, 0
+		setupRecords := testCases[0].RecordsPerDay
+		for _, tc := range testCases {
+			if tc.Streams > maxStreams {
+				maxStreams = tc.Streams
+			}
+			if tc.DaysPerStream > maxDays {
+				maxDays = tc.DaysPerStream
+			}
+			if tc.RecordsPerDay != setupRecords {
+				t.Fatalf("inconsistent RecordsPerDay across cases: expected %d, got %d", setupRecords, tc.RecordsPerDay)
+			}
+		}
+		if scale.SetupStreams < maxStreams || scale.SetupDays < maxDays {
+			t.Fatalf("insufficient setup: have %d streams/%d days; need at least %d/%d", scale.SetupStreams, scale.SetupDays, maxStreams, maxDays)
+		}
 
 		// Provide scale-specific context in logging
 		switch scale.Name {
@@ -151,6 +167,9 @@ func createBenchmarkSuiteFunc(t *testing.T, scale DigestBenchmarkScale) func(con
 		}
 
 		outputFile := fmt.Sprintf("bench_results/digest_%s_results.csv", scale.Name)
+		if err := os.MkdirAll(filepath.Dir(outputFile), 0o755); err != nil {
+			t.Logf("Warning: failed to ensure results dir: %v", err)
+		}
 		if err := SaveDigestResultsCSV(allResults, outputFile); err != nil {
 			t.Logf("Warning: failed to save results to %s: %v", outputFile, err)
 		} else {
@@ -159,6 +178,9 @@ func createBenchmarkSuiteFunc(t *testing.T, scale DigestBenchmarkScale) func(con
 
 		// Create summary report
 		summaryFile := fmt.Sprintf("bench_results/digest_%s_results_summary.md", scale.Name)
+		if err := os.MkdirAll(filepath.Dir(summaryFile), 0o755); err != nil {
+			t.Logf("Warning: failed to ensure summary dir: %v", err)
+		}
 		if err := ExportResultsSummary(allResults, summaryFile); err != nil {
 			t.Logf("Warning: failed to create summary report: %v", err)
 		} else {

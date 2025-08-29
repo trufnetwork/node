@@ -91,8 +91,10 @@ CREATE OR REPLACE ACTION create_streams(
 
     -- Validate stream types using dedicated private function
     for $validation_result in validate_stream_types_batch($stream_types) {
-        ERROR('Invalid stream type at position ' || $validation_result.position || ': ' ||
-              $validation_result.stream_type || ' - ' || $validation_result.error_reason);
+        IF $validation_result.error_reason != '' {
+            ERROR('Invalid stream type at position ' || $validation_result.position || ': ' ||
+                  $validation_result.stream_type || ' - ' || $validation_result.error_reason);
+        }
     }
 
     $base_uuid := uuid_generate_kwil('create_streams_' || @txid);
