@@ -48,11 +48,11 @@ CREATE OR REPLACE ACTION batch_digest(
     -- }
     
     -- Validate input arrays have same length
-    if array_length($stream_refs) != array_length($day_indexes) {
+    if COALESCE(array_length($stream_refs), 0) != COALESCE(array_length($day_indexes), 0) {
         ERROR('stream_refs and day_indexes arrays must have the same length');
     }
     
-    if array_length($stream_refs) = 0 {
+    if COALESCE(array_length($stream_refs), 0) = 0 {
         RETURN 0, 0, 0, false;
     }
     
@@ -87,18 +87,68 @@ CREATE OR REPLACE ACTION batch_digest(
     $keep_event_times INT[];
     $keep_created_ats INT[];
     
-    -- When called from auto_digest, candidates are already validated from pending_prune_days
-    -- So we can skip the redundant validation and use the input arrays directly
-    $valid_stream_refs := $stream_refs;
-    $valid_day_indexes := $day_indexes;
+    -- Filter out days that have already been digested (have primitive_event_type entries)
+    -- This ensures idempotency: reprocessing the same day should be a no-op
+    $valid_stream_refs := ARRAY[]::INT[];
+    $valid_day_indexes := ARRAY[]::INT[];
 
-    -- Early exit if no candidates provided
-    if array_length($valid_stream_refs) = 0 {
-        RETURN 0, 0, 0, false;
+    for $candidate in
+    WITH candidates AS (
+        SELECT sr, di
+        FROM UNNEST($stream_refs, $day_indexes) AS u(sr, di)
+    )
+    SELECT c.sr, c.di,
+        CASE WHEN EXISTS (
+            SELECT 1 FROM primitive_event_type pet
+            WHERE pet.stream_ref = c.sr
+              AND pet.event_time >= c.di * 86400
+              AND pet.event_time < (c.di + 1) * 86400
+        ) THEN 1 ELSE 0 END AS already_processed
+    FROM candidates c
+    {
+        if $candidate.already_processed = 0 {
+            $valid_stream_refs := array_append($valid_stream_refs, $candidate.sr);
+            $valid_day_indexes := array_append($valid_day_indexes, $candidate.di);
+        }
+    }
+
+    -- Early exit if no unprocessed candidates remain
+    if COALESCE(array_length($valid_stream_refs), 0) = 0 {
+        -- Count processed days and existing preserved records for already-digested days
+        $already_processed_count := COALESCE(array_length($stream_refs), 0);
+        $existing_preserved := 0;
+
+        if $already_processed_count > 0 {
+            for $count_row in
+            SELECT COUNT(*) AS n
+            FROM primitive_events pe
+            WHERE EXISTS (
+                SELECT 1 FROM UNNEST($stream_refs, $day_indexes) AS u(sr, di)
+                WHERE pe.stream_ref = u.sr
+                  AND pe.event_time >= u.di * 86400
+                  AND pe.event_time < (u.di + 1) * 86400
+            ) {
+                $existing_preserved := $count_row.n;
+            }
+        }
+
+        -- Clean up pending_prune_days for already-processed days
+        WITH cleanup_targets AS (
+            SELECT sr AS stream_ref, di AS day_index
+            FROM UNNEST($stream_refs, $day_indexes) AS u(sr, di)
+        )
+        DELETE FROM pending_prune_days
+        WHERE EXISTS (
+            SELECT 1 FROM cleanup_targets ct
+            WHERE pending_prune_days.stream_ref = ct.stream_ref
+              AND pending_prune_days.day_index = ct.day_index
+        );
+
+        RETURN $already_processed_count, 0, $existing_preserved, false;
     }
 
     -- Step 2: BULK OHLC Processing using UNNEST WITH ORDINALITY
-    if array_length($valid_stream_refs) > 0 {
+    if COALESCE(array_length($valid_stream_refs), 0) > 0 {
         -- Step 2a: Single-pass compute using zipped UNNEST WITH ORDINALITY
         for $result in
         WITH targets AS (
@@ -254,7 +304,7 @@ CREATE OR REPLACE ACTION batch_digest(
         $total_processed := COALESCE(array_length($agg_stream_refs), 0);
 
         -- Build keep-set arrays once, from the OHLC we just computed (no subscripts)
-        if array_length($agg_stream_refs) > 0 {
+        if COALESCE(array_length($agg_stream_refs), 0) > 0 {
             for $k in
             WITH points AS (
                 SELECT stream_ref, event_time, created_at
@@ -296,7 +346,7 @@ CREATE OR REPLACE ACTION batch_digest(
         }
 
         -- Step 2b: BULK DELETION using aligned arrays (guaranteed alignment)
-        if array_length($agg_stream_refs) > 0 {
+        if COALESCE(array_length($agg_stream_refs), 0) > 0 {
             
             -- EVENTS: count up to cap+1 to see if there are leftovers (no ORDER BY, no sorts)
             $cand_count INT := 0;
@@ -546,7 +596,7 @@ CREATE OR REPLACE ACTION auto_digest(
     }
     
     -- Handle empty result case
-    if $stream_refs IS NULL OR array_length($stream_refs) = 0 {
+    if $stream_refs IS NULL OR COALESCE(array_length($stream_refs), 0) = 0 {
         RETURN 0, 0, $has_more;
     }
     
