@@ -87,8 +87,8 @@ CREATE OR REPLACE ACTION batch_digest(
     $keep_event_times INT[];
     $keep_created_ats INT[];
     
-    -- Filter out days that have already been digested (have primitive_event_type entries)
-    -- This ensures idempotency: reprocessing the same day should be a no-op
+    -- Filter candidates based on processing status and leftover primitives
+    -- Allow reprocessing if there are leftover primitives not covered by markers
     $valid_stream_refs := ARRAY[]::INT[];
     $valid_day_indexes := ARRAY[]::INT[];
 
@@ -96,17 +96,31 @@ CREATE OR REPLACE ACTION batch_digest(
     WITH candidates AS (
         SELECT sr, di
         FROM UNNEST($stream_refs, $day_indexes) AS u(sr, di)
+    ),
+    candidate_status AS (
+        SELECT c.sr, c.di,
+            CASE WHEN EXISTS (
+                SELECT 1 FROM primitive_event_type pet
+                WHERE pet.stream_ref = c.sr
+                  AND pet.event_time >= c.di * 86400
+                  AND pet.event_time < (c.di + 1) * 86400
+            ) THEN 1 ELSE 0 END AS already_processed,
+            CASE WHEN EXISTS (
+                SELECT 1 FROM primitive_events pe
+                WHERE pe.stream_ref = c.sr
+                  AND pe.event_time >= c.di * 86400
+                  AND pe.event_time < (c.di + 1) * 86400
+                  AND NOT EXISTS (
+                      SELECT 1 FROM primitive_event_type pet
+                      WHERE pet.stream_ref = pe.stream_ref
+                        AND pet.event_time = pe.event_time
+                  )
+            ) THEN 1 ELSE 0 END AS has_leftovers
+        FROM candidates c
     )
-    SELECT c.sr, c.di,
-        CASE WHEN EXISTS (
-            SELECT 1 FROM primitive_event_type pet
-            WHERE pet.stream_ref = c.sr
-              AND pet.event_time >= c.di * 86400
-              AND pet.event_time < (c.di + 1) * 86400
-        ) THEN 1 ELSE 0 END AS already_processed
-    FROM candidates c
+    SELECT sr, di, already_processed, has_leftovers FROM candidate_status
     {
-        if $candidate.already_processed = 0 {
+        if $candidate.already_processed = 0 OR $candidate.has_leftovers = 1 {
             $valid_stream_refs := array_append($valid_stream_refs, $candidate.sr);
             $valid_day_indexes := array_append($valid_day_indexes, $candidate.di);
         }

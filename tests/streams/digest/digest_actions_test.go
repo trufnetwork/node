@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -50,6 +51,7 @@ func TestDigestActions(t *testing.T) {
 			WithSingleRecordSetup(testSingleRecordDayProcessing(t)),
 			WithOtherCombinationFlagsSetup(testOtherCombinationFlagPermutations(t)),
 			WithIdempotencyTestSetup(testIdempotencyChecks(t)),
+			WithLeftoverPrimitivesSetup(testLeftoverPrimitivesHandling(t)),
 		},
 	}, testutils.GetTestOptionsWithCache().Options)
 }
@@ -1728,6 +1730,17 @@ func testPartialDeletesDueToDeleteCap(t *testing.T) func(ctx context.Context, pl
 		}
 		t.Logf("AFTER digest: %d records (deleted: %d)", afterCount, beforeCount-afterCount)
 
+		// Strict assertion: second pass must reduce intermediates significantly  
+		// The exact count depends on whether OHLC values can be combined (e.g., OPEN=LOW, HIGH=CLOSE)
+		// But it should be much less than the original count and represent the final OHLC markers
+		expectedMaxRecords := 4 // Maximum would be 4 separate OHLC records
+		if afterCount > expectedMaxRecords {
+			t.Errorf("Expected at most %d OHLC records after complete digest, got %d (before: %d, after: %d)", expectedMaxRecords, afterCount, beforeCount, afterCount)
+		}
+		if afterCount >= beforeCount {
+			t.Errorf("Expected digest to reduce record count significantly: before=%d, after=%d", beforeCount, afterCount)
+		}
+
 		return nil
 	}
 }
@@ -2710,4 +2723,225 @@ func verifyMultipleDuplicatesCorrectRecords(ctx context.Context, platform *kwilT
 
 	t.Logf("✅ All multiple duplicate records are correct (latest created_at values)")
 	return nil
+}
+
+// WithLeftoverPrimitivesSetup creates a scenario with leftover primitives (primitives without markers)
+func WithLeftoverPrimitivesSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
+
+		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrapf(err, "error registering data provider")
+		}
+
+		// Create test data with primitives that will have leftovers after partial processing
+		testStreamId := util.GenerateStreamId("leftover_primitives_test_stream")
+		err = setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+			Platform: platform,
+			StreamId: testStreamId,
+			Height:   1,
+			MarkdownData: `
+			| event_time | value |
+			|------------|-------|
+			| 2160000    | 100   |
+			| 2160001    | 110   |
+			| 2160002    | 105   |
+			| 2160003    | 115   |
+			| 2160004    | 102   |
+			| 2160005    | 108   |
+			`,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error setting up leftover primitives test stream")
+		}
+
+		return testFn(ctx, platform)
+	}
+}
+
+// testLeftoverPrimitivesHandling tests that leftover primitives are properly handled in subsequent digest runs
+func testLeftoverPrimitivesHandling(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		streamRef := 1
+		dayIndex := int64(25) // Day 25: 2160000-2160005 (6 records)
+
+		// Insert pending day
+		err := insertPendingDay(ctx, platform, streamRef, dayIndex)
+		if err != nil {
+			return errors.Wrap(err, "error inserting pending day")
+		}
+
+		// Count initial records
+		initialCount, err := countPrimitiveEvents(ctx, platform, streamRef, dayIndex)
+		if err != nil {
+			return errors.Wrap(err, "error counting initial records")
+		}
+		t.Logf("Initial records: %d", initialCount)
+
+		// First pass with very low delete cap to create leftovers
+		result1, err := callBatchDigestWithCap(ctx, platform, []int{streamRef}, []int{int(dayIndex)}, 2)
+		if err != nil {
+			return errors.Wrap(err, "error calling first batch_digest with cap")
+		}
+
+		// Verify first pass had more to delete
+		if len(result1) > 0 && len(result1[0]) >= 4 {
+			hasMore1 := result1[0][3]
+			if hasMore1 != "true" {
+				t.Errorf("Expected has_more_to_delete=true on first run, got %s", hasMore1)
+			}
+			t.Logf("First pass result: %v", result1[0])
+		}
+
+		// Count records after first pass
+		afterFirstCount, err := countPrimitiveEvents(ctx, platform, streamRef, dayIndex)
+		if err != nil {
+			return errors.Wrap(err, "error counting records after first pass")
+		}
+		t.Logf("After first pass: %d records (deleted: %d)", afterFirstCount, initialCount-afterFirstCount)
+
+		// Verify some markers were created but leftover primitives remain
+		markerCount, err := countMarkers(ctx, platform, streamRef, dayIndex)
+		if err != nil {
+			return errors.Wrap(err, "error counting markers after first pass")
+		}
+		t.Logf("Markers after first pass: %d", markerCount)
+
+		if markerCount == 0 {
+			t.Error("Expected some markers to be created in first pass")
+		}
+		if afterFirstCount <= 3 {
+			t.Error("Expected leftover primitives to remain after first pass")
+		}
+
+		// Second pass should detect leftovers and continue processing
+		result2, err := callBatchDigestWithCap(ctx, platform, []int{streamRef}, []int{int(dayIndex)}, 10)
+		if err != nil {
+			return errors.Wrap(err, "error calling second batch_digest")
+		}
+
+		// Verify second pass processes the leftovers
+		if len(result2) > 0 && len(result2[0]) >= 4 {
+			hasMore2 := result2[0][3]
+			if hasMore2 != "false" {
+				t.Errorf("Expected has_more_to_delete=false on second run, got %s", hasMore2)
+			}
+			t.Logf("Second pass result: %v", result2[0])
+		}
+
+		// Count final records
+		finalCount, err := countPrimitiveEvents(ctx, platform, streamRef, dayIndex)
+		if err != nil {
+			return errors.Wrap(err, "error counting final records")
+		}
+		t.Logf("Final records: %d (total deleted: %d)", finalCount, initialCount-finalCount)
+
+		// Verify final count is reasonable (should be reduced from initial 6)
+		if finalCount >= initialCount {
+			t.Errorf("Expected final record count (%d) to be less than initial count (%d)", finalCount, initialCount)
+		}
+
+		// Verify all pending prune days are cleaned up
+		pendingExists, err := checkPendingPruneDayExists(ctx, platform, streamRef, dayIndex)
+		if err != nil {
+			return errors.Wrap(err, "error checking pending prune day")
+		}
+		if pendingExists {
+			t.Error("Expected pending_prune_days entry to be removed after processing leftovers")
+		}
+
+		// Verify final markers count
+		finalMarkerCount, err := countMarkers(ctx, platform, streamRef, dayIndex)
+		if err != nil {
+			return errors.Wrap(err, "error counting final markers")
+		}
+		t.Logf("Final markers: %d", finalMarkerCount)
+
+		if finalMarkerCount == 0 {
+			t.Error("Expected some markers to exist after complete processing")
+		}
+
+		// Test idempotency: running again should be a no-op since no leftovers remain
+		result3, err := callBatchDigest(ctx, platform, []int{streamRef}, []int{int(dayIndex)})
+		if err != nil {
+			return errors.Wrap(err, "error calling third batch_digest for idempotency test")
+		}
+
+		// Log idempotency result (may or may not be 0 depending on leftover detection logic)
+		if len(result3) > 0 && len(result3[0]) >= 1 {
+			processedDays3 := result3[0][0]
+			t.Logf("Idempotency test result: %v (processed days: %s)", result3[0], processedDays3)
+		}
+
+		// Verify record count unchanged after idempotent run
+		idempotentCount, err := countPrimitiveEvents(ctx, platform, streamRef, dayIndex)
+		if err != nil {
+			return errors.Wrap(err, "error counting records after idempotency test")
+		}
+		if idempotentCount != finalCount {
+			t.Errorf("Expected record count to remain %d after idempotent run, got %d", finalCount, idempotentCount)
+		}
+
+		t.Logf("✅ Leftover primitives handling test completed successfully")
+		return nil
+	}
+}
+
+// countMarkers counts the number of markers for a specific stream and day
+func countMarkers(ctx context.Context, platform *kwilTesting.Platform, streamRef int, dayIndex int64) (int, error) {
+	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+	if err != nil {
+		return 0, errors.Wrap(err, "error creating ethereum address")
+	}
+
+	dayStart := dayIndex * 86400
+	dayEnd := dayStart + 86400
+
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 1},
+		Signer:       deployer.Bytes(),
+		Caller:       deployer.Address(),
+		TxID:         platform.Txid(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext:     txContext,
+		OverrideAuthz: true,
+	}
+
+	var count int
+	err = platform.Engine.Execute(engineContext, platform.DB, "SELECT COUNT(*) FROM primitive_event_type WHERE stream_ref = $stream_ref AND event_time >= $day_start AND event_time < $day_end", map[string]any{
+		"$stream_ref": streamRef,
+		"$day_start":  dayStart,
+		"$day_end":    dayEnd,
+	}, func(row *common.Row) error {
+		if len(row.Values) != 1 {
+			return errors.Errorf("expected 1 column, got %d", len(row.Values))
+		}
+
+		switch v := row.Values[0].(type) {
+		case string:
+			countInt, err := strconv.Atoi(v)
+			if err != nil {
+				return errors.Wrap(err, "error converting string count to int")
+			}
+			count = countInt
+		case int64:
+			count = int(v)
+		case int:
+			count = v
+		default:
+			return errors.Errorf("unexpected count type: %T", row.Values[0])
+		}
+
+		return nil
+	})
+	if err != nil {
+		return 0, errors.Wrap(err, "error executing count markers query")
+	}
+
+	return count, nil
 }
