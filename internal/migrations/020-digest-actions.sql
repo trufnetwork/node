@@ -87,82 +87,11 @@ CREATE OR REPLACE ACTION batch_digest(
     $keep_event_times INT[];
     $keep_created_ats INT[];
     
-    -- Filter candidates based on processing status and leftover primitives
-    -- Allow reprocessing if there are leftover primitives not covered by markers
-    $valid_stream_refs := ARRAY[]::INT[];
-    $valid_day_indexes := ARRAY[]::INT[];
-
-    for $candidate in
-    WITH candidates AS (
-        SELECT sr, di
-        FROM UNNEST($stream_refs, $day_indexes) AS u(sr, di)
-    ),
-    candidate_status AS (
-        SELECT c.sr, c.di,
-            CASE WHEN EXISTS (
-                SELECT 1 FROM primitive_event_type pet
-                WHERE pet.stream_ref = c.sr
-                  AND pet.event_time >= c.di * 86400
-                  AND pet.event_time < (c.di + 1) * 86400
-            ) THEN 1 ELSE 0 END AS already_processed,
-            CASE WHEN EXISTS (
-                SELECT 1 FROM primitive_events pe
-                WHERE pe.stream_ref = c.sr
-                  AND pe.event_time >= c.di * 86400
-                  AND pe.event_time < (c.di + 1) * 86400
-                  AND NOT EXISTS (
-                      SELECT 1 FROM primitive_event_type pet
-                      WHERE pet.stream_ref = pe.stream_ref
-                        AND pet.event_time = pe.event_time
-                  )
-            ) THEN 1 ELSE 0 END AS has_leftovers
-        FROM candidates c
-    )
-    SELECT sr, di, already_processed, has_leftovers FROM candidate_status
-    {
-        if $candidate.already_processed = 0 OR $candidate.has_leftovers = 1 {
-            $valid_stream_refs := array_append($valid_stream_refs, $candidate.sr);
-            $valid_day_indexes := array_append($valid_day_indexes, $candidate.di);
-        }
-    }
-
-    -- Early exit if no unprocessed candidates remain
-    if COALESCE(array_length($valid_stream_refs), 0) = 0 {
-        -- Count processed days and existing preserved records for already-digested days
-        $already_processed_count := COALESCE(array_length($stream_refs), 0);
-        $existing_preserved := 0;
-
-        if $already_processed_count > 0 {
-            for $count_row in
-            SELECT COUNT(*) AS n
-            FROM primitive_events pe
-            WHERE EXISTS (
-                SELECT 1 FROM UNNEST($stream_refs, $day_indexes) AS u(sr, di)
-                WHERE pe.stream_ref = u.sr
-                  AND pe.event_time >= u.di * 86400
-                  AND pe.event_time < (u.di + 1) * 86400
-            ) {
-                $existing_preserved := $count_row.n;
-            }
-        }
-
-        -- Clean up pending_prune_days for already-processed days
-        WITH cleanup_targets AS (
-            SELECT sr AS stream_ref, di AS day_index
-            FROM UNNEST($stream_refs, $day_indexes) AS u(sr, di)
-        )
-        DELETE FROM pending_prune_days
-        WHERE EXISTS (
-            SELECT 1 FROM cleanup_targets ct
-            WHERE pending_prune_days.stream_ref = ct.stream_ref
-              AND pending_prune_days.day_index = ct.day_index
-        );
-
-        RETURN $already_processed_count, 0, $existing_preserved, false;
-    }
+    -- Always process requested days
+    -- Let auto_digest + pending queue handle natural idempotency
 
     -- Step 2: BULK OHLC Processing using UNNEST WITH ORDINALITY
-    if COALESCE(array_length($valid_stream_refs), 0) > 0 {
+    if COALESCE(array_length($stream_refs), 0) > 0 {
         -- Step 2a: Single-pass compute using zipped UNNEST WITH ORDINALITY
         for $result in
         WITH targets AS (
@@ -172,7 +101,7 @@ CREATE OR REPLACE ACTION batch_digest(
                 di AS day_index,
                 (di * 86400) AS day_start,
                 (di * 86400) + 86400 AS day_end
-            FROM UNNEST($valid_stream_refs, $valid_day_indexes)
+            FROM UNNEST($stream_refs, $day_indexes)
                  WITH ORDINALITY AS u(sr, di, ord)
         ),
         day_events AS (
@@ -517,7 +446,7 @@ CREATE OR REPLACE ACTION batch_digest(
                     SELECT
                         u.stream_ref,
                         u.day_index
-                    FROM UNNEST($valid_stream_refs, $valid_day_indexes) AS u(stream_ref, day_index)
+                    FROM UNNEST($stream_refs, $day_indexes) AS u(stream_ref, day_index)
                 )
                 DELETE FROM pending_prune_days
                 WHERE EXISTS (
