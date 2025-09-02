@@ -149,8 +149,10 @@ CREATE OR REPLACE ACTION grant_roles(
     FROM UNNEST($wallets) AS t(wallet)
     ON CONFLICT (owner, role_name, wallet) DO NOTHING;
 
-    -- Auto-create data providers when granting network_writer role
-    helper_create_data_providers($wallets);
+    -- Auto-create data providers only for the system:network_writer role
+    IF $owner = 'system' AND $role_name = 'network_writer' {
+        helper_create_data_providers($wallets);
+    }
 };
 
 /**
