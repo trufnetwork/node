@@ -486,6 +486,7 @@ CREATE OR REPLACE ACTION auto_digest(
     -- has_more_to_delete indicates that there are still pending batches to process
     has_more_to_delete BOOL
 ) {
+
     -- Calculate batch size dynamically
     -- Formula: floor((delete_cap * 3) / (expected_records_per_stream * 2))
     -- Equivalent to: (delete_cap / expected_records_per_stream) * 1.5 (but ensuring we don't use float like types)
@@ -540,6 +541,7 @@ CREATE OR REPLACE ACTION auto_digest(
     
     -- Handle empty result case
     if $stream_refs IS NULL OR COALESCE(array_length($stream_refs), 0) = 0 {
+        emit_auto_digest_notice(0, 0, $has_more);
         RETURN 0, 0, $has_more;
     }
     
@@ -552,12 +554,27 @@ CREATE OR REPLACE ACTION auto_digest(
         $total_deleted := $result.total_deleted_rows;
 
         if $result.has_more_to_delete {
+            emit_auto_digest_notice($processed, $total_deleted, true);
             $has_more := true;
             RETURN $processed, $total_deleted, $has_more;
         }
     }
-
+    emit_auto_digest_notice($processed, $total_deleted, $has_more);
     RETURN $processed, $total_deleted, $has_more;
+};
+
+-- private helper to emit structured NOTICE logs for parsing
+-- we use this because there's no way to get this returned from action executions on sdks
+CREATE OR REPLACE ACTION emit_auto_digest_notice(
+    $processed INT,
+    $deleted INT,
+    $has_more BOOL
+) PRIVATE VIEW {
+    $has_more_text := 'false';
+    if $has_more {
+        $has_more_text := 'true';
+    }
+    NOTICE('auto_digest:' || '{"processed_days":' || $processed::TEXT || ',"total_deleted_rows":' || $deleted::TEXT || ',"has_more_to_delete":' || $has_more_text || '}');
 };
 
 /**

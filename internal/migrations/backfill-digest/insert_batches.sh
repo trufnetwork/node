@@ -1,58 +1,106 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Required env:
-#   PROVIDER   - RPC URL for kwil node
-#   PRIVATE_KEY- Wallet to sign exec-sql
-# Optional env:
-#   CSV_FILE   - Path to candidates CSV (default: ./pending_prune_candidates.csv)
-#   BATCH_SIZE - Rows per batch insert (default: 10000)
-#   SLEEP_MS   - Milliseconds to sleep between batches (default: 200)
+# ========================================
+# CONFIGURATION - EDIT THESE VALUES
+# ========================================
 
-CSV_FILE=${CSV_FILE:-pending_prune_candidates.csv}
-BATCH_SIZE=${BATCH_SIZE:-10000}
-SLEEP_MS=${SLEEP_MS:-200}
+# RPC URL for kwil node
+PROVIDER="http://localhost:8484"
 
-if [[ -z "${PROVIDER:-}" || -z "${PRIVATE_KEY:-}" ]]; then
-  echo "ERROR: PROVIDER and PRIVATE_KEY must be set" >&2
+# Wallet private key to sign exec-sql transactions
+PRIVATE_KEY="0000000000000000000000000000000000000000000000000000000000000001"
+
+# Directory containing chunk files (created by split_into_chunks.sh)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CHUNK_DIR="$SCRIPT_DIR/chunk"
+
+# Milliseconds to sleep between batches (to avoid overwhelming the node)
+SLEEP_MS=200
+
+# ========================================
+# SCRIPT START
+# ========================================
+
+# Start timing
+SCRIPT_START_TIME=$(date +%s)
+echo "🚀 Starting batch insert process at $(date)"
+
+if [[ ! -d "$CHUNK_DIR" ]]; then
+  echo "ERROR: Chunk directory not found: $CHUNK_DIR" >&2
+  echo "Please run ./split_into_chunks.sh first to create chunks" >&2
   exit 1
 fi
 
-if [[ ! -f "$CSV_FILE" ]]; then
-  echo "ERROR: CSV file not found: $CSV_FILE" >&2
+# Count existing chunks
+CHUNK_COUNT=$(ls "$CHUNK_DIR"/chunk_*.sql 2>/dev/null | wc -l)
+if [[ $CHUNK_COUNT -eq 0 ]]; then
+  echo "ERROR: No SQL chunk files found in $CHUNK_DIR" >&2
+  echo "Please run ./split_into_chunks.sh first to create SQL chunks" >&2
   exit 1
 fi
 
-mkdir -p .ppd_chunks
-rm -f .ppd_chunks/* || true
+echo "Found $CHUNK_COUNT existing SQL chunk files in $CHUNK_DIR"
 
-# Split into chunk files (skip header)
-awk 'NR>1 {print > ".ppd_chunks/chunk_" int((NR-2)/ENVIRON["BATCH_SIZE"]) ".csv" }' "$CSV_FILE"
+CHUNK_COUNTER=0
+TOTAL_ROWS_PROCESSED=0
 
-echo "Generated $(ls .ppd_chunks | wc -l) chunk(s)"
+for chunk in "$CHUNK_DIR"/chunk_*.sql; do
+  [[ -e "$chunk" ]] || { echo "No chunks found"; break; }
 
-for chunk in .ppd_chunks/*.csv; do
-  [[ -e "$chunk" ]] || { echo "No chunks created"; break; }
-  echo "Processing $chunk"
-  VALUES=$(awk -F, '{printf "(%s,%s),", $1, $2}' "$chunk" | sed 's/,$//')
-  if [[ -z "$VALUES" ]]; then
-    echo "Empty chunk, skipping"
-    continue
-  fi
-  SQL="INSERT INTO pending_prune_days (stream_ref, day_index) VALUES ${VALUES} ON CONFLICT (stream_ref, day_index) DO NOTHING;"
-  kwil-cli exec-sql --stmt "$SQL" --provider "$PROVIDER" --private-key "$PRIVATE_KEY"
-  # Throttle
-  python3 - "$SLEEP_MS" <<'PY'
+  # Start chunk timing
+  CHUNK_START_TIME=$(date +%s)
+
+  CHUNK_COUNTER=$((CHUNK_COUNTER + 1))
+  CHUNK_NAME=$(basename "$chunk")
+
+  echo "📄 Processing SQL chunk $CHUNK_COUNTER/$CHUNK_COUNT: $CHUNK_NAME"
+
+  # Count INSERT values in this chunk (fastest method)
+  CHUNK_ROWS=$(tr -cd '(' < "$chunk" | wc -c)
+  TOTAL_ROWS_PROCESSED=$((TOTAL_ROWS_PROCESSED + CHUNK_ROWS))
+
+
+  # Execute the SQL
+  kwil-cli exec-sql --file "$chunk" --provider "$PROVIDER" --private-key "$PRIVATE_KEY" --sync
+
+  # Calculate chunk timing
+  CHUNK_END_TIME=$(date +%s)
+  CHUNK_DURATION=$((CHUNK_END_TIME - CHUNK_START_TIME))
+
+  echo "✅ SQL chunk $CHUNK_COUNTER completed in ${CHUNK_DURATION}s (${CHUNK_ROWS} rows)"
+
+  # Throttle between chunks (except for the last one)
+  if [[ $CHUNK_COUNTER -lt $CHUNK_COUNT ]]; then
+    python3 - "$SLEEP_MS" <<'PY'
 import sys, time
 ms=int(sys.argv[1]); time.sleep(ms/1000)
 PY
+  fi
 
 done
 
-echo "Done."
+# Calculate total execution time
+SCRIPT_END_TIME=$(date +%s)
+SCRIPT_DURATION=$((SCRIPT_END_TIME - SCRIPT_START_TIME))
 
+# Calculate performance metrics
+if [[ $SCRIPT_DURATION -gt 0 ]]; then
+  ROWS_PER_SECOND=$((TOTAL_ROWS_PROCESSED / SCRIPT_DURATION))
+  CHUNKS_PER_SECOND=$((CHUNK_COUNTER * 100 / SCRIPT_DURATION))  # Using integer math for chunks/second
+  CHUNKS_PER_SECOND_DECIMAL=$((CHUNKS_PER_SECOND / 100)).$((CHUNKS_PER_SECOND % 100))
+else
+  ROWS_PER_SECOND=0
+  CHUNKS_PER_SECOND_DECIMAL="N/A"
+fi
 
-
-
-
-
+echo ""
+echo "🎉 Batch insert process completed!"
+echo "📊 Performance Summary:"
+echo "   ⏱️  Total execution time: ${SCRIPT_DURATION} seconds"
+echo "   📄 Chunks processed: $CHUNK_COUNTER"
+echo "   📈 Total rows inserted: $TOTAL_ROWS_PROCESSED"
+echo "   🚀 Average speed: ${ROWS_PER_SECOND} rows/second"
+echo "   📦 Chunk processing rate: ${CHUNKS_PER_SECOND_DECIMAL} chunks/second"
+echo ""
+echo "✅ All SQL chunks processed successfully"
