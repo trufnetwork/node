@@ -3,10 +3,11 @@ package tests
 import (
 	"context"
 	"fmt"
-	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
 	"strconv"
 	"strings"
 	"testing"
+
+	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
 
 	"github.com/pkg/errors"
 	"github.com/trufnetwork/kwil-db/common"
@@ -52,6 +53,10 @@ func TestDigestActions(t *testing.T) {
 			WithOtherCombinationFlagsSetup(testOtherCombinationFlagPermutations(t)),
 			WithIdempotencyTestSetup(testIdempotencyChecks(t)),
 			WithLeftoverPrimitivesSetup(testLeftoverPrimitivesHandling(t)),
+			WithSupersedingLaterDuplicateSetup(testDuplicateSupersedesLaterTimestamp(t)),
+			WithStaleMarkerOpenBitSetup(testGetDailyOHLC_IgnoresStaleMarkers(t)),
+			WithHighCloseTogetherSetup(testHighCloseTogether_Flag10(t)),
+			WithAutoDigestZeroExpectedSetup(testAutoDigest_ValidatesExpectedRecordsInput(t)),
 		},
 	}, testutils.GetTestOptionsWithCache().Options)
 }
@@ -393,7 +398,7 @@ func verifyOHLCTypeFlags(ctx context.Context, platform *kwilTesting.Platform, st
 
 	// Query primitive_event_type table to get type flags for each timestamp
 	typeFlags := make(map[int64]int) // timestamp -> type flag
-	err = platform.Engine.Execute(engineContext, platform.DB, "SELECT event_time, type FROM primitive_event_type WHERE stream_ref = $stream_ref AND event_time >= $day_start AND event_time <= $day_end ORDER BY event_time", map[string]any{
+	err = platform.Engine.Execute(engineContext, platform.DB, "SELECT event_time, type FROM primitive_event_type WHERE stream_ref = $stream_ref AND event_time >= $day_start AND event_time < $day_end ORDER BY event_time", map[string]any{
 		"$stream_ref": streamRef,
 		"$day_start":  dayStart,
 		"$day_end":    dayEnd,
@@ -476,7 +481,7 @@ func verifyCombinationFlags(ctx context.Context, platform *kwilTesting.Platform,
 
 	// Query primitive_event_type table
 	typeFlags := make(map[int64]int)
-	err = platform.Engine.Execute(engineContext, platform.DB, "SELECT event_time, type FROM primitive_event_type WHERE stream_ref = $stream_ref AND event_time >= $day_start AND event_time <= $day_end ORDER BY event_time", map[string]any{
+	err = platform.Engine.Execute(engineContext, platform.DB, "SELECT event_time, type FROM primitive_event_type WHERE stream_ref = $stream_ref AND event_time >= $day_start AND event_time < $day_end ORDER BY event_time", map[string]any{
 		"$stream_ref": streamRef,
 		"$day_start":  dayStart,
 		"$day_end":    dayEnd,
@@ -620,7 +625,7 @@ func verifyAllSameFlags(ctx context.Context, platform *kwilTesting.Platform, str
 
 	// Query primitive_event_type table
 	typeFlags := make(map[int64]int)
-	err = platform.Engine.Execute(engineContext, platform.DB, "SELECT event_time, type FROM primitive_event_type WHERE stream_ref = $stream_ref AND event_time >= $day_start AND event_time <= $day_end ORDER BY event_time", map[string]any{
+	err = platform.Engine.Execute(engineContext, platform.DB, "SELECT event_time, type FROM primitive_event_type WHERE stream_ref = $stream_ref AND event_time >= $day_start AND event_time < $day_end ORDER BY event_time", map[string]any{
 		"$stream_ref": streamRef,
 		"$day_start":  dayStart,
 		"$day_end":    dayEnd,
@@ -1730,7 +1735,7 @@ func testPartialDeletesDueToDeleteCap(t *testing.T) func(ctx context.Context, pl
 		}
 		t.Logf("AFTER digest: %d records (deleted: %d)", afterCount, beforeCount-afterCount)
 
-		// Strict assertion: second pass must reduce intermediates significantly  
+		// Strict assertion: second pass must reduce intermediates significantly
 		// The exact count depends on whether OHLC values can be combined (e.g., OPEN=LOW, HIGH=CLOSE)
 		// But it should be much less than the original count and represent the final OHLC markers
 		expectedMaxRecords := 4 // Maximum would be 4 separate OHLC records
@@ -3071,20 +3076,20 @@ func verifyOHLCMarkersCorrect(ctx context.Context, platform *kwilTesting.Platfor
 	}
 
 	t.Logf("🔍 %s - Found %d OHLC markers:", testName, len(markers))
-	
+
 	// Track which OHLC flags we've seen
 	flagsSeen := make(map[int]bool)
 	for _, marker := range markers {
-		t.Logf("  - event_time=%d, type=%d (flags: %s), value=%s", 
+		t.Logf("  - event_time=%d, type=%d (flags: %s), value=%s",
 			marker.EventTime, marker.Type, formatOHLCFlags(marker.Type), marker.Value)
 		flagsSeen[marker.Type] = true
 	}
 
 	// Verify we have reasonable OHLC representation
 	// At minimum, we should have records that cover OPEN, HIGH, LOW, CLOSE concepts
-	hasOpen := flagsSeen[1] || flagsSeen[3] || flagsSeen[5] || flagsSeen[7] || flagsSeen[9] || flagsSeen[11] || flagsSeen[13] || flagsSeen[15] // Any flag with OPEN bit
-	hasHigh := flagsSeen[2] || flagsSeen[3] || flagsSeen[6] || flagsSeen[7] || flagsSeen[10] || flagsSeen[11] || flagsSeen[14] || flagsSeen[15] // Any flag with HIGH bit  
-	hasLow := flagsSeen[4] || flagsSeen[5] || flagsSeen[6] || flagsSeen[7] || flagsSeen[12] || flagsSeen[13] || flagsSeen[14] || flagsSeen[15] // Any flag with LOW bit
+	hasOpen := flagsSeen[1] || flagsSeen[3] || flagsSeen[5] || flagsSeen[7] || flagsSeen[9] || flagsSeen[11] || flagsSeen[13] || flagsSeen[15]     // Any flag with OPEN bit
+	hasHigh := flagsSeen[2] || flagsSeen[3] || flagsSeen[6] || flagsSeen[7] || flagsSeen[10] || flagsSeen[11] || flagsSeen[14] || flagsSeen[15]    // Any flag with HIGH bit
+	hasLow := flagsSeen[4] || flagsSeen[5] || flagsSeen[6] || flagsSeen[7] || flagsSeen[12] || flagsSeen[13] || flagsSeen[14] || flagsSeen[15]     // Any flag with LOW bit
 	hasClose := flagsSeen[8] || flagsSeen[9] || flagsSeen[10] || flagsSeen[11] || flagsSeen[12] || flagsSeen[13] || flagsSeen[14] || flagsSeen[15] // Any flag with CLOSE bit
 
 	if !hasOpen {
@@ -3126,4 +3131,371 @@ func formatOHLCFlags(flags int) string {
 		return "NONE"
 	}
 	return strings.Join(parts, "+")
+}
+
+// WithSupersedingLaterDuplicateSetup creates a scenario where later timestamp gets a newer duplicate
+func WithSupersedingLaterDuplicateSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
+
+		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrapf(err, "error registering data provider")
+		}
+
+		// Day 31 (2678400-2764800): two records t1 earlier=200, t2 later=100
+		testStreamId := util.GenerateStreamId("superseding_later_duplicate_test_stream")
+		err = setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+			Platform: platform,
+			StreamId: testStreamId,
+			Height:   1,
+			MarkdownData: `
+			| event_time | value |
+			|------------|-------|
+			| 2678400    | 200   |
+			| 2764799    | 100   |
+			`,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error setting up superseding later duplicate base stream")
+		}
+
+		return testFn(ctx, platform)
+	}
+}
+
+// testDuplicateSupersedesLaterTimestamp verifies that a newer duplicate at later timestamp overrides by created_at
+func testDuplicateSupersedesLaterTimestamp(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		streamRef := 1
+		dayIndex := int64(31)
+
+		// Insert pending day for initial two records
+		if err := insertPendingDay(ctx, platform, streamRef, dayIndex); err != nil {
+			return errors.Wrap(err, "error inserting pending day (initial)")
+		}
+
+		// First digest → OHLC should be [200, 200, 100, 100]
+		if _, err := callBatchDigest(ctx, platform, []int{streamRef}, []int{int(dayIndex)}); err != nil {
+			return errors.Wrap(err, "error calling first batch_digest")
+		}
+
+		ohlc1, err := callGetDailyOHLC(ctx, platform, streamRef, dayIndex)
+		if err != nil {
+			return errors.Wrap(err, "error calling get_daily_ohlc after first digest")
+		}
+		expected1 := `
+		| open_value | high_value | low_value | close_value |
+		|------------|------------|-----------|-------------|
+		| 200.000000000000000000 | 200.000000000000000000 | 100.000000000000000000 | 100.000000000000000000 |
+		`
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{Actual: ohlc1, Expected: expected1})
+
+		// Insert a new record at the same event_time as the later one with higher created_at and value 250
+		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address")
+		}
+		txContext := &common.TxContext{Ctx: ctx, BlockContext: &common.BlockContext{Height: 1}, Signer: deployer.Bytes(), Caller: deployer.Address(), TxID: platform.Txid()}
+		engineContext := &common.EngineContext{TxContext: txContext, OverrideAuthz: true}
+
+		// later timestamp within day 31 is 2764799; insert duplicate with created_at higher than previous (e.g., 9999)
+		if err := platform.Engine.Execute(engineContext, platform.DB,
+			"INSERT INTO primitive_events (stream_ref, event_time, value, created_at) VALUES ($stream_ref, $event_time, $value, $created_at)",
+			map[string]any{
+				"$stream_ref": streamRef,
+				"$event_time": int64(2764799),
+				"$value":      kwilTypes.MustParseDecimalExplicit("250", 36, 18),
+				"$created_at": int64(9999),
+			}, func(row *common.Row) error { return nil }); err != nil {
+			return errors.Wrap(err, "error inserting newer duplicate at later timestamp")
+		}
+
+		// Re-run digest and expect OHLC to update to [200, 250, 200, 250]
+		if _, err := callBatchDigest(ctx, platform, []int{streamRef}, []int{int(dayIndex)}); err != nil {
+			return errors.Wrap(err, "error calling second batch_digest")
+		}
+
+		ohlc2, err := callGetDailyOHLC(ctx, platform, streamRef, dayIndex)
+		if err != nil {
+			return errors.Wrap(err, "error calling get_daily_ohlc after second digest")
+		}
+		expected2 := `
+		| open_value | high_value | low_value | close_value |
+		|------------|------------|-----------|-------------|
+		| 200.000000000000000000 | 250.000000000000000000 | 200.000000000000000000 | 250.000000000000000000 |
+		`
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{Actual: ohlc2, Expected: expected2})
+
+		return nil
+	}
+}
+
+// ================================
+// HIGH-ROI GAP FIXES
+// ================================
+
+// WithStaleMarkerOpenBitSetup creates test data where stale markers can corrupt get_daily_ohlc results
+func WithStaleMarkerOpenBitSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
+
+		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrapf(err, "error registering data provider")
+		}
+
+		// Create test data with OHLC pattern for day 1 (86400-172800 seconds)
+		// OPEN=50 (earliest), HIGH=100 (max), LOW=10 (min), CLOSE=75 (latest)
+		testStreamId := util.GenerateStreamId("stale_marker_test_stream")
+		err = setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+			Platform: platform,
+			StreamId: testStreamId,
+			Height:   1,
+			MarkdownData: `
+			| event_time | value |
+			|------------|-------|
+			| 86400      | 50    |
+			| 129600     | 10    |
+			| 151200     | 100   |
+			| 172799     | 75    |
+			`,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error setting up stale marker test stream")
+		}
+
+		// Insert pending day and run batch_digest once to create correct markers
+		err = insertPendingDay(ctx, platform, 1, 1)
+		if err != nil {
+			return errors.Wrap(err, "error inserting pending day")
+		}
+
+		_, err = callBatchDigest(ctx, platform, []int{1}, []int{1})
+		if err != nil {
+			return errors.Wrap(err, "error running initial batch_digest")
+		}
+
+		// Inject a stale/extra OPEN-bit marker at a non-OPEN timestamp (151200, value=100)
+		// This simulates leftover marker state while the day is "considered digested"
+		addr, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address")
+		}
+
+		txContext := &common.TxContext{
+			Ctx:          ctx,
+			BlockContext: &common.BlockContext{Height: 1},
+			Signer:       addr.Bytes(),
+			Caller:       addr.Address(),
+			TxID:         platform.Txid(),
+		}
+
+		engineContext := &common.EngineContext{
+			TxContext:     txContext,
+			OverrideAuthz: true,
+		}
+
+		err = platform.Engine.Execute(engineContext, platform.DB,
+			"INSERT INTO primitive_event_type (stream_ref, event_time, type) VALUES ($sr, $et, $type) ON CONFLICT DO NOTHING",
+			map[string]any{
+				"$sr":   1,
+				"$et":   int64(151200), // HIGH timestamp
+				"$type": 1,             // OPEN bit (1)
+			}, func(*common.Row) error { return nil })
+		if err != nil {
+			return errors.Wrap(err, "error injecting stale marker")
+		}
+
+		return testFn(ctx, platform)
+	}
+}
+
+// testGetDailyOHLC_IgnoresStaleMarkers verifies that get_daily_ohlc ignores stale markers and returns correct OHLC values
+func testGetDailyOHLC_IgnoresStaleMarkers(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		streamRef := 1
+
+		// Call get_daily_ohlc - should ignore stale OPEN marker at 151200 and return correct OPEN=50
+		ohlcResult, err := callGetDailyOHLC(ctx, platform, streamRef, 1)
+		if err != nil {
+			return errors.Wrap(err, "error calling get_daily_ohlc with stale markers")
+		}
+
+		// Expect OPEN to remain 50 (earliest), not 100 (stale marker value)
+		expectedOHLC := `
+		| open_value | high_value | low_value | close_value |
+		|------------|-----------|-----------|-------------|
+		| 50.000000000000000000 | 100.000000000000000000 | 10.000000000000000000 | 75.000000000000000000 |
+		`
+
+		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
+			Actual:   ohlcResult,
+			Expected: expectedOHLC,
+		})
+
+		return nil
+	}
+}
+
+// WithHighCloseTogetherSetup creates test data for HIGH+CLOSE combination (flag 10)
+func WithHighCloseTogetherSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
+
+		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrapf(err, "error registering data provider")
+		}
+
+		// Create test data where HIGH and CLOSE are at the same timestamp
+		// Day 40: earliest=50 (OPEN), last=90 (CLOSE & HIGH), middle=60
+		testStreamId := util.GenerateStreamId("high_close_together_stream")
+		err = setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
+			Platform: platform,
+			StreamId: testStreamId,
+			Height:   1,
+			MarkdownData: `
+			| event_time | value |
+			|------------|-------|
+			| 3456000    | 50    |
+			| 3460000    | 60    |
+			| 3542399    | 90    |
+			`,
+		})
+		if err != nil {
+			return errors.Wrap(err, "error setting up HIGH+CLOSE test stream")
+		}
+
+		return testFn(ctx, platform)
+	}
+}
+
+// testHighCloseTogether_Flag10 tests HIGH+CLOSE combination (flag 10)
+func testHighCloseTogether_Flag10(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		streamRef := 1
+
+		// Insert pending day for day 40
+		err := insertPendingDay(ctx, platform, streamRef, 40)
+		if err != nil {
+			return errors.Wrap(err, "error inserting pending day 40")
+		}
+
+		// Run batch_digest
+		_, err = callBatchDigest(ctx, platform, []int{streamRef}, []int{40})
+		if err != nil {
+			return errors.Wrap(err, "error calling batch_digest for HIGH+CLOSE test")
+		}
+
+		// Expect flags: OPEN at 3456000 (flag 1), HIGH+CLOSE at 3542399 (flag 2+8=10)
+		// LOW is also at 3456000 (same as OPEN), so OPEN+LOW (flag 1+4=5)
+		err = verifySpecificFlags(ctx, platform, streamRef, 40, []int{5, 10}, "OPEN+LOW and HIGH+CLOSE", t)
+		if err != nil {
+			return errors.Wrap(err, "error verifying HIGH+CLOSE flags")
+		}
+
+		return nil
+	}
+}
+
+// WithAutoDigestZeroExpectedSetup creates minimal setup for testing auto_digest with zero expected records
+func WithAutoDigestZeroExpectedSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
+
+		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrapf(err, "error registering data provider")
+		}
+
+		return testFn(ctx, platform)
+	}
+}
+
+// testAutoDigest_ValidatesExpectedRecordsInput tests that auto_digest validates expected_records_per_stream input
+func testAutoDigest_ValidatesExpectedRecordsInput(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+		if err != nil {
+			return errors.Wrap(err, "error creating ethereum address")
+		}
+
+		// Test case 1: expected_records_per_stream = 0 (should error)
+		err = testAutoDigestWithExpectedRecords(platform, &deployer, 0, "expected_records_per_stream must be a positive integer")
+		if err != nil {
+			return errors.Wrap(err, "error testing zero expected_records_per_stream")
+		}
+
+		// Test case 2: expected_records_per_stream = -1 (should error)
+		err = testAutoDigestWithExpectedRecords(platform, &deployer, -1, "expected_records_per_stream must be a positive integer")
+		if err != nil {
+			return errors.Wrap(err, "error testing negative expected_records_per_stream")
+		}
+
+		// Test case 3: expected_records_per_stream = 1 (should succeed)
+		err = testAutoDigestWithExpectedRecords(platform, &deployer, 1, "")
+		if err != nil {
+			return errors.Wrap(err, "error testing valid expected_records_per_stream")
+		}
+
+		t.Logf("✅ auto_digest properly validates expected_records_per_stream input")
+		return nil
+	}
+}
+
+// Helper function to test auto_digest with different expected_records_per_stream values
+func testAutoDigestWithExpectedRecords(platform *kwilTesting.Platform, deployer *util.EthereumAddress, expectedRecords int, expectedErrorSubstring string) error {
+	txContext := &common.TxContext{
+		Ctx:          context.Background(),
+		BlockContext: &common.BlockContext{Height: 1},
+		Signer:       deployer.Bytes(),
+		Caller:       deployer.Address(),
+		TxID:         platform.Txid(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext: txContext,
+	}
+
+	var result []procedure.ResultRow
+	r, err := platform.Engine.Call(engineContext, platform.DB, "", "auto_digest", []any{
+		10,              // delete_cap
+		expectedRecords, // expected_records_per_stream
+	}, func(row *common.Row) error {
+		if len(row.Values) != 3 {
+			return errors.Errorf("expected 3 columns, got %d", len(row.Values))
+		}
+		processedDays := fmt.Sprintf("%v", row.Values[0])
+		totalDeleted := fmt.Sprintf("%v", row.Values[1])
+		hasMore := fmt.Sprintf("%v", row.Values[2])
+		result = append(result, procedure.ResultRow{processedDays, totalDeleted, hasMore})
+		return nil
+	})
+
+	// If we expect an error but didn't get one, that's a test failure
+	if expectedErrorSubstring != "" {
+		if err == nil && (r == nil || r.Error == nil) {
+			return errors.Errorf("expected error containing '%s', but got no error", expectedErrorSubstring)
+		}
+		if r != nil && r.Error != nil {
+			if !strings.Contains(r.Error.Error(), expectedErrorSubstring) {
+				return errors.Errorf("expected error containing '%s', but got: %s", expectedErrorSubstring, r.Error.Error())
+			}
+		}
+	} else {
+		// We expect success, so any error is unexpected
+		if err != nil {
+			return errors.Wrap(err, "unexpected error for valid input")
+		}
+		if r != nil && r.Error != nil {
+			return errors.Wrap(r.Error, "unexpected error for valid input")
+		}
+	}
+
+	return nil
 }

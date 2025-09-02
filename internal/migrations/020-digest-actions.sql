@@ -551,6 +551,11 @@ CREATE OR REPLACE ACTION auto_digest(
     has_more_to_delete BOOL
 ) {
 
+    -- Validate expected_records_per_stream to prevent divide by zero
+    if $expected_records_per_stream IS NULL OR $expected_records_per_stream < 1 {
+        ERROR('expected_records_per_stream must be a positive integer (minimum 1), got: ' || COALESCE($expected_records_per_stream::TEXT, 'NULL'));
+    }
+
     -- Calculate batch size dynamically
     -- Formula: floor((delete_cap * 3) / (expected_records_per_stream * 2))
     -- Equivalent to: (delete_cap / expected_records_per_stream) * 1.5 (but ensuring we don't use float like types)
@@ -679,18 +684,38 @@ CREATE OR REPLACE ACTION get_daily_ohlc(
     $close_value NUMERIC(36,18);
 
     if $is_digested {
-        -- Calculate from digested data using type markers
+        -- Calculate from digested data using type markers with robust selection
+        -- to handle potential stale markers and ensure correct OHLC values
         for $result in
         SELECT
-          MAX(CASE WHEN (t.type % 2) = 1 THEN p.value END)                            AS open_value,
-          MAX(CASE WHEN ((t.type / 2) % 2) = 1 THEN p.value END)                       AS high_value,
-          MAX(CASE WHEN ((t.type / 4) % 2) = 1 THEN p.value END)                       AS low_value,
-          MAX(CASE WHEN ((t.type / 8) % 2) = 1 THEN p.value END)                       AS close_value
-        FROM primitive_events p
-        JOIN primitive_event_type t
-          ON p.stream_ref = t.stream_ref AND p.event_time = t.event_time
-        WHERE t.stream_ref = $stream_ref
-          AND t.event_time >= $day_start AND t.event_time < $day_end {
+          (SELECT p.value FROM primitive_events p
+           JOIN primitive_event_type t ON t.stream_ref = p.stream_ref AND t.event_time = p.event_time
+           WHERE t.stream_ref = $stream_ref AND t.event_time >= $day_start AND t.event_time < $day_end
+             AND (t.type % 2) = 1
+           ORDER BY p.event_time ASC, p.created_at DESC
+           LIMIT 1) AS open_value,
+
+          (SELECT p.value FROM primitive_events p
+           JOIN primitive_event_type t ON t.stream_ref = p.stream_ref AND t.event_time = p.event_time
+           WHERE t.stream_ref = $stream_ref AND t.event_time >= $day_start AND t.event_time < $day_end
+             AND ((t.type / 2) % 2) = 1
+           ORDER BY p.value DESC, p.event_time ASC, p.created_at DESC
+           LIMIT 1) AS high_value,
+
+          (SELECT p.value FROM primitive_events p
+           JOIN primitive_event_type t ON t.stream_ref = p.stream_ref AND t.event_time = p.event_time
+           WHERE t.stream_ref = $stream_ref AND t.event_time >= $day_start AND t.event_time < $day_end
+             AND ((t.type / 4) % 2) = 1
+           ORDER BY p.value ASC, p.event_time ASC, p.created_at DESC
+           LIMIT 1) AS low_value,
+
+          (SELECT p.value FROM primitive_events p
+           JOIN primitive_event_type t ON t.stream_ref = p.stream_ref AND t.event_time = p.event_time
+           WHERE t.stream_ref = $stream_ref AND t.event_time >= $day_start AND t.event_time < $day_end
+             AND ((t.type / 8) % 2) = 1
+           ORDER BY p.event_time DESC, p.created_at DESC
+           LIMIT 1) AS close_value
+        {
             $open_value := $result.open_value;
             $high_value := $result.high_value;
             $low_value := $result.low_value;
