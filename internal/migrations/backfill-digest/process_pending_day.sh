@@ -26,6 +26,28 @@ SLEEP_MS=10
 NAMESPACE=""
 
 # ========================================
+# ADAPTIVE CONTROL (simple & robust)
+# ========================================
+
+# Target per-call runtime (seconds)
+TARGET_SEC=10
+
+# Baseline
+INITIAL_DELETE_CAP=10000  # 10k baseline
+
+# Absolute bounds for the cap
+DELETE_CAP_MIN=5000
+DELETE_CAP_MAX=1000000
+
+# Smoothing and step limits
+ADJUST_ALPHA=0.50           # 0..1; 0.5 is a good default
+MAX_STEP_UP=1.50            # at most +50% increase per call
+MAX_STEP_DOWN=0.60          # at most -40% decrease per call
+
+# Use a separate variable for the current cap; start from baseline
+CURRENT_DELETE_CAP="$INITIAL_DELETE_CAP"
+
+# ========================================
 # SCRIPT START
 # ========================================
 
@@ -39,7 +61,7 @@ CSV_LOG="$SCRIPT_DIR/process_log.csv"
 
 # Only write header if file doesn't exist or is empty
 if [[ ! -f "$CSV_LOG" ]] || [[ ! -s "$CSV_LOG" ]]; then
-  echo "days_deleted,seconds_to_complete,has_more,deleted_rows,cap,expected_records" > "$CSV_LOG"
+  echo "processed_days,seconds_to_complete,has_more,deleted_rows,cap,expected_records" > "$CSV_LOG"
 fi
 
 # Validate required configuration
@@ -53,7 +75,7 @@ DIGEST_CALLS=1
 while true; do
   DIGEST_START_TIME=$(date +%s%3N)
 
-  echo "🔄 Digest call $DIGEST_CALLS (delete_cap=$DELETE_CAP, expected_records=$EXPECTED_RECORDS_PER_STREAM)"
+  echo "🔄 Digest call $DIGEST_CALLS (delete_cap=$CURRENT_DELETE_CAP, expected_records=$EXPECTED_RECORDS_PER_STREAM)"
 
   # Execute auto_digest action (capture JSON output and errors distinctly)
   OUT_FILE=$(mktemp)
@@ -61,7 +83,7 @@ while true; do
   NS_ARG=()
   if [[ -n "$NAMESPACE" ]]; then NS_ARG+=(--namespace "$NAMESPACE"); fi
   set +e
-  kwil-cli exec-action auto_digest int:$DELETE_CAP int:$EXPECTED_RECORDS_PER_STREAM "${NS_ARG[@]}" \
+  kwil-cli exec-action auto_digest int:$CURRENT_DELETE_CAP int:$EXPECTED_RECORDS_PER_STREAM "${NS_ARG[@]}" \
     --provider "$PROVIDER" --private-key "$PRIVATE_KEY" --sync --output json \
     1>"$OUT_FILE" 2>"$ERR_FILE"
   STATUS=$?
@@ -80,7 +102,7 @@ while true; do
     if [[ -n "$RESULT" ]]; then
       echo "  Output (stdout): $RESULT"
     fi
-    echo "  Command context: provider=$PROVIDER delete_cap=$DELETE_CAP expected=$EXPECTED_RECORDS_PER_STREAM namespace=${NAMESPACE:-<default>}"
+    echo "  Command context: provider=$PROVIDER delete_cap=$CURRENT_DELETE_CAP expected=$EXPECTED_RECORDS_PER_STREAM namespace=${NAMESPACE:-<default>}"
     exit 1
   fi
 
@@ -120,7 +142,43 @@ while true; do
   echo "     🔄 Has more to process: $HAS_MORE"
 
   # Log to CSV
-  echo "$PROCESSED_DAYS,$DIGEST_DURATION,$HAS_MORE,$DELETED_ROWS,$DELETE_CAP,$EXPECTED_RECORDS_PER_STREAM" >> "$CSV_LOG"
+  echo "$PROCESSED_DAYS,$DIGEST_DURATION,$HAS_MORE,$DELETED_ROWS,$CURRENT_DELETE_CAP,$EXPECTED_RECORDS_PER_STREAM" >> "$CSV_LOG"
+
+  # -------------------------------
+  # ADAPT: choose NEXT cap from last duration
+  # -------------------------------
+
+  # Safety: avoid divide by zero
+  if [[ "$DIGEST_DURATION" == "0" ]]; then
+    DIGEST_DURATION="0.001"
+  fi
+
+  # 1) Ratio controller: what cap would hit TARGET_SEC if scaling ~linear?
+  RAW_NEXT=$(awk -v cap="$CURRENT_DELETE_CAP" -v t="$TARGET_SEC" -v d="$DIGEST_DURATION" \
+    'BEGIN{ print cap * (t/d) }')
+
+  # 2) Smooth the jump
+  SMOOTH_NEXT=$(awk -v cap="$CURRENT_DELETE_CAP" -v raw="$RAW_NEXT" -v a="$ADJUST_ALPHA" \
+    'BEGIN{ print cap + a * (raw - cap) }')
+
+  # 3) Limit step size relative to current
+  UPPER=$(awk -v cap="$CURRENT_DELETE_CAP" -v u="$MAX_STEP_UP"   'BEGIN{ print cap * u }')
+  LOWER=$(awk -v cap="$CURRENT_DELETE_CAP" -v dn="$MAX_STEP_DOWN" 'BEGIN{ print cap * dn }')
+  STEP_CLAMPED=$(awk -v x="$SMOOTH_NEXT" -v lo="$LOWER" -v hi="$UPPER" \
+    'BEGIN{ if (x<lo) x=lo; if (x>hi) x=hi; print x }')
+
+  # 4) Clamp to absolute bounds
+  NEXT_CAP=$(awk -v x="$STEP_CLAMPED" -v lo="$DELETE_CAP_MIN" -v hi="$DELETE_CAP_MAX" \
+    'BEGIN{ if (x<lo) x=lo; if (x>hi) x=hi; printf "%.0f", x }')
+
+  # 5) Outlier guard: if runtime is way above target, cut more aggressively
+  IS_OUTLIER=$(awk -v D="$DIGEST_DURATION" -v T="$TARGET_SEC" 'BEGIN{ print (D > 3*T) ? 1 : 0 }')
+  if [[ "$IS_OUTLIER" -eq 1 ]]; then
+    NEXT_CAP=$(awk -v cap="$CURRENT_DELETE_CAP" 'BEGIN{ printf "%.0f", cap/2 }')
+  fi
+
+  echo "     🔧 Adaptive cap: current=$CURRENT_DELETE_CAP next=$NEXT_CAP (duration=${DIGEST_DURATION}s, target=${TARGET_SEC}s)"
+  CURRENT_DELETE_CAP="$NEXT_CAP"
 
   # Check if we're done
   if [[ "$HAS_MORE" != "true" ]]; then
