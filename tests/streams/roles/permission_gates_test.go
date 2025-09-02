@@ -40,13 +40,8 @@ func testStreamCreationPermissionGates(t *testing.T, ctx context.Context, platfo
 		managerWallet    = "0x742d35cc6634c0532925a3b8d67e2c4e4d4c4d53"
 	)
 
-	err := setup.CreateDataProvider(ctx, platform, authorizedWriter)
-	require.NoError(t, err, "error registering data provider")
-	
-	err = setup.CreateDataProvider(ctx, platform, managerWallet)
-	require.NoError(t, err, "error registering data provider")
-
 	// Setup: Create required system roles and assign one authorized writer.
+	// Note: Data providers are now auto-created when granting network_writer role
 	setupSystemRoles(t, ctx, platform, managerWallet, authorizedWriter)
 
 	// Create platforms with the correct signers for each identity.
