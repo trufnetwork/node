@@ -14,13 +14,13 @@ PROVIDER="http://localhost:8484"
 PRIVATE_KEY="0000000000000000000000000000000000000000000000000000000000000001"
 
 # Delete cap (maximum rows to delete per auto_digest call)
-DELETE_CAP=10000
+DELETE_CAP=1000000
 
 # Expected records per stream per day (used for batch size calculation)
 EXPECTED_RECORDS_PER_STREAM=24
 
 # Milliseconds to sleep between auto_digest calls (to avoid overwhelming the node)
-SLEEP_MS=2000
+SLEEP_MS=10
 
 # Optional namespace (leave empty to use default)
 NAMESPACE=""
@@ -33,6 +33,15 @@ NAMESPACE=""
 SCRIPT_START_TIME=$(date +%s)
 echo "🚀 Starting pending_prune_days processing at $(date)"
 
+# Initialize CSV log file in the same directory as the script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CSV_LOG="$SCRIPT_DIR/process_log.csv"
+
+# Only write header if file doesn't exist or is empty
+if [[ ! -f "$CSV_LOG" ]] || [[ ! -s "$CSV_LOG" ]]; then
+  echo "days_deleted,seconds_to_complete,has_more,deleted_rows,cap,expected_records" > "$CSV_LOG"
+fi
+
 # Validate required configuration
 echo "🚀 Starting auto_digest processing..."
 
@@ -42,7 +51,7 @@ DIGEST_CALLS=1
 
 # Process all pending records using auto_digest
 while true; do
-  DIGEST_START_TIME=$(date +%s)
+  DIGEST_START_TIME=$(date +%s%3N)
 
   echo "🔄 Digest call $DIGEST_CALLS (delete_cap=$DELETE_CAP, expected_records=$EXPECTED_RECORDS_PER_STREAM)"
 
@@ -96,13 +105,10 @@ while true; do
     DELETED_ROWS=0
     HAS_MORE=false
   fi
-
-
-  
-
   # Calculate timing
-  DIGEST_END_TIME=$(date +%s)
-  DIGEST_DURATION=$((DIGEST_END_TIME - DIGEST_START_TIME))
+  DIGEST_END_TIME=$(date +%s%3N)
+  DIGEST_DURATION_MS=$((DIGEST_END_TIME - DIGEST_START_TIME))
+  DIGEST_DURATION=$(echo "scale=3; $DIGEST_DURATION_MS / 1000" | bc)
 
   # Update totals
   TOTAL_PROCESSED_DAYS=$((TOTAL_PROCESSED_DAYS + PROCESSED_DAYS))
@@ -112,6 +118,9 @@ while true; do
   echo "     📅 Processed days: $PROCESSED_DAYS"
   echo "     🗑️  Deleted rows: $DELETED_ROWS"
   echo "     🔄 Has more to process: $HAS_MORE"
+
+  # Log to CSV
+  echo "$PROCESSED_DAYS,$DIGEST_DURATION,$HAS_MORE,$DELETED_ROWS,$DELETE_CAP,$EXPECTED_RECORDS_PER_STREAM" >> "$CSV_LOG"
 
   # Check if we're done
   if [[ "$HAS_MORE" != "true" ]]; then
