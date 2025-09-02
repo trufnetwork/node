@@ -5,16 +5,6 @@
  * - batch_digest: Direct OHLC processing with bulk operations (replaces digest_daily)
  * - auto_digest: Batch process multiple pending days using optimized batch_digest
  * - get_daily_ohlc: Query daily OHLC data from raw or digested sources
- * 
- * Performance improvements:
- * - Eliminates expensive database roundtrips from one-by-one processing
- * - Uses UNNEST table-valued function for bulk array operations
- * - Pre-compiles valid candidates to avoid nested query issues
- * 
- * Dependencies:
- * - Requires digest schema (019-digest-schema.sql)
- * - Requires @leader contextual variable 
- * - Requires UNNEST table-valued function support in kwil-db
  */
 
 -- =============================================================================
@@ -183,19 +173,20 @@ CREATE OR REPLACE ACTION batch_digest(
                    ROW_NUMBER() OVER (PARTITION BY stream_ref, day_index
                                       ORDER BY value DESC, event_time ASC, created_at DESC) AS rn_high,
                    ROW_NUMBER() OVER (PARTITION BY stream_ref, day_index
-                                      ORDER BY value ASC,  event_time ASC, created_at DESC) AS rn_low
+                                      ORDER BY value ASC,  event_time ASC, created_at DESC) AS rn_low,
+                   MAX(created_at) OVER (PARTITION BY stream_ref, day_index, event_time) AS created_at_max
             FROM day_events de
         ),
         ohlc_rows AS (
             SELECT stream_ref, day_index,
                    MAX(CASE WHEN rn_open  = 1 THEN event_time END) AS open_time,
-                   MAX(CASE WHEN rn_open  = 1 THEN created_at END) AS open_created_at,
+                   MAX(CASE WHEN rn_open  = 1 THEN created_at_max END) AS open_created_at,
                    MAX(CASE WHEN rn_close = 1 THEN event_time END) AS close_time,
-                   MAX(CASE WHEN rn_close = 1 THEN created_at END) AS close_created_at,
+                   MAX(CASE WHEN rn_close = 1 THEN created_at_max END) AS close_created_at,
                    MAX(CASE WHEN rn_high  = 1 THEN event_time END) AS high_time,
-                   MAX(CASE WHEN rn_high  = 1 THEN created_at END) AS high_created_at,
+                   MAX(CASE WHEN rn_high  = 1 THEN created_at_max END) AS high_created_at,
                    MAX(CASE WHEN rn_low   = 1 THEN event_time END) AS low_time,
-                   MAX(CASE WHEN rn_low   = 1 THEN created_at END) AS low_created_at
+                   MAX(CASE WHEN rn_low   = 1 THEN created_at_max END) AS low_created_at
             FROM ranked
             GROUP BY stream_ref, day_index
             HAVING COUNT(*) >= 1
@@ -249,19 +240,20 @@ CREATE OR REPLACE ACTION batch_digest(
                    ROW_NUMBER() OVER (PARTITION BY stream_ref, day_index
                                       ORDER BY value DESC, event_time ASC, created_at DESC) AS rn_high,
                    ROW_NUMBER() OVER (PARTITION BY stream_ref, day_index
-                                      ORDER BY value ASC,  event_time ASC, created_at DESC) AS rn_low
+                                      ORDER BY value ASC,  event_time ASC, created_at DESC) AS rn_low,
+                   MAX(created_at) OVER (PARTITION BY stream_ref, day_index, event_time) AS created_at_max
             FROM day_events de
         ),
         ohlc_rows AS (
             SELECT stream_ref, day_index,
                    MAX(CASE WHEN rn_open  = 1 THEN event_time END) AS open_time,
-                   MAX(CASE WHEN rn_open  = 1 THEN created_at END) AS open_created_at,
+                   MAX(CASE WHEN rn_open  = 1 THEN created_at_max END) AS open_created_at,
                    MAX(CASE WHEN rn_close = 1 THEN event_time END) AS close_time,
-                   MAX(CASE WHEN rn_close = 1 THEN created_at END) AS close_created_at,
+                   MAX(CASE WHEN rn_close = 1 THEN created_at_max END) AS close_created_at,
                    MAX(CASE WHEN rn_high  = 1 THEN event_time END) AS high_time,
-                   MAX(CASE WHEN rn_high  = 1 THEN created_at END) AS high_created_at,
+                   MAX(CASE WHEN rn_high  = 1 THEN created_at_max END) AS high_created_at,
                    MAX(CASE WHEN rn_low   = 1 THEN event_time END) AS low_time,
-                   MAX(CASE WHEN rn_low   = 1 THEN created_at END) AS low_created_at
+                   MAX(CASE WHEN rn_low   = 1 THEN created_at_max END) AS low_created_at
             FROM ranked
             GROUP BY stream_ref, day_index
             HAVING COUNT(*) >= 1
@@ -329,19 +321,20 @@ CREATE OR REPLACE ACTION batch_digest(
                        ROW_NUMBER() OVER (PARTITION BY stream_ref, day_index
                                           ORDER BY value DESC, event_time ASC, created_at DESC) AS rn_high,
                        ROW_NUMBER() OVER (PARTITION BY stream_ref, day_index
-                                          ORDER BY value ASC,  event_time ASC, created_at DESC) AS rn_low
+                                          ORDER BY value ASC,  event_time ASC, created_at DESC) AS rn_low,
+                       MAX(created_at) OVER (PARTITION BY stream_ref, day_index, event_time) AS created_at_max
                 FROM day_events de
             ),
             ohlc_rows AS (
                 SELECT stream_ref, day_index,
                        MAX(CASE WHEN rn_open  = 1 THEN event_time END) AS open_time,
-                       MAX(CASE WHEN rn_open  = 1 THEN created_at END) AS open_created_at,
+                       MAX(CASE WHEN rn_open  = 1 THEN created_at_max END) AS open_created_at,
                        MAX(CASE WHEN rn_close = 1 THEN event_time END) AS close_time,
-                       MAX(CASE WHEN rn_close = 1 THEN created_at END) AS close_created_at,
+                       MAX(CASE WHEN rn_close = 1 THEN created_at_max END) AS close_created_at,
                        MAX(CASE WHEN rn_high  = 1 THEN event_time END) AS high_time,
-                       MAX(CASE WHEN rn_high  = 1 THEN created_at END) AS high_created_at,
+                       MAX(CASE WHEN rn_high  = 1 THEN created_at_max END) AS high_created_at,
                        MAX(CASE WHEN rn_low   = 1 THEN event_time END) AS low_time,
-                       MAX(CASE WHEN rn_low   = 1 THEN created_at END) AS low_created_at
+                       MAX(CASE WHEN rn_low   = 1 THEN created_at_max END) AS low_created_at
                 FROM ranked
                 GROUP BY stream_ref, day_index
                 HAVING COUNT(*) >= 1
