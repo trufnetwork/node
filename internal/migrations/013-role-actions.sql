@@ -9,6 +9,9 @@
  * Used by grant_roles when auto-creating data providers during network_writer role assignment.
  */
 CREATE OR REPLACE ACTION helper_create_data_providers($addresses TEXT[]) PRIVATE {
+    -- Normalize and dedupe upfront
+    $addresses := helper_sanitize_wallets($addresses);
+
     -- Validate all addresses first (done outside UNNEST to avoid action-in-query issues)
     FOR $i IN 1..array_length($addresses) {
         IF NOT check_ethereum_address($addresses[$i]) {
