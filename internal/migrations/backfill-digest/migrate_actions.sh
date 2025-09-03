@@ -95,7 +95,6 @@ for file in "${files[@]}"; do
         echo "   - Re-run with verbose logging: kwil-cli exec-sql --verbose --file \"$file\" --private-key \"***\" --provider \"$PROVIDER\" --sync"
         exit "$rc"
     fi
-    fi
 
     echo "✅ Completed $file"
     echo
