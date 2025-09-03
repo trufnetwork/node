@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pkg/errors"
 	"github.com/trufnetwork/kwil-db/common"
@@ -29,12 +30,13 @@ type ctxKit struct {
 
 func newCtxKit(ctx context.Context, p *kwilTesting.Platform, override bool) (*ctxKit, error) {
 	addr, err := util.NewEthereumAddressFromBytes(p.Deployer)
+	timestamp := time.Now().Unix()
 	if err != nil {
 		return nil, errors.Wrap(err, "new ethereum address")
 	}
 	tx := &common.TxContext{
 		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: 1},
+		BlockContext: &common.BlockContext{Height: 1, Timestamp: timestamp},
 		Signer:       addr.Bytes(),
 		Caller:       addr.Address(),
 		TxID:         p.Txid(),
@@ -130,6 +132,55 @@ func callBatchDigestWithCap(ctx context.Context, p *kwilTesting.Platform, stream
 
 func callAutoDigest(ctx context.Context, p *kwilTesting.Platform, deleteCap int) ([]procedure.ResultRow, error) {
 	return callActionAsStrings(ctx, p, "auto_digest", 3, deleteCap, 24 /* expected_records_per_stream */)
+}
+
+func callAutoDigestWithPreserve(ctx context.Context, p *kwilTesting.Platform, deleteCap int, preservePastDays int) ([]procedure.ResultRow, error) {
+	return callActionAsStrings(ctx, p, "auto_digest", 3, deleteCap, 24 /* expected_records_per_stream */, preservePastDays)
+}
+
+// callAutoDigestAtTimestamp calls auto_digest with an explicit BlockContext.Timestamp
+// to make preserve window behavior deterministic in tests.
+func callAutoDigestAtTimestamp(ctx context.Context, p *kwilTesting.Platform, deleteCap int, expectedRecordsPerStream int, preservePastDays int, timestamp int64) ([]procedure.ResultRow, error) {
+	deployer, err := util.NewEthereumAddressFromBytes(p.Deployer)
+	if err != nil {
+		return nil, errors.Wrap(err, "error creating ethereum address")
+	}
+
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 1, Timestamp: timestamp},
+		Signer:       deployer.Bytes(),
+		Caller:       deployer.Address(),
+		TxID:         p.Txid(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext: txContext,
+	}
+
+	var out []procedure.ResultRow
+	r, err := p.Engine.Call(engineContext, p.DB, "", "auto_digest", []any{
+		deleteCap,
+		expectedRecordsPerStream,
+		preservePastDays,
+	}, func(row *common.Row) error {
+		if len(row.Values) != 3 {
+			return errors.Errorf("auto_digest: expected 3 columns, got %d", len(row.Values))
+		}
+		out = append(out, procedure.ResultRow{
+			fmt.Sprintf("%v", row.Values[0]),
+			fmt.Sprintf("%v", row.Values[1]),
+			fmt.Sprintf("%v", row.Values[2]),
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if r != nil && r.Error != nil {
+		return nil, errors.Wrap(r.Error, "auto_digest failed")
+	}
+	return out, nil
 }
 
 // --- Small SQL helpers -------------------------------------------------------

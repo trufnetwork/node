@@ -286,11 +286,13 @@ func GetStreamId(ctx context.Context, platform *kwilTesting.Platform, dataProvid
 }
 
 // GetStreamIdForDeployer is a convenience function that resolves stream ref for the test deployer
-func GetStreamIdForDeployer(ctx context.Context, platform *kwilTesting.Platform, streamId string) (int, error) {
+func GetStreamIdForDeployer(ctx context.Context, platform *kwilTesting.Platform, streamName string) (int, error) {
 	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
 	if err != nil {
 		return 0, errors.Wrap(err, "error creating ethereum address")
 	}
 
-	return GetStreamId(ctx, platform, deployer.Address(), streamId)
+	streamId := util.GenerateStreamId(streamName)
+
+	return GetStreamId(ctx, platform, deployer.Address(), streamId.String())
 }

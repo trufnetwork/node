@@ -570,9 +570,9 @@ CREATE OR REPLACE ACTION auto_digest(
     --     ERROR('Only the leader node can execute auto digest operations');
     -- }
     
-    -- Validate preserve_past_days to avoid digesting the most recent days by mistake
-    if $preserve_past_days IS NULL OR $preserve_past_days < 1 {
-        ERROR('preserve_past_days must be a positive integer (minimum 1), got: ' || COALESCE($preserve_past_days::TEXT, 'NULL'));
+    -- Allow preserve_past_days to be zero (process including current day); only validate non-null
+    if $preserve_past_days IS NULL {
+        ERROR('preserve_past_days must not be NULL');
     }
 
     -- Compute current day and cutoff day to preserve most recent days

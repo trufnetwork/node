@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
 
@@ -78,7 +77,10 @@ func WithDigestTestSetup(testFn func(ctx context.Context, platform *kwilTesting.
 // testDigestBasicOHLCCalculation tests basic OHLC calculation logic
 func testDigestBasicOHLCCalculation(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		streamRef := 1 // Use hardcoded stream ref like original code
+		streamRef, err := setup.GetStreamIdForDeployer(ctx, platform, digestTestStreamName)
+		if err != nil {
+			return errors.Wrap(err, "resolve stream ref")
+		}
 
 		// Insert a day into the pending queue for digest processing
 		if err := insertPendingDay(ctx, platform, streamRef, 1); err != nil {
@@ -98,8 +100,8 @@ func testDigestBasicOHLCCalculation(t *testing.T) func(ctx context.Context, plat
 			| 50.000000000000000000 | 100.000000000000000000 | 10.000000000000000000 | 75.000000000000000000 |
 		`)
 
-		// Test auto_digest action with delete cap 10
-		res, err := callAutoDigest(ctx, platform, 10)
+		// Test auto_digest action with delete cap 10, no preserve cutoff for this test
+		res, err := callAutoDigestWithPreserve(ctx, platform, 10, 0)
 		if err != nil {
 			return errors.Wrap(err, "auto_digest")
 		}
@@ -154,15 +156,18 @@ func WithDigestCombinationFlagSetup(testFn func(ctx context.Context, platform *k
 // testDigestCombinationFlags tests that combination flags are correctly assigned when OHLC values overlap
 func testDigestCombinationFlags(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		streamRef := 1 // Use hardcoded stream ref like original code
+		streamRef, err := setup.GetStreamIdForDeployer(ctx, platform, "combination_test_stream")
+		if err != nil {
+			return errors.Wrap(err, "resolve stream ref")
+		}
 
 		// Insert a day into the pending queue (day 2 to avoid primary key conflict)
 		if err := insertPendingDay(ctx, platform, streamRef, 2); err != nil {
 			return errors.Wrap(err, "insert pending day")
 		}
 
-		// Run auto_digest with delete cap 10
-		if _, err := callAutoDigest(ctx, platform, 10); err != nil {
+		// Run auto_digest with delete cap 10, no preserve cutoff for this test
+		if _, err := callAutoDigestWithPreserve(ctx, platform, 10, 0); err != nil {
 			return errors.Wrap(err, "auto_digest")
 		}
 
@@ -257,7 +262,8 @@ func WithDigestAllSameFlagSetup(testFn func(ctx context.Context, platform *kwilT
 	return WithSignerAndProvider(WithStreamMD(testStreamId, 1, md, testFn))
 }
 
-// testDigestAllSameValueFlags tests that flag 15 is correctly assigned when all OHLC values are identical
+// testDigestAllSameValueFlags tests that when all values are identical across multiple timestamps,
+// the earliest gets OPEN+HIGH+LOW (7) and the latest gets CLOSE (8). Flag 15 is only for single-record days.
 func testDigestAllSameValueFlags(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		streamRef, err := setup.GetStreamIdForDeployer(ctx, platform, "all_same_test_stream")
@@ -271,8 +277,8 @@ func testDigestAllSameValueFlags(t *testing.T) func(ctx context.Context, platfor
 			return errors.Wrap(err, "error inserting pending day for all same values test")
 		}
 
-		// Run auto_digest with delete cap 10
-		_, err = callAutoDigest(ctx, platform, 10)
+		// Run auto_digest with delete cap 10, no preserve cutoff for this test
+		_, err = callAutoDigestWithPreserve(ctx, platform, 10, 0)
 		if err != nil {
 			return errors.Wrap(err, "error calling auto_digest for all same values test")
 		}
@@ -383,23 +389,7 @@ func testBatchDigestSingleCandidate(t *testing.T) func(ctx context.Context, plat
 // testBatchDigestMultipleCandidates tests batch_digest with multiple candidates
 func testBatchDigestMultipleCandidates(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Insert pending days for multiple streams
-		err := insertPendingDay(ctx, platform, 1, 5) // Stream 1, Day 5
-		if err != nil {
-			return errors.Wrap(err, "error inserting pending day 1")
-		}
-
-		err = insertPendingDay(ctx, platform, 2, 6) // Stream 2, Day 6
-		if err != nil {
-			return errors.Wrap(err, "error inserting pending day 2")
-		}
-
-		err = insertPendingDay(ctx, platform, 3, 7) // Stream 3, Day 7 (minimal data)
-		if err != nil {
-			return errors.Wrap(err, "error inserting pending day 3")
-		}
-
-		// Call batch_digest with multiple candidates
+		// Resolve stream refs
 		streamRef1, err := setup.GetStreamIdForDeployer(ctx, platform, "batch_test_stream_1")
 		if err != nil {
 			return errors.Wrap(err, "error resolving stream ref 1")
@@ -412,6 +402,24 @@ func testBatchDigestMultipleCandidates(t *testing.T) func(ctx context.Context, p
 		if err != nil {
 			return errors.Wrap(err, "error resolving stream ref 3")
 		}
+
+		// Insert pending days for multiple streams
+		err = insertPendingDay(ctx, platform, streamRef1, 5) // Stream 1, Day 5
+		if err != nil {
+			return errors.Wrap(err, "error inserting pending day 1")
+		}
+
+		err = insertPendingDay(ctx, platform, streamRef2, 6) // Stream 2, Day 6
+		if err != nil {
+			return errors.Wrap(err, "error inserting pending day 2")
+		}
+
+		err = insertPendingDay(ctx, platform, streamRef3, 7) // Stream 3, Day 7 (minimal data)
+		if err != nil {
+			return errors.Wrap(err, "error inserting pending day 3")
+		}
+
+		// Call batch_digest with multiple candidates
 
 		streamRefs := []int{streamRef1, streamRef2, streamRef3}
 		dayIndexes := []int{5, 6, 7}
@@ -496,24 +504,23 @@ func testArrayOrdering(t *testing.T) func(ctx context.Context, platform *kwilTes
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Create multiple test streams with sufficient data for processing
 		testStreams := []struct {
-			streamRef int
-			dayIndex  int64
-			streamId  string
+			name     string
+			dayIndex int64
 		}{
-			{1, 10, "array_test_stream_1_day_10"},
-			{2, 10, "array_test_stream_2_day_10"},
-			{3, 10, "array_test_stream_3_day_10"},
-			{1, 11, "array_test_stream_1_day_11"},
-			{2, 11, "array_test_stream_2_day_11"},
-			{3, 11, "array_test_stream_3_day_11"},
-			{1, 12, "array_test_stream_1_day_12"},
-			{2, 12, "array_test_stream_2_day_12"},
-			{3, 12, "array_test_stream_3_day_12"},
+			{"array_test_stream_1_day_10", 10},
+			{"array_test_stream_2_day_10", 10},
+			{"array_test_stream_3_day_10", 10},
+			{"array_test_stream_1_day_11", 11},
+			{"array_test_stream_2_day_11", 11},
+			{"array_test_stream_3_day_11", 11},
+			{"array_test_stream_1_day_12", 12},
+			{"array_test_stream_2_day_12", 12},
+			{"array_test_stream_3_day_12", 12},
 		}
 
 		// Setup test data for each stream with multiple records per day
 		for _, ts := range testStreams {
-			testStreamId := util.GenerateStreamId(ts.streamId)
+			testStreamId := util.GenerateStreamId(ts.name)
 			dayStart := ts.dayIndex * 86400
 
 			// Create test data with MANY records to trigger deletions and test array ordering
@@ -544,38 +551,49 @@ func testArrayOrdering(t *testing.T) func(ctx context.Context, platform *kwilTes
 					dayStart+500, dayStart+550, dayStart+525),
 			})
 			if err != nil {
-				return errors.Wrapf(err, "error setting up test data for stream %s", ts.streamId)
+				return errors.Wrapf(err, "error setting up test data for stream %s", ts.name)
+			}
+
+			// Resolve the stream_ref that was assigned to this stream
+			streamRef, err := setup.GetStreamIdForDeployer(ctx, platform, ts.name)
+			if err != nil {
+				return errors.Wrapf(err, "resolve stream_ref for %s", ts.name)
 			}
 
 			// Insert pending day
-			err = insertPendingDay(ctx, platform, ts.streamRef, ts.dayIndex)
+			err = insertPendingDay(ctx, platform, streamRef, ts.dayIndex)
 			if err != nil {
-				return errors.Wrapf(err, "error inserting pending day for stream %d, day %d", ts.streamRef, ts.dayIndex)
+				return errors.Wrapf(err, "error inserting pending day for stream %s, day %d", ts.name, ts.dayIndex)
 			}
 		}
 
-		// Run auto_digest multiple times to test for ordering consistency
-		var results []string
-		for i := 0; i < 3; i++ {
-			result, err := callAutoDigest(ctx, platform, 50) // delete cap 50
+		// Build full candidate arrays and assert batch_digest completes without index errors
+		var streamRefs []int
+		var dayIndexes []int
+		for _, ts := range testStreams {
+			sr, err := setup.GetStreamIdForDeployer(ctx, platform, ts.name)
 			if err != nil {
-				return errors.Wrapf(err, "error calling auto_digest (iteration %d)", i+1)
+				return errors.Wrapf(err, "resolve stream_ref for %s (batch)", ts.name)
 			}
-
-			if len(result) > 0 && len(result[0]) >= 2 {
-				results = append(results, fmt.Sprintf("Run %d: processed %s days, deleted %s rows",
-					i+1, result[0][0], result[0][1]))
-			}
+			streamRefs = append(streamRefs, sr)
+			dayIndexes = append(dayIndexes, int(ts.dayIndex))
 		}
 
-		// Log all results to see if they're consistent
-		for _, res := range results {
-			t.Log(res)
+		result, err := callBatchDigest(ctx, platform, streamRefs, dayIndexes)
+		if err != nil {
+			return errors.Wrap(err, "batch_digest failed for array ordering set")
 		}
 
-		// If we get here without errors, array ordering is working correctly
-		// Any array index misalignment would cause runtime errors in batch_digest
-		t.Log("Array ordering test completed successfully - no index misalignment detected")
+		// Relaxed assertion: only ensure processed_days=9 and has_more_to_delete=false
+		if len(result) == 0 || len(result[0]) < 4 {
+			return errors.New("unexpected result shape from batch_digest for array ordering")
+		}
+		if result[0][0] != "9" {
+			t.Errorf("expected processed_days=9, got %s", result[0][0])
+		}
+		if result[0][3] != "false" {
+			t.Errorf("expected has_more_to_delete=false, got %s", result[0][3])
+		}
 		return nil
 	}
 }
@@ -583,25 +601,37 @@ func testArrayOrdering(t *testing.T) func(ctx context.Context, platform *kwilTes
 // testOptimizedAutoDigest tests the optimized auto_digest function
 func testOptimizedAutoDigest(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Insert pending days for multiple streams
-		err := insertPendingDay(ctx, platform, 1, 5)
+		// Resolve stream refs and insert pending days for multiple streams
+		sr1, err := setup.GetStreamIdForDeployer(ctx, platform, "batch_test_stream_1")
 		if err != nil {
-			return errors.Wrap(err, "error inserting pending day 1")
+			return errors.Wrap(err, "resolve stream 1")
 		}
 
-		err = insertPendingDay(ctx, platform, 2, 6)
+		sr2, err := setup.GetStreamIdForDeployer(ctx, platform, "batch_test_stream_2")
 		if err != nil {
-			return errors.Wrap(err, "error inserting pending day 2")
+			return errors.Wrap(err, "resolve stream 2")
 		}
 
 		// Include the single-record day so the optimized flow covers it
-		err = insertPendingDay(ctx, platform, 3, 7)
+		sr3, err := setup.GetStreamIdForDeployer(ctx, platform, "batch_test_stream_3")
 		if err != nil {
+			return errors.Wrap(err, "resolve stream 3")
+		}
+
+		if err := insertPendingDay(ctx, platform, sr1, 5); err != nil {
+			return errors.Wrap(err, "error inserting pending day 1")
+		}
+
+		if err := insertPendingDay(ctx, platform, sr2, 6); err != nil {
+			return errors.Wrap(err, "error inserting pending day 2")
+		}
+
+		if err := insertPendingDay(ctx, platform, sr3, 7); err != nil {
 			return errors.Wrap(err, "error inserting pending day 3")
 		}
 
-		// Call optimized auto_digest — use a cap large enough to capture all 3 at once
-		result, err := callAutoDigest(ctx, platform, 50) // or keep 10: GREATEST(1, ...) still works, but may require multiple passes
+		// Call optimized auto_digest — use a cap large enough to capture all 3 at once; no preserve cutoff for this test
+		result, err := callAutoDigestWithPreserve(ctx, platform, 50, 0)
 		if err != nil {
 			return errors.Wrap(err, "error calling optimized auto_digest")
 		}
@@ -710,7 +740,7 @@ func testDigestDeletionLogic(t *testing.T) func(ctx context.Context, platform *k
 
 // WithDuplicateEventTimeSetup creates test data with duplicate records at same event_time
 func WithDuplicateEventTimeSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return WithSignerAndProvider(func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Create test data with duplicate event_time but different created_at values
 		// Day 20 (1728000-1814400): Multiple rows with identical event_time for OHLC roles
 		// We'll manually insert records using the database engine to control created_at
@@ -738,7 +768,7 @@ func WithDuplicateEventTimeSetup(testFn func(ctx context.Context, platform *kwil
 		}
 
 		return testFn(ctx, platform)
-	}
+	})
 }
 
 // testDuplicateRecordsAtSameEventTime tests duplicate records at same event_time with created_at tie-break
@@ -1030,8 +1060,18 @@ func testBoundaryTimestampSemantics(t *testing.T) func(ctx context.Context, plat
 			return errors.Wrap(err, "error calling get_daily_ohlc for day 23")
 		}
 
-		t.Logf("Day 22 OHLC: %v", ohlcDay22)
-		t.Logf("Day 23 OHLC: %v", ohlcDay23)
+		// Assert correct boundary semantics: day 22 includes events up to 1987199, day 23 includes 1987200
+		assertMarkdownEquals(t, ohlcDay22, `
+			| open_value | high_value | low_value | close_value |
+			|------------|------------|-----------|-------------|
+			| 100.000000000000000000 | 200.000000000000000000 | 100.000000000000000000 | 200.000000000000000000 |
+		`)
+
+		assertMarkdownEquals(t, ohlcDay23, `
+			| open_value | high_value | low_value | close_value |
+			|------------|------------|-----------|-------------|
+			| 75.000000000000000000 | 75.000000000000000000 | 75.000000000000000000 | 75.000000000000000000 |
+		`)
 
 		return nil
 	}
@@ -1295,8 +1335,8 @@ func WithOtherCombinationFlagsSetup(testFn func(ctx context.Context, platform *k
 			return errors.Wrap(err, "error setting up OPEN+HIGH test stream")
 		}
 
-		// Create test data for HIGH+LOW combination (flag 2+4=6)
-		// Day 28: HIGH and LOW at same timestamp with same value
+		// Create test data for OPEN+LOW and separate HIGH/CLOSE
+		// Day 28: Produces flags OPEN+LOW (5), HIGH (2), CLOSE (8)
 		testStreamId2 := util.GenerateStreamId("high_low_test_stream")
 		err = setup.SetupPrimitiveFromMarkdown(ctx, setup.MarkdownPrimitiveSetupInput{
 			Platform: platform,
@@ -1586,67 +1626,6 @@ func verifySingleRecordTypeFlag(ctx context.Context, platform *kwilTesting.Platf
 
 	if typeFlag != 15 {
 		return errors.Errorf("expected type flag 15 (OPEN+HIGH+LOW+CLOSE) for single record, got %d", typeFlag)
-	}
-
-	return nil
-}
-
-// verifyOpenHighFlags verifies OPEN+HIGH combination flags
-func verifyOpenHighFlags(ctx context.Context, platform *kwilTesting.Platform, streamRef int, dayIndex int64) error {
-	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
-	if err != nil {
-		return errors.Wrap(err, "error creating ethereum address")
-	}
-
-	dayStart := dayIndex * 86400
-	dayEnd := dayStart + 86400
-
-	txContext := &common.TxContext{
-		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: 1},
-		Signer:       deployer.Bytes(),
-		Caller:       deployer.Address(),
-		TxID:         platform.Txid(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext:     txContext,
-		OverrideAuthz: true,
-	}
-
-	typeFlags := make(map[int64]int)
-	err = platform.Engine.Execute(engineContext, platform.DB, "SELECT event_time, type FROM primitive_event_type WHERE stream_ref = $stream_ref AND event_time >= $day_start AND event_time < $day_end ORDER BY event_time", map[string]any{
-		"$stream_ref": streamRef,
-		"$day_start":  dayStart,
-		"$day_end":    dayEnd,
-	}, func(row *common.Row) error {
-		if len(row.Values) != 2 {
-			return errors.Errorf("expected 2 columns, got %d", len(row.Values))
-		}
-
-		eventTime, ok := row.Values[0].(int64)
-		if !ok {
-			return errors.New("event_time is not int64")
-		}
-
-		typeFlag, ok := row.Values[1].(int64)
-		if !ok {
-			return errors.New("type is not int64")
-		}
-
-		typeFlags[eventTime] = int(typeFlag)
-		return nil
-	})
-
-	if err != nil {
-		return err
-	}
-
-	// Check for OPEN+HIGH combination (flag 3) at timestamp 2332800
-	if flag, exists := typeFlags[2332800]; !exists {
-		return errors.New("missing OPEN+HIGH flag at timestamp 2332800")
-	} else if flag != 3 {
-		return errors.Errorf("expected OPEN+HIGH flag 3, got %d", flag)
 	}
 
 	return nil
@@ -2505,13 +2484,30 @@ func WithStaleMarkerOpenBitSetup(testFn func(ctx context.Context, platform *kwil
 			OverrideAuthz: true,
 		}
 
+		// Read existing type (if any)
+		var existingType int64
 		err = platform.Engine.Execute(engineContext, platform.DB,
-			"INSERT INTO primitive_event_type (stream_ref, event_time, type) VALUES ($sr, $et, $type) ON CONFLICT DO NOTHING",
-			map[string]any{
-				"$sr":   streamRef,
-				"$et":   int64(151200), // HIGH timestamp
-				"$type": 1,             // OPEN bit (1)
-			}, func(*common.Row) error { return nil })
+			"SELECT type FROM primitive_event_type WHERE stream_ref=$sr AND event_time=$et",
+			map[string]any{"$sr": streamRef, "$et": int64(151200)},
+			func(row *common.Row) error {
+				if len(row.Values) == 1 {
+					if v, ok := row.Values[0].(int64); ok {
+						existingType = v
+					}
+				}
+				return nil
+			},
+		)
+		if err != nil {
+			return errors.Wrap(err, "error reading existing marker type")
+		}
+		newType := existingType | 1
+		// Upsert with computed type value
+		err = platform.Engine.Execute(engineContext, platform.DB,
+			"INSERT INTO primitive_event_type (stream_ref, event_time, type) VALUES ($sr, $et, $type) ON CONFLICT (stream_ref, event_time) DO UPDATE SET type = $type",
+			map[string]any{"$sr": streamRef, "$et": int64(151200), "$type": newType},
+			func(*common.Row) error { return nil },
+		)
 		if err != nil {
 			return errors.Wrap(err, "error injecting stale marker")
 		}
@@ -2537,7 +2533,7 @@ func testGetDailyOHLC_IgnoresStaleMarkers(t *testing.T) func(ctx context.Context
 		// Expect OPEN to remain 50 (earliest), not 100 (stale marker value)
 		expectedOHLC := `
 		| open_value | high_value | low_value | close_value |
-		|------------|-----------|-----------|-------------|
+		|------------|------------|-----------|-------------|
 		| 50.000000000000000000 | 100.000000000000000000 | 10.000000000000000000 | 75.000000000000000000 |
 		`
 
@@ -2663,9 +2659,10 @@ func testAutoDigest_ValidatesExpectedRecordsInput(t *testing.T) func(ctx context
 // today or yesterday, and only process day <= current_day-2.
 func testAutoDigest_PreservesRecentDaysCutoff(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Compute current day and target days relative to real time.
-		nowSec := time.Now().Unix()
-		currentDay := nowSec / 86400
+		// Use a fixed reference point instead of time.Now() to avoid flakiness
+		// This simulates "current time" for the test
+		referenceTime := int64(1700000000) // Fixed timestamp for test consistency
+		currentDay := referenceTime / 86400
 		olderDay := currentDay - 3  // should be processed by default cutoff
 		recentDay := currentDay - 1 // should be preserved (not processed)
 
@@ -2710,8 +2707,8 @@ func testAutoDigest_PreservesRecentDaysCutoff(t *testing.T) func(ctx context.Con
 			return errors.Wrap(err, "enqueue recentDay")
 		}
 
-		// Run auto_digest with a generous delete cap; default preserve_past_days=2 applies
-		result, err := callAutoDigest(ctx, platform, 100)
+		// Run auto_digest at the fixed reference timestamp so only olderDay is processed
+		result, err := callAutoDigestAtTimestamp(ctx, platform, 100, 24, 2, referenceTime)
 		if err != nil {
 			return errors.Wrap(err, "call auto_digest")
 		}
