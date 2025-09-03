@@ -8,7 +8,7 @@ This folder is temporary and should be deleted from the repo after the migration
 
 - Source truth: `primitive_events` (raw), `streams` (filter primitive), `pending_prune_days` (queue)
 - Day index: `day_index = floor(event_time / 86400)`
-- Safety: exclude the current partial day (`<= floor((now_utc - 86400)/86400)`)
+- Includes current day as a candidate; steady-state `auto_digest` preserves recent days via its parameter
 - Idempotent: `ON CONFLICT DO NOTHING`
 - Handles case where `pending_prune_days` table doesn't exist yet (gracefully includes all candidates)
 

@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
+
+# Enable strict mode
 set -euo pipefail
+IFS=$'\n\t'
 
 # this script will process pending_prune_days using the `auto_digest` action
 
@@ -12,9 +15,6 @@ PROVIDER="http://localhost:8484"
 
 # Wallet private key to sign exec-sql transactions
 PRIVATE_KEY="0000000000000000000000000000000000000000000000000000000000000001"
-
-# Delete cap (maximum rows to delete per auto_digest call)
-DELETE_CAP=1000000
 
 # Expected records per stream per day (used for batch size calculation)
 EXPECTED_RECORDS_PER_STREAM=24
@@ -48,6 +48,62 @@ MAX_STEP_DOWN=0.60          # at most -40% decrease per call
 CURRENT_DELETE_CAP="$INITIAL_DELETE_CAP"
 
 # ========================================
+# PREFLIGHT CHECKS
+# ========================================
+
+echo "🔍 Performing preflight checks..."
+
+# Check required tools
+REQUIRED_TOOLS=("kwil-cli" "jq" "bc" "python3")
+for tool in "${REQUIRED_TOOLS[@]}"; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        echo "❌ Error: $tool not found in PATH"
+        echo "   Please ensure $tool is installed and available in your PATH"
+        exit 1
+    fi
+done
+
+# Validate required environment variables
+if [[ -z "${PROVIDER:-}" ]]; then
+    echo "❌ Error: PROVIDER is not set"
+    echo "   Please set PROVIDER to your Kwil node RPC URL"
+    exit 1
+fi
+
+if [[ -z "${PRIVATE_KEY:-}" ]]; then
+    echo "❌ Error: PRIVATE_KEY is not set"
+    echo "   Please set PRIVATE_KEY to your wallet private key"
+    exit 1
+fi
+
+# Validate configuration values
+if [[ ! "$DELETE_CAP" =~ ^[0-9]+$ ]] || [[ "$DELETE_CAP" -le 0 ]]; then
+    echo "❌ Error: DELETE_CAP must be a positive integer"
+    exit 1
+fi
+
+if [[ ! "$EXPECTED_RECORDS_PER_STREAM" =~ ^[0-9]+$ ]] || [[ "$EXPECTED_RECORDS_PER_STREAM" -le 0 ]]; then
+    echo "❌ Error: EXPECTED_RECORDS_PER_STREAM must be a positive integer"
+    exit 1
+fi
+
+if [[ ! "$SLEEP_MS" =~ ^[0-9]+$ ]] || [[ "$SLEEP_MS" -lt 0 ]]; then
+    echo "❌ Error: SLEEP_MS must be a non-negative integer"
+    exit 1
+fi
+
+# Check if log directory is writable
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ ! -w "$SCRIPT_DIR" ]]; then
+    echo "❌ Error: Cannot write to script directory: $SCRIPT_DIR"
+    echo "   Please ensure the script directory is writable"
+    exit 1
+fi
+
+echo "✅ Preflight checks passed"
+echo
+
+# ========================================
 # SCRIPT START
 # ========================================
 
@@ -58,10 +114,14 @@ echo "🚀 Starting pending_prune_days processing at $(date)"
 # Initialize CSV log file in the same directory as the script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CSV_LOG="$SCRIPT_DIR/process_log.csv"
+echo "📊 Progress will be logged to: $CSV_LOG"
 
 # Only write header if file doesn't exist or is empty
 if [[ ! -f "$CSV_LOG" ]] || [[ ! -s "$CSV_LOG" ]]; then
   echo "processed_days,seconds_to_complete,has_more,deleted_rows,cap,expected_records" > "$CSV_LOG"
+  echo "📝 Created new CSV log file with headers"
+else
+  echo "📝 Appending to existing CSV log file"
 fi
 
 # Validate required configuration
@@ -93,16 +153,32 @@ while true; do
   rm -f "$OUT_FILE" "$ERR_FILE"
 
   if [[ $STATUS -ne 0 ]]; then
-    echo "  ❌ Failed to execute auto_digest (exit $STATUS)"
+    echo "  ❌ Failed to execute auto_digest (exit code: $STATUS)"
     if [[ -n "$ERRMSG" ]]; then
-      echo "  Error (stderr): $ERRMSG"
+      echo "  📄 Error details:"
+      echo "    $ERRMSG"
     else
-      echo "  Error: unknown (no stderr captured)"
+      echo "  📄 Error: unknown (no stderr captured)"
     fi
     if [[ -n "$RESULT" ]]; then
-      echo "  Output (stdout): $RESULT"
+      echo "  📄 Command output:"
+      echo "    $RESULT"
     fi
-    echo "  Command context: provider=$PROVIDER delete_cap=$CURRENT_DELETE_CAP expected=$EXPECTED_RECORDS_PER_STREAM namespace=${NAMESPACE:-<default>}"
+
+    # Mask private key in context info
+    MASKED_KEY="${PRIVATE_KEY:0:8}***${PRIVATE_KEY: -4}"
+    echo "  🔧 Execution context:"
+    echo "    Provider: $PROVIDER"
+    echo "    Delete cap: $CURRENT_DELETE_CAP"
+    echo "    Expected records: $EXPECTED_RECORDS_PER_STREAM"
+    echo "    Namespace: ${NAMESPACE:-<default>}"
+    echo "    Private key: $MASKED_KEY"
+    echo
+    echo "  💡 Troubleshooting suggestions:"
+    echo "    - Verify the database is running and accessible at $PROVIDER"
+    echo "    - Check that your private key is correct"
+    echo "    - Ensure you have sufficient permissions to execute actions"
+    echo "    - Try running with --verbose flag for more details"
     exit 1
   fi
 
@@ -121,8 +197,9 @@ while true; do
     HAS_MORE=$(echo "$LOG_JSON" | jq -r '.has_more_to_delete' 2>/dev/null || echo "false")
   else
     # Fallback to zeros if no log found
-    echo "  ⚠️  No auto_digest NOTICE found in tx_result.log; raw result:" >&2
-    echo "  $RESULT" >&2
+    echo "  ⚠️  No auto_digest NOTICE found in tx_result.log"
+    echo "     This might indicate an issue with the action execution"
+    echo "     Raw transaction result: $RESULT" >&2
     PROCESSED_DAYS=0
     DELETED_ROWS=0
     HAS_MORE=false
@@ -182,7 +259,9 @@ while true; do
 
   # Check if we're done
   if [[ "$HAS_MORE" != "true" ]]; then
-    echo "  🎯 All pending days have been processed!"
+    echo ""
+    echo "🎯 All pending days have been processed!"
+    echo "   Preparing final summary..."
     break
   fi
 
@@ -215,14 +294,20 @@ else
   CALLS_PER_SECOND_DECIMAL="N/A"
 fi
 
-echo "🎉 Digest processing completed!"
+echo ""
+echo "🎉 Digest processing completed successfully!"
 echo "📊 Final Summary:"
 echo "   ⏱️  Total execution time: ${SCRIPT_DURATION} seconds"
 echo "   🔄 Digest calls made: $DIGEST_CALLS"
 echo "   📅 Total days processed: $TOTAL_PROCESSED_DAYS"
 echo "   🗑️  Total rows deleted: $TOTAL_DELETED_ROWS"
-echo "   📈 Average speed: ${DAYS_PER_SECOND_DECIMAL} days/second"
-echo "   🚀 Deletion rate: ${ROWS_PER_SECOND} rows/second"
-echo "   ⚡ Call frequency: ${CALLS_PER_SECOND_DECIMAL} calls/second"
+if [[ $SCRIPT_DURATION -gt 0 ]]; then
+    echo "   📈 Average processing speed: ${DAYS_PER_SECOND_DECIMAL} days/second"
+    echo "   🚀 Average deletion rate: ${ROWS_PER_SECOND} rows/second"
+    echo "   ⚡ Average call frequency: ${CALLS_PER_SECOND_DECIMAL} calls/second"
+fi
 echo ""
-echo "✅ All pending_prune_days have been processed by auto_digest"
+echo "📁 CSV log saved to: $CSV_LOG"
+echo ""
+echo "✅ All pending_prune_days have been successfully processed by auto_digest!"
+echo "   The database is now optimized and ready for continued operation."

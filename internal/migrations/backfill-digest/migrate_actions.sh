@@ -1,8 +1,16 @@
+#!/usr/bin/env bash
+
+# Enable strict mode
+set -euo pipefail
+IFS=$'\n\t'
+
 # this script will use exec sql to migrate all the files in the correct order for the schema update:
 
-base_dir="/home/outerlook/Documents/usher/trufnetwork/node/internal/migrations"
-PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001
-PROVIDER=http://localhost:8484
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"  
+base_dir="$(cd "$SCRIPT_DIR/.." && pwd)"  
+# Test key
+: "${PRIVATE_KEY:="0000000000000000000000000000000000000000000000000000000000000001"}"  
+: "${PROVIDER:=http://localhost:8484}"  
 
 files=(
 # first run the needed new schema updates
@@ -32,8 +40,61 @@ $base_dir/020-digest-actions.sql
 # $base_dir/901-utilities.sql
 ) 
 
+# Preflight checks
+echo "🔍 Performing preflight checks..."
+
+# Check if kwil-cli is available in PATH
+if ! command -v kwil-cli >/dev/null 2>&1; then
+    echo "❌ Error: kwil-cli not found in PATH"
+    echo "   Please ensure kwil-cli is installed and available in your PATH"
+    exit 1
+fi
+
+# Validate required environment variables
+if [[ -z "${PRIVATE_KEY:-}" ]]; then
+    echo "❌ Error: PRIVATE_KEY is not set"
+    exit 1
+fi
+
+if [[ -z "${PROVIDER:-}" ]]; then
+    echo "❌ Error: PROVIDER is not set"
+    exit 1
+fi
+
+echo "✅ Preflight checks passed"
+echo
+
 # run the migrations
+echo "🚀 Starting migrations..."
 for file in "${files[@]}"; do
-    echo "Running $file"
-    kwil-cli exec-sql --file "$file" --private-key "$PRIVATE_KEY" --provider "$PROVIDER" --sync
+    # Skip commented-out files (those starting with #)
+    if [[ "$file" =~ ^[[:space:]]*# ]]; then
+        continue
+    fi
+
+    # Check if migration file exists
+    if [[ ! -f "$file" ]]; then
+        echo "❌ Error: Migration file not found: $file"
+        exit 1
+    fi
+
+    echo "📄 Running $file"
+
+    # Execute migration and check exit status
+    if ! kwil-cli exec-sql --file "$file" --private-key "$PRIVATE_KEY" --provider "$PROVIDER" --sync; then
+        echo "❌ Migration failed: $file"
+        echo "   Command: kwil-cli exec-sql --file \"$file\" --private-key \"***\" --provider \"$PROVIDER\" --sync"
+        echo "   Exit code: $?"
+        echo
+        echo "💡 Troubleshooting suggestions:"
+        echo "   - Check if the database is running and accessible at $PROVIDER"
+        echo "   - Verify the private key is correct"
+        echo "   - Re-run with verbose logging: kwil-cli exec-sql --verbose --file \"$file\" --private-key \"***\" --provider \"$PROVIDER\" --sync"
+        exit 1
+    fi
+
+    echo "✅ Completed $file"
+    echo
 done
+
+echo "🎉 All migrations completed successfully!"
