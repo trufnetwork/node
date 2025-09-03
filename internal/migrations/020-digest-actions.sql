@@ -27,7 +27,8 @@
 CREATE OR REPLACE ACTION batch_digest(
     $stream_refs INT[],
     $day_indexes INT[],
-    $delete_cap INT DEFAULT 10000
+    $delete_cap INT DEFAULT 10000,
+    $preserve_past_days INT DEFAULT 2
 ) PUBLIC RETURNS TABLE(
     processed_days INT,
     total_deleted_rows INT,
@@ -543,7 +544,10 @@ CREATE OR REPLACE ACTION auto_digest(
     $delete_cap INT DEFAULT 10000,
     -- Expected records per stream per day, used to calculate optimal batch size
     -- Default of 24 represents typical hourly data collection (24 hours per day)
-    $expected_records_per_stream INT DEFAULT 24
+    $expected_records_per_stream INT DEFAULT 24,
+    -- Number of most recent full/partial days to preserve from digestion
+    -- Example: 2 preserves today and yesterday
+    $preserve_past_days INT DEFAULT 2
 ) PUBLIC RETURNS TABLE(
     processed_days INT,
     total_deleted_rows INT,
@@ -566,7 +570,16 @@ CREATE OR REPLACE ACTION auto_digest(
     --     ERROR('Only the leader node can execute auto digest operations');
     -- }
     
-    -- Get candidates using efficient ARRAY_AGG batch collection
+    -- Validate preserve_past_days to avoid digesting the most recent days by mistake
+    if $preserve_past_days IS NULL OR $preserve_past_days < 1 {
+        ERROR('preserve_past_days must be a positive integer (minimum 1), got: ' || COALESCE($preserve_past_days::TEXT, 'NULL'));
+    }
+
+    -- Compute current day and cutoff day to preserve most recent days
+    $current_day INT := (@block_timestamp / 86400)::INT;
+    $cutoff_day INT := $current_day - $preserve_past_days;
+
+    -- Get candidates using efficient ARRAY_AGG batch collection, excluding the last $preserve_past_days days
     $stream_refs INT[];
     $day_indexes INT[];
     -- will help our user determine if they need to call auto_digest again
@@ -578,6 +591,7 @@ CREATE OR REPLACE ACTION auto_digest(
     WITH candidates AS (
         SELECT stream_ref, day_index
         FROM pending_prune_days
+        WHERE day_index <= $cutoff_day
         ORDER BY day_index ASC, stream_ref ASC
         LIMIT $batch_size_plus_one
     ),
@@ -618,7 +632,7 @@ CREATE OR REPLACE ACTION auto_digest(
     $processed := 0;
     $total_deleted := 0;
     
-    for $result in batch_digest($stream_refs, $day_indexes, $delete_cap) {
+    for $result in batch_digest($stream_refs, $day_indexes, $delete_cap, $preserve_past_days) {
         $processed := $result.processed_days;
         $total_deleted := $result.total_deleted_rows;
 
