@@ -189,18 +189,18 @@ func DeleteStream(ctx context.Context, platform *kwilTesting.Platform, streamLoc
 	)
 }
 
-func CreateDataProvider(ctx context.Context, platform *kwilTesting.Platform, address string) (error) {
+func CreateDataProvider(ctx context.Context, platform *kwilTesting.Platform, address string) error {
 	addr, err := util.NewEthereumAddressFromString(address)
 	if err != nil {
 		return errors.Wrap(err, "invalid data provider address")
 	}
-	
+
 	// Grant the data provider the network_writer role
 	err = AddMemberToRoleBypass(ctx, platform, "system", "network_writer", addr.Address())
 	if err != nil {
 		return errors.Wrap(err, "failed to enable stream deployer")
 	}
-	
+
 	txContext := &common.TxContext{
 		Ctx:          ctx,
 		BlockContext: &common.BlockContext{Height: 1},
@@ -230,4 +230,67 @@ func CreateDataProvider(ctx context.Context, platform *kwilTesting.Platform, add
 	}
 
 	return nil
+}
+
+// GetStreamId resolves a stream reference using the data provider address and stream ID
+// This uses the get_stream_id action from the database to dynamically resolve stream refs
+// instead of hardcoding them as "streamRef := 1"
+func GetStreamId(ctx context.Context, platform *kwilTesting.Platform, dataProviderAddress string, streamId string) (int, error) {
+	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+	if err != nil {
+		return 0, errors.Wrap(err, "error creating ethereum address")
+	}
+
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 1},
+		Signer:       deployer.Bytes(),
+		Caller:       deployer.Address(),
+		TxID:         platform.Txid(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext: txContext,
+	}
+
+	var streamRef int
+	r, err := platform.Engine.Call(engineContext, platform.DB, "", "get_stream_id", []any{
+		dataProviderAddress,
+		streamId,
+	}, func(row *common.Row) error {
+		if len(row.Values) != 1 {
+			return errors.Errorf("expected 1 column, got %d", len(row.Values))
+		}
+
+		if row.Values[0] == nil {
+			return errors.New("stream not found")
+		}
+
+		streamRefInt, ok := row.Values[0].(int64)
+		if !ok {
+			return errors.New("stream_ref is not int64")
+		}
+
+		streamRef = int(streamRefInt)
+		return nil
+	})
+
+	if err != nil {
+		return 0, err
+	}
+	if r.Error != nil {
+		return 0, errors.Wrap(r.Error, "get_stream_id failed")
+	}
+
+	return streamRef, nil
+}
+
+// GetStreamIdForDeployer is a convenience function that resolves stream ref for the test deployer
+func GetStreamIdForDeployer(ctx context.Context, platform *kwilTesting.Platform, streamId string) (int, error) {
+	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+	if err != nil {
+		return 0, errors.Wrap(err, "error creating ethereum address")
+	}
+
+	return GetStreamId(ctx, platform, deployer.Address(), streamId)
 }
