@@ -81,16 +81,20 @@ for file in "${files[@]}"; do
     echo "📄 Running $file"
 
     # Execute migration and check exit status
-    if ! kwil-cli exec-sql --file "$file" --private-key "$PRIVATE_KEY" --provider "$PROVIDER" --sync; then
+    if kwil-cli exec-sql --file "$file" --private-key "$PRIVATE_KEY" --provider "$PROVIDER" --sync; then
+        :
+    else
+        rc=$?
         echo "❌ Migration failed: $file"
         echo "   Command: kwil-cli exec-sql --file \"$file\" --private-key \"***\" --provider \"$PROVIDER\" --sync"
-        echo "   Exit code: $?"
+        echo "   Exit code: $rc"
         echo
         echo "💡 Troubleshooting suggestions:"
         echo "   - Check if the database is running and accessible at $PROVIDER"
         echo "   - Verify the private key is correct"
         echo "   - Re-run with verbose logging: kwil-cli exec-sql --verbose --file \"$file\" --private-key \"***\" --provider \"$PROVIDER\" --sync"
-        exit 1
+        exit "$rc"
+    fi
     fi
 
     echo "✅ Completed $file"

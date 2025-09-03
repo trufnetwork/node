@@ -1,5 +1,5 @@
 -- Read-only: compute all (stream_ref, day_index) candidates to backfill pending_prune_days
--- Safe to re-run. Excludes current partial day via 24h safety window.
+-- Safe to re-run.
 
 WITH params AS (
   SELECT
