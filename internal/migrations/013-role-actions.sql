@@ -5,6 +5,31 @@
  */
 
 /**
+ * helper_create_data_providers: Internal helper to create multiple data providers without permission checks.
+ * Used by grant_roles when auto-creating data providers during network_writer role assignment.
+ */
+CREATE OR REPLACE ACTION helper_create_data_providers($addresses TEXT[]) PRIVATE {
+    -- Normalize and dedupe upfront
+    $addresses := helper_sanitize_wallets($addresses);
+
+    -- Validate all addresses first (done outside UNNEST to avoid action-in-query issues)
+    FOR $i IN 1..array_length($addresses) {
+        IF NOT check_ethereum_address($addresses[$i]) {
+            ERROR('Invalid data provider address. Must be a valid Ethereum address: ' || $addresses[$i]);
+        }
+    }
+
+    -- Batch create data providers using UNNEST for optimal performance
+    INSERT INTO data_providers (id, address, created_at)
+    SELECT 
+        ROW_NUMBER() OVER (ORDER BY t.address) + COALESCE((SELECT MAX(id) FROM data_providers), 0),
+        t.address,
+        @height
+    FROM UNNEST($addresses) AS t(address)
+    ON CONFLICT DO NOTHING;
+};
+
+/**
  * helper_assert_owner_addr: Validates an owner address for the roles context.
  * It checks if the address is a valid Ethereum address or the special 'system' identifier.
  */
@@ -123,6 +148,11 @@ CREATE OR REPLACE ACTION grant_roles(
     SELECT $owner, $role_name, t.wallet, @height, LOWER(@caller)
     FROM UNNEST($wallets) AS t(wallet)
     ON CONFLICT (owner, role_name, wallet) DO NOTHING;
+
+    -- Auto-create data providers only for the system:network_writer role
+    IF $owner = 'system' AND $role_name = 'network_writer' {
+        helper_create_data_providers($wallets);
+    }
 };
 
 /**
