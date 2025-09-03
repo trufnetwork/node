@@ -376,6 +376,25 @@ func testMultiStreamDigest(ctx context.Context, t *testing.T, client *tnclient.C
 
 				t.Logf("    Combined flags: %d (O:%t H:%t L:%t C:%t)",
 					combinedTypeFlags, hasOpen, hasHigh, hasLow, hasClose)
+
+				// Assert all OHLC components are present
+				var missingComponents []string
+				if !hasOpen {
+					missingComponents = append(missingComponents, "Open")
+				}
+				if !hasHigh {
+					missingComponents = append(missingComponents, "High")
+				}
+				if !hasLow {
+					missingComponents = append(missingComponents, "Low")
+				}
+				if !hasClose {
+					missingComponents = append(missingComponents, "Close")
+				}
+
+				require.Empty(t, missingComponents, 
+					"%s Day %d missing OHLC components: %v (combined flags: %d)", 
+					stream.name, dayNum, missingComponents, combinedTypeFlags)
 			}
 		}
 
