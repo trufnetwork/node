@@ -37,7 +37,7 @@ CREATE OR REPLACE ACTION get_stream_ids(
 CREATE OR REPLACE ACTION get_stream_id(
   $data_provider_address TEXT,
   $stream_id TEXT
-) PUBLIC returns (id INT) {
+) PUBLIC VIEW returns (id INT) {
   $ids := get_stream_ids(ARRAY[$data_provider_address], ARRAY[$stream_id]);
   if array_length($ids) = 0 {
     return NULL;

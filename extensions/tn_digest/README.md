@@ -28,11 +28,11 @@
 Minimal SQL to adjust:
 ```sql
 -- First-time setup: ensure the single row exists
-INSERT INTO digest_config (id, enabled, digest_schedule)
+INSERT INTO main.digest_config (id, enabled, digest_schedule)
 VALUES (1, true, '*/10 * * * *');
 
 -- Subsequent changes
-UPDATE digest_config SET enabled = true, digest_schedule = '*/10 * * * *' WHERE id = 1;
+UPDATE main.digest_config SET enabled = true, digest_schedule = '*/10 * * * *' WHERE id = 1;
 ```
 
 ### Leader Gating & Lifecycle

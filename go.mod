@@ -21,7 +21,7 @@ require (
 	github.com/testcontainers/testcontainers-go v0.37.0
 	github.com/trufnetwork/kwil-db v0.10.3-0.20250829040222-799cf48f758e
 	github.com/trufnetwork/kwil-db/core v0.4.3-0.20250829040222-799cf48f758e
-	github.com/trufnetwork/sdk-go v0.3.2-0.20250630062504-841b40cdb709
+	github.com/trufnetwork/sdk-go v0.4.3-0.20250821041427-ae33ba5dcd2c
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20250218142911-aa4b98e5adaa
 	golang.org/x/sync v0.15.0

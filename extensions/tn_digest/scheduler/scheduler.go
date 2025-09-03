@@ -72,14 +72,16 @@ func (s *DigestScheduler) Start(ctx context.Context, cronExpr string) error {
 	// Clear any existing jobs to avoid duplicates on (re)start
 	s.cron.Clear()
 
-	// Capture the current context to avoid races if Start is called again.
-	jobCtx := s.ctx
+	// Use background context for job execution to avoid cancellation issues
 	jobFunc := func() {
 		defer func() {
 			if r := recover(); r != nil {
 				s.logger.Error("panic in digest job", "panic", r, "stack", string(debug.Stack()))
 			}
 		}()
+
+		// Create a fresh context for each job execution
+		jobCtx := context.Background()
 
 		// Snapshot dependencies under lock to avoid races with setters.
 		s.mu.Lock()

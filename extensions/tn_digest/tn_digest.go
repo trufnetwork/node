@@ -7,12 +7,19 @@ import (
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/crypto/auth"
 	"github.com/trufnetwork/kwil-db/extensions/hooks"
+	"github.com/trufnetwork/kwil-db/extensions/precompiles"
 	sql "github.com/trufnetwork/kwil-db/node/types/sql"
 	"github.com/trufnetwork/node/extensions/tn_digest/internal"
 )
 
 // InitializeExtension registers hooks needed by this extension.
 func InitializeExtension() {
+	// Register precompile to make extension visible in logs (similar to tn_cache)
+	err := precompiles.RegisterInitializer(ExtensionName, InitializeDigestPrecompile)
+	if err != nil {
+		panic(fmt.Sprintf("failed to register %s initializer: %v", ExtensionName, err))
+	}
+
 	// Register engine ready hook
 	if err := hooks.RegisterEngineReadyHook(ExtensionName+"_engine_ready", engineReadyHook); err != nil {
 		panic(fmt.Sprintf("failed to register %s engine ready hook: %v", ExtensionName, err))
@@ -21,6 +28,12 @@ func InitializeExtension() {
 	if err := hooks.RegisterEndBlockHook(ExtensionName+"_end_block", endBlockHook); err != nil {
 		panic(fmt.Sprintf("failed to register %s end block hook: %v", ExtensionName, err))
 	}
+}
+
+// InitializeDigestPrecompile makes the extension visible in logs
+func InitializeDigestPrecompile(ctx context.Context, service *common.Service, db sql.DB, alias string, metadata map[string]any) (precompiles.Precompile, error) {
+	// Return empty precompile just to make the extension show up in "registered extension" logs
+	return precompiles.Precompile{}, nil
 }
 
 // InitializeExtensionWithNodeCapabilities is deprecated. The extension now
@@ -39,7 +52,7 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	}
 
 	// Build engine operations wrapper
-	engOps := internal.NewEngineOperations(app.Engine, db, app.Service.Logger)
+	engOps := internal.NewEngineOperations(app.Engine, db, app.Accounts, app.Service.Logger)
 
 	// Load schedule from config; fall back to default if absent
 	enabled, schedule, _ := engOps.LoadDigestConfig(ctx)
