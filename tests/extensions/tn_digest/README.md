@@ -58,6 +58,18 @@ tests/extensions/tn_digest/
 - Confirms pending_prune_days is empty after processing
 - Tests complete E2E scheduler workflow
 
+### 2. MultiStreamDigestTest
+- Batch deploys 3 test streams in single transaction using BatchDeployStreams():
+  - `stream1a` (ascending_values): Values increase over time
+  - `stream2b` (volatile_trading): High/low volatility pattern
+  - `stream3c` (steady_decline): Values decrease over time
+- Bulk inserts 135 records in single transaction (15 per stream × 3 streams)
+- Distributes data across 3 days (5 records per day per stream)
+- Uses efficient bulk operations for production-realistic performance
+- Waits for 9 digest operations (3 streams × 3 days) with 5-minute timeout
+- Verifies OHLC type flags for each stream and day
+- Validates OPEN and CLOSE flags exist for all processed days
+
 ### Current Test Coverage
 - ✅ Extension registration and precompile initialization
 - ✅ Database configuration via main.digest_config
@@ -66,6 +78,13 @@ tests/extensions/tn_digest/
 - ✅ OHLC type flag verification (15 = OPEN+HIGH+LOW+CLOSE)
 - ✅ Query result parsing from ExportToStringMap()
 - ✅ End-to-end scheduler reliability testing
+- ✅ Multi-stream processing with diverse data patterns
+- ✅ Multi-day digest operations across different time ranges
+- ✅ Comprehensive OHLC calculation validation
+- ✅ Large-scale data processing (135+ records)
+- ✅ Efficient bulk insertion operations (single transaction for all records)
+- ✅ Batch stream deployment (single transaction for multiple streams)
+- ✅ Production-realistic data ingestion patterns
 
 ## Configuration
 
@@ -80,13 +99,32 @@ VALUES (1, true, '*/30 * * * * *');
 
 ### Test Data
 
-The test creates a single test record:
-
+#### SchedulerIntegration Test
 ```
 Stream: stdigsch123456789012345678901234
 Timestamp: 259200 (Day 3)
 Value: 42
 Expected Result: Type flag 15 (OPEN+HIGH+LOW+CLOSE for single record)
+```
+
+#### MultiStreamDigestTest
+```
+Stream1 (ascending_values):
+  Day 1: Values 104, 108, 112, 116, 120
+  Day 2: Values 124, 128, 132, 136, 140  
+  Day 3: Values 144, 148, 152, 156, 160
+
+Stream2 (volatile_trading):
+  Day 1: Values 230, 190, 250, 210, 270 (alternating high/low)
+  Day 2: Values 280, 240, 300, 260, 320
+  Day 3: Values 330, 290, 350, 310, 370
+
+Stream3 (steady_decline):  
+  Day 1: Values 350, 346, 342, 338, 334
+  Day 2: Values 330, 326, 322, 318, 314
+  Day 3: Values 310, 306, 302, 298, 294
+
+Expected: OHLC type flags for each stream and day
 ```
 
 ## Expected Results
