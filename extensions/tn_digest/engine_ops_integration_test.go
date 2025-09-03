@@ -11,6 +11,7 @@ import (
 	"github.com/trufnetwork/kwil-db/core/crypto/auth"
 	"github.com/trufnetwork/kwil-db/core/log"
 	"github.com/trufnetwork/kwil-db/core/types"
+	"github.com/trufnetwork/kwil-db/node/accounts"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/extensions/tn_digest/internal"
 	digestembed "github.com/trufnetwork/node/tests/extensions/digest"
@@ -32,8 +33,12 @@ func TestBuildAndBroadcastAutoDigestTx_VerifiesTxBuildSignAndDBEffect(t *testing
 		SeedStatements: []string{string(bts)},
 		FunctionTests: []kwilTesting.TestFunc{
 			func(ctx context.Context, platform *kwilTesting.Platform) error {
+				// Create accounts service
+				accts, err := accounts.InitializeAccountStore(ctx, platform.DB, log.New())
+				require.NoError(t, err)
+				
 				// Prepare EngineOperations
-				ops := internal.NewEngineOperations(platform.Engine, platform.DB, log.New())
+				ops := internal.NewEngineOperations(platform.Engine, platform.DB, accts, log.New())
 
 				// Generate a node signer (secp256k1)
 				priv, _, err := crypto.GenerateSecp256k1Key(nil)

@@ -2,6 +2,7 @@ package tn_digest
 
 import (
 	"context"
+	"math/big"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -61,6 +62,29 @@ func (t *fakeTx) BeginTx(ctx context.Context) (sqltypes.Tx, error) { return &fak
 func (t *fakeTx) Rollback(ctx context.Context) error               { return nil }
 func (t *fakeTx) Commit(ctx context.Context) error                 { return nil }
 
+// fakeAccounts implements common.Accounts for tests
+type fakeAccounts struct{}
+
+func (f *fakeAccounts) GetAccount(ctx context.Context, db sqltypes.Executor, acctID *coretypes.AccountID) (*coretypes.Account, error) {
+	return &coretypes.Account{
+		ID:      acctID,
+		Nonce:   0,
+		Balance: big.NewInt(1000),
+	}, nil
+}
+
+func (f *fakeAccounts) Credit(ctx context.Context, tx sqltypes.Executor, acctID *coretypes.AccountID, amount *big.Int) error {
+	return nil
+}
+
+func (f *fakeAccounts) Transfer(ctx context.Context, tx sqltypes.TxMaker, from, to *coretypes.AccountID, amt *big.Int) error {
+	return nil
+}
+
+func (f *fakeAccounts) ApplySpend(ctx context.Context, tx sqltypes.Executor, account *coretypes.AccountID, amount *big.Int, nonce int64) error {
+	return nil
+}
+
 // fakeEngine implements common.Engine minimally for tests
 type fakeEngine struct{}
 
@@ -111,7 +135,7 @@ func resetExtensionForTest() *Extension {
 	ext.SetNodeSigner(mockSigner{})
 	ext.SetBroadcaster(mockBroadcaster{})
 	// minimal engine ops
-	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, &fakeDB{}, log.New()))
+	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, &fakeDB{}, &fakeAccounts{}, log.New()))
 	SetExtension(ext)
 	return ext
 }
@@ -175,7 +199,7 @@ func TestDigest_Reload_EnablesAndStarts_WhenBecomesEnabled(t *testing.T) {
 
 	// attach EngineOps with fake DB that returns enabled on reload BEFORE first hook
 	fdb := &fakeDB{enabled: true, schedule: "*/5 * * * *"}
-	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, fdb, log.New()))
+	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, fdb, &fakeAccounts{}, log.New()))
 
 	// leader at height 1: disabled, no scheduler
 	require.NoError(t, endBlockHook(context.Background(), app, makeBlock(1, identity)))
@@ -202,7 +226,7 @@ func TestDigest_Reload_DisablesAndStops_WhenBecomesDisabled(t *testing.T) {
 
 	// reload returns disabled
 	fdb := &fakeDB{enabled: false, schedule: "*/5 * * * *"}
-	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, fdb, log.New()))
+	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, fdb, &fakeAccounts{}, log.New()))
 	require.NoError(t, endBlockHook(context.Background(), app, makeBlock(2, identity)))
 
 	// stop should be idempotent

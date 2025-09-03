@@ -14,13 +14,14 @@ import (
 
 // EngineOperations wraps engine calls needed by the digest extension.
 type EngineOperations struct {
-	engine common.Engine
-	logger log.Logger
-	db     sql.DB
+	engine   common.Engine
+	logger   log.Logger
+	db       sql.DB
+	accounts common.Accounts
 }
 
-func NewEngineOperations(engine common.Engine, db sql.DB, logger log.Logger) *EngineOperations {
-	return &EngineOperations{engine: engine, db: db, logger: logger.New("ops")}
+func NewEngineOperations(engine common.Engine, db sql.DB, accounts common.Accounts, logger log.Logger) *EngineOperations {
+	return &EngineOperations{engine: engine, db: db, accounts: accounts, logger: logger.New("ops")}
 }
 
 // LoadDigestConfig reads the single-row digest configuration.
@@ -33,7 +34,7 @@ func (e *EngineOperations) LoadDigestConfig(ctx context.Context) (bool, string, 
 	)
 	// Read using engine without engine ctx (owner-level read)
 	err := e.engine.ExecuteWithoutEngineCtx(ctx, e.db,
-		`SELECT enabled, digest_schedule FROM digest_config WHERE id = 1`, nil,
+		`SELECT enabled, digest_schedule FROM main.digest_config WHERE id = 1`, nil,
 		func(row *common.Row) error {
 			if len(row.Values) >= 2 {
 				if v, ok := row.Values[0].(bool); ok {
@@ -63,13 +64,34 @@ func (e *EngineOperations) LoadDigestConfig(ctx context.Context) (bool, string, 
 
 // BuildAndBroadcastAutoDigestTx builds an ActionExecution tx for auto_digest and broadcasts it using the node signer
 func (e *EngineOperations) BuildAndBroadcastAutoDigestTx(ctx context.Context, chainID string, signer auth.Signer, broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error)) error {
+	// Get the signer account ID
+	signerAccountID, err := ktypes.GetSignerAccount(signer)
+	if err != nil {
+		return fmt.Errorf("failed to get signer account: %w", err)
+	}
+
+	// Get account information using the accounts service directly on database
+	// DB interface embeds Executor, so we can use it directly
+	account, err := e.accounts.GetAccount(ctx, e.db, signerAccountID)
+	var nextNonce uint64
+	if err != nil {
+		// Account doesn't exist yet - use nonce 1 for first transaction
+		e.logger.Info("DEBUG: Account not found, using nonce 1 for first transaction", "account", fmt.Sprintf("%x", signerAccountID.Identifier), "error", err)
+		nextNonce = uint64(1)
+	} else {
+		// Account exists - use next nonce
+		nextNonce = uint64(account.Nonce + 1)
+		e.logger.Info("DEBUG: Account found, using next nonce", "account", fmt.Sprintf("%x", signerAccountID.Identifier), "currentNonce", account.Nonce, "nextNonce", nextNonce, "balance", account.Balance)
+	}
+
 	payload := &ktypes.ActionExecution{
 		Namespace: "main",
 		Action:    "auto_digest",
 		Arguments: nil,
 	}
-	// Nonce handling: for now rely on node to correct via mempool replacement if needed. Use 0.
-	tx, err := ktypes.CreateNodeTransaction(payload, chainID, 0)
+
+	// Create transaction with proper nonce
+	tx, err := ktypes.CreateNodeTransaction(payload, chainID, nextNonce)
 	if err != nil {
 		return fmt.Errorf("create tx: %w", err)
 	}

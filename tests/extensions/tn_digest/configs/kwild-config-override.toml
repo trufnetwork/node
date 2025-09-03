@@ -1,0 +1,21 @@
+# TOML configuration overrides for tn_digest E2E test
+
+[app]
+# Enable debug logging for better test visibility
+log_level = "debug"
+
+[app.jsonrpc]
+# Ensure JSON-RPC is enabled for client connections
+enable = true
+
+[app.admin]
+# Enable admin API for test utilities
+enable = true
+
+# Extension configuration
+[app.extensions.tn_digest]
+enabled = true
+# Fast schedule for testing (every 30 seconds)
+schedule = "*/30 * * * * *"
+# Check config changes every 10 blocks
+reload_interval_blocks = "10"
