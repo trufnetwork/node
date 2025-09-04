@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pkg/errors"
@@ -39,10 +40,10 @@ func TestQUERY04Metadata(t *testing.T) {
 			WithMetadataTestSetup(testMetadataInsertionAndRetrieval(t, primitiveContractInfo)),
 			WithMetadataTestSetup(testMetadataInsertionThenDisableAndRetrieval(t, primitiveContractInfo)),
 			WithMetadataTestSetup(testListMetadataByHeight(t, primitiveContractInfo)),
-			// WithMetadataTestSetup(testListMetadataByHeightNoKey(t, primitiveContractInfo)),
-			// WithMetadataTestSetup(testListMetadataByHeightPagination(t, primitiveContractInfo)),
-			// WithMetadataTestSetup(testListMetadataByHeightInvalidRange(t, primitiveContractInfo)),
-			// WithMetadataTestSetup(testListMetadataByHeightInvalidPagination(t, primitiveContractInfo)),
+			WithMetadataTestSetup(testListMetadataByHeightNoKey(t, primitiveContractInfo)),
+			WithMetadataTestSetup(testListMetadataByHeightPagination(t, primitiveContractInfo)),
+			WithMetadataTestSetup(testListMetadataByHeightInvalidRange(t, primitiveContractInfo)),
+			WithMetadataTestSetup(testListMetadataByHeightInvalidPagination(t, primitiveContractInfo)),
 		},
 		SeedScripts: migrations.GetSeedScriptPaths(),
 	}, testutils.GetTestOptions())
@@ -170,13 +171,14 @@ func testMetadataInsertionThenDisableAndRetrieval(t *testing.T, contractInfo set
 
 func testListMetadataByHeight(t *testing.T, contractInfo setup.StreamInfo) kwilTesting.TestFunc {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		metadataKey := "test_metadata"
 		metadataItems := []struct {
 			Key     string
 			Value   string
 			ValType string
 		}{
-			{"test_metadata", "1", "int"},
-			{"test_metadata", "0", "int"},
+			{metadataKey, "1", "int"},
+			{metadataKey, "0", "int"},
 		}
 
 		for _, item := range metadataItems {
@@ -195,7 +197,7 @@ func testListMetadataByHeight(t *testing.T, contractInfo setup.StreamInfo) kwilT
 		
 		result, err := procedure.ListMetadataByHeight(ctx, procedure.ListMetadataByHeightInput{
 			Platform: 	platform,
-			Key:      	"test_metadata",
+			Key:      	metadataKey,
 			Height:   	1,
 		})
 		if err != nil {
@@ -212,6 +214,220 @@ func testListMetadataByHeight(t *testing.T, contractInfo setup.StreamInfo) kwilT
 			Actual:   result,
 			Expected: expected,
 		})
+
+		return nil
+	}
+}
+
+func testListMetadataByHeightNoKey(t *testing.T, contractInfo setup.StreamInfo) kwilTesting.TestFunc {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		metadataKey := "test_metadata"
+		metadataItems := []struct {
+			Key     string
+			Value   string
+			ValType string
+		}{
+			{metadataKey, "1", "int"},
+			{metadataKey, "0", "int"},
+		}
+
+		for _, item := range metadataItems {
+			err := procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+				Platform: platform,
+				Locator:  contractInfo.Locator,
+				Key:      item.Key,
+				Value:    item.Value,
+				ValType:  item.ValType,
+				Height:   1,
+			})
+			if err != nil {
+				return errors.Wrapf(err, "error inserting metadata with key %s", item.Key)
+			}
+		}
+		
+		result, err := procedure.ListMetadataByHeight(ctx, procedure.ListMetadataByHeightInput{
+			Platform: 	platform,
+			Height:   	1,
+		})
+		if err != nil {
+			return errors.Wrapf(err, "error listing metadata")
+		}
+
+		if (len(result) > 0) { // should return no rows
+			return errors.Wrapf(err, "expected empty results")
+		}
+
+		return nil
+	}
+}
+
+func testListMetadataByHeightPagination(t *testing.T, contractInfo setup.StreamInfo) kwilTesting.TestFunc {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		metadataKey := "test_metadata"
+		metadataItems := []struct {
+			Key     string
+			Value   string
+			ValType string
+		}{
+			{metadataKey, "1", "int"},
+			{metadataKey, "0", "int"},
+			{metadataKey, "1", "int"},
+		}
+
+		for _, item := range metadataItems {
+			err := procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+				Platform: platform,
+				Locator:  contractInfo.Locator,
+				Key:      item.Key,
+				Value:    item.Value,
+				ValType:  item.ValType,
+				Height:   1,
+			})
+			if err != nil {
+				return errors.Wrapf(err, "error inserting metadata with key %s", item.Key)
+			}
+		}
+		
+		limit := 2
+		offset := 0
+		result, err := procedure.ListMetadataByHeight(ctx, procedure.ListMetadataByHeightInput{
+			Platform: 	platform,
+			Key: 				metadataKey,
+			Limit: 			&limit,
+			Offset: 		&offset,
+			Height:   	1,
+		})
+		if err != nil {
+			return errors.Wrapf(err, "error listing metadata")
+		}
+
+		if len(result) != 2 {
+			return errors.Errorf("expected 2 results, got %d", len(result))
+		}
+
+		offset = 2
+		result, err = procedure.ListMetadataByHeight(ctx, procedure.ListMetadataByHeightInput{
+			Platform: 	platform,
+			Key: 				metadataKey,
+			Limit: 			&limit,
+			Offset: 		&offset,
+			Height:   	1,
+		})
+		if err != nil {
+			return errors.Wrapf(err, "error listing metadata")
+		}
+
+		if len(result) != 1 {
+			return errors.Errorf("expected 1 result, got %d", len(result))
+		}
+
+		return nil
+	}
+}
+
+func testListMetadataByHeightInvalidRange(t *testing.T, contractInfo setup.StreamInfo) kwilTesting.TestFunc {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		metadataKey := "test_metadata"
+		metadataItems := []struct {
+			Key     string
+			Value   string
+			ValType string
+		}{
+			{metadataKey, "1", "int"},
+			{metadataKey, "0", "int"},
+			{metadataKey, "1", "int"},
+		}
+
+		for _, item := range metadataItems {
+			err := procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+				Platform: platform,
+				Locator:  contractInfo.Locator,
+				Key:      item.Key,
+				Value:    item.Value,
+				ValType:  item.ValType,
+				Height:   1,
+			})
+			if err != nil {
+				return errors.Wrapf(err, "error inserting metadata with key %s", item.Key)
+			}
+		}
+		
+		fromHeight := int64(10)
+		toHeight :=  int64(5)
+		_, err := procedure.ListMetadataByHeight(ctx, procedure.ListMetadataByHeightInput{
+			Platform: 	platform,
+			Key: 				metadataKey,
+			FromHeight: &fromHeight,
+			ToHeight: 	&toHeight,
+			Height:   	1,
+		})
+
+		if err == nil {
+			return errors.New("expected error for invalid height range (from_height > to_height), but got none")
+		}
+
+		expectedError := "Invalid height range"
+		if !strings.Contains(err.Error(), expectedError) {
+			return errors.Errorf("expected error message to contain '%s', got: %s", expectedError, err.Error())
+		}
+
+		return nil
+	}
+}
+
+func testListMetadataByHeightInvalidPagination(t *testing.T, contractInfo setup.StreamInfo) kwilTesting.TestFunc {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		metadataKey := "test_metadata"
+		metadataItems := []struct {
+			Key     string
+			Value   string
+			ValType string
+		}{
+			{metadataKey, "1", "int"},
+			{metadataKey, "0", "int"},
+			{metadataKey, "1", "int"},
+		}
+
+		for _, item := range metadataItems {
+			err := procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+				Platform: platform,
+				Locator:  contractInfo.Locator,
+				Key:      item.Key,
+				Value:    item.Value,
+				ValType:  item.ValType,
+				Height:   1,
+			})
+			if err != nil {
+				return errors.Wrapf(err, "error inserting metadata with key %s", item.Key)
+			}
+		}
+		
+		// negative limit
+		limit := -10
+		result, err := procedure.ListMetadataByHeight(ctx, procedure.ListMetadataByHeightInput{
+			Platform: 	platform,
+			Key: 				metadataKey,
+			Limit: 			&limit,
+			Height:   	1,
+		})
+		if err != nil {
+			return errors.Wrap(err, "unexpected error with negative limit")
+		}
+
+		if len(result) != 0 {
+			return errors.Errorf("expected empty results with negative limit (converted to 0), got %d results", len(result))
+		}
+
+		negativeOffset := -5
+		result, err = procedure.ListMetadataByHeight(ctx, procedure.ListMetadataByHeightInput{
+			Platform: 	platform,
+			Key: 				metadataKey,
+			Offset: 		&negativeOffset,
+			Height:   	1,
+		})
+		if err != nil {
+			return errors.Wrap(err, "unexpected error with negative offset")
+		}
 
 		return nil
 	}
