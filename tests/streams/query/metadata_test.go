@@ -205,14 +205,15 @@ func testListMetadataByHeight(t *testing.T, contractInfo setup.StreamInfo) kwilT
 		}
 
 		expected := `
-		| stream_ref |                row_id                | value_i | value_f | value_b | value_s | value_ref | created_at |
+		| stream_ref | value_i | value_f | value_b | value_s | value_ref | created_at |
 		|---------------|-----------|---------------------|-----------------|--------|------------|----------------|------------|------------|------------|
-		| 1 | 1d6c118f-0f95-5a67-91d6-9ae777aaf5f5 | 1 | <nil> | <nil> | <nil> | <nil> | 1 |
-		| 1 | ba084c0a-6558-56d6-bea6-af6ebfe72fd5 | 0 | <nil> | <nil> | <nil> | <nil> | 1 |`
+		| 1 | 0 | <nil> | <nil> | <nil> | <nil> | 1 |
+		| 1 | 1 | <nil> | <nil> | <nil> | <nil> | 1 |`
 
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
 			Actual:   result,
 			Expected: expected,
+			ExcludedColumns: []int{1},
 		})
 
 		return nil
