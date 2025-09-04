@@ -163,7 +163,7 @@ type GetTaxonomiesForStreamsInput struct {
 type ListMetadataByHeightInput struct {
 	Platform   *kwilTesting.Platform
 	Key 			 string
-	Value      string
+	Value      *string
 	FromHeight *int64
 	ToHeight   *int64
 	Limit      *int
