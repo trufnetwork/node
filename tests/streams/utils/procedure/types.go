@@ -159,3 +159,14 @@ type GetTaxonomiesForStreamsInput struct {
 	LatestOnly    *bool
 	Height        int64
 }
+
+type ListMetadataByHeightInput struct {
+	Platform   *kwilTesting.Platform
+	Key 			 string
+	Value      string
+	FromHeight *int64
+	ToHeight   *int64
+	Limit      *int
+	Offset     *int
+	Height     int64
+}
