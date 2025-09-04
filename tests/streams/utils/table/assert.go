@@ -66,15 +66,9 @@ func AssertResultRowsEqualMarkdownTable(t *testing.T, input AssertResultRowsEqua
 			expectedHeaderMap[h] = i
 		}
 
-		// Build mapping from header name -> index in actual (after dropping columns)
 		actualHeaderMap := make(map[string]int)
-		actualColIdx := 0
-		for i := range expectedTable.Headers {
-			if _, skip := excludedIdx[i]; skip {
-				continue
-			}
-			actualHeaderMap[expectedTable.Headers[i]] = actualColIdx
-			actualColIdx++
+		for i, h := range expectedTable.Headers {
+				actualHeaderMap[h] = i
 		}
 
 		// Sort function
