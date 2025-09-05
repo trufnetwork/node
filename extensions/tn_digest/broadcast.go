@@ -50,7 +50,7 @@ func normalizeListenAddressForClient(listen string) (*url.URL, error) {
 func makeBroadcasterFromURL(u *url.URL) TxBroadcaster {
 	userClient := rpcuser.NewClient(u)
 	return txBroadcasterFunc(func(ctx context.Context, tx *types.Transaction, sync uint8) (types.Hash, *types.TxResult, error) {
-		// Map sync flag to a broadcast mode; default to WaitAccept (mempool accept).
+		// Map sync flag to broadcast mode (callers should pass 1 for WaitCommit)
 		mode := rpcclient.BroadcastWaitAccept
 		if sync == uint8(rpcclient.BroadcastWaitCommit) || sync == 1 {
 			mode = rpcclient.BroadcastWaitCommit
@@ -59,6 +59,17 @@ func makeBroadcasterFromURL(u *url.URL) TxBroadcaster {
 		if err != nil {
 			return types.Hash{}, nil, err
 		}
-		return h, nil, nil
+
+		// Query the transaction result to get the log output for parsing
+		txQueryResp, err := userClient.TxQuery(ctx, h)
+		if err != nil {
+			return types.Hash{}, nil, fmt.Errorf("failed to query transaction result: %w", err)
+		}
+
+		if txQueryResp.Result == nil {
+			return types.Hash{}, nil, fmt.Errorf("transaction result is nil")
+		}
+
+		return h, txQueryResp.Result, nil
 	})
 }

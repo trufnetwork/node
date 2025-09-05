@@ -36,7 +36,7 @@ func TestBuildAndBroadcastAutoDigestTx_VerifiesTxBuildSignAndDBEffect(t *testing
 				// Create accounts service
 				accts, err := accounts.InitializeAccountStore(ctx, platform.DB, log.New())
 				require.NoError(t, err)
-				
+
 				// Prepare EngineOperations
 				ops := internal.NewEngineOperations(platform.Engine, platform.DB, accts, log.New())
 
@@ -67,7 +67,7 @@ func TestBuildAndBroadcastAutoDigestTx_VerifiesTxBuildSignAndDBEffect(t *testing
 					_, execErr := platform.Engine.Call(engCtx, platform.DB, "main", "auto_digest", []any{}, func(_ *common.Row) error { return nil })
 					require.NoError(t, execErr)
 
-					return types.Hash{}, &types.TxResult{Code: uint32(types.CodeOk)}, nil
+					return types.Hash{}, &types.TxResult{Code: uint32(types.CodeOk), Log: "auto_digest:{\"processed_days\":1,\"total_deleted_rows\":0,\"has_more_to_delete\":false}"}, nil
 				}
 
 				// Build and broadcast via ops

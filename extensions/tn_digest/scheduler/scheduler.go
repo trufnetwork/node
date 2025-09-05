@@ -72,7 +72,7 @@ func (s *DigestScheduler) Start(ctx context.Context, cronExpr string) error {
 	// Clear any existing jobs to avoid duplicates on (re)start
 	s.cron.Clear()
 
-	// Use background context for job execution to avoid cancellation issues
+	// Use scheduler context for job execution to enable cancellation on leadership loss
 	jobFunc := func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -80,8 +80,8 @@ func (s *DigestScheduler) Start(ctx context.Context, cronExpr string) error {
 			}
 		}()
 
-		// Create a fresh context for each job execution
-		jobCtx := context.Background()
+		// Use the scheduler's context so Stop() cancels the drain loop
+		jobCtx := s.ctx
 
 		// Snapshot dependencies under lock to avoid races with setters.
 		s.mu.Lock()
@@ -96,11 +96,90 @@ func (s *DigestScheduler) Start(ctx context.Context, cronExpr string) error {
 			return
 		}
 		chainID := kwilService.GenesisConfig.ChainID
-		if err := engineOps.BuildAndBroadcastAutoDigestTx(jobCtx, chainID, signer, broadcaster.BroadcastTx); err != nil {
-			s.logger.Warn("auto_digest broadcast failed", "error", err)
-			return
+
+		// Implement drain mode: run auto_digest repeatedly until has_more=false
+		s.logger.Info("starting digest drain mode",
+			"delete_cap", DigestDeleteCap,
+			"expected_records", DigestExpectedRecordsPerStream,
+			"preserve_days", DigestPreservePastDays,
+			"max_runs", DrainMaxRuns)
+
+		runs := 0
+		consecutiveFailures := 0
+		totalProcessedDays := 0
+		totalDeletedRows := 0
+
+		for runs < DrainMaxRuns {
+			// Check for cancellation
+			select {
+			case <-jobCtx.Done():
+				s.logger.Info("digest drain canceled", "runs_completed", runs)
+				return
+			default:
+			}
+
+			runs++
+
+			result, err := engineOps.BroadcastAutoDigestWithArgsAndParse(
+				jobCtx,
+				chainID,
+				signer,
+				broadcaster.BroadcastTx,
+				DigestDeleteCap,
+				DigestExpectedRecordsPerStream,
+				DigestPreservePastDays,
+			)
+
+			if err != nil {
+				consecutiveFailures++
+				s.logger.Warn("auto_digest broadcast failed",
+					"run", runs,
+					"consecutive_failures", consecutiveFailures,
+					"error", err)
+
+				if consecutiveFailures >= DrainMaxConsecutiveFailures {
+					s.logger.Error("too many consecutive failures, aborting drain",
+						"consecutive_failures", consecutiveFailures,
+						"max_allowed", DrainMaxConsecutiveFailures)
+					return
+				}
+			} else {
+				consecutiveFailures = 0
+				// Update cumulative totals
+				totalProcessedDays += result.ProcessedDays
+				totalDeletedRows += result.TotalDeletedRows
+
+				s.logger.Info("digest run completed",
+					"run", runs,
+					"processed_days", result.ProcessedDays,
+					"deleted_rows", result.TotalDeletedRows,
+					"has_more", result.HasMoreToDelete,
+					"cumulative_processed", totalProcessedDays,
+					"cumulative_deleted", totalDeletedRows)
+
+				// Check if we're done
+				if !result.HasMoreToDelete {
+					s.logger.Info("digest drain completed successfully",
+						"total_runs", runs,
+						"total_processed_days", totalProcessedDays,
+						"total_deleted_rows", totalDeletedRows)
+					return
+				}
+			}
+
+			// Sleep between runs, but allow cancellation
+			select {
+			case <-jobCtx.Done():
+				s.logger.Info("digest drain canceled during sleep", "runs_completed", runs)
+				return
+			case <-time.After(DrainRunDelay):
+				// Continue to next run
+			}
 		}
-		s.logger.Info("auto_digest tx broadcasted")
+
+		s.logger.Info("digest drain reached max runs",
+			"max_runs", DrainMaxRuns,
+			"runs_completed", runs)
 	}
 
 	if j, err := s.cron.Cron(cronExpr).Do(jobFunc); err != nil {
