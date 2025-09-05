@@ -151,13 +151,26 @@ func (e *EngineOperations) BroadcastAutoDigestWithArgsAndParse(
 	account, err := e.accounts.GetAccount(ctx, e.db, signerAccountID)
 	var nextNonce uint64
 	if err != nil {
-		// Account doesn't exist yet - use nonce 1 for first transaction
-		e.logger.Info("DEBUG: Account not found, using nonce 1 for first transaction", "account", fmt.Sprintf("%x", signerAccountID.Identifier), "error", err)
-		nextNonce = uint64(1)
+		// Only treat “not found” / “no rows” as missing-account; fail fast on any other error
+		msg := strings.ToLower(err.Error())
+		if !strings.Contains(msg, "not found") && !strings.Contains(msg, "no rows") {
+			return nil, fmt.Errorf("get account: %w", err)
+		}
+		e.logger.Info(
+			"Account not found, using nonce 1 for first transaction",
+			"account", fmt.Sprintf("%x", signerAccountID.Identifier),
+		)
+		nextNonce = 1
 	} else {
 		// Account exists - use next nonce
 		nextNonce = uint64(account.Nonce + 1)
-		e.logger.Info("DEBUG: Account found, using next nonce", "account", fmt.Sprintf("%x", signerAccountID.Identifier), "currentNonce", account.Nonce, "nextNonce", nextNonce, "balance", account.Balance)
+		e.logger.Info(
+			"Account found, using next nonce",
+			"account", fmt.Sprintf("%x", signerAccountID.Identifier),
+			"currentNonce", account.Nonce,
+			"nextNonce", nextNonce,
+			"balance", account.Balance,
+		)
 	}
 
 	// Encode arguments

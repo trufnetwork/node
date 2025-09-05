@@ -255,7 +255,7 @@ func testListMetadataByHeightNoKey(t *testing.T, contractInfo setup.StreamInfo) 
 		}
 
 		if len(result) > 0 { // should return no rows
-			return errors.Wrapf(err, "expected empty results")
+			return errors.New("expected empty results")
 		}
 
 		return nil
