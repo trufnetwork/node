@@ -79,13 +79,13 @@ jobs:
           while [ $attempt -le $max_attempts ]; do
             echo "Test attempt $attempt of $max_attempts"
 
-            # Clean dangling Docker state only on retries
+            # Always try to cleanup lingering Kwil DB resources before each attempt
+            bash node/scripts/ci-cleanup.sh || true
+
+            # Additional cleanup only on retries
             if [ $attempt -gt 1 ]; then
-              if [ -f docker-compose.yml ]; then
-                docker compose down -v || true
-              else
-                docker system prune -af --volumes || true
-              fi
+              docker compose -f node/compose.yaml down -v || true
+              docker system prune -af --volumes || true
               sleep 5
             fi
 

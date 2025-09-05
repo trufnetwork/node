@@ -19,9 +19,9 @@ require (
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0
 	github.com/testcontainers/testcontainers-go v0.37.0
-	github.com/trufnetwork/kwil-db v0.10.3-0.20250829040222-799cf48f758e
-	github.com/trufnetwork/kwil-db/core v0.4.3-0.20250829040222-799cf48f758e
-	github.com/trufnetwork/sdk-go v0.4.3-0.20250821041427-ae33ba5dcd2c
+	github.com/trufnetwork/kwil-db v0.10.3-0.20250905175054-602e824e33c2
+	github.com/trufnetwork/kwil-db/core v0.4.3-0.20250905175054-602e824e33c2
+	github.com/trufnetwork/sdk-go v0.3.2-0.20250630062504-841b40cdb709
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20250218142911-aa4b98e5adaa
 	golang.org/x/sync v0.15.0
@@ -268,7 +268,7 @@ require (
 	golang.org/x/net v0.40.0 // indirect
 	golang.org/x/sys v0.34.0 // indirect
 	golang.org/x/term v0.32.0 // indirect
-	golang.org/x/text v0.25.0 // indirect
+	golang.org/x/text v0.25.0
 	golang.org/x/time v0.10.0 // indirect
 	golang.org/x/tools v0.30.0 // indirect
 	gonum.org/v1/gonum v0.15.1 // indirect

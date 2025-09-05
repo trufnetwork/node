@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"time"
 
 	rpcclient "github.com/trufnetwork/kwil-db/core/rpc/client"
 	rpcuser "github.com/trufnetwork/kwil-db/core/rpc/client/user/jsonrpc"
@@ -50,7 +51,7 @@ func normalizeListenAddressForClient(listen string) (*url.URL, error) {
 func makeBroadcasterFromURL(u *url.URL) TxBroadcaster {
 	userClient := rpcuser.NewClient(u)
 	return txBroadcasterFunc(func(ctx context.Context, tx *types.Transaction, sync uint8) (types.Hash, *types.TxResult, error) {
-		// Map sync flag to a broadcast mode; default to WaitAccept (mempool accept).
+		// Map sync flag to broadcast mode (callers should pass 1 for WaitCommit)
 		mode := rpcclient.BroadcastWaitAccept
 		if sync == uint8(rpcclient.BroadcastWaitCommit) || sync == 1 {
 			mode = rpcclient.BroadcastWaitCommit
@@ -59,6 +60,38 @@ func makeBroadcasterFromURL(u *url.URL) TxBroadcaster {
 		if err != nil {
 			return types.Hash{}, nil, err
 		}
-		return h, nil, nil
+
+		// Query the transaction result to get the log output for parsing
+		var txQueryResp *types.TxQueryResponse
+		var queryErr error
+		if mode == rpcclient.BroadcastWaitAccept {
+			// In Accept mode, commit may not be immediate: perform short polling.
+			for tries := 0; tries < 10; tries++ {
+				txQueryResp, queryErr = userClient.TxQuery(ctx, h)
+				if queryErr == nil && txQueryResp != nil && txQueryResp.Result != nil {
+					break
+				}
+				// brief backoff (non-blocking if ctx is canceled)
+				select {
+				case <-ctx.Done():
+					return types.Hash{}, nil, ctx.Err()
+				case <-time.After(200 * time.Millisecond):
+				}
+			}
+			if queryErr != nil {
+				return types.Hash{}, nil, fmt.Errorf("failed to query transaction result: %w", queryErr)
+			}
+		} else {
+			txQueryResp, queryErr = userClient.TxQuery(ctx, h)
+			if queryErr != nil {
+				return types.Hash{}, nil, fmt.Errorf("failed to query transaction result: %w", queryErr)
+			}
+		}
+
+		if txQueryResp == nil || txQueryResp.Result == nil {
+			return types.Hash{}, nil, fmt.Errorf("transaction result is nil")
+		}
+
+		return h, txQueryResp.Result, nil
 	})
 }

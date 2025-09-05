@@ -35,10 +35,8 @@ CREATE OR REPLACE ACTION batch_digest(
     total_preserved_rows INT,
     has_more_to_delete BOOL
 ) {
-    -- Leader authorization check, keep it commented out for now so test passing and until we can inject how leader is
-    -- if @caller != @leader {
-    --     ERROR('Only the leader node can execute batch digest operations');
-    -- }
+    -- Leader authorization check using dedicated helper function
+    check_leader_authorization();
 
     -- Validate input arrays have same length
     if COALESCE(array_length($stream_refs), 0) != COALESCE(array_length($day_indexes), 0) {
@@ -565,10 +563,8 @@ CREATE OR REPLACE ACTION auto_digest(
     -- Equivalent to: (delete_cap / expected_records_per_stream) * 1.5 (but ensuring we don't use float like types)
     $batch_size := GREATEST(1, (($delete_cap * 3) / ($expected_records_per_stream * 2)));
     $batch_size_plus_one := $batch_size + 1;
-    -- Leader authorization check, keep it commented out for now so test passing and until we can inject how leader is
-    -- if @caller != @leader {
-    --     ERROR('Only the leader node can execute auto digest operations');
-    -- }
+    -- Leader authorization check using dedicated helper function
+    check_leader_authorization();
     
     -- Allow preserve_past_days to be zero (process including current day); only validate non-null
     if $preserve_past_days IS NULL {
@@ -659,6 +655,23 @@ CREATE OR REPLACE ACTION emit_auto_digest_notice(
     }
     NOTICE('auto_digest:' || '{"processed_days":' || $processed::TEXT || ',"total_deleted_rows":' || $deleted::TEXT || ',"has_more_to_delete":' || $has_more_text || '}');
 };
+
+-- private helper for leader authorization with detailed diagnostics
+CREATE OR REPLACE ACTION check_leader_authorization() PRIVATE {
+    -- RETURN;
+    -- @signer and @leader are already BYTEA, so we can compare them directly
+    -- For debugging, encode to hex for readable output
+    IF @leader_sender != @signer {
+        $leader_sender_hex := encode(@leader_sender, 'hex');
+        $signer_hex := encode(@signer, 'hex');
+        ERROR('Only the current block leader can execute this operation: leader_sender: ' || $leader_sender_hex::TEXT || ' signer: ' || $signer_hex::TEXT);
+    }
+};
+
+-- Helper function to derive Ethereum address from secp256k1 public key
+-- This implements the Ethereum address derivation algorithm using available PostgreSQL functions
+-- NOTE: This is an approximation since we can't decompress the public key without elliptic curve ops
+-- Removed derive_ethereum_address_from_pubkey: inaccurate without EC decompression
 
 /**
  * get_daily_ohlc: Query daily OHLC data

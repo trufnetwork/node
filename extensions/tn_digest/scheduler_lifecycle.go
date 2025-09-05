@@ -40,8 +40,8 @@ func (e *Extension) ensureSchedulerWithService(service *common.Service) bool {
 	return true
 }
 
-func (e *Extension) startScheduler(ctx context.Context) error {
-	return e.Scheduler().Start(ctx, e.Schedule())
+func (e *Extension) startScheduler(_ context.Context) error {
+	return e.Scheduler().Start(context.Background(), e.Schedule())
 }
 
 func (e *Extension) stopSchedulerIfRunning() {

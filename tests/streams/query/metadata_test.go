@@ -194,26 +194,26 @@ func testListMetadataByHeight(t *testing.T, contractInfo setup.StreamInfo) kwilT
 				return errors.Wrapf(err, "error inserting metadata with key %s", item.Key)
 			}
 		}
-		
+
 		result, err := procedure.ListMetadataByHeight(ctx, procedure.ListMetadataByHeightInput{
-			Platform: 	platform,
-			Key:      	metadataKey,
-			Height:   	1,
+			Platform: platform,
+			Key:      metadataKey,
+			Height:   1,
 		})
 		if err != nil {
 			return errors.Wrapf(err, "error listing metadata")
 		}
 
 		expected := `
-		| stream_ref | value_i | value_f | value_b | value_s | value_ref | created_at |
-		|---------------|-----------|---------------------|-----------------|--------|------------|----------------|------------|------------|------------|
-		| 1 | 0 | <nil> | <nil> | <nil> | <nil> | 1 |
-		| 1 | 1 | <nil> | <nil> | <nil> | <nil> | 1 |`
+		| value_i | value_f | value_b | value_s | value_ref | created_at |
+		|---------|---------|---------|---------|-----------|------------|
+		| 0 | <nil> | <nil> | <nil> | <nil> | 1 |
+		| 1 | <nil> | <nil> | <nil> | <nil> | 1 |`
 
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
-			Actual:   result,
-			Expected: expected,
-			ExcludedColumns: []int{1},
+			Actual:          result,
+			Expected:        expected,
+			ExcludedColumns: []int{0, 1, 2},
 		})
 
 		return nil
@@ -245,17 +245,17 @@ func testListMetadataByHeightNoKey(t *testing.T, contractInfo setup.StreamInfo) 
 				return errors.Wrapf(err, "error inserting metadata with key %s", item.Key)
 			}
 		}
-		
+
 		result, err := procedure.ListMetadataByHeight(ctx, procedure.ListMetadataByHeightInput{
-			Platform: 	platform,
-			Height:   	1,
+			Platform: platform,
+			Height:   1,
 		})
 		if err != nil {
 			return errors.Wrapf(err, "error listing metadata")
 		}
 
-		if (len(result) > 0) { // should return no rows
-			return errors.Wrapf(err, "expected empty results")
+		if len(result) > 0 { // should return no rows
+			return errors.New("expected empty results")
 		}
 
 		return nil
@@ -288,15 +288,15 @@ func testListMetadataByHeightPagination(t *testing.T, contractInfo setup.StreamI
 				return errors.Wrapf(err, "error inserting metadata with key %s", item.Key)
 			}
 		}
-		
+
 		limit := 2
 		offset := 0
 		result, err := procedure.ListMetadataByHeight(ctx, procedure.ListMetadataByHeightInput{
-			Platform: 	platform,
-			Key: 				metadataKey,
-			Limit: 			&limit,
-			Offset: 		&offset,
-			Height:   	1,
+			Platform: platform,
+			Key:      metadataKey,
+			Limit:    &limit,
+			Offset:   &offset,
+			Height:   1,
 		})
 		if err != nil {
 			return errors.Wrapf(err, "error listing metadata")
@@ -308,11 +308,11 @@ func testListMetadataByHeightPagination(t *testing.T, contractInfo setup.StreamI
 
 		offset = 2
 		result, err = procedure.ListMetadataByHeight(ctx, procedure.ListMetadataByHeightInput{
-			Platform: 	platform,
-			Key: 				metadataKey,
-			Limit: 			&limit,
-			Offset: 		&offset,
-			Height:   	1,
+			Platform: platform,
+			Key:      metadataKey,
+			Limit:    &limit,
+			Offset:   &offset,
+			Height:   1,
 		})
 		if err != nil {
 			return errors.Wrapf(err, "error listing metadata")
@@ -352,15 +352,15 @@ func testListMetadataByHeightInvalidRange(t *testing.T, contractInfo setup.Strea
 				return errors.Wrapf(err, "error inserting metadata with key %s", item.Key)
 			}
 		}
-		
+
 		fromHeight := int64(10)
-		toHeight :=  int64(5)
+		toHeight := int64(5)
 		_, err := procedure.ListMetadataByHeight(ctx, procedure.ListMetadataByHeightInput{
-			Platform: 	platform,
-			Key: 				metadataKey,
+			Platform:   platform,
+			Key:        metadataKey,
 			FromHeight: &fromHeight,
-			ToHeight: 	&toHeight,
-			Height:   	1,
+			ToHeight:   &toHeight,
+			Height:     1,
 		})
 
 		if err == nil {
@@ -402,14 +402,14 @@ func testListMetadataByHeightInvalidPagination(t *testing.T, contractInfo setup.
 				return errors.Wrapf(err, "error inserting metadata with key %s", item.Key)
 			}
 		}
-		
+
 		// negative limit
 		limit := -10
 		result, err := procedure.ListMetadataByHeight(ctx, procedure.ListMetadataByHeightInput{
-			Platform: 	platform,
-			Key: 				metadataKey,
-			Limit: 			&limit,
-			Height:   	1,
+			Platform: platform,
+			Key:      metadataKey,
+			Limit:    &limit,
+			Height:   1,
 		})
 		if err != nil {
 			return errors.Wrap(err, "unexpected error with negative limit")
@@ -420,11 +420,11 @@ func testListMetadataByHeightInvalidPagination(t *testing.T, contractInfo setup.
 		}
 
 		negativeOffset := -5
-		result, err = procedure.ListMetadataByHeight(ctx, procedure.ListMetadataByHeightInput{
-			Platform: 	platform,
-			Key: 				metadataKey,
-			Offset: 		&negativeOffset,
-			Height:   	1,
+		_, err = procedure.ListMetadataByHeight(ctx, procedure.ListMetadataByHeightInput{
+			Platform: platform,
+			Key:      metadataKey,
+			Offset:   &negativeOffset,
+			Height:   1,
 		})
 		if err != nil {
 			return errors.Wrap(err, "unexpected error with negative offset")

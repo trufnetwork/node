@@ -11,6 +11,9 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/trufnetwork/kwil-db/common"
+	"github.com/trufnetwork/kwil-db/core/crypto"
+	coreauth "github.com/trufnetwork/kwil-db/core/crypto/auth"
+	extauth "github.com/trufnetwork/kwil-db/extensions/auth"
 
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 
@@ -57,6 +60,75 @@ func TestDigestActions(t *testing.T) {
 			WithHighCloseTogetherSetup(testHighCloseTogether_Flag10(t)),
 			WithAutoDigestZeroExpectedSetup(testAutoDigest_ValidatesExpectedRecordsInput(t)),
 			WithSignerAndProvider(testAutoDigest_PreservesRecentDaysCutoff(t)),
+		},
+	}, testutils.GetTestOptionsWithCache().Options)
+}
+
+// Verifies leader-only authorization on digest actions using BlockContext.Proposer.
+func TestDigestActionsLeaderAuthorization(t *testing.T) {
+	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name:        "digest_actions_leader_authorization",
+		SeedScripts: migrations.GetSeedScriptPaths(),
+		FunctionTests: []kwilTesting.TestFunc{
+			WithSignerAndProvider(func(ctx context.Context, platform *kwilTesting.Platform) error {
+				// Create a secp256k1 leader key
+				_, pubGeneric, err := crypto.GenerateSecp256k1Key(nil)
+				if err != nil {
+					return errors.Wrap(err, "generate secp256k1 key")
+				}
+				pub, ok := pubGeneric.(*crypto.Secp256k1PublicKey)
+				if !ok {
+					return errors.New("unexpected pubkey type")
+				}
+
+				// Helper to call action with explicit BlockContext.Proposer and signer/auth
+				callWithCtx := func(action string, args []any, signer []byte, authenticator string) (*common.CallResult, error) {
+					caller := ""
+					if ident, e := extauth.GetIdentifier(authenticator, signer); e == nil {
+						caller = ident
+					}
+					tx := &common.TxContext{
+						Ctx:           ctx,
+						BlockContext:  &common.BlockContext{Height: 1, Proposer: pub},
+						Signer:        signer,
+						Caller:        caller,
+						TxID:          platform.Txid(),
+						Authenticator: authenticator,
+					}
+					eng := &common.EngineContext{TxContext: tx}
+					return platform.Engine.Call(eng, platform.DB, "", action, args, func(*common.Row) error { return nil })
+				}
+
+				// Non-leader: signer != leader_sender → expect leader-only error
+				if r, err := callWithCtx("batch_digest", []any{[]int{}, []int{}}, platform.Deployer, coreauth.EthPersonalSignAuth); err != nil {
+					return errors.Wrap(err, "batch_digest non-leader call error")
+				} else if r == nil || r.Error == nil || !strings.Contains(r.Error.Error(), "Only the current block leader") {
+					return errors.New("expected leader-only error for batch_digest when not leader")
+				}
+
+				if r, err := callWithCtx("auto_digest", []any{10, 24, 2}, platform.Deployer, coreauth.EthPersonalSignAuth); err != nil {
+					return errors.Wrap(err, "auto_digest non-leader call error")
+				} else if r == nil || r.Error == nil || !strings.Contains(r.Error.Error(), "Only the current block leader") {
+					return errors.New("expected leader-only error for auto_digest when not leader")
+				}
+
+				// Leader: signer equals derived leader_sender → expect success
+				signerGood := crypto.EthereumAddressFromPubKey(pub)
+
+				if r, err := callWithCtx("batch_digest", []any{[]int{}, []int{}}, signerGood, coreauth.EthPersonalSignAuth); err != nil {
+					return errors.Wrap(err, "batch_digest leader call error")
+				} else if r != nil && r.Error != nil {
+					return errors.Wrap(r.Error, "batch_digest leader call failed")
+				}
+
+				if r, err := callWithCtx("auto_digest", []any{10, 24, 2}, signerGood, coreauth.EthPersonalSignAuth); err != nil {
+					return errors.Wrap(err, "auto_digest leader call error")
+				} else if r != nil && r.Error != nil {
+					return errors.Wrap(r.Error, "auto_digest leader call failed")
+				}
+
+				return nil
+			}),
 		},
 	}, testutils.GetTestOptionsWithCache().Options)
 }
