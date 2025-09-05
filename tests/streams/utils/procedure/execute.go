@@ -843,3 +843,46 @@ func GetTaxonomiesForStreams(ctx context.Context, input GetTaxonomiesForStreamsI
 
 	return processResultRows(resultRows)
 }
+
+// ListMetadataByHeight executes list_metadata_by_height action
+func ListMetadataByHeight(ctx context.Context, input ListMetadataByHeightInput) ([]ResultRow, error) {
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return nil, errors.Wrap(err, "error in ListMetadataByHeight.NewEthereumAddressFromBytes")
+	}
+
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: input.Height},
+		Signer:       input.Platform.Deployer,
+		Caller:       deployer.Address(),
+		TxID:         input.Platform.Txid(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext: txContext,
+	}
+
+	var resultRows [][]any
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "list_metadata_by_height", []any{
+		input.Key,
+		input.Value,
+		input.FromHeight,
+		input.ToHeight,
+		input.Limit,
+		input.Offset,
+	}, func(row *common.Row) error {
+		values := make([]any, len(row.Values))
+		copy(values, row.Values)
+		resultRows = append(resultRows, values)
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "error in ListMetadataByHeight.Call")
+	}
+	if r.Error != nil {
+		return nil, errors.Wrap(r.Error, "error in ListMetadataByHeight.Call")
+	}
+
+	return processResultRows(resultRows)
+}
