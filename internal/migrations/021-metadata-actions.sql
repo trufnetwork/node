@@ -22,7 +22,8 @@ CREATE OR REPLACE ACTION list_metadata_by_height(
   $limit INT,
   $offset INT
 ) PUBLIC view returns table(
-    stream_ref INT,
+    stream_id TEXT,
+    data_provider TEXT,
     row_id uuid,
     value_i INT,
     value_f NUMERIC(36,18),
@@ -60,21 +61,24 @@ CREATE OR REPLACE ACTION list_metadata_by_height(
     }
 
      RETURN SELECT
-              stream_ref,
+              s.stream_id,
+              dp.address AS data_provider,
               row_id,
               value_i,
               value_f,
               value_b,
               value_s,
               value_ref,
-              created_at
-            FROM metadata
+              m.created_at
+            FROM metadata m
+            JOIN streams s ON s.id = m.stream_ref
+            JOIN data_providers dp ON dp.id = s.data_provider_id
             WHERE metadata_key = $key
-              AND disabled_at IS NULL
+              AND m.disabled_at IS NULL
               -- do not use LOWER on value_ref, or it will break the index lookup
-              AND ($ref IS NULL OR value_ref = LOWER($ref))
-              AND created_at >= $effective_from
-              AND created_at <= $effective_to
-            ORDER BY created_at ASC
+              AND ($ref IS NULL OR m.value_ref = LOWER($ref))
+              AND m.created_at >= $effective_from
+              AND m.created_at <= $effective_to
+            ORDER BY m.created_at ASC
             LIMIT $limit OFFSET $offset;
 };
