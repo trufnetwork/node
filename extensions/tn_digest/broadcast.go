@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"time"
 
 	rpcclient "github.com/trufnetwork/kwil-db/core/rpc/client"
 	rpcuser "github.com/trufnetwork/kwil-db/core/rpc/client/user/jsonrpc"
@@ -61,12 +62,33 @@ func makeBroadcasterFromURL(u *url.URL) TxBroadcaster {
 		}
 
 		// Query the transaction result to get the log output for parsing
-		txQueryResp, err := userClient.TxQuery(ctx, h)
-		if err != nil {
-			return types.Hash{}, nil, fmt.Errorf("failed to query transaction result: %w", err)
+		var txQueryResp *types.TxQueryResponse
+		var queryErr error
+		if mode == rpcclient.BroadcastWaitAccept {
+			// In Accept mode, commit may not be immediate: perform short polling.
+			for tries := 0; tries < 10; tries++ {
+				txQueryResp, queryErr = userClient.TxQuery(ctx, h)
+				if queryErr == nil && txQueryResp != nil && txQueryResp.Result != nil {
+					break
+				}
+				// brief backoff (non-blocking if ctx is canceled)
+				select {
+				case <-ctx.Done():
+					return types.Hash{}, nil, ctx.Err()
+				case <-time.After(200 * time.Millisecond):
+				}
+			}
+			if queryErr != nil {
+				return types.Hash{}, nil, fmt.Errorf("failed to query transaction result: %w", queryErr)
+			}
+		} else {
+			txQueryResp, queryErr = userClient.TxQuery(ctx, h)
+			if queryErr != nil {
+				return types.Hash{}, nil, fmt.Errorf("failed to query transaction result: %w", queryErr)
+			}
 		}
 
-		if txQueryResp.Result == nil {
+		if txQueryResp == nil || txQueryResp.Result == nil {
 			return types.Hash{}, nil, fmt.Errorf("transaction result is nil")
 		}
 

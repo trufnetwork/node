@@ -2,8 +2,8 @@ package internal
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/trufnetwork/kwil-db/common"
@@ -246,48 +246,24 @@ func parseDigestResultFromTxLog(logOutput string) (*DigestTxResult, error) {
 		return nil, fmt.Errorf("no auto_digest log entry found")
 	}
 
-	// Parse the JSON (simple parsing since we know the expected structure)
-	result := &DigestTxResult{}
-
-	// Remove surrounding quotes if present
+	// Remove surrounding quotes if present (in case the JSON is quoted in the log)
 	digestJSON = strings.Trim(digestJSON, `"`)
 
-	// Extract processed_days
-	if start := strings.Index(digestJSON, `"processed_days":`); start != -1 {
-		start += len(`"processed_days":`)
-		if end := strings.Index(digestJSON[start:], ","); end != -1 {
-			if val, err := strconv.Atoi(digestJSON[start : start+end]); err == nil {
-				result.ProcessedDays = val
-			}
-		} else if end := strings.Index(digestJSON[start:], "}"); end != -1 {
-			if val, err := strconv.Atoi(digestJSON[start : start+end]); err == nil {
-				result.ProcessedDays = val
-			}
-		}
+	// Parse JSON properly
+	var jsonResult struct {
+		ProcessedDays    int  `json:"processed_days"`
+		TotalDeletedRows int  `json:"total_deleted_rows"`
+		HasMoreToDelete  bool `json:"has_more_to_delete"`
 	}
 
-	// Extract total_deleted_rows
-	if start := strings.Index(digestJSON, `"total_deleted_rows":`); start != -1 {
-		start += len(`"total_deleted_rows":`)
-		if end := strings.Index(digestJSON[start:], ","); end != -1 {
-			if val, err := strconv.Atoi(digestJSON[start : start+end]); err == nil {
-				result.TotalDeletedRows = val
-			}
-		} else if end := strings.Index(digestJSON[start:], "}"); end != -1 {
-			if val, err := strconv.Atoi(digestJSON[start : start+end]); err == nil {
-				result.TotalDeletedRows = val
-			}
-		}
+	if err := json.Unmarshal([]byte(digestJSON), &jsonResult); err != nil {
+		return nil, fmt.Errorf("failed to parse digest JSON: %w", err)
 	}
 
-	// Extract has_more_to_delete
-	if start := strings.Index(digestJSON, `"has_more_to_delete":`); start != -1 {
-		start += len(`"has_more_to_delete":`)
-		if end := strings.Index(digestJSON[start:], ","); end != -1 {
-			result.HasMoreToDelete = digestJSON[start:start+end] == "true"
-		} else if end := strings.Index(digestJSON[start:], "}"); end != -1 {
-			result.HasMoreToDelete = digestJSON[start:start+end] == "true"
-		}
+	result := &DigestTxResult{
+		ProcessedDays:    jsonResult.ProcessedDays,
+		TotalDeletedRows: jsonResult.TotalDeletedRows,
+		HasMoreToDelete:  jsonResult.HasMoreToDelete,
 	}
 
 	return result, nil
