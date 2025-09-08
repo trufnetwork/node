@@ -39,7 +39,7 @@ import (
 
 // TestAGGR09_DuplicateValues tests AGGR09: Duplicate values from multiple child streams are both counted in aggregation.
 func TestAGGR09_DuplicateValues(t *testing.T) {
-	cacheConfig := testutils.TestCache("0x0000000000000000000000000000000000000123", "*")
+	cacheConfig := testutils.SimpleCache("0x0000000000000000000000000000000000000123", "*")
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr09_duplicate_values_test",

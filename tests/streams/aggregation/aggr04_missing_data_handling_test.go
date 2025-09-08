@@ -32,7 +32,7 @@ import (
 
 // TestAGGR04_MissingDataHandling tests AGGR04: If a child stream doesn't have data for the given date (including last available data), the composed stream will not count it's weight for that date.
 func TestAGGR04_MissingDataHandling(t *testing.T) {
-	cacheConfig := testutils.TestCache("0x0000000000000000000000000000000000000123", "*")
+	cacheConfig := testutils.SimpleCache("0x0000000000000000000000000000000000000123", "*")
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr04_missing_data_handling_test",
@@ -56,7 +56,7 @@ func testAGGR04_MissingDataHandling(t *testing.T, useCache bool) func(ctx contex
 		if err != nil {
 			return errors.Wrap(err, "error registering data provider")
 		}
-		
+
 		// Setup the composed stream with 2 primitive streams
 		// One stream has data for all 4 days
 		// The other starts only on the 2nd day, and on 3rd day is missing too (has data on 2nd and 4th day)

@@ -33,7 +33,7 @@ import (
 
 // TestAGGR03_TaxonomyValidityPeriods tests AGGR03: Taxonomies define the mapping of child streams, including a period of validity for each weight. (start_date and end_date, otherwise not set)
 func TestAGGR03_TaxonomyValidityPeriods(t *testing.T) {
-	cacheConfig := testutils.TestCache("0x0000000000000000000000000000000000000123", "*")
+	cacheConfig := testutils.SimpleCache("0x0000000000000000000000000000000000000123", "*")
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr03_taxonomy_validity_periods_test",

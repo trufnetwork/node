@@ -29,7 +29,7 @@ import (
 
 // TestAGGR06_SingleActiveTaxonomy tests AGGR06: Only 1 taxonomy version can be active in a point in time.
 func TestAGGR06_SingleActiveTaxonomy(t *testing.T) {
-	cacheConfig := testutils.TestCache("0x0000000000000000000000000000000000000123", "*")
+	cacheConfig := testutils.SimpleCache("0x0000000000000000000000000000000000000123", "*")
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr06_single_active_taxonomy_test",
