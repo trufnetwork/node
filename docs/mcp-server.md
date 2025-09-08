@@ -2,10 +2,11 @@
 
 Model Context Protocol (MCP) server for querying TRUF.NETWORK data through AI Clients like Claude Desktop.
 
-## Current Supported AI Client
+## Currently Supported AI Client
+
 1. Claude Desktop
 
-Please inquiry for another client support.
+Please inquire for support for other clients.
 
 ## Prerequisites
 
@@ -17,6 +18,7 @@ Please inquiry for another client support.
 ### Install Prerequisites
 
 **macOS:**
+
 ```bash
 # Install Python 3.12+
 brew install python@3.12
@@ -27,6 +29,7 @@ pipx ensurepath
 ```
 
 **Linux (Ubuntu/Debian):**
+
 ```bash
 # Install Python 3.12+
 sudo apt update && sudo apt install python3.12
@@ -37,6 +40,7 @@ python3 -m pipx ensurepath
 ```
 
 **Windows:**
+
 ```bash
 # Install Python 3.12+ from https://www.python.org/downloads/
 # or use chocolatey:
@@ -53,6 +57,7 @@ Download from https://claude.ai/download
 ## Installation
 
 1. **Clone and install:**
+
 ```bash
 git clone https://github.com/trufnetwork/postgres-mcp.git
 cd postgres-mcp
@@ -60,7 +65,8 @@ cd postgres-mcp
 ```
 
 2. **Follow the prompts to configure:**
-   - Database connection details (default: localhost:5432/kwild), just use the default if you didn't custom anything.
+
+   - Database connection details (default: localhost:5432/kwild), just use the default if you didn't customize anything.
 
 3. **Restart Claude Desktop**
 
@@ -78,11 +84,13 @@ cd postgres-mcp
 ## Troubleshooting
 
 **Connection issues:**
+
 - Verify your Kwil node is running
 - Check database credentials
 - Ensure PostgreSQL port 5432 is accessible from local
 
 **Claude integration:**
+
 - Restart Claude Desktop after installation
 - Check config file: `~/Library/Application Support/Claude/claude_desktop_config.json`
 
