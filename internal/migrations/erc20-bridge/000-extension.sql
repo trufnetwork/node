@@ -1,5 +1,5 @@
 -- Only necessary to run on leader and validator nodes.
-USE erc20_bridge {
+USE erc20 {
     chain: 'sepolia',
-    escrow: '0x1c6D0d1666E3Ea3896c0A94018B03Ca117C15762',
+    escrow: '0x1B0A6795D45Bb5137DaFEeAb49e2c4e005d788D7'
 } AS sepolia_bridge;
