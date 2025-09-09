@@ -8,6 +8,9 @@ import (
 
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/extensions/listeners"
+	_ "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
+	_ "github.com/trufnetwork/kwil-db/node/exts/evm-sync"
+	_ "github.com/trufnetwork/kwil-db/node/exts/ordered-sync"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/tests/streams/utils/eventstore"
 	"github.com/trufnetwork/node/tests/streams/utils/service"
@@ -53,15 +56,16 @@ func (h *ERC20BridgeTestHelper) StartERC20Listener(ctx context.Context) error {
 		return fmt.Errorf("listener already running")
 	}
 
-	// Get the registered listener
-	listenerFunc, exists := listeners.GetListener("evm_sync")
-	if !exists {
-		return fmt.Errorf("evm_sync listener not registered - ensure kwil-db node/exts/evm-sync is imported")
-	}
-
-	// Use mock listener if provided
+	// Prefer mock listener if provided, otherwise fallback to registered listener
+	var listenerFunc listeners.ListenFunc
 	if mockFunc, hasMock := h.config.MockListeners["evm_sync"]; hasMock {
 		listenerFunc = mockFunc
+	} else {
+		lf, exists := listeners.GetListener("evm_sync")
+		if !exists {
+			return fmt.Errorf("evm_sync listener not registered - ensure kwil-db node/exts/evm-sync is imported")
+		}
+		listenerFunc = lf
 	}
 
 	// Create context with timeout
