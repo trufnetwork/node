@@ -96,6 +96,10 @@ func (h *ERC20BridgeTestHelper) StopERC20Listener() error {
 	select {
 	case err := <-h.listenerDone:
 		h.running = false
+		// Treat graceful cancellations as successful shutdowns
+		if err == context.Canceled || err == context.DeadlineExceeded {
+			return nil
+		}
 		return err
 	case <-time.After(5 * time.Second):
 		return fmt.Errorf("listener did not stop within timeout")
