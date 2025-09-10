@@ -457,11 +457,10 @@ proxy_set_header X-Forwarded-Port 443;
 
 ```bash
 # Test database connectivity from MCP server (TRUF.NETWORK uses kwild user/database)
-docker exec your-mcp-container psql postgresql://kwild@localhost:5432/kwild -c "SELECT version();"
+docker exec truf-mcp-server psql postgresql://kwild@localhost:5432/kwild -c "SELECT version();"
 
 # Or connect to the TRUF.NETWORK postgres container directly
 docker exec -it tn-postgres psql -U kwild -d kwild
-```
 
 ### Issue: Windows IPv4/IPv6 Addressing Problems
 

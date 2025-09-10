@@ -243,16 +243,16 @@ location /health {
 
 ## 📚 Additional Resources
 
-- [MCP Server Documentation](../mcp-server.md)
-- [Complete Reverse Proxy Guide](../mcp-reverse-proxy.md)
-- [Node Operator Guide](../node-operator-guide.md)
+- [MCP Server Documentation](../../mcp-server.md)
+- [Complete Reverse Proxy Guide](../../mcp-reverse-proxy.md)
+- [Node Operator Guide](../../node-operator-guide.md)
 - [TRUF.NETWORK Documentation](https://docs.truf.network)
 
 ## 🆘 Support
 
 If you encounter issues:
 
-1. Check the [troubleshooting section](../mcp-reverse-proxy.md#common-issues-and-solutions)
+1. Check the [troubleshooting section](../../mcp-reverse-proxy.md#common-issues-and-solutions)
 2. Verify your configuration against the examples
 3. Test with curl commands provided above
 4. Check logs for error messages

@@ -74,7 +74,7 @@ services:
     image: trufnetwork/postgres-mcp:latest
     command: ["--transport=sse", "--sse-host=0.0.0.0", "--access-mode=restricted"]
     environment:
-      - DATABASE_URI=postgresql://kwild:password@postgres:5432/kwild
+      - DATABASE_URI=postgresql://kwild@postgres:5432/kwild
     networks:
       - traefik
     labels:
@@ -264,15 +264,13 @@ services:
       - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
       - "traefik.http.routers.traefik.service=api@internal"
       - "traefik.http.routers.traefik.middlewares=dashboard-auth"
-      - "traefik.http.middlewares.dashboard-auth.basicauth.users=admin:$$apr1$$8EVjn/nj$$GiLUZqcbueTFeD23SuB6x0" # admin:password
+      - "traefik.http.middlewares.dashboard-auth.basicauth.users=admin:$$apr1$$YOUR_HASHED_PASSWORD_HERE" # Generate with: htpasswd -nb admin your-secure-password
 
   postgres:
-    image: postgres:16
+    image: kwildb/postgres:latest
     restart: unless-stopped
     environment:
-      - POSTGRES_DB=kwild
-      - POSTGRES_USER=kwild
-      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_HOST_AUTH_METHOD=trust
     volumes:
       - postgres-data:/var/lib/postgresql/data
     networks:
@@ -283,7 +281,7 @@ services:
     restart: unless-stopped
     command: ["--transport=sse", "--sse-host=0.0.0.0", "--access-mode=restricted"]
     environment:
-      - DATABASE_URI=postgresql://kwild:${DB_PASSWORD}@postgres:5432/kwild
+      - DATABASE_URI=postgresql://kwild@postgres:5432/kwild
     networks:
       - traefik
       - internal

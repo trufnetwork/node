@@ -7,17 +7,11 @@
 :8080 {
     # Route all SSE traffic to the MCP server
     # Using IPv4 (127.0.0.1) to avoid Windows IPv6/IPv4 issues
-    reverse_proxy /sse* 127.0.0.1:8000 {
-        # Critical for SSE: Disable response buffering
-        flush_interval -1
-        
-        # Pass through important headers
-        header_up Host {http.reverse_proxy.upstream.hostport}
-        header_up Connection {>Connection}
-        header_up Cache-Control {>Cache-Control}
-        header_up X-Real-IP {http.request.remote}
-        header_up X-Forwarded-For {http.request.remote}
-        header_up X-Forwarded-Proto {http.request.scheme}
+    @sse path /sse /sse/*
+    reverse_proxy @sse 127.0.0.1:8000 {
+        # Optional for SSE; Caddy streams text/event-stream by default.
+        # flush_interval -1
+        # Rely on Caddy defaults for Host/X-Forwarded-*.
     }
     
     # Optional: Health check endpoint

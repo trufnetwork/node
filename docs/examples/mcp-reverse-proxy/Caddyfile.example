@@ -47,13 +47,13 @@ mcp.your-domain.com {
     @options method OPTIONS
     respond @options 204
     
-    # Rate limiting (optional)
-    rate_limit {
-        zone static
-        key {remote}
-        events 10
-        window 1m
-    }
+    # Rate limiting (optional; requires a Caddy plugin such as mholt/caddy-ratelimit)
+    # rate_limit {
+    #     zone static
+    #     key {remote}
+    #     events 10
+    #     window 1m
+    # }
     
     # Access control (optional) - restrict to trusted networks
     # @denied not remote_ip 192.168.1.0/24 10.0.0.0/8
