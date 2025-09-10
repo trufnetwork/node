@@ -1,0 +1,254 @@
+# Docker Compose example for TRUF.NETWORK MCP Server with SSE transport
+#
+# This file demonstrates how to deploy the MCP server with SSE transport
+# using Docker Compose, with examples for different reverse proxy setups.
+#
+# Usage:
+# 1. Copy this file and customize environment variables
+# 2. Create .env file with your settings
+# 3. Run: docker compose -f docker-compose.sse.yaml up -d
+
+version: '3.8'
+
+services:
+  # PostgreSQL Database (Kwil-configured image for TRUF.NETWORK)
+  postgres:
+    image: kwildb/postgres:latest
+    container_name: tn-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db:/docker-entrypoint-initdb.d:ro  # Optional: init scripts
+    networks:
+      - internal
+    ports:
+      - "127.0.0.1:5432:5432"  # Bind to localhost only for security
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kwild} -d ${POSTGRES_DB:-kwild}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # TRUF.NETWORK MCP Server with SSE transport
+  mcp-server:
+    image: trufnetwork/postgres-mcp:latest
+    container_name: truf-mcp-server
+    restart: unless-stopped
+    command: [
+      "--transport=sse",
+      "--sse-host=0.0.0.0",
+      "--sse-port=8000", 
+      "--access-mode=restricted"  # Use 'unrestricted' for development
+    ]
+    environment:
+      DATABASE_URI: postgresql://kwild@postgres:5432/kwild
+    networks:
+      - internal
+      - proxy  # For reverse proxy access
+    ports:
+      - "${MCP_PORT:-8000}:8000"  # Exposed for reverse proxy
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    volumes:
+      - ./logs/mcp:/var/log/mcp:rw  # Optional: log persistence
+
+  # Example: Nginx reverse proxy
+  nginx:
+    image: nginx:alpine
+    container_name: truf-nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./certs:/etc/nginx/certs:ro  # SSL certificates
+      - ./logs/nginx:/var/log/nginx:rw
+    networks:
+      - proxy
+    depends_on:
+      - mcp-server
+    profiles:
+      - nginx
+
+  # Example: Caddy reverse proxy (alternative to nginx)
+  caddy:
+    image: caddy:2-alpine
+    container_name: truf-caddy
+    restart: unless-stopped
+    ports:
+      - "${CADDY_HTTP_PORT:-80}:80"
+      - "${CADDY_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/data:/data
+      - ./caddy/config:/config
+      - ./logs/caddy:/var/log/caddy:rw
+    networks:
+      - proxy
+    depends_on:
+      - mcp-server
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    profiles:
+      - caddy
+
+  # Example: Traefik reverse proxy (alternative to nginx/caddy)
+  traefik:
+    image: traefik:v3.0
+    container_name: truf-traefik
+    restart: unless-stopped
+    command:
+      - --api.dashboard=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:-admin@your-domain.com}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+    ports:
+      - "${TRAEFIK_HTTP_PORT:-80}:80"
+      - "${TRAEFIK_HTTPS_PORT:-443}:443"
+      - "${TRAEFIK_DASHBOARD_PORT:-8080}:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/letsencrypt:/letsencrypt
+      - ./logs/traefik:/var/log/traefik:rw
+    networks:
+      - proxy
+    profiles:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`traefik.${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.dashboard.service=api@internal"
+      - "traefik.http.routers.dashboard.middlewares=auth"
+      - "traefik.http.middlewares.auth.basicauth.users=admin:$$2y$$10$$K4qQe/9v4V4eJn5l5Q8K5.9Zl6J8Z9n5Q8K5.9Zl6J8Z9n5Q8K5.9"  # admin:password
+
+  # MCP Server with Traefik labels (when using traefik profile)
+  mcp-server-traefik:
+    extends:
+      service: mcp-server
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mcp.rule=Host(`mcp.${DOMAIN:-localhost}`) && PathPrefix(`/sse`)"
+      - "traefik.http.routers.mcp.entrypoints=websecure"
+      - "traefik.http.routers.mcp.tls.certresolver=letsencrypt"
+      - "traefik.http.services.mcp.loadbalancer.server.port=8000"
+      # SSE-specific middleware
+      - "traefik.http.routers.mcp.middlewares=mcp-sse"
+      - "traefik.http.middlewares.mcp-sse.headers.customrequestheaders.Connection="
+    profiles:
+      - traefik
+
+  # Monitoring: Grafana (optional)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: truf-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - internal
+      - proxy
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    profiles:
+      - monitoring
+
+  # Monitoring: Prometheus (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: truf-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus:/etc/prometheus:ro
+      - prometheus_data:/prometheus
+    networks:
+      - internal
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    profiles:
+      - monitoring
+
+networks:
+  internal:
+    driver: bridge
+    internal: true
+  proxy:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  grafana_data:
+  prometheus_data:
+
+# Example environment file (.env)
+# Copy to .env and customize:
+#
+# # Database settings (TRUF.NETWORK uses kwildb/postgres image with trust auth)
+# # The kwildb/postgres image automatically creates kwild user and database
+# # Note: No password needed due to POSTGRES_HOST_AUTH_METHOD=trust
+# 
+# # MCP Server settings
+# MCP_PORT=8000
+# 
+# # Reverse proxy settings
+# DOMAIN=mcp.your-domain.com
+# NGINX_HTTP_PORT=80
+# NGINX_HTTPS_PORT=443
+# 
+# # SSL/TLS
+# ACME_EMAIL=admin@your-domain.com
+# 
+# # Monitoring (optional)
+# GRAFANA_PASSWORD=secure-grafana-password
+# PROMETHEUS_PORT=9090
+# GRAFANA_PORT=3000
+
+---
+# Minimal production setup (nginx + mcp-server + postgres)
+# Run with: docker compose -f docker-compose.sse.yaml --profile nginx up -d
+
+# Development setup (direct access, no reverse proxy)
+# Run with: docker compose -f docker-compose.sse.yaml up mcp-server postgres -d
+
+# Full setup with Caddy and monitoring
+# Run with: docker compose -f docker-compose.sse.yaml --profile caddy --profile monitoring up -d
+
+# Usage Examples:
+#
+# 1. Start with nginx reverse proxy:
+#    docker compose -f docker-compose.sse.yaml --profile nginx up -d
+#    
+# 2. Start with Caddy (automatic HTTPS):
+#    docker compose -f docker-compose.sse.yaml --profile caddy up -d
+#    
+# 3. Start with Traefik (container orchestration):
+#    docker compose -f docker-compose.sse.yaml --profile traefik up -d
+#
+# 4. Development mode (no reverse proxy):
+#    docker compose -f docker-compose.sse.yaml up mcp-server postgres -d
+#
+# 5. View logs:
+#    docker compose -f docker-compose.sse.yaml logs -f mcp-server
+#
+# 6. Stop services:
+#    docker compose -f docker-compose.sse.yaml down
+#
+# 7. Full cleanup:
+#    docker compose -f docker-compose.sse.yaml down -v --remove-orphans

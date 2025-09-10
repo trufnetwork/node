@@ -1,0 +1,97 @@
+# Claude Desktop Configuration Examples
+# Location: %APPDATA%\Claude\claude_desktop_config.json (Different OS might vary)
+
+# Example 1: Direct SSE connection (through mcp-remote proxy)
+# This connects directly to the MCP server on port 8000
+{
+  "mcpServers": {
+    "truf-direct": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "http://127.0.0.1:8000/sse"
+      ]
+    }
+  }
+}
+
+# Example 2: Reverse proxy connection (through Caddy)
+# This connects through the reverse proxy on port 8080
+{
+  "mcpServers": {
+    "truf-proxy": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "http://127.0.0.1:8080/sse"
+      ]
+    }
+  }
+}
+
+# Example 3: Production HTTPS connection
+# This connects to a production server with HTTPS
+{
+  "mcpServers": {
+    "truf-production": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://mcp.your-domain.com/sse"
+      ]
+    }
+  }
+}
+
+# Example 4: Multiple server configuration
+# You can configure multiple servers, but only enable one at a time to avoid conflicts
+{
+  "mcpServers": {
+    "truf-local-direct": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "http://127.0.0.1:8000/sse"
+      ]
+    },
+    "truf-local-proxy": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "http://127.0.0.1:8080/sse"
+      ]
+    }
+  }
+}
+
+# IMPORTANT NOTES FOR WINDOWS:
+# 
+# 1. Always use IPv4 addresses (127.0.0.1) instead of localhost on Windows
+#    to avoid IPv6 resolution issues with SSH tunnels
+#
+# 2. Claude Desktop requires the "command" field for all MCP servers
+#    Direct SSE configuration with "type": "sse" is NOT supported
+#
+# 3. You must use npx mcp-remote as a proxy for SSE connections
+#    Make sure Node.js and npx are installed and in your PATH
+#
+# 4. Only enable one server at a time. Having multiple active servers
+#    can cause conflicts in Claude Desktop
+#
+# 5. After editing this file, completely restart Claude Desktop
+#    (close all windows and restart the application)
+#
+# 6. To test if your configuration works:
+#    - Open Claude Desktop
+#    - Start a new conversation  
+#    - Ask: "Can you list the available MCP tools?"
+#    - You should see tools like list_schemas, execute_sql, etc.
+
+# TROUBLESHOOTING:
+#
+# If Claude Desktop shows no MCP tools:
+# - Check that MCP server is running (postgres-mcp --transport=sse ...)
+# - Verify the URL is accessible (curl.exe -H "Accept: text/event-stream" URL)
+# - Ensure no other MCP servers are configured in the same file
+# - Check Claude Desktop logs in the application menu
+# - Try restarting Claude Desktop completely
