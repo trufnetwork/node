@@ -1,8 +1,11 @@
+//go:build !kwiltest
+
 package tests
 
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -10,13 +13,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
+	erc20shim "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	"github.com/trufnetwork/kwil-db/types"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	testerc20 "github.com/trufnetwork/node/tests/streams/utils/erc20"
-
-	// Ensure ERC20 meta and ordered-sync extensions register their init/genesis hooks in test runtime
-	_ "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
 )
 
 // TestERC20BridgeSimpleBalance validates ERC-20 bridge extension initialization and balance() call.
@@ -42,6 +44,13 @@ func TestERC20BridgeSimpleBalance(t *testing.T) {
 		SeedScripts: seedScripts,
 		FunctionTests: []kwilTesting.TestFunc{
 			func(ctx context.Context, platform *kwilTesting.Platform) error {
+				// Ensure instance via helper to create meta schema and instance idempotently
+				app := &common.App{DB: platform.DB, Engine: platform.Engine}
+				chain := "sepolia"
+				escrow := "0x1111111111111111111111111111111111111111"
+				erc20 := "0x2222222222222222222222222222222222222222"
+				_, _ = erc20shim.ForTestingForceSyncInstance(ctx, app, chain, escrow, erc20, 18)
+
 				// Arbitrary wallet address to query (no prior deposits => expected 0)
 				wallet := "0x1111111111111111111111111111111111110001"
 
@@ -252,7 +261,12 @@ func TestERC20BridgeAdminLockAffectsBalance(t *testing.T) {
 				engCtx := &common.EngineContext{TxContext: txCtx}
 
 				// Attempt to call system method lock_admin to credit balance
-				_, err := platform.Engine.Call(engCtx, platform.DB, "sepolia_bridge", "lock_admin", []any{user, amount}, nil)
+				// Convert amount string to Decimal (numeric(78,0))
+				amtDec, err := types.NewDecimalFromBigInt(new(big.Int).SetString(amount, 10))
+				if err != nil {
+					return fmt.Errorf("decimal parse: %w", err)
+				}
+				_, err = platform.Engine.Call(engCtx, platform.DB, "sepolia_bridge", "lock_admin", []any{user, amtDec}, nil)
 				require.NoError(t, err)
 
 				// Query balance via action seeded in simple_mock.sql
