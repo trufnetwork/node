@@ -1,0 +1,60 @@
+# Caddyfile for Windows MCP Server Testing
+# This configuration is optimized for Windows development and testing
+# with IPv4 addressing and local development considerations
+# Different OS may require different configurations
+
+# Basic HTTP configuration for local testing
+:8080 {
+    # Route all SSE traffic to the MCP server
+    # Using IPv4 (127.0.0.1) to avoid Windows IPv6/IPv4 issues
+    reverse_proxy /sse* 127.0.0.1:8000 {
+        # Critical for SSE: Disable response buffering
+        flush_interval -1
+        
+        # Pass through important headers
+        header_up Host {http.reverse_proxy.upstream.hostport}
+        header_up Connection {>Connection}
+        header_up Cache-Control {>Cache-Control}
+        header_up X-Real-IP {http.request.remote}
+        header_up X-Forwarded-For {http.request.remote}
+        header_up X-Forwarded-Proto {http.request.scheme}
+    }
+    
+    # Optional: Health check endpoint
+    reverse_proxy /health 127.0.0.1:8000
+    
+    # Enable access logging for debugging
+    log {
+        output file caddy-access.log
+        format single_field common_log
+    }
+}
+
+# Production HTTPS configuration with domain
+# Replace your-domain.com with your actual domain
+# your-domain.com {
+#     reverse_proxy /sse* 127.0.0.1:8000 {
+#         flush_interval -1
+#         header_up Host {http.reverse_proxy.upstream.hostport}
+#         header_up Connection {>Connection}
+#         header_up Cache-Control {>Cache-Control}
+#         header_up X-Real-IP {http.request.remote}
+#         header_up X-Forwarded-For {http.request.remote}
+#         header_up X-Forwarded-Proto https
+#     }
+#     
+#     # Security headers for production
+#     header {
+#         X-Frame-Options DENY
+#         X-Content-Type-Options nosniff
+#         X-XSS-Protection "1; mode=block"
+#         Strict-Transport-Security "max-age=31536000; includeSubDomains"
+#     }
+# }
+
+# Usage Instructions:
+# 1. Save this file as "Caddyfile" (no extension)
+# 2. Start MCP server: postgres-mcp --transport=sse --sse-host=127.0.0.1 --sse-port=8000
+# 3. Start Caddy: caddy run
+# 4. Test: curl.exe -H "Accept: text/event-stream" http://127.0.0.1:8080/sse
+# 5. Configure Claude Desktop with: npx mcp-remote http://127.0.0.1:8080/sse
