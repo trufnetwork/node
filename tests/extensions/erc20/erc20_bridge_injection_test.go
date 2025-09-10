@@ -34,7 +34,7 @@ func TestERC20BridgeInjectedTransferAffectsBalance(t *testing.T) {
 				app := &common.App{DB: platform.DB, Engine: platform.Engine}
 				// ensure ordered-sync topic and meta schema via helpers
 				chain := "sepolia"
-				escrow := "0x1111111111111111111111111111111111111111"
+				escrow := "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 				erc20 := "0x2222222222222222222222222222222222222222"
 				user := "0xabc0000000000000000000000000000000000001"
 				value := "1000000000000000000"

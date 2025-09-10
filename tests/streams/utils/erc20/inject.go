@@ -1,5 +1,3 @@
-//go:build kwiltest
-
 package erc20
 
 import (

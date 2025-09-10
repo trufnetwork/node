@@ -34,11 +34,12 @@ func TestERC20BridgeEpochFlow(t *testing.T) {
 		FunctionTests: []kwilTesting.TestFunc{
 			func(ctx context.Context, platform *kwilTesting.Platform) error {
 				app := &common.App{DB: platform.DB, Engine: platform.Engine}
-				// ensure ordered-sync namespace and reset cache
+				// ensure ordered-sync namespace
 				require.NoError(t, orderedsync.ForTestingEnsureNamespace(ctx, app))
-				orderedsync.ForTestingReset()
+
+				// Note: Global state reset should be handled by test framework, not individual tests
 				chain := "sepolia"
-				escrow := "0x1111111111111111111111111111111111111111"
+				escrow := "0xdddddddddddddddddddddddddddddddddddddddd"
 				erc20 := "0x2222222222222222222222222222222222222222"
 				user := "0xabc0000000000000000000000000000000000001"
 				value := "500000000000000000" // 0.5

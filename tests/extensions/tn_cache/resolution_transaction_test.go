@@ -11,6 +11,7 @@ import (
 	"github.com/trufnetwork/node/extensions/tn_cache"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
+	"github.com/trufnetwork/node/tests/streams/utils/cache"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
 	"github.com/trufnetwork/node/tests/streams/utils/setup"
 	"github.com/trufnetwork/sdk-go/core/util"
@@ -20,7 +21,7 @@ import (
 func TestResolutionInTransaction(t *testing.T) {
 	// Use a fixed deployer address for consistency
 	deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000456")
-	cacheConfig := testutils.TestCache(deployer.Address(), "*") // Wildcard to cache all streams
+	cacheConfig := testutils.SimpleCache(deployer.Address(), "*")
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "resolution_transaction_test",
@@ -28,7 +29,7 @@ func TestResolutionInTransaction(t *testing.T) {
 		FunctionTests: []kwilTesting.TestFunc{
 			func(ctx context.Context, platform *kwilTesting.Platform) error {
 				platform = procedure.WithSigner(platform, deployer.Bytes())
-				helper := testutils.SetupCacheTest(ctx, platform, cacheConfig)
+				helper := cache.SetupCacheTest(ctx, platform, cacheConfig)
 				defer helper.Cleanup()
 
 				err := setup.CreateDataProvider(ctx, platform, deployer.Address())
@@ -57,7 +58,7 @@ func TestResolutionInTransaction(t *testing.T) {
 					require.NoError(t, err)
 
 					// Trigger resolution to discover the new stream
-					err = helper.TriggerResolution(ctx)
+					err = tn_cache.GetTestHelper().TriggerResolution(ctx)
 					require.NoError(t, err)
 
 					// Verify the stream was discovered and cached
@@ -84,7 +85,7 @@ func TestResolutionInTransaction(t *testing.T) {
 					assert.True(t, found, "Newly created stream should be resolved by wildcard")
 
 					// Refresh cache for the discovered stream
-					_, err = helper.RefreshAllStreamsSync(ctx)
+					_, err = tn_cache.GetTestHelper().RefreshAllStreamsSync(ctx)
 					require.NoError(t, err)
 				})
 

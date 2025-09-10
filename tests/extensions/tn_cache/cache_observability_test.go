@@ -10,8 +10,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	"github.com/trufnetwork/node/extensions/tn_cache"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
+	"github.com/trufnetwork/node/tests/streams/utils/cache"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
 	"github.com/trufnetwork/node/tests/streams/utils/setup"
 	"github.com/trufnetwork/sdk-go/core/types"
@@ -25,7 +27,7 @@ import (
 func TestCacheObservability(t *testing.T) {
 	deployer := "0x0000000000000000000000000000000000000123"
 	streamId := util.GenerateStreamId("cache_observability_test")
-	cacheConfig := testutils.TestCache(deployer, streamId.String())
+	cacheConfig := testutils.SimpleCache(deployer, streamId.String())
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "cache_observability_test",
@@ -33,7 +35,7 @@ func TestCacheObservability(t *testing.T) {
 		FunctionTests: []kwilTesting.TestFunc{
 			func(ctx context.Context, platform *kwilTesting.Platform) error {
 				// Cache is already set up by the wrapper, but we need the helper for RefreshCache
-				helper := testutils.SetupCacheTest(ctx, platform, cacheConfig)
+				helper := cache.SetupCacheTest(ctx, platform, cacheConfig)
 				defer helper.Cleanup()
 
 				deployerAddr, err := util.NewEthereumAddressFromString(deployer)
@@ -98,7 +100,7 @@ func TestCacheObservability(t *testing.T) {
 				assert.Equal(t, false, missLog["cache_hit"], "First query should be cache miss")
 
 				// Refresh cache for hit test
-				recordsCached, err := helper.RefreshAllStreamsSync(ctx)
+				recordsCached, err := tn_cache.GetTestHelper().RefreshAllStreamsSync(ctx)
 				require.NoError(t, err)
 				assert.Equal(t, 2, recordsCached, "Should cache 2 aggregated records")
 

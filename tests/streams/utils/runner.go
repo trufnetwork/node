@@ -77,7 +77,8 @@ func RunSchemaTest(t TestingT, s kwilTesting.SchemaTest, options *Options) {
 	}, kwilOpts)
 }
 
-// wrapWithExtensionsSetup wraps test functions with both cache and ERC-20 bridge initialization
+// wrapWithExtensionsSetup wraps test functions with cache extension initialization
+// ERC20 setup removed - now handled directly in tests using WithERC20TestSetup
 func wrapWithExtensionsSetup(ctx context.Context, originalFuncs []kwilTesting.TestFunc, cacheConfig *cache.CacheOptions, erc20Config *erc20.ERC20BridgeConfig, opts *kwilTesting.Options) []kwilTesting.TestFunc {
 	wrapped := make([]kwilTesting.TestFunc, len(originalFuncs))
 	for i, fn := range originalFuncs {
@@ -96,15 +97,7 @@ func wrapWithExtensionsSetup(ctx context.Context, originalFuncs []kwilTesting.Te
 				cleanups = append(cleanups, cleanup)
 			}
 
-			// Setup ERC-20 bridge if configured
-			if erc20Config != nil {
-				cleanup, err := setupERC20Bridge(ctx, erc20Config, platform)
-				if err != nil {
-					testErr = fmt.Errorf("failed to setup ERC-20 bridge: %w", err)
-					return
-				}
-				cleanups = append(cleanups, cleanup)
-			}
+			// ERC-20 bridge setup removed - handle directly in tests with WithERC20TestSetup
 
 			// Run original test
 			err := originalFn(ctx, platform)
@@ -167,26 +160,7 @@ func setupCacheExtension(ctx context.Context, cacheConfig *cache.CacheOptions, p
 }
 
 // setupERC20Bridge sets up the ERC-20 bridge for testing
-func setupERC20Bridge(ctx context.Context, erc20Config *erc20.ERC20BridgeConfig, platform *kwilTesting.Platform) (func(), error) {
-	// Setup ERC-20 bridge test
-	bridgeHelper, err := erc20.SetupERC20BridgeTest(ctx, platform, erc20Config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to setup ERC-20 bridge test: %w", err)
-	}
-
-	// Auto-start listener if configured
-	if erc20Config.AutoStart {
-		if startErr := bridgeHelper.StartERC20Listener(ctx); startErr != nil {
-			return nil, fmt.Errorf("failed to start ERC-20 listener: %w", startErr)
-		}
-	}
-
-	cleanup := func() {
-		_ = bridgeHelper.Cleanup()
-	}
-
-	return cleanup, nil
-}
+// ERC20 setup removed - now handled directly in tests using WithERC20TestSetup
 
 // TestingT interface for test functions
 type TestingT interface {
@@ -194,29 +168,4 @@ type TestingT interface {
 	Errorf(format string, args ...interface{})
 }
 
-// WithExtensions is a convenience wrapper for both cache and ERC-20 bridge testing
-func WithExtensions(t TestingT, ctx context.Context, platform *kwilTesting.Platform, cacheConfig *cache.CacheOptions, erc20Config *erc20.ERC20BridgeConfig, testFunc func(*cache.CacheTestHelper, *erc20.ERC20BridgeTestHelper)) {
-	// Setup cache if configured
-	var cacheHelper *cache.CacheTestHelper
-	if cacheConfig != nil {
-		cacheHelper = cache.SetupCacheTest(ctx, platform, cacheConfig)
-		defer cacheHelper.Cleanup()
-	}
-
-	// Setup ERC-20 bridge if configured
-	var bridgeHelper *erc20.ERC20BridgeTestHelper
-	if erc20Config != nil {
-		var err error
-		bridgeHelper, err = erc20.SetupERC20BridgeTest(ctx, platform, erc20Config)
-		if err != nil {
-			t.Fatalf("Failed to setup ERC-20 bridge: %v", err)
-		}
-		defer func() {
-			if err := bridgeHelper.Cleanup(); err != nil {
-				t.Errorf("Failed to cleanup ERC-20 bridge: %v", err)
-			}
-		}()
-	}
-
-	testFunc(cacheHelper, bridgeHelper)
-}
+// WithExtensions removed - ERC20 setup now handled directly in tests

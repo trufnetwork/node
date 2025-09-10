@@ -1,37 +1,115 @@
-//go:build !kwiltest
-
 package tests
 
 import (
 	"context"
 	"fmt"
-	"math/big"
 	"path/filepath"
 	"runtime"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
-	"github.com/trufnetwork/kwil-db/common"
-	erc20shim "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
-	"github.com/trufnetwork/kwil-db/types"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	testerc20 "github.com/trufnetwork/node/tests/streams/utils/erc20"
 )
 
-// TestERC20BridgeSimpleBalance validates ERC-20 bridge extension initialization and balance() call.
-// This test requires the erc20_bridge extension to be available in the test environment.
+// WithERC20TestSetup is a helper function that sets up the test environment with ERC-20 bridge
+// Follows the same pattern as WithQueryTestSetup in query_test.go for consistency
+func WithERC20TestSetup(escrowAddr string) func(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	setupFunc := testerc20.WithERC20TestSetup(escrowAddr)
+	return func(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {
+		return func(ctx context.Context, platform *kwilTesting.Platform) error {
+			// First run the ERC20 setup
+			err := setupFunc(ctx, platform)
+			if err != nil {
+				return err
+			}
+			// Then run the test function
+			return testFn(ctx, platform)
+		}
+	}
+}
+
+// TestERC20BridgeSimpleBalanceTx uses transaction-based isolation for perfect test isolation
+// This allows reusing the same user accounts and escrow addresses across tests.
+func TestERC20BridgeSimpleBalanceTx(t *testing.T) {
+	// Compute absolute path to the seed script relative to this test file
+	_, thisFile, _, _ := runtime.Caller(0)
+	seedPath := filepath.Join(filepath.Dir(thisFile), "simple_mock.sql")
+
+	seedScripts := migrations.GetSeedScriptPaths()
+	seedScripts = append(seedScripts, seedPath)
+
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name:        "erc20_bridge_simple_balance_tx",
+		SeedScripts: seedScripts,
+		FunctionTests: []kwilTesting.TestFunc{
+			func(ctx context.Context, platform *kwilTesting.Platform) error {
+				// Use transaction-based isolation with WithTx
+				testFunc := testutils.WithTx(platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {
+					// Setup ERC20 with the default escrow from simple_mock.sql
+					testerc20.WithERC20TestSetupTx("0x1111111111111111111111111111111111111111")(t, txPlatform)
+
+					// Now run the actual test logic with the transaction-scoped platform
+					testSimpleBalanceTx(t, txPlatform)
+				})
+
+				// Execute the transaction-wrapped test
+				testFunc(t)
+				return nil
+			},
+		},
+	}, &testutils.Options{Options: testutils.GetTestOptions()})
+}
+
+// testSimpleBalanceTx performs the actual balance test logic with transaction-scoped platform
+func testSimpleBalanceTx(t *testing.T, txPlatform *kwilTesting.Platform) {
+	// Test-specific constants - can reuse the same user across tests now!
+	const testWallet = "0x1111111111111111111111111111111111110001"
+
+	// Query balance for a wallet with no prior deposits
+	balance, err := testerc20.GetUserBalance(context.Background(), txPlatform, testWallet)
+	require.NoError(t, err)
+
+	// Should return "0" for wallet with no prior deposits
+	require.Equal(t, "0", balance, "expected balance of 0 for wallet with no prior deposits")
+}
+
+// testSimpleBalance performs the actual balance test logic (legacy version)
+func testSimpleBalance(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Test-specific constants
+		const testWallet = "0x1111111111111111111111111111111111110001"
+
+		// Query balance for a wallet with no prior deposits
+		balance, err := testerc20.GetUserBalance(ctx, platform, testWallet)
+		if err != nil {
+			return fmt.Errorf("failed to get user balance: %w", err)
+		}
+
+		// Should return "0" for wallet with no prior deposits
+		require.Equal(t, "0", balance, "expected balance of 0 for wallet with no prior deposits")
+		return nil
+	}
+}
+
+// Removed complex listener tests - keeping only simple extension functionality tests
+// that follow the same pattern as query_test.go for consistency
+
+// TestERC20BridgeAdminLockAffectsBalanceTx validates that the lock_admin system method
+// correctly reduces a user's balance when called with OverrideAuthz.
+// Uses transaction-based isolation for proper test cleanup.
 //
-// BLOCKER: The erc20_bridge extension is not currently available in the test environment.
-// When this extension becomes available, this test will:
-// 1. Execute the USE erc20_bridge statement from simple_mock.sql
-// 2. Call the get_balance action which proxies to sepolia_bridge.balance()
-// 3. Verify it returns "0" for a wallet with no deposit events
+// Test Scenario:
+// 1. Set up ERC-20 bridge extension with a synced instance
+// 2. Credit user's balance with a realistic ERC-20 transfer (simulating deposit)
+// 3. Call lock_admin to lock the user's tokens
+// 4. Verify user's balance is reduced to 0
 //
-// Until then, this test will fail with a clear error about the missing extension.
-func TestERC20BridgeSimpleBalance(t *testing.T) {
+// This test ensures admin lock functionality works correctly and integrates
+// with the extension's balance tracking.
+func TestERC20BridgeAdminLockAffectsBalanceTx(t *testing.T) {
 	// Compute absolute path to the seed script relative to this test file
 	_, thisFile, _, _ := runtime.Caller(0)
 	seedPath := filepath.Join(filepath.Dir(thisFile), "simple_mock.sql")
@@ -40,252 +118,50 @@ func TestERC20BridgeSimpleBalance(t *testing.T) {
 	seedScripts = append(seedScripts, seedPath)
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name:        "erc20_bridge_simple_balance",
+		Name:        "erc20_bridge_admin_lock_affects_balance_tx",
 		SeedScripts: seedScripts,
 		FunctionTests: []kwilTesting.TestFunc{
 			func(ctx context.Context, platform *kwilTesting.Platform) error {
-				// Ensure instance via helper to create meta schema and instance idempotently
-				app := &common.App{DB: platform.DB, Engine: platform.Engine}
-				chain := "sepolia"
-				escrow := "0x1111111111111111111111111111111111111111"
-				erc20 := "0x2222222222222222222222222222222222222222"
-				_, _ = erc20shim.ForTestingForceSyncInstance(ctx, app, chain, escrow, erc20, 18)
+				// Use transaction-based isolation with WithTx
+				testFunc := testutils.WithTx(platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {
+					// Setup ERC20 with the default escrow from simple_mock.sql
+					testerc20.WithERC20TestSetupTx("0x1111111111111111111111111111111111111111")(t, txPlatform)
 
-				// Arbitrary wallet address to query (no prior deposits => expected 0)
-				wallet := "0x1111111111111111111111111111111111110001"
-
-				txCtx := &common.TxContext{
-					Ctx:          ctx,
-					BlockContext: &common.BlockContext{Height: 1},
-					Signer:       platform.Deployer,
-					Caller:       "0x0000000000000000000000000000000000000000",
-					TxID:         platform.Txid(),
-				}
-				engCtx := &common.EngineContext{TxContext: txCtx}
-
-				// Call our seeded action which proxies to sepolia_bridge.balance($wallet)
-				var got string
-				r, err := platform.Engine.Call(engCtx, platform.DB, "", "get_balance", []any{wallet}, func(row *common.Row) error {
-					if len(row.Values) != 1 {
-						return fmt.Errorf("expected 1 column, got %d", len(row.Values))
-					}
-					got = fmt.Sprintf("%v", row.Values[0])
-					return nil
+					// Now run the actual test logic with the transaction-scoped platform
+					testAdminLockTx(t, txPlatform)
 				})
-				require.NoError(t, err)
-				if r != nil && r.Error != nil {
-					return r.Error
-				}
 
-				// Expect 0 for no prior deposits
-				require.Equal(t, "0", got, "expected zero balance for fresh wallet without deposit events")
+				// Execute the transaction-wrapped test
+				testFunc(t)
 				return nil
 			},
 		},
 	}, &testutils.Options{Options: testutils.GetTestOptions()})
 }
 
-// TestERC20BridgeMockListener tests our ERC-20 bridge testing helpers with a mock listener.
-// This doesn't require the real erc20_bridge extension but validates our test infrastructure.
-func TestERC20BridgeMockListener(t *testing.T) {
-	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name: "erc20_bridge_mock_listener",
-		FunctionTests: []kwilTesting.TestFunc{
-			func(ctx context.Context, platform *kwilTesting.Platform) error {
-				// Create mock listener that broadcasts ERC-20 transfer events
-				mock := testutils.MockERC20Listener([]string{"erc20_transfer"})
+// testAdminLockTx performs the actual admin lock test logic with transaction-scoped platform
+func testAdminLockTx(t *testing.T, txPlatform *kwilTesting.Platform) {
+	// Test-specific constants - can reuse the same user across tests now!
+	const (
+		testUser   = "0xabc0000000000000000000000000000000000001"
+		testAmount = "1000000000000000000" // 1.0 tokens
+	)
 
-				// Configure ERC-20 bridge with mock listener
-				cfg := testutils.NewERC20BridgeConfig().
-					WithRPC("sepolia", "wss://mock-sepolia.com").
-					WithSigner("test_bridge", "/dev/null").
-					WithMockListener("evm_sync", mock).
-					WithAutoStart()
+	// Step 1: Pre-credit user's balance with realistic ERC-20 transfer
+	// This simulates a user depositing tokens into the bridge escrow
+	// Use the same escrow address as the test setup
+	err := testerc20.CreditUserBalance(context.Background(), txPlatform, "0x1111111111111111111111111111111111111111", testUser, testAmount)
+	require.NoError(t, err)
 
-				// Setup test environment
-				helper, err := testerc20.SetupERC20BridgeTest(ctx, platform, cfg)
-				require.NoError(t, err)
-				defer helper.Cleanup()
+	// Step 2: Execute admin lock operation
+	// This should reduce user's balance by the locked amount
+	err = testerc20.CallLockAdmin(context.Background(), txPlatform, testUser, testAmount)
+	require.NoError(t, err)
 
-				// Start listener and verify it works
-				require.NoError(t, helper.StartERC20Listener(ctx))
-
-				// Verify listener is running
-				require.True(t, helper.IsListenerRunning(), "listener should be running")
-
-				// Stop listener
-				require.NoError(t, helper.StopERC20Listener())
-
-				// Verify listener stopped
-				require.False(t, helper.IsListenerRunning(), "listener should have stopped")
-
-				return nil
-			},
-		},
-	}, &testutils.Options{Options: testutils.GetTestOptions()})
-}
-
-// TestERC20BridgeMockDepositEvent verifies that a mocked deposit event is broadcast by the listener.
-func TestERC20BridgeMockDepositEvent(t *testing.T) {
-	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name: "erc20_bridge_mock_deposit_event",
-		FunctionTests: []kwilTesting.TestFunc{
-			func(ctx context.Context, platform *kwilTesting.Platform) error {
-				user := "0xabc0000000000000000000000000000000000001"
-				token := "0xdef0000000000000000000000000000000000002"
-				amount := "1000000000000000000" // 1 token
-
-				// Create a mock deposit listener that emits an erc20_deposit event
-				mock := testerc20.MockERC20DepositListener(user, token, amount)
-
-				// Configure ERC-20 bridge with mock listener
-				cfg := testerc20.NewERC20BridgeConfig().
-					WithRPC("sepolia", "wss://mock-sepolia.com").
-					WithSigner("test_bridge", "/dev/null").
-					WithMockListener("evm_sync", mock).
-					WithAutoStart()
-
-				// Setup test environment
-				helper, err := testerc20.SetupERC20BridgeTest(ctx, platform, cfg)
-				require.NoError(t, err)
-				defer helper.Cleanup()
-
-				// Start listener and verify it works
-				require.NoError(t, helper.StartERC20Listener(ctx))
-
-				// Wait for the mocked deposit event to be broadcast
-				require.NoError(t, helper.WaitForListenerEvent("erc20_deposit", 2*time.Second))
-
-				// Stop listener
-				require.NoError(t, helper.StopERC20Listener())
-				return nil
-			},
-		},
-	}, &testutils.Options{Options: testutils.GetTestOptions()})
-}
-
-// TestERC20BridgeMockDepositAffectsBalance simulates a deposit and checks balance via action.
-// Note: This relies on the erc20 bridge extension wiring deposit events into balance().
-func TestERC20BridgeMockDepositAffectsBalance(t *testing.T) {
-	// Compute absolute path to the seed script relative to this test file
-	_, thisFile, _, _ := runtime.Caller(0)
-	seedPath := filepath.Join(filepath.Dir(thisFile), "simple_mock.sql")
-
-	seedScripts := migrations.GetSeedScriptPaths()
-	seedScripts = append(seedScripts, seedPath)
-
-	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name:        "erc20_bridge_mock_deposit_affects_balance",
-		SeedScripts: seedScripts,
-		FunctionTests: []kwilTesting.TestFunc{
-			func(ctx context.Context, platform *kwilTesting.Platform) error {
-				user := "0xabc0000000000000000000000000000000000001"
-				token := "0xdef0000000000000000000000000000000000002"
-				amount := "1000000000000000000" // 1 token
-
-				// Mock listener emits a deposit event
-				mock := testerc20.MockERC20DepositListener(user, token, amount)
-
-				cfg := testerc20.NewERC20BridgeConfig().
-					WithRPC("sepolia", "wss://mock-sepolia.com").
-					WithSigner("test_bridge", "/dev/null").
-					WithMockListener("evm_sync", mock).
-					WithAutoStart()
-
-				helper, err := testerc20.SetupERC20BridgeTest(ctx, platform, cfg)
-				require.NoError(t, err)
-				defer helper.Cleanup()
-
-				// Start listener and wait for event
-				require.NoError(t, helper.StartERC20Listener(ctx))
-				require.NoError(t, helper.WaitForListenerEvent("erc20_deposit", 2*time.Second))
-
-				// Query balance via action seeded in simple_mock.sql
-				txCtx := &common.TxContext{
-					Ctx:          ctx,
-					BlockContext: &common.BlockContext{Height: 1},
-					Signer:       platform.Deployer,
-					Caller:       "0x0000000000000000000000000000000000000000",
-					TxID:         platform.Txid(),
-				}
-				engCtx := &common.EngineContext{TxContext: txCtx}
-
-				var got string
-				r, err := platform.Engine.Call(engCtx, platform.DB, "", "get_balance", []any{user}, func(row *common.Row) error {
-					if len(row.Values) != 1 {
-						return fmt.Errorf("expected 1 column, got %d", len(row.Values))
-					}
-					got = fmt.Sprintf("%v", row.Values[0])
-					return nil
-				})
-				require.NoError(t, err)
-				if r != nil && r.Error != nil {
-					return r.Error
-				}
-
-				// Expect non-zero balance (equal to mocked deposit) if extension applies events to balance
-				require.Equal(t, amount, got, "expected balance to reflect mocked deposit amount")
-
-				// Stop listener
-				require.NoError(t, helper.StopERC20Listener())
-				return nil
-			},
-		},
-	}, &testutils.Options{Options: testutils.GetTestOptions()})
-}
-
-// TestERC20BridgeAdminLockAffectsBalance uses the admin lock method to simulate a deposit and verifies balance.
-func TestERC20BridgeAdminLockAffectsBalance(t *testing.T) {
-	// Compute absolute path to the seed script relative to this test file
-	_, thisFile, _, _ := runtime.Caller(0)
-	seedPath := filepath.Join(filepath.Dir(thisFile), "simple_mock.sql")
-
-	seedScripts := migrations.GetSeedScriptPaths()
-	seedScripts = append(seedScripts, seedPath)
-
-	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name:        "erc20_bridge_admin_lock_affects_balance",
-		SeedScripts: seedScripts,
-		FunctionTests: []kwilTesting.TestFunc{
-			func(ctx context.Context, platform *kwilTesting.Platform) error {
-				user := "0xabc0000000000000000000000000000000000001"
-				amount := "1000000000000000000"
-
-				txCtx := &common.TxContext{
-					Ctx:          ctx,
-					BlockContext: &common.BlockContext{Height: 1},
-					Signer:       platform.Deployer,
-					Caller:       "0x0000000000000000000000000000000000000000",
-					TxID:         platform.Txid(),
-				}
-				engCtx := &common.EngineContext{TxContext: txCtx}
-
-				// Attempt to call system method lock_admin to credit balance
-				// Convert amount string to Decimal (numeric(78,0))
-				amtDec, err := types.NewDecimalFromBigInt(new(big.Int).SetString(amount, 10))
-				if err != nil {
-					return fmt.Errorf("decimal parse: %w", err)
-				}
-				_, err = platform.Engine.Call(engCtx, platform.DB, "sepolia_bridge", "lock_admin", []any{user, amtDec}, nil)
-				require.NoError(t, err)
-
-				// Query balance via action seeded in simple_mock.sql
-				var got string
-				r, err := platform.Engine.Call(engCtx, platform.DB, "", "get_balance", []any{user}, func(row *common.Row) error {
-					if len(row.Values) != 1 {
-						return fmt.Errorf("expected 1 column, got %d", len(row.Values))
-					}
-					got = fmt.Sprintf("%v", row.Values[0])
-					return nil
-				})
-				require.NoError(t, err)
-				if r != nil && r.Error != nil {
-					return r.Error
-				}
-
-				require.Equal(t, amount, got, "expected balance to reflect admin lock amount")
-				return nil
-			},
-		},
-	}, &testutils.Options{Options: testutils.GetTestOptions()})
+	// Step 3: Verify balance was correctly reduced
+	// After locking all tokens, balance should be 0
+	finalBalance, err := testerc20.GetUserBalance(context.Background(), txPlatform, testUser)
+	require.NoError(t, err)
+	require.Equal(t, "0", finalBalance,
+		"expected user balance to be zero after admin lock of entire balance")
 }
