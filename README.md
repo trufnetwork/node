@@ -54,6 +54,8 @@ We provide official SDKs to integrate and interact with the TN network:
 
 Learn how to query data through AI Clients: [TRUF.NETWORK MCP](./docs/mcp-server.md)
 
+For production deployments behind reverse proxies: [MCP Reverse Proxy Configuration](./docs/mcp-reverse-proxy.md)
+
 ## Development Guide
 
 For contributors and developers building on top of TN:

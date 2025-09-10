@@ -1,0 +1,117 @@
+# Nginx configuration example for TRUF.NETWORK MCP Server with SSE transport
+# 
+# This configuration provides a production-ready setup for proxying the MCP server
+# with proper SSE (Server-Sent Events) support.
+#
+# Usage:
+# 1. Copy this file to /etc/nginx/sites-available/mcp-server
+# 2. Update server_name and paths for your environment
+# 3. Enable: ln -s /etc/nginx/sites-available/mcp-server /etc/nginx/sites-enabled/
+# 4. Test: nginx -t
+# 5. Reload: systemctl reload nginx
+
+# Rate limiting (add to http block in nginx.conf)
+# limit_req_zone $binary_remote_addr zone=mcp_sse:10m rate=5r/m;
+
+server {
+    listen 443 ssl http2;
+    server_name mcp.your-domain.com;
+
+    # SSL Configuration - Update paths for your certificates
+    ssl_certificate /etc/letsencrypt/live/mcp.your-domain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/mcp.your-domain.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+
+    # Security Headers
+    add_header X-Frame-Options DENY;
+    add_header X-Content-Type-Options nosniff;
+    add_header X-XSS-Protection "1; mode=block";
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin";
+
+    # Rate Limiting
+    # limit_req zone=mcp_sse burst=10 nodelay;
+
+    # MCP Server SSE Endpoint - CRITICAL SSE CONFIGURATION
+    location /sse {
+        # Backend server (adjust IP/port as needed)
+        proxy_pass http://127.0.0.1:8000/sse;
+        
+        # ESSENTIAL SSE SETTINGS - DO NOT MODIFY
+        proxy_set_header Connection '';
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding off;
+        
+        # Extended timeouts for long-lived connections
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_connect_timeout 60s;
+        
+        # Standard proxy headers
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Port 443;
+        
+        # CORS headers for browser-based clients (optional)
+        add_header 'Access-Control-Allow-Origin' '*' always;
+        add_header 'Access-Control-Allow-Headers' 'Origin, X-Requested-With, Content-Type, Accept, Authorization' always;
+        add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS' always;
+        
+        # Handle preflight requests
+        if ($request_method = 'OPTIONS') {
+            return 204;
+        }
+        
+        # Access control - restrict to trusted networks (adjust as needed)
+        # allow 192.168.1.0/24;
+        # allow 10.0.0.0/8;
+        # deny all;
+        
+        # Logging
+        access_log /var/log/nginx/mcp-sse.access.log;
+        error_log /var/log/nginx/mcp-sse.error.log;
+    }
+    
+    # Health check endpoint (optional)
+    location /health {
+        proxy_pass http://127.0.0.1:8000/health;
+        proxy_set_header Host $host;
+        access_log off;
+    }
+    
+    # Deny all other locations
+    location / {
+        return 404;
+    }
+}
+
+# HTTP to HTTPS redirect
+server {
+    listen 80;
+    server_name mcp.your-domain.com;
+    return 301 https://$host$request_uri;
+}
+
+# Example basic HTTP configuration (for development only)
+# server {
+#     listen 80;
+#     server_name mcp-dev.your-domain.com;
+#     
+#     location /sse {
+#         proxy_pass http://127.0.0.1:8000/sse;
+#         proxy_set_header Connection '';
+#         proxy_http_version 1.1;
+#         proxy_buffering off;
+#         proxy_cache off;
+#         chunked_transfer_encoding off;
+#         proxy_set_header Host $host;
+#     }
+# }
