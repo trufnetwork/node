@@ -14,6 +14,8 @@ import (
 	"github.com/trufnetwork/node/tests/streams/utils/cache"
 	"github.com/trufnetwork/node/tests/streams/utils/erc20"
 	"github.com/trufnetwork/node/tests/streams/utils/service"
+
+	erc20shim "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
 )
 
 // Options extends kwilTesting.Options with both cache and ERC-20 bridge configuration
@@ -68,6 +70,10 @@ func RunSchemaTest(t TestingT, s kwilTesting.SchemaTest, options *Options) {
 	if cacheConfig != nil || erc20Config != nil {
 		wrappedTests = wrapWithExtensionsSetup(context.Background(), s.FunctionTests, cacheConfig, erc20Config, kwilOpts)
 	}
+
+	// Ensure ERC20 prepare (USE) is idempotent during seeding to avoid cross-test conflicts
+	erc20shim.ForTestingAllowPrepareOnActive(true)
+	defer erc20shim.ForTestingAllowPrepareOnActive(false)
 
 	// Run with wrapper
 	kwilTesting.RunSchemaTest(testT, kwilTesting.SchemaTest{
