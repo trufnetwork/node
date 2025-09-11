@@ -9,6 +9,20 @@
 
 -- TESTNET
 CREATE OR REPLACE ACTION sepolia_wallet_balance($wallet_address TEXT) PUBLIC VIEW RETURNS (balance NUMERIC(78, 0)) {
+  $lower_caller TEXT := LOWER(@caller);
+
+  -- Permission Check: Ensure caller has the 'system:erc20_bridge_writer' role.
+  $has_permission BOOL := false;
+  for $row in are_members_of('system', 'erc20_bridge_writer', ARRAY[$lower_caller]) {
+      if $row.wallet = $lower_caller AND $row.is_member {
+          $has_permission := true;
+          break;
+      }
+  }
+  if NOT $has_permission {
+      ERROR('Caller does not have the required system:erc20_bridge_writer role to read balance.');
+  }
+  
   $balance := sepolia_bridge.balance($wallet_address);
   return $balance;
 };
@@ -69,6 +83,20 @@ CREATE OR REPLACE ACTION sepolia_admin_issue_tokens($to_address TEXT, $amount TE
 
 -- MAINNET
 CREATE OR REPLACE ACTION mainnet_wallet_balance($wallet_address TEXT) PUBLIC VIEW RETURNS (balance NUMERIC(78, 0)) {
+  $lower_caller TEXT := LOWER(@caller);
+
+  -- Permission Check: Ensure caller has the 'system:erc20_bridge_writer' role.
+  $has_permission BOOL := false;
+  for $row in are_members_of('system', 'erc20_bridge_writer', ARRAY[$lower_caller]) {
+      if $row.wallet = $lower_caller AND $row.is_member {
+          $has_permission := true;
+          break;
+      }
+  }
+  if NOT $has_permission {
+      ERROR('Caller does not have the required system:erc20_bridge_writer role to read balance.');
+  }
+
   $balance := mainnet_bridge.balance($wallet_address);
   return $balance;
 };
