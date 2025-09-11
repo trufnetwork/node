@@ -1,0 +1,313 @@
+# Traefik configuration example for TRUF.NETWORK MCP Server with SSE transport
+#
+# This file shows both static configuration (traefik.yml) and dynamic configuration
+# examples for deploying the MCP server with proper SSE support.
+#
+# Usage:
+# 1. Use this as your traefik.yml static configuration
+# 2. Apply the Docker Compose labels or file-based dynamic config
+# 3. Ensure the MCP server is accessible from Traefik
+
+# Static Configuration (traefik.yml)
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+api:
+  dashboard: true
+  insecure: false  # Set to true for development
+
+entryPoints:
+  web:
+    address: ":80"
+    # Redirect HTTP to HTTPS
+    http:
+      redirections:
+        entrypoint:
+          to: websecure
+          scheme: https
+          permanent: true
+          
+  websecure:
+    address: ":443"
+
+providers:
+  # Docker provider for container discovery
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    network: traefik
+    
+  # File provider for additional configuration
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: admin@your-domain.com
+      storage: /letsencrypt/acme.json
+      httpChallenge:
+        entryPoint: web
+      # Alternative: DNS challenge
+      # dnsChallenge:
+      #   provider: cloudflare
+      #   resolvers:
+      #     - "1.1.1.1:53"
+
+# Logging
+log:
+  level: INFO
+  filePath: /var/log/traefik/traefik.log
+
+accessLog:
+  filePath: /var/log/traefik/access.log
+
+---
+# Dynamic Configuration Example 1: Docker Compose Labels
+# Add these labels to your MCP server container in docker-compose.yml
+
+version: '3.8'
+services:
+  mcp-server:
+    image: trufnetwork/postgres-mcp:latest
+    command: ["--transport=sse", "--sse-host=0.0.0.0", "--access-mode=restricted"]
+    environment:
+      - DATABASE_URI=postgresql://kwild@postgres:5432/kwild
+    networks:
+      - traefik
+    labels:
+      # Enable Traefik for this service
+      - "traefik.enable=true"
+      
+      # Router configuration
+      - "traefik.http.routers.mcp-server.rule=Host(`mcp.your-domain.com`) && PathPrefix(`/sse`)"
+      - "traefik.http.routers.mcp-server.entrypoints=websecure"
+      - "traefik.http.routers.mcp-server.tls=true"
+      - "traefik.http.routers.mcp-server.tls.certresolver=letsencrypt"
+      
+      # Service configuration
+      - "traefik.http.services.mcp-server.loadbalancer.server.port=8000"
+      
+      # SSE-specific middleware
+      - "traefik.http.routers.mcp-server.middlewares=mcp-sse-headers,mcp-security,mcp-ratelimit"
+      
+      # SSE Headers Middleware - CRITICAL for SSE functionality
+      - "traefik.http.middlewares.mcp-sse-headers.headers.customrequestheaders.Connection="
+      - "traefik.http.middlewares.mcp-sse-headers.headers.customrequestheaders.Cache-Control=no-cache"
+      
+      # Security Headers Middleware
+      - "traefik.http.middlewares.mcp-security.headers.frameDeny=true"
+      - "traefik.http.middlewares.mcp-security.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.mcp-security.headers.browserXssFilter=true"
+      - "traefik.http.middlewares.mcp-security.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.mcp-security.headers.stsIncludeSubdomains=true"
+      
+      # CORS Headers (optional for browser clients)
+      - "traefik.http.middlewares.mcp-security.headers.accesscontrolalloworiginlist=*"
+      - "traefik.http.middlewares.mcp-security.headers.accesscontrolallowheaders=Origin,X-Requested-With,Content-Type,Accept,Authorization"
+      - "traefik.http.middlewares.mcp-security.headers.accesscontrolallowmethods=GET,POST,OPTIONS"
+      
+      # Rate Limiting Middleware
+      - "traefik.http.middlewares.mcp-ratelimit.ratelimit.average=10"
+      - "traefik.http.middlewares.mcp-ratelimit.ratelimit.burst=20"
+      - "traefik.http.middlewares.mcp-ratelimit.ratelimit.period=1m"
+      
+      # IP Whitelist (optional)
+      # - "traefik.http.middlewares.mcp-ipwhitelist.ipwhitelist.sourcerange=192.168.1.0/24,10.0.0.0/8"
+      # - "traefik.http.routers.mcp-server.middlewares=mcp-sse-headers,mcp-security,mcp-ratelimit,mcp-ipwhitelist"
+
+  traefik:
+    image: traefik:v3.0
+    container_name: traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"  # Dashboard (secure in production)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./dynamic:/etc/traefik/dynamic:ro
+      - ./letsencrypt:/letsencrypt
+      - ./logs:/var/log/traefik
+    networks:
+      - traefik
+    environment:
+      - CF_API_EMAIL=your-email@example.com     # For Cloudflare DNS challenge
+      - CF_DNS_API_TOKEN=your-cloudflare-token  # For Cloudflare DNS challenge
+
+networks:
+  traefik:
+    external: true
+
+---
+# Dynamic Configuration Example 2: File-based configuration
+# Save as /etc/traefik/dynamic/mcp-server.yml
+
+http:
+  routers:
+    mcp-server:
+      rule: "Host(`mcp.your-domain.com`) && PathPrefix(`/sse`)"
+      entryPoints:
+        - websecure
+      middlewares:
+        - mcp-sse-headers
+        - mcp-security
+        - mcp-ratelimit
+      service: mcp-server
+      tls:
+        certResolver: letsencrypt
+    
+    mcp-server-insecure:
+      rule: "Host(`mcp.your-domain.com`) && PathPrefix(`/sse`)"
+      entryPoints:
+        - web
+      middlewares:
+        - redirect-to-https
+      service: mcp-server
+
+  middlewares:
+    # CRITICAL: SSE Headers Middleware
+    mcp-sse-headers:
+      headers:
+        customRequestHeaders:
+          Connection: ""
+          Cache-Control: "no-cache"
+    
+    # Security Headers
+    mcp-security:
+      headers:
+        frameDeny: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        # CORS (optional)
+        accessControlAllowOriginList:
+          - "*"
+        accessControlAllowHeaders:
+          - "Origin"
+          - "X-Requested-With" 
+          - "Content-Type"
+          - "Accept"
+          - "Authorization"
+        accessControlAllowMethods:
+          - "GET"
+          - "POST"
+          - "OPTIONS"
+    
+    # Rate Limiting
+    mcp-ratelimit:
+      rateLimit:
+        average: 10
+        burst: 20
+        period: "1m"
+    
+    # IP Whitelist (optional)
+    mcp-ipwhitelist:
+      ipWhiteList:
+        sourceRange:
+          - "192.168.1.0/24"
+          - "10.0.0.0/8"
+    
+    # HTTPS Redirect
+    redirect-to-https:
+      redirectScheme:
+        scheme: https
+        permanent: true
+
+  services:
+    mcp-server:
+      loadBalancer:
+        servers:
+          - url: "http://mcp-server:8000"
+        healthCheck:
+          path: /health
+          interval: 30s
+          timeout: 5s
+
+---
+# Production Docker Compose with Traefik
+# Complete production setup
+
+version: '3.8'
+
+services:
+  traefik:
+    image: traefik:v3.0
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - "--configFile=/etc/traefik/traefik.yml"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik:/etc/traefik:ro
+      - ./letsencrypt:/letsencrypt
+      - traefik-logs:/var/log/traefik
+    networks:
+      - traefik
+    environment:
+      - CF_API_EMAIL=${CF_API_EMAIL}
+      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
+    labels:
+      # Dashboard
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.your-domain.com`)"
+      - "traefik.http.routers.traefik.entrypoints=websecure"
+      - "traefik.http.routers.traefik.tls=true"
+      - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.routers.traefik.middlewares=dashboard-auth"
+      - "traefik.http.middlewares.dashboard-auth.basicauth.users=admin:$$apr1$$YOUR_HASHED_PASSWORD_HERE" # Generate with: htpasswd -nb admin your-secure-password
+
+  postgres:
+    image: kwildb/postgres:latest
+    restart: unless-stopped
+    environment:
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - internal
+
+  mcp-server:
+    image: trufnetwork/postgres-mcp:latest
+    restart: unless-stopped
+    command: ["--transport=sse", "--sse-host=0.0.0.0", "--access-mode=restricted"]
+    environment:
+      - DATABASE_URI=postgresql://kwild@postgres:5432/kwild
+    networks:
+      - traefik
+      - internal
+    depends_on:
+      - postgres
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mcp.rule=Host(`mcp.your-domain.com`) && PathPrefix(`/sse`)"
+      - "traefik.http.routers.mcp.entrypoints=websecure"
+      - "traefik.http.routers.mcp.tls=true"
+      - "traefik.http.routers.mcp.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.mcp.middlewares=mcp-sse,mcp-security,mcp-ratelimit"
+      - "traefik.http.services.mcp.loadbalancer.server.port=8000"
+      
+      # SSE Configuration
+      - "traefik.http.middlewares.mcp-sse.headers.customrequestheaders.Connection="
+      - "traefik.http.middlewares.mcp-security.headers.frameDeny=true"
+      - "traefik.http.middlewares.mcp-security.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.mcp-ratelimit.ratelimit.average=10"
+
+networks:
+  traefik:
+    external: true
+  internal:
+    internal: true
+
+volumes:
+  postgres-data:
+  traefik-logs:
