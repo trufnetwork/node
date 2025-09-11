@@ -1,9 +1,12 @@
+//go:build kwiltest
+
 package tests
 
 import (
 	"context"
 	"testing"
 
+	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
@@ -11,7 +14,6 @@ import (
 
 	"github.com/trufnetwork/kwil-db/core/types"
 	erc20shim "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
-	deverc20 "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20/dev"
 )
 
 // TestERC20BridgeEndToEnd is a minimal E2E test using only actions + shims.
@@ -29,17 +31,29 @@ func TestERC20BridgeEndToEnd(t *testing.T) {
 	seedAndRun(t, "erc20_bridge_end_to_end", "simple_mock.sql", func(ctx context.Context, platform *kwilTesting.Platform) error {
 		app := &common.App{DB: platform.DB, Engine: platform.Engine}
 
-		// Singleton reset and initialize is handled by seedAndRun
-		// Use the sepolia_bridge alias created by simple_mock.sql
+		// Ensure the seeded alias instance exists, active and synced in DB and singleton
+		require.NoError(t, erc20shim.ForTestingActivateAndInitialize(ctx, app, TestChain, TestEscrowA, TestERC20, 18, 1))
 
-		// Set small distribution period for quick epoch progression using dev helper
-		require.NoError(t, deverc20.SetDistributionPeriod(ctx, app, TestChain, TestEscrowA, 1))
-
-		err := erc20shim.ForTestingInitializeExtension(ctx, app)
-		require.NoError(t, err)
+		// Sanity: ensure the instance reports synced and enabled via info()
+		engineCtx := engCtx(ctx, platform, "0x0000000000000000000000000000000000000000", 1, false)
+		var syncedResult, enabledResult bool
+		resInfo, errInfo := platform.Engine.Call(engineCtx, platform.DB, "sepolia_bridge", "info", []any{}, func(row *common.Row) error {
+			if len(row.Values) < 9 {
+				return nil
+			}
+			syncedResult = row.Values[6].(bool)
+			enabledResult = row.Values[8].(bool)
+			return nil
+		})
+		require.NoError(t, errInfo)
+		if resInfo != nil && resInfo.Error != nil {
+			return resInfo.Error
+		}
+		require.True(t, syncedResult, "instance should be synced before bridge")
+		require.True(t, enabledResult, "instance should be enabled before bridge")
 
 		// Step 1: Inject deposit to give user a balance
-		err = testerc20.InjectERC20Transfer(ctx, app, TestChain, TestEscrowA, TestERC20, TestUserA, TestEscrowA, TestAmount1, 10, nil)
+		err := testerc20.InjectERC20Transfer(ctx, app, TestChain, TestEscrowA, TestERC20, TestUserA, TestEscrowA, TestAmount1, 10, nil)
 		require.NoError(t, err)
 
 		// Verify user has the balance
@@ -48,28 +62,11 @@ func TestERC20BridgeEndToEnd(t *testing.T) {
 		require.Equal(t, TestAmount1, balance, "user should have deposit amount")
 
 		// Step 2: Call bridge action as user to lock+issue into epoch
-		engineCtx := engCtx(ctx, platform, TestUserA, 2, false)
+		engineCtx = engCtx(ctx, platform, TestUserA, 2, false)
 
 		amtDec, err := types.ParseDecimalExplicit(TestAmount1, 78, 0)
 		require.NoError(t, err)
-		_, err = platform.Engine.Call(engineCtx, platform.DB, "sepolia_bridge", "bridge", []any{amtDec}, func(row *common.Row) error {
-			return nil
-		})
-		require.NoError(t, err)
-
-		// Step 3: Finalize current epoch and create next
-		var bh [32]byte
-		require.NoError(t, erc20shim.ForTestingFinalizeCurrentEpoch(ctx, app, TestChain, TestEscrowA, 11, bh))
-
-		// Step 4: Confirm finalized epochs
-		require.NoError(t, erc20shim.ForTestingConfirmAllFinalizedEpochs(ctx, app, TestChain, TestEscrowA))
-
-		// Step 5: Query wallet rewards to verify bridge flow worked
-		engineCtx = engCtx(ctx, platform, "0x0000000000000000000000000000000000000000", 3, false)
-
-		rewardRows := 0
-		r, err := platform.Engine.Call(engineCtx, platform.DB, "sepolia_bridge", "list_wallet_rewards", []any{TestUserA, false}, func(row *common.Row) error {
-			rewardRows++
+		r, err := platform.Engine.Call(engineCtx, platform.DB, "sepolia_bridge", "bridge", []any{amtDec}, func(row *common.Row) error {
 			return nil
 		})
 		require.NoError(t, err)
@@ -77,7 +74,55 @@ func TestERC20BridgeEndToEnd(t *testing.T) {
 			return r.Error
 		}
 
-		// Assert that at least one reward row was returned
+		// Verify a pending reward exists after bridge for this instance and user
+		preQ := `
+		{kwil_erc20_meta}SELECT count(*) FROM epoch_rewards r
+		JOIN epochs e ON e.id = r.epoch_id
+		WHERE e.instance_id = $id AND r.recipient = $user`
+		var preRows int
+		err = platform.Engine.ExecuteWithoutEngineCtx(ctx, platform.DB, preQ, map[string]any{
+			"id":   erc20shim.ForTestingGetInstanceID(TestChain, TestEscrowA),
+			"user": ethcommon.HexToAddress(TestUserA).Bytes(),
+		}, func(row *common.Row) error {
+			if len(row.Values) != 1 {
+				return nil
+			}
+			preRows = int(row.Values[0].(int64))
+			return nil
+		})
+		require.NoError(t, err)
+		require.Greater(t, preRows, 0, "expected pending epoch reward before finalize for user in this instance")
+
+		// Step 3-4: Deterministically finalize current epoch and confirm
+		var bh [32]byte
+		require.NoError(t, erc20shim.ForTestingFinalizeAndConfirmCurrentEpoch(ctx, app, TestChain, TestEscrowA, 11, bh))
+
+		// Diagnostics: fetch instance id via alias
+		engineCtx = engCtx(ctx, platform, "0x0000000000000000000000000000000000000000", 3, false)
+		var instanceID *types.UUID
+		resID, errID := platform.Engine.Call(engineCtx, platform.DB, "sepolia_bridge", "id", []any{}, func(row *common.Row) error {
+			if len(row.Values) != 1 {
+				return nil
+			}
+			instanceID = row.Values[0].(*types.UUID)
+			return nil
+		})
+		require.NoError(t, errID)
+		if resID != nil && resID.Error != nil {
+			return resID.Error
+		}
+		require.NotNil(t, instanceID, "instance id should not be nil")
+
+		// Step 5: Query wallet rewards (confirmed only) to verify bridge flow worked deterministically
+		rewardRows := 0
+		r, err = platform.Engine.Call(engineCtx, platform.DB, "sepolia_bridge", "list_wallet_rewards", []any{TestUserA, false}, func(row *common.Row) error {
+			rewardRows++
+			return nil
+		})
+		require.NoError(t, err)
+		if r != nil && r.Error != nil {
+			return r.Error
+		}
 		require.Greater(t, rewardRows, 0, "user should have at least one wallet reward after bridge flow")
 
 		return nil

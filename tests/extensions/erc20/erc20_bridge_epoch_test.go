@@ -1,3 +1,5 @@
+//go:build kwiltest
+
 package tests
 
 import (
@@ -29,15 +31,11 @@ func TestERC20BridgeEpochFlow(t *testing.T) {
 		user := "0xabc0000000000000000000000000000000000001"
 		value := "500000000000000000" // 0.5
 
-		// Ensure instance synced (register topic and create DB instance/epoch if missing)
-		_, err := erc20shim.ForTestingForceSyncInstance(ctx, app, chain, escrow, erc20, 18)
-		require.NoError(t, err)
-
-		// Make distribution period small for test determinism
-		require.NoError(t, erc20shim.ForTestingSetDistributionPeriod(ctx, app, chain, escrow, 1))
+		// Ensure active+synced in-memory using the new helper
+		require.NoError(t, erc20shim.ForTestingActivateAndInitialize(ctx, app, chain, escrow, erc20, 18, 1))
 
 		// Create an alias for this instance
-		err = app.Engine.ExecuteWithoutEngineCtx(ctx, app.DB, fmt.Sprintf(`
+		err := app.Engine.ExecuteWithoutEngineCtx(ctx, app.DB, fmt.Sprintf(`
 			USE erc20 {
 				chain: '%s',
 				escrow: '%s'
@@ -65,12 +63,9 @@ func TestERC20BridgeEpochFlow(t *testing.T) {
 		require.NoError(t, err)
 		require.Greater(t, preRows, 0, "expected pending epoch reward before finalize")
 
-		// Finalize current epoch and create next
+		// Finalize and confirm via helper
 		var bh [32]byte
-		require.NoError(t, erc20shim.ForTestingFinalizeCurrentEpoch(ctx, app, chain, escrow, 11, bh))
-
-		// Confirm finalized epochs
-		require.NoError(t, erc20shim.ForTestingConfirmAllFinalizedEpochs(ctx, app, chain, escrow))
+		require.NoError(t, erc20shim.ForTestingFinalizeAndConfirmCurrentEpoch(ctx, app, chain, escrow, 11, bh))
 
 		// Query confirmed rewards directly
 		q := `

@@ -1,3 +1,5 @@
+//go:build kwiltest
+
 package tests
 
 import (
@@ -28,6 +30,9 @@ func TestERC20BridgeInjectedTransferAffectsBalance(t *testing.T) {
 		// Ensure instance synced and create alias
 		_, err := erc20shim.ForTestingForceSyncInstance(ctx, app, chain, escrow, erc20, 18)
 		require.NoError(t, err)
+
+		// Load instances into singleton to avoid duplicate prepare on USE
+		require.NoError(t, erc20shim.ForTestingInitializeExtension(ctx, app))
 
 		// Create an alias for this instance
 		err = app.Engine.ExecuteWithoutEngineCtx(ctx, app.DB, fmt.Sprintf(`

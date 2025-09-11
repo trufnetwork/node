@@ -1,3 +1,5 @@
+//go:build kwiltest
+
 package tests
 
 import (
@@ -31,16 +33,10 @@ func TestERC20BridgeMultiInstanceIsolation(t *testing.T) {
 		escrowA := "0xffaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		escrowB := "0xffbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
-		// Initialize first instance (escrowA)
-		_, err := erc20shim.ForTestingForceSyncInstance(ctx, app, TestChain, escrowA, TestERC20, 18)
+		// Initialize both instances active+synced
+		err := erc20shim.ForTestingActivateAndInitialize(ctx, app, TestChain, escrowA, TestERC20, 18, 60)
 		require.NoError(t, err)
-
-		// Initialize second instance (escrowB) - same erc20 but different escrow
-		_, err = erc20shim.ForTestingForceSyncInstance(ctx, app, TestChain, escrowB, TestERC20, 18)
-		require.NoError(t, err)
-
-		// Re-initialize extension to load the new instances into singleton
-		err = erc20shim.ForTestingInitializeExtension(ctx, app)
+		err = erc20shim.ForTestingActivateAndInitialize(ctx, app, TestChain, escrowB, TestERC20, 18, 60)
 		require.NoError(t, err)
 
 		// Create aliasA for escrowA

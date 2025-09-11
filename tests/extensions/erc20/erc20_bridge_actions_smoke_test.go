@@ -1,3 +1,5 @@
+//go:build kwiltest
+
 package tests
 
 import (
@@ -27,11 +29,8 @@ func TestERC20BridgeActionsSmoke(t *testing.T) {
 		app := &common.App{DB: platform.DB, Engine: platform.Engine}
 
 		// Singleton reset and initialize is handled by seedAndRun
-		// The seeded instance may have been deactivated, so we need to reactivate it
-		_, err := erc20shim.ForTestingForceSyncInstance(ctx, app, TestChain, TestEscrowA, TestERC20, 18)
-		require.NoError(t, err)
-
-		err = erc20shim.ForTestingInitializeExtension(ctx, app)
+		// Ensure active+synced in-memory
+		err := erc20shim.ForTestingActivateAndInitialize(ctx, app, TestChain, TestEscrowA, TestERC20, 18, 60)
 		require.NoError(t, err)
 
 		// Test erc20.info() action

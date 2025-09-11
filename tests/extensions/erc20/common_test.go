@@ -1,3 +1,5 @@
+//go:build kwiltest
+
 package tests
 
 import (
@@ -14,6 +16,7 @@ import (
 	testerc20 "github.com/trufnetwork/node/tests/streams/utils/erc20"
 
 	erc20shim "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
+	evmsync "github.com/trufnetwork/kwil-db/node/exts/evm-sync"
 )
 
 // Common deterministic values used across ERC20 bridge tests
@@ -40,21 +43,23 @@ func seedAndRun(t TestingT, name string, extraSeed string, fn kwilTesting.TestFu
 
 	// Wrap the test function to add singleton reset and cleanup
 	wrappedFn := func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// For tests that DO NOT use simple_mock.sql, allow deactivation to ensure clean slate
-		if extraSeed != "simple_mock.sql" {
-			if err := deactivateSeededInstance(ctx, platform, extraSeed); err != nil {
-				return fmt.Errorf("failed to deactivate seeded instance: %w", err)
+		// STEP 1: Reset singleton and prepare for seeding
+		if err := ensureSingletonReset(ctx, platform); err != nil {
+			return err
+		}
+
+		// STEP 2: If using simple_mock.sql, ensure the seeded instance is set up
+		if extraSeed == "simple_mock.sql" {
+			app := &common.App{DB: platform.DB, Engine: platform.Engine}
+			if _, err := erc20shim.ForTestingForceSyncInstance(ctx, app, TestChain, TestEscrowA, TestERC20, 18); err == nil {
+				_ = erc20shim.ForTestingInitializeExtension(ctx, app)
 			}
 		}
 
-		// Enable idempotent prepare for active instances during test
-		erc20shim.ForTestingAllowPrepareOnActive(true)
-		t.Cleanup(func() { erc20shim.ForTestingAllowPrepareOnActive(false) })
-
-		// Add cleanup for seeded instances
+		// STEP 3: Register cleanup (runs after transaction rollback)
 		addSeedCleanup(t, platform, extraSeed)
 
-		// Run the actual test inside a transaction to ensure rollback isolation
+		// STEP 4: Run the actual test inside a transaction for rollback isolation
 		tx, err := platform.DB.BeginTx(ctx)
 		if err != nil {
 			return fmt.Errorf("begin tx: %w", err)
@@ -70,6 +75,9 @@ func seedAndRun(t TestingT, name string, extraSeed string, fn kwilTesting.TestFu
 
 		return fn(ctx, txPlatform)
 	}
+
+	// Ensure the ERC20 test singleton is clean BEFORE seeds run so prepare() uses a fresh cache
+	erc20shim.ForTestingResetSingleton()
 
 	testutils.RunSchemaTest(t.(*testing.T), kwilTesting.SchemaTest{
 		Name:          name,
@@ -116,50 +124,47 @@ func ensureSingletonReset(ctx context.Context, platform *kwilTesting.Platform) e
 }
 
 // addSeedCleanup adds cleanup to deactivate instances used in seeds
+//
+// This function is called after the test transaction has been rolled back, so it MUST
+// use mechanisms that do not rely on a still-open DB connection to tear down listeners/pollers.
+// We explicitly unregister pollers/listeners using deterministic IDs, then call the
+// transactional cleanup helper as a best-effort DB cleanup.
 func addSeedCleanup(t TestingT, platform *kwilTesting.Platform, extraSeed string) {
 	// If using simple_mock.sql, add cleanup to deactivate the seeded instance
 	if extraSeed == "simple_mock.sql" {
 		t.Cleanup(func() {
+			// Unregister poller and listener by unique names (does not require DB)
+			id := erc20shim.ForTestingGetInstanceID(TestChain, TestEscrowA)
+			// state poller unique name format: "erc20_state_poll_" + id
+			pollerName := "erc20_state_poll_" + id.String()
+			_ = evmsync.StatePoller.UnregisterPoll(pollerName)
+			// transfer listener unique name available via shim
+			transferName := erc20shim.ForTestingTransferListenerTopic(*id)
+			_ = evmsync.EventSyncer.UnregisterListener(transferName)
+
+			// Best-effort DB cleanup (may log a warning if conn closed)
 			testerc20.DeactivateCurrentInstanceTx(t.(*testing.T), platform, TestEscrowA)
 		})
 	}
 }
 
 // deactivateSeededInstance deactivates the instance created by simple_mock.sql if it exists
+//
+// This function is called BEFORE the test transaction starts to ensure a clean slate.
+// It prevents "already active" errors when running multiple ERC20 tests consecutively.
+//
+// For simple_mock.sql seeds, it uses the outer (non-transactional) platform DB to ensure
+// deactivation persists and resets the singleton to reflect the DB state.
+//
+// This is different from cleanup which happens AFTER the transaction is rolled back.
 func deactivateSeededInstance(ctx context.Context, platform *kwilTesting.Platform, extraSeed string) error {
 	if extraSeed == "simple_mock.sql" {
-		// Try to deactivate the seeded instance to allow reuse
-		app := &common.App{DB: platform.DB, Engine: platform.Engine}
-		id, err := erc20shim.ForTestingForceSyncInstance(ctx, app, TestChain, TestEscrowA, TestERC20, 18)
-		if err != nil {
-			// Instance might not exist or might already be deactivated, ignore error
-			return nil
-		}
-
-		// Call the meta extension's disable method
-		txCtx := &common.TxContext{
-			Ctx:          ctx,
-			BlockContext: &common.BlockContext{Height: 1},
-			Signer:       platform.Deployer,
-			Caller:       "0x0000000000000000000000000000000000000000",
-			TxID:         platform.Txid(),
-		}
-		engCtx := &common.EngineContext{TxContext: txCtx, OverrideAuthz: true}
-
-		_, err = platform.Engine.Call(engCtx, platform.DB, "kwil_erc20_meta", "disable", []any{id}, func(row *common.Row) error {
-			return nil
-		})
-		if err != nil {
-			// Instance might already be deactivated, ignore error
-			return nil
-		}
-
-		// Reset and re-initialize the singleton to reflect the deactivated state
-		erc20shim.ForTestingResetSingleton()
-		err = erc20shim.ForTestingInitializeExtension(ctx, app)
-		if err != nil {
-			return fmt.Errorf("failed to re-initialize singleton: %w", err)
-		}
+		// Proactively unregister any previously registered poller/listener (no DB required)
+		id := erc20shim.ForTestingGetInstanceID(TestChain, TestEscrowA)
+		pollerName := "erc20_state_poll_" + id.String()
+		_ = evmsync.StatePoller.UnregisterPoll(pollerName)
+		transferName := erc20shim.ForTestingTransferListenerTopic(*id)
+		_ = evmsync.EventSyncer.UnregisterListener(transferName)
 	}
 	return nil
 }
