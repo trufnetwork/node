@@ -15,12 +15,13 @@ import (
 	erc20bridge "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
 	evmsync "github.com/trufnetwork/kwil-db/node/exts/evm-sync"
 	orderedsync "github.com/trufnetwork/kwil-db/node/exts/ordered-sync"
+	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 )
 
 // InjectERC20Transfer forces an instance synced and injects a synthetic Transfer log that credits balance.
-func InjectERC20Transfer(ctx context.Context, app *common.App, chain, escrow, erc20Addr, fromHex, toHex string, valueStr string, point int64, prev *int64) error {
+func InjectERC20Transfer(ctx context.Context, platform *kwilTesting.Platform, chain, escrow, erc20Addr, fromHex, toHex string, valueStr string, point int64, prev *int64) error {
 	// 1) Ensure instance exists and is synced
-	id, err := erc20bridge.ForTestingForceSyncInstance(ctx, app, chain, escrow, erc20Addr, 18)
+	id, err := erc20bridge.ForTestingForceSyncInstance(ctx, platform, chain, escrow, erc20Addr, 18)
 	if err != nil {
 		return fmt.Errorf("force sync instance: %w", err)
 	}
@@ -63,12 +64,12 @@ func InjectERC20Transfer(ctx context.Context, app *common.App, chain, escrow, er
 		return fmt.Errorf("serialize logs: %w", err)
 	}
 
-	if err := orderedsync.ForTestingStoreLogs(ctx, app, topic, logsData, point, prev); err != nil {
+	if err := orderedsync.ForTestingStoreLogs(ctx, platform, topic, logsData, point, prev); err != nil {
 		return fmt.Errorf("store logs: %w", err)
 	}
 
 	// 5) Resolve via end-block path
-	if err := orderedsync.ForTestingResolve(ctx, app, &common.BlockContext{Height: point, Timestamp: point}); err != nil {
+	if err := orderedsync.ForTestingResolve(ctx, platform, &common.BlockContext{Height: point, Timestamp: point}); err != nil {
 		return fmt.Errorf("resolve: %w", err)
 	}
 

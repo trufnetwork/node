@@ -17,9 +17,7 @@ import (
 
 // TestERC20BridgeInjectedTransferAffectsBalance uses the production code path via ordered-sync/evm-sync shims.
 func TestERC20BridgeInjectedTransferAffectsBalance(t *testing.T) {
-	seedAndRun(t, "erc20_bridge_injected_transfer_affects_balance", "simple_mock.sql", func(ctx context.Context, platform *kwilTesting.Platform) error {
-		app := &common.App{DB: platform.DB, Engine: platform.Engine}
-
+	seedAndRun(t, "erc20_bridge_injected_transfer_affects_balance", func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Use a different escrow for this test to avoid conflicts with seeded instance
 		chain := "sepolia"
 		escrow := "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
@@ -27,24 +25,12 @@ func TestERC20BridgeInjectedTransferAffectsBalance(t *testing.T) {
 		user := "0xabc0000000000000000000000000000000000001"
 		value := "1000000000000000000"
 
-		// Ensure instance synced and create alias
-		_, err := erc20shim.ForTestingForceSyncInstance(ctx, app, chain, escrow, erc20, 18)
-		require.NoError(t, err)
-
-		// Load instances into singleton to avoid duplicate prepare on USE
-		require.NoError(t, erc20shim.ForTestingInitializeExtension(ctx, app))
-
-		// Create an alias for this instance
-		err = app.Engine.ExecuteWithoutEngineCtx(ctx, app.DB, fmt.Sprintf(`
-			USE erc20 {
-				chain: '%s',
-				escrow: '%s'
-			} AS injection_test_bridge
-		`, chain, escrow), nil, nil)
+		// Enable instance with alias for injection test
+		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, chain, escrow, erc20, 18, 60, TestChain)
 		require.NoError(t, err)
 
 		// Inject a transfer: from user to escrow (lock/credit path)
-		err = testerc20.InjectERC20Transfer(ctx, app, chain, escrow, erc20, user, escrow, value, 1, nil)
+		err = testerc20.InjectERC20Transfer(ctx, platform, chain, escrow, erc20, user, escrow, value, 1, nil)
 		require.NoError(t, err)
 
 		// Query balance via the test alias
@@ -58,7 +44,7 @@ func TestERC20BridgeInjectedTransferAffectsBalance(t *testing.T) {
 		engCtx := &common.EngineContext{TxContext: txCtx}
 
 		var got string
-		r, err := platform.Engine.Call(engCtx, platform.DB, "injection_test_bridge", "balance", []any{user}, func(row *common.Row) error {
+		r, err := platform.Engine.Call(engCtx, platform.DB, TestChain, "balance", []any{user}, func(row *common.Row) error {
 			if len(row.Values) != 1 {
 				return fmt.Errorf("expected 1 column, got %d", len(row.Values))
 			}
@@ -73,7 +59,7 @@ func TestERC20BridgeInjectedTransferAffectsBalance(t *testing.T) {
 		require.Equal(t, value, got, "expected balance to reflect injected transfer amount")
 
 		// Cleanup: Deactivate the test instance
-		testerc20.DeactivateCurrentInstanceTx(t, platform, escrow)
+		erc20shim.ForTestingDisableInstance(ctx, platform, chain, escrow, TestChain)
 
 		return nil
 	})

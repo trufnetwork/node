@@ -26,20 +26,17 @@ import (
 // 3) Attempt lock_admin without OverrideAuthz: expect execution error.
 // 4) Retry with OverrideAuthz: expect success and balance changes to reflect lock.
 func TestERC20BridgeAdminAuthz(t *testing.T) {
-	seedAndRun(t, "erc20_bridge_admin_authz", "simple_mock.sql", func(ctx context.Context, platform *kwilTesting.Platform) error {
-		app := &common.App{DB: platform.DB, Engine: platform.Engine}
-
-		// Singleton reset and initialize is handled by seedAndRun
-		// Use the sepolia_bridge alias created by simple_mock.sql
-		err := erc20shim.ForTestingInitializeExtension(ctx, app)
+	seedAndRun(t, "erc20_bridge_admin_authz", func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Enable instance with alias for admin authz test
+		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestChain)
 		require.NoError(t, err)
 
 		// Step 1: Inject deposit so user has balance
-		err = testerc20.InjectERC20Transfer(ctx, app, TestChain, TestEscrowA, TestERC20, TestUserA, TestEscrowA, TestAmount2, 10, nil)
+		err = testerc20.InjectERC20Transfer(ctx, platform, TestChain, TestEscrowA, TestERC20, TestUserA, TestEscrowA, TestAmount2, 10, nil)
 		require.NoError(t, err)
 
 		// Verify user has the balance
-		balance, err := testerc20.GetUserBalance(ctx, platform, TestUserA)
+		balance, err := testerc20.GetUserBalance(ctx, platform, TestChain, TestUserA)
 		require.NoError(t, err)
 		require.Equal(t, TestAmount2, balance, "user should have deposit amount")
 
@@ -50,21 +47,21 @@ func TestERC20BridgeAdminAuthz(t *testing.T) {
 		amtDec, err := types.ParseDecimalExplicit(TestAmount1, 78, 0)
 		require.NoError(t, err)
 
-		_, err = platform.Engine.Call(engineCtxFail, platform.DB, "sepolia_bridge", "lock_admin", []any{TestUserA, amtDec}, func(row *common.Row) error {
+		_, err = platform.Engine.Call(engineCtxFail, platform.DB, TestChain, "lock_admin", []any{TestUserA, amtDec}, func(row *common.Row) error {
 			return nil
 		})
 		// Should fail with authz error (SYSTEM method called without OverrideAuthz)
 		require.Error(t, err, "action lock_admin is system-only")
 
 		// Balance should remain unchanged
-		balance, err = testerc20.GetUserBalance(ctx, platform, TestUserA)
+		balance, err = testerc20.GetUserBalance(ctx, platform, TestChain, TestUserA)
 		require.NoError(t, err)
 		require.Equal(t, TestAmount2, balance, "balance should remain unchanged after failed lock_admin")
 
 		// Step 3: Retry lock_admin WITH OverrideAuthz - should succeed
 		engineCtxSuccess := engCtx(ctx, platform, "0x0000000000000000000000000000000000000000", 3, true)
 
-		r, err := platform.Engine.Call(engineCtxSuccess, platform.DB, "sepolia_bridge", "lock_admin", []any{TestUserA, amtDec}, func(row *common.Row) error {
+		r, err := platform.Engine.Call(engineCtxSuccess, platform.DB, TestChain, "lock_admin", []any{TestUserA, amtDec}, func(row *common.Row) error {
 			return nil
 		})
 		require.NoError(t, err)
@@ -73,7 +70,7 @@ func TestERC20BridgeAdminAuthz(t *testing.T) {
 		}
 
 		// Step 4: Verify balance was reduced after successful lock_admin
-		balance, err = testerc20.GetUserBalance(ctx, platform, TestUserA)
+		balance, err = testerc20.GetUserBalance(ctx, platform, TestChain, TestUserA)
 		require.NoError(t, err)
 		require.Equal(t, TestAmount1, balance, "balance should be reduced after successful lock_admin")
 

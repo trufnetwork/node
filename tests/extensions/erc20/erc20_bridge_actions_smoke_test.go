@@ -25,12 +25,11 @@ import (
 // 4) Call erc20.scale_up("1") and expect 1000000000000000000 (1 * 10^18)
 // 5) Call erc20.scale_down(1e18) and expect "1"
 func TestERC20BridgeActionsSmoke(t *testing.T) {
-	seedAndRun(t, "erc20_bridge_actions_smoke", "simple_mock.sql", func(ctx context.Context, platform *kwilTesting.Platform) error {
-		app := &common.App{DB: platform.DB, Engine: platform.Engine}
+	seedAndRun(t, "erc20_bridge_actions_smoke", func(ctx context.Context, platform *kwilTesting.Platform) error {
 
 		// Singleton reset and initialize is handled by seedAndRun
 		// Ensure active+synced in-memory
-		err := erc20shim.ForTestingActivateAndInitialize(ctx, app, TestChain, TestEscrowA, TestERC20, 18, 60)
+		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestChain)
 		require.NoError(t, err)
 
 		// Test erc20.info() action
@@ -38,10 +37,8 @@ func TestERC20BridgeActionsSmoke(t *testing.T) {
 
 		var chainResult, escrowResult, periodResult string
 		var syncedResult bool
-		r, err := platform.Engine.Call(engineCtx, platform.DB, "sepolia_bridge", "info", []any{}, func(row *common.Row) error {
-			if len(row.Values) < 4 {
-				return nil // Skip if not enough fields
-			}
+		r, err := platform.Engine.Call(engineCtx, platform.DB, TestChain, "info", []any{}, func(row *common.Row) error {
+
 			chainResult = row.Values[0].(string)
 			escrowResult = row.Values[1].(string)
 			periodResult = row.Values[2].(string)
@@ -61,7 +58,7 @@ func TestERC20BridgeActionsSmoke(t *testing.T) {
 
 		// Test erc20.decimals() action
 		var decimalsResult int64
-		r, err = platform.Engine.Call(engineCtx, platform.DB, "sepolia_bridge", "decimals", []any{}, func(row *common.Row) error {
+		r, err = platform.Engine.Call(engineCtx, platform.DB, TestChain, "decimals", []any{}, func(row *common.Row) error {
 			if len(row.Values) != 1 {
 				return nil
 			}
@@ -77,7 +74,7 @@ func TestERC20BridgeActionsSmoke(t *testing.T) {
 
 		// Test erc20.scale_up("1") action
 		var scaledUpResult *types.Decimal
-		r, err = platform.Engine.Call(engineCtx, platform.DB, "sepolia_bridge", "scale_up", []any{"1"}, func(row *common.Row) error {
+		r, err = platform.Engine.Call(engineCtx, platform.DB, TestChain, "scale_up", []any{"1"}, func(row *common.Row) error {
 			if len(row.Values) != 1 {
 				return nil
 			}
@@ -98,7 +95,7 @@ func TestERC20BridgeActionsSmoke(t *testing.T) {
 		amountDecimal, err := types.ParseDecimalExplicit(TestAmount1, 78, 0)
 		require.NoError(t, err)
 
-		r, err = platform.Engine.Call(engineCtx, platform.DB, "sepolia_bridge", "scale_down", []any{amountDecimal}, func(row *common.Row) error {
+		r, err = platform.Engine.Call(engineCtx, platform.DB, TestChain, "scale_down", []any{amountDecimal}, func(row *common.Row) error {
 			if len(row.Values) != 1 {
 				return nil
 			}

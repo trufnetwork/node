@@ -4,7 +4,6 @@ package tests
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -18,9 +17,7 @@ import (
 
 // TestERC20BridgeEpochFlow validates lock-and-issue, finalize and confirm using shims.
 func TestERC20BridgeEpochFlow(t *testing.T) {
-	seedAndRun(t, "erc20_bridge_epoch_flow", "simple_mock.sql", func(ctx context.Context, platform *kwilTesting.Platform) error {
-		app := &common.App{DB: platform.DB, Engine: platform.Engine}
-
+	seedAndRun(t, "erc20_bridge_epoch_flow", func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Singleton reset and initialize is handled by seedAndRun
 		// Use the sepolia_bridge alias created by simple_mock.sql, but create a separate instance for this test
 
@@ -31,29 +28,20 @@ func TestERC20BridgeEpochFlow(t *testing.T) {
 		user := "0xabc0000000000000000000000000000000000001"
 		value := "500000000000000000" // 0.5
 
-		// Ensure active+synced in-memory using the new helper
-		require.NoError(t, erc20shim.ForTestingActivateAndInitialize(ctx, app, chain, escrow, erc20, 18, 1))
-
-		// Create an alias for this instance
-		err := app.Engine.ExecuteWithoutEngineCtx(ctx, app.DB, fmt.Sprintf(`
-			USE erc20 {
-				chain: '%s',
-				escrow: '%s'
-			} AS epoch_test_bridge
-		`, chain, escrow), nil, nil)
-		require.NoError(t, err)
+		// Enable instance with alias (includes alias creation, activation via period + rehydrate), idempotently and collision-free
+		require.NoError(t, erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, chain, escrow, erc20, 18, 1, TestChain))
 
 		// Credit balance via injected transfer (simulates inbound deposit)
-		require.NoError(t, testerc20.InjectERC20Transfer(ctx, app, chain, escrow, erc20, user, escrow, value, 10, nil))
+		require.NoError(t, testerc20.InjectERC20Transfer(ctx, platform, chain, escrow, erc20, user, escrow, value, 10, nil))
 
 		// Lock and issue directly into epoch (simulate bridge request)
-		require.NoError(t, erc20shim.ForTestingLockAndIssueDirect(ctx, app, chain, escrow, user, value))
+		require.NoError(t, erc20shim.ForTestingLockAndIssueDirect(ctx, platform, chain, escrow, user, value))
 
 		// Assert pre-finalize: there should be a pending reward in epoch_rewards
 		preQ := `
 		{kwil_erc20_meta}SELECT count(*) FROM epoch_rewards`
 		var preRows int
-		err = platform.Engine.ExecuteWithoutEngineCtx(ctx, platform.DB, preQ, nil, func(row *common.Row) error {
+		err := platform.Engine.ExecuteWithoutEngineCtx(ctx, platform.DB, preQ, nil, func(row *common.Row) error {
 			if len(row.Values) != 1 {
 				return nil
 			}
@@ -65,7 +53,7 @@ func TestERC20BridgeEpochFlow(t *testing.T) {
 
 		// Finalize and confirm via helper
 		var bh [32]byte
-		require.NoError(t, erc20shim.ForTestingFinalizeAndConfirmCurrentEpoch(ctx, app, chain, escrow, 11, bh))
+		require.NoError(t, erc20shim.ForTestingFinalizeAndConfirmCurrentEpoch(ctx, platform, chain, escrow, 11, bh))
 
 		// Query confirmed rewards directly
 		q := `
@@ -82,8 +70,8 @@ func TestERC20BridgeEpochFlow(t *testing.T) {
 		require.NoError(t, err)
 		require.Greater(t, rows, 0, "expected confirmed wallet reward rows")
 
-		// Cleanup: Deactivate the test instance
-		testerc20.DeactivateCurrentInstanceTx(t, platform, escrow)
+		// Cleanup: Disable the test instance (tears down runtimes + resets singleton)
+		require.NoError(t, erc20shim.ForTestingDisableInstance(ctx, platform, chain, escrow, TestChain))
 
 		return nil
 	})

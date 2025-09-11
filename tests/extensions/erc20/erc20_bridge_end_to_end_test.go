@@ -28,16 +28,14 @@ import (
 // 5) Confirm finalized epochs (ForTestingConfirmAllFinalizedEpochs).
 // 6) Call alias.list_wallet_rewards(user,false) and assert at least one row returned.
 func TestERC20BridgeEndToEnd(t *testing.T) {
-	seedAndRun(t, "erc20_bridge_end_to_end", "simple_mock.sql", func(ctx context.Context, platform *kwilTesting.Platform) error {
-		app := &common.App{DB: platform.DB, Engine: platform.Engine}
-
-		// Ensure the seeded alias instance exists, active and synced in DB and singleton
-		require.NoError(t, erc20shim.ForTestingActivateAndInitialize(ctx, app, TestChain, TestEscrowA, TestERC20, 18, 1))
+	seedAndRun(t, "erc20_bridge_end_to_end", func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Enable instance with alias for end-to-end test
+		require.NoError(t, erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 1, TestChain))
 
 		// Sanity: ensure the instance reports synced and enabled via info()
 		engineCtx := engCtx(ctx, platform, "0x0000000000000000000000000000000000000000", 1, false)
 		var syncedResult, enabledResult bool
-		resInfo, errInfo := platform.Engine.Call(engineCtx, platform.DB, "sepolia_bridge", "info", []any{}, func(row *common.Row) error {
+		resInfo, errInfo := platform.Engine.Call(engineCtx, platform.DB, TestChain, "info", []any{}, func(row *common.Row) error {
 			if len(row.Values) < 9 {
 				return nil
 			}
@@ -53,11 +51,11 @@ func TestERC20BridgeEndToEnd(t *testing.T) {
 		require.True(t, enabledResult, "instance should be enabled before bridge")
 
 		// Step 1: Inject deposit to give user a balance
-		err := testerc20.InjectERC20Transfer(ctx, app, TestChain, TestEscrowA, TestERC20, TestUserA, TestEscrowA, TestAmount1, 10, nil)
+		err := testerc20.InjectERC20Transfer(ctx, platform, TestChain, TestEscrowA, TestERC20, TestUserA, TestEscrowA, TestAmount1, 10, nil)
 		require.NoError(t, err)
 
 		// Verify user has the balance
-		balance, err := testerc20.GetUserBalance(ctx, platform, TestUserA)
+		balance, err := testerc20.GetUserBalance(ctx, platform, TestChain, TestUserA)
 		require.NoError(t, err)
 		require.Equal(t, TestAmount1, balance, "user should have deposit amount")
 
@@ -66,7 +64,7 @@ func TestERC20BridgeEndToEnd(t *testing.T) {
 
 		amtDec, err := types.ParseDecimalExplicit(TestAmount1, 78, 0)
 		require.NoError(t, err)
-		r, err := platform.Engine.Call(engineCtx, platform.DB, "sepolia_bridge", "bridge", []any{amtDec}, func(row *common.Row) error {
+		r, err := platform.Engine.Call(engineCtx, platform.DB, TestChain, "bridge", []any{amtDec}, func(row *common.Row) error {
 			return nil
 		})
 		require.NoError(t, err)
@@ -95,12 +93,12 @@ func TestERC20BridgeEndToEnd(t *testing.T) {
 
 		// Step 3-4: Deterministically finalize current epoch and confirm
 		var bh [32]byte
-		require.NoError(t, erc20shim.ForTestingFinalizeAndConfirmCurrentEpoch(ctx, app, TestChain, TestEscrowA, 11, bh))
+		require.NoError(t, erc20shim.ForTestingFinalizeAndConfirmCurrentEpoch(ctx, platform, TestChain, TestEscrowA, 11, bh))
 
 		// Diagnostics: fetch instance id via alias
 		engineCtx = engCtx(ctx, platform, "0x0000000000000000000000000000000000000000", 3, false)
 		var instanceID *types.UUID
-		resID, errID := platform.Engine.Call(engineCtx, platform.DB, "sepolia_bridge", "id", []any{}, func(row *common.Row) error {
+		resID, errID := platform.Engine.Call(engineCtx, platform.DB, TestChain, "id", []any{}, func(row *common.Row) error {
 			if len(row.Values) != 1 {
 				return nil
 			}
@@ -115,7 +113,7 @@ func TestERC20BridgeEndToEnd(t *testing.T) {
 
 		// Step 5: Query wallet rewards (confirmed only) to verify bridge flow worked deterministically
 		rewardRows := 0
-		r, err = platform.Engine.Call(engineCtx, platform.DB, "sepolia_bridge", "list_wallet_rewards", []any{TestUserA, false}, func(row *common.Row) error {
+		r, err = platform.Engine.Call(engineCtx, platform.DB, TestChain, "list_wallet_rewards", []any{TestUserA, false}, func(row *common.Row) error {
 			rewardRows++
 			return nil
 		})
