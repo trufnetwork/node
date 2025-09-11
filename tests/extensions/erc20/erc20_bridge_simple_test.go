@@ -84,7 +84,7 @@ func testAdminLockTx(t *testing.T, txPlatform *kwilTesting.Platform) {
 
 	// Step 2: Execute admin lock operation
 	// This should reduce user's balance by the locked amount
-	err = testerc20.CallLockAdmin(context.Background(), txPlatform, testUser, testAmount)
+	err = testerc20.CallLockAdmin(context.Background(), txPlatform, TestChain, testUser, testAmount)
 	require.NoError(t, err)
 
 	// Step 3: Verify balance was correctly reduced

@@ -19,7 +19,6 @@ import (
 func TestERC20BridgeEpochFlow(t *testing.T) {
 	seedAndRun(t, "erc20_bridge_epoch_flow", func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Singleton reset and initialize is handled by seedAndRun
-		// Use the sepolia_bridge alias created by simple_mock.sql, but create a separate instance for this test
 
 		// Use a different escrow for this test to avoid conflicts with seeded instance
 		chain := "sepolia"

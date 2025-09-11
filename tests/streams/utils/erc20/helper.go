@@ -69,7 +69,7 @@ func GetUserBalance(ctx context.Context, platform *kwilTesting.Platform, extensi
 
 // CallLockAdmin executes the lock_admin system method with OverrideAuthz.
 // This simulates an admin locking user tokens.
-func CallLockAdmin(ctx context.Context, platform *kwilTesting.Platform, userAddr, amount string) error {
+func CallLockAdmin(ctx context.Context, platform *kwilTesting.Platform, extensionAlias, userAddr, amount string) error {
 	txCtx := &common.TxContext{
 		Ctx:          ctx,
 		BlockContext: &common.BlockContext{Height: 1},
@@ -90,7 +90,7 @@ func CallLockAdmin(ctx context.Context, platform *kwilTesting.Platform, userAddr
 	}
 	amtDec.SetPrecisionAndScale(78, 0)
 
-	_, err = platform.Engine.Call(engCtx, platform.DB, "sepolia_bridge", "lock_admin", []any{userAddr, amtDec}, func(row *common.Row) error {
+	_, err = platform.Engine.Call(engCtx, platform.DB, extensionAlias, "lock_admin", []any{userAddr, amtDec}, func(row *common.Row) error {
 		return nil
 	})
 	if err != nil {
