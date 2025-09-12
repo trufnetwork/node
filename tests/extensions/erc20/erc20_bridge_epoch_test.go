@@ -28,7 +28,7 @@ func TestERC20BridgeEpochFlow(t *testing.T) {
 		value := "500000000000000000" // 0.5
 
 		// Enable instance with alias (includes alias creation, activation via period + rehydrate), idempotently and collision-free
-		require.NoError(t, erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, chain, escrow, erc20, 18, 1, TestChain))
+		require.NoError(t, erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, chain, escrow, erc20, 18, 1, TestExtensionAlias))
 
 		// Credit balance via injected transfer (simulates inbound deposit)
 		require.NoError(t, testerc20.InjectERC20Transfer(ctx, platform, chain, escrow, erc20, user, escrow, value, 10, nil))
@@ -70,7 +70,7 @@ func TestERC20BridgeEpochFlow(t *testing.T) {
 		require.Greater(t, rows, 0, "expected confirmed wallet reward rows")
 
 		// Cleanup: Disable the test instance (tears down runtimes + resets singleton)
-		require.NoError(t, erc20shim.ForTestingDisableInstance(ctx, platform, chain, escrow, TestChain))
+		require.NoError(t, erc20shim.ForTestingDisableInstance(ctx, platform, chain, escrow, TestExtensionAlias))
 
 		return nil
 	})

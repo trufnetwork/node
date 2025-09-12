@@ -26,12 +26,12 @@ func TestERC20BridgeInjectedTransferAffectsBalance(t *testing.T) {
 		value := "1000000000000000000"
 
 		// Enable instance with alias for injection test
-		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, chain, escrow, erc20, 18, 60, TestChain)
+		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, chain, escrow, erc20, 18, 60, TestExtensionAlias)
 		require.NoError(t, err)
 
 		// Cleanup: Deactivate the test instance
 		t.Cleanup(func() {
-			erc20shim.ForTestingDisableInstance(ctx, platform, chain, escrow, TestChain)
+			erc20shim.ForTestingDisableInstance(ctx, platform, chain, escrow, TestExtensionAlias)
 		})
 
 		// Inject a transfer: from user to escrow (lock/credit path)
@@ -49,7 +49,7 @@ func TestERC20BridgeInjectedTransferAffectsBalance(t *testing.T) {
 		engCtx := &common.EngineContext{TxContext: txCtx}
 
 		var got string
-		r, err := platform.Engine.Call(engCtx, platform.DB, TestChain, "balance", []any{user}, func(row *common.Row) error {
+		r, err := platform.Engine.Call(engCtx, platform.DB, TestExtensionAlias, "balance", []any{user}, func(row *common.Row) error {
 			if len(row.Values) != 1 {
 				return fmt.Errorf("expected 1 column, got %d", len(row.Values))
 			}

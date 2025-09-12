@@ -77,7 +77,23 @@ func (c *ERC20BridgeConfig) WithMockListener(name string, listener listeners.Lis
 	return c
 }
 
-// BuildERC20BridgeConfig converts the test config to kwil-db config format
+// BuildERC20BridgeConfig converts the test config to kwil-db config format.
+//
+// Note:
+// Only the fields supported by kwil-db's config are propagated here:
+// - RPC
+// - BlockSyncChuckSize
+// - Signer
+//
+// The following fields are intentionally test-only and are not copied into
+// kwil-db's config.ERC20BridgeConfig because it does not expose them:
+// - Timeout
+// - AutoStart
+// - MockListeners
+// - Per-chain retry settings: MaxRetries, ReconnectionInterval
+//
+// If kwil-db adds typed support for any of the above, propagate them here and
+// plumb them through the listeners' initialization accordingly.
 func (c *ERC20BridgeConfig) BuildERC20BridgeConfig() *config.ERC20BridgeConfig {
 	erc20Config := &config.ERC20BridgeConfig{
 		RPC:                c.RPC,
@@ -146,9 +162,13 @@ func (c *ERC20BridgeConfig) Validate() error {
 	for chain, chainConfig := range c.Chains {
 		if chainConfig.BlockSyncChunkSize != "" {
 			// Validate chunk size format (should be a number)
-			if _, err := strconv.ParseUint(chainConfig.BlockSyncChunkSize, 10, 64); err != nil {
+			v, err := strconv.ParseUint(chainConfig.BlockSyncChunkSize, 10, 64)
+			if err != nil {
 				return fmt.Errorf("invalid block sync chunk size for chain %s: %q; must be a positive integer: %v",
 					chain, chainConfig.BlockSyncChunkSize, err)
+			} else if v == 0 {
+				return fmt.Errorf("invalid block sync chunk size for chain %s: %q; must be > 0",
+					chain, chainConfig.BlockSyncChunkSize)
 			}
 		}
 

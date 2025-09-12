@@ -18,7 +18,7 @@ import (
 func TestERC20BridgeSimpleBalanceTx(t *testing.T) {
 	seedAndRun(t, "erc20_bridge_simple_balance_tx", func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Enable instance with alias in one step
-		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestChain)
+		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestExtensionAlias)
 		require.NoError(t, err)
 
 		// Run the actual test logic
@@ -33,7 +33,7 @@ func testSimpleBalanceTx(t *testing.T, txPlatform *kwilTesting.Platform) {
 	const testWallet = "0x1111111111111111111111111111111111110001"
 
 	// Query balance for a wallet with no prior deposits
-	balance, err := testerc20.GetUserBalance(context.Background(), txPlatform, TestChain, testWallet)
+	balance, err := testerc20.GetUserBalance(context.Background(), txPlatform, TestExtensionAlias, testWallet)
 	require.NoError(t, err)
 
 	// Should return "0" for wallet with no prior deposits
@@ -59,7 +59,7 @@ func testSimpleBalanceTx(t *testing.T, txPlatform *kwilTesting.Platform) {
 func TestERC20BridgeAdminLockAffectsBalanceTx(t *testing.T) {
 	seedAndRun(t, "erc20_bridge_admin_lock_affects_balance_tx", func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Enable instance with alias in one step
-		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestChain)
+		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestExtensionAlias)
 		require.NoError(t, err)
 
 		// Run the actual test logic
@@ -84,12 +84,12 @@ func testAdminLockTx(t *testing.T, txPlatform *kwilTesting.Platform) {
 
 	// Step 2: Execute admin lock operation
 	// This should reduce user's balance by the locked amount
-	err = testerc20.CallLockAdmin(context.Background(), txPlatform, TestChain, testUser, testAmount)
+	err = testerc20.CallLockAdmin(context.Background(), txPlatform, TestExtensionAlias, testUser, testAmount)
 	require.NoError(t, err)
 
 	// Step 3: Verify balance was correctly reduced
 	// After locking all tokens, balance should be 0
-	finalBalance, err := testerc20.GetUserBalance(context.Background(), txPlatform, TestChain, testUser)
+	finalBalance, err := testerc20.GetUserBalance(context.Background(), txPlatform, TestExtensionAlias, testUser)
 	require.NoError(t, err)
 	require.Equal(t, "0", finalBalance,
 		"expected user balance to be zero after admin lock of entire balance")

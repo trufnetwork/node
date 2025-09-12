@@ -17,14 +17,15 @@ import (
 
 // Common deterministic values used across ERC20 bridge tests
 const (
-	TestChain   = "sepolia"
-	TestEscrowA = "0x1111111111111111111111111111111111111111"
-	TestEscrowB = "0x2222222222222222222222222222222222222222"
-	TestERC20   = "0x2222222222222222222222222222222222222222"
-	TestUserA   = "0xabc0000000000000000000000000000000000001"
-	TestUserB   = "0xabc0000000000000000000000000000000000002"
-	TestAmount1 = "1000000000000000000" // 1.0 tokens
-	TestAmount2 = "2000000000000000000" // 2.0 tokens
+	TestChain          = "sepolia"
+	TestExtensionAlias = "erc20_bridge_test"
+	TestEscrowA        = "0x1111111111111111111111111111111111111111"
+	TestEscrowB        = "0x2222222222222222222222222222222222222222"
+	TestERC20          = "0x2222222222222222222222222222222222222222"
+	TestUserA          = "0xabc0000000000000000000000000000000000001"
+	TestUserB          = "0xabc0000000000000000000000000000000000002"
+	TestAmount1        = "1000000000000000000" // 1.0 tokens
+	TestAmount2        = "2000000000000000000" // 2.0 tokens
 )
 
 // seedAndRun is a helper that handles test execution with proper isolation

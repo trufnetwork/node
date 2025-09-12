@@ -20,13 +20,13 @@ func TestERC20BridgeConsecutiveTests(t *testing.T) {
 	t.Run("first_test", func(t *testing.T) {
 		seedAndRun(t, "erc20_bridge_first", func(ctx context.Context, platform *kwilTesting.Platform) error {
 			// Enable instance with alias for first test
-			err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestChain)
+			err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestExtensionAlias)
 			require.NoError(t, err)
 
 			// Simple test: just call info() to verify the extension is working
 			engineCtx := engCtx(ctx, platform, "0x0000000000000000000000000000000000000000", 1, false)
 			var syncedResult bool
-			res, err := platform.Engine.Call(engineCtx, platform.DB, TestChain, "info", []any{}, func(row *common.Row) error {
+			res, err := platform.Engine.Call(engineCtx, platform.DB, TestExtensionAlias, "info", []any{}, func(row *common.Row) error {
 				if len(row.Values) >= 7 {
 					syncedResult = row.Values[6].(bool)
 				}
@@ -47,7 +47,7 @@ func TestERC20BridgeConsecutiveTests(t *testing.T) {
 	t.Run("second_test", func(t *testing.T) {
 		seedAndRun(t, "erc20_bridge_second", func(ctx context.Context, platform *kwilTesting.Platform) error {
 			// This should not fail with "already active" error due to proper cleanup
-			err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestChain)
+			err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestExtensionAlias)
 			if err != nil {
 				// If this fails, let's check the DB state to debug
 				var isActive bool
@@ -68,7 +68,7 @@ func TestERC20BridgeConsecutiveTests(t *testing.T) {
 			// Simple test: just call info() to verify the extension is working
 			engineCtx := engCtx(ctx, platform, "0x0000000000000000000000000000000000000000", 1, false)
 			var syncedResult bool
-			res, err := platform.Engine.Call(engineCtx, platform.DB, TestChain, "info", []any{}, func(row *common.Row) error {
+			res, err := platform.Engine.Call(engineCtx, platform.DB, TestExtensionAlias, "info", []any{}, func(row *common.Row) error {
 				if len(row.Values) >= 7 {
 					syncedResult = row.Values[6].(bool)
 				}

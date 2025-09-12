@@ -27,7 +27,7 @@ import (
 func TestERC20BridgeTransferBalances(t *testing.T) {
 	seedAndRun(t, "erc20_bridge_transfer_balances", func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Enable instance with alias for transfer test
-		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestChain)
+		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestExtensionAlias)
 		require.NoError(t, err)
 
 		// Step 1: Inject deposit for userA
@@ -35,12 +35,12 @@ func TestERC20BridgeTransferBalances(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify userA received the full deposit
-		balanceA, err := testerc20.GetUserBalance(ctx, platform, TestChain, TestUserA)
+		balanceA, err := testerc20.GetUserBalance(ctx, platform, TestExtensionAlias, TestUserA)
 		require.NoError(t, err)
 		require.Equal(t, TestAmount2, balanceA, "userA should have full deposit amount")
 
 		// Verify userB has zero balance initially
-		balanceB, err := testerc20.GetUserBalance(ctx, platform, TestChain, TestUserB)
+		balanceB, err := testerc20.GetUserBalance(ctx, platform, TestExtensionAlias, TestUserB)
 		require.NoError(t, err)
 		require.Equal(t, "0", balanceB, "userB should have zero balance initially")
 
@@ -51,7 +51,7 @@ func TestERC20BridgeTransferBalances(t *testing.T) {
 		halfDec, err := types.ParseDecimalExplicit(TestAmount1, 78, 0)
 		require.NoError(t, err)
 
-		r, err := platform.Engine.Call(engineCtx, platform.DB, TestChain, "transfer", []any{TestUserB, halfDec}, func(row *common.Row) error {
+		r, err := platform.Engine.Call(engineCtx, platform.DB, TestExtensionAlias, "transfer", []any{TestUserB, halfDec}, func(row *common.Row) error {
 			return nil
 		})
 		require.NoError(t, err)
@@ -61,12 +61,12 @@ func TestERC20BridgeTransferBalances(t *testing.T) {
 
 		// Step 3: Verify balances after transfer
 		// userA should have remaining amount
-		balanceA, err = testerc20.GetUserBalance(ctx, platform, TestChain, TestUserA)
+		balanceA, err = testerc20.GetUserBalance(ctx, platform, TestExtensionAlias, TestUserA)
 		require.NoError(t, err)
 		require.Equal(t, TestAmount1, balanceA, "userA should have remaining amount after transfer")
 
 		// userB should have received the transferred amount
-		balanceB, err = testerc20.GetUserBalance(ctx, platform, TestChain, TestUserB)
+		balanceB, err = testerc20.GetUserBalance(ctx, platform, TestExtensionAlias, TestUserB)
 		require.NoError(t, err)
 		require.Equal(t, TestAmount1, balanceB, "userB should have received transferred amount")
 

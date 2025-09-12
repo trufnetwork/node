@@ -17,18 +17,18 @@ import (
 )
 
 // WithERC20TestSetupTx is a transaction-aware version that works with WithTx for perfect isolation
-func WithERC20TestSetup(alias string, escrowAddr string) func(t *testing.T, txPlatform *kwilTesting.Platform) {
+func WithERC20TestSetup(chain, alias string, escrowAddr string) func(t *testing.T, txPlatform *kwilTesting.Platform) {
 	return func(t *testing.T, txPlatform *kwilTesting.Platform) {
 		// Use the transaction-scoped platform
 
 		// Step 1: Set up cleanup to deactivate the instance after the test
 		// This ensures the next test can reuse the same escrow address
 		t.Cleanup(func() {
-			erc20shim.ForTestingDisableInstance(context.Background(), txPlatform, alias, escrowAddr, alias)
+			erc20shim.ForTestingDisableInstance(context.Background(), txPlatform, chain, escrowAddr, alias)
 			erc20shim.ForTestingResetSingleton()
 		})
 
-		erc20shim.ForTestingSeedAndActivateInstance(context.Background(), txPlatform, alias, escrowAddr, "0x2222222222222222222222222222222222222222", 18, 60, alias)
+		erc20shim.ForTestingSeedAndActivateInstance(context.Background(), txPlatform, chain, escrowAddr, "0x2222222222222222222222222222222222222222", 18, 60, alias)
 	}
 }
 

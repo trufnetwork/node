@@ -29,7 +29,7 @@ func TestERC20BridgeActionsSmoke(t *testing.T) {
 
 		// Singleton reset and initialize is handled by seedAndRun
 		// Ensure active+synced in-memory
-		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestChain)
+		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestExtensionAlias)
 		require.NoError(t, err)
 
 		// Test erc20.info() action
@@ -37,7 +37,7 @@ func TestERC20BridgeActionsSmoke(t *testing.T) {
 
 		var chainResult, escrowResult, periodResult string
 		var syncedResult bool
-		r, err := platform.Engine.Call(engineCtx, platform.DB, TestChain, "info", []any{}, func(row *common.Row) error {
+		r, err := platform.Engine.Call(engineCtx, platform.DB, TestExtensionAlias, "info", []any{}, func(row *common.Row) error {
 			chainResult = row.Values[0].(string)
 			escrowResult = row.Values[1].(string)
 			periodResult = row.Values[2].(string)
@@ -57,7 +57,7 @@ func TestERC20BridgeActionsSmoke(t *testing.T) {
 
 		// Test erc20.decimals() action
 		var decimalsResult int64
-		r, err = platform.Engine.Call(engineCtx, platform.DB, TestChain, "decimals", []any{}, func(row *common.Row) error {
+		r, err = platform.Engine.Call(engineCtx, platform.DB, TestExtensionAlias, "decimals", []any{}, func(row *common.Row) error {
 			if len(row.Values) != 1 {
 				return nil
 			}
@@ -73,7 +73,7 @@ func TestERC20BridgeActionsSmoke(t *testing.T) {
 
 		// Test erc20.scale_up("1") action
 		var scaledUpResult *types.Decimal
-		r, err = platform.Engine.Call(engineCtx, platform.DB, TestChain, "scale_up", []any{"1"}, func(row *common.Row) error {
+		r, err = platform.Engine.Call(engineCtx, platform.DB, TestExtensionAlias, "scale_up", []any{"1"}, func(row *common.Row) error {
 			if len(row.Values) != 1 {
 				return nil
 			}
@@ -94,7 +94,7 @@ func TestERC20BridgeActionsSmoke(t *testing.T) {
 		amountDecimal, err := types.ParseDecimalExplicit(TestAmount1, 78, 0)
 		require.NoError(t, err)
 
-		r, err = platform.Engine.Call(engineCtx, platform.DB, TestChain, "scale_down", []any{amountDecimal}, func(row *common.Row) error {
+		r, err = platform.Engine.Call(engineCtx, platform.DB, TestExtensionAlias, "scale_down", []any{amountDecimal}, func(row *common.Row) error {
 			if len(row.Values) != 1 {
 				return nil
 			}

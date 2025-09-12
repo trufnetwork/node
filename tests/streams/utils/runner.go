@@ -134,11 +134,13 @@ func setupCacheExtension(ctx context.Context, cacheConfig *cache.CacheOptions, p
 	// Parse and setup extension
 	processedConfig, err := tn_cache.ParseConfig(mockService)
 	if err != nil {
+		helper.Cleanup()
 		return nil, fmt.Errorf("failed to parse cache config: %w", err)
 	}
 
 	ext, err := tn_cache.SetupCacheExtension(ctx, processedConfig, platform.Engine, mockService)
 	if err != nil {
+		helper.Cleanup()
 		return nil, fmt.Errorf("failed to setup cache extension: %w", err)
 	}
 
@@ -146,8 +148,6 @@ func setupCacheExtension(ctx context.Context, cacheConfig *cache.CacheOptions, p
 	tn_cache.SetExtension(ext)
 
 	cleanup := func() {
-		// Cleanup helper first
-		helper.Cleanup()
 		// Stop background tasks
 		if ext.Scheduler() != nil {
 			if stopErr := ext.Scheduler().Stop(); stopErr != nil {
@@ -159,6 +159,8 @@ func setupCacheExtension(ctx context.Context, cacheConfig *cache.CacheOptions, p
 		}
 		ext.Close()
 		tn_cache.SetExtension(nil)
+		// Cleanup helper last
+		helper.Cleanup()
 	}
 
 	return cleanup, nil
