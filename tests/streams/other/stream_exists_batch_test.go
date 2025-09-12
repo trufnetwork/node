@@ -22,13 +22,13 @@ import (
 // paths are covered. This gives clear coverage of core existence logic
 // without going through higher-level helpers like filter_streams_by_existence.
 func TestSTREAM_EXISTS_BATCH01_Direct(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "stream_exists_batch_direct_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testStreamExistsBatchDirect(t),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func testStreamExistsBatchDirect(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {

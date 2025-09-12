@@ -37,7 +37,7 @@ import (
 
 // TestAGGR08_WeightChangeEventPoints tests that weight changes create event points in the composed stream
 func TestAGGR08_WeightChangeEventPoints(t *testing.T) {
-	cacheConfig := testutils.TestCache("0x0000000000000000000000000000000000000123", "*")
+	cacheConfig := testutils.SimpleCache("0x0000000000000000000000000000000000000123", "*")
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr08_weight_change_event_points_test",

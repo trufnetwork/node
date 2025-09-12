@@ -29,7 +29,7 @@ var (
 )
 
 func TestTruflationComposedFrozen(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "truflation_composed_frozen_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
@@ -42,7 +42,7 @@ func TestTruflationComposedFrozen(t *testing.T) {
 			setupTruflationFrozenComposedTest(testTruflationIndexWithBaseTime(t)),
 			setupTruflationFrozenComposedTest(testTruflationIndexRangeQuery(t)),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func setupTruflationFrozenComposedTest(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {

@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-//go:embed *.sql
+//go:embed *.sql test_only/*.sql
 var seedFiles embed.FS
 
 func GetSeedScriptPaths() []string {
@@ -28,6 +28,17 @@ func GetSeedScriptPaths() []string {
 		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
 			// Create absolute path by joining the directory path with the file name
 			seedsFiles = append(seedsFiles, filepath.Join(dir, entry.Name()))
+		}
+	}
+
+	// process test_only directory
+	entries, err = seedFiles.ReadDir("test_only")
+	if err != nil {
+		panic(err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
+			seedsFiles = append(seedsFiles, filepath.Join(dir, "test_only", entry.Name()))
 		}
 	}
 

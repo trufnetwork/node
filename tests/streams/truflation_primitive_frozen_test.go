@@ -24,7 +24,7 @@ var (
 )
 
 func TestTruflationFrozen(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "truflation_frozen_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
@@ -39,7 +39,7 @@ func TestTruflationFrozen(t *testing.T) {
 			setupTruflationFrozenTest(testWithoutFrozen(t)),
 			setupTruflationFrozenTest(testFutureFrozen(t)),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 // Test Case 1 & 9: All records before frozen

@@ -32,13 +32,13 @@ var (
 // TestComprehensivePathIndependenceWithSharedPrimitive tests path independence
 // for a hierarchy where a single primitive contributes via multiple composed paths.
 func TestComprehensivePathIndependenceWithSharedPrimitive(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "comprehensive_path_independence_shared_primitive_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			setupComprehensiveSharedStreams(testComprehensivePathIndependenceSharedFunc(t)),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 // setupComprehensiveSharedStreams sets up GCP1, GCP2, SP primitives and CC1, CC2, RC composed streams

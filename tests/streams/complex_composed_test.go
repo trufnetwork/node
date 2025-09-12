@@ -7,9 +7,12 @@ import (
 
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
+	"github.com/trufnetwork/node/tests/streams/utils/cache"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
 	"github.com/trufnetwork/node/tests/streams/utils/setup"
 	"github.com/trufnetwork/node/tests/streams/utils/table"
+
+	"github.com/trufnetwork/node/extensions/tn_cache"
 
 	"github.com/pkg/errors"
 	"github.com/trufnetwork/sdk-go/core/types"
@@ -26,7 +29,7 @@ var (
 
 func TestComplexComposed(t *testing.T) {
 	// Run with cache setup (will test both with and without cache)
-	cacheConfig := testutils.TestCache(complexComposedDeployer.Address(), "*")
+	cacheConfig := testutils.SimpleCache(complexComposedDeployer.Address(), "*")
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "complex_composed_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
@@ -49,7 +52,7 @@ func TestComplexComposed(t *testing.T) {
 func wrapTestWithCacheModes(t *testing.T, testName string, testFunc func(*testing.T, bool) func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error) func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
 		t.Run(testName+"_without_cache", func(t *testing.T) {
-			helper.RunInTx(t, func(t *testing.T, txPlatform *kwilTesting.Platform) {
+			helper.RunInTx(t, func(_ cache.TestingT, txPlatform *kwilTesting.Platform) {
 				err := testFunc(t, false)(ctx, txPlatform, helper)
 				if err != nil {
 					t.Fatalf("Test failed without cache: %v", err)
@@ -57,7 +60,7 @@ func wrapTestWithCacheModes(t *testing.T, testName string, testFunc func(*testin
 			})
 		})
 		t.Run(testName+"_with_cache", func(t *testing.T) {
-			helper.RunInTx(t, func(t *testing.T, txPlatform *kwilTesting.Platform) {
+			helper.RunInTx(t, func(_ cache.TestingT, txPlatform *kwilTesting.Platform) {
 				err := testFunc(t, true)(ctx, txPlatform, helper)
 				if err != nil {
 					t.Fatalf("Test failed with cache: %v", err)
@@ -111,12 +114,12 @@ func WithTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platfo
 		}
 
 		// Always set up cache (it will be used based on the UseCache parameter in queries)
-		cacheConfig := testutils.TestCache(complexComposedDeployer.Address(), "*")
-		helper := testutils.SetupCacheTest(ctx, platform, cacheConfig)
+		cacheConfig := testutils.SimpleCache(complexComposedDeployer.Address(), "*")
+		helper := cache.SetupCacheTest(ctx, platform, cacheConfig)
 		defer helper.Cleanup()
 
 		// Refresh cache
-		recordsCached, err := helper.RefreshAllStreamsSync(ctx)
+		recordsCached, err := tn_cache.GetTestHelper().RefreshAllStreamsSync(ctx)
 		if err != nil {
 			return errors.Wrap(err, "error refreshing cache")
 		}
@@ -695,7 +698,7 @@ func testComposedRecordNoDuplicates(t *testing.T, useCache bool) func(ctx contex
 
 		// Refresh cache for the newly created stream if cache is being used
 		if useCache {
-			_, err := helper.RefreshAllStreamsSync(ctx)
+			_, err := tn_cache.GetTestHelper().RefreshAllStreamsSync(ctx)
 			if err != nil {
 				return errors.Wrap(err, "error refreshing cache")
 			}

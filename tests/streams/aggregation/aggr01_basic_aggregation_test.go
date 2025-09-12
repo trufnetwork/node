@@ -30,7 +30,7 @@ import (
 // TestAGGR01_BasicAggregation tests AGGR01: A composed stream aggregates data from multiple child streams (which may be either primitive or composed).
 func TestAGGR01_BasicAggregation(t *testing.T) {
 	// Cache all streams from this deployer
-	cacheConfig := testutils.TestCache("0x0000000000000000000000000000000000000123", "*")
+	cacheConfig := testutils.SimpleCache("0x0000000000000000000000000000000000000123", "*")
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr01_basic_aggregation_test",

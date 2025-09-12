@@ -26,7 +26,7 @@ import (
 
 // TestAGGR05_NoDuplicateChildStreams tests AGGR05: For a single taxonomy version, there can't be duplicated child stream definitions.
 func TestAGGR05_NoDuplicateChildStreams(t *testing.T) {
-	cacheConfig := testutils.TestCache("0x0000000000000000000000000000000000000123", "*")
+	cacheConfig := testutils.SimpleCache("0x0000000000000000000000000000000000000123", "*")
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr05_no_duplicate_child_streams_test",

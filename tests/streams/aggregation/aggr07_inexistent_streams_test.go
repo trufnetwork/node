@@ -25,7 +25,7 @@ import (
 
 // TestAGGR07_InexistentStreamsRejected tests that setting taxonomies with non-existent stream references results in errors
 func TestAGGR07_InexistentStreamsRejected(t *testing.T) {
-	cacheConfig := testutils.TestCache("0x0000000000000000000000000000000000000123", "*")
+	cacheConfig := testutils.SimpleCache("0x0000000000000000000000000000000000000123", "*")
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr07_inexistent_streams_test",

@@ -11,8 +11,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	"github.com/trufnetwork/node/extensions/tn_cache"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
+	"github.com/trufnetwork/node/tests/streams/utils/cache"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
 	"github.com/trufnetwork/node/tests/streams/utils/setup"
 	"github.com/trufnetwork/sdk-go/core/types"
@@ -29,7 +31,7 @@ var composedStreamId = util.GenerateStreamId("cache_test_composed")
 func TestCacheIntegration(t *testing.T) {
 	// Create cache configuration for testing
 	// This sets up a cache that won't auto-refresh (scheduled for Feb 31st)
-	cacheConfig := testutils.TestCache("0x0000000000000000000000000000000000000123", composedStreamId.String())
+	cacheConfig := testutils.SimpleCache("0x0000000000000000000000000000000000000123", composedStreamId.String())
 
 	// Run the test with cache enabled using the new wrapper
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
@@ -44,7 +46,7 @@ func TestCacheIntegration(t *testing.T) {
 func testCacheBasicFunctionality(t *testing.T, cacheConfig *testutils.CacheOptions) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Cache is already set up by the wrapper, but we need the helper for RefreshCache
-		helper := testutils.SetupCacheTest(ctx, platform, cacheConfig)
+		helper := cache.SetupCacheTest(ctx, platform, cacheConfig)
 		defer helper.Cleanup()
 
 		// Create a composed stream with child streams
@@ -117,7 +119,7 @@ func testCacheBasicFunctionality(t *testing.T, cacheConfig *testutils.CacheOptio
 		// No need to commit since we're using the same DB connection now
 
 		// Refresh the cache to populate it with our test data
-		recordsCached, err := helper.RefreshAllStreamsSync(ctx)
+		recordsCached, err := tn_cache.GetTestHelper().RefreshAllStreamsSync(ctx)
 		require.NoError(t, err, "should be able to refresh cache")
 		assert.Equal(t, 3, recordsCached, "should cache 3 records")
 
@@ -242,7 +244,7 @@ func TestCacheIncludeChildrenForNestedComposed(t *testing.T) {
 
 func testCacheIncludeChildren(t *testing.T, cacheConfig *testutils.CacheOptions) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		helper := testutils.SetupCacheTest(ctx, platform, cacheConfig)
+		helper := cache.SetupCacheTest(ctx, platform, cacheConfig)
 		defer helper.Cleanup()
 
 		deployer, err := util.NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
@@ -317,7 +319,7 @@ func testCacheIncludeChildren(t *testing.T, cacheConfig *testutils.CacheOptions)
 		verifyCacheStreamExists(t, ctx, platform, deployer.Address(), parentComposedId.String())
 
 		// Refresh cache - should cache parent and auto-resolve children
-		recordsCached, err := helper.RefreshAllStreamsSync(ctx)
+		recordsCached, err := tn_cache.GetTestHelper().RefreshAllStreamsSync(ctx)
 		require.NoError(t, err)
 		assert.Equal(t, 9, recordsCached, "should cache 9 records (3 parent + 3 child1 + 3 child2)")
 
@@ -325,10 +327,10 @@ func testCacheIncludeChildren(t *testing.T, cacheConfig *testutils.CacheOptions)
 		verifyChildStreamsInCache(t, ctx, platform, deployer.Address(), childComposed1Id.String(), childComposed2Id.String())
 
 		// Refresh cache for child streams to populate their data
-		_, err = helper.RefreshAllStreamsSync(ctx)
+		_, err = tn_cache.GetTestHelper().RefreshAllStreamsSync(ctx)
 		require.NoError(t, err, "Failed to refresh child composed 1 cache")
 
-		_, err = helper.RefreshAllStreamsSync(ctx)
+		_, err = tn_cache.GetTestHelper().RefreshAllStreamsSync(ctx)
 		require.NoError(t, err, "Failed to refresh child composed 2 cache")
 
 		// Verify all composed streams have cached data (primitives should not)

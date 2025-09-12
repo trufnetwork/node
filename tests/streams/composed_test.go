@@ -24,7 +24,7 @@ var (
 )
 
 func TestComposed(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "composed_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
@@ -35,7 +35,7 @@ func TestComposed(t *testing.T) {
 			WithComposedTestSetup(testOnlyOwnerCanDisableTaxonomy(t)),
 			WithComposedTestSetup(testCOMPOSED03SetReadOnlyMetadataToComposedStream(t)),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func WithComposedTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) kwilTesting.TestFunc {

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	utils "github.com/trufnetwork/node/tests/streams/utils"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
 	"github.com/trufnetwork/sdk-go/core/util"
@@ -195,13 +196,13 @@ func createBenchmarkSuiteFunc(t *testing.T, scale DigestBenchmarkScale) func(con
 // runDigestBenchmarkScale runs a specific benchmark scale.
 // This is the core function that handles all benchmark execution logic.
 func runDigestBenchmarkScale(t *testing.T, scale DigestBenchmarkScale) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        fmt.Sprintf("digest_benchmark_%s", scale.Name),
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			WithDigestBenchmarkSetup(createBenchmarkSuiteFunc(t, scale)),
 		},
-	}, utils.GetTestOptions())
+	}, utils.GetTestOptionsWithCache())
 }
 
 // WithDigestBenchmarkSetup sets up the testing environment for digest benchmarks.

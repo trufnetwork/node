@@ -15,6 +15,7 @@ import (
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/extensions/tn_digest/internal"
 	digestembed "github.com/trufnetwork/node/tests/extensions/digest"
+	testutils "github.com/trufnetwork/node/tests/streams/utils"
 )
 
 // TestBuildAndBroadcastAutoDigestTx_VerifiesTxBuildSignAndDBEffect
@@ -28,7 +29,7 @@ func TestBuildAndBroadcastAutoDigestTx_VerifiesTxBuildSignAndDBEffect(t *testing
 	bts, err := digestembed.TestMigrationSQL.ReadFile("test_migration.sql")
 	require.NoError(t, err)
 
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:           "tn_digest_tx_build_broadcast_test",
 		SeedStatements: []string{string(bts)},
 		FunctionTests: []kwilTesting.TestFunc{

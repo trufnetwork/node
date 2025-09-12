@@ -13,13 +13,13 @@ import (
 )
 
 func TestBackwardCompatibility(t *testing.T) {
-	kwiltesting.RunSchemaTest(t, kwiltesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwiltesting.SchemaTest{
 		Name:        "backward_compatibility_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwiltesting.TestFunc{
 			testBackwardCompatibilityFunc(t),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func testBackwardCompatibilityFunc(t *testing.T) kwiltesting.TestFunc {

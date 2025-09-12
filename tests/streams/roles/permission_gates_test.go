@@ -16,7 +16,7 @@ import (
 )
 
 func TestPermissionGates(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "permission_gates_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
@@ -25,7 +25,7 @@ func TestPermissionGates(t *testing.T) {
 				return nil
 			},
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func testStreamCreationPermissionGates(t *testing.T, ctx context.Context, platform *kwilTesting.Platform) {

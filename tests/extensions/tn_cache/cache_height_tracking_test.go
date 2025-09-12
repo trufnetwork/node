@@ -11,8 +11,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/node/meta"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	"github.com/trufnetwork/node/extensions/tn_cache"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
+	"github.com/trufnetwork/node/tests/streams/utils/cache"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
 	"github.com/trufnetwork/node/tests/streams/utils/setup"
 	"github.com/trufnetwork/sdk-go/core/types"
@@ -26,14 +28,14 @@ import (
 func TestCacheHeightTracking(t *testing.T) {
 	deployer := "0x0000000000000000000000000000000000000456"
 	streamId := util.GenerateStreamId("height_tracking_test")
-	cacheConfig := testutils.TestCache(deployer, streamId.String())
+	cacheConfig := testutils.SimpleCache(deployer, streamId.String())
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "cache_height_tracking_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			func(ctx context.Context, platform *kwilTesting.Platform) error {
-				helper := testutils.SetupCacheTest(ctx, platform, cacheConfig)
+				helper := cache.SetupCacheTest(ctx, platform, cacheConfig)
 				defer helper.Cleanup()
 
 				deployerAddr, err := util.NewEthereumAddressFromString(deployer)
@@ -60,7 +62,7 @@ func TestCacheHeightTracking(t *testing.T) {
 				require.NoError(t, err)
 
 				// Refresh cache to populate data with height
-				recordsCached, err := helper.RefreshAllStreamsSync(ctx)
+				recordsCached, err := tn_cache.GetTestHelper().RefreshAllStreamsSync(ctx)
 				require.NoError(t, err)
 				assert.Greater(t, recordsCached, 0, "Should have cached some records")
 
@@ -75,7 +77,7 @@ func TestCacheHeightTracking(t *testing.T) {
 				useCache := true
 				fromTime := int64(50)
 				toTime := int64(250)
-				
+
 				// Execute query that will use cache and return logs
 				result, err := procedure.GetRecordWithLogs(ctx, procedure.GetRecordInput{
 					Platform: platform,
@@ -99,15 +101,15 @@ func TestCacheHeightTracking(t *testing.T) {
 						break
 					}
 				}
-				
+
 				require.NotEmpty(t, cacheLog, "Should have cache hit log with height information")
 				t.Logf("Cache log: %s", cacheLog)
-				
+
 				// Verify the log contains height fields
 				assert.Contains(t, cacheLog, "cache_hit", "Log should contain cache_hit field")
 				assert.Contains(t, cacheLog, "cache_height", "Log should contain cache_height")
 				assert.Contains(t, cacheLog, "cache_refreshed_at_timestamp", "Log should contain cache_refreshed_at_timestamp")
-				
+
 				// The cache_height should be 1 (when we cached)
 				assert.Contains(t, cacheLog, `"cache_hit": true`, "Should be a cache hit")
 				assert.Contains(t, cacheLog, `"cache_height": 1`, "Cache height should be 1")
@@ -119,4 +121,3 @@ func TestCacheHeightTracking(t *testing.T) {
 		},
 	}, testutils.GetTestOptionsWithCache(cacheConfig))
 }
-

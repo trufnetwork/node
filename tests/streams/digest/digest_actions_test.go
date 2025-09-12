@@ -32,7 +32,7 @@ var digestTestStreamId = util.GenerateStreamId(digestTestStreamName)
 var idempotencyTestStreamId = util.GenerateStreamId(idempotencyTestStreamName)
 
 func TestDigestActions(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "digest_actions_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
@@ -61,12 +61,12 @@ func TestDigestActions(t *testing.T) {
 			WithAutoDigestZeroExpectedSetup(testAutoDigest_ValidatesExpectedRecordsInput(t)),
 			WithSignerAndProvider(testAutoDigest_PreservesRecentDaysCutoff(t)),
 		},
-	}, testutils.GetTestOptionsWithCache().Options)
+	}, testutils.GetTestOptionsWithCache())
 }
 
 // Verifies leader-only authorization on digest actions using BlockContext.Proposer.
 func TestDigestActionsLeaderAuthorization(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "digest_actions_leader_authorization",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
@@ -130,7 +130,7 @@ func TestDigestActionsLeaderAuthorization(t *testing.T) {
 				return nil
 			}),
 		},
-	}, testutils.GetTestOptionsWithCache().Options)
+	}, testutils.GetTestOptionsWithCache())
 }
 
 // WithDigestTestSetup sets up test environment with digest-specific data
