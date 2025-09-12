@@ -28,7 +28,12 @@ func WithERC20TestSetup(chain, alias string, escrowAddr string) func(t *testing.
 			erc20shim.ForTestingResetSingleton()
 		})
 
-		erc20shim.ForTestingSeedAndActivateInstance(context.Background(), txPlatform, chain, escrowAddr, "0x2222222222222222222222222222222222222222", 18, 60, alias)
+		if err := erc20shim.ForTestingSeedAndActivateInstance(
+			context.Background(), txPlatform, chain, escrowAddr,
+			"0x2222222222222222222222222222222222222222", 18, 60, alias,
+		); err != nil {
+			t.Fatalf("seed/activate ERC20 instance failed: %v", err)
+		}
 	}
 }
 
@@ -90,11 +95,14 @@ func CallLockAdmin(ctx context.Context, platform *kwilTesting.Platform, extensio
 	}
 	amtDec.SetPrecisionAndScale(78, 0)
 
-	_, err = platform.Engine.Call(engCtx, platform.DB, extensionAlias, "lock_admin", []any{userAddr, amtDec}, func(row *common.Row) error {
+	r, err := platform.Engine.Call(engCtx, platform.DB, extensionAlias, "lock_admin", []any{userAddr, amtDec}, func(row *common.Row) error {
 		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("engine call error: %w", err)
+	}
+	if r != nil && r.Error != nil {
+		return fmt.Errorf("engine execution error: %w", r.Error)
 	}
 	return nil
 }
