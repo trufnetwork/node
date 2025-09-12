@@ -52,16 +52,16 @@ func TestComplexComposed(t *testing.T) {
 func wrapTestWithCacheModes(t *testing.T, testName string, testFunc func(*testing.T, bool) func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error) func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform, helper *testutils.CacheTestHelper) error {
 		t.Run(testName+"_without_cache", func(t *testing.T) {
-			helper.RunInTx(t, func(t cache.TestingT, txPlatform *kwilTesting.Platform) {
-				err := testFunc(t.(*testing.T), false)(ctx, txPlatform, helper)
+			helper.RunInTx(t, func(_ cache.TestingT, txPlatform *kwilTesting.Platform) {
+				err := testFunc(t, false)(ctx, txPlatform, helper)
 				if err != nil {
 					t.Fatalf("Test failed without cache: %v", err)
 				}
 			})
 		})
 		t.Run(testName+"_with_cache", func(t *testing.T) {
-			helper.RunInTx(t, func(t cache.TestingT, txPlatform *kwilTesting.Platform) {
-				err := testFunc(t.(*testing.T), true)(ctx, txPlatform, helper)
+			helper.RunInTx(t, func(_ cache.TestingT, txPlatform *kwilTesting.Platform) {
+				err := testFunc(t, true)(ctx, txPlatform, helper)
 				if err != nil {
 					t.Fatalf("Test failed with cache: %v", err)
 				}

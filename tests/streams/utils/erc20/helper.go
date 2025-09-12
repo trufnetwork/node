@@ -1,3 +1,5 @@
+//go:build kwiltest
+
 // Package erc20 provides helper functions for ERC-20 bridge testing.
 // Follows the same patterns as query_test.go for consistency and compatibility.
 package erc20
@@ -6,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"math/big"
-	"strconv"
 	"testing"
 
 	"github.com/trufnetwork/kwil-db/common"
@@ -78,13 +79,12 @@ func CallLockAdmin(ctx context.Context, platform *kwilTesting.Platform, extensio
 		TxID:         platform.Txid(),
 	}
 	engCtx := &common.EngineContext{TxContext: txCtx, OverrideAuthz: true}
-
-	// Convert amount string to Decimal
-	amt, err := strconv.ParseInt(amount, 10, 64)
-	if err != nil {
-		return fmt.Errorf("failed to parse amount: %w", err)
+	// Convert amount string to Decimal using big.Int
+	bn := new(big.Int)
+	if _, ok := bn.SetString(amount, 10); !ok {
+		return fmt.Errorf("failed to parse amount: %s", amount)
 	}
-	amtDec, err := types.NewDecimalFromBigInt(big.NewInt(amt), 0)
+	amtDec, err := types.NewDecimalFromBigInt(bn, 0)
 	if err != nil {
 		return fmt.Errorf("failed to create decimal: %w", err)
 	}

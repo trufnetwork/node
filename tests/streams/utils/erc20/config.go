@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"strings"
+	"strconv"
 	"time"
 
 	"github.com/trufnetwork/kwil-db/config"
@@ -127,7 +127,7 @@ func (c *ERC20BridgeConfig) Validate() error {
 		}
 
 		// Skip validation for mock paths
-		if keyPath == "/dev/null" {
+		if keyPath == os.DevNull {
 			continue
 		}
 
@@ -146,11 +146,9 @@ func (c *ERC20BridgeConfig) Validate() error {
 	for chain, chainConfig := range c.Chains {
 		if chainConfig.BlockSyncChunkSize != "" {
 			// Validate chunk size format (should be a number)
-			if !strings.Contains(chainConfig.BlockSyncChunkSize, ".") {
-				// If it's an integer, try to parse it
-				if _, err := url.Parse(chainConfig.BlockSyncChunkSize); err == nil {
-					continue // It's a valid URL-like string
-				}
+			if _, err := strconv.ParseUint(chainConfig.BlockSyncChunkSize, 10, 64); err != nil {
+				return fmt.Errorf("invalid block sync chunk size for chain %s: %q; must be a positive integer: %v",
+					chain, chainConfig.BlockSyncChunkSize, err)
 			}
 		}
 

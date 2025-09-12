@@ -51,10 +51,13 @@ func TestERC20BridgeTransferBalances(t *testing.T) {
 		halfDec, err := types.ParseDecimalExplicit(TestAmount1, 78, 0)
 		require.NoError(t, err)
 
-		_, err = platform.Engine.Call(engineCtx, platform.DB, TestChain, "transfer", []any{TestUserB, halfDec}, func(row *common.Row) error {
+		r, err := platform.Engine.Call(engineCtx, platform.DB, TestChain, "transfer", []any{TestUserB, halfDec}, func(row *common.Row) error {
 			return nil
 		})
 		require.NoError(t, err)
+		if r != nil && r.Error != nil {
+			return r.Error
+		}
 
 		// Step 3: Verify balances after transfer
 		// userA should have remaining amount

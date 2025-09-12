@@ -29,6 +29,11 @@ func TestERC20BridgeInjectedTransferAffectsBalance(t *testing.T) {
 		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, chain, escrow, erc20, 18, 60, TestChain)
 		require.NoError(t, err)
 
+		// Cleanup: Deactivate the test instance
+		t.Cleanup(func() {
+			erc20shim.ForTestingDisableInstance(ctx, platform, chain, escrow, TestChain)
+		})
+
 		// Inject a transfer: from user to escrow (lock/credit path)
 		err = testerc20.InjectERC20Transfer(ctx, platform, chain, escrow, erc20, user, escrow, value, 1, nil)
 		require.NoError(t, err)
@@ -57,9 +62,6 @@ func TestERC20BridgeInjectedTransferAffectsBalance(t *testing.T) {
 		}
 
 		require.Equal(t, value, got, "expected balance to reflect injected transfer amount")
-
-		// Cleanup: Deactivate the test instance
-		erc20shim.ForTestingDisableInstance(ctx, platform, chain, escrow, TestChain)
 
 		return nil
 	})

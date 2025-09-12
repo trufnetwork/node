@@ -91,6 +91,13 @@ func wrapWithExtensionsSetup(ctx context.Context, originalFuncs []kwilTesting.Te
 		wrapped[i] = func(ctx context.Context, platform *kwilTesting.Platform) (testErr error) {
 			// Collect cleanup functions to run after the test completes
 			var cleanups []func()
+			defer func() {
+				for i := len(cleanups) - 1; i >= 0; i-- {
+					if cleanups[i] != nil {
+						cleanups[i]()
+					}
+				}
+			}()
 
 			// Setup cache extension if configured
 			if cacheConfig != nil && cacheConfig.IsEnabled() {
@@ -108,13 +115,6 @@ func wrapWithExtensionsSetup(ctx context.Context, originalFuncs []kwilTesting.Te
 			err := originalFn(ctx, platform)
 			if err != nil {
 				testErr = err
-			}
-
-			// Run cleanups in reverse order
-			for i := len(cleanups) - 1; i >= 0; i-- {
-				if cleanups[i] != nil {
-					cleanups[i]()
-				}
 			}
 
 			return

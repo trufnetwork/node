@@ -52,7 +52,9 @@ func TestERC20BridgeMultiInstanceIsolation(t *testing.T) {
 			if len(row.Values) != 1 {
 				return nil
 			}
-			balanceA, _ = row.Values[0].(*types.Decimal)
+			if val, ok := row.Values[0].(*types.Decimal); ok {
+				balanceA = val
+			}
 			return nil
 		})
 		require.NoError(t, err)
@@ -60,6 +62,7 @@ func TestERC20BridgeMultiInstanceIsolation(t *testing.T) {
 			return r.Error
 		}
 
+		require.NotNil(t, balanceA)
 		require.Equal(t, TestAmount1, balanceA.String(), "aliasA should have the deposit amount")
 
 		// Check balance in aliasB (should be zero - no deposit made)
@@ -68,7 +71,9 @@ func TestERC20BridgeMultiInstanceIsolation(t *testing.T) {
 			if len(row.Values) != 1 {
 				return nil
 			}
-			balanceB, _ = row.Values[0].(*types.Decimal)
+			if val, ok := row.Values[0].(*types.Decimal); ok {
+				balanceB = val
+			}
 			return nil
 		})
 		require.NoError(t, err)
@@ -76,11 +81,14 @@ func TestERC20BridgeMultiInstanceIsolation(t *testing.T) {
 			return r.Error
 		}
 
+		require.NotNil(t, balanceB)
 		require.Equal(t, "0", balanceB.String(), "aliasB should have zero balance (no deposit made)")
 
 		// Cleanup: Deactivate both instances for test isolation
-		erc20shim.ForTestingDisableInstance(ctx, platform, TestChain, escrowA, aliasA)
-		erc20shim.ForTestingDisableInstance(ctx, platform, TestChain, escrowB, aliasB)
+		t.Cleanup(func() {
+			erc20shim.ForTestingDisableInstance(ctx, platform, TestChain, escrowA, aliasA)
+			erc20shim.ForTestingDisableInstance(ctx, platform, TestChain, escrowB, aliasB)
+		})
 
 		return nil
 	})

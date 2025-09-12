@@ -53,6 +53,9 @@ func SetupCacheTest(ctx context.Context, platform *kwilTesting.Platform, cacheCo
 
 // Cleanup cleans up test injection
 func (h *CacheTestHelper) Cleanup() {
+	// Clear all in-memory overrides to avoid cross-test leakage
+	tn_cache.SetTestConfiguration(nil)
+	tn_cache.SetTestDBConfiguration(config.DBConfig{})
 	tn_cache.SetTestDB(nil)
 }
 

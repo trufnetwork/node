@@ -38,7 +38,6 @@ func TestERC20BridgeActionsSmoke(t *testing.T) {
 		var chainResult, escrowResult, periodResult string
 		var syncedResult bool
 		r, err := platform.Engine.Call(engineCtx, platform.DB, TestChain, "info", []any{}, func(row *common.Row) error {
-
 			chainResult = row.Values[0].(string)
 			escrowResult = row.Values[1].(string)
 			periodResult = row.Values[2].(string)
