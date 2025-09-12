@@ -82,9 +82,12 @@ func RunSchemaTest(t TestingT, s kwilTesting.SchemaTest, options *Options) {
 		// Single function: simple path
 		orderedsync.ForTestingReset()
 		kwilTesting.RunSchemaTest(testT, kwilTesting.SchemaTest{
-			Name:          s.Name,
-			SeedScripts:   s.SeedScripts,
-			FunctionTests: wrappedTests,
+			Name:           s.Name,
+			SeedScripts:    s.SeedScripts,
+			SeedStatements: s.SeedStatements,
+			FunctionTests:  wrappedTests,
+			TestCases:      s.TestCases,
+			Owner:          s.Owner,
 		}, kwilOpts)
 		return
 	}
@@ -92,9 +95,12 @@ func RunSchemaTest(t TestingT, s kwilTesting.SchemaTest, options *Options) {
 	for _, fn := range wrappedTests {
 		orderedsync.ForTestingReset()
 		kwilTesting.RunSchemaTest(testT, kwilTesting.SchemaTest{
-			Name:          s.Name,
-			SeedScripts:   s.SeedScripts,
-			FunctionTests: []kwilTesting.TestFunc{fn},
+			Name:           s.Name,
+			SeedScripts:    s.SeedScripts,
+			SeedStatements: s.SeedStatements,
+			FunctionTests:  []kwilTesting.TestFunc{fn},
+			TestCases:      s.TestCases,
+			Owner:          s.Owner,
 		}, kwilOpts)
 	}
 }
