@@ -329,13 +329,13 @@ func testEngineOperationsIntegration(t *testing.T) func(ctx context.Context, pla
 
 // TestEngineOperations_RealTimeData tests engine operations with streams that have real-time data updates
 func TestEngineOperations_RealTimeData(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "tn_ops_realtime_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testEngineOperationsRealTime(t),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func testEngineOperationsRealTime(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {

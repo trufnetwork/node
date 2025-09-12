@@ -15,6 +15,7 @@ import (
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/extensions/tn_digest/internal"
 	digestembed "github.com/trufnetwork/node/tests/extensions/digest"
+	testutils "github.com/trufnetwork/node/tests/streams/utils"
 )
 
 // TestBuildAndBroadcastAutoDigestTx_VerifiesTxBuildSignAndDBEffect

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	utils "github.com/trufnetwork/node/tests/streams/utils"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
 	"github.com/trufnetwork/sdk-go/core/util"
