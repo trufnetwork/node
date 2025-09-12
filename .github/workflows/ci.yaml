@@ -80,11 +80,11 @@ jobs:
             echo "Test attempt $attempt of $max_attempts"
 
             # Always try to cleanup lingering Kwil DB resources before each attempt
-            bash node/scripts/ci-cleanup.sh || true
+            bash scripts/ci-cleanup.sh || true
 
             # Additional cleanup only on retries
             if [ $attempt -gt 1 ]; then
-              docker compose -f node/compose.yaml down -v || true
+              docker compose -f compose.yaml down -v || true
               docker system prune -af --volumes || true
               sleep 5
             fi
