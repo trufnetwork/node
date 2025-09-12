@@ -1,3 +1,5 @@
+-- This file exists to manually enable the ERC20 bootstrap process for our tests
+
 USE kwil_erc20_meta as kwil_erc20_meta;
 
 -- ordered-sync is provisioned by its genesis hook in node runtime. The test harness
