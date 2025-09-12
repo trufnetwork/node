@@ -80,7 +80,13 @@ jobs:
             echo "Test attempt $attempt of $max_attempts"
 
             # Always try to cleanup lingering Kwil DB resources before each attempt
-            bash scripts/ci-cleanup.sh || true
+            echo "::group::CI cleanup"
+            if [[ -x scripts/ci-cleanup.sh ]]; then
+              bash -euxo pipefail scripts/ci-cleanup.sh || true
+            else
+              echo "scripts/ci-cleanup.sh not found or not executable; skipping cleanup" >&2
+            fi
+            echo "::endgroup::"
 
             # Additional cleanup only on retries
             if [ $attempt -gt 1 ]; then
