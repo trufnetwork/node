@@ -32,13 +32,13 @@ var (
 // TestMultiLevelComposedStreams tests multi level composed streams
 // which tests mainly about composed -> composed streams.
 func TestMultiLevelComposedStreams(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "multi_level_composed_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			setupMultiLevelComposedStreams(testMultiLevelFunc(t)),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func setupMultiLevelComposedStreams(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {

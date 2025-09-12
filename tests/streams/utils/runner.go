@@ -1,3 +1,5 @@
+//go:build kwiltest
+
 // Package testutils provides the main test orchestration logic for cache and ERC-20 bridge testing
 package testutils
 
@@ -29,6 +31,8 @@ type Options struct {
 
 // RunSchemaTest is a wrapper around kwilTesting.RunSchemaTest that automatically
 // handles both cache and ERC-20 bridge setup.
+// it's necessary to use this instead of kwilTesting.RunSchemaTest because we need to clean up the ordered-sync extension after each test.
+// otherwise, we will get the "already initialized" error
 func RunSchemaTest(t TestingT, s kwilTesting.SchemaTest, options *Options) {
 	// Convert to kwilTesting.Options - use type assertion since TestingT is an alias for testing.T
 	testT := t.(*testing.T)
@@ -71,15 +75,28 @@ func RunSchemaTest(t TestingT, s kwilTesting.SchemaTest, options *Options) {
 		wrappedTests = wrapWithExtensionsSetup(context.Background(), s.FunctionTests, cacheConfig, erc20Config, kwilOpts)
 	}
 
-	// Ensure isolation: reset ordered-sync in-memory topics before test run
-	orderedsync.ForTestingReset()
+	// Run each function test in isolation so that ordered-sync is reset
+	// before the interpreter is created for that function. Resetting inside
+	// the function is too late because EngineReadyHooks run at interpreter init.
+	if len(wrappedTests) <= 1 {
+		// Single function: simple path
+		orderedsync.ForTestingReset()
+		kwilTesting.RunSchemaTest(testT, kwilTesting.SchemaTest{
+			Name:          s.Name,
+			SeedScripts:   s.SeedScripts,
+			FunctionTests: wrappedTests,
+		}, kwilOpts)
+		return
+	}
 
-	// Run with wrapper
-	kwilTesting.RunSchemaTest(testT, kwilTesting.SchemaTest{
-		Name:          s.Name,
-		SeedScripts:   s.SeedScripts,
-		FunctionTests: wrappedTests,
-	}, kwilOpts)
+	for _, fn := range wrappedTests {
+		orderedsync.ForTestingReset()
+		kwilTesting.RunSchemaTest(testT, kwilTesting.SchemaTest{
+			Name:          s.Name,
+			SeedScripts:   s.SeedScripts,
+			FunctionTests: []kwilTesting.TestFunc{fn},
+		}, kwilOpts)
+	}
 }
 
 // wrapWithExtensionsSetup wraps test functions with cache extension initialization
@@ -108,8 +125,6 @@ func wrapWithExtensionsSetup(ctx context.Context, originalFuncs []kwilTesting.Te
 				}
 				cleanups = append(cleanups, cleanup)
 			}
-
-			// ERC-20 bridge setup removed - handle directly in tests with WithERC20TestSetup
 
 			// Run original test
 			err := originalFn(ctx, platform)

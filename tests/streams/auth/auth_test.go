@@ -42,24 +42,24 @@ var (
 func TestAUTH01_StreamOwnership(t *testing.T) {
 	// Test valid ownership transfer
 	t.Run("ValidOwnershipTransfer", func(t *testing.T) {
-		kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+		testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 			Name:        "stream_ownership_transfer_AUTH01",
 			SeedScripts: migrations.GetSeedScriptPaths(),
 			FunctionTests: []kwilTesting.TestFunc{
 				testStreamOwnershipTransfer(t),
 			},
-		}, testutils.GetTestOptions())
+		}, testutils.GetTestOptionsWithCache())
 	})
 
 	//Test invalid address handling
 	t.Run("InvalidAddressHandling", func(t *testing.T) {
-		kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+		testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 			Name:        "invalid_address_ownership_transfer_AUTH01",
 			SeedScripts: migrations.GetSeedScriptPaths(),
 			FunctionTests: []kwilTesting.TestFunc{
 				testInvalidAddressOwnershipTransfer(t),
 			},
-		}, testutils.GetTestOptions())
+		}, testutils.GetTestOptionsWithCache())
 	})
 }
 
@@ -174,14 +174,14 @@ func testInvalidAddressOwnershipTransfer(t *testing.T) kwilTesting.TestFunc {
 
 // TestAUTH02_ReadPermissions tests AUTH02: A stream owner can control who is allowed to read data from its stream
 func TestAUTH02_ReadPermissions(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "read_permission_control_AUTH02",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testReadPermissionControl(t, primitiveStreamInfo),
 			testReadPermissionControl(t, composedStreamInfo),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func testReadPermissionControl(t *testing.T, streamInfo setup.StreamInfo) kwilTesting.TestFunc {
@@ -295,13 +295,13 @@ func expectedVerb(canRead bool) string {
 
 // TestAUTH02_NestedReadPermissions tests read permissions across a chain of composed streams
 func TestAUTH02_NestedReadPermissions(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "nested_read_permission_control_AUTH02",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testNestedReadPermissionControl(t),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func testNestedReadPermissionControl(t *testing.T) kwilTesting.TestFunc {
@@ -456,14 +456,14 @@ func testNestedReadPermissionControl(t *testing.T) kwilTesting.TestFunc {
 
 // TestAUTH03_WritePermissions tests AUTH03: The stream owner can control which wallets are allowed to insert data into the stream.
 func TestAUTH03_WritePermissions(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name: "write_permission_control_AUTH03",
 		FunctionTests: []kwilTesting.TestFunc{
 			testWritePermissionControl(t, primitiveStreamInfo),
 			testWritePermissionControl(t, composedStreamInfo),
 		},
 		SeedScripts: migrations.GetSeedScriptPaths(),
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func testWritePermissionControl(t *testing.T, streamInfo setup.StreamInfo) kwilTesting.TestFunc {
@@ -529,14 +529,14 @@ func testWritePermissionControl(t *testing.T, streamInfo setup.StreamInfo) kwilT
 
 // // TestAUTH04_ComposePermissions tests AUTH04: The stream owner can control which streams are allowed to compose from the stream.
 func TestAUTH04_ComposePermissions(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "compose_permission_control_AUTH04",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testComposePermissionControl(t, primitiveStreamInfo),
 			testComposePermissionControl(t, composedStreamInfo),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func testComposePermissionControl(t *testing.T, contractInfo setup.StreamInfo) kwilTesting.TestFunc {
@@ -626,13 +626,13 @@ func testComposePermissionControl(t *testing.T, contractInfo setup.StreamInfo) k
 // TestAUTH04_NestedComposePermissions tests AUTH04:
 // The stream owner can control which streams (and their nested substreams) are allowed to compose from the stream.
 func TestAUTH04_NestedComposePermissions(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "nested_compose_permission_control_AUTH04",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testNestedComposePermissionControl(t),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func testNestedComposePermissionControl(t *testing.T) kwilTesting.TestFunc {
@@ -844,7 +844,7 @@ func testNestedComposePermissionControl(t *testing.T) kwilTesting.TestFunc {
 // // TestAUTH05_StreamDeletion tests AUTH05: Stream owners are able to delete their streams and all associated data.
 // func TestAUTH05_StreamDeletion(t *testing.T) {
 // 	t.Skip("Test skipped: auth stream tests temporarily disabled")
-// 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+// 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 // 		Name: "stream_deletion_AUTH05",
 // 		FunctionTests: []kwilTesting.TestFunc{
 // 			testStreamDeletion(t, primitiveContractInfo),
@@ -854,13 +854,13 @@ func testNestedComposePermissionControl(t *testing.T) kwilTesting.TestFunc {
 // }
 
 func TestAUTH05_StreamDeletion(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "stream_deletion_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testStreamDeletion(t),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func testStreamDeletion(t *testing.T) kwilTesting.TestFunc {
@@ -921,13 +921,13 @@ func testStreamDeletion(t *testing.T) kwilTesting.TestFunc {
 }
 
 func TestFilterStreamsByExistence(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "filter_streams_by_existence_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testFilterStreamsByExistence(t),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func testFilterStreamsByExistence(t *testing.T) kwilTesting.TestFunc {

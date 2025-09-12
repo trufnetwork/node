@@ -41,14 +41,14 @@ var (
 )
 
 func TestCOMMON03DisableMetadata(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "disable_metadata",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testDisableMetadata(t, primitiveStreamInfo),
 			testDisableMetadata(t, composedStreamInfo),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func testDisableMetadata(t *testing.T, streamInfo setup.StreamInfo) kwilTesting.TestFunc {
@@ -115,14 +115,14 @@ func testDisableMetadata(t *testing.T, streamInfo setup.StreamInfo) kwilTesting.
 }
 
 func TestCOMMON02ReadOnlyMetadataCannotBeModified(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "readonly_metadata_cannot_be_modified",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testReadOnlyMetadataCannotBeModified(t, primitiveStreamInfo),
 			testReadOnlyMetadataCannotBeModified(t, composedStreamInfo),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func testReadOnlyMetadataCannotBeModified(t *testing.T, streamInfo setup.StreamInfo) kwilTesting.TestFunc {
@@ -175,14 +175,14 @@ func testReadOnlyMetadataCannotBeModified(t *testing.T, streamInfo setup.StreamI
 }
 
 func TestCOMMON02BReadOnlyMetadataCannotBeModified_Batch(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "readonly_metadata_cannot_be_modified_batch",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testReadOnlyMetadataCannotBeModifiedBatch(t, primitiveStreamInfo),
 			testReadOnlyMetadataCannotBeModifiedBatch(t, composedStreamInfo),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func testReadOnlyMetadataCannotBeModifiedBatch(t *testing.T, streamInfo setup.StreamInfo) kwilTesting.TestFunc {
@@ -237,14 +237,14 @@ func testReadOnlyMetadataCannotBeModifiedBatch(t *testing.T, streamInfo setup.St
 }
 
 func TestVisibilitySettings(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name: "visibility_settings",
 		FunctionTests: []kwilTesting.TestFunc{
 			testVisibilitySettings(t, primitiveStreamInfo),
 			testVisibilitySettings(t, composedStreamInfo),
 		},
 		SeedScripts: migrations.GetSeedScriptPaths(),
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func testVisibilitySettings(t *testing.T, streamInfo setup.StreamInfo) kwilTesting.TestFunc {

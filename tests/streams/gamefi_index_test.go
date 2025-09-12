@@ -98,7 +98,7 @@ var (
 )
 
 func TestGamefiIndex(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "gamefi_index_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
@@ -106,7 +106,7 @@ func TestGamefiIndex(t *testing.T) {
 			WithGamefiProportionalTestSetup(testGamefiIndexProportionalCalculation(t)),
 			testManualCalculationVerification(t),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func WithGamefiTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {

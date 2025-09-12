@@ -81,7 +81,7 @@ func TestRoleManagementSuite(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+			testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 				Name:        tc.name,
 				SeedScripts: migrations.GetSeedScriptPaths(),
 				FunctionTests: []kwilTesting.TestFunc{
@@ -94,7 +94,7 @@ func TestRoleManagementSuite(t *testing.T) {
 						return nil // Errors are handled by require/assert
 					},
 				},
-			}, testutils.GetTestOptions())
+			}, testutils.GetTestOptionsWithCache())
 		})
 	}
 }

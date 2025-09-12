@@ -24,13 +24,13 @@ import (
 // and private streams for caching purposes. The SQL authorization functions check if
 // wallet_address = 'extension_agent' and grant unrestricted access.
 func TestExtensionAgentPermissions(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "extension_agent_permissions_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testExtensionAgentAccess(t),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func testExtensionAgentAccess(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {

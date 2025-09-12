@@ -34,7 +34,7 @@ var (
 // TestQUERY04Metadata tests the insertion and retrieval of metadata
 // for both primitive and composed streams. Also tests disabling metadata and attempting to retrieve it.
 func TestQUERY04Metadata(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name: "metadata_insertion_and_retrieval",
 		FunctionTests: []kwilTesting.TestFunc{
 			WithMetadataTestSetup(testMetadataInsertionAndRetrieval(t, primitiveContractInfo)),
@@ -46,7 +46,7 @@ func TestQUERY04Metadata(t *testing.T) {
 			WithMetadataTestSetup(testListMetadataByHeightInvalidPagination(t, primitiveContractInfo)),
 		},
 		SeedScripts: migrations.GetSeedScriptPaths(),
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func WithMetadataTestSetup(testFn func(ctx context.Context, platform *kwilTesting.Platform) error) func(ctx context.Context, platform *kwilTesting.Platform) error {

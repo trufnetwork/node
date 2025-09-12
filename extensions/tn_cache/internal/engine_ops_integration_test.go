@@ -50,7 +50,7 @@ func testEngineOperationsIntegration(t *testing.T) func(ctx context.Context, pla
 		if err != nil {
 			return errors.Wrap(err, "error registering data provider")
 		}
-		
+
 		logger := log.NewStdoutLogger().New("tn_ops_test")
 
 		// Test 1: ListComposedStreams
@@ -348,7 +348,7 @@ func testEngineOperationsRealTime(t *testing.T) func(ctx context.Context, platfo
 		if err != nil {
 			return errors.Wrap(err, "error registering data provider")
 		}
-		
+
 		logger := log.NewStdoutLogger()
 
 		// Test fetching recent data

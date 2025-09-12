@@ -28,7 +28,7 @@ func TestBuildAndBroadcastAutoDigestTx_VerifiesTxBuildSignAndDBEffect(t *testing
 	bts, err := digestembed.TestMigrationSQL.ReadFile("test_migration.sql")
 	require.NoError(t, err)
 
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:           "tn_digest_tx_build_broadcast_test",
 		SeedStatements: []string{string(bts)},
 		FunctionTests: []kwilTesting.TestFunc{

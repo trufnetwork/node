@@ -31,7 +31,7 @@ const (
 
 // TestTaxonomyQueryActions tests the new taxonomy query actions
 func TestTaxonomyQueryActions(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "taxonomy_query_actions_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
@@ -47,7 +47,7 @@ func TestTaxonomyQueryActions(t *testing.T) {
 			testListTaxonomiesByHeightInvalidPagination(t),
 			testGetTaxonomiesForStreamsMismatchedArrays(t),
 		},
-	}, testutils.GetTestOptionsWithCache().Options)
+	}, testutils.GetTestOptionsWithCache())
 }
 
 // testListTaxonomiesByHeight tests basic height-based taxonomy querying

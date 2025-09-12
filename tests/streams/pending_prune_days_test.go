@@ -21,24 +21,24 @@ import (
 // Minimal, high-ROI test that verifies pending_prune_days is populated on insert
 // and remains idempotent for multiple inserts within the same day.
 func TestPendingPruneDaysEnqueue(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "pending_prune_days_enqueue_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testPendingPruneDays(t),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 // Same minimal assertions for the truflation batch path (truflation_insert_records)
 func TestPendingPruneDaysEnqueue_Truflation(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "pending_prune_days_enqueue_truflation_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testPendingPruneDaysTruflation(t),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func testPendingPruneDays(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {

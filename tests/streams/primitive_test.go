@@ -21,13 +21,13 @@ const primitiveStreamName = "primitive_stream_000000000000001"
 var primitiveStreamId = util.GenerateStreamId(primitiveStreamName)
 
 func TestPrimitiveStream(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "primitive_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testPRIMITIVE01_DataInsertion(t),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func testPRIMITIVE01_DataInsertion(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {

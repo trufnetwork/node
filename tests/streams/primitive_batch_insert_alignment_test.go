@@ -30,13 +30,13 @@ import (
 // The test creates two streams and inserts interleaved data, then verifies each stream
 // contains only its own data by checking specific value/stream_ref combinations.
 func TestPrimitiveBatchInsertAlignment(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "primitive_batch_insert_alignment_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testBatchAlignment(t),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 func testBatchAlignment(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {

@@ -50,7 +50,7 @@ var composedStreamId = util.GenerateStreamId(composedStreamName)
 var primitiveChildStreamId = util.GenerateStreamId(primitiveChildStreamName)
 
 func TestQueryStream(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "query_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
@@ -76,7 +76,7 @@ func TestQueryStream(t *testing.T) {
 			WithQueryTestSetup(test_GetIndexChangeUntilSpecificTime(t)),
 			WithQueryTestSetup(testBackwardCompatibility_GetRecord(t)),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 // TestConfig holds the configuration for testing streams

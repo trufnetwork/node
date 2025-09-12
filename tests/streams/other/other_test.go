@@ -28,7 +28,7 @@ var defaultStreamLocator = types.StreamLocator{
 // [OTHER01] All referenced addresses must be lowercased and valid EVM addresses starting with `0x`.
 // TestAddressValidation tests that all referenced addresses must be lowercased and valid EVM addresses starting with `0x`.
 func TestAddressValidation(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "address_validation_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
@@ -82,13 +82,13 @@ func TestAddressValidation(t *testing.T) {
 				return nil
 			},
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 // [OTHER02] Stream ids must respect the following regex: `^st[a-z0-9]{30}$` and be unique by each stream owner.
 // TestStreamIDValidation tests that stream ids must respect the following regex: `^st[a-z0-9]{30}$`
 func TestStreamIDValidation(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "stream_id_validation_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
@@ -193,20 +193,20 @@ func TestStreamIDValidation(t *testing.T) {
 				return nil
 			},
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 // [OTHER03] Any user can create a stream.
 // TestAnyUserCanCreateStream tests that any user with a valid Ethereum address can create a stream
 func TestAnyUserCanCreateStream(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "any_user_can_create_stream_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testAnyUserCanCreateStream(t),
 			testAnyUserCanCreateStream(t),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 // testAnyUserCanCreateStream tests that any user with a valid Ethereum address can create a stream
@@ -250,13 +250,13 @@ func testAnyUserCanCreateStream(t *testing.T) func(ctx context.Context, platform
 // [OTHER04] Multiple streams can be created in a single transaction.
 // TestMultipleStreamCreation tests that multiple streams can be created in a single transaction using CreateStreams
 func TestMultipleStreamCreation(t *testing.T) {
-	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "multiple_stream_creation_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testMultipleStreamCreation(t),
 		},
-	}, testutils.GetTestOptions())
+	}, testutils.GetTestOptionsWithCache())
 }
 
 // testMultipleStreamCreation tests that multiple streams can be created in a single transaction
