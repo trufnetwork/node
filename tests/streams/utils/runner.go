@@ -75,6 +75,13 @@ func RunSchemaTest(t TestingT, s kwilTesting.SchemaTest, options *Options) {
 		wrappedTests = wrapWithExtensionsSetup(context.Background(), s.FunctionTests, cacheConfig, erc20Config, kwilOpts)
 	}
 
+	// here we still don't support test cases
+	// let's make it fatal error
+	// but if needed it's easy to support it in the future
+	if len(s.TestCases) > 0 {
+		testT.Fatalf("test cases are not supported yet")
+	}
+
 	// Run each function test in isolation so that ordered-sync is reset
 	// before the interpreter is created for that function. Resetting inside
 	// the function is too late because EngineReadyHooks run at interpreter init.
@@ -86,7 +93,6 @@ func RunSchemaTest(t TestingT, s kwilTesting.SchemaTest, options *Options) {
 			SeedScripts:    s.SeedScripts,
 			SeedStatements: s.SeedStatements,
 			FunctionTests:  wrappedTests,
-			TestCases:      s.TestCases,
 			Owner:          s.Owner,
 		}, kwilOpts)
 		return
@@ -99,7 +105,6 @@ func RunSchemaTest(t TestingT, s kwilTesting.SchemaTest, options *Options) {
 			SeedScripts:    s.SeedScripts,
 			SeedStatements: s.SeedStatements,
 			FunctionTests:  []kwilTesting.TestFunc{fn},
-			TestCases:      s.TestCases,
 			Owner:          s.Owner,
 		}, kwilOpts)
 	}
