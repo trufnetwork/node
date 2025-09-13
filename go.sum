@@ -1216,6 +1216,8 @@ github.com/trufnetwork/kwil-db v0.10.3-0.20250911225741-d6cb2b2747ff h1:TeVummmh
 github.com/trufnetwork/kwil-db v0.10.3-0.20250911225741-d6cb2b2747ff/go.mod h1:LiBAC48uZl2B0IiLtD2hpOce7RNfpuDdghVAOc3u1Qo=
 github.com/trufnetwork/kwil-db v0.10.3-0.20250912193956-b6513bb06243 h1:jJzVAktQLGtpBU/m1kg8H622bRFhzqXg7VkmhHWD0t4=
 github.com/trufnetwork/kwil-db v0.10.3-0.20250912193956-b6513bb06243/go.mod h1:LiBAC48uZl2B0IiLtD2hpOce7RNfpuDdghVAOc3u1Qo=
+github.com/trufnetwork/kwil-db v0.10.3-0.20250912234738-2dca62e3c9b7 h1:FJrOP9YW1AfwKCGcIrfA3oHZE++H7TbZAnD61tDZVFA=
+github.com/trufnetwork/kwil-db v0.10.3-0.20250912234738-2dca62e3c9b7/go.mod h1:LiBAC48uZl2B0IiLtD2hpOce7RNfpuDdghVAOc3u1Qo=
 github.com/trufnetwork/kwil-db/core v0.4.3-0.20250911225741-d6cb2b2747ff h1:2hQ3ChOBM76eh10Ix0GItIfK5HNwfqrGWhoiQIH/P60=
 github.com/trufnetwork/kwil-db/core v0.4.3-0.20250911225741-d6cb2b2747ff/go.mod h1:HnOsh9+BN13LJCjiH0+XKaJzyjWKf+H9AofFFp90KwQ=
 github.com/trufnetwork/kwil-db/core v0.4.3-0.20250912193956-b6513bb06243 h1:HhFCi8rcoNDAhYhYE494robbz9UmYs6T5nm0gqLuSic=
