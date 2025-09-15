@@ -24,15 +24,14 @@ CREATE OR REPLACE ACTION sepolia_wallet_balance($wallet_address TEXT) PUBLIC VIE
 CREATE OR REPLACE ACTION sepolia_admin_bridge_tokens($amount TEXT) PUBLIC {
   $num_amount := $amount::NUMERIC(78, 0);
   
-  -- Get fee configuration for withdraw
-  FOR $config IN SELECT fee_percentage, treasury_address FROM fee_configs WHERE operation_type = 'deposit' {
-    $fee := $num_amount * $config.fee_percentage;
-    sepolia_bridge.lock($fee);
-    sepolia_bridge.unlock($config.treasury_address, $fee);
-    
-    -- Bridge the rest to users
-    sepolia_bridge.bridge($num_amount - $fee);
-  }
+  -- Get fee configuration for deposit
+  $fee_percentage, $treasury_address := get_fee_config_by_type('withdraw');
+  $fee := $num_amount * $fee_percentage;
+  sepolia_bridge.lock($fee);
+  sepolia_bridge.unlock($treasury_address, $fee);
+  
+  -- Bridge the rest to users
+  sepolia_bridge.bridge($num_amount - $fee);
 };
 
 -- MAINNET
@@ -44,13 +43,12 @@ CREATE OR REPLACE ACTION mainnet_wallet_balance($wallet_address TEXT) PUBLIC VIE
 CREATE OR REPLACE ACTION mainnet_admin_bridge_tokens($amount TEXT) PUBLIC {
   $numAmount := $amount::NUMERIC(78, 0);
   
-  -- Get fee configuration for withdraw
-  FOR $config IN SELECT fee_percentage, treasury_address FROM fee_configs WHERE operation_type = 'deposit' {
-    $fee := $numAmount * $config.fee_percentage;
-    mainnet_bridge.lock($fee);
-    mainnet_bridge.unlock($config.treasury_address, $fee);
-    
-    -- Bridge the rest to users
-    mainnet_bridge.bridge($numAmount - $fee);
-  }
+  -- Get fee configuration for deposit
+  $fee_percentage, $treasury_address := get_fee_config_by_type('withdraw');
+  $fee := $numAmount * $fee_percentage;
+  mainnet_bridge.lock($fee);
+  mainnet_bridge.unlock($treasury_address, $fee);
+  
+  -- Bridge the rest to users
+  mainnet_bridge.bridge($numAmount - $fee);
 };
