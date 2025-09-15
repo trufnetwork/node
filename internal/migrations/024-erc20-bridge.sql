@@ -25,7 +25,7 @@ CREATE OR REPLACE ACTION sepolia_admin_bridge_tokens($amount TEXT) PUBLIC {
   $num_amount := $amount::NUMERIC(78, 0);
   
   -- Get fee configuration for withdraw
-  $found := 0
+  $found := 0;
   FOR $config IN SELECT fee_percentage, treasury_address FROM fee_configs WHERE operation_type = 'withdraw' ORDER BY created_at DESC LIMIT 1 {
     $fee := $num_amount * $config.fee_percentage;
 
@@ -48,11 +48,11 @@ CREATE OR REPLACE ACTION mainnet_wallet_balance($wallet_address TEXT) PUBLIC VIE
   RETURN $balance;
 };
 
-CREATE OR REPLACE ACTION sepolia_admin_bridge_tokens($amount TEXT) PUBLIC {
+CREATE OR REPLACE ACTION mainnet_admin_bridge_tokens($amount TEXT) PUBLIC {
   $num_amount := $amount::NUMERIC(78, 0);
   
   -- Get fee configuration for withdraw
-  $found := 0
+  $found := 0;
   FOR $config IN SELECT fee_percentage, treasury_address FROM fee_configs WHERE operation_type = 'withdraw' ORDER BY created_at DESC LIMIT 1 {
     $fee := $num_amount * $config.fee_percentage;
 
