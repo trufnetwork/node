@@ -25,7 +25,8 @@ CREATE OR REPLACE ACTION sepolia_admin_bridge_tokens($amount TEXT) PUBLIC {
   $num_amount := $amount::NUMERIC(78, 0);
   
   -- Get fee configuration for withdraw
-  FOR $config IN SELECT fee_percentage, treasury_address FROM fee_configs WHERE operation_type = 'withdraw' ORDER BY created_at LIMIT 1 {
+  $found := 0
+  FOR $config IN SELECT fee_percentage, treasury_address FROM fee_configs WHERE operation_type = 'withdraw' ORDER BY created_at DESC LIMIT 1 {
     $fee := $num_amount * $config.fee_percentage;
 
     IF $fee > 0::NUMERIC(78, 0) {
@@ -35,7 +36,10 @@ CREATE OR REPLACE ACTION sepolia_admin_bridge_tokens($amount TEXT) PUBLIC {
     
     -- Bridge the rest to users
     sepolia_bridge.bridge($num_amount - $fee);
+    $found := 1;
   }
+
+  IF $found = 0 { ERROR('No fee_configs rows for operation_type=withdraw'); }
 };
 
 -- MAINNET
@@ -44,11 +48,12 @@ CREATE OR REPLACE ACTION mainnet_wallet_balance($wallet_address TEXT) PUBLIC VIE
   RETURN $balance;
 };
 
-CREATE OR REPLACE ACTION mainnet_admin_bridge_tokens($amount TEXT) PUBLIC {
+CREATE OR REPLACE ACTION sepolia_admin_bridge_tokens($amount TEXT) PUBLIC {
   $num_amount := $amount::NUMERIC(78, 0);
   
   -- Get fee configuration for withdraw
-  FOR $config IN SELECT fee_percentage, treasury_address FROM fee_configs WHERE operation_type = 'withdraw' ORDER BY created_at LIMIT 1 {
+  $found := 0
+  FOR $config IN SELECT fee_percentage, treasury_address FROM fee_configs WHERE operation_type = 'withdraw' ORDER BY created_at DESC LIMIT 1 {
     $fee := $num_amount * $config.fee_percentage;
 
     IF $fee > 0::NUMERIC(78, 0) {
@@ -58,5 +63,8 @@ CREATE OR REPLACE ACTION mainnet_admin_bridge_tokens($amount TEXT) PUBLIC {
     
     -- Bridge the rest to users
     mainnet_bridge.bridge($num_amount - $fee);
+    $found := 1;
   }
+
+  IF $found = 0 { ERROR('No fee_configs rows for operation_type=withdraw'); }
 };
