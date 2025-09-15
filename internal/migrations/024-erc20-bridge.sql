@@ -28,7 +28,7 @@ CREATE OR REPLACE ACTION sepolia_admin_bridge_tokens($amount TEXT) PUBLIC {
   FOR $config IN SELECT fee_percentage, treasury_address FROM fee_configs WHERE operation_type = 'withdraw' ORDER BY created_at LIMIT 1 {
     $fee := $num_amount * $config.fee_percentage;
 
-    IF $fee > 0 {
+    IF $fee > 0::NUMERIC(78, 0) {
       sepolia_bridge.lock($fee);
       sepolia_bridge.unlock($config.treasury_address, $fee);
     }
@@ -51,7 +51,7 @@ CREATE OR REPLACE ACTION mainnet_admin_bridge_tokens($amount TEXT) PUBLIC {
   FOR $config IN SELECT fee_percentage, treasury_address FROM fee_configs WHERE operation_type = 'withdraw' ORDER BY created_at LIMIT 1 {
     $fee := $num_amount * $config.fee_percentage;
 
-    IF $fee > 0 {
+    IF $fee > 0::NUMERIC(78, 0) {
       mainnet_bridge.lock($fee);
       mainnet_bridge.unlock($config.treasury_address, $fee);
     }
