@@ -16,12 +16,6 @@ CREATE TABLE IF NOT EXISTS fee_configs (
     CHECK (treasury_address LIKE '0x%' AND LENGTH(treasury_address) = 42)
 );
 
--- Insert default fee configurations
-INSERT INTO fee_configs (operation_type, fee_percentage, treasury_address, created_at, updated_at) VALUES
-('deposit', 0.0100, '0xDe5B2aBce299eBdC3567895B1B4b02Ca2c33C94A', @height, @height),
-('withdraw', 0.0100, '0xDe5B2aBce299eBdC3567895B1B4b02Ca2c33C94A', @height, @height)
-ON CONFLICT (operation_type) DO NOTHING;
-
 -- Action to get fee configuration by operation type
 CREATE OR REPLACE ACTION get_fee_config_by_type($operation_type TEXT) 
 PUBLIC VIEW RETURNS (
