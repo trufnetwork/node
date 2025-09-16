@@ -21,35 +21,16 @@ CREATE OR REPLACE ACTION sepolia_wallet_balance($wallet_address TEXT) PUBLIC VIE
   RETURN $balance;
 };
 
-CREATE OR REPLACE ACTION sepolia_admin_bridge_tokens($amount TEXT) PUBLIC {
-  -- Calculate 1% fee and lock it in our treasury
-  $num_amount := $amount::NUMERIC(78, 0);
-  $fee := $num_amount * 0.01;
-  sepolia_bridge.lock($fee);
-
-  $treasury_address := '0xDe5B2aBce299eBdC3567895B1B4b02Ca2c33C94A';
-  sepolia_bridge.unlock($treasury_address, $fee);
-
-  -- Bridge the rest to users
-  sepolia_bridge.bridge($num_amount - $fee);
+CREATE OR REPLACE ACTION sepolia_bridge_tokens($amount TEXT) PUBLIC {
+  sepolia_bridge.bridge($amount::NUMERIC(78, 0));
 };
 
 -- MAINNET
-CREATE OR REPLACE ACTION mainnet_wallet_balance($wallet_address TEXT) PUBLIC VIEW RETURNS (balance NUMERIC(78, 0)) {
+CREATE OR REPLACE ACTION ethereum_wallet_balance($wallet_address TEXT) PUBLIC VIEW RETURNS (balance NUMERIC(78, 0)) {
   $balance := mainnet_bridge.balance($wallet_address);
   RETURN $balance;
 };
 
-CREATE OR REPLACE ACTION mainnet_admin_bridge_tokens($amount TEXT) PUBLIC {
-  -- Calculate 1% fee and lock it in our treasury
-  $numAmount := $amount::NUMERIC(78, 0);
-  $fee := $numAmount * 0.01;
-  mainnet_bridge.lock($fee);
-
-  -- TODO: update when we have treasury address on mainnet
-  -- $treasury_address := ''
-  -- sepolia_bridge.unlock($treasury_address, $fee);
-
-  -- Bridge the rest to users
-  mainnet_bridge.bridge($numAmount - $fee);
+CREATE OR REPLACE ACTION ethereum_bridge_tokens($amount TEXT) PUBLIC {
+  mainnet_bridge.bridge($amount::NUMERIC(78, 0));
 };
