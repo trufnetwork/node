@@ -68,6 +68,10 @@ func TestTransferActionValidation(t *testing.T) {
 		err := erc20shim.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
+		// Get the configured escrow address from bridge info
+		configuredEscrow, err := getBridgeEscrowAddress(ctx, platform)
+		require.NoError(t, err)
+
 		// Test Case 1: Invalid address format
 		t.Log("Testing invalid address format...")
 		err = callSepoliaTransfer(ctx, platform, TestUserA, "invalid_address", TestAmount1)
@@ -103,17 +107,37 @@ func TestTransferActionValidation(t *testing.T) {
 		}
 		require.Error(t, err)
 
-		// TODO: Needs https://github.com/trufnetwork/kwil-db/issues/1608 to be fixed first
-		// Test Case 5: Insufficient balance (user has no balance)
-		// NOTE: This test case is commented out because the ERC20 extension
-		// may not validate insufficient balance at the extension level
-		// t.Log("Testing insufficient balance...")
-		// err = callSepoliaTransfer(ctx, platform, TestUserA, TestUserB, TestAmount1)
-		// if err == nil {
-		// 	t.Log("ERROR: Expected error for insufficient balance but got none")
-		// }
-		// require.Error(t, err)
-		// require.Contains(t, err.Error(), "insufficient balance")
+		// Test Case 5: Insufficient balance (user has no balance record - nil balance)
+		t.Log("Testing insufficient balance with nil balance...")
+		err = callSepoliaTransfer(ctx, platform, TestUserA, TestUserB, TestAmount1)
+		if err == nil {
+			t.Log("ERROR: Expected error for insufficient balance (nil) but got none")
+		}
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "insufficient balance")
+
+		// Test Case 6: Insufficient balance (user has some balance but not enough)
+		t.Log("Testing insufficient balance with partial balance...")
+
+		// Give TestUserA a small balance (half of what they'll try to transfer)
+		smallAmount := "500000000000000000" // 0.5 tokens (half of TestAmount1 which is 1.0)
+		err = testerc20.InjectERC20Transfer(ctx, platform,
+			TestChain, configuredEscrow, TestERC20, TestUserA, configuredEscrow, smallAmount, 10, nil)
+		require.NoError(t, err)
+
+		// Verify they have the small balance
+		balance, err := callSepoliaWalletBalance(ctx, platform, TestUserA)
+		require.NoError(t, err)
+		require.Equal(t, smallAmount, balance, "TestUserA should have small balance")
+
+		// Try to transfer more than they have (TestAmount1 = 1.0 tokens > smallAmount = 0.5 tokens)
+		err = callSepoliaTransfer(ctx, platform, TestUserA, TestUserB, TestAmount1)
+		if err == nil {
+			t.Log("ERROR: Expected error for insufficient balance (partial) but got none")
+		}
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "insufficient balance")
+		require.Contains(t, err.Error(), smallAmount) // Should show actual balance they have
 
 		// Test balance query with invalid address
 		t.Log("Testing balance query with invalid address...")
