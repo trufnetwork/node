@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-//go:embed *.sql test_only/*.sql
+//go:embed *.sql test_only/*.sql erc20-bridge/*.sql
 var seedFiles embed.FS
 
 func GetSeedScriptPaths() []string {
@@ -39,6 +39,17 @@ func GetSeedScriptPaths() []string {
 	for _, entry := range entries {
 		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
 			seedsFiles = append(seedsFiles, filepath.Join(dir, "test_only", entry.Name()))
+		}
+	}
+
+	// process erc20-bridge directory
+	entries, err = seedFiles.ReadDir("erc20-bridge")
+	if err != nil {
+		panic(err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
+			seedsFiles = append(seedsFiles, filepath.Join(dir, "erc20-bridge", entry.Name()))
 		}
 	}
 
