@@ -46,6 +46,11 @@ services:
       - "${TN_RPC_PORT:-8484}:8484"
       - "8080:8080"
       - "26656:26656"
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -q --spider http://localhost:8484/api/v1/health" ]
+      interval: 1m
+      timeout: 10s
+      retries: 10
     depends_on:
       kwil-postgres:
         condition: service_healthy
@@ -67,4 +72,5 @@ networks:
 
 volumes:
   data-kwil-postgres:
+
   data-tn-db:
