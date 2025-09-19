@@ -79,7 +79,7 @@ tasks:
   docker:build:local:
     desc: Build Docker image for local development (no version args needed)
     cmds:
-      - docker build -f deployments/Dockerfile -t tn-db:local .
+      - docker build -f deployments/Dockerfile -t ghcr.io/trufnetwork/node:local .
 
   # ─── host ─────────────────────────────────────────────────────────────────────
 

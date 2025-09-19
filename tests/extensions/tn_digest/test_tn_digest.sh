@@ -12,7 +12,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Configuration
-DOCKER_IMAGE="tn-db:digest-test"
+DOCKER_IMAGE="ghcr.io/trufnetwork/node:digest-test"
 COMPOSE_PROJECT="tn-digest-e2e"
 
 # Function to print colored output

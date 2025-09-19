@@ -160,8 +160,8 @@ func (f *SimpleNodeFixture) startKwild(ctx context.Context, image string, config
 			"KWILD_DB_PASS": "kwil",
 			"KWILD_DB_NAME": "kwil",
 			// Required for config.sh initialization
-			"CHAIN_ID": config.ChainID,
-			"DB_OWNER": dbOwnerIdentifier,
+			"SETUP_CHAIN_ID": config.ChainID,
+			"SETUP_DB_OWNER": dbOwnerIdentifier,
 			// Additional configuration overrides
 			"KWILD_APP_JSONRPC_LISTEN_ADDR": "0.0.0.0:8484",
 			"KWILD_APP_P2P_LISTEN_ADDR":     "0.0.0.0:6600",

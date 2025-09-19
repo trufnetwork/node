@@ -14,8 +14,8 @@ for i in {1..5}; do
   if aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 123456789012.dkr.ecr.us-west-2.amazonaws.com/mock-repo && \
      docker pull 123456789012.dkr.ecr.us-west-2.amazonaws.com/mock-repo:latest; then
     echo "ECR login and pull successful."
-    # Tag the image as tn-db:local, as the docker-compose file expects that
-    docker tag 123456789012.dkr.ecr.us-west-2.amazonaws.com/mock-repo:latest tn-db:local
+    # Tag the image as ghcr.io/trufnetwork/node:local, as the docker-compose file expects that
+    docker tag 123456789012.dkr.ecr.us-west-2.amazonaws.com/mock-repo:latest ghcr.io/trufnetwork/node:local
     break
   fi
   if [ $i -eq 5 ]; then

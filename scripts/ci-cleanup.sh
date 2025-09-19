@@ -11,7 +11,7 @@ fi
 
 # Common container names/images
 names=("tn-db" "kwil-postgres" "kwild" "postgres")
-images=("kwildb/postgres" "tn-db:local" "kwildb/postgres:latest" "kwildb/postgres:16.8-1")
+images=("kwildb/postgres" "ghcr.io/trufnetwork/node:local" "kwildb/postgres:latest" "kwildb/postgres:16.8-1")
 
 echo "[ci-cleanup] Stopping/removing lingering containers by name..."
 for n in "${names[@]}"; do
@@ -49,5 +49,3 @@ echo "[ci-cleanup] Cleanup complete."
 if command -v pkill >/dev/null 2>&1; then
   pkill -9 -f "\bkwild\b" 2>/dev/null || true
 fi
-
-
