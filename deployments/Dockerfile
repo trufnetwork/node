@@ -24,7 +24,7 @@ FROM alpine:latest
 
 ENV SETUP_CHAIN_ID=truflation-dev
 ENV SETUP_DB_OWNER=
-# DB_OWNER will be provided as an environment variable at runtime
+# Provide SETUP_DB_OWNER at runtime to override the derived owner; otherwise kwild derives one from the generated node key
 ENV CONFIG_PATH=/root/.kwild
 
 WORKDIR /app

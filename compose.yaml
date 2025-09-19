@@ -28,24 +28,28 @@ services:
   tn-db:
     container_name: tn-db
     hostname: tn-db
-    image: "tn-db:local"
+    image: "ghcr.io/trufnetwork/node:local"
     restart: unless-stopped
     build:
       context: .
       dockerfile: ./deployments/Dockerfile
-      args:
-        - CHAIN_ID=${CHAIN_ID:-trufnetwork-dev}
     environment:
       CONFIG_PATH: /root/.kwild
       # app.pg-db-host
       KWILD_DB_HOST: kwil-postgres
-      # DB_OWNER must be provided at runtime
-      DB_OWNER: ${DB_OWNER:-}
+      # Optionally supply DB_OWNER to override the owner derived from the generated node key
+      SETUP_DB_OWNER: ${DB_OWNER:-}
+      SETUP_CHAIN_ID: ${CHAIN_ID:-trufnetwork-dev}
     ports:
       - "50051:50051"
       - "${TN_RPC_PORT:-8484}:8484"
       - "8080:8080"
       - "26656:26656"
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -q --spider http://localhost:8484/api/v1/health" ]
+      interval: 1m
+      timeout: 10s
+      retries: 10
     depends_on:
       kwil-postgres:
         condition: service_healthy
@@ -53,6 +57,8 @@ services:
       - ${TN_VOLUME:-data-tn-db}:/root/.kwild
     networks:
       - tn-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     logging:
       driver: "json-file"
       options:

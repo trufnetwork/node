@@ -25,8 +25,8 @@ services:
       KWILD_DB_HOST: postgres
       KWILD_DB_PORT: 5432
       # Node configuration
-      CHAIN_ID: tn-metrics-test
-      DB_OWNER: "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"
+      SETUP_CHAIN_ID: tn-metrics-test
+      SETUP_DB_OWNER: "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"
       # Network configuration
       KWILD_APP_JSONRPC_LISTEN_ADDR: "0.0.0.0:8484"
       KWILD_APP_P2P_LISTEN_ADDR: "0.0.0.0:6600"
