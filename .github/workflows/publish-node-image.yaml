@@ -2,6 +2,11 @@ name: Publish Node Image
 
 on:
   workflow_dispatch:
+    inputs:
+      tag_latest:
+        description: "Also tag this build as latest"
+        type: boolean
+        default: false
   release:
     types:
       - published
@@ -17,6 +22,8 @@ jobs:
   build-and-push:
     name: Build and Push
     runs-on: ubuntu-latest
+    env:
+      TAG_LATEST: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.tag_latest == 'true') }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -37,7 +44,7 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=latest,enable=${{ env.TAG_LATEST }}
             type=sha
             type=ref,event=tag
             type=semver,pattern={{version}}
