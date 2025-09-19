@@ -14,6 +14,4 @@ else
     echo "Config path set to $CONFIG_PATH"
 fi
 
-exec /app/kwild start --root $CONFIG_PATH \
-       --db.read-timeout "60s"\
-       --snapshots.enable
+exec /app/kwild start --root $CONFIG_PATH
