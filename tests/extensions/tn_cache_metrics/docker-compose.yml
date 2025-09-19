@@ -16,7 +16,7 @@ services:
       - metrics-net
 
   kwild:
-    image: tn-db:metrics-test
+    image: ghcr.io/trufnetwork/node:metrics-test
     depends_on:
       postgres:
         condition: service_healthy

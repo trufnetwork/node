@@ -12,7 +12,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Configuration
-DOCKER_IMAGE="tn-db:metrics-test"
+DOCKER_IMAGE="ghcr.io/trufnetwork/node:metrics-test"
 COMPOSE_PROJECT="tn-cache-metrics"
 
 # Function to print colored output

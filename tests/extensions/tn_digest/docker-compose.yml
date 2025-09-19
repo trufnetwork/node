@@ -16,7 +16,7 @@ services:
       - digest-net
 
   kwild:
-    image: tn-db:digest-test
+    image: ghcr.io/trufnetwork/node:digest-test
     depends_on:
       postgres:
         condition: service_healthy
