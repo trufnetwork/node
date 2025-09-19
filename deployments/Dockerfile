@@ -22,9 +22,10 @@ FROM busybox:1.35.0-uclibc as busybox
 
 FROM alpine:latest
 
-ARG CHAIN_ID=truflation-dev
-
+ENV SETUP_CHAIN_ID=truflation-dev
+ENV SETUP_DB_OWNER=
 # DB_OWNER will be provided as an environment variable at runtime
+ENV CONFIG_PATH=/root/.kwild
 
 WORKDIR /app
 
@@ -41,13 +42,13 @@ RUN chmod +x /app/entrypoint.sh
 
 # create the configuration script; note that we are NOT running it here
 RUN echo "#!/bin/sh" > /app/config.sh && \
-    echo "set -e" >> /app/config.sh && \
-    echo "if [ ! -f /root/.kwild/config.toml ]; then" >> /app/config.sh && \
+    echo "set -xe" >> /app/config.sh && \
+    echo "if [ ! -f $CONFIG_PATH/config.toml ]; then" >> /app/config.sh && \
     echo "    echo 'Configuration does not exist';" >> /app/config.sh && \
     echo "    echo 'Creating configuration';" >> /app/config.sh && \
-    echo "    ./kwild setup init --chain-id $CHAIN_ID --db-owner \$DB_OWNER -r /root/.kwil-new;" >> /app/config.sh && \
-    echo "    mkdir -p /root/.kwild;" >> /app/config.sh && \
-    echo "    cp /root/.kwil-new/* /root/.kwild;" >> /app/config.sh && \
+    echo "    ./kwild setup init --chain-id \"\$SETUP_CHAIN_ID\" --db-owner \"\$SETUP_DB_OWNER\" -r '/root/.kwil-new';" >> /app/config.sh && \
+    echo "    mkdir -p $CONFIG_PATH;" >> /app/config.sh && \
+    echo "    cp /root/.kwil-new/* $CONFIG_PATH;" >> /app/config.sh && \
     echo "    rm -rf /root/.kwil-new;" >> /app/config.sh && \
     echo "    echo 'Configuration created';" >> /app/config.sh && \
     echo "else" >> /app/config.sh && \
