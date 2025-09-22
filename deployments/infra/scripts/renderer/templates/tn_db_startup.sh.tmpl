@@ -37,8 +37,8 @@ for i in {1..5}; do
   if aws ecr get-login-password --region {{ .Region }} | docker login --username AWS --password-stdin {{ .RepoURI }} && \
      docker pull {{ .ImageURI }}; then
     echo "ECR login and pull successful."
-    # Tag the image as tn-db:local, as the docker-compose file expects that
-    docker tag {{ .ImageURI }} tn-db:local
+    # Tag the image as ghcr.io/trufnetwork/node:local, as the docker-compose file expects that
+    docker tag {{ .ImageURI }} ghcr.io/trufnetwork/node:local
     break
   fi
   if [ $i -eq 5 ]; then

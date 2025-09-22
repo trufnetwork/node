@@ -6,7 +6,7 @@ echo "Starting custom entrypoint for tn_digest E2E test..."
 # Initialize configuration if it doesn't exist
 if [ ! -f /root/.kwild/config.toml ]; then
     echo "Initializing kwild configuration..."
-    ./kwild setup init --chain-id ${CHAIN_ID:-tn-digest-test} --db-owner ${DB_OWNER} -r /root/.kwild/
+    ./kwild setup init --chain-id ${SETUP_CHAIN_ID:-tn-digest-test} --db-owner ${SETUP_DB_OWNER} -r /root/.kwild/
     echo "Configuration initialized successfully"
     
     # Add tn_digest extension configuration with fast reload for testing
