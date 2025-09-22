@@ -1,0 +1,230 @@
+---
+name: Build AMI
+
+'on':
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: "Force AMI build even if not a release"
+        type: boolean
+        default: false
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  build-ami:
+    name: Build TrufNetwork AMI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          check-latest: true
+
+      - name: Install AWS CDK
+        run: |
+          npm install -g aws-cdk@latest
+          cdk --version
+
+      - name: Check if AMI pipeline exists
+        id: check-pipeline
+        run: |
+          cd deployments/infra
+
+          # Check if AMI pipeline stack is deployed
+          STACK_NAME="TrufNetwork-AMI-Pipeline-dev"
+          if aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region ${{ env.AWS_REGION }} > /dev/null 2>&1; then
+            echo "pipeline_exists=true" >> $GITHUB_OUTPUT
+            # Get pipeline ARN from stack outputs
+            PIPELINE_ARN=$(aws cloudformation describe-stacks \
+              --stack-name "$STACK_NAME" \
+              --region ${{ env.AWS_REGION }} \
+              --query \
+                'Stacks[0].Outputs[?OutputKey==`AmiPipelineArn`].OutputValue' \
+              --output text)
+            echo "pipeline_arn=$PIPELINE_ARN" >> $GITHUB_OUTPUT
+          else
+            echo "pipeline_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy AMI pipeline infrastructure
+        if: steps.check-pipeline.outputs.pipeline_exists != 'true'
+        run: |
+          cd deployments/infra
+          echo "Deploying AMI pipeline infrastructure..."
+          cdk deploy TrufNetwork-AMI-Pipeline-dev --require-approval never
+
+          # Get pipeline ARN after deployment
+          PIPELINE_ARN=$(aws cloudformation describe-stacks \
+            --stack-name "TrufNetwork-AMI-Pipeline-dev" \
+            --region ${{ env.AWS_REGION }} \
+            --query \
+              'Stacks[0].Outputs[?OutputKey==`AmiPipelineArn`].OutputValue' \
+            --output text)
+          echo "PIPELINE_ARN=$PIPELINE_ARN" >> $GITHUB_ENV
+
+      - name: Set pipeline ARN from existing stack
+        if: steps.check-pipeline.outputs.pipeline_exists == 'true'
+        run: |
+          echo "PIPELINE_ARN=${{ steps.check-pipeline.outputs.pipeline_arn }}" \
+            >> $GITHUB_ENV
+
+      - name: Trigger AMI build
+        run: |
+          echo "Starting AMI build with pipeline: $PIPELINE_ARN"
+
+          # Start image pipeline execution
+          EXECUTION_ID=$(aws imagebuilder start-image-pipeline-execution \
+            --image-pipeline-arn "$PIPELINE_ARN" \
+            --region ${{ env.AWS_REGION }} \
+            --query 'imageBuildVersionArn' \
+            --output text)
+
+          echo "AMI build started with execution ID: $EXECUTION_ID"
+          echo "EXECUTION_ID=$EXECUTION_ID" >> $GITHUB_ENV
+
+      - name: Wait for AMI build completion
+        timeout-minutes: 60
+        run: |
+          echo "Waiting for AMI build to complete..."
+          echo "Execution ID: $EXECUTION_ID"
+
+          # Poll for completion
+          while true; do
+            STATUS=$(aws imagebuilder get-image \
+              --image-build-version-arn "$EXECUTION_ID" \
+              --region ${{ env.AWS_REGION }} \
+              --query 'image.state.status' \
+              --output text)
+
+            echo "Current status: $STATUS"
+
+            case $STATUS in
+              "AVAILABLE")
+                echo "✅ AMI build completed successfully!"
+
+                # Get AMI ID
+                AMI_ID=$(aws imagebuilder get-image \
+                  --image-build-version-arn "$EXECUTION_ID" \
+                  --region ${{ env.AWS_REGION }} \
+                  --query 'image.outputResources.amis[0].image' \
+                  --output text)
+
+                echo "AMI ID: $AMI_ID"
+                echo "AMI_ID=$AMI_ID" >> $GITHUB_ENV
+                break
+                ;;
+              "FAILED")
+                echo "❌ AMI build failed!"
+                exit 1
+                ;;
+              "CANCELLED")
+                echo "❌ AMI build was cancelled!"
+                exit 1
+                ;;
+              *)
+                echo "⏳ Build in progress... waiting 30 seconds"
+                sleep 30
+                ;;
+            esac
+          done
+
+      - name: Get AMI details
+        run: |
+          if [ -n "$AMI_ID" ]; then
+            echo "📋 AMI Build Summary:"
+            echo "AMI ID: $AMI_ID"
+            echo "Region: ${{ env.AWS_REGION }}"
+            echo "Pipeline ARN: $PIPELINE_ARN"
+            echo "Execution ID: $EXECUTION_ID"
+
+            # Get AMI details
+            aws ec2 describe-images \
+              --image-ids "$AMI_ID" \
+              --region ${{ env.AWS_REGION }} \
+              --query \
+                'Images[0].{Name:Name,Description:Description,CreationDate:CreationDate,VirtualizationType:VirtualizationType,Architecture:Architecture,RootDeviceType:RootDeviceType}' \
+              --output table
+          fi
+
+      - name: Create GitHub release comment
+        if: github.event_name == 'release' && env.AMI_ID
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const amiId = process.env.AMI_ID;
+            const region = process.env.AWS_REGION;
+
+            const comment = `## 🚀 AMI Build Completed
+
+            **AMI ID:** \`${amiId}\`
+            **Region:** \`${region}\`
+            **Launch URL:** \\
+            https://console.aws.amazon.com/ec2/home?region=${region}#LaunchInstances:ami=${amiId}
+
+            ### Quick Start Commands:
+            \`\`\`bash
+            # Launch instance with this AMI
+            aws ec2 run-instances \\
+              --image-id ${amiId} \\
+              --instance-type t3.medium \\
+              --key-name your-key-pair \\
+              --security-group-ids sg-xxxxxxxxx \\
+              --region ${region}
+
+            # After instance is running, configure your node:
+            ssh ubuntu@your-instance-ip
+            sudo truflation-configure --network mainnet \\
+              --private-key "your-private-key"
+            \`\`\`
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+  notify-success:
+    name: Notify Success
+    runs-on: ubuntu-latest
+    needs: build-ami
+    if: success()
+    steps:
+      - name: Success notification
+        run: |
+          echo "✅ AMI build pipeline completed successfully!"
+          echo "AMI is now available in AWS regions and ready for deployment."
+
+  notify-failure:
+    name: Notify Failure
+    runs-on: ubuntu-latest
+    needs: build-ami
+    if: failure()
+    steps:
+      - name: Failure notification
+        run: |
+          echo "❌ AMI build pipeline failed!"
+          echo "Please check the logs and AWS ImageBuilder console for details."
+          exit 1

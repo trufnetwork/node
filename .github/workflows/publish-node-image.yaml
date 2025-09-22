@@ -1,6 +1,7 @@
+---
 name: Publish Node Image
 
-on:
+'on':
   workflow_dispatch:
     inputs:
       tag_latest:
@@ -16,7 +17,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/tn-db
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/node
 
 jobs:
   build-and-push:
