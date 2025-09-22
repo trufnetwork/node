@@ -181,14 +181,14 @@ func testListMetadataByHeight(t *testing.T, contractInfo setup.StreamInfo) kwilT
 			{metadataKey, "0", "int"},
 		}
 
-		for _, item := range metadataItems {
+		for i, item := range metadataItems {
 			err := procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
 				Platform: platform,
 				Locator:  contractInfo.Locator,
 				Key:      item.Key,
 				Value:    item.Value,
 				ValType:  item.ValType,
-				Height:   1,
+				Height:   int64(i + 1),
 			})
 			if err != nil {
 				return errors.Wrapf(err, "error inserting metadata with key %s", item.Key)
@@ -198,7 +198,7 @@ func testListMetadataByHeight(t *testing.T, contractInfo setup.StreamInfo) kwilT
 		result, err := procedure.ListMetadataByHeight(ctx, procedure.ListMetadataByHeightInput{
 			Platform: platform,
 			Key:      metadataKey,
-			Height:   1,
+			Height:   int64(len(metadataItems)),
 		})
 		if err != nil {
 			return errors.Wrapf(err, "error listing metadata")
@@ -208,7 +208,7 @@ func testListMetadataByHeight(t *testing.T, contractInfo setup.StreamInfo) kwilT
 		| value_i | value_f | value_b | value_s | value_ref | created_at |
 		|---------|---------|---------|---------|-----------|------------|
 		| 0 | <nil> | <nil> | <nil> | <nil> | 1 |
-		| 1 | <nil> | <nil> | <nil> | <nil> | 1 |`
+		| 1 | <nil> | <nil> | <nil> | <nil> | 2 |`
 
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
 			Actual:          result,
