@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -177,18 +178,22 @@ func testListMetadataByHeight(t *testing.T, contractInfo setup.StreamInfo) kwilT
 			Value   string
 			ValType string
 		}{
+			{metadataKey, "2", "int"},
 			{metadataKey, "1", "int"},
-			{metadataKey, "0", "int"},
 		}
 
-		for i, item := range metadataItems {
-			err := procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
+		for _, item := range metadataItems {
+			height, err := strconv.Atoi(item.Value)
+			if err != nil {
+				return errors.Wrapf(err, "error converting value to int")
+			}
+			err = procedure.InsertMetadata(ctx, procedure.InsertMetadataInput{
 				Platform: platform,
 				Locator:  contractInfo.Locator,
 				Key:      item.Key,
 				Value:    item.Value,
 				ValType:  item.ValType,
-				Height:   int64(i + 1),
+				Height:   int64(height),
 			})
 			if err != nil {
 				return errors.Wrapf(err, "error inserting metadata with key %s", item.Key)
@@ -207,8 +212,8 @@ func testListMetadataByHeight(t *testing.T, contractInfo setup.StreamInfo) kwilT
 		expected := `
 		| value_i | value_f | value_b | value_s | value_ref | created_at |
 		|---------|---------|---------|---------|-----------|------------|
-		| 0 | <nil> | <nil> | <nil> | <nil> | 1 |
-		| 1 | <nil> | <nil> | <nil> | <nil> | 2 |`
+		| 1 | <nil> | <nil> | <nil> | <nil> | 1 |
+		| 2 | <nil> | <nil> | <nil> | <nil> | 2 |`
 
 		table.AssertResultRowsEqualMarkdownTable(t, table.AssertResultRowsEqualMarkdownTableInput{
 			Actual:          result,
