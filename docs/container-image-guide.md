@@ -2,10 +2,13 @@
 
 Run the TRUF.NETWORK node container with Docker Compose while keeping the standard operator layout for data and configuration.
 
+> **Heads up**
+> The default quickstart relies on the container’s auto-initialization, which generates a brand-new genesis and starts an isolated network. Follow the optional pre-population section (or mount existing config) before the first run if you need to join an established network instead of bootstrapping a fresh one.
+
 ## Prerequisites
 - Docker Engine 24+ with the `docker compose` plugin.
 - Pull access to `ghcr.io/trufnetwork/node` and `kwildb/postgres`.
-- Optional: the [`kwild` CLI](https://github.com/trufnetwork/node/releases) if you want to pre-populate configuration files instead of using the container’s auto-initialisation path.
+- Optional: the [`kwild` CLI](https://github.com/trufnetwork/node/releases) if you want to pre-populate configuration files instead of using the container’s auto-initialization path.
 
 ## 1. Prepare the workspace
 ```bash
@@ -28,7 +31,7 @@ services:
     environment:
       POSTGRES_HOST_AUTH_METHOD: trust
     volumes:
-      # this will create a volume called pg-data in the current directory
+      # this creates a host directory named pg-data in the current workspace
       - ./pg-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
@@ -48,7 +51,7 @@ services:
       SETUP_CHAIN_ID: ${SETUP_CHAIN_ID:-truflation-dev}
       SETUP_DB_OWNER: ${SETUP_DB_OWNER:-}
     volumes:
-      # this will create a volume called tn_data in the current directory, or reuse your pre-generated config if it exists
+      # this creates a host directory named tn_data in the current workspace, or reuses your pre-generated config if it exists
       - ./tn_data:/root/.kwild
     ports:
       - "8484:8484"   # JSON-RPC
@@ -80,7 +83,7 @@ docker compose logs -f tn-node
 ```
 
 ## Optional: Pre-populate the configuration
-You can generate `config.toml`, `genesis.json`, and keys ahead of time so the container skips auto-initialisation.
+If you need this container to join an existing network (mainnet/testnet/devnet), generate `config.toml`, `genesis.json`, and keys ahead of time so the container skips auto-initialization.
 
 1. Clone the operator repository (once):
    ```bash

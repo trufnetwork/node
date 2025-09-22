@@ -76,7 +76,8 @@ services:
       - KWILD_DB_HOST=kwil-postgres-1
       - KWILD_APP_HOSTNAME=tn-db-1
       - KWILD_CHAIN_P2P_EXTERNAL_ADDRESS=http://tn-db-1:26656
-      - DB_OWNER=${DB_OWNER:-0x4710A8D8F0D845da110086812a32De6d90d7ff5C}
+      - SETUP_DB_OWNER=${SETUP_DB_OWNER:-0x4710A8D8F0D845da110086812a32De6d90d7ff5C}
+      - SETUP_CHAIN_ID=${SETUP_CHAIN_ID:-trufnetwork-dev}
     ports:
       - "50051:50051"
       - "8080:8080"
@@ -106,7 +107,8 @@ services:
       - KWILD_DB_HOST=kwil-postgres-2
       - KWILD_APP_HOSTNAME=tn-db-2
       - KWILD_CHAIN_P2P_EXTERNAL_ADDRESS=http://tn-db-2:26656
-      - DB_OWNER=${DB_OWNER:-0x4710A8D8F0D845da110086812a32De6d90d7ff5C}
+      - SETUP_DB_OWNER=${SETUP_DB_OWNER:-0x4710A8D8F0D845da110086812a32De6d90d7ff5C}
+      - SETUP_CHAIN_ID=${SETUP_CHAIN_ID:-trufnetwork-dev}
     ports:
       - "8485:8484"
       - "26658:26657"
