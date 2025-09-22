@@ -17,6 +17,7 @@ import (
 	"github.com/trufnetwork/node/tests/streams/utils/erc20"
 	"github.com/trufnetwork/node/tests/streams/utils/service"
 
+	erc20shim "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
 	orderedsync "github.com/trufnetwork/kwil-db/node/exts/ordered-sync"
 )
 
@@ -88,6 +89,7 @@ func RunSchemaTest(t TestingT, s kwilTesting.SchemaTest, options *Options) {
 	if len(wrappedTests) <= 1 {
 		// Single function: simple path
 		orderedsync.ForTestingReset()
+		erc20shim.ForTestingResetSingleton()
 		kwilTesting.RunSchemaTest(testT, kwilTesting.SchemaTest{
 			Name:           s.Name,
 			SeedScripts:    s.SeedScripts,
@@ -100,6 +102,7 @@ func RunSchemaTest(t TestingT, s kwilTesting.SchemaTest, options *Options) {
 
 	for _, fn := range wrappedTests {
 		orderedsync.ForTestingReset()
+		erc20shim.ForTestingResetSingleton()
 		kwilTesting.RunSchemaTest(testT, kwilTesting.SchemaTest{
 			Name:           s.Name,
 			SeedScripts:    s.SeedScripts,
