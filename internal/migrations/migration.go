@@ -2,8 +2,10 @@ package migrations
 
 import (
 	"embed"
+	"io/fs"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 )
 
@@ -11,51 +13,36 @@ import (
 var seedFiles embed.FS
 
 func GetSeedScriptPaths() []string {
-	var seedsFiles []string
+	var seedFilesPaths []string
 
 	// Get the absolute path to the directory where this file (migration.go) is located
 	_, filename, _, _ := runtime.Caller(0)
 	dir := filepath.Dir(filename)
 
-	// Read embedded seed files from root directory
-	entries, err := seedFiles.ReadDir(".")
+	err := fs.WalkDir(seedFiles, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(path, ".sql") {
+			return nil
+		}
+		if strings.HasSuffix(path, ".prod.sql") {
+			return nil
+		}
+		seedFilesPaths = append(seedFilesPaths, filepath.Join(dir, filepath.FromSlash(path)))
+		return nil
+	})
 	if err != nil {
 		panic(err)
 	}
 
-	// Process root directory SQL files
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
-			// Create absolute path by joining the directory path with the file name
-			seedsFiles = append(seedsFiles, filepath.Join(dir, entry.Name()))
-		}
-	}
-
-	// process test_only directory
-	entries, err = seedFiles.ReadDir("test_only")
-	if err != nil {
-		panic(err)
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
-			seedsFiles = append(seedsFiles, filepath.Join(dir, "test_only", entry.Name()))
-		}
-	}
-
-	// process erc20-bridge directory
-	entries, err = seedFiles.ReadDir("erc20-bridge")
-	if err != nil {
-		panic(err)
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
-			seedsFiles = append(seedsFiles, filepath.Join(dir, "erc20-bridge", entry.Name()))
-		}
-	}
-
-	if len(seedsFiles) == 0 {
+	if len(seedFilesPaths) == 0 {
 		panic("no seeds files found in embedded directory")
 	}
 
-	return seedsFiles
+	sort.Strings(seedFilesPaths)
+	return seedFilesPaths
 }
