@@ -90,6 +90,7 @@ func RunSchemaTest(t TestingT, s kwilTesting.SchemaTest, options *Options) {
 		// Single function: simple path
 		orderedsync.ForTestingReset()
 		erc20shim.ForTestingResetSingleton()
+		erc20shim.ForTestingClearAllInstances(context.Background(), nil)
 		kwilTesting.RunSchemaTest(testT, kwilTesting.SchemaTest{
 			Name:           s.Name,
 			SeedScripts:    s.SeedScripts,
@@ -103,6 +104,7 @@ func RunSchemaTest(t TestingT, s kwilTesting.SchemaTest, options *Options) {
 	for _, fn := range wrappedTests {
 		orderedsync.ForTestingReset()
 		erc20shim.ForTestingResetSingleton()
+		erc20shim.ForTestingClearAllInstances(context.Background(), nil)
 		kwilTesting.RunSchemaTest(testT, kwilTesting.SchemaTest{
 			Name:           s.Name,
 			SeedScripts:    s.SeedScripts,

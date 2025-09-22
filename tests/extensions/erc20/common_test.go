@@ -11,8 +11,6 @@ import (
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
-
-	erc20shim "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
 )
 
 // Common deterministic values used across ERC20 bridge tests
@@ -34,13 +32,7 @@ func seedAndRun(t TestingT, name string, fn kwilTesting.TestFunc) {
 
 	// Wrap the test function to add singleton reset and cleanup
 	wrappedFn := func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// STEP 1: Register cleanup (runs after transaction rollback)
-		t.Cleanup(func() {
-			erc20shim.ForTestingClearAllInstances(ctx, platform)
-			erc20shim.ForTestingResetSingleton()
-		})
-
-		// STEP 2: Run the actual test inside a transaction for rollback isolation
+		// Run the actual test inside a transaction for rollback isolation
 		tx, err := platform.DB.BeginTx(ctx)
 		if err != nil {
 			return fmt.Errorf("begin tx: %w", err)
