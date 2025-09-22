@@ -79,7 +79,7 @@ tasks:
   docker:build:local:
     desc: Build Docker image for local development (no version args needed)
     cmds:
-      - docker build -f deployments/Dockerfile -t tn-db:local .
+      - docker build -f deployments/Dockerfile -t ghcr.io/trufnetwork/node:local .
 
   # ─── host ─────────────────────────────────────────────────────────────────────
 
@@ -121,6 +121,8 @@ tasks:
     desc: Set environment variables for devnet
     internal: true
     env:
+      SETUP_DB_OWNER: "{{.DEV_DB_OWNER}}"
+      SETUP_CHAIN_ID: "{{.DEV_CHAIN_ID}}"
       DB_OWNER: "{{.DEV_DB_OWNER}}"
       CHAIN_ID: "{{.DEV_CHAIN_ID}}"
     requires: { vars: [ DEV_DB_OWNER, DEV_CHAIN_ID ] }
@@ -129,6 +131,8 @@ tasks:
     desc: Run docker-compose locally (single node stack)
     deps: [ single:env, build:binaries ]
     env:
+      SETUP_DB_OWNER: "{{.DEV_DB_OWNER}}"
+      SETUP_CHAIN_ID: "{{.DEV_CHAIN_ID}}"
       DB_OWNER: "{{.DEV_DB_OWNER}}"
       CHAIN_ID: "{{.DEV_CHAIN_ID}}"
     cmds:
@@ -148,14 +152,23 @@ tasks:
     internal: true
     env:
       BACKENDS: "{{.DEV_NODE_1_ADDRESS}},{{.DEV_NODE_2_ADDRESS}}"
-      CHAIN_ID: "{{.DEV_CHAIN_ID}}"
       NODE_RPC_ENDPOINT: "{{.DEV_NODE_1_RPC_ENDPOINT}}"
+      SETUP_CHAIN_ID: "{{.DEV_CHAIN_ID}}"
+      SETUP_DB_OWNER: "{{.DEV_DB_OWNER}}"
+      CHAIN_ID: "{{.DEV_CHAIN_ID}}"
       DB_OWNER: "{{.DEV_DB_OWNER}}"
     requires: { vars: [ DEV_NODE_1_ADDRESS, DEV_NODE_2_ADDRESS, DEV_CHAIN_ID, DEV_DB_OWNER ] } # Added requires guard for all used vars
   
   devnet:start:
     desc: Run docker-compose locally with dev configuration, 2 nodes, gateway, and indexer services
     deps: [ devnet:env, build:binaries ]
+    env:
+      SETUP_DB_OWNER: "{{.DEV_DB_OWNER}}"
+      SETUP_CHAIN_ID: "{{.DEV_CHAIN_ID}}"
+      DB_OWNER: "{{.DEV_DB_OWNER}}"
+      CHAIN_ID: "{{.DEV_CHAIN_ID}}"
+      BACKENDS: "{{.DEV_NODE_1_ADDRESS}},{{.DEV_NODE_2_ADDRESS}}"
+      NODE_RPC_ENDPOINT: "{{.DEV_NODE_1_RPC_ENDPOINT}}"
     cmds:
       - task: _compose
         vars: 
@@ -165,6 +178,13 @@ tasks:
   devnet:stop:
     desc: Shutdown dev 2 nodes, gateway, and indexer services
     deps: [ devnet:env ]
+    env:
+      SETUP_DB_OWNER: "{{.DEV_DB_OWNER}}"
+      SETUP_CHAIN_ID: "{{.DEV_CHAIN_ID}}"
+      DB_OWNER: "{{.DEV_DB_OWNER}}"
+      CHAIN_ID: "{{.DEV_CHAIN_ID}}"
+      BACKENDS: "{{.DEV_NODE_1_ADDRESS}},{{.DEV_NODE_2_ADDRESS}}"
+      NODE_RPC_ENDPOINT: "{{.DEV_NODE_1_RPC_ENDPOINT}}"
     cmds:
       - task: _compose
         vars: 

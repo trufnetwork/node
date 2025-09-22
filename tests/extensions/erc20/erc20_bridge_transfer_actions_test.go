@@ -21,8 +21,8 @@ import (
 // without needing to use the extension methods directly.
 func TestSepoliaTransferActions(t *testing.T) {
 	seedAndRun(t, "sepolia_transfer_actions", func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Initialize the extension to load the sepolia_bridge instance
-		err := erc20shim.ForTestingInitializeExtension(ctx, platform)
+		// Enable instance with alias in one step
+		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestExtensionAlias)
 		require.NoError(t, err)
 
 		// Get the configured escrow address from bridge info
@@ -31,7 +31,7 @@ func TestSepoliaTransferActions(t *testing.T) {
 
 		// Credit initial balance to TestUserA using configured escrow
 		err = testerc20.InjectERC20Transfer(ctx, platform,
-			TestChain, configuredEscrow, TestERC20, configuredEscrow, TestUserA, TestAmount2, 10, nil)
+			TestChain, configuredEscrow, TestERC20, TestUserA, configuredEscrow, TestAmount2, 10, nil)
 		require.NoError(t, err)
 
 		// Verify initial balance via sepolia_wallet_balance action
@@ -64,8 +64,8 @@ func TestSepoliaTransferActions(t *testing.T) {
 // TestTransferActionValidation tests the validation logic in the new transfer actions.
 func TestTransferActionValidation(t *testing.T) {
 	seedAndRun(t, "transfer_action_validation", func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Initialize the extension to load the sepolia_bridge instance
-		err := erc20shim.ForTestingInitializeExtension(ctx, platform)
+		// Enable instance with alias in one step
+		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestExtensionAlias)
 		require.NoError(t, err)
 
 		// Get the configured escrow address from bridge info
@@ -122,7 +122,7 @@ func TestTransferActionValidation(t *testing.T) {
 		// Give TestUserA a small balance (half of what they'll try to transfer)
 		smallAmount := "500000000000000000" // 0.5 tokens (half of TestAmount1 which is 1.0)
 		err = testerc20.InjectERC20Transfer(ctx, platform,
-			TestChain, configuredEscrow, TestERC20, configuredEscrow, TestUserA, smallAmount, 10, nil)
+			TestChain, configuredEscrow, TestERC20, TestUserA, configuredEscrow, smallAmount, 10, nil)
 		require.NoError(t, err)
 
 		// Verify they have the small balance
@@ -155,8 +155,8 @@ func TestTransferActionValidation(t *testing.T) {
 // TestMultipleTransferActions tests multiple sequential transfers using the new actions.
 func TestMultipleTransferActions(t *testing.T) {
 	seedAndRun(t, "multiple_transfer_actions", func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Initialize the extension to load the sepolia_bridge instance
-		err := erc20shim.ForTestingInitializeExtension(ctx, platform)
+		// Enable instance with alias in one step
+		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestExtensionAlias)
 		require.NoError(t, err)
 
 		// Get the configured escrow address from bridge info
@@ -171,7 +171,7 @@ func TestMultipleTransferActions(t *testing.T) {
 		// Credit large initial balance to userA
 		initialAmount := "10000000000000000000" // 10.0 tokens
 		err = testerc20.InjectERC20Transfer(ctx, platform,
-			TestChain, configuredEscrow, TestERC20, configuredEscrow, userA, initialAmount, 10, nil)
+			TestChain, configuredEscrow, TestERC20, userA, configuredEscrow, initialAmount, 10, nil)
 		require.NoError(t, err)
 
 		// Transfer A -> B (3 tokens)

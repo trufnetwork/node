@@ -89,7 +89,7 @@ jobs:
               sleep 5
             fi
 
-            if go test -short -p 1 -timeout=15m -count=1 -tags=kwiltest ./...; then
+            if go test -failfast -short -p 1 -timeout=15m -count=1 -tags=kwiltest ./...; then
               echo "✅ Tests passed on attempt $attempt"
               break
             else
