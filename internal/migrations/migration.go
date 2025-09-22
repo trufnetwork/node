@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-//go:embed *.sql test_only/*.sql erc20-bridge/*.sql
+//go:embed *.sql 0_test_only/*.sql erc20-bridge/*.sql
 var seedFiles embed.FS
 
 func GetSeedScriptPaths() []string {

@@ -21,8 +21,8 @@ import (
 // without needing to use the extension methods directly.
 func TestSepoliaTransferActions(t *testing.T) {
 	seedAndRun(t, "sepolia_transfer_actions", func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Initialize the extension to load the sepolia_bridge instance
-		err := erc20shim.ForTestingInitializeExtension(ctx, platform)
+		// Enable instance with alias in one step
+		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestExtensionAlias)
 		require.NoError(t, err)
 
 		// Get the configured escrow address from bridge info
@@ -64,8 +64,8 @@ func TestSepoliaTransferActions(t *testing.T) {
 // TestTransferActionValidation tests the validation logic in the new transfer actions.
 func TestTransferActionValidation(t *testing.T) {
 	seedAndRun(t, "transfer_action_validation", func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Initialize the extension to load the sepolia_bridge instance
-		err := erc20shim.ForTestingInitializeExtension(ctx, platform)
+		// Enable instance with alias in one step
+		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestExtensionAlias)
 		require.NoError(t, err)
 
 		// Get the configured escrow address from bridge info
@@ -155,8 +155,8 @@ func TestTransferActionValidation(t *testing.T) {
 // TestMultipleTransferActions tests multiple sequential transfers using the new actions.
 func TestMultipleTransferActions(t *testing.T) {
 	seedAndRun(t, "multiple_transfer_actions", func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Initialize the extension to load the sepolia_bridge instance
-		err := erc20shim.ForTestingInitializeExtension(ctx, platform)
+		// Enable instance with alias in one step
+		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestExtensionAlias)
 		require.NoError(t, err)
 
 		// Get the configured escrow address from bridge info
