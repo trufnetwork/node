@@ -424,7 +424,7 @@ echo ""
 echo "📝 Next steps:"
 echo "  1. Deploy the AMI infrastructure: cd deployments/infra && cdk deploy AMI-Pipeline-default-Stack"
 echo "  2. Test AMI build: Go to GitHub Actions and run the 'Build AMI' workflow"
-echo "  3. Test user experience: Launch AMI and run tn-node-configure --network testnet --enable-mcp
+echo "  3. Test user experience: Launch AMI and run tn-node-configure --network testnet --enable-mcp"
 echo ""
 
 if [ $TESTS_FAILED -gt 0 ]; then

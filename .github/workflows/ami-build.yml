@@ -12,7 +12,7 @@ name: Build AMI
     types: [published]
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 env:
@@ -167,13 +167,16 @@ jobs:
               --output table
           fi
 
-      - name: Create GitHub release comment
+      - name: Update GitHub release with AMI details
         if: github.event_name == 'release' && env.AMI_ID
         uses: actions/github-script@v7
+        env:
+          RELEASE_ID: ${{ github.event.release.id }}
         with:
           script: |
             const amiId = process.env.AMI_ID;
             const region = process.env.AWS_REGION;
+            const releaseId = process.env.RELEASE_ID;
 
             const comment = `## 🚀 AMI Build Completed
 
@@ -199,11 +202,19 @@ jobs:
             \`\`\`
             `;
 
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
+            // Get current release to append AMI details
+            const currentRelease = await github.rest.repos.getRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: comment
+              release_id: releaseId
+            });
+
+            // Update release body with AMI information
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: releaseId,
+              body: (currentRelease.data.body || '') + amiDetails
             });
 
   notify-success:

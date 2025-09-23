@@ -133,7 +133,6 @@ phases:
             - sudo systemctl enable docker
             - sudo systemctl start docker
             - sudo usermod -aG docker ubuntu
-            - sudo usermod -aG docker ec2-user || true
 
       - name: InstallDockerCompose
         action: ExecuteBash
@@ -147,7 +146,7 @@ phases:
         action: ExecuteBash
         inputs:
           commands:
-            - sudo apt-get install -y postgresql-client-14 jq curl wget unzip
+            - sudo apt-get install -y postgresql-client-16 jq curl wget unzip
 
       - name: CreateTNUser
         action: ExecuteBash
@@ -200,6 +199,7 @@ phases:
               services:
                 kwil-postgres:
                   image: kwildb/postgres:16.8-1
+                  container_name: tn-postgres
                   environment:
                     POSTGRES_DB: kwild
                     POSTGRES_USER: kwild
@@ -214,6 +214,7 @@ phases:
 
                 tn-node:
                   image: ghcr.io/trufnetwork/node:latest
+                  container_name: tn-node
                   environment:
                     - SETUP_CHAIN_ID=${CHAIN_ID:-tn-v2.1}
                     - SETUP_DB_OWNER=${DB_OWNER:-postgres://kwild:kwild@kwil-postgres:5432/kwild}
@@ -236,6 +237,7 @@ phases:
 
                 postgres-mcp:
                   image: crystaldba/postgres-mcp:latest
+                  container_name: tn-mcp
                   environment:
                     - DATABASE_URI=postgresql://kwild:kwild@kwil-postgres:5432/kwild
                     - MCP_ACCESS_MODE=restricted
@@ -412,7 +414,7 @@ phases:
 	imageRecipe := awsimagebuilder.NewCfnImageRecipe(stack, jsii.String("TNAmiRecipe"), &awsimagebuilder.CfnImageRecipeProps{
 		Name:        jsii.String(nameWithPrefix("tn-ami-recipe-" + string(stage))),
 		Version:     jsii.String("1.0.0"),
-		ParentImage: awscdk.Fn_Sub(jsii.String("{{resolve:ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp3/ami-id}}"), nil),
+		ParentImage: awscdk.Fn_Sub(jsii.String("{{resolve:ssm:/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id}}"), nil),
 		Description: jsii.String("TRUF.NETWORK node AMI with Docker infrastructure"),
 		Components: &[]*awsimagebuilder.CfnImageRecipe_ComponentConfigurationProperty{
 			{

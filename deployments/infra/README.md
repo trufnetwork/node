@@ -328,7 +328,7 @@ sudo update-node
 
 The AMI includes:
 
-- **Base OS**: Ubuntu 22.04 LTS
+- **Base OS**: Ubuntu 24.04 LTS
 - **Docker**: Latest Docker CE with docker-compose
 - **TRUF.NETWORK Stack**:
   - PostgreSQL (kwildb/postgres:16.8-1) 
