@@ -102,79 +102,10 @@ fi
 
 # Test 3: Docker Compose Configuration
 echo "3. Testing Docker Compose configuration..."
-echo "Creating and validating Docker Compose template..."
+echo "Using shared Docker Compose configuration..."
 
-cat > /tmp/test-docker-compose.yml << 'EOF'
-services:
-  kwil-postgres:
-    image: kwildb/postgres:16.8-1
-    container_name: tn-postgres
-    environment:
-      POSTGRES_DB: kwild
-      POSTGRES_USER: kwild
-      POSTGRES_PASSWORD: kwild
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-    networks:
-      - tn-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U kwild"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  tn-node:
-    image: ghcr.io/trufnetwork/node:latest
-    container_name: tn-node
-    environment:
-      - SETUP_CHAIN_ID=${CHAIN_ID:-tn-v2.1}
-      - SETUP_DB_OWNER=${DB_OWNER:-postgres://kwild:kwild@kwil-postgres:5432/kwild}
-      - CONFIG_PATH=/root/.kwild
-    volumes:
-      - node_data:/root/.kwild
-    ports:
-      - "50051:50051"
-      - "50151:50151"
-      - "8080:8080"
-      - "8484:8484"
-      - "26656:26656"
-      - "26657:26657"
-    depends_on:
-      kwil-postgres:
-        condition: service_healthy
-    networks:
-      - tn-network
-    restart: unless-stopped
-
-  postgres-mcp:
-    image: crystaldba/postgres-mcp:latest
-    container_name: tn-mcp
-    environment:
-      - DATABASE_URI=postgresql://kwild:kwild@kwil-postgres:5432/kwild
-      - MCP_ACCESS_MODE=restricted
-      - MCP_TRANSPORT=sse
-    ports:
-      - "8000:8000"
-    depends_on:
-      - kwil-postgres
-      - tn-node
-    networks:
-      - tn-network
-    restart: unless-stopped
-    profiles:
-      - mcp
-
-volumes:
-  postgres_data:
-  node_data:
-
-networks:
-  tn-network:
-    driver: bridge
-EOF
+# Use shared Docker Compose configuration (single source of truth)
+cp deployments/infra/stacks/docker-compose.template.yml /tmp/test-docker-compose.yml
 
 if eval "$COMPOSE -f /tmp/test-docker-compose.yml config" > /dev/null 2>&1; then
     echo -e "${GREEN}✅ Docker Compose configuration valid${NC}"
@@ -323,35 +254,8 @@ fi
 echo "9. Testing PostgreSQL service startup..."
 echo "Starting PostgreSQL container to test database connectivity..."
 
-cat > /tmp/tn-test-compose.yml << 'EOF'
-services:
-  kwil-postgres:
-    image: kwildb/postgres:16.8-1
-    container_name: tn-postgres
-    environment:
-      POSTGRES_DB: kwild
-      POSTGRES_USER: kwild
-      POSTGRES_PASSWORD: kwild
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-    networks:
-      - tn-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U kwild"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-volumes:
-  postgres_data:
-
-networks:
-  tn-network:
-    driver: bridge
-EOF
+# Use shared Docker Compose configuration for PostgreSQL test
+cp deployments/infra/stacks/docker-compose.template.yml /tmp/tn-test-compose.yml
 
 echo "Starting PostgreSQL container..."
 if eval "$COMPOSE -f /tmp/tn-test-compose.yml up -d kwil-postgres"; then

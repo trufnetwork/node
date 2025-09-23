@@ -1,6 +1,7 @@
 package stacks
 
 import (
+	_ "embed"
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsimagebuilder"
@@ -9,6 +10,9 @@ import (
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/config"
 )
+
+//go:embed docker-compose.template.yml
+var dockerComposeTemplate string
 
 type AmiPipelineStackProps struct {
 	awscdk.StackProps
@@ -193,76 +197,7 @@ phases:
           commands:
             - |
               cat > /opt/tn/docker-compose.yml << 'EOF'
-              services:
-                kwil-postgres:
-                  image: kwildb/postgres:16.8-1
-                  container_name: tn-postgres
-                  environment:
-                    POSTGRES_DB: kwild
-                    POSTGRES_USER: kwild
-                    POSTGRES_PASSWORD: kwild
-                  volumes:
-                    - postgres_data:/var/lib/postgresql/data
-                  ports:
-                    - "5432:5432"
-                  networks:
-                    - tn-network
-                  restart: unless-stopped
-                  healthcheck:
-                    test: ["CMD-SHELL", "pg_isready -U kwild"]
-                    interval: 10s
-                    timeout: 5s
-                    retries: 12
-
-                tn-node:
-                  image: ghcr.io/trufnetwork/node:latest
-                  container_name: tn-node
-                  environment:
-                    - SETUP_CHAIN_ID=${CHAIN_ID:-tn-v2.1}
-                    - SETUP_DB_OWNER=${DB_OWNER:-postgres://kwild:kwild@kwil-postgres:5432/kwild}
-                    - CONFIG_PATH=/root/.kwild
-                  volumes:
-                    - node_data:/root/.kwild
-                    - /opt/tn/configs:/opt/configs:ro
-                  ports:
-                    - "50051:50051"
-                    - "50151:50151"
-                    - "8080:8080"
-                    - "8484:8484"
-                    - "26656:26656"
-                    - "26657:26657"
-                  depends_on:
-                    kwil-postgres:
-                      condition: service_healthy
-                  networks:
-                    - tn-network
-                  restart: unless-stopped
-
-                postgres-mcp:
-                  image: crystaldba/postgres-mcp:latest
-                  container_name: tn-mcp
-                  environment:
-                    - DATABASE_URI=postgresql://kwild:kwild@kwil-postgres:5432/kwild
-                    - MCP_ACCESS_MODE=restricted
-                    - MCP_TRANSPORT=sse
-                  ports:
-                    - "8000:8000"
-                  depends_on:
-                    - kwil-postgres
-                    - tn-node
-                  networks:
-                    - tn-network
-                  restart: unless-stopped
-                  profiles:
-                    - mcp
-
-              volumes:
-                postgres_data:
-                node_data:
-
-              networks:
-                tn-network:
-                  driver: bridge
+              ` + dockerComposeTemplate + `
               EOF
             - sudo chown tn:tn /opt/tn/docker-compose.yml
             - sudo chmod 644 /opt/tn/docker-compose.yml
