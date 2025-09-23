@@ -1,39 +1,33 @@
 services:
   kwil-postgres:
-    image: kwildb/postgres:16.8-1
+    image: kwildb/postgres:latest
     container_name: tn-postgres
     environment:
-      POSTGRES_DB: kwild
-      POSTGRES_USER: kwild
-      POSTGRES_PASSWORD: kwild
+      POSTGRES_HOST_AUTH_METHOD: trust
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     networks:
       - tn-network
     restart: unless-stopped
+    shm_size: 1gb
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U kwild"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
       retries: 12
 
   tn-node:
-    image: ghcr.io/trufnetwork/node:latest
+    image: ghcr.io/trufnetwork/node:sha-eb8d9f0
     container_name: tn-node
-    environment:
-      - SETUP_CHAIN_ID=${CHAIN_ID:-tn-v2.1}
-      - SETUP_DB_OWNER=${DB_OWNER:-postgres://kwild:kwild@kwil-postgres:5432/kwild}
-      - CONFIG_PATH=/root/.kwild
+    entrypoint: ""
     volumes:
       - node_data:/root/.kwild
-      - /opt/tn/configs:/opt/configs:ro
+      - /opt/tn/configs:/opt/tn/configs:ro
     ports:
-      - "50051:50051"
-      - "50151:50151"
-      - "8080:8080"
       - "8484:8484"
+      - "6600:6600"
       - "26656:26656"
       - "26657:26657"
     depends_on:
@@ -42,19 +36,59 @@ services:
     networks:
       - tn-network
     restart: unless-stopped
+    command: |
+      sh -c "
+        # Generate config in temporary directory first
+        rm -rf /tmp/my-node-config
+        echo 'Initializing node configuration in temp directory...'
+        /app/kwild setup init --genesis /opt/tn/configs/network/v2/genesis.json --root /tmp/my-node-config --p2p.bootnodes \"4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656,0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656\" --state-sync.enable --state-sync.trusted-providers \"0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656\" --rpc.private --db.host kwil-postgres
+
+        # Only copy if initialization succeeded
+        if [ -f /tmp/my-node-config/config.toml ]; then
+          echo 'Copying config to /root/.kwild...'
+          mkdir -p /root/.kwild
+          cp -r /tmp/my-node-config/* /root/.kwild/
+
+          # Ensure database host is set correctly for Docker environment
+          sed -i \"s/host = '127.0.0.1'/host = 'kwil-postgres'/\" /root/.kwild/config.toml
+          sed -i \"s/host = 'localhost'/host = 'kwil-postgres'/\" /root/.kwild/config.toml
+
+          echo 'Configuration setup complete!'
+        else
+          echo 'ERROR: kwild setup init failed!'
+          exit 1
+        fi
+
+        # Convert private key to nodekey.json if TN_PRIVATE_KEY is provided
+        if [ -n \"$${TN_PRIVATE_KEY:-}\" ]; then
+          echo 'Converting private key to nodekey.json format...'
+          CLEAN_KEY=\"$${TN_PRIVATE_KEY#0x}\"
+          if ! echo \"$$CLEAN_KEY\" | grep -qE '^[a-fA-F0-9]{64}$$'; then
+            echo 'Error: Private key must be 64 hex characters (32 bytes)'
+            exit 1
+          fi
+          echo '{\"key\":\"'$$CLEAN_KEY'\",\"type\":\"secp256k1\"}' > /root/.kwild/nodekey.json
+          echo 'Nodekey created successfully'
+        fi
+
+        echo 'Starting TrufNetwork node...'
+        /app/kwild start -r /root/.kwild
+      "
 
   postgres-mcp:
     image: crystaldba/postgres-mcp:latest
     container_name: tn-mcp
     environment:
-      - DATABASE_URI=postgresql://kwild:kwild@kwil-postgres:5432/kwild
+      - DATABASE_URI=postgresql://postgres@kwil-postgres:5432/kwild
       - MCP_ACCESS_MODE=restricted
       - MCP_TRANSPORT=sse
     ports:
       - "8000:8000"
     depends_on:
-      - kwil-postgres
-      - tn-node
+      kwil-postgres:
+        condition: service_healthy
+      tn-node:
+        condition: service_started
     networks:
       - tn-network
     restart: unless-stopped

@@ -2,6 +2,7 @@ package stacks
 
 import (
 	_ "embed"
+	"encoding/base64"
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsimagebuilder"
@@ -13,6 +14,10 @@ import (
 
 //go:embed docker-compose.template.yml
 var dockerComposeTemplate string
+
+func getEncodedDockerCompose() string {
+	return base64.StdEncoding.EncodeToString([]byte(dockerComposeTemplate))
+}
 
 type AmiPipelineStackProps struct {
 	awscdk.StackProps
@@ -186,19 +191,24 @@ phases:
         action: ExecuteBash
         inputs:
           commands:
-            - sudo mkdir -p /opt/tn/{configs/{mainnet,testnet},scripts,data}
-            - sudo mkdir -p /opt/tn/configs/mainnet
-            - sudo mkdir -p /opt/tn/configs/testnet
+            - sudo mkdir -p /opt/tn/{configs/network/v2,data}
             - sudo chown -R tn:tn /opt/tn
+
+      - name: DownloadNetworkConfigs
+        action: ExecuteBash
+        inputs:
+          commands:
+            - cd /tmp
+            - curl -fsSL https://raw.githubusercontent.com/trufnetwork/truf-node-operator/main/configs/network/v2/genesis.json -o genesis.json
+            - sudo mv genesis.json /opt/tn/configs/network/v2/
+            - sudo chown -R tn:tn /opt/tn/configs
 
       - name: CreateDockerComposeFile
         action: ExecuteBash
         inputs:
           commands:
             - |
-              cat > /opt/tn/docker-compose.yml << 'EOF'
-              ` + dockerComposeTemplate + `
-              EOF
+              echo "` + getEncodedDockerCompose() + `" | base64 -d > /opt/tn/docker-compose.yml
             - sudo chown tn:tn /opt/tn/docker-compose.yml
             - sudo chmod 644 /opt/tn/docker-compose.yml
 
@@ -236,7 +246,6 @@ phases:
               set -e
 
               # Default values
-              NETWORK="testnet"
               PRIVATE_KEY=""
               ENABLE_MCP=false
               MCP_TRANSPORT="sse"
@@ -245,10 +254,6 @@ phases:
               # Parse command line arguments
               while [[ $# -gt 0 ]]; do
                 case $1 in
-                  --network)
-                    NETWORK="$2"
-                    shift 2
-                    ;;
                   --private-key)
                     PRIVATE_KEY="$2"
                     shift 2
@@ -273,7 +278,7 @@ phases:
               done
 
               echo "Configuring TRUF.NETWORK node..."
-              echo "Network: $NETWORK"
+              echo "Network: mainnet (tn-v2.1)"
               echo "MCP enabled: $ENABLE_MCP"
 
               # Chain ID is always tn-v2.1 regardless of network
@@ -294,8 +299,8 @@ phases:
               # Handle private key if provided
               if [ -n "$PRIVATE_KEY" ]; then
                 echo "Converting private key to nodekey.json..."
-                # TODO: Implement private key to nodekey.json conversion
-                echo "Private key conversion will be implemented"
+                echo "TN_PRIVATE_KEY=$PRIVATE_KEY" >> .env
+                echo "Private key will be converted on container startup"
               fi
 
               # Enable and start the service
