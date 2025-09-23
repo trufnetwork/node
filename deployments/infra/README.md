@@ -234,6 +234,152 @@ Replace `<environment>` with your target environment (e.g., dev, prod).
 
 See [Getting Benchmarks](./docs/getting-benchmarks.md) for more information.
 
+---
+
+## 🚀 AMI Pipeline Infrastructure
+
+This directory contains infrastructure for automated AMI building using AWS EC2 Image Builder. This creates a Docker-in-AMI approach where the infrastructure is baked into the AMI and applications run via Docker containers.
+
+### Features
+
+- **Automated AMI Building**: EC2 Image Builder pipeline for creating TrufNetwork node AMIs
+- **Docker-in-AMI**: Pre-installed Docker with docker-compose for container orchestration
+- **Always-Latest Strategy**: Containers pull latest images on startup
+- **MCP Server Integration**: PostgreSQL MCP server for AI agent access via SSE transport
+- **Current Region Distribution**: AMI distribution in deployment region (multi-region planned)
+- **GitHub Actions Integration**: Automated builds triggered by releases
+
+### Quick Start
+
+#### Prerequisites
+- AWS CLI configured with appropriate permissions
+- CDK CLI installed: `npm install -g aws-cdk@latest`
+- Go 1.22.x
+- Docker installed and running
+
+#### Deploy AMI Infrastructure
+
+```bash
+cd deployments/infra
+
+# Deploy using isolated AMI CDK app (✅ Tested and Working)
+cdk --app 'go run ami-cdk.go' deploy \
+  --context stage=dev \
+  --context devPrefix=test-$(whoami) \
+  --require-approval never
+```
+
+#### Verify Deployment
+
+```bash
+# Check stack status
+aws cloudformation describe-stacks \
+  --stack-name AMI-Pipeline-default-Stack \
+  --region us-east-2
+
+# Get pipeline ARN
+aws cloudformation describe-stacks \
+  --stack-name AMI-Pipeline-default-Stack \
+  --region us-east-2 \
+  --query 'Stacks[0].Outputs[?OutputKey==`AmiPipelineArnOutput`].OutputValue' \
+  --output text
+
+# Get S3 bucket name
+aws cloudformation describe-stacks \
+  --stack-name AMI-Pipeline-default-Stack \
+  --region us-east-2 \
+  --query 'Stacks[0].Outputs[?OutputKey==`AmiArtifactsBucketOutput`].OutputValue' \
+  --output text
+```
+
+#### Test AMI Functionality
+
+```bash
+# Use the latest AMI (replace with actual AMI ID from your build)
+AMI_ID="ami-xxxxxxxxxxxxxxxxx"
+
+# Launch test instance
+aws ec2 run-instances \
+  --image-id $AMI_ID \
+  --instance-type t3.medium \
+  --key-name your-key-pair \
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=TRUF-Network-AMI-Test}]' \
+  --region us-east-2
+
+# SSH to instance and test
+ssh ubuntu@<instance-ip>
+
+# Configure TRUF.NETWORK node
+sudo tn-node-configure --network testnet --enable-mcp
+
+# Verify services
+cd /opt/tn && docker-compose ps
+curl http://localhost:8000/  # MCP server (returns 404 - normal)
+```
+
+#### Update Node Images
+
+```bash
+# On AMI instances, update to latest images
+sudo update-node
+```
+
+### AMI Architecture
+
+The AMI includes:
+
+- **Base OS**: Ubuntu 24.04 LTS
+- **Docker**: Latest Docker CE with docker-compose
+- **TRUF.NETWORK Stack**:
+  - PostgreSQL (kwildb/postgres:16.8-1) 
+  - TRUF.NETWORK Node - ⚠️ To be added when ghcr image is published
+  - PostgreSQL MCP Server (crystaldba/postgres-mcp:latest) - Will need to be adjusted later on
+- **Configuration Scripts**:
+  - `/usr/local/bin/tn-node-configure` - Initial setup
+  - `/usr/local/bin/update-node` - Update to latest images
+- **SystemD Service**: `tn-node.service` for service management
+- **File Structure**:
+  - `/opt/tn/` - Main application directory
+  - `/opt/tn/docker-compose.yml` - Container orchestration
+  - `/opt/tn/.env` - Environment configuration
+
+### Local Testing
+
+Test the CDK stack locally before AWS deployment:
+
+```bash
+cd deployments/infra
+./scripts/test-ami.sh
+```
+
+This runs:
+- CDK synthesis validation
+- Docker container tests
+- YAML configuration validation
+
+### Troubleshooting
+
+**CDK Deployment Issues:**
+```bash
+cdk --version  # Ensure CDK is latest
+aws sts get-caller-identity  # Verify AWS access
+cdk bootstrap  # Re-run if needed
+```
+
+**AMI Build Issues:**
+```bash
+# Check Image Builder logs
+aws logs describe-log-groups --log-group-name-prefix /aws/imagebuilder
+```
+
+### Files
+
+- `stacks/ami_pipeline_stack.go` - Main CDK stack for AMI pipeline
+- `ami-cdk.go` - Isolated AMI deployment application
+- `cdk.test.json` - CDK configuration for AMI deployment
+
+---
+
 ## Important
 
 Always use these commands responsibly, especially in non-production environments. Remember to delete the stack after testing to avoid unnecessary AWS charges.
