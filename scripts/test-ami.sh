@@ -18,7 +18,7 @@ TESTS_FAILED=0
 # Test 1: CDK Synthesis
 echo "1. Testing CDK synthesis..."
 cd deployments/infra
-if cdk --app 'go run test-ami-cdk.go' synth --context stage=dev --context devPrefix=test > /dev/null 2>&1; then
+if cdk --app 'go run ami-cdk.go' synth --context stage=dev --context devPrefix=test > /dev/null 2>&1; then
     echo -e "${GREEN}✅ CDK synthesis successful${NC}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
 else
@@ -422,9 +422,9 @@ echo "  • PostgreSQL service startup"
 echo "  • Update script workflow"
 echo ""
 echo "📝 Next steps:"
-echo "  1. Deploy the AMI infrastructure: cd deployments/infra && cdk deploy TrufNetwork-AMI-Pipeline-dev"
+echo "  1. Deploy the AMI infrastructure: cd deployments/infra && cdk deploy AMI-Pipeline-default-Stack"
 echo "  2. Test AMI build: Go to GitHub Actions and run the 'Build AMI' workflow"
-echo "  3. Test user experience: Launch AMI and run truflation-configure --network testnet --enable-mcp"
+echo "  3. Test user experience: Launch AMI and run tn-node-configure --network testnet --enable-mcp
 echo ""
 
 if [ $TESTS_FAILED -gt 0 ]; then

@@ -16,7 +16,7 @@ permissions:
   id-token: write
 
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION: us-east-2
 
 jobs:
   build-ami:
@@ -50,7 +50,7 @@ jobs:
           cd deployments/infra
 
           # Check if AMI pipeline stack is deployed
-          STACK_NAME="TrufNetwork-AMI-Pipeline-dev"
+          STACK_NAME="AMI-Pipeline-default-Stack"
           if aws cloudformation describe-stacks \
             --stack-name "$STACK_NAME" \
             --region ${{ env.AWS_REGION }} > /dev/null 2>&1; then
@@ -72,11 +72,11 @@ jobs:
         run: |
           cd deployments/infra
           echo "Deploying AMI pipeline infrastructure..."
-          cdk deploy TrufNetwork-AMI-Pipeline-dev --require-approval never
+          cdk deploy AMI-Pipeline-default-Stack --require-approval never
 
           # Get pipeline ARN after deployment
           PIPELINE_ARN=$(aws cloudformation describe-stacks \
-            --stack-name "TrufNetwork-AMI-Pipeline-dev" \
+            --stack-name "AMI-Pipeline-default-Stack" \
             --region ${{ env.AWS_REGION }} \
             --query \
               'Stacks[0].Outputs[?OutputKey==`AmiPipelineArn`].OutputValue' \
@@ -194,7 +194,7 @@ jobs:
 
             # After instance is running, configure your node:
             ssh ubuntu@your-instance-ip
-            sudo truflation-configure --network mainnet \\
+            sudo tn-node-configure --network mainnet \\
               --private-key "your-private-key"
             \`\`\`
             `;

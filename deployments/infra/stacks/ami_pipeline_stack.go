@@ -48,12 +48,13 @@ func AmiPipelineStack(scope constructs.Construct, id string, props *AmiPipelineS
 
 	// S3 bucket for AMI build artifacts and logs
 	artifactsBucket := awss3.NewBucket(stack, jsii.String("AmiArtifactsBucket"), &awss3.BucketProps{
-		BucketName:        jsii.String(nameWithPrefix("tn-ami-artifacts-" + string(stage))),
 		RemovalPolicy:     awscdk.RemovalPolicy_DESTROY,
 		AutoDeleteObjects: jsii.Bool(true),
 		Versioned:         jsii.Bool(false),
 		PublicReadAccess:  jsii.Bool(false),
 		BlockPublicAccess: awss3.BlockPublicAccess_BLOCK_ALL(),
+		Encryption:        awss3.BucketEncryption_S3_MANAGED,
+		EnforceSSL:        jsii.Bool(true),
 	})
 
 	// IAM role for EC2 Image Builder instance
@@ -81,9 +82,8 @@ func AmiPipelineStack(scope constructs.Construct, id string, props *AmiPipelineS
 		InstanceTypes: &[]*string{
 			jsii.String("t3.medium"), // Cost-effective for AMI building
 		},
-		SecurityGroupIds: &[]*string{
-			// Will use default VPC security group - could be enhanced with custom SG
-		},
+		// Omit to use default VPC security group
+		SecurityGroupIds: nil,
 		Logging: &awsimagebuilder.CfnInfrastructureConfiguration_LoggingProperty{
 			S3Logs: &awsimagebuilder.CfnInfrastructureConfiguration_S3LogsProperty{
 				S3BucketName: artifactsBucket.BucketName(),
@@ -412,7 +412,7 @@ phases:
 	imageRecipe := awsimagebuilder.NewCfnImageRecipe(stack, jsii.String("TNAmiRecipe"), &awsimagebuilder.CfnImageRecipeProps{
 		Name:        jsii.String(nameWithPrefix("tn-ami-recipe-" + string(stage))),
 		Version:     jsii.String("1.0.0"),
-		ParentImage: jsii.String("ami-001209a78b30e703c"), // Ubuntu 22.04 LTS in us-east-2
+		ParentImage: awscdk.Fn_Sub(jsii.String("{{resolve:ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp3/ami-id}}"), nil),
 		Description: jsii.String("TRUF.NETWORK node AMI with Docker infrastructure"),
 		Components: &[]*awsimagebuilder.CfnImageRecipe_ComponentConfigurationProperty{
 			{
@@ -440,7 +440,7 @@ phases:
 		Description: jsii.String("Distribution configuration for TRUF.NETWORK AMI"),
 		Distributions: &[]*awsimagebuilder.CfnDistributionConfiguration_DistributionProperty{
 			{
-				Region: jsii.String("us-east-2"), // Current region only for testing
+				Region: awscdk.Aws_REGION(), // Use current region token
 				AmiDistributionConfiguration: &awsimagebuilder.CfnDistributionConfiguration_AmiDistributionConfigurationProperty{
 					AmiTags: &map[string]*string{
 						"Name": jsii.String("TRUFNETWORK-Node-{{imagebuilder:buildDate}}"),

@@ -295,8 +295,8 @@ aws cloudformation describe-stacks \
 #### Test AMI Functionality
 
 ```bash
-# Use the working AMI
-AMI_ID="ami-0789f7500b30a84ac"
+# Use the latest AMI (replace with actual AMI ID from your build)
+AMI_ID="ami-xxxxxxxxxxxxxxxxx"
 
 # Launch test instance
 aws ec2 run-instances \
@@ -307,7 +307,7 @@ aws ec2 run-instances \
   --region us-east-2
 
 # SSH to instance and test
-ssh ubuntu@instance-ip
+ssh ubuntu@<instance-ip>
 
 # Configure TRUF.NETWORK node
 sudo tn-node-configure --network testnet --enable-mcp

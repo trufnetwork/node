@@ -2,7 +2,6 @@ package main
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
-	"github.com/trufnetwork/node/infra/config"
 	"github.com/trufnetwork/node/infra/stacks"
 	"go.uber.org/zap"
 )
@@ -21,9 +20,11 @@ func main() {
 		Region:  nil, // CDK will auto-detect from AWS CLI config
 	}
 
+	// Use explicit stack name to match GitHub workflow expectations
+	stackName := "AMI-Pipeline-default-Stack"
 	_, amiExports := stacks.AmiPipelineStack(
 		app,
-		config.WithStackSuffix(app, "AMI-Pipeline"),
+		stackName,
 		&stacks.AmiPipelineStackProps{
 			StackProps: awscdk.StackProps{Env: testEnv},
 		},
