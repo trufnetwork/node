@@ -148,32 +148,29 @@ cat > /tmp/test-config.sh << 'EOF'
 #!/bin/bash
 set -e
 
-NETWORK="testnet"
 PRIVATE_KEY=""
 ENABLE_MCP=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --network) NETWORK="$2"; shift 2 ;;
     --private-key) PRIVATE_KEY="$2"; shift 2 ;;
     --enable-mcp) ENABLE_MCP=true; shift ;;
     *) echo "Unknown option $1"; exit 1 ;;
   esac
 done
 
-echo "Network: $NETWORK"
+echo "Network: mainnet (tn-v2.1)"
 echo "MCP enabled: $ENABLE_MCP"
 
-[[ "$NETWORK" == "mainnet" ]] || { echo "Network parsing failed"; exit 1; }
-[[ "$PRIVATE_KEY" == "test123" ]] || { echo "Private key parsing failed"; exit 1; }
+[[ "$PRIVATE_KEY" == "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef" ]] || { echo "Private key parsing failed"; exit 1; }
 [[ "$ENABLE_MCP" == true ]] || { echo "MCP flag parsing failed"; exit 1; }
 
 echo "Configuration script logic validation passed"
 EOF
 
 chmod +x /tmp/test-config.sh
-echo "Testing: /tmp/test-config.sh --network mainnet --private-key test123 --enable-mcp"
-if /tmp/test-config.sh --network mainnet --private-key "test123" --enable-mcp; then
+echo "Testing: /tmp/test-config.sh --private-key 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef --enable-mcp"
+if /tmp/test-config.sh --private-key "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef" --enable-mcp; then
     echo -e "${GREEN}✅ Configuration script logic works correctly${NC}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
 else
@@ -181,6 +178,148 @@ else
     TESTS_FAILED=$((TESTS_FAILED + 1))
 fi
 rm -f /tmp/test-config.sh
+
+# Test 6.2: Private Key Validation
+echo "6.2 Testing private key validation..."
+echo "Testing that invalid private keys are rejected..."
+
+# Test invalid key (too short)
+cat > /tmp/test-validation.sh << 'EOF'
+#!/bin/bash
+set -e
+
+# Simulate the validation logic from Docker container
+PRIVATE_KEY="$1"
+CLEAN_KEY="${PRIVATE_KEY#0x}"
+
+if ! echo "$CLEAN_KEY" | grep -qE '^[a-fA-F0-9]{64}$'; then
+  echo "Error: Private key must be 64 hex characters (32 bytes)"
+  exit 1
+fi
+
+echo "Valid private key"
+EOF
+
+chmod +x /tmp/test-validation.sh
+
+# Test 1: Invalid short key should fail
+if /tmp/test-validation.sh "test123" 2>/dev/null; then
+    echo -e "${RED}❌ Short private key validation failed - should reject invalid keys${NC}"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+else
+    echo -e "${GREEN}✅ Short private key correctly rejected${NC}"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+fi
+
+# Test 2: Valid key should pass
+if /tmp/test-validation.sh "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"; then
+    echo -e "${GREEN}✅ Valid private key correctly accepted${NC}"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+    echo -e "${RED}❌ Valid private key validation failed${NC}"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# Test 3: Key with 0x prefix should work
+if /tmp/test-validation.sh "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"; then
+    echo -e "${GREEN}✅ Private key with 0x prefix correctly accepted${NC}"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+    echo -e "${RED}❌ Private key with 0x prefix validation failed${NC}"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+rm -f /tmp/test-validation.sh
+
+# Test 6.3: Negative Private Key Tests
+echo "6.3 Testing negative private key validation cases..."
+echo "Testing various invalid private key formats..."
+
+cat > /tmp/test-negative.sh << 'EOF'
+#!/bin/bash
+set -e
+
+# Simulate the validation logic from Docker container
+PRIVATE_KEY="$1"
+CLEAN_KEY="${PRIVATE_KEY#0x}"
+
+if ! echo "$CLEAN_KEY" | grep -qE '^[a-fA-F0-9]{64}$'; then
+  echo "Error: Private key must be 64 hex characters (32 bytes)"
+  exit 1
+fi
+
+echo "Valid private key"
+EOF
+
+chmod +x /tmp/test-negative.sh
+
+# Array of invalid test cases
+INVALID_KEYS=(
+  "test123"                                                      # Too short
+  ""                                                            # Empty string
+  "123"                                                         # Way too short
+  "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg" # Non-hex characters (g)
+  "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde"   # 63 chars (too short by 1)
+  "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1"  # 65 chars (too long by 1)
+  "xyz1567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"   # Non-hex at start
+  "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdez"   # Non-hex at end
+  "1234 67890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"   # Contains space
+  "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdeG"   # Non-hex character G at end
+  "G234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"   # Non-hex character G at start
+  "!@#\$567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"   # Special characters
+  "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdXX"   # Non-hex character
+)
+
+DESCRIPTIONS=(
+  "short alphanumeric"
+  "empty string"
+  "very short number"
+  "non-hex characters (g)"
+  "63 characters (too short)"
+  "65 characters (too long)"
+  "non-hex at start"
+  "non-hex at end"
+  "contains space"
+  "non-hex character G at end"
+  "non-hex character G at start"
+  "special characters"
+  "non-hex character XX"
+)
+
+NEGATIVE_TESTS_PASSED=0
+NEGATIVE_TESTS_FAILED=0
+
+for i in "${!INVALID_KEYS[@]}"; do
+  KEY="${INVALID_KEYS[$i]}"
+  DESC="${DESCRIPTIONS[$i]}"
+
+  echo "Testing invalid key: $DESC"
+
+  if /tmp/test-negative.sh "$KEY" 2>/dev/null; then
+    echo -e "${RED}❌ FAILED: Invalid key '$DESC' was incorrectly accepted${NC}"
+    NEGATIVE_TESTS_FAILED=$((NEGATIVE_TESTS_FAILED + 1))
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+  else
+    echo -e "${GREEN}✅ PASSED: Invalid key '$DESC' correctly rejected${NC}"
+    NEGATIVE_TESTS_PASSED=$((NEGATIVE_TESTS_PASSED + 1))
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+  fi
+done
+
+echo ""
+echo "Negative test summary: $NEGATIVE_TESTS_PASSED passed, $NEGATIVE_TESTS_FAILED failed"
+
+# Test edge case: Mixed case should actually be VALID (hex is case-insensitive)
+echo "Testing edge case: Mixed case hex (should be valid)..."
+if /tmp/test-negative.sh "1234567890ABCDEF1234567890abcdef1234567890ABCDEF1234567890abcdef"; then
+    echo -e "${GREEN}✅ Mixed case hex correctly accepted (case-insensitive)${NC}"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+    echo -e "${RED}❌ Mixed case hex incorrectly rejected${NC}"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+rm -f /tmp/test-negative.sh
 
 # Test 7: Environment File Generation
 echo "7. Testing environment file generation..."
@@ -358,7 +497,7 @@ if [ "${TESTS_FAILED}" -eq 0 ]; then
     echo "📝 Next steps:"
     echo "  1. Deploy the AMI infrastructure: cd deployments/infra && cdk deploy AMI-Pipeline-default-Stack"
     echo "  2. Test AMI build: Go to GitHub Actions and run the 'Build AMI' workflow"
-    echo "  3. Test user experience: Launch AMI and run tn-node-configure --network testnet --enable-mcp"
+    echo "  3. Test user experience: Launch AMI and run tn-node-configure --enable-mcp"
     echo ""
     exit 0
 else
