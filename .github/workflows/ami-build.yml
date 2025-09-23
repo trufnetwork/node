@@ -72,6 +72,7 @@ jobs:
         run: |
           cd deployments/infra
           echo "Deploying AMI pipeline infrastructure..."
+          cdk bootstrap --require-approval never
           cdk deploy AMI-Pipeline-default-Stack --require-approval never
 
           # Get pipeline ARN after deployment
@@ -91,6 +92,10 @@ jobs:
 
       - name: Trigger AMI build
         run: |
+          if [ -z "${PIPELINE_ARN:-}" ]; then
+            echo "PIPELINE_ARN is empty; aborting." >&2
+            exit 1
+          fi
           echo "Starting AMI build with pipeline: $PIPELINE_ARN"
 
           # Start image pipeline execution
@@ -214,7 +219,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               release_id: releaseId,
-              body: (currentRelease.data.body || '') + amiDetails
+              body: (currentRelease.data.body || '') + comment
             });
 
   notify-success:

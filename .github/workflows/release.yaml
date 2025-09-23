@@ -14,6 +14,10 @@ permissions:
   # Required for workflow dispatch
   actions: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build-release:
     name: Build & release

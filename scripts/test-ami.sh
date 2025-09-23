@@ -1,5 +1,6 @@
 #!/bin/bash
-set -e
+set -Eeuo pipefail
+IFS=$'\n\t'
 
 echo "🧪 TrufNetwork AMI Testing Suite"
 echo "================================"
@@ -12,7 +13,7 @@ NC='\033[0m'
 # Detect Docker Compose command
 if docker compose version >/dev/null 2>&1; then
     COMPOSE="docker compose"
-elif docker-compose version >/dev/null 2>&1; then
+elif command -v docker-compose >/dev/null 2>&1; then
     COMPOSE="docker-compose"
 else
     echo -e "${RED}❌ Neither 'docker compose' nor 'docker-compose' found${NC}"
@@ -21,6 +22,14 @@ else
 fi
 
 echo "Using Docker Compose: $COMPOSE"
+
+# Cleanup function for test containers
+cleanup() {
+  if [ -f /tmp/tn-test-compose.yml ]; then
+    eval "$COMPOSE -f /tmp/tn-test-compose.yml down -v" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
 
 # Test counter
 TESTS_PASSED=0
@@ -99,6 +108,7 @@ cat > /tmp/test-docker-compose.yml << 'EOF'
 services:
   kwil-postgres:
     image: kwildb/postgres:16.8-1
+    container_name: tn-postgres
     environment:
       POSTGRES_DB: kwild
       POSTGRES_USER: kwild
@@ -118,6 +128,7 @@ services:
 
   tn-node:
     image: ghcr.io/trufnetwork/node:latest
+    container_name: tn-node
     environment:
       - SETUP_CHAIN_ID=${CHAIN_ID:-tn-v2.1}
       - SETUP_DB_OWNER=${DB_OWNER:-postgres://kwild:kwild@kwil-postgres:5432/kwild}
@@ -137,19 +148,19 @@ services:
     networks:
       - tn-network
     restart: unless-stopped
-    profiles:
-      - node
 
   postgres-mcp:
     image: crystaldba/postgres-mcp:latest
-    command: ["postgres-mcp", "--access-mode=restricted", "--transport=sse"]
+    container_name: tn-mcp
     environment:
       - DATABASE_URI=postgresql://kwild:kwild@kwil-postgres:5432/kwild
+      - MCP_ACCESS_MODE=restricted
+      - MCP_TRANSPORT=sse
     ports:
       - "8000:8000"
     depends_on:
-      kwil-postgres:
-        condition: service_healthy
+      - kwil-postgres
+      - tn-node
     networks:
       - tn-network
     restart: unless-stopped
@@ -165,7 +176,7 @@ networks:
     driver: bridge
 EOF
 
-if $COMPOSE -f /tmp/test-docker-compose.yml config > /dev/null 2>&1; then
+if eval "$COMPOSE -f /tmp/test-docker-compose.yml config" > /dev/null 2>&1; then
     echo -e "${GREEN}✅ Docker Compose configuration valid${NC}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
 else
@@ -285,7 +296,7 @@ echo "Checking if required Docker images can be pulled..."
 DOCKER_IMAGES_AVAILABLE=true
 
 echo "Checking kwildb/postgres:16.8-1..."
-if docker pull kwildb/postgres:16.8-1; then
+if docker manifest inspect kwildb/postgres:16.8-1 >/dev/null 2>&1; then
     echo -e "${GREEN}✓ kwildb/postgres:16.8-1 available${NC}"
 else
     echo -e "${RED}❌ kwildb/postgres:16.8-1 not available${NC}"
@@ -293,7 +304,7 @@ else
 fi
 
 echo "Checking crystaldba/postgres-mcp:latest..."
-if docker pull crystaldba/postgres-mcp:latest; then
+if docker manifest inspect crystaldba/postgres-mcp:latest >/dev/null 2>&1; then
     echo -e "${GREEN}✓ crystaldba/postgres-mcp:latest available${NC}"
 else
     echo -e "${RED}❌ crystaldba/postgres-mcp:latest not available${NC}"
@@ -316,6 +327,7 @@ cat > /tmp/tn-test-compose.yml << 'EOF'
 services:
   kwil-postgres:
     image: kwildb/postgres:16.8-1
+    container_name: tn-postgres
     environment:
       POSTGRES_DB: kwild
       POSTGRES_USER: kwild
@@ -342,15 +354,15 @@ networks:
 EOF
 
 echo "Starting PostgreSQL container..."
-if $COMPOSE -f /tmp/tn-test-compose.yml up -d kwil-postgres; then
+if eval "$COMPOSE -f /tmp/tn-test-compose.yml up -d kwil-postgres"; then
     echo "Waiting for PostgreSQL to be ready..."
     timeout=30
     while [ $timeout -gt 0 ]; do
-        if $COMPOSE -f /tmp/tn-test-compose.yml exec -T kwil-postgres pg_isready -U kwild > /dev/null 2>&1; then
+        if eval "$COMPOSE -f /tmp/tn-test-compose.yml exec -T kwil-postgres pg_isready -U kwild" > /dev/null 2>&1; then
             echo -e "${GREEN}✅ PostgreSQL started successfully${NC}"
 
             echo "Testing database connection..."
-            if $COMPOSE -f /tmp/tn-test-compose.yml exec -T kwil-postgres psql -U kwild -d kwild -c "SELECT version();" > /dev/null 2>&1; then
+            if eval "$COMPOSE -f /tmp/tn-test-compose.yml exec -T kwil-postgres psql -U kwild -d kwild -c \"SELECT version();\"" > /dev/null 2>&1; then
                 echo -e "${GREEN}✅ Database connection successful${NC}"
                 TESTS_PASSED=$((TESTS_PASSED + 1))
             else
@@ -373,7 +385,7 @@ else
 fi
 
 echo "Cleaning up test containers..."
-$COMPOSE -f /tmp/tn-test-compose.yml down -v
+eval "$COMPOSE -f /tmp/tn-test-compose.yml down -v"
 rm -f /tmp/tn-test-compose.yml
 
 # Test 10: Update Script Workflow
@@ -390,7 +402,7 @@ echo "📦 Pulling latest images..."
 # Detect Docker Compose command
 if docker compose version >/dev/null 2>&1; then
     COMPOSE="docker compose"
-elif docker-compose version >/dev/null 2>&1; then
+elif command -v docker-compose >/dev/null 2>&1; then
     COMPOSE="docker-compose"
 else
     echo "❌ Neither 'docker compose' nor 'docker-compose' found"
@@ -422,10 +434,10 @@ rm -f /tmp/tn-update-test.sh
 echo ""
 TOTAL_TESTS=$((TESTS_PASSED + TESTS_FAILED))
 
-if [ $TESTS_FAILED -eq 0 ]; then
+if [ "${TESTS_FAILED}" -eq 0 ]; then
     echo "🎉 All tests passed!"
     echo ""
-    echo "📊 Test Results: $TESTS_PASSED/$TOTAL_TESTS tests passed"
+    echo "📊 Test Results: ${TESTS_PASSED}/${TOTAL_TESTS} tests passed"
     echo ""
     echo "📋 Summary of what was tested:"
     echo "  • CDK infrastructure synthesis"
@@ -448,7 +460,7 @@ if [ $TESTS_FAILED -eq 0 ]; then
 else
     echo -e "${RED}❌ Tests failed!${NC}"
     echo ""
-    echo "📊 Test Results: $TESTS_PASSED/$TOTAL_TESTS tests passed, $TESTS_FAILED failed"
+    echo "📊 Test Results: ${TESTS_PASSED}/${TOTAL_TESTS} tests passed, ${TESTS_FAILED} failed"
     echo -e "${RED}Please fix the issues before deployment.${NC}"
     exit 1
 fi

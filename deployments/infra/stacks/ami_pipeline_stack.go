@@ -15,14 +15,14 @@ type AmiPipelineStackProps struct {
 }
 
 type AmiPipelineStackExports struct {
-	PipelineArn         string
-	DockerComponentArn  string
-	ConfigComponentArn  string
-	RecipeArn           string
-	InfraConfigArn      string
-	DistributionArn     string
-	S3BucketName        string
-	InstanceProfileArn  string
+	PipelineArn        string
+	DockerComponentArn string
+	ConfigComponentArn string
+	RecipeArn          string
+	InfraConfigArn     string
+	DistributionArn    string
+	S3BucketName       string
+	InstanceProfileArn string
 }
 
 func AmiPipelineStack(scope constructs.Construct, id string, props *AmiPipelineStackProps) (awscdk.Stack, AmiPipelineStackExports) {
@@ -83,6 +83,10 @@ func AmiPipelineStack(scope constructs.Construct, id string, props *AmiPipelineS
 		InstanceTypes: &[]*string{
 			jsii.String("t3.medium"), // Cost-effective for AMI building
 		},
+		InstanceMetadataOptions: &awsimagebuilder.CfnInfrastructureConfiguration_InstanceMetadataOptionsProperty{
+			HttpTokens:              jsii.String("required"),
+			HttpPutResponseHopLimit: jsii.Number(2),
+		},
 		// Omit to use default VPC security group
 		SecurityGroupIds: nil,
 		Logging: &awsimagebuilder.CfnInfrastructureConfiguration_LoggingProperty{
@@ -134,14 +138,6 @@ phases:
             - sudo systemctl enable docker
             - sudo systemctl start docker
             - sudo usermod -aG docker ubuntu
-
-      - name: InstallDockerCompose
-        action: ExecuteBash
-        inputs:
-          commands:
-            - sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-            - sudo chmod +x /usr/local/bin/docker-compose
-            - sudo ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
 
       - name: InstallAdditionalTools
         action: ExecuteBash
@@ -286,8 +282,8 @@ phases:
               Type=oneshot
               RemainAfterExit=true
               WorkingDirectory=/opt/tn
-              ExecStart=/usr/bin/docker-compose up -d
-              ExecStop=/usr/bin/docker-compose down
+              ExecStart=/usr/bin/docker compose up -d
+              ExecStop=/usr/bin/docker compose down
               User=tn
               Group=tn
 
@@ -376,9 +372,8 @@ phases:
               echo "Service status: $(sudo systemctl is-active tn-node)"
 
               if [ "$ENABLE_MCP" = true ]; then
-                # Get public IP with fallback to local IP
-                PUBLIC_IP=$(curl -s --connect-timeout 5 ifconfig.co 2>/dev/null || curl -s --connect-timeout 5 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}' || echo "localhost")
-                echo "MCP server will be available at: http://$PUBLIC_IP:8000/sse"
+                IPV4=$(curl -s --max-time 2 http://169.254.169.254/latest/meta-data/public-ipv4 || hostname -I | awk '{print $1}' || echo "localhost")
+                echo "MCP server will be available at: http://${IPV4}:8000/sse"
               fi
               EOF
             - sudo chmod +x /usr/local/bin/tn-node-configure
@@ -438,6 +433,7 @@ phases:
 				Ebs: &awsimagebuilder.CfnImageRecipe_EbsInstanceBlockDeviceSpecificationProperty{
 					VolumeSize:          jsii.Number(20), // 20GB root volume
 					VolumeType:          jsii.String("gp3"),
+					Encrypted:           jsii.Bool(true),
 					DeleteOnTermination: jsii.Bool(true),
 				},
 			},
@@ -488,14 +484,14 @@ phases:
 	})
 
 	exports := AmiPipelineStackExports{
-		PipelineArn:         *imagePipeline.AttrArn(),
-		DockerComponentArn:  *dockerComponent.AttrArn(),
-		ConfigComponentArn:  *configComponent.AttrArn(),
-		RecipeArn:           *imageRecipe.AttrArn(),
-		InfraConfigArn:      *infraConfig.AttrArn(),
-		DistributionArn:     *distributionConfig.AttrArn(),
-		S3BucketName:        *artifactsBucket.BucketName(),
-		InstanceProfileArn:  *instanceProfile.AttrArn(),
+		PipelineArn:        *imagePipeline.AttrArn(),
+		DockerComponentArn: *dockerComponent.AttrArn(),
+		ConfigComponentArn: *configComponent.AttrArn(),
+		RecipeArn:          *imageRecipe.AttrArn(),
+		InfraConfigArn:     *infraConfig.AttrArn(),
+		DistributionArn:    *distributionConfig.AttrArn(),
+		S3BucketName:       *artifactsBucket.BucketName(),
+		InstanceProfileArn: *instanceProfile.AttrArn(),
 	}
 
 	return stack, exports
