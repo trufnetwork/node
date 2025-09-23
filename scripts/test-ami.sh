@@ -7,9 +7,20 @@ echo "================================"
 # Colors for output
 GREEN='\033[0;32m'
 RED='\033[0;31m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
 NC='\033[0m'
+
+# Detect Docker Compose command
+if docker compose version >/dev/null 2>&1; then
+    COMPOSE="docker compose"
+elif docker-compose version >/dev/null 2>&1; then
+    COMPOSE="docker-compose"
+else
+    echo -e "${RED}❌ Neither 'docker compose' nor 'docker-compose' found${NC}"
+    echo "Please install Docker Compose v2 or legacy v1"
+    exit 1
+fi
+
+echo "Using Docker Compose: $COMPOSE"
 
 # Test counter
 TESTS_PASSED=0
@@ -18,7 +29,7 @@ TESTS_FAILED=0
 # Test 1: CDK Synthesis
 echo "1. Testing CDK synthesis..."
 cd deployments/infra
-if cdk --app 'go run test-ami-cdk.go' synth --context stage=dev --context devPrefix=test > /dev/null 2>&1; then
+if cdk --app 'go run ami-cdk.go' synth --context stage=dev --context devPrefix=test > /dev/null 2>&1; then
     echo -e "${GREEN}✅ CDK synthesis successful${NC}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
 else
@@ -108,7 +119,7 @@ services:
   tn-node:
     image: ghcr.io/trufnetwork/node:latest
     environment:
-      - SETUP_CHAIN_ID=${CHAIN_ID:-truflation-testnet}
+      - SETUP_CHAIN_ID=${CHAIN_ID:-tn-v2.1}
       - SETUP_DB_OWNER=${DB_OWNER:-postgres://kwild:kwild@kwil-postgres:5432/kwild}
       - CONFIG_PATH=/root/.kwild
     volumes:
@@ -154,7 +165,7 @@ networks:
     driver: bridge
 EOF
 
-if docker-compose -f /tmp/test-docker-compose.yml config > /dev/null 2>&1; then
+if $COMPOSE -f /tmp/test-docker-compose.yml config > /dev/null 2>&1; then
     echo -e "${GREEN}✅ Docker Compose configuration valid${NC}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
 else
@@ -238,27 +249,24 @@ cat > /tmp/test-env-gen.sh << 'EOF'
 NETWORK="mainnet"
 ENABLE_MCP=true
 
-if [ "$NETWORK" = "mainnet" ]; then
-    CHAIN_ID="truflation"
-else
-    CHAIN_ID="truflation-testnet"
-fi
+# Chain ID is always tn-v2.1
+CHAIN_ID="tn-v2.1"
 
 cat > /tmp/test.env << EOL
 CHAIN_ID=$CHAIN_ID
 DB_OWNER=postgres://kwild:kwild@kwil-postgres:5432/kwild
-COMPOSE_PROFILES=node
 EOL
 
+# Only write COMPOSE_PROFILES when MCP is enabled
 if [ "$ENABLE_MCP" = true ]; then
-    echo "COMPOSE_PROFILES=node,mcp" >> /tmp/test.env
+    echo "COMPOSE_PROFILES=mcp" >> /tmp/test.env
 fi
 
 echo "Generated environment file:"
 cat /tmp/test.env
 
-grep -q "CHAIN_ID=truflation" /tmp/test.env && \
-grep -q "COMPOSE_PROFILES=node,mcp" /tmp/test.env
+grep -q "CHAIN_ID=tn-v2.1" /tmp/test.env && \
+grep -q "COMPOSE_PROFILES=mcp" /tmp/test.env
 EOF
 
 if bash /tmp/test-env-gen.sh; then
@@ -334,15 +342,15 @@ networks:
 EOF
 
 echo "Starting PostgreSQL container..."
-if docker-compose -f /tmp/tn-test-compose.yml up -d kwil-postgres; then
+if $COMPOSE -f /tmp/tn-test-compose.yml up -d kwil-postgres; then
     echo "Waiting for PostgreSQL to be ready..."
     timeout=30
     while [ $timeout -gt 0 ]; do
-        if docker-compose -f /tmp/tn-test-compose.yml exec -T kwil-postgres pg_isready -U kwild > /dev/null 2>&1; then
+        if $COMPOSE -f /tmp/tn-test-compose.yml exec -T kwil-postgres pg_isready -U kwild > /dev/null 2>&1; then
             echo -e "${GREEN}✅ PostgreSQL started successfully${NC}"
 
             echo "Testing database connection..."
-            if docker-compose -f /tmp/tn-test-compose.yml exec -T kwil-postgres psql -U kwild -d kwild -c "SELECT version();" > /dev/null 2>&1; then
+            if $COMPOSE -f /tmp/tn-test-compose.yml exec -T kwil-postgres psql -U kwild -d kwild -c "SELECT version();" > /dev/null 2>&1; then
                 echo -e "${GREEN}✅ Database connection successful${NC}"
                 TESTS_PASSED=$((TESTS_PASSED + 1))
             else
@@ -365,7 +373,7 @@ else
 fi
 
 echo "Cleaning up test containers..."
-docker-compose -f /tmp/tn-test-compose.yml down -v
+$COMPOSE -f /tmp/tn-test-compose.yml down -v
 rm -f /tmp/tn-test-compose.yml
 
 # Test 10: Update Script Workflow
@@ -379,15 +387,20 @@ set -e
 echo "🔄 Updating TrufNetwork node to latest version..."
 
 echo "📦 Pulling latest images..."
-if command -v docker-compose > /dev/null; then
-    echo "✓ docker-compose pull command available"
-    echo "✓ Simulated pulling ghcr.io/trufnetwork/node:latest"
-    echo "✓ Simulated pulling kwildb/postgres:16.8-1"
-    echo "✓ Simulated pulling crystaldba/postgres-mcp:latest"
+# Detect Docker Compose command
+if docker compose version >/dev/null 2>&1; then
+    COMPOSE="docker compose"
+elif docker-compose version >/dev/null 2>&1; then
+    COMPOSE="docker-compose"
 else
-    echo "❌ docker-compose not available"
+    echo "❌ Neither 'docker compose' nor 'docker-compose' found"
     exit 1
 fi
+
+echo "✓ Using $COMPOSE"
+echo "✓ Simulated pulling ghcr.io/trufnetwork/node:latest"
+echo "✓ Simulated pulling kwildb/postgres:16.8-1"
+echo "✓ Simulated pulling crystaldba/postgres-mcp:latest"
 
 echo "🔄 Restarting services..."
 echo "✓ Stopping existing containers"
@@ -407,27 +420,35 @@ fi
 rm -f /tmp/tn-update-test.sh
 
 echo ""
-echo "🎉 All tests passed!"
-echo ""
-echo "📋 Summary of what was tested:"
-echo "  • CDK infrastructure synthesis"
-echo "  • GitHub Actions workflow syntax"
-echo "  • Docker Compose configuration"
-echo "  • Shell script syntax"
-echo "  • Go module compilation"
-echo "  • Configuration script logic"
-echo "  • Environment file generation"
-echo "  • Docker images availability"
-echo "  • PostgreSQL service startup"
-echo "  • Update script workflow"
-echo ""
-echo "📝 Next steps:"
-echo "  1. Deploy the AMI infrastructure: cd deployments/infra && cdk deploy TrufNetwork-AMI-Pipeline-dev"
-echo "  2. Test AMI build: Go to GitHub Actions and run the 'Build AMI' workflow"
-echo "  3. Test user experience: Launch AMI and run truflation-configure --network testnet --enable-mcp"
-echo ""
+TOTAL_TESTS=$((TESTS_PASSED + TESTS_FAILED))
 
-if [ $TESTS_FAILED -gt 0 ]; then
-    echo -e "${RED}❌ Some tests failed. Please fix the issues before deployment.${NC}"
+if [ $TESTS_FAILED -eq 0 ]; then
+    echo "🎉 All tests passed!"
+    echo ""
+    echo "📊 Test Results: $TESTS_PASSED/$TOTAL_TESTS tests passed"
+    echo ""
+    echo "📋 Summary of what was tested:"
+    echo "  • CDK infrastructure synthesis"
+    echo "  • GitHub Actions workflow syntax"
+    echo "  • Docker Compose configuration"
+    echo "  • Shell script syntax"
+    echo "  • Go module compilation"
+    echo "  • Configuration script logic"
+    echo "  • Environment file generation"
+    echo "  • Docker images availability"
+    echo "  • PostgreSQL service startup"
+    echo "  • Update script workflow"
+    echo ""
+    echo "📝 Next steps:"
+    echo "  1. Deploy the AMI infrastructure: cd deployments/infra && cdk deploy AMI-Pipeline-default-Stack"
+    echo "  2. Test AMI build: Go to GitHub Actions and run the 'Build AMI' workflow"
+    echo "  3. Test user experience: Launch AMI and run tn-node-configure --network testnet --enable-mcp"
+    echo ""
+    exit 0
+else
+    echo -e "${RED}❌ Tests failed!${NC}"
+    echo ""
+    echo "📊 Test Results: $TESTS_PASSED/$TOTAL_TESTS tests passed, $TESTS_FAILED failed"
+    echo -e "${RED}Please fix the issues before deployment.${NC}"
     exit 1
 fi

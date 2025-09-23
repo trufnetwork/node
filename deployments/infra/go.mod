@@ -2,6 +2,8 @@ module github.com/trufnetwork/node/infra
 
 go 1.24.1
 
+toolchain go1.24.4
+
 require (
 	github.com/BurntSushi/toml v1.5.0
 	github.com/Masterminds/sprig/v3 v3.3.0

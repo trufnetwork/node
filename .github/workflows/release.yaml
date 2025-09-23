@@ -11,6 +11,8 @@ permissions:
   packages: read
   # This is required for creating and modifying releases
   id-token: write
+  # Required for workflow dispatch
+  actions: write
 
 jobs:
   build-release:

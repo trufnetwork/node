@@ -15,13 +15,14 @@ type AmiPipelineStackProps struct {
 }
 
 type AmiPipelineStackExports struct {
-	PipelineArn        string
-	ComponentArn       string
-	RecipeArn          string
-	InfraConfigArn     string
-	DistributionArn    string
-	S3BucketName       string
-	InstanceProfileArn string
+	PipelineArn         string
+	DockerComponentArn  string
+	ConfigComponentArn  string
+	RecipeArn           string
+	InfraConfigArn      string
+	DistributionArn     string
+	S3BucketName        string
+	InstanceProfileArn  string
 }
 
 func AmiPipelineStack(scope constructs.Construct, id string, props *AmiPipelineStackProps) (awscdk.Stack, AmiPipelineStackExports) {
@@ -48,12 +49,13 @@ func AmiPipelineStack(scope constructs.Construct, id string, props *AmiPipelineS
 
 	// S3 bucket for AMI build artifacts and logs
 	artifactsBucket := awss3.NewBucket(stack, jsii.String("AmiArtifactsBucket"), &awss3.BucketProps{
-		BucketName:        jsii.String(nameWithPrefix("tn-ami-artifacts-" + string(stage))),
 		RemovalPolicy:     awscdk.RemovalPolicy_DESTROY,
 		AutoDeleteObjects: jsii.Bool(true),
 		Versioned:         jsii.Bool(false),
 		PublicReadAccess:  jsii.Bool(false),
 		BlockPublicAccess: awss3.BlockPublicAccess_BLOCK_ALL(),
+		Encryption:        awss3.BucketEncryption_S3_MANAGED,
+		EnforceSSL:        jsii.Bool(true),
 	})
 
 	// IAM role for EC2 Image Builder instance
@@ -81,9 +83,8 @@ func AmiPipelineStack(scope constructs.Construct, id string, props *AmiPipelineS
 		InstanceTypes: &[]*string{
 			jsii.String("t3.medium"), // Cost-effective for AMI building
 		},
-		SecurityGroupIds: &[]*string{
-			// Will use default VPC security group - could be enhanced with custom SG
-		},
+		// Omit to use default VPC security group
+		SecurityGroupIds: nil,
 		Logging: &awsimagebuilder.CfnInfrastructureConfiguration_LoggingProperty{
 			S3Logs: &awsimagebuilder.CfnInfrastructureConfiguration_S3LogsProperty{
 				S3BucketName: artifactsBucket.BucketName(),
@@ -133,7 +134,6 @@ phases:
             - sudo systemctl enable docker
             - sudo systemctl start docker
             - sudo usermod -aG docker ubuntu
-            - sudo usermod -aG docker ec2-user || true
 
       - name: InstallDockerCompose
         action: ExecuteBash
@@ -147,7 +147,7 @@ phases:
         action: ExecuteBash
         inputs:
           commands:
-            - sudo apt-get install -y postgresql-client-14 jq curl wget unzip
+            - sudo apt-get install -y postgresql-client-16 jq curl wget unzip
 
       - name: CreateTNUser
         action: ExecuteBash
@@ -200,6 +200,7 @@ phases:
               services:
                 kwil-postgres:
                   image: kwildb/postgres:16.8-1
+                  container_name: tn-postgres
                   environment:
                     POSTGRES_DB: kwild
                     POSTGRES_USER: kwild
@@ -211,9 +212,15 @@ phases:
                   networks:
                     - tn-network
                   restart: unless-stopped
+                  healthcheck:
+                    test: ["CMD-SHELL", "pg_isready -U kwild"]
+                    interval: 10s
+                    timeout: 5s
+                    retries: 12
 
                 tn-node:
                   image: ghcr.io/trufnetwork/node:latest
+                  container_name: tn-node
                   environment:
                     - SETUP_CHAIN_ID=${CHAIN_ID:-tn-v2.1}
                     - SETUP_DB_OWNER=${DB_OWNER:-postgres://kwild:kwild@kwil-postgres:5432/kwild}
@@ -229,13 +236,15 @@ phases:
                     - "26656:26656"
                     - "26657:26657"
                   depends_on:
-                    - kwil-postgres
+                    kwil-postgres:
+                      condition: service_healthy
                   networks:
                     - tn-network
                   restart: unless-stopped
 
                 postgres-mcp:
                   image: crystaldba/postgres-mcp:latest
+                  container_name: tn-mcp
                   environment:
                     - DATABASE_URI=postgresql://kwild:kwild@kwil-postgres:5432/kwild
                     - MCP_ACCESS_MODE=restricted
@@ -336,20 +345,19 @@ phases:
               echo "Network: $NETWORK"
               echo "MCP enabled: $ENABLE_MCP"
 
-              # Set environment variables based on network
+              # Chain ID is always tn-v2.1 regardless of network
+              CHAIN_ID="tn-v2.1"
               cd /opt/tn
-              # Set chain ID for TRUF.NETWORK
-              export CHAIN_ID="tn-v2.1"
 
               # Create .env file
-              cat > .env << 'ENVEOF'
-              CHAIN_ID=tn-v2.1
+              cat > .env << ENVEOF
+              CHAIN_ID=$CHAIN_ID
               DB_OWNER=postgres://kwild:kwild@kwil-postgres:5432/kwild
-              COMPOSE_PROFILES=default
               ENVEOF
 
+              # Only set COMPOSE_PROFILES when MCP is enabled
               if [ "$ENABLE_MCP" = true ]; then
-                echo "COMPOSE_PROFILES=default,mcp" >> .env
+                echo "COMPOSE_PROFILES=mcp" >> .env
               fi
 
               # Handle private key if provided
@@ -368,7 +376,9 @@ phases:
               echo "Service status: $(sudo systemctl is-active tn-node)"
 
               if [ "$ENABLE_MCP" = true ]; then
-                echo "MCP server will be available at: http://$(curl -s ifconfig.me):8000/sse"
+                # Get public IP with fallback to local IP
+                PUBLIC_IP=$(curl -s --connect-timeout 5 ifconfig.co 2>/dev/null || curl -s --connect-timeout 5 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}' || echo "localhost")
+                echo "MCP server will be available at: http://$PUBLIC_IP:8000/sse"
               fi
               EOF
             - sudo chmod +x /usr/local/bin/tn-node-configure
@@ -412,7 +422,7 @@ phases:
 	imageRecipe := awsimagebuilder.NewCfnImageRecipe(stack, jsii.String("TNAmiRecipe"), &awsimagebuilder.CfnImageRecipeProps{
 		Name:        jsii.String(nameWithPrefix("tn-ami-recipe-" + string(stage))),
 		Version:     jsii.String("1.0.0"),
-		ParentImage: jsii.String("ami-001209a78b30e703c"), // Ubuntu 22.04 LTS in us-east-2
+		ParentImage: awscdk.Fn_Sub(jsii.String("{{resolve:ssm:/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id}}"), nil),
 		Description: jsii.String("TRUF.NETWORK node AMI with Docker infrastructure"),
 		Components: &[]*awsimagebuilder.CfnImageRecipe_ComponentConfigurationProperty{
 			{
@@ -434,13 +444,13 @@ phases:
 		},
 	})
 
-	// Distribution configuration for multi-region
+	// Distribution configuration for current region
 	distributionConfig := awsimagebuilder.NewCfnDistributionConfiguration(stack, jsii.String("AmiDistributionConfiguration"), &awsimagebuilder.CfnDistributionConfigurationProps{
 		Name:        jsii.String(nameWithPrefix("tn-ami-distribution-" + string(stage))),
 		Description: jsii.String("Distribution configuration for TRUF.NETWORK AMI"),
 		Distributions: &[]*awsimagebuilder.CfnDistributionConfiguration_DistributionProperty{
 			{
-				Region: jsii.String("us-east-2"), // Current region only for testing
+				Region: awscdk.Aws_REGION(), // Use current region token
 				AmiDistributionConfiguration: &awsimagebuilder.CfnDistributionConfiguration_AmiDistributionConfigurationProperty{
 					AmiTags: &map[string]*string{
 						"Name": jsii.String("TRUFNETWORK-Node-{{imagebuilder:buildDate}}"),
@@ -478,13 +488,14 @@ phases:
 	})
 
 	exports := AmiPipelineStackExports{
-		PipelineArn:        *imagePipeline.AttrArn(),
-		ComponentArn:       *dockerComponent.AttrArn(),
-		RecipeArn:          *imageRecipe.AttrArn(),
-		InfraConfigArn:     *infraConfig.AttrArn(),
-		DistributionArn:    *distributionConfig.AttrArn(),
-		S3BucketName:       *artifactsBucket.BucketName(),
-		InstanceProfileArn: *instanceProfile.AttrArn(),
+		PipelineArn:         *imagePipeline.AttrArn(),
+		DockerComponentArn:  *dockerComponent.AttrArn(),
+		ConfigComponentArn:  *configComponent.AttrArn(),
+		RecipeArn:           *imageRecipe.AttrArn(),
+		InfraConfigArn:      *infraConfig.AttrArn(),
+		DistributionArn:     *distributionConfig.AttrArn(),
+		S3BucketName:        *artifactsBucket.BucketName(),
+		InstanceProfileArn:  *instanceProfile.AttrArn(),
 	}
 
 	return stack, exports

@@ -12,11 +12,11 @@ name: Build AMI
     types: [published]
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION: us-east-2
 
 jobs:
   build-ami:
@@ -36,7 +36,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22.x'
+          go-version: '1.24.x'
           check-latest: true
 
       - name: Install AWS CDK
@@ -50,21 +50,21 @@ jobs:
           cd deployments/infra
 
           # Check if AMI pipeline stack is deployed
-          STACK_NAME="TrufNetwork-AMI-Pipeline-dev"
+          STACK_NAME="AMI-Pipeline-default-Stack"
           if aws cloudformation describe-stacks \
             --stack-name "$STACK_NAME" \
-            --region ${{ env.AWS_REGION }} > /dev/null 2>&1; then
-            echo "pipeline_exists=true" >> $GITHUB_OUTPUT
+            --region "${{ env.AWS_REGION }}" > /dev/null 2>&1; then
+            echo "pipeline_exists=true" >> "$GITHUB_OUTPUT"
             # Get pipeline ARN from stack outputs
             PIPELINE_ARN=$(aws cloudformation describe-stacks \
               --stack-name "$STACK_NAME" \
-              --region ${{ env.AWS_REGION }} \
+              --region "${{ env.AWS_REGION }}" \
               --query \
-                'Stacks[0].Outputs[?OutputKey==`AmiPipelineArn`].OutputValue' \
+                "Stacks[0].Outputs[?OutputKey==\`AmiPipelineArnOutput\`].OutputValue" \
               --output text)
-            echo "pipeline_arn=$PIPELINE_ARN" >> $GITHUB_OUTPUT
+            echo "pipeline_arn=$PIPELINE_ARN" >> "$GITHUB_OUTPUT"
           else
-            echo "pipeline_exists=false" >> $GITHUB_OUTPUT
+            echo "pipeline_exists=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Deploy AMI pipeline infrastructure
@@ -72,22 +72,22 @@ jobs:
         run: |
           cd deployments/infra
           echo "Deploying AMI pipeline infrastructure..."
-          cdk deploy TrufNetwork-AMI-Pipeline-dev --require-approval never
+          cdk deploy AMI-Pipeline-default-Stack --require-approval never
 
           # Get pipeline ARN after deployment
           PIPELINE_ARN=$(aws cloudformation describe-stacks \
-            --stack-name "TrufNetwork-AMI-Pipeline-dev" \
-            --region ${{ env.AWS_REGION }} \
+            --stack-name "AMI-Pipeline-default-Stack" \
+            --region "${{ env.AWS_REGION }}" \
             --query \
-              'Stacks[0].Outputs[?OutputKey==`AmiPipelineArn`].OutputValue' \
+              "Stacks[0].Outputs[?OutputKey==\`AmiPipelineArnOutput\`].OutputValue" \
             --output text)
-          echo "PIPELINE_ARN=$PIPELINE_ARN" >> $GITHUB_ENV
+          echo "PIPELINE_ARN=$PIPELINE_ARN" >> "$GITHUB_ENV"
 
       - name: Set pipeline ARN from existing stack
         if: steps.check-pipeline.outputs.pipeline_exists == 'true'
         run: |
           echo "PIPELINE_ARN=${{ steps.check-pipeline.outputs.pipeline_arn }}" \
-            >> $GITHUB_ENV
+            >> "$GITHUB_ENV"
 
       - name: Trigger AMI build
         run: |
@@ -96,15 +96,15 @@ jobs:
           # Start image pipeline execution
           EXECUTION_ID=$(aws imagebuilder start-image-pipeline-execution \
             --image-pipeline-arn "$PIPELINE_ARN" \
-            --region ${{ env.AWS_REGION }} \
+            --region "${{ env.AWS_REGION }}" \
             --query 'imageBuildVersionArn' \
             --output text)
 
           echo "AMI build started with execution ID: $EXECUTION_ID"
-          echo "EXECUTION_ID=$EXECUTION_ID" >> $GITHUB_ENV
+          echo "EXECUTION_ID=$EXECUTION_ID" >> "$GITHUB_ENV"
 
       - name: Wait for AMI build completion
-        timeout-minutes: 60
+        timeout-minutes: 90
         run: |
           echo "Waiting for AMI build to complete..."
           echo "Execution ID: $EXECUTION_ID"
@@ -113,7 +113,7 @@ jobs:
           while true; do
             STATUS=$(aws imagebuilder get-image \
               --image-build-version-arn "$EXECUTION_ID" \
-              --region ${{ env.AWS_REGION }} \
+              --region "${{ env.AWS_REGION }}" \
               --query 'image.state.status' \
               --output text)
 
@@ -126,12 +126,12 @@ jobs:
                 # Get AMI ID
                 AMI_ID=$(aws imagebuilder get-image \
                   --image-build-version-arn "$EXECUTION_ID" \
-                  --region ${{ env.AWS_REGION }} \
+                  --region "${{ env.AWS_REGION }}" \
                   --query 'image.outputResources.amis[0].image' \
                   --output text)
 
                 echo "AMI ID: $AMI_ID"
-                echo "AMI_ID=$AMI_ID" >> $GITHUB_ENV
+                echo "AMI_ID=$AMI_ID" >> "$GITHUB_ENV"
                 break
                 ;;
               "FAILED")
@@ -161,19 +161,22 @@ jobs:
             # Get AMI details
             aws ec2 describe-images \
               --image-ids "$AMI_ID" \
-              --region ${{ env.AWS_REGION }} \
+              --region "${{ env.AWS_REGION }}" \
               --query \
                 'Images[0].{Name:Name,Description:Description,CreationDate:CreationDate,VirtualizationType:VirtualizationType,Architecture:Architecture,RootDeviceType:RootDeviceType}' \
               --output table
           fi
 
-      - name: Create GitHub release comment
+      - name: Update GitHub release with AMI details
         if: github.event_name == 'release' && env.AMI_ID
         uses: actions/github-script@v7
+        env:
+          RELEASE_ID: ${{ github.event.release.id }}
         with:
           script: |
             const amiId = process.env.AMI_ID;
             const region = process.env.AWS_REGION;
+            const releaseId = process.env.RELEASE_ID;
 
             const comment = `## 🚀 AMI Build Completed
 
@@ -194,16 +197,24 @@ jobs:
 
             # After instance is running, configure your node:
             ssh ubuntu@your-instance-ip
-            sudo truflation-configure --network mainnet \\
+            sudo tn-node-configure --network mainnet \\
               --private-key "your-private-key"
             \`\`\`
             `;
 
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
+            // Get current release to append AMI details
+            const currentRelease = await github.rest.repos.getRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: comment
+              release_id: releaseId
+            });
+
+            // Update release body with AMI information
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: releaseId,
+              body: (currentRelease.data.body || '') + amiDetails
             });
 
   notify-success:

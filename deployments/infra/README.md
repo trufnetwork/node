@@ -246,7 +246,7 @@ This directory contains infrastructure for automated AMI building using AWS EC2 
 - **Docker-in-AMI**: Pre-installed Docker with docker-compose for container orchestration
 - **Always-Latest Strategy**: Containers pull latest images on startup
 - **MCP Server Integration**: PostgreSQL MCP server for AI agent access via SSE transport
-- **Multi-Region Distribution**: AMI distribution across AWS regions
+- **Current Region Distribution**: AMI distribution in deployment region (multi-region planned)
 - **GitHub Actions Integration**: Automated builds triggered by releases
 
 ### Quick Start
@@ -295,8 +295,8 @@ aws cloudformation describe-stacks \
 #### Test AMI Functionality
 
 ```bash
-# Use the working AMI
-AMI_ID="ami-0789f7500b30a84ac"
+# Use the latest AMI (replace with actual AMI ID from your build)
+AMI_ID="ami-xxxxxxxxxxxxxxxxx"
 
 # Launch test instance
 aws ec2 run-instances \
@@ -307,7 +307,7 @@ aws ec2 run-instances \
   --region us-east-2
 
 # SSH to instance and test
-ssh ubuntu@instance-ip
+ssh ubuntu@<instance-ip>
 
 # Configure TRUF.NETWORK node
 sudo tn-node-configure --network testnet --enable-mcp
@@ -328,7 +328,7 @@ sudo update-node
 
 The AMI includes:
 
-- **Base OS**: Ubuntu 22.04 LTS
+- **Base OS**: Ubuntu 24.04 LTS
 - **Docker**: Latest Docker CE with docker-compose
 - **TRUF.NETWORK Stack**:
   - PostgreSQL (kwildb/postgres:16.8-1) 
