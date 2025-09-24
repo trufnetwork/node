@@ -176,6 +176,7 @@ func (e *Extension) reconfigure(ctx context.Context, cfg Config, deps MechanismD
 	}
 
 	mech := newMechanism()
+    deps.DB = dbConnFromService(e.service)
 	if err := mech.Prepare(ctx, deps); err != nil {
 		return err
 	}
@@ -185,7 +186,13 @@ func (e *Extension) reconfigure(ctx context.Context, cfg Config, deps MechanismD
 		return err
 	}
 	fire := func(callCtx context.Context, opts FireOpts) error {
-		return e.ensureRunner().Execute(callCtx, RunnerArgs{Mechanism: mech, Trigger: trig, Logger: e.logger, Reason: opts.Reason})
+		return e.ensureRunner().Execute(callCtx, RunnerArgs{
+			Mechanism: mech,
+			Trigger:   trig,
+			Logger:    e.logger,
+			Reason:    opts.Reason,
+			DB:        dbConnFromService(e.service),
+		})
 	}
 	if err := trig.Configure(ctx, cfg.Trigger, fire); err != nil {
 		return err
@@ -210,4 +217,18 @@ func (e *Extension) startTriggerIfLeader(ctx context.Context) {
 		return
 	}
 	_ = trig.Start(ctx)
+}
+
+func dbConnFromService(service *common.Service) DBConnConfig {
+	if service == nil || service.LocalConfig == nil {
+		return DBConnConfig{}
+	}
+	db := service.LocalConfig.DB
+	return DBConnConfig{
+		Host:     db.Host,
+		Port:     db.Port,
+		User:     db.User,
+		Password: db.Pass,
+		Database: db.DBName,
+	}
 }

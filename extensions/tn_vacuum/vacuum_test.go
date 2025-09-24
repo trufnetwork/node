@@ -60,7 +60,7 @@ func TestLeaderCallbacksRespectEnabledFlag(t *testing.T) {
 
 	fake := &fakeTrigger{}
 	mech := newMechanism()
-	require.NoError(t, mech.Prepare(ctx, MechanismDeps{Logger: log.New()}))
+	require.NoError(t, mech.Prepare(ctx, MechanismDeps{Logger: log.New(), DB: DBConnConfig{Database: "kwild"}}))
 
 	ext.mu.Lock()
 	ext.logger = log.New()
@@ -93,7 +93,7 @@ func TestLeaderEndBlockTriggersReload(t *testing.T) {
 
 	fake := &fakeTrigger{}
 	mech := newMechanism()
-	require.NoError(t, mech.Prepare(ctx, MechanismDeps{Logger: log.New()}))
+	require.NoError(t, mech.Prepare(ctx, MechanismDeps{Logger: log.New(), DB: DBConnConfig{Database: "kwild"}}))
 
 	ext.mu.Lock()
 	ext.logger = log.New()
@@ -140,7 +140,7 @@ func TestPgRepackMechanismRequiresBinary(t *testing.T) {
 	require.NoError(t, os.Setenv("PATH", ""))
 	defer os.Setenv("PATH", oldPath)
 
-	err := mech.Prepare(ctx, MechanismDeps{Logger: log.New()})
+	err := mech.Prepare(ctx, MechanismDeps{Logger: log.New(), DB: DBConnConfig{Database: "kwild"}})
 	require.ErrorIs(t, err, ErrPgRepackUnavailable)
 
 	_, runErr := mech.Run(ctx, RunRequest{Reason: "test"})

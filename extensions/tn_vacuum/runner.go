@@ -15,6 +15,7 @@ type RunnerArgs struct {
 	Trigger   Trigger
 	Logger    log.Logger
 	Reason    string
+	DB        DBConnConfig
 }
 
 func (r *Runner) Execute(ctx context.Context, args RunnerArgs) error {
@@ -28,7 +29,7 @@ func (r *Runner) Execute(ctx context.Context, args RunnerArgs) error {
 	if logger != nil {
 		logger.Info("vacuum runner executing", "mechanism", args.Mechanism.Name(), "reason", args.Reason)
 	}
-	_, err := args.Mechanism.Run(ctx, RunRequest{Reason: args.Reason})
+	_, err := args.Mechanism.Run(ctx, RunRequest{Reason: args.Reason, DB: args.DB})
 	if err != nil {
 		if logger != nil {
 			logger.Warn("vacuum runner failed", "error", err)
