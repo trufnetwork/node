@@ -26,28 +26,16 @@ type RunReport struct {
 	Status    string
 }
 
+var mechanismFactory = func() Mechanism { return NewPgRepackMechanism() }
+
 func newMechanism() Mechanism {
-	return &vacuumStubMechanism{}
+	return mechanismFactory()
 }
 
-type vacuumStubMechanism struct {
-	logger log.Logger
+func setMechanismFactoryForTest(f func() Mechanism) {
+	mechanismFactory = f
 }
 
-func (m *vacuumStubMechanism) Name() string { return "vacuum_stub" }
-
-func (m *vacuumStubMechanism) Prepare(ctx context.Context, deps MechanismDeps) error {
-	m.logger = deps.Logger.New("mechanism.vacuum_stub")
-	m.logger.Info("vacuum stub prepared")
-	return nil
-}
-
-func (m *vacuumStubMechanism) Run(ctx context.Context, req RunRequest) (*RunReport, error) {
-	m.logger.Info("vacuum stub run", "reason", req.Reason)
-	return &RunReport{Mechanism: m.Name(), Status: "ok"}, nil
-}
-
-func (m *vacuumStubMechanism) Close(ctx context.Context) error {
-	m.logger.Info("vacuum stub closed")
-	return nil
+func resetMechanismFactory() {
+	mechanismFactory = func() Mechanism { return NewPgRepackMechanism() }
 }

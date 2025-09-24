@@ -29,8 +29,8 @@ ENV CONFIG_PATH=/root/.kwild
 
 WORKDIR /app
 
-# add postgres client tools
-RUN apk add --no-cache postgresql16-client
+# add postgres client tools and pg_repack binary used by tn_vacuum
+RUN apk add --no-cache postgresql16-client pg_repack
 
 # move .build content to /app
 COPY --from=build /app/.build/* /app/

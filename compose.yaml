@@ -28,7 +28,7 @@ services:
   tn-db:
     container_name: tn-db
     hostname: tn-db
-    image: "ghcr.io/trufnetwork/node:local"
+    image: "ghcr.io/trufnetwork/node:${TN_IMAGE:-local}"
     restart: unless-stopped
     build:
       context: .

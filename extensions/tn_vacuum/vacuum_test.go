@@ -2,6 +2,7 @@ package tn_vacuum
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -16,6 +17,20 @@ type fakeTrigger struct {
 	endCalls int
 	lastCfg  TriggerConfig
 }
+
+type stubMechanism struct {
+	prepared bool
+}
+
+func (s *stubMechanism) Name() string { return "stub" }
+func (s *stubMechanism) Prepare(ctx context.Context, deps MechanismDeps) error {
+	s.prepared = true
+	return nil
+}
+func (s *stubMechanism) Run(ctx context.Context, req RunRequest) (*RunReport, error) {
+	return &RunReport{Mechanism: s.Name(), Status: "ok"}, nil
+}
+func (s *stubMechanism) Close(ctx context.Context) error { return nil }
 
 func (f *fakeTrigger) Configure(ctx context.Context, cfg TriggerConfig, fire func(context.Context, FireOpts) error) error {
 	f.lastCfg = cfg
@@ -40,6 +55,8 @@ func TestLeaderCallbacksRespectEnabledFlag(t *testing.T) {
 	ctx := context.Background()
 	ResetForTest()
 	ext := GetExtension()
+	setMechanismFactoryForTest(func() Mechanism { return &stubMechanism{} })
+	defer resetMechanismFactory()
 
 	fake := &fakeTrigger{}
 	mech := newMechanism()
@@ -71,6 +88,8 @@ func TestLeaderEndBlockTriggersReload(t *testing.T) {
 	ctx := context.Background()
 	ResetForTest()
 	ext := GetExtension()
+	setMechanismFactoryForTest(func() Mechanism { return &stubMechanism{} })
+	defer resetMechanismFactory()
 
 	fake := &fakeTrigger{}
 	mech := newMechanism()
@@ -108,4 +127,24 @@ func TestLeaderEndBlockTriggersReload(t *testing.T) {
 	require.Equal(t, 2, fake.endCalls) // old trigger still sees callback before reload
 	require.Equal(t, TriggerBlockInterval, ext.Config().Trigger.Kind)
 	require.NotEqual(t, fake, ext.Trigger())
+}
+
+func TestPgRepackMechanismRequiresBinary(t *testing.T) {
+	ctx := context.Background()
+	resetMechanismFactory()
+	mech := newMechanism()
+	pr, ok := mech.(*pgRepackMechanism)
+	require.True(t, ok, "mechanism should be pgRepackMechanism")
+
+	oldPath := os.Getenv("PATH")
+	require.NoError(t, os.Setenv("PATH", ""))
+	defer os.Setenv("PATH", oldPath)
+
+	err := mech.Prepare(ctx, MechanismDeps{Logger: log.New()})
+	require.ErrorIs(t, err, ErrPgRepackUnavailable)
+
+	_, runErr := mech.Run(ctx, RunRequest{Reason: "test"})
+	require.ErrorIs(t, runErr, ErrPgRepackUnavailable)
+
+	require.NoError(t, pr.Close(ctx))
 }
