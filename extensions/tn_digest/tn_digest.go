@@ -9,6 +9,7 @@ import (
 	"github.com/trufnetwork/kwil-db/extensions/hooks"
 	"github.com/trufnetwork/kwil-db/extensions/precompiles"
 	sql "github.com/trufnetwork/kwil-db/node/types/sql"
+	"github.com/trufnetwork/node/extensions/leaderwatch"
 	"github.com/trufnetwork/node/extensions/tn_digest/internal"
 )
 
@@ -24,9 +25,16 @@ func InitializeExtension() {
 	if err := hooks.RegisterEngineReadyHook(ExtensionName+"_engine_ready", engineReadyHook); err != nil {
 		panic(fmt.Sprintf("failed to register %s engine ready hook: %v", ExtensionName, err))
 	}
-	// Register end-block hook for leader gating
+	// Register end-block hook (kept for compatibility; actual leader handling via leaderwatch)
 	if err := hooks.RegisterEndBlockHook(ExtensionName+"_end_block", endBlockHook); err != nil {
 		panic(fmt.Sprintf("failed to register %s end block hook: %v", ExtensionName, err))
+	}
+	if err := leaderwatch.Register(ExtensionName, leaderwatch.Callbacks{
+		OnAcquire:  digestLeaderAcquire,
+		OnLose:     digestLeaderLose,
+		OnEndBlock: digestLeaderEndBlock,
+	}); err != nil {
+		panic(fmt.Sprintf("failed to register %s leader watcher: %v", ExtensionName, err))
 	}
 }
 
@@ -91,77 +99,106 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 
 // endBlockHook toggles scheduler based on leader status and config
 func endBlockHook(ctx context.Context, app *common.App, block *common.BlockContext) error {
+	return nil
+}
+
+func digestLeaderAcquire(ctx context.Context, app *common.App, block *common.BlockContext) {
 	ext := GetExtension()
 	if ext == nil {
-		return nil
+		return
 	}
-
-	// Determine leader: compare NetworkParameters.Leader with node identity
-	isLeader := isCurrentLeader(app, block)
-
-	prev := ext.IsLeader()
-	if !prev && isLeader {
-		// became leader: start scheduler if enabled
-		if ext.ConfigEnabled() {
-			// lazily create scheduler if missing using app.Service (tests may not set ext.Service)
-			if ext.ensureSchedulerWithService(app.Service) {
-				// created scheduler, continue to start below
-			}
-			if ext.Scheduler() == nil { // still missing due to missing prereqs
-				ext.Logger().Debug("tn_digest: prerequisites missing; deferring start until broadcaster/signer/engine/service are available")
-			} else if err := ext.startScheduler(ctx); err != nil {
-				ext.Logger().Warn("failed to start tn_digest scheduler on leader acquire", "error", err)
-			} else {
-				ext.Logger().Info("tn_digest started (leader)", "schedule", ext.Schedule())
-			}
+	ext.setLeader(true)
+	if !ext.ConfigEnabled() {
+		return
+	}
+	service := ext.Service()
+	if app != nil && app.Service != nil {
+		service = app.Service
+		if ext.Service() == nil {
+			ext.SetService(service)
 		}
 	}
-	if prev && !isLeader {
-		// lost leadership: stop scheduler if running
-		ext.stopSchedulerIfRunning()
+	if ext.ensureSchedulerWithService(service) {
+		// scheduler created; fall through to start
+	}
+	if ext.Scheduler() == nil {
+		ext.Logger().Debug("tn_digest: prerequisites missing; deferring start until broadcaster/signer/engine/service are available")
+		return
+	}
+	if err := ext.startScheduler(ctx); err != nil {
+		ext.Logger().Warn("failed to start tn_digest scheduler on leader acquire", "error", err)
+	} else {
+		ext.Logger().Info("tn_digest started (leader)", "schedule", ext.Schedule())
+	}
+}
+
+func digestLeaderLose(ctx context.Context, app *common.App, block *common.BlockContext) {
+	ext := GetExtension()
+	if ext == nil {
+		return
+	}
+	ext.setLeader(false)
+	ext.stopSchedulerIfRunning()
+	if ext.Logger() != nil {
 		ext.Logger().Info("tn_digest stopped (lost leadership)")
 	}
-	ext.setLeader(isLeader)
+}
 
-	// Periodic config reload
-	if block != nil && ext.ReloadIntervalBlocks() > 0 {
-		if block.Height-ext.LastCheckedHeight() >= ext.ReloadIntervalBlocks() {
-			if ext.EngineOps() != nil {
-				enabled, schedule, _ := ext.EngineOps().LoadDigestConfig(ctx)
-				// Only act if changed
-				if enabled != ext.ConfigEnabled() || (schedule != "" && schedule != ext.Schedule()) {
-					// fallback to default if schedule empty
-					if schedule == "" {
-						schedule = DefaultDigestSchedule
-					}
-					ext.SetConfig(enabled, schedule)
-					// reconcile based on new config and current leadership
-					if !enabled {
-						// disabled -> stop if running
-						ext.stopSchedulerIfRunning()
-						ext.Logger().Info("tn_digest stopped due to config disabled")
-					} else if isLeader {
-						// enabled and leader -> (re)start with new schedule
-						if ext.Scheduler() == nil && !ext.ensureSchedulerWithService(app.Service) {
-							ext.Logger().Debug("tn_digest: prerequisites missing; deferring (re)start after config update")
-						} else if err := func() error {
-							// stop if existing, then start
-							if ext.Scheduler() != nil {
-								ext.stopSchedulerIfRunning()
-							}
-							return ext.startScheduler(ctx)
-						}(); err != nil {
-							ext.Logger().Warn("failed to (re)start tn_digest scheduler after config update", "error", err)
-						} else {
-							ext.Logger().Info("tn_digest (re)started with new schedule", "schedule", ext.Schedule())
-						}
-					}
+func digestLeaderEndBlock(ctx context.Context, app *common.App, block *common.BlockContext) {
+	ext := GetExtension()
+	if ext == nil {
+		return
+	}
+
+	if block == nil {
+		return
+	}
+
+	reload := ext.ReloadIntervalBlocks()
+	if reload <= 0 {
+		return
+	}
+
+	if block.Height-ext.LastCheckedHeight() < reload {
+		return
+	}
+
+	if ext.EngineOps() == nil {
+		ext.Logger().Debug("tn_digest: skip reload; EngineOps not ready")
+		ext.SetLastCheckedHeight(block.Height)
+		return
+	}
+
+	enabled, schedule, _ := ext.EngineOps().LoadDigestConfig(ctx)
+	if schedule == "" {
+		schedule = DefaultDigestSchedule
+	}
+
+	if enabled != ext.ConfigEnabled() || schedule != ext.Schedule() {
+		ext.SetConfig(enabled, schedule)
+		if !enabled {
+			ext.stopSchedulerIfRunning()
+			ext.Logger().Info("tn_digest stopped due to config disabled")
+		} else if ext.IsLeader() {
+			service := ext.Service()
+			if app != nil && app.Service != nil {
+				service = app.Service
+				if ext.Service() == nil {
+					ext.SetService(service)
 				}
-			} else {
-				ext.Logger().Debug("tn_digest: skip reload; EngineOps not ready")
 			}
-			ext.SetLastCheckedHeight(block.Height)
+			if ext.Scheduler() == nil && !ext.ensureSchedulerWithService(service) {
+				ext.Logger().Debug("tn_digest: prerequisites missing; deferring (re)start after config update")
+			} else if ext.Scheduler() != nil {
+				ext.stopSchedulerIfRunning()
+				if err := ext.startScheduler(ctx); err != nil {
+					ext.Logger().Warn("failed to (re)start tn_digest scheduler after config update", "error", err)
+				} else {
+					ext.Logger().Info("tn_digest (re)started with new schedule", "schedule", ext.Schedule())
+				}
+			}
 		}
 	}
-	return nil
+
+	ext.SetLastCheckedHeight(block.Height)
 }
