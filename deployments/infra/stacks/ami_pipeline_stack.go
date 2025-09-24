@@ -288,7 +288,7 @@ phases:
               # Create .env file
               cat > .env << ENVEOF
               CHAIN_ID=$CHAIN_ID
-              DB_OWNER=postgres://kwild:kwild@kwil-postgres:5432/kwild
+              DB_OWNER=postgres://postgres@tn-postgres:5432/kwild
               ENVEOF
 
               # Only set COMPOSE_PROFILES when MCP is enabled
