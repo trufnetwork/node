@@ -30,7 +30,7 @@ func TestDatabaseSizeExtension(t *testing.T) {
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testDatabaseSizeExtensionMethods(t),
-			testGetDbSizeThreeAction(t),
+			testGetDatabaseSizeV2Actions(t),
 		},
 	}, &testutils.Options{
 		Options: &kwilTesting.Options{
@@ -86,14 +86,14 @@ func testDatabaseSizeExtensionMethods(t *testing.T) func(ctx context.Context, pl
 	}
 }
 
-// Test the get_db_size_three ACTION that uses the database_size extension
-func testGetDbSizeThreeAction(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+// Test the database_size_v2 ACTIONs that use the database_size extension
+func testGetDatabaseSizeV2Actions(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
 		platform = procedure.WithSigner(platform, deployer.Bytes())
 
-		// Call get_db_size_three ACTION
-		result, err := procedure.GetDbSizeThree(ctx, procedure.GetDatabaseSizeInput{
+		// Test get_database_size_v2 action
+		result, err := procedure.GetDatabaseSizeV2(ctx, procedure.GetDatabaseSizeInput{
 			Platform: platform,
 			Locator: types.StreamLocator{
 				DataProvider: deployer,
@@ -101,19 +101,32 @@ func testGetDbSizeThreeAction(t *testing.T) func(ctx context.Context, platform *
 			Height: 0,
 		})
 
-		require.NoError(t, err, "get_db_size_three should execute without error")
+		require.NoError(t, err, "get_database_size_v2 should execute without error")
 		require.Len(t, result, 1, "Should return exactly one row")
-		require.Len(t, result[0], 2, "Row should have exactly two columns (database_size, database_size_pretty)")
+		require.Len(t, result[0], 1, "Row should have exactly one column")
 
 		// Parse the size and verify it's a valid positive integer
 		sizeStr := result[0][0]
-		prettyStr := result[0][1]
-
 		size, err := strconv.ParseInt(sizeStr, 10, 64)
 		require.NoError(t, err, "Database size should be a valid integer")
 		assert.Greater(t, size, int64(0), "Database size should be positive")
+		assert.Greater(t, size, int64(1024), "Database size should be at least 1KB")
+		assert.Less(t, size, int64(100*1024*1024), "Database size should be less than 100MB for test")
 
-		// Verify pretty string is not empty
+		// Test get_database_size_v2_pretty action
+		prettyResult, err := procedure.GetDatabaseSizeV2Pretty(ctx, procedure.GetDatabaseSizeInput{
+			Platform: platform,
+			Locator: types.StreamLocator{
+				DataProvider: deployer,
+			},
+			Height: 0,
+		})
+
+		require.NoError(t, err, "get_database_size_v2_pretty should execute without error")
+		require.Len(t, prettyResult, 1, "Should return exactly one row")
+		require.Len(t, prettyResult[0], 1, "Row should have exactly one column")
+
+		prettyStr := prettyResult[0][0]
 		assert.NotEmpty(t, prettyStr, "Pretty size should not be empty")
 
 		// Should contain typical PostgreSQL size units
@@ -127,12 +140,7 @@ func testGetDbSizeThreeAction(t *testing.T) func(ctx context.Context, platform *
 		}
 		assert.True(t, containsUnit, "Pretty size should contain a valid unit suffix: %s", prettyStr)
 
-		// Basic sanity check - size should be reasonable
-		assert.Greater(t, size, int64(1024), "Database size should be at least 1KB")
-		assert.Less(t, size, int64(100*1024*1024), "Database size should be less than 100MB for test")
-
-		t.Logf("Database size three (ACTION using extension): %d bytes (%s)", size, prettyStr)
-
+		t.Logf("Database size v2 (extension ACTION): %d bytes (%s)", size, prettyStr)
 		return nil
 	}
 }
