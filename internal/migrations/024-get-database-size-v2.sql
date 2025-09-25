@@ -63,3 +63,26 @@ CREATE OR REPLACE ACTION get_table_sizes_v2() PUBLIC VIEW RETURNS TABLE(
         pg_database_size('kwild')::BIGINT AS size_bytes,
         pg_size_pretty(pg_database_size('kwild'))::TEXT AS size_pretty;
 };
+
+/**
+ * get_db_size_three: Returns database size using the database_size precompile extension
+ *
+ * This action demonstrates how to use a precompile extension from within an ACTION,
+ * similar to how tn_cache is used in other migrations like 007-composed-query-derivate.sql.
+ *
+ * Uses the database-size extension which provides non-deterministic PostgreSQL functions
+ * that are safe to use in read-only view actions but not in consensus-critical operations.
+ */
+CREATE OR REPLACE ACTION get_db_size_three() PUBLIC VIEW RETURNS TABLE(
+    database_size BIGINT,
+    database_size_pretty TEXT
+) {
+    -- Use the database_size extension methods via the precompile system
+    -- Similar to how tn_cache methods are called in other actions
+    $size := database_size.get_database_size();
+    $pretty := database_size.get_database_size_pretty();
+
+    RETURN SELECT
+        $size AS database_size,
+        $pretty AS database_size_pretty;
+};

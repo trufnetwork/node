@@ -994,3 +994,39 @@ func ListMetadataByHeight(ctx context.Context, input ListMetadataByHeightInput) 
 
 	return processResultRows(resultRows)
 }
+
+// GetDbSizeThree executes get_db_size_three action
+func GetDbSizeThree(ctx context.Context, input GetDatabaseSizeInput) ([]ResultRow, error) {
+	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
+	if err != nil {
+		return nil, errors.Wrap(err, "error in GetDbSizeThree.NewEthereumAddressFromBytes")
+	}
+
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: input.Height},
+		Signer:       input.Platform.Deployer,
+		Caller:       deployer.Address(),
+		TxID:         input.Platform.Txid(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext: txContext,
+	}
+
+	var resultRows [][]any
+	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_db_size_three", []any{}, func(row *common.Row) error {
+		values := make([]any, len(row.Values))
+		copy(values, row.Values)
+		resultRows = append(resultRows, values)
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "error in GetDbSizeThree.Call")
+	}
+	if r.Error != nil {
+		return nil, errors.Wrap(r.Error, "error in GetDbSizeThree.Call")
+	}
+
+	return processResultRows(resultRows)
+}

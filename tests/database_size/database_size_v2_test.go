@@ -40,6 +40,8 @@ func TestDatabaseSizeV2Actions(t *testing.T) {
 			testGetDatabaseSizeV2(t),
 			testGetDatabaseSizeV2Pretty(t),
 			testGetTableSizesV2(t),
+			// Note: testGetDbSizeThree requires database_size extension to be initialized
+			// It's tested separately using kwil-cli in full environment
 		},
 	}, &testutils.Options{
 		Options: &kwilTesting.Options{
@@ -159,6 +161,56 @@ func testGetTableSizesV2(t *testing.T) func(ctx context.Context, platform *kwilT
 			t.Logf("Table: %s, Size: %d bytes (%s)", tableName, size, sizePretty)
 		}
 
+		return nil
+	}
+}
+
+// Test get_db_size_three action - uses the database_size precompile extension
+func testGetDbSizeThree(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		deployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
+		platform = procedure.WithSigner(platform, deployer.Bytes())
+
+		// Call get_db_size_three
+		result, err := procedure.GetDbSizeThree(ctx, procedure.GetDatabaseSizeInput{
+			Platform: platform,
+			Locator: trufTypes.StreamLocator{
+				DataProvider: deployer,
+			},
+			Height: 0,
+		})
+
+		require.NoError(t, err, "get_db_size_three should execute without error")
+		require.Len(t, result, 1, "Should return exactly one row")
+		require.Len(t, result[0], 2, "Row should have exactly two columns (database_size, database_size_pretty)")
+
+		// Parse the size and verify it's a valid positive integer
+		sizeStr := result[0][0]
+		prettyStr := result[0][1]
+
+		size, err := strconv.ParseInt(sizeStr, 10, 64)
+		require.NoError(t, err, "Database size should be a valid integer")
+		assert.Greater(t, size, int64(0), "Database size should be positive")
+
+		// Verify pretty string is not empty
+		assert.NotEmpty(t, prettyStr, "Pretty size should not be empty")
+
+		// Should contain typical PostgreSQL size units (bytes, kB, MB, GB)
+		containsUnit := false
+		units := []string{"bytes", "kB", "MB", "GB", "TB"}
+		for _, unit := range units {
+			if len(prettyStr) > len(unit) && prettyStr[len(prettyStr)-len(unit):] == unit {
+				containsUnit = true
+				break
+			}
+		}
+		assert.True(t, containsUnit, "Pretty size should contain a valid unit suffix: %s", prettyStr)
+
+		// Basic sanity check - size should be reasonable (between 1KB and 100MB for test)
+		assert.Greater(t, size, int64(1024), "Database size should be at least 1KB")
+		assert.Less(t, size, int64(100*1024*1024), "Database size should be less than 100MB for test")
+
+		t.Logf("Database size three (extension): %d bytes (%s)", size, prettyStr)
 		return nil
 	}
 }
