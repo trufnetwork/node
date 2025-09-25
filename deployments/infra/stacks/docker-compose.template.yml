@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_HOST_AUTH_METHOD: trust
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./pg-data:/var/lib/postgresql/data
     ports:
       - "127.0.0.1:5432:5432"
     networks:
@@ -23,7 +23,7 @@ services:
     container_name: tn-node
     entrypoint: ""
     volumes:
-      - node_data:/root/.kwild
+      - ./tn-data:/root/.kwild
       - /opt/tn/configs:/opt/tn/configs:ro
     ports:
       - "8484:8484"
@@ -42,17 +42,19 @@ services:
         if [ ! -f /root/.kwild/config.toml ]; then
           echo 'No existing configuration found. Generating new node identity...'
 
-          # Install curl if not available and wget doesn't work
-          if ! command -v wget >/dev/null 2>&1 && ! command -v curl >/dev/null 2>&1; then
-            echo 'Installing curl...'
-            apt-get update && apt-get install -y curl || apk add curl || true
+          # Resolve external address (prefer env override; fallback if tools exist)
+          PUBLIC_IP=\"$${TN_EXTERNAL_ADDRESS:-}\"
+          if [ -z \"$$PUBLIC_IP\" ]; then
+            if command -v wget >/dev/null 2>&1; then
+              PUBLIC_IP=$$(wget -T 2 -qO- https://checkip.amazonaws.com/ 2>/dev/null || true)
+            elif command -v curl >/dev/null 2>&1; then
+              PUBLIC_IP=$$(curl -m 2 -s https://checkip.amazonaws.com/ 2>/dev/null || true)
+            fi
           fi
-
-          # Get public IP for external address
-          PUBLIC_IP=$$(wget -qO- http://checkip.amazonaws.com/ 2>/dev/null || curl -s http://checkip.amazonaws.com/ 2>/dev/null || echo \"\")
+          [ -n \"$$PUBLIC_IP\" ] && EXTERNAL_FLAG=\"--p2p.external-address $$PUBLIC_IP:26656\" || EXTERNAL_FLAG=\"\"
           echo \"Detected public IP: $$PUBLIC_IP\"
 
-          /app/kwild setup init --genesis /opt/tn/configs/network/v2/genesis.json --root /root/.kwild-new --p2p.bootnodes \"4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656,0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656\" --state-sync.enable --state-sync.trusted-providers \"0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656\" --rpc.private --db.host tn-postgres --p2p.external-address $$PUBLIC_IP:26656
+          /app/kwild setup init --genesis /opt/tn/configs/network/v2/genesis.json --root /root/.kwild-new --p2p.bootnodes \"4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656,0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656\" --state-sync.enable --state-sync.trusted-providers \"0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656\" --rpc.private --db.host tn-postgres $$EXTERNAL_FLAG
           mkdir -p /root/.kwild
           cp /root/.kwild-new/* /root/.kwild/
           rm -rf /root/.kwild-new
@@ -70,11 +72,12 @@ services:
             exit 1
           fi
           echo '{\"key\":\"'$$CLEAN_KEY'\",\"type\":\"secp256k1\"}' > /root/.kwild/nodekey.json
+          chmod 600 /root/.kwild/nodekey.json || true
           echo 'Nodekey created successfully'
         fi
 
         echo 'Starting TRUF.NETWORK node...'
-        /app/kwild start
+        exec /app/kwild start
       "
 
   postgres-mcp:
@@ -96,10 +99,6 @@ services:
     restart: unless-stopped
     profiles:
       - mcp
-
-volumes:
-  postgres_data:
-  node_data:
 
 networks:
   tn-network:
