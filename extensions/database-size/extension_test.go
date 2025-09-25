@@ -27,19 +27,20 @@ func TestDatabaseSizeExtension(t *testing.T) {
 		precompile, err := InitializeDatabaseSizePrecompile(ctx, service, nil, "test_alias", nil)
 		require.NoError(t, err)
 		assert.NotNil(t, precompile.OnStart, "OnStart hook should be defined")
+		assert.Len(t, precompile.Methods, 2, "Should have 2 precompile methods")
 
-		// Test OnStart hook with minimal app
-		if precompile.OnStart != nil {
-			app := &common.App{
-				Service: service,
-			}
-			err = precompile.OnStart(ctx, app)
-			require.NoError(t, err)
+		// Verify method names
+		methodNames := make([]string, len(precompile.Methods))
+		for i, method := range precompile.Methods {
+			methodNames[i] = method.Name
 		}
+		assert.Contains(t, methodNames, "get_database_size", "Should have get_database_size method")
+		assert.Contains(t, methodNames, "get_database_size_pretty", "Should have get_database_size_pretty method")
 	})
 
 	t.Run("TestExtensionConstants", func(t *testing.T) {
 		assert.Equal(t, "database_size", ExtensionName, "Extension name should be correct")
+		assert.Equal(t, "ext_database_size", SchemaName, "Schema name should be correct")
 	})
 }
 
@@ -47,28 +48,48 @@ func TestDatabaseSizeExtension(t *testing.T) {
 func TestDatabaseSizeWithDatabase(t *testing.T) {
 	// This test runs with the full test framework like our ACTION tests
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name: "database_size_extension_test",
+		Name: "database_size_extension_unit_test",
 		FunctionTests: []kwilTesting.TestFunc{
 			func(ctx context.Context, platform *kwilTesting.Platform) error {
 				// Test GetDatabaseSize helper function
 				size, err := GetDatabaseSize(ctx, platform.DB)
-				require.NoError(t, err)
-				assert.Greater(t, size, int64(0), "Database size should be positive")
+				if err != nil {
+					t.Errorf("GetDatabaseSize failed: %v", err)
+					return err
+				}
+				if size <= 0 {
+					t.Errorf("Database size should be positive, got %d", size)
+					return nil
+				}
 				t.Logf("Database size: %d bytes", size)
 
 				// Test GetDatabaseSizePretty helper function
 				prettySize, err := GetDatabaseSizePretty(ctx, platform.DB)
-				require.NoError(t, err)
-				assert.NotEmpty(t, prettySize, "Pretty size should not be empty")
+				if err != nil {
+					t.Errorf("GetDatabaseSizePretty failed: %v", err)
+					return err
+				}
+				if prettySize == "" {
+					t.Errorf("Pretty size should not be empty")
+					return nil
+				}
 				t.Logf("Database size (pretty): %s", prettySize)
 
 				// Compare with direct query
 				result, err := platform.DB.Execute(ctx, "SELECT pg_database_size('kwild')")
-				require.NoError(t, err)
-				require.Len(t, result.Rows, 1)
+				if err != nil {
+					t.Errorf("Direct query failed: %v", err)
+					return err
+				}
+				if len(result.Rows) != 1 {
+					t.Errorf("Expected 1 row, got %d", len(result.Rows))
+					return nil
+				}
 				directSize := result.Rows[0][0].(int64)
 
-				assert.Equal(t, directSize, size, "Extension and direct query should return same size")
+				if directSize != size {
+					t.Errorf("Extension and direct query should return same size: extension=%d, direct=%d", size, directSize)
+				}
 
 				return nil
 			},

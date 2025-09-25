@@ -56,6 +56,11 @@ func InitializeDatabaseSizePrecompile(ctx context.Context, service *common.Servi
 				}
 
 				logger.Info("database_size extension initialized successfully", "alias", alias)
+				return nil
+			}
+
+			if err := setupDatabaseSizeSchema(ctx, app.DB); err != nil {
+				return fmt.Errorf("failed to setup database_size schema: %w", err)
 			}
 			return nil
 		},
