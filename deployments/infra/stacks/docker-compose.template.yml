@@ -81,7 +81,7 @@ services:
       "
 
   postgres-mcp:
-    image: crystaldba/postgres-mcp:latest
+    image: ghcr.io/trufnetwork/postgres-mcp:latest
     container_name: tn-mcp
     environment:
       - DATABASE_URI=postgresql://postgres@tn-postgres:5432/kwild
