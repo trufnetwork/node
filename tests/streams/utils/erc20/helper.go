@@ -37,12 +37,12 @@ func WithERC20TestSetup(chain, alias string, escrowAddr string) func(t *testing.
 	}
 }
 
-// CreditUserBalance injects a realistic ERC-20 transfer to credit the user's balance.
-// This simulates a user depositing tokens into the bridge.
+// CreditUserBalance injects a synthetic escrow deposit to credit the user's balance.
+// This simulates a user depositing tokens into the bridge via the RewardDistributor contract.
 func CreditUserBalance(ctx context.Context, platform *kwilTesting.Platform, extensionAlias, escrowAddr, userAddr, amount string) error {
 	// Use the platform's DB and Engine (could be transaction-scoped)
 	return InjectERC20Transfer(
-		ctx, platform, extensionAlias, escrowAddr, "0x2222222222222222222222222222222222222222", userAddr, escrowAddr, amount, 10, nil)
+		ctx, platform, extensionAlias, escrowAddr, "0x2222222222222222222222222222222222222222", userAddr, userAddr, amount, 10, nil)
 }
 
 // GetUserBalance queries the user's current balance via the extension.

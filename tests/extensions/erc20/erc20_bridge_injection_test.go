@@ -35,7 +35,7 @@ func TestERC20BridgeInjectedTransferAffectsBalance(t *testing.T) {
 		})
 
 		// Inject a transfer: from user to escrow (lock/credit path)
-		err = testerc20.InjectERC20Transfer(ctx, platform, chain, escrow, erc20, user, escrow, value, 1, nil)
+		err = testerc20.InjectERC20Transfer(ctx, platform, chain, escrow, erc20, user, user, value, 1, nil)
 		require.NoError(t, err)
 
 		// Query balance via the test alias
@@ -62,6 +62,35 @@ func TestERC20BridgeInjectedTransferAffectsBalance(t *testing.T) {
 		}
 
 		require.Equal(t, value, got, "expected balance to reflect injected transfer amount")
+
+		return nil
+	})
+}
+
+// TestERC20BridgeInjectedDepositCreditsRecipient ensures deposits can credit a recipient distinct from the depositor.
+func TestERC20BridgeInjectedDepositCreditsRecipient(t *testing.T) {
+	seedAndRun(t, "erc20_bridge_injected_deposit_recipient", func(ctx context.Context, platform *kwilTesting.Platform) error {
+		chain := "sepolia"
+		escrow := "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+		erc20 := "0x2222222222222222222222222222222222222222"
+		depositor := "0xabc0000000000000000000000000000000000004"
+		recipient := "0xabc0000000000000000000000000000000000005"
+		value := "1500000000000000000"
+
+		require.NoError(t, erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, chain, escrow, erc20, 18, 60, TestExtensionAlias))
+		t.Cleanup(func() {
+			erc20shim.ForTestingDisableInstance(ctx, platform, chain, escrow, TestExtensionAlias)
+		})
+
+		require.NoError(t, testerc20.InjectERC20Transfer(ctx, platform, chain, escrow, erc20, depositor, recipient, value, 2, nil))
+
+		balanceRecipient, err := testerc20.GetUserBalance(ctx, platform, TestExtensionAlias, recipient)
+		require.NoError(t, err)
+		require.Equal(t, value, balanceRecipient, "recipient should receive credited deposit")
+
+		balanceDepositor, err := testerc20.GetUserBalance(ctx, platform, TestExtensionAlias, depositor)
+		require.NoError(t, err)
+		require.Equal(t, "0", balanceDepositor, "depositor should not be credited by deposit")
 
 		return nil
 	})

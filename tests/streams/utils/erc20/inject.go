@@ -20,7 +20,7 @@ import (
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 )
 
-// InjectERC20Transfer forces an instance synced and injects a synthetic Transfer log that credits balance.
+// InjectERC20Transfer forces an instance synced and injects a synthetic Deposit log that credits balance.
 func InjectERC20Transfer(ctx context.Context, platform *kwilTesting.Platform, chain, escrow, erc20Addr, fromHex, toHex string, valueStr string, point int64, prev *int64) error {
 	// 1) Ensure instance exists and is synced
 	id, err := erc20bridge.ForTestingForceSyncInstance(ctx, platform, chain, escrow, erc20Addr, 18)
@@ -31,26 +31,32 @@ func InjectERC20Transfer(ctx context.Context, platform *kwilTesting.Platform, ch
 	// 2) Compute ordered-sync topic
 	topic := erc20bridge.ForTestingTransferListenerTopic(*id)
 
-	// 3) Build a synthetic transfer log
-	from := ethcommon.HexToAddress(fromHex)
+	// 3) Build a synthetic deposit log
+	if !ethcommon.IsHexAddress(fromHex) {
+		return fmt.Errorf("invalid address: %s", fromHex)
+	}
+	if !ethcommon.IsHexAddress(toHex) {
+		return fmt.Errorf("invalid address: %s", toHex)
+	}
 	to := ethcommon.HexToAddress(toHex)
-	erc20Address := ethcommon.HexToAddress(erc20Addr)
+	escrowAddress := ethcommon.HexToAddress(escrow)
 	var bn big.Int
 	if _, ok := bn.SetString(valueStr, 10); !ok {
 		return fmt.Errorf("invalid value: %s", valueStr)
 	}
-	// topics: signature + from + to
+	// topics: only signature (no indexed params)
 	topics := []ethcommon.Hash{
-		ethcommon.HexToHash("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"),
-		ethcommon.BytesToHash(from.Bytes()),
-		ethcommon.BytesToHash(to.Bytes()),
+		ethcommon.HexToHash("0xe1fffcc4923d04b559f4d29a8bfc6cda04eb5b0d3c460751c2402c5c5cc9109c"),
 	}
-	// data: 32-byte big-endian value
+
+	var recipientWord [32]byte
+	copy(recipientWord[32-len(to.Bytes()):], to.Bytes())
 	val32 := types.BigIntToHash32(&bn)
+	data := append(recipientWord[:], val32[:]...)
 	lg := &ethtypes.Log{
-		Address:     erc20Address,
+		Address:     escrowAddress,
 		Topics:      topics,
-		Data:        val32[:],
+		Data:        data,
 		BlockNumber: uint64(point),
 		TxHash:      ethcommon.Hash{},
 		TxIndex:     0,
@@ -58,7 +64,7 @@ func InjectERC20Transfer(ctx context.Context, platform *kwilTesting.Platform, ch
 		Index:       0,
 		Removed:     false,
 	}
-	ethLog := &evmsync.EthLog{Metadata: []byte("e20trsnfr"), Log: lg}
+	ethLog := &evmsync.EthLog{Metadata: []byte("rcpdepst"), Log: lg}
 
 	// 4) Serialize like production and store via ordered-sync
 	logsData, err := serializeEthLogsLocal([]*evmsync.EthLog{ethLog})

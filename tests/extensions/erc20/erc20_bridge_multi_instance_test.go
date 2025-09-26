@@ -40,7 +40,7 @@ func TestERC20BridgeMultiInstanceIsolation(t *testing.T) {
 
 		// Step 1: Inject deposit only for escrowA, userX
 		// This simulates a deposit to escrowA only
-		err = testerc20.InjectERC20Transfer(ctx, platform, TestChain, escrowA, TestERC20, TestUserA, escrowA, TestAmount1, 10, nil)
+		err = testerc20.InjectERC20Transfer(ctx, platform, TestChain, escrowA, TestERC20, TestUserA, TestUserA, TestAmount1, 10, nil)
 		require.NoError(t, err)
 
 		// Step 2: Verify isolation - aliasA should have balance, aliasB should not
