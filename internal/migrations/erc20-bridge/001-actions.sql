@@ -21,8 +21,8 @@ CREATE OR REPLACE ACTION sepolia_wallet_balance($wallet_address TEXT) PUBLIC VIE
   RETURN $balance;
 };
 
-CREATE OR REPLACE ACTION sepolia_bridge_tokens($amount TEXT) PUBLIC {
-  sepolia_bridge.bridge($amount::NUMERIC(78, 0));
+CREATE OR REPLACE ACTION sepolia_bridge_tokens($recipient TEXT DEFAULT NULL, $amount TEXT) PUBLIC {
+  sepolia_bridge.bridge(COALESCE($recipient, @caller), $amount::NUMERIC(78, 0));
 };
 
 -- MAINNET
@@ -31,6 +31,6 @@ CREATE OR REPLACE ACTION ethereum_wallet_balance($wallet_address TEXT) PUBLIC VI
   RETURN $balance;
 };
 
-CREATE OR REPLACE ACTION ethereum_bridge_tokens($amount TEXT) PUBLIC {
-  mainnet_bridge.bridge($amount::NUMERIC(78, 0));
+CREATE OR REPLACE ACTION ethereum_bridge_tokens($recipient TEXT DEFAULT NULL, $amount TEXT) PUBLIC {
+  mainnet_bridge.bridge(COALESCE($recipient, @caller), $amount::NUMERIC(78, 0));
 };

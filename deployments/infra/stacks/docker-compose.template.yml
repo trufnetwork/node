@@ -1,11 +1,11 @@
 services:
-  kwil-postgres:
+  tn-postgres:
     image: kwildb/postgres:latest
     container_name: tn-postgres
     environment:
       POSTGRES_HOST_AUTH_METHOD: trust
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./pg-data:/var/lib/postgresql/data
     ports:
       - "127.0.0.1:5432:5432"
     networks:
@@ -23,7 +23,7 @@ services:
     container_name: tn-node
     entrypoint: ""
     volumes:
-      - node_data:/root/.kwild
+      - ./tn-data:/root/.kwild
       - /opt/tn/configs:/opt/tn/configs:ro
     ports:
       - "8484:8484"
@@ -31,32 +31,36 @@ services:
       - "26656:26656"
       - "26657:26657"
     depends_on:
-      kwil-postgres:
+      tn-postgres:
         condition: service_healthy
     networks:
       - tn-network
     restart: unless-stopped
     command: |
       sh -c "
-        # Generate config in temporary directory first
-        rm -rf /tmp/my-node-config
-        echo 'Initializing node configuration in temp directory...'
-        /app/kwild setup init --genesis /opt/tn/configs/network/v2/genesis.json --root /tmp/my-node-config --p2p.bootnodes \"4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656,0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656\" --state-sync.enable --state-sync.trusted-providers \"0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656\" --rpc.private --db.host kwil-postgres
+        # Only generate NEW config if persistent storage is empty
+        if [ ! -f /root/.kwild/config.toml ]; then
+          echo 'No existing configuration found. Generating new node identity...'
 
-        # Only copy if initialization succeeded
-        if [ -f /tmp/my-node-config/config.toml ]; then
-          echo 'Copying config to /root/.kwild...'
+          # Resolve external address (prefer env override; fallback if tools exist)
+          PUBLIC_IP=\"$${TN_EXTERNAL_ADDRESS:-}\"
+          if [ -z \"$$PUBLIC_IP\" ]; then
+            if command -v wget >/dev/null 2>&1; then
+              PUBLIC_IP=$$(wget -T 2 -qO- https://checkip.amazonaws.com/ 2>/dev/null || true)
+            elif command -v curl >/dev/null 2>&1; then
+              PUBLIC_IP=$$(curl -m 2 -s https://checkip.amazonaws.com/ 2>/dev/null || true)
+            fi
+          fi
+          [ -n \"$$PUBLIC_IP\" ] && EXTERNAL_FLAG=\"--p2p.external-address $$PUBLIC_IP:26656\" || EXTERNAL_FLAG=\"\"
+          echo \"Detected public IP: $$PUBLIC_IP\"
+
+          /app/kwild setup init --genesis /opt/tn/configs/network/v2/genesis.json --root /root/.kwild-new --p2p.bootnodes \"4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656,0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656\" --state-sync.enable --state-sync.trusted-providers \"0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656\" --rpc.private --db.host tn-postgres $$EXTERNAL_FLAG
           mkdir -p /root/.kwild
-          cp -r /tmp/my-node-config/* /root/.kwild/
-
-          # Ensure database host is set correctly for Docker environment
-          sed -i \"s/host = '127.0.0.1'/host = 'kwil-postgres'/\" /root/.kwild/config.toml
-          sed -i \"s/host = 'localhost'/host = 'kwil-postgres'/\" /root/.kwild/config.toml
-
-          echo 'Configuration setup complete!'
+          cp /root/.kwild-new/* /root/.kwild/
+          rm -rf /root/.kwild-new
+          echo 'New node identity created and saved!'
         else
-          echo 'ERROR: kwild setup init failed!'
-          exit 1
+          echo 'Using existing node identity from persistent storage.'
         fi
 
         # Convert private key to nodekey.json if TN_PRIVATE_KEY is provided
@@ -68,24 +72,25 @@ services:
             exit 1
           fi
           echo '{\"key\":\"'$$CLEAN_KEY'\",\"type\":\"secp256k1\"}' > /root/.kwild/nodekey.json
+          chmod 600 /root/.kwild/nodekey.json || true
           echo 'Nodekey created successfully'
         fi
 
-        echo 'Starting TrufNetwork node...'
-        /app/kwild start -r /root/.kwild
+        echo 'Starting TRUF.NETWORK node...'
+        exec /app/kwild start
       "
 
   postgres-mcp:
-    image: crystaldba/postgres-mcp:latest
+    image: ghcr.io/trufnetwork/postgres-mcp:latest
     container_name: tn-mcp
     environment:
-      - DATABASE_URI=postgresql://postgres@kwil-postgres:5432/kwild
+      - DATABASE_URI=postgresql://postgres@tn-postgres:5432/kwild
       - MCP_ACCESS_MODE=restricted
       - MCP_TRANSPORT=sse
     ports:
       - "8000:8000"
     depends_on:
-      kwil-postgres:
+      tn-postgres:
         condition: service_healthy
       tn-node:
         condition: service_started
@@ -94,10 +99,6 @@ services:
     restart: unless-stopped
     profiles:
       - mcp
-
-volumes:
-  postgres_data:
-  node_data:
 
 networks:
   tn-network:

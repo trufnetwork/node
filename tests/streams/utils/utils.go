@@ -13,15 +13,21 @@ import (
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 
 	// Extension registration
+	"github.com/trufnetwork/node/extensions/database-size"
 	"github.com/trufnetwork/node/extensions/tn_cache"
 	"github.com/trufnetwork/node/tests/streams/utils/cache"
 )
 
-// init registers tn_cache precompiles globally for tests
+// init registers extension precompiles globally for tests
 func init() {
 	err := precompiles.RegisterInitializer(tn_cache.ExtensionName, tn_cache.InitializeCachePrecompile)
 	if err != nil {
 		panic("failed to register tn_cache precompiles: " + err.Error())
+	}
+
+	err = precompiles.RegisterInitializer(database_size.ExtensionName, database_size.InitializeDatabaseSizePrecompile)
+	if err != nil {
+		panic("failed to register database_size precompiles: " + err.Error())
 	}
 }
 

@@ -373,11 +373,11 @@ else
     DOCKER_IMAGES_AVAILABLE=false
 fi
 
-echo "Checking crystaldba/postgres-mcp:latest..."
-if docker manifest inspect crystaldba/postgres-mcp:latest >/dev/null 2>&1; then
-    echo -e "${GREEN}✓ crystaldba/postgres-mcp:latest available${NC}"
+echo "Checking ghcr.io/trufnetwork/postgres-mcp:latest..."
+if docker manifest inspect ghcr.io/trufnetwork/postgres-mcp:latest >/dev/null 2>&1; then
+    echo -e "${GREEN}✓ ghcr.io/trufnetwork/postgres-mcp:latest available${NC}"
 else
-    echo -e "${RED}❌ crystaldba/postgres-mcp:latest not available${NC}"
+    echo -e "${RED}❌ ghcr.io/trufnetwork/postgres-mcp:latest not available${NC}"
     DOCKER_IMAGES_AVAILABLE=false
 fi
 
@@ -397,15 +397,15 @@ echo "Starting PostgreSQL container to test database connectivity..."
 cp deployments/infra/stacks/docker-compose.template.yml /tmp/tn-test-compose.yml
 
 echo "Starting PostgreSQL container..."
-if eval "$COMPOSE -f /tmp/tn-test-compose.yml up -d kwil-postgres"; then
+if eval "$COMPOSE -f /tmp/tn-test-compose.yml up -d tn-postgres"; then
     echo "Waiting for PostgreSQL to be ready..."
     timeout=30
     while [ $timeout -gt 0 ]; do
-        if eval "$COMPOSE -f /tmp/tn-test-compose.yml exec -T kwil-postgres pg_isready -U kwild" > /dev/null 2>&1; then
+        if eval "$COMPOSE -f /tmp/tn-test-compose.yml exec -T tn-postgres pg_isready -U postgres" > /dev/null 2>&1; then
             echo -e "${GREEN}✅ PostgreSQL started successfully${NC}"
 
             echo "Testing database connection..."
-            if eval "$COMPOSE -f /tmp/tn-test-compose.yml exec -T kwil-postgres psql -U kwild -d kwild -c \"SELECT version();\"" > /dev/null 2>&1; then
+            if eval "$COMPOSE -f /tmp/tn-test-compose.yml exec -T tn-postgres psql -U postgres -d kwild -c \"SELECT version();\"" > /dev/null 2>&1; then
                 echo -e "${GREEN}✅ Database connection successful${NC}"
                 TESTS_PASSED=$((TESTS_PASSED + 1))
             else
@@ -455,7 +455,7 @@ fi
 echo "✓ Using $COMPOSE"
 echo "✓ Simulated pulling ghcr.io/trufnetwork/node:latest"
 echo "✓ Simulated pulling kwildb/postgres:16.8-1"
-echo "✓ Simulated pulling crystaldba/postgres-mcp:latest"
+echo "✓ Simulated pulling ghcr.io/trufnetwork/postgres-mcp:latest"
 
 echo "🔄 Restarting services..."
 echo "✓ Stopping existing containers"
