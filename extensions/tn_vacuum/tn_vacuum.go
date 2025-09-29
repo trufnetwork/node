@@ -38,6 +38,10 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 		ext.setService(app.Service)
 	}
 
+	if app != nil {
+		ext.initializeState(ctx, app.DB)
+	}
+
 	svc := (*common.Service)(nil)
 	if app != nil {
 		svc = app.Service

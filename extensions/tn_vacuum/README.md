@@ -42,6 +42,14 @@ sudo yum install postgresql16 pg_repack_16
 
 The extension automatically creates the `pg_repack` PostgreSQL extension on first run.
 
+## State Persistence
+
+The extension keeps a lightweight bookkeeping table in your node database at
+`ext_tn_vacuum.run_state`. On every successful run it records the block height
+and timestamp, allowing restarts to pick up the schedule without re-running
+immediately. The schema is prefixed with `ext_`, so it is ignored by consensus
+hashing and remains entirely node-local.
+
 ## Metrics
 
 When OpenTelemetry is enabled, the extension provides:

@@ -73,6 +73,39 @@ func (e *errorRunMechanism) Run(ctx context.Context, req RunRequest) (*RunReport
 }
 func (e *errorRunMechanism) Close(ctx context.Context) error { return nil }
 
+type stubStateStore struct {
+	ensureCount int
+	loadCount   int
+	saveCount   int
+	loadState   runState
+	loadOK      bool
+	loadErr     error
+	saveErr     error
+	lastSaved   runState
+}
+
+func (s *stubStateStore) Ensure(ctx context.Context) error {
+	s.ensureCount++
+	return nil
+}
+
+func (s *stubStateStore) Load(ctx context.Context) (runState, bool, error) {
+	s.loadCount++
+	if s.loadErr != nil {
+		return runState{}, false, s.loadErr
+	}
+	return s.loadState, s.loadOK, nil
+}
+
+func (s *stubStateStore) Save(ctx context.Context, state runState) error {
+	s.saveCount++
+	s.lastSaved = state
+	if s.saveErr != nil {
+		return s.saveErr
+	}
+	return nil
+}
+
 func TestConfigureDisabledSkipsMechanism(t *testing.T) {
 	ctx := context.Background()
 	ResetForTest()
@@ -213,6 +246,105 @@ func TestVacuumSkippedMetrics(t *testing.T) {
 	block = &common.BlockContext{Height: 11}
 	require.NoError(t, endBlockHook(ctx, app, block))
 	require.Len(t, stub.runs, 2, "should run - interval met")
+}
+
+func TestEngineReadyLoadsPersistedState(t *testing.T) {
+	ctx := context.Background()
+	ResetForTest()
+
+	stub := &stubMechanism{}
+	setMechanismFactoryForTest(func() Mechanism { return stub })
+	defer resetMechanismFactory()
+
+	store := &stubStateStore{
+		loadState: runState{LastRunHeight: 12, LastRunAt: time.Unix(50, 0)},
+		loadOK:    true,
+	}
+
+	svc := &common.Service{
+		Logger: log.New(),
+		LocalConfig: &config.Config{Extensions: map[string]map[string]string{
+			ExtensionName: {
+				ConfigKeyEnabled:       "true",
+				ConfigKeyBlockInterval: "5",
+			},
+		}},
+	}
+
+	app := &common.App{Service: svc}
+
+	ext := GetExtension()
+	ext.setLogger(log.New())
+	ext.setStateStore(store)
+
+	require.NoError(t, engineReadyHook(ctx, app))
+	require.Equal(t, 1, store.ensureCount)
+	require.Equal(t, 1, store.loadCount)
+
+	ext.mu.RLock()
+	require.Equal(t, int64(12), ext.state.LastRunHeight)
+	ext.mu.RUnlock()
+
+	metricsStub := &stubMetricsRecorder{}
+	ext.mu.Lock()
+	ext.metrics = metricsStub
+	ext.mu.Unlock()
+
+	require.NoError(t, endBlockHook(ctx, app, &common.BlockContext{Height: 14}))
+	require.Len(t, stub.runs, 0, "should not run before interval is met")
+
+	require.NoError(t, endBlockHook(ctx, app, &common.BlockContext{Height: 18}))
+	require.Len(t, stub.runs, 1, "should run once interval is met")
+	require.Equal(t, 1, store.saveCount)
+	require.Equal(t, int64(18), metricsStub.lastHeight)
+}
+
+func TestSuccessfulRunPersistsState(t *testing.T) {
+	ctx := context.Background()
+	ResetForTest()
+
+	stub := &stubMechanism{}
+	setMechanismFactoryForTest(func() Mechanism { return stub })
+	defer resetMechanismFactory()
+
+	store := &stubStateStore{}
+
+	svc := &common.Service{
+		Logger: log.New(),
+		LocalConfig: &config.Config{Extensions: map[string]map[string]string{
+			ExtensionName: {
+				ConfigKeyEnabled:       "true",
+				ConfigKeyBlockInterval: "1",
+			},
+		}},
+	}
+
+	app := &common.App{Service: svc}
+
+	ext := GetExtension()
+	ext.setLogger(log.New())
+	ext.setStateStore(store)
+
+	now := time.Unix(100, 0)
+	ext.setNowFunc(func() time.Time { return now })
+
+	require.NoError(t, engineReadyHook(ctx, app))
+	require.Equal(t, 1, store.ensureCount)
+
+	metricsStub := &stubMetricsRecorder{}
+	ext.mu.Lock()
+	ext.metrics = metricsStub
+	ext.mu.Unlock()
+
+	require.NoError(t, endBlockHook(ctx, app, &common.BlockContext{Height: 5}))
+	require.Equal(t, 1, store.saveCount)
+	require.Equal(t, int64(5), store.lastSaved.LastRunHeight)
+	require.Equal(t, now.UTC(), store.lastSaved.LastRunAt)
+	require.Equal(t, 1, metricsStub.completeCount)
+	require.Equal(t, int64(5), metricsStub.lastHeight)
+
+	require.NoError(t, endBlockHook(ctx, app, &common.BlockContext{Height: 5}))
+	require.Equal(t, 1, store.saveCount, "duplicate height should not persist again")
 }
 
 func TestRunnerHandlesNilReport(t *testing.T) {
