@@ -12,7 +12,6 @@ type Runner struct {
 
 type RunnerArgs struct {
 	Mechanism Mechanism
-	Trigger   Trigger
 	Logger    log.Logger
 	Reason    string
 	DB        DBConnConfig

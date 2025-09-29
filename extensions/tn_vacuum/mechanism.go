@@ -7,20 +7,20 @@ import (
 )
 
 type Mechanism interface {
-    Name() string
-    Prepare(ctx context.Context, deps MechanismDeps) error
-    Run(ctx context.Context, req RunRequest) (*RunReport, error)
-    Close(ctx context.Context) error
+	Name() string
+	Prepare(ctx context.Context, deps MechanismDeps) error
+	Run(ctx context.Context, req RunRequest) (*RunReport, error)
+	Close(ctx context.Context) error
 }
 
 type MechanismDeps struct {
-    Logger log.Logger
-    DB     DBConnConfig
+	Logger log.Logger
+	DB     DBConnConfig
 }
 
 type RunRequest struct {
-    Reason string
-    DB     DBConnConfig
+	Reason string
+	DB     DBConnConfig
 }
 
 type RunReport struct {
@@ -29,11 +29,11 @@ type RunReport struct {
 }
 
 type DBConnConfig struct {
-    Host     string
-    Port     string
-    User     string
-    Password string
-    Database string
+	Host     string
+	Port     string
+	User     string
+	Password string
+	Database string
 }
 
 var mechanismFactory = func() Mechanism { return NewPgRepackMechanism() }

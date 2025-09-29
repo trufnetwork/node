@@ -2,6 +2,7 @@ package tn_vacuum
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/trufnetwork/kwil-db/common"
@@ -9,16 +10,13 @@ import (
 )
 
 type Extension struct {
-	mu                   sync.RWMutex
-	logger               log.Logger
-	service              *common.Service
-	config               Config
-	trigger              Trigger
-	mechanism            Mechanism
-	runner               *Runner
-	isLeader             bool
-	reloadIntervalBlocks int64
-	lastConfigHeight     int64
+	mu            sync.RWMutex
+	logger        log.Logger
+	service       *common.Service
+	config        Config
+	mechanism     Mechanism
+	runner        *Runner
+	lastRunHeight int64
 }
 
 var (
@@ -29,8 +27,7 @@ var (
 func GetExtension() *Extension {
 	once.Do(func() {
 		extInstance = &Extension{
-			logger:               log.New(log.WithLevel(log.LevelInfo)),
-			reloadIntervalBlocks: defaultReloadBlocks,
+			logger: log.New(log.WithLevel(log.LevelInfo)),
 		}
 	})
 	return extInstance
@@ -57,166 +54,87 @@ func (e *Extension) setLogger(l log.Logger) {
 	e.logger = l
 }
 
-func (e *Extension) Service() *common.Service {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.service
-}
-
 func (e *Extension) setService(s *common.Service) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.service = s
 }
 
-func (e *Extension) Config() Config {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.config
-}
-
-func (e *Extension) setConfig(cfg Config) {
+func (e *Extension) configure(ctx context.Context, cfg Config) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.config = cfg
-}
 
-func (e *Extension) setMechanism(m Mechanism) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.mechanism = m
-}
-
-func (e *Extension) Mechanism() Mechanism {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.mechanism
-}
-
-func (e *Extension) setTrigger(t Trigger) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.trigger = t
-}
-
-func (e *Extension) Trigger() Trigger {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.trigger
-}
-
-func (e *Extension) ensureRunner() *Runner {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.runner == nil {
-		e.runner = &Runner{logger: e.logger}
+	if e.mechanism != nil {
+		_ = e.mechanism.Close(ctx)
+		e.mechanism = nil
 	}
-	return e.runner
+
+	e.config = cfg
+	e.lastRunHeight = 0
+
+	if !cfg.Enabled {
+		return nil
+	}
+
+	mech := newMechanism()
+	deps := MechanismDeps{Logger: e.logger, DB: dbConnFromService(e.service)}
+	if err := mech.Prepare(ctx, deps); err != nil {
+		return err
+	}
+
+	e.mechanism = mech
+	e.runner = &Runner{logger: e.logger}
+	return nil
 }
 
-func (e *Extension) setLeader(v bool) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.isLeader = v
-}
+func (e *Extension) maybeRun(ctx context.Context, blockHeight int64) {
+	if blockHeight <= 0 {
+		return
+	}
 
-func (e *Extension) IsLeader() bool {
 	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.isLeader
-}
+	cfg := e.config
+	mech := e.mechanism
+	runner := e.runner
+	last := e.lastRunHeight
+	logger := e.logger
+	svc := e.service
+	e.mu.RUnlock()
 
-func (e *Extension) SetReloadIntervalBlocks(v int64) {
+	if !cfg.Enabled || mech == nil || runner == nil {
+		return
+	}
+
+	if last != 0 && blockHeight-last < cfg.BlockInterval {
+		return
+	}
+
+	reason := fmt.Sprintf("block_interval:%d", blockHeight)
+	err := runner.Execute(ctx, RunnerArgs{
+		Mechanism: mech,
+		Logger:    logger,
+		Reason:    reason,
+		DB:        dbConnFromService(svc),
+	})
+	if err != nil {
+		return
+	}
+
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.reloadIntervalBlocks = v
-}
-
-func (e *Extension) ReloadIntervalBlocks() int64 {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.reloadIntervalBlocks
-}
-
-func (e *Extension) SetLastConfigHeight(h int64) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.lastConfigHeight = h
-}
-
-func (e *Extension) LastConfigHeight() int64 {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.lastConfigHeight
+	if blockHeight > e.lastRunHeight {
+		e.lastRunHeight = blockHeight
+	}
+	e.mu.Unlock()
 }
 
 func (e *Extension) Close(ctx context.Context) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.trigger != nil {
-		_ = e.trigger.Stop(ctx)
-		e.trigger = nil
-	}
 	if e.mechanism != nil {
 		_ = e.mechanism.Close(ctx)
 		e.mechanism = nil
 	}
 	e.runner = nil
-}
-
-func (e *Extension) reconfigure(ctx context.Context, cfg Config, deps MechanismDeps) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	if e.trigger != nil {
-		_ = e.trigger.Stop(ctx)
-	}
-	if e.mechanism != nil {
-		_ = e.mechanism.Close(ctx)
-	}
-
-	mech := newMechanism()
-    deps.DB = dbConnFromService(e.service)
-	if err := mech.Prepare(ctx, deps); err != nil {
-		return err
-	}
-
-	trig, err := newTrigger(cfg.Trigger.Kind)
-	if err != nil {
-		return err
-	}
-	fire := func(callCtx context.Context, opts FireOpts) error {
-		return e.ensureRunner().Execute(callCtx, RunnerArgs{
-			Mechanism: mech,
-			Trigger:   trig,
-			Logger:    e.logger,
-			Reason:    opts.Reason,
-			DB:        dbConnFromService(e.service),
-		})
-	}
-	if err := trig.Configure(ctx, cfg.Trigger, fire); err != nil {
-		return err
-	}
-
-	e.reloadIntervalBlocks = cfg.ReloadIntervalBlocks
-	e.config = cfg
-	e.mechanism = mech
-	e.trigger = trig
-	e.runner = &Runner{logger: e.logger}
-
-	return nil
-}
-
-func (e *Extension) startTriggerIfLeader(ctx context.Context) {
-	e.mu.RLock()
-	trig := e.trigger
-	cfg := e.config
-	leader := e.isLeader
-	e.mu.RUnlock()
-	if !leader || trig == nil || !cfg.Enabled {
-		return
-	}
-	_ = trig.Start(ctx)
 }
 
 func dbConnFromService(service *common.Service) DBConnConfig {
