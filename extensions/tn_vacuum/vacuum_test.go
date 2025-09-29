@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
@@ -26,7 +27,12 @@ func (s *stubMechanism) Prepare(ctx context.Context, deps MechanismDeps) error {
 
 func (s *stubMechanism) Run(ctx context.Context, req RunRequest) (*RunReport, error) {
 	s.runs = append(s.runs, req)
-	return &RunReport{Mechanism: s.Name(), Status: "ok"}, nil
+	return &RunReport{
+		Mechanism:       s.Name(),
+		Status:          StatusOK,
+		Duration:        100 * time.Millisecond,
+		TablesProcessed: 5,
+	}, nil
 }
 
 func (s *stubMechanism) Close(ctx context.Context) error {
@@ -44,6 +50,28 @@ func (f *failingMechanism) Run(ctx context.Context, req RunRequest) (*RunReport,
 	return nil, errors.New("should not run")
 }
 func (f *failingMechanism) Close(ctx context.Context) error { return nil }
+
+type nilReportMechanism struct{}
+
+func (n *nilReportMechanism) Name() string { return "nil_report" }
+func (n *nilReportMechanism) Prepare(ctx context.Context, deps MechanismDeps) error {
+	return nil
+}
+func (n *nilReportMechanism) Run(ctx context.Context, req RunRequest) (*RunReport, error) {
+	return nil, nil
+}
+func (n *nilReportMechanism) Close(ctx context.Context) error { return nil }
+
+type errorRunMechanism struct{}
+
+func (e *errorRunMechanism) Name() string { return "error_run" }
+func (e *errorRunMechanism) Prepare(ctx context.Context, deps MechanismDeps) error {
+	return nil
+}
+func (e *errorRunMechanism) Run(ctx context.Context, req RunRequest) (*RunReport, error) {
+	return nil, errors.New("run failed")
+}
+func (e *errorRunMechanism) Close(ctx context.Context) error { return nil }
 
 func TestConfigureDisabledSkipsMechanism(t *testing.T) {
 	ctx := context.Background()
@@ -108,4 +136,173 @@ func TestConfigureFailureLeavesMechanismNil(t *testing.T) {
 	ext.mu.RLock()
 	defer ext.mu.RUnlock()
 	require.Nil(t, ext.mechanism)
+}
+
+func TestRunReportEnhancement(t *testing.T) {
+	ctx := context.Background()
+	ResetForTest()
+
+	stub := &stubMechanism{}
+	setMechanismFactoryForTest(func() Mechanism { return stub })
+	defer resetMechanismFactory()
+
+	svc := &common.Service{
+		Logger: log.New(),
+		LocalConfig: &config.Config{Extensions: map[string]map[string]string{
+			ExtensionName: {
+				ConfigKeyEnabled:       "true",
+				ConfigKeyBlockInterval: "1",
+			},
+		}},
+	}
+
+	app := &common.App{Service: svc}
+	require.NoError(t, engineReadyHook(ctx, app))
+
+	block := &common.BlockContext{Height: 1}
+	require.NoError(t, endBlockHook(ctx, app, block))
+
+	require.Len(t, stub.runs, 1)
+
+	// Verify the stub returns enhanced report data
+	ext := GetExtension()
+	runner := ext.runner
+	require.NotNil(t, runner)
+
+	report, err := stub.Run(ctx, RunRequest{Reason: "test"})
+	require.NoError(t, err)
+	require.NotNil(t, report)
+	require.Equal(t, "stub", report.Mechanism)
+	require.Equal(t, StatusOK, report.Status)
+	require.Equal(t, 100*time.Millisecond, report.Duration)
+	require.Equal(t, 5, report.TablesProcessed)
+}
+
+func TestVacuumSkippedMetrics(t *testing.T) {
+	ctx := context.Background()
+	ResetForTest()
+
+	stub := &stubMechanism{}
+	setMechanismFactoryForTest(func() Mechanism { return stub })
+	defer resetMechanismFactory()
+
+	svc := &common.Service{
+		Logger: log.New(),
+		LocalConfig: &config.Config{Extensions: map[string]map[string]string{
+			ExtensionName: {
+				ConfigKeyEnabled:       "true",
+				ConfigKeyBlockInterval: "10",
+			},
+		}},
+	}
+
+	app := &common.App{Service: svc}
+	require.NoError(t, engineReadyHook(ctx, app))
+
+	// First run at height 1
+	block := &common.BlockContext{Height: 1}
+	require.NoError(t, endBlockHook(ctx, app, block))
+	require.Len(t, stub.runs, 1)
+
+	// Should be skipped at height 5 (interval not met)
+	block = &common.BlockContext{Height: 5}
+	require.NoError(t, endBlockHook(ctx, app, block))
+	require.Len(t, stub.runs, 1, "should not run - interval not met")
+
+	// Should run at height 11 (interval met)
+	block = &common.BlockContext{Height: 11}
+	require.NoError(t, endBlockHook(ctx, app, block))
+	require.Len(t, stub.runs, 2, "should run - interval met")
+}
+
+func TestRunnerHandlesNilReport(t *testing.T) {
+	ctx := context.Background()
+	runner := &Runner{logger: log.New()}
+	metricsStub := &stubMetricsRecorder{}
+
+	require.NoError(t, runner.Execute(ctx, RunnerArgs{
+		Mechanism: &nilReportMechanism{},
+		Logger:    log.New(),
+		Reason:    "test",
+		Metrics:   metricsStub,
+	}))
+
+	require.Equal(t, 1, metricsStub.startCount)
+	require.Equal(t, 1, metricsStub.completeCount)
+	require.Zero(t, metricsStub.lastDuration)
+	require.Zero(t, metricsStub.lastTables)
+	require.Equal(t, "nil_report", metricsStub.lastMechanism)
+}
+
+func TestMaybeRunRecordsErrorOnce(t *testing.T) {
+	ctx := context.Background()
+	ResetForTest()
+
+	setMechanismFactoryForTest(func() Mechanism { return &errorRunMechanism{} })
+	defer resetMechanismFactory()
+
+	svc := &common.Service{
+		Logger: log.New(),
+		LocalConfig: &config.Config{Extensions: map[string]map[string]string{
+			ExtensionName: {
+				ConfigKeyEnabled:       "true",
+				ConfigKeyBlockInterval: "1",
+			},
+		}},
+	}
+
+	app := &common.App{Service: svc}
+	require.NoError(t, engineReadyHook(ctx, app))
+
+	metricsStub := &stubMetricsRecorder{}
+	ext := GetExtension()
+	ext.mu.Lock()
+	ext.metrics = metricsStub
+	ext.mu.Unlock()
+
+	require.NoError(t, endBlockHook(ctx, app, &common.BlockContext{Height: 1}))
+	require.Equal(t, 1, metricsStub.errorCount)
+	require.Equal(t, 1, metricsStub.startCount)
+	require.Equal(t, "error_run", metricsStub.lastErrorMechanism)
+}
+
+type stubMetricsRecorder struct {
+	startCount         int
+	completeCount      int
+	errorCount         int
+	skippedCount       int
+	lastDuration       time.Duration
+	lastTables         int
+	lastMechanism      string
+	lastErrorType      string
+	lastErrorMechanism string
+	lastSkipReason     string
+	lastHeight         int64
+}
+
+func (s *stubMetricsRecorder) RecordVacuumStart(ctx context.Context, mechanism string) {
+	s.startCount++
+	s.lastMechanism = mechanism
+}
+
+func (s *stubMetricsRecorder) RecordVacuumComplete(ctx context.Context, mechanism string, duration time.Duration, tablesProcessed int) {
+	s.completeCount++
+	s.lastMechanism = mechanism
+	s.lastDuration = duration
+	s.lastTables = tablesProcessed
+}
+
+func (s *stubMetricsRecorder) RecordVacuumError(ctx context.Context, mechanism string, errType string) {
+	s.errorCount++
+	s.lastErrorMechanism = mechanism
+	s.lastErrorType = errType
+}
+
+func (s *stubMetricsRecorder) RecordVacuumSkipped(ctx context.Context, reason string) {
+	s.skippedCount++
+	s.lastSkipReason = reason
+}
+
+func (s *stubMetricsRecorder) RecordLastRunHeight(ctx context.Context, height int64) {
+	s.lastHeight = height
 }

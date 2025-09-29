@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/trufnetwork/kwil-db/core/log"
@@ -44,6 +45,12 @@ func (m *pgRepackMechanism) Prepare(ctx context.Context, deps MechanismDeps) err
 }
 
 func (m *pgRepackMechanism) Run(ctx context.Context, req RunRequest) (*RunReport, error) {
+	startTime := time.Now()
+	report := &RunReport{
+		Mechanism: m.Name(),
+		Status:    StatusOK,
+	}
+
 	if m.binaryPath == "" {
 		return nil, fmt.Errorf("pg_repack unavailable: %w", ErrPgRepackUnavailable)
 	}
@@ -79,11 +86,20 @@ func (m *pgRepackMechanism) Run(ctx context.Context, req RunRequest) (*RunReport
 
 	m.logger.Info("pg_repack starting", "args", args)
 	if err := cmd.Run(); err != nil {
-		m.logger.Warn("pg_repack failed", "error", err, "stderr", stderr.String())
-		return nil, fmt.Errorf("pg_repack execution failed: %w", err)
+		report.Duration = time.Since(startTime)
+		report.Status = StatusFailed
+		report.Error = err.Error()
+		m.logger.Warn("pg_repack failed", "error", err, "stderr", stderr.String(), "duration", report.Duration)
+		return report, fmt.Errorf("pg_repack execution failed: %w", err)
 	}
-	m.logger.Info("pg_repack completed", "stdout", stdout.String())
-	return &RunReport{Mechanism: m.Name(), Status: "ok"}, nil
+
+	report.Duration = time.Since(startTime)
+	// Parse stdout to count tables if possible (pg_repack outputs "INFO: repacking table...")
+	tablesProcessed := strings.Count(stdout.String(), "INFO: repacking table")
+	report.TablesProcessed = tablesProcessed
+
+	m.logger.Info("pg_repack completed", "stdout", stdout.String(), "duration", report.Duration, "tables", tablesProcessed)
+	return report, nil
 }
 
 func (m *pgRepackMechanism) Close(ctx context.Context) error {
@@ -116,17 +132,17 @@ func ensurePgRepackExtension(ctx context.Context, db DBConnConfig, logger log.Lo
 func buildConnString(db DBConnConfig) string {
 	host := db.Host
 	if host == "" {
-		host = "127.0.0.1"
+		host = DefaultPostgresHost
 	}
 	port := db.Port
 	if port == "" {
-		port = "5432"
+		port = DefaultPostgresPort
 	}
 	parts := []string{
 		fmt.Sprintf("host=%s", host),
 		fmt.Sprintf("port=%s", port),
 		fmt.Sprintf("dbname=%s", db.Database),
-		"sslmode=disable",
+		DefaultSSLMode,
 	}
 	if db.User != "" {
 		parts = append(parts, fmt.Sprintf("user=%s", db.User))

@@ -2,6 +2,7 @@ package tn_vacuum
 
 import (
 	"context"
+	"time"
 
 	"github.com/trufnetwork/kwil-db/core/log"
 )
@@ -24,8 +25,11 @@ type RunRequest struct {
 }
 
 type RunReport struct {
-	Mechanism string
-	Status    string
+	Mechanism       string
+	Status          string
+	Duration        time.Duration
+	TablesProcessed int
+	Error           string
 }
 
 type DBConnConfig struct {

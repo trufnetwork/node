@@ -25,7 +25,7 @@ func LoadConfig(service *common.Service) (Config, error) {
 		return cfg, nil
 	}
 
-	if v, ok := raw["enabled"]; ok {
+	if v, ok := raw[ConfigKeyEnabled]; ok {
 		boolVal, err := parseBool(v)
 		if err != nil {
 			return cfg, fmt.Errorf("parse enabled: %w", err)
@@ -33,7 +33,7 @@ func LoadConfig(service *common.Service) (Config, error) {
 		cfg.Enabled = boolVal
 	}
 
-	if v, ok := raw["block_interval"]; ok {
+	if v, ok := raw[ConfigKeyBlockInterval]; ok {
 		val, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
 		if err != nil {
 			return cfg, fmt.Errorf("parse block_interval: %w", err)
@@ -51,12 +51,13 @@ func LoadConfig(service *common.Service) (Config, error) {
 }
 
 func parseBool(in string) (bool, error) {
-	switch strings.ToLower(strings.TrimSpace(in)) {
-	case "true", "1", "yes", "y", "on":
+	val := strings.TrimSpace(in)
+	switch val {
+	case "true":
 		return true, nil
-	case "false", "0", "no", "n", "off", "":
+	case "false", "":
 		return false, nil
 	default:
-		return false, fmt.Errorf("invalid bool %q", in)
+		return false, fmt.Errorf("invalid bool %q, expected 'true' or 'false'", in)
 	}
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/log"
+	"github.com/trufnetwork/node/extensions/tn_vacuum/metrics"
 )
 
 type Extension struct {
@@ -17,6 +18,7 @@ type Extension struct {
 	mechanism     Mechanism
 	runner        *Runner
 	lastRunHeight int64
+	metrics       metrics.MetricsRecorder
 }
 
 var (
@@ -26,8 +28,10 @@ var (
 
 func GetExtension() *Extension {
 	once.Do(func() {
+		logger := log.New(log.WithLevel(log.LevelInfo))
 		extInstance = &Extension{
-			logger: log.New(log.WithLevel(log.LevelInfo)),
+			logger:  logger,
+			metrics: metrics.NewMetricsRecorder(logger),
 		}
 	})
 	return extInstance
@@ -52,6 +56,7 @@ func (e *Extension) setLogger(l log.Logger) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.logger = l
+	e.metrics = metrics.NewMetricsRecorder(l)
 }
 
 func (e *Extension) setService(s *common.Service) {
@@ -99,6 +104,7 @@ func (e *Extension) maybeRun(ctx context.Context, blockHeight int64) {
 	last := e.lastRunHeight
 	logger := e.logger
 	svc := e.service
+	metricsRecorder := e.metrics
 	e.mu.RUnlock()
 
 	if !cfg.Enabled || mech == nil || runner == nil {
@@ -106,6 +112,9 @@ func (e *Extension) maybeRun(ctx context.Context, blockHeight int64) {
 	}
 
 	if last != 0 && blockHeight-last < cfg.BlockInterval {
+		if metricsRecorder != nil {
+			metricsRecorder.RecordVacuumSkipped(ctx, "block_interval_not_met")
+		}
 		return
 	}
 
@@ -115,14 +124,19 @@ func (e *Extension) maybeRun(ctx context.Context, blockHeight int64) {
 		Logger:    logger,
 		Reason:    reason,
 		DB:        dbConnFromService(svc),
+		Metrics:   metricsRecorder,
 	})
 	if err != nil {
+		logger.Warn("vacuum run failed", "error", err, "height", blockHeight, "reason", reason)
 		return
 	}
 
 	e.mu.Lock()
 	if blockHeight > e.lastRunHeight {
 		e.lastRunHeight = blockHeight
+		if metricsRecorder != nil {
+			metricsRecorder.RecordLastRunHeight(ctx, blockHeight)
+		}
 	}
 	e.mu.Unlock()
 }
