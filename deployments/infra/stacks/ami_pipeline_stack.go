@@ -306,7 +306,7 @@ phases:
                 # Stop service for reconfiguration
                 echo "Stopping existing services..."
                 sudo systemctl stop tn-node || true
-                sudo -u tn docker-compose down || true
+                sudo -u tn docker compose down || true
               fi
 
               # Create/update .env file
@@ -332,7 +332,8 @@ phases:
 
               # Set correct ownership
               sudo chown tn:tn .env
-
+              sudo chmod 600 .env
+              sudo chmod 750 /opt/tn
               # Enable and start the service
               sudo systemctl daemon-reload
               sudo systemctl enable tn-node
