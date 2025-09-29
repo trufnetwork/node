@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"github.com/aws/aws-cdk-go/awscdk/v2"
+	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/stacks"
 	"go.uber.org/zap"
 )
@@ -20,8 +22,12 @@ func main() {
 		Region:  nil, // CDK will auto-detect from AWS CLI config
 	}
 
-	// Use explicit stack name to match GitHub workflow expectations
-	stackName := "AMI-Pipeline-default-Stack"
+	// Use stage-specific stack name for proper environment isolation
+	stage := app.Node().TryGetContext(jsii.String("stage"))
+	if stage == nil {
+		stage = "default"
+	}
+	stackName := fmt.Sprintf("AMI-Pipeline-%s-Stack", stage)
 	_, amiExports := stacks.AmiPipelineStack(
 		app,
 		stackName,

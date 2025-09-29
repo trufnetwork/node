@@ -248,8 +248,6 @@ phases:
               # Default values
               PRIVATE_KEY=""
               ENABLE_MCP=false
-              MCP_TRANSPORT="sse"
-              MCP_ACCESS_MODE="restricted"
 
               # Parse command line arguments
               while [[ $# -gt 0 ]]; do
@@ -262,14 +260,6 @@ phases:
                     ENABLE_MCP=true
                     shift
                     ;;
-                  --mcp-transport)
-                    MCP_TRANSPORT="$2"
-                    shift 2
-                    ;;
-                  --mcp-access-mode)
-                    MCP_ACCESS_MODE="$2"
-                    shift 2
-                    ;;
                   *)
                     echo "Unknown option $1"
                     exit 1
@@ -277,7 +267,15 @@ phases:
                 esac
               done
 
-              echo "Configuring TRUF.NETWORK node..."
+              # Check if this is a reconfiguration
+              RECONFIGURE=false
+              if [ -f /opt/tn/.env ]; then
+                RECONFIGURE=true
+                echo "Existing configuration detected. Reconfiguring node..."
+              else
+                echo "Configuring TRUF.NETWORK node..."
+              fi
+
               echo "Network: mainnet (tn-v2.1)"
               echo "MCP enabled: $ENABLE_MCP"
 
@@ -285,29 +283,67 @@ phases:
               CHAIN_ID="tn-v2.1"
               cd /opt/tn
 
-              # Create .env file
+              # Handle configuration (new or reconfigure)
+              if [ "$RECONFIGURE" = true ]; then
+                # Block private key changes during reconfiguration
+                if [ -n "$PRIVATE_KEY" ]; then
+                  echo "❌ Error: Cannot change private key on existing node!"
+                  echo "Private key changes would alter node identity and cause network issues."
+                  echo "To change private key, you must deploy a fresh instance."
+                  echo ""
+                  echo "You can only reconfigure MCP settings:"
+                  echo "  sudo tn-node-configure --enable-mcp"
+                  echo "  sudo tn-node-configure  # (disable MCP)"
+                  exit 1
+                fi
+
+                # Preserve existing private key
+                if grep -q "TN_PRIVATE_KEY=" .env; then
+                  EXISTING_KEY=$(grep "TN_PRIVATE_KEY=" .env | cut -d'=' -f2)
+                  echo "Preserving existing node identity"
+                fi
+
+                # Stop service for reconfiguration
+                echo "Stopping existing services..."
+                sudo systemctl stop tn-node || true
+                sudo -u tn docker compose down || true
+              fi
+
+              # Create/update .env file
               cat > .env << ENVEOF
               CHAIN_ID=$CHAIN_ID
               ENVEOF
 
-              # Only set COMPOSE_PROFILES when MCP is enabled
+              # Handle MCP configuration
               if [ "$ENABLE_MCP" = true ]; then
                 echo "COMPOSE_PROFILES=mcp" >> .env
               fi
 
-              # Handle private key if provided
-              if [ -n "$PRIVATE_KEY" ]; then
-                echo "Converting private key to nodekey.json..."
+              # Handle private key (only for initial configuration)
+              if [ "$RECONFIGURE" = false ] && [ -n "$PRIVATE_KEY" ]; then
+                echo "Using provided private key..."
                 echo "TN_PRIVATE_KEY=$PRIVATE_KEY" >> .env
-                echo "Private key will be converted on container startup"
+              elif [ "$RECONFIGURE" = true ] && [ -n "$EXISTING_KEY" ]; then
+                echo "Preserving existing private key..."
+                echo "TN_PRIVATE_KEY=$EXISTING_KEY" >> .env
+              elif [ "$RECONFIGURE" = false ]; then
+                echo "No private key provided - node will generate new identity"
               fi
 
+              # Set correct ownership
+              sudo chown tn:tn .env
+              sudo chmod 600 .env
+              sudo chmod 750 /opt/tn
               # Enable and start the service
               sudo systemctl daemon-reload
               sudo systemctl enable tn-node
               sudo systemctl start tn-node
 
-              echo "TRUF.NETWORK node configuration complete!"
+              if [ "$RECONFIGURE" = true ]; then
+                echo "TRUF.NETWORK node reconfiguration complete!"
+              else
+                echo "TRUF.NETWORK node configuration complete!"
+              fi
               echo "Service status: $(sudo systemctl is-active tn-node)"
 
               if [ "$ENABLE_MCP" = true ]; then
@@ -322,7 +358,7 @@ phases:
         inputs:
           commands:
             - |
-              sudo tee /usr/local/bin/update-node > /dev/null << 'EOF'
+              sudo tee /usr/local/bin/tn-node-update > /dev/null << 'EOF'
               #!/bin/bash
               set -e
 
@@ -330,22 +366,102 @@ phases:
               cd /opt/tn
 
               # Pull latest images
-              sudo -u tn docker-compose pull
+              echo "Pulling latest images..."
+              sudo -u tn docker compose pull
 
-              # Restart services with new images
-              sudo -u tn docker-compose up -d
+              # Stop and recreate containers with new images
+              echo "Recreating containers with latest images..."
+              sudo -u tn docker compose up -d --force-recreate
 
               echo "Node updated successfully!"
               echo "Service status: $(sudo systemctl is-active tn-node)"
               EOF
-            - sudo chmod +x /usr/local/bin/update-node
+            - sudo chmod +x /usr/local/bin/tn-node-update
 
-      - name: EnableServices
+      - name: PrepareServices
         action: ExecuteBash
         inputs:
           commands:
             - sudo systemctl daemon-reload
-            - sudo systemctl enable tn-node
+            # Note: We do not enable tn-node immediately - we let users configure first
+
+      - name: CreateWelcomeMessage
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              sudo tee /etc/motd > /dev/null << 'EOF'
+
+              🚀 Welcome to your TRUF.NETWORK Node!
+
+              Your node is ready for configuration. Please run ONE of the following commands:
+
+              # Basic setup (auto-generated private key, no MCP)
+              sudo tn-node-configure
+
+              # With your own private key
+              sudo tn-node-configure --private-key "your-64-character-hex-key"
+
+              # With MCP enabled for AI integration
+              sudo tn-node-configure --enable-mcp
+
+              # Full configuration example
+              sudo tn-node-configure \
+                --private-key "your-key" \
+                --enable-mcp
+
+              After configuration, your node will start automatically and begin syncing!
+
+              🤖 MCP (AI Integration) Setup:
+              1. Configure node with --enable-mcp flag
+              2. Open port 8000 in your AWS Security Group:
+                 EC2 Console → Instance → Security → Edit inbound rules
+                 Add: Custom TCP, Port 8000, Source 0.0.0.0/0
+              3. Access via: http://YOUR-PUBLIC-IP:8000/sse
+
+              For help: https://docs.truf.network
+              EOF
+
+            - |
+              # Create a one-time welcome script that shows on first SSH login
+              sudo tee /etc/profile.d/tn-welcome.sh > /dev/null << 'EOF'
+              #!/bin/bash
+
+              # Only show welcome message if node is not configured yet
+              if [ ! -f /opt/tn/.env ] && [ "$USER" = "ubuntu" ]; then
+                echo ""
+                echo "🚀 Welcome to your TRUF.NETWORK Node!"
+                echo ""
+                echo "Your node is ready for configuration. Please run ONE of the following commands:"
+                echo ""
+                echo "# Basic setup (auto-generated private key, no MCP)"
+                echo "sudo tn-node-configure"
+                echo ""
+                echo "# With your own private key"
+                echo "sudo tn-node-configure --private-key \"your-64-character-hex-key\""
+                echo ""
+                echo "# With MCP enabled for AI integration"
+                echo "sudo tn-node-configure --enable-mcp"
+                echo ""
+                echo "# Full configuration example"
+                echo "sudo tn-node-configure \\"
+                echo "  --private-key \"your-key\" \\"
+                echo "  --enable-mcp"
+                echo ""
+                echo "After configuration, your node will start automatically and begin syncing!"
+                echo ""
+                echo "🤖 MCP (AI Integration) Setup:"
+                echo "1. Configure node with --enable-mcp flag"
+                echo "2. Open port 8000 in your AWS Security Group:"
+                echo "   EC2 Console → Instance → Security → Edit inbound rules"
+                echo "   Add: Custom TCP, Port 8000, Source 0.0.0.0/0"
+                echo "3. Access via: http://YOUR-PUBLIC-IP:8000/sse"
+                echo ""
+                echo "For help: https://docs.truf.network"
+                echo ""
+              fi
+              EOF
+            - sudo chmod +x /etc/profile.d/tn-welcome.sh
 `),
 	})
 

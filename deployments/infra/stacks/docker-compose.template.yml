@@ -19,7 +19,7 @@ services:
       retries: 12
 
   tn-node:
-    image: ghcr.io/trufnetwork/node:sha-eb8d9f0
+    image: ghcr.io/trufnetwork/node:latest
     container_name: tn-node
     entrypoint: ""
     volumes:
@@ -54,7 +54,7 @@ services:
           [ -n \"$$PUBLIC_IP\" ] && EXTERNAL_FLAG=\"--p2p.external-address $$PUBLIC_IP:26656\" || EXTERNAL_FLAG=\"\"
           echo \"Detected public IP: $$PUBLIC_IP\"
 
-          /app/kwild setup init --genesis /opt/tn/configs/network/v2/genesis.json --root /root/.kwild-new --p2p.bootnodes \"4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656,0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656\" --state-sync.enable --state-sync.trusted-providers \"0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656\" --rpc.private --db.host tn-postgres $$EXTERNAL_FLAG
+          /app/kwild setup init --genesis /opt/tn/configs/network/v2/genesis.json --root /root/.kwild-new --p2p.bootnodes \"4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656,0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656\" --state-sync.enable --state-sync.trusted-providers \"4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656\" --rpc.private --db.host tn-postgres $$EXTERNAL_FLAG
           mkdir -p /root/.kwild
           cp /root/.kwild-new/* /root/.kwild/
           rm -rf /root/.kwild-new
@@ -83,10 +83,9 @@ services:
   postgres-mcp:
     image: ghcr.io/trufnetwork/postgres-mcp:latest
     container_name: tn-mcp
+    command: ["--transport=sse", "--access-mode=restricted", "--sse-host=0.0.0.0"]
     environment:
       - DATABASE_URI=postgresql://postgres@tn-postgres:5432/kwild
-      - MCP_ACCESS_MODE=restricted
-      - MCP_TRANSPORT=sse
     ports:
       - "8000:8000"
     depends_on:
@@ -102,4 +101,5 @@ services:
 
 networks:
   tn-network:
+    name: tn-network
     driver: bridge
