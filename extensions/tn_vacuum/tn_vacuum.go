@@ -39,7 +39,9 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	}
 
 	if app != nil {
-		ext.initializeState(ctx, app.DB)
+		if err := ext.initializeState(ctx, app.DB); err != nil {
+			ext.Logger().Warn("failed to initialize tn_vacuum state", "error", err)
+		}
 	}
 
 	svc := (*common.Service)(nil)

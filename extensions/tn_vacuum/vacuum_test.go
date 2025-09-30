@@ -132,14 +132,20 @@ func TestEngineReadyPreparesMechanism(t *testing.T) {
 
 	svc := &common.Service{
 		Logger: log.New(),
-		LocalConfig: &config.Config{Extensions: map[string]map[string]string{
-			ExtensionName: {
-				"enabled":             "true",
-				"block_interval":      "3",
-				ConfigKeyPgRepackJobs: "2",
+		LocalConfig: &config.Config{
+			DB: config.DBConfig{DBName: "kwild_test"},
+			Extensions: map[string]map[string]string{
+				ExtensionName: {
+					"enabled":             "true",
+					"block_interval":      "3",
+					ConfigKeyPgRepackJobs: "2",
+				},
 			},
-		}},
+		},
 	}
+
+	ext := GetExtension()
+	ext.setStateStore(&stubStateStore{})
 
 	app := &common.App{Service: svc}
 	require.NoError(t, engineReadyHook(ctx, app))
@@ -164,6 +170,7 @@ func TestConfigureFailureLeavesMechanismNil(t *testing.T) {
 	ResetForTest()
 	ext := GetExtension()
 	ext.setLogger(log.New())
+	ext.setService(&common.Service{LocalConfig: &config.Config{DB: config.DBConfig{DBName: "kwild_test"}}})
 
 	setMechanismFactoryForTest(func() Mechanism { return &failingMechanism{} })
 	defer resetMechanismFactory()
@@ -186,13 +193,19 @@ func TestRunReportEnhancement(t *testing.T) {
 
 	svc := &common.Service{
 		Logger: log.New(),
-		LocalConfig: &config.Config{Extensions: map[string]map[string]string{
-			ExtensionName: {
-				ConfigKeyEnabled:       "true",
-				ConfigKeyBlockInterval: "1",
+		LocalConfig: &config.Config{
+			DB: config.DBConfig{DBName: "kwild_test"},
+			Extensions: map[string]map[string]string{
+				ExtensionName: {
+					ConfigKeyEnabled:       "true",
+					ConfigKeyBlockInterval: "1",
+				},
 			},
-		}},
+		},
 	}
+
+	ext := GetExtension()
+	ext.setStateStore(&stubStateStore{})
 
 	app := &common.App{Service: svc}
 	require.NoError(t, engineReadyHook(ctx, app))
@@ -203,7 +216,6 @@ func TestRunReportEnhancement(t *testing.T) {
 	waitForRunCount(t, stub, 1)
 
 	// Verify the stub returns enhanced report data
-	ext := GetExtension()
 	runner := ext.runner
 	require.NotNil(t, runner)
 
@@ -226,13 +238,19 @@ func TestVacuumSkippedMetrics(t *testing.T) {
 
 	svc := &common.Service{
 		Logger: log.New(),
-		LocalConfig: &config.Config{Extensions: map[string]map[string]string{
-			ExtensionName: {
-				ConfigKeyEnabled:       "true",
-				ConfigKeyBlockInterval: "10",
+		LocalConfig: &config.Config{
+			DB: config.DBConfig{DBName: "kwild_test"},
+			Extensions: map[string]map[string]string{
+				ExtensionName: {
+					ConfigKeyEnabled:       "true",
+					ConfigKeyBlockInterval: "10",
+				},
 			},
-		}},
+		},
 	}
+
+	ext := GetExtension()
+	ext.setStateStore(&stubStateStore{})
 
 	app := &common.App{Service: svc}
 	require.NoError(t, engineReadyHook(ctx, app))
@@ -269,12 +287,15 @@ func TestEngineReadyLoadsPersistedState(t *testing.T) {
 
 	svc := &common.Service{
 		Logger: log.New(),
-		LocalConfig: &config.Config{Extensions: map[string]map[string]string{
-			ExtensionName: {
-				ConfigKeyEnabled:       "true",
-				ConfigKeyBlockInterval: "5",
+		LocalConfig: &config.Config{
+			DB: config.DBConfig{DBName: "kwild_test"},
+			Extensions: map[string]map[string]string{
+				ExtensionName: {
+					ConfigKeyEnabled:       "true",
+					ConfigKeyBlockInterval: "5",
+				},
 			},
-		}},
+		},
 	}
 
 	app := &common.App{Service: svc}
@@ -318,12 +339,15 @@ func TestSuccessfulRunPersistsState(t *testing.T) {
 
 	svc := &common.Service{
 		Logger: log.New(),
-		LocalConfig: &config.Config{Extensions: map[string]map[string]string{
-			ExtensionName: {
-				ConfigKeyEnabled:       "true",
-				ConfigKeyBlockInterval: "1",
+		LocalConfig: &config.Config{
+			DB: config.DBConfig{DBName: "kwild_test"},
+			Extensions: map[string]map[string]string{
+				ExtensionName: {
+					ConfigKeyEnabled:       "true",
+					ConfigKeyBlockInterval: "1",
+				},
 			},
-		}},
+		},
 	}
 
 	app := &common.App{Service: svc}
@@ -384,19 +408,24 @@ func TestMaybeRunRecordsErrorOnce(t *testing.T) {
 
 	svc := &common.Service{
 		Logger: log.New(),
-		LocalConfig: &config.Config{Extensions: map[string]map[string]string{
-			ExtensionName: {
-				ConfigKeyEnabled:       "true",
-				ConfigKeyBlockInterval: "1",
+		LocalConfig: &config.Config{
+			DB: config.DBConfig{DBName: "kwild_test"},
+			Extensions: map[string]map[string]string{
+				ExtensionName: {
+					ConfigKeyEnabled:       "true",
+					ConfigKeyBlockInterval: "1",
+				},
 			},
-		}},
+		},
 	}
+
+	ext := GetExtension()
+	ext.setStateStore(&stubStateStore{})
 
 	app := &common.App{Service: svc}
 	require.NoError(t, engineReadyHook(ctx, app))
 
 	metricsStub := &stubMetricsRecorder{}
-	ext := GetExtension()
 	ext.mu.Lock()
 	ext.metrics = metricsStub
 	ext.mu.Unlock()

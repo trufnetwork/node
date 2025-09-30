@@ -2,6 +2,7 @@ package tn_vacuum
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/trufnetwork/kwil-db/core/log"
@@ -20,10 +21,9 @@ type MechanismDeps struct {
 }
 
 type RunRequest struct {
-	Reason          string
-	DB              DBConnConfig
-	PgRepackJobs    int
-	PgRepackNoOrder bool
+	Reason       string
+	DB           DBConnConfig
+	PgRepackJobs int
 }
 
 type RunReport struct {
@@ -42,16 +42,25 @@ type DBConnConfig struct {
 	Database string
 }
 
-var mechanismFactory = func() Mechanism { return NewPgRepackMechanism() }
+var (
+	mechanismFactory   = func() Mechanism { return NewPgRepackMechanism() }
+	mechanismFactoryMu sync.RWMutex
+)
 
 func newMechanism() Mechanism {
+	mechanismFactoryMu.RLock()
+	defer mechanismFactoryMu.RUnlock()
 	return mechanismFactory()
 }
 
 func setMechanismFactoryForTest(f func() Mechanism) {
+	mechanismFactoryMu.Lock()
+	defer mechanismFactoryMu.Unlock()
 	mechanismFactory = f
 }
 
 func resetMechanismFactory() {
+	mechanismFactoryMu.Lock()
+	defer mechanismFactoryMu.Unlock()
 	mechanismFactory = func() Mechanism { return NewPgRepackMechanism() }
 }

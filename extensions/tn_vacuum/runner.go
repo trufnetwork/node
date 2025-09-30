@@ -13,13 +13,12 @@ type Runner struct {
 }
 
 type RunnerArgs struct {
-	Mechanism       Mechanism
-	Logger          log.Logger
-	Reason          string
-	DB              DBConnConfig
-	Metrics         metrics.MetricsRecorder
-	PgRepackJobs    int
-	PgRepackNoOrder bool
+	Mechanism    Mechanism
+	Logger       log.Logger
+	Reason       string
+	DB           DBConnConfig
+	Metrics      metrics.MetricsRecorder
+	PgRepackJobs int
 }
 
 func (r *Runner) Execute(ctx context.Context, args RunnerArgs) error {
@@ -41,10 +40,9 @@ func (r *Runner) Execute(ctx context.Context, args RunnerArgs) error {
 	}
 
 	report, err := args.Mechanism.Run(ctx, RunRequest{
-		Reason:          args.Reason,
-		DB:              args.DB,
-		PgRepackJobs:    args.PgRepackJobs,
-		PgRepackNoOrder: args.PgRepackNoOrder,
+		Reason:       args.Reason,
+		DB:           args.DB,
+		PgRepackJobs: args.PgRepackJobs,
 	})
 	if err != nil {
 		if logger != nil {

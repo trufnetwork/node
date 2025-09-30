@@ -33,7 +33,7 @@ func (m *pgRepackMechanism) Prepare(ctx context.Context, deps MechanismDeps) err
 	m.db = deps.DB
 	path, err := exec.LookPath("pg_repack")
 	if err != nil {
-		m.logger.Warn("pg_repack binary not found; vacuum runs will fail until available", "error", err)
+		m.logger.Error("pg_repack binary not found; extension cannot start", "error", err)
 		return ErrPgRepackUnavailable
 	}
 	m.binaryPath = path

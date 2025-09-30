@@ -36,12 +36,11 @@ var (
 )
 
 type runRequest struct {
-	height          int64
-	reason          string
-	dbConfig        DBConnConfig
-	triggeredAt     time.Time
-	PgRepackJobs    int
-	PgRepackNoOrder bool
+	height       int64
+	reason       string
+	dbConfig     DBConnConfig
+	triggeredAt  time.Time
+	PgRepackJobs int
 }
 
 func GetExtension() *Extension {
@@ -141,7 +140,7 @@ func (e *Extension) startWorkerLocked(parent context.Context) {
 // initializeState prepares the persistence backend and loads the last run
 // information from disk. It is safe to call multiple times; the underlying
 // operations are idempotent.
-func (e *Extension) initializeState(ctx context.Context, db sql.DB) {
+func (e *Extension) initializeState(ctx context.Context, db sql.DB) error {
 	e.mu.RLock()
 	store := e.stateStore
 	service := e.service
@@ -155,19 +154,12 @@ func (e *Extension) initializeState(ctx context.Context, db sql.DB) {
 			cfg = dbConnFromService(service)
 		}
 		if cfg.Database == "" {
-			logger.Warn("tn_vacuum state persistence disabled: database name missing")
-			e.mu.Lock()
-			if e.stateStore == nil {
-				e.stateStore = noopStateStore{}
-			}
-			e.mu.Unlock()
-			return
+			return fmt.Errorf("tn_vacuum state persistence requires database name")
 		}
 
 		newStore, err := newPGStateStore(ctx, cfg, logger)
 		if err != nil {
-			logger.Warn("failed to initialize tn_vacuum state store", "error", err)
-			return
+			return fmt.Errorf("initialize tn_vacuum state store: %w", err)
 		}
 
 		e.mu.Lock()
@@ -183,21 +175,19 @@ func (e *Extension) initializeState(ctx context.Context, db sql.DB) {
 	}
 
 	if store == nil {
-		return
+		return fmt.Errorf("tn_vacuum state store unavailable")
 	}
 
 	if err := store.Ensure(ctx); err != nil {
-		logger.Warn("failed to prepare tn_vacuum state store", "error", err)
-		return
+		return fmt.Errorf("prepare tn_vacuum state store: %w", err)
 	}
 
 	state, ok, err := store.Load(ctx)
 	if err != nil {
-		logger.Warn("failed to load tn_vacuum state", "error", err)
-		return
+		return fmt.Errorf("load tn_vacuum state: %w", err)
 	}
 	if !ok {
-		return
+		return nil
 	}
 
 	e.mu.Lock()
@@ -207,6 +197,8 @@ func (e *Extension) initializeState(ctx context.Context, db sql.DB) {
 	if metricsRecorder != nil {
 		metricsRecorder.RecordLastRunHeight(ctx, state.LastRunHeight)
 	}
+
+	return nil
 }
 
 // processRun executes a scheduled vacuum request on the worker goroutine. It
@@ -235,13 +227,12 @@ func (e *Extension) processRun(ctx context.Context, req runRequest) {
 	defer cancel()
 
 	err := runner.Execute(runCtx, RunnerArgs{
-		Mechanism:       mech,
-		Logger:          logger,
-		Reason:          req.reason,
-		DB:              req.dbConfig,
-		Metrics:         metricsRecorder,
-		PgRepackJobs:    req.PgRepackJobs,
-		PgRepackNoOrder: req.PgRepackNoOrder,
+		Mechanism:    mech,
+		Logger:       logger,
+		Reason:       req.reason,
+		DB:           req.dbConfig,
+		Metrics:      metricsRecorder,
+		PgRepackJobs: req.PgRepackJobs,
 	})
 
 	if err != nil {
@@ -314,6 +305,9 @@ func (e *Extension) configure(ctx context.Context, cfg Config) error {
 
 	mech := newMechanism()
 	deps := MechanismDeps{Logger: e.logger, DB: dbConnFromService(e.service)}
+	if deps.DB.Database == "" {
+		return fmt.Errorf("tn_vacuum requires database name in configuration")
+	}
 	if err := mech.Prepare(ctx, deps); err != nil {
 		return err
 	}
