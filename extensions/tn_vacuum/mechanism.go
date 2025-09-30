@@ -20,8 +20,10 @@ type MechanismDeps struct {
 }
 
 type RunRequest struct {
-	Reason string
-	DB     DBConnConfig
+	Reason          string
+	DB              DBConnConfig
+	PgRepackJobs    int
+	PgRepackNoOrder bool
 }
 
 type RunReport struct {

@@ -11,6 +11,7 @@ import (
 type Config struct {
 	Enabled       bool
 	BlockInterval int64
+	PgRepackJobs  int
 }
 
 func LoadConfig(service *common.Service) (Config, error) {
@@ -45,6 +46,17 @@ func LoadConfig(service *common.Service) (Config, error) {
 			val = minBlockInterval
 		}
 		cfg.BlockInterval = val
+	}
+
+	if v, ok := raw[ConfigKeyPgRepackJobs]; ok {
+		val, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return cfg, fmt.Errorf("parse pg_repack_jobs: %w", err)
+		}
+		if val < 0 {
+			val = 0
+		}
+		cfg.PgRepackJobs = val
 	}
 
 	return cfg, nil

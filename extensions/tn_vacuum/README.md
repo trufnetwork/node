@@ -4,18 +4,22 @@ Automated database maintenance through periodic vacuuming operations. Reclaims d
 
 ## Configuration
 
-Add to your node's configuration file:
+Add to your node's configuration file (all values are strings due to the
+extension config format):
 
 ```toml
 [extensions.tn_vacuum]
-enabled = true
-block_interval = 50000
+enabled = "true"
+block_interval = "50000"
+# Optional tuning
+# pg_repack_jobs = "1"      # limit pg_repack concurrency (default: auto)
 ```
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `enabled` | boolean | `true` | Enable/disable the vacuum extension (`true` or `false`) |
-| `block_interval` | integer | `50000` | Number of blocks between vacuum runs |
+| `enabled` | string (`"true"`/`"false"`) | `"true"` | Enable/disable the vacuum extension |
+| `block_interval` | string (numeric) | `"50000"` | Number of blocks between vacuum runs |
+| `pg_repack_jobs` | string (numeric) | _unset_ | Passes `--jobs=N` to `pg_repack` to throttle concurrency (omit to use the binary default) |
 
 **Tuning `block_interval`:**
 - High-write environments: `25000` - `50000` blocks

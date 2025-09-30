@@ -106,6 +106,8 @@ func (s *stubStateStore) Save(ctx context.Context, state runState) error {
 	return nil
 }
 
+func (s *stubStateStore) Close() {}
+
 func TestConfigureDisabledSkipsMechanism(t *testing.T) {
 	ctx := context.Background()
 	ResetForTest()
@@ -132,8 +134,9 @@ func TestEngineReadyPreparesMechanism(t *testing.T) {
 		Logger: log.New(),
 		LocalConfig: &config.Config{Extensions: map[string]map[string]string{
 			ExtensionName: {
-				"enabled":        "true",
-				"block_interval": "3",
+				"enabled":             "true",
+				"block_interval":      "3",
+				ConfigKeyPgRepackJobs: "2",
 			},
 		}},
 	}
@@ -144,14 +147,16 @@ func TestEngineReadyPreparesMechanism(t *testing.T) {
 
 	block := &common.BlockContext{Height: 1}
 	require.NoError(t, endBlockHook(ctx, app, block))
-	require.Len(t, stub.runs, 1)
+	waitForRunCount(t, stub, 1)
 	require.Equal(t, "block_interval:1", stub.runs[0].Reason)
+	require.Equal(t, 2, stub.runs[0].PgRepackJobs)
 
 	require.NoError(t, endBlockHook(ctx, app, &common.BlockContext{Height: 2}))
+	time.Sleep(50 * time.Millisecond)
 	require.Len(t, stub.runs, 1)
 
 	require.NoError(t, endBlockHook(ctx, app, &common.BlockContext{Height: 4}))
-	require.Len(t, stub.runs, 2)
+	waitForRunCount(t, stub, 2)
 }
 
 func TestConfigureFailureLeavesMechanismNil(t *testing.T) {
@@ -195,7 +200,7 @@ func TestRunReportEnhancement(t *testing.T) {
 	block := &common.BlockContext{Height: 1}
 	require.NoError(t, endBlockHook(ctx, app, block))
 
-	require.Len(t, stub.runs, 1)
+	waitForRunCount(t, stub, 1)
 
 	// Verify the stub returns enhanced report data
 	ext := GetExtension()
@@ -235,17 +240,18 @@ func TestVacuumSkippedMetrics(t *testing.T) {
 	// First run at height 1
 	block := &common.BlockContext{Height: 1}
 	require.NoError(t, endBlockHook(ctx, app, block))
-	require.Len(t, stub.runs, 1)
+	waitForRunCount(t, stub, 1)
 
 	// Should be skipped at height 5 (interval not met)
 	block = &common.BlockContext{Height: 5}
 	require.NoError(t, endBlockHook(ctx, app, block))
+	time.Sleep(50 * time.Millisecond)
 	require.Len(t, stub.runs, 1, "should not run - interval not met")
 
 	// Should run at height 11 (interval met)
 	block = &common.BlockContext{Height: 11}
 	require.NoError(t, endBlockHook(ctx, app, block))
-	require.Len(t, stub.runs, 2, "should run - interval met")
+	waitForRunCount(t, stub, 2)
 }
 
 func TestEngineReadyLoadsPersistedState(t *testing.T) {
@@ -291,11 +297,12 @@ func TestEngineReadyLoadsPersistedState(t *testing.T) {
 	ext.mu.Unlock()
 
 	require.NoError(t, endBlockHook(ctx, app, &common.BlockContext{Height: 14}))
+	time.Sleep(50 * time.Millisecond)
 	require.Len(t, stub.runs, 0, "should not run before interval is met")
 
 	require.NoError(t, endBlockHook(ctx, app, &common.BlockContext{Height: 18}))
-	require.Len(t, stub.runs, 1, "should run once interval is met")
-	require.Equal(t, 1, store.saveCount)
+	waitForRunCount(t, stub, 1)
+	waitForCondition(t, time.Second, func() bool { return store.saveCount == 1 })
 	require.Equal(t, int64(18), metricsStub.lastHeight)
 }
 
@@ -337,13 +344,15 @@ func TestSuccessfulRunPersistsState(t *testing.T) {
 	ext.mu.Unlock()
 
 	require.NoError(t, endBlockHook(ctx, app, &common.BlockContext{Height: 5}))
-	require.Equal(t, 1, store.saveCount)
+	waitForRunCount(t, stub, 1)
+	waitForCondition(t, time.Second, func() bool { return store.saveCount == 1 })
 	require.Equal(t, int64(5), store.lastSaved.LastRunHeight)
 	require.Equal(t, now.UTC(), store.lastSaved.LastRunAt)
 	require.Equal(t, 1, metricsStub.completeCount)
 	require.Equal(t, int64(5), metricsStub.lastHeight)
 
 	require.NoError(t, endBlockHook(ctx, app, &common.BlockContext{Height: 5}))
+	time.Sleep(50 * time.Millisecond)
 	require.Equal(t, 1, store.saveCount, "duplicate height should not persist again")
 }
 
@@ -393,9 +402,24 @@ func TestMaybeRunRecordsErrorOnce(t *testing.T) {
 	ext.mu.Unlock()
 
 	require.NoError(t, endBlockHook(ctx, app, &common.BlockContext{Height: 1}))
-	require.Equal(t, 1, metricsStub.errorCount)
+	waitForCondition(t, time.Second, func() bool { return metricsStub.errorCount == 1 })
 	require.Equal(t, 1, metricsStub.startCount)
 	require.Equal(t, "error_run", metricsStub.lastErrorMechanism)
+}
+
+func TestEnqueueRunBusy(t *testing.T) {
+	ctx := context.Background()
+	ResetForTest()
+
+	ext := GetExtension()
+	ext.setLogger(log.New())
+	ext.mu.Lock()
+	ext.runQueue = make(chan runRequest, 1)
+	ext.runInProgress = true
+	ext.mu.Unlock()
+
+	req := runRequest{height: 1, reason: "test"}
+	require.False(t, ext.enqueueRun(ctx, req))
 }
 
 type stubMetricsRecorder struct {
@@ -437,4 +461,25 @@ func (s *stubMetricsRecorder) RecordVacuumSkipped(ctx context.Context, reason st
 
 func (s *stubMetricsRecorder) RecordLastRunHeight(ctx context.Context, height int64) {
 	s.lastHeight = height
+}
+
+func waitForCondition(t *testing.T, timeout time.Duration, fn func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if fn() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if fn() {
+		return
+	}
+	t.Fatalf("condition not met within %s", timeout)
+}
+
+func waitForRunCount(t *testing.T, stub *stubMechanism, count int) {
+	waitForCondition(t, time.Second, func() bool {
+		return len(stub.runs) >= count
+	})
 }

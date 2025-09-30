@@ -56,6 +56,11 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	if err := ext.configure(ctx, cfg); err != nil {
 		ext.Logger().Warn("failed to configure tn_vacuum", "error", err)
 	}
+	if cfg.Enabled {
+		ext.mu.Lock()
+		ext.startWorkerLocked(ctx)
+		ext.mu.Unlock()
+	}
 	return nil
 }
 

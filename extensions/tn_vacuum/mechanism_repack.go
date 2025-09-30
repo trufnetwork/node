@@ -73,6 +73,12 @@ func (m *pgRepackMechanism) Run(ctx context.Context, req RunRequest) (*RunReport
 		args = append(args, fmt.Sprintf("--username=%s", db.User))
 	}
 
+	if req.PgRepackJobs > 0 {
+		args = append(args, fmt.Sprintf("--jobs=%d", req.PgRepackJobs))
+	}
+	// Always skip reordering to minimize swap time; logical data remains unchanged.
+	args = append(args, "--no-order")
+
 	cmd := exec.CommandContext(ctx, m.binaryPath, args...)
 	env := os.Environ()
 	if db.Password != "" {
@@ -94,12 +100,43 @@ func (m *pgRepackMechanism) Run(ctx context.Context, req RunRequest) (*RunReport
 	}
 
 	report.Duration = time.Since(startTime)
-	// Parse stdout to count tables if possible (pg_repack outputs "INFO: repacking table...")
-	tablesProcessed := strings.Count(stdout.String(), "INFO: repacking table")
+	output := stdout.String() + stderr.String()
+	if err := detectPgRepackSoftFailure(stderr.String()); err != nil {
+		report.Status = StatusFailed
+		report.Error = err.Error()
+		m.logger.Warn("pg_repack reported incompatibility", "stderr", stderr.String(), "duration", report.Duration)
+		return report, err
+	}
+	tablesProcessed := strings.Count(output, "INFO: repacking table")
 	report.TablesProcessed = tablesProcessed
 
-	m.logger.Info("pg_repack completed", "stdout", stdout.String(), "duration", report.Duration, "tables", tablesProcessed)
+	if tablesProcessed == 0 {
+		report.Status = StatusFailed
+		report.Error = "pg_repack completed without processing any tables"
+		m.logger.Warn("pg_repack completed but processed no tables", "stderr", stderr.String())
+		return report, fmt.Errorf("pg_repack processed zero tables")
+	}
+
+	m.logger.Info("pg_repack completed", "stdout", stdout.String(), "stderr", stderr.String(), "duration", report.Duration, "tables", tablesProcessed)
 	return report, nil
+}
+
+func detectPgRepackSoftFailure(stderr string) error {
+	lowered := strings.ToLower(stderr)
+	switch {
+	case strings.Contains(lowered, "does not match database library"):
+		return fmt.Errorf("pg_repack version mismatch: %s", summarizePgRepackError(stderr))
+	default:
+		return nil
+	}
+}
+
+func summarizePgRepackError(stderr string) string {
+	lines := strings.Split(strings.TrimSpace(stderr), "\n")
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(lines[len(lines)-1])
 }
 
 func (m *pgRepackMechanism) Close(ctx context.Context) error {

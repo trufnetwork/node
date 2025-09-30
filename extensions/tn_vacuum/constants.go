@@ -14,6 +14,7 @@ const (
 const (
 	ConfigKeyEnabled       = "enabled"
 	ConfigKeyBlockInterval = "block_interval"
+	ConfigKeyPgRepackJobs  = "pg_repack_jobs"
 )
 
 // Database connection defaults
