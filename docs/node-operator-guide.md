@@ -224,7 +224,7 @@ docker run -d -p 127.0.0.1:5432:5432 --name tn-postgres \
     -e "POSTGRES_HOST_AUTH_METHOD=trust" \
     -v tn-pgdata:/var/lib/postgresql/data \
     --shm-size=1gb \
-    kwildb/postgres:latest
+    ghcr.io/trufnetwork/kwil-postgres:latest
 ```
 
 > **Warning**: Critical Security Requirements
@@ -906,7 +906,7 @@ Sometimes you may need to reset your node to sync from a specific point or recov
        -e "POSTGRES_HOST_AUTH_METHOD=trust" \
        -v tn-pgdata:/var/lib/postgresql/data \
        --shm-size=1gb \
-       kwildb/postgres:latest
+      ghcr.io/trufnetwork/kwil-postgres:latest
    ```
 
 8. **Re-enable and start services**:

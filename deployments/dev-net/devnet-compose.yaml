@@ -33,7 +33,7 @@ x-common-logging: &common_logging
 
 services:
   kwil-postgres-1:
-    image: "kwildb/postgres:16.8-1"
+    image: "ghcr.io/trufnetwork/kwil-postgres:16.8-1"
     ports:
       - "5432:5432"
     <<: *postgres_common
@@ -42,7 +42,7 @@ services:
         source: data-kwil-postgres-1
 
   kwil-postgres-2:
-    image: "kwildb/postgres:16.8-1"
+    image: "ghcr.io/trufnetwork/kwil-postgres:16.8-1"
     ports:
       - "5433:5432"
     <<: *postgres_common

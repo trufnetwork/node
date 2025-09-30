@@ -331,7 +331,7 @@ The AMI includes:
 - **Base OS**: Ubuntu 24.04 LTS
 - **Docker**: Latest Docker CE with docker-compose
 - **TRUF.NETWORK Stack**:
-  - PostgreSQL (kwildb/postgres:16.8-1) 
+  - PostgreSQL (ghcr.io/trufnetwork/kwil-postgres:16.8-1) 
   - TRUF.NETWORK Node - ⚠️ To be added when ghcr image is published
   - PostgreSQL MCP Server (crystaldba/postgres-mcp:latest) - Will need to be adjusted later on
 - **Configuration Scripts**:

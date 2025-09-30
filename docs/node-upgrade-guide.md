@@ -203,7 +203,7 @@ kwild blacklist list
 ## What About PostgreSQL & Other Components?
 
 *Minor* Kwil releases do **not** require a database upgrade.  
-If the release notes specify a new official Postgres image (e.g. `kwildb/postgres:x.y-z`) you can recreate the container at your convenience – data volumes are preserved.
+If the release notes specify a new official Postgres image (e.g. `ghcr.io/trufnetwork/kwil-postgres:x.y-z`) you can recreate the container at your convenience – data volumes are preserved.
 
 ---
 
