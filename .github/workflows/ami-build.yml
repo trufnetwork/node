@@ -17,6 +17,7 @@ permissions:
 
 env:
   AWS_REGION: us-east-2
+  STAGE: prod  # Change to 'dev' for development AMIs
 
 jobs:
   build-ami:
@@ -50,7 +51,7 @@ jobs:
           cd deployments/infra
 
           # Check if AMI pipeline stack is deployed
-          STACK_NAME="AMI-Pipeline-default-Stack"
+          STACK_NAME="AMI-Pipeline-${{ env.STAGE }}-Stack"
           if aws cloudformation describe-stacks \
             --stack-name "$STACK_NAME" \
             --region "${{ env.AWS_REGION }}" > /dev/null 2>&1; then
@@ -71,13 +72,15 @@ jobs:
         if: steps.check-pipeline.outputs.pipeline_exists != 'true'
         run: |
           cd deployments/infra
-          echo "Deploying AMI pipeline infrastructure..."
+          echo "Deploying AMI pipeline infrastructure for stage: ${{ env.STAGE }}..."
           cdk bootstrap --require-approval never
-          cdk deploy AMI-Pipeline-default-Stack --require-approval never
+          cdk deploy AMI-Pipeline-${{ env.STAGE }}-Stack \
+            --context stage=${{ env.STAGE }} \
+            --require-approval never
 
           # Get pipeline ARN after deployment
           PIPELINE_ARN=$(aws cloudformation describe-stacks \
-            --stack-name "AMI-Pipeline-default-Stack" \
+            --stack-name "AMI-Pipeline-${{ env.STAGE }}-Stack" \
             --region "${{ env.AWS_REGION }}" \
             --query \
               "Stacks[0].Outputs[?OutputKey==\`AmiPipelineArnOutput\`].OutputValue" \
