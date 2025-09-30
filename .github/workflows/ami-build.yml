@@ -4,6 +4,13 @@ name: Build AMI
 'on':
   workflow_dispatch:
     inputs:
+      stage:
+        description: "Deployment stage (prod or dev)"
+        type: choice
+        options:
+          - prod
+          - dev
+        default: prod
       force_build:
         description: "Force AMI build even if not a release"
         type: boolean
@@ -17,12 +24,14 @@ permissions:
 
 env:
   AWS_REGION: us-east-2
-  STAGE: prod  # Change to 'dev' for development AMIs
 
 jobs:
   build-ami:
     name: Build TrufNetwork AMI
     runs-on: ubuntu-latest
+    env:
+      # Use input for manual dispatch, default to 'prod' for release events
+      STAGE: ${{ inputs.stage || 'prod' }}
 
     steps:
       - name: Checkout
@@ -175,6 +184,23 @@ jobs:
               --output table
           fi
 
+      - name: Make AMI public (prod only)
+        if: env.AMI_ID && env.STAGE == 'prod'
+        run: |
+          echo "🌍 Making AMI public for production release..."
+          aws ec2 modify-image-attribute \
+            --image-id "$AMI_ID" \
+            --launch-permission "Add=[{Group=all}]" \
+            --region "${{ env.AWS_REGION }}"
+
+          echo "✅ AMI is now publicly available in Community AMIs"
+
+          # Verify public status
+          aws ec2 describe-image-attribute \
+            --image-id "$AMI_ID" \
+            --attribute launchPermission \
+            --region "${{ env.AWS_REGION }}"
+
       - name: Update GitHub release with AMI details
         if: github.event_name == 'release' && env.AMI_ID
         uses: actions/github-script@v7
@@ -184,12 +210,15 @@ jobs:
           script: |
             const amiId = process.env.AMI_ID;
             const region = process.env.AWS_REGION;
+            const stage = process.env.STAGE;
             const releaseId = process.env.RELEASE_ID;
 
             const comment = `## 🚀 AMI Build Completed
 
+            **Stage:** \`${stage}\`
             **AMI ID:** \`${amiId}\`
             **Region:** \`${region}\`
+            **Availability:** ${stage === 'prod' ? '🌍 Public (Community AMIs)' : '🔒 Private'}
             **Launch URL:** \\
             https://console.aws.amazon.com/ec2/home?region=${region}#LaunchInstances:ami=${amiId}
 
