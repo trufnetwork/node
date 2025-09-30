@@ -19,9 +19,11 @@ services:
       retries: 12
 
   tn-node:
-    image: ghcr.io/trufnetwork/node:sha-eb8d9f0
+    image: ghcr.io/trufnetwork/node:latest
     container_name: tn-node
     entrypoint: ""
+    env_file:
+      - .env
     volumes:
       - ./tn-data:/root/.kwild
       - /opt/tn/configs:/opt/tn/configs:ro
@@ -40,7 +42,7 @@ services:
       sh -c "
         # Only generate NEW config if persistent storage is empty
         if [ ! -f /root/.kwild/config.toml ]; then
-          echo 'No existing configuration found. Generating new node identity...'
+          echo 'No existing configuration found. Generating new node configuration...'
 
           # Resolve external address (prefer env override; fallback if tools exist)
           PUBLIC_IP=\"$${TN_EXTERNAL_ADDRESS:-}\"
@@ -54,26 +56,28 @@ services:
           [ -n \"$$PUBLIC_IP\" ] && EXTERNAL_FLAG=\"--p2p.external-address $$PUBLIC_IP:26656\" || EXTERNAL_FLAG=\"\"
           echo \"Detected public IP: $$PUBLIC_IP\"
 
-          /app/kwild setup init --genesis /opt/tn/configs/network/v2/genesis.json --root /root/.kwild-new --p2p.bootnodes \"4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656,0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656\" --state-sync.enable --state-sync.trusted-providers \"0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656\" --rpc.private --db.host tn-postgres $$EXTERNAL_FLAG
+          # Generate full configuration with kwild setup init
+          /app/kwild setup init --genesis /opt/tn/configs/network/v2/genesis.json --root /root/.kwild-new --p2p.bootnodes \"4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656,0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656\" --state-sync.enable --state-sync.trusted-providers \"4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656\" --rpc.private --db.host tn-postgres $$EXTERNAL_FLAG
           mkdir -p /root/.kwild
           cp /root/.kwild-new/* /root/.kwild/
           rm -rf /root/.kwild-new
-          echo 'New node identity created and saved!'
-        else
-          echo 'Using existing node identity from persistent storage.'
-        fi
 
-        # Convert private key to nodekey.json if TN_PRIVATE_KEY is provided
-        if [ -n \"$${TN_PRIVATE_KEY:-}\" ]; then
-          echo 'Converting private key to nodekey.json format...'
-          CLEAN_KEY=\"$${TN_PRIVATE_KEY#0x}\"
-          if ! echo \"$$CLEAN_KEY\" | grep -qE '^[a-fA-F0-9]{64}$$'; then
-            echo 'Error: Private key must be 64 hex characters (32 bytes)'
-            exit 1
+          # Now override nodekey if TN_PRIVATE_KEY is provided
+          if [ -n \"$${TN_PRIVATE_KEY:-}\" ]; then
+            echo 'Overriding generated nodekey with provided private key...'
+            CLEAN_KEY=\"$${TN_PRIVATE_KEY#0x}\"
+            if ! echo \"$$CLEAN_KEY\" | grep -qE '^[a-fA-F0-9]{64}$$'; then
+              echo 'Error: Private key must be 64 hex characters (32 bytes)'
+              exit 1
+            fi
+            echo '{\"key\":\"'$$CLEAN_KEY'\",\"type\":\"secp256k1\"}' > /root/.kwild/nodekey.json
+            chmod 600 /root/.kwild/nodekey.json || true
+            echo 'Node identity set from provided private key'
+          else
+            echo 'Using generated node identity'
           fi
-          echo '{\"key\":\"'$$CLEAN_KEY'\",\"type\":\"secp256k1\"}' > /root/.kwild/nodekey.json
-          chmod 600 /root/.kwild/nodekey.json || true
-          echo 'Nodekey created successfully'
+        else
+          echo 'Using existing node configuration from persistent storage.'
         fi
 
         echo 'Starting TRUF.NETWORK node...'
@@ -83,10 +87,9 @@ services:
   postgres-mcp:
     image: ghcr.io/trufnetwork/postgres-mcp:latest
     container_name: tn-mcp
+    command: ["--transport=sse", "--access-mode=restricted", "--sse-host=0.0.0.0"]
     environment:
       - DATABASE_URI=postgresql://postgres@tn-postgres:5432/kwild
-      - MCP_ACCESS_MODE=restricted
-      - MCP_TRANSPORT=sse
     ports:
       - "8000:8000"
     depends_on:
@@ -102,4 +105,5 @@ services:
 
 networks:
   tn-network:
+    name: tn-network
     driver: bridge
