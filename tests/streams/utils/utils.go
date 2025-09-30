@@ -1,3 +1,5 @@
+//go:build kwiltest
+
 // Package testutils provides utilities for testing Kwil schemas and extensions.
 // This package maintains backward compatibility while organizing functionality into focused subpackages.
 //

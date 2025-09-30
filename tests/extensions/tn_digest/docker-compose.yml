@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   postgres:
-    image: kwildb/postgres:16.8-1
+    image: ghcr.io/trufnetwork/kwil-postgres:16.8-1
     environment:
       - POSTGRES_HOST_AUTH_METHOD=trust
     ports:

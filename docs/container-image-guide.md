@@ -7,7 +7,7 @@ Run the TRUF.NETWORK node container with Docker Compose while keeping the standa
 
 ## Prerequisites
 - Docker Engine 24+ with the `docker compose` plugin.
-- Pull access to `ghcr.io/trufnetwork/node` and `kwildb/postgres`.
+- Pull access to `ghcr.io/trufnetwork/node` and `ghcr.io/trufnetwork/kwil-postgres`.
 - Optional: the [`kwild` CLI](https://github.com/trufnetwork/node/releases) if you want to pre-populate configuration files instead of using the container’s auto-initialization path.
 
 ## 1. Prepare the workspace
@@ -26,7 +26,7 @@ Create `docker-compose.yml` in `~/truf-node` using the minimal stack below.
 ```yaml
 services:
   postgres:
-    image: kwildb/postgres:16.8-1
+    image: ghcr.io/trufnetwork/kwil-postgres:latest
     restart: unless-stopped
     environment:
       POSTGRES_HOST_AUTH_METHOD: trust

@@ -28,7 +28,7 @@ This directory contains ready-to-use configuration examples for deploying the TR
 2. **Create environment file:**
    ```bash
    cat > .env << EOF
-   # TRUF.NETWORK uses kwildb/postgres image which auto-creates kwild user/database
+   # TRUF.NETWORK uses ghcr.io/trufnetwork/kwil-postgres image which auto-creates kwild user/database
    # Note: No password needed - uses POSTGRES_HOST_AUTH_METHOD=trust
    DOMAIN=mcp.your-domain.com
    ACME_EMAIL=admin@your-domain.com
@@ -276,7 +276,7 @@ Have a working configuration for another reverse proxy? Please contribute:
 git clone https://github.com/trufnetwork/node.git
 cd node/docs/examples/mcp-reverse-proxy
 
-# Configure environment (kwildb/postgres auto-creates kwild user/database)  
+# Configure environment (ghcr.io/trufnetwork/kwil-postgres auto-creates kwild user/database)  
 cat > .env << EOF
 DOMAIN=mcp.your-domain.com
 ACME_EMAIL=admin@your-domain.com

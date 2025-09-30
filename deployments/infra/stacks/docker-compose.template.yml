@@ -1,6 +1,6 @@
 services:
   tn-postgres:
-    image: kwildb/postgres:latest
+    image: ghcr.io/trufnetwork/kwil-postgres:latest
     container_name: tn-postgres
     environment:
       POSTGRES_HOST_AUTH_METHOD: trust

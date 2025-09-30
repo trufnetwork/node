@@ -29,7 +29,7 @@ Minimal SQL to adjust:
 ```sql
 -- First-time setup: ensure the single row exists
 INSERT INTO main.digest_config (id, enabled, digest_schedule)
-VALUES (1, true, '*/10 * * * *');
+VALUES (1, true, '0 9 * * *');
 
 -- Subsequent changes
 UPDATE main.digest_config SET enabled = true, digest_schedule = '*/10 * * * *' WHERE id = 1;

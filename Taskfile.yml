@@ -96,7 +96,7 @@ tasks:
   host:postgres:start:
     desc: Run a postgres container
     cmds:
-      - docker start kwil-postgres || docker run -d -p 5432:5432 --name kwil-postgres -e "POSTGRES_HOST_AUTH_METHOD=trust" kwildb/postgres:latest
+      - docker start kwil-postgres || docker run -d -p 5432:5432 --name kwil-postgres -e "POSTGRES_HOST_AUTH_METHOD=trust" ghcr.io/trufnetwork/kwil-postgres:latest
 
   host:indexer:start:
     desc: Run the indexer

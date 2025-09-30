@@ -116,7 +116,7 @@ func (f *SimpleNodeFixture) Setup(ctx context.Context, image string, config *Kwi
 // startPostgres starts a PostgreSQL container
 func (f *SimpleNodeFixture) startPostgres(ctx context.Context, networkName string) (testcontainers.Container, error) {
 	req := testcontainers.ContainerRequest{
-		Image:        "kwildb/postgres:16.8-1",
+		Image:        "ghcr.io/trufnetwork/kwil-postgres:16.8-1",
 		ExposedPorts: []string{"5432/tcp"},
 		Name:         "postgres",
 		Networks:     []string{networkName},

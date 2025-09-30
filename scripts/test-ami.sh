@@ -365,11 +365,11 @@ echo "Checking if required Docker images can be pulled..."
 
 DOCKER_IMAGES_AVAILABLE=true
 
-echo "Checking kwildb/postgres:16.8-1..."
-if docker manifest inspect kwildb/postgres:16.8-1 >/dev/null 2>&1; then
-    echo -e "${GREEN}✓ kwildb/postgres:16.8-1 available${NC}"
+echo "Checking ghcr.io/trufnetwork/kwil-postgres:16.8-1..."
+if docker manifest inspect ghcr.io/trufnetwork/kwil-postgres:16.8-1 >/dev/null 2>&1; then
+    echo -e "${GREEN}✓ ghcr.io/trufnetwork/kwil-postgres:16.8-1 available${NC}"
 else
-    echo -e "${RED}❌ kwildb/postgres:16.8-1 not available${NC}"
+    echo -e "${RED}❌ ghcr.io/trufnetwork/kwil-postgres:16.8-1 not available${NC}"
     DOCKER_IMAGES_AVAILABLE=false
 fi
 
@@ -454,7 +454,7 @@ fi
 
 echo "✓ Using $COMPOSE"
 echo "✓ Simulated pulling ghcr.io/trufnetwork/node:latest"
-echo "✓ Simulated pulling kwildb/postgres:16.8-1"
+echo "✓ Simulated pulling ghcr.io/trufnetwork/kwil-postgres:16.8-1"
 echo "✓ Simulated pulling ghcr.io/trufnetwork/postgres-mcp:latest"
 
 echo "🔄 Restarting services..."

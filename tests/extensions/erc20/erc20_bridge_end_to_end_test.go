@@ -52,7 +52,7 @@ func TestERC20BridgeEndToEnd(t *testing.T) {
 		require.True(t, enabledResult, "instance should be enabled before bridge")
 
 		// Step 1: Inject deposit to give user a balance
-		err := testerc20.InjectERC20Transfer(ctx, platform, TestChain, TestEscrowA, TestERC20, TestUserA, TestEscrowA, TestAmount1, 10, nil)
+		err := testerc20.InjectERC20Transfer(ctx, platform, TestChain, TestEscrowA, TestERC20, TestUserA, TestUserA, TestAmount1, 10, nil)
 		require.NoError(t, err)
 
 		// Verify user has the balance
@@ -134,7 +134,7 @@ func TestERC20BridgeCustomRecipient(t *testing.T) {
 		require.NoError(t, erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 1, TestExtensionAlias))
 
 		// Give user A balance to bridge
-		require.NoError(t, testerc20.InjectERC20Transfer(ctx, platform, TestChain, TestEscrowA, TestERC20, TestUserA, TestEscrowA, TestAmount1, 10, nil))
+		require.NoError(t, testerc20.InjectERC20Transfer(ctx, platform, TestChain, TestEscrowA, TestERC20, TestUserA, TestUserA, TestAmount1, 10, nil))
 
 		engineCtx := engCtx(ctx, platform, TestUserA, 2, false)
 		amtDec, err := types.ParseDecimalExplicit(TestAmount1, 78, 0)

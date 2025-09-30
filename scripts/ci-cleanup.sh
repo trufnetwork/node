@@ -11,7 +11,7 @@ fi
 
 # Common container names/images
 names=("tn-db" "kwil-postgres" "kwild" "postgres")
-images=("kwildb/postgres" "ghcr.io/trufnetwork/node:local" "kwildb/postgres:latest" "kwildb/postgres:16.8-1")
+images=("ghcr.io/trufnetwork/kwil-postgres" "ghcr.io/trufnetwork/node:local" "ghcr.io/trufnetwork/kwil-postgres:latest" "ghcr.io/trufnetwork/kwil-postgres:16.8-1")
 
 echo "[ci-cleanup] Stopping/removing lingering containers by name..."
 for n in "${names[@]}"; do
