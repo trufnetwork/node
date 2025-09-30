@@ -7,6 +7,22 @@
 
 This documentation is intended for node operators, developers and contributors. It includes guides for setup, upgrades, development, and SDK usage.
 
+## Quick Start with AMI
+
+Deploy a TRUF.NETWORK node in minutes using our pre-configured Amazon Machine Image:
+
+**🚀 [AMI Deployment Guide](./docs/ami-deployment-guide.md)** - *Recommended for beginners*
+
+## Node Operator Guide
+
+Choose your preferred deployment method:
+
+| Method | Time | Skill Level | Best For |
+|--------|------|-------------|----------|
+| **[AMI Deployment](./docs/ami-deployment-guide.md)** | 5-10 min | Beginner | Quick start, AWS users |
+| **[Manual Setup](./docs/node-operator-guide.md)** | 45-60 min | Advanced | Full control, custom infrastructure |
+
+📊 **[Compare All Deployment Options](./docs/deployment-options.md)**
 
 ## Terminology
 
@@ -15,13 +31,6 @@ For definitions of key terms used throughout this project, refer to the [Termino
 ## Schema
 
 [Schema](./docs/schema.md)
-
-
-## Node Operator Guide
-
-Learn how to deploy, configure, and maintain a TN node:
-
-[Node Operator Guide](./docs/node-operator-guide.md)
 
 
 ## Node Upgrade Guide

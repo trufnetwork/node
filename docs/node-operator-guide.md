@@ -1,8 +1,10 @@
 # Node Operator Guide
 
-This guide will walk you through the process of setting up and running a TRUF.NETWORK (TN) node. By following these steps, you'll be able to deploy a node, optionally become a validator, and contribute to the TN.
+This guide will walk you through the process of manually setting up and running a TRUF.NETWORK (TN) node. This is the advanced setup option that provides full control over your node configuration.
 
-This guide provides instructions for both Debian-based Linux (e.g., Ubuntu) and macOS. Please follow the steps corresponding to your operating system.
+> **Looking for easier setup?** Consider our [AMI Deployment Guide](./ami-deployment-guide.md) for a 5-10 minute setup process, or check [all deployment options](./deployment-options.md) to choose the best method for your needs.
+
+This guide provides detailed instructions for both Debian-based Linux (e.g., Ubuntu) and macOS. Please follow the steps corresponding to your operating system.
 
 ## Prerequisites
 
