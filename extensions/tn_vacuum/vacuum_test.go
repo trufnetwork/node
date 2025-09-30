@@ -3,6 +3,7 @@ package tn_vacuum
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 )
 
 type stubMechanism struct {
+	mu       sync.RWMutex
 	prepared int
 	runs     []RunRequest
 	closeCnt int
@@ -21,12 +23,16 @@ type stubMechanism struct {
 func (s *stubMechanism) Name() string { return "stub" }
 
 func (s *stubMechanism) Prepare(ctx context.Context, deps MechanismDeps) error {
+	s.mu.Lock()
 	s.prepared++
+	s.mu.Unlock()
 	return nil
 }
 
 func (s *stubMechanism) Run(ctx context.Context, req RunRequest) (*RunReport, error) {
+	s.mu.Lock()
 	s.runs = append(s.runs, req)
+	s.mu.Unlock()
 	return &RunReport{
 		Mechanism:       s.Name(),
 		Status:          StatusOK,
@@ -36,8 +42,39 @@ func (s *stubMechanism) Run(ctx context.Context, req RunRequest) (*RunReport, er
 }
 
 func (s *stubMechanism) Close(ctx context.Context) error {
+	s.mu.Lock()
 	s.closeCnt++
+	s.mu.Unlock()
 	return nil
+}
+
+func (s *stubMechanism) preparedCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.prepared
+}
+
+func (s *stubMechanism) runCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.runs)
+}
+
+func (s *stubMechanism) runAt(i int) (RunRequest, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if i < 0 || i >= len(s.runs) {
+		return RunRequest{}, false
+	}
+	return s.runs[i], true
+}
+
+func (s *stubMechanism) runsSnapshot() []RunRequest {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	copyRuns := make([]RunRequest, len(s.runs))
+	copy(copyRuns, s.runs)
+	return copyRuns
 }
 
 type failingMechanism struct{}
@@ -74,6 +111,7 @@ func (e *errorRunMechanism) Run(ctx context.Context, req RunRequest) (*RunReport
 func (e *errorRunMechanism) Close(ctx context.Context) error { return nil }
 
 type stubStateStore struct {
+	mu          sync.RWMutex
 	ensureCount int
 	loadCount   int
 	saveCount   int
@@ -85,28 +123,62 @@ type stubStateStore struct {
 }
 
 func (s *stubStateStore) Ensure(ctx context.Context) error {
+	s.mu.Lock()
 	s.ensureCount++
+	s.mu.Unlock()
 	return nil
 }
 
 func (s *stubStateStore) Load(ctx context.Context) (runState, bool, error) {
+	s.mu.Lock()
 	s.loadCount++
-	if s.loadErr != nil {
-		return runState{}, false, s.loadErr
+	err := s.loadErr
+	state := s.loadState
+	ok := s.loadOK
+	s.mu.Unlock()
+	if err != nil {
+		return runState{}, false, err
 	}
-	return s.loadState, s.loadOK, nil
+	return state, ok, nil
 }
 
 func (s *stubStateStore) Save(ctx context.Context, state runState) error {
+	s.mu.Lock()
 	s.saveCount++
 	s.lastSaved = state
-	if s.saveErr != nil {
-		return s.saveErr
+	err := s.saveErr
+	s.mu.Unlock()
+	if err != nil {
+		return err
 	}
 	return nil
 }
 
 func (s *stubStateStore) Close() {}
+
+func (s *stubStateStore) ensureCountValue() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.ensureCount
+}
+
+func (s *stubStateStore) loadCountValue() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.loadCount
+}
+
+func (s *stubStateStore) saveCountValue() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.saveCount
+}
+
+func (s *stubStateStore) lastSavedState() runState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.lastSaved
+}
 
 func TestConfigureDisabledSkipsMechanism(t *testing.T) {
 	ctx := context.Background()
@@ -119,7 +191,7 @@ func TestConfigureDisabledSkipsMechanism(t *testing.T) {
 	defer resetMechanismFactory()
 
 	require.NoError(t, ext.configure(ctx, Config{Enabled: false, BlockInterval: 5}))
-	require.Equal(t, 0, stub.prepared)
+	require.Equal(t, 0, stub.preparedCount())
 }
 
 func TestEngineReadyPreparesMechanism(t *testing.T) {
@@ -149,17 +221,19 @@ func TestEngineReadyPreparesMechanism(t *testing.T) {
 
 	app := &common.App{Service: svc}
 	require.NoError(t, engineReadyHook(ctx, app))
-	require.Equal(t, 1, stub.prepared)
+	require.Equal(t, 1, stub.preparedCount())
 
 	block := &common.BlockContext{Height: 1}
 	require.NoError(t, endBlockHook(ctx, app, block))
 	waitForRunCount(t, stub, 1)
-	require.Equal(t, "block_interval:1", stub.runs[0].Reason)
-	require.Equal(t, 2, stub.runs[0].PgRepackJobs)
+	firstRun, ok := stub.runAt(0)
+	require.True(t, ok)
+	require.Equal(t, "block_interval:1", firstRun.Reason)
+	require.Equal(t, 2, firstRun.PgRepackJobs)
 
 	require.NoError(t, endBlockHook(ctx, app, &common.BlockContext{Height: 2}))
 	time.Sleep(50 * time.Millisecond)
-	require.Len(t, stub.runs, 1)
+	require.Len(t, stub.runsSnapshot(), 1)
 
 	require.NoError(t, endBlockHook(ctx, app, &common.BlockContext{Height: 4}))
 	waitForRunCount(t, stub, 2)
@@ -264,7 +338,7 @@ func TestVacuumSkippedMetrics(t *testing.T) {
 	block = &common.BlockContext{Height: 5}
 	require.NoError(t, endBlockHook(ctx, app, block))
 	time.Sleep(50 * time.Millisecond)
-	require.Len(t, stub.runs, 1, "should not run - interval not met")
+	require.Len(t, stub.runsSnapshot(), 1, "should not run - interval not met")
 
 	// Should run at height 11 (interval met)
 	block = &common.BlockContext{Height: 11}
@@ -305,8 +379,8 @@ func TestEngineReadyLoadsPersistedState(t *testing.T) {
 	ext.setStateStore(store)
 
 	require.NoError(t, engineReadyHook(ctx, app))
-	require.Equal(t, 1, store.ensureCount)
-	require.Equal(t, 1, store.loadCount)
+	require.Equal(t, 1, store.ensureCountValue())
+	require.Equal(t, 1, store.loadCountValue())
 
 	ext.mu.RLock()
 	require.Equal(t, int64(12), ext.state.LastRunHeight)
@@ -319,12 +393,12 @@ func TestEngineReadyLoadsPersistedState(t *testing.T) {
 
 	require.NoError(t, endBlockHook(ctx, app, &common.BlockContext{Height: 14}))
 	time.Sleep(50 * time.Millisecond)
-	require.Len(t, stub.runs, 0, "should not run before interval is met")
+	require.Len(t, stub.runsSnapshot(), 0, "should not run before interval is met")
 
 	require.NoError(t, endBlockHook(ctx, app, &common.BlockContext{Height: 18}))
 	waitForRunCount(t, stub, 1)
-	waitForCondition(t, time.Second, func() bool { return store.saveCount == 1 })
-	require.Equal(t, int64(18), metricsStub.lastHeight)
+	waitForCondition(t, time.Second, func() bool { return store.saveCountValue() == 1 })
+	require.Equal(t, int64(18), metricsStub.snapshot().lastHeight)
 }
 
 func TestSuccessfulRunPersistsState(t *testing.T) {
@@ -360,7 +434,7 @@ func TestSuccessfulRunPersistsState(t *testing.T) {
 	ext.setNowFunc(func() time.Time { return now })
 
 	require.NoError(t, engineReadyHook(ctx, app))
-	require.Equal(t, 1, store.ensureCount)
+	require.Equal(t, 1, store.ensureCountValue())
 
 	metricsStub := &stubMetricsRecorder{}
 	ext.mu.Lock()
@@ -369,15 +443,17 @@ func TestSuccessfulRunPersistsState(t *testing.T) {
 
 	require.NoError(t, endBlockHook(ctx, app, &common.BlockContext{Height: 5}))
 	waitForRunCount(t, stub, 1)
-	waitForCondition(t, time.Second, func() bool { return store.saveCount == 1 })
-	require.Equal(t, int64(5), store.lastSaved.LastRunHeight)
-	require.Equal(t, now.UTC(), store.lastSaved.LastRunAt)
-	require.Equal(t, 1, metricsStub.completeCount)
-	require.Equal(t, int64(5), metricsStub.lastHeight)
+	waitForCondition(t, time.Second, func() bool { return store.saveCountValue() == 1 })
+	lastState := store.lastSavedState()
+	require.Equal(t, int64(5), lastState.LastRunHeight)
+	require.Equal(t, now.UTC(), lastState.LastRunAt)
+	snap := metricsStub.snapshot()
+	require.Equal(t, 1, snap.completeCount)
+	require.Equal(t, int64(5), snap.lastHeight)
 
 	require.NoError(t, endBlockHook(ctx, app, &common.BlockContext{Height: 5}))
 	time.Sleep(50 * time.Millisecond)
-	require.Equal(t, 1, store.saveCount, "duplicate height should not persist again")
+	require.Equal(t, 1, store.saveCountValue(), "duplicate height should not persist again")
 }
 
 func TestRunnerHandlesNilReport(t *testing.T) {
@@ -392,11 +468,12 @@ func TestRunnerHandlesNilReport(t *testing.T) {
 		Metrics:   metricsStub,
 	}))
 
-	require.Equal(t, 1, metricsStub.startCount)
-	require.Equal(t, 1, metricsStub.completeCount)
-	require.Zero(t, metricsStub.lastDuration)
-	require.Zero(t, metricsStub.lastTables)
-	require.Equal(t, "nil_report", metricsStub.lastMechanism)
+	snapshot := metricsStub.snapshot()
+	require.Equal(t, 1, snapshot.startCount)
+	require.Equal(t, 1, snapshot.completeCount)
+	require.Zero(t, snapshot.lastDuration)
+	require.Zero(t, snapshot.lastTables)
+	require.Equal(t, "nil_report", snapshot.lastMechanism)
 }
 
 func TestMaybeRunRecordsErrorOnce(t *testing.T) {
@@ -431,9 +508,10 @@ func TestMaybeRunRecordsErrorOnce(t *testing.T) {
 	ext.mu.Unlock()
 
 	require.NoError(t, endBlockHook(ctx, app, &common.BlockContext{Height: 1}))
-	waitForCondition(t, time.Second, func() bool { return metricsStub.errorCount == 1 })
-	require.Equal(t, 1, metricsStub.startCount)
-	require.Equal(t, "error_run", metricsStub.lastErrorMechanism)
+	waitForCondition(t, time.Second, func() bool { return metricsStub.snapshot().errorCount == 1 })
+	errorSnapshot := metricsStub.snapshot()
+	require.Equal(t, 1, errorSnapshot.startCount)
+	require.Equal(t, "error_run", errorSnapshot.lastErrorMechanism)
 }
 
 func TestEnqueueRunBusy(t *testing.T) {
@@ -452,6 +530,7 @@ func TestEnqueueRunBusy(t *testing.T) {
 }
 
 type stubMetricsRecorder struct {
+	mu                 sync.RWMutex
 	startCount         int
 	completeCount      int
 	errorCount         int
@@ -466,30 +545,66 @@ type stubMetricsRecorder struct {
 }
 
 func (s *stubMetricsRecorder) RecordVacuumStart(ctx context.Context, mechanism string) {
+	s.mu.Lock()
 	s.startCount++
 	s.lastMechanism = mechanism
+	s.mu.Unlock()
 }
 
 func (s *stubMetricsRecorder) RecordVacuumComplete(ctx context.Context, mechanism string, duration time.Duration, tablesProcessed int) {
+	s.mu.Lock()
 	s.completeCount++
 	s.lastMechanism = mechanism
 	s.lastDuration = duration
 	s.lastTables = tablesProcessed
+	s.mu.Unlock()
 }
 
 func (s *stubMetricsRecorder) RecordVacuumError(ctx context.Context, mechanism string, errType string) {
+	s.mu.Lock()
 	s.errorCount++
 	s.lastErrorMechanism = mechanism
 	s.lastErrorType = errType
+	s.mu.Unlock()
 }
 
 func (s *stubMetricsRecorder) RecordVacuumSkipped(ctx context.Context, reason string) {
+	s.mu.Lock()
 	s.skippedCount++
 	s.lastSkipReason = reason
+	s.mu.Unlock()
 }
 
 func (s *stubMetricsRecorder) RecordLastRunHeight(ctx context.Context, height int64) {
+	s.mu.Lock()
 	s.lastHeight = height
+	s.mu.Unlock()
+}
+
+func (s *stubMetricsRecorder) snapshot() stubMetricsSnapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return stubMetricsSnapshot{
+		startCount:         s.startCount,
+		completeCount:      s.completeCount,
+		errorCount:         s.errorCount,
+		lastDuration:       s.lastDuration,
+		lastTables:         s.lastTables,
+		lastMechanism:      s.lastMechanism,
+		lastErrorMechanism: s.lastErrorMechanism,
+		lastHeight:         s.lastHeight,
+	}
+}
+
+type stubMetricsSnapshot struct {
+	startCount         int
+	completeCount      int
+	errorCount         int
+	lastDuration       time.Duration
+	lastTables         int
+	lastMechanism      string
+	lastErrorMechanism string
+	lastHeight         int64
 }
 
 func waitForCondition(t *testing.T, timeout time.Duration, fn func() bool) {
@@ -509,6 +624,6 @@ func waitForCondition(t *testing.T, timeout time.Duration, fn func() bool) {
 
 func waitForRunCount(t *testing.T, stub *stubMechanism, count int) {
 	waitForCondition(t, time.Second, func() bool {
-		return len(stub.runs) >= count
+		return stub.runCount() >= count
 	})
 }
