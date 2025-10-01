@@ -56,8 +56,19 @@ services:
           [ -n \"$$PUBLIC_IP\" ] && EXTERNAL_FLAG=\"--p2p.external-address $$PUBLIC_IP:26656\" || EXTERNAL_FLAG=\"\"
           echo \"Detected public IP: $$PUBLIC_IP\"
 
-          # Generate full configuration with kwild setup init
-          /app/kwild setup init --genesis /opt/tn/configs/network/v2/genesis.json --root /root/.kwild-new --p2p.bootnodes \"4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656,0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656\" --state-sync.enable --state-sync.trusted-providers \"4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656\" --rpc.private --db.host tn-postgres $$EXTERNAL_FLAG
+          # Determine network type and generate appropriate configuration
+          NETWORK_TYPE=\"$${NETWORK_TYPE:-mainnet}\"
+
+          if [ \"$$NETWORK_TYPE\" = \"custom\" ]; then
+            echo 'Creating new custom network with chain ID: '\"$$CHAIN_ID\"
+            # Create new network without genesis file
+            /app/kwild setup init --root /root/.kwild-new --chain-id \"$$CHAIN_ID\" --rpc.private --db.host tn-postgres $$EXTERNAL_FLAG
+          else
+            echo 'Joining existing mainnet (tn-v2.1)...'
+            # Join existing network using genesis file
+            /app/kwild setup init --genesis /opt/tn/configs/network/v2/genesis.json --root /root/.kwild-new --p2p.bootnodes \"4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656,0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656\" --state-sync.enable --state-sync.trusted-providers \"4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656\" --rpc.private --db.host tn-postgres $$EXTERNAL_FLAG
+          fi
+
           mkdir -p /root/.kwild
           cp /root/.kwild-new/* /root/.kwild/
           rm -rf /root/.kwild-new
