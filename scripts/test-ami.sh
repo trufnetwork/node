@@ -107,6 +107,12 @@ echo "Using shared Docker Compose configuration..."
 # Use shared Docker Compose configuration (single source of truth)
 cp deployments/infra/stacks/docker-compose.template.yml /tmp/test-docker-compose.yml
 
+# Create dummy .env file for validation (docker-compose expects it)
+cat > /tmp/.env << 'EOF'
+CHAIN_ID=tn-v2.1
+NETWORK_TYPE=mainnet
+EOF
+
 if eval "$COMPOSE -f /tmp/test-docker-compose.yml config" > /dev/null 2>&1; then
     echo -e "${GREEN}✅ Docker Compose configuration valid${NC}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
@@ -114,7 +120,7 @@ else
     echo -e "${RED}❌ Docker Compose configuration invalid${NC}"
     TESTS_FAILED=$((TESTS_FAILED + 1))
 fi
-rm -f /tmp/test-docker-compose.yml
+rm -f /tmp/test-docker-compose.yml /tmp/.env
 
 # Test 4: Shell Script Syntax
 echo "4. Testing shell script syntax..."
@@ -396,6 +402,12 @@ echo "Starting PostgreSQL container to test database connectivity..."
 # Use shared Docker Compose configuration for PostgreSQL test
 cp deployments/infra/stacks/docker-compose.template.yml /tmp/tn-test-compose.yml
 
+# Create .env file in same directory (docker-compose expects .env relative to compose file)
+cat > /tmp/.env << 'EOF'
+CHAIN_ID=tn-v2.1
+NETWORK_TYPE=mainnet
+EOF
+
 echo "Starting PostgreSQL container..."
 if eval "$COMPOSE -f /tmp/tn-test-compose.yml up -d tn-postgres"; then
     echo "Waiting for PostgreSQL to be ready..."
@@ -428,8 +440,8 @@ else
 fi
 
 echo "Cleaning up test containers..."
-eval "$COMPOSE -f /tmp/tn-test-compose.yml down -v"
-rm -f /tmp/tn-test-compose.yml
+eval "$COMPOSE -f /tmp/tn-test-compose.yml down -v" 2>/dev/null || true
+rm -f /tmp/tn-test-compose.yml /tmp/.env
 
 # Test 10: Update Script Workflow
 echo "10. Testing update script workflow..."

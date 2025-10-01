@@ -24,14 +24,15 @@ type AmiPipelineStackProps struct {
 }
 
 type AmiPipelineStackExports struct {
-	PipelineArn        string
-	DockerComponentArn string
-	ConfigComponentArn string
-	RecipeArn          string
-	InfraConfigArn     string
-	DistributionArn    string
-	S3BucketName       string
-	InstanceProfileArn string
+	PipelineArn         string
+	DockerComponentArn  string
+	ConfigComponentArn  string
+	WelcomeComponentArn string
+	RecipeArn           string
+	InfraConfigArn      string
+	DistributionArn     string
+	S3BucketName        string
+	InstanceProfileArn  string
 }
 
 func AmiPipelineStack(scope constructs.Construct, id string, props *AmiPipelineStackProps) (awscdk.Stack, AmiPipelineStackExports) {
@@ -173,7 +174,7 @@ phases:
 `),
 	})
 
-	// Component for TRUF.NETWORK configuration
+	// Component 1: TRUF.NETWORK configuration and scripts
 	configComponent := awsimagebuilder.NewCfnComponent(stack, jsii.String("TNConfigComponent"), &awsimagebuilder.CfnComponentProps{
 		Name:        jsii.String(nameWithPrefix("tn-config-setup-" + string(stage))),
 		Platform:    jsii.String("Linux"),
@@ -248,6 +249,7 @@ phases:
               # Default values
               PRIVATE_KEY=""
               ENABLE_MCP=false
+              NETWORK=""
 
               # Parse command line arguments
               while [[ $# -gt 0 ]]; do
@@ -259,6 +261,10 @@ phases:
                   --enable-mcp)
                     ENABLE_MCP=true
                     shift
+                    ;;
+                  --network)
+                    NETWORK="$2"
+                    shift 2
                     ;;
                   *)
                     echo "Unknown option $1"
@@ -276,16 +282,23 @@ phases:
                 echo "Configuring TRUF.NETWORK node..."
               fi
 
-              echo "Network: mainnet (tn-v2.1)"
+              # Determine network type and chain ID
+              if [ -n "$NETWORK" ]; then
+                CHAIN_ID="$NETWORK"
+                NETWORK_TYPE="custom"
+                echo "Network: Custom network ($CHAIN_ID)"
+              else
+                CHAIN_ID="tn-v2.1"
+                NETWORK_TYPE="mainnet"
+                echo "Network: Mainnet (tn-v2.1)"
+              fi
               echo "MCP enabled: $ENABLE_MCP"
 
-              # Chain ID is always tn-v2.1 regardless of network
-              CHAIN_ID="tn-v2.1"
               cd /opt/tn
 
               # Handle configuration (new or reconfigure)
               if [ "$RECONFIGURE" = true ]; then
-                # Block private key changes during reconfiguration
+                # Block private key and network changes during reconfiguration
                 if [ -n "$PRIVATE_KEY" ]; then
                   echo "❌ Error: Cannot change private key on existing node!"
                   echo "Private key changes would alter node identity and cause network issues."
@@ -297,10 +310,29 @@ phases:
                   exit 1
                 fi
 
-                # Preserve existing private key
+                if [ -n "$NETWORK" ]; then
+                  echo "❌ Error: Cannot change network on existing node!"
+                  echo "Network changes require a fresh deployment."
+                  echo ""
+                  echo "You can only reconfigure MCP settings:"
+                  echo "  sudo tn-node-configure --enable-mcp"
+                  echo "  sudo tn-node-configure  # (disable MCP)"
+                  exit 1
+                fi
+
+                # Preserve existing configuration
                 if grep -q "TN_PRIVATE_KEY=" .env; then
                   EXISTING_KEY=$(grep "TN_PRIVATE_KEY=" .env | cut -d'=' -f2)
                   echo "Preserving existing node identity"
+                fi
+                if grep -q "CHAIN_ID=" .env; then
+                  EXISTING_CHAIN_ID=$(grep "CHAIN_ID=" .env | cut -d'=' -f2)
+                  CHAIN_ID="$EXISTING_CHAIN_ID"
+                  echo "Preserving existing chain ID: $CHAIN_ID"
+                fi
+                if grep -q "NETWORK_TYPE=" .env; then
+                  EXISTING_NETWORK_TYPE=$(grep "NETWORK_TYPE=" .env | cut -d'=' -f2)
+                  NETWORK_TYPE="$EXISTING_NETWORK_TYPE"
                 fi
 
                 # Stop service for reconfiguration
@@ -312,6 +344,7 @@ phases:
               # Create/update .env file
               cat > .env << ENVEOF
               CHAIN_ID=$CHAIN_ID
+              NETWORK_TYPE=$NETWORK_TYPE
               ENVEOF
 
               # Handle MCP configuration
@@ -383,8 +416,23 @@ phases:
         inputs:
           commands:
             - sudo systemctl daemon-reload
-            # Note: We do not enable tn-node immediately - we let users configure first
+`),
+	})
 
+	// Component 2: Welcome messages (split to stay under 16KB limit)
+	welcomeComponent := awsimagebuilder.NewCfnComponent(stack, jsii.String("TNWelcomeComponent"), &awsimagebuilder.CfnComponentProps{
+		Name:        jsii.String(nameWithPrefix("tn-welcome-setup-" + string(stage))),
+		Platform:    jsii.String("Linux"),
+		Version:     jsii.String("1.0.0"),
+		Description: jsii.String("Set up TRUF.NETWORK welcome messages and user guidance"),
+		Data: jsii.String(`
+name: TNWelcomeComponent
+description: Set up TRUF.NETWORK welcome messages and user guidance
+schemaVersion: 1.0
+
+phases:
+  - name: build
+    steps:
       - name: CreateWelcomeMessage
         action: ExecuteBash
         inputs:
@@ -468,7 +516,7 @@ phases:
 	// Add explicit dependency
 	infraConfig.AddDependency(instanceProfile)
 
-	// Image recipe that combines both components
+	// Image recipe that combines all components
 	imageRecipe := awsimagebuilder.NewCfnImageRecipe(stack, jsii.String("TNAmiRecipe"), &awsimagebuilder.CfnImageRecipeProps{
 		Name:        jsii.String(nameWithPrefix("tn-ami-recipe-" + string(stage))),
 		Version:     jsii.String("1.0.0"),
@@ -481,6 +529,9 @@ phases:
 			{
 				ComponentArn: configComponent.AttrArn(),
 			},
+			{
+				ComponentArn: welcomeComponent.AttrArn(),
+			},
 		},
 		BlockDeviceMappings: &[]*awsimagebuilder.CfnImageRecipe_InstanceBlockDeviceMappingProperty{
 			{
@@ -488,7 +539,7 @@ phases:
 				Ebs: &awsimagebuilder.CfnImageRecipe_EbsInstanceBlockDeviceSpecificationProperty{
 					VolumeSize:          jsii.Number(20), // 20GB root volume
 					VolumeType:          jsii.String("gp3"),
-					Encrypted:           jsii.Bool(true),
+					Encrypted:           jsii.Bool(false), // AWS Marketplace prohibits encrypted AMIs
 					DeleteOnTermination: jsii.Bool(true),
 				},
 			},
@@ -539,14 +590,15 @@ phases:
 	})
 
 	exports := AmiPipelineStackExports{
-		PipelineArn:        *imagePipeline.AttrArn(),
-		DockerComponentArn: *dockerComponent.AttrArn(),
-		ConfigComponentArn: *configComponent.AttrArn(),
-		RecipeArn:          *imageRecipe.AttrArn(),
-		InfraConfigArn:     *infraConfig.AttrArn(),
-		DistributionArn:    *distributionConfig.AttrArn(),
-		S3BucketName:       *artifactsBucket.BucketName(),
-		InstanceProfileArn: *instanceProfile.AttrArn(),
+		PipelineArn:         *imagePipeline.AttrArn(),
+		DockerComponentArn:  *dockerComponent.AttrArn(),
+		ConfigComponentArn:  *configComponent.AttrArn(),
+		WelcomeComponentArn: *welcomeComponent.AttrArn(),
+		RecipeArn:           *imageRecipe.AttrArn(),
+		InfraConfigArn:      *infraConfig.AttrArn(),
+		DistributionArn:     *distributionConfig.AttrArn(),
+		S3BucketName:        *artifactsBucket.BucketName(),
+		InstanceProfileArn:  *instanceProfile.AttrArn(),
 	}
 
 	return stack, exports
