@@ -2,5 +2,5 @@
 
 USE erc20 {
     chain: 'sepolia',
-    escrow: '0x2D4f435867066737bA1617ef024E073413909Ad2'
+    escrow: '0x502430eD0BbE0f230215870c9C2853e126eE5Ae3'
 } AS sepolia_bridge;
