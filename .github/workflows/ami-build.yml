@@ -82,8 +82,9 @@ jobs:
         run: |
           cd deployments/infra
           echo "Deploying AMI pipeline infrastructure for stage: ${{ env.STAGE }}..."
-          cdk bootstrap --require-approval never
+          cdk bootstrap --app "go run ami-cdk.go" --require-approval never
           cdk deploy AMI-Pipeline-${{ env.STAGE }}-Stack \
+            --app "go run ami-cdk.go" \
             --context stage=${{ env.STAGE }} \
             --require-approval never
 
