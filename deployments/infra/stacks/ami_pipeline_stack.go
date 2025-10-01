@@ -380,7 +380,19 @@ phases:
               echo "Service status: $(sudo systemctl is-active tn-node)"
 
               if [ "$ENABLE_MCP" = true ]; then
-                IPV4=$(curl -s --max-time 2 http://169.254.169.254/latest/meta-data/public-ipv4 || hostname -I | awk '{print $1}' || echo "localhost")
+                # Try to detect public IP from AWS metadata service
+                IPV4=$(curl -s --max-time 2 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null)
+
+                # Fallback to private IP if public IP not available
+                if [ -z "$IPV4" ]; then
+                  IPV4=$(hostname -I 2>/dev/null | awk '{print $1}')
+                fi
+
+                # Last resort: use localhost
+                if [ -z "$IPV4" ]; then
+                  IPV4="localhost"
+                fi
+
                 echo "MCP server will be available at: http://${IPV4}:8000/sse"
               fi
               EOF
