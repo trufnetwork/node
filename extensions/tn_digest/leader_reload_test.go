@@ -147,10 +147,10 @@ func TestDigest_DefaultDisabled_NoSchedulerOnLeaderAcquire(t *testing.T) {
 	ext.SetReloadIntervalBlocks(1000)
 	identity := []byte("nodeA")
 	app := &common.App{Service: makeService(identity, "1000")}
+	ext.SetService(app.Service)
 	block := makeBlock(1, identity)
 
-	err := endBlockHook(context.Background(), app, block)
-	require.NoError(t, err)
+	digestLeaderAcquire(context.Background(), app, block)
 	assert.Nil(t, ext.Scheduler())
 }
 
@@ -160,9 +160,10 @@ func TestDigest_LeaderAcquire_StartsScheduler_WhenEnabled(t *testing.T) {
 	ext.SetReloadIntervalBlocks(1000)
 	identity := []byte("nodeB")
 	app := &common.App{Service: makeService(identity, "1000")}
+	ext.SetService(app.Service)
 	block := makeBlock(1, identity)
 
-	require.NoError(t, endBlockHook(context.Background(), app, block))
+	digestLeaderAcquire(context.Background(), app, block)
 	require.NotNil(t, ext.Scheduler())
 	// cleanup
 	_ = ext.Scheduler().Stop()
@@ -174,14 +175,15 @@ func TestDigest_LoseLeadership_StopsScheduler(t *testing.T) {
 	ext.SetReloadIntervalBlocks(1000)
 	identity := []byte("nodeC")
 	app := &common.App{Service: makeService(identity, "1000")}
+	ext.SetService(app.Service)
 
 	// acquire leadership
-	require.NoError(t, endBlockHook(context.Background(), app, makeBlock(1, identity)))
+	digestLeaderAcquire(context.Background(), app, makeBlock(1, identity))
 	require.NotNil(t, ext.Scheduler())
 
 	// lose leadership
 	other := []byte("other")
-	require.NoError(t, endBlockHook(context.Background(), app, makeBlock(2, other)))
+	digestLeaderLose(context.Background(), app, makeBlock(2, other))
 
 	// idempotent stop
 	_ = ext.Scheduler().Stop()
@@ -196,17 +198,18 @@ func TestDigest_Reload_EnablesAndStarts_WhenBecomesEnabled(t *testing.T) {
 	ext.SetLastCheckedHeight(1)
 	identity := []byte("nodeD")
 	app := &common.App{Service: makeService(identity, "1")}
+	ext.SetService(app.Service)
 
 	// attach EngineOps with fake DB that returns enabled on reload BEFORE first hook
 	fdb := &fakeDB{enabled: true, schedule: "*/5 * * * *"}
 	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, fdb, &fakeAccounts{}, log.New()))
 
 	// leader at height 1: disabled, no scheduler
-	require.NoError(t, endBlockHook(context.Background(), app, makeBlock(1, identity)))
+	digestLeaderAcquire(context.Background(), app, makeBlock(1, identity))
 	assert.Nil(t, ext.Scheduler())
 
 	// height 2 triggers reload -> should enable and start
-	require.NoError(t, endBlockHook(context.Background(), app, makeBlock(2, identity)))
+	digestLeaderEndBlock(context.Background(), app, makeBlock(2, identity))
 	require.NotNil(t, ext.Scheduler())
 	_ = ext.Scheduler().Stop()
 }
@@ -219,15 +222,16 @@ func TestDigest_Reload_DisablesAndStops_WhenBecomesDisabled(t *testing.T) {
 	ext.SetLastCheckedHeight(1)
 	identity := []byte("nodeE")
 	app := &common.App{Service: makeService(identity, "1")}
+	ext.SetService(app.Service)
 
 	// start as leader enabled (no reload yet)
-	require.NoError(t, endBlockHook(context.Background(), app, makeBlock(1, identity)))
+	digestLeaderAcquire(context.Background(), app, makeBlock(1, identity))
 	require.NotNil(t, ext.Scheduler())
 
 	// reload returns disabled
 	fdb := &fakeDB{enabled: false, schedule: "*/5 * * * *"}
 	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, fdb, &fakeAccounts{}, log.New()))
-	require.NoError(t, endBlockHook(context.Background(), app, makeBlock(2, identity)))
+	digestLeaderEndBlock(context.Background(), app, makeBlock(2, identity))
 
 	// stop should be idempotent
 	_ = ext.Scheduler().Stop()
@@ -239,9 +243,10 @@ func TestDigest_LeaderDetection_UsesNetworkParametersLeader(t *testing.T) {
 	ext.SetReloadIntervalBlocks(1000)
 	identity := []byte("nodeF")
 	app := &common.App{Service: makeService(identity, "1000")}
+	ext.SetService(app.Service)
 
 	// Proposer would be different, but we use NetworkParameters.Leader in makeBlock
-	require.NoError(t, endBlockHook(context.Background(), app, makeBlock(1, identity)))
+	digestLeaderAcquire(context.Background(), app, makeBlock(1, identity))
 	require.True(t, ext.IsLeader())
 	require.NotNil(t, ext.Scheduler())
 	_ = ext.Scheduler().Stop()

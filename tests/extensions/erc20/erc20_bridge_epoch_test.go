@@ -31,7 +31,7 @@ func TestERC20BridgeEpochFlow(t *testing.T) {
 		require.NoError(t, erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, chain, escrow, erc20, 18, 1, TestExtensionAlias))
 
 		// Credit balance via injected transfer (simulates inbound deposit)
-		require.NoError(t, testerc20.InjectERC20Transfer(ctx, platform, chain, escrow, erc20, user, escrow, value, 10, nil))
+		require.NoError(t, testerc20.InjectERC20Transfer(ctx, platform, chain, escrow, erc20, user, user, value, 10, nil))
 
 		// Lock and issue directly into epoch (simulate bridge request)
 		require.NoError(t, erc20shim.ForTestingLockAndIssueDirect(ctx, platform, chain, escrow, user, value))

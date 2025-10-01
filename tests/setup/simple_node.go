@@ -116,7 +116,7 @@ func (f *SimpleNodeFixture) Setup(ctx context.Context, image string, config *Kwi
 // startPostgres starts a PostgreSQL container
 func (f *SimpleNodeFixture) startPostgres(ctx context.Context, networkName string) (testcontainers.Container, error) {
 	req := testcontainers.ContainerRequest{
-		Image:        "kwildb/postgres:16.8-1",
+		Image:        "ghcr.io/trufnetwork/kwil-postgres:16.8-1",
 		ExposedPorts: []string{"5432/tcp"},
 		Name:         "postgres",
 		Networks:     []string{networkName},
@@ -160,8 +160,8 @@ func (f *SimpleNodeFixture) startKwild(ctx context.Context, image string, config
 			"KWILD_DB_PASS": "kwil",
 			"KWILD_DB_NAME": "kwil",
 			// Required for config.sh initialization
-			"CHAIN_ID": config.ChainID,
-			"DB_OWNER": dbOwnerIdentifier,
+			"SETUP_CHAIN_ID": config.ChainID,
+			"SETUP_DB_OWNER": dbOwnerIdentifier,
 			// Additional configuration overrides
 			"KWILD_APP_JSONRPC_LISTEN_ADDR": "0.0.0.0:8484",
 			"KWILD_APP_P2P_LISTEN_ADDR":     "0.0.0.0:6600",

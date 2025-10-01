@@ -252,7 +252,7 @@ LoadModule headers_module modules/mod_headers.so
 
 ## MCP Server SSE Configuration
 
-**Important**: TRUF.NETWORK uses the Kwil PostgreSQL Docker image (`kwildb/postgres`) which is configured with `POSTGRES_HOST_AUTH_METHOD=trust` and automatically creates a `kwild` database with a `kwild` user. This matches the standard node setup described in the [Node Operator Guide](./node-operator-guide.md).
+**Important**: TRUF.NETWORK uses the Kwil PostgreSQL Docker image (`ghcr.io/trufnetwork/kwil-postgres`) which is configured with `POSTGRES_HOST_AUTH_METHOD=trust` and automatically creates a `kwild` database with a `kwild` user. This matches the standard node setup described in the [Node Operator Guide](./node-operator-guide.md).
 
 ### Starting the MCP Server with SSE
 

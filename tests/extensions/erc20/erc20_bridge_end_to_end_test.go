@@ -4,6 +4,7 @@ package tests
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
@@ -51,7 +52,7 @@ func TestERC20BridgeEndToEnd(t *testing.T) {
 		require.True(t, enabledResult, "instance should be enabled before bridge")
 
 		// Step 1: Inject deposit to give user a balance
-		err := testerc20.InjectERC20Transfer(ctx, platform, TestChain, TestEscrowA, TestERC20, TestUserA, TestEscrowA, TestAmount1, 10, nil)
+		err := testerc20.InjectERC20Transfer(ctx, platform, TestChain, TestEscrowA, TestERC20, TestUserA, TestUserA, TestAmount1, 10, nil)
 		require.NoError(t, err)
 
 		// Verify user has the balance
@@ -64,7 +65,7 @@ func TestERC20BridgeEndToEnd(t *testing.T) {
 
 		amtDec, err := types.ParseDecimalExplicit(TestAmount1, 78, 0)
 		require.NoError(t, err)
-		r, err := platform.Engine.Call(engineCtx, platform.DB, TestExtensionAlias, "bridge", []any{amtDec}, func(row *common.Row) error {
+		r, err := platform.Engine.Call(engineCtx, platform.DB, TestExtensionAlias, "bridge", []any{TestUserA, amtDec}, func(row *common.Row) error {
 			return nil
 		})
 		require.NoError(t, err)
@@ -122,6 +123,67 @@ func TestERC20BridgeEndToEnd(t *testing.T) {
 			return r.Error
 		}
 		require.Greater(t, rewardRows, 0, "user should have at least one wallet reward after bridge flow")
+
+		return nil
+	})
+}
+
+func TestERC20BridgeCustomRecipient(t *testing.T) {
+	seedAndRun(t, "erc20_bridge_custom_recipient", func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Enable instance with alias for custom recipient test
+		require.NoError(t, erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 1, TestExtensionAlias))
+
+		// Give user A balance to bridge
+		require.NoError(t, testerc20.InjectERC20Transfer(ctx, platform, TestChain, TestEscrowA, TestERC20, TestUserA, TestUserA, TestAmount1, 10, nil))
+
+		engineCtx := engCtx(ctx, platform, TestUserA, 2, false)
+		amtDec, err := types.ParseDecimalExplicit(TestAmount1, 78, 0)
+		require.NoError(t, err)
+
+		r, err := platform.Engine.Call(engineCtx, platform.DB, TestExtensionAlias, "bridge", []any{TestUserB, amtDec}, func(row *common.Row) error {
+			return nil
+		})
+		require.NoError(t, err)
+		if r != nil && r.Error != nil {
+			return r.Error
+		}
+
+		var bh [32]byte
+		require.NoError(t, erc20shim.ForTestingFinalizeAndConfirmCurrentEpoch(ctx, platform, TestChain, TestEscrowA, 11, bh))
+
+		instanceID := erc20shim.ForTestingGetInstanceID(TestChain, TestEscrowA)
+		customRewardQuery := `
+		{kwil_erc20_meta}SELECT count(*) FROM epoch_rewards r
+		JOIN epochs e ON e.id = r.epoch_id
+		WHERE e.instance_id = $id AND r.recipient = $user`
+		var rows int
+		err = platform.Engine.ExecuteWithoutEngineCtx(ctx, platform.DB, customRewardQuery, map[string]any{
+			"id":   instanceID,
+			"user": ethcommon.HexToAddress(TestUserB).Bytes(),
+		}, func(row *common.Row) error {
+			if len(row.Values) != 1 {
+				return nil
+			}
+			rows = int(row.Values[0].(int64))
+			return nil
+		})
+		require.NoError(t, err)
+		require.Greater(t, rows, 0, "expected pending epoch reward for custom recipient")
+
+		engineCtx = engCtx(ctx, platform, TestUserA, 3, false)
+		rewardRows := 0
+		r, err = platform.Engine.Call(engineCtx, platform.DB, TestExtensionAlias, "list_wallet_rewards", []any{TestUserB, false}, func(row *common.Row) error {
+			rewardRows++
+			recipientValue, ok := row.Values[4].(string)
+			require.True(t, ok)
+			require.True(t, strings.EqualFold(TestUserB, recipientValue))
+			return nil
+		})
+		require.NoError(t, err)
+		if r != nil && r.Error != nil {
+			return r.Error
+		}
+		require.Greater(t, rewardRows, 0, "user B should have at least one wallet reward after custom bridge")
 
 		return nil
 	})

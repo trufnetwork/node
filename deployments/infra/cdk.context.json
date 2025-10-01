@@ -54,5 +54,8 @@
   "hosted-zone:account=344375646931:domainName=testnet.truf.network:region=us-east-2": {
     "Id": "/hostedzone/Z08524001R8HE5X1WQXMS",
     "Name": "testnet.truf.network."
-  }
+  },
+  "acknowledged-issue-numbers": [
+    34892
+  ]
 }

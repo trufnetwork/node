@@ -1,4 +1,4 @@
--- Only necessary to run on leader and validator nodes.
+-- This is not meant to be run on tests as the contract address is valid for mainnet only.
 
 USE erc20 {
     chain: 'sepolia',

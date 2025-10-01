@@ -32,7 +32,7 @@ func TestERC20BridgeAdminAuthz(t *testing.T) {
 		require.NoError(t, err)
 
 		// Step 1: Inject deposit so user has balance
-		err = testerc20.InjectERC20Transfer(ctx, platform, TestChain, TestEscrowA, TestERC20, TestUserA, TestEscrowA, TestAmount2, 10, nil)
+		err = testerc20.InjectERC20Transfer(ctx, platform, TestChain, TestEscrowA, TestERC20, TestUserA, TestUserA, TestAmount2, 10, nil)
 		require.NoError(t, err)
 
 		// Verify user has the balance

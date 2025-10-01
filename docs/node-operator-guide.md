@@ -1,8 +1,10 @@
 # Node Operator Guide
 
-This guide will walk you through the process of setting up and running a TRUF.NETWORK (TN) node. By following these steps, you'll be able to deploy a node, optionally become a validator, and contribute to the TN.
+This guide will walk you through the process of manually setting up and running a TRUF.NETWORK (TN) node. This is the advanced setup option that provides full control over your node configuration.
 
-This guide provides instructions for both Debian-based Linux (e.g., Ubuntu) and macOS. Please follow the steps corresponding to your operating system.
+> **Looking for easier setup?** Consider our [AMI Deployment Guide](./ami-deployment-guide.md) for a 5-10 minute setup process, or check [all deployment options](./deployment-options.md) to choose the best method for your needs.
+
+This guide provides detailed instructions for both Debian-based Linux (e.g., Ubuntu) and macOS. Please follow the steps corresponding to your operating system.
 
 ## Prerequisites
 
@@ -54,7 +56,7 @@ The PostgreSQL client (`psql`) is required for database operations, and the `pg_
 #### For Linux (Ubuntu/Debian)
 
 ```bash
-sudo apt-get install -y postgresql-client-16
+sudo apt-get install -y postgresql-client-16 postgresql-16-repack
 ```
 
 #### For macOS
@@ -62,7 +64,7 @@ sudo apt-get install -y postgresql-client-16
 You can install the PostgreSQL client using [Homebrew](https://brew.sh/). If you don't have Homebrew, install it first by following the instructions on their website.
 
 ```bash
-brew install postgresql@16
+brew install postgresql@16 pg_repack
 ```
 
 To use it from any terminal, you may need to add it to your `PATH`. For `zsh` (the default in modern macOS):
@@ -224,7 +226,7 @@ docker run -d -p 127.0.0.1:5432:5432 --name tn-postgres \
     -e "POSTGRES_HOST_AUTH_METHOD=trust" \
     -v tn-pgdata:/var/lib/postgresql/data \
     --shm-size=1gb \
-    kwildb/postgres:latest
+    ghcr.io/trufnetwork/kwil-postgres:latest
 ```
 
 > **Warning**: Critical Security Requirements
@@ -485,6 +487,26 @@ For complete configuration options (stream lists, schedules, metrics, troublesho
 
 [extensions/tn_cache/README.md#operations--monitoring](../extensions/tn_cache/README.md#operations--monitoring)
 
+### Vacuum Extension (tn_vacuum)
+
+The `tn_vacuum` extension provides **automated database maintenance** through periodic vacuuming operations. It helps reclaim disk space and optimize database performance by removing dead tuples using `pg_repack`.
+
+> **Note:** If you're using the official TrufNetwork node image, `pg_repack` is already included. For custom installations, see the installation guide in the extension documentation.
+
+**Quick enable**
+
+```toml
+[extensions.tn_vacuum]
+enabled = true
+block_interval = 50000  # runs vacuum every 50k blocks
+```
+
+After editing `config.toml`, restart `kwild` for the change to take effect.
+
+For tuning guidance, metrics, and troubleshooting, see the full documentation:
+
+[extensions/tn_vacuum/README.md](../extensions/tn_vacuum/README.md)
+
 ### 7. Become a Validator (Optional)
 
 To upgrade your node to a validator:
@@ -575,19 +597,19 @@ For Ubuntu/Debian:
 
 ```bash
 sudo apt-get update
-sudo apt-get install postgresql-client-16
+sudo apt-get install postgresql-client-16 postgresql-16-repack
 ```
 
 For CentOS/RHEL:
 
 ```bash
-sudo yum install postgresql16
+sudo yum install postgresql16 pg_repack_16
 ```
 
 For macOS (using Homebrew):
 
 ```bash
-brew install postgresql@16
+brew install postgresql@16 pg_repack
 ```
 
 Verify the installation:
@@ -886,7 +908,7 @@ Sometimes you may need to reset your node to sync from a specific point or recov
        -e "POSTGRES_HOST_AUTH_METHOD=trust" \
        -v tn-pgdata:/var/lib/postgresql/data \
        --shm-size=1gb \
-       kwildb/postgres:latest
+      ghcr.io/trufnetwork/kwil-postgres:latest
    ```
 
 8. **Re-enable and start services**:
@@ -983,6 +1005,3 @@ private = true
 ```
 
 For more details, see the [Kwil Private RPC documentation](http://docs.kwil.com/docs/node/private-rpc).
-
-
-

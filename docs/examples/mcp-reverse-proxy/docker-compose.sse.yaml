@@ -13,7 +13,7 @@ version: '3.8'
 services:
   # PostgreSQL Database (Kwil-configured image for TRUF.NETWORK)
   postgres:
-    image: kwildb/postgres:latest
+    image: ghcr.io/trufnetwork/kwil-postgres:latest
     container_name: tn-postgres
     restart: unless-stopped
     environment:
@@ -200,8 +200,8 @@ volumes:
 # Example environment file (.env)
 # Copy to .env and customize:
 #
-# # Database settings (TRUF.NETWORK uses kwildb/postgres image with trust auth)
-# # The kwildb/postgres image automatically creates kwild user and database
+# # Database settings (TRUF.NETWORK uses ghcr.io/trufnetwork/kwil-postgres image with trust auth)
+# # The ghcr.io/trufnetwork/kwil-postgres image automatically creates kwild user and database
 # # Note: No password needed due to POSTGRES_HOST_AUTH_METHOD=trust
 # 
 # # MCP Server settings
