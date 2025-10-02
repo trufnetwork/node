@@ -120,7 +120,8 @@ func (s *DigestScheduler) Start(ctx context.Context, cronExpr string) error {
 
 			runs++
 
-			result, err := engineOps.BroadcastAutoDigestWithArgsAndParse(
+			// Use retry-aware broadcast method with fresh nonce refetch on each attempt
+			result, err := engineOps.BroadcastAutoDigestWithArgsAndRetry(
 				jobCtx,
 				chainID,
 				signer,
@@ -128,11 +129,12 @@ func (s *DigestScheduler) Start(ctx context.Context, cronExpr string) error {
 				DigestDeleteCap,
 				DigestExpectedRecordsPerStream,
 				DigestPreservePastDays,
+				3, // maxRetries = 3 attempts per run
 			)
 
 			if err != nil {
 				consecutiveFailures++
-				s.logger.Warn("auto_digest broadcast failed",
+				s.logger.Warn("auto_digest broadcast failed after retries",
 					"run", runs,
 					"consecutive_failures", consecutiveFailures,
 					"error", err)
