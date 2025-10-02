@@ -218,16 +218,25 @@ jobs:
 
           # Build tags array with latest release version
           VERSION="${{ steps.get-version.outputs.version }}"
-          TAGS="Key=marketplace,Value=ready Key=version,Value=$VERSION Key=stage,Value=${{ env.STAGE }} Key=build_date,Value=$(date -u +%Y-%m-%d)"
+          BUILD_DATE=$(date -u +%Y-%m-%d)
+
+          # Use bash array to properly handle values with spaces
+          TAGS=(
+            "Key=marketplace,Value=ready"
+            "Key=version,Value=$VERSION"
+            "Key=stage,Value=${{ env.STAGE }}"
+            "Key=build_date,Value=$BUILD_DATE"
+          )
 
           # Add reason tag if provided
           if [ -n "${{ inputs.reason }}" ]; then
-            TAGS="$TAGS Key=build_reason,Value=${{ inputs.reason }}"
+            TAGS+=("Key=build_reason,Value=${{ inputs.reason }}")
           fi
 
+          # Apply tags (array expansion with proper quoting)
           aws ec2 create-tags \
             --resources "$AMI_ID" \
-            --tags $TAGS \
+            --tags "${TAGS[@]}" \
             --region "${{ env.AWS_REGION }}"
 
           echo "✅ AMI is ready for Marketplace submission"
