@@ -264,6 +264,12 @@ func (e *EngineOperations) BroadcastAutoDigestWithArgsAndRetry(
 			case <-time.After(backoff):
 				// Continue to retry
 			}
+
+			// Exponential backoff with max cap (applied after wait for next retry)
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
 		}
 
 		// ALWAYS fetch fresh nonce from database on each attempt
@@ -284,12 +290,6 @@ func (e *EngineOperations) BroadcastAutoDigestWithArgsAndRetry(
 			"attempt", attempt,
 			"tx_hash", hash.String(),
 			"error", err)
-
-		// Exponential backoff with max cap
-		backoff *= 2
-		if backoff > maxBackoff {
-			backoff = maxBackoff
-		}
 	}
 
 	return nil, fmt.Errorf("max retries (%d) exceeded: %w", maxRetries, lastErr)
