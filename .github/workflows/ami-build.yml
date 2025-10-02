@@ -1,6 +1,19 @@
 ---
 name: Build AMI
 
+# This workflow should be triggered MANUALLY when AMI infrastructure needs updating.
+# Node software updates are handled automatically via Docker :latest tag.
+#
+# When to rebuild AMI:
+#   ✅ Infrastructure changes (scripts, services, docker-compose)
+#   ✅ Base OS updates (Ubuntu patches)
+#   ✅ AWS Marketplace submission
+#   ✅ Major version releases
+#
+# When NOT to rebuild:
+#   ❌ Regular node software updates (use Docker image workflow instead)
+#   ❌ Bug fixes (users get them via :latest tag)
+
 'on':
   workflow_dispatch:
     inputs:
@@ -11,16 +24,14 @@ name: Build AMI
           - prod
           - dev
         default: prod
-      force_build:
-        description: "Force AMI build even if not a release"
-        type: boolean
-        default: false
-  release:
-    types: [published]
+      reason:
+        description: "Reason for AMI rebuild (e.g., 'infrastructure update', 'marketplace submission')"
+        type: string
+        required: false
 
 permissions:
-  contents: write
-  id-token: write
+  contents: write  # For updating release descriptions with AMI details
+  id-token: write  # For AWS OIDC authentication
 
 env:
   AWS_REGION: us-east-2
@@ -30,12 +41,24 @@ jobs:
     name: Build TrufNetwork AMI
     runs-on: ubuntu-latest
     env:
-      # Use input for manual dispatch, default to 'prod' for release events
       STAGE: ${{ inputs.stage || 'prod' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Get latest release version
+        id: get-version
+        run: |
+          # Get latest release tag from GitHub API
+          LATEST_VERSION=$(gh release list --limit 1 --json tagName --jq '.[0].tagName')
+          if [ -z "$LATEST_VERSION" ]; then
+            LATEST_VERSION="manual"
+          fi
+          echo "Latest release version: $LATEST_VERSION"
+          echo "version=$LATEST_VERSION" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -104,12 +127,17 @@ jobs:
             >> "$GITHUB_ENV"
 
       - name: Trigger AMI build
+        env:
+          BUILD_REASON: ${{ inputs.reason || 'Manual trigger' }}
         run: |
           if [ -z "${PIPELINE_ARN:-}" ]; then
             echo "PIPELINE_ARN is empty; aborting." >&2
             exit 1
           fi
-          echo "Starting AMI build with pipeline: $PIPELINE_ARN"
+
+          echo "🚀 Starting AMI build with pipeline: $PIPELINE_ARN"
+          echo "📝 Reason: $BUILD_REASON"
+          echo "🏷️  Stage: ${{ env.STAGE }}"
 
           # Start image pipeline execution
           EXECUTION_ID=$(aws imagebuilder start-image-pipeline-execution \
@@ -187,14 +215,32 @@ jobs:
 
       - name: Tag AMI for Marketplace (prod only)
         if: env.AMI_ID && env.STAGE == 'prod'
+        env:
+          VERSION: ${{ steps.get-version.outputs.version }}
+          BUILD_REASON: ${{ inputs.reason }}
         run: |
           echo "🏷️ Tagging AMI for AWS Marketplace distribution..."
+
+          # Build tags array with latest release version
+          BUILD_DATE=$(date -u +%Y-%m-%d)
+
+          # Use bash array to properly handle values with spaces
+          TAGS=(
+            "Key=marketplace,Value=ready"
+            "Key=version,Value=$VERSION"
+            "Key=stage,Value=${{ env.STAGE }}"
+            "Key=build_date,Value=$BUILD_DATE"
+          )
+
+          # Add reason tag if provided (safely via env var)
+          if [ -n "$BUILD_REASON" ]; then
+            TAGS+=("Key=build_reason,Value=$BUILD_REASON")
+          fi
+
+          # Apply tags (array expansion with proper quoting)
           aws ec2 create-tags \
             --resources "$AMI_ID" \
-            --tags \
-              Key=marketplace,Value=ready \
-              Key=version,Value=${{ github.ref_name || 'latest' }} \
-              Key=stage,Value=${{ env.STAGE }} \
+            --tags "${TAGS[@]}" \
             --region "${{ env.AWS_REGION }}"
 
           echo "✅ AMI is ready for Marketplace submission"
@@ -202,25 +248,48 @@ jobs:
           echo "🔗 Next: Submit to AWS Marketplace Seller Console"
           echo "    https://aws.amazon.com/marketplace/management/products"
 
-      - name: Update GitHub release with AMI details
-        if: github.event_name == 'release' && env.AMI_ID
+      - name: Update latest release with AMI details
+        if: env.AMI_ID && steps.get-version.outputs.version != 'manual'
         uses: actions/github-script@v7
         env:
-          RELEASE_ID: ${{ github.event.release.id }}
+          VERSION: ${{ steps.get-version.outputs.version }}
+          BUILD_REASON: ${{ inputs.reason }}
         with:
           script: |
             const amiId = process.env.AMI_ID;
             const region = process.env.AWS_REGION;
             const stage = process.env.STAGE;
-            const releaseId = process.env.RELEASE_ID;
+            const version = process.env.VERSION;
+            const reason = process.env.BUILD_REASON || 'Manual AMI build';
 
-            const comment = `## 🚀 AMI Build Completed
+            // Get latest release
+            const releases = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 1
+            });
 
-            **Stage:** \`${stage}\`
+            if (releases.data.length === 0) {
+              console.log('No releases found, skipping update');
+              return;
+            }
+
+            const latestRelease = releases.data[0];
+
+            const amiInfo = `
+
+            ---
+
+            ## 🖥️ AMI Build for ${version}
+
             **AMI ID:** \`${amiId}\`
             **Region:** \`${region}\`
+            **Stage:** \`${stage}\`
             **Availability:** ${stage === 'prod' ? '🏪 Ready for AWS Marketplace' : '🔒 Private (Dev)'}
-            **Launch URL:** \\
+            **Build Reason:** ${reason}
+            **Build Date:** ${new Date().toISOString().split('T')[0]}
+
+            **Launch URL:**
             https://console.aws.amazon.com/ec2/home?region=${region}#LaunchInstances:ami=${amiId}
 
             ### Quick Start Commands:
@@ -235,25 +304,19 @@ jobs:
 
             # After instance is running, configure your node:
             ssh ubuntu@your-instance-ip
-            sudo tn-node-configure --network mainnet \\
-              --private-key "your-private-key"
+            sudo tn-node-configure
             \`\`\`
             `;
 
-            // Get current release to append AMI details
-            const currentRelease = await github.rest.repos.getRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: releaseId
-            });
-
-            // Update release body with AMI information
+            // Update release body
             await github.rest.repos.updateRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              release_id: releaseId,
-              body: (currentRelease.data.body || '') + comment
+              release_id: latestRelease.id,
+              body: (latestRelease.body || '') + amiInfo
             });
+
+            console.log(`Updated release ${version} with AMI details`);
 
   notify-success:
     name: Notify Success
@@ -264,7 +327,7 @@ jobs:
       - name: Success notification
         run: |
           echo "✅ AMI build pipeline completed successfully!"
-          echo "AMI is now available in AWS regions and ready for deployment."
+          echo "AMI is now available and ready for deployment."
 
   notify-failure:
     name: Notify Failure
