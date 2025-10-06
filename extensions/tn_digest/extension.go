@@ -8,6 +8,7 @@ package tn_digest
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/crypto/auth"
@@ -37,6 +38,8 @@ type Extension struct {
 	// reload policy
 	reloadIntervalBlocks int64
 	lastCheckedHeight    int64
+	reloadRetryBackoff   time.Duration // backoff between config reload retries (default 1 minute)
+	reloadMaxRetries     int           // max retries for config reload (default 15)
 
 	// tx submission wiring
 	broadcaster TxBroadcaster
@@ -99,6 +102,20 @@ func (e *Extension) SetReloadIntervalBlocks(v int64) { e.reloadIntervalBlocks = 
 func (e *Extension) ReloadIntervalBlocks() int64     { return e.reloadIntervalBlocks }
 func (e *Extension) SetLastCheckedHeight(h int64)    { e.lastCheckedHeight = h }
 func (e *Extension) LastCheckedHeight() int64        { return e.lastCheckedHeight }
+func (e *Extension) SetReloadRetryBackoff(d time.Duration) { e.reloadRetryBackoff = d }
+func (e *Extension) ReloadRetryBackoff() time.Duration {
+	if e.reloadRetryBackoff == 0 {
+		return 1 * time.Minute // default
+	}
+	return e.reloadRetryBackoff
+}
+func (e *Extension) SetReloadMaxRetries(n int) { e.reloadMaxRetries = n }
+func (e *Extension) ReloadMaxRetries() int {
+	if e.reloadMaxRetries == 0 {
+		return 15 // default
+	}
+	return e.reloadMaxRetries
+}
 
 func (e *Extension) SetBroadcaster(b TxBroadcaster) { e.broadcaster = b }
 func (e *Extension) Broadcaster() TxBroadcaster     { return e.broadcaster }

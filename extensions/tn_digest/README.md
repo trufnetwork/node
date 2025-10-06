@@ -41,13 +41,17 @@ UPDATE main.digest_config SET enabled = true, digest_schedule = '*/10 * * * *' W
 - The extension checks the config again every N blocks (default 1000, configurable below).
 
 ### Configuration (TOML)
-- Reload interval (best effort parse of integer blocks):
+- Reload interval and retry settings:
 ```toml
 [extensions.tn_digest]
-reload_interval_blocks = "1000"   # default 1000; set to small values for faster reconciling
+reload_interval_blocks = "1000"          # default 1000; how often to check digest_config for changes
+reload_retry_backoff_seconds = "60"     # default 60; wait time between config reload retries
+reload_max_retries = "15"               # default 15; max attempts to reload config before giving up
 # optional explicit RPC URL (overrides [rpc].listen normalization)
 # rpc_url = "https://127.0.0.1:8484"
 ```
+
+**Config reload resilience**: If reading `digest_config` fails (e.g., database timeout), the extension retries up to `reload_max_retries` times with `reload_retry_backoff_seconds` between attempts. If all retries fail, the current config is preserved and the scheduler continues running (won't stop due to transient failures).
 - RPC listen (must be enabled if `rpc_url` not set):
 ```toml
 [rpc]

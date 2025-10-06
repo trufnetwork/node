@@ -2,14 +2,16 @@ package tn_digest
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/config"
-	crypto "github.com/trufnetwork/kwil-db/core/crypto"
+	"github.com/trufnetwork/kwil-db/core/crypto"
 	"github.com/trufnetwork/kwil-db/core/crypto/auth"
 	"github.com/trufnetwork/kwil-db/core/log"
 	coretypes "github.com/trufnetwork/kwil-db/core/types"
@@ -37,9 +39,22 @@ func (p testPubKey) Verify(data []byte, sig []byte) (bool, error) { return true,
 type fakeDB struct {
 	enabled  bool
 	schedule string
+	// For testing transient failures
+	failCount   int // number of times to fail before succeeding
+	callCount   int // current call count
+	failWithErr error
 }
 
 func (f *fakeDB) Execute(ctx context.Context, stmt string, args ...any) (*sqltypes.ResultSet, error) {
+	// Simulate transient failures if configured
+	if f.failCount > 0 && f.callCount < f.failCount {
+		f.callCount++
+		if f.failWithErr != nil {
+			return nil, f.failWithErr
+		}
+		return nil, errors.New("database timeout")
+	}
+
 	// Return one row for SELECT enabled, digest_schedule FROM digest_config WHERE id = 1
 	// Any other stmt returns empty rows
 	if len(stmt) >= 6 && stmt[:6] == "SELECT" {
@@ -269,4 +284,110 @@ type mockBroadcaster struct{}
 
 func (mockBroadcaster) BroadcastTx(ctx context.Context, tx *coretypes.Transaction, sync uint8) (coretypes.Hash, *coretypes.TxResult, error) {
 	return coretypes.Hash{}, &coretypes.TxResult{Code: uint32(coretypes.CodeOk)}, nil
+}
+
+// Test retry logic for config reload
+func TestDigest_Reload_TransientFailure_SucceedsAfterRetry(t *testing.T) {
+	ext := resetExtensionForTest()
+	ext.SetConfig(true, "*/5 * * * *")
+	ext.SetReloadIntervalBlocks(1)
+	ext.SetLastCheckedHeight(1)
+	ext.SetReloadRetryBackoff(10 * time.Millisecond) // Fast retry for testing
+	identity := []byte("nodeRetry")
+	app := &common.App{Service: makeService(identity, "1")}
+	ext.SetService(app.Service)
+
+	// Start as leader
+	digestLeaderAcquire(context.Background(), app, makeBlock(1, identity))
+	require.NotNil(t, ext.Scheduler())
+
+	// DB will fail 2 times, then return new schedule on 3rd attempt
+	fdb := &fakeDB{
+		enabled:   true,
+		schedule:  "0 9 * * *",
+		failCount: 2,
+	}
+	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, fdb, &fakeAccounts{}, log.New()))
+
+	// Reload at height 2 - should retry and succeed with new schedule
+	digestLeaderEndBlock(context.Background(), app, makeBlock(2, identity))
+
+	// Scheduler should be restarted with new schedule (not stopped)
+	require.NotNil(t, ext.Scheduler())
+	assert.Equal(t, "0 9 * * *", ext.Schedule())
+	assert.Equal(t, 2, fdb.callCount) // Failed once, succeeded on 2nd
+
+	_ = ext.Scheduler().Stop()
+}
+
+func TestDigest_Reload_AllRetriesFail_KeepsCurrentConfig(t *testing.T) {
+	ext := resetExtensionForTest()
+	ext.SetConfig(true, "*/5 * * * *")
+	ext.SetReloadIntervalBlocks(1)
+	ext.SetLastCheckedHeight(1)
+	ext.SetReloadRetryBackoff(10 * time.Millisecond) // Fast retry for testing
+	identity := []byte("nodeFailAll")
+	app := &common.App{Service: makeService(identity, "1")}
+	ext.SetService(app.Service)
+
+	// Start as leader
+	digestLeaderAcquire(context.Background(), app, makeBlock(1, identity))
+	require.NotNil(t, ext.Scheduler())
+
+	// DB will fail all 15 attempts
+	fdb := &fakeDB{
+		enabled:   true,
+		schedule:  "0 9 * * *",
+		failCount: 20, // More than max retries (15)
+	}
+	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, fdb, &fakeAccounts{}, log.New()))
+
+	// Reload at height 2 - all retries fail
+	digestLeaderEndBlock(context.Background(), app, makeBlock(2, identity))
+
+	// Scheduler should STILL be running with old config (not stopped!)
+	require.NotNil(t, ext.Scheduler())
+	assert.Equal(t, "*/5 * * * *", ext.Schedule()) // Old schedule preserved
+	assert.True(t, ext.ConfigEnabled())            // Still enabled
+	assert.Equal(t, 15, fdb.callCount)             // Tried 15 times
+
+	_ = ext.Scheduler().Stop()
+}
+
+func TestDigest_Reload_ContextCancellation_ExitsGracefully(t *testing.T) {
+	ext := resetExtensionForTest()
+	ext.SetConfig(true, "*/5 * * * *")
+	ext.SetReloadIntervalBlocks(1)
+	ext.SetLastCheckedHeight(1)
+	ext.SetReloadRetryBackoff(10 * time.Millisecond) // Fast retry for testing
+	identity := []byte("nodeCancel")
+	app := &common.App{Service: makeService(identity, "1")}
+	ext.SetService(app.Service)
+
+	// Start as leader
+	digestLeaderAcquire(context.Background(), app, makeBlock(1, identity))
+	require.NotNil(t, ext.Scheduler())
+
+	// DB will fail many times
+	fdb := &fakeDB{
+		enabled:   true,
+		schedule:  "0 9 * * *",
+		failCount: 10,
+	}
+	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, fdb, &fakeAccounts{}, log.New()))
+
+	// Use a cancelled context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	// Reload should exit early without blocking
+	digestLeaderEndBlock(ctx, app, makeBlock(2, identity))
+
+	// Scheduler should still be running with old config
+	require.NotNil(t, ext.Scheduler())
+	assert.Equal(t, "*/5 * * * *", ext.Schedule())
+	// Should have attempted at least once but stopped due to cancellation
+	assert.LessOrEqual(t, fdb.callCount, 2)
+
+	_ = ext.Scheduler().Stop()
 }

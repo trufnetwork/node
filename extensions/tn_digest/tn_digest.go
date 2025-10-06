@@ -3,6 +3,7 @@ package tn_digest
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/crypto/auth"
@@ -74,21 +75,40 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	ext.SetService(app.Service)
 	ext.SetEngineOps(engOps)
 	ext.SetConfig(enabled, schedule)
-	// default reload interval: 1000 blocks; allow override via node config TOML
-	var reload int64 = 1000
+
+	// Load config from node TOML [extensions.tn_digest]
 	if ext.Service() != nil && ext.Service().LocalConfig != nil {
 		if m, ok := ext.Service().LocalConfig.Extensions[ExtensionName]; ok {
+			// reload_interval_blocks (default: 1000)
 			if v, ok2 := m["reload_interval_blocks"]; ok2 && v != "" {
-				// best-effort parse
 				var parsed int64
 				_, _ = fmt.Sscan(v, &parsed)
 				if parsed > 0 {
-					reload = parsed
+					ext.SetReloadIntervalBlocks(parsed)
+				}
+			}
+			// reload_retry_backoff_seconds (default: 60)
+			if v, ok2 := m["reload_retry_backoff_seconds"]; ok2 && v != "" {
+				var seconds int64
+				_, _ = fmt.Sscan(v, &seconds)
+				if seconds > 0 {
+					ext.SetReloadRetryBackoff(time.Duration(seconds) * time.Second)
+				}
+			}
+			// reload_max_retries (default: 15)
+			if v, ok2 := m["reload_max_retries"]; ok2 && v != "" {
+				var retries int
+				_, _ = fmt.Sscan(v, &retries)
+				if retries > 0 {
+					ext.SetReloadMaxRetries(retries)
 				}
 			}
 		}
 	}
-	ext.SetReloadIntervalBlocks(reload)
+	// Set defaults if not configured
+	if ext.ReloadIntervalBlocks() == 0 {
+		ext.SetReloadIntervalBlocks(1000)
+	}
 
 	// Fill in signer and broadcaster once engine is ready
 	wireSignerAndBroadcaster(app, ext)
@@ -169,12 +189,46 @@ func digestLeaderEndBlock(ctx context.Context, app *common.App, block *common.Bl
 		return
 	}
 
-	enabled, schedule, _ := ext.EngineOps().LoadDigestConfig(ctx)
+	// Retry config reload with configurable backoff and max retries
+	var (
+		enabled  bool
+		schedule string
+		loadErr  error
+	)
+	backoff := ext.ReloadRetryBackoff()
+	maxRetries := ext.ReloadMaxRetries()
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			ext.Logger().Warn("retrying config reload", "attempt", attempt, "last_error", loadErr, "backoff", backoff)
+			select {
+			case <-ctx.Done():
+				ext.Logger().Warn("context cancelled during config reload retry")
+				ext.SetLastCheckedHeight(block.Height)
+				return
+			case <-time.After(backoff):
+			}
+		}
+		enabled, schedule, loadErr = ext.EngineOps().LoadDigestConfig(ctx)
+		if loadErr == nil {
+			break
+		}
+	}
+	if loadErr != nil {
+		ext.Logger().Error("failed to reload digest config after retries, keeping current config (scheduler will not stop/start)", "error", loadErr, "attempts", maxRetries)
+		ext.SetLastCheckedHeight(block.Height)
+		return
+	}
 	if schedule == "" {
 		schedule = DefaultDigestSchedule
 	}
 
 	if enabled != ext.ConfigEnabled() || schedule != ext.Schedule() {
+		ext.Logger().Info("digest config changed, updating scheduler",
+			"old_enabled", ext.ConfigEnabled(),
+			"new_enabled", enabled,
+			"old_schedule", ext.Schedule(),
+			"new_schedule", schedule,
+			"is_leader", ext.IsLeader())
 		ext.SetConfig(enabled, schedule)
 		if !enabled {
 			ext.stopSchedulerIfRunning()
@@ -197,6 +251,8 @@ func digestLeaderEndBlock(ctx context.Context, app *common.App, block *common.Bl
 					ext.Logger().Info("tn_digest (re)started with new schedule", "schedule", ext.Schedule())
 				}
 			}
+		} else {
+			ext.Logger().Info("tn_digest config enabled but not leader, will start when leadership acquired")
 		}
 	}
 
