@@ -3,6 +3,7 @@ package tn_digest
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/crypto/auth"
@@ -74,24 +75,49 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	ext.SetService(app.Service)
 	ext.SetEngineOps(engOps)
 	ext.SetConfig(enabled, schedule)
-	// default reload interval: 1000 blocks; allow override via node config TOML
-	var reload int64 = 1000
+
+	// Load config from node TOML [extensions.tn_digest]
 	if ext.Service() != nil && ext.Service().LocalConfig != nil {
 		if m, ok := ext.Service().LocalConfig.Extensions[ExtensionName]; ok {
+			// reload_interval_blocks (default: 1000)
 			if v, ok2 := m["reload_interval_blocks"]; ok2 && v != "" {
-				// best-effort parse
 				var parsed int64
-				_, _ = fmt.Sscan(v, &parsed)
-				if parsed > 0 {
-					reload = parsed
+				if _, err := fmt.Sscan(v, &parsed); err != nil {
+					logger.Warn("failed to parse reload_interval_blocks, using default", "value", v, "error", err)
+				} else if parsed > 0 {
+					ext.SetReloadIntervalBlocks(parsed)
+				}
+			}
+			// reload_retry_backoff_seconds (default: 60)
+			if v, ok2 := m["reload_retry_backoff_seconds"]; ok2 && v != "" {
+				var seconds int64
+				if _, err := fmt.Sscan(v, &seconds); err != nil {
+					logger.Warn("failed to parse reload_retry_backoff_seconds, using default", "value", v, "error", err)
+				} else if seconds > 0 {
+					ext.SetReloadRetryBackoff(time.Duration(seconds) * time.Second)
+				}
+			}
+			// reload_max_retries (default: 15)
+			if v, ok2 := m["reload_max_retries"]; ok2 && v != "" {
+				var retries int
+				if _, err := fmt.Sscan(v, &retries); err != nil {
+					logger.Warn("failed to parse reload_max_retries, using default", "value", v, "error", err)
+				} else if retries > 0 {
+					ext.SetReloadMaxRetries(retries)
 				}
 			}
 		}
 	}
-	ext.SetReloadIntervalBlocks(reload)
+	// Set defaults if not configured
+	if ext.ReloadIntervalBlocks() == 0 {
+		ext.SetReloadIntervalBlocks(1000)
+	}
 
 	// Fill in signer and broadcaster once engine is ready
 	wireSignerAndBroadcaster(app, ext)
+
+	// Start background retry worker for config reload resilience
+	ext.startRetryWorker()
 
 	// Do not start scheduler here; EndBlockHook will manage based on leader
 	return nil
@@ -169,36 +195,18 @@ func digestLeaderEndBlock(ctx context.Context, app *common.App, block *common.Bl
 		return
 	}
 
-	enabled, schedule, _ := ext.EngineOps().LoadDigestConfig(ctx)
-	if schedule == "" {
-		schedule = DefaultDigestSchedule
+	// Single immediate attempt (non-blocking, consensus-safe)
+	// If it fails, signal background worker to retry with backoff
+	enabled, schedule, loadErr := ext.EngineOps().LoadDigestConfig(ctx)
+	if loadErr != nil {
+		ext.Logger().Warn("config reload failed in end-block, signaling background retry worker", "error", loadErr)
+		ext.SetLastCheckedHeight(block.Height)
+		ext.signalRetryNeeded() // signal background worker to retry
+		return
 	}
 
-	if enabled != ext.ConfigEnabled() || schedule != ext.Schedule() {
-		ext.SetConfig(enabled, schedule)
-		if !enabled {
-			ext.stopSchedulerIfRunning()
-			ext.Logger().Info("tn_digest stopped due to config disabled")
-		} else if ext.IsLeader() {
-			service := ext.Service()
-			if app != nil && app.Service != nil {
-				service = app.Service
-				if ext.Service() == nil {
-					ext.SetService(service)
-				}
-			}
-			if ext.Scheduler() == nil && !ext.ensureSchedulerWithService(service) {
-				ext.Logger().Debug("tn_digest: prerequisites missing; deferring (re)start after config update")
-			} else if ext.Scheduler() != nil {
-				ext.stopSchedulerIfRunning()
-				if err := ext.startScheduler(ctx); err != nil {
-					ext.Logger().Warn("failed to (re)start tn_digest scheduler after config update", "error", err)
-				} else {
-					ext.Logger().Info("tn_digest (re)started with new schedule", "schedule", ext.Schedule())
-				}
-			}
-		}
-	}
+	// Apply config change with proper synchronization (prevents race with background worker)
+	ext.applyConfigChangeWithLock(ctx, enabled, schedule, app)
 
 	ext.SetLastCheckedHeight(block.Height)
 }
