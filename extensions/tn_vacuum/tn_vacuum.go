@@ -70,7 +70,22 @@ func endBlockHook(ctx context.Context, app *common.App, block *common.BlockConte
 	if block == nil {
 		return nil
 	}
+
 	ext := GetExtension()
+
+	// Skip vacuum during catch-up to avoid resource contention
+	// during block sync, snapshot restore, or initial synchronization
+	if block.InCatchup {
+		ext.Logger().Debug("skipping vacuum during catch-up", "height", block.Height)
+		ext.mu.RLock()
+		metricsRecorder := ext.metrics
+		ext.mu.RUnlock()
+		if metricsRecorder != nil {
+			metricsRecorder.RecordVacuumSkipped(ctx, "node_catching_up")
+		}
+		return nil
+	}
+
 	if app != nil && app.Service != nil {
 		ext.setService(app.Service)
 	}
