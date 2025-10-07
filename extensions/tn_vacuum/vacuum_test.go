@@ -593,7 +593,7 @@ func (s *stubMetricsRecorder) snapshot() stubMetricsSnapshot {
 		lastTables:         s.lastTables,
 		lastMechanism:      s.lastMechanism,
 		lastErrorMechanism: s.lastErrorMechanism,
-		skipReasons:        []string{s.lastSkipReason},
+		lastSkipReason:     s.lastSkipReason,
 		lastHeight:         s.lastHeight,
 	}
 }
@@ -607,7 +607,7 @@ type stubMetricsSnapshot struct {
 	lastTables         int
 	lastMechanism      string
 	lastErrorMechanism string
-	skipReasons        []string
+	lastSkipReason     string
 	lastHeight         int64
 }
 
@@ -632,11 +632,32 @@ func waitForRunCount(t *testing.T, stub *stubMechanism, count int) {
 	})
 }
 
+// stubNodeStatus implements common.NodeStatusProvider for testing
+type stubNodeStatus struct {
+	mu      sync.RWMutex
+	syncing bool
+}
+
+func (s *stubNodeStatus) IsSyncing() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.syncing
+}
+
+func (s *stubNodeStatus) setSyncing(syncing bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.syncing = syncing
+}
+
 // TestVacuumSkipsDuringCatchup verifies that vacuum operations are skipped
 // when the node is in catch-up mode (syncing/block sync).
 func TestVacuumSkipsDuringCatchup(t *testing.T) {
 	ResetForTest()
 	ext := GetExtension()
+
+	// Create stub node status
+	nodeStatus := &stubNodeStatus{}
 
 	// Setup test service and mechanism
 	svc := &common.Service{
@@ -650,6 +671,7 @@ func TestVacuumSkipsDuringCatchup(t *testing.T) {
 				DBName: "kwild",
 			},
 		},
+		NodeStatus: nodeStatus,
 	}
 
 	stub := &stubMechanism{}
@@ -677,39 +699,39 @@ func TestVacuumSkipsDuringCatchup(t *testing.T) {
 		Service: svc,
 	}
 
-	// Test 1: Vacuum should be skipped when InCatchup=true
+	// Test 1: Vacuum should be skipped when node is syncing
+	nodeStatus.setSyncing(true)
 	blockCtx := &common.BlockContext{
 		Height:    1000,
 		Timestamp: time.Now().Unix(),
-		InCatchup: true,
 	}
 
 	err := endBlockHook(context.Background(), app, blockCtx)
 	require.NoError(t, err)
 
 	// Verify no vacuum was queued
-	require.Equal(t, 0, stub.runCount(), "vacuum should not run during catch-up")
+	require.Equal(t, 0, stub.runCount(), "vacuum should not run during sync")
 
 	// Verify skip metric was recorded
 	snapshot := metricsStub.snapshot()
 	require.Equal(t, 1, snapshot.skipCount, "skip metric should be recorded")
-	require.Contains(t, snapshot.skipReasons, "node_catching_up")
+	require.Equal(t, "node_syncing", snapshot.lastSkipReason)
 
-	// Test 2: Vacuum should run when InCatchup=false after interval
+	// Test 2: Vacuum should run when node is not syncing after interval
+	nodeStatus.setSyncing(false)
 	blockCtx.Height = 1101 // Beyond interval of 100
-	blockCtx.InCatchup = false
 
 	err = endBlockHook(context.Background(), app, blockCtx)
 	require.NoError(t, err)
 
 	// Wait for vacuum to be queued and processed
 	waitForRunCount(t, stub, 1)
-	require.Equal(t, 1, stub.runCount(), "vacuum should run when not catching up")
+	require.Equal(t, 1, stub.runCount(), "vacuum should run when not syncing")
 
-	// Test 3: Multiple blocks during catch-up should all be skipped
+	// Test 3: Multiple blocks during sync should all be skipped
+	nodeStatus.setSyncing(true)
 	for i := int64(1102); i <= 1300; i++ {
 		blockCtx.Height = i
-		blockCtx.InCatchup = true
 		err = endBlockHook(context.Background(), app, blockCtx)
 		require.NoError(t, err)
 	}
@@ -727,6 +749,10 @@ func TestVacuumResumesAfterCatchup(t *testing.T) {
 	ResetForTest()
 	ext := GetExtension()
 
+	// Create stub node status
+	nodeStatus := &stubNodeStatus{}
+	nodeStatus.setSyncing(true) // Start in syncing state
+
 	svc := &common.Service{
 		Logger: log.New(log.WithLevel(log.LevelInfo)),
 		LocalConfig: &config.Config{
@@ -738,6 +764,7 @@ func TestVacuumResumesAfterCatchup(t *testing.T) {
 				DBName: "kwild",
 			},
 		},
+		NodeStatus: nodeStatus,
 	}
 
 	stub := &stubMechanism{}
@@ -760,26 +787,25 @@ func TestVacuumResumesAfterCatchup(t *testing.T) {
 		Service: svc,
 	}
 
-	// Simulate catch-up period
+	// Simulate sync period
 	ctx := context.Background()
 	for i := int64(1); i <= 100; i++ {
 		blockCtx := &common.BlockContext{
 			Height:    i,
 			Timestamp: time.Now().Unix(),
-			InCatchup: true,
 		}
 		err := endBlockHook(ctx, app, blockCtx)
 		require.NoError(t, err)
 	}
 
-	// No vacuum should have run during catch-up
+	// No vacuum should have run during sync
 	require.Equal(t, 0, stub.runCount())
 
-	// Catch-up complete, resume normal operation
+	// Sync complete, resume normal operation
+	nodeStatus.setSyncing(false)
 	blockCtx := &common.BlockContext{
 		Height:    151, // Beyond interval
 		Timestamp: time.Now().Unix(),
-		InCatchup: false,
 	}
 	err := endBlockHook(ctx, app, blockCtx)
 	require.NoError(t, err)
