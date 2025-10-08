@@ -40,21 +40,41 @@ services:
     restart: unless-stopped
     command: |
       sh -c "
+        # Detect current public IP for P2P external address
+        PUBLIC_IP=\"$${TN_EXTERNAL_ADDRESS:-}\"
+        if [ -z \"$$PUBLIC_IP\" ]; then
+          if command -v wget >/dev/null 2>&1; then
+            PUBLIC_IP=$$(wget -T 2 -qO- https://checkip.amazonaws.com/ 2>/dev/null || true)
+          elif command -v curl >/dev/null 2>&1; then
+            PUBLIC_IP=$$(curl -m 2 -s https://checkip.amazonaws.com/ 2>/dev/null || true)
+          fi
+        fi
+        echo \"Current public IP: $$PUBLIC_IP\"
+
+        # Update external address in existing config if IP has changed
+        if [ -f /root/.kwild/config.toml ] && [ -n \"$$PUBLIC_IP\" ]; then
+          # Extract the P2P listen port from config (look in [p2p] section)
+          P2P_PORT=$$(awk '/^\\[p2p\\]/,/^\\[/ {if (/^listen/) {print}}' /root/.kwild/config.toml | awk -F\":\" '{print \$NF}' | tr -d \"' \\\"\" | head -1)
+          # Default to 6600 if extraction failed
+          P2P_PORT=\"\$${P2P_PORT:-6600}\"
+          CURRENT_EXTERNAL=$$(grep \"external_address\" /root/.kwild/config.toml | sed 's/.*= *[\"'\\'']*\\([^\"'\\'']*\\)[\"'\\'']*$/\\1/')
+          NEW_EXTERNAL=\"$$PUBLIC_IP:$$P2P_PORT\"
+          echo \"Config has: '$$CURRENT_EXTERNAL', Detected: '$$NEW_EXTERNAL' (P2P port: $$P2P_PORT)\"
+          if [ \"$$CURRENT_EXTERNAL\" != \"$$NEW_EXTERNAL\" ]; then
+            echo \"Updating external address from '$$CURRENT_EXTERNAL' to '$$NEW_EXTERNAL'\"
+            sed -i \"s|^external_address = .*\$|external_address = '$$NEW_EXTERNAL'|\" /root/.kwild/config.toml
+            echo \"Update complete\"
+          else
+            echo \"External address unchanged\"
+          fi
+        fi
+
         # Only generate NEW config if persistent storage is empty
         if [ ! -f /root/.kwild/config.toml ]; then
           echo 'No existing configuration found. Generating new node configuration...'
 
-          # Resolve external address (prefer env override; fallback if tools exist)
-          PUBLIC_IP=\"$${TN_EXTERNAL_ADDRESS:-}\"
-          if [ -z \"$$PUBLIC_IP\" ]; then
-            if command -v wget >/dev/null 2>&1; then
-              PUBLIC_IP=$$(wget -T 2 -qO- https://checkip.amazonaws.com/ 2>/dev/null || true)
-            elif command -v curl >/dev/null 2>&1; then
-              PUBLIC_IP=$$(curl -m 2 -s https://checkip.amazonaws.com/ 2>/dev/null || true)
-            fi
-          fi
-          [ -n \"$$PUBLIC_IP\" ] && EXTERNAL_FLAG=\"--p2p.external-address $$PUBLIC_IP:26656\" || EXTERNAL_FLAG=\"\"
-          echo \"Detected public IP: $$PUBLIC_IP\"
+          # Set external address flag (use default Kwil P2P port 6600)
+          [ -n \"$$PUBLIC_IP\" ] && EXTERNAL_FLAG=\"--p2p.external-address $$PUBLIC_IP:6600\" || EXTERNAL_FLAG=\"\"
 
           # Determine network type and generate appropriate configuration
           NETWORK_TYPE=\"$${NETWORK_TYPE:-mainnet}\"

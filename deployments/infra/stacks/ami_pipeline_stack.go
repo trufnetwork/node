@@ -372,6 +372,23 @@ phases:
               sudo systemctl enable tn-node
               sudo systemctl start tn-node
 
+              # Wait for containers to actually start
+              echo "Waiting for containers to start..."
+              MAX_WAIT=60
+              ELAPSED=0
+              while [ $ELAPSED -lt $MAX_WAIT ]; do
+                if sudo -u tn docker compose ps --status running 2>/dev/null | grep -q tn-node; then
+                  echo "Containers started successfully!"
+                  break
+                fi
+                sleep 2
+                ELAPSED=$((ELAPSED + 2))
+              done
+
+              if [ $ELAPSED -ge $MAX_WAIT ]; then
+                echo "Warning: Containers did not start within ${MAX_WAIT}s. Check logs with: sudo -u tn docker compose logs"
+              fi
+
               if [ "$RECONFIGURE" = true ]; then
                 echo "TRUF.NETWORK node reconfiguration complete!"
               else
