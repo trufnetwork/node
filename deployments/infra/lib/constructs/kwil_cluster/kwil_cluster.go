@@ -64,6 +64,7 @@ func NewKwilCluster(scope constructs.Construct, id string, props *KwilClusterPro
 			Nodes:            props.Validators,
 			// default to 1, because it is behind a TLS termination point
 			XffTrustProxyCount: jsii.String("1"),
+			CookieSameSite:     jsii.String("None"),
 		},
 		InitElements: props.InitElements,
 	})

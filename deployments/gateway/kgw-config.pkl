@@ -40,6 +40,9 @@ xff_trust_proxy_count = xff_trust_proxy_count_raw?.toIntOrNull()
 allow_deploy_db = read?("env:ALLOW_DEPLOY_DB") == "true"
 allow_adhoc_query = read?("env:ALLOW_ADHOC_QUERY") == "true"
 
+// cookie same site configuration
+cookie_same_site = read?("env:COOKIE_SAME_SITE")
+
 // SPECIAL CASE: BACKENDS
 // we just need to split the string by comma
 hidden backends_str = read("env:BACKENDS")
