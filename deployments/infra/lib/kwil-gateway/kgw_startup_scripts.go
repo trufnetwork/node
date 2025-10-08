@@ -32,6 +32,7 @@ func AddKwilGatewayStartupScriptsToInstance(options AddKwilGatewayStartupScripts
 		ChainId:            config.ChainId,
 		Domain:             jsii.String("gateway." + *config.Domain),
 		XffTrustProxyCount: config.XffTrustProxyCount,
+		CookieSameSite:     config.CookieSameSite,
 	}
 
 	script := "#!/bin/bash\nset -e\nset -x\n\n"
@@ -74,6 +75,7 @@ type KGWEnvConfig struct {
 	XffTrustProxyCount *string `env:"XFF_TRUST_PROXY_COUNT"`
 	Backends           *string `env:"BACKENDS"`
 	ChainId            *string `env:"CHAIN_ID"`
+	CookieSameSite     *string `env:"COOKIE_SAME_SITE"`
 }
 
 // GetDict returns a map of the environment variables and their values

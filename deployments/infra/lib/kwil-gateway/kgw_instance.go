@@ -22,6 +22,7 @@ type KGWConfig struct {
 	ChainId            *string
 	Nodes              []tn.TNInstance
 	XffTrustProxyCount *string
+	CookieSameSite     *string
 }
 
 type NewKGWInstanceInput struct {
