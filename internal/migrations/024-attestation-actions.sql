@@ -50,7 +50,9 @@ $max_fee INT8
     
     -- Execute target query deterministically using tn_utils.call_dispatch precompile
     -- TODO: some arguments are not deterministic, such as `use_cache`
-    -- we should aim at filtering these out before we release attestations
+    -- we should aim at filtering these out before we release attestations.
+    -- One idea is to also store a force_args in the whitelisted actions. Then this should help us force 
+    -- some args per action
     $query_result := tn_utils.call_dispatch($action_name, $args_bytes);
     
     -- Calculate attestation hash from (version|algo|created_height|data_provider|stream_id|action_id|args)
