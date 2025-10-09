@@ -4,3 +4,4 @@
 -- to be re-applied safely and ensuring objects are created in the correct schema.
 USE tn_cache AS tn_cache;
 USE database_size AS database_size;
+USE tn_utils AS tn_utils;
