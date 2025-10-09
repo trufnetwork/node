@@ -1,4 +1,4 @@
-// Package utils provides reusable precompiles for dynamic dispatch and
+// Package tn_utils provides reusable precompiles for dynamic dispatch and
 // canonical serialization helpers.
 //
 // This package leverages Kwil's native encoding (types.EncodeValue) to ensure

@@ -95,8 +95,8 @@ $max_fee INT8
         $created_height, NULL, NULL, NULL
     );
     
-    -- Call queue_for_signing precompile (stub for now)
-    -- TODO: Implement actual precompile call when available
+    -- Queue for signing (no-op on non-leader validators; handled by precompile)
+    tn_attestation.queue_for_signing(encode($attestation_hash, 'hex'));
     
     RETURN $attestation_hash;
 };

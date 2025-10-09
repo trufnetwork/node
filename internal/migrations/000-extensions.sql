@@ -5,3 +5,4 @@
 USE tn_cache AS tn_cache;
 USE database_size AS database_size;
 USE tn_utils AS tn_utils;
+USE tn_attestation AS tn_attestation;
