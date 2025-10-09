@@ -49,6 +49,8 @@ $max_fee INT8
     $caller_bytes := decode($caller_hex, 'hex');
     
     -- Execute target query deterministically using tn_utils.call_dispatch precompile
+    -- TODO: some arguments are not deterministic, such as `use_cache`
+    -- we should aim at filtering these out before we release attestations
     $query_result := tn_utils.call_dispatch($action_name, $args_bytes);
     
     -- Calculate attestation hash from (version|algo|created_height|data_provider|stream_id|action_id|args)
