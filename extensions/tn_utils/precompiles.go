@@ -11,6 +11,9 @@ import (
 	"github.com/trufnetwork/kwil-db/extensions/precompiles"
 )
 
+// buildPrecompile groups all tn_utils methods into a single precompile bundle so
+// migrations can bind to them with `USE tn_utils AS ...`. Keeping the definition
+// here makes the exported registration code in extension.go tiny and obvious.
 func buildPrecompile() precompiles.Precompile {
 	return precompiles.Precompile{
 		Methods: []precompiles.Method{
@@ -26,6 +29,9 @@ func buildPrecompile() precompiles.Precompile {
 	}
 }
 
+// callDispatchMethod exposes deterministic metered dispatch to another action.
+// Arguments and results are transferred as canonical byte blobs so cross-validator
+// comparisons remain byte-for-byte identical.
 func callDispatchMethod() precompiles.Method {
 	return precompiles.Method{
 		Name:            "call_dispatch",
@@ -44,6 +50,8 @@ func callDispatchMethod() precompiles.Method {
 	}
 }
 
+// byteaJoinMethod mirrors the behaviour of the Go canonical encoder: accepts a
+// bytea array, tolerates NULL entries, and joins segments with an optional delimiter.
 func byteaJoinMethod() precompiles.Method {
 	// Mirrors the Go-side canonical concatenation: accepts BYTEA arrays, treats nil
 	// chunks/delimiters as empty, and preserves deterministic ordering. We cannot
@@ -67,6 +75,8 @@ func byteaJoinMethod() precompiles.Method {
 	}
 }
 
+// byteaLengthPrefixMethod length-prefixes a single chunk using little endian so
+// validators can unambiguously slice the serialized payload.
 func byteaLengthPrefixMethod() precompiles.Method {
 	return precompiles.Method{
 		Name:            "bytea_length_prefix",
@@ -84,6 +94,8 @@ func byteaLengthPrefixMethod() precompiles.Method {
 	}
 }
 
+// byteaLengthPrefixManyMethod maps length-prefixing across a bytea array; used
+// for canonical payload construction where every field needs a length tag.
 func byteaLengthPrefixManyMethod() precompiles.Method {
 	return precompiles.Method{
 		Name:            "bytea_length_prefix_many",
@@ -101,6 +113,9 @@ func byteaLengthPrefixManyMethod() precompiles.Method {
 	}
 }
 
+// encodeUintMethod registers a family of fixed-width unsigned integer encoders
+// (8/16/32/64 bit). SQL only has signed ints, so we validate ranges before
+// emitting the big-endian bytes expected by the attestation format.
 func encodeUintMethod(name string, bits int) precompiles.Method {
 	return precompiles.Method{
 		Name:            name,
@@ -118,6 +133,9 @@ func encodeUintMethod(name string, bits int) precompiles.Method {
 	}
 }
 
+// callDispatchHandler decodes action arguments, executes the target action inside
+// the current engine context, canonicalises the resulting rows, and hands the
+// bytes back to SQL. Any mismatch in decoding or execution bubbles up as an error.
 func callDispatchHandler(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
 	actionName, ok := inputs[0].(string)
 	if !ok {
@@ -151,6 +169,8 @@ func callDispatchHandler(ctx *common.EngineContext, app *common.App, inputs []an
 	return resultFn([]any{resultBytes})
 }
 
+// byteaJoinHandler concatenates the provided chunks into a single bytea value,
+// normalising nil delimiters/chunks to empty slices to stay deterministic.
 func byteaJoinHandler(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
 	chunks, err := toByteSliceArray(inputs[0])
 	if err != nil {
@@ -178,6 +198,8 @@ func byteaJoinHandler(ctx *common.EngineContext, app *common.App, inputs []any, 
 	return resultFn([]any{buf.Bytes()})
 }
 
+// byteaLengthPrefixHandler prepends a 4-byte little-endian length header to the
+// provided chunk and returns the combined byte slice.
 func byteaLengthPrefixHandler(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
 	chunk, err := toByteSliceAllowNil(inputs[0])
 	if err != nil {
@@ -187,6 +209,8 @@ func byteaLengthPrefixHandler(ctx *common.EngineContext, app *common.App, inputs
 	return resultFn([]any{lengthPrefixBytes(chunk)})
 }
 
+// byteaLengthPrefixManyHandler applies lengthPrefixBytes to each element in a
+// bytea array, returning the transformed array.
 func byteaLengthPrefixManyHandler(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
 	chunks, err := toByteSliceArray(inputs[0])
 	if err != nil {
@@ -201,6 +225,9 @@ func byteaLengthPrefixManyHandler(ctx *common.EngineContext, app *common.App, in
 	return resultFn([]any{prefixed})
 }
 
+// encodeUintHandler validates the integer fits within the target width and
+// serialises it using big-endian order. It supports the four unsigned widths
+// needed for the canonical payload.
 func encodeUintHandler(bits int) precompiles.HandlerFunc {
 	return func(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
 		value, err := toInt64(inputs[0])
