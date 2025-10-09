@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +20,20 @@ const (
 	// Health endpoint
 	healthEndpoint = "http://localhost:8484/api/v1/health"
 )
+
+// retryableHTTPLogger adapts kwil's logger to work with go-retryablehttp
+// It logs HTTP requests at Debug level so they only appear when debug logging is enabled
+type retryableHTTPLogger struct {
+	logger log.Logger
+}
+
+// Printf implements the retryablehttp.Logger interface
+// We log at Debug level since these are routine health checks
+func (l *retryableHTTPLogger) Printf(format string, v ...interface{}) {
+	// Remove trailing newline if present, as Debugf adds its own
+	format = strings.TrimSuffix(format, "\n")
+	l.logger.Debugf(format, v...)
+}
 
 // SyncChecker monitors if the node is synced enough to perform cache operations
 type SyncChecker struct {
@@ -134,6 +149,8 @@ func (sc *SyncChecker) updateStatus(ctx context.Context) {
 	client.RetryMax = 3
 	client.RetryWaitMin = 1 * time.Second
 	client.RetryWaitMax = 5 * time.Second
+	// Use kwil logger adapter so HTTP logs respect the configured log level
+	client.Logger = &retryableHTTPLogger{logger: sc.logger}
 
 	req, err := retryablehttp.NewRequest("GET", sc.endpoint, nil)
 	if err != nil {
