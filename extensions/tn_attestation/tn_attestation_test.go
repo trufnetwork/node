@@ -2,6 +2,7 @@ package tn_attestation
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -12,6 +13,28 @@ import (
 	"github.com/trufnetwork/kwil-db/core/log"
 	"github.com/trufnetwork/kwil-db/extensions/precompiles"
 )
+
+// ensurePrecompileRegistered ensures the precompile is registered before use.
+// This prevents panics when running subtests in isolation.
+func ensurePrecompileRegistered(t *testing.T) {
+	t.Helper()
+	if _, ok := precompiles.RegisteredPrecompiles()[ExtensionName]; !ok {
+		require.NoError(t, registerPrecompile())
+	}
+}
+
+// getQueueForSigningHandler retrieves the queue_for_signing handler by name.
+// This is more robust than indexing Methods[0].
+func getQueueForSigningHandler(t *testing.T, precompile precompiles.Precompile) func(*common.EngineContext, *common.App, []any, func([]any) error) error {
+	t.Helper()
+	for _, method := range precompile.Methods {
+		if method.Name == "queue_for_signing" {
+			return method.Handler
+		}
+	}
+	t.Fatal("queue_for_signing method not found")
+	return nil
+}
 
 func TestAttestationQueue(t *testing.T) {
 	t.Run("NewQueue", func(t *testing.T) {
@@ -85,58 +108,59 @@ func TestAttestationQueue(t *testing.T) {
 
 	t.Run("ConcurrentAccess", func(t *testing.T) {
 		q := NewAttestationQueue()
-		done := make(chan bool)
+		var wg sync.WaitGroup
 
 		// Multiple goroutines enqueueing
+		wg.Add(10)
 		for i := range 10 {
 			go func(id int) {
+				defer wg.Done()
 				for range 100 {
 					q.Enqueue(string(rune('a' + id)))
 				}
-				done <- true
 			}(i)
 		}
 
 		// Wait for all goroutines
-		for range 10 {
-			<-done
-		}
+		wg.Wait()
 
 		// Should have exactly 10 unique hashes (one per goroutine)
 		assert.Equal(t, 10, q.Len())
 	})
-}
 
-func TestAttestationCache(t *testing.T) {
-	t.Run("Copy", func(t *testing.T) {
+	t.Run("MaxQueueSize", func(t *testing.T) {
 		q := NewAttestationQueue()
-		q.Enqueue("hash1")
 
-		c1 := &attestationCache{queue: q}
-		c2 := c1.Copy()
+		// Fill queue to max capacity
+		for i := range MaxQueueSize {
+			added := q.Enqueue(fmt.Sprintf("hash_%d", i))
+			assert.True(t, added)
+		}
+		assert.Equal(t, MaxQueueSize, q.Len())
 
-		assert.IsType(t, &attestationCache{}, c2)
-		assert.Equal(t, c1.queue.Len(), c2.(*attestationCache).queue.Len())
+		// Adding one more should evict the oldest (hash_0)
+		added := q.Enqueue("hash_new")
+		assert.True(t, added)
+		assert.Equal(t, MaxQueueSize, q.Len())
 
-		// Modifying copy shouldn't affect original
-		c2.(*attestationCache).queue.Enqueue("hash2")
-		assert.Equal(t, 1, c1.queue.Len())
-		assert.Equal(t, 2, c2.(*attestationCache).queue.Len())
+		// Verify FIFO eviction: hash_0 should be gone
+		hashes := q.DequeueAll()
+		assert.NotContains(t, hashes, "hash_0", "oldest hash should have been evicted")
+		assert.Contains(t, hashes, "hash_new", "new hash should be present")
+		assert.Contains(t, hashes, "hash_1", "second-oldest should still be present")
 	})
 
-	t.Run("Apply", func(t *testing.T) {
-		q1 := NewAttestationQueue()
-		q1.Enqueue("hash1")
+	t.Run("FIFOOrderPreserved", func(t *testing.T) {
+		q := NewAttestationQueue()
 
-		q2 := NewAttestationQueue()
-		q2.Enqueue("hash2")
-		q2.Enqueue("hash3")
+		// Enqueue in order
+		q.Enqueue("first")
+		q.Enqueue("second")
+		q.Enqueue("third")
 
-		c1 := &attestationCache{queue: q1}
-		c2 := &attestationCache{queue: q2}
-
-		c1.Apply(c2)
-		assert.Equal(t, q2.Len(), c1.queue.Len())
+		// DequeueAll should return in FIFO order
+		hashes := q.DequeueAll()
+		assert.Equal(t, []string{"first", "second", "third"}, hashes)
 	})
 }
 
@@ -155,6 +179,8 @@ func TestQueueForSigningPrecompile(t *testing.T) {
 	})
 
 	t.Run("LeaderQueuesHash", func(t *testing.T) {
+		ensurePrecompileRegistered(t)
+
 		// Reset queue
 		queue := GetAttestationQueue()
 		queue.Clear()
@@ -187,7 +213,7 @@ func TestQueueForSigningPrecompile(t *testing.T) {
 		require.NoError(t, err)
 
 		// Call queue_for_signing
-		handler := precompile.Methods[0].Handler
+		handler := getQueueForSigningHandler(t, precompile)
 		err = handler(ctx, app, []any{"test_hash_123"}, func([]any) error { return nil })
 		require.NoError(t, err)
 
@@ -198,6 +224,8 @@ func TestQueueForSigningPrecompile(t *testing.T) {
 	})
 
 	t.Run("NonLeaderDoesNotQueue", func(t *testing.T) {
+		ensurePrecompileRegistered(t)
+
 		// Reset queue
 		queue := GetAttestationQueue()
 		queue.Clear()
@@ -234,7 +262,7 @@ func TestQueueForSigningPrecompile(t *testing.T) {
 		require.NoError(t, err)
 
 		// Call queue_for_signing
-		handler := precompile.Methods[0].Handler
+		handler := getQueueForSigningHandler(t, precompile)
 		err = handler(ctx, app, []any{"test_hash_456"}, func([]any) error { return nil })
 		require.NoError(t, err)
 
@@ -243,6 +271,8 @@ func TestQueueForSigningPrecompile(t *testing.T) {
 	})
 
 	t.Run("NoProposerIsNoOp", func(t *testing.T) {
+		ensurePrecompileRegistered(t)
+
 		// Reset queue
 		queue := GetAttestationQueue()
 		queue.Clear()
@@ -270,7 +300,7 @@ func TestQueueForSigningPrecompile(t *testing.T) {
 		require.NoError(t, err)
 
 		// Call queue_for_signing
-		handler := precompile.Methods[0].Handler
+		handler := getQueueForSigningHandler(t, precompile)
 		err = handler(ctx, app, []any{"test_hash_789"}, func([]any) error { return nil })
 		require.NoError(t, err)
 
@@ -279,6 +309,8 @@ func TestQueueForSigningPrecompile(t *testing.T) {
 	})
 
 	t.Run("PreservesDeterminism", func(t *testing.T) {
+		ensurePrecompileRegistered(t)
+
 		// Reset queue
 		queue := GetAttestationQueue()
 		queue.Clear()
@@ -330,7 +362,7 @@ func TestQueueForSigningPrecompile(t *testing.T) {
 		precompile, err := initializer(context.Background(), appLeader.Service, nil, "", nil)
 		require.NoError(t, err)
 
-		handler := precompile.Methods[0].Handler
+		handler := getQueueForSigningHandler(t, precompile)
 
 		// Both should return nil error (deterministic)
 		err1 := handler(ctxLeader, appLeader, []any{"test_hash"}, func([]any) error { return nil })
@@ -345,6 +377,8 @@ func TestQueueForSigningPrecompile(t *testing.T) {
 	})
 
 	t.Run("EmptyHashReturnsError", func(t *testing.T) {
+		ensurePrecompileRegistered(t)
+
 		// Create mock leader identity
 		leaderPriv, leaderPub, err := crypto.GenerateSecp256k1Key(nil)
 		require.NoError(t, err)
@@ -373,7 +407,7 @@ func TestQueueForSigningPrecompile(t *testing.T) {
 		require.NoError(t, err)
 
 		// Call queue_for_signing with empty hash
-		handler := precompile.Methods[0].Handler
+		handler := getQueueForSigningHandler(t, precompile)
 		err = handler(ctx, app, []any{""}, func([]any) error { return nil })
 
 		// Should return error for empty hash

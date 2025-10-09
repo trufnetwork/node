@@ -13,9 +13,9 @@ import (
 // This is called from InitializeExtension().
 func registerPrecompile() error {
 	return precompiles.RegisterPrecompile(ExtensionName, precompiles.Precompile{
-		Cache: &attestationCache{
-			queue: GetAttestationQueue(),
-		},
+		// No cache needed: this precompile only affects leader's in-memory state,
+		// which is intentionally non-deterministic. All validators return nil (deterministic).
+		Cache:   nil,
 		Methods: []precompiles.Method{
 			{
 				Name: "queue_for_signing",
@@ -24,7 +24,16 @@ func registerPrecompile() error {
 				},
 				AccessModifiers: []precompiles.Modifier{precompiles.SYSTEM},
 				Handler: func(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
-					attestationHash := inputs[0].(string)
+					// Validate inputs length
+					if len(inputs) == 0 {
+						return fmt.Errorf("expected 1 input parameter, got 0")
+					}
+
+					// Safe type assertion with comma-ok
+					attestationHash, ok := inputs[0].(string)
+					if !ok {
+						return fmt.Errorf("attestation_hash must be a string, got %T", inputs[0])
+					}
 
 					// Validate attestation hash is not empty
 					if attestationHash == "" {
@@ -66,23 +75,4 @@ func registerPrecompile() error {
 			},
 		},
 	})
-}
-
-// attestationCache implements the precompiles.Cache interface.
-// It maintains a snapshot of the queue state for consensus determinism.
-type attestationCache struct {
-	queue *AttestationQueue
-}
-
-// Copy creates a deep copy of the cache.
-func (c *attestationCache) Copy() precompiles.Cache {
-	return &attestationCache{
-		queue: c.queue.Copy(),
-	}
-}
-
-// Apply applies a previously created deep copy of the cache.
-func (c *attestationCache) Apply(cache precompiles.Cache) {
-	other := cache.(*attestationCache)
-	c.queue = other.queue
 }
