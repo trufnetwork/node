@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
 
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/types"
@@ -106,7 +107,7 @@ func DecodeActionArgs(data []byte) ([]any, error) {
 
 		// Read argument bytes
 		argBytes := make([]byte, argLen)
-		if _, err := buf.Read(argBytes); err != nil {
+		if _, err := io.ReadFull(buf, argBytes); err != nil {
 			return nil, fmt.Errorf("failed to read arg %d bytes: %w", i, err)
 		}
 
@@ -214,7 +215,7 @@ func DecodeQueryResultCanonical(data []byte) ([]*common.Row, error) {
 			}
 
 			colBytes := make([]byte, colLen)
-			if _, err := buf.Read(colBytes); err != nil {
+			if _, err := io.ReadFull(buf, colBytes); err != nil {
 				return nil, fmt.Errorf("failed to read col %d bytes for row %d: %w", j, i, err)
 			}
 
