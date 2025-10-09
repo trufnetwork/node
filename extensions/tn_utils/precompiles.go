@@ -45,12 +45,17 @@ func callDispatchMethod() precompiles.Method {
 }
 
 func byteaJoinMethod() precompiles.Method {
+	// Mirrors the Go-side canonical concatenation: accepts BYTEA arrays, treats nil
+	// chunks/delimiters as empty, and preserves deterministic ordering. We cannot
+	// get the same behaviour with SQL's || operator (it is binary-only and NULL
+	// propagates), so keeping this precompile ensures SQL migrations stay aligned
+	// with the attestation encoder.
 	return precompiles.Method{
 		Name:            "bytea_join",
 		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
 		Parameters: []precompiles.PrecompileValue{
 			precompiles.NewPrecompileValue("chunks", types.ByteaArrayType, false),
-			precompiles.NewPrecompileValue("delimiter", types.ByteaType, false),
+			precompiles.NewPrecompileValue("delimiter", types.ByteaType, true),
 		},
 		Returns: &precompiles.MethodReturn{
 			IsTable: false,
@@ -152,9 +157,12 @@ func byteaJoinHandler(ctx *common.EngineContext, app *common.App, inputs []any, 
 		return err
 	}
 
-	delimiter, err := toByteSlice(inputs[1])
+	delimiter, err := toByteSliceAllowNil(inputs[1])
 	if err != nil {
 		return err
+	}
+	if delimiter == nil {
+		delimiter = []byte{}
 	}
 
 	var buf bytes.Buffer
