@@ -25,8 +25,8 @@ CREATE OR REPLACE ACTION request_attestation(
     $action_name TEXT,
     $args_bytes BYTEA,
     $encrypt_sig BOOLEAN,
-    $max_fee INT8
-) PUBLIC RETURNS BYTEA {
+$max_fee INT8
+) PUBLIC RETURNS (attestation_hash BYTEA) {
     -- Validate encryption flag (must be false in MVP)
     if $encrypt_sig = true {
         ERROR('Encryption not implemented');
@@ -42,7 +42,11 @@ CREATE OR REPLACE ACTION request_attestation(
     }
     
     -- Get current block height
-    $created_height := @block_height;
+    $created_height := @height;
+    
+    -- Normalize caller address to bytes for storage
+    $caller_hex := LOWER(substring(@caller, 3, 40));
+    $caller_bytes := decode($caller_hex, 'hex');
     
     -- Execute target query deterministically using tn_utils.call_dispatch precompile
     $query_result := tn_utils.call_dispatch($action_name, $args_bytes);
@@ -50,15 +54,27 @@ CREATE OR REPLACE ACTION request_attestation(
     -- Calculate attestation hash from (version|algo|created_height|data_provider|stream_id|action_id|args)
     $version := 1;
     $algo := 1; -- secp256k1
-    $hash_input := $version || $algo || $created_height || $data_provider || $stream_id || $action_id || $args_bytes;
-    $attestation_hash := sha256($hash_input);
-    
     -- Serialize canonical payload (version through result) using tn_utils helpers
     $version_bytes := tn_utils.encode_uint8($version::INT);
     $algo_bytes := tn_utils.encode_uint8($algo::INT);
     $height_bytes := tn_utils.encode_uint64($created_height::INT);
     $action_id_bytes := tn_utils.encode_uint16($action_id::INT);
 
+    -- Build hash material in canonical order (no length prefixes) to match
+    -- the engine-side hashing utilities used by the signing service.
+    $hash_input := tn_utils.bytea_join(ARRAY[
+        $version_bytes,
+        $algo_bytes,
+        $height_bytes,
+        $data_provider,
+        $stream_id,
+        $action_id_bytes,
+        $args_bytes
+    ], NULL);
+    $attestation_hash := digest($hash_input, 'sha256');
+
+    -- Canonical payload mirrors Go helpers: each field length-prefixed so the
+    -- validator can recover every component without ambiguity.
     $result_canonical := tn_utils.bytea_join(ARRAY[
         $version_bytes,
         $algo_bytes,
@@ -68,14 +84,14 @@ CREATE OR REPLACE ACTION request_attestation(
         $action_id_bytes,
         tn_utils.bytea_length_prefix($args_bytes),
         tn_utils.bytea_length_prefix($query_result)
-    ], E'');
+    ], NULL);
     
     -- Store unsigned attestation
     INSERT INTO attestations (
         attestation_hash, requester, result_canonical, encrypt_sig, 
         created_height, signature, validator_pubkey, signed_height
     ) VALUES (
-        $attestation_hash, @caller, $result_canonical, $encrypt_sig,
+        $attestation_hash, $caller_bytes, $result_canonical, $encrypt_sig, 
         $created_height, NULL, NULL, NULL
     );
     
