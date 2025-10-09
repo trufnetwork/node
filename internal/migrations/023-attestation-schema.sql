@@ -13,31 +13,31 @@ CREATE TABLE IF NOT EXISTS attestations (
     result_canonical BYTEA NOT NULL,
     encrypt_sig BOOLEAN NOT NULL DEFAULT false,
     created_height INT8 NOT NULL,
-    signature BYTEA NULL,
-    validator_pubkey BYTEA NULL,
-    signed_height INT8 NULL,
+    signature BYTEA,
+    validator_pubkey BYTEA,
+    signed_height INT8,
     
     CONSTRAINT pk_attestations PRIMARY KEY (requester, attestation_hash),
-    CONSTRAINT chk_attestations_encrypt_sig_false CHECK (encrypt_sig = false)
+    CONSTRAINT chk_att_encrypt_sig_false CHECK (encrypt_sig = false)
 );
 
 -- Allowlist table for actions permitted for attestation
 CREATE TABLE IF NOT EXISTS attestation_actions (
     action_name TEXT PRIMARY KEY,
-    action_id INT2 NOT NULL UNIQUE,
+    action_id INT NOT NULL UNIQUE,
     
-    CONSTRAINT chk_attestation_actions_action_id_valid CHECK (action_id >= 1 AND action_id <= 255)
+    CONSTRAINT chk_att_action_id_range CHECK (action_id >= 1 AND action_id <= 255)
 );
 
 -- Indexes for efficient querying
-CREATE INDEX IF NOT EXISTS idx_attestations_requester_created 
-    ON attestations(requester, created_height DESC);
+CREATE INDEX IF NOT EXISTS ix_att_req_created 
+    ON attestations(requester, created_height);
 
-CREATE INDEX IF NOT EXISTS idx_attestations_created_height 
-    ON attestations(created_height DESC);
+CREATE INDEX IF NOT EXISTS ix_att_created_height 
+    ON attestations(created_height);
 
-CREATE INDEX IF NOT EXISTS idx_attestations_unsigned 
-    ON attestations(signed_height) WHERE signature IS NULL;
+CREATE INDEX IF NOT EXISTS ix_att_signed_height 
+    ON attestations(signed_height);
 
 -- Bootstrap the action ID registry per issue #1197
 INSERT INTO attestation_actions (action_name, action_id) VALUES 
