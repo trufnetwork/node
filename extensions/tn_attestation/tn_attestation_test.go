@@ -453,8 +453,6 @@ func TestEngineReadyHook(t *testing.T) {
 		assert.Nil(t, signer, "signer should not be initialized without key file")
 	})
 
-	// Note: Full integration test with actual key loading is deferred to Issue #1209
-	// where it will be tested as part of end-to-end leader signing workflow
 }
 
 func TestLeaderLifecycleState(t *testing.T) {

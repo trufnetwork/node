@@ -132,16 +132,19 @@ func (e *signerExtension) submitSignature(ctx context.Context, item *PreparedSig
 		return fmt.Errorf("sign tx: %w", err)
 	}
 
-	_, result, err := broadcaster.BroadcastTx(ctx, tx, 1)
+	txHash, _, err := broadcaster.BroadcastTx(ctx, tx, 0) // Use BroadcastWaitAccept to avoid blocking consensus
 	if err != nil {
 		return fmt.Errorf("broadcast tx: %w", err)
 	}
-	if result == nil {
-		return fmt.Errorf("transaction result missing")
-	}
-	if result.Code != uint32(ktypes.CodeOk) {
-		return fmt.Errorf("sign_attestation failed with code %d: %s", result.Code, result.Log)
-	}
+
+	logger := e.Logger()
+	logger.Info("tn_attestation: signature broadcast",
+		"hash", item.HashHex,
+		"tx_hash", txHash,
+		"requester", fmt.Sprintf("%x", item.Requester))
+
+	// Async transaction status check for logging
+	go e.checkTransactionStatus(context.Background(), txHash, item.HashHex, item.Requester)
 
 	return nil
 }

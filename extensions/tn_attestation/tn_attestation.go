@@ -16,7 +16,7 @@ import (
 // InitializeExtension registers the tn_attestation extension.
 // This includes:
 // - Registering the queue_for_signing() precompile
-// - Registering leader watch callbacks for signing worker // TODO: WIP
+// - Registering leader watch callbacks for the signing workflow
 func InitializeExtension() {
 	// Register the precompile for queue_for_signing() method
 	if err := registerPrecompile(); err != nil {
@@ -28,7 +28,7 @@ func InitializeExtension() {
 		panic(fmt.Sprintf("failed to register %s engine ready hook: %v", ExtensionName, err))
 	}
 
-	// Register leader watch callbacks (for Issue 6 - leader signing worker)
+	// Register leader watch callbacks for signing workflow lifecycle
 	if err := leaderwatch.Register(ExtensionName, leaderwatch.Callbacks{
 		OnAcquire:  onLeaderAcquire,
 		OnLose:     onLeaderLose,
@@ -109,6 +109,12 @@ func onLeaderAcquire(ctx context.Context, app *common.App, block *common.BlockCo
 	logger := ext.Logger()
 	logger.Info("tn_attestation: acquired leadership")
 
+	queue := GetAttestationQueue()
+	if n := queue.Len(); n > 0 {
+		logger.Debug("tn_attestation: clearing residual attestation queue after leader acquisition", "dropped", n)
+	}
+	queue.Clear()
+
 	// TODO: Implement signing worker startup
 	// Reference implementation:
 	//   ext := GetExtension()
@@ -130,6 +136,12 @@ func onLeaderLose(ctx context.Context, app *common.App, block *common.BlockConte
 
 	logger := ext.Logger()
 	logger.Info("tn_attestation: lost leadership")
+
+	queue := GetAttestationQueue()
+	if n := queue.Len(); n > 0 {
+		logger.Debug("tn_attestation: clearing attestation queue on leader loss", "dropped", n)
+	}
+	queue.Clear()
 
 	// TODO: Implement signing worker shutdown
 	// Reference implementation:

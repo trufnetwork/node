@@ -14,18 +14,11 @@ import (
 	"github.com/trufnetwork/kwil-db/core/types"
 )
 
-// txBroadcasterFunc adapts a plain function into a TxBroadcaster.
-type txBroadcasterFunc func(ctx context.Context, tx *types.Transaction, sync uint8) (types.Hash, *types.TxResult, error)
-
-func (f txBroadcasterFunc) BroadcastTx(ctx context.Context, tx *types.Transaction, sync uint8) (types.Hash, *types.TxResult, error) {
-	return f(ctx, tx, sync)
-}
-
 func (e *signerExtension) ensureBroadcaster(service *common.Service) {
 	if service == nil || service.LocalConfig == nil {
 		return
 	}
-	if e.Broadcaster() != nil {
+	if e.Broadcaster() != nil && e.TxQueryClient() != nil {
 		return
 	}
 
@@ -50,7 +43,9 @@ func (e *signerExtension) ensureBroadcaster(service *common.Service) {
 		return
 	}
 
-	e.setBroadcaster(makeBroadcasterFromURL(u))
+	broadcaster, queryClient := makeBroadcasterFromURL(u)
+	e.setBroadcaster(broadcaster)
+	e.setTxQueryClient(queryClient)
 }
 
 func normalizeListenAddressForClient(listen string) (*url.URL, error) {
@@ -77,46 +72,58 @@ func normalizeListenAddressForClient(listen string) (*url.URL, error) {
 	return u, nil
 }
 
-func makeBroadcasterFromURL(u *url.URL) TxBroadcaster {
+func makeBroadcasterFromURL(u *url.URL) (TxBroadcaster, TxQueryClient) {
 	client := userjsonrpc.NewClient(u)
-	return txBroadcasterFunc(func(ctx context.Context, tx *types.Transaction, sync uint8) (types.Hash, *types.TxResult, error) {
-		mode := rpcclient.BroadcastWaitAccept
-		if sync == uint8(rpcclient.BroadcastWaitCommit) || sync == 1 {
-			mode = rpcclient.BroadcastWaitCommit
-		}
-		hash, err := client.Broadcast(ctx, tx, mode)
-		if err != nil {
-			return types.Hash{}, nil, err
-		}
+	br := &jsonRPCBroadcaster{client: client}
+	return br, br
+}
 
-		var resp *types.TxQueryResponse
-		var queryErr error
-		if mode == rpcclient.BroadcastWaitAccept {
-			for tries := 0; tries < 10; tries++ {
-				resp, queryErr = client.TxQuery(ctx, hash)
-				if queryErr == nil && resp != nil && resp.Result != nil {
-					break
-				}
-				select {
-				case <-ctx.Done():
-					return types.Hash{}, nil, ctx.Err()
-				case <-time.After(200 * time.Millisecond):
-				}
+type jsonRPCBroadcaster struct {
+	client *userjsonrpc.Client
+}
+
+func (b *jsonRPCBroadcaster) BroadcastTx(ctx context.Context, tx *types.Transaction, sync uint8) (types.Hash, *types.TxResult, error) {
+	mode := rpcclient.BroadcastWaitAccept
+	if sync == uint8(rpcclient.BroadcastWaitCommit) || sync == 1 {
+		mode = rpcclient.BroadcastWaitCommit
+	}
+
+	hash, err := b.client.Broadcast(ctx, tx, mode)
+	if err != nil {
+		return types.Hash{}, nil, err
+	}
+
+	var resp *types.TxQueryResponse
+	var queryErr error
+	if mode == rpcclient.BroadcastWaitAccept {
+		for tries := 0; tries < 10; tries++ {
+			resp, queryErr = b.client.TxQuery(ctx, hash)
+			if queryErr == nil && resp != nil && resp.Result != nil {
+				break
 			}
-			if queryErr != nil {
-				return types.Hash{}, nil, fmt.Errorf("tx query failed: %w", queryErr)
-			}
-		} else {
-			resp, queryErr = client.TxQuery(ctx, hash)
-			if queryErr != nil {
-				return types.Hash{}, nil, fmt.Errorf("tx query failed: %w", queryErr)
+			select {
+			case <-ctx.Done():
+				return types.Hash{}, nil, ctx.Err()
+			case <-time.After(200 * time.Millisecond):
 			}
 		}
-
-		if resp == nil || resp.Result == nil {
-			return types.Hash{}, nil, fmt.Errorf("transaction result missing")
+		if queryErr != nil {
+			return types.Hash{}, nil, fmt.Errorf("tx query failed: %w", queryErr)
 		}
+	} else {
+		resp, queryErr = b.client.TxQuery(ctx, hash)
+		if queryErr != nil {
+			return types.Hash{}, nil, fmt.Errorf("tx query failed: %w", queryErr)
+		}
+	}
 
-		return hash, resp.Result, nil
-	})
+	if resp == nil || resp.Result == nil {
+		return types.Hash{}, nil, fmt.Errorf("transaction result missing")
+	}
+
+	return hash, resp.Result, nil
+}
+
+func (b *jsonRPCBroadcaster) TxQuery(ctx context.Context, txHash types.Hash) (*types.TxQueryResponse, error) {
+	return b.client.TxQuery(ctx, txHash)
 }
