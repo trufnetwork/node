@@ -59,9 +59,15 @@ func TestSigningWorkflowWithHarness(t *testing.T) {
 	erc20shim.ForTestingResetSingleton()
 	erc20shim.ForTestingClearAllInstances(context.Background(), nil)
 
-	// Ensure tn_attestation precompile is registered (needed for queue_for_signing in migrations)
-	// Note: This is called here rather than in init() to allow other tests to test registration
+	// Ensure tn_attestation precompile is registered (needed for queue_for_signing in migrations).
+	// Track whether we registered it so we can clean up afterwards and not interfere with
+	// other tests that expect to perform the registration themselves.
+	registered := precompiles.RegisteredPrecompiles()
+	_, alreadyRegistered := registered[ExtensionName]
 	ensurePrecompileRegistered(t)
+	if !alreadyRegistered {
+		defer delete(precompiles.RegisteredPrecompiles(), ExtensionName)
+	}
 
 	ownerAddr := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000a22")
 	requesterAddrValue := util.Unsafe_NewEthereumAddressFromString("0xabc0000000000000000000000000000000000a22")
@@ -216,9 +222,7 @@ func TestSigningWorkflowWithHarness(t *testing.T) {
 				require.NotNil(t, signedRow.signature, "signature should be recorded")
 				require.Equal(t, prepared[0].Signature, signedRow.signature)
 				require.NotNil(t, signedRow.validatorPubKey, "validator pubkey should be recorded")
-				// validator_pubkey is set to @signer which is the Ethereum address derived from proposer
-				expectedSignerAddr := kcrypto.EthereumAddressFromPubKey(pubKey)
-				require.Equal(t, expectedSignerAddr, signedRow.validatorPubKey)
+				require.Equal(t, nodeSigner.CompactID(), signedRow.validatorPubKey, "validator pubkey should match node signer identity")
 				require.NotNil(t, signedRow.signedHeight, "signed height should be recorded")
 				require.Equal(t, signHeight, *signedRow.signedHeight)
 
@@ -367,7 +371,7 @@ func (b *harnessExecutingBroadcaster) BroadcastTx(ctx context.Context, tx *ktype
 
 	// Get caller identifier for leader check
 	// For leader authorization to work, Signer must be the Ethereum address derived from the proposer's public key
-	signerAddr := kcrypto.EthereumAddressFromPubKey(b.pubKey)
+	signer := b.nodeSigner.CompactID()
 	caller, err := auth.GetNodeIdentifier(b.pubKey)
 	require.NoError(b.t, err)
 
@@ -378,10 +382,10 @@ func (b *harnessExecutingBroadcaster) BroadcastTx(ctx context.Context, tx *ktype
 			Height:   b.signHeight,
 			Proposer: b.pubKey,
 		},
-		Signer:        signerAddr,
+		Signer:        signer,
 		Caller:        caller,
 		TxID:          b.platform.Txid(),
-		Authenticator: auth.EthPersonalSignAuth,
+		Authenticator: auth.Secp256k1Auth,
 	}
 
 	// Execute real sign_attestation action from migrations
