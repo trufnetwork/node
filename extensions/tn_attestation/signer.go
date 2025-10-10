@@ -46,7 +46,7 @@ func NewValidatorSigner(privateKey kwilcrypto.PrivateKey) (*ValidatorSigner, err
 // The signature format is [R || S || V] where:
 // - R: 32 bytes (signature R component)
 // - S: 32 bytes (signature S component)
-// - V: 1 byte (recovery ID, 27 or 28 for legacy compatibility)
+// - V: 1 byte (recovery ID, 27 or 28 for EVM compatibility)
 func (s *ValidatorSigner) SignKeccak256(payload []byte) ([]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -68,8 +68,11 @@ func (s *ValidatorSigner) SignKeccak256(payload []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to sign payload: %w", err)
 	}
 
-	// crypto.Sign returns 65-byte signature [R || S || V]
-	// V is already in the correct format (0 or 1, internally adjusted to 27/28 by ecrecover)
+	// crypto.Sign returns 65-byte signature [R || S || V] where V is 0 or 1
+	// EVM's ecrecover expects V as 27 or 28, so convert:
+	// V=0 (even Y) → 27, V=1 (odd Y) → 28
+	signature[64] += 27
+
 	return signature, nil
 }
 

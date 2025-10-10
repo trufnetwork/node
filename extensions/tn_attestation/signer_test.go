@@ -1,13 +1,14 @@
 package tn_attestation
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/crypto"
-	kwilcrypto "github.com/trufnetwork/kwil-db/core/crypto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kwilcrypto "github.com/trufnetwork/kwil-db/core/crypto"
 )
 
 func TestValidatorSigner(t *testing.T) {
@@ -76,9 +77,18 @@ func TestValidatorSigner(t *testing.T) {
 		signature, err := signer.SignKeccak256(payload)
 		require.NoError(t, err)
 
+		// Verify V byte is EVM-compatible (27 or 28)
+		v := signature[64]
+		assert.True(t, v == 27 || v == 28, "V must be 27 or 28, got %d", v)
+
 		// Verify the signature can be recovered
+		// Note: Go's crypto.SigToPub expects V as 0/1, so convert temporarily
+		testSig := make([]byte, len(signature))
+		copy(testSig, signature)
+		testSig[64] -= 27 // Convert 27/28 → 0/1
+
 		hash := crypto.Keccak256Hash(payload)
-		recoveredPubKey, err := crypto.SigToPub(hash.Bytes(), signature)
+		recoveredPubKey, err := crypto.SigToPub(hash.Bytes(), testSig)
 		require.NoError(t, err)
 
 		// Verify the recovered public key matches the signer's public key
@@ -255,9 +265,21 @@ func TestEVMCompatibility(t *testing.T) {
 		// Verify signature format is EVM-compatible
 		assert.Equal(t, 65, len(signature), "signature must be 65 bytes for EVM compatibility")
 
+		// Verify V byte is 27 or 28 (EVM standard, required by OpenZeppelin and modern contracts)
+		v := signature[64]
+		assert.True(t, v == 27 || v == 28, "V must be 27 or 28 for EVM compatibility, got %d", v)
+
 		// Recover the signer address from the signature (simulating Solidity ecrecover)
 		hash := crypto.Keccak256Hash(payload)
-		recoveredPubKey, err := crypto.Ecrecover(hash.Bytes(), signature)
+
+		// Note: Go's crypto.Ecrecover expects V as 0/1, but our signature has V as 27/28 (EVM format)
+		// In real usage, Solidity's ecrecover accepts 27/28 directly
+		// For testing with Go's crypto.Ecrecover, we need to convert back temporarily
+		testSig := make([]byte, len(signature))
+		copy(testSig, signature)
+		testSig[64] -= 27 // Convert 27/28 → 0/1 for Go's Ecrecover
+
+		recoveredPubKey, err := crypto.Ecrecover(hash.Bytes(), testSig)
 		require.NoError(t, err)
 		assert.NotNil(t, recoveredPubKey)
 
@@ -269,6 +291,33 @@ func TestEVMCompatibility(t *testing.T) {
 		// Verify the address matches the signer's address
 		expectedAddress := signer.Address()
 		assert.Equal(t, expectedAddress, recoveredAddress.Hex(), "ecrecover should recover correct address")
+	})
+
+	t.Run("VByteIsEVMCompatible", func(t *testing.T) {
+		privateKey, _, err := kwilcrypto.GenerateSecp256k1Key(nil)
+		require.NoError(t, err)
+
+		signer, err := NewValidatorSigner(privateKey)
+		require.NoError(t, err)
+
+		// Test multiple signatures to ensure V is always 27 or 28
+		for i := 0; i < 10; i++ {
+			payload := []byte(fmt.Sprintf("test payload %d", i))
+			signature, err := signer.SignKeccak256(payload)
+			require.NoError(t, err)
+
+			// Signature must be 65 bytes
+			require.Equal(t, 65, len(signature))
+
+			// V byte (signature[64]) must be 27 or 28 for EVM compatibility
+			// This is required by:
+			// - Ethereum Yellow Paper Appendix F
+			// - OpenZeppelin ECDSA.sol (rejects V < 27)
+			// - Modern smart contracts with explicit V validation
+			v := signature[64]
+			assert.True(t, v == 27 || v == 28,
+				"V must be 27 or 28 for EVM compatibility, got %d (iteration %d)", v, i)
+		}
 	})
 }
 
