@@ -114,16 +114,16 @@ CREATE OR REPLACE ACTION sign_attestation(
         ERROR('Only the current block leader may sign attestations. leader=' || $leader_hex || ' signer=' || $signer_hex);
     }
 
-    IF $attestation_hash IS NULL OR length($attestation_hash) = 0 {
+    IF $attestation_hash IS NULL {
         ERROR('Attestation hash is required');
     }
-    IF $requester IS NULL OR length($requester) = 0 {
+    IF $requester IS NULL {
         ERROR('Requester is required');
     }
     IF $created_height IS NULL {
         ERROR('Created height is required');
     }
-    IF $signature IS NULL OR length($signature) = 0 {
+    IF $signature IS NULL {
         ERROR('Signature is required');
     }
 

@@ -16,7 +16,6 @@ import (
 	"github.com/trufnetwork/kwil-db/core/crypto/auth"
 	"github.com/trufnetwork/kwil-db/core/log"
 	ktypes "github.com/trufnetwork/kwil-db/core/types"
-	extauth "github.com/trufnetwork/kwil-db/extensions/auth"
 	"github.com/trufnetwork/kwil-db/extensions/precompiles"
 	erc20shim "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
 	orderedsync "github.com/trufnetwork/kwil-db/node/exts/ordered-sync"
@@ -29,7 +28,7 @@ import (
 )
 
 func init() {
-	// Register extension precompiles for tests
+	// Register extension precompiles for tests (except tn_attestation which tests handle individually)
 	err := precompiles.RegisterInitializer(tn_cache.ExtensionName, tn_cache.InitializeCachePrecompile)
 	if err != nil {
 		panic("failed to register tn_cache precompiles: " + err.Error())
@@ -41,14 +40,14 @@ func init() {
 	}
 
 	tn_utils.InitializeExtension()
-	InitializeExtension()
+	// Note: tn_attestation precompile is registered by individual tests via ensurePrecompileRegistered()
 }
 
 func TestSigningWorkflowWithHarness(t *testing.T) {
-	// This is a high-level smoke test that exercises the SQL migration plus the Go
-	// extension working together. Rather than stubbing everything, we lean on the
-	// harness to spin up the database, run the real migration, and verify that an
-	// attestation request leaves a canonical row that our Go helpers understand.
+	// Integration test covering the complete production signing workflow:
+	// request_attestation (SQL) → prepareSigningWork (Go) → submitSignature (Go)
+	// → transaction marshaling → sign_attestation (SQL) with leader authorization.
+	// Tests that real migrations work correctly with transaction encoding/decoding.
 	const (
 		testActionName = "harness_attestation_action"
 		testActionID   = 21
@@ -59,6 +58,10 @@ func TestSigningWorkflowWithHarness(t *testing.T) {
 	orderedsync.ForTestingReset()
 	erc20shim.ForTestingResetSingleton()
 	erc20shim.ForTestingClearAllInstances(context.Background(), nil)
+
+	// Ensure tn_attestation precompile is registered (needed for queue_for_signing in migrations)
+	// Note: This is called here rather than in init() to allow other tests to test registration
+	ensurePrecompileRegistered(t)
 
 	ownerAddr := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000a22")
 	requesterAddrValue := util.Unsafe_NewEthereumAddressFromString("0xabc0000000000000000000000000000000000a22")
@@ -187,47 +190,35 @@ func TestSigningWorkflowWithHarness(t *testing.T) {
 				require.Len(t, prepared[0].Signature, 65, "EVM signature is 65 bytes")
 				require.Equal(t, stored.createdHeight, prepared[0].CreatedHeight)
 
-				// Phase 3: Execute sign_attestation action directly with real migrations
+				// Phase 3: Submit signature via production flow (tests transaction marshaling)
 				const signHeight = int64(42)
 
-				// Create context as the block leader for sign_attestation
-				signerAddr := kcrypto.EthereumAddressFromPubKey(pubKey)
-				caller, err := extauth.GetIdentifier(auth.EthPersonalSignAuth, signerAddr)
-				require.NoError(t, err)
-
-				signTxCtx := &common.TxContext{
-					Ctx: ctx,
-					BlockContext: &common.BlockContext{
-						Height:   signHeight,
-						Proposer: pubKey,
-					},
-					Signer:        signerAddr,
-					Caller:        caller,
-					TxID:          platform.Txid(),
-					Authenticator: auth.EthPersonalSignAuth,
+				// Create test broadcaster that unmarshals transaction and executes sign_attestation
+				broadcaster := &harnessExecutingBroadcaster{
+					t:          t,
+					platform:   platform,
+					pubKey:     pubKey,
+					nodeSigner: nodeSigner,
+					signHeight: signHeight,
 				}
+				ext.setBroadcaster(broadcaster)
 
-				// Call sign_attestation action from real migrations
-				signEngCtx := &common.EngineContext{TxContext: signTxCtx}
-				res, err := platform.Engine.Call(signEngCtx, platform.DB, "", "sign_attestation", []any{
-					attestationHash,
-					requesterAddr.Bytes(),
-					stored.createdHeight,
-					prepared[0].Signature,
-				}, func(*common.Row) error { return nil })
-				require.NoError(t, err)
-				require.NotNil(t, res)
-				if res.Error != nil {
-					t.Fatalf("sign_attestation failed: %v", res.Error)
-				}
+				// Use production submitSignature - this marshals the transaction,
+				// the broadcaster unmarshals it, and executes the real SQL action
+				err = ext.submitSignature(ctx, prepared[0])
+				require.NoError(t, err, "submitSignature should succeed")
+
+				// Verify the broadcaster was called and executed successfully
+				require.Equal(t, 1, broadcaster.calls, "should broadcast exactly once")
 
 				// Verify signed state in database
 				signedRow := fetchAttestationRowHarness(t, ctx, platform, attestationHash)
 				require.NotNil(t, signedRow.signature, "signature should be recorded")
 				require.Equal(t, prepared[0].Signature, signedRow.signature)
 				require.NotNil(t, signedRow.validatorPubKey, "validator pubkey should be recorded")
-				// validator_pubkey is set to @signer which is the Ethereum address
-				require.Equal(t, signerAddr, signedRow.validatorPubKey)
+				// validator_pubkey is set to @signer which is the Ethereum address derived from proposer
+				expectedSignerAddr := kcrypto.EthereumAddressFromPubKey(pubKey)
+				require.Equal(t, expectedSignerAddr, signedRow.validatorPubKey)
 				require.NotNil(t, signedRow.signedHeight, "signed height should be recorded")
 				require.Equal(t, signHeight, *signedRow.signedHeight)
 
