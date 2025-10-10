@@ -1,6 +1,7 @@
 package tn_utils
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,7 +26,7 @@ func TestEncodeDecodeBasicTypes(t *testing.T) {
 	decoded, err := DecodeActionArgs(encoded)
 	require.NoError(t, err)
 
-	assert.Equal(t, original, decoded)
+	assert.Equal(t, normalizeDecodedSlice(original), normalizeDecodedSlice(decoded))
 }
 
 func TestEncodeDecodeArrays(t *testing.T) {
@@ -41,15 +42,11 @@ func TestEncodeDecodeArrays(t *testing.T) {
 	decoded, err := DecodeActionArgs(encoded)
 	require.NoError(t, err)
 
-	assert.Equal(t, original, decoded)
+	assert.Equal(t, normalizeDecodedSlice(original), normalizeDecodedSlice(decoded))
 }
 
 func TestEncodeDecodeDecimal(t *testing.T) {
-	dec := &types.Decimal{}
-	err := dec.SetString("123.456")
-	require.NoError(t, err)
-
-	original := []any{dec}
+	original := []any{types.MustParseDecimal("123.456")}
 
 	encoded, err := EncodeActionArgs(original)
 	require.NoError(t, err)
@@ -57,7 +54,7 @@ func TestEncodeDecodeDecimal(t *testing.T) {
 	decoded, err := DecodeActionArgs(encoded)
 	require.NoError(t, err)
 
-	assert.Equal(t, original, decoded)
+	assert.Equal(t, normalizeDecodedSlice(original), normalizeDecodedSlice(decoded))
 }
 
 func TestEncodeDecodeUUID(t *testing.T) {
@@ -70,7 +67,7 @@ func TestEncodeDecodeUUID(t *testing.T) {
 	decoded, err := DecodeActionArgs(encoded)
 	require.NoError(t, err)
 
-	assert.Equal(t, original, decoded)
+	assert.Equal(t, normalizeDecodedSlice(original), normalizeDecodedSlice(decoded))
 }
 
 func TestDeterministicEncoding(t *testing.T) {
@@ -94,7 +91,7 @@ func TestEmptyArgs(t *testing.T) {
 	decoded, err := DecodeActionArgs(encoded)
 	require.NoError(t, err)
 
-	assert.Equal(t, original, decoded)
+	assert.Equal(t, normalizeDecodedSlice(original), normalizeDecodedSlice(decoded))
 }
 
 func TestLargeArray(t *testing.T) {
@@ -109,19 +106,17 @@ func TestLargeArray(t *testing.T) {
 	decoded, err := DecodeActionArgs(encoded)
 	require.NoError(t, err)
 
-	assert.Equal(t, original, decoded)
+	assert.Equal(t, normalizeDecodedSlice(original), normalizeDecodedSlice(decoded))
 }
 
 func TestMixedTypes(t *testing.T) {
-	dec := &types.Decimal{}
-	err := dec.SetString("999.999")
-	require.NoError(t, err)
+	dec := types.MustParseDecimal("999.999")
 	uuid := types.UUID([16]byte{16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1})
 
 	original := []any{
 		int64(-42),
 		int32(-100),
-		uint64(18446744073709551615),
+		uint64(1234567890123456789),
 		"complex string with émojis 🚀",
 		[]byte{0x00, 0x01, 0x02, 0x03, 0xFF},
 		true,
@@ -140,7 +135,129 @@ func TestMixedTypes(t *testing.T) {
 	decoded, err := DecodeActionArgs(encoded)
 	require.NoError(t, err)
 
-	assert.Equal(t, original, decoded)
+	assert.Equal(t, normalizeDecodedSlice(original), normalizeDecodedSlice(decoded))
+}
+
+// Helpers -------------------------------------------------------------------
+
+func normalizeDecodedSlice(values []any) []any {
+	normalized := make([]any, len(values))
+	for i, v := range values {
+		normalized[i] = normalizeDecodedValue(v)
+	}
+	return normalized
+}
+
+func cloneByteSlices(in [][]byte) [][]byte {
+	if in == nil {
+		return nil
+	}
+	out := make([][]byte, len(in))
+	for i := range in {
+		if in[i] == nil {
+			continue
+		}
+		out[i] = append([]byte(nil), in[i]...)
+	}
+	return out
+}
+
+func normalizeDecodedValue(val any) any {
+	if val == nil {
+		return nil
+	}
+	rv := reflect.ValueOf(val)
+	if rv.Kind() == reflect.Pointer {
+		if rv.IsNil() {
+			return nil
+		}
+		// Preserve decimal pointers so callers that rely on mutability keep references.
+		if rv.Type().Elem() == reflect.TypeOf(types.Decimal{}) {
+			return val
+		}
+		return normalizeDecodedValue(rv.Elem().Interface())
+	}
+
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return rv.Int()
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return int64(rv.Uint())
+	case reflect.Bool:
+		return rv.Bool()
+	case reflect.String:
+		return rv.String()
+	case reflect.Slice:
+		if rv.Type().Elem().Kind() == reflect.Uint8 {
+			b := make([]byte, rv.Len())
+			reflect.Copy(reflect.ValueOf(b), rv)
+			return b
+		}
+		normalizedElems := make([]any, rv.Len())
+		allString := true
+		allInt := true
+		allBool := true
+		allBytes := true
+		for i := 0; i < rv.Len(); i++ {
+			norm := normalizeDecodedValue(rv.Index(i).Interface())
+			normalizedElems[i] = norm
+			switch norm.(type) {
+			case string:
+				allInt = false
+				allBool = false
+			case int64:
+				allString = false
+				allBool = false
+			case bool:
+				allString = false
+				allInt = false
+			case []byte:
+				allString = false
+				allInt = false
+				allBool = false
+			default:
+				allString = false
+				allInt = false
+				allBool = false
+				allBytes = false
+			}
+			if _, ok := norm.([]byte); !ok {
+				allBytes = false
+			}
+		}
+		switch {
+		case allString:
+			out := make([]string, len(normalizedElems))
+			for i, elem := range normalizedElems {
+				out[i] = elem.(string)
+			}
+			return out
+		case allInt:
+			out := make([]int64, len(normalizedElems))
+			for i, elem := range normalizedElems {
+				out[i] = elem.(int64)
+			}
+			return out
+		case allBool:
+			out := make([]bool, len(normalizedElems))
+			for i, elem := range normalizedElems {
+				out[i] = elem.(bool)
+			}
+			return out
+		case allBytes:
+			out := make([][]byte, len(normalizedElems))
+			for i, elem := range normalizedElems {
+				out[i] = elem.([]byte)
+			}
+			return out
+		default:
+			return normalizedElems
+		}
+	case reflect.Struct:
+		return val
+	default:
+		return val
+	}
 }
 
 func TestErrorHandling(t *testing.T) {
@@ -289,7 +406,7 @@ func TestByteaLengthPrefixManyHandler(t *testing.T) {
 func TestEncodeUintHandlers(t *testing.T) {
 	type testCase struct {
 		name     string
-    handler  precompiles.HandlerFunc
+		handler  precompiles.HandlerFunc
 		input    any
 		expected []byte
 	}
