@@ -30,9 +30,6 @@ CREATE TABLE IF NOT EXISTS attestation_actions (
 );
 
 -- Indexes for efficient querying
-CREATE INDEX IF NOT EXISTS ix_att_req_created 
-    ON attestations(requester, created_height);
-
 CREATE INDEX IF NOT EXISTS ix_att_created_height 
     ON attestations(created_height);
 
