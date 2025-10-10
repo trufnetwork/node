@@ -2,7 +2,7 @@
  * ATTESTATION SCHEMA MIGRATION
  * 
  * Creates the essential tables needed for the attestation system:
- * - attestations: Stores attestation requests and signatures with composite PK (requester, attestation_hash)
+ * - attestations: Stores attestation requests and signatures
  * - attestation_actions: Allowlist of actions permitted for attestation with normalized IDs
  */
 
