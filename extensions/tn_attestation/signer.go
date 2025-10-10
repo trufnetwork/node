@@ -42,12 +42,8 @@ func NewValidatorSigner(privateKey kwilcrypto.PrivateKey) (*ValidatorSigner, err
 	}, nil
 }
 
-// SignKeccak256 signs the keccak256 hash of the payload and returns a 65-byte EVM-compatible signature.
-// The signature format is [R || S || V] where:
-// - R: 32 bytes (signature R component)
-// - S: 32 bytes (signature S component)
-// - V: 1 byte (recovery ID, 27 or 28 for EVM compatibility)
-func (s *ValidatorSigner) SignKeccak256(payload []byte) ([]byte, error) {
+// SignDigest signs the provided 32-byte digest (already hashed) and returns a 65-byte EVM-compatible signature.
+func (s *ValidatorSigner) SignDigest(digest []byte) ([]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -55,6 +51,26 @@ func (s *ValidatorSigner) SignKeccak256(payload []byte) ([]byte, error) {
 		return nil, fmt.Errorf("private key not initialized")
 	}
 
+	if len(digest) != crypto.DigestLength {
+		return nil, fmt.Errorf("digest must be %d bytes, got %d", crypto.DigestLength, len(digest))
+	}
+
+	signature, err := crypto.Sign(digest, s.privateKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign digest: %w", err)
+	}
+
+	// Convert V from {0,1} to {27,28} for EVM compatibility.
+	signature[64] += 27
+	return signature, nil
+}
+
+// SignKeccak256 signs the keccak256 hash of the payload and returns a 65-byte EVM-compatible signature.
+// The signature format is [R || S || V] where:
+// - R: 32 bytes (signature R component)
+// - S: 32 bytes (signature S component)
+// - V: 1 byte (recovery ID, 27 or 28 for EVM compatibility)
+func (s *ValidatorSigner) SignKeccak256(payload []byte) ([]byte, error) {
 	if len(payload) == 0 {
 		return nil, fmt.Errorf("payload cannot be empty")
 	}
@@ -63,17 +79,7 @@ func (s *ValidatorSigner) SignKeccak256(payload []byte) ([]byte, error) {
 	hash := crypto.Keccak256Hash(payload)
 
 	// Sign the hash using secp256k1
-	signature, err := crypto.Sign(hash.Bytes(), s.privateKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to sign payload: %w", err)
-	}
-
-	// crypto.Sign returns 65-byte signature [R || S || V] where V is 0 or 1
-	// EVM's ecrecover expects V as 27 or 28, so convert:
-	// V=0 (even Y) → 27, V=1 (odd Y) → 28
-	signature[64] += 27
-
-	return signature, nil
+	return s.SignDigest(hash.Bytes())
 }
 
 // PublicKey returns the public key associated with this signer (for verification).

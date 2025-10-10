@@ -1,6 +1,7 @@
 package tn_attestation
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"sync"
 	"testing"
@@ -28,6 +29,34 @@ func TestValidatorSigner(t *testing.T) {
 		assert.Error(t, err)
 		assert.Nil(t, signer)
 		assert.Contains(t, err.Error(), "private key cannot be nil")
+	})
+
+	t.Run("SignDigest", func(t *testing.T) {
+		privateKey, _, err := kwilcrypto.GenerateSecp256k1Key(nil)
+		require.NoError(t, err)
+
+		signer, err := NewValidatorSigner(privateKey)
+		require.NoError(t, err)
+
+		digest := sha256.Sum256([]byte("attestation payload"))
+
+		signature, err := signer.SignDigest(digest[:])
+		require.NoError(t, err)
+		assert.NotNil(t, signature)
+		assert.Equal(t, 65, len(signature))
+	})
+
+	t.Run("SignDigestInvalidLength", func(t *testing.T) {
+		privateKey, _, err := kwilcrypto.GenerateSecp256k1Key(nil)
+		require.NoError(t, err)
+
+		signer, err := NewValidatorSigner(privateKey)
+		require.NoError(t, err)
+
+		signature, err := signer.SignDigest([]byte{})
+		assert.Error(t, err)
+		assert.Nil(t, signature)
+		assert.Contains(t, err.Error(), "digest must be 32 bytes")
 	})
 
 	t.Run("SignKeccak256", func(t *testing.T) {
@@ -62,7 +91,7 @@ func TestValidatorSigner(t *testing.T) {
 		assert.Contains(t, err.Error(), "payload cannot be empty")
 	})
 
-	t.Run("SignatureVerification", func(t *testing.T) {
+	t.Run("SignatureVerificationWithDigest", func(t *testing.T) {
 		// Generate a test private key
 		privateKey, _, err := kwilcrypto.GenerateSecp256k1Key(nil)
 		require.NoError(t, err)
@@ -72,9 +101,10 @@ func TestValidatorSigner(t *testing.T) {
 
 		// Test payload
 		payload := []byte("test attestation payload")
+		digest := sha256.Sum256(payload)
 
-		// Sign the payload
-		signature, err := signer.SignKeccak256(payload)
+		// Sign the digest
+		signature, err := signer.SignDigest(digest[:])
 		require.NoError(t, err)
 
 		// Verify V byte is EVM-compatible (27 or 28)
@@ -87,8 +117,7 @@ func TestValidatorSigner(t *testing.T) {
 		copy(testSig, signature)
 		testSig[64] -= 27 // Convert 27/28 → 0/1
 
-		hash := crypto.Keccak256Hash(payload)
-		recoveredPubKey, err := crypto.SigToPub(hash.Bytes(), testSig)
+		recoveredPubKey, err := crypto.SigToPub(digest[:], testSig)
 		require.NoError(t, err)
 
 		// Verify the recovered public key matches the signer's public key
@@ -125,7 +154,7 @@ func TestValidatorSigner(t *testing.T) {
 		assert.True(t, address[:2] == "0x", "address should start with 0x")
 	})
 
-	t.Run("DeterministicSignature", func(t *testing.T) {
+	t.Run("DeterministicSignatureDigest", func(t *testing.T) {
 		privateKey, _, err := kwilcrypto.GenerateSecp256k1Key(nil)
 		require.NoError(t, err)
 
@@ -133,12 +162,13 @@ func TestValidatorSigner(t *testing.T) {
 		require.NoError(t, err)
 
 		payload := []byte("deterministic test payload")
+		digest := sha256.Sum256(payload)
 
 		// Sign the same payload twice
-		sig1, err := signer.SignKeccak256(payload)
+		sig1, err := signer.SignDigest(digest[:])
 		require.NoError(t, err)
 
-		sig2, err := signer.SignKeccak256(payload)
+		sig2, err := signer.SignDigest(digest[:])
 		require.NoError(t, err)
 
 		// Signatures should be identical for the same payload and key
@@ -161,7 +191,8 @@ func TestValidatorSigner(t *testing.T) {
 			go func(idx int) {
 				defer wg.Done()
 				payload := []byte("concurrent test payload")
-				signature, err := signer.SignKeccak256(payload)
+				digest := sha256.Sum256(payload)
+				signature, err := signer.SignDigest(digest[:])
 				require.NoError(t, err)
 				results[idx] = signature
 			}(i)
@@ -257,9 +288,10 @@ func TestEVMCompatibility(t *testing.T) {
 
 		// Create test payload (simulating attestation structure)
 		payload := []byte("version|algo|dataProvider|streamId|actionId|args|result")
+		digest := sha256.Sum256(payload)
 
 		// Sign the payload
-		signature, err := signer.SignKeccak256(payload)
+		signature, err := signer.SignDigest(digest[:])
 		require.NoError(t, err)
 
 		// Verify signature format is EVM-compatible
@@ -270,16 +302,11 @@ func TestEVMCompatibility(t *testing.T) {
 		assert.True(t, v == 27 || v == 28, "V must be 27 or 28 for EVM compatibility, got %d", v)
 
 		// Recover the signer address from the signature (simulating Solidity ecrecover)
-		hash := crypto.Keccak256Hash(payload)
-
-		// Note: Go's crypto.Ecrecover expects V as 0/1, but our signature has V as 27/28 (EVM format)
-		// In real usage, Solidity's ecrecover accepts 27/28 directly
-		// For testing with Go's crypto.Ecrecover, we need to convert back temporarily
 		testSig := make([]byte, len(signature))
 		copy(testSig, signature)
 		testSig[64] -= 27 // Convert 27/28 → 0/1 for Go's Ecrecover
 
-		recoveredPubKey, err := crypto.Ecrecover(hash.Bytes(), testSig)
+		recoveredPubKey, err := crypto.Ecrecover(digest[:], testSig)
 		require.NoError(t, err)
 		assert.NotNil(t, recoveredPubKey)
 
@@ -303,7 +330,8 @@ func TestEVMCompatibility(t *testing.T) {
 		// Test multiple signatures to ensure V is always 27 or 28
 		for i := 0; i < 10; i++ {
 			payload := []byte(fmt.Sprintf("test payload %d", i))
-			signature, err := signer.SignKeccak256(payload)
+			digest := sha256.Sum256(payload)
+			signature, err := signer.SignDigest(digest[:])
 			require.NoError(t, err)
 
 			// Signature must be 65 bytes

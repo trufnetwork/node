@@ -1,0 +1,369 @@
+package tn_attestation
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
+	"fmt"
+	"math/big"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/trufnetwork/kwil-db/common"
+	"github.com/trufnetwork/kwil-db/config"
+	kwilcrypto "github.com/trufnetwork/kwil-db/core/crypto"
+	"github.com/trufnetwork/kwil-db/core/crypto/auth"
+	"github.com/trufnetwork/kwil-db/core/log"
+	ktypes "github.com/trufnetwork/kwil-db/core/types"
+	nodesql "github.com/trufnetwork/kwil-db/node/types/sql"
+)
+
+func TestComputeAttestationHash(t *testing.T) {
+	payload := &CanonicalPayload{
+		Version:      1,
+		Algorithm:    1,
+		DataProvider: []byte("provider"),
+		StreamID:     []byte("stream"),
+		ActionID:     42,
+		Args:         []byte{0x01, 0x02},
+	}
+	var buf bytes.Buffer
+	buf.WriteByte(payload.Version)
+	buf.WriteByte(payload.Algorithm)
+	buf.Write(payload.DataProvider)
+	buf.Write(payload.StreamID)
+	actionBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(actionBytes, payload.ActionID)
+	buf.Write(actionBytes)
+	buf.Write(payload.Args)
+	expected := sha256.Sum256(buf.Bytes())
+
+	actual := computeAttestationHash(payload)
+	assert.Equal(t, expected, actual)
+}
+
+func TestPrepareSigningWork(t *testing.T) {
+	t.Cleanup(ResetValidatorSignerForTesting)
+
+	privateKey, _, err := kwilcrypto.GenerateSecp256k1Key(nil)
+	require.NoError(t, err)
+	require.NoError(t, InitializeValidatorSigner(privateKey))
+
+	version := uint8(1)
+	algo := uint8(1)
+	height := uint64(77)
+	actionID := uint16(5)
+	dataProvider := []byte("provider-1")
+	streamID := []byte("stream-abc")
+	args := []byte{0x01, 0x02}
+	result := []byte{0xAA}
+
+	canonical := buildCanonical(version, algo, height, dataProvider, streamID, actionID, args, result)
+	payload, err := ParseCanonicalPayload(canonical)
+	require.NoError(t, err)
+
+	hash := computeAttestationHash(payload)
+
+	engine := &stubEngine{
+		rows: []*common.Row{
+			{
+				Values: []any{
+					hash[:],
+					[]byte("requester"),
+					canonical,
+					int64(123),
+				},
+			},
+		},
+	}
+
+	ext := &signerExtension{
+		logger:             log.DiscardLogger,
+		scanIntervalBlocks: 100,
+	}
+	ext.setApp(&common.App{
+		Engine: engine,
+		DB:     stubDB{},
+	})
+
+	prepared, err := ext.prepareSigningWork(context.Background(), hex.EncodeToString(hash[:]))
+	require.NoError(t, err)
+	require.Len(t, prepared, 1)
+
+	ps := prepared[0]
+	assert.Equal(t, hash[:], ps.Hash)
+	assert.Equal(t, payload, ps.Payload)
+	assert.Equal(t, int64(123), ps.CreatedHeight)
+	assert.Len(t, ps.Signature, 65)
+}
+
+func TestSubmitSignature(t *testing.T) {
+	t.Cleanup(ResetValidatorSignerForTesting)
+
+	privateKey, _, err := kwilcrypto.GenerateSecp256k1Key(nil)
+	require.NoError(t, err)
+	require.NoError(t, InitializeValidatorSigner(privateKey))
+
+	version := uint8(1)
+	algo := uint8(1)
+	height := uint64(77)
+	actionID := uint16(5)
+	dataProvider := []byte("provider-1")
+	streamID := []byte("stream-abc")
+	args := []byte{0x01, 0x02}
+	result := []byte{0xAA}
+
+	canonical := buildCanonical(version, algo, height, dataProvider, streamID, actionID, args, result)
+	payload, err := ParseCanonicalPayload(canonical)
+	require.NoError(t, err)
+
+	hash := computeAttestationHash(payload)
+
+	engine := &stubEngine{
+		rows: []*common.Row{
+			{
+				Values: []any{
+					hash[:],
+					[]byte("requester"),
+					canonical,
+					int64(123),
+				},
+			},
+		},
+	}
+
+	service := &common.Service{
+		Logger:        log.DiscardLogger,
+		GenesisConfig: &config.GenesisConfig{ChainID: "test-chain"},
+		LocalConfig:   &config.Config{},
+	}
+
+	accounts := &stubAccounts{
+		acct: &ktypes.Account{Nonce: 7},
+	}
+
+	broadcaster := &recordingBroadcaster{}
+
+	ext := &signerExtension{
+		logger:             log.DiscardLogger,
+		scanIntervalBlocks: 100,
+	}
+	ext.setService(service)
+	ext.setApp(&common.App{
+		Engine:   engine,
+		DB:       stubDB{},
+		Accounts: accounts,
+		Service:  service,
+	})
+	ext.setNodeSigner(auth.GetNodeSigner(privateKey))
+	ext.setBroadcaster(broadcaster)
+
+	prepared, err := ext.prepareSigningWork(context.Background(), hex.EncodeToString(hash[:]))
+	require.NoError(t, err)
+	require.Len(t, prepared, 1)
+
+	err = ext.submitSignature(context.Background(), prepared[0])
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, broadcaster.calls)
+	require.NotNil(t, broadcaster.lastTx)
+	var decoded ktypes.ActionExecution
+	require.NoError(t, decoded.UnmarshalBinary(broadcaster.lastTx.Body.Payload))
+	assert.Equal(t, "main", decoded.Namespace)
+	assert.Equal(t, "sign_attestation", decoded.Action)
+	require.Len(t, decoded.Arguments, 1)
+	require.Len(t, decoded.Arguments[0], 4)
+
+	hashVal, err := decoded.Arguments[0][0].Decode()
+	require.NoError(t, err)
+	var hashBytes []byte
+	switch typed := hashVal.(type) {
+	case []byte:
+		hashBytes = typed
+	case *[]byte:
+		require.NotNil(t, typed, "hash argument pointer was nil")
+		hashBytes = *typed
+	default:
+		t.Fatalf("unexpected hash argument type %T", hashVal)
+	}
+	assert.Equal(t, hash[:], hashBytes)
+
+	requesterVal, err := decoded.Arguments[0][1].Decode()
+	require.NoError(t, err)
+	var requesterBytes []byte
+	switch typed := requesterVal.(type) {
+	case []byte:
+		requesterBytes = typed
+	case *[]byte:
+		require.NotNil(t, typed, "requester argument pointer was nil")
+		requesterBytes = *typed
+	default:
+		t.Fatalf("unexpected requester argument type %T", requesterVal)
+	}
+	assert.Equal(t, []byte("requester"), requesterBytes)
+
+	heightVal, err := decoded.Arguments[0][2].Decode()
+	require.NoError(t, err)
+	var createdHeight int64
+	switch typed := heightVal.(type) {
+	case int64:
+		createdHeight = typed
+	case *int64:
+		require.NotNil(t, typed, "created_height argument pointer was nil")
+		createdHeight = *typed
+	default:
+		t.Fatalf("unexpected created_height argument type %T", heightVal)
+	}
+	assert.Equal(t, int64(123), createdHeight)
+
+	sigVal, err := decoded.Arguments[0][3].Decode()
+	require.NoError(t, err)
+	var signatureBytes []byte
+	switch typed := sigVal.(type) {
+	case []byte:
+		signatureBytes = typed
+	case *[]byte:
+		require.NotNil(t, typed, "signature argument pointer was nil")
+		signatureBytes = *typed
+	default:
+		t.Fatalf("unexpected signature argument type %T", sigVal)
+	}
+	assert.Len(t, signatureBytes, 65)
+}
+
+func TestFetchPendingHashes(t *testing.T) {
+	ext := &signerExtension{
+		logger:             log.DiscardLogger,
+		scanIntervalBlocks: 100,
+		scanBatchLimit:     5,
+	}
+
+	engine := &stubEngine{
+		hashRows: []*common.Row{
+			{Values: []any{"aaa"}},
+			{Values: []any{"bbb"}},
+			{Values: []any{"ccc"}},
+		},
+	}
+
+	ext.setApp(&common.App{
+		Engine: engine,
+		DB:     stubDB{},
+	})
+
+	hashes, err := ext.fetchPendingHashes(context.Background(), 2)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"aaa", "bbb"}, hashes)
+
+	hashes, err = ext.fetchPendingHashes(context.Background(), 0)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"aaa", "bbb", "ccc"}, hashes)
+}
+
+type stubEngine struct {
+	rows     []*common.Row
+	hashRows []*common.Row
+}
+
+func (s *stubEngine) Call(ctx *common.EngineContext, db nodesql.DB, namespace, action string, args []any, resultFn func(*common.Row) error) (*common.CallResult, error) {
+	panic("not implemented")
+}
+
+func (s *stubEngine) CallWithoutEngineCtx(ctx context.Context, db nodesql.DB, namespace, action string, args []any, resultFn func(*common.Row) error) (*common.CallResult, error) {
+	panic("not implemented")
+}
+
+func (s *stubEngine) Execute(ctx *common.EngineContext, db nodesql.DB, statement string, params map[string]any, fn func(*common.Row) error) error {
+	panic("not implemented")
+}
+
+func (s *stubEngine) ExecuteWithoutEngineCtx(ctx context.Context, db nodesql.DB, statement string, params map[string]any, fn func(*common.Row) error) error {
+	var rows []*common.Row
+	if strings.Contains(statement, "GROUP BY attestation_hash") {
+		rows = s.hashRows
+		if limit, ok := params["limit"]; ok {
+			if n := toInt(limit); n >= 0 && n < len(rows) {
+				rows = rows[:n]
+			}
+		}
+	} else {
+		rows = s.rows
+	}
+	for _, row := range rows {
+		if err := fn(row); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type stubDB struct{}
+
+func (stubDB) Execute(ctx context.Context, stmt string, args ...any) (*nodesql.ResultSet, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (stubDB) BeginTx(ctx context.Context) (nodesql.Tx, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func toInt(v any) int {
+	switch val := v.(type) {
+	case int:
+		return val
+	case int32:
+		return int(val)
+	case int64:
+		return int(val)
+	case uint:
+		return int(val)
+	case uint32:
+		return int(val)
+	case uint64:
+		return int(val)
+	default:
+		return -1
+	}
+}
+
+type stubAccounts struct {
+	acct *ktypes.Account
+	err  error
+}
+
+func (s *stubAccounts) Credit(ctx context.Context, tx nodesql.Executor, account *ktypes.AccountID, balance *big.Int) error {
+	return nil
+}
+
+func (s *stubAccounts) Transfer(ctx context.Context, tx nodesql.TxMaker, from, to *ktypes.AccountID, amt *big.Int) error {
+	return nil
+}
+
+func (s *stubAccounts) GetAccount(ctx context.Context, tx nodesql.Executor, account *ktypes.AccountID) (*ktypes.Account, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	if s.acct != nil {
+		return s.acct, nil
+	}
+	return nil, fmt.Errorf("account not found")
+}
+
+func (s *stubAccounts) ApplySpend(ctx context.Context, tx nodesql.Executor, account *ktypes.AccountID, amount *big.Int, nonce int64) error {
+	return nil
+}
+
+type recordingBroadcaster struct {
+	calls  int
+	lastTx *ktypes.Transaction
+}
+
+func (b *recordingBroadcaster) BroadcastTx(ctx context.Context, tx *ktypes.Transaction, sync uint8) (ktypes.Hash, *ktypes.TxResult, error) {
+	b.calls++
+	b.lastTx = tx
+	return ktypes.Hash{}, &ktypes.TxResult{Code: uint32(ktypes.CodeOk)}, nil
+}

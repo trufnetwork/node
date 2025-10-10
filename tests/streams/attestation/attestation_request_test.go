@@ -141,6 +141,7 @@ func runAttestationHappyPath(t *testing.T, ctx context.Context, platform *kwilTe
 }
 
 type attestationRow struct {
+	requester       []byte
 	attestationHash []byte
 	resultCanonical []byte
 	encryptSig      bool
@@ -156,24 +157,25 @@ func fetchAttestationRow(t *testing.T, ctx context.Context, platform *kwilTestin
 
 	var rowData attestationRow
 	err = platform.Engine.Execute(engineCtx, platform.DB, `
-SELECT attestation_hash, result_canonical, encrypt_sig, signature, validator_pubkey, signed_height, created_height
+SELECT requester, attestation_hash, result_canonical, encrypt_sig, signature, validator_pubkey, signed_height, created_height
 FROM attestations
 WHERE attestation_hash = $hash;
 `, map[string]any{"hash": hash}, func(row *common.Row) error {
-		rowData.attestationHash = append([]byte(nil), row.Values[0].([]byte)...)
-		rowData.resultCanonical = append([]byte(nil), row.Values[1].([]byte)...)
-		rowData.encryptSig = row.Values[2].(bool)
-		if row.Values[3] != nil {
-			rowData.signature = append([]byte(nil), row.Values[3].([]byte)...)
-		}
+		rowData.requester = append([]byte(nil), row.Values[0].([]byte)...)
+		rowData.attestationHash = append([]byte(nil), row.Values[1].([]byte)...)
+		rowData.resultCanonical = append([]byte(nil), row.Values[2].([]byte)...)
+		rowData.encryptSig = row.Values[3].(bool)
 		if row.Values[4] != nil {
-			rowData.validatorPubKey = append([]byte(nil), row.Values[4].([]byte)...)
+			rowData.signature = append([]byte(nil), row.Values[4].([]byte)...)
 		}
 		if row.Values[5] != nil {
-			height := row.Values[5].(int64)
+			rowData.validatorPubKey = append([]byte(nil), row.Values[5].([]byte)...)
+		}
+		if row.Values[6] != nil {
+			height := row.Values[6].(int64)
 			rowData.signedHeight = &height
 		}
-		rowData.createdHeight = row.Values[6].(int64)
+		rowData.createdHeight = row.Values[7].(int64)
 		return nil
 	})
 	require.NoError(t, err)
