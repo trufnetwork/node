@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS attestations (
     validator_pubkey BYTEA,
     signed_height INT8,
     
-    CONSTRAINT pk_attestations PRIMARY KEY (requester, attestation_hash),
+    CONSTRAINT pk_attestations PRIMARY KEY (requester, created_height, attestation_hash),
     CONSTRAINT chk_att_encrypt_sig_false CHECK (encrypt_sig = false)
 );
 

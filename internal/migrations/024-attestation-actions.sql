@@ -55,7 +55,7 @@ $max_fee INT8
     -- some args per action
     $query_result := tn_utils.call_dispatch($action_name, $args_bytes);
     
-    -- Calculate attestation hash from (version|algo|created_height|data_provider|stream_id|action_id|args)
+    -- Calculate attestation hash from (version|algo|data_provider|stream_id|action_id|args)
     $version := 1;
     $algo := 1; -- secp256k1
     -- Serialize canonical payload (version through result) using tn_utils helpers
@@ -69,7 +69,6 @@ $max_fee INT8
     $hash_input := tn_utils.bytea_join(ARRAY[
         $version_bytes,
         $algo_bytes,
-        $height_bytes,
         $data_provider,
         $stream_id,
         $action_id_bytes,
