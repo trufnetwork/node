@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/trufnetwork/kwil-db/app/key"
+	appconf "github.com/trufnetwork/kwil-db/app/node/conf"
 	"github.com/trufnetwork/kwil-db/common"
+	"github.com/trufnetwork/kwil-db/config"
 	"github.com/trufnetwork/kwil-db/extensions/hooks"
 	"github.com/trufnetwork/node/extensions/leaderwatch"
 )
@@ -35,14 +38,45 @@ func InitializeExtension() {
 }
 
 // engineReadyHook is called when the engine is ready.
+// It initializes the validator signer with the node's private key.
 func engineReadyHook(ctx context.Context, app *common.App) error {
 	if app == nil || app.Service == nil {
 		return nil
 	}
 
 	logger := app.Service.Logger.New(ExtensionName)
-	logger.Info("tn_attestation extension ready",
-		"queue_size", GetAttestationQueue().Len())
+
+	// Load the validator's private key from the node key file
+	rootDir := appconf.RootDir()
+	if rootDir == "" {
+		logger.Warn("tn_attestation extension ready without validator signer (root dir is empty)",
+			"queue_size", GetAttestationQueue().Len())
+		return nil
+	}
+
+	keyPath := config.NodeKeyFilePath(rootDir)
+	privateKey, err := key.LoadNodeKey(keyPath)
+	if err != nil {
+		logger.Warn("tn_attestation extension ready without validator signer (failed to load node key)",
+			"queue_size", GetAttestationQueue().Len(),
+			"key_path", keyPath,
+			"error", err)
+		return nil
+	}
+
+	// Initialize the validator signer with the loaded private key
+	if err := InitializeValidatorSigner(privateKey); err != nil {
+		logger.Error("failed to initialize validator signer", "error", err)
+		return fmt.Errorf("failed to initialize validator signer: %w", err)
+	}
+
+	// Log the validator address for debugging
+	signer := GetValidatorSigner()
+	if signer != nil {
+		logger.Info("tn_attestation extension ready",
+			"queue_size", GetAttestationQueue().Len(),
+			"validator_address", signer.Address())
+	}
 
 	return nil
 }

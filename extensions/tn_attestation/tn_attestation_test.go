@@ -415,3 +415,41 @@ func TestQueueForSigningPrecompile(t *testing.T) {
 		assert.Contains(t, err.Error(), "attestation_hash cannot be empty")
 	})
 }
+
+func TestEngineReadyHook(t *testing.T) {
+	t.Run("NilAppHandling", func(t *testing.T) {
+		// engineReadyHook should handle nil app gracefully
+		err := engineReadyHook(context.Background(), nil)
+		assert.NoError(t, err, "should handle nil app without error")
+	})
+
+	t.Run("NilServiceHandling", func(t *testing.T) {
+		// engineReadyHook should handle nil service gracefully
+		app := &common.App{
+			Service: nil,
+		}
+		err := engineReadyHook(context.Background(), app)
+		assert.NoError(t, err, "should handle nil service without error")
+	})
+
+	t.Run("NoRootDirHandling", func(t *testing.T) {
+		// Reset signer for test isolation
+		ResetValidatorSignerForTesting()
+
+		// When no root dir is available, should not panic and log warning
+		app := &common.App{
+			Service: &common.Service{
+				Logger: log.DiscardLogger,
+			},
+		}
+		err := engineReadyHook(context.Background(), app)
+		assert.NoError(t, err, "should handle missing root dir without error")
+
+		// Signer should not be initialized
+		signer := GetValidatorSigner()
+		assert.Nil(t, signer, "signer should not be initialized without key file")
+	})
+
+	// Note: Full integration test with actual key loading is deferred to Issue #1209
+	// where it will be tested as part of end-to-end leader signing workflow
+}
