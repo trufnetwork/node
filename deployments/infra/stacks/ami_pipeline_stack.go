@@ -245,161 +245,60 @@ phases:
               sudo tee /usr/local/bin/tn-node-configure > /dev/null << 'EOF'
               #!/bin/bash
               set -e
-
-              # Default values
               PRIVATE_KEY=""
               ENABLE_MCP=false
               NETWORK=""
-
-              # Parse command line arguments
               while [[ $# -gt 0 ]]; do
                 case $1 in
-                  --private-key)
-                    PRIVATE_KEY="$2"
-                    shift 2
-                    ;;
-                  --enable-mcp)
-                    ENABLE_MCP=true
-                    shift
-                    ;;
-                  --network)
-                    NETWORK="$2"
-                    shift 2
-                    ;;
-                  *)
-                    echo "Unknown option $1"
-                    exit 1
-                    ;;
+                  --private-key) PRIVATE_KEY="$2"; shift 2;;
+                  --enable-mcp) ENABLE_MCP=true; shift;;
+                  --network) NETWORK="$2"; shift 2;;
+                  *) echo "Unknown option"; exit 1;;
                 esac
               done
-
-              # Check if this is a reconfiguration
               RECONFIGURE=false
-              if [ -f /opt/tn/.env ]; then
-                RECONFIGURE=true
-                echo "Existing configuration detected. Reconfiguring node..."
-              else
-                echo "Configuring TRUF.NETWORK node..."
-              fi
-
-              # Determine network type and chain ID
+              [ -f /opt/tn/.env ] && RECONFIGURE=true
               if [ -n "$NETWORK" ]; then
                 CHAIN_ID="$NETWORK"
                 NETWORK_TYPE="custom"
-                echo "Network: Custom network ($CHAIN_ID)"
               else
                 CHAIN_ID="tn-v2.1"
                 NETWORK_TYPE="mainnet"
-                echo "Network: Mainnet (tn-v2.1)"
               fi
-              echo "MCP enabled: $ENABLE_MCP"
-
               cd /opt/tn
-
-              # Handle configuration (new or reconfigure)
               if [ "$RECONFIGURE" = true ]; then
-                # Block private key and network changes during reconfiguration
-                if [ -n "$PRIVATE_KEY" ]; then
-                  echo "❌ Error: Cannot change private key on existing node!"
-                  echo "Private key changes would alter node identity and cause network issues."
-                  echo "To change private key, you must deploy a fresh instance."
-                  echo ""
-                  echo "You can only reconfigure MCP settings:"
-                  echo "  sudo tn-node-configure --enable-mcp"
-                  echo "  sudo tn-node-configure  # (disable MCP)"
-                  exit 1
-                fi
-
-                if [ -n "$NETWORK" ]; then
-                  echo "❌ Error: Cannot change network on existing node!"
-                  echo "Network changes require a fresh deployment."
-                  echo ""
-                  echo "You can only reconfigure MCP settings:"
-                  echo "  sudo tn-node-configure --enable-mcp"
-                  echo "  sudo tn-node-configure  # (disable MCP)"
-                  exit 1
-                fi
-
-                # Preserve existing configuration
-                if grep -q "TN_PRIVATE_KEY=" .env; then
-                  EXISTING_KEY=$(grep "TN_PRIVATE_KEY=" .env | cut -d'=' -f2)
-                  echo "Preserving existing node identity"
-                fi
-                if grep -q "CHAIN_ID=" .env; then
-                  EXISTING_CHAIN_ID=$(grep "CHAIN_ID=" .env | cut -d'=' -f2)
-                  CHAIN_ID="$EXISTING_CHAIN_ID"
-                  echo "Preserving existing chain ID: $CHAIN_ID"
-                fi
-                if grep -q "NETWORK_TYPE=" .env; then
-                  EXISTING_NETWORK_TYPE=$(grep "NETWORK_TYPE=" .env | cut -d'=' -f2)
-                  NETWORK_TYPE="$EXISTING_NETWORK_TYPE"
-                fi
-
-                # Stop service for reconfiguration
-                echo "Stopping existing services..."
+                [ -n "$PRIVATE_KEY" ] && { echo "Error: Cannot change key"; exit 1; }
+                [ -n "$NETWORK" ] && { echo "Error: Cannot change network"; exit 1; }
+                grep -q "TN_PRIVATE_KEY=" .env && EXISTING_KEY=$(grep "TN_PRIVATE_KEY=" .env | cut -d'=' -f2)
+                grep -q "CHAIN_ID=" .env && CHAIN_ID=$(grep "CHAIN_ID=" .env | cut -d'=' -f2)
+                grep -q "NETWORK_TYPE=" .env && NETWORK_TYPE=$(grep "NETWORK_TYPE=" .env | cut -d'=' -f2)
                 sudo systemctl stop tn-node || true
                 sudo -u tn docker compose down || true
               fi
-
-              # Create/update .env file
               cat > .env << ENVEOF
               CHAIN_ID=$CHAIN_ID
               NETWORK_TYPE=$NETWORK_TYPE
               ENVEOF
-
-              # Handle MCP configuration
-              if [ "$ENABLE_MCP" = true ]; then
-                echo "COMPOSE_PROFILES=mcp" >> .env
-              fi
-
-              # Handle private key (only for initial configuration)
+              [ "$ENABLE_MCP" = true ] && echo "COMPOSE_PROFILES=mcp" >> .env
               if [ "$RECONFIGURE" = false ] && [ -n "$PRIVATE_KEY" ]; then
-                echo "Using provided private key..."
                 echo "TN_PRIVATE_KEY=$PRIVATE_KEY" >> .env
               elif [ "$RECONFIGURE" = true ] && [ -n "$EXISTING_KEY" ]; then
-                echo "Preserving existing private key..."
                 echo "TN_PRIVATE_KEY=$EXISTING_KEY" >> .env
-              elif [ "$RECONFIGURE" = false ]; then
-                echo "No private key provided - node will generate new identity"
               fi
-
-              # Set correct ownership
               sudo chown tn:tn .env
               sudo chmod 600 .env
-              sudo chmod 750 /opt/tn
-              # Enable and start the service
               sudo systemctl daemon-reload
               sudo systemctl enable tn-node
               sudo systemctl start tn-node
-
-              # Wait for containers to actually start
-              echo "Waiting for containers to start..."
               MAX_WAIT=60
               ELAPSED=0
               while [ $ELAPSED -lt $MAX_WAIT ]; do
-                if sudo -u tn docker compose ps --status running 2>/dev/null | grep -q tn-node; then
-                  echo "Containers started successfully!"
-                  break
-                fi
+                sudo -u tn docker compose ps --status running 2>/dev/null | grep -q tn-node && break
                 sleep 2
                 ELAPSED=$((ELAPSED + 2))
               done
-
-              if [ $ELAPSED -ge $MAX_WAIT ]; then
-                echo "Warning: Containers did not start within ${MAX_WAIT}s. Check logs with: sudo -u tn docker compose logs"
-              fi
-
-              if [ "$RECONFIGURE" = true ]; then
-                echo "TRUF.NETWORK node reconfiguration complete!"
-              else
-                echo "TRUF.NETWORK node configuration complete!"
-              fi
-              echo "Service status: $(sudo systemctl is-active tn-node)"
-
-              if [ "$ENABLE_MCP" = true ]; then
-                IPV4=$(curl -s --max-time 2 http://169.254.169.254/latest/meta-data/public-ipv4 || hostname -I | awk '{print $1}' || echo "localhost")
-                echo "MCP server will be available at: http://${IPV4}:8000/sse"
-              fi
+              echo "Done. Status: $(sudo systemctl is-active tn-node)"
+              [ "$ENABLE_MCP" = true ] && echo "MCP: http://$(curl -s --max-time 2 http://169.254.169.254/latest/meta-data/public-ipv4 || echo localhost):8000/sse"
               EOF
             - sudo chmod +x /usr/local/bin/tn-node-configure
 
@@ -411,20 +310,10 @@ phases:
               sudo tee /usr/local/bin/tn-node-update > /dev/null << 'EOF'
               #!/bin/bash
               set -e
-
-              echo "Updating TRUF.NETWORK node to latest version..."
               cd /opt/tn
-
-              # Pull latest images
-              echo "Pulling latest images..."
               sudo -u tn docker compose pull
-
-              # Stop and recreate containers with new images
-              echo "Recreating containers with latest images..."
               sudo -u tn docker compose up -d --force-recreate
-
-              echo "Node updated successfully!"
-              echo "Service status: $(sudo systemctl is-active tn-node)"
+              echo "Updated: $(sudo systemctl is-active tn-node)"
               EOF
             - sudo chmod +x /usr/local/bin/tn-node-update
 
@@ -483,8 +372,6 @@ phases:
                  EC2 Console → Instance → Security → Edit inbound rules
                  Add: Custom TCP, Port 8000, Source 0.0.0.0/0
               3. Access via: http://YOUR-PUBLIC-IP:8000/sse
-
-              For help: https://docs.truf.network
               EOF
 
             - |
@@ -521,9 +408,6 @@ phases:
                 echo "   EC2 Console → Instance → Security → Edit inbound rules"
                 echo "   Add: Custom TCP, Port 8000, Source 0.0.0.0/0"
                 echo "3. Access via: http://YOUR-PUBLIC-IP:8000/sse"
-                echo ""
-                echo "For help: https://docs.truf.network"
-                echo ""
               fi
               EOF
             - sudo chmod +x /etc/profile.d/tn-welcome.sh

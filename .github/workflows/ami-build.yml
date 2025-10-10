@@ -77,34 +77,20 @@ jobs:
           npm install -g aws-cdk@latest
           cdk --version
 
-      - name: Check if AMI pipeline exists
-        id: check-pipeline
+      - name: Deploy/Update AMI pipeline infrastructure
         run: |
           cd deployments/infra
+          echo "Destroying existing AMI pipeline to ensure fresh components..."
 
-          # Check if AMI pipeline stack is deployed
-          STACK_NAME="AMI-Pipeline-${{ env.STAGE }}-Stack"
-          if aws cloudformation describe-stacks \
-            --stack-name "$STACK_NAME" \
-            --region "${{ env.AWS_REGION }}" > /dev/null 2>&1; then
-            echo "pipeline_exists=true" >> "$GITHUB_OUTPUT"
-            # Get pipeline ARN from stack outputs
-            PIPELINE_ARN=$(aws cloudformation describe-stacks \
-              --stack-name "$STACK_NAME" \
-              --region "${{ env.AWS_REGION }}" \
-              --query \
-                "Stacks[0].Outputs[?OutputKey==\`AmiPipelineArnOutput\`].OutputValue" \
-              --output text)
-            echo "pipeline_arn=$PIPELINE_ARN" >> "$GITHUB_OUTPUT"
-          else
-            echo "pipeline_exists=false" >> "$GITHUB_OUTPUT"
-          fi
+          # Destroy existing stack (ignore errors if it doesn't exist)
+          cdk destroy AMI-Pipeline-${{ env.STAGE }}-Stack \
+            --app "go run ami-cdk.go" \
+            --context stage=${{ env.STAGE }} \
+            --force || echo "Stack didn't exist or failed to destroy, continuing..."
 
-      - name: Deploy AMI pipeline infrastructure
-        if: steps.check-pipeline.outputs.pipeline_exists != 'true'
-        run: |
-          cd deployments/infra
-          echo "Deploying AMI pipeline infrastructure for stage: ${{ env.STAGE }}..."
+          echo "Deploying fresh AMI pipeline infrastructure for stage: ${{ env.STAGE }}..."
+          echo "This ensures all components use the latest code from this repository."
+
           cdk bootstrap --app "go run ami-cdk.go" --require-approval never
           cdk deploy AMI-Pipeline-${{ env.STAGE }}-Stack \
             --app "go run ami-cdk.go" \
@@ -119,12 +105,6 @@ jobs:
               "Stacks[0].Outputs[?OutputKey==\`AmiPipelineArnOutput\`].OutputValue" \
             --output text)
           echo "PIPELINE_ARN=$PIPELINE_ARN" >> "$GITHUB_ENV"
-
-      - name: Set pipeline ARN from existing stack
-        if: steps.check-pipeline.outputs.pipeline_exists == 'true'
-        run: |
-          echo "PIPELINE_ARN=${{ steps.check-pipeline.outputs.pipeline_arn }}" \
-            >> "$GITHUB_ENV"
 
       - name: Trigger AMI build
         env:
