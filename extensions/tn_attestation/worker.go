@@ -109,6 +109,9 @@ func (e *signerExtension) submitSignature(ctx context.Context, item *PreparedSig
 		return fmt.Errorf("database handle unavailable")
 	}
 
+	// Nonce handling: First signature ever gets nonce=1 (account doesn't exist yet).
+	// Subsequent signatures increment from last recorded nonce. We tolerate "not found"
+	// because leader's first-ever signature creates the account on-chain.
 	account, err := accounts.GetAccount(ctx, db, accountID)
 	var nonce uint64 = 1
 	if err != nil {
@@ -173,6 +176,10 @@ func (e *signerExtension) submitSignature(ctx context.Context, item *PreparedSig
 // startStatusWorker initializes the background goroutine that monitors transaction status.
 // Uses sync.Once to prevent goroutine leaks across leader transitions. The 128-entry
 // buffer provides headroom during burst signing without blocking EndBlock.
+//
+// KEY INSIGHT: Worker survives leader changes intentionally. When node loses leadership,
+// the queue still drains pending status checks for txs already broadcast. This ensures
+// operators see outcomes for all signatures, not just those from the current term.
 func (e *signerExtension) startStatusWorker() {
 	e.statusOnce.Do(func() {
 		if e.statusQueue == nil {

@@ -38,6 +38,8 @@ func (e *signerExtension) fetchUnsignedAttestations(ctx context.Context, hash []
 		return nil, fmt.Errorf("attestation extension not initialised with engine/db")
 	}
 
+	// Returns multiple rows per hash: composite key is (hash, requester, created_height).
+	// Different requesters can request identical attestations.
 	records := []attestationRecord{}
 	err := engine.ExecuteWithoutEngineCtx(
 		ctx,
@@ -100,6 +102,9 @@ func (e *signerExtension) prepareSigningWork(ctx context.Context, hashHex string
 			return nil, fmt.Errorf("parse canonical payload: %w", err)
 		}
 
+		// Hash verification prevents signing corrupted/tampered payloads. SQL generates
+		// both canonical blob and hash independently; recomputing ensures they match.
+		// Without this, a corrupted result_canonical could produce wrong signatures.
 		expectedHash := computeAttestationHash(payload)
 		if !bytes.Equal(expectedHash[:], rec.hash) {
 			return nil, fmt.Errorf("attestation hash mismatch: expected %x, got %x", rec.hash, expectedHash)
