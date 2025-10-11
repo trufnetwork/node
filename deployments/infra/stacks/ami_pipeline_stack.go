@@ -366,6 +366,9 @@ phases:
 
               After configuration, your node will start automatically and begin syncing!
 
+              📦 To update to the latest software:
+              sudo tn-node-update
+
               🤖 MCP (AI Integration) Setup:
               1. Configure node with --enable-mcp flag
               2. Open port 8000 in your AWS Security Group:
@@ -401,6 +404,9 @@ phases:
                 echo "  --enable-mcp"
                 echo ""
                 echo "After configuration, your node will start automatically and begin syncing!"
+                echo ""
+                echo "📦 To update to the latest software:"
+                echo "sudo tn-node-update"
                 echo ""
                 echo "🤖 MCP (AI Integration) Setup:"
                 echo "1. Configure node with --enable-mcp flag"
