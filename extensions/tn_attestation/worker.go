@@ -14,6 +14,13 @@ import (
 	ktypes "github.com/trufnetwork/kwil-db/core/types"
 )
 
+const (
+	statusMaxAttempts   = 12
+	statusWorkerTimeout = 2 * time.Minute
+)
+
+var statusRetryDelays = []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second}
+
 // txStatusWork queues a broadcast transaction for async status monitoring.
 // Avoids blocking consensus by deferring potentially slow RPC queries to a worker goroutine.
 type txStatusWork struct {
@@ -202,7 +209,7 @@ func (e *signerExtension) enqueueStatusCheck(txHash ktypes.Hash, attestationHash
 // Runs for the lifetime of the extension process, surviving leader transitions.
 func (e *signerExtension) runStatusWorker() {
 	for work := range e.statusQueue {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), statusWorkerTimeout)
 		e.monitorTransaction(ctx, work)
 		cancel()
 	}
@@ -217,10 +224,10 @@ func (e *signerExtension) monitorTransaction(ctx context.Context, work txStatusW
 		return
 	}
 
-	delays := []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second}
-	const maxAttempts = 12
-	if len(delays) < maxAttempts {
-		extra := make([]time.Duration, maxAttempts-len(delays))
+	delays := make([]time.Duration, len(statusRetryDelays))
+	copy(delays, statusRetryDelays)
+	if len(delays) < statusMaxAttempts {
+		extra := make([]time.Duration, statusMaxAttempts-len(delays))
 		for i := range extra {
 			extra[i] = 10 * time.Second
 		}
