@@ -1,12 +1,26 @@
+// This file implements the attestation signing worker and async transaction monitoring.
+//
+// Transaction status checking runs in a dedicated background goroutine to prevent blocking
+// EndBlock processing. The worker polls for confirmation over ~2 minutes, logging outcomes
+// for operational visibility without impacting consensus performance.
 package tn_attestation
 
 import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	ktypes "github.com/trufnetwork/kwil-db/core/types"
 )
+
+// txStatusWork queues a broadcast transaction for async status monitoring.
+// Avoids blocking consensus by deferring potentially slow RPC queries to a worker goroutine.
+type txStatusWork struct {
+	hash            ktypes.Hash // Transaction hash from broadcast
+	attestationHash string      // Original attestation hash for log correlation
+	requester       []byte      // Requester address for audit trail
+}
 
 // processAttestationHashes iterates through every dequeued hash, prepares the
 // canonical payload(s) for signing, and submits signatures back through
@@ -143,8 +157,128 @@ func (e *signerExtension) submitSignature(ctx context.Context, item *PreparedSig
 		"tx_hash", txHash,
 		"requester", fmt.Sprintf("%x", item.Requester))
 
-	// Async transaction status check for logging
-	go e.checkTransactionStatus(context.Background(), txHash, item.HashHex, item.Requester)
+	// Queue asynchronous transaction status check for logging
+	e.enqueueStatusCheck(txHash, item.HashHex, item.Requester)
 
 	return nil
+}
+
+// startStatusWorker initializes the background goroutine that monitors transaction status.
+// Uses sync.Once to prevent goroutine leaks across leader transitions. The 128-entry
+// buffer provides headroom during burst signing without blocking EndBlock.
+func (e *signerExtension) startStatusWorker() {
+	e.statusOnce.Do(func() {
+		if e.statusQueue == nil {
+			e.statusQueue = make(chan txStatusWork, 128)
+		}
+		go e.runStatusWorker()
+	})
+}
+
+// enqueueStatusCheck queues a transaction for async status monitoring.
+// Drops entries if the queue is full to avoid blocking the signing workflow.
+func (e *signerExtension) enqueueStatusCheck(txHash ktypes.Hash, attestationHash string, requester []byte) {
+	if e.getTxQueryClient() == nil {
+		return
+	}
+	if e.statusQueue == nil {
+		e.startStatusWorker()
+	}
+	work := txStatusWork{
+		hash:            txHash,
+		attestationHash: attestationHash,
+		requester:       append([]byte(nil), requester...),
+	}
+	select {
+	case e.statusQueue <- work:
+	default:
+		e.Logger().Warn("tn_attestation: transaction status queue full, dropping entry",
+			"hash", attestationHash,
+			"tx_hash", txHash)
+	}
+}
+
+// runStatusWorker consumes queued transactions and monitors each for confirmation.
+// Runs for the lifetime of the extension process, surviving leader transitions.
+func (e *signerExtension) runStatusWorker() {
+	for work := range e.statusQueue {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		e.monitorTransaction(ctx, work)
+		cancel()
+	}
+}
+
+// monitorTransaction polls for transaction confirmation with exponential backoff.
+// Queries up to 12 times over ~2 minutes (2s, 5s, then 10s intervals) to handle
+// network delays and block production variance. Logs final outcome for observability.
+func (e *signerExtension) monitorTransaction(ctx context.Context, work txStatusWork) {
+	client := e.getTxQueryClient()
+	if client == nil {
+		return
+	}
+
+	delays := []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second}
+	const maxAttempts = 12
+	if len(delays) < maxAttempts {
+		extra := make([]time.Duration, maxAttempts-len(delays))
+		for i := range extra {
+			extra[i] = 10 * time.Second
+		}
+		delays = append(delays, extra...)
+	}
+
+	logger := e.Logger()
+
+	for attempt, delay := range delays {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				logger.Warn("tn_attestation: transaction status check cancelled",
+					"hash", work.attestationHash,
+					"tx_hash", work.hash)
+				return
+			case <-time.After(delay):
+			}
+		}
+
+		resp, err := client.TxQuery(ctx, work.hash)
+		if err != nil {
+			if attempt == len(delays)-1 {
+				logger.Warn("tn_attestation: transaction status unknown",
+					"hash", work.attestationHash,
+					"tx_hash", work.hash,
+					"attempt", attempt+1,
+					"requester", fmt.Sprintf("%x", work.requester),
+					"error", err)
+			}
+			continue
+		}
+
+		if resp.Height <= 0 {
+			continue
+		}
+
+		if resp.Result != nil && resp.Result.Code == uint32(ktypes.CodeOk) {
+			logger.Info("tn_attestation: transaction confirmed",
+				"hash", work.attestationHash,
+				"tx_hash", work.hash,
+				"height", resp.Height,
+				"requester", fmt.Sprintf("%x", work.requester))
+		} else {
+			code := uint32(0)
+			logMsg := "transaction result missing"
+			if resp.Result != nil {
+				code = resp.Result.Code
+				logMsg = resp.Result.Log
+			}
+			logger.Error("tn_attestation: transaction failed",
+				"hash", work.attestationHash,
+				"tx_hash", work.hash,
+				"height", resp.Height,
+				"code", code,
+				"log", logMsg,
+				"requester", fmt.Sprintf("%x", work.requester))
+		}
+		return
+	}
 }

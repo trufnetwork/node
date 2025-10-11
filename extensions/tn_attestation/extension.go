@@ -4,13 +4,10 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/crypto/auth"
 	"github.com/trufnetwork/kwil-db/core/log"
-	"github.com/trufnetwork/kwil-db/core/types"
-	ktypes "github.com/trufnetwork/kwil-db/core/types"
 	sql "github.com/trufnetwork/kwil-db/node/types/sql"
 )
 
@@ -33,6 +30,9 @@ type signerExtension struct {
 	broadcaster   TxBroadcaster
 	txQueryClient TxQueryClient
 	nodeSigner    auth.Signer
+
+	statusOnce  sync.Once
+	statusQueue chan txStatusWork
 
 	processOverride func(context.Context, []string)
 
@@ -89,6 +89,8 @@ func (e *signerExtension) setService(svc *common.Service) {
 	}
 }
 
+// applyConfig reads extension-specific config values from service.LocalConfig.Extensions[ExtensionName].
+// Supports scan_interval_blocks and scan_batch_limit for tuning fallback DB scan behavior.
 func (e *signerExtension) applyConfig(service *common.Service) {
 	if service == nil || service.LocalConfig == nil {
 		return
@@ -111,6 +113,8 @@ func (e *signerExtension) applyConfig(service *common.Service) {
 	}
 }
 
+// setApp captures references to engine, database, and accounts subsystems from the app.
+// Called during hook registration to wire runtime dependencies.
 func (e *signerExtension) setApp(app *common.App) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -275,84 +279,8 @@ func parsePositiveInt64(raw string) (int64, error) {
 	return v, nil
 }
 
-// checkTransactionStatus asynchronously checks transaction status and logs the result
-func (e *signerExtension) checkTransactionStatus(ctx context.Context, txHash types.Hash, attestationHash string, requester []byte) {
-	// Try to get a query client from the broadcaster
-	client := e.getTxQueryClient()
-	if client == nil {
-		return
-	}
-	attempts := []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second}
-	maxAttempts := 12 // roughly 2 minutes total wait
-	attempts = append(attempts, make([]time.Duration, maxAttempts-len(attempts))...)
-	for i := len(attempts) - (maxAttempts - len(attempts)); i < len(attempts); i++ {
-		attempts[i] = 10 * time.Second
-	}
-	logger := e.Logger()
-
-	for i, delay := range attempts {
-		if i > 0 {
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(delay):
-			}
-		}
-
-		resp, err := client.TxQuery(ctx, txHash)
-		if err != nil {
-			if i == len(attempts)-1 {
-				logger.Warn("tn_attestation: transaction status unknown",
-					"hash", attestationHash,
-					"tx_hash", txHash,
-					"attempt", i+1,
-					"requester", fmt.Sprintf("%x", requester),
-					"error", err)
-			}
-			continue
-		}
-
-		if resp.Height <= 0 {
-			continue
-		}
-
-		if resp.Result != nil && resp.Result.Code == uint32(ktypes.CodeOk) {
-			logger.Info("tn_attestation: transaction confirmed",
-				"hash", attestationHash,
-				"tx_hash", txHash,
-				"height", resp.Height,
-				"requester", fmt.Sprintf("%x", requester))
-		} else {
-			code := uint32(0)
-			logMsg := "transaction result missing"
-			if resp.Result != nil {
-				code = resp.Result.Code
-				logMsg = resp.Result.Log
-			}
-			logger.Error("tn_attestation: transaction failed",
-				"hash", attestationHash,
-				"tx_hash", txHash,
-				"height", resp.Height,
-				"code", code,
-				"log", logMsg,
-				"requester", fmt.Sprintf("%x", requester))
-		}
-		return
-	}
-}
-
-// getTxQueryClient creates a query client from the broadcaster
+// getTxQueryClient retrieves the query client for transaction status polling.
+// Returns nil if broadcaster not yet initialized.
 func (e *signerExtension) getTxQueryClient() TxQueryClient {
 	return e.TxQueryClient()
-}
-
-// TxBroadcaster matches the subset of the JSON-RPC client used by the signing
-// worker to inject transactions.
-type TxBroadcaster interface {
-	BroadcastTx(ctx context.Context, tx *types.Transaction, sync uint8) (types.Hash, *types.TxResult, error)
-}
-
-// TxQueryClient interface for querying transaction status
-type TxQueryClient interface {
-	TxQuery(ctx context.Context, txHash types.Hash) (*types.TxQueryResponse, error)
 }

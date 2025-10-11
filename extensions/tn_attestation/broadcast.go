@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/trufnetwork/kwil-db/common"
 	rpcclient "github.com/trufnetwork/kwil-db/core/rpc/client"
@@ -14,6 +13,9 @@ import (
 	"github.com/trufnetwork/kwil-db/core/types"
 )
 
+// ensureBroadcaster initializes the RPC client for transaction submission if not already set.
+// Called during startup and leader acquisition to ensure the leader can broadcast sign_attestation
+// transactions. Prefers extension-specific rpc_url config, falling back to node's RPC endpoint.
 func (e *signerExtension) ensureBroadcaster(service *common.Service) {
 	if service == nil || service.LocalConfig == nil {
 		return
@@ -46,8 +48,12 @@ func (e *signerExtension) ensureBroadcaster(service *common.Service) {
 	broadcaster, queryClient := makeBroadcasterFromURL(u)
 	e.setBroadcaster(broadcaster)
 	e.setTxQueryClient(queryClient)
+	e.startStatusWorker()
 }
 
+// normalizeListenAddressForClient converts a server bind address (e.g., "0.0.0.0:8080")
+// to a client-usable localhost URL. Needed because the extension runs on the same node
+// but cannot connect to wildcard addresses like 0.0.0.0 or [::].
 func normalizeListenAddressForClient(listen string) (*url.URL, error) {
 	if listen == "" {
 		return nil, fmt.Errorf("empty listen address")
@@ -72,6 +78,8 @@ func normalizeListenAddressForClient(listen string) (*url.URL, error) {
 	return u, nil
 }
 
+// makeBroadcasterFromURL creates broadcaster and query client from the normalized RPC endpoint.
+// Returns the same instance for both interfaces to share a single connection pool.
 func makeBroadcasterFromURL(u *url.URL) (TxBroadcaster, TxQueryClient) {
 	client := userjsonrpc.NewClient(u)
 	br := &jsonRPCBroadcaster{client: client}
@@ -93,32 +101,16 @@ func (b *jsonRPCBroadcaster) BroadcastTx(ctx context.Context, tx *types.Transact
 		return types.Hash{}, nil, err
 	}
 
-	var resp *types.TxQueryResponse
-	var queryErr error
 	if mode == rpcclient.BroadcastWaitAccept {
-		for tries := 0; tries < 10; tries++ {
-			resp, queryErr = b.client.TxQuery(ctx, hash)
-			if queryErr == nil && resp != nil && resp.Result != nil {
-				break
-			}
-			select {
-			case <-ctx.Done():
-				return types.Hash{}, nil, ctx.Err()
-			case <-time.After(200 * time.Millisecond):
-			}
-		}
-		if queryErr != nil {
-			return types.Hash{}, nil, fmt.Errorf("tx query failed: %w", queryErr)
-		}
-	} else {
-		resp, queryErr = b.client.TxQuery(ctx, hash)
-		if queryErr != nil {
-			return types.Hash{}, nil, fmt.Errorf("tx query failed: %w", queryErr)
-		}
+		return hash, nil, nil
 	}
 
+	resp, err := b.client.TxQuery(ctx, hash)
+	if err != nil {
+		return hash, nil, fmt.Errorf("tx query failed: %w", err)
+	}
 	if resp == nil || resp.Result == nil {
-		return types.Hash{}, nil, fmt.Errorf("transaction result missing")
+		return hash, nil, fmt.Errorf("transaction result missing")
 	}
 
 	return hash, resp.Result, nil
@@ -126,4 +118,15 @@ func (b *jsonRPCBroadcaster) BroadcastTx(ctx context.Context, tx *types.Transact
 
 func (b *jsonRPCBroadcaster) TxQuery(ctx context.Context, txHash types.Hash) (*types.TxQueryResponse, error) {
 	return b.client.TxQuery(ctx, txHash)
+}
+
+// TxBroadcaster matches the subset of the JSON-RPC client used by the signing
+// worker to inject transactions.
+type TxBroadcaster interface {
+	BroadcastTx(ctx context.Context, tx *types.Transaction, sync uint8) (types.Hash, *types.TxResult, error)
+}
+
+// TxQueryClient interface for querying transaction status.
+type TxQueryClient interface {
+	TxQuery(ctx context.Context, txHash types.Hash) (*types.TxQueryResponse, error)
 }
