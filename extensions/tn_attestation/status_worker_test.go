@@ -21,6 +21,9 @@ type fakeTxQueryClient struct {
 	done      chan struct{}
 }
 
+// newFakeTxQueryClient builds a deterministic TxQuery client that returns the provided responses/errors.
+// expected indicates how many calls we should observe before closing the done channel; 0 auto-expands
+// to the longer of the responses/errors slices (at least 1).
 func newFakeTxQueryClient(resps []*ktypes.TxQueryResponse, errs []error, expected int) *fakeTxQueryClient {
 	if expected == 0 {
 		expected = len(resps)
