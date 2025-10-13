@@ -152,7 +152,8 @@ CREATE OR REPLACE ACTION sign_attestation(
            signed_height = @height
      WHERE attestation_hash = $attestation_hash
        AND requester = $requester
-       AND created_height = $created_height;
+       AND created_height = $created_height
+       AND signature IS NULL;
 };
 
 -- TODO: get_signed_attestation / list_attestations
