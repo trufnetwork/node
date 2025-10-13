@@ -21,18 +21,33 @@ import (
 )
 
 func TestComputeAttestationHash(t *testing.T) {
-	payload := &CanonicalPayload{
-		Version:      1,
-		Algorithm:    1,
-		DataProvider: []byte("provider"),
-		StreamID:     []byte("stream"),
-		ActionID:     42,
-		Args:         []byte{0x01, 0x02},
-	}
-	expected := sha256.Sum256(payload.raw)
+	const (
+		version   = uint8(1)
+		algorithm = uint8(1)
+		height    = uint64(99)
+		actionID  = uint16(7)
+	)
+	dataProvider := []byte("provider")
+	streamID := []byte("stream")
+	args := []byte{0x01, 0x02}
+	result := []byte{0x03, 0x04}
 
-	actual := computeAttestationHash(payload)
-	assert.Equal(t, expected, actual)
+	canonical := buildCanonical(version, algorithm, height, dataProvider, streamID, actionID, args, result)
+	payload, err := ParseCanonicalPayload(canonical)
+	require.NoError(t, err)
+
+	t.Run("hashes canonical bytes when raw present", func(t *testing.T) {
+		expected := sha256.Sum256(canonical)
+		actual := computeAttestationHash(payload)
+		assert.Equal(t, expected, actual)
+	})
+
+	t.Run("re-encodes when raw missing", func(t *testing.T) {
+		payload.raw = nil
+		expected := sha256.Sum256(canonical)
+		actual := computeAttestationHash(payload)
+		assert.Equal(t, expected, actual)
+	})
 }
 
 func TestPrepareSigningWork(t *testing.T) {
