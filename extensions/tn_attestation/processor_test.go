@@ -182,61 +182,49 @@ func TestSubmitSignature(t *testing.T) {
 	require.Len(t, decoded.Arguments, 1)
 	require.Len(t, decoded.Arguments[0], 4)
 
-	hashVal, err := decoded.Arguments[0][0].Decode()
-	require.NoError(t, err)
-	var hashBytes []byte
-	switch typed := hashVal.(type) {
-	case []byte:
-		hashBytes = typed
-	case *[]byte:
-		require.NotNil(t, typed, "hash argument pointer was nil")
-		hashBytes = *typed
-	default:
-		t.Fatalf("unexpected hash argument type %T", hashVal)
-	}
+	hashBytes := decodeBytesArg(t, decoded.Arguments[0][0], "hash")
 	assert.Equal(t, hash[:], hashBytes)
 
-	requesterVal, err := decoded.Arguments[0][1].Decode()
-	require.NoError(t, err)
-	var requesterBytes []byte
-	switch typed := requesterVal.(type) {
-	case []byte:
-		requesterBytes = typed
-	case *[]byte:
-		require.NotNil(t, typed, "requester argument pointer was nil")
-		requesterBytes = *typed
-	default:
-		t.Fatalf("unexpected requester argument type %T", requesterVal)
-	}
+	requesterBytes := decodeBytesArg(t, decoded.Arguments[0][1], "requester")
 	assert.Equal(t, []byte("requester"), requesterBytes)
 
-	heightVal, err := decoded.Arguments[0][2].Decode()
-	require.NoError(t, err)
-	var createdHeight int64
-	switch typed := heightVal.(type) {
-	case int64:
-		createdHeight = typed
-	case *int64:
-		require.NotNil(t, typed, "created_height argument pointer was nil")
-		createdHeight = *typed
-	default:
-		t.Fatalf("unexpected created_height argument type %T", heightVal)
-	}
+	createdHeight := decodeInt64Arg(t, decoded.Arguments[0][2], "created_height")
 	assert.Equal(t, int64(123), createdHeight)
 
-	sigVal, err := decoded.Arguments[0][3].Decode()
-	require.NoError(t, err)
-	var signatureBytes []byte
-	switch typed := sigVal.(type) {
-	case []byte:
-		signatureBytes = typed
-	case *[]byte:
-		require.NotNil(t, typed, "signature argument pointer was nil")
-		signatureBytes = *typed
-	default:
-		t.Fatalf("unexpected signature argument type %T", sigVal)
-	}
+	signatureBytes := decodeBytesArg(t, decoded.Arguments[0][3], "signature")
 	assert.Len(t, signatureBytes, 65)
+}
+
+func decodeBytesArg(t *testing.T, arg *ktypes.EncodedValue, fieldName string) []byte {
+	t.Helper()
+	val, err := arg.Decode()
+	require.NoError(t, err)
+	switch typed := val.(type) {
+	case []byte:
+		return typed
+	case *[]byte:
+		require.NotNil(t, typed, "%s argument pointer was nil", fieldName)
+		return *typed
+	default:
+		t.Fatalf("unexpected %s argument type %T", fieldName, val)
+		return nil
+	}
+}
+
+func decodeInt64Arg(t *testing.T, arg *ktypes.EncodedValue, fieldName string) int64 {
+	t.Helper()
+	val, err := arg.Decode()
+	require.NoError(t, err)
+	switch typed := val.(type) {
+	case int64:
+		return typed
+	case *int64:
+		require.NotNil(t, typed, "%s argument pointer was nil", fieldName)
+		return *typed
+	default:
+		t.Fatalf("unexpected %s argument type %T", fieldName, val)
+		return 0
+	}
 }
 
 func TestFetchPendingHashes(t *testing.T) {
@@ -286,16 +274,17 @@ func (s *stubEngine) Execute(ctx *common.EngineContext, db nodesql.DB, statement
 }
 
 func (s *stubEngine) ExecuteWithoutEngineCtx(ctx context.Context, db nodesql.DB, statement string, params map[string]any, fn func(*common.Row) error) error {
-	var rows []*common.Row
-	if strings.Contains(statement, "GROUP BY attestation_hash") {
-		rows = s.hashRows
+	rows := s.rows
+	if params != nil {
 		if limit, ok := params["limit"]; ok {
+			rows = s.hashRows
 			if n := toInt(limit); n >= 0 && n < len(rows) {
 				rows = rows[:n]
 			}
 		}
-	} else {
-		rows = s.rows
+	} else if strings.Contains(statement, "GROUP BY attestation_hash") {
+		// Fallback for callers that forget to pass params.
+		rows = s.hashRows
 	}
 	for _, row := range rows {
 		if err := fn(row); err != nil {
