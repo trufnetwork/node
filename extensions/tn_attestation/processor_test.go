@@ -1,10 +1,8 @@
 package tn_attestation
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"math/big"
@@ -31,16 +29,7 @@ func TestComputeAttestationHash(t *testing.T) {
 		ActionID:     42,
 		Args:         []byte{0x01, 0x02},
 	}
-	var buf bytes.Buffer
-	buf.WriteByte(payload.Version)
-	buf.WriteByte(payload.Algorithm)
-	buf.Write(payload.DataProvider)
-	buf.Write(payload.StreamID)
-	actionBytes := make([]byte, 2)
-	binary.BigEndian.PutUint16(actionBytes, payload.ActionID)
-	buf.Write(actionBytes)
-	buf.Write(payload.Args)
-	expected := sha256.Sum256(buf.Bytes())
+	expected := sha256.Sum256(payload.raw)
 
 	actual := computeAttestationHash(payload)
 	assert.Equal(t, expected, actual)

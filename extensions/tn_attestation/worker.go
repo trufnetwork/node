@@ -272,27 +272,33 @@ func (e *signerExtension) monitorTransaction(ctx context.Context, work txStatusW
 			continue
 		}
 
-		if resp.Result != nil && resp.Result.Code == uint32(ktypes.CodeOk) {
-			logger.Info("tn_attestation: transaction confirmed",
-				"hash", work.attestationHash,
-				"tx_hash", work.hash,
-				"height", resp.Height,
-				"requester", fmt.Sprintf("%x", work.requester))
-		} else {
-			code := uint32(0)
-			logMsg := "transaction result missing"
-			if resp.Result != nil {
-				code = resp.Result.Code
-				logMsg = resp.Result.Log
-			}
-			logger.Error("tn_attestation: transaction failed",
-				"hash", work.attestationHash,
-				"tx_hash", work.hash,
-				"height", resp.Height,
-				"code", code,
-				"log", logMsg,
-				"requester", fmt.Sprintf("%x", work.requester))
+	if resp.Result != nil && resp.Result.Code == uint32(ktypes.CodeOk) {
+		logger.Info("tn_attestation: transaction confirmed",
+			"hash", work.attestationHash,
+			"tx_hash", work.hash,
+			"height", resp.Height,
+			"requester", fmt.Sprintf("%x", work.requester))
+	} else {
+		code := uint32(0)
+		logMsg := "transaction result missing"
+		if resp.Result != nil {
+			code = resp.Result.Code
+			logMsg = resp.Result.Log
 		}
-		return
+		logger.Error("tn_attestation: transaction failed",
+			"hash", work.attestationHash,
+			"tx_hash", work.hash,
+			"height", resp.Height,
+			"code", code,
+			"log", logMsg,
+			"requester", fmt.Sprintf("%x", work.requester))
 	}
+	return
+}
+
+logger.Warn("tn_attestation: transaction status unresolved after retries",
+	"hash", work.attestationHash,
+	"tx_hash", work.hash,
+	"requester", fmt.Sprintf("%x", work.requester),
+	"attempts", len(delays))
 }

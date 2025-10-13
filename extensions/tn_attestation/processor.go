@@ -168,22 +168,40 @@ func (e *signerExtension) fetchPendingHashes(ctx context.Context, limit int) ([]
 	if err != nil {
 		return nil, err
 	}
-	return hashes, nil
+return hashes, nil
 }
 
 func computeAttestationHash(p *CanonicalPayload) [sha256.Size]byte {
-	var buf bytes.Buffer
-	buf.WriteByte(p.Version)
-	buf.WriteByte(p.Algorithm)
-	buf.Write(p.DataProvider)
-	buf.Write(p.StreamID)
+    if len(p.raw) > 0 {
+        return sha256.Sum256(p.raw)
+    }
 
-	actionBytes := make([]byte, 2)
-	binary.BigEndian.PutUint16(actionBytes, p.ActionID)
-	buf.Write(actionBytes)
-	buf.Write(p.Args)
+    var buf bytes.Buffer
+    buf.WriteByte(p.Version)
+    buf.WriteByte(p.Algorithm)
 
-	return sha256.Sum256(buf.Bytes())
+    height := make([]byte, 8)
+    binary.BigEndian.PutUint64(height, p.BlockHeight)
+    buf.Write(height)
+
+    writeLengthPrefixed(&buf, p.DataProvider)
+    writeLengthPrefixed(&buf, p.StreamID)
+
+    actionBytes := make([]byte, 2)
+    binary.BigEndian.PutUint16(actionBytes, p.ActionID)
+    buf.Write(actionBytes)
+
+    writeLengthPrefixed(&buf, p.Args)
+    writeLengthPrefixed(&buf, p.Result)
+
+    return sha256.Sum256(buf.Bytes())
+}
+
+func writeLengthPrefixed(buf *bytes.Buffer, data []byte) {
+    length := make([]byte, 4)
+    binary.LittleEndian.PutUint32(length, uint32(len(data)))
+    buf.Write(length)
+    buf.Write(data)
 }
 
 func bytesClone(b []byte) []byte {

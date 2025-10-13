@@ -61,30 +61,34 @@ func TestParseCanonicalPayload_ExtraBytes(t *testing.T) {
 
 // buildCanonical mirrors the SQL encoder to generate canonical payloads.
 func buildCanonical(version, algo uint8, height uint64, provider, stream []byte, actionID uint16, args, result []byte) []byte {
-	buf := bytes.NewBuffer(nil)
-	buf.WriteByte(version)
-	buf.WriteByte(algo)
+ 	buf := bytes.NewBuffer(nil)
+ 	buf.WriteByte(version)
+ 	buf.WriteByte(algo)
 
-	heightBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(heightBytes, height)
-	buf.Write(heightBytes)
+ 	heightBytes := make([]byte, 8)
+ 	binary.BigEndian.PutUint64(heightBytes, height)
+ 	buf.Write(heightBytes)
 
-	writeLengthPrefixed(buf, provider)
-	writeLengthPrefixed(buf, stream)
+ 	lengthBytes := make([]byte, 4)
+ 	binary.LittleEndian.PutUint32(lengthBytes, uint32(len(provider)))
+ 	buf.Write(lengthBytes)
+ 	buf.Write(provider)
 
-	actionBytes := make([]byte, 2)
-	binary.BigEndian.PutUint16(actionBytes, actionID)
-	buf.Write(actionBytes)
+ 	binary.LittleEndian.PutUint32(lengthBytes, uint32(len(stream)))
+ 	buf.Write(lengthBytes)
+ 	buf.Write(stream)
 
-	writeLengthPrefixed(buf, args)
-	writeLengthPrefixed(buf, result)
+ 	actionBytes := make([]byte, 2)
+ 	binary.BigEndian.PutUint16(actionBytes, actionID)
+ 	buf.Write(actionBytes)
 
-	return buf.Bytes()
-}
+ 	binary.LittleEndian.PutUint32(lengthBytes, uint32(len(args)))
+ 	buf.Write(lengthBytes)
+ 	buf.Write(args)
 
-func writeLengthPrefixed(buf *bytes.Buffer, chunk []byte) {
-	lengthBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(lengthBytes, uint32(len(chunk)))
-	buf.Write(lengthBytes)
-	buf.Write(chunk)
+ 	binary.LittleEndian.PutUint32(lengthBytes, uint32(len(result)))
+ 	buf.Write(lengthBytes)
+ 	buf.Write(result)
+
+ 	return buf.Bytes()
 }
