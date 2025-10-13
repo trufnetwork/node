@@ -44,7 +44,6 @@ $max_fee INT8
     -- some args per action
     $query_result := tn_utils.call_dispatch($action_name, $args_bytes);
     
-    -- Calculate attestation hash from (version|algo|data_provider|stream_id|action_id|args)
     $version := 1;
     $algo := 1; -- secp256k1
     -- Serialize canonical payload (version through result) using tn_utils helpers
@@ -52,18 +51,6 @@ $max_fee INT8
     $algo_bytes := tn_utils.encode_uint8($algo::INT);
     $height_bytes := tn_utils.encode_uint64($created_height::INT);
     $action_id_bytes := tn_utils.encode_uint16($action_id::INT);
-
-    -- Build hash material in canonical order (no length prefixes) to match
-    -- the engine-side hashing utilities used by the signing service.
-    $hash_input := tn_utils.bytea_join(ARRAY[
-        $version_bytes,
-        $algo_bytes,
-        $data_provider,
-        $stream_id,
-        $action_id_bytes,
-        $args_bytes
-    ], NULL);
-    $attestation_hash := digest($hash_input, 'sha256');
 
     -- Canonical payload mirrors Go helpers: each field length-prefixed so the
     -- validator can recover every component without ambiguity.
@@ -77,6 +64,18 @@ $max_fee INT8
         tn_utils.bytea_length_prefix($args_bytes),
         tn_utils.bytea_length_prefix($query_result)
     ], NULL);
+    
+    -- Build hash material in canonical order using caller-provided inputs only.
+    -- This keeps the hash deterministic for clients (excludes block height and result).
+    $hash_input := tn_utils.bytea_join(ARRAY[
+        $version_bytes,
+        $algo_bytes,
+        $data_provider,
+        $stream_id,
+        $action_id_bytes,
+        $args_bytes
+    ], NULL);
+    $attestation_hash := digest($hash_input, 'sha256');
     
     -- Store unsigned attestation
     INSERT INTO attestations (

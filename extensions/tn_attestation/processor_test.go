@@ -38,18 +38,13 @@ func TestComputeAttestationHash(t *testing.T) {
 	payload, err := ParseCanonicalPayload(canonical)
 	require.NoError(t, err)
 
-	t.Run("hashes SQL fields when raw present", func(t *testing.T) {
-		expected := sha256.Sum256(buildHashMaterial(version, algorithm, dataProvider, streamID, actionID, args))
-		actual := computeAttestationHash(payload)
-		assert.Equal(t, expected, actual)
-	})
+	expected := sha256.Sum256(buildHashMaterial(version, algorithm, dataProvider, streamID, actionID, args))
+	actual := computeAttestationHash(payload)
+	assert.Equal(t, expected, actual)
 
-	t.Run("re-encodes when raw missing", func(t *testing.T) {
-		payload.raw = nil
-		expected := sha256.Sum256(buildHashMaterial(version, algorithm, dataProvider, streamID, actionID, args))
-		actual := computeAttestationHash(payload)
-		assert.Equal(t, expected, actual)
-	})
+	payload.raw = nil
+	actual = computeAttestationHash(payload)
+	assert.Equal(t, expected, actual)
 }
 
 func TestPrepareSigningWork(t *testing.T) {

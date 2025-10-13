@@ -81,6 +81,9 @@ func (e *signerExtension) prepareSigningWork(ctx context.Context, hashHex string
 	if err != nil {
 		return nil, fmt.Errorf("invalid attestation hash %q: %w", hashHex, err)
 	}
+	if len(hashBytes) != sha256.Size {
+		return nil, fmt.Errorf("attestation hash must be %d bytes, got %d", sha256.Size, len(hashBytes))
+	}
 
 	records, err := e.fetchUnsignedAttestations(ctx, hashBytes)
 	if err != nil {
@@ -102,12 +105,10 @@ func (e *signerExtension) prepareSigningWork(ctx context.Context, hashHex string
 			return nil, fmt.Errorf("parse canonical payload: %w", err)
 		}
 
-		// Hash verification prevents signing corrupted/tampered payloads. SQL generates
-		// both canonical blob and hash independently; recomputing ensures they match.
-		// Without this, a corrupted result_canonical could produce wrong signatures.
+		// Validate stored hash matches caller inputs; SQL computes it from request parameters.
 		expectedHash := computeAttestationHash(payload)
 		if !bytes.Equal(expectedHash[:], rec.hash) {
-			return nil, fmt.Errorf("attestation hash mismatch: expected %x, got %x", rec.hash, expectedHash)
+			return nil, fmt.Errorf("attestation hash mismatch: expected %x, db %x", expectedHash, rec.hash)
 		}
 
 		digest := payload.SigningDigest()
@@ -172,20 +173,18 @@ func (e *signerExtension) fetchPendingHashes(ctx context.Context, limit int) ([]
 }
 
 func computeAttestationHash(p *CanonicalPayload) [sha256.Size]byte {
-	hasher := sha256.New()
-	hasher.Write([]byte{p.Version})
-	hasher.Write([]byte{p.Algorithm})
-	hasher.Write(p.DataProvider)
-	hasher.Write(p.StreamID)
+	buf := bytes.NewBuffer(nil)
+	buf.WriteByte(p.Version)
+	buf.WriteByte(p.Algorithm)
+	buf.Write(p.DataProvider)
+	buf.Write(p.StreamID)
 
 	var actionBytes [2]byte
 	binary.BigEndian.PutUint16(actionBytes[:], p.ActionID)
-	hasher.Write(actionBytes[:])
-	hasher.Write(p.Args)
+	buf.Write(actionBytes[:])
+	buf.Write(p.Args)
 
-	var digest [sha256.Size]byte
-	copy(digest[:], hasher.Sum(nil))
-	return digest
+	return sha256.Sum256(buf.Bytes())
 }
 
 func bytesClone(b []byte) []byte {
