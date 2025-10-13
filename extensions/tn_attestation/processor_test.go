@@ -1,8 +1,10 @@
 package tn_attestation
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"math/big"
@@ -36,15 +38,15 @@ func TestComputeAttestationHash(t *testing.T) {
 	payload, err := ParseCanonicalPayload(canonical)
 	require.NoError(t, err)
 
-	t.Run("hashes canonical bytes when raw present", func(t *testing.T) {
-		expected := sha256.Sum256(canonical)
+	t.Run("hashes SQL fields when raw present", func(t *testing.T) {
+		expected := sha256.Sum256(buildHashMaterial(version, algorithm, dataProvider, streamID, actionID, args))
 		actual := computeAttestationHash(payload)
 		assert.Equal(t, expected, actual)
 	})
 
 	t.Run("re-encodes when raw missing", func(t *testing.T) {
 		payload.raw = nil
-		expected := sha256.Sum256(canonical)
+		expected := sha256.Sum256(buildHashMaterial(version, algorithm, dataProvider, streamID, actionID, args))
 		actual := computeAttestationHash(payload)
 		assert.Equal(t, expected, actual)
 	})
@@ -225,6 +227,21 @@ func decodeInt64Arg(t *testing.T, arg *ktypes.EncodedValue, fieldName string) in
 		t.Fatalf("unexpected %s argument type %T", fieldName, val)
 		return 0
 	}
+}
+
+func buildHashMaterial(version, algo uint8, dataProvider, streamID []byte, actionID uint16, args []byte) []byte {
+	buf := bytes.NewBuffer(nil)
+	buf.WriteByte(version)
+	buf.WriteByte(algo)
+	buf.Write(dataProvider)
+	buf.Write(streamID)
+
+	var actionBytes [2]byte
+	binary.BigEndian.PutUint16(actionBytes[:], actionID)
+	buf.Write(actionBytes[:])
+	buf.Write(args)
+
+	return buf.Bytes()
 }
 
 func TestFetchPendingHashes(t *testing.T) {
