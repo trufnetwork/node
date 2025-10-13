@@ -8,6 +8,7 @@ import (
 	appconf "github.com/trufnetwork/kwil-db/app/node/conf"
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/config"
+	"github.com/trufnetwork/kwil-db/core/crypto/auth"
 	"github.com/trufnetwork/kwil-db/extensions/hooks"
 	"github.com/trufnetwork/node/extensions/leaderwatch"
 )
@@ -15,7 +16,7 @@ import (
 // InitializeExtension registers the tn_attestation extension.
 // This includes:
 // - Registering the queue_for_signing() precompile
-// - Registering leader watch callbacks for signing worker // TODO: WIP
+// - Registering leader watch callbacks for the signing workflow
 func InitializeExtension() {
 	// Register the precompile for queue_for_signing() method
 	if err := registerPrecompile(); err != nil {
@@ -27,7 +28,7 @@ func InitializeExtension() {
 		panic(fmt.Sprintf("failed to register %s engine ready hook: %v", ExtensionName, err))
 	}
 
-	// Register leader watch callbacks (for Issue 6 - leader signing worker)
+	// Register leader watch callbacks for signing workflow lifecycle
 	if err := leaderwatch.Register(ExtensionName, leaderwatch.Callbacks{
 		OnAcquire:  onLeaderAcquire,
 		OnLose:     onLeaderLose,
@@ -44,7 +45,12 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 		return nil
 	}
 
-	logger := app.Service.Logger.New(ExtensionName)
+	ext := getExtension()
+	ext.setService(app.Service)
+	ext.setApp(app)
+	ext.applyConfig(app.Service)
+
+	logger := ext.Logger()
 
 	// Load the validator's private key from the node key file
 	rootDir := appconf.RootDir()
@@ -70,6 +76,10 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 		return fmt.Errorf("failed to initialize validator signer: %w", err)
 	}
 
+	if ext.NodeSigner() == nil {
+		ext.setNodeSigner(auth.GetNodeSigner(privateKey))
+	}
+
 	// Log the validator address for debugging
 	signer := GetValidatorSigner()
 	if signer != nil {
@@ -77,6 +87,8 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 			"queue_size", GetAttestationQueue().Len(),
 			"validator_address", signer.Address())
 	}
+
+	ext.ensureBroadcaster(app.Service)
 
 	return nil
 }
@@ -88,8 +100,20 @@ func onLeaderAcquire(ctx context.Context, app *common.App, block *common.BlockCo
 		return
 	}
 
-	logger := app.Service.Logger.New(ExtensionName)
+	ext := getExtension()
+	ext.setService(app.Service)
+	if block != nil {
+		ext.setLeader(true, block.Height)
+	}
+
+	logger := ext.Logger()
 	logger.Info("tn_attestation: acquired leadership")
+
+	queue := GetAttestationQueue()
+	if n := queue.Len(); n > 0 {
+		logger.Debug("tn_attestation: clearing residual attestation queue after leader acquisition", "dropped", n)
+	}
+	queue.Clear()
 
 	// TODO: Implement signing worker startup
 	// Reference implementation:
@@ -104,8 +128,20 @@ func onLeaderLose(ctx context.Context, app *common.App, block *common.BlockConte
 		return
 	}
 
-	logger := app.Service.Logger.New(ExtensionName)
+	ext := getExtension()
+	ext.setService(app.Service)
+	if block != nil {
+		ext.setLeader(false, block.Height)
+	}
+
+	logger := ext.Logger()
 	logger.Info("tn_attestation: lost leadership")
+
+	queue := GetAttestationQueue()
+	if n := queue.Len(); n > 0 {
+		logger.Debug("tn_attestation: clearing attestation queue on leader loss", "dropped", n)
+	}
+	queue.Clear()
 
 	// TODO: Implement signing worker shutdown
 	// Reference implementation:
@@ -114,10 +150,17 @@ func onLeaderLose(ctx context.Context, app *common.App, block *common.BlockConte
 }
 
 // onLeaderEndBlock is called on every EndBlock when the node is the leader.
-// Currently dequeues and logs hashes to prevent unbounded memory growth.
-// TODO: Implement actual signing and submission of attestations.
+// It processes queued attestation hashes and, in later phases, also performs
+// periodic scans to recover any missed notifications.
 func onLeaderEndBlock(ctx context.Context, app *common.App, block *common.BlockContext) {
 	if app == nil || app.Service == nil {
+		return
+	}
+
+	ext := getExtension()
+	ext.setService(app.Service)
+
+	if !ext.Leader() {
 		return
 	}
 
@@ -125,26 +168,24 @@ func onLeaderEndBlock(ctx context.Context, app *common.App, block *common.BlockC
 	queue := GetAttestationQueue()
 	hashes := queue.DequeueAll()
 
-	// If there are hashes, log them (signing implementation pending in Issue 6)
 	if len(hashes) > 0 {
-		logger := app.Service.Logger.New(ExtensionName)
-		logger.Info("tn_attestation: dequeued attestations for signing",
+		logger := ext.Logger()
+		logger.Info("tn_attestation: processing queued attestations",
 			"count", len(hashes),
-			"block_height", block.Height,
-			"note", "signing implementation pending (Issue 6)")
+			"block_height", block.Height)
+		ext.processAttestationHashes(ctx, hashes)
+	}
 
-		// TODO: Implement actual signing and submission
-		// Reference implementation:
-		//   ext := GetExtension()
-		//   for _, hash := range hashes {
-		//       signature, err := ext.signAttestation(ctx, app, hash)
-		//       if err != nil {
-		//           logger.Error("failed to sign attestation", "hash", hash, "error", err)
-		//           continue
-		//       }
-		//       if err := ext.submitSignature(ctx, app, hash, signature); err != nil {
-		//           logger.Error("failed to submit signature", "hash", hash, "error", err)
-		//       }
-		//   }
+	if block != nil && ext.shouldPerformScan(block.Height) {
+		logger := ext.Logger()
+		pending, err := ext.fetchPendingHashes(ctx, int(ext.ScanBatchLimit()))
+		if err != nil {
+			logger.Error("tn_attestation: fallback scan failed", "error", err)
+		} else if len(pending) > 0 {
+			logger.Info("tn_attestation: fallback scan found unsigned attestations",
+				"count", len(pending),
+				"block_height", block.Height)
+			ext.processAttestationHashes(ctx, pending)
+		}
 	}
 }

@@ -3,15 +3,18 @@ package tn_attestation
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
+	"github.com/trufnetwork/kwil-db/config"
 	"github.com/trufnetwork/kwil-db/core/crypto"
 	"github.com/trufnetwork/kwil-db/core/log"
 	"github.com/trufnetwork/kwil-db/extensions/precompiles"
+	nodesql "github.com/trufnetwork/kwil-db/node/types/sql"
 )
 
 // ensurePrecompileRegistered ensures the precompile is registered before use.
@@ -450,6 +453,129 @@ func TestEngineReadyHook(t *testing.T) {
 		assert.Nil(t, signer, "signer should not be initialized without key file")
 	})
 
-	// Note: Full integration test with actual key loading is deferred to Issue #1209
-	// where it will be tested as part of end-to-end leader signing workflow
+}
+
+func TestLeaderLifecycleState(t *testing.T) {
+	original := getExtension()
+	SetExtension(&signerExtension{
+		logger:             log.DiscardLogger,
+		scanIntervalBlocks: 100,
+		scanBatchLimit:     100,
+	})
+	defer SetExtension(original)
+
+	app := &common.App{
+		Service: &common.Service{
+			Logger: log.DiscardLogger,
+		},
+	}
+	block := &common.BlockContext{Height: 10}
+
+	onLeaderAcquire(context.Background(), app, block)
+	ext := getExtension()
+	assert.True(t, ext.Leader(), "extension should mark leadership on acquire")
+	assert.Equal(t, int64(10), ext.LastScanHeight(), "last scan height should seed from acquire")
+
+	queue := GetAttestationQueue()
+	queue.Clear()
+	queue.Enqueue("hashA")
+	queue.Enqueue("hashB")
+
+	onLeaderEndBlock(context.Background(), app, &common.BlockContext{Height: 11})
+	assert.Equal(t, 0, queue.Len(), "leader end block should dequeue hashes")
+
+	onLeaderLose(context.Background(), app, &common.BlockContext{Height: 12})
+	assert.False(t, ext.Leader(), "extension should unset leadership on lose")
+
+	queue.Enqueue("hashC")
+	onLeaderEndBlock(context.Background(), app, &common.BlockContext{Height: 13})
+	assert.Equal(t, 1, queue.Len(), "non-leader end block should not tamper with queue")
+	queue.Clear()
+}
+
+func TestOnLeaderEndBlockFallbackScan(t *testing.T) {
+	original := getExtension()
+	queue := GetAttestationQueue()
+	queue.Clear()
+
+	ext := &signerExtension{
+		logger:             log.DiscardLogger,
+		scanIntervalBlocks: 1,
+		scanBatchLimit:     5,
+	}
+	SetExtension(ext)
+	t.Cleanup(func() {
+		SetExtension(original)
+		queue.Clear()
+	})
+
+	service := &common.Service{
+		Logger:      log.DiscardLogger,
+		LocalConfig: &config.Config{},
+	}
+
+	engine := &fallbackEngine{hashes: []string{"abc"}}
+	ext.setService(service)
+	ext.setApp(&common.App{
+		Service: service,
+		Engine:  engine,
+		DB:      fallbackDB{},
+	})
+	ext.setLeader(true, 0)
+
+	processed := make([][]string, 0)
+	ext.setProcessOverride(func(_ context.Context, hashes []string) {
+		processed = append(processed, append([]string(nil), hashes...))
+	})
+
+	onLeaderEndBlock(context.Background(), &common.App{Service: service}, &common.BlockContext{Height: 1})
+
+	require.Len(t, processed, 1)
+	assert.Equal(t, []string{"abc"}, processed[0])
+	assert.True(t, strings.Contains(engine.lastStatement, "GROUP BY attestation_hash"))
+}
+
+type fallbackEngine struct {
+	hashes        []string
+	lastStatement string
+}
+
+func (f *fallbackEngine) Call(ctx *common.EngineContext, db nodesql.DB, namespace, action string, args []any, resultFn func(*common.Row) error) (*common.CallResult, error) {
+	panic("not implemented")
+}
+
+func (f *fallbackEngine) CallWithoutEngineCtx(ctx context.Context, db nodesql.DB, namespace, action string, args []any, resultFn func(*common.Row) error) (*common.CallResult, error) {
+	panic("not implemented")
+}
+
+func (f *fallbackEngine) Execute(ctx *common.EngineContext, db nodesql.DB, statement string, params map[string]any, fn func(*common.Row) error) error {
+	panic("not implemented")
+}
+
+func (f *fallbackEngine) ExecuteWithoutEngineCtx(ctx context.Context, db nodesql.DB, statement string, params map[string]any, fn func(*common.Row) error) error {
+	f.lastStatement = statement
+	if strings.Contains(statement, "GROUP BY attestation_hash") {
+		rows := f.hashes
+		if limit, ok := params["limit"]; ok {
+			if n := toInt(limit); n >= 0 && n < len(rows) {
+				rows = rows[:n]
+			}
+		}
+		for _, h := range rows {
+			if err := fn(&common.Row{Values: []any{h}}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+type fallbackDB struct{}
+
+func (fallbackDB) Execute(ctx context.Context, stmt string, args ...any) (*nodesql.ResultSet, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (fallbackDB) BeginTx(ctx context.Context) (nodesql.Tx, error) {
+	return nil, fmt.Errorf("not implemented")
 }
