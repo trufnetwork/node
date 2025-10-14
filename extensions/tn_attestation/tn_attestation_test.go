@@ -528,7 +528,11 @@ func TestOnLeaderEndBlockFallbackScan(t *testing.T) {
 		processed = append(processed, append([]string(nil), hashes...))
 	})
 
-	onLeaderEndBlock(context.Background(), &common.App{Service: service}, &common.BlockContext{Height: 1})
+	onLeaderEndBlock(context.Background(), &common.App{
+		Service: service,
+		Engine:  engine,
+		DB:      fallbackDB{},
+	}, &common.BlockContext{Height: 1})
 
 	require.Len(t, processed, 1)
 	assert.Equal(t, []string{"abc"}, processed[0])

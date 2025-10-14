@@ -6,8 +6,9 @@
  * - attestation_actions: Allowlist of actions permitted for attestation with normalized IDs
  */
 
--- Attestations table with composite primary key supporting per-user attestations
+-- Attestations table with request_tx_id as primary key
 CREATE TABLE IF NOT EXISTS attestations (
+    request_tx_id TEXT PRIMARY KEY,
     attestation_hash BYTEA NOT NULL,
     requester BYTEA NOT NULL,
     result_canonical BYTEA NOT NULL,
@@ -17,7 +18,7 @@ CREATE TABLE IF NOT EXISTS attestations (
     validator_pubkey BYTEA,
     signed_height INT8,
     
-    CONSTRAINT pk_attestations PRIMARY KEY (requester, created_height, attestation_hash),
+    CONSTRAINT uq_att_composite UNIQUE (requester, created_height, attestation_hash),
     CONSTRAINT chk_att_encrypt_sig_false CHECK (encrypt_sig = false)
 );
 
@@ -35,6 +36,10 @@ CREATE INDEX IF NOT EXISTS ix_att_created_height
 
 CREATE INDEX IF NOT EXISTS ix_att_signed_height 
     ON attestations(signed_height);
+
+-- Composite index for signing workflow: fetches unsigned attestations by hash
+CREATE INDEX IF NOT EXISTS ix_att_hash_unsigned 
+    ON attestations(attestation_hash, signature);
 
 -- Bootstrap the action ID registry per issue #1197
 INSERT INTO attestation_actions (action_name, action_id) VALUES 

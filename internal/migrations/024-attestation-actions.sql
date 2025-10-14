@@ -15,7 +15,10 @@ CREATE OR REPLACE ACTION request_attestation(
     $args_bytes BYTEA,
     $encrypt_sig BOOLEAN,
 $max_fee INT8
-) PUBLIC RETURNS (attestation_hash BYTEA) {
+) PUBLIC RETURNS (request_tx_id TEXT, attestation_hash BYTEA) {
+    -- Capture transaction ID for primary key
+    $request_tx_id := @txid;
+    
     -- Validate encryption flag (must be false in MVP)
     if $encrypt_sig = true {
         ERROR('Encryption not implemented');
@@ -83,25 +86,23 @@ $max_fee INT8
     
     -- Store unsigned attestation
     INSERT INTO attestations (
-        attestation_hash, requester, result_canonical, encrypt_sig, 
+        request_tx_id, attestation_hash, requester, result_canonical, encrypt_sig, 
         created_height, signature, validator_pubkey, signed_height
     ) VALUES (
-        $attestation_hash, $caller_bytes, $result_canonical, $encrypt_sig, 
+        $request_tx_id, $attestation_hash, $caller_bytes, $result_canonical, $encrypt_sig, 
         $created_height, NULL, NULL, NULL
     );
     
 -- Queue for signing (no-op on non-leader validators; handled by precompile)
 tn_attestation.queue_for_signing(encode($attestation_hash, 'hex'));
 
-RETURN $attestation_hash;
+RETURN $request_tx_id, $attestation_hash;
 };
 
 -- -----------------------------------------------------------------------------
 -- Leader-only action for recording validator signatures on attestations.
 CREATE OR REPLACE ACTION sign_attestation(
-    $attestation_hash BYTEA,
-    $requester BYTEA,
-    $created_height INT8,
+    $request_tx_id TEXT,
     $signature BYTEA
 ) PUBLIC {
     -- Only the current leader may submit signatures on-chain.
@@ -117,14 +118,8 @@ CREATE OR REPLACE ACTION sign_attestation(
         ERROR('Only the current block leader may sign attestations. leader=' || $leader_hex || ' signer=' || $signer_hex);
     }
 
-    IF $attestation_hash IS NULL {
-        ERROR('Attestation hash is required');
-    }
-    IF $requester IS NULL {
-        ERROR('Requester is required');
-    }
-    IF $created_height IS NULL {
-        ERROR('Created height is required');
+    IF $request_tx_id IS NULL {
+        ERROR('Request transaction ID is required');
     }
     IF $signature IS NULL {
         ERROR('Signature is required');
@@ -135,18 +130,16 @@ CREATE OR REPLACE ACTION sign_attestation(
     FOR $row IN
         SELECT signature
         FROM attestations
-        WHERE attestation_hash = $attestation_hash
-          AND requester = $requester
-          AND created_height = $created_height
+        WHERE request_tx_id = $request_tx_id
         LIMIT 1
     {
         $found := TRUE;
         IF $row.signature IS NOT NULL {
-            ERROR('Attestation already signed for requester at height ' || $created_height::TEXT);
+            ERROR('Attestation already signed: ' || $request_tx_id);
         }
     }
     IF NOT $found {
-        ERROR('Attestation not found for requester at height ' || $created_height::TEXT);
+        ERROR('Attestation not found: ' || $request_tx_id);
     }
 
     -- Record signature, validator identity, and the height at which it was signed.
@@ -154,12 +147,128 @@ CREATE OR REPLACE ACTION sign_attestation(
        SET signature = $signature,
            validator_pubkey = @signer,
            signed_height = @height
-     WHERE attestation_hash = $attestation_hash
-       AND requester = $requester
-       AND created_height = $created_height
+     WHERE request_tx_id = $request_tx_id
        AND signature IS NULL;
 };
 
--- TODO: get_signed_attestation / list_attestations
--- CREATE OR REPLACE ACTION get_signed_attestation(...) { ... };
--- CREATE OR REPLACE ACTION list_attestations(...) RETURNS TABLE(...) { ... };
+-- -----------------------------------------------------------------------------
+/**
+ * get_signed_attestation: Retrieve complete signed attestation payload
+ *
+ * Returns the concatenated canonical payload + signature as a single BYTEA.
+ * 
+ * NOTE: This action does NOT verify the signature or hash integrity.
+ * Verification is the responsibility of the client/consumer because:
+ * 1. Clients should never blindly trust data from any source
+ * 2. Verification requires cryptographic operations that are expensive to run on every retrieval
+ * 3. The canonical payload contains the validator's public key, allowing client-side verification
+ * 4. Different clients may have different trust models (some may trust specific validators)
+ * 
+ * Clients SHOULD verify signatures using the validator_pubkey in the payload before using the data.
+ */
+CREATE OR REPLACE ACTION get_signed_attestation(
+    $request_tx_id TEXT
+) PUBLIC VIEW RETURNS (payload BYTEA) {
+    -- Validate attestation exists
+    $found BOOL := FALSE;
+    $canonical BYTEA;
+    $sig BYTEA;
+    
+    FOR $row IN 
+        SELECT result_canonical, signature
+        FROM attestations
+        WHERE request_tx_id = $request_tx_id
+        LIMIT 1
+    {
+        $found := TRUE;
+        $canonical := $row.result_canonical;
+        $sig := $row.signature;
+    }
+    
+    IF NOT $found {
+        ERROR('Attestation not found: ' || $request_tx_id);
+    }
+    
+    -- Validate signature is not NULL
+    IF $sig IS NULL {
+        ERROR('Attestation not yet signed: ' || $request_tx_id);
+    }
+    
+    -- Concatenate canonical + signature for 9-item payload
+    RETURN tn_utils.bytea_join(ARRAY[$canonical, $sig], NULL);
+};
+
+-- -----------------------------------------------------------------------------
+/**
+ * list_attestations: List attestations with optional filtering
+ *
+ * Returns metadata for attestations, optionally filtered by requester.
+ * Supports pagination with limit and offset.
+ */
+CREATE OR REPLACE ACTION list_attestations(
+    $requester BYTEA,
+    $limit INT,
+    $offset INT,
+    $order_by TEXT
+) PUBLIC VIEW RETURNS TABLE(
+    request_tx_id TEXT,
+    attestation_hash BYTEA,
+    requester BYTEA,
+    created_height INT8,
+    signed_height INT8,
+    encrypt_sig BOOLEAN
+) {
+    -- Validate and apply defaults
+    IF $limit IS NULL OR $limit > 5000 {
+        $limit := 5000;
+    }
+    IF $offset IS NULL {
+        $offset := 0;
+    }
+    
+    -- Parse and sanitise order_by input (only created_height supported)
+    $order_desc BOOL := TRUE;
+    IF $order_by IS NOT NULL {
+        $normalized TEXT := LOWER(TRIM($order_by));
+        IF $normalized = 'created_height asc' OR $normalized = 'created_height' {
+            $order_desc := FALSE;
+        } ELSEIF $normalized = 'created_height desc' {
+            $order_desc := TRUE;
+        }
+    }
+    
+    -- Build query with optional requester filter
+    IF $requester IS NULL {
+        -- Show all attestations (analytics/auditing)
+        IF $order_desc {
+            RETURN SELECT request_tx_id, attestation_hash, requester, 
+                          created_height, signed_height, encrypt_sig
+                   FROM attestations
+                   ORDER BY created_height DESC, request_tx_id ASC
+                   LIMIT $limit OFFSET $offset;
+        } ELSE {
+            RETURN SELECT request_tx_id, attestation_hash, requester, 
+                          created_height, signed_height, encrypt_sig
+                   FROM attestations
+                   ORDER BY created_height ASC, request_tx_id ASC
+                   LIMIT $limit OFFSET $offset;
+        }
+    } ELSE {
+        -- Filter by requester
+        IF $order_desc {
+            RETURN SELECT request_tx_id, attestation_hash, requester,
+                          created_height, signed_height, encrypt_sig
+                   FROM attestations
+                   WHERE requester = $requester
+                   ORDER BY created_height DESC, request_tx_id ASC
+                   LIMIT $limit OFFSET $offset;
+        } ELSE {
+            RETURN SELECT request_tx_id, attestation_hash, requester,
+                          created_height, signed_height, encrypt_sig
+                   FROM attestations
+                   WHERE requester = $requester
+                   ORDER BY created_height ASC, request_tx_id ASC
+                   LIMIT $limit OFFSET $offset;
+        }
+    }
+};

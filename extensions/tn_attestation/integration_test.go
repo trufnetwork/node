@@ -59,11 +59,13 @@ func runSigningIntegration(t *testing.T, useQueue bool) {
 	hash := computeAttestationHash(payload)
 	hashHex := hex.EncodeToString(hash[:])
 	requester := []byte("requester-1")
+	requestTxID := "0xqueuepath"
 
 	engine := &integrationEngineStub{
 		rows: []*common.Row{
 			{
 				Values: []any{
+					requestTxID,
 					hash[:],
 					requester,
 					canonical,
@@ -110,6 +112,9 @@ func runSigningIntegration(t *testing.T, useQueue bool) {
 	prepared, err := ext.prepareSigningWork(ctx, hashHex)
 	require.NoError(t, err)
 	require.Len(t, prepared, 1, "expected signing work to be prepared")
+	require.Equal(t, hashHex, prepared[0].HashHex)
+	require.Equal(t, int64(123), prepared[0].CreatedHeight)
+	require.Equal(t, requestTxID, prepared[0].RequestTxID)
 
 	if useQueue {
 		ext.processAttestationHashes(ctx, []string{hashHex})
@@ -122,10 +127,8 @@ func runSigningIntegration(t *testing.T, useQueue bool) {
 
 	require.Equal(t, 1, broadcaster.calls, "expected single broadcast")
 	require.NoError(t, broadcaster.lastErr)
-	require.Len(t, broadcaster.hashes, 1)
-	require.Equal(t, hashHex, broadcaster.hashes[0])
-	require.Len(t, broadcaster.heights, 1)
-	require.Equal(t, int64(123), broadcaster.heights[0])
+	require.Len(t, broadcaster.requestTxIDs, 1)
+	require.Equal(t, requestTxID, broadcaster.requestTxIDs[0])
 	require.Len(t, broadcaster.signatures, 1)
 	require.Len(t, broadcaster.signatures[0], 65, "expected 65-byte signature")
 }
@@ -138,11 +141,10 @@ func resetIntegrationState() {
 }
 
 type captureBroadcaster struct {
-	hashes     []string
-	signatures [][]byte
-	heights    []int64
-	calls      int
-	lastErr    error
+	requestTxIDs []string
+	signatures   [][]byte
+	calls        int
+	lastErr      error
 }
 
 func (b *captureBroadcaster) BroadcastTx(ctx context.Context, tx *ktypes.Transaction, sync uint8) (ktypes.Hash, *ktypes.TxResult, error) {
@@ -154,59 +156,36 @@ func (b *captureBroadcaster) BroadcastTx(ctx context.Context, tx *ktypes.Transac
 		return ktypes.Hash{}, nil, err
 	}
 
-	if len(payload.Arguments) == 0 || len(payload.Arguments[0]) != 4 {
+	if len(payload.Arguments) == 0 || len(payload.Arguments[0]) != 2 {
 		err := fmt.Errorf("unexpected argument shape")
 		b.lastErr = err
 		return ktypes.Hash{}, nil, err
 	}
 
-	val, err := payload.Arguments[0][0].Decode()
+	requestVal, err := payload.Arguments[0][0].Decode()
 	if err != nil {
 		b.lastErr = err
 		return ktypes.Hash{}, nil, err
 	}
-	var hashBytes []byte
-	switch typed := val.(type) {
-	case []byte:
-		hashBytes = typed
-	case *[]byte:
+	var requestTxID string
+	switch typed := requestVal.(type) {
+	case string:
+		requestTxID = typed
+	case *string:
 		if typed == nil {
-			err := fmt.Errorf("hash argument was null")
+			err := fmt.Errorf("request_tx_id argument was null")
 			b.lastErr = err
 			return ktypes.Hash{}, nil, err
 		}
-		hashBytes = *typed
+		requestTxID = *typed
 	default:
-		err := fmt.Errorf("hash argument type %T", val)
+		err := fmt.Errorf("request_tx_id argument type %T", requestVal)
 		b.lastErr = err
 		return ktypes.Hash{}, nil, err
 	}
-	b.hashes = append(b.hashes, hex.EncodeToString(hashBytes))
+	b.requestTxIDs = append(b.requestTxIDs, requestTxID)
 
-	heightVal, err := payload.Arguments[0][2].Decode()
-	if err != nil {
-		b.lastErr = err
-		return ktypes.Hash{}, nil, err
-	}
-	var createdHeight int64
-	switch typed := heightVal.(type) {
-	case int64:
-		createdHeight = typed
-	case *int64:
-		if typed == nil {
-			err := fmt.Errorf("created_height argument was null")
-			b.lastErr = err
-			return ktypes.Hash{}, nil, err
-		}
-		createdHeight = *typed
-	default:
-		err := fmt.Errorf("created_height argument type %T", heightVal)
-		b.lastErr = err
-		return ktypes.Hash{}, nil, err
-	}
-	b.heights = append(b.heights, createdHeight)
-
-	sigVal, err := payload.Arguments[0][3].Decode()
+	sigVal, err := payload.Arguments[0][1].Decode()
 	if err != nil {
 		b.lastErr = err
 		return ktypes.Hash{}, nil, err

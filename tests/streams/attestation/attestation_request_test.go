@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -16,85 +15,43 @@ import (
 	"github.com/trufnetwork/node/extensions/tn_utils"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
-	"github.com/trufnetwork/sdk-go/core/util"
 )
 
 func TestRequestAttestationInsertsCanonicalPayload(t *testing.T) {
-	const (
-		testActionName = "test_attestation_action"
-		testActionID   = 10
-	)
-	ownerAddr := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000a11")
+	const testActionName = "test_attestation_action"
+	addrs := NewTestAddresses()
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "ATTESTATION01_RequestInsertion",
 		SeedScripts: migrations.GetSeedScriptPaths(),
-		Owner:       ownerAddr.Address(),
+		Owner:       addrs.Owner.Address(),
 		FunctionTests: []kwilTesting.TestFunc{
 			func(ctx context.Context, platform *kwilTesting.Platform) error {
-				platform.Deployer = ownerAddr.Bytes()
+				platform.Deployer = addrs.Owner.Bytes()
+				helper := NewAttestationTestHelper(t, ctx, platform)
 
-				require.NoError(t, setupTestAttestationAction(ctx, platform, testActionName, testActionID))
-				runAttestationHappyPath(t, ctx, platform, testActionName, testActionID)
+				require.NoError(t, helper.SetupTestAction(testActionName, TestActionIDRequest))
+				runAttestationHappyPath(helper, testActionName, TestActionIDRequest)
 				return nil
 			},
 		},
 	}, testutils.GetTestOptionsWithCache())
 }
 
-func setupTestAttestationAction(ctx context.Context, platform *kwilTesting.Platform, actionName string, actionID int) error {
-	engineCtx, err := newEngineContext(ctx, platform)
-	if err != nil {
-		return err
-	}
-
-	createAction := `
-CREATE OR REPLACE ACTION ` + actionName + `(
-	$value INT8
-) PUBLIC VIEW RETURNS TABLE(result INT8) {
-	RETURN NEXT $value;
-};`
-
-	if err := platform.Engine.Execute(engineCtx, platform.DB, createAction, nil, nil); err != nil {
-		return fmt.Errorf("create action: %w", err)
-	}
-
-	engineCtx, err = newEngineContext(ctx, platform)
-	if err != nil {
-		return err
-	}
-
-	insertAllowlist := `
-INSERT INTO attestation_actions(action_name, action_id)
-VALUES ($action_name, $action_id)
-ON CONFLICT (action_name) DO UPDATE SET action_id = EXCLUDED.action_id;`
-
-	params := map[string]any{
-		"action_name": actionName,
-		"action_id":   actionID,
-	}
-
-	if err := platform.Engine.Execute(engineCtx, platform.DB, insertAllowlist, params, nil); err != nil {
-		return fmt.Errorf("insert attestation action allowlist: %w", err)
-	}
-
-	return nil
-}
-
-func runAttestationHappyPath(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, actionName string, actionID int) {
+func runAttestationHappyPath(helper *AttestationTestHelper, actionName string, actionID int) {
 	const attestedValue int64 = 42
 
 	dataProvider := []byte("provider-001")
 	streamID := []byte("stream-abc")
 
 	argsBytes, err := tn_utils.EncodeActionArgs([]any{attestedValue})
-	require.NoError(t, err, "encode action args")
+	require.NoError(helper.t, err, "encode action args")
 
-	engineCtx, err := newEngineContext(ctx, platform)
-	require.NoError(t, err)
+	engineCtx := helper.NewEngineContext()
 
+	var requestTxID string
 	var attestationHash []byte
-	_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation", []any{
+	_, err = helper.platform.Engine.Call(engineCtx, helper.platform.DB, "", "request_attestation", []any{
 		dataProvider,
 		streamID,
 		actionName,
@@ -102,26 +59,23 @@ func runAttestationHappyPath(t *testing.T, ctx context.Context, platform *kwilTe
 		false,
 		int64(0),
 	}, func(row *common.Row) error {
-		if len(row.Values) != 1 {
-			return fmt.Errorf("expected single return value, got %d", len(row.Values))
-		}
-		hash, ok := row.Values[0].([]byte)
-		if !ok {
-			return fmt.Errorf("expected BYTEA return, got %T", row.Values[0])
-		}
-		attestationHash = append([]byte(nil), hash...)
+		require.Len(helper.t, row.Values, 2, "expected 2 return values (request_tx_id, attestation_hash)")
+		requestTxID = row.Values[0].(string)
+		attestationHash = append([]byte(nil), row.Values[1].([]byte)...)
 		return nil
 	})
-	require.NoError(t, err)
-	require.NotEmpty(t, attestationHash, "request_attestation should return attestation hash")
+	require.NoError(helper.t, err)
+	require.NotEmpty(helper.t, requestTxID, "request_attestation should return request_tx_id")
+	require.NotEmpty(helper.t, attestationHash, "request_attestation should return attestation hash")
 
-	stored := fetchAttestationRow(t, ctx, platform, attestationHash)
+	stored := fetchAttestationRow(helper, attestationHash)
+	require.Equal(helper.t, requestTxID, stored.requestTxID, "request_tx_id should be captured and stored")
 
 	// Rebuild expected canonical payload
 	queryResult, err := tn_utils.EncodeQueryResultCanonical([]*common.Row{
 		{Values: []any{attestedValue}},
 	})
-	require.NoError(t, err)
+	require.NoError(helper.t, err)
 
 	expectedCanonical := buildExpectedCanonicalPayload(
 		stored.createdHeight,
@@ -132,15 +86,16 @@ func runAttestationHappyPath(t *testing.T, ctx context.Context, platform *kwilTe
 		queryResult,
 	)
 
-	require.Equal(t, expectedCanonical, stored.resultCanonical, "canonical payload mismatch")
-	require.False(t, stored.encryptSig, "encrypt_sig must remain false in MVP")
-	require.Nil(t, stored.signature, "signature must be NULL before signing")
-	require.Nil(t, stored.validatorPubKey, "validator_pubkey must be NULL before signing")
-	require.Nil(t, stored.signedHeight, "signed_height must be NULL before signing")
-	require.Equal(t, attestationHash, stored.attestationHash, "returned hash should equal stored hash")
+	require.Equal(helper.t, expectedCanonical, stored.resultCanonical, "canonical payload mismatch")
+	require.False(helper.t, stored.encryptSig, "encrypt_sig must remain false in MVP")
+	require.Nil(helper.t, stored.signature, "signature must be NULL before signing")
+	require.Nil(helper.t, stored.validatorPubKey, "validator_pubkey must be NULL before signing")
+	require.Nil(helper.t, stored.signedHeight, "signed_height must be NULL before signing")
+	require.Equal(helper.t, attestationHash, stored.attestationHash, "returned hash should equal stored hash")
 }
 
 type attestationRow struct {
+	requestTxID     string
 	requester       []byte
 	attestationHash []byte
 	resultCanonical []byte
@@ -151,35 +106,35 @@ type attestationRow struct {
 	createdHeight   int64
 }
 
-func fetchAttestationRow(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, hash []byte) attestationRow {
-	engineCtx, err := newEngineContext(ctx, platform)
-	require.NoError(t, err)
+func fetchAttestationRow(helper *AttestationTestHelper, hash []byte) attestationRow {
+	engineCtx := helper.NewEngineContext()
 
 	var rowData attestationRow
-	err = platform.Engine.Execute(engineCtx, platform.DB, `
-SELECT requester, attestation_hash, result_canonical, encrypt_sig, signature, validator_pubkey, signed_height, created_height
+	err := helper.platform.Engine.Execute(engineCtx, helper.platform.DB, `
+SELECT request_tx_id, requester, attestation_hash, result_canonical, encrypt_sig, signature, validator_pubkey, signed_height, created_height
 FROM attestations
 WHERE attestation_hash = $hash;
 `, map[string]any{"hash": hash}, func(row *common.Row) error {
-		rowData.requester = append([]byte(nil), row.Values[0].([]byte)...)
-		rowData.attestationHash = append([]byte(nil), row.Values[1].([]byte)...)
-		rowData.resultCanonical = append([]byte(nil), row.Values[2].([]byte)...)
-		rowData.encryptSig = row.Values[3].(bool)
-		if row.Values[4] != nil {
-			rowData.signature = append([]byte(nil), row.Values[4].([]byte)...)
-		}
+		rowData.requestTxID = row.Values[0].(string)
+		rowData.requester = append([]byte(nil), row.Values[1].([]byte)...)
+		rowData.attestationHash = append([]byte(nil), row.Values[2].([]byte)...)
+		rowData.resultCanonical = append([]byte(nil), row.Values[3].([]byte)...)
+		rowData.encryptSig = row.Values[4].(bool)
 		if row.Values[5] != nil {
-			rowData.validatorPubKey = append([]byte(nil), row.Values[5].([]byte)...)
+			rowData.signature = append([]byte(nil), row.Values[5].([]byte)...)
 		}
 		if row.Values[6] != nil {
-			height := row.Values[6].(int64)
+			rowData.validatorPubKey = append([]byte(nil), row.Values[6].([]byte)...)
+		}
+		if row.Values[7] != nil {
+			height := row.Values[7].(int64)
 			rowData.signedHeight = &height
 		}
-		rowData.createdHeight = row.Values[7].(int64)
+		rowData.createdHeight = row.Values[8].(int64)
 		return nil
 	})
-	require.NoError(t, err)
-	require.NotNil(t, rowData.resultCanonical, "attestation row must exist")
+	require.NoError(helper.t, err)
+	require.NotNil(helper.t, rowData.resultCanonical, "attestation row must exist")
 
 	return rowData
 }
@@ -223,25 +178,4 @@ func lengthPrefixLittleEndian(data []byte) []byte {
 	binary.LittleEndian.PutUint32(prefixed[:4], uint32(len(data)))
 	copy(prefixed[4:], data)
 	return prefixed
-}
-
-func newEngineContext(ctx context.Context, platform *kwilTesting.Platform) (*common.EngineContext, error) {
-	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
-	if err != nil {
-		return nil, fmt.Errorf("create deployer address: %w", err)
-	}
-
-	txContext := &common.TxContext{
-		Ctx: ctx,
-		BlockContext: &common.BlockContext{
-			Height: 1,
-		},
-		Signer: platform.Deployer,
-		Caller: deployer.Address(),
-		TxID:   platform.Txid(),
-	}
-
-	return &common.EngineContext{
-		TxContext: txContext,
-	}, nil
 }

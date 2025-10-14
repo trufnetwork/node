@@ -13,8 +13,7 @@ import (
 // This is called from InitializeExtension().
 func registerPrecompile() error {
 	return precompiles.RegisterPrecompile(ExtensionName, precompiles.Precompile{
-		// No cache needed: this precompile only affects leader's in-memory state,
-		// which is intentionally non-deterministic. All validators return nil (deterministic).
+		// No cache needed: queue_for_signing affects leader's in-memory state only
 		Cache: nil,
 		Methods: []precompiles.Method{
 			{

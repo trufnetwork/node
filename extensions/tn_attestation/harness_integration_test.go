@@ -100,6 +100,7 @@ func TestSigningWorkflowWithHarness(t *testing.T) {
 
 				engineCtx := newHarnessEngineContext(ctx, platform, requesterAddr)
 
+				var requestTxID string
 				var attestationHash []byte
 				_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation", []any{
 					dataProvider,
@@ -109,23 +110,30 @@ func TestSigningWorkflowWithHarness(t *testing.T) {
 					false,
 					int64(0),
 				}, func(row *common.Row) error {
-					if len(row.Values) != 1 {
-						return fmt.Errorf("expected single return value, got %d", len(row.Values))
+					if len(row.Values) != 2 {
+						return fmt.Errorf("expected 2 return values, got %d", len(row.Values))
 					}
-					hash, ok := row.Values[0].([]byte)
+					txID, ok := row.Values[0].(string)
 					if !ok {
-						return fmt.Errorf("expected BYTEA return, got %T", row.Values[0])
+						return fmt.Errorf("expected TEXT return for request_tx_id, got %T", row.Values[0])
+					}
+					requestTxID = txID
+					hash, ok := row.Values[1].([]byte)
+					if !ok {
+						return fmt.Errorf("expected BYTEA return for attestation_hash, got %T", row.Values[1])
 					}
 					attestationHash = append([]byte(nil), hash...)
 					return nil
 				})
 				require.NoError(t, err, "request_attestation failed")
+				require.NotEmpty(t, requestTxID, "request_attestation should return request_tx_id")
 				require.NotEmpty(t, attestationHash, "request_attestation should return attestation hash")
 
 				// At this point we expect a single row inserted into the persisted
 				// table. Fetch it back and validate every column so future changes that
 				// alter canonical layout or metadata will trip this test.
 				stored := fetchAttestationRowHarness(t, ctx, platform, attestationHash)
+				require.Equal(t, requestTxID, stored.requestTxID, "request_tx_id should be captured")
 				require.Equal(t, attestationHash, stored.attestationHash)
 				require.Equal(t, requesterAddr.Bytes(), stored.requester)
 				require.NotEmpty(t, stored.resultCanonical, "canonical payload should be stored")
@@ -190,6 +198,7 @@ func TestSigningWorkflowWithHarness(t *testing.T) {
 				require.Len(t, prepared, 1, "expected one prepared signature")
 
 				// Verify signature was generated correctly
+				require.Equal(t, requestTxID, prepared[0].RequestTxID, "request_tx_id should be in prepared signature")
 				require.Equal(t, hashHex, prepared[0].HashHex)
 				require.Equal(t, attestationHash, prepared[0].Hash)
 				require.Equal(t, requesterAddr.Bytes(), prepared[0].Requester)
@@ -305,25 +314,26 @@ func fetchAttestationRowHarness(t *testing.T, ctx context.Context, platform *kwi
 
 	var rowData harnessAttestationRow
 	err := platform.Engine.Execute(engineCtx, platform.DB, `
-SELECT requester, attestation_hash, result_canonical, encrypt_sig, signature, validator_pubkey, signed_height, created_height
+SELECT request_tx_id, requester, attestation_hash, result_canonical, encrypt_sig, signature, validator_pubkey, signed_height, created_height
 FROM attestations
 WHERE attestation_hash = $hash;
 `, map[string]any{"hash": hash}, func(row *common.Row) error {
-		rowData.requester = append([]byte(nil), row.Values[0].([]byte)...)
-		rowData.attestationHash = append([]byte(nil), row.Values[1].([]byte)...)
-		rowData.resultCanonical = append([]byte(nil), row.Values[2].([]byte)...)
-		rowData.encryptSig = row.Values[3].(bool)
-		if row.Values[4] != nil {
-			rowData.signature = append([]byte(nil), row.Values[4].([]byte)...)
-		}
+		rowData.requestTxID = row.Values[0].(string)
+		rowData.requester = append([]byte(nil), row.Values[1].([]byte)...)
+		rowData.attestationHash = append([]byte(nil), row.Values[2].([]byte)...)
+		rowData.resultCanonical = append([]byte(nil), row.Values[3].([]byte)...)
+		rowData.encryptSig = row.Values[4].(bool)
 		if row.Values[5] != nil {
-			rowData.validatorPubKey = append([]byte(nil), row.Values[5].([]byte)...)
+			rowData.signature = append([]byte(nil), row.Values[5].([]byte)...)
 		}
 		if row.Values[6] != nil {
-			height := row.Values[6].(int64)
+			rowData.validatorPubKey = append([]byte(nil), row.Values[6].([]byte)...)
+		}
+		if row.Values[7] != nil {
+			height := row.Values[7].(int64)
 			rowData.signedHeight = &height
 		}
-		rowData.createdHeight = row.Values[7].(int64)
+		rowData.createdHeight = row.Values[8].(int64)
 		return nil
 	})
 	require.NoError(t, err)
@@ -331,6 +341,7 @@ WHERE attestation_hash = $hash;
 }
 
 type harnessAttestationRow struct {
+	requestTxID     string
 	requester       []byte
 	attestationHash []byte
 	resultCanonical []byte
@@ -361,13 +372,11 @@ func (b *harnessExecutingBroadcaster) BroadcastTx(ctx context.Context, tx *ktype
 
 	require.Equal(b.t, "sign_attestation", payload.Action)
 	require.Len(b.t, payload.Arguments, 1)
-	require.Len(b.t, payload.Arguments[0], 4)
+	require.Len(b.t, payload.Arguments[0], 2)
 
 	// Decode arguments
-	hashBytes := b.decodeByteArg(payload.Arguments[0][0])
-	requesterBytes := b.decodeByteArg(payload.Arguments[0][1])
-	createdHeight := b.decodeInt64Arg(payload.Arguments[0][2])
-	sigBytes := b.decodeByteArg(payload.Arguments[0][3])
+	requestTxID := b.decodeStringArg(payload.Arguments[0][0])
+	sigBytes := b.decodeByteArg(payload.Arguments[0][1])
 
 	// Get caller identifier for leader check
 	// For leader authorization to work, Signer must be the Ethereum address derived from the proposer's public key
@@ -394,7 +403,7 @@ func (b *harnessExecutingBroadcaster) BroadcastTx(ctx context.Context, tx *ktype
 		b.platform.DB,
 		"",
 		"sign_attestation",
-		[]any{hashBytes, requesterBytes, createdHeight, sigBytes},
+		[]any{requestTxID, sigBytes},
 		func(*common.Row) error { return nil },
 	)
 
@@ -419,6 +428,21 @@ func (b *harnessExecutingBroadcaster) decodeByteArg(arg *ktypes.EncodedValue) []
 	default:
 		b.t.Fatalf("unexpected byte arg type %T", val)
 		return nil
+	}
+}
+
+func (b *harnessExecutingBroadcaster) decodeStringArg(arg *ktypes.EncodedValue) string {
+	val, err := arg.Decode()
+	require.NoError(b.t, err)
+	switch typed := val.(type) {
+	case string:
+		return typed
+	case *string:
+		require.NotNil(b.t, typed)
+		return *typed
+	default:
+		b.t.Fatalf("unexpected string arg type %T", val)
+		return ""
 	}
 }
 

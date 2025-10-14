@@ -60,8 +60,15 @@ func (s *ValidatorSigner) SignDigest(digest []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to sign digest: %w", err)
 	}
 
-	// Convert V from {0,1} to {27,28} for EVM compatibility.
-	signature[64] += 27
+	// Convert V to EVM-compatible {27,28}.
+	// crypto.Sign returns V in various forms ({0,1}, {27,28}, or {27+chainId*2, 28+chainId*2}).
+	// We normalize: subtract 27 to get base form, mask to {0,1}, then add 27 for EVM format.
+	v := signature[64]
+	if v >= 27 {
+		v -= 27 // Strip any offset (27 or 27+chainId*2)
+	}
+	v &= 1                 // Ensure only bit 0 remains (normalize to 0 or 1)
+	signature[64] = v + 27 // Add EVM offset to get {27,28}
 	return signature, nil
 }
 
