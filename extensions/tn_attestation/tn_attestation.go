@@ -102,6 +102,7 @@ func onLeaderAcquire(ctx context.Context, app *common.App, block *common.BlockCo
 
 	ext := getExtension()
 	ext.setService(app.Service)
+	ext.setApp(app)
 	if block != nil {
 		ext.setLeader(true, block.Height)
 	}
@@ -130,6 +131,7 @@ func onLeaderLose(ctx context.Context, app *common.App, block *common.BlockConte
 
 	ext := getExtension()
 	ext.setService(app.Service)
+	ext.setApp(app)
 	if block != nil {
 		ext.setLeader(false, block.Height)
 	}
@@ -159,6 +161,7 @@ func onLeaderEndBlock(ctx context.Context, app *common.App, block *common.BlockC
 
 	ext := getExtension()
 	ext.setService(app.Service)
+	ext.setApp(app)
 
 	if !ext.Leader() {
 		return

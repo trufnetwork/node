@@ -123,17 +123,9 @@ func (e *signerExtension) submitSignature(ctx context.Context, item *PreparedSig
 		nonce = uint64(account.Nonce + 1)
 	}
 
-	hashArg, err := ktypes.EncodeValue(item.Hash)
+	requestTxIDArg, err := ktypes.EncodeValue(item.RequestTxID)
 	if err != nil {
-		return fmt.Errorf("encode hash argument: %w", err)
-	}
-	requesterArg, err := ktypes.EncodeValue(item.Requester)
-	if err != nil {
-		return fmt.Errorf("encode requester argument: %w", err)
-	}
-	heightArg, err := ktypes.EncodeValue(item.CreatedHeight)
-	if err != nil {
-		return fmt.Errorf("encode created_height argument: %w", err)
+		return fmt.Errorf("encode request_tx_id argument: %w", err)
 	}
 	signatureArg, err := ktypes.EncodeValue(item.Signature)
 	if err != nil {
@@ -144,7 +136,7 @@ func (e *signerExtension) submitSignature(ctx context.Context, item *PreparedSig
 		Namespace: "main",
 		Action:    "sign_attestation",
 		Arguments: [][]*ktypes.EncodedValue{{
-			hashArg, requesterArg, heightArg, signatureArg,
+			requestTxIDArg, signatureArg,
 		}},
 	}
 
@@ -272,33 +264,33 @@ func (e *signerExtension) monitorTransaction(ctx context.Context, work txStatusW
 			continue
 		}
 
-	if resp.Result != nil && resp.Result.Code == uint32(ktypes.CodeOk) {
-		logger.Info("tn_attestation: transaction confirmed",
-			"hash", work.attestationHash,
-			"tx_hash", work.hash,
-			"height", resp.Height,
-			"requester", fmt.Sprintf("%x", work.requester))
-	} else {
-		code := uint32(0)
-		logMsg := "transaction result missing"
-		if resp.Result != nil {
-			code = resp.Result.Code
-			logMsg = resp.Result.Log
+		if resp.Result != nil && resp.Result.Code == uint32(ktypes.CodeOk) {
+			logger.Info("tn_attestation: transaction confirmed",
+				"hash", work.attestationHash,
+				"tx_hash", work.hash,
+				"height", resp.Height,
+				"requester", fmt.Sprintf("%x", work.requester))
+		} else {
+			code := uint32(0)
+			logMsg := "transaction result missing"
+			if resp.Result != nil {
+				code = resp.Result.Code
+				logMsg = resp.Result.Log
+			}
+			logger.Error("tn_attestation: transaction failed",
+				"hash", work.attestationHash,
+				"tx_hash", work.hash,
+				"height", resp.Height,
+				"code", code,
+				"log", logMsg,
+				"requester", fmt.Sprintf("%x", work.requester))
 		}
-		logger.Error("tn_attestation: transaction failed",
-			"hash", work.attestationHash,
-			"tx_hash", work.hash,
-			"height", resp.Height,
-			"code", code,
-			"log", logMsg,
-			"requester", fmt.Sprintf("%x", work.requester))
+		return
 	}
-	return
-}
 
-logger.Warn("tn_attestation: transaction status unresolved after retries",
-	"hash", work.attestationHash,
-	"tx_hash", work.hash,
-	"requester", fmt.Sprintf("%x", work.requester),
-	"attempts", len(delays))
+	logger.Warn("tn_attestation: transaction status unresolved after retries",
+		"hash", work.attestationHash,
+		"tx_hash", work.hash,
+		"requester", fmt.Sprintf("%x", work.requester),
+		"attempts", len(delays))
 }

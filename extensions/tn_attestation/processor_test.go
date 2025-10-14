@@ -73,6 +73,7 @@ func TestPrepareSigningWork(t *testing.T) {
 		rows: []*common.Row{
 			{
 				Values: []any{
+					"0xprepare",
 					hash[:],
 					[]byte("requester"),
 					canonical,
@@ -128,6 +129,7 @@ func TestSubmitSignature(t *testing.T) {
 		rows: []*common.Row{
 			{
 				Values: []any{
+					"0xsubmit",
 					hash[:],
 					[]byte("requester"),
 					canonical,
@@ -177,18 +179,12 @@ func TestSubmitSignature(t *testing.T) {
 	assert.Equal(t, "main", decoded.Namespace)
 	assert.Equal(t, "sign_attestation", decoded.Action)
 	require.Len(t, decoded.Arguments, 1)
-	require.Len(t, decoded.Arguments[0], 4)
+	require.Len(t, decoded.Arguments[0], 2)
 
-	hashBytes := decodeBytesArg(t, decoded.Arguments[0][0], "hash")
-	assert.Equal(t, hash[:], hashBytes)
+	requestTxID := decodeStringArg(t, decoded.Arguments[0][0], "request_tx_id")
+	assert.Equal(t, prepared[0].RequestTxID, requestTxID)
 
-	requesterBytes := decodeBytesArg(t, decoded.Arguments[0][1], "requester")
-	assert.Equal(t, []byte("requester"), requesterBytes)
-
-	createdHeight := decodeInt64Arg(t, decoded.Arguments[0][2], "created_height")
-	assert.Equal(t, int64(123), createdHeight)
-
-	signatureBytes := decodeBytesArg(t, decoded.Arguments[0][3], "signature")
+	signatureBytes := decodeBytesArg(t, decoded.Arguments[0][1], "signature")
 	assert.Len(t, signatureBytes, 65)
 }
 
@@ -221,6 +217,22 @@ func decodeInt64Arg(t *testing.T, arg *ktypes.EncodedValue, fieldName string) in
 	default:
 		t.Fatalf("unexpected %s argument type %T", fieldName, val)
 		return 0
+	}
+}
+
+func decodeStringArg(t *testing.T, arg *ktypes.EncodedValue, fieldName string) string {
+	t.Helper()
+	val, err := arg.Decode()
+	require.NoError(t, err)
+	switch typed := val.(type) {
+	case string:
+		return typed
+	case *string:
+		require.NotNil(t, typed, "%s argument pointer was nil", fieldName)
+		return *typed
+	default:
+		t.Fatalf("unexpected %s argument type %T", fieldName, val)
+		return ""
 	}
 }
 

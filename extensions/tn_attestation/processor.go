@@ -13,6 +13,7 @@ import (
 )
 
 type attestationRecord struct {
+	requestTxID   string
 	hash          []byte
 	requester     []byte
 	canonical     []byte
@@ -20,9 +21,10 @@ type attestationRecord struct {
 }
 
 // PreparedSignature captures the data needed to call sign_attestation once
-// broadcasting is wired: the attestation hash, the generated signature, and
+// broadcasting is wired: the request transaction ID, generated signature, and
 // metadata for logging and auditing.
 type PreparedSignature struct {
+	RequestTxID   string
 	HashHex       string
 	Hash          []byte
 	Requester     []byte
@@ -38,27 +40,28 @@ func (e *signerExtension) fetchUnsignedAttestations(ctx context.Context, hash []
 		return nil, fmt.Errorf("attestation extension not initialised with engine/db")
 	}
 
-	// Returns multiple rows per hash: composite key is (hash, requester, created_height).
-	// Different requesters can request identical attestations.
+	// Returns multiple rows per hash: different requesters can request identical attestations.
+	// The table uses request_tx_id as primary key, but we query by attestation_hash for signing.
 	records := []attestationRecord{}
 	err := engine.ExecuteWithoutEngineCtx(
 		ctx,
 		db,
-		`SELECT attestation_hash, requester, result_canonical, created_height
+		`SELECT request_tx_id, attestation_hash, requester, result_canonical, created_height
 		 FROM attestations
 		 WHERE attestation_hash = $hash AND signature IS NULL
 		 ORDER BY created_height ASC`,
 		map[string]any{"hash": hash},
 		func(row *common.Row) error {
-			if len(row.Values) < 4 {
+			if len(row.Values) < 5 {
 				return fmt.Errorf("unexpected attestation row format: got %d columns", len(row.Values))
 			}
 
 			rec := attestationRecord{
-				hash:          bytesClone(row.Values[0].([]byte)),
-				requester:     bytesCloneOrNil(row.Values[1]),
-				canonical:     bytesClone(row.Values[2].([]byte)),
-				createdHeight: row.Values[3].(int64),
+				requestTxID:   row.Values[0].(string),
+				hash:          bytesClone(row.Values[1].([]byte)),
+				requester:     bytesCloneOrNil(row.Values[2]),
+				canonical:     bytesClone(row.Values[3].([]byte)),
+				createdHeight: row.Values[4].(int64),
 			}
 			records = append(records, rec)
 			return nil
@@ -118,6 +121,7 @@ func (e *signerExtension) prepareSigningWork(ctx context.Context, hashHex string
 		}
 
 		prepared = append(prepared, &PreparedSignature{
+			RequestTxID:   rec.requestTxID,
 			HashHex:       hashHex,
 			Hash:          bytesClone(rec.hash),
 			Requester:     bytesCloneOrNil(rec.requester),
