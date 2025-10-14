@@ -369,12 +369,14 @@ phases:
               📦 To update to the latest software:
               sudo tn-node-update
 
-              🤖 MCP (AI Integration) Setup:
-              1. Configure node with --enable-mcp flag
-              2. Open port 8000 in your AWS Security Group:
-                 EC2 Console → Instance → Security → Edit inbound rules
-                 Add: Custom TCP, Port 8000, Source 0.0.0.0/0
-              3. Access via: http://YOUR-PUBLIC-IP:8000/sse
+              🔒 Security Group Ports:
+              - Port 6600 (P2P): Recommended for two-way peer connections
+              - Port 8484 (RPC): Needed for public node access
+
+              🤖 MCP (AI Integration) - Optional:
+              1. Configure: sudo tn-node-configure --enable-mcp
+              2. Open port 8000 in Security Group
+              3. Access: http://YOUR-PUBLIC-IP:8000/sse
               EOF
 
             - |
@@ -408,12 +410,14 @@ phases:
                 echo "📦 To update to the latest software:"
                 echo "sudo tn-node-update"
                 echo ""
-                echo "🤖 MCP (AI Integration) Setup:"
-                echo "1. Configure node with --enable-mcp flag"
-                echo "2. Open port 8000 in your AWS Security Group:"
-                echo "   EC2 Console → Instance → Security → Edit inbound rules"
-                echo "   Add: Custom TCP, Port 8000, Source 0.0.0.0/0"
-                echo "3. Access via: http://YOUR-PUBLIC-IP:8000/sse"
+                echo "🔒 Security Group Ports:"
+                echo "- Port 6600 (P2P): Recommended for two-way peer connections"
+                echo "- Port 8484 (RPC): Needed for public node access"
+                echo ""
+                echo "🤖 MCP (AI Integration) - Optional:"
+                echo "1. Configure: sudo tn-node-configure --enable-mcp"
+                echo "2. Open port 8000 in Security Group"
+                echo "3. Access: http://YOUR-PUBLIC-IP:8000/sse"
               fi
               EOF
             - sudo chmod +x /etc/profile.d/tn-welcome.sh

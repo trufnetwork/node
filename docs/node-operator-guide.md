@@ -395,10 +395,16 @@ EOF
 
 ### 5. Run TN Node
 
-Before you proceed, ensure your firewall allows incoming connections on:
+Before you proceed, ensure your firewall/security group allows incoming connections on:
 
-- JSON-RPC port (default: 8484)
-- P2P port (default: 6600)
+**Required Ports:**
+- **P2P port: 6600** (required for two-way node communication)
+- **RPC port: 8484** (needed if running a public node for user queries)
+
+**Optional Ports:**
+- **MCP port: 8000** (only if using AI integration)
+
+> **Important**: Port 6600 enables two-way P2P communication. Without it open, your node can still sync (by connecting outbound to other nodes), but other nodes cannot connect to you. Opening this port helps network health by allowing your node to accept incoming peer connections.
 
 #### For Linux
 
