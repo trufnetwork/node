@@ -155,7 +155,7 @@ func (e *signerExtension) prepareSigningWork(ctx context.Context, hashHex string
 			RequestTxID:   rec.requestTxID,
 			HashHex:       hashHex,
 			Hash:          bytesClone(rec.hash),
-			Requester:     bytesCloneOrNil(rec.requester),
+			Requester:     bytesClone(rec.requester),
 			Signature:     signature,
 			Payload:       payload,
 			CreatedHeight: rec.createdHeight,
@@ -224,22 +224,6 @@ func computeAttestationHash(p *CanonicalPayload) [sha256.Size]byte {
 
 func bytesClone(b []byte) []byte {
 	return bytes.Clone(b)
-}
-
-func bytesCloneOrNil(v any) []byte {
-	switch val := v.(type) {
-	case nil:
-		return nil
-	case []byte:
-		return bytes.Clone(val)
-	case *[]byte:
-		if val == nil {
-			return nil
-		}
-		return bytes.Clone(*val)
-	default:
-		return nil
-	}
 }
 
 func cloneBytesValue(value any) ([]byte, error) {
