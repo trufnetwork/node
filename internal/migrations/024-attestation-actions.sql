@@ -37,11 +37,15 @@ $max_fee INT8
     $caller_hex := LOWER(substring(@caller, 3, 40));
     $caller_bytes := decode($caller_hex, 'hex');
     
+    -- Force deterministic execution by overriding non-deterministic parameters.
+    -- Query actions (IDs 1-5) all have use_cache as their last parameter.
+    -- Force use_cache=false to ensure all validators compute identical results
+    -- regardless of cache state.
+    if $action_id >= 1 AND $action_id <= 5 {
+        $args_bytes := tn_utils.force_last_arg_false($args_bytes);
+    }
+
     -- Execute target query deterministically using tn_utils.call_dispatch precompile
-    -- TODO: some arguments are not deterministic, such as `use_cache`
-    -- we should aim at filtering these out before we release attestations.
-    -- One idea is to also store a force_args in the whitelisted actions. Then this should help us force 
-    -- some args per action
     $query_result := tn_utils.call_dispatch($action_name, $args_bytes);
     
     $version := 1;

@@ -461,3 +461,117 @@ func TestEncodeUintHandlers(t *testing.T) {
 		require.Error(t, err)
 	})
 }
+
+func TestForceLastArgFalseHandler(t *testing.T) {
+	t.Run("forces use_cache to false", func(t *testing.T) {
+		// Simulate query action args: (data_provider, stream_id, from, to, frozen_at, use_cache=true)
+		original := []interface{}{
+			"data_provider",   // data_provider
+			"stream_id",       // stream_id
+			int64(1704067200), // from
+			int64(1735689600), // to
+			nil,               // frozen_at
+			true,              // use_cache (will be forced to false)
+		}
+
+		// Encode args
+		argsBytes, err := EncodeActionArgs(original)
+		require.NoError(t, err)
+
+		// Force last arg to false via handler
+		var result []any
+		err = forceLastArgFalseHandler(nil, nil, []any{argsBytes}, func(out []any) error {
+			result = out
+			return nil
+		})
+		require.NoError(t, err)
+		require.Len(t, result, 1)
+
+		modifiedArgsBytes := result[0].([]byte)
+
+		// Decode to verify use_cache is now false
+		decoded, err := DecodeActionArgs(modifiedArgsBytes)
+		require.NoError(t, err)
+		require.Len(t, decoded, 6)
+
+		// Verify use_cache (last param) is now false (dereference pointer)
+		assert.Equal(t, false, *decoded[5].(*bool))
+	})
+
+	t.Run("already false remains false", func(t *testing.T) {
+		original := []interface{}{
+			"provider",
+			"stream",
+			int64(100),
+			int64(200),
+			nil,
+			false, // already false
+		}
+
+		argsBytes, err := EncodeActionArgs(original)
+		require.NoError(t, err)
+
+		var result []any
+		err = forceLastArgFalseHandler(nil, nil, []any{argsBytes}, func(out []any) error {
+			result = out
+			return nil
+		})
+		require.NoError(t, err)
+
+		modifiedArgsBytes := result[0].([]byte)
+		decoded, err := DecodeActionArgs(modifiedArgsBytes)
+		require.NoError(t, err)
+
+		// Still false
+		assert.Equal(t, false, *decoded[5].(*bool))
+	})
+
+	t.Run("empty args returns unchanged", func(t *testing.T) {
+		emptyArgs, err := EncodeActionArgs([]interface{}{})
+		require.NoError(t, err)
+
+		var result []any
+		err = forceLastArgFalseHandler(nil, nil, []any{emptyArgs}, func(out []any) error {
+			result = out
+			return nil
+		})
+		require.NoError(t, err)
+
+		// Should return unchanged
+		assert.Equal(t, emptyArgs, result[0].([]byte))
+	})
+
+	t.Run("single arg gets forced to false", func(t *testing.T) {
+		original := []interface{}{true}
+
+		argsBytes, err := EncodeActionArgs(original)
+		require.NoError(t, err)
+
+		var result []any
+		err = forceLastArgFalseHandler(nil, nil, []any{argsBytes}, func(out []any) error {
+			result = out
+			return nil
+		})
+		require.NoError(t, err)
+
+		modifiedArgsBytes := result[0].([]byte)
+		decoded, err := DecodeActionArgs(modifiedArgsBytes)
+		require.NoError(t, err)
+		require.Len(t, decoded, 1)
+
+		// Should be false now
+		assert.Equal(t, false, *decoded[0].(*bool))
+	})
+
+	t.Run("invalid bytes returns error", func(t *testing.T) {
+		err := forceLastArgFalseHandler(nil, nil, []any{[]byte{0x01, 0x02}}, func([]any) error { return nil })
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to decode action args")
+	})
+
+	t.Run("non-bytes input returns error", func(t *testing.T) {
+		err := forceLastArgFalseHandler(nil, nil, []any{"not bytes"}, func([]any) error { return nil })
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "args_bytes must be []byte")
+	})
+}

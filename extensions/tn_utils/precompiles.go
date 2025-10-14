@@ -25,6 +25,7 @@ func buildPrecompile() precompiles.Precompile {
 			encodeUintMethod("encode_uint16", 16),
 			encodeUintMethod("encode_uint32", 32),
 			encodeUintMethod("encode_uint64", 64),
+			forceLastArgFalseMethod(),
 		},
 	}
 }
@@ -341,4 +342,53 @@ func toInt64(value any) (int64, error) {
 	default:
 		return 0, fmt.Errorf("expected integer type, got %T", value)
 	}
+}
+
+// forceLastArgFalseMethod decodes args, forces last parameter to false, and re-encodes.
+// This is specifically for forcing use_cache=false in attestation query actions.
+func forceLastArgFalseMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "force_last_arg_false",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters: []precompiles.PrecompileValue{
+			precompiles.NewPrecompileValue("args_bytes", types.ByteaType, false),
+		},
+		Returns: &precompiles.MethodReturn{
+			IsTable: false,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("modified_args_bytes", types.ByteaType, false),
+			},
+		},
+		Handler: forceLastArgFalseHandler,
+	}
+}
+
+// forceLastArgFalseHandler decodes args, sets last param to false, re-encodes.
+func forceLastArgFalseHandler(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+	argsBytes, ok := inputs[0].([]byte)
+	if !ok {
+		return fmt.Errorf("args_bytes must be []byte, got %T", inputs[0])
+	}
+
+	// Decode arguments
+	args, err := DecodeActionArgs(argsBytes)
+	if err != nil {
+		return fmt.Errorf("failed to decode action args: %w", err)
+	}
+
+	// If no args or only one arg, return unchanged
+	if len(args) == 0 {
+		return resultFn([]any{argsBytes})
+	}
+
+	// Force last parameter to false (for use_cache)
+	args[len(args)-1] = false
+
+	// Re-encode modified args
+	modifiedArgsBytes, err := EncodeActionArgs(args)
+	if err != nil {
+		return fmt.Errorf("failed to encode modified args: %w", err)
+	}
+
+	return resultFn([]any{modifiedArgsBytes})
 }
