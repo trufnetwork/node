@@ -56,12 +56,43 @@ func (e *signerExtension) fetchUnsignedAttestations(ctx context.Context, hash []
 				return fmt.Errorf("unexpected attestation row format: got %d columns", len(row.Values))
 			}
 
+			txID, ok := row.Values[0].(string)
+			if !ok {
+				return fmt.Errorf("unexpected request_tx_id type %T", row.Values[0])
+			}
+
+			hashBytes, err := cloneBytesValue(row.Values[1])
+			if err != nil {
+				return fmt.Errorf("decode attestation_hash: %w", err)
+			}
+			if len(hashBytes) == 0 {
+				return fmt.Errorf("decode attestation_hash: empty value")
+			}
+
+			requesterBytes, err := cloneBytesValueAllowNil(row.Values[2])
+			if err != nil {
+				return fmt.Errorf("decode requester: %w", err)
+			}
+
+			canonicalBytes, err := cloneBytesValue(row.Values[3])
+			if err != nil {
+				return fmt.Errorf("decode result_canonical: %w", err)
+			}
+			if len(canonicalBytes) == 0 {
+				return fmt.Errorf("decode result_canonical: empty value")
+			}
+
+			height, err := extractInt64(row.Values[4])
+			if err != nil {
+				return fmt.Errorf("decode created_height: %w", err)
+			}
+
 			rec := attestationRecord{
-				requestTxID:   row.Values[0].(string),
-				hash:          bytesClone(row.Values[1].([]byte)),
-				requester:     bytesCloneOrNil(row.Values[2]),
-				canonical:     bytesClone(row.Values[3].([]byte)),
-				createdHeight: row.Values[4].(int64),
+				requestTxID:   txID,
+				hash:          hashBytes,
+				requester:     requesterBytes,
+				canonical:     canonicalBytes,
+				createdHeight: height,
 			}
 			records = append(records, rec)
 			return nil
@@ -196,8 +227,62 @@ func bytesClone(b []byte) []byte {
 }
 
 func bytesCloneOrNil(v any) []byte {
-	if v == nil {
+	switch val := v.(type) {
+	case nil:
+		return nil
+	case []byte:
+		return bytes.Clone(val)
+	case *[]byte:
+		if val == nil {
+			return nil
+		}
+		return bytes.Clone(*val)
+	default:
 		return nil
 	}
-	return bytes.Clone(v.([]byte))
+}
+
+func cloneBytesValue(value any) ([]byte, error) {
+	switch v := value.(type) {
+	case []byte:
+		return bytes.Clone(v), nil
+	case *[]byte:
+		if v == nil {
+			return nil, fmt.Errorf("value is NULL")
+		}
+		return bytes.Clone(*v), nil
+	default:
+		return nil, fmt.Errorf("unexpected type %T", value)
+	}
+}
+
+func cloneBytesValueAllowNil(value any) ([]byte, error) {
+	if value == nil {
+		return nil, nil
+	}
+	switch v := value.(type) {
+	case []byte:
+		return bytes.Clone(v), nil
+	case *[]byte:
+		if v == nil {
+			return nil, nil
+		}
+		return bytes.Clone(*v), nil
+	default:
+		return nil, fmt.Errorf("unexpected type %T", value)
+	}
+}
+
+func extractInt64(value any) (int64, error) {
+	switch v := value.(type) {
+	case int64:
+		return v, nil
+	case *int64:
+		if v == nil {
+			return 0, fmt.Errorf("value is NULL")
+		}
+		return *v, nil
+	default:
+		return 0, fmt.Errorf("unexpected type %T", value)
+	}
 }
