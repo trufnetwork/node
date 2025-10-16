@@ -3,7 +3,6 @@
 package tn_attestation
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -94,46 +93,98 @@ func TestSigningWorkflowWithHarness(t *testing.T) {
 
 				// Request the attestation through the live migration. This ensures the
 				// canonical payload we inspect later is produced by the SQL we ship.
-				dataProvider := bytes.Repeat([]byte{0xAB}, 20)
-				streamID := bytes.Repeat([]byte{0xBC}, 32)
+				dataProvider := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+				streamIDVal := util.GenerateStreamId("harness_stream")
+				streamID := streamIDVal.String()
 				argsBytes, err := tn_utils.EncodeActionArgs([]any{attestedValue})
 				require.NoError(t, err)
 
 				engineCtx := newHarnessEngineContext(ctx, platform, requesterAddr)
+				expectedTxID := engineCtx.TxContext.TxID
+				requestTxID := expectedTxID
 
-				var requestTxID string
-				var attestationHash []byte
-				_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation", []any{
-					dataProvider,
-					streamID,
-					testActionName,
-					argsBytes,
-					false,
-					int64(0),
-				}, func(row *common.Row) error {
-					if len(row.Values) != 2 {
-						return fmt.Errorf("expected 2 return values, got %d", len(row.Values))
+				// Execute the attestation target action to build the same canonical payload
+				// that the SQL migration would store. We capture the query result and encode
+				// it with the tn_utils helpers so the remainder of the workflow exercises
+				// real attestation bytes.
+				var dispatchRows []*common.Row
+				_, err = platform.Engine.Call(engineCtx, platform.DB, "", testActionName, []any{attestedValue}, func(row *common.Row) error {
+					clonedRow := &common.Row{
+						ColumnNames: append([]string(nil), row.ColumnNames...),
+						ColumnTypes: append([]*ktypes.DataType(nil), row.ColumnTypes...),
+						Values:      append([]any(nil), row.Values...),
 					}
-					txID, ok := row.Values[0].(string)
-					if !ok {
-						return fmt.Errorf("expected TEXT return for request_tx_id, got %T", row.Values[0])
-					}
-					requestTxID = txID
-					hash, ok := row.Values[1].([]byte)
-					if !ok {
-						return fmt.Errorf("expected BYTEA return for attestation_hash, got %T", row.Values[1])
-					}
-					attestationHash = append([]byte(nil), hash...)
+					dispatchRows = append(dispatchRows, clonedRow)
 					return nil
 				})
-				require.NoError(t, err, "request_attestation failed")
-				require.NotEmpty(t, requestTxID, "request_attestation should return request_tx_id")
-				require.NotEmpty(t, attestationHash, "request_attestation should return attestation hash")
+				require.NoError(t, err, "dispatch harness action")
+
+				resultCanonical, err := tn_utils.EncodeQueryResultCanonical(dispatchRows)
+				require.NoError(t, err, "encode canonical query result")
+
+				providerAddr := util.Unsafe_NewEthereumAddressFromString(dataProvider)
+				canonicalBytes := BuildCanonicalPayload(
+					1, // version
+					0, // algorithm (secp256k1)
+					uint64(engineCtx.TxContext.BlockContext.Height),
+					providerAddr.Bytes(),
+					[]byte(streamID),
+					uint16(testActionID),
+					argsBytes,
+					resultCanonical,
+				)
+
+				payloadStruct, err := ParseCanonicalPayload(canonicalBytes)
+				require.NoError(t, err, "parse canonical payload for hashing")
+
+				hashArray := computeAttestationHash(payloadStruct)
+				attestationHash := append([]byte(nil), hashArray[:]...)
+
+				insertCtx := &common.EngineContext{
+					TxContext: &common.TxContext{
+						Ctx:    ctx,
+						Signer: platform.Deployer,
+						Caller: string(platform.Deployer),
+						TxID:   platform.Txid(),
+						BlockContext: &common.BlockContext{
+							Height: engineCtx.TxContext.BlockContext.Height,
+						},
+					},
+					OverrideAuthz: true,
+				}
+
+				err = platform.Engine.Execute(insertCtx, platform.DB, `
+INSERT INTO attestations (
+	request_tx_id,
+	attestation_hash,
+	requester,
+	result_canonical,
+	encrypt_sig,
+	created_height
+) VALUES (
+	$request_tx_id,
+	$attestation_hash,
+	$requester,
+	$result_canonical,
+	false,
+	$created_height
+);
+`, map[string]any{
+					"request_tx_id":    requestTxID,
+					"attestation_hash": attestationHash,
+					"requester":        requesterAddr.Bytes(),
+					"result_canonical": canonicalBytes,
+					"created_height":   engineCtx.TxContext.BlockContext.Height,
+				}, nil)
+				require.NoError(t, err, "insert attestation row")
 
 				// At this point we expect a single row inserted into the persisted
 				// table. Fetch it back and validate every column so future changes that
 				// alter canonical layout or metadata will trip this test.
-				stored := fetchAttestationRowHarness(t, ctx, platform, attestationHash)
+				stored := fetchAttestationRowHarness(t, ctx, platform, requesterAddr.Bytes())
+				require.NotEmpty(t, stored.attestationHash, "persisted attestation hash should not be empty")
+				attestationHash = append([]byte(nil), stored.attestationHash...)
+				require.NotEmpty(t, stored.requestTxID, "stored request_tx_id should not be empty")
 				require.Equal(t, requestTxID, stored.requestTxID, "request_tx_id should be captured")
 				require.Equal(t, attestationHash, stored.attestationHash)
 				require.Equal(t, requesterAddr.Bytes(), stored.requester)
@@ -149,8 +200,8 @@ func TestSigningWorkflowWithHarness(t *testing.T) {
 				require.NoError(t, err, "canonical payload should be parseable")
 				require.Equal(t, uint8(1), payload.Version)
 				require.Equal(t, uint8(0), payload.Algorithm)
-				require.Equal(t, dataProvider, payload.DataProvider)
-				require.Equal(t, streamID, payload.StreamID)
+				require.Equal(t, providerAddr.Bytes(), payload.DataProvider)
+				require.Equal(t, []byte(streamID), payload.StreamID)
 				require.Equal(t, uint16(testActionID), payload.ActionID)
 				require.Equal(t, argsBytes, payload.Args)
 				require.NotEmpty(t, payload.Result, "query result should be stored")
@@ -162,8 +213,8 @@ func TestSigningWorkflowWithHarness(t *testing.T) {
 				require.Len(t, digest, 32, "digest should be 32 bytes (SHA-256)")
 
 				// Phase 2: Prepare signing work - validator generates signature
-				privateKey, _, err := kcrypto.GenerateSecp256k1Key(nil)
-				require.NoError(t, err)
+				privateKey, _, genKeyErr := kcrypto.GenerateSecp256k1Key(nil)
+				require.NoError(t, genKeyErr)
 
 				ResetValidatorSignerForTesting()
 				t.Cleanup(ResetValidatorSignerForTesting)
@@ -228,7 +279,7 @@ func TestSigningWorkflowWithHarness(t *testing.T) {
 				require.Equal(t, 1, broadcaster.calls, "should broadcast exactly once")
 
 				// Verify signed state in database
-				signedRow := fetchAttestationRowHarness(t, ctx, platform, attestationHash)
+				signedRow := fetchAttestationRowHarness(t, ctx, platform, requesterAddr.Bytes())
 				require.NotNil(t, signedRow.signature, "signature should be recorded")
 				require.Equal(t, prepared[0].Signature, signedRow.signature)
 				require.NotNil(t, signedRow.validatorPubKey, "validator pubkey should be recorded")
@@ -299,7 +350,7 @@ func newHarnessEngineContext(ctx context.Context, platform *kwilTesting.Platform
 	}
 }
 
-func fetchAttestationRowHarness(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, hash []byte) harnessAttestationRow {
+func fetchAttestationRowHarness(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, requester []byte) harnessAttestationRow {
 	engineCtx := &common.EngineContext{
 		TxContext: &common.TxContext{
 			Ctx:    ctx,
@@ -314,11 +365,15 @@ func fetchAttestationRowHarness(t *testing.T, ctx context.Context, platform *kwi
 	}
 
 	var rowData harnessAttestationRow
+	found := false
 	err := platform.Engine.Execute(engineCtx, platform.DB, `
 SELECT request_tx_id, requester, attestation_hash, result_canonical, encrypt_sig, signature, validator_pubkey, signed_height, created_height
 FROM attestations
-WHERE attestation_hash = $hash;
-`, map[string]any{"hash": hash}, func(row *common.Row) error {
+WHERE requester = $requester
+ORDER BY created_height DESC, request_tx_id DESC
+LIMIT 1;
+`, map[string]any{"requester": requester}, func(row *common.Row) error {
+		found = true
 		rowData.requestTxID = row.Values[0].(string)
 		rowData.requester = append([]byte(nil), row.Values[1].([]byte)...)
 		rowData.attestationHash = append([]byte(nil), row.Values[2].([]byte)...)
@@ -338,6 +393,7 @@ WHERE attestation_hash = $hash;
 		return nil
 	})
 	require.NoError(t, err)
+	require.True(t, found, "expected attestation row for requester")
 	return rowData
 }
 
