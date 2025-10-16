@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	clienttypes "github.com/trufnetwork/kwil-db/core/client/types"
 	kwilcrypto "github.com/trufnetwork/kwil-db/core/crypto"
 	"github.com/trufnetwork/kwil-db/core/crypto/auth"
 	kwiltypes "github.com/trufnetwork/kwil-db/core/types"
@@ -123,11 +125,13 @@ func testCompleteStreamAttestationWorkflow(ctx context.Context, t *testing.T, cl
 // registerDataProvider registers the signer as a data provider
 func registerDataProvider(ctx context.Context, t *testing.T, client *tnclient.Client) error {
 	// Call register_data_provider action
-	txHash, err := client.GetKwilClient().Execute(ctx, "", "register_data_provider", [][]any{{}})
+	txHash, err := client.GetKwilClient().Execute(ctx, "", "register_data_provider", [][]any{{}}, clienttypes.WithSyncBroadcast(true))
 	if err != nil {
-		// May already be registered, which is fine
-		t.Logf("Data provider registration note: %v (may already be registered)", err)
-		return nil
+		if strings.Contains(strings.ToLower(err.Error()), "unknown action") {
+			t.Logf("register_data_provider action not available, skipping registration: %v", err)
+			return nil
+		}
+		return fmt.Errorf("failed to execute register_data_provider: %w", err)
 	}
 
 	t.Logf("Registered data provider, tx hash: %s", txHash.String())
@@ -146,7 +150,7 @@ func createPrimitiveStream(ctx context.Context, t *testing.T, client *tnclient.C
 	txHash, err := client.GetKwilClient().Execute(ctx, "", "create_stream", [][]any{{
 		streamID,
 		"primitive",
-	}})
+	}}, clienttypes.WithSyncBroadcast(true))
 	if err != nil {
 		return fmt.Errorf("failed to create stream: %w", err)
 	}
@@ -165,19 +169,20 @@ func createPrimitiveStream(ctx context.Context, t *testing.T, client *tnclient.C
 func insertStreamData(ctx context.Context, t *testing.T, client *tnclient.Client, dataProvider, streamID string) error {
 	// Insert a single data point: event_time=1000, value=100.5
 	eventTime := int64(1000)
-	value := kwiltypes.MustParseDecimal("100.500000000000000000")
+	valueDecimal, err := kwiltypes.ParseDecimalExplicit("100.5", 36, 18)
+	require.NoError(t, err, "failed to build decimal value")
 
 	txHash, err := client.GetKwilClient().Execute(ctx, "", "insert_record", [][]any{{
 		dataProvider,
 		streamID,
 		eventTime,
-		value,
-	}})
+		valueDecimal,
+	}}, clienttypes.WithSyncBroadcast(true))
 	if err != nil {
 		return fmt.Errorf("failed to insert record: %w", err)
 	}
 
-	t.Logf("Inserted record (event_time=%d, value=%s), tx hash: %s", eventTime, value, txHash.String())
+	t.Logf("Inserted record (event_time=%d, value=%s), tx hash: %s", eventTime, valueDecimal.String(), txHash.String())
 
 	// Wait for confirmation
 	if err := waitForTxConfirmation(ctx, client, txHash, 30*time.Second); err != nil {
@@ -219,7 +224,7 @@ func requestStreamAttestation(ctx context.Context, t *testing.T, client *tnclien
 		argsBytes,
 		false,
 		int64(0),
-	}})
+	}}, clienttypes.WithSyncBroadcast(true))
 	if err != nil {
 		return "", fmt.Errorf("failed to execute request_attestation: %w", err)
 	}
@@ -317,7 +322,7 @@ func deleteStream(ctx context.Context, t *testing.T, client *tnclient.Client, da
 	txHash, err := client.GetKwilClient().Execute(ctx, "", "delete_stream", [][]any{{
 		dataProvider,
 		streamID,
-	}})
+	}}, clienttypes.WithSyncBroadcast(true))
 	if err != nil {
 		t.Logf("Warning: Failed to delete stream: %v", err)
 		return err

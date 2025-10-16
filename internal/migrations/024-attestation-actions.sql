@@ -8,8 +8,7 @@
  * Validates action is allowed, executes query deterministically, calculates
  * attestation hash, stores unsigned attestation, and queues for signing.
  */
-DROP ACTION IF EXISTS request_attestation;
-CREATE ACTION request_attestation(
+CREATE OR REPLACE ACTION request_attestation(
     $data_provider BYTEA,
     $stream_id BYTEA,
     $action_name TEXT,
@@ -112,8 +111,7 @@ RETURN $request_tx_id, $attestation_hash;
 
 -- -----------------------------------------------------------------------------
 -- Leader-only action for recording validator signatures on attestations.
-DROP ACTION IF EXISTS sign_attestation;
-CREATE ACTION sign_attestation(
+CREATE OR REPLACE ACTION sign_attestation(
     $request_tx_id TEXT,
     $signature BYTEA
 ) PUBLIC {
