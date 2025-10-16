@@ -13,7 +13,7 @@ Reusable precompiles that support attestation and other deterministic workflows.
 - Treats `NULL` or empty chunks as empty segments.
 
 ### `bytea_length_prefix(chunk BYTEA) -> BYTEA`
-- Returns a 4-byte little-endian length prefix followed by the original chunk (treats `NULL` as zero-length).
+- Returns a 4-byte big-endian length prefix followed by the original chunk (treats `NULL` as zero-length).
 
 ### `bytea_length_prefix_many(chunks BYTEA[]) -> BYTEA[]`
 - Applies the same length-prefix transformation to each entry, returning a new `BYTEA[]`.

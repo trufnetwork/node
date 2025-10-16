@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: ghcr.io/trufnetwork/kwil-postgres:16.8-1
+    environment:
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - attestation-net
+
+  kwild:
+    image: ghcr.io/trufnetwork/node:attestation-test
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Database connection
+      KWILD_DB_HOST: postgres
+      KWILD_DB_PORT: 5432
+      # Node configuration
+      SETUP_CHAIN_ID: tn-attestation-test
+      SETUP_DB_OWNER: "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"
+      # Network configuration
+      KWILD_APP_JSONRPC_LISTEN_ADDR: "0.0.0.0:8484"
+      KWILD_APP_P2P_LISTEN_ADDR: "0.0.0.0:6600"
+      KWILD_APP_ADMIN_LISTEN_ADDR: "0.0.0.0:8485"
+      # Logging
+      KWILD_LOG_LEVEL: "debug"
+      KWILD_LOG_FORMAT: "plain"
+    volumes:
+      - ./configs/custom-entrypoint.sh:/app/custom-entrypoint.sh:ro
+    entrypoint: ["/app/custom-entrypoint.sh"]
+    ports:
+      - "8484:8484"  # JSON-RPC
+      - "8485:8485"  # Admin API
+      - "6600:6600"  # P2P
+    networks:
+      - attestation-net
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8484/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+networks:
+  attestation-net:
+    driver: bridge
+

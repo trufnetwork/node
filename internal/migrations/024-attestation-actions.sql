@@ -50,9 +50,10 @@ $max_fee INT8
 
     -- Execute target query deterministically using tn_utils.call_dispatch precompile
     $query_result := tn_utils.call_dispatch($action_name, $args_bytes);
+    $result_payload := tn_utils.canonical_to_datapoints_abi($query_result);
     
     $version := 1;
-    $algo := 1; -- secp256k1
+    $algo := 0; -- secp256k1
     -- Serialize canonical payload (version through result) using tn_utils helpers
     $version_bytes := tn_utils.encode_uint8($version::INT);
     $algo_bytes := tn_utils.encode_uint8($algo::INT);
@@ -69,7 +70,7 @@ $max_fee INT8
         tn_utils.bytea_length_prefix($stream_id),
         $action_id_bytes,
         tn_utils.bytea_length_prefix($args_bytes),
-        tn_utils.bytea_length_prefix($query_result)
+        tn_utils.bytea_length_prefix($result_payload)
     ], NULL);
     
     -- Build hash material in canonical order using caller-provided inputs only.

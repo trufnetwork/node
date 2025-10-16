@@ -147,7 +147,7 @@ func TestSigningWorkflowWithHarness(t *testing.T) {
 				payload, err := ParseCanonicalPayload(stored.resultCanonical)
 				require.NoError(t, err, "canonical payload should be parseable")
 				require.Equal(t, uint8(1), payload.Version)
-				require.Equal(t, uint8(1), payload.Algorithm)
+				require.Equal(t, uint8(0), payload.Algorithm)
 				require.Equal(t, dataProvider, payload.DataProvider)
 				require.Equal(t, streamID, payload.StreamID)
 				require.Equal(t, uint16(testActionID), payload.ActionID)

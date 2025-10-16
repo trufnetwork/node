@@ -44,15 +44,15 @@ func runSigningIntegration(t *testing.T, useQueue bool) {
 
 	// Canonical payload mirrors the SQL construction to exercise the full pipeline.
 	version := uint8(1)
-	algo := uint8(1)
+	algo := uint8(0)
 	height := uint64(77)
 	actionID := uint16(5)
-	dataProvider := []byte("provider-queue-flow")
-	streamID := []byte("stream-queue-flow")
+	dataProvider := bytes.Repeat([]byte{0xA1}, 20)
+	streamID := bytes.Repeat([]byte{0xB2}, 32)
 	args := []byte{0x01, 0x02}
 	result := []byte{0x03}
 
-	canonical := buildCanonicalPayload(version, algo, height, dataProvider, streamID, actionID, args, result)
+	canonical := BuildCanonicalPayload(version, algo, height, dataProvider, streamID, actionID, args, result)
 	payload, err := ParseCanonicalPayload(canonical)
 	require.NoError(t, err)
 
@@ -275,68 +275,4 @@ func (signerAccountsStub) GetAccount(context.Context, sql.Executor, *ktypes.Acco
 
 func (signerAccountsStub) ApplySpend(context.Context, sql.Executor, *ktypes.AccountID, *big.Int, int64) error {
 	return nil
-}
-
-func buildCanonicalPayload(version, algo uint8, blockHeight uint64, dataProvider, streamID []byte, actionID uint16, args, result []byte) []byte {
-	versionBytes := []byte{version}
-	algoBytes := []byte{algo}
-
-	heightBytes := make([]byte, 8)
-	binaryBigEndianPutUint64(heightBytes, blockHeight)
-
-	actionBytes := make([]byte, 2)
-	binaryBigEndianPutUint16(actionBytes, actionID)
-
-	segments := [][]byte{
-		versionBytes,
-		algoBytes,
-		heightBytes,
-		lengthPrefixLittleEndian(dataProvider),
-		lengthPrefixLittleEndian(streamID),
-		actionBytes,
-		lengthPrefixLittleEndian(args),
-		lengthPrefixLittleEndian(result),
-	}
-
-	var buf bytes.Buffer
-	for _, seg := range segments {
-		buf.Write(seg)
-	}
-	return buf.Bytes()
-}
-
-func lengthPrefixLittleEndian(data []byte) []byte {
-	if data == nil {
-		data = []byte{}
-	}
-	prefixed := make([]byte, 4+len(data))
-	binaryLittleEndianPutUint32(prefixed[:4], uint32(len(data)))
-	copy(prefixed[4:], data)
-	return prefixed
-}
-
-func binaryBigEndianPutUint64(b []byte, v uint64) {
-	_ = b[7]
-	b[0] = byte(v >> 56)
-	b[1] = byte(v >> 48)
-	b[2] = byte(v >> 40)
-	b[3] = byte(v >> 32)
-	b[4] = byte(v >> 24)
-	b[5] = byte(v >> 16)
-	b[6] = byte(v >> 8)
-	b[7] = byte(v)
-}
-
-func binaryBigEndianPutUint16(b []byte, v uint16) {
-	_ = b[1]
-	b[0] = byte(v >> 8)
-	b[1] = byte(v)
-}
-
-func binaryLittleEndianPutUint32(b []byte, v uint32) {
-	_ = b[3]
-	b[0] = byte(v)
-	b[1] = byte(v >> 8)
-	b[2] = byte(v >> 16)
-	b[3] = byte(v >> 24)
 }

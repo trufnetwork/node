@@ -139,6 +139,10 @@ func (e *signerExtension) prepareSigningWork(ctx context.Context, hashHex string
 			return nil, fmt.Errorf("parse canonical payload: %w", err)
 		}
 
+		if err := payload.ValidateForEVM(); err != nil {
+			return nil, fmt.Errorf("canonical payload invalid: %w", err)
+		}
+
 		// Validate stored hash matches caller inputs; SQL computes it from request parameters.
 		expectedHash := computeAttestationHash(payload)
 		if !bytes.Equal(expectedHash[:], rec.hash) {
@@ -211,13 +215,13 @@ func computeAttestationHash(p *CanonicalPayload) [sha256.Size]byte {
 	buf := bytes.NewBuffer(nil)
 	buf.WriteByte(p.Version)
 	buf.WriteByte(p.Algorithm)
-	buf.Write(p.DataProvider)
-	buf.Write(p.StreamID)
+	buf.Write(lengthPrefixBigEndian(p.DataProvider))
+	buf.Write(lengthPrefixBigEndian(p.StreamID))
 
 	var actionBytes [2]byte
 	binary.BigEndian.PutUint16(actionBytes[:], p.ActionID)
 	buf.Write(actionBytes[:])
-	buf.Write(p.Args)
+	buf.Write(lengthPrefixBigEndian(p.Args))
 
 	return sha256.Sum256(buf.Bytes())
 }

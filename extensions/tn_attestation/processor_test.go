@@ -25,16 +25,16 @@ import (
 func TestComputeAttestationHash(t *testing.T) {
 	const (
 		version   = uint8(1)
-		algorithm = uint8(1)
+		algorithm = uint8(0)
 		height    = uint64(99)
 		actionID  = uint16(7)
 	)
-	dataProvider := []byte("provider")
-	streamID := []byte("stream")
+	dataProvider := bytes.Repeat([]byte{0x11}, 20)
+	streamID := bytes.Repeat([]byte{0x22}, 32)
 	args := []byte{0x01, 0x02}
 	result := []byte{0x03, 0x04}
 
-	canonical := buildCanonical(version, algorithm, height, dataProvider, streamID, actionID, args, result)
+	canonical := BuildCanonicalPayload(version, algorithm, height, dataProvider, streamID, actionID, args, result)
 	payload, err := ParseCanonicalPayload(canonical)
 	require.NoError(t, err)
 
@@ -55,15 +55,15 @@ func TestPrepareSigningWork(t *testing.T) {
 	require.NoError(t, InitializeValidatorSigner(privateKey))
 
 	version := uint8(1)
-	algo := uint8(1)
+	algo := uint8(0)
 	height := uint64(77)
 	actionID := uint16(5)
-	dataProvider := []byte("provider-1")
-	streamID := []byte("stream-abc")
+	dataProvider := bytes.Repeat([]byte{0x33}, 20)
+	streamID := bytes.Repeat([]byte{0x44}, 32)
 	args := []byte{0x01, 0x02}
 	result := []byte{0xAA}
 
-	canonical := buildCanonical(version, algo, height, dataProvider, streamID, actionID, args, result)
+	canonical := BuildCanonicalPayload(version, algo, height, dataProvider, streamID, actionID, args, result)
 	payload, err := ParseCanonicalPayload(canonical)
 	require.NoError(t, err)
 
@@ -111,15 +111,15 @@ func TestSubmitSignature(t *testing.T) {
 	require.NoError(t, InitializeValidatorSigner(privateKey))
 
 	version := uint8(1)
-	algo := uint8(1)
+	algo := uint8(0)
 	height := uint64(77)
 	actionID := uint16(5)
-	dataProvider := []byte("provider-1")
-	streamID := []byte("stream-abc")
+	dataProvider := bytes.Repeat([]byte{0x55}, 20)
+	streamID := bytes.Repeat([]byte{0x66}, 32)
 	args := []byte{0x01, 0x02}
 	result := []byte{0xAA}
 
-	canonical := buildCanonical(version, algo, height, dataProvider, streamID, actionID, args, result)
+	canonical := BuildCanonicalPayload(version, algo, height, dataProvider, streamID, actionID, args, result)
 	payload, err := ParseCanonicalPayload(canonical)
 	require.NoError(t, err)
 
@@ -240,13 +240,13 @@ func buildHashMaterial(version, algo uint8, dataProvider, streamID []byte, actio
 	buf := bytes.NewBuffer(nil)
 	buf.WriteByte(version)
 	buf.WriteByte(algo)
-	buf.Write(dataProvider)
-	buf.Write(streamID)
+	buf.Write(lengthPrefixBigEndian(dataProvider))
+	buf.Write(lengthPrefixBigEndian(streamID))
 
 	var actionBytes [2]byte
 	binary.BigEndian.PutUint16(actionBytes[:], actionID)
 	buf.Write(actionBytes[:])
-	buf.Write(args)
+	buf.Write(lengthPrefixBigEndian(args))
 
 	return buf.Bytes()
 }
