@@ -155,8 +155,8 @@ func (h *AttestationTestHelper) RequestAttestation(actionName string, value int6
 	require.NoError(h.t, err, "encode action args")
 
 	res := h.CallAction("request_attestation", []any{
-		TestDataProviderBytes,
-		[]byte(TestStreamID),
+		TestDataProviderHex,
+		TestStreamID,
 		actionName,
 		argsBytes,
 		false,
@@ -212,8 +212,8 @@ func (h *AttestationTestHelper) CreateAttestationForRequester(actionName string,
 	requesterCtx := h.NewRequesterContext(requester)
 	_, err = h.platform.Engine.Call(requesterCtx, h.platform.DB, "", "request_attestation",
 		[]any{
-			TestDataProviderBytes,
-			[]byte(TestStreamID),
+			TestDataProviderHex,
+			TestStreamID,
 			actionName,
 			argsBytes,
 			false,

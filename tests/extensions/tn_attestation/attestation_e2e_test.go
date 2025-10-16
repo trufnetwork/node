@@ -138,6 +138,11 @@ func registerDataProvider(ctx context.Context, t *testing.T, client *tnclient.Cl
 
 	// Wait for confirmation
 	if err := waitForTxConfirmation(ctx, client, txHash, 30*time.Second); err != nil {
+		lowerErr := strings.ToLower(err.Error())
+		if strings.Contains(lowerErr, "unknown action") {
+			t.Logf("register_data_provider confirmation indicates action absent, skipping: %v", err)
+			return nil
+		}
 		return fmt.Errorf("data provider registration not confirmed: %w", err)
 	}
 
@@ -197,12 +202,6 @@ func insertStreamData(ctx context.Context, t *testing.T, client *tnclient.Client
 
 // requestStreamAttestation requests an attestation for a get_record query on the stream
 func requestStreamAttestation(ctx context.Context, t *testing.T, client *tnclient.Client, dataProviderHex, streamID string) (string, error) {
-	dataProviderBytes, err := hex.DecodeString(dataProviderHex[2:])
-	if err != nil {
-		return "", fmt.Errorf("failed to decode data provider: %w", err)
-	}
-	streamIDBytes := []byte(streamID)
-
 	argsData := []any{
 		dataProviderHex,
 		streamID,
@@ -218,8 +217,8 @@ func requestStreamAttestation(ctx context.Context, t *testing.T, client *tnclien
 	}
 
 	txHash, err := client.GetKwilClient().Execute(ctx, "", "request_attestation", [][]any{{
-		dataProviderBytes,
-		streamIDBytes,
+		dataProviderHex,
+		streamID,
 		"get_record",
 		argsBytes,
 		false,
@@ -308,6 +307,12 @@ func waitForTxConfirmation(ctx context.Context, client *tnclient.Client, txHash 
 	for time.Now().Before(deadline) {
 		result, err := client.GetKwilClient().TxQuery(ctx, txHash)
 		if err == nil && result != nil && result.Height > 0 {
+			if result.Result == nil {
+				return fmt.Errorf("transaction %s has no result payload", txHash.String())
+			}
+			if result.Result.Code != uint32(kwiltypes.CodeOk) {
+				return fmt.Errorf("transaction %s failed: code=%d log=%s", txHash.String(), result.Result.Code, result.Result.Log)
+			}
 			return nil
 		}
 

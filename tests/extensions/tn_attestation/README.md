@@ -67,5 +67,13 @@ get_signed_attestation (retrieves payload)
 - No network failure simulation
 - Assumes node is always leader
 
-For more complex scenarios, see the integration test suite in `../../extensions/tn_attestation/`.
+## Validator trust model
 
+The attestation payload only contains the canonical bytes and a signature generated
+by the block leader. Consumers **must** already know which validator key(s) they
+trust and verify the signature against those addresses. The attestation does not
+embed validator metadata, and it is possible for any key holder to sign arbitrary
+data. Production deployments should distribute validator keys out of band and
+rotate them via node configuration, not through the attestation payload itself.
+
+For more complex scenarios, see the integration test suite in `../../extensions/tn_attestation/`.
