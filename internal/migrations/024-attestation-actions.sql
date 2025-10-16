@@ -8,7 +8,8 @@
  * Validates action is allowed, executes query deterministically, calculates
  * attestation hash, stores unsigned attestation, and queues for signing.
  */
-CREATE OR REPLACE ACTION request_attestation(
+DROP ACTION IF EXISTS request_attestation;
+CREATE ACTION request_attestation(
     $data_provider BYTEA,
     $stream_id BYTEA,
     $action_name TEXT,
@@ -40,6 +41,15 @@ $max_fee INT8
     $caller_hex := LOWER(substring(@caller, 3, 40));
     $caller_bytes := decode($caller_hex, 'hex');
     
+    -- Enforce EVM-compatible field sizes
+    if octet_length($data_provider) != 20 {
+        ERROR('data_provider must be 20 bytes');
+    }
+
+    if octet_length($stream_id) != 32 {
+        ERROR('stream_id must be 32 bytes');
+    }
+
     -- Force deterministic execution by overriding non-deterministic parameters.
     -- Query actions (IDs 1-5) all have use_cache as their last parameter.
     -- Force use_cache=false to ensure all validators compute identical results
@@ -78,10 +88,10 @@ $max_fee INT8
     $hash_input := tn_utils.bytea_join(ARRAY[
         $version_bytes,
         $algo_bytes,
-        $data_provider,
-        $stream_id,
+        tn_utils.bytea_length_prefix($data_provider),
+        tn_utils.bytea_length_prefix($stream_id),
         $action_id_bytes,
-        $args_bytes
+        tn_utils.bytea_length_prefix($args_bytes)
     ], NULL);
     $attestation_hash := digest($hash_input, 'sha256');
     
@@ -102,7 +112,8 @@ RETURN $request_tx_id, $attestation_hash;
 
 -- -----------------------------------------------------------------------------
 -- Leader-only action for recording validator signatures on attestations.
-CREATE OR REPLACE ACTION sign_attestation(
+DROP ACTION IF EXISTS sign_attestation;
+CREATE ACTION sign_attestation(
     $request_tx_id TEXT,
     $signature BYTEA
 ) PUBLIC {

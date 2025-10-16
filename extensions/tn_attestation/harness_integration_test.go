@@ -3,6 +3,7 @@
 package tn_attestation
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -93,8 +94,8 @@ func TestSigningWorkflowWithHarness(t *testing.T) {
 
 				// Request the attestation through the live migration. This ensures the
 				// canonical payload we inspect later is produced by the SQL we ship.
-				dataProvider := []byte("provider-harness")
-				streamID := []byte("stream-harness")
+				dataProvider := bytes.Repeat([]byte{0xAB}, 20)
+				streamID := bytes.Repeat([]byte{0xBC}, 32)
 				argsBytes, err := tn_utils.EncodeActionArgs([]any{attestedValue})
 				require.NoError(t, err)
 

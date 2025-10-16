@@ -34,9 +34,8 @@ services:
       # Logging
       KWILD_LOG_LEVEL: "debug"
       KWILD_LOG_FORMAT: "plain"
-    volumes:
-      - ./configs/custom-entrypoint.sh:/app/custom-entrypoint.sh:ro
-    entrypoint: ["/app/custom-entrypoint.sh"]
+      # Validator private key for signing
+      KWILD_PRIVATE_KEY: "0000000000000000000000000000000000000000000000000000000000000001"
     ports:
       - "8484:8484"  # JSON-RPC
       - "8485:8485"  # Admin API
