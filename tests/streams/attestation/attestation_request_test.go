@@ -3,7 +3,6 @@
 package tests
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"testing"
@@ -17,6 +16,7 @@ import (
 	"github.com/trufnetwork/node/extensions/tn_utils"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
+	"github.com/trufnetwork/sdk-go/core/util"
 )
 
 func TestRequestAttestationInsertsCanonicalPayload(t *testing.T) {
@@ -43,8 +43,8 @@ func TestRequestAttestationInsertsCanonicalPayload(t *testing.T) {
 func runAttestationHappyPath(helper *AttestationTestHelper, actionName string, actionID int) {
 	const attestedValue int64 = 42
 
-	dataProvider := bytes.Repeat([]byte{0x71}, 20)
-	streamID := bytes.Repeat([]byte{0x72}, 32)
+	dataProviderHex := TestDataProviderHex
+	streamID := TestStreamID
 
 	argsBytes, err := tn_utils.EncodeActionArgs([]any{attestedValue})
 	require.NoError(helper.t, err, "encode action args")
@@ -54,16 +54,20 @@ func runAttestationHappyPath(helper *AttestationTestHelper, actionName string, a
 	var requestTxID string
 	var attestationHash []byte
 	_, err = helper.platform.Engine.Call(engineCtx, helper.platform.DB, "", "request_attestation", []any{
-		dataProvider,
+		dataProviderHex,
 		streamID,
 		actionName,
 		argsBytes,
 		false,
 		int64(0),
 	}, func(row *common.Row) error {
-		require.Len(helper.t, row.Values, 2, "expected 2 return values (request_tx_id, attestation_hash)")
-		requestTxID = row.Values[0].(string)
-		attestationHash = append([]byte(nil), row.Values[1].([]byte)...)
+		require.Len(helper.t, row.Values, 2, "expected request_attestation to return request_tx_id and attestation_hash")
+		txID, ok := row.Values[0].(string)
+		require.True(helper.t, ok, "request_tx_id should be TEXT")
+		hash, ok := row.Values[1].([]byte)
+		require.True(helper.t, ok, "attestation_hash should be BYTEA")
+		requestTxID = txID
+		attestationHash = append([]byte(nil), hash...)
 		return nil
 	})
 	require.NoError(helper.t, err)
@@ -88,12 +92,13 @@ func runAttestationHappyPath(helper *AttestationTestHelper, actionName string, a
 	resultPayload, err := tn_utils.EncodeDataPointsABI(canonicalResult)
 	require.NoError(helper.t, err)
 
+	providerAddr := util.Unsafe_NewEthereumAddressFromString(dataProviderHex)
 	expectedCanonical := attestation.BuildCanonicalPayload(
 		1,
 		0,
 		uint64(stored.createdHeight),
-		dataProvider,
-		streamID,
+		providerAddr.Bytes(),
+		[]byte(streamID),
 		uint16(actionID),
 		argsBytes,
 		resultPayload,

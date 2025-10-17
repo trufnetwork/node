@@ -91,8 +91,9 @@ func TestSigningWorkflowWithHarness(t *testing.T) {
 				// path that nodes run when users hit the public API.
 				require.NoError(t, setupTestAttestationAction(ctx, platform, testActionName, testActionID))
 
-				// Request the attestation through the live migration. This ensures the
-				// canonical payload we inspect later is produced by the SQL we ship.
+				// Manually construct the attestation using the same BuildCanonicalPayload
+				// function that request_attestation would use. This verifies the Go
+				// canonical builder produces correct attestation bytes for the signing workflow.
 				dataProvider := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 				streamIDVal := util.GenerateStreamId("harness_stream")
 				streamID := streamIDVal.String()

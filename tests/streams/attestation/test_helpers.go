@@ -240,8 +240,8 @@ func (h *AttestationTestHelper) SetupTestAction(actionName string, actionID int)
 	createAction := `
 CREATE OR REPLACE ACTION ` + actionName + `(
 	$value INT8
-) PUBLIC VIEW RETURNS TABLE(result INT8) {
-	RETURN NEXT $value;
+) PUBLIC VIEW RETURNS TABLE(event_time INT8, value NUMERIC(36,18)) {
+	RETURN NEXT 1, ($value)::NUMERIC(36,18);
 };`
 
 	if err := h.platform.Engine.Execute(engineCtx, h.platform.DB, createAction, nil, nil); err != nil {
