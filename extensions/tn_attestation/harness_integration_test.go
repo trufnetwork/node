@@ -184,10 +184,11 @@ INSERT INTO attestations (
 				// alter canonical layout or metadata will trip this test.
 				stored := fetchAttestationRowHarness(t, ctx, platform, requesterAddr.Bytes())
 				require.NotEmpty(t, stored.attestationHash, "persisted attestation hash should not be empty")
-				attestationHash = append([]byte(nil), stored.attestationHash...)
+				persistedHash := append([]byte(nil), stored.attestationHash...)
 				require.NotEmpty(t, stored.requestTxID, "stored request_tx_id should not be empty")
 				require.Equal(t, requestTxID, stored.requestTxID, "request_tx_id should be captured")
-				require.Equal(t, attestationHash, stored.attestationHash)
+				require.Equal(t, attestationHash, persistedHash, "returned attestation hash should match stored hash")
+				attestationHash = persistedHash
 				require.Equal(t, requesterAddr.Bytes(), stored.requester)
 				require.NotEmpty(t, stored.resultCanonical, "canonical payload should be stored")
 				require.False(t, stored.encryptSig, "encrypt_sig must be false in MVP")
