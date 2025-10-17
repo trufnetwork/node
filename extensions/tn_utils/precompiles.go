@@ -25,6 +25,7 @@ func buildPrecompile() precompiles.Precompile {
 			encodeUintMethod("encode_uint16", 16),
 			encodeUintMethod("encode_uint32", 32),
 			encodeUintMethod("encode_uint64", 64),
+			canonicalToDataPointsABIMethod(),
 			forceLastArgFalseMethod(),
 		},
 	}
@@ -134,6 +135,23 @@ func encodeUintMethod(name string, bits int) precompiles.Method {
 	}
 }
 
+func canonicalToDataPointsABIMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "canonical_to_datapoints_abi",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters: []precompiles.PrecompileValue{
+			precompiles.NewPrecompileValue("canonical", types.ByteaType, false),
+		},
+		Returns: &precompiles.MethodReturn{
+			IsTable: false,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("encoded", types.ByteaType, false),
+			},
+		},
+		Handler: canonicalToDataPointsABIHandler,
+	}
+}
+
 // callDispatchHandler decodes action arguments, executes the target action inside
 // the current engine context, canonicalises the resulting rows, and hands the
 // bytes back to SQL. Any mismatch in decoding or execution bubbles up as an error.
@@ -170,6 +188,22 @@ func callDispatchHandler(ctx *common.EngineContext, app *common.App, inputs []an
 	return resultFn([]any{resultBytes})
 }
 
+func canonicalToDataPointsABIHandler(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+	canonical, err := toByteSliceAllowNil(inputs[0])
+	if err != nil {
+		return err
+	}
+	if canonical == nil {
+		canonical = []byte{}
+	}
+
+	encoded, err := EncodeDataPointsABI(canonical)
+	if err != nil {
+		return err
+	}
+	return resultFn([]any{encoded})
+}
+
 // byteaJoinHandler concatenates the provided chunks into a single bytea value,
 // normalising nil delimiters/chunks to empty slices to stay deterministic.
 func byteaJoinHandler(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
@@ -199,7 +233,7 @@ func byteaJoinHandler(ctx *common.EngineContext, app *common.App, inputs []any, 
 	return resultFn([]any{buf.Bytes()})
 }
 
-// byteaLengthPrefixHandler prepends a 4-byte little-endian length header to the
+// byteaLengthPrefixHandler prepends a 4-byte big-endian length header to the
 // provided chunk and returns the combined byte slice.
 func byteaLengthPrefixHandler(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
 	chunk, err := toByteSliceAllowNil(inputs[0])
@@ -315,7 +349,7 @@ func lengthPrefixBytes(chunk []byte) []byte {
 		chunk = []byte{}
 	}
 	prefixed := make([]byte, 4+len(chunk))
-	binary.LittleEndian.PutUint32(prefixed[:4], uint32(len(chunk)))
+	binary.BigEndian.PutUint32(prefixed[:4], uint32(len(chunk)))
 	copy(prefixed[4:], chunk)
 	return prefixed
 }

@@ -356,12 +356,12 @@ func TestByteaLengthPrefixHandler(t *testing.T) {
 		{
 			name:     "non-empty",
 			chunk:    []byte{0x01, 0x02},
-			expected: []byte{2, 0, 0, 0, 0x01, 0x02},
+			expected: []byte{0, 0, 0, 2, 0x01, 0x02},
 		},
 		{
 			name:     "string input",
 			chunk:    "abc",
-			expected: []byte{3, 0, 0, 0, 'a', 'b', 'c'},
+			expected: []byte{0, 0, 0, 3, 'a', 'b', 'c'},
 		},
 	}
 
@@ -398,9 +398,9 @@ func TestByteaLengthPrefixManyHandler(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, prefixed, 3)
 
-	assert.Equal(t, []byte{1, 0, 0, 0, 'a'}, prefixed[0])
+	assert.Equal(t, []byte{0, 0, 0, 1, 'a'}, prefixed[0])
 	assert.Equal(t, []byte{0, 0, 0, 0}, prefixed[1])
-	assert.Equal(t, []byte{2, 0, 0, 0, 'b', 'c'}, prefixed[2])
+	assert.Equal(t, []byte{0, 0, 0, 2, 'b', 'c'}, prefixed[2])
 }
 
 func TestEncodeUintHandlers(t *testing.T) {

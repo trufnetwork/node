@@ -5,6 +5,8 @@ package tests
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -22,13 +24,26 @@ const (
 	TestActionIDRequest = 10
 	TestActionIDGet     = 20
 	TestActionIDList    = 21
-	TestDataProvider    = "test-provider"
-	TestStreamID        = "test-stream"
+	TestStreamID        = "stream_attestation_test_00000000"
+	TestDataProviderHex = "0x0000000000000000000000000000000000000b11"
 	SignatureLength     = 65
 	MinCanonicalLength  = 20
 	DefaultBlockHeight  = 10
 	InvalidTxID         = "0x0000000000000000000000000000000000000000000000000000000000000000"
 )
+
+var (
+	TestDataProviderBytes = mustHexToBytes(TestDataProviderHex)
+)
+
+func mustHexToBytes(input string) []byte {
+	normalized := strings.TrimPrefix(input, "0x")
+	res, err := hex.DecodeString(normalized)
+	if err != nil {
+		panic(err)
+	}
+	return res
+}
 
 // TestAddresses holds reusable test addresses
 type TestAddresses struct {
@@ -140,8 +155,8 @@ func (h *AttestationTestHelper) RequestAttestation(actionName string, value int6
 	require.NoError(h.t, err, "encode action args")
 
 	res := h.CallAction("request_attestation", []any{
-		[]byte(TestDataProvider),
-		[]byte(TestStreamID),
+		TestDataProviderHex,
+		TestStreamID,
 		actionName,
 		argsBytes,
 		false,
@@ -197,8 +212,8 @@ func (h *AttestationTestHelper) CreateAttestationForRequester(actionName string,
 	requesterCtx := h.NewRequesterContext(requester)
 	_, err = h.platform.Engine.Call(requesterCtx, h.platform.DB, "", "request_attestation",
 		[]any{
-			[]byte(TestDataProvider),
-			[]byte(TestStreamID),
+			TestDataProviderHex,
+			TestStreamID,
 			actionName,
 			argsBytes,
 			false,
@@ -225,8 +240,8 @@ func (h *AttestationTestHelper) SetupTestAction(actionName string, actionID int)
 	createAction := `
 CREATE OR REPLACE ACTION ` + actionName + `(
 	$value INT8
-) PUBLIC VIEW RETURNS TABLE(result INT8) {
-	RETURN NEXT $value;
+) PUBLIC VIEW RETURNS TABLE(event_time INT8, value NUMERIC(36,18)) {
+	RETURN NEXT 1, ($value)::NUMERIC(36,18);
 };`
 
 	if err := h.platform.Engine.Execute(engineCtx, h.platform.DB, createAction, nil, nil); err != nil {

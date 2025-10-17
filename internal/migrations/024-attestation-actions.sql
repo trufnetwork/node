@@ -9,8 +9,8 @@
  * attestation hash, stores unsigned attestation, and queues for signing.
  */
 CREATE OR REPLACE ACTION request_attestation(
-    $data_provider BYTEA,
-    $stream_id BYTEA,
+    $data_provider TEXT,
+    $stream_id TEXT,
     $action_name TEXT,
     $args_bytes BYTEA,
     $encrypt_sig BOOLEAN,
@@ -40,6 +40,21 @@ $max_fee INT8
     $caller_hex := LOWER(substring(@caller, 3, 40));
     $caller_bytes := decode($caller_hex, 'hex');
     
+    -- Normalize provider input and enforce length
+    $provider_lower := LOWER($data_provider);
+    if char_length($provider_lower) != 42 {
+        ERROR('data_provider must be 0x-prefixed 40 hex characters');
+    }
+    if substring($provider_lower, 1, 2) != '0x' {
+        ERROR('data_provider must be 0x-prefixed 40 hex characters');
+    }
+    $data_provider_bytes := decode(substring($provider_lower, 3, 40), 'hex');
+
+    if length($stream_id) != 32 {
+        ERROR('stream_id must be 32 characters');
+    }
+    $stream_bytes := $stream_id::BYTEA;
+
     -- Force deterministic execution by overriding non-deterministic parameters.
     -- Query actions (IDs 1-5) all have use_cache as their last parameter.
     -- Force use_cache=false to ensure all validators compute identical results
@@ -50,9 +65,10 @@ $max_fee INT8
 
     -- Execute target query deterministically using tn_utils.call_dispatch precompile
     $query_result := tn_utils.call_dispatch($action_name, $args_bytes);
+    $result_payload := tn_utils.canonical_to_datapoints_abi($query_result);
     
     $version := 1;
-    $algo := 1; -- secp256k1
+    $algo := 0; -- secp256k1
     -- Serialize canonical payload (version through result) using tn_utils helpers
     $version_bytes := tn_utils.encode_uint8($version::INT);
     $algo_bytes := tn_utils.encode_uint8($algo::INT);
@@ -65,11 +81,11 @@ $max_fee INT8
         $version_bytes,
         $algo_bytes,
         $height_bytes,
-        tn_utils.bytea_length_prefix($data_provider),
-        tn_utils.bytea_length_prefix($stream_id),
+        tn_utils.bytea_length_prefix($data_provider_bytes),
+        tn_utils.bytea_length_prefix($stream_bytes),
         $action_id_bytes,
         tn_utils.bytea_length_prefix($args_bytes),
-        tn_utils.bytea_length_prefix($query_result)
+        tn_utils.bytea_length_prefix($result_payload)
     ], NULL);
     
     -- Build hash material in canonical order using caller-provided inputs only.
@@ -77,10 +93,10 @@ $max_fee INT8
     $hash_input := tn_utils.bytea_join(ARRAY[
         $version_bytes,
         $algo_bytes,
-        $data_provider,
-        $stream_id,
+        tn_utils.bytea_length_prefix($data_provider_bytes),
+        tn_utils.bytea_length_prefix($stream_bytes),
         $action_id_bytes,
-        $args_bytes
+        tn_utils.bytea_length_prefix($args_bytes)
     ], NULL);
     $attestation_hash := digest($hash_input, 'sha256');
     

@@ -3,18 +3,20 @@
 package tests
 
 import (
-	"bytes"
 	"context"
-	"encoding/binary"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/trufnetwork/kwil-db/common"
+	"github.com/trufnetwork/kwil-db/core/types"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	attestation "github.com/trufnetwork/node/extensions/tn_attestation"
 	"github.com/trufnetwork/node/extensions/tn_utils"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
+	"github.com/trufnetwork/sdk-go/core/util"
 )
 
 func TestRequestAttestationInsertsCanonicalPayload(t *testing.T) {
@@ -41,8 +43,8 @@ func TestRequestAttestationInsertsCanonicalPayload(t *testing.T) {
 func runAttestationHappyPath(helper *AttestationTestHelper, actionName string, actionID int) {
 	const attestedValue int64 = 42
 
-	dataProvider := []byte("provider-001")
-	streamID := []byte("stream-abc")
+	dataProviderHex := TestDataProviderHex
+	streamID := TestStreamID
 
 	argsBytes, err := tn_utils.EncodeActionArgs([]any{attestedValue})
 	require.NoError(helper.t, err, "encode action args")
@@ -52,16 +54,20 @@ func runAttestationHappyPath(helper *AttestationTestHelper, actionName string, a
 	var requestTxID string
 	var attestationHash []byte
 	_, err = helper.platform.Engine.Call(engineCtx, helper.platform.DB, "", "request_attestation", []any{
-		dataProvider,
+		dataProviderHex,
 		streamID,
 		actionName,
 		argsBytes,
 		false,
 		int64(0),
 	}, func(row *common.Row) error {
-		require.Len(helper.t, row.Values, 2, "expected 2 return values (request_tx_id, attestation_hash)")
-		requestTxID = row.Values[0].(string)
-		attestationHash = append([]byte(nil), row.Values[1].([]byte)...)
+		require.Len(helper.t, row.Values, 2, "expected request_attestation to return request_tx_id and attestation_hash")
+		txID, ok := row.Values[0].(string)
+		require.True(helper.t, ok, "request_tx_id should be TEXT")
+		hash, ok := row.Values[1].([]byte)
+		require.True(helper.t, ok, "attestation_hash should be BYTEA")
+		requestTxID = txID
+		attestationHash = append([]byte(nil), hash...)
 		return nil
 	})
 	require.NoError(helper.t, err)
@@ -72,18 +78,30 @@ func runAttestationHappyPath(helper *AttestationTestHelper, actionName string, a
 	require.Equal(helper.t, requestTxID, stored.requestTxID, "request_tx_id should be captured and stored")
 
 	// Rebuild expected canonical payload
-	queryResult, err := tn_utils.EncodeQueryResultCanonical([]*common.Row{
-		{Values: []any{attestedValue}},
-	})
+	valueDecimal := types.MustParseDecimal(fmt.Sprintf("%d.%018d", attestedValue, 0))
+	queryRows := []*common.Row{
+		{
+			Values: []any{
+				int64(1),
+				valueDecimal,
+			},
+		},
+	}
+	canonicalResult, err := tn_utils.EncodeQueryResultCanonical(queryRows)
+	require.NoError(helper.t, err)
+	resultPayload, err := tn_utils.EncodeDataPointsABI(canonicalResult)
 	require.NoError(helper.t, err)
 
-	expectedCanonical := buildExpectedCanonicalPayload(
-		stored.createdHeight,
-		dataProvider,
-		streamID,
-		actionID,
+	providerAddr := util.Unsafe_NewEthereumAddressFromString(dataProviderHex)
+	expectedCanonical := attestation.BuildCanonicalPayload(
+		1,
+		0,
+		uint64(stored.createdHeight),
+		providerAddr.Bytes(),
+		[]byte(streamID),
+		uint16(actionID),
 		argsBytes,
-		queryResult,
+		resultPayload,
 	)
 
 	require.Equal(helper.t, expectedCanonical, stored.resultCanonical, "canonical payload mismatch")
@@ -137,45 +155,4 @@ WHERE attestation_hash = $hash;
 	require.NotNil(helper.t, rowData.resultCanonical, "attestation row must exist")
 
 	return rowData
-}
-
-func buildExpectedCanonicalPayload(
-	createdHeight int64,
-	dataProvider []byte,
-	streamID []byte,
-	actionID int,
-	argsBytes []byte,
-	queryResult []byte,
-) []byte {
-	versionBytes := []byte{1}
-	algoBytes := []byte{1}
-
-	heightBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(heightBytes, uint64(createdHeight))
-
-	actionIDBytes := make([]byte, 2)
-	binary.BigEndian.PutUint16(actionIDBytes, uint16(actionID))
-
-	segments := [][]byte{
-		versionBytes,
-		algoBytes,
-		heightBytes,
-		lengthPrefixLittleEndian(dataProvider),
-		lengthPrefixLittleEndian(streamID),
-		actionIDBytes,
-		lengthPrefixLittleEndian(argsBytes),
-		lengthPrefixLittleEndian(queryResult),
-	}
-
-	return bytes.Join(segments, nil)
-}
-
-func lengthPrefixLittleEndian(data []byte) []byte {
-	if data == nil {
-		data = []byte{}
-	}
-	prefixed := make([]byte, 4+len(data))
-	binary.LittleEndian.PutUint32(prefixed[:4], uint32(len(data)))
-	copy(prefixed[4:], data)
-	return prefixed
 }

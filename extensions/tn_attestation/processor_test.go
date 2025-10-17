@@ -6,8 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math/big"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -20,21 +24,23 @@ import (
 	"github.com/trufnetwork/kwil-db/core/log"
 	ktypes "github.com/trufnetwork/kwil-db/core/types"
 	nodesql "github.com/trufnetwork/kwil-db/node/types/sql"
+	"github.com/trufnetwork/node/extensions/tn_utils"
+	"github.com/trufnetwork/sdk-go/core/util"
 )
 
 func TestComputeAttestationHash(t *testing.T) {
 	const (
 		version   = uint8(1)
-		algorithm = uint8(1)
+		algorithm = uint8(0)
 		height    = uint64(99)
 		actionID  = uint16(7)
 	)
-	dataProvider := []byte("provider")
-	streamID := []byte("stream")
+	dataProvider := bytes.Repeat([]byte{0x11}, 20)
+	streamID := bytes.Repeat([]byte{0x22}, 32)
 	args := []byte{0x01, 0x02}
 	result := []byte{0x03, 0x04}
 
-	canonical := buildCanonical(version, algorithm, height, dataProvider, streamID, actionID, args, result)
+	canonical := BuildCanonicalPayload(version, algorithm, height, dataProvider, streamID, actionID, args, result)
 	payload, err := ParseCanonicalPayload(canonical)
 	require.NoError(t, err)
 
@@ -47,6 +53,97 @@ func TestComputeAttestationHash(t *testing.T) {
 	assert.Equal(t, expected, actual)
 }
 
+func TestGoldenPayloadFixtureMatches(t *testing.T) {
+	const goldenPrivateKeyHex = "0000000000000000000000000000000000000000000000000000000000000001"
+
+	type goldenArgs struct {
+		DataProvider  string      `json:"data_provider"`
+		StreamID      string      `json:"stream_id"`
+		StartTime     int64       `json:"start_time"`
+		EndTime       int64       `json:"end_time"`
+		PendingFilter interface{} `json:"pending_filter"`
+		UseCache      bool        `json:"use_cache"`
+	}
+
+	type goldenResult struct {
+		Timestamps []int64  `json:"timestamps"`
+		Values     []string `json:"values"`
+	}
+
+	type goldenFixture struct {
+		CanonicalHex string       `json:"canonical_hex"`
+		SignatureHex string       `json:"signature_hex"`
+		PayloadHex   string       `json:"payload_hex"`
+		DataProvider string       `json:"data_provider"`
+		StreamID     string       `json:"stream_id"`
+		BlockHeight  uint64       `json:"block_height"`
+		ActionID     uint16       `json:"action_id"`
+		Args         goldenArgs   `json:"args"`
+		Result       goldenResult `json:"result"`
+	}
+
+	_, filename, _, _ := runtime.Caller(0)
+	fixturePath := filepath.Join(filepath.Dir(filename), "testdata", "attestation_golden.json")
+	fixtureBytes, err := os.ReadFile(fixturePath)
+	require.NoError(t, err, "read golden fixture")
+
+	var fx goldenFixture
+	require.NoError(t, json.Unmarshal(fixtureBytes, &fx), "parse golden fixture")
+
+	argsBytes, err := tn_utils.EncodeActionArgs([]any{
+		fx.Args.DataProvider,
+		fx.Args.StreamID,
+		fx.Args.StartTime,
+		fx.Args.EndTime,
+		fx.Args.PendingFilter,
+		fx.Args.UseCache,
+	})
+	require.NoError(t, err, "encode golden args")
+
+	rows := make([]*common.Row, len(fx.Result.Timestamps))
+	for i := range fx.Result.Timestamps {
+		dec := ktypes.MustParseDecimalExplicit(fx.Result.Values[i], 36, 18)
+		rows[i] = &common.Row{Values: []any{fx.Result.Timestamps[i], dec}}
+	}
+
+	resultCanonical, err := tn_utils.EncodeQueryResultCanonical(rows)
+	require.NoError(t, err, "encode result canonical")
+	resultPayload, err := tn_utils.EncodeDataPointsABI(resultCanonical)
+	require.NoError(t, err, "encode ABI payload")
+
+	providerAddr := util.Unsafe_NewEthereumAddressFromString(fx.DataProvider)
+	computedCanonical := BuildCanonicalPayload(
+		1,
+		0,
+		fx.BlockHeight,
+		providerAddr.Bytes(),
+		[]byte(fx.StreamID),
+		fx.ActionID,
+		argsBytes,
+		resultPayload,
+	)
+
+	computedCanonicalHex := hex.EncodeToString(computedCanonical)
+	require.Equal(t, strings.ToLower(fx.CanonicalHex), computedCanonicalHex, "canonical payload mismatch")
+
+	parsed, err := ParseCanonicalPayload(computedCanonical)
+	require.NoError(t, err)
+	digest := parsed.SigningDigest()
+
+	privKey, err := kwilcrypto.Secp256k1PrivateKeyFromHex(goldenPrivateKeyHex)
+	require.NoError(t, err)
+	signer, err := NewValidatorSigner(privKey)
+	require.NoError(t, err)
+	signature, err := signer.SignDigest(digest[:])
+	require.NoError(t, err)
+
+	signatureHex := hex.EncodeToString(signature)
+	require.Equal(t, strings.ToLower(fx.SignatureHex), signatureHex, "signature mismatch")
+
+	computedPayloadHex := hex.EncodeToString(append(append([]byte(nil), computedCanonical...), signature...))
+	require.Equal(t, strings.ToLower(fx.PayloadHex), computedPayloadHex, "payload mismatch")
+}
+
 func TestPrepareSigningWork(t *testing.T) {
 	t.Cleanup(ResetValidatorSignerForTesting)
 
@@ -55,15 +152,15 @@ func TestPrepareSigningWork(t *testing.T) {
 	require.NoError(t, InitializeValidatorSigner(privateKey))
 
 	version := uint8(1)
-	algo := uint8(1)
+	algo := uint8(0)
 	height := uint64(77)
 	actionID := uint16(5)
-	dataProvider := []byte("provider-1")
-	streamID := []byte("stream-abc")
+	dataProvider := bytes.Repeat([]byte{0x33}, 20)
+	streamID := bytes.Repeat([]byte{0x44}, 32)
 	args := []byte{0x01, 0x02}
 	result := []byte{0xAA}
 
-	canonical := buildCanonical(version, algo, height, dataProvider, streamID, actionID, args, result)
+	canonical := BuildCanonicalPayload(version, algo, height, dataProvider, streamID, actionID, args, result)
 	payload, err := ParseCanonicalPayload(canonical)
 	require.NoError(t, err)
 
@@ -111,15 +208,15 @@ func TestSubmitSignature(t *testing.T) {
 	require.NoError(t, InitializeValidatorSigner(privateKey))
 
 	version := uint8(1)
-	algo := uint8(1)
+	algo := uint8(0)
 	height := uint64(77)
 	actionID := uint16(5)
-	dataProvider := []byte("provider-1")
-	streamID := []byte("stream-abc")
+	dataProvider := bytes.Repeat([]byte{0x55}, 20)
+	streamID := bytes.Repeat([]byte{0x66}, 32)
 	args := []byte{0x01, 0x02}
 	result := []byte{0xAA}
 
-	canonical := buildCanonical(version, algo, height, dataProvider, streamID, actionID, args, result)
+	canonical := BuildCanonicalPayload(version, algo, height, dataProvider, streamID, actionID, args, result)
 	payload, err := ParseCanonicalPayload(canonical)
 	require.NoError(t, err)
 
@@ -240,13 +337,13 @@ func buildHashMaterial(version, algo uint8, dataProvider, streamID []byte, actio
 	buf := bytes.NewBuffer(nil)
 	buf.WriteByte(version)
 	buf.WriteByte(algo)
-	buf.Write(dataProvider)
-	buf.Write(streamID)
+	buf.Write(lengthPrefixBigEndian(dataProvider))
+	buf.Write(lengthPrefixBigEndian(streamID))
 
 	var actionBytes [2]byte
 	binary.BigEndian.PutUint16(actionBytes[:], actionID)
 	buf.Write(actionBytes[:])
-	buf.Write(args)
+	buf.Write(lengthPrefixBigEndian(args))
 
 	return buf.Bytes()
 }
