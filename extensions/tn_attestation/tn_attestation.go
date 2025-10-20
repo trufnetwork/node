@@ -72,8 +72,11 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 
 	// Initialize the validator signer with the loaded private key
 	if err := InitializeValidatorSigner(privateKey); err != nil {
-		logger.Error("failed to initialize validator signer", "error", err)
-		return fmt.Errorf("failed to initialize validator signer: %w", err)
+		logger.Warn("tn_attestation extension ready without validator signer (unsupported node key)",
+			"error", err,
+			"queue_size", GetAttestationQueue().Len())
+		// Leave the extension running so the node can operate without signing support.
+		return nil
 	}
 
 	if ext.NodeSigner() == nil {
