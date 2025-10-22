@@ -24,6 +24,13 @@ name: Build AMI
           - prod
           - dev
         default: prod
+      region:
+        description: "AWS region for AMI build (us-east-1 required for Marketplace)"
+        type: choice
+        options:
+          - us-east-1
+          - us-east-2
+        default: us-east-1
       reason:
         description: "Reason for AMI rebuild (e.g., 'infrastructure update', 'marketplace submission')"
         type: string
@@ -34,7 +41,7 @@ permissions:
   id-token: write  # For AWS OIDC authentication
 
 env:
-  AWS_REGION: us-east-2
+  AWS_REGION: ${{ inputs.region || 'us-east-1' }}
 
 jobs:
   build-ami:
@@ -118,6 +125,7 @@ jobs:
           echo "🚀 Starting AMI build with pipeline: $PIPELINE_ARN"
           echo "📝 Reason: $BUILD_REASON"
           echo "🏷️  Stage: ${{ env.STAGE }}"
+          echo "🌎 Region: ${{ env.AWS_REGION }}"
 
           # Start image pipeline execution
           EXECUTION_ID=$(aws imagebuilder start-image-pipeline-execution \
