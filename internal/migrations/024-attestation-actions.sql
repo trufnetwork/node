@@ -5,6 +5,9 @@
 /**
  * request_attestation: Request signed attestation of query results
  *
+ * Permissions:
+ * - Only wallets with the 'system:network_writer' role can request attestations.
+ *
  * Validates action is allowed, executes query deterministically, calculates
  * attestation hash, stores unsigned attestation, and queues for signing.
  */
@@ -18,6 +21,19 @@ $max_fee INT8
 ) PUBLIC RETURNS (request_tx_id TEXT, attestation_hash BYTEA) {
     -- Capture transaction ID for primary key
     $request_tx_id := @txid;
+    
+    -- Permission Check: Ensure caller has the 'system:network_writer' role.
+    $lower_caller TEXT := LOWER(@caller);
+    $has_permission BOOL := false;
+    for $row in are_members_of('system', 'network_writer', ARRAY[$lower_caller]) {
+        if $row.wallet = $lower_caller AND $row.is_member {
+            $has_permission := true;
+            break;
+        }
+    }
+    if NOT $has_permission {
+        ERROR('Caller does not have the required system:network_writer role to request attestation.');
+    }
     
     -- Validate encryption flag (must be false in MVP)
     if $encrypt_sig = true {
