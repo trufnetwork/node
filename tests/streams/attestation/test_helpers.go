@@ -16,6 +16,7 @@ import (
 	"github.com/trufnetwork/kwil-db/core/crypto/auth"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/extensions/tn_utils"
+	testsetup "github.com/trufnetwork/node/tests/streams/utils/setup"
 	"github.com/trufnetwork/sdk-go/core/util"
 )
 
@@ -73,11 +74,18 @@ type AttestationTestHelper struct {
 
 // NewAttestationTestHelper creates a new helper
 func NewAttestationTestHelper(t *testing.T, ctx context.Context, platform *kwilTesting.Platform) *AttestationTestHelper {
-	return &AttestationTestHelper{
+	helper := &AttestationTestHelper{
 		t:        t,
 		ctx:      ctx,
 		platform: platform,
 	}
+
+	// Grant network_writer role to deployer by default
+	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+	require.NoError(t, err, "create deployer address")
+	helper.GrantNetworkWriterRole(deployer.Address())
+
+	return helper
 }
 
 // NewEngineContext creates a standard engine context
@@ -204,8 +212,17 @@ func (h *AttestationTestHelper) SignAttestation(requestTxID string) {
 	require.Nil(h.t, res.Error, "sign_attestation should succeed")
 }
 
+// GrantNetworkWriterRole grants the network_writer role to a wallet
+func (h *AttestationTestHelper) GrantNetworkWriterRole(walletAddr string) {
+	err := testsetup.AddMemberToRoleBypass(h.ctx, h.platform, "system", "network_writer", walletAddr)
+	require.NoError(h.t, err, "grant network_writer role to %s", walletAddr)
+}
+
 // CreateAttestationForRequester creates an attestation for a specific requester
 func (h *AttestationTestHelper) CreateAttestationForRequester(actionName string, requester *util.EthereumAddress, value int64) {
+	// Grant network_writer role to requester first
+	h.GrantNetworkWriterRole(requester.Address())
+
 	argsBytes, err := tn_utils.EncodeActionArgs([]any{value})
 	require.NoError(h.t, err, "encode args")
 

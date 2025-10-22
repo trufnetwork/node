@@ -33,7 +33,15 @@ func TestRequestAttestationInsertsCanonicalPayload(t *testing.T) {
 				helper := NewAttestationTestHelper(t, ctx, platform)
 
 				require.NoError(t, helper.SetupTestAction(testActionName, TestActionIDRequest))
-				runAttestationHappyPath(helper, testActionName, TestActionIDRequest)
+
+				t.Run("HappyPath", func(t *testing.T) {
+					runAttestationHappyPath(helper, testActionName, TestActionIDRequest)
+				})
+
+				t.Run("UnauthorizedUserBlocked", func(t *testing.T) {
+					runAttestationUnauthorizedBlocked(t, ctx, platform, helper, testActionName)
+				})
+
 				return nil
 			},
 		},
@@ -122,6 +130,44 @@ type attestationRow struct {
 	validatorPubKey []byte
 	signedHeight    *int64
 	createdHeight   int64
+}
+
+func runAttestationUnauthorizedBlocked(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, helper *AttestationTestHelper, actionName string) {
+	// Create an unauthorized user that does NOT have network_writer role
+	unauthorizedAddr := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000009999")
+
+	argsBytes, err := tn_utils.EncodeActionArgs([]any{int64(999)})
+	require.NoError(t, err, "encode action args")
+
+	// Create a context for the unauthorized user
+	unauthorizedCtx := &common.EngineContext{
+		TxContext: &common.TxContext{
+			Ctx: ctx,
+			BlockContext: &common.BlockContext{
+				Height: 1,
+			},
+			Signer: unauthorizedAddr.Bytes(),
+			Caller: unauthorizedAddr.Address(),
+			TxID:   platform.Txid(),
+		},
+	}
+
+	// Try to request attestation as unauthorized user - should fail
+	res, err := platform.Engine.Call(unauthorizedCtx, platform.DB, "", "request_attestation", []any{
+		TestDataProviderHex,
+		TestStreamID,
+		actionName,
+		argsBytes,
+		false,
+		int64(0),
+	}, func(row *common.Row) error {
+		return nil
+	})
+
+	require.NoError(t, err, "call should not error at engine level")
+	require.NotNil(t, res.Error, "action should return error for unauthorized user")
+	require.Contains(t, res.Error.Error(), "does not have the required system:network_writer role",
+		"error should indicate missing network_writer role")
 }
 
 func fetchAttestationRow(helper *AttestationTestHelper, hash []byte) attestationRow {
