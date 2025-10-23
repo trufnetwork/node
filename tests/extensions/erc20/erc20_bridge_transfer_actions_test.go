@@ -248,7 +248,7 @@ func getBridgeEscrowAddress(ctx context.Context, platform *kwilTesting.Platform)
 	engineCtx := engCtx(ctx, platform, "0x0000000000000000000000000000000000000000", 1, false)
 
 	var escrow string
-	res, err := platform.Engine.Call(engineCtx, platform.DB, "", "get_erc20_bridge_info", []any{}, func(row *common.Row) error {
+	res, err := platform.Engine.Call(engineCtx, platform.DB, "", "sepolia_get_erc20_bridge_info", []any{}, func(row *common.Row) error {
 		if len(row.Values) < 2 {
 			return fmt.Errorf("expected at least 2 columns, got %d", len(row.Values))
 		}
