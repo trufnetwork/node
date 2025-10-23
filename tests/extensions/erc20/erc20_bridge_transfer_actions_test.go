@@ -21,9 +21,9 @@ import (
 // without needing to use the extension methods directly.
 func TestSepoliaTransferActions(t *testing.T) {
 	seedAndRun(t, "sepolia_transfer_actions", func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Enable instance with alias in one step
-		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestExtensionAlias)
-		require.NoError(t, err)
+		// Enable instance with alias in one step (Instance already enabled from another test)
+		// err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestExtensionAlias)
+		// require.NoError(t, err)
 
 		// Get the configured escrow address from bridge info
 		configuredEscrow, err := getBridgeEscrowAddress(ctx, platform)
