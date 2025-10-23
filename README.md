@@ -71,6 +71,12 @@ For contributors and developers building on top of TN:
 
 [Development Guide](./docs/development.md)
 
+## Attestations
+
+Need to request, sign, or verify TrufNetwork attestations? Start with the quick guide:
+
+**[Attestations Overview](./docs/attestations.md)**
+
 
 ## License
 

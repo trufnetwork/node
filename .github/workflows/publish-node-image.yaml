@@ -24,7 +24,7 @@ jobs:
     name: Build and Push
     runs-on: ubuntu-latest
     env:
-      TAG_LATEST: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.tag_latest == 'true') }}
+      TAG_LATEST: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.tag_latest) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

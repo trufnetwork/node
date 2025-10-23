@@ -588,10 +588,12 @@ func (s *stubMetricsRecorder) snapshot() stubMetricsSnapshot {
 		startCount:         s.startCount,
 		completeCount:      s.completeCount,
 		errorCount:         s.errorCount,
+		skipCount:          s.skippedCount,
 		lastDuration:       s.lastDuration,
 		lastTables:         s.lastTables,
 		lastMechanism:      s.lastMechanism,
 		lastErrorMechanism: s.lastErrorMechanism,
+		lastSkipReason:     s.lastSkipReason,
 		lastHeight:         s.lastHeight,
 	}
 }
@@ -600,10 +602,12 @@ type stubMetricsSnapshot struct {
 	startCount         int
 	completeCount      int
 	errorCount         int
+	skipCount          int
 	lastDuration       time.Duration
 	lastTables         int
 	lastMechanism      string
 	lastErrorMechanism string
+	lastSkipReason     string
 	lastHeight         int64
 }
 
@@ -626,4 +630,195 @@ func waitForRunCount(t *testing.T, stub *stubMechanism, count int) {
 	waitForCondition(t, time.Second, func() bool {
 		return stub.runCount() >= count
 	})
+}
+
+// stubNodeStatus implements common.NodeStatusProvider for testing
+type stubNodeStatus struct {
+	mu      sync.RWMutex
+	syncing bool
+}
+
+func (s *stubNodeStatus) IsSyncing() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.syncing
+}
+
+func (s *stubNodeStatus) setSyncing(syncing bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.syncing = syncing
+}
+
+// TestVacuumSkipsDuringCatchup verifies that vacuum operations are skipped
+// when the node is in catch-up mode (syncing/block sync).
+func TestVacuumSkipsDuringCatchup(t *testing.T) {
+	ResetForTest()
+	ext := GetExtension()
+
+	// Create stub node status
+	nodeStatus := &stubNodeStatus{}
+
+	// Setup test service and mechanism
+	svc := &common.Service{
+		Logger: log.New(log.WithLevel(log.LevelInfo)),
+		LocalConfig: &config.Config{
+			DB: config.DBConfig{
+				Host:   "localhost",
+				Port:   "5432",
+				User:   "kwild",
+				Pass:   "kwild",
+				DBName: "kwild",
+			},
+		},
+		NodeStatus: nodeStatus,
+	}
+
+	stub := &stubMechanism{}
+	ext.setService(svc)
+	ext.setLogger(svc.Logger)
+	ext.setStateStore(&stubStateStore{loadOK: false})
+
+	// Manually set up the extension without calling configure
+	// to avoid pg_repack dependency
+	ext.mu.Lock()
+	ext.config = Config{
+		Enabled:       true,
+		BlockInterval: 100,
+	}
+	ext.mechanism = stub
+	ext.runner = &Runner{logger: svc.Logger}
+	ext.mu.Unlock()
+
+	metricsStub := &stubMetricsRecorder{}
+	ext.mu.Lock()
+	ext.metrics = metricsStub
+	ext.mu.Unlock()
+
+	app := &common.App{
+		Service: svc,
+	}
+
+	// Test 1: Vacuum should be skipped when node is syncing
+	nodeStatus.setSyncing(true)
+	blockCtx := &common.BlockContext{
+		Height:    1000,
+		Timestamp: time.Now().Unix(),
+	}
+
+	err := endBlockHook(context.Background(), app, blockCtx)
+	require.NoError(t, err)
+
+	// Verify no vacuum was queued
+	require.Equal(t, 0, stub.runCount(), "vacuum should not run during sync")
+
+	// Verify skip metric was recorded
+	snapshot := metricsStub.snapshot()
+	require.Equal(t, 1, snapshot.skipCount, "skip metric should be recorded")
+	require.Equal(t, "node_syncing", snapshot.lastSkipReason)
+
+	// Test 2: Vacuum should run when node is not syncing after interval
+	nodeStatus.setSyncing(false)
+	blockCtx.Height = 1101 // Beyond interval of 100
+
+	err = endBlockHook(context.Background(), app, blockCtx)
+	require.NoError(t, err)
+
+	// Wait for vacuum to be queued and processed
+	waitForRunCount(t, stub, 1)
+	require.Equal(t, 1, stub.runCount(), "vacuum should run when not syncing")
+
+	// Test 3: Multiple blocks during sync should all be skipped
+	nodeStatus.setSyncing(true)
+	for i := int64(1102); i <= 1300; i++ {
+		blockCtx.Height = i
+		err = endBlockHook(context.Background(), app, blockCtx)
+		require.NoError(t, err)
+	}
+
+	// Still only 1 run (the one from test 2)
+	require.Equal(t, 1, stub.runCount(), "vacuum should not run during extended catch-up")
+
+	snapshot = metricsStub.snapshot()
+	require.Greater(t, snapshot.skipCount, 1, "multiple skips should be recorded")
+}
+
+// TestVacuumResumesAfterCatchup verifies that vacuum resumes normal operation
+// after catch-up is complete.
+func TestVacuumResumesAfterCatchup(t *testing.T) {
+	ResetForTest()
+	ext := GetExtension()
+
+	// Create stub node status
+	nodeStatus := &stubNodeStatus{}
+	nodeStatus.setSyncing(true) // Start in syncing state
+
+	svc := &common.Service{
+		Logger: log.New(log.WithLevel(log.LevelInfo)),
+		LocalConfig: &config.Config{
+			DB: config.DBConfig{
+				Host:   "localhost",
+				Port:   "5432",
+				User:   "kwild",
+				Pass:   "kwild",
+				DBName: "kwild",
+			},
+		},
+		NodeStatus: nodeStatus,
+	}
+
+	stub := &stubMechanism{}
+	ext.setService(svc)
+	ext.setLogger(svc.Logger)
+	ext.setStateStore(&stubStateStore{loadOK: false})
+
+	// Manually set up the extension without calling configure
+	// to avoid pg_repack dependency
+	ext.mu.Lock()
+	ext.config = Config{
+		Enabled:       true,
+		BlockInterval: 50,
+	}
+	ext.mechanism = stub
+	ext.runner = &Runner{logger: svc.Logger}
+	ext.mu.Unlock()
+
+	app := &common.App{
+		Service: svc,
+	}
+
+	// Simulate sync period
+	ctx := context.Background()
+	for i := int64(1); i <= 100; i++ {
+		blockCtx := &common.BlockContext{
+			Height:    i,
+			Timestamp: time.Now().Unix(),
+		}
+		err := endBlockHook(ctx, app, blockCtx)
+		require.NoError(t, err)
+	}
+
+	// No vacuum should have run during sync
+	require.Equal(t, 0, stub.runCount())
+
+	// Sync complete, resume normal operation
+	nodeStatus.setSyncing(false)
+	blockCtx := &common.BlockContext{
+		Height:    151, // Beyond interval
+		Timestamp: time.Now().Unix(),
+	}
+	err := endBlockHook(ctx, app, blockCtx)
+	require.NoError(t, err)
+
+	// Vacuum should now run
+	waitForRunCount(t, stub, 1)
+	require.Equal(t, 1, stub.runCount())
+
+	// Continue normal operation
+	blockCtx.Height = 201
+	err = endBlockHook(ctx, app, blockCtx)
+	require.NoError(t, err)
+
+	waitForRunCount(t, stub, 2)
+	require.Equal(t, 2, stub.runCount())
 }

@@ -30,13 +30,26 @@ In the AWS EC2 Console:
 - **VPC/Subnet**: Use default or your preferred network setup
 
 #### Security Groups
-If you plan to use MCP for AI integration (like Claude Code), add this inbound rule:
+
+**Required Inbound Rules** for your node to participate in the network:
+
+| Type | Protocol | Port Range | Source | Description                               |
+|------|----------|------------|--------|-------------------------------------------|
+| SSH | TCP | 22 | Your IP | Remote access                             |
+| Custom TCP | TCP | 6600 | 0.0.0.0/0 | P2P node communication (recommended) |
+| Custom TCP | TCP | 8484 | 0.0.0.0/0 | RPC service (if running public node)      |
+
+**Optional Inbound Rules:**
 
 | Type | Protocol | Port Range | Source | Description |
 |------|----------|------------|--------|-------------|
-| Custom TCP | TCP | 8000 | Your IP | MCP Server for Claude Code |
+| Custom TCP | TCP | 8000 | Your IP or 0.0.0.0/0 | MCP Server for AI integration |
 
-> **Note**: This is only needed if you want external AI tools like Claude Code to connect to your node's MCP server.
+> **Important**:
+> - **Port 6600**: Enables two-way P2P communication. Your node can sync without this (via outbound connections), but opening it helps network health by accepting incoming peer connections
+> - **Port 8484**: Needed if you want users/applications to query data from your node
+> - **Port 8000**: Only needed for MCP/AI integration (like Claude Code)
+> - **Port 22** (SSH): Should be restricted to your IP for security
 
 #### Storage
 - **Root volume**: 30 GB minimum (50+ GB recommended)
