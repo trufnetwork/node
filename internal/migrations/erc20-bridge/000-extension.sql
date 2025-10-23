@@ -1,11 +1,10 @@
 -- This is not meant to be run on tests as the contract address is valid for mainnet only.
 
--- Note: Uncomment if you want to run on testnet for sepolia.
--- USE erc20 {
---     chain: 'sepolia',
---     escrow: '0xf6009345d772a04f4e52150b5ec91617db79be58',
---     distribution_period: '30m'
--- } AS sepolia_bridge;
+USE erc20 {
+    chain: 'sepolia',
+    escrow: '0xf6009345d772a04f4e52150b5ec91617db79be58',
+    distribution_period: '30m'
+} AS sepolia_bridge;
 
 USE erc20 {
     chain: 'ethereum',
