@@ -1,3 +1,5 @@
+//go:build kwiltest
+
 package tn_digest
 
 import (

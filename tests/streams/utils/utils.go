@@ -16,7 +16,9 @@ import (
 
 	// Extension registration
 	"github.com/trufnetwork/node/extensions/database-size"
+	"github.com/trufnetwork/node/extensions/tn_attestation"
 	"github.com/trufnetwork/node/extensions/tn_cache"
+	"github.com/trufnetwork/node/extensions/tn_utils"
 	"github.com/trufnetwork/node/tests/streams/utils/cache"
 )
 
@@ -31,6 +33,9 @@ func init() {
 	if err != nil {
 		panic("failed to register database_size precompiles: " + err.Error())
 	}
+
+	tn_utils.InitializeExtension()
+	tn_attestation.InitializeExtension()
 }
 
 // ============================================================================

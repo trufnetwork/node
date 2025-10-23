@@ -27,6 +27,7 @@ services:
       BACKENDS: ${BACKENDS:-tn-db:8484}
       CHAIN_ID: ${CHAIN_ID:-trufnetwork-dev}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS}
+      COOKIE_SAME_SITE: ${COOKIE_SAME_SITE:-None}
       EXPORT_RPC_META_LOG: "true"
       META_LOG_FORMAT: "otel_nested"
       META_LOG_OTEL_PROCESSOR: "batch"
