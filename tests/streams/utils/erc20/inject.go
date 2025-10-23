@@ -26,7 +26,7 @@ func InjectERC20Transfer(ctx context.Context, platform *kwilTesting.Platform, ch
 	// 1) Ensure instance exists and is synced
 	id, err := erc20bridge.ForTestingForceSyncInstance(ctx, platform, chain, escrow, erc20Addr, 18)
 	if err != nil {
-		log.Printf("force sync instance: %w", err) // instance already exists
+		log.Printf("force sync instance: %v", err) // instance already exists
 	}
 
 	// 2) Compute ordered-sync topic
