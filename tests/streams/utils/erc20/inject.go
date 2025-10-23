@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"log"
 	"math/big"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
@@ -26,7 +25,7 @@ func InjectERC20Transfer(ctx context.Context, platform *kwilTesting.Platform, ch
 	// 1) Ensure instance exists and is synced
 	id, err := erc20bridge.ForTestingForceSyncInstance(ctx, platform, chain, escrow, erc20Addr, 18)
 	if err != nil {
-		log.Printf("force sync instance: %v", err) // instance already exists
+		return fmt.Errorf("force sync instance: %w", err)
 	}
 
 	// 2) Compute ordered-sync topic

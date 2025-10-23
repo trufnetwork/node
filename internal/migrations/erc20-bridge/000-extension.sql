@@ -6,8 +6,9 @@ USE erc20 {
     distribution_period: '30m'
 } AS sepolia_bridge;
 
-USE erc20 {
-    chain: 'ethereum',
-    escrow: '0x964dd66477c22BC5726dfeBCf9BA49aa8625978C',
-    distribution_period: '30m'
-} AS ethereum_bridge;
+-- Note: uncomment the following to enable mainnet bridge instance
+-- USE erc20 {
+--     chain: 'ethereum',
+--     escrow: '0x964dd66477c22BC5726dfeBCf9BA49aa8625978C',
+--     distribution_period: '30m'
+-- } AS ethereum_bridge;
