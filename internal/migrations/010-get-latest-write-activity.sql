@@ -17,30 +17,52 @@ CREATE OR REPLACE ACTION get_last_transactions(
         ERROR('Limit size cannot exceed 100');
     }
 
+    -- Fetch top limit_size DISTINCT blocks per table, then take top limit_size overall
+    -- This gets the most recent activity from each table type and combines them
     RETURN SELECT created_at, method FROM (
       SELECT created_at, method, ROW_NUMBER() OVER (PARTITION BY created_at ORDER BY priority ASC) AS rn FROM (
           SELECT s.created_at, 'deployStream' AS method, 1 AS priority
-          FROM streams s
-          JOIN data_providers dp ON s.data_provider_id = dp.id
-          WHERE COALESCE($data_provider, '') = '' OR dp.address = $data_provider
+          FROM (
+              SELECT DISTINCT s.created_at
+              FROM streams s
+              JOIN data_providers dp ON s.data_provider_id = dp.id
+              WHERE COALESCE($data_provider, '') = '' OR dp.address = $data_provider
+              ORDER BY s.created_at DESC
+              LIMIT $limit_size
+          ) s
           UNION ALL
           SELECT pe.created_at, 'insertRecords', 2
-          FROM primitive_events pe
-          JOIN streams s ON pe.stream_ref = s.id
-          JOIN data_providers dp ON s.data_provider_id = dp.id
-          WHERE COALESCE($data_provider, '') = '' OR dp.address = $data_provider
+          FROM (
+              SELECT DISTINCT pe.created_at
+              FROM primitive_events pe
+              JOIN streams s ON pe.stream_ref = s.id
+              JOIN data_providers dp ON s.data_provider_id = dp.id
+              WHERE COALESCE($data_provider, '') = '' OR dp.address = $data_provider
+              ORDER BY pe.created_at DESC
+              LIMIT $limit_size
+          ) pe
           UNION ALL
           SELECT t.created_at, 'setTaxonomies', 3
-          FROM taxonomies t
-          JOIN streams s ON t.stream_ref = s.id
-          JOIN data_providers dp ON s.data_provider_id = dp.id
-          WHERE COALESCE($data_provider, '') = '' OR dp.address = $data_provider
+          FROM (
+              SELECT DISTINCT t.created_at
+              FROM taxonomies t
+              JOIN streams s ON t.stream_ref = s.id
+              JOIN data_providers dp ON s.data_provider_id = dp.id
+              WHERE COALESCE($data_provider, '') = '' OR dp.address = $data_provider
+              ORDER BY t.created_at DESC
+              LIMIT $limit_size
+          ) t
           UNION ALL
           SELECT m.created_at, 'setMetadata', 4
-          FROM metadata m
-          JOIN streams s ON m.stream_ref = s.id
-          JOIN data_providers dp ON s.data_provider_id = dp.id
-          WHERE COALESCE($data_provider, '') = '' OR dp.address = $data_provider
+          FROM (
+              SELECT DISTINCT m.created_at
+              FROM metadata m
+              JOIN streams s ON m.stream_ref = s.id
+              JOIN data_providers dp ON s.data_provider_id = dp.id
+              WHERE COALESCE($data_provider, '') = '' OR dp.address = $data_provider
+              ORDER BY m.created_at DESC
+              LIMIT $limit_size
+          ) m
       ) AS combined
   ) AS ranked
   WHERE rn = 1
