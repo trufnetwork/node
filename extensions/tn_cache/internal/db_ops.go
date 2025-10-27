@@ -613,14 +613,21 @@ func (c *CacheDB) GetCachedEvents(ctx context.Context, dataProvider, streamID st
 		}, attribute.Int64("from", fromTime), attribute.Int64("to", toTime))
 }
 
-// GetCachedIndex retrieves index events from the cache for a specific time range
+// GetCachedIndex retrieves index events from the cache for a specific time range.
+// It returns the legacy base_time (nil) variant.
 func (c *CacheDB) GetCachedIndex(ctx context.Context, dataProvider, streamID string, fromTime, toTime int64) ([]CachedEvent, error) {
-	// Use middleware for tracing
+	return c.GetCachedIndexWithBaseTime(ctx, dataProvider, streamID, nil, fromTime, toTime)
+}
+
+// GetCachedIndexWithBaseTime retrieves index events for a stream using the provided base_time.
+// Passing baseTime=nil falls back to the legacy "no base time" sentinel row.
+func (c *CacheDB) GetCachedIndexWithBaseTime(ctx context.Context, dataProvider, streamID string, baseTime *int64, fromTime, toTime int64) ([]CachedEvent, error) {
+	baseTimeValue := encodeBaseTime(baseTime)
+
 	return tracing.TracedOperation(ctx, tracing.OpDBGetEvents, dataProvider, streamID,
 		func(traceCtx context.Context) ([]CachedEvent, error) {
 			var results *sql.ResultSet
 			var err error
-			baseTimeValue := constants.BaseTimeNoneSentinel
 
 			// Special case: latest value only (both fromTime and toTime are 0)
 			if fromTime == 0 && toTime == 0 {
@@ -699,6 +706,7 @@ func (c *CacheDB) GetCachedIndex(ctx context.Context, dataProvider, streamID str
 			return events, nil
 		}, attribute.Int64("from", fromTime),
 		attribute.Int64("to", toTime),
+		attribute.Int64("base_time", baseTimeValue),
 		attribute.String("type", "index"))
 }
 
