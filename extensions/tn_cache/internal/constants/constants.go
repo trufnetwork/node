@@ -14,6 +14,8 @@ const (
 	CacheSchemaName = "ext_tn_cache"
 	// PrecompileName is the name of the precompile function
 	PrecompileName = "tn_cache"
+	// BaseTimeNoneSentinel represents "no base_time" when persisted
+	BaseTimeNoneSentinel = int64(-1)
 )
 
 // Error messages
