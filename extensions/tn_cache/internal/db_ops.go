@@ -142,8 +142,8 @@ func (c *CacheDB) AddStreamConfig(ctx context.Context, config StreamCacheConfig)
 		return fmt.Errorf("upsert stream config: %w", err)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
+	if commitErr := tx.Commit(ctx); commitErr != nil {
+		return fmt.Errorf("commit transaction: %w", commitErr)
 	}
 
 	return nil
@@ -159,13 +159,7 @@ func (c *CacheDB) AddStreamConfigs(ctx context.Context, configs []StreamCacheCon
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer func() {
-		if err != nil {
-			if rbErr := tx.Rollback(ctx); rbErr != nil {
-				c.logger.Error("failed to rollback transaction", "error", rbErr)
-			}
-		}
-	}()
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Build arrays for batch insert using UNNEST for efficiency
 	var dataProviders, streamIDs, cronSchedules []string
@@ -198,8 +192,8 @@ func (c *CacheDB) AddStreamConfigs(ctx context.Context, configs []StreamCacheCon
 		return fmt.Errorf("batch upsert stream configs: %w", err)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
+	if commitErr := tx.Commit(ctx); commitErr != nil {
+		return fmt.Errorf("commit transaction: %w", commitErr)
 	}
 
 	c.logger.Info("batch stream configs update completed", "count", len(configs))
@@ -721,13 +715,7 @@ func (c *CacheDB) DeleteStreamData(ctx context.Context, dataProvider, streamID s
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer func() {
-		if err != nil {
-			if rbErr := tx.Rollback(ctx); rbErr != nil {
-				c.logger.Error("failed to rollback transaction", "error", rbErr)
-			}
-		}
-	}()
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Delete events for the stream
 	_, err = tx.Execute(ctx, `
@@ -759,8 +747,8 @@ func (c *CacheDB) DeleteStreamData(ctx context.Context, dataProvider, streamID s
 		return fmt.Errorf("delete stream config: %w", err)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
+	if commitErr := tx.Commit(ctx); commitErr != nil {
+		return fmt.Errorf("commit transaction: %w", commitErr)
 	}
 
 	return nil
@@ -774,13 +762,7 @@ func (c *CacheDB) CleanupCache(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer func() {
-		if err != nil {
-			if rbErr := tx.Rollback(ctx); rbErr != nil {
-				c.logger.Error("failed to rollback transaction", "error", rbErr)
-			}
-		}
-	}()
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Delete all events
 	_, err = tx.Execute(ctx, `DELETE FROM `+constants.CacheSchemaName+`.cached_events`)
@@ -800,8 +782,8 @@ func (c *CacheDB) CleanupCache(ctx context.Context) error {
 		return fmt.Errorf("delete all stream configs: %w", err)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
+	if commitErr := tx.Commit(ctx); commitErr != nil {
+		return fmt.Errorf("commit transaction: %w", commitErr)
 	}
 
 	return nil
@@ -822,13 +804,7 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 			if err != nil {
 				return false, fmt.Errorf("begin transaction: %w", err)
 			}
-			defer func() {
-				if err != nil {
-					if rbErr := tx.Rollback(traceCtx); rbErr != nil {
-						c.logger.Error("failed to rollback transaction", "error", rbErr)
-					}
-				}
-			}()
+			defer func() { _ = tx.Rollback(traceCtx) }()
 
 			// First, check if the stream is configured for caching
 			results, err := tx.Execute(traceCtx, `
@@ -854,8 +830,8 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 			}
 
 			if !streamExists {
-				if err := tx.Commit(traceCtx); err != nil {
-					return false, fmt.Errorf("commit transaction: %w", err)
+				if commitErr := tx.Commit(traceCtx); commitErr != nil {
+					return false, fmt.Errorf("commit transaction: %w", commitErr)
 				}
 				return false, nil
 			}
@@ -917,8 +893,8 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 				hasData = len(anchorResults.Rows) > 0
 			}
 
-			if err := tx.Commit(traceCtx); err != nil {
-				return false, fmt.Errorf("commit transaction: %w", err)
+			if commitErr := tx.Commit(traceCtx); commitErr != nil {
+				return false, fmt.Errorf("commit transaction: %w", commitErr)
 			}
 
 			return hasData, nil
@@ -937,13 +913,7 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer func() {
-		if err != nil {
-			if rbErr := tx.Rollback(ctx); rbErr != nil {
-				c.logger.Error("failed to rollback transaction", "error", rbErr)
-			}
-		}
-	}()
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// First, delete removed streams using batch operation
 	if len(toDelete) > 0 {
@@ -1000,8 +970,8 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 		}
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
+	if commitErr := tx.Commit(ctx); commitErr != nil {
+		return fmt.Errorf("commit transaction: %w", commitErr)
 	}
 
 	c.logger.Info("atomic stream config update completed",
@@ -1185,8 +1155,8 @@ func (c *CacheDB) SetupCacheSchema(ctx context.Context) error {
 	}
 
 	// Commit the transaction
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
+	if commitErr := tx.Commit(ctx); commitErr != nil {
+		return fmt.Errorf("commit transaction: %w", commitErr)
 	}
 
 	c.logger.Info("cache schema setup complete")
@@ -1206,21 +1176,15 @@ func (c *CacheDB) CleanupExtensionSchema(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer func() {
-		if err != nil {
-			if rbErr := tx.Rollback(ctx); rbErr != nil {
-				c.logger.Error("failed to rollback transaction", "error", rbErr)
-			}
-		}
-	}()
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Drop schema CASCADE to remove all tables and indexes
 	if _, err = tx.Execute(ctx, `DROP SCHEMA IF EXISTS `+constants.CacheSchemaName+` CASCADE`); err != nil {
 		return fmt.Errorf("drop schema: %w", err)
 	}
 
-	if err = tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
+	if commitErr := tx.Commit(ctx); commitErr != nil {
+		return fmt.Errorf("commit transaction: %w", commitErr)
 	}
 
 	return nil
