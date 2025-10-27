@@ -68,6 +68,41 @@ func decodeBaseTime(value int64) *int64 {
 	return &v
 }
 
+func decodeNullableBaseTime(value any) (*int64, error) {
+	if value == nil {
+		return nil, nil
+	}
+
+	intVal, ok := value.(int64)
+	if !ok {
+		return nil, fmt.Errorf("failed to convert base_time to int64 (got %T)", value)
+	}
+
+	return decodeBaseTime(intVal), nil
+}
+
+func decodeNullableInt64(value any, field string) (int64, error) {
+	switch v := value.(type) {
+	case int64:
+		return v, nil
+	case nil:
+		return 0, nil
+	default:
+		return 0, fmt.Errorf("failed to convert %s to int64", field)
+	}
+}
+
+func decodeNullableString(value any, field string) (string, error) {
+	switch v := value.(type) {
+	case string:
+		return v, nil
+	case nil:
+		return "", nil
+	default:
+		return "", fmt.Errorf("failed to convert %s to string", field)
+	}
+}
+
 // CachedEvent represents a cached event from a stream
 type CachedEvent struct {
 	DataProvider string
@@ -125,18 +160,20 @@ func (c *CacheDB) AddStreamConfig(ctx context.Context, config StreamCacheConfig)
 	baseTimeValue := encodeBaseTime(config.BaseTime)
 
 	// Insert or update the stream config using UPSERT, preserving existing values if new values are zero
-	_, err = tx.Execute(ctx, `
-		INSERT INTO `+constants.CacheSchemaName+`.cached_streams 
+	upsertStreamConfig := fmt.Sprintf(`
+		INSERT INTO %[1]s.cached_streams 
 			(data_provider, stream_id, base_time, from_timestamp, cache_refreshed_at_timestamp, cache_height, cron_schedule)
 		VALUES 
-			($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (data_provider, stream_id, base_time) 
+			($1, $2, NULLIF($3, %[2]d), $4, $5, $6, $7)
+		ON CONFLICT (data_provider, stream_id, base_time_key) 
 		DO UPDATE SET
 			from_timestamp = EXCLUDED.from_timestamp,
 			cache_refreshed_at_timestamp = COALESCE(NULLIF(EXCLUDED.cache_refreshed_at_timestamp, 0), cached_streams.cache_refreshed_at_timestamp),
 			cache_height = COALESCE(NULLIF(EXCLUDED.cache_height, 0), cached_streams.cache_height),
 			cron_schedule = EXCLUDED.cron_schedule
-	`, config.DataProvider, config.StreamID, baseTimeValue, config.FromTimestamp, config.CacheRefreshedAtTimestamp, config.CacheHeight, config.CronSchedule)
+	`, constants.CacheSchemaName, constants.BaseTimeNoneSentinel)
+
+	_, err = tx.Execute(ctx, upsertStreamConfig, config.DataProvider, config.StreamID, baseTimeValue, config.FromTimestamp, config.CacheRefreshedAtTimestamp, config.CacheHeight, config.CronSchedule)
 
 	if err != nil {
 		return fmt.Errorf("upsert stream config: %w", err)
@@ -176,17 +213,21 @@ func (c *CacheDB) AddStreamConfigs(ctx context.Context, configs []StreamCacheCon
 	}
 
 	// Execute the batch insert with UPSERT logic, preserving existing values if new values are zero
-	_, err = tx.Execute(ctx, `
-		INSERT INTO `+constants.CacheSchemaName+`.cached_streams 
+	batchUpsert := fmt.Sprintf(`
+		INSERT INTO %[1]s.cached_streams 
 			(data_provider, stream_id, base_time, from_timestamp, cache_refreshed_at_timestamp, cache_height, cron_schedule)
-		SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::INT8[], $5::INT8[], $6::INT8[], $7::TEXT[])
-		ON CONFLICT (data_provider, stream_id, base_time) 
+		SELECT data_provider, stream_id, NULLIF(base_time, %[2]d), from_timestamp, cache_refreshed_at_timestamp, cache_height, cron_schedule
+		FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::INT8[], $5::INT8[], $6::INT8[], $7::TEXT[])
+			AS t(data_provider, stream_id, base_time, from_timestamp, cache_refreshed_at_timestamp, cache_height, cron_schedule)
+		ON CONFLICT (data_provider, stream_id, base_time_key) 
 		DO UPDATE SET
 			from_timestamp = EXCLUDED.from_timestamp,
 			cache_refreshed_at_timestamp = COALESCE(NULLIF(EXCLUDED.cache_refreshed_at_timestamp, 0), cached_streams.cache_refreshed_at_timestamp),
 			cache_height = COALESCE(NULLIF(EXCLUDED.cache_height, 0), cached_streams.cache_height),
 			cron_schedule = EXCLUDED.cron_schedule
-	`, dataProviders, streamIDs, baseTimes, fromTimestamps, cacheRefreshedAtTimestamps, cacheHeights, cronSchedules)
+	`, constants.CacheSchemaName, constants.BaseTimeNoneSentinel)
+
+	_, err = tx.Execute(ctx, batchUpsert, dataProviders, streamIDs, baseTimes, fromTimestamps, cacheRefreshedAtTimestamps, cacheHeights, cronSchedules)
 
 	if err != nil {
 		return fmt.Errorf("batch upsert stream configs: %w", err)
@@ -240,35 +281,35 @@ func (c *CacheDB) ListStreamConfigs(ctx context.Context) ([]StreamCacheConfig, e
 			return nil, fmt.Errorf("failed to convert stream_id to string")
 		}
 
-		baseTimeValue, ok := row[2].(int64)
-		if !ok {
-			return nil, fmt.Errorf("failed to convert base_time to int64")
+		baseTimePtr, err := decodeNullableBaseTime(row[2])
+		if err != nil {
+			return nil, fmt.Errorf("decode cached_streams base_time: %w", err)
 		}
 
-		fromTimestamp, ok := row[3].(int64)
-		if !ok {
-			return nil, fmt.Errorf("failed to convert from_timestamp to int64")
+		fromTimestamp, err := decodeNullableInt64(row[3], "from_timestamp")
+		if err != nil {
+			return nil, err
 		}
 
-		cacheRefreshedAtTimestamp, ok := row[4].(int64)
-		if !ok {
-			return nil, fmt.Errorf("failed to convert cache_refreshed_at_timestamp to int64")
+		cacheRefreshedAtTimestamp, err := decodeNullableInt64(row[4], "cache_refreshed_at_timestamp")
+		if err != nil {
+			return nil, err
 		}
 
-		cacheHeight, ok := row[5].(int64)
-		if !ok {
-			return nil, fmt.Errorf("failed to convert cache_height to int64")
+		cacheHeight, err := decodeNullableInt64(row[5], "cache_height")
+		if err != nil {
+			return nil, err
 		}
 
-		cronSchedule, ok := row[6].(string)
-		if !ok {
-			return nil, fmt.Errorf("failed to convert cron_schedule to string")
+		cronSchedule, err := decodeNullableString(row[6], "cron_schedule")
+		if err != nil {
+			return nil, err
 		}
 
 		config := StreamCacheConfig{
 			DataProvider:              dataProvider,
 			StreamID:                  streamID,
-			BaseTime:                  decodeBaseTime(baseTimeValue),
+			BaseTime:                  baseTimePtr,
 			FromTimestamp:             fromTimestamp,
 			CacheRefreshedAtTimestamp: cacheRefreshedAtTimestamp,
 			CacheHeight:               cacheHeight,
@@ -292,6 +333,17 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 	for _, event := range events {
 		distinctBaseTimes[encodeBaseTime(event.BaseTime)] = struct{}{}
 	}
+
+	insertEventsSQL := fmt.Sprintf(`
+		INSERT INTO %[1]s.cached_events 
+			(data_provider, stream_id, base_time, event_time, value)
+		SELECT data_provider, stream_id, NULLIF(base_time, %[2]d), event_time, value
+		FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::INT8[], $5::DECIMAL(36,18)[])
+			AS t(data_provider, stream_id, base_time, event_time, value)
+		ON CONFLICT (data_provider, stream_id, base_time_key, event_time) 
+			DO UPDATE SET
+				value = EXCLUDED.value
+	`, constants.CacheSchemaName, constants.BaseTimeNoneSentinel)
 
 	_, err := tracing.TracedOperation(ctx, tracing.OpDBCacheEvents, primaryProvider, primaryStreamID,
 		func(traceCtx context.Context) (any, error) {
@@ -329,16 +381,7 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 					values = append(values, event.Value)
 				}
 
-				_, err = tx.Execute(traceCtx, `
-			INSERT INTO `+constants.CacheSchemaName+`.cached_events 
-				(data_provider, stream_id, base_time, event_time, value)
-			SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::INT8[], $5::DECIMAL(36,18)[])
-			ON CONFLICT (data_provider, stream_id, base_time, event_time) 
-				DO UPDATE SET
-					value = EXCLUDED.value
-		`, dataProviders, streamIDs, baseTimes, eventTimes, values)
-
-				if err != nil {
+				if _, err = tx.Execute(traceCtx, insertEventsSQL, dataProviders, streamIDs, baseTimes, eventTimes, values); err != nil {
 					return nil, fmt.Errorf("insert events batch: %w", err)
 				}
 			}
@@ -354,12 +397,14 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 				}
 
 				now := time.Now().Unix()
+				updateRefresh := fmt.Sprintf(`
+					UPDATE %[1]s.cached_streams
+					SET cache_refreshed_at_timestamp = $4, cache_height = $5
+					WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3
+				`, constants.CacheSchemaName)
+
 				for baseTimeValue := range distinctBaseTimes {
-					if _, err = tx.Execute(traceCtx, `
-						UPDATE `+constants.CacheSchemaName+`.cached_streams
-						SET cache_refreshed_at_timestamp = $4, cache_height = $5
-						WHERE data_provider = $1 AND stream_id = $2 AND base_time = $3
-					`, primaryProvider, primaryStreamID, baseTimeValue, now, currentHeight); err != nil {
+					if _, err = tx.Execute(traceCtx, updateRefresh, primaryProvider, primaryStreamID, baseTimeValue, now, currentHeight); err != nil {
 						return nil, fmt.Errorf("update refresh timestamp and height (base_time=%d): %w", baseTimeValue, err)
 					}
 				}
@@ -441,14 +486,18 @@ func (c *CacheDB) CacheEventsWithIndex(ctx context.Context, events []CachedEvent
 						values = append(values, event.Value)
 					}
 
-					_, err = tx.Execute(traceCtx, `
-				INSERT INTO `+constants.CacheSchemaName+`.cached_events 
+					insertEvents := fmt.Sprintf(`
+				INSERT INTO %[1]s.cached_events 
 					(data_provider, stream_id, base_time, event_time, value)
-				SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::INT8[], $5::DECIMAL(36,18)[])
-				ON CONFLICT (data_provider, stream_id, base_time, event_time) 
+				SELECT data_provider, stream_id, NULLIF(base_time, %[2]d), event_time, value
+				FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::INT8[], $5::DECIMAL(36,18)[])
+					AS t(data_provider, stream_id, base_time, event_time, value)
+				ON CONFLICT (data_provider, stream_id, base_time_key, event_time) 
 					DO UPDATE SET
 						value = EXCLUDED.value
-			`, dataProviders, streamIDs, baseTimes, eventTimes, values)
+			`, constants.CacheSchemaName, constants.BaseTimeNoneSentinel)
+
+					_, err = tx.Execute(traceCtx, insertEvents, dataProviders, streamIDs, baseTimes, eventTimes, values)
 
 					if err != nil {
 						return nil, fmt.Errorf("insert events batch: %w", err)
@@ -478,14 +527,18 @@ func (c *CacheDB) CacheEventsWithIndex(ctx context.Context, events []CachedEvent
 						indexValues = append(indexValues, event.Value)
 					}
 
-					_, err = tx.Execute(traceCtx, `
-				INSERT INTO `+constants.CacheSchemaName+`.cached_index_events 
-					(data_provider, stream_id, base_time, event_time, value)
-				SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::INT8[], $5::DECIMAL(36,18)[])
-				ON CONFLICT (data_provider, stream_id, base_time, event_time) 
-					DO UPDATE SET
-						value = EXCLUDED.value
-			`, dataProviders, streamIDs, baseTimes, eventTimes, indexValues)
+					insertIndexEvents := fmt.Sprintf(`
+					INSERT INTO %[1]s.cached_index_events 
+						(data_provider, stream_id, base_time, event_time, value)
+					SELECT data_provider, stream_id, NULLIF(base_time, %[2]d), event_time, value
+					FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::INT8[], $5::DECIMAL(36,18)[])
+						AS t(data_provider, stream_id, base_time, event_time, value)
+					ON CONFLICT (data_provider, stream_id, base_time_key, event_time) 
+						DO UPDATE SET
+							value = EXCLUDED.value
+				`, constants.CacheSchemaName, constants.BaseTimeNoneSentinel)
+
+					_, err = tx.Execute(traceCtx, insertIndexEvents, dataProviders, streamIDs, baseTimes, eventTimes, indexValues)
 
 					if err != nil {
 						return nil, fmt.Errorf("insert index events batch: %w", err)
@@ -505,11 +558,13 @@ func (c *CacheDB) CacheEventsWithIndex(ctx context.Context, events []CachedEvent
 
 				now := time.Now().Unix()
 				for baseTimeValue := range distinctBaseTimes {
-					if _, err = tx.Execute(traceCtx, `
-						UPDATE `+constants.CacheSchemaName+`.cached_streams
+					updateRefresh := fmt.Sprintf(`
+						UPDATE %[1]s.cached_streams
 						SET cache_refreshed_at_timestamp = $4, cache_height = $5
-						WHERE data_provider = $1 AND stream_id = $2 AND base_time = $3
-					`, primaryProvider, primaryStreamID, baseTimeValue, now, currentHeight); err != nil {
+						WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3
+					`, constants.CacheSchemaName)
+
+					if _, err = tx.Execute(traceCtx, updateRefresh, primaryProvider, primaryStreamID, baseTimeValue, now, currentHeight); err != nil {
 						return nil, fmt.Errorf("update refresh timestamp and height (base_time=%d): %w", baseTimeValue, err)
 					}
 				}
@@ -526,9 +581,14 @@ func (c *CacheDB) CacheEventsWithIndex(ctx context.Context, events []CachedEvent
 	return err
 }
 
-// GetCachedEvents retrieves events from the cache for a specific time range
+// GetCachedEvents retrieves events from the cache for a specific time range using the legacy (nil) base_time.
 func (c *CacheDB) GetCachedEvents(ctx context.Context, dataProvider, streamID string, fromTime, toTime int64) ([]CachedEvent, error) {
-	baseTimeValue := constants.BaseTimeNoneSentinel
+	return c.GetCachedEventsWithBaseTime(ctx, dataProvider, streamID, nil, fromTime, toTime)
+}
+
+// GetCachedEventsWithBaseTime retrieves events from the cache for a specific base_time and time range.
+func (c *CacheDB) GetCachedEventsWithBaseTime(ctx context.Context, dataProvider, streamID string, baseTime *int64, fromTime, toTime int64) ([]CachedEvent, error) {
+	baseTimeValue := encodeBaseTime(baseTime)
 
 	// Use middleware for tracing
 	return tracing.TracedOperation(ctx, tracing.OpDBGetEvents, dataProvider, streamID,
@@ -540,22 +600,22 @@ func (c *CacheDB) GetCachedEvents(ctx context.Context, dataProvider, streamID st
 			var err error
 			if toTime > 0 {
 				results, err = c.db.Execute(traceCtx, `
-					SELECT data_provider, stream_id, base_time, event_time, value
-					FROM `+constants.CacheSchemaName+`.cached_events
-					WHERE data_provider = $1 AND stream_id = $2
-						AND base_time = $3
-						AND event_time >= $4 AND event_time <= $5
-					ORDER BY event_time
-				`, dataProvider, streamID, baseTimeValue, fromTime, toTime)
+						SELECT data_provider, stream_id, base_time, event_time, value
+						FROM `+constants.CacheSchemaName+`.cached_events
+						WHERE data_provider = $1 AND stream_id = $2
+							AND base_time_key = $3
+							AND event_time >= $4 AND event_time <= $5
+						ORDER BY event_time
+					`, dataProvider, streamID, baseTimeValue, fromTime, toTime)
 			} else {
 				results, err = c.db.Execute(traceCtx, `
-					SELECT data_provider, stream_id, base_time, event_time, value
-					FROM `+constants.CacheSchemaName+`.cached_events
-					WHERE data_provider = $1 AND stream_id = $2
-						AND base_time = $3
-						AND event_time >= $4
-					ORDER BY event_time
-				`, dataProvider, streamID, baseTimeValue, fromTime)
+						SELECT data_provider, stream_id, base_time, event_time, value
+						FROM `+constants.CacheSchemaName+`.cached_events
+						WHERE data_provider = $1 AND stream_id = $2
+							AND base_time_key = $3
+							AND event_time >= $4
+						ORDER BY event_time
+					`, dataProvider, streamID, baseTimeValue, fromTime)
 			}
 
 			if err != nil {
@@ -578,9 +638,9 @@ func (c *CacheDB) GetCachedEvents(ctx context.Context, dataProvider, streamID st
 					return nil, fmt.Errorf("failed to convert stream_id to string")
 				}
 
-				baseTimeRaw, ok := row[2].(int64)
-				if !ok {
-					return nil, fmt.Errorf("failed to convert base_time to int64")
+				baseTimePtr, err := decodeNullableBaseTime(row[2])
+				if err != nil {
+					return nil, fmt.Errorf("decode cached_events base_time: %w", err)
 				}
 
 				eventTime, ok := row[3].(int64)
@@ -596,7 +656,7 @@ func (c *CacheDB) GetCachedEvents(ctx context.Context, dataProvider, streamID st
 				events = append(events, CachedEvent{
 					DataProvider: provider,
 					StreamID:     stream,
-					BaseTime:     decodeBaseTime(baseTimeRaw),
+					BaseTime:     baseTimePtr,
 					EventTime:    eventTime,
 					Value:        value,
 				})
@@ -635,30 +695,30 @@ func (c *CacheDB) GetCachedIndexWithBaseTime(ctx context.Context, dataProvider, 
 			// Special case: latest value only (both fromTime and toTime are 0)
 			if fromTime == 0 && toTime == 0 {
 				results, err = c.db.Execute(traceCtx, `
-					SELECT data_provider, stream_id, base_time, event_time, value
-					FROM `+constants.CacheSchemaName+`.cached_index_events
-					WHERE data_provider = $1 AND stream_id = $2 AND base_time = $3
-					ORDER BY event_time DESC
-					LIMIT 1
-				`, dataProvider, streamID, baseTimeValue)
+						SELECT data_provider, stream_id, base_time, event_time, value
+						FROM `+constants.CacheSchemaName+`.cached_index_events
+						WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3
+						ORDER BY event_time DESC
+						LIMIT 1
+					`, dataProvider, streamID, baseTimeValue)
 			} else if toTime > 0 {
 				results, err = c.db.Execute(traceCtx, `
-					SELECT data_provider, stream_id, base_time, event_time, value
-					FROM `+constants.CacheSchemaName+`.cached_index_events
-					WHERE data_provider = $1 AND stream_id = $2
-						AND base_time = $3
-						AND event_time >= $4 AND event_time <= $5
-					ORDER BY event_time
-				`, dataProvider, streamID, baseTimeValue, fromTime, toTime)
+						SELECT data_provider, stream_id, base_time, event_time, value
+						FROM `+constants.CacheSchemaName+`.cached_index_events
+						WHERE data_provider = $1 AND stream_id = $2
+							AND base_time_key = $3
+							AND event_time >= $4 AND event_time <= $5
+						ORDER BY event_time
+					`, dataProvider, streamID, baseTimeValue, fromTime, toTime)
 			} else {
 				results, err = c.db.Execute(traceCtx, `
-					SELECT data_provider, stream_id, base_time, event_time, value
-					FROM `+constants.CacheSchemaName+`.cached_index_events
-					WHERE data_provider = $1 AND stream_id = $2
-						AND base_time = $3
-						AND event_time >= $4
-					ORDER BY event_time
-				`, dataProvider, streamID, baseTimeValue, fromTime)
+						SELECT data_provider, stream_id, base_time, event_time, value
+						FROM `+constants.CacheSchemaName+`.cached_index_events
+						WHERE data_provider = $1 AND stream_id = $2
+							AND base_time_key = $3
+							AND event_time >= $4
+						ORDER BY event_time
+					`, dataProvider, streamID, baseTimeValue, fromTime)
 			}
 
 			if err != nil {
@@ -681,9 +741,9 @@ func (c *CacheDB) GetCachedIndexWithBaseTime(ctx context.Context, dataProvider, 
 					return nil, fmt.Errorf("failed to convert stream_id to string")
 				}
 
-				baseTimeRaw, ok := row[2].(int64)
-				if !ok {
-					return nil, fmt.Errorf("failed to convert base_time to int64")
+				baseTimePtr, err := decodeNullableBaseTime(row[2])
+				if err != nil {
+					return nil, fmt.Errorf("decode cached_index_events base_time: %w", err)
 				}
 
 				eventTime, ok := row[3].(int64)
@@ -699,7 +759,7 @@ func (c *CacheDB) GetCachedIndexWithBaseTime(ctx context.Context, dataProvider, 
 				event := CachedEvent{
 					DataProvider: dataProvider,
 					StreamID:     streamID,
-					BaseTime:     decodeBaseTime(baseTimeRaw),
+					BaseTime:     baseTimePtr,
 					EventTime:    eventTime,
 					Value:        value,
 				}
@@ -815,15 +875,17 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 			}
 			defer func() { _ = tx.Rollback(traceCtx) }()
 
+			baseTimeValue := constants.BaseTimeNoneSentinel
+
 			// First, check if the stream is configured for caching
 			results, err := tx.Execute(traceCtx, `
 				SELECT EXISTS (
 					SELECT 1
 					FROM `+constants.CacheSchemaName+`.cached_streams
-					WHERE data_provider = $1 AND stream_id = $2
+					WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $4
 						AND (from_timestamp IS NULL OR from_timestamp <= $3)
 				)
-			`, dataProvider, streamID, fromTime)
+			`, dataProvider, streamID, fromTime, baseTimeValue)
 
 			if err != nil {
 				return false, fmt.Errorf("check stream config: %w", err)
@@ -847,15 +909,14 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 
 			// Then, check if there are events in the cache
 			var hasData bool
-			baseTimeValue := constants.BaseTimeNoneSentinel
 			if toTime == 0 {
 				// No upper bound specified - to is treated as max_int8 (end of time)
 				results, err := tx.Execute(traceCtx, `
-					SELECT EXISTS (
-						SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
-						WHERE data_provider = $1 AND stream_id = $2 AND base_time = $3 AND event_time >= $4
-					)
-				`, dataProvider, streamID, baseTimeValue, fromTime)
+						SELECT EXISTS (
+							SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
+							WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 AND event_time >= $4
+						)
+					`, dataProvider, streamID, baseTimeValue, fromTime)
 				if err != nil {
 					return false, fmt.Errorf("failed to check cached events existence: %w", err)
 				}
@@ -871,11 +932,11 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 			} else {
 				// Upper bound specified
 				results, err := tx.Execute(traceCtx, `
-					SELECT EXISTS (
-						SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
-						WHERE data_provider = $1 AND stream_id = $2 AND base_time = $3 AND event_time >= $4 AND event_time <= $5
-					)
-				`, dataProvider, streamID, baseTimeValue, fromTime, toTime)
+						SELECT EXISTS (
+							SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
+							WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 AND event_time >= $4 AND event_time <= $5
+						)
+					`, dataProvider, streamID, baseTimeValue, fromTime, toTime)
 				if err != nil {
 					return false, fmt.Errorf("failed to check cached events existence: %w", err)
 				}
@@ -893,10 +954,10 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 			// If no direct events found, check for an anchor record (last event before fromTime)
 			if !hasData && fromTime != 0 {
 				anchorResults, err := tx.Execute(traceCtx, `
-					SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
-					WHERE data_provider = $1 AND stream_id = $2 AND base_time = $3 AND event_time < $4
-					LIMIT 1
-				`, dataProvider, streamID, baseTimeValue, fromTime)
+						SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
+						WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 AND event_time < $4
+						LIMIT 1
+					`, dataProvider, streamID, baseTimeValue, fromTime)
 				if err != nil {
 					return false, fmt.Errorf("failed to query anchor record: %w", err)
 				}
@@ -937,11 +998,13 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 
 		// Batch delete using array operations
 		_, err = tx.Execute(ctx, `
-			DELETE FROM `+constants.CacheSchemaName+`.cached_streams
-			WHERE (data_provider, stream_id, base_time) IN (
-				SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[])
-			)
-		`, deleteProviders, deleteStreamIDs, deleteBaseTimes)
+				DELETE FROM `+constants.CacheSchemaName+`.cached_streams
+				WHERE (data_provider, stream_id, base_time_key) IN (
+					SELECT data_provider, stream_id, base_time_key
+					FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[])
+						AS t(data_provider, stream_id, base_time_key)
+				)
+			`, deleteProviders, deleteStreamIDs, deleteBaseTimes)
 		if err != nil {
 			return fmt.Errorf("batch delete stream configs: %w", err)
 		}
@@ -963,17 +1026,21 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 		}
 
 		// Execute the batch upsert, preserving existing values if new values are zero
-		_, err = tx.Execute(ctx, `
-			INSERT INTO `+constants.CacheSchemaName+`.cached_streams 
-				(data_provider, stream_id, base_time, from_timestamp, cache_refreshed_at_timestamp, cache_height, cron_schedule)
-			SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::INT8[], $5::INT8[], $6::INT8[], $7::TEXT[])
-			ON CONFLICT (data_provider, stream_id, base_time) 
-			DO UPDATE SET
-				from_timestamp = EXCLUDED.from_timestamp,
-				cache_refreshed_at_timestamp = COALESCE(NULLIF(EXCLUDED.cache_refreshed_at_timestamp, 0), cached_streams.cache_refreshed_at_timestamp),
-				cache_height = COALESCE(NULLIF(EXCLUDED.cache_height, 0), cached_streams.cache_height),
-				cron_schedule = EXCLUDED.cron_schedule
-		`, dataProviders, streamIDs, baseTimes, fromTimestamps, cacheRefreshedAtTimestamps, cacheHeights, cronSchedules)
+		batchUpsert := fmt.Sprintf(`
+				INSERT INTO %[1]s.cached_streams 
+					(data_provider, stream_id, base_time, from_timestamp, cache_refreshed_at_timestamp, cache_height, cron_schedule)
+				SELECT data_provider, stream_id, NULLIF(base_time, %[2]d), from_timestamp, cache_refreshed_at_timestamp, cache_height, cron_schedule
+				FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::INT8[], $5::INT8[], $6::INT8[], $7::TEXT[])
+					AS t(data_provider, stream_id, base_time, from_timestamp, cache_refreshed_at_timestamp, cache_height, cron_schedule)
+				ON CONFLICT (data_provider, stream_id, base_time_key) 
+				DO UPDATE SET
+					from_timestamp = EXCLUDED.from_timestamp,
+					cache_refreshed_at_timestamp = COALESCE(NULLIF(EXCLUDED.cache_refreshed_at_timestamp, 0), cached_streams.cache_refreshed_at_timestamp),
+					cache_height = COALESCE(NULLIF(EXCLUDED.cache_height, 0), cached_streams.cache_height),
+					cron_schedule = EXCLUDED.cron_schedule
+			`, constants.CacheSchemaName, constants.BaseTimeNoneSentinel)
+
+		_, err = tx.Execute(ctx, batchUpsert, dataProviders, streamIDs, baseTimes, fromTimestamps, cacheRefreshedAtTimestamps, cacheHeights, cronSchedules)
 
 		if err != nil {
 			return fmt.Errorf("batch upsert stream configs: %w", err)
@@ -1003,7 +1070,7 @@ func (c *CacheDB) getStreamConfigPoolWithBaseTime(ctx context.Context, dataProvi
 	results, err := c.db.Execute(ctx, `
 		SELECT data_provider, stream_id, base_time, from_timestamp, cache_refreshed_at_timestamp, cache_height, cron_schedule
 		FROM `+constants.CacheSchemaName+`.cached_streams
-		WHERE data_provider = $1 AND stream_id = $2 AND base_time = $3
+		WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3
 	`, dataProvider, streamID, encodedBaseTime)
 
 	if err != nil {
@@ -1033,35 +1100,35 @@ func (c *CacheDB) getStreamConfigPoolWithBaseTime(ctx context.Context, dataProvi
 		return nil, fmt.Errorf("failed to convert stream_id to string")
 	}
 
-	baseTimeValue, ok := row[2].(int64)
-	if !ok {
-		return nil, fmt.Errorf("failed to convert base_time to int64")
+	baseTimePtr, err := decodeNullableBaseTime(row[2])
+	if err != nil {
+		return nil, fmt.Errorf("decode cached_streams base_time: %w", err)
 	}
 
-	fromTimestamp, ok := row[3].(int64)
-	if !ok {
-		return nil, fmt.Errorf("failed to convert from_timestamp to int64")
+	fromTimestamp, err := decodeNullableInt64(row[3], "from_timestamp")
+	if err != nil {
+		return nil, err
 	}
 
-	cacheRefreshedAtTimestamp, ok := row[4].(int64)
-	if !ok {
-		return nil, fmt.Errorf("failed to convert cache_refreshed_at_timestamp to int64")
+	cacheRefreshedAtTimestamp, err := decodeNullableInt64(row[4], "cache_refreshed_at_timestamp")
+	if err != nil {
+		return nil, err
 	}
 
-	cacheHeight, ok := row[5].(int64)
-	if !ok {
-		return nil, fmt.Errorf("failed to convert cache_height to int64")
+	cacheHeight, err := decodeNullableInt64(row[5], "cache_height")
+	if err != nil {
+		return nil, err
 	}
 
-	cronSchedule, ok := row[6].(string)
-	if !ok {
-		return nil, fmt.Errorf("failed to convert cron_schedule to string")
+	cronSchedule, err := decodeNullableString(row[6], "cron_schedule")
+	if err != nil {
+		return nil, err
 	}
 
 	config := &StreamCacheConfig{
 		DataProvider:              dataProviderResult,
 		StreamID:                  streamIDResult,
-		BaseTime:                  decodeBaseTime(baseTimeValue),
+		BaseTime:                  baseTimePtr,
 		FromTimestamp:             fromTimestamp,
 		CacheRefreshedAtTimestamp: cacheRefreshedAtTimestamp,
 		CacheHeight:               cacheHeight,
@@ -1085,14 +1152,15 @@ func (c *CacheDB) QueryCachedStreamsWithCounts(ctx context.Context) ([]StreamCou
 	SELECT cs.data_provider, cs.stream_id, cs.base_time, COALESCE(ce.event_count, 0) as event_count
 	FROM %s.cached_streams cs
 		LEFT JOIN (
-			SELECT data_provider, stream_id, COUNT(*) as event_count
+			SELECT data_provider, stream_id, base_time_key, COUNT(*) as event_count
 			FROM %s.cached_events
-			WHERE base_time = %d
-			GROUP BY data_provider, stream_id
-		) ce ON cs.data_provider = ce.data_provider AND cs.stream_id = ce.stream_id
-	WHERE cs.base_time = %d
+			GROUP BY data_provider, stream_id, base_time_key
+		) ce ON cs.data_provider = ce.data_provider 
+			AND cs.stream_id = ce.stream_id
+			AND cs.base_time_key = ce.base_time_key
+	WHERE cs.base_time_key = %d
 	ORDER BY cs.data_provider, cs.stream_id, cs.base_time
-	`, constants.CacheSchemaName, constants.CacheSchemaName, constants.BaseTimeNoneSentinel, constants.BaseTimeNoneSentinel)
+	`, constants.CacheSchemaName, constants.CacheSchemaName, constants.BaseTimeNoneSentinel)
 
 	results, err := c.db.Execute(ctx, query)
 	if err != nil {
@@ -1115,9 +1183,9 @@ func (c *CacheDB) QueryCachedStreamsWithCounts(ctx context.Context) ([]StreamCou
 			return nil, fmt.Errorf("failed to convert stream_id to string")
 		}
 
-		baseTimeVal, ok := row[2].(int64)
-		if !ok {
-			return nil, fmt.Errorf("failed to convert base_time to int64")
+		baseTimePtr, err := decodeNullableBaseTime(row[2])
+		if err != nil {
+			return nil, fmt.Errorf("decode cached_streams base_time: %w", err)
 		}
 
 		eventCount, ok := row[3].(int64)
@@ -1128,7 +1196,7 @@ func (c *CacheDB) QueryCachedStreamsWithCounts(ctx context.Context) ([]StreamCou
 		info := StreamCountInfo{
 			DataProvider: dataProvider,
 			StreamID:     streamID,
-			BaseTime:     decodeBaseTime(baseTimeVal),
+			BaseTime:     baseTimePtr,
 			EventCount:   eventCount,
 		}
 		streamInfos = append(streamInfos, info)
@@ -1210,12 +1278,12 @@ func (c *CacheDB) GetLastEventBefore(ctx context.Context, dataProvider, streamID
 	return tracing.TracedOperation(ctx, tracing.OpDBGetEvents, dataProvider, streamID,
 		func(traceCtx context.Context) (*CachedEvent, error) {
 			results, err := c.db.Execute(traceCtx, `
-				SELECT data_provider, stream_id, base_time, event_time, value
-				FROM `+constants.CacheSchemaName+`.cached_events
-				WHERE data_provider = $1 AND stream_id = $2 AND base_time = $3 AND event_time < $4
-				ORDER BY event_time DESC
-				LIMIT 1
-			`, dataProvider, streamID, baseTimeValue, before)
+					SELECT data_provider, stream_id, base_time, event_time, value
+					FROM `+constants.CacheSchemaName+`.cached_events
+					WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 AND event_time < $4
+					ORDER BY event_time DESC
+					LIMIT 1
+				`, dataProvider, streamID, baseTimeValue, before)
 
 			if err != nil {
 				return nil, fmt.Errorf("query last event before: %w", err)
@@ -1244,9 +1312,9 @@ func (c *CacheDB) GetLastEventBefore(ctx context.Context, dataProvider, streamID
 				return nil, fmt.Errorf("failed to convert stream_id to string")
 			}
 
-			baseTimeRaw, ok := row[2].(int64)
-			if !ok {
-				return nil, fmt.Errorf("failed to convert base_time to int64")
+			baseTimePtr, err := decodeNullableBaseTime(row[2])
+			if err != nil {
+				return nil, fmt.Errorf("decode cached_events base_time: %w", err)
 			}
 
 			eventTime, ok := row[3].(int64)
@@ -1262,7 +1330,7 @@ func (c *CacheDB) GetLastEventBefore(ctx context.Context, dataProvider, streamID
 			return &CachedEvent{
 				DataProvider: dataProviderResult,
 				StreamID:     streamIDResult,
-				BaseTime:     decodeBaseTime(baseTimeRaw),
+				BaseTime:     baseTimePtr,
 				EventTime:    eventTime,
 				Value:        value,
 			}, nil
@@ -1271,7 +1339,7 @@ func (c *CacheDB) GetLastEventBefore(ctx context.Context, dataProvider, streamID
 		attribute.String("query", "last_before"))
 }
 
-// GetFirstEventAfter retrieves the earliest event strictly after the specified timestamp.
+// GetFirstEventAfter retrieves the earliest event at or after the specified timestamp.
 // Returns (nil, sql.ErrNoRows) if no such event exists.
 func (c *CacheDB) GetFirstEventAfter(ctx context.Context, dataProvider, streamID string, after int64) (*CachedEvent, error) {
 	baseTimeValue := constants.BaseTimeNoneSentinel
@@ -1280,12 +1348,12 @@ func (c *CacheDB) GetFirstEventAfter(ctx context.Context, dataProvider, streamID
 	return tracing.TracedOperation(ctx, tracing.OpDBGetEvents, dataProvider, streamID,
 		func(traceCtx context.Context) (*CachedEvent, error) {
 			results, err := c.db.Execute(traceCtx, `
-				SELECT data_provider, stream_id, base_time, event_time, value
-				FROM `+constants.CacheSchemaName+`.cached_events
-				WHERE data_provider = $1 AND stream_id = $2 AND base_time = $3 AND event_time > $4
-				ORDER BY event_time
-				LIMIT 1
-			`, dataProvider, streamID, baseTimeValue, after)
+						SELECT data_provider, stream_id, base_time, event_time, value
+						FROM `+constants.CacheSchemaName+`.cached_events
+						WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 AND event_time >= $4
+						ORDER BY event_time
+						LIMIT 1
+					`, dataProvider, streamID, baseTimeValue, after)
 
 			if err != nil {
 				return nil, fmt.Errorf("query first event after: %w", err)
@@ -1314,9 +1382,9 @@ func (c *CacheDB) GetFirstEventAfter(ctx context.Context, dataProvider, streamID
 				return nil, fmt.Errorf("failed to convert stream_id to string")
 			}
 
-			baseTimeRaw, ok := row[2].(int64)
-			if !ok {
-				return nil, fmt.Errorf("failed to convert base_time to int64")
+			baseTimePtr, err := decodeNullableBaseTime(row[2])
+			if err != nil {
+				return nil, fmt.Errorf("decode cached_events base_time: %w", err)
 			}
 
 			eventTime, ok := row[3].(int64)
@@ -1332,7 +1400,7 @@ func (c *CacheDB) GetFirstEventAfter(ctx context.Context, dataProvider, streamID
 			return &CachedEvent{
 				DataProvider: dataProviderResult,
 				StreamID:     streamIDResult,
-				BaseTime:     decodeBaseTime(baseTimeRaw),
+				BaseTime:     baseTimePtr,
 				EventTime:    eventTime,
 				Value:        value,
 			}, nil
