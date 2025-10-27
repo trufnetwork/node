@@ -207,9 +207,14 @@ func (c *CacheDB) AddStreamConfigs(ctx context.Context, configs []StreamCacheCon
 	return nil
 }
 
-// GetStreamConfig retrieves a stream's cache configuration
+// GetStreamConfig retrieves the legacy (no base_time) cache configuration for a stream.
 func (c *CacheDB) GetStreamConfig(ctx context.Context, dataProvider, streamID string) (*StreamCacheConfig, error) {
 	return c.getStreamConfigPool(ctx, dataProvider, streamID)
+}
+
+// GetStreamConfigWithBaseTime retrieves a stream's cache configuration for a specific base_time.
+func (c *CacheDB) GetStreamConfigWithBaseTime(ctx context.Context, dataProvider, streamID string, baseTime *int64) (*StreamCacheConfig, error) {
+	return c.getStreamConfigPoolWithBaseTime(ctx, dataProvider, streamID, baseTime)
 }
 
 // ListStreamConfigs retrieves all stream cache configurations
@@ -301,11 +306,7 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 				return nil, fmt.Errorf("begin transaction: %w", err)
 			}
 			defer func() {
-				if err != nil {
-					if rbErr := tx.Rollback(traceCtx); rbErr != nil {
-						c.logger.Error("failed to rollback transaction", "error", rbErr)
-					}
-				}
+				_ = tx.Rollback(traceCtx)
 			}()
 
 			// Insert events in batches using UNNEST for efficiency
@@ -370,8 +371,8 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 				}
 			}
 
-			if err := tx.Commit(traceCtx); err != nil {
-				return nil, fmt.Errorf("commit transaction: %w", err)
+			if commitErr := tx.Commit(traceCtx); commitErr != nil {
+				return nil, fmt.Errorf("commit transaction: %w", commitErr)
 			}
 
 			return nil, nil
@@ -415,11 +416,7 @@ func (c *CacheDB) CacheEventsWithIndex(ctx context.Context, events []CachedEvent
 				return nil, fmt.Errorf("begin transaction: %w", err)
 			}
 			defer func() {
-				if err != nil {
-					if rbErr := tx.Rollback(traceCtx); rbErr != nil {
-						c.logger.Error("failed to rollback transaction", "error", rbErr)
-					}
-				}
+				_ = tx.Rollback(traceCtx)
 			}()
 
 			// Cache raw events if provided
@@ -524,8 +521,8 @@ func (c *CacheDB) CacheEventsWithIndex(ctx context.Context, events []CachedEvent
 				}
 			}
 
-			if err := tx.Commit(traceCtx); err != nil {
-				return nil, fmt.Errorf("commit transaction: %w", err)
+			if commitErr := tx.Commit(traceCtx); commitErr != nil {
+				return nil, fmt.Errorf("commit transaction: %w", commitErr)
 			}
 
 			return nil, nil
@@ -1006,13 +1003,20 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 	return nil
 }
 
-// getStreamConfigPool retrieves a stream's cache configuration using pool
+// getStreamConfigPool retrieves the default base_time (sentinel) configuration.
 func (c *CacheDB) getStreamConfigPool(ctx context.Context, dataProvider, streamID string) (*StreamCacheConfig, error) {
+	return c.getStreamConfigPoolWithBaseTime(ctx, dataProvider, streamID, nil)
+}
+
+// getStreamConfigPoolWithBaseTime retrieves a stream's cache configuration for the provided base_time.
+func (c *CacheDB) getStreamConfigPoolWithBaseTime(ctx context.Context, dataProvider, streamID string, baseTime *int64) (*StreamCacheConfig, error) {
+	encodedBaseTime := encodeBaseTime(baseTime)
+
 	results, err := c.db.Execute(ctx, `
 		SELECT data_provider, stream_id, base_time, from_timestamp, cache_refreshed_at_timestamp, cache_height, cron_schedule
 		FROM `+constants.CacheSchemaName+`.cached_streams
-		WHERE data_provider = $1 AND stream_id = $2
-	`, dataProvider, streamID)
+		WHERE data_provider = $1 AND stream_id = $2 AND base_time = $3
+	`, dataProvider, streamID, encodedBaseTime)
 
 	if err != nil {
 		return nil, fmt.Errorf("query stream config: %w", err)
@@ -1089,16 +1093,17 @@ type StreamCountInfo struct {
 
 // QueryCachedStreamsWithCounts returns all cached streams with their event counts
 func (c *CacheDB) QueryCachedStreamsWithCounts(ctx context.Context) ([]StreamCountInfo, error) {
-	query := `
+	query := fmt.Sprintf(`
 	SELECT cs.data_provider, cs.stream_id, cs.base_time, COALESCE(ce.event_count, 0) as event_count
-	FROM ` + constants.CacheSchemaName + `.cached_streams cs
+	FROM %s.cached_streams cs
 		LEFT JOIN (
 			SELECT data_provider, stream_id, COUNT(*) as event_count
-			FROM ` + constants.CacheSchemaName + `.cached_events
+			FROM %s.cached_events
 			GROUP BY data_provider, stream_id
 		) ce ON cs.data_provider = ce.data_provider AND cs.stream_id = ce.stream_id
+	WHERE cs.base_time = %d
 	ORDER BY cs.data_provider, cs.stream_id, cs.base_time
-	`
+	`, constants.CacheSchemaName, constants.CacheSchemaName, constants.BaseTimeNoneSentinel)
 
 	results, err := c.db.Execute(ctx, query)
 	if err != nil {

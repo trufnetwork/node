@@ -112,8 +112,9 @@ func ensureCachedIndexEventsSchema(ctx context.Context, tx sql.Tx) error {
 		return fmt.Errorf("add cached_index_events primary key: %w", err)
 	}
 
-	if _, err := tx.Execute(ctx, `
-		DROP INDEX IF EXISTS idx_cached_index_events_time_range`); err != nil {
+	dropIndex := fmt.Sprintf(`
+		DROP INDEX IF EXISTS %s.idx_cached_index_events_time_range`, constants.CacheSchemaName)
+	if _, err := tx.Execute(ctx, dropIndex); err != nil {
 		return fmt.Errorf("drop cached_index_events index: %w", err)
 	}
 
