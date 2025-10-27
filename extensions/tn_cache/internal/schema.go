@@ -57,20 +57,47 @@ func ensureCachedStreamsSchema(ctx context.Context, tx sql.Tx) error {
 
 // ensureCachedEventsSchema guarantees the raw events table exists with the expected index.
 func ensureCachedEventsSchema(ctx context.Context, tx sql.Tx) error {
-	if _, err := tx.Execute(ctx, `
-		CREATE TABLE IF NOT EXISTS `+constants.CacheSchemaName+`.cached_events (
+	createTable := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s.cached_events (
 			data_provider TEXT NOT NULL,
 			stream_id TEXT NOT NULL,
+			base_time INT8 NOT NULL DEFAULT %d,
 			event_time INT8 NOT NULL,
 			value NUMERIC(36, 18) NOT NULL,
-			PRIMARY KEY (data_provider, stream_id, event_time)
-		)`); err != nil {
+			PRIMARY KEY (data_provider, stream_id, base_time, event_time)
+		)`, constants.CacheSchemaName, constants.BaseTimeNoneSentinel)
+
+	if _, err := tx.Execute(ctx, createTable); err != nil {
 		return fmt.Errorf("create cached_events table: %w", err)
+	}
+
+	addColumn := fmt.Sprintf(`
+		ALTER TABLE %s.cached_events
+		ADD COLUMN IF NOT EXISTS base_time INT8 NOT NULL DEFAULT %d`, constants.CacheSchemaName, constants.BaseTimeNoneSentinel)
+	if _, err := tx.Execute(ctx, addColumn); err != nil {
+		return fmt.Errorf("add base_time to cached_events: %w", err)
+	}
+
+	if _, err := tx.Execute(ctx, `
+		ALTER TABLE `+constants.CacheSchemaName+`.cached_events
+		DROP CONSTRAINT IF EXISTS cached_events_pkey`); err != nil {
+		return fmt.Errorf("drop cached_events primary key: %w", err)
+	}
+
+	if _, err := tx.Execute(ctx, `
+		ALTER TABLE `+constants.CacheSchemaName+`.cached_events
+		ADD CONSTRAINT cached_events_pkey PRIMARY KEY (data_provider, stream_id, base_time, event_time)`); err != nil {
+		return fmt.Errorf("add cached_events primary key: %w", err)
+	}
+
+	if _, err := tx.Execute(ctx, `
+		DROP INDEX IF EXISTS `+constants.CacheSchemaName+`.idx_cached_events_time_range`); err != nil {
+		return fmt.Errorf("drop cached_events index: %w", err)
 	}
 
 	if _, err := tx.Execute(ctx, `
 		CREATE INDEX IF NOT EXISTS idx_cached_events_time_range 
-		ON `+constants.CacheSchemaName+`.cached_events (data_provider, stream_id, event_time)`); err != nil {
+		ON `+constants.CacheSchemaName+`.cached_events (data_provider, stream_id, base_time, event_time)`); err != nil {
 		return fmt.Errorf("create cached_events index: %w", err)
 	}
 

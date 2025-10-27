@@ -286,15 +286,20 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 		return nil
 	}
 
-	// Use middleware for tracing
-	_, err := tracing.TracedOperation(ctx, tracing.OpDBCacheEvents, events[0].DataProvider, events[0].StreamID,
+	primaryProvider := events[0].DataProvider
+	primaryStreamID := events[0].StreamID
+	distinctBaseTimes := make(map[int64]struct{})
+	for _, event := range events {
+		distinctBaseTimes[encodeBaseTime(event.BaseTime)] = struct{}{}
+	}
+
+	_, err := tracing.TracedOperation(ctx, tracing.OpDBCacheEvents, primaryProvider, primaryStreamID,
 		func(traceCtx context.Context) (any, error) {
 			c.logger.Debug("caching events",
-				"data_provider", events[0].DataProvider,
-				"stream_id", events[0].StreamID,
+				"data_provider", primaryProvider,
+				"stream_id", primaryStreamID,
 				"count", len(events))
 
-			// Use READ COMMITTED isolation for event caching (default is fine)
 			tx, err := c.db.BeginTx(traceCtx)
 			if err != nil {
 				return nil, fmt.Errorf("begin transaction: %w", err)
@@ -303,9 +308,6 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 				_ = tx.Rollback(traceCtx)
 			}()
 
-			// Insert events in batches using UNNEST for efficiency
-			// PostgreSQL has a limit of 65535 parameters, and we use 4 per event
-			// Use 10000 as batch size for safety (40000 parameters)
 			batchSize := 10000
 			for i := 0; i < len(events); i += batchSize {
 				end := i + batchSize
@@ -315,53 +317,51 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 
 				batch := events[i:end]
 
-				// Build arrays for UNNEST
 				var dataProviders, streamIDs []string
-				var eventTimes []int64
+				var baseTimes, eventTimes []int64
 				var values []*types.Decimal
 
 				for _, event := range batch {
 					dataProviders = append(dataProviders, event.DataProvider)
 					streamIDs = append(streamIDs, event.StreamID)
+					baseTimes = append(baseTimes, encodeBaseTime(event.BaseTime))
 					eventTimes = append(eventTimes, event.EventTime)
 					values = append(values, event.Value)
 				}
 
-				// Use UNNEST for efficient batch insert
 				_, err = tx.Execute(traceCtx, `
-					INSERT INTO `+constants.CacheSchemaName+`.cached_events 
-						(data_provider, stream_id, event_time, value)
-					SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::DECIMAL(36,18)[])
-					ON CONFLICT (data_provider, stream_id, event_time) 
-					DO UPDATE SET
-						value = EXCLUDED.value
-				`, dataProviders, streamIDs, eventTimes, values)
+			INSERT INTO `+constants.CacheSchemaName+`.cached_events 
+				(data_provider, stream_id, base_time, event_time, value)
+			SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::INT8[], $5::DECIMAL(36,18)[])
+			ON CONFLICT (data_provider, stream_id, base_time, event_time) 
+				DO UPDATE SET
+					value = EXCLUDED.value
+		`, dataProviders, streamIDs, baseTimes, eventTimes, values)
 
 				if err != nil {
 					return nil, fmt.Errorf("insert events batch: %w", err)
 				}
 			}
 
-			// Finally, update the refresh timestamp and blockchain height for the stream
-			if len(events) > 0 {
-				event := events[0]
-				baseTimeValue := encodeBaseTime(event.BaseTime)
+			if primaryProvider != "" && primaryStreamID != "" {
+				if len(distinctBaseTimes) == 0 {
+					distinctBaseTimes[constants.BaseTimeNoneSentinel] = struct{}{}
+				}
 
-				// Get current blockchain height
 				currentHeight, err := c.GetCurrentBlockHeight(traceCtx)
 				if err != nil {
 					return nil, fmt.Errorf("failed to get current blockchain height: %w", err)
 				}
 
 				now := time.Now().Unix()
-				_, err = tx.Execute(traceCtx, `
-					UPDATE `+constants.CacheSchemaName+`.cached_streams
-					SET cache_refreshed_at_timestamp = $4, cache_height = $5
-					WHERE data_provider = $1 AND stream_id = $2 AND base_time = $3
-				`, event.DataProvider, event.StreamID, baseTimeValue, now, currentHeight)
-
-				if err != nil {
-					return nil, fmt.Errorf("update refresh timestamp and height: %w", err)
+				for baseTimeValue := range distinctBaseTimes {
+					if _, err = tx.Execute(traceCtx, `
+						UPDATE `+constants.CacheSchemaName+`.cached_streams
+						SET cache_refreshed_at_timestamp = $4, cache_height = $5
+						WHERE data_provider = $1 AND stream_id = $2 AND base_time = $3
+					`, primaryProvider, primaryStreamID, baseTimeValue, now, currentHeight); err != nil {
+						return nil, fmt.Errorf("update refresh timestamp and height (base_time=%d): %w", baseTimeValue, err)
+					}
 				}
 			}
 
@@ -382,20 +382,27 @@ func (c *CacheDB) CacheEventsWithIndex(ctx context.Context, events []CachedEvent
 		return nil
 	}
 
-	// Determine primary stream for tracing
 	var primaryProvider, primaryStreamID string
-	var primaryBaseTime *int64
+	distinctBaseTimes := make(map[int64]struct{})
+
 	if len(events) > 0 {
 		primaryProvider = events[0].DataProvider
 		primaryStreamID = events[0].StreamID
-		primaryBaseTime = events[0].BaseTime
-	} else if len(indexEvents) > 0 {
-		primaryProvider = indexEvents[0].DataProvider
-		primaryStreamID = indexEvents[0].StreamID
-		primaryBaseTime = indexEvents[0].BaseTime
+		for _, event := range events {
+			distinctBaseTimes[encodeBaseTime(event.BaseTime)] = struct{}{}
+		}
 	}
 
-	// Use middleware for tracing
+	if len(indexEvents) > 0 {
+		if primaryProvider == "" {
+			primaryProvider = indexEvents[0].DataProvider
+			primaryStreamID = indexEvents[0].StreamID
+		}
+		for _, event := range indexEvents {
+			distinctBaseTimes[encodeBaseTime(event.BaseTime)] = struct{}{}
+		}
+	}
+
 	_, err := tracing.TracedOperation(ctx, tracing.OpDBCacheEvents, primaryProvider, primaryStreamID,
 		func(traceCtx context.Context) (any, error) {
 			c.logger.Debug("caching events with index",
@@ -404,7 +411,6 @@ func (c *CacheDB) CacheEventsWithIndex(ctx context.Context, events []CachedEvent
 				"raw_count", len(events),
 				"index_count", len(indexEvents))
 
-			// Begin transaction for atomic updates
 			tx, err := c.db.BeginTx(traceCtx)
 			if err != nil {
 				return nil, fmt.Errorf("begin transaction: %w", err)
@@ -413,9 +419,7 @@ func (c *CacheDB) CacheEventsWithIndex(ctx context.Context, events []CachedEvent
 				_ = tx.Rollback(traceCtx)
 			}()
 
-			// Cache raw events if provided
 			if len(events) > 0 {
-				// Insert events in batches using UNNEST for efficiency
 				batchSize := 10000
 				for i := 0; i < len(events); i += batchSize {
 					end := i + batchSize
@@ -425,27 +429,26 @@ func (c *CacheDB) CacheEventsWithIndex(ctx context.Context, events []CachedEvent
 
 					batch := events[i:end]
 
-					// Build arrays for UNNEST
 					var dataProviders, streamIDs []string
-					var eventTimes []int64
+					var baseTimes, eventTimes []int64
 					var values []*types.Decimal
 
 					for _, event := range batch {
 						dataProviders = append(dataProviders, event.DataProvider)
 						streamIDs = append(streamIDs, event.StreamID)
+						baseTimes = append(baseTimes, encodeBaseTime(event.BaseTime))
 						eventTimes = append(eventTimes, event.EventTime)
 						values = append(values, event.Value)
 					}
 
-					// Use UNNEST for efficient batch insert
 					_, err = tx.Execute(traceCtx, `
 				INSERT INTO `+constants.CacheSchemaName+`.cached_events 
-					(data_provider, stream_id, event_time, value)
-				SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::DECIMAL(36,18)[])
-				ON CONFLICT (data_provider, stream_id, event_time) 
-				DO UPDATE SET
-					value = EXCLUDED.value
-			`, dataProviders, streamIDs, eventTimes, values)
+					(data_provider, stream_id, base_time, event_time, value)
+				SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::INT8[], $5::DECIMAL(36,18)[])
+				ON CONFLICT (data_provider, stream_id, base_time, event_time) 
+					DO UPDATE SET
+						value = EXCLUDED.value
+			`, dataProviders, streamIDs, baseTimes, eventTimes, values)
 
 					if err != nil {
 						return nil, fmt.Errorf("insert events batch: %w", err)
@@ -453,9 +456,7 @@ func (c *CacheDB) CacheEventsWithIndex(ctx context.Context, events []CachedEvent
 				}
 			}
 
-			// Cache index events if provided
 			if len(indexEvents) > 0 {
-				// Insert index events in batches
 				batchSize := 10000
 				for i := 0; i < len(indexEvents); i += batchSize {
 					end := i + batchSize
@@ -465,7 +466,6 @@ func (c *CacheDB) CacheEventsWithIndex(ctx context.Context, events []CachedEvent
 
 					batch := indexEvents[i:end]
 
-					// Build arrays for UNNEST
 					var dataProviders, streamIDs []string
 					var baseTimes, eventTimes []int64
 					var indexValues []*types.Decimal
@@ -478,15 +478,14 @@ func (c *CacheDB) CacheEventsWithIndex(ctx context.Context, events []CachedEvent
 						indexValues = append(indexValues, event.Value)
 					}
 
-					// Use UNNEST for efficient batch insert
 					_, err = tx.Execute(traceCtx, `
-			INSERT INTO `+constants.CacheSchemaName+`.cached_index_events 
-				(data_provider, stream_id, base_time, event_time, value)
-			SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::INT8[], $5::DECIMAL(36,18)[])
-			ON CONFLICT (data_provider, stream_id, base_time, event_time) 
-				DO UPDATE SET
-					value = EXCLUDED.value
-		`, dataProviders, streamIDs, baseTimes, eventTimes, indexValues)
+				INSERT INTO `+constants.CacheSchemaName+`.cached_index_events 
+					(data_provider, stream_id, base_time, event_time, value)
+				SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::INT8[], $5::DECIMAL(36,18)[])
+				ON CONFLICT (data_provider, stream_id, base_time, event_time) 
+					DO UPDATE SET
+						value = EXCLUDED.value
+			`, dataProviders, streamIDs, baseTimes, eventTimes, indexValues)
 
 					if err != nil {
 						return nil, fmt.Errorf("insert index events batch: %w", err)
@@ -494,24 +493,25 @@ func (c *CacheDB) CacheEventsWithIndex(ctx context.Context, events []CachedEvent
 				}
 			}
 
-			// Update the refresh timestamp and blockchain height for the stream
 			if primaryProvider != "" && primaryStreamID != "" {
-				baseTimeValue := encodeBaseTime(primaryBaseTime)
-				// Get current blockchain height
+				if len(distinctBaseTimes) == 0 {
+					distinctBaseTimes[constants.BaseTimeNoneSentinel] = struct{}{}
+				}
+
 				currentHeight, err := c.GetCurrentBlockHeight(traceCtx)
 				if err != nil {
 					return nil, fmt.Errorf("failed to get current blockchain height: %w", err)
 				}
 
 				now := time.Now().Unix()
-				_, err = tx.Execute(traceCtx, `
-					UPDATE `+constants.CacheSchemaName+`.cached_streams
-					SET cache_refreshed_at_timestamp = $4, cache_height = $5
-					WHERE data_provider = $1 AND stream_id = $2 AND base_time = $3
-				`, primaryProvider, primaryStreamID, baseTimeValue, now, currentHeight)
-
-				if err != nil {
-					return nil, fmt.Errorf("update refresh timestamp and height: %w", err)
+				for baseTimeValue := range distinctBaseTimes {
+					if _, err = tx.Execute(traceCtx, `
+						UPDATE `+constants.CacheSchemaName+`.cached_streams
+						SET cache_refreshed_at_timestamp = $4, cache_height = $5
+						WHERE data_provider = $1 AND stream_id = $2 AND base_time = $3
+					`, primaryProvider, primaryStreamID, baseTimeValue, now, currentHeight); err != nil {
+						return nil, fmt.Errorf("update refresh timestamp and height (base_time=%d): %w", baseTimeValue, err)
+					}
 				}
 			}
 
@@ -528,6 +528,8 @@ func (c *CacheDB) CacheEventsWithIndex(ctx context.Context, events []CachedEvent
 
 // GetCachedEvents retrieves events from the cache for a specific time range
 func (c *CacheDB) GetCachedEvents(ctx context.Context, dataProvider, streamID string, fromTime, toTime int64) ([]CachedEvent, error) {
+	baseTimeValue := constants.BaseTimeNoneSentinel
+
 	// Use middleware for tracing
 	return tracing.TracedOperation(ctx, tracing.OpDBGetEvents, dataProvider, streamID,
 		func(traceCtx context.Context) ([]CachedEvent, error) {
@@ -538,20 +540,22 @@ func (c *CacheDB) GetCachedEvents(ctx context.Context, dataProvider, streamID st
 			var err error
 			if toTime > 0 {
 				results, err = c.db.Execute(traceCtx, `
-					SELECT data_provider, stream_id, event_time, value
+					SELECT data_provider, stream_id, base_time, event_time, value
 					FROM `+constants.CacheSchemaName+`.cached_events
 					WHERE data_provider = $1 AND stream_id = $2
-						AND event_time >= $3 AND event_time <= $4
+						AND base_time = $3
+						AND event_time >= $4 AND event_time <= $5
 					ORDER BY event_time
-				`, dataProvider, streamID, fromTime, toTime)
+				`, dataProvider, streamID, baseTimeValue, fromTime, toTime)
 			} else {
 				results, err = c.db.Execute(traceCtx, `
-					SELECT data_provider, stream_id, event_time, value
+					SELECT data_provider, stream_id, base_time, event_time, value
 					FROM `+constants.CacheSchemaName+`.cached_events
 					WHERE data_provider = $1 AND stream_id = $2
-						AND event_time >= $3
+						AND base_time = $3
+						AND event_time >= $4
 					ORDER BY event_time
-				`, dataProvider, streamID, fromTime)
+				`, dataProvider, streamID, baseTimeValue, fromTime)
 			}
 
 			if err != nil {
@@ -560,37 +564,42 @@ func (c *CacheDB) GetCachedEvents(ctx context.Context, dataProvider, streamID st
 
 			events := make([]CachedEvent, 0, len(results.Rows))
 			for _, row := range results.Rows {
-				if len(row) != 4 {
-					return nil, fmt.Errorf("expected 4 columns, got %d", len(row))
+				if len(row) != 5 {
+					return nil, fmt.Errorf("expected 5 columns, got %d", len(row))
 				}
 
-				dataProvider, ok := row[0].(string)
+				provider, ok := row[0].(string)
 				if !ok {
 					return nil, fmt.Errorf("failed to convert data_provider to string")
 				}
 
-				streamID, ok := row[1].(string)
+				stream, ok := row[1].(string)
 				if !ok {
 					return nil, fmt.Errorf("failed to convert stream_id to string")
 				}
 
-				eventTime, ok := row[2].(int64)
+				baseTimeRaw, ok := row[2].(int64)
+				if !ok {
+					return nil, fmt.Errorf("failed to convert base_time to int64")
+				}
+
+				eventTime, ok := row[3].(int64)
 				if !ok {
 					return nil, fmt.Errorf("failed to convert event_time to int64")
 				}
 
-				value, ok := row[3].(*types.Decimal)
+				value, ok := row[4].(*types.Decimal)
 				if !ok {
 					return nil, fmt.Errorf("failed to convert value to *types.Decimal")
 				}
 
-				event := CachedEvent{
-					DataProvider: dataProvider,
-					StreamID:     streamID,
+				events = append(events, CachedEvent{
+					DataProvider: provider,
+					StreamID:     stream,
+					BaseTime:     decodeBaseTime(baseTimeRaw),
 					EventTime:    eventTime,
 					Value:        value,
-				}
-				events = append(events, event)
+				})
 			}
 
 			// Log slow queries or large result sets
@@ -604,7 +613,7 @@ func (c *CacheDB) GetCachedEvents(ctx context.Context, dataProvider, streamID st
 			}
 
 			return events, nil
-		}, attribute.Int64("from", fromTime), attribute.Int64("to", toTime))
+		}, attribute.Int64("from", fromTime), attribute.Int64("to", toTime), attribute.Int64("base_time", baseTimeValue))
 }
 
 // GetCachedIndex retrieves index events from the cache for a specific time range.
@@ -838,14 +847,15 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 
 			// Then, check if there are events in the cache
 			var hasData bool
+			baseTimeValue := constants.BaseTimeNoneSentinel
 			if toTime == 0 {
 				// No upper bound specified - to is treated as max_int8 (end of time)
 				results, err := tx.Execute(traceCtx, `
 					SELECT EXISTS (
 						SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
-						WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3
+						WHERE data_provider = $1 AND stream_id = $2 AND base_time = $3 AND event_time >= $4
 					)
-				`, dataProvider, streamID, fromTime)
+				`, dataProvider, streamID, baseTimeValue, fromTime)
 				if err != nil {
 					return false, fmt.Errorf("failed to check cached events existence: %w", err)
 				}
@@ -863,9 +873,9 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 				results, err := tx.Execute(traceCtx, `
 					SELECT EXISTS (
 						SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
-						WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3 AND event_time <= $4
+						WHERE data_provider = $1 AND stream_id = $2 AND base_time = $3 AND event_time >= $4 AND event_time <= $5
 					)
-				`, dataProvider, streamID, fromTime, toTime)
+				`, dataProvider, streamID, baseTimeValue, fromTime, toTime)
 				if err != nil {
 					return false, fmt.Errorf("failed to check cached events existence: %w", err)
 				}
@@ -884,9 +894,9 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 			if !hasData && fromTime != 0 {
 				anchorResults, err := tx.Execute(traceCtx, `
 					SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
-					WHERE data_provider = $1 AND stream_id = $2 AND event_time < $3
+					WHERE data_provider = $1 AND stream_id = $2 AND base_time = $3 AND event_time < $4
 					LIMIT 1
-				`, dataProvider, streamID, fromTime)
+				`, dataProvider, streamID, baseTimeValue, fromTime)
 				if err != nil {
 					return false, fmt.Errorf("failed to query anchor record: %w", err)
 				}
@@ -1077,11 +1087,12 @@ func (c *CacheDB) QueryCachedStreamsWithCounts(ctx context.Context) ([]StreamCou
 		LEFT JOIN (
 			SELECT data_provider, stream_id, COUNT(*) as event_count
 			FROM %s.cached_events
+			WHERE base_time = %d
 			GROUP BY data_provider, stream_id
 		) ce ON cs.data_provider = ce.data_provider AND cs.stream_id = ce.stream_id
 	WHERE cs.base_time = %d
 	ORDER BY cs.data_provider, cs.stream_id, cs.base_time
-	`, constants.CacheSchemaName, constants.CacheSchemaName, constants.BaseTimeNoneSentinel)
+	`, constants.CacheSchemaName, constants.CacheSchemaName, constants.BaseTimeNoneSentinel, constants.BaseTimeNoneSentinel)
 
 	results, err := c.db.Execute(ctx, query)
 	if err != nil {
@@ -1190,6 +1201,146 @@ func (c *CacheDB) CleanupExtensionSchema(ctx context.Context) error {
 	return nil
 }
 
+// GetLastEventBefore retrieves the most recent event strictly before the specified timestamp.
+// Returns (nil, sql.ErrNoRows) if no such event exists.
+func (c *CacheDB) GetLastEventBefore(ctx context.Context, dataProvider, streamID string, before int64) (*CachedEvent, error) {
+	baseTimeValue := constants.BaseTimeNoneSentinel
+
+	// Use middleware for tracing
+	return tracing.TracedOperation(ctx, tracing.OpDBGetEvents, dataProvider, streamID,
+		func(traceCtx context.Context) (*CachedEvent, error) {
+			results, err := c.db.Execute(traceCtx, `
+				SELECT data_provider, stream_id, base_time, event_time, value
+				FROM `+constants.CacheSchemaName+`.cached_events
+				WHERE data_provider = $1 AND stream_id = $2 AND base_time = $3 AND event_time < $4
+				ORDER BY event_time DESC
+				LIMIT 1
+			`, dataProvider, streamID, baseTimeValue, before)
+
+			if err != nil {
+				return nil, fmt.Errorf("query last event before: %w", err)
+			}
+
+			if len(results.Rows) == 0 {
+				return nil, sql.ErrNoRows
+			}
+
+			if len(results.Rows) != 1 {
+				return nil, fmt.Errorf("expected 1 row, got %d", len(results.Rows))
+			}
+
+			row := results.Rows[0]
+			if len(row) != 5 {
+				return nil, fmt.Errorf("expected 5 columns, got %d", len(row))
+			}
+
+			dataProviderResult, ok := row[0].(string)
+			if !ok {
+				return nil, fmt.Errorf("failed to convert data_provider to string")
+			}
+
+			streamIDResult, ok := row[1].(string)
+			if !ok {
+				return nil, fmt.Errorf("failed to convert stream_id to string")
+			}
+
+			baseTimeRaw, ok := row[2].(int64)
+			if !ok {
+				return nil, fmt.Errorf("failed to convert base_time to int64")
+			}
+
+			eventTime, ok := row[3].(int64)
+			if !ok {
+				return nil, fmt.Errorf("failed to convert event_time to int64")
+			}
+
+			value, ok := row[4].(*types.Decimal)
+			if !ok {
+				return nil, fmt.Errorf("failed to convert value to *types.Decimal")
+			}
+
+			return &CachedEvent{
+				DataProvider: dataProviderResult,
+				StreamID:     streamIDResult,
+				BaseTime:     decodeBaseTime(baseTimeRaw),
+				EventTime:    eventTime,
+				Value:        value,
+			}, nil
+		}, attribute.Int64("before", before),
+		attribute.Int64("base_time", baseTimeValue),
+		attribute.String("query", "last_before"))
+}
+
+// GetFirstEventAfter retrieves the earliest event strictly after the specified timestamp.
+// Returns (nil, sql.ErrNoRows) if no such event exists.
+func (c *CacheDB) GetFirstEventAfter(ctx context.Context, dataProvider, streamID string, after int64) (*CachedEvent, error) {
+	baseTimeValue := constants.BaseTimeNoneSentinel
+
+	// Use middleware for tracing
+	return tracing.TracedOperation(ctx, tracing.OpDBGetEvents, dataProvider, streamID,
+		func(traceCtx context.Context) (*CachedEvent, error) {
+			results, err := c.db.Execute(traceCtx, `
+				SELECT data_provider, stream_id, base_time, event_time, value
+				FROM `+constants.CacheSchemaName+`.cached_events
+				WHERE data_provider = $1 AND stream_id = $2 AND base_time = $3 AND event_time > $4
+				ORDER BY event_time
+				LIMIT 1
+			`, dataProvider, streamID, baseTimeValue, after)
+
+			if err != nil {
+				return nil, fmt.Errorf("query first event after: %w", err)
+			}
+
+			if len(results.Rows) == 0 {
+				return nil, sql.ErrNoRows
+			}
+
+			if len(results.Rows) != 1 {
+				return nil, fmt.Errorf("expected 1 row, got %d", len(results.Rows))
+			}
+
+			row := results.Rows[0]
+			if len(row) != 5 {
+				return nil, fmt.Errorf("expected 5 columns, got %d", len(row))
+			}
+
+			dataProviderResult, ok := row[0].(string)
+			if !ok {
+				return nil, fmt.Errorf("failed to convert data_provider to string")
+			}
+
+			streamIDResult, ok := row[1].(string)
+			if !ok {
+				return nil, fmt.Errorf("failed to convert stream_id to string")
+			}
+
+			baseTimeRaw, ok := row[2].(int64)
+			if !ok {
+				return nil, fmt.Errorf("failed to convert base_time to int64")
+			}
+
+			eventTime, ok := row[3].(int64)
+			if !ok {
+				return nil, fmt.Errorf("failed to convert event_time to int64")
+			}
+
+			value, ok := row[4].(*types.Decimal)
+			if !ok {
+				return nil, fmt.Errorf("failed to convert value to *types.Decimal")
+			}
+
+			return &CachedEvent{
+				DataProvider: dataProviderResult,
+				StreamID:     streamIDResult,
+				BaseTime:     decodeBaseTime(baseTimeRaw),
+				EventTime:    eventTime,
+				Value:        value,
+			}, nil
+		}, attribute.Int64("after", after),
+		attribute.Int64("base_time", baseTimeValue),
+		attribute.String("query", "first_after"))
+}
+
 // waitForDatabaseReady validates that the database connection is stable before proceeding
 func (c *CacheDB) WaitForDatabaseReady(ctx context.Context, maxWait time.Duration) error {
 	timeout := time.NewTimer(maxWait)
@@ -1215,130 +1366,4 @@ func (c *CacheDB) WaitForDatabaseReady(ctx context.Context, maxWait time.Duratio
 			}
 		}
 	}
-}
-
-// GetLastEventBefore retrieves the most recent event strictly before the specified timestamp.
-// Returns (nil, sql.ErrNoRows) if no such event exists.
-func (c *CacheDB) GetLastEventBefore(ctx context.Context, dataProvider, streamID string, before int64) (*CachedEvent, error) {
-	// Use middleware for tracing
-	return tracing.TracedOperation(ctx, tracing.OpDBGetEvents, dataProvider, streamID,
-		func(traceCtx context.Context) (*CachedEvent, error) {
-			results, err := c.db.Execute(traceCtx, `
-				SELECT data_provider, stream_id, event_time, value
-				FROM `+constants.CacheSchemaName+`.cached_events
-				WHERE data_provider = $1 AND stream_id = $2 AND event_time < $3
-				ORDER BY event_time DESC
-				LIMIT 1
-			`, dataProvider, streamID, before)
-
-			if err != nil {
-				return nil, fmt.Errorf("query last event before: %w", err)
-			}
-
-			if len(results.Rows) == 0 {
-				return nil, sql.ErrNoRows
-			}
-
-			if len(results.Rows) != 1 {
-				return nil, fmt.Errorf("expected 1 row, got %d", len(results.Rows))
-			}
-
-			row := results.Rows[0]
-			if len(row) != 4 {
-				return nil, fmt.Errorf("expected 4 columns, got %d", len(row))
-			}
-
-			dataProviderResult, ok := row[0].(string)
-			if !ok {
-				return nil, fmt.Errorf("failed to convert data_provider to string")
-			}
-
-			streamIDResult, ok := row[1].(string)
-			if !ok {
-				return nil, fmt.Errorf("failed to convert stream_id to string")
-			}
-
-			eventTime, ok := row[2].(int64)
-			if !ok {
-				return nil, fmt.Errorf("failed to convert event_time to int64")
-			}
-
-			value, ok := row[3].(*types.Decimal)
-			if !ok {
-				return nil, fmt.Errorf("failed to convert value to *types.Decimal")
-			}
-
-			e := &CachedEvent{
-				DataProvider: dataProviderResult,
-				StreamID:     streamIDResult,
-				EventTime:    eventTime,
-				Value:        value,
-			}
-
-			return e, nil
-		}, attribute.Int64("before", before),
-		attribute.String("query", "last_before"))
-}
-
-// GetFirstEventAfter retrieves the first event at or after the specified timestamp.
-// Returns (nil, sql.ErrNoRows) if no such event exists.
-func (c *CacheDB) GetFirstEventAfter(ctx context.Context, dataProvider, streamID string, after int64) (*CachedEvent, error) {
-	// Use middleware for tracing
-	return tracing.TracedOperation(ctx, tracing.OpDBGetEvents, dataProvider, streamID,
-		func(traceCtx context.Context) (*CachedEvent, error) {
-			results, err := c.db.Execute(traceCtx, `
-				SELECT data_provider, stream_id, event_time, value
-				FROM `+constants.CacheSchemaName+`.cached_events
-				WHERE data_provider = $1 AND stream_id = $2 AND event_time >= $3
-				ORDER BY event_time ASC
-				LIMIT 1
-			`, dataProvider, streamID, after)
-
-			if err != nil {
-				return nil, fmt.Errorf("query first event after: %w", err)
-			}
-
-			if len(results.Rows) == 0 {
-				return nil, sql.ErrNoRows
-			}
-
-			if len(results.Rows) != 1 {
-				return nil, fmt.Errorf("expected 1 row, got %d", len(results.Rows))
-			}
-
-			row := results.Rows[0]
-			if len(row) != 4 {
-				return nil, fmt.Errorf("expected 4 columns, got %d", len(row))
-			}
-
-			dataProviderResult, ok := row[0].(string)
-			if !ok {
-				return nil, fmt.Errorf("failed to convert data_provider to string")
-			}
-
-			streamIDResult, ok := row[1].(string)
-			if !ok {
-				return nil, fmt.Errorf("failed to convert stream_id to string")
-			}
-
-			eventTime, ok := row[2].(int64)
-			if !ok {
-				return nil, fmt.Errorf("failed to convert event_time to int64")
-			}
-
-			value, ok := row[3].(*types.Decimal)
-			if !ok {
-				return nil, fmt.Errorf("failed to convert value to *types.Decimal")
-			}
-
-			e := &CachedEvent{
-				DataProvider: dataProviderResult,
-				StreamID:     streamIDResult,
-				EventTime:    eventTime,
-				Value:        value,
-			}
-
-			return e, nil
-		}, attribute.Int64("after", after),
-		attribute.String("query", "first_after"))
 }
