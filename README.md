@@ -24,6 +24,13 @@ Choose your preferred deployment method:
 
 📊 **[Compare All Deployment Options](./docs/deployment-options.md)**
 
+### Cloud-Specific Endpoint Configuration
+
+After deploying your node, you'll need to expose it to external clients. We provide cloud-specific guides:
+
+- **[AWS Endpoint Deployment](./docs/aws-deployment-guide.md)** - Configure Security Groups, Route53, and networking on AWS
+- **[Digital Ocean Endpoint Deployment](./docs/digitalocean-deployment-guide.md)** - Configure Cloud Firewalls, networking, and DNS on Digital Ocean
+
 ## Terminology
 
 For definitions of key terms used throughout this project, refer to the [Terminology Reference](./TERMINOLOGY.md).
