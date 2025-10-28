@@ -225,6 +225,122 @@ func TestCacheIncludeChildrenForNestedComposed(t *testing.T) {
 	}, testutils.GetTestOptionsWithCache(cacheConfig))
 }
 
+func TestCacheBaseTimeVariants(t *testing.T) {
+	streamID := util.GenerateStreamId("cache_test_base_time")
+	deployer := "0x0000000000000000000000000000000000000123"
+	directiveBaseTime := int64(1234)
+
+	cacheConfig := testutils.NewCacheOptions().
+		WithEnabled().
+		WithMaxBlockAge(-1*time.Second).
+		WithStream(deployer, streamID.String(), "0 0 31 2 *").
+		WithStreamBaseTime(deployer, streamID.String(), "0 0 31 2 *", directiveBaseTime)
+
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name:        "cache_base_time_variants_test",
+		SeedScripts: migrations.GetSeedScriptPaths(),
+		FunctionTests: []kwilTesting.TestFunc{
+			testCacheBaseTimeVariants(t, cacheConfig, streamID, directiveBaseTime),
+		},
+	}, testutils.GetTestOptionsWithCache(cacheConfig))
+}
+
+func testCacheBaseTimeVariants(t *testing.T, cacheConfig *testutils.CacheOptions, streamID util.StreamId, directiveBaseTime int64) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		helper := cache.SetupCacheTest(ctx, platform, cacheConfig)
+		defer helper.Cleanup()
+
+		deployer, err := util.NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
+		require.NoError(t, err)
+
+		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+
+		err = setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
+			Platform: platform,
+			StreamId: streamID,
+			MarkdownData: `
+            | event_time | value_1 |
+            |------------|---------|
+            | 1          | 100     |
+            | 2          | 200     |
+            | 3          | 400     |
+            `,
+			Height: 1,
+		})
+		require.NoError(t, err)
+
+		recordsCached, err := tn_cache.GetTestHelper().RefreshAllStreamsSync(ctx)
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, recordsCached, 3, "expected cache refresh to process events")
+
+		result, err := platform.DB.Execute(ctx,
+			`SELECT base_time FROM ext_tn_cache.cached_streams
+             WHERE data_provider = $1 AND stream_id = $2
+             ORDER BY base_time NULLS FIRST`,
+			deployer.Address(),
+			streamID.String(),
+		)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 2, "expected sentinel and base_time variants to be cached")
+
+		foundNil := false
+		foundBase := false
+		for _, row := range result.Rows {
+			if row[0] == nil {
+				foundNil = true
+				continue
+			}
+			baseTimeVal, ok := row[0].(int64)
+			require.True(t, ok, "base_time column should be int64 when not NULL")
+			if baseTimeVal == directiveBaseTime {
+				foundBase = true
+			}
+		}
+		assert.True(t, foundNil, "expected sentinel (NULL) cache shard")
+		assert.True(t, foundBase, "expected base_time-specific cache shard")
+
+		useCache := true
+		from := int64(1)
+		to := int64(3)
+
+		// Verify sentinel query succeeds via cache
+		_, err = procedure.GetIndex(ctx, procedure.GetIndexInput{
+			Platform: platform,
+			StreamLocator: types.StreamLocator{
+				StreamId:     streamID,
+				DataProvider: deployer,
+			},
+			FromTime: &from,
+			ToTime:   &to,
+			Height:   1,
+			UseCache: &useCache,
+		})
+		require.NoError(t, err)
+
+		// Verify base_time-specific query succeeds via cache
+		baseTimePtr := directiveBaseTime
+		_, err = procedure.GetIndex(ctx, procedure.GetIndexInput{
+			Platform: platform,
+			StreamLocator: types.StreamLocator{
+				StreamId:     streamID,
+				DataProvider: deployer,
+			},
+			FromTime: &from,
+			ToTime:   &to,
+			BaseTime: &baseTimePtr,
+			Height:   1,
+			UseCache: &useCache,
+		})
+		require.NoError(t, err)
+
+		return nil
+	}
+}
+
 func testCacheIncludeChildren(t *testing.T, cacheConfig *testutils.CacheOptions) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		helper := cache.SetupCacheTest(ctx, platform, cacheConfig)
