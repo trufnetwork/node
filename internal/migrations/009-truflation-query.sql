@@ -1268,8 +1268,7 @@ RETURNS TABLE(
     $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL; -- frozen queries bypass cache
 
     if $effective_enable_cache {
-        -- we use before as to, because if we have data for that, it automatically means
-        -- that we can answer this query
+        -- we use before as the starting bound so the cache check ensures an anchor exists before it
         $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $before, NULL, NULL);
     }
 
@@ -1418,8 +1417,7 @@ RETURNS TABLE(
     $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL; -- frozen queries bypass cache
 
     if $effective_enable_cache {
-        -- we use after as from, because if we have data for that, it automatically means
-        -- that we can answer this query
+        -- we use after as the lower bound (from) because events at or after this time satisfy the query
         $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $after, NULL, NULL);
     }
 
@@ -1559,7 +1557,7 @@ RETURNS TABLE(
     } else {
         $effective_base_time := get_latest_metadata_int_core($stream_ref, 'default_base_time');
     }
-    $effective_base_time := COALESCE($effective_base_time, 0);
+    -- Leave base time as NULL when no override is configured so cache queries use the sentinel variant
 
     IF $from IS NOT NULL AND $to IS NOT NULL AND $from > $to {
         ERROR(format('Invalid time range: from (%s) > to (%s)', $from, $to));

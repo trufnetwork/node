@@ -33,11 +33,10 @@ RETURNS TABLE(
   $effective_enable_cache := COALESCE($use_cache, false);
   $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL; -- frozen queries bypass cache
 
-  if $effective_enable_cache {
-      -- we use before as from, because if we have data for that, it automatically means
-      -- that we can answer this query
-      $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $before, NULL, NULL);
-  }
+    if $effective_enable_cache {
+        -- we use before as the starting bound so the cache check ensures an anchor exists before it
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $before, NULL, NULL);
+    }
 
   -- If using cache, get the most recent cached record
   if $effective_enable_cache {
@@ -189,8 +188,7 @@ RETURNS TABLE(
     $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL; -- frozen queries bypass cache
 
     if $effective_enable_cache {
-        -- we use after as to, because if we have data for that, it automatically means
-        -- that we can answer this query
+        -- we use after as the lower bound (from) because data at or after this time satisfies the query
         $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $after, NULL, NULL);
     }
 
