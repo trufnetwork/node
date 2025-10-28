@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/trufnetwork/kwil-db/core/log"
+	"github.com/trufnetwork/node/extensions/tn_cache/internal/constants"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
@@ -29,10 +30,10 @@ type OTELMetrics struct {
 	cacheEventCount   metric.Int64Gauge
 
 	// Resolution metrics
-	resolutionDuration         metric.Float64Histogram
-	resolutionErrors           metric.Int64Counter
+	resolutionDuration          metric.Float64Histogram
+	resolutionErrors            metric.Int64Counter
 	resolutionStreamsDiscovered metric.Int64Counter
-	resolutionStreamsRemoved   metric.Int64Counter
+	resolutionStreamsRemoved    metric.Int64Counter
 
 	// Refresh skip metrics
 	refreshSkipped metric.Int64Counter
@@ -167,35 +168,39 @@ func NewOTELMetrics(meter metric.Meter, logger log.Logger) (*OTELMetrics, error)
 
 // Implementation of MetricsRecorder interface
 
-func (m *OTELMetrics) RecordCacheHit(ctx context.Context, dataProvider, streamID string) {
+func (m *OTELMetrics) RecordCacheHit(ctx context.Context, dataProvider, streamID string, baseTime *int64) {
 	m.cacheHits.Add(ctx, 1,
 		metric.WithAttributes(
 			attribute.String("data_provider", dataProvider),
 			attribute.String("stream_id", streamID),
+			baseTimeAttribute(baseTime),
 		))
 }
 
-func (m *OTELMetrics) RecordCacheMiss(ctx context.Context, dataProvider, streamID string) {
+func (m *OTELMetrics) RecordCacheMiss(ctx context.Context, dataProvider, streamID string, baseTime *int64) {
 	m.cacheMisses.Add(ctx, 1,
 		metric.WithAttributes(
 			attribute.String("data_provider", dataProvider),
 			attribute.String("stream_id", streamID),
+			baseTimeAttribute(baseTime),
 		))
 }
 
-func (m *OTELMetrics) RecordCacheDataServed(ctx context.Context, dataProvider, streamID string, rowCount int) {
+func (m *OTELMetrics) RecordCacheDataServed(ctx context.Context, dataProvider, streamID string, baseTime *int64, rowCount int) {
 	m.cacheDataServed.Record(ctx, int64(rowCount),
 		metric.WithAttributes(
 			attribute.String("data_provider", dataProvider),
 			attribute.String("stream_id", streamID),
+			baseTimeAttribute(baseTime),
 		))
 }
 
-func (m *OTELMetrics) RecordCacheDataAge(ctx context.Context, dataProvider, streamID string, ageSeconds float64) {
+func (m *OTELMetrics) RecordCacheDataAge(ctx context.Context, dataProvider, streamID string, baseTime *int64, ageSeconds float64) {
 	m.cacheDataAge.Record(ctx, ageSeconds,
 		metric.WithAttributes(
 			attribute.String("data_provider", dataProvider),
 			attribute.String("stream_id", streamID),
+			baseTimeAttribute(baseTime),
 		))
 }
 
@@ -285,4 +290,12 @@ func (m *OTELMetrics) RecordRefreshSkipped(ctx context.Context, dataProvider, st
 			attribute.String("stream_id", streamID),
 			attribute.String("reason", reason),
 		))
+}
+
+func baseTimeAttribute(baseTime *int64) attribute.KeyValue {
+	value := constants.BaseTimeNoneSentinel
+	if baseTime != nil {
+		value = *baseTime
+	}
+	return attribute.Int64("base_time", value)
 }

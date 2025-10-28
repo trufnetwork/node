@@ -81,9 +81,68 @@ func TestCacheDB_HasCachedData(t *testing.T) {
 	cacheDB := NewCacheDB(mockDB, logger)
 
 	// Test HasCachedData
-	hasData, err := cacheDB.HasCachedData(context.Background(), "test_provider", "test_stream", 1234567890, 1234567900)
+	hasData, err := cacheDB.HasCachedData(context.Background(), "test_provider", "test_stream", nil, 1234567890, 1234567900)
 	require.NoError(t, err)
 	assert.True(t, hasData)
+}
+
+func TestCacheDB_HasCachedData_BaseTimeMatch(t *testing.T) {
+	mockDB := newTestDB()
+	baseTime := int64(42)
+	encoded := encodeBaseTime(&baseTime)
+	callCount := 0
+
+	mockDB.ExecuteFn = func(ctx context.Context, stmt string, args ...any) (*kwilsql.ResultSet, error) {
+		callCount++
+		require.GreaterOrEqual(t, len(args), 4)
+		if callCount == 1 {
+			require.Equal(t, encoded, args[3].(int64))
+			return &kwilsql.ResultSet{Columns: []string{"exists"}, Rows: [][]interface{}{{true}}}, nil
+		}
+		require.Equal(t, encoded, args[2].(int64))
+		return &kwilsql.ResultSet{Columns: []string{"exists"}, Rows: [][]interface{}{{true}}}, nil
+	}
+
+	mockDB.BeginTxFn = func(ctx context.Context) (kwilsql.Tx, error) {
+		return &utils.MockTx{ExecuteFn: mockDB.ExecuteFn}, nil
+	}
+
+	logger := log.New(log.WithWriter(io.Discard))
+	cacheDB := NewCacheDB(mockDB, logger)
+
+	hasData, err := cacheDB.HasCachedData(context.Background(), "provider", "stream", &baseTime, 0, 0)
+	require.NoError(t, err)
+	assert.True(t, hasData)
+}
+
+func TestCacheDB_HasCachedData_BaseTimeMismatch(t *testing.T) {
+	mockDB := newTestDB()
+	expectedBase := int64(55)
+	encodedExpected := encodeBaseTime(&expectedBase)
+	callCount := 0
+
+	mockDB.ExecuteFn = func(ctx context.Context, stmt string, args ...any) (*kwilsql.ResultSet, error) {
+		callCount++
+		if callCount == 1 {
+			return &kwilsql.ResultSet{Columns: []string{"exists"}, Rows: [][]interface{}{{true}}}, nil
+		}
+		require.GreaterOrEqual(t, len(args), 3)
+		if args[2].(int64) != encodedExpected {
+			return &kwilsql.ResultSet{Columns: []string{"exists"}, Rows: [][]interface{}{{false}}}, nil
+		}
+		return &kwilsql.ResultSet{Columns: []string{"exists"}, Rows: [][]interface{}{{true}}}, nil
+	}
+
+	mockDB.BeginTxFn = func(ctx context.Context) (kwilsql.Tx, error) {
+		return &utils.MockTx{ExecuteFn: mockDB.ExecuteFn}, nil
+	}
+
+	logger := log.New(log.WithWriter(io.Discard))
+	cacheDB := NewCacheDB(mockDB, logger)
+
+	hasData, err := cacheDB.HasCachedData(context.Background(), "provider", "stream", nil, 0, 0)
+	require.NoError(t, err)
+	assert.False(t, hasData)
 }
 
 func TestCacheDB_UpdateStreamConfigsAtomic(t *testing.T) {

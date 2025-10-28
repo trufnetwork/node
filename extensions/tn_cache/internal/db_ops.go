@@ -885,7 +885,8 @@ func (c *CacheDB) CleanupCache(ctx context.Context) error {
 }
 
 // HasCachedData checks if there is cached data for a stream in a time range
-func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID string, fromTime, toTime int64) (bool, error) {
+func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID string, baseTime *int64, fromTime, toTime int64) (bool, error) {
+ baseTimeValue := encodeBaseTime(baseTime)
 	// Use middleware for tracing
 	return tracing.TracedOperation(ctx, tracing.OpDBHasCachedData, dataProvider, streamID,
 		func(traceCtx context.Context) (bool, error) {
@@ -901,9 +902,7 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 			}
 			defer func() { _ = tx.Rollback(traceCtx) }()
 
-			baseTimeValue := constants.BaseTimeNoneSentinel
-
-			// First, check if the stream is configured for caching
+		// First, check if the stream is configured for caching
 			results, err := tx.Execute(traceCtx, `
 				SELECT EXISTS (
 					SELECT 1
@@ -996,7 +995,8 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 
 			return hasData, nil
 		}, attribute.Int64("from", fromTime),
-		attribute.Int64("to", toTime))
+		attribute.Int64("to", toTime),
+		attribute.Int64("base_time", baseTimeValue))
 }
 
 // UpdateStreamConfigsAtomic atomically updates the cached_streams table
@@ -1297,8 +1297,8 @@ func (c *CacheDB) CleanupExtensionSchema(ctx context.Context) error {
 
 // GetLastEventBefore retrieves the most recent event strictly before the specified timestamp.
 // Returns (nil, sql.ErrNoRows) if no such event exists.
-func (c *CacheDB) GetLastEventBefore(ctx context.Context, dataProvider, streamID string, before int64) (*CachedEvent, error) {
-	baseTimeValue := constants.BaseTimeNoneSentinel
+func (c *CacheDB) GetLastEventBefore(ctx context.Context, dataProvider, streamID string, baseTime *int64, before int64) (*CachedEvent, error) {
+	baseTimeValue := encodeBaseTime(baseTime)
 
 	// Use middleware for tracing
 	return tracing.TracedOperation(ctx, tracing.OpDBGetEvents, dataProvider, streamID,
@@ -1365,10 +1365,10 @@ func (c *CacheDB) GetLastEventBefore(ctx context.Context, dataProvider, streamID
 		attribute.String("query", "last_before"))
 }
 
-// GetFirstEventAfter retrieves the earliest event at or after the specified timestamp.
+// GetFirstEventAfter retrieves the earliest event at or after the specified timestamp for the provided base_time.
 // Returns (nil, sql.ErrNoRows) if no such event exists.
-func (c *CacheDB) GetFirstEventAfter(ctx context.Context, dataProvider, streamID string, after int64) (*CachedEvent, error) {
-	baseTimeValue := constants.BaseTimeNoneSentinel
+func (c *CacheDB) GetFirstEventAfter(ctx context.Context, dataProvider, streamID string, baseTime *int64, after int64) (*CachedEvent, error) {
+	baseTimeValue := encodeBaseTime(baseTime)
 
 	// Use middleware for tracing
 	return tracing.TracedOperation(ctx, tracing.OpDBGetEvents, dataProvider, streamID,

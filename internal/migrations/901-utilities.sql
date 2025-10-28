@@ -112,7 +112,8 @@ CREATE OR REPLACE ACTION helper_check_cache(
     $data_provider TEXT,
     $stream_id TEXT,
     $from INT8,
-    $to INT8
+    $to INT8,
+    $base_time INT8
 ) PRIVATE VIEW RETURNS (cache_hit BOOL) {
     $is_caching_enabled BOOL := tn_cache.is_enabled();
     $cache_hit := false;
@@ -121,15 +122,15 @@ CREATE OR REPLACE ACTION helper_check_cache(
         $has_cached_data BOOL := false;
         $cache_refreshed_at_timestamp INT8;
         $cache_height INT8;
-        $has_cached_data, $cache_refreshed_at_timestamp, $cache_height := tn_cache.has_cached_data($data_provider, $stream_id, $from, $to);
+        $has_cached_data, $cache_refreshed_at_timestamp, $cache_height := tn_cache.has_cached_data($data_provider, $stream_id, $from, $to, $base_time);
         
         if $has_cached_data {
             -- Cache hit - get most recent cached data, show height to users
-            NOTICE('{"cache_hit": true, "cache_height": ' || $cache_height::TEXT || ', "cache_refreshed_at_timestamp": ' || $cache_refreshed_at_timestamp::TEXT || '}');
+            NOTICE('{"cache_hit": true, "cache_height": ' || $cache_height::TEXT || ', "cache_refreshed_at_timestamp": ' || $cache_refreshed_at_timestamp::TEXT || ', "base_time": ' || COALESCE($base_time, -1)::TEXT || '}');
             $cache_hit := true;
         } else {
             -- Cache miss - log and fallback to original logic
-            NOTICE('{"cache_hit": false}');
+            NOTICE('{"cache_hit": false, "base_time": ' || COALESCE($base_time, -1)::TEXT || '}');
         }
     } else {
         NOTICE('{"cache_disabled": true}');

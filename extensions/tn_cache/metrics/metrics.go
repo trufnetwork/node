@@ -15,10 +15,10 @@ import (
 // This allows for pluggable implementations - either real OTEL metrics or no-op.
 type MetricsRecorder interface {
 	// Cache effectiveness metrics
-	RecordCacheHit(ctx context.Context, dataProvider, streamID string)
-	RecordCacheMiss(ctx context.Context, dataProvider, streamID string)
-	RecordCacheDataServed(ctx context.Context, dataProvider, streamID string, rowCount int)
-	RecordCacheDataAge(ctx context.Context, dataProvider, streamID string, ageSeconds float64)
+	RecordCacheHit(ctx context.Context, dataProvider, streamID string, baseTime *int64)
+	RecordCacheMiss(ctx context.Context, dataProvider, streamID string, baseTime *int64)
+	RecordCacheDataServed(ctx context.Context, dataProvider, streamID string, baseTime *int64, rowCount int)
+	RecordCacheDataAge(ctx context.Context, dataProvider, streamID string, baseTime *int64, ageSeconds float64)
 
 	// Refresh operation metrics
 	RecordRefreshStart(ctx context.Context, dataProvider, streamID string)

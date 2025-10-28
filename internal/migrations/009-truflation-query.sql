@@ -723,11 +723,11 @@ RETURNS TABLE(
     $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL; -- frozen queries bypass cache
 
     if $effective_enable_cache {
-        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $from, $to);
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $from, $to, NULL);
     }
     
     if $effective_enable_cache {
-        for $row in tn_cache.get_cached_data($data_provider, $stream_id, $from, $to) {
+        for $row in tn_cache.get_cached_data($data_provider, $stream_id, $from, $to, NULL) {
             RETURN NEXT $row.event_time, $row.value;
         }
         return;
@@ -1270,13 +1270,13 @@ RETURNS TABLE(
     if $effective_enable_cache {
         -- we use before as to, because if we have data for that, it automatically means
         -- that we can answer this query
-        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $before, NULL);
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $before, NULL, NULL);
     }
 
     -- If using cache, get the most recent cached record
     if $effective_enable_cache {
         -- Get cached data up to the before time and return the most recent
-        for $row in tn_cache.get_cached_last_before($data_provider, $stream_id, $before) {
+        for $row in tn_cache.get_cached_last_before($data_provider, $stream_id, $before, NULL) {
             RETURN NEXT $row.event_time, $row.value;
         }
         RETURN;
@@ -1420,13 +1420,13 @@ RETURNS TABLE(
     if $effective_enable_cache {
         -- we use after as from, because if we have data for that, it automatically means
         -- that we can answer this query
-        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $after, NULL);
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $after, NULL, NULL);
     }
 
     -- If using cache, get the earliest cached record
     if $effective_enable_cache {
         -- Get cached data from the after time and return the earliest
-        for $row in tn_cache.get_cached_first_after($data_provider, $stream_id, $after) {
+        for $row in tn_cache.get_cached_first_after($data_provider, $stream_id, $after, NULL) {
             RETURN NEXT $row.event_time, $row.value;
         }
         RETURN;
@@ -1575,16 +1575,16 @@ RETURNS TABLE(
 
     -- Set default value for enable_cache
     $effective_enable_cache := COALESCE($use_cache, false);
-    $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL AND $base_time IS NULL; -- frozen queries and arbitrary base time bypass cache
+    $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL; -- frozen queries bypass cache
 
     if $effective_enable_cache {
         -- Check if we have pre-calculated index values in cache
-        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $from, $to);
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $from, $to, $effective_base_time);
     }
 
     -- If using pre-calculated index cache, return directly
     if $effective_enable_cache {
-        for $row in tn_cache.get_cached_index_data($data_provider, $stream_id, $from, $to) {
+        for $row in tn_cache.get_cached_index_data($data_provider, $stream_id, $from, $to, $effective_base_time) {
             RETURN NEXT $row.event_time, $row.value;
         }
         RETURN;
