@@ -329,9 +329,21 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 
 	primaryProvider := events[0].DataProvider
 	primaryStreamID := events[0].StreamID
-	distinctBaseTimes := make(map[int64]struct{})
+
+	type streamKey struct {
+		provider string
+		streamID string
+	}
+	streamBaseTimes := make(map[streamKey]map[int64]struct{})
+	addBaseTime := func(e CachedEvent) {
+		key := streamKey{provider: e.DataProvider, streamID: e.StreamID}
+		if _, ok := streamBaseTimes[key]; !ok {
+			streamBaseTimes[key] = make(map[int64]struct{})
+		}
+		streamBaseTimes[key][encodeBaseTime(e.BaseTime)] = struct{}{}
+	}
 	for _, event := range events {
-		distinctBaseTimes[encodeBaseTime(event.BaseTime)] = struct{}{}
+		addBaseTime(event)
 	}
 
 	insertEventsSQL := fmt.Sprintf(`
@@ -386,11 +398,7 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 				}
 			}
 
-			if primaryProvider != "" && primaryStreamID != "" {
-				if len(distinctBaseTimes) == 0 {
-					distinctBaseTimes[constants.BaseTimeNoneSentinel] = struct{}{}
-				}
-
+			if len(streamBaseTimes) > 0 {
 				currentHeight, err := c.GetCurrentBlockHeight(traceCtx)
 				if err != nil {
 					return nil, fmt.Errorf("failed to get current blockchain height: %w", err)
@@ -403,9 +411,14 @@ func (c *CacheDB) CacheEvents(ctx context.Context, events []CachedEvent) error {
 					WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3
 				`, constants.CacheSchemaName)
 
-				for baseTimeValue := range distinctBaseTimes {
-					if _, err = tx.Execute(traceCtx, updateRefresh, primaryProvider, primaryStreamID, baseTimeValue, now, currentHeight); err != nil {
-						return nil, fmt.Errorf("update refresh timestamp and height (base_time=%d): %w", baseTimeValue, err)
+				for key, baseTimes := range streamBaseTimes {
+					if len(baseTimes) == 0 {
+						baseTimes[constants.BaseTimeNoneSentinel] = struct{}{}
+					}
+					for baseTimeValue := range baseTimes {
+						if _, err = tx.Execute(traceCtx, updateRefresh, key.provider, key.streamID, baseTimeValue, now, currentHeight); err != nil {
+							return nil, fmt.Errorf("update refresh timestamp and height (%s,%s, base_time=%d): %w", key.provider, key.streamID, baseTimeValue, err)
+						}
 					}
 				}
 			}
@@ -428,13 +441,25 @@ func (c *CacheDB) CacheEventsWithIndex(ctx context.Context, events []CachedEvent
 	}
 
 	var primaryProvider, primaryStreamID string
-	distinctBaseTimes := make(map[int64]struct{})
+
+	type streamKey struct {
+		provider string
+		streamID string
+	}
+	streamBaseTimes := make(map[streamKey]map[int64]struct{})
+	addBaseTime := func(e CachedEvent) {
+		key := streamKey{provider: e.DataProvider, streamID: e.StreamID}
+		if _, ok := streamBaseTimes[key]; !ok {
+			streamBaseTimes[key] = make(map[int64]struct{})
+		}
+		streamBaseTimes[key][encodeBaseTime(e.BaseTime)] = struct{}{}
+	}
 
 	if len(events) > 0 {
 		primaryProvider = events[0].DataProvider
 		primaryStreamID = events[0].StreamID
 		for _, event := range events {
-			distinctBaseTimes[encodeBaseTime(event.BaseTime)] = struct{}{}
+			addBaseTime(event)
 		}
 	}
 
@@ -444,7 +469,7 @@ func (c *CacheDB) CacheEventsWithIndex(ctx context.Context, events []CachedEvent
 			primaryStreamID = indexEvents[0].StreamID
 		}
 		for _, event := range indexEvents {
-			distinctBaseTimes[encodeBaseTime(event.BaseTime)] = struct{}{}
+			addBaseTime(event)
 		}
 	}
 
@@ -546,26 +571,27 @@ func (c *CacheDB) CacheEventsWithIndex(ctx context.Context, events []CachedEvent
 				}
 			}
 
-			if primaryProvider != "" && primaryStreamID != "" {
-				if len(distinctBaseTimes) == 0 {
-					distinctBaseTimes[constants.BaseTimeNoneSentinel] = struct{}{}
-				}
-
+			if len(streamBaseTimes) > 0 {
 				currentHeight, err := c.GetCurrentBlockHeight(traceCtx)
 				if err != nil {
 					return nil, fmt.Errorf("failed to get current blockchain height: %w", err)
 				}
 
 				now := time.Now().Unix()
-				for baseTimeValue := range distinctBaseTimes {
-					updateRefresh := fmt.Sprintf(`
+				updateRefresh := fmt.Sprintf(`
 						UPDATE %[1]s.cached_streams
 						SET cache_refreshed_at_timestamp = $4, cache_height = $5
 						WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3
 					`, constants.CacheSchemaName)
 
-					if _, err = tx.Execute(traceCtx, updateRefresh, primaryProvider, primaryStreamID, baseTimeValue, now, currentHeight); err != nil {
-						return nil, fmt.Errorf("update refresh timestamp and height (base_time=%d): %w", baseTimeValue, err)
+				for key, baseTimes := range streamBaseTimes {
+					if len(baseTimes) == 0 {
+						baseTimes[constants.BaseTimeNoneSentinel] = struct{}{}
+					}
+					for baseTimeValue := range baseTimes {
+						if _, err = tx.Execute(traceCtx, updateRefresh, key.provider, key.streamID, baseTimeValue, now, currentHeight); err != nil {
+							return nil, fmt.Errorf("update refresh timestamp and height (%s,%s, base_time=%d): %w", key.provider, key.streamID, baseTimeValue, err)
+						}
 					}
 				}
 			}
