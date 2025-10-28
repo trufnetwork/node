@@ -327,19 +327,6 @@ RETURNS TABLE(
       ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
   }
 
-  -- Base time determination: Use parameter, metadata, or first event time.
-  $effective_base_time INT8;
-  if $base_time is not null {
-      $effective_base_time := $base_time;
-  } else {
-      $effective_base_time := get_latest_metadata_int_core($stream_ref, 'default_base_time');
-  }
-  -- Note: Base time logic differs slightly from get_record_composed which defaults to 0.
-  -- Here we might need to query the first actual event if metadata is missing.
-  -- For simplicity and consistency with original get_index, let's keep COALESCE to 0 for now,
-  -- but consider revising if a true 'first event' base is needed when metadata is absent.
-  $effective_base_time := COALESCE($effective_base_time, 0);
-
   IF $from IS NOT NULL AND $to IS NOT NULL AND $from > $to {
       ERROR(format('Invalid time range: from (%s) > to (%s)', $from, $to));
   }
@@ -356,19 +343,30 @@ RETURNS TABLE(
   $effective_enable_cache := COALESCE($use_cache, false);
   -- frozen queries bypass cache
   $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL;
+  -- Pass through the raw base_time so cache probes align with user-visible semantics (NULL => sentinel shard).
+  $cache_base_time INT8 := $base_time;
 
   if $effective_enable_cache {
       -- Check if we have pre-calculated index values in cache
-      $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $from, $to, $effective_base_time);
+      $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $from, $to, $cache_base_time);
   }
 
   -- If using pre-calculated index cache, return directly
   if $effective_enable_cache {
-      for $row in tn_cache.get_cached_index_data($data_provider, $stream_id, $from, $to, $effective_base_time) {
+      for $row in tn_cache.get_cached_index_data($data_provider, $stream_id, $from, $to, $cache_base_time) {
           RETURN NEXT $row.event_time, $row.value;
       }
       RETURN;
   }
+
+  -- Base time determination: Use parameter, metadata, or first event time.
+  $effective_base_time INT8;
+  if $base_time is not null {
+      $effective_base_time := $base_time;
+  } else {
+      $effective_base_time := get_latest_metadata_int_core($stream_ref, 'default_base_time');
+  }
+  $effective_base_time := COALESCE($effective_base_time, 0);
 
   -- Original logic fallback (cache miss or cache disabled, or custom base_time)
 

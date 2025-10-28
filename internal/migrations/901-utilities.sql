@@ -123,14 +123,15 @@ CREATE OR REPLACE ACTION helper_check_cache(
         $cache_refreshed_at_timestamp INT8;
         $cache_height INT8;
         $has_cached_data, $cache_refreshed_at_timestamp, $cache_height := tn_cache.has_cached_data($data_provider, $stream_id, $from, $to, $base_time);
-        
+        -- Note: base_time is the raw caller value (NULL means "use default"), matching the shards the scheduler writes.
+
         if $has_cached_data {
             -- Cache hit - get most recent cached data, show height to users
-            NOTICE('{"cache_hit": true, "cache_height": ' || $cache_height::TEXT || ', "cache_refreshed_at_timestamp": ' || $cache_refreshed_at_timestamp::TEXT || ', "base_time": ' || COALESCE($base_time, -1)::TEXT || '}');
+            NOTICE('{"cache_hit": true, "cache_height": ' || $cache_height::TEXT || ', "cache_refreshed_at_timestamp": ' || $cache_refreshed_at_timestamp::TEXT || '}');
             $cache_hit := true;
         } else {
             -- Cache miss - log and fallback to original logic
-            NOTICE('{"cache_hit": false, "base_time": ' || COALESCE($base_time, -1)::TEXT || '}');
+            NOTICE('{"cache_hit": false}');
         }
     } else {
         NOTICE('{"cache_disabled": true}');

@@ -67,21 +67,10 @@ func (s *CacheScheduler) RefreshStreamData(ctx context.Context, directive config
 				return nil, 0, fmt.Errorf("unexpected directive type in refresh: %s (should be specific after resolution)", directive.Type)
 			}
 
-			// Resolve the effective base_time once so it can be applied consistently
-            baseTime, err := s.engineOperations.GetLatestMetadataInt(traceCtx, directive.DataProvider, directive.StreamID, "default_base_time")
-            if err != nil {
-                return nil, 0, fmt.Errorf("get default base_time: %w", err)
-            }
-            if baseTime != nil {
-                s.logger.Info("resolved base_time for refresh",
-                    "provider", directive.DataProvider,
-                    "stream", directive.StreamID,
-                    "base_time", *baseTime)
-            } else {
-                s.logger.Info("no base_time override for refresh",
-                    "provider", directive.DataProvider,
-                    "stream", directive.StreamID)
-            }
+			// Cache rows should mirror caller behaviour: a nil base_time means "use the stream default".
+			// We keep the resolved value for computations/telemetry, but persist under the sentinel shard
+			// so subsequent helper_check_cache(NULL, …) probes find the data the user expects.
+			var cacheBaseTime *int64
 
 			// Ensure there is a cached_streams entry for this base_time
 			effectiveFrom := int64(0)
@@ -91,7 +80,7 @@ func (s *CacheScheduler) RefreshStreamData(ctx context.Context, directive config
 			streamConfig := internal.StreamCacheConfig{
 				DataProvider:  directive.DataProvider,
 				StreamID:      directive.StreamID,
-				BaseTime:      baseTime,
+				BaseTime:      cacheBaseTime,
 				FromTimestamp: effectiveFrom,
 				CronSchedule:  directive.Schedule.CronExpr,
 			}
@@ -107,9 +96,13 @@ func (s *CacheScheduler) RefreshStreamData(ctx context.Context, directive config
 			}
 
 			// Then fetch index events
-			indexEvents, indexFetchErr := s.fetchSpecificIndexStream(traceCtx, directive, fromTime, baseTime)
+			indexEvents, indexFetchErr := s.fetchSpecificIndexStream(traceCtx, directive, fromTime, nil)
 			if indexFetchErr != nil {
 				return nil, 0, fmt.Errorf("fetch index stream data: %w", indexFetchErr)
+			}
+			// Store index rows under the cache shard we expose to callers.
+			for i := range indexEvents {
+				indexEvents[i].BaseTime = cacheBaseTime
 			}
 
 			// Get current blockchain height for cache metadata
