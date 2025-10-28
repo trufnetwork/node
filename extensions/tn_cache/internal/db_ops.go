@@ -886,7 +886,7 @@ func (c *CacheDB) CleanupCache(ctx context.Context) error {
 
 // HasCachedData checks if there is cached data for a stream in a time range
 func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID string, baseTime *int64, fromTime, toTime int64) (bool, error) {
- baseTimeValue := encodeBaseTime(baseTime)
+	baseTimeValue := encodeBaseTime(baseTime)
 	// Use middleware for tracing
 	return tracing.TracedOperation(ctx, tracing.OpDBHasCachedData, dataProvider, streamID,
 		func(traceCtx context.Context) (bool, error) {
@@ -902,7 +902,7 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 			}
 			defer func() { _ = tx.Rollback(traceCtx) }()
 
-		// First, check if the stream is configured for caching
+			// First, check if the stream is configured for caching
 			results, err := tx.Execute(traceCtx, `
 				SELECT EXISTS (
 					SELECT 1
@@ -977,12 +977,44 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 			}
 
 			// If no direct events found, check for an anchor record (last event before fromTime)
+			if !hasData && baseTime != nil {
+				var indexResults *sql.ResultSet
+				if toTime == 0 {
+					indexResults, err = tx.Execute(traceCtx, `
+						SELECT EXISTS (
+							SELECT 1 FROM `+constants.CacheSchemaName+`.cached_index_events
+							WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 AND event_time >= $4
+						)
+					`, dataProvider, streamID, baseTimeValue, fromTime)
+				} else {
+					indexResults, err = tx.Execute(traceCtx, `
+						SELECT EXISTS (
+							SELECT 1 FROM `+constants.CacheSchemaName+`.cached_index_events
+							WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 AND event_time >= $4 AND event_time <= $5
+						)
+					`, dataProvider, streamID, baseTimeValue, fromTime, toTime)
+				}
+				if err != nil {
+					return false, fmt.Errorf("failed to check cached index events existence: %w", err)
+				}
+
+				if len(indexResults.Rows) == 0 || len(indexResults.Rows[0]) != 1 {
+					return false, fmt.Errorf("unexpected result structure for index event existence check")
+				}
+
+				indexHasData, ok := indexResults.Rows[0][0].(bool)
+				if !ok {
+					return false, fmt.Errorf("failed to convert index event existence result to bool")
+				}
+				hasData = indexHasData
+			}
+
 			if !hasData && fromTime != 0 {
 				anchorResults, err := tx.Execute(traceCtx, `
-						SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
-						WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 AND event_time < $4
-						LIMIT 1
-					`, dataProvider, streamID, baseTimeValue, fromTime)
+					SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
+					WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 AND event_time < $4
+					LIMIT 1
+				`, dataProvider, streamID, baseTimeValue, fromTime)
 				if err != nil {
 					return false, fmt.Errorf("failed to query anchor record: %w", err)
 				}
