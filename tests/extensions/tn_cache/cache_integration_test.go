@@ -85,17 +85,8 @@ func testCacheBasicFunctionality(t *testing.T, cacheConfig *testutils.CacheOptio
 
 		// The cache configuration was already provided via test options
 		// The extension should have already inserted the stream into cached_streams
-		// Let's verify it's there
-		result, err := platform.DB.Execute(ctx,
-			`SELECT COUNT(*) FROM ext_tn_cache.cached_streams
-			 WHERE data_provider = $1 AND stream_id = $2`,
-			deployer.Address(),
-			composedStreamId.String(),
-		)
-		require.NoError(t, err)
-		require.Len(t, result.Rows, 1, "Should have one row")
-		streamCount := result.Rows[0][0].(int64)
-		assert.Equal(t, int64(1), streamCount, "Stream should be configured in cache")
+		// Let's verify the sentinel variant is present
+		verifyCacheStreamExists(t, ctx, platform, deployer.Address(), composedStreamId.String())
 
 		// Query original data from TN
 		fromTime := int64(1)
@@ -124,7 +115,7 @@ func testCacheBasicFunctionality(t *testing.T, cacheConfig *testutils.CacheOptio
 		assert.Equal(t, 3, recordsCached, "should cache 3 records")
 
 		// Query cached data
-		result, err = platform.DB.Execute(ctx,
+		result, err := platform.DB.Execute(ctx,
 			`SELECT event_time, value FROM ext_tn_cache.cached_events 
 			 WHERE data_provider = $1 AND stream_id = $2 
 			 AND event_time >= $3 AND event_time <= $4
@@ -155,16 +146,8 @@ func testCacheBasicFunctionality(t *testing.T, cacheConfig *testutils.CacheOptio
 			assert.Equal(t, expectedValues[i], cachedValue, "Cached value should match expected aggregated value")
 		}
 
-		// Verify stream configuration exists
-		result, err = platform.DB.Execute(ctx,
-			`SELECT COUNT(*) FROM ext_tn_cache.cached_streams 
-			 WHERE data_provider = $1 AND stream_id = $2`,
-			deployer.Address(),
-			composedStreamId.String(),
-		)
-		require.NoError(t, err)
-		require.Len(t, result.Rows, 1, "Should have one row")
-		assert.Equal(t, int64(1), result.Rows[0][0].(int64), "Should have one cached stream configuration")
+		// Verify stream configuration still tracks the sentinel variant (may include additional base_time shards)
+		verifyCacheStreamExists(t, ctx, platform, deployer.Address(), composedStreamId.String())
 
 		// Test get_index cache functionality
 		baseTime := int64(1)
@@ -351,20 +334,36 @@ func testCacheIncludeChildren(t *testing.T, cacheConfig *testutils.CacheOptions)
 
 func verifyCacheStreamExists(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, dataProvider, streamId string) {
 	result, err := platform.DB.Execute(ctx,
-		`SELECT COUNT(*) FROM ext_tn_cache.cached_streams
+		`SELECT base_time FROM ext_tn_cache.cached_streams
 		 WHERE data_provider = $1 AND stream_id = $2`,
 		dataProvider,
 		streamId,
 	)
 	require.NoError(t, err)
-	require.Len(t, result.Rows, 1, "Should have one row")
-	count := result.Rows[0][0].(int64)
-	assert.Equal(t, int64(1), count, "Stream should exist in cache config")
+	require.NotEmpty(t, result.Rows, "Stream %s should have at least one cache config entry", streamId)
+
+	sentinelCount := 0
+	for _, row := range result.Rows {
+		require.Len(t, row, 1, "unexpected column count when verifying cache config for stream %s", streamId)
+		if row[0] == nil {
+			sentinelCount++
+			continue
+		}
+
+		switch row[0].(type) {
+		case int64, int32:
+			// Base-time specific variants are expected and validated elsewhere.
+		default:
+			require.Failf(t, "unexpected base_time type", "stream=%s type=%T", streamId, row[0])
+		}
+	}
+
+	assert.Equal(t, 1, sentinelCount, "Stream %s should have exactly one sentinel (NULL base_time) cache config entry", streamId)
 }
 
 func verifyChildStreamsInCache(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, dataProvider, childId1, childId2 string) {
 	result, err := platform.DB.Execute(ctx,
-		`SELECT stream_id FROM ext_tn_cache.cached_streams
+		`SELECT DISTINCT stream_id FROM ext_tn_cache.cached_streams
 		 WHERE data_provider = $1 AND stream_id IN ($2, $3)
 		 ORDER BY stream_id`,
 		dataProvider,

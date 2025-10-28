@@ -68,23 +68,20 @@ func (s *CacheScheduler) RefreshStreamData(ctx context.Context, directive config
 			}
 
 			// Resolve the effective base_time once so it can be applied consistently
-			baseTime, err := s.engineOperations.GetLatestMetadataInt(traceCtx, directive.DataProvider, directive.StreamID, "default_base_time")
-			if err != nil {
-				return nil, 0, fmt.Errorf("get default base_time: %w", err)
-			}
-			if baseTime == nil {
-				zero := int64(0)
-				baseTime = &zero
-				s.logger.Debug("defaulting base_time for refresh",
-					"provider", directive.DataProvider,
-					"stream", directive.StreamID,
-					"base_time", *baseTime)
-			} else {
-				s.logger.Debug("resolved base_time for refresh",
-					"provider", directive.DataProvider,
-					"stream", directive.StreamID,
-					"base_time", *baseTime)
-			}
+            baseTime, err := s.engineOperations.GetLatestMetadataInt(traceCtx, directive.DataProvider, directive.StreamID, "default_base_time")
+            if err != nil {
+                return nil, 0, fmt.Errorf("get default base_time: %w", err)
+            }
+            if baseTime != nil {
+                s.logger.Info("resolved base_time for refresh",
+                    "provider", directive.DataProvider,
+                    "stream", directive.StreamID,
+                    "base_time", *baseTime)
+            } else {
+                s.logger.Info("no base_time override for refresh",
+                    "provider", directive.DataProvider,
+                    "stream", directive.StreamID)
+            }
 
 			// Ensure there is a cached_streams entry for this base_time
 			effectiveFrom := int64(0)
