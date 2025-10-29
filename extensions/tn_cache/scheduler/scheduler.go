@@ -740,19 +740,18 @@ func (s *CacheScheduler) UpdateGaugeMetrics(ctx context.Context) {
 	}
 
 	for _, row := range rows {
-		if row.EventCount <= 0 {
-			continue
-		}
 		key := streamKey{provider: row.DataProvider, stream: row.StreamID}
 		streamTotals[key] += row.EventCount
 	}
 
 	activeStreams := 0
 	for key, total := range streamTotals {
-		if total <= 0 {
-			continue
+		if total < 0 {
+			total = 0
 		}
-		activeStreams++
+		if total > 0 {
+			activeStreams++
+		}
 		s.metrics.RecordCacheSize(ctx, key.provider, key.stream, total)
 	}
 
