@@ -122,7 +122,7 @@ CREATE OR REPLACE ACTION helper_check_cache(
         $has_cached_data BOOL := false;
         $cache_refreshed_at_timestamp INT8;
         $cache_height INT8;
-        $has_cached_data, $cache_refreshed_at_timestamp, $cache_height := tn_cache.has_cached_data($data_provider, $stream_id, $from, $to, $base_time);
+        $has_cached_data, $cache_refreshed_at_timestamp, $cache_height := tn_cache.has_cached_data_v2($data_provider, $stream_id, $from, $to, $base_time);
         -- Note: base_time is the raw caller value (NULL means "use default"), matching the shards the scheduler writes.
 
         if $has_cached_data {

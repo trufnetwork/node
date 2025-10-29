@@ -162,11 +162,13 @@ CREATE INDEX idx_cached_index_events_time_range
 The extension registers custom SQL functions to allow actions to use the cache:
 
 - `tn_cache.is_enabled()`: Checks if caching is enabled on this node
-- `tn_cache.has_cached_data(data_provider, stream_id, from, to, base_time)`: Checks if the cache can answer a query
-- `tn_cache.get_cached_data(data_provider, stream_id, from, to, base_time)`: Retrieves cached data
-- `tn_cache.get_cached_last_before(data_provider, stream_id, before, base_time)`: Gets the most recent record before a timestamp
-- `tn_cache.get_cached_first_after(data_provider, stream_id, after, base_time)`: Gets the earliest record after a timestamp
-- `tn_cache.get_cached_index_data(data_provider, stream_id, from, to, base_time)`: Retrieves cached index values with their time ranges
+- `tn_cache.has_cached_data_v2(data_provider, stream_id, from, to, base_time)`: Checks if the cache can answer a query (legacy `has_cached_data` remains for backward compatibility).
+- `tn_cache.get_cached_data_v2(data_provider, stream_id, from, to, base_time)`: Retrieves cached data (legacy `get_cached_data` remains available).
+- `tn_cache.get_cached_last_before_v2(data_provider, stream_id, before, base_time)`: Gets the most recent record before a timestamp (legacy `get_cached_last_before` persists for older nodes).
+- `tn_cache.get_cached_first_after_v2(data_provider, stream_id, after, base_time)`: Gets the earliest record after a timestamp (legacy `get_cached_first_after` persists for older nodes).
+- `tn_cache.get_cached_index_data_v2(data_provider, stream_id, from, to, base_time)`: Retrieves cached index values with their time ranges (legacy `get_cached_index_data` persists for older nodes).
+
+> **Deployment note:** upgrade order is `binary -> SQL`. Roll out the node binary that exposes both the legacy and `_v2` methods, restart validators, and only then apply the migrations shipped with this change (the SQL helpers call `_v2`). Legacy method names are now deprecated and will be removed in the next release once operators confirm they have switched.
 
 All cache methods follow TRUF.NETWORK query conventions for how `from` and `to` parameters behave (including NULL handling and anchor records).
 
@@ -184,9 +186,9 @@ CREATE OR REPLACE ACTION get_record_composed(
 ) PRIVATE VIEW RETURNS TABLE(...) {
     -- Check for cached data if requested
     if $use_cache and tn_cache.is_enabled() {
-        if tn_cache.has_cached_data($data_provider, $stream_id, $from, $to, NULL) {
+        if tn_cache.has_cached_data_v2($data_provider, $stream_id, $from, $to, NULL) {
             NOTICE('{"cache_hit": true}');
-            return SELECT * FROM tn_cache.get_cached_data($data_provider, $stream_id, $from, $to, NULL);
+            return SELECT * FROM tn_cache.get_cached_data_v2($data_provider, $stream_id, $from, $to, NULL);
         } else {
             NOTICE('{"cache_hit": false}');
         }
@@ -205,7 +207,7 @@ CREATE OR REPLACE ACTION get_last_value_before(
     $use_cache BOOLEAN DEFAULT false
 ) PRIVATE VIEW RETURNS TABLE(event_time INT8, value NUMERIC(36,18)) {
     if $use_cache and tn_cache.is_enabled() {
-        for $row in SELECT * FROM tn_cache.get_cached_last_before($data_provider, $stream_id, $before, NULL) {
+        for $row in SELECT * FROM tn_cache.get_cached_last_before_v2($data_provider, $stream_id, $before, NULL) {
             return next $row.event_time, $row.value;
         }
         return;
@@ -230,7 +232,7 @@ CREATE OR REPLACE ACTION get_index_values(
 ) PRIVATE VIEW RETURNS TABLE(event_time INT8, value NUMERIC(36,18), index_end_time INT8) {
     if $use_cache and tn_cache.is_enabled() {
         -- Index cache includes both the index value and its validity period
-        return SELECT * FROM tn_cache.get_cached_index_data($data_provider, $stream_id, $from, $to, NULL);
+        return SELECT * FROM tn_cache.get_cached_index_data_v2($data_provider, $stream_id, $from, $to, NULL);
     }
     
     -- Fall back to computing index values
