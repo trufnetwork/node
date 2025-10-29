@@ -89,6 +89,7 @@ func generateDirectiveID(dataProvider, streamID, source string, baseTime *int64,
 func (l *Loader) deduplicateDirectives(directives []CacheDirective) []CacheDirective {
 	// Use a map to track unique cache keys and remove exact duplicates
 	directiveMap := make(map[string]CacheDirective)
+	result := make([]CacheDirective, 0, len(directives))
 
 	for _, directive := range directives {
 		cacheKey := directive.GetCacheKey()
@@ -111,11 +112,6 @@ func (l *Loader) deduplicateDirectives(directives []CacheDirective) []CacheDirec
 			continue
 		}
 		directiveMap[cacheKey] = directive
-	}
-
-	// Convert map back to slice
-	var result []CacheDirective
-	for _, directive := range directiveMap {
 		result = append(result, directive)
 	}
 
@@ -129,11 +125,7 @@ func (l *Loader) deduplicateDirectives(directives []CacheDirective) []CacheDirec
 
 // GetCacheKey returns a unique key for a cache directive (for deduplication)
 func (directive *CacheDirective) GetCacheKey() string {
-	base := "default_base"
-	if directive.BaseTime != nil {
-		base = fmt.Sprintf("%d", *directive.BaseTime)
-	}
-	return directive.DataProvider + ":" + directive.StreamID + ":" + base
+	return directive.DataProvider + ":" + directive.StreamID + ":" + formatBaseTime(directive.BaseTime)
 }
 
 func formatBaseTime(baseTime *int64) string {

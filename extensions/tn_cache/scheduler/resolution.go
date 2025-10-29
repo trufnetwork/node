@@ -469,13 +469,13 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 	}
 
 	for _, dir := range s.resolvedDirectives {
-		key := fmt.Sprintf("%s:%s", dir.DataProvider, dir.StreamID)
+		key := fmt.Sprintf("%s:%s:%s", dir.DataProvider, dir.StreamID, formatBaseTime(dir.BaseTime))
 		oldSet[key] = true
 	}
 	s.resolutionMu.RUnlock()
 
 	for _, dir := range newResolvedSpecs {
-		key := fmt.Sprintf("%s:%s", dir.DataProvider, dir.StreamID)
+		key := fmt.Sprintf("%s:%s:%s", dir.DataProvider, dir.StreamID, formatBaseTime(dir.BaseTime))
 		newSet[key] = true
 	}
 
@@ -495,13 +495,13 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 	// Record metrics for discovered and removed streams
 	for _, key := range added {
 		parts := strings.Split(key, ":")
-		if len(parts) == 2 {
+		if len(parts) >= 2 {
 			s.metrics.RecordResolutionStreamDiscovered(ctx, parts[0], parts[1])
 		}
 	}
 	for _, key := range removed {
 		parts := strings.Split(key, ":")
-		if len(parts) == 2 {
+		if len(parts) >= 2 {
 			s.metrics.RecordResolutionStreamRemoved(ctx, parts[0], parts[1])
 		}
 	}
@@ -546,7 +546,7 @@ func (s *CacheScheduler) updateCachedStreamsTable(ctx context.Context, resolvedS
 	// Build sets for comparison
 	currentSet := make(map[string]internal.StreamCacheConfig)
 	for _, config := range currentConfigs {
-		key := fmt.Sprintf("%s:%s", config.DataProvider, config.StreamID)
+		key := fmt.Sprintf("%s:%s:%s", config.DataProvider, config.StreamID, formatBaseTime(config.BaseTime))
 		currentSet[key] = config
 	}
 
@@ -555,7 +555,7 @@ func (s *CacheScheduler) updateCachedStreamsTable(ctx context.Context, resolvedS
 	newSet := make(map[string]bool)
 
 	for _, spec := range resolvedSpecs {
-		key := fmt.Sprintf("%s:%s", spec.DataProvider, spec.StreamID)
+		key := fmt.Sprintf("%s:%s:%s", spec.DataProvider, spec.StreamID, formatBaseTime(spec.BaseTime))
 		newSet[key] = true
 
 		// Preserve refresh data if stream already exists
@@ -573,6 +573,7 @@ func (s *CacheScheduler) updateCachedStreamsTable(ctx context.Context, resolvedS
 		newConfigs = append(newConfigs, internal.StreamCacheConfig{
 			DataProvider:              spec.DataProvider,
 			StreamID:                  spec.StreamID,
+			BaseTime:                  spec.BaseTime,
 			FromTimestamp:             fromTimestamp,
 			CacheRefreshedAtTimestamp: cacheRefreshedAtTimestamp,
 			CacheHeight:               cacheHeight,

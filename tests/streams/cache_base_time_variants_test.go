@@ -2,10 +2,10 @@ package tests
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
@@ -49,7 +49,7 @@ func runStreamCacheBaseTimeVariants(t *testing.T, cacheConfig *testutils.CacheOp
 
 		platform = procedure.WithSigner(platform, deployerAddress.Bytes())
 		if err := setup.CreateDataProvider(ctx, platform, deployerAddress.Address()); err != nil {
-			return errors.New("error registering data provider")
+			return errors.Wrap(err, "error registering data provider")
 		}
 
 		err = setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{

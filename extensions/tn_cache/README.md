@@ -123,31 +123,38 @@ CREATE SCHEMA IF NOT EXISTS ext_tn_cache;
 CREATE TABLE IF NOT EXISTS ext_tn_cache.cached_streams (
     data_provider TEXT NOT NULL,
     stream_id TEXT NOT NULL,
+    base_time INT8, -- NULL represents the sentinel ("use default base_time")
     from_timestamp INT8,
-    last_refreshed INT8,
+    cache_refreshed_at_timestamp INT8,
+    cache_height INT8,
     cron_schedule TEXT,
-    PRIMARY KEY (data_provider, stream_id)
+    base_time_key INT8 GENERATED ALWAYS AS (COALESCE(base_time, -1)) STORED,
+    PRIMARY KEY (data_provider, stream_id, base_time_key)
 );
 
 -- Store the actual cached event data
 CREATE TABLE IF NOT EXISTS ext_tn_cache.cached_events (
     data_provider TEXT NOT NULL,
     stream_id TEXT NOT NULL,
+    base_time INT8,
     event_time INT8 NOT NULL,
     value NUMERIC(36, 18) NOT NULL,
-    PRIMARY KEY (data_provider, stream_id, event_time)
+    base_time_key INT8 GENERATED ALWAYS AS (COALESCE(base_time, -1)) STORED,
+    PRIMARY KEY (data_provider, stream_id, base_time_key, event_time)
 );
 
 -- Store cached index values
 CREATE TABLE IF NOT EXISTS ext_tn_cache.cached_index_events (
     data_provider TEXT NOT NULL,
     stream_id TEXT NOT NULL,
+    base_time INT8,
     event_time INT8 NOT NULL,
     value NUMERIC(36, 18) NOT NULL,
-    index_end_time INT8 NOT NULL,
-    PRIMARY KEY (data_provider, stream_id, event_time)
+    base_time_key INT8 GENERATED ALWAYS AS (COALESCE(base_time, -1)) STORED,
+    PRIMARY KEY (data_provider, stream_id, base_time_key, event_time)
 );
-CREATE INDEX idx_cached_index_events_time_range ON ext_tn_cache.cached_index_events(data_provider, stream_id, event_time, index_end_time);
+CREATE INDEX idx_cached_index_events_time_range
+    ON ext_tn_cache.cached_index_events(data_provider, stream_id, base_time_key, event_time);
 ```
 
 ## SQL Functions
@@ -223,7 +230,7 @@ CREATE OR REPLACE ACTION get_index_values(
 ) PRIVATE VIEW RETURNS TABLE(event_time INT8, value NUMERIC(36,18), index_end_time INT8) {
     if $use_cache and tn_cache.is_enabled() {
         -- Index cache includes both the index value and its validity period
-        return SELECT * FROM tn_cache.get_cached_index_data($data_provider, $stream_id, $from, $to);
+        return SELECT * FROM tn_cache.get_cached_index_data($data_provider, $stream_id, $from, $to, NULL);
     }
     
     -- Fall back to computing index values
@@ -287,7 +294,7 @@ These edge-cases cause actions to **bypass the cache and recompute on the fly** 
 | Action(s) | Parameter / Condition | Effect |
 |-----------|----------------------|--------|
 | `get_record_composed`, `get_index_composed`, `get_index_change` | `frozen_at IS NOT NULL` | Cache disabled – a historical *frozen* snapshot must be computed exactly. |
-| same | `base_time IS NOT NULL` | Cache disabled – custom base time changes the whole index curve. |
+| same | `base_time IS NOT NULL` AND no matching cached shard | Cache miss – request falls through to live computation when the base_time variant was never cached. Configure `base_time` in CSV/inline config to populate a dedicated shard. |
 | same | `tn_cache` disabled on node, or `enabled = "false"` in `config.toml` | Falls back to full computation. |
 | *primitive* versions (`*_primitive`) | Any call | Never cached – primitives read directly from `primitive_events`. |
 

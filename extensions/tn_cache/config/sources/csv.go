@@ -242,7 +242,8 @@ func (s *CSVSource) parseCSVRecord(record []string, header map[string]int, lineN
 	if len(record) > columnIndex {
 		value := strings.TrimSpace(record[columnIndex])
 		if value != "" {
-			if includeChildren, err := strconv.ParseBool(value); err == nil {
+			if strings.EqualFold(value, "true") || strings.EqualFold(value, "false") {
+				includeChildren, _ := strconv.ParseBool(value)
 				spec.IncludeChildren = includeChildren
 				columnIndex++
 			} else if baseTime, err := strconv.ParseInt(value, 10, 64); err == nil {
