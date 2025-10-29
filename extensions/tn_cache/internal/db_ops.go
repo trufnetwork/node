@@ -907,33 +907,35 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 			baseTimeValue := primaryBaseTimeValue
 
 			var hasData bool
+			var ok bool
 
 			// Check the specific base_time shard
 			results, err := tx.Execute(traceCtx, `
-				SELECT EXISTS (
-					SELECT 1
-					FROM `+constants.CacheSchemaName+`.cached_streams
-					WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $4
-						AND (from_timestamp IS NULL OR from_timestamp <= $3)
-				)
+				SELECT cache_refreshed_at_timestamp
+				FROM `+constants.CacheSchemaName+`.cached_streams
+				WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $4
+					AND (from_timestamp IS NULL OR from_timestamp <= $3)
+				LIMIT 1
 			`, dataProvider, streamID, fromTime, baseTimeValue)
 			if err != nil {
 				return false, fmt.Errorf("check stream config: %w", err)
 			}
 
-			if len(results.Rows) == 0 || len(results.Rows[0]) != 1 {
-				return false, fmt.Errorf("unexpected result structure for stream exists check")
-			}
-
-			streamExists, ok := results.Rows[0][0].(bool)
-			if !ok {
-				return false, fmt.Errorf("failed to convert stream exists result to bool")
-			}
-
-			if !streamExists {
+			if len(results.Rows) == 0 {
 				// For read-only transactions, we don't need to commit - defer rollback is sufficient
 				return false, nil
 			}
+
+			if len(results.Rows[0]) != 1 {
+				return false, fmt.Errorf("unexpected result structure for stream config check")
+			}
+
+			cacheRefreshedAtTimestamp, err := decodeNullableInt64(results.Rows[0][0], "cache_refreshed_at_timestamp")
+			if err != nil {
+				return false, fmt.Errorf("decode cache_refreshed_at_timestamp: %w", err)
+			}
+
+			streamRefreshed := cacheRefreshedAtTimestamp > 0
 
 			if toTime == 0 {
 				results, err = tx.Execute(traceCtx, `
@@ -1005,6 +1007,10 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 					return false, fmt.Errorf("failed to query anchor record: %w", err)
 				}
 				hasData = len(anchorResults.Rows) > 0
+			}
+
+			if !hasData && streamRefreshed {
+				hasData = true
 			}
 
 			// For read-only transactions, we don't need to commit - defer rollback is sufficient
