@@ -1029,6 +1029,23 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 		"new_count", len(newConfigs),
 		"delete_count", len(toDelete))
 
+	// Deduplicate new configurations by provider/stream/base_time to prevent double-upserts
+	if len(newConfigs) > 1 {
+		seen := make(map[string]struct{}, len(newConfigs))
+		deduped := make([]StreamCacheConfig, 0, len(newConfigs))
+		for _, cfg := range newConfigs {
+			key := fmt.Sprintf("%s:%s:%d", cfg.DataProvider, cfg.StreamID, encodeBaseTime(cfg.BaseTime))
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			deduped = append(deduped, cfg)
+		}
+		if len(deduped) != len(newConfigs) {
+			newConfigs = deduped
+		}
+	}
+
 	tx, err := c.db.BeginTx(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)

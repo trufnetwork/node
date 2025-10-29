@@ -318,6 +318,7 @@ func (s *CacheScheduler) storeStreamConfigs(ctx context.Context, directives []co
 		streamConfig := internal.StreamCacheConfig{
 			DataProvider:              directive.DataProvider,
 			StreamID:                  directive.StreamID,
+			BaseTime:                  directive.BaseTime,
 			FromTimestamp:             fromTimestamp,
 			CacheRefreshedAtTimestamp: 0, // Will be set on first refresh
 			CacheHeight:               0, // Will be set on first refresh

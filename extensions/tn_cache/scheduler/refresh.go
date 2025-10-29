@@ -68,9 +68,8 @@ func (s *CacheScheduler) RefreshStreamData(ctx context.Context, directive config
 			}
 
 			// Cache rows should mirror caller behaviour: a nil base_time means "use the stream default".
-			// We keep the resolved value for computations/telemetry, but persist under the sentinel shard
-			// so subsequent helper_check_cache(NULL, …) probes find the data the user expects.
-			var cacheBaseTime *int64
+			// Persist using the raw directive base_time so helper_check_cache sees the same shard users request.
+			cacheBaseTime := directive.BaseTime
 
 			// Ensure there is a cached_streams entry for this base_time
 			effectiveFrom := int64(0)
@@ -96,7 +95,7 @@ func (s *CacheScheduler) RefreshStreamData(ctx context.Context, directive config
 			}
 
 			// Then fetch index events
-			indexEvents, indexFetchErr := s.fetchSpecificIndexStream(traceCtx, directive, fromTime, nil)
+			indexEvents, indexFetchErr := s.fetchSpecificIndexStream(traceCtx, directive, fromTime, directive.BaseTime)
 			if indexFetchErr != nil {
 				return nil, 0, fmt.Errorf("fetch index stream data: %w", indexFetchErr)
 			}

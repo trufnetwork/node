@@ -40,13 +40,14 @@ func (l *Loader) specToDirective(spec sources.StreamSpec, index int) (CacheDirec
 	normalizedProvider := validation.NormalizeEthereumAddress(spec.DataProvider)
 
 	// Generate a unique ID for this directive
-	id := generateDirectiveID(normalizedProvider, spec.StreamID, spec.Source, index)
+	id := generateDirectiveID(normalizedProvider, spec.StreamID, spec.Source, spec.BaseTime, index)
 
 	return CacheDirective{
 		ID:           id,
 		Type:         directiveType,
 		DataProvider: normalizedProvider,
 		StreamID:     spec.StreamID,
+		BaseTime:     spec.BaseTime,
 		Schedule: Schedule{
 			CronExpr: spec.CronSchedule,
 			// Note: We're not storing the parsed schedule in the config types
@@ -65,11 +66,16 @@ func (l *Loader) specToDirective(spec sources.StreamSpec, index int) (CacheDirec
 }
 
 // generateDirectiveID creates a unique identifier for a cache directive
-func generateDirectiveID(dataProvider, streamID, source string, index int) string {
+func generateDirectiveID(dataProvider, streamID, source string, baseTime *int64, index int) string {
 	// Create a deterministic ID based on the directive content
+	baseComponent := "default_base"
+	if baseTime != nil {
+		baseComponent = fmt.Sprintf("%d", *baseTime)
+	}
 	parts := []string{
 		strings.ToLower(dataProvider),
 		streamID,
+		baseComponent,
 		source,
 		fmt.Sprintf("%d", index),
 	}
@@ -83,10 +89,11 @@ func generateDirectiveID(dataProvider, streamID, source string, index int) strin
 func (l *Loader) deduplicateDirectives(directives []CacheDirective) []CacheDirective {
 	// Use a map to track unique cache keys and remove exact duplicates
 	directiveMap := make(map[string]CacheDirective)
+	result := make([]CacheDirective, 0, len(directives))
 
 	for _, directive := range directives {
 		cacheKey := directive.GetCacheKey()
-		
+
 		// Check if we already have a directive for this cache key
 		if existing, exists := directiveMap[cacheKey]; exists {
 			// Log warning about duplicate directive
@@ -94,6 +101,8 @@ func (l *Loader) deduplicateDirectives(directives []CacheDirective) []CacheDirec
 				"cache_key", cacheKey,
 				"data_provider", directive.DataProvider,
 				"stream_id", directive.StreamID,
+				"kept_base_time", formatBaseTime(existing.BaseTime),
+				"ignored_base_time", formatBaseTime(directive.BaseTime),
 				"kept_source", existing.Metadata.Source,
 				"ignored_source", directive.Metadata.Source,
 				"kept_schedule", existing.Schedule.CronExpr,
@@ -103,11 +112,6 @@ func (l *Loader) deduplicateDirectives(directives []CacheDirective) []CacheDirec
 			continue
 		}
 		directiveMap[cacheKey] = directive
-	}
-
-	// Convert map back to slice
-	var result []CacheDirective
-	for _, directive := range directiveMap {
 		result = append(result, directive)
 	}
 
@@ -121,5 +125,12 @@ func (l *Loader) deduplicateDirectives(directives []CacheDirective) []CacheDirec
 
 // GetCacheKey returns a unique key for a cache directive (for deduplication)
 func (directive *CacheDirective) GetCacheKey() string {
-	return directive.DataProvider + ":" + directive.StreamID
+	return directive.DataProvider + ":" + directive.StreamID + ":" + formatBaseTime(directive.BaseTime)
+}
+
+func formatBaseTime(baseTime *int64) string {
+	if baseTime == nil {
+		return "default_base"
+	}
+	return fmt.Sprintf("%d", *baseTime)
 }
