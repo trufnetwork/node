@@ -727,7 +727,7 @@ RETURNS TABLE(
     }
     
     if $effective_enable_cache {
-        for $row in tn_cache.get_cached_data($data_provider, $stream_id, $from, $to, NULL) {
+        for $row in tn_cache.get_cached_data_v2($data_provider, $stream_id, $from, $to, NULL) {
             RETURN NEXT $row.event_time, $row.value;
         }
         return;
@@ -1275,7 +1275,7 @@ RETURNS TABLE(
     -- If using cache, get the most recent cached record
     if $effective_enable_cache {
         -- Get cached data up to the before time and return the most recent
-        for $row in tn_cache.get_cached_last_before($data_provider, $stream_id, $before, NULL) {
+        for $row in tn_cache.get_cached_last_before_v2($data_provider, $stream_id, $before, NULL) {
             RETURN NEXT $row.event_time, $row.value;
         }
         RETURN;
@@ -1424,7 +1424,7 @@ RETURNS TABLE(
     -- If using cache, get the earliest cached record
     if $effective_enable_cache {
         -- Get cached data from the after time and return the earliest
-        for $row in tn_cache.get_cached_first_after($data_provider, $stream_id, $after, NULL) {
+        for $row in tn_cache.get_cached_first_after_v2($data_provider, $stream_id, $after, NULL) {
             RETURN NEXT $row.event_time, $row.value;
         }
         RETURN;
@@ -1575,7 +1575,7 @@ RETURNS TABLE(
 
     -- If using pre-calculated index cache, return directly
     if $effective_enable_cache {
-        for $row in tn_cache.get_cached_index_data($data_provider, $stream_id, $from, $to, $cache_base_time) {
+        for $row in tn_cache.get_cached_index_data_v2($data_provider, $stream_id, $from, $to, $cache_base_time) {
             RETURN NEXT $row.event_time, $row.value;
         }
         RETURN;

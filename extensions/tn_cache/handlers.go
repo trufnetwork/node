@@ -284,7 +284,8 @@ func HandleGetCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 				return nil, 0, fmt.Errorf("get interval events: %w", err)
 			}
 
-			for _, ev := range events {
+			for i := range events {
+				ev := events[i]
 				if ev.EventTime > effectiveFrom {
 					combined = append(combined, &ev)
 				}

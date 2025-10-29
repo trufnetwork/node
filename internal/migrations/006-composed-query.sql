@@ -84,7 +84,7 @@ RETURNS TABLE(
 
     -- Check if cache is enabled and frozen_at is null (frozen queries bypass cache)
     if $effective_enable_cache {
-        for $row in tn_cache.get_cached_data($data_provider, $stream_id, $from, $to, NULL) {
+        for $row in tn_cache.get_cached_data_v2($data_provider, $stream_id, $from, $to, NULL) {
             RETURN NEXT $row.event_time, $row.value;
         }
         return;

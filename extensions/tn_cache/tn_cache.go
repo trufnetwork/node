@@ -120,6 +120,10 @@ func InitializeCachePrecompile(ctx context.Context, service *common.Service, db 
 		// but there's some bug preventing internal calls to private methods (or is it private for the namespace?)
 		//
 		// these actions should be readonly, not to interfere with consensus
+		// Register both legacy and v2 precompile methods. The legacy names (no _v2)
+		// keep the old 4-argument signature so pre-base_time deployments still work.
+		// The *_v2 variants include the base_time parameter. Legacy methods are now
+		// deprecated and will be removed in the next release.
 		Methods: []precompiles.Method{
 			{
 				Name:            "is_enabled",
@@ -135,6 +139,25 @@ func InitializeCachePrecompile(ctx context.Context, service *common.Service, db 
 			},
 			{
 				Name:            "has_cached_data",
+				AccessModifiers: []precompiles.Modifier{precompiles.PUBLIC, precompiles.VIEW},
+				Parameters: []precompiles.PrecompileValue{
+					precompiles.NewPrecompileValue("data_provider", types.TextType, false),
+					precompiles.NewPrecompileValue("stream_id", types.TextType, false),
+					precompiles.NewPrecompileValue("from_time", types.IntType, true), // nullable like standard queries
+					precompiles.NewPrecompileValue("to_time", types.IntType, true),
+				},
+				Returns: &precompiles.MethodReturn{
+					IsTable: false,
+					Fields: []precompiles.PrecompileValue{
+						precompiles.NewPrecompileValue("has_data", types.BoolType, false),
+						precompiles.NewPrecompileValue("cache_refreshed_at_timestamp", types.IntType, false),
+						precompiles.NewPrecompileValue("cache_height", types.IntType, false),
+					},
+				},
+				Handler: HandleHasCachedData,
+			},
+			{
+				Name:            "has_cached_data_v2",
 				AccessModifiers: []precompiles.Modifier{precompiles.PUBLIC, precompiles.VIEW},
 				Parameters: []precompiles.PrecompileValue{
 					precompiles.NewPrecompileValue("data_provider", types.TextType, false),
@@ -161,6 +184,26 @@ func InitializeCachePrecompile(ctx context.Context, service *common.Service, db 
 					precompiles.NewPrecompileValue("stream_id", types.TextType, false),
 					precompiles.NewPrecompileValue("from_time", types.IntType, true), // nullable like standard queries
 					precompiles.NewPrecompileValue("to_time", types.IntType, true),
+				},
+				Returns: &precompiles.MethodReturn{
+					IsTable: true,
+					Fields: []precompiles.PrecompileValue{
+						precompiles.NewPrecompileValue("data_provider", types.TextType, false),
+						precompiles.NewPrecompileValue("stream_id", types.TextType, false),
+						precompiles.NewPrecompileValue("event_time", types.IntType, false),
+						precompiles.NewPrecompileValue("value", TNNumericType, false),
+					},
+				},
+				Handler: HandleGetCachedData,
+			},
+			{
+				Name:            "get_cached_data_v2",
+				AccessModifiers: []precompiles.Modifier{precompiles.PUBLIC, precompiles.VIEW},
+				Parameters: []precompiles.PrecompileValue{
+					precompiles.NewPrecompileValue("data_provider", types.TextType, false),
+					precompiles.NewPrecompileValue("stream_id", types.TextType, false),
+					precompiles.NewPrecompileValue("from_time", types.IntType, true), // nullable like standard queries
+					precompiles.NewPrecompileValue("to_time", types.IntType, true),
 					precompiles.NewPrecompileValue("base_time", types.IntType, true),
 				},
 				Returns: &precompiles.MethodReturn{
@@ -176,6 +219,23 @@ func InitializeCachePrecompile(ctx context.Context, service *common.Service, db 
 			},
 			{
 				Name:            "get_cached_last_before",
+				AccessModifiers: []precompiles.Modifier{precompiles.PUBLIC, precompiles.VIEW},
+				Parameters: []precompiles.PrecompileValue{
+					precompiles.NewPrecompileValue("data_provider", types.TextType, false),
+					precompiles.NewPrecompileValue("stream_id", types.TextType, false),
+					precompiles.NewPrecompileValue("before", types.IntType, true), // nullable
+				},
+				Returns: &precompiles.MethodReturn{
+					IsTable: false,
+					Fields: []precompiles.PrecompileValue{
+						precompiles.NewPrecompileValue("event_time", types.IntType, false),
+						precompiles.NewPrecompileValue("value", TNNumericType, false),
+					},
+				},
+				Handler: HandleGetCachedLastBefore,
+			},
+			{
+				Name:            "get_cached_last_before_v2",
 				AccessModifiers: []precompiles.Modifier{precompiles.PUBLIC, precompiles.VIEW},
 				Parameters: []precompiles.PrecompileValue{
 					precompiles.NewPrecompileValue("data_provider", types.TextType, false),
@@ -199,6 +259,23 @@ func InitializeCachePrecompile(ctx context.Context, service *common.Service, db 
 					precompiles.NewPrecompileValue("data_provider", types.TextType, false),
 					precompiles.NewPrecompileValue("stream_id", types.TextType, false),
 					precompiles.NewPrecompileValue("after", types.IntType, true), // nullable
+				},
+				Returns: &precompiles.MethodReturn{
+					IsTable: false,
+					Fields: []precompiles.PrecompileValue{
+						precompiles.NewPrecompileValue("event_time", types.IntType, false),
+						precompiles.NewPrecompileValue("value", TNNumericType, false),
+					},
+				},
+				Handler: HandleGetCachedFirstAfter,
+			},
+			{
+				Name:            "get_cached_first_after_v2",
+				AccessModifiers: []precompiles.Modifier{precompiles.PUBLIC, precompiles.VIEW},
+				Parameters: []precompiles.PrecompileValue{
+					precompiles.NewPrecompileValue("data_provider", types.TextType, false),
+					precompiles.NewPrecompileValue("stream_id", types.TextType, false),
+					precompiles.NewPrecompileValue("after", types.IntType, true), // nullable
 					precompiles.NewPrecompileValue("base_time", types.IntType, true),
 				},
 				Returns: &precompiles.MethodReturn{
@@ -212,6 +289,24 @@ func InitializeCachePrecompile(ctx context.Context, service *common.Service, db 
 			},
 			{
 				Name:            "get_cached_index_data",
+				AccessModifiers: []precompiles.Modifier{precompiles.PUBLIC, precompiles.VIEW},
+				Parameters: []precompiles.PrecompileValue{
+					precompiles.NewPrecompileValue("data_provider", types.TextType, false),
+					precompiles.NewPrecompileValue("stream_id", types.TextType, false),
+					precompiles.NewPrecompileValue("from_time", types.IntType, true), // nullable like standard queries
+					precompiles.NewPrecompileValue("to_time", types.IntType, true),
+				},
+				Returns: &precompiles.MethodReturn{
+					IsTable: true,
+					Fields: []precompiles.PrecompileValue{
+						precompiles.NewPrecompileValue("event_time", types.IntType, false),
+						precompiles.NewPrecompileValue("value", TNNumericType, false),
+					},
+				},
+				Handler: HandleGetCachedIndexData,
+			},
+			{
+				Name:            "get_cached_index_data_v2",
 				AccessModifiers: []precompiles.Modifier{precompiles.PUBLIC, precompiles.VIEW},
 				Parameters: []precompiles.PrecompileValue{
 					precompiles.NewPrecompileValue("data_provider", types.TextType, false),
