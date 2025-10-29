@@ -155,6 +155,7 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, directive conf
 			StreamID:     directive.StreamID,
 			EventTime:    r.EventTime,
 			Value:        r.Value,
+			BaseTime:     directive.BaseTime,
 		}
 	}
 
