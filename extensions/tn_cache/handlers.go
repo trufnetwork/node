@@ -158,8 +158,12 @@ func handleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 				hasData := true
 				if baseTime != nil && respectBaseTime {
 					// For base_time-specific probes, treat refreshed shards as hits even if they contain no rows.
+					probeFrom := int64(0)
+					if config.FromTimestamp > 0 {
+						probeFrom = config.FromTimestamp
+					}
 					var err error
-					hasData, err = cacheDB.HasCachedData(traceCtx, dataProvider, streamID, baseTime, 0, 0)
+					hasData, err = cacheDB.HasCachedData(traceCtx, dataProvider, streamID, baseTime, probeFrom, 0)
 					if err != nil {
 						return nil, fmt.Errorf("check cached index shard: %w", err)
 					}
