@@ -211,6 +211,8 @@ func HandleGetCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 	if len(inputs) > 4 {
 		baseTime = extractTimeParameter(inputs[4])
 	}
+	// Record queries ignore base_time sharding and always use the sentinel variant.
+	baseTime = nil
 
 	// Use middleware for tracing and metrics
 	attrs := buildTimeAttributes(fromTime, toTime, baseTime)
@@ -318,14 +320,13 @@ func HandleGetCachedLastBefore(ctx *common.EngineContext, app *common.App, input
 	if len(inputs) > 3 {
 		baseTime = extractTimeParameter(inputs[3])
 	}
+	// Record queries ignore base_time sharding and always use the sentinel variant.
+	baseTime = nil
 
 	// Use middleware for tracing
 	var attrs []attribute.KeyValue
 	if before != nil {
 		attrs = append(attrs, attribute.Int64("before", *before))
-	}
-	if baseTime != nil {
-		attrs = append(attrs, attribute.Int64("base_time", *baseTime))
 	}
 
 	result, err := tracing.TracedOperation(ctx.TxContext.Ctx, tracing.OpCacheGet, dataProvider, streamID,
@@ -382,14 +383,13 @@ func HandleGetCachedFirstAfter(ctx *common.EngineContext, app *common.App, input
 	if len(inputs) > 3 {
 		baseTime = extractTimeParameter(inputs[3])
 	}
+	// Record queries ignore base_time sharding and always use the sentinel variant.
+	baseTime = nil
 
 	// Use middleware for tracing
 	var attrs []attribute.KeyValue
 	if after != nil {
 		attrs = append(attrs, attribute.Int64("after", *after))
-	}
-	if baseTime != nil {
-		attrs = append(attrs, attribute.Int64("base_time", *baseTime))
 	}
 
 	result, err := tracing.TracedOperation(ctx.TxContext.Ctx, tracing.OpCacheGet, dataProvider, streamID,
