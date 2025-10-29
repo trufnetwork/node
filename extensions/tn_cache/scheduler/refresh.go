@@ -20,7 +20,8 @@ import (
 func (s *CacheScheduler) refreshStreamDataWithRetry(ctx context.Context, directive config.CacheDirective, maxRetries int) error {
 	return retry.Do(
 		func() error {
-			return s.RefreshStreamData(ctx, directive)
+			_, err := s.RefreshStreamData(ctx, directive)
+			return err
 		},
 		retry.Attempts(uint(maxRetries+1)),
 		retry.Delay(1*time.Second),
@@ -50,7 +51,9 @@ func (s *CacheScheduler) refreshStreamDataWithRetry(ctx context.Context, directi
 }
 
 // RefreshStreamData refreshes the cached data for a single cache directive
-func (s *CacheScheduler) RefreshStreamData(ctx context.Context, directive config.CacheDirective) error {
+func (s *CacheScheduler) RefreshStreamData(ctx context.Context, directive config.CacheDirective) (int, error) {
+	rawEventsRefreshed := 0
+
 	// Use middleware for tracing and refresh metrics
 	_, err := tracing.TracedWithRefreshMetrics(ctx, tracing.OpRefreshStream, directive.DataProvider, directive.StreamID, s.metrics,
 		func(traceCtx context.Context) (any, int, error) {
@@ -106,6 +109,7 @@ func (s *CacheScheduler) RefreshStreamData(ctx context.Context, directive config
 			if indexFetchErr != nil {
 				return nil, 0, fmt.Errorf("fetch index stream data: %w", indexFetchErr)
 			}
+			rawEventsRefreshed = len(events)
 			// Store index rows under the cache shard we expose to callers.
 			for i := range indexEvents {
 				indexEvents[i].BaseTime = cacheBaseTime
@@ -143,7 +147,7 @@ func (s *CacheScheduler) RefreshStreamData(ctx context.Context, directive config
 			return nil, totalEvents, nil
 		}, attribute.String("type", string(directive.Type)))
 
-	return err
+	return rawEventsRefreshed, err
 }
 
 // fetchSpecificStream calls get_record_composed action with proper authorization

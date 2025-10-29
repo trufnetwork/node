@@ -306,33 +306,22 @@ func testCacheBaseTimeVariants(t *testing.T, cacheConfig *testutils.CacheOptions
 		from := int64(1)
 		to := int64(3)
 
-		recordStatus, err := platform.DB.Execute(ctx,
-			`SELECT has_data FROM tn_cache.has_cached_data_v2($1, $2, $3, $4, $5)`,
-			deployer.Address(),
-			streamID.String(),
-			from,
-			to,
-			directiveBaseTime,
-		)
-		require.NoError(t, err)
-		require.Len(t, recordStatus.Rows, 1)
-		recordHasData, ok := recordStatus.Rows[0][0].(bool)
-		require.True(t, ok, "has_data column should be boolean")
-		assert.True(t, recordHasData, "record cache probe with base_time should hit sentinel shard")
+		ext := tn_cache.RequireExtension(t)
+		cacheDB := ext.CacheDB()
+		require.NotNil(t, cacheDB, "cache DB should be available")
 
-		indexStatus, err := platform.DB.Execute(ctx,
-			`SELECT has_data FROM tn_cache.has_cached_index_data_v2($1, $2, $3, $4, $5)`,
-			deployer.Address(),
-			streamID.String(),
-			from,
-			to,
-			directiveBaseTime,
-		)
+		hasRecordData, err := cacheDB.HasCachedData(ctx, deployer.Address(), streamID.String(), nil, from, to)
 		require.NoError(t, err)
-		require.Len(t, indexStatus.Rows, 1)
-		indexHasData, ok := indexStatus.Rows[0][0].(bool)
-		require.True(t, ok, "has_data column should be boolean")
-		assert.True(t, indexHasData, "index cache probe should honor base_time shard")
+		assert.True(t, hasRecordData, "record cache probe with sentinel shard should hit")
+
+		baseTimePtr := directiveBaseTime
+		hasIndexRange, err := cacheDB.HasCachedData(ctx, deployer.Address(), streamID.String(), &baseTimePtr, from, to)
+		require.NoError(t, err)
+		assert.True(t, hasIndexRange, "index cache probe with explicit range should honor base_time shard")
+
+		hasIndexLatest, err := cacheDB.HasCachedData(ctx, deployer.Address(), streamID.String(), &baseTimePtr, 0, 0)
+		require.NoError(t, err)
+		assert.True(t, hasIndexLatest, "latest index cache probe should honor base_time shard")
 
 		useCache := true
 
@@ -351,7 +340,6 @@ func testCacheBaseTimeVariants(t *testing.T, cacheConfig *testutils.CacheOptions
 		require.NoError(t, err)
 
 		// Verify base_time-specific query succeeds via cache
-		baseTimePtr := directiveBaseTime
 		_, err = procedure.GetIndex(ctx, procedure.GetIndexInput{
 			Platform: platform,
 			StreamLocator: types.StreamLocator{
