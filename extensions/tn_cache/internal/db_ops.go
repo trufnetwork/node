@@ -1205,6 +1205,7 @@ type StreamCountInfo struct {
 }
 
 // QueryCachedStreamsWithCounts returns all cached streams with their event counts
+// Returns one row per (data_provider, stream_id, base_time) combination
 func (c *CacheDB) QueryCachedStreamsWithCounts(ctx context.Context) ([]StreamCountInfo, error) {
 	query := fmt.Sprintf(`
 	SELECT cs.data_provider, cs.stream_id, cs.base_time, COALESCE(ce.event_count, 0) as event_count
@@ -1216,9 +1217,8 @@ func (c *CacheDB) QueryCachedStreamsWithCounts(ctx context.Context) ([]StreamCou
 		) ce ON cs.data_provider = ce.data_provider 
 			AND cs.stream_id = ce.stream_id
 			AND cs.base_time_key = ce.base_time_key
-	WHERE cs.base_time_key = %d
 	ORDER BY cs.data_provider, cs.stream_id, cs.base_time
-	`, constants.CacheSchemaName, constants.CacheSchemaName, constants.BaseTimeNoneSentinel)
+	`, constants.CacheSchemaName, constants.CacheSchemaName)
 
 	results, err := c.db.Execute(ctx, query)
 	if err != nil {
