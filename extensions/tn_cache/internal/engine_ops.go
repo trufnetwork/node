@@ -391,3 +391,40 @@ func (t *EngineOperations) GetIndexComposed(ctx context.Context, provider, strea
 
 	return indexEvents, nil
 }
+
+// GetLatestMetadataInt retrieves the latest metadata integer value for the given stream and key.
+func (t *EngineOperations) GetLatestMetadataInt(ctx context.Context, provider, streamID, key string) (*int64, error) {
+	engineCtx := t.createEngineContext(ctx, "get_latest_metadata_int")
+
+	var valuePtr *int64
+
+	err := t.callWithTrace(
+		ctx,
+		engineCtx,
+		"get_latest_metadata_int",
+		[]any{provider, streamID, key},
+		func(row *common.Row) error {
+			if len(row.Values) == 0 || row.Values[0] == nil {
+				return nil
+			}
+
+			switch v := row.Values[0].(type) {
+			case int64:
+				value := v
+				valuePtr = &value
+			case int32:
+				value := int64(v)
+				valuePtr = &value
+			default:
+				return fmt.Errorf("unexpected metadata int type %T", row.Values[0])
+			}
+			return nil
+		},
+	)
+
+	if err != nil {
+		return nil, fmt.Errorf("get_latest_metadata_int: %w", err)
+	}
+
+	return valuePtr, nil
+}

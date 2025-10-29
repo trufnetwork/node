@@ -141,6 +141,7 @@ func InitializeCachePrecompile(ctx context.Context, service *common.Service, db 
 					precompiles.NewPrecompileValue("stream_id", types.TextType, false),
 					precompiles.NewPrecompileValue("from_time", types.IntType, true), // nullable like standard queries
 					precompiles.NewPrecompileValue("to_time", types.IntType, true),
+					precompiles.NewPrecompileValue("base_time", types.IntType, true),
 				},
 				Returns: &precompiles.MethodReturn{
 					IsTable: false,
@@ -160,6 +161,7 @@ func InitializeCachePrecompile(ctx context.Context, service *common.Service, db 
 					precompiles.NewPrecompileValue("stream_id", types.TextType, false),
 					precompiles.NewPrecompileValue("from_time", types.IntType, true), // nullable like standard queries
 					precompiles.NewPrecompileValue("to_time", types.IntType, true),
+					precompiles.NewPrecompileValue("base_time", types.IntType, true),
 				},
 				Returns: &precompiles.MethodReturn{
 					IsTable: true,
@@ -179,6 +181,7 @@ func InitializeCachePrecompile(ctx context.Context, service *common.Service, db 
 					precompiles.NewPrecompileValue("data_provider", types.TextType, false),
 					precompiles.NewPrecompileValue("stream_id", types.TextType, false),
 					precompiles.NewPrecompileValue("before", types.IntType, true), // nullable
+					precompiles.NewPrecompileValue("base_time", types.IntType, true),
 				},
 				Returns: &precompiles.MethodReturn{
 					IsTable: false,
@@ -196,6 +199,7 @@ func InitializeCachePrecompile(ctx context.Context, service *common.Service, db 
 					precompiles.NewPrecompileValue("data_provider", types.TextType, false),
 					precompiles.NewPrecompileValue("stream_id", types.TextType, false),
 					precompiles.NewPrecompileValue("after", types.IntType, true), // nullable
+					precompiles.NewPrecompileValue("base_time", types.IntType, true),
 				},
 				Returns: &precompiles.MethodReturn{
 					IsTable: false,
@@ -214,6 +218,7 @@ func InitializeCachePrecompile(ctx context.Context, service *common.Service, db 
 					precompiles.NewPrecompileValue("stream_id", types.TextType, false),
 					precompiles.NewPrecompileValue("from_time", types.IntType, true), // nullable like standard queries
 					precompiles.NewPrecompileValue("to_time", types.IntType, true),
+					precompiles.NewPrecompileValue("base_time", types.IntType, true),
 				},
 				Returns: &precompiles.MethodReturn{
 					IsTable: true,

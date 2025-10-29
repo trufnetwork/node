@@ -67,6 +67,27 @@ func (s *CacheScheduler) RefreshStreamData(ctx context.Context, directive config
 				return nil, 0, fmt.Errorf("unexpected directive type in refresh: %s (should be specific after resolution)", directive.Type)
 			}
 
+			// Cache rows should mirror caller behaviour: a nil base_time means "use the stream default".
+			// We keep the resolved value for computations/telemetry, but persist under the sentinel shard
+			// so subsequent helper_check_cache(NULL, …) probes find the data the user expects.
+			var cacheBaseTime *int64
+
+			// Ensure there is a cached_streams entry for this base_time
+			effectiveFrom := int64(0)
+			if fromTime != nil {
+				effectiveFrom = *fromTime
+			}
+			streamConfig := internal.StreamCacheConfig{
+				DataProvider:  directive.DataProvider,
+				StreamID:      directive.StreamID,
+				BaseTime:      cacheBaseTime,
+				FromTimestamp: effectiveFrom,
+				CronSchedule:  directive.Schedule.CronExpr,
+			}
+			if err := s.cacheDB.AddStreamConfig(traceCtx, streamConfig); err != nil {
+				return nil, 0, fmt.Errorf("upsert stream config: %w", err)
+			}
+
 			// Fetch events sequentially to ensure consistency
 			// Fetch regular events first
 			events, fetchErr := s.fetchSpecificStream(traceCtx, directive, fromTime)
@@ -75,9 +96,13 @@ func (s *CacheScheduler) RefreshStreamData(ctx context.Context, directive config
 			}
 
 			// Then fetch index events
-			indexEvents, indexFetchErr := s.fetchSpecificIndexStream(traceCtx, directive, fromTime)
+			indexEvents, indexFetchErr := s.fetchSpecificIndexStream(traceCtx, directive, fromTime, nil)
 			if indexFetchErr != nil {
 				return nil, 0, fmt.Errorf("fetch index stream data: %w", indexFetchErr)
+			}
+			// Store index rows under the cache shard we expose to callers.
+			for i := range indexEvents {
+				indexEvents[i].BaseTime = cacheBaseTime
 			}
 
 			// Get current blockchain height for cache metadata
@@ -138,7 +163,7 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, directive conf
 }
 
 // fetchSpecificIndexStream retrieves index events via engine operations
-func (s *CacheScheduler) fetchSpecificIndexStream(ctx context.Context, directive config.CacheDirective, fromTime *int64) ([]internal.CachedEvent, error) {
+func (s *CacheScheduler) fetchSpecificIndexStream(ctx context.Context, directive config.CacheDirective, fromTime *int64, baseTime *int64) ([]internal.CachedEvent, error) {
 	// Ensure fromTime is not nil (engine expects int64 pointer)
 	if fromTime == nil {
 		zero := int64(0)
@@ -166,6 +191,7 @@ func (s *CacheScheduler) fetchSpecificIndexStream(ctx context.Context, directive
 			StreamID:     directive.StreamID,
 			EventTime:    r.EventTime,
 			Value:        r.Value,
+			BaseTime:     baseTime,
 		}
 	}
 	return events, nil

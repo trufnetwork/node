@@ -723,11 +723,11 @@ RETURNS TABLE(
     $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL; -- frozen queries bypass cache
 
     if $effective_enable_cache {
-        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $from, $to);
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $from, $to, NULL);
     }
     
     if $effective_enable_cache {
-        for $row in tn_cache.get_cached_data($data_provider, $stream_id, $from, $to) {
+        for $row in tn_cache.get_cached_data($data_provider, $stream_id, $from, $to, NULL) {
             RETURN NEXT $row.event_time, $row.value;
         }
         return;
@@ -1268,15 +1268,14 @@ RETURNS TABLE(
     $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL; -- frozen queries bypass cache
 
     if $effective_enable_cache {
-        -- we use before as to, because if we have data for that, it automatically means
-        -- that we can answer this query
-        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $before, NULL);
+        -- we use before as the starting bound so the cache check ensures an anchor exists before it
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $before, NULL, NULL);
     }
 
     -- If using cache, get the most recent cached record
     if $effective_enable_cache {
         -- Get cached data up to the before time and return the most recent
-        for $row in tn_cache.get_cached_last_before($data_provider, $stream_id, $before) {
+        for $row in tn_cache.get_cached_last_before($data_provider, $stream_id, $before, NULL) {
             RETURN NEXT $row.event_time, $row.value;
         }
         RETURN;
@@ -1418,15 +1417,14 @@ RETURNS TABLE(
     $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL; -- frozen queries bypass cache
 
     if $effective_enable_cache {
-        -- we use after as from, because if we have data for that, it automatically means
-        -- that we can answer this query
-        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $after, NULL);
+        -- we use after as the lower bound (from) because events at or after this time satisfy the query
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $after, NULL, NULL);
     }
 
     -- If using cache, get the earliest cached record
     if $effective_enable_cache {
         -- Get cached data from the after time and return the earliest
-        for $row in tn_cache.get_cached_first_after($data_provider, $stream_id, $after) {
+        for $row in tn_cache.get_cached_first_after($data_provider, $stream_id, $after, NULL) {
             RETURN NEXT $row.event_time, $row.value;
         }
         RETURN;
@@ -1552,15 +1550,6 @@ RETURNS TABLE(
         ERROR('Stream does not exist: data_provider=' || $data_provider || ' stream_id=' || $stream_id);
     }
 
-    -- Base time determination: Use parameter, metadata, or first event time.
-    $effective_base_time INT8;
-    if $base_time is not null {
-        $effective_base_time := $base_time;
-    } else {
-        $effective_base_time := get_latest_metadata_int_core($stream_ref, 'default_base_time');
-    }
-    $effective_base_time := COALESCE($effective_base_time, 0);
-
     IF $from IS NOT NULL AND $to IS NOT NULL AND $from > $to {
         ERROR(format('Invalid time range: from (%s) > to (%s)', $from, $to));
     }
@@ -1575,20 +1564,31 @@ RETURNS TABLE(
 
     -- Set default value for enable_cache
     $effective_enable_cache := COALESCE($use_cache, false);
-    $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL AND $base_time IS NULL; -- frozen queries and arbitrary base time bypass cache
+    $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL; -- frozen queries bypass cache
+    -- Cache lookups use the caller-supplied base_time (possibly NULL) so they track the exact shard users query.
+    $cache_base_time INT8 := $base_time;
 
     if $effective_enable_cache {
         -- Check if we have pre-calculated index values in cache
-        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $from, $to);
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $from, $to, $cache_base_time);
     }
 
     -- If using pre-calculated index cache, return directly
     if $effective_enable_cache {
-        for $row in tn_cache.get_cached_index_data($data_provider, $stream_id, $from, $to) {
+        for $row in tn_cache.get_cached_index_data($data_provider, $stream_id, $from, $to, $cache_base_time) {
             RETURN NEXT $row.event_time, $row.value;
         }
         RETURN;
     }
+
+    -- Base time determination: Use parameter, metadata, or first event time.
+    $effective_base_time INT8;
+    if $base_time is not null {
+        $effective_base_time := $base_time;
+    } else {
+        $effective_base_time := get_latest_metadata_int_core($stream_ref, 'default_base_time');
+    }
+    -- Leave base time as NULL when no override is configured so cache queries use the sentinel variant
 
     -- If both $from and $to are NULL, we find the latest event time
     IF $from IS NULL AND $to IS NULL {

@@ -884,8 +884,9 @@ func (c *CacheDB) CleanupCache(ctx context.Context) error {
 	return nil
 }
 
-// HasCachedData checks if there is cached data for a stream in a time range
-func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID string, fromTime, toTime int64) (bool, error) {
+// HasCachedData checks if there is cached data for a stream in a time range.
+func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID string, baseTime *int64, fromTime, toTime int64) (bool, error) {
+	primaryBaseTimeValue := encodeBaseTime(baseTime)
 	// Use middleware for tracing
 	return tracing.TracedOperation(ctx, tracing.OpDBHasCachedData, dataProvider, streamID,
 		func(traceCtx context.Context) (bool, error) {
@@ -901,10 +902,15 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 			}
 			defer func() { _ = tx.Rollback(traceCtx) }()
 
-			baseTimeValue := constants.BaseTimeNoneSentinel
+			baseKeys := []int64{primaryBaseTimeValue}
+			if baseTime != nil {
+				baseKeys = append(baseKeys, constants.BaseTimeNoneSentinel)
+			}
 
-			// First, check if the stream is configured for caching
-			results, err := tx.Execute(traceCtx, `
+			var hasData bool
+
+			for _, baseTimeValue := range baseKeys {
+				results, err := tx.Execute(traceCtx, `
 				SELECT EXISTS (
 					SELECT 1
 					FROM `+constants.CacheSchemaName+`.cached_streams
@@ -912,82 +918,98 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 						AND (from_timestamp IS NULL OR from_timestamp <= $3)
 				)
 			`, dataProvider, streamID, fromTime, baseTimeValue)
-
-			if err != nil {
-				return false, fmt.Errorf("check stream config: %w", err)
-			}
-
-			if len(results.Rows) == 0 || len(results.Rows[0]) != 1 {
-				return false, fmt.Errorf("unexpected result structure for stream exists check")
-			}
-
-			streamExists, ok := results.Rows[0][0].(bool)
-			if !ok {
-				return false, fmt.Errorf("failed to convert stream exists result to bool")
-			}
-
-			if !streamExists {
-				if commitErr := tx.Commit(traceCtx); commitErr != nil {
-					return false, fmt.Errorf("commit transaction: %w", commitErr)
+				if err != nil {
+					return false, fmt.Errorf("check stream config: %w", err)
 				}
-				return false, nil
-			}
 
-			// Then, check if there are events in the cache
-			var hasData bool
-			if toTime == 0 {
-				// No upper bound specified - to is treated as max_int8 (end of time)
-				results, err := tx.Execute(traceCtx, `
+				if len(results.Rows) == 0 || len(results.Rows[0]) != 1 {
+					return false, fmt.Errorf("unexpected result structure for stream exists check")
+				}
+
+				streamExists, ok := results.Rows[0][0].(bool)
+				if !ok {
+					return false, fmt.Errorf("failed to convert stream exists result to bool")
+				}
+
+				if !streamExists {
+					continue
+				}
+
+				if toTime == 0 {
+					results, err = tx.Execute(traceCtx, `
+					SELECT EXISTS (
+						SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
+						WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 AND event_time >= $4
+					)
+				`, dataProvider, streamID, baseTimeValue, fromTime)
+				} else {
+					results, err = tx.Execute(traceCtx, `
+					SELECT EXISTS (
+						SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
+						WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 AND event_time >= $4 AND event_time <= $5
+					)
+				`, dataProvider, streamID, baseTimeValue, fromTime, toTime)
+				}
+				if err != nil {
+					return false, fmt.Errorf("failed to check cached events existence: %w", err)
+				}
+
+				if len(results.Rows) == 0 || len(results.Rows[0]) != 1 {
+					return false, fmt.Errorf("unexpected result structure for event existence check")
+				}
+
+				hasData, ok = results.Rows[0][0].(bool)
+				if !ok {
+					return false, fmt.Errorf("failed to convert event existence result to bool")
+				}
+
+				if !hasData {
+					var indexResults *sql.ResultSet
+					if toTime == 0 {
+						indexResults, err = tx.Execute(traceCtx, `
 						SELECT EXISTS (
-							SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
+							SELECT 1 FROM `+constants.CacheSchemaName+`.cached_index_events
 							WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 AND event_time >= $4
 						)
 					`, dataProvider, streamID, baseTimeValue, fromTime)
-				if err != nil {
-					return false, fmt.Errorf("failed to check cached events existence: %w", err)
-				}
-
-				if len(results.Rows) == 0 || len(results.Rows[0]) != 1 {
-					return false, fmt.Errorf("unexpected result structure for event existence check")
-				}
-
-				hasData, ok = results.Rows[0][0].(bool)
-				if !ok {
-					return false, fmt.Errorf("failed to convert event existence result to bool")
-				}
-			} else {
-				// Upper bound specified
-				results, err := tx.Execute(traceCtx, `
+					} else {
+						indexResults, err = tx.Execute(traceCtx, `
 						SELECT EXISTS (
-							SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
+							SELECT 1 FROM `+constants.CacheSchemaName+`.cached_index_events
 							WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 AND event_time >= $4 AND event_time <= $5
 						)
 					`, dataProvider, streamID, baseTimeValue, fromTime, toTime)
-				if err != nil {
-					return false, fmt.Errorf("failed to check cached events existence: %w", err)
+					}
+					if err != nil {
+						return false, fmt.Errorf("failed to check cached index events existence: %w", err)
+					}
+
+					if len(indexResults.Rows) == 0 || len(indexResults.Rows[0]) != 1 {
+						return false, fmt.Errorf("unexpected result structure for index event existence check")
+					}
+
+					indexHasData, ok := indexResults.Rows[0][0].(bool)
+					if !ok {
+						return false, fmt.Errorf("failed to convert index event existence result to bool")
+					}
+					hasData = indexHasData
 				}
 
-				if len(results.Rows) == 0 || len(results.Rows[0]) != 1 {
-					return false, fmt.Errorf("unexpected result structure for event existence check")
+				if !hasData && fromTime != 0 {
+					anchorResults, err := tx.Execute(traceCtx, `
+					SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
+					WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 AND event_time < $4
+					LIMIT 1
+				`, dataProvider, streamID, baseTimeValue, fromTime)
+					if err != nil {
+						return false, fmt.Errorf("failed to query anchor record: %w", err)
+					}
+					hasData = len(anchorResults.Rows) > 0
 				}
 
-				hasData, ok = results.Rows[0][0].(bool)
-				if !ok {
-					return false, fmt.Errorf("failed to convert event existence result to bool")
+				if hasData {
+					break
 				}
-			}
-
-			// If no direct events found, check for an anchor record (last event before fromTime)
-			if !hasData && fromTime != 0 {
-				anchorResults, err := tx.Execute(traceCtx, `
-						SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
-						WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 AND event_time < $4
-						LIMIT 1
-					`, dataProvider, streamID, baseTimeValue, fromTime)
-				if err != nil {
-					return false, fmt.Errorf("failed to query anchor record: %w", err)
-				}
-				hasData = len(anchorResults.Rows) > 0
 			}
 
 			if commitErr := tx.Commit(traceCtx); commitErr != nil {
@@ -996,7 +1018,8 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 
 			return hasData, nil
 		}, attribute.Int64("from", fromTime),
-		attribute.Int64("to", toTime))
+		attribute.Int64("to", toTime),
+		attribute.Int64("base_time", primaryBaseTimeValue))
 }
 
 // UpdateStreamConfigsAtomic atomically updates the cached_streams table
@@ -1297,8 +1320,8 @@ func (c *CacheDB) CleanupExtensionSchema(ctx context.Context) error {
 
 // GetLastEventBefore retrieves the most recent event strictly before the specified timestamp.
 // Returns (nil, sql.ErrNoRows) if no such event exists.
-func (c *CacheDB) GetLastEventBefore(ctx context.Context, dataProvider, streamID string, before int64) (*CachedEvent, error) {
-	baseTimeValue := constants.BaseTimeNoneSentinel
+func (c *CacheDB) GetLastEventBefore(ctx context.Context, dataProvider, streamID string, baseTime *int64, before int64) (*CachedEvent, error) {
+	baseTimeValue := encodeBaseTime(baseTime)
 
 	// Use middleware for tracing
 	return tracing.TracedOperation(ctx, tracing.OpDBGetEvents, dataProvider, streamID,
@@ -1365,10 +1388,10 @@ func (c *CacheDB) GetLastEventBefore(ctx context.Context, dataProvider, streamID
 		attribute.String("query", "last_before"))
 }
 
-// GetFirstEventAfter retrieves the earliest event at or after the specified timestamp.
+// GetFirstEventAfter retrieves the earliest event at or after the specified timestamp for the provided base_time.
 // Returns (nil, sql.ErrNoRows) if no such event exists.
-func (c *CacheDB) GetFirstEventAfter(ctx context.Context, dataProvider, streamID string, after int64) (*CachedEvent, error) {
-	baseTimeValue := constants.BaseTimeNoneSentinel
+func (c *CacheDB) GetFirstEventAfter(ctx context.Context, dataProvider, streamID string, baseTime *int64, after int64) (*CachedEvent, error) {
+	baseTimeValue := encodeBaseTime(baseTime)
 
 	// Use middleware for tracing
 	return tracing.TracedOperation(ctx, tracing.OpDBGetEvents, dataProvider, streamID,

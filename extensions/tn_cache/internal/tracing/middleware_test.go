@@ -172,7 +172,7 @@ func TestTracedWithCacheMetrics(t *testing.T) {
 		expectedResult := "data"
 		expectedCount := 10
 
-		result, err := tracing.TracedWithCacheMetrics(ctx, tracing.OpCacheGet, "provider1", "stream1", nil,
+		result, err := tracing.TracedWithCacheMetrics(ctx, tracing.OpCacheGet, "provider1", "stream1", nil, nil,
 			func(traceCtx context.Context) (string, int, error) {
 				assert.NotNil(t, traceCtx)
 				return expectedResult, expectedCount, nil
@@ -186,7 +186,7 @@ func TestTracedWithCacheMetrics(t *testing.T) {
 		ctx := context.Background()
 		expectedResult := "data"
 
-		result, err := tracing.TracedWithCacheMetrics(ctx, tracing.OpCacheGet, "provider1", "stream1", nil,
+		result, err := tracing.TracedWithCacheMetrics(ctx, tracing.OpCacheGet, "provider1", "stream1", nil, nil,
 			func(traceCtx context.Context) (string, int, error) {
 				return expectedResult, 0, nil // 0 count
 			})
@@ -202,7 +202,7 @@ func TestTracedWithCacheMetrics(t *testing.T) {
 			attribute.Int64("to", 2000),
 		}
 
-		result, err := tracing.TracedWithCacheMetrics(ctx, tracing.OpCacheGet, "provider1", "stream1", nil,
+		result, err := tracing.TracedWithCacheMetrics(ctx, tracing.OpCacheGet, "provider1", "stream1", nil, nil,
 			func(traceCtx context.Context) ([]int, int, error) {
 				return []int{1, 2, 3}, 3, nil
 			}, attrs...)
@@ -233,24 +233,24 @@ func TestTracedWithRefreshMetrics(t *testing.T) {
 func TestConditionalTrace(t *testing.T) {
 	t.Run("tracing enabled", func(t *testing.T) {
 		ctx := context.Background()
-		
+
 		traceCtx, endFunc := tracing.ConditionalTrace(ctx, tracing.OpCacheGet, "provider1", "stream1", true)
-		
+
 		assert.NotNil(t, traceCtx)
 		assert.NotNil(t, endFunc)
-		
+
 		// Should not panic
 		endFunc(nil)
 	})
-	
+
 	t.Run("tracing disabled", func(t *testing.T) {
 		ctx := context.Background()
-		
+
 		traceCtx, endFunc := tracing.ConditionalTrace(ctx, tracing.OpCacheGet, "provider1", "stream1", false)
-		
+
 		assert.Equal(t, ctx, traceCtx) // Should return same context
 		assert.NotNil(t, endFunc)
-		
+
 		// Should not panic
 		endFunc(nil)
 	})
@@ -259,7 +259,7 @@ func TestConditionalTrace(t *testing.T) {
 func TestIsTracingEnabled(t *testing.T) {
 	// Test with tracing enabled
 	assert.True(t, tracing.IsTracingEnabled(true))
-	
+
 	// Test with tracing disabled
 	assert.False(t, tracing.IsTracingEnabled(false))
 }
@@ -267,7 +267,7 @@ func TestIsTracingEnabled(t *testing.T) {
 // Benchmark tests to ensure middleware doesn't add significant overhead
 func BenchmarkTracedOperation(b *testing.B) {
 	ctx := context.Background()
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = tracing.TracedOperation(ctx, tracing.OpCacheGet, "provider1", "stream1",
@@ -279,7 +279,7 @@ func BenchmarkTracedOperation(b *testing.B) {
 
 func BenchmarkDirectOperation(b *testing.B) {
 	ctx := context.Background()
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Direct operation without middleware for comparison

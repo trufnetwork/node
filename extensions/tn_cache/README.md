@@ -153,11 +153,11 @@ CREATE INDEX idx_cached_index_events_time_range ON ext_tn_cache.cached_index_eve
 The extension registers custom SQL functions to allow actions to use the cache:
 
 - `tn_cache.is_enabled()`: Checks if caching is enabled on this node
-- `tn_cache.has_cached_data(data_provider, stream_id, from, to)`: Checks if the cache can answer a query
-- `tn_cache.get_cached_data(data_provider, stream_id, from, to)`: Retrieves cached data
-- `tn_cache.get_cached_last_before(data_provider, stream_id, before)`: Gets the most recent record before a timestamp
-- `tn_cache.get_cached_first_after(data_provider, stream_id, after)`: Gets the earliest record after a timestamp
-- `tn_cache.get_cached_index_data(data_provider, stream_id, from, to)`: Retrieves cached index values with their time ranges
+- `tn_cache.has_cached_data(data_provider, stream_id, from, to, base_time)`: Checks if the cache can answer a query
+- `tn_cache.get_cached_data(data_provider, stream_id, from, to, base_time)`: Retrieves cached data
+- `tn_cache.get_cached_last_before(data_provider, stream_id, before, base_time)`: Gets the most recent record before a timestamp
+- `tn_cache.get_cached_first_after(data_provider, stream_id, after, base_time)`: Gets the earliest record after a timestamp
+- `tn_cache.get_cached_index_data(data_provider, stream_id, from, to, base_time)`: Retrieves cached index values with their time ranges
 
 All cache methods follow TRUF.NETWORK query conventions for how `from` and `to` parameters behave (including NULL handling and anchor records).
 
@@ -175,9 +175,9 @@ CREATE OR REPLACE ACTION get_record_composed(
 ) PRIVATE VIEW RETURNS TABLE(...) {
     -- Check for cached data if requested
     if $use_cache and tn_cache.is_enabled() {
-        if tn_cache.has_cached_data($data_provider, $stream_id, $from, $to) {
+        if tn_cache.has_cached_data($data_provider, $stream_id, $from, $to, NULL) {
             NOTICE('{"cache_hit": true}');
-            return SELECT * FROM tn_cache.get_cached_data($data_provider, $stream_id, $from, $to);
+            return SELECT * FROM tn_cache.get_cached_data($data_provider, $stream_id, $from, $to, NULL);
         } else {
             NOTICE('{"cache_hit": false}');
         }
@@ -196,7 +196,7 @@ CREATE OR REPLACE ACTION get_last_value_before(
     $use_cache BOOLEAN DEFAULT false
 ) PRIVATE VIEW RETURNS TABLE(event_time INT8, value NUMERIC(36,18)) {
     if $use_cache and tn_cache.is_enabled() {
-        for $row in SELECT * FROM tn_cache.get_cached_last_before($data_provider, $stream_id, $before) {
+        for $row in SELECT * FROM tn_cache.get_cached_last_before($data_provider, $stream_id, $before, NULL) {
             return next $row.event_time, $row.value;
         }
         return;

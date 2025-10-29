@@ -83,6 +83,7 @@ func TracedTNOperation[T any](ctx context.Context, op Operation, action string,
 type MetricsConfig struct {
 	Provider string
 	StreamID string
+	BaseTime *int64
 	Context  context.Context
 	Recorder metrics.MetricsRecorder // Optional metrics recorder
 }
@@ -99,7 +100,7 @@ func WithCacheMetrics(config MetricsConfig, fn func() (int, error)) (int, error)
 
 	// Record data served metrics on successful fetch
 	if err == nil {
-		config.Recorder.RecordCacheDataServed(config.Context, config.Provider, config.StreamID, count)
+		config.Recorder.RecordCacheDataServed(config.Context, config.Provider, config.StreamID, config.BaseTime, count)
 	}
 
 	return count, err
@@ -133,7 +134,7 @@ func WithRefreshMetrics(config MetricsConfig, fn func() (int, error)) (int, erro
 // The function should return (result, rowCount, error).
 // This assumes cache hit/miss has already been determined by HandleHasCachedData.
 func TracedWithCacheMetrics[T any](ctx context.Context, op Operation, provider, streamID string,
-	recorder metrics.MetricsRecorder, fn func(context.Context) (T, int, error), attrs ...attribute.KeyValue) (T, error) {
+	baseTime *int64, recorder metrics.MetricsRecorder, fn func(context.Context) (T, int, error), attrs ...attribute.KeyValue) (T, error) {
 	var result T
 	var count int
 
@@ -157,6 +158,7 @@ func TracedWithCacheMetrics[T any](ctx context.Context, op Operation, provider, 
 		metricsConfig := MetricsConfig{
 			Provider: provider,
 			StreamID: streamID,
+			BaseTime: baseTime,
 			Context:  ctx,
 			Recorder: recorder,
 		}
