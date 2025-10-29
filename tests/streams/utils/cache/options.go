@@ -17,12 +17,12 @@ type CacheOptions struct {
 
 // StreamConfig represents a single stream to cache
 type StreamConfig struct {
- DataProvider    string `json:"data_provider"`
- StreamID        string `json:"stream_id"`
- CronSchedule    string `json:"cron_schedule"`
- From            *int64 `json:"from,omitempty"`
- BaseTime        *int64 `json:"base_time,omitempty"`
- IncludeChildren bool   `json:"include_children,omitempty"`
+	DataProvider    string `json:"data_provider"`
+	StreamID        string `json:"stream_id"`
+	CronSchedule    string `json:"cron_schedule"`
+	From            *int64 `json:"from,omitempty"`
+	BaseTime        *int64 `json:"base_time,omitempty"`
+	IncludeChildren bool   `json:"include_children,omitempty"`
 }
 
 // NewCacheOptions creates a new cache configuration with defaults
@@ -58,23 +58,35 @@ func (c *CacheOptions) WithMaxBlockAge(duration time.Duration) *CacheOptions {
 
 // WithStream adds a stream to cache
 func (c *CacheOptions) WithStream(dataProvider, streamID, cronSchedule string) *CacheOptions {
- c.streams = append(c.streams, StreamConfig{
-  DataProvider: dataProvider,
-  StreamID:     streamID,
-  CronSchedule: cronSchedule,
- })
- return c
+	c.streams = append(c.streams, StreamConfig{
+		DataProvider: dataProvider,
+		StreamID:     streamID,
+		CronSchedule: cronSchedule,
+	})
+	return c
 }
 
 // WithStreamBaseTime adds a stream with a fixed base_time variant.
 func (c *CacheOptions) WithStreamBaseTime(dataProvider, streamID, cronSchedule string, baseTime int64) *CacheOptions {
- c.streams = append(c.streams, StreamConfig{
-  DataProvider: dataProvider,
-  StreamID:     streamID,
-  CronSchedule: cronSchedule,
-  BaseTime:     &baseTime,
- })
- return c
+	c.streams = append(c.streams, StreamConfig{
+		DataProvider: dataProvider,
+		StreamID:     streamID,
+		CronSchedule: cronSchedule,
+		BaseTime:     &baseTime,
+	})
+	return c
+}
+
+// WithStreamBaseTimeFromTime adds a stream with both base_time and from timestamp specified.
+func (c *CacheOptions) WithStreamBaseTimeFromTime(dataProvider, streamID, cronSchedule string, baseTime, fromTime int64) *CacheOptions {
+	c.streams = append(c.streams, StreamConfig{
+		DataProvider: dataProvider,
+		StreamID:     streamID,
+		CronSchedule: cronSchedule,
+		BaseTime:     &baseTime,
+		From:         &fromTime,
+	})
+	return c
 }
 
 // WithStreamFromTime adds a stream with a specific start time

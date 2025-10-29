@@ -167,7 +167,11 @@ func (c *CacheDB) AddStreamConfig(ctx context.Context, config StreamCacheConfig)
 			($1, $2, NULLIF($3, %[2]d), $4, $5, $6, $7)
 		ON CONFLICT (data_provider, stream_id, base_time_key) 
 		DO UPDATE SET
-			from_timestamp = COALESCE(EXCLUDED.from_timestamp, cached_streams.from_timestamp),
+			from_timestamp = CASE
+				WHEN cached_streams.base_time IS NULL AND EXCLUDED.base_time IS NULL THEN
+					LEAST(COALESCE(cached_streams.from_timestamp, EXCLUDED.from_timestamp), EXCLUDED.from_timestamp)
+				ELSE COALESCE(EXCLUDED.from_timestamp, cached_streams.from_timestamp)
+			END,
 			cache_refreshed_at_timestamp = COALESCE(NULLIF(EXCLUDED.cache_refreshed_at_timestamp, 0), cached_streams.cache_refreshed_at_timestamp),
 			cache_height = COALESCE(NULLIF(EXCLUDED.cache_height, 0), cached_streams.cache_height),
 			cron_schedule = EXCLUDED.cron_schedule
@@ -1098,7 +1102,11 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 					AS t(data_provider, stream_id, base_time, from_timestamp, cache_refreshed_at_timestamp, cache_height, cron_schedule)
 				ON CONFLICT (data_provider, stream_id, base_time_key) 
 				DO UPDATE SET
-					from_timestamp = COALESCE(EXCLUDED.from_timestamp, cached_streams.from_timestamp),
+					from_timestamp = CASE
+						WHEN cached_streams.base_time IS NULL AND EXCLUDED.base_time IS NULL THEN
+							LEAST(COALESCE(cached_streams.from_timestamp, EXCLUDED.from_timestamp), EXCLUDED.from_timestamp)
+						ELSE COALESCE(EXCLUDED.from_timestamp, cached_streams.from_timestamp)
+					END,
 					cache_refreshed_at_timestamp = COALESCE(NULLIF(EXCLUDED.cache_refreshed_at_timestamp, 0), cached_streams.cache_refreshed_at_timestamp),
 					cache_height = COALESCE(NULLIF(EXCLUDED.cache_height, 0), cached_streams.cache_height),
 					cron_schedule = EXCLUDED.cron_schedule
