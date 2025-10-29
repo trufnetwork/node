@@ -167,7 +167,7 @@ func (c *CacheDB) AddStreamConfig(ctx context.Context, config StreamCacheConfig)
 			($1, $2, NULLIF($3, %[2]d), $4, $5, $6, $7)
 		ON CONFLICT (data_provider, stream_id, base_time_key) 
 		DO UPDATE SET
-			from_timestamp = COALESCE(NULLIF(EXCLUDED.from_timestamp, 0), cached_streams.from_timestamp),
+			from_timestamp = COALESCE(EXCLUDED.from_timestamp, cached_streams.from_timestamp),
 			cache_refreshed_at_timestamp = COALESCE(NULLIF(EXCLUDED.cache_refreshed_at_timestamp, 0), cached_streams.cache_refreshed_at_timestamp),
 			cache_height = COALESCE(NULLIF(EXCLUDED.cache_height, 0), cached_streams.cache_height),
 			cron_schedule = EXCLUDED.cron_schedule
@@ -219,12 +219,12 @@ func (c *CacheDB) AddStreamConfigs(ctx context.Context, configs []StreamCacheCon
 		SELECT data_provider, stream_id, NULLIF(base_time, %[2]d), from_timestamp, cache_refreshed_at_timestamp, cache_height, cron_schedule
 		FROM UNNEST($1::TEXT[], $2::TEXT[], $3::INT8[], $4::INT8[], $5::INT8[], $6::INT8[], $7::TEXT[])
 			AS t(data_provider, stream_id, base_time, from_timestamp, cache_refreshed_at_timestamp, cache_height, cron_schedule)
-		ON CONFLICT (data_provider, stream_id, base_time_key) 
-		DO UPDATE SET
-			from_timestamp = COALESCE(NULLIF(EXCLUDED.from_timestamp, 0), cached_streams.from_timestamp),
-			cache_refreshed_at_timestamp = COALESCE(NULLIF(EXCLUDED.cache_refreshed_at_timestamp, 0), cached_streams.cache_refreshed_at_timestamp),
-			cache_height = COALESCE(NULLIF(EXCLUDED.cache_height, 0), cached_streams.cache_height),
-			cron_schedule = EXCLUDED.cron_schedule
+	ON CONFLICT (data_provider, stream_id, base_time_key) 
+	DO UPDATE SET
+		from_timestamp = COALESCE(EXCLUDED.from_timestamp, cached_streams.from_timestamp),
+		cache_refreshed_at_timestamp = COALESCE(NULLIF(EXCLUDED.cache_refreshed_at_timestamp, 0), cached_streams.cache_refreshed_at_timestamp),
+		cache_height = COALESCE(NULLIF(EXCLUDED.cache_height, 0), cached_streams.cache_height),
+		cron_schedule = EXCLUDED.cron_schedule
 	`, constants.CacheSchemaName, constants.BaseTimeNoneSentinel)
 
 	_, err = tx.Execute(ctx, batchUpsert, dataProviders, streamIDs, baseTimes, fromTimestamps, cacheRefreshedAtTimestamps, cacheHeights, cronSchedules)
@@ -1092,7 +1092,7 @@ func (c *CacheDB) UpdateStreamConfigsAtomic(ctx context.Context, newConfigs []St
 					AS t(data_provider, stream_id, base_time, from_timestamp, cache_refreshed_at_timestamp, cache_height, cron_schedule)
 				ON CONFLICT (data_provider, stream_id, base_time_key) 
 				DO UPDATE SET
-					from_timestamp = COALESCE(NULLIF(EXCLUDED.from_timestamp, 0), cached_streams.from_timestamp),
+					from_timestamp = COALESCE(EXCLUDED.from_timestamp, cached_streams.from_timestamp),
 					cache_refreshed_at_timestamp = COALESCE(NULLIF(EXCLUDED.cache_refreshed_at_timestamp, 0), cached_streams.cache_refreshed_at_timestamp),
 					cache_height = COALESCE(NULLIF(EXCLUDED.cache_height, 0), cached_streams.cache_height),
 					cron_schedule = EXCLUDED.cron_schedule

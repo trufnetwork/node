@@ -155,21 +155,22 @@ func handleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 
 			// Special case: if both from and to are NULL, user wants latest value only
 			if fromTime == nil && toTime == nil {
+				hasData := true
 				if baseTime != nil && respectBaseTime {
-					// For base_time-specific probes, confirm we actually have cached index data
-					indexEvents, err := cacheDB.GetCachedIndexWithBaseTime(traceCtx, dataProvider, streamID, baseTime, 0, 0)
+					// For base_time-specific probes, treat refreshed shards as hits even if they contain no rows.
+					var err error
+					hasData, err = cacheDB.HasCachedData(traceCtx, dataProvider, streamID, baseTime, 0, 0)
 					if err != nil {
-						return nil, fmt.Errorf("check latest cached index event: %w", err)
-					}
-					if len(indexEvents) == 0 {
-						if ext := GetExtension(); ext != nil && ext.IsEnabled() {
-							ext.MetricsRecorder().RecordCacheMiss(traceCtx, dataProvider, streamID, baseTime)
-						}
-						return []any{false, int64(0), int64(0)}, nil
+						return nil, fmt.Errorf("check cached index shard: %w", err)
 					}
 				}
+				if !hasData {
+					if ext := GetExtension(); ext != nil && ext.IsEnabled() {
+						ext.MetricsRecorder().RecordCacheMiss(traceCtx, dataProvider, streamID, baseTime)
+					}
+					return []any{false, int64(0), int64(0)}, nil
+				}
 				// We consider it cached if the stream has been refreshed, even if empty
-				hasData := true
 				if ext := GetExtension(); ext != nil && ext.IsEnabled() {
 					ext.MetricsRecorder().RecordCacheHit(traceCtx, dataProvider, streamID, baseTime)
 
