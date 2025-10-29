@@ -162,7 +162,8 @@ CREATE INDEX idx_cached_index_events_time_range
 The extension registers custom SQL functions to allow actions to use the cache:
 
 - `tn_cache.is_enabled()`: Checks if caching is enabled on this node
-- `tn_cache.has_cached_data_v2(data_provider, stream_id, from, to, base_time)`: Checks if the cache can answer a query (legacy `has_cached_data` remains for backward compatibility).
+- `tn_cache.has_cached_data_v2(data_provider, stream_id, from, to, base_time)`: Checks if the cache can answer a *record* query. The `base_time` argument is accepted for compatibility but always uses the default (sentinel) shard.
+- `tn_cache.has_cached_index_data_v2(data_provider, stream_id, from, to, base_time)`: Checks if the cache can answer an index query for the supplied base_time variant.
 - `tn_cache.get_cached_data_v2(data_provider, stream_id, from, to, base_time)`: Retrieves cached data (legacy `get_cached_data` remains available).
 - `tn_cache.get_cached_last_before_v2(data_provider, stream_id, before, base_time)`: Gets the most recent record before a timestamp (legacy `get_cached_last_before` persists for older nodes).
 - `tn_cache.get_cached_first_after_v2(data_provider, stream_id, after, base_time)`: Gets the earliest record after a timestamp (legacy `get_cached_first_after` persists for older nodes).

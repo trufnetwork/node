@@ -303,9 +303,38 @@ func testCacheBaseTimeVariants(t *testing.T, cacheConfig *testutils.CacheOptions
 		assert.True(t, foundNil, "expected sentinel (NULL) cache shard")
 		assert.True(t, foundBase, "expected base_time-specific cache shard")
 
-		useCache := true
 		from := int64(1)
 		to := int64(3)
+
+		recordStatus, err := platform.DB.Execute(ctx,
+			`SELECT has_data FROM tn_cache.has_cached_data_v2($1, $2, $3, $4, $5)`,
+			deployer.Address(),
+			streamID.String(),
+			from,
+			to,
+			directiveBaseTime,
+		)
+		require.NoError(t, err)
+		require.Len(t, recordStatus.Rows, 1)
+		recordHasData, ok := recordStatus.Rows[0][0].(bool)
+		require.True(t, ok, "has_data column should be boolean")
+		assert.True(t, recordHasData, "record cache probe with base_time should hit sentinel shard")
+
+		indexStatus, err := platform.DB.Execute(ctx,
+			`SELECT has_data FROM tn_cache.has_cached_index_data_v2($1, $2, $3, $4, $5)`,
+			deployer.Address(),
+			streamID.String(),
+			from,
+			to,
+			directiveBaseTime,
+		)
+		require.NoError(t, err)
+		require.Len(t, indexStatus.Rows, 1)
+		indexHasData, ok := indexStatus.Rows[0][0].(bool)
+		require.True(t, ok, "has_data column should be boolean")
+		assert.True(t, indexHasData, "index cache probe should honor base_time shard")
+
+		useCache := true
 
 		// Verify sentinel query succeeds via cache
 		_, err = procedure.GetIndex(ctx, procedure.GetIndexInput{

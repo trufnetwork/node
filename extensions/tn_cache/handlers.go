@@ -94,6 +94,15 @@ func fromTimeOrZero(fromTime *int64) int64 {
 
 // HandleHasCachedData checks if we have cached data for a stream in the given time range
 func HandleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+	return handleHasCachedData(ctx, app, inputs, resultFn, false)
+}
+
+// HandleHasCachedIndexData checks cache availability for index lookups that are base_time aware
+func HandleHasCachedIndexData(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+	return handleHasCachedData(ctx, app, inputs, resultFn, true)
+}
+
+func handleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error, respectBaseTime bool) error {
 	if err := checkExtensionEnabled(); err != nil {
 		return err
 	}
@@ -106,6 +115,9 @@ func HandleHasCachedData(ctx *common.EngineContext, app *common.App, inputs []an
 	var baseTime *int64
 	if len(inputs) > 4 {
 		baseTime = extractTimeParameter(inputs[4])
+	}
+	if !respectBaseTime {
+		baseTime = nil
 	}
 
 	// Use middleware for tracing

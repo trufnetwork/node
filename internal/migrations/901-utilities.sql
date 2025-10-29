@@ -123,10 +123,11 @@ CREATE OR REPLACE ACTION helper_check_cache(
         $has_cached_data BOOL := false;
         $cache_refreshed_at_timestamp INT8;
         $cache_height INT8;
-        -- Record lookups do not shard by base_time. Only index queries keep the caller-supplied value.
-        $normalized_base_time INT8 := CASE WHEN COALESCE($is_index, false) THEN $base_time ELSE NULL END;
-        $has_cached_data, $cache_refreshed_at_timestamp, $cache_height := tn_cache.has_cached_data_v2($data_provider, $stream_id, $from, $to, $normalized_base_time);
-        -- Note: index lookups keep the raw base_time (NULL means "use default"), matching the shards the scheduler writes.
+        IF COALESCE($is_index, false) {
+            $has_cached_data, $cache_refreshed_at_timestamp, $cache_height := tn_cache.has_cached_index_data_v2($data_provider, $stream_id, $from, $to, $base_time);
+        } ELSE {
+            $has_cached_data, $cache_refreshed_at_timestamp, $cache_height := tn_cache.has_cached_data_v2($data_provider, $stream_id, $from, $to, NULL);
+        }
 
         if $has_cached_data {
             -- Cache hit - get most recent cached data, show height to users

@@ -177,6 +177,26 @@ func InitializeCachePrecompile(ctx context.Context, service *common.Service, db 
 				Handler: HandleHasCachedData,
 			},
 			{
+				Name:            "has_cached_index_data_v2",
+				AccessModifiers: []precompiles.Modifier{precompiles.PUBLIC, precompiles.VIEW},
+				Parameters: []precompiles.PrecompileValue{
+					precompiles.NewPrecompileValue("data_provider", types.TextType, false),
+					precompiles.NewPrecompileValue("stream_id", types.TextType, false),
+					precompiles.NewPrecompileValue("from_time", types.IntType, true),
+					precompiles.NewPrecompileValue("to_time", types.IntType, true),
+					precompiles.NewPrecompileValue("base_time", types.IntType, true),
+				},
+				Returns: &precompiles.MethodReturn{
+					IsTable: false,
+					Fields: []precompiles.PrecompileValue{
+						precompiles.NewPrecompileValue("has_data", types.BoolType, false),
+						precompiles.NewPrecompileValue("cache_refreshed_at_timestamp", types.IntType, false),
+						precompiles.NewPrecompileValue("cache_height", types.IntType, false),
+					},
+				},
+				Handler: HandleHasCachedIndexData,
+			},
+			{
 				Name:            "get_cached_data",
 				AccessModifiers: []precompiles.Modifier{precompiles.PUBLIC, precompiles.VIEW},
 				Parameters: []precompiles.PrecompileValue{
