@@ -902,15 +902,14 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 			}
 			defer func() { _ = tx.Rollback(traceCtx) }()
 
-			baseKeys := []int64{primaryBaseTimeValue}
-			if baseTime != nil {
-				baseKeys = append(baseKeys, constants.BaseTimeNoneSentinel)
-			}
+			// Only check the specific baseTime shard requested
+			// When baseTime is nil, primaryBaseTimeValue is already the sentinel (-1)
+			baseTimeValue := primaryBaseTimeValue
 
 			var hasData bool
 
-			for _, baseTimeValue := range baseKeys {
-				results, err := tx.Execute(traceCtx, `
+			// Check the specific base_time shard
+			results, err := tx.Execute(traceCtx, `
 				SELECT EXISTS (
 					SELECT 1
 					FROM `+constants.CacheSchemaName+`.cached_streams
@@ -918,104 +917,97 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 						AND (from_timestamp IS NULL OR from_timestamp <= $3)
 				)
 			`, dataProvider, streamID, fromTime, baseTimeValue)
-				if err != nil {
-					return false, fmt.Errorf("check stream config: %w", err)
-				}
+			if err != nil {
+				return false, fmt.Errorf("check stream config: %w", err)
+			}
 
-				if len(results.Rows) == 0 || len(results.Rows[0]) != 1 {
-					return false, fmt.Errorf("unexpected result structure for stream exists check")
-				}
+			if len(results.Rows) == 0 || len(results.Rows[0]) != 1 {
+				return false, fmt.Errorf("unexpected result structure for stream exists check")
+			}
 
-				streamExists, ok := results.Rows[0][0].(bool)
-				if !ok {
-					return false, fmt.Errorf("failed to convert stream exists result to bool")
-				}
+			streamExists, ok := results.Rows[0][0].(bool)
+			if !ok {
+				return false, fmt.Errorf("failed to convert stream exists result to bool")
+			}
 
-				if !streamExists {
-					continue
-				}
+			if !streamExists {
+				// For read-only transactions, we don't need to commit - defer rollback is sufficient
+				return false, nil
+			}
 
-				if toTime == 0 {
-					results, err = tx.Execute(traceCtx, `
+			if toTime == 0 {
+				results, err = tx.Execute(traceCtx, `
 					SELECT EXISTS (
 						SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
 						WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 AND event_time >= $4
 					)
 				`, dataProvider, streamID, baseTimeValue, fromTime)
-				} else {
-					results, err = tx.Execute(traceCtx, `
+			} else {
+				results, err = tx.Execute(traceCtx, `
 					SELECT EXISTS (
 						SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
 						WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 AND event_time >= $4 AND event_time <= $5
 					)
 				`, dataProvider, streamID, baseTimeValue, fromTime, toTime)
-				}
-				if err != nil {
-					return false, fmt.Errorf("failed to check cached events existence: %w", err)
-				}
+			}
+			if err != nil {
+				return false, fmt.Errorf("failed to check cached events existence: %w", err)
+			}
 
-				if len(results.Rows) == 0 || len(results.Rows[0]) != 1 {
-					return false, fmt.Errorf("unexpected result structure for event existence check")
-				}
+			if len(results.Rows) == 0 || len(results.Rows[0]) != 1 {
+				return false, fmt.Errorf("unexpected result structure for event existence check")
+			}
 
-				hasData, ok = results.Rows[0][0].(bool)
-				if !ok {
-					return false, fmt.Errorf("failed to convert event existence result to bool")
-				}
+			hasData, ok = results.Rows[0][0].(bool)
+			if !ok {
+				return false, fmt.Errorf("failed to convert event existence result to bool")
+			}
 
-				if !hasData {
-					var indexResults *sql.ResultSet
-					if toTime == 0 {
-						indexResults, err = tx.Execute(traceCtx, `
+			if !hasData {
+				var indexResults *sql.ResultSet
+				if toTime == 0 {
+					indexResults, err = tx.Execute(traceCtx, `
 						SELECT EXISTS (
 							SELECT 1 FROM `+constants.CacheSchemaName+`.cached_index_events
 							WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 AND event_time >= $4
 						)
 					`, dataProvider, streamID, baseTimeValue, fromTime)
-					} else {
-						indexResults, err = tx.Execute(traceCtx, `
+				} else {
+					indexResults, err = tx.Execute(traceCtx, `
 						SELECT EXISTS (
 							SELECT 1 FROM `+constants.CacheSchemaName+`.cached_index_events
 							WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 AND event_time >= $4 AND event_time <= $5
 						)
 					`, dataProvider, streamID, baseTimeValue, fromTime, toTime)
-					}
-					if err != nil {
-						return false, fmt.Errorf("failed to check cached index events existence: %w", err)
-					}
-
-					if len(indexResults.Rows) == 0 || len(indexResults.Rows[0]) != 1 {
-						return false, fmt.Errorf("unexpected result structure for index event existence check")
-					}
-
-					indexHasData, ok := indexResults.Rows[0][0].(bool)
-					if !ok {
-						return false, fmt.Errorf("failed to convert index event existence result to bool")
-					}
-					hasData = indexHasData
+				}
+				if err != nil {
+					return false, fmt.Errorf("failed to check cached index events existence: %w", err)
 				}
 
-				if !hasData && fromTime != 0 {
-					anchorResults, err := tx.Execute(traceCtx, `
+				if len(indexResults.Rows) == 0 || len(indexResults.Rows[0]) != 1 {
+					return false, fmt.Errorf("unexpected result structure for index event existence check")
+				}
+
+				indexHasData, ok := indexResults.Rows[0][0].(bool)
+				if !ok {
+					return false, fmt.Errorf("failed to convert index event existence result to bool")
+				}
+				hasData = indexHasData
+			}
+
+			if !hasData && fromTime != 0 {
+				anchorResults, err := tx.Execute(traceCtx, `
 					SELECT 1 FROM `+constants.CacheSchemaName+`.cached_events
 					WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 AND event_time < $4
 					LIMIT 1
 				`, dataProvider, streamID, baseTimeValue, fromTime)
-					if err != nil {
-						return false, fmt.Errorf("failed to query anchor record: %w", err)
-					}
-					hasData = len(anchorResults.Rows) > 0
+				if err != nil {
+					return false, fmt.Errorf("failed to query anchor record: %w", err)
 				}
-
-				if hasData {
-					break
-				}
+				hasData = len(anchorResults.Rows) > 0
 			}
 
-			if commitErr := tx.Commit(traceCtx); commitErr != nil {
-				return false, fmt.Errorf("commit transaction: %w", commitErr)
-			}
-
+			// For read-only transactions, we don't need to commit - defer rollback is sufficient
 			return hasData, nil
 		}, attribute.Int64("from", fromTime),
 		attribute.Int64("to", toTime),
