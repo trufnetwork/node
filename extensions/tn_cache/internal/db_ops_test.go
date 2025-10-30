@@ -281,3 +281,30 @@ func TestCacheDB_UpdateStreamConfigsAtomic(t *testing.T) {
 	err := cacheDB.UpdateStreamConfigsAtomic(context.Background(), newConfigs, toDelete)
 	require.NoError(t, err)
 }
+
+func TestCacheDB_AddStreamConfigs_UsesLeastForSentinel(t *testing.T) {
+	mockDB := newTestDB()
+	capturedSQL := ""
+
+	mockDB.BeginTxFn = func(ctx context.Context) (kwilsql.Tx, error) {
+		return &utils.MockTx{
+			ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*kwilsql.ResultSet, error) {
+				capturedSQL = stmt
+				return &kwilsql.ResultSet{}, nil
+			},
+		}, nil
+	}
+
+	cacheDB := NewCacheDB(mockDB, log.New(log.WithWriter(io.Discard)))
+
+	err := cacheDB.AddStreamConfigs(context.Background(), []StreamCacheConfig{
+		{
+			DataProvider:  "provider",
+			StreamID:      "stream",
+			BaseTime:      nil,
+			FromTimestamp: 10,
+		},
+	})
+	require.NoError(t, err)
+	require.Contains(t, capturedSQL, "LEAST", "batch upsert should use LEAST merge for sentinel")
+}

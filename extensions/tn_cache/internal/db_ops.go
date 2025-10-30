@@ -225,7 +225,11 @@ func (c *CacheDB) AddStreamConfigs(ctx context.Context, configs []StreamCacheCon
 			AS t(data_provider, stream_id, base_time, from_timestamp, cache_refreshed_at_timestamp, cache_height, cron_schedule)
 	ON CONFLICT (data_provider, stream_id, base_time_key) 
 	DO UPDATE SET
-		from_timestamp = COALESCE(EXCLUDED.from_timestamp, cached_streams.from_timestamp),
+		from_timestamp = CASE
+			WHEN cached_streams.base_time IS NULL AND EXCLUDED.base_time IS NULL THEN
+				LEAST(COALESCE(cached_streams.from_timestamp, EXCLUDED.from_timestamp), EXCLUDED.from_timestamp)
+			ELSE COALESCE(EXCLUDED.from_timestamp, cached_streams.from_timestamp)
+		END,
 		cache_refreshed_at_timestamp = COALESCE(NULLIF(EXCLUDED.cache_refreshed_at_timestamp, 0), cached_streams.cache_refreshed_at_timestamp),
 		cache_height = COALESCE(NULLIF(EXCLUDED.cache_height, 0), cached_streams.cache_height),
 		cron_schedule = EXCLUDED.cron_schedule
@@ -1008,10 +1012,10 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 					LIMIT 1
 				`, dataProvider, streamID, baseTimeValue, fromTime)
 				if err != nil {
-				return false, fmt.Errorf("failed to query anchor record: %w", err)
+					return false, fmt.Errorf("failed to query anchor record: %w", err)
+				}
+				hasData = len(anchorResults.Rows) > 0
 			}
-			hasData = len(anchorResults.Rows) > 0
-		}
 
 			if !hasData && streamRefreshed && baseTime != nil {
 				hasData = true
