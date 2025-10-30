@@ -35,7 +35,7 @@ RETURNS TABLE(
 
     if $effective_enable_cache {
         -- we use before as the starting bound so the cache check ensures an anchor exists before it
-        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $before, NULL, NULL);
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $before, NULL, NULL, false);
     }
 
   -- If using cache, get the most recent cached record
@@ -189,7 +189,7 @@ RETURNS TABLE(
 
     if $effective_enable_cache {
         -- we use after as the lower bound (from) because data at or after this time satisfies the query
-        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $after, NULL, NULL);
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $after, NULL, NULL, false);
     }
 
     -- If using cache, get the earliest cached record
@@ -348,7 +348,7 @@ RETURNS TABLE(
 
   if $effective_enable_cache {
       -- Check if we have pre-calculated index values in cache
-      $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $from, $to, $cache_base_time);
+      $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $from, $to, $cache_base_time, true);
   }
 
   -- If using pre-calculated index cache, return directly

@@ -229,23 +229,25 @@ func TestCacheBaseTimeVariants(t *testing.T) {
 	streamID := util.GenerateStreamId("cache_test_base_time")
 	deployer := "0x0000000000000000000000000000000000000123"
 	directiveBaseTime := int64(1234)
+	minFrom := int64(1)
+	lateFrom := int64(2)
 
 	cacheConfig := testutils.NewCacheOptions().
 		WithEnabled().
 		WithMaxBlockAge(-1*time.Second).
-		WithStream(deployer, streamID.String(), "0 0 31 2 *").
-		WithStreamBaseTime(deployer, streamID.String(), "0 0 31 2 *", directiveBaseTime)
+		WithStreamFromTime(deployer, streamID.String(), "0 0 31 2 *", minFrom).
+		WithStreamBaseTimeFromTime(deployer, streamID.String(), "0 0 31 2 *", directiveBaseTime, lateFrom)
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "cache_base_time_variants_test",
 		SeedScripts: migrations.GetSeedScriptPaths(),
 		FunctionTests: []kwilTesting.TestFunc{
-			testCacheBaseTimeVariants(t, cacheConfig, streamID, directiveBaseTime),
+			testCacheBaseTimeVariants(t, cacheConfig, streamID, directiveBaseTime, lateFrom),
 		},
 	}, testutils.GetTestOptionsWithCache(cacheConfig))
 }
 
-func testCacheBaseTimeVariants(t *testing.T, cacheConfig *testutils.CacheOptions, streamID util.StreamId, directiveBaseTime int64) func(ctx context.Context, platform *kwilTesting.Platform) error {
+func testCacheBaseTimeVariants(t *testing.T, cacheConfig *testutils.CacheOptions, streamID util.StreamId, directiveBaseTime int64, baseRangeFrom int64) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		helper := cache.SetupCacheTest(ctx, platform, cacheConfig)
 		defer helper.Cleanup()
@@ -287,6 +289,20 @@ func testCacheBaseTimeVariants(t *testing.T, cacheConfig *testutils.CacheOptions
 		require.NoError(t, err)
 		require.Len(t, result.Rows, 2, "expected sentinel and base_time variants to be cached")
 
+		configRows, err := platform.DB.Execute(ctx,
+			`SELECT base_time, from_timestamp, cache_refreshed_at_timestamp FROM ext_tn_cache.cached_streams WHERE data_provider = $1 AND stream_id = $2 ORDER BY base_time NULLS FIRST`,
+			deployer.Address(),
+			streamID.String(),
+		)
+		require.NoError(t, err)
+		require.Len(t, configRows.Rows, 2)
+		for _, row := range configRows.Rows {
+			if row[0] != nil {
+				refresh := row[2].(int64)
+				assert.Greater(t, refresh, int64(0), "base_time shard should be refreshed")
+			}
+		}
+
 		foundNil := false
 		foundBase := false
 		for _, row := range result.Rows {
@@ -303,9 +319,36 @@ func testCacheBaseTimeVariants(t *testing.T, cacheConfig *testutils.CacheOptions
 		assert.True(t, foundNil, "expected sentinel (NULL) cache shard")
 		assert.True(t, foundBase, "expected base_time-specific cache shard")
 
-		useCache := true
 		from := int64(1)
 		to := int64(3)
+
+		ext := tn_cache.RequireExtension(t)
+		cacheDB := ext.CacheDB()
+		require.NotNil(t, cacheDB, "cache DB should be available")
+
+		hasRecordData, err := cacheDB.HasCachedData(ctx, deployer.Address(), streamID.String(), nil, from, to)
+		require.NoError(t, err)
+		assert.True(t, hasRecordData, "record cache probe with sentinel shard should hit")
+
+		baseTimePtr := directiveBaseTime
+		indexRows, err := platform.DB.Execute(ctx,
+			`SELECT event_time FROM ext_tn_cache.cached_index_events WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 ORDER BY event_time`,
+			deployer.Address(),
+			streamID.String(),
+			baseTimePtr,
+		)
+		require.NoError(t, err)
+		require.NotZero(t, len(indexRows.Rows), "expected base_time index rows to be present")
+
+		hasIndexRange, err := cacheDB.HasCachedData(ctx, deployer.Address(), streamID.String(), &baseTimePtr, baseRangeFrom, to)
+		require.NoError(t, err)
+		assert.True(t, hasIndexRange, "index cache probe with explicit range should honor base_time shard")
+
+		hasIndexLatest, err := cacheDB.HasCachedData(ctx, deployer.Address(), streamID.String(), &baseTimePtr, baseRangeFrom, 0)
+		require.NoError(t, err)
+		assert.True(t, hasIndexLatest, "latest index cache probe should honor base_time shard")
+
+		useCache := true
 
 		// Verify sentinel query succeeds via cache
 		_, err = procedure.GetIndex(ctx, procedure.GetIndexInput{
@@ -322,7 +365,6 @@ func testCacheBaseTimeVariants(t *testing.T, cacheConfig *testutils.CacheOptions
 		require.NoError(t, err)
 
 		// Verify base_time-specific query succeeds via cache
-		baseTimePtr := directiveBaseTime
 		_, err = procedure.GetIndex(ctx, procedure.GetIndexInput{
 			Platform: platform,
 			StreamLocator: types.StreamLocator{

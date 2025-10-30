@@ -57,7 +57,7 @@ type EngineOperator interface {
 	GetRecordComposed(ctx context.Context, provider, streamID string, from, to *int64) ([]EventRecord, error)
 
 	// GetIndexComposed fetches index events from a composed stream
-	GetIndexComposed(ctx context.Context, provider, streamID string, from, to *int64) ([]EventRecord, error)
+	GetIndexComposed(ctx context.Context, provider, streamID string, from, to, baseTime *int64) ([]EventRecord, error)
 }
 
 // CategoryStream represents a child stream in a category
@@ -323,7 +323,7 @@ func (t *EngineOperations) GetRecordComposed(ctx context.Context, provider, stre
 }
 
 // GetIndexComposed fetches index events from a composed stream
-func (t *EngineOperations) GetIndexComposed(ctx context.Context, provider, streamID string, from, to *int64) ([]EventRecord, error) {
+func (t *EngineOperations) GetIndexComposed(ctx context.Context, provider, streamID string, from, to, baseTime *int64) ([]EventRecord, error) {
 	t.logger.Debug("getting composed index records", "provider", provider, "stream", streamID)
 
 	// if from is nil, we should set to 0, meaning it's all available
@@ -342,10 +342,10 @@ func (t *EngineOperations) GetIndexComposed(ctx context.Context, provider, strea
 	args := []any{
 		provider,
 		streamID,
-		from, // from timestamp
-		to,   // to timestamp (fetch all available)
-		nil,  // frozen_at (not applicable for cache refresh)
-		nil,  // base_time (NULL to use default)
+		from,     // from timestamp
+		to,       // to timestamp (fetch all available)
+		nil,      // frozen_at (not applicable for cache refresh)
+		baseTime, // base_time shard (nil uses default sentinel)
 		// It's false by default. let's omit to be ok with new and old version of actions
 		// false, // don't use cache to get new data
 	}

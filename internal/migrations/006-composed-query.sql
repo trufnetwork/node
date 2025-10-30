@@ -79,7 +79,7 @@ RETURNS TABLE(
     $effective_enable_cache := $effective_enable_cache AND $frozen_at IS NULL; -- frozen queries bypass cache
 
     if $effective_enable_cache {
-        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $from, $to, NULL);
+        $effective_enable_cache := helper_check_cache($data_provider, $stream_id, $from, $to, NULL, false);
     }
 
     -- Check if cache is enabled and frozen_at is null (frozen queries bypass cache)

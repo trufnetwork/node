@@ -20,7 +20,8 @@ import (
 func (s *CacheScheduler) refreshStreamDataWithRetry(ctx context.Context, directive config.CacheDirective, maxRetries int) error {
 	return retry.Do(
 		func() error {
-			return s.RefreshStreamData(ctx, directive)
+			_, err := s.RefreshStreamData(ctx, directive)
+			return err
 		},
 		retry.Attempts(uint(maxRetries+1)),
 		retry.Delay(1*time.Second),
@@ -50,7 +51,9 @@ func (s *CacheScheduler) refreshStreamDataWithRetry(ctx context.Context, directi
 }
 
 // RefreshStreamData refreshes the cached data for a single cache directive
-func (s *CacheScheduler) RefreshStreamData(ctx context.Context, directive config.CacheDirective) error {
+func (s *CacheScheduler) RefreshStreamData(ctx context.Context, directive config.CacheDirective) (int, error) {
+	rawEventsRefreshed := 0
+
 	// Use middleware for tracing and refresh metrics
 	_, err := tracing.TracedWithRefreshMetrics(ctx, tracing.OpRefreshStream, directive.DataProvider, directive.StreamID, s.metrics,
 		func(traceCtx context.Context) (any, int, error) {
@@ -67,24 +70,31 @@ func (s *CacheScheduler) RefreshStreamData(ctx context.Context, directive config
 				return nil, 0, fmt.Errorf("unexpected directive type in refresh: %s (should be specific after resolution)", directive.Type)
 			}
 
-			// Cache rows should mirror caller behaviour: a nil base_time means "use the stream default".
-			// Persist using the raw directive base_time so helper_check_cache sees the same shard users request.
+			// Cache rows should mirror caller behaviour. Record queries always use the sentinel (NULL) shard,
+			// while index queries respect the directive base_time.
 			cacheBaseTime := directive.BaseTime
 
-			// Ensure there is a cached_streams entry for this base_time
+			// Ensure there is a cached_streams entry for the record sentinel shard
 			effectiveFrom := int64(0)
 			if fromTime != nil {
 				effectiveFrom = *fromTime
 			}
-			streamConfig := internal.StreamCacheConfig{
+			recordConfig := internal.StreamCacheConfig{
 				DataProvider:  directive.DataProvider,
 				StreamID:      directive.StreamID,
-				BaseTime:      cacheBaseTime,
+				BaseTime:      nil,
 				FromTimestamp: effectiveFrom,
 				CronSchedule:  directive.Schedule.CronExpr,
 			}
-			if err := s.cacheDB.AddStreamConfig(traceCtx, streamConfig); err != nil {
+			if err := s.cacheDB.AddStreamConfig(traceCtx, recordConfig); err != nil {
 				return nil, 0, fmt.Errorf("upsert stream config: %w", err)
+			}
+			if cacheBaseTime != nil {
+				indexConfig := recordConfig
+				indexConfig.BaseTime = cacheBaseTime
+				if err := s.cacheDB.AddStreamConfig(traceCtx, indexConfig); err != nil {
+					return nil, 0, fmt.Errorf("upsert index stream config: %w", err)
+				}
 			}
 
 			// Fetch events sequentially to ensure consistency
@@ -99,6 +109,7 @@ func (s *CacheScheduler) RefreshStreamData(ctx context.Context, directive config
 			if indexFetchErr != nil {
 				return nil, 0, fmt.Errorf("fetch index stream data: %w", indexFetchErr)
 			}
+			rawEventsRefreshed = len(events)
 			// Store index rows under the cache shard we expose to callers.
 			for i := range indexEvents {
 				indexEvents[i].BaseTime = cacheBaseTime
@@ -136,7 +147,7 @@ func (s *CacheScheduler) RefreshStreamData(ctx context.Context, directive config
 			return nil, totalEvents, nil
 		}, attribute.String("type", string(directive.Type)))
 
-	return err
+	return rawEventsRefreshed, err
 }
 
 // fetchSpecificStream calls get_record_composed action with proper authorization
@@ -155,7 +166,7 @@ func (s *CacheScheduler) fetchSpecificStream(ctx context.Context, directive conf
 			StreamID:     directive.StreamID,
 			EventTime:    r.EventTime,
 			Value:        r.Value,
-			BaseTime:     directive.BaseTime,
+			BaseTime:     nil,
 		}
 	}
 
@@ -170,7 +181,7 @@ func (s *CacheScheduler) fetchSpecificIndexStream(ctx context.Context, directive
 		fromTime = &zero
 	}
 
-	records, err := s.engineOperations.GetIndexComposed(ctx, directive.DataProvider, directive.StreamID, fromTime, nil)
+	records, err := s.engineOperations.GetIndexComposed(ctx, directive.DataProvider, directive.StreamID, fromTime, nil, baseTime)
 	if err != nil {
 		// Handle not-found errors gracefully
 		if errors.IsNotFoundError(err) {

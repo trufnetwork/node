@@ -113,7 +113,8 @@ CREATE OR REPLACE ACTION helper_check_cache(
     $stream_id TEXT,
     $from INT8,
     $to INT8,
-    $base_time INT8
+    $base_time INT8,
+    $is_index BOOL
 ) PRIVATE VIEW RETURNS (cache_hit BOOL) {
     $is_caching_enabled BOOL := tn_cache.is_enabled();
     $cache_hit := false;
@@ -122,8 +123,11 @@ CREATE OR REPLACE ACTION helper_check_cache(
         $has_cached_data BOOL := false;
         $cache_refreshed_at_timestamp INT8;
         $cache_height INT8;
-        $has_cached_data, $cache_refreshed_at_timestamp, $cache_height := tn_cache.has_cached_data_v2($data_provider, $stream_id, $from, $to, $base_time);
-        -- Note: base_time is the raw caller value (NULL means "use default"), matching the shards the scheduler writes.
+        IF COALESCE($is_index, false) {
+            $has_cached_data, $cache_refreshed_at_timestamp, $cache_height := tn_cache.has_cached_index_data_v2($data_provider, $stream_id, $from, $to, $base_time);
+        } ELSE {
+            $has_cached_data, $cache_refreshed_at_timestamp, $cache_height := tn_cache.has_cached_data_v2($data_provider, $stream_id, $from, $to, NULL);
+        }
 
         if $has_cached_data {
             -- Cache hit - get most recent cached data, show height to users
