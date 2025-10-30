@@ -1008,12 +1008,12 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 					LIMIT 1
 				`, dataProvider, streamID, baseTimeValue, fromTime)
 				if err != nil {
-					return false, fmt.Errorf("failed to query anchor record: %w", err)
-				}
-				hasData = len(anchorResults.Rows) > 0
+				return false, fmt.Errorf("failed to query anchor record: %w", err)
 			}
+			hasData = len(anchorResults.Rows) > 0
+		}
 
-			if !hasData && streamRefreshed {
+			if !hasData && streamRefreshed && baseTime != nil {
 				hasData = true
 			}
 
@@ -1022,6 +1022,98 @@ func (c *CacheDB) HasCachedData(ctx context.Context, dataProvider, streamID stri
 		}, attribute.Int64("from", fromTime),
 		attribute.Int64("to", toTime),
 		attribute.Int64("base_time", primaryBaseTimeValue))
+}
+
+// HasCachedIndexData checks if there is cached index data for a stream in a time range.
+func (c *CacheDB) HasCachedIndexData(ctx context.Context, dataProvider, streamID string, baseTime *int64, fromTime, toTime int64) (bool, error) {
+	baseTimeValue := encodeBaseTime(baseTime)
+	return tracing.TracedOperation(ctx, tracing.OpDBHasCachedData, dataProvider, streamID,
+		func(traceCtx context.Context) (bool, error) {
+			c.logger.Debug("checking for cached index data",
+				"data_provider", dataProvider,
+				"stream_id", streamID,
+				"from_time", fromTime,
+				"to_time", toTime,
+				"base_time", baseTimeValue)
+
+			tx, err := c.db.BeginTx(traceCtx)
+			if err != nil {
+				return false, fmt.Errorf("begin transaction: %w", err)
+			}
+			defer func() { _ = tx.Rollback(traceCtx) }()
+
+			results, err := tx.Execute(traceCtx, `
+				SELECT cache_refreshed_at_timestamp
+				FROM `+constants.CacheSchemaName+`.cached_streams
+				WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $4
+					AND (from_timestamp IS NULL OR from_timestamp <= $3)
+				LIMIT 1
+			`, dataProvider, streamID, fromTime, baseTimeValue)
+			if err != nil {
+				return false, fmt.Errorf("check stream config: %w", err)
+			}
+
+			if len(results.Rows) == 0 {
+				return false, nil
+			}
+
+			if len(results.Rows[0]) != 1 {
+				return false, fmt.Errorf("unexpected result structure for stream config check")
+			}
+
+			cacheRefreshedAtTimestamp, err := decodeNullableInt64(results.Rows[0][0], "cache_refreshed_at_timestamp")
+			if err != nil {
+				return false, fmt.Errorf("decode cache_refreshed_at_timestamp: %w", err)
+			}
+			if cacheRefreshedAtTimestamp == 0 {
+				return false, nil
+			}
+
+			if toTime == 0 {
+				results, err = tx.Execute(traceCtx, `
+					SELECT EXISTS (
+						SELECT 1 FROM `+constants.CacheSchemaName+`.cached_index_events
+						WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 AND event_time >= $4
+					)
+				`, dataProvider, streamID, baseTimeValue, fromTime)
+			} else {
+				results, err = tx.Execute(traceCtx, `
+					SELECT EXISTS (
+						SELECT 1 FROM `+constants.CacheSchemaName+`.cached_index_events
+						WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 AND event_time >= $4 AND event_time <= $5
+					)
+				`, dataProvider, streamID, baseTimeValue, fromTime, toTime)
+			}
+			if err != nil {
+				return false, fmt.Errorf("failed to check cached index events existence: %w", err)
+			}
+
+			if len(results.Rows) == 0 || len(results.Rows[0]) != 1 {
+				return false, fmt.Errorf("unexpected result structure for index event existence check")
+			}
+
+			hasData, ok := results.Rows[0][0].(bool)
+			if !ok {
+				return false, fmt.Errorf("failed to convert index event existence result to bool")
+			}
+
+			if !hasData && fromTime != 0 {
+				anchorResults, err := tx.Execute(traceCtx, `
+					SELECT 1 FROM `+constants.CacheSchemaName+`.cached_index_events
+					WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 AND event_time < $4
+					LIMIT 1
+				`, dataProvider, streamID, baseTimeValue, fromTime)
+				if err != nil {
+					return false, fmt.Errorf("failed to query index anchor record: %w", err)
+				}
+				hasData = len(anchorResults.Rows) > 0
+			}
+
+			return hasData, nil
+		}, attribute.Int64("from", fromTime),
+		attribute.Int64("to", toTime),
+		attribute.Int64("base_time", baseTimeValue),
+		attribute.String("type", "index"))
 }
 
 // UpdateStreamConfigsAtomic atomically updates the cached_streams table

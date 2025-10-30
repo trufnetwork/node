@@ -142,6 +142,39 @@ func TestCacheDB_HasCachedData_BaseTimeMismatch(t *testing.T) {
 
 func TestCacheDB_HasCachedData_RefreshedButEmpty(t *testing.T) {
 	mockDB := newTestDB()
+	baseTime := int64(50)
+	callCount := 0
+
+	mockDB.ExecuteFn = func(ctx context.Context, stmt string, args ...any) (*kwilsql.ResultSet, error) {
+		callCount++
+		switch callCount {
+		case 1:
+			require.Len(t, args, 4)
+			require.Equal(t, baseTime, args[3].(int64))
+			return &kwilsql.ResultSet{Columns: []string{"cache_refreshed_at_timestamp"}, Rows: [][]interface{}{{int64(100)}}}, nil
+		case 2:
+			return &kwilsql.ResultSet{Columns: []string{"exists"}, Rows: [][]interface{}{{false}}}, nil
+		case 3:
+			return &kwilsql.ResultSet{Columns: []string{"exists"}, Rows: [][]interface{}{{false}}}, nil
+		default:
+			return nil, fmt.Errorf("unexpected query")
+		}
+	}
+
+	mockDB.BeginTxFn = func(ctx context.Context) (kwilsql.Tx, error) {
+		return &utils.MockTx{ExecuteFn: mockDB.ExecuteFn}, nil
+	}
+
+	logger := log.New(log.WithWriter(io.Discard))
+	cacheDB := NewCacheDB(mockDB, logger)
+
+	hasData, err := cacheDB.HasCachedData(context.Background(), "provider", "stream", &baseTime, 0, 0)
+	require.NoError(t, err)
+	require.True(t, hasData, "refreshed shard with no events should count as cached")
+}
+
+func TestCacheDB_HasCachedData_SentinelRefreshedButEmpty(t *testing.T) {
+	mockDB := newTestDB()
 	callCount := 0
 
 	mockDB.ExecuteFn = func(ctx context.Context, stmt string, args ...any) (*kwilsql.ResultSet, error) {
@@ -167,7 +200,55 @@ func TestCacheDB_HasCachedData_RefreshedButEmpty(t *testing.T) {
 
 	hasData, err := cacheDB.HasCachedData(context.Background(), "provider", "stream", nil, 0, 0)
 	require.NoError(t, err)
-	require.True(t, hasData, "refreshed shard with no events should count as cached")
+	require.False(t, hasData, "sentinel shard without data should not count as cached")
+}
+
+func TestCacheDB_HasCachedIndexData(t *testing.T) {
+	mockDB := newTestDB()
+	callCount := 0
+	mockDB.ExecuteFn = func(ctx context.Context, stmt string, args ...any) (*kwilsql.ResultSet, error) {
+		callCount++
+		switch callCount {
+		case 1:
+			return &kwilsql.ResultSet{Columns: []string{"cache_refreshed_at_timestamp"}, Rows: [][]interface{}{{int64(100)}}}, nil
+		case 2:
+			return &kwilsql.ResultSet{Columns: []string{"exists"}, Rows: [][]interface{}{{true}}}, nil
+		default:
+			return nil, fmt.Errorf("unexpected query")
+		}
+	}
+	mockDB.BeginTxFn = func(ctx context.Context) (kwilsql.Tx, error) {
+		return &utils.MockTx{ExecuteFn: mockDB.ExecuteFn}, nil
+	}
+	cacheDB := NewCacheDB(mockDB, log.New(log.WithWriter(io.Discard)))
+	hasData, err := cacheDB.HasCachedIndexData(context.Background(), "p", "s", nil, 0, 0)
+	require.NoError(t, err)
+	require.True(t, hasData)
+}
+
+func TestCacheDB_HasCachedIndexData_Empty(t *testing.T) {
+	mockDB := newTestDB()
+	callCount := 0
+	mockDB.ExecuteFn = func(ctx context.Context, stmt string, args ...any) (*kwilsql.ResultSet, error) {
+		callCount++
+		switch callCount {
+		case 1:
+			return &kwilsql.ResultSet{Columns: []string{"cache_refreshed_at_timestamp"}, Rows: [][]interface{}{{int64(100)}}}, nil
+		case 2:
+			return &kwilsql.ResultSet{Columns: []string{"exists"}, Rows: [][]interface{}{{false}}}, nil
+		case 3:
+			return &kwilsql.ResultSet{Columns: []string{"exists"}, Rows: [][]interface{}{{false}}}, nil
+		default:
+			return nil, fmt.Errorf("unexpected query")
+		}
+	}
+	mockDB.BeginTxFn = func(ctx context.Context) (kwilsql.Tx, error) {
+		return &utils.MockTx{ExecuteFn: mockDB.ExecuteFn}, nil
+	}
+	cacheDB := NewCacheDB(mockDB, log.New(log.WithWriter(io.Discard)))
+	hasData, err := cacheDB.HasCachedIndexData(context.Background(), "p", "s", nil, 0, 0)
+	require.NoError(t, err)
+	require.False(t, hasData)
 }
 
 func TestCacheDB_UpdateStreamConfigsAtomic(t *testing.T) {
