@@ -33,7 +33,7 @@ func TestAGGR06_SingleActiveTaxonomy(t *testing.T) {
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr06_single_active_taxonomy_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			wrapTestWithCacheModes(t, "AGGR06_SingleActiveTaxonomy", testAGGR06_SingleActiveTaxonomy),
 		},

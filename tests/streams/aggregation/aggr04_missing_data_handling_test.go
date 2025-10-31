@@ -36,7 +36,7 @@ func TestAGGR04_MissingDataHandling(t *testing.T) {
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr04_missing_data_handling_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			wrapTestWithCacheModes(t, "AGGR04_MissingDataHandling", testAGGR04_MissingDataHandling),
 		},

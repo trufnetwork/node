@@ -27,7 +27,7 @@ func TestDatabaseSizeExtension(t *testing.T) {
 	// The database_size extension should be automatically available
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "database_size_extension_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testDatabaseSizeExtensionMethods(t),
 			testGetDatabaseSizeV2Actions(t),

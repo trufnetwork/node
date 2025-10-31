@@ -30,7 +30,7 @@ func TestAGGR05_NoDuplicateChildStreams(t *testing.T) {
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr05_no_duplicate_child_streams_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			wrapTestWithCacheModes(t, "AGGR05_NoDuplicateChildStreams", testAGGR05_NoDuplicateChildStreams),
 		},

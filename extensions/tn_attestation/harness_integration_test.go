@@ -80,7 +80,7 @@ func TestSigningWorkflowWithHarness(t *testing.T) {
 
 	kwilTesting.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "tn_attestation_signing_harness",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		Owner:       ownerAddr.Address(),
 		FunctionTests: []kwilTesting.TestFunc{
 			func(ctx context.Context, platform *kwilTesting.Platform) error {

@@ -32,7 +32,7 @@ import (
 func TestPrimitiveBatchInsertAlignment(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "primitive_batch_insert_alignment_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testBatchAlignment(t),
 		},

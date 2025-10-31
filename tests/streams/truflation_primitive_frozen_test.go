@@ -26,7 +26,7 @@ var (
 func TestTruflationFrozen(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "truflation_frozen_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			setupTruflationFrozenTest(testAllBeforeFrozen(t)),
 			setupTruflationFrozenTest(testAllAfterFrozen(t)),

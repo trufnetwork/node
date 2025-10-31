@@ -34,7 +34,7 @@ func TestAGGR02_WeightedContributions(t *testing.T) {
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr02_weighted_contributions_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			wrapTestWithCacheModes(t, "AGGR02_WeightedContributions", testAGGR02_WeightedContributions),
 		},

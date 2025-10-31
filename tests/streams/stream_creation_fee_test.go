@@ -44,7 +44,7 @@ func mustParseBigInt(s string) *big.Int {
 func TestStreamCreationFees(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:           "STREAM_FEE01_StreamCreationFees",
-		SeedStatements: migrations.GetSeedScriptStatements(), // Use SeedStatements for runtime bridge namespace replacement
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			setupTestEnvironment(t),
 			testExemptWalletNoFee(t),

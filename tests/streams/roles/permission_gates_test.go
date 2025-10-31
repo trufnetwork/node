@@ -17,8 +17,8 @@ import (
 
 func TestPermissionGates(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name:        "permission_gates_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		Name:           "permission_gates_test",
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			func(ctx context.Context, platform *kwilTesting.Platform) error {
 				testStreamCreationPermissionGates(t, ctx, platform)

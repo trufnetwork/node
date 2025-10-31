@@ -43,7 +43,7 @@ func TestAGGR09_DuplicateValues(t *testing.T) {
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr09_duplicate_values_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			wrapTestWithCacheModes(t, "AGGR09_DuplicateValues", testAGGR09_DuplicateValues),
 		},

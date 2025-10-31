@@ -34,7 +34,7 @@ var (
 func TestMultiLevelComposedStreams(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "multi_level_composed_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			setupMultiLevelComposedStreams(testMultiLevelFunc(t)),
 		},

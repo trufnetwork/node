@@ -36,7 +36,7 @@ func TestCacheIntegration(t *testing.T) {
 	// Run the test with cache enabled using the new wrapper
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "cache_integration_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testCacheBasicFunctionality(t, cacheConfig),
 		},
@@ -218,7 +218,7 @@ func TestCacheIncludeChildrenForNestedComposed(t *testing.T) {
 	// Run the test with cache enabled
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "cache_include_children_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testCacheIncludeChildren(t, cacheConfig),
 		},
@@ -240,7 +240,7 @@ func TestCacheBaseTimeVariants(t *testing.T) {
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "cache_base_time_variants_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testCacheBaseTimeVariants(t, cacheConfig, streamID, directiveBaseTime, lateFrom),
 		},

@@ -198,7 +198,7 @@ func createBenchmarkSuiteFunc(t *testing.T, scale DigestBenchmarkScale) func(con
 func runDigestBenchmarkScale(t *testing.T, scale DigestBenchmarkScale) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        fmt.Sprintf("digest_benchmark_%s", scale.Name),
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			WithDigestBenchmarkSetup(createBenchmarkSuiteFunc(t, scale)),
 		},

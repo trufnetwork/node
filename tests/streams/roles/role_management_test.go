@@ -83,7 +83,7 @@ func TestRoleManagementSuite(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 				Name:        tc.name,
-				SeedScripts: migrations.GetSeedScriptPaths(),
+				SeedStatements: migrations.GetSeedScriptStatements(),
 				FunctionTests: []kwilTesting.TestFunc{
 					func(ctx context.Context, platform *kwilTesting.Platform) error {
 						// Initialize platform deployer with a valid address to prevent errors in procedure calls.

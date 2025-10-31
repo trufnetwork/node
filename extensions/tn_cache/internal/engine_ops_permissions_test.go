@@ -26,7 +26,7 @@ import (
 func TestExtensionAgentPermissions(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "extension_agent_permissions_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testExtensionAgentAccess(t),
 		},
