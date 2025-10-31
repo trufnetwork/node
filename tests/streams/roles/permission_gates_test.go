@@ -29,6 +29,14 @@ func TestPermissionGates(t *testing.T) {
 }
 
 func testStreamCreationPermissionGates(t *testing.T, ctx context.Context, platform *kwilTesting.Platform) {
+	// NOTE: With transaction fees implementation, the system:network_writer role changed from
+	// a permission gate to a fee exemption gate:
+	// - Users WITH role: Can create streams without fees (same as before)
+	// - Users WITHOUT role: Can create streams but must pay 2 TRUF per stream (breaking change)
+	//
+	// This test verifies that unauthorized users get "Insufficient balance" errors (not "permission denied")
+	// since they can create streams if they pay fees, but these test addresses have zero balance.
+
 	// Initialize platform deployer with a valid address
 	defaultDeployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
 	platform.Deployer = defaultDeployer.Bytes()
@@ -65,7 +73,7 @@ func testStreamCreationPermissionGates(t *testing.T, ctx context.Context, platfo
 
 	testCases := []permissionTestCase{
 		{
-			name:        "unauthorized user cannot create single stream",
+			name:        "unauthorized user cannot create single stream without paying fee",
 			platform:    unauthorizedPlatform,
 			userAddress: unauthorizedUser,
 			action: func(p *kwilTesting.Platform, user string) error {
@@ -73,10 +81,10 @@ func testStreamCreationPermissionGates(t *testing.T, ctx context.Context, platfo
 				return setup.UntypedCreateStream(ctx, p, streamID.String(), user, "primitive")
 			},
 			expectSuccess: false,
-			expectedError: "Caller does not have the required system:network_writer role",
+			expectedError: "Insufficient balance for stream creation",
 		},
 		{
-			name:        "unauthorized user cannot create multiple streams",
+			name:        "unauthorized user cannot create multiple streams without paying fee",
 			platform:    unauthorizedPlatform,
 			userAddress: unauthorizedUser,
 			action: func(p *kwilTesting.Platform, user string) error {
@@ -85,7 +93,7 @@ func testStreamCreationPermissionGates(t *testing.T, ctx context.Context, platfo
 				})
 			},
 			expectSuccess: false,
-			expectedError: "Caller does not have the required system:network_writer role",
+			expectedError: "Insufficient balance for stream creation", // Changed: non-role-members must pay fees
 		},
 		{
 			name:        "authorized user can create single stream",
@@ -121,7 +129,7 @@ func testStreamCreationPermissionGates(t *testing.T, ctx context.Context, platfo
 		})
 	}
 
-	t.Run("permission gates respond to role state changes", func(t *testing.T) {
+	t.Run("fee exemption responds to role state changes", func(t *testing.T) {
 		// Revoke the role
 		err := procedure.RevokeRoles(ctx, procedure.RevokeRolesInput{
 			Platform: managerPlatform,
@@ -131,10 +139,10 @@ func testStreamCreationPermissionGates(t *testing.T, ctx context.Context, platfo
 		})
 		require.NoError(t, err)
 
-		// Now verify the formerly authorized user cannot create a stream
+		// Now verify the formerly authorized user must pay fees (insufficient balance error)
 		streamID := util.GenerateStreamId("post_revocation")
 		err = setup.UntypedCreateStream(ctx, authorizedPlatform, streamID.String(), authorizedWriter, "primitive")
-		require.ErrorContains(t, err, "Caller does not have the required system:network_writer role", "User should not be able to create stream after role is revoked")
+		require.ErrorContains(t, err, "Insufficient balance for stream creation", "User should be charged fees after role is revoked")
 
 		// Re-grant the role
 		err = procedure.GrantRoles(ctx, procedure.GrantRolesInput{
@@ -145,10 +153,10 @@ func testStreamCreationPermissionGates(t *testing.T, ctx context.Context, platfo
 		})
 		require.NoError(t, err)
 
-		// Verify the user can create streams again
+		// Verify the user can create streams without fees after role is re-granted
 		streamID2 := util.GenerateStreamId("post_regrant")
 		err = setup.UntypedCreateStream(ctx, authorizedPlatform, streamID2.String(), authorizedWriter, "primitive")
-		require.NoError(t, err, "User should be able to create stream after role is re-granted")
+		require.NoError(t, err, "User should be able to create stream without fees after role is re-granted")
 	})
 }
 

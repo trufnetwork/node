@@ -43,8 +43,8 @@ func mustParseBigInt(s string) *big.Int {
 // TestStreamCreationFees is the main test suite for stream creation transaction fees
 func TestStreamCreationFees(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name:        "STREAM_FEE01_StreamCreationFees",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		Name:           "STREAM_FEE01_StreamCreationFees",
+		SeedStatements: migrations.GetSeedScriptStatements(), // Use SeedStatements for runtime bridge namespace replacement
 		FunctionTests: []kwilTesting.TestFunc{
 			setupTestEnvironment(t),
 			testExemptWalletNoFee(t),
