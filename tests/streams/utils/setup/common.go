@@ -2,6 +2,7 @@ package setup
 
 import (
 	"context"
+	"strings"
 
 	"github.com/pkg/errors"
 	"github.com/trufnetwork/kwil-db/common"
@@ -317,10 +318,12 @@ func removeMemberFromRoleBypass(ctx context.Context, platform *kwilTesting.Platf
 	// Direct SQL DELETE is idempotent - deleting a non-existent role membership is a no-op
 	sql := `DELETE FROM role_members WHERE owner = $owner AND role_name = $role_name AND wallet = $wallet`
 
+	// Normalize to lowercase to match AddMemberToRoleBypass behavior
+	// (role_members table stores lowercase values, checksummed addresses won't match otherwise)
 	err := platform.Engine.Execute(engineContext, platform.DB, sql, map[string]any{
-		"$owner":     owner,
-		"$role_name": roleName,
-		"$wallet":    wallet,
+		"$owner":     strings.ToLower(owner),
+		"$role_name": strings.ToLower(roleName),
+		"$wallet":    strings.ToLower(wallet),
 	}, func(row *common.Row) error {
 		return nil
 	})
