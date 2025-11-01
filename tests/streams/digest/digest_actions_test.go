@@ -34,7 +34,7 @@ var idempotencyTestStreamId = util.GenerateStreamId(idempotencyTestStreamName)
 func TestDigestActions(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "digest_actions_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			WithDigestTestSetup(testDigestBasicOHLCCalculation(t)),
 			WithDigestTestSetup(testGetDailyOHLCRawData(t)),
@@ -68,7 +68,7 @@ func TestDigestActions(t *testing.T) {
 func TestDigestActionsLeaderAuthorization(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "digest_actions_leader_authorization",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			WithSignerAndProvider(func(ctx context.Context, platform *kwilTesting.Platform) error {
 				// Create a secp256k1 leader key

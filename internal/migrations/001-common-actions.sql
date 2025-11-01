@@ -48,6 +48,8 @@ CREATE OR REPLACE ACTION create_stream(
 
 /**
  * create_streams: Creates multiple streams at once.
+ * Fee: 2 TRUF per stream created
+ * Exemption: system:network_writer role bypasses fee collection
  * Validates stream_id format, data provider address, and stream type.
  * Sets default metadata including type, owner, visibility, and readonly keys.
  */
@@ -55,20 +57,37 @@ CREATE OR REPLACE ACTION create_streams(
     $stream_ids TEXT[],
     $stream_types TEXT[]
 ) PUBLIC {
+    -- ===== FEE COLLECTION WITH ROLE EXEMPTION =====
     $lower_caller TEXT := LOWER(@caller);
-    -- Permission Check: Ensure caller has the 'system:network_writer' role.
-    $has_permission BOOL := false;
-    for $row in are_members_of('system', 'network_writer', ARRAY[$lower_caller]) {
-        if $row.wallet = $lower_caller AND $row.is_member {
-            $has_permission := true;
-            break;
+
+    -- Check if caller is exempt (has system:network_writer role)
+    $is_exempt BOOL := FALSE;
+    FOR $row IN are_members_of('system', 'network_writer', ARRAY[$lower_caller]) {
+        IF $row.wallet = $lower_caller AND $row.is_member {
+            $is_exempt := TRUE;
+            BREAK;
         }
     }
-    if NOT $has_permission {
-        ERROR('Caller does not have the required system:network_writer role to create streams.');
-    }
 
-    -- Get caller's address (data provider) first
+    -- Collect fee only from non-exempt wallets (2 TRUF per stream)
+    IF NOT $is_exempt {
+        $fee_per_stream := 2000000000000000000::NUMERIC(78, 0); -- 2 TRUF with 18 decimals
+        $num_streams := array_length($stream_ids);
+        $total_fee := $fee_per_stream * $num_streams::NUMERIC(78, 0);
+
+        $caller_balance := ethereum_bridge.balance(@caller);
+
+        IF $caller_balance < $total_fee {
+            ERROR('Insufficient balance for stream creation. Required: ' || ($num_streams * 2)::TEXT || ' TRUF for ' || $num_streams::TEXT || ' stream(s)');
+        }
+
+        $leader_addr TEXT := encode(@leader_sender, 'hex')::TEXT;
+        ethereum_bridge.transfer($leader_addr, $total_fee);
+    }
+    -- ===== END FEE COLLECTION =====
+
+    -- ===== STREAM CREATION LOGIC =====
+    -- Get caller's address (data provider)
     $data_provider TEXT := $lower_caller;
 
     -- Check if caller is a valid ethereum address

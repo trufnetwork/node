@@ -32,7 +32,7 @@ func TestStreamCacheBaseTimeVariants(t *testing.T) {
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "stream_cache_base_time_variants",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			runStreamCacheBaseTimeVariants(t, cacheConfig, baseStreamID, explicitBaseTime),
 		},

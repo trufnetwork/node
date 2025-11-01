@@ -46,7 +46,7 @@ func TestQUERY04Metadata(t *testing.T) {
 			WithMetadataTestSetup(testListMetadataByHeightInvalidRange(t, primitiveContractInfo)),
 			WithMetadataTestSetup(testListMetadataByHeightInvalidPagination(t, primitiveContractInfo)),
 		},
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 	}, testutils.GetTestOptionsWithCache())
 }
 

@@ -24,7 +24,7 @@ var (
 func TestIndexChange(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "index_change_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			withTestIndexChangeSetup(testIndexChange(t)),
 			withTestIndexChangeSetup(testYoYIndexChange(t)),

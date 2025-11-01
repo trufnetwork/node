@@ -23,7 +23,7 @@ import (
 func TestPendingPruneDaysEnqueue(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "pending_prune_days_enqueue_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testPendingPruneDays(t),
 		},
@@ -34,7 +34,7 @@ func TestPendingPruneDaysEnqueue(t *testing.T) {
 func TestPendingPruneDaysEnqueue_Truflation(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "pending_prune_days_enqueue_truflation_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testPendingPruneDaysTruflation(t),
 		},

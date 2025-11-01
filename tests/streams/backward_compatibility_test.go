@@ -15,7 +15,7 @@ import (
 func TestBackwardCompatibility(t *testing.T) {
 	testutils.RunSchemaTest(t, kwiltesting.SchemaTest{
 		Name:        "backward_compatibility_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwiltesting.TestFunc{
 			testBackwardCompatibilityFunc(t),
 		},

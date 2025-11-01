@@ -24,7 +24,7 @@ import (
 func TestSTREAM_EXISTS_BATCH01_Direct(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "stream_exists_batch_direct_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testStreamExistsBatchDirect(t),
 		},

@@ -32,7 +32,7 @@ func TestComplexComposed(t *testing.T) {
 	cacheConfig := testutils.SimpleCache(complexComposedDeployer.Address(), "*")
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "complex_composed_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			WithTestSetup(wrapTestWithCacheModes(t, "ComplexComposedRecord", testComplexComposedRecord)),
 			WithTestSetup(wrapTestWithCacheModes(t, "ComplexComposedIndex", testComplexComposedIndex)),

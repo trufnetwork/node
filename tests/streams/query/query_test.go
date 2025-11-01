@@ -52,7 +52,7 @@ var primitiveChildStreamId = util.GenerateStreamId(primitiveChildStreamName)
 func TestQueryStream(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "query_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			WithQueryTestSetup(testQUERY01_InsertAndGetRecord(t)),
 			WithQueryTestSetup(testQUERY06_GetRecordWithFutureDate(t)),

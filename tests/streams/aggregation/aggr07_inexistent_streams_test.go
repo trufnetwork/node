@@ -29,7 +29,7 @@ func TestAGGR07_InexistentStreamsRejected(t *testing.T) {
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr07_inexistent_streams_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			wrapTestWithCacheModes(t, "AGGR07_InexistentStreams", testAGGR07_InexistentStreams),
 		},

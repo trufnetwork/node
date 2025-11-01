@@ -34,7 +34,7 @@ func TestAGGR01_BasicAggregation(t *testing.T) {
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr01_basic_aggregation_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			wrapTestWithCacheModes(t, "AGGR01_BasicAggregation", testAGGR01_BasicAggregation),
 		},

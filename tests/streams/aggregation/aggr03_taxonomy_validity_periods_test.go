@@ -37,7 +37,7 @@ func TestAGGR03_TaxonomyValidityPeriods(t *testing.T) {
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr03_taxonomy_validity_periods_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			wrapTestWithCacheModes(t, "AGGR03_TaxonomyValidityPeriods", testAGGR03_TaxonomyValidityPeriods),
 		},

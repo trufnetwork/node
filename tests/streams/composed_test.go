@@ -26,7 +26,7 @@ var (
 func TestComposed(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "composed_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testComposedLastAvailable(t),
 			testCOMPOSED01SetTaxonomyWithValidData(t),
