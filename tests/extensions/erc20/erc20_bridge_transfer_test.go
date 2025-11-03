@@ -44,7 +44,7 @@ func TestERC20BridgeTransferBalances(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "0", balanceB, "userB should have zero balance initially")
 
-		// Step 2: Transfer half amount from userA to userB using extension method
+		// Step 2: Transfer half amount from userA to userB
 		engineCtx := engCtx(ctx, platform, TestUserA, 2, false)
 
 		// transfer expects amount as numeric(78,0)
