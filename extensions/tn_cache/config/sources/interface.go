@@ -32,6 +32,7 @@ type StreamSpec struct {
 	StreamID        string `json:"stream_id"`                  // Stream ID or "*" for provider-wide
 	CronSchedule    string `json:"cron_schedule"`              // Standard cron expression
 	From            *int64 `json:"from,omitempty"`             // Optional start timestamp
+	BaseTime        *int64 `json:"base_time,omitempty"`        // Optional base_time variant
 	IncludeChildren bool   `json:"include_children,omitempty"` // Include children of composed streams (default: false)
 	Source          string `json:"-"`                          // For debugging: "inline", "file:path.csv"
 }

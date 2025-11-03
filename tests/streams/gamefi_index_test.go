@@ -100,7 +100,7 @@ var (
 func TestGamefiIndex(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "gamefi_index_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			WithGamefiTestSetup(testGamefiIndexCalculation(t)),
 			WithGamefiProportionalTestSetup(testGamefiIndexProportionalCalculation(t)),

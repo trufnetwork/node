@@ -241,9 +241,9 @@ func TestBench(t *testing.T) {
 		groupStartTime := time.Now()
 
 		schemaTest := kwilTesting.SchemaTest{
-			Name:          groupName,
-			FunctionTests: groupOfTests,
-			SeedScripts:   migrations.GetSeedScriptPaths(),
+			Name:           groupName,
+			FunctionTests:  groupOfTests,
+			SeedStatements: migrations.GetSeedScriptStatements(),
 		}
 
 		t.Run(schemaTest.Name, func(t *testing.T) {

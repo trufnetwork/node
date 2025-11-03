@@ -318,6 +318,7 @@ func (s *CacheScheduler) storeStreamConfigs(ctx context.Context, directives []co
 		streamConfig := internal.StreamCacheConfig{
 			DataProvider:              directive.DataProvider,
 			StreamID:                  directive.StreamID,
+			BaseTime:                  directive.BaseTime,
 			FromTimestamp:             fromTimestamp,
 			CacheRefreshedAtTimestamp: 0, // Will be set on first refresh
 			CacheHeight:               0, // Will be set on first refresh
@@ -727,27 +728,33 @@ func (s *CacheScheduler) registerRefreshJob(schedule string) error {
 // UpdateGaugeMetrics updates the gauge metrics for active streams and total cached events
 func (s *CacheScheduler) UpdateGaugeMetrics(ctx context.Context) {
 	// Query active streams and event counts
-	activeStreams := 0
-	totalEvents := int64(0)
-
+	type streamKey struct {
+		provider string
+		stream   string
+	}
+	streamTotals := make(map[streamKey]int64)
 	rows, err := s.cacheDB.QueryCachedStreamsWithCounts(ctx)
 	if err != nil {
 		s.logger.Warn("failed to query cached streams for metrics", "error", err)
 		return
 	}
 
-	// Clear previous event counts
-	// Record new counts per stream
 	for _, row := range rows {
-		if row.EventCount > 0 {
-			activeStreams++
-			totalEvents += row.EventCount
-			// Update per-stream event count
-			s.metrics.RecordCacheSize(ctx, row.DataProvider, row.StreamID, row.EventCount)
-		}
+		key := streamKey{provider: row.DataProvider, stream: row.StreamID}
+		streamTotals[key] += row.EventCount
 	}
 
-	// Update active streams gauge
+	activeStreams := 0
+	for key, total := range streamTotals {
+		if total < 0 {
+			total = 0
+		}
+		if total > 0 {
+			activeStreams++
+		}
+		s.metrics.RecordCacheSize(ctx, key.provider, key.stream, total)
+	}
+
 	s.metrics.RecordStreamActive(ctx, activeStreams)
 }
 

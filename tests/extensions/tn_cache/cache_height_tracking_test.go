@@ -32,7 +32,7 @@ func TestCacheHeightTracking(t *testing.T) {
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "cache_height_tracking_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			func(ctx context.Context, platform *kwilTesting.Platform) error {
 				helper := cache.SetupCacheTest(ctx, platform, cacheConfig)

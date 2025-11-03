@@ -21,6 +21,7 @@ type StreamConfig struct {
 	StreamID        string `json:"stream_id"`
 	CronSchedule    string `json:"cron_schedule"`
 	From            *int64 `json:"from,omitempty"`
+	BaseTime        *int64 `json:"base_time,omitempty"`
 	IncludeChildren bool   `json:"include_children,omitempty"`
 }
 
@@ -61,6 +62,29 @@ func (c *CacheOptions) WithStream(dataProvider, streamID, cronSchedule string) *
 		DataProvider: dataProvider,
 		StreamID:     streamID,
 		CronSchedule: cronSchedule,
+	})
+	return c
+}
+
+// WithStreamBaseTime adds a stream with a fixed base_time variant.
+func (c *CacheOptions) WithStreamBaseTime(dataProvider, streamID, cronSchedule string, baseTime int64) *CacheOptions {
+	c.streams = append(c.streams, StreamConfig{
+		DataProvider: dataProvider,
+		StreamID:     streamID,
+		CronSchedule: cronSchedule,
+		BaseTime:     &baseTime,
+	})
+	return c
+}
+
+// WithStreamBaseTimeFromTime adds a stream with both base_time and from timestamp specified.
+func (c *CacheOptions) WithStreamBaseTimeFromTime(dataProvider, streamID, cronSchedule string, baseTime, fromTime int64) *CacheOptions {
+	c.streams = append(c.streams, StreamConfig{
+		DataProvider: dataProvider,
+		StreamID:     streamID,
+		CronSchedule: cronSchedule,
+		BaseTime:     &baseTime,
+		From:         &fromTime,
 	})
 	return c
 }

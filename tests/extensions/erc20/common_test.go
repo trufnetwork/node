@@ -28,7 +28,7 @@ const (
 
 // seedAndRun is a helper that handles test execution with proper isolation
 func seedAndRun(t TestingT, name string, fn kwilTesting.TestFunc) {
-	seedScripts := migrations.GetSeedScriptPaths()
+	seedStatements := migrations.GetSeedScriptStatements()
 
 	// Wrap the test function to add singleton reset and cleanup
 	wrappedFn := func(ctx context.Context, platform *kwilTesting.Platform) error {
@@ -50,9 +50,9 @@ func seedAndRun(t TestingT, name string, fn kwilTesting.TestFunc) {
 	}
 
 	testutils.RunSchemaTest(t.(*testing.T), kwilTesting.SchemaTest{
-		Name:          name,
-		SeedScripts:   seedScripts,
-		FunctionTests: []kwilTesting.TestFunc{wrappedFn},
+		Name:           name,
+		SeedStatements: seedStatements,
+		FunctionTests:  []kwilTesting.TestFunc{wrappedFn},
 	}, &testutils.Options{Options: testutils.GetTestOptions()})
 }
 

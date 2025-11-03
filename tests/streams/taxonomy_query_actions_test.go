@@ -33,7 +33,7 @@ const (
 func TestTaxonomyQueryActions(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "taxonomy_query_actions_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testListTaxonomiesByHeight(t),
 			testListTaxonomiesByHeightWithLatestOnly(t),

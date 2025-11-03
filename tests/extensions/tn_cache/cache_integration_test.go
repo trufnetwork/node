@@ -36,7 +36,7 @@ func TestCacheIntegration(t *testing.T) {
 	// Run the test with cache enabled using the new wrapper
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "cache_integration_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testCacheBasicFunctionality(t, cacheConfig),
 		},
@@ -85,17 +85,8 @@ func testCacheBasicFunctionality(t *testing.T, cacheConfig *testutils.CacheOptio
 
 		// The cache configuration was already provided via test options
 		// The extension should have already inserted the stream into cached_streams
-		// Let's verify it's there
-		result, err := platform.DB.Execute(ctx,
-			`SELECT COUNT(*) FROM ext_tn_cache.cached_streams
-			 WHERE data_provider = $1 AND stream_id = $2`,
-			deployer.Address(),
-			composedStreamId.String(),
-		)
-		require.NoError(t, err)
-		require.Len(t, result.Rows, 1, "Should have one row")
-		streamCount := result.Rows[0][0].(int64)
-		assert.Equal(t, int64(1), streamCount, "Stream should be configured in cache")
+		// Let's verify the sentinel variant is present
+		verifyCacheStreamExists(t, ctx, platform, deployer.Address(), composedStreamId.String())
 
 		// Query original data from TN
 		fromTime := int64(1)
@@ -124,7 +115,7 @@ func testCacheBasicFunctionality(t *testing.T, cacheConfig *testutils.CacheOptio
 		assert.Equal(t, 3, recordsCached, "should cache 3 records")
 
 		// Query cached data
-		result, err = platform.DB.Execute(ctx,
+		result, err := platform.DB.Execute(ctx,
 			`SELECT event_time, value FROM ext_tn_cache.cached_events 
 			 WHERE data_provider = $1 AND stream_id = $2 
 			 AND event_time >= $3 AND event_time <= $4
@@ -155,16 +146,8 @@ func testCacheBasicFunctionality(t *testing.T, cacheConfig *testutils.CacheOptio
 			assert.Equal(t, expectedValues[i], cachedValue, "Cached value should match expected aggregated value")
 		}
 
-		// Verify stream configuration exists
-		result, err = platform.DB.Execute(ctx,
-			`SELECT COUNT(*) FROM ext_tn_cache.cached_streams 
-			 WHERE data_provider = $1 AND stream_id = $2`,
-			deployer.Address(),
-			composedStreamId.String(),
-		)
-		require.NoError(t, err)
-		require.Len(t, result.Rows, 1, "Should have one row")
-		assert.Equal(t, int64(1), result.Rows[0][0].(int64), "Should have one cached stream configuration")
+		// Verify stream configuration still tracks the sentinel variant (may include additional base_time shards)
+		verifyCacheStreamExists(t, ctx, platform, deployer.Address(), composedStreamId.String())
 
 		// Test get_index cache functionality
 		baseTime := int64(1)
@@ -235,11 +218,169 @@ func TestCacheIncludeChildrenForNestedComposed(t *testing.T) {
 	// Run the test with cache enabled
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "cache_include_children_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testCacheIncludeChildren(t, cacheConfig),
 		},
 	}, testutils.GetTestOptionsWithCache(cacheConfig))
+}
+
+func TestCacheBaseTimeVariants(t *testing.T) {
+	streamID := util.GenerateStreamId("cache_test_base_time")
+	deployer := "0x0000000000000000000000000000000000000123"
+	directiveBaseTime := int64(1234)
+	minFrom := int64(1)
+	lateFrom := int64(2)
+
+	cacheConfig := testutils.NewCacheOptions().
+		WithEnabled().
+		WithMaxBlockAge(-1*time.Second).
+		WithStreamFromTime(deployer, streamID.String(), "0 0 31 2 *", minFrom).
+		WithStreamBaseTimeFromTime(deployer, streamID.String(), "0 0 31 2 *", directiveBaseTime, lateFrom)
+
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name:        "cache_base_time_variants_test",
+		SeedStatements: migrations.GetSeedScriptStatements(),
+		FunctionTests: []kwilTesting.TestFunc{
+			testCacheBaseTimeVariants(t, cacheConfig, streamID, directiveBaseTime, lateFrom),
+		},
+	}, testutils.GetTestOptionsWithCache(cacheConfig))
+}
+
+func testCacheBaseTimeVariants(t *testing.T, cacheConfig *testutils.CacheOptions, streamID util.StreamId, directiveBaseTime int64, baseRangeFrom int64) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		helper := cache.SetupCacheTest(ctx, platform, cacheConfig)
+		defer helper.Cleanup()
+
+		deployer, err := util.NewEthereumAddressFromString("0x0000000000000000000000000000000000000123")
+		require.NoError(t, err)
+
+		platform = procedure.WithSigner(platform, deployer.Bytes())
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
+		if err != nil {
+			return errors.Wrap(err, "error registering data provider")
+		}
+
+		err = setup.SetupComposedFromMarkdown(ctx, setup.MarkdownComposedSetupInput{
+			Platform: platform,
+			StreamId: streamID,
+			MarkdownData: `
+            | event_time | value_1 |
+            |------------|---------|
+            | 1          | 100     |
+            | 2          | 200     |
+            | 3          | 400     |
+            `,
+			Height: 1,
+		})
+		require.NoError(t, err)
+
+		recordsCached, err := tn_cache.GetTestHelper().RefreshAllStreamsSync(ctx)
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, recordsCached, 3, "expected cache refresh to process events")
+
+		result, err := platform.DB.Execute(ctx,
+			`SELECT base_time FROM ext_tn_cache.cached_streams
+             WHERE data_provider = $1 AND stream_id = $2
+             ORDER BY base_time NULLS FIRST`,
+			deployer.Address(),
+			streamID.String(),
+		)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 2, "expected sentinel and base_time variants to be cached")
+
+		configRows, err := platform.DB.Execute(ctx,
+			`SELECT base_time, from_timestamp, cache_refreshed_at_timestamp FROM ext_tn_cache.cached_streams WHERE data_provider = $1 AND stream_id = $2 ORDER BY base_time NULLS FIRST`,
+			deployer.Address(),
+			streamID.String(),
+		)
+		require.NoError(t, err)
+		require.Len(t, configRows.Rows, 2)
+		for _, row := range configRows.Rows {
+			if row[0] != nil {
+				refresh := row[2].(int64)
+				assert.Greater(t, refresh, int64(0), "base_time shard should be refreshed")
+			}
+		}
+
+		foundNil := false
+		foundBase := false
+		for _, row := range result.Rows {
+			if row[0] == nil {
+				foundNil = true
+				continue
+			}
+			baseTimeVal, ok := row[0].(int64)
+			require.True(t, ok, "base_time column should be int64 when not NULL")
+			if baseTimeVal == directiveBaseTime {
+				foundBase = true
+			}
+		}
+		assert.True(t, foundNil, "expected sentinel (NULL) cache shard")
+		assert.True(t, foundBase, "expected base_time-specific cache shard")
+
+		from := int64(1)
+		to := int64(3)
+
+		ext := tn_cache.RequireExtension(t)
+		cacheDB := ext.CacheDB()
+		require.NotNil(t, cacheDB, "cache DB should be available")
+
+		hasRecordData, err := cacheDB.HasCachedData(ctx, deployer.Address(), streamID.String(), nil, from, to)
+		require.NoError(t, err)
+		assert.True(t, hasRecordData, "record cache probe with sentinel shard should hit")
+
+		baseTimePtr := directiveBaseTime
+		indexRows, err := platform.DB.Execute(ctx,
+			`SELECT event_time FROM ext_tn_cache.cached_index_events WHERE data_provider = $1 AND stream_id = $2 AND base_time_key = $3 ORDER BY event_time`,
+			deployer.Address(),
+			streamID.String(),
+			baseTimePtr,
+		)
+		require.NoError(t, err)
+		require.NotZero(t, len(indexRows.Rows), "expected base_time index rows to be present")
+
+		hasIndexRange, err := cacheDB.HasCachedData(ctx, deployer.Address(), streamID.String(), &baseTimePtr, baseRangeFrom, to)
+		require.NoError(t, err)
+		assert.True(t, hasIndexRange, "index cache probe with explicit range should honor base_time shard")
+
+		hasIndexLatest, err := cacheDB.HasCachedData(ctx, deployer.Address(), streamID.String(), &baseTimePtr, baseRangeFrom, 0)
+		require.NoError(t, err)
+		assert.True(t, hasIndexLatest, "latest index cache probe should honor base_time shard")
+
+		useCache := true
+
+		// Verify sentinel query succeeds via cache
+		_, err = procedure.GetIndex(ctx, procedure.GetIndexInput{
+			Platform: platform,
+			StreamLocator: types.StreamLocator{
+				StreamId:     streamID,
+				DataProvider: deployer,
+			},
+			FromTime: &from,
+			ToTime:   &to,
+			Height:   1,
+			UseCache: &useCache,
+		})
+		require.NoError(t, err)
+
+		// Verify base_time-specific query succeeds via cache
+		_, err = procedure.GetIndex(ctx, procedure.GetIndexInput{
+			Platform: platform,
+			StreamLocator: types.StreamLocator{
+				StreamId:     streamID,
+				DataProvider: deployer,
+			},
+			FromTime: &from,
+			ToTime:   &to,
+			BaseTime: &baseTimePtr,
+			Height:   1,
+			UseCache: &useCache,
+		})
+		require.NoError(t, err)
+
+		return nil
+	}
 }
 
 func testCacheIncludeChildren(t *testing.T, cacheConfig *testutils.CacheOptions) func(ctx context.Context, platform *kwilTesting.Platform) error {
@@ -351,20 +492,36 @@ func testCacheIncludeChildren(t *testing.T, cacheConfig *testutils.CacheOptions)
 
 func verifyCacheStreamExists(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, dataProvider, streamId string) {
 	result, err := platform.DB.Execute(ctx,
-		`SELECT COUNT(*) FROM ext_tn_cache.cached_streams
+		`SELECT base_time FROM ext_tn_cache.cached_streams
 		 WHERE data_provider = $1 AND stream_id = $2`,
 		dataProvider,
 		streamId,
 	)
 	require.NoError(t, err)
-	require.Len(t, result.Rows, 1, "Should have one row")
-	count := result.Rows[0][0].(int64)
-	assert.Equal(t, int64(1), count, "Stream should exist in cache config")
+	require.NotEmpty(t, result.Rows, "Stream %s should have at least one cache config entry", streamId)
+
+	sentinelCount := 0
+	for _, row := range result.Rows {
+		require.Len(t, row, 1, "unexpected column count when verifying cache config for stream %s", streamId)
+		if row[0] == nil {
+			sentinelCount++
+			continue
+		}
+
+		switch row[0].(type) {
+		case int64, int32:
+			// Base-time specific variants are expected and validated elsewhere.
+		default:
+			require.Failf(t, "unexpected base_time type", "stream=%s type=%T", streamId, row[0])
+		}
+	}
+
+	assert.Equal(t, 1, sentinelCount, "Stream %s should have exactly one sentinel (NULL base_time) cache config entry", streamId)
 }
 
 func verifyChildStreamsInCache(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, dataProvider, childId1, childId2 string) {
 	result, err := platform.DB.Execute(ctx,
-		`SELECT stream_id FROM ext_tn_cache.cached_streams
+		`SELECT DISTINCT stream_id FROM ext_tn_cache.cached_streams
 		 WHERE data_provider = $1 AND stream_id IN ($2, $3)
 		 ORDER BY stream_id`,
 		dataProvider,

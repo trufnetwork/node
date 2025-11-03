@@ -35,7 +35,7 @@ import (
 func TestDatabaseSizeV2Actions(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "database_size_v2_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testGetDatabaseSizeV2(t),
 			testGetDatabaseSizeV2Pretty(t),

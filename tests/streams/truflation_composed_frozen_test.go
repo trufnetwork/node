@@ -31,7 +31,7 @@ var (
 func TestTruflationComposedFrozen(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "truflation_composed_frozen_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			setupTruflationFrozenComposedTest(testTruflationComposed1(t)),
 			setupTruflationFrozenComposedTest(testTruflationComposed2(t)),

@@ -34,7 +34,7 @@ var (
 func TestComprehensivePathIndependenceWithSharedPrimitive(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "comprehensive_path_independence_shared_primitive_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			setupComprehensiveSharedStreams(testComprehensivePathIndependenceSharedFunc(t)),
 		},

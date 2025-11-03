@@ -19,7 +19,7 @@ CREATE OR REPLACE ACTION sepolia_transfer($to_address TEXT, $amount TEXT) PUBLIC
 
 
 -- MAINNET TRANSFERS
-CREATE OR REPLACE ACTION mainnet_transfer($to_address TEXT, $amount TEXT) PUBLIC {
+CREATE OR REPLACE ACTION ethereum_transfer($to_address TEXT, $amount TEXT) PUBLIC {
   -- Validate Ethereum address format
   if NOT check_ethereum_address($to_address) {
     ERROR('Invalid Ethereum address format. Must be a valid Ethereum address: ' || $to_address);
@@ -31,6 +31,6 @@ CREATE OR REPLACE ACTION mainnet_transfer($to_address TEXT, $amount TEXT) PUBLIC
   }
 
   -- Execute transfer using the bridge extension
-  mainnet_bridge.transfer($to_address, $amount::NUMERIC(78, 0));
+  ethereum_bridge.transfer($to_address, $amount::NUMERIC(78, 0));
 };
 

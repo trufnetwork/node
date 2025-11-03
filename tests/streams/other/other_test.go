@@ -30,7 +30,7 @@ var defaultStreamLocator = types.StreamLocator{
 func TestAddressValidation(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "address_validation_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			func(ctx context.Context, platform *kwilTesting.Platform) error {
 				// Test valid address - should succeed
@@ -90,7 +90,7 @@ func TestAddressValidation(t *testing.T) {
 func TestStreamIDValidation(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "stream_id_validation_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			func(ctx context.Context, platform *kwilTesting.Platform) error {
 				// Test stream ID format validation
@@ -201,7 +201,7 @@ func TestStreamIDValidation(t *testing.T) {
 func TestAnyUserCanCreateStream(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "any_user_can_create_stream_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testAnyUserCanCreateStream(t),
 			testAnyUserCanCreateStream(t),
@@ -252,7 +252,7 @@ func testAnyUserCanCreateStream(t *testing.T) func(ctx context.Context, platform
 func TestMultipleStreamCreation(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "multiple_stream_creation_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testMultipleStreamCreation(t),
 		},

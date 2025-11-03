@@ -2,6 +2,7 @@ package setup
 
 import (
 	"context"
+	"strings"
 
 	"github.com/pkg/errors"
 	"github.com/trufnetwork/kwil-db/common"
@@ -227,6 +228,107 @@ func CreateDataProvider(ctx context.Context, platform *kwilTesting.Platform, add
 	}
 	if r.Error != nil {
 		return errors.Wrap(r.Error, "error in createDataProvider")
+	}
+
+	return nil
+}
+
+// CreateDataProviderWithoutRole registers a data provider WITHOUT granting the network_writer role.
+// This is useful for testing fee collection scenarios where the data provider should pay fees.
+//
+// Note: This function:
+// 1. Temporarily grants network_writer role to register the provider (required by create_data_provider action)
+// 2. Immediately revokes the role after registration
+// 3. Leaves the data provider registered but non-whitelisted (will pay fees)
+func CreateDataProviderWithoutRole(ctx context.Context, platform *kwilTesting.Platform, address string) error {
+	addr, err := util.NewEthereumAddressFromString(address)
+	if err != nil {
+		return errors.Wrap(err, "invalid data provider address")
+	}
+
+	// First, grant role temporarily (required to call create_data_provider)
+	err = AddMemberToRoleBypass(ctx, platform, "system", "network_writer", addr.Address())
+	if err != nil {
+		return errors.Wrap(err, "failed to grant temporary network_writer role")
+	}
+
+	// Register the data provider
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 1},
+		Signer:       addr.Bytes(),
+		Caller:       addr.Address(),
+		TxID:         platform.Txid(),
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext: txContext,
+	}
+
+	r, err := platform.Engine.Call(engineContext,
+		platform.DB,
+		"",
+		"create_data_provider",
+		[]any{addr.Address()},
+		func(row *common.Row) error {
+			return nil
+		},
+	)
+	if err != nil {
+		// Clean up: revoke the temporary role before returning error
+		_ = removeMemberFromRoleBypass(ctx, platform, "system", "network_writer", addr.Address())
+		return errors.Wrap(err, "error in create_data_provider")
+	}
+	if r.Error != nil {
+		// Clean up: revoke the temporary role before returning error
+		_ = removeMemberFromRoleBypass(ctx, platform, "system", "network_writer", addr.Address())
+		return errors.Wrap(r.Error, "error in create_data_provider")
+	}
+
+	// Now revoke the role so they have to pay fees
+	err = removeMemberFromRoleBypass(ctx, platform, "system", "network_writer", addr.Address())
+	if err != nil {
+		return errors.Wrap(err, "failed to revoke network_writer role")
+	}
+
+	return nil
+}
+
+// removeMemberFromRoleBypass revokes a role using direct SQL with OverrideAuthz.
+// This mirrors AddMemberToRoleBypass and uses direct SQL instead of calling revoke_roles
+// action because:
+// 1. Calling revoke_roles requires authorization (caller must be role owner or manager)
+// 2. Test setup doesn't guarantee proper authorization context
+// 3. This is a test utility following the same pattern as AddMemberToRoleBypass
+// 4. Using OverrideAuthz is the standard pattern for test role management
+func removeMemberFromRoleBypass(ctx context.Context, platform *kwilTesting.Platform, owner, roleName, wallet string) error {
+	txContext := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 0},
+		TxID:         platform.Txid(),
+		Signer:       []byte("system"),
+		Caller:       "0x0000000000000000000000000000000000000000",
+	}
+
+	engineContext := &common.EngineContext{
+		TxContext:     txContext,
+		OverrideAuthz: true, // Skip authorization checks - this is a test utility
+	}
+
+	// Direct SQL DELETE is idempotent - deleting a non-existent role membership is a no-op
+	sql := `DELETE FROM role_members WHERE owner = $owner AND role_name = $role_name AND wallet = $wallet`
+
+	// Normalize to lowercase to match AddMemberToRoleBypass behavior
+	// (role_members table stores lowercase values, checksummed addresses won't match otherwise)
+	err := platform.Engine.Execute(engineContext, platform.DB, sql, map[string]any{
+		"$owner":     strings.ToLower(owner),
+		"$role_name": strings.ToLower(roleName),
+		"$wallet":    strings.ToLower(wallet),
+	}, func(row *common.Row) error {
+		return nil
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to remove role member")
 	}
 
 	return nil

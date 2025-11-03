@@ -107,7 +107,7 @@ func TestIncludeChildrenFunctionality(t *testing.T) {
 				name:          "invalid_value",
 				csvContent:    `0x1234567890abcdef1234567890abcdef12345678,ststream1,0 0 * * *,1719849600,maybe`,
 				expectError:   true,
-				errorContains: "invalid include_children value",
+				errorContains: "invalid include_children/base_time value",
 			},
 		}
 
@@ -354,6 +354,53 @@ func TestConfigValidation(t *testing.T) {
 				assert.NotNil(t, result.Sources, "Sources should not be nil")
 			}
 		})
+	}
+}
+
+func TestBaseTimeDirectivePropagation(t *testing.T) {
+	rawConfig := tnConfig.RawConfig{
+		Enabled: "true",
+		StreamsInline: `[
+  {
+    "data_provider": "0x1234567890abcdef1234567890abcdef12345678",
+    "stream_id": "ststream1",
+    "cron_schedule": "0 * * * *",
+    "base_time": 100
+  },
+  {
+    "data_provider": "0x1234567890abcdef1234567890abcdef12345678",
+    "stream_id": "ststream1",
+    "cron_schedule": "0 * * * *",
+    "base_time": 200
+  },
+  {
+    "data_provider": "0x1234567890abcdef1234567890abcdef12345678",
+    "stream_id": "ststream1",
+    "cron_schedule": "0 * * * *"
+  }
+]`,
+	}
+
+	loader := tnConfig.NewLoader(log.DiscardLogger)
+	processedConfig, err := loader.LoadAndProcess(context.Background(), rawConfig)
+	require.NoError(t, err)
+	require.Len(t, processedConfig.Directives, 3)
+
+	seenValues := make(map[int64]bool)
+	seenNil := false
+	for _, directive := range processedConfig.Directives {
+		if directive.BaseTime == nil {
+			seenNil = true
+			continue
+		}
+		seenValues[*directive.BaseTime] = true
+	}
+
+	require.True(t, seenNil, "expected directive with nil base_time")
+	for _, value := range []int64{100, 200} {
+		if !seenValues[value] {
+			t.Fatalf("expected directive with base_time %d", value)
+		}
 	}
 }
 

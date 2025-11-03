@@ -52,13 +52,15 @@ func (s *CacheScheduler) resolveStreamSpecsSingle(ctx context.Context, directive
 				if len(parts) == 2 {
 					childProvider, childStreamID := parts[0], parts[1]
 					childSpec := config.CacheDirective{
-						ID:              fmt.Sprintf("%s_%s_%s", childProvider, childStreamID, "child_resolved"),
+						ID:              fmt.Sprintf("%s_%s_%s_%s", childProvider, childStreamID, formatBaseTime(directive.BaseTime), "child_resolved"),
 						Type:            config.DirectiveSpecific,
 						DataProvider:    childProvider,
 						StreamID:        childStreamID,
+						BaseTime:        directive.BaseTime,
 						Schedule:        directive.Schedule,
 						TimeRange:       directive.TimeRange,
 						IncludeChildren: false, // Avoid recursive resolution
+						Metadata:        directive.Metadata,
 					}
 					resolvedSpecs = append(resolvedSpecs, childSpec)
 				}
@@ -92,12 +94,14 @@ func (s *CacheScheduler) resolveStreamSpecsSingle(ctx context.Context, directive
 		// Convert each found stream to a concrete directive
 		for _, streamID := range composedStreams {
 			streamSpec := config.CacheDirective{
-				ID:           fmt.Sprintf("%s_%s_%s", directive.DataProvider, streamID, "resolved"),
+				ID:           fmt.Sprintf("%s_%s_%s_%s", directive.DataProvider, streamID, formatBaseTime(directive.BaseTime), "resolved"),
 				Type:         config.DirectiveSpecific, // Convert to specific
 				DataProvider: directive.DataProvider,
 				StreamID:     streamID,
+				BaseTime:     directive.BaseTime,
 				Schedule:     directive.Schedule,
 				TimeRange:    directive.TimeRange,
+				Metadata:     directive.Metadata,
 			}
 			resolvedSpecs = append(resolvedSpecs, streamSpec)
 		}
@@ -143,13 +147,15 @@ func (s *CacheScheduler) resolveStreamSpecs(ctx context.Context, directives []co
 					if len(parts) == 2 {
 						childProvider, childStreamID := parts[0], parts[1]
 						childSpec := config.CacheDirective{
-							ID:              fmt.Sprintf("%s_%s_%s", childProvider, childStreamID, "child_resolved"),
+							ID:              fmt.Sprintf("%s_%s_%s_%s", childProvider, childStreamID, formatBaseTime(directive.BaseTime), "child_resolved"),
 							Type:            config.DirectiveSpecific,
 							DataProvider:    childProvider,
 							StreamID:        childStreamID,
+							BaseTime:        directive.BaseTime,
 							Schedule:        directive.Schedule,
 							TimeRange:       directive.TimeRange,
 							IncludeChildren: false, // Avoid recursive resolution
+							Metadata:        directive.Metadata,
 						}
 						resolvedSpecs = append(resolvedSpecs, childSpec)
 					}
@@ -183,12 +189,14 @@ func (s *CacheScheduler) resolveStreamSpecs(ctx context.Context, directives []co
 			// Convert each found stream to a concrete directive
 			for _, streamID := range composedStreams {
 				streamSpec := config.CacheDirective{
-					ID:           fmt.Sprintf("%s_%s_%s", directive.DataProvider, streamID, "resolved"),
+					ID:           fmt.Sprintf("%s_%s_%s_%s", directive.DataProvider, streamID, formatBaseTime(directive.BaseTime), "resolved"),
 					Type:         config.DirectiveSpecific, // Convert to specific
 					DataProvider: directive.DataProvider,
 					StreamID:     streamID,
+					BaseTime:     directive.BaseTime,
 					Schedule:     directive.Schedule,
 					TimeRange:    directive.TimeRange,
+					Metadata:     directive.Metadata,
 				}
 				resolvedSpecs = append(resolvedSpecs, streamSpec)
 			}
@@ -203,13 +211,20 @@ func (s *CacheScheduler) resolveStreamSpecs(ctx context.Context, directives []co
 	return s.deduplicateResolvedSpecs(resolvedSpecs), nil
 }
 
+func formatBaseTime(baseTime *int64) string {
+	if baseTime == nil {
+		return "default_base"
+	}
+	return fmt.Sprintf("%d", *baseTime)
+}
+
 // deduplicateResolvedSpecs prevents redundant caching when patterns overlap
 func (s *CacheScheduler) deduplicateResolvedSpecs(specs []config.CacheDirective) []config.CacheDirective {
 	// Track seen streams by composite key
 	streamMap := make(map[string]config.CacheDirective)
 
 	for _, spec := range specs {
-		key := fmt.Sprintf("%s:%s", spec.DataProvider, spec.StreamID)
+		key := fmt.Sprintf("%s:%s:%s", spec.DataProvider, spec.StreamID, formatBaseTime(spec.BaseTime))
 
 		if existing, exists := streamMap[key]; exists {
 			// Earlier 'from' = more historical data to cache
@@ -227,6 +242,7 @@ func (s *CacheScheduler) deduplicateResolvedSpecs(specs []config.CacheDirective)
 					s.logger.Warn("duplicate stream with same 'from' timestamp - keeping first occurrence",
 						"provider", spec.DataProvider,
 						"stream", spec.StreamID,
+						"base_time", formatBaseTime(spec.BaseTime),
 						"kept_schedule", existing.Schedule.CronExpr,
 						"discarded_schedule", spec.Schedule.CronExpr,
 						"from_timestamp", existingFrom)
@@ -234,6 +250,7 @@ func (s *CacheScheduler) deduplicateResolvedSpecs(specs []config.CacheDirective)
 					s.logger.Warn("duplicate stream found - keeping earlier 'from' timestamp",
 						"provider", spec.DataProvider,
 						"stream", spec.StreamID,
+						"base_time", formatBaseTime(spec.BaseTime),
 						"kept_from", newFrom,
 						"kept_schedule", spec.Schedule.CronExpr,
 						"discarded_from", existingFrom,
@@ -244,6 +261,7 @@ func (s *CacheScheduler) deduplicateResolvedSpecs(specs []config.CacheDirective)
 				s.logger.Warn("duplicate stream found - keeping earlier 'from' timestamp",
 					"provider", spec.DataProvider,
 					"stream", spec.StreamID,
+					"base_time", formatBaseTime(spec.BaseTime),
 					"kept_from", existingFrom,
 					"kept_schedule", existing.Schedule.CronExpr,
 					"discarded_from", newFrom,
@@ -451,13 +469,13 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 	}
 
 	for _, dir := range s.resolvedDirectives {
-		key := fmt.Sprintf("%s:%s", dir.DataProvider, dir.StreamID)
+		key := fmt.Sprintf("%s:%s:%s", dir.DataProvider, dir.StreamID, formatBaseTime(dir.BaseTime))
 		oldSet[key] = true
 	}
 	s.resolutionMu.RUnlock()
 
 	for _, dir := range newResolvedSpecs {
-		key := fmt.Sprintf("%s:%s", dir.DataProvider, dir.StreamID)
+		key := fmt.Sprintf("%s:%s:%s", dir.DataProvider, dir.StreamID, formatBaseTime(dir.BaseTime))
 		newSet[key] = true
 	}
 
@@ -477,13 +495,13 @@ func (s *CacheScheduler) performGlobalResolution(ctx context.Context) error {
 	// Record metrics for discovered and removed streams
 	for _, key := range added {
 		parts := strings.Split(key, ":")
-		if len(parts) == 2 {
+		if len(parts) >= 2 {
 			s.metrics.RecordResolutionStreamDiscovered(ctx, parts[0], parts[1])
 		}
 	}
 	for _, key := range removed {
 		parts := strings.Split(key, ":")
-		if len(parts) == 2 {
+		if len(parts) >= 2 {
 			s.metrics.RecordResolutionStreamRemoved(ctx, parts[0], parts[1])
 		}
 	}
@@ -528,7 +546,7 @@ func (s *CacheScheduler) updateCachedStreamsTable(ctx context.Context, resolvedS
 	// Build sets for comparison
 	currentSet := make(map[string]internal.StreamCacheConfig)
 	for _, config := range currentConfigs {
-		key := fmt.Sprintf("%s:%s", config.DataProvider, config.StreamID)
+		key := fmt.Sprintf("%s:%s:%s", config.DataProvider, config.StreamID, formatBaseTime(config.BaseTime))
 		currentSet[key] = config
 	}
 
@@ -537,7 +555,7 @@ func (s *CacheScheduler) updateCachedStreamsTable(ctx context.Context, resolvedS
 	newSet := make(map[string]bool)
 
 	for _, spec := range resolvedSpecs {
-		key := fmt.Sprintf("%s:%s", spec.DataProvider, spec.StreamID)
+		key := fmt.Sprintf("%s:%s:%s", spec.DataProvider, spec.StreamID, formatBaseTime(spec.BaseTime))
 		newSet[key] = true
 
 		// Preserve refresh data if stream already exists
@@ -555,6 +573,7 @@ func (s *CacheScheduler) updateCachedStreamsTable(ctx context.Context, resolvedS
 		newConfigs = append(newConfigs, internal.StreamCacheConfig{
 			DataProvider:              spec.DataProvider,
 			StreamID:                  spec.StreamID,
+			BaseTime:                  spec.BaseTime,
 			FromTimestamp:             fromTimestamp,
 			CacheRefreshedAtTimestamp: cacheRefreshedAtTimestamp,
 			CacheHeight:               cacheHeight,

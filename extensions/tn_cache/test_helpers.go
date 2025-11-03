@@ -100,31 +100,15 @@ func (TestHelper) RefreshAllStreamsSync(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("failed to trigger resolution: %w", err)
 	}
 
-	// Now get all current cached streams
-	cacheDB := ext.CacheDB()
-	if cacheDB == nil {
-		return 0, fmt.Errorf("failed to get cache database connection")
-	}
-
 	directives := scheduler.GetCurrentDirectives()
 
 	totalRecords := 0
 	for _, directive := range directives {
-		if err := scheduler.RefreshStreamData(ctx, directive); err != nil {
+		count, err := scheduler.RefreshStreamData(ctx, directive)
+		if err != nil {
 			return 0, fmt.Errorf("failed to refresh stream %s:%s: %w", directive.DataProvider, directive.StreamID, err)
 		}
-
-		// Update count - re-query single stream count
-		updatedInfos, err := cacheDB.QueryCachedStreamsWithCounts(ctx)
-		if err != nil {
-			return 0, fmt.Errorf("failed to query updated counts: %w", err)
-		}
-		for _, updated := range updatedInfos {
-			if updated.DataProvider == directive.DataProvider && updated.StreamID == directive.StreamID {
-				totalRecords += int(updated.EventCount)
-				break
-			}
-		}
+		totalRecords += count
 	}
 
 	return totalRecords, nil

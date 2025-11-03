@@ -23,7 +23,7 @@ var primitiveStreamId = util.GenerateStreamId(primitiveStreamName)
 func TestPrimitiveStream(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "primitive_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testPRIMITIVE01_DataInsertion(t),
 		},

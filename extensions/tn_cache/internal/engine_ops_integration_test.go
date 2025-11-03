@@ -32,7 +32,7 @@ func generateTestStreamID(prefix string) util.StreamId {
 func TestEngineOperations_Integration(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "engine_ops_integration_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testEngineOperationsIntegration(t),
 		},
@@ -331,7 +331,7 @@ func testEngineOperationsIntegration(t *testing.T) func(ctx context.Context, pla
 func TestEngineOperations_RealTimeData(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "tn_ops_realtime_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testEngineOperationsRealTime(t),
 		},

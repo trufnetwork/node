@@ -25,7 +25,7 @@ var (
 func TestDatabaseSize(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "database_size_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			WithTestDatabaseSizeSetup(testDatabaseSize(t)),
 		},

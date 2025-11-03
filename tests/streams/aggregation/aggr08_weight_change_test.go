@@ -41,7 +41,7 @@ func TestAGGR08_WeightChangeEventPoints(t *testing.T) {
 
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:        "aggr08_weight_change_event_points_test",
-		SeedScripts: migrations.GetSeedScriptPaths(),
+		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			wrapTestWithCacheModes(t, "AGGR08_WeightChangeEventPoints", testAGGR08_WeightChangeEventPoints),
 		},
