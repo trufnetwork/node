@@ -21,7 +21,7 @@ CREATE OR REPLACE ACTION sepolia_transfer($to_address TEXT, $amount TEXT) PUBLIC
   }
 
   $leader_addr TEXT := encode(@leader_sender, 'hex')::TEXT;
-  sepolia_bridge.transfer($leader_addr, $total_fee);
+  sepolia_bridge.transfer($leader_addr, $fee);
 
   -- Execute transfer using the bridge extension
   sepolia_bridge.transfer($to_address, $amount::NUMERIC(78, 0));
