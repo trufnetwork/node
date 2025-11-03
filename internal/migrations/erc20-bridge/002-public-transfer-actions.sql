@@ -13,6 +13,17 @@ CREATE OR REPLACE ACTION sepolia_transfer($to_address TEXT, $amount TEXT) PUBLIC
     ERROR('Transfer amount must be positive');
   }
 
+  -- Fee
+  $fee := 1000000000000000000::NUMERIC(78, 0); -- 1 TRUF with 18 decimals
+  $caller_balance := COALESCE(sepolia_bridge.balance(@caller), 0::NUMERIC(78, 0));
+
+  IF ($caller_balance < ($amount::NUMERIC(78, 0) + $fee)) {
+    ERROR('Insufficient balance for transfer. Requires an extra 1 TRUF fee on top of the transfer amount');
+  }
+
+  $leader_addr TEXT := encode(@leader_sender, 'hex')::TEXT;
+  sepolia_bridge.transfer($leader_addr, $fee);
+
   -- Execute transfer using the bridge extension
   sepolia_bridge.transfer($to_address, $amount::NUMERIC(78, 0));
 };
@@ -29,6 +40,17 @@ CREATE OR REPLACE ACTION ethereum_transfer($to_address TEXT, $amount TEXT) PUBLI
   if $amount::NUMERIC(78, 0) <= 0::NUMERIC(78, 0) {
     ERROR('Transfer amount must be positive');
   }
+
+  -- Fee
+  $fee := 1000000000000000000::NUMERIC(78, 0); -- 1 TRUF with 18 decimals
+  $caller_balance := COALESCE(ethereum_bridge.balance(@caller), 0::NUMERIC(78, 0));
+
+  IF ($caller_balance < ($amount::NUMERIC(78, 0) + $fee)) {
+    ERROR('Insufficient balance for transfer. Requires an extra 1 TRUF fee on top of the transfer amount');
+  }
+
+  $leader_addr TEXT := encode(@leader_sender, 'hex')::TEXT;
+  ethereum_bridge.transfer($leader_addr, $fee);
 
   -- Execute transfer using the bridge extension
   ethereum_bridge.transfer($to_address, $amount::NUMERIC(78, 0));
