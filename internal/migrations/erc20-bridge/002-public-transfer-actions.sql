@@ -15,9 +15,9 @@ CREATE OR REPLACE ACTION sepolia_transfer($to_address TEXT, $amount TEXT) PUBLIC
 
   -- Fee
   $fee := 1000000000000000000::NUMERIC(78, 0); -- 1 TRUF with 18 decimals
-  $caller_balance := sepolia_bridge.balance(@caller);
+  $caller_balance := COALESCE(sepolia_bridge.balance(@caller), 0::NUMERIC(78, 0));
 
-  IF ($caller_balance - $amount::NUMERIC(78, 0)) < $fee {
+  IF ($caller_balance < ($amount::NUMERIC(78, 0) + $fee)) < $fee {
     ERROR('Insufficient balance for transfer. Requires an extra 1 TRUF fee on top of the transfer amount');
   }
 
@@ -43,9 +43,9 @@ CREATE OR REPLACE ACTION ethereum_transfer($to_address TEXT, $amount TEXT) PUBLI
 
   -- Fee
   $fee := 1000000000000000000::NUMERIC(78, 0); -- 1 TRUF with 18 decimals
-  $caller_balance := ethereum_bridge.balance(@caller);
+  $caller_balance := COALESCE(ethereum_bridge.balance(@caller), 0::NUMERIC(78, 0));
 
-  IF ($caller_balance - $amount::NUMERIC(78, 0)) < $fee {
+  IF ($caller_balance < ($amount::NUMERIC(78, 0) + $fee)) {
     ERROR('Insufficient balance for transfer. Requires an extra 1 TRUF fee on top of the transfer amount');
   }
 
