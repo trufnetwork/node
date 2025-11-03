@@ -31,6 +31,8 @@ func TestERC20BridgeTransferBalances(t *testing.T) {
 		require.NoError(t, err)
 
 		// Step 1: Inject deposit for userA
+		// Note: Extension's transfer() method doesn't have the 1 TRUF fee
+		// The fee is only in the public SQL actions (sepolia_transfer/ethereum_transfer)
 		err = testerc20.InjectERC20Transfer(ctx, platform, TestChain, TestEscrowA, TestERC20, TestUserA, TestUserA, TestAmount2, 10, nil)
 		require.NoError(t, err)
 
@@ -44,7 +46,8 @@ func TestERC20BridgeTransferBalances(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "0", balanceB, "userB should have zero balance initially")
 
-		// Step 2: Transfer half amount from userA to userB
+		// Step 2: Transfer half amount from userA to userB using extension method
+		// Note: This uses the extension's transfer() method directly, which doesn't charge the 1 TRUF fee
 		engineCtx := engCtx(ctx, platform, TestUserA, 2, false)
 
 		// transfer expects amount as numeric(78,0)

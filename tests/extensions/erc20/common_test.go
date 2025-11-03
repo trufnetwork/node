@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/trufnetwork/kwil-db/common"
+	"github.com/trufnetwork/kwil-db/core/crypto"
+	coreauth "github.com/trufnetwork/kwil-db/core/crypto/auth"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
@@ -22,6 +24,8 @@ const (
 	TestERC20          = "0x2222222222222222222222222222222222222222"
 	TestUserA          = "0xabc0000000000000000000000000000000000001"
 	TestUserB          = "0xabc0000000000000000000000000000000000002"
+	TestUserC          = "0xabc0000000000000000000000000000000000003"
+	TestUserD          = "0xabc0000000000000000000000000000000000004"
 	TestAmount1        = "1000000000000000000" // 1.0 tokens
 	TestAmount2        = "2000000000000000000" // 2.0 tokens
 )
@@ -58,13 +62,22 @@ func seedAndRun(t TestingT, name string, fn kwilTesting.TestFunc) {
 
 // engCtx creates a standard EngineContext for testing
 func engCtx(ctx context.Context, platform *kwilTesting.Platform, caller string, height int64, overrideAuthz bool) *common.EngineContext {
+	// Generate a leader public key for fee collection
+	// This is required for actions that transfer fees to @leader_sender
+	_, leaderPubGeneric, err := crypto.GenerateSecp256k1Key(nil)
+	if err != nil {
+		panic(fmt.Sprintf("failed to generate leader key: %v", err))
+	}
+	leaderPub := leaderPubGeneric.(*crypto.Secp256k1PublicKey)
+
 	return &common.EngineContext{
 		TxContext: &common.TxContext{
-			Ctx:          ctx,
-			BlockContext: &common.BlockContext{Height: height},
-			Signer:       platform.Deployer,
-			Caller:       caller,
-			TxID:         platform.Txid(),
+			Ctx:           ctx,
+			BlockContext:  &common.BlockContext{Height: height, Proposer: leaderPub},
+			Signer:        platform.Deployer,
+			Caller:        caller,
+			TxID:          platform.Txid(),
+			Authenticator: coreauth.EthPersonalSignAuth,
 		},
 		OverrideAuthz: overrideAuthz,
 	}

@@ -30,25 +30,28 @@ func TestSepoliaTransferActions(t *testing.T) {
 		require.NoError(t, err)
 
 		// Credit initial balance to TestUserA using configured escrow
+		// Need 3.0 TRUF: 1.0 for transfer + 1.0 fee + 1.0 remaining
+		initialAmount := "3000000000000000000" // 3.0 TRUF
 		err = testerc20.InjectERC20Transfer(ctx, platform,
-			TestChain, configuredEscrow, TestERC20, TestUserA, TestUserA, TestAmount2, 10, nil)
+			TestChain, configuredEscrow, TestERC20, TestUserA, TestUserA, initialAmount, 10, nil)
 		require.NoError(t, err)
 
 		// Verify initial balance via sepolia_wallet_balance action
 		balanceA, err := callSepoliaWalletBalance(ctx, platform, TestUserA)
 		require.NoError(t, err)
-		require.Equal(t, TestAmount2, balanceA, "UserA should have initial deposit")
+		require.Equal(t, initialAmount, balanceA, "UserA should have initial deposit")
 
 		// Verify TestUserB has zero balance initially
 		balanceB, err := callSepoliaWalletBalance(ctx, platform, TestUserB)
 		require.NoError(t, err)
 		require.Equal(t, "0", balanceB, "UserB should have zero balance initially")
 
-		// Execute transfer via sepolia_transfer action
+		// Execute transfer via sepolia_transfer action (1.0 TRUF + 1.0 fee)
 		err = callSepoliaTransfer(ctx, platform, TestUserA, TestUserB, TestAmount1)
 		require.NoError(t, err)
 
 		// Verify balances after transfer
+		// UserA: 3.0 - 1.0 transfer - 1.0 fee = 1.0 remaining
 		balanceA, err = callSepoliaWalletBalance(ctx, platform, TestUserA)
 		require.NoError(t, err)
 		require.Equal(t, TestAmount1, balanceA, "UserA should have remaining amount after transfer")
@@ -114,13 +117,13 @@ func TestTransferActionValidation(t *testing.T) {
 			t.Log("ERROR: Expected error for insufficient balance (nil) but got none")
 		}
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "insufficient balance")
+		require.Contains(t, err.Error(), "Insufficient balance")
 
-		// Test Case 6: Insufficient balance (user has some balance but not enough)
+		// Test Case 6: Insufficient balance (user has some balance but not enough for transfer + fee)
 		t.Log("Testing insufficient balance with partial balance...")
 
-		// Give TestUserA a small balance (half of what they'll try to transfer)
-		smallAmount := "500000000000000000" // 0.5 tokens (half of TestAmount1 which is 1.0)
+		// Give TestUserA 1.5 TRUF (not enough for 1.0 transfer + 1.0 fee)
+		smallAmount := "1500000000000000000" // 1.5 tokens
 		err = testerc20.InjectERC20Transfer(ctx, platform,
 			TestChain, configuredEscrow, TestERC20, TestUserA, TestUserA, smallAmount, 10, nil)
 		require.NoError(t, err)
@@ -130,14 +133,14 @@ func TestTransferActionValidation(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, smallAmount, balance, "TestUserA should have small balance")
 
-		// Try to transfer more than they have (TestAmount1 = 1.0 tokens > smallAmount = 0.5 tokens)
+		// Try to transfer 1.0 TRUF (but needs 2.0 total: 1.0 + 1.0 fee, only has 1.5)
 		err = callSepoliaTransfer(ctx, platform, TestUserA, TestUserB, TestAmount1)
 		if err == nil {
 			t.Log("ERROR: Expected error for insufficient balance (partial) but got none")
 		}
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "insufficient balance")
-		require.Contains(t, err.Error(), smallAmount) // Should show actual balance they have
+		require.Contains(t, err.Error(), "Insufficient balance")
+		require.Contains(t, err.Error(), "Requires an extra 1 TRUF fee")
 
 		// Test balance query with invalid address
 		t.Log("Testing balance query with invalid address...")
@@ -166,38 +169,39 @@ func TestMultipleTransferActions(t *testing.T) {
 		// Define test users
 		userA := TestUserA
 		userB := TestUserB
-		userC := "0xabc0000000000000000000000000000000000003"
+		userC := TestUserC
 
 		// Credit large initial balance to userA
+		// Need: 3.0 + 1.0 fee + 2.0 + 1.0 fee = 7.0 TRUF for A's transfers
 		initialAmount := "10000000000000000000" // 10.0 tokens
 		err = testerc20.InjectERC20Transfer(ctx, platform,
 			TestChain, configuredEscrow, TestERC20, userA, userA, initialAmount, 10, nil)
 		require.NoError(t, err)
 
-		// Transfer A -> B (3 tokens)
+		// Transfer A -> B (3 tokens + 1 fee = 4 deducted from A)
 		err = callSepoliaTransfer(ctx, platform, userA, userB, "3000000000000000000")
 		require.NoError(t, err)
 
-		// Transfer A -> C (2 tokens)
+		// Transfer A -> C (2 tokens + 1 fee = 3 deducted from A)
 		err = callSepoliaTransfer(ctx, platform, userA, userC, TestAmount2)
 		require.NoError(t, err)
 
-		// Transfer B -> C (1 token)
+		// Transfer B -> C (1 token + 1 fee = 2 deducted from B)
 		err = callSepoliaTransfer(ctx, platform, userB, userC, TestAmount1)
 		require.NoError(t, err)
 
 		// Verify final balances
-		// UserA: 10 - 3 - 2 = 5
+		// UserA: 10 - (3 + 1 fee) - (2 + 1 fee) = 10 - 4 - 3 = 3
 		balanceA, err := callSepoliaWalletBalance(ctx, platform, userA)
 		require.NoError(t, err)
-		require.Equal(t, "5000000000000000000", balanceA, "UserA should have 5 tokens remaining")
+		require.Equal(t, "3000000000000000000", balanceA, "UserA should have 3 tokens remaining after transfers + fees")
 
-		// UserB: 3 - 1 = 2
+		// UserB: 3 received - (1 + 1 fee) = 3 - 2 = 1
 		balanceB, err := callSepoliaWalletBalance(ctx, platform, userB)
 		require.NoError(t, err)
-		require.Equal(t, TestAmount2, balanceB, "UserB should have 2 tokens remaining")
+		require.Equal(t, TestAmount1, balanceB, "UserB should have 1 token remaining after transfer + fee")
 
-		// UserC: 2 + 1 = 3
+		// UserC: 2 received + 1 received = 3
 		balanceC, err := callSepoliaWalletBalance(ctx, platform, userC)
 		require.NoError(t, err)
 		require.Equal(t, "3000000000000000000", balanceC, "UserC should have 3 tokens total")
@@ -241,6 +245,112 @@ func callSepoliaWalletBalance(ctx context.Context, platform *kwilTesting.Platfor
 		return "", res.Error
 	}
 	return balance, nil
+}
+
+// TestTransferActionFeeExactBalance tests transfer with exactly enough balance (amount + 1 TRUF fee).
+func TestTransferActionFeeExactBalance(t *testing.T) {
+	seedAndRun(t, "transfer_action_fee_exact", func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Enable instance with alias in one step
+		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestExtensionAlias)
+		require.NoError(t, err)
+
+		// Get the configured escrow address from bridge info
+		configuredEscrow, err := getBridgeEscrowAddress(ctx, platform)
+		require.NoError(t, err)
+
+		// Give TestUserA exactly 2.0 TRUF (1.0 transfer + 1.0 fee)
+		exactAmount := "2000000000000000000" // 2.0 TRUF
+		err = testerc20.InjectERC20Transfer(ctx, platform,
+			TestChain, configuredEscrow, TestERC20, TestUserA, TestUserA, exactAmount, 10, nil)
+		require.NoError(t, err)
+
+		transferAmount := TestAmount1 // 1.0 TRUF
+
+		// Transfer should succeed
+		err = callSepoliaTransfer(ctx, platform, TestUserA, TestUserB, transferAmount)
+		require.NoError(t, err)
+
+		// Verify sender now has 0 balance (2.0 - 1.0 transfer - 1.0 fee = 0)
+		balanceA, err := callSepoliaWalletBalance(ctx, platform, TestUserA)
+		require.NoError(t, err)
+		require.Equal(t, "0", balanceA, "UserA should have 0 balance after transfer + fee")
+
+		// Verify recipient received only the transfer amount (not the fee)
+		balanceB, err := callSepoliaWalletBalance(ctx, platform, TestUserB)
+		require.NoError(t, err)
+		require.Equal(t, transferAmount, balanceB, "UserB should have received transfer amount")
+
+		return nil
+	})
+}
+
+// TestTransferActionFeeInsufficientBalance tests that transfers fail when user doesn't have enough for fee.
+func TestTransferActionFeeInsufficientBalance(t *testing.T) {
+	seedAndRun(t, "transfer_action_fee_insufficient", func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Enable instance with alias in one step
+		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestExtensionAlias)
+		require.NoError(t, err)
+
+		// Get the configured escrow address from bridge info
+		configuredEscrow, err := getBridgeEscrowAddress(ctx, platform)
+		require.NoError(t, err)
+
+		// Give TestUserC exactly 1.0 TRUF (not enough for 0.5 transfer + 1.0 fee)
+		err = testerc20.InjectERC20Transfer(ctx, platform,
+			TestChain, configuredEscrow, TestERC20, TestUserC, TestUserC, TestAmount1, 10, nil)
+		require.NoError(t, err)
+
+		// Try to transfer 0.5 TRUF (but needs 1.5 total: 0.5 + 1.0 fee)
+		halfAmount := "500000000000000000" // 0.5 TRUF
+		err = callSepoliaTransfer(ctx, platform, TestUserC, TestUserB, halfAmount)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "Insufficient balance for transfer")
+		require.Contains(t, err.Error(), "Requires an extra 1 TRUF fee")
+
+		return nil
+	})
+}
+
+// TestTransferActionFeeMultipleTransfers tests that fee is deducted on each transfer.
+func TestTransferActionFeeMultipleTransfers(t *testing.T) {
+	seedAndRun(t, "transfer_action_fee_multiple", func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Enable instance with alias in one step
+		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, TestChain, TestEscrowA, TestERC20, 18, 60, TestExtensionAlias)
+		require.NoError(t, err)
+
+		// Get the configured escrow address from bridge info
+		configuredEscrow, err := getBridgeEscrowAddress(ctx, platform)
+		require.NoError(t, err)
+
+		// Give TestUserD 4.0 TRUF (enough for 1.0 transfer + 1.0 fee, twice)
+		fourTRUF := "4000000000000000000" // 4.0 TRUF
+		err = testerc20.InjectERC20Transfer(ctx, platform,
+			TestChain, configuredEscrow, TestERC20, TestUserD, TestUserD, fourTRUF, 10, nil)
+		require.NoError(t, err)
+
+		// Verify TestUserD has 4.0 TRUF initially
+		balanceD, err := callSepoliaWalletBalance(ctx, platform, TestUserD)
+		require.NoError(t, err)
+		require.Equal(t, fourTRUF, balanceD, "UserD should have 4.0 TRUF initially")
+
+		// First transfer: 1.0 TRUF + 1.0 fee = 2.0 deducted
+		err = callSepoliaTransfer(ctx, platform, TestUserD, TestUserB, TestAmount1)
+		require.NoError(t, err)
+
+		balanceD, err = callSepoliaWalletBalance(ctx, platform, TestUserD)
+		require.NoError(t, err)
+		require.Equal(t, "2000000000000000000", balanceD, "UserD should have 2.0 after first transfer+fee")
+
+		// Second transfer: 1.0 TRUF + 1.0 fee = 2.0 deducted
+		err = callSepoliaTransfer(ctx, platform, TestUserD, TestUserB, TestAmount1)
+		require.NoError(t, err)
+
+		balanceD, err = callSepoliaWalletBalance(ctx, platform, TestUserD)
+		require.NoError(t, err)
+		require.Equal(t, "0", balanceD, "UserD should have 0 after second transfer+fee")
+
+		return nil
+	})
 }
 
 // Helper function to get the configured escrow address from bridge info
