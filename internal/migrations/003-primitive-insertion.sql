@@ -31,6 +31,33 @@ CREATE OR REPLACE ACTION insert_records(
     $data_provider := helper_lowercase_array($data_provider);
     $lower_caller TEXT := LOWER(@caller);
 
+    -- ===== FEE COLLECTION WITH ROLE EXEMPTION =====
+    -- Check if caller is exempt (has system:network_writer role)
+    $is_exempt BOOL := FALSE;
+    FOR $row IN are_members_of('system', 'network_writer', ARRAY[$lower_caller]) {
+        IF $row.wallet = $lower_caller AND $row.is_member {
+            $is_exempt := TRUE;
+            BREAK;
+        }
+    }
+
+    -- Collect fee only from non-exempt wallets (2 TRUF per record)
+    IF NOT $is_exempt {
+        $fee_per_record := 2000000000000000000::NUMERIC(78, 0); -- 2 TRUF with 18 decimals
+        $num_records_for_fee INT := array_length($data_provider);
+        $total_fee := $fee_per_record * $num_records_for_fee::NUMERIC(78, 0);
+
+        $caller_balance := ethereum_bridge.balance(@caller);
+
+        IF $caller_balance < $total_fee {
+            ERROR('Insufficient balance for write fee. Required: ' || ($num_records_for_fee * 2)::TEXT || ' TRUF for ' || $num_records_for_fee::TEXT || ' record(s)');
+        }
+
+        $leader_addr TEXT := encode(@leader_sender, 'hex')::TEXT;
+        ethereum_bridge.transfer($leader_addr, $total_fee);
+    }
+    -- ===== END FEE COLLECTION =====
+
     $num_records INT := array_length($data_provider);
     if $num_records != array_length($stream_id) or $num_records != array_length($event_time) or $num_records != array_length($value) {
         ERROR('array lengths mismatch');
