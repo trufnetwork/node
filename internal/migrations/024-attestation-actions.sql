@@ -17,7 +17,7 @@ CREATE OR REPLACE ACTION request_attestation(
     $action_name TEXT,
     $args_bytes BYTEA,
     $encrypt_sig BOOLEAN,
-$max_fee INT8
+    $max_fee NUMERIC(78, 0)
 ) PUBLIC RETURNS (request_tx_id TEXT, attestation_hash BYTEA) {
     -- Capture transaction ID for primary key
     $request_tx_id := @txid;
@@ -52,6 +52,14 @@ $max_fee INT8
     -- ===== FEE COLLECTION =====
     -- Collect 40 TRUF flat fee for attestation request
     $attestation_fee := '40000000000000000000'::NUMERIC(78, 0); -- 40 TRUF with 18 decimals
+
+    -- Validate max_fee if provided
+    IF $max_fee IS NOT NULL AND $max_fee > 0::NUMERIC(78, 0) {
+        IF $attestation_fee > $max_fee {
+            ERROR('Attestation fee (40 TRUF) exceeds caller max_fee limit: ' || ($max_fee / 1000000000000000000::NUMERIC(78, 0))::TEXT || ' TRUF');
+        }
+    }
+
     $caller_balance := ethereum_bridge.balance(@caller);
 
     IF $caller_balance < $attestation_fee {

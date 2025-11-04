@@ -198,7 +198,7 @@ func (h *AttestationTestHelper) RequestAttestation(actionName string, value int6
 		actionName,
 		argsBytes,
 		false,
-		int64(0),
+		nil, // max_fee = NULL (no limit)
 	}, func(row *common.Row) error {
 		requestTxID = row.Values[0].(string)
 		attestationHash = append([]byte(nil), row.Values[1].([]byte)...)
@@ -268,7 +268,7 @@ func (h *AttestationTestHelper) CreateAttestationForRequester(actionName string,
 			actionName,
 			argsBytes,
 			false,
-			int64(0),
+			nil, // max_fee = NULL (no limit)
 		},
 		func(row *common.Row) error { return nil })
 	require.NoError(h.t, err, "request_attestation engine call")
