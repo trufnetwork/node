@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/trufnetwork/kwil-db/common"
+	"github.com/trufnetwork/kwil-db/core/crypto/auth"
 	"github.com/trufnetwork/kwil-db/core/types"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	attestation "github.com/trufnetwork/node/extensions/tn_attestation"
@@ -144,11 +145,13 @@ func runAttestationUnauthorizedBlocked(t *testing.T, ctx context.Context, platfo
 		TxContext: &common.TxContext{
 			Ctx: ctx,
 			BlockContext: &common.BlockContext{
-				Height: 1,
+				Height:   1,
+				Proposer: helper.leaderPub, // Required for @leader_sender
 			},
-			Signer: unauthorizedAddr.Bytes(),
-			Caller: unauthorizedAddr.Address(),
-			TxID:   platform.Txid(),
+			Signer:        unauthorizedAddr.Bytes(),
+			Caller:        unauthorizedAddr.Address(),
+			TxID:          platform.Txid(),
+			Authenticator: auth.EthPersonalSignAuth, // Required for balance operations
 		},
 	}
 

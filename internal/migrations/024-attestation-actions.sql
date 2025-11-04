@@ -48,6 +48,24 @@ $max_fee INT8
     if $action_id = 0 {
         ERROR('Action not allowed for attestation: ' || $action_name);
     }
+
+    -- ===== FEE COLLECTION =====
+    -- Collect 40 TRUF flat fee for attestation request
+    $attestation_fee := '40000000000000000000'::NUMERIC(78, 0); -- 40 TRUF with 18 decimals
+    $caller_balance := ethereum_bridge.balance(@caller);
+
+    IF $caller_balance < $attestation_fee {
+        ERROR('Insufficient balance for attestation. Required: 40 TRUF');
+    }
+
+    -- Verify leader address is available
+    IF @leader_sender IS NULL {
+        ERROR('Leader address not available for fee transfer');
+    }
+
+    $leader_addr TEXT := encode(@leader_sender, 'hex')::TEXT;
+    ethereum_bridge.transfer($leader_addr, $attestation_fee);
+    -- ===== END FEE COLLECTION =====
     
     -- Get current block height
     $created_height := @height;
