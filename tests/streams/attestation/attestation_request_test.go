@@ -68,7 +68,7 @@ func runAttestationHappyPath(helper *AttestationTestHelper, actionName string, a
 		actionName,
 		argsBytes,
 		false,
-		int64(0),
+		nil, // max_fee = NULL (no limit)
 	}, func(row *common.Row) error {
 		require.Len(helper.t, row.Values, 2, "expected request_attestation to return request_tx_id and attestation_hash")
 		txID, ok := row.Values[0].(string)
@@ -162,7 +162,7 @@ func runAttestationUnauthorizedBlocked(t *testing.T, ctx context.Context, platfo
 		actionName,
 		argsBytes,
 		false,
-		int64(0),
+		nil, // max_fee = NULL (no limit)
 	}, func(row *common.Row) error {
 		return nil
 	})

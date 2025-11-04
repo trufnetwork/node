@@ -411,8 +411,8 @@ func callRequestAttestationActionWithTimeRange(ctx context.Context, platform *kw
 			streamID,
 			actionName,
 			argsBytes,
-			false,    // encrypt_sig
-			int64(0), // max_fee (unused)
+			false, // encrypt_sig
+			nil,   // max_fee = NULL (no limit)
 		},
 		func(row *common.Row) error { return nil },
 	)
