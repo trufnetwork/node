@@ -60,6 +60,9 @@ CREATE OR REPLACE ACTION create_streams(
     -- ===== FEE COLLECTION WITH ROLE EXEMPTION =====
     $lower_caller TEXT := LOWER(@caller);
 
+    -- Get stream count (used for both fee calculation and validation)
+    $num_streams INT := array_length($stream_ids);
+
     -- Check if caller is exempt (has system:network_writer role)
     $is_exempt BOOL := FALSE;
     FOR $row IN are_members_of('system', 'network_writer', ARRAY[$lower_caller]) {
@@ -72,13 +75,13 @@ CREATE OR REPLACE ACTION create_streams(
     -- Collect fee only from non-exempt wallets (2 TRUF per stream)
     IF NOT $is_exempt {
         $fee_per_stream := 2000000000000000000::NUMERIC(78, 0); -- 2 TRUF with 18 decimals
-        $num_streams := array_length($stream_ids);
         $total_fee := $fee_per_stream * $num_streams::NUMERIC(78, 0);
 
         $caller_balance := ethereum_bridge.balance(@caller);
 
         IF $caller_balance < $total_fee {
-            ERROR('Insufficient balance for stream creation. Required: ' || ($num_streams * 2)::TEXT || ' TRUF for ' || $num_streams::TEXT || ' stream(s)');
+            -- Derive human-readable fee from $total_fee
+            ERROR('Insufficient balance for stream creation. Required: ' || ($total_fee / 1000000000000000000::NUMERIC(78, 0))::TEXT || ' TRUF for ' || $num_streams::TEXT || ' stream(s)');
         }
 
         $leader_addr TEXT := encode(@leader_sender, 'hex')::TEXT;
