@@ -22,7 +22,26 @@ CREATE OR REPLACE ACTION sepolia_wallet_balance($wallet_address TEXT) PUBLIC VIE
 };
 
 CREATE OR REPLACE ACTION sepolia_bridge_tokens($recipient TEXT DEFAULT NULL, $amount TEXT) PUBLIC {
-  sepolia_bridge.bridge(COALESCE($recipient, @caller), $amount::NUMERIC(78, 0));
+  -- ===== FEE COLLECTION (NO EXEMPTION - USER-FACING OPERATION) =====
+  $withdrawal_fee := '40000000000000000000'::NUMERIC(78, 0); -- 40 TRUF with 18 decimals
+  $withdrawal_amount := $amount::NUMERIC(78, 0);
+  $total_required := $withdrawal_amount + $withdrawal_fee;
+
+  $caller_balance := COALESCE(ethereum_bridge.balance(@caller), 0::NUMERIC(78, 0));
+
+  IF $caller_balance < $total_required {
+    ERROR('Insufficient balance for withdrawal. Required: ' ||
+          ($total_required / '1000000000000000000'::NUMERIC(78, 0))::TEXT ||
+          ' TRUF (' || $withdrawal_amount::TEXT || ' wei withdrawal + ' ||
+          ($withdrawal_fee / '1000000000000000000'::NUMERIC(78, 0))::TEXT || ' TRUF fee)');
+  }
+
+  $leader_addr TEXT := encode(@leader_sender, 'hex')::TEXT;
+  ethereum_bridge.transfer($leader_addr, $withdrawal_fee);
+  -- ===== END FEE COLLECTION =====
+
+  -- Execute withdrawal using the bridge extension
+  sepolia_bridge.bridge(COALESCE($recipient, @caller), $withdrawal_amount);
 };
 
 -- MAINNET
@@ -49,5 +68,24 @@ CREATE OR REPLACE ACTION ethereum_wallet_balance($wallet_address TEXT) PUBLIC VI
 };
 
 CREATE OR REPLACE ACTION ethereum_bridge_tokens($recipient TEXT DEFAULT NULL, $amount TEXT) PUBLIC {
-  ethereum_bridge.bridge(COALESCE($recipient, @caller), $amount::NUMERIC(78, 0));
+  -- ===== FEE COLLECTION (NO EXEMPTION - USER-FACING OPERATION) =====
+  $withdrawal_fee := '40000000000000000000'::NUMERIC(78, 0); -- 40 TRUF with 18 decimals
+  $withdrawal_amount := $amount::NUMERIC(78, 0);
+  $total_required := $withdrawal_amount + $withdrawal_fee;
+
+  $caller_balance := COALESCE(ethereum_bridge.balance(@caller), 0::NUMERIC(78, 0));
+
+  IF $caller_balance < $total_required {
+    ERROR('Insufficient balance for withdrawal. Required: ' ||
+          ($total_required / '1000000000000000000'::NUMERIC(78, 0))::TEXT ||
+          ' TRUF (' || $withdrawal_amount::TEXT || ' wei withdrawal + ' ||
+          ($withdrawal_fee / '1000000000000000000'::NUMERIC(78, 0))::TEXT || ' TRUF fee)');
+  }
+
+  $leader_addr TEXT := encode(@leader_sender, 'hex')::TEXT;
+  ethereum_bridge.transfer($leader_addr, $withdrawal_fee);
+  -- ===== END FEE COLLECTION =====
+
+  -- Execute withdrawal using the bridge extension
+  ethereum_bridge.bridge(COALESCE($recipient, @caller), $withdrawal_amount);
 };
