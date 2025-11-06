@@ -1,11 +1,25 @@
-CREATE OR REPLACE ACTION get_last_transactions(
+/**
+ * Transaction history views
+ *
+ * get_last_transactions_v1  - legacy implementation (no fee/caller metadata)
+ * get_last_transactions_v2  - ledger-backed implementation with fee details
+ * get_last_transactions     - temporary wrapper returning the v2 signature but
+ *                             still sourcing data from v1. This will be replaced
+ *                             with v2 once callers migrate.
+ */
+
+CREATE OR REPLACE ACTION get_last_transactions_v1(
     $data_provider TEXT,
     $limit_size   INT8
 ) PUBLIC VIEW RETURNS TABLE(
     created_at INT8,
     method     TEXT
 ) {
-    $data_provider := LOWER($data_provider);
+    $normalized_provider TEXT := NULL;
+    IF COALESCE($data_provider, '') != '' {
+        $normalized_provider := LOWER($data_provider);
+    }
+
     IF $limit_size IS NULL {
         $limit_size := 6;
     }
@@ -17,8 +31,6 @@ CREATE OR REPLACE ACTION get_last_transactions(
         ERROR('Limit size cannot exceed 100');
     }
 
-    -- Fetch top limit_size DISTINCT blocks per table, then take top limit_size overall
-    -- This gets the most recent activity from each table type and combines them
     RETURN SELECT created_at, method FROM (
       SELECT created_at, method, ROW_NUMBER() OVER (PARTITION BY created_at ORDER BY priority ASC) AS rn FROM (
           SELECT s.created_at, 'deployStream' AS method, 1 AS priority
@@ -26,7 +38,7 @@ CREATE OR REPLACE ACTION get_last_transactions(
               SELECT DISTINCT s.created_at
               FROM streams s
               JOIN data_providers dp ON s.data_provider_id = dp.id
-              WHERE COALESCE($data_provider, '') = '' OR dp.address = $data_provider
+              WHERE COALESCE($normalized_provider, '') = '' OR dp.address = $normalized_provider
               ORDER BY s.created_at DESC
               LIMIT $limit_size
           ) s
@@ -37,7 +49,7 @@ CREATE OR REPLACE ACTION get_last_transactions(
               FROM primitive_events pe
               JOIN streams s ON pe.stream_ref = s.id
               JOIN data_providers dp ON s.data_provider_id = dp.id
-              WHERE COALESCE($data_provider, '') = '' OR dp.address = $data_provider
+              WHERE COALESCE($normalized_provider, '') = '' OR dp.address = $normalized_provider
               ORDER BY pe.created_at DESC
               LIMIT $limit_size
           ) pe
@@ -48,7 +60,7 @@ CREATE OR REPLACE ACTION get_last_transactions(
               FROM taxonomies t
               JOIN streams s ON t.stream_ref = s.id
               JOIN data_providers dp ON s.data_provider_id = dp.id
-              WHERE COALESCE($data_provider, '') = '' OR dp.address = $data_provider
+              WHERE COALESCE($normalized_provider, '') = '' OR dp.address = $normalized_provider
               ORDER BY t.created_at DESC
               LIMIT $limit_size
           ) t
@@ -59,7 +71,7 @@ CREATE OR REPLACE ACTION get_last_transactions(
               FROM metadata m
               JOIN streams s ON m.stream_ref = s.id
               JOIN data_providers dp ON s.data_provider_id = dp.id
-              WHERE COALESCE($data_provider, '') = '' OR dp.address = $data_provider
+              WHERE COALESCE($normalized_provider, '') = '' OR dp.address = $normalized_provider
               ORDER BY m.created_at DESC
               LIMIT $limit_size
           ) m
@@ -68,4 +80,104 @@ CREATE OR REPLACE ACTION get_last_transactions(
   WHERE rn = 1
   ORDER BY created_at DESC
   LIMIT $limit_size;
-}
+};
+
+CREATE OR REPLACE ACTION get_last_transactions_v2(
+    $data_provider TEXT,
+    $limit_size   INT8
+) PUBLIC VIEW RETURNS TABLE(
+    tx_id TEXT,
+    created_at INT8,
+    method TEXT,
+    caller TEXT,
+    fee_amount NUMERIC(78, 0),
+    fee_recipient TEXT,
+    metadata TEXT,
+    fee_distributions TEXT
+) {
+    $normalized_provider TEXT := NULL;
+    IF COALESCE($data_provider, '') != '' {
+        $normalized_provider := LOWER($data_provider);
+        IF NOT check_ethereum_address($normalized_provider) {
+            ERROR('Invalid data provider address. Must be a valid Ethereum address: ' || $data_provider);
+        }
+    }
+
+    IF $limit_size IS NULL OR $limit_size <= 0 {
+        $limit_size := 6;
+    }
+
+    IF $limit_size > 100 {
+        ERROR('Limit size cannot exceed 100');
+    }
+
+    RETURN
+    WITH distributions AS (
+        SELECT
+            tx_id,
+            string_agg(
+                recipient || ':' || amount::TEXT,
+                ',' ORDER BY sequence ASC
+            ) AS fee_distributions
+        FROM transaction_event_distributions
+        GROUP BY tx_id
+    )
+    SELECT
+        te.tx_id,
+        te.block_height AS created_at,
+        tm.name AS method,
+        te.caller,
+        te.fee_amount,
+        te.fee_recipient,
+        te.metadata,
+        COALESCE(d.fee_distributions, '') AS fee_distributions
+    FROM transaction_events te
+    JOIN transaction_methods tm ON tm.method_id = te.method_id
+    LEFT JOIN distributions d ON d.tx_id = te.tx_id
+    WHERE $normalized_provider IS NULL OR te.caller = $normalized_provider
+    ORDER BY te.block_height DESC, te.tx_id DESC
+    LIMIT $limit_size;
+};
+
+CREATE OR REPLACE ACTION get_last_transactions(
+    $data_provider TEXT,
+    $limit_size   INT8
+) PUBLIC VIEW RETURNS TABLE(
+    tx_id TEXT,
+    created_at INT8,
+    method TEXT,
+    caller TEXT,
+    fee_amount NUMERIC(78, 0),
+    fee_recipient TEXT,
+    metadata TEXT,
+    fee_distributions TEXT
+) {
+    $normalized_provider TEXT := NULL;
+    IF COALESCE($data_provider, '') != '' {
+        $normalized_provider := LOWER($data_provider);
+        IF NOT check_ethereum_address($normalized_provider) {
+            ERROR('Invalid data provider address. Must be a valid Ethereum address: ' || $data_provider);
+        }
+    }
+
+    $limit_val INT := COALESCE($limit_size, 6);
+    IF $limit_val <= 0 {
+        $limit_val := 6;
+    }
+
+    IF $limit_val > 100 {
+        ERROR('Limit size cannot exceed 100');
+    }
+
+    RETURN
+    SELECT
+        NULL::TEXT AS tx_id,
+        lt.created_at,
+        lt.method,
+        NULL::TEXT AS caller,
+        NULL::NUMERIC(78, 0) AS fee_amount,
+        NULL::TEXT AS fee_recipient,
+        NULL::TEXT AS metadata,
+        ''::TEXT AS fee_distributions
+    FROM get_last_transactions_v1($normalized_provider, $limit_val) lt;
+};

@@ -59,6 +59,9 @@ CREATE OR REPLACE ACTION create_streams(
 ) PUBLIC {
     -- ===== FEE COLLECTION WITH ROLE EXEMPTION =====
     $lower_caller TEXT := LOWER(@caller);
+    $fee_total NUMERIC(78, 0) := 0::NUMERIC(78, 0);
+    $fee_recipient TEXT := NULL;
+    $leader_hex TEXT := NULL;
 
     -- Get stream count (used for both fee calculation and validation)
     $num_streams INT := array_length($stream_ids);
@@ -77,6 +80,11 @@ CREATE OR REPLACE ACTION create_streams(
         $fee_per_stream := 2000000000000000000::NUMERIC(78, 0); -- 2 TRUF with 18 decimals
         $total_fee := $fee_per_stream * $num_streams::NUMERIC(78, 0);
 
+        IF @leader_sender IS NULL {
+            ERROR('Leader address not available for fee transfer');
+        }
+        $leader_hex := encode(@leader_sender, 'hex')::TEXT;
+
         $caller_balance := ethereum_bridge.balance(@caller);
 
         IF $caller_balance < $total_fee {
@@ -84,8 +92,9 @@ CREATE OR REPLACE ACTION create_streams(
             ERROR('Insufficient balance for stream creation. Required: ' || ($total_fee / 1000000000000000000::NUMERIC(78, 0))::TEXT || ' TRUF for ' || $num_streams::TEXT || ' stream(s)');
         }
 
-        $leader_addr TEXT := encode(@leader_sender, 'hex')::TEXT;
-        ethereum_bridge.transfer($leader_addr, $total_fee);
+        ethereum_bridge.transfer($leader_hex, $total_fee);
+        $fee_total := $total_fee;
+        $fee_recipient := '0x' || $leader_hex;
     }
     -- ===== END FEE COLLECTION =====
 
@@ -288,6 +297,12 @@ CREATE OR REPLACE ACTION create_streams(
     JOIN data_providers dp ON dp.address = $data_provider
     JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = t.stream_id;
 
+    record_transaction_event(
+        1,
+        $fee_total,
+        $fee_recipient,
+        NULL
+    );
 };
 
 
@@ -375,6 +390,13 @@ CREATE OR REPLACE ACTION insert_metadata(
         LOWER($value_ref), 
         $current_block,
         $stream_ref
+    );
+
+    record_transaction_event(
+        7,
+        0::NUMERIC(78, 0),
+        NULL,
+        NULL
     );
 };
 

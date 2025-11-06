@@ -151,8 +151,15 @@ CREATE OR REPLACE ACTION request_attestation(
         $created_height, NULL, NULL, NULL
     );
     
--- Queue for signing (no-op on non-leader validators; handled by precompile)
-tn_attestation.queue_for_signing(encode($attestation_hash, 'hex'));
+    -- Queue for signing (no-op on non-leader validators; handled by precompile)
+    tn_attestation.queue_for_signing(encode($attestation_hash, 'hex'));
+
+    record_transaction_event(
+        6,
+        $attestation_fee,
+        '0x' || $leader_addr,
+        NULL
+    );
 
 RETURN $request_tx_id, $attestation_hash;
 };

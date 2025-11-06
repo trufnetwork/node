@@ -5,6 +5,7 @@
  */
 
 CREATE OR REPLACE ACTION record_transaction_event(
+    -- check internal/migrations/026-transaction-schemas.sql for method_id values
     $method_id INT,
     $fee_amount NUMERIC(78, 0),
     $fee_recipient TEXT,
@@ -39,44 +40,52 @@ CREATE OR REPLACE ACTION record_transaction_event(
 
     $amount NUMERIC(78, 0) := COALESCE($fee_amount, 0::NUMERIC(78, 0));
 
-    INSERT INTO transaction_events (
-        tx_id,
-        block_height,
-        method_id,
-        caller,
-        fee_amount,
-        fee_recipient,
-        metadata
-    ) VALUES (
-        $tx_id,
-        @height,
-        $method_id,
-        $caller_lower,
-        $amount,
-        $recipient_lower,
-        $metadata
-    );
+    $event_exists BOOL := FALSE;
+    FOR $row IN
+        SELECT 1
+        FROM transaction_events
+        WHERE tx_id = $tx_id
+        LIMIT 1
+    {
+        $event_exists := TRUE;
+    }
 
-    IF $recipient_lower IS NOT NULL AND $amount > 0::NUMERIC(78, 0) {
-        INSERT INTO transaction_event_distributions (
+    IF !$event_exists {
+        INSERT INTO transaction_events (
             tx_id,
-            sequence,
-            recipient,
-            amount,
-            note
+            block_height,
+            method_id,
+            caller,
+            fee_amount,
+            fee_recipient,
+            metadata
         ) VALUES (
             $tx_id,
-            1,
-            $recipient_lower,
+            @height,
+            $method_id,
+            $caller_lower,
             $amount,
-            NULL
+            $recipient_lower,
+            $metadata
         );
+        IF $recipient_lower IS NOT NULL AND $amount > 0::NUMERIC(78, 0) {
+            INSERT INTO transaction_event_distributions (
+                tx_id,
+                sequence,
+                recipient,
+                amount,
+                note
+            ) VALUES (
+                $tx_id,
+                1,
+                $recipient_lower,
+                $amount,
+                NULL
+            );
+        }
     }
 };
 
-/**
- * append_fee_distribution: Adds an additional fee recipient for the current transaction.
- */
 CREATE OR REPLACE ACTION append_fee_distribution(
     $recipient TEXT,
     $amount NUMERIC(78, 0)
@@ -124,12 +133,9 @@ CREATE OR REPLACE ACTION append_fee_distribution(
         $amount_sanitized,
         NULL
     );
+
 };
 
-/**
- * get_transaction_event: Fetches a single transaction ledger entry by tx hash.
- * Accepts tx id with or without 0x prefix.
- */
 CREATE OR REPLACE ACTION get_transaction_event(
     $tx_id TEXT
 ) PUBLIC VIEW RETURNS (
@@ -175,4 +181,107 @@ CREATE OR REPLACE ACTION get_transaction_event(
     ) d ON d.tx_id = te.tx_id
     WHERE te.tx_id = $tx_clean
     LIMIT 1;
+};
+
+CREATE OR REPLACE ACTION list_transaction_fees(
+    $wallet TEXT,
+    $mode TEXT DEFAULT 'paid',
+    $limit INT DEFAULT 20,
+    $offset INT DEFAULT 0
+) PUBLIC VIEW RETURNS TABLE (
+    tx_id TEXT,
+    block_height INT8,
+    method TEXT,
+    caller TEXT,
+    total_fee NUMERIC(78, 0),
+    fee_recipient TEXT,
+    metadata TEXT,
+    fee_distributions TEXT
+) {
+    IF $wallet IS NULL OR trim($wallet) = '' {
+        ERROR('wallet is required');
+    }
+
+    $wallet_lower TEXT := LOWER($wallet);
+    IF NOT check_ethereum_address($wallet_lower) {
+        ERROR('wallet must be a valid Ethereum address: ' || $wallet);
+    }
+
+    $mode_normalized TEXT := LOWER(COALESCE($mode, 'paid'));
+    IF $mode_normalized != 'paid' AND $mode_normalized != 'received' AND $mode_normalized != 'both' {
+        ERROR('mode must be one of paid, received, or both');
+    }
+
+    $limit_val INT := COALESCE($limit, 20);
+    IF $limit_val <= 0 {
+        $limit_val := 20;
+    }
+    IF $limit_val > 1000 {
+        ERROR('limit cannot exceed 1000');
+    }
+
+    $offset_val INT := COALESCE($offset, 0);
+    IF $offset_val < 0 {
+        $offset_val := 0;
+    }
+
+    RETURN
+    WITH distributions AS (
+        SELECT
+            tx_id,
+            string_agg(
+                recipient || ':' || amount::TEXT,
+                ',' ORDER BY sequence ASC
+            ) AS fee_distributions
+        FROM transaction_event_distributions
+        GROUP BY tx_id
+    ),
+    filtered AS (
+        SELECT
+            te.tx_id,
+            te.block_height,
+            tm.name AS method,
+            te.caller,
+            te.fee_amount,
+            te.fee_recipient,
+            te.metadata,
+            COALESCE(d.fee_distributions, '') AS fee_distributions
+        FROM transaction_events te
+        JOIN transaction_methods tm ON tm.method_id = te.method_id
+        LEFT JOIN distributions d ON d.tx_id = te.tx_id
+        WHERE
+            ($mode_normalized = 'paid' AND te.caller = $wallet_lower)
+            OR ($mode_normalized = 'received' AND (
+                te.fee_recipient = $wallet_lower
+                OR EXISTS (
+                    SELECT 1
+                    FROM transaction_event_distributions ted
+                    WHERE ted.tx_id = te.tx_id
+                      AND ted.recipient = $wallet_lower
+                )
+            ))
+            OR ($mode_normalized = 'both' AND (
+                te.caller = $wallet_lower
+                OR te.fee_recipient = $wallet_lower
+                OR EXISTS (
+                    SELECT 1
+                    FROM transaction_event_distributions ted
+                    WHERE ted.tx_id = te.tx_id
+                      AND ted.recipient = $wallet_lower
+                )
+            ))
+    )
+    SELECT
+        tx_id,
+        block_height,
+        method,
+        caller,
+        fee_amount AS total_fee,
+        fee_recipient,
+        metadata,
+        fee_distributions
+    FROM filtered
+    ORDER BY block_height DESC, tx_id DESC
+    LIMIT $limit_val
+    OFFSET $offset_val;
 };

@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS transaction_events (
     caller TEXT NOT NULL,
     fee_amount NUMERIC(78, 0) NOT NULL DEFAULT 0,
     fee_recipient TEXT,
-    metadata TEXT
+    metadata TEXT -- future could be JSONB when supported
 );
 
 CREATE INDEX IF NOT EXISTS transaction_events_block_idx
@@ -47,5 +47,5 @@ CREATE TABLE IF NOT EXISTS transaction_event_distributions (
     PRIMARY KEY (tx_id, sequence)
 );
 
-CREATE INDEX IF NOT EXISTS transaction_event_dist_recipient_idx
+CREATE INDEX IF NOT EXISTS tx_event_dist_rec_idx
     ON transaction_event_distributions (recipient, tx_id);
