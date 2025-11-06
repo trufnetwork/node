@@ -84,54 +84,17 @@ CREATE OR REPLACE ACTION record_transaction_event(
     }
 };
 
-CREATE OR REPLACE ACTION append_fee_distribution(
-    $recipient TEXT,
-    $amount NUMERIC(78, 0)
-) PRIVATE {
-    IF @txid IS NULL {
-        ERROR('append_fee_distribution: missing transaction id');
-    }
-
-    IF $recipient IS NULL {
-        ERROR('append_fee_distribution: recipient is required');
-    }
-
-    $recipient_lower TEXT := LOWER($recipient);
-    IF NOT check_ethereum_address($recipient_lower) {
-        ERROR('append_fee_distribution: invalid recipient address: ' || $recipient);
-    }
-
-    $tx_hex TEXT := LOWER(@txid);
-    IF LENGTH($tx_hex) != 64 {
-        ERROR('append_fee_distribution: txid must be 32-byte hex string');
-    }
-    $tx_id TEXT := '0x' || $tx_hex;
-
-    $amount_sanitized NUMERIC(78, 0) := COALESCE($amount, 0::NUMERIC(78, 0));
-
-    $next_sequence INT := 1;
-    FOR $row IN
-        SELECT COALESCE(MAX(sequence), 0) + 1 AS seq
-        FROM transaction_event_distributions
-        WHERE tx_id = $tx_id
-    {
-        $next_sequence := $row.seq;
-    }
-
-    INSERT INTO transaction_event_distributions (
-        tx_id,
-        sequence,
-        recipient,
-        amount,
-        note
-    ) VALUES (
-        $tx_id,
-        $next_sequence,
-        $recipient_lower,
-        $amount_sanitized,
-        NULL
-    );
-};
+-- CREATE OR REPLACE ACTION record_tx_event_split(
+--     $method_id INT,
+--     $fee_amount NUMERIC(78, 0),
+--     $recipients TEXT[],
+--     $amounts NUMERIC(78, 0)[],
+--     $metadata TEXT
+-- ) PRIVATE {
+--     -- TODO: Implement multi-recipient fee recording in a single call.
+--     -- This action should validate array lengths, ensure the amounts sum to
+--     -- $fee_amount, and write the distribution rows atomically.
+-- };
 
 CREATE OR REPLACE ACTION get_transaction_event(
     $tx_id TEXT
@@ -327,6 +290,5 @@ CREATE OR REPLACE ACTION list_transaction_fees(
              fe.tx_id DESC,
              COALESCE(ted.sequence, 0) ASC;
 };
-
 
 
