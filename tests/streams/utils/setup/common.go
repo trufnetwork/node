@@ -2,10 +2,14 @@ package setup
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/pkg/errors"
 	"github.com/trufnetwork/kwil-db/common"
+	"github.com/trufnetwork/kwil-db/core/crypto"
+	coreauth "github.com/trufnetwork/kwil-db/core/crypto/auth"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/sdk-go/core/types"
 	"github.com/trufnetwork/sdk-go/core/util"
@@ -25,6 +29,53 @@ type StreamInfo struct {
 
 func (contractType ContractType) String() string {
 	return string(contractType)
+}
+
+var (
+	defaultLeaderOnce sync.Once
+	defaultLeaderPub  *crypto.Secp256k1PublicKey
+)
+
+func defaultLeaderPublicKey() *crypto.Secp256k1PublicKey {
+	defaultLeaderOnce.Do(func() {
+		_, pubGeneric, err := crypto.GenerateSecp256k1Key(nil)
+		if err != nil {
+			panic(fmt.Sprintf("failed to generate default leader key: %v", err))
+		}
+		var ok bool
+		defaultLeaderPub, ok = pubGeneric.(*crypto.Secp256k1PublicKey)
+		if !ok {
+			panic("default leader public key is not secp256k1")
+		}
+	})
+	return defaultLeaderPub
+}
+
+func newTxContextWithLeader(ctx context.Context, platform *kwilTesting.Platform, signer []byte, caller string, authenticator string, height int64) *common.TxContext {
+	if height <= 0 {
+		height = 1
+	}
+	return &common.TxContext{
+		Ctx: ctx,
+		BlockContext: &common.BlockContext{
+			Height:   height,
+			Proposer: defaultLeaderPublicKey(),
+		},
+		Signer:        signer,
+		Caller:        caller,
+		TxID:          platform.Txid(),
+		Authenticator: authenticator,
+	}
+}
+
+func newEthEngineContext(ctx context.Context, platform *kwilTesting.Platform, addr util.EthereumAddress, height int64) *common.EngineContext {
+	txContext := newTxContextWithLeader(ctx, platform, addr.Bytes(), addr.Address(), coreauth.EthPersonalSignAuth, height)
+	return &common.EngineContext{TxContext: txContext}
+}
+
+// NewEngineContext returns an engine context configured with the provided signer and a deterministic leader.
+func NewEngineContext(ctx context.Context, platform *kwilTesting.Platform, addr util.EthereumAddress, height int64) *common.EngineContext {
+	return newEthEngineContext(ctx, platform, addr, height)
 }
 
 // CreateStream parses and creates the dataset for a contract
@@ -63,17 +114,7 @@ func UntypedCreateStream(ctx context.Context, platform *kwilTesting.Platform, st
 		return errors.Wrap(err, "invalid data provider address")
 	}
 
-	txContext := &common.TxContext{
-		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: 1},
-		Signer:       addr.Bytes(),
-		Caller:       addr.Address(),
-		TxID:         platform.Txid(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := newEthEngineContext(ctx, platform, addr, 1)
 
 	r, err := platform.Engine.Call(engineContext,
 		platform.DB,
@@ -124,17 +165,7 @@ func CreateStreamsWithOptions(ctx context.Context, platform *kwilTesting.Platfor
 		return errors.Wrap(err, "error creating composed dataset")
 	}
 
-	txContext := &common.TxContext{
-		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: 1},
-		Signer:       deployer.Bytes(),
-		Caller:       deployer.Address(),
-		TxID:         platform.Txid(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := newEthEngineContext(ctx, platform, deployer, 1)
 
 	streamIds := make([]string, len(streamInfos))
 	streamTypes := make([]string, len(streamInfos))
@@ -164,17 +195,7 @@ func CreateStreamsWithOptions(ctx context.Context, platform *kwilTesting.Platfor
 }
 
 func DeleteStream(ctx context.Context, platform *kwilTesting.Platform, streamLocator types.StreamLocator) (*common.CallResult, error) {
-	txContext := &common.TxContext{
-		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: 1},
-		Signer:       streamLocator.DataProvider.Bytes(),
-		Caller:       streamLocator.DataProvider.Address(),
-		TxID:         platform.Txid(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := newEthEngineContext(ctx, platform, streamLocator.DataProvider, 1)
 
 	return platform.Engine.Call(engineContext,
 		platform.DB,
@@ -202,17 +223,7 @@ func CreateDataProvider(ctx context.Context, platform *kwilTesting.Platform, add
 		return errors.Wrap(err, "failed to enable stream deployer")
 	}
 
-	txContext := &common.TxContext{
-		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: 1},
-		Signer:       addr.Bytes(),
-		Caller:       addr.Address(),
-		TxID:         platform.Txid(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := newEthEngineContext(ctx, platform, addr, 1)
 
 	r, err := platform.Engine.Call(engineContext,
 		platform.DB,
@@ -253,17 +264,7 @@ func CreateDataProviderWithoutRole(ctx context.Context, platform *kwilTesting.Pl
 	}
 
 	// Register the data provider
-	txContext := &common.TxContext{
-		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: 1},
-		Signer:       addr.Bytes(),
-		Caller:       addr.Address(),
-		TxID:         platform.Txid(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := newEthEngineContext(ctx, platform, addr, 1)
 
 	r, err := platform.Engine.Call(engineContext,
 		platform.DB,
@@ -302,16 +303,15 @@ func CreateDataProviderWithoutRole(ctx context.Context, platform *kwilTesting.Pl
 // 3. This is a test utility following the same pattern as AddMemberToRoleBypass
 // 4. Using OverrideAuthz is the standard pattern for test role management
 func removeMemberFromRoleBypass(ctx context.Context, platform *kwilTesting.Platform, owner, roleName, wallet string) error {
-	txContext := &common.TxContext{
-		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: 0},
-		TxID:         platform.Txid(),
-		Signer:       []byte("system"),
-		Caller:       "0x0000000000000000000000000000000000000000",
-	}
-
 	engineContext := &common.EngineContext{
-		TxContext:     txContext,
+		TxContext: newTxContextWithLeader(
+			ctx,
+			platform,
+			[]byte("system"),
+			"0x0000000000000000000000000000000000000000",
+			"",
+			1,
+		),
 		OverrideAuthz: true, // Skip authorization checks - this is a test utility
 	}
 
@@ -343,17 +343,7 @@ func GetStreamId(ctx context.Context, platform *kwilTesting.Platform, dataProvid
 		return 0, errors.Wrap(err, "error creating ethereum address")
 	}
 
-	txContext := &common.TxContext{
-		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: 1},
-		Signer:       deployer.Bytes(),
-		Caller:       deployer.Address(),
-		TxID:         platform.Txid(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := newEthEngineContext(ctx, platform, deployer, 1)
 
 	var streamRef int
 	r, err := platform.Engine.Call(engineContext, platform.DB, "", "get_stream_id", []any{

@@ -5,15 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	trufTypes "github.com/trufnetwork/sdk-go/core/types"
-	"github.com/trufnetwork/sdk-go/core/util"
+	"sync"
 
 	"github.com/pkg/errors"
 	"github.com/trufnetwork/kwil-db/common"
+	"github.com/trufnetwork/kwil-db/core/crypto"
+	coreauth "github.com/trufnetwork/kwil-db/core/crypto/auth"
 	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
-	"github.com/trufnetwork/sdk-go/core/types"
+	types "github.com/trufnetwork/sdk-go/core/types"
+	"github.com/trufnetwork/sdk-go/core/util"
 )
 
 // GetDataResult contains the full result of a GetRecord call
@@ -45,6 +46,39 @@ func parseCacheInfoFromLogs(logs []string) (cacheHit bool, cachedAt *int64) {
 		}
 	}
 	return
+}
+
+var (
+	defaultLeaderOnce sync.Once
+	defaultLeaderPub  crypto.PublicKey
+)
+
+func defaultLeaderPublicKey() crypto.PublicKey {
+	defaultLeaderOnce.Do(func() {
+		_, pubGeneric, err := crypto.GenerateSecp256k1Key(nil)
+		if err != nil {
+			panic(fmt.Sprintf("failed to generate default leader key: %v", err))
+		}
+		defaultLeaderPub = pubGeneric
+	})
+	return defaultLeaderPub
+}
+
+func newTxContextWithLeader(ctx context.Context, platform *kwilTesting.Platform, signer []byte, caller string, authenticator string, height int64) *common.TxContext {
+	if height <= 0 {
+		height = 1
+	}
+	return &common.TxContext{
+		Ctx: ctx,
+		BlockContext: &common.BlockContext{
+			Height:   height,
+			Proposer: defaultLeaderPublicKey(),
+		},
+		Signer:        signer,
+		Caller:        caller,
+		TxID:          platform.Txid(),
+		Authenticator: authenticator,
+	}
 }
 
 // GetRecordWithLogs executes get_record and returns full result including logs
@@ -504,16 +538,15 @@ func SetTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 		weightDecimals = append(weightDecimals, valueDecimal)
 	}
 
-	txContext := &common.TxContext{
-		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: input.Height},
-		Signer:       input.Platform.Deployer,
-		Caller:       deployer.Address(),
-		TxID:         input.Platform.Txid(),
-	}
-
 	engineContext := &common.EngineContext{
-		TxContext: txContext,
+		TxContext: newTxContextWithLeader(
+			ctx,
+			input.Platform,
+			input.Platform.Deployer,
+			deployer.Address(),
+			coreauth.EthPersonalSignAuth,
+			input.Height,
+		),
 	}
 
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "insert_taxonomy", []any{
@@ -726,7 +759,7 @@ func ListStreams(ctx context.Context, input ListStreamsInput) ([]ResultRow, erro
 
 type GetDatabaseSizeInput struct {
 	Platform *kwilTesting.Platform
-	Locator  trufTypes.StreamLocator
+	Locator  types.StreamLocator
 	Height   int64
 }
 
@@ -833,7 +866,6 @@ func GetDatabaseSizeV2Pretty(ctx context.Context, input GetDatabaseSizeInput) ([
 
 	return processResultRows(resultRows)
 }
-
 
 // ListTaxonomiesByHeight executes list_taxonomies_by_height action
 func ListTaxonomiesByHeight(ctx context.Context, input ListTaxonomiesByHeightInput) ([]ResultRow, error) {
@@ -959,4 +991,3 @@ func ListMetadataByHeight(ctx context.Context, input ListMetadataByHeightInput) 
 
 	return processResultRows(resultRows)
 }
-
