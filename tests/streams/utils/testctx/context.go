@@ -34,7 +34,7 @@ func defaultLeaderPublicKey() *crypto.Secp256k1PublicKey {
 
 // NewTxContextWithAuth constructs a TxContext that includes a deterministic leader proposer.
 func NewTxContextWithAuth(ctx context.Context, platform *kwilTesting.Platform, signer []byte, caller string, authenticator string, height int64) *common.TxContext {
-	if height <= 0 {
+	if height < 0 {
 		height = 1
 	}
 	return &common.TxContext{
