@@ -2,15 +2,12 @@ package setup
 
 import (
 	"context"
-	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/pkg/errors"
 	"github.com/trufnetwork/kwil-db/common"
-	"github.com/trufnetwork/kwil-db/core/crypto"
-	coreauth "github.com/trufnetwork/kwil-db/core/crypto/auth"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	"github.com/trufnetwork/node/tests/streams/utils/testctx"
 	"github.com/trufnetwork/sdk-go/core/types"
 	"github.com/trufnetwork/sdk-go/core/util"
 )
@@ -31,51 +28,13 @@ func (contractType ContractType) String() string {
 	return string(contractType)
 }
 
-var (
-	defaultLeaderOnce sync.Once
-	defaultLeaderPub  *crypto.Secp256k1PublicKey
-)
-
-func defaultLeaderPublicKey() *crypto.Secp256k1PublicKey {
-	defaultLeaderOnce.Do(func() {
-		_, pubGeneric, err := crypto.GenerateSecp256k1Key(nil)
-		if err != nil {
-			panic(fmt.Sprintf("failed to generate default leader key: %v", err))
-		}
-		var ok bool
-		defaultLeaderPub, ok = pubGeneric.(*crypto.Secp256k1PublicKey)
-		if !ok {
-			panic("default leader public key is not secp256k1")
-		}
-	})
-	return defaultLeaderPub
-}
-
-func newTxContextWithLeader(ctx context.Context, platform *kwilTesting.Platform, signer []byte, caller string, authenticator string, height int64) *common.TxContext {
-	if height <= 0 {
-		height = 1
-	}
-	return &common.TxContext{
-		Ctx: ctx,
-		BlockContext: &common.BlockContext{
-			Height:   height,
-			Proposer: defaultLeaderPublicKey(),
-		},
-		Signer:        signer,
-		Caller:        caller,
-		TxID:          platform.Txid(),
-		Authenticator: authenticator,
-	}
-}
-
 func newEthEngineContext(ctx context.Context, platform *kwilTesting.Platform, addr util.EthereumAddress, height int64) *common.EngineContext {
-	txContext := newTxContextWithLeader(ctx, platform, addr.Bytes(), addr.Address(), coreauth.EthPersonalSignAuth, height)
-	return &common.EngineContext{TxContext: txContext}
+	return testctx.NewEngineContext(ctx, platform, addr, height)
 }
 
 // NewEngineContext returns an engine context configured with the provided signer and a deterministic leader.
 func NewEngineContext(ctx context.Context, platform *kwilTesting.Platform, addr util.EthereumAddress, height int64) *common.EngineContext {
-	return newEthEngineContext(ctx, platform, addr, height)
+	return testctx.NewEngineContext(ctx, platform, addr, height)
 }
 
 // CreateStream parses and creates the dataset for a contract
@@ -304,7 +263,7 @@ func CreateDataProviderWithoutRole(ctx context.Context, platform *kwilTesting.Pl
 // 4. Using OverrideAuthz is the standard pattern for test role management
 func removeMemberFromRoleBypass(ctx context.Context, platform *kwilTesting.Platform, owner, roleName, wallet string) error {
 	engineContext := &common.EngineContext{
-		TxContext: newTxContextWithLeader(
+		TxContext: testctx.NewTxContextWithAuth(
 			ctx,
 			platform,
 			[]byte("system"),
