@@ -311,7 +311,17 @@ CREATE OR REPLACE ACTION list_transaction_fees(
         LIMIT $limit_val
         OFFSET $offset_val
     ) fe
-    LEFT JOIN transaction_event_distributions ted
+    LEFT JOIN (
+        SELECT
+            tx_id,
+            sequence,
+            recipient,
+            amount
+        FROM transaction_event_distributions
+        WHERE
+            NOT $mode_is_received
+            OR recipient = $wallet_lower
+    ) ted
         ON ted.tx_id = fe.tx_id
     ORDER BY fe.block_height DESC,
              fe.tx_id DESC,

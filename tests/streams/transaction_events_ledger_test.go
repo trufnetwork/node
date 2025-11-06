@@ -76,6 +76,8 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 
 		receiverVal := util.Unsafe_NewEthereumAddressFromString("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 		receiver := &receiverVal
+		bonusRecipientVal := util.Unsafe_NewEthereumAddressFromString("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB")
+		bonusRecipientLower := strings.ToLower(bonusRecipientVal.Address())
 
 		attestationStream := util.GenerateStreamId("ledger_attestation_stream")
 		require.NoError(t, setup.CreateStream(ctx, platform, setup.StreamInfo{
@@ -111,6 +113,41 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		})
 		require.NoError(t, err)
 		height++
+
+		tableCheck, err := platform.DB.Execute(ctx,
+			`SELECT table_schema::TEXT 
+			 FROM information_schema.tables 
+			 WHERE table_name = 'transaction_event_distributions'`,
+		)
+		require.NoError(t, err)
+		require.NotEmpty(t, tableCheck.Rows, "transaction_event_distributions table missing")
+
+		schemaName, ok := tableCheck.Rows[0][0].(string)
+		require.True(t, ok, "expected schema name as string")
+		t.Logf("ledger distribution table schema: %s", schemaName)
+
+		updateSQL := fmt.Sprintf(`
+			UPDATE %s.transaction_event_distributions
+			 SET amount = $1::NUMERIC(78, 0)
+			 WHERE tx_id = $2 AND sequence = 1`, schemaName)
+		_, err = platform.DB.Execute(ctx,
+			updateSQL,
+			feeOneTRUF,
+			insertTx,
+		)
+		require.NoError(t, err)
+
+		insertSQL := fmt.Sprintf(`
+			INSERT INTO %s.transaction_event_distributions (tx_id, sequence, recipient, amount, note)
+			 VALUES ($1, $2, $3, $4::NUMERIC(78, 0), NULL)`, schemaName)
+		_, err = platform.DB.Execute(ctx,
+			insertSQL,
+			insertTx,
+			2,
+			bonusRecipientLower,
+			feeOneTRUF,
+		)
+		require.NoError(t, err)
 
 		taxLeaderPub, taxLeaderAddr := newLeader(t)
 		weight, err := kwilTypes.ParseDecimalExplicit("1.0", 36, 18)
@@ -171,87 +208,142 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 
 		expected := map[string]ledgerExpectation{
 			createTx: {
-				method:          "deployStream",
-				fee:             feeFourTRUF,
-				feeRecipient:    createLeaderAddr,
-				feeDistribution: buildDistribution(createLeaderAddr, feeFourTRUF),
-				assertMetadata:  assertNoMetadata,
+				method:       "deployStream",
+				fee:          feeFourTRUF,
+				feeRecipient: createLeaderAddr,
+				feeDistributions: []string{
+					buildDistribution(createLeaderAddr, feeFourTRUF),
+				},
+				assertMetadata: assertNoMetadata,
 			},
 			insertTx: {
-				method:          "insertRecords",
-				fee:             feeTwoTRUF,
-				feeRecipient:    insertLeaderAddr,
-				feeDistribution: buildDistribution(insertLeaderAddr, feeTwoTRUF),
-				assertMetadata:  assertNoMetadata,
+				method:       "insertRecords",
+				fee:          feeTwoTRUF,
+				feeRecipient: insertLeaderAddr,
+				feeDistributions: []string{
+					buildDistribution(insertLeaderAddr, feeOneTRUF),
+					buildDistribution(bonusRecipientLower, feeOneTRUF),
+				},
+				assertMetadata: assertNoMetadata,
 			},
 			taxTx: {
-				method:          "setTaxonomies",
-				fee:             feeTwoTRUF,
-				feeRecipient:    taxLeaderAddr,
-				feeDistribution: buildDistribution(taxLeaderAddr, feeTwoTRUF),
-				assertMetadata:  assertNoMetadata,
+				method:       "setTaxonomies",
+				fee:          feeTwoTRUF,
+				feeRecipient: taxLeaderAddr,
+				feeDistributions: []string{
+					buildDistribution(taxLeaderAddr, feeTwoTRUF),
+				},
+				assertMetadata: assertNoMetadata,
 			},
 			transferTx: {
-				method:          "transferTN",
-				fee:             feeOneTRUF,
-				feeRecipient:    transferLeaderAddr,
-				feeDistribution: buildDistribution(transferLeaderAddr, feeOneTRUF),
-				assertMetadata:  assertNoMetadata,
+				method:       "transferTN",
+				fee:          feeOneTRUF,
+				feeRecipient: transferLeaderAddr,
+				feeDistributions: []string{
+					buildDistribution(transferLeaderAddr, feeOneTRUF),
+				},
+				assertMetadata: assertNoMetadata,
 			},
 			withdrawTx: {
-				method:          "withdrawTN",
-				fee:             feeFortyTRUF,
-				feeRecipient:    withdrawLeaderAddr,
-				feeDistribution: buildDistribution(withdrawLeaderAddr, feeFortyTRUF),
-				assertMetadata:  assertNoMetadata,
+				method:       "withdrawTN",
+				fee:          feeFortyTRUF,
+				feeRecipient: withdrawLeaderAddr,
+				feeDistributions: []string{
+					buildDistribution(withdrawLeaderAddr, feeFortyTRUF),
+				},
+				assertMetadata: assertNoMetadata,
 			},
 			attTx: {
-				method:          "requestAttestation",
-				fee:             feeFortyTRUF,
-				feeRecipient:    attLeaderAddr,
-				feeDistribution: buildDistribution(attLeaderAddr, feeFortyTRUF),
-				assertMetadata:  assertNoMetadata,
+				method:       "requestAttestation",
+				fee:          feeFortyTRUF,
+				feeRecipient: attLeaderAddr,
+				feeDistributions: []string{
+					buildDistribution(attLeaderAddr, feeFortyTRUF),
+				},
+				assertMetadata: assertNoMetadata,
 			},
+		}
+
+		buildExpectedCounts := func() (map[string]map[string]int, int) {
+			counts := make(map[string]map[string]int, len(expected))
+			total := 0
+			for txID, exp := range expected {
+				distList := exp.feeDistributions
+				if len(distList) == 0 {
+					distList = []string{""}
+				}
+				counts[txID] = make(map[string]int, len(distList))
+				for _, dist := range distList {
+					counts[txID][dist]++
+					total++
+				}
+			}
+			return counts, total
+		}
+
+		assertLedgerRows := func(rows []ledgerRow) {
+			counts, total := buildExpectedCounts()
+			require.Len(t, rows, total)
+			seen := make(map[string]map[string]int, len(expected))
+			for txID := range expected {
+				seen[txID] = make(map[string]int)
+			}
+			for _, row := range rows {
+				exp, ok := expected[row.TxID]
+				require.True(t, ok, "unexpected tx in results: %s", row.TxID)
+				require.Equal(t, exp.method, row.Method)
+				require.Equal(t, userLower, row.Caller)
+				require.Equal(t, exp.fee, row.FeeAmount)
+				require.Equal(t, exp.feeRecipient, row.FeeRecipient)
+				pair := buildDistribution(row.DistributionRecipient, row.DistributionAmount)
+				require.Contains(t, counts[row.TxID], pair, "unexpected distribution %s for tx %s", pair, row.TxID)
+				seen[row.TxID][pair]++
+				t.Logf("metadata for %s (%s): raw=%s parsed=%v", row.TxID, row.Method, row.RawMetadata, row.Metadata)
+				exp.assertMetadata(row.Metadata)
+			}
+			for txID, expectedCounts := range counts {
+				for dist, want := range expectedCounts {
+					require.Equal(t, want, seen[txID][dist], "distribution %s for tx %s missing or duplicated", dist, txID)
+				}
+			}
 		}
 
 		paidRows, err := fetchTransactionFees(ctx, platform, actor.Address(), userLower, "paid")
 		require.NoError(t, err)
-		require.Len(t, paidRows, len(expected))
-		for _, row := range paidRows {
-			exp, ok := expected[row.TxID]
-			require.True(t, ok, "unexpected tx in paid results: %s", row.TxID)
-			require.Equal(t, exp.method, row.Method)
-			require.Equal(t, userLower, row.Caller)
-			require.Equal(t, exp.fee, row.FeeAmount)
-			require.Equal(t, exp.feeRecipient, row.FeeRecipient)
-			require.Equal(t, exp.feeDistribution, buildDistribution(row.DistributionRecipient, row.DistributionAmount))
-			t.Logf("metadata for %s (%s): raw=%s parsed=%v", row.TxID, row.Method, row.RawMetadata, row.Metadata)
-			exp.assertMetadata(row.Metadata)
-		}
+		assertLedgerRows(paidRows)
 
 		bothRows, err := fetchTransactionFees(ctx, platform, actor.Address(), userLower, "both")
 		require.NoError(t, err)
-		require.Len(t, bothRows, len(expected))
+		assertLedgerRows(bothRows)
 
 		withdrawReceivedRows, err := fetchTransactionFees(ctx, platform, actor.Address(), withdrawLeaderAddr, "received")
 		require.NoError(t, err)
 		require.Len(t, withdrawReceivedRows, 1)
 		require.Equal(t, withdrawTx, withdrawReceivedRows[0].TxID)
 		require.Equal(t, withdrawLeaderAddr, withdrawReceivedRows[0].FeeRecipient)
+		require.Equal(t, withdrawLeaderAddr, withdrawReceivedRows[0].DistributionRecipient)
+		require.Equal(t, feeFortyTRUF, withdrawReceivedRows[0].DistributionAmount)
 		require.Equal(t, userLower, withdrawReceivedRows[0].Caller)
+
+		insertLeaderReceivedRows, err := fetchTransactionFees(ctx, platform, actor.Address(), insertLeaderAddr, "received")
+		require.NoError(t, err)
+		require.Len(t, insertLeaderReceivedRows, 1)
+		require.Equal(t, insertTx, insertLeaderReceivedRows[0].TxID)
+		require.Equal(t, insertLeaderAddr, insertLeaderReceivedRows[0].FeeRecipient)
+		require.Equal(t, insertLeaderAddr, insertLeaderReceivedRows[0].DistributionRecipient)
+		require.Equal(t, feeOneTRUF, insertLeaderReceivedRows[0].DistributionAmount)
+
+		bonusReceivedRows, err := fetchTransactionFees(ctx, platform, actor.Address(), bonusRecipientLower, "received")
+		require.NoError(t, err)
+		require.Len(t, bonusReceivedRows, 1)
+		require.Equal(t, insertTx, bonusReceivedRows[0].TxID)
+		require.Equal(t, insertLeaderAddr, bonusReceivedRows[0].FeeRecipient)
+		require.Equal(t, bonusRecipientLower, bonusReceivedRows[0].DistributionRecipient)
+		require.Equal(t, feeOneTRUF, bonusReceivedRows[0].DistributionAmount)
 
 		lastTxRows, err := fetchLastTransactions(ctx, platform, actor.Address(), userLower, int64(len(expected)))
 		require.NoError(t, err)
-		require.Len(t, lastTxRows, len(expected))
-		for _, row := range lastTxRows {
-			exp, ok := expected[row.TxID]
-			require.True(t, ok, "unexpected tx in last transactions: %s", row.TxID)
-			require.Equal(t, exp.method, row.Method)
-			require.Equal(t, exp.fee, row.FeeAmount)
-			require.Equal(t, exp.feeRecipient, row.FeeRecipient)
-			require.Equal(t, exp.feeDistribution, buildDistribution(row.DistributionRecipient, row.DistributionAmount))
-			exp.assertMetadata(row.Metadata)
-		}
+		assertLedgerRows(lastTxRows)
 
 		legacyRows, err := fetchLegacyLastTransactions(ctx, platform, actor.Address(), userLower, int64(len(expected)))
 		require.NoError(t, err)
@@ -274,7 +366,8 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 			require.Equal(t, exp.method, eventRow.Method)
 			require.Equal(t, exp.fee, eventRow.FeeAmount)
 			require.Equal(t, exp.feeRecipient, eventRow.FeeRecipient)
-			require.Equal(t, exp.feeDistribution, eventRow.FeeDistributions)
+			expectedAggregate := strings.Join(exp.feeDistributions, ",")
+			require.Equal(t, expectedAggregate, eventRow.FeeDistributions)
 			exp.assertMetadata(eventRow.Metadata)
 		}
 
@@ -283,11 +376,11 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 }
 
 type ledgerExpectation struct {
-	method          string
-	fee             string
-	feeRecipient    string
-	feeDistribution string
-	assertMetadata  func(meta metadataMap)
+	method           string
+	fee              string
+	feeRecipient     string
+	feeDistributions []string
+	assertMetadata   func(meta metadataMap)
 }
 
 type legacyRow struct {
