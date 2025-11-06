@@ -46,7 +46,7 @@ CREATE OR REPLACE ACTION sepolia_bridge_tokens($recipient TEXT DEFAULT NULL, $am
   $bridge_recipient TEXT := LOWER(COALESCE($recipient, @caller));
 
   -- Execute withdrawal using the bridge extension
-  sepolia_bridge.bridge(COALESCE($recipient, @caller), $withdrawal_amount);
+  sepolia_bridge.bridge($bridge_recipient, $withdrawal_amount);
 
   record_transaction_event(
     5,
@@ -104,7 +104,7 @@ CREATE OR REPLACE ACTION ethereum_bridge_tokens($recipient TEXT DEFAULT NULL, $a
   $bridge_recipient TEXT := LOWER(COALESCE($recipient, @caller));
 
   -- Execute withdrawal using the bridge extension
-  ethereum_bridge.bridge(COALESCE($recipient, @caller), $withdrawal_amount);
+  ethereum_bridge.bridge($bridge_recipient, $withdrawal_amount);
 
   record_transaction_event(
     5,
