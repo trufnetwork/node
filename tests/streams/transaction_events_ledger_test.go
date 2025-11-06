@@ -345,6 +345,25 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		require.NoError(t, err)
 		assertLedgerRows(lastTxRows)
 
+		withdrawHistoryRows, err := fetchLastTransactions(ctx, platform, actor.Address(), withdrawLeaderAddr, 10)
+		require.NoError(t, err)
+		require.NotEmpty(t, withdrawHistoryRows)
+		require.Equal(t, withdrawTx, withdrawHistoryRows[0].TxID)
+
+		bonusHistoryRows, err := fetchLastTransactions(ctx, platform, actor.Address(), bonusRecipientLower, 10)
+		require.NoError(t, err)
+		require.NotEmpty(t, bonusHistoryRows)
+		foundBonus := false
+		for _, row := range bonusHistoryRows {
+			if row.DistributionRecipient == bonusRecipientLower {
+				require.Equal(t, insertTx, row.TxID)
+				require.Equal(t, feeOneTRUF, row.DistributionAmount)
+				foundBonus = true
+				break
+			}
+		}
+		require.True(t, foundBonus, "expected to find distribution row for bonus recipient")
+
 		legacyRows, err := fetchLegacyLastTransactions(ctx, platform, actor.Address(), userLower, int64(len(expected)))
 		require.NoError(t, err)
 		require.NotEmpty(t, legacyRows)
@@ -475,9 +494,10 @@ func fetchTransactionFees(ctx context.Context, platform *kwilTesting.Platform, c
 	return rows, err
 }
 
-func fetchLastTransactions(ctx context.Context, platform *kwilTesting.Platform, caller string, dataProvider string, limit int64) ([]ledgerRow, error) {
+func fetchLastTransactions(ctx context.Context, platform *kwilTesting.Platform, caller string, address string, limit int64) ([]ledgerRow, error) {
 	rows := make([]ledgerRow, 0, 8)
-	args := []any{dataProvider, limit}
+	addr := strings.ToLower(address)
+	args := []any{addr, limit}
 	err := callView(ctx, platform, caller, "get_last_transactions_v2", args, func(row *common.Row) error {
 		feeRecipient := ""
 		if row.Values[5] != nil {
