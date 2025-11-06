@@ -2,7 +2,7 @@
  * Transaction history views
  *
  * get_last_transactions_v1  - legacy implementation (no fee/caller metadata)
- * get_last_transactions_v2  - ledger-backed implementation with fee details
+ * get_last_transactions_v2  - ledger-backed implementation (redefined later in migration 027)
  * get_last_transactions     - temporary wrapper returning the v2 signature but
  *                             still sourcing data from v1. This will be replaced
  *                             with v2 once callers migrate.
@@ -95,48 +95,18 @@ CREATE OR REPLACE ACTION get_last_transactions_v2(
     metadata TEXT,
     fee_distributions TEXT
 ) {
-    $normalized_provider TEXT := NULL;
-    IF COALESCE($data_provider, '') != '' {
-        $normalized_provider := LOWER($data_provider);
-        IF NOT check_ethereum_address($normalized_provider) {
-            ERROR('Invalid data provider address. Must be a valid Ethereum address: ' || $data_provider);
-        }
-    }
-
-    IF $limit_size IS NULL OR $limit_size <= 0 {
-        $limit_size := 6;
-    }
-
-    IF $limit_size > 100 {
-        ERROR('Limit size cannot exceed 100');
-    }
-
+    -- Placeholder implementation: will be replaced by ledger-backed view in migration 027.
     RETURN
-    WITH distributions AS (
-        SELECT
-            tx_id,
-            string_agg(
-                recipient || ':' || amount::TEXT,
-                ',' ORDER BY sequence ASC
-            ) AS fee_distributions
-        FROM transaction_event_distributions
-        GROUP BY tx_id
-    )
     SELECT
-        te.tx_id,
-        te.block_height AS created_at,
-        tm.name AS method,
-        te.caller,
-        te.fee_amount,
-        te.fee_recipient,
-        te.metadata,
-        COALESCE(d.fee_distributions, '') AS fee_distributions
-    FROM transaction_events te
-    JOIN transaction_methods tm ON tm.method_id = te.method_id
-    LEFT JOIN distributions d ON d.tx_id = te.tx_id
-    WHERE $normalized_provider IS NULL OR te.caller = $normalized_provider
-    ORDER BY te.block_height DESC, te.tx_id DESC
-    LIMIT $limit_size;
+        NULL::TEXT AS tx_id,
+        lt.created_at,
+        lt.method,
+        NULL::TEXT AS caller,
+        NULL::NUMERIC(78, 0) AS fee_amount,
+        NULL::TEXT AS fee_recipient,
+        NULL::TEXT AS metadata,
+        ''::TEXT AS fee_distributions
+    FROM get_last_transactions_v1($data_provider, $limit_size) lt;
 };
 
 CREATE OR REPLACE ACTION get_last_transactions(

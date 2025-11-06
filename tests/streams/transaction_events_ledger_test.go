@@ -224,13 +224,22 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 			require.Equal(t, userLower, row.Caller)
 			require.Equal(t, exp.fee, row.FeeAmount)
 			require.Equal(t, exp.feeRecipient, row.FeeRecipient)
-			require.Equal(t, exp.feeDistribution, row.FeeDistributions)
+			require.Equal(t, exp.feeDistribution, buildDistribution(row.DistributionRecipient, row.DistributionAmount))
 			t.Logf("metadata for %s (%s): raw=%s parsed=%v", row.TxID, row.Method, row.RawMetadata, row.Metadata)
 			exp.assertMetadata(row.Metadata)
 		}
 
 		bothRows, err := fetchTransactionFees(ctx, platform, actor.Address(), userLower, "both")
 		require.NoError(t, err)
+		debugBothCount := 0
+		err = callView(ctx, platform, actor.Address(), "list_transaction_fees", []any{userLower, "both", 20, 0}, func(row *common.Row) error {
+			debugBothCount++
+			t.Logf("both row raw: %+v", row.Values)
+			return nil
+		})
+		require.NoError(t, err)
+		t.Logf("both count raw: %d", debugBothCount)
+		t.Logf("bothRows len (helper): %d", len(bothRows))
 		require.Len(t, bothRows, len(expected))
 
 		withdrawReceivedRows, err := fetchTransactionFees(ctx, platform, actor.Address(), withdrawLeaderAddr, "received")
@@ -242,6 +251,20 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 
 		lastTxRows, err := fetchLastTransactions(ctx, platform, actor.Address(), userLower, int64(len(expected)))
 		require.NoError(t, err)
+		debugLastCount := 0
+		err = callView(ctx, platform, actor.Address(), "get_last_transactions_v2", []any{userLower, int64(len(expected))}, func(row *common.Row) error {
+			debugLastCount++
+			t.Logf("last row raw: %+v", row.Values)
+			return nil
+		})
+		require.NoError(t, err)
+		t.Logf("lastRows count raw: %d", debugLastCount)
+		err = callView(ctx, platform, actor.Address(), "get_last_transactions_v2", []any{"", int64(len(expected))}, func(row *common.Row) error {
+			t.Logf("last row (no filter): %+v", row.Values)
+			return nil
+		})
+		require.NoError(t, err)
+		t.Logf("lastRows len (helper): %d", len(lastTxRows))
 		require.Len(t, lastTxRows, len(expected))
 		for _, row := range lastTxRows {
 			exp, ok := expected[row.TxID]
@@ -249,8 +272,23 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 			require.Equal(t, exp.method, row.Method)
 			require.Equal(t, exp.fee, row.FeeAmount)
 			require.Equal(t, exp.feeRecipient, row.FeeRecipient)
-			require.Equal(t, exp.feeDistribution, row.FeeDistributions)
+			require.Equal(t, exp.feeDistribution, buildDistribution(row.DistributionRecipient, row.DistributionAmount))
 			exp.assertMetadata(row.Metadata)
+		}
+
+		legacyRows, err := fetchLegacyLastTransactions(ctx, platform, actor.Address(), userLower, int64(len(expected)))
+		require.NoError(t, err)
+		require.NotEmpty(t, legacyRows)
+
+		methodSet := make(map[string]struct{})
+		for _, exp := range expected {
+			methodSet[exp.method] = struct{}{}
+		}
+
+		for _, row := range legacyRows {
+			require.Greater(t, row.CreatedAt, int64(0))
+			_, ok := methodSet[row.Method]
+			require.True(t, ok, "unexpected method in legacy view: %s", row.Method)
 		}
 
 		for txID, exp := range expected {
@@ -275,15 +313,24 @@ type ledgerExpectation struct {
 	assertMetadata  func(meta metadataMap)
 }
 
+type legacyRow struct {
+	CreatedAt int64
+	Method    string
+}
+
 type ledgerRow struct {
-	TxID             string
-	Method           string
-	Caller           string
-	FeeAmount        string
-	FeeRecipient     string
-	Metadata         metadataMap
-	FeeDistributions string
-	RawMetadata      string
+	TxID                  string
+	CreatedAt             int64
+	Method                string
+	Caller                string
+	FeeAmount             string
+	FeeRecipient          string
+	Metadata              metadataMap
+	FeeDistributions      string
+	DistributionSequence  int
+	DistributionRecipient string
+	DistributionAmount    string
+	RawMetadata           string
 }
 
 func newLeader(t *testing.T) (*crypto.Secp256k1PublicKey, string) {
@@ -334,15 +381,24 @@ func fetchTransactionFees(ctx context.Context, platform *kwilTesting.Platform, c
 		rawMetadata := stringOrEmpty(row.Values[6])
 		meta := parseMetadata(row.Values[6])
 
+		seq := int(row.Values[7].(int64))
+		distRecipient := ""
+		if row.Values[8] != nil {
+			distRecipient = strings.ToLower(row.Values[8].(string))
+		}
+
 		rows = append(rows, ledgerRow{
-			TxID:             row.Values[0].(string),
-			Method:           row.Values[2].(string),
-			Caller:           strings.ToLower(row.Values[3].(string)),
-			FeeAmount:        decimalToString(row.Values[4]),
-			FeeRecipient:     feeRecipient,
-			Metadata:         meta,
-			FeeDistributions: stringOrEmpty(row.Values[7]),
-			RawMetadata:      rawMetadata,
+			TxID:                  row.Values[0].(string),
+			CreatedAt:             row.Values[1].(int64),
+			Method:                row.Values[2].(string),
+			Caller:                strings.ToLower(row.Values[3].(string)),
+			FeeAmount:             decimalToString(row.Values[4]),
+			FeeRecipient:          feeRecipient,
+			Metadata:              meta,
+			DistributionSequence:  seq,
+			DistributionRecipient: distRecipient,
+			DistributionAmount:    decimalToString(row.Values[9]),
+			RawMetadata:           rawMetadata,
 		})
 		return nil
 	})
@@ -360,14 +416,30 @@ func fetchLastTransactions(ctx context.Context, platform *kwilTesting.Platform, 
 
 		rawMetadata := stringOrEmpty(row.Values[6])
 		rows = append(rows, ledgerRow{
-			TxID:             row.Values[0].(string),
-			Method:           row.Values[2].(string),
-			Caller:           strings.ToLower(row.Values[3].(string)),
-			FeeAmount:        decimalToString(row.Values[4]),
-			FeeRecipient:     feeRecipient,
-			Metadata:         parseMetadata(row.Values[6]),
-			FeeDistributions: stringOrEmpty(row.Values[7]),
-			RawMetadata:      rawMetadata,
+			TxID:                  row.Values[0].(string),
+			CreatedAt:             row.Values[1].(int64),
+			Method:                row.Values[2].(string),
+			Caller:                strings.ToLower(row.Values[3].(string)),
+			FeeAmount:             decimalToString(row.Values[4]),
+			FeeRecipient:          feeRecipient,
+			Metadata:              parseMetadata(row.Values[6]),
+			DistributionSequence:  int(row.Values[7].(int64)),
+			DistributionRecipient: strings.ToLower(stringOrEmpty(row.Values[8])),
+			DistributionAmount:    decimalToString(row.Values[9]),
+			RawMetadata:           rawMetadata,
+		})
+		return nil
+	})
+	return rows, err
+}
+
+func fetchLegacyLastTransactions(ctx context.Context, platform *kwilTesting.Platform, caller string, dataProvider string, limit int64) ([]legacyRow, error) {
+	rows := make([]legacyRow, 0, 8)
+	args := []any{dataProvider, limit}
+	err := callView(ctx, platform, caller, "get_last_transactions_v1", args, func(row *common.Row) error {
+		rows = append(rows, legacyRow{
+			CreatedAt: row.Values[0].(int64),
+			Method:    row.Values[1].(string),
 		})
 		return nil
 	})
@@ -384,14 +456,17 @@ func fetchTransactionEvent(ctx context.Context, platform *kwilTesting.Platform, 
 
 		rawMetadata := stringOrEmpty(row.Values[6])
 		result = ledgerRow{
-			TxID:             row.Values[0].(string),
-			Method:           row.Values[2].(string),
-			Caller:           strings.ToLower(row.Values[3].(string)),
-			FeeAmount:        decimalToString(row.Values[4]),
-			FeeRecipient:     feeRecipient,
-			Metadata:         parseMetadata(row.Values[6]),
-			FeeDistributions: stringOrEmpty(row.Values[7]),
-			RawMetadata:      rawMetadata,
+			TxID:                  row.Values[0].(string),
+			Method:                row.Values[2].(string),
+			Caller:                strings.ToLower(row.Values[3].(string)),
+			FeeAmount:             decimalToString(row.Values[4]),
+			FeeRecipient:          feeRecipient,
+			Metadata:              parseMetadata(row.Values[6]),
+			FeeDistributions:      stringOrEmpty(row.Values[7]),
+			DistributionSequence:  0,
+			DistributionRecipient: "",
+			DistributionAmount:    "",
+			RawMetadata:           rawMetadata,
 		}
 		return nil
 	})

@@ -38,6 +38,8 @@ CREATE INDEX IF NOT EXISTS transaction_events_block_idx
 CREATE INDEX IF NOT EXISTS transaction_events_caller_idx
     ON transaction_events (caller, block_height, tx_id);
 
+-- this table is the single source of truth for per-recipient breakdowns; downstream readers aggregate from it
+-- E.g. attestations will soon pay a slice of the fee to each data provider that contributed to the data
 CREATE TABLE IF NOT EXISTS transaction_event_distributions (
     tx_id TEXT NOT NULL REFERENCES transaction_events(tx_id) ON DELETE CASCADE,
     sequence INT NOT NULL,
