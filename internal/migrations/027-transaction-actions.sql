@@ -1,9 +1,3 @@
-/**
- * =============================================================================
- * Transaction Ledger Helper Actions
- * =============================================================================
- */
-
 CREATE OR REPLACE ACTION record_transaction_event(
     -- check internal/migrations/026-transaction-schemas.sql for method_id values
     $method_id INT,
@@ -70,7 +64,6 @@ CREATE OR REPLACE ACTION record_transaction_event(
             $recipient_lower,
             $metadata
         );
-        $initial_summary TEXT := '';
         IF $recipient_lower IS NOT NULL AND $amount > 0::NUMERIC(78, 0) {
             -- transaction_event_distributions is the single source of truth for
             -- per-recipient breakdowns; downstream readers aggregate from it.
@@ -87,12 +80,7 @@ CREATE OR REPLACE ACTION record_transaction_event(
                 $amount,
                 NULL
             );
-            $initial_summary := $recipient_lower || ':' || $amount::TEXT;
         }
-
-        INSERT INTO transaction_event_summaries (tx_id, fee_distributions)
-        VALUES ($tx_id, $initial_summary)
-        ON CONFLICT (tx_id) DO NOTHING;
     }
 };
 
@@ -143,26 +131,6 @@ CREATE OR REPLACE ACTION append_fee_distribution(
         $amount_sanitized,
         NULL
     );
-
-    $entry TEXT := $recipient_lower || ':' || $amount_sanitized::TEXT;
-    $updated BOOL := FALSE;
-    FOR $summary_row IN
-        UPDATE transaction_event_summaries
-        SET fee_distributions = CASE
-            WHEN fee_distributions = '' THEN $entry
-            ELSE fee_distributions || ',' || $entry
-        END
-        WHERE tx_id = $tx_id
-        RETURNING tx_id
-    {
-        $updated := TRUE;
-    }
-
-    IF !$updated {
-        INSERT INTO transaction_event_summaries (tx_id, fee_distributions)
-        VALUES ($tx_id, $entry)
-        ON CONFLICT (tx_id) DO NOTHING;
-    }
 };
 
 CREATE OR REPLACE ACTION get_transaction_event(
@@ -263,8 +231,7 @@ CREATE OR REPLACE ACTION list_transaction_fees(
     metadata TEXT,
     distribution_sequence INT,
     distribution_recipient TEXT,
-    distribution_amount NUMERIC(78, 0),
-    fee_distributions TEXT
+    distribution_amount NUMERIC(78, 0)
 ) {
     IF $wallet IS NULL OR trim($wallet) = '' {
         ERROR('wallet is required');
@@ -293,6 +260,10 @@ CREATE OR REPLACE ACTION list_transaction_fees(
         $offset_val := 0;
     }
 
+    $mode_is_paid BOOL := $mode_normalized = 'paid';
+    $mode_is_received BOOL := $mode_normalized = 'received';
+    $mode_is_both BOOL := $mode_normalized = 'both';
+
     RETURN SELECT
         fe.tx_id,
         fe.block_height,
@@ -303,8 +274,7 @@ CREATE OR REPLACE ACTION list_transaction_fees(
         fe.metadata,
         COALESCE(ted.sequence, 0) AS distribution_sequence,
         ted.recipient AS distribution_recipient,
-        ted.amount AS distribution_amount,
-        COALESCE(ts.fee_distributions, '') AS fee_distributions
+        ted.amount AS distribution_amount
     FROM (
         SELECT
             te.tx_id,
@@ -317,8 +287,8 @@ CREATE OR REPLACE ACTION list_transaction_fees(
         FROM transaction_events te
         JOIN transaction_methods tm ON tm.method_id = te.method_id
         WHERE
-            ($mode_normalized = 'paid' AND te.caller = $wallet_lower)
-            OR ($mode_normalized = 'received' AND (
+            ($mode_is_paid AND te.caller = $wallet_lower)
+            OR ($mode_is_received AND (
                 te.fee_recipient = $wallet_lower
                 OR EXISTS (
                     SELECT 1
@@ -327,7 +297,7 @@ CREATE OR REPLACE ACTION list_transaction_fees(
                       AND ted_inner.recipient = $wallet_lower
                 )
             ))
-            OR ($mode_normalized = 'both' AND (
+            OR ($mode_is_both AND (
                 te.caller = $wallet_lower
                 OR te.fee_recipient = $wallet_lower
                 OR EXISTS (
@@ -343,8 +313,6 @@ CREATE OR REPLACE ACTION list_transaction_fees(
     ) fe
     LEFT JOIN transaction_event_distributions ted
         ON ted.tx_id = fe.tx_id
-    LEFT JOIN transaction_event_summaries ts
-        ON ts.tx_id = fe.tx_id
     ORDER BY fe.block_height DESC,
              fe.tx_id DESC,
              COALESCE(ted.sequence, 0) ASC;
@@ -363,7 +331,9 @@ CREATE OR REPLACE ACTION get_last_transactions_v2(
     fee_amount NUMERIC(78, 0),
     fee_recipient TEXT,
     metadata TEXT,
-    fee_distributions TEXT
+    distribution_sequence INT,
+    distribution_recipient TEXT,
+    distribution_amount NUMERIC(78, 0)
 ) {
     $normalized_provider TEXT := NULL;
     IF COALESCE($data_provider, '') != '' {
@@ -382,73 +352,37 @@ CREATE OR REPLACE ACTION get_last_transactions_v2(
         ERROR('Limit size cannot exceed 100');
     }
 
-    $tx_ids TEXT[] := '{}'::TEXT[];
-    $block_heights TEXT[] := '{}'::TEXT[];
-    $methods TEXT[] := '{}'::TEXT[];
-    $callers TEXT[] := '{}'::TEXT[];
-    $fee_amounts TEXT[] := '{}'::TEXT[];
-    $fee_recipients TEXT[] := '{}'::TEXT[];
-    $metadata_values TEXT[] := '{}'::TEXT[];
-    $fee_summaries TEXT[] := '{}'::TEXT[];
-
-    FOR $row IN
+    RETURN
+    WITH limited_events AS (
         SELECT
             te.tx_id,
             te.block_height,
             tm.name AS method,
-            te.caller,
+            LOWER(te.caller) AS caller,
             te.fee_amount,
             te.fee_recipient,
             te.metadata
         FROM transaction_events te
         JOIN transaction_methods tm ON tm.method_id = te.method_id
-        WHERE $normalized_provider IS NULL OR te.caller = $normalized_provider
+        WHERE $normalized_provider IS NULL OR LOWER(te.caller) = $normalized_provider
         ORDER BY te.block_height DESC, te.tx_id DESC
         LIMIT $limit_val
-    {
-        $summary TEXT := '';
-        FOR $dist IN
-            SELECT recipient, amount
-            FROM transaction_event_distributions
-            WHERE tx_id = $row.tx_id
-            ORDER BY sequence ASC
-        {
-            $entry TEXT := $dist.recipient || ':' || $dist.amount::TEXT;
-            IF $summary = '' {
-                $summary := $entry;
-            } ELSE {
-                $summary := $summary || ',' || $entry;
-            }
-        }
-
-        $tx_ids := array_append($tx_ids, $row.tx_id);
-        $block_heights := array_append($block_heights, $row.block_height::TEXT);
-        $methods := array_append($methods, $row.method);
-        $callers := array_append($callers, LOWER($row.caller));
-        $fee_amounts := array_append($fee_amounts, $row.fee_amount::TEXT);
-        $fee_recipients := array_append($fee_recipients, COALESCE($row.fee_recipient, ''));
-        $metadata_values := array_append($metadata_values, COALESCE($row.metadata, ''));
-        $fee_summaries := array_append($fee_summaries, $summary);
-    }
-
-    RETURN
+    )
     SELECT
-        tx_id,
-        created_at::INT8,
-        method,
-        caller,
-        fee_amount::NUMERIC(78, 0),
-        NULLIF(fee_recipient, ''),
-        NULLIF(metadata, ''),
-        fee_distributions
-    FROM unnest(
-        $tx_ids,
-        $block_heights,
-        $methods,
-        $callers,
-        $fee_amounts,
-        $fee_recipients,
-        $metadata_values,
-        $fee_summaries
-    ) AS entries(tx_id, created_at, method, caller, fee_amount, fee_recipient, metadata, fee_distributions);
+        le.tx_id,
+        le.block_height,
+        le.method,
+        le.caller,
+        le.fee_amount,
+        le.fee_recipient,
+        le.metadata,
+        COALESCE(ted.sequence, 0) AS distribution_sequence,
+        ted.recipient AS distribution_recipient,
+        ted.amount AS distribution_amount
+    FROM limited_events le
+    LEFT JOIN transaction_event_distributions ted
+        ON ted.tx_id = le.tx_id
+    ORDER BY le.block_height DESC,
+             le.tx_id DESC,
+             COALESCE(ted.sequence, 0) ASC;
 };

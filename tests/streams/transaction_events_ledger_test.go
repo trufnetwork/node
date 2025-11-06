@@ -231,15 +231,6 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 
 		bothRows, err := fetchTransactionFees(ctx, platform, actor.Address(), userLower, "both")
 		require.NoError(t, err)
-		debugBothCount := 0
-		err = callView(ctx, platform, actor.Address(), "list_transaction_fees", []any{userLower, "both", 20, 0}, func(row *common.Row) error {
-			debugBothCount++
-			t.Logf("both row raw: %+v", row.Values)
-			return nil
-		})
-		require.NoError(t, err)
-		t.Logf("both count raw: %d", debugBothCount)
-		t.Logf("bothRows len (helper): %d", len(bothRows))
 		require.Len(t, bothRows, len(expected))
 
 		withdrawReceivedRows, err := fetchTransactionFees(ctx, platform, actor.Address(), withdrawLeaderAddr, "received")
@@ -251,20 +242,6 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 
 		lastTxRows, err := fetchLastTransactions(ctx, platform, actor.Address(), userLower, int64(len(expected)))
 		require.NoError(t, err)
-		debugLastCount := 0
-		err = callView(ctx, platform, actor.Address(), "get_last_transactions_v2", []any{userLower, int64(len(expected))}, func(row *common.Row) error {
-			debugLastCount++
-			t.Logf("last row raw: %+v", row.Values)
-			return nil
-		})
-		require.NoError(t, err)
-		t.Logf("lastRows count raw: %d", debugLastCount)
-		err = callView(ctx, platform, actor.Address(), "get_last_transactions_v2", []any{"", int64(len(expected))}, func(row *common.Row) error {
-			t.Logf("last row (no filter): %+v", row.Values)
-			return nil
-		})
-		require.NoError(t, err)
-		t.Logf("lastRows len (helper): %d", len(lastTxRows))
 		require.Len(t, lastTxRows, len(expected))
 		for _, row := range lastTxRows {
 			exp, ok := expected[row.TxID]
