@@ -21,20 +21,7 @@ CREATE OR REPLACE ACTION request_attestation(
 ) PUBLIC RETURNS (request_tx_id TEXT, attestation_hash BYTEA) {
     -- Capture transaction ID for primary key
     $request_tx_id := @txid;
-    
-    -- Permission Check: Ensure caller has the 'system:network_writer' role.
-    $lower_caller TEXT := LOWER(@caller);
-    $has_permission BOOL := false;
-    for $row in are_members_of('system', 'network_writer', ARRAY[$lower_caller]) {
-        if $row.wallet = $lower_caller AND $row.is_member {
-            $has_permission := true;
-            break;
-        }
-    }
-    if NOT $has_permission {
-        ERROR('Caller does not have the required system:network_writer role to request attestation.');
-    }
-    
+
     -- Validate encryption flag (must be false in MVP)
     if $encrypt_sig = true {
         ERROR('Encryption not implemented');
@@ -49,30 +36,47 @@ CREATE OR REPLACE ACTION request_attestation(
         ERROR('Action not allowed for attestation: ' || $action_name);
     }
 
-    -- ===== FEE COLLECTION =====
-    -- Collect 40 TRUF flat fee for attestation request
-    $attestation_fee := '40000000000000000000'::NUMERIC(78, 0); -- 40 TRUF with 18 decimals
+    -- ===== FEE COLLECTION WITH ROLE EXEMPTION =====
+    -- Declare variables in outer scope
+    $attestation_fee NUMERIC(78, 0);
+    $caller_balance NUMERIC(78, 0);
+    $leader_addr TEXT;
 
-    -- Validate max_fee if provided
-    IF $max_fee IS NOT NULL AND $max_fee > 0::NUMERIC(78, 0) {
-        IF $attestation_fee > $max_fee {
-            ERROR('Attestation fee (40 TRUF) exceeds caller max_fee limit: ' || ($max_fee / 1000000000000000000::NUMERIC(78, 0))::TEXT || ' TRUF');
+    -- Check if caller is exempt (has system:network_writer role)
+    $is_exempt BOOL := FALSE;
+    $lower_caller TEXT := LOWER(@caller);
+    FOR $row IN are_members_of('system', 'network_writer', ARRAY[$lower_caller]) {
+        IF $row.wallet = $lower_caller AND $row.is_member {
+            $is_exempt := TRUE;
+            BREAK;
         }
     }
 
-    $caller_balance := ethereum_bridge.balance(@caller);
+    -- Collect fee only from non-exempt wallets (40 TRUF flat fee)
+    IF NOT $is_exempt {
+        $attestation_fee := '40000000000000000000'::NUMERIC(78, 0); -- 40 TRUF with 18 decimals
 
-    IF $caller_balance < $attestation_fee {
-        ERROR('Insufficient balance for attestation. Required: 40 TRUF');
+        -- Validate max_fee if provided
+        IF $max_fee IS NOT NULL AND $max_fee > 0::NUMERIC(78, 0) {
+            IF $attestation_fee > $max_fee {
+                ERROR('Attestation fee (40 TRUF) exceeds caller max_fee limit: ' || ($max_fee / 1000000000000000000::NUMERIC(78, 0))::TEXT || ' TRUF');
+            }
+        }
+
+        $caller_balance := ethereum_bridge.balance(@caller);
+
+        IF $caller_balance < $attestation_fee {
+            ERROR('Insufficient balance for attestation. Required: 40 TRUF');
+        }
+
+        -- Verify leader address is available
+        IF @leader_sender IS NULL {
+            ERROR('Leader address not available for fee transfer');
+        }
+
+        $leader_addr := encode(@leader_sender, 'hex')::TEXT;
+        ethereum_bridge.transfer($leader_addr, $attestation_fee);
     }
-
-    -- Verify leader address is available
-    IF @leader_sender IS NULL {
-        ERROR('Leader address not available for fee transfer');
-    }
-
-    $leader_addr TEXT := encode(@leader_sender, 'hex')::TEXT;
-    ethereum_bridge.transfer($leader_addr, $attestation_fee);
     -- ===== END FEE COLLECTION =====
     
     -- Get current block height
