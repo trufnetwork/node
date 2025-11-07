@@ -21,7 +21,7 @@ import (
 
 // TestPrimitiveBatchInsertAlignment ensures that batch insertion via insert_records maps values
 // to the correct streams when multiple streams are processed together.
-// 
+//
 // This is a regression test for a bug where get_stream_ids() and helper_lowercase_array()
 // were using non-deterministic array aggregation, causing stream_ref arrays to become
 // misaligned with input data_provider/stream_id arrays. This resulted in records being
@@ -31,7 +31,7 @@ import (
 // contains only its own data by checking specific value/stream_ref combinations.
 func TestPrimitiveBatchInsertAlignment(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name:        "primitive_batch_insert_alignment_test",
+		Name:           "primitive_batch_insert_alignment_test",
 		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testBatchAlignment(t),
@@ -76,14 +76,7 @@ func testBatchAlignment(t *testing.T) func(ctx context.Context, platform *kwilTe
 		}
 
 		// Execute insert_records directly in one call
-		txContext := &common.TxContext{
-			Ctx:          ctx,
-			BlockContext: &common.BlockContext{Height: 1},
-			TxID:         platform.Txid(),
-			Signer:       deployer.Bytes(),
-			Caller:       deployer.Address(),
-		}
-		engineContext := &common.EngineContext{TxContext: txContext}
+		engineContext := setup.NewEngineContext(ctx, platform, deployer, 1)
 
 		r, err := platform.Engine.Call(engineContext, platform.DB, "", "insert_records", []any{
 			dataProviders,

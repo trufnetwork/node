@@ -36,12 +36,24 @@ CREATE OR REPLACE ACTION sepolia_bridge_tokens($recipient TEXT DEFAULT NULL, $am
           ($withdrawal_fee / '1000000000000000000'::NUMERIC(78, 0))::TEXT || ' TRUF fee)');
   }
 
-  $leader_addr TEXT := encode(@leader_sender, 'hex')::TEXT;
-  ethereum_bridge.transfer($leader_addr, $withdrawal_fee);
+  IF @leader_sender IS NULL {
+    ERROR('Leader address not available for fee transfer');
+  }
+  $leader_hex TEXT := encode(@leader_sender, 'hex')::TEXT;
+  ethereum_bridge.transfer($leader_hex, $withdrawal_fee);
   -- ===== END FEE COLLECTION =====
 
+  $bridge_recipient TEXT := LOWER(COALESCE($recipient, @caller));
+
   -- Execute withdrawal using the bridge extension
-  sepolia_bridge.bridge(COALESCE($recipient, @caller), $withdrawal_amount);
+  sepolia_bridge.bridge($bridge_recipient, $withdrawal_amount);
+
+  record_transaction_event(
+    5,
+    $withdrawal_fee,
+    '0x' || $leader_hex,
+    NULL
+  );
 };
 
 -- MAINNET
@@ -82,10 +94,22 @@ CREATE OR REPLACE ACTION ethereum_bridge_tokens($recipient TEXT DEFAULT NULL, $a
           ($withdrawal_fee / '1000000000000000000'::NUMERIC(78, 0))::TEXT || ' TRUF fee)');
   }
 
-  $leader_addr TEXT := encode(@leader_sender, 'hex')::TEXT;
-  ethereum_bridge.transfer($leader_addr, $withdrawal_fee);
+  IF @leader_sender IS NULL {
+    ERROR('Leader address not available for fee transfer');
+  }
+  $leader_hex TEXT := encode(@leader_sender, 'hex')::TEXT;
+  ethereum_bridge.transfer($leader_hex, $withdrawal_fee);
   -- ===== END FEE COLLECTION =====
 
+  $bridge_recipient TEXT := LOWER(COALESCE($recipient, @caller));
+
   -- Execute withdrawal using the bridge extension
-  ethereum_bridge.bridge(COALESCE($recipient, @caller), $withdrawal_amount);
+  ethereum_bridge.bridge($bridge_recipient, $withdrawal_amount);
+
+  record_transaction_event(
+    5,
+    $withdrawal_fee,
+    '0x' || $leader_hex,
+    NULL
+  );
 };

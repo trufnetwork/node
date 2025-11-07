@@ -107,7 +107,6 @@ CREATE OR REPLACE ACTION helper_lowercase_array(
     ) t;
 };
 
-
 CREATE OR REPLACE ACTION helper_check_cache(
     $data_provider TEXT,
     $stream_id TEXT,
