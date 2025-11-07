@@ -4,13 +4,12 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/trufnetwork/sdk-go/core/types"
-
 	"github.com/pkg/errors"
 	"github.com/trufnetwork/kwil-db/common"
 	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	testtable "github.com/trufnetwork/node/tests/streams/utils/table"
+	"github.com/trufnetwork/sdk-go/core/types"
 	"github.com/trufnetwork/sdk-go/core/util"
 )
 
@@ -156,19 +155,8 @@ func InsertMarkdownPrimitiveData(ctx context.Context, input InsertMarkdownDataIn
 			continue
 		}
 
-		txContext := &common.TxContext{
-			Ctx: ctx,
-			BlockContext: &common.BlockContext{
-				Height: input.Height,
-			},
-			TxID:   txid,
-			Signer: signer.Bytes(),
-			Caller: signer.Address(),
-		}
-
-		engineContext := &common.EngineContext{
-			TxContext: txContext,
-		}
+		engineContext := newEthEngineContext(ctx, input.Platform, signer, input.Height)
+		engineContext.TxContext.TxID = txid
 
 		r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "insert_record", []any{
 			input.StreamLocator.DataProvider.Address(),
@@ -217,19 +205,8 @@ func insertPrimitiveData(ctx context.Context, input InsertPrimitiveDataInput) er
 	}
 
 	for _, arg := range args {
-		txContext := &common.TxContext{
-			Ctx: ctx,
-			BlockContext: &common.BlockContext{
-				Height: input.Height,
-			},
-			TxID:   txid,
-			Signer: deployer.Bytes(),
-			Caller: deployer.Address(),
-		}
-
-		engineContext := &common.EngineContext{
-			TxContext: txContext,
-		}
+		engineContext := newEthEngineContext(ctx, input.Platform, deployer, input.Height)
+		engineContext.TxContext.TxID = txid
 
 		r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "insert_record", arg, func(row *common.Row) error {
 			return nil
@@ -327,16 +304,8 @@ func InsertPrimitiveDataMultiBatch(ctx context.Context, input InsertMultiPrimiti
 		}
 		signerAddr := util.Unsafe_NewEthereumAddressFromString(provider)
 
-		txContext := &common.TxContext{
-			Ctx: ctx,
-			BlockContext: &common.BlockContext{
-				Height: input.Height,
-			},
-			TxID:   txid,
-			Signer: signerAddr.Bytes(),
-			Caller: signerAddr.Address(),
-		}
-		engineContext := &common.EngineContext{TxContext: txContext}
+		engineContext := newEthEngineContext(ctx, input.Platform, signerAddr, input.Height)
+		engineContext.TxContext.TxID = txid
 
 		args := []any{g.dataProviders, g.streamIds, g.eventTimes, g.values}
 		r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "insert_records", args, func(row *common.Row) error { return nil })
@@ -404,19 +373,8 @@ func InsertTruflationDataBatch(ctx context.Context, input InsertTruflationDataIn
 		return errors.Wrap(err, "error in InsertTruflationDataBatch")
 	}
 
-	txContext := &common.TxContext{
-		Ctx: ctx,
-		BlockContext: &common.BlockContext{
-			Height: input.Height,
-		},
-		TxID:   txid,
-		Signer: deployer.Bytes(),
-		Caller: deployer.Address(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := newEthEngineContext(ctx, input.Platform, deployer, input.Height)
+	engineContext.TxContext.TxID = txid
 
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "truflation_insert_records", args, func(row *common.Row) error {
 		return nil

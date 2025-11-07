@@ -6,14 +6,13 @@ import (
 	"fmt"
 	"strings"
 
-	trufTypes "github.com/trufnetwork/sdk-go/core/types"
-	"github.com/trufnetwork/sdk-go/core/util"
-
 	"github.com/pkg/errors"
 	"github.com/trufnetwork/kwil-db/common"
 	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
-	"github.com/trufnetwork/sdk-go/core/types"
+	"github.com/trufnetwork/node/tests/streams/utils/testctx"
+	types "github.com/trufnetwork/sdk-go/core/types"
+	"github.com/trufnetwork/sdk-go/core/util"
 )
 
 // GetDataResult contains the full result of a GetRecord call
@@ -54,19 +53,7 @@ func GetRecordWithLogs(ctx context.Context, input GetRecordInput) (*GetDataResul
 		return nil, errors.Wrap(err, "error in getRecord")
 	}
 
-	txContext := &common.TxContext{
-		Ctx: ctx,
-		BlockContext: &common.BlockContext{
-			Height: input.Height,
-		},
-		TxID:   input.Platform.Txid(),
-		Signer: input.Platform.Deployer,
-		Caller: deployer.Address(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := testctx.NewEngineContext(ctx, input.Platform, deployer, input.Height)
 
 	prefix := ""
 	if input.Prefix != nil {
@@ -155,19 +142,7 @@ func GetIndexWithLogs(ctx context.Context, input GetIndexInput) (*GetDataResult,
 		return nil, errors.Wrap(err, "error in getIndex")
 	}
 
-	txContext := &common.TxContext{
-		Ctx: ctx,
-		BlockContext: &common.BlockContext{
-			Height: input.Height,
-		},
-		TxID:   input.Platform.Txid(),
-		Signer: input.Platform.Deployer,
-		Caller: deployer.Address(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := testctx.NewEngineContext(ctx, input.Platform, deployer, input.Height)
 
 	prefix := ""
 	if input.Prefix != nil {
@@ -236,19 +211,7 @@ func GetIndexChangeWithLogs(ctx context.Context, input GetIndexChangeInput) (*Ge
 		return nil, errors.Wrap(err, "error in getIndexChange")
 	}
 
-	txContext := &common.TxContext{
-		Ctx: ctx,
-		BlockContext: &common.BlockContext{
-			Height: input.Height,
-		},
-		TxID:   input.Platform.Txid(),
-		Signer: input.Platform.Deployer,
-		Caller: deployer.Address(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := testctx.NewEngineContext(ctx, input.Platform, deployer, input.Height)
 
 	// Set default use_cache to false if not specified
 	useCache := false
@@ -311,19 +274,7 @@ func GetFirstRecordWithLogs(ctx context.Context, input GetFirstRecordInput) (*Ge
 		return nil, errors.Wrap(err, "error in getFirstRecord")
 	}
 
-	txContext := &common.TxContext{
-		Ctx: ctx,
-		BlockContext: &common.BlockContext{
-			Height: input.Height,
-		},
-		TxID:   input.Platform.Txid(),
-		Signer: input.Platform.Deployer,
-		Caller: deployer.Address(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := testctx.NewEngineContext(ctx, input.Platform, deployer, input.Height)
 
 	// Set default use_cache to false if not specified
 	useCache := false
@@ -382,19 +333,7 @@ func SetMetadata(ctx context.Context, input SetMetadataInput) error {
 		return errors.Wrap(err, "error in setMetadata")
 	}
 
-	txContext := &common.TxContext{
-		Ctx: ctx,
-		BlockContext: &common.BlockContext{
-			Height: input.Height,
-		},
-		TxID:   input.Platform.Txid(),
-		Signer: input.Platform.Deployer,
-		Caller: deployer.Address(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := testctx.NewEngineContext(ctx, input.Platform, deployer, input.Height)
 
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "set_metadata", []any{
 		input.StreamLocator.DataProvider.Address(),
@@ -449,17 +388,7 @@ func DescribeTaxonomies(ctx context.Context, input DescribeTaxonomiesInput) ([]R
 		return nil, errors.Wrap(err, "error in DescribeTaxonomies.NewEthereumAddressFromBytes")
 	}
 
-	txContext := &common.TxContext{
-		BlockContext: &common.BlockContext{Height: 0},
-		Signer:       input.Platform.Deployer,
-		Caller:       deployer.Address(),
-		TxID:         input.Platform.Txid(),
-		Ctx:          ctx,
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := testctx.NewEngineContext(ctx, input.Platform, deployer, 0)
 
 	var resultRows [][]any
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "describe_taxonomies", []any{
@@ -504,17 +433,7 @@ func SetTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 		weightDecimals = append(weightDecimals, valueDecimal)
 	}
 
-	txContext := &common.TxContext{
-		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: input.Height},
-		Signer:       input.Platform.Deployer,
-		Caller:       deployer.Address(),
-		TxID:         input.Platform.Txid(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := testctx.NewEngineContext(ctx, input.Platform, deployer, input.Height)
 
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "insert_taxonomy", []any{
 		input.StreamLocator.DataProvider.Address(), // parent data provider
@@ -538,19 +457,7 @@ func GetCategoryStreams(ctx context.Context, input GetCategoryStreamsInput) ([]R
 		return nil, errors.Wrap(err, "error in getCategoryStreams")
 	}
 
-	txContext := &common.TxContext{
-		Ctx: ctx,
-		BlockContext: &common.BlockContext{
-			Height: 0,
-		},
-		TxID:   input.Platform.Txid(),
-		Signer: input.Platform.Deployer,
-		Caller: deployer.Address(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := testctx.NewEngineContext(ctx, input.Platform, deployer, 0)
 
 	var resultRows [][]any
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_category_streams", []any{
@@ -583,19 +490,7 @@ func FilterStreamsByExistence(ctx context.Context, input FilterStreamsByExistenc
 		return nil, errors.Wrap(err, "error in FilterStreamsByExistence")
 	}
 
-	txContext := &common.TxContext{
-		Ctx: ctx,
-		BlockContext: &common.BlockContext{
-			Height: input.Height,
-		},
-		TxID:   input.Platform.Txid(),
-		Signer: input.Platform.Deployer,
-		Caller: deployer.Address(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := testctx.NewEngineContext(ctx, input.Platform, deployer, input.Height)
 
 	dataProviders := []string{}
 	streamIds := []string{}
@@ -640,19 +535,7 @@ func DisableTaxonomy(ctx context.Context, input DisableTaxonomyInput) error {
 		return errors.Wrap(err, "error in DisableTaxonomy")
 	}
 
-	txContext := &common.TxContext{
-		Ctx: ctx,
-		BlockContext: &common.BlockContext{
-			Height: input.Height,
-		},
-		TxID:   input.Platform.Txid(),
-		Signer: input.Platform.Deployer,
-		Caller: deployer.Address(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := testctx.NewEngineContext(ctx, input.Platform, deployer, input.Height)
 
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "disable_taxonomy", []any{
 		input.StreamLocator.DataProvider.Address(),
@@ -687,19 +570,7 @@ func ListStreams(ctx context.Context, input ListStreamsInput) ([]ResultRow, erro
 		return nil, errors.Wrap(err, "error in ListStreams")
 	}
 
-	txContext := &common.TxContext{
-		Ctx: ctx,
-		BlockContext: &common.BlockContext{
-			Height: input.Height,
-		},
-		TxID:   input.Platform.Txid(),
-		Signer: input.Platform.Deployer,
-		Caller: deployer.Address(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := testctx.NewEngineContext(ctx, input.Platform, deployer, input.Height)
 
 	var resultRows [][]any
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "list_streams", []any{
@@ -726,7 +597,7 @@ func ListStreams(ctx context.Context, input ListStreamsInput) ([]ResultRow, erro
 
 type GetDatabaseSizeInput struct {
 	Platform *kwilTesting.Platform
-	Locator  trufTypes.StreamLocator
+	Locator  types.StreamLocator
 	Height   int64
 }
 
@@ -736,17 +607,7 @@ func GetDatabaseSize(ctx context.Context, input GetDatabaseSizeInput) (int64, er
 		return 0, errors.Wrap(err, "failed to create Ethereum address from deployer bytes")
 	}
 
-	txContext := &common.TxContext{
-		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: input.Height},
-		Signer:       input.Platform.Deployer,
-		Caller:       deployer.Address(),
-		TxID:         input.Platform.Txid(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := testctx.NewEngineContext(ctx, input.Platform, deployer, input.Height)
 	var databaseSize *int64
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_database_size", []any{}, func(row *common.Row) error {
 		databaseSize = safe(row.Values[0], nil, int64PtrConverter)
@@ -769,17 +630,7 @@ func GetDatabaseSizeV2(ctx context.Context, input GetDatabaseSizeInput) ([]Resul
 		return nil, errors.Wrap(err, "error in GetDatabaseSizeV2.NewEthereumAddressFromBytes")
 	}
 
-	txContext := &common.TxContext{
-		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: input.Height},
-		Signer:       input.Platform.Deployer,
-		Caller:       deployer.Address(),
-		TxID:         input.Platform.Txid(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := testctx.NewEngineContext(ctx, input.Platform, deployer, input.Height)
 
 	var resultRows [][]any
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_database_size_v2", []any{}, func(row *common.Row) error {
@@ -805,17 +656,7 @@ func GetDatabaseSizeV2Pretty(ctx context.Context, input GetDatabaseSizeInput) ([
 		return nil, errors.Wrap(err, "error in GetDatabaseSizeV2Pretty.NewEthereumAddressFromBytes")
 	}
 
-	txContext := &common.TxContext{
-		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: input.Height},
-		Signer:       input.Platform.Deployer,
-		Caller:       deployer.Address(),
-		TxID:         input.Platform.Txid(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := testctx.NewEngineContext(ctx, input.Platform, deployer, input.Height)
 
 	var resultRows [][]any
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_database_size_v2_pretty", []any{}, func(row *common.Row) error {
@@ -834,7 +675,6 @@ func GetDatabaseSizeV2Pretty(ctx context.Context, input GetDatabaseSizeInput) ([
 	return processResultRows(resultRows)
 }
 
-
 // ListTaxonomiesByHeight executes list_taxonomies_by_height action
 func ListTaxonomiesByHeight(ctx context.Context, input ListTaxonomiesByHeightInput) ([]ResultRow, error) {
 	deployer, err := util.NewEthereumAddressFromBytes(input.Platform.Deployer)
@@ -842,17 +682,7 @@ func ListTaxonomiesByHeight(ctx context.Context, input ListTaxonomiesByHeightInp
 		return nil, errors.Wrap(err, "error in ListTaxonomiesByHeight.NewEthereumAddressFromBytes")
 	}
 
-	txContext := &common.TxContext{
-		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: input.Height},
-		Signer:       input.Platform.Deployer,
-		Caller:       deployer.Address(),
-		TxID:         input.Platform.Txid(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := testctx.NewEngineContext(ctx, input.Platform, deployer, input.Height)
 
 	var resultRows [][]any
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "list_taxonomies_by_height", []any{
@@ -884,17 +714,7 @@ func GetTaxonomiesForStreams(ctx context.Context, input GetTaxonomiesForStreamsI
 		return nil, errors.Wrap(err, "error in GetTaxonomiesForStreams.NewEthereumAddressFromBytes")
 	}
 
-	txContext := &common.TxContext{
-		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: input.Height},
-		Signer:       input.Platform.Deployer,
-		Caller:       deployer.Address(),
-		TxID:         input.Platform.Txid(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := testctx.NewEngineContext(ctx, input.Platform, deployer, input.Height)
 
 	var resultRows [][]any
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "get_taxonomies_for_streams", []any{
@@ -924,17 +744,7 @@ func ListMetadataByHeight(ctx context.Context, input ListMetadataByHeightInput) 
 		return nil, errors.Wrap(err, "error in ListMetadataByHeight.NewEthereumAddressFromBytes")
 	}
 
-	txContext := &common.TxContext{
-		Ctx:          ctx,
-		BlockContext: &common.BlockContext{Height: input.Height},
-		Signer:       input.Platform.Deployer,
-		Caller:       deployer.Address(),
-		TxID:         input.Platform.Txid(),
-	}
-
-	engineContext := &common.EngineContext{
-		TxContext: txContext,
-	}
+	engineContext := testctx.NewEngineContext(ctx, input.Platform, deployer, input.Height)
 
 	var resultRows [][]any
 	r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "list_metadata_by_height", []any{
@@ -959,4 +769,3 @@ func ListMetadataByHeight(ctx context.Context, input ListMetadataByHeightInput) 
 
 	return processResultRows(resultRows)
 }
-

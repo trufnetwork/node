@@ -17,7 +17,7 @@ CREATE OR REPLACE ACTION request_attestation(
     $action_name TEXT,
     $args_bytes BYTEA,
     $encrypt_sig BOOLEAN,
-$max_fee INT8
+    $max_fee NUMERIC(78, 0)
 ) PUBLIC RETURNS (request_tx_id TEXT, attestation_hash BYTEA) {
     -- Capture transaction ID for primary key
     $request_tx_id := @txid;
@@ -48,6 +48,32 @@ $max_fee INT8
     if $action_id = 0 {
         ERROR('Action not allowed for attestation: ' || $action_name);
     }
+
+    -- ===== FEE COLLECTION =====
+    -- Collect 40 TRUF flat fee for attestation request
+    $attestation_fee := '40000000000000000000'::NUMERIC(78, 0); -- 40 TRUF with 18 decimals
+
+    -- Validate max_fee if provided
+    IF $max_fee IS NOT NULL AND $max_fee > 0::NUMERIC(78, 0) {
+        IF $attestation_fee > $max_fee {
+            ERROR('Attestation fee (40 TRUF) exceeds caller max_fee limit: ' || ($max_fee / 1000000000000000000::NUMERIC(78, 0))::TEXT || ' TRUF');
+        }
+    }
+
+    $caller_balance := ethereum_bridge.balance(@caller);
+
+    IF $caller_balance < $attestation_fee {
+        ERROR('Insufficient balance for attestation. Required: 40 TRUF');
+    }
+
+    -- Verify leader address is available
+    IF @leader_sender IS NULL {
+        ERROR('Leader address not available for fee transfer');
+    }
+
+    $leader_addr TEXT := encode(@leader_sender, 'hex')::TEXT;
+    ethereum_bridge.transfer($leader_addr, $attestation_fee);
+    -- ===== END FEE COLLECTION =====
     
     -- Get current block height
     $created_height := @height;
@@ -125,8 +151,15 @@ $max_fee INT8
         $created_height, NULL, NULL, NULL
     );
     
--- Queue for signing (no-op on non-leader validators; handled by precompile)
-tn_attestation.queue_for_signing(encode($attestation_hash, 'hex'));
+    -- Queue for signing (no-op on non-leader validators; handled by precompile)
+    tn_attestation.queue_for_signing(encode($attestation_hash, 'hex'));
+
+    record_transaction_event(
+        6,
+        $attestation_fee,
+        '0x' || $leader_addr,
+        NULL
+    );
 
 RETURN $request_tx_id, $attestation_hash;
 };

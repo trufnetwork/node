@@ -10,11 +10,14 @@ CREATE OR REPLACE ACTION insert_taxonomy(
     $weights NUMERIC(36,18)[],      -- The weights of the child streams.
     $start_date INT                 -- The start date of the taxonomy.
 ) PUBLIC {
-     $data_provider := LOWER($data_provider);
+    $data_provider := LOWER($data_provider);
     for $i in 1..array_length($child_data_providers) {
         $child_data_providers[$i] := LOWER($child_data_providers[$i]);
     }
     $lower_caller  := LOWER(@caller);
+    $fee_total NUMERIC(78, 0) := 0::NUMERIC(78, 0);
+    $fee_recipient TEXT := NULL;
+    $leader_hex TEXT := NULL;
 
     -- ensure it's a composed stream
     if is_primitive_stream($data_provider, $stream_id) == true {
@@ -39,6 +42,40 @@ CREATE OR REPLACE ACTION insert_taxonomy(
     if $num_children == 0 {
         ERROR('There must be at least 1 child');
     }
+
+    -- ===== FEE COLLECTION WITH ROLE EXEMPTION =====
+
+    -- Check if caller is exempt (has system:network_writer role)
+    $is_exempt BOOL := FALSE;
+    FOR $row IN are_members_of('system', 'network_writer', ARRAY[$lower_caller]) {
+        IF $row.wallet = $lower_caller AND $row.is_member {
+            $is_exempt := TRUE;
+            BREAK;
+        }
+    }
+
+    -- Collect fee only from non-exempt wallets (2 TRUF per stream)
+    IF NOT $is_exempt {
+        $fee_per_stream := 2000000000000000000::NUMERIC(78, 0); -- 2 TRUF with 18 decimals
+        $total_fee := $fee_per_stream * $num_children::NUMERIC(78, 0);
+
+        IF @leader_sender IS NULL {
+            ERROR('Leader address not available for fee transfer');
+        }
+        $leader_hex := encode(@leader_sender, 'hex')::TEXT;
+
+        $caller_balance := ethereum_bridge.balance(@caller);
+
+        IF $caller_balance < $total_fee {
+            -- Derive human-readable fee from $total_fee
+            ERROR('Insufficient balance for taxonomies creation. Required: ' || ($total_fee / 1000000000000000000::NUMERIC(78, 0))::TEXT || ' TRUF for ' || $num_children::TEXT || ' child stream(s)');
+        }
+
+        ethereum_bridge.transfer($leader_hex, $total_fee);
+        $fee_total := $total_fee;
+        $fee_recipient := '0x' || $leader_hex;
+    }
+    -- ===== END FEE COLLECTION =====
 
     -- Default start time to 0 if not provided
     if $start_date IS NULL {
@@ -85,6 +122,13 @@ CREATE OR REPLACE ACTION insert_taxonomy(
             $child_stream_ref
         );
     }
+
+    record_transaction_event(
+        3,
+        $fee_total,
+        $fee_recipient,
+        NULL
+    );
 };
 
 /**
