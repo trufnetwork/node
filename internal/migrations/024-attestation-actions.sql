@@ -271,11 +271,12 @@ CREATE OR REPLACE ACTION get_signed_attestation(
 /**
  * list_attestations: List attestations with optional filtering
  *
- * Returns metadata for attestations, optionally filtered by requester.
+ * Returns metadata for attestations, optionally filtered by requester or request_tx_id.
  * Supports pagination with limit and offset.
  */
 CREATE OR REPLACE ACTION list_attestations(
     $requester BYTEA,
+    $request_tx_id TEXT,
     $limit INT,
     $offset INT,
     $order_by TEXT
@@ -306,17 +307,24 @@ CREATE OR REPLACE ACTION list_attestations(
         }
     }
     
-    -- Build query with optional requester filter
-    IF $requester IS NULL {
+    -- Build query with optional requester and request_tx_id filters
+    IF $request_tx_id IS NOT NULL {
+        -- Filter by specific request_tx_id (ignores other filters for exact match)
+        RETURN SELECT request_tx_id, attestation_hash, requester,
+                      created_height, signed_height, encrypt_sig
+               FROM attestations
+               WHERE request_tx_id = $request_tx_id
+               LIMIT 1;
+    } ELSEIF $requester IS NULL {
         -- Show all attestations (analytics/auditing)
         IF $order_desc {
-            RETURN SELECT request_tx_id, attestation_hash, requester, 
+            RETURN SELECT request_tx_id, attestation_hash, requester,
                           created_height, signed_height, encrypt_sig
                    FROM attestations
                    ORDER BY created_height DESC, request_tx_id ASC
                    LIMIT $limit OFFSET $offset;
         } ELSE {
-            RETURN SELECT request_tx_id, attestation_hash, requester, 
+            RETURN SELECT request_tx_id, attestation_hash, requester,
                           created_height, signed_height, encrypt_sig
                    FROM attestations
                    ORDER BY created_height ASC, request_tx_id ASC
