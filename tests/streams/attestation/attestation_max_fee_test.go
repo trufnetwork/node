@@ -177,7 +177,9 @@ func testMaxFeeBelow40TRUF(t *testing.T, h *AttestationTestHelper, actionName st
 	argsBytes, err := tn_utils.EncodeActionArgs([]any{int64(46)})
 	require.NoError(t, err, "encode action args")
 
-	engineCtx := h.NewEngineContext()
+	// Use non-exempt user to test max_fee validation (exempt users skip fee checks)
+	addrs := NewTestAddresses()
+	engineCtx := h.NewNonExemptContext(addrs.Requester1)
 
 	maxFee := types.MustParseDecimalExplicit("30000000000000000000", 78, 0) // 30 TRUF in wei
 
