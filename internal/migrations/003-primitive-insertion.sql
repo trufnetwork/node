@@ -94,13 +94,14 @@ CREATE OR REPLACE ACTION insert_records(
     }
 
     -- Insert all records using UNNEST to expand arrays efficiently
-    INSERT INTO primitive_events (event_time, value, created_at, truflation_created_at, stream_ref)
+    INSERT INTO primitive_events (event_time, value, created_at, truflation_created_at, stream_ref, tx_id)
     SELECT
         unnested.event_time,
         unnested.value,
         $current_block,
         NULL,
-        unnested.stream_ref
+        unnested.stream_ref,
+        @txid
     FROM UNNEST($event_time, $value, $stream_refs) AS unnested(event_time, value, stream_ref)
     WHERE unnested.value != 0::NUMERIC(36,18)
     ORDER BY unnested.stream_ref, unnested.event_time, $current_block;  -- matches (stream_ref, event_time, created_at)

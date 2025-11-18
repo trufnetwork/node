@@ -52,6 +52,16 @@ func TestTransactionEventsLedger(t *testing.T) {
 	}, testutils.GetTestOptionsWithCache())
 }
 
+func TestTransactionIDTracking(t *testing.T) {
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name:           "LEDGER_TXID01_TransactionIDTracking",
+		SeedStatements: migrations.GetSeedScriptStatements(),
+		FunctionTests: []kwilTesting.TestFunc{
+			runTransactionIDTrackingScenario(t),
+		},
+	}, testutils.GetTestOptionsWithCache())
+}
+
 func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		systemAdmin := util.Unsafe_NewEthereumAddressFromString("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
@@ -191,7 +201,7 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		})
 		require.NoError(t, err)
 
-		attLeaderPub, attLeaderAddr := newLeader(t)
+		attLeaderPub, _ := newLeader(t)
 		attTx, err := callActionWithLeader(ctx, platform, actor, attLeaderPub, height, "request_attestation", []any{
 			strings.ToLower(systemAdmin.Address()),
 			attestationStream.String(),
@@ -255,10 +265,10 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 			},
 			attTx: {
 				method:       "requestAttestation",
-				fee:          feeFortyTRUF,
-				feeRecipient: attLeaderAddr,
+				fee:          "0", // Actor is exempt (has network_writer role), so fee should be 0
+				feeRecipient: "",  // No fee recipient when exempt
 				feeDistributions: []string{
-					buildDistribution(attLeaderAddr, feeFortyTRUF),
+					buildDistribution("", "0"),
 				},
 				assertMetadata: assertNoMetadata,
 			},
@@ -724,4 +734,170 @@ func ledgerGiveBalance(ctx context.Context, platform *kwilTesting.Platform, wall
 		ledgerPointCounter,
 		nil,
 	)
+}
+
+// runTransactionIDTrackingScenario tests that tx_id is properly tracked in data tables
+func runTransactionIDTrackingScenario(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		systemAdmin := util.Unsafe_NewEthereumAddressFromString("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
+		platform.Deployer = systemAdmin.Bytes()
+
+		require.NoError(t, setup.AddMemberToRoleBypass(ctx, platform, "system", "network_writers_manager", systemAdmin.Address()))
+		require.NoError(t, setup.CreateDataProvider(ctx, platform, systemAdmin.Address()))
+
+		// Initialize ERC20 bridge
+		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, ledgerChain, ledgerEscrow, ledgerERC20, 18, 60, ledgerExtensionAlias)
+		if err != nil {
+			if !strings.Contains(err.Error(), "alias \"sepolia_bridge\" already exists") {
+				require.NoError(t, err)
+			}
+			require.NoError(t, erc20shim.ForTestingInitializeExtension(ctx, platform))
+		}
+		require.NoError(t, erc20shim.ForTestingInitializeExtension(ctx, platform))
+
+		actor := util.Unsafe_NewEthereumAddressFromString("0x9999999999999999999999999999999999999999")
+		require.NoError(t, setup.CreateDataProviderWithoutRole(ctx, platform, actor.Address()))
+		require.NoError(t, ledgerGiveBalance(ctx, platform, actor.Address(), initialUserFunds))
+
+		userLower := strings.ToLower(actor.Address())
+		height := int64(10)
+
+		primitiveStream := util.GenerateStreamId("txid_test_primitive")
+		composedStream := util.GenerateStreamId("txid_test_composed")
+
+		// Test 1: Create streams and verify tx_id
+		t.Log("Testing streams.tx_id tracking...")
+		createLeaderPub, _ := newLeader(t)
+		createTx, err := callActionWithLeader(ctx, platform, &actor, createLeaderPub, height, "create_streams", []any{
+			[]string{primitiveStream.String(), composedStream.String()},
+			[]string{"primitive", "composed"},
+		})
+		require.NoError(t, err)
+		height++
+
+		// Verify streams.tx_id is set
+		streamCheckRes, err := platform.DB.Execute(ctx,
+			`SELECT stream_id, tx_id FROM main.streams WHERE stream_id IN ($1, $2)`,
+			primitiveStream.String(), composedStream.String())
+		require.NoError(t, err)
+		require.Len(t, streamCheckRes.Rows, 2, "expected 2 streams to be created")
+
+		for _, row := range streamCheckRes.Rows {
+			streamID := row[0].(string)
+			txID := row[1].(string)
+			// createTx has 0x prefix, but db stores without it
+			expectedTxID := strings.TrimPrefix(createTx, "0x")
+			require.Equal(t, expectedTxID, txID, "stream %s should have tx_id = %s", streamID, expectedTxID)
+			t.Logf("✓ Stream %s has tx_id: %s", streamID, txID)
+		}
+
+		// Verify metadata.tx_id is set (streams create metadata records)
+		metadataCheckRes, err := platform.DB.Execute(ctx,
+			`SELECT COUNT(*) FROM main.metadata WHERE tx_id = $1`, strings.TrimPrefix(createTx, "0x"))
+		require.NoError(t, err)
+		metadataCount := metadataCheckRes.Rows[0][0].(int64)
+		require.Greater(t, metadataCount, int64(0), "expected metadata records with tx_id")
+		t.Logf("✓ Found %d metadata records with tx_id: %s", metadataCount, createTx)
+
+		// Test 2: Insert records and verify tx_id
+		t.Log("Testing primitive_events.tx_id tracking...")
+		insertLeaderPub, _ := newLeader(t)
+		insertValue, err := kwilTypes.ParseDecimalExplicit("42.5", 36, 18)
+		require.NoError(t, err)
+		insertTx, err := callActionWithLeader(ctx, platform, &actor, insertLeaderPub, height, "insert_records", []any{
+			[]string{userLower},
+			[]string{primitiveStream.String()},
+			[]int64{1000},
+			[]*kwilTypes.Decimal{insertValue},
+		})
+		require.NoError(t, err)
+		height++
+
+		// Verify primitive_events.tx_id is set
+		eventsCheckRes, err := platform.DB.Execute(ctx,
+			`SELECT event_time, value, tx_id FROM main.primitive_events WHERE tx_id = $1`, strings.TrimPrefix(insertTx, "0x"))
+		require.NoError(t, err)
+		require.Len(t, eventsCheckRes.Rows, 1, "expected 1 primitive event to be inserted")
+
+		eventRow := eventsCheckRes.Rows[0]
+		eventTime := eventRow[0].(int64)
+		eventValue := eventRow[1].(*kwilTypes.Decimal)
+		eventTxID := eventRow[2].(string)
+
+		require.Equal(t, int64(1000), eventTime)
+		require.NotNil(t, eventValue, "event value should not be nil")
+		require.Equal(t, strings.TrimPrefix(insertTx, "0x"), eventTxID)
+		t.Logf("✓ Primitive event (time=%d, value=%s) has tx_id: %s", eventTime, eventValue.String(), eventTxID)
+
+		// Test 3: Insert taxonomy and verify tx_id
+		t.Log("Testing taxonomies.tx_id tracking...")
+		taxLeaderPub, _ := newLeader(t)
+		weight, err := kwilTypes.ParseDecimalExplicit("1.0", 36, 18)
+		require.NoError(t, err)
+		taxTx, err := callActionWithLeader(ctx, platform, &actor, taxLeaderPub, height, "insert_taxonomy", []any{
+			userLower,
+			composedStream.String(),
+			[]string{userLower},
+			[]string{primitiveStream.String()},
+			[]*kwilTypes.Decimal{weight},
+			nil,
+		})
+		require.NoError(t, err)
+		height++
+
+		// Verify taxonomies.tx_id is set
+		taxCheckRes, err := platform.DB.Execute(ctx,
+			`SELECT weight, tx_id FROM main.taxonomies WHERE tx_id = $1`, strings.TrimPrefix(taxTx, "0x"))
+		require.NoError(t, err)
+		require.Len(t, taxCheckRes.Rows, 1, "expected 1 taxonomy to be inserted")
+
+		taxRow := taxCheckRes.Rows[0]
+		taxWeight := taxRow[0].(*kwilTypes.Decimal)
+		taxTxID := taxRow[1].(string)
+
+		require.NotNil(t, taxWeight, "taxonomy weight should not be nil")
+		require.Equal(t, strings.TrimPrefix(taxTx, "0x"), taxTxID)
+		t.Logf("✓ Taxonomy (weight=%s) has tx_id: %s", taxWeight.String(), taxTxID)
+
+		// Test 4: Insert metadata and verify tx_id
+		t.Log("Testing metadata.tx_id tracking via insert_metadata...")
+		metaLeaderPub, _ := newLeader(t)
+		metaTx, err := callActionWithLeader(ctx, platform, &actor, metaLeaderPub, height, "insert_metadata", []any{
+			userLower,
+			primitiveStream.String(),
+			"test_key",
+			"test_value",
+			"string",
+		})
+		require.NoError(t, err)
+		height++
+
+		// Verify metadata.tx_id is set for insert_metadata
+		metaInsertCheckRes, err := platform.DB.Execute(ctx,
+			`SELECT metadata_key, value_s, tx_id FROM main.metadata WHERE tx_id = $1 AND metadata_key = $2`,
+			strings.TrimPrefix(metaTx, "0x"), "test_key")
+		require.NoError(t, err)
+		require.Len(t, metaInsertCheckRes.Rows, 1, "expected 1 metadata record to be inserted")
+
+		metaRow := metaInsertCheckRes.Rows[0]
+		metaKey := metaRow[0].(string)
+		metaValue := metaRow[1].(string)
+		metaTxIDResult := metaRow[2].(string)
+
+		require.Equal(t, "test_key", metaKey)
+		require.Equal(t, "test_value", metaValue)
+		require.Equal(t, strings.TrimPrefix(metaTx, "0x"), metaTxIDResult)
+		t.Logf("✓ Metadata (key=%s, value=%s) has tx_id: %s", metaKey, metaValue, metaTxIDResult)
+
+		// Summary
+		t.Log("========================================")
+		t.Log("✓ All tx_id tracking tests passed!")
+		t.Log("  - streams.tx_id: TRACKED")
+		t.Log("  - primitive_events.tx_id: TRACKED")
+		t.Log("  - taxonomies.tx_id: TRACKED")
+		t.Log("  - metadata.tx_id: TRACKED")
+		t.Log("========================================")
+
+		return nil
+	}
 }

@@ -110,7 +110,8 @@ CREATE OR REPLACE ACTION insert_taxonomy(
             group_sequence,
             start_time,
             stream_ref,
-            child_stream_ref
+            child_stream_ref,
+            tx_id
         ) VALUES (
             $taxonomy_id,
             $weight_value,
@@ -119,7 +120,8 @@ CREATE OR REPLACE ACTION insert_taxonomy(
             $new_group_sequence,          -- Use the new group_sequence for all child records.
             $start_date,          -- Start date of the taxonomy.
             $stream_ref,
-            $child_stream_ref
+            $child_stream_ref,
+            @txid
         );
     }
 
