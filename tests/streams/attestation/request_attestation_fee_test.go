@@ -101,25 +101,22 @@ func setupAttestationTestEnvironment(t *testing.T) func(ctx context.Context, pla
 	}
 }
 
-// Test 1: Network writer member pays 40 TRUF fee per attestation request
+// Test 1: Non-exempt user pays 40 TRUF fee per attestation request
 func testAttestationNetworkWriterPaysFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		requesterAddrVal := util.Unsafe_NewEthereumAddressFromString("0xa111111111111111111111111111111111111111")
 		requesterAddr := &requesterAddrVal
 
-		// Register as data provider with network_writer role
-		err := setup.CreateDataProvider(ctx, platform, requesterAddr.Address())
-		require.NoError(t, err, "failed to register data provider")
-
-		// Give requester 100 TRUF
-		err = giveAttestationBalance(ctx, platform, requesterAddr.Address(), "100000000000000000000")
+		// Note: NOT creating data provider - this user is non-exempt and must pay fees
+		// Give requester 100 TRUF (users with network_writer role are exempt, others must pay)
+		err := giveAttestationBalance(ctx, platform, requesterAddr.Address(), "100000000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
 		// Get initial balance
 		initialBalance, err := getAttestationBalance(ctx, platform, requesterAddr.Address())
 		require.NoError(t, err, "failed to get initial balance")
 
-		// Request attestation (should pay 40 TRUF)
+		// Request attestation (should pay 40 TRUF as non-exempt user)
 		systemAdmin := util.Unsafe_NewEthereumAddressFromString("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
 		streamID := "st000000000000000000000000000000"
 		err = requestAttestation(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_record")
@@ -143,12 +140,8 @@ func testAttestationInsufficientBalance(t *testing.T) func(ctx context.Context, 
 		requesterAddrVal := util.Unsafe_NewEthereumAddressFromString("0xa222222222222222222222222222222222222222")
 		requesterAddr := &requesterAddrVal
 
-		// Register as data provider with network_writer role
-		err := setup.CreateDataProvider(ctx, platform, requesterAddr.Address())
-		require.NoError(t, err, "failed to register data provider")
-
 		// Give requester only 10 TRUF (insufficient for 40 TRUF fee)
-		err = giveAttestationBalance(ctx, platform, requesterAddr.Address(), "10000000000000000000")
+		err := giveAttestationBalance(ctx, platform, requesterAddr.Address(), "10000000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
 		// Try to request attestation (should fail)
@@ -169,12 +162,8 @@ func testAttestationMultipleRequestsChargeFees(t *testing.T) func(ctx context.Co
 		requesterAddrVal := util.Unsafe_NewEthereumAddressFromString("0xa333333333333333333333333333333333333333")
 		requesterAddr := &requesterAddrVal
 
-		// Register as data provider with network_writer role
-		err := setup.CreateDataProvider(ctx, platform, requesterAddr.Address())
-		require.NoError(t, err, "failed to register data provider")
-
 		// Give requester 200 TRUF (enough for 5 attestations)
-		err = giveAttestationBalance(ctx, platform, requesterAddr.Address(), "200000000000000000000")
+		err := giveAttestationBalance(ctx, platform, requesterAddr.Address(), "200000000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
 		// Get initial balance
@@ -211,12 +200,8 @@ func testAttestationLeaderReceivesFees(t *testing.T) func(ctx context.Context, p
 		requesterAddrVal := util.Unsafe_NewEthereumAddressFromString("0xa444444444444444444444444444444444444444")
 		requesterAddr := &requesterAddrVal
 
-		// Register as data provider with network_writer role
-		err := setup.CreateDataProvider(ctx, platform, requesterAddr.Address())
-		require.NoError(t, err, "failed to register data provider")
-
 		// Give requester 100 TRUF
-		err = giveAttestationBalance(ctx, platform, requesterAddr.Address(), "100000000000000000000")
+		err := giveAttestationBalance(ctx, platform, requesterAddr.Address(), "100000000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
 		// Generate leader keys
@@ -260,12 +245,8 @@ func testAttestationBalanceCorrectlyDeducted(t *testing.T) func(ctx context.Cont
 		requesterAddrVal := util.Unsafe_NewEthereumAddressFromString("0xa555555555555555555555555555555555555555")
 		requesterAddr := &requesterAddrVal
 
-		// Register as data provider with network_writer role
-		err := setup.CreateDataProvider(ctx, platform, requesterAddr.Address())
-		require.NoError(t, err, "failed to register data provider")
-
 		// Give requester exactly 80 TRUF (enough for 2 attestations)
-		err = giveAttestationBalance(ctx, platform, requesterAddr.Address(), "80000000000000000000")
+		err := giveAttestationBalance(ctx, platform, requesterAddr.Address(), "80000000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
 		systemAdmin := util.Unsafe_NewEthereumAddressFromString("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
