@@ -134,13 +134,13 @@ type attestationRow struct {
 }
 
 func runAttestationUnauthorizedBlocked(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, helper *AttestationTestHelper, actionName string) {
-	// Create an unauthorized user that does NOT have network_writer role
+	// Create a non-exempt user that does NOT have network_writer role (must pay 40 TRUF fee)
 	unauthorizedAddr := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000009999")
 
 	argsBytes, err := tn_utils.EncodeActionArgs([]any{int64(999)})
 	require.NoError(t, err, "encode action args")
 
-	// Create a context for the unauthorized user
+	// Create a context for the non-exempt user (no balance given, so can't pay fee)
 	unauthorizedCtx := &common.EngineContext{
 		TxContext: &common.TxContext{
 			Ctx: ctx,
@@ -155,7 +155,7 @@ func runAttestationUnauthorizedBlocked(t *testing.T, ctx context.Context, platfo
 		},
 	}
 
-	// Try to request attestation as unauthorized user - should fail
+	// Try to request attestation as non-exempt user without balance - should fail with insufficient balance
 	res, err := platform.Engine.Call(unauthorizedCtx, platform.DB, "", "request_attestation", []any{
 		TestDataProviderHex,
 		TestStreamID,
@@ -168,9 +168,9 @@ func runAttestationUnauthorizedBlocked(t *testing.T, ctx context.Context, platfo
 	})
 
 	require.NoError(t, err, "call should not error at engine level")
-	require.NotNil(t, res.Error, "action should return error for unauthorized user")
-	require.Contains(t, res.Error.Error(), "does not have the required system:network_writer role",
-		"error should indicate missing network_writer role")
+	require.NotNil(t, res.Error, "action should return error for user without balance")
+	require.Contains(t, res.Error.Error(), "Insufficient balance for attestation",
+		"error should indicate insufficient balance (non-exempt users must pay 40 TRUF fee)")
 }
 
 func fetchAttestationRow(helper *AttestationTestHelper, hash []byte) attestationRow {
