@@ -85,6 +85,8 @@ func runAttestationHappyPath(helper *AttestationTestHelper, actionName string, a
 
 	stored := fetchAttestationRow(helper, attestationHash)
 	require.Equal(helper.t, requestTxID, stored.requestTxID, "request_tx_id should be captured and stored")
+	require.Equal(helper.t, dataProviderHex, stored.dataProvider, "data_provider should be stored")
+	require.Equal(helper.t, streamID, stored.streamID, "stream_id should be stored")
 
 	// Rebuild expected canonical payload
 	valueDecimal := types.MustParseDecimal(fmt.Sprintf("%d.%018d", attestedValue, 0))
@@ -124,6 +126,8 @@ func runAttestationHappyPath(helper *AttestationTestHelper, actionName string, a
 type attestationRow struct {
 	requestTxID     string
 	requester       []byte
+	dataProvider    string
+	streamID        string
 	attestationHash []byte
 	resultCanonical []byte
 	encryptSig      bool
@@ -178,26 +182,28 @@ func fetchAttestationRow(helper *AttestationTestHelper, hash []byte) attestation
 
 	var rowData attestationRow
 	err := helper.platform.Engine.Execute(engineCtx, helper.platform.DB, `
-SELECT request_tx_id, requester, attestation_hash, result_canonical, encrypt_sig, signature, validator_pubkey, signed_height, created_height
+SELECT request_tx_id, requester, data_provider, stream_id, attestation_hash, result_canonical, encrypt_sig, signature, validator_pubkey, signed_height, created_height
 FROM attestations
 WHERE attestation_hash = $hash;
 `, map[string]any{"hash": hash}, func(row *common.Row) error {
 		rowData.requestTxID = row.Values[0].(string)
 		rowData.requester = append([]byte(nil), row.Values[1].([]byte)...)
-		rowData.attestationHash = append([]byte(nil), row.Values[2].([]byte)...)
-		rowData.resultCanonical = append([]byte(nil), row.Values[3].([]byte)...)
-		rowData.encryptSig = row.Values[4].(bool)
-		if row.Values[5] != nil {
-			rowData.signature = append([]byte(nil), row.Values[5].([]byte)...)
-		}
-		if row.Values[6] != nil {
-			rowData.validatorPubKey = append([]byte(nil), row.Values[6].([]byte)...)
-		}
+		rowData.dataProvider = row.Values[2].(string)
+		rowData.streamID = row.Values[3].(string)
+		rowData.attestationHash = append([]byte(nil), row.Values[4].([]byte)...)
+		rowData.resultCanonical = append([]byte(nil), row.Values[5].([]byte)...)
+		rowData.encryptSig = row.Values[6].(bool)
 		if row.Values[7] != nil {
-			height := row.Values[7].(int64)
+			rowData.signature = append([]byte(nil), row.Values[7].([]byte)...)
+		}
+		if row.Values[8] != nil {
+			rowData.validatorPubKey = append([]byte(nil), row.Values[8].([]byte)...)
+		}
+		if row.Values[9] != nil {
+			height := row.Values[9].(int64)
 			rowData.signedHeight = &height
 		}
-		rowData.createdHeight = row.Values[8].(int64)
+		rowData.createdHeight = row.Values[10].(int64)
 		return nil
 	})
 	require.NoError(helper.t, err)

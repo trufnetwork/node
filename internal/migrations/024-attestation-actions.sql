@@ -148,11 +148,11 @@ CREATE OR REPLACE ACTION request_attestation(
     
     -- Store unsigned attestation
     INSERT INTO attestations (
-        request_tx_id, attestation_hash, requester, result_canonical, encrypt_sig, 
-        created_height, signature, validator_pubkey, signed_height
+        request_tx_id, attestation_hash, requester, data_provider, stream_id,
+        result_canonical, encrypt_sig, created_height, signature, validator_pubkey, signed_height
     ) VALUES (
-        $request_tx_id, $attestation_hash, $caller_bytes, $result_canonical, $encrypt_sig, 
-        $created_height, NULL, NULL, NULL
+        $request_tx_id, $attestation_hash, $caller_bytes, $data_provider, $stream_id,
+        $result_canonical, $encrypt_sig, $created_height, NULL, NULL, NULL
     );
     
     -- Queue for signing (no-op on non-leader validators; handled by precompile)
@@ -284,6 +284,8 @@ CREATE OR REPLACE ACTION list_attestations(
     request_tx_id TEXT,
     attestation_hash BYTEA,
     requester BYTEA,
+    data_provider TEXT,
+    stream_id TEXT,
     created_height INT8,
     signed_height INT8,
     encrypt_sig BOOLEAN
@@ -310,7 +312,7 @@ CREATE OR REPLACE ACTION list_attestations(
     -- Build query with optional requester and request_tx_id filters
     IF $request_tx_id IS NOT NULL {
         -- Filter by specific request_tx_id (ignores other filters for exact match)
-        RETURN SELECT request_tx_id, attestation_hash, requester,
+        RETURN SELECT request_tx_id, attestation_hash, requester, data_provider, stream_id,
                       created_height, signed_height, encrypt_sig
                FROM attestations
                WHERE request_tx_id = $request_tx_id
@@ -318,13 +320,13 @@ CREATE OR REPLACE ACTION list_attestations(
     } ELSEIF $requester IS NULL {
         -- Show all attestations (analytics/auditing)
         IF $order_desc {
-            RETURN SELECT request_tx_id, attestation_hash, requester,
+            RETURN SELECT request_tx_id, attestation_hash, requester, data_provider, stream_id,
                           created_height, signed_height, encrypt_sig
                    FROM attestations
                    ORDER BY created_height DESC, request_tx_id ASC
                    LIMIT $limit OFFSET $offset;
         } ELSE {
-            RETURN SELECT request_tx_id, attestation_hash, requester,
+            RETURN SELECT request_tx_id, attestation_hash, requester, data_provider, stream_id,
                           created_height, signed_height, encrypt_sig
                    FROM attestations
                    ORDER BY created_height ASC, request_tx_id ASC
@@ -333,14 +335,14 @@ CREATE OR REPLACE ACTION list_attestations(
     } ELSE {
         -- Filter by requester
         IF $order_desc {
-            RETURN SELECT request_tx_id, attestation_hash, requester,
+            RETURN SELECT request_tx_id, attestation_hash, requester, data_provider, stream_id,
                           created_height, signed_height, encrypt_sig
                    FROM attestations
                    WHERE requester = $requester
                    ORDER BY created_height DESC, request_tx_id ASC
                    LIMIT $limit OFFSET $offset;
         } ELSE {
-            RETURN SELECT request_tx_id, attestation_hash, requester,
+            RETURN SELECT request_tx_id, attestation_hash, requester, data_provider, stream_id,
                           created_height, signed_height, encrypt_sig
                    FROM attestations
                    WHERE requester = $requester
