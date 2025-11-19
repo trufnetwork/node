@@ -1,10 +1,10 @@
 -- Add data_provider column to attestations table
 ALTER TABLE attestations
-ADD COLUMN IF NOT EXISTS data_provider TEXT NOT NULL DEFAULT '';
+ADD COLUMN IF NOT EXISTS data_provider TEXT;
 
 -- Add stream_id column to attestations table
 ALTER TABLE attestations
-ADD COLUMN IF NOT EXISTS stream_id TEXT NOT NULL DEFAULT '';
+ADD COLUMN IF NOT EXISTS stream_id TEXT;
 
 -- Create index on data_provider for efficient querying
 CREATE INDEX IF NOT EXISTS ix_att_data_provider
