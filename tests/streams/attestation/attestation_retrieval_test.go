@@ -160,7 +160,15 @@ func testListNoFilter(h *AttestationTestHelper, actionName string, addrs *TestAd
 	count := 0
 	h.CallAction("list_attestations", []any{nil, nil, 100, 0, nil}, func(row *common.Row) error {
 		count++
-		require.Len(h.t, row.Values, 6, "should return 6 columns")
+		require.Len(h.t, row.Values, 8, "should return 8 columns: request_tx_id, attestation_hash, requester, data_provider, stream_id, created_height, signed_height, encrypt_sig")
+
+		// Verify data_provider and stream_id are present
+		dataProvider := row.Values[3].(string)
+		streamID := row.Values[4].(string)
+		require.NotEmpty(h.t, dataProvider, "data_provider should not be empty")
+		require.NotEmpty(h.t, streamID, "stream_id should not be empty")
+		require.Equal(h.t, TestDataProviderHex, dataProvider, "data_provider should match test value")
+		require.Equal(h.t, TestStreamID, streamID, "stream_id should match test value")
 		return nil
 	})
 	require.Equal(h.t, 3, count, "should return all 3 attestations")
