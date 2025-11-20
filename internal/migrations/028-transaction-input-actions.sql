@@ -208,7 +208,10 @@ CREATE OR REPLACE ACTION get_transaction_metadata(
  * @return Single attestation record or empty if not found
  *
  * Note: BYTEA fields (attestation_hash, requester, result_canonical, etc.)
- *       are returned as hex-encoded strings
+ *       are returned as BYTEA types. PostgreSQL returns them as hex-encoded
+ *       strings (prefixed with \x), which are decoded to raw bytes by the
+ *       Kwil engine and then re-encoded by the client/serialization layer
+ *       (typically as hex or base64) when transmitted over JSON-RPC
  */
 CREATE OR REPLACE ACTION get_transaction_attestation(
     $tx_id TEXT
