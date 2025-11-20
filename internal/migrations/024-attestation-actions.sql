@@ -277,6 +277,8 @@ CREATE OR REPLACE ACTION get_signed_attestation(
 CREATE OR REPLACE ACTION list_attestations(
     $requester BYTEA,
     $request_tx_id TEXT,
+    $attestation_hash BYTEA,
+    $result_canonical BYTEA,
     $limit INT,
     $offset INT,
     $order_by TEXT
@@ -309,14 +311,32 @@ CREATE OR REPLACE ACTION list_attestations(
         }
     }
     
-    -- Build query with optional requester and request_tx_id filters
+    -- Build query with optional filters
+    -- Priority: request_tx_id > attestation_hash > result_canonical > requester
     IF $request_tx_id IS NOT NULL {
-        -- Filter by specific request_tx_id (ignores other filters for exact match)
+        -- Filter by specific request_tx_id (exact match, ignores other filters)
         RETURN SELECT request_tx_id, attestation_hash, requester, data_provider, stream_id,
                       created_height, signed_height, encrypt_sig
                FROM attestations
                WHERE request_tx_id = $request_tx_id
-               LIMIT 1;
+               ORDER BY created_height DESC, request_tx_id ASC
+               LIMIT $limit OFFSET $offset;
+    } ELSEIF $attestation_hash IS NOT NULL {
+        -- Filter by attestation_hash (can return multiple if hash collision, but unlikely)
+        RETURN SELECT request_tx_id, attestation_hash, requester, data_provider, stream_id,
+                      created_height, signed_height, encrypt_sig
+               FROM attestations
+               WHERE attestation_hash = $attestation_hash
+               ORDER BY created_height DESC, request_tx_id ASC
+               LIMIT $limit OFFSET $offset;
+    } ELSEIF $result_canonical IS NOT NULL {
+        -- Filter by result_canonical (exact match)
+        RETURN SELECT request_tx_id, attestation_hash, requester, data_provider, stream_id,
+                      created_height, signed_height, encrypt_sig
+               FROM attestations
+               WHERE result_canonical = $result_canonical
+               ORDER BY created_height DESC, request_tx_id ASC
+               LIMIT $limit OFFSET $offset;
     } ELSEIF $requester IS NULL {
         -- Show all attestations (analytics/auditing)
         IF $order_desc {
