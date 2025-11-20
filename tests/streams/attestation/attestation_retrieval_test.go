@@ -148,7 +148,7 @@ func TestListAttestations(t *testing.T) {
 }
 
 func testListEmpty(h *AttestationTestHelper) {
-	count := h.CountRows("list_attestations", []any{nil, nil, 10, 0, nil})
+	count := h.CountRows("list_attestations", []any{nil, nil, nil, nil, 10, 0, nil})
 	require.Equal(h.t, 0, count, "should return no results when empty")
 }
 
@@ -158,7 +158,7 @@ func testListNoFilter(h *AttestationTestHelper, actionName string, addrs *TestAd
 	h.CreateAttestationForRequester(actionName, addrs.Requester2, 3)
 
 	count := 0
-	h.CallAction("list_attestations", []any{nil, nil, 100, 0, nil}, func(row *common.Row) error {
+	h.CallAction("list_attestations", []any{nil, nil, nil, nil, 100, 0, nil}, func(row *common.Row) error {
 		count++
 		require.Len(h.t, row.Values, 8, "should return 8 columns: request_tx_id, attestation_hash, requester, data_provider, stream_id, created_height, signed_height, encrypt_sig")
 
@@ -176,7 +176,7 @@ func testListNoFilter(h *AttestationTestHelper, actionName string, addrs *TestAd
 
 func testListFilterByRequester(h *AttestationTestHelper, addrs *TestAddresses) {
 	count := 0
-	h.CallAction("list_attestations", []any{addrs.Requester1.Bytes(), nil, 100, 0, nil}, func(row *common.Row) error {
+	h.CallAction("list_attestations", []any{addrs.Requester1.Bytes(), nil, nil, nil, 100, 0, nil}, func(row *common.Row) error {
 		count++
 		requester := row.Values[2].([]byte)
 		require.Equal(h.t, addrs.Requester1.Bytes(), requester, "requester should match filter")
@@ -195,7 +195,7 @@ func testListFilterByRequestTxID(h *AttestationTestHelper, actionName string, ad
 	count := 0
 	var returnedTxID string
 	var returnedHash []byte
-	h.CallAction("list_attestations", []any{nil, requestTxID1, nil, nil, nil}, func(row *common.Row) error {
+	h.CallAction("list_attestations", []any{nil, requestTxID1, nil, nil, nil, nil, nil}, func(row *common.Row) error {
 		count++
 		returnedTxID = row.Values[0].(string)
 		returnedHash = row.Values[1].([]byte)
@@ -208,7 +208,7 @@ func testListFilterByRequestTxID(h *AttestationTestHelper, actionName string, ad
 
 	// Verify different request_tx_id returns different result
 	count = 0
-	h.CallAction("list_attestations", []any{nil, requestTxID2, nil, nil, nil}, func(row *common.Row) error {
+	h.CallAction("list_attestations", []any{nil, requestTxID2, nil, nil, nil, nil, nil}, func(row *common.Row) error {
 		count++
 		returnedTxID = row.Values[0].(string)
 		return nil
@@ -217,7 +217,7 @@ func testListFilterByRequestTxID(h *AttestationTestHelper, actionName string, ad
 	require.Equal(h.t, requestTxID2, returnedTxID, "returned tx_id should match second filter")
 
 	// Verify non-existent request_tx_id returns no results
-	count = h.CountRows("list_attestations", []any{nil, InvalidTxID, nil, nil, nil})
+	count = h.CountRows("list_attestations", []any{nil, InvalidTxID, nil, nil, nil, nil, nil})
 	require.Equal(h.t, 0, count, "should return 0 results for non-existent request_tx_id")
 }
 
@@ -227,15 +227,15 @@ func testListPagination(h *AttestationTestHelper, actionName string, addrs *Test
 	}
 
 	// First page
-	count := h.CountRows("list_attestations", []any{addrs.Requester1.Bytes(), nil, 3, 0, nil})
+	count := h.CountRows("list_attestations", []any{addrs.Requester1.Bytes(), nil, nil, nil, 3, 0, nil})
 	require.Equal(h.t, 3, count, "first page should return 3 results")
 
 	// Second page
-	count = h.CountRows("list_attestations", []any{addrs.Requester1.Bytes(), nil, 3, 3, nil})
+	count = h.CountRows("list_attestations", []any{addrs.Requester1.Bytes(), nil, nil, nil, 3, 3, nil})
 	require.Equal(h.t, 3, count, "second page should return 3 results")
 }
 
 func testListMaxLimit(h *AttestationTestHelper) {
-	count := h.CountRows("list_attestations", []any{nil, nil, 99999, 0, nil})
+	count := h.CountRows("list_attestations", []any{nil, nil, nil, nil, 99999, 0, nil})
 	require.Greater(h.t, count, 0, "should return results with large limit")
 }
