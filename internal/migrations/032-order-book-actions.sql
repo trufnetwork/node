@@ -92,6 +92,13 @@ CREATE OR REPLACE ACTION create_market(
     -- CREATE MARKET
     -- ==========================================================================
 
+    -- Validate @caller format (must be 0x-prefixed Ethereum address)
+    -- Note: Kwil supports both Secp256k1 (EVM) and ED25519 signers. This action
+    -- requires a 0x-prefixed Ethereum address format for EVM compatibility.
+    if @caller IS NULL OR length(@caller) != 42 OR substring(LOWER(@caller), 1, 2) != '0x' {
+        ERROR('Invalid caller address format (expected 0x-prefixed Ethereum address)');
+    }
+
     -- Convert caller address to bytes for storage
     $caller_bytes BYTEA := decode(substring(LOWER(@caller), 3, 40), 'hex');
 
