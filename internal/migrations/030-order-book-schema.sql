@@ -71,10 +71,8 @@ CREATE TABLE IF NOT EXISTS ob_positions (
 -- =============================================================================
 -- Indexes for query performance
 -- =============================================================================
-
--- Fast participant lookup by wallet address
-CREATE INDEX IF NOT EXISTS idx_ob_participants_wallet
-    ON ob_participants(wallet_address);
+-- Note: ob_participants.wallet_address already has implicit index from UNIQUE constraint
+-- Note: ob_queries.hash already has implicit index from UNIQUE constraint
 
 -- Order book queries: find best orders for matching (by query, outcome, price, FIFO)
 CREATE INDEX IF NOT EXISTS idx_ob_pos_order_match

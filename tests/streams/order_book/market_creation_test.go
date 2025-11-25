@@ -129,8 +129,11 @@ func testCreateMarketValidation(t *testing.T) func(ctx context.Context, platform
 		validHash := sha256.Sum256([]byte("test_validation"))
 		futureTime := time.Now().Add(1 * time.Hour).Unix()
 
-		// Note: Cannot validate BYTEA length in Kuneiform (length() only accepts TEXT)
-		// Hash length validation relies on table constraints instead
+		// Test: Invalid hash length (not 32 bytes)
+		shortHash := []byte("too_short") // Less than 32 bytes
+		err = callCreateMarket(ctx, platform, &userAddr, shortHash, futureTime, int64(5), int64(20), nil)
+		require.Error(t, err, "should fail with invalid hash length")
+		require.Contains(t, err.Error(), "32 bytes", "error should mention 32 bytes")
 
 		// Test: Settlement time in the past
 		pastTime := time.Now().Add(-1 * time.Hour).Unix()

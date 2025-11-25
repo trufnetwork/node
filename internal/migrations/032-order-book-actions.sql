@@ -36,10 +36,14 @@ CREATE OR REPLACE ACTION create_market(
     -- VALIDATION
     -- ==========================================================================
 
-    -- Validate query hash (must not be NULL)
-    -- Note: length() doesn't support BYTEA in Kuneiform, so we rely on table constraint
+    -- Validate query hash (must be exactly 32 bytes for SHA256)
+    -- Note: length() doesn't support BYTEA in Kuneiform, so we use encode() to convert
+    -- to hex string and check the length (32 bytes = 64 hex characters)
     if $query_hash IS NULL {
         ERROR('query_hash is required');
+    }
+    if length(encode($query_hash, 'hex')) != 64 {
+        ERROR('query_hash must be exactly 32 bytes (SHA256)');
     }
 
     -- Validate settlement time (must be in the future)
