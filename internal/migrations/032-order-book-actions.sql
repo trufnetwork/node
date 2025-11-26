@@ -315,9 +315,9 @@ PUBLIC VIEW RETURNS (market_exists BOOLEAN) {
 -- =============================================================================
 /**
  * Stub for the matching engine. This allows place_buy_order() and place_sell_order()
- * to call match_orders() without blocking on Issue 6 implementation.
+ * to call match_orders() without blocking on Issue (Order Matching) implementation.
  *
- * TODO: Full implementation in Issue 6 (Order Matching)
+ * TODO: Full implementation in another Issue (Order Matching)
  *
  * The matching engine will implement:
  * 1. Direct match - Buy order meets sell order at same price
@@ -334,9 +334,9 @@ CREATE OR REPLACE ACTION match_orders(
     $outcome BOOL,
     $price INT
 ) PRIVATE {
-    -- Stub: No-op until Issue 6
+    -- Stub: No-op until Issue (Order Matching)
     -- This prevents errors when called from place_buy_order/place_sell_order
-    -- Full matching engine will be implemented in Issue 6
+    -- Full matching engine will be implemented in Issue (Order Matching)
     RETURN;
 };
 
@@ -422,6 +422,10 @@ CREATE OR REPLACE ACTION place_buy_order(
         ERROR('Market does not exist (query_id: ' || $query_id::TEXT || ')');
     }
 
+    -- Note: Markets remain tradable until explicitly settled (settled=true).
+    -- The settle_time is metadata indicating when settlement CAN occur, not when it MUST.
+    -- Users can continue trading past settle_time until the settlement action is triggered.
+    -- This two-phase design allows flexibility in settlement timing.
     if $settled {
         ERROR('Market has already settled (no trading allowed)');
     }
