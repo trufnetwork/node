@@ -305,3 +305,218 @@ PUBLIC VIEW RETURNS (market_exists BOOLEAN) {
 
     RETURN false;
 };
+
+-- =============================================================================
+-- Section 3: Trading Actions
+-- =============================================================================
+
+-- =============================================================================
+-- match_orders: Matching engine (stub for Issue 6)
+-- =============================================================================
+/**
+ * Stub for the matching engine. This allows place_buy_order() and place_sell_order()
+ * to call match_orders() without blocking on Issue (Order Matching) implementation.
+ *
+ * TODO: Full implementation in another Issue (Order Matching)
+ *
+ * The matching engine will implement:
+ * 1. Direct match - Buy order meets sell order at same price
+ * 2. Mint match - Opposite buy orders at complementary prices create share pairs
+ * 3. Burn match - Opposite sell orders at complementary prices destroy shares
+ *
+ * Parameters:
+ * - $query_id: Market identifier
+ * - $outcome: TRUE (YES) or FALSE (NO)
+ * - $price: Price level to match (1-99)
+ */
+CREATE OR REPLACE ACTION match_orders(
+    $query_id INT,
+    $outcome BOOL,
+    $price INT
+) PRIVATE {
+    -- Stub: No-op until Issue (Order Matching)
+    -- This prevents errors when called from place_buy_order/place_sell_order
+    -- Full matching engine will be implemented in Issue (Order Matching)
+    RETURN;
+};
+
+-- =============================================================================
+-- place_buy_order: Place a buy order for YES or NO shares
+-- =============================================================================
+/**
+ * Places a buy order for YES or NO shares in a prediction market.
+ *
+ * Users lock collateral (amount × price) to place a buy order. The order is added
+ * to the order book with a NEGATIVE price to distinguish it from sell orders.
+ * The matching engine is triggered to check for immediate matches.
+ *
+ * Parameters:
+ * - $query_id: Market identifier (from ob_queries.id)
+ * - $outcome: TRUE for YES shares, FALSE for NO shares
+ * - $price: Price per share in cents (1-99 = $0.01 to $0.99)
+ * - $amount: Number of shares to buy
+ *
+ * Collateral locked: amount × price × 10^16
+ * Example: 10 shares at $0.56 = 10 × 56 × 10^16 = 5.6 × 10^18 wei (5.6 TRUF)
+ *
+ * Price Convention:
+ * - Buy orders stored with NEGATIVE price (e.g., -56 for $0.56 buy)
+ * - Sell orders stored with POSITIVE price (e.g., 56 for $0.56 sell)
+ * - Holdings stored with price = 0 (not listed for sale)
+ *
+ * Examples:
+ *   place_buy_order(1, TRUE, 56, 10)   -- Buy 10 YES at $0.56 (locks 5.6 TRUF)
+ *   place_buy_order(1, FALSE, 44, 20)  -- Buy 20 NO at $0.44 (locks 8.8 TRUF)
+ */
+CREATE OR REPLACE ACTION place_buy_order(
+    $query_id INT,
+    $outcome BOOL,
+    $price INT,
+    $amount INT8
+) PUBLIC {
+    -- Constants
+    $collateral_decimals INT := 18;
+
+    -- ==========================================================================
+    -- SECTION 1: VALIDATION
+    -- ==========================================================================
+
+    -- 1.1 Validate @caller format (must be 0x-prefixed Ethereum address)
+    -- Note: Kwil supports both Secp256k1 (EVM) and ED25519 signers. This action
+    -- requires a 0x-prefixed Ethereum address format for EVM compatibility.
+    if @caller IS NULL OR length(@caller) != 42 OR substring(LOWER(@caller), 1, 2) != '0x' {
+        ERROR('Invalid caller address format (expected 0x-prefixed Ethereum address)');
+    }
+
+    -- 1.2 Validate parameters
+    if $query_id IS NULL {
+        ERROR('query_id is required');
+    }
+
+    if $outcome IS NULL {
+        ERROR('outcome is required (TRUE for YES, FALSE for NO)');
+    }
+
+    if $price IS NULL OR $price < 1 OR $price > 99 {
+        ERROR('price must be between 1 and 99 ($0.01 to $0.99)');
+    }
+
+    if $amount IS NULL OR $amount <= 0 {
+        ERROR('amount must be positive');
+    }
+
+    if $amount > 1000000000 {
+        ERROR('amount exceeds maximum allowed of 1,000,000,000');
+    }
+
+    -- 1.3 Validate market exists and is not settled
+    $settled BOOL;
+    $market_found BOOL := false;
+
+    for $row in SELECT settled FROM ob_queries WHERE id = $query_id {
+        $settled := $row.settled;
+        $market_found := true;
+    }
+
+    if NOT $market_found {
+        ERROR('Market does not exist (query_id: ' || $query_id::TEXT || ')');
+    }
+
+    -- Note: Markets remain tradable until explicitly settled (settled=true).
+    -- The settle_time is metadata indicating when settlement CAN occur, not when it MUST.
+    -- Users can continue trading past settle_time until the settlement action is triggered.
+    -- This two-phase design allows flexibility in settlement timing.
+    if $settled {
+        ERROR('Market has already settled (no trading allowed)');
+    }
+
+    -- ==========================================================================
+    -- SECTION 2: CALCULATE COLLATERAL NEEDED
+    -- ==========================================================================
+
+    -- For buy order: collateral = amount × price × 10^16
+    -- Example: 10 shares at $0.56 = 10 × 56 × 10^16 = 5.6 × 10^18 wei
+    --
+    -- Why 10^16?
+    -- - Prices are in cents (1-99)
+    -- - Token has 18 decimals
+    -- - Formula: 10^(18-2) = 10^16
+    -- Note: Kuneiform doesn't have POWER(), so we use hardcoded constant
+    -- Cast INT8 and INT to NUMERIC for multiplication
+    $collateral_needed NUMERIC(78, 0) := ($amount::NUMERIC(78, 0) * $price::NUMERIC(78, 0) * '10000000000000000'::NUMERIC(78, 0));
+
+    -- ==========================================================================
+    -- SECTION 3: CHECK BALANCE
+    -- ==========================================================================
+
+    $caller_balance NUMERIC(78, 0) := COALESCE(ethereum_bridge.balance(@caller), 0::NUMERIC(78, 0));
+
+    if $caller_balance < $collateral_needed {
+        -- Note: Division by 10^18 for display purposes (convert wei to TRUF)
+        ERROR('Insufficient balance. Required: ' || $collateral_needed::TEXT || ' wei (' ||
+              ($collateral_needed / '1000000000000000000'::NUMERIC(78, 0))::TEXT || ' TRUF)');
+    }
+
+    -- ==========================================================================
+    -- SECTION 4: GET OR CREATE PARTICIPANT
+    -- ==========================================================================
+
+    -- Convert @caller (TEXT like '0x1234...') to BYTEA (20 bytes)
+    $caller_bytes BYTEA := decode(substring(LOWER(@caller), 3, 40), 'hex');
+
+    -- Try to get existing participant
+    $participant_id INT;
+    for $row in SELECT id FROM ob_participants WHERE wallet_address = $caller_bytes {
+        $participant_id := $row.id;
+    }
+
+    -- Create if not found (MAX(id) + 1 pattern)
+    -- Note: This is safe in Kwil because transactions within a block are processed
+    -- sequentially by the consensus engine, not concurrently.
+    if $participant_id IS NULL {
+        INSERT INTO ob_participants (id, wallet_address)
+        SELECT COALESCE(MAX(id), 0) + 1, $caller_bytes
+        FROM ob_participants;
+
+        -- Retrieve the newly created ID
+        for $row in SELECT id FROM ob_participants WHERE wallet_address = $caller_bytes {
+            $participant_id := $row.id;
+        }
+    }
+
+    -- ==========================================================================
+    -- SECTION 5: LOCK COLLATERAL
+    -- ==========================================================================
+
+    -- Lock tokens from user to vault (network-owned balance)
+    -- Note: ethereum_bridge.lock() throws ERROR on failure (insufficient balance, etc.)
+    -- TODO: Replace ethereum_bridge with usdc_bridge when USDC bridge is deployed
+    ethereum_bridge.lock($collateral_needed);
+
+    -- ==========================================================================
+    -- SECTION 6: INSERT BUY ORDER (UPSERT)
+    -- ==========================================================================
+
+    -- Buy orders use NEGATIVE price to distinguish from sell orders
+    -- Example: Buy at $0.56 stored as price = -56
+    --
+    -- If multiple orders at same (query_id, participant_id, outcome, price):
+    -- - Accumulate amounts
+    -- - Update timestamp to latest (FIFO within price level)
+    INSERT INTO ob_positions
+    (query_id, participant_id, outcome, price, amount, last_updated)
+    VALUES ($query_id, $participant_id, $outcome, -$price, $amount, @block_timestamp)
+    ON CONFLICT (query_id, participant_id, outcome, price) DO UPDATE
+    SET amount = ob_positions.amount + EXCLUDED.amount,
+        last_updated = EXCLUDED.last_updated;
+
+    -- ==========================================================================
+    -- SECTION 7: TRIGGER MATCHING ENGINE
+    -- ==========================================================================
+
+    -- Attempt to match this buy order with existing sell orders
+    -- Note: This is a stub in Issue 2, full implementation in Issue 6
+    match_orders($query_id, $outcome, $price);
+
+    -- Success: Order placed (may be partially or fully matched by future matching engine)
+};
