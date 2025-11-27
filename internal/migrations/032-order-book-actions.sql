@@ -520,3 +520,178 @@ CREATE OR REPLACE ACTION place_buy_order(
 
     -- Success: Order placed (may be partially or fully matched by future matching engine)
 };
+
+-- =============================================================================
+-- place_sell_order: Place a sell order for YES or NO shares
+-- =============================================================================
+/**
+ * Places a sell order for YES or NO shares that the user already owns.
+ *
+ * Users must own shares (held in positions table with price = 0) before selling.
+ * Shares are moved from holdings to the sell order book with positive price.
+ * No new collateral is needed since shares already exist.
+ *
+ * Parameters:
+ * - $query_id: Market identifier (from ob_queries.id)
+ * - $outcome: TRUE for YES shares, FALSE for NO shares
+ * - $price: Price per share in cents (1-99 = $0.01 to $0.99)
+ * - $amount: Number of shares to sell
+ *
+ * Prerequisites: User must own at least $amount shares of $outcome
+ *
+ * Price Convention:
+ * - Holdings stored with price = 0 (shares owned, not listed for sale)
+ * - Sell orders stored with POSITIVE price (e.g., 56 for $0.56 sell)
+ * - Buy orders stored with NEGATIVE price (e.g., -56 for $0.56 buy)
+ *
+ * Examples:
+ *   place_sell_order(1, TRUE, 56, 10)   -- Sell 10 YES at $0.56
+ *   place_sell_order(1, FALSE, 44, 20)  -- Sell 20 NO at $0.44
+ */
+CREATE OR REPLACE ACTION place_sell_order(
+    $query_id INT,
+    $outcome BOOL,
+    $price INT,
+    $amount INT8
+) PUBLIC {
+    -- ==========================================================================
+    -- SECTION 1: VALIDATION
+    -- ==========================================================================
+
+    -- 1.1 Validate @caller format (must be 0x-prefixed Ethereum address)
+    -- Note: Kwil supports both Secp256k1 (EVM) and ED25519 signers. This action
+    -- requires a 0x-prefixed Ethereum address format for EVM compatibility.
+    if @caller IS NULL OR length(@caller) != 42 OR substring(LOWER(@caller), 1, 2) != '0x' {
+        ERROR('Invalid caller address format (expected 0x-prefixed Ethereum address)');
+    }
+
+    -- 1.2 Validate parameters
+    if $query_id IS NULL {
+        ERROR('query_id is required');
+    }
+
+    if $outcome IS NULL {
+        ERROR('outcome is required (TRUE for YES, FALSE for NO)');
+    }
+
+    if $price IS NULL OR $price < 1 OR $price > 99 {
+        ERROR('price must be between 1 and 99 ($0.01 to $0.99)');
+    }
+
+    if $amount IS NULL OR $amount <= 0 {
+        ERROR('amount must be positive');
+    }
+
+    if $amount > 1000000000 {
+        ERROR('amount exceeds maximum allowed of 1,000,000,000');
+    }
+
+    -- 1.3 Validate market exists and is not settled
+    $settled BOOL;
+    $market_found BOOL := false;
+
+    for $row in SELECT settled FROM ob_queries WHERE id = $query_id {
+        $settled := $row.settled;
+        $market_found := true;
+    }
+
+    if NOT $market_found {
+        ERROR('Market does not exist (query_id: ' || $query_id::TEXT || ')');
+    }
+
+    -- Note: Markets remain tradable until explicitly settled (settled=true).
+    -- The settle_time is metadata indicating when settlement CAN occur, not when it MUST.
+    -- Users can continue trading past settle_time until the settlement action is triggered.
+    -- This two-phase design allows flexibility in settlement timing.
+    if $settled {
+        ERROR('Market has already settled (no trading allowed)');
+    }
+
+    -- ==========================================================================
+    -- SECTION 2: GET PARTICIPANT (NO AUTO-CREATE FOR SELLS)
+    -- ==========================================================================
+
+    -- Convert @caller (TEXT like '0x1234...') to BYTEA (20 bytes)
+    $caller_bytes BYTEA := decode(substring(LOWER(@caller), 3, 40), 'hex');
+
+    -- Look up participant (DON'T auto-create for sells)
+    -- If user has shares, they must already be a participant from previous buy/mint
+    $participant_id INT;
+    for $row in SELECT id FROM ob_participants WHERE wallet_address = $caller_bytes {
+        $participant_id := $row.id;
+    }
+
+    if $participant_id IS NULL {
+        ERROR('No shares found. You must own shares before selling.');
+    }
+
+    -- ==========================================================================
+    -- SECTION 3: VERIFY SHARE OWNERSHIP
+    -- ==========================================================================
+
+    -- Check holding position (price = 0 means holding, not listed for sale)
+    $held_amount INT8;
+    for $row in SELECT amount FROM ob_positions
+        WHERE query_id = $query_id
+          AND participant_id = $participant_id
+          AND outcome = $outcome
+          AND price = 0  -- Holdings have price = 0
+    {
+        $held_amount := $row.amount;
+    }
+
+    -- Validate sufficient shares
+    if $held_amount IS NULL {
+        ERROR('No shares found. You must own shares of the specified outcome before selling.');
+    }
+
+    if $held_amount < $amount {
+        ERROR('Insufficient shares. You own: ' || $held_amount::TEXT ||
+              ' shares, trying to sell: ' || $amount::TEXT);
+    }
+
+    -- ==========================================================================
+    -- SECTION 4: MOVE SHARES FROM HOLDING TO SELL ORDER
+    -- ==========================================================================
+
+    -- Step 1: Reduce holdings (price = 0)
+    UPDATE ob_positions
+    SET amount = amount - $amount
+    WHERE query_id = $query_id
+      AND participant_id = $participant_id
+      AND outcome = $outcome
+      AND price = 0;
+
+    -- Step 2: Clean up zero holdings
+    -- If user sells all their shares, remove the holding row entirely
+    DELETE FROM ob_positions
+    WHERE query_id = $query_id
+      AND participant_id = $participant_id
+      AND outcome = $outcome
+      AND price = 0
+      AND amount = 0;
+
+    -- Step 3: Insert sell order (UPSERT)
+    -- Sell orders use POSITIVE price to distinguish from buy orders
+    -- Example: Sell at $0.56 stored as price = 56
+    --
+    -- If multiple orders at same (query_id, participant_id, outcome, price):
+    -- - Accumulate amounts
+    -- - Update timestamp to latest (FIFO within price level)
+    INSERT INTO ob_positions
+    (query_id, participant_id, outcome, price, amount, last_updated)
+    VALUES ($query_id, $participant_id, $outcome, $price, $amount, @block_timestamp)
+    ON CONFLICT (query_id, participant_id, outcome, price) DO UPDATE
+    SET amount = ob_positions.amount + EXCLUDED.amount,
+        last_updated = EXCLUDED.last_updated;
+
+    -- ==========================================================================
+    -- SECTION 5: TRIGGER MATCHING ENGINE
+    -- ==========================================================================
+
+    -- Attempt to match this sell order with existing buy orders
+    -- Note: This is a stub in Issue 3, full implementation in Issue 6
+    match_orders($query_id, $outcome, $price);
+
+    -- Success: Order placed (may be partially or fully matched by future matching engine)
+};
