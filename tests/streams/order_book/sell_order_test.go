@@ -251,7 +251,11 @@ func testSellOrderMarketSettled(t *testing.T) func(ctx context.Context, platform
 		})
 		require.NoError(t, err)
 
-		// Manually mark market as settled using admin privileges
+		// TODO (Issue 7 - Settlement): This is a TEST-ONLY shortcut that manually
+		// marks the market as settled by directly updating the database.
+		// In production, settlement should happen through a proper settlement action
+		// that will be implemented in Issue 7 (see split_limit_order_test.go for details).
+		// For now, we bypass the entire settlement flow just to test validation.
 		tx := &common.TxContext{
 			Ctx:          ctx,
 			BlockContext: &common.BlockContext{Height: 1},

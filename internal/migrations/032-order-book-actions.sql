@@ -695,3 +695,208 @@ CREATE OR REPLACE ACTION place_sell_order(
 
     -- Success: Order placed (may be partially or fully matched by future matching engine)
 };
+
+-- =============================================================================
+-- place_split_limit_order: Mint binary token pairs and list unwanted side for sale
+-- =============================================================================
+/**
+ * Places a split limit order - the primary liquidity provision mechanism.
+ * Mints equal amounts of YES and NO shares, holds the desired outcome,
+ * and automatically lists the unwanted outcome for sale.
+ *
+ * This is a v2 feature that enables users to become liquidity providers
+ * and earn a share of redemption fees (only SELL side qualifies for LP rewards).
+ *
+ * Parameters:
+ * - $query_id: Market identifier (from ob_queries.id)
+ * - $true_price: Price for YES shares in cents (1-99 = $0.01 to $0.99)
+ * - $amount: Number of share PAIRS to mint
+ *
+ * Collateral locked: amount × $1.00 (amount × 10^18 wei)
+ * Example: 100 share pairs = 100 × 10^18 wei = 100 TRUF
+ *
+ * Result:
+ * - User holds: $amount YES shares at price=0 (holding, not for sale)
+ * - User sells: $amount NO shares at price=(100-true_price) (listed for sale)
+ *
+ * Price Calculation:
+ * - YES price: $true_price (e.g., $0.56 = 56 cents)
+ * - NO price: 100 - $true_price (e.g., 100 - 56 = 44 cents = $0.44)
+ * - Total: Always $1.00 per share pair
+ *
+ * LP Reward Eligibility (Issue 9):
+ * - Only the SELL order (NO shares) qualifies for LP rewards
+ * - Must be within max_spread of market midpoint
+ * - Must meet min_order_size threshold
+ *
+ * Examples:
+ *   place_split_limit_order(1, 56, 100)  -- Mint 100 pairs: hold YES, sell NO @ $0.44
+ *   place_split_limit_order(1, 35, 50)   -- Mint 50 pairs: hold YES, sell NO @ $0.65
+ */
+CREATE OR REPLACE ACTION place_split_limit_order(
+    $query_id INT,
+    $true_price INT,
+    $amount INT8
+) PUBLIC {
+    -- ==========================================================================
+    -- SECTION 1: VALIDATION
+    -- ==========================================================================
+
+    -- 1.1 Validate @caller format (must be 0x-prefixed Ethereum address)
+    -- Note: Kwil supports both Secp256k1 (EVM) and ED25519 signers. This action
+    -- requires a 0x-prefixed Ethereum address format for EVM compatibility.
+    if @caller IS NULL OR length(@caller) != 42 OR substring(LOWER(@caller), 1, 2) != '0x' {
+        ERROR('Invalid caller address format (expected 0x-prefixed Ethereum address)');
+    }
+
+    -- 1.2 Validate parameters
+    if $query_id IS NULL {
+        ERROR('query_id is required');
+    }
+
+    if $true_price IS NULL OR $true_price < 1 OR $true_price > 99 {
+        ERROR('true_price must be between 1 and 99 ($0.01 to $0.99)');
+    }
+
+    if $amount IS NULL OR $amount <= 0 {
+        ERROR('amount must be positive');
+    }
+
+    if $amount > 1000000000 {
+        ERROR('amount exceeds maximum allowed of 1,000,000,000');
+    }
+
+    -- 1.3 Validate market exists and is not settled
+    $settled BOOL;
+    $market_found BOOL := false;
+
+    for $row in SELECT settled FROM ob_queries WHERE id = $query_id {
+        $settled := $row.settled;
+        $market_found := true;
+    }
+
+    if NOT $market_found {
+        ERROR('Market does not exist (query_id: ' || $query_id::TEXT || ')');
+    }
+
+    -- Note: Markets remain tradable until explicitly settled (settled=true).
+    -- The settle_time is metadata indicating when settlement CAN occur, not when it MUST.
+    -- Users can continue trading past settle_time until the settlement action is triggered.
+    -- This two-phase design allows flexibility in settlement timing.
+    if $settled {
+        ERROR('Market has already settled (no trading allowed)');
+    }
+
+    -- ==========================================================================
+    -- SECTION 2: CALCULATE COLLATERAL NEEDED
+    -- ==========================================================================
+
+    -- For split order: collateral = amount × $1.00 = amount × 10^18
+    -- Example: 100 shares × 10^18 = 100,000,000,000,000,000,000 wei = 100 TRUF
+    --
+    -- Why 10^18?
+    -- - Minting a share pair (YES + NO) requires $1.00 total collateral
+    -- - Token has 18 decimals
+    -- - Formula: $1.00 × 10^18
+    -- Note: Kuneiform doesn't have POWER(), so we use hardcoded constant
+    -- Cast INT8 to NUMERIC for multiplication
+    $collateral_needed NUMERIC(78, 0) := ($amount::NUMERIC(78, 0) * '1000000000000000000'::NUMERIC(78, 0));
+
+    -- ==========================================================================
+    -- SECTION 3: CHECK BALANCE
+    -- ==========================================================================
+
+    $caller_balance NUMERIC(78, 0) := COALESCE(ethereum_bridge.balance(@caller), 0::NUMERIC(78, 0));
+
+    if $caller_balance < $collateral_needed {
+        -- Note: Division by 10^18 for display purposes (convert wei to TRUF)
+        ERROR('Insufficient balance. Required: ' || $collateral_needed::TEXT || ' wei (' ||
+              ($collateral_needed / '1000000000000000000'::NUMERIC(78, 0))::TEXT || ' TRUF)');
+    }
+
+    -- ==========================================================================
+    -- SECTION 4: GET OR CREATE PARTICIPANT
+    -- ==========================================================================
+
+    -- Convert @caller (TEXT like '0x1234...') to BYTEA (20 bytes)
+    $caller_bytes BYTEA := decode(substring(LOWER(@caller), 3, 40), 'hex');
+
+    -- Try to get existing participant
+    $participant_id INT;
+    for $row in SELECT id FROM ob_participants WHERE wallet_address = $caller_bytes {
+        $participant_id := $row.id;
+    }
+
+    -- Create if not found (MAX(id) + 1 pattern)
+    -- Note: This is safe in Kwil because transactions within a block are processed
+    -- sequentially by the consensus engine, not concurrently.
+    if $participant_id IS NULL {
+        INSERT INTO ob_participants (id, wallet_address)
+        SELECT COALESCE(MAX(id), 0) + 1, $caller_bytes
+        FROM ob_participants;
+
+        -- Retrieve the newly created ID
+        for $row in SELECT id FROM ob_participants WHERE wallet_address = $caller_bytes {
+            $participant_id := $row.id;
+        }
+    }
+
+    -- ==========================================================================
+    -- SECTION 5: LOCK COLLATERAL
+    -- ==========================================================================
+
+    -- Lock tokens from user to vault (network-owned balance)
+    -- Note: ethereum_bridge.lock() throws ERROR on failure (insufficient balance, etc.)
+    -- TODO: Replace ethereum_bridge with usdc_bridge when USDC bridge is deployed
+    ethereum_bridge.lock($collateral_needed);
+
+    -- ==========================================================================
+    -- SECTION 6: MINT YES SHARES (HOLDING)
+    -- ==========================================================================
+
+    -- Mint YES shares and hold them (not for sale)
+    -- These are stored with price = 0 to indicate holding (not listed)
+    --
+    -- If user already has YES holdings, amounts accumulate (UPSERT)
+    INSERT INTO ob_positions
+    (query_id, participant_id, outcome, price, amount, last_updated)
+    VALUES ($query_id, $participant_id, TRUE, 0, $amount, @block_timestamp)
+    ON CONFLICT (query_id, participant_id, outcome, price) DO UPDATE
+    SET amount = ob_positions.amount + EXCLUDED.amount,
+        last_updated = EXCLUDED.last_updated;
+
+    -- ==========================================================================
+    -- SECTION 7: MINT NO SHARES (SELL ORDER)
+    -- ==========================================================================
+
+    -- Calculate complementary price for NO shares
+    -- If user wants YES @ $0.56, they sell NO @ $0.44 (100 - 56 = 44)
+    $false_price INT := 100 - $true_price;
+
+    -- Create NO sell order directly (v2 optimization)
+    -- Note: We skip the intermediate holding step - go straight to sell order
+    -- This is more efficient than: mint at price=0, then call place_sell_order()
+    --
+    -- If user already has a NO sell order at this price, amounts accumulate (UPSERT)
+    INSERT INTO ob_positions
+    (query_id, participant_id, outcome, price, amount, last_updated)
+    VALUES ($query_id, $participant_id, FALSE, $false_price, $amount, @block_timestamp)
+    ON CONFLICT (query_id, participant_id, outcome, price) DO UPDATE
+    SET amount = ob_positions.amount + EXCLUDED.amount,
+        last_updated = EXCLUDED.last_updated;
+
+    -- ==========================================================================
+    -- SECTION 8: TRIGGER MATCHING ENGINE
+    -- ==========================================================================
+
+    -- Attempt to match the NO sell order with existing buy orders
+    -- Note: This is a stub in Issue 4, full implementation in Issue 6
+    -- Match is attempted on the FALSE (NO) outcome at the false_price
+    match_orders($query_id, FALSE, $false_price);
+
+    -- Success: Split order placed
+    -- - YES shares held at price=0 (not for sale)
+    -- - NO shares listed for sale at price=false_price
+    -- - May be partially or fully matched by future matching engine
+    -- TODO (Issue 9): Check LP eligibility and track in ob_liquidity_providers
+};
