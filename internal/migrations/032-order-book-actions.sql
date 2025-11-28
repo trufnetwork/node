@@ -927,3 +927,190 @@ CREATE OR REPLACE ACTION place_split_limit_order(
     --
     -- See SPECIFICATION.md v1.2 Section 6.1 for LP reward model details
 };
+
+-- =============================================================================
+-- cancel_order: Cancel an open buy or sell order
+-- =============================================================================
+/**
+ * Cancels an open buy or sell order and refunds collateral or returns shares.
+ *
+ * Users can cancel their open orders at any time before settlement with no fee.
+ * This action allows traders to exit positions or adjust their strategy without penalty.
+ *
+ * Order Types Supported:
+ * - Buy orders (price < 0): Locked collateral is refunded to user's wallet
+ * - Sell orders (price > 0): Shares are returned to holding wallet (price = 0)
+ * - Holdings (price = 0): Cannot be cancelled via this action (use place_sell_order to list)
+ *
+ * Example 1: Cancel buy order for YES @ $0.56
+ * - User placed buy order: 100 shares × $0.56 = 56 TRUF locked
+ * - User calls cancel_order(query_id=1, outcome=TRUE, price=-56)
+ * - System refunds 56 TRUF to user's wallet
+ * - Order is deleted from ob_positions
+ *
+ * Example 2: Cancel sell order for NO @ $0.44
+ * - User placed sell order: 100 NO shares listed at $0.44
+ * - User calls cancel_order(query_id=1, outcome=FALSE, price=44)
+ * - System moves 100 NO shares back to holdings (price=0)
+ * - Sell order is deleted from ob_positions
+ *
+ * Collateral Refund Calculation (Buy Orders):
+ * - Formula: amount × |price| × 10^16 wei
+ * - Example: 10 shares @ $0.56 = 10 × 56 × 10^16 = 5.6 × 10^18 wei (5.6 TRUF)
+ *
+ * Parameters:
+ * - $query_id: Market ID from ob_queries
+ * - $outcome: TRUE (YES shares) or FALSE (NO shares)
+ * - $price: Price of order to cancel (-99 to 99, excluding 0)
+ *
+ * Returns: Nothing (void action)
+ *
+ * Errors:
+ * - If market doesn't exist
+ * - If market is already settled
+ * - If order doesn't exist or doesn't belong to caller
+ * - If price is 0 (holdings cannot be cancelled)
+ * - If price is out of valid range (-99 to 99)
+ * - If caller address is invalid format
+ */
+CREATE OR REPLACE ACTION cancel_order(
+    $query_id INT,
+    $outcome BOOL,
+    $price INT
+) PUBLIC {
+    -- ==========================================================================
+    -- SECTION 1: VALIDATE CALLER
+    -- ==========================================================================
+
+    -- Validate @caller format (must be 0x-prefixed Ethereum address)
+    -- Note: Kwil supports both Secp256k1 (EVM) and ED25519 signers. This action
+    -- requires a 0x-prefixed Ethereum address format for EVM compatibility.
+    if @caller IS NULL OR length(@caller) != 42 OR substring(LOWER(@caller), 1, 2) != '0x' {
+        ERROR('Invalid caller address format (expected 0x-prefixed Ethereum address)');
+    }
+
+    -- ==========================================================================
+    -- SECTION 2: VALIDATE PARAMETERS
+    -- ==========================================================================
+
+    -- Validate query_id
+    if $query_id IS NULL OR $query_id < 1 {
+        ERROR('Invalid query_id');
+    }
+
+    -- Validate outcome
+    if $outcome IS NULL {
+        ERROR('Outcome must be specified (TRUE for YES, FALSE for NO)');
+    }
+
+    -- Validate price range
+    -- Buy orders: -99 to -1 (negative)
+    -- Sell orders: 1 to 99 (positive)
+    -- Holdings: 0 (NOT allowed - holdings cannot be cancelled, use place_sell_order to list)
+    if $price IS NULL OR $price < -99 OR $price > 99 OR $price = 0 {
+        ERROR('Price must be between -99 and 99 (excluding 0). Holdings (price=0) cannot be cancelled.');
+    }
+
+    -- ==========================================================================
+    -- SECTION 3: VALIDATE MARKET
+    -- ==========================================================================
+
+    -- Check market exists and is not settled
+    $settled BOOL;
+    for $row in SELECT settled FROM ob_queries WHERE id = $query_id {
+        $settled := $row.settled;
+    }
+
+    if $settled IS NULL {
+        ERROR('Market does not exist');
+    }
+
+    if $settled {
+        ERROR('Cannot cancel orders on settled market');
+    }
+
+    -- ==========================================================================
+    -- SECTION 4: GET PARTICIPANT
+    -- ==========================================================================
+
+    -- Get participant ID from caller's wallet address
+    -- Note: Don't auto-create participant - they must exist if they have orders
+    -- This uses the helper function from 031-order-book-vault.sql
+    $participant_id INT := ob_get_participant_id(@caller);
+
+    if $participant_id IS NULL {
+        ERROR('No participant record found for this wallet');
+    }
+
+    -- ==========================================================================
+    -- SECTION 5: GET ORDER DETAILS
+    -- ==========================================================================
+
+    -- Query order from ob_positions table
+    -- The composite primary key is: (query_id, participant_id, outcome, price)
+    $order_amount INT8;
+    for $row in SELECT amount
+                FROM ob_positions
+                WHERE query_id = $query_id
+                  AND participant_id = $participant_id
+                  AND outcome = $outcome
+                  AND price = $price {
+        $order_amount := $row.amount;
+    }
+
+    if $order_amount IS NULL {
+        ERROR('Order not found or does not belong to you');
+    }
+
+    -- ==========================================================================
+    -- SECTION 6: REFUND COLLATERAL (BUY ORDERS) OR RETURN SHARES (SELL ORDERS)
+    -- ==========================================================================
+
+    -- For buy orders (price < 0): Refund locked collateral to user's wallet
+    if $price < 0 {
+        -- Calculate locked collateral
+        -- Formula: amount × |price| × 10^16 wei
+        -- Example: 10 shares @ $0.56 = 10 × 56 × 10^16 = 5.6 × 10^18 wei
+        --
+        -- Why 10^16? Prices are in cents (1-99), we need to convert to 18-decimal wei:
+        -- - Price 56 = $0.56 = 0.56 / 1.00
+        -- - Collateral per share = price / 100 * 10^18 = price * 10^16
+
+        $abs_price INT := -$price;  -- Convert negative price to positive
+        $multiplier NUMERIC(78, 0) := '10000000000000000'::NUMERIC(78, 0);  -- 10^16
+        $refund_amount NUMERIC(78, 0) := $order_amount::NUMERIC(78, 0) * $abs_price::NUMERIC(78, 0) * $multiplier;
+
+        -- Unlock collateral back to user using helper from 031-order-book-vault.sql
+        -- This calls ethereum_bridge.unlock() internally
+        ob_unlock_collateral(@caller, $refund_amount);
+    }
+
+    -- For sell orders (price > 0): Return shares to holding wallet
+    if $price > 0 {
+        -- Move shares back to holding wallet (price = 0)
+        -- If user already has holdings for this outcome, amounts accumulate (UPSERT)
+        INSERT INTO ob_positions (query_id, participant_id, outcome, price, amount, last_updated)
+        VALUES ($query_id, $participant_id, $outcome, 0::INT, $order_amount, @block_timestamp)
+        ON CONFLICT (query_id, participant_id, outcome, price)
+        DO UPDATE SET
+            amount = ob_positions.amount + EXCLUDED.amount,
+            last_updated = EXCLUDED.last_updated;
+    }
+
+    -- ==========================================================================
+    -- SECTION 7: DELETE CANCELLED ORDER
+    -- ==========================================================================
+
+    -- Delete the cancelled order from ob_positions table
+    -- This uses the composite primary key to identify the exact order
+    DELETE FROM ob_positions
+    WHERE query_id = $query_id
+      AND participant_id = $participant_id
+      AND outcome = $outcome
+      AND price = $price;
+
+    -- Success: Order cancelled
+    -- - For buy orders: Collateral has been refunded
+    -- - For sell orders: Shares have been returned to holdings
+    -- - Order is completely removed from the order book
+};
