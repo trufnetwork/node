@@ -704,8 +704,8 @@ CREATE OR REPLACE ACTION place_sell_order(
  * Mints equal amounts of YES and NO shares, holds the desired outcome,
  * and automatically lists the unwanted outcome for sale.
  *
- * This is a v2 feature that enables users to become liquidity providers
- * and earn a share of redemption fees (only SELL side qualifies for LP rewards).
+ * This feature enables users to become liquidity providers and earn a share
+ * of redemption fees by providing tight two-sided markets.
  *
  * Parameters:
  * - $query_id: Market identifier (from ob_queries.id)
@@ -724,10 +724,24 @@ CREATE OR REPLACE ACTION place_sell_order(
  * - NO price: 100 - $true_price (e.g., 100 - 56 = 44 cents = $0.44)
  * - Total: Always $1.00 per share pair
  *
- * LP Reward Eligibility (Issue 9):
- * - Only the SELL order (NO shares) qualifies for LP rewards
- * - Must be within max_spread of market midpoint
- * - Must meet min_order_size threshold
+ * LP Reward Eligibility (Issue 9 - TO BE IMPLEMENTED):
+ *
+ * To qualify for LP rewards, ALL of the following must be true:
+ * 1. BOTH buy and sell prices must be within max_spread of market midpoint (50):
+ *    - Effective BUY price (true_price) within spread
+ *    - SELL price (false_price = 100 - true_price) within spread
+ * 2. Amount must meet min_order_size threshold from ob_queries
+ *
+ * Rewards are calculated based on SELL order volume (NO shares listed for sale),
+ * but qualification requires BOTH prices to be within the spread. This encourages
+ * tight two-sided markets and provides meaningful liquidity for traders.
+ *
+ * Example with max_spread = 5 cents:
+ * - Market midpoint: $0.50
+ * - Split @ $0.56/$0.44: Distance = 6¢ → OUTSIDE spread → NOT qualified ❌
+ * - Split @ $0.52/$0.48: Distance = 2¢ → WITHIN spread → QUALIFIED ✅
+ *
+ * Implementation: LP tracking deferred to Issue 9 (LP rewards and fee distribution)
  *
  * Examples:
  *   place_split_limit_order(1, 56, 100)  -- Mint 100 pairs: hold YES, sell NO @ $0.44
@@ -898,5 +912,18 @@ CREATE OR REPLACE ACTION place_split_limit_order(
     -- - YES shares held at price=0 (not for sale)
     -- - NO shares listed for sale at price=false_price
     -- - May be partially or fully matched by future matching engine
-    -- TODO (Issue 9): Check LP eligibility and track in ob_liquidity_providers
+
+    -- TODO (Issue 9): Implement LP eligibility tracking
+    -- When implemented, validate that BOTH buy and sell prices are within spread:
+    --   1. Get market parameters: max_spread, min_order_size from ob_queries
+    --   2. Calculate distances from midpoint (50):
+    --      - buy_distance := ABS(50 - $true_price)
+    --      - sell_distance := ABS(50 - $false_price)
+    --   3. Check eligibility:
+    --      - qualifies := (buy_distance <= max_spread) AND
+    --                     (sell_distance <= max_spread) AND
+    --                     ($amount >= min_order_size)
+    --   4. If qualifies, insert into ob_liquidity_providers table
+    --
+    -- See SPECIFICATION.md v1.2 Section 6.1 for LP reward model details
 };
