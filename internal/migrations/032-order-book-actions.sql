@@ -344,9 +344,21 @@ PUBLIC VIEW RETURNS (market_exists BOOLEAN) {
  * Example: Buy YES @ $0.56 matches Sell YES @ $0.56
  *
  * Collateral Flow:
- * - Buyer's collateral stays locked in their buy order
- * - Seller already owns shares (no collateral locked)
- * - Shares transfer from seller's sell order to buyer's holdings
+ * - Buyer's locked collateral is transferred to seller as payment
+ * - Shares transfer from seller's holdings to buyer's holdings
+ *
+ * Recursion Behavior:
+ * - Uses tail recursion to process multiple matches sequentially
+ * - Each iteration matches one order pair and removes/reduces them from ob_positions
+ * - Recursion depth = number of orders matched at this price level
+ * - Natural termination when no more matching orders exist (LIMIT 1 returns nothing)
+ * - Maximum depth is bounded by the number of orders in the order book
+ * - In practice, depth rarely exceeds 10-20 due to:
+ *   * Economic constraints (gas costs for creating many small orders)
+ *   * Market maker behavior (traders prefer larger consolidated orders)
+ *   * Natural order book dynamics
+ * - Worst case: One large order matching 100+ tiny orders requires 100+ separate
+ *   transactions to create those orders, making it economically impractical
  *
  * Parameters:
  * - $query_id: Market identifier
@@ -419,6 +431,22 @@ CREATE OR REPLACE ACTION match_direct(
         $match_amount := $sell_amount;
     }
 
+    -- Get seller's wallet address for payment
+    $seller_wallet_bytes BYTEA;
+    for $row in SELECT wallet_address FROM ob_participants WHERE id = $sell_participant_id {
+        $seller_wallet_bytes := $row.wallet_address;
+    }
+    $seller_wallet_address TEXT := '0x' || encode($seller_wallet_bytes, 'hex');
+
+    -- Calculate payment to seller
+    $multiplier NUMERIC(78, 0) := '10000000000000000'::NUMERIC(78, 0);
+    $seller_payment NUMERIC(78, 0) := ($match_amount::NUMERIC(78, 0) *
+                                        $price::NUMERIC(78, 0) *
+                                        $multiplier);
+
+    -- Transfer payment from vault to seller
+    ob_unlock_collateral($seller_wallet_address, $seller_payment);
+
     -- Transfer shares from seller to buyer
     -- Step 1: Delete fully matched orders FIRST (prevents amount=0 constraint violation)
     DELETE FROM ob_positions
@@ -469,6 +497,19 @@ CREATE OR REPLACE ACTION match_direct(
  * - Both buyers already have collateral locked (sum = $1.00 per pair)
  * - No new collateral needed
  * - System creates new YES and NO shares backed by existing locked collateral
+ *
+ * Recursion Behavior:
+ * - Uses tail recursion to process multiple mint matches sequentially
+ * - Each iteration mints one share pair and removes/reduces buy orders from ob_positions
+ * - Recursion depth = number of share pairs minted at these complementary price levels
+ * - Natural termination when no more complementary buy orders exist (LIMIT 1 returns nothing)
+ * - Maximum depth is bounded by the number of buy orders in the order book
+ * - In practice, depth rarely exceeds 10-20 due to:
+ *   * Economic constraints (gas costs for creating many small orders)
+ *   * Market maker behavior (traders prefer larger consolidated orders)
+ *   * Natural order book dynamics
+ * - Worst case: One large YES buy matching 100+ tiny NO buys requires 100+ separate
+ *   transactions to create those orders, making it economically impractical
  *
  * Parameters:
  * - $query_id: Market identifier
@@ -600,6 +641,19 @@ CREATE OR REPLACE ACTION match_mint(
  * - YES seller receives: burn_amount × yes_price
  * - NO seller receives: burn_amount × no_price
  * - Total returned: burn_amount × $1.00
+ *
+ * Recursion Behavior:
+ * - Uses tail recursion to process multiple burn matches sequentially
+ * - Each iteration burns one share pair and removes/reduces sell orders from ob_positions
+ * - Recursion depth = number of share pairs burned at these complementary price levels
+ * - Natural termination when no more complementary sell orders exist (LIMIT 1 returns nothing)
+ * - Maximum depth is bounded by the number of sell orders in the order book
+ * - In practice, depth rarely exceeds 10-20 due to:
+ *   * Economic constraints (gas costs for creating many small orders)
+ *   * Market maker behavior (traders prefer larger consolidated orders)
+ *   * Natural order book dynamics
+ * - Worst case: One large YES sell matching 100+ tiny NO sells requires 100+ separate
+ *   transactions to create those orders, making it economically impractical
  *
  * Parameters:
  * - $query_id: Market identifier
