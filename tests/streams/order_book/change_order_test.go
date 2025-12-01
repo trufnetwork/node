@@ -327,10 +327,7 @@ func testChangeBidTimestampPreservation(t *testing.T) func(ctx context.Context, 
 		require.NoError(t, err)
 		require.Greater(t, originalTimestamp, int64(0))
 
-		// Sleep to ensure time passes
-		time.Sleep(2 * time.Second)
-
-		// Change bid
+		// Change bid (timestamp should be preserved from original order)
 		err = callChangeBid(ctx, platform, &userAddr, int(marketID), true, -54, -50, 100)
 		require.NoError(t, err)
 
@@ -500,10 +497,7 @@ func testChangeAskTimestampPreservation(t *testing.T) func(ctx context.Context, 
 		require.NoError(t, err)
 		require.Greater(t, originalTimestamp, int64(0))
 
-		// Sleep to ensure time passes
-		time.Sleep(2 * time.Second)
-
-		// Change ask
+		// Change ask (timestamp should be preserved from original order)
 		err = callChangeAsk(ctx, platform, &userAddr, int(marketID), false, 44, 40, 100)
 		require.NoError(t, err)
 
