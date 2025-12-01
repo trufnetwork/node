@@ -311,33 +311,515 @@ PUBLIC VIEW RETURNS (market_exists BOOLEAN) {
 -- =============================================================================
 
 -- =============================================================================
--- match_orders: Matching engine (stub for Issue 6)
+-- MATCHING ENGINE (Issue 6)
 -- =============================================================================
 /**
- * Stub for the matching engine. This allows place_buy_order() and place_sell_order()
- * to call match_orders() without blocking on Issue (Order Matching) implementation.
+ * The matching engine automatically executes trades by matching compatible orders.
+ * Three match types are supported:
  *
- * TODO: Full implementation in another Issue (Order Matching)
+ * 1. DIRECT MATCH - Buy order meets sell order at same price
+ *    Example: Buy 100 YES @ $0.56 matches Sell 80 YES @ $0.56
+ *    Result: 80 shares transfer from seller to buyer
  *
- * The matching engine will implement:
- * 1. Direct match - Buy order meets sell order at same price
- * 2. Mint match - Opposite buy orders at complementary prices create share pairs
- * 3. Burn match - Opposite sell orders at complementary prices destroy shares
+ * 2. MINT MATCH - Opposite buy orders at complementary prices create share pairs
+ *    Example: Buy 100 YES @ $0.56 + Buy 80 NO @ $0.44 → Mint 80 pairs
+ *    Result: System creates 80 YES shares + 80 NO shares (backed by locked collateral)
+ *
+ * 3. BURN MATCH - Opposite sell orders at complementary prices destroy shares
+ *    Example: Sell 100 YES @ $0.60 + Sell 80 NO @ $0.40 → Burn 80 pairs
+ *    Result: System destroys shares, returns $1.00 collateral per pair to sellers
+ *
+ * All matches support:
+ * - FIFO ordering (earlier orders matched first via last_updated timestamp)
+ * - Partial fills (order remains open if not fully matched)
+ * - Atomic execution (all updates succeed or all fail)
+ */
+
+-- =============================================================================
+-- match_direct: Direct match implementation
+-- =============================================================================
+/**
+ * Matches buy and sell orders at the same price for the same outcome.
+ *
+ * Example: Buy YES @ $0.56 matches Sell YES @ $0.56
+ *
+ * Collateral Flow:
+ * - Buyer's collateral stays locked in their buy order
+ * - Seller already owns shares (no collateral locked)
+ * - Shares transfer from seller's sell order to buyer's holdings
  *
  * Parameters:
  * - $query_id: Market identifier
  * - $outcome: TRUE (YES) or FALSE (NO)
- * - $price: Price level to match (1-99)
+ * - $price: Positive price (1-99 cents)
+ */
+CREATE OR REPLACE ACTION match_direct(
+    $query_id INT,
+    $outcome BOOL,
+    $price INT
+) PRIVATE {
+    -- Get first buy order (FIFO: earliest first)
+    $buy_participant_id INT;
+    $buy_amount INT8;
+    $buy_found BOOL := false;
+
+    for $buy_order in
+        SELECT participant_id, amount
+        FROM ob_positions
+        WHERE query_id = $query_id
+          AND outcome = $outcome
+          AND price = -$price  -- Buy orders have negative price
+        ORDER BY last_updated ASC  -- FIFO
+        LIMIT 1
+    {
+        $buy_participant_id := $buy_order.participant_id;
+        $buy_amount := $buy_order.amount;
+        $buy_found := true;
+    }
+
+    -- No buy order, exit
+    if NOT $buy_found {
+        RETURN;
+    }
+
+    -- Get first sell order (FIFO: earliest first)
+    $sell_participant_id INT;
+    $sell_amount INT8;
+    $sell_found BOOL := false;
+
+    for $sell_order in
+        SELECT participant_id, amount
+        FROM ob_positions
+        WHERE query_id = $query_id
+          AND outcome = $outcome
+          AND price = $price  -- Sell orders have positive price
+        ORDER BY last_updated ASC  -- FIFO
+        LIMIT 1
+    {
+        $sell_participant_id := $sell_order.participant_id;
+        $sell_amount := $sell_order.amount;
+        $sell_found := true;
+    }
+
+    -- No sell order, exit
+    if NOT $sell_found {
+        RETURN;
+    }
+
+    -- Defensive: Skip if either order has zero or negative amount (shouldn't happen)
+    if $buy_amount <= 0 OR $sell_amount <= 0 {
+        RETURN;
+    }
+
+    -- Calculate match amount (minimum of buy and sell)
+    $match_amount INT8;
+    if $buy_amount < $sell_amount {
+        $match_amount := $buy_amount;
+    } else {
+        $match_amount := $sell_amount;
+    }
+
+    -- Transfer shares from seller to buyer
+    -- Step 1: Delete fully matched orders FIRST (prevents amount=0 constraint violation)
+    DELETE FROM ob_positions
+    WHERE query_id = $query_id
+      AND ((participant_id = $sell_participant_id AND outcome = $outcome
+            AND price = $price AND amount = $match_amount)
+        OR (participant_id = $buy_participant_id AND outcome = $outcome
+            AND price = -$price AND amount = $match_amount));
+
+    -- Step 2: Reduce seller's sell order (only if partial fill)
+    UPDATE ob_positions
+    SET amount = amount - $match_amount
+    WHERE query_id = $query_id
+      AND participant_id = $sell_participant_id
+      AND outcome = $outcome
+      AND price = $price
+      AND amount > $match_amount;
+
+    -- Step 3: Add shares to buyer's holdings (price = 0)
+    INSERT INTO ob_positions
+    (query_id, participant_id, outcome, price, amount, last_updated)
+    VALUES ($query_id, $buy_participant_id, $outcome, 0, $match_amount, @block_timestamp)
+    ON CONFLICT (query_id, participant_id, outcome, price) DO UPDATE
+    SET amount = ob_positions.amount + EXCLUDED.amount;
+
+    -- Step 4: Reduce buyer's buy order (only if partial fill)
+    UPDATE ob_positions
+    SET amount = amount - $match_amount
+    WHERE query_id = $query_id
+      AND participant_id = $buy_participant_id
+      AND outcome = $outcome
+      AND price = -$price
+      AND amount > $match_amount;
+
+    -- Recursively call to match next orders
+    match_direct($query_id, $outcome, $price);
+};
+
+-- =============================================================================
+-- match_mint: Mint match implementation
+-- =============================================================================
+/**
+ * Creates new share pairs when opposite buy orders at complementary prices exist.
+ *
+ * Example: Buy 100 YES @ $0.56 + Buy 80 NO @ $0.44 → Mint 80 pairs
+ *
+ * Collateral Flow:
+ * - Both buyers already have collateral locked (sum = $1.00 per pair)
+ * - No new collateral needed
+ * - System creates new YES and NO shares backed by existing locked collateral
+ *
+ * Parameters:
+ * - $query_id: Market identifier
+ * - $yes_price: YES buy order price (e.g., 56)
+ * - $no_price: NO buy order price (must sum to 100, e.g., 44)
+ */
+CREATE OR REPLACE ACTION match_mint(
+    $query_id INT,
+    $yes_price INT,
+    $no_price INT
+) PRIVATE {
+    -- Validate complementary prices (must sum to 100)
+    if ($yes_price + $no_price) != 100 {
+        RETURN;
+    }
+
+    -- Get first YES buy order (FIFO)
+    $yes_participant_id INT;
+    $yes_amount INT8;
+    $yes_found BOOL := false;
+
+    for $yes_buy in
+        SELECT participant_id, amount
+        FROM ob_positions
+        WHERE query_id = $query_id
+          AND outcome = true
+          AND price = -$yes_price
+        ORDER BY last_updated ASC
+        LIMIT 1
+    {
+        $yes_participant_id := $yes_buy.participant_id;
+        $yes_amount := $yes_buy.amount;
+        $yes_found := true;
+    }
+
+    if NOT $yes_found {
+        RETURN;
+    }
+
+    -- Get first NO buy order (FIFO)
+    $no_participant_id INT;
+    $no_amount INT8;
+    $no_found BOOL := false;
+
+    for $no_buy in
+        SELECT participant_id, amount
+        FROM ob_positions
+        WHERE query_id = $query_id
+          AND outcome = false
+          AND price = -$no_price
+        ORDER BY last_updated ASC
+        LIMIT 1
+    {
+        $no_participant_id := $no_buy.participant_id;
+        $no_amount := $no_buy.amount;
+        $no_found := true;
+    }
+
+    if NOT $no_found {
+        RETURN;
+    }
+
+    -- Defensive: Skip if either order has zero or negative amount (shouldn't happen)
+    if $yes_amount <= 0 OR $no_amount <= 0 {
+        RETURN;
+    }
+
+    -- Calculate mint amount
+    $mint_amount INT8;
+    if $yes_amount < $no_amount {
+        $mint_amount := $yes_amount;
+    } else {
+        $mint_amount := $no_amount;
+    }
+
+    -- Delete fully matched buy orders FIRST
+    DELETE FROM ob_positions
+    WHERE query_id = $query_id
+      AND ((participant_id = $yes_participant_id AND outcome = true
+            AND price = -$yes_price AND amount = $mint_amount)
+        OR (participant_id = $no_participant_id AND outcome = false
+            AND price = -$no_price AND amount = $mint_amount));
+
+    -- Mint shares
+    INSERT INTO ob_positions
+    (query_id, participant_id, outcome, price, amount, last_updated)
+    VALUES ($query_id, $yes_participant_id, true, 0, $mint_amount, @block_timestamp)
+    ON CONFLICT (query_id, participant_id, outcome, price) DO UPDATE
+    SET amount = ob_positions.amount + EXCLUDED.amount;
+
+    INSERT INTO ob_positions
+    (query_id, participant_id, outcome, price, amount, last_updated)
+    VALUES ($query_id, $no_participant_id, false, 0, $mint_amount, @block_timestamp)
+    ON CONFLICT (query_id, participant_id, outcome, price) DO UPDATE
+    SET amount = ob_positions.amount + EXCLUDED.amount;
+
+    -- Reduce buy orders (only if partial fill)
+    UPDATE ob_positions
+    SET amount = amount - $mint_amount
+    WHERE query_id = $query_id
+      AND participant_id = $yes_participant_id
+      AND outcome = true
+      AND price = -$yes_price
+      AND amount > $mint_amount;
+
+    UPDATE ob_positions
+    SET amount = amount - $mint_amount
+    WHERE query_id = $query_id
+      AND participant_id = $no_participant_id
+      AND outcome = false
+      AND price = -$no_price
+      AND amount > $mint_amount;
+
+    -- Recursively match next orders
+    match_mint($query_id, $yes_price, $no_price);
+};
+
+-- =============================================================================
+-- match_burn: Burn match implementation
+-- =============================================================================
+/**
+ * Destroys share pairs when opposite sell orders at complementary prices exist,
+ * returning collateral to sellers.
+ *
+ * Example: Sell 100 YES @ $0.60 + Sell 80 NO @ $0.40 → Burn 80 pairs
+ *
+ * Collateral Flow:
+ * - Total collateral backing shares: $1.00 per pair
+ * - YES seller receives: burn_amount × yes_price
+ * - NO seller receives: burn_amount × no_price
+ * - Total returned: burn_amount × $1.00
+ *
+ * Parameters:
+ * - $query_id: Market identifier
+ * - $yes_price: YES sell order price (e.g., 60)
+ * - $no_price: NO sell order price (must sum to 100, e.g., 40)
+ */
+CREATE OR REPLACE ACTION match_burn(
+    $query_id INT,
+    $yes_price INT,
+    $no_price INT
+) PRIVATE {
+    -- Multiplier for collateral calculations
+    $multiplier NUMERIC(78, 0) := '10000000000000000'::NUMERIC(78, 0);
+
+    -- Validate complementary prices (must sum to 100)
+    if ($yes_price + $no_price) != 100 {
+        RETURN;
+    }
+
+    -- Get first YES sell order (FIFO)
+    $yes_participant_id INT;
+    $yes_amount INT8;
+    $yes_found BOOL := false;
+
+    for $yes_sell in
+        SELECT participant_id, amount
+        FROM ob_positions
+        WHERE query_id = $query_id
+          AND outcome = true
+          AND price = $yes_price
+        ORDER BY last_updated ASC
+        LIMIT 1
+    {
+        $yes_participant_id := $yes_sell.participant_id;
+        $yes_amount := $yes_sell.amount;
+        $yes_found := true;
+    }
+
+    if NOT $yes_found {
+        RETURN;
+    }
+
+    -- Get YES seller's wallet address
+    $yes_wallet_bytes BYTEA;
+    for $row in SELECT wallet_address FROM ob_participants WHERE id = $yes_participant_id {
+        $yes_wallet_bytes := $row.wallet_address;
+    }
+    $yes_wallet_address TEXT := '0x' || encode($yes_wallet_bytes, 'hex');
+
+    -- Get first NO sell order (FIFO)
+    $no_participant_id INT;
+    $no_amount INT8;
+    $no_found BOOL := false;
+
+    for $no_sell in
+        SELECT participant_id, amount
+        FROM ob_positions
+        WHERE query_id = $query_id
+          AND outcome = false
+          AND price = $no_price
+        ORDER BY last_updated ASC
+        LIMIT 1
+    {
+        $no_participant_id := $no_sell.participant_id;
+        $no_amount := $no_sell.amount;
+        $no_found := true;
+    }
+
+    if NOT $no_found {
+        RETURN;
+    }
+
+    -- Defensive: Skip if either order has zero or negative amount (shouldn't happen)
+    if $yes_amount <= 0 OR $no_amount <= 0 {
+        RETURN;
+    }
+
+    -- Get NO seller's wallet address
+    $no_wallet_bytes BYTEA;
+    for $row in SELECT wallet_address FROM ob_participants WHERE id = $no_participant_id {
+        $no_wallet_bytes := $row.wallet_address;
+    }
+    $no_wallet_address TEXT := '0x' || encode($no_wallet_bytes, 'hex');
+
+    -- Calculate burn amount
+    $burn_amount INT8;
+    if $yes_amount < $no_amount {
+        $burn_amount := $yes_amount;
+    } else {
+        $burn_amount := $no_amount;
+    }
+
+    -- Calculate payouts
+    $yes_payout NUMERIC(78, 0) := ($burn_amount::NUMERIC(78, 0) *
+                                    $yes_price::NUMERIC(78, 0) *
+                                    $multiplier);
+
+    $no_payout NUMERIC(78, 0) := ($burn_amount::NUMERIC(78, 0) *
+                                   $no_price::NUMERIC(78, 0) *
+                                   $multiplier);
+
+    -- Unlock collateral
+    ob_unlock_collateral($yes_wallet_address, $yes_payout);
+    ob_unlock_collateral($no_wallet_address, $no_payout);
+
+    -- Delete fully matched sell orders FIRST
+    DELETE FROM ob_positions
+    WHERE query_id = $query_id
+      AND ((participant_id = $yes_participant_id AND outcome = true
+            AND price = $yes_price AND amount = $burn_amount)
+        OR (participant_id = $no_participant_id AND outcome = false
+            AND price = $no_price AND amount = $burn_amount));
+
+    -- Reduce sell orders (only if partial fill)
+    UPDATE ob_positions
+    SET amount = amount - $burn_amount
+    WHERE query_id = $query_id
+      AND participant_id = $yes_participant_id
+      AND outcome = true
+      AND price = $yes_price
+      AND amount > $burn_amount;
+
+    UPDATE ob_positions
+    SET amount = amount - $burn_amount
+    WHERE query_id = $query_id
+      AND participant_id = $no_participant_id
+      AND outcome = false
+      AND price = $no_price
+      AND amount > $burn_amount;
+
+    -- Recursively match next orders
+    match_burn($query_id, $yes_price, $no_price);
+};
+
+-- =============================================================================
+-- match_orders: Main matching orchestrator
+-- =============================================================================
+/**
+ * Coordinates all three matching types for a given order.
+ *
+ * Called automatically after every order placement to attempt matching.
+ * Tries all three match types in sequence:
+ * 1. Direct match (most common, fastest)
+ * 2. Mint match (creates liquidity)
+ * 3. Burn match (removes liquidity)
+ *
+ * Parameters:
+ * - $query_id: Market identifier
+ * - $outcome: TRUE (YES) or FALSE (NO)
+ * - $price: Price level that triggered matching (1-99)
  */
 CREATE OR REPLACE ACTION match_orders(
     $query_id INT,
     $outcome BOOL,
     $price INT
 ) PRIVATE {
-    -- Stub: No-op until Issue (Order Matching)
-    -- This prevents errors when called from place_buy_order/place_sell_order
-    -- Full matching engine will be implemented in Issue (Order Matching)
-    RETURN;
+    -- ==========================================================================
+    -- SECTION 1: VALIDATE INPUTS
+    -- ==========================================================================
+
+    if $query_id IS NULL {
+        ERROR('query_id is required for matching');
+    }
+
+    if $outcome IS NULL {
+        ERROR('outcome is required for matching');
+    }
+
+    if $price IS NULL OR $price < 1 OR $price > 99 {
+        ERROR('price must be between 1 and 99 for matching');
+    }
+
+    -- ==========================================================================
+    -- SECTION 2: TRY DIRECT MATCH
+    -- ==========================================================================
+    -- Match buy and sell orders at the same price for same outcome
+    -- This is the most common match type and should be tried first
+
+    match_direct($query_id, $outcome, $price);
+
+    -- ==========================================================================
+    -- SECTION 3: TRY MINT MATCH
+    -- ==========================================================================
+    -- Create share pairs when opposite buy orders at complementary prices exist
+    -- Example: Buy YES @ 56 + Buy NO @ 44 = Mint pair
+
+    -- Calculate complementary price (must sum to 100)
+    $complementary_price INT := 100 - $price;
+
+    -- Only attempt mint match if complementary price is valid (1-99)
+    if $complementary_price >= 1 AND $complementary_price <= 99 {
+        -- Match based on which outcome we're matching for
+        if $outcome = true {
+            -- Matching YES order: look for NO buy at complementary price
+            match_mint($query_id, $price, $complementary_price);
+        } else {
+            -- Matching NO order: look for YES buy at complementary price
+            match_mint($query_id, $complementary_price, $price);
+        }
+    }
+
+    -- ==========================================================================
+    -- SECTION 4: TRY BURN MATCH
+    -- ==========================================================================
+    -- Destroy share pairs when opposite sell orders at complementary prices exist
+    -- Example: Sell YES @ 60 + Sell NO @ 40 = Burn pair
+
+    if $complementary_price >= 1 AND $complementary_price <= 99 {
+        -- Match based on which outcome we're matching for
+        if $outcome = true {
+            -- Matching YES order: look for NO sell at complementary price
+            match_burn($query_id, $price, $complementary_price);
+        } else {
+            -- Matching NO order: look for YES sell at complementary price
+            match_burn($query_id, $complementary_price, $price);
+        }
+    }
+
+    -- Success: All possible matches attempted
+    -- Note: Some, all, or none of the matches may have executed
 };
 
 -- =============================================================================
@@ -654,22 +1136,22 @@ CREATE OR REPLACE ACTION place_sell_order(
     -- SECTION 4: MOVE SHARES FROM HOLDING TO SELL ORDER
     -- ==========================================================================
 
-    -- Step 1: Reduce holdings (price = 0)
-    UPDATE ob_positions
-    SET amount = amount - $amount
-    WHERE query_id = $query_id
-      AND participant_id = $participant_id
-      AND outcome = $outcome
-      AND price = 0;
-
-    -- Step 2: Clean up zero holdings
-    -- If user sells all their shares, remove the holding row entirely
+    -- Step 1: Delete holdings if selling all shares (prevents amount=0 constraint violation)
     DELETE FROM ob_positions
     WHERE query_id = $query_id
       AND participant_id = $participant_id
       AND outcome = $outcome
       AND price = 0
-      AND amount = 0;
+      AND amount = $amount;
+
+    -- Step 2: Reduce holdings if selling partial shares
+    UPDATE ob_positions
+    SET amount = amount - $amount
+    WHERE query_id = $query_id
+      AND participant_id = $participant_id
+      AND outcome = $outcome
+      AND price = 0
+      AND amount > $amount;
 
     -- Step 3: Insert sell order (UPSERT)
     -- Sell orders use POSITIVE price to distinguish from buy orders
