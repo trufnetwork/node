@@ -1114,3 +1114,481 @@ CREATE OR REPLACE ACTION cancel_order(
     -- - For sell orders: Shares have been returned to holdings
     -- - Order is completely removed from the order book
 };
+
+-- =============================================================================
+-- change_bid: Atomically modify buy order price
+-- =============================================================================
+/**
+ * Atomically cancels an existing buy order and places a new buy order at a different price.
+ * This is critical for market makers who need to adjust prices without losing FIFO priority
+ * or creating liquidity gaps.
+ *
+ * Key Features:
+ * - ATOMIC: Either both cancel+place succeed, or neither happens
+ * - TIMESTAMP PRESERVATION: New order inherits old order's last_updated timestamp (maintains FIFO queue position)
+ * - NET COLLATERAL: Only locks/unlocks the difference in collateral needed
+ * - FLEXIBLE AMOUNT: Can increase or decrease order size during modification
+ *
+ * Market Maker Use Case:
+ * - MM has: Buy 100 YES @ $0.54 (timestamp T1, 54 TRUF locked)
+ * - Market moves down, MM needs to adjust to $0.50
+ * - MM calls: change_bid(query_id, TRUE, -54, -50, 100)
+ * - Result: Buy 100 YES @ $0.50 (timestamp T1 preserved, 50 TRUF locked, 4 TRUF refunded)
+ *
+ * Partial Match Scenario:
+ * - Original order: 100 shares @ $0.54
+ * - Matched: 30 shares (70 remaining in book)
+ * - User calls: change_bid(old=-54, new=-50, new_amount=100)
+ * - Result: 100 shares @ $0.50 (upsizing from 70 to 100, locks additional 15 TRUF)
+ *
+ * Collateral Calculation:
+ * - Old collateral: old_amount × |old_price| × 10^16 wei
+ * - New collateral: new_amount × |new_price| × 10^16 wei
+ * - Delta: new_collateral - old_collateral
+ * - If delta > 0: Lock additional collateral (will ERROR if insufficient balance)
+ * - If delta < 0: Unlock excess collateral
+ * - If delta = 0: No collateral change
+ *
+ * Parameters:
+ * - $query_id: Market ID from ob_queries
+ * - $outcome: TRUE (YES shares) or FALSE (NO shares)
+ * - $old_price: Current buy order price (must be negative: -99 to -1)
+ * - $new_price: New buy order price (must be negative: -99 to -1, must differ from old_price)
+ * - $new_amount: New order amount in shares (can be larger or smaller than old amount)
+ *
+ * Returns: Nothing (void action)
+ *
+ * Errors:
+ * - If caller address is invalid format
+ * - If parameters are invalid (query_id, outcome, prices, amount)
+ * - If prices are not both negative (buy orders only)
+ * - If new_price equals old_price (use cancel_order instead)
+ * - If market doesn't exist or is already settled
+ * - If old order doesn't exist at specified price
+ * - If insufficient balance for collateral increase
+ *
+ * Examples:
+ *   change_bid(1, TRUE, -54, -50, 100)   -- Adjust buy from $0.54 to $0.50 (lower price)
+ *   change_bid(1, TRUE, -50, -56, 100)   -- Adjust buy from $0.50 to $0.56 (higher price)
+ *   change_bid(1, FALSE, -44, -40, 200)  -- Adjust NO buy, also change amount
+ */
+CREATE OR REPLACE ACTION change_bid(
+    $query_id INT,
+    $outcome BOOL,
+    $old_price INT,
+    $new_price INT,
+    $new_amount INT8
+) PUBLIC {
+    -- ==========================================================================
+    -- SECTION 1: VALIDATE CALLER
+    -- ==========================================================================
+
+    if @caller IS NULL OR length(@caller) != 42 OR substring(LOWER(@caller), 1, 2) != '0x' {
+        ERROR('Invalid caller address format (expected 0x-prefixed Ethereum address)');
+    }
+
+    -- ==========================================================================
+    -- SECTION 2: VALIDATE PARAMETERS
+    -- ==========================================================================
+
+    if $query_id IS NULL OR $query_id < 1 {
+        ERROR('Invalid query_id');
+    }
+
+    if $outcome IS NULL {
+        ERROR('Outcome must be specified (TRUE for YES, FALSE for NO)');
+    }
+
+    -- Validate old_price (must be negative for buy orders)
+    if $old_price IS NULL OR $old_price >= 0 OR $old_price < -99 {
+        ERROR('Old price must be negative (buy order) between -99 and -1');
+    }
+
+    -- Validate new_price (must be negative for buy orders)
+    if $new_price IS NULL OR $new_price >= 0 OR $new_price < -99 {
+        ERROR('New price must be negative (buy order) between -99 and -1');
+    }
+
+    -- Validate prices are different
+    if $old_price = $new_price {
+        ERROR('New price must differ from old price. Use cancel_order() to remove an order.');
+    }
+
+    -- Validate amount
+    if $new_amount IS NULL OR $new_amount <= 0 {
+        ERROR('New amount must be positive');
+    }
+
+    if $new_amount > 1000000000 {
+        ERROR('amount exceeds maximum allowed of 1,000,000,000');
+    }
+
+    -- ==========================================================================
+    -- SECTION 3: VALIDATE MARKET
+    -- ==========================================================================
+
+    $settled BOOL;
+    for $row in SELECT settled FROM ob_queries WHERE id = $query_id {
+        $settled := $row.settled;
+    }
+
+    if $settled IS NULL {
+        ERROR('Market does not exist');
+    }
+
+    if $settled {
+        ERROR('Cannot modify orders on settled market');
+    }
+
+    -- ==========================================================================
+    -- SECTION 4: GET OLD ORDER DETAILS
+    -- ==========================================================================
+
+    $participant_id INT := ob_get_participant_id(@caller);
+    if $participant_id IS NULL {
+        ERROR('No participant record found for this wallet');
+    }
+
+    -- Get old order amount and timestamp
+    $old_amount INT8;
+    $old_timestamp INT8;
+    for $row in SELECT amount, last_updated FROM ob_positions
+                WHERE query_id = $query_id
+                  AND participant_id = $participant_id
+                  AND outcome = $outcome
+                  AND price = $old_price {
+        $old_amount := $row.amount;
+        $old_timestamp := $row.last_updated;
+    }
+
+    if $old_amount IS NULL {
+        ERROR('Old order not found at specified price');
+    }
+
+    -- ==========================================================================
+    -- SECTION 5: CALCULATE COLLATERAL CHANGE
+    -- ==========================================================================
+
+    -- Buy order collateral formula: amount × |price| × 10^16 wei
+    -- Example: 100 shares @ $0.54 = 100 × 54 × 10^16 = 5.4 × 10^19 wei (54 TRUF)
+    $multiplier NUMERIC(78, 0) := '10000000000000000'::NUMERIC(78, 0);  -- 10^16
+
+    $old_abs_price INT := -$old_price;  -- Make positive
+    $new_abs_price INT := -$new_price;  -- Make positive
+
+    $old_collateral NUMERIC(78, 0) := $old_amount::NUMERIC(78, 0) *
+                                       $old_abs_price::NUMERIC(78, 0) *
+                                       $multiplier;
+
+    $new_collateral NUMERIC(78, 0) := $new_amount::NUMERIC(78, 0) *
+                                       $new_abs_price::NUMERIC(78, 0) *
+                                       $multiplier;
+
+    $collateral_delta NUMERIC(78, 0) := $new_collateral - $old_collateral;
+    $zero NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
+
+    -- ==========================================================================
+    -- SECTION 6: ADJUST COLLATERAL (NET CHANGE ONLY)
+    -- ==========================================================================
+
+    if $collateral_delta > $zero {
+        -- New order needs MORE collateral
+        -- Lock additional amount (will ERROR if insufficient balance)
+        ethereum_bridge.lock($collateral_delta);
+
+    } else if $collateral_delta < $zero {
+        -- New order needs LESS collateral
+        -- Unlock excess amount
+        $unlock_amount NUMERIC(78, 0) := $zero - $collateral_delta;  -- Make positive
+        ob_unlock_collateral(@caller, $unlock_amount);
+    }
+    -- If $collateral_delta = 0, no collateral adjustment needed
+
+    -- ==========================================================================
+    -- SECTION 7: DELETE OLD ORDER
+    -- ==========================================================================
+
+    DELETE FROM ob_positions
+    WHERE query_id = $query_id
+      AND participant_id = $participant_id
+      AND outcome = $outcome
+      AND price = $old_price;
+
+    -- ==========================================================================
+    -- SECTION 8: INSERT NEW ORDER (PRESERVING TIMESTAMP)
+    -- ==========================================================================
+
+    -- CRITICAL: Use old_timestamp to preserve FIFO priority
+    -- If accumulating with existing order at new price, keep EARLIEST timestamp
+    INSERT INTO ob_positions
+    (query_id, participant_id, outcome, price, amount, last_updated)
+    VALUES ($query_id, $participant_id, $outcome, $new_price, $new_amount, $old_timestamp)
+    ON CONFLICT (query_id, participant_id, outcome, price) DO UPDATE
+    SET amount = ob_positions.amount + EXCLUDED.amount,
+        last_updated = CASE
+            WHEN ob_positions.last_updated < EXCLUDED.last_updated
+            THEN ob_positions.last_updated  -- Keep earlier timestamp (existing order was first)
+            ELSE EXCLUDED.last_updated       -- Keep earlier timestamp (moved order was first)
+        END;
+
+    -- ==========================================================================
+    -- SECTION 9: TRIGGER MATCHING ENGINE
+    -- ==========================================================================
+
+    -- Try to match new order immediately (stub in Issue 5B, full implementation in Issue 6)
+    -- Note: match_orders expects positive price (1-99), so use $new_abs_price not $new_price
+    match_orders($query_id, $outcome, $new_abs_price);
+
+    -- Success: Buy order price modified atomically
+    -- - Old order deleted, new order placed with preserved timestamp
+    -- - Collateral adjusted (net change only)
+    -- - FIFO priority maintained
+};
+
+-- =============================================================================
+-- change_ask: Atomically modify sell order price
+-- =============================================================================
+/**
+ * Atomically cancels an existing sell order and places a new sell order at a different price.
+ * Similar to change_bid() but for sell orders, managing shares instead of collateral.
+ *
+ * Key Features:
+ * - ATOMIC: Either both cancel+place succeed, or neither happens
+ * - TIMESTAMP PRESERVATION: New order inherits old order's last_updated timestamp
+ * - FLEXIBLE AMOUNT: Can increase (pull from holdings) or decrease (return to holdings) order size
+ * - NO COLLATERAL: Sell orders just move shares between holdings and order book
+ *
+ * Market Maker Use Case:
+ * - MM has: Sell 100 YES @ $0.60 (timestamp T1)
+ * - Market moves up, MM needs to adjust to $0.65
+ * - MM calls: change_ask(query_id, TRUE, 60, 65, 100)
+ * - Result: Sell 100 YES @ $0.65 (timestamp T1 preserved)
+ *
+ * Amount Adjustment Scenarios:
+ * 1. Increase amount (new_amount > old_amount):
+ *    - Pulls additional shares from holdings (price = 0)
+ *    - Will ERROR if insufficient shares in holdings
+ *
+ * 2. Decrease amount (new_amount < old_amount):
+ *    - Returns excess shares to holdings (price = 0)
+ *
+ * 3. Same amount (new_amount = old_amount):
+ *    - Just moves order to new price
+ *
+ * Partial Match Scenario:
+ * - Original order: 100 shares @ $0.60
+ * - Matched: 40 shares (60 remaining in book)
+ * - User calls: change_ask(old=60, new=55, new_amount=100)
+ * - Result: 100 shares @ $0.55 (pulls 40 shares from holdings to upsize)
+ *
+ * Parameters:
+ * - $query_id: Market ID from ob_queries
+ * - $outcome: TRUE (YES shares) or FALSE (NO shares)
+ * - $old_price: Current sell order price (must be positive: 1 to 99)
+ * - $new_price: New sell order price (must be positive: 1 to 99, must differ from old_price)
+ * - $new_amount: New order amount in shares (can be larger or smaller than old amount)
+ *
+ * Returns: Nothing (void action)
+ *
+ * Errors:
+ * - If caller address is invalid format
+ * - If parameters are invalid
+ * - If prices are not both positive (sell orders only)
+ * - If new_price equals old_price
+ * - If market doesn't exist or is already settled
+ * - If old order doesn't exist at specified price
+ * - If insufficient shares in holdings for amount increase
+ *
+ * Examples:
+ *   change_ask(1, TRUE, 60, 55, 100)   -- Adjust sell from $0.60 to $0.55 (lower price)
+ *   change_ask(1, TRUE, 55, 65, 100)   -- Adjust sell from $0.55 to $0.65 (higher price)
+ *   change_ask(1, FALSE, 44, 48, 200)  -- Adjust NO sell, also change amount
+ */
+CREATE OR REPLACE ACTION change_ask(
+    $query_id INT,
+    $outcome BOOL,
+    $old_price INT,
+    $new_price INT,
+    $new_amount INT8
+) PUBLIC {
+    -- ==========================================================================
+    -- SECTION 1: VALIDATE CALLER
+    -- ==========================================================================
+
+    if @caller IS NULL OR length(@caller) != 42 OR substring(LOWER(@caller), 1, 2) != '0x' {
+        ERROR('Invalid caller address format (expected 0x-prefixed Ethereum address)');
+    }
+
+    -- ==========================================================================
+    -- SECTION 2: VALIDATE PARAMETERS
+    -- ==========================================================================
+
+    if $query_id IS NULL OR $query_id < 1 {
+        ERROR('Invalid query_id');
+    }
+
+    if $outcome IS NULL {
+        ERROR('Outcome must be specified (TRUE for YES, FALSE for NO)');
+    }
+
+    -- Validate old_price (must be positive for sell orders)
+    if $old_price IS NULL OR $old_price <= 0 OR $old_price > 99 {
+        ERROR('Old price must be positive (sell order) between 1 and 99');
+    }
+
+    -- Validate new_price (must be positive for sell orders)
+    if $new_price IS NULL OR $new_price <= 0 OR $new_price > 99 {
+        ERROR('New price must be positive (sell order) between 1 and 99');
+    }
+
+    -- Validate prices are different
+    if $old_price = $new_price {
+        ERROR('New price must differ from old price. Use cancel_order() to remove an order.');
+    }
+
+    -- Validate amount
+    if $new_amount IS NULL OR $new_amount <= 0 {
+        ERROR('New amount must be positive');
+    }
+
+    if $new_amount > 1000000000 {
+        ERROR('amount exceeds maximum allowed of 1,000,000,000');
+    }
+
+    -- ==========================================================================
+    -- SECTION 3: VALIDATE MARKET
+    -- ==========================================================================
+
+    $settled BOOL;
+    for $row in SELECT settled FROM ob_queries WHERE id = $query_id {
+        $settled := $row.settled;
+    }
+
+    if $settled IS NULL {
+        ERROR('Market does not exist');
+    }
+
+    if $settled {
+        ERROR('Cannot modify orders on settled market');
+    }
+
+    -- ==========================================================================
+    -- SECTION 4: GET OLD ORDER DETAILS
+    -- ==========================================================================
+
+    $participant_id INT := ob_get_participant_id(@caller);
+    if $participant_id IS NULL {
+        ERROR('No participant record found for this wallet. You must own shares before selling.');
+    }
+
+    -- Get old order amount and timestamp
+    $old_amount INT8;
+    $old_timestamp INT8;
+    for $row in SELECT amount, last_updated FROM ob_positions
+                WHERE query_id = $query_id
+                  AND participant_id = $participant_id
+                  AND outcome = $outcome
+                  AND price = $old_price {
+        $old_amount := $row.amount;
+        $old_timestamp := $row.last_updated;
+    }
+
+    if $old_amount IS NULL {
+        ERROR('Old order not found at specified price');
+    }
+
+    -- ==========================================================================
+    -- SECTION 5: ADJUST SHARES (IF AMOUNT CHANGED)
+    -- ==========================================================================
+
+    if $new_amount > $old_amount {
+        -- New order needs MORE shares
+        -- Pull additional shares from holdings (price = 0)
+        $additional_shares INT8 := $new_amount - $old_amount;
+
+        -- Check holdings
+        $held_amount INT8;
+        for $row in SELECT amount FROM ob_positions
+                    WHERE query_id = $query_id
+                      AND participant_id = $participant_id
+                      AND outcome = $outcome
+                      AND price = 0 {
+            $held_amount := $row.amount;
+        }
+
+        if $held_amount IS NULL OR $held_amount < $additional_shares {
+            ERROR('Insufficient shares in holdings. Need ' || $additional_shares::TEXT ||
+                  ' more shares, but only have ' || COALESCE($held_amount, 0::INT8)::TEXT || ' in holdings.');
+        }
+
+        -- Reduce holdings
+        if $held_amount = $additional_shares {
+            -- Depleting all holdings - delete directly to avoid amount=0 constraint violation
+            DELETE FROM ob_positions
+            WHERE query_id = $query_id
+              AND participant_id = $participant_id
+              AND outcome = $outcome
+              AND price = 0;
+        } else {
+            -- Partial reduction - update amount
+            UPDATE ob_positions
+            SET amount = amount - $additional_shares
+            WHERE query_id = $query_id
+              AND participant_id = $participant_id
+              AND outcome = $outcome
+              AND price = 0;
+        }
+
+    } else if $new_amount < $old_amount {
+        -- New order needs FEWER shares
+        -- Return excess shares to holdings (price = 0)
+        $excess_shares INT8 := $old_amount - $new_amount;
+
+        INSERT INTO ob_positions
+        (query_id, participant_id, outcome, price, amount, last_updated)
+        VALUES ($query_id, $participant_id, $outcome, 0::INT, $excess_shares, @block_timestamp)
+        ON CONFLICT (query_id, participant_id, outcome, price) DO UPDATE
+        SET amount = ob_positions.amount + EXCLUDED.amount,
+            last_updated = EXCLUDED.last_updated;
+    }
+    -- If $new_amount = $old_amount, no share adjustment needed
+
+    -- ==========================================================================
+    -- SECTION 6: DELETE OLD ORDER
+    -- ==========================================================================
+
+    DELETE FROM ob_positions
+    WHERE query_id = $query_id
+      AND participant_id = $participant_id
+      AND outcome = $outcome
+      AND price = $old_price;
+
+    -- ==========================================================================
+    -- SECTION 7: INSERT NEW ORDER (PRESERVING TIMESTAMP)
+    -- ==========================================================================
+
+    -- CRITICAL: Use old_timestamp to preserve FIFO priority
+    -- If accumulating with existing order at new price, keep EARLIEST timestamp
+    INSERT INTO ob_positions
+    (query_id, participant_id, outcome, price, amount, last_updated)
+    VALUES ($query_id, $participant_id, $outcome, $new_price, $new_amount, $old_timestamp)
+    ON CONFLICT (query_id, participant_id, outcome, price) DO UPDATE
+    SET amount = ob_positions.amount + EXCLUDED.amount,
+        last_updated = CASE
+            WHEN ob_positions.last_updated < EXCLUDED.last_updated
+            THEN ob_positions.last_updated  -- Keep earlier timestamp (existing order was first)
+            ELSE EXCLUDED.last_updated       -- Keep earlier timestamp (moved order was first)
+        END;
+
+    -- ==========================================================================
+    -- SECTION 8: TRIGGER MATCHING ENGINE
+    -- ==========================================================================
+
+    -- Try to match new order immediately (stub in Issue 5B, full implementation in Issue 6)
+    match_orders($query_id, $outcome, $new_price);
+
+    -- Success: Sell order price modified atomically
+    -- - Old order deleted, new order placed with preserved timestamp
+    -- - Shares adjusted (pulled from or returned to holdings)
+    -- - FIFO priority maintained
+};
