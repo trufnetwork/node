@@ -1336,7 +1336,8 @@ CREATE OR REPLACE ACTION change_bid(
     -- ==========================================================================
 
     -- Try to match new order immediately (stub in Issue 5B, full implementation in Issue 6)
-    match_orders($query_id, $outcome, $new_price);
+    -- Note: match_orders expects positive price (1-99), so use $new_abs_price not $new_price
+    match_orders($query_id, $outcome, $new_abs_price);
 
     -- Success: Buy order price modified atomically
     -- - Old order deleted, new order placed with preserved timestamp
@@ -1521,20 +1522,22 @@ CREATE OR REPLACE ACTION change_ask(
         }
 
         -- Reduce holdings
-        UPDATE ob_positions
-        SET amount = amount - $additional_shares
-        WHERE query_id = $query_id
-          AND participant_id = $participant_id
-          AND outcome = $outcome
-          AND price = 0;
-
-        -- Clean up zero holdings
-        DELETE FROM ob_positions
-        WHERE query_id = $query_id
-          AND participant_id = $participant_id
-          AND outcome = $outcome
-          AND price = 0
-          AND amount = 0;
+        if $held_amount = $additional_shares {
+            -- Depleting all holdings - delete directly to avoid amount=0 constraint violation
+            DELETE FROM ob_positions
+            WHERE query_id = $query_id
+              AND participant_id = $participant_id
+              AND outcome = $outcome
+              AND price = 0;
+        } else {
+            -- Partial reduction - update amount
+            UPDATE ob_positions
+            SET amount = amount - $additional_shares
+            WHERE query_id = $query_id
+              AND participant_id = $participant_id
+              AND outcome = $outcome
+              AND price = 0;
+        }
 
     } else if $new_amount < $old_amount {
         -- New order needs FEWER shares

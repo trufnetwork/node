@@ -582,44 +582,53 @@ func testChangeAskUpsizing(t *testing.T) func(ctx context.Context, platform *kwi
 		err = callPlaceSplitLimitOrder(ctx, platform, &userAddr, int(marketID), 56, 100)
 		require.NoError(t, err)
 
-		// Verify initial sell order
-		amount, _, err := getOrderDetails(ctx, platform, int(marketID), userAddr.Address(), false, 44)
-		require.NoError(t, err)
-		require.Equal(t, int64(100), amount)
-
-		// Verify holdings (100 YES shares at price=0)
+		// Verify initial holdings (100 YES shares at price=0)
 		holdings, _, err := getOrderDetails(ctx, platform, int(marketID), userAddr.Address(), true, 0)
 		require.NoError(t, err)
 		require.Equal(t, int64(100), holdings)
 
-		// Place another split order to get more shares
-		err = callPlaceSplitLimitOrder(ctx, platform, &userAddr, int(marketID), 56, 50)
+		// Cancel the NO sell order to get those shares back as holdings
+		err = callCancelOrder(ctx, platform, &userAddr, int(marketID), false, 44)
 		require.NoError(t, err)
 
-		// Now have: 150 YES holdings, 150 NO sell @ $0.44
-		holdings, _, err = getOrderDetails(ctx, platform, int(marketID), userAddr.Address(), true, 0)
+		// Now we have 100 YES holdings + 100 NO holdings
+		noHoldings, _, err := getOrderDetails(ctx, platform, int(marketID), userAddr.Address(), false, 0)
 		require.NoError(t, err)
-		require.Equal(t, int64(150), holdings)
+		require.Equal(t, int64(100), noHoldings)
 
-		// Upsize sell order: 150 NO @ $0.44 → 200 NO @ $0.40
-		// This should pull 50 additional shares from holdings
-		err = callChangeAsk(ctx, platform, &userAddr, int(marketID), false, 44, 40, 200)
+		// Place a NO sell order at $0.44 with 50 shares (leaving 50 NO in holdings)
+		err = callPlaceSellOrder(ctx, platform, &userAddr, int(marketID), false, 44, 50)
 		require.NoError(t, err)
 
-		// Verify new sell order has 200 shares
+		// Verify NO sell order
+		amount, _, err := getOrderDetails(ctx, platform, int(marketID), userAddr.Address(), false, 44)
+		require.NoError(t, err)
+		require.Equal(t, int64(50), amount)
+
+		// Verify NO holdings (50 remaining)
+		noHoldings, _, err = getOrderDetails(ctx, platform, int(marketID), userAddr.Address(), false, 0)
+		require.NoError(t, err)
+		require.Equal(t, int64(50), noHoldings)
+
+		// Upsize sell order: 50 NO @ $0.44 → 100 NO @ $0.40
+		// This should pull 50 additional NO shares from holdings
+		err = callChangeAsk(ctx, platform, &userAddr, int(marketID), false, 44, 40, 100)
+		require.NoError(t, err)
+
+		// Verify new sell order has 100 shares
 		amount, _, err = getOrderDetails(ctx, platform, int(marketID), userAddr.Address(), false, 40)
 		require.NoError(t, err)
-		require.Equal(t, int64(200), amount)
+		require.Equal(t, int64(100), amount)
 
 		// Verify old order deleted
 		amount, _, err = getOrderDetails(ctx, platform, int(marketID), userAddr.Address(), false, 44)
 		require.NoError(t, err)
 		require.Equal(t, int64(0), amount)
 
-		// Verify holdings unchanged (still 150 YES)
-		holdings, _, err = getOrderDetails(ctx, platform, int(marketID), userAddr.Address(), true, 0)
+		// Verify NO holdings depleted (used for upsize)
+		noHoldings, _, err = getOrderDetails(ctx, platform, int(marketID), userAddr.Address(), false, 0)
 		require.NoError(t, err)
-		require.Equal(t, int64(150), holdings)
+		require.Equal(t, int64(0), noHoldings)
 
 		return nil
 	}
