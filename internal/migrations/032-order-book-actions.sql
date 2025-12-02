@@ -2128,3 +2128,145 @@ CREATE OR REPLACE ACTION change_ask(
     -- - Shares adjusted (pulled from or returned to holdings)
     -- - FIFO priority maintained
 };
+
+-- =============================================================================
+-- settle_market: Settle a prediction market using attestation results
+-- =============================================================================
+/**
+ * Settles a prediction market by retrieving the signed attestation and marking
+ * the winning outcome. This is a permissionless action - anyone can settle a
+ * market once the settle_time has been reached and the attestation is available.
+ *
+ * Settlement Process:
+ * 1. Validate market exists, not already settled, and settle_time reached
+ * 2. Query attestation by market hash (market.hash = attestation.attestation_hash)
+ * 3. Verify attestation has been signed
+ * 4. Parse result_canonical to extract boolean outcome (TRUE = YES wins, FALSE = NO wins)
+ * 5. Mark market as settled with winning_outcome and settled_at timestamp
+ *
+ * After settlement:
+ * - All trading is permanently blocked (buy, sell, split, cancel, change orders)
+ * - Users must call claim_payout() to redeem winning shares (Issue 8)
+ * - Market state is frozen and cannot be changed
+ *
+ * Parameters:
+ * - $query_id: Market ID from ob_queries.id
+ *
+ * Returns: Nothing (void action)
+ *
+ * Errors:
+ * - If market doesn't exist
+ * - If market is already settled
+ * - If settle_time has not been reached
+ * - If attestation doesn't exist for market hash
+ * - If attestation is not yet signed
+ * - If result parsing fails
+ *
+ * Examples:
+ *   settle_market(1)  -- Settle market ID 1 using its attestation
+ *
+ * Note: This action is part of Issue 7 (Manual Settlement). Automatic settlement
+ * via extension (Issue 7B) will call this action on a schedule.
+ */
+CREATE OR REPLACE ACTION settle_market(
+    $query_id INT
+) PUBLIC {
+    -- ==========================================================================
+    -- SECTION 1: VALIDATE MARKET AND TIMING
+    -- ==========================================================================
+
+    -- Validate query_id
+    if $query_id IS NULL OR $query_id < 1 {
+        ERROR('Invalid query_id');
+    }
+
+    -- Get market details
+    $market_hash BYTEA;
+    $settle_time INT8;
+    $settled BOOL;
+    $market_found BOOL := false;
+
+    for $row in SELECT hash, settle_time, settled
+                FROM ob_queries
+                WHERE id = $query_id {
+        $market_hash := $row.hash;
+        $settle_time := $row.settle_time;
+        $settled := $row.settled;
+        $market_found := true;
+    }
+
+    if NOT $market_found {
+        ERROR('Market does not exist (query_id: ' || $query_id::TEXT || ')');
+    }
+
+    -- Check if already settled
+    if $settled {
+        ERROR('Market has already been settled');
+    }
+
+    -- Check if settle_time has been reached
+    -- Note: @block_timestamp is unix epoch seconds of current block
+    if @block_timestamp < $settle_time {
+        ERROR('Settlement time not yet reached. settle_time: ' || $settle_time::TEXT ||
+              ', current time: ' || @block_timestamp::TEXT);
+    }
+
+    -- ==========================================================================
+    -- SECTION 2: RETRIEVE ATTESTATION
+    -- ==========================================================================
+
+    -- Query attestation by hash
+    -- Note: market.hash should match attestation.attestation_hash
+    -- This links the market to the cryptographic attestation of the query result
+    $result_canonical BYTEA;
+    $signature BYTEA;
+    $attestation_found BOOL := false;
+
+    for $row in SELECT result_canonical, signature
+                FROM attestations
+                WHERE attestation_hash = $market_hash
+                ORDER BY signed_height DESC
+                LIMIT 1 {
+        $result_canonical := $row.result_canonical;
+        $signature := $row.signature;
+        $attestation_found := true;
+    }
+
+    if NOT $attestation_found {
+        ERROR('Attestation not found for market hash. Market cannot be settled without attestation.');
+    }
+
+    -- Verify attestation has been signed
+    if $signature IS NULL {
+        ERROR('Attestation not yet signed by validator. Please wait for signing to complete.');
+    }
+
+    -- ==========================================================================
+    -- SECTION 3: PARSE ATTESTATION RESULT
+    -- ==========================================================================
+
+    -- Parse result_canonical to extract boolean outcome
+    -- Uses tn_utils.parse_attestation_boolean() precompile
+    -- Returns: TRUE (YES wins) or FALSE (NO wins)
+    $winning_outcome BOOL := tn_utils.parse_attestation_boolean($result_canonical);
+
+    if $winning_outcome IS NULL {
+        ERROR('Failed to parse attestation result (result is NULL)');
+    }
+
+    -- ==========================================================================
+    -- SECTION 4: MARK MARKET AS SETTLED
+    -- ==========================================================================
+
+    -- Update market with settlement information
+    UPDATE ob_queries
+    SET settled = true,
+        winning_outcome = $winning_outcome,
+        settled_at = @block_timestamp
+    WHERE id = $query_id;
+
+    -- Success: Market settled
+    -- - All trading is now blocked
+    -- - winning_outcome is recorded (TRUE = YES wins, FALSE = NO wins)
+    -- - Users can now call claim_payout() to redeem winning shares (Issue 8)
+};

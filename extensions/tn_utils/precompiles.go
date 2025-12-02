@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"math/big"
 
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/types"
@@ -27,6 +28,7 @@ func buildPrecompile() precompiles.Precompile {
 			encodeUintMethod("encode_uint64", 64),
 			canonicalToDataPointsABIMethod(),
 			forceLastArgFalseMethod(),
+			parseAttestationBooleanMethod(),
 		},
 	}
 }
@@ -425,4 +427,149 @@ func forceLastArgFalseHandler(ctx *common.EngineContext, app *common.App, inputs
 	}
 
 	return resultFn([]any{modifiedArgsBytes})
+}
+
+// parseAttestationBooleanMethod extracts a boolean result from an attestation's
+// result_canonical field. This is used for prediction market settlement where
+// attestations return boolean outcomes (YES=true, NO=false).
+func parseAttestationBooleanMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "parse_attestation_boolean",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters: []precompiles.PrecompileValue{
+			precompiles.NewPrecompileValue("result_canonical", types.ByteaType, false),
+		},
+		Returns: &precompiles.MethodReturn{
+			IsTable: false,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("outcome", types.BoolType, false),
+			},
+		},
+		Handler: parseAttestationBooleanHandler,
+	}
+}
+
+// parseAttestationBooleanHandler parses result_canonical to extract a boolean outcome.
+//
+// This handler supports both native boolean results and numeric results (standard stream format).
+// For numeric results (from primitive streams):
+//   - value > 0 → TRUE (YES wins)
+//   - value == 0 → FALSE (NO wins)
+//
+// The result_canonical format is:
+//   - version (uint8, 1 byte)
+//   - algo (uint8, 1 byte)
+//   - height (uint64, 8 bytes)
+//   - length_prefix(data_provider) (4 bytes length + N bytes data)
+//   - length_prefix(stream) (4 bytes length + N bytes data)
+//   - action_id (uint16, 2 bytes)
+//   - length_prefix(args) (4 bytes length + N bytes data)
+//   - length_prefix(result_payload) (4 bytes length + N bytes data)
+//
+// We parse through the structure to reach result_payload, then decode the value.
+func parseAttestationBooleanHandler(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+	resultCanonical, err := toByteSliceAllowNil(inputs[0])
+	if err != nil {
+		return fmt.Errorf("result_canonical must be bytea: %w", err)
+	}
+	if resultCanonical == nil || len(resultCanonical) == 0 {
+		return fmt.Errorf("result_canonical cannot be empty")
+	}
+
+	// Parse the canonical format
+	offset := 0
+
+	// Skip version (1 byte)
+	if offset+1 > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: too short for version")
+	}
+	offset += 1
+
+	// Skip algo (1 byte)
+	if offset+1 > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: too short for algo")
+	}
+	offset += 1
+
+	// Skip height (8 bytes, big-endian uint64)
+	if offset+8 > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: too short for height")
+	}
+	offset += 8
+
+	// Skip length_prefix(data_provider)
+	if offset+4 > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: too short for data_provider length")
+	}
+	dpLength := binary.BigEndian.Uint32(resultCanonical[offset : offset+4])
+	offset += 4 + int(dpLength)
+	if offset > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: data_provider data extends beyond buffer")
+	}
+
+	// Skip length_prefix(stream)
+	if offset+4 > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: too short for stream length")
+	}
+	streamLength := binary.BigEndian.Uint32(resultCanonical[offset : offset+4])
+	offset += 4 + int(streamLength)
+	if offset > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: stream data extends beyond buffer")
+	}
+
+	// Skip action_id (2 bytes, big-endian uint16)
+	if offset+2 > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: too short for action_id")
+	}
+	offset += 2
+
+	// Skip length_prefix(args)
+	if offset+4 > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: too short for args length")
+	}
+	argsLength := binary.BigEndian.Uint32(resultCanonical[offset : offset+4])
+	offset += 4 + int(argsLength)
+	if offset > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: args data extends beyond buffer")
+	}
+
+	// Read length_prefix(result_payload)
+	if offset+4 > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: too short for result_payload length")
+	}
+	resultLength := binary.BigEndian.Uint32(resultCanonical[offset : offset+4])
+	offset += 4
+	if offset+int(resultLength) > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: result_payload data extends beyond buffer")
+	}
+
+	resultPayload := resultCanonical[offset : offset+int(resultLength)]
+
+	// Decode the result payload (ABI format: abi.encode(uint256[], int256[]))
+	// This format is used for EVM smart contract compatibility
+	decoded, err := dataPointsABIArgs.Unpack(resultPayload)
+	if err != nil {
+		return fmt.Errorf("failed to decode ABI result payload: %w", err)
+	}
+
+	if len(decoded) != 2 {
+		return fmt.Errorf("expected 2 arrays (timestamps, values), got %d", len(decoded))
+	}
+
+	// Extract values array (second element)
+	values, ok := decoded[1].([]*big.Int)
+	if !ok {
+		return fmt.Errorf("values must be []*big.Int, got %T", decoded[1])
+	}
+
+	if len(values) == 0 {
+		return fmt.Errorf("result payload contains no values")
+	}
+
+	// Use the latest value for settlement (last element)
+	// Prediction market pattern: value > 0 = YES (TRUE), value == 0 = NO (FALSE)
+	latestValue := values[len(values)-1]
+	outcome := latestValue.Sign() > 0
+
+	return resultFn([]any{outcome})
 }
