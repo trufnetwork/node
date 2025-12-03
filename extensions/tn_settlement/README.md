@@ -1,6 +1,6 @@
 # TN Settlement Extension
 
-**Automatic market settlement for prediction markets on TrufNetwork.**
+**Automatic market settlement for prediction markets on TRUF.NETWORK.**
 
 This extension automatically polls for unsettled markets past their `settle_time` and broadcasts `settle_market()` transactions when attestations are available. It follows the same leader-only architecture as `tn_digest`.
 
@@ -134,7 +134,7 @@ INFO: tn_settlement (re)started with new schedule, schedule=*/10 * * * *
 
 ### Build
 ```bash
-cd /home/micbun/trufnetwork/node
+cd <repository-root>
 task build
 ```
 
@@ -171,9 +171,9 @@ kwild start
 
 ## References
 
-- **Implementation Plan**: `/home/micbun/trufnetwork/PredictionMarketTasks/OrderbookSetupGoal/ISSUE_7B_SETTLEMENT_AUTOMATION_ANALYSIS.md`
-- **Reference Implementation**: `/home/micbun/trufnetwork/node/extensions/tn_digest/`
-- **Settlement Action**: `/home/micbun/trufnetwork/node/internal/migrations/032-order-book-actions.sql:2171-2272`
+- **Reference Implementation**: `extensions/tn_digest/` (architecture template)
+- **Settlement Action**: `internal/migrations/032-order-book-actions.sql:2171-2272`
+- **Engine Operations**: `extensions/tn_digest/internal/engine_ops.go` (pattern reference)
 
 ## Status
 

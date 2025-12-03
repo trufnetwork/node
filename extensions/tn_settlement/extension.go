@@ -27,7 +27,7 @@ type TxBroadcaster interface {
 type Extension struct {
 	logger    log.Logger
 	scheduler *scheduler.SettlementScheduler
-	isLeader  bool
+	isLeader  atomic.Bool
 
 	// lifecycle wiring
 	engineOps *internal.EngineOperations
@@ -60,27 +60,38 @@ type Extension struct {
 
 var (
 	extensionInstance *Extension
-	once              sync.Once
+	extensionMu       sync.RWMutex
 )
 
 func GetExtension() *Extension {
-	once.Do(func() {
-		if extensionInstance == nil {
-			extensionInstance = &Extension{
-				logger:               log.New(log.WithLevel(log.LevelInfo)),
-				reloadIntervalBlocks: 100, // Check config every 100 blocks
-				maxMarketsPerRun:     10,
-				retryAttempts:        3,
-			}
+	// Fast path: read lock
+	extensionMu.RLock()
+	if extensionInstance != nil {
+		defer extensionMu.RUnlock()
+		return extensionInstance
+	}
+	extensionMu.RUnlock()
+
+	// Slow path: write lock to create default instance
+	extensionMu.Lock()
+	defer extensionMu.Unlock()
+
+	// Double-check after acquiring write lock
+	if extensionInstance == nil {
+		extensionInstance = &Extension{
+			logger:               log.New(log.WithLevel(log.LevelInfo)),
+			reloadIntervalBlocks: 100, // Check config every 100 blocks
+			maxMarketsPerRun:     10,
+			retryAttempts:        3,
 		}
-	})
+	}
 	return extensionInstance
 }
 
 func SetExtension(ext *Extension) {
-	once.Do(func() {
-		extensionInstance = ext
-	})
+	extensionMu.Lock()
+	defer extensionMu.Unlock()
+	extensionInstance = ext
 }
 
 func NewExtension(logger log.Logger, sched *scheduler.SettlementScheduler) *Extension {
@@ -95,8 +106,8 @@ func NewExtension(logger log.Logger, sched *scheduler.SettlementScheduler) *Exte
 
 func (e *Extension) Logger() log.Logger                           { return e.logger }
 func (e *Extension) Scheduler() *scheduler.SettlementScheduler    { return e.scheduler }
-func (e *Extension) IsLeader() bool                               { return e.isLeader }
-func (e *Extension) setLeader(v bool)                             { e.isLeader = v }
+func (e *Extension) IsLeader() bool                               { return e.isLeader.Load() }
+func (e *Extension) setLeader(v bool)                             { e.isLeader.Store(v) }
 func (e *Extension) EngineOps() *internal.EngineOperations        { return e.engineOps }
 func (e *Extension) SetEngineOps(ops *internal.EngineOperations)  { e.engineOps = ops }
 func (e *Extension) Service() *common.Service                     { return e.service }
@@ -168,6 +179,8 @@ func (e *Extension) startRetryWorker() {
 
 // stopRetryWorker stops the background retry worker
 func (e *Extension) stopRetryWorker() {
+	e.retryMu.Lock()
+	defer e.retryMu.Unlock()
 	if e.retryWorkerCancel != nil {
 		e.retryWorkerCancel()
 		e.retryWorkerCancel = nil

@@ -197,7 +197,7 @@ func (s *SettlementScheduler) Start(ctx context.Context, cronExpr string) error 
 	if j, err := s.cron.Cron(cronExpr).Do(jobFunc); err != nil {
 		// Fallback for schedules that include seconds
 		if j2, err2 := s.cron.CronWithSeconds(cronExpr).Do(jobFunc); err2 != nil {
-			return fmt.Errorf("register settlement job: %w", err)
+			return fmt.Errorf("register settlement job: %w", err2)
 		} else {
 			j2.SingletonMode()
 		}

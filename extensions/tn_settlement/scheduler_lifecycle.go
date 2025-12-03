@@ -2,6 +2,7 @@ package tn_settlement
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/trufnetwork/kwil-db/app/key"
 	appconf "github.com/trufnetwork/kwil-db/app/node/conf"
@@ -43,7 +44,11 @@ func (e *Extension) ensureSchedulerWithService(service *common.Service) bool {
 }
 
 func (e *Extension) startScheduler(ctx context.Context) error {
-	return e.Scheduler().Start(ctx, e.Schedule())
+	sched := e.Scheduler()
+	if sched == nil {
+		return fmt.Errorf("scheduler not initialized")
+	}
+	return sched.Start(ctx, e.Schedule())
 }
 
 func (e *Extension) stopSchedulerIfRunning() {
