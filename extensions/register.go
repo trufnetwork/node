@@ -6,6 +6,7 @@ import (
 	"github.com/trufnetwork/node/extensions/tn_attestation"
 	"github.com/trufnetwork/node/extensions/tn_cache"
 	"github.com/trufnetwork/node/extensions/tn_digest"
+	"github.com/trufnetwork/node/extensions/tn_settlement"
 	"github.com/trufnetwork/node/extensions/tn_vacuum"
 	"github.com/trufnetwork/node/extensions/tn_utils"
 )
@@ -15,6 +16,7 @@ func init() {
 	tn_utils.InitializeExtension()
 	tn_cache.InitializeExtension()
 	tn_digest.InitializeExtension()
+	tn_settlement.InitializeExtension()
 	tn_vacuum.InitializeExtension()
 	tn_attestation.InitializeExtension()
 	database_size.InitializeExtension()
