@@ -2265,8 +2265,7 @@ CREATE OR REPLACE ACTION settle_market(
         settled_at = @block_timestamp
     WHERE id = $query_id;
 
-    -- Success: Market settled
-    -- - All trading is now blocked
-    -- - winning_outcome is recorded (TRUE = YES wins, FALSE = NO wins)
-    -- - Users can now call claim_payout() to redeem winning shares (Issue 8)
+    -- Issue 8: Automatic atomic settlement processing
+    -- Process all payouts, refunds, and fee collection atomically
+    process_settlement($query_id, $winning_outcome);
 };
