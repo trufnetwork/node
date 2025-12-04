@@ -10,8 +10,27 @@
  *
  * Implementation Note:
  * Uses CTE + ARRAY_AGG to collect all payout data in a single query, then
- * processes payouts via batch unlock. This avoids nested queries (Kuneiform
- * limitation: cannot call functions inside FOR loops).
+ * processes payouts via batch unlock. This avoids nested queries in the main
+ * settlement action (Kuneiform limitation: cannot call external functions
+ * like ethereum_bridge.unlock() inside FOR loops in the same action).
+ *
+ * The batch unlock helper (ob_batch_unlock_collateral) CAN loop with function
+ * calls because it's a separate action called ONCE with all aggregated data.
+ *
+ * Transaction Atomicity:
+ * All Kwil actions execute in a single database transaction. If ANY operation
+ * fails (including ethereum_bridge.unlock()), the ENTIRE action rolls back:
+ * - Database changes (position deletions, settled flag) are reverted
+ * - Blockchain state changes are NOT committed (Kwil's 2-phase approach)
+ * - The settled flag remains false, allowing the settlement extension to retry
+ *
+ * Retry Mechanism:
+ * The tn_settlement extension retries failed settlements (3 attempts with backoff).
+ * After exhaustion, the market remains unsettled and requires manual intervention
+ * or extension restart to resume retries. This is safe because:
+ * 1. The settled flag prevents duplicate settlement attempts within a transaction
+ * 2. Rollback ensures partial state never persists
+ * 3. Position data remains intact for retry attempts
  */
 
 -- Batch unlock collateral for multiple wallets
