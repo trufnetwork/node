@@ -1,5 +1,5 @@
 /**
- * MIGRATION 034: ORDER BOOK SETTLEMENT
+ * MIGRATION 033: ORDER BOOK SETTLEMENT
  *
  * Automatic atomic settlement processing:
  * - Bulk delete losing positions (efficient)
@@ -42,7 +42,6 @@ CREATE OR REPLACE ACTION process_settlement(
     $query_id INT,
     $winning_outcome BOOL
 ) PRIVATE {
-    $collateral_decimals INT8 := 18;
     $redemption_fee_bps INT := 200;  -- 2% (200 basis points)
     $total_fees_collected NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
     $one_token NUMERIC(78, 0) := '1000000000000000000'::NUMERIC(78, 0);
