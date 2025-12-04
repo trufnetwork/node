@@ -9,9 +9,9 @@
  * - Collect fees in vault (Issue 9 will distribute them)
  *
  * Implementation Note:
- * Uses a staging table (ob_settlement_payouts) to collect payout data during
- * position processing, then processes all payouts after the loop completes.
- * This avoids nested queries (Kuneiform limitation: cannot call functions inside FOR loops).
+ * Uses CTE + ARRAY_AGG to collect all payout data in a single query, then
+ * processes payouts via batch unlock. This avoids nested queries (Kuneiform
+ * limitation: cannot call functions inside FOR loops).
  */
 
 -- Batch unlock collateral for multiple wallets
@@ -31,8 +31,6 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
         SELECT wallet, amount
         FROM UNNEST($wallet_addresses, $amounts) AS u(wallet, amount)
     {
-        -- DEBUG: Insert unlock attempt into a log table (if it exists)
-        -- Actual unlock
         ethereum_bridge.unlock($payout.wallet, $payout.amount);
     }
 };
@@ -47,12 +45,13 @@ CREATE OR REPLACE ACTION process_settlement(
     $one_token NUMERIC(78, 0) := '1000000000000000000'::NUMERIC(78, 0);
 
     -- Step 1: Bulk delete all losing positions (efficient single operation)
-    -- Deletes losing holds (price=0) and losing open sells (price>0)
+    -- Price semantics: price=0 (holdings), price>0 (open sells), price<0 (open buys)
+    -- Deletes losing outcome holdings and sells, which have zero value after settlement
     -- This removes ~50% of positions upfront
     DELETE FROM ob_positions
     WHERE query_id = $query_id
       AND outcome = NOT $winning_outcome
-      AND price >= 0;  -- Holdings and open sells only
+      AND price >= 0;  -- Holdings (price=0) and open sells (price>0) only
 
     -- Step 2: Collect ALL payout data using CTE + ARRAY_AGG (digest pattern!)
     -- Calculate payouts and aggregate into arrays in a SINGLE query
@@ -76,6 +75,7 @@ CREATE OR REPLACE ACTION process_settlement(
             wallet_address,
             price,
             -- Pre-calculate all monetary values to avoid CASE type issues
+            -- All amounts cast to NUMERIC(78, 0) to match ethereum_bridge.unlock() API
             (amount::NUMERIC(78, 0) * $one_token)::NUMERIC(78, 0) as gross_winner_payout,
             ((amount::NUMERIC(78, 0) * $one_token * $redemption_fee_bps::NUMERIC(78, 0)) / 10000::NUMERIC(78, 0))::NUMERIC(78, 0) as winner_fee,
             ((amount::NUMERIC(78, 0) * abs(price)::NUMERIC(78, 0) * $one_token) / 100::NUMERIC(78, 0))::NUMERIC(78, 0) as refund_amount
@@ -84,7 +84,9 @@ CREATE OR REPLACE ACTION process_settlement(
     payouts AS (
         SELECT
             wallet_address,
-            -- Now use pre-calculated values in CASE (all same type!)
+            -- Remaining positions after Step 1 are:
+            -- 1. Winning holdings/sells (price >= 0): Pay shares × $1 - 2% fee
+            -- 2. Open buy orders (price < 0): Refund locked collateral, no fee
             CASE
                 WHEN price >= 0 THEN
                     gross_winner_payout - winner_fee
@@ -132,12 +134,12 @@ CREATE OR REPLACE ACTION process_settlement(
     }
 
     -- Step 5: Fee distribution (Issue 9 will implement this)
-    -- For now: Fees accumulate in vault
+    -- Fees are automatically kept in the vault by deducting from unlocked amounts.
+    -- Winners receive (shares × $1 - 2% fee), so 2% remains locked in vault.
+    --
+    -- $total_fees_collected tracks the amount for future distribution:
     -- TODO (Issue 9): Uncomment when distribute_fees() is implemented
     -- distribute_fees($query_id, $total_fees_collected);
-
-    -- Note: Fees remain in vault and can be:
-    -- 1. Withdrawn by governance for network treasury
-    -- 2. Distributed when Issue 9 is complete
-    -- 3. Tracked via vault balance queries
+    --
+    -- Verification: Check vault balance via ethereum_bridge queries
 }
