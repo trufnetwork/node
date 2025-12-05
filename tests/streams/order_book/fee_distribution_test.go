@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
@@ -60,7 +59,7 @@ func testSingleLPReceives100Percent(t *testing.T) func(context.Context, *kwilTes
 
 		// Create market using attestation hash
 		queryHash := sha256.Sum256([]byte("feedist01"))
-		settleTime := time.Now().Add(24 * time.Hour).Unix()
+		settleTime := int64(2000000000) // Fixed future timestamp (May 2033)
 		var marketID int64
 		err = callCreateMarket(ctx, platform, &lp, queryHash[:], settleTime, 5, 50, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
@@ -125,7 +124,7 @@ func testMultipleLPsProportionalDistribution(t *testing.T) func(context.Context,
 
 		// Create market
 		queryHash := sha256.Sum256([]byte("feedist02"))
-		settleTime := time.Now().Add(24 * time.Hour).Unix()
+		settleTime := int64(2000000000) // Fixed future timestamp (May 2033)
 		var marketID int64
 		err = callCreateMarket(ctx, platform, &alice, queryHash[:], settleTime, 5, 50, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
@@ -186,7 +185,7 @@ func testNoLPsFeesRemainInVault(t *testing.T) func(context.Context, *kwilTesting
 
 		// Create market
 		queryHash := sha256.Sum256([]byte("feedist03"))
-		settleTime := time.Now().Add(24 * time.Hour).Unix()
+		settleTime := int64(2000000000) // Fixed future timestamp (May 2033)
 		var marketID int64
 		err = callCreateMarket(ctx, platform, &creator, queryHash[:], settleTime, 5, 50, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)

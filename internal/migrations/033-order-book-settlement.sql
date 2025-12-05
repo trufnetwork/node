@@ -83,8 +83,10 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
  * - Atomic transaction (rolls back on any failure)
  *
  * Dependencies:
- * - Migration 034 (ob_liquidity_providers table)
- * - ob_batch_unlock_collateral (defined above in this migration)
+ * - ob_liquidity_providers table (created later in migration 034-lp-tracking.sql)
+ *   NOTE: Function body references this table but won't execute until after 034 is applied
+ * - ob_batch_unlock_collateral() helper (defined above in this migration)
+ * - ethereum_bridge.unlock() (from Migration 031)
  *
  * Example:
  * - Total fees: 1000 TRUF
@@ -113,16 +115,18 @@ CREATE OR REPLACE ACTION distribute_fees(
     }
 
     -- Step 3: Calculate total LP volume
-    $total_lp_volume INT8;
-    for $row in SELECT SUM(split_order_amount) as total
+    -- Use NUMERIC to avoid implicit cast issues with SUM() aggregate
+    $total_lp_volume NUMERIC(78, 0);
+    for $row in SELECT SUM(split_order_amount)::NUMERIC(78, 0) as total
                 FROM ob_liquidity_providers
-                WHERE query_id = $query_id {
+                WHERE query_id = $query_id
+                  AND split_order_amount > 0::INT8 {  -- Only count positive volumes
         $total_lp_volume := $row.total;
     }
 
     -- Step 4: Early exit if no LPs (fees stay in vault)
-    -- Cast 0 to INT8 to match $total_lp_volume type
-    if $total_lp_volume IS NULL OR $total_lp_volume = 0::INT8 {
+    -- Cast 0 to NUMERIC to match $total_lp_volume type
+    if $total_lp_volume IS NULL OR $total_lp_volume = 0::NUMERIC(78, 0) {
         RETURN; -- No LPs, fees remain in vault for future use
     }
 
@@ -140,13 +144,14 @@ CREATE OR REPLACE ACTION distribute_fees(
         SELECT
             ARRAY_AGG(('0x' || encode(p.wallet_address, 'hex'))) as wallets,
             ARRAY_AGG(
+                -- All terms are NUMERIC(78,0), no implicit casts needed
                 (($total_fees * lp.split_order_amount::NUMERIC(78, 0)) /
-                 $total_lp_volume::NUMERIC(78, 0))::NUMERIC(78, 0)
+                 $total_lp_volume)::NUMERIC(78, 0)
             ) as amounts
         FROM ob_liquidity_providers lp
         INNER JOIN ob_participants p ON lp.participant_id = p.id
         WHERE lp.query_id = $query_id
-          AND lp.split_order_amount > 0::INT8  -- Defensive: ensure non-zero volume
+          AND lp.split_order_amount > 0::INT8  -- Skip zero volumes (already filtered in SUM)
     {
         $wallet_addresses := $batch.wallets;
         $reward_amounts := $batch.amounts;

@@ -49,7 +49,10 @@ CREATE TABLE IF NOT EXISTS ob_liquidity_providers (
     total_qualified_orders INT NOT NULL DEFAULT 1, -- Count of qualifying orders
     PRIMARY KEY (query_id, participant_id),
     FOREIGN KEY (query_id) REFERENCES ob_queries(id) ON DELETE CASCADE,
-    FOREIGN KEY (participant_id) REFERENCES ob_participants(id)
+    FOREIGN KEY (participant_id) REFERENCES ob_participants(id),
+    -- Enforce positive volume invariant (used by fee distribution math)
+    CHECK (split_order_amount > 0),
+    CHECK (total_qualified_orders > 0)
 );
 
 /**
