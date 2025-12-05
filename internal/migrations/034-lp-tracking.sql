@@ -38,7 +38,7 @@
  * - One record per LP per market
  * - Multiple qualifying orders accumulate split_order_amount
  */
-CREATE TABLE ob_liquidity_providers (
+CREATE TABLE IF NOT EXISTS ob_liquidity_providers (
     query_id INT NOT NULL,
     participant_id INT NOT NULL,
     split_order_amount INT8 NOT NULL,   -- Total volume from qualified split orders
@@ -49,7 +49,10 @@ CREATE TABLE ob_liquidity_providers (
     total_qualified_orders INT NOT NULL DEFAULT 1, -- Count of qualifying orders
     PRIMARY KEY (query_id, participant_id),
     FOREIGN KEY (query_id) REFERENCES ob_queries(id) ON DELETE CASCADE,
-    FOREIGN KEY (participant_id) REFERENCES ob_participants(id)
+    FOREIGN KEY (participant_id) REFERENCES ob_participants(id),
+    -- Enforce positive volume invariant (used by fee distribution math)
+    CHECK (split_order_amount > 0),
+    CHECK (total_qualified_orders > 0)
 );
 
 /**
@@ -91,7 +94,7 @@ CREATE INDEX idx_ob_lp_by_query ON ob_liquidity_providers(query_id);
  * - Call: get_lp_stats(1)
  * - Returns all LPs for market 1, sorted by volume (highest first)
  */
-CREATE ACTION get_lp_stats($query_id INT) PUBLIC VIEW
+CREATE OR REPLACE ACTION get_lp_stats($query_id INT) PUBLIC VIEW
 RETURNS TABLE(
     participant_id INT,
     wallet_address BYTEA,
