@@ -54,6 +54,114 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
     }
 };
 
+-- ============================================================================
+-- Fee Distribution to Liquidity Providers (Issue 9B)
+-- ============================================================================
+
+/**
+ * distribute_fees($query_id, $total_fees)
+ *
+ * Distributes settlement fees proportionally to all qualified LPs for a market.
+ * Called automatically after winner payouts in process_settlement().
+ *
+ * Parameters:
+ * - $query_id: Market ID from ob_queries
+ * - $total_fees: Total fees collected (2% of redemptions), in wei
+ *
+ * Behavior:
+ * - No LPs → fees remain in vault (safe accumulation)
+ * - Single LP → receives 100% of fees
+ * - Multiple LPs → proportional distribution by volume
+ *
+ * Formula:
+ * - reward = (total_fees × lp_volume) / total_lp_volume
+ * - Truncates to integer wei (dust may remain in vault)
+ *
+ * Safety:
+ * - Validates market is settled before distribution
+ * - SUM(rewards) ≤ total_fees (no overpayment due to truncation)
+ * - Atomic transaction (rolls back on any failure)
+ *
+ * Dependencies:
+ * - Migration 034 (ob_liquidity_providers table)
+ * - ob_batch_unlock_collateral (defined above in this migration)
+ *
+ * Example:
+ * - Total fees: 1000 TRUF
+ * - LP Alice: 300 volume → 300 TRUF
+ * - LP Bob: 700 volume → 700 TRUF
+ * - Total: 1000 volume, 1000 TRUF distributed
+ */
+CREATE OR REPLACE ACTION distribute_fees(
+    $query_id INT,
+    $total_fees NUMERIC(78, 0)
+) PRIVATE {
+    -- Step 1: Validate market is settled
+    $is_settled BOOL := false;
+    for $row in SELECT settled FROM ob_queries WHERE id = $query_id {
+        $is_settled := $row.settled;
+    }
+
+    if NOT $is_settled {
+        error('Cannot distribute fees: market not yet settled');
+    }
+
+    -- Step 2: Early exit if no fees to distribute
+    -- Cast 0 to NUMERIC to match $total_fees type
+    if $total_fees IS NULL OR $total_fees <= 0::NUMERIC(78, 0) {
+        RETURN; -- No fees, nothing to do
+    }
+
+    -- Step 3: Calculate total LP volume
+    $total_lp_volume INT8;
+    for $row in SELECT SUM(split_order_amount) as total
+                FROM ob_liquidity_providers
+                WHERE query_id = $query_id {
+        $total_lp_volume := $row.total;
+    }
+
+    -- Step 4: Early exit if no LPs (fees stay in vault)
+    -- Cast 0 to INT8 to match $total_lp_volume type
+    if $total_lp_volume IS NULL OR $total_lp_volume = 0::INT8 {
+        RETURN; -- No LPs, fees remain in vault for future use
+    }
+
+    -- Step 5: Build arrays for batch unlock
+    -- Calculate rewards: (total_fees × lp_volume) / total_lp_volume
+    -- Use NUMERIC(78, 0) for all calculations to prevent overflow
+    --
+    -- NOTE: ob_batch_unlock_collateral() expects TEXT[] (wallet addresses as "0xABC...")
+    -- We must convert BYTEA wallet_address from ob_participants to TEXT format
+    -- CRITICAL: All type casts must be inline using ::TYPE syntax
+    $wallet_addresses TEXT[];
+    $reward_amounts NUMERIC(78, 0)[];
+
+    for $batch in
+        SELECT
+            ARRAY_AGG(('0x' || encode(p.wallet_address, 'hex'))) as wallets,
+            ARRAY_AGG(
+                (($total_fees * lp.split_order_amount::NUMERIC(78, 0)) /
+                 $total_lp_volume::NUMERIC(78, 0))::NUMERIC(78, 0)
+            ) as amounts
+        FROM ob_liquidity_providers lp
+        INNER JOIN ob_participants p ON lp.participant_id = p.id
+        WHERE lp.query_id = $query_id
+          AND lp.split_order_amount > 0::INT8  -- Defensive: ensure non-zero volume
+    {
+        $wallet_addresses := $batch.wallets;
+        $reward_amounts := $batch.amounts;
+    }
+
+    -- Step 6: Batch unlock rewards to LPs
+    if $wallet_addresses IS NOT NULL AND array_length($wallet_addresses) > 0 {
+        ob_batch_unlock_collateral($wallet_addresses, $reward_amounts);
+    }
+
+    -- Note: Due to integer truncation, SUM(rewards) ≤ total_fees.
+    -- Small dust amounts (< number_of_lps wei) may remain in vault.
+    -- This is acceptable and accumulates for future distributions.
+};
+
 -- Process settlement: Pay winners, refund open buys, collect fees
 CREATE OR REPLACE ACTION process_settlement(
     $query_id INT,
@@ -152,13 +260,16 @@ CREATE OR REPLACE ACTION process_settlement(
         ob_batch_unlock_collateral($wallet_addresses, $amounts);
     }
 
-    -- Step 5: Fee distribution (Issue 9 will implement this)
+    -- Step 5: Fee distribution to liquidity providers
     -- Fees are automatically kept in the vault by deducting from unlocked amounts.
     -- Winners receive (shares × $1 - 2% fee), so 2% remains locked in vault.
     --
-    -- $total_fees_collected tracks the amount for future distribution:
-    -- TODO (Issue 9): Uncomment when distribute_fees() is implemented
-    -- distribute_fees($query_id, $total_fees_collected);
-    --
+    -- distribute_fees() distributes the collected fees to qualified LPs proportionally.
+    -- See function definition above in this migration for implementation details.
+    -- Edge cases:
+    -- - No LPs: Fees remain in vault (safe accumulation)
+    -- - Zero fees: No-op, returns early
+    distribute_fees($query_id, $total_fees_collected);
+
     -- Verification: Check vault balance via ethereum_bridge queries
 }
