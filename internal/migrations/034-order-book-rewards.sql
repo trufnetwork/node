@@ -130,7 +130,133 @@ CREATE OR REPLACE ACTION sample_lp_rewards(
     $query_id INT,
     $block INT8
 ) PUBLIC {
-    -- STUB: Implementation in Task 9R2
-    -- For now, this action does nothing (no rewards generated)
-    RETURN;
+    -- Check if market is settled
+    $is_settled BOOL;
+    for $row in SELECT settled FROM ob_queries WHERE id = $query_id {
+        $is_settled := $row.settled;
+    }
+    if $is_settled {
+        ERROR('Market is already settled');
+    }
+
+    -- Calculate midpoint (reference line 34-46)
+    $best_bid INT;
+    $best_ask INT;
+
+    for $row in SELECT price FROM ob_positions
+        WHERE query_id = $query_id AND outcome = TRUE AND price < 0
+        ORDER BY price ASC LIMIT 1
+    {
+        $best_bid := $row.price;
+    }
+
+    for $row in SELECT price FROM ob_positions
+        WHERE query_id = $query_id AND outcome = TRUE AND price > 0
+        ORDER BY price ASC LIMIT 1
+    {
+        $best_ask := $row.price;
+    }
+
+    if $best_bid IS NULL OR $best_ask IS NULL {
+        RETURN;
+    }
+
+    $x_mid INT := ($best_ask + (-$best_bid)) / 2;
+
+    -- Dynamic spread (reference line 48-63)
+    $x_spread_base INT := $x_mid - (100 - $x_mid);
+    if $x_spread_base < 0 {
+        $x_spread_base := -$x_spread_base;
+    }
+
+    $x_spread INT;
+    if $x_spread_base < 30 {
+        $x_spread := 5;
+    } elseif $x_spread_base < 60 {
+        $x_spread := 4;
+    } elseif $x_spread_base < 80 {
+        $x_spread := 3;
+    } else {
+        RETURN;
+    }
+
+    -- Calculate scores (reference line 65-147)
+    for $pos in
+        SELECT
+            p1.participant_id,
+            p1.price as yes_price,
+            p1.amount,
+            p2.price as no_price
+        FROM ob_positions p1
+        JOIN ob_positions p2
+            ON p1.query_id = p2.query_id
+           AND p1.participant_id = p2.participant_id
+           AND p1.outcome = TRUE
+           AND p2.outcome = FALSE
+           AND p1.amount = p2.amount
+           AND p1.price < 0
+           AND p2.price < 0
+        WHERE p1.query_id = $query_id
+          AND p1.price + p2.price = -100
+    {
+        $pid INT := $pos.participant_id;
+        $yes_price INT := $pos.yes_price;
+        $no_price INT := $pos.no_price;
+        $amount INT := $pos.amount;
+
+        -- Calculate distances (reference uses ABS())
+        $yes_dist INT := $x_mid - (-$yes_price);
+        if $yes_dist < 0 {
+            $yes_dist := -$yes_dist;
+        }
+
+        $no_dist INT := (100 - $x_mid) - (-$no_price);
+        if $no_dist < 0 {
+            $no_dist := -$no_dist;
+        }
+
+        -- Filter by spread (reference line 135-146)
+        if $yes_dist < $x_spread AND $no_dist < $x_spread {
+            -- Get minimum distance (reference uses LEAST())
+            $min_dist INT := $yes_dist;
+            if $no_dist < $yes_dist {
+                $min_dist := $no_dist;
+            }
+
+            -- Calculate score (reference line 74: amount * POWER((spread - dist) / spread, 2))
+            $spread_minus_dist INT := $x_spread - $min_dist;
+            $score NUMERIC(20,4) := (
+                $amount::NUMERIC(20,4) *
+                ($spread_minus_dist * $spread_minus_dist)::NUMERIC(20,4) /
+                ($x_spread * $x_spread)::NUMERIC(20,4)
+            );
+
+            INSERT INTO ob_rewards (query_id, participant_id, block, reward_percent)
+            VALUES ($query_id, $pid, $block, $score::NUMERIC(5,2));
+        }
+    }
+
+    -- Normalize to percentages (reference final SELECT)
+    $total NUMERIC(20,4) := 0::NUMERIC(20,4);
+    for $row in SELECT SUM(reward_percent) as total FROM ob_rewards
+        WHERE query_id = $query_id AND block = $block
+    {
+        $total := $row.total::NUMERIC(20,4);
+    }
+
+    if $total > 0::NUMERIC(20,4) {
+        for $row in SELECT participant_id, reward_percent FROM ob_rewards
+            WHERE query_id = $query_id AND block = $block
+        {
+            $pid INT := $row.participant_id;
+            $raw NUMERIC(20,4) := $row.reward_percent::NUMERIC(20,4);
+            $pct NUMERIC(5,2) := (($raw / $total)::NUMERIC(20,4) * 100.0)::NUMERIC(5,2);
+
+            DELETE FROM ob_rewards
+            WHERE query_id = $query_id AND participant_id = $pid AND block = $block;
+
+            INSERT INTO ob_rewards (query_id, participant_id, block, reward_percent)
+            VALUES ($query_id, $pid, $block, $pct);
+        }
+    }
 };
