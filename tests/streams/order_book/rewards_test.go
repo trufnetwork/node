@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -76,8 +77,10 @@ func getRewards(ctx context.Context, platform *kwilTesting.Platform, queryID int
 			// reward_percent is NUMERIC(5,2) which comes as *types.Decimal
 			decimal := row.Values[1].(*types.Decimal)
 			rewardStr := decimal.String()
-			var reward float64
-			fmt.Sscanf(rewardStr, "%f", &reward)
+			reward, err := strconv.ParseFloat(rewardStr, 64)
+			if err != nil {
+				return fmt.Errorf("failed to parse reward %q: %w", rewardStr, err)
+			}
 			rewards[pid] = reward
 			return nil
 		},

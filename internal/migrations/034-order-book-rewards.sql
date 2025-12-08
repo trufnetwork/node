@@ -93,10 +93,15 @@ CREATE INDEX IF NOT EXISTS idx_ob_rewards_query_block ON ob_rewards(query_id, bl
  * - Distance 80-99¢: INELIGIBLE (nearly settled, no rewards)
  *
  * Polymarket Scoring Formula:
- * - For each split limit order (paired TRUE/FALSE positions):
- *   - Calculate per-side score: amount * ((spread - distance) / spread)²
- *   - Market score = LEAST(true_score, false_score)
- * - Reward percent = (market_score / total_score) * 100
+ * - For each paired buy order (YES @ p + NO @ 100-p):
+ *   - Calculate distances from midpoint for both sides
+ *   - Use minimum distance: min_dist = LEAST(yes_distance, no_distance)
+ *   - Score = amount * ((spread - min_dist) / spread)²
+ * - Reward percent = (participant_score / total_score) * 100
+ *
+ * The minimum distance approach rewards balanced liquidity provision.
+ * For paired positions with equal amounts, both sides contribute equally
+ * since they share the same minimum distance from midpoint.
  *
  * Parameters:
  * - $query_id: Market to sample (must not be settled)
@@ -118,13 +123,6 @@ CREATE INDEX IF NOT EXISTS idx_ob_rewards_query_block ON ob_rewards(query_id, bl
  *   -- If total_fees = 1000 TRUF:
  *   --   reward_per_block = 1000 / 3 = 333.33 TRUF
  *   --   Each LP gets: 333.33 * (avg of their reward_percents)
- *
- * TODO (Task 9R2):
- * - Implement midpoint calculation from order book
- * - Implement dynamic spread determination
- * - Implement Polymarket scoring formula
- * - Handle Kuneiform limitations (no POWER, LEAST, temp tables)
- * - Write 11 comprehensive tests
  */
 CREATE OR REPLACE ACTION sample_lp_rewards(
     $query_id INT,
