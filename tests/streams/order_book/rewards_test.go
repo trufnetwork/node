@@ -112,6 +112,10 @@ func TestRewards(t *testing.T) {
 
 			// Category D: Edge Cases
 			testSampleRewardsNoQualifyingOrders(t),
+
+			// Category E: Constraint Logic Tests
+			testConstraintSellBuyPair(t),
+			testConstraintNoDuplicates(t),
 		},
 	}, testutils.GetTestOptionsWithCache())
 }
@@ -448,17 +452,25 @@ func testSampleRewardsSingleLP(t *testing.T) func(context.Context, *kwilTesting.
 		})
 		require.NoError(t, err)
 
-		// User1: Create paired buy orders for LP rewards
-		// Buy YES @ 48¢ + Buy NO @ 52¢ (complementary)
-		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), true, 48, 100)
-		require.NoError(t, err)
-		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), false, 52, 100)
+		// Create order book depth for midpoint calculation
+		// Split @ 50 with 300 → 300 TRUE holdings + 300 FALSE SELL @ 50
+		err = callPlaceSplitLimitOrder(ctx, platform, &user1, int(marketID), 50, 300)
 		require.NoError(t, err)
 
-		// Create order book depth for midpoint calculation (using same user)
-		err = callPlaceSplitLimitOrder(ctx, platform, &user1, int(marketID), 50, 200)
+		// Establish bid and ask for midpoint
+		// TRUE BUY @ 46 (establishes best bid)
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), true, 46, 50)
 		require.NoError(t, err)
+		// TRUE SELL @ 52 (establishes best ask, uses 200 holdings)
 		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 52, 200)
+		require.NoError(t, err)
+
+		// User1: Create paired SELL+BUY orders for LP rewards
+		// Sell YES @ 48¢ + Buy NO @ 52¢ (complementary, liquidity provision)
+		// Uses remaining 100 TRUE holdings from split
+		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 48, 100)
+		require.NoError(t, err)
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), false, 52, 100)
 		require.NoError(t, err)
 
 		// Sample rewards
@@ -507,20 +519,31 @@ func testSampleRewardsTwoLPs(t *testing.T) func(context.Context, *kwilTesting.Pl
 		})
 		require.NoError(t, err)
 
-		// Create order book depth first
-		err = callPlaceSplitLimitOrder(ctx, platform, &user1, int(marketID), 50, 300)
+		// Create order book depth
+		// User1: Split @ 50 with 400 → 400 TRUE holdings + 400 FALSE SELL @ 50
+		err = callPlaceSplitLimitOrder(ctx, platform, &user1, int(marketID), 50, 400)
 		require.NoError(t, err)
+
+		// Establish bid and ask for midpoint
+		// TRUE BUY @ 44 (establishes best bid)
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), true, 44, 50)
+		require.NoError(t, err)
+		// TRUE SELL @ 52 (establishes best ask, uses 300 holdings)
 		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 52, 300)
 		require.NoError(t, err)
 
-		// User1: Paired buy orders YES @ 46¢ + NO @ 54¢
-		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), true, 46, 100)
+		// User1: Paired SELL+BUY orders YES @ 46¢ + NO @ 54¢
+		// Uses remaining 100 TRUE holdings from split
+		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 46, 100)
 		require.NoError(t, err)
 		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), false, 54, 100)
 		require.NoError(t, err)
 
-		// User2: Paired buy orders YES @ 47¢ + NO @ 53¢ (closer to midpoint)
-		err = callPlaceBuyOrder(ctx, platform, &user2, int(marketID), true, 47, 100)
+		// User2: Paired SELL+BUY orders YES @ 47¢ + NO @ 53¢ (closer to midpoint)
+		// Split @ 50 to get TRUE holdings
+		err = callPlaceSplitLimitOrder(ctx, platform, &user2, int(marketID), 50, 100)
+		require.NoError(t, err)
+		err = callPlaceSellOrder(ctx, platform, &user2, int(marketID), true, 47, 100)
 		require.NoError(t, err)
 		err = callPlaceBuyOrder(ctx, platform, &user2, int(marketID), false, 53, 100)
 		require.NoError(t, err)
@@ -579,26 +602,40 @@ func testSampleRewardsMultipleLPs(t *testing.T) func(context.Context, *kwilTesti
 		})
 		require.NoError(t, err)
 
-		// Create order book depth first
-		err = callPlaceSplitLimitOrder(ctx, platform, &user1, int(marketID), 50, 300)
+		// Create order book depth
+		// User1: Split @ 50 with 400 → 400 TRUE holdings + 400 FALSE SELL @ 50
+		err = callPlaceSplitLimitOrder(ctx, platform, &user1, int(marketID), 50, 400)
 		require.NoError(t, err)
+
+		// Establish bid and ask for midpoint
+		// TRUE BUY @ 44 (establishes best bid)
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), true, 44, 50)
+		require.NoError(t, err)
+		// TRUE SELL @ 52 (establishes best ask, uses 300 holdings)
 		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 52, 300)
 		require.NoError(t, err)
 
-		// User1: Paired buy orders YES @ 46¢ + NO @ 54¢ (farthest from midpoint, 4¢ away)
-		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), true, 46, 100)
+		// User1: Paired SELL+BUY orders YES @ 46¢ + NO @ 54¢ (farthest from midpoint, 4¢ away)
+		// Uses remaining 100 TRUE holdings from split
+		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 46, 100)
 		require.NoError(t, err)
 		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), false, 54, 100)
 		require.NoError(t, err)
 
-		// User2: Paired buy orders YES @ 47¢ + NO @ 53¢ (middle distance, 3¢ away, larger amount)
-		err = callPlaceBuyOrder(ctx, platform, &user2, int(marketID), true, 47, 200)
+		// User2: Paired SELL+BUY orders YES @ 47¢ + NO @ 53¢ (middle distance, 3¢ away, larger amount)
+		// Split @ 50 to get TRUE holdings
+		err = callPlaceSplitLimitOrder(ctx, platform, &user2, int(marketID), 50, 200)
+		require.NoError(t, err)
+		err = callPlaceSellOrder(ctx, platform, &user2, int(marketID), true, 47, 200)
 		require.NoError(t, err)
 		err = callPlaceBuyOrder(ctx, platform, &user2, int(marketID), false, 53, 200)
 		require.NoError(t, err)
 
-		// User3: Paired buy orders YES @ 48¢ + NO @ 52¢ (closest to midpoint, 2¢ away)
-		err = callPlaceBuyOrder(ctx, platform, &user3, int(marketID), true, 48, 100)
+		// User3: Paired SELL+BUY orders YES @ 48¢ + NO @ 52¢ (closest to midpoint, 2¢ away)
+		// Split @ 50 to get TRUE holdings
+		err = callPlaceSplitLimitOrder(ctx, platform, &user3, int(marketID), 50, 100)
+		require.NoError(t, err)
+		err = callPlaceSellOrder(ctx, platform, &user3, int(marketID), true, 48, 100)
 		require.NoError(t, err)
 		err = callPlaceBuyOrder(ctx, platform, &user3, int(marketID), false, 52, 100)
 		require.NoError(t, err)
@@ -670,6 +707,144 @@ func testSampleRewardsNoQualifyingOrders(t *testing.T) func(context.Context, *kw
 		rewards, err := getRewards(ctx, platform, int(marketID), 8000)
 		require.NoError(t, err)
 		require.Empty(t, rewards, "No rewards when orders don't qualify (spread too wide)")
+
+		return nil
+	}
+}
+// =============================================================================
+// Category E: Constraint Logic Tests
+// =============================================================================
+
+// testConstraintSellBuyPair verifies the constraint correctly matches SELL+BUY pairs
+func testConstraintSellBuyPair(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		lastBalancePoint = nil
+
+		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
+		require.NoError(t, err)
+
+		user1 := util.Unsafe_NewEthereumAddressFromString("0xc111111111111111111111111111111111111111")
+		err = giveBalanceChained(ctx, platform, user1.Address(), "1000000000000000000000")
+		require.NoError(t, err)
+
+		queryHash := sha256.Sum256([]byte("test_constraint_sell_buy"))
+		settleTime := time.Now().Add(24 * time.Hour).Unix()
+
+		var queryID int64
+		err = callCreateMarket(ctx, platform, &user1, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+			queryID = row.Values[0].(int64)
+			return nil
+		})
+		require.NoError(t, err)
+
+		// Create complete order book with SELL+BUY pair
+		// Split @ 40 → TRUE holdings + FALSE SELL @ 60
+		err = callPlaceSplitLimitOrder(ctx, platform, &user1, int(queryID), 40, 100)
+		require.NoError(t, err)
+
+		// TRUE BUY @ 42 (establishes bid for midpoint)
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(queryID), true, 42, 50)
+		require.NoError(t, err)
+
+		// TRUE SELL @ 48
+		err = callPlaceSellOrder(ctx, platform, &user1, int(queryID), true, 48, 100)
+		require.NoError(t, err)
+
+		// FALSE BUY @ 52 (matches constraint with TRUE SELL @ 48)
+		// Constraint: 100 - ABS(48) = -52 * -1 → 100 - 48 = 52 → 52 = 52 ✅
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(queryID), false, 52, 100)
+		require.NoError(t, err)
+
+		// Sample rewards
+		err = callSampleLPRewards(ctx, platform, &user1, int(queryID), 9000, nil)
+		require.NoError(t, err)
+
+		// Verify rewards generated
+		rewards, err := getRewards(ctx, platform, int(queryID), 9000)
+		require.NoError(t, err)
+		require.NotEmpty(t, rewards, "SELL+BUY pair should receive rewards")
+
+		// Should have exactly 1 participant
+		require.Len(t, rewards, 1, "Should have 1 LP")
+
+		// Should get 100% of rewards (only LP)
+		for _, percent := range rewards {
+			require.InDelta(t, 100.0, percent, 0.01, "Single LP should get 100%")
+		}
+
+		return nil
+	}
+}
+
+// testConstraintNoDuplicates verifies the constraint prevents duplicate rows from self-join
+func testConstraintNoDuplicates(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		lastBalancePoint = nil
+
+		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
+		require.NoError(t, err)
+
+		user2 := util.Unsafe_NewEthereumAddressFromString("0xc222222222222222222222222222222222222222")
+		err = giveBalanceChained(ctx, platform, user2.Address(), "1000000000000000000000")
+		require.NoError(t, err)
+
+		queryHash := sha256.Sum256([]byte("test_constraint_no_dup"))
+		settleTime := time.Now().Add(24 * time.Hour).Unix()
+
+		var queryID int64
+		err = callCreateMarket(ctx, platform, &user2, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+			queryID = row.Values[0].(int64)
+			return nil
+		})
+		require.NoError(t, err)
+
+		// Create same SELL+BUY pair
+		err = callPlaceSplitLimitOrder(ctx, platform, &user2, int(queryID), 40, 100)
+		require.NoError(t, err)
+
+		err = callPlaceBuyOrder(ctx, platform, &user2, int(queryID), true, 42, 50)
+		require.NoError(t, err)
+
+		err = callPlaceSellOrder(ctx, platform, &user2, int(queryID), true, 48, 100)
+		require.NoError(t, err)
+
+		err = callPlaceBuyOrder(ctx, platform, &user2, int(queryID), false, 52, 100)
+		require.NoError(t, err)
+
+		// Sample rewards
+		err = callSampleLPRewards(ctx, platform, &user2, int(queryID), 10000, nil)
+		require.NoError(t, err)
+
+		// Count reward rows - should be exactly 1, not 2
+		tx := &common.TxContext{
+			Ctx: ctx,
+			BlockContext: &common.BlockContext{
+				Height:    1,
+				Timestamp: time.Now().Unix(),
+			},
+			Signer:        []byte("anonymous"),
+			Caller:        "anonymous",
+			TxID:          platform.Txid(),
+			Authenticator: "anonymous",
+		}
+		engineCtx := &common.EngineContext{TxContext: tx}
+
+		var count int
+		err = platform.Engine.Execute(
+			engineCtx,
+			platform.DB,
+			`SELECT COUNT(*) FROM ob_rewards WHERE query_id = $query_id AND block = $block`,
+			map[string]any{
+				"$query_id": queryID,
+				"$block":    int64(10000),
+			},
+			func(row *common.Row) error {
+				count = int(row.Values[0].(int64))
+				return nil
+			},
+		)
+		require.NoError(t, err)
+		require.Equal(t, 1, count, "Should have exactly 1 reward row (no duplicates from self-join)")
 
 		return nil
 	}
