@@ -189,32 +189,34 @@ CREATE OR REPLACE ACTION sample_lp_rewards(
         JOIN ob_positions p2
             ON p1.query_id = p2.query_id
            AND p1.participant_id = p2.participant_id
-           AND p1.outcome = TRUE
-           AND p2.outcome = FALSE
+           AND p1.outcome != p2.outcome
            AND p1.amount = p2.amount
-           AND p1.price < 0
-           AND p2.price < 0
         WHERE p1.query_id = $query_id
-          AND p1.price + p2.price = -100
     {
         $pid INT := $pos.participant_id;
         $yes_price INT := $pos.yes_price;
         $no_price INT := $pos.no_price;
         $amount INT := $pos.amount;
 
-        -- Calculate distances (reference uses ABS())
-        $yes_dist INT := $x_mid - (-$yes_price);
-        if $yes_dist < 0 {
-            $yes_dist := -$yes_dist;
-        }
+        -- Price range is 0-100 cents (100 represents $1.00)
+        -- Constraint: yes_price = 100 + no_price
+        -- This ensures we only process (SELL, BUY) pairs, not (BUY, SELL) duplicates
+        -- Example: SELL YES @ 48 + BUY NO @ 52 → 48 = 100 + (-52) ✅
+        if $yes_price == 100 + $no_price {
+            -- Calculate distances from midpoint using ABS()
+            -- Handles both positive (SELL) and negative (BUY) prices
+            $yes_dist INT := $x_mid - $yes_price;
+            if $yes_dist < 0 {
+                $yes_dist := -$yes_dist;
+            }
 
-        $no_dist INT := (100 - $x_mid) - (-$no_price);
-        if $no_dist < 0 {
-            $no_dist := -$no_dist;
-        }
+            $no_dist INT := (100 - $x_mid) - (-$no_price);
+            if $no_dist < 0 {
+                $no_dist := -$no_dist;
+            }
 
-        -- Filter by spread (reference line 135-146)
-        if $yes_dist < $x_spread AND $no_dist < $x_spread {
+            -- Filter by spread (reference line 135-146)
+            if $yes_dist < $x_spread AND $no_dist < $x_spread {
             -- Get minimum distance (reference uses LEAST())
             $min_dist INT := $yes_dist;
             if $no_dist < $yes_dist {
@@ -231,6 +233,7 @@ CREATE OR REPLACE ACTION sample_lp_rewards(
 
             INSERT INTO ob_rewards (query_id, participant_id, block, reward_percent)
             VALUES ($query_id, $pid, $block, $score::NUMERIC(5,2));
+            }
         }
     }
 
