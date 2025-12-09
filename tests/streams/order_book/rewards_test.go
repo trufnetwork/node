@@ -751,7 +751,7 @@ func testConstraintSellBuyPair(t *testing.T) func(context.Context, *kwilTesting.
 		require.NoError(t, err)
 
 		// FALSE BUY @ 52 (matches constraint with TRUE SELL @ 48)
-		// Constraint: 100 - ABS(48) = -52 * -1 → 100 - 48 = 52 → 52 = 52 ✅
+		// Constraint: yes_price == 100 + no_price → 48 == 100 + (-52) ✅
 		err = callPlaceBuyOrder(ctx, platform, &user1, int(queryID), false, 52, 100)
 		require.NoError(t, err)
 

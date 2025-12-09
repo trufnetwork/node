@@ -198,11 +198,13 @@ CREATE OR REPLACE ACTION sample_lp_rewards(
         $no_price INT := $pos.no_price;
         $amount INT := $pos.amount;
 
-        -- Implement constraint: p1.price = 100 + p2.price
-        -- This ensures p1=SELL (positive) and p2=BUY (negative), avoiding duplicate rows
+        -- Price range is 0-100 cents (100 represents $1.00)
+        -- Constraint: yes_price = 100 + no_price
+        -- This ensures we only process (SELL, BUY) pairs, not (BUY, SELL) duplicates
+        -- Example: SELL YES @ 48 + BUY NO @ 52 → 48 = 100 + (-52) ✅
         if $yes_price == 100 + $no_price {
-            -- Calculate distances from midpoint
-            -- p1 (yes_price) is SELL (positive), so distance is ABS(midpoint - price)
+            -- Calculate distances from midpoint using ABS()
+            -- Handles both positive (SELL) and negative (BUY) prices
             $yes_dist INT := $x_mid - $yes_price;
             if $yes_dist < 0 {
                 $yes_dist := -$yes_dist;
