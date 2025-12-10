@@ -68,9 +68,14 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
  * Uses the ob_rewards table populated by periodic sample_lp_rewards() calls.
  * Fees are distributed proportionally across all sampled blocks.
  *
- * Formula:
- * - reward_per_block = total_fees / COUNT(DISTINCT blocks)
- * - participant_reward = SUM(reward_per_block * reward_percent / 100) across all blocks
+ * Zero-Loss Distribution Algorithm:
+ * 1. total_percent = SUM(reward_percent) across all blocks for each participant
+ * 2. base_reward = (total_fees * total_percent) / (100 * block_count)
+ * 3. dust = total_fees - SUM(base_reward)
+ * 4. first_participant gets base_reward + dust (ensures all fees distributed)
+ *
+ * This approach minimizes truncation (single point vs per-block) and ensures
+ * zero fee loss by giving the remainder to the first participant.
  *
  * Parameters:
  * - $query_id: Settled market ID
@@ -78,29 +83,100 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
  *
  * Behavior:
  * - No samples → fees remain in vault (safe accumulation)
- * - Distributes proportionally across sampled blocks
+ * - Distributes proportionally across sampled blocks with zero loss
  * - Deletes processed rewards from ob_rewards table
  *
  * Dependencies:
  * - ob_rewards table (created in migration 034-order-book-rewards.sql)
  * - ob_batch_unlock_collateral() helper (defined above in this migration)
  * - ethereum_bridge.unlock() (from Migration 031)
- *
- * TODO (Task 9R3):
- * - Implement block-based distribution logic
- * - Count distinct sampled blocks
- * - Aggregate rewards per participant
- * - Batch unlock and cleanup
- *
- * For now, this is a stub that does nothing (fees remain in vault).
  */
 CREATE OR REPLACE ACTION distribute_fees(
     $query_id INT,
     $total_fees NUMERIC(78, 0)
 ) PRIVATE {
-    -- STUB: Implementation in Task 9R3
-    -- For now, fees remain in vault (safe - can be distributed later)
-    RETURN;
+    -- Early return if no fees to distribute
+    if $total_fees = '0'::NUMERIC(78, 0) {
+        RETURN;
+    }
+
+    -- Step 1: Count distinct blocks sampled for this market
+    $block_count INT := 0;
+    for $row in SELECT COUNT(DISTINCT block) as cnt FROM ob_rewards WHERE query_id = $query_id {
+        $block_count := $row.cnt;
+    }
+
+    -- Edge case: No samples recorded → fees remain in vault (safe accumulation)
+    if $block_count = 0 {
+        RETURN;
+    }
+
+    -- Step 2-4: Calculate rewards with zero-loss distribution
+    -- Improved algorithm: Calculate total percentage first, then distribute
+    -- Remainder (dust) is given to the first participant to ensure all fees are distributed
+    $wallet_addresses TEXT[];
+    $amounts NUMERIC(78, 0)[];
+
+    for $result in
+    WITH participant_totals AS (
+        -- Sum each participant's reward percentages across all sampled blocks
+        -- Cast to INT to truncate decimal (64.00 → 64)
+        SELECT
+            r.participant_id,
+            p.wallet_address,
+            SUM(r.reward_percent)::INT as total_percent_int
+        FROM ob_rewards r
+        JOIN ob_participants p ON r.participant_id = p.id
+        WHERE r.query_id = $query_id
+        GROUP BY r.participant_id, p.wallet_address
+    ),
+    calculated_rewards AS (
+        -- Calculate base reward using integer division: (total_fees * total_percent_int) / (100 * block_count)
+        -- This truncates fractional rewards, creating "dust" that will be distributed to first LP
+        SELECT
+            participant_id,
+            wallet_address,
+            (($total_fees * total_percent_int::NUMERIC(78, 0)) / (100::NUMERIC(78, 0) * $block_count::NUMERIC(78, 0)))::NUMERIC(78, 0) as base_reward
+        FROM participant_totals
+    ),
+    total_check AS (
+        -- Calculate total distributed to find dust (remainder from integer division)
+        SELECT COALESCE(SUM(base_reward)::NUMERIC(78, 0), '0'::NUMERIC(78, 0)) as total_distributed
+        FROM calculated_rewards
+    ),
+    with_remainder AS (
+        -- Distribute remainder to first participant (lowest participant_id)
+        -- This ensures zero fee loss - all settlement fees go to LPs as intended
+        SELECT
+            participant_id,
+            wallet_address,
+            base_reward + CASE
+                WHEN participant_id = (SELECT MIN(participant_id) FROM calculated_rewards)
+                THEN $total_fees - (SELECT total_distributed FROM total_check)
+                ELSE '0'::NUMERIC(78, 0)
+            END as final_reward
+        FROM calculated_rewards
+    ),
+    aggregated AS (
+        -- Aggregate into arrays for batch processing (same pattern as process_settlement)
+        SELECT
+            ARRAY_AGG('0x' || encode(wallet_address, 'hex') ORDER BY participant_id) as wallets,
+            ARRAY_AGG(final_reward ORDER BY participant_id) as amounts
+        FROM with_remainder
+    )
+    SELECT wallets, amounts FROM aggregated
+    {
+        $wallet_addresses := $result.wallets;
+        $amounts := $result.amounts;
+    }
+
+    -- Step 5: Batch unlock to all LPs (single call, no loops)
+    if $wallet_addresses IS NOT NULL AND COALESCE(array_length($wallet_addresses), 0) > 0 {
+        ob_batch_unlock_collateral($wallet_addresses, $amounts);
+    }
+
+    -- Step 6: Cleanup - delete processed rewards to save storage
+    DELETE FROM ob_rewards WHERE query_id = $query_id;
 };
 
 -- Process settlement: Pay winners, refund open buys, collect fees
