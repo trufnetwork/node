@@ -112,6 +112,11 @@ jobs:
             fi
           done
 
+      - name: Cleanup Docker resources before acceptance test
+        run: |
+          docker compose -f compose.yaml down -v || true
+          docker system prune -af --volumes || true
+
       - name: Start Single-Node Stack
         run: task single:start
 
