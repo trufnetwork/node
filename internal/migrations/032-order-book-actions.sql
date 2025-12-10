@@ -311,7 +311,7 @@ PUBLIC VIEW RETURNS (market_exists BOOLEAN) {
 -- =============================================================================
 
 -- =============================================================================
--- MATCHING ENGINE (Issue 6)
+-- MATCHING ENGINE
 -- =============================================================================
 /**
  * The matching engine automatically executes trades by matching compatible orders.
@@ -1064,7 +1064,6 @@ CREATE OR REPLACE ACTION place_buy_order(
     -- ==========================================================================
 
     -- Attempt to match this buy order with existing sell orders
-    -- Note: This is a stub in Issue 2, full implementation in Issue 6
     match_orders($query_id, $outcome, $price);
 
     -- Success: Order placed (may be partially or fully matched by future matching engine)
@@ -1239,7 +1238,6 @@ CREATE OR REPLACE ACTION place_sell_order(
     -- ==========================================================================
 
     -- Attempt to match this sell order with existing buy orders
-    -- Note: This is a stub in Issue 3, full implementation in Issue 6
     match_orders($query_id, $outcome, $price);
 
     -- Success: Order placed (may be partially or fully matched by future matching engine)
@@ -1273,7 +1271,7 @@ CREATE OR REPLACE ACTION place_sell_order(
  * - NO price: 100 - $true_price (e.g., 100 - 56 = 44 cents = $0.44)
  * - Total: Always $1.00 per share pair
  *
- * LP Reward Eligibility (Issue 9 - TO BE IMPLEMENTED):
+ * LP Reward Eligibility:
  *
  * To qualify for LP rewards, ALL of the following must be true:
  * 1. BOTH buy and sell prices must be within max_spread of market midpoint (50):
@@ -1289,8 +1287,6 @@ CREATE OR REPLACE ACTION place_sell_order(
  * - Market midpoint: $0.50
  * - Split @ $0.56/$0.44: Distance = 6¢ → OUTSIDE spread → NOT qualified ❌
  * - Split @ $0.52/$0.48: Distance = 2¢ → WITHIN spread → QUALIFIED ✅
- *
- * Implementation: LP tracking deferred to Issue 9 (LP rewards and fee distribution)
  *
  * Examples:
  *   place_split_limit_order(1, 56, 100)  -- Mint 100 pairs: hold YES, sell NO @ $0.44
@@ -1453,7 +1449,6 @@ CREATE OR REPLACE ACTION place_split_limit_order(
     -- ==========================================================================
 
     -- Attempt to match the NO sell order with existing buy orders
-    -- Note: This is a stub in Issue 4, full implementation in Issue 6
     -- Match is attempted on the FALSE (NO) outcome at the false_price
     match_orders($query_id, FALSE, $false_price);
 
@@ -1870,7 +1865,7 @@ CREATE OR REPLACE ACTION change_bid(
     -- SECTION 9: TRIGGER MATCHING ENGINE
     -- ==========================================================================
 
-    -- Try to match new order immediately (stub in Issue 5B, full implementation in Issue 6)
+    -- Try to match new order immediately
     -- Note: match_orders expects positive price (1-99), so use $new_abs_price not $new_price
     match_orders($query_id, $outcome, $new_abs_price);
 
@@ -2119,7 +2114,7 @@ CREATE OR REPLACE ACTION change_ask(
     -- SECTION 8: TRIGGER MATCHING ENGINE
     -- ==========================================================================
 
-    -- Try to match new order immediately (stub in Issue 5B, full implementation in Issue 6)
+    -- Try to match new order immediately
     match_orders($query_id, $outcome, $new_price);
 
     -- Success: Sell order price modified atomically
@@ -2145,7 +2140,7 @@ CREATE OR REPLACE ACTION change_ask(
  *
  * After settlement:
  * - All trading is permanently blocked (buy, sell, split, cancel, change orders)
- * - Users must call claim_payout() to redeem winning shares (Issue 8)
+ * - Users must call claim_payout() to redeem winning shares
  * - Market state is frozen and cannot be changed
  *
  * Parameters:
@@ -2163,9 +2158,6 @@ CREATE OR REPLACE ACTION change_ask(
  *
  * Examples:
  *   settle_market(1)  -- Settle market ID 1 using its attestation
- *
- * Note: This action is part of Issue 7 (Manual Settlement). Automatic settlement
- * via extension (Issue 7B) will call this action on a schedule.
  */
 CREATE OR REPLACE ACTION settle_market(
     $query_id INT
@@ -2264,7 +2256,6 @@ CREATE OR REPLACE ACTION settle_market(
         settled_at = @block_timestamp
     WHERE id = $query_id;
 
-    -- Issue 8: Automatic atomic settlement processing
     -- Process all payouts, refunds, and fee collection atomically
     process_settlement($query_id, $winning_outcome);
 };

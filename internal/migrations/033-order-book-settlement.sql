@@ -6,7 +6,7 @@
  * - Pay winners (shares × $1.00 - 2% redemption fee)
  * - Refund open buy orders (no fee)
  * - Delete all positions atomically
- * - Collect fees in vault (Issue 9 will distribute them)
+ * - Collect fees in vault
  *
  * Implementation Note:
  * Uses CTE + ARRAY_AGG to collect all payout data in a single query, then
@@ -55,7 +55,7 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
 };
 
 -- ============================================================================
--- Fee Distribution to Liquidity Providers (Issue 9B)
+-- Fee Distribution to Liquidity Providers
 -- ============================================================================
 
 /**
@@ -64,7 +64,7 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
  * Distributes settlement fees to liquidity providers based on sampled rewards.
  * Called automatically after winner payouts in process_settlement().
  *
- * DYNAMIC REWARDS MODEL (Issue 9 Refactor):
+ * DYNAMIC REWARDS MODEL:
  * Uses the ob_rewards table populated by periodic sample_lp_rewards() calls.
  * Fees are distributed proportionally across all sampled blocks.
  *
@@ -77,18 +77,27 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
  * This approach minimizes truncation (single point vs per-block) and ensures
  * zero fee loss by giving the remainder to the first participant.
  *
+ * AUDIT TRAIL:
+ * Before deleting ob_rewards, creates immutable records in:
+ * - ob_fee_distributions: Summary (query_id, total_fees, LP count, timestamp)
+ * - ob_fee_distribution_details: Per-LP rewards (participant_id, amount, percent)
+ *
+ * This ensures full traceability for compliance and user verification.
+ *
  * Parameters:
  * - $query_id: Settled market ID
  * - $total_fees: Total fees collected (2% of redemptions), in wei
  *
  * Behavior:
- * - No samples → fees remain in vault (safe accumulation)
+ * - No samples → fees remain in vault (safe accumulation), NO audit record
  * - Distributes proportionally across sampled blocks with zero loss
+ * - Creates audit records in ob_fee_distributions tables
  * - Deletes processed rewards from ob_rewards table
  *
  * Dependencies:
- * - ob_rewards table (created in migration 034-order-book-rewards.sql)
- * - ob_batch_unlock_collateral() helper (defined above in this migration)
+ * - ob_rewards table (created in migration 034)
+ * - ob_fee_distributions tables (created in migration 036)
+ * - ob_batch_unlock_collateral() helper (defined above)
  * - ethereum_bridge.unlock() (from Migration 031)
  */
 CREATE OR REPLACE ACTION distribute_fees(
@@ -175,7 +184,100 @@ CREATE OR REPLACE ACTION distribute_fees(
         ob_batch_unlock_collateral($wallet_addresses, $amounts);
     }
 
+    -- Step 5.5: CREATE AUDIT RECORDS
+    -- Insert distribution summary and per-LP details BEFORE deleting ob_rewards.
+    -- This ensures full traceability for compliance and user verification.
+
+    -- Only create audit if distribution actually occurred
+    if $wallet_addresses IS NOT NULL AND COALESCE(array_length($wallet_addresses), 0) > 0 {
+        -- Generate distribution ID (MAX+1 pattern, safe in Kwil sequential execution)
+        $distribution_id INT;
+        for $row in SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM ob_fee_distributions {
+            $distribution_id := $row.next_id;
+        }
+
+        -- Insert distribution summary
+        INSERT INTO ob_fee_distributions (
+            id,
+            query_id,
+            total_fees_distributed,
+            total_lp_count,
+            block_count,
+            distributed_at
+        ) VALUES (
+            $distribution_id,
+            $query_id,
+            $total_fees,
+            COALESCE(array_length($wallet_addresses), 0),
+            $block_count,
+            @block_timestamp
+        );
+
+        -- Insert per-LP details
+        -- Match the distributed amounts (from arrays) with participant data from ob_rewards
+        -- This creates audit records showing exactly who got what
+        $idx INT := 1;
+        for $w_row in SELECT wallet FROM UNNEST($wallet_addresses) AS w(wallet) {
+            $wallet_hex TEXT := $w_row.wallet;
+
+            -- Get corresponding amount (arrays are same length, ordered by participant_id)
+            $reward_amount NUMERIC(78, 0);
+            for $a_row in
+                SELECT amount
+                FROM UNNEST($amounts) AS a(amount)
+                LIMIT 1 OFFSET ($idx - 1)
+            {
+                $reward_amount := $a_row.amount;
+            }
+
+            -- Get participant info by matching wallet address
+            $pid INT;
+            $wallet_bytes BYTEA;
+            $total_reward_pct NUMERIC(10, 2);
+
+            for $p_data in
+                SELECT
+                    p.id,
+                    p.wallet_address
+                FROM ob_participants p
+                WHERE '0x' || encode(p.wallet_address, 'hex') = $wallet_hex
+            {
+                $pid := $p_data.id;
+                $wallet_bytes := $p_data.wallet_address;
+
+                -- Calculate total_reward_percent in separate query to avoid type inference issues
+                $total_reward_pct := 0::NUMERIC(10,2);
+                for $pct_row in
+                    SELECT SUM(reward_percent::NUMERIC(10,2))::NUMERIC(10,2) as sum_pct
+                    FROM ob_rewards
+                    WHERE query_id = $query_id AND participant_id = $pid
+                {
+                    if $pct_row.sum_pct IS NOT NULL {
+                        $total_reward_pct := $pct_row.sum_pct;
+                    }
+                }
+            }
+
+            INSERT INTO ob_fee_distribution_details (
+                distribution_id,
+                participant_id,
+                wallet_address,
+                reward_amount,
+                total_reward_percent
+            ) VALUES (
+                $distribution_id,
+                $pid,
+                $wallet_bytes,
+                $reward_amount,
+                $total_reward_pct
+            );
+
+            $idx := $idx + 1;
+        }
+    }
+
     -- Step 6: Cleanup - delete processed rewards to save storage
+    -- NOW SAFE: Audit records created above preserve distribution history
     DELETE FROM ob_rewards WHERE query_id = $query_id;
 };
 
