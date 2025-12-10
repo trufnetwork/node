@@ -1,5 +1,5 @@
 /**
- * MIGRATION 034: DYNAMIC LP REWARDS SAMPLING (ISSUE 9 REFACTOR)
+ * MIGRATION 034: DYNAMIC LP REWARDS SAMPLING
  *
  * Purpose:
  * Store periodic snapshots of liquidity provider reward eligibility.
@@ -14,13 +14,6 @@
  *
  * References:
  * - Polymarket Rewards: https://docs.polymarket.com/developers/rewards/overview
- * - TRUF Spec: /PredictionMarketTasks/OrderbookSetupGoal/orderBookLiquidityRewardsProgram/0mainDoc.md
- * - Reference SQL: /PredictionMarketTasks/OrderbookSetupGoal/orderBookLiquidityRewardsProgram/2DynamicRewardsCalculation.md
- *
- * Related Issues:
- * - Task 9R1: Schema Migration + Cleanup (THIS MIGRATION)
- * - Task 9R2: Rewards Sampling Implementation (sample_lp_rewards logic)
- * - Task 9R3: Settlement Fee Distribution (uses this table)
  */
 
 -- ============================================================================
