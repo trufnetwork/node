@@ -123,6 +123,10 @@ PUBLIC VIEW RETURNS (
     }
 
     -- Step 7: Validate collateral balance
+    -- NOTE: Multi-market limitation - vault_balance is GLOBAL (all markets combined),
+    -- but expected_collateral is per-market. In single-market scenarios this check
+    -- is accurate. In multi-market scenarios, valid_collateral will be FALSE since
+    -- vault_balance > expected_collateral. See testMultipleMarketsIsolation for details.
     $valid_collateral BOOL;
     if $vault_balance = $expected_collateral {
         $valid_collateral := TRUE;

@@ -28,7 +28,7 @@ func TestValidateMarketCollateral(t *testing.T) {
 			testValidMarketNoOrders(t),
 			testValidMarketWithBalancedOrders(t),
 			testValidMarketAfterMatching(t),
-			testValidMarketAfterSettlement(t),
+			testValidMarketWithPositions(t),
 			testValidMarketWithOpenBuys(t),
 			testMultipleMarketsIsolation(t),
 		},
@@ -165,8 +165,9 @@ func testValidMarketAfterMatching(t *testing.T) func(context.Context, *kwilTesti
 	}
 }
 
-// testValidMarketAfterSettlement tests validation after settlement (positions deleted)
-func testValidMarketAfterSettlement(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+// testValidMarketWithPositions tests validation with existing positions (before settlement)
+// TODO: Add actual settlement testing when attestation support is available
+func testValidMarketWithPositions(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Initialize ERC20 extension
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
@@ -179,9 +180,9 @@ func testValidMarketAfterSettlement(t *testing.T) func(context.Context, *kwilTes
 		err = giveBalance(ctx, platform, userAddr.Address(), "500000000000000000000")
 		require.NoError(t, err)
 
-		// Create market with settle_time (far future, we'll settle early for testing)
+		// Create market
 		queryHash := [32]byte{}
-		copy(queryHash[:], []byte("test_settlement_validation"))
+		copy(queryHash[:], []byte("test_positions_validation"))
 
 		var marketID int64
 		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:],
@@ -195,28 +196,18 @@ func testValidMarketAfterSettlement(t *testing.T) func(context.Context, *kwilTes
 		err = callPlaceSplitLimitOrder(ctx, platform, &userAddr, int(marketID), 60, 100)
 		require.NoError(t, err)
 
-		// Validate before settlement (should have positions)
-		valid_binaries1, _, total_true1, total_false1, _, _, _ := validateMarket(t, ctx, platform, int(marketID))
-		require.True(t, valid_binaries1, "Before settlement: should be valid")
-		require.Equal(t, int64(100), total_true1, "Before settlement: 100 TRUE shares")
-		require.Equal(t, int64(100), total_false1, "Before settlement: 100 FALSE shares")
+		// Validate market with positions
+		valid_binaries, valid_collateral, total_true, total_false, vault_balance, expected_collateral, open_buys_value := validateMarket(t, ctx, platform, int(marketID))
 
-		// Note: We're not actually settling the market (requires attestation)
-		// This test just verifies that validation works with positions present
-		// In a real settlement scenario, positions would be deleted
-
-		// Validate the market (positions should still exist)
-		valid_binaries2, valid_collateral2, total_true2, total_false2, vault_balance2, expected_collateral2, open_buys_value2 := validateMarket(t, ctx, platform, int(marketID))
-
-		// Market should still be valid with positions
+		// Market should be valid with positions
 		t.Logf("Market with positions: valid_binaries=%v, valid_collateral=%v, total_true=%d, total_false=%d, vault_balance=%s, expected_collateral=%s, open_buys_value=%d",
-			valid_binaries2, valid_collateral2, total_true2, total_false2, vault_balance2, expected_collateral2, open_buys_value2)
+			valid_binaries, valid_collateral, total_true, total_false, vault_balance, expected_collateral, open_buys_value)
 
 		// Positions should exist and be balanced
-		require.True(t, valid_binaries2, "Market should have valid binary parity")
-		require.True(t, valid_collateral2, "Market should have valid collateral")
-		require.Equal(t, int64(100), total_true2, "Market should have 100 TRUE shares")
-		require.Equal(t, int64(100), total_false2, "Market should have 100 FALSE shares")
+		require.True(t, valid_binaries, "Market should have valid binary parity")
+		require.True(t, valid_collateral, "Market should have valid collateral")
+		require.Equal(t, int64(100), total_true, "Market should have 100 TRUE shares")
+		require.Equal(t, int64(100), total_false, "Market should have 100 FALSE shares")
 
 		return nil
 	}
