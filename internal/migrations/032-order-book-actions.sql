@@ -2163,6 +2163,57 @@ CREATE OR REPLACE ACTION settle_market(
     $query_id INT
 ) PUBLIC {
     -- ==========================================================================
+    -- SECTION 0: MARKET INTEGRITY VALIDATION
+    -- ==========================================================================
+    -- Validate market health before settlement to prevent settlements with
+    -- accounting bugs (orphan shares, missing collateral, etc.)
+    --
+    -- This automatic validation enforces that:
+    -- 1. Binary token parity: TRUE shares = FALSE shares (no orphans)
+    -- 2. Vault collateral: vault balance matches obligations
+    --
+    -- If validation fails, settlement is blocked with detailed error message.
+    -- See Migration 037 for validate_market_collateral() implementation.
+
+    $valid_binaries BOOL;
+    $valid_collateral BOOL;
+    $total_true BIGINT;
+    $total_false BIGINT;
+    $vault_balance NUMERIC(78, 0);
+    $expected_collateral NUMERIC(78, 0);
+    $open_buys_value BIGINT;
+
+    for $validation in validate_market_collateral($query_id) {
+        $valid_binaries := $validation.valid_token_binaries;
+        $valid_collateral := $validation.valid_collateral;
+        $total_true := $validation.total_true;
+        $total_false := $validation.total_false;
+        $vault_balance := $validation.vault_balance;
+        $expected_collateral := $validation.expected_collateral;
+        $open_buys_value := $validation.open_buys_value;
+    }
+
+    -- Block settlement if binary token parity is violated
+    if NOT $valid_binaries {
+        ERROR('Cannot settle market: Binary token parity violation. TRUE shares=' ||
+              COALESCE($total_true::TEXT, 'NULL') || ', FALSE shares=' || COALESCE($total_false::TEXT, 'NULL') ||
+              '. Orphan shares detected - this indicates an accounting bug.');
+    }
+
+    -- Block settlement if vault collateral doesn't match obligations
+    -- NOTE: Multi-market limitation - vault_balance is GLOBAL (all markets combined),
+    -- so collateral validation is only performed for markets with actual positions.
+    -- Empty markets (total_true=0, total_false=0) skip this check since they have
+    -- no collateral obligations and the vault may contain funds from other markets.
+    if $total_true > 0 OR $total_false > 0 {
+        if NOT $valid_collateral {
+            ERROR('Cannot settle market: Vault collateral mismatch. Expected=' ||
+                  COALESCE($expected_collateral::TEXT, 'NULL') || ' wei, Actual=' || COALESCE($vault_balance::TEXT, 'NULL') ||
+                  ' wei. This indicates missing or excess collateral.');
+        }
+    }
+
+    -- ==========================================================================
     -- SECTION 1: VALIDATE MARKET AND TIMING
     -- ==========================================================================
 
