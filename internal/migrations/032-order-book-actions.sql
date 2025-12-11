@@ -2162,6 +2162,11 @@ CREATE OR REPLACE ACTION change_ask(
 CREATE OR REPLACE ACTION settle_market(
     $query_id INT
 ) PUBLIC {
+    -- Quick input validation before integrity checks
+    if $query_id IS NULL OR $query_id < 1 {
+        ERROR('Invalid query_id');
+    }
+
     -- ==========================================================================
     -- SECTION 0: MARKET INTEGRITY VALIDATION
     -- ==========================================================================
@@ -2182,6 +2187,7 @@ CREATE OR REPLACE ACTION settle_market(
     $vault_balance NUMERIC(78, 0);
     $expected_collateral NUMERIC(78, 0);
     $open_buys_value BIGINT;
+    $validation_found BOOL := false;
 
     for $validation in validate_market_collateral($query_id) {
         $valid_binaries := $validation.valid_token_binaries;
@@ -2191,6 +2197,12 @@ CREATE OR REPLACE ACTION settle_market(
         $vault_balance := $validation.vault_balance;
         $expected_collateral := $validation.expected_collateral;
         $open_buys_value := $validation.open_buys_value;
+        $validation_found := true;
+    }
+
+    -- Guard against missing validation data
+    if NOT $validation_found {
+        ERROR('Validation data not found for query_id: ' || $query_id::TEXT);
     }
 
     -- Block settlement if binary token parity is violated
@@ -2216,11 +2228,6 @@ CREATE OR REPLACE ACTION settle_market(
     -- ==========================================================================
     -- SECTION 1: VALIDATE MARKET AND TIMING
     -- ==========================================================================
-
-    -- Validate query_id
-    if $query_id IS NULL OR $query_id < 1 {
-        ERROR('Invalid query_id');
-    }
 
     -- Get market details
     $market_hash BYTEA;

@@ -953,6 +953,7 @@ func testSettleMarketBlockedByBinaryParityViolation(t *testing.T) func(context.C
 				return nil
 			})
 		require.NoError(t, err)
+		require.Equal(t, int64(0), remainingFalse, "expected all FALSE positions to be deleted")
 		t.Logf("Corrupted positions - deleted FALSE sell orders. Remaining FALSE shares: %d", remainingFalse)
 
 		// Try to settle (should fail with binary parity violation)
