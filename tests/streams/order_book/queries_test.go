@@ -58,20 +58,20 @@ func TestQueries(t *testing.T) {
 			testGetUserPositionsMixed(t),
 
 			// get_market_depth tests
-			//testGetMarketDepthEmpty(t),
-			//testGetMarketDepthAggregation(t),
+			testGetMarketDepthEmpty(t),
+			testGetMarketDepthAggregation(t),
 
 			// get_best_prices tests
-			//testGetBestPricesNoOrders(t),
-			//testGetBestPricesOnlyBuy(t),
-			//testGetBestPricesOnlySell(t),
-			//testGetBestPricesBothSides(t),
+			testGetBestPricesNoOrders(t),
+			testGetBestPricesOnlyBuy(t),
+			testGetBestPricesOnlySell(t),
+			testGetBestPricesBothSides(t),
 
 			// get_user_collateral tests
-			//testGetUserCollateralEmpty(t),
-			//testGetUserCollateralWithBuyOrders(t),
-			//testGetUserCollateralWithShares(t),
-			//testGetUserCollateralMixed(t),
+			testGetUserCollateralEmpty(t),
+			testGetUserCollateralWithBuyOrders(t),
+			testGetUserCollateralWithShares(t),
+			testGetUserCollateralMixed(t),
 		},
 	}, testutils.GetTestOptionsWithCache())
 }
