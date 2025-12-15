@@ -4,5 +4,5 @@ package tn_settlement
 const ExtensionName = "tn_settlement"
 
 // DefaultSettlementSchedule is the default cron schedule for settlement polling
-// Format: "*/5 * * * *" = Every 5 minutes
-const DefaultSettlementSchedule = "*/5 * * * *"
+// Format: "0 * * * *" = Every hour (on the hour)
+const DefaultSettlementSchedule = "0 * * * *"
