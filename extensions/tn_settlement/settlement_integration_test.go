@@ -226,19 +226,19 @@ func testLoadSettlementConfig(t *testing.T) func(context.Context, *kwilTesting.P
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x8888888888888888888888888888888888888888")
 		platform.Deployer = deployer.Bytes()
 
-		// Test LoadSettlementConfig with missing table (should return defaults)
+		// Test LoadSettlementConfig (table exists from migration with seeded defaults)
 		accts, err := accounts.InitializeAccountStore(ctx, platform.DB, log.New())
 		require.NoError(t, err)
 		ops := internal.NewEngineOperations(platform.Engine, platform.DB, accts, log.New())
 
 		enabled, schedule, maxMarkets, retries, err := ops.LoadSettlementConfig(ctx)
 		require.NoError(t, err)
-		require.False(t, enabled, "should return false (default) when table doesn't exist")
-		require.Equal(t, "", schedule)
+		require.False(t, enabled, "should be false (default disabled for safety)")
+		require.Equal(t, "0 * * * *", schedule, "should be hourly schedule from migration")
 		require.Equal(t, 10, maxMarkets)
 		require.Equal(t, 3, retries)
 
-		t.Logf("✅ LoadSettlementConfig with missing table returned defaults: enabled=%v, schedule=%s, max=%d, retries=%d",
+		t.Logf("✅ LoadSettlementConfig loaded config from migration: enabled=%v, schedule=%s, max=%d, retries=%d",
 			enabled, schedule, maxMarkets, retries)
 		return nil
 	}
