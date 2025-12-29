@@ -17,3 +17,10 @@ USE erc20 {
     chain: 'sepolia',
     escrow: '0x502430eD0BbE0f230215870c9C2853e126eE5Ae3'
 } AS sepolia_bridge;
+
+-- The following is for test environments where the hoodi bridge is used. Please comment for production and use the above.
+USE erc20 {
+    chain: 'hoodi',
+    escrow: '0x878d6aaeb6e746033f50b8dc268d54b4631554e7',
+    distribution_period: '30m'
+} AS hoodi_bridge;
