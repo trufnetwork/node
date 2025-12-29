@@ -37,7 +37,10 @@ var (
 
 func mustParseHoodiBigInt(s string) *big.Int {
 	val := new(big.Int)
-	val.SetString(s, 10)
+	_, ok := val.SetString(s, 10)
+	if !ok {
+		panic(fmt.Sprintf("failed to parse big.Int: %q", s))
+	}
 	return val
 }
 
@@ -269,9 +272,24 @@ func testHoodiWithdrawalFeeRecordedInLedger(t *testing.T) func(ctx context.Conte
 		err = platform.Engine.ExecuteWithoutEngineCtx(ctx, platform.DB, query, map[string]any{}, func(row *common.Row) error {
 			found = true
 			if len(row.Values) >= 3 {
-				methodID = int(row.Values[0].(int64))
-				feeAmount = row.Values[1].(string)
-				feeRecipient = row.Values[2].(string)
+				// Safe type assertions with comma-ok idiom
+				if val, ok := row.Values[0].(int64); ok {
+					methodID = int(val)
+				} else {
+					return fmt.Errorf("expected int64 for method_id, got %T", row.Values[0])
+				}
+
+				if val, ok := row.Values[1].(string); ok {
+					feeAmount = val
+				} else {
+					return fmt.Errorf("expected string for fee_amount, got %T", row.Values[1])
+				}
+
+				if val, ok := row.Values[2].(string); ok {
+					feeRecipient = val
+				} else {
+					return fmt.Errorf("expected string for fee_recipient, got %T", row.Values[2])
+				}
 			}
 			return nil
 		})
