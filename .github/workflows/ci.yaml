@@ -39,13 +39,21 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ !github.event.pull_request.draft }}
     steps:
-      - name: Clear cache
+      - name: Clear cache and show disk space
         if: ${{ !env.ACT }} # skip during local actions testing
         run: |
+          echo "Initial disk space:"
+          df -h /
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /opt/ghc
           sudo rm -rf "/usr/local/share/boost"
           sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          # Additional cleanup for Android, Azure, and other pre-installed tools
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /usr/local/.ghcup || true
+          sudo rm -rf /usr/share/swift || true
+          echo "Disk space after cleanup:"
+          df -h /
 
       - uses: actions/checkout@v4
 
@@ -62,6 +70,17 @@ jobs:
       - name: Run Taskfile
         run: task build
 
+      - name: Clean caches to free disk space
+        run: |
+          # Clean Go build cache to free space before test compilation
+          # NOTE: Keep .build/ directory - needed later for single-node stack
+          go clean -cache -testcache -fuzzcache || true
+          # Remove Docker build cache and images
+          docker builder prune -af || true
+          docker image prune -af || true
+          # Show remaining disk space
+          df -h /
+
       - name: Run Go Tests (with retry)
         run: |
           set -o errexit -o nounset -o pipefail
@@ -70,11 +89,19 @@ jobs:
           max_attempts=3
           backoff=10
 
-          # Ensure Docker daemon is ready before first attempt
+          # Ensure Docker daemon is ready before first attempt (max 60s)
+          wait_count=0
+          max_wait=30
           until docker info >/dev/null 2>&1; do
-            echo "Waiting for Docker daemon to be ready..."
+            if [ $wait_count -ge $max_wait ]; then
+              echo "❌ Docker daemon failed to become ready after ${max_wait} attempts"
+              exit 1
+            fi
+            echo "Waiting for Docker daemon to be ready... (attempt $((wait_count + 1))/${max_wait})"
             sleep 2
+            wait_count=$((wait_count + 1))
           done
+          echo "✅ Docker daemon is ready"
 
           while [ $attempt -le $max_attempts ]; do
             echo "Test attempt $attempt of $max_attempts"
@@ -89,7 +116,12 @@ jobs:
               sleep 5
             fi
 
-            if go test -failfast -short -p 1 -timeout=30m -count=1 -tags=kwiltest ./...; then
+            # Run unit tests only on PRs (skip integration tests and benchmarks to avoid disk space issues)
+            # Integration tests create Docker containers which rapidly fill disk (~50+ containers)
+            # Benchmarks are long-running performance tests (not needed for every PR)
+            # Full integration suite runs on main branch via slow-integration-tests job
+            if go test -failfast -p 1 -timeout=15m -count=1 -tags=kwiltest \
+              $(go list -tags=kwiltest ./... | grep -v -E '^github\.com/trufnetwork/node/(tests/(streams|database_size|extensions/(erc20|database-size))|internal/benchmark)'); then
               echo "✅ Tests passed on attempt $attempt"
               break
             else
@@ -128,3 +160,150 @@ jobs:
       - name: Run CI Tests Script
         run: |
           scripts/ci-tests.sh
+
+  check-slow-test-paths:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    outputs:
+      slow_tests_changed: ${{ steps.filter.outputs.slow_tests }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for affected paths
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            slow_tests:
+              - 'tests/streams/**'
+              - 'tests/database_size/**'
+              - 'tests/extensions/erc20/**'
+              - 'tests/extensions/database-size/**'
+
+  slow-integration-tests:
+    runs-on: ubuntu-latest
+    needs: check-slow-test-paths
+    # Runs on:
+    # - main branch (always)
+    # - workflow_dispatch (manual trigger)
+    # - pull_request when:
+    #   * Label "run-slow-tests" is added to the PR, OR
+    #   * Files in order_book/, digest/, erc20/, or streams/ directories are modified
+    #
+    # To trigger on a PR:
+    # 1. Add label "run-slow-tests" to the PR, OR
+    # 2. Modify files in tests/streams/order_book/, tests/streams/digest/,
+    #    tests/extensions/erc20/, or tests/streams/ directories
+    if: |
+      always() && (
+        github.event_name == 'workflow_dispatch' ||
+        github.ref == 'refs/heads/main' ||
+        (
+          github.event_name == 'pull_request' &&
+          (
+            contains(github.event.pull_request.labels.*.name, 'run-slow-tests') ||
+            needs.check-slow-test-paths.outputs.slow_tests_changed == 'true'
+          )
+        )
+      )
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clear cache and show disk space
+        run: |
+          echo "Initial disk space:"
+          df -h /
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /usr/local/.ghcup || true
+          sudo rm -rf /usr/share/swift || true
+          echo "Disk space after cleanup:"
+          df -h /
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Install Taskfile
+        uses: arduino/setup-task@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Taskfile
+        run: task build
+
+      - name: Clean build artifacts to free disk space
+        run: |
+          sudo rm -rf .build/ || true
+          go clean -cache -testcache -fuzzcache || true
+          docker builder prune -af || true
+          docker image prune -af || true
+          df -h /
+
+      - name: Run Slow Integration Tests (with retry)
+        run: |
+          set -o errexit -o nounset -o pipefail
+
+          attempt=1
+          max_attempts=3
+          backoff=10
+
+          # Ensure Docker daemon is ready before first attempt (max 60s)
+          wait_count=0
+          max_wait=30
+          until docker info >/dev/null 2>&1; do
+            if [ $wait_count -ge $max_wait ]; then
+              echo "❌ Docker daemon failed to become ready after ${max_wait} attempts"
+              exit 1
+            fi
+            echo "Waiting for Docker daemon to be ready... (attempt $((wait_count + 1))/${max_wait})"
+            sleep 2
+            wait_count=$((wait_count + 1))
+          done
+          echo "✅ Docker daemon is ready"
+
+          while [ $attempt -le $max_attempts ]; do
+            echo "Integration test attempt $attempt of $max_attempts"
+
+            # Always cleanup lingering resources before each attempt
+            bash scripts/ci-cleanup.sh || true
+
+            # Additional cleanup only on retries
+            if [ $attempt -gt 1 ]; then
+              docker compose -f compose.yaml down -v || true
+              docker system prune -af --volumes || true
+              sleep 5
+            fi
+
+            # Run ALL integration tests (everything excluded from PR fast tests)
+            # These create Docker containers and need significant disk space
+            if go test -v -p 1 -timeout=120m -count=1 -tags=kwiltest \
+              ./tests/streams/... \
+              ./tests/database_size \
+              ./tests/extensions/erc20 \
+              ./tests/extensions/database-size; then
+              echo "✅ Integration tests passed on attempt $attempt"
+              break
+            else
+              echo "❌ Integration tests failed on attempt $attempt"
+              # Surface Docker diagnostics
+              echo "::group::Docker diagnostics"
+              docker ps -a || true
+              docker system df || true
+              docker info || true
+              echo "::endgroup::"
+
+              if [ $attempt -eq $max_attempts ]; then
+                echo "All integration test attempts failed"
+                exit 1
+              fi
+              attempt=$((attempt + 1))
+              echo "Waiting ${backoff}s before retry..."
+              sleep "$backoff"
+              backoff=$((backoff * 2))
+            fi
+          done
