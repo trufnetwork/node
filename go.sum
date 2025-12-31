@@ -1216,10 +1216,14 @@ github.com/trufnetwork/kwil-db v0.10.3-0.20251204134443-d43bfe5b400b h1:IAYxPaxl
 github.com/trufnetwork/kwil-db v0.10.3-0.20251204134443-d43bfe5b400b/go.mod h1:LiBAC48uZl2B0IiLtD2hpOce7RNfpuDdghVAOc3u1Qo=
 github.com/trufnetwork/kwil-db v0.10.3-0.20251229074241-278c1930ac63 h1:MqZsMaNyX3sF/hSPF+8e7k8Rg+YJxU8jX8jHPr096x4=
 github.com/trufnetwork/kwil-db v0.10.3-0.20251229074241-278c1930ac63/go.mod h1:LiBAC48uZl2B0IiLtD2hpOce7RNfpuDdghVAOc3u1Qo=
+github.com/trufnetwork/kwil-db v0.10.3-0.20251231160535-05b6487e7fc5 h1:zhdnzXVldZWtdhZQHSl1EuFHMRf8TbRkgA2RoMhtqic=
+github.com/trufnetwork/kwil-db v0.10.3-0.20251231160535-05b6487e7fc5/go.mod h1:LiBAC48uZl2B0IiLtD2hpOce7RNfpuDdghVAOc3u1Qo=
 github.com/trufnetwork/kwil-db/core v0.4.3-0.20251204134443-d43bfe5b400b h1:CGtjMi1JqG/z1g+hnLVpYNS0yHz4Yif7Zflj6tzyTM8=
 github.com/trufnetwork/kwil-db/core v0.4.3-0.20251204134443-d43bfe5b400b/go.mod h1:HnOsh9+BN13LJCjiH0+XKaJzyjWKf+H9AofFFp90KwQ=
 github.com/trufnetwork/kwil-db/core v0.4.3-0.20251229074241-278c1930ac63 h1:M3eB0d2Vq9uI1vrYWPUW8nFow6qrKpTvMLvdQAnHNwU=
 github.com/trufnetwork/kwil-db/core v0.4.3-0.20251229074241-278c1930ac63/go.mod h1:HnOsh9+BN13LJCjiH0+XKaJzyjWKf+H9AofFFp90KwQ=
+github.com/trufnetwork/kwil-db/core v0.4.3-0.20251231160535-05b6487e7fc5 h1:YYP5Y4BmIwmJ/WyXwLO6Oe/s/ADdpnAf1WDdLYeBG0M=
+github.com/trufnetwork/kwil-db/core v0.4.3-0.20251231160535-05b6487e7fc5/go.mod h1:HnOsh9+BN13LJCjiH0+XKaJzyjWKf+H9AofFFp90KwQ=
 github.com/trufnetwork/openzeppelin-merkle-tree-go v0.0.2 h1:DCq8MzbWH0wZmICNmMVsSzUHUPl+2vqRhluEABjxl88=
 github.com/trufnetwork/openzeppelin-merkle-tree-go v0.0.2/go.mod h1:Y0MJpPp9QXU5vC6Gpoilql2NkgmGNcbHm9HYC2v2N8s=
 github.com/trufnetwork/sdk-go v0.3.2-0.20250630062504-841b40cdb709 h1:d9EqPXIjbq/atzEncK5dM3Z9oStx1BxCGuL/sjefeCw=
