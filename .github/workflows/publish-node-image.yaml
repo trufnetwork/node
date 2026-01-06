@@ -50,15 +50,17 @@ jobs:
             type=ref,event=tag
             type=semver,pattern={{version}}
 
-      - name: Build and push image (multi-arch)
+      - name: Build and push image (linux/amd64)
         uses: docker/build-push-action@v5
         with:
           context: .
           file: deployments/Dockerfile
           push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Summary
         run: |
