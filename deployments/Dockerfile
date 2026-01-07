@@ -1,5 +1,9 @@
 FROM golang:1.24.3-alpine3.21 AS build
 
+# Use buildx automatic platform args
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+
 WORKDIR /app
 COPY go.mod go.sum ./
 
@@ -15,7 +19,11 @@ COPY extensions/ ./extensions/
 COPY deployments/tn-entrypoint.sh ./deployments/tn-entrypoint.sh
 
 # todo: incorporate task build process, otherwise images will lack information about the build
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /app/.build/kwild /app/cmd/kwild/main.go
+# Use build cache mounts for faster rebuilds
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -o /app/.build/kwild /app/cmd/kwild/main.go
 
 FROM postgres:16-alpine AS pg_repack_builder
 
