@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/types"
-	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	erc20shim "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
+	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	testerc20 "github.com/trufnetwork/node/tests/streams/utils/erc20"
 )
 
@@ -107,14 +107,15 @@ func TestHoodiGetWithdrawalProofAction(t *testing.T) {
 		var amount *types.Decimal
 		var blockHash, root []byte
 		var proofs [][]byte
+		var signatures [][]byte
 
 		r, err = platform.Engine.Call(engineCtx, platform.DB, "", "hoodi_get_withdrawal_proof",
 			[]any{testUser}, // Just wallet address parameter
 			func(row *common.Row) error {
 				proofRows++
 
-				// Verify all 9 columns are present
-				require.Equal(t, 9, len(row.Values), "should return 9 columns")
+				// Verify all 10 columns are present (including signatures)
+				require.Equal(t, 10, len(row.Values), "should return 10 columns including signatures")
 
 				// Extract values
 				chain = row.Values[0].(string)
@@ -135,7 +136,23 @@ func TestHoodiGetWithdrawalProofAction(t *testing.T) {
 					require.True(t, ok2, "proofs should be array (got type %T)", row.Values[8])
 					proofs = make([][]byte, len(proofsRaw))
 					for i, p := range proofsRaw {
-						proofs[i] = p.([]byte)
+						pb, ok3 := p.([]byte)
+						require.True(t, ok3, "proof element %d should be []byte (got type %T)", i, p)
+						proofs[i] = pb
+					}
+				}
+
+				// Extract signatures (BYTEA[] type) - NEW!
+				signatures, ok = row.Values[9].([][]byte)
+				if !ok {
+					// Fallback to []any
+					signaturesRaw, ok2 := row.Values[9].([]any)
+					require.True(t, ok2, "signatures should be array (got type %T)", row.Values[9])
+					signatures = make([][]byte, len(signaturesRaw))
+					for i, s := range signaturesRaw {
+						sb, ok3 := s.([]byte)
+						require.True(t, ok3, "signature element %d should be []byte (got type %T)", i, s)
+						signatures[i] = sb
 					}
 				}
 
@@ -153,7 +170,7 @@ func TestHoodiGetWithdrawalProofAction(t *testing.T) {
 		// Log what we got
 		t.Logf("Returned data: chain=%s, chainID=%s, contract=%s, recipient=%s", chain, chainID, contract, recipient)
 		t.Logf("Amount: %s", amount.String())
-		t.Logf("BlockHash length: %d, Root length: %d, Proofs length: %d", len(blockHash), len(root), len(proofs))
+		t.Logf("BlockHash length: %d, Root length: %d, Proofs length: %d, Signatures length: %d", len(blockHash), len(root), len(proofs), len(signatures))
 
 		// Verify returned data structure
 		require.Equal(t, MigrationHoodiChain, chain, "chain should match")
@@ -183,12 +200,21 @@ func TestHoodiGetWithdrawalProofAction(t *testing.T) {
 		t.Logf("Merkle root: 0x%s", hex.EncodeToString(root))
 		t.Logf("Total proof elements: %d", len(proofs))
 
+		// Verify validator signatures structure (NEW!)
+		require.NotEmpty(t, signatures, "should have at least one validator signature")
+		for i, sig := range signatures {
+			require.Equal(t, 65, len(sig), "signature %d should be 65 bytes (r||s||v)", i)
+			t.Logf("Signature %d length: %d bytes", i, len(sig))
+		}
+		t.Logf("Total validator signatures: %d", len(signatures))
+
 		t.Logf("✅ Public action hoodi_get_withdrawal_proof works correctly")
 		t.Logf("   Chain: %s", chain)
 		t.Logf("   ChainID: %s", chainID)
 		t.Logf("   Contract: %s", contract)
 		t.Logf("   Recipient: %s", recipient)
 		t.Logf("   Amount: %s wei", amount.String())
+		t.Logf("   Validator Signatures: %d", len(signatures))
 
 		return nil
 	})
@@ -266,11 +292,11 @@ func TestHoodiGetWithdrawalProofNoPending(t *testing.T) {
 	})
 }
 
-// TestHoodiGetWithdrawalProofMultipleWithdrawals tests multiple withdrawals in one epoch.
+// TestHoodiGetWithdrawalProofMultipleUsers tests multiple users with withdrawals in one epoch.
 // Note: Testing multiple EPOCHS requires complex timing logic not yet in test infrastructure.
-// This test validates that multiple withdrawals by the same user in one epoch are handled correctly.
-func TestHoodiGetWithdrawalProofMultipleWithdrawals(t *testing.T) {
-	seedAndRun(t, "hoodi_get_withdrawal_proof_multiple_withdrawals", func(ctx context.Context, platform *kwilTesting.Platform) error {
+// This test validates that multiple users can each retrieve their withdrawal proofs correctly.
+func TestHoodiGetWithdrawalProofMultipleUsers(t *testing.T) {
+	seedAndRun(t, "hoodi_get_withdrawal_proof_multiple_users", func(ctx context.Context, platform *kwilTesting.Platform) error {
 		userA := "0xabc0000000000000000000000000000000000001"
 		userB := "0xabc0000000000000000000000000000000000002"
 		amount100 := "100000000000000000000"
