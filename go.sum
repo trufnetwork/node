@@ -1218,12 +1218,16 @@ github.com/trufnetwork/kwil-db v0.10.3-0.20260108132315-b1fcfb33a848 h1:if1b7eUD
 github.com/trufnetwork/kwil-db v0.10.3-0.20260108132315-b1fcfb33a848/go.mod h1:LiBAC48uZl2B0IiLtD2hpOce7RNfpuDdghVAOc3u1Qo=
 github.com/trufnetwork/kwil-db v0.10.3-0.20260108143501-5a4b71722836 h1:imLAq+R1o8kIK++IxgEaOUEcgNWcSnFaJz3axHtX8aI=
 github.com/trufnetwork/kwil-db v0.10.3-0.20260108143501-5a4b71722836/go.mod h1:LiBAC48uZl2B0IiLtD2hpOce7RNfpuDdghVAOc3u1Qo=
+github.com/trufnetwork/kwil-db v0.10.3-0.20260108163022-4af0579f0ecf h1:m0mJy0kSyUn/POcTonSBmqVuhak5l8rRqBmJvP/7+Y8=
+github.com/trufnetwork/kwil-db v0.10.3-0.20260108163022-4af0579f0ecf/go.mod h1:LiBAC48uZl2B0IiLtD2hpOce7RNfpuDdghVAOc3u1Qo=
 github.com/trufnetwork/kwil-db/core v0.4.3-0.20260107154136-b8af58932e24 h1:5RcJ0Cyt9UaXwv71d9jYgwGL2zwyTJdP9m4wkk6B6Z8=
 github.com/trufnetwork/kwil-db/core v0.4.3-0.20260107154136-b8af58932e24/go.mod h1:HnOsh9+BN13LJCjiH0+XKaJzyjWKf+H9AofFFp90KwQ=
 github.com/trufnetwork/kwil-db/core v0.4.3-0.20260108132315-b1fcfb33a848 h1:/0naLqfmAqfL5XWdN1yulk5auImOP14Taw0B1baq3GU=
 github.com/trufnetwork/kwil-db/core v0.4.3-0.20260108132315-b1fcfb33a848/go.mod h1:HnOsh9+BN13LJCjiH0+XKaJzyjWKf+H9AofFFp90KwQ=
 github.com/trufnetwork/kwil-db/core v0.4.3-0.20260108143501-5a4b71722836 h1:GbT+bcD4LovTEpZPqCW49lKcaotB8Ytl5xs5wQT8UrI=
 github.com/trufnetwork/kwil-db/core v0.4.3-0.20260108143501-5a4b71722836/go.mod h1:HnOsh9+BN13LJCjiH0+XKaJzyjWKf+H9AofFFp90KwQ=
+github.com/trufnetwork/kwil-db/core v0.4.3-0.20260108163022-4af0579f0ecf h1:ysL3QbwQtONB4vS2iQ8YsxpdrrDa8ivpneRTWBi4daM=
+github.com/trufnetwork/kwil-db/core v0.4.3-0.20260108163022-4af0579f0ecf/go.mod h1:HnOsh9+BN13LJCjiH0+XKaJzyjWKf+H9AofFFp90KwQ=
 github.com/trufnetwork/openzeppelin-merkle-tree-go v0.0.2 h1:DCq8MzbWH0wZmICNmMVsSzUHUPl+2vqRhluEABjxl88=
 github.com/trufnetwork/openzeppelin-merkle-tree-go v0.0.2/go.mod h1:Y0MJpPp9QXU5vC6Gpoilql2NkgmGNcbHm9HYC2v2N8s=
 github.com/trufnetwork/sdk-go v0.3.2-0.20250630062504-841b40cdb709 h1:d9EqPXIjbq/atzEncK5dM3Z9oStx1BxCGuL/sjefeCw=
