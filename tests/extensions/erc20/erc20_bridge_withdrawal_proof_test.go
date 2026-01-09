@@ -98,6 +98,14 @@ func TestHoodiGetWithdrawalProofAction(t *testing.T) {
 		)
 		require.NoError(t, err, "failed to finalize epoch")
 
+		// Add validator signature for the epoch (required for withdrawal proofs)
+		err = erc20shim.ForTestingAddValidatorSignatureToEpoch(
+			ctx, platform,
+			MigrationHoodiChain,
+			MigrationHoodiEscrow,
+		)
+		require.NoError(t, err, "failed to add validator signature")
+
 		// Call the PUBLIC ACTION hoodi_get_withdrawal_proof
 		// This is the action users will call in production
 		engineCtx = engCtx(ctx, platform, "0x0000000000000000000000000000000000000000", 3, false)
@@ -381,6 +389,14 @@ func TestHoodiGetWithdrawalProofMultipleUsers(t *testing.T) {
 			MigrationHoodiEscrow,
 			12,
 			bh,
+		)
+		require.NoError(t, err)
+
+		// Add validator signature for the epoch
+		err = erc20shim.ForTestingAddValidatorSignatureToEpoch(
+			ctx, platform,
+			MigrationHoodiChain,
+			MigrationHoodiEscrow,
 		)
 		require.NoError(t, err)
 
