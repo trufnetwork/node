@@ -22,5 +22,5 @@ USE erc20 {
 USE erc20 {
     chain: 'hoodi',
     escrow: '0x878d6aaeb6e746033f50b8dc268d54b4631554e7',
-    distribution_period: '30m'
+    distribution_period: '10m'
 } AS hoodi_bridge;
