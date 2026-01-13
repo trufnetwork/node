@@ -19,9 +19,23 @@ USE erc20 {
     distribution_period: '10m'
 } AS sepolia_bridge;
 
--- The following is for test environments where the hoodi bridge is used. Please comment for production and use the above.
+-- The following is for test environments where the hoodi bridges are used. Please comment for production and use the above.
+-- First hoodi bridge: Test Token (TT)
+-- Token: 0x263ce78fef26600e4e428cebc91c2a52484b4fbf
+-- Proxy: 0x878d6aaeb6e746033f50b8dc268d54b4631554e7
+-- Explorer: https://hoodi.etherscan.io/address/0x878d6aaeb6e746033f50b8dc268d54b4631554e7
 USE erc20 {
     chain: 'hoodi',
     escrow: '0x878d6aaeb6e746033f50b8dc268d54b4631554e7',
     distribution_period: '10m'
-} AS hoodi_bridge;
+} AS hoodi_tt;
+
+-- Second hoodi bridge: Test Token 2 (TT2)
+-- Token: 0x1591DeAa21710E0BA6CC1b15F49620C9F65B2dEd
+-- Proxy: 0x9BD843A3ce718FE639e9968860B933b026784687
+-- Explorer: https://hoodi.etherscan.io/address/0x9BD843A3ce718FE639e9968860B933b026784687
+USE erc20 {
+    chain: 'hoodi',
+    escrow: '0x9BD843A3ce718FE639e9968860B933b026784687',
+    distribution_period: '10m'
+} AS hoodi_tt2;

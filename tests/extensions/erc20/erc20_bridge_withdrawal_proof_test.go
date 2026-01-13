@@ -21,29 +21,29 @@ const (
 	// Real Hoodi chain and addresses (from migrations)
 	MigrationHoodiChain  = "hoodi"
 	MigrationHoodiEscrow = "0x878d6aaeb6e746033f50b8dc268d54b4631554e7"
-	MigrationHoodiAlias  = "hoodi_bridge" // Alias from migration 000-extension.sql
+	MigrationHoodiAlias  = "hoodi_tt" // Alias from migration 000-extension.sql
 )
 
-// TestHoodiGetWithdrawalProofAction tests the public hoodi_get_withdrawal_proof action.
-// This test uses the migration-registered hoodi_bridge instance (not a test-specific instance).
+// TestHoodiGetWithdrawalProofAction tests the public hoodi_tt_get_withdrawal_proof action.
+// This test uses the migration-registered hoodi_tt instance (not a test-specific instance).
 //
 // Test flow:
 // 1) Seed data into migration-registered hoodi_bridge instance
 // 2) User deposits and withdraws
 // 3) Finalize and confirm epoch
-// 4) Call public action hoodi_get_withdrawal_proof
+// 4) Call public action hoodi_tt_get_withdrawal_proof
 // 5) Verify returned merkle proof structure
 //
 // This validates the full end-to-end public API that users will call.
 func TestHoodiGetWithdrawalProofAction(t *testing.T) {
-	seedAndRun(t, "hoodi_get_withdrawal_proof_action", func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// The hoodi_bridge instance is already created by migrations (000-extension.sql)
+	seedAndRun(t, "hoodi_tt_get_withdrawal_proof_action", func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// The hoodi_tt instance is already created by migrations (000-extension.sql)
 		// We just need to seed it with test data
 
 		testUser := "0xf9820f9143699cac6f662b19a4b29e13c9393783"
 		testAmount := "100000000000000000000" // 100 tokens
 
-		// The hoodi_bridge instance already exists from migrations
+		// The hoodi_tt instance already exists from migrations
 		// Need to sync it to database AND load into singleton
 		_, err := erc20shim.ForTestingForceSyncInstance(
 			ctx, platform,
@@ -52,7 +52,7 @@ func TestHoodiGetWithdrawalProofAction(t *testing.T) {
 			"0x0000000000000000000000000000000000000001", // Fake ERC20 for testing
 			18,
 		)
-		require.NoError(t, err, "failed to sync hoodi_bridge instance")
+		require.NoError(t, err, "failed to sync hoodi_tt instance")
 
 		// Load DB instances into singleton
 		err = erc20shim.ForTestingInitializeExtension(ctx, platform)
@@ -106,7 +106,7 @@ func TestHoodiGetWithdrawalProofAction(t *testing.T) {
 		)
 		require.NoError(t, err, "failed to add validator signature")
 
-		// Call the PUBLIC ACTION hoodi_get_withdrawal_proof
+		// Call the PUBLIC ACTION hoodi_tt_get_withdrawal_proof
 		// This is the action users will call in production
 		engineCtx = engCtx(ctx, platform, "0x0000000000000000000000000000000000000000", 3, false)
 
@@ -117,7 +117,7 @@ func TestHoodiGetWithdrawalProofAction(t *testing.T) {
 		var proofs [][]byte
 		var signatures [][]byte
 
-		r, err = platform.Engine.Call(engineCtx, platform.DB, "", "hoodi_get_withdrawal_proof",
+		r, err = platform.Engine.Call(engineCtx, platform.DB, "", "hoodi_tt_get_withdrawal_proof",
 			[]any{testUser}, // Just wallet address parameter
 			func(row *common.Row) error {
 				proofRows++
@@ -216,7 +216,7 @@ func TestHoodiGetWithdrawalProofAction(t *testing.T) {
 		}
 		t.Logf("Total validator signatures: %d", len(signatures))
 
-		t.Logf("✅ Public action hoodi_get_withdrawal_proof works correctly")
+		t.Logf("✅ Public action hoodi_tt_get_withdrawal_proof works correctly")
 		t.Logf("   Chain: %s", chain)
 		t.Logf("   ChainID: %s", chainID)
 		t.Logf("   Contract: %s", contract)
@@ -230,7 +230,7 @@ func TestHoodiGetWithdrawalProofAction(t *testing.T) {
 
 // TestHoodiGetWithdrawalProofNoPending tests that pending epochs are not returned.
 func TestHoodiGetWithdrawalProofNoPending(t *testing.T) {
-	seedAndRun(t, "hoodi_get_withdrawal_proof_no_pending", func(ctx context.Context, platform *kwilTesting.Platform) error {
+	seedAndRun(t, "hoodi_tt_get_withdrawal_proof_no_pending", func(ctx context.Context, platform *kwilTesting.Platform) error {
 		testUser := "0xabc0000000000000000000000000000000000001"
 		testAmount := "50000000000000000000"
 
@@ -280,7 +280,7 @@ func TestHoodiGetWithdrawalProofNoPending(t *testing.T) {
 		// Call public action
 		engineCtx = engCtx(ctx, platform, "0x0000000000000000000000000000000000000000", 3, false)
 		var proofRows int
-		r, err = platform.Engine.Call(engineCtx, platform.DB, "", "hoodi_get_withdrawal_proof",
+		r, err = platform.Engine.Call(engineCtx, platform.DB, "", "hoodi_tt_get_withdrawal_proof",
 			[]any{testUser},
 			func(row *common.Row) error {
 				proofRows++
@@ -304,7 +304,7 @@ func TestHoodiGetWithdrawalProofNoPending(t *testing.T) {
 // Note: Testing multiple EPOCHS requires complex timing logic not yet in test infrastructure.
 // This test validates that multiple users can each retrieve their withdrawal proofs correctly.
 func TestHoodiGetWithdrawalProofMultipleUsers(t *testing.T) {
-	seedAndRun(t, "hoodi_get_withdrawal_proof_multiple_users", func(ctx context.Context, platform *kwilTesting.Platform) error {
+	seedAndRun(t, "hoodi_tt_get_withdrawal_proof_multiple_users", func(ctx context.Context, platform *kwilTesting.Platform) error {
 		userA := "0xabc0000000000000000000000000000000000001"
 		userB := "0xabc0000000000000000000000000000000000002"
 		amount100 := "100000000000000000000"
@@ -405,7 +405,7 @@ func TestHoodiGetWithdrawalProofMultipleUsers(t *testing.T) {
 		var proofRowsA int
 		var amountA string
 
-		r, err = platform.Engine.Call(engineCtx, platform.DB, "", "hoodi_get_withdrawal_proof",
+		r, err = platform.Engine.Call(engineCtx, platform.DB, "", "hoodi_tt_get_withdrawal_proof",
 			[]any{userA},
 			func(row *common.Row) error {
 				proofRowsA++
@@ -424,7 +424,7 @@ func TestHoodiGetWithdrawalProofMultipleUsers(t *testing.T) {
 		var proofRowsB int
 		var amountB string
 
-		r, err = platform.Engine.Call(engineCtx, platform.DB, "", "hoodi_get_withdrawal_proof",
+		r, err = platform.Engine.Call(engineCtx, platform.DB, "", "hoodi_tt_get_withdrawal_proof",
 			[]any{userB},
 			func(row *common.Row) error {
 				proofRowsB++
