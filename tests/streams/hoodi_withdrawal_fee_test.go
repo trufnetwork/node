@@ -25,7 +25,7 @@ const (
 	testHoodiChain         = "hoodi"
 	testHoodiEscrow        = "0x878d6aaeb6e746033f50b8dc268d54b4631554e7" // Real Hoodi bridge proxy
 	testHoodiERC20         = "0x263ce78fef26600e4e428cebc91c2a52484b4fbf" // Real TRUF token on Hoodi
-	testHoodiExtensionName = "hoodi_bridge"                              // Extension name from migrations
+	testHoodiExtensionName = "hoodi_tt"                                  // Extension name from migrations
 	hoodiWithdrawalFee     = "40000000000000000000"                      // 40 TRUF with 18 decimals
 )
 
@@ -45,7 +45,7 @@ func mustParseHoodiBigInt(s string) *big.Int {
 }
 
 // TestHoodiWithdrawalFees is the main test suite for Hoodi bridge withdrawal fees
-// This test validates the hoodi_bridge_tokens action defined in 001-actions.sql
+// This test validates the hoodi_tt_bridge_tokens action defined in 001-actions.sql
 func TestHoodiWithdrawalFees(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
 		Name:           "HOODI_WITHDRAWAL_FEE01_WithdrawalFees",
@@ -71,7 +71,7 @@ func setupHoodiWithdrawalTestEnvironment(t *testing.T) func(ctx context.Context,
 		platform.Deployer = systemAdmin.Bytes()
 
 		// Sync and initialize Hoodi bridge extension
-		// The hoodi_bridge instance is created by migrations (000-extension.sql)
+		// The hoodi_tt instance is created by migrations (000-extension.sql)
 		// ForTestingForceSyncInstance ensures it's synced in DB
 		_, err := erc20shim.ForTestingForceSyncInstance(
 			ctx,
@@ -96,7 +96,7 @@ func setupHoodiWithdrawalTestEnvironment(t *testing.T) func(ctx context.Context,
 	}
 }
 
-// Test 1: hoodi_bridge_tokens pays 40 TRUF fee
+// Test 1: hoodi_tt_bridge_tokens pays 40 TRUF fee
 func testHoodiWithdrawalPaysFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Re-initialize extension in this test (singleton might have been reset)
@@ -124,7 +124,7 @@ func testHoodiWithdrawalPaysFee(t *testing.T) func(ctx context.Context, platform
 		// Withdraw 10 TRUF (should deduct 50 TRUF total: 10 withdrawal + 40 fee)
 		withdrawAmount := "10000000000000000000" // 10 TRUF
 		err = executeHoodiWithdrawalWithLeader(ctx, platform, userAddr, pub, userAddr.Address(), withdrawAmount)
-		require.NoError(t, err, "hoodi_bridge_tokens should succeed")
+		require.NoError(t, err, "hoodi_tt_bridge_tokens should succeed")
 
 		// Verify balance decreased by 50 TRUF (10 TRUF withdrawal + 40 TRUF fee)
 		finalBalance, err := getHoodiBalance(ctx, platform, userAddr.Address())
@@ -137,7 +137,7 @@ func testHoodiWithdrawalPaysFee(t *testing.T) func(ctx context.Context, platform
 			"Balance should decrease by 50 TRUF (10 withdrawal + 40 fee), expected %s but got %s",
 			expectedBalance, finalBalance)
 
-		t.Logf("✅ hoodi_bridge_tokens correctly deducted 50 TRUF (10 withdrawal + 40 fee)")
+		t.Logf("✅ hoodi_tt_bridge_tokens correctly deducted 50 TRUF (10 withdrawal + 40 fee)")
 		return nil
 	}
 }
@@ -164,11 +164,11 @@ func testHoodiWithdrawalInsufficientBalance(t *testing.T) func(ctx context.Conte
 		// Try to withdraw 10 TRUF (should fail - needs 50 TRUF total)
 		withdrawAmount := "10000000000000000000" // 10 TRUF
 		err = executeHoodiWithdrawalWithLeader(ctx, platform, userAddr, pub, userAddr.Address(), withdrawAmount)
-		require.Error(t, err, "hoodi_bridge_tokens should fail with insufficient balance")
+		require.Error(t, err, "hoodi_tt_bridge_tokens should fail with insufficient balance")
 		require.Contains(t, err.Error(), "Insufficient balance for withdrawal",
 			"error should mention insufficient balance, got: %v", err)
 
-		t.Logf("✅ hoodi_bridge_tokens correctly rejects insufficient balance (30 TRUF < 50 TRUF needed)")
+		t.Logf("✅ hoodi_tt_bridge_tokens correctly rejects insufficient balance (30 TRUF < 50 TRUF needed)")
 		return nil
 	}
 }
@@ -212,7 +212,7 @@ func testHoodiWithdrawalLeaderReceivesFees(t *testing.T) func(ctx context.Contex
 		// Withdraw 10 TRUF with specific leader
 		withdrawAmount := "10000000000000000000" // 10 TRUF
 		err = executeHoodiWithdrawalWithLeader(ctx, platform, userAddr, pub, userAddr.Address(), withdrawAmount)
-		require.NoError(t, err, "hoodi_bridge_tokens with leader should succeed")
+		require.NoError(t, err, "hoodi_tt_bridge_tokens with leader should succeed")
 
 		// Verify leader balance increased by 40 TRUF
 		finalLeaderBalance, err := getHoodiBalance(ctx, platform, leaderAddr)
@@ -255,10 +255,10 @@ func testHoodiWithdrawalFeeRecordedInLedger(t *testing.T) func(ctx context.Conte
 		// Withdraw 10 TRUF
 		withdrawAmount := "10000000000000000000" // 10 TRUF
 		err = executeHoodiWithdrawalWithLeader(ctx, platform, userAddr, pub, userAddr.Address(), withdrawAmount)
-		require.NoError(t, err, "hoodi_bridge_tokens should succeed")
+		require.NoError(t, err, "hoodi_tt_bridge_tokens should succeed")
 
 		// Query transaction_events table to verify fee was recorded
-		// The hoodi_bridge_tokens action calls record_transaction_event(5, $withdrawal_fee, leader, NULL)
+		// The hoodi_tt_bridge_tokens action calls record_transaction_event(5, $withdrawal_fee, leader, NULL)
 		// Table schema: method_id (INT), fee_amount (NUMERIC), fee_recipient (TEXT)
 		query := `SELECT method_id, fee_amount::TEXT, fee_recipient FROM transaction_events
 		          WHERE method_id = 5 AND fee_recipient IS NOT NULL
@@ -351,7 +351,7 @@ func getHoodiBalance(ctx context.Context, platform *kwilTesting.Platform, wallet
 	return balance, nil
 }
 
-// callHoodiWithdrawalAction calls the hoodi_bridge_tokens action
+// callHoodiWithdrawalAction calls the hoodi_tt_bridge_tokens action
 func callHoodiWithdrawalAction(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, leaderPub *crypto.Secp256k1PublicKey, recipient string, amount string) error {
 	tx := &common.TxContext{
 		Ctx: ctx,
@@ -366,12 +366,12 @@ func callHoodiWithdrawalAction(ctx context.Context, platform *kwilTesting.Platfo
 	}
 	engineCtx := &common.EngineContext{TxContext: tx}
 
-	// Call hoodi_bridge_tokens action (defined in 001-actions.sql)
+	// Call hoodi_tt_bridge_tokens action (defined in 001-actions.sql)
 	res, err := platform.Engine.Call(
 		engineCtx,
 		platform.DB,
 		"",
-		"hoodi_bridge_tokens", // Hoodi-specific action with 40 TRUF fee
+		"hoodi_tt_bridge_tokens", // Hoodi TT-specific action with 40 TRUF fee
 		[]any{recipient, amount},
 		func(row *common.Row) error { return nil },
 	)
