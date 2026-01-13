@@ -22,38 +22,18 @@ CREATE OR REPLACE ACTION hoodi_tt_wallet_balance($wallet_address TEXT) PUBLIC VI
 };
 
 CREATE OR REPLACE ACTION hoodi_tt_bridge_tokens($recipient TEXT DEFAULT NULL, $amount TEXT) PUBLIC {
-  -- ===== FEE COLLECTION (NO EXEMPTION - USER-FACING OPERATION) =====
-  $withdrawal_fee := '40000000000000000000'::NUMERIC(78, 0); -- 40 TRUF with 18 decimals
   $withdrawal_amount := $amount::NUMERIC(78, 0);
-  $total_required := $withdrawal_amount + $withdrawal_fee;
-
   $caller_balance := COALESCE(hoodi_tt.balance(@caller), 0::NUMERIC(78, 0));
 
-  IF $caller_balance < $total_required {
+  IF $caller_balance < $withdrawal_amount {
     ERROR('Insufficient balance for withdrawal. Required: ' ||
-          ($total_required / '1000000000000000000'::NUMERIC(78, 0))::TEXT ||
-          ' TRUF (' || $withdrawal_amount::TEXT || ' wei withdrawal + ' ||
-          ($withdrawal_fee / '1000000000000000000'::NUMERIC(78, 0))::TEXT || ' TRUF fee)');
+          ($withdrawal_amount / '1000000000000000000'::NUMERIC(78, 0))::TEXT || ' tokens');
   }
-
-  IF @leader_sender IS NULL {
-    ERROR('Leader address not available for fee transfer');
-  }
-  $leader_hex TEXT := encode(@leader_sender, 'hex')::TEXT;
-  hoodi_tt.transfer($leader_hex, $withdrawal_fee);
-  -- ===== END FEE COLLECTION =====
 
   $bridge_recipient TEXT := LOWER(COALESCE($recipient, @caller));
 
   -- Execute withdrawal using the bridge extension
   hoodi_tt.bridge($bridge_recipient, $withdrawal_amount);
-
-  record_transaction_event(
-    5,
-    $withdrawal_fee,
-    '0x' || $leader_hex,
-    NULL
-  );
 };
 
 -- HOODI TESTNET - Test Token 2 (TT2)
@@ -80,38 +60,18 @@ CREATE OR REPLACE ACTION hoodi_tt2_wallet_balance($wallet_address TEXT) PUBLIC V
 };
 
 CREATE OR REPLACE ACTION hoodi_tt2_bridge_tokens($recipient TEXT DEFAULT NULL, $amount TEXT) PUBLIC {
-  -- ===== FEE COLLECTION (NO EXEMPTION - USER-FACING OPERATION) =====
-  $withdrawal_fee := '40000000000000000000'::NUMERIC(78, 0); -- 40 TRUF with 18 decimals
   $withdrawal_amount := $amount::NUMERIC(78, 0);
-  $total_required := $withdrawal_amount + $withdrawal_fee;
-
   $caller_balance := COALESCE(hoodi_tt2.balance(@caller), 0::NUMERIC(78, 0));
 
-  IF $caller_balance < $total_required {
+  IF $caller_balance < $withdrawal_amount {
     ERROR('Insufficient balance for withdrawal. Required: ' ||
-          ($total_required / '1000000000000000000'::NUMERIC(78, 0))::TEXT ||
-          ' TRUF (' || $withdrawal_amount::TEXT || ' wei withdrawal + ' ||
-          ($withdrawal_fee / '1000000000000000000'::NUMERIC(78, 0))::TEXT || ' TRUF fee)');
+          ($withdrawal_amount / '1000000000000000000'::NUMERIC(78, 0))::TEXT || ' tokens');
   }
-
-  IF @leader_sender IS NULL {
-    ERROR('Leader address not available for fee transfer');
-  }
-  $leader_hex TEXT := encode(@leader_sender, 'hex')::TEXT;
-  hoodi_tt2.transfer($leader_hex, $withdrawal_fee);
-  -- ===== END FEE COLLECTION =====
 
   $bridge_recipient TEXT := LOWER(COALESCE($recipient, @caller));
 
   -- Execute withdrawal using the bridge extension
   hoodi_tt2.bridge($bridge_recipient, $withdrawal_amount);
-
-  record_transaction_event(
-    5,
-    $withdrawal_fee,
-    '0x' || $leader_hex,
-    NULL
-  );
 };
 
 -- SEPOLIA TESTNET (kept for reference)

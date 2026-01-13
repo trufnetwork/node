@@ -20,19 +20,17 @@ import (
 	"github.com/trufnetwork/sdk-go/core/util"
 )
 
-// Test constants for Hoodi withdrawal fees
+// Test constants for Hoodi bridge (no withdrawal fees)
 const (
 	testHoodiChain         = "hoodi"
 	testHoodiEscrow        = "0x878d6aaeb6e746033f50b8dc268d54b4631554e7" // Real Hoodi bridge proxy
 	testHoodiERC20         = "0x263ce78fef26600e4e428cebc91c2a52484b4fbf" // Real TRUF token on Hoodi
 	testHoodiExtensionName = "hoodi_tt"                                  // Extension name from migrations
-	hoodiWithdrawalFee     = "40000000000000000000"                      // 40 TRUF with 18 decimals
 )
 
 var (
-	fortyTRUFHoodiFee          = mustParseHoodiBigInt(hoodiWithdrawalFee) // 40 TRUF as big.Int
-	hoodiPointCounter   int64  = 6000                                     // Start from 6000, increment for each balance injection
-	hoodiPrevPoint      *int64                                            // Track previous point for deposit chaining
+	hoodiPointCounter int64  = 6000  // Start from 6000, increment for each balance injection
+	hoodiPrevPoint    *int64         // Track previous point for deposit chaining
 )
 
 func mustParseHoodiBigInt(s string) *big.Int {
@@ -44,18 +42,17 @@ func mustParseHoodiBigInt(s string) *big.Int {
 	return val
 }
 
-// TestHoodiWithdrawalFees is the main test suite for Hoodi bridge withdrawal fees
+// TestHoodiWithdrawalNoFees is the main test suite for Hoodi bridge withdrawals (no fees)
 // This test validates the hoodi_tt_bridge_tokens action defined in 001-actions.sql
-func TestHoodiWithdrawalFees(t *testing.T) {
+func TestHoodiWithdrawalNoFees(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name:           "HOODI_WITHDRAWAL_FEE01_WithdrawalFees",
+		Name:           "HOODI_WITHDRAWAL_NOFEE01_NoWithdrawalFees",
 		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			setupHoodiWithdrawalTestEnvironment(t),
-			testHoodiWithdrawalPaysFee(t),
+			testHoodiWithdrawalNoFee(t),
 			testHoodiWithdrawalInsufficientBalance(t),
-			testHoodiWithdrawalLeaderReceivesFees(t),
-			testHoodiWithdrawalFeeRecordedInLedger(t),
+			testHoodiWithdrawalLeaderReceivesNoFees(t),
 		},
 	}, testutils.GetTestOptionsWithCache())
 }
@@ -96,8 +93,8 @@ func setupHoodiWithdrawalTestEnvironment(t *testing.T) func(ctx context.Context,
 	}
 }
 
-// Test 1: hoodi_tt_bridge_tokens pays 40 TRUF fee
-func testHoodiWithdrawalPaysFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+// Test 1: hoodi_tt_bridge_tokens charges no fee
+func testHoodiWithdrawalNoFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Re-initialize extension in this test (singleton might have been reset)
 		err := erc20shim.ForTestingInitializeExtension(ctx, platform)
@@ -116,33 +113,32 @@ func testHoodiWithdrawalPaysFee(t *testing.T) func(ctx context.Context, platform
 		t.Logf("DEBUG: User balance after deposit: %s", initialBalance.String())
 		require.Equal(t, "100000000000000000000", initialBalance.String(), "initial balance should be 100 TRUF (got %s)", initialBalance.String())
 
-		// Generate leader for fee recipient
+		// Generate leader
 		_, pubGeneric, err := crypto.GenerateSecp256k1Key(nil)
 		require.NoError(t, err, "failed to generate leader key")
 		pub := pubGeneric.(*crypto.Secp256k1PublicKey)
 
-		// Withdraw 10 TRUF (should deduct 50 TRUF total: 10 withdrawal + 40 fee)
+		// Withdraw 10 TRUF (should deduct only 10 TRUF, no fee)
 		withdrawAmount := "10000000000000000000" // 10 TRUF
 		err = executeHoodiWithdrawalWithLeader(ctx, platform, userAddr, pub, userAddr.Address(), withdrawAmount)
 		require.NoError(t, err, "hoodi_tt_bridge_tokens should succeed")
 
-		// Verify balance decreased by 50 TRUF (10 TRUF withdrawal + 40 TRUF fee)
+		// Verify balance decreased by exactly 10 TRUF (no fee)
 		finalBalance, err := getHoodiBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to get final balance")
 
 		withdrawAmountBig, _ := new(big.Int).SetString(withdrawAmount, 10)
-		expectedDeduction := new(big.Int).Add(withdrawAmountBig, fortyTRUFHoodiFee)
-		expectedBalance := new(big.Int).Sub(initialBalance, expectedDeduction)
+		expectedBalance := new(big.Int).Sub(initialBalance, withdrawAmountBig)
 		require.Equal(t, 0, expectedBalance.Cmp(finalBalance),
-			"Balance should decrease by 50 TRUF (10 withdrawal + 40 fee), expected %s but got %s",
+			"Balance should decrease by exactly 10 TRUF (no fee), expected %s but got %s",
 			expectedBalance, finalBalance)
 
-		t.Logf("✅ hoodi_tt_bridge_tokens correctly deducted 50 TRUF (10 withdrawal + 40 fee)")
+		t.Logf("✅ hoodi_tt_bridge_tokens correctly deducted only 10 TRUF (no fee)")
 		return nil
 	}
 }
 
-// Test 2: Insufficient balance for withdrawal + fee fails
+// Test 2: Insufficient balance for withdrawal fails
 func testHoodiWithdrawalInsufficientBalance(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Re-initialize extension in this test (singleton might have been reset)
@@ -152,29 +148,29 @@ func testHoodiWithdrawalInsufficientBalance(t *testing.T) func(ctx context.Conte
 		userAddrVal := util.Unsafe_NewEthereumAddressFromString("0xc222222222222222222222222222222222222222")
 		userAddr := &userAddrVal
 
-		// Give user only 30 TRUF (insufficient for 10 TRUF withdrawal + 40 TRUF fee = 50 TRUF needed)
-		err = giveHoodiBalance(ctx, platform, userAddr.Address(), "30000000000000000000")
+		// Give user only 5 TRUF (insufficient for 10 TRUF withdrawal)
+		err = giveHoodiBalance(ctx, platform, userAddr.Address(), "5000000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
-		// Generate leader for fee recipient
+		// Generate leader
 		_, pubGeneric, err := crypto.GenerateSecp256k1Key(nil)
 		require.NoError(t, err, "failed to generate leader key")
 		pub := pubGeneric.(*crypto.Secp256k1PublicKey)
 
-		// Try to withdraw 10 TRUF (should fail - needs 50 TRUF total)
+		// Try to withdraw 10 TRUF (should fail - only has 5 TRUF)
 		withdrawAmount := "10000000000000000000" // 10 TRUF
 		err = executeHoodiWithdrawalWithLeader(ctx, platform, userAddr, pub, userAddr.Address(), withdrawAmount)
 		require.Error(t, err, "hoodi_tt_bridge_tokens should fail with insufficient balance")
 		require.Contains(t, err.Error(), "Insufficient balance for withdrawal",
 			"error should mention insufficient balance, got: %v", err)
 
-		t.Logf("✅ hoodi_tt_bridge_tokens correctly rejects insufficient balance (30 TRUF < 50 TRUF needed)")
+		t.Logf("✅ hoodi_tt_bridge_tokens correctly rejects insufficient balance (5 TRUF < 10 TRUF needed)")
 		return nil
 	}
 }
 
-// Test 3: Leader receives 40 TRUF fee
-func testHoodiWithdrawalLeaderReceivesFees(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+// Test 3: Leader receives no fees
+func testHoodiWithdrawalLeaderReceivesNoFees(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Re-initialize extension in this test (singleton might have been reset)
 		err := erc20shim.ForTestingInitializeExtension(ctx, platform)
@@ -214,95 +210,16 @@ func testHoodiWithdrawalLeaderReceivesFees(t *testing.T) func(ctx context.Contex
 		err = executeHoodiWithdrawalWithLeader(ctx, platform, userAddr, pub, userAddr.Address(), withdrawAmount)
 		require.NoError(t, err, "hoodi_tt_bridge_tokens with leader should succeed")
 
-		// Verify leader balance increased by 40 TRUF
+		// Verify leader balance stays at 0 (no fee transfer)
 		finalLeaderBalance, err := getHoodiBalance(ctx, platform, leaderAddr)
 		require.NoError(t, err, "failed to get final leader balance")
 
-		expectedLeaderBalance := new(big.Int).Add(initialLeaderBalance, fortyTRUFHoodiFee)
-		require.Equal(t, 0, expectedLeaderBalance.Cmp(finalLeaderBalance),
-			"Leader should receive 40 TRUF fee, expected %s but got %s",
-			expectedLeaderBalance, finalLeaderBalance)
-
-		t.Logf("✅ Leader correctly received 40 TRUF fee (balance: %s → %s)",
+		require.Equal(t, 0, initialLeaderBalance.Cmp(finalLeaderBalance),
+			"Leader should receive no fee, balance should stay %s but got %s",
 			initialLeaderBalance, finalLeaderBalance)
-		return nil
-	}
-}
 
-// Test 4: Withdrawal fee is recorded in transaction ledger
-func testHoodiWithdrawalFeeRecordedInLedger(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
-	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Re-initialize extension in this test
-		err := erc20shim.ForTestingInitializeExtension(ctx, platform)
-		require.NoError(t, err, "failed to re-initialize extension")
-
-		userAddrVal := util.Unsafe_NewEthereumAddressFromString("0xc444444444444444444444444444444444444444")
-		userAddr := &userAddrVal
-
-		// Give user 100 TRUF
-		// Reset deposit chain for test independence
-		hoodiPrevPoint = nil
-		err = giveHoodiBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
-		require.NoError(t, err, "failed to give balance")
-
-		// Generate leader keys
-		_, pubGeneric, err := crypto.GenerateSecp256k1Key(nil)
-		require.NoError(t, err, "failed to generate leader key")
-		pub := pubGeneric.(*crypto.Secp256k1PublicKey)
-		leaderSigner := crypto.EthereumAddressFromPubKey(pub)
-		leaderAddr := fmt.Sprintf("0x%x", leaderSigner)
-
-		// Withdraw 10 TRUF
-		withdrawAmount := "10000000000000000000" // 10 TRUF
-		err = executeHoodiWithdrawalWithLeader(ctx, platform, userAddr, pub, userAddr.Address(), withdrawAmount)
-		require.NoError(t, err, "hoodi_tt_bridge_tokens should succeed")
-
-		// Query transaction_events table to verify fee was recorded
-		// The hoodi_tt_bridge_tokens action calls record_transaction_event(5, $withdrawal_fee, leader, NULL)
-		// Table schema: method_id (INT), fee_amount (NUMERIC), fee_recipient (TEXT)
-		query := `SELECT method_id, fee_amount::TEXT, fee_recipient FROM transaction_events
-		          WHERE method_id = 5 AND fee_recipient IS NOT NULL
-		          ORDER BY block_height DESC LIMIT 1`
-
-		var methodID int
-		var feeAmount string
-		var feeRecipient string
-		var found bool
-
-		err = platform.Engine.ExecuteWithoutEngineCtx(ctx, platform.DB, query, map[string]any{}, func(row *common.Row) error {
-			found = true
-			if len(row.Values) >= 3 {
-				// Safe type assertions with comma-ok idiom
-				if val, ok := row.Values[0].(int64); ok {
-					methodID = int(val)
-				} else {
-					return fmt.Errorf("expected int64 for method_id, got %T", row.Values[0])
-				}
-
-				if val, ok := row.Values[1].(string); ok {
-					feeAmount = val
-				} else {
-					return fmt.Errorf("expected string for fee_amount, got %T", row.Values[1])
-				}
-
-				if val, ok := row.Values[2].(string); ok {
-					feeRecipient = val
-				} else {
-					return fmt.Errorf("expected string for fee_recipient, got %T", row.Values[2])
-				}
-			}
-			return nil
-		})
-		require.NoError(t, err, "failed to query transaction_events")
-		require.True(t, found, "withdrawal fee event should be recorded in transaction_events")
-
-		// Verify event details
-		require.Equal(t, 5, methodID, "method_id should be 5 (withdrawal fee)")
-		require.Equal(t, hoodiWithdrawalFee, feeAmount, "fee_amount should be 40 TRUF fee")
-		require.Equal(t, leaderAddr, feeRecipient, "fee_recipient should be leader address")
-
-		t.Logf("✅ Withdrawal fee correctly recorded in transaction_events (event_type=5, amount=40 TRUF, recipient=%s)",
-			leaderAddr)
+		t.Logf("✅ Leader correctly received no fee (balance: %s → %s)",
+			initialLeaderBalance, finalLeaderBalance)
 		return nil
 	}
 }
@@ -371,7 +288,7 @@ func callHoodiWithdrawalAction(ctx context.Context, platform *kwilTesting.Platfo
 		engineCtx,
 		platform.DB,
 		"",
-		"hoodi_tt_bridge_tokens", // Hoodi TT-specific action with 40 TRUF fee
+		"hoodi_tt_bridge_tokens", // Hoodi TT bridge action (no fees)
 		[]any{recipient, amount},
 		func(row *common.Row) error { return nil },
 	)
@@ -384,7 +301,7 @@ func callHoodiWithdrawalAction(ctx context.Context, platform *kwilTesting.Platfo
 	return nil
 }
 
-// executeHoodiWithdrawalWithLeader executes a withdrawal with a specific leader (for testing fee recipient)
+// executeHoodiWithdrawalWithLeader executes a withdrawal with a specific leader
 func executeHoodiWithdrawalWithLeader(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, leaderPub *crypto.Secp256k1PublicKey, recipient string, amount string) error {
 	return callHoodiWithdrawalAction(ctx, platform, signer, leaderPub, recipient, amount)
 }
