@@ -96,7 +96,7 @@ func setupHoodiWithdrawalTestEnvironment(t *testing.T) func(ctx context.Context,
 	}
 }
 
-// Test 1: hoodi_bridge_tokens pays 40 TRUF fee
+// Test 1: hoodi_tt_bridge_tokens pays 40 TRUF fee
 func testHoodiWithdrawalPaysFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Re-initialize extension in this test (singleton might have been reset)
@@ -137,7 +137,7 @@ func testHoodiWithdrawalPaysFee(t *testing.T) func(ctx context.Context, platform
 			"Balance should decrease by 50 TRUF (10 withdrawal + 40 fee), expected %s but got %s",
 			expectedBalance, finalBalance)
 
-		t.Logf("✅ hoodi_bridge_tokens correctly deducted 50 TRUF (10 withdrawal + 40 fee)")
+		t.Logf("✅ hoodi_tt_bridge_tokens correctly deducted 50 TRUF (10 withdrawal + 40 fee)")
 		return nil
 	}
 }
@@ -168,7 +168,7 @@ func testHoodiWithdrawalInsufficientBalance(t *testing.T) func(ctx context.Conte
 		require.Contains(t, err.Error(), "Insufficient balance for withdrawal",
 			"error should mention insufficient balance, got: %v", err)
 
-		t.Logf("✅ hoodi_bridge_tokens correctly rejects insufficient balance (30 TRUF < 50 TRUF needed)")
+		t.Logf("✅ hoodi_tt_bridge_tokens correctly rejects insufficient balance (30 TRUF < 50 TRUF needed)")
 		return nil
 	}
 }
@@ -212,7 +212,7 @@ func testHoodiWithdrawalLeaderReceivesFees(t *testing.T) func(ctx context.Contex
 		// Withdraw 10 TRUF with specific leader
 		withdrawAmount := "10000000000000000000" // 10 TRUF
 		err = executeHoodiWithdrawalWithLeader(ctx, platform, userAddr, pub, userAddr.Address(), withdrawAmount)
-		require.NoError(t, err, "hoodi_bridge_tokens with leader should succeed")
+		require.NoError(t, err, "hoodi_tt_bridge_tokens with leader should succeed")
 
 		// Verify leader balance increased by 40 TRUF
 		finalLeaderBalance, err := getHoodiBalance(ctx, platform, leaderAddr)
@@ -351,7 +351,7 @@ func getHoodiBalance(ctx context.Context, platform *kwilTesting.Platform, wallet
 	return balance, nil
 }
 
-// callHoodiWithdrawalAction calls the hoodi_bridge_tokens action
+// callHoodiWithdrawalAction calls the hoodi_tt_bridge_tokens action
 func callHoodiWithdrawalAction(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, leaderPub *crypto.Secp256k1PublicKey, recipient string, amount string) error {
 	tx := &common.TxContext{
 		Ctx: ctx,

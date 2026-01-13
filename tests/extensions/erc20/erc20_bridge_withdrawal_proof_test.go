@@ -28,7 +28,7 @@ const (
 // This test uses the migration-registered hoodi_tt instance (not a test-specific instance).
 //
 // Test flow:
-// 1) Seed data into migration-registered hoodi_bridge instance
+// 1) Seed data into migration-registered hoodi_tt instance
 // 2) User deposits and withdraws
 // 3) Finalize and confirm epoch
 // 4) Call public action hoodi_tt_get_withdrawal_proof
