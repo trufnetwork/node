@@ -32,10 +32,10 @@ USE erc20 {
 
 -- Second hoodi bridge: Test Token 2 (TT2)
 -- Token: 0x1591DeAa21710E0BA6CC1b15F49620C9F65B2dEd
--- Proxy: 0x9BD843A3ce718FE639e9968860B933b026784687
--- Explorer: https://hoodi.etherscan.io/address/0x9BD843A3ce718FE639e9968860B933b026784687
+-- Proxy: 0x80D9B3b6941367917816d36748C88B303f7F1415
+-- Explorer: https://hoodi.etherscan.io/address/0x80D9B3b6941367917816d36748C88B303f7F1415
 USE erc20 {
     chain: 'hoodi',
-    escrow: '0x9BD843A3ce718FE639e9968860B933b026784687',
+    escrow: '0x80D9B3b6941367917816d36748C88B303f7F1415',
     distribution_period: '10m'
 } AS hoodi_tt2;
