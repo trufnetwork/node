@@ -5,7 +5,62 @@
  * - create_market: Create a new prediction market
  * - get_market_info: Get market details by ID
  * - list_markets: List markets with optional filtering
+ *
+ * Bridge Support:
+ * - All collateral-locking actions accept a $bridge parameter
+ * - Supported bridges: hoodi_tt2, sepolia_bridge, ethereum_bridge
  */
+
+-- =============================================================================
+-- validate_bridge: Helper to validate bridge parameter
+-- =============================================================================
+/**
+ * Validates that the bridge parameter is one of the supported bridges.
+ * Throws an error if invalid.
+ *
+ * Parameters:
+ * - $bridge: The bridge namespace to validate
+ */
+CREATE OR REPLACE ACTION validate_bridge($bridge TEXT) PRIVATE {
+    if $bridge IS NULL {
+        ERROR('bridge parameter is required');
+    }
+
+    if $bridge != 'hoodi_tt2' AND
+       $bridge != 'sepolia_bridge' AND
+       $bridge != 'ethereum_bridge' {
+        ERROR('Invalid bridge. Supported: hoodi_tt2, sepolia_bridge, ethereum_bridge');
+    }
+
+    RETURN;
+};
+
+-- =============================================================================
+-- get_market_bridge: Get the bridge for a market
+-- =============================================================================
+/**
+ * Retrieves the bridge namespace for a given market.
+ * Throws an error if market doesn't exist.
+ *
+ * Parameters:
+ * - $query_id: The market ID
+ *
+ * Returns:
+ * - The bridge namespace (hoodi_tt2, sepolia_bridge, or ethereum_bridge)
+ */
+CREATE OR REPLACE ACTION get_market_bridge($query_id INT) PRIVATE RETURNS (bridge TEXT) {
+    $found_bridge TEXT;
+
+    for $row in SELECT bridge FROM ob_queries WHERE id = $query_id {
+        $found_bridge := $row.bridge;
+    }
+
+    if $found_bridge IS NULL {
+        ERROR('Market does not exist (query_id: ' || $query_id::TEXT || ')');
+    }
+
+    RETURN $found_bridge;
+};
 
 -- =============================================================================
 -- create_market: Create a new prediction market
@@ -15,6 +70,7 @@
  * identified by a unique hash derived from the attestation query parameters.
  *
  * Parameters:
+ * - $bridge: Bridge namespace for collateral (hoodi_tt2, sepolia_bridge, ethereum_bridge)
  * - $query_hash: SHA256 hash of (data_provider + stream_id + action_id + args) - 32 bytes
  * - $settle_time: Unix timestamp when market can be settled (must be in future)
  * - $max_spread: Maximum spread for LP rewards (1-50 cents)
@@ -27,6 +83,7 @@
  * - 2 TRUF market creation fee (TODO: adjust based on spam prevention needs)
  */
 CREATE OR REPLACE ACTION create_market(
+    $bridge TEXT,
     $query_hash BYTEA,
     $settle_time INT8,
     $max_spread INT,
@@ -35,6 +92,9 @@ CREATE OR REPLACE ACTION create_market(
     -- ==========================================================================
     -- VALIDATION
     -- ==========================================================================
+
+    -- Validate bridge parameter
+    validate_bridge($bridge);
 
     -- Validate query hash (must be exactly 32 bytes for SHA256)
     -- Note: length() doesn't support BYTEA in Kuneiform, so we use encode() to convert
@@ -69,9 +129,16 @@ CREATE OR REPLACE ACTION create_market(
     -- TODO: Adjust fee based on spam prevention needs
     $market_creation_fee NUMERIC(78, 0) := '2000000000000000000'::NUMERIC(78, 0);
 
-    -- Check caller has sufficient balance
+    -- Check caller has sufficient balance (bridge-specific)
     -- TODO: Review when USDC bridge available
-    $caller_balance NUMERIC(78, 0) := COALESCE(ethereum_bridge.balance(@caller), 0::NUMERIC(78, 0));
+    $caller_balance NUMERIC(78, 0);
+    if $bridge = 'hoodi_tt2' {
+        $caller_balance := COALESCE(hoodi_tt2.balance(@caller), 0::NUMERIC(78, 0));
+    } else if $bridge = 'sepolia_bridge' {
+        $caller_balance := COALESCE(sepolia_bridge.balance(@caller), 0::NUMERIC(78, 0));
+    } else if $bridge = 'ethereum_bridge' {
+        $caller_balance := COALESCE(ethereum_bridge.balance(@caller), 0::NUMERIC(78, 0));
+    }
 
     if $caller_balance < $market_creation_fee {
         ERROR('Insufficient balance for market creation fee. Required: 2 TRUF');
@@ -82,11 +149,17 @@ CREATE OR REPLACE ACTION create_market(
         ERROR('Leader address not available for fee transfer');
     }
 
-    -- Transfer fee to leader
+    -- Transfer fee to leader (bridge-specific)
     -- Note: Bridge operations throw ERROR on failure (insufficient balance, etc.)
     -- so no explicit return value check is needed
     $leader_hex TEXT := encode(@leader_sender, 'hex')::TEXT;
-    ethereum_bridge.transfer($leader_hex, $market_creation_fee);
+    if $bridge = 'hoodi_tt2' {
+        hoodi_tt2.transfer($leader_hex, $market_creation_fee);
+    } else if $bridge = 'sepolia_bridge' {
+        sepolia_bridge.transfer($leader_hex, $market_creation_fee);
+    } else if $bridge = 'ethereum_bridge' {
+        ethereum_bridge.transfer($leader_hex, $market_creation_fee);
+    }
 
     -- ==========================================================================
     -- CREATE MARKET
@@ -112,7 +185,8 @@ CREATE OR REPLACE ACTION create_market(
         max_spread,
         min_order_size,
         created_at,
-        creator
+        creator,
+        bridge
     )
     SELECT
         COALESCE(MAX(id), 0) + 1,
@@ -121,7 +195,8 @@ CREATE OR REPLACE ACTION create_market(
         $max_spread,
         $min_order_size,
         @height,
-        $caller_bytes
+        $caller_bytes,
+        $bridge
     FROM ob_queries;
 
     -- Get the ID we just inserted
@@ -368,7 +443,8 @@ PUBLIC VIEW RETURNS (market_exists BOOLEAN) {
 CREATE OR REPLACE ACTION match_direct(
     $query_id INT,
     $outcome BOOL,
-    $price INT
+    $price INT,
+    $bridge TEXT
 ) PRIVATE {
     -- Get first buy order (FIFO: earliest first)
     $buy_participant_id INT;
@@ -445,7 +521,7 @@ CREATE OR REPLACE ACTION match_direct(
                                         $multiplier);
 
     -- Transfer payment from vault to seller
-    ob_unlock_collateral($seller_wallet_address, $seller_payment);
+    ob_unlock_collateral($bridge, $seller_wallet_address, $seller_payment);
 
     -- Transfer shares from seller to buyer
     -- Step 1: Delete fully matched orders FIRST (prevents amount=0 constraint violation)
@@ -519,7 +595,8 @@ CREATE OR REPLACE ACTION match_direct(
 CREATE OR REPLACE ACTION match_mint(
     $query_id INT,
     $yes_price INT,
-    $no_price INT
+    $no_price INT,
+    $bridge TEXT
 ) PRIVATE {
     -- Validate complementary prices (must sum to 100)
     if ($yes_price + $no_price) != 100 {
@@ -670,7 +747,8 @@ CREATE OR REPLACE ACTION match_mint(
 CREATE OR REPLACE ACTION match_burn(
     $query_id INT,
     $yes_price INT,
-    $no_price INT
+    $no_price INT,
+    $bridge TEXT
 ) PRIVATE {
     -- Multiplier for collateral calculations
     $multiplier NUMERIC(78, 0) := '10000000000000000'::NUMERIC(78, 0);
@@ -769,8 +847,8 @@ CREATE OR REPLACE ACTION match_burn(
                                    $multiplier);
 
     -- Unlock collateral
-    ob_unlock_collateral($yes_wallet_address, $yes_payout);
-    ob_unlock_collateral($no_wallet_address, $no_payout);
+    ob_unlock_collateral($bridge, $yes_wallet_address, $yes_payout);
+    ob_unlock_collateral($bridge, $no_wallet_address, $no_payout);
 
     -- Delete fully matched sell orders FIRST
     DELETE FROM ob_positions
@@ -821,7 +899,8 @@ CREATE OR REPLACE ACTION match_burn(
 CREATE OR REPLACE ACTION match_orders(
     $query_id INT,
     $outcome BOOL,
-    $price INT
+    $price INT,
+    $bridge TEXT
 ) PRIVATE {
     -- ==========================================================================
     -- SECTION 1: VALIDATE INPUTS
@@ -845,7 +924,7 @@ CREATE OR REPLACE ACTION match_orders(
     -- Match buy and sell orders at the same price for same outcome
     -- This is the most common match type and should be tried first
 
-    match_direct($query_id, $outcome, $price);
+    match_direct($query_id, $outcome, $price, $bridge);
 
     -- ==========================================================================
     -- SECTION 3: TRY MINT MATCH
@@ -861,10 +940,10 @@ CREATE OR REPLACE ACTION match_orders(
         -- Match based on which outcome we're matching for
         if $outcome = true {
             -- Matching YES order: look for NO buy at complementary price
-            match_mint($query_id, $price, $complementary_price);
+            match_mint($query_id, $price, $complementary_price, $bridge);
         } else {
             -- Matching NO order: look for YES buy at complementary price
-            match_mint($query_id, $complementary_price, $price);
+            match_mint($query_id, $complementary_price, $price, $bridge);
         }
     }
 
@@ -878,10 +957,10 @@ CREATE OR REPLACE ACTION match_orders(
         -- Match based on which outcome we're matching for
         if $outcome = true {
             -- Matching YES order: look for NO sell at complementary price
-            match_burn($query_id, $price, $complementary_price);
+            match_burn($query_id, $price, $complementary_price, $bridge);
         } else {
             -- Matching NO order: look for YES sell at complementary price
-            match_burn($query_id, $complementary_price, $price);
+            match_burn($query_id, $complementary_price, $price, $bridge);
         }
     }
 
@@ -898,6 +977,8 @@ CREATE OR REPLACE ACTION match_orders(
  * Users lock collateral (amount × price) to place a buy order. The order is added
  * to the order book with a NEGATIVE price to distinguish it from sell orders.
  * The matching engine is triggered to check for immediate matches.
+ *
+ * The bridge is determined by the market's configuration (set during create_market).
  *
  * Parameters:
  * - $query_id: Market identifier (from ob_queries.id)
@@ -930,14 +1011,17 @@ CREATE OR REPLACE ACTION place_buy_order(
     -- SECTION 1: VALIDATION
     -- ==========================================================================
 
-    -- 1.1 Validate @caller format (must be 0x-prefixed Ethereum address)
+    -- 1.1 Get market bridge (will ERROR if market doesn't exist)
+    $bridge TEXT := get_market_bridge($query_id);
+
+    -- 1.2 Validate @caller format (must be 0x-prefixed Ethereum address)
     -- Note: Kwil supports both Secp256k1 (EVM) and ED25519 signers. This action
     -- requires a 0x-prefixed Ethereum address format for EVM compatibility.
     if @caller IS NULL OR length(@caller) != 42 OR substring(LOWER(@caller), 1, 2) != '0x' {
         ERROR('Invalid caller address format (expected 0x-prefixed Ethereum address)');
     }
 
-    -- 1.2 Validate parameters
+    -- 1.3 Validate parameters
     if $query_id IS NULL {
         ERROR('query_id is required');
     }
@@ -958,7 +1042,7 @@ CREATE OR REPLACE ACTION place_buy_order(
         ERROR('amount exceeds maximum allowed of 1,000,000,000');
     }
 
-    -- 1.3 Validate market exists and is not settled
+    -- 1.4 Validate market exists and is not settled
     $settled BOOL;
     $market_found BOOL := false;
 
@@ -995,10 +1079,17 @@ CREATE OR REPLACE ACTION place_buy_order(
     $collateral_needed NUMERIC(78, 0) := ($amount::NUMERIC(78, 0) * $price::NUMERIC(78, 0) * '10000000000000000'::NUMERIC(78, 0));
 
     -- ==========================================================================
-    -- SECTION 3: CHECK BALANCE
+    -- SECTION 3: CHECK BALANCE (bridge-specific)
     -- ==========================================================================
 
-    $caller_balance NUMERIC(78, 0) := COALESCE(ethereum_bridge.balance(@caller), 0::NUMERIC(78, 0));
+    $caller_balance NUMERIC(78, 0);
+    if $bridge = 'hoodi_tt2' {
+        $caller_balance := COALESCE(hoodi_tt2.balance(@caller), 0::NUMERIC(78, 0));
+    } else if $bridge = 'sepolia_bridge' {
+        $caller_balance := COALESCE(sepolia_bridge.balance(@caller), 0::NUMERIC(78, 0));
+    } else if $bridge = 'ethereum_bridge' {
+        $caller_balance := COALESCE(ethereum_bridge.balance(@caller), 0::NUMERIC(78, 0));
+    }
 
     if $caller_balance < $collateral_needed {
         -- Note: Division by 10^18 for display purposes (convert wei to TRUF)
@@ -1034,13 +1125,18 @@ CREATE OR REPLACE ACTION place_buy_order(
     }
 
     -- ==========================================================================
-    -- SECTION 5: LOCK COLLATERAL
+    -- SECTION 5: LOCK COLLATERAL (bridge-specific)
     -- ==========================================================================
 
     -- Lock tokens from user to vault (network-owned balance)
-    -- Note: ethereum_bridge.lock() throws ERROR on failure (insufficient balance, etc.)
-    -- TODO: Replace ethereum_bridge with usdc_bridge when USDC bridge is deployed
-    ethereum_bridge.lock($collateral_needed);
+    -- Note: Bridge lock() throws ERROR on failure (insufficient balance, etc.)
+    if $bridge = 'hoodi_tt2' {
+        hoodi_tt2.lock($collateral_needed);
+    } else if $bridge = 'sepolia_bridge' {
+        sepolia_bridge.lock($collateral_needed);
+    } else if $bridge = 'ethereum_bridge' {
+        ethereum_bridge.lock($collateral_needed);
+    }
 
     -- ==========================================================================
     -- SECTION 6: INSERT BUY ORDER (UPSERT)
@@ -1064,7 +1160,7 @@ CREATE OR REPLACE ACTION place_buy_order(
     -- ==========================================================================
 
     -- Attempt to match this buy order with existing sell orders
-    match_orders($query_id, $outcome, $price);
+    match_orders($query_id, $outcome, $price, $bridge);
 
     -- Success: Order placed (may be partially or fully matched by future matching engine)
 };
@@ -1105,6 +1201,9 @@ CREATE OR REPLACE ACTION place_sell_order(
     -- ==========================================================================
     -- SECTION 1: VALIDATION
     -- ==========================================================================
+
+    -- 1.0 Get market bridge (will ERROR if market doesn't exist)
+    $bridge TEXT := get_market_bridge($query_id);
 
     -- 1.1 Validate @caller format (must be 0x-prefixed Ethereum address)
     -- Note: Kwil supports both Secp256k1 (EVM) and ED25519 signers. This action
@@ -1238,7 +1337,7 @@ CREATE OR REPLACE ACTION place_sell_order(
     -- ==========================================================================
 
     -- Attempt to match this sell order with existing buy orders
-    match_orders($query_id, $outcome, $price);
+    match_orders($query_id, $outcome, $price, $bridge);
 
     -- Success: Order placed (may be partially or fully matched by future matching engine)
 };
@@ -1253,6 +1352,8 @@ CREATE OR REPLACE ACTION place_sell_order(
  *
  * This feature enables users to become liquidity providers and earn a share
  * of redemption fees by providing tight two-sided markets.
+ *
+ * The bridge is determined by the market's configuration (set during create_market).
  *
  * Parameters:
  * - $query_id: Market identifier (from ob_queries.id)
@@ -1301,14 +1402,17 @@ CREATE OR REPLACE ACTION place_split_limit_order(
     -- SECTION 1: VALIDATION
     -- ==========================================================================
 
-    -- 1.1 Validate @caller format (must be 0x-prefixed Ethereum address)
+    -- 1.1 Get market bridge (will ERROR if market doesn't exist)
+    $bridge TEXT := get_market_bridge($query_id);
+
+    -- 1.2 Validate @caller format (must be 0x-prefixed Ethereum address)
     -- Note: Kwil supports both Secp256k1 (EVM) and ED25519 signers. This action
     -- requires a 0x-prefixed Ethereum address format for EVM compatibility.
     if @caller IS NULL OR length(@caller) != 42 OR substring(LOWER(@caller), 1, 2) != '0x' {
         ERROR('Invalid caller address format (expected 0x-prefixed Ethereum address)');
     }
 
-    -- 1.2 Validate parameters
+    -- 1.3 Validate parameters
     if $query_id IS NULL {
         ERROR('query_id is required');
     }
@@ -1325,7 +1429,7 @@ CREATE OR REPLACE ACTION place_split_limit_order(
         ERROR('amount exceeds maximum allowed of 1,000,000,000');
     }
 
-    -- 1.3 Validate market exists and is not settled
+    -- 1.4 Validate market exists and is not settled
     $settled BOOL;
     $market_found BOOL := false;
 
@@ -1362,10 +1466,17 @@ CREATE OR REPLACE ACTION place_split_limit_order(
     $collateral_needed NUMERIC(78, 0) := ($amount::NUMERIC(78, 0) * '1000000000000000000'::NUMERIC(78, 0));
 
     -- ==========================================================================
-    -- SECTION 3: CHECK BALANCE
+    -- SECTION 3: CHECK BALANCE (bridge-specific)
     -- ==========================================================================
 
-    $caller_balance NUMERIC(78, 0) := COALESCE(ethereum_bridge.balance(@caller), 0::NUMERIC(78, 0));
+    $caller_balance NUMERIC(78, 0);
+    if $bridge = 'hoodi_tt2' {
+        $caller_balance := COALESCE(hoodi_tt2.balance(@caller), 0::NUMERIC(78, 0));
+    } else if $bridge = 'sepolia_bridge' {
+        $caller_balance := COALESCE(sepolia_bridge.balance(@caller), 0::NUMERIC(78, 0));
+    } else if $bridge = 'ethereum_bridge' {
+        $caller_balance := COALESCE(ethereum_bridge.balance(@caller), 0::NUMERIC(78, 0));
+    }
 
     if $caller_balance < $collateral_needed {
         -- Note: Division by 10^18 for display purposes (convert wei to TRUF)
@@ -1401,13 +1512,18 @@ CREATE OR REPLACE ACTION place_split_limit_order(
     }
 
     -- ==========================================================================
-    -- SECTION 5: LOCK COLLATERAL
+    -- SECTION 5: LOCK COLLATERAL (bridge-specific)
     -- ==========================================================================
 
     -- Lock tokens from user to vault (network-owned balance)
-    -- Note: ethereum_bridge.lock() throws ERROR on failure (insufficient balance, etc.)
-    -- TODO: Replace ethereum_bridge with usdc_bridge when USDC bridge is deployed
-    ethereum_bridge.lock($collateral_needed);
+    -- Note: Bridge lock() throws ERROR on failure (insufficient balance, etc.)
+    if $bridge = 'hoodi_tt2' {
+        hoodi_tt2.lock($collateral_needed);
+    } else if $bridge = 'sepolia_bridge' {
+        sepolia_bridge.lock($collateral_needed);
+    } else if $bridge = 'ethereum_bridge' {
+        ethereum_bridge.lock($collateral_needed);
+    }
 
     -- ==========================================================================
     -- SECTION 6: MINT YES SHARES (HOLDING)
@@ -1450,7 +1566,7 @@ CREATE OR REPLACE ACTION place_split_limit_order(
 
     -- Attempt to match the NO sell order with existing buy orders
     -- Match is attempted on the FALSE (NO) outcome at the false_price
-    match_orders($query_id, FALSE, $false_price);
+    match_orders($query_id, FALSE, $false_price, $bridge);
 
     -- Success: Split order placed
     -- - YES shares held at price=0 (not for sale)
@@ -1508,6 +1624,13 @@ CREATE OR REPLACE ACTION cancel_order(
     $outcome BOOL,
     $price INT
 ) PUBLIC {
+    -- ==========================================================================
+    -- SECTION 0: GET MARKET BRIDGE
+    -- ==========================================================================
+
+    -- Get market bridge (will ERROR if market doesn't exist)
+    $bridge TEXT := get_market_bridge($query_id);
+
     -- ==========================================================================
     -- SECTION 1: VALIDATE CALLER
     -- ==========================================================================
@@ -1611,8 +1734,8 @@ CREATE OR REPLACE ACTION cancel_order(
         $refund_amount NUMERIC(78, 0) := $order_amount::NUMERIC(78, 0) * $abs_price::NUMERIC(78, 0) * $multiplier;
 
         -- Unlock collateral back to user using helper from 031-order-book-vault.sql
-        -- This calls ethereum_bridge.unlock() internally
-        ob_unlock_collateral(@caller, $refund_amount);
+        -- Passes bridge parameter to unlock from correct bridge
+        ob_unlock_collateral($bridge, @caller, $refund_amount);
     }
 
     -- For sell orders (price > 0): Return shares to holding wallet
@@ -1709,6 +1832,13 @@ CREATE OR REPLACE ACTION change_bid(
     $new_price INT,
     $new_amount INT8
 ) PUBLIC {
+    -- ==========================================================================
+    -- SECTION 0: GET MARKET BRIDGE
+    -- ==========================================================================
+
+    -- Get market bridge (will ERROR if market doesn't exist)
+    $bridge TEXT := get_market_bridge($query_id);
+
     -- ==========================================================================
     -- SECTION 1: VALIDATE CALLER
     -- ==========================================================================
@@ -1824,13 +1954,19 @@ CREATE OR REPLACE ACTION change_bid(
     if $collateral_delta > $zero {
         -- New order needs MORE collateral
         -- Lock additional amount (will ERROR if insufficient balance)
-        ethereum_bridge.lock($collateral_delta);
+        if $bridge = 'hoodi_tt2' {
+            hoodi_tt2.lock($collateral_delta);
+        } else if $bridge = 'sepolia_bridge' {
+            sepolia_bridge.lock($collateral_delta);
+        } else if $bridge = 'ethereum_bridge' {
+            ethereum_bridge.lock($collateral_delta);
+        }
 
     } else if $collateral_delta < $zero {
         -- New order needs LESS collateral
         -- Unlock excess amount
         $unlock_amount NUMERIC(78, 0) := $zero - $collateral_delta;  -- Make positive
-        ob_unlock_collateral(@caller, $unlock_amount);
+        ob_unlock_collateral($bridge, @caller, $unlock_amount);
     }
     -- If $collateral_delta = 0, no collateral adjustment needed
 
@@ -1867,7 +2003,7 @@ CREATE OR REPLACE ACTION change_bid(
 
     -- Try to match new order immediately
     -- Note: match_orders expects positive price (1-99), so use $new_abs_price not $new_price
-    match_orders($query_id, $outcome, $new_abs_price);
+    match_orders($query_id, $outcome, $new_abs_price, $bridge);
 
     -- Success: Buy order price modified atomically
     -- - Old order deleted, new order placed with preserved timestamp
@@ -1941,6 +2077,13 @@ CREATE OR REPLACE ACTION change_ask(
     $new_price INT,
     $new_amount INT8
 ) PUBLIC {
+    -- ==========================================================================
+    -- SECTION 0: GET MARKET BRIDGE
+    -- ==========================================================================
+
+    -- Get market bridge (will ERROR if market doesn't exist)
+    $bridge TEXT := get_market_bridge($query_id);
+
     -- ==========================================================================
     -- SECTION 1: VALIDATE CALLER
     -- ==========================================================================
@@ -2115,7 +2258,7 @@ CREATE OR REPLACE ACTION change_ask(
     -- ==========================================================================
 
     -- Try to match new order immediately
-    match_orders($query_id, $outcome, $new_price);
+    match_orders($query_id, $outcome, $new_price, $bridge);
 
     -- Success: Sell order price modified atomically
     -- - Old order deleted, new order placed with preserved timestamp

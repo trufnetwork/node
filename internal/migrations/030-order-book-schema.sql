@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS ob_queries (
     min_order_size INT8 NOT NULL DEFAULT 20,
     created_at INT8 NOT NULL,
     creator BYTEA NOT NULL,
+    bridge TEXT NOT NULL,
 
     CONSTRAINT chk_ob_queries_max_spread CHECK (max_spread >= 1 AND max_spread <= 50),
     CONSTRAINT chk_ob_queries_min_order CHECK (min_order_size >= 1)

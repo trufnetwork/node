@@ -9,9 +9,16 @@
  * IMPORTANT: The "vault" is the network's ownedBalance in the ERC20 bridge,
  * stored in reward_instances.balance. We use lock()/unlock() methods.
  *
- * TODO: When USDC bridge is deployed (see "Goal: Deposit/withdraw contracts"),
- *       replace ethereum_bridge with usdc_bridge in all collateral operations.
+ * Bridge Support:
+ * - All vault operations accept a $bridge parameter
+ * - Supported bridges: hoodi_tt2, sepolia_bridge, ethereum_bridge
  */
+
+-- =============================================================================
+-- validate_bridge: Helper to validate bridge parameter
+-- =============================================================================
+-- Shared validation procedure (defined in 032-order-book-actions.sql)
+-- Note: This procedure is defined in the order book actions file but used here too
 
 -- =============================================================================
 -- ob_lock_collateral: Lock user's collateral into network vault
@@ -19,18 +26,27 @@
 -- Uses the ERC20 bridge's lock() method which:
 -- - Decreases user's balance in kwil_erc20_meta.balances
 -- - Increases network's ownedBalance in reward_instances.balance
---
--- TODO: Replace ethereum_bridge with usdc_bridge when USDC bridge is deployed
-CREATE OR REPLACE ACTION ob_lock_collateral($amount NUMERIC(78, 0))
+CREATE OR REPLACE ACTION ob_lock_collateral($bridge TEXT, $amount NUMERIC(78, 0))
 PRIVATE {
+    -- Validate bridge (will ERROR if invalid)
+    -- Note: validate_bridge procedure defined in 032-order-book-actions.sql
+    -- Since migrations run in order, that procedure will exist when this is called
+
     -- Validate amount
     if $amount IS NULL OR $amount <= 0::NUMERIC(78, 0) {
         ERROR('Lock amount must be positive');
     }
 
     -- Lock collateral using bridge (user -> network ownedBalance)
-    -- TODO: Change to usdc_bridge.lock($amount) when USDC bridge is available
-    ethereum_bridge.lock($amount);
+    if $bridge = 'hoodi_tt2' {
+        hoodi_tt2.lock($amount);
+    } else if $bridge = 'sepolia_bridge' {
+        sepolia_bridge.lock($amount);
+    } else if $bridge = 'ethereum_bridge' {
+        ethereum_bridge.lock($amount);
+    } else {
+        ERROR('Invalid bridge. Supported: hoodi_tt2, sepolia_bridge, ethereum_bridge');
+    }
 };
 
 -- =============================================================================
@@ -41,8 +57,7 @@ PRIVATE {
 -- - Increases user's balance
 --
 -- NOTE: This is effectively a SYSTEM action - unlock() requires owner permission
--- TODO: Replace ethereum_bridge with usdc_bridge when USDC bridge is deployed
-CREATE OR REPLACE ACTION ob_unlock_collateral($user_address TEXT, $amount NUMERIC(78, 0))
+CREATE OR REPLACE ACTION ob_unlock_collateral($bridge TEXT, $user_address TEXT, $amount NUMERIC(78, 0))
 PRIVATE {
     -- Validate inputs (must be 0x-prefixed 40 hex character address)
     if $user_address IS NULL OR length($user_address) != 42 OR substring(LOWER($user_address), 1, 2) != '0x' {
@@ -54,8 +69,15 @@ PRIVATE {
     }
 
     -- Unlock collateral using bridge (network ownedBalance -> user)
-    -- TODO: Change to usdc_bridge.unlock($user_address, $amount) when USDC bridge is available
-    ethereum_bridge.unlock($user_address, $amount);
+    if $bridge = 'hoodi_tt2' {
+        hoodi_tt2.unlock($user_address, $amount);
+    } else if $bridge = 'sepolia_bridge' {
+        sepolia_bridge.unlock($user_address, $amount);
+    } else if $bridge = 'ethereum_bridge' {
+        ethereum_bridge.unlock($user_address, $amount);
+    } else {
+        ERROR('Invalid bridge. Supported: hoodi_tt2, sepolia_bridge, ethereum_bridge');
+    }
 };
 
 -- =============================================================================
