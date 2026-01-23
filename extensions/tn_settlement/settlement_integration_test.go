@@ -28,6 +28,11 @@ import (
 // NO_OUTCOME_VALUE represents a NO outcome in settlement tests
 const NO_OUTCOME_VALUE = "-1.000000000000000000"
 
+// Test constants - match existing erc20-bridge configuration
+const (
+	testExtensionName = "sepolia_bridge"
+)
+
 // TestSettlementIntegration tests the automatic settlement functionality
 func TestSettlementIntegration(t *testing.T) {
 	owner := util.Unsafe_NewEthereumAddressFromString("0x4444444444444444444444444444444444444444")
@@ -77,7 +82,7 @@ func testFindUnsettledMarkets(t *testing.T) func(context.Context, *kwilTesting.P
 
 		var queryID int
 		createRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{attestationHash, settleTime, int64(5), int64(1)},
+			[]any{testExtensionName, attestationHash, settleTime, int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -174,7 +179,7 @@ func testSettleMarketViaAction(t *testing.T) func(context.Context, *kwilTesting.
 
 		var queryID int
 		createRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{attestationHash, settleTime, int64(5), int64(1)},
+			[]any{testExtensionName, attestationHash, settleTime, int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -274,7 +279,7 @@ func testSkipMarketWithoutAttestation(t *testing.T) func(context.Context, *kwilT
 
 		var queryID int
 		createRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{attestationHash, settleTime, int64(5), int64(1)},
+			[]any{testExtensionName, attestationHash, settleTime, int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -349,7 +354,7 @@ func testMultipleMarketsProcessing(t *testing.T) func(context.Context, *kwilTest
 
 			var queryID int
 			createRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-				[]any{attestationHash, settleTime, int64(5), int64(1)},
+				[]any{testExtensionName, attestationHash, settleTime, int64(5), int64(1)},
 				func(row *common.Row) error {
 					queryID = int(row.Values[0].(int64))
 					return nil

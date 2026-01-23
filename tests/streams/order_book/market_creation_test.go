@@ -378,7 +378,7 @@ func callCreateMarket(ctx context.Context, platform *kwilTesting.Platform, signe
 		platform.DB,
 		"",
 		"create_market",
-		[]any{queryHash, settleTime, maxSpread, minOrderSize},
+		[]any{testExtensionName, queryHash, settleTime, maxSpread, minOrderSize},
 		resultFn,
 	)
 	if err != nil {

@@ -181,7 +181,7 @@ func testWinnerReceives98PercentPayout(t *testing.T) func(context.Context, *kwil
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
 		createMarketRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{attestationHash, settleTime, maxSpread, minOrderSize},
+			[]any{testExtensionName, attestationHash, settleTime, maxSpread, minOrderSize},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil

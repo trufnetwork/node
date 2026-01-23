@@ -175,7 +175,7 @@ func testSettleMarketHappyPath(t *testing.T) func(context.Context, *kwilTesting.
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
 		createRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{attestationHash, settleTime, maxSpread, minOrderSize},
+			[]any{testExtensionName, attestationHash, settleTime, maxSpread, minOrderSize},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -304,7 +304,7 @@ func testSettleMarketWithNoOutcome(t *testing.T) func(context.Context, *kwilTest
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{attestationHash, int64(100), int64(5), int64(1)},
+			[]any{testExtensionName, attestationHash, int64(100), int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -402,7 +402,7 @@ func testSettleMarketWithMultipleDatapoints(t *testing.T) func(context.Context, 
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{attestationHash, int64(100), int64(5), int64(1)},
+			[]any{testExtensionName, attestationHash, int64(100), int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -515,7 +515,7 @@ func testSettleMarketAlreadySettled(t *testing.T) func(context.Context, *kwilTes
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{attestationHash, int64(100), int64(5), int64(1)},
+			[]any{testExtensionName, attestationHash, int64(100), int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -597,7 +597,7 @@ func testSettleMarketTooEarly(t *testing.T) func(context.Context, *kwilTesting.P
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{attestationHash, int64(1000), int64(5), int64(1)},
+			[]any{testExtensionName, attestationHash, int64(1000), int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -638,7 +638,7 @@ func testSettleMarketNoAttestation(t *testing.T) func(context.Context, *kwilTest
 		engineCtx := helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
 		_, err := platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{fakeHash, int64(100), int64(5), int64(1)},
+			[]any{testExtensionName, fakeHash, int64(100), int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -710,7 +710,7 @@ func testSettleMarketAttestationNotSigned(t *testing.T) func(context.Context, *k
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{attestationHash, int64(100), int64(5), int64(1)},
+			[]any{testExtensionName, attestationHash, int64(100), int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -800,7 +800,7 @@ func testSettleMarketValidationIntegration(t *testing.T) func(context.Context, *
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{attestationHash, int64(100), int64(5), int64(1)},
+			[]any{testExtensionName, attestationHash, int64(100), int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -895,7 +895,7 @@ func testSettleMarketBlockedByBinaryParityViolation(t *testing.T) func(context.C
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{attestationHash, int64(100), int64(5), int64(1)},
+			[]any{testExtensionName, attestationHash, int64(100), int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -1081,7 +1081,7 @@ func testSettleMarketBlockedByCollateralMismatch(t *testing.T) func(context.Cont
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{attestationHash1, int64(100), int64(5), int64(1)},
+			[]any{testExtensionName, attestationHash1, int64(100), int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID1 = int(row.Values[0].(int64))
 				return nil
@@ -1091,7 +1091,7 @@ func testSettleMarketBlockedByCollateralMismatch(t *testing.T) func(context.Cont
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{attestationHash2, int64(100), int64(5), int64(1)},
+			[]any{testExtensionName, attestationHash2, int64(100), int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID2 = int(row.Values[0].(int64))
 				return nil
