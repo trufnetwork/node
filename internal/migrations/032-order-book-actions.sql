@@ -558,7 +558,7 @@ CREATE OR REPLACE ACTION match_direct(
       AND amount > $match_amount;
 
     -- Recursively call to match next orders
-    match_direct($query_id, $outcome, $price);
+    match_direct($query_id, $outcome, $price, $bridge);
 };
 
 -- =============================================================================
@@ -708,7 +708,7 @@ CREATE OR REPLACE ACTION match_mint(
       AND amount > $mint_amount;
 
     -- Recursively match next orders
-    match_mint($query_id, $yes_price, $no_price);
+    match_mint($query_id, $yes_price, $no_price, $bridge);
 };
 
 -- =============================================================================
@@ -876,7 +876,7 @@ CREATE OR REPLACE ACTION match_burn(
       AND amount > $burn_amount;
 
     -- Recursively match next orders
-    match_burn($query_id, $yes_price, $no_price);
+    match_burn($query_id, $yes_price, $no_price, $bridge);
 };
 
 -- =============================================================================

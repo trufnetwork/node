@@ -877,7 +877,7 @@ func createTestMarketQueries(t *testing.T, ctx context.Context, platform *kwilTe
 
 	var queryID int64
 	err := callActionQueries(ctx, platform, signer, "create_market",
-		[]any{testExtensionName, queryHash[:], settleTime, int64(5), int64(20)},
+		[]any{testExtensionNameQueries, queryHash[:], settleTime, int64(5), int64(20)},
 		func(row *common.Row) error {
 			queryID = row.Values[0].(int64)
 			return nil
