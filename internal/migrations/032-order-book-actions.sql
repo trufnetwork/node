@@ -67,11 +67,11 @@ CREATE OR REPLACE ACTION get_market_bridge($query_id INT) PRIVATE RETURNS (bridg
 -- =============================================================================
 /**
  * Creates a market with specified settlement parameters. The market is
- * identified by a unique hash derived from the attestation query parameters.
+ * identified by a unique hash derived from the query components.
  *
  * Parameters:
  * - $bridge: Bridge namespace for collateral (hoodi_tt2, sepolia_bridge, ethereum_bridge)
- * - $query_hash: SHA256 hash of (data_provider + stream_id + action_id + args) - 32 bytes
+ * - $query_components: ABI-encoded (address data_provider, bytes32 stream_id, string action_id, bytes args)
  * - $settle_time: Unix timestamp when market can be settled (must be in future)
  * - $max_spread: Maximum spread for LP rewards (1-50 cents)
  * - $min_order_size: Minimum order size for LP rewards (must be positive)
@@ -84,7 +84,7 @@ CREATE OR REPLACE ACTION get_market_bridge($query_id INT) PRIVATE RETURNS (bridg
  */
 CREATE OR REPLACE ACTION create_market(
     $bridge TEXT,
-    $query_hash BYTEA,
+    $query_components BYTEA,
     $settle_time INT8,
     $max_spread INT,
     $min_order_size INT8
@@ -96,14 +96,30 @@ CREATE OR REPLACE ACTION create_market(
     -- Validate bridge parameter
     validate_bridge($bridge);
 
-    -- Validate query hash (must be exactly 32 bytes for SHA256)
-    -- Note: length() doesn't support BYTEA in Kuneiform, so we use encode() to convert
-    -- to hex string and check the length (32 bytes = 64 hex characters)
-    if $query_hash IS NULL {
-        ERROR('query_hash is required');
+    -- Validate query components (must be ABI-encoded)
+    if $query_components IS NULL OR length(encode($query_components, 'hex')) = 0 {
+        ERROR('query_components is required (ABI-encoded (address,bytes32,string,bytes))');
     }
-    if length(encode($query_hash, 'hex')) != 64 {
-        ERROR('query_hash must be exactly 32 bytes (SHA256)');
+
+    -- Compute hash from query components using attestation format
+    -- This ensures market hash matches attestation hash for automatic settlement
+    $query_hash BYTEA;
+    for $row in tn_utils.compute_attestation_hash($query_components) {
+        $query_hash := $row.hash;
+    }
+
+    -- Validate hash is exactly 32 bytes
+    if length(encode($query_hash, 'hex')) != 64 {  -- 32 bytes = 64 hex chars
+        ERROR('Invalid query_components: computed hash must be 32 bytes');
+    }
+
+    -- Check for duplicate market (hash must be unique)
+    $existing_id INT;
+    for $row in SELECT id FROM ob_queries WHERE hash = $query_hash {
+        $existing_id := $row.id;
+    }
+    if $existing_id IS NOT NULL {
+        ERROR('Market already exists with this query hash (query_id: ' || $existing_id::TEXT || ')');
     }
 
     -- Validate settlement time (must be in the future)
@@ -126,22 +142,17 @@ CREATE OR REPLACE ACTION create_market(
     -- FEE COLLECTION
     -- ==========================================================================
     -- Fee: 2 TRUF (2 * 10^18 wei)
-    -- TODO: Adjust fee based on spam prevention needs
+    -- Market creation fee is ALWAYS paid in TRUF (hoodi_tt on testnet)
+    -- regardless of which bridge the market uses for collateral
     $market_creation_fee NUMERIC(78, 0) := '2000000000000000000'::NUMERIC(78, 0);
 
-    -- Check caller has sufficient balance (bridge-specific)
-    -- TODO: Review when USDC bridge available
-    $caller_balance NUMERIC(78, 0);
-    if $bridge = 'hoodi_tt2' {
-        $caller_balance := COALESCE(hoodi_tt2.balance(@caller), 0::NUMERIC(78, 0));
-    } else if $bridge = 'sepolia_bridge' {
-        $caller_balance := COALESCE(sepolia_bridge.balance(@caller), 0::NUMERIC(78, 0));
-    } else if $bridge = 'ethereum_bridge' {
-        $caller_balance := COALESCE(ethereum_bridge.balance(@caller), 0::NUMERIC(78, 0));
-    }
+    -- Check caller has sufficient TRUF balance
+    -- IMPORTANT: Fee is collected from hoodi_tt (TRUF), not from market's bridge
+    -- TODO: Replace hoodi_tt with actual TRUF bridge on mainnet when available! hoodi_tt is testnet only.
+    $caller_balance NUMERIC(78, 0) := COALESCE(hoodi_tt.balance(@caller), 0::NUMERIC(78, 0));
 
     if $caller_balance < $market_creation_fee {
-        ERROR('Insufficient balance for market creation fee. Required: 2 TRUF');
+        ERROR('Insufficient TRUF balance for market creation fee. Required: 2 TRUF (hoodi_tt balance)');
     }
 
     -- Verify leader address is available for fee transfer
@@ -149,17 +160,11 @@ CREATE OR REPLACE ACTION create_market(
         ERROR('Leader address not available for fee transfer');
     }
 
-    -- Transfer fee to leader (bridge-specific)
+    -- Transfer fee to leader from TRUF bridge (hoodi_tt)
     -- Note: Bridge operations throw ERROR on failure (insufficient balance, etc.)
     -- so no explicit return value check is needed
     $leader_hex TEXT := encode(@leader_sender, 'hex')::TEXT;
-    if $bridge = 'hoodi_tt2' {
-        hoodi_tt2.transfer($leader_hex, $market_creation_fee);
-    } else if $bridge = 'sepolia_bridge' {
-        sepolia_bridge.transfer($leader_hex, $market_creation_fee);
-    } else if $bridge = 'ethereum_bridge' {
-        ethereum_bridge.transfer($leader_hex, $market_creation_fee);
-    }
+    hoodi_tt.transfer($leader_hex, $market_creation_fee);
 
     -- ==========================================================================
     -- CREATE MARKET
@@ -181,6 +186,7 @@ CREATE OR REPLACE ACTION create_market(
     INSERT INTO ob_queries (
         id,
         hash,
+        query_components,
         settle_time,
         max_spread,
         min_order_size,
@@ -191,6 +197,7 @@ CREATE OR REPLACE ACTION create_market(
     SELECT
         COALESCE(MAX(id), 0) + 1,
         $query_hash,
+        $query_components,
         $settle_time,
         $max_spread,
         $min_order_size,
@@ -232,6 +239,8 @@ CREATE OR REPLACE ACTION create_market(
 CREATE OR REPLACE ACTION get_market_info($query_id INT)
 PUBLIC VIEW RETURNS (
     hash BYTEA,
+    query_components BYTEA,
+    bridge TEXT,
     settle_time INT8,
     settled BOOLEAN,
     winning_outcome BOOLEAN,
@@ -246,12 +255,12 @@ PUBLIC VIEW RETURNS (
     }
 
     for $market in
-        SELECT hash, settle_time, settled, winning_outcome, settled_at,
+        SELECT hash, query_components, bridge, settle_time, settled, winning_outcome, settled_at,
                max_spread, min_order_size, created_at, creator
         FROM ob_queries
         WHERE id = $query_id
     {
-        RETURN $market.hash, $market.settle_time, $market.settled,
+        RETURN $market.hash, $market.query_components, $market.bridge, $market.settle_time, $market.settled,
                $market.winning_outcome, $market.settled_at, $market.max_spread,
                $market.min_order_size, $market.created_at, $market.creator;
     }

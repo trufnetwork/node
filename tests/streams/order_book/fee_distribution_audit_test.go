@@ -4,7 +4,6 @@ package order_book
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"math/big"
 	"strings"
@@ -62,11 +61,12 @@ func testAuditRecordCreation(t *testing.T) func(context.Context, *kwilTesting.Pl
 		require.NoError(t, err)
 
 		// Create market
-		queryHash := sha256.Sum256([]byte("test_audit_record_creation"))
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000062", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &user1, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &user1, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -184,11 +184,12 @@ func testAuditMultiBlock(t *testing.T) func(context.Context, *kwilTesting.Platfo
 		err = giveBalanceChained(ctx, platform, user2.Address(), "500000000000000000000")
 		require.NoError(t, err)
 
-		queryHash := sha256.Sum256([]byte("test_audit_multiblock"))
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000063", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &user1, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &user1, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -253,11 +254,12 @@ func testAuditNoLPs(t *testing.T) func(context.Context, *kwilTesting.Platform) e
 		err = giveBalanceChained(ctx, platform, user1.Address(), "500000000000000000000")
 		require.NoError(t, err)
 
-		queryHash := sha256.Sum256([]byte("test_audit_no_lps"))
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000064", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &user1, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &user1, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -307,11 +309,12 @@ func testAuditZeroFees(t *testing.T) func(context.Context, *kwilTesting.Platform
 		err = giveBalanceChained(ctx, platform, user1.Address(), "500000000000000000000")
 		require.NoError(t, err)
 
-		queryHash := sha256.Sum256([]byte("test_audit_zero_fees"))
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000065", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &user1, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &user1, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -364,11 +367,12 @@ func testAuditDataIntegrity(t *testing.T) func(context.Context, *kwilTesting.Pla
 		err = giveBalanceChained(ctx, platform, user2.Address(), "500000000000000000000")
 		require.NoError(t, err)
 
-		queryHash := sha256.Sum256([]byte("test_audit_data_integrity"))
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000066", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &user1, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &user1, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})

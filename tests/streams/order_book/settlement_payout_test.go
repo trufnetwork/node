@@ -171,7 +171,12 @@ func testWinnerReceives98PercentPayout(t *testing.T) func(context.Context, *kwil
 		// Sign the attestation
 		helper.SignAttestation(requestTxID)
 
-		// Create market using the attestation hash
+		// Encode query components for create_market (must match attestation args!)
+		queryComponents, err := encodeQueryComponentsForTests(
+			dataProvider, streamID, "get_record", argsBytes)
+		require.NoError(t, err)
+
+		// Create market using query_components
 		settleTime := int64(100) // Future timestamp
 		maxSpread := int64(5)
 		minOrderSize := int64(1)
@@ -181,7 +186,7 @@ func testWinnerReceives98PercentPayout(t *testing.T) func(context.Context, *kwil
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
 		createMarketRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{testExtensionName, attestationHash, settleTime, maxSpread, minOrderSize},
+			[]any{testExtensionName, queryComponents, settleTime, maxSpread, minOrderSize},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil

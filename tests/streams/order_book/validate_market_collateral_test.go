@@ -181,11 +181,11 @@ func testValidMarketWithPositions(t *testing.T) func(context.Context, *kwilTesti
 		require.NoError(t, err)
 
 		// Create market
-		queryHash := [32]byte{}
-		copy(queryHash[:], []byte("test_positions_validation"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000068", "get_record", []byte{0x01})
+		require.NoError(t, err)
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:],
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents,
 			9999999999, 5, 20, func(row *common.Row) error {
 				marketID = row.Values[0].(int64)
 				return nil
@@ -375,13 +375,15 @@ func validateMarket(
 
 // createMarketWithHelper creates a market using the existing helper
 func createMarketWithHelper(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress) (int, error) {
-	// Create a proper 32-byte hash
-	queryHash := [32]byte{}
-	copy(queryHash[:], []byte("test_query_hash_validation_test"))
+	// Create proper query components
+	queryComponents, err := encodeQueryComponentsForTests(signer.Address(), "sttest00000000000000000000000069", "get_record", []byte{0x01})
+	if err != nil {
+		return 0, err
+	}
 
 	// Use existing createMarket helper from market_creation_test.go
 	var marketID int64
-	err := callCreateMarket(ctx, platform, signer, queryHash[:],
+	err = callCreateMarket(ctx, platform, signer, queryComponents,
 		9999999999, 5, 20, func(row *common.Row) error {
 		marketID = row.Values[0].(int64)
 		return nil

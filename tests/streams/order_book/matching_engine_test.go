@@ -4,7 +4,6 @@ package order_book
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"math/big"
 	"testing"
@@ -105,10 +104,12 @@ func testDirectMatchFullMatch(t *testing.T) func(context.Context, *kwilTesting.P
 		require.NoError(t, err)
 
 		// Create market
-		queryHash := sha256.Sum256([]byte("test_direct_match"))
+		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000036", "get_record", []byte{0x01})
+
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &user1Addr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &user1Addr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -170,10 +171,12 @@ func testMintMatchFullMatch(t *testing.T) func(context.Context, *kwilTesting.Pla
 		require.NoError(t, err)
 
 		// Create market
-		queryHash := sha256.Sum256([]byte("test_mint_match"))
+		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000037", "get_record", []byte{0x01})
+
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &user1Addr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &user1Addr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -236,10 +239,12 @@ func testBurnMatchFullMatch(t *testing.T) func(context.Context, *kwilTesting.Pla
 		require.NoError(t, err)
 
 		// Create market
-		queryHash := sha256.Sum256([]byte("test_burn_match"))
+		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000038", "get_record", []byte{0x01})
+
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &user1Addr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &user1Addr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -329,10 +334,12 @@ func testDirectMatchPartialFill(t *testing.T) func(context.Context, *kwilTesting
 		require.NoError(t, err)
 
 		// Create market
-		queryHash := sha256.Sum256([]byte("test_direct_partial"))
+		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000039", "get_record", []byte{0x01})
+
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &user1Addr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &user1Addr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -398,10 +405,12 @@ func testMintMatchPartialFill(t *testing.T) func(context.Context, *kwilTesting.P
 		require.NoError(t, err)
 
 		// Create market
-		queryHash := sha256.Sum256([]byte("test_mint_partial"))
+		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000040", "get_record", []byte{0x01})
+
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &user1Addr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &user1Addr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -470,10 +479,12 @@ func testBurnMatchPartialFill(t *testing.T) func(context.Context, *kwilTesting.P
 		require.NoError(t, err)
 
 		// Create market
-		queryHash := sha256.Sum256([]byte("test_burn_partial"))
+		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000041", "get_record", []byte{0x01})
+
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &user1Addr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &user1Addr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -573,10 +584,12 @@ func testDirectMatchMultipleRounds(t *testing.T) func(context.Context, *kwilTest
 		require.NoError(t, err)
 
 		// Create market
-		queryHash := sha256.Sum256([]byte("test_multiple_rounds"))
+		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000042", "get_record", []byte{0x01})
+
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &user1Addr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &user1Addr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -657,10 +670,12 @@ func testNoMatchingOrders(t *testing.T) func(context.Context, *kwilTesting.Platf
 		require.NoError(t, err)
 
 		// Create market
-		queryHash := sha256.Sum256([]byte("test_no_match"))
+		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000043", "get_record", []byte{0x01})
+
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &user1Addr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &user1Addr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})

@@ -10,10 +10,13 @@ import (
 	"testing"
 	"time"
 
+	gethAbi "github.com/ethereum/go-ethereum/accounts/abi"
+	gethCommon "github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/crypto"
 	coreauth "github.com/trufnetwork/kwil-db/core/crypto/auth"
+	orderedsync "github.com/trufnetwork/kwil-db/node/exts/ordered-sync"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
@@ -23,16 +26,32 @@ import (
 
 // Test constants - match existing erc20-bridge configuration
 const (
-	testChain         = "sepolia"
-	testEscrow        = "0x502430eD0BbE0f230215870c9C2853e126eE5Ae3"
-	testERC20         = "0x2222222222222222222222222222222222222222"
-	testExtensionName = "sepolia_bridge"
-	marketFee         = "2000000000000000000" // 2 TRUF with 18 decimals
+	// TRUF bridge (hoodi_tt) - market creation fee is ALWAYS collected from here
+	testTRUFChain         = "hoodi"
+	testTRUFEscrow        = "0x878d6aaeb6e746033f50b8dc268d54b4631554e7"
+	testTRUFERC20         = "0x263ce78fef26600e4e428cebc91c2a52484b4fbf"
+	testTRUFExtensionName = "hoodi_tt"
+
+	// USDC bridge (hoodi_tt2) - market collateral for trading
+	// IMPORTANT: Must match 000-extension.sql registration (source of truth)
+	testUSDCChain         = "hoodi"
+	testUSDCEscrow        = "0x80D9B3b6941367917816d36748C88B303f7F1415"
+	testUSDCERC20         = "0x1591DeAa21710E0BA6CC1b15F49620C9F65B2dEd"
+	testUSDCExtensionName = "hoodi_tt2"
+
+	// Aliases for other test files that don't use create_market
+	testChain         = testUSDCChain
+	testEscrow        = testUSDCEscrow
+	testERC20         = testUSDCERC20
+	testExtensionName = testUSDCExtensionName
+
+	marketFee = "2000000000000000000" // 2 TRUF with 18 decimals
 )
 
 var (
-	twoTRUF      = mustParseBigInt(marketFee)
-	pointCounter int64 = 100 // Start from 100 to avoid conflicts with other tests
+	twoTRUF                = mustParseBigInt(marketFee)
+	trufPointCounter int64 = 100   // Counter for TRUF bridge (hoodi_tt)
+	usdcPointCounter int64 = 10000 // Counter for USDC bridge (hoodi_tt2) - far apart to avoid conflicts
 )
 
 func mustParseBigInt(s string) *big.Int {
@@ -69,9 +88,14 @@ func testCreateMarketHappyPath(t *testing.T) func(ctx context.Context, platform 
 		err := giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000") // 100 TRUF
 		require.NoError(t, err, "failed to give balance")
 
-		// Generate test query hash
-		queryData := []byte("test_data_provider:test_stream:get_record:args")
-		queryHash := sha256.Sum256(queryData)
+		// Encode query components
+		dataProvider := userAddr.Address()
+		streamID := "sthappypath000000000000000000000000" // Exactly 32 chars
+		actionID := "get_record"
+		argsBytes := []byte{0x01, 0x02, 0x03}
+
+		queryComponents, err := encodeQueryComponents(dataProvider, streamID, actionID, argsBytes)
+		require.NoError(t, err, "failed to encode query components")
 
 		// Set settlement time to 1 hour from now
 		settleTime := time.Now().Add(1 * time.Hour).Unix()
@@ -82,7 +106,7 @@ func testCreateMarketHappyPath(t *testing.T) func(ctx context.Context, platform 
 
 		// Create market
 		var queryID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, int64(5), int64(20), func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, int64(5), int64(20), func(row *common.Row) error {
 			require.Len(t, row.Values, 1, "expected 1 return value")
 			queryID = row.Values[0].(int64)
 			return nil
@@ -100,16 +124,22 @@ func testCreateMarketHappyPath(t *testing.T) func(ctx context.Context, platform 
 
 		// Verify market was created via get_market_info
 		var storedHash []byte
+		var storedComponents []byte
+		var storedBridge string
 		var storedSettleTime int64
 		var settled bool
 		err = callGetMarketInfo(ctx, platform, &userAddr, int(queryID), func(row *common.Row) error {
 			storedHash = row.Values[0].([]byte)
-			storedSettleTime = row.Values[1].(int64)
-			settled = row.Values[2].(bool)
+			storedComponents = row.Values[1].([]byte)
+			storedBridge = row.Values[2].(string)
+			storedSettleTime = row.Values[3].(int64)
+			settled = row.Values[4].(bool)
 			return nil
 		})
 		require.NoError(t, err, "get_market_info should succeed")
-		require.Equal(t, queryHash[:], storedHash, "hash should match")
+		require.Len(t, storedHash, 32, "hash should be 32 bytes")
+		require.Equal(t, queryComponents, storedComponents, "components should match")
+		require.Equal(t, testUSDCExtensionName, storedBridge, "bridge should match")
 		require.Equal(t, settleTime, storedSettleTime, "settle_time should match")
 		require.False(t, settled, "market should not be settled")
 
@@ -126,32 +156,40 @@ func testCreateMarketValidation(t *testing.T) func(ctx context.Context, platform
 		err := giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
 		require.NoError(t, err)
 
-		validHash := sha256.Sum256([]byte("test_validation"))
+		// Encode valid query components
+		dataProvider := userAddr.Address()
+		streamID := "stvalidation00000000000000000000000" // Exactly 32 chars
+		actionID := "get_record"
+		argsBytes := []byte{0x01}
+
+		validComponents, err := encodeQueryComponents(dataProvider, streamID, actionID, argsBytes)
+		require.NoError(t, err)
+
 		futureTime := time.Now().Add(1 * time.Hour).Unix()
 
-		// Test: Invalid hash length (not 32 bytes)
-		shortHash := []byte("too_short") // Less than 32 bytes
-		err = callCreateMarket(ctx, platform, &userAddr, shortHash, futureTime, int64(5), int64(20), nil)
-		require.Error(t, err, "should fail with invalid hash length")
-		require.Contains(t, err.Error(), "32 bytes", "error should mention 32 bytes")
+		// Test: Empty query_components
+		emptyComponents := []byte{}
+		err = callCreateMarket(ctx, platform, &userAddr, emptyComponents, futureTime, int64(5), int64(20), nil)
+		require.Error(t, err, "should fail with empty query_components")
+		require.Contains(t, err.Error(), "query_components", "error should mention query_components")
 
 		// Test: Settlement time in the past
 		pastTime := time.Now().Add(-1 * time.Hour).Unix()
-		err = callCreateMarket(ctx, platform, &userAddr, validHash[:], pastTime, int64(5), int64(20), nil)
+		err = callCreateMarket(ctx, platform, &userAddr, validComponents, pastTime, int64(5), int64(20), nil)
 		require.Error(t, err, "should fail with past settlement time")
 		require.Contains(t, err.Error(), "future", "error should mention future")
 
 		// Test: Invalid max_spread (too high)
-		err = callCreateMarket(ctx, platform, &userAddr, validHash[:], futureTime, int64(100), int64(20), nil)
+		err = callCreateMarket(ctx, platform, &userAddr, validComponents, futureTime, int64(100), int64(20), nil)
 		require.Error(t, err, "should fail with max_spread > 50")
 		require.Contains(t, err.Error(), "spread", "error should mention spread")
 
 		// Test: Invalid max_spread (zero)
-		err = callCreateMarket(ctx, platform, &userAddr, validHash[:], futureTime, int64(0), int64(20), nil)
+		err = callCreateMarket(ctx, platform, &userAddr, validComponents, futureTime, int64(0), int64(20), nil)
 		require.Error(t, err, "should fail with max_spread = 0")
 
 		// Test: Invalid min_order_size (zero)
-		err = callCreateMarket(ctx, platform, &userAddr, validHash[:], futureTime, int64(5), int64(0), nil)
+		err = callCreateMarket(ctx, platform, &userAddr, validComponents, futureTime, int64(5), int64(0), nil)
 		require.Error(t, err, "should fail with min_order_size = 0")
 
 		return nil
@@ -167,15 +205,23 @@ func testCreateMarketDuplicateHash(t *testing.T) func(ctx context.Context, platf
 		err := giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
 		require.NoError(t, err)
 
-		queryHash := sha256.Sum256([]byte("unique_market_hash"))
+		// Encode query components
+		dataProvider := userAddr.Address()
+		streamID := "stduplicate000000000000000000000000" // Exactly 32 chars
+		actionID := "get_record"
+		argsBytes := []byte{0x01}
+
+		queryComponents, err := encodeQueryComponents(dataProvider, streamID, actionID, argsBytes)
+		require.NoError(t, err)
+
 		settleTime := time.Now().Add(1 * time.Hour).Unix()
 
 		// Create first market (should succeed)
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, int64(5), int64(20), nil)
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, int64(5), int64(20), nil)
 		require.NoError(t, err, "first market creation should succeed")
 
 		// Try to create duplicate (should fail due to UNIQUE constraint)
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime+3600, int64(5), int64(20), nil)
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime+3600, int64(5), int64(20), nil)
 		require.Error(t, err, "duplicate hash should be rejected")
 
 		return nil
@@ -191,13 +237,21 @@ func testCreateMarketInsufficientBalance(t *testing.T) func(ctx context.Context,
 		err := giveBalance(ctx, platform, userAddr.Address(), "1000000000000000000")
 		require.NoError(t, err)
 
-		queryHash := sha256.Sum256([]byte("insufficient_balance_test"))
+		// Encode query components
+		dataProvider := userAddr.Address()
+		streamID := "stinsufficient00000000000000000000000" // Exactly 32 chars
+		actionID := "get_record"
+		argsBytes := []byte{0x01}
+
+		queryComponents, err := encodeQueryComponents(dataProvider, streamID, actionID, argsBytes)
+		require.NoError(t, err)
+
 		settleTime := time.Now().Add(1 * time.Hour).Unix()
 
-		// Try to create market (should fail due to insufficient balance)
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, int64(5), int64(20), nil)
-		require.Error(t, err, "should fail with insufficient balance")
-		require.Contains(t, err.Error(), "Insufficient balance", "error should mention insufficient balance")
+		// Try to create market (should fail due to insufficient TRUF balance)
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, int64(5), int64(20), nil)
+		require.Error(t, err, "should fail with insufficient TRUF balance")
+		require.Contains(t, err.Error(), "Insufficient TRUF balance", "error should mention insufficient TRUF balance")
 
 		return nil
 	}
@@ -212,11 +266,19 @@ func testGetMarketInfo(t *testing.T) func(ctx context.Context, platform *kwilTes
 		err := giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
 		require.NoError(t, err)
 
-		queryHash := sha256.Sum256([]byte("get_market_info_test"))
+		// Encode query components
+		dataProvider := userAddr.Address()
+		streamID := "stgetmarketinfo000000000000000000000" // Exactly 32 chars
+		actionID := "get_index"
+		argsBytes := []byte{0x01, 0x02}
+
+		queryComponents, err := encodeQueryComponents(dataProvider, streamID, actionID, argsBytes)
+		require.NoError(t, err)
+
 		settleTime := time.Now().Add(2 * time.Hour).Unix()
 
 		var queryID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, int64(10), int64(50), func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, int64(10), int64(50), func(row *common.Row) error {
 			queryID = row.Values[0].(int64)
 			return nil
 		})
@@ -224,21 +286,27 @@ func testGetMarketInfo(t *testing.T) func(ctx context.Context, platform *kwilTes
 
 		// Test get_market_info
 		var hash []byte
+		var components []byte
+		var bridge string
 		var storedSettleTime int64
 		var maxSpread int64
 		var minOrderSize int64
 		err = callGetMarketInfo(ctx, platform, &userAddr, int(queryID), func(row *common.Row) error {
 			hash = row.Values[0].([]byte)
-			storedSettleTime = row.Values[1].(int64)
-			// settled = row.Values[2].(bool)
-			// winningOutcome = row.Values[3]
-			// settledAt = row.Values[4]
-			maxSpread = row.Values[5].(int64)
-			minOrderSize = row.Values[6].(int64)
+			components = row.Values[1].([]byte)
+			bridge = row.Values[2].(string)
+			storedSettleTime = row.Values[3].(int64)
+			// settled = row.Values[4].(bool)
+			// winningOutcome = row.Values[5]
+			// settledAt = row.Values[6]
+			maxSpread = row.Values[7].(int64)
+			minOrderSize = row.Values[8].(int64)
 			return nil
 		})
 		require.NoError(t, err)
-		require.Equal(t, queryHash[:], hash)
+		require.Len(t, hash, 32, "hash should be 32 bytes")
+		require.Equal(t, queryComponents, components, "components should match")
+		require.Equal(t, testUSDCExtensionName, bridge, "bridge should match")
 		require.Equal(t, settleTime, storedSettleTime)
 		require.Equal(t, int64(10), maxSpread)
 		require.Equal(t, int64(50), minOrderSize)
@@ -263,9 +331,15 @@ func testListMarkets(t *testing.T) func(ctx context.Context, platform *kwilTesti
 
 		// Create 3 markets
 		for i := 0; i < 3; i++ {
-			queryHash := sha256.Sum256([]byte(fmt.Sprintf("list_markets_test_%d", i)))
+			dataProvider := userAddr.Address()
+			// Generate exactly 32-char stream ID
+			streamID := fmt.Sprintf("stlistmarkets%02d0000000000000000", i)[:32]
+			actionID := "get_record"
+			argsBytes := []byte{byte(i)}
+			queryComponents, err := encodeQueryComponents(dataProvider, streamID, actionID, argsBytes)
+			require.NoError(t, err)
 			settleTime := time.Now().Add(time.Duration(i+1) * time.Hour).Unix()
-			err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, int64(5), int64(20), nil)
+			err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, int64(5), int64(20), nil)
 			require.NoError(t, err)
 		}
 
@@ -291,15 +365,35 @@ func testMarketExists(t *testing.T) func(ctx context.Context, platform *kwilTest
 		err := giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
 		require.NoError(t, err)
 
+		// Encode query components
+		dataProvider := userAddr.Address()
+		streamID := "stmarketexists0000000000000000000000" // Exactly 32 chars
+		actionID := "get_record"
+		argsBytes := []byte{0x01}
+
+		queryComponents, err := encodeQueryComponents(dataProvider, streamID, actionID, argsBytes)
+		require.NoError(t, err)
+
 		// Create a market
-		queryHash := sha256.Sum256([]byte("market_exists_test"))
 		settleTime := time.Now().Add(1 * time.Hour).Unix()
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, int64(5), int64(20), nil)
+		var queryID int64
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, int64(5), int64(20), func(row *common.Row) error {
+			queryID = row.Values[0].(int64)
+			return nil
+		})
+		require.NoError(t, err)
+
+		// Get the hash from get_market_info
+		var queryHash []byte
+		err = callGetMarketInfo(ctx, platform, &userAddr, int(queryID), func(row *common.Row) error {
+			queryHash = row.Values[0].([]byte)
+			return nil
+		})
 		require.NoError(t, err)
 
 		// Test market_exists for existing market
 		var exists bool
-		err = callMarketExists(ctx, platform, &userAddr, queryHash[:], func(row *common.Row) error {
+		err = callMarketExists(ctx, platform, &userAddr, queryHash, func(row *common.Row) error {
 			exists = row.Values[0].(bool)
 			return nil
 		})
@@ -321,24 +415,57 @@ func testMarketExists(t *testing.T) func(ctx context.Context, platform *kwilTest
 
 // ===== HELPER FUNCTIONS =====
 
+// giveBalance injects balance to BOTH bridges:
+// 1. hoodi_tt (TRUF) for market creation fees
+// 2. hoodi_tt2 (USDC) for market collateral/trading
 func giveBalance(ctx context.Context, platform *kwilTesting.Platform, wallet string, amountStr string) error {
-	pointCounter++
-	return testerc20.InjectERC20Transfer(
+	// Reset ordered-sync state to start fresh (clears last_processed_point)
+	orderedsync.ForTestingReset()
+
+	// Inject TRUF balance (use separate counter per bridge, starting fresh each test)
+	trufPointCounter++
+	fmt.Printf("DEBUG giveBalance: Injecting TRUF at point %d\n", trufPointCounter)
+	err := testerc20.InjectERC20Transfer(
 		ctx,
 		platform,
-		testChain,
-		testEscrow,
-		testERC20,
+		testTRUFChain,
+		testTRUFEscrow,
+		testTRUFERC20,
 		wallet,
 		wallet,
 		amountStr,
-		pointCounter,
-		nil,
+		trufPointCounter,
+		nil, // No chaining
 	)
+	if err != nil {
+		return fmt.Errorf("failed to inject TRUF: %w", err)
+	}
+
+	// Inject USDC balance (use separate counter)
+	usdcPointCounter++
+	fmt.Printf("DEBUG giveBalance: Injecting USDC at point %d\n", usdcPointCounter)
+	err = testerc20.InjectERC20Transfer(
+		ctx,
+		platform,
+		testUSDCChain,
+		testUSDCEscrow,
+		testUSDCERC20,
+		wallet,
+		wallet,
+		amountStr,
+		usdcPointCounter,
+		nil, // No chaining - separate topic from TRUF
+	)
+	if err != nil {
+		return fmt.Errorf("failed to inject USDC: %w", err)
+	}
+
+	return nil
 }
 
 func getBalance(ctx context.Context, platform *kwilTesting.Platform, wallet string) (*big.Int, error) {
-	balanceStr, err := testerc20.GetUserBalance(ctx, platform, testExtensionName, wallet)
+	// Market creation tests check TRUF balance (hoodi_tt) since fee is deducted from there
+	balanceStr, err := testerc20.GetUserBalance(ctx, platform, testTRUFExtensionName, wallet)
 	if err != nil {
 		return nil, err
 	}
@@ -351,7 +478,7 @@ func getBalance(ctx context.Context, platform *kwilTesting.Platform, wallet stri
 	return balance, nil
 }
 
-func callCreateMarket(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, queryHash []byte, settleTime int64, maxSpread int64, minOrderSize int64, resultFn func(*common.Row) error) error {
+func callCreateMarket(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, queryComponents []byte, settleTime int64, maxSpread int64, minOrderSize int64, resultFn func(*common.Row) error) error {
 	// Generate leader key for fee transfers
 	_, pubGeneric, err := crypto.GenerateSecp256k1Key(nil)
 	if err != nil {
@@ -378,7 +505,7 @@ func callCreateMarket(ctx context.Context, platform *kwilTesting.Platform, signe
 		platform.DB,
 		"",
 		"create_market",
-		[]any{testExtensionName, queryHash, settleTime, maxSpread, minOrderSize},
+		[]any{testUSDCExtensionName, queryComponents, settleTime, maxSpread, minOrderSize},
 		resultFn,
 	)
 	if err != nil {
@@ -472,4 +599,47 @@ func callMarketExists(ctx context.Context, platform *kwilTesting.Platform, signe
 		return res.Error
 	}
 	return nil
+}
+
+// encodeQueryComponents encodes query components using ABI format
+// Format: (address data_provider, bytes32 stream_id, string action_id, bytes args)
+func encodeQueryComponents(dataProvider, streamID, actionID string, args []byte) ([]byte, error) {
+	addressType, err := gethAbi.NewType("address", "", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create address type: %w", err)
+	}
+	bytes32Type, err := gethAbi.NewType("bytes32", "", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create bytes32 type: %w", err)
+	}
+	stringType, err := gethAbi.NewType("string", "", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create string type: %w", err)
+	}
+	bytesType, err := gethAbi.NewType("bytes", "", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create bytes type: %w", err)
+	}
+
+	abiArgs := gethAbi.Arguments{
+		{Type: addressType, Name: "data_provider"},
+		{Type: bytes32Type, Name: "stream_id"},
+		{Type: stringType, Name: "action_id"},
+		{Type: bytesType, Name: "args"},
+	}
+
+	// Convert data provider to address
+	dpAddr := gethCommon.HexToAddress(dataProvider)
+
+	// Convert stream ID to bytes32 (pad with zeros on the right)
+	var streamIDBytes [32]byte
+	copy(streamIDBytes[:], []byte(streamID))
+
+	// Pack the ABI
+	encoded, err := abiArgs.Pack(dpAddr, streamIDBytes, actionID, args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to pack ABI: %w", err)
+	}
+
+	return encoded, nil
 }

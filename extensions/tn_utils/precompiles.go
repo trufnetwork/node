@@ -2,11 +2,14 @@ package tn_utils
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"math"
 	"math/big"
 
+	gethAbi "github.com/ethereum/go-ethereum/accounts/abi"
+	gethCommon "github.com/ethereum/go-ethereum/common"
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/kwil-db/extensions/precompiles"
@@ -29,6 +32,7 @@ func buildPrecompile() precompiles.Precompile {
 			canonicalToDataPointsABIMethod(),
 			forceLastArgFalseMethod(),
 			parseAttestationBooleanMethod(),
+			computeAttestationHashMethod(),
 		},
 	}
 }
@@ -572,4 +576,149 @@ func parseAttestationBooleanHandler(ctx *common.EngineContext, app *common.App, 
 	outcome := latestValue.Sign() > 0
 
 	return resultFn([]any{outcome})
+}
+
+// computeAttestationHashMethod computes the attestation-format hash from ABI-encoded query components.
+// This ensures market hashes match attestation hashes, enabling automatic settlement.
+func computeAttestationHashMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "compute_attestation_hash",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters: []precompiles.PrecompileValue{
+			precompiles.NewPrecompileValue("query_components", types.ByteaType, false),
+		},
+		Returns: &precompiles.MethodReturn{
+			IsTable: true,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("hash", types.ByteaType, false),
+			},
+		},
+		Handler: computeAttestationHashHandler,
+	}
+}
+
+// computeAttestationHashHandler decodes ABI-encoded query components and computes
+// the attestation hash using the same format as request_attestation.
+func computeAttestationHashHandler(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+	queryComponents, err := toByteSliceAllowNil(inputs[0])
+	if err != nil {
+		return err
+	}
+
+	if len(queryComponents) == 0 {
+		return fmt.Errorf("query_components cannot be empty")
+	}
+
+	// Define ABI type for query components: (address, bytes32, string, bytes)
+	addressType, err := gethAbi.NewType("address", "", nil)
+	if err != nil {
+		return fmt.Errorf("failed to create address type: %w", err)
+	}
+	bytes32Type, err := gethAbi.NewType("bytes32", "", nil)
+	if err != nil {
+		return fmt.Errorf("failed to create bytes32 type: %w", err)
+	}
+	stringType, err := gethAbi.NewType("string", "", nil)
+	if err != nil {
+		return fmt.Errorf("failed to create string type: %w", err)
+	}
+	bytesType, err := gethAbi.NewType("bytes", "", nil)
+	if err != nil {
+		return fmt.Errorf("failed to create bytes type: %w", err)
+	}
+
+	args := gethAbi.Arguments{
+		{Type: addressType, Name: "data_provider"},
+		{Type: bytes32Type, Name: "stream_id"},
+		{Type: stringType, Name: "action_id"},
+		{Type: bytesType, Name: "args"},
+	}
+
+	// Decode ABI
+	decoded, err := args.Unpack(queryComponents)
+	if err != nil {
+		return fmt.Errorf("failed to decode query_components (expected ABI-encoded (address,bytes32,string,bytes)): %w", err)
+	}
+
+	if len(decoded) != 4 {
+		return fmt.Errorf("expected 4 components, got %d", len(decoded))
+	}
+
+	// Extract components
+	dataProvider, ok := decoded[0].(gethCommon.Address)
+	if !ok {
+		return fmt.Errorf("data_provider must be address, got %T", decoded[0])
+	}
+
+	streamID, ok := decoded[1].([32]byte)
+	if !ok {
+		return fmt.Errorf("stream_id must be bytes32, got %T", decoded[1])
+	}
+
+	actionIDStr, ok := decoded[2].(string)
+	if !ok {
+		return fmt.Errorf("action_id must be string, got %T", decoded[2])
+	}
+
+	argsBytes, ok := decoded[3].([]byte)
+	if !ok {
+		return fmt.Errorf("args must be bytes, got %T", decoded[3])
+	}
+
+	// Map action_id string to uint16 (must match attestation_actions table)
+	actionIDNum, err := getActionIDNumber(actionIDStr)
+	if err != nil {
+		return fmt.Errorf("invalid action_id: %w", err)
+	}
+
+	// Build hash input using attestation format
+	// Format: version(1) + algo(1) + length_prefix(data_provider) + length_prefix(stream_id) + action_id(2) + length_prefix(args)
+	buffer := new(bytes.Buffer)
+
+	// Version (1 byte) - always 0x01
+	buffer.WriteByte(1)
+
+	// Algorithm (1 byte) - always 0x00
+	buffer.WriteByte(0)
+
+	// Length-prefixed data_provider (20 bytes)
+	dataProviderBytes := dataProvider.Bytes()
+	buffer.Write(lengthPrefixBytes(dataProviderBytes))
+
+	// Length-prefixed stream_id (32 bytes)
+	buffer.Write(lengthPrefixBytes(streamID[:]))
+
+	// Action ID as uint16 big-endian (2 bytes)
+	var actionIDBytes [2]byte
+	binary.BigEndian.PutUint16(actionIDBytes[:], actionIDNum)
+	buffer.Write(actionIDBytes[:])
+
+	// Length-prefixed args
+	buffer.Write(lengthPrefixBytes(argsBytes))
+
+	// Compute SHA256 hash
+	hash := sha256.Sum256(buffer.Bytes())
+
+	return resultFn([]any{hash[:]})
+}
+
+// getActionIDNumber maps action name to numeric ID (must match attestation_actions table)
+func getActionIDNumber(actionName string) (uint16, error) {
+	actionMap := map[string]uint16{
+		"get_record":           1,
+		"get_index":            2,
+		"get_change_over_time": 3,
+		"get_last_record":      4,
+		"get_first_record":     5,
+		// Future binary actions will be added here:
+		// "price_above_threshold": 6,
+		// "price_below_threshold": 7,
+		// "value_in_range": 8,
+	}
+
+	id, ok := actionMap[actionName]
+	if !ok {
+		return 0, fmt.Errorf("unknown action: %s (must be one of: get_record, get_index, get_change_over_time, get_last_record, get_first_record)", actionName)
+	}
+	return id, nil
 }
