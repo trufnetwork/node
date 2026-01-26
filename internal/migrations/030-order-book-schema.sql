@@ -20,6 +20,7 @@
 CREATE TABLE IF NOT EXISTS ob_queries (
     id INT PRIMARY KEY,
     hash BYTEA NOT NULL UNIQUE,
+    query_components BYTEA NOT NULL,
     settle_time INT8 NOT NULL,
     settled BOOLEAN DEFAULT false NOT NULL,
     winning_outcome BOOLEAN,
@@ -90,6 +91,10 @@ CREATE INDEX IF NOT EXISTS idx_ob_queries_settle_time
 -- Settled status index for filtering active/settled markets
 CREATE INDEX IF NOT EXISTS idx_ob_queries_settled
     ON ob_queries(settled);
+
+-- Query components index for potential future queries on components
+CREATE INDEX IF NOT EXISTS idx_ob_queries_components
+    ON ob_queries(query_components);
 
 -- =============================================================================
 -- Transaction method registration

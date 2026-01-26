@@ -65,8 +65,12 @@ func testSettleMarketHappyPath(t *testing.T) func(context.Context, *kwilTesting.
 		// Setup attestation helper (handles ERC20 initialization)
 		helper := attestationTests.NewAttestationTestHelper(t, ctx, platform)
 
+		// Give balance for market creation and trading
+		err := giveBalance(ctx, platform, deployer.Address(), "500000000000000000000")
+		require.NoError(t, err)
+
 		// Create data provider
-		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
 		require.NoError(t, err)
 
 		// Use simple stream ID (exactly 32 characters)
@@ -137,7 +141,6 @@ func testSettleMarketHappyPath(t *testing.T) func(context.Context, *kwilTesting.
 		require.NoError(t, err)
 
 		var requestTxID string
-		var attestationHash []byte
 		engineCtx = helper.NewEngineContext()
 		res, err := platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 			[]any{
@@ -150,7 +153,7 @@ func testSettleMarketHappyPath(t *testing.T) func(context.Context, *kwilTesting.
 			},
 			func(row *common.Row) error {
 				requestTxID = row.Values[0].(string)
-				attestationHash = append([]byte(nil), row.Values[1].([]byte)...)
+				// attestationHash not needed - using queryComponents
 				return nil
 			})
 		require.NoError(t, err)
@@ -159,13 +162,17 @@ func testSettleMarketHappyPath(t *testing.T) func(context.Context, *kwilTesting.
 			require.NoError(t, res.Error, "request_attestation failed")
 		}
 		require.NotEmpty(t, requestTxID)
-		require.NotEmpty(t, attestationHash)
-		t.Logf("Created attestation: txID=%s, hash=%x", requestTxID, attestationHash)
+		t.Logf("Created attestation: txID=%s", requestTxID)
 
 		// Sign the attestation
 		helper.SignAttestation(requestTxID)
 
-		// Create market using the attestation hash
+		// Encode query components for create_market (must match attestation args!)
+		queryComponents, err := encodeQueryComponentsForTests(
+			dataProvider, streamID, "get_record", argsBytes)
+		require.NoError(t, err)
+
+		// Create market using query_components
 		settleTime := int64(100) // Future timestamp
 		maxSpread := int64(5)
 		minOrderSize := int64(1)
@@ -175,7 +182,7 @@ func testSettleMarketHappyPath(t *testing.T) func(context.Context, *kwilTesting.
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
 		createRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{testExtensionName, attestationHash, settleTime, maxSpread, minOrderSize},
+			[]any{testExtensionName, queryComponents, settleTime, maxSpread, minOrderSize},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -239,7 +246,13 @@ func testSettleMarketWithNoOutcome(t *testing.T) func(context.Context, *kwilTest
 		platform.Deployer = deployer.Bytes()
 
 		helper := attestationTests.NewAttestationTestHelper(t, ctx, platform)
-		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+
+		// Give balance for market creation and trading
+		err := giveBalance(ctx, platform, deployer.Address(), "500000000000000000000")
+		require.NoError(t, err)
+
+		// Create data provider
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
 		require.NoError(t, err)
 
 		streamID := "stnooutcome000000000000000000000"
@@ -287,24 +300,27 @@ func testSettleMarketWithNoOutcome(t *testing.T) func(context.Context, *kwilTest
 		require.NoError(t, err)
 
 		var requestTxID string
-		var attestationHash []byte
 		engineCtx = helper.NewEngineContext()
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 			[]any{dataProvider, streamID, "get_record", argsBytes, false, nil},
 			func(row *common.Row) error {
 				requestTxID = row.Values[0].(string)
-				attestationHash = append([]byte(nil), row.Values[1].([]byte)...)
+				// attestationHash not needed - using queryComponents
 				return nil
 			})
 		require.NoError(t, err)
 		helper.SignAttestation(requestTxID)
+
+		// Encode query components for create_market
+		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_record", argsBytes)
+		require.NoError(t, err)
 
 		// Create and settle market
 		var queryID int
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{testExtensionName, attestationHash, int64(100), int64(5), int64(1)},
+			[]any{testExtensionName, queryComponents, int64(100), int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -349,7 +365,13 @@ func testSettleMarketWithMultipleDatapoints(t *testing.T) func(context.Context, 
 		platform.Deployer = deployer.Bytes()
 
 		helper := attestationTests.NewAttestationTestHelper(t, ctx, platform)
-		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+
+		// Give balance for market creation and trading
+		err := giveBalance(ctx, platform, deployer.Address(), "500000000000000000000")
+		require.NoError(t, err)
+
+		// Create data provider
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
 		require.NoError(t, err)
 
 		streamID := "stmultiple0000000000000000000000"
@@ -385,24 +407,27 @@ func testSettleMarketWithMultipleDatapoints(t *testing.T) func(context.Context, 
 		require.NoError(t, err)
 
 		var requestTxID string
-		var attestationHash []byte
 		engineCtx = helper.NewEngineContext()
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 			[]any{dataProvider, streamID, "get_record", argsBytes, false, nil},
 			func(row *common.Row) error {
 				requestTxID = row.Values[0].(string)
-				attestationHash = append([]byte(nil), row.Values[1].([]byte)...)
+				// attestationHash not needed - using queryComponents
 				return nil
 			})
 		require.NoError(t, err)
 		helper.SignAttestation(requestTxID)
+
+		// Encode query components for create_market
+		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_record", argsBytes)
+		require.NoError(t, err)
 
 		// Create and settle market
 		var queryID int
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{testExtensionName, attestationHash, int64(100), int64(5), int64(1)},
+			[]any{testExtensionName, queryComponents, int64(100), int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -471,7 +496,13 @@ func testSettleMarketAlreadySettled(t *testing.T) func(context.Context, *kwilTes
 		platform.Deployer = deployer.Bytes()
 
 		helper := attestationTests.NewAttestationTestHelper(t, ctx, platform)
-		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+
+		// Give balance for market creation and trading
+		err := giveBalance(ctx, platform, deployer.Address(), "500000000000000000000")
+		require.NoError(t, err)
+
+		// Create data provider
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
 		require.NoError(t, err)
 
 		streamID := "stalreadysettled0000000000000000"
@@ -498,24 +529,27 @@ func testSettleMarketAlreadySettled(t *testing.T) func(context.Context, *kwilTes
 		})
 
 		var requestTxID string
-		var attestationHash []byte
 		engineCtx = helper.NewEngineContext()
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 			[]any{dataProvider, streamID, "get_record", argsBytes, false, nil},
 			func(row *common.Row) error {
 				requestTxID = row.Values[0].(string)
-				attestationHash = append([]byte(nil), row.Values[1].([]byte)...)
+				// attestationHash not needed - using queryComponents
 				return nil
 			})
 		require.NoError(t, err)
 		helper.SignAttestation(requestTxID)
+
+		// Encode query components for create_market
+		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_record", argsBytes)
+		require.NoError(t, err)
 
 		// Create market
 		var queryID int
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{testExtensionName, attestationHash, int64(100), int64(5), int64(1)},
+			[]any{testExtensionName, queryComponents, int64(100), int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -553,7 +587,13 @@ func testSettleMarketTooEarly(t *testing.T) func(context.Context, *kwilTesting.P
 		platform.Deployer = deployer.Bytes()
 
 		helper := attestationTests.NewAttestationTestHelper(t, ctx, platform)
-		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+
+		// Give balance for market creation and trading
+		err := giveBalance(ctx, platform, deployer.Address(), "500000000000000000000")
+		require.NoError(t, err)
+
+		// Create data provider
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
 		require.NoError(t, err)
 
 		streamID := "sttooearly0000000000000000000000"
@@ -580,24 +620,27 @@ func testSettleMarketTooEarly(t *testing.T) func(context.Context, *kwilTesting.P
 		})
 
 		var requestTxID string
-		var attestationHash []byte
 		engineCtx = helper.NewEngineContext()
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 			[]any{dataProvider, streamID, "get_record", argsBytes, false, nil},
 			func(row *common.Row) error {
 				requestTxID = row.Values[0].(string)
-				attestationHash = append([]byte(nil), row.Values[1].([]byte)...)
+				// attestationHash not needed - using queryComponents
 				return nil
 			})
 		require.NoError(t, err)
 		helper.SignAttestation(requestTxID)
+
+		// Encode query components for create_market
+		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_record", argsBytes)
+		require.NoError(t, err)
 
 		// Create market with settle_time = 1000
 		var queryID int
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{testExtensionName, attestationHash, int64(1000), int64(5), int64(1)},
+			[]any{testExtensionName, queryComponents, int64(1000), int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -628,17 +671,25 @@ func testSettleMarketNoAttestation(t *testing.T) func(context.Context, *kwilTest
 
 		helper := attestationTests.NewAttestationTestHelper(t, ctx, platform)
 
-		// Create market with fake attestation hash (no actual attestation exists)
-		fakeHash := make([]byte, 32)
-		for i := range fakeHash {
-			fakeHash[i] = 0xAA
-		}
+		// Give balance for market creation and trading
+		err := giveBalance(ctx, platform, deployer.Address(), "500000000000000000000")
+		require.NoError(t, err)
+
+		// Create data provider
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
+		require.NoError(t, err)
+
+		// Create fake query components (no actual attestation exists)
+		dataProvider := deployer.Address()
+		streamID := "stfakeattest0000000000000000000"
+		fakeQueryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_record", nil)
+		require.NoError(t, err)
 
 		var queryID int
 		engineCtx := helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
-		_, err := platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{testExtensionName, fakeHash, int64(100), int64(5), int64(1)},
+		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
+			[]any{testExtensionName, fakeQueryComponents, int64(100), int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -668,7 +719,13 @@ func testSettleMarketAttestationNotSigned(t *testing.T) func(context.Context, *k
 		platform.Deployer = deployer.Bytes()
 
 		helper := attestationTests.NewAttestationTestHelper(t, ctx, platform)
-		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+
+		// Give balance for market creation and trading
+		err := giveBalance(ctx, platform, deployer.Address(), "500000000000000000000")
+		require.NoError(t, err)
+
+		// Create data provider
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
 		require.NoError(t, err)
 
 		streamID := "stunsigned0000000000000000000000"
@@ -694,23 +751,26 @@ func testSettleMarketAttestationNotSigned(t *testing.T) func(context.Context, *k
 			dataProvider, streamID, int64(500), int64(1500), nil, false,
 		})
 
-		var attestationHash []byte
 		engineCtx = helper.NewEngineContext()
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 			[]any{dataProvider, streamID, "get_record", argsBytes, false, nil},
 			func(row *common.Row) error {
-				attestationHash = append([]byte(nil), row.Values[1].([]byte)...)
+				// attestation hash not needed - using queryComponents
 				return nil
 			})
 		require.NoError(t, err)
 		// NOTE: Intentionally NOT signing the attestation
+
+		// Encode query components for create_market
+		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_record", argsBytes)
+		require.NoError(t, err)
 
 		// Create market
 		var queryID int
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{testExtensionName, attestationHash, int64(100), int64(5), int64(1)},
+			[]any{testExtensionName, queryComponents, int64(100), int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -752,7 +812,13 @@ func testSettleMarketValidationIntegration(t *testing.T) func(context.Context, *
 		platform.Deployer = deployer.Bytes()
 
 		helper := attestationTests.NewAttestationTestHelper(t, ctx, platform)
-		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+
+		// Give balance for market creation and trading
+		err := giveBalance(ctx, platform, deployer.Address(), "500000000000000000000")
+		require.NoError(t, err)
+
+		// Create data provider
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
 		require.NoError(t, err)
 
 		streamID := "stvalidationtest0000000000000000"
@@ -783,24 +849,27 @@ func testSettleMarketValidationIntegration(t *testing.T) func(context.Context, *
 		require.NoError(t, err)
 
 		var requestTxID string
-		var attestationHash []byte
 		engineCtx = helper.NewEngineContext()
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 			[]any{dataProvider, streamID, "get_record", argsBytes, false, nil},
 			func(row *common.Row) error {
 				requestTxID = row.Values[0].(string)
-				attestationHash = append([]byte(nil), row.Values[1].([]byte)...)
+				// attestationHash not needed - using queryComponents
 				return nil
 			})
 		require.NoError(t, err)
 		helper.SignAttestation(requestTxID)
+
+		// Encode query components for create_market
+		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_record", argsBytes)
+		require.NoError(t, err)
 
 		// Create market
 		var queryID int
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{testExtensionName, attestationHash, int64(100), int64(5), int64(1)},
+			[]any{testExtensionName, queryComponents, int64(100), int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -850,7 +919,13 @@ func testSettleMarketBlockedByBinaryParityViolation(t *testing.T) func(context.C
 		platform.Deployer = deployer.Bytes()
 
 		helper := attestationTests.NewAttestationTestHelper(t, ctx, platform)
-		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+
+		// Give balance for market creation and trading
+		err := giveBalance(ctx, platform, deployer.Address(), "500000000000000000000")
+		require.NoError(t, err)
+
+		// Create data provider
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
 		require.NoError(t, err)
 
 		streamID := "stparityviolation000000000000000"
@@ -878,24 +953,27 @@ func testSettleMarketBlockedByBinaryParityViolation(t *testing.T) func(context.C
 		})
 
 		var requestTxID string
-		var attestationHash []byte
 		engineCtx = helper.NewEngineContext()
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 			[]any{dataProvider, streamID, "get_record", argsBytes, false, nil},
 			func(row *common.Row) error {
 				requestTxID = row.Values[0].(string)
-				attestationHash = append([]byte(nil), row.Values[1].([]byte)...)
+				// attestationHash not needed - using queryComponents
 				return nil
 			})
 		require.NoError(t, err)
 		helper.SignAttestation(requestTxID)
+
+		// Encode query components for create_market
+		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_record", argsBytes)
+		require.NoError(t, err)
 
 		// Create market
 		var queryID int
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{testExtensionName, attestationHash, int64(100), int64(5), int64(1)},
+			[]any{testExtensionName, queryComponents, int64(100), int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -986,7 +1064,13 @@ func testSettleMarketBlockedByCollateralMismatch(t *testing.T) func(context.Cont
 		platform.Deployer = deployer.Bytes()
 
 		helper := attestationTests.NewAttestationTestHelper(t, ctx, platform)
-		err := setup.CreateDataProvider(ctx, platform, deployer.Address())
+
+		// Give balance for market creation and trading
+		err := giveBalance(ctx, platform, deployer.Address(), "500000000000000000000")
+		require.NoError(t, err)
+
+		// Create data provider
+		err = setup.CreateDataProvider(ctx, platform, deployer.Address())
 		require.NoError(t, err)
 
 		// Initialize ERC20 for placing orders
@@ -1021,13 +1105,12 @@ func testSettleMarketBlockedByCollateralMismatch(t *testing.T) func(context.Cont
 		})
 		require.NoError(t, err)
 		var requestTxID1 string
-		var attestationHash1 []byte
 		engineCtx = helper.NewEngineContext()
 		res1, err := platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 			[]any{dataProvider, streamID1, "get_record", argsBytes1, false, nil},
 			func(row *common.Row) error {
 				requestTxID1 = row.Values[0].(string)
-				attestationHash1 = append([]byte(nil), row.Values[1].([]byte)...)
+				// attestation hash not needed - using queryComponents
 				return nil
 			})
 		require.NoError(t, err)
@@ -1036,6 +1119,11 @@ func testSettleMarketBlockedByCollateralMismatch(t *testing.T) func(context.Cont
 			require.NoError(t, res1.Error)
 		}
 		helper.SignAttestation(requestTxID1)
+
+		// Encode query components for market 1
+		queryComponents1, err := encodeQueryComponentsForTests(
+			dataProvider, streamID1, "get_record", argsBytes1)
+		require.NoError(t, err)
 
 		// ===== STREAM 2 =====
 		streamID2 := "stcollateralmismatch200000000000"
@@ -1059,13 +1147,12 @@ func testSettleMarketBlockedByCollateralMismatch(t *testing.T) func(context.Cont
 		})
 		require.NoError(t, err)
 		var requestTxID2 string
-		var attestationHash2 []byte
 		engineCtx = helper.NewEngineContext()
 		res2, err := platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 			[]any{dataProvider, streamID2, "get_record", argsBytes2, false, nil},
 			func(row *common.Row) error {
 				requestTxID2 = row.Values[0].(string)
-				attestationHash2 = append([]byte(nil), row.Values[1].([]byte)...)
+				// attestation hash not needed - using queryComponents
 				return nil
 			})
 		require.NoError(t, err)
@@ -1075,13 +1162,18 @@ func testSettleMarketBlockedByCollateralMismatch(t *testing.T) func(context.Cont
 		}
 		helper.SignAttestation(requestTxID2)
 
+		// Encode query components for market 2
+		queryComponents2, err := encodeQueryComponentsForTests(
+			dataProvider, streamID2, "get_record", argsBytes2)
+		require.NoError(t, err)
+
 		// ===== CREATE MARKETS =====
 		var queryID1, queryID2 int
 
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{testExtensionName, attestationHash1, int64(100), int64(5), int64(1)},
+			[]any{testExtensionName, queryComponents1, int64(100), int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID1 = int(row.Values[0].(int64))
 				return nil
@@ -1091,7 +1183,7 @@ func testSettleMarketBlockedByCollateralMismatch(t *testing.T) func(context.Cont
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 50
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{testExtensionName, attestationHash2, int64(100), int64(5), int64(1)},
+			[]any{testExtensionName, queryComponents2, int64(100), int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID2 = int(row.Values[0].(int64))
 				return nil

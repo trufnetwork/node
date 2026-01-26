@@ -4,7 +4,6 @@ package order_book
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"testing"
 	"time"
@@ -183,11 +182,12 @@ func testChangeBidSuccess(t *testing.T) func(ctx context.Context, platform *kwil
 		require.NoError(t, err)
 
 		// Create market
-		queryHash := sha256.Sum256([]byte("test_change_bid_success"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_bid_success0", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -229,11 +229,12 @@ func testChangeBidHigherPrice(t *testing.T) func(ctx context.Context, platform *
 		err = giveBalance(ctx, platform, userAddr.Address(), "300000000000000000000")
 		require.NoError(t, err)
 
-		queryHash := sha256.Sum256([]byte("test_change_bid_higher"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_bid_higher00", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -266,11 +267,12 @@ func testChangeBidInsufficientBalance(t *testing.T) func(ctx context.Context, pl
 		err = giveBalance(ctx, platform, userAddr.Address(), "102000000000000000000") // 102 TRUF
 		require.NoError(t, err)
 
-		queryHash := sha256.Sum256([]byte("test_change_bid_insufficient"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_bid_insuffic", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -308,11 +310,12 @@ func testChangeBidTimestampPreservation(t *testing.T) func(ctx context.Context, 
 		err = giveBalance(ctx, platform, userAddr.Address(), "200000000000000000000")
 		require.NoError(t, err)
 
-		queryHash := sha256.Sum256([]byte("test_change_bid_timestamp"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_bid_timestam", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -351,11 +354,12 @@ func testChangeBidInvalidPrices(t *testing.T) func(ctx context.Context, platform
 		err = giveBalance(ctx, platform, userAddr.Address(), "200000000000000000000")
 		require.NoError(t, err)
 
-		queryHash := sha256.Sum256([]byte("test_change_bid_invalid"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_bid_invalid0", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -396,11 +400,12 @@ func testChangeAskSuccess(t *testing.T) func(ctx context.Context, platform *kwil
 		err = giveBalance(ctx, platform, userAddr.Address(), "200000000000000000000")
 		require.NoError(t, err)
 
-		queryHash := sha256.Sum256([]byte("test_change_ask_success"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_ask_success0", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -442,11 +447,12 @@ func testChangeAskHigherPrice(t *testing.T) func(ctx context.Context, platform *
 		err = giveBalance(ctx, platform, userAddr.Address(), "200000000000000000000")
 		require.NoError(t, err)
 
-		queryHash := sha256.Sum256([]byte("test_change_ask_higher"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_ask_higher00", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -478,11 +484,12 @@ func testChangeAskTimestampPreservation(t *testing.T) func(ctx context.Context, 
 		err = giveBalance(ctx, platform, userAddr.Address(), "200000000000000000000")
 		require.NoError(t, err)
 
-		queryHash := sha256.Sum256([]byte("test_change_ask_timestamp"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_ask_timestam", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -521,11 +528,12 @@ func testChangeAskInvalidPrices(t *testing.T) func(ctx context.Context, platform
 		err = giveBalance(ctx, platform, userAddr.Address(), "200000000000000000000")
 		require.NoError(t, err)
 
-		queryHash := sha256.Sum256([]byte("test_change_ask_invalid"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_ask_invalid0", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -562,11 +570,12 @@ func testChangeAskUpsizing(t *testing.T) func(ctx context.Context, platform *kwi
 		err = giveBalance(ctx, platform, userAddr.Address(), "300000000000000000000")
 		require.NoError(t, err)
 
-		queryHash := sha256.Sum256([]byte("test_change_ask_upsize"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_ask_upsize00", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -637,11 +646,12 @@ func testChangeAskDownsizing(t *testing.T) func(ctx context.Context, platform *k
 		err = giveBalance(ctx, platform, userAddr.Address(), "200000000000000000000")
 		require.NoError(t, err)
 
-		queryHash := sha256.Sum256([]byte("test_change_ask_downsize"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_ask_downsize", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})

@@ -4,7 +4,7 @@ package order_book
 
 import (
 	"context"
-	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"math/big"
 	"strings"
@@ -14,10 +14,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
 	coreauth "github.com/trufnetwork/kwil-db/core/crypto/auth"
-	erc20bridge "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
+	"github.com/trufnetwork/kwil-db/core/types"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
+	testerc20 "github.com/trufnetwork/node/tests/streams/utils/erc20"
+	erc20bridge "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
 	"github.com/trufnetwork/sdk-go/core/util"
 )
 
@@ -71,27 +73,162 @@ func testBuyOrderSuccessful(t *testing.T) func(ctx context.Context, platform *kw
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		userAddr := util.Unsafe_NewEthereumAddressFromString("0x1111111111111111111111111111111111111111")
 
-		// Setup: Initialize ERC20 extension singleton (needed for lock/unlock operations)
-		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
-		require.NoError(t, err, "failed to initialize ERC20 extension")
-
-		// Setup: Give user 100 TRUF
-		err = giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
+		// Setup: Give user 100 TRUF (injected to both TRUF and USDC bridges)
+		err := giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
+		// CRITICAL: Load DB instances into singleton cache
+		// giveBalance() syncs instances to DATABASE via ForTestingForceSyncInstance
+		// But balance()/lock()/unlock() actions check the in-memory SINGLETON cache
+		// ForTestingInitializeExtension() loads DB instances into singleton
+		err = erc20bridge.ForTestingInitializeExtension(ctx, platform)
+		require.NoError(t, err, "failed to initialize ERC20 extension singleton")
+
+		// DEBUG: Check balances AFTER initialization
+		trufBal, err := getBalance(ctx, platform, userAddr.Address())
+		require.NoError(t, err)
+		usdcBal, err := getUSDCBalance(ctx, platform, userAddr.Address())
+		require.NoError(t, err)
+		t.Logf("DEBUG: After init - TRUF: %s (expected 100e18), USDC: %s (expected 100e18)", trufBal.String(), usdcBal.String())
+
+		// DEBUG: Try to get balance directly from DB to see if it's there
+		balanceStr, err := testerc20.GetUserBalance(ctx, platform, testUSDCExtensionName, userAddr.Address())
+		t.Logf("DEBUG: USDC balance from GetUserBalance: %s (err: %v)", balanceStr, err)
+
+		// DEBUG: Check what extension instances exist
+		app := &common.App{DB: platform.DB, Engine: platform.Engine}
+		var instanceCount int
+		_ = app.Engine.ExecuteWithoutEngineCtx(ctx, app.DB, `{kwil_erc20_meta}SELECT COUNT(*) FROM reward_instances`, nil, func(r *common.Row) error {
+			instanceCount = int(r.Values[0].(int64))
+			return nil
+		})
+		t.Logf("DEBUG: Total ERC20 instances in DB: %d", instanceCount)
+
+		// DEBUG: List all instances with sync status
+		_ = app.Engine.ExecuteWithoutEngineCtx(ctx, app.DB, `{kwil_erc20_meta}
+			SELECT escrow_address, synced, erc20_address, erc20_decimals
+			FROM reward_instances`, nil, func(r *common.Row) error {
+			escrow := r.Values[0].([]byte)
+			synced := r.Values[1].(bool)
+			var erc20Addr []byte
+			if r.Values[2] != nil {
+				erc20Addr = r.Values[2].([]byte)
+			}
+			var decimals *int64
+			if r.Values[3] != nil {
+				d := r.Values[3].(int64)
+				decimals = &d
+			}
+			t.Logf("DEBUG: Instance escrow=0x%x synced=%v erc20=0x%x decimals=%v",
+				escrow, synced, erc20Addr, decimals)
+			return nil
+		})
+
+		// DEBUG: Check user balances table (correct table is 'balances', column is 'address')
+		var balanceCount int
+		_ = app.Engine.ExecuteWithoutEngineCtx(ctx, app.DB, `{kwil_erc20_meta}SELECT COUNT(*) FROM balances WHERE address = $addr`,
+			map[string]any{"$addr": []byte(userAddr.Bytes())}, func(r *common.Row) error {
+			balanceCount = int(r.Values[0].(int64))
+			return nil
+		})
+		t.Logf("DEBUG: User has %d balance records in balances table", balanceCount)
+
+		// DEBUG: Show actual balance values for this user
+		_ = app.Engine.ExecuteWithoutEngineCtx(ctx, app.DB, `{kwil_erc20_meta}
+			SELECT b.balance, r.escrow_address, r.erc20_address
+			FROM balances b
+			JOIN reward_instances r ON b.reward_id = r.id
+			WHERE b.address = $addr`,
+			map[string]any{"$addr": []byte(userAddr.Bytes())}, func(r *common.Row) error {
+			balance := r.Values[0].(*types.Decimal).String()
+			escrow := "0x" + hex.EncodeToString(r.Values[1].([]byte))
+			erc20 := "0x" + hex.EncodeToString(r.Values[2].([]byte))
+			t.Logf("DEBUG: Balance=%s escrow=%s erc20=%s", balance, escrow, erc20)
+			return nil
+		})
+
+		// DEBUG: Check if ordered-sync namespace exists
+		var namespaceExists bool
+		err = app.Engine.ExecuteWithoutEngineCtx(ctx, app.DB, `SELECT 1`, nil, func(r *common.Row) error {
+			namespaceExists = true
+			return nil
+		})
+		t.Logf("DEBUG: Can execute queries: %v (err: %v)", namespaceExists, err)
+
+		// DEBUG: Check if ordered-sync pending_data were stored
+		var pendingCount int
+		err = app.Engine.ExecuteWithoutEngineCtx(ctx, app.DB, `{kwil_ordered_sync}SELECT COUNT(*) FROM pending_data`, nil, func(r *common.Row) error {
+			pendingCount = int(r.Values[0].(int64))
+			return nil
+		})
+		t.Logf("DEBUG: Total ordered-sync pending_data: %d (err: %v)", pendingCount, err)
+
+		// DEBUG: Check topics table
+		var topicCount int
+		err = app.Engine.ExecuteWithoutEngineCtx(ctx, app.DB, `{kwil_ordered_sync}SELECT COUNT(*) FROM topics`, nil, func(r *common.Row) error {
+			topicCount = int(r.Values[0].(int64))
+			return nil
+		})
+		t.Logf("DEBUG: Total ordered-sync topics: %d (err: %v)", topicCount, err)
+
+		// DEBUG: List pending_data points with topic info
+		_ = app.Engine.ExecuteWithoutEngineCtx(ctx, app.DB, `{kwil_ordered_sync}
+			SELECT p.point, p.previous_point, t.name, t.last_processed_point
+			FROM pending_data p
+			JOIN topics t ON p.topic_id = t.id
+			ORDER BY p.point`, nil, func(r *common.Row) error {
+			point := r.Values[0].(int64)
+			var prevPoint *int64
+			if r.Values[1] != nil {
+				p := r.Values[1].(int64)
+				prevPoint = &p
+			}
+			topicName := r.Values[2].(string)
+			var lastProcessed *int64
+			if r.Values[3] != nil {
+				lp := r.Values[3].(int64)
+				lastProcessed = &lp
+			}
+			var lpStr string
+			if lastProcessed != nil {
+				lpStr = fmt.Sprintf("%d", *lastProcessed)
+			} else {
+				lpStr = "nil"
+			}
+			var prevStr string
+			if prevPoint != nil {
+				prevStr = fmt.Sprintf("%d", *prevPoint)
+			} else {
+				prevStr = "nil"
+			}
+			t.Logf("DEBUG: pending point=%d prev=%s topic=%s last_processed=%s MATCH=%v",
+				point, prevStr, topicName, lpStr, (prevPoint == nil && lastProcessed == nil) || (prevPoint != nil && lastProcessed != nil && *prevPoint == *lastProcessed))
+			return nil
+		})
+
+		// DEBUG: Check finalized status
+		_ = app.Engine.ExecuteWithoutEngineCtx(ctx, app.DB, `{kwil_ordered_sync}SELECT topic, point, finalized FROM logs ORDER BY point`, nil, func(r *common.Row) error {
+			topic := r.Values[0].(string)
+			point := r.Values[1].(int64)
+			finalized := r.Values[2].(bool)
+			t.Logf("DEBUG: Log topic=%s point=%d finalized=%v", topic, point, finalized)
+			return nil
+		})
+
 		// Create a market
-		queryHash := sha256.Sum256([]byte("test_market_buy_1"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000001", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
 		require.NoError(t, err, "create_market should succeed")
 
-		// Get balance before order
-		balanceBefore, err := getBalance(ctx, platform, userAddr.Address())
+		// Get USDC balance before order (collateral is locked from USDC bridge)
+		balanceBefore, err := getUSDCBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
 		// Place buy order: 10 YES shares at $0.56
@@ -99,8 +236,8 @@ func testBuyOrderSuccessful(t *testing.T) func(ctx context.Context, platform *kw
 		err = callPlaceBuyOrder(ctx, platform, &userAddr, int(marketID), true, 56, 10)
 		require.NoError(t, err, "place_buy_order should succeed")
 
-		// Verify balance decreased by 5.6 TRUF
-		balanceAfter, err := getBalance(ctx, platform, userAddr.Address())
+		// Verify USDC balance decreased by 5.6 TRUF
+		balanceAfter, err := getUSDCBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
 		// Expected: balanceBefore - 5.6 (collateral locked for order)
@@ -129,20 +266,21 @@ func testBuyOrderInsufficientBalance(t *testing.T) func(ctx context.Context, pla
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		userAddr := util.Unsafe_NewEthereumAddressFromString("0x2222222222222222222222222222222222222222")
 
-		// Setup: Initialize ERC20 extension
-		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
+		// Give user only 3 TRUF (enough for market creation but not order)
+		err := giveBalance(ctx, platform, userAddr.Address(), "3000000000000000000")
 		require.NoError(t, err)
 
-		// Give user only 3 TRUF (enough for market creation but not order)
-		err = giveBalance(ctx, platform, userAddr.Address(), "3000000000000000000")
+		// Initialize ERC20 extension after balance injection
+		err = erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
 		// Create market
-		queryHash := sha256.Sum256([]byte("test_market_buy_2"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000002", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -162,10 +300,11 @@ func testBuyOrderMarketNotFound(t *testing.T) func(ctx context.Context, platform
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		userAddr := util.Unsafe_NewEthereumAddressFromString("0x3333333333333333333333333333333333333333")
 
-		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
+		err := giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
 		require.NoError(t, err)
 
-		err = giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
+		// Initialize ERC20 extension after balance injection
+		err = erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
 		// Try to place order on non-existent market (ID 99999)
@@ -182,18 +321,20 @@ func testBuyOrderInvalidPrice(t *testing.T) func(ctx context.Context, platform *
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		userAddr := util.Unsafe_NewEthereumAddressFromString("0x4444444444444444444444444444444444444444")
 
-		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
+		err := giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
 		require.NoError(t, err)
 
-		err = giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
+		// Initialize ERC20 extension after balance injection
+		err = erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
 		// Create market
-		queryHash := sha256.Sum256([]byte("test_market_buy_3"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000003", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -218,18 +359,20 @@ func testBuyOrderInvalidAmount(t *testing.T) func(ctx context.Context, platform 
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		userAddr := util.Unsafe_NewEthereumAddressFromString("0x5555555555555555555555555555555555555555")
 
-		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
+		err := giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
 		require.NoError(t, err)
 
-		err = giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
+		// Initialize ERC20 extension after balance injection
+		err = erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
 		// Create market
-		queryHash := sha256.Sum256([]byte("test_market_buy_4"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000004", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -259,18 +402,20 @@ func testBuyOrderMultipleOrdersDifferentPrices(t *testing.T) func(ctx context.Co
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		userAddr := util.Unsafe_NewEthereumAddressFromString("0x6666666666666666666666666666666666666666")
 
-		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
+		err := giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
 		require.NoError(t, err)
 
-		err = giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
+		// Initialize ERC20 extension after balance injection
+		err = erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
 		// Create market
-		queryHash := sha256.Sum256([]byte("test_market_buy_5"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000005", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -311,18 +456,20 @@ func testBuyOrderMultipleOrdersSamePrice(t *testing.T) func(ctx context.Context,
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		userAddr := util.Unsafe_NewEthereumAddressFromString("0x7777777777777777777777777777777777777777")
 
-		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
+		err := giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
 		require.NoError(t, err)
 
-		err = giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
+		// Initialize ERC20 extension after balance injection
+		err = erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
 		// Create market
-		queryHash := sha256.Sum256([]byte("test_market_buy_6"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000006", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -354,26 +501,28 @@ func testBuyOrderBalanceChanges(t *testing.T) func(ctx context.Context, platform
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		userAddr := util.Unsafe_NewEthereumAddressFromString("0x8888888888888888888888888888888888888888")
 
-		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
+		initialBalance := toWei("50")
+		err := giveBalance(ctx, platform, userAddr.Address(), initialBalance.String())
 		require.NoError(t, err)
 
-		initialBalance := toWei("50")
-		err = giveBalance(ctx, platform, userAddr.Address(), initialBalance.String())
+		// Initialize ERC20 extension after balance injection
+		err = erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
 		// Create market (costs 2 TRUF)
-		queryHash := sha256.Sum256([]byte("test_market_buy_7"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000007", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
 		require.NoError(t, err)
 
-		// Get balance after market creation
-		balanceAfterMarket, err := getBalance(ctx, platform, userAddr.Address())
+		// Get USDC balance after market creation (collateral comes from USDC bridge)
+		balanceAfterMarket, err := getUSDCBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
 		// Place order: 20 shares at $0.75 (requires 15 TRUF)
@@ -381,8 +530,8 @@ func testBuyOrderBalanceChanges(t *testing.T) func(ctx context.Context, platform
 		err = callPlaceBuyOrder(ctx, platform, &userAddr, int(marketID), false, 75, 20)
 		require.NoError(t, err)
 
-		// Verify balance decreased by 15 TRUF
-		balanceFinal, err := getBalance(ctx, platform, userAddr.Address())
+		// Verify USDC balance decreased by 15 TRUF
+		balanceFinal, err := getUSDCBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
 		expectedFinal := new(big.Int).Sub(balanceAfterMarket, toWei("15"))
@@ -469,4 +618,21 @@ func getPositions(ctx context.Context, platform *kwilTesting.Platform, marketID 
 	}
 
 	return positions, nil
+}
+
+// getUSDCBalance returns the user's USDC bridge balance (hoodi_tt2)
+// Used for checking collateral locked in buy/sell orders
+func getUSDCBalance(ctx context.Context, platform *kwilTesting.Platform, wallet string) (*big.Int, error) {
+	// Import testerc20 is needed
+	balanceStr, err := testerc20.GetUserBalance(ctx, platform, testUSDCExtensionName, wallet)
+	if err != nil {
+		return nil, err
+	}
+
+	balance := new(big.Int)
+	if _, ok := balance.SetString(balanceStr, 10); !ok {
+		return nil, fmt.Errorf("invalid balance string: %s", balanceStr)
+	}
+
+	return balance, nil
 }

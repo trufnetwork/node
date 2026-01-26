@@ -4,7 +4,6 @@ package order_book
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"math/big"
 	"testing"
@@ -54,11 +53,12 @@ func testCancelBuyOrderSuccess(t *testing.T) func(ctx context.Context, platform 
 		require.NoError(t, err, "failed to give balance")
 
 		// Create market
-		queryHash := sha256.Sum256([]byte("test_market_cancel_buy_1"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000027", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -101,11 +101,12 @@ func testCancelSellOrderSuccess(t *testing.T) func(ctx context.Context, platform
 		require.NoError(t, err)
 
 		// Create market
-		queryHash := sha256.Sum256([]byte("test_market_cancel_sell_1"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000028", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -171,11 +172,12 @@ func testCancelBuyOrderMultiplePrices(t *testing.T) func(ctx context.Context, pl
 		require.NoError(t, err)
 
 		// Create market
-		queryHash := sha256.Sum256([]byte("test_market_cancel_multi"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000029", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -240,11 +242,12 @@ func testCancelOrderNotFound(t *testing.T) func(ctx context.Context, platform *k
 		require.NoError(t, err)
 
 		// Create market
-		queryHash := sha256.Sum256([]byte("test_market_cancel_not_found"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000030", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -276,11 +279,12 @@ func testCancelOrderMarketSettled(t *testing.T) func(ctx context.Context, platfo
 		require.NoError(t, err)
 
 		// Create market with settle time in the past
-		queryHash := sha256.Sum256([]byte("test_market_cancel_settled"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000031", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -334,11 +338,12 @@ func testCancelOrderInvalidPrice(t *testing.T) func(ctx context.Context, platfor
 		require.NoError(t, err)
 
 		// Create market
-		queryHash := sha256.Sum256([]byte("test_market_cancel_invalid_price"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000032", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -369,11 +374,12 @@ func testCancelOrderHoldings(t *testing.T) func(ctx context.Context, platform *k
 		require.NoError(t, err)
 
 		// Create market
-		queryHash := sha256.Sum256([]byte("test_market_cancel_holdings"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000033", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -401,11 +407,12 @@ func testCancelBuyOrderVerifyRefund(t *testing.T) func(ctx context.Context, plat
 		require.NoError(t, err)
 
 		// Create market
-		queryHash := sha256.Sum256([]byte("test_market_cancel_verify_refund"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000034", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})
@@ -458,11 +465,12 @@ func testCancelSellOrderVerifyShares(t *testing.T) func(ctx context.Context, pla
 		require.NoError(t, err)
 
 		// Create market
-		queryHash := sha256.Sum256([]byte("test_market_cancel_verify_shares"))
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000035", "get_record", []byte{0x01})
+		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
 		var marketID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHash[:], settleTime, 5, 20, func(row *common.Row) error {
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
 			marketID = row.Values[0].(int64)
 			return nil
 		})

@@ -4,8 +4,6 @@ package order_book
 
 import (
 	"context"
-	"crypto/sha256"
-	"fmt"
 	"testing"
 	"time"
 
@@ -871,20 +869,21 @@ func giveBalanceQueries(ctx context.Context, platform *kwilTesting.Platform, wal
 }
 
 func createTestMarketQueries(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress) (int, []byte) {
-	queryData := []byte(fmt.Sprintf("test:stream:%d", time.Now().UnixNano()))
-	queryHash := sha256.Sum256(queryData)
+	queryComponents, err := encodeQueryComponentsForTests(signer.Address(), "sttest00000000000000000000000067", "get_record", []byte{0x01})
+	require.NoError(t, err)
+
 	settleTime := time.Now().Add(1 * time.Hour).Unix()
 
 	var queryID int64
-	err := callActionQueries(ctx, platform, signer, "create_market",
-		[]any{testExtensionNameQueries, queryHash[:], settleTime, int64(5), int64(20)},
+	err = callActionQueries(ctx, platform, signer, "create_market",
+		[]any{testExtensionNameQueries, queryComponents, settleTime, int64(5), int64(20)},
 		func(row *common.Row) error {
 			queryID = row.Values[0].(int64)
 			return nil
 		})
 	require.NoError(t, err)
 
-	return int(queryID), queryHash[:]
+	return int(queryID), queryComponents
 }
 
 func callGetOrderBook(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, queryID int, outcome bool, resultFn func(*common.Row) error) error {
