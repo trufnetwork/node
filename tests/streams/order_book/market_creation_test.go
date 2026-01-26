@@ -332,14 +332,12 @@ func testListMarkets(t *testing.T) func(ctx context.Context, platform *kwilTesti
 		// Create 3 markets
 		for i := 0; i < 3; i++ {
 			dataProvider := userAddr.Address()
-			streamID := fmt.Sprintf("stlistmarkets%d000000000000000000000", i) // Pad to 32 chars
-			streamID = streamID[:32]                                           // Ensure exactly 32 chars
+			// Generate exactly 32-char stream ID
+			streamID := fmt.Sprintf("stlistmarkets%02d0000000000000000", i)[:32]
 			actionID := "get_record"
 			argsBytes := []byte{byte(i)}
-
 			queryComponents, err := encodeQueryComponents(dataProvider, streamID, actionID, argsBytes)
 			require.NoError(t, err)
-
 			settleTime := time.Now().Add(time.Duration(i+1) * time.Hour).Unix()
 			err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, int64(5), int64(20), nil)
 			require.NoError(t, err)
