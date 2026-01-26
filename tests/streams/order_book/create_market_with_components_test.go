@@ -35,7 +35,6 @@ const (
 	testUSDCEscrowComponents        = "0x80D9B3b6941367917816d36748C88B303f7F1415"
 	testUSDCERC20Components         = "0x1591DeAa21710E0BA6CC1b15F49620C9F65B2dEd"
 	testUSDCExtensionNameComponents = "hoodi_tt2"
-
 )
 
 // Balance tracking for chained deposits (prevents multi-user balance issues)
@@ -61,6 +60,7 @@ func TestCreateMarketWithQueryComponents(t *testing.T) {
 		},
 	}, testutils.GetTestOptionsWithCache())
 }
+
 // testCreateMarketWithValidComponents tests successful market creation with query_components
 func testCreateMarketWithValidComponents(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
@@ -78,7 +78,7 @@ func testCreateMarketWithValidComponents(t *testing.T) func(ctx context.Context,
 
 		// Encode query components
 		dataProvider := userAddr.Address()
-		streamID := "stbtcusd00000000000000000000000000" // Exactly 32 chars
+		streamID := "stbtcusd000000000000000000000000" // Exactly 32 chars
 		actionID := "get_record"
 
 		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, actionID, nil)

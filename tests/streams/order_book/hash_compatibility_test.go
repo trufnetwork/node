@@ -53,7 +53,6 @@ const (
 	testUSDCEscrowHashCompat        = "0x80D9B3b6941367917816d36748C88B303f7F1415"
 	testUSDCERC20HashCompat         = "0x1591DeAa21710E0BA6CC1b15F49620C9F65B2dEd"
 	testUSDCExtensionNameHashCompat = "hoodi_tt2"
-
 )
 
 var (
@@ -325,8 +324,8 @@ func testHashCompatibility_DifferentComponentsProduceDifferentHash(t *testing.T)
 		require.NoError(t, err)
 
 		dataProvider := deployer.Address()
-		streamID1 := "stdiffcomp10000000000000000000"
-		streamID2 := "stdiffcomp20000000000000000000"
+		streamID1 := "stdiffcomp1000000000000000000000"
+		streamID2 := "stdiffcomp2000000000000000000000"
 		actionID := "get_record"
 		argsBytes := []byte{0x00}
 

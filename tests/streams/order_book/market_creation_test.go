@@ -49,9 +49,9 @@ const (
 )
 
 var (
-	twoTRUF               = mustParseBigInt(marketFee)
-	trufPointCounter     int64 = 100   // Counter for TRUF bridge (hoodi_tt)
-	usdcPointCounter     int64 = 10000 // Counter for USDC bridge (hoodi_tt2) - far apart to avoid conflicts
+	twoTRUF                = mustParseBigInt(marketFee)
+	trufPointCounter int64 = 100   // Counter for TRUF bridge (hoodi_tt)
+	usdcPointCounter int64 = 10000 // Counter for USDC bridge (hoodi_tt2) - far apart to avoid conflicts
 )
 
 func mustParseBigInt(s string) *big.Int {
@@ -333,10 +333,7 @@ func testListMarkets(t *testing.T) func(ctx context.Context, platform *kwilTesti
 		for i := 0; i < 3; i++ {
 			dataProvider := userAddr.Address()
 			streamID := fmt.Sprintf("stlistmarkets%d000000000000000000000", i) // Pad to 32 chars
-			if len(streamID) < 32 {
-				streamID = streamID + string(make([]byte, 32-len(streamID)))
-			}
-			streamID = streamID[:32] // Ensure exactly 32 chars
+			streamID = streamID[:32]                                           // Ensure exactly 32 chars
 			actionID := "get_record"
 			argsBytes := []byte{byte(i)}
 
