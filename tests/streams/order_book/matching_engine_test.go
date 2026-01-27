@@ -21,35 +21,95 @@ import (
 
 // balancePointTracker tracks the previous point for chaining ERC20 deposits
 var (
-	balancePointCounter int64 = 100
-	lastBalancePoint    *int64
+	balancePointCounter     int64 = 100
+	lastBalancePoint        *int64
+	trufBalancePointCounter int64 = 200
+	lastTrufBalancePoint    *int64
 )
 
-// giveBalanceChained gives balance with proper linked-list chaining for ordered-sync
+// giveBalanceChained gives balance (BOTH TRUF and USDC) with proper linked-list chaining for ordered-sync
 func giveBalanceChained(ctx context.Context, platform *kwilTesting.Platform, wallet string, amountStr string) error {
-	balancePointCounter++
-	currentPoint := balancePointCounter
+	// Inject TRUF balance first (for market creation fee)
+	trufBalancePointCounter++
+	trufPoint := trufBalancePointCounter
 
 	err := testerc20.InjectERC20Transfer(
 		ctx,
 		platform,
-		testChain,
-		testEscrow,
-		testERC20,
+		testTRUFChain,
+		testTRUFEscrow,
+		testTRUFERC20,
 		wallet,
 		wallet,
 		amountStr,
-		currentPoint,
-		lastBalancePoint, // Chain to previous point
+		trufPoint,
+		lastTrufBalancePoint, // Chain to previous TRUF point
 	)
 
-	if err == nil {
-		// Update lastBalancePoint for next call
-		p := currentPoint
-		lastBalancePoint = &p
+	if err != nil {
+		return fmt.Errorf("failed to inject TRUF: %w", err)
 	}
 
-	return err
+	// Update TRUF lastPoint for next call
+	p := trufPoint
+	lastTrufBalancePoint = &p
+
+	// Inject USDC balance (for market collateral)
+	balancePointCounter++
+	usdcPoint := balancePointCounter
+
+	err = testerc20.InjectERC20Transfer(
+		ctx,
+		platform,
+		testUSDCChain,
+		testUSDCEscrow,
+		testUSDCERC20,
+		wallet,
+		wallet,
+		amountStr,
+		usdcPoint,
+		lastBalancePoint, // Chain to previous USDC point
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to inject USDC: %w", err)
+	}
+
+	// Update USDC lastPoint for next call
+	q := usdcPoint
+	lastBalancePoint = &q
+
+	return nil
+}
+
+// giveUSDCBalanceChained gives USDC only balance with proper linked-list chaining for ordered-sync
+// Use this for vault/escrow funding where TRUF is not needed
+func giveUSDCBalanceChained(ctx context.Context, platform *kwilTesting.Platform, wallet string, amountStr string) error {
+	balancePointCounter++
+	usdcPoint := balancePointCounter
+
+	err := testerc20.InjectERC20Transfer(
+		ctx,
+		platform,
+		testUSDCChain,
+		testUSDCEscrow,
+		testUSDCERC20,
+		wallet,
+		wallet,
+		amountStr,
+		usdcPoint,
+		lastBalancePoint, // Chain to previous USDC point
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to inject USDC: %w", err)
+	}
+
+	// Update USDC lastPoint for next call
+	q := usdcPoint
+	lastBalancePoint = &q
+
+	return nil
 }
 
 // TestMatchingEngine tests all three match types: direct, mint, and burn
@@ -88,6 +148,7 @@ func testDirectMatchFullMatch(t *testing.T) func(context.Context, *kwilTesting.P
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Reset balance point tracker for this test
 		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
 
 		// CRITICAL: Initialize ERC20 extension singleton FIRST
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
@@ -155,6 +216,7 @@ func testMintMatchFullMatch(t *testing.T) func(context.Context, *kwilTesting.Pla
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Reset balance point tracker for this test
 		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
 
 		// CRITICAL: Initialize ERC20 extension singleton FIRST
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
@@ -223,6 +285,7 @@ func testBurnMatchFullMatch(t *testing.T) func(context.Context, *kwilTesting.Pla
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Reset balance point tracker for this test
 		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
 
 		// CRITICAL: Initialize ERC20 extension singleton FIRST
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
@@ -260,7 +323,7 @@ func testBurnMatchFullMatch(t *testing.T) func(context.Context, *kwilTesting.Pla
 		require.NoError(t, err)
 
 		// Get balance before burn
-		balance1Before, err := getBalance(ctx, platform, user1Addr.Address())
+		balance1Before, err := getUSDCBalance(ctx, platform, user1Addr.Address())
 		require.NoError(t, err)
 
 		// User1: Sell the YES holdings @ $0.60
@@ -268,7 +331,7 @@ func testBurnMatchFullMatch(t *testing.T) func(context.Context, *kwilTesting.Pla
 		require.NoError(t, err)
 
 		// Get User2's initial balance BEFORE split limit
-		balance2Initial, err := getBalance(ctx, platform, user2Addr.Address())
+		balance2Initial, err := getUSDCBalance(ctx, platform, user2Addr.Address())
 		require.NoError(t, err)
 
 		// User2: Split limit @ 60 creates YES holdings + NO sell @ 40
@@ -290,10 +353,10 @@ func testBurnMatchFullMatch(t *testing.T) func(context.Context, *kwilTesting.Pla
 		require.False(t, hasSellOrders, "Sell orders should be burned")
 
 		// Verify collateral returned
-		balance1After, err := getBalance(ctx, platform, user1Addr.Address())
+		balance1After, err := getUSDCBalance(ctx, platform, user1Addr.Address())
 		require.NoError(t, err)
 
-		balance2After, err := getBalance(ctx, platform, user2Addr.Address())
+		balance2After, err := getUSDCBalance(ctx, platform, user2Addr.Address())
 		require.NoError(t, err)
 
 		// User1 should receive 60 TRUF (100 shares × $0.60)
@@ -318,6 +381,7 @@ func testDirectMatchPartialFill(t *testing.T) func(context.Context, *kwilTesting
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Reset balance point tracker for this test
 		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
 
 		// CRITICAL: Initialize ERC20 extension singleton FIRST
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
@@ -389,6 +453,7 @@ func testMintMatchPartialFill(t *testing.T) func(context.Context, *kwilTesting.P
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Reset balance point tracker for this test
 		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
 
 		// CRITICAL: Initialize ERC20 extension singleton FIRST
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
@@ -463,6 +528,7 @@ func testBurnMatchPartialFill(t *testing.T) func(context.Context, *kwilTesting.P
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Reset balance point tracker for this test
 		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
 
 		// CRITICAL: Initialize ERC20 extension singleton FIRST
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
@@ -499,7 +565,7 @@ func testBurnMatchPartialFill(t *testing.T) func(context.Context, *kwilTesting.P
 		require.NoError(t, err)
 
 		// Get balance before burn
-		balance1Before, err := getBalance(ctx, platform, user1Addr.Address())
+		balance1Before, err := getUSDCBalance(ctx, platform, user1Addr.Address())
 		require.NoError(t, err)
 
 		// User1: Sell 60 YES @ $0.60
@@ -507,7 +573,7 @@ func testBurnMatchPartialFill(t *testing.T) func(context.Context, *kwilTesting.P
 		require.NoError(t, err)
 
 		// Get User2's initial balance
-		balance2Initial, err := getBalance(ctx, platform, user2Addr.Address())
+		balance2Initial, err := getUSDCBalance(ctx, platform, user2Addr.Address())
 		require.NoError(t, err)
 
 		// User2: Split limit @ 60 creates 100 YES holdings + 100 NO sell @ 40
@@ -530,10 +596,10 @@ func testBurnMatchPartialFill(t *testing.T) func(context.Context, *kwilTesting.P
 		require.Equal(t, int64(40), user2NoSellOrder.Amount)
 
 		// Verify collateral returned
-		balance1After, err := getBalance(ctx, platform, user1Addr.Address())
+		balance1After, err := getUSDCBalance(ctx, platform, user1Addr.Address())
 		require.NoError(t, err)
 
-		balance2After, err := getBalance(ctx, platform, user2Addr.Address())
+		balance2After, err := getUSDCBalance(ctx, platform, user2Addr.Address())
 		require.NoError(t, err)
 
 		// User1 should receive 36 TRUF (60 shares × $0.60)
@@ -560,6 +626,7 @@ func testDirectMatchMultipleRounds(t *testing.T) func(context.Context, *kwilTest
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Reset balance point tracker for this test
 		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
 
 		// CRITICAL: Initialize ERC20 extension singleton FIRST
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
@@ -654,6 +721,7 @@ func testNoMatchingOrders(t *testing.T) func(context.Context, *kwilTesting.Platf
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Reset balance point tracker for this test
 		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
 
 		// CRITICAL: Initialize ERC20 extension singleton FIRST
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)

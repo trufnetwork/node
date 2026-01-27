@@ -122,7 +122,8 @@ func TestRewards(t *testing.T) {
 // testSampleRewardsMarketSettled tests error when trying to sample a settled market
 func testSampleRewardsMarketSettled(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		lastBalancePoint = nil // Reset for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil // Reset for this test
 		userAddr := util.Unsafe_NewEthereumAddressFromString("0x1111111111111111111111111111111111111111")
 
 		// Setup: Initialize ERC20 extension
@@ -180,7 +181,8 @@ func testSampleRewardsMarketSettled(t *testing.T) func(context.Context, *kwilTes
 // testSampleRewardsNoOrderBook tests sampling when no orders exist
 func testSampleRewardsNoOrderBook(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		lastBalancePoint = nil // Reset for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil // Reset for this test
 		userAddr := util.Unsafe_NewEthereumAddressFromString("0x2222222222222222222222222222222222222222")
 
 		// Setup: Initialize ERC20 extension
@@ -219,7 +221,8 @@ func testSampleRewardsNoOrderBook(t *testing.T) func(context.Context, *kwilTesti
 // testSampleRewardsIncompleteOrderBook tests when only bid or ask exists (not both)
 func testSampleRewardsIncompleteOrderBook(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		lastBalancePoint = nil // Reset for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil // Reset for this test
 		userAddr := util.Unsafe_NewEthereumAddressFromString("0x3333333333333333333333333333333333333333")
 
 		// Setup: Initialize ERC20 extension
@@ -263,7 +266,8 @@ func testSampleRewardsIncompleteOrderBook(t *testing.T) func(context.Context, *k
 // testSampleRewardsSpread5Cents tests dynamic spread = 5¢ (midpoint 36-50 or 50-64)
 func testSampleRewardsSpread5Cents(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		lastBalancePoint = nil // Reset for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil // Reset for this test
 		user1 := util.Unsafe_NewEthereumAddressFromString("0x4444444444444444444444444444444444444444")
 
 		// Setup: Initialize ERC20 extension
@@ -307,7 +311,8 @@ func testSampleRewardsSpread5Cents(t *testing.T) func(context.Context, *kwilTest
 // testSampleRewardsSpread4Cents tests dynamic spread = 4¢ (midpoint distance 30-59)
 func testSampleRewardsSpread4Cents(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		lastBalancePoint = nil // Reset for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil // Reset for this test
 		user1 := util.Unsafe_NewEthereumAddressFromString("0x5555555555555555555555555555555555555555")
 
 		// Setup: Initialize ERC20 extension
@@ -350,7 +355,8 @@ func testSampleRewardsSpread4Cents(t *testing.T) func(context.Context, *kwilTest
 // testSampleRewardsSpread3Cents tests dynamic spread = 3¢ (midpoint distance 60-79)
 func testSampleRewardsSpread3Cents(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		lastBalancePoint = nil // Reset for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil // Reset for this test
 		user1 := util.Unsafe_NewEthereumAddressFromString("0x6666666666666666666666666666666666666666")
 
 		// Setup: Initialize ERC20 extension
@@ -393,7 +399,8 @@ func testSampleRewardsSpread3Cents(t *testing.T) func(context.Context, *kwilTest
 // testSampleRewardsIneligibleMarket tests markets too certain for rewards (distance 80-99)
 func testSampleRewardsIneligibleMarket(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		lastBalancePoint = nil // Reset for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil // Reset for this test
 		user1 := util.Unsafe_NewEthereumAddressFromString("0x7777777777777777777777777777777777777777")
 
 		// Setup: Initialize ERC20 extension
@@ -436,7 +443,8 @@ func testSampleRewardsIneligibleMarket(t *testing.T) func(context.Context, *kwil
 // testSampleRewardsSingleLP tests single LP gets 100% of rewards
 func testSampleRewardsSingleLP(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		lastBalancePoint = nil // Reset for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil // Reset for this test
 		user1 := util.Unsafe_NewEthereumAddressFromString("0x8888888888888888888888888888888888888888")
 
 		// Setup: Initialize ERC20 extension
@@ -500,7 +508,8 @@ func testSampleRewardsSingleLP(t *testing.T) func(context.Context, *kwilTesting.
 // testSampleRewardsTwoLPs tests reward distribution between two LPs
 func testSampleRewardsTwoLPs(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		lastBalancePoint = nil // Reset for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil // Reset for this test
 		user1 := util.Unsafe_NewEthereumAddressFromString("0x9999999999999999999999999999999999999999")
 		user2 := util.Unsafe_NewEthereumAddressFromString("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 
@@ -580,7 +589,8 @@ func testSampleRewardsTwoLPs(t *testing.T) func(context.Context, *kwilTesting.Pl
 // testSampleRewardsMultipleLPs tests reward distribution among multiple LPs
 func testSampleRewardsMultipleLPs(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		lastBalancePoint = nil // Reset for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil // Reset for this test
 		user1 := util.Unsafe_NewEthereumAddressFromString("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 		user2 := util.Unsafe_NewEthereumAddressFromString("0xcccccccccccccccccccccccccccccccccccccccc")
 		user3 := util.Unsafe_NewEthereumAddressFromString("0xdddddddddddddddddddddddddddddddddddddddd")
@@ -673,7 +683,8 @@ func testSampleRewardsMultipleLPs(t *testing.T) func(context.Context, *kwilTesti
 // testSampleRewardsNoQualifyingOrders tests when orders exist but none qualify (too wide spread)
 func testSampleRewardsNoQualifyingOrders(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		lastBalancePoint = nil // Reset for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil // Reset for this test
 		user1 := util.Unsafe_NewEthereumAddressFromString("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
 		user2 := util.Unsafe_NewEthereumAddressFromString("0xffffffffffffffffffffffffffffffffffffffff")
 
@@ -729,6 +740,7 @@ func testSampleRewardsNoQualifyingOrders(t *testing.T) func(context.Context, *kw
 func testConstraintSellBuyPair(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
 
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -793,6 +805,7 @@ func testConstraintSellBuyPair(t *testing.T) func(context.Context, *kwilTesting.
 func testConstraintNoDuplicates(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
 
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)

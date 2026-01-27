@@ -46,6 +46,7 @@ func testDistribution1Block2LPs(t *testing.T) func(context.Context, *kwilTesting
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Reset balance point tracker
 		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
 
 		// Initialize ERC20 extension
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
@@ -125,9 +126,9 @@ func testDistribution1Block2LPs(t *testing.T) func(context.Context, *kwilTesting
 		require.InDelta(t, 100.0, total, 0.01, "Rewards should sum to 100%")
 
 		// Get balances before distribution
-		balance1Before, err := getBalance(ctx, platform, user1.Address())
+		balance1Before, err := getUSDCBalance(ctx, platform, user1.Address())
 		require.NoError(t, err)
-		balance2Before, err := getBalance(ctx, platform, user2.Address())
+		balance2Before, err := getUSDCBalance(ctx, platform, user2.Address())
 		require.NoError(t, err)
 		t.Logf("Balances before distribution: User1=%s, User2=%s", balance1Before.String(), balance2Before.String())
 
@@ -137,7 +138,7 @@ func testDistribution1Block2LPs(t *testing.T) func(context.Context, *kwilTesting
 
 		// Fund the vault (escrow) with 1000 TRUF so it can distribute fees
 		// Use giveBalanceChained to maintain the ordered-sync chain
-		err = giveBalanceChained(ctx, platform, testEscrow, totalFees.String())
+		err = giveUSDCBalanceChained(ctx, platform, testUSDCEscrow, totalFees.String())
 		require.NoError(t, err)
 		t.Logf("Funded vault with %s TRUF", new(big.Int).Div(totalFees, big.NewInt(1e18)).String())
 
@@ -176,9 +177,9 @@ func testDistribution1Block2LPs(t *testing.T) func(context.Context, *kwilTesting
 		}
 
 		// Get balances after distribution
-		balance1After, err := getBalance(ctx, platform, user1.Address())
+		balance1After, err := getUSDCBalance(ctx, platform, user1.Address())
 		require.NoError(t, err)
-		balance2After, err := getBalance(ctx, platform, user2.Address())
+		balance2After, err := getUSDCBalance(ctx, platform, user2.Address())
 		require.NoError(t, err)
 		t.Logf("Balances after distribution: User1=%s, User2=%s", balance1After.String(), balance2After.String())
 
@@ -225,6 +226,7 @@ func testDistribution3Blocks2LPs(t *testing.T) func(context.Context, *kwilTestin
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Reset balance point tracker
 		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
 
 		// Initialize ERC20 extension
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
@@ -304,16 +306,16 @@ func testDistribution3Blocks2LPs(t *testing.T) func(context.Context, *kwilTestin
 		participant2ID := 2
 
 		// Get balances before distribution
-		balance1Before, err := getBalance(ctx, platform, user1.Address())
+		balance1Before, err := getUSDCBalance(ctx, platform, user1.Address())
 		require.NoError(t, err)
-		balance2Before, err := getBalance(ctx, platform, user2.Address())
+		balance2Before, err := getUSDCBalance(ctx, platform, user2.Address())
 		require.NoError(t, err)
 
 		// Distribute 30 TRUF in fees (10 TRUF per block)
 		totalFees := new(big.Int).Mul(big.NewInt(30), big.NewInt(1e18))
 
 		// Fund vault
-		err = giveBalanceChained(ctx, platform, testEscrow, totalFees.String())
+		err = giveUSDCBalanceChained(ctx, platform, testUSDCEscrow, totalFees.String())
 		require.NoError(t, err)
 		_, err = erc20bridge.ForTestingForceSyncInstance(ctx, platform, testChain, testEscrow, testERC20, 18)
 		require.NoError(t, err)
@@ -349,9 +351,9 @@ func testDistribution3Blocks2LPs(t *testing.T) func(context.Context, *kwilTestin
 		}
 
 		// Get balances after distribution
-		balance1After, err := getBalance(ctx, platform, user1.Address())
+		balance1After, err := getUSDCBalance(ctx, platform, user1.Address())
 		require.NoError(t, err)
-		balance2After, err := getBalance(ctx, platform, user2.Address())
+		balance2After, err := getUSDCBalance(ctx, platform, user2.Address())
 		require.NoError(t, err)
 
 		// Calculate actual distributions
@@ -412,6 +414,7 @@ func testDistributionNoSamples(t *testing.T) func(context.Context, *kwilTesting.
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Reset balance point tracker
 		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
 
 		// Initialize ERC20 extension
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
@@ -440,14 +443,14 @@ func testDistributionNoSamples(t *testing.T) func(context.Context, *kwilTesting.
 		// DO NOT call sample_lp_rewards - no samples!
 
 		// Get balance before distribution
-		balanceBefore, err := getBalance(ctx, platform, user1.Address())
+		balanceBefore, err := getUSDCBalance(ctx, platform, user1.Address())
 		require.NoError(t, err)
 
 		// Prepare 10 TRUF fees
 		totalFees := new(big.Int).Mul(big.NewInt(10), big.NewInt(1e18))
 
 		// Fund vault
-		err = giveBalanceChained(ctx, platform, testEscrow, totalFees.String())
+		err = giveUSDCBalanceChained(ctx, platform, testUSDCEscrow, totalFees.String())
 		require.NoError(t, err)
 		_, err = erc20bridge.ForTestingForceSyncInstance(ctx, platform, testChain, testEscrow, testERC20, 18)
 		require.NoError(t, err)
@@ -483,14 +486,14 @@ func testDistributionNoSamples(t *testing.T) func(context.Context, *kwilTesting.
 		}
 
 		// Get balance after distribution
-		balanceAfter, err := getBalance(ctx, platform, user1.Address())
+		balanceAfter, err := getUSDCBalance(ctx, platform, user1.Address())
 		require.NoError(t, err)
 
 		// Verify NO distribution occurred
 		require.Equal(t, balanceBefore, balanceAfter, "User balance should be unchanged (no samples)")
 
 		// Verify vault still has the fees (they weren't distributed)
-		vaultBalance, err := getBalance(ctx, platform, testEscrow)
+		vaultBalance, err := getUSDCBalance(ctx, platform, testEscrow)
 		require.NoError(t, err)
 		require.True(t, vaultBalance.Cmp(totalFees) >= 0, "Vault should retain fees when no samples exist")
 
@@ -506,6 +509,7 @@ func testDistributionZeroFees(t *testing.T) func(context.Context, *kwilTesting.P
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Reset balance point tracker
 		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
 
 		// Initialize ERC20 extension
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
@@ -558,9 +562,9 @@ func testDistributionZeroFees(t *testing.T) func(context.Context, *kwilTesting.P
 		require.NoError(t, err)
 
 		// Get balances before distribution
-		balance1Before, err := getBalance(ctx, platform, user1.Address())
+		balance1Before, err := getUSDCBalance(ctx, platform, user1.Address())
 		require.NoError(t, err)
-		balance2Before, err := getBalance(ctx, platform, user2.Address())
+		balance2Before, err := getUSDCBalance(ctx, platform, user2.Address())
 		require.NoError(t, err)
 
 		// Call distribute_fees with ZERO fees (should return early)
@@ -595,9 +599,9 @@ func testDistributionZeroFees(t *testing.T) func(context.Context, *kwilTesting.P
 		}
 
 		// Get balances after distribution
-		balance1After, err := getBalance(ctx, platform, user1.Address())
+		balance1After, err := getUSDCBalance(ctx, platform, user1.Address())
 		require.NoError(t, err)
-		balance2After, err := getBalance(ctx, platform, user2.Address())
+		balance2After, err := getUSDCBalance(ctx, platform, user2.Address())
 		require.NoError(t, err)
 
 		// Verify NO distribution occurred
@@ -621,6 +625,7 @@ func testDistribution1LP(t *testing.T) func(context.Context, *kwilTesting.Platfo
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Reset balance point tracker
 		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
 
 		// Initialize ERC20 extension
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
@@ -676,14 +681,14 @@ func testDistribution1LP(t *testing.T) func(context.Context, *kwilTesting.Platfo
 		require.InDelta(t, 100.0, rewards[participant1ID], 0.01, "Single LP should have 100%")
 
 		// Get balance before distribution
-		balanceBefore, err := getBalance(ctx, platform, user1.Address())
+		balanceBefore, err := getUSDCBalance(ctx, platform, user1.Address())
 		require.NoError(t, err)
 
 		// Distribute 10 TRUF in fees
 		totalFees := new(big.Int).Mul(big.NewInt(10), big.NewInt(1e18))
 
 		// Fund vault
-		err = giveBalanceChained(ctx, platform, testEscrow, totalFees.String())
+		err = giveUSDCBalanceChained(ctx, platform, testUSDCEscrow, totalFees.String())
 		require.NoError(t, err)
 		_, err = erc20bridge.ForTestingForceSyncInstance(ctx, platform, testChain, testEscrow, testERC20, 18)
 		require.NoError(t, err)
@@ -719,7 +724,7 @@ func testDistribution1LP(t *testing.T) func(context.Context, *kwilTesting.Platfo
 		}
 
 		// Get balance after distribution
-		balanceAfter, err := getBalance(ctx, platform, user1.Address())
+		balanceAfter, err := getUSDCBalance(ctx, platform, user1.Address())
 		require.NoError(t, err)
 
 		// Calculate distribution

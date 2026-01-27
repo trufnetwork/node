@@ -418,33 +418,33 @@ func testCancelBuyOrderVerifyRefund(t *testing.T) func(ctx context.Context, plat
 		})
 		require.NoError(t, err)
 
-		// Get balance before buy order
-		balanceBefore, err := getBalance(ctx, platform, userAddr.Address())
+		// Get USDC balance before buy order (buy orders lock USDC, not TRUF)
+		balanceBefore, err := getUSDCBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
-		// Place buy order: 10 YES @ $0.56 (costs 5.6 TRUF)
+		// Place buy order: 10 YES @ $0.56 (costs 5.6 USDC)
 		err = callPlaceBuyOrder(ctx, platform, &userAddr, int(marketID), true, 56, 10)
 		require.NoError(t, err)
 
-		// Get balance after buy order (should be 5.6 TRUF less)
-		balanceAfterBuy, err := getBalance(ctx, platform, userAddr.Address())
+		// Get USDC balance after buy order (should be 5.6 USDC less)
+		balanceAfterBuy, err := getUSDCBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
 		expectedAfterBuy := new(big.Int).Sub(balanceBefore, toWei("5.6"))
 		require.Equal(t, 0, expectedAfterBuy.Cmp(balanceAfterBuy),
-			fmt.Sprintf("Balance after buy should be 5.6 TRUF less. Before: %s, After: %s, Expected: %s",
+			fmt.Sprintf("USDC balance after buy should be 5.6 less. Before: %s, After: %s, Expected: %s",
 				balanceBefore.String(), balanceAfterBuy.String(), expectedAfterBuy.String()))
 
 		// Cancel the order
 		err = callCancelOrder(ctx, platform, &userAddr, int(marketID), true, -56)
 		require.NoError(t, err)
 
-		// Get balance after cancel (should be back to balanceBefore)
-		balanceAfterCancel, err := getBalance(ctx, platform, userAddr.Address())
+		// Get USDC balance after cancel (should be back to balanceBefore)
+		balanceAfterCancel, err := getUSDCBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
 		require.Equal(t, 0, balanceBefore.Cmp(balanceAfterCancel),
-			fmt.Sprintf("Balance after cancel should equal balance before buy. Before: %s, After: %s",
+			fmt.Sprintf("USDC balance after cancel should equal balance before buy. Before: %s, After: %s",
 				balanceBefore.String(), balanceAfterCancel.String()))
 
 		return nil

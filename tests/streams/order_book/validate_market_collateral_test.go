@@ -120,6 +120,7 @@ func testValidMarketAfterMatching(t *testing.T) func(context.Context, *kwilTesti
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Reset balance point tracker
 		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
 
 		// Initialize ERC20 extension
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
@@ -273,24 +274,35 @@ func testMultipleMarketsIsolation(t *testing.T) func(context.Context, *kwilTesti
 		err = giveBalance(ctx, platform, userAddr.Address(), "500000000000000000000")
 		require.NoError(t, err)
 
-		// Create market A
-		queryHashA := [32]byte{}
-		copy(queryHashA[:], []byte("test_market_A_isolation"))
+		// Create market A using proper query_components encoding
+		// Stream IDs must be exactly 32 characters
+		queryComponentsA, err := encodeQueryComponentsForTests(
+			userAddr.Address(),
+			"sttest_market_a_isolation0000000", // 32 chars
+			"get_record",
+			[]byte{0x01},
+		)
+		require.NoError(t, err)
 
 		var marketA_ID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHashA[:],
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponentsA,
 			9999999999, 5, 20, func(row *common.Row) error {
 				marketA_ID = row.Values[0].(int64)
 				return nil
 			})
 		require.NoError(t, err)
 
-		// Create market B
-		queryHashB := [32]byte{}
-		copy(queryHashB[:], []byte("test_market_B_isolation"))
+		// Create market B using proper query_components encoding
+		queryComponentsB, err := encodeQueryComponentsForTests(
+			userAddr.Address(),
+			"sttest_market_b_isolation0000000", // 32 chars
+			"get_record",
+			[]byte{0x02},
+		)
+		require.NoError(t, err)
 
 		var marketB_ID int64
-		err = callCreateMarket(ctx, platform, &userAddr, queryHashB[:],
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponentsB,
 			9999999999, 5, 20, func(row *common.Row) error {
 				marketB_ID = row.Values[0].(int64)
 				return nil
