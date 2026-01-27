@@ -359,18 +359,18 @@ func testBurnMatchFullMatch(t *testing.T) func(context.Context, *kwilTesting.Pla
 		balance2After, err := getUSDCBalance(ctx, platform, user2Addr.Address())
 		require.NoError(t, err)
 
-		// User1 should receive 60 TRUF (100 shares × $0.60)
+		// User1 should receive 60 USDC (100 shares × $0.60)
 		payout1 := new(big.Int).Sub(balance1After, balance1Before)
 		expectedPayout1 := new(big.Int).Mul(big.NewInt(60), big.NewInt(1e18))
 		require.Equal(t, expectedPayout1.String(), payout1.String(),
-			fmt.Sprintf("User1 should receive 60 TRUF, got %s", payout1.String()))
+			fmt.Sprintf("User1 should receive 60 USDC, got %s", payout1.String()))
 
-		// User2 locked 100 TRUF for split, got back 40 TRUF from burn
-		// Net result: balance should decrease by 60 TRUF
+		// User2 locked 100 USDC for split, got back 40 USDC from burn
+		// Net result: balance should decrease by 60 USDC
 		netChange2 := new(big.Int).Sub(balance2After, balance2Initial)
 		expectedNetChange2 := new(big.Int).Mul(big.NewInt(-60), big.NewInt(1e18))
 		require.Equal(t, expectedNetChange2.String(), netChange2.String(),
-			fmt.Sprintf("User2 net change should be -60 TRUF (locked 100, received 40), got %s", netChange2.String()))
+			fmt.Sprintf("User2 net change should be -60 USDC (locked 100, received 40), got %s", netChange2.String()))
 
 		return nil
 	}
@@ -602,13 +602,13 @@ func testBurnMatchPartialFill(t *testing.T) func(context.Context, *kwilTesting.P
 		balance2After, err := getUSDCBalance(ctx, platform, user2Addr.Address())
 		require.NoError(t, err)
 
-		// User1 should receive 36 TRUF (60 shares × $0.60)
+		// User1 should receive 36 USDC (60 shares × $0.60)
 		payout1 := new(big.Int).Sub(balance1After, balance1Before)
 		expectedPayout1 := new(big.Int).Mul(big.NewInt(36), big.NewInt(1e18))
 		require.Equal(t, expectedPayout1.String(), payout1.String())
 
-		// User2 locked 100 TRUF for split, got back 24 TRUF from burn (60 shares × $0.40)
-		// Net change: -76 TRUF
+		// User2 locked 100 USDC for split, got back 24 USDC from burn (60 shares × $0.40)
+		// Net change: -76 USDC
 		netChange2 := new(big.Int).Sub(balance2After, balance2Initial)
 		expectedNetChange2 := new(big.Int).Mul(big.NewInt(-76), big.NewInt(1e18))
 		require.Equal(t, expectedNetChange2.String(), netChange2.String())

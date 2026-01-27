@@ -29,6 +29,9 @@ const (
 	testExtensionNameQueries = "sepolia_bridge"
 )
 
+// Note: testTRUFChain, testTRUFEscrow, testTRUFERC20 are defined in market_creation_test.go
+// and shared across all test files in this package
+
 var (
 	queriesPointCounter         int64  = 200 // Start from 200 to avoid conflicts
 	lastBalancePointQueries     *int64       // For chaining sepolia_bridge deposits
