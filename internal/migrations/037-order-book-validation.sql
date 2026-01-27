@@ -99,19 +99,41 @@ PUBLIC VIEW RETURNS (
     $buys_collateral NUMERIC(78, 0) := ($open_buys_value::NUMERIC(78, 0) * '1000000000000000000'::NUMERIC(78, 0)) / 100::NUMERIC(78, 0);
     $expected_collateral := ($shares_collateral + $buys_collateral)::NUMERIC(78, 0);
 
-    -- Step 5: Get actual vault balance from ethereum_bridge
-    -- The ethereum_bridge.info() precompile returns network ownedBalance
+    -- Step 5: Get market's bridge and retrieve actual vault balance
+    $bridge TEXT;
+    for $row in SELECT bridge FROM ob_queries WHERE id = $query_id {
+        $bridge := $row.bridge;
+    }
+    if $bridge IS NULL {
+        ERROR('Market not found for query_id: ' || $query_id::TEXT);
+    }
+
+    -- The bridge.info() precompile returns network ownedBalance
     $vault_balance NUMERIC(78, 0) := 0::NUMERIC(78, 0);
     $row_count INT := 0;
 
-    for $info in ethereum_bridge.info() {
-        $vault_balance := $info.balance;
-        $row_count := $row_count + 1;
+    if $bridge = 'hoodi_tt2' {
+        for $info in hoodi_tt2.info() {
+            $vault_balance := $info.balance;
+            $row_count := $row_count + 1;
+        }
+    } else if $bridge = 'sepolia_bridge' {
+        for $info in sepolia_bridge.info() {
+            $vault_balance := $info.balance;
+            $row_count := $row_count + 1;
+        }
+    } else if $bridge = 'ethereum_bridge' {
+        for $info in ethereum_bridge.info() {
+            $vault_balance := $info.balance;
+            $row_count := $row_count + 1;
+        }
+    } else {
+        ERROR('Invalid bridge in validate_market_collateral: ' || COALESCE($bridge, 'NULL'));
     }
 
     -- Validate that bridge returned data (distinguish unavailable from empty vault)
     if $row_count = 0 {
-        ERROR('Cannot validate collateral: ethereum_bridge.info() returned no data. Bridge may be unavailable or not initialized.');
+        ERROR('Cannot validate collateral: bridge.info() returned no data. Bridge may be unavailable or not initialized.');
     }
 
     -- Step 6: Validate binary token parity

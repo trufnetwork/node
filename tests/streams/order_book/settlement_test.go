@@ -480,7 +480,7 @@ func testSettleMarketInvalidQueryID(t *testing.T) func(context.Context, *kwilTes
 			[]any{99999}, nil)
 		require.NoError(t, err)
 		require.NotNil(t, settleRes.Error, "should error on invalid query_id")
-		require.Contains(t, settleRes.Error.Error(), "Market does not exist")
+		require.Contains(t, settleRes.Error.Error(), "Market not found for query_id:")
 
 		return nil
 	}

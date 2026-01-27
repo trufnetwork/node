@@ -4,6 +4,7 @@ package order_book
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -28,9 +29,14 @@ const (
 	testExtensionNameQueries = "sepolia_bridge"
 )
 
+// Note: testTRUFChain, testTRUFEscrow, testTRUFERC20 are defined in market_creation_test.go
+// and shared across all test files in this package
+
 var (
-	queriesPointCounter     int64  = 200 // Start from 200 to avoid conflicts
-	lastBalancePointQueries *int64       // For chaining balance deposits
+	queriesPointCounter         int64  = 200 // Start from 200 to avoid conflicts
+	lastBalancePointQueries     *int64       // For chaining sepolia_bridge deposits
+	queriesTrufPointCounter     int64  = 300 // Separate counter for TRUF
+	lastTrufBalancePointQueries *int64       // For chaining TRUF deposits
 )
 
 func TestQueries(t *testing.T) {
@@ -81,6 +87,7 @@ func TestQueries(t *testing.T) {
 func testGetOrderBookEmpty(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
 
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -116,6 +123,7 @@ func testGetOrderBookEmpty(t *testing.T) func(context.Context, *kwilTesting.Plat
 func testGetOrderBookWithBuyOrders(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
 
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -153,6 +161,7 @@ func testGetOrderBookWithBuyOrders(t *testing.T) func(context.Context, *kwilTest
 func testGetOrderBookWithSellOrders(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
 
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -190,6 +199,7 @@ func testGetOrderBookWithSellOrders(t *testing.T) func(context.Context, *kwilTes
 func testGetOrderBookMixed(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
 
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -243,6 +253,7 @@ func testGetOrderBookMixed(t *testing.T) func(context.Context, *kwilTesting.Plat
 func testGetOrderBookExcludesHoldings(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
 
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -274,6 +285,7 @@ func testGetOrderBookExcludesHoldings(t *testing.T) func(context.Context, *kwilT
 func testGetOrderBookSortingFIFO(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
 
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -327,6 +339,7 @@ func testGetOrderBookSortingFIFO(t *testing.T) func(context.Context, *kwilTestin
 func testGetUserPositionsEmpty(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
 
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -349,6 +362,7 @@ func testGetUserPositionsEmpty(t *testing.T) func(context.Context, *kwilTesting.
 func testGetUserPositionsWithHoldings(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
 
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -395,6 +409,7 @@ func testGetUserPositionsWithHoldings(t *testing.T) func(context.Context, *kwilT
 func testGetUserPositionsWithOrders(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
 
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -430,6 +445,7 @@ func testGetUserPositionsWithOrders(t *testing.T) func(context.Context, *kwilTes
 func testGetUserPositionsMixed(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
 
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -480,6 +496,7 @@ func testGetUserPositionsMixed(t *testing.T) func(context.Context, *kwilTesting.
 func testGetMarketDepthEmpty(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
 
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -506,6 +523,7 @@ func testGetMarketDepthEmpty(t *testing.T) func(context.Context, *kwilTesting.Pl
 func testGetMarketDepthAggregation(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
 
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -553,6 +571,7 @@ func testGetMarketDepthAggregation(t *testing.T) func(context.Context, *kwilTest
 func testGetBestPricesNoOrders(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
 
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -592,6 +611,7 @@ func testGetBestPricesNoOrders(t *testing.T) func(context.Context, *kwilTesting.
 func testGetBestPricesOnlyBuy(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
 
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -626,6 +646,7 @@ func testGetBestPricesOnlyBuy(t *testing.T) func(context.Context, *kwilTesting.P
 func testGetBestPricesOnlySell(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
 
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -661,6 +682,7 @@ func testGetBestPricesOnlySell(t *testing.T) func(context.Context, *kwilTesting.
 func testGetBestPricesBothSides(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
 
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -722,6 +744,7 @@ func testGetBestPricesBothSides(t *testing.T) func(context.Context, *kwilTesting
 func testGetUserCollateralEmpty(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
 
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -743,6 +766,7 @@ func testGetUserCollateralEmpty(t *testing.T) func(context.Context, *kwilTesting
 func testGetUserCollateralWithBuyOrders(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
 
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -775,6 +799,7 @@ func testGetUserCollateralWithBuyOrders(t *testing.T) func(context.Context, *kwi
 func testGetUserCollateralWithShares(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
 
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -807,6 +832,7 @@ func testGetUserCollateralWithShares(t *testing.T) func(context.Context, *kwilTe
 func testGetUserCollateralMixed(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
 
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -848,10 +874,32 @@ func testGetUserCollateralMixed(t *testing.T) func(context.Context, *kwilTesting
 // ============================================================================
 
 func giveBalanceQueries(ctx context.Context, platform *kwilTesting.Platform, wallet string, amountStr string) error {
+	// Inject TRUF first (for market creation fee - always from hoodi_tt)
+	queriesTrufPointCounter++
+	trufPoint := queriesTrufPointCounter
+
+	err := testerc20.InjectERC20Transfer(
+		ctx, platform,
+		testTRUFChain,
+		testTRUFEscrow,
+		testTRUFERC20,
+		wallet, wallet,
+		amountStr,
+		trufPoint,
+		lastTrufBalancePointQueries, // Chain to previous TRUF
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to inject TRUF: %w", err)
+	}
+	p := trufPoint
+	lastTrufBalancePointQueries = &p
+
+	// Inject sepolia_bridge tokens (for market collateral)
 	queriesPointCounter++
 	currentPoint := queriesPointCounter
 
-	err := testerc20.InjectERC20Transfer(
+	err = testerc20.InjectERC20Transfer(
 		ctx, platform,
 		testChainQueries,
 		testEscrowQueries,
@@ -862,10 +910,13 @@ func giveBalanceQueries(ctx context.Context, platform *kwilTesting.Platform, wal
 		lastBalancePointQueries, // Chain to previous
 	)
 
-	if err == nil {
-		lastBalancePointQueries = &currentPoint // Update for next call
+	if err != nil {
+		return fmt.Errorf("failed to inject sepolia: %w", err)
 	}
-	return err
+	q := currentPoint
+	lastBalancePointQueries = &q
+
+	return nil
 }
 
 func createTestMarketQueries(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress) (int, []byte) {

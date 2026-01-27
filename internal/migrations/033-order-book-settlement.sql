@@ -35,7 +35,9 @@
 
 -- Batch unlock collateral for multiple wallets
 -- This helper processes all unlocks in a single call, avoiding nested queries in settlement
+-- The $bridge parameter specifies which bridge to use (hoodi_tt2, sepolia_bridge, ethereum_bridge)
 CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
+    $bridge TEXT,
     $wallet_addresses TEXT[],
     $amounts NUMERIC(78, 0)[]
 ) PRIVATE {
@@ -50,7 +52,16 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
         SELECT wallet, amount
         FROM UNNEST($wallet_addresses, $amounts) AS u(wallet, amount)
     {
-        ethereum_bridge.unlock($payout.wallet, $payout.amount);
+        -- Use the correct bridge based on market configuration
+        if $bridge = 'hoodi_tt2' {
+            hoodi_tt2.unlock($payout.wallet, $payout.amount);
+        } else if $bridge = 'sepolia_bridge' {
+            sepolia_bridge.unlock($payout.wallet, $payout.amount);
+        } else if $bridge = 'ethereum_bridge' {
+            ethereum_bridge.unlock($payout.wallet, $payout.amount);
+        } else {
+            ERROR('Invalid bridge in ob_batch_unlock_collateral: ' || COALESCE($bridge, 'NULL'));
+        }
     }
 };
 
@@ -107,6 +118,15 @@ CREATE OR REPLACE ACTION distribute_fees(
     -- Early return if no fees to distribute
     if $total_fees = '0'::NUMERIC(78, 0) {
         RETURN;
+    }
+
+    -- Get market's bridge for unlock operations
+    $bridge TEXT;
+    for $row in SELECT bridge FROM ob_queries WHERE id = $query_id {
+        $bridge := $row.bridge;
+    }
+    if $bridge IS NULL {
+        ERROR('Market not found for query_id: ' || $query_id::TEXT);
     }
 
     -- Step 1: Count distinct blocks sampled for this market
@@ -181,7 +201,7 @@ CREATE OR REPLACE ACTION distribute_fees(
 
     -- Step 5: Batch unlock to all LPs (single call, no loops)
     if $wallet_addresses IS NOT NULL AND COALESCE(array_length($wallet_addresses), 0) > 0 {
-        ob_batch_unlock_collateral($wallet_addresses, $amounts);
+        ob_batch_unlock_collateral($bridge, $wallet_addresses, $amounts);
     }
 
     -- Step 5.5: CREATE AUDIT RECORDS
@@ -290,6 +310,15 @@ CREATE OR REPLACE ACTION process_settlement(
     $total_fees_collected NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
     $one_token NUMERIC(78, 0) := '1000000000000000000'::NUMERIC(78, 0);
 
+    -- Get market's bridge for unlock operations
+    $bridge TEXT;
+    for $row in SELECT bridge FROM ob_queries WHERE id = $query_id {
+        $bridge := $row.bridge;
+    }
+    if $bridge IS NULL {
+        ERROR('Market not found for query_id: ' || $query_id::TEXT);
+    }
+
     -- Step 1: Bulk delete all losing positions (efficient single operation)
     -- Price semantics: price=0 (holdings), price>0 (open sells), price<0 (open buys)
     -- Deletes losing outcome holdings and sells, which have zero value after settlement
@@ -376,7 +405,7 @@ CREATE OR REPLACE ACTION process_settlement(
 
     -- Step 4: Process ALL payouts in a SINGLE batch call (no nested queries!)
     if $wallet_addresses IS NOT NULL AND COALESCE(array_length($wallet_addresses), 0) > 0 {
-        ob_batch_unlock_collateral($wallet_addresses, $amounts);
+        ob_batch_unlock_collateral($bridge, $wallet_addresses, $amounts);
     }
 
     -- Step 5: Fee distribution to liquidity providers

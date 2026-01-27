@@ -465,24 +465,24 @@ func testSplitOrderBalanceChanges(t *testing.T) func(ctx context.Context, platfo
 		})
 		require.NoError(t, err)
 
-		// Get balance before
-		balanceBefore, err := getBalance(ctx, platform, userAddr.Address())
+		// Get USDC balance before (split orders lock USDC, not TRUF)
+		balanceBefore, err := getUSDCBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
 		// Place split order: 75 shares
-		// Collateral: 75 × 10^18 = 75 TRUF
+		// Collateral: 75 × 10^18 = 75 USDC
 		err = callPlaceSplitLimitOrder(ctx, platform, &userAddr, int(marketID), 56, 75)
 		require.NoError(t, err)
 
-		// Get balance after
-		balanceAfter, err := getBalance(ctx, platform, userAddr.Address())
+		// Get USDC balance after
+		balanceAfter, err := getUSDCBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
-		// Verify balance decreased by 75 TRUF
+		// Verify USDC balance decreased by 75 (collateral locked)
 		expectedDecrease := toWei("75")
 		actualDecrease := new(big.Int).Sub(balanceBefore, balanceAfter)
 		require.Equal(t, expectedDecrease.String(), actualDecrease.String(),
-			"balance should decrease by 75 TRUF")
+			"USDC balance should decrease by 75 (collateral)")
 
 		return nil
 	}

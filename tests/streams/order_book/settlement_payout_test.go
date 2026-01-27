@@ -39,13 +39,6 @@ func TestSettlementPayouts(t *testing.T) {
 // Scenario: User creates 100 YES shares, market settles as YES, user receives 98 USDC
 func testWinnerReceives98PercentPayout(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Reset balance point tracker for this test
-		lastBalancePoint = nil
-
-		// CRITICAL: Initialize ERC20 extension singleton FIRST (like matching_engine_test.go)
-		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
-		require.NoError(t, err)
-
 		// Use valid Ethereum address as user
 		userAddr := util.Unsafe_NewEthereumAddressFromString("0x2222222222222222222222222222222222222222")
 		platform.Deployer = userAddr.Bytes()
@@ -53,18 +46,22 @@ func testWinnerReceives98PercentPayout(t *testing.T) func(context.Context, *kwil
 		// Setup attestation helper (for signing)
 		helper := attestationTests.NewAttestationTestHelper(t, ctx, platform)
 
-		// Create data provider
-		err = setup.CreateDataProvider(ctx, platform, userAddr.Address())
+		// Create data provider FIRST
+		err := setup.CreateDataProvider(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
-		// Give user initial balance: 500 USDC
-		err = giveBalanceChained(ctx, platform, userAddr.Address(), "500000000000000000000")
+		// Give user initial balance (injects to DB) - injects BOTH TRUF and USDC
+		err = giveBalance(ctx, platform, userAddr.Address(), "500000000000000000000")
 		require.NoError(t, err)
 
-		// Get balance before market operations
-		balanceBefore, err := getBalance(ctx, platform, userAddr.Address())
+		// Initialize ERC20 extension AFTER balance (loads DB instances to singleton)
+		err = erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
-		t.Logf("User balance before: %s USDC", balanceBefore.String())
+
+		// Get USDC balance before market operations (payouts are in USDC)
+		balanceBefore, err := getUSDCBalance(ctx, platform, userAddr.Address())
+		require.NoError(t, err)
+		t.Logf("User USDC balance before: %s", balanceBefore.String())
 
 		// Use simple stream ID (exactly 32 characters)
 		streamID := "stpayouttest00000000000000000000" // Exactly 32 chars
@@ -258,17 +255,17 @@ func testWinnerReceives98PercentPayout(t *testing.T) func(context.Context, *kwil
 
 		// NEW: Verify user received 98% payout
 		// Expected: 100 shares × $1.00 - 2% fee = 98 USDC
-		balanceAfter, err := getBalance(ctx, platform, userAddr.Address())
+		balanceAfter, err := getUSDCBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
-		t.Logf("User balance after: %s USDC", balanceAfter.String())
+		t.Logf("User USDC balance after: %s", balanceAfter.String())
 
-		// Net change should be: -2 USDC (market creation fee) -100 USDC (locked) + 98 USDC (payout) = -4 USDC
-		// (2 USDC market creation fee + 2 USDC settlement fee = 4 USDC total fees)
+		// Net USDC change: -100 USDC (locked) + 98 USDC (payout) = -2 USDC (settlement fee only)
+		// Note: Market creation fee (2 TRUF) is separate from USDC
 		netChange := new(big.Int).Sub(balanceAfter, balanceBefore)
-		expectedNetChange := new(big.Int).Mul(big.NewInt(-4), big.NewInt(1e18)) // -4 USDC
+		expectedNetChange := new(big.Int).Mul(big.NewInt(-2), big.NewInt(1e18)) // -2 USDC (settlement fee)
 		require.Equal(t, expectedNetChange.String(), netChange.String(),
-			"Net change should be -4 USDC (2 market creation + 2 settlement fee)")
-		t.Logf("✓ Net balance change: %s (4 USDC total fees: 2 creation + 2 settlement)", netChange.String())
+			"USDC net change should be -2 (settlement fee only, market creation is in TRUF)")
+		t.Logf("✓ Net USDC balance change: %s (2 USDC settlement fee)", netChange.String())
 
 		return nil
 	}

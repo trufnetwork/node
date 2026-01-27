@@ -333,7 +333,7 @@ func testListMarkets(t *testing.T) func(ctx context.Context, platform *kwilTesti
 		for i := 0; i < 3; i++ {
 			dataProvider := userAddr.Address()
 			// Generate exactly 32-char stream ID
-			streamID := fmt.Sprintf("stlistmarkets%02d0000000000000000", i)[:32]
+			streamID := fmt.Sprintf("stlistmarkets%02d00000000000000000", i)[:32]
 			actionID := "get_record"
 			argsBytes := []byte{byte(i)}
 			queryComponents, err := encodeQueryComponents(dataProvider, streamID, actionID, argsBytes)

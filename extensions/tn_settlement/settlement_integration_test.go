@@ -7,13 +7,15 @@ import (
 	"fmt"
 	"testing"
 
+	gethAbi "github.com/ethereum/go-ethereum/accounts/abi"
+	gethCommon "github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/log"
 	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/kwil-db/node/accounts"
-	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	erc20bridge "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
+	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 
 	"github.com/trufnetwork/node/extensions/tn_settlement/internal"
 	"github.com/trufnetwork/node/extensions/tn_utils"
@@ -23,6 +25,7 @@ import (
 	"github.com/trufnetwork/sdk-go/core/util"
 
 	attestationTests "github.com/trufnetwork/node/tests/streams/attestation"
+	testerc20 "github.com/trufnetwork/node/tests/streams/utils/erc20"
 )
 
 // NO_OUTCOME_VALUE represents a NO outcome in settlement tests
@@ -31,6 +34,17 @@ const NO_OUTCOME_VALUE = "-1.000000000000000000"
 // Test constants - match existing erc20-bridge configuration
 const (
 	testExtensionName = "sepolia_bridge"
+
+	// TRUF bridge constants for market creation fee
+	testTRUFChain  = "hoodi"
+	testTRUFEscrow = "0x878d6aaeb6e746033f50b8dc268d54b4631554e7"
+	testTRUFERC20  = "0x263ce78fef26600e4e428cebc91c2a52484b4fbf"
+)
+
+// Point counter for TRUF balance injection
+var (
+	trufPointCounter     int64 = 500
+	lastTrufBalancePoint *int64
 )
 
 // TestSettlementIntegration tests the automatic settlement functionality
@@ -58,6 +72,9 @@ func TestSettlementIntegration(t *testing.T) {
 
 func testFindUnsettledMarkets(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset point counter for this test
+		lastTrufBalancePoint = nil
+
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x5555555555555555555555555555555555555555")
 		platform.Deployer = deployer.Bytes()
 
@@ -69,9 +86,13 @@ func testFindUnsettledMarkets(t *testing.T) func(context.Context, *kwilTesting.P
 		err = erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
-		// Create stream and attestation
+		// Give TRUF balance for market creation fee
+		err = giveTrufBalance(ctx, platform, deployer.Address(), "10000000000000000000") // 10 TRUF
+		require.NoError(t, err)
+
+		// Create stream and attestation - returns query_components (ABI-encoded)
 		streamID := "stfindmarket00000000000000000000"
-		attestationHash := createStreamAndAttestation(t, ctx, platform, helper, deployer, streamID, "1.000000000000000000")
+		queryComponents := createStreamAndAttestation(t, ctx, platform, helper, deployer, streamID, "1.000000000000000000")
 
 		// Create market with settle_time in the past (relative to database time)
 		// settleTime=100 is in the past (Jan 1970), BlockContext.Timestamp=50 for creation
@@ -82,7 +103,7 @@ func testFindUnsettledMarkets(t *testing.T) func(context.Context, *kwilTesting.P
 
 		var queryID int
 		createRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{testExtensionName, attestationHash, settleTime, int64(5), int64(1)},
+			[]any{testExtensionName, queryComponents, settleTime, int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -93,6 +114,18 @@ func testFindUnsettledMarkets(t *testing.T) func(context.Context, *kwilTesting.P
 		}
 		require.Greater(t, queryID, 0)
 
+		// Get the hash from the database (computed by create_market)
+		var marketHash []byte
+		engineCtx = helper.NewEngineContext()
+		err = platform.Engine.Execute(engineCtx, platform.DB,
+			`SELECT hash FROM ob_queries WHERE id = $id`,
+			map[string]any{"id": queryID},
+			func(row *common.Row) error {
+				marketHash = row.Values[0].([]byte)
+				return nil
+			})
+		require.NoError(t, err)
+
 		// Test FindUnsettledMarkets
 		accts, err := accounts.InitializeAccountStore(ctx, platform.DB, log.New())
 		require.NoError(t, err)
@@ -102,9 +135,9 @@ func testFindUnsettledMarkets(t *testing.T) func(context.Context, *kwilTesting.P
 		require.NoError(t, err)
 		require.Len(t, markets, 1, "should find 1 unsettled market")
 		require.Equal(t, queryID, markets[0].ID)
-		require.Equal(t, attestationHash, markets[0].Hash)
+		require.Equal(t, marketHash, markets[0].Hash)
 
-		t.Logf("✅ FindUnsettledMarkets found market queryID=%d with hash=%x", queryID, attestationHash)
+		t.Logf("✅ FindUnsettledMarkets found market queryID=%d with hash=%x", queryID, marketHash)
 		return nil
 	}
 }
@@ -115,6 +148,9 @@ func testFindUnsettledMarkets(t *testing.T) func(context.Context, *kwilTesting.P
 
 func testAttestationExists(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset point counter for this test
+		lastTrufBalancePoint = nil
+
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x6666666666666666666666666666666666666666")
 		platform.Deployer = deployer.Bytes()
 
@@ -126,8 +162,39 @@ func testAttestationExists(t *testing.T) func(context.Context, *kwilTesting.Plat
 		err = erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
+		// Give TRUF balance for market creation fee
+		err = giveTrufBalance(ctx, platform, deployer.Address(), "10000000000000000000") // 10 TRUF
+		require.NoError(t, err)
+
 		streamID := "stattexists000000000000000000000"
-		attestationHash := createStreamAndAttestation(t, ctx, platform, helper, deployer, streamID, "1.000000000000000000")
+		queryComponents := createStreamAndAttestation(t, ctx, platform, helper, deployer, streamID, "1.000000000000000000")
+
+		// Create market to get the computed hash
+		engineCtx := helper.NewEngineContext()
+		engineCtx.TxContext.BlockContext.Timestamp = 50
+		var queryID int
+		createRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
+			[]any{testExtensionName, queryComponents, int64(100), int64(5), int64(1)},
+			func(row *common.Row) error {
+				queryID = int(row.Values[0].(int64))
+				return nil
+			})
+		require.NoError(t, err)
+		if createRes.Error != nil {
+			t.Fatalf("create_market failed: %v", createRes.Error)
+		}
+
+		// Get the hash from the database
+		var attestationHash []byte
+		engineCtx = helper.NewEngineContext()
+		err = platform.Engine.Execute(engineCtx, platform.DB,
+			`SELECT hash FROM ob_queries WHERE id = $id`,
+			map[string]any{"id": queryID},
+			func(row *common.Row) error {
+				attestationHash = row.Values[0].([]byte)
+				return nil
+			})
+		require.NoError(t, err)
 
 		// Test AttestationExists
 		accts, err := accounts.InitializeAccountStore(ctx, platform.DB, log.New())
@@ -156,6 +223,9 @@ func testAttestationExists(t *testing.T) func(context.Context, *kwilTesting.Plat
 
 func testSettleMarketViaAction(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset point counter for this test
+		lastTrufBalancePoint = nil
+
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x7777777777777777777777777777777777777777")
 		platform.Deployer = deployer.Bytes()
 
@@ -167,8 +237,12 @@ func testSettleMarketViaAction(t *testing.T) func(context.Context, *kwilTesting.
 		err = erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
+		// Give TRUF balance for market creation fee
+		err = giveTrufBalance(ctx, platform, deployer.Address(), "10000000000000000000") // 10 TRUF
+		require.NoError(t, err)
+
 		streamID := "stsettleaction000000000000000000"
-		attestationHash := createStreamAndAttestation(t, ctx, platform, helper, deployer, streamID, "1.000000000000000000")
+		queryComponents := createStreamAndAttestation(t, ctx, platform, helper, deployer, streamID, "1.000000000000000000")
 
 		// Create market (settleTime in future relative to BlockContext)
 		creationTime := int64(50)
@@ -179,7 +253,7 @@ func testSettleMarketViaAction(t *testing.T) func(context.Context, *kwilTesting.
 
 		var queryID int
 		createRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{testExtensionName, attestationHash, settleTime, int64(5), int64(1)},
+			[]any{testExtensionName, queryComponents, settleTime, int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -255,6 +329,9 @@ func testLoadSettlementConfig(t *testing.T) func(context.Context, *kwilTesting.P
 
 func testSkipMarketWithoutAttestation(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset point counter for this test
+		lastTrufBalancePoint = nil
+
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x9999999999999999999999999999999999999999")
 		platform.Deployer = deployer.Bytes()
 
@@ -266,9 +343,13 @@ func testSkipMarketWithoutAttestation(t *testing.T) func(context.Context, *kwilT
 		err = erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
+		// Give TRUF balance for market creation fee
+		err = giveTrufBalance(ctx, platform, deployer.Address(), "10000000000000000000") // 10 TRUF
+		require.NoError(t, err)
+
 		// Create stream and attestation WITHOUT signing (skip the SignAttestation step)
 		streamID := "stskipnoatt000000000000000000000"
-		attestationHash := createStreamWithoutSigningAttestation(t, ctx, platform, helper, deployer, streamID, "1.000000000000000000")
+		queryComponents := createStreamWithoutSigningAttestation(t, ctx, platform, helper, deployer, streamID, "1.000000000000000000")
 
 		// Create market (settleTime in future relative to BlockContext)
 		creationTime := int64(50)
@@ -279,7 +360,7 @@ func testSkipMarketWithoutAttestation(t *testing.T) func(context.Context, *kwilT
 
 		var queryID int
 		createRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{testExtensionName, attestationHash, settleTime, int64(5), int64(1)},
+			[]any{testExtensionName, queryComponents, settleTime, int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -288,6 +369,18 @@ func testSkipMarketWithoutAttestation(t *testing.T) func(context.Context, *kwilT
 		if createRes.Error != nil {
 			t.Fatalf("create_market failed: %v", createRes.Error)
 		}
+
+		// Get the hash from the database
+		var attestationHash []byte
+		engineCtx = helper.NewEngineContext()
+		err = platform.Engine.Execute(engineCtx, platform.DB,
+			`SELECT hash FROM ob_queries WHERE id = $id`,
+			map[string]any{"id": queryID},
+			func(row *common.Row) error {
+				attestationHash = row.Values[0].([]byte)
+				return nil
+			})
+		require.NoError(t, err)
 
 		// Test AttestationExists should return false
 		accts, err := accounts.InitializeAccountStore(ctx, platform.DB, log.New())
@@ -322,6 +415,9 @@ func testSkipMarketWithoutAttestation(t *testing.T) func(context.Context, *kwilT
 
 func testMultipleMarketsProcessing(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset point counter for this test
+		lastTrufBalancePoint = nil
+
 		deployer := util.Unsafe_NewEthereumAddressFromString("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 		platform.Deployer = deployer.Bytes()
 
@@ -331,6 +427,10 @@ func testMultipleMarketsProcessing(t *testing.T) func(context.Context, *kwilTest
 
 		// Initialize ERC20 extension
 		err = erc20bridge.ForTestingInitializeExtension(ctx, platform)
+		require.NoError(t, err)
+
+		// Give TRUF balance for market creation fees (need 3 markets × 2 TRUF = 6 TRUF minimum)
+		err = giveTrufBalance(ctx, platform, deployer.Address(), "20000000000000000000") // 20 TRUF
 		require.NoError(t, err)
 
 		// Create 3 markets (settleTime in future relative to BlockContext)
@@ -347,14 +447,14 @@ func testMultipleMarketsProcessing(t *testing.T) func(context.Context, *kwilTest
 				value = NO_OUTCOME_VALUE // NO outcome for second market
 			}
 
-			attestationHash := createStreamAndAttestation(t, ctx, platform, helper, deployer, streamID, value)
+			queryComponents := createStreamAndAttestation(t, ctx, platform, helper, deployer, streamID, value)
 
 			engineCtx := helper.NewEngineContext()
 			engineCtx.TxContext.BlockContext.Timestamp = creationTime
 
 			var queryID int
 			createRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-				[]any{testExtensionName, attestationHash, settleTime, int64(5), int64(1)},
+				[]any{testExtensionName, queryComponents, settleTime, int64(5), int64(1)},
 				func(row *common.Row) error {
 					queryID = int(row.Values[0].(int64))
 					return nil
@@ -403,7 +503,64 @@ func testMultipleMarketsProcessing(t *testing.T) func(context.Context, *kwilTest
 // Helper Functions
 // =============================================================================
 
+// giveTrufBalance gives TRUF balance to a user for market creation fee
+func giveTrufBalance(ctx context.Context, platform *kwilTesting.Platform, wallet string, amountStr string) error {
+	trufPointCounter++
+	currentPoint := trufPointCounter
+
+	err := testerc20.InjectERC20Transfer(
+		ctx, platform,
+		testTRUFChain, testTRUFEscrow, testTRUFERC20,
+		wallet, wallet, amountStr,
+		currentPoint, lastTrufBalancePoint,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to inject TRUF: %w", err)
+	}
+
+	p := currentPoint
+	lastTrufBalancePoint = &p
+	return nil
+}
+
+// encodeQueryComponents encodes query components as ABI (address,bytes32,string,bytes)
+func encodeQueryComponents(dataProvider, streamID, actionID string, argsBytes []byte) ([]byte, error) {
+	addressType, err := gethAbi.NewType("address", "", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create address type: %w", err)
+	}
+	bytes32Type, err := gethAbi.NewType("bytes32", "", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create bytes32 type: %w", err)
+	}
+	stringType, err := gethAbi.NewType("string", "", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create string type: %w", err)
+	}
+	bytesType, err := gethAbi.NewType("bytes", "", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create bytes type: %w", err)
+	}
+
+	args := gethAbi.Arguments{
+		{Type: addressType},
+		{Type: bytes32Type},
+		{Type: stringType},
+		{Type: bytesType},
+	}
+
+	// Convert data_provider string to address
+	addr := gethCommon.HexToAddress(dataProvider)
+
+	// Convert stream_id to bytes32 (pad to 32 bytes)
+	var streamIDBytes32 [32]byte
+	copy(streamIDBytes32[:], []byte(streamID))
+
+	return args.Pack(addr, streamIDBytes32, actionID, argsBytes)
+}
+
 // createStreamWithoutSigningAttestation creates a stream and unsigned attestation (for testing skip logic)
+// Returns query_components (ABI-encoded) for use with create_market
 func createStreamWithoutSigningAttestation(
 	t *testing.T,
 	ctx context.Context,
@@ -434,17 +591,16 @@ func createStreamWithoutSigningAttestation(
 		}, nil)
 	require.NoError(t, err)
 
-	// Request attestation
+	// Encode action args for get_record
 	argsBytes, err := tn_utils.EncodeActionArgs([]any{
 		dataProvider, streamID, int64(500), int64(1500), nil, false,
 	})
 	require.NoError(t, err)
 
-	var attestationHash []byte
+	// Request attestation (but don't sign)
 	res, err := platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 		[]any{dataProvider, streamID, "get_record", argsBytes, false, nil},
 		func(row *common.Row) error {
-			attestationHash = append([]byte(nil), row.Values[1].([]byte)...)
 			return nil
 		})
 	require.NoError(t, err)
@@ -454,10 +610,15 @@ func createStreamWithoutSigningAttestation(
 
 	// NOTE: Intentionally NOT calling helper.SignAttestation() to test unsigned attestation
 
-	return attestationHash
+	// Return ABI-encoded query_components for create_market
+	queryComponents, err := encodeQueryComponents(dataProvider, streamID, "get_record", argsBytes)
+	require.NoError(t, err)
+
+	return queryComponents
 }
 
-// createStreamAndAttestation creates a stream, inserts data, and returns signed attestation hash
+// createStreamAndAttestation creates a stream, inserts data, and returns ABI-encoded query_components
+// for use with create_market (the hash is computed by create_market from query_components)
 func createStreamAndAttestation(
 	t *testing.T,
 	ctx context.Context,
@@ -490,12 +651,13 @@ func createStreamAndAttestation(
 		}, nil)
 	require.NoError(t, err)
 
-	// Request attestation using the SAME engineCtx so it sees the inserted data
+	// Encode action args for get_record - MUST match what we use in request_attestation
 	argsBytes, err := tn_utils.EncodeActionArgs([]any{
 		dataProvider, streamID, int64(500), int64(1500), nil, false,
 	})
 	require.NoError(t, err)
 
+	// Request attestation using the SAME engineCtx so it sees the inserted data
 	var requestTxID string
 	var attestationHash []byte
 	res, err := platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
@@ -515,5 +677,10 @@ func createStreamAndAttestation(
 	// Sign attestation
 	helper.SignAttestation(requestTxID)
 
-	return attestationHash
+	// Return ABI-encoded query_components for create_market
+	// The hash is computed by create_market from these query_components
+	queryComponents, err := encodeQueryComponents(dataProvider, streamID, "get_record", argsBytes)
+	require.NoError(t, err)
+
+	return queryComponents
 }

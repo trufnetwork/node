@@ -46,6 +46,7 @@ func testAuditRecordCreation(t *testing.T) func(context.Context, *kwilTesting.Pl
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Reset balance point tracker
 		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
 
 		// Initialize ERC20 extension
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
@@ -173,6 +174,7 @@ func testAuditRecordCreation(t *testing.T) func(context.Context, *kwilTesting.Pl
 func testAuditMultiBlock(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
@@ -246,6 +248,7 @@ func testAuditMultiBlock(t *testing.T) func(context.Context, *kwilTesting.Platfo
 func testAuditNoLPs(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
@@ -301,6 +304,7 @@ func testAuditNoLPs(t *testing.T) func(context.Context, *kwilTesting.Platform) e
 func testAuditZeroFees(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
@@ -356,6 +360,7 @@ func testAuditZeroFees(t *testing.T) func(context.Context, *kwilTesting.Platform
 func testAuditDataIntegrity(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
@@ -381,10 +386,11 @@ func testAuditDataIntegrity(t *testing.T) func(context.Context, *kwilTesting.Pla
 		// Setup LP scenario (places orders which spend collateral)
 		setupLPScenario(t, ctx, platform, &user1, &user2, int(marketID))
 
-		// Get initial balances AFTER order placement (to measure only fee distribution increase)
-		bal1Before, err := getBalance(ctx, platform, user1.Address())
+		// Get initial USDC balances AFTER order placement (to measure only fee distribution increase)
+		// Note: Fee distribution pays in USDC (hoodi_tt2), not TRUF (hoodi_tt)
+		bal1Before, err := getUSDCBalance(ctx, platform, user1.Address())
 		require.NoError(t, err)
-		bal2Before, err := getBalance(ctx, platform, user2.Address())
+		bal2Before, err := getUSDCBalance(ctx, platform, user2.Address())
 		require.NoError(t, err)
 
 		// Sample
@@ -396,10 +402,10 @@ func testAuditDataIntegrity(t *testing.T) func(context.Context, *kwilTesting.Pla
 		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees)
 		require.NoError(t, err)
 
-		// Get final balances
-		bal1After, err := getBalance(ctx, platform, user1.Address())
+		// Get final USDC balances
+		bal1After, err := getUSDCBalance(ctx, platform, user1.Address())
 		require.NoError(t, err)
-		bal2After, err := getBalance(ctx, platform, user2.Address())
+		bal2After, err := getUSDCBalance(ctx, platform, user2.Address())
 		require.NoError(t, err)
 
 		// Calculate actual balance increases
@@ -510,9 +516,9 @@ func setupLPScenario(t *testing.T, ctx context.Context, platform *kwilTesting.Pl
 func fundVaultAndDistributeFees(t *testing.T, ctx context.Context, platform *kwilTesting.Platform,
 	user *util.EthereumAddress, marketID int, totalFees *big.Int) error {
 
-	// Fund vault if fees > 0
+	// Fund vault if fees > 0 (use USDC-only since vault doesn't need TRUF)
 	if totalFees.Sign() > 0 {
-		err := giveBalanceChained(ctx, platform, testEscrow, totalFees.String())
+		err := giveUSDCBalanceChained(ctx, platform, testUSDCEscrow, totalFees.String())
 		if err != nil {
 			return err
 		}
