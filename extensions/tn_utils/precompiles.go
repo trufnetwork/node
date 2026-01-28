@@ -555,6 +555,11 @@ func parseAttestationBooleanHandler(ctx *common.EngineContext, app *common.App, 
 		return parseBinaryActionResult(resultPayload, resultFn)
 	}
 
+	// Validate action_id is in supported range before decoding
+	if actionID < 1 || actionID > 9 {
+		return fmt.Errorf("unsupported action_id %d", actionID)
+	}
+
 	// Numeric action (action_id 1-5) - decode as abi.encode(uint256[], int256[])
 	return parseNumericActionResult(resultPayload, resultFn)
 }
