@@ -455,10 +455,9 @@ func parseAttestationBooleanMethod() precompiles.Method {
 
 // parseAttestationBooleanHandler parses result_canonical to extract a boolean outcome.
 //
-// This handler supports both native boolean results and numeric results (standard stream format).
-// For numeric results (from primitive streams):
-//   - value > 0 → TRUE (YES wins)
-//   - value == 0 → FALSE (NO wins)
+// This handler supports both:
+// 1. Binary action results (action_id 6-9): Direct boolean encoded as abi.encode(bool)
+// 2. Numeric results (action_id 1-5): Interpreted as value > 0 = TRUE, value == 0 = FALSE
 //
 // The result_canonical format is:
 //   - version (uint8, 1 byte)
@@ -470,7 +469,7 @@ func parseAttestationBooleanMethod() precompiles.Method {
 //   - length_prefix(args) (4 bytes length + N bytes data)
 //   - length_prefix(result_payload) (4 bytes length + N bytes data)
 //
-// We parse through the structure to reach result_payload, then decode the value.
+// We parse through the structure to reach result_payload, then decode based on action_id.
 func parseAttestationBooleanHandler(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
 	resultCanonical, err := toByteSliceAllowNil(inputs[0])
 	if err != nil {
@@ -521,10 +520,11 @@ func parseAttestationBooleanHandler(ctx *common.EngineContext, app *common.App, 
 		return fmt.Errorf("invalid result_canonical: stream data extends beyond buffer")
 	}
 
-	// Skip action_id (2 bytes, big-endian uint16)
+	// Read action_id (2 bytes, big-endian uint16) - we need this to determine decoding format
 	if offset+2 > len(resultCanonical) {
 		return fmt.Errorf("invalid result_canonical: too short for action_id")
 	}
+	actionID := binary.BigEndian.Uint16(resultCanonical[offset : offset+2])
 	offset += 2
 
 	// Skip length_prefix(args)
@@ -549,8 +549,44 @@ func parseAttestationBooleanHandler(ctx *common.EngineContext, app *common.App, 
 
 	resultPayload := resultCanonical[offset : offset+int(resultLength)]
 
-	// Decode the result payload (ABI format: abi.encode(uint256[], int256[]))
-	// This format is used for EVM smart contract compatibility
+	// Check if this is a binary action (action_id 6-9)
+	// Binary actions return abi.encode(bool) directly
+	if IsBinaryAction(actionID) {
+		return parseBinaryActionResult(resultPayload, resultFn)
+	}
+
+	// Numeric action (action_id 1-5) - decode as abi.encode(uint256[], int256[])
+	return parseNumericActionResult(resultPayload, resultFn)
+}
+
+// parseBinaryActionResult decodes abi.encode(bool) and returns the boolean directly
+func parseBinaryActionResult(resultPayload []byte, resultFn func([]any) error) error {
+	// ABI-encoded bool is 32 bytes (padded)
+	if len(resultPayload) != 32 {
+		return fmt.Errorf("binary action result must be 32 bytes (abi-encoded bool), got %d", len(resultPayload))
+	}
+
+	// Decode using the boolean ABI args
+	decoded, err := booleanABIArgs.Unpack(resultPayload)
+	if err != nil {
+		return fmt.Errorf("failed to decode boolean ABI result: %w", err)
+	}
+
+	if len(decoded) != 1 {
+		return fmt.Errorf("expected 1 value from boolean decode, got %d", len(decoded))
+	}
+
+	outcome, ok := decoded[0].(bool)
+	if !ok {
+		return fmt.Errorf("decoded value is not boolean, got %T", decoded[0])
+	}
+
+	return resultFn([]any{outcome})
+}
+
+// parseNumericActionResult decodes abi.encode(uint256[], int256[]) and interprets as boolean
+// value > 0 = TRUE (YES wins), value == 0 = FALSE (NO wins)
+func parseNumericActionResult(resultPayload []byte, resultFn func([]any) error) error {
 	decoded, err := dataPointsABIArgs.Unpack(resultPayload)
 	if err != nil {
 		return fmt.Errorf("failed to decode ABI result payload: %w", err)
@@ -705,20 +741,28 @@ func computeAttestationHashHandler(ctx *common.EngineContext, app *common.App, i
 // getActionIDNumber maps action name to numeric ID (must match attestation_actions table)
 func getActionIDNumber(actionName string) (uint16, error) {
 	actionMap := map[string]uint16{
+		// Numeric data actions (return TABLE(event_time INT8, value NUMERIC))
 		"get_record":           1,
 		"get_index":            2,
 		"get_change_over_time": 3,
 		"get_last_record":      4,
 		"get_first_record":     5,
-		// Future binary actions will be added here:
-		// "price_above_threshold": 6,
-		// "price_below_threshold": 7,
-		// "value_in_range": 8,
+		// Binary actions (return TABLE(result BOOLEAN)) - for prediction market settlement
+		"price_above_threshold": 6,
+		"price_below_threshold": 7,
+		"value_in_range":        8,
+		"value_equals":          9,
 	}
 
 	id, ok := actionMap[actionName]
 	if !ok {
-		return 0, fmt.Errorf("unknown action: %s (must be one of: get_record, get_index, get_change_over_time, get_last_record, get_first_record)", actionName)
+		return 0, fmt.Errorf("unknown action: %s (valid actions: get_record, get_index, get_change_over_time, get_last_record, get_first_record, price_above_threshold, price_below_threshold, value_in_range, value_equals)", actionName)
 	}
 	return id, nil
+}
+
+// IsBinaryAction returns true if the action ID corresponds to a binary action
+// that returns TABLE(result BOOLEAN) instead of TABLE(event_time INT8, value NUMERIC)
+func IsBinaryAction(actionID uint16) bool {
+	return actionID >= 6 && actionID <= 9
 }
