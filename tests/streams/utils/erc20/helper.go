@@ -66,6 +66,14 @@ func GetUserBalance(ctx context.Context, platform *kwilTesting.Platform, extensi
 	case "sepolia_bridge":
 		chainName = "sepolia"
 		escrowAddr = "0x80d9b3b6941367917816d36748c88b303f7f1415"
+	case "erc20_bridge_test":
+		// Test-only alias used in tests/extensions/erc20/ tests
+		chainName = "sepolia"
+		escrowAddr = "0x1111111111111111111111111111111111111111"
+	case "hoodi_bridge_test":
+		// Test-only alias used in tests/extensions/erc20/erc20_bridge_hoodi_test.go
+		chainName = "hoodi"
+		escrowAddr = "0x3333333333333333333333333333333333333333"
 	default:
 		return "", fmt.Errorf("unknown extension alias: %s", extensionAlias)
 	}
