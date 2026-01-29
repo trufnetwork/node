@@ -312,8 +312,8 @@ func testLoadSettlementConfig(t *testing.T) func(context.Context, *kwilTesting.P
 
 		enabled, schedule, maxMarkets, retries, err := ops.LoadSettlementConfig(ctx)
 		require.NoError(t, err)
-		require.False(t, enabled, "should be false (default disabled for safety)")
-		require.Equal(t, "0 * * * *", schedule, "should be hourly schedule from migration")
+		require.True(t, enabled, "should be true (enabled by migration 041)")
+		require.Equal(t, "0,30 * * * *", schedule, "should be 30-minute schedule from migration 041")
 		require.Equal(t, 10, maxMarkets)
 		require.Equal(t, 3, retries)
 
