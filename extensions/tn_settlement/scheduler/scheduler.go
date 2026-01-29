@@ -92,7 +92,10 @@ func (s *SettlementScheduler) Start(ctx context.Context, cronExpr string) error 
 	if s.cancel != nil {
 		s.cancel()
 	}
-	s.ctx, s.cancel = context.WithCancel(ctx)
+	// Use Background context instead of the passed-in context to ensure
+	// the scheduler's jobs continue running even if the caller's context
+	// (e.g., a block processing context) is canceled
+	s.ctx, s.cancel = context.WithCancel(context.Background())
 
 	// Clear any existing jobs to avoid duplicates on (re)start
 	s.cron.Clear()

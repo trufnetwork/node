@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -503,8 +504,8 @@ func TestDecodeQueryComponents_ValidInput(t *testing.T) {
 		t.Errorf("ActionName mismatch: expected %s, got %s", actionName, decoded.ActionName)
 	}
 
-	if len(decoded.ArgsBytes) != len(argsBytes) {
-		t.Errorf("ArgsBytes length mismatch: expected %d, got %d", len(argsBytes), len(decoded.ArgsBytes))
+	if !bytes.Equal(decoded.ArgsBytes, argsBytes) {
+		t.Errorf("ArgsBytes mismatch: expected %v, got %v", argsBytes, decoded.ArgsBytes)
 	}
 }
 

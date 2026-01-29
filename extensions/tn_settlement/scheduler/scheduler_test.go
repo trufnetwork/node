@@ -92,11 +92,21 @@ func (m *mockSigner) PubKey() crypto.PublicKey {
 
 // mockEngineOps implements EngineOps interface for testing.
 // It signals when methods are called to verify job execution.
+// It also checks context cancellation to ensure the scheduler uses its own context.
 type mockEngineOps struct {
+	t                      *testing.T
 	onFindUnsettledMarkets func()
 }
 
 func (m *mockEngineOps) FindUnsettledMarkets(ctx context.Context, limit int) ([]*internal.UnsettledMarket, error) {
+	// Check if context is canceled - this would indicate the bug regressed
+	// (scheduler passing parent context instead of its own internal context)
+	if ctx.Err() != nil {
+		if m.t != nil {
+			m.t.Fatalf("FindUnsettledMarkets called with canceled context: %v - scheduler should use its own internal context", ctx.Err())
+		}
+		return nil, ctx.Err()
+	}
 	if m.onFindUnsettledMarkets != nil {
 		m.onFindUnsettledMarkets()
 	}
@@ -413,7 +423,10 @@ func TestSchedulerJobRunsAfterParentContextCanceled(t *testing.T) {
 	jobExecuted := make(chan struct{}, 1)
 
 	// Create mock EngineOps that signals when FindUnsettledMarkets is called
+	// The mock also checks that ctx is not canceled - if it is, the test fails
+	// because the scheduler should use its own internal context, not the parent context
 	mockOps := &mockEngineOps{
+		t: t,
 		onFindUnsettledMarkets: func() {
 			// Signal that the job ran (non-blocking send)
 			select {
