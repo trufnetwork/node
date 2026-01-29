@@ -3,6 +3,7 @@ package internal
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/big"
 	"strings"
 	"testing"
@@ -613,6 +614,9 @@ func TestRequestAttestationForMarket_VerifyTransactionStructure(t *testing.T) {
 // =============================================================================
 
 func encodeQueryComponentsForTest(dataProvider, streamID, actionName string, argsBytes []byte) ([]byte, error) {
+	if len(streamID) > 32 {
+		return nil, fmt.Errorf("streamID must be <= 32 bytes, got %d", len(streamID))
+	}
 	addressType, err := gethAbi.NewType("address", "", nil)
 	if err != nil {
 		return nil, err

@@ -354,17 +354,24 @@ func (e *EngineOperations) broadcastSettleMarketWithFreshNonce(
 // GetMarketQueryComponents fetches and decodes query_components for a market
 func (e *EngineOperations) GetMarketQueryComponents(ctx context.Context, queryID int) (*QueryComponents, error) {
 	var queryComponentsBytes []byte
-	var found bool
+	var foundRow bool
+	var foundData bool
 
 	err := e.engine.ExecuteWithoutEngineCtx(ctx, e.db,
 		`SELECT query_components FROM ob_queries WHERE id = $query_id`,
 		map[string]any{"query_id": int64(queryID)},
 		func(row *common.Row) error {
 			if len(row.Values) >= 1 {
-				if bytes, ok := row.Values[0].([]byte); ok {
-					queryComponentsBytes = bytes
-					found = true
+				foundRow = true
+				if row.Values[0] == nil {
+					return fmt.Errorf("query_components is NULL for query_id=%d", queryID)
 				}
+				bytes, ok := row.Values[0].([]byte)
+				if !ok {
+					return fmt.Errorf("unexpected query_components type: %T", row.Values[0])
+				}
+				queryComponentsBytes = bytes
+				foundData = true
 			}
 			return nil
 		})
@@ -372,8 +379,11 @@ func (e *EngineOperations) GetMarketQueryComponents(ctx context.Context, queryID
 	if err != nil {
 		return nil, fmt.Errorf("fetch query_components: %w", err)
 	}
-	if !found {
+	if !foundRow {
 		return nil, fmt.Errorf("market not found: query_id=%d", queryID)
+	}
+	if !foundData {
+		return nil, fmt.Errorf("query_components missing or invalid for query_id=%d", queryID)
 	}
 
 	return decodeQueryComponents(queryComponentsBytes)

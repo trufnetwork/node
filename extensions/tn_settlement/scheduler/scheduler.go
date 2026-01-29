@@ -20,10 +20,19 @@ type txBroadcaster interface {
 	BroadcastTx(ctx context.Context, tx *ktypes.Transaction, sync uint8) (ktypes.Hash, *ktypes.TxResult, error)
 }
 
+// EngineOps defines the operations needed by the settlement scheduler.
+// This interface allows for mocking in tests.
+type EngineOps interface {
+	FindUnsettledMarkets(ctx context.Context, limit int) ([]*internal.UnsettledMarket, error)
+	AttestationExists(ctx context.Context, marketHash []byte) (bool, error)
+	RequestAttestationForMarket(ctx context.Context, chainID string, signer auth.Signer, broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error), market *internal.UnsettledMarket) error
+	BroadcastSettleMarketWithRetry(ctx context.Context, chainID string, signer auth.Signer, broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error), queryID int, maxRetries int) error
+}
+
 type SettlementScheduler struct {
 	kwilService *common.Service
 	logger      log.Logger
-	engineOps   *internal.EngineOperations
+	engineOps   EngineOps
 	cron        *gocron.Scheduler
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -39,7 +48,7 @@ type SettlementScheduler struct {
 type NewSettlementSchedulerParams struct {
 	Service          *common.Service
 	Logger           log.Logger
-	EngineOps        *internal.EngineOperations
+	EngineOps        EngineOps
 	Signer           auth.Signer
 	Tx               txBroadcaster
 	MaxMarketsPerRun int
@@ -257,7 +266,10 @@ func (s *SettlementScheduler) RunOnce(ctx context.Context) error {
 	for _, market := range markets {
 		hasAttestation, err := engineOps.AttestationExists(ctx, market.Hash)
 		if err != nil {
-			continue
+			s.logger.Error("failed to check attestation existence",
+				"query_id", market.ID,
+				"error", err)
+			return fmt.Errorf("check attestation for market %d: %w", market.ID, err)
 		}
 		if !hasAttestation {
 			// Request attestation for this market
