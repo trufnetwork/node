@@ -6,12 +6,22 @@ import (
 	"strings"
 	"time"
 
+	gethAbi "github.com/ethereum/go-ethereum/accounts/abi"
+	gethCommon "github.com/ethereum/go-ethereum/common"
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/crypto/auth"
 	"github.com/trufnetwork/kwil-db/core/log"
 	ktypes "github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
 )
+
+// QueryComponents holds decoded ABI-encoded query components from a market
+type QueryComponents struct {
+	DataProvider string
+	StreamID     string
+	ActionName   string
+	ArgsBytes    []byte
+}
 
 // EngineOperations wraps engine calls needed by the settlement extension
 type EngineOperations struct {
@@ -339,4 +349,210 @@ func (e *EngineOperations) broadcastSettleMarketWithFreshNonce(
 		"nonce", nextNonce)
 
 	return hash, nil
+}
+
+// GetMarketQueryComponents fetches and decodes query_components for a market
+func (e *EngineOperations) GetMarketQueryComponents(ctx context.Context, queryID int) (*QueryComponents, error) {
+	var queryComponentsBytes []byte
+	var found bool
+
+	err := e.engine.ExecuteWithoutEngineCtx(ctx, e.db,
+		`SELECT query_components FROM ob_queries WHERE id = $query_id`,
+		map[string]any{"query_id": int64(queryID)},
+		func(row *common.Row) error {
+			if len(row.Values) >= 1 {
+				if bytes, ok := row.Values[0].([]byte); ok {
+					queryComponentsBytes = bytes
+					found = true
+				}
+			}
+			return nil
+		})
+
+	if err != nil {
+		return nil, fmt.Errorf("fetch query_components: %w", err)
+	}
+	if !found {
+		return nil, fmt.Errorf("market not found: query_id=%d", queryID)
+	}
+
+	return decodeQueryComponents(queryComponentsBytes)
+}
+
+// decodeQueryComponents decodes ABI-encoded query components (address, bytes32, string, bytes)
+func decodeQueryComponents(data []byte) (*QueryComponents, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("query_components is empty")
+	}
+
+	addressType, err := gethAbi.NewType("address", "", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create address type: %w", err)
+	}
+	bytes32Type, err := gethAbi.NewType("bytes32", "", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create bytes32 type: %w", err)
+	}
+	stringType, err := gethAbi.NewType("string", "", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create string type: %w", err)
+	}
+	bytesType, err := gethAbi.NewType("bytes", "", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create bytes type: %w", err)
+	}
+
+	args := gethAbi.Arguments{
+		{Type: addressType},
+		{Type: bytes32Type},
+		{Type: stringType},
+		{Type: bytesType},
+	}
+
+	decoded, err := args.Unpack(data)
+	if err != nil {
+		return nil, fmt.Errorf("unpack query_components: %w", err)
+	}
+
+	if len(decoded) != 4 {
+		return nil, fmt.Errorf("expected 4 components, got %d", len(decoded))
+	}
+
+	// Extract data provider address
+	dataProvider, ok := decoded[0].(gethCommon.Address)
+	if !ok {
+		return nil, fmt.Errorf("invalid data_provider type: %T", decoded[0])
+	}
+
+	// Extract stream ID (bytes32 -> string, trim null padding)
+	streamIDBytes, ok := decoded[1].([32]byte)
+	if !ok {
+		return nil, fmt.Errorf("invalid stream_id type: %T", decoded[1])
+	}
+	streamID := strings.TrimRight(string(streamIDBytes[:]), "\x00")
+
+	// Extract action name
+	actionName, ok := decoded[2].(string)
+	if !ok {
+		return nil, fmt.Errorf("invalid action_name type: %T", decoded[2])
+	}
+
+	// Extract args bytes
+	argsBytes, ok := decoded[3].([]byte)
+	if !ok {
+		return nil, fmt.Errorf("invalid args_bytes type: %T", decoded[3])
+	}
+
+	return &QueryComponents{
+		DataProvider: strings.ToLower(dataProvider.Hex()),
+		StreamID:     streamID,
+		ActionName:   actionName,
+		ArgsBytes:    argsBytes,
+	}, nil
+}
+
+// RequestAttestationForMarket broadcasts a request_attestation transaction for a market
+func (e *EngineOperations) RequestAttestationForMarket(
+	ctx context.Context,
+	chainID string,
+	signer auth.Signer,
+	broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error),
+	market *UnsettledMarket,
+) error {
+	// Get query components from market
+	components, err := e.GetMarketQueryComponents(ctx, market.ID)
+	if err != nil {
+		return fmt.Errorf("get query components: %w", err)
+	}
+
+	// Get signer account ID
+	signerAccountID, err := ktypes.GetSignerAccount(signer)
+	if err != nil {
+		return fmt.Errorf("get signer account: %w", err)
+	}
+
+	// Fetch fresh nonce from database
+	account, err := e.accounts.GetAccount(ctx, e.db, signerAccountID)
+	var nextNonce uint64
+	if err != nil {
+		if !isAccountNotFoundError(err) {
+			return fmt.Errorf("get account: %w", err)
+		}
+		nextNonce = 1
+	} else {
+		nextNonce = uint64(account.Nonce + 1)
+	}
+
+	// Encode arguments for request_attestation action
+	// Parameters: data_provider TEXT, stream_id TEXT, action_name TEXT, args_bytes BYTEA, encrypt_sig BOOL, max_fee NUMERIC
+	dataProviderArg, err := ktypes.EncodeValue(components.DataProvider)
+	if err != nil {
+		return fmt.Errorf("encode data_provider: %w", err)
+	}
+	streamIDArg, err := ktypes.EncodeValue(components.StreamID)
+	if err != nil {
+		return fmt.Errorf("encode stream_id: %w", err)
+	}
+	actionNameArg, err := ktypes.EncodeValue(components.ActionName)
+	if err != nil {
+		return fmt.Errorf("encode action_name: %w", err)
+	}
+	argsBytesArg, err := ktypes.EncodeValue(components.ArgsBytes)
+	if err != nil {
+		return fmt.Errorf("encode args_bytes: %w", err)
+	}
+	encryptSigArg, err := ktypes.EncodeValue(false)
+	if err != nil {
+		return fmt.Errorf("encode encrypt_sig: %w", err)
+	}
+	// max_fee is NULL for network_writer role (exempt from fees)
+	maxFeeArg, err := ktypes.EncodeValue(nil)
+	if err != nil {
+		return fmt.Errorf("encode max_fee: %w", err)
+	}
+
+	// Build ActionExecution payload
+	payload := &ktypes.ActionExecution{
+		Namespace: "main",
+		Action:    "request_attestation",
+		Arguments: [][]*ktypes.EncodedValue{{
+			dataProviderArg,
+			streamIDArg,
+			actionNameArg,
+			argsBytesArg,
+			encryptSigArg,
+			maxFeeArg,
+		}},
+	}
+
+	// Create transaction
+	tx, err := ktypes.CreateNodeTransaction(payload, chainID, nextNonce)
+	if err != nil {
+		return fmt.Errorf("create tx: %w", err)
+	}
+
+	// Sign transaction
+	if err := tx.Sign(signer); err != nil {
+		return fmt.Errorf("sign tx: %w", err)
+	}
+
+	// Broadcast (sync mode = WaitCommit)
+	hash, txResult, err := broadcaster(ctx, tx, 1)
+	if err != nil {
+		return fmt.Errorf("broadcast tx: %w", err)
+	}
+
+	// Check transaction result
+	if txResult.Code != uint32(ktypes.CodeOk) {
+		return fmt.Errorf("transaction failed with code %d: %s", txResult.Code, txResult.Log)
+	}
+
+	e.logger.Info("request_attestation broadcast succeeded",
+		"query_id", market.ID,
+		"tx_hash", hash.String(),
+		"data_provider", components.DataProvider,
+		"stream_id", components.StreamID,
+		"action_name", components.ActionName)
+
+	return nil
 }

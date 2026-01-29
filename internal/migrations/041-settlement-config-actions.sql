@@ -1,4 +1,4 @@
--- MIGRATION 042: SETTLEMENT CONFIG ACTIONS
+-- MIGRATION 041: SETTLEMENT CONFIG ACTIONS
 --
 -- Enables automatic settlement and adds actions to manage settlement configuration.
 -- Uses existing network_writer role for access control.

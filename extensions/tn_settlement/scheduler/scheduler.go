@@ -158,11 +158,22 @@ func (s *SettlementScheduler) Start(ctx context.Context, cronExpr string) error 
 				continue
 			}
 			if !hasAttestation {
-				s.logger.Debug("attestation not yet available, skipping market",
+				// Request attestation for this market
+				s.logger.Info("attestation not available, requesting attestation",
 					"query_id", market.ID,
 					"settle_time", market.SettleTime)
-				skipped++
-				continue // Not an error, just not ready yet
+
+				if err := engineOps.RequestAttestationForMarket(jobCtx, chainID, signer, broadcaster.BroadcastTx, market); err != nil {
+					s.logger.Warn("failed to request attestation",
+						"query_id", market.ID,
+						"error", err)
+					failed++
+				} else {
+					s.logger.Info("attestation requested successfully",
+						"query_id", market.ID)
+					skipped++ // Will settle on next run after signing
+				}
+				continue
 			}
 
 			// Broadcast settle_market transaction with retry
@@ -245,7 +256,16 @@ func (s *SettlementScheduler) RunOnce(ctx context.Context) error {
 
 	for _, market := range markets {
 		hasAttestation, err := engineOps.AttestationExists(ctx, market.Hash)
-		if err != nil || !hasAttestation {
+		if err != nil {
+			continue
+		}
+		if !hasAttestation {
+			// Request attestation for this market
+			if err := engineOps.RequestAttestationForMarket(ctx, chainID, signer, broadcaster.BroadcastTx, market); err != nil {
+				s.logger.Warn("failed to request attestation in RunOnce",
+					"query_id", market.ID,
+					"error", err)
+			}
 			continue
 		}
 

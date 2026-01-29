@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	gethAbi "github.com/ethereum/go-ethereum/accounts/abi"
+	gethCommon "github.com/ethereum/go-ethereum/common"
+	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/crypto"
 	"github.com/trufnetwork/kwil-db/core/crypto/auth"
 	"github.com/trufnetwork/kwil-db/core/log"
@@ -464,4 +467,204 @@ func TestBroadcastSettleMarketWithRetry_VerifyTransactionStructure(t *testing.T)
 	}
 
 	t.Logf("Successfully verified transaction structure for settle_market(query_id=%d)", queryID)
+}
+
+// =============================================================================
+// Test: Decode Query Components
+// =============================================================================
+
+func TestDecodeQueryComponents_ValidInput(t *testing.T) {
+	// Create valid ABI-encoded query components
+	dataProvider := "0xe5252596672cd0208a881bdb67c9df429916ba92"
+	streamID := "st9bc3cf61c3a88aa17f4ea5f1bad7b2"
+	actionName := "price_above_threshold"
+	argsBytes := []byte{0x01, 0x02, 0x03, 0x04}
+
+	encoded, err := encodeQueryComponentsForTest(dataProvider, streamID, actionName, argsBytes)
+	if err != nil {
+		t.Fatalf("Failed to encode query components: %v", err)
+	}
+
+	decoded, err := decodeQueryComponents(encoded)
+	if err != nil {
+		t.Fatalf("Failed to decode query components: %v", err)
+	}
+
+	if decoded.DataProvider != strings.ToLower(dataProvider) {
+		t.Errorf("DataProvider mismatch: expected %s, got %s", strings.ToLower(dataProvider), decoded.DataProvider)
+	}
+
+	if decoded.StreamID != streamID {
+		t.Errorf("StreamID mismatch: expected %s, got %s", streamID, decoded.StreamID)
+	}
+
+	if decoded.ActionName != actionName {
+		t.Errorf("ActionName mismatch: expected %s, got %s", actionName, decoded.ActionName)
+	}
+
+	if len(decoded.ArgsBytes) != len(argsBytes) {
+		t.Errorf("ArgsBytes length mismatch: expected %d, got %d", len(argsBytes), len(decoded.ArgsBytes))
+	}
+}
+
+func TestDecodeQueryComponents_EmptyInput(t *testing.T) {
+	_, err := decodeQueryComponents(nil)
+	if err == nil {
+		t.Fatal("Expected error for nil input")
+	}
+	if !strings.Contains(err.Error(), "empty") {
+		t.Errorf("Expected empty error, got: %v", err)
+	}
+
+	_, err = decodeQueryComponents([]byte{})
+	if err == nil {
+		t.Fatal("Expected error for empty input")
+	}
+}
+
+func TestDecodeQueryComponents_InvalidInput(t *testing.T) {
+	// Invalid ABI data
+	_, err := decodeQueryComponents([]byte{0x01, 0x02, 0x03})
+	if err == nil {
+		t.Fatal("Expected error for invalid ABI data")
+	}
+	if !strings.Contains(err.Error(), "unpack") {
+		t.Errorf("Expected unpack error, got: %v", err)
+	}
+}
+
+// =============================================================================
+// Test: Request Attestation For Market
+// =============================================================================
+
+func TestRequestAttestationForMarket_VerifyTransactionStructure(t *testing.T) {
+	accounts := &mockAccounts{}
+
+	var capturedTx *ktypes.Transaction
+	capturingBroadcaster := func(ctx context.Context, tx *ktypes.Transaction, sync uint8) (ktypes.Hash, *ktypes.TxResult, error) {
+		capturedTx = tx
+		return ktypes.Hash{1, 2, 3}, &ktypes.TxResult{
+			Code: uint32(ktypes.CodeOk),
+			Log:  "Attestation requested",
+		}, nil
+	}
+
+	priv, _, err := crypto.GenerateSecp256k1Key(nil)
+	if err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
+	signer := auth.GetNodeSigner(priv)
+
+	// Create mock engine that returns query_components
+	dataProvider := "0xe5252596672cd0208a881bdb67c9df429916ba92"
+	streamID := "st9bc3cf61c3a88aa17f4ea5f1bad7b2"
+	actionName := "price_above_threshold"
+	argsBytes := []byte{0x01, 0x02, 0x03, 0x04}
+
+	queryComponents, err := encodeQueryComponentsForTest(dataProvider, streamID, actionName, argsBytes)
+	if err != nil {
+		t.Fatalf("Failed to encode query components: %v", err)
+	}
+
+	mockEngine := &mockEngineForQueryComponents{
+		queryComponents: queryComponents,
+	}
+
+	ops := &EngineOperations{
+		logger:   log.New(),
+		accounts: accounts,
+		engine:   mockEngine,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	market := &UnsettledMarket{
+		ID:         1,
+		Hash:       []byte{0xab, 0xcd},
+		SettleTime: 1234567890,
+	}
+
+	err = ops.RequestAttestationForMarket(ctx, "test-chain", signer, capturingBroadcaster, market)
+	if err != nil {
+		t.Fatalf("Expected success, got error: %v", err)
+	}
+
+	// Verify transaction was created
+	if capturedTx == nil {
+		t.Fatal("Transaction was not captured")
+	}
+
+	// Verify transaction has signature
+	if capturedTx.Signature == nil || capturedTx.Signature.Data == nil {
+		t.Error("Transaction is not signed")
+	}
+
+	// Verify payload type is ActionExecution
+	if capturedTx.Body.PayloadType != ktypes.PayloadTypeExecute {
+		t.Errorf("Expected PayloadType Execute, got %s", capturedTx.Body.PayloadType)
+	}
+
+	t.Log("Successfully verified transaction structure for request_attestation")
+}
+
+// =============================================================================
+// Helper: Encode Query Components for Testing
+// =============================================================================
+
+func encodeQueryComponentsForTest(dataProvider, streamID, actionName string, argsBytes []byte) ([]byte, error) {
+	addressType, err := gethAbi.NewType("address", "", nil)
+	if err != nil {
+		return nil, err
+	}
+	bytes32Type, err := gethAbi.NewType("bytes32", "", nil)
+	if err != nil {
+		return nil, err
+	}
+	stringType, err := gethAbi.NewType("string", "", nil)
+	if err != nil {
+		return nil, err
+	}
+	bytesType, err := gethAbi.NewType("bytes", "", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	args := gethAbi.Arguments{
+		{Type: addressType},
+		{Type: bytes32Type},
+		{Type: stringType},
+		{Type: bytesType},
+	}
+
+	addr := gethCommon.HexToAddress(dataProvider)
+
+	var streamIDBytes32 [32]byte
+	copy(streamIDBytes32[:], []byte(streamID))
+
+	return args.Pack(addr, streamIDBytes32, actionName, argsBytes)
+}
+
+// Mock engine for query components test
+type mockEngineForQueryComponents struct {
+	queryComponents []byte
+}
+
+func (m *mockEngineForQueryComponents) ExecuteWithoutEngineCtx(ctx context.Context, db sql.DB, stmt string, params map[string]any, fn func(*common.Row) error) error {
+	// Return mock query_components
+	row := &common.Row{
+		Values: []any{m.queryComponents},
+	}
+	return fn(row)
+}
+
+// Satisfy the Engine interface - these are not used in our tests
+func (m *mockEngineForQueryComponents) Call(ctx *common.EngineContext, db sql.DB, namespace, action string, args []any, fn func(*common.Row) error) (*common.CallResult, error) {
+	return nil, nil
+}
+func (m *mockEngineForQueryComponents) CallWithoutEngineCtx(ctx context.Context, db sql.DB, namespace, action string, args []any, fn func(*common.Row) error) (*common.CallResult, error) {
+	return nil, nil
+}
+func (m *mockEngineForQueryComponents) Execute(ctx *common.EngineContext, db sql.DB, stmt string, params map[string]any, fn func(*common.Row) error) error {
+	return nil
 }
