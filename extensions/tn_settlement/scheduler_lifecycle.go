@@ -124,7 +124,8 @@ func settlementLeaderAcquire(ctx context.Context, app *common.App, block *common
 		ext.Logger().Debug("tn_settlement: prerequisites missing; deferring start until broadcaster/signer/engine/service are available")
 		return
 	}
-	if err := ext.startScheduler(ctx); err != nil {
+	// Use background context for scheduler - block context gets canceled after block processing
+	if err := ext.startScheduler(context.Background()); err != nil {
 		ext.Logger().Warn("failed to start tn_settlement scheduler on leader acquire", "error", err)
 	} else {
 		ext.Logger().Info("tn_settlement started (leader)", "schedule", ext.Schedule())

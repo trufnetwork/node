@@ -297,7 +297,8 @@ func (e *Extension) applyConfigChangeWithLock(ctx context.Context, enabled bool,
 				e.Logger().Debug("tn_settlement: prerequisites missing; deferring (re)start after config update")
 			} else if e.Scheduler() != nil {
 				e.stopSchedulerIfRunning()
-				if err := e.startScheduler(ctx); err != nil {
+				// Use background context for scheduler - passed context may be block-scoped
+				if err := e.startScheduler(context.Background()); err != nil {
 					e.Logger().Warn("failed to (re)start tn_settlement scheduler after config update", "error", err)
 				} else {
 					e.Logger().Info("tn_settlement (re)started with new schedule", "schedule", e.Schedule())
