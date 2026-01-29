@@ -72,7 +72,7 @@ func wireSignerAndBroadcaster(app *common.App, ext *Extension) {
 			if pk, err := key.LoadNodeKey(keyPath); err != nil {
 				ext.Logger().Warn("failed to load node key for signer; tn_settlement disabled until available", "path", keyPath, "error", err)
 			} else {
-				ext.SetNodeSigner(auth.GetNodeSigner(pk))
+				ext.SetNodeSigner(auth.GetUserSigner(pk))
 			}
 		}
 	}

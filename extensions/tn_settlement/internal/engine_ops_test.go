@@ -88,7 +88,7 @@ func TestBroadcastSettleMarketWithRetry_ImmediateSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
-	signer := auth.GetNodeSigner(priv)
+	signer := auth.GetUserSigner(priv)
 
 	ops := &EngineOperations{
 		logger:   log.New(),
@@ -132,7 +132,7 @@ func TestBroadcastSettleMarketWithRetry_RetriesOnError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
-	signer := auth.GetNodeSigner(priv)
+	signer := auth.GetUserSigner(priv)
 
 	ops := &EngineOperations{
 		logger:   log.New(),
@@ -178,7 +178,7 @@ func TestBroadcastSettleMarketWithRetry_MaxRetriesExceeded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
-	signer := auth.GetNodeSigner(priv)
+	signer := auth.GetUserSigner(priv)
 
 	ops := &EngineOperations{
 		logger:   log.New(),
@@ -223,7 +223,7 @@ func TestBroadcastSettleMarketWithRetry_FreshNonceEachAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
-	signer := auth.GetNodeSigner(priv)
+	signer := auth.GetUserSigner(priv)
 
 	ops := &EngineOperations{
 		logger:   log.New(),
@@ -270,7 +270,7 @@ func TestBroadcastSettleMarketWithRetry_ContextCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
-	signer := auth.GetNodeSigner(priv)
+	signer := auth.GetUserSigner(priv)
 
 	ops := &EngineOperations{
 		logger:   log.New(),
@@ -313,7 +313,7 @@ func TestBroadcastSettleMarketWithRetry_TransactionFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
-	signer := auth.GetNodeSigner(priv)
+	signer := auth.GetUserSigner(priv)
 
 	ops := &EngineOperations{
 		logger:   log.New(),
@@ -358,7 +358,7 @@ func TestBroadcastSettleMarketWithRetry_ExponentialBackoff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
-	signer := auth.GetNodeSigner(priv)
+	signer := auth.GetUserSigner(priv)
 
 	ops := &EngineOperations{
 		logger:   log.New(),
@@ -421,7 +421,7 @@ func TestBroadcastSettleMarketWithRetry_VerifyTransactionStructure(t *testing.T)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
-	signer := auth.GetNodeSigner(priv)
+	signer := auth.GetUserSigner(priv)
 
 	ops := &EngineOperations{
 		logger:   log.New(),
@@ -555,7 +555,7 @@ func TestRequestAttestationForMarket_VerifyTransactionStructure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
-	signer := auth.GetNodeSigner(priv)
+	signer := auth.GetUserSigner(priv)
 
 	// Create mock engine that returns query_components
 	dataProvider := "0xe5252596672cd0208a881bdb67c9df429916ba92"
