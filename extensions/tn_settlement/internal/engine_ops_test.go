@@ -655,6 +655,9 @@ type mockEngineForQueryComponents struct {
 	queryComponents []byte
 }
 
+// Compile-time check that mockEngineForQueryComponents implements common.Engine
+var _ common.Engine = (*mockEngineForQueryComponents)(nil)
+
 func (m *mockEngineForQueryComponents) ExecuteWithoutEngineCtx(ctx context.Context, db sql.DB, stmt string, params map[string]any, fn func(*common.Row) error) error {
 	// Return mock query_components
 	row := &common.Row{

@@ -51,6 +51,10 @@ type Extension struct {
 	retrySignal       chan struct{} // signal to trigger retry worker
 	retryMu           sync.Mutex    // protects retry state
 
+	// shutdown context for graceful termination
+	shutdownCtx    context.Context
+	shutdownCancel context.CancelFunc
+
 	// tx submission wiring
 	broadcaster TxBroadcaster
 	nodeSigner  auth.Signer
@@ -164,6 +168,18 @@ func (e *Extension) SetBroadcaster(b TxBroadcaster) { e.broadcaster = b }
 func (e *Extension) Broadcaster() TxBroadcaster     { return e.broadcaster }
 func (e *Extension) SetNodeSigner(s auth.Signer)    { e.nodeSigner = s }
 func (e *Extension) NodeSigner() auth.Signer        { return e.nodeSigner }
+
+// ShutdownContext returns the extension's shutdown context, creating it if needed.
+// This context is cancelled when Close() is called, allowing graceful termination
+// of long-running operations like the scheduler.
+func (e *Extension) ShutdownContext() context.Context {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.shutdownCtx == nil {
+		e.shutdownCtx, e.shutdownCancel = context.WithCancel(context.Background())
+	}
+	return e.shutdownCtx
+}
 
 // startRetryWorker starts the background config reload retry worker
 func (e *Extension) startRetryWorker() {
@@ -297,8 +313,8 @@ func (e *Extension) applyConfigChangeWithLock(ctx context.Context, enabled bool,
 				e.Logger().Debug("tn_settlement: prerequisites missing; deferring (re)start after config update")
 			} else if e.Scheduler() != nil {
 				e.stopSchedulerIfRunning()
-				// Use background context for scheduler - passed context may be block-scoped
-				if err := e.startScheduler(context.Background()); err != nil {
+				// Use extension's shutdown context for scheduler - ensures graceful shutdown
+				if err := e.startScheduler(e.ShutdownContext()); err != nil {
 					e.Logger().Warn("failed to (re)start tn_settlement scheduler after config update", "error", err)
 				} else {
 					e.Logger().Info("tn_settlement (re)started with new schedule", "schedule", e.Schedule())
@@ -310,10 +326,17 @@ func (e *Extension) applyConfigChangeWithLock(ctx context.Context, enabled bool,
 	}
 }
 
-// Close stops background jobs
+// Close stops background jobs and cancels the shutdown context
 func (e *Extension) Close() {
 	e.stopRetryWorker()
 	if e.scheduler != nil {
 		_ = e.scheduler.Stop()
 	}
+	// Cancel shutdown context to signal any operations using it
+	e.mu.Lock()
+	if e.shutdownCancel != nil {
+		e.shutdownCancel()
+		e.shutdownCancel = nil
+	}
+	e.mu.Unlock()
 }
