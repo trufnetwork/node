@@ -28,6 +28,7 @@ type EngineOperations struct {
 	engine   common.Engine
 	logger   log.Logger
 	db       sql.DB
+	dbPool   sql.DelayedReadTxMaker // For fresh read transactions in background jobs
 	accounts common.Accounts
 }
 
@@ -38,10 +39,11 @@ type UnsettledMarket struct {
 	SettleTime int64  // Unix timestamp
 }
 
-func NewEngineOperations(engine common.Engine, db sql.DB, accounts common.Accounts, logger log.Logger) *EngineOperations {
+func NewEngineOperations(engine common.Engine, db sql.DB, dbPool sql.DelayedReadTxMaker, accounts common.Accounts, logger log.Logger) *EngineOperations {
 	return &EngineOperations{
 		engine:   engine,
 		db:       db,
+		dbPool:   dbPool,
 		accounts: accounts,
 		logger:   logger.New("settlement_ops"),
 	}
@@ -289,22 +291,44 @@ func (e *EngineOperations) broadcastSettleMarketWithFreshNonce(
 		return ktypes.Hash{}, fmt.Errorf("get signer account: %w", err)
 	}
 
-	// Fetch fresh nonce from database
-	account, err := e.accounts.GetAccount(ctx, e.db, signerAccountID)
+	// Fetch fresh nonce from database using a fresh read transaction
 	var nextNonce uint64
-	if err != nil {
-		if !isAccountNotFoundError(err) {
-			return ktypes.Hash{}, fmt.Errorf("get account: %w", err)
+	if e.dbPool != nil {
+		readTx := e.dbPool.BeginDelayedReadTx()
+		defer readTx.Rollback(ctx)
+
+		account, err := e.accounts.GetAccount(ctx, readTx, signerAccountID)
+		if err != nil {
+			if !isAccountNotFoundError(err) {
+				return ktypes.Hash{}, fmt.Errorf("get account: %w", err)
+			}
+			nextNonce = 1
+			e.logger.Info("account not found, using nonce 1",
+				"account", fmt.Sprintf("%x", signerAccountID.Identifier))
+		} else {
+			nextNonce = uint64(account.Nonce + 1)
+			e.logger.Info("fresh nonce from database",
+				"account", fmt.Sprintf("%x", signerAccountID.Identifier),
+				"db_nonce", account.Nonce,
+				"next_nonce", nextNonce)
 		}
-		nextNonce = 1
-		e.logger.Info("account not found, using nonce 1",
-			"account", fmt.Sprintf("%x", signerAccountID.Identifier))
 	} else {
-		nextNonce = uint64(account.Nonce + 1)
-		e.logger.Info("fresh nonce from database",
-			"account", fmt.Sprintf("%x", signerAccountID.Identifier),
-			"db_nonce", account.Nonce,
-			"next_nonce", nextNonce)
+		// Fallback to stored db (may fail if tx is closed)
+		account, err := e.accounts.GetAccount(ctx, e.db, signerAccountID)
+		if err != nil {
+			if !isAccountNotFoundError(err) {
+				return ktypes.Hash{}, fmt.Errorf("get account: %w", err)
+			}
+			nextNonce = 1
+			e.logger.Info("account not found, using nonce 1",
+				"account", fmt.Sprintf("%x", signerAccountID.Identifier))
+		} else {
+			nextNonce = uint64(account.Nonce + 1)
+			e.logger.Info("fresh nonce from database",
+				"account", fmt.Sprintf("%x", signerAccountID.Identifier),
+				"db_nonce", account.Nonce,
+				"next_nonce", nextNonce)
+		}
 	}
 
 	// Encode query_id argument
@@ -481,16 +505,32 @@ func (e *EngineOperations) RequestAttestationForMarket(
 		return fmt.Errorf("get signer account: %w", err)
 	}
 
-	// Fetch fresh nonce from database
-	account, err := e.accounts.GetAccount(ctx, e.db, signerAccountID)
+	// Fetch fresh nonce from database using a fresh read transaction
 	var nextNonce uint64
-	if err != nil {
-		if !isAccountNotFoundError(err) {
-			return fmt.Errorf("get account: %w", err)
+	if e.dbPool != nil {
+		readTx := e.dbPool.BeginDelayedReadTx()
+		defer readTx.Rollback(ctx)
+
+		account, err := e.accounts.GetAccount(ctx, readTx, signerAccountID)
+		if err != nil {
+			if !isAccountNotFoundError(err) {
+				return fmt.Errorf("get account: %w", err)
+			}
+			nextNonce = 1
+		} else {
+			nextNonce = uint64(account.Nonce + 1)
 		}
-		nextNonce = 1
 	} else {
-		nextNonce = uint64(account.Nonce + 1)
+		// Fallback to stored db (may fail if tx is closed)
+		account, err := e.accounts.GetAccount(ctx, e.db, signerAccountID)
+		if err != nil {
+			if !isAccountNotFoundError(err) {
+				return fmt.Errorf("get account: %w", err)
+			}
+			nextNonce = 1
+		} else {
+			nextNonce = uint64(account.Nonce + 1)
+		}
 	}
 
 	// Encode arguments for request_attestation action

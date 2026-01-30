@@ -59,7 +59,8 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	}
 
 	// Build engine operations wrapper
-	engOps := internal.NewEngineOperations(app.Engine, db, app.Accounts, app.Service.Logger)
+	// Pass DBPool for fresh read transactions in background jobs
+	engOps := internal.NewEngineOperations(app.Engine, db, app.Service.DBPool, app.Accounts, app.Service.Logger)
 
 	// Load schedule from config; fall back to defaults if absent
 	enabled, schedule, maxMarkets, retries, _ := engOps.LoadSettlementConfig(ctx)
