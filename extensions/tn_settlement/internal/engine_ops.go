@@ -59,6 +59,23 @@ func isAccountNotFoundError(err error) bool {
 	return strings.Contains(msg, "not found") || strings.Contains(msg, "no rows")
 }
 
+// getFreshReadTx returns a fresh database connection for read operations.
+// This is critical for background scheduler operations where e.db may be stale/closed.
+// Returns: (db, cleanup function, error)
+// The cleanup function MUST be called (via defer) to rollback the read transaction.
+func (e *EngineOperations) getFreshReadTx(ctx context.Context) (sql.DB, func(), error) {
+	if e.dbPool != nil {
+		readTx := e.dbPool.BeginDelayedReadTx()
+		cleanup := func() {
+			readTx.Rollback(ctx)
+		}
+		return readTx, cleanup, nil
+	}
+	// Fallback to stored db (may fail if tx is closed, but better than nothing)
+	e.logger.Warn("dbPool is nil, falling back to stored db connection (may be stale)")
+	return e.db, func() {}, nil
+}
+
 // LoadSettlementConfig reads the single-row settlement configuration
 // Returns (enabled, schedule, maxMarketsPerRun, retryAttempts)
 // If table/row missing, returns false, "", 10, 3 and no error
@@ -71,8 +88,16 @@ func (e *EngineOperations) LoadSettlementConfig(ctx context.Context) (bool, stri
 		found      bool
 	)
 
+	// Use fresh read transaction from pool to avoid stale connection issues
+	// in background scheduler contexts where e.db may be closed
+	db, cleanup, err := e.getFreshReadTx(ctx)
+	if err != nil {
+		return false, "", 10, 3, fmt.Errorf("get fresh read tx: %w", err)
+	}
+	defer cleanup()
+
 	// Read using engine without engine ctx (owner-level read)
-	err := e.engine.ExecuteWithoutEngineCtx(ctx, e.db,
+	err = e.engine.ExecuteWithoutEngineCtx(ctx, db,
 		`SELECT enabled, settlement_schedule, max_markets_per_run, retry_attempts
 		 FROM main.settlement_config WHERE id = 1`, nil,
 		func(row *common.Row) error {
@@ -137,7 +162,14 @@ func (e *EngineOperations) FindUnsettledMarkets(ctx context.Context, limit int) 
 		LIMIT $limit
 	`
 
-	err := e.engine.ExecuteWithoutEngineCtx(ctx, e.db, query,
+	// Use fresh read transaction from pool to avoid stale connection issues
+	db, cleanup, err := e.getFreshReadTx(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get fresh read tx: %w", err)
+	}
+	defer cleanup()
+
+	err = e.engine.ExecuteWithoutEngineCtx(ctx, db, query,
 		map[string]any{
 			"current_time": currentTime,
 			"limit":        int64(limit),
@@ -205,7 +237,14 @@ func (e *EngineOperations) AttestationExists(ctx context.Context, marketHash []b
 		LIMIT 1
 	`
 
-	err := e.engine.ExecuteWithoutEngineCtx(ctx, e.db, query,
+	// Use fresh read transaction from pool to avoid stale connection issues
+	db, cleanup, err := e.getFreshReadTx(ctx)
+	if err != nil {
+		return false, fmt.Errorf("get fresh read tx: %w", err)
+	}
+	defer cleanup()
+
+	err = e.engine.ExecuteWithoutEngineCtx(ctx, db, query,
 		map[string]any{"hash": marketHash},
 		func(row *common.Row) error {
 			exists = true
@@ -381,7 +420,14 @@ func (e *EngineOperations) GetMarketQueryComponents(ctx context.Context, queryID
 	var foundRow bool
 	var foundData bool
 
-	err := e.engine.ExecuteWithoutEngineCtx(ctx, e.db,
+	// Use fresh read transaction from pool to avoid stale connection issues
+	db, cleanup, err := e.getFreshReadTx(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get fresh read tx: %w", err)
+	}
+	defer cleanup()
+
+	err = e.engine.ExecuteWithoutEngineCtx(ctx, db,
 		`SELECT query_components FROM ob_queries WHERE id = $query_id`,
 		map[string]any{"query_id": int64(queryID)},
 		func(row *common.Row) error {

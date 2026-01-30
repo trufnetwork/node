@@ -26,11 +26,29 @@ type EngineOperations struct {
 	engine   common.Engine
 	logger   log.Logger
 	db       sql.DB
+	dbPool   sql.DelayedReadTxMaker // For fresh read transactions in background jobs
 	accounts common.Accounts
 }
 
-func NewEngineOperations(engine common.Engine, db sql.DB, accounts common.Accounts, logger log.Logger) *EngineOperations {
-	return &EngineOperations{engine: engine, db: db, accounts: accounts, logger: logger.New("ops")}
+func NewEngineOperations(engine common.Engine, db sql.DB, dbPool sql.DelayedReadTxMaker, accounts common.Accounts, logger log.Logger) *EngineOperations {
+	return &EngineOperations{engine: engine, db: db, dbPool: dbPool, accounts: accounts, logger: logger.New("ops")}
+}
+
+// getFreshReadTx returns a fresh database connection for read operations.
+// This is critical for background scheduler operations where e.db may be stale/closed.
+// Returns: (db, cleanup function, error)
+// The cleanup function MUST be called (via defer) to rollback the read transaction.
+func (e *EngineOperations) getFreshReadTx(ctx context.Context) (sql.DB, func(), error) {
+	if e.dbPool != nil {
+		readTx := e.dbPool.BeginDelayedReadTx()
+		cleanup := func() {
+			readTx.Rollback(ctx)
+		}
+		return readTx, cleanup, nil
+	}
+	// Fallback to stored db (may fail if tx is closed, but better than nothing)
+	e.logger.Warn("dbPool is nil, falling back to stored db connection (may be stale)")
+	return e.db, func() {}, nil
 }
 
 // LoadDigestConfig reads the single-row digest configuration.
@@ -41,8 +59,17 @@ func (e *EngineOperations) LoadDigestConfig(ctx context.Context) (bool, string, 
 		schedule string
 		found    bool
 	)
+
+	// Use fresh read transaction from pool to avoid stale connection issues
+	// in background scheduler contexts where e.db may be closed
+	db, cleanup, err := e.getFreshReadTx(ctx)
+	if err != nil {
+		return false, "", fmt.Errorf("get fresh read tx: %w", err)
+	}
+	defer cleanup()
+
 	// Read using engine without engine ctx (owner-level read)
-	err := e.engine.ExecuteWithoutEngineCtx(ctx, e.db,
+	err = e.engine.ExecuteWithoutEngineCtx(ctx, db,
 		`SELECT enabled, digest_schedule FROM main.digest_config WHERE id = 1`, nil,
 		func(row *common.Row) error {
 			if len(row.Values) >= 2 {
@@ -79,9 +106,16 @@ func (e *EngineOperations) BuildAndBroadcastAutoDigestTx(ctx context.Context, ch
 		return fmt.Errorf("failed to get signer account: %w", err)
 	}
 
+	// Use fresh read transaction from pool to avoid stale connection issues
+	db, cleanup, err := e.getFreshReadTx(ctx)
+	if err != nil {
+		return fmt.Errorf("get fresh read tx: %w", err)
+	}
+	defer cleanup()
+
 	// Get account information using the accounts service directly on database
 	// DB interface embeds Executor, so we can use it directly
-	account, err := e.accounts.GetAccount(ctx, e.db, signerAccountID)
+	account, err := e.accounts.GetAccount(ctx, db, signerAccountID)
 	var nextNonce uint64
 	if err != nil {
 		// Account doesn't exist yet - use nonce 1 for first transaction
@@ -148,11 +182,18 @@ func (e *EngineOperations) BroadcastAutoDigestWithArgsAndParse(
 		return nil, fmt.Errorf("failed to get signer account: %w", err)
 	}
 
+	// Use fresh read transaction from pool to avoid stale connection issues
+	db, cleanup, err := e.getFreshReadTx(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get fresh read tx: %w", err)
+	}
+	defer cleanup()
+
 	// Get account information using the accounts service directly on database
-	account, err := e.accounts.GetAccount(ctx, e.db, signerAccountID)
+	account, err := e.accounts.GetAccount(ctx, db, signerAccountID)
 	var nextNonce uint64
 	if err != nil {
-		// Only treat “not found” / “no rows” as missing-account; fail fast on any other error
+		// Only treat "not found" / "no rows" as missing-account; fail fast on any other error
 		msg := strings.ToLower(err.Error())
 		if !strings.Contains(msg, "not found") && !strings.Contains(msg, "no rows") {
 			return nil, fmt.Errorf("get account: %w", err)
@@ -310,8 +351,15 @@ func (e *EngineOperations) broadcastAutoDigestWithFreshNonce(
 		return nil, ktypes.Hash{}, fmt.Errorf("get signer account: %w", err)
 	}
 
+	// Use fresh read transaction from pool to avoid stale connection issues
+	db, cleanup, err := e.getFreshReadTx(ctx)
+	if err != nil {
+		return nil, ktypes.Hash{}, fmt.Errorf("get fresh read tx: %w", err)
+	}
+	defer cleanup()
+
 	// ALWAYS query database for current nonce (fresh state)
-	account, err := e.accounts.GetAccount(ctx, e.db, signerAccountID)
+	account, err := e.accounts.GetAccount(ctx, db, signerAccountID)
 	var nextNonce uint64
 	if err != nil {
 		// Only treat "not found" / "no rows" as missing-account
