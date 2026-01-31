@@ -53,7 +53,7 @@ func InitializeExtensionWithNodeCapabilities(_ TxBroadcaster, _ auth.Signer) { I
 func engineReadyHook(ctx context.Context, app *common.App) error {
 	logger := app.Service.Logger.New(ExtensionName)
 
-	// Use app.DB for read/query; if a separate RO pool is needed in future, wire it here.
+	// Use app.DB for read/query
 	var db sql.DB
 	db = app.DB
 	if db == nil {
@@ -61,7 +61,8 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	}
 
 	// Build engine operations wrapper
-	engOps := internal.NewEngineOperations(app.Engine, db, app.Accounts, app.Service.Logger)
+	// Pass DBPool for fresh read transactions in background jobs
+	engOps := internal.NewEngineOperations(app.Engine, db, app.Service.DBPool, app.Accounts, app.Service.Logger)
 
 	// Load schedule from config; fall back to default if absent
 	enabled, schedule, _ := engOps.LoadDigestConfig(ctx)

@@ -129,7 +129,7 @@ func testFindUnsettledMarkets(t *testing.T) func(context.Context, *kwilTesting.P
 		// Test FindUnsettledMarkets
 		accts, err := accounts.InitializeAccountStore(ctx, platform.DB, log.New())
 		require.NoError(t, err)
-		ops := internal.NewEngineOperations(platform.Engine, platform.DB, accts, log.New())
+		ops := internal.NewEngineOperations(platform.Engine, platform.DB, nil, accts, log.New())
 
 		markets, err := ops.FindUnsettledMarkets(ctx, 10)
 		require.NoError(t, err)
@@ -199,7 +199,7 @@ func testAttestationExists(t *testing.T) func(context.Context, *kwilTesting.Plat
 		// Test AttestationExists
 		accts, err := accounts.InitializeAccountStore(ctx, platform.DB, log.New())
 		require.NoError(t, err)
-		ops := internal.NewEngineOperations(platform.Engine, platform.DB, accts, log.New())
+		ops := internal.NewEngineOperations(platform.Engine, platform.DB, nil, accts, log.New())
 
 		exists, err := ops.AttestationExists(ctx, attestationHash)
 		require.NoError(t, err)
@@ -308,12 +308,12 @@ func testLoadSettlementConfig(t *testing.T) func(context.Context, *kwilTesting.P
 		// Test LoadSettlementConfig (table exists from migration with seeded defaults)
 		accts, err := accounts.InitializeAccountStore(ctx, platform.DB, log.New())
 		require.NoError(t, err)
-		ops := internal.NewEngineOperations(platform.Engine, platform.DB, accts, log.New())
+		ops := internal.NewEngineOperations(platform.Engine, platform.DB, nil, accts, log.New())
 
 		enabled, schedule, maxMarkets, retries, err := ops.LoadSettlementConfig(ctx)
 		require.NoError(t, err)
-		require.False(t, enabled, "should be false (default disabled for safety)")
-		require.Equal(t, "0 * * * *", schedule, "should be hourly schedule from migration")
+		require.True(t, enabled, "should be true (enabled by migration 041)")
+		require.Equal(t, "0,30 * * * *", schedule, "should be 30-minute schedule from migration 041")
 		require.Equal(t, 10, maxMarkets)
 		require.Equal(t, 3, retries)
 
@@ -385,7 +385,7 @@ func testSkipMarketWithoutAttestation(t *testing.T) func(context.Context, *kwilT
 		// Test AttestationExists should return false
 		accts, err := accounts.InitializeAccountStore(ctx, platform.DB, log.New())
 		require.NoError(t, err)
-		ops := internal.NewEngineOperations(platform.Engine, platform.DB, accts, log.New())
+		ops := internal.NewEngineOperations(platform.Engine, platform.DB, nil, accts, log.New())
 
 		exists, err := ops.AttestationExists(ctx, attestationHash)
 		require.NoError(t, err)
@@ -469,7 +469,7 @@ func testMultipleMarketsProcessing(t *testing.T) func(context.Context, *kwilTest
 		// Test FindUnsettledMarkets with limit
 		accts, err := accounts.InitializeAccountStore(ctx, platform.DB, log.New())
 		require.NoError(t, err)
-		ops := internal.NewEngineOperations(platform.Engine, platform.DB, accts, log.New())
+		ops := internal.NewEngineOperations(platform.Engine, platform.DB, nil, accts, log.New())
 
 		markets, err := ops.FindUnsettledMarkets(ctx, 2)
 		require.NoError(t, err)

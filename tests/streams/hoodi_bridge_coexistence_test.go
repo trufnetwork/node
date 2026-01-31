@@ -29,17 +29,20 @@ const (
 	testTTExtensionName = "hoodi_tt"
 
 	// hoodi_tt2 bridge (second bridge)
+	// Must match the escrow address in migrations/erc20-bridge/000-extension.sql
 	testTT2Chain         = "hoodi"
-	testTT2Escrow        = "0x9BD843A3ce718FE639e9968860B933b026784687"
+	testTT2Escrow        = "0x80D9B3b6941367917816d36748C88B303f7F1415"
 	testTT2ERC20         = "0x1591DeAa21710E0BA6CC1b15F49620C9F65B2dEd"
 	testTT2ExtensionName = "hoodi_tt2"
 )
 
 var (
-	ttPointCounter  int64  = 7000 // Start from 7000 for TT bridge
-	tt2PointCounter int64  = 8000 // Start from 8000 for TT2 bridge
-	ttPrevPoint     *int64        // Track previous point for TT deposits
-	tt2PrevPoint    *int64        // Track previous point for TT2 deposits
+	// Separate counters and prev pointers for each bridge
+	// Each bridge has its own ordered-sync topic (per escrow address)
+	ttPointCounter  int64  = 7000
+	tt2PointCounter int64  = 8000
+	ttPrevPoint     *int64
+	tt2PrevPoint    *int64
 )
 
 // TestHoodiBridgeCoexistence verifies that hoodi_tt and hoodi_tt2 can co-exist without interfering
@@ -60,7 +63,7 @@ func TestHoodiBridgeCoexistence(t *testing.T) {
 // setupBridgeCoexistenceEnvironment sets up both Hoodi bridge instances
 func setupBridgeCoexistenceEnvironment(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		// Reset point trackers
+		// Reset point trackers for fresh test
 		ttPrevPoint = nil
 		tt2PrevPoint = nil
 
@@ -107,6 +110,10 @@ func setupBridgeCoexistenceEnvironment(t *testing.T) func(ctx context.Context, p
 // Test 1: Deposit to TT only affects TT balance
 func testTTDepositOnlyAffectsTTBalance(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset point trackers - each test runs in isolated container with fresh DB
+		ttPrevPoint = nil
+		tt2PrevPoint = nil
+
 		err := erc20shim.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err, "failed to re-initialize extension")
 
@@ -135,6 +142,10 @@ func testTTDepositOnlyAffectsTTBalance(t *testing.T) func(ctx context.Context, p
 // Test 2: Deposit to TT2 only affects TT2 balance
 func testTT2DepositOnlyAffectsTT2Balance(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset point trackers - each test runs in isolated container with fresh DB
+		ttPrevPoint = nil
+		tt2PrevPoint = nil
+
 		err := erc20shim.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err, "failed to re-initialize extension")
 
@@ -163,15 +174,15 @@ func testTT2DepositOnlyAffectsTT2Balance(t *testing.T) func(ctx context.Context,
 // Test 3: Withdrawals are isolated between bridges
 func testWithdrawalsAreIsolated(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset point trackers - each test runs in isolated container with fresh DB
+		ttPrevPoint = nil
+		tt2PrevPoint = nil
+
 		err := erc20shim.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err, "failed to re-initialize extension")
 
 		userAddrVal := util.Unsafe_NewEthereumAddressFromString("0xc777777777777777777777777777777777777777")
 		userAddr := &userAddrVal
-
-		// Reset deposit chains
-		ttPrevPoint = nil
-		tt2PrevPoint = nil
 
 		// Give user 100 TT and 100 TT2
 		err = giveTTBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
@@ -225,6 +236,10 @@ func testWithdrawalsAreIsolated(t *testing.T) func(ctx context.Context, platform
 // Test 4: Cross-contamination test - operations on one bridge don't affect the other
 func testCrossContamination(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset point trackers - each test runs in isolated container with fresh DB
+		ttPrevPoint = nil
+		tt2PrevPoint = nil
+
 		err := erc20shim.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err, "failed to re-initialize extension")
 
@@ -233,10 +248,6 @@ func testCrossContamination(t *testing.T) func(ctx context.Context, platform *kw
 
 		user2AddrVal := util.Unsafe_NewEthereumAddressFromString("0xc999999999999999999999999999999999999999")
 		user2Addr := &user2AddrVal
-
-		// Reset deposit chains
-		ttPrevPoint = nil
-		tt2PrevPoint = nil
 
 		// User1: deposit 50 TT
 		err = giveTTBalance(ctx, platform, user1Addr.Address(), "50000000000000000000")

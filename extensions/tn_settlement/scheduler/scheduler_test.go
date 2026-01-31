@@ -6,10 +6,13 @@ import (
 	"time"
 
 	"github.com/trufnetwork/kwil-db/common"
+	"github.com/trufnetwork/kwil-db/config"
 	"github.com/trufnetwork/kwil-db/core/crypto"
 	"github.com/trufnetwork/kwil-db/core/crypto/auth"
 	"github.com/trufnetwork/kwil-db/core/log"
 	ktypes "github.com/trufnetwork/kwil-db/core/types"
+
+	"github.com/trufnetwork/node/extensions/tn_settlement/internal"
 )
 
 // =============================================================================
@@ -85,6 +88,42 @@ func (m *mockSigner) PubKey() crypto.PublicKey {
 		mockPubKeyData[i] = byte(i)
 	}
 	return &mockPublicKey{data: mockPubKeyData}
+}
+
+// mockEngineOps implements EngineOps interface for testing.
+// It signals when methods are called to verify job execution.
+// It also checks context cancellation to ensure the scheduler uses its own context.
+type mockEngineOps struct {
+	t                      *testing.T
+	onFindUnsettledMarkets func()
+}
+
+func (m *mockEngineOps) FindUnsettledMarkets(ctx context.Context, limit int) ([]*internal.UnsettledMarket, error) {
+	// Check if context is canceled - this would indicate the bug regressed
+	// (scheduler passing parent context instead of its own internal context)
+	if ctx.Err() != nil {
+		if m.t != nil {
+			m.t.Fatalf("FindUnsettledMarkets called with canceled context: %v - scheduler should use its own internal context", ctx.Err())
+		}
+		return nil, ctx.Err()
+	}
+	if m.onFindUnsettledMarkets != nil {
+		m.onFindUnsettledMarkets()
+	}
+	// Return empty list - no markets to settle
+	return []*internal.UnsettledMarket{}, nil
+}
+
+func (m *mockEngineOps) AttestationExists(ctx context.Context, marketHash []byte) (bool, error) {
+	return false, nil
+}
+
+func (m *mockEngineOps) RequestAttestationForMarket(ctx context.Context, chainID string, signer auth.Signer, broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error), market *internal.UnsettledMarket) error {
+	return nil
+}
+
+func (m *mockEngineOps) BroadcastSettleMarketWithRetry(ctx context.Context, chainID string, signer auth.Signer, broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error), queryID int, maxRetries int) error {
+	return nil
 }
 
 // =============================================================================
@@ -360,6 +399,80 @@ func TestSchedulerSetSigner(t *testing.T) {
 	}
 
 	t.Log("Scheduler handled signer change correctly (thread-safe)")
+}
+
+// =============================================================================
+// Test: Scheduler Job Runs After Parent Context Canceled
+// This tests the bug fix where block context was passed to Start() and got
+// canceled before cron jobs could run.
+// =============================================================================
+
+func TestSchedulerJobRunsAfterParentContextCanceled(t *testing.T) {
+	// Create service with GenesisConfig to pass prerequisites check
+	service := &common.Service{
+		Logger: log.New(),
+		GenesisConfig: &config.GenesisConfig{
+			ChainID: "test-chain",
+		},
+	}
+
+	broadcaster := &mockTxBroadcaster{}
+	signer := &mockSigner{}
+
+	// Track if job executed - use buffered channel to avoid blocking
+	jobExecuted := make(chan struct{}, 1)
+
+	// Create mock EngineOps that signals when FindUnsettledMarkets is called
+	// The mock also checks that ctx is not canceled - if it is, the test fails
+	// because the scheduler should use its own internal context, not the parent context
+	mockOps := &mockEngineOps{
+		t: t,
+		onFindUnsettledMarkets: func() {
+			// Signal that the job ran (non-blocking send)
+			select {
+			case jobExecuted <- struct{}{}:
+			default:
+			}
+		},
+	}
+
+	scheduler := NewSettlementScheduler(NewSettlementSchedulerParams{
+		Service:          service,
+		Logger:           log.New(),
+		EngineOps:        mockOps, // Mock that signals when FindUnsettledMarkets is called
+		Tx:               broadcaster,
+		Signer:           signer,
+		MaxMarketsPerRun: 10,
+		RetryAttempts:    3,
+	})
+
+	// Simulate the bug: create a context that will be canceled immediately
+	// (like a block processing context)
+	blockCtx, cancelBlock := context.WithCancel(context.Background())
+
+	// Start scheduler - with our fix, it should use its own internal context
+	err := scheduler.Start(blockCtx, "* * * * * *") // Every second
+	if err != nil {
+		t.Fatalf("Failed to start scheduler: %v", err)
+	}
+
+	// Immediately cancel the "block" context (simulating block processing completion)
+	cancelBlock()
+
+	// Wait for the job to execute with a timeout
+	// The old bug would cause "context canceled" errors and the job would never run
+	select {
+	case <-jobExecuted:
+		t.Log("Scheduler job executed successfully even after parent context was canceled - bug fix verified!")
+	case <-time.After(3 * time.Second):
+		t.Fatal("Timeout: scheduler job never executed after parent context was canceled - the bug fix may have regressed")
+	}
+
+	// Clean up
+	err = scheduler.Stop()
+	if err != nil {
+		t.Fatalf("Failed to stop scheduler: %v", err)
+	}
 }
 
 // =============================================================================

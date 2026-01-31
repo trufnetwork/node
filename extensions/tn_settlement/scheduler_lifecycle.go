@@ -72,7 +72,7 @@ func wireSignerAndBroadcaster(app *common.App, ext *Extension) {
 			if pk, err := key.LoadNodeKey(keyPath); err != nil {
 				ext.Logger().Warn("failed to load node key for signer; tn_settlement disabled until available", "path", keyPath, "error", err)
 			} else {
-				ext.SetNodeSigner(auth.GetNodeSigner(pk))
+				ext.SetNodeSigner(auth.GetUserSigner(pk))
 			}
 		}
 	}
@@ -124,7 +124,9 @@ func settlementLeaderAcquire(ctx context.Context, app *common.App, block *common
 		ext.Logger().Debug("tn_settlement: prerequisites missing; deferring start until broadcaster/signer/engine/service are available")
 		return
 	}
-	if err := ext.startScheduler(ctx); err != nil {
+	// Use extension's shutdown context - this ensures the scheduler stops on node shutdown
+	// even if leaderwatch callbacks don't fire
+	if err := ext.startScheduler(ext.ShutdownContext()); err != nil {
 		ext.Logger().Warn("failed to start tn_settlement scheduler on leader acquire", "error", err)
 	} else {
 		ext.Logger().Info("tn_settlement started (leader)", "schedule", ext.Schedule())

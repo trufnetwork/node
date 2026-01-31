@@ -65,7 +65,7 @@ func GetUserBalance(ctx context.Context, platform *kwilTesting.Platform, extensi
 		escrowAddr = "0x80D9B3b6941367917816d36748C88B303f7F1415"
 	case "sepolia_bridge":
 		chainName = "sepolia"
-		escrowAddr = "0x80d9b3b6941367917816d36748c88b303f7f1415"
+		escrowAddr = "0x502430eD0BbE0f230215870c9C2853e126eE5Ae3"
 	case "erc20_bridge_test":
 		// Test-only alias used in tests/extensions/erc20/ tests
 		chainName = "sepolia"

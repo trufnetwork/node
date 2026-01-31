@@ -20,10 +20,19 @@ type txBroadcaster interface {
 	BroadcastTx(ctx context.Context, tx *ktypes.Transaction, sync uint8) (ktypes.Hash, *ktypes.TxResult, error)
 }
 
+// EngineOps defines the operations needed by the settlement scheduler.
+// This interface allows for mocking in tests.
+type EngineOps interface {
+	FindUnsettledMarkets(ctx context.Context, limit int) ([]*internal.UnsettledMarket, error)
+	AttestationExists(ctx context.Context, marketHash []byte) (bool, error)
+	RequestAttestationForMarket(ctx context.Context, chainID string, signer auth.Signer, broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error), market *internal.UnsettledMarket) error
+	BroadcastSettleMarketWithRetry(ctx context.Context, chainID string, signer auth.Signer, broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error), queryID int, maxRetries int) error
+}
+
 type SettlementScheduler struct {
 	kwilService *common.Service
 	logger      log.Logger
-	engineOps   *internal.EngineOperations
+	engineOps   EngineOps
 	cron        *gocron.Scheduler
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -39,7 +48,7 @@ type SettlementScheduler struct {
 type NewSettlementSchedulerParams struct {
 	Service          *common.Service
 	Logger           log.Logger
-	EngineOps        *internal.EngineOperations
+	EngineOps        EngineOps
 	Signer           auth.Signer
 	Tx               txBroadcaster
 	MaxMarketsPerRun int
@@ -83,7 +92,10 @@ func (s *SettlementScheduler) Start(ctx context.Context, cronExpr string) error 
 	if s.cancel != nil {
 		s.cancel()
 	}
-	s.ctx, s.cancel = context.WithCancel(ctx)
+	// Use Background context instead of the passed-in context to ensure
+	// the scheduler's jobs continue running even if the caller's context
+	// (e.g., a block processing context) is canceled
+	s.ctx, s.cancel = context.WithCancel(context.Background())
 
 	// Clear any existing jobs to avoid duplicates on (re)start
 	s.cron.Clear()
@@ -158,11 +170,22 @@ func (s *SettlementScheduler) Start(ctx context.Context, cronExpr string) error 
 				continue
 			}
 			if !hasAttestation {
-				s.logger.Debug("attestation not yet available, skipping market",
+				// Request attestation for this market
+				s.logger.Info("attestation not available, requesting attestation",
 					"query_id", market.ID,
 					"settle_time", market.SettleTime)
-				skipped++
-				continue // Not an error, just not ready yet
+
+				if err := engineOps.RequestAttestationForMarket(jobCtx, chainID, signer, broadcaster.BroadcastTx, market); err != nil {
+					s.logger.Warn("failed to request attestation",
+						"query_id", market.ID,
+						"error", err)
+					failed++
+				} else {
+					s.logger.Info("attestation requested successfully",
+						"query_id", market.ID)
+					skipped++ // Will settle on next run after signing
+				}
+				continue
 			}
 
 			// Broadcast settle_market transaction with retry
@@ -245,7 +268,19 @@ func (s *SettlementScheduler) RunOnce(ctx context.Context) error {
 
 	for _, market := range markets {
 		hasAttestation, err := engineOps.AttestationExists(ctx, market.Hash)
-		if err != nil || !hasAttestation {
+		if err != nil {
+			s.logger.Error("failed to check attestation existence",
+				"query_id", market.ID,
+				"error", err)
+			return fmt.Errorf("check attestation for market %d: %w", market.ID, err)
+		}
+		if !hasAttestation {
+			// Request attestation for this market
+			if err := engineOps.RequestAttestationForMarket(ctx, chainID, signer, broadcaster.BroadcastTx, market); err != nil {
+				s.logger.Warn("failed to request attestation in RunOnce",
+					"query_id", market.ID,
+					"error", err)
+			}
 			continue
 		}
 
