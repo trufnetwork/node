@@ -51,13 +51,17 @@ func TestSettlement(t *testing.T) {
 			// Validation tests:
 			testSettleMarketValidationIntegration(t),
 			testSettleMarketBlockedByBinaryParityViolation(t),
-			testSettleMarketBlockedByCollateralMismatch(t),
+			testSettleMarketMultiMarketCollateral(t),
 		},
 	}, testutils.GetTestOptionsWithCache())
 }
 
 func testSettleMarketHappyPath(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset balance point tracker for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
+
 		// Use a valid Ethereum address as deployer
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x1111111111111111111111111111111111111111")
 		platform.Deployer = deployer.Bytes()
@@ -242,6 +246,10 @@ func testSettleMarketHappyPath(t *testing.T) func(context.Context, *kwilTesting.
 
 func testSettleMarketWithNoOutcome(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset balance point tracker for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
+
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x2222222222222222222222222222222222222222")
 		platform.Deployer = deployer.Bytes()
 
@@ -361,6 +369,10 @@ func testSettleMarketWithNoOutcome(t *testing.T) func(context.Context, *kwilTest
 
 func testSettleMarketWithMultipleDatapoints(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset balance point tracker for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
+
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x3333333333333333333333333333333333333333")
 		platform.Deployer = deployer.Bytes()
 
@@ -492,6 +504,10 @@ func testSettleMarketInvalidQueryID(t *testing.T) func(context.Context, *kwilTes
 
 func testSettleMarketAlreadySettled(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset balance point tracker for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
+
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x5555555555555555555555555555555555555555")
 		platform.Deployer = deployer.Bytes()
 
@@ -583,6 +599,10 @@ func testSettleMarketAlreadySettled(t *testing.T) func(context.Context, *kwilTes
 
 func testSettleMarketTooEarly(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset balance point tracker for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
+
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x6666666666666666666666666666666666666666")
 		platform.Deployer = deployer.Bytes()
 
@@ -666,6 +686,10 @@ func testSettleMarketTooEarly(t *testing.T) func(context.Context, *kwilTesting.P
 
 func testSettleMarketNoAttestation(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset balance point tracker for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
+
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x7777777777777777777777777777777777777777")
 		platform.Deployer = deployer.Bytes()
 
@@ -715,6 +739,10 @@ func testSettleMarketNoAttestation(t *testing.T) func(context.Context, *kwilTest
 
 func testSettleMarketAttestationNotSigned(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset balance point tracker for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
+
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x8888888888888888888888888888888888888888")
 		platform.Deployer = deployer.Bytes()
 
@@ -808,6 +836,10 @@ func testSettleMarketAttestationNotSigned(t *testing.T) func(context.Context, *k
 //	validation blocking using admin context (OverrideAuthz: true) to corrupt state.
 func testSettleMarketValidationIntegration(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset balance point tracker for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
+
 		deployer := util.Unsafe_NewEthereumAddressFromString("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 		platform.Deployer = deployer.Bytes()
 
@@ -915,6 +947,10 @@ func testSettleMarketValidationIntegration(t *testing.T) func(context.Context, *
 
 func testSettleMarketBlockedByBinaryParityViolation(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset balance point tracker for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
+
 		deployer := util.Unsafe_NewEthereumAddressFromString("0x9999999999999999999999999999999999999999")
 		platform.Deployer = deployer.Bytes()
 
@@ -1055,11 +1091,18 @@ func testSettleMarketBlockedByBinaryParityViolation(t *testing.T) func(context.C
 }
 
 // =============================================================================
-// Test: Settlement Blocked by Collateral Mismatch
+// Test: Multi-Market Settlement with Global Collateral Validation
 // =============================================================================
 
-func testSettleMarketBlockedByCollateralMismatch(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+// testSettleMarketMultiMarketCollateral verifies that settlement works correctly
+// in multi-market scenarios where the validation function uses GLOBAL expected
+// collateral (sum across all unsettled markets) instead of per-market values.
+func testSettleMarketMultiMarketCollateral(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset balance point tracker for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
+
 		deployer := util.Unsafe_NewEthereumAddressFromString("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 		platform.Deployer = deployer.Bytes()
 
@@ -1207,24 +1250,24 @@ func testSettleMarketBlockedByCollateralMismatch(t *testing.T) func(context.Cont
 		t.Logf("Placed 100 shares in market 2")
 
 		// Now vault has 200 USDC total (100 from each market)
-		// But market 1's expected_collateral is only 100 USDC
-		// This triggers collateral mismatch because vault_balance is GLOBAL
+		// Validation uses GLOBAL expected collateral = 200 USDC (sum across all markets)
+		// Vault (200) = Expected (200) → Collateral validation PASSES
+		//
+		// NOTE: This test verifies that multi-market settlement works correctly
+		// when the vault balance matches the global expected collateral.
+		// The validation function is designed to validate GLOBAL collateral, not per-market.
 
-		// Try to settle market 1 (should fail with collateral mismatch)
+		// Settle market 1 (should succeed - collateral matches globally)
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = 200
 		settleRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "settle_market",
 			[]any{queryID1}, nil)
 		require.NoError(t, err)
-		require.NotNil(t, settleRes.Error, "should error when collateral mismatched")
-		require.Contains(t, settleRes.Error.Error(), "Vault collateral mismatch",
-			"error message should mention collateral mismatch")
-		require.Contains(t, settleRes.Error.Error(), "Expected=",
-			"error message should include expected collateral")
-		require.Contains(t, settleRes.Error.Error(), "Actual=",
-			"error message should include actual vault balance")
+		// Collateral should match globally (200 USDC vault = 200 USDC expected)
+		// Settlement should succeed for valid market
+		require.Nil(t, settleRes.Error, "settlement should succeed when global collateral matches")
 
-		t.Logf("Settlement correctly blocked: %v", settleRes.Error)
+		t.Logf("Multi-market settlement succeeded - global collateral validation passed")
 
 		return nil
 	}

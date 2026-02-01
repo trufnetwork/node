@@ -114,7 +114,7 @@ func testCreateMarketStoresHashAndComponents(t *testing.T) func(ctx context.Cont
 
 		// Create query components
 		dataProvider := userAddr.Address()
-		streamID := "ststorage00000000000000000000000000" // Exactly 32 chars
+		streamID := "ststorage00000000000000000000000" // Exactly 32 chars
 		actionID := "get_record"
 		argsBytes := []byte{0x01, 0x02, 0x03}
 
@@ -171,7 +171,7 @@ func testCreateMarketRejectsDuplicateHash(t *testing.T) func(ctx context.Context
 
 		// Create query components
 		dataProvider := userAddr.Address()
-		streamID := "stduplicate000000000000000000000000" // Exactly 32 chars
+		streamID := "stduplicate000000000000000000000" // Exactly 32 chars
 		actionID := "get_record"
 		argsBytes := []byte{0xAA, 0xBB}
 
@@ -262,7 +262,7 @@ func testGetMarketInfoReturnsComponentsAndBridge(t *testing.T) func(ctx context.
 
 		// Create query components
 		dataProvider := userAddr.Address()
-		streamID := "stgetinfo00000000000000000000000000" // Exactly 32 chars
+		streamID := "stgetinfo00000000000000000000000" // Exactly 32 chars
 		actionID := "get_index"
 		argsBytes := []byte{0x11, 0x22, 0x33, 0x44}
 
@@ -327,7 +327,7 @@ func testCreateMarketWithDifferentBridges(t *testing.T) func(ctx context.Context
 
 		// Create query components
 		dataProvider := userAddr.Address()
-		streamID := "stbridgetest000000000000000000000000" // Exactly 32 chars
+		streamID := "stbridgetest00000000000000000000" // Exactly 32 chars
 		actionID := "get_record"
 		argsBytes := []byte{0x00}
 
