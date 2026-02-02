@@ -138,20 +138,21 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	// Build engine operations wrapper
 	engOps := internal.NewEngineOperations(app.Engine, db, app.Service.DBPool, app.Accounts, app.Service.Logger)
 
-	// Load config from database
-	enabled, interval, maxMarkets, err := engOps.LoadLPRewardsConfig(ctx)
-	if err != nil {
-		logger.Warn("failed to load LP rewards config; using defaults", "error", err)
-	}
-
-	// Create extension instance and set values
+	// Create extension instance and set basic values
 	ext := GetExtension()
 	ext.logger = logger
 	ext.service = app.Service
 	ext.engOps = engOps
-	ext.enabled = enabled
-	ext.samplingIntervalBlocks = int64(interval)
-	ext.maxMarketsPerRun = maxMarkets
+
+	// Load config from database - only update if successful, otherwise keep defaults
+	enabled, interval, maxMarkets, err := engOps.LoadLPRewardsConfig(ctx)
+	if err != nil {
+		logger.Warn("failed to load LP rewards config; using defaults", "error", err)
+	} else {
+		ext.enabled = enabled
+		ext.samplingIntervalBlocks = int64(interval)
+		ext.maxMarketsPerRun = maxMarkets
+	}
 
 	// Load config from node TOML [extensions.tn_lp_rewards]
 	if ext.service != nil && ext.service.LocalConfig != nil {
@@ -319,15 +320,15 @@ func leaderEndBlock(ctx context.Context, app *common.App, block *common.BlockCon
 	maxMarketsPerRun := ext.maxMarketsPerRun
 	ext.mu.RUnlock()
 
-	if !enabled {
-		return
-	}
-
-	// Reload config periodically
+	// Reload config periodically (do this BEFORE enabled check so we can re-enable without restart)
 	if configReloadInterval > 0 && blockHeight-atomic.LoadInt64(&ext.lastCheckedHeight) >= configReloadInterval {
 		// Use background context since EndBlockHook context is canceled when block ends
 		go ext.reloadConfig(context.Background())
 		atomic.StoreInt64(&ext.lastCheckedHeight, blockHeight)
+	}
+
+	if !enabled {
+		return
 	}
 
 	// Check if it's time to sample (every N blocks)
