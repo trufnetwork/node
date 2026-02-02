@@ -180,31 +180,22 @@ func (e *EngineOperations) BroadcastSampleLPRewards(
 		return fmt.Errorf("get signer account: %w", err)
 	}
 
-	// Fetch fresh nonce from database
-	var nextNonce uint64
-	if e.dbPool != nil {
-		readTx := e.dbPool.BeginDelayedReadTx()
-		defer readTx.Rollback(ctx)
+	// Fetch fresh nonce from database using validated read transaction
+	readTx, cleanup, err := e.getFreshReadTx(ctx)
+	if err != nil {
+		return fmt.Errorf("get fresh read tx: %w", err)
+	}
+	defer cleanup()
 
-		account, err := e.accounts.GetAccount(ctx, readTx, signerAccountID)
-		if err != nil {
-			if !isAccountNotFoundError(err) {
-				return fmt.Errorf("get account: %w", err)
-			}
-			nextNonce = 1
-		} else {
-			nextNonce = uint64(account.Nonce + 1)
+	var nextNonce uint64
+	account, err := e.accounts.GetAccount(ctx, readTx, signerAccountID)
+	if err != nil {
+		if !isAccountNotFoundError(err) {
+			return fmt.Errorf("get account: %w", err)
 		}
+		nextNonce = 1
 	} else {
-		account, err := e.accounts.GetAccount(ctx, e.db, signerAccountID)
-		if err != nil {
-			if !isAccountNotFoundError(err) {
-				return fmt.Errorf("get account: %w", err)
-			}
-			nextNonce = 1
-		} else {
-			nextNonce = uint64(account.Nonce + 1)
-		}
+		nextNonce = uint64(account.Nonce + 1)
 	}
 
 	// Encode arguments for sample_lp_rewards action
