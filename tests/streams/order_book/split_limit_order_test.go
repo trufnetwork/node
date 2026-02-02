@@ -100,9 +100,8 @@ func testSplitOrderMarketSettled(t *testing.T) func(ctx context.Context, platfor
 		//   1. Request attestation from TN oracle
 		//   2. Verify the outcome (TRUE/FALSE)
 		//   3. Cancel all outstanding orders
-		//   4. Payout winners (minus 2% fee)
-		//   5. Distribute fees to LPs and network
-		//   6. Mark market as settled
+		//   4. Payout winners (full $1 per share, zero-sum settlement)
+		//   5. Mark market as settled
 		// For now, we bypass this entire flow just to test the "market settled" validation.
 		tx := &common.TxContext{
 			Ctx: ctx,

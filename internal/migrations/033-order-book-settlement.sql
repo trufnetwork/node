@@ -3,10 +3,10 @@
  *
  * Automatic atomic settlement processing:
  * - Bulk delete losing positions (efficient)
- * - Pay winners (shares × $1.00 - 2% redemption fee)
- * - Refund open buy orders (no fee)
+ * - Pay winners full $1.00 per share (no redemption fee)
+ * - Refund open buy orders
  * - Delete all positions atomically
- * - Collect fees in vault
+ * - Zero-sum settlement: losers fund winners
  *
  * Implementation Note:
  * Uses CTE + ARRAY_AGG to collect all payout data in a single query, then
@@ -72,8 +72,12 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
 /**
  * distribute_fees($query_id, $total_fees)
  *
- * Distributes settlement fees to liquidity providers based on sampled rewards.
- * Called automatically after winner payouts in process_settlement().
+ * Distributes trading fees to liquidity providers based on sampled rewards.
+ * Called to distribute LP rewards collected during market operation (spread fees).
+ *
+ * NOTE: This function is NOT called during settlement. Settlement is zero-sum
+ * (no redemption fees). This function is used to distribute trading fees that
+ * were collected during market operation from the bid-ask spread.
  *
  * DYNAMIC REWARDS MODEL:
  * Uses the ob_rewards table populated by periodic sample_lp_rewards() calls.
@@ -96,8 +100,8 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
  * This ensures full traceability for compliance and user verification.
  *
  * Parameters:
- * - $query_id: Settled market ID
- * - $total_fees: Total fees collected (2% of redemptions), in wei
+ * - $query_id: Market ID
+ * - $total_fees: Total trading fees to distribute, in wei
  *
  * Behavior:
  * - No samples → fees remain in vault (safe accumulation), NO audit record
@@ -301,13 +305,15 @@ CREATE OR REPLACE ACTION distribute_fees(
     DELETE FROM ob_rewards WHERE query_id = $query_id;
 };
 
--- Process settlement: Pay winners, refund open buys, collect fees
+-- Process settlement: Pay winners, refund open buys
+-- NOTE: No redemption fee is charged. Winners receive full $1 per share.
+-- LP rewards come from trading fees (spread) collected during market operation,
+-- NOT from settlement redemptions. This ensures prediction markets are zero-sum
+-- for participants (losers fund winners, not winners paying fees).
 CREATE OR REPLACE ACTION process_settlement(
     $query_id INT,
     $winning_outcome BOOL
 ) PRIVATE {
-    $redemption_fee_bps INT := 200;  -- 2% (200 basis points)
-    $total_fees_collected NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
     $one_token NUMERIC(78, 0) := '1000000000000000000'::NUMERIC(78, 0);
 
     -- Get market's bridge for unlock operations
@@ -351,8 +357,8 @@ CREATE OR REPLACE ACTION process_settlement(
             price,
             -- Pre-calculate all monetary values to avoid CASE type issues
             -- All amounts cast to NUMERIC(78, 0) to match ethereum_bridge.unlock() API
-            (amount::NUMERIC(78, 0) * $one_token)::NUMERIC(78, 0) as gross_winner_payout,
-            ((amount::NUMERIC(78, 0) * $one_token * $redemption_fee_bps::NUMERIC(78, 0)) / 10000::NUMERIC(78, 0))::NUMERIC(78, 0) as winner_fee,
+            -- Winners get full $1 per share (no redemption fee)
+            (amount::NUMERIC(78, 0) * $one_token)::NUMERIC(78, 0) as winner_payout,
             ((amount::NUMERIC(78, 0) * abs(price)::NUMERIC(78, 0) * $one_token) / 100::NUMERIC(78, 0))::NUMERIC(78, 0) as refund_amount
         FROM remaining_positions
     ),
@@ -360,44 +366,35 @@ CREATE OR REPLACE ACTION process_settlement(
         SELECT
             wallet_address,
             -- Remaining positions after Step 1 are:
-            -- 1. Winning holdings/sells (price >= 0): Pay shares × $1 - 2% fee
-            -- 2. Open buy orders (price < 0): Refund locked collateral, no fee
+            -- 1. Winning holdings/sells (price >= 0): Pay shares × $1 (full amount, no fee)
+            -- 2. Open buy orders (price < 0): Refund locked collateral
             CASE
                 WHEN price >= 0 THEN
-                    gross_winner_payout - winner_fee
+                    winner_payout
                 ELSE
                     refund_amount
-            END as payout_amount,
-            CASE
-                WHEN price >= 0 THEN
-                    winner_fee
-                ELSE
-                    '0'::NUMERIC(78, 0)
-            END as fee_amount
+            END as payout_amount
         FROM calculated_values
     ),
     wallet_totals AS (
         -- Group by wallet to handle multiple positions per user
         SELECT
             wallet_address,
-            SUM(payout_amount) as total_payout,
-            SUM(fee_amount) as total_fees
+            SUM(payout_amount) as total_payout
         FROM payouts
         GROUP BY wallet_address
     ),
     aggregated AS (
         SELECT
             ARRAY_AGG(wallet_address ORDER BY wallet_address) as wallets,
-            ARRAY_AGG(total_payout::NUMERIC(78, 0) ORDER BY wallet_address) as amounts,
-            SUM(total_fees)::NUMERIC(78, 0) as total_fees
+            ARRAY_AGG(total_payout::NUMERIC(78, 0) ORDER BY wallet_address) as amounts
         FROM wallet_totals
     )
-    SELECT wallets, amounts, COALESCE(total_fees, 0::NUMERIC(78, 0)) as total_fees
+    SELECT wallets, amounts
     FROM aggregated
     {
         $wallet_addresses := $result.wallets;
         $amounts := $result.amounts;
-        $total_fees_collected := $result.total_fees;
     }
 
     -- Step 3: Delete all processed positions (set-based, no loop!)
@@ -408,16 +405,8 @@ CREATE OR REPLACE ACTION process_settlement(
         ob_batch_unlock_collateral($bridge, $wallet_addresses, $amounts);
     }
 
-    -- Step 5: Fee distribution to liquidity providers
-    -- Fees are automatically kept in the vault by deducting from unlocked amounts.
-    -- Winners receive (shares × $1 - 2% fee), so 2% remains locked in vault.
-    --
-    -- distribute_fees() distributes the collected fees to qualified LPs proportionally.
-    -- See function definition above in this migration for implementation details.
-    -- Edge cases:
-    -- - No LPs: Fees remain in vault (safe accumulation)
-    -- - Zero fees: No-op, returns early
-    distribute_fees($query_id, $total_fees_collected);
-
-    -- Verification: Check vault balance via ethereum_bridge queries
+    -- Note: LP fee distribution happens separately via trading fees collected during
+    -- market operation (spread between buy/sell orders). Settlement does NOT charge
+    -- redemption fees - winners receive full $1 per share, ensuring the market is
+    -- zero-sum for participants (losers fund winners).
 }
