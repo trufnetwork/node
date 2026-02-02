@@ -27,6 +27,7 @@ func (e *Extension) buildScheduler(service *common.Service) *scheduler.Settlemen
 		Signer:           e.NodeSigner(),
 		MaxMarketsPerRun: e.MaxMarketsPerRun(),
 		RetryAttempts:    e.RetryAttempts(),
+		ProcessingGuard:  e, // Extension implements ProcessingGuard interface
 	})
 }
 

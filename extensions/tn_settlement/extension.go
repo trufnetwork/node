@@ -39,6 +39,9 @@ type Extension struct {
 	maxMarketsPerRun int
 	retryAttempts    int
 
+	// Processing state - prevents overlapping settlement runs (nonce conflicts)
+	isProcessing atomic.Bool
+
 	// reload policy
 	reloadIntervalBlocks int64
 	lastCheckedHeight    int64
@@ -168,6 +171,19 @@ func (e *Extension) SetBroadcaster(b TxBroadcaster) { e.broadcaster = b }
 func (e *Extension) Broadcaster() TxBroadcaster     { return e.broadcaster }
 func (e *Extension) SetNodeSigner(s auth.Signer)    { e.nodeSigner = s }
 func (e *Extension) NodeSigner() auth.Signer        { return e.nodeSigner }
+
+// IsProcessing returns true if a settlement run is currently in progress
+func (e *Extension) IsProcessing() bool { return e.isProcessing.Load() }
+
+// SetProcessing sets the processing flag (used to clear the flag when done)
+func (e *Extension) SetProcessing(v bool) { e.isProcessing.Store(v) }
+
+// TryStartProcessing atomically checks and sets the processing flag.
+// Returns true if processing was started (flag was false and is now true).
+// Returns false if another run is already in progress (flag was already true).
+func (e *Extension) TryStartProcessing() bool {
+	return e.isProcessing.CompareAndSwap(false, true)
+}
 
 // ShutdownContext returns the extension's shutdown context, creating it if needed.
 // This context is cancelled when Close() is called, allowing graceful termination
