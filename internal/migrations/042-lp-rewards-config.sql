@@ -102,11 +102,14 @@ CREATE OR REPLACE ACTION update_lp_rewards_config(
     }
 
     -- Validate inputs
-    if $sampling_interval_blocks < 1 {
+    if $enabled IS NULL {
+        ERROR('enabled cannot be NULL');
+    }
+    if $sampling_interval_blocks IS NULL OR $sampling_interval_blocks < 1 {
         ERROR('sampling_interval_blocks must be >= 1');
     }
-    if $max_markets_per_run < 1 {
-        ERROR('max_markets_per_run must be >= 1');
+    if $max_markets_per_run IS NULL OR $max_markets_per_run < 1 OR $max_markets_per_run > 1000 {
+        ERROR('max_markets_per_run must be between 1 and 1000');
     }
 
     -- Update or insert config
@@ -129,6 +132,11 @@ CREATE OR REPLACE ACTION update_lp_rewards_config(
  */
 CREATE OR REPLACE ACTION get_active_markets_for_sampling($limit INT)
 PUBLIC VIEW RETURNS (query_id INT) {
+    -- Validate limit parameter
+    if $limit IS NULL OR $limit < 1 {
+        ERROR('limit must be >= 1');
+    }
+
     for $row in SELECT id FROM ob_queries
         WHERE settled = FALSE
         ORDER BY id ASC

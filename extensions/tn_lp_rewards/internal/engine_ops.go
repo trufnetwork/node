@@ -50,6 +50,10 @@ func (e *EngineOperations) getFreshReadTx(ctx context.Context) (sql.DB, func(), 
 		}
 		return readTx, cleanup, nil
 	}
+	// Fallback to stored db connection
+	if e.db == nil {
+		return nil, func() {}, fmt.Errorf("no database connection available (both dbPool and db are nil)")
+	}
 	e.logger.Warn("dbPool is nil, falling back to stored db connection (may be stale)")
 	return e.db, func() {}, nil
 }
@@ -232,8 +236,9 @@ func (e *EngineOperations) BroadcastSampleLPRewards(
 		return fmt.Errorf("sign tx: %w", err)
 	}
 
-	// Broadcast (async mode = 0 for fire-and-forget, no waiting)
-	hash, txResult, err := broadcaster(ctx, tx, 0)
+	// Broadcast with sync mode = 1 (wait for commit) to ensure nonce increments properly
+	// before broadcasting next transaction
+	hash, txResult, err := broadcaster(ctx, tx, 1)
 	if err != nil {
 		return fmt.Errorf("broadcast tx: %w", err)
 	}

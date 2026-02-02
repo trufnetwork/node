@@ -62,9 +62,29 @@ func testGetLPRewardsConfigDefault(t *testing.T) func(context.Context, *kwilTest
 			"get_lp_rewards_config",
 			[]any{},
 			func(row *common.Row) error {
-				enabled = row.Values[0].(bool)
-				samplingInterval = row.Values[1].(int64)
-				maxMarkets = row.Values[2].(int64)
+				// Use type switches for robustness across different backends
+				switch v := row.Values[0].(type) {
+				case bool:
+					enabled = v
+				default:
+					return fmt.Errorf("unexpected type for enabled: %T", v)
+				}
+				switch v := row.Values[1].(type) {
+				case int64:
+					samplingInterval = v
+				case int:
+					samplingInterval = int64(v)
+				default:
+					return fmt.Errorf("unexpected type for sampling_interval: %T", v)
+				}
+				switch v := row.Values[2].(type) {
+				case int64:
+					maxMarkets = v
+				case int:
+					maxMarkets = int64(v)
+				default:
+					return fmt.Errorf("unexpected type for max_markets: %T", v)
+				}
 				found = true
 				return nil
 			},
@@ -147,9 +167,29 @@ func testUpdateLPRewardsConfig(t *testing.T) func(context.Context, *kwilTesting.
 			"get_lp_rewards_config",
 			[]any{},
 			func(row *common.Row) error {
-				enabled = row.Values[0].(bool)
-				samplingInterval = row.Values[1].(int64)
-				maxMarkets = row.Values[2].(int64)
+				// Use type switches for robustness
+				switch v := row.Values[0].(type) {
+				case bool:
+					enabled = v
+				default:
+					return fmt.Errorf("unexpected type for enabled: %T", v)
+				}
+				switch v := row.Values[1].(type) {
+				case int64:
+					samplingInterval = v
+				case int:
+					samplingInterval = int64(v)
+				default:
+					return fmt.Errorf("unexpected type for sampling_interval: %T", v)
+				}
+				switch v := row.Values[2].(type) {
+				case int64:
+					maxMarkets = v
+				case int:
+					maxMarkets = int64(v)
+				default:
+					return fmt.Errorf("unexpected type for max_markets: %T", v)
+				}
 				return nil
 			},
 		)
@@ -273,7 +313,16 @@ func testGetActiveMarketsForSampling(t *testing.T) func(context.Context, *kwilTe
 			"get_active_markets_for_sampling",
 			[]any{int64(10)}, // limit=10
 			func(row *common.Row) error {
-				activeMarkets = append(activeMarkets, row.Values[0].(int64))
+				switch v := row.Values[0].(type) {
+				case int64:
+					activeMarkets = append(activeMarkets, v)
+				case int:
+					activeMarkets = append(activeMarkets, int64(v))
+				case int32:
+					activeMarkets = append(activeMarkets, int64(v))
+				default:
+					return fmt.Errorf("unexpected type for query_id: %T", v)
+				}
 				return nil
 			},
 		)

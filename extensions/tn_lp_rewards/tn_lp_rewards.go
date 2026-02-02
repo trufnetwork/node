@@ -136,7 +136,10 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	engOps := internal.NewEngineOperations(app.Engine, db, app.Service.DBPool, app.Accounts, app.Service.Logger)
 
 	// Load config from database
-	enabled, interval, maxMarkets, _ := engOps.LoadLPRewardsConfig(ctx)
+	enabled, interval, maxMarkets, err := engOps.LoadLPRewardsConfig(ctx)
+	if err != nil {
+		logger.Warn("failed to load LP rewards config; using defaults", "error", err)
+	}
 
 	// Create extension instance and set values
 	ext := GetExtension()
@@ -299,29 +302,39 @@ func leaderEndBlock(ctx context.Context, app *common.App, block *common.BlockCon
 		return
 	}
 
-	if !ext.enabled {
-		return
-	}
-
 	if block == nil {
 		return
 	}
 
 	blockHeight := block.Height
 
+	// Snapshot config values under RLock to avoid races with reloadConfig
+	ext.mu.RLock()
+	enabled := ext.enabled
+	samplingIntervalBlocks := ext.samplingIntervalBlocks
+	configReloadInterval := ext.configReloadInterval
+	maxMarketsPerRun := ext.maxMarketsPerRun
+	ext.mu.RUnlock()
+
+	if !enabled {
+		return
+	}
+
 	// Reload config periodically
-	if ext.configReloadInterval > 0 && blockHeight-atomic.LoadInt64(&ext.lastCheckedHeight) >= ext.configReloadInterval {
-		go ext.reloadConfig(ctx)
+	if configReloadInterval > 0 && blockHeight-atomic.LoadInt64(&ext.lastCheckedHeight) >= configReloadInterval {
+		// Use background context since EndBlockHook context is canceled when block ends
+		go ext.reloadConfig(context.Background())
 		atomic.StoreInt64(&ext.lastCheckedHeight, blockHeight)
 	}
 
 	// Check if it's time to sample (every N blocks)
-	if ext.samplingIntervalBlocks <= 0 || blockHeight%ext.samplingIntervalBlocks != 0 {
+	if samplingIntervalBlocks <= 0 || blockHeight%samplingIntervalBlocks != 0 {
 		return
 	}
 
-	// Sample LP rewards in background
-	go ext.sampleLPRewards(ctx, blockHeight)
+	// Sample LP rewards in background with background context
+	// (EndBlockHook context is canceled when block processing ends)
+	go ext.sampleLPRewardsWithConfig(context.Background(), blockHeight, maxMarketsPerRun)
 }
 
 // reloadConfig reloads configuration from database
@@ -348,15 +361,15 @@ func (ext *Extension) reloadConfig(ctx context.Context) {
 		"max_markets_per_run", maxMarkets)
 }
 
-// sampleLPRewards samples LP rewards for all active markets
-func (ext *Extension) sampleLPRewards(ctx context.Context, blockHeight int64) {
+// sampleLPRewardsWithConfig samples LP rewards for all active markets using provided config
+func (ext *Extension) sampleLPRewardsWithConfig(ctx context.Context, blockHeight int64, maxMarketsPerRun int) {
 	if ext.engOps == nil || ext.signer == nil || ext.broadcaster == nil {
 		ext.logger.Warn("LP rewards extension not fully initialized")
 		return
 	}
 
 	// Get active markets
-	markets, err := ext.engOps.GetActiveMarkets(ctx, ext.maxMarketsPerRun)
+	markets, err := ext.engOps.GetActiveMarkets(ctx, maxMarketsPerRun)
 	if err != nil {
 		ext.logger.Warn("failed to get active markets", "error", err)
 		return
@@ -377,7 +390,10 @@ func (ext *Extension) sampleLPRewards(ctx context.Context, blockHeight int64) {
 		chainID = ext.service.GenesisConfig.ChainID
 	}
 
-	// Sample each market
+	// Sample each market sequentially to avoid nonce conflicts
+	// Each transaction must complete before the next one starts
+	successCount := 0
+	failCount := 0
 	for _, queryID := range markets {
 		err := ext.engOps.BroadcastSampleLPRewards(
 			ctx,
@@ -392,11 +408,19 @@ func (ext *Extension) sampleLPRewards(ctx context.Context, blockHeight int64) {
 				"query_id", queryID,
 				"block", blockHeight,
 				"error", err)
+			failCount++
+			// Continue to next market even if this one fails
 			continue
 		}
 
 		ext.logger.Debug("sampled LP rewards",
 			"query_id", queryID,
 			"block", blockHeight)
+		successCount++
 	}
+
+	ext.logger.Info("LP rewards sampling completed",
+		"block", blockHeight,
+		"success", successCount,
+		"failed", failCount)
 }
