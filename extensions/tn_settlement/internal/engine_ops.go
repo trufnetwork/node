@@ -258,8 +258,8 @@ func (e *EngineOperations) AttestationExists(ctx context.Context, marketHash []b
 	return exists, nil
 }
 
-// BroadcastSettleMarketWithRetry broadcasts settle_market transaction with retry logic
-// for nonce errors. Uses exponential backoff since external systems may use the same wallet.
+// BroadcastSettleMarketWithRetry broadcasts settle_market transaction with retry logic.
+// Uses exponential backoff since external systems may use the same wallet (nonce conflicts).
 func (e *EngineOperations) BroadcastSettleMarketWithRetry(
 	ctx context.Context,
 	chainID string,
@@ -274,10 +274,11 @@ func (e *EngineOperations) BroadcastSettleMarketWithRetry(
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			e.logger.Warn("retrying settle_market broadcast due to nonce error",
+			e.logger.Warn("retrying settle_market broadcast",
 				"attempt", attempt,
 				"query_id", queryID,
 				"backoff", backoff,
+				"is_nonce_error", isNonceError(lastErr),
 				"last_error", lastErr)
 
 			// Wait before retry with context cancellation support
@@ -307,24 +308,15 @@ func (e *EngineOperations) BroadcastSettleMarketWithRetry(
 		}
 
 		lastErr = err
-
-		// Only retry on nonce errors; other errors (e.g., "market already settled") are not transient
-		if !isNonceError(err) {
-			e.logger.Warn("settle_market broadcast failed with non-retryable error",
-				"query_id", queryID,
-				"tx_hash", hash.String(),
-				"error", err)
-			return err
-		}
-
-		e.logger.Warn("settle_market broadcast failed with nonce error",
+		e.logger.Warn("settle_market broadcast failed",
 			"attempt", attempt,
 			"query_id", queryID,
 			"tx_hash", hash.String(),
+			"is_nonce_error", isNonceError(err),
 			"error", err)
 	}
 
-	return fmt.Errorf("settle_market failed after %d retries due to nonce conflicts: %w", maxRetries, lastErr)
+	return fmt.Errorf("settle_market failed after %d retries: %w", maxRetries, lastErr)
 }
 
 // broadcastSettleMarketWithFreshNonce builds and broadcasts settle_market with fresh nonce
@@ -552,7 +544,7 @@ func isNonceError(err error) bool {
 }
 
 // RequestAttestationForMarket broadcasts a request_attestation transaction for a market
-// with retry logic for nonce errors (exponential backoff)
+// with retry logic (exponential backoff for transient errors like nonce conflicts)
 func (e *EngineOperations) RequestAttestationForMarket(
 	ctx context.Context,
 	chainID string,
@@ -566,7 +558,7 @@ func (e *EngineOperations) RequestAttestationForMarket(
 		return fmt.Errorf("get query components: %w", err)
 	}
 
-	// Retry configuration for nonce errors
+	// Retry configuration
 	// Uses exponential backoff since external systems may be using the same wallet
 	const maxRetries = 5
 	backoff := 2 * time.Second
@@ -575,10 +567,11 @@ func (e *EngineOperations) RequestAttestationForMarket(
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			e.logger.Warn("retrying request_attestation due to nonce error",
+			e.logger.Warn("retrying request_attestation",
 				"query_id", market.ID,
 				"attempt", attempt,
 				"backoff", backoff,
+				"is_nonce_error", isNonceError(lastErr),
 				"last_error", lastErr)
 
 			// Wait before retry with context cancellation support
@@ -601,11 +594,11 @@ func (e *EngineOperations) RequestAttestationForMarket(
 		}
 
 		lastErr = err
-
-		// Only retry on nonce errors; other errors are not transient
-		if !isNonceError(err) {
-			return err
-		}
+		e.logger.Warn("request_attestation broadcast failed",
+			"query_id", market.ID,
+			"attempt", attempt,
+			"is_nonce_error", isNonceError(err),
+			"error", err)
 	}
 
 	return fmt.Errorf("request_attestation failed after %d retries: %w", maxRetries, lastErr)
