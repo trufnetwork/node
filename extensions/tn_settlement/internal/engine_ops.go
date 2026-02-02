@@ -258,7 +258,8 @@ func (e *EngineOperations) AttestationExists(ctx context.Context, marketHash []b
 	return exists, nil
 }
 
-// BroadcastSettleMarketWithRetry broadcasts settle_market transaction with retry logic
+// BroadcastSettleMarketWithRetry broadcasts settle_market transaction with retry logic.
+// Uses exponential backoff since external systems may use the same wallet (nonce conflicts).
 func (e *EngineOperations) BroadcastSettleMarketWithRetry(
 	ctx context.Context,
 	chainID string,
@@ -277,9 +278,10 @@ func (e *EngineOperations) BroadcastSettleMarketWithRetry(
 				"attempt", attempt,
 				"query_id", queryID,
 				"backoff", backoff,
+				"is_nonce_error", isNonceError(lastErr),
 				"last_error", lastErr)
 
-			// Wait before retry
+			// Wait before retry with context cancellation support
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -310,10 +312,11 @@ func (e *EngineOperations) BroadcastSettleMarketWithRetry(
 			"attempt", attempt,
 			"query_id", queryID,
 			"tx_hash", hash.String(),
+			"is_nonce_error", isNonceError(err),
 			"error", err)
 	}
 
-	return fmt.Errorf("max retries (%d) exceeded: %w", maxRetries, lastErr)
+	return fmt.Errorf("settle_market failed after %d retries: %w", maxRetries, lastErr)
 }
 
 // broadcastSettleMarketWithFreshNonce builds and broadcasts settle_market with fresh nonce
@@ -531,7 +534,17 @@ func decodeQueryComponents(data []byte) (*QueryComponents, error) {
 	}, nil
 }
 
+// isNonceError checks if the error is related to nonce conflicts
+func isNonceError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "nonce") || strings.Contains(msg, "invalid nonce")
+}
+
 // RequestAttestationForMarket broadcasts a request_attestation transaction for a market
+// with retry logic (exponential backoff for transient errors like nonce conflicts)
 func (e *EngineOperations) RequestAttestationForMarket(
 	ctx context.Context,
 	chainID string,
@@ -539,12 +552,67 @@ func (e *EngineOperations) RequestAttestationForMarket(
 	broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error),
 	market *UnsettledMarket,
 ) error {
-	// Get query components from market
+	// Get query components from market (only need to do this once)
 	components, err := e.GetMarketQueryComponents(ctx, market.ID)
 	if err != nil {
 		return fmt.Errorf("get query components: %w", err)
 	}
 
+	// Retry configuration
+	// Uses exponential backoff since external systems may be using the same wallet
+	const maxRetries = 5
+	backoff := 2 * time.Second
+	maxBackoff := 30 * time.Second
+
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			e.logger.Warn("retrying request_attestation",
+				"query_id", market.ID,
+				"attempt", attempt,
+				"backoff", backoff,
+				"is_nonce_error", isNonceError(lastErr),
+				"last_error", lastErr)
+
+			// Wait before retry with context cancellation support
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff):
+			}
+
+			// Exponential backoff
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+
+		err := e.broadcastRequestAttestationWithFreshNonce(ctx, chainID, signer, broadcaster, market, components)
+		if err == nil {
+			return nil
+		}
+
+		lastErr = err
+		e.logger.Warn("request_attestation broadcast failed",
+			"query_id", market.ID,
+			"attempt", attempt,
+			"is_nonce_error", isNonceError(err),
+			"error", err)
+	}
+
+	return fmt.Errorf("request_attestation failed after %d retries: %w", maxRetries, lastErr)
+}
+
+// broadcastRequestAttestationWithFreshNonce builds and broadcasts request_attestation with fresh nonce
+func (e *EngineOperations) broadcastRequestAttestationWithFreshNonce(
+	ctx context.Context,
+	chainID string,
+	signer auth.Signer,
+	broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error),
+	market *UnsettledMarket,
+	components *QueryComponents,
+) error {
 	// Get signer account ID
 	signerAccountID, err := ktypes.GetSignerAccount(signer)
 	if err != nil {
@@ -648,7 +716,8 @@ func (e *EngineOperations) RequestAttestationForMarket(
 		"tx_hash", hash.String(),
 		"data_provider", components.DataProvider,
 		"stream_id", components.StreamID,
-		"action_name", components.ActionName)
+		"action_name", components.ActionName,
+		"nonce", nextNonce)
 
 	return nil
 }

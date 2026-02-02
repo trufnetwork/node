@@ -121,6 +121,12 @@ CREATE OR REPLACE ACTION sample_lp_rewards(
     $query_id INT,
     $block INT8
 ) PUBLIC {
+    -- Check if this block was already sampled to prevent duplicate key errors
+    -- This handles retries, race conditions, and scheduler overlap
+    for $row in SELECT 1 FROM ob_rewards WHERE query_id = $query_id AND block = $block LIMIT 1 {
+        RETURN;
+    }
+
     -- Check if market is settled
     $is_settled BOOL;
     for $row in SELECT settled FROM ob_queries WHERE id = $query_id {

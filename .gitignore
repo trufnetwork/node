@@ -33,3 +33,6 @@ deployments/network
 
 .task
 CLAUDE.md
+
+# dev-only maintenance files
+maintenance

@@ -30,14 +30,15 @@ func TestSettlementPayouts(t *testing.T) {
 		SeedStatements: migrations.GetSeedScriptStatements(),
 		Owner:          owner.Address(),
 		FunctionTests: []kwilTesting.TestFunc{
-			testWinnerReceives98PercentPayout(t),
+			testWinnerReceivesFullPayout(t),
 		},
 	}, testutils.GetTestOptionsWithCache())
 }
 
-// testWinnerReceives98PercentPayout verifies that a winner receives 98% payout (2% fee deducted)
-// Scenario: User creates 100 YES shares, market settles as YES, user receives 98 USDC
-func testWinnerReceives98PercentPayout(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+// testWinnerReceivesFullPayout verifies that a winner receives 100% payout (no fee)
+// Scenario: User creates 100 YES shares, market settles as YES, user receives full 100 USDC
+// Note: Settlement is zero-sum - losers fund winners, no redemption fee charged
+func testWinnerReceivesFullPayout(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Use valid Ethereum address as user
 		userAddr := util.Unsafe_NewEthereumAddressFromString("0x2222222222222222222222222222222222222222")
@@ -253,19 +254,20 @@ func testWinnerReceives98PercentPayout(t *testing.T) func(context.Context, *kwil
 		require.Empty(t, positionsAfter, "All positions should be deleted after settlement")
 		t.Logf("✓ All positions cleared after settlement")
 
-		// NEW: Verify user received 98% payout
-		// Expected: 100 shares × $1.00 - 2% fee = 98 USDC
+		// NEW: Verify user received full 100% payout (no redemption fee)
+		// Expected: 100 shares × $1.00 = 100 USDC (zero-sum settlement)
 		balanceAfter, err := getUSDCBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 		t.Logf("User USDC balance after: %s", balanceAfter.String())
 
-		// Net USDC change: -100 USDC (locked) + 98 USDC (payout) = -2 USDC (settlement fee only)
+		// Net USDC change: -100 USDC (locked) + 100 USDC (payout) = 0 USDC
+		// Settlement is zero-sum: winners get full $1 per share, losers lose their stake
 		// Note: Market creation fee (2 TRUF) is separate from USDC
 		netChange := new(big.Int).Sub(balanceAfter, balanceBefore)
-		expectedNetChange := new(big.Int).Mul(big.NewInt(-2), big.NewInt(1e18)) // -2 USDC (settlement fee)
+		expectedNetChange := big.NewInt(0) // No fee, zero-sum settlement
 		require.Equal(t, expectedNetChange.String(), netChange.String(),
-			"USDC net change should be -2 (settlement fee only, market creation is in TRUF)")
-		t.Logf("✓ Net USDC balance change: %s (2 USDC settlement fee)", netChange.String())
+			"USDC net change should be 0 (no redemption fee, zero-sum settlement)")
+		t.Logf("✓ Net USDC balance change: %s (zero-sum, no fee)", netChange.String())
 
 		return nil
 	}

@@ -50,7 +50,7 @@ func (m *mockBroadcaster) broadcast(ctx context.Context, tx *ktypes.Transaction,
 }
 
 type mockAccounts struct {
-	nonceCalls int
+	nonceCalls   int
 	currentNonce int64
 }
 
@@ -198,8 +198,8 @@ func TestBroadcastSettleMarketWithRetry_MaxRetriesExceeded(t *testing.T) {
 		t.Fatal("Expected error, got nil")
 	}
 
-	if !strings.Contains(err.Error(), "max retries") {
-		t.Errorf("Expected max retries error, got: %v", err)
+	if !strings.Contains(err.Error(), "retries") {
+		t.Errorf("Expected retries error, got: %v", err)
 	}
 
 	// With maxRetries=0, should only attempt once

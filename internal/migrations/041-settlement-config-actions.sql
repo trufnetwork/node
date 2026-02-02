@@ -19,7 +19,7 @@ UPDATE settlement_config
 SET
     enabled = true,
     settlement_schedule = '0,30 * * * *',
-    max_markets_per_run = 10,
+    max_markets_per_run = 100,
     retry_attempts = 3,
     updated_at = 0
 WHERE id = 1;
@@ -37,7 +37,7 @@ WHERE id = 1;
 -- - $retry_attempts: Number of retry attempts for failed settlements (INT, 1-10)
 --
 -- Usage:
---   kwil-cli call-action update_settlement_config bool:true text:'0,30 * * * *' int:10 int:3
+--   kwil-cli call-action update_settlement_config bool:true text:'0,30 * * * *' int:100 int:3
 CREATE OR REPLACE ACTION update_settlement_config(
     $enabled BOOL,
     $schedule TEXT,
@@ -49,9 +49,9 @@ CREATE OR REPLACE ACTION update_settlement_config(
     $has_role BOOL := false;
 
     for $row in SELECT 1 FROM role_members
-        WHERE role_owner = 'system'
+        WHERE owner = 'system'
         AND role_name = 'network_writer'
-        AND member_address = $caller_addr {
+        AND wallet = $caller_addr {
         $has_role := true;
     }
 

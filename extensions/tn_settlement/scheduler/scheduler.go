@@ -20,6 +20,17 @@ type txBroadcaster interface {
 	BroadcastTx(ctx context.Context, tx *ktypes.Transaction, sync uint8) (ktypes.Hash, *ktypes.TxResult, error)
 }
 
+// ProcessingGuard provides atomic processing state management to prevent
+// overlapping settlement runs (which cause nonce conflicts).
+type ProcessingGuard interface {
+	// TryStartProcessing atomically tries to start processing.
+	// Returns true if processing was started (no other run in progress).
+	// Returns false if another run is already in progress.
+	TryStartProcessing() bool
+	// SetProcessing sets the processing state (used to clear flag when done).
+	SetProcessing(v bool)
+}
+
 // EngineOps defines the operations needed by the settlement scheduler.
 // This interface allows for mocking in tests.
 type EngineOps interface {
@@ -43,6 +54,9 @@ type SettlementScheduler struct {
 
 	maxMarketsPerRun int
 	retryAttempts    int
+
+	// processingGuard prevents overlapping settlement runs (nonce conflicts)
+	processingGuard ProcessingGuard
 }
 
 type NewSettlementSchedulerParams struct {
@@ -53,6 +67,7 @@ type NewSettlementSchedulerParams struct {
 	Tx               txBroadcaster
 	MaxMarketsPerRun int
 	RetryAttempts    int
+	ProcessingGuard  ProcessingGuard // Optional: prevents overlapping runs
 }
 
 func NewSettlementScheduler(params NewSettlementSchedulerParams) *SettlementScheduler {
@@ -74,6 +89,7 @@ func NewSettlementScheduler(params NewSettlementSchedulerParams) *SettlementSche
 		signer:           params.Signer,
 		maxMarketsPerRun: maxMarkets,
 		retryAttempts:    retries,
+		processingGuard:  params.ProcessingGuard,
 	}
 }
 
@@ -107,6 +123,22 @@ func (s *SettlementScheduler) Start(ctx context.Context, cronExpr string) error 
 				s.logger.Error("panic in settlement job", "panic", r, "stack", string(debug.Stack()))
 			}
 		}()
+
+		// Check processing guard to prevent overlapping runs (prevents nonce conflicts)
+		// This is needed because scheduler restart (e.g., on config change) can cause
+		// the previous job to still be running when a new scheduler starts.
+		s.mu.Lock()
+		guard := s.processingGuard
+		s.mu.Unlock()
+
+		if guard != nil {
+			if !guard.TryStartProcessing() {
+				s.logger.Warn("skipping settlement job - previous run still in progress")
+				return
+			}
+			// Ensure we clear the processing flag when done
+			defer guard.SetProcessing(false)
+		}
 
 		// Snapshot dependencies under lock to avoid races with setters
 		s.mu.Lock()
@@ -247,6 +279,18 @@ func (s *SettlementScheduler) Stop() error {
 
 // RunOnce executes the settlement job payload once (for tests and manual triggering)
 func (s *SettlementScheduler) RunOnce(ctx context.Context) error {
+	// Check processing guard to prevent overlapping runs
+	s.mu.Lock()
+	guard := s.processingGuard
+	s.mu.Unlock()
+
+	if guard != nil {
+		if !guard.TryStartProcessing() {
+			return fmt.Errorf("settlement run already in progress")
+		}
+		defer guard.SetProcessing(false)
+	}
+
 	s.mu.Lock()
 	engineOps := s.engineOps
 	broadcaster := s.broadcaster
