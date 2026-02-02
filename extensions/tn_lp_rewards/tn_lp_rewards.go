@@ -61,6 +61,9 @@ type Extension struct {
 	configReloadInterval   int64 // Reload config every N blocks
 	lastCheckedHeight      int64
 
+	// Sampling state - prevents overlapping runs
+	isSampling atomic.Bool
+
 	// Transaction broadcasting
 	signer      auth.Signer
 	broadcaster TxBroadcaster
@@ -332,6 +335,13 @@ func leaderEndBlock(ctx context.Context, app *common.App, block *common.BlockCon
 		return
 	}
 
+	// Skip if previous sampling run is still in progress (prevents nonce conflicts)
+	if !ext.isSampling.CompareAndSwap(false, true) {
+		ext.logger.Warn("skipping LP rewards sampling - previous run still in progress",
+			"block", blockHeight)
+		return
+	}
+
 	// Sample LP rewards in background with background context
 	// (EndBlockHook context is canceled when block processing ends)
 	go ext.sampleLPRewardsWithConfig(context.Background(), blockHeight, maxMarketsPerRun)
@@ -363,6 +373,9 @@ func (ext *Extension) reloadConfig(ctx context.Context) {
 
 // sampleLPRewardsWithConfig samples LP rewards for all active markets using provided config
 func (ext *Extension) sampleLPRewardsWithConfig(ctx context.Context, blockHeight int64, maxMarketsPerRun int) {
+	// Always clear the sampling flag when done
+	defer ext.isSampling.Store(false)
+
 	if ext.engOps == nil || ext.signer == nil || ext.broadcaster == nil {
 		ext.logger.Warn("LP rewards extension not fully initialized")
 		return

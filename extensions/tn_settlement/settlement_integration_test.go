@@ -314,7 +314,7 @@ func testLoadSettlementConfig(t *testing.T) func(context.Context, *kwilTesting.P
 		require.NoError(t, err)
 		require.True(t, enabled, "should be true (enabled by migration 041)")
 		require.Equal(t, "0,30 * * * *", schedule, "should be 30-minute schedule from migration 041")
-		require.Equal(t, 10, maxMarkets)
+		require.Equal(t, 100, maxMarkets, "should be 100 from migration 041")
 		require.Equal(t, 3, retries)
 
 		t.Logf("✅ LoadSettlementConfig loaded config from migration: enabled=%v, schedule=%s, max=%d, retries=%d",
