@@ -179,8 +179,10 @@ PUBLIC VIEW RETURNS (
 
     -- Step 8: Validate collateral balance
     -- Now compares vault balance against TOTAL expected collateral from ALL unsettled markets
+    -- Using >= because having MORE collateral than expected is safe (extra margin),
+    -- while having LESS would indicate missing funds (which would fail this check)
     $valid_collateral BOOL;
-    if $vault_balance = $expected_collateral {
+    if $vault_balance >= $expected_collateral {
         $valid_collateral := TRUE;
     } else {
         $valid_collateral := FALSE;
