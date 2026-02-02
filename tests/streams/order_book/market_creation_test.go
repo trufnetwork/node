@@ -90,7 +90,7 @@ func testCreateMarketHappyPath(t *testing.T) func(ctx context.Context, platform 
 
 		// Encode query components
 		dataProvider := userAddr.Address()
-		streamID := "sthappypath000000000000000000000000" // Exactly 32 chars
+		streamID := "sthappypath000000000000000000000" // Exactly 32 chars
 		actionID := "get_record"
 		argsBytes := []byte{0x01, 0x02, 0x03}
 
@@ -158,7 +158,7 @@ func testCreateMarketValidation(t *testing.T) func(ctx context.Context, platform
 
 		// Encode valid query components
 		dataProvider := userAddr.Address()
-		streamID := "stvalidation00000000000000000000000" // Exactly 32 chars
+		streamID := "stvalidation0000000000000000000000" // Exactly 32 chars
 		actionID := "get_record"
 		argsBytes := []byte{0x01}
 
@@ -207,7 +207,7 @@ func testCreateMarketDuplicateHash(t *testing.T) func(ctx context.Context, platf
 
 		// Encode query components
 		dataProvider := userAddr.Address()
-		streamID := "stduplicate000000000000000000000000" // Exactly 32 chars
+		streamID := "stduplicate0000000000000000000000" // Exactly 32 chars
 		actionID := "get_record"
 		argsBytes := []byte{0x01}
 
@@ -239,7 +239,7 @@ func testCreateMarketInsufficientBalance(t *testing.T) func(ctx context.Context,
 
 		// Encode query components
 		dataProvider := userAddr.Address()
-		streamID := "stinsufficient00000000000000000000000" // Exactly 32 chars
+		streamID := "stinsufficient000000000000000000" // Exactly 32 chars
 		actionID := "get_record"
 		argsBytes := []byte{0x01}
 
@@ -268,7 +268,7 @@ func testGetMarketInfo(t *testing.T) func(ctx context.Context, platform *kwilTes
 
 		// Encode query components
 		dataProvider := userAddr.Address()
-		streamID := "stgetmarketinfo000000000000000000000" // Exactly 32 chars
+		streamID := "stgetmarketinfo00000000000000000" // Exactly 32 chars
 		actionID := "get_index"
 		argsBytes := []byte{0x01, 0x02}
 
@@ -367,7 +367,7 @@ func testMarketExists(t *testing.T) func(ctx context.Context, platform *kwilTest
 
 		// Encode query components
 		dataProvider := userAddr.Address()
-		streamID := "stmarketexists0000000000000000000000" // Exactly 32 chars
+		streamID := "stmarketexists000000000000000000" // Exactly 32 chars
 		actionID := "get_record"
 		argsBytes := []byte{0x01}
 

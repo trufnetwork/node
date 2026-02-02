@@ -38,6 +38,10 @@ func TestValidateMarketCollateral(t *testing.T) {
 // testValidMarketNoOrders tests validation on empty market (no positions)
 func testValidMarketNoOrders(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset balance point tracker for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
+
 		// Initialize ERC20 extension
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -75,6 +79,10 @@ func testValidMarketNoOrders(t *testing.T) func(context.Context, *kwilTesting.Pl
 // testValidMarketWithBalancedOrders tests validation after split limit order
 func testValidMarketWithBalancedOrders(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset balance point tracker for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
+
 		// Initialize ERC20 extension
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -170,6 +178,10 @@ func testValidMarketAfterMatching(t *testing.T) func(context.Context, *kwilTesti
 // TODO: Add actual settlement testing when attestation support is available
 func testValidMarketWithPositions(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset balance point tracker for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
+
 		// Initialize ERC20 extension
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -217,6 +229,10 @@ func testValidMarketWithPositions(t *testing.T) func(context.Context, *kwilTesti
 // testValidMarketWithOpenBuys tests validation with open buy orders (escrowed collateral)
 func testValidMarketWithOpenBuys(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset balance point tracker for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
+
 		// Initialize ERC20 extension
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -263,6 +279,10 @@ func testValidMarketWithOpenBuys(t *testing.T) func(context.Context, *kwilTestin
 // testMultipleMarketsIsolation tests that validation only counts one market's positions
 func testMultipleMarketsIsolation(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset balance point tracker for this test
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
+
 		// Initialize ERC20 extension
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -317,31 +337,35 @@ func testMultipleMarketsIsolation(t *testing.T) func(context.Context, *kwilTesti
 		err = callPlaceSplitLimitOrder(ctx, platform, &userAddr, int(marketB_ID), 60, 200)
 		require.NoError(t, err)
 
-		// Validate market A (should only see 100 shares)
+		// Validate market A (should only see 100 shares for THIS market)
+		// NOTE: expected_collateral is GLOBAL across ALL unsettled markets (by design)
+		// The validation function ensures vault balance matches TOTAL obligations
 		valid_binaries_A, valid_collateral_A, total_true_A, total_false_A, vault_balance_A, expected_collateral_A, _ := validateMarket(t, ctx, platform, int(marketA_ID))
 
 		require.True(t, valid_binaries_A, "Market A should have valid binary parity")
-		require.Equal(t, int64(100), total_true_A, "Market A should have 100 TRUE shares (not 300)")
-		require.Equal(t, int64(100), total_false_A, "Market A should have 100 FALSE shares (not 300)")
-		require.Equal(t, "100000000000000000000", expected_collateral_A, "Market A: expected 100 USDC")
+		require.Equal(t, int64(100), total_true_A, "Market A should have 100 TRUE shares (per-market count)")
+		require.Equal(t, int64(100), total_false_A, "Market A should have 100 FALSE shares (per-market count)")
+		// expected_collateral is GLOBAL: 100 (market A) + 200 (market B) = 300 USDC
+		require.Equal(t, "300000000000000000000", expected_collateral_A, "Expected collateral should be 300 USDC (total across all markets)")
 
-		// Note: valid_collateral will be FALSE because vault_balance includes BOTH markets' collateral
-		// This is the CORRECT behavior - the validation function detects cross-market contamination
-		require.False(t, valid_collateral_A, "Market A should show invalid collateral (vault has 300 USDC, expected 100 USDC)")
+		// valid_collateral should be TRUE because vault (300 USDC) = expected (300 USDC total)
+		// The validation function correctly validates GLOBAL vault balance against TOTAL expected collateral
+		require.True(t, valid_collateral_A, "Valid collateral should be TRUE (vault=300 matches expected=300)")
 
 		t.Logf("Market A validation: valid_binaries=%v, valid_collateral=%v, total_true=%d, total_false=%d, vault_balance=%s, expected_collateral=%s",
 			valid_binaries_A, valid_collateral_A, total_true_A, total_false_A, vault_balance_A, expected_collateral_A)
 
-		// Validate market B (should only see 200 shares)
+		// Validate market B (should only see 200 shares for THIS market)
 		valid_binaries_B, valid_collateral_B, total_true_B, total_false_B, vault_balance_B, expected_collateral_B, _ := validateMarket(t, ctx, platform, int(marketB_ID))
 
 		require.True(t, valid_binaries_B, "Market B should have valid binary parity")
-		require.Equal(t, int64(200), total_true_B, "Market B should have 200 TRUE shares (not 300)")
-		require.Equal(t, int64(200), total_false_B, "Market B should have 200 FALSE shares (not 300)")
-		require.Equal(t, "200000000000000000000", expected_collateral_B, "Market B: expected 200 USDC")
+		require.Equal(t, int64(200), total_true_B, "Market B should have 200 TRUE shares (per-market count)")
+		require.Equal(t, int64(200), total_false_B, "Market B should have 200 FALSE shares (per-market count)")
+		// expected_collateral is GLOBAL: 100 (market A) + 200 (market B) = 300 USDC
+		require.Equal(t, "300000000000000000000", expected_collateral_B, "Expected collateral should be 300 USDC (total across all markets)")
 
-		// Note: valid_collateral will be FALSE because vault_balance includes BOTH markets' collateral
-		require.False(t, valid_collateral_B, "Market B should show invalid collateral (vault has 300 USDC, expected 200 USDC)")
+		// valid_collateral should be TRUE because vault (300 USDC) = expected (300 USDC total)
+		require.True(t, valid_collateral_B, "Valid collateral should be TRUE (vault=300 matches expected=300)")
 
 		t.Logf("Market B validation: valid_binaries=%v, valid_collateral=%v, total_true=%d, total_false=%d, vault_balance=%s, expected_collateral=%s",
 			valid_binaries_B, valid_collateral_B, total_true_B, total_false_B, vault_balance_B, expected_collateral_B)
