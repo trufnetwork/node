@@ -72,12 +72,14 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
 /**
  * distribute_fees($query_id, $total_fees)
  *
- * Distributes trading fees to liquidity providers based on sampled rewards.
- * Called to distribute LP rewards collected during market operation (spread fees).
+ * Distributes redemption fees to liquidity providers based on sampled rewards.
+ * Called automatically at the end of process_settlement() with the 2% fees
+ * collected from winning position redemptions.
  *
- * NOTE: This function is NOT called during settlement. Settlement is zero-sum
- * (no redemption fees). This function is used to distribute trading fees that
- * were collected during market operation from the bid-ask spread.
+ * Fee Source:
+ * - 2% redemption fee is collected from winning positions at settlement
+ * - Winners receive $0.98 per share, the $0.02 goes to LP fee pool
+ * - This fee pool is distributed proportionally to LPs based on ob_rewards samples
  *
  * DYNAMIC REWARDS MODEL:
  * Uses the ob_rewards table populated by periodic sample_lp_rewards() calls.
@@ -269,7 +271,8 @@ CREATE OR REPLACE ACTION distribute_fees(
                 $pid := $p_data.id;
                 $wallet_bytes := $p_data.wallet_address;
 
-                -- Calculate total_reward_percent in separate query to avoid type inference issues
+                -- Calculate total_reward_percent: average percentage across all sampled blocks
+                -- Sum of percentages / block_count = normalized to 0-100 range
                 $total_reward_pct := 0::NUMERIC(10,2);
                 for $pct_row in
                     SELECT SUM(reward_percent::NUMERIC(10,2))::NUMERIC(10,2) as sum_pct
@@ -277,7 +280,7 @@ CREATE OR REPLACE ACTION distribute_fees(
                     WHERE query_id = $query_id AND participant_id = $pid
                 {
                     if $pct_row.sum_pct IS NOT NULL {
-                        $total_reward_pct := $pct_row.sum_pct;
+                        $total_reward_pct := $pct_row.sum_pct / $block_count::NUMERIC(10,2);
                     }
                 }
             }
@@ -305,16 +308,22 @@ CREATE OR REPLACE ACTION distribute_fees(
     DELETE FROM ob_rewards WHERE query_id = $query_id;
 };
 
--- Process settlement: Pay winners, refund open buys
--- NOTE: No redemption fee is charged. Winners receive full $1 per share.
--- LP rewards come from trading fees (spread) collected during market operation,
--- NOT from settlement redemptions. This ensures prediction markets are zero-sum
--- for participants (losers fund winners, not winners paying fees).
+-- Process settlement: Pay winners (minus 2% fee), refund open buys, distribute LP rewards
+--
+-- Fee Model (per Latest.md authoritative design):
+-- - 2% redemption fee is collected from winning positions at settlement
+-- - This fee is distributed to Liquidity Providers based on sampled rewards (ob_rewards)
+-- - Open buy orders are refunded in full (no fee)
+-- - Losing positions get nothing (deleted)
+--
+-- This follows the Polymarket model where LPs are compensated for providing liquidity
+-- through a percentage of settlement redemptions.
 CREATE OR REPLACE ACTION process_settlement(
     $query_id INT,
     $winning_outcome BOOL
 ) PRIVATE {
     $one_token NUMERIC(78, 0) := '1000000000000000000'::NUMERIC(78, 0);
+    $fee_rate INT := 2;  -- 2% redemption fee for LP rewards
 
     -- Get market's bridge for unlock operations
     $bridge TEXT;
@@ -335,9 +344,10 @@ CREATE OR REPLACE ACTION process_settlement(
       AND price >= 0;  -- Holdings (price=0) and open sells (price>0) only
 
     -- Step 2: Collect ALL payout data using CTE + ARRAY_AGG (digest pattern!)
-    -- Calculate payouts and aggregate into arrays in a SINGLE query
+    -- Calculate payouts (with 2% fee for winners) and aggregate into arrays in a SINGLE query
     $wallet_addresses TEXT[];
     $amounts NUMERIC(78, 0)[];
+    $total_fees NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
 
     for $result in
     WITH remaining_positions AS (
@@ -355,46 +365,64 @@ CREATE OR REPLACE ACTION process_settlement(
         SELECT
             wallet_address,
             price,
+            amount::NUMERIC(78, 0) as amount_numeric,
             -- Pre-calculate all monetary values to avoid CASE type issues
             -- All amounts cast to NUMERIC(78, 0) to match ethereum_bridge.unlock() API
-            -- Winners get full $1 per share (no redemption fee)
-            (amount::NUMERIC(78, 0) * $one_token)::NUMERIC(78, 0) as winner_payout,
+            -- Winners get 98% (100% - 2% fee) per share
+            -- Gross payout = amount * $1.00
+            (amount::NUMERIC(78, 0) * $one_token)::NUMERIC(78, 0) as gross_payout,
+            -- Net payout = gross * (100 - fee_rate) / 100 = gross * 98 / 100
+            ((amount::NUMERIC(78, 0) * $one_token * (100 - $fee_rate)::NUMERIC(78, 0)) / 100::NUMERIC(78, 0))::NUMERIC(78, 0) as winner_payout,
+            -- Fee = gross * fee_rate / 100 = gross * 2 / 100
+            ((amount::NUMERIC(78, 0) * $one_token * $fee_rate::NUMERIC(78, 0)) / 100::NUMERIC(78, 0))::NUMERIC(78, 0) as fee_amount,
+            -- Refund for open buys (full amount, no fee)
             ((amount::NUMERIC(78, 0) * abs(price)::NUMERIC(78, 0) * $one_token) / 100::NUMERIC(78, 0))::NUMERIC(78, 0) as refund_amount
         FROM remaining_positions
     ),
     payouts AS (
         SELECT
             wallet_address,
+            price,
             -- Remaining positions after Step 1 are:
-            -- 1. Winning holdings/sells (price >= 0): Pay shares × $1 (full amount, no fee)
-            -- 2. Open buy orders (price < 0): Refund locked collateral
+            -- 1. Winning holdings/sells (price >= 0): Pay shares × $0.98 (2% fee)
+            -- 2. Open buy orders (price < 0): Refund locked collateral (no fee)
             CASE
-                WHEN price >= 0 THEN
-                    winner_payout
-                ELSE
-                    refund_amount
-            END as payout_amount
+                WHEN price >= 0 THEN winner_payout
+                ELSE refund_amount
+            END as payout_amount,
+            -- Track fees (only from winning positions, not refunds)
+            CASE
+                WHEN price >= 0 THEN fee_amount
+                ELSE '0'::NUMERIC(78, 0)
+            END as fee_collected
         FROM calculated_values
     ),
     wallet_totals AS (
         -- Group by wallet to handle multiple positions per user
         SELECT
             wallet_address,
-            SUM(payout_amount) as total_payout
+            SUM(payout_amount)::NUMERIC(78, 0) as total_payout
         FROM payouts
         GROUP BY wallet_address
+    ),
+    fee_total AS (
+        -- Calculate total fees collected from all winning positions
+        SELECT COALESCE(SUM(fee_collected)::NUMERIC(78, 0), '0'::NUMERIC(78, 0)) as fees
+        FROM payouts
     ),
     aggregated AS (
         SELECT
             ARRAY_AGG(wallet_address ORDER BY wallet_address) as wallets,
-            ARRAY_AGG(total_payout::NUMERIC(78, 0) ORDER BY wallet_address) as amounts
+            ARRAY_AGG(total_payout::NUMERIC(78, 0) ORDER BY wallet_address) as amounts,
+            (SELECT fees FROM fee_total) as total_fees
         FROM wallet_totals
     )
-    SELECT wallets, amounts
+    SELECT wallets, amounts, total_fees
     FROM aggregated
     {
         $wallet_addresses := $result.wallets;
         $amounts := $result.amounts;
+        $total_fees := $result.total_fees;
     }
 
     -- Step 3: Delete all processed positions (set-based, no loop!)
@@ -405,8 +433,68 @@ CREATE OR REPLACE ACTION process_settlement(
         ob_batch_unlock_collateral($bridge, $wallet_addresses, $amounts);
     }
 
-    -- Note: LP fee distribution happens separately via trading fees collected during
-    -- market operation (spread between buy/sell orders). Settlement does NOT charge
-    -- redemption fees - winners receive full $1 per share, ensuring the market is
-    -- zero-sum for participants (losers fund winners).
+    -- Step 5: Distribute collected fees to Liquidity Providers
+    -- The 2% redemption fee is distributed proportionally based on sampled LP rewards
+    -- If no LP rewards were sampled, fees remain in the vault (safe accumulation)
+    if $total_fees IS NOT NULL AND $total_fees > '0'::NUMERIC(78, 0) {
+        distribute_fees($query_id, $total_fees);
+    }
+};
+
+-- =============================================================================
+-- trigger_fee_distribution: Public action to manually trigger LP fee distribution
+-- =============================================================================
+/**
+ * Manually triggers fee distribution for a market. Only callable by network_writer role.
+ *
+ * NOTE: In normal operation, fees are distributed automatically during settlement
+ * via process_settlement() which calls distribute_fees() with the 2% redemption fees.
+ *
+ * This manual trigger is provided for:
+ * - Recovery scenarios if settlement failed partway through
+ * - Additional LP incentive programs funded externally
+ * - Testing and debugging
+ *
+ * Parameters:
+ * - $query_id: Market ID
+ * - $total_fees: Total fees to distribute (in wei, e.g., "1000000000000000000" for 1 token)
+ *
+ * Prerequisites:
+ * - Market must have LP rewards sampled (ob_rewards records)
+ * - Caller must have network_writer role
+ */
+CREATE OR REPLACE ACTION trigger_fee_distribution(
+    $query_id INT,
+    $total_fees TEXT
+) PUBLIC {
+    -- Check caller has network_writer role
+    $has_role BOOL := FALSE;
+
+    for $row in SELECT 1 FROM role_members
+        WHERE owner = 'system'
+          AND role_name = 'network_writer'
+          AND wallet = LOWER(@caller)
+        LIMIT 1
+    {
+        $has_role := TRUE;
+    }
+
+    if $has_role = FALSE {
+        ERROR('Only network_writer can trigger fee distribution');
+    }
+
+    -- Validate query_id
+    if $query_id IS NULL OR $query_id < 1 {
+        ERROR('Invalid query_id');
+    }
+
+    -- Convert total_fees string to NUMERIC
+    $fees NUMERIC(78, 0) := $total_fees::NUMERIC(78, 0);
+
+    if $fees IS NULL OR $fees < 0 {
+        ERROR('Invalid total_fees amount');
+    }
+
+    -- Call the private distribute_fees action
+    distribute_fees($query_id, $fees);
 }
