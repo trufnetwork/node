@@ -254,20 +254,23 @@ func testWinnerReceivesFullPayout(t *testing.T) func(context.Context, *kwilTesti
 		require.Empty(t, positionsAfter, "All positions should be deleted after settlement")
 		t.Logf("✓ All positions cleared after settlement")
 
-		// NEW: Verify user received full 100% payout (no redemption fee)
-		// Expected: 100 shares × $1.00 = 100 USDC (zero-sum settlement)
+		// Verify user received 98% payout (2% redemption fee for LP rewards)
+		// Expected: 100 shares × $0.98 = 98 USDC (per Latest.md: 2% fee to LPs)
 		balanceAfter, err := getUSDCBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 		t.Logf("User USDC balance after: %s", balanceAfter.String())
 
-		// Net USDC change: -100 USDC (locked) + 100 USDC (payout) = 0 USDC
-		// Settlement is zero-sum: winners get full $1 per share, losers lose their stake
+		// Net USDC change: -100 USDC (locked) + 98 USDC (payout after 2% fee) = -2 USDC
+		// Per Latest.md: "2% rewards commission taken from every settlement transaction"
+		// This fee is distributed to Liquidity Providers based on sampled rewards
 		// Note: Market creation fee (2 TRUF) is separate from USDC
 		netChange := new(big.Int).Sub(balanceAfter, balanceBefore)
-		expectedNetChange := big.NewInt(0) // No fee, zero-sum settlement
+		// Expected: -2 USDC (2% of 100 USDC = 2 USDC fee)
+		expectedFee := new(big.Int).Mul(big.NewInt(2), big.NewInt(1e18)) // 2 USDC in wei
+		expectedNetChange := new(big.Int).Neg(expectedFee)               // -2 USDC
 		require.Equal(t, expectedNetChange.String(), netChange.String(),
-			"USDC net change should be 0 (no redemption fee, zero-sum settlement)")
-		t.Logf("✓ Net USDC balance change: %s (zero-sum, no fee)", netChange.String())
+			"USDC net change should be -2 USDC (2% redemption fee for LP rewards)")
+		t.Logf("✓ Net USDC balance change: %s (2%% fee = 2 USDC)", netChange.String())
 
 		return nil
 	}
