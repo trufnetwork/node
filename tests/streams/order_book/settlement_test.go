@@ -182,7 +182,7 @@ func testSettleMarketHappyPath(t *testing.T) func(context.Context, *kwilTesting.
 		minOrderSize := int64(1)
 		var queryID int
 
-		// Use timestamp 50 for market creation (before settleTime)
+		// Use current time for market creation (before settleTime)
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = time.Now().Unix()
 		createRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
@@ -198,9 +198,9 @@ func testSettleMarketHappyPath(t *testing.T) func(context.Context, *kwilTesting.
 		}
 		require.Greater(t, queryID, 0, "queryID should be positive")
 
-		// Settle the market with timestamp 200 (after settleTime)
+		// Settle the market with timestamp after settleTime
 		engineCtx = helper.NewEngineContext()
-		engineCtx.TxContext.BlockContext.Timestamp = 200
+		engineCtx.TxContext.BlockContext.Timestamp = settleTime + 1
 		settleRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "settle_market",
 			[]any{queryID},
 			nil)
@@ -1005,11 +1005,12 @@ func testSettleMarketBlockedByBinaryParityViolation(t *testing.T) func(context.C
 		require.NoError(t, err)
 
 		// Create market
+		settleTime := time.Now().Add(1 * time.Hour).Unix()
 		var queryID int
 		engineCtx = helper.NewEngineContext()
-		engineCtx.TxContext.BlockContext.Timestamp = 50
+		engineCtx.TxContext.BlockContext.Timestamp = time.Now().Unix()
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
-			[]any{testExtensionName, queryComponents, int64(100), int64(5), int64(1)},
+			[]any{testExtensionName, queryComponents, settleTime, int64(5), int64(1)},
 			func(row *common.Row) error {
 				queryID = int(row.Values[0].(int64))
 				return nil
@@ -1072,7 +1073,7 @@ func testSettleMarketBlockedByBinaryParityViolation(t *testing.T) func(context.C
 
 		// Try to settle (should fail with binary parity violation)
 		engineCtx = helper.NewEngineContext()
-		engineCtx.TxContext.BlockContext.Timestamp = 200
+		engineCtx.TxContext.BlockContext.Timestamp = settleTime + 1
 		settleRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "settle_market",
 			[]any{queryID}, nil)
 		require.NoError(t, err)

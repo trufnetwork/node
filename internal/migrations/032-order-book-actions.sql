@@ -1066,10 +1066,10 @@ CREATE OR REPLACE ACTION place_buy_order(
         ERROR('Market does not exist (query_id: ' || $query_id::TEXT || ')');
     }
 
-    -- Note: Markets remain tradable until explicitly settled (settled=true).
-    -- The settle_time is metadata indicating when settlement CAN occur, not when it MUST.
-    -- Users can continue trading past settle_time until the settlement action is triggered.
-    -- This two-phase design allows flexibility in settlement timing.
+    -- Note: Markets remain tradable until settlement time is reached or explicitly settled (settled=true).
+    -- The settle_time is metadata indicating when settlement CAN occur, and now serves as a hard cutoff for trading.
+    -- Users cannot continue trading past settle_time.
+    -- This two-phase design allows flexibility in settlement timing while ensuring a fixed trading window.
     if $settled {
         ERROR('Market has already settled (no trading allowed)');
     }
@@ -1264,10 +1264,10 @@ CREATE OR REPLACE ACTION place_sell_order(
         ERROR('Market does not exist (query_id: ' || $query_id::TEXT || ')');
     }
 
-    -- Note: Markets remain tradable until explicitly settled (settled=true).
-    -- The settle_time is metadata indicating when settlement CAN occur, not when it MUST.
-    -- Users can continue trading past settle_time until the settlement action is triggered.
-    -- This two-phase design allows flexibility in settlement timing.
+    -- Note: Markets remain tradable until settlement time is reached or explicitly settled (settled=true).
+    -- The settle_time is metadata indicating when settlement CAN occur, and now serves as a hard cutoff for trading.
+    -- Users cannot continue trading past settle_time.
+    -- This two-phase design allows flexibility in settlement timing while ensuring a fixed trading window.
     if $settled {
         ERROR('Market has already settled (no trading allowed)');
     }
@@ -1467,10 +1467,10 @@ CREATE OR REPLACE ACTION place_split_limit_order(
         ERROR('Market does not exist (query_id: ' || $query_id::TEXT || ')');
     }
 
-    -- Note: Markets remain tradable until explicitly settled (settled=true).
-    -- The settle_time is metadata indicating when settlement CAN occur, not when it MUST.
-    -- Users can continue trading past settle_time until the settlement action is triggered.
-    -- This two-phase design allows flexibility in settlement timing.
+    -- Note: Markets remain tradable until settlement time is reached or explicitly settled (settled=true).
+    -- The settle_time is metadata indicating when settlement CAN occur, and now serves as a hard cutoff for trading.
+    -- Users cannot continue trading past settle_time.
+    -- This two-phase design allows flexibility in settlement timing while ensuring a fixed trading window.
     if $settled {
         ERROR('Market has already settled (no trading allowed)');
     }

@@ -181,7 +181,7 @@ func testWinnerReceivesFullPayout(t *testing.T) func(context.Context, *kwilTesti
 		minOrderSize := int64(1)
 		var queryID int
 
-		// Use timestamp 50 for market creation (before settleTime)
+		// Use current time for market creation (before settleTime)
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = time.Now().Unix()
 		createMarketRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
@@ -217,9 +217,9 @@ func testWinnerReceivesFullPayout(t *testing.T) func(context.Context, *kwilTesti
 		require.Equal(t, int64(100), yesHoldings.Amount)
 		t.Logf("User has %d YES holdings before settlement", yesHoldings.Amount)
 
-		// Settle the market with timestamp 200 (after settleTime)
+		// Settle the market with timestamp after settleTime
 		engineCtx = helper.NewEngineContext()
-		engineCtx.TxContext.BlockContext.Timestamp = 200
+		engineCtx.TxContext.BlockContext.Timestamp = settleTime + 1
 		settleRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "settle_market",
 			[]any{queryID},
 			nil)
