@@ -54,6 +54,11 @@ CREATE OR REPLACE ACTION price_above_threshold(
     if $timestamp IS NULL {
         ERROR('timestamp is required');
     }
+
+    -- Prevent premature resolution
+    if @block_timestamp < $timestamp {
+        ERROR('Cannot resolve market before target timestamp. Current: ' || @block_timestamp::TEXT || ', Target: ' || $timestamp::TEXT);
+    }
     if $threshold IS NULL {
         ERROR('threshold is required');
     }
@@ -124,6 +129,11 @@ CREATE OR REPLACE ACTION price_below_threshold(
     if $timestamp IS NULL {
         ERROR('timestamp is required');
     }
+
+    -- Prevent premature resolution
+    if @block_timestamp < $timestamp {
+        ERROR('Cannot resolve market before target timestamp. Current: ' || @block_timestamp::TEXT || ', Target: ' || $timestamp::TEXT);
+    }
     if $threshold IS NULL {
         ERROR('threshold is required');
     }
@@ -191,6 +201,11 @@ CREATE OR REPLACE ACTION value_in_range(
     -- Validate inputs
     if $timestamp IS NULL {
         ERROR('timestamp is required');
+    }
+
+    -- Prevent premature resolution
+    if @block_timestamp < $timestamp {
+        ERROR('Cannot resolve market before target timestamp. Current: ' || @block_timestamp::TEXT || ', Target: ' || $timestamp::TEXT);
     }
     if $min_value IS NULL {
         ERROR('min_value is required');
@@ -267,6 +282,11 @@ CREATE OR REPLACE ACTION value_equals(
     -- Validate inputs
     if $timestamp IS NULL {
         ERROR('timestamp is required');
+    }
+
+    -- Prevent premature resolution
+    if @block_timestamp < $timestamp {
+        ERROR('Cannot resolve market before target timestamp. Current: ' || @block_timestamp::TEXT || ', Target: ' || $timestamp::TEXT);
     }
     if $target IS NULL {
         ERROR('target is required');

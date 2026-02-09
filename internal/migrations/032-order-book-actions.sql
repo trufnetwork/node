@@ -1053,10 +1053,12 @@ CREATE OR REPLACE ACTION place_buy_order(
 
     -- 1.4 Validate market exists and is not settled
     $settled BOOL;
+    $settle_time INT8;
     $market_found BOOL := false;
 
-    for $row in SELECT settled FROM ob_queries WHERE id = $query_id {
+    for $row in SELECT settled, settle_time FROM ob_queries WHERE id = $query_id {
         $settled := $row.settled;
+        $settle_time := $row.settle_time;
         $market_found := true;
     }
 
@@ -1070,6 +1072,11 @@ CREATE OR REPLACE ACTION place_buy_order(
     -- This two-phase design allows flexibility in settlement timing.
     if $settled {
         ERROR('Market has already settled (no trading allowed)');
+    }
+
+    -- Trading Cutoff: Prevent new orders after settlement time
+    if @block_timestamp >= $settle_time {
+        ERROR('Trading is closed. Market has passed its settlement time.');
     }
 
     -- ==========================================================================
@@ -1244,10 +1251,12 @@ CREATE OR REPLACE ACTION place_sell_order(
 
     -- 1.3 Validate market exists and is not settled
     $settled BOOL;
+    $settle_time INT8;
     $market_found BOOL := false;
 
-    for $row in SELECT settled FROM ob_queries WHERE id = $query_id {
+    for $row in SELECT settled, settle_time FROM ob_queries WHERE id = $query_id {
         $settled := $row.settled;
+        $settle_time := $row.settle_time;
         $market_found := true;
     }
 
@@ -1261,6 +1270,11 @@ CREATE OR REPLACE ACTION place_sell_order(
     -- This two-phase design allows flexibility in settlement timing.
     if $settled {
         ERROR('Market has already settled (no trading allowed)');
+    }
+
+    -- Trading Cutoff: Prevent new orders after settlement time
+    if @block_timestamp >= $settle_time {
+        ERROR('Trading is closed. Market has passed its settlement time.');
     }
 
     -- ==========================================================================
@@ -1440,10 +1454,12 @@ CREATE OR REPLACE ACTION place_split_limit_order(
 
     -- 1.4 Validate market exists and is not settled
     $settled BOOL;
+    $settle_time INT8;
     $market_found BOOL := false;
 
-    for $row in SELECT settled FROM ob_queries WHERE id = $query_id {
+    for $row in SELECT settled, settle_time FROM ob_queries WHERE id = $query_id {
         $settled := $row.settled;
+        $settle_time := $row.settle_time;
         $market_found := true;
     }
 
@@ -1457,6 +1473,11 @@ CREATE OR REPLACE ACTION place_split_limit_order(
     -- This two-phase design allows flexibility in settlement timing.
     if $settled {
         ERROR('Market has already settled (no trading allowed)');
+    }
+
+    -- Trading Cutoff: Prevent new orders after settlement time
+    if @block_timestamp >= $settle_time {
+        ERROR('Trading is closed. Market has passed its settlement time.');
     }
 
     -- ==========================================================================
@@ -1897,8 +1918,10 @@ CREATE OR REPLACE ACTION change_bid(
     -- ==========================================================================
 
     $settled BOOL;
-    for $row in SELECT settled FROM ob_queries WHERE id = $query_id {
+    $settle_time INT8;
+    for $row in SELECT settled, settle_time FROM ob_queries WHERE id = $query_id {
         $settled := $row.settled;
+        $settle_time := $row.settle_time;
     }
 
     if $settled IS NULL {
@@ -1907,6 +1930,11 @@ CREATE OR REPLACE ACTION change_bid(
 
     if $settled {
         ERROR('Cannot modify orders on settled market');
+    }
+
+    -- Trading Cutoff: Prevent modifying orders after settlement time
+    if @block_timestamp >= $settle_time {
+        ERROR('Trading is closed. Market has passed its settlement time.');
     }
 
     -- ==========================================================================
@@ -2142,8 +2170,10 @@ CREATE OR REPLACE ACTION change_ask(
     -- ==========================================================================
 
     $settled BOOL;
-    for $row in SELECT settled FROM ob_queries WHERE id = $query_id {
+    $settle_time INT8;
+    for $row in SELECT settled, settle_time FROM ob_queries WHERE id = $query_id {
         $settled := $row.settled;
+        $settle_time := $row.settle_time;
     }
 
     if $settled IS NULL {
@@ -2152,6 +2182,11 @@ CREATE OR REPLACE ACTION change_ask(
 
     if $settled {
         ERROR('Cannot modify orders on settled market');
+    }
+
+    -- Trading Cutoff: Prevent modifying orders after settlement time
+    if @block_timestamp >= $settle_time {
+        ERROR('Trading is closed. Market has passed its settlement time.');
     }
 
     -- ==========================================================================
