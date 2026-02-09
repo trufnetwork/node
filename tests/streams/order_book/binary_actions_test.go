@@ -5,6 +5,7 @@ package order_book
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
@@ -51,6 +52,7 @@ func TestBinaryActions(t *testing.T) {
 			// Error cases
 			testBinaryActionNoData(t),
 			testValueInRangeInvalidRange(t),
+			testBinaryActionFutureTimestamp(t),
 		},
 	}, testutils.GetTestOptionsWithCache())
 }
@@ -74,6 +76,9 @@ func setupBinaryActionTest(t *testing.T, ctx context.Context, platform *kwilTest
 	// Use attestation helper for engine context after data provider is created
 	helper := attestationTests.NewAttestationTestHelper(t, ctx, platform)
 	engineCtx := helper.NewEngineContext()
+	// Set block timestamp to be after the event time so "past" queries work
+	// If eventTime is 1000, block time 2000 allows querying 1000
+	engineCtx.TxContext.BlockContext.Timestamp = eventTime + 1000
 
 	t.Logf("Setup: Creating stream %s", streamID)
 
@@ -614,6 +619,7 @@ func testBinaryActionNoData(t *testing.T) func(context.Context, *kwilTesting.Pla
 
 		helper := attestationTests.NewAttestationTestHelper(t, ctx, platform)
 		engineCtx := helper.NewEngineContext()
+		engineCtx.TxContext.BlockContext.Timestamp = 2000 // Ensure query is in the past
 
 		// Create stream but DON'T insert any data
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "create_stream",
@@ -649,6 +655,7 @@ func testValueInRangeInvalidRange(t *testing.T) func(context.Context, *kwilTesti
 		eventTime := int64(1000)
 
 		engineCtx, dataProvider := setupBinaryActionTest(t, ctx, platform, streamID, eventTime, "100.000000000000000000")
+		engineCtx.TxContext.BlockContext.Timestamp = 2000 // Ensure query is in the past
 
 		// min > max is invalid
 		minDecimal, err := kwilTypes.ParseDecimalExplicit("200.000000000000000000", 36, 18)
@@ -670,6 +677,61 @@ func testValueInRangeInvalidRange(t *testing.T) func(context.Context, *kwilTesti
 		require.NotNil(t, res.Error, "should error when min > max")
 		require.Contains(t, res.Error.Error(), "Invalid range")
 		t.Log("value_in_range with min > max: correctly returned error")
+
+		return nil
+	}
+}
+
+func testBinaryActionFutureTimestamp(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		deployer := util.Unsafe_NewEthereumAddressFromString("0x1111111111111111111111111111111111111111")
+		platform.Deployer = deployer.Bytes()
+
+		streamID := "stbinaryfuture000000000000000001"
+		dataProvider := deployer.Address()
+
+		// Create data provider using setup helper
+		err := setup.CreateDataProvider(ctx, platform, dataProvider)
+		require.NoError(t, err)
+
+		helper := attestationTests.NewAttestationTestHelper(t, ctx, platform)
+		engineCtx := helper.NewEngineContext()
+
+		// Create stream
+		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "create_stream",
+			[]any{streamID, "primitive"}, nil)
+		require.NoError(t, err)
+
+		// Insert some data for now
+		eventTime := time.Now().Unix()
+		valueDecimal, _ := kwilTypes.ParseDecimalExplicit("50000.000000000000000000", 36, 18)
+		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "insert_records",
+			[]any{
+				[]string{dataProvider},
+				[]string{streamID},
+				[]int64{eventTime},
+				[]*kwilTypes.Decimal{valueDecimal},
+			}, nil)
+		require.NoError(t, err)
+
+		// Try to query for FUTURE timestamp (1 hour later)
+		futureTime := eventTime + 3600
+		thresholdDecimal, _ := kwilTypes.ParseDecimalExplicit("40000.000000000000000000", 36, 18)
+
+		res, err := platform.Engine.Call(engineCtx, platform.DB, "", "price_above_threshold",
+			[]any{
+				dataProvider,
+				streamID,
+				futureTime,
+				thresholdDecimal,
+				nil,
+			}, nil)
+		require.NoError(t, err)
+
+		// Should error due to premature resolution safeguard
+		require.NotNil(t, res.Error, "should error when querying future timestamp")
+		require.Contains(t, res.Error.Error(), "Cannot resolve market before target timestamp", "error should mention target timestamp")
+		t.Log("price_above_threshold with future timestamp: correctly returned error")
 
 		return nil
 	}

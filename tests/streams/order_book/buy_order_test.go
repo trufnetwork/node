@@ -64,6 +64,7 @@ func TestPlaceBuyOrder(t *testing.T) {
 			testBuyOrderMultipleOrdersDifferentPrices(t),
 			testBuyOrderMultipleOrdersSamePrice(t),
 			testBuyOrderBalanceChanges(t),
+			testBuyOrderTradingClosed(t),
 		},
 	}, testutils.GetTestOptionsWithCache())
 }
@@ -635,4 +636,41 @@ func getUSDCBalance(ctx context.Context, platform *kwilTesting.Platform, wallet 
 	}
 
 	return balance, nil
+}
+
+// testBuyOrderTradingClosed tests that orders cannot be placed after settlement time
+func testBuyOrderTradingClosed(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		userAddr := util.Unsafe_NewEthereumAddressFromString("0x9999999999999999999999999999999999999999")
+
+		err := giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
+		require.NoError(t, err)
+
+		err = erc20bridge.ForTestingInitializeExtension(ctx, platform)
+		require.NoError(t, err)
+
+		// Create market with settlement time 2 seconds in the future
+		// Note: We need a slight delay to ensure we can create it before it expires
+		settleTime := time.Now().Add(2 * time.Second).Unix()
+		
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000008", "get_record", []byte{0x01})
+		require.NoError(t, err)
+
+		var marketID int64
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
+			marketID = row.Values[0].(int64)
+			return nil
+		})
+		require.NoError(t, err)
+
+		// Wait for settlement time to pass
+		time.Sleep(3 * time.Second)
+
+		// Try to place buy order - should fail
+		err = callPlaceBuyOrder(ctx, platform, &userAddr, int(marketID), true, 50, 10)
+		require.Error(t, err, "place_buy_order should fail after settle_time")
+		require.Contains(t, err.Error(), "Trading is closed", "error should mention trading closed")
+
+		return nil
+	}
 }

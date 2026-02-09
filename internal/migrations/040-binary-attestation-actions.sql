@@ -23,6 +23,18 @@ INSERT INTO attestation_actions (action_name, action_id) VALUES
 ON CONFLICT (action_name) DO NOTHING;
 
 -- =============================================================================
+-- Helper: Validate timestamp is not in the future
+-- =============================================================================
+CREATE OR REPLACE ACTION validate_not_before_timestamp($timestamp INT8) PRIVATE {
+    if $timestamp IS NULL {
+        ERROR('timestamp is required');
+    }
+    if @block_timestamp < $timestamp {
+        ERROR('Cannot resolve market before target timestamp. Current: ' || @block_timestamp::TEXT || ', Target: ' || $timestamp::TEXT);
+    }
+};
+
+-- =============================================================================
 -- price_above_threshold: Returns TRUE if value > threshold at timestamp
 -- =============================================================================
 --
@@ -51,9 +63,7 @@ CREATE OR REPLACE ACTION price_above_threshold(
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
 
     -- Validate inputs
-    if $timestamp IS NULL {
-        ERROR('timestamp is required');
-    }
+    validate_not_before_timestamp($timestamp);
     if $threshold IS NULL {
         ERROR('threshold is required');
     }
@@ -121,9 +131,7 @@ CREATE OR REPLACE ACTION price_below_threshold(
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
 
     -- Validate inputs
-    if $timestamp IS NULL {
-        ERROR('timestamp is required');
-    }
+    validate_not_before_timestamp($timestamp);
     if $threshold IS NULL {
         ERROR('threshold is required');
     }
@@ -189,9 +197,7 @@ CREATE OR REPLACE ACTION value_in_range(
     $effective_frozen_at INT8 := COALESCE($frozen_at, $max_int8);
 
     -- Validate inputs
-    if $timestamp IS NULL {
-        ERROR('timestamp is required');
-    }
+    validate_not_before_timestamp($timestamp);
     if $min_value IS NULL {
         ERROR('min_value is required');
     }
@@ -265,9 +271,7 @@ CREATE OR REPLACE ACTION value_equals(
     $effective_tolerance NUMERIC(36, 18) := COALESCE($tolerance, 0::NUMERIC(36, 18));
 
     -- Validate inputs
-    if $timestamp IS NULL {
-        ERROR('timestamp is required');
-    }
+    validate_not_before_timestamp($timestamp);
     if $target IS NULL {
         ERROR('target is required');
     }
