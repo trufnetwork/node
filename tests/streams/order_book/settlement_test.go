@@ -177,14 +177,14 @@ func testSettleMarketHappyPath(t *testing.T) func(context.Context, *kwilTesting.
 		require.NoError(t, err)
 
 		// Create market using query_components
-		settleTime := int64(100) // Future timestamp
+		settleTime := time.Now().Add(1 * time.Hour).Unix()
 		maxSpread := int64(5)
 		minOrderSize := int64(1)
 		var queryID int
 
 		// Use timestamp 50 for market creation (before settleTime)
 		engineCtx = helper.NewEngineContext()
-		engineCtx.TxContext.BlockContext.Timestamp = 50
+		engineCtx.TxContext.BlockContext.Timestamp = time.Now().Unix()
 		createRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
 			[]any{testExtensionName, queryComponents, settleTime, maxSpread, minOrderSize},
 			func(row *common.Row) error {
