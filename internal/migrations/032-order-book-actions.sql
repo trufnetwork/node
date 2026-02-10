@@ -2461,7 +2461,7 @@ CREATE OR REPLACE ACTION settle_market(
     for $row in SELECT result_canonical, signature
                 FROM attestations
                 WHERE attestation_hash = $market_hash
-                ORDER BY signed_height DESC
+                ORDER BY signed_height DESC NULLS LAST
                 LIMIT 1 {
         $result_canonical := $row.result_canonical;
         $signature := $row.signature;
