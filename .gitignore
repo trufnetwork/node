@@ -33,6 +33,7 @@ deployments/network
 
 .task
 CLAUDE.md
+GEMINI.md
 
 # dev-only maintenance files
 maintenance
