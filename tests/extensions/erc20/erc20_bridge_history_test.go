@@ -31,7 +31,8 @@ func TestERC20BridgeHistory(t *testing.T) {
 		// This will create a 'transfer' record
 		// We use the extension's 'transfer' action via engine call
 		engineCtx := engCtx(ctx, platform, TestUserA, 20, false) // Block height 20
-		transferAmt, _ := types.ParseDecimalExplicit("500000000000000000", 78, 0) // 0.5 tokens
+		transferAmt, err := types.ParseDecimalExplicit("500000000000000000", 78, 0) // 0.5 tokens
+		require.NoError(t, err)
 
 		// Transfer from UserA to UserB
 		res, err := platform.Engine.Call(engineCtx, platform.DB, TestExtensionAlias, "transfer", []any{TestUserB, transferAmt}, nil)
@@ -84,7 +85,8 @@ func TestERC20BridgeHistory(t *testing.T) {
 
 		// 5. Perform a Withdrawal (bridge out)
 		// This will create a 'withdrawal' record with status 'pending_epoch'
-		withdrawalAmt, _ := types.ParseDecimalExplicit("100000000000000000", 78, 0) // 0.1 tokens
+		withdrawalAmt, err := types.ParseDecimalExplicit("100000000000000000", 78, 0) // 0.1 tokens
+		require.NoError(t, err)
 		withdrawalRecipient := "0x1111111111111111111111111111111111111111" // External address
 
 		engineCtx3 := engCtx(ctx, platform, TestUserA, 30, false) // Block height 30
