@@ -11,10 +11,6 @@
 --     distribution_period: '10m'
 -- } AS ethereum_bridge;
 
-UNUSE sepolia_bridge;
-UNUSE hoodi_tt;
-UNUSE hoodi_tt2;
-
 -- TESTING ONLY ---
 -- The following is for test environments where the sepolia bridge is used. Please comment for production and use the above.
 USE erc20 {
