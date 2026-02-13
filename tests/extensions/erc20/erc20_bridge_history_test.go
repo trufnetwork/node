@@ -4,6 +4,7 @@ package tests
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -40,8 +41,12 @@ func TestERC20BridgeHistory(t *testing.T) {
 		require.Nil(t, res.Error)
 
 		// 3. Query History for UserA (should see Deposit + Transfer Sent)
+		// Params: wallet, limit (10), offset (0)
 		var historyRows [][]any
 		res, err = platform.Engine.Call(engineCtx, platform.DB, TestExtensionAlias, "get_history", []any{TestUserA, int64(10), int64(0)}, func(row *common.Row) error {
+			if len(row.Values) != 10 {
+				return fmt.Errorf("unexpected column count: %d, expected 10", len(row.Values))
+			}
 			historyRows = append(historyRows, row.Values)
 			return nil
 		})
@@ -73,6 +78,9 @@ func TestERC20BridgeHistory(t *testing.T) {
 		// 4. Query History for UserB (should see Transfer Received)
 		historyRows = nil
 		res, err = platform.Engine.Call(engineCtx, platform.DB, TestExtensionAlias, "get_history", []any{TestUserB, int64(10), int64(0)}, func(row *common.Row) error {
+			if len(row.Values) != 10 {
+				return fmt.Errorf("unexpected column count: %d, expected 10", len(row.Values))
+			}
 			historyRows = append(historyRows, row.Values)
 			return nil
 		})
@@ -87,7 +95,7 @@ func TestERC20BridgeHistory(t *testing.T) {
 		// This will create a 'withdrawal' record with status 'pending_epoch'
 		withdrawalAmt, err := types.ParseDecimalExplicit("100000000000000000", 78, 0) // 0.1 tokens
 		require.NoError(t, err)
-		withdrawalRecipient := "0x1111111111111111111111111111111111111111" // External address
+		withdrawalRecipient := TestUserB // External address distinct from Escrow
 
 		engineCtx3 := engCtx(ctx, platform, TestUserA, 30, false) // Block height 30
 		res, err = platform.Engine.Call(engineCtx3, platform.DB, TestExtensionAlias, "bridge", []any{withdrawalRecipient, withdrawalAmt}, nil)
@@ -97,6 +105,9 @@ func TestERC20BridgeHistory(t *testing.T) {
 		// 6. Query History for UserA again (should see Withdrawal + Transfer + Deposit)
 		historyRows = nil
 		res, err = platform.Engine.Call(engineCtx3, platform.DB, TestExtensionAlias, "get_history", []any{TestUserA, int64(10), int64(0)}, func(row *common.Row) error {
+			if len(row.Values) != 10 {
+				return fmt.Errorf("unexpected column count: %d, expected 10", len(row.Values))
+			}
 			historyRows = append(historyRows, row.Values)
 			return nil
 		})
