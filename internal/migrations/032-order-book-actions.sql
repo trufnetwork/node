@@ -273,7 +273,11 @@ PUBLIC VIEW RETURNS (
     max_spread INT,
     min_order_size INT8,
     created_at INT8,
-    creator BYTEA
+    creator BYTEA,
+    data_provider BYTEA,
+    stream_id BYTEA,
+    action_id TEXT,
+    query_args BYTEA
 ) {
     if $query_id IS NULL {
         ERROR('query_id is required');
@@ -281,13 +285,15 @@ PUBLIC VIEW RETURNS (
 
     for $market in
         SELECT hash, query_components, bridge, settle_time, settled, winning_outcome, settled_at,
-               max_spread, min_order_size, created_at, creator
+               max_spread, min_order_size, created_at, creator,
+               data_provider, stream_id, action_id, query_args
         FROM ob_queries
         WHERE id = $query_id
     {
         RETURN $market.hash, $market.query_components, $market.bridge, $market.settle_time, $market.settled,
                $market.winning_outcome, $market.settled_at, $market.max_spread,
-               $market.min_order_size, $market.created_at, $market.creator;
+               $market.min_order_size, $market.created_at, $market.creator,
+               $market.data_provider, $market.stream_id, $market.action_id, $market.query_args;
     }
 
     ERROR('Market not found: ' || $query_id::TEXT);

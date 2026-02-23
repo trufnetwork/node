@@ -4,7 +4,6 @@ package order_book
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -62,8 +61,8 @@ func testDiscoveryWorkflow(t *testing.T) func(ctx context.Context, platform *kwi
 		})
 		require.NoError(t, err)
 
-		// 2. Verify Structured Columns in DB
-		// We'll query ob_queries directly using standard SQL to prove denormalization worked
+		// 2. Verify Structured Columns via get_market_info
+		// This also tests that get_market_info now returns the denormalized columns
 		engineCtx := engCtx(ctx, platform, userAddr.Address(), 1)
 		
 		var dbProvider []byte
@@ -71,30 +70,18 @@ func testDiscoveryWorkflow(t *testing.T) func(ctx context.Context, platform *kwi
 		var dbActionID string
 		var dbQueryArgs []byte
 
-		err = platform.Engine.Execute(engineCtx, platform.DB, 
-			"SELECT data_provider, stream_id, action_id, query_args FROM ob_queries WHERE id = " + fmt.Sprintf("%d", queryID), nil, func(row *common.Row) error {
-			require.NotNil(t, row.Values[0])
-			v0, ok := row.Values[0].([]byte)
-			require.True(t, ok, "expected []byte for data_provider")
-			dbProvider = v0
-
-			require.NotNil(t, row.Values[1])
-			v1, ok := row.Values[1].([]byte)
-			require.True(t, ok, "expected []byte for stream_id")
-			dbStreamID = v1
-
-			require.NotNil(t, row.Values[2])
-			v2, ok := row.Values[2].(string)
-			require.True(t, ok, "expected string for action_id")
-			dbActionID = v2
-
-			require.NotNil(t, row.Values[3])
-			v3, ok := row.Values[3].([]byte)
-			require.True(t, ok, "expected []byte for query_args")
-			dbQueryArgs = v3
+		res, err := platform.Engine.Call(engineCtx, platform.DB, "", "get_market_info", []any{int64(queryID)}, func(row *common.Row) error {
+			// get_market_info now returns 15 columns. Denormalized ones are at 11, 12, 13, 14
+			require.Equal(t, 15, len(row.Values), "get_market_info should return 15 columns")
+			
+			dbProvider = row.Values[11].([]byte)
+			dbStreamID = row.Values[12].([]byte)
+			dbActionID = row.Values[13].(string)
+			dbQueryArgs = row.Values[14].([]byte)
 			return nil
 		})
 		require.NoError(t, err)
+		require.Nil(t, res.Error)
 
 		require.Equal(t, gethCommon.HexToAddress(dataProvider).Bytes(), dbProvider, "data_provider should be denormalized")
 		
@@ -108,7 +95,7 @@ func testDiscoveryWorkflow(t *testing.T) func(ctx context.Context, platform *kwi
 		// 3. Test Discovery View
 		var discoveryCount int
 		// Parameters: $stream_id, $limit, $offset
-		res, err := platform.Engine.Call(engineCtx, platform.DB, "", "get_markets_by_stream", []any{expectedStreamID[:], int64(10), int64(0)}, func(row *common.Row) error {
+		res, err = platform.Engine.Call(engineCtx, platform.DB, "", "get_markets_by_stream", []any{expectedStreamID[:], int64(10), int64(0)}, func(row *common.Row) error {
 			discoveryCount++
 			require.Equal(t, int64(queryID), row.Values[0].(int64), "discovered ID should match")
 			require.Equal(t, actionID, row.Values[3].(string), "discovered action_id should match")
