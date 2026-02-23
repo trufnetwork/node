@@ -53,6 +53,6 @@ PUBLIC VIEW RETURNS TABLE (
                   winning_outcome, max_spread, min_order_size, created_at
            FROM ob_queries
            WHERE stream_id = $stream_id
-           ORDER BY created_at DESC
+           ORDER BY created_at DESC, id DESC
            LIMIT $effective_limit OFFSET $effective_offset;
 };

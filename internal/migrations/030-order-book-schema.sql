@@ -101,7 +101,7 @@ CREATE INDEX IF NOT EXISTS idx_ob_queries_components
     ON ob_queries(query_components);
 
 -- Discovery indexes for high-performance lookups
-CREATE INDEX IF NOT EXISTS idx_ob_queries_stream_id ON ob_queries(stream_id);
+CREATE INDEX IF NOT EXISTS idx_ob_queries_stream_id_created ON ob_queries(stream_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_ob_queries_provider_stream ON ob_queries(data_provider, stream_id);
 CREATE INDEX IF NOT EXISTS idx_ob_queries_action_id ON ob_queries(action_id);
 
