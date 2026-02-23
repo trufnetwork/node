@@ -114,7 +114,7 @@ CREATE OR REPLACE ACTION create_market(
     }
 
     -- Validation: Ensure decoding succeeded
-    if $data_provider IS NULL OR $stream_id IS NULL {
+    if $data_provider IS NULL OR $stream_id IS NULL OR $action_id_str IS NULL OR $query_args IS NULL {
         ERROR('Failed to decode query_components: invalid ABI data or missing components');
     }
 

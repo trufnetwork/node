@@ -36,7 +36,9 @@ PUBLIC VIEW RETURNS TABLE (
         ERROR('stream_id is required');
     }
 
-    -- Apply default and max limits
+    -- Apply default and max limits 
+    -- Note: This logic is intentionally duplicated from list_markets (032-order-book-actions.sql)
+    -- to maintain consistency in pagination behavior.
     $effective_limit INT := 100;
     $effective_offset INT := 0;
 
