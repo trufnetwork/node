@@ -8,7 +8,6 @@ import (
 	"math"
 	"math/big"
 
-	gethAbi "github.com/ethereum/go-ethereum/accounts/abi"
 	gethCommon "github.com/ethereum/go-ethereum/common"
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/types"
@@ -769,33 +768,8 @@ func decodeQueryComponentsHandler(ctx *common.EngineContext, app *common.App, in
 
 // unpackQueryComponents extracts (dataProvider, streamID, actionID, args) from ABI-encoded bytes.
 func unpackQueryComponents(data []byte) (dataProvider []byte, streamID []byte, actionID string, args []byte, err error) {
-	// Define ABI types with explicit error checking
-	addressType, err := gethAbi.NewType("address", "", nil)
-	if err != nil {
-		return nil, nil, "", nil, fmt.Errorf("failed to create address type: %w", err)
-	}
-	bytes32Type, err := gethAbi.NewType("bytes32", "", nil)
-	if err != nil {
-		return nil, nil, "", nil, fmt.Errorf("failed to create bytes32 type: %w", err)
-	}
-	stringType, err := gethAbi.NewType("string", "", nil)
-	if err != nil {
-		return nil, nil, "", nil, fmt.Errorf("failed to create string type: %w", err)
-	}
-	bytesType, err := gethAbi.NewType("bytes", "", nil)
-	if err != nil {
-		return nil, nil, "", nil, fmt.Errorf("failed to create bytes type: %w", err)
-	}
-
-	abiArgs := gethAbi.Arguments{
-		{Type: addressType, Name: "data_provider"},
-		{Type: bytes32Type, Name: "stream_id"},
-		{Type: stringType, Name: "action_id"},
-		{Type: bytesType, Name: "args"},
-	}
-
-	// Decode ABI
-	decoded, err := abiArgs.Unpack(data)
+	// Decode ABI using pre-initialised package-level args
+	decoded, err := queryComponentsABIArgs.Unpack(data)
 	if err != nil {
 		return nil, nil, "", nil, fmt.Errorf("failed to decode query_components: %w", err)
 	}
