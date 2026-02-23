@@ -8,7 +8,6 @@ import (
 	"math"
 	"math/big"
 
-	gethAbi "github.com/ethereum/go-ethereum/accounts/abi"
 	gethCommon "github.com/ethereum/go-ethereum/common"
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/types"
@@ -33,6 +32,7 @@ func buildPrecompile() precompiles.Precompile {
 			forceLastArgFalseMethod(),
 			parseAttestationBooleanMethod(),
 			computeAttestationHashMethod(),
+			decodeQueryComponentsMethod(),
 		},
 	}
 }
@@ -650,60 +650,9 @@ func computeAttestationHashHandler(ctx *common.EngineContext, app *common.App, i
 		return fmt.Errorf("query_components cannot be empty")
 	}
 
-	// Define ABI type for query components: (address, bytes32, string, bytes)
-	addressType, err := gethAbi.NewType("address", "", nil)
+	dataProvider, streamID, actionIDStr, argsBytes, err := unpackQueryComponents(queryComponents)
 	if err != nil {
-		return fmt.Errorf("failed to create address type: %w", err)
-	}
-	bytes32Type, err := gethAbi.NewType("bytes32", "", nil)
-	if err != nil {
-		return fmt.Errorf("failed to create bytes32 type: %w", err)
-	}
-	stringType, err := gethAbi.NewType("string", "", nil)
-	if err != nil {
-		return fmt.Errorf("failed to create string type: %w", err)
-	}
-	bytesType, err := gethAbi.NewType("bytes", "", nil)
-	if err != nil {
-		return fmt.Errorf("failed to create bytes type: %w", err)
-	}
-
-	args := gethAbi.Arguments{
-		{Type: addressType, Name: "data_provider"},
-		{Type: bytes32Type, Name: "stream_id"},
-		{Type: stringType, Name: "action_id"},
-		{Type: bytesType, Name: "args"},
-	}
-
-	// Decode ABI
-	decoded, err := args.Unpack(queryComponents)
-	if err != nil {
-		return fmt.Errorf("failed to decode query_components (expected ABI-encoded (address,bytes32,string,bytes)): %w", err)
-	}
-
-	if len(decoded) != 4 {
-		return fmt.Errorf("expected 4 components, got %d", len(decoded))
-	}
-
-	// Extract components
-	dataProvider, ok := decoded[0].(gethCommon.Address)
-	if !ok {
-		return fmt.Errorf("data_provider must be address, got %T", decoded[0])
-	}
-
-	streamID, ok := decoded[1].([32]byte)
-	if !ok {
-		return fmt.Errorf("stream_id must be bytes32, got %T", decoded[1])
-	}
-
-	actionIDStr, ok := decoded[2].(string)
-	if !ok {
-		return fmt.Errorf("action_id must be string, got %T", decoded[2])
-	}
-
-	argsBytes, ok := decoded[3].([]byte)
-	if !ok {
-		return fmt.Errorf("args must be bytes, got %T", decoded[3])
+		return err
 	}
 
 	// Map action_id string to uint16 (must match attestation_actions table)
@@ -723,11 +672,10 @@ func computeAttestationHashHandler(ctx *common.EngineContext, app *common.App, i
 	buffer.WriteByte(0)
 
 	// Length-prefixed data_provider (20 bytes)
-	dataProviderBytes := dataProvider.Bytes()
-	buffer.Write(lengthPrefixBytes(dataProviderBytes))
+	buffer.Write(lengthPrefixBytes(dataProvider))
 
 	// Length-prefixed stream_id (32 bytes)
-	buffer.Write(lengthPrefixBytes(streamID[:]))
+	buffer.Write(lengthPrefixBytes(streamID))
 
 	// Action ID as uint16 big-endian (2 bytes)
 	var actionIDBytes [2]byte
@@ -752,7 +700,7 @@ func getActionIDNumber(actionName string) (uint16, error) {
 		"get_change_over_time": 3,
 		"get_last_record":      4,
 		"get_first_record":     5,
-		// Binary actions (return TABLE(result BOOLEAN)) - for prediction market settlement
+		// Binary actions (return TABLE(result BOOLEAN) - for prediction market settlement
 		"price_above_threshold": 6,
 		"price_below_threshold": 7,
 		"value_in_range":        8,
@@ -770,4 +718,86 @@ func getActionIDNumber(actionName string) (uint16, error) {
 // that returns TABLE(result BOOLEAN) instead of TABLE(event_time INT8, value NUMERIC)
 func IsBinaryAction(actionID uint16) bool {
 	return actionID >= 6 && actionID <= 9
+}
+
+// decodeQueryComponentsMethod decodes ABI-encoded query components into its
+// structured parts (dataProvider, streamID, actionID, args).
+func decodeQueryComponentsMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "decode_query_components",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters: []precompiles.PrecompileValue{
+			precompiles.NewPrecompileValue("query_components", types.ByteaType, false),
+		},
+		Returns: &precompiles.MethodReturn{
+			IsTable: true,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("data_provider", types.ByteaType, false),
+				precompiles.NewPrecompileValue("stream_id", types.ByteaType, false),
+				precompiles.NewPrecompileValue("action_id", types.TextType, false),
+				precompiles.NewPrecompileValue("args", types.ByteaType, false),
+			},
+		},
+		Handler: decodeQueryComponentsHandler,
+	}
+}
+
+// decodeQueryComponentsHandler decodes ABI-encoded query components.
+func decodeQueryComponentsHandler(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+	queryComponents, err := toByteSliceAllowNil(inputs[0])
+	if err != nil {
+		return err
+	}
+
+	if len(queryComponents) == 0 {
+		return fmt.Errorf("query_components cannot be empty")
+	}
+
+	dataProvider, streamID, actionID, args, err := unpackQueryComponents(queryComponents)
+	if err != nil {
+		return err
+	}
+
+	return resultFn([]any{
+		dataProvider,
+		streamID,
+		actionID,
+		args,
+	})
+}
+
+// unpackQueryComponents extracts (dataProvider, streamID, actionID, args) from ABI-encoded bytes.
+func unpackQueryComponents(data []byte) (dataProvider []byte, streamID []byte, actionID string, args []byte, err error) {
+	// Decode ABI using pre-initialised package-level args
+	decoded, err := queryComponentsABIArgs.Unpack(data)
+	if err != nil {
+		return nil, nil, "", nil, fmt.Errorf("failed to decode query_components: %w", err)
+	}
+
+	if len(decoded) != 4 {
+		return nil, nil, "", nil, fmt.Errorf("expected 4 components, got %d", len(decoded))
+	}
+
+	// Type assertions and shape conversions
+	dpAddr, ok := decoded[0].(gethCommon.Address)
+	if !ok {
+		return nil, nil, "", nil, fmt.Errorf("data_provider must be address, got %T", decoded[0])
+	}
+
+	sid, ok := decoded[1].([32]byte)
+	if !ok {
+		return nil, nil, "", nil, fmt.Errorf("stream_id must be bytes32, got %T", decoded[1])
+	}
+
+	aid, ok := decoded[2].(string)
+	if !ok {
+		return nil, nil, "", nil, fmt.Errorf("action_id must be string, got %T", decoded[2])
+	}
+
+	argBytes, ok := decoded[3].([]byte)
+	if !ok {
+		return nil, nil, "", nil, fmt.Errorf("args must be bytes, got %T", decoded[3])
+	}
+
+	return dpAddr.Bytes(), sid[:], aid, argBytes, nil
 }
