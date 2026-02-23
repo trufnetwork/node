@@ -12,7 +12,7 @@ import (
 func TestDecodeQueryComponents(t *testing.T) {
 	t.Run("ValidComponents_DecodesCorrectly", func(t *testing.T) {
 		dataProvider := "0x1111111111111111111111111111111111111111"
-		streamID := "stbtcusd00000000000000000000000000" // Exactly 32 chars
+		streamID := "stbtcusd000000000000000000000000" // Exactly 32 chars
 		actionID := "price_above_threshold"
 		args := []byte{0x01, 0x02, 0x03, 0x04}
 

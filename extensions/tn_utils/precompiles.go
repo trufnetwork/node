@@ -651,60 +651,9 @@ func computeAttestationHashHandler(ctx *common.EngineContext, app *common.App, i
 		return fmt.Errorf("query_components cannot be empty")
 	}
 
-	// Define ABI type for query components: (address, bytes32, string, bytes)
-	addressType, err := gethAbi.NewType("address", "", nil)
+	dataProvider, streamID, actionIDStr, argsBytes, err := unpackQueryComponents(queryComponents)
 	if err != nil {
-		return fmt.Errorf("failed to create address type: %w", err)
-	}
-	bytes32Type, err := gethAbi.NewType("bytes32", "", nil)
-	if err != nil {
-		return fmt.Errorf("failed to create bytes32 type: %w", err)
-	}
-	stringType, err := gethAbi.NewType("string", "", nil)
-	if err != nil {
-		return fmt.Errorf("failed to create string type: %w", err)
-	}
-	bytesType, err := gethAbi.NewType("bytes", "", nil)
-	if err != nil {
-		return fmt.Errorf("failed to create bytes type: %w", err)
-	}
-
-	args := gethAbi.Arguments{
-		{Type: addressType, Name: "data_provider"},
-		{Type: bytes32Type, Name: "stream_id"},
-		{Type: stringType, Name: "action_id"},
-		{Type: bytesType, Name: "args"},
-	}
-
-	// Decode ABI
-	decoded, err := args.Unpack(queryComponents)
-	if err != nil {
-		return fmt.Errorf("failed to decode query_components (expected ABI-encoded (address,bytes32,string,bytes)): %w", err)
-	}
-
-	if len(decoded) != 4 {
-		return fmt.Errorf("expected 4 components, got %d", len(decoded))
-	}
-
-	// Extract components
-	dataProvider, ok := decoded[0].(gethCommon.Address)
-	if !ok {
-		return fmt.Errorf("data_provider must be address, got %T", decoded[0])
-	}
-
-	streamID, ok := decoded[1].([32]byte)
-	if !ok {
-		return fmt.Errorf("stream_id must be bytes32, got %T", decoded[1])
-	}
-
-	actionIDStr, ok := decoded[2].(string)
-	if !ok {
-		return fmt.Errorf("action_id must be string, got %T", decoded[2])
-	}
-
-	argsBytes, ok := decoded[3].([]byte)
-	if !ok {
-		return fmt.Errorf("args must be bytes, got %T", decoded[3])
+		return err
 	}
 
 	// Map action_id string to uint16 (must match attestation_actions table)
@@ -724,11 +673,10 @@ func computeAttestationHashHandler(ctx *common.EngineContext, app *common.App, i
 	buffer.WriteByte(0)
 
 	// Length-prefixed data_provider (20 bytes)
-	dataProviderBytes := dataProvider.Bytes()
-	buffer.Write(lengthPrefixBytes(dataProviderBytes))
+	buffer.Write(lengthPrefixBytes(dataProvider))
 
 	// Length-prefixed stream_id (32 bytes)
-	buffer.Write(lengthPrefixBytes(streamID[:]))
+	buffer.Write(lengthPrefixBytes(streamID))
 
 	// Action ID as uint16 big-endian (2 bytes)
 	var actionIDBytes [2]byte
@@ -753,7 +701,7 @@ func getActionIDNumber(actionName string) (uint16, error) {
 		"get_change_over_time": 3,
 		"get_last_record":      4,
 		"get_first_record":     5,
-		// Binary actions (return TABLE(result BOOLEAN)) - for prediction market settlement
+		// Binary actions (return TABLE(result BOOLEAN) - for prediction market settlement
 		"price_above_threshold": 6,
 		"price_below_threshold": 7,
 		"value_in_range":        8,
@@ -806,13 +754,40 @@ func decodeQueryComponentsHandler(ctx *common.EngineContext, app *common.App, in
 		return fmt.Errorf("query_components cannot be empty")
 	}
 
-	// Define ABI type for query components: (address, bytes32, string, bytes)
-	addressType, _ := gethAbi.NewType("address", "", nil)
-	bytes32Type, _ := gethAbi.NewType("bytes32", "", nil)
-	stringType, _ := gethAbi.NewType("string", "", nil)
-	bytesType, _ := gethAbi.NewType("bytes", "", nil)
+	dataProvider, streamID, actionID, args, err := unpackQueryComponents(queryComponents)
+	if err != nil {
+		return err
+	}
 
-	args := gethAbi.Arguments{
+	return resultFn([]any{
+		dataProvider,
+		streamID,
+		actionID,
+		args,
+	})
+}
+
+// unpackQueryComponents extracts (dataProvider, streamID, actionID, args) from ABI-encoded bytes.
+func unpackQueryComponents(data []byte) (dataProvider []byte, streamID []byte, actionID string, args []byte, err error) {
+	// Define ABI types with explicit error checking
+	addressType, err := gethAbi.NewType("address", "", nil)
+	if err != nil {
+		return nil, nil, "", nil, fmt.Errorf("failed to create address type: %w", err)
+	}
+	bytes32Type, err := gethAbi.NewType("bytes32", "", nil)
+	if err != nil {
+		return nil, nil, "", nil, fmt.Errorf("failed to create bytes32 type: %w", err)
+	}
+	stringType, err := gethAbi.NewType("string", "", nil)
+	if err != nil {
+		return nil, nil, "", nil, fmt.Errorf("failed to create string type: %w", err)
+	}
+	bytesType, err := gethAbi.NewType("bytes", "", nil)
+	if err != nil {
+		return nil, nil, "", nil, fmt.Errorf("failed to create bytes type: %w", err)
+	}
+
+	abiArgs := gethAbi.Arguments{
 		{Type: addressType, Name: "data_provider"},
 		{Type: bytes32Type, Name: "stream_id"},
 		{Type: stringType, Name: "action_id"},
@@ -820,40 +795,35 @@ func decodeQueryComponentsHandler(ctx *common.EngineContext, app *common.App, in
 	}
 
 	// Decode ABI
-	decoded, err := args.Unpack(queryComponents)
+	decoded, err := abiArgs.Unpack(data)
 	if err != nil {
-		return fmt.Errorf("failed to decode query_components: %w", err)
+		return nil, nil, "", nil, fmt.Errorf("failed to decode query_components: %w", err)
 	}
 
 	if len(decoded) != 4 {
-		return fmt.Errorf("expected 4 components, got %d", len(decoded))
+		return nil, nil, "", nil, fmt.Errorf("expected 4 components, got %d", len(decoded))
 	}
 
-	// Extract components
-	dataProvider, ok := decoded[0].(gethCommon.Address)
+	// Type assertions and shape conversions
+	dpAddr, ok := decoded[0].(gethCommon.Address)
 	if !ok {
-		return fmt.Errorf("data_provider must be address, got %T", decoded[0])
+		return nil, nil, "", nil, fmt.Errorf("data_provider must be address, got %T", decoded[0])
 	}
 
-	streamID, ok := decoded[1].([32]byte)
+	sid, ok := decoded[1].([32]byte)
 	if !ok {
-		return fmt.Errorf("stream_id must be bytes32, got %T", decoded[1])
+		return nil, nil, "", nil, fmt.Errorf("stream_id must be bytes32, got %T", decoded[1])
 	}
 
-	actionIDStr, ok := decoded[2].(string)
+	aid, ok := decoded[2].(string)
 	if !ok {
-		return fmt.Errorf("action_id must be string, got %T", decoded[2])
+		return nil, nil, "", nil, fmt.Errorf("action_id must be string, got %T", decoded[2])
 	}
 
-	argsBytes, ok := decoded[3].([]byte)
+	argBytes, ok := decoded[3].([]byte)
 	if !ok {
-		return fmt.Errorf("args must be bytes, got %T", decoded[3])
+		return nil, nil, "", nil, fmt.Errorf("args must be bytes, got %T", decoded[3])
 	}
 
-	return resultFn([]any{
-		dataProvider.Bytes(),
-		streamID[:],
-		actionIDStr,
-		argsBytes,
-	})
+	return dpAddr.Bytes(), sid[:], aid, argBytes, nil
 }
