@@ -33,6 +33,7 @@ func buildPrecompile() precompiles.Precompile {
 			forceLastArgFalseMethod(),
 			parseAttestationBooleanMethod(),
 			computeAttestationHashMethod(),
+			decodeQueryComponentsMethod(),
 		},
 	}
 }
@@ -770,4 +771,89 @@ func getActionIDNumber(actionName string) (uint16, error) {
 // that returns TABLE(result BOOLEAN) instead of TABLE(event_time INT8, value NUMERIC)
 func IsBinaryAction(actionID uint16) bool {
 	return actionID >= 6 && actionID <= 9
+}
+
+// decodeQueryComponentsMethod decodes ABI-encoded query components into its
+// structured parts (dataProvider, streamID, actionID, args).
+func decodeQueryComponentsMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "decode_query_components",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters: []precompiles.PrecompileValue{
+			precompiles.NewPrecompileValue("query_components", types.ByteaType, false),
+		},
+		Returns: &precompiles.MethodReturn{
+			IsTable: true,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("data_provider", types.ByteaType, false),
+				precompiles.NewPrecompileValue("stream_id", types.ByteaType, false),
+				precompiles.NewPrecompileValue("action_id", types.TextType, false),
+				precompiles.NewPrecompileValue("args", types.ByteaType, false),
+			},
+		},
+		Handler: decodeQueryComponentsHandler,
+	}
+}
+
+// decodeQueryComponentsHandler decodes ABI-encoded query components.
+func decodeQueryComponentsHandler(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+	queryComponents, err := toByteSliceAllowNil(inputs[0])
+	if err != nil {
+		return err
+	}
+
+	if len(queryComponents) == 0 {
+		return fmt.Errorf("query_components cannot be empty")
+	}
+
+	// Define ABI type for query components: (address, bytes32, string, bytes)
+	addressType, _ := gethAbi.NewType("address", "", nil)
+	bytes32Type, _ := gethAbi.NewType("bytes32", "", nil)
+	stringType, _ := gethAbi.NewType("string", "", nil)
+	bytesType, _ := gethAbi.NewType("bytes", "", nil)
+
+	args := gethAbi.Arguments{
+		{Type: addressType, Name: "data_provider"},
+		{Type: bytes32Type, Name: "stream_id"},
+		{Type: stringType, Name: "action_id"},
+		{Type: bytesType, Name: "args"},
+	}
+
+	// Decode ABI
+	decoded, err := args.Unpack(queryComponents)
+	if err != nil {
+		return fmt.Errorf("failed to decode query_components: %w", err)
+	}
+
+	if len(decoded) != 4 {
+		return fmt.Errorf("expected 4 components, got %d", len(decoded))
+	}
+
+	// Extract components
+	dataProvider, ok := decoded[0].(gethCommon.Address)
+	if !ok {
+		return fmt.Errorf("data_provider must be address, got %T", decoded[0])
+	}
+
+	streamID, ok := decoded[1].([32]byte)
+	if !ok {
+		return fmt.Errorf("stream_id must be bytes32, got %T", decoded[1])
+	}
+
+	actionIDStr, ok := decoded[2].(string)
+	if !ok {
+		return fmt.Errorf("action_id must be string, got %T", decoded[2])
+	}
+
+	argsBytes, ok := decoded[3].([]byte)
+	if !ok {
+		return fmt.Errorf("args must be bytes, got %T", decoded[3])
+	}
+
+	return resultFn([]any{
+		dataProvider.Bytes(),
+		streamID[:],
+		actionIDStr,
+		argsBytes,
+	})
 }
