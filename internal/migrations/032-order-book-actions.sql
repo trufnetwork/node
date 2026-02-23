@@ -101,6 +101,23 @@ CREATE OR REPLACE ACTION create_market(
         ERROR('query_components is required (ABI-encoded (address,bytes32,string,bytes))');
     }
 
+    -- Decode components for structured storage
+    $data_provider BYTEA;
+    $stream_id BYTEA;
+    $action_id_str TEXT;
+    $query_args BYTEA;
+    for $row in tn_utils.decode_query_components($query_components) {
+        $data_provider := $row.data_provider;
+        $stream_id := $row.stream_id;
+        $action_id_str := $row.action_id;
+        $query_args := $row.args;
+    }
+
+    -- Validation: Ensure decoding succeeded
+    if $data_provider IS NULL OR $stream_id IS NULL {
+        ERROR('Failed to decode query_components: invalid ABI data or missing components');
+    }
+
     -- Compute hash from query components using attestation format
     -- This ensures market hash matches attestation hash for automatic settlement
     $query_hash BYTEA;
@@ -187,6 +204,10 @@ CREATE OR REPLACE ACTION create_market(
         id,
         hash,
         query_components,
+        data_provider,
+        stream_id,
+        action_id,
+        query_args,
         settle_time,
         max_spread,
         min_order_size,
@@ -198,6 +219,10 @@ CREATE OR REPLACE ACTION create_market(
         COALESCE(MAX(id), 0) + 1,
         $query_hash,
         $query_components,
+        $data_provider,
+        $stream_id,
+        $action_id_str,
+        $query_args,
         $settle_time,
         $max_spread,
         $min_order_size,
