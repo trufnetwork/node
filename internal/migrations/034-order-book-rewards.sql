@@ -120,7 +120,7 @@ CREATE INDEX IF NOT EXISTS idx_ob_rewards_query_block ON ob_rewards(query_id, bl
 CREATE OR REPLACE ACTION sample_lp_rewards(
     $query_id INT,
     $block INT8
-) PUBLIC {
+) PRIVATE {
     -- Check if this block was already sampled to prevent duplicate key errors
     -- This handles retries, race conditions, and scheduler overlap
     for $row in SELECT 1 FROM ob_rewards WHERE query_id = $query_id AND block = $block LIMIT 1 {
@@ -181,9 +181,10 @@ CREATE OR REPLACE ACTION sample_lp_rewards(
     for $pos in
         SELECT
             p1.participant_id,
-            p1.price as yes_price,
+            p1.price as p1_price,
+            p1.outcome as p1_outcome,
             p1.amount,
-            p2.price as no_price
+            p2.price as p2_price
         FROM ob_positions p1
         JOIN ob_positions p2
             ON p1.query_id = p2.query_id
@@ -193,45 +194,54 @@ CREATE OR REPLACE ACTION sample_lp_rewards(
         WHERE p1.query_id = $query_id
     {
         $pid INT := $pos.participant_id;
-        $yes_price INT := $pos.yes_price;
-        $no_price INT := $pos.no_price;
         $amount INT := $pos.amount;
 
-        -- Price range is 0-100 cents (100 represents $1.00)
-        -- Constraint: yes_price = 100 + no_price
-        -- This ensures we only process (SELL, BUY) pairs, not (BUY, SELL) duplicates
-        -- Example: SELL YES @ 48 + BUY NO @ 52 → 48 = 100 + (-52) ✅
-        if $yes_price == 100 + $no_price {
-            -- Calculate distances from midpoint using ABS()
-            -- Handles both positive (SELL) and negative (BUY) prices
-            $yes_dist INT := $x_mid - $yes_price;
-            if $yes_dist < 0 {
-                $yes_dist := -$yes_dist;
+        -- The specification requires pairing a SELL order with a BUY order
+        -- such that Magnitude(Ask) + Magnitude(Bid) = 100.
+        -- Formula: Price1 = 100 + Price2 (where Price1 > 0 and Price2 < 0)
+        if $pos.p1_price == 100 + $pos.p2_price {
+            -- Assign prices based on outcome
+            $yes_price INT;
+            $no_price INT;
+            if $pos.p1_outcome == TRUE {
+                $yes_price := $pos.p1_price;
+                $no_price := $pos.p2_price;
+            } else {
+                $yes_price := $pos.p2_price;
+                $no_price := $pos.p1_price;
             }
 
-            $no_dist INT := (100 - $x_mid) - (-$no_price);
-            if $no_dist < 0 {
-                $no_dist := -$no_dist;
-            }
+            -- Convert to positive magnitudes for distance check (abs workaround)
+            $yes_mag INT := $yes_price;
+            if $yes_mag < 0 { $yes_mag := -$yes_mag; }
+            $no_mag INT := $no_price;
+            if $no_mag < 0 { $no_mag := -$no_mag; }
+
+            -- Calculate distances from midpoint magnitudes
+            $yes_dist INT := $x_mid - $yes_mag;
+            if $yes_dist < 0 { $yes_dist := -$yes_dist; }
+
+            $no_dist INT := (100 - $x_mid) - $no_mag;
+            if $no_dist < 0 { $no_dist := -$no_dist; }
 
             -- Filter by spread (reference line 135-146)
             if $yes_dist < $x_spread AND $no_dist < $x_spread {
-            -- Get minimum distance (reference uses LEAST())
-            $min_dist INT := $yes_dist;
-            if $no_dist < $yes_dist {
-                $min_dist := $no_dist;
-            }
+                -- Get minimum distance (reference uses LEAST())
+                $min_dist INT := $yes_dist;
+                if $no_dist < $yes_dist {
+                    $min_dist := $no_dist;
+                }
 
-            -- Calculate score (reference line 74: amount * POWER((spread - dist) / spread, 2))
-            $spread_minus_dist INT := $x_spread - $min_dist;
-            $score NUMERIC(20,4) := (
-                $amount::NUMERIC(20,4) *
-                ($spread_minus_dist * $spread_minus_dist)::NUMERIC(20,4) /
-                ($x_spread * $x_spread)::NUMERIC(20,4)
-            );
+                -- Calculate score (reference line 74: amount * POWER((spread - dist) / spread, 2))
+                $spread_minus_dist INT := $x_spread - $min_dist;
+                $score NUMERIC(20,4) := (
+                    $amount::NUMERIC(20,4) *
+                    ($spread_minus_dist * $spread_minus_dist)::NUMERIC(20,4) /
+                    ($x_spread * $x_spread)::NUMERIC(20,4)
+                );
 
-            INSERT INTO ob_rewards (query_id, participant_id, block, reward_percent)
-            VALUES ($query_id, $pid, $block, $score::NUMERIC(5,2));
+                INSERT INTO ob_rewards (query_id, participant_id, block, reward_percent)
+                VALUES ($query_id, $pid, $block, $score::NUMERIC(5,2));
             }
         }
     }
@@ -260,3 +270,38 @@ CREATE OR REPLACE ACTION sample_lp_rewards(
         }
     }
 };
+
+-- =============================================================================
+-- sample_all_active_lp_rewards: Batch sampling for all active markets
+-- =============================================================================
+/**
+ * Iterates through all active markets and performs reward sampling.
+ * This consolidated call is more efficient than calling sample_lp_rewards 
+ * multiple times from an external process.
+ *
+ * Parameters:
+ * - $block: The block height to record for all samples
+ * - $market_limit: Maximum number of markets to process in this run
+ */
+CREATE OR REPLACE ACTION sample_all_active_lp_rewards(
+    $block INT8,
+    $market_limit INT
+) PRIVATE {
+    if $block IS NULL OR $block <= 0 {
+        ERROR('block height is required and must be positive');
+    }
+
+    if $market_limit IS NULL OR $market_limit <= 0 {
+        ERROR('market_limit is required and must be positive');
+    }
+
+    for $market in SELECT id FROM ob_queries 
+        WHERE settled = false 
+        ORDER BY id ASC 
+        LIMIT $market_limit 
+    {
+        -- Call the helper action for each market
+        sample_lp_rewards($market.id, $block);
+    }
+};
+

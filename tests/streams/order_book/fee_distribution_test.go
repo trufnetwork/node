@@ -108,7 +108,7 @@ func testDistribution1Block2LPs(t *testing.T) func(context.Context, *kwilTesting
 		require.NoError(t, err)
 
 		// Sample LP rewards at block 1000
-		err = callSampleLPRewards(ctx, platform, &user1, int(marketID), 1000, nil)
+		err = triggerBatchSampling(ctx, platform, 1000)
 		require.NoError(t, err)
 
 		// Verify rewards were recorded
@@ -278,11 +278,11 @@ func testDistribution3Blocks2LPs(t *testing.T) func(context.Context, *kwilTestin
 		require.NoError(t, err)
 
 		// Sample LP rewards at 3 different blocks
-		err = callSampleLPRewards(ctx, platform, &user1, int(marketID), 1000, nil)
+		err = triggerBatchSampling(ctx, platform, 1000)
 		require.NoError(t, err)
-		err = callSampleLPRewards(ctx, platform, &user1, int(marketID), 2000, nil)
+		err = triggerBatchSampling(ctx, platform, 2000)
 		require.NoError(t, err)
-		err = callSampleLPRewards(ctx, platform, &user1, int(marketID), 3000, nil)
+		err = triggerBatchSampling(ctx, platform, 3000)
 		require.NoError(t, err)
 
 		// Verify rewards were recorded for all 3 blocks
@@ -558,7 +558,7 @@ func testDistributionZeroFees(t *testing.T) func(context.Context, *kwilTesting.P
 		require.NoError(t, err)
 
 		// Sample LP rewards
-		err = callSampleLPRewards(ctx, platform, &user1, int(marketID), 1000, nil)
+		err = triggerBatchSampling(ctx, platform, 1000)
 		require.NoError(t, err)
 
 		// Get balances before distribution
@@ -666,7 +666,7 @@ func testDistribution1LP(t *testing.T) func(context.Context, *kwilTesting.Platfo
 		require.NoError(t, err)
 
 		// Sample LP rewards at block 1000
-		err = callSampleLPRewards(ctx, platform, &user1, int(marketID), 1000, nil)
+		err = triggerBatchSampling(ctx, platform, 1000)
 		require.NoError(t, err)
 
 		// Verify only 1 LP recorded

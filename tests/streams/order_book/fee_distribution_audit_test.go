@@ -78,7 +78,7 @@ func testAuditRecordCreation(t *testing.T) func(context.Context, *kwilTesting.Pl
 		setupLPScenario(t, ctx, platform, &user1, &user2, int(marketID))
 
 		// Sample LP rewards
-		err = callSampleLPRewards(ctx, platform, &user1, int(marketID), 1000, nil)
+		err = triggerBatchSampling(ctx, platform, 1000)
 		require.NoError(t, err)
 
 		// Fund vault and call distribute_fees
@@ -201,11 +201,11 @@ func testAuditMultiBlock(t *testing.T) func(context.Context, *kwilTesting.Platfo
 		setupLPScenario(t, ctx, platform, &user1, &user2, int(marketID))
 
 		// Sample 3 blocks
-		err = callSampleLPRewards(ctx, platform, &user1, int(marketID), 1000, nil)
+		err = triggerBatchSampling(ctx, platform, 1000)
 		require.NoError(t, err)
-		err = callSampleLPRewards(ctx, platform, &user1, int(marketID), 2000, nil)
+		err = triggerBatchSampling(ctx, platform, 2000)
 		require.NoError(t, err)
-		err = callSampleLPRewards(ctx, platform, &user1, int(marketID), 3000, nil)
+		err = triggerBatchSampling(ctx, platform, 3000)
 		require.NoError(t, err)
 
 		// Distribute fees
@@ -394,7 +394,7 @@ func testAuditDataIntegrity(t *testing.T) func(context.Context, *kwilTesting.Pla
 		require.NoError(t, err)
 
 		// Sample
-		err = callSampleLPRewards(ctx, platform, &user1, int(marketID), 1000, nil)
+		err = triggerBatchSampling(ctx, platform, 1000)
 		require.NoError(t, err)
 
 		// Distribute

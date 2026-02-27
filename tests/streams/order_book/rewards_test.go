@@ -20,27 +20,29 @@ import (
 	"github.com/trufnetwork/sdk-go/core/util"
 )
 
-func callSampleLPRewards(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, queryID int, block int64, resultFn func(*common.Row) error) error {
-	tx := &common.TxContext{
-		Ctx: ctx,
-		BlockContext: &common.BlockContext{
-			Height:    1,
-			Timestamp: time.Now().Unix(),
-		},
-		Signer:        signer.Bytes(),
-		Caller:        signer.Address(),
-		TxID:          platform.Txid(),
-		Authenticator: coreauth.EthPersonalSignAuth,
+// triggerDirectSampling allows testing individual market sampling (e.g. for error cases)
+func triggerDirectSampling(ctx context.Context, platform *kwilTesting.Platform, queryID int, block int64) error {
+	res, err := platform.Engine.CallWithoutEngineCtx(ctx, platform.DB, "main", "sample_lp_rewards", []any{int64(queryID), block}, nil)
+	if err != nil {
+		return err
 	}
-	engineCtx := &common.EngineContext{TxContext: tx}
+	if res.Error != nil {
+		return fmt.Errorf("%s", res.Error.Error())
+	}
+	return nil
+}
 
-	res, err := platform.Engine.Call(
-		engineCtx,
+// triggerBatchSampling simulates the EndBlockHook calling the PRIVATE sample_all_active_lp_rewards action.
+func triggerBatchSampling(ctx context.Context, platform *kwilTesting.Platform, block int64) error {
+	// We use CallWithoutEngineCtx because internal hooks run without an external caller/signer.
+	// This matches the new batch logic in tn_lp_rewards.go.
+	res, err := platform.Engine.CallWithoutEngineCtx(
+		ctx,
 		platform.DB,
-		"",
-		"sample_lp_rewards",
-		[]any{queryID, block},
-		resultFn,
+		"main",
+		"sample_all_active_lp_rewards",
+		[]any{block, int64(1000)},
+		nil,
 	)
 	if err != nil {
 		return err
@@ -169,8 +171,8 @@ func testSampleRewardsMarketSettled(t *testing.T) func(context.Context, *kwilTes
 		)
 		require.NoError(t, err)
 
-		// Try to sample settled market
-		err = callSampleLPRewards(ctx, platform, &userAddr, int(marketID), 1000, nil)
+		// Try to sample settled market directly
+		err = triggerDirectSampling(ctx, platform, int(marketID), 1000)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "Market is already settled")
 
@@ -206,7 +208,7 @@ func testSampleRewardsNoOrderBook(t *testing.T) func(context.Context, *kwilTesti
 		require.NoError(t, err)
 
 		// Sample should succeed but produce no rewards (empty order book)
-		err = callSampleLPRewards(ctx, platform, &userAddr, int(marketID), 1000, nil)
+		err = triggerBatchSampling(ctx, platform, 1000)
 		require.NoError(t, err)
 
 		// Verify no rewards were inserted
@@ -251,7 +253,7 @@ func testSampleRewardsIncompleteOrderBook(t *testing.T) func(context.Context, *k
 		require.NoError(t, err)
 
 		// Sample should succeed but produce no rewards (incomplete order book)
-		err = callSampleLPRewards(ctx, platform, &userAddr, int(marketID), 1000, nil)
+		err = triggerBatchSampling(ctx, platform, 1000)
 		require.NoError(t, err)
 
 		// Verify no rewards
@@ -296,7 +298,7 @@ func testSampleRewardsSpread5Cents(t *testing.T) func(context.Context, *kwilTest
 		require.NoError(t, err)
 
 		// Sample rewards
-		err = callSampleLPRewards(ctx, platform, &user1, int(marketID), 1000, nil)
+		err = triggerBatchSampling(ctx, platform, 1000)
 		require.NoError(t, err)
 
 		// Verify spread was 5¢ (we can't check spread directly, but rewards should be generated)
@@ -341,7 +343,7 @@ func testSampleRewardsSpread4Cents(t *testing.T) func(context.Context, *kwilTest
 		require.NoError(t, err)
 
 		// Sample rewards
-		err = callSampleLPRewards(ctx, platform, &user1, int(marketID), 2000, nil)
+		err = triggerBatchSampling(ctx, platform, 2000)
 		require.NoError(t, err)
 
 		rewards, err := getRewards(ctx, platform, int(marketID), 2000)
@@ -385,7 +387,7 @@ func testSampleRewardsSpread3Cents(t *testing.T) func(context.Context, *kwilTest
 		require.NoError(t, err)
 
 		// Sample rewards
-		err = callSampleLPRewards(ctx, platform, &user1, int(marketID), 3000, nil)
+		err = triggerBatchSampling(ctx, platform, 3000)
 		require.NoError(t, err)
 
 		rewards, err := getRewards(ctx, platform, int(marketID), 3000)
@@ -429,7 +431,7 @@ func testSampleRewardsIneligibleMarket(t *testing.T) func(context.Context, *kwil
 		require.NoError(t, err)
 
 		// Sample should succeed but produce no rewards (ineligible spread)
-		err = callSampleLPRewards(ctx, platform, &user1, int(marketID), 4000, nil)
+		err = triggerBatchSampling(ctx, platform, 4000)
 		require.NoError(t, err)
 
 		rewards, err := getRewards(ctx, platform, int(marketID), 4000)
@@ -489,7 +491,7 @@ func testSampleRewardsSingleLP(t *testing.T) func(context.Context, *kwilTesting.
 		require.NoError(t, err)
 
 		// Sample rewards
-		err = callSampleLPRewards(ctx, platform, &user1, int(marketID), 5000, nil)
+		err = triggerBatchSampling(ctx, platform, 5000)
 		require.NoError(t, err)
 
 		rewards, err := getRewards(ctx, platform, int(marketID), 5000)
@@ -566,7 +568,7 @@ func testSampleRewardsTwoLPs(t *testing.T) func(context.Context, *kwilTesting.Pl
 		require.NoError(t, err)
 
 		// Sample rewards
-		err = callSampleLPRewards(ctx, platform, &user1, int(marketID), 6000, nil)
+		err = triggerBatchSampling(ctx, platform, 6000)
 		require.NoError(t, err)
 
 		rewards, err := getRewards(ctx, platform, int(marketID), 6000)
@@ -660,7 +662,7 @@ func testSampleRewardsMultipleLPs(t *testing.T) func(context.Context, *kwilTesti
 		require.NoError(t, err)
 
 		// Sample rewards
-		err = callSampleLPRewards(ctx, platform, &user1, int(marketID), 7000, nil)
+		err = triggerBatchSampling(ctx, platform, 7000)
 		require.NoError(t, err)
 
 		rewards, err := getRewards(ctx, platform, int(marketID), 7000)
@@ -722,7 +724,7 @@ func testSampleRewardsNoQualifyingOrders(t *testing.T) func(context.Context, *kw
 
 		// Midpoint will be around 50¢ with spread distance > threshold
 		// Sample should produce no rewards
-		err = callSampleLPRewards(ctx, platform, &user1, int(marketID), 8000, nil)
+		err = triggerBatchSampling(ctx, platform, 8000)
 		require.NoError(t, err)
 
 		rewards, err := getRewards(ctx, platform, int(marketID), 8000)
@@ -781,7 +783,7 @@ func testConstraintSellBuyPair(t *testing.T) func(context.Context, *kwilTesting.
 		require.NoError(t, err)
 
 		// Sample rewards
-		err = callSampleLPRewards(ctx, platform, &user1, int(queryID), 9000, nil)
+		err = triggerBatchSampling(ctx, platform, 9000)
 		require.NoError(t, err)
 
 		// Verify rewards generated
@@ -841,7 +843,7 @@ func testConstraintNoDuplicates(t *testing.T) func(context.Context, *kwilTesting
 		require.NoError(t, err)
 
 		// Sample rewards
-		err = callSampleLPRewards(ctx, platform, &user2, int(queryID), 10000, nil)
+		err = triggerBatchSampling(ctx, platform, 10000)
 		require.NoError(t, err)
 
 		// Count reward rows - should be exactly 1, not 2
