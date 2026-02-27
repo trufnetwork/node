@@ -6,9 +6,7 @@ import (
 	"strings"
 
 	"github.com/trufnetwork/kwil-db/common"
-	"github.com/trufnetwork/kwil-db/core/crypto/auth"
 	"github.com/trufnetwork/kwil-db/core/log"
-	ktypes "github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
 )
 
@@ -64,13 +62,13 @@ func (e *EngineOperations) LoadLPRewardsConfig(ctx context.Context) (bool, int, 
 	var (
 		enabled    bool = true
 		interval   int  = 10
-		maxMarkets int  = 50
+		maxMarkets int  = 1000
 		found      bool
 	)
 
 	db, cleanup, err := e.getFreshReadTx(ctx)
 	if err != nil {
-		return true, 10, 50, fmt.Errorf("get fresh read tx: %w", err)
+		return enabled, interval, maxMarkets, fmt.Errorf("get fresh read tx: %w", err)
 	}
 	defer cleanup()
 
@@ -106,12 +104,12 @@ func (e *EngineOperations) LoadLPRewardsConfig(ctx context.Context) (bool, int, 
 				strings.Contains(msg, "undefined table") ||
 				strings.Contains(msg, "not found")) {
 			e.logger.Info("lp_rewards_config table not found; using defaults")
-			return true, 10, 50, nil
+			return enabled, interval, maxMarkets, nil
 		}
-		return true, 10, 50, err
+		return enabled, interval, maxMarkets, err
 	}
 	if !found {
-		return true, 10, 50, nil
+		return enabled, interval, maxMarkets, nil
 	}
 	return enabled, interval, maxMarkets, nil
 }
@@ -163,88 +161,4 @@ func (e *EngineOperations) GetActiveMarkets(ctx context.Context, limit int) ([]i
 	}
 
 	return markets, nil
-}
-
-// BroadcastSampleLPRewards broadcasts a sample_lp_rewards transaction
-func (e *EngineOperations) BroadcastSampleLPRewards(
-	ctx context.Context,
-	chainID string,
-	signer auth.Signer,
-	broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error),
-	queryID int,
-	blockHeight int64,
-) error {
-	// Get signer account ID
-	signerAccountID, err := ktypes.GetSignerAccount(signer)
-	if err != nil {
-		return fmt.Errorf("get signer account: %w", err)
-	}
-
-	// Fetch fresh nonce from database using validated read transaction
-	readTx, cleanup, err := e.getFreshReadTx(ctx)
-	if err != nil {
-		return fmt.Errorf("get fresh read tx: %w", err)
-	}
-	defer cleanup()
-
-	var nextNonce uint64
-	account, err := e.accounts.GetAccount(ctx, readTx, signerAccountID)
-	if err != nil {
-		if !isAccountNotFoundError(err) {
-			return fmt.Errorf("get account: %w", err)
-		}
-		nextNonce = 1
-	} else {
-		nextNonce = uint64(account.Nonce + 1)
-	}
-
-	// Encode arguments for sample_lp_rewards action
-	// Parameters: $query_id INT, $block INT8
-	queryIDArg, err := ktypes.EncodeValue(int64(queryID))
-	if err != nil {
-		return fmt.Errorf("encode query_id: %w", err)
-	}
-	blockArg, err := ktypes.EncodeValue(blockHeight)
-	if err != nil {
-		return fmt.Errorf("encode block: %w", err)
-	}
-
-	// Build ActionExecution payload
-	payload := &ktypes.ActionExecution{
-		Namespace: "main",
-		Action:    "sample_lp_rewards",
-		Arguments: [][]*ktypes.EncodedValue{{queryIDArg, blockArg}},
-	}
-
-	// Create transaction
-	tx, err := ktypes.CreateNodeTransaction(payload, chainID, nextNonce)
-	if err != nil {
-		return fmt.Errorf("create tx: %w", err)
-	}
-
-	// Sign transaction
-	if err := tx.Sign(signer); err != nil {
-		return fmt.Errorf("sign tx: %w", err)
-	}
-
-	// Broadcast with sync mode = 1 (wait for commit) to ensure nonce increments properly
-	// before broadcasting next transaction
-	hash, txResult, err := broadcaster(ctx, tx, 1)
-	if err != nil {
-		return fmt.Errorf("broadcast tx: %w", err)
-	}
-
-	// Check immediate result (may not have error yet in async mode)
-	if txResult != nil && txResult.Code != uint32(ktypes.CodeOk) {
-		return fmt.Errorf("transaction failed with code %d: %s",
-			txResult.Code, txResult.Log)
-	}
-
-	e.logger.Debug("sample_lp_rewards transaction broadcast",
-		"query_id", queryID,
-		"block", blockHeight,
-		"tx_hash", hash.String(),
-		"nonce", nextNonce)
-
-	return nil
 }

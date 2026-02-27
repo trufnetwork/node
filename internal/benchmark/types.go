@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/trufnetwork/sdk-go/core/util"
-	testutils "github.com/trufnetwork/node/tests/streams/utils"
+	"github.com/trufnetwork/node/tests/streams/utils/cache"
 )
 
 type (
@@ -17,7 +17,7 @@ type (
 		Samples         int
 		Procedures      []ProcedureEnum
 		CacheEnabled    bool                      // Whether to enable cache for this benchmark case
-		CacheConfig     *testutils.CacheOptions  // Optional custom cache configuration
+		CacheConfig     *cache.CacheOptions  // Optional custom cache configuration
 	}
 	Result struct {
 		Case                   BenchmarkCase

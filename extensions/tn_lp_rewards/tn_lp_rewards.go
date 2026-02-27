@@ -3,25 +3,14 @@ package tn_lp_rewards
 import (
 	"context"
 	"fmt"
-	"net"
-	"net/url"
-	"strings"
 	"sync"
 	"sync/atomic"
 
-	"github.com/trufnetwork/kwil-db/app/key"
-	appconf "github.com/trufnetwork/kwil-db/app/node/conf"
 	"github.com/trufnetwork/kwil-db/common"
-	"github.com/trufnetwork/kwil-db/config"
-	"github.com/trufnetwork/kwil-db/core/crypto/auth"
 	"github.com/trufnetwork/kwil-db/core/log"
-	rpcclient "github.com/trufnetwork/kwil-db/core/rpc/client"
-	rpcuser "github.com/trufnetwork/kwil-db/core/rpc/client/user/jsonrpc"
-	ktypes "github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/kwil-db/extensions/hooks"
 	"github.com/trufnetwork/kwil-db/extensions/precompiles"
 	sql "github.com/trufnetwork/kwil-db/node/types/sql"
-	"github.com/trufnetwork/node/extensions/leaderwatch"
 	"github.com/trufnetwork/node/extensions/tn_lp_rewards/internal"
 )
 
@@ -33,18 +22,6 @@ const (
 	DefaultMaxMarketsPerRun       = 50
 )
 
-// TxBroadcaster interface for broadcasting transactions
-type TxBroadcaster interface {
-	BroadcastTx(ctx context.Context, tx *ktypes.Transaction, sync uint8) (ktypes.Hash, *ktypes.TxResult, error)
-}
-
-// txBroadcasterFunc adapts a function to the TxBroadcaster interface
-type txBroadcasterFunc func(ctx context.Context, tx *ktypes.Transaction, sync uint8) (ktypes.Hash, *ktypes.TxResult, error)
-
-func (f txBroadcasterFunc) BroadcastTx(ctx context.Context, tx *ktypes.Transaction, sync uint8) (ktypes.Hash, *ktypes.TxResult, error) {
-	return f(ctx, tx, sync)
-}
-
 // Extension holds the singleton state for LP rewards sampling
 type Extension struct {
 	mu sync.RWMutex
@@ -52,7 +29,6 @@ type Extension struct {
 	logger   log.Logger
 	service  *common.Service
 	engOps   *internal.EngineOperations
-	isLeader atomic.Bool
 
 	// Configuration (loaded from database)
 	enabled                bool
@@ -60,13 +36,6 @@ type Extension struct {
 	maxMarketsPerRun       int
 	configReloadInterval   int64 // Reload config every N blocks
 	lastCheckedHeight      int64
-
-	// Sampling state - prevents overlapping runs
-	isSampling atomic.Bool
-
-	// Transaction broadcasting
-	signer      auth.Signer
-	broadcaster TxBroadcaster
 }
 
 var (
@@ -111,13 +80,10 @@ func InitializeExtension() {
 		panic(fmt.Sprintf("failed to register %s engine ready hook: %v", ExtensionName, err))
 	}
 
-	// Register with leaderwatch for leadership coordination
-	if err := leaderwatch.Register(ExtensionName, leaderwatch.Callbacks{
-		OnAcquire:  leaderAcquire,
-		OnLose:     leaderLose,
-		OnEndBlock: leaderEndBlock,
-	}); err != nil {
-		panic(fmt.Sprintf("failed to register %s leader watcher: %v", ExtensionName, err))
+	// Register end-block hook for KEYLESS internal sampling
+	// This hook runs on ALL nodes during block finalisation.
+	if err := hooks.RegisterEndBlockHook(ExtensionName+"_end_block", endBlockHook); err != nil {
+		panic(fmt.Sprintf("failed to register %s end block hook: %v", ExtensionName, err))
 	}
 }
 
@@ -169,10 +135,7 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 		}
 	}
 
-	// Wire signer and broadcaster
-	wireSignerAndBroadcaster(app, ext)
-
-	logger.Info("LP rewards extension initialized",
+	logger.Info("LP rewards extension initialized (Internal Hook mode)",
 		"enabled", ext.enabled,
 		"sampling_interval_blocks", ext.samplingIntervalBlocks,
 		"max_markets_per_run", ext.maxMarketsPerRun)
@@ -180,134 +143,13 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	return nil
 }
 
-// wireSignerAndBroadcaster fills in signer and broadcaster if not already set
-func wireSignerAndBroadcaster(app *common.App, ext *Extension) {
-	if app == nil || app.Service == nil || app.Service.LocalConfig == nil {
-		return
-	}
-	// Signer (from node key file)
-	if ext.signer == nil {
-		rootDir := appconf.RootDir()
-		if rootDir == "" {
-			ext.logger.Warn("root dir is empty; cannot load node key for signer")
-		} else {
-			keyPath := config.NodeKeyFilePath(rootDir)
-			if pk, err := key.LoadNodeKey(keyPath); err != nil {
-				ext.logger.Warn("failed to load node key for signer; LP rewards disabled until available", "path", keyPath, "error", err)
-			} else {
-				ext.signer = auth.GetUserSigner(pk)
-			}
-		}
-	}
-	// Broadcaster (JSON-RPC user service)
-	if ext.broadcaster == nil {
-		// Optional override: [extensions.tn_lp_rewards].rpc_url
-		if m, ok := app.Service.LocalConfig.Extensions[ExtensionName]; ok {
-			if rpcURL := m["rpc_url"]; rpcURL != "" {
-				if u, err := normalizeListenAddressForClient(rpcURL); err == nil {
-					ext.broadcaster = makeBroadcasterFromURL(u)
-					return
-				} else {
-					ext.logger.Warn("invalid extensions.tn_lp_rewards.rpc_url; falling back to [rpc].listen", "error", err)
-				}
-			}
-		}
-		listen := app.Service.LocalConfig.RPC.ListenAddress
-		if listen == "" {
-			ext.logger.Warn("RPC listen address is empty; cannot create broadcaster")
-		} else if u, err := normalizeListenAddressForClient(listen); err != nil {
-			ext.logger.Warn("invalid RPC listen address; cannot create broadcaster", "addr", listen, "error", err)
-		} else {
-			ext.broadcaster = makeBroadcasterFromURL(u)
-		}
-	}
-}
-
-// normalizeListenAddressForClient converts a server listen address into a client URL
-func normalizeListenAddressForClient(listen string) (*url.URL, error) {
-	if listen == "" {
-		return nil, fmt.Errorf("empty listen address")
-	}
-	endpoint := listen
-	if !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "https://") {
-		endpoint = "http://" + endpoint
-	}
-	u, err := url.Parse(endpoint)
-	if err != nil {
-		return nil, err
-	}
-	host, port, err := net.SplitHostPort(u.Host)
-	if err != nil {
-		cleanHost := strings.Trim(u.Host, "[]")
-		if cleanHost == "" {
-			u.Host = "127.0.0.1"
-		} else if ip := net.ParseIP(cleanHost); ip != nil && ip.IsUnspecified() {
-			u.Host = "127.0.0.1"
-		}
-	} else {
-		cleanHost := strings.Trim(host, "[]")
-		if cleanHost == "" {
-			u.Host = net.JoinHostPort("127.0.0.1", port)
-		} else if ip := net.ParseIP(cleanHost); ip != nil && ip.IsUnspecified() {
-			u.Host = net.JoinHostPort("127.0.0.1", port)
-		}
-	}
-	return u, nil
-}
-
-// makeBroadcasterFromURL creates a TxBroadcaster backed by the user JSON-RPC client
-func makeBroadcasterFromURL(u *url.URL) TxBroadcaster {
-	userClient := rpcuser.NewClient(u)
-	return txBroadcasterFunc(func(ctx context.Context, tx *ktypes.Transaction, sync uint8) (ktypes.Hash, *ktypes.TxResult, error) {
-		// Map sync flag to broadcast mode (0 for accept-only, 1 for wait-commit)
-		mode := rpcclient.BroadcastWaitAccept
-		if sync == 1 {
-			mode = rpcclient.BroadcastWaitCommit
-		}
-		h, err := userClient.Broadcast(ctx, tx, mode)
-		if err != nil {
-			return ktypes.Hash{}, nil, err
-		}
-		// For accept mode, we don't need to query the result (just mempool acceptance)
-		if mode == rpcclient.BroadcastWaitAccept {
-			return h, nil, nil
-		}
-		// For commit mode, query the result
-		txQueryResp, err := userClient.TxQuery(ctx, h)
-		if err != nil {
-			return h, nil, fmt.Errorf("failed to query transaction result: %w", err)
-		}
-		if txQueryResp == nil || txQueryResp.Result == nil {
-			return h, nil, nil
-		}
-		return h, txQueryResp.Result, nil
-	})
-}
-
-// leaderAcquire is called when this node becomes leader
-func leaderAcquire(ctx context.Context, app *common.App, block *common.BlockContext) {
-	ext := GetExtension()
-	ext.isLeader.Store(true)
-	ext.logger.Info("acquired leadership, LP rewards sampling enabled")
-}
-
-// leaderLose is called when this node loses leadership
-func leaderLose(ctx context.Context, app *common.App, block *common.BlockContext) {
-	ext := GetExtension()
-	ext.isLeader.Store(false)
-	ext.logger.Info("lost leadership, LP rewards sampling disabled")
-}
-
-// leaderEndBlock is called at the end of each block when this node is leader
-func leaderEndBlock(ctx context.Context, app *common.App, block *common.BlockContext) {
+// endBlockHook is called on every node at the end of each block.
+// It performs reward sampling as a consensus rule (no keys/nonces needed).
+func endBlockHook(ctx context.Context, app *common.App, block *common.BlockContext) error {
 	ext := GetExtension()
 
-	if !ext.isLeader.Load() {
-		return
-	}
-
-	if block == nil {
-		return
+	if block == nil || ext.engOps == nil {
+		return nil
 	}
 
 	blockHeight := block.Height
@@ -320,32 +162,24 @@ func leaderEndBlock(ctx context.Context, app *common.App, block *common.BlockCon
 	maxMarketsPerRun := ext.maxMarketsPerRun
 	ext.mu.RUnlock()
 
-	// Reload config periodically (do this BEFORE enabled check so we can re-enable without restart)
+	// Reload config periodically
 	if configReloadInterval > 0 && blockHeight-atomic.LoadInt64(&ext.lastCheckedHeight) >= configReloadInterval {
-		// Use background context since EndBlockHook context is canceled when block ends
-		go ext.reloadConfig(context.Background())
+		ext.reloadConfig(ctx)
 		atomic.StoreInt64(&ext.lastCheckedHeight, blockHeight)
 	}
 
 	if !enabled {
-		return
+		return nil
 	}
 
 	// Check if it's time to sample (every N blocks)
 	if samplingIntervalBlocks <= 0 || blockHeight%samplingIntervalBlocks != 0 {
-		return
+		return nil
 	}
 
-	// Skip if previous sampling run is still in progress (prevents nonce conflicts)
-	if !ext.isSampling.CompareAndSwap(false, true) {
-		ext.logger.Warn("skipping LP rewards sampling - previous run still in progress",
-			"block", blockHeight)
-		return
-	}
-
-	// Sample LP rewards in background with background context
-	// (EndBlockHook context is canceled when block processing ends)
-	go ext.sampleLPRewardsWithConfig(context.Background(), blockHeight, maxMarketsPerRun)
+	// Execute sampling logic directly against the engine (Internal call)
+	// This is deterministic and run by all nodes at the same height.
+	return ext.performInternalSampling(ctx, app, blockHeight, maxMarketsPerRun)
 }
 
 // reloadConfig reloads configuration from database
@@ -372,69 +206,30 @@ func (ext *Extension) reloadConfig(ctx context.Context) {
 		"max_markets_per_run", maxMarkets)
 }
 
-// sampleLPRewardsWithConfig samples LP rewards for all active markets using provided config
-func (ext *Extension) sampleLPRewardsWithConfig(ctx context.Context, blockHeight int64, maxMarketsPerRun int) {
-	// Always clear the sampling flag when done
-	defer ext.isSampling.Store(false)
+// performInternalSampling executes sampling logic for all active markets in a single batch.
+// This runs within the block execution transaction.
+func (ext *Extension) performInternalSampling(ctx context.Context, app *common.App, blockHeight int64, maxMarketsPerRun int) error {
+	ext.logger.Info("performing batch LP rewards sampling",
+		"block", blockHeight,
+		"limit", maxMarketsPerRun)
 
-	if ext.engOps == nil || ext.signer == nil || ext.broadcaster == nil {
-		ext.logger.Warn("LP rewards extension not fully initialized")
-		return
-	}
+	// Call sample_all_active_lp_rewards directly via Engine (Internal execution)
+	// This performs the entire sampling loop inside a single SQL context for efficiency.
+	res, err := app.Engine.CallWithoutEngineCtx(ctx, app.DB, "main", "sample_all_active_lp_rewards", []any{
+		blockHeight,
+		int64(maxMarketsPerRun),
+	}, nil)
 
-	// Get active markets
-	markets, err := ext.engOps.GetActiveMarkets(ctx, maxMarketsPerRun)
 	if err != nil {
-		ext.logger.Warn("failed to get active markets", "error", err)
-		return
+		ext.logger.Error("batch internal sampling failed", "error", err)
+		return nil // We don't return error to avoid halting network on logic issues
 	}
 
-	if len(markets) == 0 {
-		ext.logger.Debug("no active markets to sample", "block", blockHeight)
-		return
+	if res.Error != nil {
+		ext.logger.Warn("batch sampling execution error", "error", res.Error)
+	} else {
+		ext.logger.Info("batch internal LP rewards sampling completed", "block", blockHeight)
 	}
 
-	ext.logger.Info("sampling LP rewards",
-		"block", blockHeight,
-		"market_count", len(markets))
-
-	// Get chain ID from service
-	chainID := ""
-	if ext.service != nil && ext.service.GenesisConfig != nil {
-		chainID = ext.service.GenesisConfig.ChainID
-	}
-
-	// Sample each market sequentially to avoid nonce conflicts
-	// Each transaction must complete before the next one starts
-	successCount := 0
-	failCount := 0
-	for _, queryID := range markets {
-		err := ext.engOps.BroadcastSampleLPRewards(
-			ctx,
-			chainID,
-			ext.signer,
-			ext.broadcaster.BroadcastTx,
-			queryID,
-			blockHeight,
-		)
-		if err != nil {
-			ext.logger.Warn("failed to sample LP rewards",
-				"query_id", queryID,
-				"block", blockHeight,
-				"error", err)
-			failCount++
-			// Continue to next market even if this one fails
-			continue
-		}
-
-		ext.logger.Debug("sampled LP rewards",
-			"query_id", queryID,
-			"block", blockHeight)
-		successCount++
-	}
-
-	ext.logger.Info("LP rewards sampling completed",
-		"block", blockHeight,
-		"success", successCount,
-		"failed", failCount)
+	return nil
 }
