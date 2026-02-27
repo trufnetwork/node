@@ -27,7 +27,7 @@ func triggerDirectSampling(ctx context.Context, platform *kwilTesting.Platform, 
 		return err
 	}
 	if res.Error != nil {
-		return fmt.Errorf("%s", res.Error.Error())
+		return res.Error
 	}
 	return nil
 }
@@ -48,7 +48,7 @@ func triggerBatchSampling(ctx context.Context, platform *kwilTesting.Platform, b
 		return err
 	}
 	if res.Error != nil {
-		return fmt.Errorf("%s", res.Error.Error())
+		return res.Error
 	}
 	return nil
 }

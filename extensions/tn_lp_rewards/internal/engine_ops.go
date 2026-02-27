@@ -68,7 +68,7 @@ func (e *EngineOperations) LoadLPRewardsConfig(ctx context.Context) (bool, int, 
 
 	db, cleanup, err := e.getFreshReadTx(ctx)
 	if err != nil {
-		return true, 10, 50, fmt.Errorf("get fresh read tx: %w", err)
+		return enabled, interval, maxMarkets, fmt.Errorf("get fresh read tx: %w", err)
 	}
 	defer cleanup()
 
@@ -104,12 +104,12 @@ func (e *EngineOperations) LoadLPRewardsConfig(ctx context.Context) (bool, int, 
 				strings.Contains(msg, "undefined table") ||
 				strings.Contains(msg, "not found")) {
 			e.logger.Info("lp_rewards_config table not found; using defaults")
-			return true, 10, 50, nil
+			return enabled, interval, maxMarkets, nil
 		}
-		return true, 10, 50, err
+		return enabled, interval, maxMarkets, err
 	}
 	if !found {
-		return true, 10, 50, nil
+		return enabled, interval, maxMarkets, nil
 	}
 	return enabled, interval, maxMarkets, nil
 }

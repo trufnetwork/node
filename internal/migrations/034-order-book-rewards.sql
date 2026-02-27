@@ -32,9 +32,9 @@
  * - Reward percentages sum to 100% (±0.01% for rounding) per block
  *
  * Sampling Trigger:
- * - External system calls sample_lp_rewards($query_id, $block) periodically
+ * - Internal system calls sample_lp_rewards($query_id, $block) periodically via EndBlockHook
  * - Recommended: Every 50 blocks (~10 minutes with 12s block times)
- * - Can be called by anyone (PUBLIC action)
+ * - Can only be invoked internally (PRIVATE action)
  *
  * Distribution:
  * - At settlement, total fees divided equally across all sampled blocks
