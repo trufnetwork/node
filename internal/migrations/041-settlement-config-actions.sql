@@ -19,7 +19,7 @@ UPDATE settlement_config
 SET
     enabled = true,
     settlement_schedule = '0,30 * * * *',
-    max_markets_per_run = 100,
+    max_markets_per_run = 1000,
     retry_attempts = 3,
     updated_at = 0
 WHERE id = 1;
@@ -33,11 +33,11 @@ WHERE id = 1;
 -- Parameters:
 -- - $enabled: Enable/disable automatic settlement (BOOL)
 -- - $schedule: Cron schedule for settlement checks (TEXT)
--- - $max_markets_per_run: Max markets to process per job run (INT, 1-100)
+-- - $max_markets_per_run: Max markets to process per job run (INT, 1-1000)
 -- - $retry_attempts: Number of retry attempts for failed settlements (INT, 1-10)
 --
 -- Usage:
---   kwil-cli call-action update_settlement_config bool:true text:'0,30 * * * *' int:100 int:3
+--   kwil-cli call-action update_settlement_config bool:true text:'0,30 * * * *' int:1000 int:3
 CREATE OR REPLACE ACTION update_settlement_config(
     $enabled BOOL,
     $schedule TEXT,
@@ -68,8 +68,8 @@ CREATE OR REPLACE ACTION update_settlement_config(
         ERROR('schedule cannot be empty');
     }
 
-    if $max_markets_per_run IS NULL OR $max_markets_per_run < 1 OR $max_markets_per_run > 100 {
-        ERROR('max_markets_per_run must be between 1 and 100');
+    if $max_markets_per_run IS NULL OR $max_markets_per_run < 1 OR $max_markets_per_run > 1000 {
+        ERROR('max_markets_per_run must be between 1 and 1000');
     }
 
     if $retry_attempts IS NULL OR $retry_attempts < 1 OR $retry_attempts > 10 {
