@@ -111,7 +111,7 @@ func TestComputeAttestationHash(t *testing.T) {
 		})
 
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "failed to decode query_components")
+		require.Contains(t, err.Error(), "failed to ABI-decode query_components")
 	})
 
 	t.Run("UnknownActionID_ReturnsError", func(t *testing.T) {

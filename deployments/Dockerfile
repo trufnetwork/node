@@ -1,4 +1,4 @@
-FROM golang:1.24.3-alpine3.21 AS build
+FROM golang:1.25.3-alpine3.21 AS build
 
 # Use buildx automatic platform args
 ARG TARGETOS=linux

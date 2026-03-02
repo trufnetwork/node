@@ -21,10 +21,6 @@ CREATE TABLE IF NOT EXISTS ob_queries (
     id INT PRIMARY KEY,
     hash BYTEA NOT NULL UNIQUE,
     query_components BYTEA NOT NULL,
-    data_provider BYTEA,
-    stream_id BYTEA,
-    action_id TEXT,
-    query_args BYTEA,
     settle_time INT8 NOT NULL,
     settled BOOLEAN DEFAULT false NOT NULL,
     winning_outcome BOOLEAN,
@@ -99,11 +95,6 @@ CREATE INDEX IF NOT EXISTS idx_ob_queries_settled
 -- Query components index for potential future queries on components
 CREATE INDEX IF NOT EXISTS idx_ob_queries_components
     ON ob_queries(query_components);
-
--- Discovery indexes for high-performance lookups
-CREATE INDEX IF NOT EXISTS idx_ob_queries_stream_id_created ON ob_queries(stream_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_ob_queries_provider_stream ON ob_queries(data_provider, stream_id);
-CREATE INDEX IF NOT EXISTS idx_ob_queries_action_id ON ob_queries(action_id);
 
 -- =============================================================================
 -- Transaction method registration
