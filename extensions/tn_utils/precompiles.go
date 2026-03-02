@@ -8,10 +8,11 @@ import (
 	"math"
 	"math/big"
 
-	gethCommon "github.com/ethereum/go-ethereum/common"
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/kwil-db/extensions/precompiles"
+	"github.com/trufnetwork/sdk-go/core/contractsapi"
+	"github.com/trufnetwork/sdk-go/core/util"
 )
 
 // buildPrecompile groups all tn_utils methods into a single precompile bundle so
@@ -32,7 +33,6 @@ func buildPrecompile() precompiles.Precompile {
 			forceLastArgFalseMethod(),
 			parseAttestationBooleanMethod(),
 			computeAttestationHashMethod(),
-			decodeQueryComponentsMethod(),
 		},
 	}
 }
@@ -720,84 +720,18 @@ func IsBinaryAction(actionID uint16) bool {
 	return actionID >= 6 && actionID <= 9
 }
 
-// decodeQueryComponentsMethod decodes ABI-encoded query components into its
-// structured parts (dataProvider, streamID, actionID, args).
-func decodeQueryComponentsMethod() precompiles.Method {
-	return precompiles.Method{
-		Name:            "decode_query_components",
-		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
-		Parameters: []precompiles.PrecompileValue{
-			precompiles.NewPrecompileValue("query_components", types.ByteaType, false),
-		},
-		Returns: &precompiles.MethodReturn{
-			IsTable: true,
-			Fields: []precompiles.PrecompileValue{
-				precompiles.NewPrecompileValue("data_provider", types.ByteaType, false),
-				precompiles.NewPrecompileValue("stream_id", types.ByteaType, false),
-				precompiles.NewPrecompileValue("action_id", types.TextType, false),
-				precompiles.NewPrecompileValue("args", types.ByteaType, false),
-			},
-		},
-		Handler: decodeQueryComponentsHandler,
-	}
-}
-
-// decodeQueryComponentsHandler decodes ABI-encoded query components.
-func decodeQueryComponentsHandler(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
-	queryComponents, err := toByteSliceAllowNil(inputs[0])
-	if err != nil {
-		return err
-	}
-
-	if len(queryComponents) == 0 {
-		return fmt.Errorf("query_components cannot be empty")
-	}
-
-	dataProvider, streamID, actionID, args, err := unpackQueryComponents(queryComponents)
-	if err != nil {
-		return err
-	}
-
-	return resultFn([]any{
-		dataProvider,
-		streamID,
-		actionID,
-		args,
-	})
-}
-
 // unpackQueryComponents extracts (dataProvider, streamID, actionID, args) from ABI-encoded bytes.
+// This is a private helper used by computeAttestationHashHandler for consensus logic.
 func unpackQueryComponents(data []byte) (dataProvider []byte, streamID []byte, actionID string, args []byte, err error) {
-	// Decode ABI using pre-initialised package-level args
-	decoded, err := queryComponentsABIArgs.Unpack(data)
+	dp, sid, aid, argBytes, err := contractsapi.DecodeQueryComponents(data)
 	if err != nil {
-		return nil, nil, "", nil, fmt.Errorf("failed to decode query_components: %w", err)
+		return nil, nil, "", nil, err
 	}
 
-	if len(decoded) != 4 {
-		return nil, nil, "", nil, fmt.Errorf("expected 4 components, got %d", len(decoded))
+	addr, err := util.NewEthereumAddressFromString(dp)
+	if err != nil {
+		return nil, nil, "", nil, fmt.Errorf("invalid data_provider address: %w", err)
 	}
 
-	// Type assertions and shape conversions
-	dpAddr, ok := decoded[0].(gethCommon.Address)
-	if !ok {
-		return nil, nil, "", nil, fmt.Errorf("data_provider must be address, got %T", decoded[0])
-	}
-
-	sid, ok := decoded[1].([32]byte)
-	if !ok {
-		return nil, nil, "", nil, fmt.Errorf("stream_id must be bytes32, got %T", decoded[1])
-	}
-
-	aid, ok := decoded[2].(string)
-	if !ok {
-		return nil, nil, "", nil, fmt.Errorf("action_id must be string, got %T", decoded[2])
-	}
-
-	argBytes, ok := decoded[3].([]byte)
-	if !ok {
-		return nil, nil, "", nil, fmt.Errorf("args must be bytes, got %T", decoded[3])
-	}
-
-	return dpAddr.Bytes(), sid[:], aid, argBytes, nil
+	return addr.Bytes(), []byte(sid), aid, argBytes, nil
 }

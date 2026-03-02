@@ -101,23 +101,6 @@ CREATE OR REPLACE ACTION create_market(
         ERROR('query_components is required (ABI-encoded (address,bytes32,string,bytes))');
     }
 
-    -- Decode components for structured storage
-    $data_provider BYTEA;
-    $stream_id BYTEA;
-    $action_id_str TEXT;
-    $query_args BYTEA;
-    for $row in tn_utils.decode_query_components($query_components) {
-        $data_provider := $row.data_provider;
-        $stream_id := $row.stream_id;
-        $action_id_str := $row.action_id;
-        $query_args := $row.args;
-    }
-
-    -- Validation: Ensure decoding succeeded
-    if $data_provider IS NULL OR $stream_id IS NULL OR $action_id_str IS NULL OR $query_args IS NULL {
-        ERROR('Failed to decode query_components: invalid ABI data or missing components');
-    }
-
     -- Compute hash from query components using attestation format
     -- This ensures market hash matches attestation hash for automatic settlement
     $query_hash BYTEA;
@@ -204,10 +187,6 @@ CREATE OR REPLACE ACTION create_market(
         id,
         hash,
         query_components,
-        data_provider,
-        stream_id,
-        action_id,
-        query_args,
         settle_time,
         max_spread,
         min_order_size,
@@ -219,10 +198,6 @@ CREATE OR REPLACE ACTION create_market(
         COALESCE(MAX(id), 0) + 1,
         $query_hash,
         $query_components,
-        $data_provider,
-        $stream_id,
-        $action_id_str,
-        $query_args,
         $settle_time,
         $max_spread,
         $min_order_size,
@@ -273,11 +248,7 @@ PUBLIC VIEW RETURNS (
     max_spread INT,
     min_order_size INT8,
     created_at INT8,
-    creator BYTEA,
-    data_provider BYTEA,
-    stream_id BYTEA,
-    action_id TEXT,
-    query_args BYTEA
+    creator BYTEA
 ) {
     if $query_id IS NULL {
         ERROR('query_id is required');
@@ -285,15 +256,13 @@ PUBLIC VIEW RETURNS (
 
     for $market in
         SELECT hash, query_components, bridge, settle_time, settled, winning_outcome, settled_at,
-               max_spread, min_order_size, created_at, creator,
-               data_provider, stream_id, action_id, query_args
+               max_spread, min_order_size, created_at, creator
         FROM ob_queries
         WHERE id = $query_id
     {
         RETURN $market.hash, $market.query_components, $market.bridge, $market.settle_time, $market.settled,
                $market.winning_outcome, $market.settled_at, $market.max_spread,
-               $market.min_order_size, $market.created_at, $market.creator,
-               $market.data_provider, $market.stream_id, $market.action_id, $market.query_args;
+               $market.min_order_size, $market.created_at, $market.creator;
     }
 
     ERROR('Market not found: ' || $query_id::TEXT);

@@ -14,7 +14,6 @@ const dataPointTargetScale uint16 = 18
 var (
 	dataPointsABIArgs      gethAbi.Arguments
 	booleanABIArgs         gethAbi.Arguments
-	queryComponentsABIArgs gethAbi.Arguments
 )
 
 func init() {
@@ -38,31 +37,6 @@ func init() {
 	}
 	booleanABIArgs = gethAbi.Arguments{
 		{Type: boolType},
-	}
-
-	// ABI types for query components: (address, bytes32, string, bytes)
-	addressType, err := gethAbi.NewType("address", "", nil)
-	if err != nil {
-		panic(fmt.Sprintf("tn_utils: failed to initialise address ABI type: %v", err))
-	}
-	bytes32Type, err := gethAbi.NewType("bytes32", "", nil)
-	if err != nil {
-		panic(fmt.Sprintf("tn_utils: failed to initialise bytes32 ABI type: %v", err))
-	}
-	stringType, err := gethAbi.NewType("string", "", nil)
-	if err != nil {
-		panic(fmt.Sprintf("tn_utils: failed to initialise string ABI type: %v", err))
-	}
-	bytesType, err := gethAbi.NewType("bytes", "", nil)
-	if err != nil {
-		panic(fmt.Sprintf("tn_utils: failed to initialise bytes ABI type: %v", err))
-	}
-
-	queryComponentsABIArgs = gethAbi.Arguments{
-		{Type: addressType, Name: "data_provider"},
-		{Type: bytes32Type, Name: "stream_id"},
-		{Type: stringType, Name: "action_id"},
-		{Type: bytesType, Name: "args"},
 	}
 }
 
