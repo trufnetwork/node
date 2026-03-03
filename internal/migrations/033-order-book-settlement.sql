@@ -154,46 +154,59 @@ CREATE OR REPLACE ACTION distribute_fees(
 
     if $block_count > 0 AND $total_fees > '0'::NUMERIC(78, 0) {
         -- Step 3: Calculate rewards with zero-loss distribution
+        -- We calculate all distribution arrays in a SINGLE query using simplified logic
+        -- to avoid performance bottlenecks in the Kwil engine.
+        
+        -- Get the first participant ID to handle the remainder (dust)
+        $min_participant_id INT;
+        for $row in SELECT MIN(participant_id) as mid FROM ob_rewards WHERE query_id = $query_id {
+            $min_participant_id := $row.mid;
+        }
+
+        -- Calculate total distributed to find the remainder
+        $total_distributed_base NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
+        for $row in 
+            SELECT SUM((($total_fees::NUMERIC(78, 20) * total_percent_numeric) / (100::NUMERIC(78, 20) * $block_count::NUMERIC(78, 20)))::NUMERIC(78, 0))::NUMERIC(78, 0) as total
+            FROM (
+                SELECT SUM(reward_percent)::NUMERIC(78, 20) as total_percent_numeric
+                FROM ob_rewards
+                WHERE query_id = $query_id
+                GROUP BY participant_id
+            ) AS pt
+        {
+            $total_distributed_base := $row.total;
+        }
+
+        $remainder NUMERIC(78, 0) := $total_fees - $total_distributed_base;
+
+        -- Aggregate into arrays for batch processing
         for $result in
-        WITH participant_totals AS (
-            SELECT
-                r.participant_id,
-                p.wallet_address,
-                SUM(r.reward_percent)::INT as total_percent_int
-            FROM ob_rewards r
-            JOIN ob_participants p ON r.participant_id = p.id
-            WHERE r.query_id = $query_id
-            GROUP BY r.participant_id, p.wallet_address
-        ),
-        calculated_rewards AS (
-            SELECT
-                participant_id,
-                wallet_address,
-                (($total_fees * total_percent_int::NUMERIC(78, 0)) / (100::NUMERIC(78, 0) * $block_count::NUMERIC(78, 0)))::NUMERIC(78, 0) as base_reward
-            FROM participant_totals
-        ),
-        total_check AS (
-            SELECT COALESCE(SUM(base_reward)::NUMERIC(78, 0), '0'::NUMERIC(78, 0)) as total_distributed
-            FROM calculated_rewards
-        ),
-        with_remainder AS (
-            SELECT
-                participant_id,
-                wallet_address,
-                base_reward + CASE
-                    WHEN participant_id = (SELECT MIN(participant_id) FROM calculated_rewards)
-                    THEN $total_fees - (SELECT total_distributed FROM total_check)
-                    ELSE '0'::NUMERIC(78, 0)
-                END as final_reward
-            FROM calculated_rewards
-        ),
-        aggregated AS (
-            SELECT
-                ARRAY_AGG('0x' || encode(wallet_address, 'hex') ORDER BY participant_id) as wallets,
-                ARRAY_AGG(final_reward ORDER BY participant_id) as amounts
-            FROM with_remainder
-        )
-        SELECT wallets, amounts FROM aggregated
+            WITH participant_totals AS (
+                SELECT
+                    r.participant_id,
+                    p.wallet_address,
+                    SUM(r.reward_percent)::NUMERIC(78, 20) as total_percent_numeric
+                FROM ob_rewards r
+                JOIN ob_participants p ON r.participant_id = p.id
+                WHERE r.query_id = $query_id
+                GROUP BY r.participant_id, p.wallet_address
+            ),
+            calculated_rewards AS (
+                SELECT
+                    participant_id,
+                    wallet_address,
+                    (($total_fees::NUMERIC(78, 20) * total_percent_numeric) / (100::NUMERIC(78, 20) * $block_count::NUMERIC(78, 20)))::NUMERIC(78, 0) + 
+                    (CASE WHEN participant_id = $min_participant_id THEN $remainder ELSE '0'::NUMERIC(78, 0) END) as final_reward
+                FROM participant_totals
+            ),
+            aggregated AS (
+                SELECT
+                    ARRAY_AGG('0x' || encode(wallet_address, 'hex') ORDER BY participant_id) as wallets,
+                    ARRAY_AGG(final_reward ORDER BY participant_id) as amounts
+                FROM calculated_rewards
+                WHERE final_reward > '0'::NUMERIC(78, 0)
+            )
+            SELECT wallets, amounts FROM aggregated
         {
             $wallet_addresses := $result.wallets;
             $amounts := $result.amounts;
@@ -227,14 +240,9 @@ CREATE OR REPLACE ACTION distribute_fees(
 
     -- Step 6: Insert per-LP details (only if LPs exist)
     if $lp_count > 0 {
-        $idx INT := 1;
-        for $w_row in SELECT wallet FROM UNNEST($wallet_addresses) AS w(wallet) {
-            $wallet_hex TEXT := $w_row.wallet;
-            
-            $reward_amount NUMERIC(78, 0);
-            for $a_row in SELECT amount FROM UNNEST($amounts) AS a(amount) LIMIT 1 OFFSET ($idx - 1) {
-                $reward_amount := $a_row.amount;
-            }
+        for $payout in SELECT wallet, amount FROM UNNEST($wallet_addresses, $amounts) AS p(wallet, amount) {
+            $wallet_hex TEXT := $payout.wallet;
+            $reward_amount NUMERIC(78, 0) := $payout.amount;
 
             $pid INT;
             $wallet_bytes BYTEA;
@@ -265,13 +273,13 @@ CREATE OR REPLACE ACTION distribute_fees(
                 $reward_amount,
                 $total_reward_pct
             );
-
-            $idx := $idx + 1;
         }
     }
 
     -- Step 7: Cleanup
-    DELETE FROM ob_rewards WHERE query_id = $query_id;
+    if $lp_count > 0 {
+        DELETE FROM ob_rewards WHERE query_id = $query_id;
+    }
 };
 
 -- Process settlement: Pay winners (minus 2% fee), refund open buys, distribute LP rewards

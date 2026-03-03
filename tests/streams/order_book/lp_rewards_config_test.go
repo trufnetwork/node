@@ -403,7 +403,7 @@ func testExtensionConfigLoad(t *testing.T) func(context.Context, *kwilTesting.Pl
 					maxMarkets = int64(v)
 				case *types.Decimal:
 					// Handle if it's stored as NUMERIC
-					maxMarkets = 50 // default
+					maxMarkets = 1000 // default
 				}
 				found = true
 				return nil
@@ -418,7 +418,7 @@ func testExtensionConfigLoad(t *testing.T) func(context.Context, *kwilTesting.Pl
 		// Verify config values are valid
 		require.True(t, enabled)
 		require.Equal(t, int64(10), samplingInterval)
-		require.Equal(t, int64(50), maxMarkets)
+		require.Equal(t, int64(1000), maxMarkets)
 
 		return nil
 	}

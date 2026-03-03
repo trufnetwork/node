@@ -348,6 +348,10 @@ func testAuditZeroFees(t *testing.T) func(context.Context, *kwilTesting.Platform
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "get_distribution_summary", []any{int(marketID)},
 			func(row *common.Row) error {
 				rowCount++
+				// Verify zero values in the summary
+				// get_distribution_summary returns (distribution_id, total_fees_distributed, total_lp_count, block_count, distributed_at)
+				require.Equal(t, "0", row.Values[1].(*kwilTypes.Decimal).String(), "Total fees should be 0")
+				require.Equal(t, int64(0), row.Values[2].(int64), "Total LP count should be 0")
 				return nil
 			})
 		require.NoError(t, err)

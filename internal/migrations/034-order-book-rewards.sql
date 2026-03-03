@@ -92,30 +92,9 @@ CREATE INDEX IF NOT EXISTS idx_ob_rewards_query_block ON ob_rewards(query_id, bl
  *   - Score = amount * ((spread - min_dist) / spread)²
  * - Reward percent = (participant_score / total_score) * 100
  *
- * The minimum distance approach rewards balanced liquidity provision.
- * For paired positions with equal amounts, both sides contribute equally
- * since they share the same minimum distance from midpoint.
- *
  * Parameters:
  * - $query_id: Market to sample (must not be settled)
  * - $block: Block height for this sample (used as key in ob_rewards table)
- *
- * Behavior:
- * - Inserts rows into ob_rewards table with reward percentages
- * - Returns nothing on success
- * - Errors if market is already settled
- * - Returns empty if no qualifying LPs (no orders, too wide spread, or ineligible midpoint)
- *
- * Example Usage:
- *   -- External system samples every 50 blocks
- *   sample_lp_rewards(query_id := 1, block := 1000);
- *   sample_lp_rewards(query_id := 1, block := 1050);
- *   sample_lp_rewards(query_id := 1, block := 1100);
- *
- *   -- At settlement, distribute_fees() reads these 3 samples
- *   -- If total_fees = 1000 TRUF:
- *   --   reward_per_block = 1000 / 3 = 333.33 TRUF
- *   --   Each LP gets: 333.33 * (avg of their reward_percents)
  */
 CREATE OR REPLACE ACTION sample_lp_rewards(
     $query_id INT,
@@ -175,15 +154,14 @@ CREATE OR REPLACE ACTION sample_lp_rewards(
     }
 
     -- Step 1: Calculate Global Total Score
-    -- We join positions to find pairs (Outcome1, Outcome2) with same amount
-    -- Qualification: EffectivePrice1 + EffectivePrice2 = 100
+    -- We calculate the total sum of scores for all qualifying pairs
     $global_total_score NUMERIC(78, 20) := 0::NUMERIC(78, 20);
-    for $row in 
+    for $totals in
         SELECT SUM(
             p1.amount::NUMERIC(78, 20) *
             (($x_spread - ABS($x_mid - (CASE WHEN p1.outcome = TRUE THEN (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END) ELSE (100 - (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END)) END)))::NUMERIC(78, 20) * ($x_spread - ABS($x_mid - (CASE WHEN p1.outcome = TRUE THEN (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END) ELSE (100 - (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END)) END)))::NUMERIC(78, 20))::NUMERIC(78, 20) /
             ($x_spread * $x_spread)::NUMERIC(78, 20)
-        ) as total
+        )::NUMERIC(78, 20) as total
         FROM ob_positions p1
         JOIN ob_positions p2
             ON p1.query_id = p2.query_id
@@ -195,8 +173,8 @@ CREATE OR REPLACE ACTION sample_lp_rewards(
           AND (p1.price != 0 OR p2.price != 0)
           AND ABS($x_mid - (CASE WHEN p1.outcome = TRUE THEN (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END) ELSE (100 - (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END)) END)) < $x_spread
     {
-        if $row.total IS NOT NULL {
-            $global_total_score := $row.total::NUMERIC(78, 20);
+        if $totals.total IS NOT NULL {
+            $global_total_score := $totals.total;
         }
     }
 
@@ -213,7 +191,7 @@ CREATE OR REPLACE ACTION sample_lp_rewards(
                 p1.amount::NUMERIC(78, 20) *
                 (($x_spread - ABS($x_mid - (CASE WHEN p1.outcome = TRUE THEN (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END) ELSE (100 - (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END)) END)))::NUMERIC(78, 20) * ($x_spread - ABS($x_mid - (CASE WHEN p1.outcome = TRUE THEN (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END) ELSE (100 - (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END)) END)))::NUMERIC(78, 20))::NUMERIC(78, 20) /
                 ($x_spread * $x_spread)::NUMERIC(78, 20)
-            ) as participant_score
+            )::NUMERIC(78, 20) as participant_score
         FROM ob_positions p1
         JOIN ob_positions p2
             ON p1.query_id = p2.query_id
@@ -227,7 +205,7 @@ CREATE OR REPLACE ACTION sample_lp_rewards(
         GROUP BY p1.participant_id
     {
         $pid INT := $row.participant_id;
-        $score NUMERIC(78, 20) := $row.participant_score::NUMERIC(78, 20);
+        $score NUMERIC(78, 20) := $row.participant_score;
         $pct NUMERIC(5,2) := (($score / $global_total_score) * 100.0::NUMERIC(78, 20))::NUMERIC(5,2);
 
         INSERT INTO ob_rewards (query_id, participant_id, block, reward_percent)
@@ -268,4 +246,3 @@ CREATE OR REPLACE ACTION sample_all_active_lp_rewards(
         sample_lp_rewards($market.id, $block);
     }
 };
-
