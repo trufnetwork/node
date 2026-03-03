@@ -5,6 +5,7 @@ package order_book
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -403,7 +404,11 @@ func testExtensionConfigLoad(t *testing.T) func(context.Context, *kwilTesting.Pl
 					maxMarkets = int64(v)
 				case *types.Decimal:
 					// Handle if it's stored as NUMERIC
-					maxMarkets = 1000 // default
+					var err error
+					maxMarkets, err = strconv.ParseInt(v.String(), 10, 64)
+					if err != nil {
+						return fmt.Errorf("failed to parse max_markets_per_run as decimal: %w", err)
+					}
 				}
 				found = true
 				return nil

@@ -120,7 +120,7 @@ CREATE OR REPLACE ACTION sample_lp_rewards(
 
     for $row in SELECT price FROM ob_positions
         WHERE query_id = $query_id AND outcome = TRUE AND price < 0
-        ORDER BY price DESC LIMIT 1
+        ORDER BY price ASC LIMIT 1
     {
         $best_bid := $row.price;
     }
