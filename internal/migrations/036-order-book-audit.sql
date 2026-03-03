@@ -191,14 +191,12 @@ CREATE OR REPLACE ACTION get_distribution_summary(
 CREATE OR REPLACE ACTION get_distribution_details(
     $distribution_id INT
 ) PUBLIC VIEW RETURNS TABLE(
-    participant_id INT,
     wallet_address TEXT,
     reward_amount NUMERIC(78, 0),
     total_reward_percent NUMERIC(10, 2)
 ) {
     for $row in
         SELECT
-            participant_id,
             '0x' || encode(wallet_address, 'hex') as wallet_hex,
             reward_amount,
             total_reward_percent
@@ -206,7 +204,7 @@ CREATE OR REPLACE ACTION get_distribution_details(
         WHERE distribution_id = $distribution_id
         ORDER BY reward_amount DESC
     {
-        RETURN NEXT $row.participant_id, $row.wallet_hex, $row.reward_amount, $row.total_reward_percent;
+        RETURN NEXT $row.wallet_hex, $row.reward_amount, $row.total_reward_percent;
     }
 };
 
@@ -232,11 +230,11 @@ CREATE OR REPLACE ACTION get_distribution_details(
 CREATE OR REPLACE ACTION get_participant_reward_history(
     $wallet_hex TEXT
 ) PUBLIC VIEW RETURNS TABLE(
+    distribution_id INT,
     query_id INT,
     reward_amount NUMERIC(78, 0),
     total_reward_percent NUMERIC(10, 2),
-    distributed_at INT8,
-    distribution_id INT
+    distributed_at INT8
 ) {
     -- Remove 0x prefix if present
     $clean_hex TEXT := $wallet_hex;
@@ -246,16 +244,16 @@ CREATE OR REPLACE ACTION get_participant_reward_history(
 
     for $row in
         SELECT
+            dd.distribution_id,
             d.query_id,
             dd.reward_amount,
             dd.total_reward_percent,
-            d.distributed_at,
-            dd.distribution_id
+            d.distributed_at
         FROM ob_fee_distribution_details dd
         JOIN ob_fee_distributions d ON dd.distribution_id = d.id
         WHERE LOWER(encode(dd.wallet_address, 'hex')) = LOWER($clean_hex)
         ORDER BY d.distributed_at DESC
     {
-        RETURN NEXT $row.query_id, $row.reward_amount, $row.total_reward_percent, $row.distributed_at, $row.distribution_id;
+        RETURN NEXT $row.distribution_id, $row.query_id, $row.reward_amount, $row.total_reward_percent, $row.distributed_at;
     }
 };

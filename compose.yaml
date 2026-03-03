@@ -13,6 +13,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1.5G
     # persis data
     volumes:
       - ${POSTGRES_VOLUME:-data-kwil-postgres}:/var/lib/postgresql/data
@@ -50,6 +54,10 @@ services:
       interval: 1m
       timeout: 10s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 1.5G
     depends_on:
       kwil-postgres:
         condition: service_healthy
