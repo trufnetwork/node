@@ -19,7 +19,7 @@ const (
 
 	// Default configuration
 	DefaultSamplingIntervalBlocks = 10
-	DefaultMaxMarketsPerRun       = 50
+	DefaultMaxMarketsPerRun       = 1000
 )
 
 // Extension holds the singleton state for LP rewards sampling

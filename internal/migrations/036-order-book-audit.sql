@@ -54,9 +54,9 @@ CREATE TABLE IF NOT EXISTS ob_fee_distributions (
     block_count INT NOT NULL,
     distributed_at INT8 NOT NULL,
     FOREIGN KEY (query_id) REFERENCES ob_queries(id) ON DELETE CASCADE,
-    CHECK (total_fees_distributed >= 0),
-    CHECK (total_lp_count > 0),
-    CHECK (block_count > 0)
+    CONSTRAINT chk_ob_fd_fees CHECK (total_fees_distributed >= 0),
+    CONSTRAINT chk_ob_fd_lp_count CHECK (total_lp_count >= 0),
+    CONSTRAINT chk_ob_fd_block_count CHECK (block_count >= 0)
 );
 
 /**
@@ -89,8 +89,8 @@ CREATE TABLE IF NOT EXISTS ob_fee_distribution_details (
     PRIMARY KEY (distribution_id, participant_id),
     FOREIGN KEY (distribution_id) REFERENCES ob_fee_distributions(id) ON DELETE CASCADE,
     FOREIGN KEY (participant_id) REFERENCES ob_participants(id),
-    CHECK (reward_amount > 0),
-    CHECK (total_reward_percent > 0)
+    CONSTRAINT chk_ob_fdd_reward CHECK (reward_amount > 0),
+    CONSTRAINT chk_ob_fdd_percent CHECK (total_reward_percent > 0)
 );
 
 -- ============================================================================

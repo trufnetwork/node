@@ -284,17 +284,20 @@ func testAuditNoLPs(t *testing.T) func(context.Context, *kwilTesting.Platform) e
 		}
 		engineCtx := &common.EngineContext{TxContext: tx, OverrideAuthz: true}
 
-		// Query distribution summary - should have 0 rows
+		// Query distribution summary - should have 1 row with 0 LPs
 		var rowCount int
+		var lpCount int
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "get_distribution_summary", []any{int(marketID)},
 			func(row *common.Row) error {
+				lpCount = int(row.Values[2].(int64))
 				rowCount++
 				return nil
 			})
 		require.NoError(t, err)
-		require.Equal(t, 0, rowCount, "Should have 0 distribution records (no LPs)")
+		require.Equal(t, 1, rowCount, "Should have 1 distribution record even with no LPs")
+		require.Equal(t, 0, lpCount, "LP count should be 0")
 
-		t.Logf("✅ No audit record created when no LPs (fees stayed in vault)")
+		t.Logf("✅ Audit record correctly created with 0 LPs")
 
 		return nil
 	}
@@ -340,17 +343,21 @@ func testAuditZeroFees(t *testing.T) func(context.Context, *kwilTesting.Platform
 		}
 		engineCtx := &common.EngineContext{TxContext: tx, OverrideAuthz: true}
 
-		// Query distribution summary - should have 0 rows
+		// Query distribution summary - should have 1 row
 		var rowCount int
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "get_distribution_summary", []any{int(marketID)},
 			func(row *common.Row) error {
 				rowCount++
+				// Verify zero values in the summary
+				// get_distribution_summary returns (distribution_id, total_fees_distributed, total_lp_count, block_count, distributed_at)
+				require.Equal(t, "0", row.Values[1].(*kwilTypes.Decimal).String(), "Total fees should be 0")
+				require.Equal(t, int64(0), row.Values[2].(int64), "Total LP count should be 0")
 				return nil
 			})
 		require.NoError(t, err)
-		require.Equal(t, 0, rowCount, "Should have 0 distribution records (zero fees)")
+		require.Equal(t, 1, rowCount, "Should have 1 distribution record even with zero fees")
 
-		t.Logf("✅ No audit record created when zero fees collected")
+		t.Logf("✅ Audit record correctly created with zero fees")
 
 		return nil
 	}
