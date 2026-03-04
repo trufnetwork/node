@@ -121,24 +121,71 @@ CREATE OR REPLACE ACTION distribute_fees(
     $query_id INT,
     $total_fees NUMERIC(78, 0)
 ) PRIVATE {
-    -- Get market's bridge for unlock operations
+    -- Get market details for fee split and unlock
     $bridge TEXT;
-    for $row in SELECT bridge FROM ob_queries WHERE id = $query_id {
+    $query_components BYTEA;
+    for $row in SELECT bridge, query_components FROM ob_queries WHERE id = $query_id {
         $bridge := $row.bridge;
+        $query_components := $row.query_components;
     }
     if $bridge IS NULL {
         ERROR('Market not found for query_id: ' || $query_id::TEXT);
     }
 
-    -- Step 1: Count distinct blocks sampled for this market
+    -- Step 0: Calculate Shares (75/12.5/12.5 split)
+    -- Target: 1.5% (LPs), 0.25% (DP), 0.25% (Validator) out of 2.0% total fees
+    -- Split of the 2.0% pool: 75% LPs, 12.5% DP, 12.5% Validator
+    $lp_share NUMERIC(78, 0) := ($total_fees * 75::NUMERIC(78, 0)) / 100::NUMERIC(78, 0);
+    $infra_share NUMERIC(78, 0) := ($total_fees * 125::NUMERIC(78, 0)) / 1000::NUMERIC(78, 0);
+    
+    -- Ensure 100% distribution: add any rounding dust to LP pool
+    $lp_share := $lp_share + ($total_fees - $lp_share - (2::NUMERIC(78, 0) * $infra_share));
+
+    -- Step 1: Payout Data Provider (0.25%)
+    $dp_addr BYTEA;
+    for $row in tn_utils.unpack_query_components($query_components) {
+        $dp_addr := $row.data_provider;
+    }
+    
+    $actual_dp_fees NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
+    if $dp_addr IS NOT NULL AND $infra_share > '0'::NUMERIC(78, 0) {
+        $dp_wallet TEXT := '0x' || encode($dp_addr, 'hex');
+        if $bridge = 'hoodi_tt2' {
+            hoodi_tt2.unlock($dp_wallet, $infra_share);
+            $actual_dp_fees := $infra_share;
+        } else if $bridge = 'sepolia_bridge' {
+            sepolia_bridge.unlock($dp_wallet, $infra_share);
+            $actual_dp_fees := $infra_share;
+        } else if $bridge = 'ethereum_bridge' {
+            ethereum_bridge.unlock($dp_wallet, $infra_share);
+            $actual_dp_fees := $infra_share;
+        }
+    }
+
+    -- Step 2: Payout Validator (Leader) (0.25%)
+    -- Use @leader_sender to incentivize active block production
+    $actual_validator_fees NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
+    if @leader_sender IS NOT NULL AND $infra_share > '0'::NUMERIC(78, 0) {
+        $validator_wallet TEXT := '0x' || encode(@leader_sender, 'hex');
+        if $bridge = 'hoodi_tt2' {
+            hoodi_tt2.unlock($validator_wallet, $infra_share);
+            $actual_validator_fees := $infra_share;
+        } else if $bridge = 'sepolia_bridge' {
+            sepolia_bridge.unlock($validator_wallet, $infra_share);
+            $actual_validator_fees := $infra_share;
+        } else if $bridge = 'ethereum_bridge' {
+            ethereum_bridge.unlock($validator_wallet, $infra_share);
+            $actual_validator_fees := $infra_share;
+        }
+    }
+
+    -- Step 3: Count distinct blocks sampled for this market
     $block_count INT := 0;
     for $row in SELECT COUNT(DISTINCT block) as cnt FROM ob_rewards WHERE query_id = $query_id {
         $block_count := $row.cnt;
     }
 
-    -- Step 2: Generate distribution ID and create summary record ALWAYS
-    -- This provides visibility into settled markets even if no rewards were distributed
-    -- or if zero fees were collected.
+    -- Step 4: Generate distribution ID and create summary record ALWAYS
     $distribution_id INT;
     for $row in SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM ob_fee_distributions {
         $distribution_id := $row.next_id;
@@ -152,11 +199,8 @@ CREATE OR REPLACE ACTION distribute_fees(
     $wallet_addresses TEXT[];
     $amounts NUMERIC(78, 0)[];
 
-    if $block_count > 0 AND $total_fees > '0'::NUMERIC(78, 0) {
-        -- Step 3: Calculate rewards with zero-loss distribution
-        -- We calculate all distribution arrays in a SINGLE query using simplified logic
-        -- to avoid performance bottlenecks in the Kwil engine.
-        
+    if $block_count > 0 AND $lp_share > '0'::NUMERIC(78, 0) {
+        -- Step 5: Calculate rewards with zero-loss distribution
         -- Get the first participant ID to handle the remainder (dust)
         $min_participant_id INT;
         for $row in SELECT MIN(participant_id) as mid FROM ob_rewards WHERE query_id = $query_id {
@@ -166,7 +210,7 @@ CREATE OR REPLACE ACTION distribute_fees(
         -- Calculate total distributed to find the remainder
         $total_distributed_base NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
         for $row in 
-            SELECT SUM((($total_fees::NUMERIC(78, 20) * total_percent_numeric) / (100::NUMERIC(78, 20) * $block_count::NUMERIC(78, 20)))::NUMERIC(78, 0))::NUMERIC(78, 0) as total
+            SELECT SUM((($lp_share::NUMERIC(78, 20) * total_percent_numeric) / (100::NUMERIC(78, 20) * $block_count::NUMERIC(78, 20)))::NUMERIC(78, 0))::NUMERIC(78, 0) as total
             FROM (
                 SELECT SUM(reward_percent)::NUMERIC(78, 20) as total_percent_numeric
                 FROM ob_rewards
@@ -177,7 +221,7 @@ CREATE OR REPLACE ACTION distribute_fees(
             $total_distributed_base := $row.total;
         }
 
-        $remainder NUMERIC(78, 0) := $total_fees - $total_distributed_base;
+        $remainder NUMERIC(78, 0) := $lp_share - $total_distributed_base;
 
         -- Aggregate into arrays for batch processing
         for $result in
@@ -195,7 +239,7 @@ CREATE OR REPLACE ACTION distribute_fees(
                 SELECT
                     participant_id,
                     wallet_address,
-                    (($total_fees::NUMERIC(78, 20) * total_percent_numeric) / (100::NUMERIC(78, 20) * $block_count::NUMERIC(78, 20)))::NUMERIC(78, 0) + 
+                    (($lp_share::NUMERIC(78, 20) * total_percent_numeric) / (100::NUMERIC(78, 20) * $block_count::NUMERIC(78, 20)))::NUMERIC(78, 0) + 
                     (CASE WHEN participant_id = $min_participant_id THEN $remainder ELSE '0'::NUMERIC(78, 0) END) as final_reward
                 FROM participant_totals
             ),
@@ -214,18 +258,20 @@ CREATE OR REPLACE ACTION distribute_fees(
 
         if $wallet_addresses IS NOT NULL AND COALESCE(array_length($wallet_addresses), 0) > 0 {
             $lp_count := array_length($wallet_addresses);
-            $actual_fees_distributed := $total_fees;
+            $actual_fees_distributed := $lp_share;
 
-            -- Step 4: Batch unlock to all qualifying LPs
+            -- Step 6: Batch unlock to all qualifying LPs
             ob_batch_unlock_collateral($bridge, $wallet_addresses, $amounts);
         }
     }
 
-    -- Step 5: Insert distribution summary
+    -- Step 7: Insert distribution summary
     INSERT INTO ob_fee_distributions (
         id,
         query_id,
         total_fees_distributed,
+        total_dp_fees,
+        total_validator_fees,
         total_lp_count,
         block_count,
         distributed_at
@@ -233,12 +279,14 @@ CREATE OR REPLACE ACTION distribute_fees(
         $distribution_id,
         $query_id,
         $actual_fees_distributed,
+        $actual_dp_fees,
+        $actual_validator_fees,
         $lp_count,
         $block_count,
         @block_timestamp
     );
 
-    -- Step 6: Insert per-LP details (only if LPs exist)
+    -- Step 8: Insert per-LP details (only if LPs exist)
     if $lp_count > 0 {
         for $payout in SELECT wallet, amount FROM UNNEST($wallet_addresses, $amounts) AS p(wallet, amount) {
             $wallet_hex TEXT := $payout.wallet;
@@ -276,7 +324,7 @@ CREATE OR REPLACE ACTION distribute_fees(
         }
     }
 
-    -- Step 7: Cleanup
+    -- Step 9: Cleanup
     if $lp_count > 0 {
         DELETE FROM ob_rewards WHERE query_id = $query_id;
     }

@@ -32,7 +32,7 @@
 CREATE TABLE IF NOT EXISTS lp_rewards_config (
     id INT PRIMARY KEY DEFAULT 1,
     enabled BOOL NOT NULL DEFAULT TRUE,
-    sampling_interval_blocks INT NOT NULL DEFAULT 10,
+    sampling_interval_blocks INT NOT NULL DEFAULT 50,
     max_markets_per_run INT NOT NULL DEFAULT 1000,
     CHECK (id = 1),
     CHECK (sampling_interval_blocks >= 1),
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS lp_rewards_config (
 
 -- Insert default configuration
 INSERT INTO lp_rewards_config (id, enabled, sampling_interval_blocks, max_markets_per_run)
-VALUES (1, TRUE, 10, 1000)
+VALUES (1, TRUE, 50, 1000)
 ON CONFLICT (id) DO NOTHING;
 
 -- ============================================================================
@@ -66,7 +66,7 @@ PUBLIC VIEW RETURNS (
         RETURN $row.enabled, $row.sampling_interval_blocks, $row.max_markets_per_run;
     }
     -- Default if no row exists
-    RETURN TRUE, 10, 1000;
+    RETURN TRUE, 50, 1000;
 };
 
 /**

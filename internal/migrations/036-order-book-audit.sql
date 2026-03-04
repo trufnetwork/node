@@ -49,7 +49,9 @@
 CREATE TABLE IF NOT EXISTS ob_fee_distributions (
     id INT PRIMARY KEY,
     query_id INT NOT NULL,
-    total_fees_distributed NUMERIC(78, 0) NOT NULL,
+    total_fees_distributed NUMERIC(78, 0) NOT NULL, -- Total LP fees
+    total_dp_fees NUMERIC(78, 0) NOT NULL DEFAULT 0,
+    total_validator_fees NUMERIC(78, 0) NOT NULL DEFAULT 0,
     total_lp_count INT NOT NULL,
     block_count INT NOT NULL,
     distributed_at INT8 NOT NULL,
@@ -151,7 +153,9 @@ CREATE OR REPLACE ACTION get_distribution_summary(
     $query_id INT
 ) PUBLIC VIEW RETURNS TABLE(
     distribution_id INT,
-    total_fees_distributed NUMERIC(78, 0),
+    total_lp_fees_distributed NUMERIC(78, 0),
+    total_dp_fees NUMERIC(78, 0),
+    total_validator_fees NUMERIC(78, 0),
     total_lp_count INT,
     block_count INT,
     distributed_at INT8
@@ -159,7 +163,9 @@ CREATE OR REPLACE ACTION get_distribution_summary(
     for $row in
         SELECT
             id as distribution_id,
-            total_fees_distributed,
+            total_fees_distributed as total_lp_fees_distributed,
+            total_dp_fees,
+            total_validator_fees,
             total_lp_count,
             block_count,
             distributed_at
@@ -167,7 +173,7 @@ CREATE OR REPLACE ACTION get_distribution_summary(
         WHERE query_id = $query_id
         ORDER BY distributed_at DESC
     {
-        RETURN NEXT $row.distribution_id, $row.total_fees_distributed, $row.total_lp_count, $row.block_count, $row.distributed_at;
+        RETURN NEXT $row.distribution_id, $row.total_lp_fees_distributed, $row.total_dp_fees, $row.total_validator_fees, $row.total_lp_count, $row.block_count, $row.distributed_at;
     }
 };
 
@@ -191,12 +197,14 @@ CREATE OR REPLACE ACTION get_distribution_summary(
 CREATE OR REPLACE ACTION get_distribution_details(
     $distribution_id INT
 ) PUBLIC VIEW RETURNS TABLE(
+    participant_id INT,
     wallet_address TEXT,
     reward_amount NUMERIC(78, 0),
     total_reward_percent NUMERIC(10, 2)
 ) {
     for $row in
         SELECT
+            participant_id,
             '0x' || encode(wallet_address, 'hex') as wallet_hex,
             reward_amount,
             total_reward_percent
@@ -204,7 +212,7 @@ CREATE OR REPLACE ACTION get_distribution_details(
         WHERE distribution_id = $distribution_id
         ORDER BY reward_amount DESC
     {
-        RETURN NEXT $row.wallet_hex, $row.reward_amount, $row.total_reward_percent;
+        RETURN NEXT $row.participant_id, $row.wallet_hex, $row.reward_amount, $row.total_reward_percent;
     }
 };
 
