@@ -33,8 +33,48 @@ func buildPrecompile() precompiles.Precompile {
 			forceLastArgFalseMethod(),
 			parseAttestationBooleanMethod(),
 			computeAttestationHashMethod(),
+			unpackQueryComponentsMethod(),
 		},
 	}
+}
+
+// unpackQueryComponentsMethod extracts (dataProvider, streamID, actionID, args) from ABI-encoded bytes.
+func unpackQueryComponentsMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "unpack_query_components",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters: []precompiles.PrecompileValue{
+			precompiles.NewPrecompileValue("query_components", types.ByteaType, false),
+		},
+		Returns: &precompiles.MethodReturn{
+			IsTable: false,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("data_provider", types.ByteaType, false),
+				precompiles.NewPrecompileValue("stream_id", types.ByteaType, false),
+				precompiles.NewPrecompileValue("action_id", types.TextType, false),
+				precompiles.NewPrecompileValue("args", types.ByteaType, false),
+			},
+		},
+		Handler: unpackQueryComponentsHandler,
+	}
+}
+
+func unpackQueryComponentsHandler(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+	queryComponents, err := toByteSliceAllowNil(inputs[0])
+	if err != nil {
+		return err
+	}
+
+	if len(queryComponents) == 0 {
+		return fmt.Errorf("query_components cannot be empty")
+	}
+
+	dataProvider, streamID, actionID, args, err := unpackQueryComponents(queryComponents)
+	if err != nil {
+		return err
+	}
+
+	return resultFn([]any{dataProvider, streamID, actionID, args})
 }
 
 // callDispatchMethod exposes deterministic metered dispatch to another action.

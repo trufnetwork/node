@@ -7,8 +7,27 @@ import (
 
 	gethAbi "github.com/ethereum/go-ethereum/accounts/abi"
 	gethCommon "github.com/ethereum/go-ethereum/common"
+	"github.com/stretchr/testify/require"
+	"github.com/trufnetwork/kwil-db/core/crypto"
 	"github.com/trufnetwork/node/extensions/tn_utils"
 )
+
+// NewTestProposerPub generates a new proposer public key for testing.
+func NewTestProposerPub(t require.TestingT) *crypto.Secp256k1PublicKey {
+	_, pubGeneric, err := crypto.GenerateSecp256k1Key(nil)
+	require.NoError(t, err)
+	return pubGeneric.(*crypto.Secp256k1PublicKey)
+}
+
+// ensureNonZeroAddress returns the provided address unless it's the zero address,
+// in which case it returns a fallback non-zero address.
+func ensureNonZeroAddress(addr string) string {
+	zeroAddr := "0x0000000000000000000000000000000000000000"
+	if addr == zeroAddr {
+		return "0x0000000000000000000000000000000000000001"
+	}
+	return addr
+}
 
 // encodeQueryComponentsForTests encodes query components using ABI format for testing
 // This is a shared helper for all order_book tests
