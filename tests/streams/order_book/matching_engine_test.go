@@ -29,9 +29,14 @@ var (
 
 // giveBalanceChained gives balance (BOTH TRUF and USDC) with proper linked-list chaining for ordered-sync
 func giveBalanceChained(ctx context.Context, platform *kwilTesting.Platform, wallet string, amountStr string) error {
-	// Inject TRUF balance first (for market creation fee)
-	trufBalancePointCounter++
-	trufPoint := trufBalancePointCounter
+	// Inject TRUF balance (for market creation fees)
+	trufPointCounter++
+	trufPoint := trufPointCounter
+
+	from := "0x0000000000000000000000000000000000000000"
+	if wallet == from {
+		from = "0x0000000000000000000000000000000000000001"
+	}
 
 	err := testerc20.InjectERC20Transfer(
 		ctx,
@@ -39,12 +44,13 @@ func giveBalanceChained(ctx context.Context, platform *kwilTesting.Platform, wal
 		testTRUFChain,
 		testTRUFEscrow,
 		testTRUFERC20,
-		wallet,
+		from,
 		wallet,
 		amountStr,
 		trufPoint,
 		lastTrufBalancePoint, // Chain to previous TRUF point
 	)
+
 
 	if err != nil {
 		return fmt.Errorf("failed to inject TRUF: %w", err)
@@ -64,7 +70,7 @@ func giveBalanceChained(ctx context.Context, platform *kwilTesting.Platform, wal
 		testUSDCChain,
 		testUSDCEscrow,
 		testUSDCERC20,
-		wallet,
+		from,
 		wallet,
 		amountStr,
 		usdcPoint,
@@ -88,13 +94,18 @@ func giveUSDCBalanceChained(ctx context.Context, platform *kwilTesting.Platform,
 	balancePointCounter++
 	usdcPoint := balancePointCounter
 
+	from := "0x0000000000000000000000000000000000000000"
+	if wallet == from {
+		from = "0x0000000000000000000000000000000000000001"
+	}
+
 	err := testerc20.InjectERC20Transfer(
 		ctx,
 		platform,
 		testUSDCChain,
 		testUSDCEscrow,
 		testUSDCERC20,
-		wallet,
+		from,
 		wallet,
 		amountStr,
 		usdcPoint,

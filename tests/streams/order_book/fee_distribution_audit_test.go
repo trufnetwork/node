@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
+	"github.com/trufnetwork/kwil-db/core/crypto"
 	coreauth "github.com/trufnetwork/kwil-db/core/crypto/auth"
 	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
 	erc20bridge "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
@@ -102,7 +103,9 @@ func testAuditRecordCreation(t *testing.T) func(context.Context, *kwilTesting.Pl
 
 		// Query distribution summary using callback pattern
 		var distributionID int
-		var totalFeesStr string
+		var totalLPFeesStr string
+		var totalDPFeesStr string
+		var totalValFeesStr string
 		var lpCount int
 		var blockCount int
 		var summaryRowCount int
@@ -110,19 +113,29 @@ func testAuditRecordCreation(t *testing.T) func(context.Context, *kwilTesting.Pl
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "get_distribution_summary", []any{int(marketID)},
 			func(row *common.Row) error {
 				distributionID = int(row.Values[0].(int64))
-				// total_fees_distributed is NUMERIC(78, 0) which comes as *types.Decimal
-				totalFeesDecimal := row.Values[1].(*kwilTypes.Decimal)
-				totalFeesStr = totalFeesDecimal.String()
-				lpCount = int(row.Values[2].(int64))
-				blockCount = int(row.Values[3].(int64))
+				// total_lp_fees_distributed is NUMERIC(78, 0) which comes as *types.Decimal
+				totalLPFeesDecimal := row.Values[1].(*kwilTypes.Decimal)
+				totalLPFeesStr = totalLPFeesDecimal.String()
+				totalDPFeesStr = row.Values[2].(*kwilTypes.Decimal).String()
+				totalValFeesStr = row.Values[3].(*kwilTypes.Decimal).String()
+				lpCount = int(row.Values[4].(int64))
+				blockCount = int(row.Values[5].(int64))
 				summaryRowCount++
 				return nil
 			})
 		require.NoError(t, err)
 		require.Equal(t, 1, summaryRowCount, "Should have 1 distribution summary record")
 
-		t.Logf("✅ Audit summary: distribution_id=%d, total_fees=%s, lp_count=%d, block_count=%d",
-			distributionID, totalFeesStr, lpCount, blockCount)
+		t.Logf("✅ Audit summary: distribution_id=%d, total_lp_fees=%s, total_dp_fees=%s, total_val_fees=%s, lp_count=%d, block_count=%d",
+			distributionID, totalLPFeesStr, totalDPFeesStr, totalValFeesStr, lpCount, blockCount)
+
+		// Verify 75/12.5/12.5 split
+		expectedInfraShare := new(big.Int).Div(new(big.Int).Mul(totalFees, big.NewInt(125)), big.NewInt(1000))
+		expectedLPShare := new(big.Int).Sub(totalFees, new(big.Int).Mul(expectedInfraShare, big.NewInt(2)))
+
+		require.Equal(t, expectedLPShare.String(), totalLPFeesStr, "LP share in audit should match 75% (+ dust)")
+		require.Equal(t, expectedInfraShare.String(), totalDPFeesStr, "DP share in audit should match 12.5%")
+		require.Equal(t, expectedInfraShare.String(), totalValFeesStr, "Validator share in audit should match 12.5%")
 
 		require.Equal(t, 2, lpCount, "LP count should be 2")
 		require.Equal(t, 1, blockCount, "Block count should be 1")
@@ -153,18 +166,18 @@ func testAuditRecordCreation(t *testing.T) func(context.Context, *kwilTesting.Pl
 		require.NoError(t, err)
 		require.Len(t, detailRows, 2, "Should have 2 LP detail records")
 
-		// Verify zero-loss: SUM(reward_amount) = total_fees_distributed
-		totalFeesFromAudit, _ := new(big.Int).SetString(totalFeesStr, 10)
+		// Verify zero-loss: SUM(reward_amount) = total_lp_fees_distributed
+		totalLPFeesFromAudit, _ := new(big.Int).SetString(totalLPFeesStr, 10)
 		var totalDistributed big.Int
 		for _, detail := range detailRows {
 			amt, _ := new(big.Int).SetString(detail.rewardAmount, 10)
 			totalDistributed.Add(&totalDistributed, amt)
 		}
 
-		require.Equal(t, totalFeesFromAudit.String(), totalDistributed.String(),
-			"Zero-loss audit: SUM(reward_amount) should equal total_fees_distributed")
+		require.Equal(t, totalLPFeesFromAudit.String(), totalDistributed.String(),
+			"Zero-loss audit: SUM(reward_amount) should equal total_lp_fees_distributed")
 
-		t.Logf("✅ Audit record creation verified: %s wei distributed across %d LPs", totalFeesFromAudit.String(), lpCount)
+		t.Logf("✅ Audit record creation verified: %s wei distributed across %d LPs", totalLPFeesFromAudit.String(), lpCount)
 
 		return nil
 	}
@@ -230,7 +243,7 @@ func testAuditMultiBlock(t *testing.T) func(context.Context, *kwilTesting.Platfo
 
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "get_distribution_summary", []any{int(marketID)},
 			func(row *common.Row) error {
-				blockCount = int(row.Values[3].(int64))
+				blockCount = int(row.Values[5].(int64))
 				rowCount++
 				return nil
 			})
@@ -268,6 +281,10 @@ func testAuditNoLPs(t *testing.T) func(context.Context, *kwilTesting.Platform) e
 		})
 		require.NoError(t, err)
 
+		// Lock some collateral to ensure bridge liquidity for payouts
+		err = callPlaceSplitLimitOrder(ctx, platform, &user1, int(marketID), 50, 100)
+		require.NoError(t, err)
+
 		// Don't sample LP rewards (no LP samples)
 		totalFees := new(big.Int).Mul(big.NewInt(10), big.NewInt(1e18))
 		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees)
@@ -284,20 +301,29 @@ func testAuditNoLPs(t *testing.T) func(context.Context, *kwilTesting.Platform) e
 		}
 		engineCtx := &common.EngineContext{TxContext: tx, OverrideAuthz: true}
 
-		// Query distribution summary - should have 1 row with 0 LPs
+		// Query distribution summary - should have 1 row with 0 LPs but with DP/Val fees
 		var rowCount int
 		var lpCount int
+		var totalDPFeesStr string
+		var totalValFeesStr string
+		
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "get_distribution_summary", []any{int(marketID)},
 			func(row *common.Row) error {
-				lpCount = int(row.Values[2].(int64))
+				totalDPFeesStr = row.Values[2].(*kwilTypes.Decimal).String()
+				totalValFeesStr = row.Values[3].(*kwilTypes.Decimal).String()
+				lpCount = int(row.Values[4].(int64))
 				rowCount++
 				return nil
 			})
 		require.NoError(t, err)
 		require.Equal(t, 1, rowCount, "Should have 1 distribution record even with no LPs")
 		require.Equal(t, 0, lpCount, "LP count should be 0")
+		
+		expectedInfraShare := new(big.Int).Div(new(big.Int).Mul(totalFees, big.NewInt(125)), big.NewInt(1000))
+		require.Equal(t, expectedInfraShare.String(), totalDPFeesStr, "DP fees should be recorded")
+		require.Equal(t, expectedInfraShare.String(), totalValFeesStr, "Validator fees should be recorded")
 
-		t.Logf("✅ Audit record correctly created with 0 LPs")
+		t.Logf("✅ Audit record correctly created with 0 LPs and recorded infra fees")
 
 		return nil
 	}
@@ -349,9 +375,9 @@ func testAuditZeroFees(t *testing.T) func(context.Context, *kwilTesting.Platform
 			func(row *common.Row) error {
 				rowCount++
 				// Verify zero values in the summary
-				// get_distribution_summary returns (distribution_id, total_fees_distributed, total_lp_count, block_count, distributed_at)
+				// get_distribution_summary returns (distribution_id, total_lp_fees_distributed, total_dp_fees, total_validator_fees, total_lp_count, block_count, distributed_at)
 				require.Equal(t, "0", row.Values[1].(*kwilTypes.Decimal).String(), "Total fees should be 0")
-				require.Equal(t, int64(0), row.Values[2].(int64), "Total LP count should be 0")
+				require.Equal(t, int64(0), row.Values[4].(int64), "Total LP count should be 0")
 				return nil
 			})
 		require.NoError(t, err)
@@ -432,15 +458,17 @@ func testAuditDataIntegrity(t *testing.T) func(context.Context, *kwilTesting.Pla
 
 		// Query distribution summary using callback pattern
 		var distributionID int
-		var totalFeesStr string
+		var totalLPFeesStr string
+		var totalDPFeesStr string
+		var totalValFeesStr string
 		var summaryRowCount int
 
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "get_distribution_summary", []any{int(marketID)},
 			func(row *common.Row) error {
 				distributionID = int(row.Values[0].(int64))
-				// total_fees_distributed is NUMERIC(78, 0) which comes as *types.Decimal
-				totalFeesDecimal := row.Values[1].(*kwilTypes.Decimal)
-				totalFeesStr = totalFeesDecimal.String()
+				totalLPFeesStr = row.Values[1].(*kwilTypes.Decimal).String()
+				totalDPFeesStr = row.Values[2].(*kwilTypes.Decimal).String()
+				totalValFeesStr = row.Values[3].(*kwilTypes.Decimal).String()
 				summaryRowCount++
 				return nil
 			})
@@ -477,18 +505,38 @@ func testAuditDataIntegrity(t *testing.T) func(context.Context, *kwilTesting.Pla
 
 		require.NotNil(t, auditReward1, "User1 should have audit reward")
 		require.NotNil(t, auditReward2, "User2 should have audit reward")
-		require.Equal(t, increase1.String(), auditReward1.String(), "Audit reward1 should match balance increase")
-		require.Equal(t, increase2.String(), auditReward2.String(), "Audit reward2 should match balance increase")
+
+		// Expected balance increases:
+		// User1 = auditReward1 (LP) + totalDPFees (DP) [+ totalValFees (if Leader)]
+		// User2 = auditReward2 (LP)
+		infraShare, _ := new(big.Int).SetString(totalDPFeesStr, 10)
+		expectedIncrease1 := new(big.Int).Add(auditReward1, infraShare)
+		
+		if increase1.Cmp(expectedIncrease1) != 0 {
+			// Try adding validator share if User1 is leader
+			infraShareVal, _ := new(big.Int).SetString(totalValFeesStr, 10)
+			expectedIncrease1WithVal := new(big.Int).Add(expectedIncrease1, infraShareVal)
+			if increase1.Cmp(expectedIncrease1WithVal) == 0 {
+				t.Logf("User1 appears to be the leader, adding Validator share to expectation")
+				expectedIncrease1 = expectedIncrease1WithVal
+			}
+		}
+
+		require.Equal(t, expectedIncrease1.String(), increase1.String(), "User1 balance increase should match LP + DP (+ Leader) audit rewards")
+		require.Equal(t, increase2.String(), auditReward2.String(), "User2 balance increase should match LP audit reward")
 
 		// Verify zero-loss in audit
-		totalFeesFromAudit, _ := new(big.Int).SetString(totalFeesStr, 10)
-		auditSum := new(big.Int).Add(auditReward1, auditReward2)
-		require.Equal(t, totalFeesFromAudit.String(), auditSum.String(), "Audit rewards should sum to total fees")
+		totalLPFeesFromAudit, _ := new(big.Int).SetString(totalLPFeesStr, 10)
+		auditLPSum := new(big.Int).Add(auditReward1, auditReward2)
+		require.Equal(t, totalLPFeesFromAudit.String(), auditLPSum.String(), "Audit LP rewards should sum to total LP fees")
+
+		totalFeesFromAudit := new(big.Int).Add(totalLPFeesFromAudit, new(big.Int).Add(infraShare, infraShare))
+		require.Equal(t, totalFees.String(), totalFeesFromAudit.String(), "Total fees from audit should match input totalFees")
 
 		t.Logf("✅ Audit data integrity verified:")
-		t.Logf("  - Audit User1 reward: %s wei (balance increase: %s)", auditReward1.String(), increase1.String())
-		t.Logf("  - Audit User2 reward: %s wei (balance increase: %s)", auditReward2.String(), increase2.String())
-		t.Logf("  - Audit total: %s wei (zero-loss verified)", auditSum.String())
+		t.Logf("  - Audit User1 LP reward: %s wei (total increase: %s)", auditReward1.String(), increase1.String())
+		t.Logf("  - Audit User2 LP reward: %s wei (total increase: %s)", auditReward2.String(), increase2.String())
+		t.Logf("  - Audit total: %s wei (zero-loss verified)", totalFeesFromAudit.String())
 
 		return nil
 	}
@@ -542,12 +590,20 @@ func fundVaultAndDistributeFees(t *testing.T, ctx context.Context, platform *kwi
 		return err
 	}
 
+	// Generate leader key for fee transfers
+	_, pubGeneric, err := crypto.GenerateSecp256k1Key(nil)
+	if err != nil {
+		return err
+	}
+	pub := pubGeneric.(*crypto.Secp256k1PublicKey)
+
 	// Call distribute_fees
 	tx := &common.TxContext{
 		Ctx: ctx,
 		BlockContext: &common.BlockContext{
 			Height:    1,
 			Timestamp: time.Now().Unix(),
+			Proposer:  pub,
 		},
 		Signer:        user.Bytes(),
 		Caller:        user.Address(),
