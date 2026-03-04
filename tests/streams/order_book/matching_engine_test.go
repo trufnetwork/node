@@ -33,10 +33,7 @@ func giveBalanceChained(ctx context.Context, platform *kwilTesting.Platform, wal
 	trufPointCounter++
 	trufPoint := trufPointCounter
 
-	from := "0x0000000000000000000000000000000000000000"
-	if wallet == from {
-		from = "0x0000000000000000000000000000000000000001"
-	}
+	from := ensureNonZeroAddress(wallet)
 
 	err := testerc20.InjectERC20Transfer(
 		ctx,
@@ -94,10 +91,7 @@ func giveUSDCBalanceChained(ctx context.Context, platform *kwilTesting.Platform,
 	balancePointCounter++
 	usdcPoint := balancePointCounter
 
-	from := "0x0000000000000000000000000000000000000000"
-	if wallet == from {
-		from = "0x0000000000000000000000000000000000000001"
-	}
+	from := ensureNonZeroAddress(wallet)
 
 	err := testerc20.InjectERC20Transfer(
 		ctx,

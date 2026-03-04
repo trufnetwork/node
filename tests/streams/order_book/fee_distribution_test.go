@@ -11,7 +11,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
-	"github.com/trufnetwork/kwil-db/core/crypto"
 	coreauth "github.com/trufnetwork/kwil-db/core/crypto/auth"
 	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
 	erc20bridge "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
@@ -144,9 +143,7 @@ func testDistribution1Block2LPs(t *testing.T) func(context.Context, *kwilTesting
 		require.NoError(t, err)
 
 		// Generate leader key for fee transfers
-		_, pubGeneric, err := crypto.GenerateSecp256k1Key(nil)
-		require.NoError(t, err)
-		pub := pubGeneric.(*crypto.Secp256k1PublicKey)
+		pub := NewTestProposerPub(t)
 
 		tx := &common.TxContext{
 			Ctx: ctx,
@@ -333,9 +330,7 @@ func testDistribution3Blocks2LPs(t *testing.T) func(context.Context, *kwilTestin
 		require.NoError(t, err)
 
 		// Generate leader key for fee transfers
-		_, pubGeneric, err := crypto.GenerateSecp256k1Key(nil)
-		require.NoError(t, err)
-		pub := pubGeneric.(*crypto.Secp256k1PublicKey)
+		pub := NewTestProposerPub(t)
 
 		tx := &common.TxContext{
 			Ctx: ctx,
@@ -478,9 +473,7 @@ func testDistributionNoSamples(t *testing.T) func(context.Context, *kwilTesting.
 		require.NoError(t, err)
 
 		// Generate leader key for fee transfers
-		_, pubGeneric, err := crypto.GenerateSecp256k1Key(nil)
-		require.NoError(t, err)
-		pub := pubGeneric.(*crypto.Secp256k1PublicKey)
+		pub := NewTestProposerPub(t)
 
 		tx := &common.TxContext{
 			Ctx: ctx,
@@ -608,9 +601,7 @@ func testDistributionZeroFees(t *testing.T) func(context.Context, *kwilTesting.P
 		require.NoError(t, err)
 
 		// Generate leader key for fee transfers
-		_, pubGeneric, err := crypto.GenerateSecp256k1Key(nil)
-		require.NoError(t, err)
-		pub := pubGeneric.(*crypto.Secp256k1PublicKey)
+		pub := NewTestProposerPub(t)
 
 		tx := &common.TxContext{
 			Ctx: ctx,
@@ -739,9 +730,7 @@ func testDistribution1LP(t *testing.T) func(context.Context, *kwilTesting.Platfo
 		require.NoError(t, err)
 
 		// Generate leader key for fee transfers
-		_, pubGeneric, err := crypto.GenerateSecp256k1Key(nil)
-		require.NoError(t, err)
-		pub := pubGeneric.(*crypto.Secp256k1PublicKey)
+		pub := NewTestProposerPub(t)
 
 		tx := &common.TxContext{
 			Ctx: ctx,
@@ -791,9 +780,9 @@ func testDistribution1LP(t *testing.T) func(context.Context, *kwilTesting.Platfo
 			expectedDist = totalFees
 		}
 
-		// Verify user got at least LP + DP share
-		require.True(t, dist.Cmp(expectedDist) >= 0,
-			fmt.Sprintf("User1 should get at least LP + DP fees. Got %s, expected at least %s",
+		// Verify user got exactly LP + DP share
+		require.Equal(t, 0, dist.Cmp(expectedDist),
+			fmt.Sprintf("User1 should get exactly LP + DP fees. Got %s, expected %s",
 				dist.String(), expectedDist.String()))
 
 		t.Logf("✅ Single LP (plus DP/Leader roles) correctly received fees: %s", dist.String())

@@ -12,7 +12,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
-	"github.com/trufnetwork/kwil-db/core/crypto"
 	coreauth "github.com/trufnetwork/kwil-db/core/crypto/auth"
 	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
 	erc20bridge "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
@@ -530,7 +529,9 @@ func testAuditDataIntegrity(t *testing.T) func(context.Context, *kwilTesting.Pla
 		auditLPSum := new(big.Int).Add(auditReward1, auditReward2)
 		require.Equal(t, totalLPFeesFromAudit.String(), auditLPSum.String(), "Audit LP rewards should sum to total LP fees")
 
-		totalFeesFromAudit := new(big.Int).Add(totalLPFeesFromAudit, new(big.Int).Add(infraShare, infraShare))
+		totalDPFees, _ := new(big.Int).SetString(totalDPFeesStr, 10)
+		totalValFees, _ := new(big.Int).SetString(totalValFeesStr, 10)
+		totalFeesFromAudit := new(big.Int).Add(totalLPFeesFromAudit, new(big.Int).Add(totalDPFees, totalValFees))
 		require.Equal(t, totalFees.String(), totalFeesFromAudit.String(), "Total fees from audit should match input totalFees")
 
 		t.Logf("✅ Audit data integrity verified:")
@@ -591,11 +592,7 @@ func fundVaultAndDistributeFees(t *testing.T, ctx context.Context, platform *kwi
 	}
 
 	// Generate leader key for fee transfers
-	_, pubGeneric, err := crypto.GenerateSecp256k1Key(nil)
-	if err != nil {
-		return err
-	}
-	pub := pubGeneric.(*crypto.Secp256k1PublicKey)
+	pub := NewTestProposerPub(t)
 
 	// Call distribute_fees
 	tx := &common.TxContext{
