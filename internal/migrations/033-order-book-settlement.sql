@@ -147,27 +147,35 @@ CREATE OR REPLACE ACTION distribute_fees(
         $dp_addr := $row.data_provider;
     }
     
+    $actual_dp_fees NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
     if $dp_addr IS NOT NULL AND $infra_share > '0'::NUMERIC(78, 0) {
         $dp_wallet TEXT := '0x' || encode($dp_addr, 'hex');
         if $bridge = 'hoodi_tt2' {
             hoodi_tt2.unlock($dp_wallet, $infra_share);
+            $actual_dp_fees := $infra_share;
         } else if $bridge = 'sepolia_bridge' {
             sepolia_bridge.unlock($dp_wallet, $infra_share);
+            $actual_dp_fees := $infra_share;
         } else if $bridge = 'ethereum_bridge' {
             ethereum_bridge.unlock($dp_wallet, $infra_share);
+            $actual_dp_fees := $infra_share;
         }
     }
 
     -- Step 2: Payout Validator (Leader) (0.25%)
     -- Use @leader_sender to incentivize active block production
+    $actual_validator_fees NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
     if @leader_sender IS NOT NULL AND $infra_share > '0'::NUMERIC(78, 0) {
         $validator_wallet TEXT := '0x' || encode(@leader_sender, 'hex');
         if $bridge = 'hoodi_tt2' {
             hoodi_tt2.unlock($validator_wallet, $infra_share);
+            $actual_validator_fees := $infra_share;
         } else if $bridge = 'sepolia_bridge' {
             sepolia_bridge.unlock($validator_wallet, $infra_share);
+            $actual_validator_fees := $infra_share;
         } else if $bridge = 'ethereum_bridge' {
             ethereum_bridge.unlock($validator_wallet, $infra_share);
+            $actual_validator_fees := $infra_share;
         }
     }
 
@@ -271,8 +279,8 @@ CREATE OR REPLACE ACTION distribute_fees(
         $distribution_id,
         $query_id,
         $actual_fees_distributed,
-        $infra_share,
-        $infra_share,
+        $actual_dp_fees,
+        $actual_validator_fees,
         $lp_count,
         $block_count,
         @block_timestamp
