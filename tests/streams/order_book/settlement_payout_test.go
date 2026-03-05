@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
+	coreauth "github.com/trufnetwork/kwil-db/core/crypto/auth"
 	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
 	erc20bridge "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
@@ -45,36 +46,52 @@ func testWinnerReceivesFullPayout(t *testing.T) func(context.Context, *kwilTesti
 		userAddr := util.Unsafe_NewEthereumAddressFromString("0x2222222222222222222222222222222222222222")
 		platform.Deployer = userAddr.Bytes()
 
+		// Use a different address for data provider so user doesn't get DP fees
+		dpAddr := util.Unsafe_NewEthereumAddressFromString("0x3333333333333333333333333333333333333333")
+
 		// Setup attestation helper (for signing)
 		helper := attestationTests.NewAttestationTestHelper(t, ctx, platform)
 
-		// Create data provider FIRST
+		// Create data provider FIRST (user needs to be a data provider to create streams)
 		err := setup.CreateDataProvider(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
-		// Give user initial balance (injects to DB) - injects BOTH TRUF and USDC
+		// Also create the other address as a data provider for the market query
+		err = setup.CreateDataProvider(ctx, platform, dpAddr.Address())
+		require.NoError(t, err)
+
+		// Give user initial balance
 		err = giveBalance(ctx, platform, userAddr.Address(), "500000000000000000000")
 		require.NoError(t, err)
 
-		// Initialize ERC20 extension AFTER balance (loads DB instances to singleton)
+		// Initialize ERC20 extension AFTER balance
 		err = erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
-		// Get USDC balance before market operations (payouts are in USDC)
+		// Get USDC balance before market operations
 		balanceBefore, err := getUSDCBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 		t.Logf("User USDC balance before: %s", balanceBefore.String())
 
-		// Use simple stream ID (exactly 32 characters)
-		streamID := "stpayouttest00000000000000000000" // Exactly 32 chars
-		dataProvider := userAddr.Address()
+		// Use simple stream ID
+		streamID := "stpayouttest00000000000000000000"
+		dataProvider := dpAddr.Address()
 
 		// CRITICAL: create_stream + insert_records + get_record must share the SAME
 		// engine context to ensure inserted data is visible within the transaction
-		engineCtx := helper.NewEngineContext()
+		// We use a dedicated context for DP operations
+		dpTx := &common.TxContext{
+			Ctx:           ctx,
+			BlockContext:  &common.BlockContext{Height: 1},
+			Signer:        dpAddr.Bytes(),
+			Caller:        dpAddr.Address(),
+			TxID:          platform.Txid(),
+			Authenticator: coreauth.EthPersonalSignAuth,
+		}
+		dpEngineCtx := &common.EngineContext{TxContext: dpTx}
 
-		// Create primitive stream
-		createRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "create_stream",
+		// Create primitive stream (DP is owner/provider)
+		createRes, err := platform.Engine.Call(dpEngineCtx, platform.DB, "", "create_stream",
 			[]any{streamID, "primitive"},
 			nil)
 		require.NoError(t, err)
@@ -83,7 +100,7 @@ func testWinnerReceivesFullPayout(t *testing.T) func(context.Context, *kwilTesti
 		}
 		t.Logf("✓ Created stream: %s", streamID)
 
-		// Insert outcome data directly using the SAME engineCtx
+		// Insert outcome data directly using the SAME dpEngineCtx
 		eventTime := int64(1000)
 
 		// Create decimal value (1.0 = YES outcome)
@@ -92,10 +109,11 @@ func testWinnerReceivesFullPayout(t *testing.T) func(context.Context, *kwilTesti
 		require.NoError(t, err)
 		t.Logf("✓ Parsed decimal value: %v", valueDecimal)
 
-		// Insert using the same engineCtx so data is visible to subsequent calls
-		insertRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "insert_records",
+		// Insert using the same dpEngineCtx so data is visible to subsequent calls
+		// Use dpAddr as the provider for the record
+		insertRes, err := platform.Engine.Call(dpEngineCtx, platform.DB, "", "insert_records",
 			[]any{
-				[]string{dataProvider},
+				[]string{dpAddr.Address()},
 				[]string{streamID},
 				[]int64{eventTime},
 				[]*kwilTypes.Decimal{valueDecimal},
@@ -106,11 +124,14 @@ func testWinnerReceivesFullPayout(t *testing.T) func(context.Context, *kwilTesti
 			t.Fatalf("insert_records error: %v", insertRes.Error)
 		}
 		t.Logf("✓ Inserted record: provider=%s, stream=%s, time=%d, value=%s",
-			dataProvider, streamID, eventTime, valueStr)
+			dpAddr.Address(), streamID, eventTime, valueStr)
+
+		// Set dataProvider to dpAddr for subsequent attestation and market creation
+		dataProvider = dpAddr.Address()
 
 		// Verify data was inserted by querying directly (reuse same context)
 		var foundData bool
-		getRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "get_record",
+		getRes, err := platform.Engine.Call(dpEngineCtx, platform.DB, "", "get_record",
 			[]any{
 				dataProvider,
 				streamID,
@@ -143,8 +164,8 @@ func testWinnerReceivesFullPayout(t *testing.T) func(context.Context, *kwilTesti
 
 		var requestTxID string
 		var attestationHash []byte
-		engineCtx = helper.NewEngineContext()
-		res, err := platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
+		// Attestations are typically requested by users, but can be anyone
+		res, err := platform.Engine.Call(dpEngineCtx, platform.DB, "", "request_attestation",
 			[]any{
 				dataProvider,
 				streamID,
@@ -182,7 +203,7 @@ func testWinnerReceivesFullPayout(t *testing.T) func(context.Context, *kwilTesti
 		var queryID int
 
 		// Use current time for market creation (before settleTime)
-		engineCtx = helper.NewEngineContext()
+		engineCtx := helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = time.Now().Unix()
 		createMarketRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
 			[]any{testExtensionName, queryComponents, settleTime, maxSpread, minOrderSize},
@@ -220,6 +241,7 @@ func testWinnerReceivesFullPayout(t *testing.T) func(context.Context, *kwilTesti
 		// Settle the market with timestamp after settleTime
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = settleTime + 1
+		engineCtx.TxContext.BlockContext.Proposer = NewTestProposerPub(t)
 		settleRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "settle_market",
 			[]any{queryID},
 			nil)
