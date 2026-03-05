@@ -33,10 +33,8 @@ const (
 // and shared across all test files in this package
 
 var (
-	queriesPointCounter         int64  = 200 // Start from 200 to avoid conflicts
-	lastBalancePointQueries     *int64       // For chaining sepolia_bridge deposits
-	queriesTrufPointCounter     int64  = 300 // Separate counter for TRUF
-	lastTrufBalancePointQueries *int64       // For chaining TRUF deposits
+	lastBalancePointQueries     *int64 // For chaining sepolia_bridge deposits
+	lastTrufBalancePointQueries *int64 // For chaining TRUF deposits
 )
 
 func TestQueries(t *testing.T) {
@@ -875,8 +873,8 @@ func testGetUserCollateralMixed(t *testing.T) func(context.Context, *kwilTesting
 
 func giveBalanceQueries(ctx context.Context, platform *kwilTesting.Platform, wallet string, amountStr string) error {
 	// Inject TRUF first (for market creation fee - always from hoodi_tt)
-	queriesTrufPointCounter++
-	trufPoint := queriesTrufPointCounter
+	(*trufPointCounter)++
+	trufPoint := *trufPointCounter
 
 	err := testerc20.InjectERC20Transfer(
 		ctx, platform,
@@ -896,8 +894,8 @@ func giveBalanceQueries(ctx context.Context, platform *kwilTesting.Platform, wal
 	lastTrufBalancePointQueries = &p
 
 	// Inject sepolia_bridge tokens (for market collateral)
-	queriesPointCounter++
-	currentPoint := queriesPointCounter
+	(*usdcPointCounter)++
+	currentPoint := *usdcPointCounter
 
 	err = testerc20.InjectERC20Transfer(
 		ctx, platform,

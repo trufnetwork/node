@@ -37,6 +37,7 @@
 -- This helper processes all unlocks in a single call, avoiding nested queries in settlement
 -- The $bridge parameter specifies which bridge to use (hoodi_tt2, sepolia_bridge, ethereum_bridge)
 CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
+    $query_id INT, -- Pass query_id for impact recording
     $bridge TEXT,
     $wallet_addresses TEXT[],
     $amounts NUMERIC(78, 0)[]
@@ -52,15 +53,33 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
         SELECT wallet, amount
         FROM UNNEST($wallet_addresses, $amounts) AS u(wallet, amount)
     {
+        $wallet_hex TEXT := $payout.wallet;
+        $amount NUMERIC(78,0) := $payout.amount;
+
         -- Use the correct bridge based on market configuration
         if $bridge = 'hoodi_tt2' {
-            hoodi_tt2.unlock($payout.wallet, $payout.amount);
+            hoodi_tt2.unlock($wallet_hex, $amount);
         } else if $bridge = 'sepolia_bridge' {
-            sepolia_bridge.unlock($payout.wallet, $payout.amount);
+            sepolia_bridge.unlock($wallet_hex, $amount);
         } else if $bridge = 'ethereum_bridge' {
-            ethereum_bridge.unlock($payout.wallet, $payout.amount);
+            ethereum_bridge.unlock($wallet_hex, $amount);
         } else {
             ERROR('Invalid bridge in ob_batch_unlock_collateral: ' || COALESCE($bridge, 'NULL'));
+        }
+
+        -- Record impact for P&L
+        -- Payouts are positive collateral change
+        -- Shares are zero (already deleted in Step 3 of process_settlement)
+        $pid INT;
+        for $p in SELECT id FROM ob_participants WHERE '0x' || encode(wallet_address, 'hex') = $wallet_hex {
+            $pid := $p.id;
+        }
+
+        if $pid IS NOT NULL {
+            -- We don't know the exact outcome here easily, so we just pick TRUE (YES)
+            -- since all-time P&L is usually aggregated across the market anyway.
+            ob_record_net_impact($query_id, $pid, TRUE, 0::INT8, $amount, FALSE -- is_negative
+            );
         }
     }
 };
@@ -261,7 +280,7 @@ CREATE OR REPLACE ACTION distribute_fees(
             $actual_fees_distributed := $lp_share;
 
             -- Step 6: Batch unlock to all qualifying LPs
-            ob_batch_unlock_collateral($bridge, $wallet_addresses, $amounts);
+            ob_batch_unlock_collateral($query_id, $bridge, $wallet_addresses, $amounts);
         }
     }
 
@@ -452,7 +471,7 @@ CREATE OR REPLACE ACTION process_settlement(
 
     -- Step 4: Process ALL payouts in a SINGLE batch call (no nested queries!)
     if $wallet_addresses IS NOT NULL AND COALESCE(array_length($wallet_addresses), 0) > 0 {
-        ob_batch_unlock_collateral($bridge, $wallet_addresses, $amounts);
+        ob_batch_unlock_collateral($query_id, $bridge, $wallet_addresses, $amounts);
     }
 
     -- Step 5: Distribute collected fees to Liquidity Providers

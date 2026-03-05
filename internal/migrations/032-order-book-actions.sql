@@ -532,6 +532,9 @@ CREATE OR REPLACE ACTION match_direct(
     -- Transfer payment from vault to seller
     ob_unlock_collateral($bridge, $seller_wallet_address, $seller_payment);
 
+    -- Record impact for seller payout
+    ob_record_tx_payout($sell_participant_id, $seller_payment);
+
     -- Transfer shares from seller to buyer
     -- Step 1: Delete fully matched orders FIRST (prevents amount=0 constraint violation)
     DELETE FROM ob_positions
@@ -859,6 +862,10 @@ CREATE OR REPLACE ACTION match_burn(
     ob_unlock_collateral($bridge, $yes_wallet_address, $yes_payout);
     ob_unlock_collateral($bridge, $no_wallet_address, $no_payout);
 
+    -- Record impacts for both sellers
+    ob_record_tx_payout($yes_participant_id, $yes_payout);
+    ob_record_tx_payout($no_participant_id, $no_payout);
+
     -- Delete fully matched sell orders FIRST
     DELETE FROM ob_positions
     WHERE query_id = $query_id
@@ -1140,6 +1147,14 @@ CREATE OR REPLACE ACTION place_buy_order(
         }
     }
 
+    -- Track shares before matching for P&L
+    $shares_before INT8 := 0;
+    for $row in SELECT amount FROM ob_positions
+        WHERE query_id = $query_id AND participant_id = $participant_id AND outcome = $outcome AND price = 0
+    {
+        $shares_before := $row.amount;
+    }
+
     -- ==========================================================================
     -- SECTION 5: LOCK COLLATERAL (bridge-specific)
     -- ==========================================================================
@@ -1177,6 +1192,29 @@ CREATE OR REPLACE ACTION place_buy_order(
 
     -- Attempt to match this buy order with existing sell orders
     match_orders($query_id, $outcome, $price, $bridge);
+
+    -- ==========================================================================
+    -- SECTION 8: RECORD NET IMPACT
+    -- ==========================================================================
+    
+    -- Track shares after matching
+    $shares_after INT8 := 0;
+    for $row in SELECT amount FROM ob_positions
+        WHERE query_id = $query_id AND participant_id = $participant_id AND outcome = $outcome AND price = 0
+    {
+        $shares_after := $row.amount;
+    }
+
+    -- Collateral change is negative (spent)
+    -- Shares change is positive (shares gained)
+    ob_record_net_impact(
+        $query_id,
+        $participant_id,
+        $outcome,
+        $shares_after - $shares_before,
+        $collateral_needed,
+        TRUE -- is_negative
+    );
 
     -- Success: Order placed (may be partially or fully matched by future matching engine)
 };
@@ -1320,6 +1358,14 @@ CREATE OR REPLACE ACTION place_sell_order(
               ' shares, trying to sell: ' || $amount::TEXT);
     }
 
+    -- Track shares before matching for P&L
+    $shares_before INT8 := 0;
+    for $row in SELECT amount FROM ob_positions
+        WHERE query_id = $query_id AND participant_id = $participant_id AND outcome = $outcome AND price = 0
+    {
+        $shares_before := $row.amount;
+    }
+
     -- ==========================================================================
     -- SECTION 4: MOVE SHARES FROM HOLDING TO SELL ORDER
     -- ==========================================================================
@@ -1361,6 +1407,35 @@ CREATE OR REPLACE ACTION place_sell_order(
 
     -- Attempt to match this sell order with existing buy orders
     match_orders($query_id, $outcome, $price, $bridge);
+
+    -- ==========================================================================
+    -- SECTION 6: RECORD NET IMPACT
+    -- ==========================================================================
+
+    -- Track shares after matching
+    $shares_after INT8 := 0;
+    for $row in SELECT amount FROM ob_positions
+        WHERE query_id = $query_id AND participant_id = $participant_id AND outcome = $outcome AND price = 0
+    {
+        $shares_after := $row.amount;
+    }
+
+    -- Get total collateral received from matching
+    $payout NUMERIC(78,0) := ob_get_tx_payout($participant_id);
+
+    -- Shares change is negative (shares sold/moved from holdings)
+    -- Collateral change is positive (payouts received)
+    ob_record_net_impact(
+        $query_id,
+        $participant_id,
+        $outcome,
+        $shares_after - $shares_before,
+        $payout,
+        FALSE -- is_negative
+    );
+
+    -- Cleanup temporary payouts
+    ob_cleanup_tx_payouts();
 
     -- Success: Order placed (may be partially or fully matched by future matching engine)
 };
@@ -1541,6 +1616,14 @@ CREATE OR REPLACE ACTION place_split_limit_order(
         }
     }
 
+    -- Track YES holdings before for P&L
+    $shares_before INT8 := 0;
+    for $row in SELECT amount FROM ob_positions
+        WHERE query_id = $query_id AND participant_id = $participant_id AND outcome = TRUE AND price = 0
+    {
+        $shares_before := $row.amount;
+    }
+
     -- ==========================================================================
     -- SECTION 5: LOCK COLLATERAL (bridge-specific)
     -- ==========================================================================
@@ -1597,6 +1680,44 @@ CREATE OR REPLACE ACTION place_split_limit_order(
     -- Attempt to match the NO sell order with existing buy orders
     -- Match is attempted on the FALSE (NO) outcome at the false_price
     match_orders($query_id, FALSE, $false_price, $bridge);
+
+    -- ==========================================================================
+    -- SECTION 9: RECORD NET IMPACT
+    -- ==========================================================================
+
+    -- Track YES holdings after
+    $shares_after INT8 := 0;
+    for $row in SELECT amount FROM ob_positions
+        WHERE query_id = $query_id AND participant_id = $participant_id AND outcome = TRUE AND price = 0
+    {
+        $shares_after := $row.amount;
+    }
+
+    -- Get payouts from matching NO sell order
+    $payout NUMERIC(78,0) := ob_get_tx_payout($participant_id);
+
+    -- Net collateral change: -locked + payouts
+    -- Shares change: net YES shares gained
+    $is_neg BOOL := FALSE;
+    $net_col NUMERIC(78,0) := '0'::NUMERIC(78,0);
+    if $payout < $collateral_needed {
+        $is_neg := TRUE;
+        $net_col := $collateral_needed - $payout;
+    } else {
+        $net_col := $payout - $collateral_needed;
+    }
+
+    ob_record_net_impact(
+        $query_id,
+        $participant_id,
+        TRUE, -- Record against YES side for split orders
+        $shares_after - $shares_before,
+        $net_col,
+        $is_neg
+    );
+
+    -- Cleanup
+    ob_cleanup_tx_payouts();
 
     -- Success: Split order placed
     -- - YES shares held at price=0 (not for sale)
@@ -1725,6 +1846,14 @@ CREATE OR REPLACE ACTION cancel_order(
         ERROR('No participant record found for this wallet');
     }
 
+    -- Track holdings before for P&L
+    $shares_before INT8 := 0;
+    for $row in SELECT amount FROM ob_positions
+        WHERE query_id = $query_id AND participant_id = $participant_id AND outcome = $outcome AND price = 0
+    {
+        $shares_before := $row.amount;
+    }
+
     -- ==========================================================================
     -- SECTION 5: GET ORDER DETAILS
     -- ==========================================================================
@@ -1791,6 +1920,38 @@ CREATE OR REPLACE ACTION cancel_order(
       AND participant_id = $participant_id
       AND outcome = $outcome
       AND price = $price;
+
+    -- ==========================================================================
+    -- SECTION 8: RECORD NET IMPACT
+    -- ==========================================================================
+
+    -- Track shares after
+    $shares_after INT8 := 0;
+    for $row in SELECT amount FROM ob_positions
+        WHERE query_id = $query_id AND participant_id = $participant_id AND outcome = $outcome AND price = 0
+    {
+        $shares_after := $row.amount;
+    }
+
+    -- Record impact
+    -- If buy order (price < 0): collateral_change = refund_amount, shares_change = 0
+    -- If sell order (price > 0): collateral_change = 0, shares_change = returned shares
+    $total_refund NUMERIC(78,0) := '0'::NUMERIC(78,0);
+    if $price < 0 {
+        -- Recalculate refund for impact record
+        $abs_p INT := -$price;
+        $mul NUMERIC(78,0) := '10000000000000000'::NUMERIC(78,0);
+        $total_refund := $order_amount::NUMERIC(78,0) * $abs_p::NUMERIC(78,0) * $mul;
+    }
+
+    ob_record_net_impact(
+        $query_id,
+        $participant_id,
+        $outcome,
+        $shares_after - $shares_before,
+        $total_refund,
+        FALSE -- is_negative
+    );
 
     -- Success: Order cancelled
     -- - For buy orders: Collateral has been refunded

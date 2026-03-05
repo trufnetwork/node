@@ -49,9 +49,7 @@ const (
 )
 
 var (
-	twoTRUF                = mustParseBigInt(marketFee)
-	trufPointCounter int64 = 100   // Counter for TRUF bridge (hoodi_tt)
-	usdcPointCounter int64 = 10000 // Counter for USDC bridge (hoodi_tt2) - far apart to avoid conflicts
+	twoTRUF = mustParseBigInt(marketFee)
 )
 
 func mustParseBigInt(s string) *big.Int {
@@ -423,8 +421,8 @@ func giveBalance(ctx context.Context, platform *kwilTesting.Platform, wallet str
 	orderedsync.ForTestingReset()
 
 	// Inject TRUF balance (use separate counter per bridge, starting fresh each test)
-	trufPointCounter++
-	fmt.Printf("DEBUG giveBalance: Injecting TRUF at point %d\n", trufPointCounter)
+	(*trufPointCounter)++
+	fmt.Printf("DEBUG giveBalance: Injecting TRUF at point %d\n", *trufPointCounter)
 	err := testerc20.InjectERC20Transfer(
 		ctx,
 		platform,
@@ -434,7 +432,7 @@ func giveBalance(ctx context.Context, platform *kwilTesting.Platform, wallet str
 		wallet,
 		wallet,
 		amountStr,
-		trufPointCounter,
+		*trufPointCounter,
 		nil, // No chaining
 	)
 	if err != nil {
@@ -442,8 +440,8 @@ func giveBalance(ctx context.Context, platform *kwilTesting.Platform, wallet str
 	}
 
 	// Inject USDC balance (use separate counter)
-	usdcPointCounter++
-	fmt.Printf("DEBUG giveBalance: Injecting USDC at point %d\n", usdcPointCounter)
+	(*usdcPointCounter)++
+	fmt.Printf("DEBUG giveBalance: Injecting USDC at point %d\n", *usdcPointCounter)
 	err = testerc20.InjectERC20Transfer(
 		ctx,
 		platform,
@@ -453,7 +451,7 @@ func giveBalance(ctx context.Context, platform *kwilTesting.Platform, wallet str
 		wallet,
 		wallet,
 		amountStr,
-		usdcPointCounter,
+		*usdcPointCounter,
 		nil, // No chaining - separate topic from TRUF
 	)
 	if err != nil {
