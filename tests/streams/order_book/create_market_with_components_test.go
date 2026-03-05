@@ -240,6 +240,7 @@ func testCreateMarketRejectsMalformedABI(t *testing.T) func(ctx context.Context,
 		err = callCreateMarketWithComponents(ctx, platform, &userAddr, malformedABI, settleTime, int64(5), int64(100), nil)
 		require.Error(t, err, "malformed ABI should be rejected")
 		// Error should mention decoding or invalid components
+		require.Contains(t, err.Error(), "length insufficient", "error should mention ABI decoding length failure")
 		t.Logf("Malformed ABI error: %v", err)
 
 		return nil
