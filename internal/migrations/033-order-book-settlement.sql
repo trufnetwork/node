@@ -151,29 +151,30 @@ CREATE OR REPLACE ACTION distribute_fees(
         $block_count := $row.cnt;
     }
 
-    -- Step 4: Generate distribution ID and create summary record ALWAYS
+    -- Default values for summary
+    $actual_fees_distributed NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
+    $lp_count INT := 0;
     $distribution_id INT;
     for $row in SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM ob_fee_distributions {
         $distribution_id := $row.next_id;
     }
 
-    -- Default values for summary
-    $actual_fees_distributed NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
-    $lp_count INT := 0;
+    $total_distributed_base NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
+    $remainder NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
+    $min_participant_id INT;
 
     -- If we have samples AND fees to distribute, calculate rewards
-    $wallet_addresses TEXT[];
-    $amounts NUMERIC(78, 0)[];
-    $outcomes BOOL[];
-
     if $block_count > 0 AND $lp_share > '0'::NUMERIC(78, 0) {
+
+        $wallet_addresses TEXT[] := ARRAY[]::TEXT[];
+        $amounts NUMERIC(78, 0)[] := ARRAY[]::NUMERIC(78, 0)[];
+        $outcomes BOOL[] := ARRAY[]::BOOL[];
+
         -- Step 5: Calculate rewards with zero-loss distribution
-        $min_participant_id INT;
         for $row in SELECT MIN(participant_id) as mid FROM ob_rewards WHERE query_id = $query_id {
             $min_participant_id := $row.mid;
         }
 
-        $total_distributed_base NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
         for $row in 
             SELECT SUM((($lp_share::NUMERIC(78, 20) * total_percent_numeric) / (100::NUMERIC(78, 20) * $block_count::NUMERIC(78, 20)))::NUMERIC(78, 0))::NUMERIC(78, 0) as total
             FROM (
@@ -186,7 +187,7 @@ CREATE OR REPLACE ACTION distribute_fees(
             $total_distributed_base := $row.total;
         }
 
-        $remainder NUMERIC(78, 0) := $lp_share - $total_distributed_base;
+        $remainder := $lp_share - $total_distributed_base;
 
         -- Aggregate into arrays for batch processing
         for $result in
@@ -203,24 +204,27 @@ CREATE OR REPLACE ACTION distribute_fees(
             calculated_rewards AS (
                 SELECT
                     participant_id,
-                    '0x' || encode(wallet_address, 'hex') as wallet,
+                    wallet_address,
+                    '0x' || encode(wallet_address, 'hex') as wallet_hex,
                     (($lp_share::NUMERIC(78, 20) * total_percent_numeric) / (100::NUMERIC(78, 20) * $block_count::NUMERIC(78, 20)))::NUMERIC(78, 0) + 
-                    (CASE WHEN participant_id = $min_participant_id THEN $remainder ELSE '0'::NUMERIC(78, 0) END) as final_reward
+                    (CASE WHEN participant_id = $min_participant_id THEN $remainder ELSE '0'::NUMERIC(78, 0) END) as final_reward,
+                    total_percent_numeric
                 FROM participant_totals
-            ),
-            aggregated AS (
-                SELECT
-                    ARRAY_AGG(wallet ORDER BY participant_id) as wallets,
-                    ARRAY_AGG(final_reward::NUMERIC(78, 0) ORDER BY participant_id) as amounts,
-                    ARRAY_AGG($winning_outcome ORDER BY participant_id) as outcomes
-                FROM calculated_rewards
-                WHERE final_reward > '0'::NUMERIC(78, 0)
             )
-            SELECT wallets, amounts, outcomes FROM aggregated
+            SELECT participant_id, wallet_address, wallet_hex, final_reward, total_percent_numeric 
+            FROM calculated_rewards
         {
-            $wallet_addresses := $result.wallets;
-            $amounts := $result.amounts;
-            $outcomes := $result.outcomes;
+            $current_wallet_hex TEXT := $result.wallet_hex;
+            $current_final_reward NUMERIC(78, 0) := $result.final_reward;
+            $current_pid INT := $result.participant_id;
+            $current_wallet_addr BYTEA := $result.wallet_address;
+            $current_reward_percent NUMERIC(10, 2) := $result.total_percent_numeric::NUMERIC(10, 2);
+
+            if $current_final_reward > '0'::NUMERIC(78, 0) {
+                $wallet_addresses := array_append($wallet_addresses, $current_wallet_hex);
+                $amounts := array_append($amounts, $current_final_reward);
+                $outcomes := array_append($outcomes, $winning_outcome);
+            }
         }
 
         if $wallet_addresses IS NOT NULL AND COALESCE(array_length($wallet_addresses), 0) > 0 {
@@ -232,15 +236,57 @@ CREATE OR REPLACE ACTION distribute_fees(
         }
     }
 
-    -- Step 7: Insert distribution summary
+    -- Step 7: Insert distribution summary (ALWAYS, even if $lp_count=0)
     INSERT INTO ob_fee_distributions (
         id, query_id, total_fees_distributed, total_dp_fees, total_validator_fees, total_lp_count, block_count, distributed_at
     ) VALUES (
         $distribution_id, $query_id, $actual_fees_distributed, $actual_dp_fees, $actual_validator_fees, $lp_count, $block_count, @block_timestamp
     );
 
-    -- Step 8: Cleanup processed rewards
-    DELETE FROM ob_rewards WHERE query_id = $query_id;
+    -- Step 7.5: Insert audit details (must be after summary for FK)
+    if $lp_count > 0 {
+        for $result in
+            WITH participant_totals AS (
+                SELECT
+                    r.participant_id,
+                    p.wallet_address,
+                    SUM(r.reward_percent)::NUMERIC(78, 20) as total_percent_numeric
+                FROM ob_rewards r
+                JOIN ob_participants p ON r.participant_id = p.id
+                WHERE r.query_id = $query_id
+                GROUP BY r.participant_id, p.wallet_address
+            ),
+            calculated_rewards AS (
+                SELECT
+                    participant_id,
+                    wallet_address,
+                    (($lp_share::NUMERIC(78, 20) * total_percent_numeric) / (100::NUMERIC(78, 20) * $block_count::NUMERIC(78, 20)))::NUMERIC(78, 0) + 
+                    (CASE WHEN participant_id = $min_participant_id THEN $remainder ELSE '0'::NUMERIC(78, 0) END) as final_reward,
+                    total_percent_numeric
+                FROM participant_totals
+            )
+            SELECT participant_id, wallet_address, final_reward, total_percent_numeric 
+            FROM calculated_rewards
+        {
+            $det_final_reward NUMERIC(78, 0) := $result.final_reward;
+            $det_pid INT := $result.participant_id;
+            $det_wallet_addr BYTEA := $result.wallet_address;
+            $det_reward_percent NUMERIC(10, 2) := $result.total_percent_numeric::NUMERIC(10, 2);
+
+            if $det_final_reward > '0'::NUMERIC(78, 0) {
+                INSERT INTO ob_fee_distribution_details (
+                    distribution_id, participant_id, wallet_address, reward_amount, total_reward_percent
+                ) VALUES (
+                    $distribution_id, $det_pid, $det_wallet_addr, $det_final_reward, $det_reward_percent
+                );
+            }
+        }
+    }
+
+    -- Step 8: Cleanup processed rewards (ONLY if actual distribution happened)
+    if $lp_count > 0 {
+        DELETE FROM ob_rewards WHERE query_id = $query_id;
+    }
 };
 
 -- ============================================================================
