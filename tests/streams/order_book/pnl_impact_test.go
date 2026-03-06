@@ -97,7 +97,6 @@ func testPnLImpactTrading(t *testing.T) func(ctx context.Context, platform *kwil
 		require.Len(t, impacts, 3)
 		
 		// Index 1 & 2 are User B's split order impacts (YES and NO)
-		// One should have -10 collateral and +10 shares, other should have +10 shares and 0 collateral
 		var userBSplitYes *NetImpact
 		var userBSplitNo *NetImpact
 		for i := 1; i < 3; i++ {
@@ -126,7 +125,6 @@ func testPnLImpactTrading(t *testing.T) func(ctx context.Context, platform *kwil
 		// Index 3 & 4 should be the match impacts for Seller (B) and Buyer (A)
 		var matchSeller *NetImpact
 		var matchBuyer *NetImpact
-		// We can distinguish by ParticipantID or by impacts content
 		for i := 3; i < 5; i++ {
 			if impacts[i].SharesChange < 0 {
 				matchSeller = &impacts[i]
@@ -142,7 +140,7 @@ func testPnLImpactTrading(t *testing.T) func(ctx context.Context, platform *kwil
 		require.Equal(t, int64(-10), matchSeller.SharesChange)
 		require.Equal(t, toWei("6").String(), matchSeller.CollateralChange.String())
 		
-		// Buyer (A) gained 10 YES shares, 0 collateral change (already locked)
+		// Buyer (A) gained 10 YES shares, 0 collateral change
 		require.Equal(t, int64(10), matchBuyer.SharesChange)
 		require.Equal(t, toWei("0").String(), matchBuyer.CollateralChange.String())
 
@@ -207,24 +205,32 @@ func testPnLImpactSettlement(t *testing.T) func(ctx context.Context, platform *k
 		require.NoError(t, err)
 		
 		// Expected impacts:
-		// 1. Initial split order (FALSE): +10 shares, 0 collateral
-		// 2. Initial split order (TRUE): +10 shares, -10 TRUF (lock + mint)
-		// 3. Settlement payout (TRUE): +9.8 TRUF
-		require.Len(t, impacts, 3)
+		// 1. Initial split (NO): +10 shares, 0 collateral
+		// 2. Initial split (YES): +10 shares, -10 TRUF
+		// 3. Settlement payout (YES): +9.8 TRUF
+		// 4. Validator reward (YES): +0.025 TRUF (from 0.25% of 10.0 volume)
+		// Total fees collected: 2% of 10.0 = 0.20
+		// Validator share: 12.5% of 0.20 = 0.025
+		require.Len(t, impacts, 4)
 		
 		// Find payout impact
 		var settlementPayout *NetImpact
+		var validatorReward *NetImpact
 		for _, imp := range impacts {
-			// Settlement payout has 0 shares change and positive collateral
-			if imp.SharesChange == 0 && !imp.IsNegative && imp.CollateralChange.Cmp(big.NewInt(0)) > 0 {
-				settlementPayout = &imp
-				break
+			if imp.SharesChange == 0 && !imp.IsNegative {
+				if imp.CollateralChange.String() == toWei("9.8").String() {
+					settlementPayout = &imp
+				} else if imp.CollateralChange.String() == "25000000000000000" {
+					validatorReward = &imp
+				}
 			}
 		}
 		
 		require.NotNil(t, settlementPayout, "settlement payout impact not found")
-		require.Equal(t, toWei("9.8").String(), settlementPayout.CollateralChange.String())
 		require.Equal(t, true, settlementPayout.Outcome, "payout should be recorded against winning outcome")
+		
+		require.NotNil(t, validatorReward, "validator reward impact not found")
+		require.Equal(t, true, validatorReward.Outcome, "validator reward should be recorded against winning outcome")
 
 		return nil
 	}

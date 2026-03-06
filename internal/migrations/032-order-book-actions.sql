@@ -2063,9 +2063,14 @@ CREATE OR REPLACE ACTION change_bid(
         -- Unlock excess amount
         $unlock_amount NUMERIC(78, 0) := $zero - $collateral_delta;  -- Make positive
         ob_unlock_collateral($bridge, @caller, $unlock_amount);
-    }
-    -- If $collateral_delta = 0, no collateral adjustment needed
 
+        -- Record initial impact (refund)
+        ob_record_tx_impact($participant_id, $outcome, 0::INT8, $unlock_amount, FALSE);
+        } else if $collateral_delta > $zero {
+        -- Record initial impact (lock)
+        ob_record_tx_impact($participant_id, $outcome, 0::INT8, $collateral_delta, TRUE);
+        }
+        -- If $collateral_delta = 0, no collateral adjustment needed
     -- ==========================================================================
     -- SECTION 7: DELETE OLD ORDER
     -- ==========================================================================
@@ -2100,6 +2105,12 @@ CREATE OR REPLACE ACTION change_bid(
     -- Try to match new order immediately
     -- Note: match_orders expects positive price (1-99), so use $new_abs_price not $new_price
     match_orders($query_id, $outcome, $new_abs_price, $bridge);
+
+    -- ==========================================================================
+    -- SECTION 10: CLEANUP & MATERIALIZE IMPACTS
+    -- ==========================================================================
+
+    ob_cleanup_tx_payouts($query_id);
 
     -- Success: Buy order price modified atomically
     -- - Old order deleted, new order placed with preserved timestamp
@@ -2362,6 +2373,12 @@ CREATE OR REPLACE ACTION change_ask(
 
     -- Try to match new order immediately
     match_orders($query_id, $outcome, $new_price, $bridge);
+
+    -- ==========================================================================
+    -- SECTION 9: CLEANUP & MATERIALIZE IMPACTS
+    -- ==========================================================================
+
+    ob_cleanup_tx_payouts($query_id);
 
     -- Success: Sell order price modified atomically
     -- - Old order deleted, new order placed with preserved timestamp

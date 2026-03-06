@@ -7,30 +7,6 @@
  * - Refund open buy orders
  * - Delete all positions atomically
  * - Zero-sum settlement: losers fund winners
- *
- * Implementation Note:
- * Uses CTE + ARRAY_AGG to collect all payout data in a single query, then
- * processes payouts via batch unlock. This avoids nested queries in the main
- * settlement action (Kuneiform limitation: cannot call external functions
- * like ethereum_bridge.unlock() inside FOR loops in the same action).
- *
- * The batch unlock helper (ob_batch_unlock_collateral) CAN loop with function
- * calls because it's a separate action called ONCE with all aggregated data.
- *
- * Transaction Atomicity:
- * All Kwil actions execute in a single database transaction. If ANY operation
- * fails (including ethereum_bridge.unlock()), the ENTIRE action rolls back:
- * - Database changes (position deletions, settled flag) are reverted
- * - Blockchain state changes are NOT committed (Kwil's 2-phase approach)
- * - The settled flag remains false, allowing the settlement extension to retry
- *
- * Retry Mechanism:
- * The tn_settlement extension retries failed settlements (3 attempts with backoff).
- * After exhaustion, the market remains unsettled and requires manual intervention
- * or extension restart to resume retries. This is safe because:
- * 1. The settled flag prevents duplicate settlement attempts within a transaction
- * 2. Rollback ensures partial state never persists
- * 3. Position data remains intact for retry attempts
  */
 
 -- Batch unlock collateral for multiple wallets
@@ -41,21 +17,22 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
     $bridge TEXT,
     $wallet_addresses TEXT[],
     $amounts NUMERIC(78, 0)[],
-    $outcome BOOL
+    $outcomes BOOL[]
 ) PRIVATE {
     -- Validate input arrays have same length
-    if COALESCE(array_length($wallet_addresses), 0) != COALESCE(array_length($amounts), 0) {
-        ERROR('wallet_addresses and amounts arrays must have the same length');
+    if COALESCE(array_length($wallet_addresses), 0) != COALESCE(array_length($amounts), 0) OR
+       COALESCE(array_length($wallet_addresses), 0) != COALESCE(array_length($outcomes), 0) {
+        ERROR('wallet_addresses, amounts and outcomes arrays must have the same length');
     }
 
-    -- Process each unlock (this is the ONLY place we loop with function calls)
-    -- This is safe because the settlement action calls THIS function once with all data
+    -- Process each unlock
     for $payout in
-        SELECT wallet, amount
-        FROM UNNEST($wallet_addresses, $amounts) AS u(wallet, amount)
+        SELECT wallet, amount, outcome
+        FROM UNNEST($wallet_addresses, $amounts, $outcomes) AS u(wallet, amount, outcome)
     {
         $wallet_hex TEXT := $payout.wallet;
         $amount NUMERIC(78,0) := $payout.amount;
+        $current_outcome BOOL := $payout.outcome;
 
         -- Use the correct bridge based on market configuration
         if $bridge = 'hoodi_tt2' {
@@ -69,16 +46,14 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
         }
 
         -- Record impact for P&L
-        -- Payouts are positive collateral change
-        -- Shares are zero (already deleted in Step 3 of process_settlement)
         $pid INT;
         for $p in SELECT id FROM ob_participants WHERE '0x' || encode(wallet_address, 'hex') = $wallet_hex {
             $pid := $p.id;
         }
 
         if $pid IS NOT NULL {
-            -- Use the actual outcome passed from settlement context
-            ob_record_net_impact($query_id, $pid, $outcome, 0::INT8, $amount, FALSE);
+            -- Use the actual outcome for this specific payout
+            ob_record_net_impact($query_id, $pid, $current_outcome, 0::INT8, $amount, FALSE);
         }
     }
 };
@@ -88,56 +63,14 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
 -- ============================================================================
 
 /**
- * distribute_fees($query_id, $total_fees)
+ * distribute_fees($query_id, $total_fees, $winning_outcome)
  *
  * Distributes redemption fees to liquidity providers based on sampled rewards.
- * Called automatically at the end of process_settlement() with the 2% fees
- * collected from winning position redemptions.
- *
- * Fee Source:
- * - 2% redemption fee is collected from winning positions at settlement
- * - Winners receive $0.98 per share, the $0.02 goes to LP fee pool
- * - This fee pool is distributed proportionally to LPs based on ob_rewards samples
- *
- * DYNAMIC REWARDS MODEL:
- * Uses the ob_rewards table populated by periodic sample_lp_rewards() calls.
- * Fees are distributed proportionally across all sampled blocks.
- *
- * Zero-Loss Distribution Algorithm:
- * 1. total_percent = SUM(reward_percent) across all blocks for each participant
- * 2. base_reward = (total_fees * total_percent) / (100 * block_count)
- * 3. dust = total_fees - SUM(base_reward)
- * 4. first_participant gets base_reward + dust (ensures all fees distributed)
- *
- * This approach minimizes truncation (single point vs per-block) and ensures
- * zero fee loss by giving the remainder to the first participant.
- *
- * AUDIT TRAIL:
- * Before deleting ob_rewards, creates immutable records in:
- * - ob_fee_distributions: Summary (query_id, total_fees, LP count, timestamp)
- * - ob_fee_distribution_details: Per-LP rewards (participant_id, amount, percent)
- *
- * This ensures full traceability for compliance and user verification.
- *
- * Parameters:
- * - $query_id: Market ID
- * - $total_fees: Total trading fees to distribute, in wei
- *
- * Behavior:
- * - No samples → fees remain in vault (safe accumulation), NO audit record
- * - Distributes proportionally across sampled blocks with zero loss
- * - Creates audit records in ob_fee_distributions tables
- * - Deletes processed rewards from ob_rewards table
- *
- * Dependencies:
- * - ob_rewards table (created in migration 034)
- * - ob_fee_distributions tables (created in migration 036)
- * - ob_batch_unlock_collateral() helper (defined above)
- * - ethereum_bridge.unlock() (from Migration 031)
  */
 CREATE OR REPLACE ACTION distribute_fees(
     $query_id INT,
-    $total_fees NUMERIC(78, 0)
+    $total_fees NUMERIC(78, 0),
+    $winning_outcome BOOL
 ) PRIVATE {
     -- Get market details for fee split and unlock
     $bridge TEXT;
@@ -151,8 +84,6 @@ CREATE OR REPLACE ACTION distribute_fees(
     }
 
     -- Step 0: Calculate Shares (75/12.5/12.5 split)
-    -- Target: 1.5% (LPs), 0.25% (DP), 0.25% (Validator) out of 2.0% total fees
-    -- Split of the 2.0% pool: 75% LPs, 12.5% DP, 12.5% Validator
     $lp_share NUMERIC(78, 0) := ($total_fees * 75::NUMERIC(78, 0)) / 100::NUMERIC(78, 0);
     $infra_share NUMERIC(78, 0) := ($total_fees * 125::NUMERIC(78, 0)) / 1000::NUMERIC(78, 0);
     
@@ -178,10 +109,18 @@ CREATE OR REPLACE ACTION distribute_fees(
             ethereum_bridge.unlock($dp_wallet, $infra_share);
             $actual_dp_fees := $infra_share;
         }
+
+        -- Record DP reward impact (against winning side)
+        $dp_pid INT;
+        for $p in SELECT id FROM ob_participants WHERE wallet_address = $dp_addr {
+            $dp_pid := $p.id;
+        }
+        if $dp_pid IS NOT NULL {
+            ob_record_net_impact($query_id, $dp_pid, $winning_outcome, 0::INT8, $infra_share, FALSE);
+        }
     }
 
     -- Step 2: Payout Validator (Leader) (0.25%)
-    -- Use @leader_sender to incentivize active block production
     $actual_validator_fees NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
     if @leader_sender IS NOT NULL AND $infra_share > '0'::NUMERIC(78, 0) {
         $validator_wallet TEXT := '0x' || encode(@leader_sender, 'hex');
@@ -194,6 +133,15 @@ CREATE OR REPLACE ACTION distribute_fees(
         } else if $bridge = 'ethereum_bridge' {
             ethereum_bridge.unlock($validator_wallet, $infra_share);
             $actual_validator_fees := $infra_share;
+        }
+
+        -- Record Validator reward impact (against winning side)
+        $val_pid INT;
+        for $p in SELECT id FROM ob_participants WHERE wallet_address = @leader_sender {
+            $val_pid := $p.id;
+        }
+        if $val_pid IS NOT NULL {
+            ob_record_net_impact($query_id, $val_pid, $winning_outcome, 0::INT8, $infra_share, FALSE);
         }
     }
 
@@ -216,16 +164,15 @@ CREATE OR REPLACE ACTION distribute_fees(
     -- If we have samples AND fees to distribute, calculate rewards
     $wallet_addresses TEXT[];
     $amounts NUMERIC(78, 0)[];
+    $outcomes BOOL[];
 
     if $block_count > 0 AND $lp_share > '0'::NUMERIC(78, 0) {
         -- Step 5: Calculate rewards with zero-loss distribution
-        -- Get the first participant ID to handle the remainder (dust)
         $min_participant_id INT;
         for $row in SELECT MIN(participant_id) as mid FROM ob_rewards WHERE query_id = $query_id {
             $min_participant_id := $row.mid;
         }
 
-        -- Calculate total distributed to find the remainder
         $total_distributed_base NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
         for $row in 
             SELECT SUM((($lp_share::NUMERIC(78, 20) * total_percent_numeric) / (100::NUMERIC(78, 20) * $block_count::NUMERIC(78, 20)))::NUMERIC(78, 0))::NUMERIC(78, 0) as total
@@ -256,22 +203,24 @@ CREATE OR REPLACE ACTION distribute_fees(
             calculated_rewards AS (
                 SELECT
                     participant_id,
-                    wallet_address,
+                    '0x' || encode(wallet_address, 'hex') as wallet,
                     (($lp_share::NUMERIC(78, 20) * total_percent_numeric) / (100::NUMERIC(78, 20) * $block_count::NUMERIC(78, 20)))::NUMERIC(78, 0) + 
                     (CASE WHEN participant_id = $min_participant_id THEN $remainder ELSE '0'::NUMERIC(78, 0) END) as final_reward
                 FROM participant_totals
             ),
             aggregated AS (
                 SELECT
-                    ARRAY_AGG('0x' || encode(wallet_address, 'hex') ORDER BY participant_id) as wallets,
-                    ARRAY_AGG(final_reward ORDER BY participant_id) as amounts
+                    ARRAY_AGG(wallet ORDER BY participant_id) as wallets,
+                    ARRAY_AGG(final_reward::NUMERIC(78, 0) ORDER BY participant_id) as amounts,
+                    ARRAY_AGG($winning_outcome ORDER BY participant_id) as outcomes
                 FROM calculated_rewards
                 WHERE final_reward > '0'::NUMERIC(78, 0)
             )
-            SELECT wallets, amounts FROM aggregated
+            SELECT wallets, amounts, outcomes FROM aggregated
         {
             $wallet_addresses := $result.wallets;
             $amounts := $result.amounts;
+            $outcomes := $result.outcomes;
         }
 
         if $wallet_addresses IS NOT NULL AND COALESCE(array_length($wallet_addresses), 0) > 0 {
@@ -279,264 +228,113 @@ CREATE OR REPLACE ACTION distribute_fees(
             $actual_fees_distributed := $lp_share;
 
             -- Step 6: Batch unlock to all qualifying LPs
-            -- Record LP rewards against TRUE outcome for P&L tracking
-            ob_batch_unlock_collateral($query_id, $bridge, $wallet_addresses, $amounts, TRUE);
+            ob_batch_unlock_collateral($query_id, $bridge, $wallet_addresses, $amounts, $outcomes);
         }
     }
 
     -- Step 7: Insert distribution summary
     INSERT INTO ob_fee_distributions (
-        id,
-        query_id,
-        total_fees_distributed,
-        total_dp_fees,
-        total_validator_fees,
-        total_lp_count,
-        block_count,
-        distributed_at
+        id, query_id, total_fees_distributed, total_dp_fees, total_validator_fees, total_lp_count, block_count, distributed_at
     ) VALUES (
-        $distribution_id,
-        $query_id,
-        $actual_fees_distributed,
-        $actual_dp_fees,
-        $actual_validator_fees,
-        $lp_count,
-        $block_count,
-        @block_timestamp
+        $distribution_id, $query_id, $actual_fees_distributed, $actual_dp_fees, $actual_validator_fees, $lp_count, $block_count, @block_timestamp
     );
 
-    -- Step 8: Insert per-LP details (only if LPs exist)
-    if $lp_count > 0 {
-        for $payout in SELECT wallet, amount FROM UNNEST($wallet_addresses, $amounts) AS p(wallet, amount) {
-            $wallet_hex TEXT := $payout.wallet;
-            $reward_amount NUMERIC(78, 0) := $payout.amount;
-
-            $pid INT;
-            $wallet_bytes BYTEA;
-            $total_reward_pct NUMERIC(10, 2);
-
-            for $p_data in SELECT id, wallet_address FROM ob_participants WHERE '0x' || encode(wallet_address, 'hex') = $wallet_hex {
-                $pid := $p_data.id;
-                $wallet_bytes := $p_data.wallet_address;
-                
-                $total_reward_pct := 0::NUMERIC(10,2);
-                for $pct_row in SELECT SUM(reward_percent::NUMERIC(10,2))::NUMERIC(10,2) as sum_pct FROM ob_rewards WHERE query_id = $query_id AND participant_id = $pid {
-                    if $pct_row.sum_pct IS NOT NULL {
-                        $total_reward_pct := $pct_row.sum_pct / $block_count::NUMERIC(10,2);
-                    }
-                }
-            }
-
-            INSERT INTO ob_fee_distribution_details (
-                distribution_id,
-                participant_id,
-                wallet_address,
-                reward_amount,
-                total_reward_percent
-            ) VALUES (
-                $distribution_id,
-                $pid,
-                $wallet_bytes,
-                $reward_amount,
-                $total_reward_pct
-            );
-        }
-    }
-
-    -- Step 9: Cleanup
-    if $lp_count > 0 {
-        DELETE FROM ob_rewards WHERE query_id = $query_id;
-    }
+    -- Step 8: Cleanup processed rewards
+    DELETE FROM ob_rewards WHERE query_id = $query_id;
 };
 
--- Process settlement: Pay winners (minus 2% fee), refund open buys, distribute LP rewards
---
--- Fee Model (per Latest.md authoritative design):
--- - 2% redemption fee is collected from winning positions at settlement
--- - This fee is distributed to Liquidity Providers based on sampled rewards (ob_rewards)
--- - Open buy orders are refunded in full (no fee)
--- - Losing positions get nothing (deleted)
---
--- This follows the Polymarket model where LPs are compensated for providing liquidity
--- through a percentage of settlement redemptions.
+-- ============================================================================
+-- Main Settlement Process
+-- ============================================================================
+
+/**
+ * process_settlement($query_id, $winning_outcome)
+ *
+ * Internal helper to handle the state changes and payouts for settlement.
+ */
 CREATE OR REPLACE ACTION process_settlement(
     $query_id INT,
     $winning_outcome BOOL
 ) PRIVATE {
-    $one_token NUMERIC(78, 0) := '1000000000000000000'::NUMERIC(78, 0);
-    $fee_rate INT := 2;  -- 2% redemption fee for LP rewards
-
-    -- Get market's bridge for unlock operations
+    -- SECTION 0: GET MARKET BRIDGE
     $bridge TEXT;
     for $row in SELECT bridge FROM ob_queries WHERE id = $query_id {
         $bridge := $row.bridge;
     }
-    if $bridge IS NULL {
-        ERROR('Market not found for query_id: ' || $query_id::TEXT);
-    }
 
-    -- Step 1: Bulk delete all losing positions (efficient single operation)
-    -- Price semantics: price=0 (holdings), price>0 (open sells), price<0 (open buys)
-    -- Deletes losing outcome holdings and sells, which have zero value after settlement
-    -- This removes ~50% of positions upfront
-    DELETE FROM ob_positions
-    WHERE query_id = $query_id
-      AND outcome = NOT $winning_outcome
-      AND price >= 0;  -- Holdings (price=0) and open sells (price>0) only
-
-    -- Step 2: Collect ALL payout data using CTE + ARRAY_AGG (digest pattern!)
-    -- Calculate payouts (with 2% fee for winners) and aggregate into arrays in a SINGLE query
+    -- SECTION 1: CALCULATE PAYOUTS (Winners and Buy Refunds)
     $wallet_addresses TEXT[];
     $amounts NUMERIC(78, 0)[];
+    $outcomes BOOL[];
     $total_fees NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
 
+    -- Aggregate ALL payouts in one query to avoid nested loops
     for $result in
-    WITH remaining_positions AS (
-        SELECT
-            p.participant_id,
-            p.outcome,
-            p.price,
-            p.amount,
-            '0x' || encode(part.wallet_address, 'hex') as wallet_address
-        FROM ob_positions p
-        JOIN ob_participants part ON p.participant_id = part.id
-        WHERE p.query_id = $query_id
-    ),
-    calculated_values AS (
-        SELECT
-            wallet_address,
-            price,
-            amount::NUMERIC(78, 0) as amount_numeric,
-            -- Pre-calculate all monetary values to avoid CASE type issues
-            -- All amounts cast to NUMERIC(78, 0) to match ethereum_bridge.unlock() API
-            -- Winners get 98% (100% - 2% fee) per share
-            -- Gross payout = amount * $1.00
-            (amount::NUMERIC(78, 0) * $one_token)::NUMERIC(78, 0) as gross_payout,
-            -- Net payout = gross * (100 - fee_rate) / 100 = gross * 98 / 100
-            ((amount::NUMERIC(78, 0) * $one_token * (100 - $fee_rate)::NUMERIC(78, 0)) / 100::NUMERIC(78, 0))::NUMERIC(78, 0) as winner_payout,
-            -- Fee = gross * fee_rate / 100 = gross * 2 / 100
-            ((amount::NUMERIC(78, 0) * $one_token * $fee_rate::NUMERIC(78, 0)) / 100::NUMERIC(78, 0))::NUMERIC(78, 0) as fee_amount,
-            -- Refund for open buys (full amount, no fee)
-            ((amount::NUMERIC(78, 0) * abs(price)::NUMERIC(78, 0) * $one_token) / 100::NUMERIC(78, 0))::NUMERIC(78, 0) as refund_amount
-        FROM remaining_positions
-    ),
-    payouts AS (
-        SELECT
-            wallet_address,
-            price,
-            -- Remaining positions after Step 1 are:
-            -- 1. Winning holdings/sells (price >= 0): Pay shares × $0.98 (2% fee)
-            -- 2. Open buy orders (price < 0): Refund locked collateral (no fee)
-            CASE
-                WHEN price >= 0 THEN winner_payout
-                ELSE refund_amount
-            END as payout_amount,
-            -- Track fees (only from winning positions, not refunds)
-            CASE
-                WHEN price >= 0 THEN fee_amount
-                ELSE '0'::NUMERIC(78, 0)
-            END as fee_collected
-        FROM calculated_values
-    ),
-    wallet_totals AS (
-        -- Group by wallet to handle multiple positions per user
-        SELECT
-            wallet_address,
-            SUM(payout_amount)::NUMERIC(78, 0) as total_payout
-        FROM payouts
-        GROUP BY wallet_address
-    ),
-    fee_total AS (
-        -- Calculate total fees collected from all winning positions
-        SELECT COALESCE(SUM(fee_collected)::NUMERIC(78, 0), '0'::NUMERIC(78, 0)) as fees
-        FROM payouts
-    ),
-    aggregated AS (
-        SELECT
-            ARRAY_AGG(wallet_address ORDER BY wallet_address) as wallets,
-            ARRAY_AGG(total_payout::NUMERIC(78, 0) ORDER BY wallet_address) as amounts,
-            (SELECT fees FROM fee_total) as total_fees
-        FROM wallet_totals
-    )
-    SELECT wallets, amounts, total_fees
-    FROM aggregated
+        WITH calculated_payouts AS (
+            SELECT
+                '0x' || encode(p.wallet_address, 'hex') as wallet,
+                CASE
+                    WHEN pos.price >= 0 THEN ((pos.amount::NUMERIC(78, 0) * '1000000000000000000'::NUMERIC(78, 0) * 98::NUMERIC(78, 0)) / 100::NUMERIC(78, 0))
+                    ELSE (pos.amount::NUMERIC(78, 0) * abs(pos.price)::NUMERIC(78, 0) * '10000000000000000'::NUMERIC(78, 0))
+                END as amount,
+                CASE
+                    WHEN pos.price >= 0 THEN $winning_outcome
+                    ELSE pos.outcome
+                END as outcome,
+                CASE
+                    WHEN pos.price >= 0 THEN ((pos.amount::NUMERIC(78, 0) * '1000000000000000000'::NUMERIC(78, 0) * 2::NUMERIC(78, 0)) / 100::NUMERIC(78, 0))
+                    ELSE '0'::NUMERIC(78, 0)
+                END as fee
+            FROM ob_positions pos
+            JOIN ob_participants p ON pos.participant_id = p.id
+            WHERE pos.query_id = $query_id
+              AND (
+                (pos.price >= 0 AND pos.outcome = $winning_outcome) -- Winners
+                OR (pos.price < 0) -- All open buy orders get refunded
+              )
+        ),
+        aggregated AS (
+            SELECT
+                ARRAY_AGG(wallet) as wallets,
+                ARRAY_AGG(amount::NUMERIC(78, 0)) as amounts,
+                ARRAY_AGG(outcome) as outcomes,
+                SUM(fee)::NUMERIC(78, 0) as fees
+            FROM calculated_payouts
+        )
+        SELECT wallets, amounts, outcomes, COALESCE(fees, '0'::NUMERIC(78, 0)) as fees FROM aggregated
     {
         $wallet_addresses := $result.wallets;
         $amounts := $result.amounts;
-        $total_fees := $result.total_fees;
+        $outcomes := $result.outcomes;
+        $total_fees := $result.fees;
     }
 
-    -- Step 3: Delete all processed positions (set-based, no loop!)
+    -- Step 2: Delete all positions for this market atomically
     DELETE FROM ob_positions WHERE query_id = $query_id;
 
-    -- Step 4: Process ALL payouts in a SINGLE batch call (no nested queries!)
+    -- Step 3: Process ALL payouts in a SINGLE batch call
     if $wallet_addresses IS NOT NULL AND COALESCE(array_length($wallet_addresses), 0) > 0 {
-        -- Use the actual winning outcome for P&L tracking
-        ob_batch_unlock_collateral($query_id, $bridge, $wallet_addresses, $amounts, $winning_outcome);
+        ob_batch_unlock_collateral($query_id, $bridge, $wallet_addresses, $amounts, $outcomes);
     }
 
-    -- Step 5: Distribute collected fees to Liquidity Providers
-    -- The 2% redemption fee is distributed proportionally based on sampled LP rewards
-    -- If no LP rewards were sampled, fees remain in the vault (safe accumulation)
+    -- Step 4: Distribute collected fees
     if $total_fees IS NOT NULL AND $total_fees > '0'::NUMERIC(78, 0) {
-        distribute_fees($query_id, $total_fees);
+        distribute_fees($query_id, $total_fees, $winning_outcome);
     }
 };
 
--- =============================================================================
--- trigger_fee_distribution: Public action to manually trigger LP fee distribution
--- =============================================================================
-/**
- * Manually triggers fee distribution for a market. Only callable by network_writer role.
- *
- * NOTE: In normal operation, fees are distributed automatically during settlement
- * via process_settlement() which calls distribute_fees() with the 2% redemption fees.
- *
- * This manual trigger is provided for:
- * - Recovery scenarios if settlement failed partway through
- * - Additional LP incentive programs funded externally
- * - Testing and debugging
- *
- * Parameters:
- * - $query_id: Market ID
- * - $total_fees: Total fees to distribute (in wei, e.g., "1000000000000000000" for 1 token)
- *
- * Prerequisites:
- * - Market must have LP rewards sampled (ob_rewards records)
- * - Caller must have network_writer role
- */
+-- Public trigger
 CREATE OR REPLACE ACTION trigger_fee_distribution(
     $query_id INT,
-    $total_fees TEXT
+    $total_fees TEXT,
+    $winning_outcome BOOL
 ) PUBLIC {
-    -- Check caller has network_writer role
     $has_role BOOL := FALSE;
-
-    for $row in SELECT 1 FROM role_members
-        WHERE owner = 'system'
-          AND role_name = 'network_writer'
-          AND wallet = LOWER(@caller)
-        LIMIT 1
-    {
+    for $row in SELECT 1 FROM role_members WHERE owner = 'system' AND role_name = 'network_writer' AND wallet = LOWER(@caller) LIMIT 1 {
         $has_role := TRUE;
     }
+    if $has_role = FALSE { ERROR('Only network_writer can trigger fee distribution'); }
 
-    if $has_role = FALSE {
-        ERROR('Only network_writer can trigger fee distribution');
-    }
-
-    -- Validate query_id
-    if $query_id IS NULL OR $query_id < 1 {
-        ERROR('Invalid query_id');
-    }
-
-    -- Convert total_fees string to NUMERIC
     $fees NUMERIC(78, 0) := $total_fees::NUMERIC(78, 0);
-
-    if $fees IS NULL OR $fees < 0 {
-        ERROR('Invalid total_fees amount');
-    }
-
-    -- Call the private distribute_fees action
-    distribute_fees($query_id, $fees);
+    distribute_fees($query_id, $fees, $winning_outcome);
 }
