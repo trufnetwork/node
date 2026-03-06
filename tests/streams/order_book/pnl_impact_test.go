@@ -88,28 +88,65 @@ func testPnLImpactTrading(t *testing.T) func(ctx context.Context, platform *kwil
 		require.Equal(t, toWei("-6").String(), impacts[0].CollateralChange.String())
 
 		// 4. User B places Split Order: 10 pairs @ $0.60
-		// Mint 10 pairs (locks 10 TRUF) -> holds 10 YES, sells 10 NO @ 0.40
+		// Mint 10 pairs (locks 10 TRUF) -> holds 10 YES, holds 10 NO (listed)
 		err = callPlaceSplitLimitOrder(ctx, platform, &userB, int(marketID), 60, 10)
 		require.NoError(t, err)
 		
-		// User B now has 10 YES holdings. Let's sell them to User A.
+		impacts, err = getNetImpacts(ctx, platform, int(marketID))
+		require.NoError(t, err)
+		require.Len(t, impacts, 3)
+		
+		// Index 1 & 2 are User B's split order impacts (YES and NO)
+		// One should have -10 collateral and +10 shares, other should have +10 shares and 0 collateral
+		var userBSplitYes *NetImpact
+		var userBSplitNo *NetImpact
+		for i := 1; i < 3; i++ {
+			if impacts[i].Outcome {
+				userBSplitYes = &impacts[i]
+			} else {
+				userBSplitNo = &impacts[i]
+			}
+		}
+		require.NotNil(t, userBSplitYes)
+		require.NotNil(t, userBSplitNo)
+		require.Equal(t, int64(10), userBSplitYes.SharesChange)
+		require.Equal(t, toWei("-10").String(), userBSplitYes.CollateralChange.String())
+		require.Equal(t, int64(10), userBSplitNo.SharesChange)
+		require.Equal(t, toWei("0").String(), userBSplitNo.CollateralChange.String())
+
+		// 5. User B sells YES holdings to User A
 		err = callPlaceSellOrder(ctx, platform, &userB, int(marketID), true, 60, 10)
 		require.NoError(t, err)
 
 		// Verify impacts after match
 		impacts, err = getNetImpacts(ctx, platform, int(marketID))
 		require.NoError(t, err)
-		require.Len(t, impacts, 3)
+		require.Len(t, impacts, 5)
 		
-		// Check User B split order impact (index 1)
-		require.Equal(t, int64(10), impacts[1].SharesChange)
-		require.Equal(t, toWei("-10").String(), impacts[1].CollateralChange.String())
+		// Index 3 & 4 should be the match impacts for Seller (B) and Buyer (A)
+		var matchSeller *NetImpact
+		var matchBuyer *NetImpact
+		// We can distinguish by ParticipantID or by impacts content
+		for i := 3; i < 5; i++ {
+			if impacts[i].SharesChange < 0 {
+				matchSeller = &impacts[i]
+			} else {
+				matchBuyer = &impacts[i]
+			}
+		}
 		
-		// Check User B sell order impact (index 2)
-		require.Equal(t, int64(-10), impacts[2].SharesChange)
-		require.Equal(t, toWei("6").String(), impacts[2].CollateralChange.String())
+		require.NotNil(t, matchSeller, "match seller impact not found")
+		require.NotNil(t, matchBuyer, "match buyer impact not found")
+		
+		// Seller (B) lost 10 YES shares, gained 6 TRUF
+		require.Equal(t, int64(-10), matchSeller.SharesChange)
+		require.Equal(t, toWei("6").String(), matchSeller.CollateralChange.String())
+		
+		// Buyer (A) gained 10 YES shares, 0 collateral change (already locked)
+		require.Equal(t, int64(10), matchBuyer.SharesChange)
+		require.Equal(t, toWei("0").String(), matchBuyer.CollateralChange.String())
 
-		// 5. Test Cancel Order
+		// 6. Test Cancel Order
 		err = callPlaceBuyOrder(ctx, platform, &userA, int(marketID), true, 50, 10)
 		require.NoError(t, err)
 		
@@ -118,7 +155,7 @@ func testPnLImpactTrading(t *testing.T) func(ctx context.Context, platform *kwil
 		
 		impacts, err = getNetImpacts(ctx, platform, int(marketID))
 		require.NoError(t, err)
-		require.Len(t, impacts, 5)
+		require.Len(t, impacts, 7)
 		
 		// Last impact should be the cancel refund (+5 TRUF)
 		lastImpact := impacts[len(impacts)-1]
@@ -169,9 +206,25 @@ func testPnLImpactSettlement(t *testing.T) func(ctx context.Context, platform *k
 		impacts, err := getNetImpacts(ctx, platform, int(marketID))
 		require.NoError(t, err)
 		
-		require.Len(t, impacts, 2)
-		// Index 1 is settlement payout
-		require.Equal(t, toWei("9.8").String(), impacts[1].CollateralChange.String())
+		// Expected impacts:
+		// 1. Initial split order (FALSE): +10 shares, 0 collateral
+		// 2. Initial split order (TRUE): +10 shares, -10 TRUF (lock + mint)
+		// 3. Settlement payout (TRUE): +9.8 TRUF
+		require.Len(t, impacts, 3)
+		
+		// Find payout impact
+		var settlementPayout *NetImpact
+		for _, imp := range impacts {
+			// Settlement payout has 0 shares change and positive collateral
+			if imp.SharesChange == 0 && !imp.IsNegative && imp.CollateralChange.Cmp(big.NewInt(0)) > 0 {
+				settlementPayout = &imp
+				break
+			}
+		}
+		
+		require.NotNil(t, settlementPayout, "settlement payout impact not found")
+		require.Equal(t, toWei("9.8").String(), settlementPayout.CollateralChange.String())
+		require.Equal(t, true, settlementPayout.Outcome, "payout should be recorded against winning outcome")
 
 		return nil
 	}
@@ -236,7 +289,7 @@ func callProcessSettlement(t require.TestingT, ctx context.Context, platform *kw
 	}
 	engineCtx := &common.EngineContext{TxContext: tx, OverrideAuthz: true}
 
-	_, err := platform.Engine.Call(
+	res, err := platform.Engine.Call(
 		engineCtx,
 		platform.DB,
 		"",
@@ -244,5 +297,11 @@ func callProcessSettlement(t require.TestingT, ctx context.Context, platform *kw
 		[]any{marketID, winningOutcome},
 		nil,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	if res.Error != nil {
+		return res.Error
+	}
+	return nil
 }

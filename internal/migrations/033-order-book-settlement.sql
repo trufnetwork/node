@@ -40,7 +40,8 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
     $query_id INT, -- Pass query_id for impact recording
     $bridge TEXT,
     $wallet_addresses TEXT[],
-    $amounts NUMERIC(78, 0)[]
+    $amounts NUMERIC(78, 0)[],
+    $outcome BOOL
 ) PRIVATE {
     -- Validate input arrays have same length
     if COALESCE(array_length($wallet_addresses), 0) != COALESCE(array_length($amounts), 0) {
@@ -76,10 +77,8 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
         }
 
         if $pid IS NOT NULL {
-            -- We don't know the exact outcome here easily, so we just pick TRUE (YES)
-            -- since all-time P&L is usually aggregated across the market anyway.
-            ob_record_net_impact($query_id, $pid, TRUE, 0::INT8, $amount, FALSE -- is_negative
-            );
+            -- Use the actual outcome passed from settlement context
+            ob_record_net_impact($query_id, $pid, $outcome, 0::INT8, $amount, FALSE);
         }
     }
 };
@@ -280,7 +279,8 @@ CREATE OR REPLACE ACTION distribute_fees(
             $actual_fees_distributed := $lp_share;
 
             -- Step 6: Batch unlock to all qualifying LPs
-            ob_batch_unlock_collateral($query_id, $bridge, $wallet_addresses, $amounts);
+            -- Record LP rewards against TRUE outcome for P&L tracking
+            ob_batch_unlock_collateral($query_id, $bridge, $wallet_addresses, $amounts, TRUE);
         }
     }
 
@@ -471,7 +471,8 @@ CREATE OR REPLACE ACTION process_settlement(
 
     -- Step 4: Process ALL payouts in a SINGLE batch call (no nested queries!)
     if $wallet_addresses IS NOT NULL AND COALESCE(array_length($wallet_addresses), 0) > 0 {
-        ob_batch_unlock_collateral($query_id, $bridge, $wallet_addresses, $amounts);
+        -- Use the actual winning outcome for P&L tracking
+        ob_batch_unlock_collateral($query_id, $bridge, $wallet_addresses, $amounts, $winning_outcome);
     }
 
     -- Step 5: Distribute collected fees to Liquidity Providers
