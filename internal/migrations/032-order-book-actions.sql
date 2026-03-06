@@ -532,6 +532,10 @@ CREATE OR REPLACE ACTION match_direct(
     -- Transfer payment from vault to seller
     ob_unlock_collateral($bridge, $seller_wallet_address, $seller_payment);
 
+    -- Record impacts for P&L
+    ob_record_tx_impact($sell_participant_id, $outcome, -$match_amount, $seller_payment, FALSE);
+    ob_record_tx_impact($buy_participant_id, $outcome, $match_amount, 0::NUMERIC(78,0), FALSE);
+
     -- Transfer shares from seller to buyer
     -- Step 1: Delete fully matched orders FIRST (prevents amount=0 constraint violation)
     DELETE FROM ob_positions
@@ -699,6 +703,10 @@ CREATE OR REPLACE ACTION match_mint(
     ON CONFLICT (query_id, participant_id, outcome, price) DO UPDATE
     SET amount = ob_positions.amount + EXCLUDED.amount;
 
+    -- Record impacts for P&L
+    ob_record_tx_impact($yes_participant_id, true, $mint_amount, 0::NUMERIC(78,0), FALSE);
+    ob_record_tx_impact($no_participant_id, false, $mint_amount, 0::NUMERIC(78,0), FALSE);
+
     -- Reduce buy orders (only if partial fill)
     UPDATE ob_positions
     SET amount = amount - $mint_amount
@@ -858,6 +866,10 @@ CREATE OR REPLACE ACTION match_burn(
     -- Unlock collateral
     ob_unlock_collateral($bridge, $yes_wallet_address, $yes_payout);
     ob_unlock_collateral($bridge, $no_wallet_address, $no_payout);
+
+    -- Record impacts for P&L
+    ob_record_tx_impact($yes_participant_id, TRUE, -$burn_amount, $yes_payout, FALSE);
+    ob_record_tx_impact($no_participant_id, FALSE, -$burn_amount, $no_payout, FALSE);
 
     -- Delete fully matched sell orders FIRST
     DELETE FROM ob_positions
@@ -1140,6 +1152,8 @@ CREATE OR REPLACE ACTION place_buy_order(
         }
     }
 
+
+
     -- ==========================================================================
     -- SECTION 5: LOCK COLLATERAL (bridge-specific)
     -- ==========================================================================
@@ -1153,6 +1167,9 @@ CREATE OR REPLACE ACTION place_buy_order(
     } else if $bridge = 'ethereum_bridge' {
         ethereum_bridge.lock($collateral_needed);
     }
+
+    -- Record initial impact (collateral spent)
+    ob_record_tx_impact($participant_id, $outcome, 0::INT8, $collateral_needed, TRUE);
 
     -- ==========================================================================
     -- SECTION 6: INSERT BUY ORDER (UPSERT)
@@ -1177,6 +1194,12 @@ CREATE OR REPLACE ACTION place_buy_order(
 
     -- Attempt to match this buy order with existing sell orders
     match_orders($query_id, $outcome, $price, $bridge);
+
+    -- ==========================================================================
+    -- SECTION 8: CLEANUP & MATERIALIZE IMPACTS
+    -- ==========================================================================
+    
+    ob_cleanup_tx_payouts($query_id);
 
     -- Success: Order placed (may be partially or fully matched by future matching engine)
 };
@@ -1320,6 +1343,8 @@ CREATE OR REPLACE ACTION place_sell_order(
               ' shares, trying to sell: ' || $amount::TEXT);
     }
 
+
+
     -- ==========================================================================
     -- SECTION 4: MOVE SHARES FROM HOLDING TO SELL ORDER
     -- ==========================================================================
@@ -1361,6 +1386,12 @@ CREATE OR REPLACE ACTION place_sell_order(
 
     -- Attempt to match this sell order with existing buy orders
     match_orders($query_id, $outcome, $price, $bridge);
+
+    -- ==========================================================================
+    -- SECTION 6: CLEANUP & MATERIALIZE IMPACTS
+    -- ==========================================================================
+
+    ob_cleanup_tx_payouts($query_id);
 
     -- Success: Order placed (may be partially or fully matched by future matching engine)
 };
@@ -1541,6 +1572,8 @@ CREATE OR REPLACE ACTION place_split_limit_order(
         }
     }
 
+
+
     -- ==========================================================================
     -- SECTION 5: LOCK COLLATERAL (bridge-specific)
     -- ==========================================================================
@@ -1555,9 +1588,25 @@ CREATE OR REPLACE ACTION place_split_limit_order(
         ethereum_bridge.lock($collateral_needed);
     }
 
+    -- Record initial impacts:
+    -- Calculate split collateral (50/50 split for YES/NO legs)
+    $collateral_per_leg NUMERIC(78, 0) := $collateral_needed / 2::NUMERIC(78, 0);
+    -- Handle dust: add remainder to YES leg if odd amount
+    $collateral_yes NUMERIC(78, 0) := $collateral_per_leg + ($collateral_needed - (2::NUMERIC(78, 0) * $collateral_per_leg));
+    
+    -- 1. Collateral lock (split between outcomes)
+    ob_record_tx_impact($participant_id, TRUE, 0::INT8, $collateral_yes, TRUE);
+    ob_record_tx_impact($participant_id, FALSE, 0::INT8, $collateral_per_leg, TRUE);
+    
+    -- 2. Mint YES shares
+    ob_record_tx_impact($participant_id, TRUE, $amount, 0::NUMERIC(78,0), FALSE);
+    -- 3. Mint NO shares
+    ob_record_tx_impact($participant_id, FALSE, $amount, 0::NUMERIC(78,0), FALSE);
+
     -- ==========================================================================
-    -- SECTION 6: MINT YES SHARES (HOLDING)
+    -- SECTION 7: CREATE POSITIONS
     -- ==========================================================================
+
 
     -- Mint YES shares and hold them (not for sale)
     -- These are stored with price = 0 to indicate holding (not listed)
@@ -1597,6 +1646,12 @@ CREATE OR REPLACE ACTION place_split_limit_order(
     -- Attempt to match the NO sell order with existing buy orders
     -- Match is attempted on the FALSE (NO) outcome at the false_price
     match_orders($query_id, FALSE, $false_price, $bridge);
+
+    -- ==========================================================================
+    -- SECTION 9: CLEANUP & MATERIALIZE IMPACTS
+    -- ==========================================================================
+
+    ob_cleanup_tx_payouts($query_id);
 
     -- Success: Split order placed
     -- - YES shares held at price=0 (not for sale)
@@ -1725,6 +1780,8 @@ CREATE OR REPLACE ACTION cancel_order(
         ERROR('No participant record found for this wallet');
     }
 
+
+
     -- ==========================================================================
     -- SECTION 5: GET ORDER DETAILS
     -- ==========================================================================
@@ -1766,6 +1823,9 @@ CREATE OR REPLACE ACTION cancel_order(
         -- Unlock collateral back to user using helper from 031-order-book-vault.sql
         -- Passes bridge parameter to unlock from correct bridge
         ob_unlock_collateral($bridge, @caller, $refund_amount);
+
+        -- Record impact for refund (Buy orders)
+        ob_record_tx_impact($participant_id, $outcome, 0::INT8, $refund_amount, FALSE);
     }
 
     -- For sell orders (price > 0): Return shares to holding wallet
@@ -1791,6 +1851,12 @@ CREATE OR REPLACE ACTION cancel_order(
       AND participant_id = $participant_id
       AND outcome = $outcome
       AND price = $price;
+
+    -- ==========================================================================
+    -- SECTION 8: CLEANUP & MATERIALIZE IMPACTS
+    -- ==========================================================================
+
+    ob_cleanup_tx_payouts($query_id);
 
     -- Success: Order cancelled
     -- - For buy orders: Collateral has been refunded
@@ -1999,13 +2065,18 @@ CREATE OR REPLACE ACTION change_bid(
             ethereum_bridge.lock($collateral_delta);
         }
 
-    } else if $collateral_delta < $zero {
+        -- Record initial impact (lock)
+        ob_record_tx_impact($participant_id, $outcome, 0::INT8, $collateral_delta, TRUE);
+        } else if $collateral_delta < $zero {
         -- New order needs LESS collateral
         -- Unlock excess amount
         $unlock_amount NUMERIC(78, 0) := $zero - $collateral_delta;  -- Make positive
         ob_unlock_collateral($bridge, @caller, $unlock_amount);
-    }
-    -- If $collateral_delta = 0, no collateral adjustment needed
+
+        -- Record initial impact (refund)
+        ob_record_tx_impact($participant_id, $outcome, 0::INT8, $unlock_amount, FALSE);
+        }
+        -- If $collateral_delta = 0, no collateral adjustment needed
 
     -- ==========================================================================
     -- SECTION 7: DELETE OLD ORDER
@@ -2041,6 +2112,12 @@ CREATE OR REPLACE ACTION change_bid(
     -- Try to match new order immediately
     -- Note: match_orders expects positive price (1-99), so use $new_abs_price not $new_price
     match_orders($query_id, $outcome, $new_abs_price, $bridge);
+
+    -- ==========================================================================
+    -- SECTION 10: CLEANUP & MATERIALIZE IMPACTS
+    -- ==========================================================================
+
+    ob_cleanup_tx_payouts($query_id);
 
     -- Success: Buy order price modified atomically
     -- - Old order deleted, new order placed with preserved timestamp
@@ -2303,6 +2380,12 @@ CREATE OR REPLACE ACTION change_ask(
 
     -- Try to match new order immediately
     match_orders($query_id, $outcome, $new_price, $bridge);
+
+    -- ==========================================================================
+    -- SECTION 9: CLEANUP & MATERIALIZE IMPACTS
+    -- ==========================================================================
+
+    ob_cleanup_tx_payouts($query_id);
 
     -- Success: Sell order price modified atomically
     -- - Old order deleted, new order placed with preserved timestamp

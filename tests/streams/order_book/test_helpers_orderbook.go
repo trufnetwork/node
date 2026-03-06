@@ -3,14 +3,109 @@
 package order_book
 
 import (
+	"context"
 	"fmt"
 
 	gethAbi "github.com/ethereum/go-ethereum/accounts/abi"
 	gethCommon "github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/core/crypto"
+	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/extensions/tn_utils"
+	testerc20 "github.com/trufnetwork/node/tests/streams/utils/erc20"
 )
+
+var (
+	balancePointCounter     int64 = 1000
+	lastBalancePoint        *int64
+	trufBalancePointCounter int64 = 2000
+	lastTrufBalancePoint    *int64
+	
+	// Legacy names for compatibility with some files
+	usdcPointCounter = &balancePointCounter
+	trufPointCounter = &trufBalancePointCounter
+)
+
+// InjectDualBalance injects balance to BOTH bridges with proper chaining:
+// 1. hoodi_tt (TRUF) for market creation fees
+// 2. hoodi_tt2 (USDC) for market collateral/trading
+func InjectDualBalance(ctx context.Context, platform *kwilTesting.Platform, wallet string, amountStr string) error {
+	from := ensureNonZeroAddress(wallet)
+
+	// 1. Inject TRUF balance
+	trufBalancePointCounter++
+	trufPoint := trufBalancePointCounter
+	err := testerc20.InjectERC20Transfer(
+		ctx,
+		platform,
+		testTRUFChain,
+		testTRUFEscrow,
+		testTRUFERC20,
+		from,
+		wallet,
+		amountStr,
+		trufPoint,
+		lastTrufBalancePoint,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to inject TRUF: %w", err)
+	}
+	lastTrufBalancePoint = &trufPoint
+
+	// 2. Inject USDC balance
+	balancePointCounter++
+	usdcPoint := balancePointCounter
+	err = testerc20.InjectERC20Transfer(
+		ctx,
+		platform,
+		testUSDCChain,
+		testUSDCEscrow,
+		testUSDCERC20,
+		from,
+		wallet,
+		amountStr,
+		usdcPoint,
+		lastBalancePoint,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to inject USDC: %w", err)
+	}
+	lastBalancePoint = &usdcPoint
+
+	return nil
+}
+
+// giveUSDCBalanceChained gives USDC only balance with proper linked-list chaining for ordered-sync
+// Use this for vault/escrow funding where TRUF is not needed
+func giveUSDCBalanceChained(ctx context.Context, platform *kwilTesting.Platform, wallet string, amountStr string) error {
+	balancePointCounter++
+	usdcPoint := balancePointCounter
+
+	from := ensureNonZeroAddress(wallet)
+
+	err := testerc20.InjectERC20Transfer(
+		ctx,
+		platform,
+		testUSDCChain,
+		testUSDCEscrow,
+		testUSDCERC20,
+		from,
+		wallet,
+		amountStr,
+		usdcPoint,
+		lastBalancePoint, // Chain to previous USDC point
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to inject USDC: %w", err)
+	}
+
+	// Update USDC lastPoint for next call
+	q := usdcPoint
+	lastBalancePoint = &q
+
+	return nil
+}
 
 // NewTestProposerPub generates a new proposer public key for testing.
 func NewTestProposerPub(t require.TestingT) *crypto.Secp256k1PublicKey {

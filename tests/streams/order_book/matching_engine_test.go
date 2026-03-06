@@ -19,19 +19,11 @@ import (
 	"github.com/trufnetwork/sdk-go/core/util"
 )
 
-// balancePointTracker tracks the previous point for chaining ERC20 deposits
-var (
-	balancePointCounter     int64 = 100
-	lastBalancePoint        *int64
-	trufBalancePointCounter int64 = 200
-	lastTrufBalancePoint    *int64
-)
-
 // giveBalanceChained gives balance (BOTH TRUF and USDC) with proper linked-list chaining for ordered-sync
 func giveBalanceChained(ctx context.Context, platform *kwilTesting.Platform, wallet string, amountStr string) error {
 	// Inject TRUF balance (for market creation fees)
-	trufPointCounter++
-	trufPoint := trufPointCounter
+	trufBalancePointCounter++
+	trufPoint := trufBalancePointCounter
 
 	from := ensureNonZeroAddress(wallet)
 
@@ -58,61 +50,10 @@ func giveBalanceChained(ctx context.Context, platform *kwilTesting.Platform, wal
 	lastTrufBalancePoint = &p
 
 	// Inject USDC balance (for market collateral)
-	balancePointCounter++
-	usdcPoint := balancePointCounter
-
-	err = testerc20.InjectERC20Transfer(
-		ctx,
-		platform,
-		testUSDCChain,
-		testUSDCEscrow,
-		testUSDCERC20,
-		from,
-		wallet,
-		amountStr,
-		usdcPoint,
-		lastBalancePoint, // Chain to previous USDC point
-	)
-
+	err = giveUSDCBalanceChained(ctx, platform, wallet, amountStr)
 	if err != nil {
-		return fmt.Errorf("failed to inject USDC: %w", err)
+		return err
 	}
-
-	// Update USDC lastPoint for next call
-	q := usdcPoint
-	lastBalancePoint = &q
-
-	return nil
-}
-
-// giveUSDCBalanceChained gives USDC only balance with proper linked-list chaining for ordered-sync
-// Use this for vault/escrow funding where TRUF is not needed
-func giveUSDCBalanceChained(ctx context.Context, platform *kwilTesting.Platform, wallet string, amountStr string) error {
-	balancePointCounter++
-	usdcPoint := balancePointCounter
-
-	from := ensureNonZeroAddress(wallet)
-
-	err := testerc20.InjectERC20Transfer(
-		ctx,
-		platform,
-		testUSDCChain,
-		testUSDCEscrow,
-		testUSDCERC20,
-		from,
-		wallet,
-		amountStr,
-		usdcPoint,
-		lastBalancePoint, // Chain to previous USDC point
-	)
-
-	if err != nil {
-		return fmt.Errorf("failed to inject USDC: %w", err)
-	}
-
-	// Update USDC lastPoint for next call
-	q := usdcPoint
-	lastBalancePoint = &q
 
 	return nil
 }

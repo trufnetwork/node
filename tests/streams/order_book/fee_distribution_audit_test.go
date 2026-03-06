@@ -83,7 +83,7 @@ func testAuditRecordCreation(t *testing.T) func(context.Context, *kwilTesting.Pl
 
 		// Fund vault and call distribute_fees
 		totalFees := new(big.Int).Mul(big.NewInt(10), big.NewInt(1e18)) // 10 TRUF
-		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees)
+		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees, true)
 		require.NoError(t, err)
 
 		// Verify audit summary record exists
@@ -222,7 +222,7 @@ func testAuditMultiBlock(t *testing.T) func(context.Context, *kwilTesting.Platfo
 
 		// Distribute fees
 		totalFees := new(big.Int).Mul(big.NewInt(30), big.NewInt(1e18))
-		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees)
+		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees, true)
 		require.NoError(t, err)
 
 		// Verify audit summary
@@ -286,7 +286,7 @@ func testAuditNoLPs(t *testing.T) func(context.Context, *kwilTesting.Platform) e
 
 		// Don't sample LP rewards (no LP samples)
 		totalFees := new(big.Int).Mul(big.NewInt(10), big.NewInt(1e18))
-		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees)
+		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees, true)
 		require.NoError(t, err)
 
 		// Verify NO audit summary record
@@ -354,7 +354,7 @@ func testAuditZeroFees(t *testing.T) func(context.Context, *kwilTesting.Platform
 
 		// Call distribute_fees with $0 fees (early return)
 		zeroFees := big.NewInt(0)
-		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), zeroFees)
+		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), zeroFees, true)
 		require.NoError(t, err)
 
 		// Verify NO audit record (zero fees early return)
@@ -431,7 +431,7 @@ func testAuditDataIntegrity(t *testing.T) func(context.Context, *kwilTesting.Pla
 
 		// Distribute
 		totalFees := new(big.Int).Mul(big.NewInt(10), big.NewInt(1e18))
-		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees)
+		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees, true)
 		require.NoError(t, err)
 
 		// Get final USDC balances
@@ -570,7 +570,7 @@ func setupLPScenario(t *testing.T, ctx context.Context, platform *kwilTesting.Pl
 
 // fundVaultAndDistributeFees funds the vault and calls distribute_fees
 func fundVaultAndDistributeFees(t *testing.T, ctx context.Context, platform *kwilTesting.Platform,
-	user *util.EthereumAddress, marketID int, totalFees *big.Int) error {
+	user *util.EthereumAddress, marketID int, totalFees *big.Int, winningOutcome bool) error {
 
 	// Fund vault if fees > 0 (use USDC-only since vault doesn't need TRUF)
 	if totalFees.Sign() > 0 {
@@ -609,7 +609,7 @@ func fundVaultAndDistributeFees(t *testing.T, ctx context.Context, platform *kwi
 	}
 	engineCtx := &common.EngineContext{TxContext: tx, OverrideAuthz: true}
 
-	res, err := platform.Engine.Call(engineCtx, platform.DB, "", "distribute_fees", []any{marketID, totalFeesDecimal}, nil)
+	res, err := platform.Engine.Call(engineCtx, platform.DB, "", "distribute_fees", []any{marketID, totalFeesDecimal, winningOutcome}, nil)
 	if err != nil {
 		return err
 	}
