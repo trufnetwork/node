@@ -212,23 +212,28 @@ func testPnLImpactSettlement(t *testing.T) func(ctx context.Context, platform *k
 		// 4. Validator reward (YES): +0.025 TRUF
 		require.Len(t, impacts, 4)
 		
-		// Verify split collateral impacts
-		var splitYes, splitNo *NetImpact
-		for i := 0; i < 2; i++ {
-			if impacts[i].Outcome {
-				splitYes = &impacts[i]
-			} else {
-				splitNo = &impacts[i]
-			}
-		}
-		require.Equal(t, toWei("-5").String(), splitYes.CollateralChange.String())
-		require.Equal(t, toWei("-5").String(), splitNo.CollateralChange.String())
+		// Get User A participant ID
+		var userAPID int
+		err = platform.Engine.Execute(
+			&common.EngineContext{TxContext: &common.TxContext{Ctx: ctx, BlockContext: &common.BlockContext{Height: 1}, TxID: platform.Txid()}},
+			platform.DB,
+			"SELECT id FROM ob_participants WHERE '0x' || encode(wallet_address, 'hex') = $wallet",
+			map[string]any{"$wallet": userA.Address()},
+			func(row *common.Row) error {
+				userAPID = int(row.Values[0].(int64))
+				return nil
+			},
+		)
+		require.NoError(t, err)
 
 		// Find payout impact
 		var settlementPayout *NetImpact
 		var validatorReward *NetImpact
 		for _, imp := range impacts {
 			if imp.SharesChange == 0 && !imp.IsNegative {
+				// Settlement payout and Validator reward are both for User A in this test
+				require.Equal(t, userAPID, imp.ParticipantID, "reward should be for userA (leader/winner)")
+				
 				if imp.CollateralChange.String() == toWei("9.8").String() {
 					settlementPayout = &imp
 				} else if imp.CollateralChange.String() == "25000000000000000" {

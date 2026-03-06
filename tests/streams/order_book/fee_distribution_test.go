@@ -164,7 +164,7 @@ func testDistribution1Block2LPs(t *testing.T) func(context.Context, *kwilTesting
 			platform.DB,
 			"",
 			"distribute_fees",
-			[]any{int(marketID), totalFeesDecimal},
+			[]any{int(marketID), totalFeesDecimal, true},
 			nil,
 		)
 		require.NoError(t, err)
@@ -351,7 +351,7 @@ func testDistribution3Blocks2LPs(t *testing.T) func(context.Context, *kwilTestin
 			platform.DB,
 			"",
 			"distribute_fees",
-			[]any{int(marketID), totalFeesDecimal},
+			[]any{int(marketID), totalFeesDecimal, true},
 			nil,
 		)
 		require.NoError(t, err)
@@ -494,7 +494,7 @@ func testDistributionNoSamples(t *testing.T) func(context.Context, *kwilTesting.
 			platform.DB,
 			"",
 			"distribute_fees",
-			[]any{int(marketID), totalFeesDecimal},
+			[]any{int(marketID), totalFeesDecimal, true},
 			nil,
 		)
 		require.NoError(t, err)
@@ -622,7 +622,7 @@ func testDistributionZeroFees(t *testing.T) func(context.Context, *kwilTesting.P
 			platform.DB,
 			"",
 			"distribute_fees",
-			[]any{int(marketID), zeroFeesDecimal},
+			[]any{int(marketID), zeroFeesDecimal, true},
 			nil,
 		)
 		require.NoError(t, err)
@@ -751,7 +751,7 @@ func testDistribution1LP(t *testing.T) func(context.Context, *kwilTesting.Platfo
 			platform.DB,
 			"",
 			"distribute_fees",
-			[]any{int(marketID), totalFeesDecimal},
+			[]any{int(marketID), totalFeesDecimal, true},
 			nil,
 		)
 		require.NoError(t, err)
