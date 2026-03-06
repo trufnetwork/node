@@ -4,6 +4,7 @@ package order_book
 
 import (
 	"context"
+	"fmt"
 	"math/big"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
 	coreauth "github.com/trufnetwork/kwil-db/core/crypto/auth"
+	"github.com/trufnetwork/kwil-db/core/crypto"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
@@ -171,7 +173,9 @@ func testPnLImpactSettlement(t *testing.T) func(ctx context.Context, platform *k
 		lastBalancePoint = nil
 		lastTrufBalancePoint = nil
 
-		userA := util.Unsafe_NewEthereumAddressFromString("0xCCCCCCC333333333333333333333333333333333")
+		// Use a real key for User A so we can use them as block proposer (Leader) and Data Provider
+		userAPub := NewTestProposerPub(t)
+		userA := util.Unsafe_NewEthereumAddressFromString(fmt.Sprintf("0x%x", crypto.EthereumAddressFromPubKey(userAPub)))
 		
 		// Setup FIRST: Inject balance
 		err := InjectDualBalance(ctx, platform, userA.Address(), "100000000000000000000")
@@ -198,7 +202,8 @@ func testPnLImpactSettlement(t *testing.T) func(ctx context.Context, platform *k
 		require.NoError(t, err)
 
 		// Settle market with YES winning
-		err = callProcessSettlement(t, ctx, platform, int(marketID), true)
+		// Pass userA as the proposer
+		err = callProcessSettlementWithProposer(t, ctx, platform, int(marketID), true, userAPub)
 		require.NoError(t, err)
 
 		// Verify settlement impact
@@ -209,8 +214,9 @@ func testPnLImpactSettlement(t *testing.T) func(ctx context.Context, platform *k
 		// 1. Initial split (NO): +10 shares, -5 TRUF (split collateral)
 		// 2. Initial split (YES): +10 shares, -5 TRUF (split collateral)
 		// 3. Settlement payout (YES): +9.8 TRUF
-		// 4. Validator reward (YES): +0.025 TRUF
-		require.Len(t, impacts, 4)
+		// 4. DP reward (YES): +0.025 TRUF
+		// 5. Validator reward (YES): +0.025 TRUF
+		require.Len(t, impacts, 5)
 		
 		// Get User A participant ID
 		var userAPID int
@@ -228,16 +234,19 @@ func testPnLImpactSettlement(t *testing.T) func(ctx context.Context, platform *k
 
 		// Find payout impact
 		var settlementPayout *NetImpact
+		var dpReward *NetImpact
 		var validatorReward *NetImpact
 		for _, imp := range impacts {
-			if imp.SharesChange == 0 && !imp.IsNegative {
-				// Settlement payout and Validator reward are both for User A in this test
-				require.Equal(t, userAPID, imp.ParticipantID, "reward should be for userA (leader/winner)")
-				
+			if imp.SharesChange == 0 && !imp.IsNegative && imp.ParticipantID == userAPID {
+				// Settlement payout, DP reward and Validator reward are all for User A in this test
 				if imp.CollateralChange.String() == toWei("9.8").String() {
 					settlementPayout = &imp
 				} else if imp.CollateralChange.String() == "25000000000000000" {
-					validatorReward = &imp
+					if dpReward == nil {
+						dpReward = &imp
+					} else {
+						validatorReward = &imp
+					}
 				}
 			}
 		}
@@ -245,6 +254,9 @@ func testPnLImpactSettlement(t *testing.T) func(ctx context.Context, platform *k
 		require.NotNil(t, settlementPayout, "settlement payout impact not found")
 		require.Equal(t, true, settlementPayout.Outcome, "payout should be recorded against winning outcome")
 		
+		require.NotNil(t, dpReward, "dp reward impact not found")
+		require.Equal(t, true, dpReward.Outcome, "dp reward should be recorded against winning outcome")
+
 		require.NotNil(t, validatorReward, "validator reward impact not found")
 		require.Equal(t, true, validatorReward.Outcome, "validator reward should be recorded against winning outcome")
 
@@ -296,15 +308,13 @@ func getNetImpacts(ctx context.Context, platform *kwilTesting.Platform, marketID
 	return impacts, err
 }
 
-func callProcessSettlement(t require.TestingT, ctx context.Context, platform *kwilTesting.Platform, marketID int, winningOutcome bool) error {
-	pub := NewTestProposerPub(t)
-
+func callProcessSettlementWithProposer(t require.TestingT, ctx context.Context, platform *kwilTesting.Platform, marketID int, winningOutcome bool, proposer crypto.PublicKey) error {
 	tx := &common.TxContext{
 		Ctx: ctx,
 		BlockContext: &common.BlockContext{
 			Height:    1,
 			Timestamp: time.Now().Unix(),
-			Proposer:  pub,
+			Proposer:  proposer,
 		},
 		TxID:          platform.Txid(),
 		Authenticator: coreauth.EthPersonalSignAuth,
@@ -326,4 +336,9 @@ func callProcessSettlement(t require.TestingT, ctx context.Context, platform *kw
 		return res.Error
 	}
 	return nil
+}
+
+func callProcessSettlement(t require.TestingT, ctx context.Context, platform *kwilTesting.Platform, marketID int, winningOutcome bool) error {
+	pub := NewTestProposerPub(t)
+	return callProcessSettlementWithProposer(t, ctx, platform, marketID, winningOutcome, pub)
 }
