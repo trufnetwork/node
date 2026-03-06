@@ -295,9 +295,9 @@ CREATE OR REPLACE ACTION process_settlement(
         ),
         aggregated AS (
             SELECT
-                ARRAY_AGG(wallet) as wallets,
-                ARRAY_AGG(amount::NUMERIC(78, 0)) as amounts,
-                ARRAY_AGG(outcome) as outcomes,
+                ARRAY_AGG(wallet ORDER BY wallet, outcome) as wallets,
+                ARRAY_AGG(amount::NUMERIC(78, 0) ORDER BY wallet, outcome) as amounts,
+                ARRAY_AGG(outcome ORDER BY wallet, outcome) as outcomes,
                 SUM(fee)::NUMERIC(78, 0) as fees
             FROM calculated_payouts
         )
@@ -323,11 +323,10 @@ CREATE OR REPLACE ACTION process_settlement(
     }
 };
 
--- Public trigger
+// Public trigger
 CREATE OR REPLACE ACTION trigger_fee_distribution(
     $query_id INT,
-    $total_fees TEXT,
-    $winning_outcome BOOL
+    $total_fees TEXT
 ) PUBLIC {
     $has_role BOOL := FALSE;
     for $row in SELECT 1 FROM role_members WHERE owner = 'system' AND role_name = 'network_writer' AND wallet = LOWER(@caller) LIMIT 1 {
@@ -335,6 +334,19 @@ CREATE OR REPLACE ACTION trigger_fee_distribution(
     }
     if $has_role = FALSE { ERROR('Only network_writer can trigger fee distribution'); }
 
+    -- Query market truth for winning outcome
+    $winning BOOL;
+    $found BOOL := FALSE;
+    for $row in SELECT winning_outcome FROM ob_queries WHERE id = $query_id {
+        $winning := $row.winning_outcome;
+        $found := TRUE;
+    }
+
+    if NOT $found {
+        ERROR('Market not found: ' || $query_id::TEXT);
+    }
+
     $fees NUMERIC(78, 0) := $total_fees::NUMERIC(78, 0);
-    distribute_fees($query_id, $fees, $winning_outcome);
+    distribute_fees($query_id, $fees, $winning);
 }
+

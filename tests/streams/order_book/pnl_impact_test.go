@@ -89,6 +89,7 @@ func testPnLImpactTrading(t *testing.T) func(ctx context.Context, platform *kwil
 
 		// 4. User B places Split Order: 10 pairs @ $0.60
 		// Mint 10 pairs (locks 10 TRUF) -> holds 10 YES, holds 10 NO (listed)
+		// Collateral is split 50/50 between outcomes (-5 each)
 		err = callPlaceSplitLimitOrder(ctx, platform, &userB, int(marketID), 60, 10)
 		require.NoError(t, err)
 		
@@ -109,9 +110,9 @@ func testPnLImpactTrading(t *testing.T) func(ctx context.Context, platform *kwil
 		require.NotNil(t, userBSplitYes)
 		require.NotNil(t, userBSplitNo)
 		require.Equal(t, int64(10), userBSplitYes.SharesChange)
-		require.Equal(t, toWei("-10").String(), userBSplitYes.CollateralChange.String())
+		require.Equal(t, toWei("-5").String(), userBSplitYes.CollateralChange.String())
 		require.Equal(t, int64(10), userBSplitNo.SharesChange)
-		require.Equal(t, toWei("0").String(), userBSplitNo.CollateralChange.String())
+		require.Equal(t, toWei("-5").String(), userBSplitNo.CollateralChange.String())
 
 		// 5. User B sells YES holdings to User A
 		err = callPlaceSellOrder(ctx, platform, &userB, int(marketID), true, 60, 10)
@@ -205,14 +206,24 @@ func testPnLImpactSettlement(t *testing.T) func(ctx context.Context, platform *k
 		require.NoError(t, err)
 		
 		// Expected impacts:
-		// 1. Initial split (NO): +10 shares, 0 collateral
-		// 2. Initial split (YES): +10 shares, -10 TRUF
+		// 1. Initial split (NO): +10 shares, -5 TRUF (split collateral)
+		// 2. Initial split (YES): +10 shares, -5 TRUF (split collateral)
 		// 3. Settlement payout (YES): +9.8 TRUF
-		// 4. Validator reward (YES): +0.025 TRUF (from 0.25% of 10.0 volume)
-		// Total fees collected: 2% of 10.0 = 0.20
-		// Validator share: 12.5% of 0.20 = 0.025
+		// 4. Validator reward (YES): +0.025 TRUF
 		require.Len(t, impacts, 4)
 		
+		// Verify split collateral impacts
+		var splitYes, splitNo *NetImpact
+		for i := 0; i < 2; i++ {
+			if impacts[i].Outcome {
+				splitYes = &impacts[i]
+			} else {
+				splitNo = &impacts[i]
+			}
+		}
+		require.Equal(t, toWei("-5").String(), splitYes.CollateralChange.String())
+		require.Equal(t, toWei("-5").String(), splitNo.CollateralChange.String())
+
 		// Find payout impact
 		var settlementPayout *NetImpact
 		var validatorReward *NetImpact

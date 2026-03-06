@@ -1589,8 +1589,15 @@ CREATE OR REPLACE ACTION place_split_limit_order(
     }
 
     -- Record initial impacts:
-    -- 1. Collateral lock (record against YES)
-    ob_record_tx_impact($participant_id, TRUE, 0::INT8, $collateral_needed, TRUE);
+    -- Calculate split collateral (50/50 split for YES/NO legs)
+    $collateral_per_leg NUMERIC(78, 0) := $collateral_needed / 2::NUMERIC(78, 0);
+    -- Handle dust: add remainder to YES leg if odd amount
+    $collateral_yes NUMERIC(78, 0) := $collateral_per_leg + ($collateral_needed - (2::NUMERIC(78, 0) * $collateral_per_leg));
+    
+    -- 1. Collateral lock (split between outcomes)
+    ob_record_tx_impact($participant_id, TRUE, 0::INT8, $collateral_yes, TRUE);
+    ob_record_tx_impact($participant_id, FALSE, 0::INT8, $collateral_per_leg, TRUE);
+    
     -- 2. Mint YES shares
     ob_record_tx_impact($participant_id, TRUE, $amount, 0::NUMERIC(78,0), FALSE);
     -- 3. Mint NO shares
@@ -2058,7 +2065,9 @@ CREATE OR REPLACE ACTION change_bid(
             ethereum_bridge.lock($collateral_delta);
         }
 
-    } else if $collateral_delta < $zero {
+        -- Record initial impact (lock)
+        ob_record_tx_impact($participant_id, $outcome, 0::INT8, $collateral_delta, TRUE);
+        } else if $collateral_delta < $zero {
         -- New order needs LESS collateral
         -- Unlock excess amount
         $unlock_amount NUMERIC(78, 0) := $zero - $collateral_delta;  -- Make positive
@@ -2066,11 +2075,9 @@ CREATE OR REPLACE ACTION change_bid(
 
         -- Record initial impact (refund)
         ob_record_tx_impact($participant_id, $outcome, 0::INT8, $unlock_amount, FALSE);
-        } else if $collateral_delta > $zero {
-        -- Record initial impact (lock)
-        ob_record_tx_impact($participant_id, $outcome, 0::INT8, $collateral_delta, TRUE);
         }
         -- If $collateral_delta = 0, no collateral adjustment needed
+
     -- ==========================================================================
     -- SECTION 7: DELETE OLD ORDER
     -- ==========================================================================
