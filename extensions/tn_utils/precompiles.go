@@ -129,10 +129,13 @@ func getLeaderHexMethod() precompiles.Method {
 			// to transfer fees via the bridge.
 			pubkey := ctx.TxContext.BlockContext.Proposer
 			
-			// Try to cast to Secp256k1 public key to get ETH address
-			if secp, ok := pubkey.(*crypto.Secp256k1PublicKey); ok {
-				addr := crypto.EthereumAddressFromPubKey(secp)
-				return resultFn([]any{"0x" + hex.EncodeToString(addr)})
+			if pubkey.Type() == crypto.KeyTypeSecp256k1 {
+				// Manually unmarshal to ensure we have the concrete type
+				secp, err := crypto.UnmarshalSecp256k1PublicKey(pubkey.Bytes())
+				if err == nil {
+					addr := crypto.EthereumAddressFromPubKey(secp)
+					return resultFn([]any{"0x" + hex.EncodeToString(addr)})
+				}
 			}
 			
 			// Fallback to raw hex of the public key
@@ -159,10 +162,13 @@ func getLeaderBytesMethod() precompiles.Method {
 			}
 			
 			pubkey := ctx.TxContext.BlockContext.Proposer
-			// Try to cast to Secp256k1 public key to get ETH address bytes
-			if secp, ok := pubkey.(*crypto.Secp256k1PublicKey); ok {
-				addr := crypto.EthereumAddressFromPubKey(secp)
-				return resultFn([]any{addr})
+			if pubkey.Type() == crypto.KeyTypeSecp256k1 {
+				// Manually unmarshal to ensure we have the concrete type
+				secp, err := crypto.UnmarshalSecp256k1PublicKey(pubkey.Bytes())
+				if err == nil {
+					addr := crypto.EthereumAddressFromPubKey(secp)
+					return resultFn([]any{addr})
+				}
 			}
 			
 			// Fallback to raw bytes of the public key
