@@ -72,8 +72,14 @@ CREATE OR REPLACE ACTION ob_record_tx_impact(
 CREATE OR REPLACE ACTION ob_cleanup_tx_payouts(
     $query_id INT
 ) PRIVATE {
+    $next_id INT;
+    for $row in SELECT COALESCE(MAX(id), 0::INT) + 1 as val FROM ob_net_impacts {
+        $next_id := $row.val;
+    }
+
     -- Iterate over all touched (participant, outcome) pairs in this TX
-    for $p in SELECT DISTINCT participant_id, outcome FROM ob_tx_payouts {
+    -- Deterministic ordering is CRITICAL for stable ID allocation across validators
+    for $p in SELECT DISTINCT participant_id, outcome FROM ob_tx_payouts ORDER BY participant_id, outcome {
         -- Capture into local variables to avoid "unknown variable" error in nested loops
         $current_pid INT := $p.participant_id;
         $current_outcome BOOL := $p.outcome;
@@ -90,18 +96,21 @@ CREATE OR REPLACE ACTION ob_cleanup_tx_payouts(
             }
         }
         
-        -- Call record_net_impact with final net values
-        $final_is_neg BOOL := FALSE;
-        $final_mag NUMERIC(78,0) := 0::NUMERIC(78,0);
-        
-        if $net_collateral < 0::NUMERIC(100,0) {
-            $final_is_neg := TRUE;
-            $final_mag := (0::NUMERIC(100,0) - $net_collateral)::NUMERIC(78,0);
-        } else {
-            $final_mag := $net_collateral::NUMERIC(78,0);
+        -- Call record_net_impact with final net values if change occurred
+        if $net_shares != 0 OR $net_collateral != 0::NUMERIC(100,0) {
+            $final_is_neg BOOL := FALSE;
+            $final_mag NUMERIC(78,0) := 0::NUMERIC(78,0);
+            
+            if $net_collateral < 0::NUMERIC(100,0) {
+                $final_is_neg := TRUE;
+                $final_mag := (0::NUMERIC(100,0) - $net_collateral)::NUMERIC(78,0);
+            } else {
+                $final_mag := $net_collateral::NUMERIC(78,0);
+            }
+            
+            ob_record_net_impact($next_id, $query_id, $current_pid, $current_outcome, $net_shares, $final_mag, $final_is_neg);
+            $next_id := $next_id + 1;
         }
-        
-        ob_record_net_impact($query_id, $current_pid, $current_outcome, $net_shares, $final_mag, $final_is_neg);
     }
 
     DELETE FROM ob_tx_payouts;
@@ -122,6 +131,7 @@ CREATE OR REPLACE ACTION ob_get_tx_payout(
 
 -- Internal helper to record impacts into audit trail
 CREATE OR REPLACE ACTION ob_record_net_impact(
+    $id INT,
     $query_id INT,
     $participant_id INT,
     $outcome BOOLEAN,
@@ -129,11 +139,6 @@ CREATE OR REPLACE ACTION ob_record_net_impact(
     $collateral_change NUMERIC(78,0),
     $is_negative BOOLEAN
 ) PRIVATE {
-    -- Skip if no net change
-    if $shares_change = 0 AND $collateral_change = 0::NUMERIC(78,0) {
-        RETURN;
-    }
-
     INSERT INTO ob_net_impacts (
         id,
         tx_hash,
@@ -144,9 +149,8 @@ CREATE OR REPLACE ACTION ob_record_net_impact(
         collateral_change,
         is_negative,
         timestamp
-    )
-    SELECT
-        COALESCE(MAX(id), 0::INT) + 1,
+    ) VALUES (
+        $id,
         decode(@txid, 'hex'),
         $query_id,
         $participant_id,
@@ -155,5 +159,5 @@ CREATE OR REPLACE ACTION ob_record_net_impact(
         $collateral_change,
         $is_negative,
         @block_timestamp
-    FROM ob_net_impacts;
+    );
 };
