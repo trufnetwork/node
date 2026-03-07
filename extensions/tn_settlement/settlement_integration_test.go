@@ -259,6 +259,9 @@ func testSettleMarketViaAction(t *testing.T) func(context.Context, *kwilTesting.
 				return nil
 			})
 		require.NoError(t, err)
+		for _, log := range createRes.Logs {
+			t.Logf("Engine log (create_market): %s", log)
+		}
 		if createRes.Error != nil {
 			t.Fatalf("create_market failed: %v", createRes.Error)
 		}
@@ -269,6 +272,9 @@ func testSettleMarketViaAction(t *testing.T) func(context.Context, *kwilTesting.
 		settleRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "settle_market",
 			[]any{queryID}, nil)
 		require.NoError(t, err)
+		for _, log := range settleRes.Logs {
+			t.Logf("Engine log (settle_market): %s", log)
+		}
 		require.Nil(t, settleRes.Error)
 
 		// Verify settlement
@@ -313,7 +319,7 @@ func testLoadSettlementConfig(t *testing.T) func(context.Context, *kwilTesting.P
 		enabled, schedule, maxMarkets, retries, err := ops.LoadSettlementConfig(ctx)
 		require.NoError(t, err)
 		require.True(t, enabled, "should be true (enabled by migration 041)")
-		require.Equal(t, "0,30 * * * *", schedule, "should be 30-minute schedule from migration 041")
+		require.Equal(t, "*/5 * * * *", schedule, "should be 5-minute schedule from migration 041")
 		require.Equal(t, 1000, maxMarkets, "should be 1000 from migration 041")
 		require.Equal(t, 3, retries)
 
@@ -460,6 +466,9 @@ func testMultipleMarketsProcessing(t *testing.T) func(context.Context, *kwilTest
 					return nil
 				})
 			require.NoError(t, err)
+			for _, log := range createRes.Logs {
+				t.Logf("Engine log (create_market %d): %s", i, log)
+			}
 			if createRes.Error != nil {
 				t.Fatalf("create_market %d failed: %v", i, createRes.Error)
 			}
@@ -486,6 +495,9 @@ func testMultipleMarketsProcessing(t *testing.T) func(context.Context, *kwilTest
 			settleRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "settle_market",
 				[]any{queryID}, nil)
 			require.NoError(t, err)
+			for _, log := range settleRes.Logs {
+				t.Logf("Engine log (settle_market %d): %s", queryID, log)
+			}
 			require.Nil(t, settleRes.Error)
 		}
 

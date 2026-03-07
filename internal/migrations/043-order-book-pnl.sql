@@ -50,12 +50,19 @@ CREATE OR REPLACE ACTION ob_record_tx_payout(
     $participant_id INT,
     $amount NUMERIC(78,0)
 ) PRIVATE {
-    INSERT INTO ob_tx_payouts (id, participant_id, outcome, shares_change, amount, is_negative)
-    SELECT COALESCE(MAX(id), 0::INT) + 1, $participant_id, TRUE, 0::INT8, $amount, FALSE
-    FROM ob_tx_payouts;
+    $next_id INT;
+    for $row in SELECT COALESCE(MAX(id), 0::INT) + 1 as val FROM ob_tx_payouts {
+        $next_id := $row.val;
+    }
+
+    INSERT INTO ob_tx_payouts (
+        id, participant_id, outcome, shares_change, amount, is_negative
+    ) VALUES (
+        $next_id, $participant_id, TRUE, 0::INT8, $amount, FALSE
+    );
 };
 
--- Helper to record a full impact during matching
+-- Internal helper to record impacts during matching/placement
 CREATE OR REPLACE ACTION ob_record_tx_impact(
     $participant_id INT,
     $outcome BOOLEAN,
@@ -63,9 +70,21 @@ CREATE OR REPLACE ACTION ob_record_tx_impact(
     $amount NUMERIC(78,0),
     $is_negative BOOLEAN
 ) PRIVATE {
-    INSERT INTO ob_tx_payouts (id, participant_id, outcome, shares_change, amount, is_negative)
-    SELECT COALESCE(MAX(id), 0::INT) + 1, $participant_id, $outcome, $shares_change, $amount, $is_negative
-    FROM ob_tx_payouts;
+    $next_id INT;
+    for $row in SELECT COALESCE(MAX(id), 0::INT) + 1 as val FROM ob_tx_payouts {
+        $next_id := $row.val;
+    }
+
+    $actual_shares INT8 := $shares_change;
+    if $is_negative {
+        $actual_shares := - $shares_change;
+    }
+
+    INSERT INTO ob_tx_payouts (
+        id, participant_id, outcome, shares_change, amount, is_negative
+    ) VALUES (
+        $next_id, $participant_id, $outcome, $actual_shares, $amount, $is_negative
+    );
 };
 
 -- Helper to materialize and cleanup impacts for current TX

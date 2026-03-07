@@ -13,12 +13,12 @@
 -- - Migration 015: system:network_writer role must exist
 
 -- =============================================================================
--- ENABLE SETTLEMENT BY DEFAULT (every 30 minutes: at 0 and 30 past the hour)
+-- ENABLE SETTLEMENT BY DEFAULT (every 5 minutes)
 -- =============================================================================
 UPDATE settlement_config
 SET
     enabled = true,
-    settlement_schedule = '0,30 * * * *',
+    settlement_schedule = '*/5 * * * *',
     max_markets_per_run = 1000,
     retry_attempts = 3,
     updated_at = 0
