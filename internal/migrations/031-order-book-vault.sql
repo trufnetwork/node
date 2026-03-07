@@ -117,7 +117,6 @@ PRIVATE RETURNS (participant_id INT) {
 
 -- =============================================================================
 -- ob_get_participant_id: Get participant ID without creating (for lookups)
--- =============================================================================
 -- Returns the participant_id for a wallet address, or NULL if not found.
 -- Use this for read-only operations where we don't want to create records.
 CREATE OR REPLACE ACTION ob_get_participant_id($wallet_address TEXT)

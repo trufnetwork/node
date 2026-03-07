@@ -47,7 +47,8 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
 
         -- Record impact for P&L
         $pid INT;
-        for $p in SELECT id FROM ob_participants WHERE '0x' || encode(wallet_address, 'hex') = $wallet_hex {
+        $wallet_bytes BYTEA := decode(substring($wallet_hex, 3, 40), 'hex');
+        for $p in SELECT id FROM ob_participants WHERE wallet_address = $wallet_bytes {
             $pid := $p.id;
         }
 
@@ -122,8 +123,11 @@ CREATE OR REPLACE ACTION distribute_fees(
 
     -- Step 2: Payout Validator (Leader) (0.25%)
     $actual_validator_fees NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
-    if @leader_sender IS NOT NULL AND $infra_share > '0'::NUMERIC(78, 0) {
-        $validator_wallet TEXT := '0x' || encode(@leader_sender, 'hex');
+    $validator_wallet TEXT := tn_utils.get_leader_hex();
+    if $validator_wallet != '' AND $infra_share > '0'::NUMERIC(78, 0) {
+        -- Safe leader address conversion
+        $leader_bytes_tmp BYTEA := tn_utils.get_leader_bytes();
+
         if $bridge = 'hoodi_tt2' {
             hoodi_tt2.unlock($validator_wallet, $infra_share);
             $actual_validator_fees := $infra_share;
@@ -137,7 +141,7 @@ CREATE OR REPLACE ACTION distribute_fees(
 
         -- Record Validator reward impact (against winning side)
         $val_pid INT;
-        for $p in SELECT id FROM ob_participants WHERE wallet_address = @leader_sender {
+        for $p in SELECT id FROM ob_participants WHERE wallet_address = $leader_bytes_tmp {
             $val_pid := $p.id;
         }
         if $val_pid IS NOT NULL {
@@ -375,7 +379,10 @@ CREATE OR REPLACE ACTION trigger_fee_distribution(
     $total_fees TEXT
 ) PUBLIC {
     $has_role BOOL := FALSE;
-    for $row in SELECT 1 FROM role_members WHERE owner = 'system' AND role_name = 'network_writer' AND wallet = LOWER(@caller) LIMIT 1 {
+    -- Safe caller normalization using precompiles
+    $lower_caller TEXT := tn_utils.get_caller_hex();
+
+    for $row in SELECT 1 FROM role_members WHERE owner = 'system' AND role_name = 'network_writer' AND wallet = $lower_caller LIMIT 1 {
         $has_role := TRUE;
     }
     if $has_role = FALSE { ERROR('Only network_writer can trigger fee distribution'); }

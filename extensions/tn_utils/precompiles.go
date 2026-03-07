@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"math/big"
+	"strings"
 
 	"github.com/trufnetwork/kwil-db/common"
+	"github.com/trufnetwork/kwil-db/core/crypto"
+	"github.com/trufnetwork/kwil-db/core/crypto/auth"
 	"github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/kwil-db/extensions/precompiles"
 	"github.com/trufnetwork/sdk-go/core/contractsapi"
@@ -34,6 +38,116 @@ func buildPrecompile() precompiles.Precompile {
 			parseAttestationBooleanMethod(),
 			computeAttestationHashMethod(),
 			unpackQueryComponentsMethod(),
+			getCallerHexMethod(),
+			getCallerBytesMethod(),
+			getLeaderHexMethod(),
+			getLeaderBytesMethod(),
+		},
+	}
+}
+
+// getCallerHexMethod returns the current transaction caller as a 0x-prefixed hex string.
+func getCallerHexMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "get_caller_hex",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters:      []precompiles.PrecompileValue{},
+		Returns: &precompiles.MethodReturn{
+			IsTable: false,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("caller_hex", types.TextType, false),
+			},
+		},
+		Handler: func(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+			if ctx.TxContext == nil {
+				return resultFn([]any{""})
+			}
+			// If Caller is already a hex string (common in EVM), return it with 0x prefix if missing
+			caller := ctx.TxContext.Caller
+			if !strings.HasPrefix(caller, "0x") && !strings.HasPrefix(caller, "0X") {
+				// If it's a raw identifier, try to see if it's hex
+				if _, err := hex.DecodeString(caller); err == nil && len(caller) == 40 {
+					caller = "0x" + caller
+				}
+			}
+			return resultFn([]any{strings.ToLower(caller)})
+		},
+	}
+}
+
+// getCallerBytesMethod returns the current transaction caller as raw bytes.
+func getCallerBytesMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "get_caller_bytes",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters:      []precompiles.PrecompileValue{},
+		Returns: &precompiles.MethodReturn{
+			IsTable: false,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("caller_bytes", types.ByteaType, false),
+			},
+		},
+		Handler: func(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+			if ctx.TxContext == nil {
+				return resultFn([]any{[]byte{}})
+			}
+			// Signer is the public key / identity bytes
+			return resultFn([]any{ctx.TxContext.Signer})
+		},
+	}
+}
+
+// getLeaderHexMethod returns the current block leader as a 0x-prefixed hex string.
+func getLeaderHexMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "get_leader_hex",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters:      []precompiles.PrecompileValue{},
+		Returns: &precompiles.MethodReturn{
+			IsTable: false,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("leader_hex", types.TextType, false),
+			},
+		},
+		Handler: func(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+			if ctx.TxContext == nil || ctx.TxContext.BlockContext == nil || ctx.TxContext.BlockContext.Proposer == nil {
+				return resultFn([]any{""})
+			}
+			
+			// For prediction markets, we usually want the Ethereum address of the leader
+			// to transfer fees via the bridge.
+			pubkey := ctx.TxContext.BlockContext.Proposer
+			if pubkey.Type() == crypto.KeyTypeSecp256k1 {
+				// Convert to Ethereum address
+				addr, err := auth.GetUserIdentifier(pubkey)
+				if err == nil {
+					return resultFn([]any{strings.ToLower(addr)})
+				}
+			}
+			
+			// Fallback to raw hex if not secp256k1 or conversion fails
+			return resultFn([]any{"0x" + hex.EncodeToString(pubkey.Bytes())})
+		},
+	}
+}
+
+// getLeaderBytesMethod returns the current block leader as raw bytes.
+func getLeaderBytesMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "get_leader_bytes",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters:      []precompiles.PrecompileValue{},
+		Returns: &precompiles.MethodReturn{
+			IsTable: false,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("leader_bytes", types.ByteaType, false),
+			},
+		},
+		Handler: func(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+			if ctx.TxContext == nil || ctx.TxContext.BlockContext == nil || ctx.TxContext.BlockContext.Proposer == nil {
+				return resultFn([]any{[]byte{}})
+			}
+			return resultFn([]any{ctx.TxContext.BlockContext.Proposer.Bytes()})
 		},
 	}
 }

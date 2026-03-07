@@ -160,25 +160,21 @@ CREATE OR REPLACE ACTION create_market(
         ERROR('Leader address not available for fee transfer');
     }
 
+    -- Safe leader address conversion (handles both TEXT and BYTEA leader_sender)
+    $leader_hex TEXT := tn_utils.get_leader_hex();
+    if $leader_hex = '' {
+        ERROR('Leader address not available for fee transfer');
+    }
+
     -- Transfer fee to leader from TRUF bridge (hoodi_tt)
-    -- Note: Bridge operations throw ERROR on failure (insufficient balance, etc.)
-    -- so no explicit return value check is needed
-    $leader_hex TEXT := encode(@leader_sender, 'hex')::TEXT;
     hoodi_tt.transfer($leader_hex, $market_creation_fee);
 
     -- ==========================================================================
     -- CREATE MARKET
     -- ==========================================================================
 
-    -- Validate @caller format (must be 0x-prefixed Ethereum address)
-    -- Note: Kwil supports both Secp256k1 (EVM) and ED25519 signers. This action
-    -- requires a 0x-prefixed Ethereum address format for EVM compatibility.
-    if @caller IS NULL OR length(@caller) != 42 OR substring(LOWER(@caller), 1, 2) != '0x' {
-        ERROR('Invalid caller address format (expected 0x-prefixed Ethereum address)');
-    }
-
-    -- Convert caller address to bytes for storage
-    $caller_bytes BYTEA := decode(substring(LOWER(@caller), 3, 40), 'hex');
+    -- Safe caller normalization (handles both TEXT and BYTEA @caller)
+    $caller_bytes BYTEA := tn_utils.get_caller_bytes();
 
     -- Insert market record with MAX(id) + 1 pattern
     -- Note: This is safe in Kwil because transactions within a block are processed
@@ -218,7 +214,7 @@ CREATE OR REPLACE ACTION create_market(
     record_transaction_event(
         8,
         $market_creation_fee,
-        '0x' || $leader_hex,
+        $leader_hex,
         NULL
     );
 
@@ -1035,12 +1031,9 @@ CREATE OR REPLACE ACTION place_buy_order(
     -- 1.1 Get market bridge (will ERROR if market doesn't exist)
     $bridge TEXT := get_market_bridge($query_id);
 
-    -- 1.2 Validate @caller format (must be 0x-prefixed Ethereum address)
-    -- Note: Kwil supports both Secp256k1 (EVM) and ED25519 signers. This action
-    -- requires a 0x-prefixed Ethereum address format for EVM compatibility.
-    if @caller IS NULL OR length(@caller) != 42 OR substring(LOWER(@caller), 1, 2) != '0x' {
-        ERROR('Invalid caller address format (expected 0x-prefixed Ethereum address)');
-    }
+    -- 1.2 Validate @caller format and normalize to bytes
+    -- Safe caller normalization (handles both TEXT and BYTEA @caller)
+    $caller_bytes BYTEA := tn_utils.get_caller_bytes();
 
     -- 1.3 Validate parameters
     if $query_id IS NULL {
@@ -1129,8 +1122,8 @@ CREATE OR REPLACE ACTION place_buy_order(
     -- SECTION 4: GET OR CREATE PARTICIPANT
     -- ==========================================================================
 
-    -- Convert @caller (TEXT like '0x1234...') to BYTEA (20 bytes)
-    $caller_bytes BYTEA := decode(substring(LOWER(@caller), 3, 40), 'hex');
+    -- Safe caller normalization (already done in Section 1.2)
+    -- $caller_bytes is already available
 
     -- Try to get existing participant
     $participant_id INT;
@@ -1244,12 +1237,8 @@ CREATE OR REPLACE ACTION place_sell_order(
     -- 1.0 Get market bridge (will ERROR if market doesn't exist)
     $bridge TEXT := get_market_bridge($query_id);
 
-    -- 1.1 Validate @caller format (must be 0x-prefixed Ethereum address)
-    -- Note: Kwil supports both Secp256k1 (EVM) and ED25519 signers. This action
-    -- requires a 0x-prefixed Ethereum address format for EVM compatibility.
-    if @caller IS NULL OR length(@caller) != 42 OR substring(LOWER(@caller), 1, 2) != '0x' {
-        ERROR('Invalid caller address format (expected 0x-prefixed Ethereum address)');
-    }
+    -- Safe caller normalization using precompiles
+    $caller_bytes BYTEA := tn_utils.get_caller_bytes();
 
     -- 1.2 Validate parameters
     if $query_id IS NULL {
@@ -1304,8 +1293,8 @@ CREATE OR REPLACE ACTION place_sell_order(
     -- SECTION 2: GET PARTICIPANT (NO AUTO-CREATE FOR SELLS)
     -- ==========================================================================
 
-    -- Convert @caller (TEXT like '0x1234...') to BYTEA (20 bytes)
-    $caller_bytes BYTEA := decode(substring(LOWER(@caller), 3, 40), 'hex');
+    -- Safe caller normalization (already done in Section 1.2)
+    -- $caller_bytes is already available
 
     -- Look up participant (DON'T auto-create for sells)
     -- If user has shares, they must already be a participant from previous buy/mint
@@ -1459,12 +1448,9 @@ CREATE OR REPLACE ACTION place_split_limit_order(
     -- 1.1 Get market bridge (will ERROR if market doesn't exist)
     $bridge TEXT := get_market_bridge($query_id);
 
-    -- 1.2 Validate @caller format (must be 0x-prefixed Ethereum address)
-    -- Note: Kwil supports both Secp256k1 (EVM) and ED25519 signers. This action
-    -- requires a 0x-prefixed Ethereum address format for EVM compatibility.
-    if @caller IS NULL OR length(@caller) != 42 OR substring(LOWER(@caller), 1, 2) != '0x' {
-        ERROR('Invalid caller address format (expected 0x-prefixed Ethereum address)');
-    }
+    -- 1.2 Validate @caller format and normalize to bytes
+    -- Safe caller normalization (handles both TEXT and BYTEA @caller)
+    $caller_bytes BYTEA := tn_utils.get_caller_bytes();
 
     -- 1.3 Validate parameters
     if $query_id IS NULL {
@@ -1549,8 +1535,8 @@ CREATE OR REPLACE ACTION place_split_limit_order(
     -- SECTION 4: GET OR CREATE PARTICIPANT
     -- ==========================================================================
 
-    -- Convert @caller (TEXT like '0x1234...') to BYTEA (20 bytes)
-    $caller_bytes BYTEA := decode(substring(LOWER(@caller), 3, 40), 'hex');
+    -- Safe caller normalization (already done in Section 1.2)
+    -- $caller_bytes is already available
 
     -- Try to get existing participant
     $participant_id INT;
@@ -1720,12 +1706,8 @@ CREATE OR REPLACE ACTION cancel_order(
     -- SECTION 1: VALIDATE CALLER
     -- ==========================================================================
 
-    -- Validate @caller format (must be 0x-prefixed Ethereum address)
-    -- Note: Kwil supports both Secp256k1 (EVM) and ED25519 signers. This action
-    -- requires a 0x-prefixed Ethereum address format for EVM compatibility.
-    if @caller IS NULL OR length(@caller) != 42 OR substring(LOWER(@caller), 1, 2) != '0x' {
-        ERROR('Invalid caller address format (expected 0x-prefixed Ethereum address)');
-    }
+    -- Safe caller normalization using precompiles
+    $caller_bytes BYTEA := tn_utils.get_caller_bytes();
 
     -- ==========================================================================
     -- SECTION 2: VALIDATE PARAMETERS
@@ -1774,7 +1756,7 @@ CREATE OR REPLACE ACTION cancel_order(
     -- Get participant ID from caller's wallet address
     -- Note: Don't auto-create participant - they must exist if they have orders
     -- This uses the helper function from 031-order-book-vault.sql
-    $participant_id INT := ob_get_participant_id(@caller);
+    $participant_id INT := ob_get_participant_id(tn_utils.get_caller_hex());
 
     if $participant_id IS NULL {
         ERROR('No participant record found for this wallet');
@@ -1935,13 +1917,8 @@ CREATE OR REPLACE ACTION change_bid(
     -- Get market bridge (will ERROR if market doesn't exist)
     $bridge TEXT := get_market_bridge($query_id);
 
-    -- ==========================================================================
-    -- SECTION 1: VALIDATE CALLER
-    -- ==========================================================================
-
-    if @caller IS NULL OR length(@caller) != 42 OR substring(LOWER(@caller), 1, 2) != '0x' {
-        ERROR('Invalid caller address format (expected 0x-prefixed Ethereum address)');
-    }
+    -- Safe caller normalization using precompiles
+    $caller_bytes BYTEA := tn_utils.get_caller_bytes();
 
     -- ==========================================================================
     -- SECTION 2: VALIDATE PARAMETERS
@@ -2007,7 +1984,7 @@ CREATE OR REPLACE ACTION change_bid(
     -- SECTION 4: GET OLD ORDER DETAILS
     -- ==========================================================================
 
-    $participant_id INT := ob_get_participant_id(@caller);
+    $participant_id INT := ob_get_participant_id(tn_utils.get_caller_hex());
     if $participant_id IS NULL {
         ERROR('No participant record found for this wallet');
     }
@@ -2198,13 +2175,8 @@ CREATE OR REPLACE ACTION change_ask(
     -- Get market bridge (will ERROR if market doesn't exist)
     $bridge TEXT := get_market_bridge($query_id);
 
-    -- ==========================================================================
-    -- SECTION 1: VALIDATE CALLER
-    -- ==========================================================================
-
-    if @caller IS NULL OR length(@caller) != 42 OR substring(LOWER(@caller), 1, 2) != '0x' {
-        ERROR('Invalid caller address format (expected 0x-prefixed Ethereum address)');
-    }
+    -- Safe caller normalization using precompiles
+    $caller_bytes BYTEA := tn_utils.get_caller_bytes();
 
     -- ==========================================================================
     -- SECTION 2: VALIDATE PARAMETERS
@@ -2270,7 +2242,7 @@ CREATE OR REPLACE ACTION change_ask(
     -- SECTION 4: GET OLD ORDER DETAILS
     -- ==========================================================================
 
-    $participant_id INT := ob_get_participant_id(@caller);
+    $participant_id INT := ob_get_participant_id(tn_utils.get_caller_hex());
     if $participant_id IS NULL {
         ERROR('No participant record found for this wallet. You must own shares before selling.');
     }

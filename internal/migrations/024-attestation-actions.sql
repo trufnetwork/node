@@ -42,9 +42,12 @@ CREATE OR REPLACE ACTION request_attestation(
     $caller_balance NUMERIC(78, 0);
     $leader_addr TEXT;
 
+    -- Normalizing caller and leader safely using precompiles
+    $caller_bytes BYTEA := tn_utils.get_caller_bytes();
+    $lower_caller TEXT := tn_utils.get_caller_hex();
+
     -- Check if caller is exempt (has system:network_writer role)
     $is_exempt BOOL := FALSE;
-    $lower_caller TEXT := LOWER(@caller);
     FOR $row IN are_members_of('system', 'network_writer', ARRAY[$lower_caller]) {
         IF $row.wallet = $lower_caller AND $row.is_member {
             $is_exempt := TRUE;
@@ -69,12 +72,12 @@ CREATE OR REPLACE ACTION request_attestation(
             ERROR('Insufficient balance for attestation. Required: 40 TRUF');
         }
 
-        -- Verify leader address is available
-        IF @leader_sender IS NULL {
+        -- Safe leader address conversion
+        $leader_addr := tn_utils.get_leader_hex();
+        IF $leader_addr = '' {
             ERROR('Leader address not available for fee transfer');
         }
 
-        $leader_addr := encode(@leader_sender, 'hex')::TEXT;
         ethereum_bridge.transfer($leader_addr, $attestation_fee);
     }
     -- ===== END FEE COLLECTION =====
@@ -82,9 +85,8 @@ CREATE OR REPLACE ACTION request_attestation(
     -- Get current block height
     $created_height := @height;
     
-    -- Normalize caller address to bytes for storage
-    $caller_hex := LOWER(substring(@caller, 3, 40));
-    $caller_bytes := decode($caller_hex, 'hex');
+    -- Normalize caller address to bytes for storage (re-use safe normalization)
+    $caller_bytes := $caller_bytes; -- Already normalized above
     
     -- Normalize provider input and enforce length
     $provider_lower := LOWER($data_provider);
@@ -161,7 +163,7 @@ CREATE OR REPLACE ACTION request_attestation(
     record_transaction_event(
         6,
         $attestation_fee,
-        '0x' || $leader_addr,
+        $leader_addr,
         NULL
     );
 

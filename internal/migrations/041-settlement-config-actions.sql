@@ -45,7 +45,9 @@ CREATE OR REPLACE ACTION update_settlement_config(
     $retry_attempts INT
 ) PUBLIC {
     -- Validate caller has network_writer role
-    $caller_addr TEXT := LOWER(@caller);
+    -- Safe caller normalization using precompiles
+    $caller_addr TEXT := tn_utils.get_caller_hex();
+
     $has_role BOOL := false;
 
     for $row in SELECT 1 FROM role_members

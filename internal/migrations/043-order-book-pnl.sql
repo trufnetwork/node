@@ -2,6 +2,8 @@
  * ORDER BOOK P&L MIGRATION
  *
  * Creates the ob_net_impacts table to track the net change of every transaction.
+ * This version removes the redundant tx_hash from the temporary ob_tx_payouts table
+ * to avoid bytea/text comparison errors in Kuneiform.
  */
 
 -- =============================================================================
@@ -36,7 +38,6 @@ CREATE INDEX IF NOT EXISTS idx_ob_net_impacts_query ON ob_net_impacts(query_id);
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS ob_tx_payouts (
     id INT PRIMARY KEY, -- Surrogate key needed for Kwil
-    tx_hash BYTEA NOT NULL,
     participant_id INT NOT NULL,
     outcome BOOLEAN NOT NULL,
     shares_change INT8 NOT NULL,
@@ -49,8 +50,8 @@ CREATE OR REPLACE ACTION ob_record_tx_payout(
     $participant_id INT,
     $amount NUMERIC(78,0)
 ) PRIVATE {
-    INSERT INTO ob_tx_payouts (id, tx_hash, participant_id, outcome, shares_change, amount, is_negative)
-    SELECT COALESCE(MAX(id), 0::INT) + 1, decode(@txid, 'hex'), $participant_id, TRUE, 0::INT8, $amount, FALSE
+    INSERT INTO ob_tx_payouts (id, participant_id, outcome, shares_change, amount, is_negative)
+    SELECT COALESCE(MAX(id), 0::INT) + 1, $participant_id, TRUE, 0::INT8, $amount, FALSE
     FROM ob_tx_payouts;
 };
 
@@ -62,8 +63,8 @@ CREATE OR REPLACE ACTION ob_record_tx_impact(
     $amount NUMERIC(78,0),
     $is_negative BOOLEAN
 ) PRIVATE {
-    INSERT INTO ob_tx_payouts (id, tx_hash, participant_id, outcome, shares_change, amount, is_negative)
-    SELECT COALESCE(MAX(id), 0::INT) + 1, decode(@txid, 'hex'), $participant_id, $outcome, $shares_change, $amount, $is_negative
+    INSERT INTO ob_tx_payouts (id, participant_id, outcome, shares_change, amount, is_negative)
+    SELECT COALESCE(MAX(id), 0::INT) + 1, $participant_id, $outcome, $shares_change, $amount, $is_negative
     FROM ob_tx_payouts;
 };
 
@@ -72,7 +73,7 @@ CREATE OR REPLACE ACTION ob_cleanup_tx_payouts(
     $query_id INT
 ) PRIVATE {
     -- Iterate over all touched (participant, outcome) pairs in this TX
-    for $p in SELECT DISTINCT participant_id, outcome FROM ob_tx_payouts WHERE tx_hash = decode(@txid, 'hex') {
+    for $p in SELECT DISTINCT participant_id, outcome FROM ob_tx_payouts {
         -- Capture into local variables to avoid "unknown variable" error in nested loops
         $current_pid INT := $p.participant_id;
         $current_outcome BOOL := $p.outcome;
@@ -80,7 +81,7 @@ CREATE OR REPLACE ACTION ob_cleanup_tx_payouts(
         $net_shares INT8 := 0;
         $net_collateral NUMERIC(100,0) := 0::NUMERIC(100,0);
         
-        for $impact in SELECT shares_change, amount, is_negative FROM ob_tx_payouts WHERE tx_hash = decode(@txid, 'hex') AND participant_id = $current_pid AND outcome = $current_outcome {
+        for $impact in SELECT shares_change, amount, is_negative FROM ob_tx_payouts WHERE participant_id = $current_pid AND outcome = $current_outcome {
             $net_shares := $net_shares + $impact.shares_change;
             if $impact.is_negative {
                 $net_collateral := $net_collateral - $impact.amount::NUMERIC(100,0);
@@ -103,7 +104,7 @@ CREATE OR REPLACE ACTION ob_cleanup_tx_payouts(
         ob_record_net_impact($query_id, $current_pid, $current_outcome, $net_shares, $final_mag, $final_is_neg);
     }
 
-    DELETE FROM ob_tx_payouts WHERE tx_hash = decode(@txid, 'hex');
+    DELETE FROM ob_tx_payouts;
 };
 
 -- Helper to get total payout for a participant in current TX (Legacy helper)
@@ -111,7 +112,7 @@ CREATE OR REPLACE ACTION ob_get_tx_payout(
     $participant_id INT
 ) PRIVATE RETURNS (total_payout NUMERIC(78,0)) {
     $total NUMERIC(78,0) := 0::NUMERIC(78,0);
-    for $row in SELECT amount, is_negative FROM ob_tx_payouts WHERE tx_hash = decode(@txid, 'hex') AND participant_id = $participant_id {
+    for $row in SELECT amount, is_negative FROM ob_tx_payouts WHERE participant_id = $participant_id {
         if NOT $row.is_negative {
             $total := $total + $row.amount;
         }
