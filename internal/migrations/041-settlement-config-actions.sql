@@ -4,7 +4,7 @@
 -- Uses existing network_writer role for access control.
 --
 -- Changes:
--- - Enables settlement with 30-minute schedule by default
+-- - Enables settlement with 5-minute schedule by default
 -- - Adds update_settlement_config action (role-gated to network_writer)
 -- - Adds get_settlement_config action (public view)
 --
@@ -13,12 +13,12 @@
 -- - Migration 015: system:network_writer role must exist
 
 -- =============================================================================
--- ENABLE SETTLEMENT BY DEFAULT (every 30 minutes: at 0 and 30 past the hour)
+-- ENABLE SETTLEMENT BY DEFAULT (every 5 minutes)
 -- =============================================================================
 UPDATE settlement_config
 SET
     enabled = true,
-    settlement_schedule = '0,30 * * * *',
+    settlement_schedule = '*/5 * * * *',
     max_markets_per_run = 1000,
     retry_attempts = 3,
     updated_at = 0
@@ -45,7 +45,9 @@ CREATE OR REPLACE ACTION update_settlement_config(
     $retry_attempts INT
 ) PUBLIC {
     -- Validate caller has network_writer role
-    $caller_addr TEXT := LOWER(@caller);
+    -- Safe caller normalization using precompiles
+    $caller_addr TEXT := tn_utils.get_caller_hex();
+
     $has_role BOOL := false;
 
     for $row in SELECT 1 FROM role_members
