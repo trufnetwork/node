@@ -4,7 +4,7 @@
 -- Uses existing network_writer role for access control.
 --
 -- Changes:
--- - Enables settlement with 30-minute schedule by default
+-- - Enables settlement with 5-minute schedule by default
 -- - Adds update_settlement_config action (role-gated to network_writer)
 -- - Adds get_settlement_config action (public view)
 --

@@ -95,7 +95,9 @@ CREATE OR REPLACE ACTION distribute_fees(
         $dp_pid INT;
         for $p in SELECT id FROM ob_participants WHERE wallet_address = $dp_addr { $dp_pid := $p.id; }
         if $dp_pid IS NOT NULL {
-            ob_record_net_impact($query_id, $dp_pid, $winning_outcome, 0::INT8, $infra_share, FALSE);
+            $next_id_dp INT;
+            for $row in SELECT COALESCE(MAX(id), 0::INT) + 1 as val FROM ob_net_impacts { $next_id_dp := $row.val; }
+            ob_record_net_impact($next_id_dp, $query_id, $dp_pid, $winning_outcome, 0::INT8, $infra_share, FALSE);
             $actual_dp_fees := $infra_share;
         }
     }
@@ -112,7 +114,9 @@ CREATE OR REPLACE ACTION distribute_fees(
         $leader_bytes BYTEA := tn_utils.get_leader_bytes();
         for $p in SELECT id FROM ob_participants WHERE wallet_address = $leader_bytes { $val_pid := $p.id; }
         if $val_pid IS NOT NULL {
-            ob_record_net_impact($query_id, $val_pid, $winning_outcome, 0::INT8, $infra_share, FALSE);
+            $next_id_val INT;
+            for $row in SELECT COALESCE(MAX(id), 0::INT) + 1 as val FROM ob_net_impacts { $next_id_val := $row.val; }
+            ob_record_net_impact($next_id_val, $query_id, $val_pid, $winning_outcome, 0::INT8, $infra_share, FALSE);
             $actual_validator_fees := $infra_share;
         }
     }
