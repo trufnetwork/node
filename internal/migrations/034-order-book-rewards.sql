@@ -114,31 +114,43 @@ CREATE OR REPLACE ACTION sample_lp_rewards(
         ERROR('Market is already settled');
     }
 
-    -- Calculate midpoint
-    $best_bid INT;
-    $best_ask INT;
+    -- Calculate midpoint considering both YES and NO outcomes
+    $best_bid INT := 0;
+    $best_ask INT := 100;
 
-    for $row in SELECT price FROM ob_positions
-        WHERE query_id = $query_id AND outcome = TRUE AND price < 0
-        ORDER BY price ASC LIMIT 1
-    {
-        $best_bid := $row.price;
+    -- YES Buys (price < 0) -> bid = ABS(price)
+    for $row in SELECT price FROM ob_positions WHERE query_id = $query_id AND outcome = TRUE AND price < 0 ORDER BY price ASC LIMIT 1 {
+        $p INT := $row.price;
+        if $p < 0 { $p := -$p; }
+        if $p > $best_bid { $best_bid := $p; }
     }
 
-    for $row in SELECT price FROM ob_positions
-        WHERE query_id = $query_id AND outcome = TRUE AND price > 0
-        ORDER BY price ASC LIMIT 1
-    {
-        $best_ask := $row.price;
+    -- NO Sells (price > 0) -> bid = 100 - price
+    for $row in SELECT price FROM ob_positions WHERE query_id = $query_id AND outcome = FALSE AND price > 0 ORDER BY price ASC LIMIT 1 {
+        $p INT := 100 - $row.price;
+        if $p > $best_bid { $best_bid := $p; }
     }
 
-    -- If no two-sided liquidity, no rewards
-    if $best_bid IS NULL OR $best_ask IS NULL {
+    -- YES Sells (price > 0) -> ask = price
+    for $row in SELECT price FROM ob_positions WHERE query_id = $query_id AND outcome = TRUE AND price > 0 ORDER BY price ASC LIMIT 1 {
+        if $row.price < $best_ask { $best_ask := $row.price; }
+    }
+
+    -- NO Buys (price < 0) -> ask = 100 - ABS(price)
+    for $row in SELECT price FROM ob_positions WHERE query_id = $query_id AND outcome = FALSE AND price < 0 ORDER BY price ASC LIMIT 1 {
+        $p INT := $row.price;
+        if $p < 0 { $p := -$p; }
+        $p := 100 - $p;
+        if $p < $best_ask { $best_ask := $p; }
+    }
+
+    -- If no valid bids or asks were found (i.e. still 0 or 100), no two-sided liquidity
+    if $best_bid = 0 OR $best_ask = 100 {
         RETURN;
     }
 
-    -- Midpoint is (BestAsk + BestBidMagnitude) / 2
-    $x_mid INT := ($best_ask + ABS($best_bid)) / 2;
+    -- Midpoint is (best_ask + best_bid) / 2
+    $x_mid INT := ($best_ask + $best_bid) / 2;
 
     -- Dynamic spread
     $x_spread_base INT := ABS($x_mid - (100 - $x_mid));
