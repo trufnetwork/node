@@ -190,15 +190,24 @@ func testDistribution1Block2LPs(t *testing.T) func(context.Context, *kwilTesting
 		infraShare := new(big.Int).Div(new(big.Int).Mul(totalFees, big.NewInt(125)), big.NewInt(1000))
 		lpShareTotal := new(big.Int).Sub(totalFees, new(big.Int).Mul(infraShare, big.NewInt(2)))
 
-		// User1 is DP, so they get 12.5% infraShare + their LP share
-		// User1 LP percentage is 64% of lpShareTotal
-		// User2 LP percentage is 36% of lpShareTotal
-		expectedLP1 := new(big.Int).Div(new(big.Int).Mul(lpShareTotal, big.NewInt(64)), big.NewInt(100))
-		expectedLP2 := new(big.Int).Div(new(big.Int).Mul(lpShareTotal, big.NewInt(36)), big.NewInt(100))
+		// Dynamically calculate expected LP shares based on sampled rewards
+		// rewards map is [participant_id: percentage]
+		expectedLP1 := big.NewInt(0)
+		expectedLP2 := big.NewInt(0)
+
+		if p1Reward, ok := rewards[1]; ok {
+			// Convert float64 percentage to big.Int with precision
+			// reward_percent is already 0-100
+			p1Wei := new(big.Int).Mul(lpShareTotal, big.NewInt(int64(p1Reward*100)))
+			expectedLP1 = new(big.Int).Div(p1Wei, big.NewInt(10000))
+		}
+		if p2Reward, ok := rewards[2]; ok {
+			p2Wei := new(big.Int).Mul(lpShareTotal, big.NewInt(int64(p2Reward*100)))
+			expectedLP2 = new(big.Int).Div(p2Wei, big.NewInt(10000))
+		}
 
 		// User1 gets expectedLP1 + infraShare (as DP)
 		// They might also get another infraShare if they are the leader (@leader_sender)
-		// In kwil-db testing, @leader_sender usually defaults to the first validator
 		expectedDist1 := new(big.Int).Add(expectedLP1, infraShare)
 		expectedDist2 := expectedLP2
 
@@ -376,16 +385,19 @@ func testDistribution3Blocks2LPs(t *testing.T) func(context.Context, *kwilTestin
 		infraShare := new(big.Int).Div(new(big.Int).Mul(totalFees, big.NewInt(125)), big.NewInt(1000))
 		lpShareTotal := new(big.Int).Sub(totalFees, new(big.Int).Mul(infraShare, big.NewInt(2)))
 
-		// Total percentages: User1 = 192%, User2 = 108%
-		// User1 LP: (lpShareTotal * 192) / (100 * 3)
-		// User2 LP: (lpShareTotal * 108) / (100 * 3)
+		// Calculate average LP share across all blocks
+		totalP1Reward := rewards1000[1] + rewards2000[1] + rewards3000[1]
+		totalP2Reward := rewards1000[2] + rewards2000[2] + rewards3000[2]
+
+		// User1 LP: (lpShareTotal * totalP1Reward) / (100 * 3)
+		// User2 LP: (lpShareTotal * totalP2Reward) / (100 * 3)
 		expectedLP1 := new(big.Int).Div(
-			new(big.Int).Mul(lpShareTotal, big.NewInt(192)),
-			big.NewInt(300),
+			new(big.Int).Mul(lpShareTotal, big.NewInt(int64(totalP1Reward*100))),
+			big.NewInt(30000),
 		)
 		expectedLP2 := new(big.Int).Div(
-			new(big.Int).Mul(lpShareTotal, big.NewInt(108)),
-			big.NewInt(300),
+			new(big.Int).Mul(lpShareTotal, big.NewInt(int64(totalP2Reward*100))),
+			big.NewInt(30000),
 		)
 
 		// User1 is DP, so gets expectedLP1 + infraShare (+ Leader share if applicable)
