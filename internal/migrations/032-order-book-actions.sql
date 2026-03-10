@@ -2546,16 +2546,19 @@ CREATE OR REPLACE ACTION settle_market(
     }
 
     -- ==========================================================================
-    -- SECTION 4: MARK MARKET AS SETTLED
+    -- SECTION 4: PROCESS SETTLEMENT AND MARK AS SETTLED
     -- ==========================================================================
 
-    -- Update market with settlement information
+    -- Process all payouts, refunds, and fee collection atomically.
+    -- IMPORTANT: This must run BEFORE marking settled=true because
+    -- process_settlement() calls sample_lp_rewards() which checks settled flag.
+    process_settlement($query_id, $winning_outcome);
+
+    -- Mark market as settled AFTER processing completes successfully.
+    -- If process_settlement fails, the market remains unsettled for retry.
     UPDATE ob_queries
     SET settled = true,
         winning_outcome = $winning_outcome,
         settled_at = @block_timestamp
     WHERE id = $query_id;
-
-    -- Process all payouts, refunds, and fee collection atomically
-    process_settlement($query_id, $winning_outcome);
 };
