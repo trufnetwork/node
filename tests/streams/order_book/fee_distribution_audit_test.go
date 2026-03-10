@@ -56,9 +56,9 @@ func testAuditRecordCreation(t *testing.T) func(context.Context, *kwilTesting.Pl
 		user2 := util.Unsafe_NewEthereumAddressFromString("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB")
 
 		// Give both users balance
-		err = giveBalanceChained(ctx, platform, user1.Address(), "500000000000000000000")
+		err = giveBalanceChained(ctx, platform, user1.Address(), "1000000000000000000000")
 		require.NoError(t, err)
-		err = giveBalanceChained(ctx, platform, user2.Address(), "500000000000000000000")
+		err = giveBalanceChained(ctx, platform, user2.Address(), "1000000000000000000000")
 		require.NoError(t, err)
 
 		// Create market
@@ -137,7 +137,8 @@ func testAuditRecordCreation(t *testing.T) func(context.Context, *kwilTesting.Pl
 		require.Equal(t, expectedInfraShare.String(), totalValFeesStr, "Validator share in audit should match 12.5%")
 
 		require.Equal(t, 2, lpCount, "LP count should be 2")
-		require.Equal(t, 1, blockCount, "Block count should be 1")
+		// Block count = 2: 1 manual sample + 1 final sample at settlement (@height)
+		require.Equal(t, 2, blockCount, "Block count should be 2 (1 manual + 1 final at settlement)")
 
 		// Verify per-LP detail records using callback pattern with slice collection
 		type detailRow struct {
@@ -193,9 +194,9 @@ func testAuditMultiBlock(t *testing.T) func(context.Context, *kwilTesting.Platfo
 		user1 := util.Unsafe_NewEthereumAddressFromString("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC")
 		user2 := util.Unsafe_NewEthereumAddressFromString("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD")
 
-		err = giveBalanceChained(ctx, platform, user1.Address(), "500000000000000000000")
+		err = giveBalanceChained(ctx, platform, user1.Address(), "1000000000000000000000")
 		require.NoError(t, err)
-		err = giveBalanceChained(ctx, platform, user2.Address(), "500000000000000000000")
+		err = giveBalanceChained(ctx, platform, user2.Address(), "1000000000000000000000")
 		require.NoError(t, err)
 
 		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000063", "get_record", []byte{0x01})
@@ -248,7 +249,8 @@ func testAuditMultiBlock(t *testing.T) func(context.Context, *kwilTesting.Platfo
 			})
 		require.NoError(t, err)
 		require.Equal(t, 1, rowCount, "Should have 1 distribution summary record")
-		require.Equal(t, 3, blockCount, "Block count should be 3 (3 samples)")
+		// Block count = 4: 3 manual samples + 1 final sample at settlement (@height)
+		require.Equal(t, 4, blockCount, "Block count should be 4 (3 manual + 1 final at settlement)")
 
 		t.Logf("✅ Multi-block audit verified: %d blocks sampled", blockCount)
 
@@ -266,7 +268,7 @@ func testAuditNoLPs(t *testing.T) func(context.Context, *kwilTesting.Platform) e
 
 		user1 := util.Unsafe_NewEthereumAddressFromString("0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
 
-		err = giveBalanceChained(ctx, platform, user1.Address(), "500000000000000000000")
+		err = giveBalanceChained(ctx, platform, user1.Address(), "1000000000000000000000")
 		require.NoError(t, err)
 
 		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000064", "get_record", []byte{0x01})
@@ -338,7 +340,7 @@ func testAuditZeroFees(t *testing.T) func(context.Context, *kwilTesting.Platform
 
 		user1 := util.Unsafe_NewEthereumAddressFromString("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF")
 
-		err = giveBalanceChained(ctx, platform, user1.Address(), "500000000000000000000")
+		err = giveBalanceChained(ctx, platform, user1.Address(), "1000000000000000000000")
 		require.NoError(t, err)
 
 		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000065", "get_record", []byte{0x01})
@@ -399,9 +401,9 @@ func testAuditDataIntegrity(t *testing.T) func(context.Context, *kwilTesting.Pla
 		user1 := util.Unsafe_NewEthereumAddressFromString("0x9999999999999999999999999999999999999999")
 		user2 := util.Unsafe_NewEthereumAddressFromString("0x8888888888888888888888888888888888888888")
 
-		err = giveBalanceChained(ctx, platform, user1.Address(), "500000000000000000000")
+		err = giveBalanceChained(ctx, platform, user1.Address(), "1000000000000000000000")
 		require.NoError(t, err)
-		err = giveBalanceChained(ctx, platform, user2.Address(), "500000000000000000000")
+		err = giveBalanceChained(ctx, platform, user2.Address(), "1000000000000000000000")
 		require.NoError(t, err)
 
 		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000066", "get_record", []byte{0x01})
@@ -543,29 +545,51 @@ func testAuditDataIntegrity(t *testing.T) func(context.Context, *kwilTesting.Pla
 	}
 }
 
-// setupLPScenario creates paired orders for both users to qualify as LPs
+// setupLPScenario creates paired orders for both users to qualify as LPs.
+// CRITICAL: Buy prices are chosen BELOW existing sell prices to avoid the
+// matching engine consuming LP pair orders on placement.
 func setupLPScenario(t *testing.T, ctx context.Context, platform *kwilTesting.Platform,
 	user1, user2 *util.EthereumAddress, marketID int) {
 
+	// User1: Split@50 → YES(300), NO sell@50(300)
 	err := callPlaceSplitLimitOrder(ctx, platform, user1, marketID, 50, 300)
 	require.NoError(t, err)
 
-	err = callPlaceBuyOrder(ctx, platform, user1, marketID, true, 46, 50)
+	// Establish bid and ask for midpoint
+	err = callPlaceBuyOrder(ctx, platform, user1, marketID, true, 44, 50)
 	require.NoError(t, err)
-	err = callPlaceSellOrder(ctx, platform, user1, marketID, true, 52, 200)
+	err = callPlaceSellOrder(ctx, platform, user1, marketID, true, 56, 150)
 	require.NoError(t, err)
+	// holdings: 300→150
 
-	err = callPlaceSellOrder(ctx, platform, user1, marketID, true, 48, 100)
-	require.NoError(t, err)
-	err = callPlaceBuyOrder(ctx, platform, user1, marketID, false, 52, 100)
-	require.NoError(t, err)
-
+	// User2: Split@50 → YES(100), NO sell@50(100)
 	err = callPlaceSplitLimitOrder(ctx, platform, user2, marketID, 50, 100)
 	require.NoError(t, err)
-	err = callPlaceSellOrder(ctx, platform, user2, marketID, true, 49, 100)
+
+	// User1 TRUE-side LP pair: YES sell@52 + NO buy@48
+	// NO buy@48 < NO sell@50 → no match ✓
+	err = callPlaceSellOrder(ctx, platform, user1, marketID, true, 52, 100)
 	require.NoError(t, err)
-	err = callPlaceBuyOrder(ctx, platform, user2, marketID, false, 51, 100)
+	// holdings: 150→50
+	err = callPlaceBuyOrder(ctx, platform, user1, marketID, false, 48, 100)
 	require.NoError(t, err)
+
+	// User2 TRUE-side LP pair: YES sell@51 + NO buy@49
+	// NO buy@49 < NO sell@50 → no match ✓
+	err = callPlaceSellOrder(ctx, platform, user2, marketID, true, 51, 100)
+	require.NoError(t, err)
+	err = callPlaceBuyOrder(ctx, platform, user2, marketID, false, 49, 100)
+	require.NoError(t, err)
+
+	// User1 FALSE-side LP pair: NO sell@50(300) + YES buy@50(300)
+	// YES buy@50 < YES sell@51 → no match ✓
+	err = callPlaceBuyOrder(ctx, platform, user1, marketID, true, 50, 300)
+	require.NoError(t, err)
+
+	// User2 FALSE-side LP pair: NO sell@50(100) + YES buy@50(100)
+	err = callPlaceBuyOrder(ctx, platform, user2, marketID, true, 50, 100)
+	require.NoError(t, err)
+	// Final midpoint: best bid=-50, lowest sell=51 → midpoint=50, spread=5
 }
 
 // fundVaultAndDistributeFees funds the vault and calls distribute_fees

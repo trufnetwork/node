@@ -34,6 +34,11 @@ func triggerDirectSampling(ctx context.Context, platform *kwilTesting.Platform, 
 
 // triggerBatchSampling simulates the EndBlockHook calling the PRIVATE sample_all_active_lp_rewards action.
 func triggerBatchSampling(ctx context.Context, platform *kwilTesting.Platform, block int64) error {
+	return triggerBatchSamplingWithLogs(ctx, platform, block, nil)
+}
+
+// triggerBatchSamplingWithLogs is like triggerBatchSampling but captures NOTICE logs for debugging.
+func triggerBatchSamplingWithLogs(ctx context.Context, platform *kwilTesting.Platform, block int64, t *testing.T) error {
 	// We use CallWithoutEngineCtx because internal hooks run without an external caller/signer.
 	// This matches the new batch logic in tn_lp_rewards.go.
 	res, err := platform.Engine.CallWithoutEngineCtx(
@@ -46,6 +51,11 @@ func triggerBatchSampling(ctx context.Context, platform *kwilTesting.Platform, b
 	)
 	if err != nil {
 		return err
+	}
+	if t != nil && res != nil && len(res.Logs) > 0 {
+		for i, log := range res.Logs {
+			t.Logf("NOTICE[%d]: %s", i, log)
+		}
 	}
 	if res.Error != nil {
 		return res.Error
@@ -232,7 +242,7 @@ func testSampleRewardsIncompleteOrderBook(t *testing.T) func(context.Context, *k
 		require.NoError(t, err)
 
 		// Give user balance
-		err = giveBalance(ctx, platform, userAddr.Address(), "500000000000000000000")
+		err = giveBalanceChained(ctx, platform, userAddr.Address(), "500000000000000000000")
 		require.NoError(t, err)
 
 		// Create market
@@ -248,24 +258,31 @@ func testSampleRewardsIncompleteOrderBook(t *testing.T) func(context.Context, *k
 		require.NoError(t, err)
 
 		// Place split limit order at 60¢ (creates YES holdings + NO sell @ 40¢)
-		// This creates a sell order but no buy order, so midpoint calculation fails
+		// This gives us bid-side only: YES buy order is missing, and more importantly
+		// YES sell order is missing. Spec-aligned midpoint requires YES sell, so
+		// sampling returns early with no rewards.
 		err = callPlaceSplitLimitOrder(ctx, platform, &userAddr, int(marketID), 60, 100)
 		require.NoError(t, err)
 
-		// Sample should succeed but produce no rewards (incomplete order book)
+		// Also add a YES buy to have at least the bid side
+		err = callPlaceBuyOrder(ctx, platform, &userAddr, int(marketID), true, 58, 50)
+		require.NoError(t, err)
+		// Still no YES sell → midpoint can't be calculated → no rewards
+
+		// Sample should succeed but produce no rewards (no YES sell = incomplete order book)
 		err = triggerBatchSampling(ctx, platform, 1000)
 		require.NoError(t, err)
 
 		// Verify no rewards
 		rewards, err := getRewards(ctx, platform, int(marketID), 1000)
 		require.NoError(t, err)
-		require.Empty(t, rewards, "No rewards for incomplete order book")
+		require.Empty(t, rewards, "No rewards for incomplete order book (missing YES sell)")
 
 		return nil
 	}
 }
 
-// testSampleRewardsSpread5Cents tests dynamic spread = 5¢ (midpoint 36-50 or 50-64)
+// testSampleRewardsSpread5Cents tests dynamic spread = 5¢ (midpoint distance from 50 < 15)
 func testSampleRewardsSpread5Cents(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePoint = nil
@@ -292,18 +309,48 @@ func testSampleRewardsSpread5Cents(t *testing.T) func(context.Context, *kwilTest
 		})
 		require.NoError(t, err)
 
-		// Create order book with midpoint around 48¢ (distance from 50 = 2, spread = 5¢)
-		// User1: Split @ 48¢ → YES holdings + NO sell @ 52¢
-		err = callPlaceSplitLimitOrder(ctx, platform, &user1, int(marketID), 48, 100)
+		// Create two-sided order book with balanced TRUE-side and FALSE-side pairs.
+		// LEAST(TRUE-side, FALSE-side) scoring requires BOTH types of pairs.
+		// CRITICAL: LP pair buy prices must be BELOW existing sell prices of same
+		// outcome to avoid the matching engine consuming them on placement.
+		//
+		// Step 1: Split @ 50 for holdings + NO sell @ 50
+		err = callPlaceSplitLimitOrder(ctx, platform, &user1, int(marketID), 50, 200)
+		require.NoError(t, err)
+		// Creates: YES holdings (TRUE, price=0, amount=200) + NO sell @ 50 (FALSE, price=50, amount=200)
+
+		// Step 2: Establish bid and ask for midpoint
+		// YES buy @ 46 (bid)
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), true, 46, 50)
+		require.NoError(t, err)
+		// YES sell @ 54 (ask, from holdings: 200→150)
+		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 54, 50)
 		require.NoError(t, err)
 
-		// Sample rewards
-		err = triggerBatchSampling(ctx, platform, 1000)
+		// Step 3: TRUE-side LP pair: YES sell @ 51 + NO buy @ 49
+		// Pair: p1.price=51 = 100+(-49) ✓, amounts 100=100
+		// NO buy @ 49 does NOT match NO sell @ 50 (sell 50 > buy 49 → no direct match)
+		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 51, 100)
+		require.NoError(t, err)
+		// holdings: 150→50
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), false, 49, 100)
 		require.NoError(t, err)
 
-		// Verify spread was 5¢ (we can't check spread directly, but rewards should be generated)
+		// Step 4: FALSE-side LP pair: NO sell @ 50 + YES buy @ 50
+		// Pair: p1.price=50 = 100+(-50) ✓, amounts 200=200
+		// YES buy @ 50 does NOT match YES sell @ 51 (sell 51 > buy 50 → no direct match)
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), true, 50, 200)
+		require.NoError(t, err)
+		// Final midpoint: best bid=-50, lowest sell=51 → midpoint=(51+50)/2=50
+		// spread_base=|50-50|=0 → spread=5
+
+		// Sample rewards with NOTICE logging
+		err = triggerBatchSamplingWithLogs(ctx, platform, 1000, t)
+		require.NoError(t, err)
+
 		rewards, err := getRewards(ctx, platform, int(marketID), 1000)
 		require.NoError(t, err)
+		require.NotEmpty(t, rewards, "Should generate rewards with 5¢ spread")
 		t.Logf("Spread 5¢ rewards: %+v", rewards)
 
 		return nil
@@ -337,17 +384,41 @@ func testSampleRewardsSpread4Cents(t *testing.T) func(context.Context, *kwilTest
 		})
 		require.NoError(t, err)
 
-		// Create order book with midpoint around 35¢ (distance from 50 = 15, spread = 4¢)
-		// User1: Split @ 35¢ → YES holdings + NO sell @ 65¢
-		err = callPlaceSplitLimitOrder(ctx, platform, &user1, int(marketID), 35, 100)
+		// Create two-sided order book with midpoint around 35¢
+		// spread_base = |35 - 65| = 30 → spread = 4¢
+		// CRITICAL: Buy prices chosen below sell prices to avoid matching engine consumption.
+		err = callPlaceSplitLimitOrder(ctx, platform, &user1, int(marketID), 35, 200)
+		require.NoError(t, err)
+		// YES buy @ 33 (bid side)
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), true, 33, 50)
+		require.NoError(t, err)
+		// YES sell @ 37 (ask side, from holdings: 200→150)
+		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 37, 50)
 		require.NoError(t, err)
 
+		// TRUE-side LP pair: YES sell @ 36 + NO buy @ 64 (36 = 100 + (-64))
+		// NO buy @ 64 does NOT match NO sell @ 65 (sell 65 > buy 64 → no match)
+		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 36, 100)
+		require.NoError(t, err)
+		// holdings: 150→50
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), false, 64, 100)
+		require.NoError(t, err)
+
+		// FALSE-side LP pair: NO sell @ 65 (from split, amount=200) + YES buy @ 35
+		// YES buy @ 35 does NOT match YES sell @ 36 (sell 36 > buy 35 → no match)
+		// Pair: p1.price=65 = 100+(-35) ✓, amounts 200=200
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), true, 35, 200)
+		require.NoError(t, err)
+		// Final midpoint: best bid=-35, lowest sell=36 → midpoint=(36+35)/2=35
+		// spread_base=|35-65|=30 → spread=4
+
 		// Sample rewards
-		err = triggerBatchSampling(ctx, platform, 2000)
+		err = triggerBatchSamplingWithLogs(ctx, platform, 2000, t)
 		require.NoError(t, err)
 
 		rewards, err := getRewards(ctx, platform, int(marketID), 2000)
 		require.NoError(t, err)
+		require.NotEmpty(t, rewards, "Should generate rewards with 4¢ spread")
 		t.Logf("Spread 4¢ rewards: %+v", rewards)
 
 		return nil
@@ -381,17 +452,41 @@ func testSampleRewardsSpread3Cents(t *testing.T) func(context.Context, *kwilTest
 		})
 		require.NoError(t, err)
 
-		// Create order book with midpoint around 20¢ (distance from 50 = 30, spread = 3¢)
-		// User1: Split @ 20¢ → YES holdings + NO sell @ 80¢
-		err = callPlaceSplitLimitOrder(ctx, platform, &user1, int(marketID), 20, 100)
+		// Create two-sided order book with midpoint around 20¢
+		// spread_base = |20 - 80| = 60 → spread = 3¢
+		// CRITICAL: Buy prices chosen below sell prices to avoid matching engine consumption.
+		err = callPlaceSplitLimitOrder(ctx, platform, &user1, int(marketID), 20, 200)
+		require.NoError(t, err)
+		// YES buy @ 18 (bid side)
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), true, 18, 50)
+		require.NoError(t, err)
+		// YES sell @ 22 (ask side, from holdings: 200→150)
+		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 22, 50)
 		require.NoError(t, err)
 
+		// TRUE-side LP pair: YES sell @ 21 + NO buy @ 79 (21 = 100 + (-79))
+		// NO buy @ 79 does NOT match NO sell @ 80 (sell 80 > buy 79 → no match)
+		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 21, 100)
+		require.NoError(t, err)
+		// holdings: 150→50
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), false, 79, 100)
+		require.NoError(t, err)
+
+		// FALSE-side LP pair: NO sell @ 80 (from split, amount=200) + YES buy @ 20
+		// YES buy @ 20 does NOT match YES sell @ 21 (sell 21 > buy 20 → no match)
+		// Pair: p1.price=80 = 100+(-20) ✓, amounts 200=200
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), true, 20, 200)
+		require.NoError(t, err)
+		// Final midpoint: best bid=-20, lowest sell=21 → midpoint=(21+20)/2=20
+		// spread_base=|20-80|=60 → spread=3
+
 		// Sample rewards
-		err = triggerBatchSampling(ctx, platform, 3000)
+		err = triggerBatchSamplingWithLogs(ctx, platform, 3000, t)
 		require.NoError(t, err)
 
 		rewards, err := getRewards(ctx, platform, int(marketID), 3000)
 		require.NoError(t, err)
+		require.NotEmpty(t, rewards, "Should generate rewards with 3¢ spread")
 		t.Logf("Spread 3¢ rewards: %+v", rewards)
 
 		return nil
@@ -425,10 +520,18 @@ func testSampleRewardsIneligibleMarket(t *testing.T) func(context.Context, *kwil
 		})
 		require.NoError(t, err)
 
-		// Create order book with midpoint around 5¢ (distance from 50 = 45, ineligible)
-		// User1: Split @ 5¢ → YES holdings + NO sell @ 95¢
-		err = callPlaceSplitLimitOrder(ctx, platform, &user1, int(marketID), 5, 100)
+		// Create two-sided order book with midpoint around 10¢
+		// spread_base = |10 - 90| = 80 → INELIGIBLE (>= 80)
+		// Split @ 10¢ → YES holdings + NO sell @ 90¢
+		err = callPlaceSplitLimitOrder(ctx, platform, &user1, int(marketID), 10, 200)
 		require.NoError(t, err)
+		// YES buy @ 8 (bid side)
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), true, 8, 50)
+		require.NoError(t, err)
+		// YES sell @ 12 (ask side, from holdings)
+		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 12, 100)
+		require.NoError(t, err)
+		// Midpoint = (12 + 8) / 2 = 10. spread_base = |10 - 90| = 80 → INELIGIBLE
 
 		// Sample should succeed but produce no rewards (ineligible spread)
 		err = triggerBatchSampling(ctx, platform, 4000)
@@ -453,8 +556,8 @@ func testSampleRewardsSingleLP(t *testing.T) func(context.Context, *kwilTesting.
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
-		// Give user balance
-		err = giveBalanceChained(ctx, platform, user1.Address(), "500000000000000000000")
+		// Give user balance (1000 TRUF for TRUE-side + FALSE-side pairs)
+		err = giveBalanceChained(ctx, platform, user1.Address(), "1000000000000000000000")
 		require.NoError(t, err)
 
 		// Create market
@@ -478,17 +581,25 @@ func testSampleRewardsSingleLP(t *testing.T) func(context.Context, *kwilTesting.
 		// TRUE BUY @ 46 (establishes best bid)
 		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), true, 46, 50)
 		require.NoError(t, err)
-		// TRUE SELL @ 52 (establishes best ask, uses 200 holdings)
-		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 52, 200)
+		// TRUE SELL @ 54 (establishes best ask, uses 200 holdings: 300→100)
+		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 54, 200)
 		require.NoError(t, err)
 
-		// User1: Create paired SELL+BUY orders for LP rewards
-		// Sell YES @ 48¢ + Buy NO @ 52¢ (complementary, liquidity provision)
-		// Uses remaining 100 TRUE holdings from split
-		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 48, 100)
+		// User1: TRUE-side LP pair: YES sell @ 51 + NO buy @ 49
+		// Pair: p1.price=51 = 100+(-49) ✓, amounts 100=100
+		// NO buy @ 49 does NOT match NO sell @ 50 (sell 50 > buy 49 → no match)
+		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 51, 100)
 		require.NoError(t, err)
-		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), false, 52, 100)
+		// holdings: 100→0
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), false, 49, 100)
 		require.NoError(t, err)
+
+		// User1: FALSE-side LP pair: NO sell @ 50 (from split, amount=300) + YES buy @ 50
+		// YES buy @ 50 does NOT match YES sell @ 51 (sell 51 > buy 50 → no match)
+		// Pair: p1.price=50 = 100+(-50) ✓, amounts 300=300
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), true, 50, 300)
+		require.NoError(t, err)
+		// Final midpoint: best bid=-50, lowest sell=51 → midpoint=50, spread=5
 
 		// Sample rewards
 		err = triggerBatchSampling(ctx, platform, 5000)
@@ -519,11 +630,11 @@ func testSampleRewardsTwoLPs(t *testing.T) func(context.Context, *kwilTesting.Pl
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
-		// Give both users balance (MUST use chained helper!)
-		err = giveBalanceChained(ctx, platform, user1.Address(), "500000000000000000000")
+		// Give both users balance (1000 TRUF for TRUE-side + FALSE-side pairs)
+		err = giveBalanceChained(ctx, platform, user1.Address(), "1000000000000000000000")
 		require.NoError(t, err)
 
-		err = giveBalanceChained(ctx, platform, user2.Address(), "500000000000000000000")
+		err = giveBalanceChained(ctx, platform, user2.Address(), "1000000000000000000000")
 		require.NoError(t, err)
 
 		// Create market
@@ -547,25 +658,42 @@ func testSampleRewardsTwoLPs(t *testing.T) func(context.Context, *kwilTesting.Pl
 		// TRUE BUY @ 44 (establishes best bid)
 		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), true, 44, 50)
 		require.NoError(t, err)
-		// TRUE SELL @ 52 (establishes best ask, uses 300 holdings)
-		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 52, 300)
+		// TRUE SELL @ 56 (establishes best ask, uses 200 holdings: 400→200)
+		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 56, 200)
 		require.NoError(t, err)
 
-		// User1: Paired SELL+BUY orders YES @ 46¢ + NO @ 54¢
-		// Uses remaining 100 TRUE holdings from split
-		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 46, 100)
-		require.NoError(t, err)
-		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), false, 54, 100)
-		require.NoError(t, err)
-
-		// User2: Paired SELL+BUY orders YES @ 47¢ + NO @ 53¢ (closer to midpoint)
-		// Split @ 50 to get TRUE holdings
+		// User2: Split @ 50 with 100 → 100 TRUE holdings + 100 FALSE SELL @ 50
 		err = callPlaceSplitLimitOrder(ctx, platform, &user2, int(marketID), 50, 100)
 		require.NoError(t, err)
-		err = callPlaceSellOrder(ctx, platform, &user2, int(marketID), true, 47, 100)
+
+		// User1: TRUE-side LP pair: YES sell @ 52 + NO buy @ 48
+		// NO buy @ 48 does NOT match NO sell @ 50 (sell 50 > buy 48 → no match)
+		// Pair: 52 = 100+(-48) ✓, amounts 100=100
+		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 52, 100)
 		require.NoError(t, err)
-		err = callPlaceBuyOrder(ctx, platform, &user2, int(marketID), false, 53, 100)
+		// holdings: 200→100
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), false, 48, 100)
 		require.NoError(t, err)
+
+		// User2: TRUE-side LP pair: YES sell @ 51 + NO buy @ 49 (closer to midpoint)
+		// NO buy @ 49 does NOT match NO sell @ 50 (sell 50 > buy 49 → no match)
+		// Pair: 51 = 100+(-49) ✓, amounts 100=100
+		err = callPlaceSellOrder(ctx, platform, &user2, int(marketID), true, 51, 100)
+		require.NoError(t, err)
+		err = callPlaceBuyOrder(ctx, platform, &user2, int(marketID), false, 49, 100)
+		require.NoError(t, err)
+
+		// User1: FALSE-side LP pair: NO sell @ 50 (amount=400) + YES buy @ 50
+		// YES buy @ 50 does NOT match YES sell @ 51 (sell 51 > buy 50 → no match)
+		// Pair: 50 = 100+(-50) ✓, amounts 400=400
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), true, 50, 400)
+		require.NoError(t, err)
+
+		// User2: FALSE-side LP pair: NO sell @ 50 (amount=100) + YES buy @ 50
+		// Pair: 50 = 100+(-50) ✓, amounts 100=100
+		err = callPlaceBuyOrder(ctx, platform, &user2, int(marketID), true, 50, 100)
+		require.NoError(t, err)
+		// Final midpoint: best bid=-50, lowest sell=51 → midpoint=50, spread=5
 
 		// Sample rewards
 		err = triggerBatchSampling(ctx, platform, 6000)
@@ -601,14 +729,14 @@ func testSampleRewardsMultipleLPs(t *testing.T) func(context.Context, *kwilTesti
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
-		// Give all users balance (MUST use chained helper!)
-		err = giveBalanceChained(ctx, platform, user1.Address(), "500000000000000000000")
+		// Give all users balance (1000 TRUF for TRUE-side + FALSE-side pairs)
+		err = giveBalanceChained(ctx, platform, user1.Address(), "1000000000000000000000")
 		require.NoError(t, err)
 
-		err = giveBalanceChained(ctx, platform, user2.Address(), "500000000000000000000")
+		err = giveBalanceChained(ctx, platform, user2.Address(), "1000000000000000000000")
 		require.NoError(t, err)
 
-		err = giveBalanceChained(ctx, platform, user3.Address(), "500000000000000000000")
+		err = giveBalanceChained(ctx, platform, user3.Address(), "1000000000000000000000")
 		require.NoError(t, err)
 
 		// Create market
@@ -632,34 +760,60 @@ func testSampleRewardsMultipleLPs(t *testing.T) func(context.Context, *kwilTesti
 		// TRUE BUY @ 44 (establishes best bid)
 		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), true, 44, 50)
 		require.NoError(t, err)
-		// TRUE SELL @ 52 (establishes best ask, uses 300 holdings)
-		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 52, 300)
+		// TRUE SELL @ 56 (establishes best ask, uses 200 holdings: 400→200)
+		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 56, 200)
 		require.NoError(t, err)
 
-		// User1: Paired SELL+BUY orders YES @ 46¢ + NO @ 54¢ (farthest from midpoint, 4¢ away)
-		// Uses remaining 100 TRUE holdings from split
-		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 46, 100)
-		require.NoError(t, err)
-		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), false, 54, 100)
-		require.NoError(t, err)
-
-		// User2: Paired SELL+BUY orders YES @ 47¢ + NO @ 53¢ (middle distance, 3¢ away, larger amount)
-		// Split @ 50 to get TRUE holdings
+		// User2: Split @ 50 with 200 → 200 TRUE holdings + 200 FALSE SELL @ 50
 		err = callPlaceSplitLimitOrder(ctx, platform, &user2, int(marketID), 50, 200)
 		require.NoError(t, err)
-		err = callPlaceSellOrder(ctx, platform, &user2, int(marketID), true, 47, 200)
-		require.NoError(t, err)
-		err = callPlaceBuyOrder(ctx, platform, &user2, int(marketID), false, 53, 200)
-		require.NoError(t, err)
 
-		// User3: Paired SELL+BUY orders YES @ 48¢ + NO @ 52¢ (closest to midpoint, 2¢ away)
-		// Split @ 50 to get TRUE holdings
+		// User3: Split @ 50 with 100 → 100 TRUE holdings + 100 FALSE SELL @ 50
 		err = callPlaceSplitLimitOrder(ctx, platform, &user3, int(marketID), 50, 100)
 		require.NoError(t, err)
-		err = callPlaceSellOrder(ctx, platform, &user3, int(marketID), true, 48, 100)
+
+		// User1: TRUE-side LP pair: YES sell @ 54 + NO buy @ 46 (farthest, 3¢ from midpoint)
+		// NO buy @ 46 does NOT match NO sell @ 50 (sell 50 > buy 46 → no match)
+		// Pair: 54 = 100+(-46) ✓, amounts 100=100
+		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 54, 100)
 		require.NoError(t, err)
-		err = callPlaceBuyOrder(ctx, platform, &user3, int(marketID), false, 52, 100)
+		// holdings: 200→100
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), false, 46, 100)
 		require.NoError(t, err)
+
+		// User2: TRUE-side LP pair: YES sell @ 53 + NO buy @ 47 (middle, 2¢ from midpoint)
+		// NO buy @ 47 does NOT match NO sell @ 50 (sell 50 > buy 47 → no match)
+		// Pair: 53 = 100+(-47) ✓, amounts 200=200
+		err = callPlaceSellOrder(ctx, platform, &user2, int(marketID), true, 53, 200)
+		require.NoError(t, err)
+		err = callPlaceBuyOrder(ctx, platform, &user2, int(marketID), false, 47, 200)
+		require.NoError(t, err)
+
+		// User3: TRUE-side LP pair: YES sell @ 52 + NO buy @ 48 (closest, 1¢ from midpoint)
+		// NO buy @ 48 does NOT match NO sell @ 50 (sell 50 > buy 48 → no match)
+		// Pair: 52 = 100+(-48) ✓, amounts 100=100
+		err = callPlaceSellOrder(ctx, platform, &user3, int(marketID), true, 52, 100)
+		require.NoError(t, err)
+		err = callPlaceBuyOrder(ctx, platform, &user3, int(marketID), false, 48, 100)
+		require.NoError(t, err)
+
+		// User1: FALSE-side LP pair: NO sell @ 50 (amount=400) + YES buy @ 50
+		// YES buy @ 50 does NOT match any YES sell (52, 53, 54, 56 all > 50 → no match)
+		// Pair: 50 = 100+(-50) ✓, amounts 400=400
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), true, 50, 400)
+		require.NoError(t, err)
+
+		// User2: FALSE-side LP pair: NO sell @ 50 (amount=200) + YES buy @ 50
+		// Pair: 50 = 100+(-50) ✓, amounts 200=200
+		err = callPlaceBuyOrder(ctx, platform, &user2, int(marketID), true, 50, 200)
+		require.NoError(t, err)
+
+		// User3: FALSE-side LP pair: NO sell @ 50 (amount=100) + YES buy @ 50
+		// Pair: 50 = 100+(-50) ✓, amounts 100=100
+		err = callPlaceBuyOrder(ctx, platform, &user3, int(marketID), true, 50, 100)
+		require.NoError(t, err)
+		// Final midpoint: best bid=-50, lowest sell=52 → midpoint=(52+50)/2=51
+		// spread_base=|51-49|=2 → spread=5
 
 		// Sample rewards
 		err = triggerBatchSampling(ctx, platform, 7000)
@@ -688,17 +842,13 @@ func testSampleRewardsNoQualifyingOrders(t *testing.T) func(context.Context, *kw
 		lastBalancePoint = nil
 		lastTrufBalancePoint = nil // Reset for this test
 		user1 := util.Unsafe_NewEthereumAddressFromString("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
-		user2 := util.Unsafe_NewEthereumAddressFromString("0xffffffffffffffffffffffffffffffffffffffff")
 
 		// Setup: Initialize ERC20 extension
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
-		// Give users balance
+		// Give user balance
 		err = giveBalanceChained(ctx, platform, user1.Address(), "500000000000000000000")
-		require.NoError(t, err)
-
-		err = giveBalanceChained(ctx, platform, user2.Address(), "500000000000000000000")
 		require.NoError(t, err)
 
 		// Create market
@@ -713,17 +863,29 @@ func testSampleRewardsNoQualifyingOrders(t *testing.T) func(context.Context, *kw
 		})
 		require.NoError(t, err)
 
-		// Create orders with very wide spread (won't qualify for rewards)
-		// User1: Split @ 10¢ → YES holdings + NO sell @ 90¢
-		err = callPlaceSplitLimitOrder(ctx, platform, &user1, int(marketID), 10, 100)
+		// Create two-sided order book with midpoint at 50¢ (spread = 5¢)
+		// Then create LP pairs far from midpoint that won't qualify
+		err = callPlaceSplitLimitOrder(ctx, platform, &user1, int(marketID), 50, 200)
 		require.NoError(t, err)
-
-		// User2: Split @ 90¢ → YES holdings + NO sell @ 10¢
-		err = callPlaceSplitLimitOrder(ctx, platform, &user2, int(marketID), 90, 100)
+		// YES buy @ 48 (bid side)
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), true, 48, 50)
 		require.NoError(t, err)
+		// YES sell @ 52 (ask side, from holdings: 200→150)
+		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 52, 50)
+		require.NoError(t, err)
+		// Midpoint = (52 + 48) / 2 = 50. spread_base = |50 - 50| = 0 → spread = 5
 
-		// Midpoint will be around 50¢ with spread distance > threshold
-		// Sample should produce no rewards
+		// TRUE-side LP pair far from midpoint: YES sell @ 58 + NO buy @ 42
+		// |50 - 58| = 8 > spread 5 → won't qualify
+		// NO buy @ 42 does NOT match NO sell @ 50 (sell 50 > buy 42 → no match)
+		err = callPlaceSellOrder(ctx, platform, &user1, int(marketID), true, 58, 50)
+		require.NoError(t, err)
+		// holdings: 150→100
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(marketID), false, 42, 50)
+		require.NoError(t, err)
+		// No FALSE-side pair needed: LEAST(0, any) = 0 regardless
+
+		// Sample should produce no rewards (pair too far from midpoint)
 		err = triggerBatchSampling(ctx, platform, 8000)
 		require.NoError(t, err)
 
@@ -765,22 +927,33 @@ func testConstraintSellBuyPair(t *testing.T) func(context.Context, *kwilTesting.
 		require.NoError(t, err)
 
 		// Create complete order book with SELL+BUY pair
-		// Split @ 40 → TRUE holdings + FALSE SELL @ 60
-		err = callPlaceSplitLimitOrder(ctx, platform, &user1, int(queryID), 40, 100)
+		// Split @ 50 → TRUE holdings + FALSE SELL @ 50
+		err = callPlaceSplitLimitOrder(ctx, platform, &user1, int(queryID), 50, 100)
 		require.NoError(t, err)
 
-		// TRUE BUY @ 42 (establishes bid for midpoint)
-		err = callPlaceBuyOrder(ctx, platform, &user1, int(queryID), true, 42, 50)
+		// TRUE BUY @ 46 (establishes bid for midpoint)
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(queryID), true, 46, 50)
 		require.NoError(t, err)
 
-		// TRUE SELL @ 48
-		err = callPlaceSellOrder(ctx, platform, &user1, int(queryID), true, 48, 100)
+		// TRUE SELL @ 54 (establishes ask for midpoint, holdings: 100→50)
+		err = callPlaceSellOrder(ctx, platform, &user1, int(queryID), true, 54, 50)
 		require.NoError(t, err)
 
-		// FALSE BUY @ 52 (matches constraint with TRUE SELL @ 48)
-		// Constraint: yes_price == 100 + no_price → 48 == 100 + (-52) ✅
-		err = callPlaceBuyOrder(ctx, platform, &user1, int(queryID), false, 52, 100)
+		// TRUE-side LP pair: YES sell @ 51 + NO buy @ 49
+		// NO buy @ 49 does NOT match NO sell @ 50 (sell 50 > buy 49 → no match)
+		// Pair: 51 = 100+(-49) ✓, amounts 50=50
+		err = callPlaceSellOrder(ctx, platform, &user1, int(queryID), true, 51, 50)
 		require.NoError(t, err)
+		// holdings: 50→0
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(queryID), false, 49, 50)
+		require.NoError(t, err)
+
+		// FALSE-side LP pair: NO sell @ 50 (from split, amount=100) + YES buy @ 50
+		// YES buy @ 50 does NOT match YES sell @ 51 (sell 51 > buy 50 → no match)
+		// Pair: 50 = 100+(-50) ✓, amounts 100=100
+		err = callPlaceBuyOrder(ctx, platform, &user1, int(queryID), true, 50, 100)
+		require.NoError(t, err)
+		// Final midpoint: best bid=-50, lowest sell=51 → midpoint=50, spread=5
 
 		// Sample rewards
 		err = triggerBatchSampling(ctx, platform, 9000)
@@ -829,17 +1002,24 @@ func testConstraintNoDuplicates(t *testing.T) func(context.Context, *kwilTesting
 		})
 		require.NoError(t, err)
 
-		// Create same SELL+BUY pair
-		err = callPlaceSplitLimitOrder(ctx, platform, &user2, int(queryID), 40, 100)
+		// Create SELL+BUY pair with same pattern as constraint test
+		err = callPlaceSplitLimitOrder(ctx, platform, &user2, int(queryID), 50, 100)
 		require.NoError(t, err)
 
-		err = callPlaceBuyOrder(ctx, platform, &user2, int(queryID), true, 42, 50)
+		err = callPlaceBuyOrder(ctx, platform, &user2, int(queryID), true, 46, 50)
 		require.NoError(t, err)
 
-		err = callPlaceSellOrder(ctx, platform, &user2, int(queryID), true, 48, 100)
+		err = callPlaceSellOrder(ctx, platform, &user2, int(queryID), true, 54, 50)
 		require.NoError(t, err)
 
-		err = callPlaceBuyOrder(ctx, platform, &user2, int(queryID), false, 52, 100)
+		// TRUE-side LP pair: YES sell @ 51 + NO buy @ 49
+		err = callPlaceSellOrder(ctx, platform, &user2, int(queryID), true, 51, 50)
+		require.NoError(t, err)
+		err = callPlaceBuyOrder(ctx, platform, &user2, int(queryID), false, 49, 50)
+		require.NoError(t, err)
+
+		// FALSE-side LP pair: NO sell @ 50 (amount=100) + YES buy @ 50
+		err = callPlaceBuyOrder(ctx, platform, &user2, int(queryID), true, 50, 100)
 		require.NoError(t, err)
 
 		// Sample rewards

@@ -124,6 +124,9 @@ CREATE OR REPLACE ACTION distribute_fees(
     }
 
     -- LP Distribution Pre-calculation
+    -- GURANTEE: Take a final sample at settlement to ensure distribution happens even for short-lived markets
+    sample_lp_rewards($query_id, @height);
+
     $block_count INT := 0;
     for $row in SELECT COUNT(DISTINCT block) as cnt FROM ob_rewards WHERE query_id = $query_id { $block_count := $row.cnt; }
 
