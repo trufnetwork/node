@@ -124,8 +124,8 @@ CREATE OR REPLACE ACTION distribute_fees(
     }
 
     -- LP Distribution Pre-calculation
-    -- GURANTEE: Take a final sample at settlement to ensure distribution happens even for short-lived markets
-    sample_lp_rewards($query_id, @height);
+    -- NOTE: sample_lp_rewards() is called in process_settlement() BEFORE ob_positions are deleted,
+    -- so the final sample reads the live order book. Do NOT call it here.
 
     $block_count INT := 0;
     for $row in SELECT COUNT(DISTINCT block) as cnt FROM ob_rewards WHERE query_id = $query_id { $block_count := $row.cnt; }
@@ -248,6 +248,10 @@ CREATE OR REPLACE ACTION process_settlement(
             $total_fees := $total_fees + $res.fee;
         }
     }
+
+    -- GUARANTEE: Take a final LP sample BEFORE deleting positions.
+    -- sample_lp_rewards reads ob_positions, so it must run while the book is still live.
+    sample_lp_rewards($query_id, @height);
 
     DELETE FROM ob_positions WHERE query_id = $query_id;
 

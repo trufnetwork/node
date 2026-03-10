@@ -137,8 +137,8 @@ func testAuditRecordCreation(t *testing.T) func(context.Context, *kwilTesting.Pl
 		require.Equal(t, expectedInfraShare.String(), totalValFeesStr, "Validator share in audit should match 12.5%")
 
 		require.Equal(t, 2, lpCount, "LP count should be 2")
-		// Block count = 2: 1 manual sample + 1 final sample at settlement (@height)
-		require.Equal(t, 2, blockCount, "Block count should be 2 (1 manual + 1 final at settlement)")
+		// Block count = 1: manual sample only (final sample happens in process_settlement, not distribute_fees)
+		require.Equal(t, 1, blockCount, "Block count should be 1 (manual sample only)")
 
 		// Verify per-LP detail records using callback pattern with slice collection
 		type detailRow struct {
@@ -249,8 +249,8 @@ func testAuditMultiBlock(t *testing.T) func(context.Context, *kwilTesting.Platfo
 			})
 		require.NoError(t, err)
 		require.Equal(t, 1, rowCount, "Should have 1 distribution summary record")
-		// Block count = 4: 3 manual samples + 1 final sample at settlement (@height)
-		require.Equal(t, 4, blockCount, "Block count should be 4 (3 manual + 1 final at settlement)")
+		// Block count = 3: manual samples only (final sample happens in process_settlement, not distribute_fees)
+		require.Equal(t, 3, blockCount, "Block count should be 3 (manual samples only)")
 
 		t.Logf("✅ Multi-block audit verified: %d blocks sampled", blockCount)
 

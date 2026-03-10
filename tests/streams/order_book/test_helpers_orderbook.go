@@ -5,7 +5,6 @@ package order_book
 import (
 	"context"
 	"fmt"
-	"time"
 
 	gethAbi "github.com/ethereum/go-ethereum/accounts/abi"
 	gethCommon "github.com/ethereum/go-ethereum/common"
@@ -190,13 +189,15 @@ func encodeQueryComponentsForTests(dataProvider, streamID, actionID string, args
 	return encoded, nil
 }
 
-// callSettleMarket is a shared helper to call the settle_market action
-func callSettleMarket(ctx context.Context, platform *kwilTesting.Platform, caller *util.EthereumAddress, queryID int, winningOutcome bool) error {
+// callSettleMarket is a shared helper to call the settle_market action.
+// settle_market($query_id INT) determines the winning outcome from the attestation.
+// The caller must set BlockContext.Timestamp >= market's settle_time.
+func callSettleMarket(ctx context.Context, platform *kwilTesting.Platform, caller *util.EthereumAddress, queryID int, settlementTimestamp int64) error {
 	tx := &common.TxContext{
 		Ctx: ctx,
 		BlockContext: &common.BlockContext{
 			Height:    1,
-			Timestamp: time.Now().Unix(),
+			Timestamp: settlementTimestamp,
 		},
 		Signer:        caller.Bytes(),
 		Caller:        caller.Address(),
@@ -205,7 +206,7 @@ func callSettleMarket(ctx context.Context, platform *kwilTesting.Platform, calle
 	}
 	engineCtx := &common.EngineContext{TxContext: tx}
 
-	res, err := platform.Engine.Call(engineCtx, platform.DB, "", "settle_market", []any{int64(queryID), winningOutcome}, nil)
+	res, err := platform.Engine.Call(engineCtx, platform.DB, "", "settle_market", []any{int64(queryID)}, nil)
 	if err != nil {
 		return err
 	}

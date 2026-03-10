@@ -451,8 +451,9 @@ func testDistribution3Blocks2LPs(t *testing.T) func(context.Context, *kwilTestin
 
 // testDistributionNoSamples tests edge case where no LP samples exist
 // Scenario: DP and Validator get their 12.5% shares, LP share (75%) stays in vault
-// Note: In practice, distribute_fees() calls sample_lp_rewards() one final time at settlement,
-// so block_count=0 only occurs if the market has no two-sided liquidity at all.
+// Note: In practice, process_settlement() calls sample_lp_rewards() one final time BEFORE
+// deleting positions and calling distribute_fees(), so block_count=0 only occurs if the
+// market has no two-sided liquidity at all.
 func testDistributionNoSamples(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Reset balance point tracker
@@ -488,9 +489,10 @@ func testDistributionNoSamples(t *testing.T) func(context.Context, *kwilTesting.
 		require.NoError(t, err)
 
 		// DO NOT call sample_lp_rewards - no samples!
-		// distribute_fees will call sample_lp_rewards one final time at @height,
-		// but with only bid-side liquidity (split limit order only creates YES holdings + NO sell),
-		// the spec-aligned midpoint requires YES sell orders, so no rewards will be generated.
+		// In production, process_settlement() calls sample_lp_rewards one final time before
+		// deleting positions. But with only bid-side liquidity (split limit order only creates
+		// YES holdings + NO sell), the spec-aligned midpoint requires YES sell orders, so
+		// no rewards will be generated.
 
 		// Get balance before distribution
 		balanceBefore, err := getUSDCBalance(ctx, platform, user1.Address())
