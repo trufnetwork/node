@@ -9,10 +9,13 @@ import (
 	gethAbi "github.com/ethereum/go-ethereum/accounts/abi"
 	gethCommon "github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
+	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/crypto"
+	coreauth "github.com/trufnetwork/kwil-db/core/crypto/auth"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/extensions/tn_utils"
 	testerc20 "github.com/trufnetwork/node/tests/streams/utils/erc20"
+	"github.com/trufnetwork/sdk-go/core/util"
 )
 
 var (
@@ -184,4 +187,31 @@ func encodeQueryComponentsForTests(dataProvider, streamID, actionID string, args
 	}
 
 	return encoded, nil
+}
+
+// callSettleMarket is a shared helper to call the settle_market action.
+// settle_market($query_id INT) determines the winning outcome from the attestation.
+// The caller must set BlockContext.Timestamp >= market's settle_time.
+func callSettleMarket(ctx context.Context, platform *kwilTesting.Platform, caller *util.EthereumAddress, queryID int, settlementTimestamp int64) error {
+	tx := &common.TxContext{
+		Ctx: ctx,
+		BlockContext: &common.BlockContext{
+			Height:    1,
+			Timestamp: settlementTimestamp,
+		},
+		Signer:        caller.Bytes(),
+		Caller:        caller.Address(),
+		TxID:          platform.Txid(),
+		Authenticator: coreauth.EthPersonalSignAuth,
+	}
+	engineCtx := &common.EngineContext{TxContext: tx}
+
+	res, err := platform.Engine.Call(engineCtx, platform.DB, "", "settle_market", []any{int64(queryID)}, nil)
+	if err != nil {
+		return err
+	}
+	if res.Error != nil {
+		return res.Error
+	}
+	return nil
 }

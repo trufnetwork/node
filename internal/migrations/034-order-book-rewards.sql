@@ -100,8 +100,11 @@ CREATE OR REPLACE ACTION sample_lp_rewards(
     $query_id INT,
     $block INT8
 ) PRIVATE {
+    NOTICE('sample_lp_rewards: START query_id=' || $query_id::TEXT || ' block=' || $block::TEXT);
+
     -- Check if this block was already sampled to prevent duplicate key errors
     for $row in SELECT 1 FROM ob_rewards WHERE query_id = $query_id AND block = $block LIMIT 1 {
+        NOTICE('sample_lp_rewards: RETURN already sampled');
         RETURN;
     }
 
@@ -114,45 +117,45 @@ CREATE OR REPLACE ACTION sample_lp_rewards(
         ERROR('Market is already settled');
     }
 
-    -- Calculate midpoint considering both YES and NO outcomes
-    $best_bid INT := 0;
-    $best_ask INT := 100;
+    -- =========================================================================
+    -- Midpoint Calculation (Spec-aligned: YES positions only)
+    -- =========================================================================
 
-    -- YES Buys (price < 0) -> bid = ABS(price)
+    -- Step A: Best YES bid (highest YES buy = most negative price)
+    -- ORDER BY price ASC LIMIT 1 gets the most negative = highest bid
+    $x_mid INT;
+    $has_bid BOOL := FALSE;
     for $row in SELECT price FROM ob_positions WHERE query_id = $query_id AND outcome = TRUE AND price < 0 ORDER BY price ASC LIMIT 1 {
-        $p INT := $row.price;
-        if $p < 0 { $p := -$p; }
-        if $p > $best_bid { $best_bid := $p; }
+        $x_mid := $row.price;  -- negative value, e.g. -34
+        $has_bid := TRUE;
+        NOTICE('sample_lp_rewards: best YES bid price=' || $row.price::TEXT);
     }
 
-    -- NO Sells (price > 0) -> bid = 100 - price
-    for $row in SELECT price FROM ob_positions WHERE query_id = $query_id AND outcome = FALSE AND price > 0 ORDER BY price ASC LIMIT 1 {
-        $p INT := 100 - $row.price;
-        if $p > $best_bid { $best_bid := $p; }
+    if NOT $has_bid {
+        NOTICE('sample_lp_rewards: RETURN no YES buy orders');
+        RETURN;  -- No YES buy orders = no bid side
     }
 
-    -- YES Sells (price > 0) -> ask = price
+    -- Step B: Lowest YES sell → midpoint = (sell_price + ABS(buy_price)) / 2
+    -- Integer division in Kuneiform truncates (= FLOOR for positive results)
+    $has_ask BOOL := FALSE;
     for $row in SELECT price FROM ob_positions WHERE query_id = $query_id AND outcome = TRUE AND price > 0 ORDER BY price ASC LIMIT 1 {
-        if $row.price < $best_ask { $best_ask := $row.price; }
+        NOTICE('sample_lp_rewards: lowest YES sell price=' || $row.price::TEXT || ' x_mid_before=' || $x_mid::TEXT);
+        -- $x_mid is negative (YES buy), negate to get ABS
+        $x_mid := ($row.price + (0 - $x_mid)) / 2;
+        $has_ask := TRUE;
     }
 
-    -- NO Buys (price < 0) -> ask = 100 - ABS(price)
-    for $row in SELECT price FROM ob_positions WHERE query_id = $query_id AND outcome = FALSE AND price < 0 ORDER BY price ASC LIMIT 1 {
-        $p INT := $row.price;
-        if $p < 0 { $p := -$p; }
-        $p := 100 - $p;
-        if $p < $best_ask { $best_ask := $p; }
+    if NOT $has_ask {
+        NOTICE('sample_lp_rewards: RETURN no YES sell orders');
+        RETURN;  -- No YES sell orders = no two-sided liquidity (spec requirement)
     }
 
-    -- If no valid bids or asks were found (i.e. still 0 or 100), no two-sided liquidity
-    if $best_bid = 0 OR $best_ask = 100 {
-        RETURN;
-    }
+    NOTICE('sample_lp_rewards: x_mid=' || $x_mid::TEXT);
 
-    -- Midpoint is (best_ask + best_bid) / 2
-    $x_mid INT := ($best_ask + $best_bid) / 2;
-
-    -- Dynamic spread
+    -- =========================================================================
+    -- Dynamic Spread
+    -- =========================================================================
     $x_spread_base INT := ABS($x_mid - (100 - $x_mid));
     $x_spread INT;
     if $x_spread_base < 30 {
@@ -162,47 +165,58 @@ CREATE OR REPLACE ACTION sample_lp_rewards(
     } elseif $x_spread_base < 80 {
         $x_spread := 3;
     } else {
-        RETURN;
+        NOTICE('sample_lp_rewards: RETURN market too certain spread_base=' || $x_spread_base::TEXT);
+        RETURN;  -- Market too certain, ineligible for rewards
     }
 
-    -- Step 1: Calculate Global Total Score
-    -- We calculate the total sum of scores for all qualifying pairs
+    NOTICE('sample_lp_rewards: spread_base=' || $x_spread_base::TEXT || ' spread=' || $x_spread::TEXT);
+
+    -- =========================================================================
+    -- Step 1: Calculate Global Total Score using LEAST(TRUE-side, FALSE-side)
+    --
+    -- Join condition: p1.price = 100 + p2.price (spec-aligned, directional)
+    -- This means p1 is always the higher-price side (positive), p2 is always
+    -- the lower-price side (negative). Holdings (price=0) are naturally excluded.
+    --
+    -- Scoring: LEAST of two side sums ensures balanced two-sided liquidity.
+    -- Per participant: LEAST(SUM(TRUE-side scores), SUM(FALSE-side scores))
+    -- Global total: SUM of per-participant LEAST scores
+    --
+    -- We must GROUP BY participant_id and use LEAST(SUM(...), SUM(...))
+    -- because each row has p1.outcome as either TRUE or FALSE (never both),
+    -- so per-row LEAST would always be 0.
+    -- =========================================================================
     $global_total_score NUMERIC(78, 20) := 0::NUMERIC(78, 20);
     for $totals in
-        SELECT SUM(
-            p1.amount::NUMERIC(78, 20) *
-            (($x_spread - ABS($x_mid - (CASE WHEN p1.outcome = TRUE THEN (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END) ELSE (100 - (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END)) END)))::NUMERIC(78, 20) * ($x_spread - ABS($x_mid - (CASE WHEN p1.outcome = TRUE THEN (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END) ELSE (100 - (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END)) END)))::NUMERIC(78, 20))::NUMERIC(78, 20) /
-            ($x_spread * $x_spread)::NUMERIC(78, 20)
-        )::NUMERIC(78, 20) as total
-        FROM ob_positions p1
-        JOIN ob_positions p2
-            ON p1.query_id = p2.query_id
-           AND p1.participant_id = p2.participant_id
-           AND p1.outcome != p2.outcome
-           AND p1.amount = p2.amount
-        WHERE p1.query_id = $query_id
-          AND (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END + CASE WHEN p2.price = 0 THEN 100 - ABS(p1.price) ELSE ABS(p2.price) END) = 100
-          AND (p1.price != 0 OR p2.price != 0)
-          AND ABS($x_mid - (CASE WHEN p1.outcome = TRUE THEN (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END) ELSE (100 - (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END)) END)) < $x_spread
-    {
-        if $totals.total IS NOT NULL {
-            $global_total_score := $totals.total;
-        }
-    }
-
-    if $global_total_score <= 0::NUMERIC(78, 20) {
-        RETURN;
-    }
-
-    -- Step 2: Calculate and Insert Normalized Participant Scores
-    -- One insert per participant per block to avoid PK violation
-    for $row in 
-        SELECT 
-            p1.participant_id,
-            SUM(
-                p1.amount::NUMERIC(78, 20) *
-                (($x_spread - ABS($x_mid - (CASE WHEN p1.outcome = TRUE THEN (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END) ELSE (100 - (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END)) END)))::NUMERIC(78, 20) * ($x_spread - ABS($x_mid - (CASE WHEN p1.outcome = TRUE THEN (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END) ELSE (100 - (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END)) END)))::NUMERIC(78, 20))::NUMERIC(78, 20) /
-                ($x_spread * $x_spread)::NUMERIC(78, 20)
+        SELECT
+            p1.participant_id as pid,
+            LEAST(
+                SUM(
+                    CASE WHEN p1.outcome = TRUE THEN
+                        LEAST(p1.amount, p2.amount)::NUMERIC(78, 20) *
+                        (($x_spread - LEAST(
+                            ABS($x_mid - ABS(p1.price)),
+                            ABS(100 - $x_mid - ABS(p2.price))
+                        ))::NUMERIC(78, 20) * ($x_spread - LEAST(
+                            ABS($x_mid - ABS(p1.price)),
+                            ABS(100 - $x_mid - ABS(p2.price))
+                        ))::NUMERIC(78, 20))::NUMERIC(78, 20) /
+                        ($x_spread * $x_spread)::NUMERIC(78, 20)
+                    ELSE 0::NUMERIC(78, 20) END
+                ),
+                SUM(
+                    CASE WHEN p1.outcome = FALSE THEN
+                        LEAST(p1.amount, p2.amount)::NUMERIC(78, 20) *
+                        (($x_spread - LEAST(
+                            ABS($x_mid - ABS(p2.price)),
+                            ABS(100 - $x_mid - ABS(p1.price))
+                        ))::NUMERIC(78, 20) * ($x_spread - LEAST(
+                            ABS($x_mid - ABS(p2.price)),
+                            ABS(100 - $x_mid - ABS(p1.price))
+                        ))::NUMERIC(78, 20))::NUMERIC(78, 20) /
+                        ($x_spread * $x_spread)::NUMERIC(78, 20)
+                    ELSE 0::NUMERIC(78, 20) END
+                )
             )::NUMERIC(78, 20) as participant_score
         FROM ob_positions p1
         JOIN ob_positions p2
@@ -210,10 +224,90 @@ CREATE OR REPLACE ACTION sample_lp_rewards(
            AND p1.participant_id = p2.participant_id
            AND p1.outcome != p2.outcome
            AND p1.amount = p2.amount
+           AND p1.price = 100 + p2.price
         WHERE p1.query_id = $query_id
-          AND (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END + CASE WHEN p2.price = 0 THEN 100 - ABS(p1.price) ELSE ABS(p2.price) END) = 100
-          AND (p1.price != 0 OR p2.price != 0)
-          AND ABS($x_mid - (CASE WHEN p1.outcome = TRUE THEN (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END) ELSE (100 - (CASE WHEN p1.price = 0 THEN 100 - ABS(p2.price) ELSE ABS(p1.price) END)) END)) < $x_spread
+          AND (CASE
+              WHEN p1.outcome = TRUE THEN
+                  ABS(p1.price) > $x_mid - $x_spread AND
+                  ABS(p1.price) < $x_mid + $x_spread AND
+                  ABS(p2.price) > 100 - $x_mid - $x_spread AND
+                  ABS(p2.price) < 100 - $x_mid + $x_spread
+              ELSE
+                  ABS(p2.price) > $x_mid - $x_spread AND
+                  ABS(p2.price) < $x_mid + $x_spread AND
+                  ABS(p1.price) > 100 - $x_mid - $x_spread AND
+                  ABS(p1.price) < 100 - $x_mid + $x_spread
+          END)
+        GROUP BY p1.participant_id
+    {
+        $ps NUMERIC(78, 20) := $totals.participant_score;
+        if $ps IS NOT NULL {
+            $global_total_score := $global_total_score + $ps;
+        }
+    }
+
+    NOTICE('sample_lp_rewards: global_total_score=' || $global_total_score::TEXT);
+
+    if $global_total_score <= 0::NUMERIC(78, 20) {
+        NOTICE('sample_lp_rewards: RETURN global_total_score <= 0');
+        RETURN;
+    }
+
+    -- =========================================================================
+    -- Step 2: Calculate per-participant scores and insert into ob_rewards
+    -- Uses LEAST(TRUE-side, FALSE-side) per participant for balanced scoring
+    -- =========================================================================
+    for $row in
+        SELECT
+            p1.participant_id,
+            LEAST(
+                SUM(
+                    CASE WHEN p1.outcome = TRUE THEN
+                        LEAST(p1.amount, p2.amount)::NUMERIC(78, 20) *
+                        (($x_spread - LEAST(
+                            ABS($x_mid - ABS(p1.price)),
+                            ABS(100 - $x_mid - ABS(p2.price))
+                        ))::NUMERIC(78, 20) * ($x_spread - LEAST(
+                            ABS($x_mid - ABS(p1.price)),
+                            ABS(100 - $x_mid - ABS(p2.price))
+                        ))::NUMERIC(78, 20))::NUMERIC(78, 20) /
+                        ($x_spread * $x_spread)::NUMERIC(78, 20)
+                    ELSE 0::NUMERIC(78, 20) END
+                ),
+                SUM(
+                    CASE WHEN p1.outcome = FALSE THEN
+                        LEAST(p1.amount, p2.amount)::NUMERIC(78, 20) *
+                        (($x_spread - LEAST(
+                            ABS($x_mid - ABS(p2.price)),
+                            ABS(100 - $x_mid - ABS(p1.price))
+                        ))::NUMERIC(78, 20) * ($x_spread - LEAST(
+                            ABS($x_mid - ABS(p2.price)),
+                            ABS(100 - $x_mid - ABS(p1.price))
+                        ))::NUMERIC(78, 20))::NUMERIC(78, 20) /
+                        ($x_spread * $x_spread)::NUMERIC(78, 20)
+                    ELSE 0::NUMERIC(78, 20) END
+                )
+            )::NUMERIC(78, 20) as participant_score
+        FROM ob_positions p1
+        JOIN ob_positions p2
+            ON p1.query_id = p2.query_id
+           AND p1.participant_id = p2.participant_id
+           AND p1.outcome != p2.outcome
+           AND p1.amount = p2.amount
+           AND p1.price = 100 + p2.price
+        WHERE p1.query_id = $query_id
+          AND (CASE
+              WHEN p1.outcome = TRUE THEN
+                  ABS(p1.price) > $x_mid - $x_spread AND
+                  ABS(p1.price) < $x_mid + $x_spread AND
+                  ABS(p2.price) > 100 - $x_mid - $x_spread AND
+                  ABS(p2.price) < 100 - $x_mid + $x_spread
+              ELSE
+                  ABS(p2.price) > $x_mid - $x_spread AND
+                  ABS(p2.price) < $x_mid + $x_spread AND
+                  ABS(p1.price) > 100 - $x_mid - $x_spread AND
+                  ABS(p1.price) < 100 - $x_mid + $x_spread
+          END)
         GROUP BY p1.participant_id
     {
         $pid INT := $row.participant_id;
