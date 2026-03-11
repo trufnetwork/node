@@ -168,20 +168,20 @@ func testAuditRecordCreation(t *testing.T) func(context.Context, *kwilTesting.Pl
 				return nil
 			})
 		require.NoError(t, err)
-		require.Len(t, detailRows, 2, "Should have 2 LP detail records")
+		// 3 detail records: 2 LPs + 1 validator (user1's DP fee merged into LP row via ON CONFLICT)
+		require.Len(t, detailRows, 3, "Should have 3 detail records (2 LPs + 1 validator, DP merged with LP)")
 
-		// Verify zero-loss: SUM(reward_amount) = total_lp_fees_distributed
-		totalLPFeesFromAudit, _ := new(big.Int).SetString(totalLPFeesStr, 10)
+		// Verify zero-loss: SUM(reward_amount) = total_fees (LP + DP + validator)
 		var totalDistributed big.Int
 		for _, detail := range detailRows {
 			amt, _ := new(big.Int).SetString(detail.rewardAmount, 10)
 			totalDistributed.Add(&totalDistributed, amt)
 		}
 
-		require.Equal(t, totalLPFeesFromAudit.String(), totalDistributed.String(),
-			"Zero-loss audit: SUM(reward_amount) should equal total_lp_fees_distributed")
+		require.Equal(t, totalFees.String(), totalDistributed.String(),
+			"Zero-loss audit: SUM(detail reward_amount) should equal total_fees")
 
-		t.Logf("✅ Audit record creation verified: %s wei distributed across %d LPs", totalLPFeesFromAudit.String(), lpCount)
+		t.Logf("✅ Audit record creation verified: %s wei distributed across %d detail records", totalDistributed.String(), len(detailRows))
 
 		return nil
 	}
@@ -502,7 +502,8 @@ func testAuditDataIntegrity(t *testing.T) func(context.Context, *kwilTesting.Pla
 				return nil
 			})
 		require.NoError(t, err)
-		require.Equal(t, 2, detailRowCount, "Should have 2 LP detail records")
+		// 3 detail records: 2 LPs + 1 validator (user1's DP fee merged into LP row via ON CONFLICT)
+		require.Equal(t, 3, detailRowCount, "Should have 3 detail records (2 LPs + 1 validator, DP merged with LP)")
 
 		// Verify audit rewards match actual balance increases
 		// Note: user.Address() already includes "0x" prefix
@@ -515,12 +516,11 @@ func testAuditDataIntegrity(t *testing.T) func(context.Context, *kwilTesting.Pla
 		require.NotNil(t, auditReward1, "User1 should have audit reward")
 		require.NotNil(t, auditReward2, "User2 should have audit reward")
 
-		// Expected balance increases:
-		// User1 = auditReward1 (LP) + totalDPFees (DP) [+ totalValFees (if Leader)]
-		// User2 = auditReward2 (LP)
-		infraShare, _ := new(big.Int).SetString(totalDPFeesStr, 10)
-		expectedIncrease1 := new(big.Int).Add(auditReward1, infraShare)
-		
+		// User1's audit detail now includes DP fee (merged via ON CONFLICT), so
+		// the balance increase should match the audit reward directly.
+		// However, user1 might also be the validator (leader), so account for that.
+		expectedIncrease1 := new(big.Int).Set(auditReward1)
+
 		if increase1.Cmp(expectedIncrease1) != 0 {
 			// Try adding validator share if User1 is leader
 			infraShareVal, _ := new(big.Int).SetString(totalValFeesStr, 10)
@@ -531,23 +531,26 @@ func testAuditDataIntegrity(t *testing.T) func(context.Context, *kwilTesting.Pla
 			}
 		}
 
-		require.Equal(t, expectedIncrease1.String(), increase1.String(), "User1 balance increase should match LP + DP (+ Leader) audit rewards")
+		require.Equal(t, expectedIncrease1.String(), increase1.String(), "User1 balance increase should match audit reward (LP + DP merged)")
 		require.Equal(t, increase2.String(), auditReward2.String(), "User2 balance increase should match LP audit reward")
 
-		// Verify zero-loss in audit
-		totalLPFeesFromAudit, _ := new(big.Int).SetString(totalLPFeesStr, 10)
-		auditLPSum := new(big.Int).Add(auditReward1, auditReward2)
-		require.Equal(t, totalLPFeesFromAudit.String(), auditLPSum.String(), "Audit LP rewards should sum to total LP fees")
+		// Verify zero-loss: SUM(all detail amounts) = total_fees
+		var totalDetailSum big.Int
+		for _, reward := range auditRewards {
+			totalDetailSum.Add(&totalDetailSum, reward)
+		}
+		require.Equal(t, totalFees.String(), totalDetailSum.String(), "SUM(detail amounts) should equal total_fees")
 
 		totalDPFees, _ := new(big.Int).SetString(totalDPFeesStr, 10)
 		totalValFees, _ := new(big.Int).SetString(totalValFeesStr, 10)
-		totalFeesFromAudit := new(big.Int).Add(totalLPFeesFromAudit, new(big.Int).Add(totalDPFees, totalValFees))
-		require.Equal(t, totalFees.String(), totalFeesFromAudit.String(), "Total fees from audit should match input totalFees")
+		totalLPFeesFromAudit, _ := new(big.Int).SetString(totalLPFeesStr, 10)
+		totalFeesFromSummary := new(big.Int).Add(totalLPFeesFromAudit, new(big.Int).Add(totalDPFees, totalValFees))
+		require.Equal(t, totalFees.String(), totalFeesFromSummary.String(), "Summary totals should match input totalFees")
 
 		t.Logf("✅ Audit data integrity verified:")
-		t.Logf("  - Audit User1 LP reward: %s wei (total increase: %s)", auditReward1.String(), increase1.String())
-		t.Logf("  - Audit User2 LP reward: %s wei (total increase: %s)", auditReward2.String(), increase2.String())
-		t.Logf("  - Audit total: %s wei (zero-loss verified)", totalFeesFromAudit.String())
+		t.Logf("  - Audit User1 reward: %s wei (total increase: %s)", auditReward1.String(), increase1.String())
+		t.Logf("  - Audit User2 reward: %s wei (total increase: %s)", auditReward2.String(), increase2.String())
+		t.Logf("  - Audit total: %s wei (zero-loss verified)", totalDetailSum.String())
 
 		return nil
 	}
