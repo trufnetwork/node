@@ -158,34 +158,37 @@ CREATE OR REPLACE ACTION distribute_fees(
                     $first_validator := FALSE;
                 }
 
-                -- Unlock funds via bridge
-                if $bridge = 'hoodi_tt2' { hoodi_tt2.unlock($v_wallet_hex, $v_payout); }
-                else if $bridge = 'sepolia_bridge' { sepolia_bridge.unlock($v_wallet_hex, $v_payout); }
-                else if $bridge = 'ethereum_bridge' { ethereum_bridge.unlock($v_wallet_hex, $v_payout); }
+                -- Skip validators with zero payout (e.g., infra_share < validator_count)
+                if $v_payout > '0'::NUMERIC(78, 0) {
+                    -- Unlock funds via bridge
+                    if $bridge = 'hoodi_tt2' { hoodi_tt2.unlock($v_wallet_hex, $v_payout); }
+                    else if $bridge = 'sepolia_bridge' { sepolia_bridge.unlock($v_wallet_hex, $v_payout); }
+                    else if $bridge = 'ethereum_bridge' { ethereum_bridge.unlock($v_wallet_hex, $v_payout); }
 
-                -- Ensure validator has a participant record
-                $v_pid INT;
-                for $p in SELECT id FROM ob_participants WHERE wallet_address = $v_wallet_bytes { $v_pid := $p.id; }
-                if $v_pid IS NULL {
-                    INSERT INTO ob_participants (id, wallet_address)
-                    SELECT COALESCE(MAX(id), 0) + 1, $v_wallet_bytes
-                    FROM ob_participants;
+                    -- Ensure validator has a participant record
+                    $v_pid INT;
                     for $p in SELECT id FROM ob_participants WHERE wallet_address = $v_wallet_bytes { $v_pid := $p.id; }
-                }
-                if $v_pid IS NOT NULL {
-                    $next_id_val INT;
-                    for $row in SELECT COALESCE(MAX(id), 0::INT) + 1 as val FROM ob_net_impacts { $next_id_val := $row.val; }
-                    ob_record_net_impact($next_id_val, $query_id, $v_pid, $winning_outcome, 0::INT8, $v_payout, FALSE);
+                    if $v_pid IS NULL {
+                        INSERT INTO ob_participants (id, wallet_address)
+                        SELECT COALESCE(MAX(id), 0) + 1, $v_wallet_bytes
+                        FROM ob_participants;
+                        for $p in SELECT id FROM ob_participants WHERE wallet_address = $v_wallet_bytes { $v_pid := $p.id; }
+                    }
+                    if $v_pid IS NOT NULL {
+                        $next_id_val INT;
+                        for $row in SELECT COALESCE(MAX(id), 0::INT) + 1 as val FROM ob_net_impacts { $next_id_val := $row.val; }
+                        ob_record_net_impact($next_id_val, $query_id, $v_pid, $winning_outcome, 0::INT8, $v_payout, FALSE);
 
-                    -- Record validator in distribution details so indexer picks it up
-                    INSERT INTO ob_fee_distribution_details (distribution_id, participant_id, wallet_address, reward_amount, total_reward_percent)
-                    VALUES ($distribution_id, $v_pid, $v_wallet_bytes, $v_payout, $v_pct)
-                    ON CONFLICT (distribution_id, participant_id) DO UPDATE
-                    SET reward_amount = ob_fee_distribution_details.reward_amount + $v_payout,
-                        total_reward_percent = ob_fee_distribution_details.total_reward_percent + $v_pct;
-                }
+                        -- Record validator in distribution details so indexer picks it up
+                        INSERT INTO ob_fee_distribution_details (distribution_id, participant_id, wallet_address, reward_amount, total_reward_percent)
+                        VALUES ($distribution_id, $v_pid, $v_wallet_bytes, $v_payout, $v_pct)
+                        ON CONFLICT (distribution_id, participant_id) DO UPDATE
+                        SET reward_amount = ob_fee_distribution_details.reward_amount + $v_payout,
+                            total_reward_percent = ob_fee_distribution_details.total_reward_percent + $v_pct;
+                    }
 
-                $actual_validator_fees := $actual_validator_fees + $v_payout;
+                    $actual_validator_fees := $actual_validator_fees + $v_payout;
+                }
             }
         }
     }
@@ -226,17 +229,19 @@ CREATE OR REPLACE ACTION distribute_fees(
                 $amounts := array_append($amounts, $reward_final);
                 $outcomes := array_append($outcomes, $winning_outcome);
 
-                -- Record LP audit detail
+                -- Record LP audit detail (skip if percent rounds to 0 at NUMERIC(10,2) precision)
                 $curr_pid INT := $res.participant_id;
                 $curr_wallet BYTEA := $res.wallet_address;
                 $curr_reward NUMERIC(78,0) := $reward_final;
                 $curr_pct NUMERIC(10,2) := $res.reward_percent::NUMERIC(10, 2);
 
-                INSERT INTO ob_fee_distribution_details (distribution_id, participant_id, wallet_address, reward_amount, total_reward_percent)
-                VALUES ($distribution_id, $curr_pid, $curr_wallet, $curr_reward, $curr_pct)
-                ON CONFLICT (distribution_id, participant_id) DO UPDATE
-                SET reward_amount = ob_fee_distribution_details.reward_amount + $curr_reward,
-                    total_reward_percent = ob_fee_distribution_details.total_reward_percent + $curr_pct;
+                if $curr_pct > 0.00::NUMERIC(10, 2) {
+                    INSERT INTO ob_fee_distribution_details (distribution_id, participant_id, wallet_address, reward_amount, total_reward_percent)
+                    VALUES ($distribution_id, $curr_pid, $curr_wallet, $curr_reward, $curr_pct)
+                    ON CONFLICT (distribution_id, participant_id) DO UPDATE
+                    SET reward_amount = ob_fee_distribution_details.reward_amount + $curr_reward,
+                        total_reward_percent = ob_fee_distribution_details.total_reward_percent + $curr_pct;
+                }
             }
         }
 
