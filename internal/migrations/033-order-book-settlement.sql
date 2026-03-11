@@ -94,8 +94,15 @@ CREATE OR REPLACE ACTION distribute_fees(
 
         $actual_dp_fees := $infra_share;
 
+        -- Ensure DP has a participant record so the fee is tracked in ob_net_impacts
         $dp_pid INT;
         for $p in SELECT id FROM ob_participants WHERE wallet_address = $dp_addr { $dp_pid := $p.id; }
+        if $dp_pid IS NULL {
+            INSERT INTO ob_participants (id, wallet_address)
+            SELECT COALESCE(MAX(id), 0) + 1, $dp_addr
+            FROM ob_participants;
+            for $p in SELECT id FROM ob_participants WHERE wallet_address = $dp_addr { $dp_pid := $p.id; }
+        }
         if $dp_pid IS NOT NULL {
             $next_id_dp INT;
             for $row in SELECT COALESCE(MAX(id), 0::INT) + 1 as val FROM ob_net_impacts { $next_id_dp := $row.val; }
@@ -113,9 +120,16 @@ CREATE OR REPLACE ACTION distribute_fees(
 
         $actual_validator_fees := $infra_share;
 
+        -- Ensure Validator has a participant record so the fee is tracked in ob_net_impacts
         $val_pid INT;
         $leader_bytes BYTEA := tn_utils.get_leader_bytes();
         for $p in SELECT id FROM ob_participants WHERE wallet_address = $leader_bytes { $val_pid := $p.id; }
+        if $val_pid IS NULL AND $leader_bytes IS NOT NULL {
+            INSERT INTO ob_participants (id, wallet_address)
+            SELECT COALESCE(MAX(id), 0) + 1, $leader_bytes
+            FROM ob_participants;
+            for $p in SELECT id FROM ob_participants WHERE wallet_address = $leader_bytes { $val_pid := $p.id; }
+        }
         if $val_pid IS NOT NULL {
             $next_id_val INT;
             for $row in SELECT COALESCE(MAX(id), 0::INT) + 1 as val FROM ob_net_impacts { $next_id_val := $row.val; }
