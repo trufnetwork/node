@@ -3,9 +3,11 @@
 package order_book
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math/big"
+	"sort"
 	"testing"
 	"time"
 
@@ -1125,10 +1127,10 @@ func testDistributionMultipleValidators(t *testing.T) func(context.Context, *kwi
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
-		// Inject 3 validators
+		// Inject 3 validators (capture all pubkeys to determine sort order)
 		val1Pub, val1Addr := injectTestValidator(t, platform)
-		_, val2Addr := injectTestValidator(t, platform)
-		_, val3Addr := injectTestValidator(t, platform)
+		val2Pub, val2Addr := injectTestValidator(t, platform)
+		val3Pub, val3Addr := injectTestValidator(t, platform)
 
 		t.Logf("Validators: %s, %s, %s", val1Addr[:10], val2Addr[:10], val3Addr[:10])
 
@@ -1228,9 +1230,9 @@ func testDistributionMultipleValidators(t *testing.T) func(context.Context, *kwi
 		require.True(t, inc2.Sign() > 0, "V2 should get > 0")
 		require.True(t, inc3.Sign() > 0, "V3 should get > 0")
 
-		// Payouts should differ by at most 1 wei (remainder handling)
-		// PostgreSQL NUMERIC(78,0) division rounds, so the first validator
-		// gets per_validator + remainder (which may be negative, i.e., 1 wei less)
+		// Payouts should differ by at most 1 wei (remainder handling).
+		// NUMERIC(78,0) division rounds to nearest integer, so for division by 3
+		// the remainder is at most 1 in absolute value.
 		vals := []*big.Int{inc1, inc2, inc3}
 		minVal, maxVal := new(big.Int).Set(vals[0]), new(big.Int).Set(vals[0])
 		for _, v := range vals[1:] {
@@ -1248,6 +1250,28 @@ func testDistributionMultipleValidators(t *testing.T) func(context.Context, *kwi
 		// Verify that not all validators got the same amount (remainder is non-zero)
 		require.True(t, diff.Sign() > 0,
 			"With 31 TRUF, remainder should be non-zero so validators get different amounts")
+
+		// Verify deterministic remainder recipient: the first validator sorted by pubkey
+		// should receive the remainder (may be +1 or -1 depending on rounding direction).
+		type valEntry struct {
+			pubkey []byte
+			payout *big.Int
+		}
+		entries := []valEntry{
+			{pubkey: val1Pub.Bytes(), payout: inc1},
+			{pubkey: val2Pub.Bytes(), payout: inc2},
+			{pubkey: val3Pub.Bytes(), payout: inc3},
+		}
+		sort.Slice(entries, func(i, j int) bool {
+			return bytes.Compare(entries[i].pubkey, entries[j].pubkey) < 0
+		})
+		// The first validator (sorted by pubkey) gets the remainder, making its payout
+		// different from the others. Verify it's the one with a unique payout.
+		firstPayout := entries[0].payout
+		othersSame := entries[1].payout.Cmp(entries[2].payout) == 0
+		firstDiffers := firstPayout.Cmp(entries[1].payout) != 0
+		require.True(t, othersSame && firstDiffers,
+			"First validator (sorted by pubkey) should be the sole remainder recipient")
 
 		// Verify audit summary shows correct total validator fees
 		var totalValFeesStr string

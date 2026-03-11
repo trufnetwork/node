@@ -205,10 +205,16 @@ func getValidatorsMethod() precompiles.Method {
 				return nil
 			}
 
+			// Defensive shallow copy to avoid mutating the caller's slice
+			validatorsCopy := make([]*types.Validator, len(validators))
+			copy(validatorsCopy, validators)
+
 			// Sort deterministically by pubkey bytes for consensus safety
-			sort.Slice(validators, func(i, j int) bool {
-				return bytes.Compare(validators[i].Identifier, validators[j].Identifier) < 0
+			sort.Slice(validatorsCopy, func(i, j int) bool {
+				return bytes.Compare(validatorsCopy[i].Identifier, validatorsCopy[j].Identifier) < 0
 			})
+
+			validators = validatorsCopy
 
 			for _, v := range validators {
 				if v.Power <= 0 {
@@ -263,9 +269,16 @@ func getValidatorCountMethod() precompiles.Method {
 			validators := app.Validators.GetValidators()
 			var count int64
 			for _, v := range validators {
-				if v.Power > 0 {
-					count++
+				if v.Power <= 0 {
+					continue
 				}
+				// Mirror get_validators() filtering: skip malformed secp256k1 keys
+				if v.KeyType == crypto.KeyTypeSecp256k1 {
+					if _, err := crypto.UnmarshalSecp256k1PublicKey(v.Identifier); err != nil {
+						continue
+					}
+				}
+				count++
 			}
 
 			return resultFn([]any{count})
