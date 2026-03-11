@@ -114,11 +114,7 @@ CREATE OR REPLACE ACTION distribute_fees(
     $actual_validator_fees NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
 
     if $infra_share > '0'::NUMERIC(78, 0) {
-        -- Count validators first for even split
-        $validator_count INT := 0;
-        for $v in tn_utils.get_validators() {
-            $validator_count := $validator_count + 1;
-        }
+        $validator_count INT := tn_utils.get_validator_count();
 
         if $validator_count > 0 {
             $per_validator NUMERIC(78, 0) := $infra_share / $validator_count::NUMERIC(78, 0);

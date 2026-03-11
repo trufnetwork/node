@@ -43,6 +43,7 @@ func buildPrecompile() precompiles.Precompile {
 			getLeaderHexMethod(),
 			getLeaderBytesMethod(),
 			getValidatorsMethod(),
+			getValidatorCountMethod(),
 		},
 	}
 }
@@ -237,6 +238,37 @@ func getValidatorsMethod() precompiles.Method {
 			}
 
 			return nil
+		},
+	}
+}
+
+// getValidatorCountMethod returns the number of active validators (power > 0) as a scalar INT.
+// This avoids iterating get_validators() just to count, enabling single-pass distribution loops.
+func getValidatorCountMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "get_validator_count",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters:      []precompiles.PrecompileValue{},
+		Returns: &precompiles.MethodReturn{
+			IsTable: false,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("count", types.IntType, false),
+			},
+		},
+		Handler: func(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+			if app == nil || app.Validators == nil {
+				return resultFn([]any{int64(0)})
+			}
+
+			validators := app.Validators.GetValidators()
+			var count int64
+			for _, v := range validators {
+				if v.Power > 0 {
+					count++
+				}
+			}
+
+			return resultFn([]any{count})
 		},
 	}
 }

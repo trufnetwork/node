@@ -1167,8 +1167,8 @@ func testDistributionMultipleValidators(t *testing.T) func(context.Context, *kwi
 		val3Before, err := getUSDCBalance(ctx, platform, val3Addr)
 		require.NoError(t, err)
 
-		// Distribute 30 TRUF fees (nice for 3-way split math)
-		totalFees := new(big.Int).Mul(big.NewInt(30), big.NewInt(1e18))
+		// Distribute 31 TRUF fees (produces non-zero remainder when split 3 ways)
+		totalFees := new(big.Int).Mul(big.NewInt(31), big.NewInt(1e18))
 
 		err = giveUSDCBalanceChained(ctx, platform, testUSDCEscrow, totalFees.String())
 		require.NoError(t, err)
@@ -1215,39 +1215,39 @@ func testDistributionMultipleValidators(t *testing.T) func(context.Context, *kwi
 
 		t.Logf("Validator payouts: V1=%s, V2=%s, V3=%s", inc1.String(), inc2.String(), inc3.String())
 
-		// Expected: infraShare = 30 * 10^18 * 125 / 1000 = 3.75 * 10^18
+		// Expected: infraShare = 31 * 10^18 * 125 / 1000 = 3.875 * 10^18
 		infraShare := new(big.Int).Div(new(big.Int).Mul(totalFees, big.NewInt(125)), big.NewInt(1000))
-		perValidator := new(big.Int).Div(infraShare, big.NewInt(3))
-		remainder := new(big.Int).Sub(infraShare, new(big.Int).Mul(perValidator, big.NewInt(3)))
-
-		t.Logf("Expected: infraShare=%s, perValidator=%s, remainder=%s",
-			infraShare.String(), perValidator.String(), remainder.String())
 
 		// Total validator payout should equal infraShare
 		totalValPayout := new(big.Int).Add(inc1, new(big.Int).Add(inc2, inc3))
 		require.Equal(t, infraShare.String(), totalValPayout.String(),
 			"Total validator payout should equal infraShare")
 
-		// Each validator should get at least perValidator
-		require.True(t, inc1.Cmp(perValidator) >= 0, "V1 should get >= perValidator")
-		require.True(t, inc2.Cmp(perValidator) >= 0, "V2 should get >= perValidator")
-		require.True(t, inc3.Cmp(perValidator) >= 0, "V3 should get >= perValidator")
+		// All validators should get > 0
+		require.True(t, inc1.Sign() > 0, "V1 should get > 0")
+		require.True(t, inc2.Sign() > 0, "V2 should get > 0")
+		require.True(t, inc3.Sign() > 0, "V3 should get > 0")
 
-		// Exactly one validator should get the remainder (if any)
-		if remainder.Sign() > 0 {
-			perWithRemainder := new(big.Int).Add(perValidator, remainder)
-			extraCount := 0
-			if inc1.Cmp(perWithRemainder) == 0 {
-				extraCount++
+		// Payouts should differ by at most 1 wei (remainder handling)
+		// PostgreSQL NUMERIC(78,0) division rounds, so the first validator
+		// gets per_validator + remainder (which may be negative, i.e., 1 wei less)
+		vals := []*big.Int{inc1, inc2, inc3}
+		minVal, maxVal := new(big.Int).Set(vals[0]), new(big.Int).Set(vals[0])
+		for _, v := range vals[1:] {
+			if v.Cmp(minVal) < 0 {
+				minVal.Set(v)
 			}
-			if inc2.Cmp(perWithRemainder) == 0 {
-				extraCount++
+			if v.Cmp(maxVal) > 0 {
+				maxVal.Set(v)
 			}
-			if inc3.Cmp(perWithRemainder) == 0 {
-				extraCount++
-			}
-			require.Equal(t, 1, extraCount, "Exactly 1 validator should get the remainder")
 		}
+		diff := new(big.Int).Sub(maxVal, minVal)
+		require.True(t, diff.Cmp(big.NewInt(1)) <= 0,
+			"Max difference between validators should be <= 1 wei, got %s", diff.String())
+
+		// Verify that not all validators got the same amount (remainder is non-zero)
+		require.True(t, diff.Sign() > 0,
+			"With 31 TRUF, remainder should be non-zero so validators get different amounts")
 
 		// Verify audit summary shows correct total validator fees
 		var totalValFeesStr string
@@ -1283,8 +1283,8 @@ func testDistributionMultipleValidators(t *testing.T) func(context.Context, *kwi
 			require.Equal(t, 1, count, fmt.Sprintf("Validator %s should have participant entry", addr[:10]))
 		}
 
-		t.Logf("3-validator split verified: total=%s, per=%s+remainder=%s",
-			totalValPayout.String(), perValidator.String(), remainder.String())
+		t.Logf("3-validator split verified: total=%s, min=%s, max=%s, diff=%s",
+			totalValPayout.String(), minVal.String(), maxVal.String(), diff.String())
 
 		return nil
 	}
