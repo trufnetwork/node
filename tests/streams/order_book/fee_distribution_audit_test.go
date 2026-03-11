@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
+	"github.com/trufnetwork/kwil-db/core/crypto"
 	coreauth "github.com/trufnetwork/kwil-db/core/crypto/auth"
 	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
 	erc20bridge "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
@@ -81,9 +82,12 @@ func testAuditRecordCreation(t *testing.T) func(context.Context, *kwilTesting.Pl
 		err = triggerBatchSampling(ctx, platform, 1000)
 		require.NoError(t, err)
 
+		// Inject a validator so distribute_fees can pay validator share
+		valPub, _ := injectTestValidator(t, platform)
+
 		// Fund vault and call distribute_fees
 		totalFees := new(big.Int).Mul(big.NewInt(10), big.NewInt(1e18)) // 10 TRUF
-		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees, true)
+		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees, true, valPub)
 		require.NoError(t, err)
 
 		// Verify audit summary record exists
@@ -221,9 +225,10 @@ func testAuditMultiBlock(t *testing.T) func(context.Context, *kwilTesting.Platfo
 		err = triggerBatchSampling(ctx, platform, 3000)
 		require.NoError(t, err)
 
-		// Distribute fees
+		// Inject validator and distribute fees
+		valPub, _ := injectTestValidator(t, platform)
 		totalFees := new(big.Int).Mul(big.NewInt(30), big.NewInt(1e18))
-		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees, true)
+		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees, true, valPub)
 		require.NoError(t, err)
 
 		// Verify audit summary
@@ -287,8 +292,9 @@ func testAuditNoLPs(t *testing.T) func(context.Context, *kwilTesting.Platform) e
 		require.NoError(t, err)
 
 		// Don't sample LP rewards (no LP samples)
+		valPub, _ := injectTestValidator(t, platform)
 		totalFees := new(big.Int).Mul(big.NewInt(10), big.NewInt(1e18))
-		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees, true)
+		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees, true, valPub)
 		require.NoError(t, err)
 
 		// Verify NO audit summary record
@@ -355,8 +361,9 @@ func testAuditZeroFees(t *testing.T) func(context.Context, *kwilTesting.Platform
 		require.NoError(t, err)
 
 		// Call distribute_fees with $0 fees (early return)
+		valPub, _ := injectTestValidator(t, platform)
 		zeroFees := big.NewInt(0)
-		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), zeroFees, true)
+		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), zeroFees, true, valPub)
 		require.NoError(t, err)
 
 		// Verify NO audit record (zero fees early return)
@@ -431,9 +438,10 @@ func testAuditDataIntegrity(t *testing.T) func(context.Context, *kwilTesting.Pla
 		err = triggerBatchSampling(ctx, platform, 1000)
 		require.NoError(t, err)
 
-		// Distribute
+		// Inject validator and distribute
+		valPub, _ := injectTestValidator(t, platform)
 		totalFees := new(big.Int).Mul(big.NewInt(10), big.NewInt(1e18))
-		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees, true)
+		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees, true, valPub)
 		require.NoError(t, err)
 
 		// Get final USDC balances
@@ -592,9 +600,10 @@ func setupLPScenario(t *testing.T, ctx context.Context, platform *kwilTesting.Pl
 	// Final midpoint: best bid=-50, lowest sell=51 → midpoint=50, spread=5
 }
 
-// fundVaultAndDistributeFees funds the vault and calls distribute_fees
+// fundVaultAndDistributeFees funds the vault and calls distribute_fees.
+// If proposer is nil, a random proposer key is generated.
 func fundVaultAndDistributeFees(t *testing.T, ctx context.Context, platform *kwilTesting.Platform,
-	user *util.EthereumAddress, marketID int, totalFees *big.Int, winningOutcome bool) error {
+	user *util.EthereumAddress, marketID int, totalFees *big.Int, winningOutcome bool, proposer ...crypto.PublicKey) error {
 
 	// Fund vault if fees > 0 (use USDC-only since vault doesn't need TRUF)
 	if totalFees.Sign() > 0 {
@@ -615,8 +624,13 @@ func fundVaultAndDistributeFees(t *testing.T, ctx context.Context, platform *kwi
 		return err
 	}
 
-	// Generate leader key for fee transfers
-	pub := NewTestProposerPub(t)
+	// Use provided proposer or generate one
+	var pub crypto.PublicKey
+	if len(proposer) > 0 && proposer[0] != nil {
+		pub = proposer[0]
+	} else {
+		pub = NewTestProposerPub(t)
+	}
 
 	// Call distribute_fees
 	tx := &common.TxContext{

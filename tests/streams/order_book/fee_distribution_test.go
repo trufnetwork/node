@@ -39,6 +39,8 @@ func TestFeeDistribution(t *testing.T) {
 			testDistribution1LP(t),
 			// DP/Validator auto-participant creation: non-trading DP and Validator get fees
 			testDistributionDPValidatorAutoParticipant(t),
+			// Multi-validator: fees split evenly among 3 validators
+			testDistributionMultipleValidators(t),
 		},
 	}, testutils.GetTestOptionsWithCache())
 }
@@ -157,7 +159,7 @@ func testDistribution1Block2LPs(t *testing.T) func(context.Context, *kwilTesting
 		require.NoError(t, err)
 
 		// Generate leader key for fee transfers
-		pub := NewTestProposerPub(t)
+		pub, _ := injectTestValidator(t, platform)
 
 		tx := &common.TxContext{
 			Ctx: ctx,
@@ -362,7 +364,7 @@ func testDistribution3Blocks2LPs(t *testing.T) func(context.Context, *kwilTestin
 		require.NoError(t, err)
 
 		// Generate leader key for fee transfers
-		pub := NewTestProposerPub(t)
+		pub, _ := injectTestValidator(t, platform)
 
 		tx := &common.TxContext{
 			Ctx: ctx,
@@ -515,7 +517,7 @@ func testDistributionNoSamples(t *testing.T) func(context.Context, *kwilTesting.
 		require.NoError(t, err)
 
 		// Generate leader key for fee transfers
-		pub := NewTestProposerPub(t)
+		pub, _ := injectTestValidator(t, platform)
 
 		tx := &common.TxContext{
 			Ctx: ctx,
@@ -657,7 +659,7 @@ func testDistributionZeroFees(t *testing.T) func(context.Context, *kwilTesting.P
 		require.NoError(t, err)
 
 		// Generate leader key for fee transfers
-		pub := NewTestProposerPub(t)
+		pub, _ := injectTestValidator(t, platform)
 
 		tx := &common.TxContext{
 			Ctx: ctx,
@@ -795,7 +797,7 @@ func testDistribution1LP(t *testing.T) func(context.Context, *kwilTesting.Platfo
 		require.NoError(t, err)
 
 		// Generate leader key for fee transfers
-		pub := NewTestProposerPub(t)
+		pub, _ := injectTestValidator(t, platform)
 
 		tx := &common.TxContext{
 			Ctx: ctx,
@@ -943,7 +945,7 @@ func testDistributionDPValidatorAutoParticipant(t *testing.T) func(context.Conte
 		require.NoError(t, err)
 
 		// Generate a known proposer key — this becomes the Validator address
-		pub := NewTestProposerPub(t)
+		pub, _ := injectTestValidator(t, platform)
 		validatorAddr := fmt.Sprintf("0x%x", crypto.EthereumAddressFromPubKey(pub))
 		t.Logf("Validator address: %s", validatorAddr)
 
@@ -1106,6 +1108,183 @@ func testDistributionDPValidatorAutoParticipant(t *testing.T) func(context.Conte
 		require.Equal(t, expectedInfraShare.String(), totalValFeesStr, "Audit should show Validator fees")
 
 		t.Logf("Audit verified: DP fees=%s, Validator fees=%s", totalDPFeesStr, totalValFeesStr)
+
+		return nil
+	}
+}
+
+// testDistributionMultipleValidators tests that validator fees are split evenly among
+// 3 validators, with remainder going to the first (sorted by pubkey).
+func testDistributionMultipleValidators(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Reset balance point tracker
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
+
+		// Initialize ERC20 extension
+		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
+		require.NoError(t, err)
+
+		// Inject 3 validators
+		val1Pub, val1Addr := injectTestValidator(t, platform)
+		_, val2Addr := injectTestValidator(t, platform)
+		_, val3Addr := injectTestValidator(t, platform)
+
+		t.Logf("Validators: %s, %s, %s", val1Addr[:10], val2Addr[:10], val3Addr[:10])
+
+		// LP users
+		user1 := util.Unsafe_NewEthereumAddressFromString("0xAABBCCDDEEFF00112233445566778899AABBCCDD")
+		user2 := util.Unsafe_NewEthereumAddressFromString("0x112233445566778899AABBCCDDEEFF0011223344")
+
+		err = giveBalanceChained(ctx, platform, user1.Address(), "1000000000000000000000")
+		require.NoError(t, err)
+		err = giveBalanceChained(ctx, platform, user2.Address(), "1000000000000000000000")
+		require.NoError(t, err)
+
+		// Create market with user1 as DP
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000071", "get_record", []byte{0x01})
+		require.NoError(t, err)
+		settleTime := time.Now().Add(24 * time.Hour).Unix()
+
+		var marketID int64
+		err = callCreateMarket(ctx, platform, &user1, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
+			marketID = row.Values[0].(int64)
+			return nil
+		})
+		require.NoError(t, err)
+		t.Logf("Created market ID: %d", marketID)
+
+		// Setup LP scenario and sample
+		setupLPScenario(t, ctx, platform, &user1, &user2, int(marketID))
+		err = triggerBatchSampling(ctx, platform, 1000)
+		require.NoError(t, err)
+
+		// Get validator balances before
+		val1Before, err := getUSDCBalance(ctx, platform, val1Addr)
+		require.NoError(t, err)
+		val2Before, err := getUSDCBalance(ctx, platform, val2Addr)
+		require.NoError(t, err)
+		val3Before, err := getUSDCBalance(ctx, platform, val3Addr)
+		require.NoError(t, err)
+
+		// Distribute 30 TRUF fees (nice for 3-way split math)
+		totalFees := new(big.Int).Mul(big.NewInt(30), big.NewInt(1e18))
+
+		err = giveUSDCBalanceChained(ctx, platform, testUSDCEscrow, totalFees.String())
+		require.NoError(t, err)
+		_, err = erc20bridge.ForTestingForceSyncInstance(ctx, platform, testChain, testEscrow, testERC20, 18)
+		require.NoError(t, err)
+
+		totalFeesDecimal, err := kwilTypes.ParseDecimalExplicit(totalFees.String(), 78, 0)
+		require.NoError(t, err)
+
+		// Call distribute_fees with val1 as block proposer
+		tx := &common.TxContext{
+			Ctx: ctx,
+			BlockContext: &common.BlockContext{
+				Height:    1,
+				Timestamp: time.Now().Unix(),
+				Proposer:  val1Pub,
+			},
+			Signer:        user1.Bytes(),
+			Caller:        user1.Address(),
+			TxID:          platform.Txid(),
+			Authenticator: coreauth.EthPersonalSignAuth,
+		}
+		engineCtx := &common.EngineContext{TxContext: tx, OverrideAuthz: true}
+
+		res, err := platform.Engine.Call(engineCtx, platform.DB, "", "distribute_fees",
+			[]any{int(marketID), totalFeesDecimal, true}, nil)
+		require.NoError(t, err)
+		if res.Error != nil {
+			t.Fatalf("distribute_fees error: %v", res.Error)
+		}
+
+		// Get validator balances after
+		val1After, err := getUSDCBalance(ctx, platform, val1Addr)
+		require.NoError(t, err)
+		val2After, err := getUSDCBalance(ctx, platform, val2Addr)
+		require.NoError(t, err)
+		val3After, err := getUSDCBalance(ctx, platform, val3Addr)
+		require.NoError(t, err)
+
+		// Calculate increases
+		inc1 := new(big.Int).Sub(val1After, val1Before)
+		inc2 := new(big.Int).Sub(val2After, val2Before)
+		inc3 := new(big.Int).Sub(val3After, val3Before)
+
+		t.Logf("Validator payouts: V1=%s, V2=%s, V3=%s", inc1.String(), inc2.String(), inc3.String())
+
+		// Expected: infraShare = 30 * 10^18 * 125 / 1000 = 3.75 * 10^18
+		infraShare := new(big.Int).Div(new(big.Int).Mul(totalFees, big.NewInt(125)), big.NewInt(1000))
+		perValidator := new(big.Int).Div(infraShare, big.NewInt(3))
+		remainder := new(big.Int).Sub(infraShare, new(big.Int).Mul(perValidator, big.NewInt(3)))
+
+		t.Logf("Expected: infraShare=%s, perValidator=%s, remainder=%s",
+			infraShare.String(), perValidator.String(), remainder.String())
+
+		// Total validator payout should equal infraShare
+		totalValPayout := new(big.Int).Add(inc1, new(big.Int).Add(inc2, inc3))
+		require.Equal(t, infraShare.String(), totalValPayout.String(),
+			"Total validator payout should equal infraShare")
+
+		// Each validator should get at least perValidator
+		require.True(t, inc1.Cmp(perValidator) >= 0, "V1 should get >= perValidator")
+		require.True(t, inc2.Cmp(perValidator) >= 0, "V2 should get >= perValidator")
+		require.True(t, inc3.Cmp(perValidator) >= 0, "V3 should get >= perValidator")
+
+		// Exactly one validator should get the remainder (if any)
+		if remainder.Sign() > 0 {
+			perWithRemainder := new(big.Int).Add(perValidator, remainder)
+			extraCount := 0
+			if inc1.Cmp(perWithRemainder) == 0 {
+				extraCount++
+			}
+			if inc2.Cmp(perWithRemainder) == 0 {
+				extraCount++
+			}
+			if inc3.Cmp(perWithRemainder) == 0 {
+				extraCount++
+			}
+			require.Equal(t, 1, extraCount, "Exactly 1 validator should get the remainder")
+		}
+
+		// Verify audit summary shows correct total validator fees
+		var totalValFeesStr string
+		_, err = platform.Engine.Call(
+			&common.EngineContext{TxContext: &common.TxContext{
+				Ctx: ctx, BlockContext: &common.BlockContext{Height: 1, Timestamp: time.Now().Unix()},
+				Signer: user1.Bytes(), Caller: user1.Address(), TxID: platform.Txid(),
+				Authenticator: coreauth.EthPersonalSignAuth,
+			}, OverrideAuthz: true},
+			platform.DB, "", "get_distribution_summary", []any{int(marketID)},
+			func(row *common.Row) error {
+				totalValFeesStr = row.Values[3].(*kwilTypes.Decimal).String()
+				return nil
+			})
+		require.NoError(t, err)
+		require.Equal(t, infraShare.String(), totalValFeesStr,
+			"Audit total_validator_fees should equal full infraShare")
+
+		// Verify all 3 validators have ob_participants entries
+		for _, addr := range []string{val1Addr, val2Addr, val3Addr} {
+			var count int
+			err = platform.Engine.Execute(
+				&common.EngineContext{TxContext: &common.TxContext{Ctx: ctx, BlockContext: &common.BlockContext{Height: 1}, TxID: platform.Txid()}},
+				platform.DB,
+				"SELECT COUNT(*) as cnt FROM ob_participants WHERE wallet_address = decode(substring($wallet, 3, 40), 'hex')",
+				map[string]any{"$wallet": addr},
+				func(row *common.Row) error {
+					count = int(row.Values[0].(int64))
+					return nil
+				},
+			)
+			require.NoError(t, err)
+			require.Equal(t, 1, count, fmt.Sprintf("Validator %s should have participant entry", addr[:10]))
+		}
+
+		t.Logf("3-validator split verified: total=%s, per=%s+remainder=%s",
+			totalValPayout.String(), perValidator.String(), remainder.String())
 
 		return nil
 	}

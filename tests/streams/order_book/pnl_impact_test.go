@@ -176,7 +176,10 @@ func testPnLImpactSettlement(t *testing.T) func(ctx context.Context, platform *k
 		// Use a real key for User A so we can use them as block proposer (Leader) and Data Provider
 		userAPub := NewTestProposerPub(t)
 		userA := util.Unsafe_NewEthereumAddressFromString(fmt.Sprintf("0x%x", crypto.EthereumAddressFromPubKey(userAPub)))
-		
+
+		// Inject User A as a validator so distribute_fees pays validator share
+		platform.Validators.ForTestingAddValidator(userAPub.Bytes(), crypto.KeyTypeSecp256k1, 1)
+
 		// Setup FIRST: Inject balance
 		err := InjectDualBalance(ctx, platform, userA.Address(), "100000000000000000000")
 		require.NoError(t, err)
