@@ -142,16 +142,19 @@ CREATE OR REPLACE ACTION distribute_fees(
             $val_remainder NUMERIC(78, 0) := $infra_share - ($per_validator * $validator_count::NUMERIC(78, 0));
             $first_validator BOOL := TRUE;
             $val_pct NUMERIC(10, 2) := 12.50::NUMERIC(10, 2) / $validator_count::NUMERIC(10, 2);
+            $val_pct_remainder NUMERIC(10, 2) := 12.50::NUMERIC(10, 2) - ($val_pct * $validator_count::NUMERIC(10, 2));
 
             for $v in tn_utils.get_validators() {
                 -- Extract row fields to local variables (Kuneiform SQL generator limitation)
                 $v_wallet_hex TEXT := $v.wallet_hex;
                 $v_wallet_bytes BYTEA := $v.wallet_bytes;
                 $v_payout NUMERIC(78, 0) := $per_validator;
+                $v_pct NUMERIC(10, 2) := $val_pct;
 
                 -- Give remainder to first validator (deterministic: sorted by pubkey)
                 if $first_validator {
                     $v_payout := $v_payout + $val_remainder;
+                    $v_pct := $v_pct + $val_pct_remainder;
                     $first_validator := FALSE;
                 }
 
@@ -176,10 +179,10 @@ CREATE OR REPLACE ACTION distribute_fees(
 
                     -- Record validator in distribution details so indexer picks it up
                     INSERT INTO ob_fee_distribution_details (distribution_id, participant_id, wallet_address, reward_amount, total_reward_percent)
-                    VALUES ($distribution_id, $v_pid, $v_wallet_bytes, $v_payout, $val_pct)
+                    VALUES ($distribution_id, $v_pid, $v_wallet_bytes, $v_payout, $v_pct)
                     ON CONFLICT (distribution_id, participant_id) DO UPDATE
                     SET reward_amount = ob_fee_distribution_details.reward_amount + $v_payout,
-                        total_reward_percent = ob_fee_distribution_details.total_reward_percent + $val_pct;
+                        total_reward_percent = ob_fee_distribution_details.total_reward_percent + $v_pct;
                 }
 
                 $actual_validator_fees := $actual_validator_fees + $v_payout;

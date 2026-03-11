@@ -516,22 +516,10 @@ func testAuditDataIntegrity(t *testing.T) func(context.Context, *kwilTesting.Pla
 		require.NotNil(t, auditReward1, "User1 should have audit reward")
 		require.NotNil(t, auditReward2, "User2 should have audit reward")
 
-		// User1's audit detail now includes DP fee (merged via ON CONFLICT), so
-		// the balance increase should match the audit reward directly.
-		// However, user1 might also be the validator (leader), so account for that.
-		expectedIncrease1 := new(big.Int).Set(auditReward1)
-
-		if increase1.Cmp(expectedIncrease1) != 0 {
-			// Try adding validator share if User1 is leader
-			infraShareVal, _ := new(big.Int).SetString(totalValFeesStr, 10)
-			expectedIncrease1WithVal := new(big.Int).Add(expectedIncrease1, infraShareVal)
-			if increase1.Cmp(expectedIncrease1WithVal) == 0 {
-				t.Logf("User1 appears to be the leader, adding Validator share to expectation")
-				expectedIncrease1 = expectedIncrease1WithVal
-			}
-		}
-
-		require.Equal(t, expectedIncrease1.String(), increase1.String(), "User1 balance increase should match audit reward (LP + DP merged)")
+		// User1's audit detail includes DP fee merged with LP reward (via ON CONFLICT),
+		// so the balance increase should match the audit reward directly.
+		// Note: user1 is never the validator (injectTestValidator generates a fresh keypair).
+		require.Equal(t, auditReward1.String(), increase1.String(), "User1 balance increase should match audit reward (LP + DP merged)")
 		require.Equal(t, increase2.String(), auditReward2.String(), "User2 balance increase should match LP audit reward")
 
 		// Verify zero-loss: SUM(all detail amounts) = total_fees
