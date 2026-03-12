@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"sort"
 	"strings"
 
 	"github.com/trufnetwork/kwil-db/common"
@@ -41,6 +42,8 @@ func buildPrecompile() precompiles.Precompile {
 			getCallerBytesMethod(),
 			getLeaderHexMethod(),
 			getLeaderBytesMethod(),
+			getValidatorsMethod(),
+			getValidatorCountMethod(),
 		},
 	}
 }
@@ -173,6 +176,112 @@ func getLeaderBytesMethod() precompiles.Method {
 			
 			// Fallback to raw bytes of the public key
 			return resultFn([]any{pubkey.Bytes()})
+		},
+	}
+}
+
+// getValidatorsMethod returns all active validators as a table of (wallet_hex, wallet_bytes, power).
+// Results are sorted deterministically by public key bytes for consensus safety.
+func getValidatorsMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "get_validators",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters:      []precompiles.PrecompileValue{},
+		Returns: &precompiles.MethodReturn{
+			IsTable: true,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("wallet_hex", types.TextType, false),
+				precompiles.NewPrecompileValue("wallet_bytes", types.ByteaType, false),
+				precompiles.NewPrecompileValue("power", types.IntType, false),
+			},
+		},
+		Handler: func(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+			if app == nil || app.Validators == nil {
+				return nil // No validators available, return empty table
+			}
+
+			validators := app.Validators.GetValidators()
+			if len(validators) == 0 {
+				return nil
+			}
+
+			// Defensive shallow copy to avoid mutating the caller's slice
+			validatorsCopy := make([]*types.Validator, len(validators))
+			copy(validatorsCopy, validators)
+
+			// Sort deterministically by pubkey bytes for consensus safety
+			sort.Slice(validatorsCopy, func(i, j int) bool {
+				return bytes.Compare(validatorsCopy[i].Identifier, validatorsCopy[j].Identifier) < 0
+			})
+
+			validators = validatorsCopy
+
+			for _, v := range validators {
+				if v.Power <= 0 {
+					continue
+				}
+
+				var walletHex string
+				var walletBytes []byte
+
+				if v.KeyType == crypto.KeyTypeSecp256k1 {
+					secp, err := crypto.UnmarshalSecp256k1PublicKey(v.Identifier)
+					if err != nil {
+						continue // Skip validators with invalid keys
+					}
+					addr := crypto.EthereumAddressFromPubKey(secp)
+					walletHex = "0x" + hex.EncodeToString(addr)
+					walletBytes = addr
+				} else {
+					// Non-secp256k1 validators: use raw pubkey
+					walletHex = "0x" + hex.EncodeToString(v.Identifier)
+					walletBytes = v.Identifier
+				}
+
+				if err := resultFn([]any{walletHex, walletBytes, v.Power}); err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+	}
+}
+
+// getValidatorCountMethod returns the number of active validators (power > 0) as a scalar INT.
+// This avoids iterating get_validators() just to count, enabling single-pass distribution loops.
+func getValidatorCountMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "get_validator_count",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters:      []precompiles.PrecompileValue{},
+		Returns: &precompiles.MethodReturn{
+			IsTable: false,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("count", types.IntType, false),
+			},
+		},
+		Handler: func(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+			if app == nil || app.Validators == nil {
+				return resultFn([]any{int64(0)})
+			}
+
+			validators := app.Validators.GetValidators()
+			var count int64
+			for _, v := range validators {
+				if v.Power <= 0 {
+					continue
+				}
+				// Mirror get_validators() filtering: skip malformed secp256k1 keys
+				if v.KeyType == crypto.KeyTypeSecp256k1 {
+					if _, err := crypto.UnmarshalSecp256k1PublicKey(v.Identifier); err != nil {
+						continue
+					}
+				}
+				count++
+			}
+
+			return resultFn([]any{count})
 		},
 	}
 }

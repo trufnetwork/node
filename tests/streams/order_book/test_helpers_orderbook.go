@@ -117,6 +117,16 @@ func NewTestProposerPub(t require.TestingT) *crypto.Secp256k1PublicKey {
 	return pubGeneric.(*crypto.Secp256k1PublicKey)
 }
 
+// injectTestValidator adds a validator to the platform's VoteStore for testing.
+// Returns the validator's public key (for use as BlockContext.Proposer) and
+// its derived Ethereum address.
+func injectTestValidator(t require.TestingT, platform *kwilTesting.Platform) (*crypto.Secp256k1PublicKey, string) {
+	pub := NewTestProposerPub(t)
+	platform.Validators.ForTestingAddValidator(pub.Bytes(), crypto.KeyTypeSecp256k1, 1)
+	addr := fmt.Sprintf("0x%x", crypto.EthereumAddressFromPubKey(pub))
+	return pub, addr
+}
+
 // ensureNonZeroAddress returns the provided address unless it's the zero address,
 // in which case it returns a fallback non-zero address.
 func ensureNonZeroAddress(addr string) string {

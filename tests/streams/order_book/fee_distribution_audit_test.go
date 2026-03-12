@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
+	"github.com/trufnetwork/kwil-db/core/crypto"
 	coreauth "github.com/trufnetwork/kwil-db/core/crypto/auth"
 	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
 	erc20bridge "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
@@ -81,9 +82,12 @@ func testAuditRecordCreation(t *testing.T) func(context.Context, *kwilTesting.Pl
 		err = triggerBatchSampling(ctx, platform, 1000)
 		require.NoError(t, err)
 
+		// Inject a validator so distribute_fees can pay validator share
+		valPub, _ := injectTestValidator(t, platform)
+
 		// Fund vault and call distribute_fees
 		totalFees := new(big.Int).Mul(big.NewInt(10), big.NewInt(1e18)) // 10 TRUF
-		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees, true)
+		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees, true, valPub)
 		require.NoError(t, err)
 
 		// Verify audit summary record exists
@@ -164,20 +168,20 @@ func testAuditRecordCreation(t *testing.T) func(context.Context, *kwilTesting.Pl
 				return nil
 			})
 		require.NoError(t, err)
-		require.Len(t, detailRows, 2, "Should have 2 LP detail records")
+		// 3 detail records: 2 LPs + 1 validator (user1's DP fee merged into LP row via ON CONFLICT)
+		require.Len(t, detailRows, 3, "Should have 3 detail records (2 LPs + 1 validator, DP merged with LP)")
 
-		// Verify zero-loss: SUM(reward_amount) = total_lp_fees_distributed
-		totalLPFeesFromAudit, _ := new(big.Int).SetString(totalLPFeesStr, 10)
+		// Verify zero-loss: SUM(reward_amount) = total_fees (LP + DP + validator)
 		var totalDistributed big.Int
 		for _, detail := range detailRows {
 			amt, _ := new(big.Int).SetString(detail.rewardAmount, 10)
 			totalDistributed.Add(&totalDistributed, amt)
 		}
 
-		require.Equal(t, totalLPFeesFromAudit.String(), totalDistributed.String(),
-			"Zero-loss audit: SUM(reward_amount) should equal total_lp_fees_distributed")
+		require.Equal(t, totalFees.String(), totalDistributed.String(),
+			"Zero-loss audit: SUM(detail reward_amount) should equal total_fees")
 
-		t.Logf("✅ Audit record creation verified: %s wei distributed across %d LPs", totalLPFeesFromAudit.String(), lpCount)
+		t.Logf("✅ Audit record creation verified: %s wei distributed across %d detail records", totalDistributed.String(), len(detailRows))
 
 		return nil
 	}
@@ -221,9 +225,10 @@ func testAuditMultiBlock(t *testing.T) func(context.Context, *kwilTesting.Platfo
 		err = triggerBatchSampling(ctx, platform, 3000)
 		require.NoError(t, err)
 
-		// Distribute fees
+		// Inject validator and distribute fees
+		valPub, _ := injectTestValidator(t, platform)
 		totalFees := new(big.Int).Mul(big.NewInt(30), big.NewInt(1e18))
-		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees, true)
+		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees, true, valPub)
 		require.NoError(t, err)
 
 		// Verify audit summary
@@ -287,8 +292,9 @@ func testAuditNoLPs(t *testing.T) func(context.Context, *kwilTesting.Platform) e
 		require.NoError(t, err)
 
 		// Don't sample LP rewards (no LP samples)
+		valPub, _ := injectTestValidator(t, platform)
 		totalFees := new(big.Int).Mul(big.NewInt(10), big.NewInt(1e18))
-		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees, true)
+		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees, true, valPub)
 		require.NoError(t, err)
 
 		// Verify NO audit summary record
@@ -355,8 +361,9 @@ func testAuditZeroFees(t *testing.T) func(context.Context, *kwilTesting.Platform
 		require.NoError(t, err)
 
 		// Call distribute_fees with $0 fees (early return)
+		valPub, _ := injectTestValidator(t, platform)
 		zeroFees := big.NewInt(0)
-		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), zeroFees, true)
+		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), zeroFees, true, valPub)
 		require.NoError(t, err)
 
 		// Verify NO audit record (zero fees early return)
@@ -431,9 +438,10 @@ func testAuditDataIntegrity(t *testing.T) func(context.Context, *kwilTesting.Pla
 		err = triggerBatchSampling(ctx, platform, 1000)
 		require.NoError(t, err)
 
-		// Distribute
+		// Inject validator and distribute
+		valPub, _ := injectTestValidator(t, platform)
 		totalFees := new(big.Int).Mul(big.NewInt(10), big.NewInt(1e18))
-		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees, true)
+		err = fundVaultAndDistributeFees(t, ctx, platform, &user1, int(marketID), totalFees, true, valPub)
 		require.NoError(t, err)
 
 		// Get final USDC balances
@@ -494,7 +502,8 @@ func testAuditDataIntegrity(t *testing.T) func(context.Context, *kwilTesting.Pla
 				return nil
 			})
 		require.NoError(t, err)
-		require.Equal(t, 2, detailRowCount, "Should have 2 LP detail records")
+		// 3 detail records: 2 LPs + 1 validator (user1's DP fee merged into LP row via ON CONFLICT)
+		require.Equal(t, 3, detailRowCount, "Should have 3 detail records (2 LPs + 1 validator, DP merged with LP)")
 
 		// Verify audit rewards match actual balance increases
 		// Note: user.Address() already includes "0x" prefix
@@ -507,39 +516,29 @@ func testAuditDataIntegrity(t *testing.T) func(context.Context, *kwilTesting.Pla
 		require.NotNil(t, auditReward1, "User1 should have audit reward")
 		require.NotNil(t, auditReward2, "User2 should have audit reward")
 
-		// Expected balance increases:
-		// User1 = auditReward1 (LP) + totalDPFees (DP) [+ totalValFees (if Leader)]
-		// User2 = auditReward2 (LP)
-		infraShare, _ := new(big.Int).SetString(totalDPFeesStr, 10)
-		expectedIncrease1 := new(big.Int).Add(auditReward1, infraShare)
-		
-		if increase1.Cmp(expectedIncrease1) != 0 {
-			// Try adding validator share if User1 is leader
-			infraShareVal, _ := new(big.Int).SetString(totalValFeesStr, 10)
-			expectedIncrease1WithVal := new(big.Int).Add(expectedIncrease1, infraShareVal)
-			if increase1.Cmp(expectedIncrease1WithVal) == 0 {
-				t.Logf("User1 appears to be the leader, adding Validator share to expectation")
-				expectedIncrease1 = expectedIncrease1WithVal
-			}
-		}
-
-		require.Equal(t, expectedIncrease1.String(), increase1.String(), "User1 balance increase should match LP + DP (+ Leader) audit rewards")
+		// User1's audit detail includes DP fee merged with LP reward (via ON CONFLICT),
+		// so the balance increase should match the audit reward directly.
+		// Note: user1 is never the validator (injectTestValidator generates a fresh keypair).
+		require.Equal(t, auditReward1.String(), increase1.String(), "User1 balance increase should match audit reward (LP + DP merged)")
 		require.Equal(t, increase2.String(), auditReward2.String(), "User2 balance increase should match LP audit reward")
 
-		// Verify zero-loss in audit
-		totalLPFeesFromAudit, _ := new(big.Int).SetString(totalLPFeesStr, 10)
-		auditLPSum := new(big.Int).Add(auditReward1, auditReward2)
-		require.Equal(t, totalLPFeesFromAudit.String(), auditLPSum.String(), "Audit LP rewards should sum to total LP fees")
+		// Verify zero-loss: SUM(all detail amounts) = total_fees
+		var totalDetailSum big.Int
+		for _, reward := range auditRewards {
+			totalDetailSum.Add(&totalDetailSum, reward)
+		}
+		require.Equal(t, totalFees.String(), totalDetailSum.String(), "SUM(detail amounts) should equal total_fees")
 
 		totalDPFees, _ := new(big.Int).SetString(totalDPFeesStr, 10)
 		totalValFees, _ := new(big.Int).SetString(totalValFeesStr, 10)
-		totalFeesFromAudit := new(big.Int).Add(totalLPFeesFromAudit, new(big.Int).Add(totalDPFees, totalValFees))
-		require.Equal(t, totalFees.String(), totalFeesFromAudit.String(), "Total fees from audit should match input totalFees")
+		totalLPFeesFromAudit, _ := new(big.Int).SetString(totalLPFeesStr, 10)
+		totalFeesFromSummary := new(big.Int).Add(totalLPFeesFromAudit, new(big.Int).Add(totalDPFees, totalValFees))
+		require.Equal(t, totalFees.String(), totalFeesFromSummary.String(), "Summary totals should match input totalFees")
 
 		t.Logf("✅ Audit data integrity verified:")
-		t.Logf("  - Audit User1 LP reward: %s wei (total increase: %s)", auditReward1.String(), increase1.String())
-		t.Logf("  - Audit User2 LP reward: %s wei (total increase: %s)", auditReward2.String(), increase2.String())
-		t.Logf("  - Audit total: %s wei (zero-loss verified)", totalFeesFromAudit.String())
+		t.Logf("  - Audit User1 reward: %s wei (total increase: %s)", auditReward1.String(), increase1.String())
+		t.Logf("  - Audit User2 reward: %s wei (total increase: %s)", auditReward2.String(), increase2.String())
+		t.Logf("  - Audit total: %s wei (zero-loss verified)", totalDetailSum.String())
 
 		return nil
 	}
@@ -592,9 +591,10 @@ func setupLPScenario(t *testing.T, ctx context.Context, platform *kwilTesting.Pl
 	// Final midpoint: best bid=-50, lowest sell=51 → midpoint=50, spread=5
 }
 
-// fundVaultAndDistributeFees funds the vault and calls distribute_fees
+// fundVaultAndDistributeFees funds the vault and calls distribute_fees.
+// If proposer is nil, a random proposer key is generated.
 func fundVaultAndDistributeFees(t *testing.T, ctx context.Context, platform *kwilTesting.Platform,
-	user *util.EthereumAddress, marketID int, totalFees *big.Int, winningOutcome bool) error {
+	user *util.EthereumAddress, marketID int, totalFees *big.Int, winningOutcome bool, proposer ...crypto.PublicKey) error {
 
 	// Fund vault if fees > 0 (use USDC-only since vault doesn't need TRUF)
 	if totalFees.Sign() > 0 {
@@ -615,8 +615,13 @@ func fundVaultAndDistributeFees(t *testing.T, ctx context.Context, platform *kwi
 		return err
 	}
 
-	// Generate leader key for fee transfers
-	pub := NewTestProposerPub(t)
+	// Use provided proposer or generate one
+	var pub crypto.PublicKey
+	if len(proposer) > 0 && proposer[0] != nil {
+		pub = proposer[0]
+	} else {
+		pub = NewTestProposerPub(t)
+	}
 
 	// Call distribute_fees
 	tx := &common.TxContext{
