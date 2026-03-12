@@ -455,8 +455,9 @@ func testGetUserPositionsMixed(t *testing.T) func(context.Context, *kwilTesting.
 
 		queryID, _ := createTestMarketQueries(t, ctx, platform, &user)
 
-		// Buy + split
-		err = callPlaceBuyOrderQueries(ctx, platform, &user, queryID, false, 45, 50, nil)
+		// Buy + split (buy price must be below split's NO sell price to avoid price-crossing match)
+		// Split at true_price=60 creates NO sell @ 40, so NO buy must be < 40
+		err = callPlaceBuyOrderQueries(ctx, platform, &user, queryID, false, 35, 50, nil)
 		require.NoError(t, err)
 
 		err = callPlaceSplitOrderQueries(ctx, platform, &user, queryID, 60, 100, nil)
