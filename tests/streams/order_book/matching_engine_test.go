@@ -873,26 +873,31 @@ func testDirectMatchPriceCrossingSweep(t *testing.T) func(context.Context, *kwil
 		})
 		require.NoError(t, err)
 
-		// Three sellers at different prices
-		// Seller1: sell YES @ 48 (30 shares)
-		err = callPlaceSplitLimitOrder(ctx, platform, &seller1, int(marketID), 48, 30)
-		require.NoError(t, err)
-		err = callPlaceSellOrder(ctx, platform, &seller1, int(marketID), true, 48, 30)
-		require.NoError(t, err)
-
-		// Seller2: sell YES @ 50 (40 shares)
+		// Place sellers OUT OF price order to prove price-priority matching
+		// Seller2: sell YES @ 50 (40 shares) — placed FIRST
 		err = callPlaceSplitLimitOrder(ctx, platform, &seller2, int(marketID), 50, 40)
 		require.NoError(t, err)
 		err = callPlaceSellOrder(ctx, platform, &seller2, int(marketID), true, 50, 40)
 		require.NoError(t, err)
 
-		// Seller3: sell YES @ 52 (50 shares)
+		// Seller3: sell YES @ 52 (50 shares) — placed SECOND
 		err = callPlaceSplitLimitOrder(ctx, platform, &seller3, int(marketID), 52, 50)
 		require.NoError(t, err)
 		err = callPlaceSellOrder(ctx, platform, &seller3, int(marketID), true, 52, 50)
 		require.NoError(t, err)
 
+		// Seller1: sell YES @ 48 (30 shares) — placed LAST (cheapest, but latest)
+		err = callPlaceSplitLimitOrder(ctx, platform, &seller1, int(marketID), 48, 30)
+		require.NoError(t, err)
+		err = callPlaceSellOrder(ctx, platform, &seller1, int(marketID), true, 48, 30)
+		require.NoError(t, err)
+
+		// Record buyer's balance before the buy
+		buyerBalanceBefore, err := getUSDCBalance(ctx, platform, buyer.Address())
+		require.NoError(t, err)
+
 		// Buyer: Buy 100 YES @ $0.55 — should sweep sell@48 (30), sell@50 (40), sell@52 (30 of 50)
+		// Price-priority: cheapest first regardless of insertion order
 		err = callPlaceBuyOrder(ctx, platform, &buyer, int(marketID), true, 55, 100)
 		require.NoError(t, err)
 
@@ -900,7 +905,7 @@ func testDirectMatchPriceCrossingSweep(t *testing.T) func(context.Context, *kwil
 		positions, err := getPositions(ctx, platform, int(marketID))
 		require.NoError(t, err)
 
-		// Participant order: seller1=1, seller2=2, seller3=3, buyer=4
+		// Participant order: seller2=1, seller3=2, seller1=3, buyer=4
 		var buyerYesHoldings *Position
 		for i := range positions {
 			if positions[i].ParticipantID == 4 && positions[i].Outcome && positions[i].Price == 0 {
@@ -912,10 +917,10 @@ func testDirectMatchPriceCrossingSweep(t *testing.T) func(context.Context, *kwil
 		require.Equal(t, int64(100), buyerYesHoldings.Amount,
 			"Buyer should have 100 YES shares (30@48 + 40@50 + 30@52)")
 
-		// Seller3 should have 20 remaining (50 - 30 = 20)
+		// Seller3 (pid=2) should have 20 remaining (50 - 30 = 20)
 		var seller3Remaining *Position
 		for i := range positions {
-			if positions[i].ParticipantID == 3 && positions[i].Outcome && positions[i].Price == 52 {
+			if positions[i].ParticipantID == 2 && positions[i].Outcome && positions[i].Price == 52 {
 				seller3Remaining = &positions[i]
 			}
 		}
@@ -930,6 +935,17 @@ func testDirectMatchPriceCrossingSweep(t *testing.T) func(context.Context, *kwil
 			}
 		}
 		require.False(t, hasBuyOrders, "Buy order should be fully consumed by sweep")
+
+		// Verify buyer's balance delta = cost at execution prices (best-price execution)
+		// 30@48 + 40@50 + 30@52 = 1440 + 2000 + 1560 = 5000 (in cents)
+		// 5000 × 10^16 = 5 × 10^19 wei
+		buyerBalanceAfter, err := getUSDCBalance(ctx, platform, buyer.Address())
+		require.NoError(t, err)
+
+		balanceDecrease := new(big.Int).Sub(buyerBalanceBefore, buyerBalanceAfter)
+		expectedCost := new(big.Int).Mul(big.NewInt(5000), new(big.Int).Exp(big.NewInt(10), big.NewInt(16), nil))
+		require.Equal(t, expectedCost.String(), balanceDecrease.String(),
+			"Buyer cost should be 30×48 + 40×50 + 30×52 = 5000 cents (best-price execution)")
 
 		return nil
 	}
