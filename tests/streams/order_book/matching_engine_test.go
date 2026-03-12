@@ -79,7 +79,11 @@ func TestMatchingEngine(t *testing.T) {
 			// Category D: Multiple Round Tests
 			testDirectMatchMultipleRounds(t),
 
-			// Category E: Edge Cases
+			// Category E: Price-Crossing Tests
+			testDirectMatchPriceCrossing(t),
+			testDirectMatchPriceCrossingSweep(t),
+
+			// Category F: Edge Cases
 			testNoMatchingOrders(t),
 		},
 	}, testutils.GetTestOptionsWithCache())
@@ -659,7 +663,7 @@ func testDirectMatchMultipleRounds(t *testing.T) func(context.Context, *kwilTest
 }
 
 // =============================================================================
-// Category E: Edge Cases
+// Category F: Edge Cases
 // =============================================================================
 
 // testNoMatchingOrders tests that no-op occurs when no matching orders exist
@@ -732,6 +736,216 @@ func testNoMatchingOrders(t *testing.T) func(context.Context, *kwilTesting.Platf
 		require.Equal(t, int64(100), user1BuyOrder.Amount)
 		require.NotNil(t, user2SellOrder, "User2 sell order should remain")
 		require.Equal(t, int64(100), user2SellOrder.Amount)
+
+		return nil
+	}
+}
+
+// =============================================================================
+// Category E: Price-Crossing Tests
+// =============================================================================
+
+// testDirectMatchPriceCrossing tests that buy@52 matches sell@51 (price-crossing)
+// The match executes at sell price and buyer is refunded the difference.
+func testDirectMatchPriceCrossing(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
+
+		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
+		require.NoError(t, err)
+
+		buyer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000004")
+		seller := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000005")
+
+		err = giveBalanceChained(ctx, platform, buyer.Address(), "500000000000000000000")
+		require.NoError(t, err)
+		err = giveBalanceChained(ctx, platform, seller.Address(), "500000000000000000000")
+		require.NoError(t, err)
+
+		// Create market
+		queryComponents, err := encodeQueryComponentsForTests(buyer.Address(), "sttest00000000000000000000000044", "get_record", []byte{0x01})
+		require.NoError(t, err)
+		settleTime := time.Now().Add(24 * time.Hour).Unix()
+		var marketID int64
+		err = callCreateMarket(ctx, platform, &buyer, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
+			marketID = row.Values[0].(int64)
+			return nil
+		})
+		require.NoError(t, err)
+
+		// Seller: Create shares and place sell@51
+		err = callPlaceSplitLimitOrder(ctx, platform, &seller, int(marketID), 51, 100)
+		require.NoError(t, err)
+		err = callPlaceSellOrder(ctx, platform, &seller, int(marketID), true, 51, 100)
+		require.NoError(t, err)
+
+		// Record buyer's USDC balance before buy
+		buyerBalanceBefore, err := getUSDCBalance(ctx, platform, buyer.Address())
+		require.NoError(t, err)
+
+		// Buyer: Buy YES @ $0.52 — should cross and match sell@51
+		err = callPlaceBuyOrder(ctx, platform, &buyer, int(marketID), true, 52, 50)
+		require.NoError(t, err)
+
+		// Verify: buyer should have 50 YES holdings
+		positions, err := getPositions(ctx, platform, int(marketID))
+		require.NoError(t, err)
+
+		// Seller acts first (participant 1), buyer acts second (participant 2)
+		var buyerYesHoldings *Position
+		var sellerSellRemaining *Position
+		for i := range positions {
+			if positions[i].ParticipantID == 2 && positions[i].Outcome && positions[i].Price == 0 {
+				buyerYesHoldings = &positions[i]
+			}
+			if positions[i].ParticipantID == 1 && positions[i].Outcome && positions[i].Price == 51 {
+				sellerSellRemaining = &positions[i]
+			}
+		}
+
+		require.NotNil(t, buyerYesHoldings, "Buyer should have YES holdings from price-crossing match")
+		require.Equal(t, int64(50), buyerYesHoldings.Amount, "Buyer should have 50 YES shares")
+
+		// Seller's sell order should be partially filled (100 - 50 = 50 remaining)
+		require.NotNil(t, sellerSellRemaining, "Seller should have remaining sell order")
+		require.Equal(t, int64(50), sellerSellRemaining.Amount, "Seller should have 50 remaining")
+
+		// No buy order should remain (fully matched)
+		hasBuyOrders := false
+		for i := range positions {
+			if positions[i].Price < 0 && positions[i].Outcome {
+				hasBuyOrders = true
+			}
+		}
+		require.False(t, hasBuyOrders, "Buy order should be fully consumed")
+
+		// Verify buyer got price improvement refund
+		// Buyer locked: 50 × 52 × 10^16 = 26 × 10^18 (26 USDC)
+		// Seller received: 50 × 51 × 10^16 = 25.5 × 10^18 (25.5 USDC)
+		// Buyer refund: 50 × 1 × 10^16 = 0.5 × 10^18 (0.5 USDC)
+		// Net cost to buyer: 25.5 USDC (not 26 USDC)
+		buyerBalanceAfter, err := getUSDCBalance(ctx, platform, buyer.Address())
+		require.NoError(t, err)
+
+		// Balance decrease = amount actually paid = 50 shares × $0.51 = 25.5 USDC
+		balanceDecrease := new(big.Int).Sub(buyerBalanceBefore, buyerBalanceAfter)
+		expectedCost := new(big.Int).Mul(big.NewInt(50*51), new(big.Int).Exp(big.NewInt(10), big.NewInt(16), nil))
+		require.Equal(t, expectedCost.String(), balanceDecrease.String(),
+			"Buyer should pay at sell price (51), not buy price (52)")
+
+		return nil
+	}
+}
+
+// testDirectMatchPriceCrossingSweep tests sweeping across multiple price levels
+// Buy@55 should match sell@48, sell@50, sell@52 (cheapest first)
+func testDirectMatchPriceCrossingSweep(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
+
+		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
+		require.NoError(t, err)
+
+		buyer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000006")
+		seller1 := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000007")
+		seller2 := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000008")
+		seller3 := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000009")
+
+		err = giveBalanceChained(ctx, platform, buyer.Address(), "500000000000000000000")
+		require.NoError(t, err)
+		err = giveBalanceChained(ctx, platform, seller1.Address(), "500000000000000000000")
+		require.NoError(t, err)
+		err = giveBalanceChained(ctx, platform, seller2.Address(), "500000000000000000000")
+		require.NoError(t, err)
+		err = giveBalanceChained(ctx, platform, seller3.Address(), "500000000000000000000")
+		require.NoError(t, err)
+
+		// Create market
+		queryComponents, err := encodeQueryComponentsForTests(buyer.Address(), "sttest00000000000000000000000045", "get_record", []byte{0x01})
+		require.NoError(t, err)
+		settleTime := time.Now().Add(24 * time.Hour).Unix()
+		var marketID int64
+		err = callCreateMarket(ctx, platform, &buyer, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
+			marketID = row.Values[0].(int64)
+			return nil
+		})
+		require.NoError(t, err)
+
+		// Place sellers OUT OF price order to prove price-priority matching
+		// Seller2: sell YES @ 50 (40 shares) — placed FIRST
+		err = callPlaceSplitLimitOrder(ctx, platform, &seller2, int(marketID), 50, 40)
+		require.NoError(t, err)
+		err = callPlaceSellOrder(ctx, platform, &seller2, int(marketID), true, 50, 40)
+		require.NoError(t, err)
+
+		// Seller3: sell YES @ 52 (50 shares) — placed SECOND
+		err = callPlaceSplitLimitOrder(ctx, platform, &seller3, int(marketID), 52, 50)
+		require.NoError(t, err)
+		err = callPlaceSellOrder(ctx, platform, &seller3, int(marketID), true, 52, 50)
+		require.NoError(t, err)
+
+		// Seller1: sell YES @ 48 (30 shares) — placed LAST (cheapest, but latest)
+		err = callPlaceSplitLimitOrder(ctx, platform, &seller1, int(marketID), 48, 30)
+		require.NoError(t, err)
+		err = callPlaceSellOrder(ctx, platform, &seller1, int(marketID), true, 48, 30)
+		require.NoError(t, err)
+
+		// Record buyer's balance before the buy
+		buyerBalanceBefore, err := getUSDCBalance(ctx, platform, buyer.Address())
+		require.NoError(t, err)
+
+		// Buyer: Buy 100 YES @ $0.55 — should sweep sell@48 (30), sell@50 (40), sell@52 (30 of 50)
+		// Price-priority: cheapest first regardless of insertion order
+		err = callPlaceBuyOrder(ctx, platform, &buyer, int(marketID), true, 55, 100)
+		require.NoError(t, err)
+
+		// Verify positions
+		positions, err := getPositions(ctx, platform, int(marketID))
+		require.NoError(t, err)
+
+		// Participant order: seller2=1, seller3=2, seller1=3, buyer=4
+		var buyerYesHoldings *Position
+		for i := range positions {
+			if positions[i].ParticipantID == 4 && positions[i].Outcome && positions[i].Price == 0 {
+				buyerYesHoldings = &positions[i]
+			}
+		}
+
+		require.NotNil(t, buyerYesHoldings, "Buyer should have YES holdings from sweep")
+		require.Equal(t, int64(100), buyerYesHoldings.Amount,
+			"Buyer should have 100 YES shares (30@48 + 40@50 + 30@52)")
+
+		// Seller3 (pid=2) should have 20 remaining (50 - 30 = 20)
+		var seller3Remaining *Position
+		for i := range positions {
+			if positions[i].ParticipantID == 2 && positions[i].Outcome && positions[i].Price == 52 {
+				seller3Remaining = &positions[i]
+			}
+		}
+		require.NotNil(t, seller3Remaining, "Seller3 should have remaining sell order")
+		require.Equal(t, int64(20), seller3Remaining.Amount, "Seller3 should have 20 remaining at price 52")
+
+		// No buy orders should remain
+		hasBuyOrders := false
+		for i := range positions {
+			if positions[i].Price < 0 && positions[i].Outcome {
+				hasBuyOrders = true
+			}
+		}
+		require.False(t, hasBuyOrders, "Buy order should be fully consumed by sweep")
+
+		// Verify buyer's balance delta = cost at execution prices (best-price execution)
+		// 30@48 + 40@50 + 30@52 = 1440 + 2000 + 1560 = 5000 (in cents)
+		// 5000 × 10^16 = 5 × 10^19 wei
+		buyerBalanceAfter, err := getUSDCBalance(ctx, platform, buyer.Address())
+		require.NoError(t, err)
+
+		balanceDecrease := new(big.Int).Sub(buyerBalanceBefore, buyerBalanceAfter)
+		expectedCost := new(big.Int).Mul(big.NewInt(5000), new(big.Int).Exp(big.NewInt(10), big.NewInt(16), nil))
+		require.Equal(t, expectedCost.String(), balanceDecrease.String(),
+			"Buyer cost should be 30×48 + 40×50 + 30×52 = 5000 cents (best-price execution)")
 
 		return nil
 	}

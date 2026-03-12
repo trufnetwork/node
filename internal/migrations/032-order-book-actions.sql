@@ -416,34 +416,35 @@ PUBLIC VIEW RETURNS (market_exists BOOLEAN) {
  */
 
 -- =============================================================================
--- match_direct: Direct match implementation
+-- match_direct: Direct match implementation with price-crossing
 -- =============================================================================
 /**
- * Matches buy and sell orders at the same price for the same outcome.
+ * Matches overlapping buy and sell orders for the same outcome.
+ * Supports price-crossing: a buy@52 can match a sell@51 (standard order book behavior).
  *
- * Example: Buy YES @ $0.56 matches Sell YES @ $0.56
+ * Price-Crossing Semantics:
+ * - A match occurs when the best buy price >= the best sell price
+ * - The match executes at the SELL price (buyer gets price improvement)
+ * - If buy_price > sell_price, the buyer is refunded the difference
+ * - Example: Buy YES @ $0.52 matches Sell YES @ $0.51
+ *   → Seller receives $0.51/share, buyer is refunded $0.01/share
  *
  * Collateral Flow:
- * - Buyer's locked collateral is transferred to seller as payment
+ * - Seller receives: match_amount × sell_price × 10^16
+ * - Buyer refund (if price improvement): match_amount × (buy_price - sell_price) × 10^16
  * - Shares transfer from seller's holdings to buyer's holdings
  *
  * Recursion Behavior:
  * - Uses tail recursion to process multiple matches sequentially
  * - Each iteration matches one order pair and removes/reduces them from ob_positions
- * - Recursion depth = number of orders matched at this price level
- * - Natural termination when no more matching orders exist (LIMIT 1 returns nothing)
+ * - Natural termination when no more overlapping orders exist
  * - Maximum depth is bounded by the number of orders in the order book
- * - In practice, depth rarely exceeds 10-20 due to:
- *   * Economic constraints (gas costs for creating many small orders)
- *   * Market maker behavior (traders prefer larger consolidated orders)
- *   * Natural order book dynamics
- * - Worst case: One large order matching 100+ tiny orders requires 100+ separate
- *   transactions to create those orders, making it economically impractical
  *
  * Parameters:
  * - $query_id: Market identifier
  * - $outcome: TRUE (YES) or FALSE (NO)
- * - $price: Positive price (1-99 cents)
+ * - $price: Unused (kept for call-site compatibility). Sweep finds best overlap.
+ * - $bridge: Bridge identifier for collateral operations
  */
 CREATE OR REPLACE ACTION match_direct(
     $query_id INT,
@@ -451,20 +452,48 @@ CREATE OR REPLACE ACTION match_direct(
     $price INT,
     $bridge TEXT
 ) PRIVATE {
-    -- Get first buy order (FIFO: earliest first)
+    -- Find the cheapest sell order (best ask)
+    $sell_price INT;
+    $sell_participant_id INT;
+    $sell_amount INT8;
+    $sell_found BOOL := false;
+
+    for $sell_order in
+        SELECT price, participant_id, amount
+        FROM ob_positions
+        WHERE query_id = $query_id
+          AND outcome = $outcome
+          AND price > 0          -- Sell orders have positive price
+        ORDER BY price ASC, last_updated ASC  -- Cheapest first, then FIFO
+        LIMIT 1
+    {
+        $sell_price := $sell_order.price;
+        $sell_participant_id := $sell_order.participant_id;
+        $sell_amount := $sell_order.amount;
+        $sell_found := true;
+    }
+
+    -- No sell order, exit
+    if NOT $sell_found {
+        RETURN;
+    }
+
+    -- Find the most expensive buy order (best bid)
+    $buy_price_neg INT;
     $buy_participant_id INT;
     $buy_amount INT8;
     $buy_found BOOL := false;
 
     for $buy_order in
-        SELECT participant_id, amount
+        SELECT price, participant_id, amount
         FROM ob_positions
         WHERE query_id = $query_id
           AND outcome = $outcome
-          AND price = -$price  -- Buy orders have negative price
-        ORDER BY last_updated ASC  -- FIFO
+          AND price < 0          -- Buy orders have negative price
+        ORDER BY price ASC, last_updated ASC  -- Most negative first = highest buy price, then FIFO
         LIMIT 1
     {
+        $buy_price_neg := $buy_order.price;
         $buy_participant_id := $buy_order.participant_id;
         $buy_amount := $buy_order.amount;
         $buy_found := true;
@@ -475,27 +504,11 @@ CREATE OR REPLACE ACTION match_direct(
         RETURN;
     }
 
-    -- Get first sell order (FIFO: earliest first)
-    $sell_participant_id INT;
-    $sell_amount INT8;
-    $sell_found BOOL := false;
+    -- Convert negative stored price to positive buy price
+    $buy_price INT := 0 - $buy_price_neg;
 
-    for $sell_order in
-        SELECT participant_id, amount
-        FROM ob_positions
-        WHERE query_id = $query_id
-          AND outcome = $outcome
-          AND price = $price  -- Sell orders have positive price
-        ORDER BY last_updated ASC  -- FIFO
-        LIMIT 1
-    {
-        $sell_participant_id := $sell_order.participant_id;
-        $sell_amount := $sell_order.amount;
-        $sell_found := true;
-    }
-
-    -- No sell order, exit
-    if NOT $sell_found {
+    -- Check price crossing: buy price must be >= sell price for a match
+    if $buy_price < $sell_price {
         RETURN;
     }
 
@@ -519,27 +532,51 @@ CREATE OR REPLACE ACTION match_direct(
     }
     $seller_wallet_address TEXT := '0x' || encode($seller_wallet_bytes, 'hex');
 
-    -- Calculate payment to seller
+    -- Calculate payment to seller (at sell price)
     $multiplier NUMERIC(78, 0) := '10000000000000000'::NUMERIC(78, 0);
     $seller_payment NUMERIC(78, 0) := ($match_amount::NUMERIC(78, 0) *
-                                        $price::NUMERIC(78, 0) *
+                                        $sell_price::NUMERIC(78, 0) *
                                         $multiplier);
 
     -- Transfer payment from vault to seller
     ob_unlock_collateral($bridge, $seller_wallet_address, $seller_payment);
 
-    -- Record impacts for P&L
+    -- Record sell impact for P&L
     ob_record_tx_impact($sell_participant_id, $outcome, -$match_amount, $seller_payment, FALSE);
-    ob_record_tx_impact($buy_participant_id, $outcome, $match_amount, 0::NUMERIC(78,0), FALSE);
+
+    -- Handle buyer price improvement refund
+    $price_diff INT := $buy_price - $sell_price;
+
+    -- Get buyer's wallet address (needed for potential refund)
+    $buyer_wallet_bytes BYTEA;
+    for $row in SELECT wallet_address FROM ob_participants WHERE id = $buy_participant_id {
+        $buyer_wallet_bytes := $row.wallet_address;
+    }
+    $buyer_wallet_address TEXT := '0x' || encode($buyer_wallet_bytes, 'hex');
+
+    if $price_diff > 0 {
+        -- Buyer locked collateral at buy_price but match executes at sell_price
+        -- Refund the difference: match_amount × (buy_price - sell_price) × 10^16
+        $buyer_refund NUMERIC(78, 0) := ($match_amount::NUMERIC(78, 0) *
+                                          $price_diff::NUMERIC(78, 0) *
+                                          $multiplier);
+        ob_unlock_collateral($bridge, $buyer_wallet_address, $buyer_refund);
+
+        -- Record buy impact with refund
+        ob_record_tx_impact($buy_participant_id, $outcome, $match_amount, $buyer_refund, FALSE);
+    } else {
+        -- No price improvement (exact price match)
+        ob_record_tx_impact($buy_participant_id, $outcome, $match_amount, 0::NUMERIC(78,0), FALSE);
+    }
 
     -- Transfer shares from seller to buyer
     -- Step 1: Delete fully matched orders FIRST (prevents amount=0 constraint violation)
     DELETE FROM ob_positions
     WHERE query_id = $query_id
       AND ((participant_id = $sell_participant_id AND outcome = $outcome
-            AND price = $price AND amount = $match_amount)
+            AND price = $sell_price AND amount = $match_amount)
         OR (participant_id = $buy_participant_id AND outcome = $outcome
-            AND price = -$price AND amount = $match_amount));
+            AND price = $buy_price_neg AND amount = $match_amount));
 
     -- Step 2: Reduce seller's sell order (only if partial fill)
     UPDATE ob_positions
@@ -547,7 +584,7 @@ CREATE OR REPLACE ACTION match_direct(
     WHERE query_id = $query_id
       AND participant_id = $sell_participant_id
       AND outcome = $outcome
-      AND price = $price
+      AND price = $sell_price
       AND amount > $match_amount;
 
     -- Step 3: Add shares to buyer's holdings (price = 0)
@@ -563,10 +600,10 @@ CREATE OR REPLACE ACTION match_direct(
     WHERE query_id = $query_id
       AND participant_id = $buy_participant_id
       AND outcome = $outcome
-      AND price = -$price
+      AND price = $buy_price_neg
       AND amount > $match_amount;
 
-    -- Recursively call to match next orders
+    -- Recursively call to match next overlapping orders
     match_direct($query_id, $outcome, $price, $bridge);
 };
 
@@ -904,14 +941,14 @@ CREATE OR REPLACE ACTION match_burn(
  *
  * Called automatically after every order placement to attempt matching.
  * Tries all three match types in sequence:
- * 1. Direct match (most common, fastest)
- * 2. Mint match (creates liquidity)
- * 3. Burn match (removes liquidity)
+ * 1. Direct match with price-crossing (buy_price >= sell_price)
+ * 2. Mint match (creates liquidity, exact complementary prices)
+ * 3. Burn match (removes liquidity, exact complementary prices)
  *
  * Parameters:
  * - $query_id: Market identifier
  * - $outcome: TRUE (YES) or FALSE (NO)
- * - $price: Price level that triggered matching (1-99)
+ * - $price: Price of the triggering order (used for mint/burn complementary calc)
  */
 CREATE OR REPLACE ACTION match_orders(
     $query_id INT,
@@ -936,10 +973,10 @@ CREATE OR REPLACE ACTION match_orders(
     }
 
     -- ==========================================================================
-    -- SECTION 2: TRY DIRECT MATCH
+    -- SECTION 2: TRY DIRECT MATCH (with price-crossing)
     -- ==========================================================================
-    -- Match buy and sell orders at the same price for same outcome
-    -- This is the most common match type and should be tried first
+    -- Sweeps to find the best overlapping buy/sell pair (buy_price >= sell_price)
+    -- Match executes at sell price; buyer is refunded price difference
 
     match_direct($query_id, $outcome, $price, $bridge);
 
