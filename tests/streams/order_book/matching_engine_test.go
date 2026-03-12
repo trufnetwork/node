@@ -663,7 +663,7 @@ func testDirectMatchMultipleRounds(t *testing.T) func(context.Context, *kwilTest
 }
 
 // =============================================================================
-// Category E: Edge Cases
+// Category F: Edge Cases
 // =============================================================================
 
 // testNoMatchingOrders tests that no-op occurs when no matching orders exist
@@ -821,14 +821,14 @@ func testDirectMatchPriceCrossing(t *testing.T) func(context.Context, *kwilTesti
 		require.False(t, hasBuyOrders, "Buy order should be fully consumed")
 
 		// Verify buyer got price improvement refund
-		// Buyer locked: 50 × 52 × 10^16 = 26 × 10^18 (26 TRUF)
-		// Seller received: 50 × 51 × 10^16 = 25.5 × 10^18 (25.5 TRUF)
-		// Buyer refund: 50 × 1 × 10^16 = 0.5 × 10^18 (0.5 TRUF)
-		// Net cost to buyer: 25.5 TRUF (not 26 TRUF)
+		// Buyer locked: 50 × 52 × 10^16 = 26 × 10^18 (26 USDC)
+		// Seller received: 50 × 51 × 10^16 = 25.5 × 10^18 (25.5 USDC)
+		// Buyer refund: 50 × 1 × 10^16 = 0.5 × 10^18 (0.5 USDC)
+		// Net cost to buyer: 25.5 USDC (not 26 USDC)
 		buyerBalanceAfter, err := getUSDCBalance(ctx, platform, buyer.Address())
 		require.NoError(t, err)
 
-		// Balance decrease = amount actually paid = 50 shares × $0.51 = 25.5 TRUF
+		// Balance decrease = amount actually paid = 50 shares × $0.51 = 25.5 USDC
 		balanceDecrease := new(big.Int).Sub(buyerBalanceBefore, buyerBalanceAfter)
 		expectedCost := new(big.Int).Mul(big.NewInt(50*51), new(big.Int).Exp(big.NewInt(10), big.NewInt(16), nil))
 		require.Equal(t, expectedCost.String(), balanceDecrease.String(),
