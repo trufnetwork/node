@@ -44,6 +44,11 @@ services:
       # Optionally supply SETUP_DB_OWNER to override the owner derived from the generated node key
       SETUP_DB_OWNER: ${SETUP_DB_OWNER:-}
       SETUP_CHAIN_ID: ${SETUP_CHAIN_ID:-trufnetwork-dev}
+      # Go memory tuning to prevent OOM kills within container memory limits.
+      # GOMEMLIMIT should be ~80% of the container memory limit.
+      GOMEMLIMIT: ${GOMEMLIMIT:-2500MiB}
+      # GOGC=50 triggers GC when heap grows 50% (default 100), reducing peak memory.
+      GOGC: ${GOGC:-50}
     ports:
       - "50051:50051"
       - "${TN_RPC_PORT:-8484}:8484"
@@ -57,7 +62,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1.5G
+          memory: 3G
     depends_on:
       kwil-postgres:
         condition: service_healthy
