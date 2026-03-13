@@ -17,8 +17,8 @@ require (
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.37.0
-	github.com/trufnetwork/kwil-db v0.10.3-0.20260313141718-a7f124b3e0b7
-	github.com/trufnetwork/kwil-db/core v0.4.3-0.20260313141718-a7f124b3e0b7
+	github.com/trufnetwork/kwil-db v0.10.3-0.20260313180311-7a6e0f2b5210
+	github.com/trufnetwork/kwil-db/core v0.4.3-0.20260313180311-7a6e0f2b5210
 	github.com/trufnetwork/sdk-go v0.6.4-0.20260224122406-a741343e2f37
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20250218142911-aa4b98e5adaa
