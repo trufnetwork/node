@@ -34,7 +34,7 @@ Follow the installation guide: [https://getfoundry.sh/introduction/installation]
 ```bash
 cast send 0x1591DeAa21710E0BA6CC1b15F49620C9F65B2dEd \
   "mint(uint256)" 1000000000000000000000 \
-  --rpc-url wss://0xrpc.io/hoodi \
+  --rpc-url https://rpc.hoodi.ethpandaops.io \
   --private-key YOUR_PRIVATE_KEY
 ```
 
@@ -51,7 +51,7 @@ This mints 1000 TT2 tokens. Adjust the amount as needed:
 ```bash
 cast send 0x263ce78fef26600e4e428cebc91c2a52484b4fbf \
   "mint(uint256)" 1000000000000000000000 \
-  --rpc-url wss://0xrpc.io/hoodi \
+  --rpc-url https://rpc.hoodi.ethpandaops.io \
   --private-key YOUR_PRIVATE_KEY
 ```
 
@@ -63,12 +63,21 @@ After minting tokens on Hoodi, deposit them to TRUF.NETWORK using the web interf
 
 Connect your wallet and follow the deposit flow.
 
+## Alternative RPC Endpoints
+
+You can use any Hoodi RPC endpoint. Here are some alternatives (see [ChainList](https://chainlist.org/chain/560048) for more):
+
+| Endpoint | Provider |
+|----------|----------|
+| `https://ethereum-hoodi-rpc.publicnode.com` | PublicNode |
+| `https://rpc.sentio.xyz/hoodi` | Sentio |
+
 ## Quick Reference
 
 ```bash
 # Mint 1000 TT2 (USDC)
-cast send 0x1591DeAa21710E0BA6CC1b15F49620C9F65B2dEd "mint(uint256)" 1000000000000000000000 --rpc-url wss://0xrpc.io/hoodi --private-key YOUR_PRIVATE_KEY
+cast send 0x1591DeAa21710E0BA6CC1b15F49620C9F65B2dEd "mint(uint256)" 1000000000000000000000 --rpc-url https://rpc.hoodi.ethpandaops.io --private-key YOUR_PRIVATE_KEY
 
 # Mint 1000 TT (TRUF)
-cast send 0x263ce78fef26600e4e428cebc91c2a52484b4fbf "mint(uint256)" 1000000000000000000000 --rpc-url wss://0xrpc.io/hoodi --private-key YOUR_PRIVATE_KEY
+cast send 0x263ce78fef26600e4e428cebc91c2a52484b4fbf "mint(uint256)" 1000000000000000000000 --rpc-url https://rpc.hoodi.ethpandaops.io --private-key YOUR_PRIVATE_KEY
 ```
