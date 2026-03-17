@@ -2,6 +2,7 @@ package tn_local
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"github.com/trufnetwork/kwil-db/core/log"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
@@ -12,7 +13,7 @@ type Extension struct {
 	logger    log.Logger
 	db        sql.DB
 	localDB   *LocalDB
-	isEnabled bool
+	isEnabled atomic.Bool
 }
 
 var (
@@ -26,8 +27,7 @@ var (
 func GetExtension() *Extension {
 	once.Do(func() {
 		extensionInstance = &Extension{
-			logger:    log.New(log.WithLevel(log.LevelInfo)),
-			isEnabled: false,
+			logger: log.New(log.WithLevel(log.LevelInfo)),
 		}
 	})
 	return extensionInstance
@@ -41,7 +41,7 @@ func (e *Extension) configure(logger log.Logger, db sql.DB, localDB *LocalDB) {
 	e.logger = logger
 	e.db = db
 	e.localDB = localDB
-	e.isEnabled = true
+	e.isEnabled.Store(true)
 }
 
 // Close closes the extension's connection pool.
