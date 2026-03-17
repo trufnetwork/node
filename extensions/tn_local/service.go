@@ -25,6 +25,7 @@ func (ext *Extension) Methods() map[jsonrpc.Method]rpcserver.MethodDef {
 
 // Health implements rpcserver.Svc.
 func (ext *Extension) Health(ctx context.Context) (json.RawMessage, bool) {
-	resp, _ := json.Marshal(struct{ Enabled bool }{ext.isEnabled})
-	return resp, ext.isEnabled
+	enabled := ext.isEnabled.Load()
+	resp, _ := json.Marshal(struct{ Enabled bool }{enabled})
+	return resp, enabled
 }

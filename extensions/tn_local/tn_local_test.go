@@ -92,29 +92,32 @@ func TestSetupSchema_RollbackOnError(t *testing.T) {
 }
 
 func TestExtensionSingleton(t *testing.T) {
-	// Reset for test isolation
+	// Reset for test isolation — never copy sync.Once (contains mutex)
 	prev := extensionInstance
-	prevOnce := once
 	extensionInstance = nil
 	once = sync.Once{}
 	t.Cleanup(func() {
 		extensionInstance = prev
-		once = prevOnce
+		once = sync.Once{}
+		if prev != nil {
+			once.Do(func() {}) // mark as done since instance already exists
+		}
 	})
 
 	ext1 := GetExtension()
 	ext2 := GetExtension()
 	require.Same(t, ext1, ext2, "GetExtension should return same instance")
-	require.False(t, ext1.isEnabled, "default extension should be disabled")
+	require.False(t, ext1.isEnabled.Load(), "default extension should be disabled")
 
 	// configure updates the existing instance in-place (preserves pointer identity)
 	ext1.configure(ext1.logger, nil, nil)
-	require.True(t, ext1.isEnabled)
+	require.True(t, ext1.isEnabled.Load())
 	require.Same(t, ext1, GetExtension(), "still same pointer after configure")
 }
 
 func TestServiceInterface(t *testing.T) {
-	ext := &Extension{isEnabled: true}
+	ext := &Extension{}
+	ext.isEnabled.Store(true)
 
 	require.Equal(t, ServiceName, ext.Name())
 
