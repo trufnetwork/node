@@ -1,0 +1,55 @@
+package tn_local
+
+import (
+	"sync"
+
+	"github.com/trufnetwork/kwil-db/core/log"
+	"github.com/trufnetwork/kwil-db/node/types/sql"
+)
+
+// Extension holds all state for the tn_local extension.
+type Extension struct {
+	logger    log.Logger
+	db        sql.DB
+	localDB   *LocalDB
+	isEnabled bool
+}
+
+var (
+	extensionInstance *Extension
+	once             sync.Once
+)
+
+// GetExtension returns the singleton Extension instance.
+// The returned pointer is stable — adminServerHook registers it as a Svc,
+// so it must never be replaced. Use configure() to update fields in-place.
+func GetExtension() *Extension {
+	once.Do(func() {
+		extensionInstance = &Extension{
+			logger:    log.New(log.WithLevel(log.LevelInfo)),
+			isEnabled: false,
+		}
+	})
+	return extensionInstance
+}
+
+// configure updates the extension's internal state in-place.
+// This preserves the pointer identity so that the admin server's registered
+// Svc reference remains valid. Called during sequential startup before the
+// server accepts requests.
+func (e *Extension) configure(logger log.Logger, db sql.DB, localDB *LocalDB) {
+	e.logger = logger
+	e.db = db
+	e.localDB = localDB
+	e.isEnabled = true
+}
+
+// Close closes the extension's connection pool.
+func (e *Extension) Close() {
+	if e.db != nil {
+		if wrapper, ok := e.db.(*PoolDBWrapper); ok {
+			wrapper.Close()
+			e.logger.Info("closed local storage connection pool")
+		}
+	}
+}
