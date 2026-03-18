@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/core/log"
 	jsonrpc "github.com/trufnetwork/kwil-db/core/rpc/json"
@@ -175,7 +176,8 @@ func TestCreateStream_Success(t *testing.T) {
 	require.Nil(t, rpcErr, "expected no error")
 	require.NotNil(t, resp)
 	require.Contains(t, capturedStmt, "INSERT INTO "+SchemaName+".streams")
-	require.Equal(t, "0xEC36224A679218Ae28FCeCe8d3c68595B87Dd832", capturedArgs[0])
+	// data_provider should be lowercased (matching consensus behavior)
+	require.Equal(t, "0xec36224a679218ae28fcece8d3c68595b87dd832", capturedArgs[0])
 	require.Equal(t, "st00000000000000000000000000test", capturedArgs[1])
 	require.Equal(t, "primitive", capturedArgs[2])
 }
@@ -266,6 +268,23 @@ func TestCreateStream_DuplicateStream(t *testing.T) {
 	mockDB := &utils.MockDB{
 		ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*kwilsql.ResultSet, error) {
 			return nil, fmt.Errorf("duplicate key value violates unique constraint")
+		},
+	}
+	ext := newTestExtension(mockDB)
+
+	_, rpcErr := ext.CreateStream(context.Background(), &CreateStreamRequest{
+		DataProvider: "0xEC36224A679218Ae28FCeCe8d3c68595B87Dd832",
+		StreamID:     "st00000000000000000000000000test",
+		StreamType:   "primitive",
+	})
+	require.NotNil(t, rpcErr)
+	require.Contains(t, rpcErr.Message, "stream already exists")
+}
+
+func TestCreateStream_DuplicateStream_PgError(t *testing.T) {
+	mockDB := &utils.MockDB{
+		ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*kwilsql.ResultSet, error) {
+			return nil, &pgconn.PgError{Code: "23505", Message: "unique_violation"}
 		},
 	}
 	ext := newTestExtension(mockDB)

@@ -59,7 +59,12 @@ func (ext *Extension) CreateStream(ctx context.Context, req *CreateStreamRequest
 	if req == nil {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "missing request", nil)
 	}
-	if err := validateDataProvider(req.DataProvider); err != nil {
+
+	// Normalize data_provider to lowercase to match consensus behavior
+	// (consensus uses LOWER() in 001-common-actions.sql before insertion).
+	dataProvider := strings.ToLower(req.DataProvider)
+
+	if err := validateDataProvider(dataProvider); err != nil {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
 	}
 	if err := validateStreamID(req.StreamID); err != nil {
@@ -69,9 +74,9 @@ func (ext *Extension) CreateStream(ctx context.Context, req *CreateStreamRequest
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
 	}
 
-	if err := ext.dbCreateStream(ctx, req.DataProvider, req.StreamID, req.StreamType); err != nil {
+	if err := ext.dbCreateStream(ctx, dataProvider, req.StreamID, req.StreamType); err != nil {
 		if isDuplicateKeyError(err) {
-			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream already exists: %s/%s", req.DataProvider, req.StreamID), nil)
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream already exists: %s/%s", dataProvider, req.StreamID), nil)
 		}
 		ext.logger.Error("failed to create local stream", "error", err)
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to create stream", nil)
