@@ -3,6 +3,7 @@ package tn_local
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/trufnetwork/kwil-db/core/log"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
@@ -17,6 +18,15 @@ type LocalDB struct {
 // NewLocalDB creates a new LocalDB.
 func NewLocalDB(db sql.DB, logger log.Logger) *LocalDB {
 	return &LocalDB{db: db, logger: logger}
+}
+
+// dbCreateStream inserts a new stream into ext_tn_local.streams.
+func (ext *Extension) dbCreateStream(ctx context.Context, dataProvider, streamID, streamType string) error {
+	_, err := ext.db.Execute(ctx, fmt.Sprintf(
+		`INSERT INTO %s.streams (data_provider, stream_id, stream_type, created_at)
+		 VALUES ($1, $2, $3, $4)`, SchemaName),
+		dataProvider, streamID, streamType, time.Now().Unix())
+	return err
 }
 
 // SetupSchema creates the ext_tn_local schema and all tables within a single transaction.
