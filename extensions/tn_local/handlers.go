@@ -88,9 +88,45 @@ func (ext *Extension) CreateStream(ctx context.Context, req *CreateStreamRequest
 	return &CreateStreamResponse{}, nil
 }
 
-// InsertRecords inserts records into a local primitive stream. (Task 4)
+// InsertRecords inserts records into a local primitive stream.
 func (ext *Extension) InsertRecords(ctx context.Context, req *InsertRecordsRequest) (*InsertRecordsResponse, *jsonrpc.Error) {
-	return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "not implemented", nil)
+	if req == nil {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "missing request", nil)
+	}
+
+	dataProvider := strings.ToLower(req.DataProvider)
+
+	if err := validateDataProvider(dataProvider); err != nil {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
+	}
+	if err := validateStreamID(req.StreamID); err != nil {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
+	}
+	if len(req.Records) == 0 {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "records must not be empty", nil)
+	}
+
+	streamRef, streamType, err := ext.dbLookupStreamRef(ctx, dataProvider, req.StreamID)
+	if err != nil {
+		ext.logger.Error("failed to look up stream", "error", err)
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to look up stream", nil)
+	}
+	if streamRef == 0 {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream not found: %s/%s", dataProvider, req.StreamID), nil)
+	}
+	if streamType != "primitive" {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream %s/%s is not a primitive stream", dataProvider, req.StreamID), nil)
+	}
+
+	if err := ext.dbInsertRecords(ctx, streamRef, req.Records); err != nil {
+		if isDuplicateKeyError(err) {
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "duplicate record: same event_time already exists", nil)
+		}
+		ext.logger.Error("failed to insert records", "error", err)
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to insert records", nil)
+	}
+
+	return &InsertRecordsResponse{Count: len(req.Records)}, nil
 }
 
 // InsertTaxonomy adds a taxonomy entry to a local composed stream. (Task 5)
