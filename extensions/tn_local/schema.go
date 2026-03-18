@@ -65,6 +65,8 @@ func ensurePrimitiveEventsTable(ctx context.Context, tx sql.Tx) error {
 		return fmt.Errorf("create primitive_events table: %w", err)
 	}
 
+	// Non-unique index mirrors consensus primitive_events_query_idx (017-normalize-tables.sql:105).
+	// Multiple rows per (stream_ref, event_time) are allowed — created_at provides versioning.
 	createIndex := fmt.Sprintf(`
 		CREATE INDEX IF NOT EXISTS local_pe_stream_time_idx
 		ON %s.primitive_events (stream_ref, event_time)`, SchemaName)
