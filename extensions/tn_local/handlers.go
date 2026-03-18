@@ -45,6 +45,9 @@ func validateDataProvider(dataProvider string) error {
 
 // isDuplicateKeyError checks if err is a PostgreSQL unique constraint violation (23505).
 func isDuplicateKeyError(err error) bool {
+	if err == nil {
+		return false
+	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		return pgErr.Code == pgUniqueViolation

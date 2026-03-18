@@ -152,6 +152,7 @@ func TestCreateStream_NilRequest(t *testing.T) {
 	resp, rpcErr := ext.CreateStream(context.Background(), nil)
 	require.Nil(t, resp)
 	require.NotNil(t, rpcErr)
+	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
 	require.Contains(t, rpcErr.Message, "missing request")
 }
 
@@ -221,6 +222,7 @@ func TestCreateStream_InvalidStreamID(t *testing.T) {
 				StreamType:   "primitive",
 			})
 			require.NotNil(t, rpcErr)
+			require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
 			require.Contains(t, rpcErr.Message, tt.wantMsg)
 		})
 	}
@@ -235,6 +237,7 @@ func TestCreateStream_InvalidStreamType(t *testing.T) {
 		StreamType:   "invalid",
 	})
 	require.NotNil(t, rpcErr)
+	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
 	require.Contains(t, rpcErr.Message, "must be 'primitive' or 'composed'")
 }
 
@@ -259,6 +262,7 @@ func TestCreateStream_InvalidDataProvider(t *testing.T) {
 				StreamType:   "primitive",
 			})
 			require.NotNil(t, rpcErr)
+			require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
 			require.Contains(t, rpcErr.Message, "data_provider must be a valid Ethereum address")
 		})
 	}
@@ -284,7 +288,7 @@ func TestCreateStream_DuplicateStream(t *testing.T) {
 func TestCreateStream_DuplicateStream_PgError(t *testing.T) {
 	mockDB := &utils.MockDB{
 		ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*kwilsql.ResultSet, error) {
-			return nil, &pgconn.PgError{Code: "23505", Message: "unique_violation"}
+			return nil, &pgconn.PgError{Code: pgUniqueViolation, Message: "unique_violation"}
 		},
 	}
 	ext := newTestExtension(mockDB)
