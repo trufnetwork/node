@@ -197,6 +197,52 @@ func TestInsertRecords_InvalidStreamID(t *testing.T) {
 	require.Contains(t, rpcErr.Message, "stream_id must be exactly 32 characters")
 }
 
+func TestInsertRecords_InvalidValue(t *testing.T) {
+	mockDB := mockDBWithStream(42, "primitive", nil)
+	ext := newTestExtension(mockDB)
+
+	tests := []struct {
+		name    string
+		value   string
+		wantMsg string
+	}{
+		{"non-numeric", "hello", "invalid record value at index 0"},
+		{"empty", "", "invalid record value at index 0"},
+		{"NaN", "NaN", "must be a finite number"},
+		{"Inf", "Inf", "must be a finite number"},
+		{"-Inf", "-Inf", "must be a finite number"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, rpcErr := ext.InsertRecords(context.Background(), &InsertRecordsRequest{
+				DataProvider: "0xEC36224A679218Ae28FCeCe8d3c68595B87Dd832",
+				StreamID:     "st00000000000000000000000000test",
+				Records:      []RecordInput{{EventTime: 1000, Value: tt.value}},
+			})
+			require.NotNil(t, rpcErr)
+			require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
+			require.Contains(t, rpcErr.Message, tt.wantMsg)
+		})
+	}
+}
+
+func TestInsertRecords_InvalidValueAtIndex(t *testing.T) {
+	mockDB := mockDBWithStream(42, "primitive", nil)
+	ext := newTestExtension(mockDB)
+
+	_, rpcErr := ext.InsertRecords(context.Background(), &InsertRecordsRequest{
+		DataProvider: "0xEC36224A679218Ae28FCeCe8d3c68595B87Dd832",
+		StreamID:     "st00000000000000000000000000test",
+		Records: []RecordInput{
+			{EventTime: 1000, Value: "1.0"},
+			{EventTime: 2000, Value: "bad"},
+		},
+	})
+	require.NotNil(t, rpcErr)
+	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
+	require.Contains(t, rpcErr.Message, "invalid record value at index 1")
+}
+
 func TestInsertRecords_LookupDBError(t *testing.T) {
 	mockDB := &utils.MockDB{
 		ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*kwilsql.ResultSet, error) {

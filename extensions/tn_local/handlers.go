@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -116,6 +118,16 @@ func (ext *Extension) InsertRecords(ctx context.Context, req *InsertRecordsReque
 	}
 	if streamType != "primitive" {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream %s/%s is not a primitive stream", dataProvider, req.StreamID), nil)
+	}
+
+	for i, r := range req.Records {
+		f, parseErr := strconv.ParseFloat(r.Value, 64)
+		if parseErr != nil {
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("invalid record value at index %d: %v", i, parseErr), nil)
+		}
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("invalid record value at index %d: must be a finite number", i), nil)
+		}
 	}
 
 	if err := ext.dbInsertRecords(ctx, streamRef, req.Records); err != nil {

@@ -66,7 +66,7 @@ func ensurePrimitiveEventsTable(ctx context.Context, tx sql.Tx) error {
 	}
 
 	createIndex := fmt.Sprintf(`
-		CREATE INDEX IF NOT EXISTS local_pe_stream_time_idx
+		CREATE UNIQUE INDEX IF NOT EXISTS local_pe_stream_time_idx
 		ON %s.primitive_events (stream_ref, event_time)`, SchemaName)
 
 	if _, err := tx.Execute(ctx, createIndex); err != nil {
