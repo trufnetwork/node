@@ -65,8 +65,7 @@ func (ext *Extension) dbInsertRecords(ctx context.Context, streamRef int64, reco
 	for _, r := range records {
 		_, err := tx.Execute(ctx, fmt.Sprintf(
 			`INSERT INTO %s.primitive_events (stream_ref, event_time, value, created_at)
-			 VALUES ($1, $2, $3, $4)
-			 ON CONFLICT (stream_ref, event_time) DO NOTHING`, SchemaName),
+			 VALUES ($1, $2, $3, $4)`, SchemaName),
 			streamRef, r.EventTime, r.Value, createdAt)
 		if err != nil {
 			return err
