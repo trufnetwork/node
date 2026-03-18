@@ -177,10 +177,15 @@ func TestCreateStream_Success(t *testing.T) {
 	require.Nil(t, rpcErr, "expected no error")
 	require.NotNil(t, resp)
 	require.Contains(t, capturedStmt, "INSERT INTO "+SchemaName+".streams")
+	require.Len(t, capturedArgs, 4, "INSERT should have 4 parameters")
 	// data_provider should be lowercased (matching consensus behavior)
 	require.Equal(t, "0xec36224a679218ae28fcece8d3c68595b87dd832", capturedArgs[0])
 	require.Equal(t, "st00000000000000000000000000test", capturedArgs[1])
 	require.Equal(t, "primitive", capturedArgs[2])
+	// created_at should be a non-zero unix timestamp
+	createdAt, ok := capturedArgs[3].(int64)
+	require.True(t, ok, "created_at should be int64")
+	require.NotZero(t, createdAt, "created_at should be non-zero")
 }
 
 func TestCreateStream_ComposedType(t *testing.T) {
@@ -282,6 +287,7 @@ func TestCreateStream_DuplicateStream(t *testing.T) {
 		StreamType:   "primitive",
 	})
 	require.NotNil(t, rpcErr)
+	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
 	require.Contains(t, rpcErr.Message, "stream already exists")
 }
 
@@ -299,6 +305,7 @@ func TestCreateStream_DuplicateStream_PgError(t *testing.T) {
 		StreamType:   "primitive",
 	})
 	require.NotNil(t, rpcErr)
+	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
 	require.Contains(t, rpcErr.Message, "stream already exists")
 }
 
