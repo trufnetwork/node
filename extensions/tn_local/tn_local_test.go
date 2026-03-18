@@ -145,6 +145,15 @@ func newTestExtension(db kwilsql.DB) *Extension {
 	return ext
 }
 
+func TestCreateStream_NilRequest(t *testing.T) {
+	ext := newTestExtension(&utils.MockDB{})
+
+	resp, rpcErr := ext.CreateStream(context.Background(), nil)
+	require.Nil(t, resp)
+	require.NotNil(t, rpcErr)
+	require.Contains(t, rpcErr.Message, "missing request")
+}
+
 func TestCreateStream_Success(t *testing.T) {
 	var capturedStmt string
 	var capturedArgs []any
