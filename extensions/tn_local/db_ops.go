@@ -52,8 +52,9 @@ func (ext *Extension) dbLookupStreamRef(ctx context.Context, dataProvider, strea
 	return id, streamType, nil
 }
 
-// dbInsertRecords batch-inserts records into ext_tn_local.primitive_events within a transaction.
-func (ext *Extension) dbInsertRecords(ctx context.Context, streamRef int64, records []RecordInput) error {
+// dbInsertRecords batch-inserts resolved records into ext_tn_local.primitive_events
+// within a transaction. Mirrors the consensus INSERT in 003-primitive-insertion.sql.
+func (ext *Extension) dbInsertRecords(ctx context.Context, streamRefs []int64, eventTimes []int64, values []string) error {
 	createdAt := time.Now().Unix()
 
 	tx, err := ext.db.BeginTx(ctx)
@@ -62,11 +63,11 @@ func (ext *Extension) dbInsertRecords(ctx context.Context, streamRef int64, reco
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	for _, r := range records {
+	for i := range streamRefs {
 		_, err := tx.Execute(ctx, fmt.Sprintf(
 			`INSERT INTO %s.primitive_events (stream_ref, event_time, value, created_at)
 			 VALUES ($1, $2, $3, $4)`, SchemaName),
-			streamRef, r.EventTime, r.Value, createdAt)
+			streamRefs[i], eventTimes[i], values[i], createdAt)
 		if err != nil {
 			return err
 		}

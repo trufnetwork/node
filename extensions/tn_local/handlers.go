@@ -90,38 +90,39 @@ func (ext *Extension) CreateStream(ctx context.Context, req *CreateStreamRequest
 	return &CreateStreamResponse{}, nil
 }
 
-// InsertRecords inserts records into a local primitive stream.
+// InsertRecords inserts records into local primitive streams.
+// Mirrors the consensus insert_records action (003-primitive-insertion.sql):
+//   - Parallel arrays: data_provider[], stream_id[], event_time[], value[]
+//   - Zero values are silently filtered (WHERE value != 0)
+//   - Multiple rows per (stream_ref, event_time) allowed (created_at versioning)
+//   - Returns empty response (consensus returns nothing)
 func (ext *Extension) InsertRecords(ctx context.Context, req *InsertRecordsRequest) (*InsertRecordsResponse, *jsonrpc.Error) {
 	if req == nil {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "missing request", nil)
 	}
 
-	dataProvider := strings.ToLower(req.DataProvider)
-
-	if err := validateDataProvider(dataProvider); err != nil {
-		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
-	}
-	if err := validateStreamID(req.StreamID); err != nil {
-		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
-	}
-	if len(req.Records) == 0 {
+	n := len(req.DataProvider)
+	if n == 0 {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "records must not be empty", nil)
 	}
-
-	streamRef, streamType, err := ext.dbLookupStreamRef(ctx, dataProvider, req.StreamID)
-	if err != nil {
-		ext.logger.Error("failed to look up stream", "error", err)
-		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to look up stream", nil)
-	}
-	if streamRef == 0 {
-		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream not found: %s/%s", dataProvider, req.StreamID), nil)
-	}
-	if streamType != "primitive" {
-		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream %s/%s is not a primitive stream", dataProvider, req.StreamID), nil)
+	if n != len(req.StreamID) || n != len(req.EventTime) || n != len(req.Value) {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "array lengths mismatch", nil)
 	}
 
-	for i, r := range req.Records {
-		f, parseErr := strconv.ParseFloat(r.Value, 64)
+	// Normalize data_providers to lowercase (consensus uses LOWER() in 001-common-actions.sql).
+	for i := range req.DataProvider {
+		req.DataProvider[i] = strings.ToLower(req.DataProvider[i])
+	}
+
+	// Validate all inputs upfront.
+	for i := 0; i < n; i++ {
+		if err := validateDataProvider(req.DataProvider[i]); err != nil {
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("record %d: %v", i, err), nil)
+		}
+		if err := validateStreamID(req.StreamID[i]); err != nil {
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("record %d: %v", i, err), nil)
+		}
+		f, parseErr := strconv.ParseFloat(req.Value[i], 64)
 		if parseErr != nil {
 			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("invalid record value at index %d: %v", i, parseErr), nil)
 		}
@@ -130,15 +131,51 @@ func (ext *Extension) InsertRecords(ctx context.Context, req *InsertRecordsReque
 		}
 	}
 
-	if err := ext.dbInsertRecords(ctx, streamRef, req.Records); err != nil {
-		if isDuplicateKeyError(err) {
-			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "duplicate record: same event_time already exists", nil)
+	// Resolve stream refs for unique (data_provider, stream_id) pairs.
+	type streamKey struct{ dp, sid string }
+	streamRefMap := make(map[streamKey]int64)
+	for i := 0; i < n; i++ {
+		key := streamKey{req.DataProvider[i], req.StreamID[i]}
+		if _, ok := streamRefMap[key]; ok {
+			continue
 		}
-		ext.logger.Error("failed to insert records", "error", err)
-		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to insert records", nil)
+		ref, stype, err := ext.dbLookupStreamRef(ctx, key.dp, key.sid)
+		if err != nil {
+			ext.logger.Error("failed to look up stream", "error", err)
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to look up stream", nil)
+		}
+		if ref == 0 {
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream not found: %s/%s", key.dp, key.sid), nil)
+		}
+		if stype != "primitive" {
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream %s/%s is not a primitive stream", key.dp, key.sid), nil)
+		}
+		streamRefMap[key] = ref
 	}
 
-	return &InsertRecordsResponse{Count: len(req.Records)}, nil
+	// Build resolved records, filtering zero values (mirrors consensus WHERE value != 0).
+	streamRefs := make([]int64, 0, n)
+	eventTimes := make([]int64, 0, n)
+	values := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		f, _ := strconv.ParseFloat(req.Value[i], 64)
+		if f == 0 {
+			continue
+		}
+		key := streamKey{req.DataProvider[i], req.StreamID[i]}
+		streamRefs = append(streamRefs, streamRefMap[key])
+		eventTimes = append(eventTimes, req.EventTime[i])
+		values = append(values, req.Value[i])
+	}
+
+	if len(streamRefs) > 0 {
+		if err := ext.dbInsertRecords(ctx, streamRefs, eventTimes, values); err != nil {
+			ext.logger.Error("failed to insert records", "error", err)
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to insert records", nil)
+		}
+	}
+
+	return &InsertRecordsResponse{}, nil
 }
 
 // InsertTaxonomy adds a taxonomy entry to a local composed stream. (Task 5)

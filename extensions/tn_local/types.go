@@ -11,22 +11,18 @@ type CreateStreamRequest struct {
 type CreateStreamResponse struct{}
 
 // InsertRecordsRequest is the JSON-RPC request for local.insert_records.
+// Mirrors the consensus insert_records($data_provider TEXT[], $stream_id TEXT[],
+// $event_time INT8[], $value NUMERIC(36,18)[]) signature — parallel arrays.
 type InsertRecordsRequest struct {
-	DataProvider string        `json:"data_provider"`
-	StreamID     string        `json:"stream_id"`
-	Records      []RecordInput `json:"records"`
-}
-
-// RecordInput is a single record to insert.
-type RecordInput struct {
-	EventTime int64  `json:"event_time"`
-	Value     string `json:"value"`
+	DataProvider []string `json:"data_provider"`
+	StreamID     []string `json:"stream_id"`
+	EventTime    []int64  `json:"event_time"`
+	Value        []string `json:"value"`
 }
 
 // InsertRecordsResponse is the JSON-RPC response for local.insert_records.
-type InsertRecordsResponse struct {
-	Count int `json:"count"`
-}
+// Mirrors consensus which returns nothing.
+type InsertRecordsResponse struct{}
 
 // InsertTaxonomyRequest is the JSON-RPC request for local.insert_taxonomy.
 type InsertTaxonomyRequest struct {
