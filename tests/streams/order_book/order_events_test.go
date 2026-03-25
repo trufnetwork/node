@@ -702,8 +702,7 @@ func testOrderEventSettlement(t *testing.T) func(ctx context.Context, platform *
 			}
 		}
 		require.True(t, foundWinnerAt98, "should have winning settlement event with price=98")
-		// Losers may or may not exist depending on position state after matching
-		_ = foundLoserAt0
+		require.True(t, foundLoserAt0, "should have losing settlement event with price=0")
 
 		return nil
 	}

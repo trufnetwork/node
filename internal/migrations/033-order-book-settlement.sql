@@ -286,6 +286,7 @@ CREATE OR REPLACE ACTION process_settlement(
         SELECT pos.participant_id, pos.price, pos.amount, pos.outcome
         FROM ob_positions pos
         WHERE pos.query_id = $query_id
+        ORDER BY pos.participant_id, pos.outcome, pos.price, pos.amount
     {
         $evt_pid INT := $evt_row.participant_id;
         $evt_out BOOL := $evt_row.outcome;

@@ -13,7 +13,7 @@
 -- ob_order_events: Individual order event log
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS ob_order_events (
-    id INT PRIMARY KEY,
+    id INT8 PRIMARY KEY,
     tx_hash BYTEA NOT NULL,
     query_id INT NOT NULL,
     participant_id INT NOT NULL,
@@ -47,8 +47,8 @@ CREATE OR REPLACE ACTION ob_record_order_event(
     $amount INT8,
     $counterparty_id INT
 ) PRIVATE {
-    $next_id INT;
-    for $row in SELECT COALESCE(MAX(id), 0::INT) + 1 as val FROM ob_order_events {
+    $next_id INT8;
+    for $row in SELECT COALESCE(MAX(id), 0::INT8) + 1 as val FROM ob_order_events {
         $next_id := $row.val;
     }
 
