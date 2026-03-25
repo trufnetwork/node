@@ -280,6 +280,36 @@ CREATE OR REPLACE ACTION process_settlement(
     $outcomes BOOL[];
     $total_fees NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
 
+    -- First: record settlement events for ALL positions (winners + losers + open buys)
+    -- This uses a broader query than the payout calculation to include losing positions.
+    for $evt_row in
+        SELECT pos.participant_id, pos.price, pos.amount, pos.outcome
+        FROM ob_positions pos
+        WHERE pos.query_id = $query_id
+        ORDER BY pos.participant_id, pos.outcome, pos.price, pos.amount
+    {
+        $evt_pid INT := $evt_row.participant_id;
+        $evt_out BOOL := $evt_row.outcome;
+        $evt_amount INT8 := $evt_row.amount;
+        $evt_raw_price INT := $evt_row.price;
+
+        -- Determine settlement price for the event:
+        -- - Winning holdings (price=0, winning outcome): 98 (redemption at $0.98)
+        -- - Winning sell orders (price>0, winning outcome): 98 (redeemed, not sold)
+        -- - Losing positions (wrong outcome, price>=0): 0 (worthless)
+        -- - Open buy orders (price<0): abs(price) (collateral refund at buy price)
+        $evt_settle_price INT;
+        if $evt_raw_price < 0 {
+            $evt_settle_price := -$evt_raw_price;
+        } else if $evt_out = $winning_outcome {
+            $evt_settle_price := 98;
+        } else {
+            $evt_settle_price := 0;
+        }
+        ob_record_order_event($query_id, $evt_pid, 'settled', $evt_out, $evt_settle_price, $evt_amount, NULL);
+    }
+
+    -- Second: calculate payouts (original logic, only winners + open buys)
     for $res in
         WITH target_positions AS (
             SELECT pos.participant_id, p.wallet_address, pos.price, pos.amount, pos.outcome
@@ -287,11 +317,11 @@ CREATE OR REPLACE ACTION process_settlement(
             WHERE pos.query_id = $query_id AND ((pos.price >= 0 AND pos.outcome = $winning_outcome) OR (pos.price < 0))
         ),
         payout_calculation AS (
-            SELECT 
+            SELECT
                 participant_id,
                 wallet_address,
                 '0x' || encode(wallet_address, 'hex') as wallet_hex,
-                CASE 
+                CASE
                     WHEN price >= 0 THEN ((amount::NUMERIC(78, 0) * '1000000000000000000'::NUMERIC(78, 0) * 98::NUMERIC(78, 0)) / 100::NUMERIC(78, 0))
                     ELSE (amount::NUMERIC(78, 0) * (CASE WHEN price < 0 THEN -price ELSE price END)::NUMERIC(78, 0) * '10000000000000000'::NUMERIC(78, 0))
                 END as pay,

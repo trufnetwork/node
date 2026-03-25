@@ -541,6 +541,10 @@ CREATE OR REPLACE ACTION match_direct(
     -- Transfer payment from vault to seller
     ob_unlock_collateral($bridge, $seller_wallet_address, $seller_payment);
 
+    -- Record fill events (execution price = sell_price for direct matches)
+    ob_record_order_event($query_id, $buy_participant_id, 'direct_buy_fill', $outcome, $sell_price, $match_amount, $sell_participant_id);
+    ob_record_order_event($query_id, $sell_participant_id, 'direct_sell_fill', $outcome, $sell_price, $match_amount, $buy_participant_id);
+
     -- Record sell impact for P&L
     ob_record_tx_impact($sell_participant_id, $outcome, -$match_amount, $seller_payment, FALSE);
 
@@ -715,6 +719,10 @@ CREATE OR REPLACE ACTION match_mint(
         $mint_amount := $no_amount;
     }
 
+    -- Record mint fill events
+    ob_record_order_event($query_id, $yes_participant_id, 'mint_fill', TRUE, $yes_price, $mint_amount, $no_participant_id);
+    ob_record_order_event($query_id, $no_participant_id, 'mint_fill', FALSE, $no_price, $mint_amount, $yes_participant_id);
+
     -- Delete fully matched buy orders FIRST
     DELETE FROM ob_positions
     WHERE query_id = $query_id
@@ -886,6 +894,10 @@ CREATE OR REPLACE ACTION match_burn(
     } else {
         $burn_amount := $no_amount;
     }
+
+    -- Record burn fill events
+    ob_record_order_event($query_id, $yes_participant_id, 'burn_fill', TRUE, $yes_price, $burn_amount, $no_participant_id);
+    ob_record_order_event($query_id, $no_participant_id, 'burn_fill', FALSE, $no_price, $burn_amount, $yes_participant_id);
 
     -- Calculate payouts
     $yes_payout NUMERIC(78, 0) := ($burn_amount::NUMERIC(78, 0) *
@@ -1218,6 +1230,9 @@ CREATE OR REPLACE ACTION place_buy_order(
     SET amount = ob_positions.amount + EXCLUDED.amount,
         last_updated = EXCLUDED.last_updated;
 
+    -- Record order event
+    ob_record_order_event($query_id, $participant_id, 'buy_placed', $outcome, $price, $amount, NULL);
+
     -- ==========================================================================
     -- SECTION 7: TRIGGER MATCHING ENGINE
     -- ==========================================================================
@@ -1228,7 +1243,7 @@ CREATE OR REPLACE ACTION place_buy_order(
     -- ==========================================================================
     -- SECTION 8: CLEANUP & MATERIALIZE IMPACTS
     -- ==========================================================================
-    
+
     ob_cleanup_tx_payouts($query_id);
 
     -- Success: Order placed (may be partially or fully matched by future matching engine)
@@ -1405,6 +1420,9 @@ CREATE OR REPLACE ACTION place_sell_order(
     ON CONFLICT (query_id, participant_id, outcome, price) DO UPDATE
     SET amount = ob_positions.amount + EXCLUDED.amount,
         last_updated = EXCLUDED.last_updated;
+
+    -- Record order event
+    ob_record_order_event($query_id, $participant_id, 'sell_placed', $outcome, $price, $amount, NULL);
 
     -- ==========================================================================
     -- SECTION 5: TRIGGER MATCHING ENGINE
@@ -1662,6 +1680,10 @@ CREATE OR REPLACE ACTION place_split_limit_order(
     SET amount = ob_positions.amount + EXCLUDED.amount,
         last_updated = EXCLUDED.last_updated;
 
+    -- Record order events: YES holding + NO sell
+    ob_record_order_event($query_id, $participant_id, 'split_placed', TRUE, $true_price, $amount, NULL);
+    ob_record_order_event($query_id, $participant_id, 'split_placed', FALSE, $false_price, $amount, NULL);
+
     -- ==========================================================================
     -- SECTION 8: TRIGGER MATCHING ENGINE
     -- ==========================================================================
@@ -1858,6 +1880,15 @@ CREATE OR REPLACE ACTION cancel_order(
             amount = ob_positions.amount + EXCLUDED.amount,
             last_updated = EXCLUDED.last_updated;
     }
+
+    -- Record cancel event (use absolute price for display)
+    $abs_cancel_price INT;
+    if $price < 0 {
+        $abs_cancel_price := -$price;
+    } else {
+        $abs_cancel_price := $price;
+    }
+    ob_record_order_event($query_id, $participant_id, 'cancelled', $outcome, $abs_cancel_price, $order_amount, NULL);
 
     -- ==========================================================================
     -- SECTION 7: DELETE CANCELLED ORDER
@@ -2118,6 +2149,9 @@ CREATE OR REPLACE ACTION change_bid(
             THEN ob_positions.last_updated  -- Keep earlier timestamp (existing order was first)
             ELSE EXCLUDED.last_updated       -- Keep earlier timestamp (moved order was first)
         END;
+
+    -- Record bid change event (positive price for display)
+    ob_record_order_event($query_id, $participant_id, 'bid_changed', $outcome, $new_abs_price, $new_amount, NULL);
 
     -- ==========================================================================
     -- SECTION 9: TRIGGER MATCHING ENGINE
@@ -2382,6 +2416,9 @@ CREATE OR REPLACE ACTION change_ask(
             THEN ob_positions.last_updated  -- Keep earlier timestamp (existing order was first)
             ELSE EXCLUDED.last_updated       -- Keep earlier timestamp (moved order was first)
         END;
+
+    -- Record ask change event
+    ob_record_order_event($query_id, $participant_id, 'ask_changed', $outcome, $new_price, $new_amount, NULL);
 
     -- ==========================================================================
     -- SECTION 8: TRIGGER MATCHING ENGINE
