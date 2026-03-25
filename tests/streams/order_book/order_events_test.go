@@ -690,9 +690,13 @@ func testOrderEventSettlement(t *testing.T) func(ctx context.Context, platform *
 		settled := getOrderEventsByType(events, "settled")
 		require.GreaterOrEqual(t, len(settled), 2, "should have settled events for multiple positions")
 
-		// Check that winning holdings have price=98 (redemption price)
+		// Check settlement events cover all branches:
+		// - Winners (YES holdings, price>=0): settle at 98
+		// - Losers (NO holdings, wrong outcome): settle at 0
+		// - Open buy orders (price<0): refund at abs(price)
 		var foundWinnerAt98 bool
 		var foundLoserAt0 bool
+		var foundOpenBuyAt30 bool
 		for _, evt := range settled {
 			if evt.Outcome == true && evt.Price == 98 {
 				foundWinnerAt98 = true
@@ -700,9 +704,13 @@ func testOrderEventSettlement(t *testing.T) func(ctx context.Context, platform *
 			if evt.Price == 0 {
 				foundLoserAt0 = true
 			}
+			if evt.Outcome == true && evt.Price == 30 {
+				foundOpenBuyAt30 = true
+			}
 		}
 		require.True(t, foundWinnerAt98, "should have winning settlement event with price=98")
 		require.True(t, foundLoserAt0, "should have losing settlement event with price=0")
+		require.True(t, foundOpenBuyAt30, "should have open buy order settlement event with price=30")
 
 		return nil
 	}
