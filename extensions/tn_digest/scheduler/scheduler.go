@@ -237,10 +237,11 @@ func (s *DigestScheduler) trimOrderEvents(
 		default:
 		}
 
-		result, err := engineOps.BroadcastTrimOrderEvents(
+		result, err := engineOps.BroadcastTrimOrderEventsWithRetry(
 			ctx, chainID, signer, broadcaster.BroadcastTx,
 			TrimOrderEventsPreserveBlocks,
 			TrimOrderEventsDeleteCap,
+			3, // maxRetries
 		)
 		if err != nil {
 			s.logger.Warn("trim_order_events failed (non-fatal)", "run", run, "error", err)

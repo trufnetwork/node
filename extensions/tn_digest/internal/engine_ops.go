@@ -450,8 +450,51 @@ type TrimOrderEventsTxResult struct {
 	HasMore   bool
 }
 
-// BroadcastTrimOrderEvents broadcasts a trim_order_events action with fresh nonce.
-func (e *EngineOperations) BroadcastTrimOrderEvents(
+// BroadcastTrimOrderEventsWithRetry wraps BroadcastTrimOrderEvents with retry logic.
+// On any error it re-fetches a fresh nonce before retrying, mirroring
+// BroadcastAutoDigestWithArgsAndRetry.
+func (e *EngineOperations) BroadcastTrimOrderEventsWithRetry(
+	ctx context.Context,
+	chainID string,
+	signer auth.Signer,
+	broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error),
+	preserveBlocks int64,
+	deleteCap int,
+	maxRetries int,
+) (*TrimOrderEventsTxResult, error) {
+	var lastErr error
+	backoff := 5 * time.Second
+	maxBackoff := 30 * time.Second
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			e.logger.Warn("retrying trim_order_events with fresh nonce",
+				"attempt", attempt, "last_error", lastErr)
+
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+
+		result, err := e.broadcastTrimOrderEventsOnce(ctx, chainID, signer, broadcaster, preserveBlocks, deleteCap)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+	}
+
+	return nil, fmt.Errorf("trim_order_events max retries (%d) exceeded: %w", maxRetries, lastErr)
+}
+
+// broadcastTrimOrderEventsOnce fetches a fresh nonce and broadcasts once.
+func (e *EngineOperations) broadcastTrimOrderEventsOnce(
 	ctx context.Context,
 	chainID string,
 	signer auth.Signer,
@@ -532,18 +575,26 @@ func (e *EngineOperations) BroadcastTrimOrderEvents(
 	return result, nil
 }
 
-// parseTrimResultFromTxLog extracts deleted/remaining/has_more from NOTICE output
+// parseTrimResultFromTxLog extracts deleted/remaining/has_more from NOTICE output.
+// Handles log lines with prefixes (e.g., "NOTICE: trim_order_events: ...") by
+// extracting the payload after the marker, mirroring parseDigestResultFromTxLog.
 func parseTrimResultFromTxLog(logOutput string) (*TrimOrderEventsTxResult, error) {
 	result := &TrimOrderEventsTxResult{}
 	for _, line := range strings.Split(logOutput, "\n") {
 		if !strings.Contains(line, "trim_order_events:") {
 			continue
 		}
-		// Parse "trim_order_events: deleted=X remaining=Y has_more=Z"
-		n, err := fmt.Sscanf(line, "trim_order_events: deleted=%d remaining=%d has_more=%t",
+		// Extract payload after marker (handles prefixed lines like "NOTICE: trim_order_events: ...")
+		parts := strings.SplitN(line, "trim_order_events:", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		payload := strings.TrimSpace(parts[1])
+
+		n, err := fmt.Sscanf(payload, "deleted=%d remaining=%d has_more=%t",
 			&result.Deleted, &result.Remaining, &result.HasMore)
 		if err != nil || n != 3 {
-			return nil, fmt.Errorf("failed to parse trim log line (scanned %d/3 fields): %q", n, line)
+			return nil, fmt.Errorf("failed to parse trim log payload (scanned %d/3 fields): %q", n, payload)
 		}
 		return result, nil
 	}
