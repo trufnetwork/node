@@ -165,6 +165,9 @@ func (s *DigestScheduler) Start(ctx context.Context, cronExpr string) error {
 						"total_runs", runs,
 						"total_processed_days", totalProcessedDays,
 						"total_deleted_rows", totalDeletedRows)
+
+					// After digest drain, trim order events (best-effort, non-fatal)
+					s.trimOrderEvents(jobCtx, chainID, engineOps, signer, broadcaster)
 					return
 				}
 			}
@@ -182,6 +185,9 @@ func (s *DigestScheduler) Start(ctx context.Context, cronExpr string) error {
 		s.logger.Info("digest drain reached max runs",
 			"max_runs", DrainMaxRuns,
 			"runs_completed", runs)
+
+		// After digest drain, trim order events (best-effort, non-fatal)
+		s.trimOrderEvents(jobCtx, chainID, engineOps, signer, broadcaster)
 	}
 
 	if j, err := s.cron.Cron(cronExpr).Do(jobFunc); err != nil {
@@ -210,6 +216,56 @@ func (s *DigestScheduler) Stop() error {
 	}
 	s.logger.Info("digest scheduler stopped")
 	return nil
+}
+
+// trimOrderEvents runs the trim_order_events action in a drain loop (best-effort).
+// Called after digest drain completes. Failures are logged but do not fail the digest job.
+func (s *DigestScheduler) trimOrderEvents(
+	ctx context.Context,
+	chainID string,
+	engineOps *internal.EngineOperations,
+	signer auth.Signer,
+	broadcaster txBroadcaster,
+) {
+	s.logger.Info("starting order event trim")
+
+	for run := 0; run < TrimOrderEventsMaxRuns; run++ {
+		select {
+		case <-ctx.Done():
+			s.logger.Info("order event trim canceled", "runs_completed", run)
+			return
+		default:
+		}
+
+		result, err := engineOps.BroadcastTrimOrderEvents(
+			ctx, chainID, signer, broadcaster.BroadcastTx,
+			TrimOrderEventsPreserveBlocks,
+			TrimOrderEventsDeleteCap,
+		)
+		if err != nil {
+			s.logger.Warn("trim_order_events failed (non-fatal)", "run", run, "error", err)
+			return
+		}
+
+		s.logger.Info("trim_order_events run completed",
+			"run", run,
+			"deleted", result.Deleted,
+			"remaining", result.Remaining,
+			"has_more", result.HasMore)
+
+		if !result.HasMore {
+			return
+		}
+
+		// Brief delay between trim runs
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
+	}
+
+	s.logger.Info("order event trim reached max runs", "max_runs", TrimOrderEventsMaxRuns)
 }
 
 // RunOnce executes the digest job payload once (for tests and manual triggering).

@@ -443,6 +443,113 @@ func (e *EngineOperations) broadcastAutoDigestWithFreshNonce(
 	return result, hash, nil
 }
 
+// TrimOrderEventsTxResult represents the parsed result from a trim_order_events transaction
+type TrimOrderEventsTxResult struct {
+	Deleted   int
+	Remaining int
+	HasMore   bool
+}
+
+// BroadcastTrimOrderEvents broadcasts a trim_order_events action with fresh nonce.
+func (e *EngineOperations) BroadcastTrimOrderEvents(
+	ctx context.Context,
+	chainID string,
+	signer auth.Signer,
+	broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error),
+	preserveBlocks int64,
+	deleteCap int,
+) (*TrimOrderEventsTxResult, error) {
+	signerAccountID, err := ktypes.GetSignerAccount(signer)
+	if err != nil {
+		return nil, fmt.Errorf("get signer account: %w", err)
+	}
+
+	db, cleanup, err := e.getFreshReadTx(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get fresh read tx: %w", err)
+	}
+	defer cleanup()
+
+	account, err := e.accounts.GetAccount(ctx, db, signerAccountID)
+	var nextNonce uint64
+	if err != nil {
+		msg := strings.ToLower(err.Error())
+		if !strings.Contains(msg, "not found") && !strings.Contains(msg, "no rows") {
+			return nil, fmt.Errorf("get account: %w", err)
+		}
+		nextNonce = 1
+	} else {
+		nextNonce = uint64(account.Nonce + 1)
+	}
+
+	preserveBlocksArg, err := ktypes.EncodeValue(preserveBlocks)
+	if err != nil {
+		return nil, fmt.Errorf("encode preserveBlocks: %w", err)
+	}
+	deleteCapArg, err := ktypes.EncodeValue(int64(deleteCap))
+	if err != nil {
+		return nil, fmt.Errorf("encode deleteCap: %w", err)
+	}
+
+	payload := &ktypes.ActionExecution{
+		Namespace: "main",
+		Action:    "trim_order_events",
+		Arguments: [][]*ktypes.EncodedValue{{
+			preserveBlocksArg, deleteCapArg,
+		}},
+	}
+
+	tx, err := ktypes.CreateNodeTransaction(payload, chainID, nextNonce)
+	if err != nil {
+		return nil, fmt.Errorf("create tx: %w", err)
+	}
+	if err := tx.Sign(signer); err != nil {
+		return nil, fmt.Errorf("sign tx: %w", err)
+	}
+
+	hash, txResult, err := broadcaster(ctx, tx, 1)
+	if err != nil {
+		return nil, fmt.Errorf("broadcast tx: %w", err)
+	}
+
+	if txResult.Code != uint32(ktypes.CodeOk) {
+		return nil, fmt.Errorf("transaction failed with code %d: %s",
+			txResult.Code, txResult.Log)
+	}
+
+	result, err := parseTrimResultFromTxLog(txResult.Log)
+	if err != nil {
+		e.logger.Warn("failed to parse trim_order_events result", "error", err, "log", txResult.Log)
+		return nil, fmt.Errorf("parse trim result: %w", err)
+	}
+
+	e.logger.Info("trim_order_events completed",
+		"deleted", result.Deleted,
+		"remaining", result.Remaining,
+		"has_more", result.HasMore,
+		"tx_hash", hash.String())
+
+	return result, nil
+}
+
+// parseTrimResultFromTxLog extracts deleted/remaining/has_more from NOTICE output
+func parseTrimResultFromTxLog(logOutput string) (*TrimOrderEventsTxResult, error) {
+	result := &TrimOrderEventsTxResult{}
+	for _, line := range strings.Split(logOutput, "\n") {
+		if !strings.Contains(line, "trim_order_events:") {
+			continue
+		}
+		// Parse "trim_order_events: deleted=X remaining=Y has_more=Z"
+		n, err := fmt.Sscanf(line, "trim_order_events: deleted=%d remaining=%d has_more=%t",
+			&result.Deleted, &result.Remaining, &result.HasMore)
+		if err != nil || n != 3 {
+			return nil, fmt.Errorf("failed to parse trim log line (scanned %d/3 fields): %q", n, line)
+		}
+		return result, nil
+	}
+	return nil, fmt.Errorf("no trim_order_events log entry found in: %q", logOutput)
+}
+
 // parseDigestResultFromTxLog parses the digest result from transaction log output
 // The digest action outputs log entries like: "auto_digest:{...json...}"
 func parseDigestResultFromTxLog(logOutput string) (*DigestTxResult, error) {
