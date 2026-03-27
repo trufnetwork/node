@@ -232,6 +232,9 @@ func (ext *Extension) InsertTaxonomy(ctx context.Context, req *InsertTaxonomyReq
 	if err := validateStreamID(req.StreamID); err != nil {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
 	}
+	if req.StartDate < 0 {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "start_date must be >= 0", nil)
+	}
 
 	// Normalize child data_providers to lowercase.
 	for i := range req.ChildDataProviders {

@@ -455,6 +455,22 @@ func TestInsertTaxonomy_ParentLookupDBError(t *testing.T) {
 	require.Contains(t, rpcErr.Message, "failed to look up parent stream")
 }
 
+func TestInsertTaxonomy_NegativeStartDate(t *testing.T) {
+	ext := newTestExtension(&utils.MockDB{})
+
+	_, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
+		DataProvider:       testDP,
+		StreamID:           testComposedSID,
+		ChildDataProviders: []string{testDP},
+		ChildStreamIDs:     []string{testChildSID1},
+		Weights:            []string{"1.0"},
+		StartDate:          -1,
+	})
+	require.NotNil(t, rpcErr)
+	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
+	require.Contains(t, rpcErr.Message, "start_date must be >= 0")
+}
+
 func TestInsertTaxonomy_ZeroWeight(t *testing.T) {
 	lowDP := strings.ToLower(testDP)
 	childRefs := map[string]int64{

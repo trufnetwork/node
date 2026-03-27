@@ -78,7 +78,14 @@ func (ext *Extension) dbInsertRecords(ctx context.Context, streamRefs []int64, e
 
 // dbGetNextGroupSequence returns MAX(group_sequence)+1 for a parent stream, or 1 if none exist.
 // Mirrors consensus get_current_group_sequence + 1 (004-composed-taxonomy.sql:86).
+// Acquires a transaction-scoped advisory lock on parentRef to serialize concurrent allocations.
 func (ext *Extension) dbGetNextGroupSequence(ctx context.Context, tx sql.Tx, parentRef int64) (int, error) {
+	// Advisory lock serializes concurrent InsertTaxonomy calls for the same parent.
+	// Released automatically on tx commit/rollback.
+	if _, err := tx.Execute(ctx, `SELECT pg_advisory_xact_lock($1)`, parentRef); err != nil {
+		return 0, fmt.Errorf("advisory lock: %w", err)
+	}
+
 	rs, err := tx.Execute(ctx, fmt.Sprintf(
 		`SELECT COALESCE(MAX(group_sequence), 0) + 1 FROM %s.taxonomies WHERE stream_ref = $1`, SchemaName),
 		parentRef)
