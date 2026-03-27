@@ -316,10 +316,12 @@ func TestInsertTaxonomy_InvalidWeight(t *testing.T) {
 		weight  string
 		wantMsg string
 	}{
-		{"non-numeric", "abc", "weight must be a valid number"},
+		{"non-numeric", "abc", "weight must be a valid decimal number"},
 		{"negative", "-1.0", "weight must be non-negative"},
-		{"NaN", "NaN", "weight must be a finite number"},
-		{"Inf", "Inf", "weight must be a finite number"},
+		{"NaN", "NaN", "weight must be a valid decimal number"},
+		{"Inf", "Inf", "weight must be a valid decimal number"},
+		{"too many decimal places", "1.1234567890123456789", "more than 18 decimal places"},
+		{"too many integral digits", "1234567890123456789.0", "more than 18 integral digits"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -337,6 +339,39 @@ func TestInsertTaxonomy_InvalidWeight(t *testing.T) {
 			require.Contains(t, rpcErr.Message, tt.wantMsg)
 		})
 	}
+}
+
+func TestInsertTaxonomy_DuplicateChild(t *testing.T) {
+	ext := newTestExtension(&utils.MockDB{})
+
+	_, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
+		DataProvider:       testDP,
+		StreamID:           testComposedSID,
+		ChildDataProviders: []string{testDP, testDP},
+		ChildStreamIDs:     []string{testChildSID1, testChildSID1},
+		Weights:            []string{"0.5", "0.5"},
+		StartDate:          0,
+	})
+	require.NotNil(t, rpcErr)
+	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
+	require.Contains(t, rpcErr.Message, "child 1: duplicate child_data_provider/child_stream_id tuple")
+}
+
+func TestInsertTaxonomy_DuplicateChildMixedCase(t *testing.T) {
+	ext := newTestExtension(&utils.MockDB{})
+
+	// Same address, different casing — should still detect as duplicate after normalization
+	_, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
+		DataProvider:       testDP,
+		StreamID:           testComposedSID,
+		ChildDataProviders: []string{"0xEC36224A679218Ae28FCeCe8d3c68595B87Dd832", "0xec36224a679218ae28fcece8d3c68595b87dd832"},
+		ChildStreamIDs:     []string{testChildSID1, testChildSID1},
+		Weights:            []string{"0.5", "0.5"},
+		StartDate:          0,
+	})
+	require.NotNil(t, rpcErr)
+	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
+	require.Contains(t, rpcErr.Message, "child 1: duplicate child_data_provider/child_stream_id tuple")
 }
 
 func TestInsertTaxonomy_DBInsertError(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/shopspring/decimal"
 	jsonrpc "github.com/trufnetwork/kwil-db/core/rpc/json"
 )
 
@@ -47,17 +48,28 @@ func validateDataProvider(dataProvider string) error {
 	return nil
 }
 
-// validateWeight checks that a weight value is a valid non-negative number.
+// validateWeight checks that a weight value fits NUMERIC(36,18):
+// non-negative, at most 18 decimal places, at most 18 integral digits (36 total - 18 scale).
 func validateWeight(weight string) error {
-	f, err := strconv.ParseFloat(weight, 64)
+	d, err := decimal.NewFromString(weight)
 	if err != nil {
-		return fmt.Errorf("weight must be a valid number")
+		return fmt.Errorf("weight must be a valid decimal number")
 	}
-	if math.IsNaN(f) || math.IsInf(f, 0) {
-		return fmt.Errorf("weight must be a finite number")
-	}
-	if f < 0 {
+	if d.IsNegative() {
 		return fmt.Errorf("weight must be non-negative")
+	}
+	// NUMERIC(36,18): up to 18 fractional digits, up to 18 integral digits.
+	// Exponent returns (coeff, exp) where value = coeff * 10^exp.
+	// Negative exponent = number of fractional digits.
+	exp := d.Exponent()
+	if exp < -18 {
+		return fmt.Errorf("weight exceeds NUMERIC(36,18): more than 18 decimal places")
+	}
+	// Check integral digits: remove trailing zeros, count digits left of decimal point.
+	// NumDigits gives total significant digits in the coefficient.
+	intPart := d.Truncate(0).Abs()
+	if intPart.NumDigits() > 18 {
+		return fmt.Errorf("weight exceeds NUMERIC(36,18): more than 18 integral digits")
 	}
 	return nil
 }
@@ -242,6 +254,8 @@ func (ext *Extension) InsertTaxonomy(ctx context.Context, req *InsertTaxonomyReq
 	}
 
 	// Validate all children upfront.
+	type childKey struct{ dp, sid string }
+	seenChildren := make(map[childKey]struct{}, n)
 	for i := 0; i < n; i++ {
 		if err := validateDataProvider(req.ChildDataProviders[i]); err != nil {
 			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("child %d: %v", i, err), nil)
@@ -252,6 +266,11 @@ func (ext *Extension) InsertTaxonomy(ctx context.Context, req *InsertTaxonomyReq
 		if err := validateWeight(req.Weights[i]); err != nil {
 			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("child %d: %v", i, err), nil)
 		}
+		key := childKey{req.ChildDataProviders[i], req.ChildStreamIDs[i]}
+		if _, exists := seenChildren[key]; exists {
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("child %d: duplicate child_data_provider/child_stream_id tuple", i), nil)
+		}
+		seenChildren[key] = struct{}{}
 	}
 
 	// Verify parent stream exists and is composed.
