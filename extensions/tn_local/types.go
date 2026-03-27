@@ -25,13 +25,16 @@ type InsertRecordsRequest struct {
 type InsertRecordsResponse struct{}
 
 // InsertTaxonomyRequest is the JSON-RPC request for local.insert_taxonomy.
+// Mirrors the consensus insert_taxonomy($data_provider, $stream_id,
+// $child_data_providers TEXT[], $child_stream_ids TEXT[], $weights NUMERIC(36,18)[],
+// $start_date INT) signature — parallel arrays for children.
 type InsertTaxonomyRequest struct {
-	DataProvider      string `json:"data_provider"`
-	StreamID          string `json:"stream_id"`
-	ChildDataProvider string `json:"child_data_provider"`
-	ChildStreamID     string `json:"child_stream_id"`
-	Weight            string `json:"weight"`
-	StartTime         int64  `json:"start_time"`
+	DataProvider       string   `json:"data_provider"`
+	StreamID           string   `json:"stream_id"`
+	ChildDataProviders []string `json:"child_data_providers"`
+	ChildStreamIDs     []string `json:"child_stream_ids"`
+	Weights            []string `json:"weights"`
+	StartDate          int64    `json:"start_date"`
 }
 
 // InsertTaxonomyResponse is the JSON-RPC response for local.insert_taxonomy.
