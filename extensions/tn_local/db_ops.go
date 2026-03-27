@@ -76,6 +76,41 @@ func (ext *Extension) dbInsertRecords(ctx context.Context, streamRefs []int64, e
 	return tx.Commit(ctx)
 }
 
+// dbGetNextGroupSequence returns MAX(group_sequence)+1 for a parent stream, or 1 if none exist.
+// Mirrors consensus get_current_group_sequence + 1 (004-composed-taxonomy.sql:86).
+// Acquires a transaction-scoped advisory lock on parentRef to serialize concurrent allocations.
+func (ext *Extension) dbGetNextGroupSequence(ctx context.Context, tx sql.Tx, parentRef int64) (int, error) {
+	// Advisory lock serializes concurrent InsertTaxonomy calls for the same parent.
+	// Released automatically on tx commit/rollback.
+	if _, err := tx.Execute(ctx, `SELECT pg_advisory_xact_lock($1)`, parentRef); err != nil {
+		return 0, fmt.Errorf("advisory lock: %w", err)
+	}
+
+	rs, err := tx.Execute(ctx, fmt.Sprintf(
+		`SELECT COALESCE(MAX(group_sequence), 0) + 1 FROM %s.taxonomies WHERE stream_ref = $1`, SchemaName),
+		parentRef)
+	if err != nil {
+		return 0, err
+	}
+	if len(rs.Rows) == 0 {
+		return 1, nil
+	}
+	val, ok := rs.Rows[0][0].(int64)
+	if !ok {
+		return 0, fmt.Errorf("unexpected group_sequence type: %T", rs.Rows[0][0])
+	}
+	return int(val), nil
+}
+
+// dbInsertTaxonomyRow inserts a single taxonomy row within a transaction.
+func (ext *Extension) dbInsertTaxonomyRow(ctx context.Context, tx sql.Tx, taxonomyID string, parentRef int64, childRef int64, weight string, startDate int64, groupSeq int, createdAt int64) error {
+	_, err := tx.Execute(ctx, fmt.Sprintf(
+		`INSERT INTO %s.taxonomies (taxonomy_id, stream_ref, child_stream_ref, weight, start_time, group_sequence, created_at)
+		 VALUES ($1::UUID, $2, $3, $4, $5, $6, $7)`, SchemaName),
+		taxonomyID, parentRef, childRef, weight, startDate, groupSeq, createdAt)
+	return err
+}
+
 // SetupSchema creates the ext_tn_local schema and all tables within a single transaction.
 func (l *LocalDB) SetupSchema(ctx context.Context) error {
 	l.logger.Info("setting up local storage schema")

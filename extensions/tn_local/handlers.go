@@ -2,14 +2,17 @@ package tn_local
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/shopspring/decimal"
 	jsonrpc "github.com/trufnetwork/kwil-db/core/rpc/json"
 )
 
@@ -43,6 +46,42 @@ func validateDataProvider(dataProvider string) error {
 		return fmt.Errorf("data_provider must be a valid Ethereum address (0x + 40 hex chars)")
 	}
 	return nil
+}
+
+// validateWeight checks that a weight value fits NUMERIC(36,18):
+// non-negative, at most 18 decimal places, at most 18 integral digits (36 total - 18 scale).
+func validateWeight(weight string) error {
+	d, err := decimal.NewFromString(weight)
+	if err != nil {
+		return fmt.Errorf("weight must be a valid decimal number")
+	}
+	if d.IsNegative() {
+		return fmt.Errorf("weight must be non-negative")
+	}
+	// NUMERIC(36,18): up to 18 fractional digits, up to 18 integral digits.
+	// Exponent returns (coeff, exp) where value = coeff * 10^exp.
+	// Negative exponent = number of fractional digits.
+	exp := d.Exponent()
+	if exp < -18 {
+		return fmt.Errorf("weight exceeds NUMERIC(36,18): more than 18 decimal places")
+	}
+	// Check integral digits: remove trailing zeros, count digits left of decimal point.
+	// NumDigits gives total significant digits in the coefficient.
+	intPart := d.Truncate(0).Abs()
+	if intPart.NumDigits() > 18 {
+		return fmt.Errorf("weight exceeds NUMERIC(36,18): more than 18 integral digits")
+	}
+	return nil
+}
+
+// generateTaxonomyID creates a unique UUID from taxonomy components.
+// Mirrors consensus: uuid_generate_kwil(@txid||$data_provider||...).
+// Since local operations have no @txid, we include UnixNano for per-call
+// uniqueness (analogous to how @txid differs per transaction in consensus).
+func generateTaxonomyID(dataProvider, streamID, childDP, childSID string, index int) string {
+	h := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%s|%s|%d|%d", dataProvider, streamID, childDP, childSID, index, time.Now().UnixNano())))
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		h[0:4], h[4:6], h[6:8], h[8:10], h[10:16])
 }
 
 // isDuplicateKeyError checks if err is a PostgreSQL unique constraint violation (23505).
@@ -178,9 +217,121 @@ func (ext *Extension) InsertRecords(ctx context.Context, req *InsertRecordsReque
 	return &InsertRecordsResponse{}, nil
 }
 
-// InsertTaxonomy adds a taxonomy entry to a local composed stream. (Task 5)
+// InsertTaxonomy adds a taxonomy group to a local composed stream.
+// Mirrors the consensus insert_taxonomy action (004-composed-taxonomy.sql):
+//   - Parallel arrays: child_data_providers[], child_stream_ids[], weights[]
+//   - All children must exist in local storage (no cross-storage references)
+//   - Increments group_sequence (MAX+1)
+//   - Returns empty response (consensus returns nothing)
 func (ext *Extension) InsertTaxonomy(ctx context.Context, req *InsertTaxonomyRequest) (*InsertTaxonomyResponse, *jsonrpc.Error) {
-	return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "not implemented", nil)
+	if req == nil {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "missing request", nil)
+	}
+
+	n := len(req.ChildStreamIDs)
+	if n == 0 {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "there must be at least 1 child", nil)
+	}
+	if n != len(req.ChildDataProviders) || n != len(req.Weights) {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "child array lengths mismatch", nil)
+	}
+
+	// Normalize parent data_provider to lowercase (consensus: LOWER()).
+	dataProvider := strings.ToLower(req.DataProvider)
+	if err := validateDataProvider(dataProvider); err != nil {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
+	}
+	if err := validateStreamID(req.StreamID); err != nil {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
+	}
+	if req.StartDate < 0 {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "start_date must be >= 0", nil)
+	}
+
+	// Normalize child data_providers to lowercase.
+	for i := range req.ChildDataProviders {
+		req.ChildDataProviders[i] = strings.ToLower(req.ChildDataProviders[i])
+	}
+
+	// Validate all children upfront.
+	type childKey struct{ dp, sid string }
+	seenChildren := make(map[childKey]struct{}, n)
+	for i := 0; i < n; i++ {
+		if err := validateDataProvider(req.ChildDataProviders[i]); err != nil {
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("child %d: %v", i, err), nil)
+		}
+		if err := validateStreamID(req.ChildStreamIDs[i]); err != nil {
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("child %d: %v", i, err), nil)
+		}
+		if err := validateWeight(req.Weights[i]); err != nil {
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("child %d: %v", i, err), nil)
+		}
+		key := childKey{req.ChildDataProviders[i], req.ChildStreamIDs[i]}
+		if _, exists := seenChildren[key]; exists {
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("child %d: duplicate child_data_provider/child_stream_id tuple", i), nil)
+		}
+		seenChildren[key] = struct{}{}
+	}
+
+	// Verify parent stream exists and is composed.
+	parentRef, parentType, err := ext.dbLookupStreamRef(ctx, dataProvider, req.StreamID)
+	if err != nil {
+		ext.logger.Error("failed to look up parent stream", "error", err)
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to look up parent stream", nil)
+	}
+	if parentRef == 0 {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("parent stream not found: %s/%s", dataProvider, req.StreamID), nil)
+	}
+	if parentType != "composed" {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream %s/%s is not a composed stream", dataProvider, req.StreamID), nil)
+	}
+
+	// Resolve all child stream refs (must exist in local storage).
+	childRefs := make([]int64, n)
+	for i := 0; i < n; i++ {
+		ref, _, lookupErr := ext.dbLookupStreamRef(ctx, req.ChildDataProviders[i], req.ChildStreamIDs[i])
+		if lookupErr != nil {
+			ext.logger.Error("failed to look up child stream", "error", lookupErr)
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to look up child stream", nil)
+		}
+		if ref == 0 {
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("child stream not found in local storage: %s/%s", req.ChildDataProviders[i], req.ChildStreamIDs[i]), nil)
+		}
+		childRefs[i] = ref
+	}
+
+	// Default start_date to 0 if not provided (mirrors consensus: if $start_date IS NULL { $start_date := 0; }).
+	startDate := req.StartDate
+
+	// Begin transaction for group_sequence + inserts.
+	tx, err := ext.db.BeginTx(ctx)
+	if err != nil {
+		ext.logger.Error("failed to begin transaction", "error", err)
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to begin transaction", nil)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	groupSeq, err := ext.dbGetNextGroupSequence(ctx, tx, parentRef)
+	if err != nil {
+		ext.logger.Error("failed to get next group sequence", "error", err)
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to get group sequence", nil)
+	}
+
+	createdAt := time.Now().Unix()
+	for i := 0; i < n; i++ {
+		taxonomyID := generateTaxonomyID(dataProvider, req.StreamID, req.ChildDataProviders[i], req.ChildStreamIDs[i], i)
+		if insertErr := ext.dbInsertTaxonomyRow(ctx, tx, taxonomyID, parentRef, childRefs[i], req.Weights[i], startDate, groupSeq, createdAt); insertErr != nil {
+			ext.logger.Error("failed to insert taxonomy row", "error", insertErr)
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to insert taxonomy", nil)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		ext.logger.Error("failed to commit transaction", "error", err)
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to commit taxonomy", nil)
+	}
+
+	return &InsertTaxonomyResponse{}, nil
 }
 
 // GetRecord queries records from a local primitive stream. (Task 6)
