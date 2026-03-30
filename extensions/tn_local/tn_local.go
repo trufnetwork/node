@@ -12,6 +12,17 @@ import (
 	rpcserver "github.com/trufnetwork/kwil-db/node/services/jsonrpc"
 )
 
+// endBlockHook updates the cached block height after each committed block.
+// This allows local stream operations to use the same created_at = block height
+// semantics as consensus streams.
+func endBlockHook(_ context.Context, _ *common.App, block *common.BlockContext) error {
+	if block == nil {
+		return nil
+	}
+	GetExtension().height.Store(block.Height)
+	return nil
+}
+
 // InitializeExtension registers the tn_local hooks.
 // Called from extensions/register.go during init().
 func InitializeExtension() {
@@ -23,6 +34,11 @@ func InitializeExtension() {
 	err = hooks.RegisterAdminServerHook("tn_local_admin", adminServerHook)
 	if err != nil {
 		panic(fmt.Sprintf("failed to register tn_local admin server hook: %v", err))
+	}
+
+	err = hooks.RegisterEndBlockHook("tn_local_end_block", endBlockHook)
+	if err != nil {
+		panic(fmt.Sprintf("failed to register tn_local end block hook: %v", err))
 	}
 }
 

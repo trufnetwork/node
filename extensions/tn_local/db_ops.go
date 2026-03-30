@@ -3,7 +3,6 @@ package tn_local
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/trufnetwork/kwil-db/core/log"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
@@ -21,11 +20,12 @@ func NewLocalDB(db sql.DB, logger log.Logger) *LocalDB {
 }
 
 // dbCreateStream inserts a new stream into ext_tn_local.streams.
+// Uses current block height for created_at, matching consensus semantics.
 func (ext *Extension) dbCreateStream(ctx context.Context, dataProvider, streamID, streamType string) error {
 	_, err := ext.db.Execute(ctx, fmt.Sprintf(
 		`INSERT INTO %s.streams (data_provider, stream_id, stream_type, created_at)
 		 VALUES ($1, $2, $3, $4)`, SchemaName),
-		dataProvider, streamID, streamType, time.Now().Unix())
+		dataProvider, streamID, streamType, ext.currentHeight())
 	return err
 }
 
@@ -41,7 +41,7 @@ func (ext *Extension) dbLookupStreamRef(ctx context.Context, dataProvider, strea
 	if len(rs.Rows) == 0 {
 		return 0, "", nil
 	}
-	id, ok := rs.Rows[0][0].(int64)
+	id, ok := toInt64Val(rs.Rows[0][0])
 	if !ok {
 		return 0, "", fmt.Errorf("unexpected id type: %T", rs.Rows[0][0])
 	}
@@ -54,8 +54,9 @@ func (ext *Extension) dbLookupStreamRef(ctx context.Context, dataProvider, strea
 
 // dbInsertRecords batch-inserts resolved records into ext_tn_local.primitive_events
 // within a transaction. Mirrors the consensus INSERT in 003-primitive-insertion.sql.
+// Uses current block height for created_at, matching consensus semantics.
 func (ext *Extension) dbInsertRecords(ctx context.Context, streamRefs []int64, eventTimes []int64, values []string) error {
-	createdAt := time.Now().Unix()
+	createdAt := ext.currentHeight()
 
 	tx, err := ext.db.BeginTx(ctx)
 	if err != nil {
@@ -95,7 +96,7 @@ func (ext *Extension) dbGetNextGroupSequence(ctx context.Context, tx sql.Tx, par
 	if len(rs.Rows) == 0 {
 		return 1, nil
 	}
-	val, ok := rs.Rows[0][0].(int64)
+	val, ok := toInt64Val(rs.Rows[0][0])
 	if !ok {
 		return 0, fmt.Errorf("unexpected group_sequence type: %T", rs.Rows[0][0])
 	}
@@ -109,6 +110,21 @@ func (ext *Extension) dbInsertTaxonomyRow(ctx context.Context, tx sql.Tx, taxono
 		 VALUES ($1::UUID, $2, $3, $4, $5, $6, $7)`, SchemaName),
 		taxonomyID, parentRef, childRef, weight, startDate, groupSeq, createdAt)
 	return err
+}
+
+// toInt64Val converts integer types (int32, int64, int) from database results to int64.
+// PostgreSQL SERIAL returns int32, BIGINT returns int64.
+func toInt64Val(v any) (int64, bool) {
+	switch val := v.(type) {
+	case int64:
+		return val, true
+	case int32:
+		return int64(val), true
+	case int:
+		return int64(val), true
+	default:
+		return 0, false
+	}
 }
 
 // SetupSchema creates the ext_tn_local schema and all tables within a single transaction.

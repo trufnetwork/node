@@ -116,9 +116,10 @@ func TestInsertRecords_Success(t *testing.T) {
 	require.Equal(t, int64(42), capturedArgs[0][0]) // stream_ref
 	require.Equal(t, int64(1000), capturedArgs[0][1])
 	require.Equal(t, "123.456", capturedArgs[0][2])
+	// created_at = block height (0 before any blocks are processed in tests)
 	createdAt, ok := capturedArgs[0][3].(int64)
 	require.True(t, ok, "created_at should be int64")
-	require.NotZero(t, createdAt)
+	require.GreaterOrEqual(t, createdAt, int64(0))
 
 	require.Equal(t, int64(42), capturedArgs[1][0])
 	require.Equal(t, int64(2000), capturedArgs[1][1])
