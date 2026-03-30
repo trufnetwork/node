@@ -317,7 +317,7 @@ func (ext *Extension) InsertTaxonomy(ctx context.Context, req *InsertTaxonomyReq
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to get group sequence", nil)
 	}
 
-	createdAt := time.Now().Unix()
+	createdAt := ext.currentHeight()
 	for i := 0; i < n; i++ {
 		taxonomyID := generateTaxonomyID(dataProvider, req.StreamID, req.ChildDataProviders[i], req.ChildStreamIDs[i], i)
 		if insertErr := ext.dbInsertTaxonomyRow(ctx, tx, taxonomyID, parentRef, childRefs[i], req.Weights[i], startDate, groupSeq, createdAt); insertErr != nil {
@@ -334,17 +334,154 @@ func (ext *Extension) InsertTaxonomy(ctx context.Context, req *InsertTaxonomyReq
 	return &InsertTaxonomyResponse{}, nil
 }
 
-// GetRecord queries records from a local primitive stream. (Task 6)
+// GetRecord queries records from a local stream (primitive or composed).
+// Mirrors consensus get_record_primitive/get_record_composed:
+//   - Both from/to nil: return latest record
+//   - Gap-filling with anchor record
+//   - Dedup by created_at DESC
+//   - LIMIT 10000
 func (ext *Extension) GetRecord(ctx context.Context, req *GetRecordRequest) (*GetRecordResponse, *jsonrpc.Error) {
-	return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "not implemented", nil)
+	if req == nil {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "missing request", nil)
+	}
+
+	dataProvider := strings.ToLower(req.DataProvider)
+	if err := validateDataProvider(dataProvider); err != nil {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
+	}
+	if err := validateStreamID(req.StreamID); err != nil {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
+	}
+
+	ref, stype, err := ext.dbLookupStreamRef(ctx, dataProvider, req.StreamID)
+	if err != nil {
+		ext.logger.Error("failed to look up stream", "error", err)
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to look up stream", nil)
+	}
+	if ref == 0 {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream not found: %s/%s", dataProvider, req.StreamID), nil)
+	}
+
+	var records []RecordOutput
+	switch stype {
+	case "primitive":
+		records, err = ext.dbGetRecordPrimitive(ctx, ref, req.FromTime, req.ToTime)
+	case "composed":
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "composed stream queries not yet implemented", nil)
+	default:
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, fmt.Sprintf("unknown stream type: %s", stype), nil)
+	}
+	if err != nil {
+		ext.logger.Error("failed to query records", "error", err)
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to query records", nil)
+	}
+
+	if records == nil {
+		records = []RecordOutput{}
+	}
+
+	return &GetRecordResponse{Records: records}, nil
 }
 
-// GetIndex queries computed index values from a local stream. (Task 6)
+// GetIndex queries computed index values from a local stream.
+// Index = (value / base_value) * 100.
+// Default base_time is the earliest event_time in the stream.
 func (ext *Extension) GetIndex(ctx context.Context, req *GetIndexRequest) (*GetIndexResponse, *jsonrpc.Error) {
-	return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "not implemented", nil)
+	if req == nil {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "missing request", nil)
+	}
+
+	dataProvider := strings.ToLower(req.DataProvider)
+	if err := validateDataProvider(dataProvider); err != nil {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
+	}
+	if err := validateStreamID(req.StreamID); err != nil {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
+	}
+
+	ref, stype, err := ext.dbLookupStreamRef(ctx, dataProvider, req.StreamID)
+	if err != nil {
+		ext.logger.Error("failed to look up stream", "error", err)
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to look up stream", nil)
+	}
+	if ref == 0 {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream not found: %s/%s", dataProvider, req.StreamID), nil)
+	}
+
+	if stype == "composed" {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "composed stream queries not yet implemented", nil)
+	}
+
+	// Resolve base_time: default to first event_time in the stream
+	baseTime := req.BaseTime
+	if baseTime == nil {
+		firstET, lookupErr := ext.dbGetFirstEventTime(ctx, ref)
+		if lookupErr != nil {
+			ext.logger.Error("failed to get first event time", "error", lookupErr)
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to determine base time", nil)
+		}
+		if firstET == nil {
+			return &GetIndexResponse{Records: []IndexOutput{}}, nil
+		}
+		baseTime = firstET
+	}
+
+	// Get the base value at base_time
+	var baseRecords []RecordOutput
+	baseRecords, err = ext.dbGetRecordPrimitive(ctx, ref, nil, baseTime)
+	if err != nil {
+		ext.logger.Error("failed to get base value", "error", err)
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to get base value", nil)
+	}
+	if len(baseRecords) == 0 {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "no data at base time", nil)
+	}
+
+	baseValue, parseErr := decimal.NewFromString(baseRecords[len(baseRecords)-1].Value)
+	if parseErr != nil {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to parse base value", nil)
+	}
+	if baseValue.IsZero() {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "base value is 0", nil)
+	}
+
+	// Get all records for the requested range
+	var records []RecordOutput
+	records, err = ext.dbGetRecordPrimitive(ctx, ref, req.FromTime, req.ToTime)
+	if err != nil {
+		ext.logger.Error("failed to query records for index", "error", err)
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to query records", nil)
+	}
+
+	// Calculate index: (value / base_value) * 100
+	hundred := decimal.NewFromInt(100)
+	indexRecords := make([]IndexOutput, 0, len(records))
+	for _, r := range records {
+		val, valErr := decimal.NewFromString(r.Value)
+		if valErr != nil {
+			continue
+		}
+		indexed := val.Mul(hundred).Div(baseValue)
+		indexRecords = append(indexRecords, IndexOutput{
+			EventTime: r.EventTime,
+			Value:     indexed.StringFixed(18),
+		})
+	}
+
+	return &GetIndexResponse{Records: indexRecords}, nil
 }
 
-// ListStreams lists all local streams. (Task 6)
-func (ext *Extension) ListStreams(ctx context.Context, req *ListStreamsRequest) (*ListStreamsResponse, *jsonrpc.Error) {
-	return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "not implemented", nil)
+// ListStreams lists all local streams.
+func (ext *Extension) ListStreams(ctx context.Context, _ *ListStreamsRequest) (*ListStreamsResponse, *jsonrpc.Error) {
+	streams, err := ext.dbListStreams(ctx)
+	if err != nil {
+		ext.logger.Error("failed to list streams", "error", err)
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to list streams", nil)
+	}
+
+	if streams == nil {
+		streams = []StreamInfo{}
+	}
+
+	return &ListStreamsResponse{Streams: streams}, nil
 }

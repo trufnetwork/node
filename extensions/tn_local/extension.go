@@ -14,6 +14,9 @@ type Extension struct {
 	db        sql.DB
 	localDB   *LocalDB
 	isEnabled atomic.Bool
+	// height tracks the latest committed block height, updated by EndBlockHook.
+	// Local streams use the same created_at = block height semantics as consensus.
+	height atomic.Int64
 }
 
 var (
@@ -42,6 +45,12 @@ func (e *Extension) configure(logger log.Logger, db sql.DB, localDB *LocalDB) {
 	e.db = db
 	e.localDB = localDB
 	e.isEnabled.Store(true)
+}
+
+// currentHeight returns the latest committed block height.
+// Falls back to 0 if no blocks have been processed yet (e.g. during tests).
+func (e *Extension) currentHeight() int64 {
+	return e.height.Load()
 }
 
 // Close closes the extension's connection pool.

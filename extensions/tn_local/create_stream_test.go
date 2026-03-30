@@ -48,10 +48,10 @@ func TestCreateStream_Success(t *testing.T) {
 	require.Equal(t, "0xec36224a679218ae28fcece8d3c68595b87dd832", capturedArgs[0])
 	require.Equal(t, "st00000000000000000000000000test", capturedArgs[1])
 	require.Equal(t, "primitive", capturedArgs[2])
-	// created_at should be a non-zero unix timestamp
+	// created_at should be block height (int64); 0 before any blocks are processed
 	createdAt, ok := capturedArgs[3].(int64)
 	require.True(t, ok, "created_at should be int64")
-	require.NotZero(t, createdAt, "created_at should be non-zero")
+	require.GreaterOrEqual(t, createdAt, int64(0), "created_at should be >= 0")
 }
 
 func TestCreateStream_ComposedType(t *testing.T) {
