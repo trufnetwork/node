@@ -13,6 +13,7 @@ import (
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/crypto"
 	coreauth "github.com/trufnetwork/kwil-db/core/crypto/auth"
+	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/extensions/tn_utils"
 	"github.com/trufnetwork/node/internal/migrations"
@@ -433,4 +434,90 @@ func requestAttestationWithTimeRange(ctx context.Context, platform *kwilTesting.
 // requestAttestationWithLeader requests attestation with a specific leader
 func requestAttestationWithLeader(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, leaderPub *crypto.Secp256k1PublicKey, dataProvider string, streamID string, actionName string) error {
 	return callRequestAttestationAction(ctx, platform, signer, leaderPub, dataProvider, streamID, actionName)
+}
+
+// requestAttestationWithArgsBytes requests attestation with pre-encoded args bytes
+func requestAttestationWithArgsBytes(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, dataProvider string, streamID string, actionName string, argsBytes []byte) error {
+	_, pubGeneric, err := crypto.GenerateSecp256k1Key(nil)
+	if err != nil {
+		return err
+	}
+	pub := pubGeneric.(*crypto.Secp256k1PublicKey)
+
+	tx := &common.TxContext{
+		Ctx: ctx,
+		BlockContext: &common.BlockContext{
+			Height:   1,
+			Proposer: pub,
+		},
+		Signer:        signer.Bytes(),
+		Caller:        signer.Address(),
+		TxID:          platform.Txid(),
+		Authenticator: coreauth.EthPersonalSignAuth,
+	}
+	engineCtx := &common.EngineContext{TxContext: tx}
+
+	res, err := platform.Engine.Call(
+		engineCtx,
+		platform.DB,
+		"",
+		"request_attestation",
+		[]any{
+			strings.ToLower(dataProvider),
+			streamID,
+			actionName,
+			argsBytes,
+			false, // encrypt_sig
+			nil,   // max_fee
+		},
+		func(row *common.Row) error { return nil },
+	)
+	if err != nil {
+		return err
+	}
+	if res != nil && res.Error != nil {
+		return res.Error
+	}
+	return nil
+}
+
+// insertTestDataPoint inserts a single data point into a primitive stream
+func insertTestDataPoint(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, streamID string, eventTime int64, value string) error {
+	tx := &common.TxContext{
+		Ctx:           ctx,
+		BlockContext:  &common.BlockContext{Height: 1},
+		Signer:        signer.Bytes(),
+		Caller:        signer.Address(),
+		TxID:          platform.Txid(),
+		Authenticator: coreauth.EthPersonalSignAuth,
+	}
+	engineCtx := &common.EngineContext{TxContext: tx}
+
+	decVal, err := kwilTypes.ParseDecimal(value)
+	if err != nil {
+		return fmt.Errorf("failed to parse decimal value: %w", err)
+	}
+	// Set precision to match NUMERIC(36,18) expected by insert_records
+	decVal.SetPrecisionAndScale(36, 18)
+
+	res, err := platform.Engine.Call(
+		engineCtx,
+		platform.DB,
+		"",
+		"insert_records",
+		[]any{
+			[]string{signer.Address()},
+			[]string{streamID},
+			[]int64{eventTime},
+			[]*kwilTypes.Decimal{decVal},
+		},
+		func(row *common.Row) error { return nil },
+	)
+	if err != nil {
+		return err
+	}
+	if res != nil && res.Error != nil {
+		return res.Error
+	}
+	return nil
 }

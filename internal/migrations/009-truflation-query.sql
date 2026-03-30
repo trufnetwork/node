@@ -240,7 +240,8 @@ CREATE OR REPLACE ACTION truflation_get_record_primitive(
     )
     -- Final selection with fallback
     SELECT event_time, value FROM combined_results
-    ORDER BY event_time ASC;
+    ORDER BY event_time ASC
+    LIMIT 10000;
 };
 
 /**
@@ -1221,7 +1222,8 @@ RETURNS TABLE(
         SELECT event_time, value FROM anchor_hit
     )
     SELECT DISTINCT event_time, value FROM result
-    ORDER BY 1;
+    ORDER BY 1
+    LIMIT 10000;
 };
 
 CREATE OR REPLACE ACTION truflation_last_rc_composed(
@@ -2174,5 +2176,6 @@ RETURNS TABLE(
         SELECT event_time, value FROM anchor_hit
     )
     SELECT DISTINCT event_time, value FROM result
-    ORDER BY 1;
+    ORDER BY 1
+    LIMIT 10000;
 };
