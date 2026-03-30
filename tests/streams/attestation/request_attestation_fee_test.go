@@ -463,7 +463,7 @@ func requestAttestationWithArgsBytes(ctx context.Context, platform *kwilTesting.
 		"",
 		"request_attestation",
 		[]any{
-			dataProvider,
+			strings.ToLower(dataProvider),
 			streamID,
 			actionName,
 			argsBytes,

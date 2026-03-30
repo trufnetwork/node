@@ -791,7 +791,7 @@ func validateAttestationDateRangeHandler(ctx *common.EngineContext, app *common.
 
 	// If only one is provided, the range is effectively unbounded — reject
 	if fromVal == nil || toVal == nil {
-		return fmt.Errorf("attestation queries with range-based actions (get_record, get_index) must specify both 'from' and 'to' parameters")
+		return fmt.Errorf("attestation queries with range-based actions (get_record, get_index, get_change_over_time) must specify both 'from' and 'to' parameters")
 	}
 
 	fromTS, err := toInt64(*fromVal)
@@ -805,6 +805,9 @@ func validateAttestationDateRangeHandler(ctx *common.EngineContext, app *common.
 	}
 
 	dateRange := toTS - fromTS
+	if dateRange < 0 {
+		return fmt.Errorf("attestation date range invalid: 'from' (%d) must be less than or equal to 'to' (%d)", fromTS, toTS)
+	}
 	if dateRange > MaxAttestationDateRangeSeconds {
 		return fmt.Errorf("attestation date range of %d seconds exceeds maximum of %d seconds (90 days)", dateRange, MaxAttestationDateRangeSeconds)
 	}

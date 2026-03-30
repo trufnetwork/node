@@ -4,7 +4,6 @@ package tests
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -142,7 +141,7 @@ func testAllDateRangeValidations(t *testing.T) func(ctx context.Context, platfor
 		require.Contains(t, err.Error(), "exceeds maximum")
 
 		// === Test 9: get_last_record (action_id=4) should skip validation ===
-		// Signature: get_last_record($data_provider TEXT, $stream_id TEXT, $before INT8, $frozen_at INT8)
+		// Signature: get_last_record($data_provider TEXT, $stream_id TEXT, $before INT8, $frozen_at INT8, $use_cache BOOL)
 		t.Log("Test 9: get_last_record should skip date range validation")
 		lastRecordArgs := []any{
 			systemAdmin.Address(), streamID,
@@ -155,7 +154,19 @@ func testAllDateRangeValidations(t *testing.T) func(ctx context.Context, platfor
 		err = requestAttestationWithArgsBytes(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_last_record", argsBytes)
 		require.NoError(t, err, "get_last_record should skip date range validation")
 
-		fmt.Println("All date range validation tests passed")
+		// === Test 10: from == to (single-point query, dateRange=0) should succeed ===
+		t.Log("Test 10: get_record with from == to should succeed")
+		samePoint := int64(1000000)
+		err = requestAttestationWithTimeRange(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_record", samePoint, samePoint)
+		require.NoError(t, err, "single-point query (from == to) should succeed")
+
+		// === Test 11: from > to (negative range) should fail ===
+		t.Log("Test 11: get_record with from > to should fail")
+		err = requestAttestationWithTimeRange(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_record", int64(2000000), int64(1000000))
+		require.Error(t, err, "negative range (from > to) should fail")
+		require.Contains(t, err.Error(), "must be less than or equal", "should reject inverted range")
+
+		t.Log("All date range validation tests passed")
 		return nil
 	}
 }
