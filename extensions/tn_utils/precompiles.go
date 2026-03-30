@@ -815,8 +815,9 @@ func validateAttestationDateRangeHandler(ctx *common.EngineContext, app *common.
 	return nil
 }
 
-// derefIntPtr dereferences a pointer to an integer type, returning nil if the input is nil.
-// DecodeActionArgs may return *int64 for nullable INT8 parameters.
+// derefIntPtr dereferences a pointer to any integer type, returning nil if the
+// input is nil or a nil pointer. DecodeActionArgs may return pointer variants
+// (*int64, *int32, *int, *uint64, etc.) for nullable parameters.
 func derefIntPtr(v any) *any {
 	if v == nil {
 		return nil
@@ -834,8 +835,56 @@ func derefIntPtr(v any) *any {
 		}
 		val := any(*ptr)
 		return &val
+	case *int32:
+		if ptr == nil {
+			return nil
+		}
+		val := any(*ptr)
+		return &val
+	case *int16:
+		if ptr == nil {
+			return nil
+		}
+		val := any(*ptr)
+		return &val
+	case *int8:
+		if ptr == nil {
+			return nil
+		}
+		val := any(*ptr)
+		return &val
+	case *uint64:
+		if ptr == nil {
+			return nil
+		}
+		val := any(*ptr)
+		return &val
+	case *uint32:
+		if ptr == nil {
+			return nil
+		}
+		val := any(*ptr)
+		return &val
+	case *uint16:
+		if ptr == nil {
+			return nil
+		}
+		val := any(*ptr)
+		return &val
+	case *uint8:
+		if ptr == nil {
+			return nil
+		}
+		val := any(*ptr)
+		return &val
+	case *uint:
+		if ptr == nil {
+			return nil
+		}
+		val := any(*ptr)
+		return &val
 	default:
-		// Not a pointer — return as-is
+		// Not a pointer — return as-is (toInt64 will handle value types)
 		return &v
 	}
 }

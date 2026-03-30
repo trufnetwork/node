@@ -140,6 +140,12 @@ func testAllDateRangeValidations(t *testing.T) func(ctx context.Context, platfor
 		require.Error(t, err, "get_index with 180-day range should fail")
 		require.Contains(t, err.Error(), "exceeds maximum")
 
+		// === Test 8b: get_change_over_time with 180-day range should also fail ===
+		t.Log("Test 8b: get_change_over_time with 180-day range should fail")
+		err = requestAttestationWithTimeRange(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_change_over_time", from180, to180)
+		require.Error(t, err, "get_change_over_time with 180-day range should fail")
+		require.Contains(t, err.Error(), "exceeds maximum")
+
 		// === Test 9: get_last_record (action_id=4) should skip validation ===
 		// Signature: get_last_record($data_provider TEXT, $stream_id TEXT, $before INT8, $frozen_at INT8, $use_cache BOOL)
 		t.Log("Test 9: get_last_record should skip date range validation")
