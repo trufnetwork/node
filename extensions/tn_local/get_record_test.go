@@ -56,6 +56,24 @@ func TestGetRecord_InvalidStreamID(t *testing.T) {
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
 }
 
+func TestGetRecord_FromAfterTo(t *testing.T) {
+	mockDB := mockDBForQuery(1, "primitive", nil)
+	ext := newTestExtension(mockDB)
+
+	from := int64(2)
+	to := int64(1)
+	resp, rpcErr := ext.GetRecord(context.Background(), &GetRecordRequest{
+		DataProvider: testDP,
+		StreamID:     testSID,
+		FromTime:     &from,
+		ToTime:       &to,
+	})
+	require.Nil(t, resp)
+	require.NotNil(t, rpcErr)
+	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
+	require.Contains(t, rpcErr.Message, "from_time must be <= to_time")
+}
+
 func TestGetRecord_Primitive_LatestRecord(t *testing.T) {
 	// Both from and to nil → return latest record
 	mockDB := mockDBForQuery(1, "primitive", [][]any{

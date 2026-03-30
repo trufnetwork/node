@@ -13,13 +13,17 @@ import (
 )
 
 // These integration tests validate the actual SQL queries run against a real PostgreSQL.
-// They require a running PostgreSQL instance. Skip if unavailable.
+// They require TEST_PG_DATABASE to be explicitly set to opt in (prevents accidental runs
+// against production databases). Skip if unavailable.
+//
+// Run with:
+//   TEST_PG_DATABASE=kwild go test -v ./extensions/tn_local/ -run TestIntegration -count=1
 //
 // Configure via environment variables:
+//   TEST_PG_DATABASE (required — must be set to run)
 //   TEST_PG_HOST (default: localhost)
 //   TEST_PG_PORT (default: 5432)
 //   TEST_PG_USER (default: kwild)
-//   TEST_PG_DATABASE (default: kwild)
 
 func envOrDefault(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
@@ -31,13 +35,19 @@ func envOrDefault(key, fallback string) string {
 func setupIntegrationDB(t *testing.T) *Extension {
 	t.Helper()
 
+	// Require explicit env config to avoid accidentally running against production.
+	// At least TEST_PG_DATABASE must be set to opt in.
+	dbName := os.Getenv("TEST_PG_DATABASE")
+	if dbName == "" {
+		t.Skip("skipping integration test: TEST_PG_DATABASE not set (set it to opt in)")
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	host := envOrDefault("TEST_PG_HOST", "localhost")
 	port := envOrDefault("TEST_PG_PORT", "5432")
 	user := envOrDefault("TEST_PG_USER", "kwild")
-	dbName := envOrDefault("TEST_PG_DATABASE", "kwild")
 
 	connStr := fmt.Sprintf("host=%s port=%s user=%s database=%s sslmode=disable", host, port, user, dbName)
 	pool, err := pgxpool.New(ctx, connStr)
@@ -107,7 +117,9 @@ func TestIntegration_PrimitiveGetRecord(t *testing.T) {
 	require.Len(t, resp.Records, 1, "latest record should return 1 row")
 	require.Equal(t, int64(5000), resp.Records[0].EventTime)
 
-	// Test 2: Time range query
+	// Test 2: Time range query (from=1500, to=4000)
+	// Anchor: last event at or before 1500 → 1000
+	// Interval: event_time > 1500 AND event_time <= 4000 → 2000, 3000, 4000
 	from := int64(1500)
 	to := int64(4000)
 	resp, rpcErr = ext.GetRecord(ctx, &GetRecordRequest{
@@ -117,14 +129,13 @@ func TestIntegration_PrimitiveGetRecord(t *testing.T) {
 		ToTime:       &to,
 	})
 	require.Nil(t, rpcErr)
-	// Should have: anchor at 1000, then 2000, 3000, 4000
-	require.GreaterOrEqual(t, len(resp.Records), 3, "should have at least 3 records in range")
-	// Verify ordering
-	for i := 1; i < len(resp.Records); i++ {
-		require.Greater(t, resp.Records[i].EventTime, resp.Records[i-1].EventTime, "records should be ordered by event_time")
+	require.Len(t, resp.Records, 4, "should have anchor + 3 interval records")
+	expectedTimes := []int64{1000, 2000, 3000, 4000}
+	for i, et := range expectedTimes {
+		require.Equal(t, et, resp.Records[i].EventTime, "record %d event_time mismatch", i)
 	}
 
-	// Test 3: Empty range
+	// Test 3: Range beyond data (from=9000, to=9999) — only anchor at 5000
 	from = int64(9000)
 	to = int64(9999)
 	resp, rpcErr = ext.GetRecord(ctx, &GetRecordRequest{
@@ -134,8 +145,8 @@ func TestIntegration_PrimitiveGetRecord(t *testing.T) {
 		ToTime:       &to,
 	})
 	require.Nil(t, rpcErr)
-	// May have anchor at 5000
-	require.LessOrEqual(t, len(resp.Records), 1, "should have at most 1 anchor record")
+	require.Len(t, resp.Records, 1, "should have exactly 1 anchor record")
+	require.Equal(t, int64(5000), resp.Records[0].EventTime)
 }
 
 func TestIntegration_PrimitiveGetIndex(t *testing.T) {
