@@ -103,6 +103,13 @@ CREATE OR REPLACE ACTION request_attestation(
     }
     $stream_bytes := $stream_id::BYTEA;
 
+    -- Validate date range for range-based attestation actions (IDs 1-3) BEFORE
+    -- executing the query. This prevents unbounded queries from scanning the entire
+    -- primitive_events table during block execution. Max range: 90 days.
+    -- This check runs before call_dispatch to reject expensive queries early,
+    -- before kwil-db buffers all result rows into memory.
+    tn_utils.validate_attestation_date_range($action_id, $args_bytes);
+
     -- Force deterministic execution by overriding non-deterministic parameters.
     -- Query actions (IDs 1-5) all have use_cache as their last parameter.
     -- Force use_cache=false to ensure all validators compute identical results

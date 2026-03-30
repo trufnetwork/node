@@ -86,7 +86,8 @@ CREATE OR REPLACE ACTION get_record_primitive(
     )
     -- Final selection with fallback
     SELECT event_time, value FROM combined_results
-    ORDER BY event_time ASC;
+    ORDER BY event_time ASC
+    LIMIT 10000;
 };
 
 /**

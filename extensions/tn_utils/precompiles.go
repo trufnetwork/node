@@ -35,6 +35,7 @@ func buildPrecompile() precompiles.Precompile {
 			encodeUintMethod("encode_uint64", 64),
 			canonicalToDataPointsABIMethod(),
 			forceLastArgFalseMethod(),
+			validateAttestationDateRangeMethod(),
 			parseAttestationBooleanMethod(),
 			computeAttestationHashMethod(),
 			unpackQueryComponentsMethod(),
@@ -93,18 +94,18 @@ func getCallerBytesMethod() precompiles.Method {
 			if ctx == nil || ctx.TxContext == nil {
 				return resultFn([]any{[]byte{}})
 			}
-			
+
 			// Return normalized address bytes instead of raw public key bytes.
 			// Caller is the string identifier (hex address for EVM).
 			caller := ctx.TxContext.Caller
 			if strings.HasPrefix(caller, "0x") || strings.HasPrefix(caller, "0X") {
 				caller = caller[2:]
 			}
-			
+
 			if b, err := hex.DecodeString(caller); err == nil && len(b) == 20 {
 				return resultFn([]any{b})
 			}
-			
+
 			// Fallback to Signer (public key) if not a hex address
 			return resultFn([]any{ctx.TxContext.Signer})
 		},
@@ -127,11 +128,11 @@ func getLeaderHexMethod() precompiles.Method {
 			if ctx == nil || ctx.TxContext == nil || ctx.TxContext.BlockContext == nil || ctx.TxContext.BlockContext.Proposer == nil {
 				return resultFn([]any{""})
 			}
-			
+
 			// For prediction markets, we usually want the Ethereum address of the leader
 			// to transfer fees via the bridge.
 			pubkey := ctx.TxContext.BlockContext.Proposer
-			
+
 			if pubkey.Type() == crypto.KeyTypeSecp256k1 {
 				// Manually unmarshal to ensure we have the concrete type
 				secp, err := crypto.UnmarshalSecp256k1PublicKey(pubkey.Bytes())
@@ -140,7 +141,7 @@ func getLeaderHexMethod() precompiles.Method {
 					return resultFn([]any{"0x" + hex.EncodeToString(addr)})
 				}
 			}
-			
+
 			// Fallback to raw hex of the public key
 			return resultFn([]any{"0x" + hex.EncodeToString(pubkey.Bytes())})
 		},
@@ -163,7 +164,7 @@ func getLeaderBytesMethod() precompiles.Method {
 			if ctx == nil || ctx.TxContext == nil || ctx.TxContext.BlockContext == nil || ctx.TxContext.BlockContext.Proposer == nil {
 				return resultFn([]any{[]byte{}})
 			}
-			
+
 			pubkey := ctx.TxContext.BlockContext.Proposer
 			if pubkey.Type() == crypto.KeyTypeSecp256k1 {
 				// Manually unmarshal to ensure we have the concrete type
@@ -173,7 +174,7 @@ func getLeaderBytesMethod() precompiles.Method {
 					return resultFn([]any{addr})
 				}
 			}
-			
+
 			// Fallback to raw bytes of the public key
 			return resultFn([]any{pubkey.Bytes()})
 		},
@@ -719,6 +720,121 @@ func forceLastArgFalseHandler(ctx *common.EngineContext, app *common.App, inputs
 	}
 
 	return resultFn([]any{modifiedArgsBytes})
+}
+
+// MaxAttestationDateRangeSeconds is the maximum allowed date range for attestation
+// queries (90 days). This prevents unbounded queries from scanning the entire
+// primitive_events table during on-chain block execution.
+//
+// 90 days is generous for all legitimate attestation use cases:
+//   - Settlement only needs the latest value (single point)
+//   - Proof of history typically spans days or weeks, not years
+//   - 90 days of daily data = 90 rows, hourly = 2,160 rows (both safe)
+const MaxAttestationDateRangeSeconds int64 = 90 * 24 * 60 * 60 // 7,776,000 seconds
+
+// validateAttestationDateRangeMethod checks that the date range in attestation
+// query args does not exceed 90 days. Only applies to range-based actions
+// (action_id 1-3: get_record, get_index, get_change_over_time) where args
+// contain $from at index 2 and $to at index 3.
+//
+// Actions 4-5 (get_last_record, get_first_record) are single-point queries
+// with LIMIT 1 and do not need date range validation.
+// Actions 6-9 (binary) return a single boolean and are inherently safe.
+func validateAttestationDateRangeMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "validate_attestation_date_range",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters: []precompiles.PrecompileValue{
+			precompiles.NewPrecompileValue("action_id", types.IntType, false),
+			precompiles.NewPrecompileValue("args_bytes", types.ByteaType, false),
+		},
+		Returns: nil, // void — errors if invalid
+		Handler: validateAttestationDateRangeHandler,
+	}
+}
+
+func validateAttestationDateRangeHandler(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+	actionID, err := toInt64(inputs[0])
+	if err != nil {
+		return fmt.Errorf("action_id: %w", err)
+	}
+
+	// Only validate range-based actions (1-3: get_record, get_index, get_change_over_time).
+	// Actions 4-5 are single-point (LIMIT 1), actions 6-9 are binary (single bool).
+	if actionID < 1 || actionID > 3 {
+		return nil // no validation needed
+	}
+
+	argsBytes, ok := inputs[1].([]byte)
+	if !ok {
+		return fmt.Errorf("args_bytes must be []byte, got %T", inputs[1])
+	}
+
+	args, err := DecodeActionArgs(argsBytes)
+	if err != nil {
+		return fmt.Errorf("failed to decode action args: %w", err)
+	}
+
+	// Range-based actions have signature: ($data_provider, $stream_id, $from, $to, ...)
+	// $from is at index 2, $to is at index 3
+	if len(args) < 4 {
+		return fmt.Errorf("range-based attestation action requires at least 4 args, got %d", len(args))
+	}
+
+	// If both from and to are nil, the action returns the latest record (LIMIT 1) — safe
+	fromVal := derefIntPtr(args[2])
+	toVal := derefIntPtr(args[3])
+
+	if fromVal == nil && toVal == nil {
+		return nil
+	}
+
+	// If only one is provided, the range is effectively unbounded — reject
+	if fromVal == nil || toVal == nil {
+		return fmt.Errorf("attestation queries with range-based actions (get_record, get_index) must specify both 'from' and 'to' parameters")
+	}
+
+	fromTS, err := toInt64(*fromVal)
+	if err != nil {
+		return fmt.Errorf("failed to parse 'from' parameter: %w", err)
+	}
+
+	toTS, err := toInt64(*toVal)
+	if err != nil {
+		return fmt.Errorf("failed to parse 'to' parameter: %w", err)
+	}
+
+	dateRange := toTS - fromTS
+	if dateRange > MaxAttestationDateRangeSeconds {
+		return fmt.Errorf("attestation date range of %d seconds exceeds maximum of %d seconds (90 days)", dateRange, MaxAttestationDateRangeSeconds)
+	}
+
+	return nil
+}
+
+// derefIntPtr dereferences a pointer to an integer type, returning nil if the input is nil.
+// DecodeActionArgs may return *int64 for nullable INT8 parameters.
+func derefIntPtr(v any) *any {
+	if v == nil {
+		return nil
+	}
+	switch ptr := v.(type) {
+	case *int64:
+		if ptr == nil {
+			return nil
+		}
+		val := any(*ptr)
+		return &val
+	case *int:
+		if ptr == nil {
+			return nil
+		}
+		val := any(*ptr)
+		return &val
+	default:
+		// Not a pointer — return as-is
+		return &v
+	}
 }
 
 // parseAttestationBooleanMethod extracts a boolean result from an attestation's

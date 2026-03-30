@@ -964,7 +964,8 @@ RETURNS TABLE(
       SELECT event_time, value FROM anchor_hit
   )
   SELECT DISTINCT event_time, value FROM result
-  ORDER BY 1;
+  ORDER BY 1
+  LIMIT 10000;
 };
 
 
