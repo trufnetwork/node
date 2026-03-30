@@ -353,6 +353,11 @@ func (ext *Extension) GetRecord(ctx context.Context, req *GetRecordRequest) (*Ge
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
 	}
 
+	// Validate time range
+	if req.FromTime != nil && req.ToTime != nil && *req.FromTime > *req.ToTime {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "from_time must be <= to_time", nil)
+	}
+
 	ref, stype, err := ext.dbLookupStreamRef(ctx, dataProvider, req.StreamID)
 	if err != nil {
 		ext.logger.Error("failed to look up stream", "error", err)
@@ -399,6 +404,11 @@ func (ext *Extension) GetIndex(ctx context.Context, req *GetIndexRequest) (*GetI
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
 	}
 
+	// Validate time range
+	if req.FromTime != nil && req.ToTime != nil && *req.FromTime > *req.ToTime {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "from_time must be <= to_time", nil)
+	}
+
 	ref, stype, err := ext.dbLookupStreamRef(ctx, dataProvider, req.StreamID)
 	if err != nil {
 		ext.logger.Error("failed to look up stream", "error", err)
@@ -426,18 +436,17 @@ func (ext *Extension) GetIndex(ctx context.Context, req *GetIndexRequest) (*GetI
 		baseTime = firstET
 	}
 
-	// Get the base value at base_time
-	var baseRecords []RecordOutput
-	baseRecords, err = ext.dbGetRecordPrimitive(ctx, ref, nil, baseTime)
-	if err != nil {
-		ext.logger.Error("failed to get base value", "error", err)
+	// Get the base value: single-row lookup at or before base_time
+	baseRecord, baseErr := ext.dbGetRecordAtOrBefore(ctx, ref, *baseTime)
+	if baseErr != nil {
+		ext.logger.Error("failed to get base value", "error", baseErr)
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to get base value", nil)
 	}
-	if len(baseRecords) == 0 {
+	if baseRecord == nil {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "no data at base time", nil)
 	}
 
-	baseValue, parseErr := decimal.NewFromString(baseRecords[len(baseRecords)-1].Value)
+	baseValue, parseErr := decimal.NewFromString(baseRecord.Value)
 	if parseErr != nil {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to parse base value", nil)
 	}

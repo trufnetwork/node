@@ -16,6 +16,9 @@ import (
 // This allows local stream operations to use the same created_at = block height
 // semantics as consensus streams.
 func endBlockHook(_ context.Context, _ *common.App, block *common.BlockContext) error {
+	if block == nil {
+		return nil
+	}
 	GetExtension().height.Store(block.Height)
 	return nil
 }

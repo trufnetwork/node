@@ -2,6 +2,8 @@ package tn_local
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -13,8 +15,18 @@ import (
 // These integration tests validate the actual SQL queries run against a real PostgreSQL.
 // They require a running PostgreSQL instance. Skip if unavailable.
 //
-// Run with: go test -v -tags integration ./extensions/tn_local/ -run TestIntegration -count=1
-// Or use the default test DB: PGHOST=localhost PGPORT=5432 PGUSER=postgres PGDATABASE=kwild
+// Configure via environment variables:
+//   TEST_PG_HOST (default: localhost)
+//   TEST_PG_PORT (default: 5432)
+//   TEST_PG_USER (default: kwild)
+//   TEST_PG_DATABASE (default: kwild)
+
+func envOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
 
 func setupIntegrationDB(t *testing.T) *Extension {
 	t.Helper()
@@ -22,7 +34,12 @@ func setupIntegrationDB(t *testing.T) *Extension {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	connStr := "host=localhost port=5432 user=kwild database=kwild sslmode=disable"
+	host := envOrDefault("TEST_PG_HOST", "localhost")
+	port := envOrDefault("TEST_PG_PORT", "5432")
+	user := envOrDefault("TEST_PG_USER", "kwild")
+	dbName := envOrDefault("TEST_PG_DATABASE", "kwild")
+
+	connStr := fmt.Sprintf("host=%s port=%s user=%s database=%s sslmode=disable", host, port, user, dbName)
 	pool, err := pgxpool.New(ctx, connStr)
 	if err != nil {
 		t.Skipf("skipping integration test: cannot connect to PostgreSQL: %v", err)
@@ -141,6 +158,7 @@ func TestIntegration_PrimitiveGetIndex(t *testing.T) {
 	require.Nil(t, rpcErr)
 
 	// Test 1: Default base_time (first event = 1000, base = 10.0)
+	// Index = (value / base) * 100 → 100, 200, 300
 	from := int64(500)
 	to := int64(5000)
 	resp, rpcErr := ext.GetIndex(ctx, &GetIndexRequest{
@@ -150,15 +168,16 @@ func TestIntegration_PrimitiveGetIndex(t *testing.T) {
 		ToTime:       &to,
 	})
 	require.Nil(t, rpcErr, "get_index failed: %v", rpcErr)
-	require.GreaterOrEqual(t, len(resp.Records), 3)
-
-	// Index at base time should be 100
-	// Values: 10/10*100=100, 20/10*100=200, 30/10*100=300
-	for _, r := range resp.Records {
-		t.Logf("index: event_time=%d value=%s", r.EventTime, r.Value)
-	}
+	require.Len(t, resp.Records, 3)
+	require.Equal(t, int64(1000), resp.Records[0].EventTime)
+	require.Equal(t, "100.000000000000000000", resp.Records[0].Value)
+	require.Equal(t, int64(2000), resp.Records[1].EventTime)
+	require.Equal(t, "200.000000000000000000", resp.Records[1].Value)
+	require.Equal(t, int64(3000), resp.Records[2].EventTime)
+	require.Equal(t, "300.000000000000000000", resp.Records[2].Value)
 
 	// Test 2: Explicit base_time = 2000 (base value = 20.0)
+	// Index = (value / 20) * 100 → 50, 100, 150
 	baseTime := int64(2000)
 	resp, rpcErr = ext.GetIndex(ctx, &GetIndexRequest{
 		DataProvider: testDP,
@@ -168,10 +187,13 @@ func TestIntegration_PrimitiveGetIndex(t *testing.T) {
 		BaseTime:     &baseTime,
 	})
 	require.Nil(t, rpcErr, "get_index with base_time failed: %v", rpcErr)
-	require.GreaterOrEqual(t, len(resp.Records), 3)
-	for _, r := range resp.Records {
-		t.Logf("index (base=2000): event_time=%d value=%s", r.EventTime, r.Value)
-	}
+	require.Len(t, resp.Records, 3)
+	require.Equal(t, int64(1000), resp.Records[0].EventTime)
+	require.Equal(t, "50.000000000000000000", resp.Records[0].Value)
+	require.Equal(t, int64(2000), resp.Records[1].EventTime)
+	require.Equal(t, "100.000000000000000000", resp.Records[1].Value)
+	require.Equal(t, int64(3000), resp.Records[2].EventTime)
+	require.Equal(t, "150.000000000000000000", resp.Records[2].Value)
 }
 
 func TestIntegration_ListStreams(t *testing.T) {

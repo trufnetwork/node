@@ -112,6 +112,7 @@ func TestGetRecord_Primitive_EmptyResult(t *testing.T) {
 	})
 	require.Nil(t, rpcErr)
 	require.NotNil(t, resp)
+	require.NotNil(t, resp.Records, "Records should be non-nil empty slice, not nil")
 	require.Empty(t, resp.Records)
 }
 

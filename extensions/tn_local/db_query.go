@@ -115,6 +115,36 @@ func (ext *Extension) dbGetFirstEventTime(ctx context.Context, streamRef int64) 
 	return &et, nil
 }
 
+// dbGetRecordAtOrBefore returns the single most recent record at or before the given time.
+// Used for base value lookup in index calculations — avoids fetching a large prefix
+// which could hit LIMIT 10000 and return wrong last element.
+func (ext *Extension) dbGetRecordAtOrBefore(ctx context.Context, streamRef int64, atOrBefore int64) (*RecordOutput, error) {
+	query := fmt.Sprintf(`
+		SELECT pe.event_time, pe.value::TEXT
+		FROM %s.primitive_events pe
+		WHERE pe.stream_ref = $1
+			AND pe.event_time <= $2
+		ORDER BY pe.event_time DESC, pe.created_at DESC
+		LIMIT 1`, SchemaName)
+
+	rs, err := ext.db.Execute(ctx, query, streamRef, atOrBefore)
+	if err != nil {
+		return nil, fmt.Errorf("query record at or before %d: %w", atOrBefore, err)
+	}
+	if rs == nil || len(rs.Rows) == 0 {
+		return nil, nil
+	}
+
+	records, err := resultSetToRecords(rs)
+	if err != nil {
+		return nil, err
+	}
+	if len(records) == 0 {
+		return nil, nil
+	}
+	return &records[0], nil
+}
+
 // dbListStreams returns all local streams.
 func (ext *Extension) dbListStreams(ctx context.Context) ([]StreamInfo, error) {
 	query := fmt.Sprintf(`
@@ -128,11 +158,26 @@ func (ext *Extension) dbListStreams(ctx context.Context) ([]StreamInfo, error) {
 	}
 
 	streams := make([]StreamInfo, 0, len(rs.Rows))
-	for _, row := range rs.Rows {
-		dp, _ := row[0].(string)
-		sid, _ := row[1].(string)
-		stype, _ := row[2].(string)
-		createdAt, _ := toInt64Val(row[3])
+	for i, row := range rs.Rows {
+		if len(row) < 4 {
+			return nil, fmt.Errorf("list streams: row %d has %d columns, expected 4", i, len(row))
+		}
+		dp, ok := row[0].(string)
+		if !ok {
+			return nil, fmt.Errorf("list streams: row %d: unexpected data_provider type: %T", i, row[0])
+		}
+		sid, ok := row[1].(string)
+		if !ok {
+			return nil, fmt.Errorf("list streams: row %d: unexpected stream_id type: %T", i, row[1])
+		}
+		stype, ok := row[2].(string)
+		if !ok {
+			return nil, fmt.Errorf("list streams: row %d: unexpected stream_type type: %T", i, row[2])
+		}
+		createdAt, ok := toInt64Val(row[3])
+		if !ok {
+			return nil, fmt.Errorf("list streams: row %d: unexpected created_at type: %T", i, row[3])
+		}
 		streams = append(streams, StreamInfo{
 			DataProvider: dp,
 			StreamID:     sid,
@@ -150,9 +195,9 @@ func resultSetToRecords(rs *sql.ResultSet) ([]RecordOutput, error) {
 	}
 
 	records := make([]RecordOutput, 0, len(rs.Rows))
-	for _, row := range rs.Rows {
+	for i, row := range rs.Rows {
 		if len(row) < 2 {
-			continue
+			return nil, fmt.Errorf("row %d has %d columns, expected at least 2", i, len(row))
 		}
 		et, ok := toInt64Val(row[0])
 		if !ok {

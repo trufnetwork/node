@@ -49,6 +49,8 @@ func TestListStreams_ReturnsAll(t *testing.T) {
 	require.Equal(t, "primitive", resp.Streams[0].StreamType)
 	require.Equal(t, int64(100), resp.Streams[0].CreatedAt)
 
+	require.Equal(t, "0xabc123", resp.Streams[1].DataProvider)
+	require.Equal(t, "st00000000000000000000000000bbbb", resp.Streams[1].StreamID)
 	require.Equal(t, "composed", resp.Streams[1].StreamType)
 	require.Equal(t, int64(200), resp.Streams[1].CreatedAt)
 }

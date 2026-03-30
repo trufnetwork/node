@@ -30,6 +30,7 @@ func TestGetIndex_StreamNotFound(t *testing.T) {
 	})
 	require.Nil(t, resp)
 	require.NotNil(t, rpcErr)
+	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
 	require.Contains(t, rpcErr.Message, "stream not found")
 }
 
@@ -187,6 +188,7 @@ func TestGetIndex_BaseValueZero(t *testing.T) {
 		ToTime:       &to,
 	})
 	require.NotNil(t, rpcErr)
+	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
 	require.Contains(t, rpcErr.Message, "base value is 0")
 }
 
