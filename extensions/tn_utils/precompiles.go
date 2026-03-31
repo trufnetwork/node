@@ -1161,11 +1161,14 @@ func getActionIDNumber(actionName string) (uint16, error) {
 		"price_below_threshold": 7,
 		"value_in_range":        8,
 		"value_equals":          9,
+		// Single-row range actions (return TABLE(event_time INT8, value NUMERIC) LIMIT 1)
+		"get_high_value": 10,
+		"get_low_value":  11,
 	}
 
 	id, ok := actionMap[actionName]
 	if !ok {
-		return 0, fmt.Errorf("unknown action: %s (valid actions: get_record, get_index, get_change_over_time, get_last_record, get_first_record, price_above_threshold, price_below_threshold, value_in_range, value_equals)", actionName)
+		return 0, fmt.Errorf("unknown action: %s", actionName)
 	}
 	return id, nil
 }
