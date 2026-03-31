@@ -603,15 +603,16 @@ func createStreamWithoutSigningAttestation(
 		}, nil)
 	require.NoError(t, err)
 
-	// Encode action args for get_record
+	// Encode action args for get_last_record
+	// Signature: ($data_provider, $stream_id, $before, $frozen_at, $use_cache)
 	argsBytes, err := tn_utils.EncodeActionArgs([]any{
-		dataProvider, streamID, int64(500), int64(1500), nil, false,
+		dataProvider, streamID, int64(1500), nil, false,
 	})
 	require.NoError(t, err)
 
 	// Request attestation (but don't sign)
 	res, err := platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
-		[]any{dataProvider, streamID, "get_record", argsBytes, false, nil},
+		[]any{dataProvider, streamID, "get_last_record", argsBytes, false, nil},
 		func(row *common.Row) error {
 			return nil
 		})
@@ -623,7 +624,7 @@ func createStreamWithoutSigningAttestation(
 	// NOTE: Intentionally NOT calling helper.SignAttestation() to test unsigned attestation
 
 	// Return ABI-encoded query_components for create_market
-	queryComponents, err := encodeQueryComponents(dataProvider, streamID, "get_record", argsBytes)
+	queryComponents, err := encodeQueryComponents(dataProvider, streamID, "get_last_record", argsBytes)
 	require.NoError(t, err)
 
 	return queryComponents
@@ -663,9 +664,10 @@ func createStreamAndAttestation(
 		}, nil)
 	require.NoError(t, err)
 
-	// Encode action args for get_record - MUST match what we use in request_attestation
+	// Encode action args for get_last_record - MUST match what we use in request_attestation
+	// Signature: ($data_provider, $stream_id, $before, $frozen_at, $use_cache)
 	argsBytes, err := tn_utils.EncodeActionArgs([]any{
-		dataProvider, streamID, int64(500), int64(1500), nil, false,
+		dataProvider, streamID, int64(1500), nil, false,
 	})
 	require.NoError(t, err)
 
@@ -673,7 +675,7 @@ func createStreamAndAttestation(
 	var requestTxID string
 	var attestationHash []byte
 	res, err := platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
-		[]any{dataProvider, streamID, "get_record", argsBytes, false, nil},
+		[]any{dataProvider, streamID, "get_last_record", argsBytes, false, nil},
 		func(row *common.Row) error {
 			requestTxID = row.Values[0].(string)
 			attestationHash = append([]byte(nil), row.Values[1].([]byte)...)
@@ -691,7 +693,7 @@ func createStreamAndAttestation(
 
 	// Return ABI-encoded query_components for create_market
 	// The hash is computed by create_market from these query_components
-	queryComponents, err := encodeQueryComponents(dataProvider, streamID, "get_record", argsBytes)
+	queryComponents, err := encodeQueryComponents(dataProvider, streamID, "get_last_record", argsBytes)
 	require.NoError(t, err)
 
 	return queryComponents

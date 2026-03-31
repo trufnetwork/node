@@ -119,20 +119,19 @@ func testHashCompatibility_MarketAndAttestation(t *testing.T) func(context.Conte
 		// STEP 1: Create market with query_components
 		// ======================================================================
 
-		// Build query components for get_record action
-		// Args: data_provider, stream_id, from, to, frozen_at, use_cache
+		// Build query components for get_last_record action
+		// Args: data_provider, stream_id, before, frozen_at, use_cache
 		argsBytes, err := tn_utils.EncodeActionArgs([]any{
 			dataProvider,
 			streamID,
-			int64(500),  // from
-			int64(1500), // to
+			int64(1500), // before
 			nil,         // frozen_at (NULL = latest)
 			false,       // use_cache
 		})
 		require.NoError(t, err)
 
 		// Encode query components using ABI
-		queryComponents, err := encodeQueryComponentsABIHashCompat(dataProvider, streamID, "get_record", argsBytes)
+		queryComponents, err := encodeQueryComponentsABIHashCompat(dataProvider, streamID, "get_last_record", argsBytes)
 		require.NoError(t, err)
 
 		// Create market
@@ -177,7 +176,7 @@ func testHashCompatibility_MarketAndAttestation(t *testing.T) func(context.Conte
 			[]any{
 				dataProvider,
 				streamID,
-				"get_record",
+				"get_last_record",
 				argsBytes,
 				false, // encrypt_sig
 				nil,   // max_fee

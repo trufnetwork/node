@@ -194,10 +194,9 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		argsBytes, err := tn_utils.EncodeActionArgs([]any{
 			strings.ToLower(systemAdmin.Address()),
 			attestationStream.String(),
-			int64(0),
-			int64(999),
-			int64(99999),
-			false,
+			int64(999),  // before
+			int64(99999), // frozen_at
+			false,        // use_cache
 		})
 		require.NoError(t, err)
 
@@ -205,7 +204,7 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		attTx, err := callActionWithLeader(ctx, platform, actor, attLeaderPub, height, "request_attestation", []any{
 			strings.ToLower(systemAdmin.Address()),
 			attestationStream.String(),
-			"get_record",
+			"get_last_record",
 			argsBytes,
 			false,
 			nil,

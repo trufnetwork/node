@@ -132,13 +132,12 @@ func testSettleMarketHappyPath(t *testing.T) func(context.Context, *kwilTesting.
 		require.NoError(t, err)
 		require.True(t, foundData, "Data should be found in stream")
 
-		// Request attestation for get_record
-		// Args: data_provider, stream_id, from, to, frozen_at, use_cache
+		// Request attestation for get_last_record
+		// Args: data_provider, stream_id, before, frozen_at, use_cache
 		argsBytes, err := tn_utils.EncodeActionArgs([]any{
 			dataProvider,
 			streamID,
-			int64(500),  // from (before our eventTime=1000)
-			int64(1500), // to (after our eventTime=1000)
+			int64(1500), // before (after our eventTime=1000)
 			nil,         // frozen_at (NULL = latest)
 			false,       // use_cache
 		})
@@ -150,7 +149,7 @@ func testSettleMarketHappyPath(t *testing.T) func(context.Context, *kwilTesting.
 			[]any{
 				dataProvider,
 				streamID,
-				"get_record",
+				"get_last_record",
 				argsBytes,
 				false, // encrypt_sig
 				nil,   // max_fee
@@ -173,7 +172,7 @@ func testSettleMarketHappyPath(t *testing.T) func(context.Context, *kwilTesting.
 
 		// Encode query components for create_market (must match attestation args!)
 		queryComponents, err := encodeQueryComponentsForTests(
-			dataProvider, streamID, "get_record", argsBytes)
+			dataProvider, streamID, "get_last_record", argsBytes)
 		require.NoError(t, err)
 
 		// Create market using query_components
@@ -303,14 +302,14 @@ func testSettleMarketWithNoOutcome(t *testing.T) func(context.Context, *kwilTest
 
 		// Request and sign attestation
 		argsBytes, err := tn_utils.EncodeActionArgs([]any{
-			dataProvider, streamID, int64(500), int64(1500), nil, false,
+			dataProvider, streamID, int64(1500), nil, false,
 		})
 		require.NoError(t, err)
 
 		var requestTxID string
 		engineCtx = helper.NewEngineContext()
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
-			[]any{dataProvider, streamID, "get_record", argsBytes, false, nil},
+			[]any{dataProvider, streamID, "get_last_record", argsBytes, false, nil},
 			func(row *common.Row) error {
 				requestTxID = row.Values[0].(string)
 				// attestationHash not needed - using queryComponents
@@ -320,7 +319,7 @@ func testSettleMarketWithNoOutcome(t *testing.T) func(context.Context, *kwilTest
 		helper.SignAttestation(requestTxID)
 
 		// Encode query components for create_market
-		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_record", argsBytes)
+		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_last_record", argsBytes)
 		require.NoError(t, err)
 
 		// Create and settle market
@@ -414,14 +413,14 @@ func testSettleMarketWithMultipleDatapoints(t *testing.T) func(context.Context, 
 
 		// Request attestation for range containing all datapoints
 		argsBytes, err := tn_utils.EncodeActionArgs([]any{
-			dataProvider, streamID, int64(500), int64(3500), nil, false,
+			dataProvider, streamID, int64(3500), nil, false,
 		})
 		require.NoError(t, err)
 
 		var requestTxID string
 		engineCtx = helper.NewEngineContext()
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
-			[]any{dataProvider, streamID, "get_record", argsBytes, false, nil},
+			[]any{dataProvider, streamID, "get_last_record", argsBytes, false, nil},
 			func(row *common.Row) error {
 				requestTxID = row.Values[0].(string)
 				// attestationHash not needed - using queryComponents
@@ -431,7 +430,7 @@ func testSettleMarketWithMultipleDatapoints(t *testing.T) func(context.Context, 
 		helper.SignAttestation(requestTxID)
 
 		// Encode query components for create_market
-		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_record", argsBytes)
+		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_last_record", argsBytes)
 		require.NoError(t, err)
 
 		// Create and settle market
@@ -541,13 +540,13 @@ func testSettleMarketAlreadySettled(t *testing.T) func(context.Context, *kwilTes
 		require.NoError(t, err)
 
 		argsBytes, _ := tn_utils.EncodeActionArgs([]any{
-			dataProvider, streamID, int64(500), int64(1500), nil, false,
+			dataProvider, streamID, int64(1500), nil, false,
 		})
 
 		var requestTxID string
 		engineCtx = helper.NewEngineContext()
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
-			[]any{dataProvider, streamID, "get_record", argsBytes, false, nil},
+			[]any{dataProvider, streamID, "get_last_record", argsBytes, false, nil},
 			func(row *common.Row) error {
 				requestTxID = row.Values[0].(string)
 				// attestationHash not needed - using queryComponents
@@ -557,7 +556,7 @@ func testSettleMarketAlreadySettled(t *testing.T) func(context.Context, *kwilTes
 		helper.SignAttestation(requestTxID)
 
 		// Encode query components for create_market
-		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_record", argsBytes)
+		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_last_record", argsBytes)
 		require.NoError(t, err)
 
 		// Create market
@@ -636,13 +635,13 @@ func testSettleMarketTooEarly(t *testing.T) func(context.Context, *kwilTesting.P
 		require.NoError(t, err)
 
 		argsBytes, _ := tn_utils.EncodeActionArgs([]any{
-			dataProvider, streamID, int64(500), int64(1500), nil, false,
+			dataProvider, streamID, int64(1500), nil, false,
 		})
 
 		var requestTxID string
 		engineCtx = helper.NewEngineContext()
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
-			[]any{dataProvider, streamID, "get_record", argsBytes, false, nil},
+			[]any{dataProvider, streamID, "get_last_record", argsBytes, false, nil},
 			func(row *common.Row) error {
 				requestTxID = row.Values[0].(string)
 				// attestationHash not needed - using queryComponents
@@ -652,7 +651,7 @@ func testSettleMarketTooEarly(t *testing.T) func(context.Context, *kwilTesting.P
 		helper.SignAttestation(requestTxID)
 
 		// Encode query components for create_market
-		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_record", argsBytes)
+		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_last_record", argsBytes)
 		require.NoError(t, err)
 
 		// Create market with settle_time = 1000
@@ -706,7 +705,7 @@ func testSettleMarketNoAttestation(t *testing.T) func(context.Context, *kwilTest
 		// Create fake query components (no actual attestation exists)
 		dataProvider := deployer.Address()
 		streamID := "stfakeattest0000000000000000000"
-		fakeQueryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_record", nil)
+		fakeQueryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_last_record", nil)
 		require.NoError(t, err)
 
 		var queryID int
@@ -776,12 +775,12 @@ func testSettleMarketAttestationNotSigned(t *testing.T) func(context.Context, *k
 		require.NoError(t, err)
 
 		argsBytes, _ := tn_utils.EncodeActionArgs([]any{
-			dataProvider, streamID, int64(500), int64(1500), nil, false,
+			dataProvider, streamID, int64(1500), nil, false,
 		})
 
 		engineCtx = helper.NewEngineContext()
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
-			[]any{dataProvider, streamID, "get_record", argsBytes, false, nil},
+			[]any{dataProvider, streamID, "get_last_record", argsBytes, false, nil},
 			func(row *common.Row) error {
 				// attestation hash not needed - using queryComponents
 				return nil
@@ -790,7 +789,7 @@ func testSettleMarketAttestationNotSigned(t *testing.T) func(context.Context, *k
 		// NOTE: Intentionally NOT signing the attestation
 
 		// Encode query components for create_market
-		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_record", argsBytes)
+		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_last_record", argsBytes)
 		require.NoError(t, err)
 
 		// Create market
@@ -876,14 +875,14 @@ func testSettleMarketValidationIntegration(t *testing.T) func(context.Context, *
 
 		// Request and sign attestation
 		argsBytes, err := tn_utils.EncodeActionArgs([]any{
-			dataProvider, streamID, int64(500), int64(1500), nil, false,
+			dataProvider, streamID, int64(1500), nil, false,
 		})
 		require.NoError(t, err)
 
 		var requestTxID string
 		engineCtx = helper.NewEngineContext()
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
-			[]any{dataProvider, streamID, "get_record", argsBytes, false, nil},
+			[]any{dataProvider, streamID, "get_last_record", argsBytes, false, nil},
 			func(row *common.Row) error {
 				requestTxID = row.Values[0].(string)
 				// attestationHash not needed - using queryComponents
@@ -893,7 +892,7 @@ func testSettleMarketValidationIntegration(t *testing.T) func(context.Context, *
 		helper.SignAttestation(requestTxID)
 
 		// Encode query components for create_market
-		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_record", argsBytes)
+		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_last_record", argsBytes)
 		require.NoError(t, err)
 
 		// Create market
@@ -985,13 +984,13 @@ func testSettleMarketBlockedByBinaryParityViolation(t *testing.T) func(context.C
 
 		// Request and sign attestation
 		argsBytes, _ := tn_utils.EncodeActionArgs([]any{
-			dataProvider, streamID, int64(500), int64(1500), nil, false,
+			dataProvider, streamID, int64(1500), nil, false,
 		})
 
 		var requestTxID string
 		engineCtx = helper.NewEngineContext()
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
-			[]any{dataProvider, streamID, "get_record", argsBytes, false, nil},
+			[]any{dataProvider, streamID, "get_last_record", argsBytes, false, nil},
 			func(row *common.Row) error {
 				requestTxID = row.Values[0].(string)
 				// attestationHash not needed - using queryComponents
@@ -1001,7 +1000,7 @@ func testSettleMarketBlockedByBinaryParityViolation(t *testing.T) func(context.C
 		helper.SignAttestation(requestTxID)
 
 		// Encode query components for create_market
-		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_record", argsBytes)
+		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_last_record", argsBytes)
 		require.NoError(t, err)
 
 		// Create market
@@ -1145,13 +1144,13 @@ func testSettleMarketMultiMarketCollateral(t *testing.T) func(context.Context, *
 		require.NoError(t, err)
 
 		argsBytes1, err := tn_utils.EncodeActionArgs([]any{
-			dataProvider, streamID1, int64(500), int64(1500), nil, false,
+			dataProvider, streamID1, int64(1500), nil, false,
 		})
 		require.NoError(t, err)
 		var requestTxID1 string
 		engineCtx = helper.NewEngineContext()
 		res1, err := platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
-			[]any{dataProvider, streamID1, "get_record", argsBytes1, false, nil},
+			[]any{dataProvider, streamID1, "get_last_record", argsBytes1, false, nil},
 			func(row *common.Row) error {
 				requestTxID1 = row.Values[0].(string)
 				// attestation hash not needed - using queryComponents
@@ -1166,7 +1165,7 @@ func testSettleMarketMultiMarketCollateral(t *testing.T) func(context.Context, *
 
 		// Encode query components for market 1
 		queryComponents1, err := encodeQueryComponentsForTests(
-			dataProvider, streamID1, "get_record", argsBytes1)
+			dataProvider, streamID1, "get_last_record", argsBytes1)
 		require.NoError(t, err)
 
 		// ===== STREAM 2 =====
@@ -1187,13 +1186,13 @@ func testSettleMarketMultiMarketCollateral(t *testing.T) func(context.Context, *
 		require.NoError(t, err)
 
 		argsBytes2, err := tn_utils.EncodeActionArgs([]any{
-			dataProvider, streamID2, int64(500), int64(1500), nil, false,
+			dataProvider, streamID2, int64(1500), nil, false,
 		})
 		require.NoError(t, err)
 		var requestTxID2 string
 		engineCtx = helper.NewEngineContext()
 		res2, err := platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
-			[]any{dataProvider, streamID2, "get_record", argsBytes2, false, nil},
+			[]any{dataProvider, streamID2, "get_last_record", argsBytes2, false, nil},
 			func(row *common.Row) error {
 				requestTxID2 = row.Values[0].(string)
 				// attestation hash not needed - using queryComponents
@@ -1208,7 +1207,7 @@ func testSettleMarketMultiMarketCollateral(t *testing.T) func(context.Context, *
 
 		// Encode query components for market 2
 		queryComponents2, err := encodeQueryComponentsForTests(
-			dataProvider, streamID2, "get_record", argsBytes2)
+			dataProvider, streamID2, "get_last_record", argsBytes2)
 		require.NoError(t, err)
 
 		// ===== CREATE MARKETS =====
