@@ -732,14 +732,13 @@ func forceLastArgFalseHandler(ctx *common.EngineContext, app *common.App, inputs
 //   - 90 days of daily data = 90 rows, hourly = 2,160 rows (both safe)
 const MaxAttestationDateRangeSeconds int64 = 90 * 24 * 60 * 60 // 7,776,000 seconds
 
-// validateAttestationDateRangeMethod checks that the date range in attestation
-// query args does not exceed 90 days. Only applies to range-based actions
-// (action_id 1-3: get_record, get_index, get_change_over_time) where args
-// contain $from at index 2 and $to at index 3.
-//
-// Actions 4-5 (get_last_record, get_first_record) are single-point queries
-// with LIMIT 1 and do not need date range validation.
-// Actions 6-9 (binary) return a single boolean and are inherently safe.
+// validateAttestationDateRangeMethod validates attestation action eligibility:
+//   - Actions 1-3 (get_record, get_index, get_change_over_time) are BLOCKED — they return
+//     multiple rows and are not allowed for attestation.
+//   - Actions 4-5 (get_last_record, get_first_record) are single-point (LIMIT 1) — no validation needed.
+//   - Actions 6-9 (binary) return a single boolean — no validation needed.
+//   - Actions 10-11 (get_high_value, get_low_value) are single-row range queries — date range
+//     validated (max 90 days, both from and to required).
 func validateAttestationDateRangeMethod() precompiles.Method {
 	return precompiles.Method{
 		Name:            "validate_attestation_date_range",
@@ -759,10 +758,16 @@ func validateAttestationDateRangeHandler(ctx *common.EngineContext, app *common.
 		return fmt.Errorf("action_id: %w", err)
 	}
 
-	// Only validate range-based actions (1-3: get_record, get_index, get_change_over_time).
-	// Actions 4-5 are single-point (LIMIT 1), actions 6-9 are binary (single bool).
-	if actionID < 1 || actionID > 3 {
-		return nil // no validation needed
+	// Block multi-row actions entirely (IDs 1-3: get_record, get_index, get_change_over_time).
+	// These return arrays and are not allowed for attestation.
+	if actionID >= 1 && actionID <= 3 {
+		return fmt.Errorf("action %d not allowed for attestation: use get_last_record, get_first_record, get_high_value, get_low_value, or binary actions", actionID)
+	}
+
+	// Only validate date range for range-based single-row actions (IDs 10-11: get_high_value, get_low_value).
+	// Actions 4-5 are single-point (LIMIT 1), actions 6-9 are binary (single bool) — no validation needed.
+	if actionID != 10 && actionID != 11 {
+		return nil
 	}
 
 	argsBytes, ok := inputs[1].([]byte)
@@ -775,23 +780,18 @@ func validateAttestationDateRangeHandler(ctx *common.EngineContext, app *common.
 		return fmt.Errorf("failed to decode action args: %w", err)
 	}
 
-	// Range-based actions have signature: ($data_provider, $stream_id, $from, $to, ...)
-	// $from is at index 2, $to is at index 3
+	// get_high_value/get_low_value signature: ($data_provider, $stream_id, $from, $to, $frozen_at)
+	// $from at index 2, $to at index 3
 	if len(args) < 4 {
-		return fmt.Errorf("range-based attestation action requires at least 4 args, got %d", len(args))
+		return fmt.Errorf("attestation action requires at least 4 args, got %d", len(args))
 	}
 
-	// If both from and to are nil, the action returns the latest record (LIMIT 1) — safe
 	fromVal := derefIntPtr(args[2])
 	toVal := derefIntPtr(args[3])
 
-	if fromVal == nil && toVal == nil {
-		return nil
-	}
-
-	// If only one is provided, the range is effectively unbounded — reject
+	// Both from and to are required for get_high_value/get_low_value (no "latest record" shortcut)
 	if fromVal == nil || toVal == nil {
-		return fmt.Errorf("attestation queries with range-based actions (get_record, get_index, get_change_over_time) must specify both 'from' and 'to' parameters")
+		return fmt.Errorf("get_high_value/get_low_value attestation actions require both 'from' and 'to' parameters")
 	}
 
 	fromTS, err := toInt64(*fromVal)

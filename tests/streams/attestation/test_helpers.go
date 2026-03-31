@@ -24,7 +24,7 @@ import (
 
 // Test data constants to avoid magic values
 const (
-	TestActionIDRequest = 10
+	TestActionIDRequest = 100
 	TestActionIDGet     = 20
 	TestActionIDList    = 21
 	TestStreamID        = "stream_attestation_test_00000000"
