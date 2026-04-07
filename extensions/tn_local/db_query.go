@@ -365,6 +365,31 @@ func (ext *Extension) dbGetLastRecordComposed(ctx context.Context, streamRef int
 	return resultSetToRecords(rs)
 }
 
+// dbGetFirstComposedEventTime returns the earliest event_time at which the
+// composed stream has a defined weighted-average value. Mirrors
+// dbGetFirstEventTime for primitives — avoids pulling a 10000-row prefix
+// just to read the [0] element when computing the default base_time.
+func (ext *Extension) dbGetFirstComposedEventTime(ctx context.Context, streamRef int64) (*int64, error) {
+	query := composedQueryCTEs() + `
+		SELECT event_time FROM weighted_avg
+		WHERE value IS NOT NULL
+		ORDER BY event_time ASC
+		LIMIT 1`
+
+	rs, err := ext.db.Execute(ctx, query, streamRef)
+	if err != nil {
+		return nil, fmt.Errorf("query first composed event time: %w", err)
+	}
+	if rs == nil || len(rs.Rows) == 0 {
+		return nil, nil
+	}
+	et, ok := toInt64Val(rs.Rows[0][0])
+	if !ok {
+		return nil, fmt.Errorf("unexpected event_time type: %T", rs.Rows[0][0])
+	}
+	return &et, nil
+}
+
 // dbGetComposedRecordAtOrBefore returns the single most recent composed record
 // at or before the given time. Mirrors dbGetRecordAtOrBefore for primitives —
 // avoids the 10000-row prefix bug when history exceeds maxQueryResults.

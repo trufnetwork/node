@@ -432,17 +432,15 @@ func (ext *Extension) GetIndex(ctx context.Context, req *GetIndexRequest) (*GetI
 			}
 			baseTime = firstET
 		} else {
-			// For composed streams, get the earliest event time across all leaf primitives
-			zero := int64(0)
-			allRecords, queryErr := ext.dbGetRecordComposed(ctx, ref, &zero, nil)
-			if queryErr != nil {
-				ext.logger.Error("failed to get composed records for base time", "error", queryErr)
+			firstET, lookupErr := ext.dbGetFirstComposedEventTime(ctx, ref)
+			if lookupErr != nil {
+				ext.logger.Error("failed to get first composed event time", "error", lookupErr)
 				return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to determine base time", nil)
 			}
-			if len(allRecords) == 0 {
+			if firstET == nil {
 				return &GetIndexResponse{Records: []IndexOutput{}}, nil
 			}
-			baseTime = &allRecords[0].EventTime
+			baseTime = firstET
 		}
 	}
 
