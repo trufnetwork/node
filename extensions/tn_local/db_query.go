@@ -145,6 +145,195 @@ func (ext *Extension) dbGetRecordAtOrBefore(ctx context.Context, streamRef int64
 	return &records[0], nil
 }
 
+// dbGetRecordComposed retrieves the calculated time series for a composed stream.
+// Uses a direct weighted-average calculation approach:
+//  1. Recursively expand taxonomy tree (handling overshadowing via MAX(group_sequence))
+//  2. Collect all unique event times across leaf primitives
+//  3. At each time point, compute weighted average using LOCF values and active weights
+//  4. Final value = SUM(weight * value) / SUM(weight) with gap-filling
+func (ext *Extension) dbGetRecordComposed(ctx context.Context, streamRef int64, from, to *int64) ([]RecordOutput, error) {
+	// Both nil: return latest record
+	if from == nil && to == nil {
+		return ext.dbGetLastRecordComposed(ctx, streamRef)
+	}
+
+	effectiveFrom := int64(0)
+	if from != nil {
+		effectiveFrom = *from
+	}
+	effectiveTo := maxInt8
+	if to != nil {
+		effectiveTo = *to
+	}
+
+	// Direct calculation: at each event time, compute weighted average of leaf values.
+	// Simpler than delta-based but correct for local queries.
+	query := fmt.Sprintf(`
+		WITH RECURSIVE
+		-- Step 1: Resolve taxonomy segments with overshadowing
+		taxonomy_segments AS (
+			SELECT
+				t.stream_ref AS parent_ref,
+				t.child_stream_ref,
+				t.weight,
+				t.start_time,
+				t.group_sequence,
+				MAX(t.group_sequence) OVER (PARTITION BY t.stream_ref, t.start_time) AS max_gs
+			FROM %[1]s.taxonomies t
+			WHERE t.disabled_at IS NULL
+		),
+		active_taxonomy AS (
+			SELECT
+				parent_ref,
+				child_stream_ref,
+				weight,
+				start_time,
+				COALESCE(
+					LEAD(start_time) OVER (PARTITION BY parent_ref, child_stream_ref ORDER BY start_time) - 1,
+					%[2]d
+				) AS end_time
+			FROM taxonomy_segments
+			WHERE group_sequence = max_gs
+		),
+		-- Step 2: Recursive hierarchy — find all leaf primitives with cumulative weights
+		hierarchy AS (
+			SELECT
+				at.child_stream_ref AS leaf_ref,
+				at.weight AS cumulative_weight,
+				at.start_time AS path_start,
+				at.end_time AS path_end,
+				1 AS level
+			FROM active_taxonomy at
+			WHERE at.parent_ref = $1
+
+			UNION ALL
+
+			SELECT
+				at.child_stream_ref,
+				(h.cumulative_weight * at.weight)::NUMERIC(36,18),
+				GREATEST(h.path_start, at.start_time),
+				LEAST(h.path_end, at.end_time),
+				h.level + 1
+			FROM hierarchy h
+			JOIN active_taxonomy at ON at.parent_ref = h.leaf_ref
+			WHERE h.level < 100
+				AND GREATEST(h.path_start, at.start_time) <= LEAST(h.path_end, at.end_time)
+		),
+		-- Filter to only leaf primitives (no further children)
+		leaf_primitives AS (
+			SELECT leaf_ref, cumulative_weight, path_start, path_end
+			FROM hierarchy h
+			WHERE NOT EXISTS (
+				SELECT 1 FROM active_taxonomy at2 WHERE at2.parent_ref = h.leaf_ref
+			)
+		),
+
+		-- Step 3: Get all primitive events, deduped
+		leaf_events AS (
+			SELECT
+				pe.stream_ref, pe.event_time, pe.value,
+				ROW_NUMBER() OVER (
+					PARTITION BY pe.stream_ref, pe.event_time
+					ORDER BY pe.created_at DESC
+				) AS rn
+			FROM %[1]s.primitive_events pe
+			WHERE pe.stream_ref IN (SELECT DISTINCT leaf_ref FROM leaf_primitives)
+		),
+		deduped_events AS (
+			SELECT stream_ref, event_time, value FROM leaf_events WHERE rn = 1
+		),
+
+		-- Step 4: Collect all unique event times from leaf primitives
+		all_times AS (
+			SELECT DISTINCT event_time FROM deduped_events
+		),
+
+		-- Step 5: At each time point, for each leaf, find the LOCF value
+		-- (latest value at or before this time)
+		time_leaf_values AS (
+			SELECT
+				t.event_time,
+				lp.leaf_ref,
+				lp.cumulative_weight,
+				lp.path_start,
+				lp.path_end,
+				(
+					SELECT de.value FROM deduped_events de
+					WHERE de.stream_ref = lp.leaf_ref
+						AND de.event_time <= t.event_time
+					ORDER BY de.event_time DESC
+					LIMIT 1
+				) AS locf_value
+			FROM all_times t
+			CROSS JOIN leaf_primitives lp
+		),
+
+		-- Step 6: Compute weighted average at each time
+		-- Only include leaves where: weight is active AND leaf has a value
+		weighted_avg AS (
+			SELECT
+				event_time,
+				CASE
+					WHEN SUM(CASE WHEN locf_value IS NOT NULL
+						AND event_time >= path_start AND event_time <= path_end
+						THEN cumulative_weight ELSE 0::NUMERIC(36,18) END) = 0::NUMERIC(36,18)
+					THEN NULL
+					ELSE (
+						SUM(CASE WHEN locf_value IS NOT NULL
+							AND event_time >= path_start AND event_time <= path_end
+							THEN cumulative_weight * locf_value ELSE 0::NUMERIC(36,18) END)
+						/
+						SUM(CASE WHEN locf_value IS NOT NULL
+							AND event_time >= path_start AND event_time <= path_end
+							THEN cumulative_weight ELSE 0::NUMERIC(36,18) END)
+					)::NUMERIC(36,18)
+				END AS value
+			FROM time_leaf_values
+			GROUP BY event_time
+			HAVING SUM(CASE WHEN locf_value IS NOT NULL
+				AND event_time >= path_start AND event_time <= path_end
+				THEN 1 ELSE 0 END) > 0
+		),
+
+		-- Step 7: Anchor + range filter
+		anchor AS (
+			SELECT event_time, value FROM weighted_avg
+			WHERE event_time <= $2 AND value IS NOT NULL
+			ORDER BY event_time DESC LIMIT 1
+		),
+		range_results AS (
+			SELECT event_time, value FROM anchor
+			UNION ALL
+			SELECT event_time, value FROM weighted_avg
+			WHERE event_time > $2 AND event_time <= $3 AND value IS NOT NULL
+		)
+		SELECT DISTINCT event_time, value::TEXT FROM range_results
+		ORDER BY event_time ASC
+		LIMIT %[3]d`, SchemaName, maxInt8, maxQueryResults)
+
+	rs, err := ext.db.Execute(ctx, query, streamRef, effectiveFrom, effectiveTo)
+	if err != nil {
+		return nil, fmt.Errorf("query composed records: %w", err)
+	}
+
+	return resultSetToRecords(rs)
+}
+
+// dbGetLastRecordComposed returns the most recent calculated value for a composed stream.
+// Uses a wide range query to compute full history, then returns only the last entry.
+func (ext *Extension) dbGetLastRecordComposed(ctx context.Context, streamRef int64) ([]RecordOutput, error) {
+	zero := int64(0)
+	maxVal := maxInt8
+	records, err := ext.dbGetRecordComposed(ctx, streamRef, &zero, &maxVal)
+	if err != nil {
+		return nil, err
+	}
+	if len(records) == 0 {
+		return nil, nil
+	}
+	return []RecordOutput{records[len(records)-1]}, nil
+}
+
 // dbListStreams returns all local streams.
 func (ext *Extension) dbListStreams(ctx context.Context) ([]StreamInfo, error) {
 	query := fmt.Sprintf(`

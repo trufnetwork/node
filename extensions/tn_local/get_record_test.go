@@ -134,16 +134,20 @@ func TestGetRecord_Primitive_EmptyResult(t *testing.T) {
 	require.Empty(t, resp.Records)
 }
 
-func TestGetRecord_Composed_NotImplemented(t *testing.T) {
-	mockDB := mockDBForQuery(1, "composed", nil)
+func TestGetRecord_Composed_Dispatches(t *testing.T) {
+	// Verify that composed streams route to the composed query path
+	mockDB := mockDBForQuery(1, "composed", [][]any{
+		{int64(1000), "50.000000000000000000"},
+	})
 	ext := newTestExtension(mockDB)
 
-	_, rpcErr := ext.GetRecord(context.Background(), &GetRecordRequest{
+	resp, rpcErr := ext.GetRecord(context.Background(), &GetRecordRequest{
 		DataProvider: testDP,
 		StreamID:     testSID,
 	})
-	require.NotNil(t, rpcErr)
-	require.Contains(t, rpcErr.Message, "not yet implemented")
+	require.Nil(t, rpcErr)
+	require.NotNil(t, resp)
+	require.Len(t, resp.Records, 1)
 }
 
 // mockDBForQuery creates a MockDB that returns stream lookup results

@@ -372,7 +372,7 @@ func (ext *Extension) GetRecord(ctx context.Context, req *GetRecordRequest) (*Ge
 	case "primitive":
 		records, err = ext.dbGetRecordPrimitive(ctx, ref, req.FromTime, req.ToTime)
 	case "composed":
-		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "composed stream queries not yet implemented", nil)
+		records, err = ext.dbGetRecordComposed(ctx, ref, req.FromTime, req.ToTime)
 	default:
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, fmt.Sprintf("unknown stream type: %s", stype), nil)
 	}
@@ -418,35 +418,59 @@ func (ext *Extension) GetIndex(ctx context.Context, req *GetIndexRequest) (*GetI
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream not found: %s/%s", dataProvider, req.StreamID), nil)
 	}
 
-	if stype == "composed" {
-		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "composed stream queries not yet implemented", nil)
-	}
-
 	// Resolve base_time: default to first event_time in the stream
 	baseTime := req.BaseTime
 	if baseTime == nil {
-		firstET, lookupErr := ext.dbGetFirstEventTime(ctx, ref)
-		if lookupErr != nil {
-			ext.logger.Error("failed to get first event time", "error", lookupErr)
-			return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to determine base time", nil)
+		if stype == "primitive" {
+			firstET, lookupErr := ext.dbGetFirstEventTime(ctx, ref)
+			if lookupErr != nil {
+				ext.logger.Error("failed to get first event time", "error", lookupErr)
+				return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to determine base time", nil)
+			}
+			if firstET == nil {
+				return &GetIndexResponse{Records: []IndexOutput{}}, nil
+			}
+			baseTime = firstET
+		} else {
+			// For composed streams, get the earliest event time across all leaf primitives
+			zero := int64(0)
+			allRecords, queryErr := ext.dbGetRecordComposed(ctx, ref, &zero, nil)
+			if queryErr != nil {
+				ext.logger.Error("failed to get composed records for base time", "error", queryErr)
+				return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to determine base time", nil)
+			}
+			if len(allRecords) == 0 {
+				return &GetIndexResponse{Records: []IndexOutput{}}, nil
+			}
+			baseTime = &allRecords[0].EventTime
 		}
-		if firstET == nil {
-			return &GetIndexResponse{Records: []IndexOutput{}}, nil
-		}
-		baseTime = firstET
 	}
 
-	// Get the base value: single-row lookup at or before base_time
-	baseRecord, baseErr := ext.dbGetRecordAtOrBefore(ctx, ref, *baseTime)
-	if baseErr != nil {
-		ext.logger.Error("failed to get base value", "error", baseErr)
+	// Get the base value at base_time
+	var baseRecords []RecordOutput
+	switch stype {
+	case "primitive":
+		// Single-row lookup for primitives (avoids LIMIT 10000 prefix issue)
+		baseRecord, baseErr := ext.dbGetRecordAtOrBefore(ctx, ref, *baseTime)
+		if baseErr != nil {
+			ext.logger.Error("failed to get base value", "error", baseErr)
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to get base value", nil)
+		}
+		if baseRecord != nil {
+			baseRecords = []RecordOutput{*baseRecord}
+		}
+	case "composed":
+		baseRecords, err = ext.dbGetRecordComposed(ctx, ref, nil, baseTime)
+	}
+	if err != nil {
+		ext.logger.Error("failed to get base value", "error", err)
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to get base value", nil)
 	}
-	if baseRecord == nil {
+	if len(baseRecords) == 0 {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "no data at base time", nil)
 	}
 
-	baseValue, parseErr := decimal.NewFromString(baseRecord.Value)
+	baseValue, parseErr := decimal.NewFromString(baseRecords[len(baseRecords)-1].Value)
 	if parseErr != nil {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to parse base value", nil)
 	}
@@ -456,7 +480,12 @@ func (ext *Extension) GetIndex(ctx context.Context, req *GetIndexRequest) (*GetI
 
 	// Get all records for the requested range
 	var records []RecordOutput
-	records, err = ext.dbGetRecordPrimitive(ctx, ref, req.FromTime, req.ToTime)
+	switch stype {
+	case "primitive":
+		records, err = ext.dbGetRecordPrimitive(ctx, ref, req.FromTime, req.ToTime)
+	case "composed":
+		records, err = ext.dbGetRecordComposed(ctx, ref, req.FromTime, req.ToTime)
+	}
 	if err != nil {
 		ext.logger.Error("failed to query records for index", "error", err)
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to query records", nil)

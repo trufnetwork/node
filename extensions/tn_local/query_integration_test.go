@@ -332,3 +332,176 @@ func TestIntegration_HeightAsCreatedAt(t *testing.T) {
 		"stream created_at should be block height 100")
 }
 
+func TestIntegration_ComposedGetRecord(t *testing.T) {
+	ext := setupIntegrationDB(t)
+	ctx := context.Background()
+	dp := testDP
+
+	// Create two primitive child streams and one composed parent (exactly 32 chars each)
+	childSID1 := "st000000000000000000000000child1"
+	childSID2 := "st000000000000000000000000child2"
+	composedSID := "st0000000000000000000000000comp1"
+
+	for _, sid := range []string{childSID1, childSID2, composedSID} {
+		stype := "primitive"
+		if sid == composedSID {
+			stype = "composed"
+		}
+		_, rpcErr := ext.CreateStream(ctx, &CreateStreamRequest{
+			DataProvider: dp, StreamID: sid, StreamType: stype,
+		})
+		require.Nil(t, rpcErr, "create stream %s failed: %v", sid, rpcErr)
+	}
+
+	// child1: 10, 20, 30 at times 1000, 2000, 3000
+	_, rpcErr := ext.InsertRecords(ctx, &InsertRecordsRequest{
+		DataProvider: []string{dp, dp, dp},
+		StreamID:     []string{childSID1, childSID1, childSID1},
+		EventTime:    []int64{1000, 2000, 3000},
+		Value:        []string{"10.0", "20.0", "30.0"},
+	})
+	require.Nil(t, rpcErr)
+
+	// child2: 100, 200, 300 at times 1000, 2000, 3000
+	_, rpcErr = ext.InsertRecords(ctx, &InsertRecordsRequest{
+		DataProvider: []string{dp, dp, dp},
+		StreamID:     []string{childSID2, childSID2, childSID2},
+		EventTime:    []int64{1000, 2000, 3000},
+		Value:        []string{"100.0", "200.0", "300.0"},
+	})
+	require.Nil(t, rpcErr)
+
+	// Taxonomy: composed = 0.5 * child1 + 0.5 * child2
+	_, rpcErr = ext.InsertTaxonomy(ctx, &InsertTaxonomyRequest{
+		DataProvider:       dp,
+		StreamID:           composedSID,
+		ChildDataProviders: []string{dp, dp},
+		ChildStreamIDs:     []string{childSID1, childSID2},
+		Weights:            []string{"0.5", "0.5"},
+		StartDate:          0,
+	})
+	require.Nil(t, rpcErr, "insert taxonomy failed: %v", rpcErr)
+
+	// Query composed stream: weighted avg = (0.5*10+0.5*100)/1.0 = 55, etc.
+	from := int64(500)
+	to := int64(5000)
+	resp, rpcErr := ext.GetRecord(ctx, &GetRecordRequest{
+		DataProvider: dp, StreamID: composedSID,
+		FromTime: &from, ToTime: &to,
+	})
+	require.Nil(t, rpcErr, "get_record composed failed: %v", rpcErr)
+	require.Len(t, resp.Records, 3)
+	require.Equal(t, "55.000000000000000000", resp.Records[0].Value)
+	require.Equal(t, "110.000000000000000000", resp.Records[1].Value)
+	require.Equal(t, "165.000000000000000000", resp.Records[2].Value)
+
+	// Latest record
+	resp, rpcErr = ext.GetRecord(ctx, &GetRecordRequest{
+		DataProvider: dp, StreamID: composedSID,
+	})
+	require.Nil(t, rpcErr)
+	require.Len(t, resp.Records, 1)
+	require.Equal(t, int64(3000), resp.Records[0].EventTime)
+	require.Equal(t, "165.000000000000000000", resp.Records[0].Value)
+}
+
+func TestIntegration_ComposedGetIndex(t *testing.T) {
+	ext := setupIntegrationDB(t)
+	ctx := context.Background()
+	dp := testDP
+
+	childSID := "st0000000000000000000000000chld1"
+	composedSID := "st0000000000000000000000000cmpsd"
+
+	_, rpcErr := ext.CreateStream(ctx, &CreateStreamRequest{DataProvider: dp, StreamID: childSID, StreamType: "primitive"})
+	require.Nil(t, rpcErr)
+	_, rpcErr = ext.CreateStream(ctx, &CreateStreamRequest{DataProvider: dp, StreamID: composedSID, StreamType: "composed"})
+	require.Nil(t, rpcErr)
+
+	_, rpcErr = ext.InsertRecords(ctx, &InsertRecordsRequest{
+		DataProvider: []string{dp, dp, dp},
+		StreamID:     []string{childSID, childSID, childSID},
+		EventTime:    []int64{1000, 2000, 3000},
+		Value:        []string{"50.0", "75.0", "100.0"},
+	})
+	require.Nil(t, rpcErr)
+
+	_, rpcErr = ext.InsertTaxonomy(ctx, &InsertTaxonomyRequest{
+		DataProvider:       dp,
+		StreamID:           composedSID,
+		ChildDataProviders: []string{dp},
+		ChildStreamIDs:     []string{childSID},
+		Weights:            []string{"1.0"},
+		StartDate:          0,
+	})
+	require.Nil(t, rpcErr)
+
+	// Index with default base_time: base=50, index = (val/50)*100
+	from := int64(500)
+	to := int64(5000)
+	resp, rpcErr := ext.GetIndex(ctx, &GetIndexRequest{
+		DataProvider: dp, StreamID: composedSID,
+		FromTime: &from, ToTime: &to,
+	})
+	require.Nil(t, rpcErr, "get_index composed failed: %v", rpcErr)
+	require.Len(t, resp.Records, 3)
+	require.Equal(t, "100.000000000000000000", resp.Records[0].Value)
+	require.Equal(t, "150.000000000000000000", resp.Records[1].Value)
+	require.Equal(t, "200.000000000000000000", resp.Records[2].Value)
+}
+
+func TestIntegration_NestedComposed(t *testing.T) {
+	ext := setupIntegrationDB(t)
+	ctx := context.Background()
+	dp := testDP
+
+	// Hierarchy: root (composed) → mid (composed) → leaf (primitive)
+	leafSID := "st000000000000000000000000leaf01"
+	midSID := "st000000000000000000000000midi01"
+	rootSID := "st000000000000000000000000root01"
+
+	_, err := ext.CreateStream(ctx, &CreateStreamRequest{DataProvider: dp, StreamID: leafSID, StreamType: "primitive"})
+	require.Nil(t, err)
+	_, err = ext.CreateStream(ctx, &CreateStreamRequest{DataProvider: dp, StreamID: midSID, StreamType: "composed"})
+	require.Nil(t, err)
+	_, err = ext.CreateStream(ctx, &CreateStreamRequest{DataProvider: dp, StreamID: rootSID, StreamType: "composed"})
+	require.Nil(t, err)
+
+	_, err = ext.InsertRecords(ctx, &InsertRecordsRequest{
+		DataProvider: []string{dp, dp, dp},
+		StreamID:     []string{leafSID, leafSID, leafSID},
+		EventTime:    []int64{1000, 2000, 3000},
+		Value:        []string{"100.0", "200.0", "300.0"},
+	})
+	require.Nil(t, err)
+
+	// mid = 1.0 * leaf
+	_, err = ext.InsertTaxonomy(ctx, &InsertTaxonomyRequest{
+		DataProvider: dp, StreamID: midSID,
+		ChildDataProviders: []string{dp}, ChildStreamIDs: []string{leafSID},
+		Weights: []string{"1.0"}, StartDate: 0,
+	})
+	require.Nil(t, err)
+
+	// root = 0.5 * mid
+	_, err = ext.InsertTaxonomy(ctx, &InsertTaxonomyRequest{
+		DataProvider: dp, StreamID: rootSID,
+		ChildDataProviders: []string{dp}, ChildStreamIDs: []string{midSID},
+		Weights: []string{"0.5"}, StartDate: 0,
+	})
+	require.Nil(t, err)
+
+	// Weighted average with single component: SUM(0.5*v)/SUM(0.5) = v
+	from := int64(500)
+	to := int64(5000)
+	resp, rpcErr := ext.GetRecord(ctx, &GetRecordRequest{
+		DataProvider: dp, StreamID: rootSID,
+		FromTime: &from, ToTime: &to,
+	})
+	require.Nil(t, rpcErr, "nested composed query failed: %v", rpcErr)
+	require.Len(t, resp.Records, 3)
+	require.Equal(t, "100.000000000000000000", resp.Records[0].Value)
+	require.Equal(t, "200.000000000000000000", resp.Records[1].Value)
+	require.Equal(t, "300.000000000000000000", resp.Records[2].Value)
+}
+
