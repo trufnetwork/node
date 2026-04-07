@@ -81,8 +81,8 @@ func setupAttestationTestEnvironment(t *testing.T) func(ctx context.Context, pla
 			return fmt.Errorf("failed to register system admin as data provider: %w", err)
 		}
 
-		// Note: get_record is already registered in 023-attestation-schema.sql with ID=1
-		// No need to register it again
+		// Note: get_last_record (ID=4) and get_high_value (ID=10) are registered in
+		// 023-attestation-schema.sql and 045-high-low-attestation-actions.sql respectively
 
 		// Create a test stream for attestations
 		streamID := "st000000000000000000000000000000"
@@ -120,7 +120,7 @@ func testAttestationNetworkWriterPaysFee(t *testing.T) func(ctx context.Context,
 		// Request attestation (should pay 40 TRUF as non-exempt user)
 		systemAdmin := util.Unsafe_NewEthereumAddressFromString("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
 		streamID := "st000000000000000000000000000000"
-		err = requestAttestation(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_record")
+		err = requestAttestation(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_last_record")
 		require.NoError(t, err, "attestation request should succeed")
 
 		// Verify balance decreased by 40 TRUF
@@ -148,7 +148,7 @@ func testAttestationInsufficientBalance(t *testing.T) func(ctx context.Context, 
 		// Try to request attestation (should fail)
 		systemAdmin := util.Unsafe_NewEthereumAddressFromString("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
 		streamID := "st000000000000000000000000000000"
-		err = requestAttestation(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_record")
+		err = requestAttestation(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_last_record")
 		require.Error(t, err, "attestation request should fail with insufficient balance")
 		require.Contains(t, err.Error(), "Insufficient balance for attestation",
 			"error should mention insufficient balance")
@@ -178,7 +178,7 @@ func testAttestationMultipleRequestsChargeFees(t *testing.T) func(ctx context.Co
 			// Vary the time range for each request to get different attestation hashes
 			from := int64(i * 1000)
 			to := int64(i*1000 + 999)
-			err = requestAttestationWithTimeRange(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_record", from, to)
+			err = requestAttestationWithTimeRange(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_high_value", from, to)
 			require.NoError(t, err, "attestation request %d should succeed", i+1)
 		}
 
@@ -225,7 +225,7 @@ func testAttestationLeaderReceivesFees(t *testing.T) func(ctx context.Context, p
 		// Request attestation with specific leader
 		systemAdmin := util.Unsafe_NewEthereumAddressFromString("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
 		streamID := "st000000000000000000000000000000"
-		err = requestAttestationWithLeader(ctx, platform, requesterAddr, pub, systemAdmin.Address(), streamID, "get_record")
+		err = requestAttestationWithLeader(ctx, platform, requesterAddr, pub, systemAdmin.Address(), streamID, "get_last_record")
 		require.NoError(t, err, "attestation request with leader should succeed")
 
 		// Verify leader balance increased by 40 TRUF
@@ -254,15 +254,15 @@ func testAttestationBalanceCorrectlyDeducted(t *testing.T) func(ctx context.Cont
 		streamID := "st000000000000000000000000000000"
 
 		// First attestation should succeed (time range 0-999)
-		err = requestAttestationWithTimeRange(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_record", 0, 999)
+		err = requestAttestationWithTimeRange(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_high_value", 0, 999)
 		require.NoError(t, err, "first attestation should succeed")
 
 		// Second attestation should succeed (time range 1000-1999)
-		err = requestAttestationWithTimeRange(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_record", 1000, 1999)
+		err = requestAttestationWithTimeRange(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_high_value", 1000, 1999)
 		require.NoError(t, err, "second attestation should succeed")
 
 		// Third attestation should fail (insufficient balance) (time range 2000-2999)
-		err = requestAttestationWithTimeRange(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_record", 2000, 2999)
+		err = requestAttestationWithTimeRange(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_high_value", 2000, 2999)
 		require.Error(t, err, "third attestation should fail with insufficient balance")
 		require.Contains(t, err.Error(), "Insufficient balance for attestation",
 			"error should mention insufficient balance")
@@ -346,30 +346,46 @@ func getAttestationBalance(ctx context.Context, platform *kwilTesting.Platform, 
 	return balance, nil
 }
 
-// callRequestAttestationAction is the base implementation - calls the request_attestation action
+// callRequestAttestationAction calls request_attestation for single-point actions (get_last_record).
+// Encodes args: ($data_provider, $stream_id, $before, $frozen_at, $use_cache)
 func callRequestAttestationAction(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, leaderPub *crypto.Secp256k1PublicKey, dataProvider string, streamID string, actionName string) error {
-	return callRequestAttestationActionWithTimeRange(ctx, platform, signer, leaderPub, dataProvider, streamID, actionName, int64(0), int64(99999))
-}
-
-// callRequestAttestationActionWithTimeRange is the base implementation with custom time range
-func callRequestAttestationActionWithTimeRange(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, leaderPub *crypto.Secp256k1PublicKey, dataProvider string, streamID string, actionName string, from int64, to int64) error {
-	// Prepare arguments for get_record action
-	// get_record($data_provider TEXT, $stream_id TEXT, $from INT8, $to INT8, $frozen_at INT8, $use_cache BOOL)
 	actionArgs := []any{
 		dataProvider,
 		streamID,
-		from,
-		to,
-		int64(99999), // frozen_at
-		false,        // use_cache (will be forced to false by request_attestation)
+		nil,   // before
+		nil,   // frozen_at
+		false, // use_cache
 	}
 
-	// Encode action arguments
 	argsBytes, err := tn_utils.EncodeActionArgs(actionArgs)
 	if err != nil {
 		return fmt.Errorf("failed to encode action args: %w", err)
 	}
 
+	return callRequestAttestationWithBytes(ctx, platform, signer, leaderPub, dataProvider, streamID, actionName, argsBytes)
+}
+
+// callRequestAttestationActionWithTimeRange calls request_attestation for range-based actions (get_high_value, get_low_value).
+// Encodes args: ($data_provider, $stream_id, $from, $to, $frozen_at)
+func callRequestAttestationActionWithTimeRange(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, leaderPub *crypto.Secp256k1PublicKey, dataProvider string, streamID string, actionName string, from int64, to int64) error {
+	actionArgs := []any{
+		dataProvider,
+		streamID,
+		from,
+		to,
+		nil, // frozen_at
+	}
+
+	argsBytes, err := tn_utils.EncodeActionArgs(actionArgs)
+	if err != nil {
+		return fmt.Errorf("failed to encode action args: %w", err)
+	}
+
+	return callRequestAttestationWithBytes(ctx, platform, signer, leaderPub, dataProvider, streamID, actionName, argsBytes)
+}
+
+// callRequestAttestationWithBytes is the base implementation that calls request_attestation with pre-encoded args
+func callRequestAttestationWithBytes(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, leaderPub *crypto.Secp256k1PublicKey, dataProvider string, streamID string, actionName string, argsBytes []byte) error {
 	tx := &common.TxContext{
 		Ctx: ctx,
 		BlockContext: &common.BlockContext{

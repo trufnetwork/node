@@ -59,27 +59,40 @@ func testAllDateRangeValidations(t *testing.T) func(ctx context.Context, platfor
 		err = giveAttestationBalance(ctx, platform, systemAdmin.Address(), "1000000000000000000000")
 		require.NoError(t, err)
 
-		// Insert a data point for binary action test
+		// Insert multiple data points for high/low tests
 		err = insertTestDataPoint(ctx, platform, &systemAdmin, streamID, 1000000, "75.000000000000000000")
 		require.NoError(t, err)
+		err = insertTestDataPoint(ctx, platform, &systemAdmin, streamID, 1000100, "120.000000000000000000")
+		require.NoError(t, err)
+		err = insertTestDataPoint(ctx, platform, &systemAdmin, streamID, 1000200, "30.000000000000000000")
+		require.NoError(t, err)
 
-		// === Test 1: 30-day range should succeed ===
-		t.Log("Test 1: get_record with 30-day range should succeed")
+		// =====================================================================
+		// Group 1: Actions 1-3 are BLOCKED from attestation
+		// =====================================================================
+
+		// === Test 1: get_record is blocked ===
+		t.Log("Test 1: get_record is blocked from attestation")
 		from30 := int64(1000000)
 		to30 := int64(1000000 + 30*24*60*60)
 		err = requestAttestationWithTimeRange(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_record", from30, to30)
-		require.NoError(t, err, "30-day range should succeed")
+		require.Error(t, err, "get_record should be blocked")
+		require.Contains(t, err.Error(), "not allowed for attestation")
 
-		// === Test 2: 180-day range should fail ===
-		t.Log("Test 2: get_record with 180-day range should fail")
-		from180 := int64(1000000)
-		to180 := int64(1000000 + 180*24*60*60)
-		err = requestAttestationWithTimeRange(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_record", from180, to180)
-		require.Error(t, err, "180-day range should fail")
-		require.Contains(t, err.Error(), "exceeds maximum", "should mention exceeding maximum")
+		// === Test 2: get_index is blocked ===
+		t.Log("Test 2: get_index is blocked from attestation")
+		err = requestAttestationWithTimeRange(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_index", from30, to30)
+		require.Error(t, err, "get_index should be blocked")
+		require.Contains(t, err.Error(), "not allowed for attestation")
 
-		// === Test 3: Both from and to nil should succeed (latest record, safe) ===
-		t.Log("Test 3: get_record with both null dates should succeed")
+		// === Test 3: get_change_over_time is blocked ===
+		t.Log("Test 3: get_change_over_time is blocked from attestation")
+		err = requestAttestationWithTimeRange(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_change_over_time", from30, to30)
+		require.Error(t, err, "get_change_over_time should be blocked")
+		require.Contains(t, err.Error(), "not allowed for attestation")
+
+		// === Test 4: get_record with null dates is also blocked ===
+		t.Log("Test 4: get_record with null dates is still blocked")
 		nullArgs := []any{
 			systemAdmin.Address(), streamID,
 			nil, nil,   // from, to both nil
@@ -88,67 +101,15 @@ func testAllDateRangeValidations(t *testing.T) func(ctx context.Context, platfor
 		argsBytes, err := tn_utils.EncodeActionArgs(nullArgs)
 		require.NoError(t, err)
 		err = requestAttestationWithArgsBytes(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_record", argsBytes)
-		require.NoError(t, err, "both null dates should succeed (returns latest record)")
+		require.Error(t, err, "get_record should be blocked even with null dates")
+		require.Contains(t, err.Error(), "not allowed for attestation")
 
-		// === Test 4: Only one date param should fail (unbounded range) ===
-		t.Log("Test 4: get_record with only 'to' should fail")
-		oneNullArgs := []any{
-			systemAdmin.Address(), streamID,
-			nil, int64(99999), // from=nil (unbounded), to=specified
-			nil, false,
-		}
-		argsBytes, err = tn_utils.EncodeActionArgs(oneNullArgs)
-		require.NoError(t, err)
-		err = requestAttestationWithArgsBytes(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_record", argsBytes)
-		require.Error(t, err, "one null date should fail")
-		require.Contains(t, err.Error(), "must specify both", "should require both from and to")
+		// =====================================================================
+		// Group 2: Actions 4-5 pass (single-point, LIMIT 1)
+		// =====================================================================
 
-		// === Test 5: Exactly 90 days should succeed (boundary) ===
-		t.Log("Test 5: get_record with exactly 90-day range should succeed")
-		from90 := int64(1000000)
-		to90 := int64(1000000 + 90*24*60*60)
-		err = requestAttestationWithTimeRange(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_record", from90, to90)
-		require.NoError(t, err, "exactly 90-day range should succeed")
-
-		// === Test 6: 91 days should fail (just over boundary) ===
-		t.Log("Test 6: get_record with 91-day range should fail")
-		from91 := int64(1000000)
-		to91 := int64(1000000 + 91*24*60*60)
-		err = requestAttestationWithTimeRange(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_record", from91, to91)
-		require.Error(t, err, "91-day range should fail")
-		require.Contains(t, err.Error(), "exceeds maximum")
-
-		// === Test 7: Binary action (price_above_threshold) skips validation ===
-		t.Log("Test 7: binary action should skip date range validation")
-		thresholdVal, err := kwilTypes.ParseDecimal("50.000000000000000000")
-		require.NoError(t, err)
-		thresholdVal.SetPrecisionAndScale(36, 18)
-		binaryArgs := []any{
-			systemAdmin.Address(), streamID,
-			int64(1000000),  // timestamp
-			thresholdVal,    // threshold as NUMERIC(36,18)
-			nil,             // frozen_at
-		}
-		argsBytes, err = tn_utils.EncodeActionArgs(binaryArgs)
-		require.NoError(t, err)
-		err = requestAttestationWithArgsBytes(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "price_above_threshold", argsBytes)
-		require.NoError(t, err, "binary action should skip date range validation")
-
-		// === Test 8: get_index with 180-day range should also fail ===
-		t.Log("Test 8: get_index with 180-day range should fail")
-		err = requestAttestationWithTimeRange(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_index", from180, to180)
-		require.Error(t, err, "get_index with 180-day range should fail")
-		require.Contains(t, err.Error(), "exceeds maximum")
-
-		// === Test 8b: get_change_over_time with 180-day range should also fail ===
-		t.Log("Test 8b: get_change_over_time with 180-day range should fail")
-		err = requestAttestationWithTimeRange(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_change_over_time", from180, to180)
-		require.Error(t, err, "get_change_over_time with 180-day range should fail")
-		require.Contains(t, err.Error(), "exceeds maximum")
-
-		// === Test 9: get_last_record (action_id=4) should skip validation ===
-		// Signature: get_last_record($data_provider TEXT, $stream_id TEXT, $before INT8, $frozen_at INT8, $use_cache BOOL)
-		t.Log("Test 9: get_last_record should skip date range validation")
+		// === Test 5: get_last_record (action_id=4) passes ===
+		t.Log("Test 5: get_last_record should pass (single-point query)")
 		lastRecordArgs := []any{
 			systemAdmin.Address(), streamID,
 			nil,   // before
@@ -158,21 +119,108 @@ func testAllDateRangeValidations(t *testing.T) func(ctx context.Context, platfor
 		argsBytes, err = tn_utils.EncodeActionArgs(lastRecordArgs)
 		require.NoError(t, err)
 		err = requestAttestationWithArgsBytes(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_last_record", argsBytes)
-		require.NoError(t, err, "get_last_record should skip date range validation")
+		require.NoError(t, err, "get_last_record should pass")
 
-		// === Test 10: from == to (single-point query, dateRange=0) should succeed ===
-		t.Log("Test 10: get_record with from == to should succeed")
-		samePoint := int64(1000000)
-		err = requestAttestationWithTimeRange(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_record", samePoint, samePoint)
-		require.NoError(t, err, "single-point query (from == to) should succeed")
+		// =====================================================================
+		// Group 3: Actions 6-9 pass (binary, single boolean)
+		// =====================================================================
 
-		// === Test 11: from > to (negative range) should fail ===
-		t.Log("Test 11: get_record with from > to should fail")
-		err = requestAttestationWithTimeRange(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_record", int64(2000000), int64(1000000))
-		require.Error(t, err, "negative range (from > to) should fail")
-		require.Contains(t, err.Error(), "must be less than or equal", "should reject inverted range")
+		// === Test 6: binary action (price_above_threshold) passes ===
+		t.Log("Test 6: binary action should pass")
+		thresholdVal, err := kwilTypes.ParseDecimal("50.000000000000000000")
+		require.NoError(t, err)
+		thresholdVal.SetPrecisionAndScale(36, 18)
+		binaryArgs := []any{
+			systemAdmin.Address(), streamID,
+			int64(1000000),  // timestamp
+			thresholdVal,    // threshold
+			nil,             // frozen_at
+		}
+		argsBytes, err = tn_utils.EncodeActionArgs(binaryArgs)
+		require.NoError(t, err)
+		err = requestAttestationWithArgsBytes(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "price_above_threshold", argsBytes)
+		require.NoError(t, err, "binary action should pass")
 
-		t.Log("All date range validation tests passed")
+		// =====================================================================
+		// Group 4: Actions 10-11 date range validation
+		// =====================================================================
+
+		// === Test 7: get_high_value with valid 30-day range succeeds ===
+		t.Log("Test 7: get_high_value with valid range should succeed")
+		highArgs := []any{
+			systemAdmin.Address(), streamID,
+			int64(900000), int64(1100000), // ~1.2 day range
+			nil, // frozen_at
+		}
+		argsBytes, err = tn_utils.EncodeActionArgs(highArgs)
+		require.NoError(t, err)
+		err = requestAttestationWithArgsBytes(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_high_value", argsBytes)
+		require.NoError(t, err, "get_high_value with valid range should succeed")
+
+		// === Test 8: get_low_value with valid range succeeds ===
+		t.Log("Test 8: get_low_value with valid range should succeed")
+		lowArgs := []any{
+			systemAdmin.Address(), streamID,
+			int64(900000), int64(1100000),
+			nil,
+		}
+		argsBytes, err = tn_utils.EncodeActionArgs(lowArgs)
+		require.NoError(t, err)
+		err = requestAttestationWithArgsBytes(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_low_value", argsBytes)
+		require.NoError(t, err, "get_low_value with valid range should succeed")
+
+		// === Test 9: get_high_value with 180-day range fails ===
+		t.Log("Test 9: get_high_value with 180-day range should fail")
+		highLongArgs := []any{
+			systemAdmin.Address(), streamID,
+			int64(1000000), int64(1000000 + 180*24*60*60),
+			nil,
+		}
+		argsBytes, err = tn_utils.EncodeActionArgs(highLongArgs)
+		require.NoError(t, err)
+		err = requestAttestationWithArgsBytes(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_high_value", argsBytes)
+		require.Error(t, err, "get_high_value with 180-day range should fail")
+		require.Contains(t, err.Error(), "exceeds maximum")
+
+		// === Test 10: get_high_value with from > to fails ===
+		t.Log("Test 10: get_high_value with from > to should fail")
+		highInvertedArgs := []any{
+			systemAdmin.Address(), streamID,
+			int64(2000000), int64(1000000),
+			nil,
+		}
+		argsBytes, err = tn_utils.EncodeActionArgs(highInvertedArgs)
+		require.NoError(t, err)
+		err = requestAttestationWithArgsBytes(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_high_value", argsBytes)
+		require.Error(t, err, "inverted range should fail")
+		require.Contains(t, err.Error(), "must be less than or equal")
+
+		// === Test 11: get_high_value with nil from/to fails ===
+		t.Log("Test 11: get_high_value with nil dates should fail")
+		highNilArgs := []any{
+			systemAdmin.Address(), streamID,
+			nil, nil,
+			nil,
+		}
+		argsBytes, err = tn_utils.EncodeActionArgs(highNilArgs)
+		require.NoError(t, err)
+		err = requestAttestationWithArgsBytes(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_high_value", argsBytes)
+		require.Error(t, err, "get_high_value with nil dates should fail")
+		require.Contains(t, err.Error(), "require both")
+
+		// === Test 12: get_high_value with exactly 90 days succeeds ===
+		t.Log("Test 12: get_high_value with exactly 90-day range should succeed")
+		high90Args := []any{
+			systemAdmin.Address(), streamID,
+			int64(1000000), int64(1000000 + 90*24*60*60),
+			nil,
+		}
+		argsBytes, err = tn_utils.EncodeActionArgs(high90Args)
+		require.NoError(t, err)
+		err = requestAttestationWithArgsBytes(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_high_value", argsBytes)
+		require.NoError(t, err, "exactly 90-day range should succeed")
+
+		t.Log("All attestation restriction tests passed")
 		return nil
 	}
 }

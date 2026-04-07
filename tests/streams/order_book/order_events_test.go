@@ -617,14 +617,14 @@ func testOrderEventSettlement(t *testing.T) func(ctx context.Context, platform *
 
 		// Request and sign attestation
 		argsBytes, err := tn_utils.EncodeActionArgs([]any{
-			dataProvider, streamID, int64(500), int64(1500), nil, false,
+			dataProvider, streamID, int64(1500), nil, false,
 		})
 		require.NoError(t, err)
 
 		var requestTxID string
 		engineCtx = helper.NewEngineContext()
 		res, err := platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
-			[]any{dataProvider, streamID, "get_record", argsBytes, false, nil},
+			[]any{dataProvider, streamID, "get_last_record", argsBytes, false, nil},
 			func(row *common.Row) error {
 				requestTxID = row.Values[0].(string)
 				return nil
@@ -635,7 +635,7 @@ func testOrderEventSettlement(t *testing.T) func(ctx context.Context, platform *
 		helper.SignAttestation(requestTxID)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_record", argsBytes)
+		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_last_record", argsBytes)
 		require.NoError(t, err)
 
 		settleTime := time.Now().Add(1 * time.Hour).Unix()
