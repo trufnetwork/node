@@ -446,31 +446,24 @@ func (ext *Extension) GetIndex(ctx context.Context, req *GetIndexRequest) (*GetI
 		}
 	}
 
-	// Get the base value at base_time
-	var baseRecords []RecordOutput
+	// Get the base value at base_time — both branches use a single-row lookup
+	// to avoid the 10000-row LIMIT prefix bug for long histories.
+	var baseRecord *RecordOutput
 	switch stype {
 	case "primitive":
-		// Single-row lookup for primitives (avoids LIMIT 10000 prefix issue)
-		baseRecord, baseErr := ext.dbGetRecordAtOrBefore(ctx, ref, *baseTime)
-		if baseErr != nil {
-			ext.logger.Error("failed to get base value", "error", baseErr)
-			return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to get base value", nil)
-		}
-		if baseRecord != nil {
-			baseRecords = []RecordOutput{*baseRecord}
-		}
+		baseRecord, err = ext.dbGetRecordAtOrBefore(ctx, ref, *baseTime)
 	case "composed":
-		baseRecords, err = ext.dbGetRecordComposed(ctx, ref, nil, baseTime)
+		baseRecord, err = ext.dbGetComposedRecordAtOrBefore(ctx, ref, *baseTime)
 	}
 	if err != nil {
 		ext.logger.Error("failed to get base value", "error", err)
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to get base value", nil)
 	}
-	if len(baseRecords) == 0 {
+	if baseRecord == nil {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "no data at base time", nil)
 	}
 
-	baseValue, parseErr := decimal.NewFromString(baseRecords[len(baseRecords)-1].Value)
+	baseValue, parseErr := decimal.NewFromString(baseRecord.Value)
 	if parseErr != nil {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to parse base value", nil)
 	}

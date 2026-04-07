@@ -151,14 +151,15 @@ func testWinnerReceivesFullPayout(t *testing.T) func(context.Context, *kwilTesti
 		}
 		require.True(t, foundData, "Data should be found in stream")
 
-		// Request attestation for get_record
+		// Request attestation for get_last_record
+		// Args: data_provider, stream_id, before, frozen_at, use_cache
+		// (get_record is action_id 1, blocked by validate_attestation_date_range — must use a single-row action)
 		argsBytes, err := tn_utils.EncodeActionArgs([]any{
 			dataProvider,
 			streamID,
-			int64(500),
-			int64(1500),
-			nil,
-			false,
+			int64(1500), // before (after our eventTime=1000)
+			nil,         // frozen_at (NULL = latest)
+			false,       // use_cache
 		})
 		require.NoError(t, err)
 
@@ -169,7 +170,7 @@ func testWinnerReceivesFullPayout(t *testing.T) func(context.Context, *kwilTesti
 			[]any{
 				dataProvider,
 				streamID,
-				"get_record",
+				"get_last_record",
 				argsBytes,
 				false,
 				nil,
@@ -193,7 +194,7 @@ func testWinnerReceivesFullPayout(t *testing.T) func(context.Context, *kwilTesti
 
 		// Encode query components for create_market (must match attestation args!)
 		queryComponents, err := encodeQueryComponentsForTests(
-			dataProvider, streamID, "get_record", argsBytes)
+			dataProvider, streamID, "get_last_record", argsBytes)
 		require.NoError(t, err)
 
 		// Create market using query_components

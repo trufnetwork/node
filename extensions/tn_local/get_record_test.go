@@ -135,10 +135,34 @@ func TestGetRecord_Primitive_EmptyResult(t *testing.T) {
 }
 
 func TestGetRecord_Composed_Dispatches(t *testing.T) {
-	// Verify that composed streams route to the composed query path
-	mockDB := mockDBForQuery(1, "composed", [][]any{
-		{int64(1000), "50.000000000000000000"},
-	})
+	// Verify that composed streams route to the composed query path.
+	// The mock distinguishes the composed CTE chain ("WITH RECURSIVE" + "weighted_avg")
+	// from the primitive query, and only returns rows for the composed branch — so
+	// if dispatch falls through to the primitive path, the test sees zero rows
+	// AND we additionally assert composedSeen below.
+	var composedSeen bool
+	mockDB := &utils.MockDB{
+		ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*kwilsql.ResultSet, error) {
+			// Stream lookup
+			if strings.Contains(stmt, "SELECT id, stream_type") {
+				return &kwilsql.ResultSet{
+					Columns: []string{"id", "stream_type"},
+					Rows:    [][]any{{int64(1), "composed"}},
+				}, nil
+			}
+			// Composed query path: composedQueryCTEs() emits "weighted_avg" — a token
+			// that does NOT appear in the primitive query.
+			if strings.Contains(stmt, "weighted_avg") {
+				composedSeen = true
+				return &kwilsql.ResultSet{
+					Columns: []string{"event_time", "value"},
+					Rows:    [][]any{{int64(1000), "50.000000000000000000"}},
+				}, nil
+			}
+			// Primitive path would land here — return empty so dispatch failure is loud.
+			return &kwilsql.ResultSet{Rows: [][]any{}}, nil
+		},
+	}
 	ext := newTestExtension(mockDB)
 
 	resp, rpcErr := ext.GetRecord(context.Background(), &GetRecordRequest{
@@ -147,6 +171,7 @@ func TestGetRecord_Composed_Dispatches(t *testing.T) {
 	})
 	require.Nil(t, rpcErr)
 	require.NotNil(t, resp)
+	require.True(t, composedSeen, "composed query path must be invoked for composed streams")
 	require.Len(t, resp.Records, 1)
 }
 

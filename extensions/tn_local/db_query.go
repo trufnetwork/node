@@ -145,57 +145,65 @@ func (ext *Extension) dbGetRecordAtOrBefore(ctx context.Context, streamRef int64
 	return &records[0], nil
 }
 
-// dbGetRecordComposed retrieves the calculated time series for a composed stream.
-// Uses a direct weighted-average calculation approach:
-//  1. Recursively expand taxonomy tree (handling overshadowing via MAX(group_sequence))
-//  2. Collect all unique event times across leaf primitives
-//  3. At each time point, compute weighted average using LOCF values and active weights
-//  4. Final value = SUM(weight * value) / SUM(weight) with gap-filling
-func (ext *Extension) dbGetRecordComposed(ctx context.Context, streamRef int64, from, to *int64) ([]RecordOutput, error) {
-	// Both nil: return latest record
-	if from == nil && to == nil {
-		return ext.dbGetLastRecordComposed(ctx, streamRef)
-	}
-
-	effectiveFrom := int64(0)
-	if from != nil {
-		effectiveFrom = *from
-	}
-	effectiveTo := maxInt8
-	if to != nil {
-		effectiveTo = *to
-	}
-
-	// Direct calculation: at each event time, compute weighted average of leaf values.
-	// Simpler than delta-based but correct for local queries.
-	query := fmt.Sprintf(`
+// composedQueryCTEs returns the shared CTE prefix used by all composed-stream
+// queries. The prefix produces a `weighted_avg(event_time, value)` relation
+// containing one row per change-point (leaf primitive event or taxonomy
+// boundary) with the LOCF-filled weighted average across all active leaves.
+//
+// Callers append their own SELECT clause referencing `weighted_avg` and pass
+// $1 = parent stream_ref (additional placeholders are caller-defined).
+//
+// Mirrors consensus 006-composed-query.sql for correct overshadowing:
+//   - parent_next_starts: LEAD over per-PARENT distinct start_times so children
+//     removed in later group_sequences are properly closed at the next parent
+//     boundary (NOT per-child, which would leave removed children open forever).
+//   - all_times: UNION of (a) leaf events filtered to their active windows
+//     and (b) taxonomy boundary times, so weight changes that don't coincide
+//     with a leaf event still produce a result row.
+func composedQueryCTEs() string {
+	return fmt.Sprintf(`
 		WITH RECURSIVE
-		-- Step 1: Resolve taxonomy segments with overshadowing
-		taxonomy_segments AS (
+		-- Step 1a: distinct start_times per parent (basis for LEAD boundary calc)
+		parent_distinct_starts AS (
+			SELECT DISTINCT stream_ref, start_time
+			FROM %[1]s.taxonomies
+			WHERE disabled_at IS NULL
+		),
+		-- Step 1b: next start_time per parent — closes out children removed in
+		-- subsequent group_sequences, regardless of whether the same child reappears.
+		parent_next_starts AS (
+			SELECT
+				stream_ref,
+				start_time,
+				LEAD(start_time) OVER (PARTITION BY stream_ref ORDER BY start_time) AS next_start_time
+			FROM parent_distinct_starts
+		),
+		-- Step 1c: max group_sequence per (parent, start_time) — overshadowing winner.
+		max_gs_per_start AS (
+			SELECT stream_ref, start_time, MAX(group_sequence) AS max_gs
+			FROM %[1]s.taxonomies
+			WHERE disabled_at IS NULL
+			GROUP BY stream_ref, start_time
+		),
+		-- Step 2: Active taxonomy = winning rows joined to their parent's next boundary.
+		active_taxonomy AS (
 			SELECT
 				t.stream_ref AS parent_ref,
 				t.child_stream_ref,
 				t.weight,
 				t.start_time,
-				t.group_sequence,
-				MAX(t.group_sequence) OVER (PARTITION BY t.stream_ref, t.start_time) AS max_gs
+				COALESCE(pns.next_start_time, %[2]d) - 1 AS end_time
 			FROM %[1]s.taxonomies t
+			JOIN max_gs_per_start mgs
+				ON t.stream_ref = mgs.stream_ref
+				AND t.start_time = mgs.start_time
+				AND t.group_sequence = mgs.max_gs
+			JOIN parent_next_starts pns
+				ON t.stream_ref = pns.stream_ref
+				AND t.start_time = pns.start_time
 			WHERE t.disabled_at IS NULL
 		),
-		active_taxonomy AS (
-			SELECT
-				parent_ref,
-				child_stream_ref,
-				weight,
-				start_time,
-				COALESCE(
-					LEAD(start_time) OVER (PARTITION BY parent_ref, child_stream_ref ORDER BY start_time) - 1,
-					%[2]d
-				) AS end_time
-			FROM taxonomy_segments
-			WHERE group_sequence = max_gs
-		),
-		-- Step 2: Recursive hierarchy — find all leaf primitives with cumulative weights
+		-- Step 3: Recursive hierarchy — expand to leaf primitives with cumulative weights.
 		hierarchy AS (
 			SELECT
 				at.child_stream_ref AS leaf_ref,
@@ -219,7 +227,6 @@ func (ext *Extension) dbGetRecordComposed(ctx context.Context, streamRef int64, 
 			WHERE h.level < 100
 				AND GREATEST(h.path_start, at.start_time) <= LEAST(h.path_end, at.end_time)
 		),
-		-- Filter to only leaf primitives (no further children)
 		leaf_primitives AS (
 			SELECT leaf_ref, cumulative_weight, path_start, path_end
 			FROM hierarchy h
@@ -227,8 +234,7 @@ func (ext *Extension) dbGetRecordComposed(ctx context.Context, streamRef int64, 
 				SELECT 1 FROM active_taxonomy at2 WHERE at2.parent_ref = h.leaf_ref
 			)
 		),
-
-		-- Step 3: Get all primitive events, deduped
+		-- Step 4: Get all primitive events for active leaves, deduped by latest created_at.
 		leaf_events AS (
 			SELECT
 				pe.stream_ref, pe.event_time, pe.value,
@@ -242,14 +248,21 @@ func (ext *Extension) dbGetRecordComposed(ctx context.Context, streamRef int64, 
 		deduped_events AS (
 			SELECT stream_ref, event_time, value FROM leaf_events WHERE rn = 1
 		),
-
-		-- Step 4: Collect all unique event times from leaf primitives
+		-- Step 5: All change-points = leaf events restricted to their active window
+		--         UNION taxonomy boundary times. Mirrors consensus cleaned_event_times
+		--         so weight changes between leaf events still emit a result row.
 		all_times AS (
-			SELECT DISTINCT event_time FROM deduped_events
+			SELECT DISTINCT event_time FROM (
+				SELECT de.event_time
+				FROM deduped_events de
+				JOIN leaf_primitives lp ON de.stream_ref = lp.leaf_ref
+				WHERE de.event_time >= lp.path_start
+					AND de.event_time <= lp.path_end
+				UNION ALL
+				SELECT path_start AS event_time FROM leaf_primitives
+			) combined
 		),
-
-		-- Step 5: At each time point, for each leaf, find the LOCF value
-		-- (latest value at or before this time)
+		-- Step 6: At each change-point, find each leaf's LOCF value.
 		time_leaf_values AS (
 			SELECT
 				t.event_time,
@@ -267,9 +280,7 @@ func (ext *Extension) dbGetRecordComposed(ctx context.Context, streamRef int64, 
 			FROM all_times t
 			CROSS JOIN leaf_primitives lp
 		),
-
-		-- Step 6: Compute weighted average at each time
-		-- Only include leaves where: weight is active AND leaf has a value
+		-- Step 7: Weighted average = SUM(weight * value) / SUM(weight) over active leaves.
 		weighted_avg AS (
 			SELECT
 				event_time,
@@ -293,9 +304,27 @@ func (ext *Extension) dbGetRecordComposed(ctx context.Context, streamRef int64, 
 			HAVING SUM(CASE WHEN locf_value IS NOT NULL
 				AND event_time >= path_start AND event_time <= path_end
 				THEN 1 ELSE 0 END) > 0
-		),
+		)`, SchemaName, maxInt8)
+}
 
-		-- Step 7: Anchor + range filter
+// dbGetRecordComposed retrieves the calculated time series for a composed stream
+// over an explicit range, using anchor + interval semantics like the primitive query.
+func (ext *Extension) dbGetRecordComposed(ctx context.Context, streamRef int64, from, to *int64) ([]RecordOutput, error) {
+	// Both nil: return latest record (avoids the LIMIT-prefix bug for long histories).
+	if from == nil && to == nil {
+		return ext.dbGetLastRecordComposed(ctx, streamRef)
+	}
+
+	effectiveFrom := int64(0)
+	if from != nil {
+		effectiveFrom = *from
+	}
+	effectiveTo := maxInt8
+	if to != nil {
+		effectiveTo = *to
+	}
+
+	query := composedQueryCTEs() + fmt.Sprintf(`,
 		anchor AS (
 			SELECT event_time, value FROM weighted_avg
 			WHERE event_time <= $2 AND value IS NOT NULL
@@ -309,7 +338,7 @@ func (ext *Extension) dbGetRecordComposed(ctx context.Context, streamRef int64, 
 		)
 		SELECT DISTINCT event_time, value::TEXT FROM range_results
 		ORDER BY event_time ASC
-		LIMIT %[3]d`, SchemaName, maxInt8, maxQueryResults)
+		LIMIT %d`, maxQueryResults)
 
 	rs, err := ext.db.Execute(ctx, query, streamRef, effectiveFrom, effectiveTo)
 	if err != nil {
@@ -319,19 +348,48 @@ func (ext *Extension) dbGetRecordComposed(ctx context.Context, streamRef int64, 
 	return resultSetToRecords(rs)
 }
 
-// dbGetLastRecordComposed returns the most recent calculated value for a composed stream.
-// Uses a wide range query to compute full history, then returns only the last entry.
+// dbGetLastRecordComposed returns the most recent calculated value for a composed
+// stream via a single-row DESC query — does NOT pull the full history through
+// the 10000-row prefix (which would return the wrong record for long histories).
 func (ext *Extension) dbGetLastRecordComposed(ctx context.Context, streamRef int64) ([]RecordOutput, error) {
-	zero := int64(0)
-	maxVal := maxInt8
-	records, err := ext.dbGetRecordComposed(ctx, streamRef, &zero, &maxVal)
+	query := composedQueryCTEs() + `
+		SELECT event_time, value::TEXT FROM weighted_avg
+		WHERE value IS NOT NULL
+		ORDER BY event_time DESC
+		LIMIT 1`
+
+	rs, err := ext.db.Execute(ctx, query, streamRef)
+	if err != nil {
+		return nil, fmt.Errorf("query last composed record: %w", err)
+	}
+	return resultSetToRecords(rs)
+}
+
+// dbGetComposedRecordAtOrBefore returns the single most recent composed record
+// at or before the given time. Mirrors dbGetRecordAtOrBefore for primitives —
+// avoids the 10000-row prefix bug when history exceeds maxQueryResults.
+func (ext *Extension) dbGetComposedRecordAtOrBefore(ctx context.Context, streamRef int64, atOrBefore int64) (*RecordOutput, error) {
+	query := composedQueryCTEs() + `
+		SELECT event_time, value::TEXT FROM weighted_avg
+		WHERE value IS NOT NULL AND event_time <= $2
+		ORDER BY event_time DESC
+		LIMIT 1`
+
+	rs, err := ext.db.Execute(ctx, query, streamRef, atOrBefore)
+	if err != nil {
+		return nil, fmt.Errorf("query composed record at or before %d: %w", atOrBefore, err)
+	}
+	if rs == nil || len(rs.Rows) == 0 {
+		return nil, nil
+	}
+	records, err := resultSetToRecords(rs)
 	if err != nil {
 		return nil, err
 	}
 	if len(records) == 0 {
 		return nil, nil
 	}
-	return []RecordOutput{records[len(records)-1]}, nil
+	return &records[0], nil
 }
 
 // dbListStreams returns all local streams.
