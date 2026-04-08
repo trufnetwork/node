@@ -22,6 +22,21 @@ func TestCreateStream_NilRequest(t *testing.T) {
 	require.Contains(t, rpcErr.Message, "missing request")
 }
 
+func TestCreateStream_DisabledWhenNoNodeAddress(t *testing.T) {
+	// An extension without a configured node address (e.g. node has no
+	// secp256k1 key) must reject every request with the disabled error.
+	ext := &Extension{db: &utils.MockDB{}}
+	// isEnabled is intentionally not set.
+
+	_, rpcErr := ext.CreateStream(context.Background(), &CreateStreamRequest{
+		StreamID:   "st00000000000000000000000000test",
+		StreamType: "primitive",
+	})
+	require.NotNil(t, rpcErr)
+	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInternal), rpcErr.Code)
+	require.Contains(t, rpcErr.Message, "tn_local is disabled")
+}
+
 func TestCreateStream_Success(t *testing.T) {
 	var capturedStmt string
 	var capturedArgs []any
@@ -36,17 +51,16 @@ func TestCreateStream_Success(t *testing.T) {
 	ext.height.Store(42)
 
 	resp, rpcErr := ext.CreateStream(context.Background(), &CreateStreamRequest{
-		DataProvider: "0xEC36224A679218Ae28FCeCe8d3c68595B87Dd832",
-		StreamID:     "st00000000000000000000000000test",
-		StreamType:   "primitive",
+		StreamID:   "st00000000000000000000000000test",
+		StreamType: "primitive",
 	})
 
 	require.Nil(t, rpcErr, "expected no error")
 	require.NotNil(t, resp)
 	require.Contains(t, capturedStmt, "INSERT INTO "+SchemaName+".streams")
 	require.Len(t, capturedArgs, 4, "INSERT should have 4 parameters")
-	// data_provider should be lowercased (matching consensus behavior)
-	require.Equal(t, "0xec36224a679218ae28fcece8d3c68595b87dd832", capturedArgs[0])
+	// data_provider must be the node's own address — server-derived, never client-supplied.
+	require.Equal(t, testNodeAddress, capturedArgs[0])
 	require.Equal(t, "st00000000000000000000000000test", capturedArgs[1])
 	require.Equal(t, "primitive", capturedArgs[2])
 	// created_at should propagate the block height set on the extension
@@ -64,9 +78,8 @@ func TestCreateStream_ComposedType(t *testing.T) {
 	ext := newTestExtension(mockDB)
 
 	resp, rpcErr := ext.CreateStream(context.Background(), &CreateStreamRequest{
-		DataProvider: "0xEC36224A679218Ae28FCeCe8d3c68595B87Dd832",
-		StreamID:     "st00000000000000000000000000test",
-		StreamType:   "composed",
+		StreamID:   "st00000000000000000000000000test",
+		StreamType: "composed",
 	})
 
 	require.Nil(t, rpcErr)
@@ -89,9 +102,8 @@ func TestCreateStream_InvalidStreamID(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, rpcErr := ext.CreateStream(context.Background(), &CreateStreamRequest{
-				DataProvider: "0xEC36224A679218Ae28FCeCe8d3c68595B87Dd832",
-				StreamID:     tt.streamID,
-				StreamType:   "primitive",
+				StreamID:   tt.streamID,
+				StreamType: "primitive",
 			})
 			require.NotNil(t, rpcErr)
 			require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
@@ -104,40 +116,12 @@ func TestCreateStream_InvalidStreamType(t *testing.T) {
 	ext := newTestExtension(&utils.MockDB{})
 
 	_, rpcErr := ext.CreateStream(context.Background(), &CreateStreamRequest{
-		DataProvider: "0xEC36224A679218Ae28FCeCe8d3c68595B87Dd832",
-		StreamID:     "st00000000000000000000000000test",
-		StreamType:   "invalid",
+		StreamID:   "st00000000000000000000000000test",
+		StreamType: "invalid",
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
 	require.Contains(t, rpcErr.Message, "must be 'primitive' or 'composed'")
-}
-
-func TestCreateStream_InvalidDataProvider(t *testing.T) {
-	ext := newTestExtension(&utils.MockDB{})
-
-	tests := []struct {
-		name         string
-		dataProvider string
-	}{
-		{"no 0x prefix", "EC36224A679218Ae28FCeCe8d3c68595B87Dd832"},
-		{"too short", "0xEC36224A679218Ae28"},
-		{"too long", "0xEC36224A679218Ae28FCeCe8d3c68595B87Dd832FF"},
-		{"invalid chars", "0xGG36224A679218Ae28FCeCe8d3c68595B87Dd832"},
-		{"empty", ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, rpcErr := ext.CreateStream(context.Background(), &CreateStreamRequest{
-				DataProvider: tt.dataProvider,
-				StreamID:     "st00000000000000000000000000test",
-				StreamType:   "primitive",
-			})
-			require.NotNil(t, rpcErr)
-			require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
-			require.Contains(t, rpcErr.Message, "data_provider must be a valid Ethereum address")
-		})
-	}
 }
 
 func TestCreateStream_DuplicateStream(t *testing.T) {
@@ -149,9 +133,8 @@ func TestCreateStream_DuplicateStream(t *testing.T) {
 	ext := newTestExtension(mockDB)
 
 	_, rpcErr := ext.CreateStream(context.Background(), &CreateStreamRequest{
-		DataProvider: "0xEC36224A679218Ae28FCeCe8d3c68595B87Dd832",
-		StreamID:     "st00000000000000000000000000test",
-		StreamType:   "primitive",
+		StreamID:   "st00000000000000000000000000test",
+		StreamType: "primitive",
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
@@ -167,9 +150,8 @@ func TestCreateStream_DuplicateStream_PgError(t *testing.T) {
 	ext := newTestExtension(mockDB)
 
 	_, rpcErr := ext.CreateStream(context.Background(), &CreateStreamRequest{
-		DataProvider: "0xEC36224A679218Ae28FCeCe8d3c68595B87Dd832",
-		StreamID:     "st00000000000000000000000000test",
-		StreamType:   "primitive",
+		StreamID:   "st00000000000000000000000000test",
+		StreamType: "primitive",
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
@@ -185,9 +167,8 @@ func TestCreateStream_DBError(t *testing.T) {
 	ext := newTestExtension(mockDB)
 
 	_, rpcErr := ext.CreateStream(context.Background(), &CreateStreamRequest{
-		DataProvider: "0xEC36224A679218Ae28FCeCe8d3c68595B87Dd832",
-		StreamID:     "st00000000000000000000000000test",
-		StreamType:   "primitive",
+		StreamID:   "st00000000000000000000000000test",
+		StreamType: "primitive",
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInternal), rpcErr.Code)

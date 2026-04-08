@@ -74,8 +74,9 @@ func setupIntegrationDB(t *testing.T) *Extension {
 	}
 
 	ext := &Extension{
-		logger: logger,
-		db:     wrapper,
+		logger:      logger,
+		db:          wrapper,
+		nodeAddress: testNodeAddress,
 	}
 	ext.isEnabled.Store(true)
 
@@ -93,25 +94,22 @@ func TestIntegration_PrimitiveGetRecord(t *testing.T) {
 
 	// Create a primitive stream
 	_, rpcErr := ext.CreateStream(ctx, &CreateStreamRequest{
-		DataProvider: testDP,
-		StreamID:     testSID,
-		StreamType:   "primitive",
+		StreamID:   testSID,
+		StreamType: "primitive",
 	})
 	require.Nil(t, rpcErr, "create stream failed: %v", rpcErr)
 
 	// Insert records
 	_, rpcErr = ext.InsertRecords(ctx, &InsertRecordsRequest{
-		DataProvider: []string{testDP, testDP, testDP, testDP, testDP},
-		StreamID:     []string{testSID, testSID, testSID, testSID, testSID},
-		EventTime:    []int64{1000, 2000, 3000, 4000, 5000},
-		Value:        []string{"10.5", "20.0", "30.75", "40.0", "50.25"},
+		StreamID:  []string{testSID, testSID, testSID, testSID, testSID},
+		EventTime: []int64{1000, 2000, 3000, 4000, 5000},
+		Value:     []string{"10.5", "20.0", "30.75", "40.0", "50.25"},
 	})
 	require.Nil(t, rpcErr, "insert records failed: %v", rpcErr)
 
 	// Test 1: Latest record (both nil)
 	resp, rpcErr := ext.GetRecord(ctx, &GetRecordRequest{
-		DataProvider: testDP,
-		StreamID:     testSID,
+		StreamID: testSID,
 	})
 	require.Nil(t, rpcErr)
 	require.Len(t, resp.Records, 1, "latest record should return 1 row")
@@ -123,10 +121,9 @@ func TestIntegration_PrimitiveGetRecord(t *testing.T) {
 	from := int64(1500)
 	to := int64(4000)
 	resp, rpcErr = ext.GetRecord(ctx, &GetRecordRequest{
-		DataProvider: testDP,
-		StreamID:     testSID,
-		FromTime:     &from,
-		ToTime:       &to,
+		StreamID: testSID,
+		FromTime: &from,
+		ToTime:   &to,
 	})
 	require.Nil(t, rpcErr)
 	require.Len(t, resp.Records, 4, "should have anchor + 3 interval records")
@@ -139,10 +136,9 @@ func TestIntegration_PrimitiveGetRecord(t *testing.T) {
 	from = int64(9000)
 	to = int64(9999)
 	resp, rpcErr = ext.GetRecord(ctx, &GetRecordRequest{
-		DataProvider: testDP,
-		StreamID:     testSID,
-		FromTime:     &from,
-		ToTime:       &to,
+		StreamID: testSID,
+		FromTime: &from,
+		ToTime:   &to,
 	})
 	require.Nil(t, rpcErr)
 	require.Len(t, resp.Records, 1, "should have exactly 1 anchor record")
@@ -154,17 +150,15 @@ func TestIntegration_PrimitiveGetIndex(t *testing.T) {
 	ctx := context.Background()
 
 	_, rpcErr := ext.CreateStream(ctx, &CreateStreamRequest{
-		DataProvider: testDP,
-		StreamID:     testSID,
-		StreamType:   "primitive",
+		StreamID:   testSID,
+		StreamType: "primitive",
 	})
 	require.Nil(t, rpcErr)
 
 	_, rpcErr = ext.InsertRecords(ctx, &InsertRecordsRequest{
-		DataProvider: []string{testDP, testDP, testDP},
-		StreamID:     []string{testSID, testSID, testSID},
-		EventTime:    []int64{1000, 2000, 3000},
-		Value:        []string{"10.0", "20.0", "30.0"},
+		StreamID:  []string{testSID, testSID, testSID},
+		EventTime: []int64{1000, 2000, 3000},
+		Value:     []string{"10.0", "20.0", "30.0"},
 	})
 	require.Nil(t, rpcErr)
 
@@ -173,10 +167,9 @@ func TestIntegration_PrimitiveGetIndex(t *testing.T) {
 	from := int64(500)
 	to := int64(5000)
 	resp, rpcErr := ext.GetIndex(ctx, &GetIndexRequest{
-		DataProvider: testDP,
-		StreamID:     testSID,
-		FromTime:     &from,
-		ToTime:       &to,
+		StreamID: testSID,
+		FromTime: &from,
+		ToTime:   &to,
 	})
 	require.Nil(t, rpcErr, "get_index failed: %v", rpcErr)
 	require.Len(t, resp.Records, 3)
@@ -191,11 +184,10 @@ func TestIntegration_PrimitiveGetIndex(t *testing.T) {
 	// Index = (value / 20) * 100 → 50, 100, 150
 	baseTime := int64(2000)
 	resp, rpcErr = ext.GetIndex(ctx, &GetIndexRequest{
-		DataProvider: testDP,
-		StreamID:     testSID,
-		FromTime:     &from,
-		ToTime:       &to,
-		BaseTime:     &baseTime,
+		StreamID: testSID,
+		FromTime: &from,
+		ToTime:   &to,
+		BaseTime: &baseTime,
 	})
 	require.Nil(t, rpcErr, "get_index with base_time failed: %v", rpcErr)
 	require.Len(t, resp.Records, 3)
@@ -218,15 +210,15 @@ func TestIntegration_ListStreams(t *testing.T) {
 
 	// Create some streams
 	streams := []struct {
-		dp, sid, stype string
+		sid, stype string
 	}{
-		{testDP, "st00000000000000000000000000aaaa", "primitive"},
-		{testDP, "st00000000000000000000000000bbbb", "composed"},
-		{testDP, "st00000000000000000000000000cccc", "primitive"},
+		{"st00000000000000000000000000aaaa", "primitive"},
+		{"st00000000000000000000000000bbbb", "composed"},
+		{"st00000000000000000000000000cccc", "primitive"},
 	}
 	for _, s := range streams {
 		_, rpcErr := ext.CreateStream(ctx, &CreateStreamRequest{
-			DataProvider: s.dp, StreamID: s.sid, StreamType: s.stype,
+			StreamID: s.sid, StreamType: s.stype,
 		})
 		require.Nil(t, rpcErr, "create stream %s failed", s.sid)
 	}
@@ -239,6 +231,9 @@ func TestIntegration_ListStreams(t *testing.T) {
 	types := make(map[string]int)
 	for _, s := range resp.Streams {
 		types[s.StreamType]++
+		// list_streams response mirrors consensus shape — DataProvider is always
+		// the node's own address (redundant but kept for parity).
+		require.Equal(t, testNodeAddress, s.DataProvider)
 	}
 	require.Equal(t, 2, types["primitive"])
 	require.Equal(t, 1, types["composed"])
@@ -249,16 +244,15 @@ func TestIntegration_GapFilling(t *testing.T) {
 	ctx := context.Background()
 
 	_, rpcErr := ext.CreateStream(ctx, &CreateStreamRequest{
-		DataProvider: testDP, StreamID: testSID, StreamType: "primitive",
+		StreamID: testSID, StreamType: "primitive",
 	})
 	require.Nil(t, rpcErr)
 
 	// Insert sparse data: values at 1000, 3000, 5000
 	_, rpcErr = ext.InsertRecords(ctx, &InsertRecordsRequest{
-		DataProvider: []string{testDP, testDP, testDP},
-		StreamID:     []string{testSID, testSID, testSID},
-		EventTime:    []int64{1000, 3000, 5000},
-		Value:        []string{"10.0", "30.0", "50.0"},
+		StreamID:  []string{testSID, testSID, testSID},
+		EventTime: []int64{1000, 3000, 5000},
+		Value:     []string{"10.0", "30.0", "50.0"},
 	})
 	require.Nil(t, rpcErr)
 
@@ -267,7 +261,7 @@ func TestIntegration_GapFilling(t *testing.T) {
 	from := int64(2000)
 	to := int64(4000)
 	resp, rpcErr := ext.GetRecord(ctx, &GetRecordRequest{
-		DataProvider: testDP, StreamID: testSID,
+		StreamID: testSID,
 		FromTime: &from, ToTime: &to,
 	})
 	require.Nil(t, rpcErr)
@@ -292,32 +286,30 @@ func TestIntegration_HeightAsCreatedAt(t *testing.T) {
 	ext.height.Store(100)
 
 	_, rpcErr := ext.CreateStream(ctx, &CreateStreamRequest{
-		DataProvider: testDP, StreamID: testSID, StreamType: "primitive",
+		StreamID: testSID, StreamType: "primitive",
 	})
 	require.Nil(t, rpcErr)
 
 	// Insert at height 100
 	_, rpcErr = ext.InsertRecords(ctx, &InsertRecordsRequest{
-		DataProvider: []string{testDP},
-		StreamID:     []string{testSID},
-		EventTime:    []int64{1000},
-		Value:        []string{"10.0"},
+		StreamID:  []string{testSID},
+		EventTime: []int64{1000},
+		Value:     []string{"10.0"},
 	})
 	require.Nil(t, rpcErr)
 
 	// Advance height and insert updated value for same event_time
 	ext.height.Store(200)
 	_, rpcErr = ext.InsertRecords(ctx, &InsertRecordsRequest{
-		DataProvider: []string{testDP},
-		StreamID:     []string{testSID},
-		EventTime:    []int64{1000},
-		Value:        []string{"99.0"},
+		StreamID:  []string{testSID},
+		EventTime: []int64{1000},
+		Value:     []string{"99.0"},
 	})
 	require.Nil(t, rpcErr)
 
 	// Query: should get latest value (created_at=200 wins over 100)
 	resp, rpcErr := ext.GetRecord(ctx, &GetRecordRequest{
-		DataProvider: testDP, StreamID: testSID,
+		StreamID: testSID,
 	})
 	require.Nil(t, rpcErr)
 	require.Len(t, resp.Records, 1)
@@ -335,7 +327,6 @@ func TestIntegration_HeightAsCreatedAt(t *testing.T) {
 func TestIntegration_ComposedGetRecord(t *testing.T) {
 	ext := setupIntegrationDB(t)
 	ctx := context.Background()
-	dp := testDP
 
 	// Create two primitive child streams and one composed parent (exactly 32 chars each)
 	childSID1 := "st000000000000000000000000child1"
@@ -348,37 +339,33 @@ func TestIntegration_ComposedGetRecord(t *testing.T) {
 			stype = "composed"
 		}
 		_, rpcErr := ext.CreateStream(ctx, &CreateStreamRequest{
-			DataProvider: dp, StreamID: sid, StreamType: stype,
+			StreamID: sid, StreamType: stype,
 		})
 		require.Nil(t, rpcErr, "create stream %s failed: %v", sid, rpcErr)
 	}
 
 	// child1: 10, 20, 30 at times 1000, 2000, 3000
 	_, rpcErr := ext.InsertRecords(ctx, &InsertRecordsRequest{
-		DataProvider: []string{dp, dp, dp},
-		StreamID:     []string{childSID1, childSID1, childSID1},
-		EventTime:    []int64{1000, 2000, 3000},
-		Value:        []string{"10.0", "20.0", "30.0"},
+		StreamID:  []string{childSID1, childSID1, childSID1},
+		EventTime: []int64{1000, 2000, 3000},
+		Value:     []string{"10.0", "20.0", "30.0"},
 	})
 	require.Nil(t, rpcErr)
 
 	// child2: 100, 200, 300 at times 1000, 2000, 3000
 	_, rpcErr = ext.InsertRecords(ctx, &InsertRecordsRequest{
-		DataProvider: []string{dp, dp, dp},
-		StreamID:     []string{childSID2, childSID2, childSID2},
-		EventTime:    []int64{1000, 2000, 3000},
-		Value:        []string{"100.0", "200.0", "300.0"},
+		StreamID:  []string{childSID2, childSID2, childSID2},
+		EventTime: []int64{1000, 2000, 3000},
+		Value:     []string{"100.0", "200.0", "300.0"},
 	})
 	require.Nil(t, rpcErr)
 
 	// Taxonomy: composed = 0.5 * child1 + 0.5 * child2
 	_, rpcErr = ext.InsertTaxonomy(ctx, &InsertTaxonomyRequest{
-		DataProvider:       dp,
-		StreamID:           composedSID,
-		ChildDataProviders: []string{dp, dp},
-		ChildStreamIDs:     []string{childSID1, childSID2},
-		Weights:            []string{"0.5", "0.5"},
-		StartDate:          0,
+		StreamID:       composedSID,
+		ChildStreamIDs: []string{childSID1, childSID2},
+		Weights:        []string{"0.5", "0.5"},
+		StartDate:      0,
 	})
 	require.Nil(t, rpcErr, "insert taxonomy failed: %v", rpcErr)
 
@@ -386,7 +373,7 @@ func TestIntegration_ComposedGetRecord(t *testing.T) {
 	from := int64(500)
 	to := int64(5000)
 	resp, rpcErr := ext.GetRecord(ctx, &GetRecordRequest{
-		DataProvider: dp, StreamID: composedSID,
+		StreamID: composedSID,
 		FromTime: &from, ToTime: &to,
 	})
 	require.Nil(t, rpcErr, "get_record composed failed: %v", rpcErr)
@@ -397,7 +384,7 @@ func TestIntegration_ComposedGetRecord(t *testing.T) {
 
 	// Latest record
 	resp, rpcErr = ext.GetRecord(ctx, &GetRecordRequest{
-		DataProvider: dp, StreamID: composedSID,
+		StreamID: composedSID,
 	})
 	require.Nil(t, rpcErr)
 	require.Len(t, resp.Records, 1)
@@ -408,31 +395,27 @@ func TestIntegration_ComposedGetRecord(t *testing.T) {
 func TestIntegration_ComposedGetIndex(t *testing.T) {
 	ext := setupIntegrationDB(t)
 	ctx := context.Background()
-	dp := testDP
 
 	childSID := "st0000000000000000000000000chld1"
 	composedSID := "st0000000000000000000000000cmpsd"
 
-	_, rpcErr := ext.CreateStream(ctx, &CreateStreamRequest{DataProvider: dp, StreamID: childSID, StreamType: "primitive"})
+	_, rpcErr := ext.CreateStream(ctx, &CreateStreamRequest{StreamID: childSID, StreamType: "primitive"})
 	require.Nil(t, rpcErr)
-	_, rpcErr = ext.CreateStream(ctx, &CreateStreamRequest{DataProvider: dp, StreamID: composedSID, StreamType: "composed"})
+	_, rpcErr = ext.CreateStream(ctx, &CreateStreamRequest{StreamID: composedSID, StreamType: "composed"})
 	require.Nil(t, rpcErr)
 
 	_, rpcErr = ext.InsertRecords(ctx, &InsertRecordsRequest{
-		DataProvider: []string{dp, dp, dp},
-		StreamID:     []string{childSID, childSID, childSID},
-		EventTime:    []int64{1000, 2000, 3000},
-		Value:        []string{"50.0", "75.0", "100.0"},
+		StreamID:  []string{childSID, childSID, childSID},
+		EventTime: []int64{1000, 2000, 3000},
+		Value:     []string{"50.0", "75.0", "100.0"},
 	})
 	require.Nil(t, rpcErr)
 
 	_, rpcErr = ext.InsertTaxonomy(ctx, &InsertTaxonomyRequest{
-		DataProvider:       dp,
-		StreamID:           composedSID,
-		ChildDataProviders: []string{dp},
-		ChildStreamIDs:     []string{childSID},
-		Weights:            []string{"1.0"},
-		StartDate:          0,
+		StreamID:       composedSID,
+		ChildStreamIDs: []string{childSID},
+		Weights:        []string{"1.0"},
+		StartDate:      0,
 	})
 	require.Nil(t, rpcErr)
 
@@ -440,7 +423,7 @@ func TestIntegration_ComposedGetIndex(t *testing.T) {
 	from := int64(500)
 	to := int64(5000)
 	resp, rpcErr := ext.GetIndex(ctx, &GetIndexRequest{
-		DataProvider: dp, StreamID: composedSID,
+		StreamID: composedSID,
 		FromTime: &from, ToTime: &to,
 	})
 	require.Nil(t, rpcErr, "get_index composed failed: %v", rpcErr)
@@ -453,40 +436,38 @@ func TestIntegration_ComposedGetIndex(t *testing.T) {
 func TestIntegration_NestedComposed(t *testing.T) {
 	ext := setupIntegrationDB(t)
 	ctx := context.Background()
-	dp := testDP
 
 	// Hierarchy: root (composed) → mid (composed) → leaf (primitive)
 	leafSID := "st000000000000000000000000leaf01"
 	midSID := "st000000000000000000000000midi01"
 	rootSID := "st000000000000000000000000root01"
 
-	_, err := ext.CreateStream(ctx, &CreateStreamRequest{DataProvider: dp, StreamID: leafSID, StreamType: "primitive"})
+	_, err := ext.CreateStream(ctx, &CreateStreamRequest{StreamID: leafSID, StreamType: "primitive"})
 	require.Nil(t, err)
-	_, err = ext.CreateStream(ctx, &CreateStreamRequest{DataProvider: dp, StreamID: midSID, StreamType: "composed"})
+	_, err = ext.CreateStream(ctx, &CreateStreamRequest{StreamID: midSID, StreamType: "composed"})
 	require.Nil(t, err)
-	_, err = ext.CreateStream(ctx, &CreateStreamRequest{DataProvider: dp, StreamID: rootSID, StreamType: "composed"})
+	_, err = ext.CreateStream(ctx, &CreateStreamRequest{StreamID: rootSID, StreamType: "composed"})
 	require.Nil(t, err)
 
 	_, err = ext.InsertRecords(ctx, &InsertRecordsRequest{
-		DataProvider: []string{dp, dp, dp},
-		StreamID:     []string{leafSID, leafSID, leafSID},
-		EventTime:    []int64{1000, 2000, 3000},
-		Value:        []string{"100.0", "200.0", "300.0"},
+		StreamID:  []string{leafSID, leafSID, leafSID},
+		EventTime: []int64{1000, 2000, 3000},
+		Value:     []string{"100.0", "200.0", "300.0"},
 	})
 	require.Nil(t, err)
 
 	// mid = 1.0 * leaf
 	_, err = ext.InsertTaxonomy(ctx, &InsertTaxonomyRequest{
-		DataProvider: dp, StreamID: midSID,
-		ChildDataProviders: []string{dp}, ChildStreamIDs: []string{leafSID},
+		StreamID: midSID,
+		ChildStreamIDs: []string{leafSID},
 		Weights: []string{"1.0"}, StartDate: 0,
 	})
 	require.Nil(t, err)
 
 	// root = 0.5 * mid
 	_, err = ext.InsertTaxonomy(ctx, &InsertTaxonomyRequest{
-		DataProvider: dp, StreamID: rootSID,
-		ChildDataProviders: []string{dp}, ChildStreamIDs: []string{midSID},
+		StreamID: rootSID,
+		ChildStreamIDs: []string{midSID},
 		Weights: []string{"0.5"}, StartDate: 0,
 	})
 	require.Nil(t, err)
@@ -495,7 +476,7 @@ func TestIntegration_NestedComposed(t *testing.T) {
 	from := int64(500)
 	to := int64(5000)
 	resp, rpcErr := ext.GetRecord(ctx, &GetRecordRequest{
-		DataProvider: dp, StreamID: rootSID,
+		StreamID: rootSID,
 		FromTime: &from, ToTime: &to,
 	})
 	require.Nil(t, rpcErr, "nested composed query failed: %v", rpcErr)
@@ -517,7 +498,6 @@ func TestIntegration_NestedComposed(t *testing.T) {
 func TestIntegration_TaxonomyReplacementGroup(t *testing.T) {
 	ext := setupIntegrationDB(t)
 	ctx := context.Background()
-	dp := testDP
 
 	// Three primitive children + one composed parent (32-char SIDs).
 	childA := "st0000000000000000000000000reptA"
@@ -531,7 +511,7 @@ func TestIntegration_TaxonomyReplacementGroup(t *testing.T) {
 			stype = "composed"
 		}
 		_, rpcErr := ext.CreateStream(ctx, &CreateStreamRequest{
-			DataProvider: dp, StreamID: sid, StreamType: stype,
+			StreamID: sid, StreamType: stype,
 		})
 		require.Nil(t, rpcErr, "create stream %s failed: %v", sid, rpcErr)
 	}
@@ -540,32 +520,27 @@ func TestIntegration_TaxonomyReplacementGroup(t *testing.T) {
 	// Each leaf has a constant value to make weighted-avg arithmetic obvious.
 	// A: value 10, B: value 100, C: value 1000.
 	_, rpcErr := ext.InsertRecords(ctx, &InsertRecordsRequest{
-		DataProvider: []string{dp, dp, dp, dp, dp, dp},
-		StreamID:     []string{childA, childA, childB, childB, childC, childC},
-		EventTime:    []int64{100, 300, 100, 300, 100, 300},
-		Value:        []string{"10.0", "10.0", "100.0", "100.0", "1000.0", "1000.0"},
+		StreamID:  []string{childA, childA, childB, childB, childC, childC},
+		EventTime: []int64{100, 300, 100, 300, 100, 300},
+		Value:     []string{"10.0", "10.0", "100.0", "100.0", "1000.0", "1000.0"},
 	})
 	require.Nil(t, rpcErr)
 
 	// Group 1 @ start_time=0: { A: 0.5, B: 0.5 }
 	_, rpcErr = ext.InsertTaxonomy(ctx, &InsertTaxonomyRequest{
-		DataProvider:       dp,
-		StreamID:           composedSID,
-		ChildDataProviders: []string{dp, dp},
-		ChildStreamIDs:     []string{childA, childB},
-		Weights:            []string{"0.5", "0.5"},
-		StartDate:          0,
+		StreamID:       composedSID,
+		ChildStreamIDs: []string{childA, childB},
+		Weights:        []string{"0.5", "0.5"},
+		StartDate:      0,
 	})
 	require.Nil(t, rpcErr, "insert taxonomy group 1 failed: %v", rpcErr)
 
 	// Group 2 @ start_time=200: { A: 0.7, C: 0.3 } — B is REMOVED.
 	_, rpcErr = ext.InsertTaxonomy(ctx, &InsertTaxonomyRequest{
-		DataProvider:       dp,
-		StreamID:           composedSID,
-		ChildDataProviders: []string{dp, dp},
-		ChildStreamIDs:     []string{childA, childC},
-		Weights:            []string{"0.7", "0.3"},
-		StartDate:          200,
+		StreamID:       composedSID,
+		ChildStreamIDs: []string{childA, childC},
+		Weights:        []string{"0.7", "0.3"},
+		StartDate:      200,
 	})
 	require.Nil(t, rpcErr, "insert taxonomy group 2 failed: %v", rpcErr)
 
@@ -573,7 +548,7 @@ func TestIntegration_TaxonomyReplacementGroup(t *testing.T) {
 	from := int64(50)
 	to := int64(400)
 	resp, rpcErr := ext.GetRecord(ctx, &GetRecordRequest{
-		DataProvider: dp, StreamID: composedSID,
+		StreamID: composedSID,
 		FromTime: &from, ToTime: &to,
 	})
 	require.Nil(t, rpcErr, "get_record across replacement boundary failed: %v", rpcErr)
@@ -610,7 +585,7 @@ func TestIntegration_TaxonomyReplacementGroup(t *testing.T) {
 
 	// "Latest" lookup should also use the new weights, not the stale ones.
 	latestResp, rpcErr := ext.GetRecord(ctx, &GetRecordRequest{
-		DataProvider: dp, StreamID: composedSID,
+		StreamID: composedSID,
 	})
 	require.Nil(t, rpcErr)
 	require.Len(t, latestResp.Records, 1)
@@ -621,7 +596,7 @@ func TestIntegration_TaxonomyReplacementGroup(t *testing.T) {
 	// GetIndex with explicit base_time before the boundary should also work.
 	baseTime := int64(100)
 	indexResp, rpcErr := ext.GetIndex(ctx, &GetIndexRequest{
-		DataProvider: dp, StreamID: composedSID,
+		StreamID: composedSID,
 		FromTime: &from, ToTime: &to, BaseTime: &baseTime,
 	})
 	require.Nil(t, rpcErr, "get_index across replacement boundary failed: %v", rpcErr)

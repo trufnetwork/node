@@ -14,6 +14,12 @@ type Extension struct {
 	db        sql.DB
 	localDB   *LocalDB
 	isEnabled atomic.Bool
+	// nodeAddress is the lowercase 0x-prefixed Ethereum address derived from the
+	// node's secp256k1 operator key. It is the implicit data_provider for every
+	// local stream operation — clients never supply a data_provider. Empty when
+	// the node has no secp256k1 key (read-only / ed25519 nodes); in that case
+	// isEnabled stays false and all handlers return a clear error.
+	nodeAddress string
 	// height tracks the latest committed block height, updated by EndBlockHook.
 	// Local streams use the same created_at = block height semantics as consensus.
 	height atomic.Int64
@@ -40,11 +46,20 @@ func GetExtension() *Extension {
 // This preserves the pointer identity so that the admin server's registered
 // Svc reference remains valid. Called during sequential startup before the
 // server accepts requests.
-func (e *Extension) configure(logger log.Logger, db sql.DB, localDB *LocalDB) {
+//
+// nodeAddress must be the lowercase 0x-prefixed Ethereum address derived from
+// the node's secp256k1 key. If empty (no secp256k1 key available), the
+// extension stays disabled and all handlers return an error — local streams
+// require a stable operator identity to claim ownership of.
+func (e *Extension) configure(logger log.Logger, db sql.DB, localDB *LocalDB, nodeAddress string) {
 	e.logger = logger
 	e.db = db
 	e.localDB = localDB
-	e.isEnabled.Store(true)
+	e.nodeAddress = nodeAddress
+	// Always set isEnabled deterministically based on nodeAddress so that
+	// re-configuring an extension (e.g. in tests or on node re-init) can't
+	// leave a stale-true flag when the new address is empty.
+	e.isEnabled.Store(nodeAddress != "")
 }
 
 // currentHeight returns the latest committed block height.

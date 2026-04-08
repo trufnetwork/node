@@ -21,36 +21,31 @@ func TestGetRecord_NilRequest(t *testing.T) {
 	require.Contains(t, rpcErr.Message, "missing request")
 }
 
+func TestGetRecord_DisabledWhenNoNodeAddress(t *testing.T) {
+	ext := &Extension{db: &utils.MockDB{}}
+	_, rpcErr := ext.GetRecord(context.Background(), &GetRecordRequest{StreamID: testSID})
+	require.NotNil(t, rpcErr)
+	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInternal), rpcErr.Code)
+	require.Contains(t, rpcErr.Message, "tn_local is disabled")
+}
+
 func TestGetRecord_StreamNotFound(t *testing.T) {
 	mockDB := mockDBWithStream(0, "", nil)
 	ext := newTestExtension(mockDB)
 
 	resp, rpcErr := ext.GetRecord(context.Background(), &GetRecordRequest{
-		DataProvider: testDP,
-		StreamID:     testSID,
+		StreamID: testSID,
 	})
 	require.Nil(t, resp)
 	require.NotNil(t, rpcErr)
 	require.Contains(t, rpcErr.Message, "stream not found")
 }
 
-func TestGetRecord_InvalidDataProvider(t *testing.T) {
-	ext := newTestExtension(&utils.MockDB{})
-
-	_, rpcErr := ext.GetRecord(context.Background(), &GetRecordRequest{
-		DataProvider: "invalid",
-		StreamID:     testSID,
-	})
-	require.NotNil(t, rpcErr)
-	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
-}
-
 func TestGetRecord_InvalidStreamID(t *testing.T) {
 	ext := newTestExtension(&utils.MockDB{})
 
 	_, rpcErr := ext.GetRecord(context.Background(), &GetRecordRequest{
-		DataProvider: testDP,
-		StreamID:     "short",
+		StreamID: "short",
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
@@ -63,10 +58,9 @@ func TestGetRecord_FromAfterTo(t *testing.T) {
 	from := int64(2)
 	to := int64(1)
 	resp, rpcErr := ext.GetRecord(context.Background(), &GetRecordRequest{
-		DataProvider: testDP,
-		StreamID:     testSID,
-		FromTime:     &from,
-		ToTime:       &to,
+		StreamID: testSID,
+		FromTime: &from,
+		ToTime:   &to,
 	})
 	require.Nil(t, resp)
 	require.NotNil(t, rpcErr)
@@ -82,8 +76,7 @@ func TestGetRecord_Primitive_LatestRecord(t *testing.T) {
 	ext := newTestExtension(mockDB)
 
 	resp, rpcErr := ext.GetRecord(context.Background(), &GetRecordRequest{
-		DataProvider: testDP,
-		StreamID:     testSID,
+		StreamID: testSID,
 	})
 	require.Nil(t, rpcErr)
 	require.NotNil(t, resp)
@@ -103,10 +96,9 @@ func TestGetRecord_Primitive_TimeRange(t *testing.T) {
 	ext := newTestExtension(mockDB)
 
 	resp, rpcErr := ext.GetRecord(context.Background(), &GetRecordRequest{
-		DataProvider: testDP,
-		StreamID:     testSID,
-		FromTime:     &from,
-		ToTime:       &to,
+		StreamID: testSID,
+		FromTime: &from,
+		ToTime:   &to,
 	})
 	require.Nil(t, rpcErr)
 	require.NotNil(t, resp)
@@ -123,15 +115,36 @@ func TestGetRecord_Primitive_EmptyResult(t *testing.T) {
 	from := int64(1000)
 	to := int64(5000)
 	resp, rpcErr := ext.GetRecord(context.Background(), &GetRecordRequest{
-		DataProvider: testDP,
-		StreamID:     testSID,
-		FromTime:     &from,
-		ToTime:       &to,
+		StreamID: testSID,
+		FromTime: &from,
+		ToTime:   &to,
 	})
 	require.Nil(t, rpcErr)
 	require.NotNil(t, resp)
 	require.NotNil(t, resp.Records, "Records should be non-nil empty slice, not nil")
 	require.Empty(t, resp.Records)
+}
+
+func TestGetRecord_LookupUsesNodeAddress(t *testing.T) {
+	// Verify the stream lookup uses the node's own address.
+	var lookupDP string
+	mockDB := &utils.MockDB{
+		ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*kwilsql.ResultSet, error) {
+			if strings.Contains(stmt, "SELECT id, stream_type") && len(args) >= 2 {
+				lookupDP = args[0].(string)
+				return &kwilsql.ResultSet{
+					Columns: []string{"id", "stream_type"},
+					Rows:    [][]any{{int64(1), "primitive"}},
+				}, nil
+			}
+			return &kwilsql.ResultSet{Rows: [][]any{}}, nil
+		},
+	}
+	ext := newTestExtension(mockDB)
+
+	_, rpcErr := ext.GetRecord(context.Background(), &GetRecordRequest{StreamID: testSID})
+	require.Nil(t, rpcErr)
+	require.Equal(t, testNodeAddress, lookupDP, "GetRecord must look up streams under the node's own address")
 }
 
 func TestGetRecord_Composed_Dispatches(t *testing.T) {
@@ -166,8 +179,7 @@ func TestGetRecord_Composed_Dispatches(t *testing.T) {
 	ext := newTestExtension(mockDB)
 
 	resp, rpcErr := ext.GetRecord(context.Background(), &GetRecordRequest{
-		DataProvider: testDP,
-		StreamID:     testSID,
+		StreamID: testSID,
 	})
 	require.Nil(t, rpcErr)
 	require.NotNil(t, resp)

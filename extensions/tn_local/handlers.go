@@ -6,10 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
@@ -19,7 +17,14 @@ import (
 // pgUniqueViolation is the PostgreSQL error code for unique_violation.
 const pgUniqueViolation = "23505"
 
-var ethAddrRegex = regexp.MustCompile(`^0x[0-9a-fA-F]{40}$`)
+// disabledError is the error every handler returns when the extension is not
+// enabled (e.g. the node has no secp256k1 operator key). Local stream
+// operations require a stable operator identity to claim ownership of, so
+// they cannot run on read-only or ed25519-only nodes.
+func disabledError() *jsonrpc.Error {
+	return jsonrpc.NewError(jsonrpc.ErrorInternal,
+		"tn_local is disabled: this node has no secp256k1 operator key", nil)
+}
 
 // validateStreamID checks that stream_id is 32 chars and starts with "st".
 func validateStreamID(streamID string) error {
@@ -36,14 +41,6 @@ func validateStreamID(streamID string) error {
 func validateStreamType(streamType string) error {
 	if streamType != "primitive" && streamType != "composed" {
 		return fmt.Errorf("stream_type must be 'primitive' or 'composed', got %q", streamType)
-	}
-	return nil
-}
-
-// validateDataProvider checks that data_provider is a valid Ethereum address (0x + 40 hex).
-func validateDataProvider(dataProvider string) error {
-	if !ethAddrRegex.MatchString(dataProvider) {
-		return fmt.Errorf("data_provider must be a valid Ethereum address (0x + 40 hex chars)")
 	}
 	return nil
 }
@@ -75,11 +72,14 @@ func validateWeight(weight string) error {
 }
 
 // generateTaxonomyID creates a unique UUID from taxonomy components.
-// Mirrors consensus: uuid_generate_kwil(@txid||$data_provider||...).
-// Since local operations have no @txid, we include UnixNano for per-call
-// uniqueness (analogous to how @txid differs per transaction in consensus).
-func generateTaxonomyID(dataProvider, streamID, childDP, childSID string, index int) string {
-	h := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%s|%s|%d|%d", dataProvider, streamID, childDP, childSID, index, time.Now().UnixNano())))
+// Mirrors consensus: uuid_generate_kwil(@txid||$data_provider||$stream_id||$child||$i).
+// Since local operations have no @txid, we use groupSeq — an int assigned by
+// dbGetNextGroupSequence under an advisory lock, guaranteed unique per
+// (parent stream, insertion call). Together with index (unique per child in
+// a single call), this makes IDs deterministic and collision-free without
+// depending on wall-clock time.
+func generateTaxonomyID(dataProvider, streamID, childSID string, groupSeq, index int) string {
+	h := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%s|%d|%d", dataProvider, streamID, childSID, groupSeq, index)))
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
 		h[0:4], h[4:6], h[6:8], h[8:10], h[10:16])
 }
@@ -98,19 +98,15 @@ func isDuplicateKeyError(err error) bool {
 	return strings.Contains(msg, "duplicate key") || strings.Contains(msg, "unique constraint")
 }
 
-// CreateStream creates a local stream.
+// CreateStream creates a local stream owned by the node operator.
 func (ext *Extension) CreateStream(ctx context.Context, req *CreateStreamRequest) (*CreateStreamResponse, *jsonrpc.Error) {
 	if req == nil {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "missing request", nil)
 	}
-
-	// Normalize data_provider to lowercase to match consensus behavior
-	// (consensus uses LOWER() in 001-common-actions.sql before insertion).
-	dataProvider := strings.ToLower(req.DataProvider)
-
-	if err := validateDataProvider(dataProvider); err != nil {
-		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
+	if !ext.isEnabled.Load() {
+		return nil, disabledError()
 	}
+
 	if err := validateStreamID(req.StreamID); err != nil {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
 	}
@@ -118,9 +114,9 @@ func (ext *Extension) CreateStream(ctx context.Context, req *CreateStreamRequest
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
 	}
 
-	if err := ext.dbCreateStream(ctx, dataProvider, req.StreamID, req.StreamType); err != nil {
+	if err := ext.dbCreateStream(ctx, ext.nodeAddress, req.StreamID, req.StreamType); err != nil {
 		if isDuplicateKeyError(err) {
-			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream already exists: %s/%s", dataProvider, req.StreamID), nil)
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream already exists: %s", req.StreamID), nil)
 		}
 		ext.logger.Error("failed to create local stream", "error", err)
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to create stream", nil)
@@ -129,35 +125,33 @@ func (ext *Extension) CreateStream(ctx context.Context, req *CreateStreamRequest
 	return &CreateStreamResponse{}, nil
 }
 
-// InsertRecords inserts records into local primitive streams.
+// InsertRecords inserts records into local primitive streams owned by the node.
 // Mirrors the consensus insert_records action (003-primitive-insertion.sql):
-//   - Parallel arrays: data_provider[], stream_id[], event_time[], value[]
+//   - Parallel arrays: stream_id[], event_time[], value[]
 //   - Zero values are silently filtered (WHERE value != 0)
 //   - Multiple rows per (stream_ref, event_time) allowed (created_at versioning)
 //   - Returns empty response (consensus returns nothing)
+//
+// All records implicitly target streams owned by this node — no data_provider
+// on the wire.
 func (ext *Extension) InsertRecords(ctx context.Context, req *InsertRecordsRequest) (*InsertRecordsResponse, *jsonrpc.Error) {
 	if req == nil {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "missing request", nil)
 	}
+	if !ext.isEnabled.Load() {
+		return nil, disabledError()
+	}
 
-	n := len(req.DataProvider)
+	n := len(req.StreamID)
 	if n == 0 {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "records must not be empty", nil)
 	}
-	if n != len(req.StreamID) || n != len(req.EventTime) || n != len(req.Value) {
+	if n != len(req.EventTime) || n != len(req.Value) {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "array lengths mismatch", nil)
-	}
-
-	// Normalize data_providers to lowercase (consensus uses LOWER() in 001-common-actions.sql).
-	for i := range req.DataProvider {
-		req.DataProvider[i] = strings.ToLower(req.DataProvider[i])
 	}
 
 	// Validate all inputs upfront.
 	for i := 0; i < n; i++ {
-		if err := validateDataProvider(req.DataProvider[i]); err != nil {
-			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("record %d: %v", i, err), nil)
-		}
 		if err := validateStreamID(req.StreamID[i]); err != nil {
 			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("record %d: %v", i, err), nil)
 		}
@@ -170,26 +164,25 @@ func (ext *Extension) InsertRecords(ctx context.Context, req *InsertRecordsReque
 		}
 	}
 
-	// Resolve stream refs for unique (data_provider, stream_id) pairs.
-	type streamKey struct{ dp, sid string }
-	streamRefMap := make(map[streamKey]int64)
+	// Resolve stream refs for unique stream_ids (all owned by ext.nodeAddress).
+	streamRefMap := make(map[string]int64)
 	for i := 0; i < n; i++ {
-		key := streamKey{req.DataProvider[i], req.StreamID[i]}
-		if _, ok := streamRefMap[key]; ok {
+		sid := req.StreamID[i]
+		if _, ok := streamRefMap[sid]; ok {
 			continue
 		}
-		ref, stype, err := ext.dbLookupStreamRef(ctx, key.dp, key.sid)
+		ref, stype, err := ext.dbLookupStreamRef(ctx, ext.nodeAddress, sid)
 		if err != nil {
 			ext.logger.Error("failed to look up stream", "error", err)
 			return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to look up stream", nil)
 		}
 		if ref == 0 {
-			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream not found: %s/%s", key.dp, key.sid), nil)
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream not found: %s", sid), nil)
 		}
 		if stype != "primitive" {
-			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream %s/%s is not a primitive stream", key.dp, key.sid), nil)
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream %s is not a primitive stream", sid), nil)
 		}
-		streamRefMap[key] = ref
+		streamRefMap[sid] = ref
 	}
 
 	// Build resolved records, filtering zero values (mirrors consensus WHERE value != 0).
@@ -201,8 +194,7 @@ func (ext *Extension) InsertRecords(ctx context.Context, req *InsertRecordsReque
 		if f == 0 {
 			continue
 		}
-		key := streamKey{req.DataProvider[i], req.StreamID[i]}
-		streamRefs = append(streamRefs, streamRefMap[key])
+		streamRefs = append(streamRefs, streamRefMap[req.StreamID[i]])
 		eventTimes = append(eventTimes, req.EventTime[i])
 		values = append(values, req.Value[i])
 	}
@@ -219,28 +211,26 @@ func (ext *Extension) InsertRecords(ctx context.Context, req *InsertRecordsReque
 
 // InsertTaxonomy adds a taxonomy group to a local composed stream.
 // Mirrors the consensus insert_taxonomy action (004-composed-taxonomy.sql):
-//   - Parallel arrays: child_data_providers[], child_stream_ids[], weights[]
-//   - All children must exist in local storage (no cross-storage references)
+//   - Parallel arrays: child_stream_ids[], weights[]
+//   - All children are local streams owned by this node (no cross-DP children)
 //   - Increments group_sequence (MAX+1)
 //   - Returns empty response (consensus returns nothing)
 func (ext *Extension) InsertTaxonomy(ctx context.Context, req *InsertTaxonomyRequest) (*InsertTaxonomyResponse, *jsonrpc.Error) {
 	if req == nil {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "missing request", nil)
 	}
+	if !ext.isEnabled.Load() {
+		return nil, disabledError()
+	}
 
 	n := len(req.ChildStreamIDs)
 	if n == 0 {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "there must be at least 1 child", nil)
 	}
-	if n != len(req.ChildDataProviders) || n != len(req.Weights) {
+	if n != len(req.Weights) {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "child array lengths mismatch", nil)
 	}
 
-	// Normalize parent data_provider to lowercase (consensus: LOWER()).
-	dataProvider := strings.ToLower(req.DataProvider)
-	if err := validateDataProvider(dataProvider); err != nil {
-		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
-	}
 	if err := validateStreamID(req.StreamID); err != nil {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
 	}
@@ -248,54 +238,45 @@ func (ext *Extension) InsertTaxonomy(ctx context.Context, req *InsertTaxonomyReq
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "start_date must be >= 0", nil)
 	}
 
-	// Normalize child data_providers to lowercase.
-	for i := range req.ChildDataProviders {
-		req.ChildDataProviders[i] = strings.ToLower(req.ChildDataProviders[i])
-	}
-
-	// Validate all children upfront.
-	type childKey struct{ dp, sid string }
-	seenChildren := make(map[childKey]struct{}, n)
+	// Validate all children upfront. Children share the node's data_provider,
+	// so dedup is purely by stream_id.
+	seenChildren := make(map[string]struct{}, n)
 	for i := 0; i < n; i++ {
-		if err := validateDataProvider(req.ChildDataProviders[i]); err != nil {
-			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("child %d: %v", i, err), nil)
-		}
 		if err := validateStreamID(req.ChildStreamIDs[i]); err != nil {
 			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("child %d: %v", i, err), nil)
 		}
 		if err := validateWeight(req.Weights[i]); err != nil {
 			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("child %d: %v", i, err), nil)
 		}
-		key := childKey{req.ChildDataProviders[i], req.ChildStreamIDs[i]}
-		if _, exists := seenChildren[key]; exists {
-			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("child %d: duplicate child_data_provider/child_stream_id tuple", i), nil)
+		if _, exists := seenChildren[req.ChildStreamIDs[i]]; exists {
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("child %d: duplicate child_stream_id", i), nil)
 		}
-		seenChildren[key] = struct{}{}
+		seenChildren[req.ChildStreamIDs[i]] = struct{}{}
 	}
 
 	// Verify parent stream exists and is composed.
-	parentRef, parentType, err := ext.dbLookupStreamRef(ctx, dataProvider, req.StreamID)
+	parentRef, parentType, err := ext.dbLookupStreamRef(ctx, ext.nodeAddress, req.StreamID)
 	if err != nil {
 		ext.logger.Error("failed to look up parent stream", "error", err)
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to look up parent stream", nil)
 	}
 	if parentRef == 0 {
-		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("parent stream not found: %s/%s", dataProvider, req.StreamID), nil)
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("parent stream not found: %s", req.StreamID), nil)
 	}
 	if parentType != "composed" {
-		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream %s/%s is not a composed stream", dataProvider, req.StreamID), nil)
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream %s is not a composed stream", req.StreamID), nil)
 	}
 
 	// Resolve all child stream refs (must exist in local storage).
 	childRefs := make([]int64, n)
 	for i := 0; i < n; i++ {
-		ref, _, lookupErr := ext.dbLookupStreamRef(ctx, req.ChildDataProviders[i], req.ChildStreamIDs[i])
+		ref, _, lookupErr := ext.dbLookupStreamRef(ctx, ext.nodeAddress, req.ChildStreamIDs[i])
 		if lookupErr != nil {
 			ext.logger.Error("failed to look up child stream", "error", lookupErr)
 			return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to look up child stream", nil)
 		}
 		if ref == 0 {
-			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("child stream not found in local storage: %s/%s", req.ChildDataProviders[i], req.ChildStreamIDs[i]), nil)
+			return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("child stream not found in local storage: %s", req.ChildStreamIDs[i]), nil)
 		}
 		childRefs[i] = ref
 	}
@@ -319,7 +300,7 @@ func (ext *Extension) InsertTaxonomy(ctx context.Context, req *InsertTaxonomyReq
 
 	createdAt := ext.currentHeight()
 	for i := 0; i < n; i++ {
-		taxonomyID := generateTaxonomyID(dataProvider, req.StreamID, req.ChildDataProviders[i], req.ChildStreamIDs[i], i)
+		taxonomyID := generateTaxonomyID(ext.nodeAddress, req.StreamID, req.ChildStreamIDs[i], groupSeq, i)
 		if insertErr := ext.dbInsertTaxonomyRow(ctx, tx, taxonomyID, parentRef, childRefs[i], req.Weights[i], startDate, groupSeq, createdAt); insertErr != nil {
 			ext.logger.Error("failed to insert taxonomy row", "error", insertErr)
 			return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to insert taxonomy", nil)
@@ -344,11 +325,10 @@ func (ext *Extension) GetRecord(ctx context.Context, req *GetRecordRequest) (*Ge
 	if req == nil {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "missing request", nil)
 	}
-
-	dataProvider := strings.ToLower(req.DataProvider)
-	if err := validateDataProvider(dataProvider); err != nil {
-		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
+	if !ext.isEnabled.Load() {
+		return nil, disabledError()
 	}
+
 	if err := validateStreamID(req.StreamID); err != nil {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
 	}
@@ -358,13 +338,13 @@ func (ext *Extension) GetRecord(ctx context.Context, req *GetRecordRequest) (*Ge
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "from_time must be <= to_time", nil)
 	}
 
-	ref, stype, err := ext.dbLookupStreamRef(ctx, dataProvider, req.StreamID)
+	ref, stype, err := ext.dbLookupStreamRef(ctx, ext.nodeAddress, req.StreamID)
 	if err != nil {
 		ext.logger.Error("failed to look up stream", "error", err)
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to look up stream", nil)
 	}
 	if ref == 0 {
-		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream not found: %s/%s", dataProvider, req.StreamID), nil)
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream not found: %s", req.StreamID), nil)
 	}
 
 	var records []RecordOutput
@@ -395,11 +375,10 @@ func (ext *Extension) GetIndex(ctx context.Context, req *GetIndexRequest) (*GetI
 	if req == nil {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "missing request", nil)
 	}
-
-	dataProvider := strings.ToLower(req.DataProvider)
-	if err := validateDataProvider(dataProvider); err != nil {
-		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
+	if !ext.isEnabled.Load() {
+		return nil, disabledError()
 	}
+
 	if err := validateStreamID(req.StreamID); err != nil {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
 	}
@@ -409,13 +388,13 @@ func (ext *Extension) GetIndex(ctx context.Context, req *GetIndexRequest) (*GetI
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "from_time must be <= to_time", nil)
 	}
 
-	ref, stype, err := ext.dbLookupStreamRef(ctx, dataProvider, req.StreamID)
+	ref, stype, err := ext.dbLookupStreamRef(ctx, ext.nodeAddress, req.StreamID)
 	if err != nil {
 		ext.logger.Error("failed to look up stream", "error", err)
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to look up stream", nil)
 	}
 	if ref == 0 {
-		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream not found: %s/%s", dataProvider, req.StreamID), nil)
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream not found: %s", req.StreamID), nil)
 	}
 
 	// Resolve base_time: default to first event_time in the stream
@@ -500,8 +479,11 @@ func (ext *Extension) GetIndex(ctx context.Context, req *GetIndexRequest) (*GetI
 	return &GetIndexResponse{Records: indexRecords}, nil
 }
 
-// ListStreams lists all local streams.
+// ListStreams lists all local streams owned by this node.
 func (ext *Extension) ListStreams(ctx context.Context, _ *ListStreamsRequest) (*ListStreamsResponse, *jsonrpc.Error) {
+	if !ext.isEnabled.Load() {
+		return nil, disabledError()
+	}
 	streams, err := ext.dbListStreams(ctx)
 	if err != nil {
 		ext.logger.Error("failed to list streams", "error", err)

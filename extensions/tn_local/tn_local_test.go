@@ -109,10 +109,33 @@ func TestExtensionSingleton(t *testing.T) {
 	require.Same(t, ext1, ext2, "GetExtension should return same instance")
 	require.False(t, ext1.isEnabled.Load(), "default extension should be disabled")
 
-	// configure updates the existing instance in-place (preserves pointer identity)
-	ext1.configure(ext1.logger, nil, nil)
+	// configure updates the existing instance in-place (preserves pointer identity).
+	// Passing a non-empty node address transitions the extension to enabled.
+	ext1.configure(ext1.logger, nil, nil, testNodeAddress)
 	require.True(t, ext1.isEnabled.Load())
+	require.Equal(t, testNodeAddress, ext1.nodeAddress)
 	require.Same(t, ext1, GetExtension(), "still same pointer after configure")
+}
+
+func TestExtensionConfigureEmptyAddressStaysDisabled(t *testing.T) {
+	// configure() with an empty node address must NOT enable the extension —
+	// this is the read-only / ed25519 fallback path. Handlers will refuse
+	// requests with the disabled error.
+	prev := extensionInstance
+	extensionInstance = nil
+	once = sync.Once{}
+	t.Cleanup(func() {
+		extensionInstance = prev
+		once = sync.Once{}
+		if prev != nil {
+			once.Do(func() {})
+		}
+	})
+
+	ext := GetExtension()
+	ext.configure(ext.logger, nil, nil, "")
+	require.False(t, ext.isEnabled.Load(), "empty node address must keep extension disabled")
+	require.Empty(t, ext.nodeAddress)
 }
 
 func TestServiceInterface(t *testing.T) {
@@ -134,11 +157,20 @@ func TestServiceInterface(t *testing.T) {
 	require.NotNil(t, health)
 }
 
-// newTestExtension creates an Extension with a mock DB for handler tests.
+// testNodeAddress is the lowercase Ethereum address used as the implicit
+// data_provider for handler tests. It is the lowercase form of testDP, so
+// any test that previously asserted captured args matched a lowercased
+// testDP keeps working without value changes.
+const testNodeAddress = "0xec36224a679218ae28fcece8d3c68595b87dd832"
+
+// newTestExtension creates an Extension with a mock DB and a stub node address
+// for handler tests. The node address mirrors what the production engineReadyHook
+// would derive from the secp256k1 ValidatorSigner.
 func newTestExtension(db kwilsql.DB) *Extension {
 	ext := &Extension{
-		logger: log.New(log.WithWriter(io.Discard)),
-		db:     db,
+		logger:      log.New(log.WithWriter(io.Discard)),
+		db:          db,
+		nodeAddress: testNodeAddress,
 	}
 	ext.isEnabled.Store(true)
 	return ext
