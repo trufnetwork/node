@@ -8,7 +8,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
@@ -73,11 +72,14 @@ func validateWeight(weight string) error {
 }
 
 // generateTaxonomyID creates a unique UUID from taxonomy components.
-// Mirrors consensus: uuid_generate_kwil(@txid||$data_provider||...).
-// Since local operations have no @txid, we include UnixNano for per-call
-// uniqueness (analogous to how @txid differs per transaction in consensus).
-func generateTaxonomyID(dataProvider, streamID, childSID string, index int) string {
-	h := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%s|%d|%d", dataProvider, streamID, childSID, index, time.Now().UnixNano())))
+// Mirrors consensus: uuid_generate_kwil(@txid||$data_provider||$stream_id||$child||$i).
+// Since local operations have no @txid, we use groupSeq — an int assigned by
+// dbGetNextGroupSequence under an advisory lock, guaranteed unique per
+// (parent stream, insertion call). Together with index (unique per child in
+// a single call), this makes IDs deterministic and collision-free without
+// depending on wall-clock time.
+func generateTaxonomyID(dataProvider, streamID, childSID string, groupSeq, index int) string {
+	h := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%s|%d|%d", dataProvider, streamID, childSID, groupSeq, index)))
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
 		h[0:4], h[4:6], h[6:8], h[8:10], h[10:16])
 }
@@ -298,7 +300,7 @@ func (ext *Extension) InsertTaxonomy(ctx context.Context, req *InsertTaxonomyReq
 
 	createdAt := ext.currentHeight()
 	for i := 0; i < n; i++ {
-		taxonomyID := generateTaxonomyID(ext.nodeAddress, req.StreamID, req.ChildStreamIDs[i], i)
+		taxonomyID := generateTaxonomyID(ext.nodeAddress, req.StreamID, req.ChildStreamIDs[i], groupSeq, i)
 		if insertErr := ext.dbInsertTaxonomyRow(ctx, tx, taxonomyID, parentRef, childRefs[i], req.Weights[i], startDate, groupSeq, createdAt); insertErr != nil {
 			ext.logger.Error("failed to insert taxonomy row", "error", insertErr)
 			return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to insert taxonomy", nil)

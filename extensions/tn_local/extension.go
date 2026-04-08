@@ -56,9 +56,10 @@ func (e *Extension) configure(logger log.Logger, db sql.DB, localDB *LocalDB, no
 	e.db = db
 	e.localDB = localDB
 	e.nodeAddress = nodeAddress
-	if nodeAddress != "" {
-		e.isEnabled.Store(true)
-	}
+	// Always set isEnabled deterministically based on nodeAddress so that
+	// re-configuring an extension (e.g. in tests or on node re-init) can't
+	// leave a stale-true flag when the new address is empty.
+	e.isEnabled.Store(nodeAddress != "")
 }
 
 // currentHeight returns the latest committed block height.
