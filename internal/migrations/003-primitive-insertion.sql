@@ -37,6 +37,12 @@ CREATE OR REPLACE ACTION insert_records(
     -- Get record count (used for both fee calculation and validation)
     $num_records INT := array_length($data_provider);
 
+    -- Cap batch size to prevent superlinear block execution time.
+    -- With per-tx PG isolation, blocks handle thousands of small txns efficiently.
+    if $num_records > 10 {
+        ERROR('insert_records: batch size exceeds maximum of 10 records');
+    }
+
     -- ===== FEE COLLECTION WITH ROLE EXEMPTION =====
     -- Check if caller is exempt (has system:network_writer role)
     $is_exempt BOOL := FALSE;
