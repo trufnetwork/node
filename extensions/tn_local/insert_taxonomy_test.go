@@ -17,10 +17,11 @@ const testChildSID1 = "st000000000000000000000000child1"
 const testChildSID2 = "st000000000000000000000000child2"
 
 // mockDBForTaxonomy returns a MockDB that simulates stream lookups for taxonomy tests.
-// parentSID is the parent stream ID (used to distinguish parent from child lookups).
-// parentRef/parentType is returned for the parent stream lookup.
-// childRefs maps "dp/sid" -> ref for child lookups.
-// executeFn captures INSERT/SELECT statements in transactions.
+// All children/parents implicitly belong to the node operator (testNodeAddress).
+//
+//   - parentRef/parentType is returned for the parent stream lookup (matched by stream_id).
+//   - childRefs maps child stream_id -> ref for child lookups.
+//   - executeFn captures INSERT/SELECT statements in transactions.
 func mockDBForTaxonomy(
 	parentRef int64, parentType string,
 	childRefs map[string]int64,
@@ -28,12 +29,10 @@ func mockDBForTaxonomy(
 ) *utils.MockDB {
 	lookupFn := func(ctx context.Context, stmt string, args ...any) (*kwilsql.ResultSet, error) {
 		if strings.Contains(stmt, "SELECT") && len(args) >= 2 {
-			dp, _ := args[0].(string)
 			sid, _ := args[1].(string)
-			key := dp + "/" + sid
 
-			// First check the childRefs map
-			if ref, ok := childRefs[key]; ok {
+			// First check the childRefs map (keyed by stream_id only).
+			if ref, ok := childRefs[sid]; ok {
 				return &kwilsql.ResultSet{
 					Columns: []string{"id", "stream_type"},
 					Rows:    [][]any{{ref, "primitive"}},
@@ -89,16 +88,26 @@ func TestInsertTaxonomy_NilRequest(t *testing.T) {
 	require.Contains(t, rpcErr.Message, "missing request")
 }
 
+func TestInsertTaxonomy_DisabledWhenNoNodeAddress(t *testing.T) {
+	ext := &Extension{db: &utils.MockDB{}}
+	_, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
+		StreamID:       testComposedSID,
+		ChildStreamIDs: []string{testChildSID1},
+		Weights:        []string{"1.0"},
+	})
+	require.NotNil(t, rpcErr)
+	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInternal), rpcErr.Code)
+	require.Contains(t, rpcErr.Message, "tn_local is disabled")
+}
+
 func TestInsertTaxonomy_EmptyChildren(t *testing.T) {
 	ext := newTestExtension(&utils.MockDB{})
 
 	_, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
-		DataProvider:       testDP,
-		StreamID:           testComposedSID,
-		ChildDataProviders: []string{},
-		ChildStreamIDs:     []string{},
-		Weights:            []string{},
-		StartDate:          0,
+		StreamID:       testComposedSID,
+		ChildStreamIDs: []string{},
+		Weights:        []string{},
+		StartDate:      0,
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
@@ -109,12 +118,10 @@ func TestInsertTaxonomy_ArrayLengthMismatch(t *testing.T) {
 	ext := newTestExtension(&utils.MockDB{})
 
 	_, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
-		DataProvider:       testDP,
-		StreamID:           testComposedSID,
-		ChildDataProviders: []string{testDP, testDP},
-		ChildStreamIDs:     []string{testChildSID1},
-		Weights:            []string{"1.0"},
-		StartDate:          0,
+		StreamID:       testComposedSID,
+		ChildStreamIDs: []string{testChildSID1, testChildSID2},
+		Weights:        []string{"1.0"},
+		StartDate:      0,
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
@@ -122,10 +129,9 @@ func TestInsertTaxonomy_ArrayLengthMismatch(t *testing.T) {
 }
 
 func TestInsertTaxonomy_Success(t *testing.T) {
-	lowDP := strings.ToLower(testDP)
 	childRefs := map[string]int64{
-		lowDP + "/" + testChildSID1: 10,
-		lowDP + "/" + testChildSID2: 11,
+		testChildSID1: 10,
+		testChildSID2: 11,
 	}
 
 	var capturedStmts []string
@@ -138,12 +144,10 @@ func TestInsertTaxonomy_Success(t *testing.T) {
 	ext := newTestExtension(mockDB)
 
 	resp, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
-		DataProvider:       testDP,
-		StreamID:           testComposedSID,
-		ChildDataProviders: []string{testDP, testDP},
-		ChildStreamIDs:     []string{testChildSID1, testChildSID2},
-		Weights:            []string{"0.6", "0.4"},
-		StartDate:          1000,
+		StreamID:       testComposedSID,
+		ChildStreamIDs: []string{testChildSID1, testChildSID2},
+		Weights:        []string{"0.6", "0.4"},
+		StartDate:      1000,
 	})
 
 	require.Nil(t, rpcErr, "expected no error")
@@ -160,9 +164,8 @@ func TestInsertTaxonomy_Success(t *testing.T) {
 }
 
 func TestInsertTaxonomy_SingleChild(t *testing.T) {
-	lowDP := strings.ToLower(testDP)
 	childRefs := map[string]int64{
-		lowDP + "/" + testChildSID1: 10,
+		testChildSID1: 10,
 	}
 
 	var insertCalled bool
@@ -174,19 +177,17 @@ func TestInsertTaxonomy_SingleChild(t *testing.T) {
 			require.Equal(t, int64(100), args[1]) // parent_ref
 			require.Equal(t, int64(10), args[2])  // child_ref
 			require.Equal(t, "1.0", args[3])      // weight
-			require.Equal(t, int64(500), args[4])  // start_date
+			require.Equal(t, int64(500), args[4]) // start_date
 		}
 		return &kwilsql.ResultSet{}, nil
 	})
 	ext := newTestExtension(mockDB)
 
 	resp, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
-		DataProvider:       testDP,
-		StreamID:           testComposedSID,
-		ChildDataProviders: []string{testDP},
-		ChildStreamIDs:     []string{testChildSID1},
-		Weights:            []string{"1.0"},
-		StartDate:          500,
+		StreamID:       testComposedSID,
+		ChildStreamIDs: []string{testChildSID1},
+		Weights:        []string{"1.0"},
+		StartDate:      500,
 	})
 
 	require.Nil(t, rpcErr)
@@ -194,17 +195,66 @@ func TestInsertTaxonomy_SingleChild(t *testing.T) {
 	require.True(t, insertCalled, "INSERT should have been called")
 }
 
+func TestInsertTaxonomy_LookupUsesNodeAddress(t *testing.T) {
+	// Verify both parent and child lookups use the node's own address.
+	var parentDP, childDP string
+	lookupCalls := 0
+	mockDB := &utils.MockDB{
+		ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*kwilsql.ResultSet, error) {
+			if strings.Contains(stmt, "SELECT") && len(args) >= 2 {
+				lookupCalls++
+				dp := args[0].(string)
+				if lookupCalls == 1 {
+					parentDP = dp
+					return &kwilsql.ResultSet{
+						Columns: []string{"id", "stream_type"},
+						Rows:    [][]any{{int64(100), "composed"}},
+					}, nil
+				}
+				childDP = dp
+				return &kwilsql.ResultSet{
+					Columns: []string{"id", "stream_type"},
+					Rows:    [][]any{{int64(10), "primitive"}},
+				}, nil
+			}
+			return &kwilsql.ResultSet{}, nil
+		},
+		BeginTxFn: func(ctx context.Context) (kwilsql.Tx, error) {
+			return &utils.MockTx{
+				ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*kwilsql.ResultSet, error) {
+					if strings.Contains(stmt, "MAX(group_sequence)") {
+						return &kwilsql.ResultSet{
+							Columns: []string{"next_seq"},
+							Rows:    [][]any{{int64(1)}},
+						}, nil
+					}
+					return &kwilsql.ResultSet{}, nil
+				},
+			}, nil
+		},
+	}
+	ext := newTestExtension(mockDB)
+
+	_, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
+		StreamID:       testComposedSID,
+		ChildStreamIDs: []string{testChildSID1},
+		Weights:        []string{"1.0"},
+	})
+
+	require.Nil(t, rpcErr)
+	require.Equal(t, testNodeAddress, parentDP, "parent lookup must use the node's own address")
+	require.Equal(t, testNodeAddress, childDP, "child lookup must use the node's own address")
+}
+
 func TestInsertTaxonomy_ParentNotFound(t *testing.T) {
 	mockDB := mockDBForTaxonomy(0, "", nil, nil)
 	ext := newTestExtension(mockDB)
 
 	_, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
-		DataProvider:       testDP,
-		StreamID:           testComposedSID,
-		ChildDataProviders: []string{testDP},
-		ChildStreamIDs:     []string{testChildSID1},
-		Weights:            []string{"1.0"},
-		StartDate:          0,
+		StreamID:       testComposedSID,
+		ChildStreamIDs: []string{testChildSID1},
+		Weights:        []string{"1.0"},
+		StartDate:      0,
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
@@ -216,12 +266,10 @@ func TestInsertTaxonomy_ParentNotComposed(t *testing.T) {
 	ext := newTestExtension(mockDB)
 
 	_, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
-		DataProvider:       testDP,
-		StreamID:           testComposedSID,
-		ChildDataProviders: []string{testDP},
-		ChildStreamIDs:     []string{testChildSID1},
-		Weights:            []string{"1.0"},
-		StartDate:          0,
+		StreamID:       testComposedSID,
+		ChildStreamIDs: []string{testChildSID1},
+		Weights:        []string{"1.0"},
+		StartDate:      0,
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
@@ -234,76 +282,38 @@ func TestInsertTaxonomy_ChildNotFound(t *testing.T) {
 	ext := newTestExtension(mockDB)
 
 	_, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
-		DataProvider:       testDP,
-		StreamID:           testComposedSID,
-		ChildDataProviders: []string{testDP},
-		ChildStreamIDs:     []string{testChildSID1},
-		Weights:            []string{"1.0"},
-		StartDate:          0,
+		StreamID:       testComposedSID,
+		ChildStreamIDs: []string{testChildSID1},
+		Weights:        []string{"1.0"},
+		StartDate:      0,
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
 	require.Contains(t, rpcErr.Message, "child stream not found in local storage")
 }
 
-func TestInsertTaxonomy_InvalidParentDataProvider(t *testing.T) {
-	ext := newTestExtension(&utils.MockDB{})
-
-	_, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
-		DataProvider:       "invalid",
-		StreamID:           testComposedSID,
-		ChildDataProviders: []string{testDP},
-		ChildStreamIDs:     []string{testChildSID1},
-		Weights:            []string{"1.0"},
-		StartDate:          0,
-	})
-	require.NotNil(t, rpcErr)
-	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
-	require.Contains(t, rpcErr.Message, "data_provider must be a valid Ethereum address")
-}
-
 func TestInsertTaxonomy_InvalidParentStreamID(t *testing.T) {
 	ext := newTestExtension(&utils.MockDB{})
 
 	_, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
-		DataProvider:       testDP,
-		StreamID:           "bad",
-		ChildDataProviders: []string{testDP},
-		ChildStreamIDs:     []string{testChildSID1},
-		Weights:            []string{"1.0"},
-		StartDate:          0,
+		StreamID:       "bad",
+		ChildStreamIDs: []string{testChildSID1},
+		Weights:        []string{"1.0"},
+		StartDate:      0,
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
 	require.Contains(t, rpcErr.Message, "stream_id must be exactly 32 characters")
 }
 
-func TestInsertTaxonomy_InvalidChildDataProvider(t *testing.T) {
-	ext := newTestExtension(&utils.MockDB{})
-
-	_, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
-		DataProvider:       testDP,
-		StreamID:           testComposedSID,
-		ChildDataProviders: []string{"bad_address"},
-		ChildStreamIDs:     []string{testChildSID1},
-		Weights:            []string{"1.0"},
-		StartDate:          0,
-	})
-	require.NotNil(t, rpcErr)
-	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
-	require.Contains(t, rpcErr.Message, "child 0: data_provider must be a valid Ethereum address")
-}
-
 func TestInsertTaxonomy_InvalidChildStreamID(t *testing.T) {
 	ext := newTestExtension(&utils.MockDB{})
 
 	_, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
-		DataProvider:       testDP,
-		StreamID:           testComposedSID,
-		ChildDataProviders: []string{testDP},
-		ChildStreamIDs:     []string{"short"},
-		Weights:            []string{"1.0"},
-		StartDate:          0,
+		StreamID:       testComposedSID,
+		ChildStreamIDs: []string{"short"},
+		Weights:        []string{"1.0"},
+		StartDate:      0,
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
@@ -327,12 +337,10 @@ func TestInsertTaxonomy_InvalidWeight(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ext := newTestExtension(&utils.MockDB{})
 			_, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
-				DataProvider:       testDP,
-				StreamID:           testComposedSID,
-				ChildDataProviders: []string{testDP},
-				ChildStreamIDs:     []string{testChildSID1},
-				Weights:            []string{tt.weight},
-				StartDate:          0,
+				StreamID:       testComposedSID,
+				ChildStreamIDs: []string{testChildSID1},
+				Weights:        []string{tt.weight},
+				StartDate:      0,
 			})
 			require.NotNil(t, rpcErr)
 			require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
@@ -345,39 +353,19 @@ func TestInsertTaxonomy_DuplicateChild(t *testing.T) {
 	ext := newTestExtension(&utils.MockDB{})
 
 	_, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
-		DataProvider:       testDP,
-		StreamID:           testComposedSID,
-		ChildDataProviders: []string{testDP, testDP},
-		ChildStreamIDs:     []string{testChildSID1, testChildSID1},
-		Weights:            []string{"0.5", "0.5"},
-		StartDate:          0,
+		StreamID:       testComposedSID,
+		ChildStreamIDs: []string{testChildSID1, testChildSID1},
+		Weights:        []string{"0.5", "0.5"},
+		StartDate:      0,
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
-	require.Contains(t, rpcErr.Message, "child 1: duplicate child_data_provider/child_stream_id tuple")
-}
-
-func TestInsertTaxonomy_DuplicateChildMixedCase(t *testing.T) {
-	ext := newTestExtension(&utils.MockDB{})
-
-	// Same address, different casing — should still detect as duplicate after normalization
-	_, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
-		DataProvider:       testDP,
-		StreamID:           testComposedSID,
-		ChildDataProviders: []string{"0xEC36224A679218Ae28FCeCe8d3c68595B87Dd832", "0xec36224a679218ae28fcece8d3c68595b87dd832"},
-		ChildStreamIDs:     []string{testChildSID1, testChildSID1},
-		Weights:            []string{"0.5", "0.5"},
-		StartDate:          0,
-	})
-	require.NotNil(t, rpcErr)
-	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
-	require.Contains(t, rpcErr.Message, "child 1: duplicate child_data_provider/child_stream_id tuple")
+	require.Contains(t, rpcErr.Message, "child 1: duplicate child_stream_id")
 }
 
 func TestInsertTaxonomy_DBInsertError(t *testing.T) {
-	lowDP := strings.ToLower(testDP)
 	childRefs := map[string]int64{
-		lowDP + "/" + testChildSID1: 10,
+		testChildSID1: 10,
 	}
 
 	mockDB := mockDBForTaxonomy(100, "composed", childRefs, func(ctx context.Context, stmt string, args ...any) (*kwilsql.ResultSet, error) {
@@ -389,84 +377,14 @@ func TestInsertTaxonomy_DBInsertError(t *testing.T) {
 	ext := newTestExtension(mockDB)
 
 	_, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
-		DataProvider:       testDP,
-		StreamID:           testComposedSID,
-		ChildDataProviders: []string{testDP},
-		ChildStreamIDs:     []string{testChildSID1},
-		Weights:            []string{"1.0"},
-		StartDate:          0,
+		StreamID:       testComposedSID,
+		ChildStreamIDs: []string{testChildSID1},
+		Weights:        []string{"1.0"},
+		StartDate:      0,
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInternal), rpcErr.Code)
 	require.Contains(t, rpcErr.Message, "failed to insert taxonomy")
-}
-
-func TestInsertTaxonomy_LowercaseNormalization(t *testing.T) {
-	mixedCaseDP := "0xEC36224A679218Ae28FCeCe8d3c68595B87Dd832"
-	lowDP := strings.ToLower(mixedCaseDP)
-	childRefs := map[string]int64{
-		lowDP + "/" + testChildSID1: 10,
-	}
-
-	var capturedParentDP string
-	var capturedChildDP string
-
-	// Use a custom mock that captures the lowercased lookup args
-	lookupCalls := 0
-	mockDB := &utils.MockDB{
-		ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*kwilsql.ResultSet, error) {
-			if strings.Contains(stmt, "SELECT") && len(args) >= 2 {
-				lookupCalls++
-				dp := args[0].(string)
-				sid := args[1].(string)
-				if lookupCalls == 1 {
-					capturedParentDP = dp
-					return &kwilsql.ResultSet{
-						Columns: []string{"id", "stream_type"},
-						Rows:    [][]any{{int64(100), "composed"}},
-					}, nil
-				}
-				capturedChildDP = dp
-				key := dp + "/" + sid
-				if ref, ok := childRefs[key]; ok {
-					return &kwilsql.ResultSet{
-						Columns: []string{"id", "stream_type"},
-						Rows:    [][]any{{ref, "primitive"}},
-					}, nil
-				}
-				return &kwilsql.ResultSet{Rows: [][]any{}}, nil
-			}
-			return &kwilsql.ResultSet{}, nil
-		},
-		BeginTxFn: func(ctx context.Context) (kwilsql.Tx, error) {
-			return &utils.MockTx{
-				ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*kwilsql.ResultSet, error) {
-					if strings.Contains(stmt, "MAX(group_sequence)") {
-						return &kwilsql.ResultSet{
-							Columns: []string{"next_seq"},
-							Rows:    [][]any{{int64(1)}},
-						}, nil
-					}
-					return &kwilsql.ResultSet{}, nil
-				},
-			}, nil
-		},
-	}
-	ext := newTestExtension(mockDB)
-
-	resp, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
-		DataProvider:       mixedCaseDP,
-		StreamID:           testComposedSID,
-		ChildDataProviders: []string{mixedCaseDP},
-		ChildStreamIDs:     []string{testChildSID1},
-		Weights:            []string{"1.0"},
-		StartDate:          0,
-	})
-
-	require.Nil(t, rpcErr)
-	require.NotNil(t, resp)
-	require.Equal(t, lowDP, capturedParentDP, "parent data_provider should be lowercased")
-	require.Equal(t, lowDP, capturedChildDP, "child data_provider should be lowercased")
 }
 
 func TestInsertTaxonomy_ParentLookupDBError(t *testing.T) {
@@ -478,12 +396,10 @@ func TestInsertTaxonomy_ParentLookupDBError(t *testing.T) {
 	ext := newTestExtension(mockDB)
 
 	_, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
-		DataProvider:       testDP,
-		StreamID:           testComposedSID,
-		ChildDataProviders: []string{testDP},
-		ChildStreamIDs:     []string{testChildSID1},
-		Weights:            []string{"1.0"},
-		StartDate:          0,
+		StreamID:       testComposedSID,
+		ChildStreamIDs: []string{testChildSID1},
+		Weights:        []string{"1.0"},
+		StartDate:      0,
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInternal), rpcErr.Code)
@@ -494,12 +410,10 @@ func TestInsertTaxonomy_NegativeStartDate(t *testing.T) {
 	ext := newTestExtension(&utils.MockDB{})
 
 	_, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
-		DataProvider:       testDP,
-		StreamID:           testComposedSID,
-		ChildDataProviders: []string{testDP},
-		ChildStreamIDs:     []string{testChildSID1},
-		Weights:            []string{"1.0"},
-		StartDate:          -1,
+		StreamID:       testComposedSID,
+		ChildStreamIDs: []string{testChildSID1},
+		Weights:        []string{"1.0"},
+		StartDate:      -1,
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
@@ -507,9 +421,8 @@ func TestInsertTaxonomy_NegativeStartDate(t *testing.T) {
 }
 
 func TestInsertTaxonomy_ZeroWeight(t *testing.T) {
-	lowDP := strings.ToLower(testDP)
 	childRefs := map[string]int64{
-		lowDP + "/" + testChildSID1: 10,
+		testChildSID1: 10,
 	}
 
 	mockDB := mockDBForTaxonomy(100, "composed", childRefs, func(ctx context.Context, stmt string, args ...any) (*kwilsql.ResultSet, error) {
@@ -519,12 +432,10 @@ func TestInsertTaxonomy_ZeroWeight(t *testing.T) {
 
 	// Zero weight should be allowed (non-negative)
 	resp, rpcErr := ext.InsertTaxonomy(context.Background(), &InsertTaxonomyRequest{
-		DataProvider:       testDP,
-		StreamID:           testComposedSID,
-		ChildDataProviders: []string{testDP},
-		ChildStreamIDs:     []string{testChildSID1},
-		Weights:            []string{"0"},
-		StartDate:          0,
+		StreamID:       testComposedSID,
+		ChildStreamIDs: []string{testChildSID1},
+		Weights:        []string{"0"},
+		StartDate:      0,
 	})
 	require.Nil(t, rpcErr)
 	require.NotNil(t, resp)

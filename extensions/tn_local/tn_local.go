@@ -2,6 +2,7 @@ package tn_local
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -53,6 +54,18 @@ func adminServerHook(server *rpcserver.Server) error {
 func engineReadyHook(ctx context.Context, app *common.App) error {
 	logger := app.Service.Logger.New("tn_local")
 
+	// Derive the node operator's Ethereum address from its secp256k1 key.
+	// This is the implicit data_provider for every local stream operation.
+	// If the node has no secp256k1 signer (read-only / ed25519), nodeAddress
+	// stays empty and the extension stays disabled — handlers will refuse all
+	// requests with a clear error.
+	nodeAddress := deriveNodeAddress(app, logger)
+
+	// Allow tests to inject an address without setting up a real ValidatorSigner.
+	if testAddr := getTestNodeAddress(); testAddr != "" {
+		nodeAddress = testAddr
+	}
+
 	var localDB *LocalDB
 	if testDB := getTestDB(); testDB != nil {
 		localDB = NewLocalDB(testDB, logger)
@@ -83,10 +96,30 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	// Update existing singleton in-place to preserve the pointer registered
 	// with the admin server's RegisterSvc.
 	ext := GetExtension()
-	ext.configure(logger, localDB.db, localDB)
+	ext.configure(logger, localDB.db, localDB, nodeAddress)
 
-	logger.Info("tn_local extension initialized")
+	if nodeAddress == "" {
+		logger.Warn("tn_local disabled: node has no secp256k1 operator key — local stream operations will be rejected")
+	} else {
+		logger.Info("tn_local extension initialized", "node_address", nodeAddress)
+	}
 	return nil
+}
+
+// deriveNodeAddress returns the lowercase 0x-prefixed Ethereum address derived
+// from the node's secp256k1 operator key, or "" if no secp256k1 key is available.
+// Local streams use this as the implicit data_provider — there is no other way
+// to claim ownership of a local stream.
+func deriveNodeAddress(app *common.App, logger log.Logger) string {
+	if app == nil || app.Service == nil || app.Service.ValidatorSigner == nil {
+		return ""
+	}
+	addrBytes, err := app.Service.ValidatorSigner.EthereumAddress()
+	if err != nil {
+		logger.Warn("tn_local: failed to derive Ethereum address from node key", "error", err)
+		return ""
+	}
+	return "0x" + hex.EncodeToString(addrBytes)
 }
 
 // createIndependentConnectionPool creates a dedicated connection pool for local storage.

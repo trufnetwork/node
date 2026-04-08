@@ -20,13 +20,20 @@ func TestGetIndex_NilRequest(t *testing.T) {
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
 }
 
+func TestGetIndex_DisabledWhenNoNodeAddress(t *testing.T) {
+	ext := &Extension{db: &utils.MockDB{}}
+	_, rpcErr := ext.GetIndex(context.Background(), &GetIndexRequest{StreamID: testSID})
+	require.NotNil(t, rpcErr)
+	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInternal), rpcErr.Code)
+	require.Contains(t, rpcErr.Message, "tn_local is disabled")
+}
+
 func TestGetIndex_StreamNotFound(t *testing.T) {
 	mockDB := mockDBForQuery(0, "", nil)
 	ext := newTestExtension(mockDB)
 
 	resp, rpcErr := ext.GetIndex(context.Background(), &GetIndexRequest{
-		DataProvider: testDP,
-		StreamID:     testSID,
+		StreamID: testSID,
 	})
 	require.Nil(t, resp)
 	require.NotNil(t, rpcErr)
@@ -85,10 +92,9 @@ func TestGetIndex_Primitive_DefaultBaseTime(t *testing.T) {
 	from := int64(1000)
 	to := int64(5000)
 	resp, rpcErr := ext.GetIndex(context.Background(), &GetIndexRequest{
-		DataProvider: testDP,
-		StreamID:     testSID,
-		FromTime:     &from,
-		ToTime:       &to,
+		StreamID: testSID,
+		FromTime: &from,
+		ToTime:   &to,
 	})
 	require.Nil(t, rpcErr, "expected no error, got: %v", rpcErr)
 	require.NotNil(t, resp)
@@ -139,11 +145,10 @@ func TestGetIndex_ExplicitBaseTime(t *testing.T) {
 	to := int64(5000)
 	baseTime := int64(2000)
 	resp, rpcErr := ext.GetIndex(context.Background(), &GetIndexRequest{
-		DataProvider: testDP,
-		StreamID:     testSID,
-		FromTime:     &from,
-		ToTime:       &to,
-		BaseTime:     &baseTime,
+		StreamID: testSID,
+		FromTime: &from,
+		ToTime:   &to,
+		BaseTime: &baseTime,
 	})
 	require.Nil(t, rpcErr)
 	require.NotNil(t, resp)
@@ -182,10 +187,9 @@ func TestGetIndex_BaseValueZero(t *testing.T) {
 	from := int64(1000)
 	to := int64(5000)
 	_, rpcErr := ext.GetIndex(context.Background(), &GetIndexRequest{
-		DataProvider: testDP,
-		StreamID:     testSID,
-		FromTime:     &from,
-		ToTime:       &to,
+		StreamID: testSID,
+		FromTime: &from,
+		ToTime:   &to,
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
@@ -208,8 +212,7 @@ func TestGetIndex_EmptyStream(t *testing.T) {
 	ext := newTestExtension(mockDB)
 
 	resp, rpcErr := ext.GetIndex(context.Background(), &GetIndexRequest{
-		DataProvider: testDP,
-		StreamID:     testSID,
+		StreamID: testSID,
 	})
 	require.Nil(t, rpcErr)
 	require.NotNil(t, resp)

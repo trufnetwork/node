@@ -44,7 +44,7 @@ func mockDBWithStream(streamRef int64, streamType string, executeFn func(ctx con
 	}
 }
 
-const testDP = "0xEC36224A679218Ae28FCeCe8d3c68595B87Dd832"
+// testSID is the canonical 32-char stream ID used by handler tests.
 const testSID = "st00000000000000000000000000test"
 
 func TestInsertRecords_NilRequest(t *testing.T) {
@@ -57,14 +57,25 @@ func TestInsertRecords_NilRequest(t *testing.T) {
 	require.Contains(t, rpcErr.Message, "missing request")
 }
 
+func TestInsertRecords_DisabledWhenNoNodeAddress(t *testing.T) {
+	ext := &Extension{db: &utils.MockDB{}}
+	_, rpcErr := ext.InsertRecords(context.Background(), &InsertRecordsRequest{
+		StreamID:  []string{testSID},
+		EventTime: []int64{1000},
+		Value:     []string{"1.0"},
+	})
+	require.NotNil(t, rpcErr)
+	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInternal), rpcErr.Code)
+	require.Contains(t, rpcErr.Message, "tn_local is disabled")
+}
+
 func TestInsertRecords_EmptyArrays(t *testing.T) {
 	ext := newTestExtension(&utils.MockDB{})
 
 	_, rpcErr := ext.InsertRecords(context.Background(), &InsertRecordsRequest{
-		DataProvider: []string{},
-		StreamID:     []string{},
-		EventTime:    []int64{},
-		Value:        []string{},
+		StreamID:  []string{},
+		EventTime: []int64{},
+		Value:     []string{},
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
@@ -75,10 +86,9 @@ func TestInsertRecords_ArrayLengthMismatch(t *testing.T) {
 	ext := newTestExtension(&utils.MockDB{})
 
 	_, rpcErr := ext.InsertRecords(context.Background(), &InsertRecordsRequest{
-		DataProvider: []string{testDP, testDP},
-		StreamID:     []string{testSID},
-		EventTime:    []int64{1000},
-		Value:        []string{"1.0"},
+		StreamID:  []string{testSID, testSID},
+		EventTime: []int64{1000},
+		Value:     []string{"1.0"},
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
@@ -96,10 +106,9 @@ func TestInsertRecords_Success(t *testing.T) {
 	ext := newTestExtension(mockDB)
 
 	resp, rpcErr := ext.InsertRecords(context.Background(), &InsertRecordsRequest{
-		DataProvider: []string{testDP, testDP},
-		StreamID:     []string{testSID, testSID},
-		EventTime:    []int64{1000, 2000},
-		Value:        []string{"123.456", "789.012"},
+		StreamID:  []string{testSID, testSID},
+		EventTime: []int64{1000, 2000},
+		Value:     []string{"123.456", "789.012"},
 	})
 
 	require.Nil(t, rpcErr, "expected no error")
@@ -126,6 +135,40 @@ func TestInsertRecords_Success(t *testing.T) {
 	require.Equal(t, "789.012", capturedArgs[1][2])
 }
 
+func TestInsertRecords_LookupUsesNodeAddress(t *testing.T) {
+	// Verify that the stream lookup uses the node's own address, not anything
+	// caller-controlled. This is the core regression test for the auth fix.
+	var lookupDP string
+	mockDB := &utils.MockDB{
+		ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*kwilsql.ResultSet, error) {
+			if strings.Contains(stmt, "SELECT") && len(args) >= 2 {
+				lookupDP = args[0].(string)
+				return &kwilsql.ResultSet{
+					Columns: []string{"id", "stream_type"},
+					Rows:    [][]any{{int64(42), "primitive"}},
+				}, nil
+			}
+			return &kwilsql.ResultSet{}, nil
+		},
+		BeginTxFn: func(ctx context.Context) (kwilsql.Tx, error) {
+			return &utils.MockTx{
+				ExecuteFn: func(ctx context.Context, stmt string, args ...any) (*kwilsql.ResultSet, error) {
+					return &kwilsql.ResultSet{}, nil
+				},
+			}, nil
+		},
+	}
+	ext := newTestExtension(mockDB)
+
+	_, rpcErr := ext.InsertRecords(context.Background(), &InsertRecordsRequest{
+		StreamID:  []string{testSID},
+		EventTime: []int64{1000},
+		Value:     []string{"1.0"},
+	})
+	require.Nil(t, rpcErr)
+	require.Equal(t, testNodeAddress, lookupDP, "stream lookup must use the node's own address")
+}
+
 func TestInsertRecords_ZeroValuesFiltered(t *testing.T) {
 	var capturedArgs [][]any
 	mockDB := mockDBWithStream(42, "primitive", func(ctx context.Context, stmt string, args ...any) (*kwilsql.ResultSet, error) {
@@ -135,10 +178,9 @@ func TestInsertRecords_ZeroValuesFiltered(t *testing.T) {
 	ext := newTestExtension(mockDB)
 
 	resp, rpcErr := ext.InsertRecords(context.Background(), &InsertRecordsRequest{
-		DataProvider: []string{testDP, testDP, testDP},
-		StreamID:     []string{testSID, testSID, testSID},
-		EventTime:    []int64{1000, 2000, 3000},
-		Value:        []string{"1.5", "0", "2.5"},
+		StreamID:  []string{testSID, testSID, testSID},
+		EventTime: []int64{1000, 2000, 3000},
+		Value:     []string{"1.5", "0", "2.5"},
 	})
 
 	require.Nil(t, rpcErr)
@@ -161,10 +203,9 @@ func TestInsertRecords_AllZerosNoInsert(t *testing.T) {
 	ext := newTestExtension(mockDB)
 
 	resp, rpcErr := ext.InsertRecords(context.Background(), &InsertRecordsRequest{
-		DataProvider: []string{testDP},
-		StreamID:     []string{testSID},
-		EventTime:    []int64{1000},
-		Value:        []string{"0"},
+		StreamID:  []string{testSID},
+		EventTime: []int64{1000},
+		Value:     []string{"0"},
 	})
 
 	require.Nil(t, rpcErr)
@@ -177,10 +218,9 @@ func TestInsertRecords_StreamNotFound(t *testing.T) {
 	ext := newTestExtension(mockDB)
 
 	_, rpcErr := ext.InsertRecords(context.Background(), &InsertRecordsRequest{
-		DataProvider: []string{testDP},
-		StreamID:     []string{testSID},
-		EventTime:    []int64{1000},
-		Value:        []string{"1.0"},
+		StreamID:  []string{testSID},
+		EventTime: []int64{1000},
+		Value:     []string{"1.0"},
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
@@ -192,10 +232,9 @@ func TestInsertRecords_ComposedStreamRejected(t *testing.T) {
 	ext := newTestExtension(mockDB)
 
 	_, rpcErr := ext.InsertRecords(context.Background(), &InsertRecordsRequest{
-		DataProvider: []string{testDP},
-		StreamID:     []string{testSID},
-		EventTime:    []int64{1000},
-		Value:        []string{"1.0"},
+		StreamID:  []string{testSID},
+		EventTime: []int64{1000},
+		Value:     []string{"1.0"},
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
@@ -209,38 +248,22 @@ func TestInsertRecords_DBError(t *testing.T) {
 	ext := newTestExtension(mockDB)
 
 	_, rpcErr := ext.InsertRecords(context.Background(), &InsertRecordsRequest{
-		DataProvider: []string{testDP},
-		StreamID:     []string{testSID},
-		EventTime:    []int64{1000},
-		Value:        []string{"1.0"},
+		StreamID:  []string{testSID},
+		EventTime: []int64{1000},
+		Value:     []string{"1.0"},
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInternal), rpcErr.Code)
 	require.Contains(t, rpcErr.Message, "failed to insert records")
 }
 
-func TestInsertRecords_InvalidDataProvider(t *testing.T) {
-	ext := newTestExtension(&utils.MockDB{})
-
-	_, rpcErr := ext.InsertRecords(context.Background(), &InsertRecordsRequest{
-		DataProvider: []string{"invalid"},
-		StreamID:     []string{testSID},
-		EventTime:    []int64{1000},
-		Value:        []string{"1.0"},
-	})
-	require.NotNil(t, rpcErr)
-	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
-	require.Contains(t, rpcErr.Message, "data_provider must be a valid Ethereum address")
-}
-
 func TestInsertRecords_InvalidStreamID(t *testing.T) {
 	ext := newTestExtension(&utils.MockDB{})
 
 	_, rpcErr := ext.InsertRecords(context.Background(), &InsertRecordsRequest{
-		DataProvider: []string{testDP},
-		StreamID:     []string{"bad"},
-		EventTime:    []int64{1000},
-		Value:        []string{"1.0"},
+		StreamID:  []string{"bad"},
+		EventTime: []int64{1000},
+		Value:     []string{"1.0"},
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
@@ -265,10 +288,9 @@ func TestInsertRecords_InvalidValue(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, rpcErr := ext.InsertRecords(context.Background(), &InsertRecordsRequest{
-				DataProvider: []string{testDP},
-				StreamID:     []string{testSID},
-				EventTime:    []int64{1000},
-				Value:        []string{tt.value},
+				StreamID:  []string{testSID},
+				EventTime: []int64{1000},
+				Value:     []string{tt.value},
 			})
 			require.NotNil(t, rpcErr)
 			require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
@@ -282,10 +304,9 @@ func TestInsertRecords_InvalidValueAtIndex(t *testing.T) {
 	ext := newTestExtension(mockDB)
 
 	_, rpcErr := ext.InsertRecords(context.Background(), &InsertRecordsRequest{
-		DataProvider: []string{testDP, testDP},
-		StreamID:     []string{testSID, testSID},
-		EventTime:    []int64{1000, 2000},
-		Value:        []string{"1.0", "bad"},
+		StreamID:  []string{testSID, testSID},
+		EventTime: []int64{1000, 2000},
+		Value:     []string{"1.0", "bad"},
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInvalidParams), rpcErr.Code)
@@ -301,10 +322,9 @@ func TestInsertRecords_LookupDBError(t *testing.T) {
 	ext := newTestExtension(mockDB)
 
 	_, rpcErr := ext.InsertRecords(context.Background(), &InsertRecordsRequest{
-		DataProvider: []string{testDP},
-		StreamID:     []string{testSID},
-		EventTime:    []int64{1000},
-		Value:        []string{"1.0"},
+		StreamID:  []string{testSID},
+		EventTime: []int64{1000},
+		Value:     []string{"1.0"},
 	})
 	require.NotNil(t, rpcErr)
 	require.Equal(t, jsonrpc.ErrorCode(jsonrpc.ErrorInternal), rpcErr.Code)
