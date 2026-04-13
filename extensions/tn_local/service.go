@@ -17,9 +17,11 @@ func (ext *Extension) Methods() map[jsonrpc.Method]rpcserver.MethodDef {
 		"local.create_stream":   rpcserver.MakeMethodDef(ext.CreateStream, "create a local stream", ""),
 		"local.insert_records":  rpcserver.MakeMethodDef(ext.InsertRecords, "insert records into local stream", "count"),
 		"local.insert_taxonomy": rpcserver.MakeMethodDef(ext.InsertTaxonomy, "add taxonomy to local composed stream", ""),
-		"local.get_record":      rpcserver.MakeMethodDef(ext.GetRecord, "query local stream records", "records"),
-		"local.get_index":       rpcserver.MakeMethodDef(ext.GetIndex, "query local stream index", "records"),
-		"local.list_streams":    rpcserver.MakeMethodDef(ext.ListStreams, "list all local streams", "streams"),
+		"local.delete_stream":     rpcserver.MakeMethodDef(ext.DeleteStream, "delete a local stream and all its data", ""),
+		"local.disable_taxonomy":  rpcserver.MakeMethodDef(ext.DisableTaxonomy, "disable a taxonomy group on a local composed stream", ""),
+		"local.get_record":        rpcserver.MakeMethodDef(ext.GetRecord, "query local stream records", "records"),
+		"local.get_index":         rpcserver.MakeMethodDef(ext.GetIndex, "query local stream index", "records"),
+		"local.list_streams":      rpcserver.MakeMethodDef(ext.ListStreams, "list all local streams", "streams"),
 	}
 }
 

@@ -85,6 +85,25 @@ type IndexOutput struct {
 	Value     string `json:"value"`
 }
 
+// DeleteStreamRequest is the JSON-RPC request for local.delete_stream.
+// Mirrors consensus delete_stream minus data_provider.
+type DeleteStreamRequest struct {
+	StreamID string `json:"stream_id"`
+}
+
+// DeleteStreamResponse is the JSON-RPC response for local.delete_stream.
+type DeleteStreamResponse struct{}
+
+// DisableTaxonomyRequest is the JSON-RPC request for local.disable_taxonomy.
+// Mirrors consensus disable_taxonomy minus data_provider.
+type DisableTaxonomyRequest struct {
+	StreamID      string `json:"stream_id"`
+	GroupSequence int    `json:"group_sequence"`
+}
+
+// DisableTaxonomyResponse is the JSON-RPC response for local.disable_taxonomy.
+type DisableTaxonomyResponse struct{}
+
 // ListStreamsRequest is the JSON-RPC request for local.list_streams.
 type ListStreamsRequest struct{}
 

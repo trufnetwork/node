@@ -112,6 +112,34 @@ func (ext *Extension) dbInsertTaxonomyRow(ctx context.Context, tx sql.Tx, taxono
 	return err
 }
 
+// dbDeleteStream removes a stream and all associated data (primitive_events,
+// taxonomies) via ON DELETE CASCADE. Mirrors consensus delete_stream.
+// Returns true if a stream was deleted, false if it did not exist.
+func (ext *Extension) dbDeleteStream(ctx context.Context, dataProvider, streamID string) (bool, error) {
+	rs, err := ext.db.Execute(ctx, fmt.Sprintf(
+		`DELETE FROM %s.streams WHERE data_provider = $1 AND stream_id = $2`, SchemaName),
+		dataProvider, streamID)
+	if err != nil {
+		return false, err
+	}
+	return rs.Status.RowsAffected > 0, nil
+}
+
+// dbDisableTaxonomy sets disabled_at on all taxonomy rows matching the given
+// stream_ref and group_sequence. Mirrors consensus: UPDATE taxonomies SET
+// disabled_at = @height WHERE stream_ref = $ref AND group_sequence = $gs.
+// Returns true if any rows were updated.
+func (ext *Extension) dbDisableTaxonomy(ctx context.Context, streamRef int64, groupSequence int) (bool, error) {
+	rs, err := ext.db.Execute(ctx, fmt.Sprintf(
+		`UPDATE %s.taxonomies SET disabled_at = $1
+		 WHERE stream_ref = $2 AND group_sequence = $3 AND disabled_at IS NULL`, SchemaName),
+		ext.currentHeight(), streamRef, groupSequence)
+	if err != nil {
+		return false, err
+	}
+	return rs.Status.RowsAffected > 0, nil
+}
+
 // toInt64Val converts integer types (int32, int64, int) from database results to int64.
 // PostgreSQL SERIAL returns int32, BIGINT returns int64.
 func toInt64Val(v any) (int64, bool) {
