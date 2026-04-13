@@ -610,3 +610,251 @@ func TestIntegration_TaxonomyReplacementGroup(t *testing.T) {
 	// Index at time 300 = (307 / 55) * 100 ≈ 558.181818...
 	require.Contains(t, indexValues, int64(300))
 }
+
+func TestIntegration_DeleteStream_Primitive(t *testing.T) {
+	ext := setupIntegrationDB(t)
+	ctx := context.Background()
+
+	// Create a primitive stream and insert records.
+	_, rpcErr := ext.CreateStream(ctx, &CreateStreamRequest{
+		StreamID: testSID, StreamType: "primitive",
+	})
+	require.Nil(t, rpcErr)
+
+	_, rpcErr = ext.InsertRecords(ctx, &InsertRecordsRequest{
+		StreamID:  []string{testSID, testSID},
+		EventTime: []int64{1000, 2000},
+		Value:     []string{"10.0", "20.0"},
+	})
+	require.Nil(t, rpcErr)
+
+	// Verify data exists before delete.
+	resp, rpcErr := ext.GetRecord(ctx, &GetRecordRequest{StreamID: testSID})
+	require.Nil(t, rpcErr)
+	require.Len(t, resp.Records, 1, "should have latest record")
+
+	// Delete the stream — ON DELETE CASCADE should remove records too.
+	_, rpcErr = ext.DeleteStream(ctx, &DeleteStreamRequest{StreamID: testSID})
+	require.Nil(t, rpcErr)
+
+	// Verify stream is gone: GetRecord should return "stream not found".
+	_, rpcErr = ext.GetRecord(ctx, &GetRecordRequest{StreamID: testSID})
+	require.NotNil(t, rpcErr, "expected error after deleting stream")
+	require.Contains(t, rpcErr.Message, "not found")
+
+	// Verify ListStreams no longer includes it.
+	listResp, rpcErr := ext.ListStreams(ctx, &ListStreamsRequest{})
+	require.Nil(t, rpcErr)
+	require.Empty(t, listResp.Streams, "deleted stream should not appear in list")
+
+	// Deleting again should fail with "not found".
+	_, rpcErr = ext.DeleteStream(ctx, &DeleteStreamRequest{StreamID: testSID})
+	require.NotNil(t, rpcErr)
+	require.Contains(t, rpcErr.Message, "not found")
+}
+
+func TestIntegration_DeleteStream_Composed(t *testing.T) {
+	ext := setupIntegrationDB(t)
+	ctx := context.Background()
+
+	childA := "st000000000000000000000000delchA"
+	childB := "st000000000000000000000000delchB"
+	composedSID := "st000000000000000000000000delcmp"
+
+	// Create children and composed parent.
+	for _, sid := range []string{childA, childB} {
+		_, rpcErr := ext.CreateStream(ctx, &CreateStreamRequest{
+			StreamID: sid, StreamType: "primitive",
+		})
+		require.Nil(t, rpcErr)
+	}
+	_, rpcErr := ext.CreateStream(ctx, &CreateStreamRequest{
+		StreamID: composedSID, StreamType: "composed",
+	})
+	require.Nil(t, rpcErr)
+
+	// Insert child records and taxonomy.
+	_, rpcErr = ext.InsertRecords(ctx, &InsertRecordsRequest{
+		StreamID:  []string{childA, childB},
+		EventTime: []int64{100, 100},
+		Value:     []string{"50.0", "50.0"},
+	})
+	require.Nil(t, rpcErr)
+
+	_, rpcErr = ext.InsertTaxonomy(ctx, &InsertTaxonomyRequest{
+		StreamID:       composedSID,
+		ChildStreamIDs: []string{childA, childB},
+		Weights:        []string{"0.5", "0.5"},
+		StartDate:      0,
+	})
+	require.Nil(t, rpcErr)
+
+	// Verify composed stream works.
+	resp, rpcErr := ext.GetRecord(ctx, &GetRecordRequest{StreamID: composedSID})
+	require.Nil(t, rpcErr)
+	require.Len(t, resp.Records, 1)
+	require.Equal(t, "50.000000000000000000", resp.Records[0].Value)
+
+	// Delete composed parent — cascades taxonomy rows but children survive.
+	_, rpcErr = ext.DeleteStream(ctx, &DeleteStreamRequest{StreamID: composedSID})
+	require.Nil(t, rpcErr)
+
+	// Children should still exist.
+	childResp, rpcErr := ext.GetRecord(ctx, &GetRecordRequest{StreamID: childA})
+	require.Nil(t, rpcErr)
+	require.Len(t, childResp.Records, 1, "child stream should survive parent deletion")
+
+	// ListStreams should show only the two children.
+	listResp, rpcErr := ext.ListStreams(ctx, &ListStreamsRequest{})
+	require.Nil(t, rpcErr)
+	require.Len(t, listResp.Streams, 2, "only child streams should remain")
+}
+
+func TestIntegration_DisableTaxonomy(t *testing.T) {
+	ext := setupIntegrationDB(t)
+	ctx := context.Background()
+
+	childA := "st000000000000000000000000dschA0"
+	childB := "st000000000000000000000000dschB0"
+	childC := "st000000000000000000000000dschC0"
+	composedSID := "st00000000000000000000000dscomp0"
+
+	// Create children and composed parent.
+	for _, sid := range []string{childA, childB, childC} {
+		_, rpcErr := ext.CreateStream(ctx, &CreateStreamRequest{
+			StreamID: sid, StreamType: "primitive",
+		})
+		require.Nil(t, rpcErr)
+	}
+	_, rpcErr := ext.CreateStream(ctx, &CreateStreamRequest{
+		StreamID: composedSID, StreamType: "composed",
+	})
+	require.Nil(t, rpcErr)
+
+	// Insert leaf data: A=10, B=100, C=1000.
+	_, rpcErr = ext.InsertRecords(ctx, &InsertRecordsRequest{
+		StreamID:  []string{childA, childB, childC},
+		EventTime: []int64{100, 100, 100},
+		Value:     []string{"10.0", "100.0", "1000.0"},
+	})
+	require.Nil(t, rpcErr)
+
+	// Group 0: { A: 0.5, B: 0.5 } @ start_time=0.
+	_, rpcErr = ext.InsertTaxonomy(ctx, &InsertTaxonomyRequest{
+		StreamID:       composedSID,
+		ChildStreamIDs: []string{childA, childB},
+		Weights:        []string{"0.5", "0.5"},
+		StartDate:      0,
+	})
+	require.Nil(t, rpcErr)
+
+	// Verify composed value before disable: 0.5*10 + 0.5*100 = 55.
+	resp, rpcErr := ext.GetRecord(ctx, &GetRecordRequest{StreamID: composedSID})
+	require.Nil(t, rpcErr)
+	require.Len(t, resp.Records, 1)
+	require.Equal(t, "55.000000000000000000", resp.Records[0].Value)
+
+	// Disable group 0.
+	_, rpcErr = ext.DisableTaxonomy(ctx, &DisableTaxonomyRequest{
+		StreamID:      composedSID,
+		GroupSequence: 1,
+	})
+	require.Nil(t, rpcErr)
+
+	// After disabling the only taxonomy group, composed stream should have no data.
+	resp, rpcErr = ext.GetRecord(ctx, &GetRecordRequest{StreamID: composedSID})
+	require.Nil(t, rpcErr)
+	require.Empty(t, resp.Records, "composed stream with disabled taxonomy should return no records")
+
+	// Disabling again should fail — already disabled.
+	_, rpcErr = ext.DisableTaxonomy(ctx, &DisableTaxonomyRequest{
+		StreamID:      composedSID,
+		GroupSequence: 1,
+	})
+	require.NotNil(t, rpcErr, "expected error when disabling already-disabled group")
+	require.Contains(t, rpcErr.Message, "not found or already disabled")
+}
+
+func TestIntegration_DisableTaxonomy_OnPrimitive(t *testing.T) {
+	ext := setupIntegrationDB(t)
+	ctx := context.Background()
+
+	// DisableTaxonomy should reject primitive streams.
+	_, rpcErr := ext.CreateStream(ctx, &CreateStreamRequest{
+		StreamID: testSID, StreamType: "primitive",
+	})
+	require.Nil(t, rpcErr)
+
+	_, rpcErr = ext.DisableTaxonomy(ctx, &DisableTaxonomyRequest{
+		StreamID:      testSID,
+		GroupSequence: 1,
+	})
+	require.NotNil(t, rpcErr, "expected error on primitive stream")
+	require.Contains(t, rpcErr.Message, "not a composed stream")
+}
+
+func TestIntegration_DisableTaxonomy_ThenReplace(t *testing.T) {
+	ext := setupIntegrationDB(t)
+	ctx := context.Background()
+
+	childA := "st0000000000000000000000dtrrchA0"
+	childB := "st0000000000000000000000dtrrchB0"
+	childC := "st0000000000000000000000dtrrchC0"
+	composedSID := "st000000000000000000000dtrrcmp00"
+
+	for _, sid := range []string{childA, childB, childC} {
+		_, rpcErr := ext.CreateStream(ctx, &CreateStreamRequest{
+			StreamID: sid, StreamType: "primitive",
+		})
+		require.Nil(t, rpcErr)
+	}
+	_, rpcErr := ext.CreateStream(ctx, &CreateStreamRequest{
+		StreamID: composedSID, StreamType: "composed",
+	})
+	require.Nil(t, rpcErr)
+
+	// Insert child data: A=10, B=100, C=1000.
+	_, rpcErr = ext.InsertRecords(ctx, &InsertRecordsRequest{
+		StreamID:  []string{childA, childB, childC},
+		EventTime: []int64{100, 100, 100},
+		Value:     []string{"10.0", "100.0", "1000.0"},
+	})
+	require.Nil(t, rpcErr)
+
+	// Group 0: { A: 0.5, B: 0.5 } → value = 55.
+	_, rpcErr = ext.InsertTaxonomy(ctx, &InsertTaxonomyRequest{
+		StreamID:       composedSID,
+		ChildStreamIDs: []string{childA, childB},
+		Weights:        []string{"0.5", "0.5"},
+		StartDate:      0,
+	})
+	require.Nil(t, rpcErr)
+
+	// Disable group 0 — composed returns no data.
+	_, rpcErr = ext.DisableTaxonomy(ctx, &DisableTaxonomyRequest{
+		StreamID:      composedSID,
+		GroupSequence: 1,
+	})
+	require.Nil(t, rpcErr)
+
+	resp, rpcErr := ext.GetRecord(ctx, &GetRecordRequest{StreamID: composedSID})
+	require.Nil(t, rpcErr)
+	require.Empty(t, resp.Records, "disabled taxonomy should yield no records")
+
+	// Insert replacement group 1: { A: 0.3, C: 0.7 } @ start_time=200.
+	_, rpcErr = ext.InsertTaxonomy(ctx, &InsertTaxonomyRequest{
+		StreamID:       composedSID,
+		ChildStreamIDs: []string{childA, childC},
+		Weights:        []string{"0.3", "0.7"},
+		StartDate:      200,
+	})
+	require.Nil(t, rpcErr)
+
+	// Now composed stream should use group 1 weights:
+	// LOCF carries A=10 and C=1000 → 0.3*10 + 0.7*1000 = 3 + 700 = 703.
+	resp, rpcErr = ext.GetRecord(ctx, &GetRecordRequest{StreamID: composedSID})
+	require.Nil(t, rpcErr)
+	require.Len(t, resp.Records, 1)
+	require.Equal(t, "703.000000000000000000", resp.Records[0].Value,
+		"after disabling group 0 and adding group 1: 0.3*10 + 0.7*1000 = 703")
+}

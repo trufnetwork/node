@@ -479,6 +479,75 @@ func (ext *Extension) GetIndex(ctx context.Context, req *GetIndexRequest) (*GetI
 	return &GetIndexResponse{Records: indexRecords}, nil
 }
 
+// DeleteStream removes a local stream and all associated data (records, taxonomies).
+// Mirrors consensus delete_stream: ON DELETE CASCADE removes child rows.
+func (ext *Extension) DeleteStream(ctx context.Context, req *DeleteStreamRequest) (*DeleteStreamResponse, *jsonrpc.Error) {
+	if req == nil {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "missing request", nil)
+	}
+	if !ext.isEnabled.Load() {
+		return nil, disabledError()
+	}
+
+	if err := validateStreamID(req.StreamID); err != nil {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
+	}
+
+	deleted, err := ext.dbDeleteStream(ctx, ext.nodeAddress, req.StreamID)
+	if err != nil {
+		ext.logger.Error("failed to delete local stream", "error", err)
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to delete stream", nil)
+	}
+	if !deleted {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream not found: %s", req.StreamID), nil)
+	}
+
+	return &DeleteStreamResponse{}, nil
+}
+
+// DisableTaxonomy disables a taxonomy group on a local composed stream.
+// Mirrors consensus disable_taxonomy: sets disabled_at = current block height.
+func (ext *Extension) DisableTaxonomy(ctx context.Context, req *DisableTaxonomyRequest) (*DisableTaxonomyResponse, *jsonrpc.Error) {
+	if req == nil {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "missing request", nil)
+	}
+	if !ext.isEnabled.Load() {
+		return nil, disabledError()
+	}
+
+	if err := validateStreamID(req.StreamID); err != nil {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
+	}
+	if req.GroupSequence < 0 {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "group_sequence must be >= 0", nil)
+	}
+
+	// Verify stream exists and is composed.
+	ref, stype, err := ext.dbLookupStreamRef(ctx, ext.nodeAddress, req.StreamID)
+	if err != nil {
+		ext.logger.Error("failed to look up stream", "error", err)
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to look up stream", nil)
+	}
+	if ref == 0 {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream not found: %s", req.StreamID), nil)
+	}
+	if stype != "composed" {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, fmt.Sprintf("stream %s is not a composed stream", req.StreamID), nil)
+	}
+
+	disabled, err := ext.dbDisableTaxonomy(ctx, ref, req.GroupSequence)
+	if err != nil {
+		ext.logger.Error("failed to disable taxonomy", "error", err)
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInternal, "failed to disable taxonomy", nil)
+	}
+	if !disabled {
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams,
+			fmt.Sprintf("taxonomy group %d not found or already disabled on stream %s", req.GroupSequence, req.StreamID), nil)
+	}
+
+	return &DisableTaxonomyResponse{}, nil
+}
+
 // ListStreams lists all local streams owned by this node.
 func (ext *Extension) ListStreams(ctx context.Context, _ *ListStreamsRequest) (*ListStreamsResponse, *jsonrpc.Error) {
 	if !ext.isEnabled.Load() {
