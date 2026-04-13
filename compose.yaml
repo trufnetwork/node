@@ -1,6 +1,6 @@
 services:
   kwil-postgres:
-    image: "ghcr.io/trufnetwork/kwil-postgres:16.8-1"
+    image: "ghcr.io/trufnetwork/kwil-postgres:16.8-2"
     hostname: kwil-postgres
     shm_size: 2G
     restart: unless-stopped

@@ -14,11 +14,12 @@ require (
 	github.com/montanaflynn/stats v0.7.1
 	github.com/pkg/errors v0.9.1
 	github.com/samber/lo v1.47.0
+	github.com/shopspring/decimal v1.4.0
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.37.0
-	github.com/trufnetwork/kwil-db v0.10.3-0.20260316174721-ee9a05e5fbc3
-	github.com/trufnetwork/kwil-db/core v0.4.3-0.20260316174721-ee9a05e5fbc3
+	github.com/trufnetwork/kwil-db v0.10.3-0.20260413125950-e0bc3b09a211
+	github.com/trufnetwork/kwil-db/core v0.4.3-0.20260413125950-e0bc3b09a211
 	github.com/trufnetwork/sdk-go v0.6.4-0.20260224122406-a741343e2f37
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20250218142911-aa4b98e5adaa
@@ -40,7 +41,6 @@ require (
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/pion/stun/v2 v2.0.0 // indirect
-	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/smartcontractkit/chainlink-protos/cre/go v0.0.0-20251021010742-3f8d3dba17d8 // indirect
 	github.com/smartcontractkit/cre-sdk-go v1.1.2 // indirect
 	github.com/smartcontractkit/cre-sdk-go/capabilities/networking/http v0.10.0 // indirect
