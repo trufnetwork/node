@@ -29,14 +29,14 @@ FROM postgres:16-alpine AS pg_repack_builder
 
 # build pg_repack against postgres 16 client libraries
 RUN apk add --no-cache build-base clang19 gawk llvm19 curl zlib-dev readline-dev openssl-dev lz4-dev zstd-dev && \
-    curl -fsSL -o /tmp/pg_repack.tar.gz https://codeload.github.com/reorg/pg_repack/tar.gz/refs/tags/ver_1.5.2 && \
+    curl -fsSL -o /tmp/pg_repack.tar.gz https://codeload.github.com/reorg/pg_repack/tar.gz/refs/tags/ver_1.5.3 && \
     tar -xzf /tmp/pg_repack.tar.gz && rm /tmp/pg_repack.tar.gz && \
-    cd pg_repack-ver_1.5.2 && \
+    cd pg_repack-ver_1.5.3 && \
     make USE_PGXS=1 PG_CONFIG=/usr/local/bin/pg_config && \
     make USE_PGXS=1 PG_CONFIG=/usr/local/bin/pg_config install && \
     PG_BINDIR="$(/usr/local/bin/pg_config --bindir)" && \
     install -Dm755 "$PG_BINDIR/pg_repack" /opt/pg_repack/bin/pg_repack && \
-    cd .. && rm -rf pg_repack-ver_1.5.2
+    cd .. && rm -rf pg_repack-ver_1.5.3
 
 FROM alpine:3.21
 
