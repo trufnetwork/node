@@ -8,7 +8,6 @@ package tn_attestation
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	ktypes "github.com/trufnetwork/kwil-db/core/types"
@@ -94,33 +93,12 @@ func (e *signerExtension) submitSignature(ctx context.Context, item *PreparedSig
 		return fmt.Errorf("node signer not initialised")
 	}
 
-	accountID, err := ktypes.GetSignerAccount(signer)
+	// Use internal nonce tracking to avoid "invalid nonce" when submitting
+	// multiple attestations in a single EndBlock. The nonce is initialized
+	// from the ledger on first use and incremented after each broadcast.
+	nonce, err := e.nextNonce(ctx)
 	if err != nil {
-		return fmt.Errorf("derive account id: %w", err)
-	}
-
-	accounts := e.Accounts()
-	if accounts == nil {
-		return fmt.Errorf("accounts subsystem unavailable")
-	}
-
-	db := e.DB()
-	if db == nil {
-		return fmt.Errorf("database handle unavailable")
-	}
-
-	// Nonce handling: First signature ever gets nonce=1 (account doesn't exist yet).
-	// Subsequent signatures increment from last recorded nonce. We tolerate "not found"
-	// because leader's first-ever signature creates the account on-chain.
-	account, err := accounts.GetAccount(ctx, db, accountID)
-	var nonce uint64 = 1
-	if err != nil {
-		msg := strings.ToLower(err.Error())
-		if !strings.Contains(msg, "not found") && !strings.Contains(msg, "no rows") {
-			return fmt.Errorf("get account: %w", err)
-		}
-	} else {
-		nonce = uint64(account.Nonce + 1)
+		return fmt.Errorf("get nonce: %w", err)
 	}
 
 	requestTxIDArg, err := ktypes.EncodeValue(item.RequestTxID)
@@ -150,6 +128,9 @@ func (e *signerExtension) submitSignature(ctx context.Context, item *PreparedSig
 
 	txHash, _, err := broadcaster.BroadcastTx(ctx, tx, 0) // Use BroadcastWaitAccept to avoid blocking consensus
 	if err != nil {
+		// Reset nonce on broadcast failure so next attempt re-fetches from
+		// the ledger instead of continuing with a potentially stale counter.
+		e.resetNonce()
 		return fmt.Errorf("broadcast tx: %w", err)
 	}
 

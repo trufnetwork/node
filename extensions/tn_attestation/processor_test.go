@@ -474,10 +474,134 @@ func (s *stubAccounts) ApplySpend(ctx context.Context, tx nodesql.Executor, acco
 type recordingBroadcaster struct {
 	calls  int
 	lastTx *ktypes.Transaction
+	nonces []uint64 // records nonce of each broadcast call
+
+	// failOnCall, if > 0, causes the Nth call to return an error.
+	failOnCall int
 }
 
 func (b *recordingBroadcaster) BroadcastTx(ctx context.Context, tx *ktypes.Transaction, sync uint8) (ktypes.Hash, *ktypes.TxResult, error) {
 	b.calls++
 	b.lastTx = tx
+	b.nonces = append(b.nonces, tx.Body.Nonce)
+	if b.failOnCall > 0 && b.calls == b.failOnCall {
+		return ktypes.Hash{}, nil, fmt.Errorf("broadcast tx: invalid nonce")
+	}
 	return ktypes.Hash{}, &ktypes.TxResult{Code: uint32(ktypes.CodeOk)}, nil
+}
+
+// setupNonceTestExtension creates a signerExtension wired with stubs for nonce testing.
+// Returns the extension, broadcaster, and a slice of PreparedSignature items ready to submit.
+func setupNonceTestExtension(t *testing.T, ledgerNonce int64, numItems int) (*signerExtension, *recordingBroadcaster, []*PreparedSignature) {
+	t.Helper()
+	t.Cleanup(ResetValidatorSignerForTesting)
+
+	privateKey, _, err := kwilcrypto.GenerateSecp256k1Key(nil)
+	require.NoError(t, err)
+	require.NoError(t, InitializeValidatorSigner(privateKey))
+
+	broadcaster := &recordingBroadcaster{}
+	ext := &signerExtension{
+		logger:             log.DiscardLogger,
+		scanIntervalBlocks: 100,
+	}
+
+	service := &common.Service{
+		Logger:        log.DiscardLogger,
+		GenesisConfig: &config.GenesisConfig{ChainID: "test-chain"},
+		LocalConfig:   &config.Config{},
+	}
+	ext.setService(service)
+	ext.setApp(&common.App{
+		Engine:   &stubEngine{},
+		DB:       stubDB{},
+		Accounts: &stubAccounts{acct: &ktypes.Account{Nonce: ledgerNonce}},
+		Service:  service,
+	})
+	ext.setNodeSigner(auth.GetNodeSigner(privateKey))
+	ext.setBroadcaster(broadcaster)
+
+	// Build N prepared signatures with distinct hashes.
+	signer := GetValidatorSigner()
+	items := make([]*PreparedSignature, numItems)
+	for i := range items {
+		canonical := BuildCanonicalPayload(1, 0, uint64(100+i),
+			bytes.Repeat([]byte{0x55}, 20),
+			bytes.Repeat([]byte{byte(i + 1)}, 32),
+			5, []byte{0x01}, []byte{0xAA})
+		payload, err := ParseCanonicalPayload(canonical)
+		require.NoError(t, err)
+		hash := computeAttestationHash(payload)
+		sig, err := signer.SignDigest(hash[:])
+		require.NoError(t, err)
+		items[i] = &PreparedSignature{
+			RequestTxID:   fmt.Sprintf("0xreq%d", i),
+			HashHex:       hex.EncodeToString(hash[:]),
+			Hash:          hash[:],
+			Requester:     []byte("requester"),
+			Signature:     sig,
+			Payload:       payload,
+			CreatedHeight: int64(100 + i),
+		}
+	}
+
+	return ext, broadcaster, items
+}
+
+func TestNonceTracking(t *testing.T) {
+	t.Run("BatchSubmissionsUseIncrementingNonces", func(t *testing.T) {
+		ext, broadcaster, items := setupNonceTestExtension(t, 7, 3)
+
+		// Submit 3 attestations — they should get nonces 8, 9, 10.
+		for _, item := range items {
+			err := ext.submitSignature(context.Background(), item)
+			require.NoError(t, err)
+		}
+
+		require.Equal(t, 3, broadcaster.calls)
+		assert.Equal(t, []uint64{8, 9, 10}, broadcaster.nonces,
+			"batch submissions should use incrementing nonces")
+	})
+
+	t.Run("BroadcastFailureResetsNonce", func(t *testing.T) {
+		ext, broadcaster, items := setupNonceTestExtension(t, 7, 3)
+		broadcaster.failOnCall = 2 // second broadcast fails
+
+		// First submission succeeds (nonce 8).
+		err := ext.submitSignature(context.Background(), items[0])
+		require.NoError(t, err)
+
+		// Second submission fails — nonce should reset.
+		err = ext.submitSignature(context.Background(), items[1])
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid nonce")
+
+		// Third submission should re-fetch from ledger (nonce 7+1=8 again).
+		// Note: stubAccounts returns a fixed nonce (doesn't advance on broadcast),
+		// so re-fetch returns the same value. In production, the ledger nonce
+		// advances after tx inclusion, yielding a higher value here.
+		err = ext.submitSignature(context.Background(), items[2])
+		require.NoError(t, err)
+
+		require.Equal(t, 3, broadcaster.calls)
+		assert.Equal(t, uint64(8), broadcaster.nonces[0], "first call nonce")
+		assert.Equal(t, uint64(9), broadcaster.nonces[1], "failed call nonce")
+		assert.Equal(t, uint64(8), broadcaster.nonces[2], "re-fetched nonce after reset")
+	})
+
+	t.Run("ResetNonceForcesLedgerRefetch", func(t *testing.T) {
+		ext, broadcaster, items := setupNonceTestExtension(t, 10, 2)
+
+		err := ext.submitSignature(context.Background(), items[0])
+		require.NoError(t, err)
+		assert.Equal(t, uint64(11), broadcaster.nonces[0])
+
+		// Manually reset (simulates leader transition).
+		ext.resetNonce()
+
+		err = ext.submitSignature(context.Background(), items[1])
+		require.NoError(t, err)
+		assert.Equal(t, uint64(11), broadcaster.nonces[1],
+			"after reset, nonce should be re-fetched from ledger (10+1=11)")
+	})
 }

@@ -109,6 +109,7 @@ func onLeaderAcquire(ctx context.Context, app *common.App, block *common.BlockCo
 	if block != nil {
 		ext.setLeader(true, block.Height)
 	}
+	ext.resetNonce() // re-fetch nonce from ledger on new leadership term
 
 	logger := ext.Logger()
 	logger.Info("tn_attestation: acquired leadership")
