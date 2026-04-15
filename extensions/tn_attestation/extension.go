@@ -3,7 +3,6 @@ package tn_attestation
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/trufnetwork/kwil-db/common"
@@ -326,16 +325,12 @@ func (e *signerExtension) nextNonce(ctx context.Context) (uint64, error) {
 	}
 
 	account, err := accounts.GetAccount(ctx, db, accountID)
-	var nonce uint64 = 1
 	if err != nil {
-		msg := strings.ToLower(err.Error())
-		if !strings.Contains(msg, "not found") && !strings.Contains(msg, "no rows") {
-			return 0, fmt.Errorf("get account: %w", err)
-		}
-		// Account not found — first ever transaction
-	} else {
-		nonce = uint64(account.Nonce + 1)
+		return 0, fmt.Errorf("get account: %w", err)
 	}
+	// GetAccount returns a zero-value account (nonce=0) when not found,
+	// so nonce+1 = 1 for the first ever transaction.
+	nonce := uint64(account.Nonce + 1)
 
 	e.pendingNonce = nonce + 1
 	e.nonceInitialized = true

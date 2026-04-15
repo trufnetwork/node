@@ -577,6 +577,9 @@ func TestNonceTracking(t *testing.T) {
 		assert.Contains(t, err.Error(), "invalid nonce")
 
 		// Third submission should re-fetch from ledger (nonce 7+1=8 again).
+		// Note: stubAccounts returns a fixed nonce (doesn't advance on broadcast),
+		// so re-fetch returns the same value. In production, the ledger nonce
+		// advances after tx inclusion, yielding a higher value here.
 		err = ext.submitSignature(context.Background(), items[2])
 		require.NoError(t, err)
 

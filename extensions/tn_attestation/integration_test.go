@@ -269,8 +269,13 @@ func (signerAccountsStub) Transfer(context.Context, sql.TxMaker, *ktypes.Account
 	return nil
 }
 
-func (signerAccountsStub) GetAccount(context.Context, sql.Executor, *ktypes.AccountID) (*ktypes.Account, error) {
-	return nil, fmt.Errorf("not found")
+func (signerAccountsStub) GetAccount(_ context.Context, _ sql.Executor, account *ktypes.AccountID) (*ktypes.Account, error) {
+	// Match real Accounts.GetAccount behavior: return zero-value account when not found.
+	return &ktypes.Account{
+		ID:      account,
+		Balance: big.NewInt(0),
+		Nonce:   0,
+	}, nil
 }
 
 func (signerAccountsStub) ApplySpend(context.Context, sql.Executor, *ktypes.AccountID, *big.Int, int64) error {
