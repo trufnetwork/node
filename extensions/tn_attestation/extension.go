@@ -3,11 +3,13 @@ package tn_attestation
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/crypto/auth"
 	"github.com/trufnetwork/kwil-db/core/log"
+	ktypes "github.com/trufnetwork/kwil-db/core/types"
 	sql "github.com/trufnetwork/kwil-db/node/types/sql"
 )
 
@@ -35,6 +37,13 @@ type signerExtension struct {
 	statusQueue chan txStatusWork
 
 	processOverride func(context.Context, []string)
+
+	// pendingNonce tracks the next nonce to use for attestation transactions.
+	// Initialized from the ledger on first use, then incremented after each
+	// successful broadcast. This prevents "invalid nonce" errors when
+	// submitting multiple attestations in a single EndBlock.
+	pendingNonce      uint64
+	nonceInitialized  bool
 
 	mu sync.RWMutex
 }
@@ -277,6 +286,60 @@ func parsePositiveInt64(raw string) (int64, error) {
 		return 0, fmt.Errorf("value must be positive, got %d", v)
 	}
 	return v, nil
+}
+
+// resetNonce clears the cached nonce so the next submission re-fetches from the ledger.
+func (e *signerExtension) resetNonce() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.nonceInitialized = false
+	e.pendingNonce = 0
+}
+
+// nextNonce returns the next nonce to use and increments the internal counter.
+// On first call (or after reset), it initializes from the ledger.
+func (e *signerExtension) nextNonce(ctx context.Context) (uint64, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.nonceInitialized {
+		nonce := e.pendingNonce
+		e.pendingNonce++
+		return nonce, nil
+	}
+
+	// Initialize from ledger
+	accounts := e.accounts
+	db := e.db
+	if accounts == nil || db == nil {
+		return 0, fmt.Errorf("accounts or db unavailable for nonce lookup")
+	}
+
+	signer := e.nodeSigner
+	if signer == nil {
+		return 0, fmt.Errorf("node signer unavailable for nonce lookup")
+	}
+
+	accountID, err := ktypes.GetSignerAccount(signer)
+	if err != nil {
+		return 0, fmt.Errorf("derive account id: %w", err)
+	}
+
+	account, err := accounts.GetAccount(ctx, db, accountID)
+	var nonce uint64 = 1
+	if err != nil {
+		msg := strings.ToLower(err.Error())
+		if !strings.Contains(msg, "not found") && !strings.Contains(msg, "no rows") {
+			return 0, fmt.Errorf("get account: %w", err)
+		}
+		// Account not found — first ever transaction
+	} else {
+		nonce = uint64(account.Nonce + 1)
+	}
+
+	e.pendingNonce = nonce + 1
+	e.nonceInitialized = true
+	return nonce, nil
 }
 
 // getTxQueryClient retrieves the query client for transaction status polling.
