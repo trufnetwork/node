@@ -1,6 +1,7 @@
 package tn_local
 
 import (
+	"bytes"
 	"container/list"
 	"context"
 	"crypto/sha256"
@@ -72,23 +73,38 @@ func canonicalDigest(method string, paramsCanonicalJSON []byte, tsMs int64) []by
 	return crypto.Keccak256([]byte(payload))
 }
 
-// canonicalJSON re-encodes v as JSON with sorted keys, no whitespace, and
-// stable number/string handling. Implementation: marshal the value, parse
-// back into a generic structure (map[string]any / []any / scalars), then
-// re-marshal — Go's encoding/json sorts map keys alphabetically when
-// marshalling map[string]any, which is exactly what we need to produce
-// language-independent canonical bytes (Python `json.dumps(sort_keys=True)`
-// and JS sorted-key stringify produce the same bytes).
+// canonicalJSON re-encodes v as JSON with sorted keys, no whitespace,
+// HTML escaping disabled, and full numeric precision. Implementation:
+// marshal the value, decode with UseNumber so large int64 values survive,
+// then re-encode with SetEscapeHTML(false) so that `<`, `>`, and `&` in
+// strings stay verbatim. These two settings make Go's encoder produce
+// the same bytes Python's `json.dumps(..., sort_keys=True, separators=(",",":"), ensure_ascii=False)`
+// and JS's sorted-key stringify produce — required so a signature signed
+// by one SDK verifies on the server-side digest.
 func canonicalJSON(v any) ([]byte, error) {
 	first, err := json.Marshal(v)
 	if err != nil {
 		return nil, fmt.Errorf("canonical marshal: %w", err)
 	}
+	dec := json.NewDecoder(bytes.NewReader(first))
+	dec.UseNumber()
 	var generic any
-	if err := json.Unmarshal(first, &generic); err != nil {
+	if err := dec.Decode(&generic); err != nil {
 		return nil, fmt.Errorf("canonical reparse: %w", err)
 	}
-	return json.Marshal(generic)
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(generic); err != nil {
+		return nil, fmt.Errorf("canonical re-encode: %w", err)
+	}
+	// json.Encoder appends a trailing newline; strip it so the bytes match
+	// what a single Marshal call would produce.
+	out := buf.Bytes()
+	if n := len(out); n > 0 && out[n-1] == '\n' {
+		out = out[:n-1]
+	}
+	return out, nil
 }
 
 // canonicalParams returns the canonical JSON of req with its embedded
@@ -210,9 +226,17 @@ func (ext *Extension) checkAuth(_ context.Context, method string, req AuthSetter
 		return authError("signer is not this node's operator")
 	}
 
-	// Replay protection: hash the wire signature and dedup.
+	// Replay protection: hash the wire signature and dedup. Cache pointer
+	// is loaded atomically — configureAuth() may swap it on a window change
+	// from a different goroutine.
+	cache := ext.replayCache.Load()
+	if cache == nil {
+		// Should be set by configure(); guard so a misconfigured test
+		// doesn't nil-deref instead of failing cleanly.
+		return authError("replay cache not initialized")
+	}
 	sigKey := crypto.Keccak256Hash(sig).Hex()
-	if !ext.replayCache.add(sigKey, time.Now()) {
+	if !cache.add(sigKey, time.Now()) {
 		return authError("replay detected")
 	}
 

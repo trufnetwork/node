@@ -27,6 +27,28 @@ func TestCanonicalJSON_DeterministicAndSorted(t *testing.T) {
 	require.Equal(t, `{"a":1,"b":2}`, string(a))
 }
 
+func TestCanonicalJSON_DoesNotEscapeHTMLChars(t *testing.T) {
+	// Go's encoding/json HTML-escapes <, >, & by default. Other languages
+	// (Python, JS) do NOT — so the digest would diverge if we kept the
+	// default. canonicalJSON must emit verbatim < > & to match.
+	got, err := canonicalJSON(map[string]any{
+		"value": "a<b>c&d",
+	})
+	require.NoError(t, err)
+	require.Equal(t, `{"value":"a<b>c&d"}`, string(got))
+}
+
+func TestCanonicalJSON_PreservesLargeIntegerPrecision(t *testing.T) {
+	// json.Unmarshal into `any` decodes JSON numbers as float64, which
+	// loses precision past 2^53. UseNumber() keeps them as json.Number so
+	// the re-encoded bytes match the original digits — important for
+	// timestamps, group sequences, and any int64 we sign over.
+	const big int64 = 9_007_199_254_740_993 // 2^53 + 1, can't round-trip via float64
+	got, err := canonicalJSON(map[string]any{"event_time": big})
+	require.NoError(t, err)
+	require.Equal(t, `{"event_time":9007199254740993}`, string(got))
+}
+
 func TestCanonicalDigest_Stable(t *testing.T) {
 	params := []byte(`{"stream_id":"st00000000000000000000000000demo","stream_type":"primitive"}`)
 	d1 := canonicalDigest(MethodCreateStream, params, 1700000000000)
@@ -243,14 +265,13 @@ func TestCheckAuth_DifferentMethod_Rejects(t *testing.T) {
 	key, addr := genKey(t)
 	ext := authExtension(t, addr)
 
-	// Sign for create_stream, replay against delete_stream — the digest
-	// includes the method name so this must fail even though the params
-	// happen to share a stream_id field.
-	createReq := &CreateStreamRequest{StreamID: "st00000000000000000000000000demo", StreamType: "primitive"}
-	createReq.Auth = signRequest(t, key, MethodCreateStream, createReq, time.Now().UnixMilli())
-
+	// Sign the actual delete params, but bind the signature to the
+	// create_stream method. Verifying as delete_stream then mismatches on
+	// method only — params are byte-identical between sign and verify.
+	// That isolates the test to method binding and removes any
+	// interpretation that the rejection came from a params shape change.
 	deleteReq := &DeleteStreamRequest{StreamID: "st00000000000000000000000000demo"}
-	deleteReq.Auth = createReq.Auth
+	deleteReq.Auth = signRequest(t, key, MethodCreateStream, deleteReq, time.Now().UnixMilli())
 
 	authErr := ext.checkAuth(context.Background(), MethodDeleteStream, deleteReq)
 	require.NotNil(t, authErr, "signature bound to a different method must not authenticate this one")

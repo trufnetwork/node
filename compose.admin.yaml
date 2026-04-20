@@ -45,24 +45,61 @@ services:
       # reachable from elsewhere — see the comment block above.
       - "${TN_ADMIN_BIND:-127.0.0.1}:${TN_ADMIN_PORT:-8485}:8485"
     environment:
-      # When set to "true", the entrypoint appends [extensions.tn_local]
-      # require_signature = "true" to config.toml on first init. Use this
-      # for the SDK auth examples and any deployment that wants the SDK to
-      # prove possession of the operator key on every admin call. Default
-      # is unset (no auth — same as today's tn_local behavior).
+      # Mirrors the host-side TN_ADMIN_BIND so the entrypoint can fail
+      # fast when it's set to a non-loopback address (since the command
+      # below always passes --admin.notls — exposing plain HTTP on a
+      # public interface is never what we want here).
+      TN_ADMIN_BIND: ${TN_ADMIN_BIND:-127.0.0.1}
+      # When set to "true", the entrypoint enforces require_signature=true
+      # in /root/.kwild/config.toml's [extensions.tn_local] block. Use
+      # this for the SDK auth examples and any deployment that wants the
+      # SDK to prove possession of the operator key on every admin call.
+      # Default is unset (no auth — same as today's tn_local behavior).
       TN_LOCAL_REQUIRE_SIGNATURE: ${TN_LOCAL_REQUIRE_SIGNATURE:-}
     entrypoint: ["/bin/sh", "-c"]
-    # Run the standard config bootstrap, optionally append the tn_local
+    # Run the standard config bootstrap, optionally enforce the tn_local
     # auth config, then start kwild with admin RPC exposed on the
     # container's 0.0.0.0:8485 (docker port mapping requires the listener
     # to be reachable from outside the container's loopback). --admin.notls
     # is required because that bind is non-loopback inside the container;
-    # the host-side loopback mapping above keeps it private.
+    # the host-side bind (TN_ADMIN_BIND) is what keeps it private.
     command:
       - |
+        set -e
+
+        # Refuse to launch with --admin.notls on a non-loopback host bind.
+        # If the operator wants remote admin access they need to set up TLS
+        # / admin.pass themselves (see kwil-docs at /admin/node) and remove
+        # --admin.notls from this file's command — not just flip the bind.
+        case "$$TN_ADMIN_BIND" in
+          127.0.0.1|::1|localhost) ;;
+          *)
+            echo "FATAL: TN_ADMIN_BIND=$$TN_ADMIN_BIND is non-loopback but the compose passes --admin.notls. This would expose plain-HTTP admin RPC. Configure TLS (https://kwil-docs.vercel.app/docs/admin/node) and edit compose.admin.yaml to drop --admin.notls before exposing the port off-host." >&2
+            exit 1
+            ;;
+        esac
+
         /app/config.sh
-        if [ "$$TN_LOCAL_REQUIRE_SIGNATURE" = "true" ] && ! grep -q '\[extensions.tn_local\]' /root/.kwild/config.toml; then
-          printf '\n[extensions.tn_local]\nrequire_signature = "true"\n' >> /root/.kwild/config.toml
-          echo "tn_local: require_signature=true appended to config.toml"
+
+        # Enforce require_signature=true when requested. Three cases:
+        #   (a) section absent          → append the block
+        #   (b) section present, key set to "true" → no-op
+        #   (c) section present, key absent or different → fail fast
+        # We don't try to silently rewrite an existing config — config.toml
+        # is operator-owned and clobbering it could mask other intentional
+        # settings. A clear failure beats a silent override.
+        if [ "$$TN_LOCAL_REQUIRE_SIGNATURE" = "true" ]; then
+          if grep -q '^\[extensions.tn_local\]' /root/.kwild/config.toml; then
+            if grep -q '^require_signature = "true"' /root/.kwild/config.toml; then
+              echo "tn_local: require_signature=true already set"
+            else
+              echo "FATAL: TN_LOCAL_REQUIRE_SIGNATURE=true but /root/.kwild/config.toml's [extensions.tn_local] section does not set require_signature = \"true\". Edit the file to set it, or remove the conflicting section so this entrypoint can append a fresh one." >&2
+              exit 1
+            fi
+          else
+            printf '\n[extensions.tn_local]\nrequire_signature = "true"\n' >> /root/.kwild/config.toml
+            echo "tn_local: appended require_signature=true to config.toml"
+          fi
         fi
+
         exec /app/kwild start --root /root/.kwild --admin.listen 0.0.0.0:8485 --admin.notls

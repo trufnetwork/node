@@ -571,6 +571,13 @@ func (ext *Extension) DisableTaxonomy(ctx context.Context, req *DisableTaxonomyR
 
 // ListStreams lists all local streams owned by this node.
 func (ext *Extension) ListStreams(ctx context.Context, req *ListStreamsRequest) (*ListStreamsResponse, *jsonrpc.Error) {
+	if req == nil {
+		// Match the other handlers' guard. Without it a typed-nil
+		// *ListStreamsRequest reaches checkAuth as a non-nil AuthSetter
+		// interface value, and the embedded *AuthEnvelope receiver
+		// panics on the GetAuth() call.
+		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, "missing request", nil)
+	}
 	if !ext.isEnabled.Load() {
 		return nil, disabledError()
 	}

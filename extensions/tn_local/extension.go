@@ -34,8 +34,10 @@ type Extension struct {
 	// safely after construction (e.g. during reconfigure in tests).
 	replayWindowSeconds atomic.Int64
 	// replayCache holds recent valid signatures so a duplicate within the
-	// window is rejected as a replay. Always non-nil after configure().
-	replayCache *replayCache
+	// window is rejected as a replay. Stored atomically so configureAuth
+	// can swap it (e.g. on window change) without racing the readers in
+	// checkAuth. Always non-nil after configure().
+	replayCache atomic.Pointer[replayCache]
 }
 
 var (
@@ -79,8 +81,8 @@ func (e *Extension) configure(logger log.Logger, db sql.DB, localDB *LocalDB, no
 	if e.replayWindowSeconds.Load() == 0 {
 		e.replayWindowSeconds.Store(defaultReplayWindowSeconds)
 	}
-	if e.replayCache == nil {
-		e.replayCache = newReplayCache(defaultReplayCacheSize, e.replayWindowSeconds.Load())
+	if e.replayCache.Load() == nil {
+		e.replayCache.Store(newReplayCache(defaultReplayCacheSize, e.replayWindowSeconds.Load()))
 	}
 }
 
@@ -91,6 +93,9 @@ func (e *Extension) configure(logger log.Logger, db sql.DB, localDB *LocalDB, no
 // Pass require=false (the default) to keep behavior identical to pre-auth
 // tn_local. Pass require=true to reject any request whose `_auth` header
 // doesn't recover to this node's address.
+//
+// Safe to call concurrently with in-flight checkAuth — the replay cache
+// is swapped via atomic.Pointer.
 func (e *Extension) configureAuth(require bool, windowSeconds int64) {
 	if windowSeconds <= 0 {
 		windowSeconds = defaultReplayWindowSeconds
@@ -98,7 +103,7 @@ func (e *Extension) configureAuth(require bool, windowSeconds int64) {
 	e.replayWindowSeconds.Store(windowSeconds)
 	// Rebuild the cache on window change so eviction works against the
 	// new window. Cheap — cache is small.
-	e.replayCache = newReplayCache(defaultReplayCacheSize, windowSeconds)
+	e.replayCache.Store(newReplayCache(defaultReplayCacheSize, windowSeconds))
 	e.requireSignature.Store(require)
 }
 

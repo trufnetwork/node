@@ -158,11 +158,16 @@ func readAuthConfig(app *common.App, logger log.Logger) (require bool, windowSec
 	}
 
 	if v, ok := cfg["replay_window_seconds"]; ok {
-		if n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil && n > 0 {
-			windowSeconds = n
-		} else {
-			logger.Warn("tn_local: invalid replay_window_seconds, ignoring",
+		n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		switch {
+		case err != nil:
+			logger.Warn("tn_local: replay_window_seconds is not an integer",
+				"value", v, "error", err, "default", windowSeconds)
+		case n <= 0:
+			logger.Warn("tn_local: replay_window_seconds must be > 0",
 				"value", v, "default", windowSeconds)
+		default:
+			windowSeconds = n
 		}
 	}
 
