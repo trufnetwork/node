@@ -137,7 +137,23 @@ tasks:
       CHAIN_ID: "{{.DEV_CHAIN_ID}}"
     cmds:
       - sh -c 'docker compose -f compose.yaml up -d'
-    
+
+  single:start:admin:
+    desc: |
+      Same as single:start, plus exposes the admin JSON-RPC on host port
+      8485, bound to 127.0.0.1 by default (same-host SDK only). Required
+      for the tn_local SDK examples and any other on-host admin tooling.
+      For remote access, set up TLS or admin.pass and override TN_ADMIN_BIND
+      — see compose.admin.yaml header for details.
+    deps: [ single:env, build:binaries ]
+    env:
+      SETUP_DB_OWNER: "{{.DEV_DB_OWNER}}"
+      SETUP_CHAIN_ID: "{{.DEV_CHAIN_ID}}"
+      DB_OWNER: "{{.DEV_DB_OWNER}}"
+      CHAIN_ID: "{{.DEV_CHAIN_ID}}"
+    cmds:
+      - sh -c 'docker compose -f compose.yaml -f compose.admin.yaml up -d'
+
   single:stop:
     desc: Shutdown single node environment
     deps: [ single:env ]
