@@ -23,6 +23,19 @@ type Extension struct {
 	// height tracks the latest committed block height, updated by EndBlockHook.
 	// Local streams use the same created_at = block height semantics as consensus.
 	height atomic.Int64
+
+	// requireSignature gates application-level auth. When true, every handler
+	// rejects requests whose `_auth` header doesn't recover to ext.nodeAddress.
+	// Default false — preserves the pre-auth behavior unless an operator
+	// explicitly opts in via the [extensions.tn_local] config.
+	requireSignature atomic.Bool
+	// replayWindowSeconds is the ± skew window for auth timestamps and the
+	// max age of replay-cache entries. Atomic so configure() can update it
+	// safely after construction (e.g. during reconfigure in tests).
+	replayWindowSeconds atomic.Int64
+	// replayCache holds recent valid signatures so a duplicate within the
+	// window is rejected as a replay. Always non-nil after configure().
+	replayCache *replayCache
 }
 
 var (
@@ -60,7 +73,43 @@ func (e *Extension) configure(logger log.Logger, db sql.DB, localDB *LocalDB, no
 	// re-configuring an extension (e.g. in tests or on node re-init) can't
 	// leave a stale-true flag when the new address is empty.
 	e.isEnabled.Store(nodeAddress != "")
+
+	// Auth defaults — caller can override via configureAuth() after this.
+	// Defaults match the "no auth, behave as today" behavior.
+	if e.replayWindowSeconds.Load() == 0 {
+		e.replayWindowSeconds.Store(defaultReplayWindowSeconds)
+	}
+	if e.replayCache == nil {
+		e.replayCache = newReplayCache(defaultReplayCacheSize, e.replayWindowSeconds.Load())
+	}
 }
+
+// configureAuth lets the extension opt into application-level signature
+// auth (require_signature=true). Window is the ± skew tolerance for auth
+// timestamps and the max age for replay-cache entries.
+//
+// Pass require=false (the default) to keep behavior identical to pre-auth
+// tn_local. Pass require=true to reject any request whose `_auth` header
+// doesn't recover to this node's address.
+func (e *Extension) configureAuth(require bool, windowSeconds int64) {
+	if windowSeconds <= 0 {
+		windowSeconds = defaultReplayWindowSeconds
+	}
+	e.replayWindowSeconds.Store(windowSeconds)
+	// Rebuild the cache on window change so eviction works against the
+	// new window. Cheap — cache is small.
+	e.replayCache = newReplayCache(defaultReplayCacheSize, windowSeconds)
+	e.requireSignature.Store(require)
+}
+
+const (
+	// defaultReplayWindowSeconds is the ± clock-skew tolerance and replay-
+	// cache age cutoff in seconds. 60s leaves ample room for NTP-synced
+	// hosts without making the replay window meaningfully exploitable.
+	defaultReplayWindowSeconds int64 = 60
+	// defaultReplayCacheSize bounds the replay cache. 100k × 32 bytes ≈ 3MB.
+	defaultReplayCacheSize int = 100_000
+)
 
 // currentHeight returns the latest committed block height.
 // Falls back to 0 if no blocks have been processed yet (e.g. during tests).

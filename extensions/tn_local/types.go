@@ -12,7 +12,12 @@ package tn_local
 // address — redundant but mirrored for compatibility.
 
 // CreateStreamRequest is the JSON-RPC request for local.create_stream.
+//
+// Every request type embeds AuthEnvelope so an optional `_auth` field can
+// ride alongside the request fields. When require_signature is enabled on
+// the server the field is required; when disabled it's ignored.
 type CreateStreamRequest struct {
+	AuthEnvelope
 	StreamID   string `json:"stream_id"`
 	StreamType string `json:"stream_type"` // "primitive" or "composed"
 }
@@ -25,6 +30,7 @@ type CreateStreamResponse struct{}
 // parallel arrays for stream_id, event_time, and value. Each record may
 // target a different stream, but all streams are owned by the node.
 type InsertRecordsRequest struct {
+	AuthEnvelope
 	StreamID  []string `json:"stream_id"`
 	EventTime []int64  `json:"event_time"`
 	Value     []string `json:"value"`
@@ -38,6 +44,7 @@ type InsertRecordsResponse struct{}
 // Mirrors the consensus insert_taxonomy signature minus data_provider /
 // child_data_providers — children are always local to the same node.
 type InsertTaxonomyRequest struct {
+	AuthEnvelope
 	StreamID       string   `json:"stream_id"`
 	ChildStreamIDs []string `json:"child_stream_ids"`
 	Weights        []string `json:"weights"`
@@ -49,6 +56,7 @@ type InsertTaxonomyResponse struct{}
 
 // GetRecordRequest is the JSON-RPC request for local.get_record.
 type GetRecordRequest struct {
+	AuthEnvelope
 	StreamID string `json:"stream_id"`
 	FromTime *int64 `json:"from_time,omitempty"`
 	ToTime   *int64 `json:"to_time,omitempty"`
@@ -68,6 +76,7 @@ type RecordOutput struct {
 
 // GetIndexRequest is the JSON-RPC request for local.get_index.
 type GetIndexRequest struct {
+	AuthEnvelope
 	StreamID string `json:"stream_id"`
 	FromTime *int64 `json:"from_time,omitempty"`
 	ToTime   *int64 `json:"to_time,omitempty"`
@@ -88,6 +97,7 @@ type IndexOutput struct {
 // DeleteStreamRequest is the JSON-RPC request for local.delete_stream.
 // Mirrors consensus delete_stream minus data_provider.
 type DeleteStreamRequest struct {
+	AuthEnvelope
 	StreamID string `json:"stream_id"`
 }
 
@@ -97,6 +107,7 @@ type DeleteStreamResponse struct{}
 // DisableTaxonomyRequest is the JSON-RPC request for local.disable_taxonomy.
 // Mirrors consensus disable_taxonomy minus data_provider.
 type DisableTaxonomyRequest struct {
+	AuthEnvelope
 	StreamID      string `json:"stream_id"`
 	GroupSequence int    `json:"group_sequence"`
 }
@@ -105,7 +116,9 @@ type DisableTaxonomyRequest struct {
 type DisableTaxonomyResponse struct{}
 
 // ListStreamsRequest is the JSON-RPC request for local.list_streams.
-type ListStreamsRequest struct{}
+type ListStreamsRequest struct {
+	AuthEnvelope
+}
 
 // ListStreamsResponse is the JSON-RPC response for local.list_streams.
 type ListStreamsResponse struct {

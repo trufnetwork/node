@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -12,6 +14,11 @@ import (
 	"github.com/trufnetwork/kwil-db/extensions/hooks"
 	rpcserver "github.com/trufnetwork/kwil-db/node/services/jsonrpc"
 )
+
+// ExtensionName is the [extensions.<name>] block this extension reads from
+// config.toml. Keys: require_signature (bool, default false),
+// replay_window_seconds (int, default 60).
+const ExtensionName = "tn_local"
 
 // endBlockHook updates the cached block height after each committed block.
 // This allows local stream operations to use the same created_at = block height
@@ -98,12 +105,68 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	ext := GetExtension()
 	ext.configure(logger, localDB.db, localDB, nodeAddress)
 
+	// Apply optional [extensions.tn_local] config — gates application-level
+	// signature auth on top of kwild's transport auth.
+	requireSig, windowSec := readAuthConfig(app, logger)
+	ext.configureAuth(requireSig, windowSec)
+
 	if nodeAddress == "" {
 		logger.Warn("tn_local disabled: node has no secp256k1 operator key — local stream operations will be rejected")
 	} else {
-		logger.Info("tn_local extension initialized", "node_address", nodeAddress)
+		logger.Info("tn_local extension initialized",
+			"node_address", nodeAddress,
+			"require_signature", requireSig,
+			"replay_window_seconds", windowSec)
 	}
 	return nil
+}
+
+// readAuthConfig parses the optional [extensions.tn_local] config block.
+// Both keys are optional with safe defaults — missing config means
+// require_signature=false (current behavior, no breakage for existing nodes).
+//
+// Recognized keys:
+//
+//	require_signature      = "true" | "false"     (default "false")
+//	replay_window_seconds  = "<int>"              (default 60)
+//
+// Bad values fall back to defaults with a warning rather than failing
+// startup — the operator may not have intended to opt in, and we don't want
+// a typo in a single config line to take down the node.
+func readAuthConfig(app *common.App, logger log.Logger) (require bool, windowSeconds int64) {
+	require = false
+	windowSeconds = defaultReplayWindowSeconds
+
+	if app == nil || app.Service == nil || app.Service.LocalConfig == nil {
+		return
+	}
+	cfg, ok := app.Service.LocalConfig.Extensions[ExtensionName]
+	if !ok || cfg == nil {
+		return
+	}
+
+	if v, ok := cfg["require_signature"]; ok {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true", "1", "yes", "on":
+			require = true
+		case "false", "0", "no", "off", "":
+			require = false
+		default:
+			logger.Warn("tn_local: invalid require_signature value, ignoring",
+				"value", v, "default", false)
+		}
+	}
+
+	if v, ok := cfg["replay_window_seconds"]; ok {
+		if n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil && n > 0 {
+			windowSeconds = n
+		} else {
+			logger.Warn("tn_local: invalid replay_window_seconds, ignoring",
+				"value", v, "default", windowSeconds)
+		}
+	}
+
+	return
 }
 
 // deriveNodeAddress returns the lowercase 0x-prefixed Ethereum address derived

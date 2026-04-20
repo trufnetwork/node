@@ -106,6 +106,9 @@ func (ext *Extension) CreateStream(ctx context.Context, req *CreateStreamRequest
 	if !ext.isEnabled.Load() {
 		return nil, disabledError()
 	}
+	if authErr := ext.checkAuth(ctx, MethodCreateStream, req); authErr != nil {
+		return nil, authErr
+	}
 
 	if err := validateStreamID(req.StreamID); err != nil {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
@@ -140,6 +143,9 @@ func (ext *Extension) InsertRecords(ctx context.Context, req *InsertRecordsReque
 	}
 	if !ext.isEnabled.Load() {
 		return nil, disabledError()
+	}
+	if authErr := ext.checkAuth(ctx, MethodInsertRecords, req); authErr != nil {
+		return nil, authErr
 	}
 
 	n := len(req.StreamID)
@@ -221,6 +227,9 @@ func (ext *Extension) InsertTaxonomy(ctx context.Context, req *InsertTaxonomyReq
 	}
 	if !ext.isEnabled.Load() {
 		return nil, disabledError()
+	}
+	if authErr := ext.checkAuth(ctx, MethodInsertTaxonomy, req); authErr != nil {
+		return nil, authErr
 	}
 
 	n := len(req.ChildStreamIDs)
@@ -328,6 +337,9 @@ func (ext *Extension) GetRecord(ctx context.Context, req *GetRecordRequest) (*Ge
 	if !ext.isEnabled.Load() {
 		return nil, disabledError()
 	}
+	if authErr := ext.checkAuth(ctx, MethodGetRecord, req); authErr != nil {
+		return nil, authErr
+	}
 
 	if err := validateStreamID(req.StreamID); err != nil {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
@@ -377,6 +389,9 @@ func (ext *Extension) GetIndex(ctx context.Context, req *GetIndexRequest) (*GetI
 	}
 	if !ext.isEnabled.Load() {
 		return nil, disabledError()
+	}
+	if authErr := ext.checkAuth(ctx, MethodGetIndex, req); authErr != nil {
+		return nil, authErr
 	}
 
 	if err := validateStreamID(req.StreamID); err != nil {
@@ -488,6 +503,9 @@ func (ext *Extension) DeleteStream(ctx context.Context, req *DeleteStreamRequest
 	if !ext.isEnabled.Load() {
 		return nil, disabledError()
 	}
+	if authErr := ext.checkAuth(ctx, MethodDeleteStream, req); authErr != nil {
+		return nil, authErr
+	}
 
 	if err := validateStreamID(req.StreamID); err != nil {
 		return nil, jsonrpc.NewError(jsonrpc.ErrorInvalidParams, err.Error(), nil)
@@ -513,6 +531,9 @@ func (ext *Extension) DisableTaxonomy(ctx context.Context, req *DisableTaxonomyR
 	}
 	if !ext.isEnabled.Load() {
 		return nil, disabledError()
+	}
+	if authErr := ext.checkAuth(ctx, MethodDisableTaxonomy, req); authErr != nil {
+		return nil, authErr
 	}
 
 	if err := validateStreamID(req.StreamID); err != nil {
@@ -549,9 +570,12 @@ func (ext *Extension) DisableTaxonomy(ctx context.Context, req *DisableTaxonomyR
 }
 
 // ListStreams lists all local streams owned by this node.
-func (ext *Extension) ListStreams(ctx context.Context, _ *ListStreamsRequest) (*ListStreamsResponse, *jsonrpc.Error) {
+func (ext *Extension) ListStreams(ctx context.Context, req *ListStreamsRequest) (*ListStreamsResponse, *jsonrpc.Error) {
 	if !ext.isEnabled.Load() {
 		return nil, disabledError()
+	}
+	if authErr := ext.checkAuth(ctx, MethodListStreams, req); authErr != nil {
+		return nil, authErr
 	}
 	streams, err := ext.dbListStreams(ctx)
 	if err != nil {

@@ -1,0 +1,68 @@
+# Opt-in compose override that exposes kwild's admin RPC to the host on
+# port 8485. Layered on top of compose.yaml.
+#
+# Use via the dedicated task:
+#
+#   task single:start:admin
+#
+# Or directly:
+#
+#   docker compose -f compose.yaml -f compose.admin.yaml up -d
+#
+# WHEN TO USE
+#   - Running the `tn_local` SDK examples (sdk-go, sdk-py, sdk-js LocalActions)
+#   - Operating on private/off-chain streams from your own machine
+#   - Any other admin JSON-RPC use case from the same host as the node
+#
+# SECURITY MODEL (defaults below)
+#   - Host port is bound to 127.0.0.1 only — only processes on the host
+#     itself can reach 8485. This includes `tn_local` running in production
+#     on a node-operator's box, as long as the SDK runs on the same host.
+#   - Inside the container kwild listens on 0.0.0.0:8485 (docker port
+#     mapping requires this). `--admin.notls` is required because that bind
+#     is non-loopback from kwild's perspective; the host-side loopback bind
+#     is what keeps it private.
+#
+# REMOTE / MULTI-HOST (production)
+#   If the SDK does not run on the same host as the node, plain HTTP is not
+#   acceptable and this override is not enough. You need either:
+#     1. mTLS — generate `admin.cert` / `admin.key` on the server, give
+#        clients a matching cert pair, and drop `--admin.notls` from the
+#        command below. Override the host port binding to 0.0.0.0 if the
+#        client is off-host.
+#     2. `--admin.pass <password>` over TLS. Same caveat about the bind
+#        address.
+#     3. Tunnel the admin port over SSH / WireGuard / a private network so
+#        the SDK can still hit `127.0.0.1:8485` from its end.
+#   Pick whichever matches your network model. Never expose `--admin.notls`
+#   on a public interface — admin has no built-in authentication, so the
+#   transport is your only line of defense.
+services:
+  tn-db:
+    ports:
+      # Bind to host loopback only by default. Override TN_ADMIN_BIND if
+      # you've set up TLS or a password and intentionally want the port
+      # reachable from elsewhere — see the comment block above.
+      - "${TN_ADMIN_BIND:-127.0.0.1}:${TN_ADMIN_PORT:-8485}:8485"
+    environment:
+      # When set to "true", the entrypoint appends [extensions.tn_local]
+      # require_signature = "true" to config.toml on first init. Use this
+      # for the SDK auth examples and any deployment that wants the SDK to
+      # prove possession of the operator key on every admin call. Default
+      # is unset (no auth — same as today's tn_local behavior).
+      TN_LOCAL_REQUIRE_SIGNATURE: ${TN_LOCAL_REQUIRE_SIGNATURE:-}
+    entrypoint: ["/bin/sh", "-c"]
+    # Run the standard config bootstrap, optionally append the tn_local
+    # auth config, then start kwild with admin RPC exposed on the
+    # container's 0.0.0.0:8485 (docker port mapping requires the listener
+    # to be reachable from outside the container's loopback). --admin.notls
+    # is required because that bind is non-loopback inside the container;
+    # the host-side loopback mapping above keeps it private.
+    command:
+      - |
+        /app/config.sh
+        if [ "$$TN_LOCAL_REQUIRE_SIGNATURE" = "true" ] && ! grep -q '\[extensions.tn_local\]' /root/.kwild/config.toml; then
+          printf '\n[extensions.tn_local]\nrequire_signature = "true"\n' >> /root/.kwild/config.toml
+          echo "tn_local: require_signature=true appended to config.toml"
+        fi
+        exec /app/kwild start --root /root/.kwild --admin.listen 0.0.0.0:8485 --admin.notls
