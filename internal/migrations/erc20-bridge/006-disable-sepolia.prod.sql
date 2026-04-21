@@ -1,0 +1,22 @@
+-- Disable and remove the deprecated sepolia_bridge from mainnet.
+--
+-- The sepolia_bridge was a holdover from the early-2025 testnet setup that
+-- pointed at the Sepolia testnet escrow. With the prediction-market upgrade,
+-- mainnet collateral flows through ethereum_bridge (USDC) and the planned
+-- TRUF mainnet bridge — sepolia_bridge is no longer referenced by any
+-- mainnet action.
+--
+-- Side effect: stops the kwild ERC20 listener for sepolia, which on the new
+-- binary scans Ethereum from block 0 → ~10.7M and emits "exceed maximum
+-- block range: 50000" recovery warnings on every cycle. After UNUSE, those
+-- warnings cease.
+--
+-- UNUSE properly cleans up the extension namespace even if the instance is
+-- already disabled. The kwil_erc20_meta tables for this instance remain in
+-- the database for forensics; drop them separately if you want a full purge.
+--
+-- DO NOT apply on testnet — testnet still uses sepolia_bridge.
+-- This is a .prod.sql file: excluded from the embedded seed loader, applied
+-- manually via `kwil-cli exec-sql --file ... --sync` against the live node.
+
+UNUSE sepolia_bridge;
