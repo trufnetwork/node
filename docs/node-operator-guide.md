@@ -626,6 +626,58 @@ pg_dump --version
 
 **Security Warning**: It is recommended to not expose port 5432 publicly in production environments.
 
+### Upgrading the PostgreSQL Image
+
+Some `kwild` upgrades ship alongside a new `kwil-postgres` image. The `:latest` tag is **not** auto-pulled — Docker keeps using the image you originally pulled until you explicitly refresh it. If a node upgrade fails to start because of a Postgres version or setting mismatch, manually pull the latest image and recreate the container.
+
+#### For Linux
+
+```bash
+# Stop kwild first so it releases the database connection
+sudo systemctl stop kwild
+
+# Stop and remove the old container — KEEP the volume, your data lives there
+docker stop tn-postgres
+docker rm tn-postgres
+
+# Pull the latest image
+docker pull ghcr.io/trufnetwork/kwil-postgres:latest
+
+# Recreate the container with the SAME volume name (data is preserved)
+docker run -d -p 127.0.0.1:5432:5432 --name tn-postgres \
+    -e "POSTGRES_HOST_AUTH_METHOD=trust" \
+    -v tn-pgdata:/var/lib/postgresql/data \
+    --shm-size=1gb \
+    ghcr.io/trufnetwork/kwil-postgres:latest
+
+# Start kwild back up
+sudo systemctl start kwild
+```
+
+#### For macOS
+
+```bash
+# Stop kwild first so it releases the database connection
+launchctl stop com.trufnetwork.kwild
+
+# Stop and remove the old container — KEEP the volume, your data lives there
+docker stop tn-postgres
+docker rm tn-postgres
+
+# Pull the latest image
+docker pull ghcr.io/trufnetwork/kwil-postgres:latest
+
+# Recreate the container with the SAME volume name (data is preserved)
+docker run -d -p 127.0.0.1:5432:5432 --name tn-postgres \
+    -e "POSTGRES_HOST_AUTH_METHOD=trust" \
+    -v tn-pgdata:/var/lib/postgresql/data \
+    --shm-size=1gb \
+    ghcr.io/trufnetwork/kwil-postgres:latest
+
+# Start kwild back up
+launchctl start com.trufnetwork.kwild
+```
+
 ### Missing Logs on Linux (`journalctl` shows no entries)
 
 If you're running `kwild` as a `systemd` service but encounter the following when checking logs:

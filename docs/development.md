@@ -75,8 +75,12 @@ task single:start:admin
 
 It layers `compose.admin.yaml` on the default compose file: host port
 `8485` bound to `127.0.0.1` only, kwild started with `--admin.listen
-0.0.0.0:8485 --admin.notls`. Same trust model as the default unix socket
-— just over TCP. Stop with the regular `task single:stop`.
+0.0.0.0:8485 --admin.notls`. Convenient for on-host dev work, but **not
+equivalent to the default unix socket** — any process running as any
+user on the host can reach loopback TCP, while the unix socket gates
+access by filesystem permissions. For production on the same host,
+prefer the default unix socket; if you need the port open, pair it with
+`--admin.pass` or mTLS. Stop with the regular `task single:stop`.
 
 For **off-host access** (data provider's laptop, a different VM, a CI
 runner) set `TN_ADMIN_BIND=0.0.0.0` to expose the port and pick a real
