@@ -628,7 +628,7 @@ pg_dump --version
 
 ### Upgrading the PostgreSQL Image
 
-Some `kwild` upgrades ship alongside a new `kwil-postgres` image. The `:latest` tag is **not** auto-pulled — Docker keeps using the image you originally pulled until you explicitly refresh it. If a node upgrade fails to start because of a Postgres version or setting mismatch, manually pull the latest image and recreate the container.
+Some `kwild` upgrades ship alongside a new `kwil-postgres` image. The `:latest` tag is **not** auto-pulled — Docker keeps using the image you originally pulled, and a plain `docker run` reuses the cached one. To force a re-check against the registry, add `--pull always` to `docker run` (or run an explicit `docker pull` first). If a node upgrade fails to start because of a Postgres version or setting mismatch, recreate the container with the latest image as shown below.
 
 #### For Linux
 
@@ -640,11 +640,9 @@ sudo systemctl stop kwild
 docker stop tn-postgres
 docker rm tn-postgres
 
-# Pull the latest image
-docker pull ghcr.io/trufnetwork/kwil-postgres:latest
-
-# Recreate the container with the SAME volume name (data is preserved)
-docker run -d -p 127.0.0.1:5432:5432 --name tn-postgres \
+# Recreate the container with --pull always so Docker fetches the newest
+# :latest from the registry (the SAME volume name keeps your data)
+docker run -d --pull always -p 127.0.0.1:5432:5432 --name tn-postgres \
     -e "POSTGRES_HOST_AUTH_METHOD=trust" \
     -v tn-pgdata:/var/lib/postgresql/data \
     --shm-size=1gb \
@@ -664,11 +662,9 @@ launchctl stop com.trufnetwork.kwild
 docker stop tn-postgres
 docker rm tn-postgres
 
-# Pull the latest image
-docker pull ghcr.io/trufnetwork/kwil-postgres:latest
-
-# Recreate the container with the SAME volume name (data is preserved)
-docker run -d -p 127.0.0.1:5432:5432 --name tn-postgres \
+# Recreate the container with --pull always so Docker fetches the newest
+# :latest from the registry (the SAME volume name keeps your data)
+docker run -d --pull always -p 127.0.0.1:5432:5432 --name tn-postgres \
     -e "POSTGRES_HOST_AUTH_METHOD=trust" \
     -v tn-pgdata:/var/lib/postgresql/data \
     --shm-size=1gb \
