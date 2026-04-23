@@ -481,6 +481,47 @@ postgres-mcp --transport=sse --sse-host=127.0.0.1 --sse-port=8000
 Test-NetConnection -ComputerName localhost -Port 5432
 ```
 
+### Issue: MCP Client Times Out During Initialization
+
+**Symptoms**: Server connects and lists tools successfully, but Claude Desktop shows "Server disconnected" or something similar
+
+**Cause**: Known issue with `npx mcp-remote` and Claude Desktop where the `initialize` response is not forwarded back in time. See [modelcontextprotocol/typescript-sdk#86](https://github.com/modelcontextprotocol/typescript-sdk/issues/86).
+
+**Solution**: Use absolute paths to the node binary and `proxy.js` entry point instead of `npx`:
+
+1. Install `mcp-remote` globally:
+   ```bash
+   npm install -g mcp-remote
+   ```
+
+2. Find your paths:
+   ```bash
+   which node
+   npm root -g
+   ```
+
+3. Find your paths and update the Claude Desktop config:
+   ```bash
+   which node      # get node path
+   npm root -g     # get global node_modules path
+   ```
+
+   ```json
+   {
+     "mcpServers": {
+       "truf-postgres": {
+         "command": "/path/to/node",
+         "args": ["/path/to/node_modules/mcp-remote/dist/proxy.js", "https://your-domain.com/sse"]
+       }
+     }
+   }
+   ```
+
+   Config file location:
+   - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+   - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+   - **Linux**: `~/.config/Claude/claude_desktop_config.json`
+
 ### Issue: Claude Desktop Direct SSE Configuration
 
 **Symptoms**: Claude Desktop shows "Required" errors for missing "command" field
