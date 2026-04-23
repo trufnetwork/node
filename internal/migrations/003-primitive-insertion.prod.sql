@@ -1,26 +1,19 @@
-/**
- * insert_record: Adds a new data point to a primitive stream.
- * Validates write permissions and stream existence before insertion.
- */
-CREATE OR REPLACE ACTION insert_record(
-    $data_provider TEXT,
-    $stream_id TEXT,
-    $event_time INT8,
-    $value NUMERIC(36,18)
-) PUBLIC {
-    insert_records(
-        ARRAY[$data_provider],
-        ARRAY[$stream_id],
-        ARRAY[$event_time],
-        ARRAY[$value]
-    );
-};
+-- =============================================================================
+-- GENERATED FILE — DO NOT EDIT BY HAND
+-- =============================================================================
+-- Source : internal/migrations/003-primitive-insertion.sql
+-- Script : scripts/generate_prod_migrations.py
+--
+-- Manual-apply mainnet override. The embedded migration loader skips
+-- *.prod.sql, so apply via:
+--
+--     kwil-cli exec-sql --file <this file> --sync \
+--         --private-key $PRIVATE_KEY --provider $PROVIDER
+--
+-- Prerequisite: erc20-bridge/000-extension.prod.sql must be applied
+-- FIRST so the eth_truf and eth_usdc bridge instances exist.
+-- =============================================================================
 
-
-/**
- * insert_records: Adds multiple new data points to a primitive stream in batch.
- * Validates write permissions and stream existence for each record before insertion.
- */
 CREATE OR REPLACE ACTION insert_records(
     $data_provider TEXT[],
     $stream_id TEXT[],
@@ -64,14 +57,14 @@ CREATE OR REPLACE ACTION insert_records(
         }
         $leader_hex := encode(@leader_sender, 'hex')::TEXT;
 
-        $caller_balance := ethereum_bridge.balance(@caller);
+        $caller_balance := eth_truf.balance(@caller);
 
         IF $caller_balance < $total_fee {
             -- Derive human-readable fee from $total_fee
             ERROR('Insufficient balance for write fee. Required: ' || ($total_fee / 1000000000000000000::NUMERIC(78, 0))::TEXT || ' TRUF for ' || $num_records::TEXT || ' record(s)');
         }
 
-        ethereum_bridge.transfer($leader_hex, $total_fee);
+        eth_truf.transfer($leader_hex, $total_fee);
         $fee_total := $total_fee;
         $fee_recipient := '0x' || $leader_hex;
     }

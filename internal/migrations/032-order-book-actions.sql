@@ -148,7 +148,6 @@ CREATE OR REPLACE ACTION create_market(
 
     -- Check caller has sufficient TRUF balance
     -- IMPORTANT: Fee is collected from hoodi_tt (TRUF), not from market's bridge
-    -- TODO: Replace hoodi_tt with actual TRUF bridge on mainnet when available! hoodi_tt is testnet only.
     $caller_balance NUMERIC(78, 0) := COALESCE(hoodi_tt.balance(@caller), 0::NUMERIC(78, 0));
 
     if $caller_balance < $market_creation_fee {
