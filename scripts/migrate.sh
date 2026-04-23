@@ -44,8 +44,16 @@ run_with_retry() {
     done
 }
 
-# Get all .sql files in ./internal/migrations folder
-files=(./internal/migrations/*.sql)
+# Get all .sql files in ./internal/migrations folder, skipping *.prod.sql.
+# *.prod.sql files are manual-apply mainnet overrides — the embedded
+# migration loader (internal/migrations/migration.go) skips them, and so
+# does this script to keep its behavior aligned. Apply them by hand AFTER
+# this script via `kwil-cli exec-sql --file <path> --sync`.
+files=()
+for f in ./internal/migrations/*.sql; do
+    [[ "$f" == *.prod.sql ]] && continue
+    files+=("$f")
+done
 num_files=${#files[@]}
 
 # Run them with kwil-cli exec-sql
