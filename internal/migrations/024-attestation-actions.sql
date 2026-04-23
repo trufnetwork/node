@@ -21,20 +21,7 @@ CREATE OR REPLACE ACTION request_attestation(
 ) PUBLIC RETURNS (request_tx_id TEXT, attestation_hash BYTEA) {
     -- Capture transaction ID for primary key
     $request_tx_id := @txid;
-    
-    -- Permission Check: Ensure caller has the 'system:network_writer' role.
-    $lower_caller TEXT := LOWER(@caller);
-    $has_permission BOOL := false;
-    for $row in are_members_of('system', 'network_writer', ARRAY[$lower_caller]) {
-        if $row.wallet = $lower_caller AND $row.is_member {
-            $has_permission := true;
-            break;
-        }
-    }
-    if NOT $has_permission {
-        ERROR('Caller does not have the required system:network_writer role to request attestation.');
-    }
-    
+
     -- Validate encryption flag (must be false in MVP)
     if $encrypt_sig = true {
         ERROR('Encryption not implemented');
@@ -49,38 +36,57 @@ CREATE OR REPLACE ACTION request_attestation(
         ERROR('Action not allowed for attestation: ' || $action_name);
     }
 
-    -- ===== FEE COLLECTION =====
-    -- Collect 40 TRUF flat fee for attestation request
-    $attestation_fee := '40000000000000000000'::NUMERIC(78, 0); -- 40 TRUF with 18 decimals
+    -- ===== FEE COLLECTION WITH ROLE EXEMPTION =====
+    -- Declare variables in outer scope
+    $attestation_fee NUMERIC(78, 0);
+    $caller_balance NUMERIC(78, 0);
+    $leader_addr TEXT;
 
-    -- Validate max_fee if provided
-    IF $max_fee IS NOT NULL AND $max_fee > 0::NUMERIC(78, 0) {
-        IF $attestation_fee > $max_fee {
-            ERROR('Attestation fee (40 TRUF) exceeds caller max_fee limit: ' || ($max_fee / 1000000000000000000::NUMERIC(78, 0))::TEXT || ' TRUF');
+    -- Normalizing caller and leader safely using precompiles
+    $caller_bytes BYTEA := tn_utils.get_caller_bytes();
+    $lower_caller TEXT := tn_utils.get_caller_hex();
+
+    -- Check if caller is exempt (has system:network_writer role)
+    $is_exempt BOOL := FALSE;
+    FOR $row IN are_members_of('system', 'network_writer', ARRAY[$lower_caller]) {
+        IF $row.wallet = $lower_caller AND $row.is_member {
+            $is_exempt := TRUE;
+            BREAK;
         }
     }
 
-    $caller_balance := ethereum_bridge.balance(@caller);
+    -- Collect fee only from non-exempt wallets (40 TRUF flat fee)
+    IF NOT $is_exempt {
+        $attestation_fee := '40000000000000000000'::NUMERIC(78, 0); -- 40 TRUF with 18 decimals
 
-    IF $caller_balance < $attestation_fee {
-        ERROR('Insufficient balance for attestation. Required: 40 TRUF');
+        -- Validate max_fee if provided
+        IF $max_fee IS NOT NULL AND $max_fee > 0::NUMERIC(78, 0) {
+            IF $attestation_fee > $max_fee {
+                ERROR('Attestation fee (40 TRUF) exceeds caller max_fee limit: ' || ($max_fee / 1000000000000000000::NUMERIC(78, 0))::TEXT || ' TRUF');
+            }
+        }
+
+        $caller_balance := ethereum_bridge.balance(@caller);
+
+        IF $caller_balance < $attestation_fee {
+            ERROR('Insufficient balance for attestation. Required: 40 TRUF');
+        }
+
+        -- Safe leader address conversion
+        $leader_addr := tn_utils.get_leader_hex();
+        IF $leader_addr = '' {
+            ERROR('Leader address not available for fee transfer');
+        }
+
+        ethereum_bridge.transfer($leader_addr, $attestation_fee);
     }
-
-    -- Verify leader address is available
-    IF @leader_sender IS NULL {
-        ERROR('Leader address not available for fee transfer');
-    }
-
-    $leader_addr TEXT := encode(@leader_sender, 'hex')::TEXT;
-    ethereum_bridge.transfer($leader_addr, $attestation_fee);
     -- ===== END FEE COLLECTION =====
     
     -- Get current block height
     $created_height := @height;
     
-    -- Normalize caller address to bytes for storage
-    $caller_hex := LOWER(substring(@caller, 3, 40));
-    $caller_bytes := decode($caller_hex, 'hex');
+    -- Normalize caller address to bytes for storage (re-use safe normalization)
+    $caller_bytes := $caller_bytes; -- Already normalized above
     
     -- Normalize provider input and enforce length
     $provider_lower := LOWER($data_provider);
@@ -96,6 +102,13 @@ CREATE OR REPLACE ACTION request_attestation(
         ERROR('stream_id must be 32 characters');
     }
     $stream_bytes := $stream_id::BYTEA;
+
+    -- Validate date range for range-based attestation actions (IDs 1-3) BEFORE
+    -- executing the query. This prevents unbounded queries from scanning the entire
+    -- primitive_events table during block execution. Max range: 90 days.
+    -- This check runs before call_dispatch to reject expensive queries early,
+    -- before kwil-db buffers all result rows into memory.
+    tn_utils.validate_attestation_date_range($action_id, $args_bytes);
 
     -- Force deterministic execution by overriding non-deterministic parameters.
     -- Query actions (IDs 1-5) all have use_cache as their last parameter.
@@ -144,11 +157,11 @@ CREATE OR REPLACE ACTION request_attestation(
     
     -- Store unsigned attestation
     INSERT INTO attestations (
-        request_tx_id, attestation_hash, requester, result_canonical, encrypt_sig, 
-        created_height, signature, validator_pubkey, signed_height
+        request_tx_id, attestation_hash, requester, data_provider, stream_id,
+        result_canonical, encrypt_sig, created_height, signature, validator_pubkey, signed_height
     ) VALUES (
-        $request_tx_id, $attestation_hash, $caller_bytes, $result_canonical, $encrypt_sig, 
-        $created_height, NULL, NULL, NULL
+        $request_tx_id, $attestation_hash, $caller_bytes, $data_provider, $stream_id,
+        $result_canonical, $encrypt_sig, $created_height, NULL, NULL, NULL
     );
     
     -- Queue for signing (no-op on non-leader validators; handled by precompile)
@@ -157,7 +170,7 @@ CREATE OR REPLACE ACTION request_attestation(
     record_transaction_event(
         6,
         $attestation_fee,
-        '0x' || $leader_addr,
+        $leader_addr,
         NULL
     );
 
@@ -267,11 +280,14 @@ CREATE OR REPLACE ACTION get_signed_attestation(
 /**
  * list_attestations: List attestations with optional filtering
  *
- * Returns metadata for attestations, optionally filtered by requester.
+ * Returns metadata for attestations, optionally filtered by requester or request_tx_id.
  * Supports pagination with limit and offset.
  */
 CREATE OR REPLACE ACTION list_attestations(
     $requester BYTEA,
+    $request_tx_id TEXT,
+    $attestation_hash BYTEA,
+    $result_canonical BYTEA,
     $limit INT,
     $offset INT,
     $order_by TEXT
@@ -279,6 +295,8 @@ CREATE OR REPLACE ACTION list_attestations(
     request_tx_id TEXT,
     attestation_hash BYTEA,
     requester BYTEA,
+    data_provider TEXT,
+    stream_id TEXT,
     created_height INT8,
     signed_height INT8,
     encrypt_sig BOOLEAN
@@ -302,17 +320,42 @@ CREATE OR REPLACE ACTION list_attestations(
         }
     }
     
-    -- Build query with optional requester filter
-    IF $requester IS NULL {
+    -- Build query with optional filters
+    -- Priority: request_tx_id > attestation_hash > result_canonical > requester
+    IF $request_tx_id IS NOT NULL {
+        -- Filter by specific request_tx_id (exact match, ignores other filters)
+        RETURN SELECT request_tx_id, attestation_hash, requester, data_provider, stream_id,
+                      created_height, signed_height, encrypt_sig
+               FROM attestations
+               WHERE request_tx_id = $request_tx_id
+               ORDER BY created_height DESC, request_tx_id ASC
+               LIMIT $limit OFFSET $offset;
+    } ELSEIF $attestation_hash IS NOT NULL {
+        -- Filter by attestation_hash (can return multiple if hash collision, but unlikely)
+        RETURN SELECT request_tx_id, attestation_hash, requester, data_provider, stream_id,
+                      created_height, signed_height, encrypt_sig
+               FROM attestations
+               WHERE attestation_hash = $attestation_hash
+               ORDER BY created_height DESC, request_tx_id ASC
+               LIMIT $limit OFFSET $offset;
+    } ELSEIF $result_canonical IS NOT NULL {
+        -- Filter by result_canonical (exact match)
+        RETURN SELECT request_tx_id, attestation_hash, requester, data_provider, stream_id,
+                      created_height, signed_height, encrypt_sig
+               FROM attestations
+               WHERE result_canonical = $result_canonical
+               ORDER BY created_height DESC, request_tx_id ASC
+               LIMIT $limit OFFSET $offset;
+    } ELSEIF $requester IS NULL {
         -- Show all attestations (analytics/auditing)
         IF $order_desc {
-            RETURN SELECT request_tx_id, attestation_hash, requester, 
+            RETURN SELECT request_tx_id, attestation_hash, requester, data_provider, stream_id,
                           created_height, signed_height, encrypt_sig
                    FROM attestations
                    ORDER BY created_height DESC, request_tx_id ASC
                    LIMIT $limit OFFSET $offset;
         } ELSE {
-            RETURN SELECT request_tx_id, attestation_hash, requester, 
+            RETURN SELECT request_tx_id, attestation_hash, requester, data_provider, stream_id,
                           created_height, signed_height, encrypt_sig
                    FROM attestations
                    ORDER BY created_height ASC, request_tx_id ASC
@@ -321,14 +364,14 @@ CREATE OR REPLACE ACTION list_attestations(
     } ELSE {
         -- Filter by requester
         IF $order_desc {
-            RETURN SELECT request_tx_id, attestation_hash, requester,
+            RETURN SELECT request_tx_id, attestation_hash, requester, data_provider, stream_id,
                           created_height, signed_height, encrypt_sig
                    FROM attestations
                    WHERE requester = $requester
                    ORDER BY created_height DESC, request_tx_id ASC
                    LIMIT $limit OFFSET $offset;
         } ELSE {
-            RETURN SELECT request_tx_id, attestation_hash, requester,
+            RETURN SELECT request_tx_id, attestation_hash, requester, data_provider, stream_id,
                           created_height, signed_height, encrypt_sig
                    FROM attestations
                    WHERE requester = $requester

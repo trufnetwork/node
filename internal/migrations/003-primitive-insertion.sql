@@ -37,6 +37,12 @@ CREATE OR REPLACE ACTION insert_records(
     -- Get record count (used for both fee calculation and validation)
     $num_records INT := array_length($data_provider);
 
+    -- Cap batch size to prevent superlinear block execution time.
+    -- With per-tx PG isolation, blocks handle thousands of small txns efficiently.
+    if $num_records > 10 {
+        ERROR('insert_records: batch size exceeds maximum of 10 records');
+    }
+
     -- ===== FEE COLLECTION WITH ROLE EXEMPTION =====
     -- Check if caller is exempt (has system:network_writer role)
     $is_exempt BOOL := FALSE;
@@ -94,13 +100,14 @@ CREATE OR REPLACE ACTION insert_records(
     }
 
     -- Insert all records using UNNEST to expand arrays efficiently
-    INSERT INTO primitive_events (event_time, value, created_at, truflation_created_at, stream_ref)
+    INSERT INTO primitive_events (event_time, value, created_at, truflation_created_at, stream_ref, tx_id)
     SELECT
         unnested.event_time,
         unnested.value,
         $current_block,
         NULL,
-        unnested.stream_ref
+        unnested.stream_ref,
+        @txid
     FROM UNNEST($event_time, $value, $stream_refs) AS unnested(event_time, value, stream_ref)
     WHERE unnested.value != 0::NUMERIC(36,18)
     ORDER BY unnested.stream_ref, unnested.event_time, $current_block;  -- matches (stream_ref, event_time, created_at)

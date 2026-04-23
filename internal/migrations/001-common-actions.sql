@@ -146,14 +146,15 @@ CREATE OR REPLACE ACTION create_streams(
     }
     
     -- Create the streams using UNNEST for optimal performance
-    INSERT INTO streams (id, data_provider_id, data_provider, stream_id, stream_type, created_at)
+    INSERT INTO streams (id, data_provider_id, data_provider, stream_id, stream_type, created_at, tx_id)
     SELECT
         ROW_NUMBER() OVER (ORDER BY t.stream_id) + COALESCE((SELECT MAX(id) FROM streams), 0) AS id,
         $data_provider_id,
         $data_provider,
         t.stream_id,
         t.stream_type,
-        @height
+        @height,
+        @txid
     FROM UNNEST($stream_ids, $stream_types) AS t(stream_id, stream_type);
  
     -- Create metadata for the streams using UNNEST for optimal performance
@@ -168,7 +169,8 @@ CREATE OR REPLACE ACTION create_streams(
         value_ref,
         created_at,
         disabled_at,
-        stream_ref
+        stream_ref,
+        tx_id
     )
     SELECT
         uuid_generate_v5($base_uuid, 'metadata' || $data_provider || t.stream_id || 'stream_owner' || '1')::UUID,
@@ -180,7 +182,8 @@ CREATE OR REPLACE ACTION create_streams(
         LOWER($data_provider)::TEXT,
         @height,
         NULL::INT,
-        s.id
+        s.id,
+        @txid
     FROM UNNEST($stream_ids, $stream_types) AS t(stream_id, stream_type)
     JOIN data_providers dp ON dp.address = $data_provider
     JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = t.stream_id;
@@ -196,7 +199,8 @@ CREATE OR REPLACE ACTION create_streams(
         value_ref,
         created_at,
         disabled_at,
-        stream_ref
+        stream_ref,
+        tx_id
     )
     SELECT
         uuid_generate_v5($base_uuid, 'metadata' || $data_provider || t.stream_id || 'read_visibility' || '2')::UUID,
@@ -208,7 +212,8 @@ CREATE OR REPLACE ACTION create_streams(
         NULL::TEXT,
         @height,
         NULL::INT,
-        s.id
+        s.id,
+        @txid
     FROM UNNEST($stream_ids, $stream_types) AS t(stream_id, stream_type)
     JOIN data_providers dp ON dp.address = $data_provider
     JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = t.stream_id;
@@ -224,7 +229,8 @@ CREATE OR REPLACE ACTION create_streams(
         value_ref,
         created_at,
         disabled_at,
-        stream_ref
+        stream_ref,
+        tx_id
     )
     SELECT
         uuid_generate_v5($base_uuid, 'metadata' || $data_provider || t.stream_id || 'readonly_key' || '3')::UUID,
@@ -236,7 +242,8 @@ CREATE OR REPLACE ACTION create_streams(
         NULL::TEXT,
         @height,
         NULL::INT,
-        s.id
+        s.id,
+        @txid
     FROM UNNEST($stream_ids, $stream_types) AS t(stream_id, stream_type)
     JOIN data_providers dp ON dp.address = $data_provider
     JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = t.stream_id;
@@ -252,7 +259,8 @@ CREATE OR REPLACE ACTION create_streams(
         value_ref,
         created_at,
         disabled_at,
-        stream_ref
+        stream_ref,
+        tx_id
     )
     SELECT
         uuid_generate_v5($base_uuid, 'metadata' || $data_provider || t.stream_id || 'readonly_key' || '4')::UUID,
@@ -264,7 +272,8 @@ CREATE OR REPLACE ACTION create_streams(
         NULL::TEXT,
         @height,
         NULL::INT,
-        s.id
+        s.id,
+        @txid
     FROM UNNEST($stream_ids, $stream_types) AS t(stream_id, stream_type)
     JOIN data_providers dp ON dp.address = $data_provider
     JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = t.stream_id;
@@ -280,7 +289,8 @@ CREATE OR REPLACE ACTION create_streams(
         value_ref,
         created_at,
         disabled_at,
-        stream_ref
+        stream_ref,
+        tx_id
     )
     SELECT
         uuid_generate_v5($base_uuid, 'metadata' || $data_provider || t.stream_id || 'type' || '5')::UUID,
@@ -292,7 +302,8 @@ CREATE OR REPLACE ACTION create_streams(
         NULL::TEXT,
         @height,
         NULL::INT,
-        s.id
+        s.id,
+        @txid
     FROM UNNEST($stream_ids, $stream_types) AS t(stream_id, stream_type)
     JOIN data_providers dp ON dp.address = $data_provider
     JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = t.stream_id;
@@ -371,25 +382,27 @@ CREATE OR REPLACE ACTION insert_metadata(
     
     -- Insert the metadata
     INSERT INTO metadata (
-        row_id, 
-        metadata_key, 
-        value_i, 
-        value_f, 
-        value_s, 
-        value_b, 
-        value_ref, 
+        row_id,
+        metadata_key,
+        value_i,
+        value_f,
+        value_s,
+        value_b,
+        value_ref,
         created_at,
-        stream_ref
+        stream_ref,
+        tx_id
     ) VALUES (
-        $uuid, 
-        $key, 
-        $value_i, 
-        $value_f, 
-        $value_s, 
-        $value_b, 
-        LOWER($value_ref), 
+        $uuid,
+        $key,
+        $value_i,
+        $value_f,
+        $value_s,
+        $value_b,
+        LOWER($value_ref),
         $current_block,
-        $stream_ref
+        $stream_ref,
+        @txid
     );
 
     record_transaction_event(

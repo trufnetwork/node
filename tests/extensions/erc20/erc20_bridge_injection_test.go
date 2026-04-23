@@ -71,8 +71,8 @@ func TestERC20BridgeInjectedTransferAffectsBalance(t *testing.T) {
 func TestERC20BridgeInjectedDepositCreditsRecipient(t *testing.T) {
 	seedAndRun(t, "erc20_bridge_injected_deposit_recipient", func(ctx context.Context, platform *kwilTesting.Platform) error {
 		chain := "sepolia"
-		escrow := "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
-		erc20 := "0x2222222222222222222222222222222222222222"
+		escrow := TestEscrowA // Use consistent escrow from common_test.go
+		erc20 := TestERC20
 		depositor := "0xabc0000000000000000000000000000000000004"
 		recipient := "0xabc0000000000000000000000000000000000005"
 		value := "1500000000000000000"

@@ -2,13 +2,21 @@ package tn_utils
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"math"
+	"math/big"
+	"sort"
+	"strings"
 
 	"github.com/trufnetwork/kwil-db/common"
+	"github.com/trufnetwork/kwil-db/core/crypto"
 	"github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/kwil-db/extensions/precompiles"
+	"github.com/trufnetwork/sdk-go/core/contractsapi"
+	"github.com/trufnetwork/sdk-go/core/util"
 )
 
 // buildPrecompile groups all tn_utils methods into a single precompile bundle so
@@ -27,8 +35,295 @@ func buildPrecompile() precompiles.Precompile {
 			encodeUintMethod("encode_uint64", 64),
 			canonicalToDataPointsABIMethod(),
 			forceLastArgFalseMethod(),
+			validateAttestationDateRangeMethod(),
+			parseAttestationBooleanMethod(),
+			computeAttestationHashMethod(),
+			unpackQueryComponentsMethod(),
+			getCallerHexMethod(),
+			getCallerBytesMethod(),
+			getLeaderHexMethod(),
+			getLeaderBytesMethod(),
+			getValidatorsMethod(),
+			getValidatorCountMethod(),
 		},
 	}
+}
+
+// getCallerHexMethod returns the current transaction caller as a 0x-prefixed hex string.
+func getCallerHexMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "get_caller_hex",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters:      []precompiles.PrecompileValue{},
+		Returns: &precompiles.MethodReturn{
+			IsTable: false,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("caller_hex", types.TextType, false),
+			},
+		},
+		Handler: func(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+			if ctx == nil || ctx.TxContext == nil {
+				return resultFn([]any{""})
+			}
+			// If Caller is already a hex string (common in EVM), return it with 0x prefix if missing
+			caller := ctx.TxContext.Caller
+			if !strings.HasPrefix(caller, "0x") && !strings.HasPrefix(caller, "0X") {
+				// If it's a raw identifier, try to see if it's hex
+				if _, err := hex.DecodeString(caller); err == nil && len(caller) == 40 {
+					caller = "0x" + caller
+				}
+			}
+			return resultFn([]any{strings.ToLower(caller)})
+		},
+	}
+}
+
+// getCallerBytesMethod returns the current transaction caller as raw bytes (normalized address).
+func getCallerBytesMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "get_caller_bytes",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters:      []precompiles.PrecompileValue{},
+		Returns: &precompiles.MethodReturn{
+			IsTable: false,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("caller_bytes", types.ByteaType, false),
+			},
+		},
+		Handler: func(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+			if ctx == nil || ctx.TxContext == nil {
+				return resultFn([]any{[]byte{}})
+			}
+
+			// Return normalized address bytes instead of raw public key bytes.
+			// Caller is the string identifier (hex address for EVM).
+			caller := ctx.TxContext.Caller
+			if strings.HasPrefix(caller, "0x") || strings.HasPrefix(caller, "0X") {
+				caller = caller[2:]
+			}
+
+			if b, err := hex.DecodeString(caller); err == nil && len(b) == 20 {
+				return resultFn([]any{b})
+			}
+
+			// Fallback to Signer (public key) if not a hex address
+			return resultFn([]any{ctx.TxContext.Signer})
+		},
+	}
+}
+
+// getLeaderHexMethod returns the current block leader as a 0x-prefixed hex string.
+func getLeaderHexMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "get_leader_hex",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters:      []precompiles.PrecompileValue{},
+		Returns: &precompiles.MethodReturn{
+			IsTable: false,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("leader_hex", types.TextType, false),
+			},
+		},
+		Handler: func(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+			if ctx == nil || ctx.TxContext == nil || ctx.TxContext.BlockContext == nil || ctx.TxContext.BlockContext.Proposer == nil {
+				return resultFn([]any{""})
+			}
+
+			// For prediction markets, we usually want the Ethereum address of the leader
+			// to transfer fees via the bridge.
+			pubkey := ctx.TxContext.BlockContext.Proposer
+
+			if pubkey.Type() == crypto.KeyTypeSecp256k1 {
+				// Manually unmarshal to ensure we have the concrete type
+				secp, err := crypto.UnmarshalSecp256k1PublicKey(pubkey.Bytes())
+				if err == nil {
+					addr := crypto.EthereumAddressFromPubKey(secp)
+					return resultFn([]any{"0x" + hex.EncodeToString(addr)})
+				}
+			}
+
+			// Fallback to raw hex of the public key
+			return resultFn([]any{"0x" + hex.EncodeToString(pubkey.Bytes())})
+		},
+	}
+}
+
+// getLeaderBytesMethod returns the current block leader as raw bytes (normalized address).
+func getLeaderBytesMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "get_leader_bytes",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters:      []precompiles.PrecompileValue{},
+		Returns: &precompiles.MethodReturn{
+			IsTable: false,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("leader_bytes", types.ByteaType, false),
+			},
+		},
+		Handler: func(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+			if ctx == nil || ctx.TxContext == nil || ctx.TxContext.BlockContext == nil || ctx.TxContext.BlockContext.Proposer == nil {
+				return resultFn([]any{[]byte{}})
+			}
+
+			pubkey := ctx.TxContext.BlockContext.Proposer
+			if pubkey.Type() == crypto.KeyTypeSecp256k1 {
+				// Manually unmarshal to ensure we have the concrete type
+				secp, err := crypto.UnmarshalSecp256k1PublicKey(pubkey.Bytes())
+				if err == nil {
+					addr := crypto.EthereumAddressFromPubKey(secp)
+					return resultFn([]any{addr})
+				}
+			}
+
+			// Fallback to raw bytes of the public key
+			return resultFn([]any{pubkey.Bytes()})
+		},
+	}
+}
+
+// getValidatorsMethod returns all active validators as a table of (wallet_hex, wallet_bytes, power).
+// Results are sorted deterministically by public key bytes for consensus safety.
+func getValidatorsMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "get_validators",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters:      []precompiles.PrecompileValue{},
+		Returns: &precompiles.MethodReturn{
+			IsTable: true,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("wallet_hex", types.TextType, false),
+				precompiles.NewPrecompileValue("wallet_bytes", types.ByteaType, false),
+				precompiles.NewPrecompileValue("power", types.IntType, false),
+			},
+		},
+		Handler: func(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+			if app == nil || app.Validators == nil {
+				return nil // No validators available, return empty table
+			}
+
+			validators := app.Validators.GetValidators()
+			if len(validators) == 0 {
+				return nil
+			}
+
+			// Defensive shallow copy to avoid mutating the caller's slice
+			validatorsCopy := make([]*types.Validator, len(validators))
+			copy(validatorsCopy, validators)
+
+			// Sort deterministically by pubkey bytes for consensus safety
+			sort.Slice(validatorsCopy, func(i, j int) bool {
+				return bytes.Compare(validatorsCopy[i].Identifier, validatorsCopy[j].Identifier) < 0
+			})
+
+			validators = validatorsCopy
+
+			for _, v := range validators {
+				if v.Power <= 0 {
+					continue
+				}
+
+				var walletHex string
+				var walletBytes []byte
+
+				if v.KeyType == crypto.KeyTypeSecp256k1 {
+					secp, err := crypto.UnmarshalSecp256k1PublicKey(v.Identifier)
+					if err != nil {
+						continue // Skip validators with invalid keys
+					}
+					addr := crypto.EthereumAddressFromPubKey(secp)
+					walletHex = "0x" + hex.EncodeToString(addr)
+					walletBytes = addr
+				} else {
+					// Non-secp256k1 validators: use raw pubkey
+					walletHex = "0x" + hex.EncodeToString(v.Identifier)
+					walletBytes = v.Identifier
+				}
+
+				if err := resultFn([]any{walletHex, walletBytes, v.Power}); err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+	}
+}
+
+// getValidatorCountMethod returns the number of active validators (power > 0) as a scalar INT.
+// This avoids iterating get_validators() just to count, enabling single-pass distribution loops.
+func getValidatorCountMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "get_validator_count",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters:      []precompiles.PrecompileValue{},
+		Returns: &precompiles.MethodReturn{
+			IsTable: false,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("count", types.IntType, false),
+			},
+		},
+		Handler: func(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+			if app == nil || app.Validators == nil {
+				return resultFn([]any{int64(0)})
+			}
+
+			validators := app.Validators.GetValidators()
+			var count int64
+			for _, v := range validators {
+				if v.Power <= 0 {
+					continue
+				}
+				// Mirror get_validators() filtering: skip malformed secp256k1 keys
+				if v.KeyType == crypto.KeyTypeSecp256k1 {
+					if _, err := crypto.UnmarshalSecp256k1PublicKey(v.Identifier); err != nil {
+						continue
+					}
+				}
+				count++
+			}
+
+			return resultFn([]any{count})
+		},
+	}
+}
+
+// unpackQueryComponentsMethod extracts (dataProvider, streamID, actionID, args) from ABI-encoded bytes.
+func unpackQueryComponentsMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "unpack_query_components",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters: []precompiles.PrecompileValue{
+			precompiles.NewPrecompileValue("query_components", types.ByteaType, false),
+		},
+		Returns: &precompiles.MethodReturn{
+			IsTable: false,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("data_provider", types.ByteaType, false),
+				precompiles.NewPrecompileValue("stream_id", types.ByteaType, false),
+				precompiles.NewPrecompileValue("action_id", types.TextType, false),
+				precompiles.NewPrecompileValue("args", types.ByteaType, false),
+			},
+		},
+		Handler: unpackQueryComponentsHandler,
+	}
+}
+
+func unpackQueryComponentsHandler(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+	queryComponents, err := toByteSliceAllowNil(inputs[0])
+	if err != nil {
+		return err
+	}
+
+	if len(queryComponents) == 0 {
+		return fmt.Errorf("query_components cannot be empty")
+	}
+
+	dataProvider, streamID, actionID, args, err := unpackQueryComponents(queryComponents)
+	if err != nil {
+		return err
+	}
+
+	return resultFn([]any{dataProvider, streamID, actionID, args})
 }
 
 // callDispatchMethod exposes deterministic metered dispatch to another action.
@@ -425,4 +720,477 @@ func forceLastArgFalseHandler(ctx *common.EngineContext, app *common.App, inputs
 	}
 
 	return resultFn([]any{modifiedArgsBytes})
+}
+
+// MaxAttestationDateRangeSeconds is the maximum allowed date range for attestation
+// queries (90 days). This prevents unbounded queries from scanning the entire
+// primitive_events table during on-chain block execution.
+//
+// 90 days is generous for all legitimate attestation use cases:
+//   - Settlement only needs the latest value (single point)
+//   - Proof of history typically spans days or weeks, not years
+//   - 90 days of daily data = 90 rows, hourly = 2,160 rows (both safe)
+const MaxAttestationDateRangeSeconds int64 = 90 * 24 * 60 * 60 // 7,776,000 seconds
+
+// validateAttestationDateRangeMethod validates attestation action eligibility:
+//   - Actions 1-3 (get_record, get_index, get_change_over_time) are BLOCKED — they return
+//     multiple rows and are not allowed for attestation.
+//   - Actions 4-5 (get_last_record, get_first_record) are single-point (LIMIT 1) — no validation needed.
+//   - Actions 6-9 (binary) return a single boolean — no validation needed.
+//   - Actions 10-11 (get_high_value, get_low_value) are single-row range queries — date range
+//     validated (max 90 days, both from and to required).
+func validateAttestationDateRangeMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "validate_attestation_date_range",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters: []precompiles.PrecompileValue{
+			precompiles.NewPrecompileValue("action_id", types.IntType, false),
+			precompiles.NewPrecompileValue("args_bytes", types.ByteaType, false),
+		},
+		Returns: nil, // void — errors if invalid
+		Handler: validateAttestationDateRangeHandler,
+	}
+}
+
+func validateAttestationDateRangeHandler(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+	actionID, err := toInt64(inputs[0])
+	if err != nil {
+		return fmt.Errorf("action_id: %w", err)
+	}
+
+	// Block multi-row actions entirely (IDs 1-3: get_record, get_index, get_change_over_time).
+	// These return arrays and are not allowed for attestation.
+	if actionID >= 1 && actionID <= 3 {
+		return fmt.Errorf("action %d not allowed for attestation: use get_last_record, get_first_record, get_high_value, get_low_value, or binary actions", actionID)
+	}
+
+	// Only validate date range for range-based single-row actions (IDs 10-11: get_high_value, get_low_value).
+	// Actions 4-5 are single-point (LIMIT 1), actions 6-9 are binary (single bool) — no validation needed.
+	if actionID != 10 && actionID != 11 {
+		return nil
+	}
+
+	argsBytes, ok := inputs[1].([]byte)
+	if !ok {
+		return fmt.Errorf("args_bytes must be []byte, got %T", inputs[1])
+	}
+
+	args, err := DecodeActionArgs(argsBytes)
+	if err != nil {
+		return fmt.Errorf("failed to decode action args: %w", err)
+	}
+
+	// get_high_value/get_low_value signature: ($data_provider, $stream_id, $from, $to, $frozen_at)
+	// $from at index 2, $to at index 3
+	if len(args) < 4 {
+		return fmt.Errorf("attestation action requires at least 4 args, got %d", len(args))
+	}
+
+	fromVal := derefIntPtr(args[2])
+	toVal := derefIntPtr(args[3])
+
+	// Both from and to are required for get_high_value/get_low_value (no "latest record" shortcut)
+	if fromVal == nil || toVal == nil {
+		return fmt.Errorf("get_high_value/get_low_value attestation actions require both 'from' and 'to' parameters")
+	}
+
+	fromTS, err := toInt64(*fromVal)
+	if err != nil {
+		return fmt.Errorf("failed to parse 'from' parameter: %w", err)
+	}
+
+	toTS, err := toInt64(*toVal)
+	if err != nil {
+		return fmt.Errorf("failed to parse 'to' parameter: %w", err)
+	}
+
+	dateRange := toTS - fromTS
+	if dateRange < 0 {
+		return fmt.Errorf("attestation date range invalid: 'from' (%d) must be less than or equal to 'to' (%d)", fromTS, toTS)
+	}
+	if dateRange > MaxAttestationDateRangeSeconds {
+		return fmt.Errorf("attestation date range of %d seconds exceeds maximum of %d seconds (90 days)", dateRange, MaxAttestationDateRangeSeconds)
+	}
+
+	return nil
+}
+
+// derefIntPtr dereferences a pointer to any integer type, returning nil if the
+// input is nil or a nil pointer. DecodeActionArgs may return pointer variants
+// (*int64, *int32, *int, *uint64, etc.) for nullable parameters.
+func derefIntPtr(v any) *any {
+	if v == nil {
+		return nil
+	}
+	switch ptr := v.(type) {
+	case *int64:
+		if ptr == nil {
+			return nil
+		}
+		val := any(*ptr)
+		return &val
+	case *int:
+		if ptr == nil {
+			return nil
+		}
+		val := any(*ptr)
+		return &val
+	case *int32:
+		if ptr == nil {
+			return nil
+		}
+		val := any(*ptr)
+		return &val
+	case *int16:
+		if ptr == nil {
+			return nil
+		}
+		val := any(*ptr)
+		return &val
+	case *int8:
+		if ptr == nil {
+			return nil
+		}
+		val := any(*ptr)
+		return &val
+	case *uint64:
+		if ptr == nil {
+			return nil
+		}
+		val := any(*ptr)
+		return &val
+	case *uint32:
+		if ptr == nil {
+			return nil
+		}
+		val := any(*ptr)
+		return &val
+	case *uint16:
+		if ptr == nil {
+			return nil
+		}
+		val := any(*ptr)
+		return &val
+	case *uint8:
+		if ptr == nil {
+			return nil
+		}
+		val := any(*ptr)
+		return &val
+	case *uint:
+		if ptr == nil {
+			return nil
+		}
+		val := any(*ptr)
+		return &val
+	default:
+		// Not a pointer — return as-is (toInt64 will handle value types)
+		return &v
+	}
+}
+
+// parseAttestationBooleanMethod extracts a boolean result from an attestation's
+// result_canonical field. This is used for prediction market settlement where
+// attestations return boolean outcomes (YES=true, NO=false).
+func parseAttestationBooleanMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "parse_attestation_boolean",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters: []precompiles.PrecompileValue{
+			precompiles.NewPrecompileValue("result_canonical", types.ByteaType, false),
+		},
+		Returns: &precompiles.MethodReturn{
+			IsTable: false,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("outcome", types.BoolType, false),
+			},
+		},
+		Handler: parseAttestationBooleanHandler,
+	}
+}
+
+// parseAttestationBooleanHandler parses result_canonical to extract a boolean outcome.
+//
+// This handler supports both:
+// 1. Binary action results (action_id 6-9): Direct boolean encoded as abi.encode(bool)
+// 2. Numeric results (action_id 1-5): Interpreted as value > 0 = TRUE, value == 0 = FALSE
+//
+// The result_canonical format is:
+//   - version (uint8, 1 byte)
+//   - algo (uint8, 1 byte)
+//   - height (uint64, 8 bytes)
+//   - length_prefix(data_provider) (4 bytes length + N bytes data)
+//   - length_prefix(stream) (4 bytes length + N bytes data)
+//   - action_id (uint16, 2 bytes)
+//   - length_prefix(args) (4 bytes length + N bytes data)
+//   - length_prefix(result_payload) (4 bytes length + N bytes data)
+//
+// We parse through the structure to reach result_payload, then decode based on action_id.
+func parseAttestationBooleanHandler(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+	resultCanonical, err := toByteSliceAllowNil(inputs[0])
+	if err != nil {
+		return fmt.Errorf("result_canonical must be bytea: %w", err)
+	}
+	if resultCanonical == nil || len(resultCanonical) == 0 {
+		return fmt.Errorf("result_canonical cannot be empty")
+	}
+
+	// Parse the canonical format
+	offset := 0
+
+	// Skip version (1 byte)
+	if offset+1 > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: too short for version")
+	}
+	offset += 1
+
+	// Skip algo (1 byte)
+	if offset+1 > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: too short for algo")
+	}
+	offset += 1
+
+	// Skip height (8 bytes, big-endian uint64)
+	if offset+8 > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: too short for height")
+	}
+	offset += 8
+
+	// Skip length_prefix(data_provider)
+	if offset+4 > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: too short for data_provider length")
+	}
+	dpLength := binary.BigEndian.Uint32(resultCanonical[offset : offset+4])
+	offset += 4 + int(dpLength)
+	if offset > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: data_provider data extends beyond buffer")
+	}
+
+	// Skip length_prefix(stream)
+	if offset+4 > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: too short for stream length")
+	}
+	streamLength := binary.BigEndian.Uint32(resultCanonical[offset : offset+4])
+	offset += 4 + int(streamLength)
+	if offset > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: stream data extends beyond buffer")
+	}
+
+	// Read action_id (2 bytes, big-endian uint16) - we need this to determine decoding format
+	if offset+2 > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: too short for action_id")
+	}
+	actionID := binary.BigEndian.Uint16(resultCanonical[offset : offset+2])
+	offset += 2
+
+	// Skip length_prefix(args)
+	if offset+4 > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: too short for args length")
+	}
+	argsLength := binary.BigEndian.Uint32(resultCanonical[offset : offset+4])
+	offset += 4 + int(argsLength)
+	if offset > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: args data extends beyond buffer")
+	}
+
+	// Read length_prefix(result_payload)
+	if offset+4 > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: too short for result_payload length")
+	}
+	resultLength := binary.BigEndian.Uint32(resultCanonical[offset : offset+4])
+	offset += 4
+	if offset+int(resultLength) > len(resultCanonical) {
+		return fmt.Errorf("invalid result_canonical: result_payload data extends beyond buffer")
+	}
+
+	resultPayload := resultCanonical[offset : offset+int(resultLength)]
+
+	// Check if this is a binary action (action_id 6-9)
+	// Binary actions return abi.encode(bool) directly
+	if IsBinaryAction(actionID) {
+		return parseBinaryActionResult(resultPayload, resultFn)
+	}
+
+	// Validate action_id is in supported range before decoding
+	if actionID < 1 || actionID > 9 {
+		return fmt.Errorf("unsupported action_id %d", actionID)
+	}
+
+	// Numeric action (action_id 1-5) - decode as abi.encode(uint256[], int256[])
+	return parseNumericActionResult(resultPayload, resultFn)
+}
+
+// parseBinaryActionResult decodes abi.encode(bool) and returns the boolean directly
+func parseBinaryActionResult(resultPayload []byte, resultFn func([]any) error) error {
+	// ABI-encoded bool is 32 bytes (padded)
+	if len(resultPayload) != 32 {
+		return fmt.Errorf("binary action result must be 32 bytes (abi-encoded bool), got %d", len(resultPayload))
+	}
+
+	// Decode using the boolean ABI args
+	decoded, err := booleanABIArgs.Unpack(resultPayload)
+	if err != nil {
+		return fmt.Errorf("failed to decode boolean ABI result: %w", err)
+	}
+
+	if len(decoded) != 1 {
+		return fmt.Errorf("expected 1 value from boolean decode, got %d", len(decoded))
+	}
+
+	outcome, ok := decoded[0].(bool)
+	if !ok {
+		return fmt.Errorf("decoded value is not boolean, got %T", decoded[0])
+	}
+
+	return resultFn([]any{outcome})
+}
+
+// parseNumericActionResult decodes abi.encode(uint256[], int256[]) and interprets as boolean
+// value > 0 = TRUE (YES wins), value == 0 = FALSE (NO wins)
+func parseNumericActionResult(resultPayload []byte, resultFn func([]any) error) error {
+	decoded, err := dataPointsABIArgs.Unpack(resultPayload)
+	if err != nil {
+		return fmt.Errorf("failed to decode ABI result payload: %w", err)
+	}
+
+	if len(decoded) != 2 {
+		return fmt.Errorf("expected 2 arrays (timestamps, values), got %d", len(decoded))
+	}
+
+	// Extract values array (second element)
+	values, ok := decoded[1].([]*big.Int)
+	if !ok {
+		return fmt.Errorf("values must be []*big.Int, got %T", decoded[1])
+	}
+
+	if len(values) == 0 {
+		return fmt.Errorf("result payload contains no values")
+	}
+
+	// Use the latest value for settlement (last element)
+	// Prediction market pattern: value > 0 = YES (TRUE), value == 0 = NO (FALSE)
+	latestValue := values[len(values)-1]
+	outcome := latestValue.Sign() > 0
+
+	return resultFn([]any{outcome})
+}
+
+// computeAttestationHashMethod computes the attestation-format hash from ABI-encoded query components.
+// This ensures market hashes match attestation hashes, enabling automatic settlement.
+func computeAttestationHashMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "compute_attestation_hash",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters: []precompiles.PrecompileValue{
+			precompiles.NewPrecompileValue("query_components", types.ByteaType, false),
+		},
+		Returns: &precompiles.MethodReturn{
+			IsTable: true,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("hash", types.ByteaType, false),
+			},
+		},
+		Handler: computeAttestationHashHandler,
+	}
+}
+
+// computeAttestationHashHandler decodes ABI-encoded query components and computes
+// the attestation hash using the same format as request_attestation.
+func computeAttestationHashHandler(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+	queryComponents, err := toByteSliceAllowNil(inputs[0])
+	if err != nil {
+		return err
+	}
+
+	if len(queryComponents) == 0 {
+		return fmt.Errorf("query_components cannot be empty")
+	}
+
+	dataProvider, streamID, actionIDStr, argsBytes, err := unpackQueryComponents(queryComponents)
+	if err != nil {
+		return err
+	}
+
+	// Map action_id string to uint16 (must match attestation_actions table)
+	actionIDNum, err := getActionIDNumber(actionIDStr)
+	if err != nil {
+		return fmt.Errorf("invalid action_id: %w", err)
+	}
+
+	// Build hash input using attestation format
+	// Format: version(1) + algo(1) + length_prefix(data_provider) + length_prefix(stream_id) + action_id(2) + length_prefix(args)
+	buffer := new(bytes.Buffer)
+
+	// Version (1 byte) - always 0x01
+	buffer.WriteByte(1)
+
+	// Algorithm (1 byte) - always 0x00
+	buffer.WriteByte(0)
+
+	// Length-prefixed data_provider (20 bytes)
+	buffer.Write(lengthPrefixBytes(dataProvider))
+
+	// Length-prefixed stream_id (32 bytes)
+	buffer.Write(lengthPrefixBytes(streamID))
+
+	// Action ID as uint16 big-endian (2 bytes)
+	var actionIDBytes [2]byte
+	binary.BigEndian.PutUint16(actionIDBytes[:], actionIDNum)
+	buffer.Write(actionIDBytes[:])
+
+	// Length-prefixed args
+	buffer.Write(lengthPrefixBytes(argsBytes))
+
+	// Compute SHA256 hash
+	hash := sha256.Sum256(buffer.Bytes())
+
+	return resultFn([]any{hash[:]})
+}
+
+// getActionIDNumber maps action name to numeric ID (must match attestation_actions table)
+func getActionIDNumber(actionName string) (uint16, error) {
+	actionMap := map[string]uint16{
+		// Numeric data actions (return TABLE(event_time INT8, value NUMERIC))
+		"get_record":           1,
+		"get_index":            2,
+		"get_change_over_time": 3,
+		"get_last_record":      4,
+		"get_first_record":     5,
+		// Binary actions (return TABLE(result BOOLEAN) - for prediction market settlement
+		"price_above_threshold": 6,
+		"price_below_threshold": 7,
+		"value_in_range":        8,
+		"value_equals":          9,
+		// Single-row range actions (return TABLE(event_time INT8, value NUMERIC) LIMIT 1)
+		"get_high_value": 10,
+		"get_low_value":  11,
+	}
+
+	id, ok := actionMap[actionName]
+	if !ok {
+		return 0, fmt.Errorf("unknown action: %s", actionName)
+	}
+	return id, nil
+}
+
+// IsBinaryAction returns true if the action ID corresponds to a binary action
+// that returns TABLE(result BOOLEAN) instead of TABLE(event_time INT8, value NUMERIC)
+func IsBinaryAction(actionID uint16) bool {
+	return actionID >= 6 && actionID <= 9
+}
+
+// unpackQueryComponents extracts (dataProvider, streamID, actionID, args) from ABI-encoded bytes.
+// This is a private helper used by computeAttestationHashHandler for consensus logic.
+func unpackQueryComponents(data []byte) (dataProvider []byte, streamID []byte, actionID string, args []byte, err error) {
+	dp, sid, aid, argBytes, err := contractsapi.DecodeQueryComponents(data)
+	if err != nil {
+		return nil, nil, "", nil, err
+	}
+
+	addr, err := util.NewEthereumAddressFromString(dp)
+	if err != nil {
+		return nil, nil, "", nil, fmt.Errorf("invalid data_provider address: %w", err)
+	}
+
+	return addr.Bytes(), []byte(sid), aid, argBytes, nil
 }

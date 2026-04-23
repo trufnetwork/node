@@ -26,11 +26,29 @@ type EngineOperations struct {
 	engine   common.Engine
 	logger   log.Logger
 	db       sql.DB
+	dbPool   sql.DelayedReadTxMaker // For fresh read transactions in background jobs
 	accounts common.Accounts
 }
 
-func NewEngineOperations(engine common.Engine, db sql.DB, accounts common.Accounts, logger log.Logger) *EngineOperations {
-	return &EngineOperations{engine: engine, db: db, accounts: accounts, logger: logger.New("ops")}
+func NewEngineOperations(engine common.Engine, db sql.DB, dbPool sql.DelayedReadTxMaker, accounts common.Accounts, logger log.Logger) *EngineOperations {
+	return &EngineOperations{engine: engine, db: db, dbPool: dbPool, accounts: accounts, logger: logger.New("ops")}
+}
+
+// getFreshReadTx returns a fresh database connection for read operations.
+// This is critical for background scheduler operations where e.db may be stale/closed.
+// Returns: (db, cleanup function, error)
+// The cleanup function MUST be called (via defer) to rollback the read transaction.
+func (e *EngineOperations) getFreshReadTx(ctx context.Context) (sql.DB, func(), error) {
+	if e.dbPool != nil {
+		readTx := e.dbPool.BeginDelayedReadTx()
+		cleanup := func() {
+			readTx.Rollback(ctx)
+		}
+		return readTx, cleanup, nil
+	}
+	// Fallback to stored db (may fail if tx is closed, but better than nothing)
+	e.logger.Warn("dbPool is nil, falling back to stored db connection (may be stale)")
+	return e.db, func() {}, nil
 }
 
 // LoadDigestConfig reads the single-row digest configuration.
@@ -41,8 +59,17 @@ func (e *EngineOperations) LoadDigestConfig(ctx context.Context) (bool, string, 
 		schedule string
 		found    bool
 	)
+
+	// Use fresh read transaction from pool to avoid stale connection issues
+	// in background scheduler contexts where e.db may be closed
+	db, cleanup, err := e.getFreshReadTx(ctx)
+	if err != nil {
+		return false, "", fmt.Errorf("get fresh read tx: %w", err)
+	}
+	defer cleanup()
+
 	// Read using engine without engine ctx (owner-level read)
-	err := e.engine.ExecuteWithoutEngineCtx(ctx, e.db,
+	err = e.engine.ExecuteWithoutEngineCtx(ctx, db,
 		`SELECT enabled, digest_schedule FROM main.digest_config WHERE id = 1`, nil,
 		func(row *common.Row) error {
 			if len(row.Values) >= 2 {
@@ -79,9 +106,16 @@ func (e *EngineOperations) BuildAndBroadcastAutoDigestTx(ctx context.Context, ch
 		return fmt.Errorf("failed to get signer account: %w", err)
 	}
 
+	// Use fresh read transaction from pool to avoid stale connection issues
+	db, cleanup, err := e.getFreshReadTx(ctx)
+	if err != nil {
+		return fmt.Errorf("get fresh read tx: %w", err)
+	}
+	defer cleanup()
+
 	// Get account information using the accounts service directly on database
 	// DB interface embeds Executor, so we can use it directly
-	account, err := e.accounts.GetAccount(ctx, e.db, signerAccountID)
+	account, err := e.accounts.GetAccount(ctx, db, signerAccountID)
 	var nextNonce uint64
 	if err != nil {
 		// Account doesn't exist yet - use nonce 1 for first transaction
@@ -148,11 +182,18 @@ func (e *EngineOperations) BroadcastAutoDigestWithArgsAndParse(
 		return nil, fmt.Errorf("failed to get signer account: %w", err)
 	}
 
+	// Use fresh read transaction from pool to avoid stale connection issues
+	db, cleanup, err := e.getFreshReadTx(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get fresh read tx: %w", err)
+	}
+	defer cleanup()
+
 	// Get account information using the accounts service directly on database
-	account, err := e.accounts.GetAccount(ctx, e.db, signerAccountID)
+	account, err := e.accounts.GetAccount(ctx, db, signerAccountID)
 	var nextNonce uint64
 	if err != nil {
-		// Only treat “not found” / “no rows” as missing-account; fail fast on any other error
+		// Only treat "not found" / "no rows" as missing-account; fail fast on any other error
 		msg := strings.ToLower(err.Error())
 		if !strings.Contains(msg, "not found") && !strings.Contains(msg, "no rows") {
 			return nil, fmt.Errorf("get account: %w", err)
@@ -310,8 +351,15 @@ func (e *EngineOperations) broadcastAutoDigestWithFreshNonce(
 		return nil, ktypes.Hash{}, fmt.Errorf("get signer account: %w", err)
 	}
 
+	// Use fresh read transaction from pool to avoid stale connection issues
+	db, cleanup, err := e.getFreshReadTx(ctx)
+	if err != nil {
+		return nil, ktypes.Hash{}, fmt.Errorf("get fresh read tx: %w", err)
+	}
+	defer cleanup()
+
 	// ALWAYS query database for current nonce (fresh state)
-	account, err := e.accounts.GetAccount(ctx, e.db, signerAccountID)
+	account, err := e.accounts.GetAccount(ctx, db, signerAccountID)
 	var nextNonce uint64
 	if err != nil {
 		// Only treat "not found" / "no rows" as missing-account
@@ -393,6 +441,164 @@ func (e *EngineOperations) broadcastAutoDigestWithFreshNonce(
 		"preserve_days", preserveDays)
 
 	return result, hash, nil
+}
+
+// TrimOrderEventsTxResult represents the parsed result from a trim_order_events transaction
+type TrimOrderEventsTxResult struct {
+	Deleted   int
+	Remaining int
+	HasMore   bool
+}
+
+// BroadcastTrimOrderEventsWithRetry wraps BroadcastTrimOrderEvents with retry logic.
+// On any error it re-fetches a fresh nonce before retrying, mirroring
+// BroadcastAutoDigestWithArgsAndRetry.
+func (e *EngineOperations) BroadcastTrimOrderEventsWithRetry(
+	ctx context.Context,
+	chainID string,
+	signer auth.Signer,
+	broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error),
+	preserveBlocks int64,
+	deleteCap int,
+	maxRetries int,
+) (*TrimOrderEventsTxResult, error) {
+	var lastErr error
+	backoff := 5 * time.Second
+	maxBackoff := 30 * time.Second
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			e.logger.Warn("retrying trim_order_events with fresh nonce",
+				"attempt", attempt, "last_error", lastErr)
+
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+
+		result, err := e.broadcastTrimOrderEventsOnce(ctx, chainID, signer, broadcaster, preserveBlocks, deleteCap)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+	}
+
+	return nil, fmt.Errorf("trim_order_events max retries (%d) exceeded: %w", maxRetries, lastErr)
+}
+
+// broadcastTrimOrderEventsOnce fetches a fresh nonce and broadcasts once.
+func (e *EngineOperations) broadcastTrimOrderEventsOnce(
+	ctx context.Context,
+	chainID string,
+	signer auth.Signer,
+	broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error),
+	preserveBlocks int64,
+	deleteCap int,
+) (*TrimOrderEventsTxResult, error) {
+	signerAccountID, err := ktypes.GetSignerAccount(signer)
+	if err != nil {
+		return nil, fmt.Errorf("get signer account: %w", err)
+	}
+
+	db, cleanup, err := e.getFreshReadTx(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get fresh read tx: %w", err)
+	}
+	defer cleanup()
+
+	account, err := e.accounts.GetAccount(ctx, db, signerAccountID)
+	var nextNonce uint64
+	if err != nil {
+		msg := strings.ToLower(err.Error())
+		if !strings.Contains(msg, "not found") && !strings.Contains(msg, "no rows") {
+			return nil, fmt.Errorf("get account: %w", err)
+		}
+		nextNonce = 1
+	} else {
+		nextNonce = uint64(account.Nonce + 1)
+	}
+
+	preserveBlocksArg, err := ktypes.EncodeValue(preserveBlocks)
+	if err != nil {
+		return nil, fmt.Errorf("encode preserveBlocks: %w", err)
+	}
+	deleteCapArg, err := ktypes.EncodeValue(int64(deleteCap))
+	if err != nil {
+		return nil, fmt.Errorf("encode deleteCap: %w", err)
+	}
+
+	payload := &ktypes.ActionExecution{
+		Namespace: "main",
+		Action:    "trim_order_events",
+		Arguments: [][]*ktypes.EncodedValue{{
+			preserveBlocksArg, deleteCapArg,
+		}},
+	}
+
+	tx, err := ktypes.CreateNodeTransaction(payload, chainID, nextNonce)
+	if err != nil {
+		return nil, fmt.Errorf("create tx: %w", err)
+	}
+	if err := tx.Sign(signer); err != nil {
+		return nil, fmt.Errorf("sign tx: %w", err)
+	}
+
+	hash, txResult, err := broadcaster(ctx, tx, 1)
+	if err != nil {
+		return nil, fmt.Errorf("broadcast tx: %w", err)
+	}
+
+	if txResult.Code != uint32(ktypes.CodeOk) {
+		return nil, fmt.Errorf("transaction failed with code %d: %s",
+			txResult.Code, txResult.Log)
+	}
+
+	result, err := parseTrimResultFromTxLog(txResult.Log)
+	if err != nil {
+		e.logger.Warn("failed to parse trim_order_events result", "error", err, "log", txResult.Log)
+		return nil, fmt.Errorf("parse trim result: %w", err)
+	}
+
+	e.logger.Info("trim_order_events completed",
+		"deleted", result.Deleted,
+		"remaining", result.Remaining,
+		"has_more", result.HasMore,
+		"tx_hash", hash.String())
+
+	return result, nil
+}
+
+// parseTrimResultFromTxLog extracts deleted/remaining/has_more from NOTICE output.
+// Handles log lines with prefixes (e.g., "NOTICE: trim_order_events: ...") by
+// extracting the payload after the marker, mirroring parseDigestResultFromTxLog.
+func parseTrimResultFromTxLog(logOutput string) (*TrimOrderEventsTxResult, error) {
+	result := &TrimOrderEventsTxResult{}
+	for _, line := range strings.Split(logOutput, "\n") {
+		if !strings.Contains(line, "trim_order_events:") {
+			continue
+		}
+		// Extract payload after marker (handles prefixed lines like "NOTICE: trim_order_events: ...")
+		parts := strings.SplitN(line, "trim_order_events:", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		payload := strings.TrimSpace(parts[1])
+
+		n, err := fmt.Sscanf(payload, "deleted=%d remaining=%d has_more=%t",
+			&result.Deleted, &result.Remaining, &result.HasMore)
+		if err != nil || n != 3 {
+			return nil, fmt.Errorf("failed to parse trim log payload (scanned %d/3 fields): %q", n, payload)
+		}
+		return result, nil
+	}
+	return nil, fmt.Errorf("no trim_order_events log entry found in: %q", logOutput)
 }
 
 // parseDigestResultFromTxLog parses the digest result from transaction log output

@@ -32,3 +32,8 @@ deployments/network
 /gitignore
 
 .task
+CLAUDE.md
+GEMINI.md
+
+# dev-only maintenance files
+maintenance

@@ -41,7 +41,7 @@ func TestBuildAndBroadcastAutoDigestTx_VerifiesTxBuildSignAndDBEffect(t *testing
 				require.NoError(t, err)
 
 				// Prepare EngineOperations
-				ops := internal.NewEngineOperations(platform.Engine, platform.DB, accts, log.New())
+				ops := internal.NewEngineOperations(platform.Engine, platform.DB, nil, accts, log.New())
 
 				// Generate a node signer (secp256k1)
 				priv, _, err := crypto.GenerateSecp256k1Key(nil)

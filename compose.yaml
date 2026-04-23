@@ -1,6 +1,6 @@
 services:
   kwil-postgres:
-    image: "ghcr.io/trufnetwork/kwil-postgres:16.8-1"
+    image: "ghcr.io/trufnetwork/kwil-postgres:16.8-2"
     hostname: kwil-postgres
     shm_size: 2G
     restart: unless-stopped
@@ -13,6 +13,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1.5G
     # persis data
     volumes:
       - ${POSTGRES_VOLUME:-data-kwil-postgres}:/var/lib/postgresql/data
@@ -40,6 +44,11 @@ services:
       # Optionally supply SETUP_DB_OWNER to override the owner derived from the generated node key
       SETUP_DB_OWNER: ${SETUP_DB_OWNER:-}
       SETUP_CHAIN_ID: ${SETUP_CHAIN_ID:-trufnetwork-dev}
+      # Go memory tuning to prevent OOM kills within container memory limits.
+      # GOMEMLIMIT should be ~80% of the container memory limit.
+      GOMEMLIMIT: ${GOMEMLIMIT:-2500MiB}
+      # GOGC=50 triggers GC when heap grows 50% (default 100), reducing peak memory.
+      GOGC: ${GOGC:-50}
     ports:
       - "50051:50051"
       - "${TN_RPC_PORT:-8484}:8484"
@@ -50,6 +59,10 @@ services:
       interval: 1m
       timeout: 10s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 3G
     depends_on:
       kwil-postgres:
         condition: service_healthy

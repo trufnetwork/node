@@ -150,7 +150,7 @@ func resetExtensionForTest() *Extension {
 	ext.SetNodeSigner(mockSigner{})
 	ext.SetBroadcaster(mockBroadcaster{})
 	// minimal engine ops
-	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, &fakeDB{}, &fakeAccounts{}, log.New()))
+	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, &fakeDB{}, nil, &fakeAccounts{}, log.New()))
 	SetExtension(ext)
 	return ext
 }
@@ -217,7 +217,7 @@ func TestDigest_Reload_EnablesAndStarts_WhenBecomesEnabled(t *testing.T) {
 
 	// attach EngineOps with fake DB that returns enabled on reload BEFORE first hook
 	fdb := &fakeDB{enabled: true, schedule: "*/5 * * * *"}
-	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, fdb, &fakeAccounts{}, log.New()))
+	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, fdb, nil, &fakeAccounts{}, log.New()))
 
 	// leader at height 1: disabled, no scheduler
 	digestLeaderAcquire(context.Background(), app, makeBlock(1, identity))
@@ -245,7 +245,7 @@ func TestDigest_Reload_DisablesAndStops_WhenBecomesDisabled(t *testing.T) {
 
 	// reload returns disabled
 	fdb := &fakeDB{enabled: false, schedule: "*/5 * * * *"}
-	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, fdb, &fakeAccounts{}, log.New()))
+	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, fdb, nil, &fakeAccounts{}, log.New()))
 	digestLeaderEndBlock(context.Background(), app, makeBlock(2, identity))
 
 	// stop should be idempotent
@@ -311,7 +311,7 @@ func TestDigest_Reload_TransientFailure_SucceedsAfterRetry(t *testing.T) {
 		schedule:  "0 9 * * *",
 		failCount: 2,
 	}
-	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, fdb, &fakeAccounts{}, log.New()))
+	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, fdb, nil, &fakeAccounts{}, log.New()))
 
 	// Reload at height 2 - first attempt fails, triggers background retry
 	digestLeaderEndBlock(context.Background(), app, makeBlock(2, identity))
@@ -356,7 +356,7 @@ func TestDigest_Reload_AllRetriesFail_KeepsCurrentConfig(t *testing.T) {
 		schedule:  "0 9 * * *",
 		failCount: 20, // More than max retries (15)
 	}
-	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, fdb, &fakeAccounts{}, log.New()))
+	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, fdb, nil, &fakeAccounts{}, log.New()))
 
 	// Reload at height 2 - first attempt fails, triggers background retry
 	digestLeaderEndBlock(context.Background(), app, makeBlock(2, identity))
@@ -396,7 +396,7 @@ func TestDigest_Reload_ContextCancellation_ExitsGracefully(t *testing.T) {
 		schedule:  "0 9 * * *",
 		failCount: 10,
 	}
-	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, fdb, &fakeAccounts{}, log.New()))
+	ext.SetEngineOps(digestinternal.NewEngineOperations(&fakeEngine{}, fdb, nil, &fakeAccounts{}, log.New()))
 
 	// Reload triggers background retry
 	digestLeaderEndBlock(context.Background(), app, makeBlock(2, identity))

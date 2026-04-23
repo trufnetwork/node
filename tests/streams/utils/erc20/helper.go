@@ -46,7 +46,41 @@ func CreditUserBalance(ctx context.Context, platform *kwilTesting.Platform, exte
 }
 
 // GetUserBalance queries the user's current balance via the extension.
+// IMPORTANT: The balance() action requires TWO parameters: instance_id (UUID) and user_address (text).
+// We compute the instance ID deterministically from the extension configuration.
 func GetUserBalance(ctx context.Context, platform *kwilTesting.Platform, extensionAlias, userAddr string) (string, error) {
+	// CRITICAL: Get instance ID from extension configuration
+	// The balance() precompile signature is: balance(id UUID, user TEXT)
+	// We need to pass the instance ID as the first parameter
+
+	// For test extensions, we need to know the chain and escrow address
+	// Extract from known test configurations
+	var chainName, escrowAddr string
+	switch extensionAlias {
+	case "hoodi_tt":
+		chainName = "hoodi"
+		escrowAddr = "0x878d6aaeb6e746033f50b8dc268d54b4631554e7"
+	case "hoodi_tt2":
+		chainName = "hoodi"
+		escrowAddr = "0x80D9B3b6941367917816d36748C88B303f7F1415"
+	case "sepolia_bridge":
+		chainName = "sepolia"
+		escrowAddr = "0x502430eD0BbE0f230215870c9C2853e126eE5Ae3"
+	case "erc20_bridge_test":
+		// Test-only alias used in tests/extensions/erc20/ tests
+		chainName = "sepolia"
+		escrowAddr = "0x1111111111111111111111111111111111111111"
+	case "hoodi_bridge_test":
+		// Test-only alias used in tests/extensions/erc20/erc20_bridge_hoodi_test.go
+		chainName = "hoodi"
+		escrowAddr = "0x3333333333333333333333333333333333333333"
+	default:
+		return "", fmt.Errorf("unknown extension alias: %s", extensionAlias)
+	}
+
+	// Compute instance ID deterministically (same as ForTestingForceSyncInstance)
+	instanceID := erc20shim.ForTestingGetInstanceID(chainName, escrowAddr)
+
 	txCtx := &common.TxContext{
 		Ctx:          ctx,
 		BlockContext: &common.BlockContext{Height: 1},
@@ -57,7 +91,8 @@ func GetUserBalance(ctx context.Context, platform *kwilTesting.Platform, extensi
 	engCtx := &common.EngineContext{TxContext: txCtx, OverrideAuthz: true}
 
 	var balance string
-	r, err := platform.Engine.Call(engCtx, platform.DB, extensionAlias, "balance", []any{userAddr}, func(row *common.Row) error {
+	// Pass instance ID as FIRST parameter, user address as SECOND
+	r, err := platform.Engine.Call(engCtx, platform.DB, "kwil_erc20_meta", "balance", []any{instanceID, userAddr}, func(row *common.Row) error {
 		if len(row.Values) != 1 {
 			return fmt.Errorf("expected 1 column, got %d", len(row.Values))
 		}

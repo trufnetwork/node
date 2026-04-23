@@ -13,6 +13,7 @@ import (
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/crypto"
 	coreauth "github.com/trufnetwork/kwil-db/core/crypto/auth"
+	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/extensions/tn_utils"
 	"github.com/trufnetwork/node/internal/migrations"
@@ -80,8 +81,8 @@ func setupAttestationTestEnvironment(t *testing.T) func(ctx context.Context, pla
 			return fmt.Errorf("failed to register system admin as data provider: %w", err)
 		}
 
-		// Note: get_record is already registered in 023-attestation-schema.sql with ID=1
-		// No need to register it again
+		// Note: get_last_record (ID=4) and get_high_value (ID=10) are registered in
+		// 023-attestation-schema.sql and 045-high-low-attestation-actions.sql respectively
 
 		// Create a test stream for attestations
 		streamID := "st000000000000000000000000000000"
@@ -101,28 +102,25 @@ func setupAttestationTestEnvironment(t *testing.T) func(ctx context.Context, pla
 	}
 }
 
-// Test 1: Network writer member pays 40 TRUF fee per attestation request
+// Test 1: Non-exempt user pays 40 TRUF fee per attestation request
 func testAttestationNetworkWriterPaysFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		requesterAddrVal := util.Unsafe_NewEthereumAddressFromString("0xa111111111111111111111111111111111111111")
 		requesterAddr := &requesterAddrVal
 
-		// Register as data provider with network_writer role
-		err := setup.CreateDataProvider(ctx, platform, requesterAddr.Address())
-		require.NoError(t, err, "failed to register data provider")
-
-		// Give requester 100 TRUF
-		err = giveAttestationBalance(ctx, platform, requesterAddr.Address(), "100000000000000000000")
+		// Note: NOT creating data provider - this user is non-exempt and must pay fees
+		// Give requester 100 TRUF (users with network_writer role are exempt, others must pay)
+		err := giveAttestationBalance(ctx, platform, requesterAddr.Address(), "100000000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
 		// Get initial balance
 		initialBalance, err := getAttestationBalance(ctx, platform, requesterAddr.Address())
 		require.NoError(t, err, "failed to get initial balance")
 
-		// Request attestation (should pay 40 TRUF)
+		// Request attestation (should pay 40 TRUF as non-exempt user)
 		systemAdmin := util.Unsafe_NewEthereumAddressFromString("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
 		streamID := "st000000000000000000000000000000"
-		err = requestAttestation(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_record")
+		err = requestAttestation(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_last_record")
 		require.NoError(t, err, "attestation request should succeed")
 
 		// Verify balance decreased by 40 TRUF
@@ -143,18 +141,14 @@ func testAttestationInsufficientBalance(t *testing.T) func(ctx context.Context, 
 		requesterAddrVal := util.Unsafe_NewEthereumAddressFromString("0xa222222222222222222222222222222222222222")
 		requesterAddr := &requesterAddrVal
 
-		// Register as data provider with network_writer role
-		err := setup.CreateDataProvider(ctx, platform, requesterAddr.Address())
-		require.NoError(t, err, "failed to register data provider")
-
 		// Give requester only 10 TRUF (insufficient for 40 TRUF fee)
-		err = giveAttestationBalance(ctx, platform, requesterAddr.Address(), "10000000000000000000")
+		err := giveAttestationBalance(ctx, platform, requesterAddr.Address(), "10000000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
 		// Try to request attestation (should fail)
 		systemAdmin := util.Unsafe_NewEthereumAddressFromString("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
 		streamID := "st000000000000000000000000000000"
-		err = requestAttestation(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_record")
+		err = requestAttestation(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_last_record")
 		require.Error(t, err, "attestation request should fail with insufficient balance")
 		require.Contains(t, err.Error(), "Insufficient balance for attestation",
 			"error should mention insufficient balance")
@@ -169,12 +163,8 @@ func testAttestationMultipleRequestsChargeFees(t *testing.T) func(ctx context.Co
 		requesterAddrVal := util.Unsafe_NewEthereumAddressFromString("0xa333333333333333333333333333333333333333")
 		requesterAddr := &requesterAddrVal
 
-		// Register as data provider with network_writer role
-		err := setup.CreateDataProvider(ctx, platform, requesterAddr.Address())
-		require.NoError(t, err, "failed to register data provider")
-
 		// Give requester 200 TRUF (enough for 5 attestations)
-		err = giveAttestationBalance(ctx, platform, requesterAddr.Address(), "200000000000000000000")
+		err := giveAttestationBalance(ctx, platform, requesterAddr.Address(), "200000000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
 		// Get initial balance
@@ -188,7 +178,7 @@ func testAttestationMultipleRequestsChargeFees(t *testing.T) func(ctx context.Co
 			// Vary the time range for each request to get different attestation hashes
 			from := int64(i * 1000)
 			to := int64(i*1000 + 999)
-			err = requestAttestationWithTimeRange(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_record", from, to)
+			err = requestAttestationWithTimeRange(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_high_value", from, to)
 			require.NoError(t, err, "attestation request %d should succeed", i+1)
 		}
 
@@ -211,12 +201,8 @@ func testAttestationLeaderReceivesFees(t *testing.T) func(ctx context.Context, p
 		requesterAddrVal := util.Unsafe_NewEthereumAddressFromString("0xa444444444444444444444444444444444444444")
 		requesterAddr := &requesterAddrVal
 
-		// Register as data provider with network_writer role
-		err := setup.CreateDataProvider(ctx, platform, requesterAddr.Address())
-		require.NoError(t, err, "failed to register data provider")
-
 		// Give requester 100 TRUF
-		err = giveAttestationBalance(ctx, platform, requesterAddr.Address(), "100000000000000000000")
+		err := giveAttestationBalance(ctx, platform, requesterAddr.Address(), "100000000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
 		// Generate leader keys
@@ -239,7 +225,7 @@ func testAttestationLeaderReceivesFees(t *testing.T) func(ctx context.Context, p
 		// Request attestation with specific leader
 		systemAdmin := util.Unsafe_NewEthereumAddressFromString("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
 		streamID := "st000000000000000000000000000000"
-		err = requestAttestationWithLeader(ctx, platform, requesterAddr, pub, systemAdmin.Address(), streamID, "get_record")
+		err = requestAttestationWithLeader(ctx, platform, requesterAddr, pub, systemAdmin.Address(), streamID, "get_last_record")
 		require.NoError(t, err, "attestation request with leader should succeed")
 
 		// Verify leader balance increased by 40 TRUF
@@ -260,27 +246,23 @@ func testAttestationBalanceCorrectlyDeducted(t *testing.T) func(ctx context.Cont
 		requesterAddrVal := util.Unsafe_NewEthereumAddressFromString("0xa555555555555555555555555555555555555555")
 		requesterAddr := &requesterAddrVal
 
-		// Register as data provider with network_writer role
-		err := setup.CreateDataProvider(ctx, platform, requesterAddr.Address())
-		require.NoError(t, err, "failed to register data provider")
-
 		// Give requester exactly 80 TRUF (enough for 2 attestations)
-		err = giveAttestationBalance(ctx, platform, requesterAddr.Address(), "80000000000000000000")
+		err := giveAttestationBalance(ctx, platform, requesterAddr.Address(), "80000000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
 		systemAdmin := util.Unsafe_NewEthereumAddressFromString("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
 		streamID := "st000000000000000000000000000000"
 
 		// First attestation should succeed (time range 0-999)
-		err = requestAttestationWithTimeRange(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_record", 0, 999)
+		err = requestAttestationWithTimeRange(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_high_value", 0, 999)
 		require.NoError(t, err, "first attestation should succeed")
 
 		// Second attestation should succeed (time range 1000-1999)
-		err = requestAttestationWithTimeRange(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_record", 1000, 1999)
+		err = requestAttestationWithTimeRange(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_high_value", 1000, 1999)
 		require.NoError(t, err, "second attestation should succeed")
 
 		// Third attestation should fail (insufficient balance) (time range 2000-2999)
-		err = requestAttestationWithTimeRange(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_record", 2000, 2999)
+		err = requestAttestationWithTimeRange(ctx, platform, requesterAddr, systemAdmin.Address(), streamID, "get_high_value", 2000, 2999)
 		require.Error(t, err, "third attestation should fail with insufficient balance")
 		require.Contains(t, err.Error(), "Insufficient balance for attestation",
 			"error should mention insufficient balance")
@@ -364,30 +346,46 @@ func getAttestationBalance(ctx context.Context, platform *kwilTesting.Platform, 
 	return balance, nil
 }
 
-// callRequestAttestationAction is the base implementation - calls the request_attestation action
+// callRequestAttestationAction calls request_attestation for single-point actions (get_last_record).
+// Encodes args: ($data_provider, $stream_id, $before, $frozen_at, $use_cache)
 func callRequestAttestationAction(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, leaderPub *crypto.Secp256k1PublicKey, dataProvider string, streamID string, actionName string) error {
-	return callRequestAttestationActionWithTimeRange(ctx, platform, signer, leaderPub, dataProvider, streamID, actionName, int64(0), int64(99999))
-}
-
-// callRequestAttestationActionWithTimeRange is the base implementation with custom time range
-func callRequestAttestationActionWithTimeRange(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, leaderPub *crypto.Secp256k1PublicKey, dataProvider string, streamID string, actionName string, from int64, to int64) error {
-	// Prepare arguments for get_record action
-	// get_record($data_provider TEXT, $stream_id TEXT, $from INT8, $to INT8, $frozen_at INT8, $use_cache BOOL)
 	actionArgs := []any{
 		dataProvider,
 		streamID,
-		from,
-		to,
-		int64(99999), // frozen_at
-		false,        // use_cache (will be forced to false by request_attestation)
+		nil,   // before
+		nil,   // frozen_at
+		false, // use_cache
 	}
 
-	// Encode action arguments
 	argsBytes, err := tn_utils.EncodeActionArgs(actionArgs)
 	if err != nil {
 		return fmt.Errorf("failed to encode action args: %w", err)
 	}
 
+	return callRequestAttestationWithBytes(ctx, platform, signer, leaderPub, dataProvider, streamID, actionName, argsBytes)
+}
+
+// callRequestAttestationActionWithTimeRange calls request_attestation for range-based actions (get_high_value, get_low_value).
+// Encodes args: ($data_provider, $stream_id, $from, $to, $frozen_at)
+func callRequestAttestationActionWithTimeRange(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, leaderPub *crypto.Secp256k1PublicKey, dataProvider string, streamID string, actionName string, from int64, to int64) error {
+	actionArgs := []any{
+		dataProvider,
+		streamID,
+		from,
+		to,
+		nil, // frozen_at
+	}
+
+	argsBytes, err := tn_utils.EncodeActionArgs(actionArgs)
+	if err != nil {
+		return fmt.Errorf("failed to encode action args: %w", err)
+	}
+
+	return callRequestAttestationWithBytes(ctx, platform, signer, leaderPub, dataProvider, streamID, actionName, argsBytes)
+}
+
+// callRequestAttestationWithBytes is the base implementation that calls request_attestation with pre-encoded args
+func callRequestAttestationWithBytes(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, leaderPub *crypto.Secp256k1PublicKey, dataProvider string, streamID string, actionName string, argsBytes []byte) error {
 	tx := &common.TxContext{
 		Ctx: ctx,
 		BlockContext: &common.BlockContext{
@@ -452,4 +450,90 @@ func requestAttestationWithTimeRange(ctx context.Context, platform *kwilTesting.
 // requestAttestationWithLeader requests attestation with a specific leader
 func requestAttestationWithLeader(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, leaderPub *crypto.Secp256k1PublicKey, dataProvider string, streamID string, actionName string) error {
 	return callRequestAttestationAction(ctx, platform, signer, leaderPub, dataProvider, streamID, actionName)
+}
+
+// requestAttestationWithArgsBytes requests attestation with pre-encoded args bytes
+func requestAttestationWithArgsBytes(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, dataProvider string, streamID string, actionName string, argsBytes []byte) error {
+	_, pubGeneric, err := crypto.GenerateSecp256k1Key(nil)
+	if err != nil {
+		return err
+	}
+	pub := pubGeneric.(*crypto.Secp256k1PublicKey)
+
+	tx := &common.TxContext{
+		Ctx: ctx,
+		BlockContext: &common.BlockContext{
+			Height:   1,
+			Proposer: pub,
+		},
+		Signer:        signer.Bytes(),
+		Caller:        signer.Address(),
+		TxID:          platform.Txid(),
+		Authenticator: coreauth.EthPersonalSignAuth,
+	}
+	engineCtx := &common.EngineContext{TxContext: tx}
+
+	res, err := platform.Engine.Call(
+		engineCtx,
+		platform.DB,
+		"",
+		"request_attestation",
+		[]any{
+			strings.ToLower(dataProvider),
+			streamID,
+			actionName,
+			argsBytes,
+			false, // encrypt_sig
+			nil,   // max_fee
+		},
+		func(row *common.Row) error { return nil },
+	)
+	if err != nil {
+		return err
+	}
+	if res != nil && res.Error != nil {
+		return res.Error
+	}
+	return nil
+}
+
+// insertTestDataPoint inserts a single data point into a primitive stream
+func insertTestDataPoint(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, streamID string, eventTime int64, value string) error {
+	tx := &common.TxContext{
+		Ctx:           ctx,
+		BlockContext:  &common.BlockContext{Height: 1},
+		Signer:        signer.Bytes(),
+		Caller:        signer.Address(),
+		TxID:          platform.Txid(),
+		Authenticator: coreauth.EthPersonalSignAuth,
+	}
+	engineCtx := &common.EngineContext{TxContext: tx}
+
+	decVal, err := kwilTypes.ParseDecimal(value)
+	if err != nil {
+		return fmt.Errorf("failed to parse decimal value: %w", err)
+	}
+	// Set precision to match NUMERIC(36,18) expected by insert_records
+	decVal.SetPrecisionAndScale(36, 18)
+
+	res, err := platform.Engine.Call(
+		engineCtx,
+		platform.DB,
+		"",
+		"insert_records",
+		[]any{
+			[]string{signer.Address()},
+			[]string{streamID},
+			[]int64{eventTime},
+			[]*kwilTypes.Decimal{decVal},
+		},
+		func(row *common.Row) error { return nil },
+	)
+	if err != nil {
+		return err
+	}
+	if res != nil && res.Error != nil {
+		return res.Error
+	}
+	return nil
 }

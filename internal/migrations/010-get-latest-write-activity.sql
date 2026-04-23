@@ -189,15 +189,15 @@ CREATE OR REPLACE ACTION get_last_transactions(
         ERROR('Limit size cannot exceed 100');
     }
 
-    RETURN
-    SELECT
-        NULL::TEXT AS tx_id,
-        lt.created_at,
-        lt.method,
-        NULL::TEXT AS caller,
-        NULL::NUMERIC(78, 0) AS fee_amount,
-        NULL::TEXT AS fee_recipient,
-        NULL::TEXT AS metadata,
-        ''::TEXT AS fee_distributions
-    FROM get_last_transactions_v1($normalized_provider, $limit_val) lt;
+    FOR $row IN get_last_transactions_v1($normalized_provider, $limit_val) {
+        $fee_distributions TEXT := '';
+        RETURN NEXT NULL::TEXT,
+            $row.created_at,
+            $row.method,
+            NULL::TEXT,
+            NULL::NUMERIC(78, 0),
+            NULL::TEXT,
+            NULL::TEXT,
+            $fee_distributions;
+    }
 };

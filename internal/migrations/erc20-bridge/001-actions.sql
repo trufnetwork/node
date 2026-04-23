@@ -1,4 +1,80 @@
--- TESTNET
+-- HOODI TESTNET - Test Token (TT)
+CREATE OR REPLACE ACTION hoodi_tt_get_erc20_bridge_info()
+PUBLIC VIEW RETURNS (
+  chain TEXT,
+  escrow TEXT,
+  epoch_period TEXT,
+  erc20 TEXT,
+  decimals INT,
+  balance NUMERIC(78, 0),
+  synced BOOLEAN,
+  synced_at INT8,
+  enabled BOOLEAN
+) {
+  FOR $row IN hoodi_tt.info() {
+    RETURN $row.chain, $row.escrow, $row.epoch_period, $row.erc20, $row.decimals, $row.balance, $row.synced, $row.synced_at, $row.enabled;
+  }
+};
+
+CREATE OR REPLACE ACTION hoodi_tt_wallet_balance($wallet_address TEXT) PUBLIC VIEW RETURNS (balance NUMERIC(78, 0)) {
+  $balance := hoodi_tt.balance($wallet_address);
+  RETURN $balance;
+};
+
+CREATE OR REPLACE ACTION hoodi_tt_bridge_tokens($recipient TEXT DEFAULT NULL, $amount TEXT) PUBLIC {
+  $withdrawal_amount := $amount::NUMERIC(78, 0);
+  $caller_balance := COALESCE(hoodi_tt.balance(@caller), 0::NUMERIC(78, 0));
+
+  IF $caller_balance < $withdrawal_amount {
+    ERROR('Insufficient balance for withdrawal. Required: ' ||
+          ($withdrawal_amount / '1000000000000000000'::NUMERIC(78, 0))::TEXT || ' tokens');
+  }
+
+  $bridge_recipient TEXT := LOWER(COALESCE($recipient, @caller));
+
+  -- Execute withdrawal using the bridge extension
+  hoodi_tt.bridge($bridge_recipient, $withdrawal_amount);
+};
+
+-- HOODI TESTNET - Test Token 2 (TT2)
+CREATE OR REPLACE ACTION hoodi_tt2_get_erc20_bridge_info()
+PUBLIC VIEW RETURNS (
+  chain TEXT,
+  escrow TEXT,
+  epoch_period TEXT,
+  erc20 TEXT,
+  decimals INT,
+  balance NUMERIC(78, 0),
+  synced BOOLEAN,
+  synced_at INT8,
+  enabled BOOLEAN
+) {
+  FOR $row IN hoodi_tt2.info() {
+    RETURN $row.chain, $row.escrow, $row.epoch_period, $row.erc20, $row.decimals, $row.balance, $row.synced, $row.synced_at, $row.enabled;
+  }
+};
+
+CREATE OR REPLACE ACTION hoodi_tt2_wallet_balance($wallet_address TEXT) PUBLIC VIEW RETURNS (balance NUMERIC(78, 0)) {
+  $balance := hoodi_tt2.balance($wallet_address);
+  RETURN $balance;
+};
+
+CREATE OR REPLACE ACTION hoodi_tt2_bridge_tokens($recipient TEXT DEFAULT NULL, $amount TEXT) PUBLIC {
+  $withdrawal_amount := $amount::NUMERIC(78, 0);
+  $caller_balance := COALESCE(hoodi_tt2.balance(@caller), 0::NUMERIC(78, 0));
+
+  IF $caller_balance < $withdrawal_amount {
+    ERROR('Insufficient balance for withdrawal. Required: ' ||
+          ($withdrawal_amount / '1000000000000000000'::NUMERIC(78, 0))::TEXT || ' tokens');
+  }
+
+  $bridge_recipient TEXT := LOWER(COALESCE($recipient, @caller));
+
+  -- Execute withdrawal using the bridge extension
+  hoodi_tt2.bridge($bridge_recipient, $withdrawal_amount);
+};
+
+-- SEPOLIA TESTNET (kept for reference)
 CREATE OR REPLACE ACTION sepolia_get_erc20_bridge_info() 
 PUBLIC VIEW RETURNS (
   chain TEXT,

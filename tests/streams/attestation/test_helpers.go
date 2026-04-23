@@ -24,7 +24,7 @@ import (
 
 // Test data constants to avoid magic values
 const (
-	TestActionIDRequest = 10
+	TestActionIDRequest = 100
 	TestActionIDGet     = 20
 	TestActionIDList    = 21
 	TestStreamID        = "stream_attestation_test_00000000"
@@ -128,6 +128,27 @@ func (h *AttestationTestHelper) NewEngineContext() *common.EngineContext {
 			},
 			Signer:        h.platform.Deployer,
 			Caller:        deployer.Address(),
+			TxID:          h.platform.Txid(),
+			Authenticator: auth.EthPersonalSignAuth, // Required for balance operations
+		},
+	}
+}
+
+// NewNonExemptContext creates a context for a non-exempt user (without network_writer role)
+// This is useful for testing fee validation with non-exempt users
+func (h *AttestationTestHelper) NewNonExemptContext(userAddr *util.EthereumAddress) *common.EngineContext {
+	// Give user balance to pay fees
+	h.GiveBalance(userAddr.Address(), "1000000000000000000000") // 1000 TRUF
+
+	return &common.EngineContext{
+		TxContext: &common.TxContext{
+			Ctx: h.ctx,
+			BlockContext: &common.BlockContext{
+				Height:   1,
+				Proposer: h.leaderPub, // Required for @leader_sender in fee transfers
+			},
+			Signer:        userAddr.Bytes(),
+			Caller:        userAddr.Address(),
 			TxID:          h.platform.Txid(),
 			Authenticator: auth.EthPersonalSignAuth, // Required for balance operations
 		},
