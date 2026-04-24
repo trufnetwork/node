@@ -111,12 +111,18 @@ PUBLIC VIEW RETURNS (
     $vault_balance NUMERIC(78, 0) := 0::NUMERIC(78, 0);
     $row_count INT := 0;
 
-    if $bridge != 'eth_usdc' {
-        ERROR('Invalid bridge. Supported: eth_usdc');
-    }
-    for $info in eth_usdc.info() {
-        $vault_balance := $info.balance;
-        $row_count := $row_count + 1;
+    if $bridge = 'eth_usdc' {
+        for $info in eth_usdc.info() {
+            $vault_balance := $info.balance;
+            $row_count := $row_count + 1;
+        }
+    } else if $bridge = 'eth_truf' {
+        for $info in eth_truf.info() {
+            $vault_balance := $info.balance;
+            $row_count := $row_count + 1;
+        }
+    } else {
+        ERROR('Invalid bridge. Supported: eth_usdc, eth_truf');
     }
 
     -- Validate that bridge returned data (distinguish unavailable from empty vault)

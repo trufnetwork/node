@@ -27,8 +27,11 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
         SELECT u.wallet_hex, u.amount
         FROM UNNEST($wallet_hexes, $amounts) AS u(wallet_hex, amount)
     {
-        eth_usdc.unlock($payout.wallet_hex, $payout.amount);
-    }
+        if $bridge = 'eth_usdc' {
+            eth_usdc.unlock($payout.wallet_hex, $payout.amount);
+        } else if $bridge = 'eth_truf' {
+            eth_truf.unlock($payout.wallet_hex, $payout.amount);
+        }}
 
     -- 2. Record all impacts using a loop to avoid "unknown variable" in INSERT...SELECT
     $next_id INT;
@@ -100,9 +103,11 @@ CREATE OR REPLACE ACTION distribute_fees(
     $actual_dp_fees NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
     if $dp_addr IS NOT NULL AND $infra_share > '0'::NUMERIC(78, 0) {
         $dp_wallet_hex TEXT := '0x' || encode($dp_addr, 'hex');
-        eth_usdc.unlock($dp_wallet_hex, $infra_share); 
-
-        $actual_dp_fees := $infra_share;
+        if $bridge = 'eth_usdc' {
+            eth_usdc.unlock($dp_wallet_hex, $infra_share); 
+        } else if $bridge = 'eth_truf' {
+            eth_truf.unlock($dp_wallet_hex, $infra_share); 
+        }$actual_dp_fees := $infra_share;
 
         -- Ensure DP has a participant record so the fee is tracked in ob_net_impacts
         $dp_pid INT;
@@ -154,9 +159,11 @@ CREATE OR REPLACE ACTION distribute_fees(
                 -- Skip validators with zero payout (e.g., infra_share < validator_count)
                 if $v_payout > '0'::NUMERIC(78, 0) {
                     -- Unlock funds via bridge
-                    eth_usdc.unlock($v_wallet_hex, $v_payout); 
-
-                    -- Ensure validator has a participant record
+                    if $bridge = 'eth_usdc' {
+                        eth_usdc.unlock($v_wallet_hex, $v_payout); 
+                    } else if $bridge = 'eth_truf' {
+                        eth_truf.unlock($v_wallet_hex, $v_payout); 
+                    }-- Ensure validator has a participant record
                     $v_pid INT;
                     for $p in SELECT id FROM ob_participants WHERE wallet_address = $v_wallet_bytes { $v_pid := $p.id; }
                     if $v_pid IS NULL {

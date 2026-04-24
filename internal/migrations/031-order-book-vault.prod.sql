@@ -26,10 +26,13 @@ PRIVATE {
     }
 
     -- Lock collateral using bridge (user -> network ownedBalance)
-    if $bridge != 'eth_usdc' {
-        ERROR('Invalid bridge. Supported: eth_usdc');
+    if $bridge = 'eth_usdc' {
+        eth_usdc.lock($amount);
+    } else if $bridge = 'eth_truf' {
+        eth_truf.lock($amount);
+    } else {
+        ERROR('Invalid bridge. Supported: eth_usdc, eth_truf');
     }
-    eth_usdc.lock($amount);
 };
 
 CREATE OR REPLACE ACTION ob_unlock_collateral($bridge TEXT, $user_address TEXT, $amount NUMERIC(78, 0))
@@ -44,8 +47,11 @@ PRIVATE {
     }
 
     -- Unlock collateral using bridge (network ownedBalance -> user)
-    if $bridge != 'eth_usdc' {
-        ERROR('Invalid bridge. Supported: eth_usdc');
+    if $bridge = 'eth_usdc' {
+        eth_usdc.unlock($user_address, $amount);
+    } else if $bridge = 'eth_truf' {
+        eth_truf.unlock($user_address, $amount);
+    } else {
+        ERROR('Invalid bridge. Supported: eth_usdc, eth_truf');
     }
-    eth_usdc.unlock($user_address, $amount);
 };

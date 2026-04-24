@@ -19,8 +19,9 @@ CREATE OR REPLACE ACTION validate_bridge($bridge TEXT) PRIVATE {
         ERROR('bridge parameter is required');
     }
 
-    if $bridge != 'eth_usdc' {
-        ERROR('Invalid bridge. Supported: eth_usdc');
+    if $bridge != 'eth_usdc' AND
+       $bridge != 'eth_truf' {
+        ERROR('Invalid bridge. Supported: eth_usdc, eth_truf');
     }
 
     RETURN;
@@ -253,9 +254,11 @@ CREATE OR REPLACE ACTION place_buy_order(
     -- ==========================================================================
 
     $caller_balance NUMERIC(78, 0);
-    $caller_balance := COALESCE(eth_usdc.balance(@caller), 0::NUMERIC(78, 0));
-
-    if $caller_balance < $collateral_needed {
+    if $bridge = 'eth_usdc' {
+        $caller_balance := COALESCE(eth_usdc.balance(@caller), 0::NUMERIC(78, 0));
+    } else if $bridge = 'eth_truf' {
+        $caller_balance := COALESCE(eth_truf.balance(@caller), 0::NUMERIC(78, 0));
+    }if $caller_balance < $collateral_needed {
         -- Note: Division by 10^18 for display purposes (convert wei to TRUF)
         ERROR('Insufficient balance. Required: ' || $collateral_needed::TEXT || ' wei (' ||
               ($collateral_needed / '1000000000000000000'::NUMERIC(78, 0))::TEXT || ' TRUF)');
@@ -296,9 +299,11 @@ CREATE OR REPLACE ACTION place_buy_order(
 
     -- Lock tokens from user to vault (network-owned balance)
     -- Note: Bridge lock() throws ERROR on failure (insufficient balance, etc.)
-    eth_usdc.lock($collateral_needed);
-
-    -- Record initial impact (collateral spent)
+    if $bridge = 'eth_usdc' {
+        eth_usdc.lock($collateral_needed);
+    } else if $bridge = 'eth_truf' {
+        eth_truf.lock($collateral_needed);
+    }-- Record initial impact (collateral spent)
     ob_record_tx_impact($participant_id, $outcome, 0::INT8, $collateral_needed, TRUE);
 
     -- ==========================================================================
@@ -418,9 +423,11 @@ CREATE OR REPLACE ACTION place_split_limit_order(
     -- ==========================================================================
 
     $caller_balance NUMERIC(78, 0);
-    $caller_balance := COALESCE(eth_usdc.balance(@caller), 0::NUMERIC(78, 0));
-
-    if $caller_balance < $collateral_needed {
+    if $bridge = 'eth_usdc' {
+        $caller_balance := COALESCE(eth_usdc.balance(@caller), 0::NUMERIC(78, 0));
+    } else if $bridge = 'eth_truf' {
+        $caller_balance := COALESCE(eth_truf.balance(@caller), 0::NUMERIC(78, 0));
+    }if $caller_balance < $collateral_needed {
         -- Note: Division by 10^18 for display purposes (convert wei to TRUF)
         ERROR('Insufficient balance. Required: ' || $collateral_needed::TEXT || ' wei (' ||
               ($collateral_needed / '1000000000000000000'::NUMERIC(78, 0))::TEXT || ' TRUF)');
@@ -461,9 +468,11 @@ CREATE OR REPLACE ACTION place_split_limit_order(
 
     -- Lock tokens from user to vault (network-owned balance)
     -- Note: Bridge lock() throws ERROR on failure (insufficient balance, etc.)
-    eth_usdc.lock($collateral_needed);
-
-    -- Record initial impacts:
+    if $bridge = 'eth_usdc' {
+        eth_usdc.lock($collateral_needed);
+    } else if $bridge = 'eth_truf' {
+        eth_truf.lock($collateral_needed);
+    }-- Record initial impacts:
     -- Calculate split collateral (50/50 split for YES/NO legs)
     $collateral_per_leg NUMERIC(78, 0) := $collateral_needed / 2::NUMERIC(78, 0);
     -- Handle dust: add remainder to YES leg if odd amount
@@ -669,9 +678,11 @@ CREATE OR REPLACE ACTION change_bid(
     if $collateral_delta > $zero {
         -- New order needs MORE collateral
         -- Lock additional amount (will ERROR if insufficient balance)
-        eth_usdc.lock($collateral_delta);
-
-        -- Record initial impact (lock)
+        if $bridge = 'eth_usdc' {
+            eth_usdc.lock($collateral_delta);
+        } else if $bridge = 'eth_truf' {
+            eth_truf.lock($collateral_delta);
+        }-- Record initial impact (lock)
         ob_record_tx_impact($participant_id, $outcome, 0::INT8, $collateral_delta, TRUE);
         } else if $collateral_delta < $zero {
         -- New order needs LESS collateral
