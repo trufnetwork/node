@@ -150,19 +150,30 @@ def split_actions(sql: str) -> list[tuple[str, str]]:
 def substitute_tokens(text: str) -> str:
     """Apply the bridge-name substitutions.
 
+    Maps testnet / legacy bridges to their mainnet equivalents:
+        hoodi_tt2       -> eth_usdc      (USDC collateral)
+        hoodi_tt        -> eth_truf      (TRUF — fee/collateral)
+        ethereum_bridge -> eth_truf      (legacy mainnet TRUF)
+
     Order matters: `hoodi_tt2` must be replaced before `hoodi_tt`,
     otherwise the second pass would corrupt the suffix.
     """
     text = text.replace("hoodi_tt2", "eth_usdc")
     text = text.replace("hoodi_tt", "eth_truf")
+    text = text.replace("ethereum_bridge", "eth_truf")
     return text
 
 
-_DISPATCH_BRANCH_RE = re.compile(
-    r"if\s+\$bridge\s*=\s*'eth_usdc'\s*\{",
+# After substitute_tokens, the only mainnet collateral bridges we want to
+# keep in dispatch chains are eth_usdc and eth_truf. Anything else
+# (sepolia_bridge, future testnet aliases) gets dropped.
+MAINNET_BRIDGES = ("eth_usdc", "eth_truf")
+
+_BRANCH_HEADER_RE = re.compile(
+    r"(?:if|else\s+if)\s+\$bridge\s*=\s*'(?P<name>\w+)'\s*\{",
 )
-_ELSEIF_HEADER_RE = re.compile(
-    r"\s*else\s+if\s+\$bridge\s*=\s*'(?:sepolia_bridge|ethereum_bridge)'\s*\{",
+_IF_BRANCH_HEADER_RE = re.compile(
+    r"if\s+\$bridge\s*=\s*'(?P<name>\w+)'\s*\{",
 )
 _ELSE_HEADER_RE = re.compile(r"\s*else\s*\{")
 
@@ -187,66 +198,105 @@ def _scan_balanced_block(text: str, start: int) -> int:
 
 
 def collapse_dispatch(action_text: str) -> str:
-    """Collapse `if $bridge = '<X>' { ... } else if ... else if ... [else { ERROR }]`
-    chains in `action_text` so only the `eth_usdc` branch remains.
+    """Walk each `if $bridge = '<X>' { ... } else if ... [else { ... }]`
+    chain, keep only branches whose `<X>` is a mainnet bridge
+    (eth_usdc, eth_truf), and drop the rest (sepolia_bridge etc.).
 
-    If the original chain ended in an `else { ERROR(...) }` clause, the
-    eth_usdc body is prefixed with a guard `if $bridge != 'eth_usdc' {
-    ERROR(...) }` to preserve the original "reject unknown bridge"
-    semantics. Otherwise the body is inlined naked, mirroring the
-    original silent fall-through behavior.
+    Behavior summary:
+      * Single mainnet branch in the chain  ->  inline body, prefix with a
+        `if $bridge != '<X>' { ERROR }` guard if the original had a final
+        `else { ERROR }`. Mirrors original silent-fall-through if no guard.
+      * Two mainnet branches                ->  rebuild as
+        `if … else if … [else { ERROR }]` listing only the mainnet bridges
+        in the supported-list message.
+      * No mainnet branches                 ->  drop the entire chain
+        (shouldn't happen post-substitution, but safe).
 
-    Multiple dispatch chains in the same action are handled iteratively.
+    Multiple chains per action are handled iteratively.
     """
     out = []
     i = 0
     n = len(action_text)
     while i < n:
-        m = _DISPATCH_BRANCH_RE.search(action_text, i)
+        # Find next dispatch CHAIN START (must begin with `if`, not `else if`).
+        m = _IF_BRANCH_HEADER_RE.search(action_text, i)
         if not m:
             out.append(action_text[i:])
             break
-        # Emit everything before the dispatch verbatim.
+
+        # Emit everything before the chain verbatim.
         out.append(action_text[i:m.start()])
 
-        # eth_usdc branch: scan its body.
-        body_open = m.end() - 1  # index of `{`
-        body_end = _scan_balanced_block(action_text, body_open)
-        usdc_body_inner = action_text[body_open + 1:body_end - 1]
-
-        # Determine the leading whitespace of the original `if` line so we
-        # can re-indent the inlined body to match.
+        # Capture indentation of the `if` line for re-indentation.
         line_start = action_text.rfind("\n", 0, m.start()) + 1
         indent = action_text[line_start:m.start()]
 
-        cursor = body_end
-        # Consume `else if $bridge = 'sepolia_bridge' { ... }` and
-        # `else if $bridge = 'ethereum_bridge' { ... }` (in either order,
-        # zero or more times).
-        while True:
-            em = _ELSEIF_HEADER_RE.match(action_text, cursor)
-            if not em:
+        # Walk the chain, collecting (name, body_inner) for each branch.
+        branches: list[tuple[str, str]] = []
+        cursor = m.start()
+        while cursor < n:
+            bm = _BRANCH_HEADER_RE.match(action_text, cursor)
+            if not bm:
                 break
-            cursor = _scan_balanced_block(action_text, em.end() - 1)
+            name = bm.group("name")
+            body_open = bm.end() - 1  # the `{`
+            body_end = _scan_balanced_block(action_text, body_open)
+            body_inner = action_text[body_open + 1:body_end - 1]
+            branches.append((name, body_inner))
+            cursor = body_end
+            # Skip whitespace/newlines before the next `else …` or end of chain.
+            while cursor < n and action_text[cursor] in " \t\n":
+                cursor += 1
+            # If next token isn't `else`, the chain ends here.
+            if not action_text[cursor:cursor + 4].startswith("else"):
+                break
 
-        # Optional final `else { ... }` — typically an ERROR.
+        # Optional final `else { ... }`.
         had_final_else = False
         em = _ELSE_HEADER_RE.match(action_text, cursor)
         if em:
             had_final_else = True
             cursor = _scan_balanced_block(action_text, em.end() - 1)
 
-        # Build replacement.
-        usdc_body = _redent_body(usdc_body_inner, indent)
-        if had_final_else:
-            replacement = (
-                f"if $bridge != 'eth_usdc' {{\n"
-                f"{indent}    ERROR('Invalid bridge. Supported: eth_usdc');\n"
-                f"{indent}}}\n"
-                f"{indent}{usdc_body}"
-            )
+        # Filter to mainnet branches, preserving source order.
+        mainnet = [(name, body) for name, body in branches if name in MAINNET_BRIDGES]
+
+        if not mainnet:
+            # All branches were testnet — drop the whole chain.
+            replacement = ""
+        elif len(mainnet) == 1:
+            # Single branch: inline (with optional guard).
+            name, body_inner = mainnet[0]
+            body = _redent_body(body_inner, indent)
+            if had_final_else:
+                replacement = (
+                    f"if $bridge != '{name}' {{\n"
+                    f"{indent}    ERROR('Invalid bridge. Supported: {name}');\n"
+                    f"{indent}}}\n"
+                    f"{indent}{body}"
+                )
+            else:
+                replacement = body
         else:
-            replacement = usdc_body
+            # Multiple mainnet branches: rebuild if/else-if chain.
+            inner_indent = indent + "    "
+            parts: list[str] = []
+            for idx, (name, body_inner) in enumerate(mainnet):
+                body = _redent_body(body_inner, inner_indent)
+                if idx == 0:
+                    parts.append(f"if $bridge = '{name}' {{")
+                else:
+                    parts.append(f"{indent}}} else if $bridge = '{name}' {{")
+                parts.append(f"{inner_indent}{body}")
+            if had_final_else:
+                supported = ", ".join(name for name, _ in mainnet)
+                parts.append(f"{indent}}} else {{")
+                parts.append(f"{inner_indent}ERROR('Invalid bridge. Supported: {supported}');")
+                parts.append(f"{indent}}}")
+            else:
+                parts.append(f"{indent}}}")
+            replacement = "\n".join(parts)
+
         out.append(replacement)
         i = cursor
     return "".join(out)
@@ -290,24 +340,32 @@ def _redent_body(body: str, target_indent: str) -> str:
     return "\n".join(out_lines)
 
 
+# After substitute_tokens, the validate_bridge AND chain reads:
+#   $bridge != 'eth_usdc' AND $bridge != 'sepolia_bridge' AND $bridge != 'eth_truf'
+# We want to drop the sepolia_bridge clause and update the matching ERROR
+# string so the action accepts both mainnet bridges.
 _VALIDATE_AND_CHAIN_RE = re.compile(
     r"\$bridge\s*!=\s*'eth_usdc'\s+AND\s*\n?\s*"
     r"\$bridge\s*!=\s*'sepolia_bridge'\s+AND\s*\n?\s*"
-    r"\$bridge\s*!=\s*'ethereum_bridge'",
+    r"\$bridge\s*!=\s*'eth_truf'",
+)
+_VALIDATE_AND_REPLACEMENT = (
+    "$bridge != 'eth_usdc' AND\n"
+    "       $bridge != 'eth_truf'"
 )
 _SUPPORTED_LIST_RE = re.compile(
-    r"Supported:\s+eth_usdc,\s+sepolia_bridge,\s+ethereum_bridge",
+    r"Supported:\s+eth_usdc,\s+sepolia_bridge,\s+eth_truf",
 )
 
 
 def collapse_validate_and_chain(text: str) -> str:
-    """Collapse the `$bridge != 'eth_usdc' AND $bridge != 'sepolia_bridge'
-    AND $bridge != 'ethereum_bridge'` predicate (used in
-    `validate_bridge`) to a single inequality, and shrink the matching
-    "Supported:" ERROR list. Idempotent.
+    """Collapse the three-clause `$bridge != …` predicate (used in
+    `validate_bridge`) to drop the sepolia_bridge testnet clause, and
+    shrink the matching "Supported:" ERROR list to the mainnet bridges
+    only. Idempotent.
     """
-    text = _VALIDATE_AND_CHAIN_RE.sub("$bridge != 'eth_usdc'", text)
-    text = _SUPPORTED_LIST_RE.sub("Supported: eth_usdc", text)
+    text = _VALIDATE_AND_CHAIN_RE.sub(_VALIDATE_AND_REPLACEMENT, text)
+    text = _SUPPORTED_LIST_RE.sub("Supported: eth_usdc, eth_truf", text)
     return text
 
 
