@@ -154,25 +154,7 @@ CREATE INDEX IF NOT EXISTS meta_key_ref_idx ON metadata (metadata_key, value_ref
 -- for now, we just index disabled_at
 CREATE INDEX IF NOT EXISTS meta_disabled_idx ON metadata (disabled_at);
 
-/* ============================================================================
- * Transaction Tracking Columns
- * ============================================================================
- * Add tx_id columns to data tables for transaction effect tracking.
- * This enables querying what data was created/modified by specific transactions.
- */
-
--- Add tx_id to streams table (for deployStream tracking)
-ALTER TABLE streams ADD COLUMN IF NOT EXISTS tx_id TEXT;
-CREATE INDEX IF NOT EXISTS streams_tx_id_idx ON streams (tx_id);
-
--- Add tx_id to primitive_events table (for insertRecords tracking)
-ALTER TABLE primitive_events ADD COLUMN IF NOT EXISTS tx_id TEXT;
-CREATE INDEX IF NOT EXISTS pe_tx_id_idx ON primitive_events (tx_id);
-
--- Add tx_id to taxonomies table (for setTaxonomies tracking)
-ALTER TABLE taxonomies ADD COLUMN IF NOT EXISTS tx_id TEXT;
-CREATE INDEX IF NOT EXISTS tax_tx_id_idx ON taxonomies (tx_id);
-
--- Add tx_id to metadata table (for setMetadata tracking)
-ALTER TABLE metadata ADD COLUMN IF NOT EXISTS tx_id TEXT;
-CREATE INDEX IF NOT EXISTS meta_tx_id_idx ON metadata (tx_id);
+-- tx_id tracking columns moved to 000-transaction-input-columns.sql so they
+-- can land independently of this file's CREATE INDEX statements (which
+-- reference pre-017 column names and abort on re-run against normalized
+-- mainnet schema).
