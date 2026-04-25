@@ -1268,6 +1268,8 @@ github.com/trufnetwork/kwil-db v0.10.3-0.20260425015148-65dd9427650c h1:m6xLA3GV
 github.com/trufnetwork/kwil-db v0.10.3-0.20260425015148-65dd9427650c/go.mod h1:LiBAC48uZl2B0IiLtD2hpOce7RNfpuDdghVAOc3u1Qo=
 github.com/trufnetwork/kwil-db v0.10.3-0.20260425032526-01958405eb8f h1:ebwnykLqpEYG6CQlnrNyMCCbYcrsV8RxW1y6nGTjWAE=
 github.com/trufnetwork/kwil-db v0.10.3-0.20260425032526-01958405eb8f/go.mod h1:LiBAC48uZl2B0IiLtD2hpOce7RNfpuDdghVAOc3u1Qo=
+github.com/trufnetwork/kwil-db v0.10.3-0.20260425051255-2adc7ffbb5c8 h1:QU7TBID+UlwjOjIC0AsQmUYOE/68B83nHsW68Prz46Y=
+github.com/trufnetwork/kwil-db v0.10.3-0.20260425051255-2adc7ffbb5c8/go.mod h1:LiBAC48uZl2B0IiLtD2hpOce7RNfpuDdghVAOc3u1Qo=
 github.com/trufnetwork/kwil-db/core v0.4.3-0.20260406143732-e25a390e62bb h1:tghQHOXYDHwjBmhEVAQESPTvf3O9Oq/1qzow5aKE81c=
 github.com/trufnetwork/kwil-db/core v0.4.3-0.20260406143732-e25a390e62bb/go.mod h1:HnOsh9+BN13LJCjiH0+XKaJzyjWKf+H9AofFFp90KwQ=
 github.com/trufnetwork/kwil-db/core v0.4.3-0.20260413125950-e0bc3b09a211 h1:h5HpwEqbPDEo4uGYz7ZUTfQ9tJBKyHaCmtwk2boB7Xs=
@@ -1292,6 +1294,8 @@ github.com/trufnetwork/kwil-db/core v0.4.3-0.20260425015148-65dd9427650c h1:JbIh
 github.com/trufnetwork/kwil-db/core v0.4.3-0.20260425015148-65dd9427650c/go.mod h1:HnOsh9+BN13LJCjiH0+XKaJzyjWKf+H9AofFFp90KwQ=
 github.com/trufnetwork/kwil-db/core v0.4.3-0.20260425032526-01958405eb8f h1:sUXarAL3agU5APqin8hrA4uwgQxfjKP3v5pvrzBcOaU=
 github.com/trufnetwork/kwil-db/core v0.4.3-0.20260425032526-01958405eb8f/go.mod h1:HnOsh9+BN13LJCjiH0+XKaJzyjWKf+H9AofFFp90KwQ=
+github.com/trufnetwork/kwil-db/core v0.4.3-0.20260425051255-2adc7ffbb5c8 h1:7m3S++3CqQlNBvUiRr9rHuTtUSRyjcyTFrhOhu56d/0=
+github.com/trufnetwork/kwil-db/core v0.4.3-0.20260425051255-2adc7ffbb5c8/go.mod h1:HnOsh9+BN13LJCjiH0+XKaJzyjWKf+H9AofFFp90KwQ=
 github.com/trufnetwork/openzeppelin-merkle-tree-go v0.0.2 h1:DCq8MzbWH0wZmICNmMVsSzUHUPl+2vqRhluEABjxl88=
 github.com/trufnetwork/openzeppelin-merkle-tree-go v0.0.2/go.mod h1:Y0MJpPp9QXU5vC6Gpoilql2NkgmGNcbHm9HYC2v2N8s=
 github.com/trufnetwork/sdk-go v0.6.4-0.20260224122406-a741343e2f37 h1:VD/GWxLTshaXpLukEc1SXbG7QA9HrFzF8JvxJAJ/x7Q=
