@@ -75,22 +75,22 @@ CREATE OR REPLACE ACTION insert_records(
 
     $current_block INT := @height;
 
-    -- Get stream reference for all streams early for better performance
-    $stream_refs := get_stream_ids($data_provider, $stream_id);
-
-    -- Check stream existence using stream refs (handles nulls for non-existent streams)
-    if !stream_exists_batch_core($stream_refs) {
-        ERROR('one or more streams do not exist');
-    }
-
-    -- Check if streams are primitive using stream refs
-    if !is_primitive_stream_batch_core($stream_refs) {
-        ERROR('one or more streams are not primitive streams');
-    }
-
-    -- Validate that the wallet is allowed to write to each stream using stream refs
-    if !wallet_write_batch_core($stream_refs, $lower_caller) {
-        ERROR('wallet not allowed to write to one or more streams');
+    -- One-shot validation: resolves stream refs + checks existence, primitive
+    -- type, and wallet write-auth in a single SQL pass.  Replaces four
+    -- separate calls that each round-tripped to postgres on the same arrays.
+    -- See 002-validate-streams-for-write.sql for rationale and shape.
+    $stream_refs INT[];
+    for $v in validate_streams_for_write($data_provider, $stream_id, $lower_caller) {
+        if !$v.all_exist {
+            ERROR('one or more streams do not exist');
+        }
+        if !$v.all_primitive {
+            ERROR('one or more streams are not primitive streams');
+        }
+        if !$v.all_writable {
+            ERROR('wallet not allowed to write to one or more streams');
+        }
+        $stream_refs := $v.stream_refs;
     }
 
     -- Insert all records using UNNEST to expand arrays efficiently
