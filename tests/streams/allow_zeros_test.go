@@ -45,43 +45,43 @@ func testAllowZerosFourCombinations(t *testing.T) func(ctx context.Context, plat
 		platform = procedure.WithSigner(platform, deployer.Bytes())
 		require.NoError(t, setup.CreateDataProvider(ctx, platform, deployer.Address()))
 
-		filterOnLocator := types.StreamLocator{
+		allowZerosOffLocator := types.StreamLocator{
 			StreamId:     util.GenerateStreamId("allow_zeros_off_stream"),
 			DataProvider: deployer,
 		}
-		filterOffLocator := types.StreamLocator{
+		allowZerosOnLocator := types.StreamLocator{
 			StreamId:     util.GenerateStreamId("allow_zeros_on_stream"),
 			DataProvider: deployer,
 		}
 
-		// Default-FALSE (filter on): zeros dropped.
-		require.NoError(t, createStreamWithAllowZeros(ctx, platform, filterOnLocator, false))
-		// Opt-in TRUE (filter off): zeros persist.
-		require.NoError(t, createStreamWithAllowZeros(ctx, platform, filterOffLocator, true))
+		// allow_zeros=false: zeros dropped on insert (today's behavior).
+		require.NoError(t, createStreamWithAllowZeros(ctx, platform, allowZerosOffLocator, false))
+		// allow_zeros=true: zeros persist alongside non-zero values.
+		require.NoError(t, createStreamWithAllowZeros(ctx, platform, allowZerosOnLocator, true))
 
 		// Insert {value=0, value=5} into both streams at distinct event_times.
-		require.NoError(t, setup.ExecuteInsertRecord(ctx, platform, filterOnLocator,
+		require.NoError(t, setup.ExecuteInsertRecord(ctx, platform, allowZerosOffLocator,
 			setup.InsertRecordInput{EventTime: 100, Value: 0}, 1))
-		require.NoError(t, setup.ExecuteInsertRecord(ctx, platform, filterOnLocator,
+		require.NoError(t, setup.ExecuteInsertRecord(ctx, platform, allowZerosOffLocator,
 			setup.InsertRecordInput{EventTime: 200, Value: 5}, 1))
-		require.NoError(t, setup.ExecuteInsertRecord(ctx, platform, filterOffLocator,
+		require.NoError(t, setup.ExecuteInsertRecord(ctx, platform, allowZerosOnLocator,
 			setup.InsertRecordInput{EventTime: 100, Value: 0}, 1))
-		require.NoError(t, setup.ExecuteInsertRecord(ctx, platform, filterOffLocator,
+		require.NoError(t, setup.ExecuteInsertRecord(ctx, platform, allowZerosOnLocator,
 			setup.InsertRecordInput{EventTime: 200, Value: 5}, 1))
 
-		// Filter ON: only non-zero shows up.
-		onRows, err := getRecordsRange(ctx, platform, filterOnLocator, 0, 1000)
+		// allow_zeros=false: only non-zero shows up.
+		offRows, err := getRecordsRange(ctx, platform, allowZerosOffLocator, 0, 1000, 10)
 		require.NoError(t, err)
-		require.Equal(t, []rec{{EventTime: 200, Value: 5}}, onRows,
-			"filter_on stream: zero must be dropped, non-zero must persist")
+		require.Equal(t, []rec{{EventTime: 200, Value: 5}}, offRows,
+			"allow_zeros=false: zero must be dropped, non-zero must persist")
 
-		// Filter OFF: both records show up.
-		offRows, err := getRecordsRange(ctx, platform, filterOffLocator, 0, 1000)
+		// allow_zeros=true: both records show up.
+		onRows, err := getRecordsRange(ctx, platform, allowZerosOnLocator, 0, 1000, 10)
 		require.NoError(t, err)
 		require.Equal(t, []rec{
 			{EventTime: 100, Value: 0},
 			{EventTime: 200, Value: 5},
-		}, offRows, "filter_off stream: both zero and non-zero must persist")
+		}, onRows, "allow_zeros=true: both zero and non-zero must persist")
 
 		return nil
 	}
@@ -112,7 +112,7 @@ func testAllowZerosDefaultPreservesBehavior(t *testing.T) func(ctx context.Conte
 		require.NoError(t, setup.ExecuteInsertRecord(ctx, platform, locator,
 			setup.InsertRecordInput{EventTime: 200, Value: 7}, 1))
 
-		rows, err := getRecordsRange(ctx, platform, locator, 0, 1000)
+		rows, err := getRecordsRange(ctx, platform, locator, 0, 1000, 5)
 		require.NoError(t, err)
 		require.Equal(t, []rec{{EventTime: 200, Value: 7}}, rows,
 			"default-shape create_stream must preserve today's zero-drop behavior")
@@ -138,10 +138,15 @@ func testSetAllowZerosToggleMutability(t *testing.T) func(ctx context.Context, p
 		}
 		require.NoError(t, createStreamWithAllowZeros(ctx, platform, locator, false))
 
+		// Each stage reads at insert_height+1 so the just-written row is
+		// visible. The pattern is more verbose than a global magic
+		// height but spells out the read-after-write timing per stage.
+
 		// Stage 1: default off — zero dropped.
+		const stage1Insert int64 = 1
 		require.NoError(t, setup.ExecuteInsertRecord(ctx, platform, locator,
-			setup.InsertRecordInput{EventTime: 100, Value: 0}, 1))
-		rows, err := getRecordsRange(ctx, platform, locator, 0, 1000)
+			setup.InsertRecordInput{EventTime: 100, Value: 0}, stage1Insert))
+		rows, err := getRecordsRange(ctx, platform, locator, 0, 1000, stage1Insert+1)
 		require.NoError(t, err)
 		require.Empty(t, rows, "stage 1: zero with allow_zeros=FALSE must be dropped")
 
@@ -149,9 +154,10 @@ func testSetAllowZerosToggleMutability(t *testing.T) func(ctx context.Context, p
 		require.NoError(t, setAllowZeros(ctx, platform, locator, true))
 
 		// Stage 2: zeros now persist.
+		const stage2Insert int64 = 2
 		require.NoError(t, setup.ExecuteInsertRecord(ctx, platform, locator,
-			setup.InsertRecordInput{EventTime: 200, Value: 0}, 2))
-		rows, err = getRecordsRange(ctx, platform, locator, 0, 1000)
+			setup.InsertRecordInput{EventTime: 200, Value: 0}, stage2Insert))
+		rows, err = getRecordsRange(ctx, platform, locator, 0, 1000, stage2Insert+1)
 		require.NoError(t, err)
 		require.Equal(t, []rec{{EventTime: 200, Value: 0}}, rows,
 			"stage 2: zero after allow_zeros=TRUE flip must persist")
@@ -160,9 +166,10 @@ func testSetAllowZerosToggleMutability(t *testing.T) func(ctx context.Context, p
 		require.NoError(t, setAllowZeros(ctx, platform, locator, false))
 
 		// Stage 3: new zeros are dropped, but the one from stage 2 stays.
+		const stage3Insert int64 = 3
 		require.NoError(t, setup.ExecuteInsertRecord(ctx, platform, locator,
-			setup.InsertRecordInput{EventTime: 300, Value: 0}, 3))
-		rows, err = getRecordsRange(ctx, platform, locator, 0, 1000)
+			setup.InsertRecordInput{EventTime: 300, Value: 0}, stage3Insert))
+		rows, err = getRecordsRange(ctx, platform, locator, 0, 1000, stage3Insert+1)
 		require.NoError(t, err)
 		require.Equal(t, []rec{{EventTime: 200, Value: 0}}, rows,
 			"stage 3: zero after flip-back-to-FALSE must be dropped; earlier zero must remain")
@@ -389,15 +396,18 @@ func getAllowZeros(ctx context.Context, platform *kwilTesting.Platform, locator 
 	return got, nil
 }
 
-// getRecordsRange wraps procedure.GetRecord with from/to int64 values
-// and returns a typed event_time + decimal-string slice.
-func getRecordsRange(ctx context.Context, platform *kwilTesting.Platform, locator types.StreamLocator, from, to int64) ([]rec, error) {
+// getRecordsRange wraps procedure.GetRecord with explicit from/to/height
+// int64 values and returns a typed event_time + numeric-value slice.
+// The height parameter is the chain height the read is performed at —
+// callers should pass a height >= the latest insert height in the test
+// so all writes are visible.
+func getRecordsRange(ctx context.Context, platform *kwilTesting.Platform, locator types.StreamLocator, from, to, height int64) ([]rec, error) {
 	rows, err := procedure.GetRecord(ctx, procedure.GetRecordInput{
 		Platform:      platform,
 		StreamLocator: locator,
 		FromTime:      &from,
 		ToTime:        &to,
-		Height:        10,
+		Height:        height,
 	})
 	if err != nil {
 		return nil, err
