@@ -169,7 +169,9 @@ CREATE OR REPLACE ACTION helper_enqueue_prune_days(
     LEFT JOIN (
         -- Latest non-disabled allow_zeros row per stream in this batch.
         -- Deterministic tiebreaker (created_at DESC, row_id DESC) keeps the
-        -- action AppHash-stable across nodes.
+        -- action AppHash-stable across nodes. The inner JOIN against
+        -- UNNEST scopes the metadata scan to the batch's distinct
+        -- stream_refs so enqueue latency stays bounded by batch size.
         SELECT stream_ref, value_b AS allow_zeros FROM (
             SELECT
                 md.stream_ref,
@@ -179,6 +181,10 @@ CREATE OR REPLACE ACTION helper_enqueue_prune_days(
                     ORDER BY md.created_at DESC, md.row_id DESC
                 ) AS rn
             FROM metadata md
+            JOIN (SELECT DISTINCT r.stream_ref
+                  FROM UNNEST($stream_refs) AS r(stream_ref)
+                  WHERE r.stream_ref IS NOT NULL) batch
+              ON batch.stream_ref = md.stream_ref
             WHERE md.metadata_key = 'allow_zeros'
               AND md.disabled_at IS NULL
         ) ranked WHERE rn = 1

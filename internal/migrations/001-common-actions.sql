@@ -397,7 +397,16 @@ CREATE OR REPLACE ACTION insert_metadata(
     if !is_stream_owner($data_provider, $stream_id, $lower_caller) {
         ERROR('Only stream owner can insert metadata');
     }
-    
+
+    -- Reserved keys: allow_zeros has a dedicated mutator (set_allow_zeros)
+    -- that handles the disable-then-insert sequence atomically. Routing
+    -- writes through the generic insert_metadata path would let two
+    -- concurrent rows coexist and break the "latest non-disabled wins"
+    -- semantics that insert_records / helper_enqueue_prune_days rely on.
+    if LOWER($key) = 'allow_zeros' {
+        ERROR('use set_allow_zeros to modify allow_zeros');
+    }
+
     -- Set the appropriate value based on type
     if $val_type = 'int' {
         $value_i := $value::INT;
@@ -503,7 +512,15 @@ CREATE OR REPLACE ACTION disable_metadata(
     if $found = false {
         ERROR('Metadata record not found');
     }
-    
+
+    -- Reserved keys: allow_zeros has a dedicated mutator (set_allow_zeros)
+    -- that disables-and-reinserts atomically. Letting disable_metadata
+    -- soft-delete this row in isolation would silently flip a stream
+    -- back to default-FALSE without writing the corresponding audit row.
+    if LOWER($metadata_key) = 'allow_zeros' {
+        ERROR('use set_allow_zeros to modify allow_zeros');
+    }
+
     -- In a separate step, check if the key is read-only
     $is_readonly BOOL := false;
     for $readonly_row in SELECT * FROM metadata 

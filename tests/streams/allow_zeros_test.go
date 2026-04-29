@@ -30,6 +30,7 @@ func TestAllowZerosCombinations(t *testing.T) {
 			testSetAllowZerosToggleMutability(t),
 			testAllowZerosGatesPruneEnqueue(t),
 			testGetAllowZerosReflectsState(t),
+			testNonOwnerCannotToggleAllowZeros(t),
 		},
 	}, testutils.GetTestOptionsWithCache())
 }
@@ -71,15 +72,15 @@ func testAllowZerosFourCombinations(t *testing.T) func(ctx context.Context, plat
 		// Filter ON: only non-zero shows up.
 		onRows, err := getRecordsRange(ctx, platform, filterOnLocator, 0, 1000)
 		require.NoError(t, err)
-		require.Equal(t, []rec{{EventTime: 200, Value: "5.000000000000000000"}}, onRows,
+		require.Equal(t, []rec{{EventTime: 200, Value: 5}}, onRows,
 			"filter_on stream: zero must be dropped, non-zero must persist")
 
 		// Filter OFF: both records show up.
 		offRows, err := getRecordsRange(ctx, platform, filterOffLocator, 0, 1000)
 		require.NoError(t, err)
 		require.Equal(t, []rec{
-			{EventTime: 100, Value: "0.000000000000000000"},
-			{EventTime: 200, Value: "5.000000000000000000"},
+			{EventTime: 100, Value: 0},
+			{EventTime: 200, Value: 5},
 		}, offRows, "filter_off stream: both zero and non-zero must persist")
 
 		return nil
@@ -113,7 +114,7 @@ func testAllowZerosDefaultPreservesBehavior(t *testing.T) func(ctx context.Conte
 
 		rows, err := getRecordsRange(ctx, platform, locator, 0, 1000)
 		require.NoError(t, err)
-		require.Equal(t, []rec{{EventTime: 200, Value: "7.000000000000000000"}}, rows,
+		require.Equal(t, []rec{{EventTime: 200, Value: 7}}, rows,
 			"default-shape create_stream must preserve today's zero-drop behavior")
 
 		return nil
@@ -152,7 +153,7 @@ func testSetAllowZerosToggleMutability(t *testing.T) func(ctx context.Context, p
 			setup.InsertRecordInput{EventTime: 200, Value: 0}, 2))
 		rows, err = getRecordsRange(ctx, platform, locator, 0, 1000)
 		require.NoError(t, err)
-		require.Equal(t, []rec{{EventTime: 200, Value: "0.000000000000000000"}}, rows,
+		require.Equal(t, []rec{{EventTime: 200, Value: 0}}, rows,
 			"stage 2: zero after allow_zeros=TRUE flip must persist")
 
 		// Toggle off again.
@@ -163,7 +164,7 @@ func testSetAllowZerosToggleMutability(t *testing.T) func(ctx context.Context, p
 			setup.InsertRecordInput{EventTime: 300, Value: 0}, 3))
 		rows, err = getRecordsRange(ctx, platform, locator, 0, 1000)
 		require.NoError(t, err)
-		require.Equal(t, []rec{{EventTime: 200, Value: "0.000000000000000000"}}, rows,
+		require.Equal(t, []rec{{EventTime: 200, Value: 0}}, rows,
 			"stage 3: zero after flip-back-to-FALSE must be dropped; earlier zero must remain")
 
 		return nil
@@ -260,11 +261,50 @@ func testGetAllowZerosReflectsState(t *testing.T) func(ctx context.Context, plat
 	}
 }
 
+// testNonOwnerCannotToggleAllowZeros: a wallet that didn't create the
+// stream must not be able to flip its allow_zeros flag, and a failed
+// attempt must leave the current state unchanged.
+func testNonOwnerCannotToggleAllowZeros(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		owner := util.Unsafe_NewEthereumAddressFromString("0x000000000000000000000000000000000000a115")
+		platform = procedure.WithSigner(platform, owner.Bytes())
+		require.NoError(t, setup.CreateDataProvider(ctx, platform, owner.Address()))
+
+		defaultLocator := types.StreamLocator{
+			StreamId:     util.GenerateStreamId("allow_zeros_authz_stream"),
+			DataProvider: owner,
+		}
+		// Create with the default (FALSE).
+		require.NoError(t, setup.CreateStream(ctx, platform, setup.StreamInfo{
+			Type: setup.ContractTypePrimitive, Locator: defaultLocator,
+		}))
+
+		prev, err := getAllowZeros(ctx, platform, defaultLocator)
+		require.NoError(t, err)
+		require.False(t, prev, "precondition: default-shape stream must report allow_zeros=false")
+
+		stranger := util.Unsafe_NewEthereumAddressFromString("0x00000000000000000000000000000000000ba115")
+		err = setAllowZerosAs(ctx, platform, defaultLocator, true, stranger)
+		require.Error(t, err, "non-owner toggle must be rejected by the action")
+		require.Contains(t, err.Error(), "Only stream owner",
+			"reject reason should come from the is_stream_owner guard")
+
+		after, err := getAllowZeros(ctx, platform, defaultLocator)
+		require.NoError(t, err)
+		require.Equal(t, prev, after, "rejected toggle must not change the stored flag")
+
+		return nil
+	}
+}
+
 // ----- Helpers ---------------------------------------------------------
 
+// rec carries the event_time and a parsed numeric value so assertions
+// stay format-agnostic (e.g., the SDK could reformat 0 as "0",
+// "0.0", or "0.000000000000000000" without breaking the tests).
 type rec struct {
 	EventTime int64
-	Value     string
+	Value     float64
 }
 
 // createStreamWithAllowZeros calls create_stream with the third
@@ -291,12 +331,19 @@ func createStreamWithAllowZeros(ctx context.Context, platform *kwilTesting.Platf
 	return nil
 }
 
+// setAllowZeros calls set_allow_zeros signed by the stream owner.
 func setAllowZeros(ctx context.Context, platform *kwilTesting.Platform, locator types.StreamLocator, value bool) error {
-	addr, err := util.NewEthereumAddressFromString(locator.DataProvider.Address())
+	owner, err := util.NewEthereumAddressFromString(locator.DataProvider.Address())
 	if err != nil {
 		return errors.Wrap(err, "invalid data provider address")
 	}
-	engineCtx := setup.NewEngineContext(ctx, platform, addr, 1)
+	return setAllowZerosAs(ctx, platform, locator, value, owner)
+}
+
+// setAllowZerosAs calls set_allow_zeros signed by an explicit caller —
+// used to assert the owner-only authorization check rejects strangers.
+func setAllowZerosAs(ctx context.Context, platform *kwilTesting.Platform, locator types.StreamLocator, value bool, caller util.EthereumAddress) error {
+	engineCtx := setup.NewEngineContext(ctx, platform, caller, 1)
 
 	r, err := platform.Engine.Call(engineCtx, platform.DB, "", "set_allow_zeros",
 		[]any{locator.DataProvider.Address(), locator.StreamId.String(), value},
@@ -364,7 +411,11 @@ func getRecordsRange(ctx context.Context, platform *kwilTesting.Platform, locato
 		if err != nil {
 			return nil, errors.Wrap(err, "parse event_time")
 		}
-		out = append(out, rec{EventTime: ts, Value: row[1]})
+		v, err := strconv.ParseFloat(row[1], 64)
+		if err != nil {
+			return nil, errors.Wrapf(err, "parse value %q as float", row[1])
+		}
+		out = append(out, rec{EventTime: ts, Value: v})
 	}
 	return out, nil
 }
