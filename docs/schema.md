@@ -67,3 +67,20 @@ Flexible key-value storage for additional stream properties.
 | `value_ref` | | Reference value |
 | `created_at` | | Record creation timestamp |
 | `disabled_at` | | Soft deletion timestamp |
+
+#### Reserved metadata keys
+
+The `metadata_key` column is open for stream-owner use, but a fixed set
+of reserved keys drive built-in actions:
+
+| Key | Value column | Set by | Read by |
+|-----|--------------|--------|---------|
+| `stream_owner` | `value_ref` | `create_stream`, `transfer_stream_ownership` | `is_stream_owner` |
+| `read_visibility` | `value_i` | `create_stream`, `set_read_visibility` | `is_allowed_to_read_*` |
+| `compose_visibility` | `value_i` | `set_compose_visibility` | composed-query gates |
+| `allow_read_wallet` | `value_ref` | `allow_read_wallet` | `is_allowed_to_read_*` |
+| `allow_compose_stream` | `value_ref` | `allow_compose_stream` | composed-query gates |
+| `readonly_key` | `value_s` | `create_stream` | `insert_metadata`, `disable_metadata` |
+| `type` | `value_s` | `create_stream` | informational |
+| `default_base_time` | `value_i` | SDK `set_default_base_time` | index-base lookup |
+| `allow_zeros` | `value_b` | `create_stream($allow_zeros=TRUE)`, `set_allow_zeros(true)` | `insert_records`, `helper_enqueue_prune_days` (default FALSE: zeros dropped on insert) |
