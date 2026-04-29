@@ -142,27 +142,55 @@ CREATE OR REPLACE ACTION helper_check_cache(
     RETURN $cache_hit;
 };
 
--- Enqueue pending prune days for a batch of records, filtering out zero values
+-- Enqueue pending prune days for a batch of records.
+-- Zero-valued records are skipped by default (today's behavior) so the
+-- digest pipeline doesn't waste work on days that produced no persisted
+-- rows. Streams opted in via `allow_zeros=TRUE` persist zero values, and
+-- their zero-day rows must be enqueued so digest can see them; the
+-- per-stream allow_zeros lookup below gates that case.
 CREATE OR REPLACE ACTION helper_enqueue_prune_days(
     $stream_refs INT[],
     $event_times INT8[],
     $values NUMERIC(36,18)[]
 ) PRIVATE {
-    IF COALESCE(array_length($event_times), 0) = 0 {  
-         RETURN;  
-     }  
-    IF COALESCE(array_length($stream_refs), 0) != COALESCE(array_length($event_times), 0)  
-       OR COALESCE(array_length($event_times), 0) != COALESCE(array_length($values), 0) {  
-        ERROR('helper_enqueue_prune_days: array lengths mismatch');  
-    } 
+    IF COALESCE(array_length($event_times), 0) = 0 {
+         RETURN;
+     }
+    IF COALESCE(array_length($stream_refs), 0) != COALESCE(array_length($event_times), 0)
+       OR COALESCE(array_length($event_times), 0) != COALESCE(array_length($values), 0) {
+        ERROR('helper_enqueue_prune_days: array lengths mismatch');
+    }
 
     INSERT INTO pending_prune_days (stream_ref, day_index)
     SELECT DISTINCT
         t.stream_ref,
         (t.event_time / 86400)::INT AS day_index
     FROM UNNEST($stream_refs, $event_times, $values) AS t(stream_ref, event_time, value)
+    LEFT JOIN (
+        -- Latest non-disabled allow_zeros row per stream in this batch.
+        -- Deterministic tiebreaker (created_at DESC, row_id DESC) keeps the
+        -- action AppHash-stable across nodes. The inner JOIN against
+        -- UNNEST scopes the metadata scan to the batch's distinct
+        -- stream_refs so enqueue latency stays bounded by batch size.
+        SELECT stream_ref, value_b AS allow_zeros FROM (
+            SELECT
+                md.stream_ref,
+                md.value_b,
+                ROW_NUMBER() OVER (
+                    PARTITION BY md.stream_ref
+                    ORDER BY md.created_at DESC, md.row_id DESC
+                ) AS rn
+            FROM metadata md
+            JOIN (SELECT DISTINCT r.stream_ref
+                  FROM UNNEST($stream_refs) AS r(stream_ref)
+                  WHERE r.stream_ref IS NOT NULL) batch
+              ON batch.stream_ref = md.stream_ref
+            WHERE md.metadata_key = 'allow_zeros'
+              AND md.disabled_at IS NULL
+        ) ranked WHERE rn = 1
+    ) cfg ON cfg.stream_ref = t.stream_ref
     WHERE t.stream_ref IS NOT NULL
       AND t.event_time >= 0::INT8
-      AND t.value != 0::NUMERIC(36,18)
+      AND (t.value != 0::NUMERIC(36,18) OR COALESCE(cfg.allow_zeros, FALSE) = TRUE)
     ON CONFLICT (stream_ref, day_index) DO NOTHING;
 };

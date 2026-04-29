@@ -100,7 +100,11 @@ CREATE OR REPLACE ACTION insert_records(
         $stream_refs := $v.stream_refs;
     }
 
-    -- Insert all records using UNNEST to expand arrays efficiently
+    -- Insert all records using UNNEST to expand arrays efficiently.
+    -- The per-stream `allow_zeros` flag (default FALSE — no metadata row)
+    -- gates the value=0 drop. Streams without an explicit `allow_zeros`
+    -- metadata row inherit the default FALSE, preserving today's behavior.
+    -- Streams opted in via `allow_zeros=TRUE` persist value=0 records.
     INSERT INTO primitive_events (event_time, value, created_at, truflation_created_at, stream_ref, tx_id)
     SELECT
         unnested.event_time,
@@ -110,7 +114,33 @@ CREATE OR REPLACE ACTION insert_records(
         unnested.stream_ref,
         @txid
     FROM UNNEST($event_time, $value, $stream_refs) AS unnested(event_time, value, stream_ref)
-    WHERE unnested.value != 0::NUMERIC(36,18)
+    LEFT JOIN (
+        -- Latest non-disabled allow_zeros row per stream in this batch.
+        -- Deterministic tiebreaker (created_at DESC, row_id DESC) is required
+        -- to keep the action AppHash-stable across nodes. The inner JOIN
+        -- against UNNEST scopes the metadata scan to the batch's distinct
+        -- stream_refs so insert latency stays bounded by batch size, not
+        -- by the global allow_zeros row count.
+        SELECT stream_ref, value_b AS allow_zeros FROM (
+            SELECT
+                md.stream_ref,
+                md.value_b,
+                ROW_NUMBER() OVER (
+                    PARTITION BY md.stream_ref
+                    ORDER BY md.created_at DESC, md.row_id DESC
+                ) AS rn
+            FROM metadata md
+            JOIN (SELECT DISTINCT r.stream_ref
+                  FROM UNNEST($stream_refs) AS r(stream_ref)
+                  WHERE r.stream_ref IS NOT NULL) batch
+              ON batch.stream_ref = md.stream_ref
+            WHERE md.metadata_key = 'allow_zeros'
+              AND md.disabled_at IS NULL
+        ) ranked WHERE rn = 1
+    ) cfg ON cfg.stream_ref = unnested.stream_ref
+    WHERE
+        unnested.value != 0::NUMERIC(36,18)
+        OR COALESCE(cfg.allow_zeros, FALSE) = TRUE
     ORDER BY unnested.stream_ref, unnested.event_time, $current_block;  -- matches (stream_ref, event_time, created_at)
 
     -- Enqueue days for pruning using helper (idempotent, distinct per day)

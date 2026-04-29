@@ -16,7 +16,8 @@
 
 CREATE OR REPLACE ACTION create_streams(
     $stream_ids TEXT[],
-    $stream_types TEXT[]
+    $stream_types TEXT[],
+    $allow_zeros BOOL[] DEFAULT NULL
 ) PUBLIC {
     -- ===== FEE COLLECTION WITH ROLE EXEMPTION =====
     $lower_caller TEXT := LOWER(@caller);
@@ -71,6 +72,12 @@ CREATE OR REPLACE ACTION create_streams(
     -- Check if stream_ids and stream_types arrays have the same length
     if array_length($stream_ids) != array_length($stream_types) {
         ERROR('Stream IDs and stream types arrays must have the same length');
+    }
+
+    -- If allow_zeros array was provided, it must have the same length as stream_ids.
+    -- A NULL array means "use default (FALSE) for every stream" — no row written.
+    if $allow_zeros IS NOT NULL AND array_length($allow_zeros) != array_length($stream_ids) {
+        ERROR('allow_zeros array length must match stream_ids');
     }
 
     -- Validate stream IDs
@@ -268,6 +275,41 @@ CREATE OR REPLACE ACTION create_streams(
     FROM UNNEST($stream_ids, $stream_types) AS t(stream_id, stream_type)
     JOIN data_providers dp ON dp.address = $data_provider
     JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = t.stream_id;
+
+    -- Insert allow_zeros metadata only when explicitly set to TRUE.
+    -- FALSE / NULL leaves the row absent so the implicit default of FALSE
+    -- (today's behavior — zeros dropped on insert) is preserved.
+    if $allow_zeros IS NOT NULL {
+        INSERT INTO metadata (
+            row_id,
+            metadata_key,
+            value_i,
+            value_f,
+            value_b,
+            value_s,
+            value_ref,
+            created_at,
+            disabled_at,
+            stream_ref,
+            tx_id
+        )
+        SELECT
+            uuid_generate_v5($base_uuid, 'metadata' || $data_provider || t.stream_id || 'allow_zeros' || '6')::UUID,
+            'allow_zeros'::TEXT,
+            NULL::INT,
+            NULL::NUMERIC(36,18),
+            TRUE,
+            NULL::TEXT,
+            NULL::TEXT,
+            @height,
+            NULL::INT,
+            s.id,
+            @txid
+        FROM UNNEST($stream_ids, $allow_zeros) AS t(stream_id, allow_z)
+        JOIN data_providers dp ON dp.address = $data_provider
+        JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = t.stream_id
+        WHERE COALESCE(t.allow_z, FALSE) = TRUE;
+    }
 
     record_transaction_event(
         1,

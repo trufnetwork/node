@@ -40,6 +40,7 @@ This document lists the behaviors that must have automated tests to ensure they 
 - [x] Data records are immutable. They can't be disabled or deleted. (records can't be disabled by design, no need to test)
 - [COMPOSED04] Taxonomy definitions are immutable. But they can be disabled (only the whole version and not a single child definition)
 - [PRIMITIVE04] A base date for a stream can be set by parameters. If not set, the stream will use the first record date as base date.
+- [PRIMITIVE05] Per-stream `allow_zeros` config (default false) controls whether `value=0` inserts persist. Default behavior drops zeros silently on insert; opt-in via `create_stream($allow_zeros=true)` or `set_allow_zeros()` persists them. Toggle is forward-only — historical state is not rewritten. Verified by `tests/streams/allow_zeros_test.go`.
 
 
 ## Composition & Aggregation

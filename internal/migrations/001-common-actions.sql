@@ -37,13 +37,19 @@ CREATE OR REPLACE ACTION create_data_provider(
  * create_stream: Creates a new stream with required metadata.
  * Validates stream_id format, data provider address, and stream type.
  * Sets default metadata including type, owner, visibility, and readonly keys.
+ *
+ * Optional $allow_zeros (default FALSE) controls whether value=0 inserts
+ * are persisted on this stream. Default FALSE preserves the existing
+ * behavior (zeros are silently dropped on insert and excluded from prune
+ * enqueueing). Set TRUE to allow zero-valued records.
  */
 CREATE OR REPLACE ACTION create_stream(
     $stream_id TEXT,
-    $stream_type TEXT
+    $stream_type TEXT,
+    $allow_zeros BOOL DEFAULT FALSE
 ) PUBLIC {
     -- Delegate to batch implementation for single-stream consistency.
-    create_streams( ARRAY[$stream_id], ARRAY[$stream_type] );
+    create_streams( ARRAY[$stream_id], ARRAY[$stream_type], ARRAY[$allow_zeros] );
 };
 
 /**
@@ -52,10 +58,17 @@ CREATE OR REPLACE ACTION create_stream(
  * Exemption: system:network_writer role bypasses fee collection
  * Validates stream_id format, data provider address, and stream type.
  * Sets default metadata including type, owner, visibility, and readonly keys.
+ *
+ * Optional $allow_zeros: per-stream BOOL array (defaults to NULL — every
+ * stream gets the implicit default of FALSE, today's behavior). When
+ * supplied, length must match $stream_ids; only TRUE entries write a
+ * persisted metadata row. FALSE entries leave the row absent so the
+ * default-FALSE join in insert_records continues to drop value=0 inserts.
  */
 CREATE OR REPLACE ACTION create_streams(
     $stream_ids TEXT[],
-    $stream_types TEXT[]
+    $stream_types TEXT[],
+    $allow_zeros BOOL[] DEFAULT NULL
 ) PUBLIC {
     -- ===== FEE COLLECTION WITH ROLE EXEMPTION =====
     $lower_caller TEXT := LOWER(@caller);
@@ -110,6 +123,12 @@ CREATE OR REPLACE ACTION create_streams(
     -- Check if stream_ids and stream_types arrays have the same length
     if array_length($stream_ids) != array_length($stream_types) {
         ERROR('Stream IDs and stream types arrays must have the same length');
+    }
+
+    -- If allow_zeros array was provided, it must have the same length as stream_ids.
+    -- A NULL array means "use default (FALSE) for every stream" — no row written.
+    if $allow_zeros IS NOT NULL AND array_length($allow_zeros) != array_length($stream_ids) {
+        ERROR('allow_zeros array length must match stream_ids');
     }
 
     -- Validate stream IDs
@@ -308,6 +327,41 @@ CREATE OR REPLACE ACTION create_streams(
     JOIN data_providers dp ON dp.address = $data_provider
     JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = t.stream_id;
 
+    -- Insert allow_zeros metadata only when explicitly set to TRUE.
+    -- FALSE / NULL leaves the row absent so the implicit default of FALSE
+    -- (today's behavior — zeros dropped on insert) is preserved.
+    if $allow_zeros IS NOT NULL {
+        INSERT INTO metadata (
+            row_id,
+            metadata_key,
+            value_i,
+            value_f,
+            value_b,
+            value_s,
+            value_ref,
+            created_at,
+            disabled_at,
+            stream_ref,
+            tx_id
+        )
+        SELECT
+            uuid_generate_v5($base_uuid, 'metadata' || $data_provider || t.stream_id || 'allow_zeros' || '6')::UUID,
+            'allow_zeros'::TEXT,
+            NULL::INT,
+            NULL::NUMERIC(36,18),
+            TRUE,
+            NULL::TEXT,
+            NULL::TEXT,
+            @height,
+            NULL::INT,
+            s.id,
+            @txid
+        FROM UNNEST($stream_ids, $allow_zeros) AS t(stream_id, allow_z)
+        JOIN data_providers dp ON dp.address = $data_provider
+        JOIN streams s ON s.data_provider_id = dp.id AND s.stream_id = t.stream_id
+        WHERE COALESCE(t.allow_z, FALSE) = TRUE;
+    }
+
     record_transaction_event(
         1,
         $fee_total,
@@ -343,7 +397,16 @@ CREATE OR REPLACE ACTION insert_metadata(
     if !is_stream_owner($data_provider, $stream_id, $lower_caller) {
         ERROR('Only stream owner can insert metadata');
     }
-    
+
+    -- Reserved keys: allow_zeros has a dedicated mutator (set_allow_zeros)
+    -- that handles the disable-then-insert sequence atomically. Routing
+    -- writes through the generic insert_metadata path would let two
+    -- concurrent rows coexist and break the "latest non-disabled wins"
+    -- semantics that insert_records / helper_enqueue_prune_days rely on.
+    if LOWER($key) = 'allow_zeros' {
+        ERROR('use set_allow_zeros to modify allow_zeros');
+    }
+
     -- Set the appropriate value based on type
     if $val_type = 'int' {
         $value_i := $value::INT;
@@ -449,7 +512,15 @@ CREATE OR REPLACE ACTION disable_metadata(
     if $found = false {
         ERROR('Metadata record not found');
     }
-    
+
+    -- Reserved keys: allow_zeros has a dedicated mutator (set_allow_zeros)
+    -- that disables-and-reinserts atomically. Letting disable_metadata
+    -- soft-delete this row in isolation would silently flip a stream
+    -- back to default-FALSE without writing the corresponding audit row.
+    if LOWER($metadata_key) = 'allow_zeros' {
+        ERROR('use set_allow_zeros to modify allow_zeros');
+    }
+
     -- In a separate step, check if the key is read-only
     $is_readonly BOOL := false;
     for $readonly_row in SELECT * FROM metadata 
