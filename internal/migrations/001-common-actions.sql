@@ -54,7 +54,7 @@ CREATE OR REPLACE ACTION create_stream(
 
 /**
  * create_streams: Creates multiple streams at once.
- * Fee: 2 TRUF per stream created
+ * Fee: 6 TRUF per stream created
  * Exemption: system:network_writer role bypasses fee collection
  * Validates stream_id format, data provider address, and stream type.
  * Sets default metadata including type, owner, visibility, and readonly keys.
@@ -88,9 +88,9 @@ CREATE OR REPLACE ACTION create_streams(
         }
     }
 
-    -- Collect fee only from non-exempt wallets (2 TRUF per stream)
+    -- Collect fee only from non-exempt wallets (6 TRUF per stream)
     IF NOT $is_exempt {
-        $fee_per_stream := 2000000000000000000::NUMERIC(78, 0); -- 2 TRUF with 18 decimals
+        $fee_per_stream := 6000000000000000000::NUMERIC(78, 0); -- 6 TRUF with 18 decimals
         $total_fee := $fee_per_stream * $num_streams::NUMERIC(78, 0);
 
         IF @leader_sender IS NULL {

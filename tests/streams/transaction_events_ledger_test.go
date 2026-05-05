@@ -32,8 +32,9 @@ const (
 	ledgerExtensionAlias = "sepolia_bridge"
 
 	feeOneTRUF       = "1000000000000000000"
-	feeTwoTRUF       = "2000000000000000000"
-	feeFourTRUF      = "4000000000000000000"
+	feeThreeTRUF     = "3000000000000000000"
+	feeSixTRUF       = "6000000000000000000"
+	feeTwelveTRUF    = "12000000000000000000"
 	feeFortyTRUF     = "40000000000000000000"
 	transferAmount   = "5000000000000000000"
 	withdrawAmount   = "10000000000000000000"
@@ -142,7 +143,7 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 			 WHERE tx_id = $2 AND sequence = 1`, schemaName)
 		_, err = platform.DB.Execute(ctx,
 			updateSQL,
-			feeOneTRUF,
+			feeThreeTRUF,
 			insertTx,
 		)
 		require.NoError(t, err)
@@ -155,7 +156,7 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 			insertTx,
 			2,
 			bonusRecipientLower,
-			feeOneTRUF,
+			feeThreeTRUF,
 		)
 		require.NoError(t, err)
 
@@ -218,29 +219,29 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		expected := map[string]ledgerExpectation{
 			createTx: {
 				method:       "deployStream",
-				fee:          feeFourTRUF,
+				fee:          feeTwelveTRUF,
 				feeRecipient: createLeaderAddr,
 				feeDistributions: []string{
-					buildDistribution(createLeaderAddr, feeFourTRUF),
+					buildDistribution(createLeaderAddr, feeTwelveTRUF),
 				},
 				assertMetadata: assertNoMetadata,
 			},
 			insertTx: {
 				method:       "insertRecords",
-				fee:          feeTwoTRUF,
+				fee:          feeSixTRUF,
 				feeRecipient: insertLeaderAddr,
 				feeDistributions: []string{
-					buildDistribution(insertLeaderAddr, feeOneTRUF),
-					buildDistribution(bonusRecipientLower, feeOneTRUF),
+					buildDistribution(insertLeaderAddr, feeThreeTRUF),
+					buildDistribution(bonusRecipientLower, feeThreeTRUF),
 				},
 				assertMetadata: assertNoMetadata,
 			},
 			taxTx: {
 				method:       "setTaxonomies",
-				fee:          feeTwoTRUF,
+				fee:          feeSixTRUF,
 				feeRecipient: taxLeaderAddr,
 				feeDistributions: []string{
-					buildDistribution(taxLeaderAddr, feeTwoTRUF),
+					buildDistribution(taxLeaderAddr, feeSixTRUF),
 				},
 				assertMetadata: assertNoMetadata,
 			},
@@ -340,7 +341,7 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		require.Equal(t, insertTx, insertLeaderReceivedRows[0].TxID)
 		require.Equal(t, insertLeaderAddr, insertLeaderReceivedRows[0].FeeRecipient)
 		require.Equal(t, insertLeaderAddr, insertLeaderReceivedRows[0].DistributionRecipient)
-		require.Equal(t, feeOneTRUF, insertLeaderReceivedRows[0].DistributionAmount)
+		require.Equal(t, feeThreeTRUF, insertLeaderReceivedRows[0].DistributionAmount)
 
 		bonusReceivedRows, err := fetchTransactionFees(ctx, platform, actor.Address(), bonusRecipientLower, "received")
 		require.NoError(t, err)
@@ -348,7 +349,7 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		require.Equal(t, insertTx, bonusReceivedRows[0].TxID)
 		require.Equal(t, insertLeaderAddr, bonusReceivedRows[0].FeeRecipient)
 		require.Equal(t, bonusRecipientLower, bonusReceivedRows[0].DistributionRecipient)
-		require.Equal(t, feeOneTRUF, bonusReceivedRows[0].DistributionAmount)
+		require.Equal(t, feeThreeTRUF, bonusReceivedRows[0].DistributionAmount)
 
 		lastTxRows, err := fetchLastTransactions(ctx, platform, actor.Address(), userLower, int64(len(expected)))
 		require.NoError(t, err)
@@ -366,7 +367,7 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		for _, row := range bonusHistoryRows {
 			if row.DistributionRecipient == bonusRecipientLower {
 				require.Equal(t, insertTx, row.TxID)
-				require.Equal(t, feeOneTRUF, row.DistributionAmount)
+				require.Equal(t, feeThreeTRUF, row.DistributionAmount)
 				foundBonus = true
 				break
 			}
