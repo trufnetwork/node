@@ -274,6 +274,9 @@ CREATE OR REPLACE ACTION process_settlement(
     $bridge TEXT;
     for $row in SELECT bridge FROM ob_queries WHERE id = $query_id { $bridge := $row.bridge; }
 
+    -- Bridge token base units per $1.00 (single source of per-bridge decimals).
+    $units_per_dollar NUMERIC(78, 0) := get_bridge_units_per_dollar($bridge);
+
     $pids INT[];
     $wallet_hexes TEXT[];
     $amounts NUMERIC(78, 0)[];
@@ -322,11 +325,14 @@ CREATE OR REPLACE ACTION process_settlement(
                 wallet_address,
                 '0x' || encode(wallet_address, 'hex') as wallet_hex,
                 CASE
-                    WHEN price >= 0 THEN ((amount::NUMERIC(78, 0) * '1000000000000000000'::NUMERIC(78, 0) * 98::NUMERIC(78, 0)) / 100::NUMERIC(78, 0))
-                    ELSE (amount::NUMERIC(78, 0) * (CASE WHEN price < 0 THEN -price ELSE price END)::NUMERIC(78, 0) * '10000000000000000'::NUMERIC(78, 0))
+                    -- Winning share payout: amount × $0.98 (98% of $1.00, in base units).
+                    WHEN price >= 0 THEN ((amount::NUMERIC(78, 0) * $units_per_dollar * 98::NUMERIC(78, 0)) / 100::NUMERIC(78, 0))
+                    -- Open buy refund: amount × |price| × $0.01 (price is INT in [1,99]).
+                    ELSE ((amount::NUMERIC(78, 0) * (CASE WHEN price < 0 THEN -price ELSE price END)::NUMERIC(78, 0) * $units_per_dollar) / 100::NUMERIC(78, 0))
                 END as pay,
                 CASE WHEN price >= 0 THEN $winning_outcome ELSE outcome END as out,
-                CASE WHEN price >= 0 THEN ((amount::NUMERIC(78, 0) * '1000000000000000000'::NUMERIC(78, 0) * 2::NUMERIC(78, 0)) / 100::NUMERIC(78, 0)) ELSE 0::NUMERIC(78, 0) END as fee
+                -- Settlement fee: 2% of $1.00 per winning share.
+                CASE WHEN price >= 0 THEN ((amount::NUMERIC(78, 0) * $units_per_dollar * 2::NUMERIC(78, 0)) / 100::NUMERIC(78, 0)) ELSE 0::NUMERIC(78, 0) END as fee
             FROM target_positions
         )
         SELECT * FROM payout_calculation

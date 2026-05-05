@@ -284,32 +284,41 @@ CREATE OR REPLACE ACTION get_best_prices(
 };
 
 /**
- * get_user_collateral()
+ * get_user_collateral($bridge)
  *
- * Show caller's total collateral locked across all markets.
- * Useful for user dashboards showing "total value locked in prediction markets".
+ * Show caller's total collateral locked across all markets that use the
+ * given bridge. Different bridges have different on-chain decimals
+ * (e.g. eth_truf=18, eth_usdc=6) — summing across mixed-bridge positions
+ * would produce a meaningless quantity, so this action is per-bridge.
  *
- * Returns:
- * - total_locked: Total collateral (shares value + buy orders locked)
+ * Parameters:
+ * - $bridge: Bridge namespace. Defaults to ethereum_bridge in dev /
+ *            eth_truf in prod (the legacy 18-decimal default), so existing
+ *            parameterless callers keep working unchanged.
+ *
+ * Returns (all values in $bridge's token base units):
+ * - total_locked: shares_value + buy_orders_locked
  * - buy_orders_locked: Collateral locked in open buy orders
  * - shares_value: Value of shares held (holdings + open sells, at $1.00 per share)
  *
- * All values in wei (18 decimals).
- *
  * Usage:
- *   kwil-cli database call --action get_user_collateral
+ *   kwil-cli call-action get_user_collateral
+ *   kwil-cli call-action get_user_collateral text:eth_usdc
  *
- * Example Output:
+ * Example Output (ethereum_bridge, 18-decimal):
  *   total_locked               | buy_orders_locked          | shares_value
  *   2500000000000000000000     | 500000000000000000000      | 2000000000000000000000
  *   (2500 tokens)              | (500 tokens)               | (2000 tokens)
  */
-CREATE OR REPLACE ACTION get_user_collateral()
+CREATE OR REPLACE ACTION get_user_collateral($bridge TEXT DEFAULT 'ethereum_bridge')
 PUBLIC VIEW RETURNS (
     total_locked NUMERIC(78, 0),
     buy_orders_locked NUMERIC(78, 0),
     shares_value NUMERIC(78, 0)
 ) {
+    -- Bridge token base units per $1.00 (single source of per-bridge decimals).
+    $units_per_dollar NUMERIC(78, 0) := get_bridge_units_per_dollar($bridge);
+
     -- Get caller's wallet address
     $caller_bytes BYTEA := decode(substring(LOWER(@caller), 3, 40), 'hex');
 
@@ -324,29 +333,36 @@ PUBLIC VIEW RETURNS (
         RETURN 0::NUMERIC(78, 0), 0::NUMERIC(78, 0), 0::NUMERIC(78, 0);
     }
 
-    -- Calculate locked collateral from buy orders
-    -- Buy order collateral = |price| * amount * 0.01 (price in cents)
-    -- Convert to wei: multiply by 10^18, divide by 100
+    -- Buy order collateral, in bridge token base units:
+    --   ($amount * |price| * units_per_dollar) / 100
+    -- Restricted to markets that use $bridge.
     $buy_locked NUMERIC(78, 0);
     for $row in
-        SELECT COALESCE(SUM(abs(price)::NUMERIC(78, 0) * amount::NUMERIC(78, 0) * '10000000000000000'::NUMERIC(78, 0))::NUMERIC(78, 0), 0::NUMERIC(78, 0)) as total
-        FROM ob_positions
-        WHERE participant_id = $participant_id
-          AND price < 0
+        SELECT COALESCE(
+            SUM(abs(p.price)::NUMERIC(78, 0) * p.amount::NUMERIC(78, 0))::NUMERIC(78, 0),
+            0::NUMERIC(78, 0)
+        ) as price_amount_sum
+        FROM ob_positions p
+        JOIN ob_queries q ON p.query_id = q.id
+        WHERE p.participant_id = $participant_id
+          AND p.price < 0
+          AND q.bridge = $bridge
     {
-        $buy_locked := $row.total;
+        $buy_locked := ($row.price_amount_sum * $units_per_dollar) / 100::NUMERIC(78, 0);
     }
 
-    -- Calculate value of shares held (holdings + open sells)
-    -- Each share = $1.00 = 10^18 wei
+    -- Shares value (holdings + open sells), valued at $1.00 per share, in
+    -- bridge token base units. Restricted to markets that use $bridge.
     $shares_value NUMERIC(78, 0);
     for $row in
-        SELECT COALESCE(SUM(amount::NUMERIC(78, 0) * '1000000000000000000'::NUMERIC(78, 0))::NUMERIC(78, 0), 0::NUMERIC(78, 0)) as total
-        FROM ob_positions
-        WHERE participant_id = $participant_id
-          AND price >= 0
+        SELECT COALESCE(SUM(p.amount)::NUMERIC(78, 0), 0::NUMERIC(78, 0)) as amount_sum
+        FROM ob_positions p
+        JOIN ob_queries q ON p.query_id = q.id
+        WHERE p.participant_id = $participant_id
+          AND p.price >= 0
+          AND q.bridge = $bridge
     {
-        $shares_value := $row.total;
+        $shares_value := $row.amount_sum * $units_per_dollar;
     }
 
     -- Total locked collateral

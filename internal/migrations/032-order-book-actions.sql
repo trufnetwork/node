@@ -36,6 +36,45 @@ CREATE OR REPLACE ACTION validate_bridge($bridge TEXT) PRIVATE {
 };
 
 -- =============================================================================
+-- get_bridge_units_per_dollar: Bridge token base units per $1.00 of collateral
+-- =============================================================================
+/**
+ * Returns the number of bridge token base units that represent $1.00 of
+ * collateral. This is 10^decimals where decimals is the bridge token's
+ * on-chain decimals.
+ *
+ * Embedded test bridges (hoodi_tt2, sepolia_bridge, ethereum_bridge) are all
+ * 18-decimal TRUF-likes and share the same value. The generated mainnet
+ * override (.prod.sql) replaces the body with eth_truf=10^18 and
+ * eth_usdc=10^6, driven by BRIDGE_DECIMALS in
+ * scripts/generate_prod_migrations.py — the only place real per-bridge
+ * decimals live.
+ *
+ * IMPORTANT: $price in OB actions is INT in [1, 99] — an integer-encoded
+ * probability/price-point, NOT a value with units. To compute collateral
+ * in base units:
+ *
+ *     collateral_base_units = ($amount * $price * units_per_dollar) / 100
+ *
+ * Parameters:
+ * - $bridge: Bridge namespace
+ *
+ * Returns:
+ * - units_per_dollar: Base units representing $1.00
+ */
+CREATE OR REPLACE ACTION get_bridge_units_per_dollar($bridge TEXT)
+    PUBLIC VIEW RETURNS (units_per_dollar NUMERIC(78, 0)) {
+    if $bridge = 'hoodi_tt2' {
+        RETURN '1000000000000000000'::NUMERIC(78, 0);
+    } else if $bridge = 'sepolia_bridge' {
+        RETURN '1000000000000000000'::NUMERIC(78, 0);
+    } else if $bridge = 'ethereum_bridge' {
+        RETURN '1000000000000000000'::NUMERIC(78, 0);
+    }
+    ERROR('Unknown bridge: ' || $bridge);
+};
+
+-- =============================================================================
 -- get_market_bridge: Get the bridge for a market
 -- =============================================================================
 /**
@@ -73,7 +112,7 @@ CREATE OR REPLACE ACTION get_market_bridge($query_id INT) PRIVATE RETURNS (bridg
  * - $bridge: Bridge namespace for collateral (hoodi_tt2, sepolia_bridge, ethereum_bridge)
  * - $query_components: ABI-encoded (address data_provider, bytes32 stream_id, string action_id, bytes args)
  * - $settle_time: Unix timestamp when market can be settled (must be in future)
- * - $max_spread: Maximum spread for LP rewards (1-50 cents)
+ * - $max_spread: Maximum spread for LP rewards (1-50 price-points)
  * - $min_order_size: Minimum order size for LP rewards (must be positive)
  *
  * Returns:
@@ -128,9 +167,9 @@ CREATE OR REPLACE ACTION create_market(
         ERROR('Settlement time must be in the future');
     }
 
-    -- Validate max_spread (1-50 cents)
+    -- Validate max_spread (1-50 price-points)
     if $max_spread IS NULL OR $max_spread < 1 OR $max_spread > 50 {
-        ERROR('Max spread must be between 1 and 50 cents');
+        ERROR('Max spread must be between 1 and 50 (price-points)');
     }
 
     -- Validate min_order_size (must be positive)
@@ -141,7 +180,7 @@ CREATE OR REPLACE ACTION create_market(
     -- ==========================================================================
     -- FEE COLLECTION
     -- ==========================================================================
-    -- Fee: 2 TRUF (2 * 10^18 wei)
+    -- Fee: 2 TRUF (2 * 10^18 base units of eth_truf)
     -- Market creation fee is ALWAYS paid in TRUF (hoodi_tt on testnet)
     -- regardless of which bridge the market uses for collateral
     $market_creation_fee NUMERIC(78, 0) := '2000000000000000000'::NUMERIC(78, 0);
@@ -428,9 +467,9 @@ PUBLIC VIEW RETURNS (market_exists BOOLEAN) {
  * - Example: Buy YES @ $0.52 matches Sell YES @ $0.51
  *   → Seller receives $0.51/share, buyer is refunded $0.01/share
  *
- * Collateral Flow:
- * - Seller receives: match_amount × sell_price × 10^16
- * - Buyer refund (if price improvement): match_amount × (buy_price - sell_price) × 10^16
+ * Collateral Flow (all amounts in bridge token base units):
+ * - Seller receives: (match_amount × sell_price × units_per_dollar) / 100
+ * - Buyer refund (if price improvement): (match_amount × (buy_price - sell_price) × units_per_dollar) / 100
  * - Shares transfer from seller's holdings to buyer's holdings
  *
  * Recursion Behavior:
@@ -531,11 +570,12 @@ CREATE OR REPLACE ACTION match_direct(
     }
     $seller_wallet_address TEXT := '0x' || encode($seller_wallet_bytes, 'hex');
 
-    -- Calculate payment to seller (at sell price)
-    $multiplier NUMERIC(78, 0) := '10000000000000000'::NUMERIC(78, 0);
+    -- Calculate payment to seller (at sell price), in bridge token base units.
+    -- $price is INT in [1, 99]; divide by 100 to convert to dollars.
+    $units_per_dollar NUMERIC(78, 0) := get_bridge_units_per_dollar($bridge);
     $seller_payment NUMERIC(78, 0) := ($match_amount::NUMERIC(78, 0) *
                                         $sell_price::NUMERIC(78, 0) *
-                                        $multiplier);
+                                        $units_per_dollar) / 100::NUMERIC(78, 0);
 
     -- Transfer payment from vault to seller
     ob_unlock_collateral($bridge, $seller_wallet_address, $seller_payment);
@@ -558,11 +598,11 @@ CREATE OR REPLACE ACTION match_direct(
     $buyer_wallet_address TEXT := '0x' || encode($buyer_wallet_bytes, 'hex');
 
     if $price_diff > 0 {
-        -- Buyer locked collateral at buy_price but match executes at sell_price
-        -- Refund the difference: match_amount × (buy_price - sell_price) × 10^16
+        -- Buyer locked collateral at buy_price but match executes at sell_price.
+        -- Refund the difference: (match_amount × (buy_price - sell_price) × units_per_dollar) / 100.
         $buyer_refund NUMERIC(78, 0) := ($match_amount::NUMERIC(78, 0) *
                                           $price_diff::NUMERIC(78, 0) *
-                                          $multiplier);
+                                          $units_per_dollar) / 100::NUMERIC(78, 0);
         ob_unlock_collateral($bridge, $buyer_wallet_address, $buyer_refund);
 
         -- Record buy impact with refund
@@ -807,8 +847,8 @@ CREATE OR REPLACE ACTION match_burn(
     $no_price INT,
     $bridge TEXT
 ) PRIVATE {
-    -- Multiplier for collateral calculations
-    $multiplier NUMERIC(78, 0) := '10000000000000000'::NUMERIC(78, 0);
+    -- Bridge token base units per $1.00 of collateral (single source of truth).
+    $units_per_dollar NUMERIC(78, 0) := get_bridge_units_per_dollar($bridge);
 
     -- Validate complementary prices (must sum to 100)
     if ($yes_price + $no_price) != 100 {
@@ -898,14 +938,15 @@ CREATE OR REPLACE ACTION match_burn(
     ob_record_order_event($query_id, $yes_participant_id, 'burn_fill', TRUE, $yes_price, $burn_amount, $no_participant_id);
     ob_record_order_event($query_id, $no_participant_id, 'burn_fill', FALSE, $no_price, $burn_amount, $yes_participant_id);
 
-    -- Calculate payouts
+    -- Calculate payouts in bridge token base units.
+    -- $price is INT in [1, 99]; divide by 100 to convert to dollars.
     $yes_payout NUMERIC(78, 0) := ($burn_amount::NUMERIC(78, 0) *
                                     $yes_price::NUMERIC(78, 0) *
-                                    $multiplier);
+                                    $units_per_dollar) / 100::NUMERIC(78, 0);
 
     $no_payout NUMERIC(78, 0) := ($burn_amount::NUMERIC(78, 0) *
                                    $no_price::NUMERIC(78, 0) *
-                                   $multiplier);
+                                   $units_per_dollar) / 100::NUMERIC(78, 0);
 
     -- Unlock collateral
     ob_unlock_collateral($bridge, $yes_wallet_address, $yes_payout);
@@ -1048,15 +1089,17 @@ CREATE OR REPLACE ACTION match_orders(
  * Parameters:
  * - $query_id: Market identifier (from ob_queries.id)
  * - $outcome: TRUE for YES shares, FALSE for NO shares
- * - $price: Price per share in cents (1-99 = $0.01 to $0.99)
+ * - $price: INT in [1, 99] — implied probability × 100 ($0.01 to $0.99)
  * - $amount: Number of shares to buy
  *
- * Collateral locked: amount × price × 10^16
- * Example: 10 shares at $0.56 = 10 × 56 × 10^16 = 5.6 × 10^18 wei (5.6 TRUF)
+ * Collateral locked (in bridge token base units):
+ *   ($amount * $price * units_per_dollar) / 100
+ * Example (eth_truf, units_per_dollar = 10^18):
+ *   10 shares at price 56 → (10 × 56 × 10^18) / 100 = 5.6 × 10^18 base units (5.6 TRUF)
  *
  * Price Convention:
- * - Buy orders stored with NEGATIVE price (e.g., -56 for $0.56 buy)
- * - Sell orders stored with POSITIVE price (e.g., 56 for $0.56 sell)
+ * - Buy orders stored with NEGATIVE price (e.g., -56 for a buy at probability 56)
+ * - Sell orders stored with POSITIVE price (e.g., 56 for a sell at probability 56)
  * - Holdings stored with price = 0 (not listed for sale)
  *
  * Examples:
@@ -1069,9 +1112,6 @@ CREATE OR REPLACE ACTION place_buy_order(
     $price INT,
     $amount INT8
 ) PUBLIC {
-    -- Constants
-    $collateral_decimals INT := 18;
-
     -- ==========================================================================
     -- SECTION 1: VALIDATION
     -- ==========================================================================
@@ -1136,16 +1176,15 @@ CREATE OR REPLACE ACTION place_buy_order(
     -- SECTION 2: CALCULATE COLLATERAL NEEDED
     -- ==========================================================================
 
-    -- For buy order: collateral = amount × price × 10^16
-    -- Example: 10 shares at $0.56 = 10 × 56 × 10^16 = 5.6 × 10^18 wei
+    -- All collateral in bridge token base units. units_per_dollar is sourced
+    -- from get_bridge_units_per_dollar (the single point where per-bridge
+    -- decimals are defined). $price is INT in [1, 99], so we divide by 100.
     --
-    -- Why 10^16?
-    -- - Prices are in cents (1-99)
-    -- - Token has 18 decimals
-    -- - Formula: 10^(18-2) = 10^16
-    -- Note: Kuneiform doesn't have POWER(), so we use hardcoded constant
-    -- Cast INT8 and INT to NUMERIC for multiplication
-    $collateral_needed NUMERIC(78, 0) := ($amount::NUMERIC(78, 0) * $price::NUMERIC(78, 0) * '10000000000000000'::NUMERIC(78, 0));
+    --   collateral = ($amount * $price * units_per_dollar) / 100
+    $units_per_dollar NUMERIC(78, 0) := get_bridge_units_per_dollar($bridge);
+    $collateral_needed NUMERIC(78, 0) := ($amount::NUMERIC(78, 0) *
+                                           $price::NUMERIC(78, 0) *
+                                           $units_per_dollar) / 100::NUMERIC(78, 0);
 
     -- ==========================================================================
     -- SECTION 3: CHECK BALANCE (bridge-specific)
@@ -1161,9 +1200,9 @@ CREATE OR REPLACE ACTION place_buy_order(
     }
 
     if $caller_balance < $collateral_needed {
-        -- Note: Division by 10^18 for display purposes (convert wei to TRUF)
-        ERROR('Insufficient balance. Required: ' || $collateral_needed::TEXT || ' wei (' ||
-              ($collateral_needed / '1000000000000000000'::NUMERIC(78, 0))::TEXT || ' TRUF)');
+        -- Display in token base units AND in dollar form (collateral / units_per_dollar).
+        ERROR('Insufficient balance. Required: ' || $collateral_needed::TEXT || ' base units ($' ||
+              ($collateral_needed / $units_per_dollar)::TEXT || ')');
     }
 
     -- ==========================================================================
@@ -1261,7 +1300,7 @@ CREATE OR REPLACE ACTION place_buy_order(
  * Parameters:
  * - $query_id: Market identifier (from ob_queries.id)
  * - $outcome: TRUE for YES shares, FALSE for NO shares
- * - $price: Price per share in cents (1-99 = $0.01 to $0.99)
+ * - $price: INT in [1, 99] — implied probability × 100 ($0.01 to $0.99)
  * - $amount: Number of shares to sell
  *
  * Prerequisites: User must own at least $amount shares of $outcome
@@ -1454,19 +1493,21 @@ CREATE OR REPLACE ACTION place_sell_order(
  *
  * Parameters:
  * - $query_id: Market identifier (from ob_queries.id)
- * - $true_price: Price for YES shares in cents (1-99 = $0.01 to $0.99)
+ * - $true_price: INT in [1, 99] — implied probability for YES × 100 ($0.01 to $0.99)
  * - $amount: Number of share PAIRS to mint
  *
- * Collateral locked: amount × $1.00 (amount × 10^18 wei)
- * Example: 100 share pairs = 100 × 10^18 wei = 100 TRUF
+ * Collateral locked (in bridge token base units):
+ *   $amount * units_per_dollar    -- one full $1.00 per minted pair
+ * Example (eth_truf, units_per_dollar = 10^18):
+ *   100 share pairs → 100 × 10^18 base units = 100 TRUF
  *
  * Result:
  * - User holds: $amount YES shares at price=0 (holding, not for sale)
  * - User sells: $amount NO shares at price=(100-true_price) (listed for sale)
  *
  * Price Calculation:
- * - YES price: $true_price (e.g., $0.56 = 56 cents)
- * - NO price: 100 - $true_price (e.g., 100 - 56 = 44 cents = $0.44)
+ * - YES price: $true_price (e.g., 56 ⇒ $0.56)
+ * - NO price: 100 - $true_price (e.g., 100 - 56 = 44 ⇒ $0.44)
  * - Total: Always $1.00 per share pair
  *
  * LP Reward Eligibility:
@@ -1481,10 +1522,10 @@ CREATE OR REPLACE ACTION place_sell_order(
  * but qualification requires BOTH prices to be within the spread. This encourages
  * tight two-sided markets and provides meaningful liquidity for traders.
  *
- * Example with max_spread = 5 cents:
- * - Market midpoint: $0.50
- * - Split @ $0.56/$0.44: Distance = 6¢ → OUTSIDE spread → NOT qualified ❌
- * - Split @ $0.52/$0.48: Distance = 2¢ → WITHIN spread → QUALIFIED ✅
+ * Example with max_spread = 5:
+ * - Market midpoint: 50 (price-points)
+ * - Split @ 56/44: Distance = 6 → OUTSIDE spread → NOT qualified
+ * - Split @ 52/48: Distance = 2 → WITHIN spread → QUALIFIED
  *
  * Examples:
  *   place_split_limit_order(1, 56, 100)  -- Mint 100 pairs: hold YES, sell NO @ $0.44
@@ -1555,16 +1596,14 @@ CREATE OR REPLACE ACTION place_split_limit_order(
     -- SECTION 2: CALCULATE COLLATERAL NEEDED
     -- ==========================================================================
 
-    -- For split order: collateral = amount × $1.00 = amount × 10^18
-    -- Example: 100 shares × 10^18 = 100,000,000,000,000,000,000 wei = 100 TRUF
+    -- Each minted share pair requires $1.00 of collateral, expressed in
+    -- bridge token base units. units_per_dollar is sourced from
+    -- get_bridge_units_per_dollar (the single point where per-bridge
+    -- decimals are defined).
     --
-    -- Why 10^18?
-    -- - Minting a share pair (YES + NO) requires $1.00 total collateral
-    -- - Token has 18 decimals
-    -- - Formula: $1.00 × 10^18
-    -- Note: Kuneiform doesn't have POWER(), so we use hardcoded constant
-    -- Cast INT8 to NUMERIC for multiplication
-    $collateral_needed NUMERIC(78, 0) := ($amount::NUMERIC(78, 0) * '1000000000000000000'::NUMERIC(78, 0));
+    --   collateral = $amount * units_per_dollar
+    $units_per_dollar NUMERIC(78, 0) := get_bridge_units_per_dollar($bridge);
+    $collateral_needed NUMERIC(78, 0) := $amount::NUMERIC(78, 0) * $units_per_dollar;
 
     -- ==========================================================================
     -- SECTION 3: CHECK BALANCE (bridge-specific)
@@ -1580,9 +1619,9 @@ CREATE OR REPLACE ACTION place_split_limit_order(
     }
 
     if $caller_balance < $collateral_needed {
-        -- Note: Division by 10^18 for display purposes (convert wei to TRUF)
-        ERROR('Insufficient balance. Required: ' || $collateral_needed::TEXT || ' wei (' ||
-              ($collateral_needed / '1000000000000000000'::NUMERIC(78, 0))::TEXT || ' TRUF)');
+        -- Display in token base units AND in dollar form (collateral / units_per_dollar).
+        ERROR('Insufficient balance. Required: ' || $collateral_needed::TEXT || ' base units ($' ||
+              ($collateral_needed / $units_per_dollar)::TEXT || ')');
     }
 
     -- ==========================================================================
@@ -1729,9 +1768,10 @@ CREATE OR REPLACE ACTION place_split_limit_order(
  * - System moves 100 NO shares back to holdings (price=0)
  * - Sell order is deleted from ob_positions
  *
- * Collateral Refund Calculation (Buy Orders):
- * - Formula: amount × |price| × 10^16 wei
- * - Example: 10 shares @ $0.56 = 10 × 56 × 10^16 = 5.6 × 10^18 wei (5.6 TRUF)
+ * Collateral Refund Calculation (Buy Orders), in bridge token base units:
+ * - Formula: ($order_amount * |price| * units_per_dollar) / 100
+ * - Example (eth_truf, units_per_dollar = 10^18):
+ *   10 shares @ price 56 → (10 × 56 × 10^18) / 100 = 5.6 × 10^18 base units (5.6 TRUF)
  *
  * Parameters:
  * - $query_id: Market ID from ob_queries
@@ -1848,17 +1888,14 @@ CREATE OR REPLACE ACTION cancel_order(
 
     -- For buy orders (price < 0): Refund locked collateral to user's wallet
     if $price < 0 {
-        -- Calculate locked collateral
-        -- Formula: amount × |price| × 10^16 wei
-        -- Example: 10 shares @ $0.56 = 10 × 56 × 10^16 = 5.6 × 10^18 wei
-        --
-        -- Why 10^16? Prices are in cents (1-99), we need to convert to 18-decimal wei:
-        -- - Price 56 = $0.56 = 0.56 / 1.00
-        -- - Collateral per share = price / 100 * 10^18 = price * 10^16
-
-        $abs_price INT := -$price;  -- Convert negative price to positive
-        $multiplier NUMERIC(78, 0) := '10000000000000000'::NUMERIC(78, 0);  -- 10^16
-        $refund_amount NUMERIC(78, 0) := $order_amount::NUMERIC(78, 0) * $abs_price::NUMERIC(78, 0) * $multiplier;
+        -- Refund in bridge token base units. units_per_dollar comes from
+        -- get_bridge_units_per_dollar (single source of per-bridge decimals).
+        -- $price is INT in [1, 99]; divide by 100 to convert to dollars.
+        $abs_price INT := -$price;
+        $units_per_dollar NUMERIC(78, 0) := get_bridge_units_per_dollar($bridge);
+        $refund_amount NUMERIC(78, 0) := ($order_amount::NUMERIC(78, 0) *
+                                            $abs_price::NUMERIC(78, 0) *
+                                            $units_per_dollar) / 100::NUMERIC(78, 0);
 
         -- Unlock collateral back to user using helper from 031-order-book-vault.sql
         -- Passes bridge parameter to unlock from correct bridge
@@ -1939,9 +1976,9 @@ CREATE OR REPLACE ACTION cancel_order(
  * - User calls: change_bid(old=-54, new=-50, new_amount=100)
  * - Result: 100 shares @ $0.50 (upsizing from 70 to 100, locks additional 15 TRUF)
  *
- * Collateral Calculation:
- * - Old collateral: old_amount × |old_price| × 10^16 wei
- * - New collateral: new_amount × |new_price| × 10^16 wei
+ * Collateral Calculation (in bridge token base units):
+ * - Old collateral: ($old_amount * |old_price| * units_per_dollar) / 100
+ * - New collateral: ($new_amount * |new_price| * units_per_dollar) / 100
  * - Delta: new_collateral - old_collateral
  * - If delta > 0: Lock additional collateral (will ERROR if insufficient balance)
  * - If delta < 0: Unlock excess collateral
@@ -2076,20 +2113,21 @@ CREATE OR REPLACE ACTION change_bid(
     -- SECTION 5: CALCULATE COLLATERAL CHANGE
     -- ==========================================================================
 
-    -- Buy order collateral formula: amount × |price| × 10^16 wei
-    -- Example: 100 shares @ $0.54 = 100 × 54 × 10^16 = 5.4 × 10^19 wei (54 TRUF)
-    $multiplier NUMERIC(78, 0) := '10000000000000000'::NUMERIC(78, 0);  -- 10^16
+    -- Buy order collateral in bridge token base units:
+    --   ($amount * |price| * units_per_dollar) / 100
+    -- units_per_dollar comes from get_bridge_units_per_dollar (single source
+    -- of per-bridge decimals). $price is INT in [1, 99].
+    $units_per_dollar NUMERIC(78, 0) := get_bridge_units_per_dollar($bridge);
+    $old_abs_price INT := -$old_price;
+    $new_abs_price INT := -$new_price;
 
-    $old_abs_price INT := -$old_price;  -- Make positive
-    $new_abs_price INT := -$new_price;  -- Make positive
+    $old_collateral NUMERIC(78, 0) := ($old_amount::NUMERIC(78, 0) *
+                                        $old_abs_price::NUMERIC(78, 0) *
+                                        $units_per_dollar) / 100::NUMERIC(78, 0);
 
-    $old_collateral NUMERIC(78, 0) := $old_amount::NUMERIC(78, 0) *
-                                       $old_abs_price::NUMERIC(78, 0) *
-                                       $multiplier;
-
-    $new_collateral NUMERIC(78, 0) := $new_amount::NUMERIC(78, 0) *
-                                       $new_abs_price::NUMERIC(78, 0) *
-                                       $multiplier;
+    $new_collateral NUMERIC(78, 0) := ($new_amount::NUMERIC(78, 0) *
+                                        $new_abs_price::NUMERIC(78, 0) *
+                                        $units_per_dollar) / 100::NUMERIC(78, 0);
 
     $collateral_delta NUMERIC(78, 0) := $new_collateral - $old_collateral;
     $zero NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
@@ -2535,8 +2573,8 @@ CREATE OR REPLACE ACTION settle_market(
     if $total_true > 0 OR $total_false > 0 {
         if NOT $valid_collateral {
             ERROR('Cannot settle market: Vault collateral mismatch. Expected=' ||
-                  COALESCE($expected_collateral::TEXT, 'NULL') || ' wei, Actual=' || COALESCE($vault_balance::TEXT, 'NULL') ||
-                  ' wei. This indicates missing or excess collateral.');
+                  COALESCE($expected_collateral::TEXT, 'NULL') || ' base units, Actual=' || COALESCE($vault_balance::TEXT, 'NULL') ||
+                  ' base units. This indicates missing or excess collateral.');
         }
     }
 

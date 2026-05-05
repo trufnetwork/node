@@ -956,7 +956,7 @@ func callGetBestPrices(ctx context.Context, platform *kwilTesting.Platform, sign
 }
 
 func callGetUserCollateral(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, resultFn func(*common.Row) error) error {
-	return callActionQueries(ctx, platform, signer, "get_user_collateral", []any{}, resultFn)
+	return callActionQueries(ctx, platform, signer, "get_user_collateral", []any{testExtensionNameQueries}, resultFn)
 }
 
 func callPlaceBuyOrderQueries(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, queryID int, outcome bool, price, amount int, resultFn func(*common.Row) error) error {
