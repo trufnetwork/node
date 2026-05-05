@@ -112,7 +112,11 @@ CREATE OR REPLACE ACTION get_market_bridge($query_id INT) PRIVATE RETURNS (bridg
  * - $bridge: Bridge namespace for collateral (hoodi_tt2, sepolia_bridge, ethereum_bridge)
  * - $query_components: ABI-encoded (address data_provider, bytes32 stream_id, string action_id, bytes args)
  * - $settle_time: Unix timestamp when market can be settled (must be in future)
- * - $max_spread: Maximum spread for LP rewards (1-50 price-points)
+ * - $max_spread: DEPRECATED — accepted, validated, and stored, but no longer
+ *                consumed. LP reward eligibility uses a dynamic spread
+ *                computed in sample_lp_rewards (034). Kept for backward
+ *                compatibility with existing callers. See:
+ *                PredictionMarketTasks/backlog/max_spread_unused.md
  * - $min_order_size: Minimum order size for LP rewards (must be positive)
  *
  * Returns:
@@ -1512,20 +1516,24 @@ CREATE OR REPLACE ACTION place_sell_order(
  *
  * LP Reward Eligibility:
  *
- * To qualify for LP rewards, ALL of the following must be true:
- * 1. BOTH buy and sell prices must be within max_spread of market midpoint (50):
- *    - Effective BUY price (true_price) within spread
- *    - SELL price (false_price = 100 - true_price) within spread
- * 2. Amount must meet min_order_size threshold from ob_queries
+ * Implemented in sample_lp_rewards (034-order-book-rewards.sql) using a
+ * DYNAMIC spread that depends on the current market midpoint, NOT the
+ * per-market max_spread column (which is dormant — see
+ * PredictionMarketTasks/backlog/max_spread_unused.md):
  *
- * Rewards are calculated based on SELL order volume (NO shares listed for sale),
- * but qualification requires BOTH prices to be within the spread. This encourages
- * tight two-sided markets and provides meaningful liquidity for traders.
+ *   spread_base = ABS(midpoint - (100 - midpoint))
+ *     < 30 → eligible band = ±5 price-points around midpoint
+ *     < 60 → eligible band = ±4
+ *     < 80 → eligible band = ±3
+ *     ≥ 80 → market too certain, no rewards
  *
- * Example with max_spread = 5:
- * - Market midpoint: 50 (price-points)
- * - Split @ 56/44: Distance = 6 → OUTSIDE spread → NOT qualified
- * - Split @ 52/48: Distance = 2 → WITHIN spread → QUALIFIED
+ * For an order to score:
+ * 1. BOTH legs of the LP pair (YES + NO) must fall inside the eligible band.
+ * 2. Per-pair score is weighted by ((spread - distance) / spread)² — tighter
+ *    quotes earn more.
+ * 3. Per-participant score is LEAST(TRUE-side sum, FALSE-side sum) — both
+ *    sides of the book must contribute for non-zero rewards.
+ * 4. Amount must meet min_order_size threshold from ob_queries.
  *
  * Examples:
  *   place_split_limit_order(1, 56, 100)  -- Mint 100 pairs: hold YES, sell NO @ $0.44

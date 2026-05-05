@@ -178,9 +178,12 @@ def substitute_tokens(text: str) -> str:
 
 
 # After substitute_tokens, the only mainnet collateral bridges we want to
-# keep in dispatch chains are eth_usdc and eth_truf. Anything else
-# (sepolia_bridge, future testnet aliases) gets dropped.
-MAINNET_BRIDGES = ("eth_usdc", "eth_truf")
+# keep in dispatch chains are the ones declared in BRIDGE_DECIMALS. Anything
+# else (sepolia_bridge, future testnet aliases) gets dropped.
+# Used as a membership test only (`name in MAINNET_BRIDGES`); order is not
+# load-bearing since the displayed branch order in collapse_dispatch comes
+# from the source SQL, not from this tuple.
+MAINNET_BRIDGES = tuple(BRIDGE_DECIMALS)
 
 _BRANCH_HEADER_RE = re.compile(
     r"(?:if|else\s+if)\s+\$bridge\s*=\s*'(?P<name>\w+)'\s*\{",

@@ -25,6 +25,12 @@ CREATE TABLE IF NOT EXISTS ob_queries (
     settled BOOLEAN DEFAULT false NOT NULL,
     winning_outcome BOOLEAN,
     settled_at INT8,
+    -- DEPRECATED: dormant column. Originally intended to gate LP reward
+    -- eligibility per market, but sample_lp_rewards (034-order-book-rewards.sql)
+    -- uses a dynamic spread computed from the market midpoint and never reads
+    -- this value. Kept on the table for backward compatibility with existing
+    -- clients that still write/read it. See:
+    -- PredictionMarketTasks/backlog/max_spread_unused.md
     max_spread INT NOT NULL DEFAULT 5,
     min_order_size INT8 NOT NULL DEFAULT 20,
     created_at INT8 NOT NULL,
