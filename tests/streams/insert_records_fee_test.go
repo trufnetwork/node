@@ -29,11 +29,11 @@ const (
 	testInsertEscrow        = "0x502430eD0BbE0f230215870c9C2853e126eE5Ae3"
 	testInsertERC20         = "0x2222222222222222222222222222222222222222"
 	testInsertExtensionName = "sepolia_bridge"
-	insertFeeAmount         = "2000000000000000000" // 2 TRUF with 18 decimals per record
+	insertFeeAmount         = "6000000000000000000" // 6 TRUF with 18 decimals per record
 )
 
 var (
-	twoTRUFInsert            = mustParseInsertBigInt(insertFeeAmount) // 2 TRUF as big.Int
+	sixTRUFInsert            = mustParseInsertBigInt(insertFeeAmount) // 6 TRUF as big.Int
 	insertPointCounter int64 = 1000                                   // Start from 1000, increment for each balance injection
 )
 
@@ -181,7 +181,7 @@ func testInsertExemptWalletNoFee(t *testing.T) func(ctx context.Context, platfor
 	}
 }
 
-// Test 2: Non-exempt wallet pays 2 TRUF fee per record
+// Test 2: Non-exempt wallet pays 6 TRUF fee per record
 func testInsertNonExemptWalletPaysFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Get systemAdmin who owns the stream
@@ -225,13 +225,13 @@ func testInsertNonExemptWalletPaysFee(t *testing.T) func(ctx context.Context, pl
 		err = insertRecord(ctx, platform, userAddr, systemAdmin.Address(), streamID, 1000, "10.5")
 		require.NoError(t, err, "insert should succeed")
 
-		// Verify balance decreased by 2 TRUF
+		// Verify balance decreased by 6 TRUF
 		finalBalance, err := getInsertBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to get final balance")
 
-		expectedBalance := new(big.Int).Sub(initialBalance, twoTRUFInsert)
+		expectedBalance := new(big.Int).Sub(initialBalance, sixTRUFInsert)
 		require.Equal(t, 0, expectedBalance.Cmp(finalBalance),
-			"Balance should decrease by 2 TRUF, expected %s but got %s", expectedBalance, finalBalance)
+			"Balance should decrease by 6 TRUF, expected %s but got %s", expectedBalance, finalBalance)
 
 		return nil
 	}
@@ -269,7 +269,7 @@ func testInsertInsufficientBalance(t *testing.T) func(ctx context.Context, platf
 		err = grantStreamWriteAccess(ctx, platform, systemAdmin.Address(), streamID, userAddr.Address())
 		require.NoError(t, err, "failed to grant write access")
 
-		// Give user only 1 TRUF (insufficient for 2 TRUF fee)
+		// Give user only 1 TRUF (insufficient for 6 TRUF fee)
 		err = giveInsertBalance(ctx, platform, userAddr.Address(), "1000000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
@@ -329,8 +329,8 @@ func testInsertRoleChangeAffectsFee(t *testing.T) func(ctx context.Context, plat
 		balanceAfterFirst, err := getInsertBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
-		expectedAfterFirst := new(big.Int).Sub(initialBalance, twoTRUFInsert)
-		require.Equal(t, 0, expectedAfterFirst.Cmp(balanceAfterFirst), "First insert should charge 2 TRUF fee")
+		expectedAfterFirst := new(big.Int).Sub(initialBalance, sixTRUFInsert)
+		require.Equal(t, 0, expectedAfterFirst.Cmp(balanceAfterFirst), "First insert should charge 6 TRUF fee")
 
 		// Grant network_writer role to make user exempt
 		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "network_writer", userAddr.Address())
@@ -355,7 +355,7 @@ func testInsertRoleChangeAffectsFee(t *testing.T) func(ctx context.Context, plat
 		balanceAfterThird, err := getInsertBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
-		expectedAfterThird := new(big.Int).Sub(balanceAfterSecond, twoTRUFInsert)
+		expectedAfterThird := new(big.Int).Sub(balanceAfterSecond, sixTRUFInsert)
 		require.Equal(t, 0, expectedAfterThird.Cmp(balanceAfterThird), "Third insert should charge fee (role revoked)")
 
 		return nil
@@ -407,14 +407,14 @@ func testInsertBatchChargesPerRecord(t *testing.T) func(ctx context.Context, pla
 		err = insertMultipleRecords(ctx, platform, userAddr, systemAdmin.Address(), streamID, 2000, numRecords)
 		require.NoError(t, err, "batch insert should succeed")
 
-		// Verify balance decreased by 10 TRUF (5 records × 2 TRUF)
+		// Verify balance decreased by 30 TRUF (5 records × 6 TRUF)
 		finalBalance, err := getInsertBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
-		feeForFiveRecords := new(big.Int).Mul(twoTRUFInsert, big.NewInt(int64(numRecords)))
+		feeForFiveRecords := new(big.Int).Mul(sixTRUFInsert, big.NewInt(int64(numRecords)))
 		expectedBalance := new(big.Int).Sub(initialBalance, feeForFiveRecords)
 		require.Equal(t, 0, expectedBalance.Cmp(finalBalance),
-			"Balance should decrease by 10 TRUF (5 records × 2 TRUF), expected %s but got %s", expectedBalance, finalBalance)
+			"Balance should decrease by 30 TRUF (5 records × 6 TRUF), expected %s but got %s", expectedBalance, finalBalance)
 
 		return nil
 	}
@@ -477,13 +477,13 @@ func testInsertLeaderReceivesFees(t *testing.T) func(ctx context.Context, platfo
 		err = insertRecordWithLeader(ctx, platform, userAddr, pub, systemAdmin.Address(), streamID, 3000, "15.5")
 		require.NoError(t, err, "insert with leader should succeed")
 
-		// Verify leader balance increased by 2 TRUF
+		// Verify leader balance increased by 6 TRUF
 		finalLeaderBalance, err := getInsertBalance(ctx, platform, leaderAddr)
 		require.NoError(t, err, "failed to get final leader balance")
 
-		expectedLeaderBalance := new(big.Int).Add(initialLeaderBalance, twoTRUFInsert)
+		expectedLeaderBalance := new(big.Int).Add(initialLeaderBalance, sixTRUFInsert)
 		require.Equal(t, 0, expectedLeaderBalance.Cmp(finalLeaderBalance),
-			"Leader should receive 2 TRUF fee, expected %s but got %s", expectedLeaderBalance, finalLeaderBalance)
+			"Leader should receive 6 TRUF fee, expected %s but got %s", expectedLeaderBalance, finalLeaderBalance)
 
 		return nil
 	}

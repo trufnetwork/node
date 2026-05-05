@@ -26,11 +26,11 @@ const (
 	testEscrow        = "0x502430eD0BbE0f230215870c9C2853e126eE5Ae3" // From erc20-bridge/000-extension.sql
 	testERC20         = "0x2222222222222222222222222222222222222222"
 	testExtensionName = "sepolia_bridge"
-	feeAmount         = "2000000000000000000" // 2 TRUF with 18 decimals
+	feeAmount         = "6000000000000000000" // 6 TRUF with 18 decimals
 )
 
 var (
-	twoTRUF            = mustParseBigInt(feeAmount) // 2 TRUF as big.Int
+	sixTRUF            = mustParseBigInt(feeAmount) // 6 TRUF as big.Int
 	pointCounter int64 = 10                         // Start from 10, increment for each balance injection
 )
 
@@ -119,7 +119,7 @@ func testExemptWalletNoFee(t *testing.T) func(ctx context.Context, platform *kwi
 	}
 }
 
-// Test 2: Non-exempt wallet pays 2 TRUF fee
+// Test 2: Non-exempt wallet pays 6 TRUF fee
 func testNonExemptWalletPaysFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		userAddrVal := util.Unsafe_NewEthereumAddressFromString("0x3333333333333333333333333333333333333333")
@@ -141,13 +141,13 @@ func testNonExemptWalletPaysFee(t *testing.T) func(ctx context.Context, platform
 		err = createStream(ctx, platform, userAddr, "st000000000000000000000000000002", "primitive")
 		require.NoError(t, err, "stream creation should succeed")
 
-		// Verify balance decreased by 2 TRUF
+		// Verify balance decreased by 6 TRUF
 		finalBalance, err := getBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to get final balance")
 
-		expectedBalance := new(big.Int).Sub(initialBalance, twoTRUF)
+		expectedBalance := new(big.Int).Sub(initialBalance, sixTRUF)
 		require.Equal(t, 0, expectedBalance.Cmp(finalBalance),
-			"Balance should decrease by 2 TRUF, expected %s but got %s", expectedBalance, finalBalance)
+			"Balance should decrease by 6 TRUF, expected %s but got %s", expectedBalance, finalBalance)
 
 		return nil
 	}
@@ -201,8 +201,8 @@ func testRoleChangeAffectsFee(t *testing.T) func(ctx context.Context, platform *
 		balanceAfterFirst, err := getBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
-		expectedAfterFirst := new(big.Int).Sub(initialBalance, twoTRUF)
-		require.Equal(t, 0, expectedAfterFirst.Cmp(balanceAfterFirst), "First call should charge 2 TRUF fee")
+		expectedAfterFirst := new(big.Int).Sub(initialBalance, sixTRUF)
+		require.Equal(t, 0, expectedAfterFirst.Cmp(balanceAfterFirst), "First call should charge 6 TRUF fee")
 
 		// Grant role
 		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "network_writer", userAddr.Address())
@@ -227,7 +227,7 @@ func testRoleChangeAffectsFee(t *testing.T) func(ctx context.Context, platform *
 		balanceAfterThird, err := getBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
-		expectedAfterThird := new(big.Int).Sub(balanceAfterSecond, twoTRUF)
+		expectedAfterThird := new(big.Int).Sub(balanceAfterSecond, sixTRUF)
 		require.Equal(t, 0, expectedAfterThird.Cmp(balanceAfterThird), "Third call should charge fee (role revoked)")
 
 		return nil
@@ -263,15 +263,15 @@ func testBatchCreationPerStreamFee(t *testing.T) func(ctx context.Context, platf
 		err = createStreams(ctx, platform, userAddr, streamIds, streamTypes)
 		require.NoError(t, err, "batch stream creation should succeed")
 
-		// Verify balance decreased by 6 TRUF (2 TRUF × 3 streams)
+		// Verify balance decreased by 18 TRUF (6 TRUF × 3 streams)
 		finalBalance, err := getBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
 		numStreams := int64(len(streamIds)) // 3 streams
-		expectedFee := new(big.Int).Mul(twoTRUF, big.NewInt(numStreams))
+		expectedFee := new(big.Int).Mul(sixTRUF, big.NewInt(numStreams))
 		expectedBalance := new(big.Int).Sub(initialBalance, expectedFee)
 		require.Equal(t, 0, expectedBalance.Cmp(finalBalance),
-			"Batch should charge 2 TRUF per stream (3 streams = 6 TRUF), expected %s but got %s", expectedBalance, finalBalance)
+			"Batch should charge 6 TRUF per stream (3 streams = 18 TRUF), expected %s but got %s", expectedBalance, finalBalance)
 
 		return nil
 	}
@@ -310,13 +310,13 @@ func testLeaderReceivesFees(t *testing.T) func(ctx context.Context, platform *kw
 		err = createStreamWithLeader(ctx, platform, userAddr, pub, "st00000000000000000000000000000a", "primitive")
 		require.NoError(t, err, "stream creation with leader should succeed")
 
-		// Verify leader balance increased by 2 TRUF
+		// Verify leader balance increased by 6 TRUF
 		finalLeaderBalance, err := getBalance(ctx, platform, leaderAddr)
 		require.NoError(t, err, "failed to get final leader balance")
 
-		expectedLeaderBalance := new(big.Int).Add(initialLeaderBalance, twoTRUF)
+		expectedLeaderBalance := new(big.Int).Add(initialLeaderBalance, sixTRUF)
 		require.Equal(t, 0, expectedLeaderBalance.Cmp(finalLeaderBalance),
-			"Leader should receive 2 TRUF fee, expected %s but got %s", expectedLeaderBalance, finalLeaderBalance)
+			"Leader should receive 6 TRUF fee, expected %s but got %s", expectedLeaderBalance, finalLeaderBalance)
 
 		return nil
 	}

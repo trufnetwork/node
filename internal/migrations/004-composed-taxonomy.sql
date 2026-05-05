@@ -54,9 +54,9 @@ CREATE OR REPLACE ACTION insert_taxonomy(
         }
     }
 
-    -- Collect fee only from non-exempt wallets (2 TRUF per stream)
+    -- Collect fee only from non-exempt wallets (6 TRUF per stream)
     IF NOT $is_exempt {
-        $fee_per_stream := 2000000000000000000::NUMERIC(78, 0); -- 2 TRUF with 18 decimals
+        $fee_per_stream := 6000000000000000000::NUMERIC(78, 0); -- 6 TRUF with 18 decimals
         $total_fee := $fee_per_stream * $num_children::NUMERIC(78, 0);
 
         IF @leader_sender IS NULL {
