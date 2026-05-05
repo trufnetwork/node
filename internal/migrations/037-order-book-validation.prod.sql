@@ -48,10 +48,11 @@ PUBLIC VIEW RETURNS (
         $total_false := $row.total;
     }
 
-    -- Step 3: Calculate open buy collateral obligations for THIS market (in cents)
-    -- Buy orders: price is negative (stored in cents: -1 to -99)
-    -- Collateral per buy order = |price| * amount / 100 (converted to dollars)
-    -- We return the value in cents for precision
+    -- Step 3: Sum (|price| * amount) for THIS market's open buy orders.
+    -- $price is INT in [-99, -1] for buy orders (negative). The sum here is
+    -- bridge-decimal-agnostic: multiply by units_per_dollar/100 to convert
+    -- to base units. We expose the raw sum so callers (or this action's
+    -- own collateral check below) can apply the conversion themselves.
     $open_buys_value BIGINT := 0;
     for $row in
         SELECT COALESCE(SUM(ABS(price) * amount)::BIGINT, 0::BIGINT) as total_value
@@ -74,7 +75,7 @@ PUBLIC VIEW RETURNS (
     -- Step 5: Calculate TOTAL expected collateral across ALL unsettled markets using same bridge
     -- This fixes the multi-market validation issue where vault holds collateral for all markets
     $total_shares_all_markets BIGINT := 0;
-    $total_buys_cents_all_markets BIGINT := 0;
+    $total_buys_price_amount BIGINT := 0;  -- SUM(|price| * amount); convert to base units via units_per_dollar/100
 
     -- Sum TRUE shares (holdings + sells) across all unsettled markets with same bridge
     for $row in
@@ -89,7 +90,7 @@ PUBLIC VIEW RETURNS (
         $total_shares_all_markets := $row.total;
     }
 
-    -- Sum open buy orders (in cents) across all unsettled markets with same bridge
+    -- Sum (|price| * amount) for all unsettled markets' open buy orders, same bridge.
     for $row in
         SELECT COALESCE(SUM(ABS(p.price) * p.amount)::BIGINT, 0::BIGINT) as total_value
         FROM ob_positions p
@@ -98,13 +99,17 @@ PUBLIC VIEW RETURNS (
           AND q.bridge = $bridge
           AND p.price < 0
     {
-        $total_buys_cents_all_markets := $row.total_value;
+        $total_buys_price_amount := $row.total_value;
     }
 
-    -- Calculate total expected collateral in wei (18 decimals)
+    -- Calculate total expected collateral in bridge token base units.
+    -- units_per_dollar comes from get_bridge_units_per_dollar — single source
+    -- of per-bridge decimals. Each share is backed by $1.00; each buy order
+    -- locks ($amount * $price * units_per_dollar) / 100.
+    $units_per_dollar NUMERIC(78, 0) := get_bridge_units_per_dollar($bridge);
     $expected_collateral NUMERIC(78, 0);
-    $shares_collateral NUMERIC(78, 0) := $total_shares_all_markets::NUMERIC(78, 0) * '1000000000000000000'::NUMERIC(78, 0);
-    $buys_collateral NUMERIC(78, 0) := ($total_buys_cents_all_markets::NUMERIC(78, 0) * '1000000000000000000'::NUMERIC(78, 0)) / 100::NUMERIC(78, 0);
+    $shares_collateral NUMERIC(78, 0) := $total_shares_all_markets::NUMERIC(78, 0) * $units_per_dollar;
+    $buys_collateral NUMERIC(78, 0) := ($total_buys_price_amount::NUMERIC(78, 0) * $units_per_dollar) / 100::NUMERIC(78, 0);
     $expected_collateral := ($shares_collateral + $buys_collateral)::NUMERIC(78, 0);
 
     -- Step 6: Get actual vault balance from bridge

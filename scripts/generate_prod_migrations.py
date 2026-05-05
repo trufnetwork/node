@@ -47,12 +47,25 @@ from typing import Iterable
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MIGRATIONS_DIR = REPO_ROOT / "internal" / "migrations"
 
+# Per-bridge on-chain decimals. The ONLY place real decimals live for the
+# mainnet override. The dev `.sql` migrations carry stub values appropriate
+# for the embedded test bridges (all 18-decimal); on prod-generation we
+# regenerate `get_bridge_units_per_dollar` entirely from this map so each
+# bridge gets units_per_dollar = 10^decimals. To add a new bridge, add an
+# entry here and ensure substitute_tokens maps a hoodi alias to its name
+# (or extend substitute_tokens / MAINNET_BRIDGES).
+BRIDGE_DECIMALS: dict[str, int] = {
+    "eth_truf": 18,
+    "eth_usdc": 6,
+}
+
 # (source_relpath, output_relpath, mode)
 TARGETS: list[tuple[str, str, str]] = [
     ("031-order-book-vault.sql", "031-order-book-vault.prod.sql", "core"),
     ("032-order-book-actions.sql", "032-order-book-actions.prod.sql", "core"),
     ("033-order-book-settlement.sql", "033-order-book-settlement.prod.sql", "core"),
     ("037-order-book-validation.sql", "037-order-book-validation.prod.sql", "core"),
+    ("038-order-book-queries.sql", "038-order-book-queries.prod.sql", "core"),
     (
         "erc20-bridge/001-actions.sql",
         "erc20-bridge/001-actions.prod.sql",
@@ -165,9 +178,12 @@ def substitute_tokens(text: str) -> str:
 
 
 # After substitute_tokens, the only mainnet collateral bridges we want to
-# keep in dispatch chains are eth_usdc and eth_truf. Anything else
-# (sepolia_bridge, future testnet aliases) gets dropped.
-MAINNET_BRIDGES = ("eth_usdc", "eth_truf")
+# keep in dispatch chains are the ones declared in BRIDGE_DECIMALS. Anything
+# else (sepolia_bridge, future testnet aliases) gets dropped.
+# Used as a membership test only (`name in MAINNET_BRIDGES`); order is not
+# load-bearing since the displayed branch order in collapse_dispatch comes
+# from the source SQL, not from this tuple.
+MAINNET_BRIDGES = tuple(BRIDGE_DECIMALS)
 
 _BRANCH_HEADER_RE = re.compile(
     r"(?:if|else\s+if)\s+\$bridge\s*=\s*'(?P<name>\w+)'\s*\{",
@@ -369,14 +385,58 @@ def collapse_validate_and_chain(text: str) -> str:
     return text
 
 
+def regenerate_units_per_dollar() -> str:
+    """Build the prod body of `get_bridge_units_per_dollar` from
+    BRIDGE_DECIMALS. Replaces whatever the dev source contained — the
+    dev branches are stubs that all return 10^18, but each prod bridge
+    needs its own units_per_dollar = 10^decimals.
+
+    Returns the full action text including the CREATE OR REPLACE header
+    and trailing semicolon, ending with a single newline.
+    """
+    branches: list[str] = []
+    for idx, (bridge, decimals) in enumerate(BRIDGE_DECIMALS.items()):
+        units = "1" + "0" * decimals
+        prefix = "if" if idx == 0 else "} else if"
+        branches.append(
+            f"    {prefix} $bridge = '{bridge}' {{\n"
+            f"        RETURN '{units}'::NUMERIC(78, 0);"
+        )
+    body = "\n".join(branches) + "\n    }\n    ERROR('Unknown bridge: ' || $bridge);"
+    return (
+        "CREATE OR REPLACE ACTION get_bridge_units_per_dollar($bridge TEXT)\n"
+        "    PUBLIC VIEW RETURNS (units_per_dollar NUMERIC(78, 0)) {\n"
+        f"{body}\n"
+        "};\n"
+    )
+
+
 def transform_core(source_sql: str) -> tuple[str, list[str]]:
     """Mode A. Emit each action whose body references `eth_truf`/`eth_usdc`
     after substitution, with dispatch chains collapsed.
+
+    Special case: `get_bridge_units_per_dollar` is regenerated from
+    BRIDGE_DECIMALS rather than rewritten via substitution — the dev
+    branches are 18-decimal stubs but each prod bridge needs its actual
+    decimals (eth_truf=18, eth_usdc=6). See regenerate_units_per_dollar.
     """
     parts: list[str] = []
     names: list[str] = []
     for name, raw in split_actions(source_sql):
-        if "hoodi_tt" not in raw:
+        # `get_bridge_units_per_dollar` is regenerated regardless of whether
+        # the dev source still mentions any bridge alias — its prod body
+        # comes from BRIDGE_DECIMALS, not from textual substitution. Keep
+        # this above the bridge-mention filter so a future refactor that
+        # drops the alias from the helper body doesn't silently strip it
+        # from the prod override.
+        if name == "get_bridge_units_per_dollar":
+            parts.append(regenerate_units_per_dollar())
+            names.append(name)
+            continue
+        # Emit any action that references a bridge alias we substitute,
+        # so e.g. `$bridge TEXT DEFAULT 'ethereum_bridge'` in get_user_collateral
+        # becomes `'eth_truf'` in the prod override.
+        if "hoodi_tt" not in raw and "ethereum_bridge" not in raw:
             continue
         substituted = substitute_tokens(raw)
         substituted = collapse_validate_and_chain(substituted)

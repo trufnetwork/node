@@ -27,6 +27,16 @@ CREATE OR REPLACE ACTION validate_bridge($bridge TEXT) PRIVATE {
     RETURN;
 };
 
+CREATE OR REPLACE ACTION get_bridge_units_per_dollar($bridge TEXT)
+    PUBLIC VIEW RETURNS (units_per_dollar NUMERIC(78, 0)) {
+    if $bridge = 'eth_truf' {
+        RETURN '1000000000000000000'::NUMERIC(78, 0);
+    } else if $bridge = 'eth_usdc' {
+        RETURN '1000000'::NUMERIC(78, 0);
+    }
+    ERROR('Unknown bridge: ' || $bridge);
+};
+
 CREATE OR REPLACE ACTION create_market(
     $bridge TEXT,
     $query_components BYTEA,
@@ -73,9 +83,9 @@ CREATE OR REPLACE ACTION create_market(
         ERROR('Settlement time must be in the future');
     }
 
-    -- Validate max_spread (1-50 cents)
+    -- Validate max_spread (1-50 price-points)
     if $max_spread IS NULL OR $max_spread < 1 OR $max_spread > 50 {
-        ERROR('Max spread must be between 1 and 50 cents');
+        ERROR('Max spread must be between 1 and 50 (price-points)');
     }
 
     -- Validate min_order_size (must be positive)
@@ -86,7 +96,7 @@ CREATE OR REPLACE ACTION create_market(
     -- ==========================================================================
     -- FEE COLLECTION
     -- ==========================================================================
-    -- Fee: 2 TRUF (2 * 10^18 wei)
+    -- Fee: 2 TRUF (2 * 10^18 base units of eth_truf)
     -- Market creation fee is ALWAYS paid in TRUF (eth_truf on testnet)
     -- regardless of which bridge the market uses for collateral
     $market_creation_fee NUMERIC(78, 0) := '2000000000000000000'::NUMERIC(78, 0);
@@ -171,9 +181,6 @@ CREATE OR REPLACE ACTION place_buy_order(
     $price INT,
     $amount INT8
 ) PUBLIC {
-    -- Constants
-    $collateral_decimals INT := 18;
-
     -- ==========================================================================
     -- SECTION 1: VALIDATION
     -- ==========================================================================
@@ -238,16 +245,15 @@ CREATE OR REPLACE ACTION place_buy_order(
     -- SECTION 2: CALCULATE COLLATERAL NEEDED
     -- ==========================================================================
 
-    -- For buy order: collateral = amount × price × 10^16
-    -- Example: 10 shares at $0.56 = 10 × 56 × 10^16 = 5.6 × 10^18 wei
+    -- All collateral in bridge token base units. units_per_dollar is sourced
+    -- from get_bridge_units_per_dollar (the single point where per-bridge
+    -- decimals are defined). $price is INT in [1, 99], so we divide by 100.
     --
-    -- Why 10^16?
-    -- - Prices are in cents (1-99)
-    -- - Token has 18 decimals
-    -- - Formula: 10^(18-2) = 10^16
-    -- Note: Kuneiform doesn't have POWER(), so we use hardcoded constant
-    -- Cast INT8 and INT to NUMERIC for multiplication
-    $collateral_needed NUMERIC(78, 0) := ($amount::NUMERIC(78, 0) * $price::NUMERIC(78, 0) * '10000000000000000'::NUMERIC(78, 0));
+    --   collateral = ($amount * $price * units_per_dollar) / 100
+    $units_per_dollar NUMERIC(78, 0) := get_bridge_units_per_dollar($bridge);
+    $collateral_needed NUMERIC(78, 0) := ($amount::NUMERIC(78, 0) *
+                                           $price::NUMERIC(78, 0) *
+                                           $units_per_dollar) / 100::NUMERIC(78, 0);
 
     -- ==========================================================================
     -- SECTION 3: CHECK BALANCE (bridge-specific)
@@ -259,9 +265,9 @@ CREATE OR REPLACE ACTION place_buy_order(
     } else if $bridge = 'eth_truf' {
         $caller_balance := COALESCE(eth_truf.balance(@caller), 0::NUMERIC(78, 0));
     }if $caller_balance < $collateral_needed {
-        -- Note: Division by 10^18 for display purposes (convert wei to TRUF)
-        ERROR('Insufficient balance. Required: ' || $collateral_needed::TEXT || ' wei (' ||
-              ($collateral_needed / '1000000000000000000'::NUMERIC(78, 0))::TEXT || ' TRUF)');
+        -- Display in token base units AND in dollar form (collateral / units_per_dollar).
+        ERROR('Insufficient balance. Required: ' || $collateral_needed::TEXT || ' base units ($' ||
+              ($collateral_needed / $units_per_dollar)::TEXT || ')');
     }
 
     -- ==========================================================================
@@ -407,16 +413,14 @@ CREATE OR REPLACE ACTION place_split_limit_order(
     -- SECTION 2: CALCULATE COLLATERAL NEEDED
     -- ==========================================================================
 
-    -- For split order: collateral = amount × $1.00 = amount × 10^18
-    -- Example: 100 shares × 10^18 = 100,000,000,000,000,000,000 wei = 100 TRUF
+    -- Each minted share pair requires $1.00 of collateral, expressed in
+    -- bridge token base units. units_per_dollar is sourced from
+    -- get_bridge_units_per_dollar (the single point where per-bridge
+    -- decimals are defined).
     --
-    -- Why 10^18?
-    -- - Minting a share pair (YES + NO) requires $1.00 total collateral
-    -- - Token has 18 decimals
-    -- - Formula: $1.00 × 10^18
-    -- Note: Kuneiform doesn't have POWER(), so we use hardcoded constant
-    -- Cast INT8 to NUMERIC for multiplication
-    $collateral_needed NUMERIC(78, 0) := ($amount::NUMERIC(78, 0) * '1000000000000000000'::NUMERIC(78, 0));
+    --   collateral = $amount * units_per_dollar
+    $units_per_dollar NUMERIC(78, 0) := get_bridge_units_per_dollar($bridge);
+    $collateral_needed NUMERIC(78, 0) := $amount::NUMERIC(78, 0) * $units_per_dollar;
 
     -- ==========================================================================
     -- SECTION 3: CHECK BALANCE (bridge-specific)
@@ -428,9 +432,9 @@ CREATE OR REPLACE ACTION place_split_limit_order(
     } else if $bridge = 'eth_truf' {
         $caller_balance := COALESCE(eth_truf.balance(@caller), 0::NUMERIC(78, 0));
     }if $caller_balance < $collateral_needed {
-        -- Note: Division by 10^18 for display purposes (convert wei to TRUF)
-        ERROR('Insufficient balance. Required: ' || $collateral_needed::TEXT || ' wei (' ||
-              ($collateral_needed / '1000000000000000000'::NUMERIC(78, 0))::TEXT || ' TRUF)');
+        -- Display in token base units AND in dollar form (collateral / units_per_dollar).
+        ERROR('Insufficient balance. Required: ' || $collateral_needed::TEXT || ' base units ($' ||
+              ($collateral_needed / $units_per_dollar)::TEXT || ')');
     }
 
     -- ==========================================================================
@@ -653,20 +657,21 @@ CREATE OR REPLACE ACTION change_bid(
     -- SECTION 5: CALCULATE COLLATERAL CHANGE
     -- ==========================================================================
 
-    -- Buy order collateral formula: amount × |price| × 10^16 wei
-    -- Example: 100 shares @ $0.54 = 100 × 54 × 10^16 = 5.4 × 10^19 wei (54 TRUF)
-    $multiplier NUMERIC(78, 0) := '10000000000000000'::NUMERIC(78, 0);  -- 10^16
+    -- Buy order collateral in bridge token base units:
+    --   ($amount * |price| * units_per_dollar) / 100
+    -- units_per_dollar comes from get_bridge_units_per_dollar (single source
+    -- of per-bridge decimals). $price is INT in [1, 99].
+    $units_per_dollar NUMERIC(78, 0) := get_bridge_units_per_dollar($bridge);
+    $old_abs_price INT := -$old_price;
+    $new_abs_price INT := -$new_price;
 
-    $old_abs_price INT := -$old_price;  -- Make positive
-    $new_abs_price INT := -$new_price;  -- Make positive
+    $old_collateral NUMERIC(78, 0) := ($old_amount::NUMERIC(78, 0) *
+                                        $old_abs_price::NUMERIC(78, 0) *
+                                        $units_per_dollar) / 100::NUMERIC(78, 0);
 
-    $old_collateral NUMERIC(78, 0) := $old_amount::NUMERIC(78, 0) *
-                                       $old_abs_price::NUMERIC(78, 0) *
-                                       $multiplier;
-
-    $new_collateral NUMERIC(78, 0) := $new_amount::NUMERIC(78, 0) *
-                                       $new_abs_price::NUMERIC(78, 0) *
-                                       $multiplier;
+    $new_collateral NUMERIC(78, 0) := ($new_amount::NUMERIC(78, 0) *
+                                        $new_abs_price::NUMERIC(78, 0) *
+                                        $units_per_dollar) / 100::NUMERIC(78, 0);
 
     $collateral_delta NUMERIC(78, 0) := $new_collateral - $old_collateral;
     $zero NUMERIC(78, 0) := '0'::NUMERIC(78, 0);
