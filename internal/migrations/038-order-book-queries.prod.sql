@@ -57,6 +57,13 @@ PUBLIC VIEW RETURNS (
 
     -- Shares value (holdings + open sells), valued at $1.00 per share, in
     -- bridge token base units. Restricted to markets that use $bridge.
+    --
+    -- KNOWN ISSUE: this currently sums YES + NO unconditionally, so a paired
+    -- holding (e.g. 100 YES + 100 NO from a split mint) reports 200 × $1
+    -- instead of the 100 × $1 collateral that actually backs it. Correct
+    -- per-market netting needs MAX(net_yes, net_no), but changing it shifts
+    -- the returned values that off-chain consumers depend on — defer to a
+    -- separate, coordinated change.
     $shares_value NUMERIC(78, 0);
     for $row in
         SELECT COALESCE(SUM(p.amount)::NUMERIC(78, 0), 0::NUMERIC(78, 0)) as amount_sum

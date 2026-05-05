@@ -420,14 +420,20 @@ def transform_core(source_sql: str) -> tuple[str, list[str]]:
     parts: list[str] = []
     names: list[str] = []
     for name, raw in split_actions(source_sql):
+        # `get_bridge_units_per_dollar` is regenerated regardless of whether
+        # the dev source still mentions any bridge alias — its prod body
+        # comes from BRIDGE_DECIMALS, not from textual substitution. Keep
+        # this above the bridge-mention filter so a future refactor that
+        # drops the alias from the helper body doesn't silently strip it
+        # from the prod override.
+        if name == "get_bridge_units_per_dollar":
+            parts.append(regenerate_units_per_dollar())
+            names.append(name)
+            continue
         # Emit any action that references a bridge alias we substitute,
         # so e.g. `$bridge TEXT DEFAULT 'ethereum_bridge'` in get_user_collateral
         # becomes `'eth_truf'` in the prod override.
         if "hoodi_tt" not in raw and "ethereum_bridge" not in raw:
-            continue
-        if name == "get_bridge_units_per_dollar":
-            parts.append(regenerate_units_per_dollar())
-            names.append(name)
             continue
         substituted = substitute_tokens(raw)
         substituted = collapse_validate_and_chain(substituted)
