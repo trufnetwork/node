@@ -71,10 +71,12 @@ func TestMatchingEngine(t *testing.T) {
 			// Category B: Mint Match Tests
 			testMintMatchFullMatch(t),
 			testMintMatchPartialFill(t),
+			testMintMatchSameWallet(t),
 
 			// Category C: Burn Match Tests
 			testBurnMatchFullMatch(t),
 			testBurnMatchPartialFill(t),
+			testBurnMatchSameWallet(t),
 
 			// Category D: Multiple Round Tests
 			testDirectMatchMultipleRounds(t),
@@ -469,6 +471,70 @@ func testMintMatchPartialFill(t *testing.T) func(context.Context, *kwilTesting.P
 	}
 }
 
+// testMintMatchSameWallet verifies mint fires when one wallet posts both opposing buy orders.
+// Spec: vinarmani in PR #1277 review — self-matching buys execute (mint), get removed, and
+// are naturally ineligible for LP rewards because they leave the open order book.
+func testMintMatchSameWallet(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
+
+		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
+		require.NoError(t, err)
+
+		userAddr := util.Unsafe_NewEthereumAddressFromString("0x000000000000000000000000000000000000000A")
+
+		err = giveBalanceChained(ctx, platform, userAddr.Address(), "500000000000000000000")
+		require.NoError(t, err)
+
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000046", "get_record", []byte{0x01})
+		require.NoError(t, err)
+		settleTime := time.Now().Add(24 * time.Hour).Unix()
+		var marketID int64
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
+			marketID = row.Values[0].(int64)
+			return nil
+		})
+		require.NoError(t, err)
+
+		// Same wallet places both opposing buys; second placement should trigger mint.
+		err = callPlaceBuyOrder(ctx, platform, &userAddr, int(marketID), true, 56, 100)
+		require.NoError(t, err)
+
+		err = callPlaceBuyOrder(ctx, platform, &userAddr, int(marketID), false, 44, 100)
+		require.NoError(t, err)
+
+		positions, err := getPositions(ctx, platform, int(marketID))
+		require.NoError(t, err)
+
+		var yesHoldings, noHoldings, leftoverYesBuy, leftoverNoBuy *Position
+		for i := range positions {
+			if positions[i].ParticipantID != 1 {
+				continue
+			}
+			switch {
+			case positions[i].Outcome && positions[i].Price == 0:
+				yesHoldings = &positions[i]
+			case !positions[i].Outcome && positions[i].Price == 0:
+				noHoldings = &positions[i]
+			case positions[i].Outcome && positions[i].Price == -56:
+				leftoverYesBuy = &positions[i]
+			case !positions[i].Outcome && positions[i].Price == -44:
+				leftoverNoBuy = &positions[i]
+			}
+		}
+
+		require.NotNil(t, yesHoldings, "self-mint should leave YES holdings")
+		require.Equal(t, int64(100), yesHoldings.Amount)
+		require.NotNil(t, noHoldings, "self-mint should leave NO holdings")
+		require.Equal(t, int64(100), noHoldings.Amount)
+		require.Nil(t, leftoverYesBuy, "YES buy order should be consumed by mint")
+		require.Nil(t, leftoverNoBuy, "NO buy order should be consumed by mint")
+
+		return nil
+	}
+}
+
 // =============================================================================
 // Category C: Burn Match Tests (continued)
 // =============================================================================
@@ -562,6 +628,81 @@ func testBurnMatchPartialFill(t *testing.T) func(context.Context, *kwilTesting.P
 		netChange2 := new(big.Int).Sub(balance2After, balance2Initial)
 		expectedNetChange2 := new(big.Int).Mul(big.NewInt(-76), big.NewInt(1e18))
 		require.Equal(t, expectedNetChange2.String(), netChange2.String())
+
+		return nil
+	}
+}
+
+// testBurnMatchSameWallet verifies burn fires when one wallet posts both opposing sell orders.
+// Setup uses the now-allowed self-mint (testMintMatchSameWallet) to obtain both YES + NO holdings,
+// then sells both at complementary prices to trigger burn. Net USDC change should be ~0
+// (locked 100 for the mint, recovered 60 + 40 = 100 from the burn).
+func testBurnMatchSameWallet(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
+
+		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
+		require.NoError(t, err)
+
+		userAddr := util.Unsafe_NewEthereumAddressFromString("0x000000000000000000000000000000000000000B")
+
+		err = giveBalanceChained(ctx, platform, userAddr.Address(), "500000000000000000000")
+		require.NoError(t, err)
+
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000047", "get_record", []byte{0x01})
+		require.NoError(t, err)
+		settleTime := time.Now().Add(24 * time.Hour).Unix()
+		var marketID int64
+		err = callCreateMarket(ctx, platform, &userAddr, queryComponents, settleTime, 5, 20, func(row *common.Row) error {
+			marketID = row.Values[0].(int64)
+			return nil
+		})
+		require.NoError(t, err)
+
+		balanceInitial, err := getUSDCBalance(ctx, platform, userAddr.Address())
+		require.NoError(t, err)
+
+		// Self-mint to obtain 100 YES + 100 NO holdings (locks 50 + 50 = 100 USDC).
+		err = callPlaceBuyOrder(ctx, platform, &userAddr, int(marketID), true, 50, 100)
+		require.NoError(t, err)
+		err = callPlaceBuyOrder(ctx, platform, &userAddr, int(marketID), false, 50, 100)
+		require.NoError(t, err)
+
+		// Same wallet posts both opposing sells; second placement should trigger burn.
+		err = callPlaceSellOrder(ctx, platform, &userAddr, int(marketID), true, 60, 100)
+		require.NoError(t, err)
+		err = callPlaceSellOrder(ctx, platform, &userAddr, int(marketID), false, 40, 100)
+		require.NoError(t, err)
+
+		positions, err := getPositions(ctx, platform, int(marketID))
+		require.NoError(t, err)
+
+		var leftoverYesSell, leftoverNoSell, residualHoldings *Position
+		for i := range positions {
+			if positions[i].ParticipantID != 1 {
+				continue
+			}
+			switch {
+			case positions[i].Outcome && positions[i].Price == 60:
+				leftoverYesSell = &positions[i]
+			case !positions[i].Outcome && positions[i].Price == 40:
+				leftoverNoSell = &positions[i]
+			case positions[i].Price == 0 && positions[i].Amount > 0:
+				residualHoldings = &positions[i]
+			}
+		}
+
+		require.Nil(t, leftoverYesSell, "YES sell order should be consumed by burn")
+		require.Nil(t, leftoverNoSell, "NO sell order should be consumed by burn")
+		require.Nil(t, residualHoldings, "all holdings should be burned")
+
+		// Locked 100 USDC for the mint, burn returns 60 + 40 = 100 USDC. Net change ~0.
+		balanceFinal, err := getUSDCBalance(ctx, platform, userAddr.Address())
+		require.NoError(t, err)
+		netChange := new(big.Int).Sub(balanceFinal, balanceInitial)
+		require.Equal(t, "0", netChange.String(),
+			fmt.Sprintf("net USDC change should be 0 (locked 100, recovered 60+40=100), got %s", netChange.String()))
 
 		return nil
 	}
@@ -775,7 +916,11 @@ func testDirectMatchPriceCrossing(t *testing.T) func(context.Context, *kwilTesti
 		require.NoError(t, err)
 
 		// Seller: Create shares and place sell@51
+		// Split limit @ 51 leaves a NO sell @ 49 from the same wallet; cancel it before
+		// placing the YES sell @ 51 to prevent self-burn (51 + 49 = 100 complementary).
 		err = callPlaceSplitLimitOrder(ctx, platform, &seller, int(marketID), 51, 100)
+		require.NoError(t, err)
+		err = callCancelOrder(ctx, platform, &seller, int(marketID), false, 49)
 		require.NoError(t, err)
 		err = callPlaceSellOrder(ctx, platform, &seller, int(marketID), true, 51, 100)
 		require.NoError(t, err)
@@ -873,9 +1018,14 @@ func testDirectMatchPriceCrossingSweep(t *testing.T) func(context.Context, *kwil
 		})
 		require.NoError(t, err)
 
-		// Place sellers OUT OF price order to prove price-priority matching
+		// Place sellers OUT OF price order to prove price-priority matching.
+		// Each split limit leaves a complementary NO sell on the same wallet, which
+		// would self-burn against the YES sell; cancel the NO sells before placing YES sells.
+
 		// Seller2: sell YES @ 50 (40 shares) — placed FIRST
 		err = callPlaceSplitLimitOrder(ctx, platform, &seller2, int(marketID), 50, 40)
+		require.NoError(t, err)
+		err = callCancelOrder(ctx, platform, &seller2, int(marketID), false, 50)
 		require.NoError(t, err)
 		err = callPlaceSellOrder(ctx, platform, &seller2, int(marketID), true, 50, 40)
 		require.NoError(t, err)
@@ -883,11 +1033,15 @@ func testDirectMatchPriceCrossingSweep(t *testing.T) func(context.Context, *kwil
 		// Seller3: sell YES @ 52 (50 shares) — placed SECOND
 		err = callPlaceSplitLimitOrder(ctx, platform, &seller3, int(marketID), 52, 50)
 		require.NoError(t, err)
+		err = callCancelOrder(ctx, platform, &seller3, int(marketID), false, 48)
+		require.NoError(t, err)
 		err = callPlaceSellOrder(ctx, platform, &seller3, int(marketID), true, 52, 50)
 		require.NoError(t, err)
 
 		// Seller1: sell YES @ 48 (30 shares) — placed LAST (cheapest, but latest)
 		err = callPlaceSplitLimitOrder(ctx, platform, &seller1, int(marketID), 48, 30)
+		require.NoError(t, err)
+		err = callCancelOrder(ctx, platform, &seller1, int(marketID), false, 52)
 		require.NoError(t, err)
 		err = callPlaceSellOrder(ctx, platform, &seller1, int(marketID), true, 48, 30)
 		require.NoError(t, err)

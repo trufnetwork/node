@@ -742,13 +742,6 @@ CREATE OR REPLACE ACTION match_mint(
         RETURN;
     }
 
-    -- Prevent self-matching: Don't match orders from the same participant
-    -- This allows LPs to place complementary buy orders (e.g., YES @ 48 + NO @ 52)
-    -- that stay open in the order book for liquidity provision and rewards eligibility
-    if $yes_participant_id = $no_participant_id {
-        RETURN;
-    }
-
     -- Defensive: Skip if either order has zero or negative amount (shouldn't happen)
     if $yes_amount <= 0 OR $no_amount <= 0 {
         RETURN;
@@ -909,12 +902,6 @@ CREATE OR REPLACE ACTION match_burn(
     }
 
     if NOT $no_found {
-        RETURN;
-    }
-
-    -- Prevent self-matching: Don't match orders from the same participant
-    -- This allows LPs to place complementary sell orders that stay open
-    if $yes_participant_id = $no_participant_id {
         RETURN;
     }
 
