@@ -497,11 +497,19 @@ func requestAttestationWithArgsBytes(ctx context.Context, platform *kwilTesting.
 	return nil
 }
 
-// insertTestDataPoint inserts a single data point into a primitive stream
+// insertTestDataPoint inserts a single data point into a primitive stream.
+// Sets Proposer so universal write-fee migration's @leader_sender check passes.
 func insertTestDataPoint(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, streamID string, eventTime int64, value string) error {
+	_, leaderPub, err := crypto.GenerateSecp256k1Key(nil)
+	if err != nil {
+		return fmt.Errorf("generate leader key: %w", err)
+	}
 	tx := &common.TxContext{
-		Ctx:           ctx,
-		BlockContext:  &common.BlockContext{Height: 1},
+		Ctx: ctx,
+		BlockContext: &common.BlockContext{
+			Height:   1,
+			Proposer: leaderPub,
+		},
 		Signer:        signer.Bytes(),
 		Caller:        signer.Address(),
 		TxID:          platform.Txid(),
