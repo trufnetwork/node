@@ -36,7 +36,7 @@ func TestTaxonomyFees(t *testing.T) {
 		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			setupTaxonomyTestEnvironment(t),
-			testTaxonomyExemptWalletNoFee(t),
+			testTaxonomyWriterRolePaysFee(t),
 			testTaxonomyNonExemptWalletPaysFee(t),
 			testTaxonomyInsufficientBalance(t),
 			testTaxonomyMultipleChildrenFee(t),
@@ -67,49 +67,48 @@ func setupTaxonomyTestEnvironment(t *testing.T) func(ctx context.Context, platfo
 	}
 }
 
-// Test 1: Exempt wallet (with network_writer role) inserts taxonomy without paying fee
-func testTaxonomyExemptWalletNoFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+// Test 1: Wallet with network_writer role still pays insert_taxonomy fees.
+// 100 TRUF in → 6 (composed) + 6 (child) + 6 (1-child taxonomy) = 18 TRUF spent.
+func testTaxonomyWriterRolePaysFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		exemptAddrVal := util.Unsafe_NewEthereumAddressFromString("0x2111111111111111111111111111111111111111")
-		exemptAddr := &exemptAddrVal
+		writerAddrVal := util.Unsafe_NewEthereumAddressFromString("0x2111111111111111111111111111111111111111")
+		writerAddr := &writerAddrVal
 
-		// Register data provider (this grants network_writer role - exempt from fees)
-		err := setup.CreateDataProvider(ctx, platform, exemptAddr.Address())
+		// Register as data provider (also grants network_writer role; no longer exempts).
+		err := setup.CreateDataProvider(ctx, platform, writerAddr.Address())
 		require.NoError(t, err, "failed to create data provider")
 
-		// Give balance to verify it doesn't change
-		err = giveBalance(ctx, platform, exemptAddr.Address(), "100000000000000000000") // 100 TRUF
+		err = giveBalance(ctx, platform, writerAddr.Address(), "100000000000000000000") // 100 TRUF
 		require.NoError(t, err, "failed to give balance")
 
-		// Get initial balance
-		initialBalance, err := getBalance(ctx, platform, exemptAddr.Address())
+		initialBalance, err := getBalance(ctx, platform, writerAddr.Address())
 		require.NoError(t, err, "failed to get initial balance")
 
-		// Create streams using direct engine calls (like stream_creation_fee_test does)
-		composedStreamId := util.GenerateStreamId("taxonomy_exempt_composed")
-		childStreamId := util.GenerateStreamId("taxonomy_exempt_child")
+		composedStreamId := util.GenerateStreamId("taxonomy_writer_composed")
+		childStreamId := util.GenerateStreamId("taxonomy_writer_child")
 
-		// Create composed stream
-		err = createStream(ctx, platform, exemptAddr, composedStreamId.String(), "composed")
+		err = createStream(ctx, platform, writerAddr, composedStreamId.String(), "composed")
 		require.NoError(t, err, "failed to create composed stream")
 
-		// Create child stream
-		err = createStream(ctx, platform, exemptAddr, childStreamId.String(), "primitive")
+		err = createStream(ctx, platform, writerAddr, childStreamId.String(), "primitive")
 		require.NoError(t, err, "failed to create child stream")
 
-		// Insert taxonomy (1 child = 6 TRUF fee, but should be exempt)
-		err = insertTaxonomy(ctx, platform, exemptAddr,
-			exemptAddr.Address(), composedStreamId.String(),
-			[]string{exemptAddr.Address()},
+		err = insertTaxonomy(ctx, platform, writerAddr,
+			writerAddr.Address(), composedStreamId.String(),
+			[]string{writerAddr.Address()},
 			[]string{childStreamId.String()},
 			[]string{"1.0"},
 			nil)
-		require.NoError(t, err, "taxonomy insertion should succeed for exempt wallet")
+		require.NoError(t, err, "taxonomy insertion should succeed")
 
-		// Verify balance unchanged (no fee charged)
-		finalBalance, err := getBalance(ctx, platform, exemptAddr.Address())
+		finalBalance, err := getBalance(ctx, platform, writerAddr.Address())
 		require.NoError(t, err, "failed to get final balance")
-		require.Equal(t, initialBalance, finalBalance, "Balance should not change for exempt wallet (no fee)")
+
+		// 6 (composed create) + 6 (child create) + 6 (taxonomy w/ 1 child)
+		eighteenTRUF := mustParseBigInt("18000000000000000000")
+		expectedBalance := new(big.Int).Sub(initialBalance, eighteenTRUF)
+		require.Equal(t, 0, expectedBalance.Cmp(finalBalance),
+			"network_writer should pay 18 TRUF total, expected %s but got %s", expectedBalance, finalBalance)
 
 		return nil
 	}

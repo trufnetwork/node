@@ -29,13 +29,13 @@ func TestPermissionGates(t *testing.T) {
 }
 
 func testStreamCreationPermissionGates(t *testing.T, ctx context.Context, platform *kwilTesting.Platform) {
-	// NOTE: With transaction fees implementation, the system:network_writer role changed from
-	// a permission gate to a fee exemption gate:
-	// - Users WITH role: Can create streams without fees (same as before)
-	// - Users WITHOUT role: Can create streams but must pay 2 TRUF per stream (breaking change)
-	//
-	// This test verifies that unauthorized users get "Insufficient balance" errors (not "permission denied")
-	// since they can create streams if they pay fees, but these test addresses have zero balance.
+	// Universal write-fee enforcement removed the role-based exemption: every caller
+	// pays 6 TRUF per stream regardless of network_writer membership. This test now
+	// only covers the still-meaningful gate — that an authorized data provider can
+	// create streams when their wallet is funded (UntypedCreateStream tops up the
+	// balance via feefund). Cases that asserted role-based exemption or expected
+	// "Insufficient balance" for the unauthorized path were removed because the
+	// universal-fee semantics are exercised by stream_creation_fee_test.go.
 
 	// Initialize platform deployer with a valid address
 	defaultDeployer := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000000000")
@@ -44,7 +44,6 @@ func testStreamCreationPermissionGates(t *testing.T, ctx context.Context, platfo
 	// Test addresses - using valid Ethereum address format
 	const (
 		authorizedWriter = "0x742d35cc6634c0532925a3b8d67e2c4e4d4c4d51"
-		unauthorizedUser = "0x742d35cc6634c0532925a3b8d67e2c4e4d4c4d52"
 		managerWallet    = "0x742d35cc6634c0532925a3b8d67e2c4e4d4c4d53"
 	)
 
@@ -53,13 +52,8 @@ func testStreamCreationPermissionGates(t *testing.T, ctx context.Context, platfo
 	setupSystemRoles(t, ctx, platform, managerWallet, authorizedWriter)
 
 	// Create platforms with the correct signers for each identity.
-	managerAddr := util.Unsafe_NewEthereumAddressFromString(managerWallet)
 	authorizedAddr := util.Unsafe_NewEthereumAddressFromString(authorizedWriter)
-	unauthorizedAddr := util.Unsafe_NewEthereumAddressFromString(unauthorizedUser)
-
-	managerPlatform := procedure.WithSigner(platform, managerAddr.Bytes())
 	authorizedPlatform := procedure.WithSigner(platform, authorizedAddr.Bytes())
-	unauthorizedPlatform := procedure.WithSigner(platform, unauthorizedAddr.Bytes())
 
 	// Defines a test case for stream creation permissions.
 	type permissionTestCase struct {
@@ -72,29 +66,6 @@ func testStreamCreationPermissionGates(t *testing.T, ctx context.Context, platfo
 	}
 
 	testCases := []permissionTestCase{
-		{
-			name:        "unauthorized user cannot create single stream without paying fee",
-			platform:    unauthorizedPlatform,
-			userAddress: unauthorizedUser,
-			action: func(p *kwilTesting.Platform, user string) error {
-				streamID := util.GenerateStreamId("unauthorized_single")
-				return setup.UntypedCreateStream(ctx, p, streamID.String(), user, "primitive")
-			},
-			expectSuccess: false,
-			expectedError: "Insufficient balance for stream creation",
-		},
-		{
-			name:        "unauthorized user cannot create multiple streams without paying fee",
-			platform:    unauthorizedPlatform,
-			userAddress: unauthorizedUser,
-			action: func(p *kwilTesting.Platform, user string) error {
-				return setup.CreateStreamsWithOptions(ctx, p, generateStreamInfos(user, 2), setup.CreateStreamsOptions{
-					SkipAutoRoleGrant: true,
-				})
-			},
-			expectSuccess: false,
-			expectedError: "Insufficient balance for stream creation", // Changed: non-role-members must pay fees
-		},
 		{
 			name:        "authorized user can create single stream",
 			platform:    authorizedPlatform,
@@ -128,36 +99,6 @@ func testStreamCreationPermissionGates(t *testing.T, ctx context.Context, platfo
 			}
 		})
 	}
-
-	t.Run("fee exemption responds to role state changes", func(t *testing.T) {
-		// Revoke the role
-		err := procedure.RevokeRoles(ctx, procedure.RevokeRolesInput{
-			Platform: managerPlatform,
-			Owner:    "system",
-			RoleName: "network_writer",
-			Wallets:  []string{authorizedWriter},
-		})
-		require.NoError(t, err)
-
-		// Now verify the formerly authorized user must pay fees (insufficient balance error)
-		streamID := util.GenerateStreamId("post_revocation")
-		err = setup.UntypedCreateStream(ctx, authorizedPlatform, streamID.String(), authorizedWriter, "primitive")
-		require.ErrorContains(t, err, "Insufficient balance for stream creation", "User should be charged fees after role is revoked")
-
-		// Re-grant the role
-		err = procedure.GrantRoles(ctx, procedure.GrantRolesInput{
-			Platform: managerPlatform,
-			Owner:    "system",
-			RoleName: "network_writer",
-			Wallets:  []string{authorizedWriter},
-		})
-		require.NoError(t, err)
-
-		// Verify the user can create streams without fees after role is re-granted
-		streamID2 := util.GenerateStreamId("post_regrant")
-		err = setup.UntypedCreateStream(ctx, authorizedPlatform, streamID2.String(), authorizedWriter, "primitive")
-		require.NoError(t, err, "User should be able to create stream without fees after role is re-granted")
-	})
 }
 
 // setupSystemRoles is a helper to create the necessary system roles for testing.

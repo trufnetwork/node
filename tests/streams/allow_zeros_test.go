@@ -11,6 +11,7 @@ import (
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
+	"github.com/trufnetwork/node/tests/streams/utils/feefund"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
 	"github.com/trufnetwork/node/tests/streams/utils/setup"
 	"github.com/trufnetwork/sdk-go/core/types"
@@ -321,6 +322,11 @@ func createStreamWithAllowZeros(ctx context.Context, platform *kwilTesting.Platf
 	addr, err := util.NewEthereumAddressFromString(locator.DataProvider.Address())
 	if err != nil {
 		return errors.Wrap(err, "invalid data provider address")
+	}
+
+	// Fund for the universal create_stream fee — mirror setup.UntypedCreateStream.
+	if err := feefund.EnsureWalletFunded(ctx, platform, addr.Address(), feefund.PerStreamWei); err != nil {
+		return errors.Wrap(err, "fund wallet for create_stream fee")
 	}
 
 	engineCtx := setup.NewEngineContext(ctx, platform, addr, 1)

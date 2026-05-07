@@ -9,11 +9,13 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
+	kcrypto "github.com/trufnetwork/kwil-db/core/crypto"
 	coreauth "github.com/trufnetwork/kwil-db/core/crypto/auth"
 	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
+	"github.com/trufnetwork/node/tests/streams/utils/feefund"
 	"github.com/trufnetwork/node/tests/streams/utils/setup"
 	sdkTypes "github.com/trufnetwork/sdk-go/core/types"
 	"github.com/trufnetwork/sdk-go/core/util"
@@ -39,6 +41,13 @@ func runTransactionInputActionsTest(t *testing.T) func(ctx context.Context, plat
 		require.NoError(t, setup.AddMemberToRoleBypass(ctx, platform, "system", "network_writers_manager", systemAdmin.Address()))
 		require.NoError(t, setup.CreateDataProvider(ctx, platform, systemAdmin.Address()))
 
+		// Universal write-fee enforcement requires a leader sender on the block
+		// context AND a funded caller wallet. Cover both direct Engine.Call
+		// invocations below (2 streams + 1 record = 18 TRUF).
+		_, leaderPub, err := kcrypto.GenerateSecp256k1Key(nil)
+		require.NoError(t, err, "generate leader key")
+		require.NoError(t, feefund.EnsureWalletFunded(ctx, platform, systemAdmin.Address(), "18000000000000000000"))
+
 		// Test 1: get_transaction_streams
 		t.Log("Test 1: Create streams and verify get_transaction_streams")
 
@@ -49,7 +58,8 @@ func runTransactionInputActionsTest(t *testing.T) func(ctx context.Context, plat
 		tx1 := &common.TxContext{
 			Ctx: ctx,
 			BlockContext: &common.BlockContext{
-				Height: 100,
+				Height:   100,
+				Proposer: leaderPub,
 			},
 			Signer:        systemAdmin.Bytes(),
 			Caller:        systemAdmin.Address(),
@@ -57,11 +67,12 @@ func runTransactionInputActionsTest(t *testing.T) func(ctx context.Context, plat
 			Authenticator: coreauth.EthPersonalSignAuth,
 		}
 		engineCtx1 := &common.EngineContext{TxContext: tx1}
-		_, err := platform.Engine.Call(engineCtx1, platform.DB, "", "create_streams", []any{
+		createRes, err := platform.Engine.Call(engineCtx1, platform.DB, "", "create_streams", []any{
 			[]string{stream1.String(), stream2.String()},
 			[]string{"primitive", "composed"},
 		}, func(row *common.Row) error { return nil })
 		require.NoError(t, err)
+		require.NoError(t, createRes.Error, "create_streams action failed")
 
 		formattedTxID1 := "0x" + txID1
 		t.Logf("Created streams with tx_id: %s", formattedTxID1)
@@ -118,7 +129,8 @@ func runTransactionInputActionsTest(t *testing.T) func(ctx context.Context, plat
 		tx2 := &common.TxContext{
 			Ctx: ctx,
 			BlockContext: &common.BlockContext{
-				Height: 101,
+				Height:   101,
+				Proposer: leaderPub,
 			},
 			Signer:        systemAdmin.Bytes(),
 			Caller:        systemAdmin.Address(),
@@ -126,13 +138,14 @@ func runTransactionInputActionsTest(t *testing.T) func(ctx context.Context, plat
 			Authenticator: coreauth.EthPersonalSignAuth,
 		}
 		engineCtx2 := &common.EngineContext{TxContext: tx2}
-		_, err = platform.Engine.Call(engineCtx2, platform.DB, "", "insert_records", []any{
+		insertRes, err := platform.Engine.Call(engineCtx2, platform.DB, "", "insert_records", []any{
 			[]string{strings.ToLower(systemAdmin.Address())},
 			[]string{primitiveStream.String()},
 			[]int64{1700000000},
 			[]*kwilTypes.Decimal{value1},
 		}, func(row *common.Row) error { return nil })
 		require.NoError(t, err)
+		require.NoError(t, insertRes.Error, "insert_records action failed")
 
 		formattedTxID2 := "0x" + txID2
 		t.Logf("Inserted records with tx_id: %s", formattedTxID2)

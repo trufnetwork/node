@@ -201,7 +201,7 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		})
 		require.NoError(t, err)
 
-		attLeaderPub, _ := newLeader(t)
+		attLeaderPub, attLeaderAddr := newLeader(t)
 		attTx, err := callActionWithLeader(ctx, platform, actor, attLeaderPub, height, "request_attestation", []any{
 			strings.ToLower(systemAdmin.Address()),
 			attestationStream.String(),
@@ -265,10 +265,10 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 			},
 			attTx: {
 				method:       "requestAttestation",
-				fee:          "0", // Actor is exempt (has network_writer role), so fee should be 0
-				feeRecipient: "",  // No fee recipient when exempt
+				fee:          feeFortyTRUF,
+				feeRecipient: attLeaderAddr,
 				feeDistributions: []string{
-					buildDistribution("", "0"),
+					buildDistribution(attLeaderAddr, feeFortyTRUF),
 				},
 				assertMetadata: assertNoMetadata,
 			},

@@ -17,6 +17,7 @@ import (
 	"github.com/trufnetwork/node/extensions/tn_utils"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
+	"github.com/trufnetwork/node/tests/streams/utils/feefund"
 	"github.com/trufnetwork/node/tests/streams/utils/setup"
 	"github.com/trufnetwork/sdk-go/core/util"
 
@@ -68,6 +69,12 @@ func testWinnerReceivesFullPayout(t *testing.T) func(context.Context, *kwilTesti
 		err = erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
+		// Fund DP on the sepolia bridge (where ethereum_bridge resolves under tests)
+		// for create_stream (6 TRUF), insert_records (6 TRUF), request_attestation (40 TRUF).
+		// Give 100 TRUF to leave headroom.
+		err = feefund.EnsureWalletFunded(ctx, platform, dpAddr.Address(), "100000000000000000000")
+		require.NoError(t, err)
+
 		// Get USDC balance before market operations
 		balanceBefore, err := getUSDCBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
@@ -82,7 +89,7 @@ func testWinnerReceivesFullPayout(t *testing.T) func(context.Context, *kwilTesti
 		// We use a dedicated context for DP operations
 		dpTx := &common.TxContext{
 			Ctx:           ctx,
-			BlockContext:  &common.BlockContext{Height: 1},
+			BlockContext:  &common.BlockContext{Height: 1, Proposer: NewTestProposerPub(t)},
 			Signer:        dpAddr.Bytes(),
 			Caller:        dpAddr.Address(),
 			TxID:          platform.Txid(),

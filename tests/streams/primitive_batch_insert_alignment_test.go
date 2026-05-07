@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"strconv"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
+	"github.com/trufnetwork/node/tests/streams/utils/feefund"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
 	"github.com/trufnetwork/node/tests/streams/utils/setup"
 	"github.com/trufnetwork/node/tests/streams/utils/table"
@@ -73,6 +75,17 @@ func testBatchAlignment(t *testing.T) func(ctx context.Context, platform *kwilTe
 				return errors.Wrap(err, "parse decimal")
 			}
 			values = append(values, dec)
+		}
+
+		// Fund deployer for the per-record write fee (universal fee enforcement).
+		// Mirrors the migration 003 charge of feefund.PerStreamWei (6 TRUF) per record.
+		feePerRecord, ok := new(big.Int).SetString(feefund.PerStreamWei, 10)
+		if !ok {
+			return errors.Errorf("invalid feefund.PerStreamWei: %s", feefund.PerStreamWei)
+		}
+		totalFee := new(big.Int).Mul(feePerRecord, big.NewInt(int64(len(eventTimes))))
+		if err := feefund.EnsureWalletFunded(ctx, platform, deployer.Address(), totalFee.String()); err != nil {
+			return errors.Wrap(err, "fund deployer for insert_records fee")
 		}
 
 		// Execute insert_records directly in one call

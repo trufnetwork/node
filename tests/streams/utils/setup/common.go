@@ -2,11 +2,13 @@ package setup
 
 import (
 	"context"
+	"math/big"
 	"strings"
 
 	"github.com/pkg/errors"
 	"github.com/trufnetwork/kwil-db/common"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	"github.com/trufnetwork/node/tests/streams/utils/feefund"
 	"github.com/trufnetwork/node/tests/streams/utils/testctx"
 	"github.com/trufnetwork/sdk-go/core/types"
 	"github.com/trufnetwork/sdk-go/core/util"
@@ -73,6 +75,12 @@ func UntypedCreateStream(ctx context.Context, platform *kwilTesting.Platform, st
 		return errors.Wrap(err, "invalid data provider address")
 	}
 
+	// Universal write-fee enforcement (001-common-actions.sql) charges 6 TRUF per
+	// stream from every caller — top the wallet up so setup helpers stay neutral.
+	if err := feefund.EnsureWalletFunded(ctx, platform, addr.Address(), feefund.PerStreamWei); err != nil {
+		return errors.Wrap(err, "fund wallet for stream creation fee")
+	}
+
 	engineContext := newEthEngineContext(ctx, platform, addr, 1)
 
 	r, err := platform.Engine.Call(engineContext,
@@ -122,6 +130,14 @@ func CreateStreamsWithOptions(ctx context.Context, platform *kwilTesting.Platfor
 	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
 	if err != nil {
 		return errors.Wrap(err, "error creating composed dataset")
+	}
+
+	// Fund the deployer with 6 TRUF × N streams so the universal write fee passes.
+	feePerStream := new(big.Int)
+	feePerStream.SetString(feefund.PerStreamWei, 10)
+	totalFee := new(big.Int).Mul(feePerStream, big.NewInt(int64(len(streamInfos))))
+	if err := feefund.EnsureWalletFunded(ctx, platform, deployer.Address(), totalFee.String()); err != nil {
+		return errors.Wrap(err, "fund deployer for batch stream creation fee")
 	}
 
 	engineContext := newEthEngineContext(ctx, platform, deployer, 1)
@@ -203,13 +219,18 @@ func CreateDataProvider(ctx context.Context, platform *kwilTesting.Platform, add
 	return nil
 }
 
-// CreateDataProviderWithoutRole registers a data provider WITHOUT granting the network_writer role.
-// This is useful for testing fee collection scenarios where the data provider should pay fees.
+// CreateDataProviderWithoutRole registers a data provider and ensures the
+// network_writer role is NOT left granted afterward. Used for permission tests
+// that need a registered DP whose wallet does not carry the role.
+//
+// Note: under the universal write-fee enforcement (Phase 1) every caller pays
+// regardless of role, so this helper is no longer about "non-whitelisted = pays
+// fees". It exists only to exercise role-gated authorization paths.
 //
 // Note: This function:
 // 1. Temporarily grants network_writer role to register the provider (required by create_data_provider action)
 // 2. Immediately revokes the role after registration
-// 3. Leaves the data provider registered but non-whitelisted (will pay fees)
+// 3. Leaves the data provider registered but without the network_writer role
 func CreateDataProviderWithoutRole(ctx context.Context, platform *kwilTesting.Platform, address string) error {
 	addr, err := util.NewEthereumAddressFromString(address)
 	if err != nil {

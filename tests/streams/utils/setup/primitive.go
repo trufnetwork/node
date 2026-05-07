@@ -2,16 +2,33 @@ package setup
 
 import (
 	"context"
+	"math/big"
 	"strconv"
 
 	"github.com/pkg/errors"
 	"github.com/trufnetwork/kwil-db/common"
 	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	"github.com/trufnetwork/node/tests/streams/utils/feefund"
 	testtable "github.com/trufnetwork/node/tests/streams/utils/table"
 	"github.com/trufnetwork/sdk-go/core/types"
 	"github.com/trufnetwork/sdk-go/core/util"
 )
+
+// fundForRecordWrites tops up `wallet` with the fee required for `numRecords`
+// insert_record/insert_records calls (each charges feefund.PerStreamWei). The
+// universal-fee migration removed the network_writer exemption, so test setup
+// helpers must pre-fund the signer or every insert reverts with "Insufficient
+// balance for write fee".
+func fundForRecordWrites(ctx context.Context, platform *kwilTesting.Platform, wallet string, numRecords int) error {
+	if numRecords <= 0 {
+		return nil
+	}
+	feePerRecord := new(big.Int)
+	feePerRecord.SetString(feefund.PerStreamWei, 10)
+	totalFee := new(big.Int).Mul(feePerRecord, big.NewInt(int64(numRecords)))
+	return feefund.EnsureWalletFunded(ctx, platform, wallet, totalFee.String())
+}
 
 type InsertRecordInput struct {
 	EventTime int64   `json:"event_time"`
@@ -148,6 +165,17 @@ func InsertMarkdownPrimitiveData(ctx context.Context, input InsertMarkdownDataIn
 		return errors.Wrap(err, "error in InsertMarkdownPrimitiveData")
 	}
 
+	// Count non-empty rows to pre-fund the signer for the universal write fee.
+	nonEmpty := 0
+	for _, row := range table.Rows {
+		if row[1] != "" {
+			nonEmpty++
+		}
+	}
+	if err := fundForRecordWrites(ctx, input.Platform, signer.Address(), nonEmpty); err != nil {
+		return errors.Wrap(err, "fund signer for insert_record fees")
+	}
+
 	for _, row := range table.Rows {
 		eventTime := row[0]
 		value := row[1]
@@ -202,6 +230,10 @@ func insertPrimitiveData(ctx context.Context, input InsertPrimitiveDataInput) er
 	deployer, err := util.NewEthereumAddressFromBytes(input.PrimitiveStream.StreamLocator.DataProvider.Bytes())
 	if err != nil {
 		return errors.Wrap(err, "error in insertPrimitiveData")
+	}
+
+	if err := fundForRecordWrites(ctx, input.Platform, deployer.Address(), len(args)); err != nil {
+		return errors.Wrap(err, "fund deployer for insert_record fees")
 	}
 
 	for _, arg := range args {
@@ -303,6 +335,10 @@ func InsertPrimitiveDataMultiBatch(ctx context.Context, input InsertMultiPrimiti
 				provider, len(g.dataProviders), len(g.streamIds), len(g.eventTimes), len(g.values))
 		}
 		signerAddr := util.Unsafe_NewEthereumAddressFromString(provider)
+
+		if err := fundForRecordWrites(ctx, input.Platform, signerAddr.Address(), len(g.dataProviders)); err != nil {
+			return errors.Wrapf(err, "fund %s for insert_records batch", provider)
+		}
 
 		engineContext := newEthEngineContext(ctx, input.Platform, signerAddr, input.Height)
 		engineContext.TxContext.TxID = txid
