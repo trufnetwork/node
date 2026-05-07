@@ -47,10 +47,10 @@ func TestStreamCreationFees(t *testing.T) {
 		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			setupTestEnvironment(t),
-			testExemptWalletNoFee(t),
+			testWriterRolePaysFee(t),
 			testNonExemptWalletPaysFee(t),
 			testInsufficientBalance(t),
-			testRoleChangeAffectsFee(t),
+			testFeeIndependentOfRole(t),
 			testBatchCreationPerStreamFee(t),
 			testLeaderReceivesFees(t),
 		},
@@ -88,32 +88,33 @@ func setupTestEnvironment(t *testing.T) func(ctx context.Context, platform *kwil
 	}
 }
 
-// Test 1: Exempt wallet creates stream without paying fee
-func testExemptWalletNoFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+// Test 1: Wallet with network_writer role still pays the create_streams fee.
+// The role no longer carries an exemption — funded callers always pay 6 TRUF/stream.
+func testWriterRolePaysFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		exemptAddrVal := util.Unsafe_NewEthereumAddressFromString("0x1111111111111111111111111111111111111111")
-		exemptAddr := &exemptAddrVal
+		writerAddrVal := util.Unsafe_NewEthereumAddressFromString("0x1111111111111111111111111111111111111111")
+		writerAddr := &writerAddrVal
 
-		// Register data provider (this also grants network_writer role and registers in data_providers table)
-		err := setup.CreateDataProvider(ctx, platform, exemptAddr.Address())
+		// Register as data provider (also grants network_writer role).
+		err := setup.CreateDataProvider(ctx, platform, writerAddr.Address())
 		require.NoError(t, err, "failed to create data provider")
 
-		// Give balance to verify it doesn't change
-		err = giveBalance(ctx, platform, exemptAddr.Address(), "100000000000000000000")
+		// Fund wallet so the create fee can be paid.
+		err = giveBalance(ctx, platform, writerAddr.Address(), "100000000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
-		// Get initial balance
-		initialBalance, err := getBalance(ctx, platform, exemptAddr.Address())
+		initialBalance, err := getBalance(ctx, platform, writerAddr.Address())
 		require.NoError(t, err, "failed to get initial balance")
 
-		// Create stream as exempt user
-		err = createStream(ctx, platform, exemptAddr, "st000000000000000000000000000001", "primitive")
-		require.NoError(t, err, "stream creation should succeed for exempt wallet")
+		err = createStream(ctx, platform, writerAddr, "st000000000000000000000000000001", "primitive")
+		require.NoError(t, err, "stream creation should succeed for funded network_writer")
 
-		// Verify balance unchanged
-		finalBalance, err := getBalance(ctx, platform, exemptAddr.Address())
+		finalBalance, err := getBalance(ctx, platform, writerAddr.Address())
 		require.NoError(t, err, "failed to get final balance")
-		require.Equal(t, initialBalance, finalBalance, "Balance should not change for exempt wallet")
+
+		expectedBalance := new(big.Int).Sub(initialBalance, sixTRUF)
+		require.Equal(t, 0, expectedBalance.Cmp(finalBalance),
+			"network_writer should pay 6 TRUF, expected %s but got %s", expectedBalance, finalBalance)
 
 		return nil
 	}
@@ -177,24 +178,23 @@ func testInsufficientBalance(t *testing.T) func(ctx context.Context, platform *k
 	}
 }
 
-// Test 4: Role change affects fee behavior
-func testRoleChangeAffectsFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+// Test 4: network_writer role grant/revoke does NOT change the create_streams fee.
+// Every call charges 6 TRUF regardless of role membership.
+func testFeeIndependentOfRole(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		userAddrVal := util.Unsafe_NewEthereumAddressFromString("0x5555555555555555555555555555555555555555")
 		userAddr := &userAddrVal
 
-		// Register data provider WITHOUT role (non-whitelisted, will pay fees)
 		err := setup.CreateDataProviderWithoutRole(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to register data provider")
 
-		// Give user 100 TRUF
 		err = giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
-		// First call: User pays fee (not exempt)
 		initialBalance, err := getBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
+		// Without role: charges 6 TRUF.
 		err = createStream(ctx, platform, userAddr, "st000000000000000000000000000004", "primitive")
 		require.NoError(t, err, "first stream creation should succeed")
 
@@ -202,25 +202,25 @@ func testRoleChangeAffectsFee(t *testing.T) func(ctx context.Context, platform *
 		require.NoError(t, err)
 
 		expectedAfterFirst := new(big.Int).Sub(initialBalance, sixTRUF)
-		require.Equal(t, 0, expectedAfterFirst.Cmp(balanceAfterFirst), "First call should charge 6 TRUF fee")
+		require.Equal(t, 0, expectedAfterFirst.Cmp(balanceAfterFirst), "first create should charge 6 TRUF")
 
-		// Grant role
+		// Grant role — must NOT exempt.
 		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "network_writer", userAddr.Address())
 		require.NoError(t, err, "failed to grant role")
 
-		// Second call: User is now exempt
 		err = createStream(ctx, platform, userAddr, "st000000000000000000000000000005", "primitive")
 		require.NoError(t, err, "second stream creation should succeed")
 
 		balanceAfterSecond, err := getBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
-		require.Equal(t, 0, balanceAfterFirst.Cmp(balanceAfterSecond), "Second call should not charge fee (now exempt)")
+		expectedAfterSecond := new(big.Int).Sub(balanceAfterFirst, sixTRUF)
+		require.Equal(t, 0, expectedAfterSecond.Cmp(balanceAfterSecond),
+			"network_writer must still pay the 6 TRUF fee — exemption removed")
 
-		// Revoke role using bypass (same pattern as AddMemberToRoleBypass)
+		// Revoke role — fee unchanged.
 		err = revokeRoleBypass(ctx, platform, "system", "network_writer", userAddr.Address())
 		require.NoError(t, err, "failed to revoke role")
 
-		// Third call: User pays fee again
 		err = createStream(ctx, platform, userAddr, "st000000000000000000000000000006", "primitive")
 		require.NoError(t, err, "third stream creation should succeed")
 
@@ -228,7 +228,8 @@ func testRoleChangeAffectsFee(t *testing.T) func(ctx context.Context, platform *
 		require.NoError(t, err)
 
 		expectedAfterThird := new(big.Int).Sub(balanceAfterSecond, sixTRUF)
-		require.Equal(t, 0, expectedAfterThird.Cmp(balanceAfterThird), "Third call should charge fee (role revoked)")
+		require.Equal(t, 0, expectedAfterThird.Cmp(balanceAfterThird),
+			"third create should charge 6 TRUF (role revoked, fee unchanged)")
 
 		return nil
 	}

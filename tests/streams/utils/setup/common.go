@@ -2,11 +2,13 @@ package setup
 
 import (
 	"context"
+	"math/big"
 	"strings"
 
 	"github.com/pkg/errors"
 	"github.com/trufnetwork/kwil-db/common"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	"github.com/trufnetwork/node/tests/streams/utils/feefund"
 	"github.com/trufnetwork/node/tests/streams/utils/testctx"
 	"github.com/trufnetwork/sdk-go/core/types"
 	"github.com/trufnetwork/sdk-go/core/util"
@@ -73,6 +75,12 @@ func UntypedCreateStream(ctx context.Context, platform *kwilTesting.Platform, st
 		return errors.Wrap(err, "invalid data provider address")
 	}
 
+	// Universal write-fee enforcement (001-common-actions.sql) charges 6 TRUF per
+	// stream from every caller — top the wallet up so setup helpers stay neutral.
+	if err := feefund.EnsureWalletFunded(ctx, platform, addr.Address(), feefund.PerStreamWei); err != nil {
+		return errors.Wrap(err, "fund wallet for stream creation fee")
+	}
+
 	engineContext := newEthEngineContext(ctx, platform, addr, 1)
 
 	r, err := platform.Engine.Call(engineContext,
@@ -122,6 +130,14 @@ func CreateStreamsWithOptions(ctx context.Context, platform *kwilTesting.Platfor
 	deployer, err := util.NewEthereumAddressFromBytes(platform.Deployer)
 	if err != nil {
 		return errors.Wrap(err, "error creating composed dataset")
+	}
+
+	// Fund the deployer with 6 TRUF × N streams so the universal write fee passes.
+	feePerStream := new(big.Int)
+	feePerStream.SetString(feefund.PerStreamWei, 10)
+	totalFee := new(big.Int).Mul(feePerStream, big.NewInt(int64(len(streamInfos))))
+	if err := feefund.EnsureWalletFunded(ctx, platform, deployer.Address(), totalFee.String()); err != nil {
+		return errors.Wrap(err, "fund deployer for batch stream creation fee")
 	}
 
 	engineContext := newEthEngineContext(ctx, platform, deployer, 1)

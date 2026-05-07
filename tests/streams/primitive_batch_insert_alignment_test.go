@@ -12,6 +12,7 @@ import (
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
+	"github.com/trufnetwork/node/tests/streams/utils/feefund"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
 	"github.com/trufnetwork/node/tests/streams/utils/setup"
 	"github.com/trufnetwork/node/tests/streams/utils/table"
@@ -73,6 +74,11 @@ func testBatchAlignment(t *testing.T) func(ctx context.Context, platform *kwilTe
 				return errors.Wrap(err, "parse decimal")
 			}
 			values = append(values, dec)
+		}
+
+		// Fund deployer for the 4-record write fee (universal fee enforcement).
+		if err := feefund.EnsureWalletFunded(ctx, platform, deployer.Address(), "24000000000000000000"); err != nil {
+			return errors.Wrap(err, "fund deployer for insert_records fee")
 		}
 
 		// Execute insert_records directly in one call

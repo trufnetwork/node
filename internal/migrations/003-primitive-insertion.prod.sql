@@ -37,37 +37,26 @@ CREATE OR REPLACE ACTION insert_records(
     --     ERROR('insert_records: batch size exceeds maximum of 10 records');
     -- }
 
-    -- ===== FEE COLLECTION WITH ROLE EXEMPTION =====
-    -- Check if caller is exempt (has system:network_writer role)
-    $is_exempt BOOL := FALSE;
-    FOR $row IN are_members_of('system', 'network_writer', ARRAY[$lower_caller]) {
-        IF $row.wallet = $lower_caller AND $row.is_member {
-            $is_exempt := TRUE;
-            BREAK;
-        }
+    -- ===== FEE COLLECTION =====
+    -- Charge 6 TRUF per record to every caller.
+    $fee_per_record := 6000000000000000000::NUMERIC(78, 0); -- 6 TRUF with 18 decimals
+    $total_fee := $fee_per_record * $num_records::NUMERIC(78, 0);
+
+    IF @leader_sender IS NULL {
+        ERROR('Leader address not available for fee transfer');
+    }
+    $leader_hex := encode(@leader_sender, 'hex')::TEXT;
+
+    $caller_balance := eth_truf.balance(@caller);
+
+    IF $caller_balance < $total_fee {
+        -- Derive human-readable fee from $total_fee
+        ERROR('Insufficient balance for write fee. Required: ' || ($total_fee / 1000000000000000000::NUMERIC(78, 0))::TEXT || ' TRUF for ' || $num_records::TEXT || ' record(s)');
     }
 
-    -- Collect fee only from non-exempt wallets (6 TRUF per record)
-    IF NOT $is_exempt {
-        $fee_per_record := 6000000000000000000::NUMERIC(78, 0); -- 6 TRUF with 18 decimals
-        $total_fee := $fee_per_record * $num_records::NUMERIC(78, 0);
-
-        IF @leader_sender IS NULL {
-            ERROR('Leader address not available for fee transfer');
-        }
-        $leader_hex := encode(@leader_sender, 'hex')::TEXT;
-
-        $caller_balance := eth_truf.balance(@caller);
-
-        IF $caller_balance < $total_fee {
-            -- Derive human-readable fee from $total_fee
-            ERROR('Insufficient balance for write fee. Required: ' || ($total_fee / 1000000000000000000::NUMERIC(78, 0))::TEXT || ' TRUF for ' || $num_records::TEXT || ' record(s)');
-        }
-
-        eth_truf.transfer($leader_hex, $total_fee);
-        $fee_total := $total_fee;
-        $fee_recipient := '0x' || $leader_hex;
-    }
+    eth_truf.transfer($leader_hex, $total_fee);
+    $fee_total := $total_fee;
+    $fee_recipient := '0x' || $leader_hex;
     -- ===== END FEE COLLECTION =====
     if $num_records != array_length($stream_id) or $num_records != array_length($event_time) or $num_records != array_length($value) {
         ERROR('array lengths mismatch');

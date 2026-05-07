@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"strings"
 
 	"github.com/pkg/errors"
 	"github.com/trufnetwork/kwil-db/common"
 	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	"github.com/trufnetwork/node/tests/streams/utils/feefund"
 	"github.com/trufnetwork/node/tests/streams/utils/testctx"
 	types "github.com/trufnetwork/sdk-go/core/types"
 	"github.com/trufnetwork/sdk-go/core/util"
@@ -431,6 +433,15 @@ func SetTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 			return errors.Wrap(err, "error parsing weight")
 		}
 		weightDecimals = append(weightDecimals, valueDecimal)
+	}
+
+	// insert_taxonomy charges feefund.PerStreamWei per child stream after the
+	// universal-fee migration removed the network_writer exemption.
+	feePerChild := new(big.Int)
+	feePerChild.SetString(feefund.PerStreamWei, 10)
+	totalFee := new(big.Int).Mul(feePerChild, big.NewInt(int64(len(primitiveStreamStrings))))
+	if err := feefund.EnsureWalletFunded(ctx, input.Platform, deployer.Address(), totalFee.String()); err != nil {
+		return errors.Wrap(err, "fund deployer for insert_taxonomy fees")
 	}
 
 	engineContext := testctx.NewEngineContext(ctx, input.Platform, deployer, input.Height)

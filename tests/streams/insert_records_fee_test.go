@@ -50,10 +50,10 @@ func TestInsertRecordsFees(t *testing.T) {
 		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			setupInsertTestEnvironment(t),
-			testInsertExemptWalletNoFee(t),
+			testInsertWriterRolePaysFee(t),
 			testInsertNonExemptWalletPaysFee(t),
 			testInsertInsufficientBalance(t),
-			testInsertRoleChangeAffectsFee(t),
+			testInsertFeeIndependentOfRole(t),
 			testInsertBatchChargesPerRecord(t),
 			testInsertLeaderReceivesFees(t),
 		},
@@ -138,21 +138,22 @@ func setupInsertTestEnvironment(t *testing.T) func(ctx context.Context, platform
 	}
 }
 
-// Test 1: Exempt wallet inserts records without paying fee
-func testInsertExemptWalletNoFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+// Test 1: Wallet with network_writer role still pays the fee (no exemption).
+// Previously the role exempted the caller; after the universal-fee change, the role
+// keeps its admin/permission uses but no longer affects fee collection.
+func testInsertWriterRolePaysFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		exemptAddrVal := util.Unsafe_NewEthereumAddressFromString("0xa111111111111111111111111111111111111111")
-		exemptAddr := &exemptAddrVal
+		writerAddrVal := util.Unsafe_NewEthereumAddressFromString("0xa111111111111111111111111111111111111111")
+		writerAddr := &writerAddrVal
 
-		// Register as data provider with network_writer role (this makes them exempt)
-		err := setup.CreateDataProvider(ctx, platform, exemptAddr.Address())
+		// Register as data provider with network_writer role (no longer exempt).
+		err := setup.CreateDataProvider(ctx, platform, writerAddr.Address())
 		require.NoError(t, err, "failed to register data provider")
 
-		// Create stream owned by exempt user (they can create without fee due to network_writer role)
 		streamID := "st111111111111111111111111111111"
 		streamLocator := types.StreamLocator{
 			StreamId:     util.GenerateStreamId(streamID),
-			DataProvider: *exemptAddr,
+			DataProvider: *writerAddr,
 		}
 		err = setup.CreateStream(ctx, platform, setup.StreamInfo{
 			Type:    setup.ContractTypePrimitive,
@@ -160,22 +161,22 @@ func testInsertExemptWalletNoFee(t *testing.T) func(ctx context.Context, platfor
 		})
 		require.NoError(t, err, "failed to create stream")
 
-		// Give balance to verify it doesn't change
-		err = giveInsertBalance(ctx, platform, exemptAddr.Address(), "100000000000000000000")
+		// Fund wallet so the insert fee can be paid.
+		err = giveInsertBalance(ctx, platform, writerAddr.Address(), "100000000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
-		// Get initial balance
-		initialBalance, err := getInsertBalance(ctx, platform, exemptAddr.Address())
+		initialBalance, err := getInsertBalance(ctx, platform, writerAddr.Address())
 		require.NoError(t, err, "failed to get initial balance")
 
-		// Insert 1 record as exempt user (into their own stream)
-		err = insertRecord(ctx, platform, exemptAddr, exemptAddr.Address(), streamID, 1000, "10.5")
-		require.NoError(t, err, "insert should succeed for exempt wallet")
+		err = insertRecord(ctx, platform, writerAddr, writerAddr.Address(), streamID, 1000, "10.5")
+		require.NoError(t, err, "insert should succeed for funded network_writer")
 
-		// Verify balance unchanged
-		finalBalance, err := getInsertBalance(ctx, platform, exemptAddr.Address())
+		finalBalance, err := getInsertBalance(ctx, platform, writerAddr.Address())
 		require.NoError(t, err, "failed to get final balance")
-		require.Equal(t, initialBalance, finalBalance, "Balance should not change for exempt wallet")
+
+		expectedBalance := new(big.Int).Sub(initialBalance, sixTRUFInsert)
+		require.Equal(t, 0, expectedBalance.Cmp(finalBalance),
+			"network_writer should pay 6 TRUF, expected %s but got %s", expectedBalance, finalBalance)
 
 		return nil
 	}
@@ -283,8 +284,10 @@ func testInsertInsufficientBalance(t *testing.T) func(ctx context.Context, platf
 	}
 }
 
-// Test 4: Role change affects fee behavior
-func testInsertRoleChangeAffectsFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+// Test 4: network_writer role grant/revoke does NOT change fee charging.
+// The role no longer carries a fee exemption — every insert charges 6 TRUF
+// regardless of role membership.
+func testInsertFeeIndependentOfRole(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Get systemAdmin who owns the stream
 		systemAdmin := util.Unsafe_NewEthereumAddressFromString("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
@@ -305,24 +308,21 @@ func testInsertRoleChangeAffectsFee(t *testing.T) func(ctx context.Context, plat
 		})
 		require.NoError(t, err, "failed to create stream")
 
-		// Register non-exempt user
 		userAddrVal := util.Unsafe_NewEthereumAddressFromString("0xa555555555555555555555555555555555555555")
 		userAddr := &userAddrVal
 		err = setup.CreateDataProviderWithoutRole(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to register data provider")
 
-		// Grant write access to user
 		err = grantStreamWriteAccess(ctx, platform, systemAdmin.Address(), streamID, userAddr.Address())
 		require.NoError(t, err, "failed to grant write access")
 
-		// Give user 100 TRUF
 		err = giveInsertBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
-		// First insert: User pays fee (not exempt)
 		initialBalance, err := getInsertBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
+		// Insert without role — charges 6 TRUF.
 		err = insertRecord(ctx, platform, userAddr, systemAdmin.Address(), streamID, 1000, "10.5")
 		require.NoError(t, err, "first insert should succeed")
 
@@ -330,25 +330,26 @@ func testInsertRoleChangeAffectsFee(t *testing.T) func(ctx context.Context, plat
 		require.NoError(t, err)
 
 		expectedAfterFirst := new(big.Int).Sub(initialBalance, sixTRUFInsert)
-		require.Equal(t, 0, expectedAfterFirst.Cmp(balanceAfterFirst), "First insert should charge 6 TRUF fee")
+		require.Equal(t, 0, expectedAfterFirst.Cmp(balanceAfterFirst), "first insert should charge 6 TRUF")
 
-		// Grant network_writer role to make user exempt
+		// Grant network_writer role — must NOT exempt going forward.
 		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "network_writer", userAddr.Address())
 		require.NoError(t, err, "failed to grant role")
 
-		// Second insert: User is now exempt
 		err = insertRecord(ctx, platform, userAddr, systemAdmin.Address(), streamID, 1001, "11.5")
 		require.NoError(t, err, "second insert should succeed")
 
 		balanceAfterSecond, err := getInsertBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
-		require.Equal(t, 0, balanceAfterFirst.Cmp(balanceAfterSecond), "Second insert should not charge fee (now exempt)")
 
-		// Revoke network_writer role
+		expectedAfterSecond := new(big.Int).Sub(balanceAfterFirst, sixTRUFInsert)
+		require.Equal(t, 0, expectedAfterSecond.Cmp(balanceAfterSecond),
+			"network_writer must still pay the 6 TRUF fee — exemption removed")
+
+		// Revoke role — fee behavior unchanged.
 		err = revokeInsertRoleBypass(ctx, platform, "system", "network_writer", userAddr.Address())
 		require.NoError(t, err, "failed to revoke role")
 
-		// Third insert: User pays fee again
 		err = insertRecord(ctx, platform, userAddr, systemAdmin.Address(), streamID, 1002, "12.5")
 		require.NoError(t, err, "third insert should succeed")
 
@@ -356,7 +357,8 @@ func testInsertRoleChangeAffectsFee(t *testing.T) func(ctx context.Context, plat
 		require.NoError(t, err)
 
 		expectedAfterThird := new(big.Int).Sub(balanceAfterSecond, sixTRUFInsert)
-		require.Equal(t, 0, expectedAfterThird.Cmp(balanceAfterThird), "Third insert should charge fee (role revoked)")
+		require.Equal(t, 0, expectedAfterThird.Cmp(balanceAfterThird),
+			"third insert should charge 6 TRUF (role revoked, fee unchanged)")
 
 		return nil
 	}
