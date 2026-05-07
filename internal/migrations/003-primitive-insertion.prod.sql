@@ -43,7 +43,15 @@ CREATE OR REPLACE ACTION insert_records(
     if $num_records IS NULL OR $num_records = 0 {
         ERROR('insert_records: empty or NULL data_provider array');
     }
-    if $num_records != array_length($stream_id) or $num_records != array_length($event_time) or $num_records != array_length($value) {
+    -- Use IS DISTINCT FROM so a NULL parallel array (array_length(NULL) = NULL)
+    -- is treated as a length mismatch and the ERROR fires. Plain `!= NULL`
+    -- would yield NULL — falsy in IF — and let mismatched batches reach the
+    -- fee transfer with a worse downstream error. Parentheses are required
+    -- because Kuneiform's parser otherwise binds OR tighter than the right
+    -- operand of IS DISTINCT FROM, producing a type error.
+    if ($num_records IS DISTINCT FROM array_length($stream_id))
+       OR ($num_records IS DISTINCT FROM array_length($event_time))
+       OR ($num_records IS DISTINCT FROM array_length($value)) {
         ERROR('array lengths mismatch');
     }
 
