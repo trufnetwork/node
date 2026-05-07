@@ -44,6 +44,16 @@ CREATE OR REPLACE ACTION insert_records(
     --     ERROR('insert_records: batch size exceeds maximum of 10 records');
     -- }
 
+    -- Cheap input validation runs before any precompile call so malformed
+    -- requests (NULL/empty/length-mismatched arrays) fail fast instead of
+    -- propagating NULL into fee math or wasting bridge.balance() roundtrips.
+    if $num_records IS NULL OR $num_records = 0 {
+        ERROR('insert_records: empty or NULL data_provider array');
+    }
+    if $num_records != array_length($stream_id) or $num_records != array_length($event_time) or $num_records != array_length($value) {
+        ERROR('array lengths mismatch');
+    }
+
     -- ===== FEE COLLECTION =====
     -- Charge 6 TRUF per record to every caller.
     $fee_per_record := 6000000000000000000::NUMERIC(78, 0); -- 6 TRUF with 18 decimals
@@ -65,9 +75,6 @@ CREATE OR REPLACE ACTION insert_records(
     $fee_total := $total_fee;
     $fee_recipient := '0x' || $leader_hex;
     -- ===== END FEE COLLECTION =====
-    if $num_records != array_length($stream_id) or $num_records != array_length($event_time) or $num_records != array_length($value) {
-        ERROR('array lengths mismatch');
-    }
 
     $current_block INT := @height;
 

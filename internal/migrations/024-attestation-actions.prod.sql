@@ -49,7 +49,7 @@ CREATE OR REPLACE ACTION request_attestation(
     $caller_bytes BYTEA := tn_utils.get_caller_bytes();
     $lower_caller TEXT := tn_utils.get_caller_hex();
 
-    -- Charge 40 TRUF to every caller.
+    -- Charge 40 TRUF to every caller (no role-based exemption).
     $attestation_fee := '40000000000000000000'::NUMERIC(78, 0); -- 40 TRUF with 18 decimals
 
     -- Validate max_fee if provided

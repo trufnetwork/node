@@ -69,13 +69,27 @@ CREATE OR REPLACE ACTION create_streams(
     $stream_types TEXT[],
     $allow_zeros BOOL[] DEFAULT NULL
 ) PUBLIC {
-    -- ===== FEE COLLECTION =====
     $lower_caller TEXT := LOWER(@caller);
     $fee_total NUMERIC(78, 0) := 0::NUMERIC(78, 0);
     $fee_recipient TEXT := NULL;
     $leader_hex TEXT := NULL;
 
-    -- Get stream count (used for both fee calculation and validation)
+    -- Cheap input validation runs before any precompile call so malformed
+    -- requests (NULL/empty/length-mismatched arrays) fail fast instead of
+    -- propagating NULL into fee math or wasting bridge.balance() roundtrips.
+    if $stream_ids IS NULL OR array_length($stream_ids) IS NULL OR array_length($stream_ids) = 0 {
+        ERROR('Stream IDs array must be non-empty');
+    }
+    if array_length($stream_ids) != array_length($stream_types) {
+        ERROR('Stream IDs and stream types arrays must have the same length');
+    }
+    -- If allow_zeros array was provided, it must have the same length as stream_ids.
+    -- A NULL array means "use default (FALSE) for every stream" — no row written.
+    if $allow_zeros IS NOT NULL AND array_length($allow_zeros) != array_length($stream_ids) {
+        ERROR('allow_zeros array length must match stream_ids');
+    }
+
+    -- ===== FEE COLLECTION =====
     $num_streams INT := array_length($stream_ids);
 
     -- Charge 6 TRUF per stream to every caller (no role-based exemption).
@@ -106,17 +120,6 @@ CREATE OR REPLACE ACTION create_streams(
     -- Check if caller is a valid ethereum address
     if NOT check_ethereum_address($data_provider) {
         ERROR('Invalid data provider address. Must be a valid Ethereum address: ' || $data_provider);
-    }
-
-    -- Check if stream_ids and stream_types arrays have the same length
-    if array_length($stream_ids) != array_length($stream_types) {
-        ERROR('Stream IDs and stream types arrays must have the same length');
-    }
-
-    -- If allow_zeros array was provided, it must have the same length as stream_ids.
-    -- A NULL array means "use default (FALSE) for every stream" — no row written.
-    if $allow_zeros IS NOT NULL AND array_length($allow_zeros) != array_length($stream_ids) {
-        ERROR('allow_zeros array length must match stream_ids');
     }
 
     -- Validate stream IDs

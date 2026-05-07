@@ -437,8 +437,10 @@ func SetTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 
 	// insert_taxonomy charges feefund.PerStreamWei per child stream after the
 	// universal-fee migration removed the network_writer exemption.
-	feePerChild := new(big.Int)
-	feePerChild.SetString(feefund.PerStreamWei, 10)
+	feePerChild, ok := new(big.Int).SetString(feefund.PerStreamWei, 10)
+	if !ok {
+		return errors.Errorf("invalid feefund.PerStreamWei: %s", feefund.PerStreamWei)
+	}
 	totalFee := new(big.Int).Mul(feePerChild, big.NewInt(int64(len(primitiveStreamStrings))))
 	if err := feefund.EnsureWalletFunded(ctx, input.Platform, deployer.Address(), totalFee.String()); err != nil {
 		return errors.Wrap(err, "fund deployer for insert_taxonomy fees")

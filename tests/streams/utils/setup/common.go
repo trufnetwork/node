@@ -219,13 +219,18 @@ func CreateDataProvider(ctx context.Context, platform *kwilTesting.Platform, add
 	return nil
 }
 
-// CreateDataProviderWithoutRole registers a data provider WITHOUT granting the network_writer role.
-// This is useful for testing fee collection scenarios where the data provider should pay fees.
+// CreateDataProviderWithoutRole registers a data provider and ensures the
+// network_writer role is NOT left granted afterward. Used for permission tests
+// that need a registered DP whose wallet does not carry the role.
+//
+// Note: under the universal write-fee enforcement (Phase 1) every caller pays
+// regardless of role, so this helper is no longer about "non-whitelisted = pays
+// fees". It exists only to exercise role-gated authorization paths.
 //
 // Note: This function:
 // 1. Temporarily grants network_writer role to register the provider (required by create_data_provider action)
 // 2. Immediately revokes the role after registration
-// 3. Leaves the data provider registered but non-whitelisted (will pay fees)
+// 3. Leaves the data provider registered but without the network_writer role
 func CreateDataProviderWithoutRole(ctx context.Context, platform *kwilTesting.Platform, address string) error {
 	addr, err := util.NewEthereumAddressFromString(address)
 	if err != nil {

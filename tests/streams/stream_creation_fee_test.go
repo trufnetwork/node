@@ -16,6 +16,7 @@ import (
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	testerc20 "github.com/trufnetwork/node/tests/streams/utils/erc20"
+	"github.com/trufnetwork/node/tests/streams/utils/feefund"
 	"github.com/trufnetwork/node/tests/streams/utils/setup"
 	"github.com/trufnetwork/sdk-go/core/util"
 )
@@ -26,17 +27,21 @@ const (
 	testEscrow        = "0x502430eD0BbE0f230215870c9C2853e126eE5Ae3" // From erc20-bridge/000-extension.sql
 	testERC20         = "0x2222222222222222222222222222222222222222"
 	testExtensionName = "sepolia_bridge"
-	feeAmount         = "6000000000000000000" // 6 TRUF with 18 decimals
 )
 
 var (
-	sixTRUF            = mustParseBigInt(feeAmount) // 6 TRUF as big.Int
-	pointCounter int64 = 10                         // Start from 10, increment for each balance injection
+	// sixTRUF is parsed from feefund.PerStreamWei — the same constant the
+	// migration uses, so a fee-schedule change in one place can't drift
+	// from test assertions silently.
+	sixTRUF            = mustParseBigInt(feefund.PerStreamWei)
+	pointCounter int64 = 10 // Start from 10, increment for each balance injection
 )
 
 func mustParseBigInt(s string) *big.Int {
-	val := new(big.Int)
-	val.SetString(s, 10)
+	val, ok := new(big.Int).SetString(s, 10)
+	if !ok {
+		panic(fmt.Sprintf("mustParseBigInt: invalid integer string %q", s))
+	}
 	return val
 }
 
