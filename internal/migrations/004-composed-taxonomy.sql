@@ -53,14 +53,14 @@ CREATE OR REPLACE ACTION insert_taxonomy(
     }
     $leader_hex := encode(@leader_sender, 'hex')::TEXT;
 
-    $caller_balance := sepolia_bridge.balance(@caller);
+    $caller_balance := hoodi_tt.balance(@caller);
 
     IF $caller_balance < $total_fee {
         -- Derive human-readable fee from $total_fee
         ERROR('Insufficient balance for taxonomies creation. Required: ' || ($total_fee / 1000000000000000000::NUMERIC(78, 0))::TEXT || ' TRUF for ' || $num_children::TEXT || ' child stream(s)');
     }
 
-    sepolia_bridge.transfer($leader_hex, $total_fee);
+    hoodi_tt.transfer($leader_hex, $total_fee);
     $fee_total := $total_fee;
     $fee_recipient := '0x' || $leader_hex;
     -- ===== END FEE COLLECTION =====
