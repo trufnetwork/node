@@ -276,7 +276,7 @@ func callWithdrawalAction(ctx context.Context, platform *kwilTesting.Platform, s
 		engineCtx,
 		platform.DB,
 		"",
-		"sepolia_bridge_tokens", // Test-specific action (ethereum_bridge_tokens also becomes this in tests)
+		"sepolia_bridge_tokens", // Dev/test withdrawal action — mainnet override is eth_truf_bridge_tokens
 		[]any{recipient, amount},
 		func(row *common.Row) error { return nil },
 	)

@@ -32,9 +32,11 @@ const (
 )
 
 const (
-	// Test bridge constants — match the alias produced by GetSeedScriptStatements'
-	// ethereum_bridge → sepolia_bridge replacement and the USE block in
-	// internal/migrations/erc20-bridge/000-extension.sql.
+	// Test bridge constants — must match the `sepolia_bridge` USE block in
+	// internal/migrations/erc20-bridge/000-extension.sql, since the dev
+	// fee-collection actions (001/003/004/024) call sepolia_bridge.balance()
+	// and sepolia_bridge.transfer() directly. (Mainnet override calls
+	// eth_truf via the matching *.prod.sql files.)
 	testFundingChain  = "sepolia"
 	testFundingEscrow = "0x502430eD0BbE0f230215870c9C2853e126eE5Ae3"
 	testFundingERC20  = "0x2222222222222222222222222222222222222222"
