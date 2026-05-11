@@ -7,9 +7,19 @@
  * without distributions return a single row with NULL distribution fields.
  *
  * Parameter name `$data_provider` is preserved from the previous wrapper
- * signature for SDK backward compatibility. The earlier `_v1` and `_v2`
- * variants have been retired — see `maintenance/` for the operational DROP
- * script that removes them from already-migrated databases.
+ * signature so existing SDK call sites continue to work unchanged after the
+ * binary upgrade — no SDK release needs to land in lockstep.
+ *
+ * Retired variants `get_last_transactions_v1` and `get_last_transactions_v2`
+ * existed in earlier revisions of this file and remain as orphan action
+ * definitions on already-migrated databases (this file is the only place
+ * either was defined; trimming it does not auto-drop them). They are not
+ * removed by an embedded migration on purpose: dropping a callable action is
+ * a one-way change that should be performed manually per environment, after
+ * confirming no external caller still depends on the legacy signatures. Apply
+ * the following manually once per env:
+ *     DROP ACTION IF EXISTS get_last_transactions_v1;
+ *     DROP ACTION IF EXISTS get_last_transactions_v2;
  */
 
 CREATE OR REPLACE ACTION get_last_transactions(

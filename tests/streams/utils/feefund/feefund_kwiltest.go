@@ -32,13 +32,13 @@ const (
 )
 
 const (
-	// Test bridge constants — must match the `sepolia_bridge` USE block in
+	// Test bridge constants — must match the `hoodi_tt` USE block in
 	// internal/migrations/erc20-bridge/000-extension.sql, since the dev
-	// fee-collection actions (001/003/004/024) call sepolia_bridge.balance()
-	// and sepolia_bridge.transfer() directly. (Mainnet override calls
-	// eth_truf via the matching *.prod.sql files.)
-	testFundingChain  = "sepolia"
-	testFundingEscrow = "0x502430eD0BbE0f230215870c9C2853e126eE5Ae3"
+	// fee-collection actions (001/003/004/024) call hoodi_tt.balance() and
+	// hoodi_tt.transfer() directly. (Mainnet override calls eth_truf via the
+	// matching *.prod.sql files.)
+	testFundingChain  = "hoodi"
+	testFundingEscrow = "0x878d6aaeb6e746033f50b8dc268d54b4631554e7"
 	testFundingERC20  = "0x2222222222222222222222222222222222222222"
 )
 
