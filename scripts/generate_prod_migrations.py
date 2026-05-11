@@ -462,22 +462,25 @@ def transform_wrap(source_sql: str) -> tuple[str, list[str]]:
 
 
 def transform_fee(source_sql: str) -> tuple[str, list[str]]:
-    """Mode C. Emit each action that calls `ethereum_bridge` directly
-    (TRUF fee-collection pattern), with `ethereum_bridge` → `eth_truf`
-    substitution.
+    """Mode C. Emit each action that calls the dev TRUF bridge directly
+    (fee-collection pattern), substituting it for `eth_truf` on mainnet.
 
-    No if/else dispatch collapse — `ethereum_bridge` here appears as
-    unconditional method calls inside fee-collection blocks, not as a
-    branch in a bridge-dispatch chain. Order-book files where
-    `ethereum_bridge` was a dispatch branch are handled by mode `core`
-    instead, which drops those branches entirely.
+    Recognised dev bridge aliases: `hoodi_tt` (current) and `ethereum_bridge`
+    (legacy — kept so historical dev migrations regenerate cleanly).
+
+    No if/else dispatch collapse — the bridge call here is an unconditional
+    method invocation inside a fee-collection block, not a branch in a
+    bridge-dispatch chain. Order-book files where the bridge appears as a
+    dispatch branch are handled by mode `core` instead.
     """
     parts: list[str] = []
     names: list[str] = []
     for name, raw in split_actions(source_sql):
-        if "ethereum_bridge" not in raw:
+        if "hoodi_tt" not in raw and "ethereum_bridge" not in raw:
             continue
-        substituted = raw.replace("ethereum_bridge", "eth_truf")
+        substituted = raw.replace("hoodi_tt", "eth_truf").replace(
+            "ethereum_bridge", "eth_truf"
+        )
         parts.append(substituted.rstrip() + "\n")
         names.append(name)
     return "\n".join(parts), names

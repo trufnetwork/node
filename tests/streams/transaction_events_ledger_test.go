@@ -374,21 +374,6 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		}
 		require.True(t, foundBonus, "expected to find distribution row for bonus recipient")
 
-		legacyRows, err := fetchLegacyLastTransactions(ctx, platform, actor.Address(), userLower, int64(len(expected)))
-		require.NoError(t, err)
-		require.NotEmpty(t, legacyRows)
-
-		methodSet := make(map[string]struct{})
-		for _, exp := range expected {
-			methodSet[exp.method] = struct{}{}
-		}
-
-		for _, row := range legacyRows {
-			require.Greater(t, row.CreatedAt, int64(0))
-			_, ok := methodSet[row.Method]
-			require.True(t, ok, "unexpected method in legacy view: %s", row.Method)
-		}
-
 		for txID, exp := range expected {
 			eventRow, err := fetchTransactionEvent(ctx, platform, actor.Address(), txID)
 			require.NoError(t, err, "failed to fetch transaction event for %s", txID)
@@ -410,11 +395,6 @@ type ledgerExpectation struct {
 	feeRecipient     string
 	feeDistributions []string
 	assertMetadata   func(meta metadataMap)
-}
-
-type legacyRow struct {
-	CreatedAt int64
-	Method    string
 }
 
 type ledgerRow struct {
@@ -508,7 +488,7 @@ func fetchLastTransactions(ctx context.Context, platform *kwilTesting.Platform, 
 	rows := make([]ledgerRow, 0, 8)
 	addr := strings.ToLower(address)
 	args := []any{addr, limit}
-	err := callView(ctx, platform, caller, "get_last_transactions_v2", args, func(row *common.Row) error {
+	err := callView(ctx, platform, caller, "get_last_transactions", args, func(row *common.Row) error {
 		feeRecipient := ""
 		if row.Values[5] != nil {
 			feeRecipient = strings.ToLower(row.Values[5].(string))
@@ -527,19 +507,6 @@ func fetchLastTransactions(ctx context.Context, platform *kwilTesting.Platform, 
 			DistributionRecipient: strings.ToLower(stringOrEmpty(row.Values[8])),
 			DistributionAmount:    decimalToString(row.Values[9]),
 			RawMetadata:           rawMetadata,
-		})
-		return nil
-	})
-	return rows, err
-}
-
-func fetchLegacyLastTransactions(ctx context.Context, platform *kwilTesting.Platform, caller string, dataProvider string, limit int64) ([]legacyRow, error) {
-	rows := make([]legacyRow, 0, 8)
-	args := []any{dataProvider, limit}
-	err := callView(ctx, platform, caller, "get_last_transactions_v1", args, func(row *common.Row) error {
-		rows = append(rows, legacyRow{
-			CreatedAt: row.Values[0].(int64),
-			Method:    row.Values[1].(string),
 		})
 		return nil
 	})

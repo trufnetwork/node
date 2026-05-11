@@ -47,16 +47,18 @@ func GetSeedScriptPaths() []string {
 	return seedFilesPaths
 }
 
-// GetSeedScriptStatements returns migration SQL statements with test-specific replacements.
-// This is used for test environments to replace production bridge namespace with test bridge.
+// GetSeedScriptStatements returns the dev/test migration SQL statements as-is.
 //
-// Replacement strategy:
-// - Production migrations use 'ethereum_bridge' (mainnet)
-// - Test environments need 'sepolia_bridge' (testnet)
-// - Runtime string replacement avoids duplicate migration files
+// Dev source-of-truth lives in the literal `*.sql` files; mainnet overrides
+// live in matching `*.prod.sql` files. Each environment's bridge namespace
+// (dev: hoodi_tt / hoodi_tt2 / sepolia_bridge; mainnet: eth_truf / eth_usdc)
+// appears verbatim in its own file — no runtime placeholder substitution.
 //
-// This implements the approach discussed to avoid maintaining separate test-only override files
-// that duplicate logic and can become a bug source if production and test logic diverges.
+// (Earlier revisions rewrote `ethereum_bridge` → `sepolia_bridge` here so a
+// single `*.sql` could target both environments. That created a placeholder
+// that only worked through this loader; `scripts/migrate.sh` applied files
+// literally, so any path that bypassed in-process tests hit a missing
+// `ethereum_bridge` namespace. The placeholder is now removed.)
 func GetSeedScriptStatements() []string {
 	var statements []string
 
@@ -89,20 +91,12 @@ func GetSeedScriptStatements() []string {
 	// Sort paths to ensure consistent loading order (0_test_only/ loads after production)
 	sort.Strings(sqlPaths)
 
-	// Read each file and apply test-specific replacements
 	for _, path := range sqlPaths {
 		content, err := seedFiles.ReadFile(path)
 		if err != nil {
 			panic("failed to read migration file " + path + ": " + err.Error())
 		}
-
-		sql := string(content)
-
-		// Replace production bridge namespace with test bridge namespace
-		// This allows tests to use the same migration logic without duplication
-		sql = strings.ReplaceAll(sql, "ethereum_bridge", "sepolia_bridge")
-
-		statements = append(statements, sql)
+		statements = append(statements, string(content))
 	}
 
 	return statements

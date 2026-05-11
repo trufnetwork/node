@@ -69,9 +69,9 @@ func testWinnerReceivesFullPayout(t *testing.T) func(context.Context, *kwilTesti
 		err = erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
-		// Fund DP on the sepolia bridge (where ethereum_bridge resolves under tests)
-		// for create_stream (6 TRUF), insert_records (6 TRUF), request_attestation (40 TRUF).
-		// Give 100 TRUF to leave headroom.
+		// Fund DP on the sepolia_bridge (the dev TRUF substitute) for
+		// create_stream (6 TRUF), insert_records (6 TRUF), request_attestation
+		// (40 TRUF). Give 100 TRUF to leave headroom.
 		err = feefund.EnsureWalletFunded(ctx, platform, dpAddr.Address(), "100000000000000000000")
 		require.NoError(t, err)
 

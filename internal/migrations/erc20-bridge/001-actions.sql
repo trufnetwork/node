@@ -103,7 +103,7 @@ CREATE OR REPLACE ACTION sepolia_bridge_tokens($recipient TEXT DEFAULT NULL, $am
   $withdrawal_amount := $amount::NUMERIC(78, 0);
   $total_required := $withdrawal_amount + $withdrawal_fee;
 
-  $caller_balance := COALESCE(ethereum_bridge.balance(@caller), 0::NUMERIC(78, 0));
+  $caller_balance := COALESCE(sepolia_bridge.balance(@caller), 0::NUMERIC(78, 0));
 
   IF $caller_balance < $total_required {
     ERROR('Insufficient balance for withdrawal. Required: ' ||
@@ -116,7 +116,7 @@ CREATE OR REPLACE ACTION sepolia_bridge_tokens($recipient TEXT DEFAULT NULL, $am
     ERROR('Leader address not available for fee transfer');
   }
   $leader_hex TEXT := encode(@leader_sender, 'hex')::TEXT;
-  ethereum_bridge.transfer($leader_hex, $withdrawal_fee);
+  sepolia_bridge.transfer($leader_hex, $withdrawal_fee);
   -- ===== END FEE COLLECTION =====
 
   $bridge_recipient TEXT := LOWER(COALESCE($recipient, @caller));

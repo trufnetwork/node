@@ -55,7 +55,7 @@ CREATE OR REPLACE ACTION request_attestation(
         }
     }
 
-    $caller_balance := ethereum_bridge.balance(@caller);
+    $caller_balance := hoodi_tt.balance(@caller);
 
     IF $caller_balance < $attestation_fee {
         ERROR('Insufficient balance for attestation. Required: 40 TRUF');
@@ -67,7 +67,7 @@ CREATE OR REPLACE ACTION request_attestation(
         ERROR('Leader address not available for fee transfer');
     }
 
-    ethereum_bridge.transfer($leader_addr, $attestation_fee);
+    hoodi_tt.transfer($leader_addr, $attestation_fee);
     -- ===== END FEE COLLECTION =====
     
     -- Get current block height
