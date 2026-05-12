@@ -56,9 +56,10 @@ CREATE OR REPLACE ACTION insert_taxonomy(
     }
 
     -- ===== FEE COLLECTION =====
-    -- Charge 6 TRUF per child to every caller.
-    $fee_per_stream := 6000000000000000000::NUMERIC(78, 0); -- 6 TRUF with 18 decimals
-    $total_fee := $fee_per_stream * $num_children::NUMERIC(78, 0);
+    -- Flat 1 TRUF per transaction (write-fee policy per issue #3805).
+    -- Cost is independent of $num_children: a taxonomy with N children
+    -- charges the same 1 TRUF as one with a single child.
+    $total_fee := 1000000000000000000::NUMERIC(78, 0); -- 1 TRUF with 18 decimals
 
     IF @leader_sender IS NULL {
         ERROR('Leader address not available for fee transfer');
@@ -68,8 +69,7 @@ CREATE OR REPLACE ACTION insert_taxonomy(
     $caller_balance := eth_truf.balance(@caller);
 
     IF $caller_balance < $total_fee {
-        -- Derive human-readable fee from $total_fee
-        ERROR('Insufficient balance for taxonomies creation. Required: ' || ($total_fee / 1000000000000000000::NUMERIC(78, 0))::TEXT || ' TRUF for ' || $num_children::TEXT || ' child stream(s)');
+        ERROR('Insufficient balance for taxonomies creation. Required: 1 TRUF');
     }
 
     eth_truf.transfer($leader_hex, $total_fee);

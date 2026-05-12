@@ -20,21 +20,26 @@ import (
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	testerc20 "github.com/trufnetwork/node/tests/streams/utils/erc20"
+	"github.com/trufnetwork/node/tests/streams/utils/feefund"
 	"github.com/trufnetwork/node/tests/streams/utils/setup"
 	sdkTypes "github.com/trufnetwork/sdk-go/core/types"
 	"github.com/trufnetwork/sdk-go/core/util"
 )
 
 const (
+	// The transfer/withdraw helpers (`sepolia_transfer`,
+	// `sepolia_bridge_tokens`) charge fees against the `sepolia_bridge`
+	// instance, so the test-local ledgerGiveBalance funds that one. The
+	// write-fee actions (create_streams / insert_records / insert_taxonomy /
+	// request_attestation) charge against `hoodi_tt` instead — that balance
+	// is topped up separately via `feefund.EnsureWalletFunded` below.
 	ledgerChain          = "sepolia"
 	ledgerEscrow         = "0x502430eD0BbE0f230215870c9C2853e126eE5Ae3"
 	ledgerERC20          = "0x2222222222222222222222222222222222222222"
 	ledgerExtensionAlias = "sepolia_bridge"
 
+	feeHalfTRUF      = "500000000000000000"
 	feeOneTRUF       = "1000000000000000000"
-	feeThreeTRUF     = "3000000000000000000"
-	feeSixTRUF       = "6000000000000000000"
-	feeTwelveTRUF    = "12000000000000000000"
 	feeFortyTRUF     = "40000000000000000000"
 	transferAmount   = "5000000000000000000"
 	withdrawAmount   = "10000000000000000000"
@@ -84,6 +89,12 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		actor := &actorVal
 		require.NoError(t, setup.CreateDataProviderWithoutRole(ctx, platform, actor.Address()))
 		require.NoError(t, ledgerGiveBalance(ctx, platform, actor.Address(), initialUserFunds))
+		// The write-fee actions (create_streams / insert_records /
+		// insert_taxonomy / request_attestation) charge against `hoodi_tt`,
+		// not `sepolia_bridge`. Fund 100 TRUF there — covers 1+1+1 write
+		// fees plus the 40 TRUF attestation fee with headroom.
+		require.NoError(t, feefund.EnsureWalletFunded(ctx, platform, actor.Address(), "100000000000000000000"),
+			"fund actor on hoodi_tt for write fees")
 
 		receiverVal := util.Unsafe_NewEthereumAddressFromString("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 		receiver := &receiverVal
@@ -141,9 +152,11 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 			UPDATE %s.transaction_event_distributions
 			 SET amount = $1::NUMERIC(78, 0)
 			 WHERE tx_id = $2 AND sequence = 1`, schemaName)
+		// Split the auto-recorded 1 TRUF distribution into two halves so the
+		// ledger test exercises multi-recipient bookkeeping for a single tx.
 		_, err = platform.DB.Execute(ctx,
 			updateSQL,
-			feeThreeTRUF,
+			feeHalfTRUF,
 			insertTx,
 		)
 		require.NoError(t, err)
@@ -156,7 +169,7 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 			insertTx,
 			2,
 			bonusRecipientLower,
-			feeThreeTRUF,
+			feeHalfTRUF,
 		)
 		require.NoError(t, err)
 
@@ -219,29 +232,29 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		expected := map[string]ledgerExpectation{
 			createTx: {
 				method:       "deployStream",
-				fee:          feeTwelveTRUF,
+				fee:          feeOneTRUF, // flat 1 TRUF regardless of stream count
 				feeRecipient: createLeaderAddr,
 				feeDistributions: []string{
-					buildDistribution(createLeaderAddr, feeTwelveTRUF),
+					buildDistribution(createLeaderAddr, feeOneTRUF),
 				},
 				assertMetadata: assertNoMetadata,
 			},
 			insertTx: {
 				method:       "insertRecords",
-				fee:          feeSixTRUF,
+				fee:          feeOneTRUF, // flat 1 TRUF regardless of record count
 				feeRecipient: insertLeaderAddr,
 				feeDistributions: []string{
-					buildDistribution(insertLeaderAddr, feeThreeTRUF),
-					buildDistribution(bonusRecipientLower, feeThreeTRUF),
+					buildDistribution(insertLeaderAddr, feeHalfTRUF),
+					buildDistribution(bonusRecipientLower, feeHalfTRUF),
 				},
 				assertMetadata: assertNoMetadata,
 			},
 			taxTx: {
 				method:       "setTaxonomies",
-				fee:          feeSixTRUF,
+				fee:          feeOneTRUF, // flat 1 TRUF regardless of child count
 				feeRecipient: taxLeaderAddr,
 				feeDistributions: []string{
-					buildDistribution(taxLeaderAddr, feeSixTRUF),
+					buildDistribution(taxLeaderAddr, feeOneTRUF),
 				},
 				assertMetadata: assertNoMetadata,
 			},
@@ -341,7 +354,7 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		require.Equal(t, insertTx, insertLeaderReceivedRows[0].TxID)
 		require.Equal(t, insertLeaderAddr, insertLeaderReceivedRows[0].FeeRecipient)
 		require.Equal(t, insertLeaderAddr, insertLeaderReceivedRows[0].DistributionRecipient)
-		require.Equal(t, feeThreeTRUF, insertLeaderReceivedRows[0].DistributionAmount)
+		require.Equal(t, feeHalfTRUF, insertLeaderReceivedRows[0].DistributionAmount)
 
 		bonusReceivedRows, err := fetchTransactionFees(ctx, platform, actor.Address(), bonusRecipientLower, "received")
 		require.NoError(t, err)
@@ -349,7 +362,7 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		require.Equal(t, insertTx, bonusReceivedRows[0].TxID)
 		require.Equal(t, insertLeaderAddr, bonusReceivedRows[0].FeeRecipient)
 		require.Equal(t, bonusRecipientLower, bonusReceivedRows[0].DistributionRecipient)
-		require.Equal(t, feeThreeTRUF, bonusReceivedRows[0].DistributionAmount)
+		require.Equal(t, feeHalfTRUF, bonusReceivedRows[0].DistributionAmount)
 
 		lastTxRows, err := fetchLastTransactions(ctx, platform, actor.Address(), userLower, int64(len(expected)))
 		require.NoError(t, err)
@@ -367,7 +380,7 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		for _, row := range bonusHistoryRows {
 			if row.DistributionRecipient == bonusRecipientLower {
 				require.Equal(t, insertTx, row.TxID)
-				require.Equal(t, feeThreeTRUF, row.DistributionAmount)
+				require.Equal(t, feeHalfTRUF, row.DistributionAmount)
 				foundBonus = true
 				break
 			}
@@ -725,6 +738,9 @@ func runTransactionIDTrackingScenario(t *testing.T) func(ctx context.Context, pl
 		actor := util.Unsafe_NewEthereumAddressFromString("0x9999999999999999999999999999999999999999")
 		require.NoError(t, setup.CreateDataProviderWithoutRole(ctx, platform, actor.Address()))
 		require.NoError(t, ledgerGiveBalance(ctx, platform, actor.Address(), initialUserFunds))
+		// Write-fee actions charge against `hoodi_tt`; fund that bridge too.
+		require.NoError(t, feefund.EnsureWalletFunded(ctx, platform, actor.Address(), "100000000000000000000"),
+			"fund actor on hoodi_tt for write fees")
 
 		userLower := strings.ToLower(actor.Address())
 		height := int64(10)
