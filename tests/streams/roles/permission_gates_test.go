@@ -30,7 +30,7 @@ func TestPermissionGates(t *testing.T) {
 
 func testStreamCreationPermissionGates(t *testing.T, ctx context.Context, platform *kwilTesting.Platform) {
 	// Universal write-fee enforcement removed the role-based exemption: every caller
-	// pays 6 TRUF per stream regardless of network_writer membership. This test now
+	// pays a flat 1 TRUF per tx regardless of network_writer membership. This test now
 	// only covers the still-meaningful gate — that an authorized data provider can
 	// create streams when their wallet is funded (UntypedCreateStream tops up the
 	// balance via feefund). Cases that asserted role-based exemption or expected

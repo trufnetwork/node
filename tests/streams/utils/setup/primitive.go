@@ -15,18 +15,19 @@ import (
 	"github.com/trufnetwork/sdk-go/core/util"
 )
 
-// fundForRecordWrites tops up `wallet` with the fee required for `numRecords`
-// insert_record/insert_records calls (each charges feefund.PerStreamWei). The
-// universal-fee migration removed the network_writer exemption, so test setup
-// helpers must pre-fund the signer or every insert reverts with "Insufficient
-// balance for write fee".
-func fundForRecordWrites(ctx context.Context, platform *kwilTesting.Platform, wallet string, numRecords int) error {
-	if numRecords <= 0 {
+// fundForInsertCalls tops up `wallet` with the flat 1 TRUF fee × `numCalls`
+// for that many insert_record / insert_records transactions. The migration
+// charges a flat per-tx fee regardless of how many records are in each batch,
+// so callers pass the *number of engine calls* they plan to make, not the
+// number of records. Single-record loops pass len(rows); batched single-call
+// helpers pass 1.
+func fundForInsertCalls(ctx context.Context, platform *kwilTesting.Platform, wallet string, numCalls int) error {
+	if numCalls <= 0 {
 		return nil
 	}
-	feePerRecord := new(big.Int)
-	feePerRecord.SetString(feefund.PerStreamWei, 10)
-	totalFee := new(big.Int).Mul(feePerRecord, big.NewInt(int64(numRecords)))
+	feePerCall := new(big.Int)
+	feePerCall.SetString(feefund.WriteFeeWei, 10)
+	totalFee := new(big.Int).Mul(feePerCall, big.NewInt(int64(numCalls)))
 	return feefund.EnsureWalletFunded(ctx, platform, wallet, totalFee.String())
 }
 
@@ -172,7 +173,9 @@ func InsertMarkdownPrimitiveData(ctx context.Context, input InsertMarkdownDataIn
 			nonEmpty++
 		}
 	}
-	if err := fundForRecordWrites(ctx, input.Platform, signer.Address(), nonEmpty); err != nil {
+	// InsertMarkdownPrimitiveData calls insert_record once per non-empty row,
+	// so the signer needs `nonEmpty` × 1-TRUF write fee.
+	if err := fundForInsertCalls(ctx, input.Platform, signer.Address(), nonEmpty); err != nil {
 		return errors.Wrap(err, "fund signer for insert_record fees")
 	}
 
@@ -232,7 +235,9 @@ func insertPrimitiveData(ctx context.Context, input InsertPrimitiveDataInput) er
 		return errors.Wrap(err, "error in insertPrimitiveData")
 	}
 
-	if err := fundForRecordWrites(ctx, input.Platform, deployer.Address(), len(args)); err != nil {
+	// insertPrimitiveData loops over args making one insert_record call per
+	// record, so each call needs its own 1-TRUF write fee.
+	if err := fundForInsertCalls(ctx, input.Platform, deployer.Address(), len(args)); err != nil {
 		return errors.Wrap(err, "fund deployer for insert_record fees")
 	}
 
@@ -336,7 +341,10 @@ func InsertPrimitiveDataMultiBatch(ctx context.Context, input InsertMultiPrimiti
 		}
 		signerAddr := util.Unsafe_NewEthereumAddressFromString(provider)
 
-		if err := fundForRecordWrites(ctx, input.Platform, signerAddr.Address(), len(g.dataProviders)); err != nil {
+		// InsertPrimitiveDataMultiBatch issues exactly one insert_records call
+		// per provider group, regardless of how many records it contains. The
+		// write fee is per-tx, so fund a single 1 TRUF (not len(records) × 1).
+		if err := fundForInsertCalls(ctx, input.Platform, signerAddr.Address(), 1); err != nil {
 			return errors.Wrapf(err, "fund %s for insert_records batch", provider)
 		}
 

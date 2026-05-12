@@ -54,7 +54,7 @@ CREATE OR REPLACE ACTION create_stream(
 
 /**
  * create_streams: Creates multiple streams at once.
- * Fee: 6 TRUF per stream created (charged to every caller, no exemptions)
+ * Fee: 1 TRUF flat per transaction (charged to every caller, no exemptions)
  * Validates stream_id format, data provider address, and stream type.
  * Sets default metadata including type, owner, visibility, and readonly keys.
  *
@@ -90,11 +90,10 @@ CREATE OR REPLACE ACTION create_streams(
     }
 
     -- ===== FEE COLLECTION =====
-    $num_streams INT := array_length($stream_ids);
-
-    -- Charge 6 TRUF per stream to every caller (no role-based exemption).
-    $fee_per_stream := 6000000000000000000::NUMERIC(78, 0); -- 6 TRUF with 18 decimals
-    $total_fee := $fee_per_stream * $num_streams::NUMERIC(78, 0);
+    -- Flat 1 TRUF per transaction (write-fee policy per issue #3805).
+    -- Cost is independent of $num_streams: batching N streams in one call
+    -- charges the same 1 TRUF as creating a single stream.
+    $total_fee := 1000000000000000000::NUMERIC(78, 0); -- 1 TRUF with 18 decimals
 
     IF @leader_sender IS NULL {
         ERROR('Leader address not available for fee transfer');
@@ -104,8 +103,7 @@ CREATE OR REPLACE ACTION create_streams(
     $caller_balance := hoodi_tt.balance(@caller);
 
     IF $caller_balance < $total_fee {
-        -- Derive human-readable fee from $total_fee
-        ERROR('Insufficient balance for stream creation. Required: ' || ($total_fee / 1000000000000000000::NUMERIC(78, 0))::TEXT || ' TRUF for ' || $num_streams::TEXT || ' stream(s)');
+        ERROR('Insufficient balance for stream creation. Required: 1 TRUF');
     }
 
     hoodi_tt.transfer($leader_hex, $total_fee);
