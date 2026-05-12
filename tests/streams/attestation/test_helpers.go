@@ -34,9 +34,12 @@ const (
 	DefaultBlockHeight  = 10
 	InvalidTxID         = "0x0000000000000000000000000000000000000000000000000000000000000000"
 
-	// ERC20 instance constants for balance operations
-	testChain  = "sepolia"
-	testEscrow = "0x502430eD0BbE0f230215870c9C2853e126eE5Ae3"
+	// ERC20 instance constants for balance operations — must match the
+	// `hoodi_tt` USE block in erc20-bridge/000-extension.sql so the balance
+	// credited via ForTestingCreditBalance lands on the same instance the
+	// fee-collection actions (001/003/004/024) read via `hoodi_tt.balance`.
+	testChain  = "hoodi"
+	testEscrow = "0x878d6aaeb6e746033f50b8dc268d54b4631554e7"
 	testERC20  = "0x2222222222222222222222222222222222222222"
 )
 

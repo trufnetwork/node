@@ -24,12 +24,16 @@ import (
 	"github.com/trufnetwork/sdk-go/core/util"
 )
 
-// Test constants for attestation fees
+// Test constants for attestation fees — bridge configuration must match the
+// `hoodi_tt` USE block in erc20-bridge/000-extension.sql since
+// `request_attestation` charges its fee through `hoodi_tt.balance` /
+// `hoodi_tt.transfer`. Crediting `sepolia_bridge` here would credit the wrong
+// instance and the fee check would always see a zero balance.
 const (
-	testAttestationChain         = "sepolia"
-	testAttestationEscrow        = "0x502430eD0BbE0f230215870c9C2853e126eE5Ae3"
+	testAttestationChain         = "hoodi"
+	testAttestationEscrow        = "0x878d6aaeb6e746033f50b8dc268d54b4631554e7"
 	testAttestationERC20         = "0x2222222222222222222222222222222222222222"
-	testAttestationExtensionName = "sepolia_bridge"
+	testAttestationExtensionName = "hoodi_tt"
 	attestationFeeAmount         = "40000000000000000000" // 40 TRUF with 18 decimals
 )
 
