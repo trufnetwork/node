@@ -34,7 +34,8 @@ CREATE OR REPLACE ACTION insert_records(
     $fee_recipient TEXT := NULL;
     $leader_hex TEXT := NULL;
 
-    -- Get record count (used for both fee calculation and validation)
+    -- Record count is used for validation only — fees are a flat 1 TRUF
+    -- per transaction now, so the count no longer factors into fee math.
     $num_records INT := array_length($data_provider);
 
     -- Cap batch size to prevent superlinear block execution time.
@@ -63,9 +64,10 @@ CREATE OR REPLACE ACTION insert_records(
     }
 
     -- ===== FEE COLLECTION =====
-    -- Charge 6 TRUF per record to every caller.
-    $fee_per_record := 6000000000000000000::NUMERIC(78, 0); -- 6 TRUF with 18 decimals
-    $total_fee := $fee_per_record * $num_records::NUMERIC(78, 0);
+    -- Flat 1 TRUF per transaction (write-fee policy per issue #3805).
+    -- Cost is independent of $num_records: batching N records in one call
+    -- charges the same 1 TRUF as inserting a single record.
+    $total_fee := 1000000000000000000::NUMERIC(78, 0); -- 1 TRUF with 18 decimals
 
     IF @leader_sender IS NULL {
         ERROR('Leader address not available for fee transfer');
@@ -75,8 +77,7 @@ CREATE OR REPLACE ACTION insert_records(
     $caller_balance := hoodi_tt.balance(@caller);
 
     IF $caller_balance < $total_fee {
-        -- Derive human-readable fee from $total_fee
-        ERROR('Insufficient balance for write fee. Required: ' || ($total_fee / 1000000000000000000::NUMERIC(78, 0))::TEXT || ' TRUF for ' || $num_records::TEXT || ' record(s)');
+        ERROR('Insufficient balance for write fee. Required: 1 TRUF');
     }
 
     hoodi_tt.transfer($leader_hex, $total_fee);
