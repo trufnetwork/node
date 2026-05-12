@@ -87,8 +87,8 @@ func testFindUnsettledMarkets(t *testing.T) func(context.Context, *kwilTesting.P
 		require.NoError(t, err)
 
 		// Give TRUF balance for market creation fee
-		// Cover one market's worth of fees: create_stream (6) + insert_records
-		// (6) + request_attestation (40) = 52 TRUF. Fund 100 TRUF for headroom.
+		// Cover one market's worth of fees: create_stream (1) + insert_records
+		// (1) + request_attestation (40) = 42 TRUF. Fund 100 TRUF for headroom.
 		err = giveTrufBalance(ctx, platform, deployer.Address(), "100000000000000000000") // 100 TRUF
 		require.NoError(t, err)
 
@@ -165,8 +165,8 @@ func testAttestationExists(t *testing.T) func(context.Context, *kwilTesting.Plat
 		require.NoError(t, err)
 
 		// Give TRUF balance for market creation fee
-		// Cover one market's worth of fees: create_stream (6) + insert_records
-		// (6) + request_attestation (40) = 52 TRUF. Fund 100 TRUF for headroom.
+		// Cover one market's worth of fees: create_stream (1) + insert_records
+		// (1) + request_attestation (40) = 42 TRUF. Fund 100 TRUF for headroom.
 		err = giveTrufBalance(ctx, platform, deployer.Address(), "100000000000000000000") // 100 TRUF
 		require.NoError(t, err)
 
@@ -242,8 +242,8 @@ func testSettleMarketViaAction(t *testing.T) func(context.Context, *kwilTesting.
 		require.NoError(t, err)
 
 		// Give TRUF balance for market creation fee
-		// Cover one market's worth of fees: create_stream (6) + insert_records
-		// (6) + request_attestation (40) = 52 TRUF. Fund 100 TRUF for headroom.
+		// Cover one market's worth of fees: create_stream (1) + insert_records
+		// (1) + request_attestation (40) = 42 TRUF. Fund 100 TRUF for headroom.
 		err = giveTrufBalance(ctx, platform, deployer.Address(), "100000000000000000000") // 100 TRUF
 		require.NoError(t, err)
 
@@ -356,8 +356,8 @@ func testSkipMarketWithoutAttestation(t *testing.T) func(context.Context, *kwilT
 		require.NoError(t, err)
 
 		// Give TRUF balance for market creation fee
-		// Cover one market's worth of fees: create_stream (6) + insert_records
-		// (6) + request_attestation (40) = 52 TRUF. Fund 100 TRUF for headroom.
+		// Cover one market's worth of fees: create_stream (1) + insert_records
+		// (1) + request_attestation (40) = 42 TRUF. Fund 100 TRUF for headroom.
 		err = giveTrufBalance(ctx, platform, deployer.Address(), "100000000000000000000") // 100 TRUF
 		require.NoError(t, err)
 
@@ -443,8 +443,8 @@ func testMultipleMarketsProcessing(t *testing.T) func(context.Context, *kwilTest
 		err = erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
 
-		// Cover three markets' worth of fees: 3 × (create_stream 6 +
-		// insert_records 6 + request_attestation 40) = 156 TRUF. Fund 500 TRUF
+		// Cover three markets' worth of fees: 3 × (create_stream 1 +
+		// insert_records 1 + request_attestation 40) = 126 TRUF. Fund 500 TRUF
 		// for headroom.
 		err = giveTrufBalance(ctx, platform, deployer.Address(), "500000000000000000000") // 500 TRUF
 		require.NoError(t, err)

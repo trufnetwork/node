@@ -22,11 +22,13 @@ import (
 
 // Test constants for taxonomy fees
 const (
-	taxonomyFeeAmount = "6000000000000000000" // 6 TRUF with 18 decimals per child stream
+	// Flat 1 TRUF per insert_taxonomy transaction (issue #3805): child count
+	// no longer multiplies the fee.
+	taxonomyFeeAmount = "1000000000000000000" // 1 TRUF with 18 decimals per tx
 )
 
 var (
-	sixTRUFTaxonomy = mustParseBigInt(taxonomyFeeAmount) // 6 TRUF as big.Int, using shared helper from stream_creation_fee_test.go
+	oneTRUFTaxonomy = mustParseBigInt(taxonomyFeeAmount) // 1 TRUF as big.Int, using shared helper from stream_creation_fee_test.go
 )
 
 // TestTaxonomyFees is the main test suite for insert_taxonomy transaction fees
@@ -39,7 +41,7 @@ func TestTaxonomyFees(t *testing.T) {
 			testTaxonomyWriterRolePaysFee(t),
 			testTaxonomyNonExemptWalletPaysFee(t),
 			testTaxonomyInsufficientBalance(t),
-			testTaxonomyMultipleChildrenFee(t),
+			testTaxonomyMultipleChildrenChargesFlatFee(t),
 		},
 	}, testutils.GetTestOptionsWithCache())
 }
@@ -68,7 +70,7 @@ func setupTaxonomyTestEnvironment(t *testing.T) func(ctx context.Context, platfo
 }
 
 // Test 1: Wallet with network_writer role still pays insert_taxonomy fees.
-// 100 TRUF in → 6 (composed) + 6 (child) + 6 (1-child taxonomy) = 18 TRUF spent.
+// 100 TRUF in → 1 (composed) + 1 (child) + 1 (1-child taxonomy) = 3 TRUF spent.
 func testTaxonomyWriterRolePaysFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		writerAddrVal := util.Unsafe_NewEthereumAddressFromString("0x2111111111111111111111111111111111111111")
@@ -104,17 +106,19 @@ func testTaxonomyWriterRolePaysFee(t *testing.T) func(ctx context.Context, platf
 		finalBalance, err := getBalance(ctx, platform, writerAddr.Address())
 		require.NoError(t, err, "failed to get final balance")
 
-		// 6 (composed create) + 6 (child create) + 6 (taxonomy w/ 1 child)
-		eighteenTRUF := mustParseBigInt("18000000000000000000")
-		expectedBalance := new(big.Int).Sub(initialBalance, eighteenTRUF)
+		// 1 (composed create) + 1 (child create) + 1 (taxonomy w/ 1 child) — flat per tx.
+		threeTRUF := mustParseBigInt("3000000000000000000")
+		expectedBalance := new(big.Int).Sub(initialBalance, threeTRUF)
 		require.Equal(t, 0, expectedBalance.Cmp(finalBalance),
-			"network_writer should pay 18 TRUF total, expected %s but got %s", expectedBalance, finalBalance)
+			"network_writer should pay 3 TRUF total, expected %s but got %s", expectedBalance, finalBalance)
 
 		return nil
 	}
 }
 
-// Test 2: Non-exempt wallet (without network_writer role) pays 6 TRUF per child stream
+// Test 2: Non-exempt wallet (without network_writer role) pays a flat 1 TRUF
+// per write tx — fund precisely the 3 TRUF needed (1 composed + 1 child + 1 taxonomy)
+// to prove the per-tx invariant.
 func testTaxonomyNonExemptWalletPaysFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		nonExemptAddrVal := util.Unsafe_NewEthereumAddressFromString("0x3222222222222222222222222222222222222222")
@@ -124,34 +128,34 @@ func testTaxonomyNonExemptWalletPaysFee(t *testing.T) func(ctx context.Context, 
 		err := setup.CreateDataProviderWithoutRole(ctx, platform, nonExemptAddr.Address())
 		require.NoError(t, err, "failed to create data provider without role")
 
-		// Give 18 TRUF: 6 TRUF (composed stream fee) + 6 TRUF (child stream fee) + 6 TRUF (taxonomy fee)
-		eighteenTRUF := mustParseBigInt("18000000000000000000") // 18 TRUF
-		err = giveBalance(ctx, platform, nonExemptAddr.Address(), eighteenTRUF.String())
+		// Give exactly 3 TRUF: 1 (composed stream fee) + 1 (child stream fee) + 1 (taxonomy fee)
+		threeTRUF := mustParseBigInt("3000000000000000000") // 3 TRUF
+		err = giveBalance(ctx, platform, nonExemptAddr.Address(), threeTRUF.String())
 		require.NoError(t, err, "failed to give balance")
 
 		// Get initial balance
 		initialBalance, err := getBalance(ctx, platform, nonExemptAddr.Address())
 		require.NoError(t, err, "failed to get initial balance")
-		require.Equal(t, eighteenTRUF, initialBalance, "Initial balance should be 18 TRUF")
+		require.Equal(t, threeTRUF, initialBalance, "Initial balance should be 3 TRUF")
 
-		// Create streams using direct engine calls (each costs 6 TRUF)
+		// Create streams using direct engine calls (each costs a flat 1 TRUF)
 		composedStreamId := util.GenerateStreamId("taxonomy_nonexempt_composed")
 		childStreamId := util.GenerateStreamId("taxonomy_nonexempt_child")
 
-		// Create composed stream (costs 6 TRUF)
+		// Create composed stream (costs 1 TRUF)
 		err = createStream(ctx, platform, nonExemptAddr, composedStreamId.String(), "composed")
 		require.NoError(t, err, "failed to create composed stream")
 
-		// Create child stream (costs 6 TRUF)
+		// Create child stream (costs 1 TRUF)
 		err = createStream(ctx, platform, nonExemptAddr, childStreamId.String(), "primitive")
 		require.NoError(t, err, "failed to create child stream")
 
-		// Balance after stream creation should be 6 TRUF (18 - 6 - 6)
+		// Balance after stream creation should be 1 TRUF (3 - 1 - 1)
 		balanceAfterStreams, err := getBalance(ctx, platform, nonExemptAddr.Address())
 		require.NoError(t, err, "failed to get balance after stream creation")
-		require.Equal(t, sixTRUFTaxonomy, balanceAfterStreams, "Balance should be 6 TRUF after creating streams")
+		require.Equal(t, oneTRUFTaxonomy, balanceAfterStreams, "Balance should be 1 TRUF after creating streams")
 
-		// Insert taxonomy (1 child = 6 TRUF fee)
+		// Insert taxonomy (1 child, flat 1 TRUF fee)
 		err = insertTaxonomy(ctx, platform, nonExemptAddr,
 			nonExemptAddr.Address(), composedStreamId.String(),
 			[]string{nonExemptAddr.Address()},
@@ -160,7 +164,7 @@ func testTaxonomyNonExemptWalletPaysFee(t *testing.T) func(ctx context.Context, 
 			nil)
 		require.NoError(t, err, "taxonomy insertion should succeed")
 
-		// Verify balance is now 0 (6 TRUF taxonomy fee charged)
+		// Verify balance is now 0 (1 TRUF taxonomy fee charged)
 		finalBalance, err := getBalance(ctx, platform, nonExemptAddr.Address())
 		require.NoError(t, err, "failed to get final balance")
 
@@ -180,12 +184,13 @@ func testTaxonomyInsufficientBalance(t *testing.T) func(ctx context.Context, pla
 		err := setup.CreateDataProviderWithoutRole(ctx, platform, insufficientAddr.Address())
 		require.NoError(t, err, "failed to create data provider without role")
 
-		// Give 13 TRUF: Enough for streams (6+6=12) but not enough for taxonomy fee (need 6 more)
-		thirteenTRUF := mustParseBigInt("13000000000000000000") // 13 TRUF
-		err = giveBalance(ctx, platform, insufficientAddr.Address(), thirteenTRUF.String())
+		// Give exactly 2 TRUF: enough for the two create_stream calls (1 + 1)
+		// but nothing left over for the 1 TRUF taxonomy fee.
+		twoTRUF := mustParseBigInt("2000000000000000000")
+		err = giveBalance(ctx, platform, insufficientAddr.Address(), twoTRUF.String())
 		require.NoError(t, err, "failed to give balance")
 
-		// Create streams (costs 12 TRUF total, leaving 1 TRUF)
+		// Create streams (costs 2 TRUF total, leaving 0)
 		composedStreamId := util.GenerateStreamId("taxonomy_insufficient_composed")
 		childStreamId := util.GenerateStreamId("taxonomy_insufficient_child")
 
@@ -195,11 +200,10 @@ func testTaxonomyInsufficientBalance(t *testing.T) func(ctx context.Context, pla
 		err = createStream(ctx, platform, insufficientAddr, childStreamId.String(), "primitive")
 		require.NoError(t, err, "failed to create child stream")
 
-		// Should have 1 TRUF left (13 - 6 - 6 = 1), not enough for 6 TRUF taxonomy fee
+		// Should have 0 TRUF left (2 - 1 - 1 = 0), not enough for the 1 TRUF taxonomy fee
 		remainingBalance, err := getBalance(ctx, platform, insufficientAddr.Address())
 		require.NoError(t, err, "failed to get remaining balance")
-		oneTRUF := mustParseBigInt("1000000000000000000")
-		require.Equal(t, oneTRUF, remainingBalance, "Should have 1 TRUF left after creating streams")
+		require.Equal(t, big.NewInt(0), remainingBalance, "Should have 0 TRUF left after creating streams")
 
 		// Attempt to insert taxonomy - should fail due to insufficient balance
 		err = insertTaxonomy(ctx, platform, insufficientAddr,
@@ -211,14 +215,15 @@ func testTaxonomyInsufficientBalance(t *testing.T) func(ctx context.Context, pla
 
 		require.Error(t, err, "taxonomy insertion should fail with insufficient balance")
 		require.Contains(t, err.Error(), "Insufficient balance for taxonomies creation", "Error should mention insufficient balance")
-		require.Contains(t, err.Error(), "Required: 6 TRUF", "Error should mention 6 TRUF requirement")
+		require.Contains(t, err.Error(), "Required: 1 TRUF", "Error should mention 1 TRUF requirement")
 
 		return nil
 	}
 }
 
-// Test 4: Multiple children - fee should be 6 TRUF per child
-func testTaxonomyMultipleChildrenFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+// Test 4: Multi-child taxonomy charges a flat 1 TRUF regardless of child count.
+// This is the key invariant of issue #3805 — pricing is per-tx, not per-child.
+func testTaxonomyMultipleChildrenChargesFlatFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		multiAddrVal := util.Unsafe_NewEthereumAddressFromString("0x5444444444444444444444444444444444444444")
 		multiAddr := &multiAddrVal
@@ -227,39 +232,40 @@ func testTaxonomyMultipleChildrenFee(t *testing.T) func(ctx context.Context, pla
 		err := setup.CreateDataProviderWithoutRole(ctx, platform, multiAddr.Address())
 		require.NoError(t, err, "failed to create data provider without role")
 
-		// Give 42 TRUF: 6 (composed) + 18 (3 children streams) + 18 (taxonomy fee for 3 children)
-		fortyTwoTRUF := mustParseBigInt("42000000000000000000") // 42 TRUF
-		err = giveBalance(ctx, platform, multiAddr.Address(), fortyTwoTRUF.String())
+		// Give exactly 5 TRUF: 1 (composed) + 3 (3 children) + 1 (taxonomy, flat).
+		// If the migration were still per-child, the 3-child taxonomy would
+		// cost 3 TRUF and this test would fail with insufficient balance.
+		fiveTRUF := mustParseBigInt("5000000000000000000")
+		err = giveBalance(ctx, platform, multiAddr.Address(), fiveTRUF.String())
 		require.NoError(t, err, "failed to give balance")
 
 		// Get initial balance
 		initialBalance, err := getBalance(ctx, platform, multiAddr.Address())
 		require.NoError(t, err, "failed to get initial balance")
-		require.Equal(t, fortyTwoTRUF, initialBalance, "Initial balance should be 42 TRUF")
+		require.Equal(t, fiveTRUF, initialBalance, "Initial balance should be 5 TRUF")
 
-		// Create streams (costs 6 + 18 = 24 TRUF total)
+		// Create streams (costs 1 + 3 = 4 TRUF total)
 		composedStreamId := util.GenerateStreamId("taxonomy_multi_composed")
 		child1StreamId := util.GenerateStreamId("taxonomy_multi_child1")
 		child2StreamId := util.GenerateStreamId("taxonomy_multi_child2")
 		child3StreamId := util.GenerateStreamId("taxonomy_multi_child3")
 
-		// Create composed stream (costs 6 TRUF)
+		// Create composed stream (costs 1 TRUF)
 		err = createStream(ctx, platform, multiAddr, composedStreamId.String(), "composed")
 		require.NoError(t, err, "failed to create composed stream")
 
-		// Create 3 child streams (costs 18 TRUF total)
+		// Create 3 child streams (costs 3 TRUF total, one per create_stream call)
 		for _, childId := range []util.StreamId{child1StreamId, child2StreamId, child3StreamId} {
 			err = createStream(ctx, platform, multiAddr, childId.String(), "primitive")
 			require.NoError(t, err, "failed to create child stream")
 		}
 
-		// Balance after stream creation should be 18 TRUF (42 - 24)
+		// Balance after stream creation should be 1 TRUF (5 - 4)
 		balanceAfterStreams, err := getBalance(ctx, platform, multiAddr.Address())
 		require.NoError(t, err, "failed to get balance after stream creation")
-		eighteenTRUF := mustParseBigInt("18000000000000000000")
-		require.Equal(t, eighteenTRUF, balanceAfterStreams, "Balance should be 18 TRUF after creating streams")
+		require.Equal(t, oneTRUFTaxonomy, balanceAfterStreams, "Balance should be 1 TRUF after creating streams")
 
-		// Insert taxonomy with 3 children (should charge 18 TRUF total)
+		// Insert taxonomy with 3 children — must still charge exactly 1 TRUF.
 		err = insertTaxonomy(ctx, platform, multiAddr,
 			multiAddr.Address(), composedStreamId.String(),
 			[]string{multiAddr.Address(), multiAddr.Address(), multiAddr.Address()},
@@ -268,11 +274,11 @@ func testTaxonomyMultipleChildrenFee(t *testing.T) func(ctx context.Context, pla
 			nil)
 		require.NoError(t, err, "taxonomy insertion should succeed")
 
-		// Verify balance is now 0 (18 TRUF taxonomy fee charged)
+		// Verify balance is now 0 — 3-child taxonomy charged only 1 TRUF (flat).
 		finalBalance, err := getBalance(ctx, platform, multiAddr.Address())
 		require.NoError(t, err, "failed to get final balance")
 
-		require.Equal(t, big.NewInt(0), finalBalance, "Final balance should be 0 after paying all fees")
+		require.Equal(t, big.NewInt(0), finalBalance, "Final balance should be 0 — taxonomy fee is flat 1 TRUF regardless of child count")
 
 		return nil
 	}
