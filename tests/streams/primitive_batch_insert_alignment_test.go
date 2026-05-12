@@ -78,10 +78,10 @@ func testBatchAlignment(t *testing.T) func(ctx context.Context, platform *kwilTe
 		}
 
 		// Fund deployer for the per-record write fee (universal fee enforcement).
-		// Mirrors the migration 003 charge of feefund.PerStreamWei (6 TRUF) per record.
-		feePerRecord, ok := new(big.Int).SetString(feefund.PerStreamWei, 10)
+		// Mirrors the migration 003 charge of feefund.WriteFeeWei (6 TRUF) per record.
+		feePerRecord, ok := new(big.Int).SetString(feefund.WriteFeeWei, 10)
 		if !ok {
-			return errors.Errorf("invalid feefund.PerStreamWei: %s", feefund.PerStreamWei)
+			return errors.Errorf("invalid feefund.WriteFeeWei: %s", feefund.WriteFeeWei)
 		}
 		totalFee := new(big.Int).Mul(feePerRecord, big.NewInt(int64(len(eventTimes))))
 		if err := feefund.EnsureWalletFunded(ctx, platform, deployer.Address(), totalFee.String()); err != nil {

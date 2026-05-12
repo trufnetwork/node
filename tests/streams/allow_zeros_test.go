@@ -325,7 +325,7 @@ func createStreamWithAllowZeros(ctx context.Context, platform *kwilTesting.Platf
 	}
 
 	// Fund for the universal create_stream fee — mirror setup.UntypedCreateStream.
-	if err := feefund.EnsureWalletFunded(ctx, platform, addr.Address(), feefund.PerStreamWei); err != nil {
+	if err := feefund.EnsureWalletFunded(ctx, platform, addr.Address(), feefund.WriteFeeWei); err != nil {
 		return errors.Wrap(err, "fund wallet for create_stream fee")
 	}
 

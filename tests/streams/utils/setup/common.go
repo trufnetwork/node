@@ -2,7 +2,6 @@ package setup
 
 import (
 	"context"
-	"math/big"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -75,9 +74,9 @@ func UntypedCreateStream(ctx context.Context, platform *kwilTesting.Platform, st
 		return errors.Wrap(err, "invalid data provider address")
 	}
 
-	// Universal write-fee enforcement (001-common-actions.sql) charges 6 TRUF per
-	// stream from every caller — top the wallet up so setup helpers stay neutral.
-	if err := feefund.EnsureWalletFunded(ctx, platform, addr.Address(), feefund.PerStreamWei); err != nil {
+	// Universal write-fee enforcement (001-common-actions.sql) charges a flat
+	// 1 TRUF per transaction — top the wallet up so setup helpers stay neutral.
+	if err := feefund.EnsureWalletFunded(ctx, platform, addr.Address(), feefund.WriteFeeWei); err != nil {
 		return errors.Wrap(err, "fund wallet for stream creation fee")
 	}
 
@@ -132,11 +131,9 @@ func CreateStreamsWithOptions(ctx context.Context, platform *kwilTesting.Platfor
 		return errors.Wrap(err, "error creating composed dataset")
 	}
 
-	// Fund the deployer with 6 TRUF × N streams so the universal write fee passes.
-	feePerStream := new(big.Int)
-	feePerStream.SetString(feefund.PerStreamWei, 10)
-	totalFee := new(big.Int).Mul(feePerStream, big.NewInt(int64(len(streamInfos))))
-	if err := feefund.EnsureWalletFunded(ctx, platform, deployer.Address(), totalFee.String()); err != nil {
+	// Fund the deployer with a flat 1 TRUF for the single create_streams call.
+	// The write fee is per-tx, not per-stream, so batch size doesn't multiply it.
+	if err := feefund.EnsureWalletFunded(ctx, platform, deployer.Address(), feefund.WriteFeeWei); err != nil {
 		return errors.Wrap(err, "fund deployer for batch stream creation fee")
 	}
 

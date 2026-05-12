@@ -14,7 +14,7 @@ import (
 
 // Constants kept identical to feefund_kwiltest.go so callers compile uniformly.
 const (
-	PerStreamWei      = "6000000000000000000"  // 6 TRUF
+	WriteFeeWei       = "1000000000000000000"  // 1 TRUF (flat per-tx write fee)
 	AttestationFeeWei = "40000000000000000000" // 40 TRUF
 )
 

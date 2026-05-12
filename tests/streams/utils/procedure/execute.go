@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math/big"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -435,15 +434,10 @@ func SetTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 		weightDecimals = append(weightDecimals, valueDecimal)
 	}
 
-	// insert_taxonomy charges feefund.PerStreamWei per child stream after the
-	// universal-fee migration removed the network_writer exemption.
-	feePerChild, ok := new(big.Int).SetString(feefund.PerStreamWei, 10)
-	if !ok {
-		return errors.Errorf("invalid feefund.PerStreamWei: %s", feefund.PerStreamWei)
-	}
-	totalFee := new(big.Int).Mul(feePerChild, big.NewInt(int64(len(primitiveStreamStrings))))
-	if err := feefund.EnsureWalletFunded(ctx, input.Platform, deployer.Address(), totalFee.String()); err != nil {
-		return errors.Wrap(err, "fund deployer for insert_taxonomy fees")
+	// insert_taxonomy charges a flat 1 TRUF per call regardless of child
+	// count, so fund a single feefund.WriteFeeWei before invoking it.
+	if err := feefund.EnsureWalletFunded(ctx, input.Platform, deployer.Address(), feefund.WriteFeeWei); err != nil {
+		return errors.Wrap(err, "fund deployer for insert_taxonomy fee")
 	}
 
 	engineContext := testctx.NewEngineContext(ctx, input.Platform, deployer, input.Height)

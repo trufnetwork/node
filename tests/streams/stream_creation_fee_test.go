@@ -21,19 +21,24 @@ import (
 	"github.com/trufnetwork/sdk-go/core/util"
 )
 
-// Test constants - must match erc20-bridge/000-extension.sql configuration
+// Test constants — must match the `hoodi_tt` USE block in
+// erc20-bridge/000-extension.sql. The fee-collection actions (001/003/004)
+// call hoodi_tt.balance / hoodi_tt.transfer directly, so this test helper
+// credits balance into the matching bridge instance.
 const (
-	testChain         = "sepolia"
-	testEscrow        = "0x502430eD0BbE0f230215870c9C2853e126eE5Ae3" // From erc20-bridge/000-extension.sql
+	testChain         = "hoodi"
+	testEscrow        = "0x878d6aaeb6e746033f50b8dc268d54b4631554e7"
 	testERC20         = "0x2222222222222222222222222222222222222222"
-	testExtensionName = "sepolia_bridge"
+	testExtensionName = "hoodi_tt"
 )
 
 var (
-	// sixTRUF is parsed from feefund.PerStreamWei — the same constant the
+	// oneTRUF is parsed from feefund.WriteFeeWei — the same constant the
 	// migration uses, so a fee-schedule change in one place can't drift
-	// from test assertions silently.
-	sixTRUF            = mustParseBigInt(feefund.PerStreamWei)
+	// from test assertions silently. Per issue #3805 the write fee is now a
+	// flat 1 TRUF per transaction, regardless of how many streams the tx
+	// creates.
+	oneTRUF            = mustParseBigInt(feefund.WriteFeeWei)
 	pointCounter int64 = 10 // Start from 10, increment for each balance injection
 )
 
@@ -56,7 +61,7 @@ func TestStreamCreationFees(t *testing.T) {
 			testNonExemptWalletPaysFee(t),
 			testInsufficientBalance(t),
 			testFeeIndependentOfRole(t),
-			testBatchCreationPerStreamFee(t),
+			testBatchCreationChargesFlatFee(t),
 			testLeaderReceivesFees(t),
 		},
 	}, testutils.GetTestOptionsWithCache())
@@ -94,7 +99,7 @@ func setupTestEnvironment(t *testing.T) func(ctx context.Context, platform *kwil
 }
 
 // Test 1: Wallet with network_writer role still pays the create_streams fee.
-// The role no longer carries an exemption — funded callers always pay 6 TRUF/stream.
+// The role no longer carries an exemption — funded callers always pay 1 TRUF per tx.
 func testWriterRolePaysFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		writerAddrVal := util.Unsafe_NewEthereumAddressFromString("0x1111111111111111111111111111111111111111")
@@ -117,15 +122,15 @@ func testWriterRolePaysFee(t *testing.T) func(ctx context.Context, platform *kwi
 		finalBalance, err := getBalance(ctx, platform, writerAddr.Address())
 		require.NoError(t, err, "failed to get final balance")
 
-		expectedBalance := new(big.Int).Sub(initialBalance, sixTRUF)
+		expectedBalance := new(big.Int).Sub(initialBalance, oneTRUF)
 		require.Equal(t, 0, expectedBalance.Cmp(finalBalance),
-			"network_writer should pay 6 TRUF, expected %s but got %s", expectedBalance, finalBalance)
+			"network_writer should pay 1 TRUF, expected %s but got %s", expectedBalance, finalBalance)
 
 		return nil
 	}
 }
 
-// Test 2: Non-exempt wallet pays 6 TRUF fee
+// Test 2: Non-exempt wallet pays 1 TRUF fee
 func testNonExemptWalletPaysFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		userAddrVal := util.Unsafe_NewEthereumAddressFromString("0x3333333333333333333333333333333333333333")
@@ -147,13 +152,13 @@ func testNonExemptWalletPaysFee(t *testing.T) func(ctx context.Context, platform
 		err = createStream(ctx, platform, userAddr, "st000000000000000000000000000002", "primitive")
 		require.NoError(t, err, "stream creation should succeed")
 
-		// Verify balance decreased by 6 TRUF
+		// Verify balance decreased by 1 TRUF
 		finalBalance, err := getBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to get final balance")
 
-		expectedBalance := new(big.Int).Sub(initialBalance, sixTRUF)
+		expectedBalance := new(big.Int).Sub(initialBalance, oneTRUF)
 		require.Equal(t, 0, expectedBalance.Cmp(finalBalance),
-			"Balance should decrease by 6 TRUF, expected %s but got %s", expectedBalance, finalBalance)
+			"Balance should decrease by 1 TRUF, expected %s but got %s", expectedBalance, finalBalance)
 
 		return nil
 	}
@@ -169,8 +174,8 @@ func testInsufficientBalance(t *testing.T) func(ctx context.Context, platform *k
 		err := setup.CreateDataProviderWithoutRole(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to register data provider")
 
-		// Give user only 1 TRUF (insufficient)
-		err = giveBalance(ctx, platform, userAddr.Address(), "1000000000000000000")
+		// Give user 0.5 TRUF (insufficient for the flat 1 TRUF fee).
+		err = giveBalance(ctx, platform, userAddr.Address(), "500000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
 		// Try to create stream (should fail)
@@ -184,7 +189,7 @@ func testInsufficientBalance(t *testing.T) func(ctx context.Context, platform *k
 }
 
 // Test 4: network_writer role grant/revoke does NOT change the create_streams fee.
-// Every call charges 6 TRUF regardless of role membership.
+// Every call charges 1 TRUF regardless of role membership.
 func testFeeIndependentOfRole(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		userAddrVal := util.Unsafe_NewEthereumAddressFromString("0x5555555555555555555555555555555555555555")
@@ -199,15 +204,15 @@ func testFeeIndependentOfRole(t *testing.T) func(ctx context.Context, platform *
 		initialBalance, err := getBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
-		// Without role: charges 6 TRUF.
+		// Without role: charges 1 TRUF.
 		err = createStream(ctx, platform, userAddr, "st000000000000000000000000000004", "primitive")
 		require.NoError(t, err, "first stream creation should succeed")
 
 		balanceAfterFirst, err := getBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
-		expectedAfterFirst := new(big.Int).Sub(initialBalance, sixTRUF)
-		require.Equal(t, 0, expectedAfterFirst.Cmp(balanceAfterFirst), "first create should charge 6 TRUF")
+		expectedAfterFirst := new(big.Int).Sub(initialBalance, oneTRUF)
+		require.Equal(t, 0, expectedAfterFirst.Cmp(balanceAfterFirst), "first create should charge 1 TRUF")
 
 		// Grant role — must NOT exempt.
 		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "network_writer", userAddr.Address())
@@ -218,9 +223,9 @@ func testFeeIndependentOfRole(t *testing.T) func(ctx context.Context, platform *
 
 		balanceAfterSecond, err := getBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
-		expectedAfterSecond := new(big.Int).Sub(balanceAfterFirst, sixTRUF)
+		expectedAfterSecond := new(big.Int).Sub(balanceAfterFirst, oneTRUF)
 		require.Equal(t, 0, expectedAfterSecond.Cmp(balanceAfterSecond),
-			"network_writer must still pay the 6 TRUF fee — exemption removed")
+			"network_writer must still pay the 1 TRUF fee — exemption removed")
 
 		// Revoke role — fee unchanged.
 		err = revokeRoleBypass(ctx, platform, "system", "network_writer", userAddr.Address())
@@ -232,16 +237,17 @@ func testFeeIndependentOfRole(t *testing.T) func(ctx context.Context, platform *
 		balanceAfterThird, err := getBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
-		expectedAfterThird := new(big.Int).Sub(balanceAfterSecond, sixTRUF)
+		expectedAfterThird := new(big.Int).Sub(balanceAfterSecond, oneTRUF)
 		require.Equal(t, 0, expectedAfterThird.Cmp(balanceAfterThird),
-			"third create should charge 6 TRUF (role revoked, fee unchanged)")
+			"third create should charge 1 TRUF (role revoked, fee unchanged)")
 
 		return nil
 	}
 }
 
-// Test 5: Batch stream creation charges fee per stream (not per call)
-func testBatchCreationPerStreamFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+// Test 5: Batched create_streams charges a flat 1 TRUF (not 1 TRUF × N).
+// This is the key invariant of issue #3805 — pricing is per-tx, not per-stream.
+func testBatchCreationChargesFlatFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		userAddrVal := util.Unsafe_NewEthereumAddressFromString("0x6666666666666666666666666666666666666666")
 		userAddr := &userAddrVal
@@ -269,15 +275,14 @@ func testBatchCreationPerStreamFee(t *testing.T) func(ctx context.Context, platf
 		err = createStreams(ctx, platform, userAddr, streamIds, streamTypes)
 		require.NoError(t, err, "batch stream creation should succeed")
 
-		// Verify balance decreased by 18 TRUF (6 TRUF × 3 streams)
+		// Verify balance decreased by exactly 1 TRUF for the whole batch.
 		finalBalance, err := getBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
-		numStreams := int64(len(streamIds)) // 3 streams
-		expectedFee := new(big.Int).Mul(sixTRUF, big.NewInt(numStreams))
-		expectedBalance := new(big.Int).Sub(initialBalance, expectedFee)
+		expectedBalance := new(big.Int).Sub(initialBalance, oneTRUF)
 		require.Equal(t, 0, expectedBalance.Cmp(finalBalance),
-			"Batch should charge 6 TRUF per stream (3 streams = 18 TRUF), expected %s but got %s", expectedBalance, finalBalance)
+			"Batch of %d streams must still charge 1 TRUF flat (per-tx, not per-stream); expected %s but got %s",
+			len(streamIds), expectedBalance, finalBalance)
 
 		return nil
 	}
@@ -316,13 +321,13 @@ func testLeaderReceivesFees(t *testing.T) func(ctx context.Context, platform *kw
 		err = createStreamWithLeader(ctx, platform, userAddr, pub, "st00000000000000000000000000000a", "primitive")
 		require.NoError(t, err, "stream creation with leader should succeed")
 
-		// Verify leader balance increased by 6 TRUF
+		// Verify leader balance increased by 1 TRUF
 		finalLeaderBalance, err := getBalance(ctx, platform, leaderAddr)
 		require.NoError(t, err, "failed to get final leader balance")
 
-		expectedLeaderBalance := new(big.Int).Add(initialLeaderBalance, sixTRUF)
+		expectedLeaderBalance := new(big.Int).Add(initialLeaderBalance, oneTRUF)
 		require.Equal(t, 0, expectedLeaderBalance.Cmp(finalLeaderBalance),
-			"Leader should receive 6 TRUF fee, expected %s but got %s", expectedLeaderBalance, finalLeaderBalance)
+			"Leader should receive 1 TRUF fee, expected %s but got %s", expectedLeaderBalance, finalLeaderBalance)
 
 		return nil
 	}

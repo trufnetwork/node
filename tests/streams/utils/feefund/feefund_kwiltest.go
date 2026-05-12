@@ -23,9 +23,12 @@ import (
 // hard-coded fee in its corresponding migration so that test funding stays
 // in sync with on-chain charges. If a migration changes its fee, update here.
 const (
-	// PerStreamWei mirrors the fee in 001-common-actions.sql `create_streams`
-	// AND in 003-primitive-insertion.sql / 004-composed-taxonomy.sql.
-	PerStreamWei = "6000000000000000000" // 6 TRUF
+	// WriteFeeWei mirrors the flat per-transaction write fee charged by
+	// 001-common-actions.sql `create_streams`, 003-primitive-insertion.sql
+	// `insert_records`, and 004-composed-taxonomy.sql `insert_taxonomy`.
+	// Per issue #3805 the fee is independent of batch size — one tx charges
+	// 1 TRUF regardless of how many streams/records/children it touches.
+	WriteFeeWei = "1000000000000000000" // 1 TRUF
 
 	// AttestationFeeWei mirrors the flat fee in 024-attestation-actions.sql.
 	AttestationFeeWei = "40000000000000000000" // 40 TRUF
