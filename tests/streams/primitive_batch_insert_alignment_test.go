@@ -3,7 +3,6 @@ package tests
 import (
 	"context"
 	"fmt"
-	"math/big"
 	"strconv"
 	"testing"
 
@@ -77,14 +76,10 @@ func testBatchAlignment(t *testing.T) func(ctx context.Context, platform *kwilTe
 			values = append(values, dec)
 		}
 
-		// Fund deployer for the per-record write fee (universal fee enforcement).
-		// Mirrors the migration 003 charge of feefund.WriteFeeWei (6 TRUF) per record.
-		feePerRecord, ok := new(big.Int).SetString(feefund.WriteFeeWei, 10)
-		if !ok {
-			return errors.Errorf("invalid feefund.WriteFeeWei: %s", feefund.WriteFeeWei)
-		}
-		totalFee := new(big.Int).Mul(feePerRecord, big.NewInt(int64(len(eventTimes))))
-		if err := feefund.EnsureWalletFunded(ctx, platform, deployer.Address(), totalFee.String()); err != nil {
+		// Fund deployer for the flat 1 TRUF write fee. insert_records is a
+		// single engine call here, so one fund covers the whole batch
+		// regardless of how many records it carries (issue #3805).
+		if err := feefund.EnsureWalletFunded(ctx, platform, deployer.Address(), feefund.WriteFeeWei); err != nil {
 			return errors.Wrap(err, "fund deployer for insert_records fee")
 		}
 

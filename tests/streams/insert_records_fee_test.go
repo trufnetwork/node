@@ -18,23 +18,28 @@ import (
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	testerc20 "github.com/trufnetwork/node/tests/streams/utils/erc20"
+	"github.com/trufnetwork/node/tests/streams/utils/feefund"
 	"github.com/trufnetwork/node/tests/streams/utils/setup"
 	"github.com/trufnetwork/sdk-go/core/types"
 	"github.com/trufnetwork/sdk-go/core/util"
 )
 
-// Test constants
+// Test constants — bridge configuration must match the `hoodi_tt` USE block
+// in erc20-bridge/000-extension.sql since insert_records charges fees through
+// `hoodi_tt.balance` / `hoodi_tt.transfer`.
 const (
-	testInsertChain         = "sepolia"
-	testInsertEscrow        = "0x502430eD0BbE0f230215870c9C2853e126eE5Ae3"
+	testInsertChain         = "hoodi"
+	testInsertEscrow        = "0x878d6aaeb6e746033f50b8dc268d54b4631554e7"
 	testInsertERC20         = "0x2222222222222222222222222222222222222222"
-	testInsertExtensionName = "sepolia_bridge"
-	insertFeeAmount         = "6000000000000000000" // 6 TRUF with 18 decimals per record
+	testInsertExtensionName = "hoodi_tt"
 )
 
 var (
-	sixTRUFInsert            = mustParseInsertBigInt(insertFeeAmount) // 6 TRUF as big.Int
-	insertPointCounter int64 = 1000                                   // Start from 1000, increment for each balance injection
+	// oneTRUFInsert is parsed from feefund.WriteFeeWei — the same shared
+	// constant the migration uses — so a fee-schedule change can't drift
+	// silently between the action and the test assertions (issue #3805).
+	oneTRUFInsert            = mustParseInsertBigInt(feefund.WriteFeeWei) // 1 TRUF as big.Int
+	insertPointCounter int64 = 1000                                       // Start from 1000, increment for each balance injection
 )
 
 func mustParseInsertBigInt(s string) *big.Int {
@@ -54,7 +59,7 @@ func TestInsertRecordsFees(t *testing.T) {
 			testInsertNonExemptWalletPaysFee(t),
 			testInsertInsufficientBalance(t),
 			testInsertFeeIndependentOfRole(t),
-			testInsertBatchChargesPerRecord(t),
+			testInsertBatchChargesFlatFee(t),
 			testInsertLeaderReceivesFees(t),
 		},
 	}, testutils.GetTestOptionsWithCache())
@@ -174,15 +179,15 @@ func testInsertWriterRolePaysFee(t *testing.T) func(ctx context.Context, platfor
 		finalBalance, err := getInsertBalance(ctx, platform, writerAddr.Address())
 		require.NoError(t, err, "failed to get final balance")
 
-		expectedBalance := new(big.Int).Sub(initialBalance, sixTRUFInsert)
+		expectedBalance := new(big.Int).Sub(initialBalance, oneTRUFInsert)
 		require.Equal(t, 0, expectedBalance.Cmp(finalBalance),
-			"network_writer should pay 6 TRUF, expected %s but got %s", expectedBalance, finalBalance)
+			"network_writer should pay 1 TRUF, expected %s but got %s", expectedBalance, finalBalance)
 
 		return nil
 	}
 }
 
-// Test 2: Non-exempt wallet pays 6 TRUF fee per record
+// Test 2: Non-exempt wallet pays 1 TRUF fee per record
 func testInsertNonExemptWalletPaysFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Get systemAdmin who owns the stream
@@ -226,13 +231,13 @@ func testInsertNonExemptWalletPaysFee(t *testing.T) func(ctx context.Context, pl
 		err = insertRecord(ctx, platform, userAddr, systemAdmin.Address(), streamID, 1000, "10.5")
 		require.NoError(t, err, "insert should succeed")
 
-		// Verify balance decreased by 6 TRUF
+		// Verify balance decreased by 1 TRUF
 		finalBalance, err := getInsertBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to get final balance")
 
-		expectedBalance := new(big.Int).Sub(initialBalance, sixTRUFInsert)
+		expectedBalance := new(big.Int).Sub(initialBalance, oneTRUFInsert)
 		require.Equal(t, 0, expectedBalance.Cmp(finalBalance),
-			"Balance should decrease by 6 TRUF, expected %s but got %s", expectedBalance, finalBalance)
+			"Balance should decrease by 1 TRUF, expected %s but got %s", expectedBalance, finalBalance)
 
 		return nil
 	}
@@ -270,8 +275,8 @@ func testInsertInsufficientBalance(t *testing.T) func(ctx context.Context, platf
 		err = grantStreamWriteAccess(ctx, platform, systemAdmin.Address(), streamID, userAddr.Address())
 		require.NoError(t, err, "failed to grant write access")
 
-		// Give user only 1 TRUF (insufficient for 6 TRUF fee)
-		err = giveInsertBalance(ctx, platform, userAddr.Address(), "1000000000000000000")
+		// Give user only 0.5 TRUF (insufficient for the flat 1 TRUF fee).
+		err = giveInsertBalance(ctx, platform, userAddr.Address(), "500000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
 		// Try to insert record (should fail - data_provider is systemAdmin who owns the stream)
@@ -285,7 +290,7 @@ func testInsertInsufficientBalance(t *testing.T) func(ctx context.Context, platf
 }
 
 // Test 4: network_writer role grant/revoke does NOT change fee charging.
-// The role no longer carries a fee exemption — every insert charges 6 TRUF
+// The role no longer carries a fee exemption — every insert charges 1 TRUF
 // regardless of role membership.
 func testInsertFeeIndependentOfRole(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
@@ -322,15 +327,15 @@ func testInsertFeeIndependentOfRole(t *testing.T) func(ctx context.Context, plat
 		initialBalance, err := getInsertBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
-		// Insert without role — charges 6 TRUF.
+		// Insert without role — charges 1 TRUF.
 		err = insertRecord(ctx, platform, userAddr, systemAdmin.Address(), streamID, 1000, "10.5")
 		require.NoError(t, err, "first insert should succeed")
 
 		balanceAfterFirst, err := getInsertBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
-		expectedAfterFirst := new(big.Int).Sub(initialBalance, sixTRUFInsert)
-		require.Equal(t, 0, expectedAfterFirst.Cmp(balanceAfterFirst), "first insert should charge 6 TRUF")
+		expectedAfterFirst := new(big.Int).Sub(initialBalance, oneTRUFInsert)
+		require.Equal(t, 0, expectedAfterFirst.Cmp(balanceAfterFirst), "first insert should charge 1 TRUF")
 
 		// Grant network_writer role — must NOT exempt going forward.
 		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "network_writer", userAddr.Address())
@@ -342,9 +347,9 @@ func testInsertFeeIndependentOfRole(t *testing.T) func(ctx context.Context, plat
 		balanceAfterSecond, err := getInsertBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
-		expectedAfterSecond := new(big.Int).Sub(balanceAfterFirst, sixTRUFInsert)
+		expectedAfterSecond := new(big.Int).Sub(balanceAfterFirst, oneTRUFInsert)
 		require.Equal(t, 0, expectedAfterSecond.Cmp(balanceAfterSecond),
-			"network_writer must still pay the 6 TRUF fee — exemption removed")
+			"network_writer must still pay the 1 TRUF fee — exemption removed")
 
 		// Revoke role — fee behavior unchanged.
 		err = revokeInsertRoleBypass(ctx, platform, "system", "network_writer", userAddr.Address())
@@ -356,16 +361,17 @@ func testInsertFeeIndependentOfRole(t *testing.T) func(ctx context.Context, plat
 		balanceAfterThird, err := getInsertBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
-		expectedAfterThird := new(big.Int).Sub(balanceAfterSecond, sixTRUFInsert)
+		expectedAfterThird := new(big.Int).Sub(balanceAfterSecond, oneTRUFInsert)
 		require.Equal(t, 0, expectedAfterThird.Cmp(balanceAfterThird),
-			"third insert should charge 6 TRUF (role revoked, fee unchanged)")
+			"third insert should charge 1 TRUF (role revoked, fee unchanged)")
 
 		return nil
 	}
 }
 
-// Test 5: Batch insert charges fee per record (not per call)
-func testInsertBatchChargesPerRecord(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+// Test 5: Batched insert_records charges a flat 1 TRUF (not 1 TRUF × N records).
+// This is the key invariant of issue #3805 — pricing is per-tx, not per-record.
+func testInsertBatchChargesFlatFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Get systemAdmin who owns the stream
 		systemAdmin := util.Unsafe_NewEthereumAddressFromString("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
@@ -409,14 +415,14 @@ func testInsertBatchChargesPerRecord(t *testing.T) func(ctx context.Context, pla
 		err = insertMultipleRecords(ctx, platform, userAddr, systemAdmin.Address(), streamID, 2000, numRecords)
 		require.NoError(t, err, "batch insert should succeed")
 
-		// Verify balance decreased by 30 TRUF (5 records × 6 TRUF)
+		// Verify balance decreased by exactly 1 TRUF for the whole batch.
 		finalBalance, err := getInsertBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
-		feeForFiveRecords := new(big.Int).Mul(sixTRUFInsert, big.NewInt(int64(numRecords)))
-		expectedBalance := new(big.Int).Sub(initialBalance, feeForFiveRecords)
+		expectedBalance := new(big.Int).Sub(initialBalance, oneTRUFInsert)
 		require.Equal(t, 0, expectedBalance.Cmp(finalBalance),
-			"Balance should decrease by 30 TRUF (5 records × 6 TRUF), expected %s but got %s", expectedBalance, finalBalance)
+			"Batch of %d records must still charge 1 TRUF flat (per-tx, not per-record); expected %s but got %s",
+			numRecords, expectedBalance, finalBalance)
 
 		return nil
 	}
@@ -479,13 +485,13 @@ func testInsertLeaderReceivesFees(t *testing.T) func(ctx context.Context, platfo
 		err = insertRecordWithLeader(ctx, platform, userAddr, pub, systemAdmin.Address(), streamID, 3000, "15.5")
 		require.NoError(t, err, "insert with leader should succeed")
 
-		// Verify leader balance increased by 6 TRUF
+		// Verify leader balance increased by 1 TRUF
 		finalLeaderBalance, err := getInsertBalance(ctx, platform, leaderAddr)
 		require.NoError(t, err, "failed to get final leader balance")
 
-		expectedLeaderBalance := new(big.Int).Add(initialLeaderBalance, sixTRUFInsert)
+		expectedLeaderBalance := new(big.Int).Add(initialLeaderBalance, oneTRUFInsert)
 		require.Equal(t, 0, expectedLeaderBalance.Cmp(finalLeaderBalance),
-			"Leader should receive 6 TRUF fee, expected %s but got %s", expectedLeaderBalance, finalLeaderBalance)
+			"Leader should receive 1 TRUF fee, expected %s but got %s", expectedLeaderBalance, finalLeaderBalance)
 
 		return nil
 	}
