@@ -107,18 +107,20 @@ func (m *pgRepackMechanism) Run(ctx context.Context, req RunRequest) (*RunReport
 		m.logger.Warn("pg_repack reported incompatibility", "stderr", stderr.String(), "duration", report.Duration)
 		return report, err
 	}
-	tablesProcessed := strings.Count(output, "INFO: repacking table")
+	tablesProcessed := countRepackedTables(output)
 	report.TablesProcessed = tablesProcessed
 
 	if tablesProcessed == 0 {
-		report.Status = StatusFailed
-		report.Error = "pg_repack completed without processing any tables"
-		m.logger.Warn("pg_repack completed but processed no tables", "stderr", stderr.String())
-		return report, fmt.Errorf("pg_repack processed zero tables")
+		m.logger.Info("pg_repack completed with no eligible tables", "duration", report.Duration)
+		return report, nil
 	}
 
 	m.logger.Info("pg_repack completed", "stdout", stdout.String(), "stderr", stderr.String(), "duration", report.Duration, "tables", tablesProcessed)
 	return report, nil
+}
+
+func countRepackedTables(output string) int {
+	return strings.Count(output, "INFO: repacking table")
 }
 
 func detectPgRepackSoftFailure(stderr string) error {
