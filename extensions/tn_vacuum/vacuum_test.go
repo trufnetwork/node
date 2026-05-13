@@ -514,6 +514,64 @@ func TestMaybeRunRecordsErrorOnce(t *testing.T) {
 	require.Equal(t, "error_run", errorSnapshot.lastErrorMechanism)
 }
 
+// TestFailedRunStillAdvancesState confirms that a mechanism error does not
+// pin the schedule to the last successful height. Without this, maybeRun
+// would observe LastRunHeight stuck at 0 and enqueue a fresh attempt on every
+// committed block — the regression behind INCIDENT_2026-05-13_pg_repack_lockup.
+func TestFailedRunStillAdvancesState(t *testing.T) {
+	ctx := context.Background()
+	ResetForTest()
+
+	setMechanismFactoryForTest(func() Mechanism { return &errorRunMechanism{} })
+	defer resetMechanismFactory()
+
+	store := &stubStateStore{}
+
+	svc := &common.Service{
+		Logger: log.New(),
+		LocalConfig: &config.Config{
+			DB: config.DBConfig{DBName: "kwild_test"},
+			Extensions: map[string]map[string]string{
+				ExtensionName: {
+					ConfigKeyEnabled:       "true",
+					ConfigKeyBlockInterval: "1",
+				},
+			},
+		},
+	}
+
+	app := &common.App{Service: svc}
+
+	ext := GetExtension()
+	ext.setLogger(log.New())
+	ext.setStateStore(store)
+
+	now := time.Unix(200, 0)
+	ext.setNowFunc(func() time.Time { return now })
+
+	require.NoError(t, engineReadyHook(ctx, app))
+
+	metricsStub := &stubMetricsRecorder{}
+	ext.mu.Lock()
+	ext.metrics = metricsStub
+	ext.mu.Unlock()
+
+	require.NoError(t, endBlockHook(ctx, app, &common.BlockContext{Height: 5}))
+
+	waitForCondition(t, time.Second, func() bool { return metricsStub.snapshot().errorCount == 1 })
+	waitForCondition(t, time.Second, func() bool { return store.saveCountValue() == 1 })
+
+	savedState := store.lastSavedState()
+	require.Equal(t, int64(5), savedState.LastRunHeight)
+	require.Equal(t, now.UTC(), savedState.LastRunAt)
+
+	ext.mu.RLock()
+	require.Equal(t, int64(5), ext.state.LastRunHeight)
+	ext.mu.RUnlock()
+
+	require.Equal(t, int64(5), metricsStub.snapshot().lastHeight)
+}
+
 func TestEnqueueRunBusy(t *testing.T) {
 	ctx := context.Background()
 	ResetForTest()

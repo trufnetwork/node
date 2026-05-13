@@ -235,22 +235,19 @@ func (e *Extension) processRun(ctx context.Context, req runRequest) {
 		PgRepackJobs: req.PgRepackJobs,
 	})
 
-	if err != nil {
-		logger.Warn("vacuum run failed", "error", err, "height", req.height, "reason", req.reason)
-		e.mu.Lock()
-		e.runInProgress = false
-		e.mu.Unlock()
-		return
-	}
-
+	// Advance scheduling state regardless of run outcome. A transient mechanism
+	// error (pg_repack version mismatch, lock-conflict timeout, missing binary,
+	// etc.) must not keep maybeRun queuing a fresh attempt on every committed
+	// block — the success/failure distinction lives in the metric, not the
+	// schedule.
 	newState := runState{LastRunHeight: req.height}
 	if nowFn != nil {
 		newState.LastRunAt = nowFn().UTC()
 	}
 
 	if store != nil {
-		if err := store.Save(runCtx, newState); err != nil {
-			logger.Warn("failed to persist tn_vacuum state", "error", err)
+		if saveErr := store.Save(runCtx, newState); saveErr != nil {
+			logger.Warn("failed to persist tn_vacuum state", "error", saveErr)
 		}
 	}
 	if metricsRecorder != nil {
@@ -263,6 +260,10 @@ func (e *Extension) processRun(ctx context.Context, req runRequest) {
 	}
 	e.runInProgress = false
 	e.mu.Unlock()
+
+	if err != nil {
+		logger.Warn("vacuum run failed", "error", err, "height", req.height, "reason", req.reason)
+	}
 }
 
 // enqueueRun places a run request on the worker queue if no job is already
