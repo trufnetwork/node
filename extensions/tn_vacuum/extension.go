@@ -332,22 +332,42 @@ func (e *Extension) maybeRun(ctx context.Context, blockHeight int64) {
 	svc := e.service
 	metricsRecorder := e.metrics
 	nowFn := e.now
+	store := e.stateStore
 	e.mu.RUnlock()
 
 	if !cfg.Enabled || mech == nil || runner == nil {
 		return
 	}
 
-	if state.LastRunHeight != 0 {
-		if blockHeight <= state.LastRunHeight {
-			return
+	if state.LastRunHeight == 0 {
+		seeded := runState{LastRunHeight: blockHeight}
+		if nowFn != nil {
+			seeded.LastRunAt = nowFn().UTC()
 		}
-		if blockHeight-state.LastRunHeight < cfg.BlockInterval {
-			if metricsRecorder != nil {
-				metricsRecorder.RecordVacuumSkipped(ctx, "block_interval_not_met")
+		if store != nil {
+			if saveErr := store.Save(ctx, seeded); saveErr != nil {
+				logger.Warn("failed to persist tn_vacuum seed state", "error", saveErr)
 			}
-			return
 		}
+		e.mu.Lock()
+		if blockHeight > e.state.LastRunHeight {
+			e.state = seeded
+		}
+		e.mu.Unlock()
+		if metricsRecorder != nil {
+			metricsRecorder.RecordVacuumSkipped(ctx, "first_block_seed")
+		}
+		return
+	}
+
+	if blockHeight <= state.LastRunHeight {
+		return
+	}
+	if blockHeight-state.LastRunHeight < cfg.BlockInterval {
+		if metricsRecorder != nil {
+			metricsRecorder.RecordVacuumSkipped(ctx, "block_interval_not_met")
+		}
+		return
 	}
 
 	reason := fmt.Sprintf("block_interval:%d", blockHeight)
