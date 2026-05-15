@@ -295,8 +295,15 @@ type InsertMultiPrimitiveDataInput struct {
 	Streams  []PrimitiveStreamWithData
 }
 
+// insertRecordsMaxBatchSize mirrors the on-chain cap enforced by insert_records
+// (migration 003-primitive-insertion.sql). Helpers that build a single engine
+// call must keep each call at or below this many records.
+const insertRecordsMaxBatchSize = 10
+
 // InsertPrimitiveDataMultiBatch inserts records for multiple streams using the insert_records action.
-// It groups records by data provider to minimize calls and ensure correct signing.
+// It groups records by data provider to minimize calls and ensure correct signing,
+// then chunks each provider's batch to stay within the on-chain insert_records cap
+// (insertRecordsMaxBatchSize).
 func InsertPrimitiveDataMultiBatch(ctx context.Context, input InsertMultiPrimitiveDataInput) error {
 	if len(input.Streams) == 0 {
 		return nil
@@ -333,7 +340,8 @@ func InsertPrimitiveDataMultiBatch(ctx context.Context, input InsertMultiPrimiti
 
 	txid := input.Platform.Txid()
 
-	// Execute one call per provider group with correct signer
+	// Execute one or more calls per provider group with correct signer,
+	// chunking at insertRecordsMaxBatchSize to satisfy the on-chain cap.
 	for provider, g := range byProvider {
 		if len(g.dataProviders) != len(g.streamIds) || len(g.streamIds) != len(g.eventTimes) || len(g.eventTimes) != len(g.values) {
 			return errors.Errorf("array length mismatch for provider %s: dp=%d sid=%d ts=%d val=%d",
@@ -341,23 +349,39 @@ func InsertPrimitiveDataMultiBatch(ctx context.Context, input InsertMultiPrimiti
 		}
 		signerAddr := util.Unsafe_NewEthereumAddressFromString(provider)
 
-		// InsertPrimitiveDataMultiBatch issues exactly one insert_records call
-		// per provider group, regardless of how many records it contains. The
-		// write fee is per-tx, so fund a single 1 TRUF (not len(records) × 1).
-		if err := fundForInsertCalls(ctx, input.Platform, signerAddr.Address(), 1); err != nil {
+		total := len(g.dataProviders)
+		if total == 0 {
+			continue
+		}
+		numCalls := (total + insertRecordsMaxBatchSize - 1) / insertRecordsMaxBatchSize
+
+		// Fee is per-tx; fund one 1-TRUF call for each chunk we'll send.
+		if err := fundForInsertCalls(ctx, input.Platform, signerAddr.Address(), numCalls); err != nil {
 			return errors.Wrapf(err, "fund %s for insert_records batch", provider)
 		}
 
-		engineContext := newEthEngineContext(ctx, input.Platform, signerAddr, input.Height)
-		engineContext.TxContext.TxID = txid
+		for start := 0; start < total; start += insertRecordsMaxBatchSize {
+			end := start + insertRecordsMaxBatchSize
+			if end > total {
+				end = total
+			}
 
-		args := []any{g.dataProviders, g.streamIds, g.eventTimes, g.values}
-		r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "insert_records", args, func(row *common.Row) error { return nil })
-		if err != nil {
-			return errors.Wrapf(err, "insert_records call failed for provider %s", provider)
-		}
-		if r.Error != nil {
-			return errors.Wrapf(r.Error, "insert_records result failed for provider %s", provider)
+			engineContext := newEthEngineContext(ctx, input.Platform, signerAddr, input.Height)
+			engineContext.TxContext.TxID = txid
+
+			args := []any{
+				g.dataProviders[start:end],
+				g.streamIds[start:end],
+				g.eventTimes[start:end],
+				g.values[start:end],
+			}
+			r, err := input.Platform.Engine.Call(engineContext, input.Platform.DB, "", "insert_records", args, func(row *common.Row) error { return nil })
+			if err != nil {
+				return errors.Wrapf(err, "insert_records call failed for provider %s", provider)
+			}
+			if r.Error != nil {
+				return errors.Wrapf(r.Error, "insert_records result failed for provider %s", provider)
+			}
 		}
 	}
 

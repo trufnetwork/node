@@ -33,10 +33,14 @@ CREATE OR REPLACE ACTION insert_records(
 
     -- Cap batch size to prevent superlinear block execution time.
     -- With per-tx PG isolation, blocks handle thousands of small txns efficiently.
-    -- TODO: Commented out for now to allow larger batch sizes, MUST be re-enabled once ingestors are updated!!!
-    -- if $num_records > 10 {
-    --     ERROR('insert_records: batch size exceeds maximum of 10 records');
-    -- }
+    -- All shipping clients (sdk-go BulkInserter, sdk-py BulkInserter, the
+    -- truf-data-provider Go cron, and the tsn-adapters Python pipeline)
+    -- already chunk at 10 rows/tx, so this cap is a defense-in-depth bound
+    -- against compromised/buggy callers and not a constraint on legitimate
+    -- batching. See truflation/website#3887.
+    if $num_records > 10 {
+        ERROR('insert_records: batch size exceeds maximum of 10 records');
+    }
 
     -- Cheap input validation runs before any precompile call so malformed
     -- requests (NULL/empty/length-mismatched arrays) fail fast instead of
