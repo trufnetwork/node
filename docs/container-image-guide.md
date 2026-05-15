@@ -97,7 +97,7 @@ If you need this container to join an existing network (mainnet/testnet/devnet),
      --root    ~/truf-node/tn_data \
      --p2p.bootnodes "4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656,0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656" \
      --state-sync.enable \
-     --state-sync.trusted-providers "0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656" \
+     --state-sync.trusted-providers "4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656" \
      --rpc.private
    ```
 4. Update the generated database host so it matches the Compose service name. Open `~/truf-node/tn_data/config.toml` and set:
