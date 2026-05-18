@@ -63,6 +63,7 @@ func TestStreamCreationFees(t *testing.T) {
 			testFeeIndependentOfRole(t),
 			testBatchCreationChargesFlatFee(t),
 			testLeaderReceivesFees(t),
+			testUnenrolledWalletCreatesStreamFree(t),
 		},
 	}, testutils.GetTestOptionsWithCache())
 }
@@ -109,6 +110,11 @@ func testWriterRolePaysFee(t *testing.T) func(ctx context.Context, platform *kwi
 		err := setup.CreateDataProvider(ctx, platform, writerAddr.Address())
 		require.NoError(t, err, "failed to create data provider")
 
+		// Enroll wallet in fee_required (phased rollout per #3805 — only
+		// enrolled wallets pay; the test asserts fees are charged).
+		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", writerAddr.Address())
+		require.NoError(t, err, "failed to enroll in fee_required role")
+
 		// Fund wallet so the create fee can be paid.
 		err = giveBalance(ctx, platform, writerAddr.Address(), "100000000000000000000")
 		require.NoError(t, err, "failed to give balance")
@@ -139,6 +145,10 @@ func testNonExemptWalletPaysFee(t *testing.T) func(ctx context.Context, platform
 		// Register data provider WITHOUT role (non-whitelisted, will pay fees)
 		err := setup.CreateDataProviderWithoutRole(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to register data provider")
+
+		// Enroll wallet in fee_required so the create fee is charged.
+		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", userAddr.Address())
+		require.NoError(t, err, "failed to enroll in fee_required role")
 
 		// Give user 100 TRUF
 		err = giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
@@ -174,6 +184,11 @@ func testInsufficientBalance(t *testing.T) func(ctx context.Context, platform *k
 		err := setup.CreateDataProviderWithoutRole(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to register data provider")
 
+		// Enroll wallet in fee_required so the create fee is charged
+		// (test expects insufficient-balance failure, not the free path).
+		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", userAddr.Address())
+		require.NoError(t, err, "failed to enroll in fee_required role")
+
 		// Give user 0.5 TRUF (insufficient for the flat 1 TRUF fee).
 		err = giveBalance(ctx, platform, userAddr.Address(), "500000000000000000")
 		require.NoError(t, err, "failed to give balance")
@@ -197,6 +212,12 @@ func testFeeIndependentOfRole(t *testing.T) func(ctx context.Context, platform *
 
 		err := setup.CreateDataProviderWithoutRole(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to register data provider")
+
+		// Enroll wallet in fee_required so create_streams charges across
+		// network_writer grant/revoke (test is about NW orthogonality, not
+		// about phased-rollout free-write path).
+		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", userAddr.Address())
+		require.NoError(t, err, "failed to enroll in fee_required role")
 
 		err = giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
 		require.NoError(t, err, "failed to give balance")
@@ -256,6 +277,10 @@ func testBatchCreationChargesFlatFee(t *testing.T) func(ctx context.Context, pla
 		err := setup.CreateDataProviderWithoutRole(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to register data provider")
 
+		// Enroll wallet in fee_required so the batch is charged.
+		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", userAddr.Address())
+		require.NoError(t, err, "failed to enroll in fee_required role")
+
 		// Give user 100 TRUF
 		err = giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
 		require.NoError(t, err, "failed to give balance")
@@ -298,6 +323,10 @@ func testLeaderReceivesFees(t *testing.T) func(ctx context.Context, platform *kw
 		err := setup.CreateDataProviderWithoutRole(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to register data provider")
 
+		// Enroll wallet in fee_required so the leader receives the fee.
+		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", userAddr.Address())
+		require.NoError(t, err, "failed to enroll in fee_required role")
+
 		// Setup leader
 		_, pubGeneric, err := crypto.GenerateSecp256k1Key(nil)
 		require.NoError(t, err, "failed to generate leader key")
@@ -328,6 +357,36 @@ func testLeaderReceivesFees(t *testing.T) func(ctx context.Context, platform *kw
 		expectedLeaderBalance := new(big.Int).Add(initialLeaderBalance, oneTRUF)
 		require.Equal(t, 0, expectedLeaderBalance.Cmp(finalLeaderBalance),
 			"Leader should receive 1 TRUF fee, expected %s but got %s", expectedLeaderBalance, finalLeaderBalance)
+
+		return nil
+	}
+}
+
+// Test 7: A wallet not enrolled in system:fee_required writes for free.
+// Phased rollout of #3805 — until enrolled, the action runs without
+// touching the ERC20 bridge. The wallet's TRUF balance is unchanged
+// and the create succeeds even when it has zero TRUF.
+func testUnenrolledWalletCreatesStreamFree(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		freeAddrVal := util.Unsafe_NewEthereumAddressFromString("0x8888888888888888888888888888888888888888")
+		freeAddr := &freeAddrVal
+
+		// Register data provider WITHOUT role. NOT enrolled in fee_required.
+		err := setup.CreateDataProviderWithoutRole(ctx, platform, freeAddr.Address())
+		require.NoError(t, err, "failed to register data provider")
+
+		// Deliberately do NOT fund the wallet — a free-write path should
+		// not require any TRUF balance.
+		initialBalance, err := getBalance(ctx, platform, freeAddr.Address())
+		require.NoError(t, err, "failed to get initial balance")
+		require.Equal(t, big.NewInt(0), initialBalance, "free-write wallet should start with zero TRUF")
+
+		err = createStream(ctx, platform, freeAddr, "st00000000000000000000000000000b", "primitive")
+		require.NoError(t, err, "un-enrolled wallet should be able to create streams for free")
+
+		finalBalance, err := getBalance(ctx, platform, freeAddr.Address())
+		require.NoError(t, err, "failed to get final balance")
+		require.Equal(t, big.NewInt(0), finalBalance, "un-enrolled wallet must not be charged")
 
 		return nil
 	}

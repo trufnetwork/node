@@ -61,6 +61,7 @@ func TestInsertRecordsFees(t *testing.T) {
 			testInsertFeeIndependentOfRole(t),
 			testInsertBatchChargesFlatFee(t),
 			testInsertLeaderReceivesFees(t),
+			testInsertUnenrolledWalletWritesFree(t),
 		},
 	}, testutils.GetTestOptionsWithCache())
 }
@@ -155,6 +156,11 @@ func testInsertWriterRolePaysFee(t *testing.T) func(ctx context.Context, platfor
 		err := setup.CreateDataProvider(ctx, platform, writerAddr.Address())
 		require.NoError(t, err, "failed to register data provider")
 
+		// Enroll wallet in fee_required (phased rollout per #3805 — only
+		// enrolled wallets pay; the test asserts fees are charged).
+		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", writerAddr.Address())
+		require.NoError(t, err, "failed to enroll in fee_required role")
+
 		streamID := "st111111111111111111111111111111"
 		streamLocator := types.StreamLocator{
 			StreamId:     util.GenerateStreamId(streamID),
@@ -215,6 +221,10 @@ func testInsertNonExemptWalletPaysFee(t *testing.T) func(ctx context.Context, pl
 		err = setup.CreateDataProviderWithoutRole(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to register data provider")
 
+		// Enroll wallet in fee_required so the insert fee is charged.
+		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", userAddr.Address())
+		require.NoError(t, err, "failed to enroll in fee_required role")
+
 		// Grant write access to user
 		err = grantStreamWriteAccess(ctx, platform, systemAdmin.Address(), streamID, userAddr.Address())
 		require.NoError(t, err, "failed to grant write access")
@@ -271,6 +281,11 @@ func testInsertInsufficientBalance(t *testing.T) func(ctx context.Context, platf
 		err = setup.CreateDataProviderWithoutRole(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to register data provider")
 
+		// Enroll wallet so the insufficient-balance ERROR fires (un-enrolled
+		// wallets bypass the balance check entirely).
+		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", userAddr.Address())
+		require.NoError(t, err, "failed to enroll in fee_required role")
+
 		// Grant write access to user
 		err = grantStreamWriteAccess(ctx, platform, systemAdmin.Address(), streamID, userAddr.Address())
 		require.NoError(t, err, "failed to grant write access")
@@ -317,6 +332,11 @@ func testInsertFeeIndependentOfRole(t *testing.T) func(ctx context.Context, plat
 		userAddr := &userAddrVal
 		err = setup.CreateDataProviderWithoutRole(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to register data provider")
+
+		// Enroll wallet so insert charges across NW grant/revoke (test is
+		// about NW orthogonality, not phased-rollout free-write path).
+		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", userAddr.Address())
+		require.NoError(t, err, "failed to enroll in fee_required role")
 
 		err = grantStreamWriteAccess(ctx, platform, systemAdmin.Address(), streamID, userAddr.Address())
 		require.NoError(t, err, "failed to grant write access")
@@ -398,6 +418,10 @@ func testInsertBatchChargesFlatFee(t *testing.T) func(ctx context.Context, platf
 		err = setup.CreateDataProviderWithoutRole(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to register data provider")
 
+		// Enroll wallet in fee_required so the batch is charged.
+		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", userAddr.Address())
+		require.NoError(t, err, "failed to enroll in fee_required role")
+
 		// Grant write access to user
 		err = grantStreamWriteAccess(ctx, platform, systemAdmin.Address(), streamID, userAddr.Address())
 		require.NoError(t, err, "failed to grant write access")
@@ -456,6 +480,10 @@ func testInsertLeaderReceivesFees(t *testing.T) func(ctx context.Context, platfo
 		err = setup.CreateDataProviderWithoutRole(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to register data provider")
 
+		// Enroll wallet in fee_required so the leader receives the fee.
+		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", userAddr.Address())
+		require.NoError(t, err, "failed to enroll in fee_required role")
+
 		// Grant write access to user
 		err = grantStreamWriteAccess(ctx, platform, systemAdmin.Address(), streamID, userAddr.Address())
 		require.NoError(t, err, "failed to grant write access")
@@ -492,6 +520,54 @@ func testInsertLeaderReceivesFees(t *testing.T) func(ctx context.Context, platfo
 		expectedLeaderBalance := new(big.Int).Add(initialLeaderBalance, oneTRUFInsert)
 		require.Equal(t, 0, expectedLeaderBalance.Cmp(finalLeaderBalance),
 			"Leader should receive 1 TRUF fee, expected %s but got %s", expectedLeaderBalance, finalLeaderBalance)
+
+		return nil
+	}
+}
+
+// Test 7: A wallet not enrolled in system:fee_required inserts for free.
+// Phased rollout of #3805 — until enrolled, the action runs without
+// touching the ERC20 bridge. The wallet's TRUF balance is unchanged
+// and the insert succeeds even when it has zero TRUF.
+func testInsertUnenrolledWalletWritesFree(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		systemAdmin := util.Unsafe_NewEthereumAddressFromString("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
+
+		err := setup.CreateDataProvider(ctx, platform, systemAdmin.Address())
+		require.NoError(t, err, "failed to register systemAdmin as data provider")
+
+		streamID := "st888888888888888888888888888888"
+		streamLocator := types.StreamLocator{
+			StreamId:     util.GenerateStreamId(streamID),
+			DataProvider: systemAdmin,
+		}
+		err = setup.CreateStream(ctx, platform, setup.StreamInfo{
+			Type:    setup.ContractTypePrimitive,
+			Locator: streamLocator,
+		})
+		require.NoError(t, err, "failed to create stream")
+
+		freeAddrVal := util.Unsafe_NewEthereumAddressFromString("0xa888888888888888888888888888888888888888")
+		freeAddr := &freeAddrVal
+		err = setup.CreateDataProviderWithoutRole(ctx, platform, freeAddr.Address())
+		require.NoError(t, err, "failed to register data provider")
+
+		// NOT enrolled in fee_required. Grant per-stream write access only.
+		err = grantStreamWriteAccess(ctx, platform, systemAdmin.Address(), streamID, freeAddr.Address())
+		require.NoError(t, err, "failed to grant write access")
+
+		// Deliberately do not fund the wallet — free path should not need
+		// any TRUF balance.
+		initialBalance, err := getInsertBalance(ctx, platform, freeAddr.Address())
+		require.NoError(t, err, "failed to get initial balance")
+		require.Equal(t, big.NewInt(0), initialBalance, "free-write wallet should start with zero TRUF")
+
+		err = insertRecord(ctx, platform, freeAddr, systemAdmin.Address(), streamID, 5000, "20.5")
+		require.NoError(t, err, "un-enrolled wallet should insert for free")
+
+		finalBalance, err := getInsertBalance(ctx, platform, freeAddr.Address())
+		require.NoError(t, err, "failed to get final balance")
+		require.Equal(t, big.NewInt(0), finalBalance, "un-enrolled wallet must not be charged")
 
 		return nil
 	}
