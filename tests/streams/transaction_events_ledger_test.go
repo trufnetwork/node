@@ -95,6 +95,11 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		// fees plus the 40 TRUF attestation fee with headroom.
 		require.NoError(t, feefund.EnsureWalletFunded(ctx, platform, actor.Address(), "100000000000000000000"),
 			"fund actor on hoodi_tt for write fees")
+		// Phased rollout: create_streams / insert_records / insert_taxonomy
+		// only charge wallets in `system:fee_required`. This test asserts the full
+		// fee ledger (deployStream + insertRecords + setTaxonomies rows), so enroll
+		// the actor before any write fires.
+		require.NoError(t, setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", actor.Address()))
 
 		receiverVal := util.Unsafe_NewEthereumAddressFromString("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 		receiver := &receiverVal
