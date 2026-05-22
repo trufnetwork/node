@@ -324,8 +324,9 @@ func createStreamWithAllowZeros(ctx context.Context, platform *kwilTesting.Platf
 		return errors.Wrap(err, "invalid data provider address")
 	}
 
-	// Fund for the universal create_stream fee — mirror setup.UntypedCreateStream.
-	if err := feefund.EnsureWalletFunded(ctx, platform, addr.Address(), feefund.WriteFeeWei); err != nil {
+	// Fund for the universal create_stream per-stream fee (issue #3971) —
+	// mirror setup.UntypedCreateStream.
+	if err := feefund.EnsureWalletFunded(ctx, platform, addr.Address(), feefund.StreamCreationFeeWei); err != nil {
 		return errors.Wrap(err, "fund wallet for create_stream fee")
 	}
 

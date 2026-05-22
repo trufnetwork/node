@@ -70,9 +70,9 @@ func testWinnerReceivesFullPayout(t *testing.T) func(context.Context, *kwilTesti
 		require.NoError(t, err)
 
 		// Fund DP on the sepolia_bridge (the dev TRUF substitute) for
-		// create_stream (6 TRUF), insert_records (6 TRUF), request_attestation
-		// (40 TRUF). Give 100 TRUF to leave headroom.
-		err = feefund.EnsureWalletFunded(ctx, platform, dpAddr.Address(), "100000000000000000000")
+		// create_stream (100 TRUF, #3971), insert_records (1 TRUF), and
+		// request_attestation (40 TRUF). 200 TRUF leaves headroom.
+		err = feefund.EnsureWalletFunded(ctx, platform, dpAddr.Address(), "200000000000000000000")
 		require.NoError(t, err)
 
 		// Get USDC balance before market operations

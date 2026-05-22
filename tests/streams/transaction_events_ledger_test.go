@@ -38,12 +38,15 @@ const (
 	ledgerERC20          = "0x2222222222222222222222222222222222222222"
 	ledgerExtensionAlias = "sepolia_bridge"
 
-	feeHalfTRUF      = "500000000000000000"
-	feeOneTRUF       = "1000000000000000000"
-	feeFortyTRUF     = "40000000000000000000"
-	transferAmount   = "5000000000000000000"
-	withdrawAmount   = "10000000000000000000"
-	initialUserFunds = "200000000000000000000"
+	feeHalfTRUF  = "500000000000000000"
+	feeOneTRUF   = "1000000000000000000"
+	feeFortyTRUF = "40000000000000000000"
+	// feeTwoHundredTRUF mirrors create_streams charging 100 TRUF × N streams
+	// (issue #3971); this test creates 2 streams in one tx → 200 TRUF.
+	feeTwoHundredTRUF = "200000000000000000000"
+	transferAmount    = "5000000000000000000"
+	withdrawAmount    = "10000000000000000000"
+	initialUserFunds  = "200000000000000000000"
 )
 
 var ledgerPointCounter int64 = 20000
@@ -91,14 +94,17 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		require.NoError(t, ledgerGiveBalance(ctx, platform, actor.Address(), initialUserFunds))
 		// The write-fee actions (create_streams / insert_records /
 		// insert_taxonomy / request_attestation) charge against `hoodi_tt`,
-		// not `sepolia_bridge`. Fund 100 TRUF there — covers 1+1+1 write
-		// fees plus the 40 TRUF attestation fee with headroom.
-		require.NoError(t, feefund.EnsureWalletFunded(ctx, platform, actor.Address(), "100000000000000000000"),
+		// not `sepolia_bridge`. create_streams is now 100 TRUF per stream
+		// (#3971); this test creates 2 streams, inserts 1 record, sets a
+		// taxonomy, and requests an attestation. Fund 500 TRUF to cover
+		// 200 + 1 + 1 + 40 with headroom for future ledger assertions.
+		require.NoError(t, feefund.EnsureWalletFunded(ctx, platform, actor.Address(), "500000000000000000000"),
 			"fund actor on hoodi_tt for write fees")
-		// Phased rollout: create_streams / insert_records / insert_taxonomy
-		// only charge wallets in `system:fee_required`. This test asserts the full
-		// fee ledger (deployStream + insertRecords + setTaxonomies rows), so enroll
-		// the actor before any write fires.
+		// Phased rollout: insert_records / insert_taxonomy only charge wallets
+		// in `system:fee_required`. (create_streams charges universally now —
+		// issue #3971 — so it does not need the enrollment, but the ledger
+		// test asserts the full fee ledger including insertRecords + setTaxonomies
+		// rows, so enroll the actor before those writes fire.)
 		require.NoError(t, setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", actor.Address()))
 
 		receiverVal := util.Unsafe_NewEthereumAddressFromString("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
@@ -213,7 +219,7 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		argsBytes, err := tn_utils.EncodeActionArgs([]any{
 			strings.ToLower(systemAdmin.Address()),
 			attestationStream.String(),
-			int64(999),  // before
+			int64(999),   // before
 			int64(99999), // frozen_at
 			false,        // use_cache
 		})
@@ -237,10 +243,10 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		expected := map[string]ledgerExpectation{
 			createTx: {
 				method:       "deployStream",
-				fee:          feeOneTRUF, // flat 1 TRUF regardless of stream count
+				fee:          feeTwoHundredTRUF, // 100 TRUF × 2 streams (#3971)
 				feeRecipient: createLeaderAddr,
 				feeDistributions: []string{
-					buildDistribution(createLeaderAddr, feeOneTRUF),
+					buildDistribution(createLeaderAddr, feeTwoHundredTRUF),
 				},
 				assertMetadata: assertNoMetadata,
 			},
@@ -744,7 +750,9 @@ func runTransactionIDTrackingScenario(t *testing.T) func(ctx context.Context, pl
 		require.NoError(t, setup.CreateDataProviderWithoutRole(ctx, platform, actor.Address()))
 		require.NoError(t, ledgerGiveBalance(ctx, platform, actor.Address(), initialUserFunds))
 		// Write-fee actions charge against `hoodi_tt`; fund that bridge too.
-		require.NoError(t, feefund.EnsureWalletFunded(ctx, platform, actor.Address(), "100000000000000000000"),
+		// create_streams is now 100 TRUF per stream (#3971) — this test
+		// creates 2 streams + inserts records. 300 TRUF gives headroom.
+		require.NoError(t, feefund.EnsureWalletFunded(ctx, platform, actor.Address(), "300000000000000000000"),
 			"fund actor on hoodi_tt for write fees")
 
 		userLower := strings.ToLower(actor.Address())
