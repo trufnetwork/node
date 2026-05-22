@@ -54,7 +54,10 @@ CREATE OR REPLACE ACTION create_stream(
 
 /**
  * create_streams: Creates multiple streams at once.
- * Fee: 1 TRUF flat per transaction (charged to every caller, no exemptions)
+ * Fee: 100 TRUF per stream (issue #3971). Charged on every caller —
+ * no role exemption. The total transferred is
+ * 100 TRUF × array_length($stream_ids), bounded only by the caller's
+ * TRUF balance.
  * Validates stream_id format, data provider address, and stream type.
  * Sets default metadata including type, owner, visibility, and readonly keys.
  *
@@ -90,34 +93,26 @@ CREATE OR REPLACE ACTION create_streams(
     }
 
     -- ===== FEE COLLECTION =====
-    -- Flat 1 TRUF per transaction (write-fee policy per issue #3805).
-    -- Phased rollout: only wallets enrolled in `system:fee_required`
-    -- are charged. Empty role => no caller is charged. Once every
-    -- active write wallet is enrolled, drop this gate in a follow-up
-    -- migration so universal charging resumes.
-    $total_fee := 1000000000000000000::NUMERIC(78, 0); -- 1 TRUF with 18 decimals
+    -- Per-stream write fee per issue #3971. Charged universally — no role gate.
+    -- Streams aren't truncated by the daily digest, so per-stream pricing
+    -- ensures storage cost scales with what the caller actually creates.
+    $per_stream_fee NUMERIC(78, 0) := '100000000000000000000'::NUMERIC(78, 0); -- 100 TRUF (10^20)
+    $total_fee NUMERIC(78, 0) := $per_stream_fee * array_length($stream_ids)::NUMERIC(78, 0);
 
-    $fee_required BOOL := FALSE;
-    for $r in are_members_of('system', 'fee_required', ARRAY[$lower_caller]) {
-        $fee_required := $r.is_member;
+    IF @leader_sender IS NULL {
+        ERROR('Leader address not available for fee transfer');
+    }
+    $leader_hex := encode(@leader_sender, 'hex')::TEXT;
+
+    $caller_balance := hoodi_tt.balance(@caller);
+
+    IF $caller_balance < $total_fee {
+        ERROR('Insufficient balance for stream creation. Required: 100 TRUF per stream');
     }
 
-    IF $fee_required {
-        IF @leader_sender IS NULL {
-            ERROR('Leader address not available for fee transfer');
-        }
-        $leader_hex := encode(@leader_sender, 'hex')::TEXT;
-
-        $caller_balance := hoodi_tt.balance(@caller);
-
-        IF $caller_balance < $total_fee {
-            ERROR('Insufficient balance for stream creation. Required: 1 TRUF');
-        }
-
-        hoodi_tt.transfer($leader_hex, $total_fee);
-        $fee_total := $total_fee;
-        $fee_recipient := '0x' || $leader_hex;
-    }
+    hoodi_tt.transfer($leader_hex, $total_fee);
+    $fee_total := $total_fee;
+    $fee_recipient := '0x' || $leader_hex;
     -- ===== END FEE COLLECTION =====
 
     -- ===== STREAM CREATION LOGIC =====

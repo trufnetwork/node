@@ -33,12 +33,11 @@ const (
 )
 
 var (
-	// oneTRUF is parsed from feefund.WriteFeeWei — the same constant the
-	// migration uses, so a fee-schedule change in one place can't drift
-	// from test assertions silently. Per issue #3805 the write fee is now a
-	// flat 1 TRUF per transaction, regardless of how many streams the tx
-	// creates.
-	oneTRUF            = mustParseBigInt(feefund.WriteFeeWei)
+	// perStreamFee is parsed from feefund.StreamCreationFeeWei — the same
+	// constant the migration uses, so a fee-schedule change in one place
+	// can't drift from test assertions silently. Per issue #3971 create_streams
+	// charges 100 TRUF per stream, universally (no role exemption).
+	perStreamFee       = mustParseBigInt(feefund.StreamCreationFeeWei)
 	pointCounter int64 = 10 // Start from 10, increment for each balance injection
 )
 
@@ -61,9 +60,9 @@ func TestStreamCreationFees(t *testing.T) {
 			testNonExemptWalletPaysFee(t),
 			testInsufficientBalance(t),
 			testFeeIndependentOfRole(t),
-			testBatchCreationChargesFlatFee(t),
+			testBatchChargesPerStreamFee(t),
 			testLeaderReceivesFees(t),
-			testUnenrolledWalletCreatesStreamFree(t),
+			testUnenrolledWalletStillCharged(t),
 		},
 	}, testutils.GetTestOptionsWithCache())
 }
@@ -99,8 +98,8 @@ func setupTestEnvironment(t *testing.T) func(ctx context.Context, platform *kwil
 	}
 }
 
-// Test 1: Wallet with network_writer role still pays the create_streams fee.
-// The role no longer carries an exemption — funded callers always pay 1 TRUF per tx.
+// Test 1: Wallet with network_writer role pays the create_streams per-stream fee.
+// The role carries no exemption — funded callers always pay 100 TRUF per stream.
 func testWriterRolePaysFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		writerAddrVal := util.Unsafe_NewEthereumAddressFromString("0x1111111111111111111111111111111111111111")
@@ -110,13 +109,8 @@ func testWriterRolePaysFee(t *testing.T) func(ctx context.Context, platform *kwi
 		err := setup.CreateDataProvider(ctx, platform, writerAddr.Address())
 		require.NoError(t, err, "failed to create data provider")
 
-		// Enroll wallet in fee_required (phased rollout per #3805 — only
-		// enrolled wallets pay; the test asserts fees are charged).
-		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", writerAddr.Address())
-		require.NoError(t, err, "failed to enroll in fee_required role")
-
-		// Fund wallet so the create fee can be paid.
-		err = giveBalance(ctx, platform, writerAddr.Address(), "100000000000000000000")
+		// Fund wallet with 200 TRUF so the single-stream create fee can be paid.
+		err = giveBalance(ctx, platform, writerAddr.Address(), "200000000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
 		initialBalance, err := getBalance(ctx, platform, writerAddr.Address())
@@ -128,30 +122,27 @@ func testWriterRolePaysFee(t *testing.T) func(ctx context.Context, platform *kwi
 		finalBalance, err := getBalance(ctx, platform, writerAddr.Address())
 		require.NoError(t, err, "failed to get final balance")
 
-		expectedBalance := new(big.Int).Sub(initialBalance, oneTRUF)
+		expectedBalance := new(big.Int).Sub(initialBalance, perStreamFee)
 		require.Equal(t, 0, expectedBalance.Cmp(finalBalance),
-			"network_writer should pay 1 TRUF, expected %s but got %s", expectedBalance, finalBalance)
+			"network_writer should pay 100 TRUF per stream, expected %s but got %s", expectedBalance, finalBalance)
 
 		return nil
 	}
 }
 
-// Test 2: Non-exempt wallet pays 1 TRUF fee
+// Test 2: Non-whitelisted wallet pays the per-stream fee.
+// No role gating exists for create_streams — every caller pays 100 TRUF/stream.
 func testNonExemptWalletPaysFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		userAddrVal := util.Unsafe_NewEthereumAddressFromString("0x3333333333333333333333333333333333333333")
 		userAddr := &userAddrVal
 
-		// Register data provider WITHOUT role (non-whitelisted, will pay fees)
+		// Register data provider WITHOUT role (non-whitelisted).
 		err := setup.CreateDataProviderWithoutRole(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to register data provider")
 
-		// Enroll wallet in fee_required so the create fee is charged.
-		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", userAddr.Address())
-		require.NoError(t, err, "failed to enroll in fee_required role")
-
-		// Give user 100 TRUF
-		err = giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
+		// Give user 200 TRUF (enough for a single-stream create).
+		err = giveBalance(ctx, platform, userAddr.Address(), "200000000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
 		// Get initial balance
@@ -162,35 +153,30 @@ func testNonExemptWalletPaysFee(t *testing.T) func(ctx context.Context, platform
 		err = createStream(ctx, platform, userAddr, "st000000000000000000000000000002", "primitive")
 		require.NoError(t, err, "stream creation should succeed")
 
-		// Verify balance decreased by 1 TRUF
+		// Verify balance decreased by 100 TRUF
 		finalBalance, err := getBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to get final balance")
 
-		expectedBalance := new(big.Int).Sub(initialBalance, oneTRUF)
+		expectedBalance := new(big.Int).Sub(initialBalance, perStreamFee)
 		require.Equal(t, 0, expectedBalance.Cmp(finalBalance),
-			"Balance should decrease by 1 TRUF, expected %s but got %s", expectedBalance, finalBalance)
+			"Balance should decrease by 100 TRUF, expected %s but got %s", expectedBalance, finalBalance)
 
 		return nil
 	}
 }
 
-// Test 3: Insufficient balance fails
+// Test 3: Insufficient balance fails (caller has < 100 TRUF, can't pay per-stream fee).
 func testInsufficientBalance(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		userAddrVal := util.Unsafe_NewEthereumAddressFromString("0x4444444444444444444444444444444444444444")
 		userAddr := &userAddrVal
 
-		// Register data provider WITHOUT role (non-whitelisted, will pay fees)
+		// Register data provider WITHOUT role (non-whitelisted).
 		err := setup.CreateDataProviderWithoutRole(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to register data provider")
 
-		// Enroll wallet in fee_required so the create fee is charged
-		// (test expects insufficient-balance failure, not the free path).
-		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", userAddr.Address())
-		require.NoError(t, err, "failed to enroll in fee_required role")
-
-		// Give user 0.5 TRUF (insufficient for the flat 1 TRUF fee).
-		err = giveBalance(ctx, platform, userAddr.Address(), "500000000000000000")
+		// Give user 50 TRUF (insufficient for the 100 TRUF per-stream fee).
+		err = giveBalance(ctx, platform, userAddr.Address(), "50000000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
 		// Try to create stream (should fail)
@@ -204,7 +190,7 @@ func testInsufficientBalance(t *testing.T) func(ctx context.Context, platform *k
 }
 
 // Test 4: network_writer role grant/revoke does NOT change the create_streams fee.
-// Every call charges 1 TRUF regardless of role membership.
+// Every call charges 100 TRUF per stream regardless of role membership.
 func testFeeIndependentOfRole(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		userAddrVal := util.Unsafe_NewEthereumAddressFromString("0x5555555555555555555555555555555555555555")
@@ -213,27 +199,22 @@ func testFeeIndependentOfRole(t *testing.T) func(ctx context.Context, platform *
 		err := setup.CreateDataProviderWithoutRole(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to register data provider")
 
-		// Enroll wallet in fee_required so create_streams charges across
-		// network_writer grant/revoke (test is about NW orthogonality, not
-		// about phased-rollout free-write path).
-		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", userAddr.Address())
-		require.NoError(t, err, "failed to enroll in fee_required role")
-
-		err = giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
+		// Give 500 TRUF — three single-stream creates @ 100 TRUF each.
+		err = giveBalance(ctx, platform, userAddr.Address(), "500000000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
 		initialBalance, err := getBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
-		// Without role: charges 1 TRUF.
+		// Without role: charges 100 TRUF.
 		err = createStream(ctx, platform, userAddr, "st000000000000000000000000000004", "primitive")
 		require.NoError(t, err, "first stream creation should succeed")
 
 		balanceAfterFirst, err := getBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
-		expectedAfterFirst := new(big.Int).Sub(initialBalance, oneTRUF)
-		require.Equal(t, 0, expectedAfterFirst.Cmp(balanceAfterFirst), "first create should charge 1 TRUF")
+		expectedAfterFirst := new(big.Int).Sub(initialBalance, perStreamFee)
+		require.Equal(t, 0, expectedAfterFirst.Cmp(balanceAfterFirst), "first create should charge 100 TRUF")
 
 		// Grant role — must NOT exempt.
 		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "network_writer", userAddr.Address())
@@ -244,9 +225,9 @@ func testFeeIndependentOfRole(t *testing.T) func(ctx context.Context, platform *
 
 		balanceAfterSecond, err := getBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
-		expectedAfterSecond := new(big.Int).Sub(balanceAfterFirst, oneTRUF)
+		expectedAfterSecond := new(big.Int).Sub(balanceAfterFirst, perStreamFee)
 		require.Equal(t, 0, expectedAfterSecond.Cmp(balanceAfterSecond),
-			"network_writer must still pay the 1 TRUF fee — exemption removed")
+			"network_writer must still pay the 100 TRUF fee — no exemption")
 
 		// Revoke role — fee unchanged.
 		err = revokeRoleBypass(ctx, platform, "system", "network_writer", userAddr.Address())
@@ -258,31 +239,27 @@ func testFeeIndependentOfRole(t *testing.T) func(ctx context.Context, platform *
 		balanceAfterThird, err := getBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
-		expectedAfterThird := new(big.Int).Sub(balanceAfterSecond, oneTRUF)
+		expectedAfterThird := new(big.Int).Sub(balanceAfterSecond, perStreamFee)
 		require.Equal(t, 0, expectedAfterThird.Cmp(balanceAfterThird),
-			"third create should charge 1 TRUF (role revoked, fee unchanged)")
+			"third create should charge 100 TRUF (role revoked, fee unchanged)")
 
 		return nil
 	}
 }
 
-// Test 5: Batched create_streams charges a flat 1 TRUF (not 1 TRUF × N).
-// This is the key invariant of issue #3805 — pricing is per-tx, not per-stream.
-func testBatchCreationChargesFlatFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+// Test 5: Batched create_streams charges N × perStreamFee (issue #3971).
+// Pricing is per-stream, not per-tx — three streams = 300 TRUF.
+func testBatchChargesPerStreamFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		userAddrVal := util.Unsafe_NewEthereumAddressFromString("0x6666666666666666666666666666666666666666")
 		userAddr := &userAddrVal
 
-		// Register data provider WITHOUT role (non-whitelisted, will pay fees)
+		// Register data provider WITHOUT role (non-whitelisted).
 		err := setup.CreateDataProviderWithoutRole(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to register data provider")
 
-		// Enroll wallet in fee_required so the batch is charged.
-		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", userAddr.Address())
-		require.NoError(t, err, "failed to enroll in fee_required role")
-
-		// Give user 100 TRUF
-		err = giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
+		// Give user 500 TRUF (more than the 300 TRUF needed for 3 streams).
+		err = giveBalance(ctx, platform, userAddr.Address(), "500000000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
 		// Get initial balance
@@ -300,32 +277,29 @@ func testBatchCreationChargesFlatFee(t *testing.T) func(ctx context.Context, pla
 		err = createStreams(ctx, platform, userAddr, streamIds, streamTypes)
 		require.NoError(t, err, "batch stream creation should succeed")
 
-		// Verify balance decreased by exactly 1 TRUF for the whole batch.
+		// Verify balance decreased by N × perStreamFee for the whole batch.
 		finalBalance, err := getBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err)
 
-		expectedBalance := new(big.Int).Sub(initialBalance, oneTRUF)
+		totalFee := new(big.Int).Mul(perStreamFee, big.NewInt(int64(len(streamIds))))
+		expectedBalance := new(big.Int).Sub(initialBalance, totalFee)
 		require.Equal(t, 0, expectedBalance.Cmp(finalBalance),
-			"Batch of %d streams must still charge 1 TRUF flat (per-tx, not per-stream); expected %s but got %s",
+			"Batch of %d streams charges N × 100 TRUF (per-stream, not per-tx); expected %s but got %s",
 			len(streamIds), expectedBalance, finalBalance)
 
 		return nil
 	}
 }
 
-// Test 6: Leader receives fees
+// Test 6: Leader receives the per-stream fee.
 func testLeaderReceivesFees(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		userAddrVal := util.Unsafe_NewEthereumAddressFromString("0x7777777777777777777777777777777777777777")
 		userAddr := &userAddrVal
 
-		// Register data provider WITHOUT role (non-whitelisted, will pay fees)
+		// Register data provider WITHOUT role (non-whitelisted).
 		err := setup.CreateDataProviderWithoutRole(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to register data provider")
-
-		// Enroll wallet in fee_required so the leader receives the fee.
-		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", userAddr.Address())
-		require.NoError(t, err, "failed to enroll in fee_required role")
 
 		// Setup leader
 		_, pubGeneric, err := crypto.GenerateSecp256k1Key(nil)
@@ -334,8 +308,8 @@ func testLeaderReceivesFees(t *testing.T) func(ctx context.Context, platform *kw
 		leaderSigner := crypto.EthereumAddressFromPubKey(pub)
 		leaderAddr := fmt.Sprintf("0x%x", leaderSigner)
 
-		// Give user 100 TRUF
-		err = giveBalance(ctx, platform, userAddr.Address(), "100000000000000000000")
+		// Give user 200 TRUF (covers one create at 100 TRUF).
+		err = giveBalance(ctx, platform, userAddr.Address(), "200000000000000000000")
 		require.NoError(t, err, "failed to give user balance")
 
 		// Give leader initial balance (so we can track the increase)
@@ -350,43 +324,47 @@ func testLeaderReceivesFees(t *testing.T) func(ctx context.Context, platform *kw
 		err = createStreamWithLeader(ctx, platform, userAddr, pub, "st00000000000000000000000000000a", "primitive")
 		require.NoError(t, err, "stream creation with leader should succeed")
 
-		// Verify leader balance increased by 1 TRUF
+		// Verify leader balance increased by 100 TRUF
 		finalLeaderBalance, err := getBalance(ctx, platform, leaderAddr)
 		require.NoError(t, err, "failed to get final leader balance")
 
-		expectedLeaderBalance := new(big.Int).Add(initialLeaderBalance, oneTRUF)
+		expectedLeaderBalance := new(big.Int).Add(initialLeaderBalance, perStreamFee)
 		require.Equal(t, 0, expectedLeaderBalance.Cmp(finalLeaderBalance),
-			"Leader should receive 1 TRUF fee, expected %s but got %s", expectedLeaderBalance, finalLeaderBalance)
+			"Leader should receive 100 TRUF fee, expected %s but got %s", expectedLeaderBalance, finalLeaderBalance)
 
 		return nil
 	}
 }
 
-// Test 7: A wallet not enrolled in system:fee_required writes for free.
-// Phased rollout of #3805 — until enrolled, the action runs without
-// touching the ERC20 bridge. The wallet's TRUF balance is unchanged
-// and the create succeeds even when it has zero TRUF.
-func testUnenrolledWalletCreatesStreamFree(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+// Test 7: A wallet not enrolled in system:fee_required is still charged.
+// Regression check that the phased-rollout exemption has been removed
+// from create_streams (issue #3971 universal charging).
+func testUnenrolledWalletStillCharged(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		freeAddrVal := util.Unsafe_NewEthereumAddressFromString("0x8888888888888888888888888888888888888888")
-		freeAddr := &freeAddrVal
+		userAddrVal := util.Unsafe_NewEthereumAddressFromString("0x8888888888888888888888888888888888888888")
+		userAddr := &userAddrVal
 
 		// Register data provider WITHOUT role. NOT enrolled in fee_required.
-		err := setup.CreateDataProviderWithoutRole(ctx, platform, freeAddr.Address())
+		err := setup.CreateDataProviderWithoutRole(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to register data provider")
 
-		// Deliberately do NOT fund the wallet — a free-write path should
-		// not require any TRUF balance.
-		initialBalance, err := getBalance(ctx, platform, freeAddr.Address())
+		// Fund with 200 TRUF — enough to cover one 100-TRUF create.
+		err = giveBalance(ctx, platform, userAddr.Address(), "200000000000000000000")
+		require.NoError(t, err, "failed to give balance")
+
+		initialBalance, err := getBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to get initial balance")
-		require.Equal(t, big.NewInt(0), initialBalance, "free-write wallet should start with zero TRUF")
 
-		err = createStream(ctx, platform, freeAddr, "st00000000000000000000000000000b", "primitive")
-		require.NoError(t, err, "un-enrolled wallet should be able to create streams for free")
+		err = createStream(ctx, platform, userAddr, "st00000000000000000000000000000b", "primitive")
+		require.NoError(t, err, "wallet should be able to create stream when funded")
 
-		finalBalance, err := getBalance(ctx, platform, freeAddr.Address())
+		finalBalance, err := getBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to get final balance")
-		require.Equal(t, big.NewInt(0), finalBalance, "un-enrolled wallet must not be charged")
+
+		expectedBalance := new(big.Int).Sub(initialBalance, perStreamFee)
+		require.Equal(t, 0, expectedBalance.Cmp(finalBalance),
+			"Un-enrolled wallet must still be charged 100 TRUF — exemption removed; expected %s but got %s",
+			expectedBalance, finalBalance)
 
 		return nil
 	}

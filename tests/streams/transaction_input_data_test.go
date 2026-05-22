@@ -42,11 +42,12 @@ func runTransactionInputActionsTest(t *testing.T) func(ctx context.Context, plat
 		require.NoError(t, setup.CreateDataProvider(ctx, platform, systemAdmin.Address()))
 
 		// Universal write-fee enforcement requires a leader sender on the block
-		// context AND a funded caller wallet. Cover both direct Engine.Call
-		// invocations below (2 streams + 1 record = 18 TRUF).
+		// context AND a funded caller wallet. The direct Engine.Call below
+		// creates 2 streams (200 TRUF @ 100/stream per #3971) and inserts 1
+		// record (1 TRUF). Fund with headroom.
 		_, leaderPub, err := kcrypto.GenerateSecp256k1Key(nil)
 		require.NoError(t, err, "generate leader key")
-		require.NoError(t, feefund.EnsureWalletFunded(ctx, platform, systemAdmin.Address(), "18000000000000000000"))
+		require.NoError(t, feefund.EnsureWalletFunded(ctx, platform, systemAdmin.Address(), "300000000000000000000"))
 
 		// Test 1: get_transaction_streams
 		t.Log("Test 1: Create streams and verify get_transaction_streams")
