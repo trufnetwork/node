@@ -63,6 +63,7 @@ func TestStreamCreationFees(t *testing.T) {
 			testBatchChargesPerStreamFee(t),
 			testLeaderReceivesFees(t),
 			testUnenrolledWalletStillCharged(t),
+		testPermissionlessOnboarding(t),
 		},
 	}, testutils.GetTestOptionsWithCache())
 }
@@ -370,6 +371,56 @@ func testUnenrolledWalletStillCharged(t *testing.T) func(ctx context.Context, pl
 	}
 }
 
+// Test 8: A wallet with NO data_providers row and NO system:network_writer role
+// can create streams — the action auto-registers the data provider on first call.
+// Second call from the same wallet succeeds via the ON CONFLICT DO NOTHING path.
+func testPermissionlessOnboarding(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		userAddrVal := util.Unsafe_NewEthereumAddressFromString("0x9999999999999999999999999999999999999999")
+		userAddr := &userAddrVal
+
+		// Fund with 300 TRUF — enough for two single-stream creates.
+		// Deliberately skip CreateDataProvider / CreateDataProviderWithoutRole.
+		err := giveBalance(ctx, platform, userAddr.Address(), "300000000000000000000")
+		require.NoError(t, err, "failed to give balance")
+
+		initialBalance, err := getBalance(ctx, platform, userAddr.Address())
+		require.NoError(t, err, "failed to get initial balance")
+
+		// First create: auto-registers this wallet as a data provider.
+		err = createStream(ctx, platform, userAddr, "st00000000000000000000000000000c", "primitive")
+		require.NoError(t, err, "first stream creation should succeed without prior data provider registration")
+
+		dpCount, err := countDataProviders(ctx, platform, userAddr.Address())
+		require.NoError(t, err, "failed to count data providers after first create")
+		require.Equal(t, 1, dpCount, "exactly one data_providers row should exist after first create")
+
+		balanceAfterFirst, err := getBalance(ctx, platform, userAddr.Address())
+		require.NoError(t, err, "failed to get balance after first create")
+
+		expectedAfterFirst := new(big.Int).Sub(initialBalance, perStreamFee)
+		require.Equal(t, 0, expectedAfterFirst.Cmp(balanceAfterFirst),
+			"first create should charge 100 TRUF, expected %s but got %s", expectedAfterFirst, balanceAfterFirst)
+
+		// Second create: data provider already exists — ON CONFLICT DO NOTHING path.
+		err = createStream(ctx, platform, userAddr, "st00000000000000000000000000000d", "primitive")
+		require.NoError(t, err, "second stream creation should succeed (ON CONFLICT path)")
+
+		dpCount, err = countDataProviders(ctx, platform, userAddr.Address())
+		require.NoError(t, err, "failed to count data providers after second create")
+		require.Equal(t, 1, dpCount, "data_providers row count must remain 1 after ON CONFLICT path")
+
+		balanceAfterSecond, err := getBalance(ctx, platform, userAddr.Address())
+		require.NoError(t, err, "failed to get balance after second create")
+
+		expectedAfterSecond := new(big.Int).Sub(balanceAfterFirst, perStreamFee)
+		require.Equal(t, 0, expectedAfterSecond.Cmp(balanceAfterSecond),
+			"second create should charge another 100 TRUF, expected %s but got %s", expectedAfterSecond, balanceAfterSecond)
+
+		return nil
+	}
+}
+
 // ===== HELPER FUNCTIONS =====
 
 // revokeRoleBypass revokes a role using direct SQL with OverrideAuthz
@@ -435,6 +486,31 @@ func getBalance(ctx context.Context, platform *kwilTesting.Platform, wallet stri
 	}
 
 	return balance, nil
+}
+
+// countDataProviders returns the number of data_providers rows matching the given address.
+func countDataProviders(ctx context.Context, platform *kwilTesting.Platform, address string) (int, error) {
+	engineCtx := &common.EngineContext{
+		TxContext: &common.TxContext{
+			Ctx:          ctx,
+			BlockContext: &common.BlockContext{Height: 0},
+			TxID:         platform.Txid(),
+			Signer:       []byte("system"),
+			Caller:       "0x0000000000000000000000000000000000000000",
+		},
+		OverrideAuthz: true,
+	}
+
+	var count int
+	err := platform.Engine.Execute(engineCtx, platform.DB,
+		`SELECT COUNT(*) AS cnt FROM data_providers WHERE address = $addr`,
+		map[string]any{"$addr": address},
+		func(row *common.Row) error {
+			count = int(row.Values[0].(int64))
+			return nil
+		},
+	)
+	return count, err
 }
 
 // callCreateStreamsAction is the base implementation - calls the create_streams action
