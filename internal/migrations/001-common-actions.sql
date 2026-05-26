@@ -142,19 +142,22 @@ CREATE OR REPLACE ACTION create_streams(
 
     $base_uuid := uuid_generate_kwil('create_streams_' || @txid);
 
-    -- Get the data provider id
+    -- Permissionless onboarding: the per-stream fee is the only requirement.
+    -- If the caller has no data_providers row yet, create one now.
+    INSERT INTO data_providers (id, address, created_at)
+    VALUES (
+        COALESCE((SELECT MAX(id) FROM data_providers), 0) + 1,
+        $data_provider,
+        @height
+    )
+    ON CONFLICT (address) DO NOTHING;
+
     $data_provider_id INT;
-    $dp_found BOOL := false;
     for $data_provider_row in SELECT id
         FROM data_providers
         WHERE address = $data_provider
         LIMIT 1 {
-        $dp_found := true;
         $data_provider_id := $data_provider_row.id;
-    }
-
-    if $dp_found = false {
-        ERROR('Data provider not found: ' || $data_provider);
     }
     
     -- Create the streams using UNNEST for optimal performance
