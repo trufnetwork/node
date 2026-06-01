@@ -45,6 +45,8 @@ func buildPrecompile() precompiles.Precompile {
 			getLeaderBytesMethod(),
 			getValidatorsMethod(),
 			getValidatorCountMethod(),
+			deriveMAAAddressMethod(),
+			computeRulesHashMethod(),
 		},
 	}
 }
