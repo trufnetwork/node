@@ -91,6 +91,21 @@ func TestComputeRulesHash_OrderIndependentAndDedup(t *testing.T) {
 	if !bytes.Equal(base, deduped) {
 		t.Fatalf("duplicate entry changed the hash:\n base %x\n dedup %x", base, deduped)
 	}
+
+	// Conflicting body_hash for a duplicate (namespace, action): the LAST occurrence wins
+	// (5RulesHash-Preimage-Spec.md §1 canonicalization rule 1: "last write wins for its body_hash").
+	// The earlier 0xdd pin on ob_place_order is dropped in favor of the trailing 0xcc, so the result
+	// must equal `base` (which pins ob_place_order to 0xcc).
+	lastWins, err := computeRulesHash("bps", 250, "0", "eth_truf",
+		[]string{"main", "main", "main"},
+		[]string{"ob_place_order", "ob_cancel_order", "ob_place_order"},
+		[][]byte{repeatByte(0xdd, 32), nil, repeatByte(0xcc, 32)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(base, lastWins) {
+		t.Fatalf("last-write-wins not honored for a conflicting body_hash:\n base %x\n lastWins %x", base, lastWins)
+	}
 }
 
 func TestDeriveMAAAddress_GoldenVectors(t *testing.T) {
@@ -164,6 +179,9 @@ func TestDeriveMAAAddress_RejectsBadLengths(t *testing.T) {
 	if _, err := deriveMAAAddress(repeatByte(0x11, 19), good20, good32, nil); err == nil {
 		t.Fatal("expected error for 19-byte restricted")
 	}
+	if _, err := deriveMAAAddress(good20, repeatByte(0x22, 21), good32, nil); err == nil {
+		t.Fatal("expected error for 21-byte unrestricted")
+	}
 	if _, err := deriveMAAAddress(good20, good20, repeatByte(0x33, 31), nil); err == nil {
 		t.Fatal("expected error for 31-byte rules_hash")
 	}
@@ -179,5 +197,10 @@ func TestComputeRulesHash_Validation(t *testing.T) {
 	if _, err := computeRulesHash("bps", 0, "0", "eth_truf",
 		[]string{"main"}, []string{"a"}, [][]byte{repeatByte(0x00, 31)}); err == nil {
 		t.Fatal("expected error for 31-byte body_hash")
+	}
+	// Mismatched parallel-slice lengths must error, not panic (index-out-of-range) or silently truncate.
+	if _, err := computeRulesHash("bps", 0, "0", "eth_truf",
+		[]string{"main"}, []string{"a", "b"}, [][]byte{nil}); err == nil {
+		t.Fatal("expected error for mismatched namespaces/actions/body_hashes lengths")
 	}
 }

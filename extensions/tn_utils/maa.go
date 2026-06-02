@@ -192,6 +192,14 @@ func computeRulesHashHandler(ctx *common.EngineContext, app *common.App, inputs 
 
 // computeRulesHash builds the canonical RULES_PREIMAGE (doc 5 §1) and returns keccak256(preimage).
 func computeRulesHash(feeMode string, feeBps int64, feeFlatStr, bridge string, namespaces, actions []string, bodyHashes [][]byte) ([]byte, error) {
+	// Defensive: the three allow-list slices are indexed in lockstep below. The on-chain handler
+	// already equalizes them, but guard the pure function so a direct caller gets an error instead
+	// of an index-out-of-range panic or a silently-truncated hash.
+	if len(namespaces) != len(actions) || len(namespaces) != len(bodyHashes) {
+		return nil, fmt.Errorf("namespaces/actions/body_hashes must be equal length (%d/%d/%d)",
+			len(namespaces), len(actions), len(bodyHashes))
+	}
+
 	var b bytes.Buffer
 
 	b.WriteByte(maaRulesVersion)
