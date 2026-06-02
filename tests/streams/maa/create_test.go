@@ -79,8 +79,7 @@ func createDefaultMAA(t *testing.T, ctx context.Context, platform *kwilTesting.P
 	err := callAs(ctx, platform, restricted, "maa_create", []any{
 		unrestrictedHex,                    // $unrestricted_addr
 		repeat(0xab, 32),                   // $salt
-		"eth_truf",                         // $bridge
-		"TRUF",                             // $token
+		"eth_truf",                         // $bridge (token TRUF is derived from this)
 		"bps",                              // $fee_mode
 		feeBps,                             // $fee_bps
 		dec(t, "0"),                        // $fee_flat
@@ -126,7 +125,7 @@ func testMAACreateMatchesGoldenVectorAndGetters(t *testing.T) func(context.Conte
 		require.False(t, known, "unknown address must report not-known")
 
 		// maa_get_rule(addr) -> field checks
-		var restrField, unrestrField, bridgeField, feeMode string
+		var restrField, unrestrField, bridgeField, tokenField, feeMode string
 		var feeBps int64
 		var enabled bool
 		require.NoError(t, callAs(ctx, platform, restricted, "maa_get_rule", []any{addr},
@@ -134,6 +133,7 @@ func testMAACreateMatchesGoldenVectorAndGetters(t *testing.T) func(context.Conte
 				restrField = row.Values[2].(string)
 				unrestrField = row.Values[3].(string)
 				bridgeField = row.Values[5].(string)
+				tokenField = row.Values[6].(string)
 				feeMode = row.Values[7].(string)
 				feeBps = row.Values[8].(int64)
 				enabled = row.Values[10].(bool)
@@ -142,6 +142,7 @@ func testMAACreateMatchesGoldenVectorAndGetters(t *testing.T) func(context.Conte
 		require.Equal(t, restrictedHex, restrField)
 		require.Equal(t, unrestrictedHex, unrestrField)
 		require.Equal(t, "eth_truf", bridgeField)
+		require.Equal(t, "TRUF", tokenField, "token must be derived from bridge, not caller-supplied")
 		require.Equal(t, "bps", feeMode)
 		require.Equal(t, int64(250), feeBps)
 		require.True(t, enabled)
@@ -177,22 +178,35 @@ func testMAAValidation(t *testing.T) func(context.Context, *kwilTesting.Platform
 
 		// Duplicate identity (same restricted/unrestricted/rules/salt) must be rejected.
 		require.Error(t, callAs(ctx, platform, restricted, "maa_create", []any{
-			unrestrictedHex, repeat(0xab, 32), "eth_truf", "TRUF", "bps", int64(250), dec(t, "0"),
+			unrestrictedHex, repeat(0xab, 32), "eth_truf", "bps", int64(250), dec(t, "0"),
 			[]string{"main", "main"}, []string{"ob_place_order", "ob_cancel_order"},
 			[][]byte{repeat(0xcc, 32), nil},
 		}, nil), "duplicate MAA must be rejected")
 
 		// restricted == unrestricted must be rejected (signer is `owner`, unrestricted also owner).
 		require.Error(t, callAs(ctx, platform, owner, "maa_create", []any{
-			unrestrictedHex, repeat(0x01, 32), "eth_truf", "TRUF", "bps", int64(0), dec(t, "0"),
+			unrestrictedHex, repeat(0x01, 32), "eth_truf", "bps", int64(0), dec(t, "0"),
 			[]string{}, []string{}, [][]byte{},
 		}, nil), "restricted == unrestricted must be rejected")
 
 		// fee_bps out of range must be rejected.
 		require.Error(t, callAs(ctx, platform, restricted, "maa_create", []any{
-			unrestrictedHex, repeat(0x02, 32), "eth_truf", "TRUF", "bps", int64(10001), dec(t, "0"),
+			unrestrictedHex, repeat(0x02, 32), "eth_truf", "bps", int64(10001), dec(t, "0"),
 			[]string{}, []string{}, [][]byte{},
 		}, nil), "fee_bps > 10000 must be rejected")
+
+		// Duplicate (namespace, action) in the allow-list must be rejected (PK + canonical-set integrity).
+		require.Error(t, callAs(ctx, platform, restricted, "maa_create", []any{
+			unrestrictedHex, repeat(0x03, 32), "eth_truf", "bps", int64(0), dec(t, "0"),
+			[]string{"main", "main"}, []string{"ob_place_order", "ob_place_order"},
+			[][]byte{nil, nil},
+		}, nil), "duplicate (namespace, action) must be rejected")
+
+		// Unsupported bridge must be rejected (token is derived from bridge, not caller-supplied).
+		require.Error(t, callAs(ctx, platform, restricted, "maa_create", []any{
+			unrestrictedHex, repeat(0x04, 32), "eth_dai", "bps", int64(0), dec(t, "0"),
+			[]string{}, []string{}, [][]byte{},
+		}, nil), "unsupported bridge must be rejected")
 		return nil
 	}
 }

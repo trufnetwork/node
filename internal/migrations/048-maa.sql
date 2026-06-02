@@ -72,7 +72,8 @@ CREATE TABLE IF NOT EXISTS maa_events (
     block_height    INT8  NOT NULL,
     block_timestamp INT8  NOT NULL,
 
-    FOREIGN KEY (maa_address) REFERENCES maa_rules(maa_address) ON DELETE CASCADE
+    -- RESTRICT (not CASCADE): the audit log is permanent — deleting a rule must never erase its history.
+    FOREIGN KEY (maa_address) REFERENCES maa_rules(maa_address) ON DELETE RESTRICT
 );
 
 CREATE INDEX IF NOT EXISTS idx_maa_events_addr ON maa_events(maa_address);
@@ -112,8 +113,7 @@ CREATE OR REPLACE ACTION maa_record_event(
 CREATE OR REPLACE ACTION maa_create(
     $unrestricted_addr TEXT,       -- owner (0x-hex); the restricted signer is @caller
     $salt              BYTEA,      -- enables several MAAs per {restricted,unrestricted} pair (may be NULL)
-    $bridge            TEXT,
-    $token             TEXT,
+    $bridge            TEXT,       -- 'eth_truf' | 'eth_usdc'; token is DERIVED from this (not a parameter)
     $fee_mode          TEXT,
     $fee_bps           INT,
     $fee_flat          NUMERIC(78, 0),
@@ -141,11 +141,42 @@ CREATE OR REPLACE ACTION maa_create(
         ERROR('fee_bps must be between 0 and 10000 (0..100%)');
     }
 
+    -- token is DERIVED from bridge (spec 5RulesHash-Preimage-Spec.md §6.3: "bridge is committed;
+    -- token is not — token is derivable from bridge"). Never trust a caller-supplied token, and
+    -- reject any bridge we can't price (decimal scale + display token are bridge-specific).
+    $token TEXT;
+    if $bridge = 'eth_truf' {
+        $token := 'TRUF';
+    } elseif $bridge = 'eth_usdc' {
+        $token := 'USDC';
+    } else {
+        ERROR('unsupported bridge (expected eth_truf or eth_usdc)');
+    }
+
     -- Parallel allow-list arrays must be equal length (NULL/empty arrays are allowed and equal).
     -- Parens are required: IS DISTINCT FROM binds looser than OR (see 003-primitive-insertion.sql).
     $n INT := array_length($namespaces);
     if ($n IS DISTINCT FROM array_length($actions)) OR ($n IS DISTINCT FROM array_length($body_hashes)) {
         ERROR('namespaces, actions and body_hashes must be the same length');
+    }
+
+    -- Reject duplicate (namespace, action) pairs. compute_rules_hash canonicalizes duplicates
+    -- (spec §1: dedup, last-write-wins on body_hash), but maa_allowed_actions has a
+    -- (maa_address, namespace, action) PRIMARY KEY, so a raw duplicate would PK-violate the insert
+    -- below. Fail closed here with a clear message and keep the stored allow-list 1:1 with the
+    -- hashed rule set (no silently-dropped body_hash pin).
+    $has_dup BOOL := false;
+    for $d in
+        SELECT 1 AS one
+        FROM UNNEST($namespaces, $actions) AS u(ns, act)
+        GROUP BY u.ns, u.act
+        HAVING COUNT(*) > 1
+        LIMIT 1
+    {
+        $has_dup := true;
+    }
+    if $has_dup {
+        ERROR('duplicate (namespace, action) in allow-list; each pair may appear at most once');
     }
 
     -- Commitment computed ON-CHAIN from the rule terms (never trusted from a parameter).
