@@ -16,10 +16,16 @@ import (
 	"github.com/trufnetwork/sdk-go/core/util"
 )
 
-// Two component keys used across the tests.
+// The two component keys used across the tests — these are the golden-vector inputs
+// (2MAA-Plan.md §5.4): restricted = 0x11*20, unrestricted = 0x22*20.
 const (
 	restrictedHex   = "0x1111111111111111111111111111111111111111"
 	unrestrictedHex = "0x2222222222222222222222222222222222222222"
+
+	// Frozen golden vector A (2MAA-Plan.md §5.4): bps 250, allow-list {ob_place_order(0xcc), ob_cancel_order},
+	// salt 0xab*32. rule_id is the full 32-byte identifier; maa_address is the derived 20-byte wallet.
+	goldenRuleIDHex = "a0b517da759b794e2484dc8b9dba8f5211a53dcdf26448f19c7c68699ff7bcf1"
+	goldenMAAHex    = "84da4dbca14d429c719d65a0bb76bd7fa3c5c349"
 )
 
 func TestMAA(t *testing.T) {
@@ -27,7 +33,7 @@ func TestMAA(t *testing.T) {
 		Name:           "MAA_RuleStore",
 		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
-			testMAACreateMatchesGoldenVectorAndGetters(t),
+			testMAACreateRuleJoinAndGetters(t),
 			testMAAValidation(t),
 		},
 	}, testutils.GetTestOptionsWithCache())
@@ -72,97 +78,124 @@ func callAs(ctx context.Context, platform *kwilTesting.Platform, caller util.Eth
 	return res.Error
 }
 
-// createDefaultMAA registers an MAA signed by `restricted`, returns the derived address bytes.
-func createDefaultMAA(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, restricted util.EthereumAddress, feeBps int64) []byte {
+// createDefaultRule registers the golden-vector rule signed by `restricted`, returns the rule_id bytes.
+func createDefaultRule(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, restricted util.EthereumAddress, feeBps int64, salt []byte) []byte {
 	t.Helper()
-	var addr []byte
-	err := callAs(ctx, platform, restricted, "maa_create", []any{
-		unrestrictedHex,                    // $unrestricted_addr
-		repeat(0xab, 32),                   // $salt
-		"eth_truf",                         // $bridge (token TRUF is derived from this)
-		"bps",                              // $fee_mode
-		feeBps,                             // $fee_bps
-		dec(t, "0"),                        // $fee_flat
-		[]string{"main", "main"},           // $namespaces
+	var ruleID []byte
+	err := callAs(ctx, platform, restricted, "maa_create_rule", []any{
+		salt,                                          // $salt
+		"bps",                                         // $fee_mode
+		feeBps,                                        // $fee_bps
+		dec(t, "0"),                                   // $fee_flat
+		[]string{"main", "main"},                      // $namespaces
 		[]string{"ob_place_order", "ob_cancel_order"}, // $actions
-		[][]byte{repeat(0xcc, 32), nil},    // $body_hashes
+		[][]byte{repeat(0xcc, 32), nil},               // $body_hashes
 	}, func(row *common.Row) error {
-		addr = append([]byte(nil), row.Values[0].([]byte)...)
+		ruleID = append([]byte(nil), row.Values[0].([]byte)...)
 		return nil
 	})
-	require.NoError(t, err, "maa_create should succeed")
-	require.Len(t, addr, 20, "maa_address must be 20 bytes")
-	return addr
+	require.NoError(t, err, "maa_create_rule should succeed")
+	require.Len(t, ruleID, 32, "rule_id must be 32 bytes (untruncated identifier)")
+	return ruleID
+}
+
+// joinRule has `funder` join an existing rule_id, returns the derived 20-byte maa_address.
+func joinRule(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, funder util.EthereumAddress, ruleID []byte) []byte {
+	t.Helper()
+	var maa []byte
+	err := callAs(ctx, platform, funder, "maa_join", []any{ruleID}, func(row *common.Row) error {
+		maa = append([]byte(nil), row.Values[0].([]byte)...)
+		return nil
+	})
+	require.NoError(t, err, "maa_join should succeed")
+	require.Len(t, maa, 20, "maa_address must be 20 bytes")
+	return maa
 }
 
 // ---------------------------------------------------------------------------
 // tests
 // ---------------------------------------------------------------------------
 
-func testMAACreateMatchesGoldenVectorAndGetters(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+func testMAACreateRuleJoinAndGetters(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		restricted := util.Unsafe_NewEthereumAddressFromString(restrictedHex)
+		unrestricted := util.Unsafe_NewEthereumAddressFromString(unrestrictedHex)
 		platform.Deployer = restricted.Bytes()
 
-		addr := createDefaultMAA(t, ctx, platform, restricted, 250)
-
-		// The on-chain derivation MUST match the frozen golden vector A
-		// (5RulesHash-Preimage-Spec.md §4) — same inputs, same address.
-		wantA, err := hex.DecodeString("79ce248b31fc0d2016a175b36f79c5726b40387a")
+		// 1) Create the rule (restricted signs). Must reproduce golden-vector A rule_id.
+		ruleID := createDefaultRule(t, ctx, platform, restricted, 250, repeat(0xab, 32))
+		wantRuleID, err := hex.DecodeString(goldenRuleIDHex)
 		require.NoError(t, err)
-		require.Equal(t, wantA, addr, "maa_create must reproduce golden-vector A address")
+		require.Equal(t, wantRuleID, ruleID, "maa_create_rule must reproduce golden-vector A rule_id")
 
-		// maa_is_known(addr) -> true
+		// 2) Join the rule (unrestricted funder signs). Must reproduce golden-vector A maa_address.
+		maa := joinRule(t, ctx, platform, unrestricted, ruleID)
+		wantMAA, err := hex.DecodeString(goldenMAAHex)
+		require.NoError(t, err)
+		require.Equal(t, wantMAA, maa, "maa_join must reproduce golden-vector A maa_address")
+
+		// maa_is_known(maa) -> true; maa_is_known(random) -> false.
 		var known bool
-		require.NoError(t, callAs(ctx, platform, restricted, "maa_is_known", []any{addr},
+		require.NoError(t, callAs(ctx, platform, restricted, "maa_is_known", []any{maa},
 			func(row *common.Row) error { known = row.Values[0].(bool); return nil }))
 		require.True(t, known)
-
-		// maa_is_known(random) -> false
 		known = true
 		require.NoError(t, callAs(ctx, platform, restricted, "maa_is_known", []any{repeat(0x99, 20)},
 			func(row *common.Row) error { known = row.Values[0].(bool); return nil }))
 		require.False(t, known, "unknown address must report not-known")
 
-		// maa_get_rule(addr) -> field checks
-		var restrField, unrestrField, bridgeField, tokenField, feeMode string
+		// maa_get_rule(rule_id) -> field checks (no bridge/token/enabled/unrestricted on the rule).
+		var restrField, feeMode string
 		var feeBps int64
-		var enabled bool
-		require.NoError(t, callAs(ctx, platform, restricted, "maa_get_rule", []any{addr},
+		require.NoError(t, callAs(ctx, platform, restricted, "maa_get_rule", []any{ruleID},
 			func(row *common.Row) error {
-				restrField = row.Values[2].(string)
-				unrestrField = row.Values[3].(string)
-				bridgeField = row.Values[5].(string)
-				tokenField = row.Values[6].(string)
-				feeMode = row.Values[7].(string)
-				feeBps = row.Values[8].(int64)
-				enabled = row.Values[10].(bool)
+				restrField = row.Values[1].(string)
+				feeMode = row.Values[3].(string)
+				feeBps = row.Values[4].(int64)
 				return nil
 			}))
 		require.Equal(t, restrictedHex, restrField)
-		require.Equal(t, unrestrictedHex, unrestrField)
-		require.Equal(t, "eth_truf", bridgeField)
-		require.Equal(t, "TRUF", tokenField, "token must be derived from bridge, not caller-supplied")
 		require.Equal(t, "bps", feeMode)
 		require.Equal(t, int64(250), feeBps)
-		require.True(t, enabled)
 
-		// maa_get_allowed_actions(addr) -> 2 rows, canonically ordered (cancel before place)
+		// maa_get_instance(maa) -> MAA maps to both keys + rule_id.
+		var instMAA, instRule, instRestr, instUnrestr string
+		require.NoError(t, callAs(ctx, platform, restricted, "maa_get_instance", []any{maa},
+			func(row *common.Row) error {
+				instMAA = row.Values[0].(string)
+				instRule = row.Values[1].(string)
+				instRestr = row.Values[2].(string)
+				instUnrestr = row.Values[3].(string)
+				return nil
+			}))
+		require.Equal(t, "0x"+goldenMAAHex, instMAA)
+		require.Equal(t, "0x"+goldenRuleIDHex, instRule)
+		require.Equal(t, restrictedHex, instRestr)
+		require.Equal(t, unrestrictedHex, instUnrestr)
+
+		// maa_get_allowed_actions(rule_id) -> 2 rows, canonically ordered (cancel before place).
 		var acts []string
-		require.NoError(t, callAs(ctx, platform, restricted, "maa_get_allowed_actions", []any{addr},
+		require.NoError(t, callAs(ctx, platform, restricted, "maa_get_allowed_actions", []any{ruleID},
 			func(row *common.Row) error { acts = append(acts, row.Values[1].(string)); return nil }))
 		require.Equal(t, []string{"ob_cancel_order", "ob_place_order"}, acts)
 
-		// maa_get_events(addr) -> exactly one CREATE event, actor_role restricted
+		// maa_get_events(rule_id) -> CREATE_RULE (restricted) then JOIN (unrestricted).
 		var evtTypes, evtRoles []string
-		require.NoError(t, callAs(ctx, platform, restricted, "maa_get_events", []any{addr, int64(100), int64(0)},
+		require.NoError(t, callAs(ctx, platform, restricted, "maa_get_events", []any{ruleID, int64(100), int64(0)},
 			func(row *common.Row) error {
-				evtTypes = append(evtTypes, row.Values[1].(string))
-				evtRoles = append(evtRoles, row.Values[2].(string))
+				evtTypes = append(evtTypes, row.Values[2].(string))
+				evtRoles = append(evtRoles, row.Values[3].(string))
 				return nil
 			}))
-		require.Equal(t, []string{"CREATE"}, evtTypes)
-		require.Equal(t, []string{"restricted"}, evtRoles)
+		require.Equal(t, []string{"CREATE_RULE", "JOIN"}, evtTypes)
+		require.Equal(t, []string{"restricted", "unrestricted"}, evtRoles)
+
+		// maa_list_by_restricted accepts a non-0x-prefixed address (input normalization) and finds the rule.
+		var listed []string
+		require.NoError(t, callAs(ctx, platform, restricted, "maa_list_by_restricted",
+			[]any{"1111111111111111111111111111111111111111", int64(10), int64(0)},
+			func(row *common.Row) error { listed = append(listed, row.Values[0].(string)); return nil }))
+		require.Equal(t, []string{"0x" + goldenRuleIDHex}, listed, "list_by_restricted must accept a non-0x address")
 		return nil
 	}
 }
@@ -170,43 +203,50 @@ func testMAACreateMatchesGoldenVectorAndGetters(t *testing.T) func(context.Conte
 func testMAAValidation(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		restricted := util.Unsafe_NewEthereumAddressFromString(restrictedHex)
-		owner := util.Unsafe_NewEthereumAddressFromString(unrestrictedHex)
+		unrestricted := util.Unsafe_NewEthereumAddressFromString(unrestrictedHex)
 		platform.Deployer = restricted.Bytes()
 
-		// Create the canonical MAA so the duplicate check below has something to collide with.
-		_ = createDefaultMAA(t, ctx, platform, restricted, 250)
+		// Create the canonical rule so collisions below have something to hit.
+		ruleID := createDefaultRule(t, ctx, platform, restricted, 250, repeat(0xab, 32))
 
-		// Duplicate identity (same restricted/unrestricted/rules/salt) must be rejected.
-		require.Error(t, callAs(ctx, platform, restricted, "maa_create", []any{
-			unrestrictedHex, repeat(0xab, 32), "eth_truf", "bps", int64(250), dec(t, "0"),
+		// Duplicate rule identity (same restricted/rules/salt) must be rejected.
+		require.Error(t, callAs(ctx, platform, restricted, "maa_create_rule", []any{
+			repeat(0xab, 32), "bps", int64(250), dec(t, "0"),
 			[]string{"main", "main"}, []string{"ob_place_order", "ob_cancel_order"},
 			[][]byte{repeat(0xcc, 32), nil},
-		}, nil), "duplicate MAA must be rejected")
+		}, nil), "duplicate rule must be rejected")
 
-		// restricted == unrestricted must be rejected (signer is `owner`, unrestricted also owner).
-		require.Error(t, callAs(ctx, platform, owner, "maa_create", []any{
-			unrestrictedHex, repeat(0x01, 32), "eth_truf", "bps", int64(0), dec(t, "0"),
-			[]string{}, []string{}, [][]byte{},
-		}, nil), "restricted == unrestricted must be rejected")
-
-		// fee_bps out of range must be rejected.
-		require.Error(t, callAs(ctx, platform, restricted, "maa_create", []any{
-			unrestrictedHex, repeat(0x02, 32), "eth_truf", "bps", int64(10001), dec(t, "0"),
+		// fee_bps out of range (>10000 = >100%) must be rejected.
+		require.Error(t, callAs(ctx, platform, restricted, "maa_create_rule", []any{
+			repeat(0x02, 32), "bps", int64(10001), dec(t, "0"),
 			[]string{}, []string{}, [][]byte{},
 		}, nil), "fee_bps > 10000 must be rejected")
 
-		// Duplicate (namespace, action) in the allow-list must be rejected (PK + canonical-set integrity).
-		require.Error(t, callAs(ctx, platform, restricted, "maa_create", []any{
-			unrestrictedHex, repeat(0x03, 32), "eth_truf", "bps", int64(0), dec(t, "0"),
+		// Negative fee_flat must be rejected by the action-level guard.
+		require.Error(t, callAs(ctx, platform, restricted, "maa_create_rule", []any{
+			repeat(0x05, 32), "flat", int64(0), dec(t, "-1"),
+			[]string{}, []string{}, [][]byte{},
+		}, nil), "negative fee_flat must be rejected")
+
+		// Duplicate (namespace, action) in the allow-list must be rejected.
+		require.Error(t, callAs(ctx, platform, restricted, "maa_create_rule", []any{
+			repeat(0x03, 32), "bps", int64(0), dec(t, "0"),
 			[]string{"main", "main"}, []string{"ob_place_order", "ob_place_order"},
 			[][]byte{nil, nil},
 		}, nil), "duplicate (namespace, action) must be rejected")
 
-		// Unsupported bridge must be rejected (token is derived from bridge, not caller-supplied).
-		require.Error(t, callAs(ctx, platform, restricted, "maa_create", []any{
-			unrestrictedHex, repeat(0x04, 32), "eth_dai", "bps", int64(0), dec(t, "0"),
-			[]string{}, []string{}, [][]byte{},
-		}, nil), "unsupported bridge must be rejected")
+		// maa_join on an unknown rule_id must be rejected.
+		require.Error(t, callAs(ctx, platform, unrestricted, "maa_join", []any{repeat(0xee, 32)}, nil),
+			"join of unknown rule_id must be rejected")
+
+		// Self-delegation: the rule creator (restricted) joining its own rule must be rejected.
+		require.Error(t, callAs(ctx, platform, restricted, "maa_join", []any{ruleID}, nil),
+			"funder == rule creator must be rejected")
+
+		// First real join succeeds; a second identical join (same funder + rule) must be rejected.
+		_ = joinRule(t, ctx, platform, unrestricted, ruleID)
+		require.Error(t, callAs(ctx, platform, unrestricted, "maa_join", []any{ruleID}, nil),
+			"double join must be rejected")
 		return nil
 	}
 }

@@ -2,16 +2,21 @@ package tn_utils
 
 // Modular Agent Address (MAA) derivation precompiles.
 //
-// Two pure, deterministic functions back the MAA rule store (migration 048):
+// Three pure, deterministic functions back the MAA rule store (migration 048):
 //
-//   tn_utils.compute_rules_hash(fee_mode, fee_bps, fee_flat, bridge, namespaces[], actions[], body_hashes[])
+//   tn_utils.compute_rules_hash(fee_mode, fee_bps, fee_flat, namespaces[], actions[], body_hashes[])
 //       -> keccak256(RULES_PREIMAGE)                                    (32 bytes)
-//   tn_utils.derive_maa_address(restricted, unrestricted, rules_hash, salt)
+//   tn_utils.derive_rule_id(restricted, rules_hash, salt)
+//       -> keccak256(RULE_ID_PREIMAGE)                                  (32 bytes, NOT truncated)
+//   tn_utils.derive_maa_address(unrestricted, restricted, rule_id)
 //       -> keccak256(ADDRESS_PREIMAGE)[12:32]                           (20 bytes)
 //
-// The exact byte layout is frozen in 0GoalModularAgentAddresses/5RulesHash-Preimage-Spec.md and
-// MUST stay byte-identical to the SDK implementations (a mismatch sends funds to the wrong address).
-// keccak256 here is Ethereum/legacy Keccak (go-ethereum crypto.Keccak256), NOT NIST SHA3-256.
+// rule_id is an IDENTIFIER (the handle a funder passes to maa_join), not a fundable ETH address, so it is
+// the full 32-byte keccak. maa_address IS a 20-byte ETH address (it holds funds), so it keeps the [12:].
+// The wallet is token-agnostic: the rule pins NO bridge/token (Vin §0.4), so compute_rules_hash has no
+// bridge field. The exact byte layout is frozen in 0GoalModularAgentAddresses/2MAA-Plan.md §5 and MUST
+// stay byte-identical to the SDK implementations (a mismatch sends funds to the wrong address). keccak256
+// here is Ethereum/legacy Keccak (go-ethereum crypto.Keccak256), NOT NIST SHA3-256.
 
 import (
 	"bytes"
@@ -28,9 +33,74 @@ import (
 )
 
 const (
-	maaRulesVersion byte = 0x01 // RULES_PREIMAGE leading version byte (doc 5 §1)
-	maaAddrVersion  byte = 0x01 // ADDRESS_PREIMAGE leading version byte (doc 5 §2)
+	maaRulesVersion  byte = 0x01 // RULES_PREIMAGE leading version byte (plan §5.1)
+	maaRuleIDVersion byte = 0x01 // RULE_ID_PREIMAGE leading version byte (plan §5.2)
+	maaAddrVersion   byte = 0x01 // ADDRESS_PREIMAGE leading version byte (plan §5.3)
 )
+
+// ---------------------------------------------------------------------------
+// derive_rule_id
+// ---------------------------------------------------------------------------
+
+func deriveRuleIDMethod() precompiles.Method {
+	return precompiles.Method{
+		Name:            "derive_rule_id",
+		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
+		Parameters: []precompiles.PrecompileValue{
+			precompiles.NewPrecompileValue("restricted", types.ByteaType, false),
+			precompiles.NewPrecompileValue("rules_hash", types.ByteaType, false),
+			precompiles.NewPrecompileValue("salt", types.ByteaType, true), // nullable: empty salt allowed
+		},
+		Returns: &precompiles.MethodReturn{
+			IsTable: false,
+			Fields: []precompiles.PrecompileValue{
+				precompiles.NewPrecompileValue("rule_id", types.ByteaType, false),
+			},
+		},
+		Handler: deriveRuleIDHandler,
+	}
+}
+
+func deriveRuleIDHandler(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
+	restricted, err := toByteSliceAllowNil(inputs[0])
+	if err != nil {
+		return fmt.Errorf("restricted: %w", err)
+	}
+	rulesHash, err := toByteSliceAllowNil(inputs[1])
+	if err != nil {
+		return fmt.Errorf("rules_hash: %w", err)
+	}
+	salt, err := toByteSliceAllowNil(inputs[2])
+	if err != nil {
+		return fmt.Errorf("salt: %w", err)
+	}
+
+	id, err := deriveRuleID(restricted, rulesHash, salt)
+	if err != nil {
+		return err
+	}
+	return resultFn([]any{id})
+}
+
+// deriveRuleID builds RULE_ID_PREIMAGE (plan §5.2) and returns the FULL 32-byte keccak256 — the rule_id
+// is an identifier, not an address, so it is NOT truncated to 20 bytes.
+func deriveRuleID(restricted, rulesHash, salt []byte) ([]byte, error) {
+	if len(restricted) != 20 {
+		return nil, fmt.Errorf("restricted must be 20 bytes, got %d", len(restricted))
+	}
+	if len(rulesHash) != 32 {
+		return nil, fmt.Errorf("rules_hash must be 32 bytes, got %d", len(rulesHash))
+	}
+
+	// RULE_ID_PREIMAGE = version ‖ restricted ‖ rules_hash ‖ salt   (salt last/variable)
+	var buf bytes.Buffer
+	buf.WriteByte(maaRuleIDVersion)
+	buf.Write(restricted)
+	buf.Write(rulesHash)
+	buf.Write(salt)
+
+	return ethcrypto.Keccak256(buf.Bytes()), nil // 32 bytes, untruncated
+}
 
 // ---------------------------------------------------------------------------
 // derive_maa_address
@@ -41,10 +111,9 @@ func deriveMAAAddressMethod() precompiles.Method {
 		Name:            "derive_maa_address",
 		AccessModifiers: []precompiles.Modifier{precompiles.VIEW, precompiles.PUBLIC},
 		Parameters: []precompiles.PrecompileValue{
-			precompiles.NewPrecompileValue("restricted", types.ByteaType, false),
 			precompiles.NewPrecompileValue("unrestricted", types.ByteaType, false),
-			precompiles.NewPrecompileValue("rules_hash", types.ByteaType, false),
-			precompiles.NewPrecompileValue("salt", types.ByteaType, true), // nullable: empty salt allowed
+			precompiles.NewPrecompileValue("restricted", types.ByteaType, false),
+			precompiles.NewPrecompileValue("rule_id", types.ByteaType, false),
 		},
 		Returns: &precompiles.MethodReturn{
 			IsTable: false,
@@ -57,50 +126,46 @@ func deriveMAAAddressMethod() precompiles.Method {
 }
 
 func deriveMAAAddressHandler(ctx *common.EngineContext, app *common.App, inputs []any, resultFn func([]any) error) error {
-	restricted, err := toByteSliceAllowNil(inputs[0])
-	if err != nil {
-		return fmt.Errorf("restricted: %w", err)
-	}
-	unrestricted, err := toByteSliceAllowNil(inputs[1])
+	unrestricted, err := toByteSliceAllowNil(inputs[0])
 	if err != nil {
 		return fmt.Errorf("unrestricted: %w", err)
 	}
-	rulesHash, err := toByteSliceAllowNil(inputs[2])
+	restricted, err := toByteSliceAllowNil(inputs[1])
 	if err != nil {
-		return fmt.Errorf("rules_hash: %w", err)
+		return fmt.Errorf("restricted: %w", err)
 	}
-	salt, err := toByteSliceAllowNil(inputs[3])
+	ruleID, err := toByteSliceAllowNil(inputs[2])
 	if err != nil {
-		return fmt.Errorf("salt: %w", err)
+		return fmt.Errorf("rule_id: %w", err)
 	}
 
-	addr, err := deriveMAAAddress(restricted, unrestricted, rulesHash, salt)
+	addr, err := deriveMAAAddress(unrestricted, restricted, ruleID)
 	if err != nil {
 		return err
 	}
 	return resultFn([]any{addr})
 }
 
-// deriveMAAAddress builds the canonical ADDRESS_PREIMAGE (doc 5 §2) and returns the low 20 bytes
-// of keccak256(preimage) — the Ethereum-style MAA address.
-func deriveMAAAddress(restricted, unrestricted, rulesHash, salt []byte) ([]byte, error) {
-	if len(restricted) != 20 {
-		return nil, fmt.Errorf("restricted must be 20 bytes, got %d", len(restricted))
-	}
+// deriveMAAAddress builds the canonical ADDRESS_PREIMAGE (plan §5.3) from the composite
+// (unrestricted, restricted, rule_id) and returns the low 20 bytes of keccak256(preimage) —
+// the Ethereum-style MAA address that actually holds funds.
+func deriveMAAAddress(unrestricted, restricted, ruleID []byte) ([]byte, error) {
 	if len(unrestricted) != 20 {
 		return nil, fmt.Errorf("unrestricted must be 20 bytes, got %d", len(unrestricted))
 	}
-	if len(rulesHash) != 32 {
-		return nil, fmt.Errorf("rules_hash must be 32 bytes, got %d", len(rulesHash))
+	if len(restricted) != 20 {
+		return nil, fmt.Errorf("restricted must be 20 bytes, got %d", len(restricted))
+	}
+	if len(ruleID) != 32 {
+		return nil, fmt.Errorf("rule_id must be 32 bytes, got %d", len(ruleID))
 	}
 
-	// ADDRESS_PREIMAGE = version ‖ restricted ‖ unrestricted ‖ rules_hash ‖ salt   (salt last/variable)
+	// ADDRESS_PREIMAGE = version ‖ unrestricted ‖ restricted ‖ rule_id   (Vin's verbatim order)
 	var buf bytes.Buffer
 	buf.WriteByte(maaAddrVersion)
-	buf.Write(restricted)
 	buf.Write(unrestricted)
-	buf.Write(rulesHash)
-	buf.Write(salt)
+	buf.Write(restricted)
+	buf.Write(ruleID)
 
 	full := ethcrypto.Keccak256(buf.Bytes()) // 32 bytes
 	out := make([]byte, 20)
@@ -120,7 +185,6 @@ func computeRulesHashMethod() precompiles.Method {
 			precompiles.NewPrecompileValue("fee_mode", types.TextType, false),
 			precompiles.NewPrecompileValue("fee_bps", types.IntType, false),
 			precompiles.NewPrecompileValue("fee_flat", types.TextType, false), // decimal string of base units
-			precompiles.NewPrecompileValue("bridge", types.TextType, false),
 			precompiles.NewPrecompileValue("namespaces", types.TextArrayType, false),
 			precompiles.NewPrecompileValue("actions", types.TextArrayType, false),
 			precompiles.NewPrecompileValue("body_hashes", types.ByteaArrayType, true), // nullable elements
@@ -154,21 +218,17 @@ func computeRulesHashHandler(ctx *common.EngineContext, app *common.App, inputs 
 	if err != nil {
 		return fmt.Errorf("fee_flat: %w", err)
 	}
-	bridge, err := toStr(inputs[3])
-	if err != nil {
-		return fmt.Errorf("bridge: %w", err)
-	}
-	namespaces, err := toStringSliceArray(inputs[4])
+	namespaces, err := toStringSliceArray(inputs[3])
 	if err != nil {
 		return fmt.Errorf("namespaces: %w", err)
 	}
-	actions, err := toStringSliceArray(inputs[5])
+	actions, err := toStringSliceArray(inputs[4])
 	if err != nil {
 		return fmt.Errorf("actions: %w", err)
 	}
 	var bodyHashes [][]byte
-	if inputs[6] != nil {
-		bodyHashes, err = toByteSliceArray(inputs[6])
+	if inputs[5] != nil {
+		bodyHashes, err = toByteSliceArray(inputs[5])
 		if err != nil {
 			return fmt.Errorf("body_hashes: %w", err)
 		}
@@ -183,15 +243,16 @@ func computeRulesHashHandler(ctx *common.EngineContext, app *common.App, inputs 
 			len(namespaces), len(actions), len(bodyHashes))
 	}
 
-	hash, err := computeRulesHash(feeMode, feeBps, feeFlatStr, bridge, namespaces, actions, bodyHashes)
+	hash, err := computeRulesHash(feeMode, feeBps, feeFlatStr, namespaces, actions, bodyHashes)
 	if err != nil {
 		return err
 	}
 	return resultFn([]any{hash})
 }
 
-// computeRulesHash builds the canonical RULES_PREIMAGE (doc 5 §1) and returns keccak256(preimage).
-func computeRulesHash(feeMode string, feeBps int64, feeFlatStr, bridge string, namespaces, actions []string, bodyHashes [][]byte) ([]byte, error) {
+// computeRulesHash builds the canonical RULES_PREIMAGE (plan §5.1, token-agnostic: NO bridge field) and
+// returns keccak256(preimage).
+func computeRulesHash(feeMode string, feeBps int64, feeFlatStr string, namespaces, actions []string, bodyHashes [][]byte) ([]byte, error) {
 	// Defensive: the three allow-list slices are indexed in lockstep below. The on-chain handler
 	// already equalizes them, but guard the pure function so a direct caller gets an error instead
 	// of an index-out-of-range panic or a silently-truncated hash.
@@ -228,11 +289,7 @@ func computeRulesHash(feeMode string, feeBps int64, feeFlatStr, bridge string, n
 	feeFlat.FillBytes(ff[:]) // big-endian, left-zero-padded
 	b.Write(ff[:])
 
-	if err := maaWriteLP8(&b, []byte(bridge)); err != nil {
-		return nil, fmt.Errorf("bridge: %w", err)
-	}
-
-	// Canonicalize: dedup by (namespace, action), sort bytewise.
+	// Canonicalize: dedup by (namespace, action), sort bytewise on raw UTF-8.
 	dedup := make(map[string]maaAllowEntry, len(namespaces))
 	for i := range namespaces {
 		e := maaAllowEntry{namespace: namespaces[i], action: actions[i], bodyHash: bodyHashes[i]}
@@ -281,7 +338,7 @@ func computeRulesHash(feeMode string, feeBps int64, feeFlatStr, bridge string, n
 // helpers
 // ---------------------------------------------------------------------------
 
-// maaWriteLP8 writes a uint8 length prefix followed by the bytes (doc 5 §1 length-prefixed strings).
+// maaWriteLP8 writes a uint8 length prefix followed by the bytes (plan §5.1 length-prefixed strings).
 func maaWriteLP8(buf *bytes.Buffer, p []byte) error {
 	if len(p) > 0xff {
 		return fmt.Errorf("length-prefixed field exceeds 255 bytes (got %d)", len(p))
