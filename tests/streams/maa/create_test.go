@@ -189,6 +189,13 @@ func testMAACreateRuleJoinAndGetters(t *testing.T) func(context.Context, *kwilTe
 			}))
 		require.Equal(t, []string{"CREATE_RULE", "JOIN"}, evtTypes)
 		require.Equal(t, []string{"restricted", "unrestricted"}, evtRoles)
+
+		// maa_list_by_restricted accepts a non-0x-prefixed address (input normalization) and finds the rule.
+		var listed []string
+		require.NoError(t, callAs(ctx, platform, restricted, "maa_list_by_restricted",
+			[]any{"1111111111111111111111111111111111111111", int64(10), int64(0)},
+			func(row *common.Row) error { listed = append(listed, row.Values[0].(string)); return nil }))
+		require.Equal(t, []string{"0x" + goldenRuleIDHex}, listed, "list_by_restricted must accept a non-0x address")
 		return nil
 	}
 }
@@ -214,6 +221,12 @@ func testMAAValidation(t *testing.T) func(context.Context, *kwilTesting.Platform
 			repeat(0x02, 32), "bps", int64(10001), dec(t, "0"),
 			[]string{}, []string{}, [][]byte{},
 		}, nil), "fee_bps > 10000 must be rejected")
+
+		// Negative fee_flat must be rejected by the action-level guard.
+		require.Error(t, callAs(ctx, platform, restricted, "maa_create_rule", []any{
+			repeat(0x05, 32), "flat", int64(0), dec(t, "-1"),
+			[]string{}, []string{}, [][]byte{},
+		}, nil), "negative fee_flat must be rejected")
 
 		// Duplicate (namespace, action) in the allow-list must be rejected.
 		require.Error(t, callAs(ctx, platform, restricted, "maa_create_rule", []any{

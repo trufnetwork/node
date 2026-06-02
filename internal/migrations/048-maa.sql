@@ -149,6 +149,10 @@ CREATE OR REPLACE ACTION maa_create_rule(
     if $fee_bps < 0 OR $fee_bps > 10000 {
         ERROR('fee_bps must be between 0 and 10000 (10000 = 100%)');
     }
+    -- Friendly action-level guard mirroring chk_maa_rules_fee_flat (a raw CHECK violation is opaque).
+    if $fee_flat < 0::NUMERIC(78, 0) {
+        ERROR('fee_flat must be >= 0');
+    }
 
     -- Parallel allow-list arrays must be equal length (NULL/empty arrays are allowed and equal).
     -- Parens are required: IS DISTINCT FROM binds looser than OR (see 003-primitive-insertion.sql).
@@ -326,7 +330,11 @@ PUBLIC VIEW RETURNS TABLE(
 ) {
     if $limit IS NULL OR $limit <= 0 { $limit := 100; }
     if $offset IS NULL OR $offset < 0 { $offset := 0; }
-    $agent_bytes BYTEA := decode(substring(LOWER($agent), 3, 40), 'hex');
+    -- Normalize $agent: accept with/without 0x prefix; require 40 hex chars (decode rejects non-hex digits).
+    $agent_hex TEXT := LOWER($agent);
+    if substring($agent_hex, 1, 2) = '0x' { $agent_hex := substring($agent_hex, 3, length($agent_hex)); }
+    if length($agent_hex) != 40 { ERROR('agent must be a 20-byte hex address (40 hex chars, optional 0x prefix)'); }
+    $agent_bytes BYTEA := decode($agent_hex, 'hex');
 
     for $r in
         SELECT '0x' || encode(rule_id, 'hex') AS rid, created_at
@@ -347,7 +355,11 @@ PUBLIC VIEW RETURNS TABLE(
 ) {
     if $limit IS NULL OR $limit <= 0 { $limit := 100; }
     if $offset IS NULL OR $offset < 0 { $offset := 0; }
-    $owner_bytes BYTEA := decode(substring(LOWER($owner), 3, 40), 'hex');
+    -- Normalize $owner: accept with/without 0x prefix; require 40 hex chars (decode rejects non-hex digits).
+    $owner_hex TEXT := LOWER($owner);
+    if substring($owner_hex, 1, 2) = '0x' { $owner_hex := substring($owner_hex, 3, length($owner_hex)); }
+    if length($owner_hex) != 40 { ERROR('owner must be a 20-byte hex address (40 hex chars, optional 0x prefix)'); }
+    $owner_bytes BYTEA := decode($owner_hex, 'hex');
 
     for $r in
         SELECT
