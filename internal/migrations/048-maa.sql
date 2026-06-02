@@ -1,68 +1,87 @@
 /*
  * MIGRATION 048: MODULAR AGENT ADDRESSES (MAA)
  *
- * Rule store + append-only audit trail for fundable "agent wallets".
+ * Rule store + MAA-instance lookup + append-only audit for fundable "agent wallets".
  * Node-side SQL only — same blast radius as 031-order-book-vault.sql. No consensus change.
  *
- * Addresses are stored as 20-byte BYTEA internally and exchanged as 0x-prefixed hex TEXT
- * at the API boundary. The MAA address and rules_hash are derived by the pure tn_utils
- * precompiles (derive_maa_address / compute_rules_hash); the exact byte layout is frozen in
- * 0GoalModularAgentAddresses/5RulesHash-Preimage-Spec.md and is shared with the SDKs.
+ * TWO addresses (spec 0MainGoal.md): a RULE_ID identifies a rule set; a funder JOINS it to get a
+ * distinct MAA. rule_id is a 32-byte CONTENT-HASH IDENTIFIER (not an ETH address — never funded
+ * directly); maa_address is a real 20-byte ETH address that holds funds. Both are derived by the pure
+ * tn_utils precompiles (compute_rules_hash / derive_rule_id / derive_maa_address); the exact byte layout
+ * is frozen in 0GoalModularAgentAddresses/2MAA-Plan.md §5 and is shared with the SDKs.
  *
- * The rule (fee + allow-list) is set ONCE at maa_create and is IMMUTABLE thereafter, per the
- * spec ("the portion ... determined at the time of rule creation"; agents act on "preset rules").
- * rules_hash commits to exactly those terms and defines the permanent address. There are NO
- * setters — to change a rule, create a new MAA. The owner controls funds by withdrawing (a
- * later issue), not by editing the rule.
+ * Token-agnostic (Vin §0.4): the rule pins NO bridge/token — the wallet accepts all bridged tokens, so
+ * this file calls no bridge precompile (NO mainnet .prod.sql twin).
  *
- * Bridge-agnostic: NO mainnet .prod.sql twin — this file calls no bridge precompile.
+ * The rule (fee + allow-list) is set ONCE at maa_create_rule and is IMMUTABLE thereafter (Vin §0.5).
+ * rules_hash commits to exactly those terms and (via rule_id) defines the addresses. There are NO
+ * setters — to change a rule, create a new one. The owner controls funds by withdrawing (a later issue),
+ * not by editing the rule.
+ *
+ * Two write actions, BOTH fund-free:
+ *   maa_create_rule  -- the RESTRICTED creator registers a rule, returns rule_id.
+ *   maa_join         -- a funder (UNRESTRICTED) joins a rule_id, returns the derived MAA address.
+ * Funding is a separate transfer to the MAA address (a later issue).
  */
 
 -- =============================================================================
--- maa_rules: one row per agent wallet (composite identity + fee config)
+-- maa_rules: one row per RULE. Keyed by rule_id (a 32-byte identifier).
+-- Reusable by unlimited funders -> many MAAs.
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS maa_rules (
-    maa_address       BYTEA PRIMARY KEY,        -- composite identity; funds credited here; route rewrites @caller to this
-    rule_address      BYTEA NOT NULL,           -- spec "Rule Address" (== maa_address; kept for spec fidelity)
-    restricted_addr   BYTEA NOT NULL,           -- agent: creates the rule, allow-list bound
-    unrestricted_addr BYTEA NOT NULL,           -- owner/funder: full custody + withdraw
-    rules_hash        BYTEA NOT NULL,           -- 32-byte creation-time commitment over fee + allow-list
-    bridge            TEXT  NOT NULL,           -- 'eth_truf' | 'eth_usdc' (pins decimal scale)
-    token             TEXT  NOT NULL,           -- 'TRUF' | 'USDC' (display; derived from bridge)
-    fee_mode          TEXT  NOT NULL,           -- 'bps' | 'flat'
-    fee_bps           INT   NOT NULL DEFAULT 0,            -- 0..10000 (0..100%); policy cap (if any) is enforced separately
-    fee_flat          NUMERIC(78, 0) NOT NULL DEFAULT 0,  -- base units of `bridge`
-    enabled           BOOLEAN NOT NULL DEFAULT true,       -- reserved; immutable in v1 (no revoke); always true
-    created_at        INT8  NOT NULL,                       -- @height at creation
+    rule_id         BYTEA PRIMARY KEY,        -- 32-byte id: keccak(version‖restricted‖rules_hash‖salt) (untruncated)
+    restricted_addr BYTEA NOT NULL,           -- agent: creates the rule, allow-list bound
+    rules_hash      BYTEA NOT NULL,           -- 32-byte creation-time commitment over fee + allow-list
+    salt            BYTEA,                     -- rule nonce: lets one creator have several distinct rules (may be NULL)
+    fee_mode        TEXT  NOT NULL,           -- 'bps' | 'flat'
+    fee_bps         INT   NOT NULL DEFAULT 0,            -- 0..10000 (0..100%; 10000 = 100%). No policy cap (Vin §0.3).
+    fee_flat        NUMERIC(78, 0) NOT NULL DEFAULT 0,  -- base units; denomination resolved at withdrawal
+    created_at      INT8  NOT NULL,                       -- @height at creation
 
     CONSTRAINT chk_maa_rules_fee_bps  CHECK (fee_bps >= 0 AND fee_bps <= 10000),
     CONSTRAINT chk_maa_rules_fee_flat CHECK (fee_flat >= 0),
     CONSTRAINT chk_maa_rules_fee_mode CHECK (fee_mode = 'bps' OR fee_mode = 'flat')
 );
 
-CREATE INDEX IF NOT EXISTS idx_maa_rules_unrestricted ON maa_rules(unrestricted_addr);
-CREATE INDEX IF NOT EXISTS idx_maa_rules_restricted   ON maa_rules(restricted_addr);
+CREATE INDEX IF NOT EXISTS idx_maa_rules_restricted ON maa_rules(restricted_addr);
 
 -- =============================================================================
--- maa_allowed_actions: action-name references, child of maa_rules
+-- maa_allowed_actions: action-name references, child of maa_rules (by rule_id).
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS maa_allowed_actions (
-    maa_address BYTEA NOT NULL,
-    namespace   TEXT  NOT NULL,                 -- e.g. 'main'
-    action      TEXT  NOT NULL,                 -- allow-listed action name
-    body_hash   BYTEA,                           -- optional action body-hash pin (MB8); NULL = unpinned
+    rule_id   BYTEA NOT NULL,
+    namespace TEXT  NOT NULL,                  -- e.g. 'main'
+    action    TEXT  NOT NULL,                  -- allow-listed action name
+    body_hash BYTEA,                            -- optional action body-hash pin (MB8); NULL = unpinned
 
-    PRIMARY KEY (maa_address, namespace, action),
-    FOREIGN KEY (maa_address) REFERENCES maa_rules(maa_address) ON DELETE CASCADE
+    PRIMARY KEY (rule_id, namespace, action),
+    FOREIGN KEY (rule_id) REFERENCES maa_rules(rule_id) ON DELETE CASCADE
 );
 
 -- =============================================================================
--- maa_events: append-only audit log (permanent — NOT trimmed)
+-- maa_instances: one row per joined MAA. Created by maa_join (fund-free).
+-- THE lookup table: maa_address -> {rule_id, restricted (via rule), unrestricted}.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS maa_instances (
+    maa_address       BYTEA PRIMARY KEY,       -- 20-byte ETH addr: keccak(version‖unrestricted‖restricted‖rule_id)[12:]
+    rule_id           BYTEA NOT NULL,          -- FK to maa_rules
+    unrestricted_addr BYTEA NOT NULL,          -- owner / funder (bound at maa_join)
+    created_at        INT8  NOT NULL,
+
+    FOREIGN KEY (rule_id) REFERENCES maa_rules(rule_id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_maa_inst_unrestricted ON maa_instances(unrestricted_addr);
+CREATE INDEX IF NOT EXISTS idx_maa_inst_rule         ON maa_instances(rule_id);
+
+-- =============================================================================
+-- maa_events: append-only audit log (permanent — NOT trimmed).
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS maa_events (
     id              INT8 PRIMARY KEY,            -- MAX(id)+1; safe under Kwil sequential block exec
-    maa_address     BYTEA NOT NULL,
-    event_type      TEXT  NOT NULL,              -- 'CREATE' (FUND/EXEC/WITHDRAW added in later issues)
+    rule_id         BYTEA NOT NULL,
+    maa_address     BYTEA,                       -- nullable: rule-level events (CREATE_RULE) have no MAA
+    event_type      TEXT  NOT NULL,              -- 'CREATE_RULE' | 'JOIN' (FUND/EXEC/WITHDRAW in later issues)
     actor_role      TEXT  NOT NULL,              -- 'restricted' | 'unrestricted'
     actor_addr      BYTEA NOT NULL,
     inner_namespace TEXT,                         -- nullable until exec events (later issue)
@@ -73,15 +92,17 @@ CREATE TABLE IF NOT EXISTS maa_events (
     block_timestamp INT8  NOT NULL,
 
     -- RESTRICT (not CASCADE): the audit log is permanent — deleting a rule must never erase its history.
-    FOREIGN KEY (maa_address) REFERENCES maa_rules(maa_address) ON DELETE RESTRICT
+    FOREIGN KEY (rule_id) REFERENCES maa_rules(rule_id) ON DELETE RESTRICT
 );
 
-CREATE INDEX IF NOT EXISTS idx_maa_events_addr ON maa_events(maa_address);
+CREATE INDEX IF NOT EXISTS idx_maa_events_rule ON maa_events(rule_id);
+CREATE INDEX IF NOT EXISTS idx_maa_events_maa  ON maa_events(maa_address);
 
 -- =============================================================================
 -- maa_record_event: append one audit row (private helper)
 -- =============================================================================
 CREATE OR REPLACE ACTION maa_record_event(
+    $rule_id         BYTEA,
     $maa_address     BYTEA,
     $event_type      TEXT,
     $actor_role      TEXT,
@@ -97,60 +118,36 @@ CREATE OR REPLACE ACTION maa_record_event(
     }
 
     INSERT INTO maa_events (
-        id, maa_address, event_type, actor_role, actor_addr,
+        id, rule_id, maa_address, event_type, actor_role, actor_addr,
         inner_namespace, inner_action, amount, tx_hash, block_height, block_timestamp
     ) VALUES (
-        $next_id, $maa_address, $event_type, $actor_role, $actor_addr,
+        $next_id, $rule_id, $maa_address, $event_type, $actor_role, $actor_addr,
         $inner_namespace, $inner_action, $amount, decode(@txid, 'hex'), @height, @block_timestamp
     );
 };
 
 -- =============================================================================
--- maa_create: the RESTRICTED key signs (lifecycle step 1). The rule is set ONCE here and is
--- IMMUTABLE thereafter (spec: fee "determined at the time of rule creation"; agents act on
--- "preset rules"). There are no setters — to change a rule, create a new MAA.
+-- maa_create_rule: the RESTRICTED key signs (lifecycle step 1). The rule is set ONCE here and is
+-- IMMUTABLE thereafter (Vin §0.5). No setters. The unrestricted owner is NOT a parameter — it is bound
+-- later, at maa_join. FUND-FREE.
 -- =============================================================================
-CREATE OR REPLACE ACTION maa_create(
-    $unrestricted_addr TEXT,       -- owner (0x-hex); the restricted signer is @caller
-    $salt              BYTEA,      -- enables several MAAs per {restricted,unrestricted} pair (may be NULL)
-    $bridge            TEXT,       -- 'eth_truf' | 'eth_usdc'; token is DERIVED from this (not a parameter)
-    $fee_mode          TEXT,
-    $fee_bps           INT,
-    $fee_flat          NUMERIC(78, 0),
-    $namespaces        TEXT[],     -- parallel arrays for the allow-list
-    $actions           TEXT[],
-    $body_hashes       BYTEA[]
-) PUBLIC RETURNS (maa_address BYTEA) {
-    -- Restricted signer = @caller (design §6 flow 1; "whoever signs becomes the restricted party").
+CREATE OR REPLACE ACTION maa_create_rule(
+    $salt        BYTEA,      -- rule nonce (enables several distinct rules per creator; may be NULL)
+    $fee_mode    TEXT,
+    $fee_bps     INT,
+    $fee_flat    NUMERIC(78, 0),
+    $namespaces  TEXT[],     -- parallel arrays for the allow-list
+    $actions     TEXT[],
+    $body_hashes BYTEA[]
+) PUBLIC RETURNS (rule_id BYTEA) {
+    -- Creator = @caller = restricted (design flow 1; "whoever signs becomes the restricted party").
     $restricted_bytes BYTEA := tn_utils.get_caller_bytes();
 
-    -- Validate + decode the owner address (0x-hex -> 20-byte BYTEA).
-    if $unrestricted_addr IS NULL OR length($unrestricted_addr) != 42
-       OR substring(LOWER($unrestricted_addr), 1, 2) != '0x' {
-        ERROR('unrestricted_addr must be a 0x-prefixed 40-hex address');
-    }
-    $unrestricted_bytes BYTEA := decode(substring(LOWER($unrestricted_addr), 3, 40), 'hex');
-
-    if $restricted_bytes = $unrestricted_bytes {
-        ERROR('restricted and unrestricted address must differ');
-    }
     if $fee_mode != 'bps' AND $fee_mode != 'flat' {
         ERROR('fee_mode must be bps or flat');
     }
     if $fee_bps < 0 OR $fee_bps > 10000 {
-        ERROR('fee_bps must be between 0 and 10000 (0..100%)');
-    }
-
-    -- token is DERIVED from bridge (spec 5RulesHash-Preimage-Spec.md §6.3: "bridge is committed;
-    -- token is not — token is derivable from bridge"). Never trust a caller-supplied token, and
-    -- reject any bridge we can't price (decimal scale + display token are bridge-specific).
-    $token TEXT;
-    if $bridge = 'eth_truf' {
-        $token := 'TRUF';
-    } elseif $bridge = 'eth_usdc' {
-        $token := 'USDC';
-    } else {
-        ERROR('unsupported bridge (expected eth_truf or eth_usdc)');
+        ERROR('fee_bps must be between 0 and 10000 (10000 = 100%)');
     }
 
     -- Parallel allow-list arrays must be equal length (NULL/empty arrays are allowed and equal).
@@ -160,11 +157,10 @@ CREATE OR REPLACE ACTION maa_create(
         ERROR('namespaces, actions and body_hashes must be the same length');
     }
 
-    -- Reject duplicate (namespace, action) pairs. compute_rules_hash canonicalizes duplicates
-    -- (spec §1: dedup, last-write-wins on body_hash), but maa_allowed_actions has a
-    -- (maa_address, namespace, action) PRIMARY KEY, so a raw duplicate would PK-violate the insert
-    -- below. Fail closed here with a clear message and keep the stored allow-list 1:1 with the
-    -- hashed rule set (no silently-dropped body_hash pin).
+    -- Reject duplicate (namespace, action) pairs. compute_rules_hash canonicalizes duplicates (plan §5.1:
+    -- dedup, last-write-wins on body_hash), but maa_allowed_actions has a (rule_id, namespace, action)
+    -- PRIMARY KEY, so a raw duplicate would PK-violate the insert below. Fail closed here with a clear
+    -- message and keep the stored allow-list 1:1 with the hashed rule set.
     $has_dup BOOL := false;
     for $d in
         SELECT 1 AS one
@@ -179,78 +175,108 @@ CREATE OR REPLACE ACTION maa_create(
         ERROR('duplicate (namespace, action) in allow-list; each pair may appear at most once');
     }
 
-    -- Commitment computed ON-CHAIN from the rule terms (never trusted from a parameter).
+    -- Commitment computed ON-CHAIN from the rule terms (never trusted from a parameter). NO bridge param.
     $rules_hash BYTEA := tn_utils.compute_rules_hash(
-        $fee_mode, $fee_bps, $fee_flat::text, $bridge, $namespaces, $actions, $body_hashes
+        $fee_mode, $fee_bps, $fee_flat::text, $namespaces, $actions, $body_hashes
     );
 
-    -- Deterministic address. rule_address == maa_address.
-    $maa_address BYTEA := tn_utils.derive_maa_address(
-        $restricted_bytes, $unrestricted_bytes, $rules_hash, $salt
-    );
+    -- rule_id is the 32-byte content-hash IDENTIFIER (untruncated).
+    $rule_id BYTEA := tn_utils.derive_rule_id($restricted_bytes, $rules_hash, $salt);
 
-    -- Reject a duplicate identity.
+    -- Reject a duplicate rule identity.
     $exists BOOL := false;
-    for $row in SELECT 1 AS one FROM maa_rules WHERE maa_address = $maa_address {
+    for $row in SELECT 1 AS one FROM maa_rules WHERE rule_id = $rule_id {
         $exists := true;
     }
     if $exists {
-        ERROR('an MAA already exists for this {restricted, unrestricted, rules, salt}');
+        ERROR('a rule already exists for this {restricted, rules, salt}');
     }
 
     INSERT INTO maa_rules (
-        maa_address, rule_address, restricted_addr, unrestricted_addr, rules_hash,
-        bridge, token, fee_mode, fee_bps, fee_flat, enabled, created_at
+        rule_id, restricted_addr, rules_hash, salt, fee_mode, fee_bps, fee_flat, created_at
     ) VALUES (
-        $maa_address, $maa_address, $restricted_bytes, $unrestricted_bytes, $rules_hash,
-        $bridge, $token, $fee_mode, $fee_bps, $fee_flat, true, @height
+        $rule_id, $restricted_bytes, $rules_hash, $salt, $fee_mode, $fee_bps, $fee_flat, @height
     );
 
     -- Allow-list: batch insert via parallel-array UNNEST (precedent: 033-order-book-settlement.sql:42).
-    INSERT INTO maa_allowed_actions (maa_address, namespace, action, body_hash)
-    SELECT $maa_address, t.ns, t.act, t.bh
+    INSERT INTO maa_allowed_actions (rule_id, namespace, action, body_hash)
+    SELECT $rule_id, t.ns, t.act, t.bh
     FROM UNNEST($namespaces, $actions, $body_hashes) AS t(ns, act, bh);
 
-    maa_record_event($maa_address, 'CREATE', 'restricted', $restricted_bytes, NULL, NULL, NULL);
+    maa_record_event($rule_id, NULL, 'CREATE_RULE', 'restricted', $restricted_bytes, NULL, NULL, NULL);
+
+    RETURN $rule_id;
+};
+
+-- =============================================================================
+-- maa_join: a funder (the UNRESTRICTED key) joins a rule_id (lifecycle step 2). Binds the caller as the
+-- unrestricted owner, derives the deterministic MAA address, and records the instance. FUND-FREE — funding
+-- is a separate transfer to the returned MAA address (a later issue). SDK name: joinAgentAddress(ruleId).
+-- =============================================================================
+CREATE OR REPLACE ACTION maa_join($rule_id BYTEA) PUBLIC RETURNS (maa_address BYTEA) {
+    $unrestricted_bytes BYTEA := tn_utils.get_caller_bytes();
+
+    -- Look up the rule's restricted creator (also asserts the rule_id exists).
+    $restricted_bytes BYTEA;
+    $found BOOL := false;
+    for $r in SELECT restricted_addr FROM maa_rules WHERE rule_id = $rule_id {
+        $restricted_bytes := $r.restricted_addr;
+        $found := true;
+    }
+    if !$found {
+        ERROR('unknown rule_id');
+    }
+    if $unrestricted_bytes = $restricted_bytes {
+        ERROR('unrestricted must differ from the rule creator');
+    }
+
+    -- Derive the real 20-byte MAA address from the composite (unrestricted, restricted, rule_id).
+    $maa_address BYTEA := tn_utils.derive_maa_address($unrestricted_bytes, $restricted_bytes, $rule_id);
+
+    -- Reject a duplicate join (this funder already has an MAA for this rule).
+    $exists BOOL := false;
+    for $row in SELECT 1 AS one FROM maa_instances WHERE maa_address = $maa_address {
+        $exists := true;
+    }
+    if $exists {
+        ERROR('this funder has already joined this rule (MAA exists)');
+    }
+
+    INSERT INTO maa_instances (maa_address, rule_id, unrestricted_addr, created_at)
+    VALUES ($maa_address, $rule_id, $unrestricted_bytes, @height);
+
+    maa_record_event($rule_id, $maa_address, 'JOIN', 'unrestricted', $unrestricted_bytes, NULL, NULL, NULL);
 
     RETURN $maa_address;
 };
 
 -- =============================================================================
--- Public getters (audit surface)
+-- Public getters (audit / transparency surface)
 -- =============================================================================
-CREATE OR REPLACE ACTION maa_get_rule($maa_address BYTEA)
+CREATE OR REPLACE ACTION maa_get_rule($rule_id BYTEA)
 PUBLIC VIEW RETURNS TABLE(
-    maa_address TEXT,
-    rule_address TEXT,
+    rule_id TEXT,
     restricted_addr TEXT,
-    unrestricted_addr TEXT,
     rules_hash TEXT,
-    bridge TEXT,
-    token TEXT,
     fee_mode TEXT,
     fee_bps INT,
     fee_flat NUMERIC(78, 0),
-    enabled BOOL,
     created_at INT8
 ) {
     for $r in
         SELECT
-            '0x' || encode(maa_address, 'hex')       AS maa_a,
-            '0x' || encode(rule_address, 'hex')      AS rule_a,
-            '0x' || encode(restricted_addr, 'hex')   AS restr_a,
-            '0x' || encode(unrestricted_addr, 'hex') AS unrestr_a,
-            '0x' || encode(rules_hash, 'hex')        AS rh,
-            bridge, token, fee_mode, fee_bps, fee_flat, enabled, created_at
+            '0x' || encode(rule_id, 'hex')         AS rid,
+            '0x' || encode(restricted_addr, 'hex') AS restr_a,
+            '0x' || encode(rules_hash, 'hex')      AS rh,
+            fee_mode, fee_bps, fee_flat, created_at
         FROM maa_rules
-        WHERE maa_address = $maa_address
+        WHERE rule_id = $rule_id
     {
-        RETURN NEXT $r.maa_a, $r.rule_a, $r.restr_a, $r.unrestr_a, $r.rh,
-                    $r.bridge, $r.token, $r.fee_mode, $r.fee_bps, $r.fee_flat, $r.enabled, $r.created_at;
+        RETURN NEXT $r.rid, $r.restr_a, $r.rh, $r.fee_mode, $r.fee_bps, $r.fee_flat, $r.created_at;
     }
 };
 
-CREATE OR REPLACE ACTION maa_get_allowed_actions($maa_address BYTEA)
+CREATE OR REPLACE ACTION maa_get_allowed_actions($rule_id BYTEA)
 PUBLIC VIEW RETURNS TABLE(
     namespace TEXT,
     action TEXT,
@@ -262,38 +288,40 @@ PUBLIC VIEW RETURNS TABLE(
             action,
             CASE WHEN body_hash IS NULL THEN NULL ELSE '0x' || encode(body_hash, 'hex') END AS bh
         FROM maa_allowed_actions
-        WHERE maa_address = $maa_address
+        WHERE rule_id = $rule_id
         ORDER BY namespace ASC, action ASC
     {
         RETURN NEXT $r.namespace, $r.action, $r.bh;
     }
 };
 
-CREATE OR REPLACE ACTION maa_list_by_unrestricted($owner TEXT, $limit INT, $offset INT)
+-- maa_get_instance: the primary explorer/wallet lookup — MAA address -> both keys + rule set (via rule_id).
+CREATE OR REPLACE ACTION maa_get_instance($maa_address BYTEA)
 PUBLIC VIEW RETURNS TABLE(
     maa_address TEXT,
-    enabled BOOL,
+    rule_id TEXT,
+    restricted_addr TEXT,
+    unrestricted_addr TEXT,
     created_at INT8
 ) {
-    if $limit IS NULL OR $limit <= 0 { $limit := 100; }
-    if $offset IS NULL OR $offset < 0 { $offset := 0; }
-    $owner_bytes BYTEA := decode(substring(LOWER($owner), 3, 40), 'hex');
-
     for $r in
-        SELECT '0x' || encode(maa_address, 'hex') AS a, enabled, created_at
-        FROM maa_rules
-        WHERE unrestricted_addr = $owner_bytes
-        ORDER BY created_at ASC, maa_address ASC
-        LIMIT $limit OFFSET $offset
+        SELECT
+            '0x' || encode(i.maa_address, 'hex')       AS maa_a,
+            '0x' || encode(i.rule_id, 'hex')           AS rid,
+            '0x' || encode(r.restricted_addr, 'hex')   AS restr_a,
+            '0x' || encode(i.unrestricted_addr, 'hex') AS unrestr_a,
+            i.created_at AS ca
+        FROM maa_instances i
+        JOIN maa_rules r ON r.rule_id = i.rule_id
+        WHERE i.maa_address = $maa_address
     {
-        RETURN NEXT $r.a, $r.enabled, $r.created_at;
+        RETURN NEXT $r.maa_a, $r.rid, $r.restr_a, $r.unrestr_a, $r.ca;
     }
 };
 
 CREATE OR REPLACE ACTION maa_list_by_restricted($agent TEXT, $limit INT, $offset INT)
 PUBLIC VIEW RETURNS TABLE(
-    maa_address TEXT,
-    enabled BOOL,
+    rule_id TEXT,
     created_at INT8
 ) {
     if $limit IS NULL OR $limit <= 0 { $limit := 100; }
@@ -301,19 +329,67 @@ PUBLIC VIEW RETURNS TABLE(
     $agent_bytes BYTEA := decode(substring(LOWER($agent), 3, 40), 'hex');
 
     for $r in
-        SELECT '0x' || encode(maa_address, 'hex') AS a, enabled, created_at
+        SELECT '0x' || encode(rule_id, 'hex') AS rid, created_at
         FROM maa_rules
         WHERE restricted_addr = $agent_bytes
-        ORDER BY created_at ASC, maa_address ASC
+        ORDER BY created_at ASC, rule_id ASC
         LIMIT $limit OFFSET $offset
     {
-        RETURN NEXT $r.a, $r.enabled, $r.created_at;
+        RETURN NEXT $r.rid, $r.created_at;
     }
 };
 
-CREATE OR REPLACE ACTION maa_get_events($maa_address BYTEA, $limit INT, $offset INT)
+CREATE OR REPLACE ACTION maa_list_by_unrestricted($owner TEXT, $limit INT, $offset INT)
+PUBLIC VIEW RETURNS TABLE(
+    maa_address TEXT,
+    rule_id TEXT,
+    created_at INT8
+) {
+    if $limit IS NULL OR $limit <= 0 { $limit := 100; }
+    if $offset IS NULL OR $offset < 0 { $offset := 0; }
+    $owner_bytes BYTEA := decode(substring(LOWER($owner), 3, 40), 'hex');
+
+    for $r in
+        SELECT
+            '0x' || encode(maa_address, 'hex') AS maa_a,
+            '0x' || encode(rule_id, 'hex')     AS rid,
+            created_at
+        FROM maa_instances
+        WHERE unrestricted_addr = $owner_bytes
+        ORDER BY created_at ASC, maa_address ASC
+        LIMIT $limit OFFSET $offset
+    {
+        RETURN NEXT $r.maa_a, $r.rid, $r.created_at;
+    }
+};
+
+CREATE OR REPLACE ACTION maa_list_instances_by_rule($rule_id BYTEA, $limit INT, $offset INT)
+PUBLIC VIEW RETURNS TABLE(
+    maa_address TEXT,
+    unrestricted_addr TEXT,
+    created_at INT8
+) {
+    if $limit IS NULL OR $limit <= 0 { $limit := 100; }
+    if $offset IS NULL OR $offset < 0 { $offset := 0; }
+
+    for $r in
+        SELECT
+            '0x' || encode(maa_address, 'hex')       AS maa_a,
+            '0x' || encode(unrestricted_addr, 'hex') AS unrestr_a,
+            created_at
+        FROM maa_instances
+        WHERE rule_id = $rule_id
+        ORDER BY created_at ASC, maa_address ASC
+        LIMIT $limit OFFSET $offset
+    {
+        RETURN NEXT $r.maa_a, $r.unrestr_a, $r.created_at;
+    }
+};
+
+CREATE OR REPLACE ACTION maa_get_events($rule_id BYTEA, $limit INT, $offset INT)
 PUBLIC VIEW RETURNS TABLE(
     id INT8,
+    maa_address TEXT,
     event_type TEXT,
     actor_role TEXT,
     actor_addr TEXT,
@@ -329,25 +405,28 @@ PUBLIC VIEW RETURNS TABLE(
 
     for $r in
         SELECT
-            id, event_type, actor_role,
+            id,
+            CASE WHEN maa_address IS NULL THEN NULL ELSE '0x' || encode(maa_address, 'hex') END AS maa_a,
+            event_type, actor_role,
             '0x' || encode(actor_addr, 'hex') AS actor_a,
             inner_namespace, inner_action, amount,
             '0x' || encode(tx_hash, 'hex') AS txh,
             block_height, block_timestamp
         FROM maa_events
-        WHERE maa_address = $maa_address
+        WHERE rule_id = $rule_id
         ORDER BY id ASC
         LIMIT $limit OFFSET $offset
     {
-        RETURN NEXT $r.id, $r.event_type, $r.actor_role, $r.actor_a,
+        RETURN NEXT $r.id, $r.maa_a, $r.event_type, $r.actor_role, $r.actor_a,
                     $r.inner_namespace, $r.inner_action, $r.amount, $r.txh,
                     $r.block_height, $r.block_timestamp;
     }
 };
 
+-- maa_is_known: true iff $maa_address is a joined MAA (used later by the exec route to detect MAAs).
 CREATE OR REPLACE ACTION maa_is_known($maa_address BYTEA)
 PUBLIC VIEW RETURNS (known BOOL) {
-    for $r in SELECT 1 AS one FROM maa_rules WHERE maa_address = $maa_address {
+    for $r in SELECT 1 AS one FROM maa_instances WHERE maa_address = $maa_address {
         RETURN true;
     }
     RETURN false;
