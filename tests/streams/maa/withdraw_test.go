@@ -69,21 +69,22 @@ func balance(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, 
 }
 
 // setupFundedMAA creates a rule (restricted), joins it (unrestricted), funds the derived MAA
-// with `fund` base units, and returns the MAA address. The ERC20 extension is initialized first.
+// with `fund` base units, and returns the MAA address and the created rule ID. The ERC20
+// extension is initialized first.
 func setupFundedMAA(
 	t *testing.T, ctx context.Context, platform *kwilTesting.Platform,
 	restricted, unrestricted util.EthereumAddress, feeBps int64, salt []byte, fund string,
-) []byte {
+) (maa []byte, ruleID []byte) {
 	t.Helper()
 	require.NoError(t, erc20bridge.ForTestingInitializeExtension(ctx, platform))
 
-	ruleID := createDefaultRule(t, ctx, platform, restricted, feeBps, salt)
-	maa := joinRule(t, ctx, platform, unrestricted, ruleID)
+	ruleID = createDefaultRule(t, ctx, platform, restricted, feeBps, salt)
+	maa = joinRule(t, ctx, platform, unrestricted, ruleID)
 
 	orderedsync.ForTestingReset()
 	maaAddr := addrFromBytes(maa)
 	fundAddress(t, ctx, platform, maaAddr.Address(), fund, 1)
-	return maa
+	return maa, ruleID
 }
 
 // ---------------------------------------------------------------------------
@@ -99,7 +100,7 @@ func testMAAWithdrawInternalBps(t *testing.T) func(context.Context, *kwilTesting
 		platform.Deployer = restricted.Bytes()
 
 		// 100 tokens funded; 250 bps (2.5%) commission.
-		maa := setupFundedMAA(t, ctx, platform, restricted, unrestricted, 250, repeat(0xab, 32), "100000000000000000000")
+		maa, ruleID := setupFundedMAA(t, ctx, platform, restricted, unrestricted, 250, repeat(0xab, 32), "100000000000000000000")
 		maaAddr := addrFromBytes(maa)
 
 		// maa_get_balance reports the funded amount.
@@ -117,20 +118,20 @@ func testMAAWithdrawInternalBps(t *testing.T) func(context.Context, *kwilTesting
 		require.Equal(t, "97500000000000000000", balance(t, ctx, platform, unrestrictedHex), "owner receives the remainder")
 		require.Equal(t, "0", balance(t, ctx, platform, maaAddr.Address()), "agent wallet is drained")
 
-		// A WITHDRAW audit event is recorded for the rule.
+		// A WITHDRAW audit event is recorded for this rule, carrying the gross amount.
 		var evtTypes []string
-		var lastAmount string
-		require.NoError(t, callAs(ctx, platform, restricted, "maa_get_events", []any{
-			func() []byte { b, _ := hex.DecodeString(goldenRuleIDHex); return b }(), int64(100), int64(0),
-		}, func(row *common.Row) error {
-			evtTypes = append(evtTypes, row.Values[2].(string))
-			if row.Values[7] != nil {
-				lastAmount = row.Values[7].(*kwilTypes.Decimal).String()
-			}
-			return nil
-		}))
+		var withdrawAmount string
+		require.NoError(t, callAs(ctx, platform, restricted, "maa_get_events", []any{ruleID, int64(100), int64(0)},
+			func(row *common.Row) error {
+				evtType := row.Values[2].(string)
+				evtTypes = append(evtTypes, evtType)
+				if evtType == "WITHDRAW" && row.Values[7] != nil {
+					withdrawAmount = row.Values[7].(*kwilTypes.Decimal).String()
+				}
+				return nil
+			}))
 		require.Contains(t, evtTypes, "WITHDRAW")
-		require.Equal(t, "100000000000000000000", lastAmount, "WITHDRAW records the gross amount")
+		require.Equal(t, "100000000000000000000", withdrawAmount, "the WITHDRAW event records the gross amount")
 		return nil
 	}
 }
@@ -143,7 +144,7 @@ func testMAAWithdrawGuards(t *testing.T) func(context.Context, *kwilTesting.Plat
 		unrestricted := util.Unsafe_NewEthereumAddressFromString(unrestrictedHex)
 		platform.Deployer = restricted.Bytes()
 
-		maa := setupFundedMAA(t, ctx, platform, restricted, unrestricted, 250, repeat(0xab, 32), "100000000000000000000")
+		maa, _ := setupFundedMAA(t, ctx, platform, restricted, unrestricted, 250, repeat(0xab, 32), "100000000000000000000")
 		maaAddr := addrFromBytes(maa)
 
 		// A normal signer (not a known MAA) cannot withdraw — @caller is not an agent wallet.
@@ -208,7 +209,7 @@ func testMAABridgeOut(t *testing.T) func(context.Context, *kwilTesting.Platform)
 		unrestricted := util.Unsafe_NewEthereumAddressFromString(unrestrictedHex)
 		platform.Deployer = restricted.Bytes()
 
-		maa := setupFundedMAA(t, ctx, platform, restricted, unrestricted, 250, repeat(0xab, 32), "100000000000000000000")
+		maa, _ := setupFundedMAA(t, ctx, platform, restricted, unrestricted, 250, repeat(0xab, 32), "100000000000000000000")
 		maaAddr := addrFromBytes(maa)
 
 		// Bridge the whole balance off; recipient defaults to the owner.

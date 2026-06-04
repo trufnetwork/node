@@ -129,11 +129,19 @@ CREATE OR REPLACE ACTION maa_do_withdraw(
     $fee_mode TEXT;
     $fee_bps INT;
     $fee_flat NUMERIC(78, 0);
+    $rule_found BOOL := false;
     for $r in SELECT restricted_addr, fee_mode, fee_bps, fee_flat FROM maa_rules WHERE rule_id = $rule_id {
         $restricted_bytes := $r.restricted_addr;
         $fee_mode := $r.fee_mode;
         $fee_bps := $r.fee_bps;
         $fee_flat := $r.fee_flat;
+        $rule_found := true;
+    }
+    -- The maa_instances FK guarantees the rule exists with NOT NULL / CHECK-valid fee + payee
+    -- columns, but guard explicitly so a withdrawal can never proceed (or record an event) with a
+    -- NULL payee or fee term if that invariant is ever weakened.
+    if !$rule_found {
+        ERROR('agent wallet references a missing rule');
     }
 
     $maa_hex TEXT := '0x' || encode($maa_bytes, 'hex');
