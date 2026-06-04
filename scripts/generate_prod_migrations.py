@@ -66,6 +66,7 @@ TARGETS: list[tuple[str, str, str]] = [
     ("033-order-book-settlement.sql", "033-order-book-settlement.prod.sql", "core"),
     ("037-order-book-validation.sql", "037-order-book-validation.prod.sql", "core"),
     ("038-order-book-queries.sql", "038-order-book-queries.prod.sql", "core"),
+    ("049-maa-funding.sql", "049-maa-funding.prod.sql", "core"),
     (
         "erc20-bridge/001-actions.sql",
         "erc20-bridge/001-actions.prod.sql",
