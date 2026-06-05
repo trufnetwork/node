@@ -329,6 +329,10 @@ func testMAABridgeOutExplicitRecipientAndAtomicity(t *testing.T) func(context.Co
 		//    to the passed DB handle (a write outside it would survive the rollback).
 		spTx, err := platform.DB.BeginTx(ctx)
 		require.NoError(t, err)
+		// Guard every failure path: a failed require aborts this function (Goexit
+		// still runs defers), and without this the savepoint would leak open on the
+		// shared session. A second Rollback after the explicit one below is a no-op.
+		defer func() { _ = spTx.Rollback(ctx) }()
 		err = callAsOn(ctx, platform, spTx, maaAddr, "maa_bridge_out",
 			[]any{wdBridge, dec(t, "100000000000000000000"), "not-an-address"})
 		require.Error(t, err, "a payout-leg failure must abort the withdrawal")
