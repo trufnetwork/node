@@ -16,11 +16,16 @@
  * nothing. The recipients are always resolved from the store (restricted = commission,
  * unrestricted = payout) — never from a caller argument — so the destinations cannot be
  * steered. Each withdrawal is two legs (commission -> restricted, payout -> owner/L1) in a
- * single action body, so a failure on either leg rolls the whole move back.
+ * single action, and every transaction's route body runs inside its own nested DB
+ * transaction that is rolled back when the route errors — so a failure on either leg
+ * leaves nothing applied (the engine itself does not undo an aborted action's earlier
+ * writes; the per-transaction boundary does).
  *
- * Fee math: 'bps' = floor(gross * fee_bps / 10000); 'flat' = fee_flat in the withdrawn
- * token's own base units. The commission is deducted FROM the gross (the owner receives the
- * remainder), clamped to never exceed the gross. There is no protocol fee cap.
+ * Fee math: 'bps' = gross * fee_bps / 10000, rounded HALF-UP to a whole base unit (the
+ * engine's NUMERIC rounding mode); 'flat' = fee_flat in the withdrawn token's own base
+ * units. The commission is deducted FROM the gross (the owner receives the remainder), so
+ * the two legs always sum to the gross exactly regardless of rounding; it is clamped to
+ * never exceed the gross. There is no protocol fee cap.
  *
  * Token-agnostic: an agent wallet can hold several bridged tokens, so withdrawal targets one
  * bridge per call via the $bridge argument. The bridge namespace is the per-token instance:
@@ -74,8 +79,8 @@ PRIVATE {
 
 -- =============================================================================
 -- maa_commission: the commission charged on a gross withdrawal, per the rule's fee terms.
--- 'flat' returns fee_flat verbatim (the withdrawn token's base units); 'bps' floors
--- gross * fee_bps / 10000 (same integer-division idiom as the settlement fee split).
+-- 'flat' returns fee_flat verbatim (the withdrawn token's base units); 'bps' computes
+-- gross * fee_bps / 10000, rounded half-up to a whole base unit.
 -- =============================================================================
 CREATE OR REPLACE ACTION maa_commission(
     $fee_mode TEXT,
@@ -86,8 +91,10 @@ CREATE OR REPLACE ACTION maa_commission(
     if $fee_mode = 'flat' {
         RETURN $fee_flat;
     }
-    -- Assigning to a NUMERIC(78, 0) variable truncates the fractional part (floor for the
-    -- non-negative values here); the caller recaptures the remainder as payout = gross - commission.
+    -- The division is brought to scale 0 with the engine's NUMERIC rounding mode, which is
+    -- ROUND HALF-UP (e.g. 19999 * 250 / 10000 = 499.975 -> 500; .5 rounds away from zero).
+    -- The dust direction never creates or destroys funds: the caller pays out
+    -- gross - commission, so the two legs always sum to the gross exactly.
     $c NUMERIC(78, 0) := ($gross * $fee_bps::NUMERIC(78, 0)) / 10000::NUMERIC(78, 0);
     RETURN $c;
 };

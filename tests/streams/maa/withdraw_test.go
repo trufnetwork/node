@@ -12,6 +12,7 @@ import (
 	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
 	erc20bridge "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
 	orderedsync "github.com/trufnetwork/kwil-db/node/exts/ordered-sync"
+	"github.com/trufnetwork/kwil-db/node/types/sql"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
@@ -20,12 +21,17 @@ import (
 )
 
 // The withdrawal tests run against the hoodi_tt2 (USDC) test bridge — one of the per-token
-// instances an agent wallet can hold. Balances are 18-decimal in the test harness.
+// instances an agent wallet can hold. Balances are 18-decimal in the test harness. The
+// hoodi_tt (TRUF) bridge is a second, independent instance used to prove per-token isolation.
 const (
 	wdBridge = "hoodi_tt2"
 	wdChain  = "hoodi"
 	wdEscrow = "0x80D9B3b6941367917816d36748C88B303f7F1415"
 	wdERC20  = "0x1591DeAa21710E0BA6CC1b15F49620C9F65B2dEd"
+
+	wdTRUFBridge = "hoodi_tt"
+	wdTRUFEscrow = "0x878d6aaeb6e746033f50b8dc268d54b4631554e7"
+	wdTRUFERC20  = "0x263ce78fef26600e4e428cebc91c2a52484b4fbf"
 )
 
 func TestMAAWithdraw(t *testing.T) {
@@ -37,6 +43,9 @@ func TestMAAWithdraw(t *testing.T) {
 			testMAAWithdrawGuards(t),
 			testMAAWithdrawFlatFeeClamped(t),
 			testMAABridgeOut(t),
+			testMAAWithdrawBpsRounding(t),
+			testMAABridgeOutExplicitRecipientAndAtomicity(t),
+			testMAAWithdrawMultiTokenIsolation(t),
 		},
 	}, testutils.GetTestOptionsWithCache())
 }
@@ -66,6 +75,48 @@ func balance(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, 
 		return "0"
 	}
 	return b
+}
+
+// fundAddressTRUF credits `to` on the hoodi_tt (TRUF) bridge — a second, independent
+// per-token instance (its ordered-sync topic is separate from hoodi_tt2's, so a first
+// deposit at point 1 with no predecessor processes independently).
+func fundAddressTRUF(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, to string, amount string, point int64) {
+	t.Helper()
+	require.NoError(t, testerc20.InjectERC20Transfer(
+		ctx, platform, wdChain, wdTRUFEscrow, wdTRUFERC20, to, to, amount, point, nil,
+	))
+}
+
+// balanceTRUF reads an address's hoodi_tt (TRUF) ledger balance ("0" when there is no row).
+func balanceTRUF(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, addr string) string {
+	t.Helper()
+	b, err := testerc20.GetUserBalance(ctx, platform, wdTRUFBridge, addr)
+	require.NoError(t, err)
+	if b == "" || b == "<nil>" {
+		return "0"
+	}
+	return b
+}
+
+// callAsOn is callAs against an explicit DB handle. The atomicity test uses it to run a
+// withdrawal inside a nested transaction (savepoint) — the same boundary the block
+// processor gives every transaction in production: the route body runs in a nested tx
+// that is rolled back when the route returns an error, so a failed transaction's writes
+// are discarded as a unit.
+func callAsOn(ctx context.Context, platform *kwilTesting.Platform, db sql.DB, caller util.EthereumAddress, action string, args []any) error {
+	tx := &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 1},
+		Signer:       caller.Bytes(),
+		Caller:       caller.Address(),
+		TxID:         platform.Txid(),
+	}
+	engineCtx := &common.EngineContext{TxContext: tx}
+	res, err := platform.Engine.Call(engineCtx, db, "", action, args, func(*common.Row) error { return nil })
+	if err != nil {
+		return err
+	}
+	return res.Error
 }
 
 // setupFundedMAA creates a rule (restricted), joins it (unrestricted), funds the derived MAA
@@ -221,6 +272,121 @@ func testMAABridgeOut(t *testing.T) func(context.Context, *kwilTesting.Platform)
 		require.Equal(t, "2500000000000000000", balance(t, ctx, platform, restrictedHex), "agent earns the commission on bridge-out")
 		require.Equal(t, "0", balance(t, ctx, platform, maaAddr.Address()), "agent wallet is drained")
 		require.Equal(t, "0", balance(t, ctx, platform, unrestrictedHex), "the payout was bridged to L1, not credited internally")
+		return nil
+	}
+}
+
+// testMAAWithdrawBpsRounding pins the bps commission's rounding direction on non-divisible
+// amounts: the engine brings the division to scale 0 with ROUND HALF-UP. Two partial
+// withdrawals (also covering the partial-withdraw shape) discriminate the three candidate
+// behaviors: 19999 @ 250 bps = 499.975 -> 500 (rejects floor's 499); 20020 @ 250 bps =
+// 500.5 -> 501 (rejects banker's 500). Funds conserve regardless: payout = gross - commission.
+func testMAAWithdrawBpsRounding(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		restricted := util.Unsafe_NewEthereumAddressFromString(restrictedHex)
+		unrestricted := util.Unsafe_NewEthereumAddressFromString(unrestrictedHex)
+		platform.Deployer = restricted.Bytes()
+
+		maa, _ := setupFundedMAA(t, ctx, platform, restricted, unrestricted, 250, repeat(0xab, 32), "100000")
+		maaAddr := addrFromBytes(maa)
+
+		// 19999 * 250 / 10000 = 499.975 -> commission 500 (floor would give 499).
+		require.NoError(t, callAs(ctx, platform, maaAddr, "maa_withdraw", []any{wdBridge, dec(t, "19999")}, nil))
+		require.Equal(t, "500", balance(t, ctx, platform, restrictedHex), "499.975 must round half-up to 500")
+		require.Equal(t, "19499", balance(t, ctx, platform, unrestrictedHex), "owner receives gross - commission")
+		require.Equal(t, "80001", balance(t, ctx, platform, maaAddr.Address()), "partial withdraw leaves the remainder")
+
+		// 20020 * 250 / 10000 = 500.5 -> commission 501 (banker's rounding would give 500).
+		require.NoError(t, callAs(ctx, platform, maaAddr, "maa_withdraw", []any{wdBridge, dec(t, "20020")}, nil))
+		require.Equal(t, "1001", balance(t, ctx, platform, restrictedHex), "the .5 fraction must round away from zero")
+		require.Equal(t, "39018", balance(t, ctx, platform, unrestrictedHex))
+		require.Equal(t, "59981", balance(t, ctx, platform, maaAddr.Address()))
+		return nil
+	}
+}
+
+// testMAABridgeOutExplicitRecipientAndAtomicity covers the two untested bridge-out shapes:
+// (1) ATOMICITY — a payout leg that fails AFTER the commission leg has executed must roll
+// back the whole withdrawal, leaving every balance untouched; (2) an explicit L1 recipient
+// (instead of the default owner) works and still pays the commission, and the WITHDRAW
+// audit event is recorded for the bridge-out variant too.
+func testMAABridgeOutExplicitRecipientAndAtomicity(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		restricted := util.Unsafe_NewEthereumAddressFromString(restrictedHex)
+		unrestricted := util.Unsafe_NewEthereumAddressFromString(unrestrictedHex)
+		platform.Deployer = restricted.Bytes()
+
+		maa, ruleID := setupFundedMAA(t, ctx, platform, restricted, unrestricted, 250, repeat(0xab, 32), "100000000000000000000")
+		maaAddr := addrFromBytes(maa)
+
+		// 1) A malformed recipient makes the payout leg fail AFTER the commission leg ran.
+		//    Production wraps every transaction's route body in a nested DB transaction
+		//    that is rolled back when the route errors — the engine itself does not undo
+		//    an aborted action's earlier writes; the tx boundary does. Emulate exactly
+		//    that boundary: run the failing withdrawal in a savepoint and roll it back on
+		//    error. This pins two real properties: the payout-leg error propagates (a
+		//    swallowed error would make this call "succeed"), and every write is confined
+		//    to the passed DB handle (a write outside it would survive the rollback).
+		spTx, err := platform.DB.BeginTx(ctx)
+		require.NoError(t, err)
+		// Guard every failure path: a failed require aborts this function (Goexit
+		// still runs defers), and without this the savepoint would leak open on the
+		// shared session. A second Rollback after the explicit one below is a no-op.
+		defer func() { _ = spTx.Rollback(ctx) }()
+		err = callAsOn(ctx, platform, spTx, maaAddr, "maa_bridge_out",
+			[]any{wdBridge, dec(t, "100000000000000000000"), "not-an-address"})
+		require.Error(t, err, "a payout-leg failure must abort the withdrawal")
+		require.NoError(t, spTx.Rollback(ctx))
+		require.Equal(t, "100000000000000000000", balance(t, ctx, platform, maaAddr.Address()), "failed withdrawal must move nothing")
+		require.Equal(t, "0", balance(t, ctx, platform, restrictedHex), "the commission leg must be confined to the rolled-back tx")
+
+		// 2) An explicit L1 recipient: commission still lands with the agent, the MAA is
+		//    drained, and neither the owner nor the recipient is credited internally.
+		recipient := "0x9999999999999999999999999999999999999999"
+		require.NoError(t, callAs(ctx, platform, maaAddr, "maa_bridge_out",
+			[]any{wdBridge, dec(t, "100000000000000000000"), recipient}, nil),
+			"bridge-out to an explicit recipient must succeed")
+		require.Equal(t, "2500000000000000000", balance(t, ctx, platform, restrictedHex), "agent earns the commission")
+		require.Equal(t, "0", balance(t, ctx, platform, maaAddr.Address()), "agent wallet is drained")
+		require.Equal(t, "0", balance(t, ctx, platform, unrestrictedHex), "owner is not credited internally on an L1 bridge-out")
+		require.Equal(t, "0", balance(t, ctx, platform, recipient), "the recipient is paid on L1, not on the internal ledger")
+
+		// The bridge-out variant records a WITHDRAW audit event with the gross amount.
+		var withdrawAmount string
+		require.NoError(t, callAs(ctx, platform, restricted, "maa_get_events", []any{ruleID, int64(100), int64(0)},
+			func(row *common.Row) error {
+				if row.Values[2].(string) == "WITHDRAW" && row.Values[7] != nil {
+					withdrawAmount = row.Values[7].(*kwilTypes.Decimal).String()
+				}
+				return nil
+			}))
+		require.Equal(t, "100000000000000000000", withdrawAmount, "bridge-out must record a WITHDRAW event with the gross")
+		return nil
+	}
+}
+
+// testMAAWithdrawMultiTokenIsolation: an agent wallet holds several bridged tokens, one
+// ledger row per (instance, address). Withdrawing one token must not touch another —
+// the per-token boundary the $bridge argument selects.
+func testMAAWithdrawMultiTokenIsolation(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		restricted := util.Unsafe_NewEthereumAddressFromString(restrictedHex)
+		unrestricted := util.Unsafe_NewEthereumAddressFromString(unrestrictedHex)
+		platform.Deployer = restricted.Bytes()
+
+		maa, _ := setupFundedMAA(t, ctx, platform, restricted, unrestricted, 250, repeat(0xab, 32), "100000000000000000000")
+		maaAddr := addrFromBytes(maa)
+		// Fund the SAME wallet on the second token's instance (independent topic, first point).
+		fundAddressTRUF(t, ctx, platform, maaAddr.Address(), "50000000000000000000", 1)
+		require.Equal(t, "50000000000000000000", balanceTRUF(t, ctx, platform, maaAddr.Address()), "TRUF funding must land")
+
+		// Withdraw the whole USDC balance; the TRUF balance must be untouched.
+		require.NoError(t, callAs(ctx, platform, maaAddr, "maa_withdraw", []any{wdBridge, dec(t, "100000000000000000000")}, nil))
+		require.Equal(t, "0", balance(t, ctx, platform, maaAddr.Address()), "USDC drained")
+		require.Equal(t, "2500000000000000000", balance(t, ctx, platform, restrictedHex), "USDC commission paid")
+		require.Equal(t, "50000000000000000000", balanceTRUF(t, ctx, platform, maaAddr.Address()), "TRUF balance untouched by a USDC withdrawal")
+		require.Equal(t, "0", balanceTRUF(t, ctx, platform, restrictedHex), "no TRUF commission was charged")
+		require.Equal(t, "0", balanceTRUF(t, ctx, platform, unrestrictedHex), "no TRUF payout occurred")
 		return nil
 	}
 }
