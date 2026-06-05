@@ -83,11 +83,11 @@ func createDefaultRule(t *testing.T, ctx context.Context, platform *kwilTesting.
 	t.Helper()
 	var ruleID []byte
 	err := callAs(ctx, platform, restricted, "maa_create_rule", []any{
-		salt,                                          // $salt
-		"bps",                                         // $fee_mode
-		feeBps,                                        // $fee_bps
-		dec(t, "0"),                                   // $fee_flat
-		[]string{"main", "main"},                      // $namespaces
+		salt,                     // $salt
+		"bps",                    // $fee_mode
+		feeBps,                   // $fee_bps
+		dec(t, "0"),              // $fee_flat
+		[]string{"main", "main"}, // $namespaces
 		[]string{"ob_place_order", "ob_cancel_order"}, // $actions
 		[][]byte{repeat(0xcc, 32), nil},               // $body_hashes
 	}, func(row *common.Row) error {
