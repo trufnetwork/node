@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
+	coreauth "github.com/trufnetwork/kwil-db/core/crypto/auth"
 	erc20bridge "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
 	orderedsync "github.com/trufnetwork/kwil-db/node/exts/ordered-sync"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
@@ -43,7 +44,9 @@ func TestMAAWithdrawRouteE2E(t *testing.T) {
 // callAsMAA invokes an action exactly as the maa_exec route's inner call does: @caller is the
 // MAA address and TxContext.MAARestricted carries the signer's role (true for the restricted
 // agent, false for the unrestricted owner). The flag threads by pointer to any call depth, so
-// the erc20 token boundary sees it inside the nested transfer/bridge primitives.
+// the erc20 token boundary sees it inside the nested transfer/bridge primitives. The route's
+// childTx is a shallow copy of the component's signed tx, so it carries that signer's
+// authenticator — reproduced here (order-book actions resolve the caller through it).
 func callAsMAA(ctx context.Context, platform *kwilTesting.Platform, maa util.EthereumAddress, restricted bool, action string, args []any) error {
 	tx := &common.TxContext{
 		Ctx:           ctx,
@@ -51,6 +54,7 @@ func callAsMAA(ctx context.Context, platform *kwilTesting.Platform, maa util.Eth
 		Signer:        maa.Bytes(),
 		Caller:        maa.Address(),
 		TxID:          platform.Txid(),
+		Authenticator: coreauth.EthPersonalSignAuth,
 		MAARestricted: restricted,
 	}
 	res, err := platform.Engine.Call(&common.EngineContext{TxContext: tx}, platform.DB, "", action, args, func(*common.Row) error { return nil })
