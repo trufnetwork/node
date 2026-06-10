@@ -38,9 +38,10 @@ import (
 // leaving collateral lock/unlock open so allow-listed trading survives.
 //
 // The bot's allow-list is the four real order-book trading actions in the default ("main")
-// namespace; create_market is deliberately NOT allow-listed (it pays a fee via transfer, which
-// the boundary blocks for the restricted role) and settle_market is left to the network. The
-// market here is created by an ordinary market-maker account, not the agent.
+// namespace; create_market is deliberately NOT allow-listed (market provisioning is not a
+// liquidity-maintenance task — though its leader-paid fee would pass the boundary's write-fee
+// carve-out, see data_agent_test.go) and settle_market is left to the network. The market here
+// is created by an ordinary market-maker account, not the agent.
 
 // lpActions is the canonical liquidity-vault-operator allow-list: place + amend + cancel on the
 // order book, nothing that can move funds out.
