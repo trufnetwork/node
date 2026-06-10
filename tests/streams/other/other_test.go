@@ -7,13 +7,16 @@ import (
 
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
+	"github.com/trufnetwork/node/tests/streams/utils/feefund"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
 	"github.com/trufnetwork/node/tests/streams/utils/setup"
+	"github.com/trufnetwork/node/tests/streams/utils/testctx"
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
+	coreauth "github.com/trufnetwork/kwil-db/core/crypto/auth"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/sdk-go/core/types"
 	"github.com/trufnetwork/sdk-go/core/util"
@@ -29,7 +32,7 @@ var defaultStreamLocator = types.StreamLocator{
 // TestAddressValidation tests that all referenced addresses must be lowercased and valid EVM addresses starting with `0x`.
 func TestAddressValidation(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name:        "address_validation_test",
+		Name:           "address_validation_test",
 		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			func(ctx context.Context, platform *kwilTesting.Platform) error {
@@ -53,10 +56,28 @@ func TestAddressValidation(t *testing.T) {
 				t.Run("MissingPrefix", testutils.WithTx(platform, func(t *testing.T, txPlatform *kwilTesting.Platform) {
 					invalidAddress1 := "0000000000000000000000000000000000000001"
 
-					// Test stream creation with invalid address
-					err := setup.UntypedCreateStream(ctx, txPlatform, defaultStreamLocator.StreamId.String(), invalidAddress1, string(setup.ContractTypePrimitive))
-					assert.Error(t, err, "address without 0x prefix should be rejected")
-					// The system should reject this invalid address (either during role check or address validation)
+					// The Go-side helpers parse-and-normalize their address argument, so a
+					// prefix-less form never reaches the network through them — and since
+					// create_streams became permissionless (#1384) there is no role check
+					// left to trip on it either. Drive create_stream with the raw string as
+					// @caller so the system's own check_ethereum_address is what rejects it.
+					// The fee gate runs before address validation and resolves hex with or
+					// without the prefix, so fund the canonical form to prove the rejection
+					// is the address check, not an empty balance.
+					err := feefund.EnsureWalletFunded(ctx, txPlatform, "0x"+invalidAddress1, feefund.StreamCreationFeeWei)
+					require.NoError(t, err, "failed to fund the caller's stream fee")
+
+					engineCtx := &common.EngineContext{TxContext: testctx.NewTxContextWithAuth(
+						ctx, txPlatform, []byte(invalidAddress1), invalidAddress1, coreauth.EthPersonalSignAuth, 1)}
+					res, callErr := txPlatform.Engine.Call(engineCtx, txPlatform.DB, "", "create_stream",
+						[]any{defaultStreamLocator.StreamId.String(), string(setup.ContractTypePrimitive)},
+						func(*common.Row) error { return nil })
+					if callErr == nil && res != nil {
+						callErr = res.Error
+					}
+					assert.Error(t, callErr, "address without 0x prefix should be rejected")
+					assert.ErrorContains(t, callErr, "Invalid data provider address",
+						"the rejection must come from the system's address validation")
 				}))
 
 				// Test invalid address - wrong length
@@ -89,7 +110,7 @@ func TestAddressValidation(t *testing.T) {
 // TestStreamIDValidation tests that stream ids must respect the following regex: `^st[a-z0-9]{30}$`
 func TestStreamIDValidation(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name:        "stream_id_validation_test",
+		Name:           "stream_id_validation_test",
 		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			func(ctx context.Context, platform *kwilTesting.Platform) error {
@@ -221,7 +242,7 @@ func TestStreamIDValidation(t *testing.T) {
 // TestAnyUserCanCreateStream tests that any user with a valid Ethereum address can create a stream
 func TestAnyUserCanCreateStream(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name:        "any_user_can_create_stream_test",
+		Name:           "any_user_can_create_stream_test",
 		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testAnyUserCanCreateStream(t),
@@ -272,7 +293,7 @@ func testAnyUserCanCreateStream(t *testing.T) func(ctx context.Context, platform
 // TestMultipleStreamCreation tests that multiple streams can be created in a single transaction using CreateStreams
 func TestMultipleStreamCreation(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name:        "multiple_stream_creation_test",
+		Name:           "multiple_stream_creation_test",
 		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			testMultipleStreamCreation(t),
