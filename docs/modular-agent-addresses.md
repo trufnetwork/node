@@ -21,6 +21,9 @@ This document walks the two end-to-end examples:
 > The two component keys sign their own transactions; the **MAA** is the wallet they operate.
 > See the rule store (`048-maa.sql`) and the withdrawal/commission actions (`049-maa-funding.sql`).
 
+Activating the `maa_exec` route on a running network is a coordinated, height-gated rollout —
+see the [MAA activation rollout runbook](./maa-rollout.md).
+
 ## Example 1 — Liquidity Vault Operator
 
 ### The canonical LP allow-list
