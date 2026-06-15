@@ -1240,10 +1240,10 @@ github.com/tklauser/go-sysconf v0.3.14 h1:g5vzr9iPFFz24v2KZXs/pvpvh8/V9Fw6vQK5ZZ
 github.com/tklauser/go-sysconf v0.3.14/go.mod h1:1ym4lWMLUOhuBOPGtRcJm7tEGX4SCYNEEEtghGG/8uY=
 github.com/tklauser/numcpus v0.9.0 h1:lmyCHtANi8aRUgkckBgoDk1nHCux3n2cgkJLXdQGPDo=
 github.com/tklauser/numcpus v0.9.0/go.mod h1:SN6Nq1O3VychhC1npsWostA+oW+VOQTxZrS604NSRyI=
-github.com/trufnetwork/kwil-db v0.10.3-0.20260611144500-9fab49f49c4a h1:RAGVKuGNWVCfjE7VZgDmKAL8+b6NAkf3cERaZBJW9e4=
-github.com/trufnetwork/kwil-db v0.10.3-0.20260611144500-9fab49f49c4a/go.mod h1:LiBAC48uZl2B0IiLtD2hpOce7RNfpuDdghVAOc3u1Qo=
-github.com/trufnetwork/kwil-db/core v0.4.3-0.20260611144500-9fab49f49c4a h1:ofLCuJnD/3zMS38JXNCdv3WkdBrSNDi5+l3GaoBKkJM=
-github.com/trufnetwork/kwil-db/core v0.4.3-0.20260611144500-9fab49f49c4a/go.mod h1:HnOsh9+BN13LJCjiH0+XKaJzyjWKf+H9AofFFp90KwQ=
+github.com/trufnetwork/kwil-db v0.10.3-0.20260615121733-0d71bd259558 h1:I49YGUiUMvEtaWVso+3dLDw9mvZwmRm+yveDmoV1mjA=
+github.com/trufnetwork/kwil-db v0.10.3-0.20260615121733-0d71bd259558/go.mod h1:LiBAC48uZl2B0IiLtD2hpOce7RNfpuDdghVAOc3u1Qo=
+github.com/trufnetwork/kwil-db/core v0.4.3-0.20260615121733-0d71bd259558 h1:m7a9HITFMXJF22QznIKoAdeiH8eZxWPU8IRzgcyNMo8=
+github.com/trufnetwork/kwil-db/core v0.4.3-0.20260615121733-0d71bd259558/go.mod h1:HnOsh9+BN13LJCjiH0+XKaJzyjWKf+H9AofFFp90KwQ=
 github.com/trufnetwork/openzeppelin-merkle-tree-go v0.0.2 h1:DCq8MzbWH0wZmICNmMVsSzUHUPl+2vqRhluEABjxl88=
 github.com/trufnetwork/openzeppelin-merkle-tree-go v0.0.2/go.mod h1:Y0MJpPp9QXU5vC6Gpoilql2NkgmGNcbHm9HYC2v2N8s=
 github.com/trufnetwork/sdk-go v0.6.4-0.20260224122406-a741343e2f37 h1:VD/GWxLTshaXpLukEc1SXbG7QA9HrFzF8JvxJAJ/x7Q=
