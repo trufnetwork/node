@@ -25,7 +25,11 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -o /app/.build/kwild /app/cmd/kwild/main.go
 
-FROM postgres:16-alpine AS pg_repack_builder
+# Pin to alpine3.21 to match the final runtime stage below: the floating
+# `postgres:16-alpine` tag has moved to Alpine 3.24, which dropped the clang19/llvm19
+# packages this stage installs (and built a pg_repack against a newer libc than the
+# alpine:3.21 runtime). Keeping both stages on Alpine 3.21 restores the build and the ABI match.
+FROM postgres:16-alpine3.21 AS pg_repack_builder
 
 # build pg_repack against postgres 16 client libraries
 RUN apk add --no-cache build-base clang19 gawk llvm19 curl zlib-dev readline-dev openssl-dev lz4-dev zstd-dev && \
