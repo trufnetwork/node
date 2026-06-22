@@ -81,3 +81,85 @@ CREATE OR REPLACE ACTION ethereum_transfer($to_address TEXT, $amount TEXT) PUBLI
     NULL
   );
 };
+
+
+-- HOODI TEST TOKEN (TT) TRANSFERS
+CREATE OR REPLACE ACTION hoodi_tt_transfer($to_address TEXT, $amount TEXT) PUBLIC {
+  $recipient_lower TEXT := LOWER($to_address);
+
+  -- Validate Ethereum address format
+  if NOT check_ethereum_address($recipient_lower) {
+    ERROR('Invalid Ethereum address format. Must be a valid Ethereum address: ' || $to_address);
+  }
+
+  -- Validate amount is positive
+  if $amount::NUMERIC(78, 0) <= 0::NUMERIC(78, 0) {
+    ERROR('Transfer amount must be positive');
+  }
+
+  -- Fee
+  $fee := 1000000000000000000::NUMERIC(78, 0); -- 1 TT with 18 decimals
+  $caller_balance := COALESCE(hoodi_tt.balance(@caller), 0::NUMERIC(78, 0));
+
+  IF @leader_sender IS NULL {
+    ERROR('Leader address not available for fee transfer');
+  }
+  $leader_hex TEXT := encode(@leader_sender, 'hex')::TEXT;
+
+  IF ($caller_balance < ($amount::NUMERIC(78, 0) + $fee)) {
+    ERROR('Insufficient balance for transfer. Requires an extra 1 TT fee on top of the transfer amount');
+  }
+
+  hoodi_tt.transfer($leader_hex, $fee);
+
+  -- Execute transfer using the bridge extension
+  hoodi_tt.transfer($to_address, $amount::NUMERIC(78, 0));
+
+  record_transaction_event(
+    4,
+    $fee,
+    '0x' || $leader_hex,
+    NULL
+  );
+};
+
+
+-- HOODI TEST TOKEN 2 (TT2) TRANSFERS
+CREATE OR REPLACE ACTION hoodi_tt2_transfer($to_address TEXT, $amount TEXT) PUBLIC {
+  $recipient_lower TEXT := LOWER($to_address);
+
+  -- Validate Ethereum address format
+  if NOT check_ethereum_address($recipient_lower) {
+    ERROR('Invalid Ethereum address format. Must be a valid Ethereum address: ' || $to_address);
+  }
+
+  -- Validate amount is positive
+  if $amount::NUMERIC(78, 0) <= 0::NUMERIC(78, 0) {
+    ERROR('Transfer amount must be positive');
+  }
+
+  -- Fee
+  $fee := 1000000000000000000::NUMERIC(78, 0); -- 1 TT2 with 18 decimals
+  $caller_balance := COALESCE(hoodi_tt2.balance(@caller), 0::NUMERIC(78, 0));
+
+  IF @leader_sender IS NULL {
+    ERROR('Leader address not available for fee transfer');
+  }
+  $leader_hex TEXT := encode(@leader_sender, 'hex')::TEXT;
+
+  IF ($caller_balance < ($amount::NUMERIC(78, 0) + $fee)) {
+    ERROR('Insufficient balance for transfer. Requires an extra 1 TT2 fee on top of the transfer amount');
+  }
+
+  hoodi_tt2.transfer($leader_hex, $fee);
+
+  -- Execute transfer using the bridge extension
+  hoodi_tt2.transfer($to_address, $amount::NUMERIC(78, 0));
+
+  record_transaction_event(
+    4,
+    $fee,
+    '0x' || $leader_hex,
+    NULL
+  );
+};
