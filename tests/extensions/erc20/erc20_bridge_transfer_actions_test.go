@@ -373,3 +373,100 @@ func getBridgeEscrowAddress(ctx context.Context, platform *kwilTesting.Platform)
 	}
 	return escrow, nil
 }
+
+// hoodi_tt bridge constants (chain + lowercase escrow + erc20), matching erc20-bridge/000-extension.sql.
+// The exact lowercase escrow matches the instance id the migration registered, so InjectERC20Transfer
+// targets that same instance (a different-cased escrow would derive a different id).
+const (
+	hoodiTTChain  = "hoodi"
+	hoodiTTEscrow = "0x878d6aaeb6e746033f50b8dc268d54b4631554e7"
+	hoodiTTERC20  = "0x263ce78fef26600e4e428cebc91c2a52484b4fbf"
+)
+
+// TestHoodiTransferActions tests the hoodi_tt_transfer() wrapper against the hoodi_tt bridge that
+// testnet actually uses. hoodi_tt is registered by erc20-bridge/000-extension.sql and activated in the
+// singleton by ForTestingInitializeExtension. This guards the wrapper added so agent-wallet funding
+// (owner -> MAA) works without a main-namespace transfer action having to be hand-seeded per bridge.
+func TestHoodiTransferActions(t *testing.T) {
+	seedAndRun(t, "hoodi_tt_transfer_actions", func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Activate the bridge singleton (loads + syncs the migration-registered instances, incl. hoodi_tt).
+		require.NoError(t, erc20shim.ForTestingInitializeExtension(ctx, platform))
+
+		// Credit UserA on hoodi_tt: 3.0 TT (1.0 transfer + 1.0 fee + 1.0 remaining). Single deposit -> nil prev.
+		initialAmount := "3000000000000000000"
+		require.NoError(t, testerc20.InjectERC20Transfer(ctx, platform,
+			hoodiTTChain, hoodiTTEscrow, hoodiTTERC20, TestUserA, TestUserA, initialAmount, 10, nil))
+
+		balanceA, err := callHoodiWalletBalance(ctx, platform, TestUserA)
+		require.NoError(t, err)
+		require.Equal(t, initialAmount, balanceA, "UserA should have initial deposit")
+
+		balanceB, err := callHoodiWalletBalance(ctx, platform, TestUserB)
+		require.NoError(t, err)
+		require.Equal(t, "0", balanceB, "UserB should have zero balance initially")
+
+		// Transfer 1.0 TT (+ 1.0 fee) from A to B.
+		err = callHoodiTransfer(ctx, platform, TestUserA, TestUserB, TestAmount1)
+		require.NoError(t, err)
+
+		// UserA: 3.0 - 1.0 transfer - 1.0 fee = 1.0
+		balanceA, err = callHoodiWalletBalance(ctx, platform, TestUserA)
+		require.NoError(t, err)
+		require.Equal(t, TestAmount1, balanceA, "UserA should have remaining amount after transfer + fee")
+
+		// UserB: received exactly the transfer amount (not the fee).
+		balanceB, err = callHoodiWalletBalance(ctx, platform, TestUserB)
+		require.NoError(t, err)
+		require.Equal(t, TestAmount1, balanceB, "UserB should have received transferred amount")
+
+		// Validation: B has 1.0, a 1.0 transfer needs 2.0 (1.0 + 1.0 fee) -> insufficient.
+		err = callHoodiTransfer(ctx, platform, TestUserB, TestUserA, TestAmount1)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "Insufficient balance for transfer")
+		require.Contains(t, err.Error(), "Requires an extra 1 TT fee")
+
+		// Validation: bad recipient address.
+		err = callHoodiTransfer(ctx, platform, TestUserA, "invalid_address", TestAmount1)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "Invalid Ethereum address format")
+
+		return nil
+	})
+}
+
+// Helper function to call hoodi_tt_transfer action
+func callHoodiTransfer(ctx context.Context, platform *kwilTesting.Platform, from, to, amount string) error {
+	engineCtx := engCtx(ctx, platform, from, 1, false)
+
+	res, err := platform.Engine.Call(engineCtx, platform.DB, "", "hoodi_tt_transfer", []any{to, amount}, func(row *common.Row) error {
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if res != nil && res.Error != nil {
+		return res.Error
+	}
+	return nil
+}
+
+// Helper function to call hoodi_tt_wallet_balance action
+func callHoodiWalletBalance(ctx context.Context, platform *kwilTesting.Platform, userAddr string) (string, error) {
+	engineCtx := engCtx(ctx, platform, "0x0000000000000000000000000000000000000000", 1, false)
+
+	var balance string
+	res, err := platform.Engine.Call(engineCtx, platform.DB, "", "hoodi_tt_wallet_balance", []any{userAddr}, func(row *common.Row) error {
+		if len(row.Values) != 1 {
+			return fmt.Errorf("expected 1 column, got %d", len(row.Values))
+		}
+		balance = row.Values[0].(*types.Decimal).String()
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if res != nil && res.Error != nil {
+		return "", res.Error
+	}
+	return balance, nil
+}
