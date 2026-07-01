@@ -457,6 +457,46 @@ func SetupCacheExtension(ctx context.Context, config *config.ProcessedConfig, en
 	return NewExtension(service.Logger, cacheDB, scheduler, syncChecker, metricsRecorder, engineOps, db, config.Enabled), nil
 }
 
+// cacheLockTimeoutMillis bounds (in milliseconds) how long a cache read or
+// write waits on a Postgres table lock before failing. See the lock_timeout
+// rationale in createIndependentConnectionPool.
+const cacheLockTimeoutMillis = "3000"
+
+// buildCachePoolConfig parses the connection string and applies the cache pool
+// tuning and the bounded lock_timeout. It is separated from pool creation so a
+// unit test can assert the lock_timeout is wired without needing a live database.
+func buildCachePoolConfig(connStr string) (*pgxpool.Config, error) {
+	poolConfig, err := pgxpool.ParseConfig(connStr)
+	if err != nil {
+		return nil, fmt.Errorf("parse pool config: %w", err)
+	}
+
+	// Configure pool specifically for cache operations
+	poolConfig.MaxConns = 10 // Dedicated connections for cache operations
+	poolConfig.MinConns = 2  // Keep minimum connections ready
+	poolConfig.MaxConnLifetime = 30 * time.Minute
+	poolConfig.MaxConnIdleTime = 5 * time.Minute
+
+	// Bound how long a cache read/write waits on a Postgres table lock. Cache
+	// reads of streams/taxonomies run through the engine interpreter (to reuse
+	// composed-stream logic), so they hold the interpreter read lock for the
+	// duration of the query. If an in-block DDL (ALTER/DROP/etc.) holds an
+	// AccessExclusiveLock on one of those tables, an unbounded wait would keep the
+	// interpreter lock held and deadlock block production. A finite lock_timeout
+	// makes the read fail fast, release the interpreter lock, and retry next tick.
+	// Ordinary DML never conflicts with a SELECT's AccessShareLock, so this only
+	// trips during real DDL contention. Cache writes target ext_tn_cache (owned
+	// exclusively by this extension) and simply retry on the next refresh.
+	// Set as a startup parameter so it applies to every connection and stays
+	// introspectable for tests.
+	if poolConfig.ConnConfig.RuntimeParams == nil {
+		poolConfig.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	poolConfig.ConnConfig.RuntimeParams["lock_timeout"] = cacheLockTimeoutMillis
+
+	return poolConfig, nil
+}
+
 // createIndependentConnectionPool creates a dedicated connection pool for cache operations
 func createIndependentConnectionPool(ctx context.Context, service *common.Service, logger log.Logger) (*pgxpool.Pool, error) {
 	// Check for test DB config override first
@@ -470,17 +510,10 @@ func createIndependentConnectionPool(ctx context.Context, service *common.Servic
 		connStr += " password=" + dbConfig.Pass
 	}
 
-	// Parse configuration to customize pool settings
-	poolConfig, err := pgxpool.ParseConfig(connStr)
+	poolConfig, err := buildCachePoolConfig(connStr)
 	if err != nil {
-		return nil, fmt.Errorf("parse pool config: %w", err)
+		return nil, err
 	}
-
-	// Configure pool specifically for cache operations
-	poolConfig.MaxConns = 10 // Dedicated connections for cache operations
-	poolConfig.MinConns = 2  // Keep minimum connections ready
-	poolConfig.MaxConnLifetime = 30 * time.Minute
-	poolConfig.MaxConnIdleTime = 5 * time.Minute
 
 	// Create the pool
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)

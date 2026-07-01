@@ -29,6 +29,7 @@ type EngineOperations struct {
 	logger   log.Logger
 	db       sql.DB
 	dbPool   sql.DelayedReadTxMaker // For fresh read transactions in background jobs
+	readDB   sql.DB                 // Independent read handle for poll reads; bypasses the engine interpreter lock
 	accounts common.Accounts
 }
 
@@ -39,11 +40,19 @@ type UnsettledMarket struct {
 	SettleTime int64  // Unix timestamp
 }
 
-func NewEngineOperations(engine common.Engine, db sql.DB, dbPool sql.DelayedReadTxMaker, accounts common.Accounts, logger log.Logger) *EngineOperations {
+// NewEngineOperations builds the settlement engine-ops wrapper.
+//
+// readDB is an independent read handle (a *ReadPool in production) used for all
+// poll-time SELECTs. It runs plain SQL and does NOT go through the engine
+// interpreter, so a settlement read can never hold the interpreter lock while
+// waiting on a Postgres table lock — the deadlock this fixes. In tests readDB
+// may be the platform tx so reads observe the test's uncommitted writes.
+func NewEngineOperations(engine common.Engine, db sql.DB, dbPool sql.DelayedReadTxMaker, readDB sql.DB, accounts common.Accounts, logger log.Logger) *EngineOperations {
 	return &EngineOperations{
 		engine:   engine,
 		db:       db,
 		dbPool:   dbPool,
+		readDB:   readDB,
 		accounts: accounts,
 		logger:   logger.New("settlement_ops"),
 	}
@@ -59,73 +68,40 @@ func isAccountNotFoundError(err error) bool {
 	return strings.Contains(msg, "not found") || strings.Contains(msg, "no rows")
 }
 
-// getFreshReadTx returns a fresh database connection for read operations.
-// This is critical for background scheduler operations where e.db may be stale/closed.
-// Returns: (db, cleanup function, error)
-// The cleanup function MUST be called (via defer) to rollback the read transaction.
-func (e *EngineOperations) getFreshReadTx(ctx context.Context) (sql.DB, func(), error) {
-	if e.dbPool != nil {
-		readTx := e.dbPool.BeginDelayedReadTx()
-		cleanup := func() {
-			readTx.Rollback(ctx)
-		}
-		return readTx, cleanup, nil
+// toInt64 coerces a decoded SQL integer value (INT/INT8/etc. decode to int64)
+// to an int64. It returns false for NULLs or unexpected types.
+func toInt64(v any) (int64, bool) {
+	switch n := v.(type) {
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	case int32:
+		return int64(n), true
+	default:
+		return 0, false
 	}
-	// Fallback to stored db (may fail if tx is closed, but better than nothing)
-	e.logger.Warn("dbPool is nil, falling back to stored db connection (may be stale)")
-	return e.db, func() {}, nil
 }
 
 // LoadSettlementConfig reads the single-row settlement configuration
 // Returns (enabled, schedule, maxMarketsPerRun, retryAttempts)
-// If table/row missing, returns false, "", 10, 3 and no error
+// If table/row missing, returns false, "", 10, 3 and no error.
+//
+// The read runs on the independent readDB handle (plain SQL, no engine
+// interpreter) so it cannot deadlock against in-block DDL. This method is
+// invoked both from the background scheduler and, periodically, from within
+// EndBlock; the readDB's bounded lock_timeout ensures the EndBlock call fails
+// fast (surfacing an error to the caller's retry path) rather than hanging.
 func (e *EngineOperations) LoadSettlementConfig(ctx context.Context) (bool, string, int, int, error) {
-	var (
-		enabled    bool
-		schedule   string
-		maxMarkets int
-		retries    int
-		found      bool
-	)
-
-	// Use fresh read transaction from pool to avoid stale connection issues
-	// in background scheduler contexts where e.db may be closed
-	db, cleanup, err := e.getFreshReadTx(ctx)
-	if err != nil {
-		return false, "", 10, 3, fmt.Errorf("get fresh read tx: %w", err)
+	if e.readDB == nil {
+		return false, "", 10, 3, fmt.Errorf("settlement read handle not initialized")
 	}
-	defer cleanup()
 
-	// Read using engine without engine ctx (owner-level read)
-	err = e.engine.ExecuteWithoutEngineCtx(ctx, db,
+	rs, err := e.readDB.Execute(ctx,
 		`SELECT enabled, settlement_schedule, max_markets_per_run, retry_attempts
-		 FROM main.settlement_config WHERE id = 1`, nil,
-		func(row *common.Row) error {
-			if len(row.Values) >= 4 {
-				if v, ok := row.Values[0].(bool); ok {
-					enabled = v
-				}
-				if s, ok := row.Values[1].(string); ok {
-					schedule = s
-				}
-				if m, ok := row.Values[2].(int); ok {
-					maxMarkets = m
-				} else if m64, ok := row.Values[2].(int64); ok {
-					maxMarkets = int(m64)
-				}
-				if r, ok := row.Values[3].(int); ok {
-					retries = r
-				} else if r64, ok := row.Values[3].(int64); ok {
-					retries = int(r64)
-				}
-				found = true
-			}
-			return nil
-		})
-
+		 FROM main.settlement_config WHERE id = 1`)
 	if err != nil {
 		// tolerate missing table; everything else should surface to caller
-		// TODO: Use typed error from engine API if available
 		msg := strings.ToLower(err.Error())
 		if strings.Contains(msg, "settlement_config") &&
 			(strings.Contains(msg, "does not exist") ||
@@ -137,125 +113,96 @@ func (e *EngineOperations) LoadSettlementConfig(ctx context.Context) (bool, stri
 		}
 		return false, "", 10, 3, err
 	}
-	if !found {
+
+	if len(rs.Rows) == 0 || len(rs.Rows[0]) < 4 {
 		return false, "", 10, 3, nil
+	}
+
+	row := rs.Rows[0]
+	enabled, _ := row[0].(bool)
+	schedule, _ := row[1].(string)
+	maxMarkets := 10
+	if n, ok := toInt64(row[2]); ok {
+		maxMarkets = int(n)
+	}
+	retries := 3
+	if n, ok := toInt64(row[3]); ok {
+		retries = int(n)
 	}
 	return enabled, schedule, maxMarkets, retries, nil
 }
 
 // FindUnsettledMarkets queries for markets past settle_time that haven't been settled yet
-// Uses the current Unix timestamp to determine which markets are ready
+// Uses the current Unix timestamp to determine which markets are ready.
+//
+// Reads run on the independent readDB handle (plain SQL, positional params,
+// main-schema-qualified) rather than through the engine interpreter.
 func (e *EngineOperations) FindUnsettledMarkets(ctx context.Context, limit int) ([]*UnsettledMarket, error) {
-	var markets []*UnsettledMarket
+	if e.readDB == nil {
+		return nil, fmt.Errorf("settlement read handle not initialized")
+	}
 
 	// Get current Unix timestamp for comparison
 	currentTime := time.Now().Unix()
 
-	// Query: SELECT id, hash, settle_time FROM ob_queries
-	//        WHERE settled = FALSE AND settle_time <= $current_time
-	//        ORDER BY settle_time ASC LIMIT $limit
-	query := `
-		SELECT id, hash, settle_time
-		FROM ob_queries
-		WHERE settled = false AND settle_time <= $current_time
-		ORDER BY settle_time ASC
-		LIMIT $limit
-	`
-
-	// Use fresh read transaction from pool to avoid stale connection issues
-	db, cleanup, err := e.getFreshReadTx(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("get fresh read tx: %w", err)
-	}
-	defer cleanup()
-
-	err = e.engine.ExecuteWithoutEngineCtx(ctx, db, query,
-		map[string]any{
-			"current_time": currentTime,
-			"limit":        int64(limit),
-		},
-		func(row *common.Row) error {
-			if len(row.Values) >= 3 {
-				// Extract values with type assertions
-				var id int
-				var hash []byte
-				var settleTime int64
-
-				// Handle id (can be int32 or int64)
-				switch v := row.Values[0].(type) {
-				case int:
-					id = v
-				case int32:
-					id = int(v)
-				case int64:
-					id = int(v)
-				default:
-					return fmt.Errorf("unexpected type for id: %T", v)
-				}
-
-				// Handle hash
-				var ok bool
-				hash, ok = row.Values[1].([]byte)
-				if !ok {
-					return fmt.Errorf("unexpected type for hash: %T", row.Values[1])
-				}
-
-				// Handle settle_time
-				switch v := row.Values[2].(type) {
-				case int64:
-					settleTime = v
-				case int:
-					settleTime = int64(v)
-				default:
-					return fmt.Errorf("unexpected type for settle_time: %T", v)
-				}
-
-				market := &UnsettledMarket{
-					ID:         id,
-					Hash:       hash,
-					SettleTime: settleTime,
-				}
-				markets = append(markets, market)
-			}
-			return nil
-		})
-
+	rs, err := e.readDB.Execute(ctx,
+		`SELECT id, hash, settle_time
+		 FROM main.ob_queries
+		 WHERE settled = false AND settle_time <= $1
+		 ORDER BY settle_time ASC
+		 LIMIT $2`,
+		currentTime, int64(limit))
 	if err != nil {
 		return nil, fmt.Errorf("query unsettled markets: %w", err)
+	}
+
+	markets := make([]*UnsettledMarket, 0, len(rs.Rows))
+	for _, row := range rs.Rows {
+		if len(row) < 3 {
+			continue
+		}
+
+		idVal, ok := toInt64(row[0])
+		if !ok {
+			return nil, fmt.Errorf("unexpected type for id: %T", row[0])
+		}
+		hash, ok := row[1].([]byte)
+		if !ok {
+			return nil, fmt.Errorf("unexpected type for hash: %T", row[1])
+		}
+		settleTime, ok := toInt64(row[2])
+		if !ok {
+			return nil, fmt.Errorf("unexpected type for settle_time: %T", row[2])
+		}
+
+		markets = append(markets, &UnsettledMarket{
+			ID:         int(idVal),
+			Hash:       hash,
+			SettleTime: settleTime,
+		})
 	}
 
 	return markets, nil
 }
 
-// AttestationExists checks if a signed attestation exists for the given hash
+// AttestationExists checks if a signed attestation exists for the given hash.
+//
+// Reads run on the independent readDB handle rather than the engine interpreter.
 func (e *EngineOperations) AttestationExists(ctx context.Context, marketHash []byte) (bool, error) {
-	var exists bool
-
-	query := `
-		SELECT 1 FROM attestations
-		WHERE attestation_hash = $hash AND signature IS NOT NULL
-		LIMIT 1
-	`
-
-	// Use fresh read transaction from pool to avoid stale connection issues
-	db, cleanup, err := e.getFreshReadTx(ctx)
-	if err != nil {
-		return false, fmt.Errorf("get fresh read tx: %w", err)
+	if e.readDB == nil {
+		return false, fmt.Errorf("settlement read handle not initialized")
 	}
-	defer cleanup()
 
-	err = e.engine.ExecuteWithoutEngineCtx(ctx, db, query,
-		map[string]any{"hash": marketHash},
-		func(row *common.Row) error {
-			exists = true
-			return nil
-		})
-
+	rs, err := e.readDB.Execute(ctx,
+		`SELECT 1 FROM main.attestations
+		 WHERE attestation_hash = $1 AND signature IS NOT NULL
+		 LIMIT 1`,
+		marketHash)
 	if err != nil {
 		return false, fmt.Errorf("check attestation: %w", err)
 	}
 
-	return exists, nil
+	return len(rs.Rows) > 0, nil
 }
 
 // BroadcastSettleMarketWithRetry broadcasts settle_market transaction with retry logic.
@@ -417,46 +364,32 @@ func (e *EngineOperations) broadcastSettleMarketWithFreshNonce(
 	return hash, nil
 }
 
-// GetMarketQueryComponents fetches and decodes query_components for a market
+// GetMarketQueryComponents fetches and decodes query_components for a market.
+//
+// Reads run on the independent readDB handle rather than the engine interpreter.
 func (e *EngineOperations) GetMarketQueryComponents(ctx context.Context, queryID int) (*QueryComponents, error) {
-	var queryComponentsBytes []byte
-	var foundRow bool
-	var foundData bool
-
-	// Use fresh read transaction from pool to avoid stale connection issues
-	db, cleanup, err := e.getFreshReadTx(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("get fresh read tx: %w", err)
+	if e.readDB == nil {
+		return nil, fmt.Errorf("settlement read handle not initialized")
 	}
-	defer cleanup()
 
-	err = e.engine.ExecuteWithoutEngineCtx(ctx, db,
-		`SELECT query_components FROM ob_queries WHERE id = $query_id`,
-		map[string]any{"query_id": int64(queryID)},
-		func(row *common.Row) error {
-			if len(row.Values) >= 1 {
-				foundRow = true
-				if row.Values[0] == nil {
-					return fmt.Errorf("query_components is NULL for query_id=%d", queryID)
-				}
-				bytes, ok := row.Values[0].([]byte)
-				if !ok {
-					return fmt.Errorf("unexpected query_components type: %T", row.Values[0])
-				}
-				queryComponentsBytes = bytes
-				foundData = true
-			}
-			return nil
-		})
-
+	rs, err := e.readDB.Execute(ctx,
+		`SELECT query_components FROM main.ob_queries WHERE id = $1`,
+		int64(queryID))
 	if err != nil {
 		return nil, fmt.Errorf("fetch query_components: %w", err)
 	}
-	if !foundRow {
+
+	if len(rs.Rows) == 0 || len(rs.Rows[0]) < 1 {
 		return nil, fmt.Errorf("market not found: query_id=%d", queryID)
 	}
-	if !foundData {
-		return nil, fmt.Errorf("query_components missing or invalid for query_id=%d", queryID)
+
+	raw := rs.Rows[0][0]
+	if raw == nil {
+		return nil, fmt.Errorf("query_components is NULL for query_id=%d", queryID)
+	}
+	queryComponentsBytes, ok := raw.([]byte)
+	if !ok {
+		return nil, fmt.Errorf("unexpected query_components type: %T", raw)
 	}
 
 	return decodeQueryComponents(queryComponentsBytes)

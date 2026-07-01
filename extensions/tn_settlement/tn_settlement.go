@@ -58,9 +58,25 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 		logger.Warn("app.DB is nil; settlement extension may not be fully operational")
 	}
 
+	// Build an independent read-only pool for the scheduler's poll reads. These
+	// reads bypass the engine interpreter so a settlement read can never hold the
+	// interpreter lock while waiting on a Postgres table lock — the condition that
+	// previously deadlocked the chain against in-block DDL.
+	//
+	// Fail-closed: if the pool can't be built, readDB stays nil and settlement
+	// reads return errors (the scheduler skips and retries) rather than falling
+	// back to the interpreter and reintroducing the deadlock.
+	var readDB sql.DB
+	readPool, poolErr := internal.NewReadPool(ctx, app.Service, logger)
+	if poolErr != nil {
+		logger.Warn("failed to create settlement read pool; settlement reads disabled until restart", "error", poolErr)
+	} else {
+		readDB = readPool
+	}
+
 	// Build engine operations wrapper
-	// Pass DBPool for fresh read transactions in background jobs
-	engOps := internal.NewEngineOperations(app.Engine, db, app.Service.DBPool, app.Accounts, app.Service.Logger)
+	// Pass DBPool for fresh read transactions in background jobs and readDB for poll reads
+	engOps := internal.NewEngineOperations(app.Engine, db, app.Service.DBPool, readDB, app.Accounts, app.Service.Logger)
 
 	// Load schedule from config; fall back to defaults if absent
 	enabled, schedule, maxMarkets, retries, _ := engOps.LoadSettlementConfig(ctx)
@@ -79,6 +95,7 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 	ext.logger = logger
 	ext.SetService(app.Service)
 	ext.SetEngineOps(engOps)
+	ext.SetReadPool(readPool)
 	ext.SetConfig(enabled, schedule, maxMarkets, retries)
 
 	// Load config from node TOML [extensions.tn_settlement]

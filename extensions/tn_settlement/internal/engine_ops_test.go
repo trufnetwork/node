@@ -12,13 +12,36 @@ import (
 
 	gethAbi "github.com/ethereum/go-ethereum/accounts/abi"
 	gethCommon "github.com/ethereum/go-ethereum/common"
-	"github.com/trufnetwork/kwil-db/common"
+	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/core/crypto"
 	"github.com/trufnetwork/kwil-db/core/crypto/auth"
 	"github.com/trufnetwork/kwil-db/core/log"
 	ktypes "github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
 )
+
+// TestPollReads_FailClosedWhenReadDBNil asserts the settlement poll reads fail
+// closed when the independent read handle was never built (e.g. the pool could
+// not be created at startup). This is the fix's central safety property: reads
+// must error out rather than silently fall back to the engine interpreter, which
+// is what would reintroduce the deadlock this change eliminates.
+func TestPollReads_FailClosedWhenReadDBNil(t *testing.T) {
+	ops := &EngineOperations{logger: log.New()} // readDB deliberately nil
+	ctx := context.Background()
+	const want = "settlement read handle not initialized"
+
+	_, _, _, _, err := ops.LoadSettlementConfig(ctx)
+	require.ErrorContains(t, err, want, "LoadSettlementConfig must fail closed")
+
+	_, err = ops.FindUnsettledMarkets(ctx, 10)
+	require.ErrorContains(t, err, want, "FindUnsettledMarkets must fail closed")
+
+	_, err = ops.AttestationExists(ctx, []byte{0x01})
+	require.ErrorContains(t, err, want, "AttestationExists must fail closed")
+
+	_, err = ops.GetMarketQueryComponents(ctx, 1)
+	require.ErrorContains(t, err, want, "GetMarketQueryComponents must fail closed")
+}
 
 // =============================================================================
 // Mock implementations for testing
@@ -568,14 +591,14 @@ func TestRequestAttestationForMarket_VerifyTransactionStructure(t *testing.T) {
 		t.Fatalf("Failed to encode query components: %v", err)
 	}
 
-	mockEngine := &mockEngineForQueryComponents{
+	readDB := &mockReadDBForQueryComponents{
 		queryComponents: queryComponents,
 	}
 
 	ops := &EngineOperations{
 		logger:   log.New(),
 		accounts: accounts,
-		engine:   mockEngine,
+		readDB:   readDB,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
@@ -650,29 +673,23 @@ func encodeQueryComponentsForTest(dataProvider, streamID, actionName string, arg
 	return args.Pack(addr, streamIDBytes32, actionName, argsBytes)
 }
 
-// Mock engine for query components test
-type mockEngineForQueryComponents struct {
+// Mock read handle for query components test. GetMarketQueryComponents now reads
+// via the independent readDB handle (plain SQL), so the test supplies the row
+// directly rather than through the engine.
+type mockReadDBForQueryComponents struct {
 	queryComponents []byte
 }
 
-// Compile-time check that mockEngineForQueryComponents implements common.Engine
-var _ common.Engine = (*mockEngineForQueryComponents)(nil)
+// Compile-time check that mockReadDBForQueryComponents implements sql.DB
+var _ sql.DB = (*mockReadDBForQueryComponents)(nil)
 
-func (m *mockEngineForQueryComponents) ExecuteWithoutEngineCtx(ctx context.Context, db sql.DB, stmt string, params map[string]any, fn func(*common.Row) error) error {
-	// Return mock query_components
-	row := &common.Row{
-		Values: []any{m.queryComponents},
-	}
-	return fn(row)
+func (m *mockReadDBForQueryComponents) Execute(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
+	return &sql.ResultSet{
+		Columns: []string{"query_components"},
+		Rows:    [][]any{{m.queryComponents}},
+	}, nil
 }
 
-// Satisfy the Engine interface - these are not used in our tests
-func (m *mockEngineForQueryComponents) Call(ctx *common.EngineContext, db sql.DB, namespace, action string, args []any, fn func(*common.Row) error) (*common.CallResult, error) {
-	return nil, nil
-}
-func (m *mockEngineForQueryComponents) CallWithoutEngineCtx(ctx context.Context, db sql.DB, namespace, action string, args []any, fn func(*common.Row) error) (*common.CallResult, error) {
-	return nil, nil
-}
-func (m *mockEngineForQueryComponents) Execute(ctx *common.EngineContext, db sql.DB, stmt string, params map[string]any, fn func(*common.Row) error) error {
-	return nil
+func (m *mockReadDBForQueryComponents) BeginTx(ctx context.Context) (sql.Tx, error) {
+	return nil, fmt.Errorf("mock read handle does not support transactions")
 }
