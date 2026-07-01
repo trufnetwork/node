@@ -31,6 +31,7 @@ type Extension struct {
 
 	// lifecycle wiring
 	engineOps *internal.EngineOperations
+	readPool  *internal.ReadPool // independent read pool backing engineOps' poll reads; closed on shutdown
 	service   *common.Service
 
 	// config snapshot
@@ -111,18 +112,19 @@ func NewExtension(logger log.Logger, sched *scheduler.SettlementScheduler) *Exte
 	}
 }
 
-func (e *Extension) Logger() log.Logger                           { return e.logger }
-func (e *Extension) Scheduler() *scheduler.SettlementScheduler    { return e.scheduler }
-func (e *Extension) IsLeader() bool                               { return e.isLeader.Load() }
-func (e *Extension) setLeader(v bool)                             { e.isLeader.Store(v) }
-func (e *Extension) EngineOps() *internal.EngineOperations        { return e.engineOps }
-func (e *Extension) SetEngineOps(ops *internal.EngineOperations)  { e.engineOps = ops }
-func (e *Extension) Service() *common.Service                     { return e.service }
-func (e *Extension) SetService(s *common.Service)                 { e.service = s }
-func (e *Extension) ConfigEnabled() bool                          { return e.enabled }
-func (e *Extension) Schedule() string                             { return e.schedule }
-func (e *Extension) MaxMarketsPerRun() int                        { return e.maxMarketsPerRun }
-func (e *Extension) RetryAttempts() int                           { return e.retryAttempts }
+func (e *Extension) Logger() log.Logger                          { return e.logger }
+func (e *Extension) Scheduler() *scheduler.SettlementScheduler   { return e.scheduler }
+func (e *Extension) IsLeader() bool                              { return e.isLeader.Load() }
+func (e *Extension) setLeader(v bool)                            { e.isLeader.Store(v) }
+func (e *Extension) EngineOps() *internal.EngineOperations       { return e.engineOps }
+func (e *Extension) SetEngineOps(ops *internal.EngineOperations) { e.engineOps = ops }
+func (e *Extension) SetReadPool(p *internal.ReadPool)            { e.readPool = p }
+func (e *Extension) Service() *common.Service                    { return e.service }
+func (e *Extension) SetService(s *common.Service)                { e.service = s }
+func (e *Extension) ConfigEnabled() bool                         { return e.enabled }
+func (e *Extension) Schedule() string                            { return e.schedule }
+func (e *Extension) MaxMarketsPerRun() int                       { return e.maxMarketsPerRun }
+func (e *Extension) RetryAttempts() int                          { return e.retryAttempts }
 func (e *Extension) SetScheduler(s *scheduler.SettlementScheduler) {
 	e.mu.Lock()
 	oldScheduler := e.scheduler
@@ -150,8 +152,8 @@ func (e *Extension) SetConfig(enabled bool, schedule string, maxMarkets, retries
 
 func (e *Extension) SetReloadIntervalBlocks(v int64)       { e.reloadIntervalBlocks = v }
 func (e *Extension) ReloadIntervalBlocks() int64           { return e.reloadIntervalBlocks }
-func (e *Extension) SetLastCheckedHeight(h int64) { atomic.StoreInt64(&e.lastCheckedHeight, h) }
-func (e *Extension) LastCheckedHeight() int64     { return atomic.LoadInt64(&e.lastCheckedHeight) }
+func (e *Extension) SetLastCheckedHeight(h int64)          { atomic.StoreInt64(&e.lastCheckedHeight, h) }
+func (e *Extension) LastCheckedHeight() int64              { return atomic.LoadInt64(&e.lastCheckedHeight) }
 func (e *Extension) SetReloadRetryBackoff(d time.Duration) { e.reloadRetryBackoff = d }
 func (e *Extension) ReloadRetryBackoff() time.Duration {
 	if e.reloadRetryBackoff == 0 {
@@ -347,6 +349,10 @@ func (e *Extension) Close() {
 	e.stopRetryWorker()
 	if e.scheduler != nil {
 		_ = e.scheduler.Stop()
+	}
+	// Release the independent read pool's connections.
+	if e.readPool != nil {
+		e.readPool.Close()
 	}
 	// Cancel shutdown context to signal any operations using it
 	e.mu.Lock()
