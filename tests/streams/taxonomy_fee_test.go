@@ -42,7 +42,7 @@ func TestTaxonomyFees(t *testing.T) {
 			testTaxonomyNonExemptWalletPaysFee(t),
 			testTaxonomyInsufficientBalance(t),
 			testTaxonomyMultipleChildrenChargesFlatFee(t),
-			testTaxonomyUnenrolledWalletWritesFree(t),
+			testTaxonomyUnenrolledWalletStillPaysFee(t),
 		},
 	}, testutils.GetTestOptionsWithCache())
 }
@@ -80,11 +80,6 @@ func testTaxonomyWriterRolePaysFee(t *testing.T) func(ctx context.Context, platf
 		// Register as data provider (also grants network_writer role; no longer exempts).
 		err := setup.CreateDataProvider(ctx, platform, writerAddr.Address())
 		require.NoError(t, err, "failed to create data provider")
-
-		// Enroll wallet in fee_required (phased rollout per #3805 — only
-		// enrolled wallets pay; the test asserts fees are charged).
-		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", writerAddr.Address())
-		require.NoError(t, err, "failed to enroll in fee_required role")
 
 		err = giveBalance(ctx, platform, writerAddr.Address(), "300000000000000000000") // 300 TRUF
 		require.NoError(t, err, "failed to give balance")
@@ -132,10 +127,6 @@ func testTaxonomyNonExemptWalletPaysFee(t *testing.T) func(ctx context.Context, 
 		// Register data provider WITHOUT role (non-whitelisted - will pay fees)
 		err := setup.CreateDataProviderWithoutRole(ctx, platform, nonExemptAddr.Address())
 		require.NoError(t, err, "failed to create data provider without role")
-
-		// Enroll wallet in fee_required so taxonomy writes are charged.
-		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", nonExemptAddr.Address())
-		require.NoError(t, err, "failed to enroll in fee_required role")
 
 		// Give exactly 201 TRUF: 100 (composed) + 100 (child) + 1 (taxonomy)
 		exactFund := mustParseBigInt("201000000000000000000") // 201 TRUF
@@ -191,11 +182,6 @@ func testTaxonomyInsufficientBalance(t *testing.T) func(ctx context.Context, pla
 		err := setup.CreateDataProviderWithoutRole(ctx, platform, insufficientAddr.Address())
 		require.NoError(t, err, "failed to create data provider without role")
 
-		// Enroll wallet so the insufficient-balance ERROR fires on the
-		// taxonomy step (un-enrolled wallets bypass the balance check).
-		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", insufficientAddr.Address())
-		require.NoError(t, err, "failed to enroll in fee_required role")
-
 		// Give exactly 200 TRUF: enough for two create_stream calls (100 + 100)
 		// but nothing left over for the 1 TRUF taxonomy fee.
 		twoHundredTRUF := mustParseBigInt("200000000000000000000")
@@ -243,11 +229,6 @@ func testTaxonomyMultipleChildrenChargesFlatFee(t *testing.T) func(ctx context.C
 		// Register data provider WITHOUT role
 		err := setup.CreateDataProviderWithoutRole(ctx, platform, multiAddr.Address())
 		require.NoError(t, err, "failed to create data provider without role")
-
-		// Enroll wallet in fee_required so the multi-child taxonomy is
-		// charged at the flat 1 TRUF.
-		err = setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", multiAddr.Address())
-		require.NoError(t, err, "failed to enroll in fee_required role")
 
 		// Give exactly 401 TRUF: 100 (composed) + 300 (3 children) + 1 (taxonomy, flat).
 		// If the migration were still per-child, the 3-child taxonomy would
@@ -300,48 +281,49 @@ func testTaxonomyMultipleChildrenChargesFlatFee(t *testing.T) func(ctx context.C
 	}
 }
 
-// Test 5: A wallet not enrolled in system:fee_required pays the universal
-// stream creation fee (100 TRUF/stream) but the taxonomy insertion is free.
-// Phased rollout of #3805 — insert_taxonomy fee only fires for enrolled wallets.
-func testTaxonomyUnenrolledWalletWritesFree(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+// Test 5: A wallet with no fee-related role membership still pays the
+// insert_taxonomy fee. Regression check that the phased-rollout exemption
+// has been removed (issue #3805 universal charging) — after two 100-TRUF
+// stream creates, the 1-TRUF taxonomy fee is charged like everybody else.
+func testTaxonomyUnenrolledWalletStillPaysFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
-		freeAddrVal := util.Unsafe_NewEthereumAddressFromString("0x6555555555555555555555555555555555555555")
-		freeAddr := &freeAddrVal
+		userAddrVal := util.Unsafe_NewEthereumAddressFromString("0x6555555555555555555555555555555555555555")
+		userAddr := &userAddrVal
 
-		err := setup.CreateDataProviderWithoutRole(ctx, platform, freeAddr.Address())
+		err := setup.CreateDataProviderWithoutRole(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to create data provider without role")
 
-		// Fund with exactly 200 TRUF for two stream creations (100 each, universal).
-		// NOT enrolled in fee_required — taxonomy itself should be free.
-		err = giveBalance(ctx, platform, freeAddr.Address(), "200000000000000000000")
+		// Fund exactly 201 TRUF: 100 (composed) + 100 (child) + 1 (taxonomy).
+		// No fee-related role membership — the taxonomy fee applies anyway.
+		err = giveBalance(ctx, platform, userAddr.Address(), "201000000000000000000")
 		require.NoError(t, err, "failed to give balance")
 
-		composedStreamId := util.GenerateStreamId("taxonomy_free_composed")
-		childStreamId := util.GenerateStreamId("taxonomy_free_child")
+		composedStreamId := util.GenerateStreamId("taxonomy_unenrolled_composed")
+		childStreamId := util.GenerateStreamId("taxonomy_unenrolled_child")
 
-		err = createStream(ctx, platform, freeAddr, composedStreamId.String(), "composed")
+		err = createStream(ctx, platform, userAddr, composedStreamId.String(), "composed")
 		require.NoError(t, err, "failed to create composed stream")
 
-		err = createStream(ctx, platform, freeAddr, childStreamId.String(), "primitive")
+		err = createStream(ctx, platform, userAddr, childStreamId.String(), "primitive")
 		require.NoError(t, err, "failed to create child stream")
 
-		// After 2 stream creations (200 TRUF spent), balance should be 0
-		balanceAfterStreams, err := getBalance(ctx, platform, freeAddr.Address())
+		// After 2 stream creations (200 TRUF spent), balance should be 1 TRUF.
+		balanceAfterStreams, err := getBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to get balance after stream creation")
-		require.Equal(t, big.NewInt(0), balanceAfterStreams, "Balance should be 0 after creating streams")
+		require.Equal(t, oneTRUFTaxonomy, balanceAfterStreams, "Balance should be 1 TRUF after creating streams")
 
-		// Taxonomy insertion should succeed for free (not enrolled in fee_required)
-		err = insertTaxonomy(ctx, platform, freeAddr,
-			freeAddr.Address(), composedStreamId.String(),
-			[]string{freeAddr.Address()},
+		// Taxonomy insertion is charged the universal 1 TRUF — no exemption.
+		err = insertTaxonomy(ctx, platform, userAddr,
+			userAddr.Address(), composedStreamId.String(),
+			[]string{userAddr.Address()},
 			[]string{childStreamId.String()},
 			[]string{"1.0"},
 			nil)
-		require.NoError(t, err, "un-enrolled wallet should insert taxonomy for free")
+		require.NoError(t, err, "un-enrolled wallet should insert taxonomy, paying the universal fee")
 
-		finalBalance, err := getBalance(ctx, platform, freeAddr.Address())
+		finalBalance, err := getBalance(ctx, platform, userAddr.Address())
 		require.NoError(t, err, "failed to get final balance")
-		require.Equal(t, big.NewInt(0), finalBalance, "un-enrolled wallet must not be charged for taxonomy insertion")
+		require.Equal(t, big.NewInt(0), finalBalance, "un-enrolled wallet must pay the 1 TRUF taxonomy fee — exemption removed")
 
 		return nil
 	}

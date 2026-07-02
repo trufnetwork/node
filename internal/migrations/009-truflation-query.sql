@@ -49,10 +49,35 @@ CREATE OR REPLACE ACTION truflation_insert_records(
     -- Use helper function to avoid expensive for-loop roundtrips
     $data_providers := helper_lowercase_array($data_provider);
     $lower_caller TEXT := LOWER(@caller);
+    $fee_total NUMERIC(78, 0) := 0::NUMERIC(78, 0);
+    $fee_recipient TEXT := NULL;
+    $leader_hex TEXT := NULL;
     $num_records INT := array_length($data_provider);
     if $num_records != array_length($stream_id) or $num_records != array_length($event_time) or $num_records != array_length($value) or $num_records != array_length($truflation_created_at) {
         ERROR('array lengths mismatch');
     }
+
+    -- ===== FEE COLLECTION =====
+    -- Flat 1 TRUF per transaction (write-fee policy per issue #3805).
+    -- Charged universally — no role gate. Every caller pays the flat
+    -- per-tx fee regardless of role membership.
+    $total_fee := 1000000000000000000::NUMERIC(78, 0); -- 1 TRUF with 18 decimals
+
+    IF @leader_sender IS NULL {
+        ERROR('Leader address not available for fee transfer');
+    }
+    $leader_hex := encode(@leader_sender, 'hex')::TEXT;
+
+    $caller_balance := hoodi_tt.balance(@caller);
+
+    IF $caller_balance < $total_fee {
+        ERROR('Insufficient balance for write fee. Required: 1 TRUF');
+    }
+
+    hoodi_tt.transfer($leader_hex, $total_fee);
+    $fee_total := $total_fee;
+    $fee_recipient := '0x' || $leader_hex;
+    -- ===== END FEE COLLECTION =====
 
     $current_block INT := @height;
 
@@ -118,6 +143,13 @@ CREATE OR REPLACE ACTION truflation_insert_records(
         $stream_refs,
         $event_time,
         $value
+    );
+
+    record_transaction_event(
+        2,
+        $fee_total,
+        $fee_recipient,
+        NULL
     );
 };
 

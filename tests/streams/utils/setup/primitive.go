@@ -441,6 +441,12 @@ func InsertTruflationDataBatch(ctx context.Context, input InsertTruflationDataIn
 		return errors.Wrap(err, "error in InsertTruflationDataBatch")
 	}
 
+	// truflation_insert_records now charges the flat per-tx write fee (issue #3805);
+	// this helper makes a single engine call, so fund the provider for one call.
+	if err := fundForInsertCalls(ctx, input.Platform, deployer.Address(), 1); err != nil {
+		return errors.Wrap(err, "fund provider for truflation_insert_records")
+	}
+
 	engineContext := newEthEngineContext(ctx, input.Platform, deployer, input.Height)
 	engineContext.TxContext.TxID = txid
 
