@@ -27,7 +27,8 @@ Three transformation modes:
   `eth_usdc_*`) and skip the sepolia/ethereum siblings entirely.
 
 * `fee` — the write-fee collection actions (001 create_streams,
-  003 insert_records, 004 insert_taxonomy, 024 request_attestation).
+  003 insert_records, 004 insert_taxonomy, 009 truflation_insert_records,
+  024 request_attestation).
   These hardcode `ethereum_bridge.balance/.transfer` for the TRUF
   fee. On mainnet `ethereum_bridge` is declared-but-empty, so emit a
   CREATE OR REPLACE override with `ethereum_bridge` → `eth_truf` to
@@ -85,6 +86,7 @@ TARGETS: list[tuple[str, str, str]] = [
     ("001-common-actions.sql", "001-common-actions.prod.sql", "fee"),
     ("003-primitive-insertion.sql", "003-primitive-insertion.prod.sql", "fee"),
     ("004-composed-taxonomy.sql", "004-composed-taxonomy.prod.sql", "fee"),
+    ("009-truflation-query.sql", "009-truflation-query.prod.sql", "fee"),
     ("024-attestation-actions.sql", "024-attestation-actions.prod.sql", "fee"),
 ]
 

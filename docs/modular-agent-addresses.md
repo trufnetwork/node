@@ -135,11 +135,10 @@ secure that the agent can spend it only on the network's write fees, never take 
 | `main`    | `insert_records` | Provide data to those indexes                     |
 
 Both actions charge **caller-keyed** bridge fees — `create_streams` 100 TRUF per stream,
-`insert_records` a flat 1 TRUF per transaction once the wallet is enrolled in
-`system:fee_required` — so with `@caller` rewritten to the MAA they debit the **agent
-wallet's own escrow**, with zero fee code specific to MAA. The fee `transfer` targets
-`@leader_sender`, which is exactly the token boundary's write-fee carve-out; any other
-`transfer` recipient remains blocked for the restricted agent.
+`insert_records` a flat 1 TRUF per transaction — so with `@caller` rewritten to the MAA they
+debit the **agent wallet's own escrow**, with zero fee code specific to MAA. The fee
+`transfer` targets `@leader_sender`, which is exactly the token boundary's write-fee
+carve-out; any other `transfer` recipient remains blocked for the restricted agent.
 
 The streams the agent creates belong to the **MAA**, not to the agent's own key: the agent
 wallet is the data provider of record, so replacing the agent (a new rule + wallet) never

@@ -57,33 +57,24 @@ CREATE OR REPLACE ACTION insert_taxonomy(
 
     -- ===== FEE COLLECTION =====
     -- Flat 1 TRUF per transaction (write-fee policy per issue #3805).
-    -- Phased rollout: only wallets enrolled in `system:fee_required`
-    -- are charged. Empty role => no caller is charged. Once every
-    -- active write wallet is enrolled, drop this gate in a follow-up
-    -- migration so universal charging resumes.
+    -- Charged universally — no role gate. Every caller pays the flat
+    -- per-tx fee regardless of role membership.
     $total_fee := 1000000000000000000::NUMERIC(78, 0); -- 1 TRUF with 18 decimals
 
-    $fee_required BOOL := FALSE;
-    for $r in are_members_of('system', 'fee_required', ARRAY[$lower_caller]) {
-        $fee_required := $r.is_member;
+    IF @leader_sender IS NULL {
+        ERROR('Leader address not available for fee transfer');
+    }
+    $leader_hex := encode(@leader_sender, 'hex')::TEXT;
+
+    $caller_balance := eth_truf.balance(@caller);
+
+    IF $caller_balance < $total_fee {
+        ERROR('Insufficient balance for taxonomies creation. Required: 1 TRUF');
     }
 
-    IF $fee_required {
-        IF @leader_sender IS NULL {
-            ERROR('Leader address not available for fee transfer');
-        }
-        $leader_hex := encode(@leader_sender, 'hex')::TEXT;
-
-        $caller_balance := eth_truf.balance(@caller);
-
-        IF $caller_balance < $total_fee {
-            ERROR('Insufficient balance for taxonomies creation. Required: 1 TRUF');
-        }
-
-        eth_truf.transfer($leader_hex, $total_fee);
-        $fee_total := $total_fee;
-        $fee_recipient := '0x' || $leader_hex;
-    }
+    eth_truf.transfer($leader_hex, $total_fee);
+    $fee_total := $total_fee;
+    $fee_recipient := '0x' || $leader_hex;
     -- ===== END FEE COLLECTION =====
 
     -- Default start time to 0 if not provided

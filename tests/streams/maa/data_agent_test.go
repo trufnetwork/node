@@ -19,7 +19,6 @@ import (
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	testerc20 "github.com/trufnetwork/node/tests/streams/utils/erc20"
 	"github.com/trufnetwork/node/tests/streams/utils/feefund"
-	"github.com/trufnetwork/node/tests/streams/utils/setup"
 	"github.com/trufnetwork/sdk-go/core/util"
 )
 
@@ -28,8 +27,8 @@ import (
 // An AI agent (the restricted key) creates new indexes and provides regular data to them,
 // running entirely AS its agent wallet (the MAA). The owner (the unrestricted key) "fills up"
 // the MAA with TRUF; the agent's job costs TRUF — create_streams charges 100 TRUF per stream
-// and insert_records a flat 1 TRUF once the wallet is enrolled in system:fee_required — and
-// both fees are caller-keyed bridge transfers, so with @caller rewritten to the MAA they
+// and insert_records a flat 1 TRUF per transaction — both fees are caller-keyed bridge
+// transfers, so with @caller rewritten to the MAA they
 // debit the MAA's OWN escrow with zero new fee code. The owner stays secure that the agent
 // can never exfiltrate the funds: the erc20 MAARestricted boundary blocks every fund exit
 // for the restricted role, carving out ONLY the protocol write-fee — a transfer whose
@@ -54,7 +53,7 @@ var (
 )
 
 const (
-	daInsertFee = "1000000000000000000" // flat 1 TRUF per insert_records tx (003, fee_required-gated)
+	daInsertFee = "1000000000000000000" // flat 1 TRUF per insert_records tx (003)
 )
 
 func TestMAADataAgent(t *testing.T) {
@@ -196,9 +195,8 @@ func streamOwner(t *testing.T, ctx context.Context, platform *kwilTesting.Platfo
 
 // testDataAgentLifecycle: the full happy path. The agent creates an index and provides data
 // to it AS the MAA, every fee coming out of the MAA's TRUF escrow (100 TRUF per stream;
-// 1 TRUF per insert once the wallet is enrolled in system:fee_required) and landing with the
-// block leader; the owner reads the provided data back and withdraws the remaining escrow at
-// any time, paying the agent its commission.
+// 1 TRUF per insert) and landing with the block leader; the owner reads the provided data
+// back and withdraws the remaining escrow at any time, paying the agent its commission.
 func testDataAgentLifecycle(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		restricted := util.Unsafe_NewEthereumAddressFromString(restrictedHex)
@@ -232,28 +230,28 @@ func testDataAgentLifecycle(t *testing.T) func(context.Context, *kwilTesting.Pla
 		require.Equal(t, maaAddr.Address(), streamOwner(t, ctx, platform, streamID),
 			"the stream belongs to the agent wallet, not the agent's own key")
 
-		// 2) THE AGENT PROVIDES DATA. Before fee_required enrollment the insert is free —
-		//    today's phased-rollout default.
+		// 2) THE AGENT PROVIDES DATA. insert_records charges the flat 1-TRUF write fee on
+		//    every call — it too comes out of the MAA escrow and lands with the leader.
 		require.NoError(t, daCallAsMAA(ctx, platform, maaAddr, true /* agent */, leader,
 			"insert_records", []any{
 				[]string{maaAddr.Address()}, []string{streamID}, []int64{100}, []*kwilTypes.Decimal{dec36(t, "42.5")},
 			}),
 			"the agent must be able to insert records into its wallet's stream")
-		require.Equal(t, "150000000000000000000", balanceTRUF(t, ctx, platform, maaAddr.Address()),
-			"un-enrolled wallets pay no insert fee (phased rollout)")
-
-		// 3) Once the wallet is enrolled in system:fee_required, the flat 1-TRUF write fee
-		//    applies — and it too comes out of the MAA escrow.
-		require.NoError(t, setup.AddMemberToRoleBypass(ctx, platform, "system", "fee_required", maaAddr.Address()))
-		require.NoError(t, daCallAsMAA(ctx, platform, maaAddr, true /* agent */, leader,
-			"insert_records", []any{
-				[]string{maaAddr.Address()}, []string{streamID}, []int64{200}, []*kwilTypes.Decimal{dec36(t, "43.75")},
-			}),
-			"the enrolled agent must still be able to insert, paying the write fee from escrow")
 		require.Equal(t, "149000000000000000000", balanceTRUF(t, ctx, platform, maaAddr.Address()),
 			"the 1-TRUF write fee must come out of the MAA escrow")
 		require.Equal(t, "101000000000000000000", balanceTRUF(t, ctx, platform, leaderAddr),
 			"the write fee must land with the block leader: 100 + 1")
+
+		// 3) A SECOND DATA POINT — each insert is charged the flat 1 TRUF from escrow.
+		require.NoError(t, daCallAsMAA(ctx, platform, maaAddr, true /* agent */, leader,
+			"insert_records", []any{
+				[]string{maaAddr.Address()}, []string{streamID}, []int64{200}, []*kwilTypes.Decimal{dec36(t, "43.75")},
+			}),
+			"the agent must be able to insert a second record, paying the write fee from escrow")
+		require.Equal(t, "148000000000000000000", balanceTRUF(t, ctx, platform, maaAddr.Address()),
+			"a second 1-TRUF write fee comes out of the MAA escrow")
+		require.Equal(t, "102000000000000000000", balanceTRUF(t, ctx, platform, leaderAddr),
+			"the write fee must land with the block leader: 100 + 1 + 1")
 
 		// 4) THE DATA IS PROVIDED: anyone (here the owner) reads the records back.
 		records := readRecords(t, ctx, platform, unrestricted, maaAddr.Address(), streamID)
@@ -263,13 +261,13 @@ func testDataAgentLifecycle(t *testing.T) func(context.Context, *kwilTesting.Pla
 		}, records, "the owner sees the data the agent provided")
 
 		// 5) THE OWNER WITHDRAWS the un-spent escrow at any time, paying the 2.5%
-		//    commission: 149 × 2.5% = 3.725 TRUF to the agent, the rest to the owner.
+		//    commission: 148 × 2.5% = 3.7 TRUF to the agent, the rest to the owner.
 		require.NoError(t, callAsMAA(ctx, platform, maaAddr, false /* unrestricted owner */, "maa_withdraw",
-			[]any{wdTRUFBridge, dec(t, "149000000000000000000")}),
+			[]any{wdTRUFBridge, dec(t, "148000000000000000000")}),
 			"the owner must be able to withdraw the remaining escrow any time")
 		require.Equal(t, "0", balanceTRUF(t, ctx, platform, maaAddr.Address()), "the agent wallet is drained")
-		require.Equal(t, "3725000000000000000", balanceTRUF(t, ctx, platform, restrictedHex), "agent earns 2.5% of 149 = 3.725 TRUF")
-		require.Equal(t, "145275000000000000000", balanceTRUF(t, ctx, platform, unrestrictedHex), "owner recovers the 145.275 TRUF remainder")
+		require.Equal(t, "3700000000000000000", balanceTRUF(t, ctx, platform, restrictedHex), "agent earns 2.5% of 148 = 3.7 TRUF")
+		require.Equal(t, "144300000000000000000", balanceTRUF(t, ctx, platform, unrestrictedHex), "owner recovers the 144.3 TRUF remainder")
 		require.Equal(t, 1, countWithdrawEvents(t, ctx, platform, unrestricted, ruleID), "the exit is audited")
 		return nil
 	}
