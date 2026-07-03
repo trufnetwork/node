@@ -134,6 +134,16 @@ func (s *SettlementScheduler) clearQuarantine(queryID int) {
 	delete(s.quarantine, queryID)
 }
 
+// quarantineCount returns the number of quarantine entries. It bounds how many
+// quarantined rows a settlement query might return, so runSettlementCycle can
+// over-fetch by this amount and still process up to maxMarkets non-quarantined
+// markets.
+func (s *SettlementScheduler) quarantineCount() int {
+	s.quarantineMu.Lock()
+	defer s.quarantineMu.Unlock()
+	return len(s.quarantine)
+}
+
 func (s *SettlementScheduler) SetSigner(sig auth.Signer) {
 	s.mu.Lock()
 	s.signer = sig
@@ -264,7 +274,12 @@ func (s *SettlementScheduler) runSettlementCycle(
 	chainID string,
 	maxMarkets, retries int,
 ) (settled, failed, skipped int, err error) {
-	markets, err := engineOps.FindUnsettledMarkets(ctx, maxMarkets)
+	// Over-fetch by the number of quarantined markets. FindUnsettledMarkets returns
+	// oldest-first, so a quarantined older market would otherwise fill a limited page
+	// ahead of a newer, settleable one and starve it. Requesting maxMarkets plus the
+	// quarantine count guarantees the page still holds up to maxMarkets non-quarantined
+	// markets (len(quarantine) is a safe upper bound on how many rows we may skip).
+	markets, err := engineOps.FindUnsettledMarkets(ctx, maxMarkets+s.quarantineCount())
 	if err != nil {
 		s.logger.Error("failed to query unsettled markets", "error", err)
 		return 0, 0, 0, fmt.Errorf("query unsettled markets: %w", err)
@@ -277,7 +292,17 @@ func (s *SettlementScheduler) runSettlementCycle(
 
 	s.logger.Info("found unsettled markets", "count", len(markets))
 
+	// processed counts the non-quarantined markets handled this cycle — it is the
+	// maxMarkets budget. Quarantine skips do NOT consume it, so a quarantined market
+	// cannot crowd out settleable ones.
+	processed := 0
 	for _, market := range markets {
+		// Stop once the budget of non-quarantined markets is met; any remaining
+		// fetched rows are only the over-fetch headroom.
+		if processed >= maxMarkets {
+			break
+		}
+
 		// Check for cancellation (e.g. leadership loss / shutdown)
 		select {
 		case <-ctx.Done():
@@ -290,13 +315,15 @@ func (s *SettlementScheduler) runSettlementCycle(
 		}
 
 		// Skip markets quarantined by a prior permanent failure until their
-		// re-probe deadline.
+		// re-probe deadline. A quarantine skip does not consume the budget.
 		if s.isQuarantined(market.ID) {
 			s.logger.Warn("skipping market quarantined after a permanent settlement failure; awaiting manual intervention",
 				"query_id", market.ID)
 			skipped++
 			continue
 		}
+
+		processed++
 
 		// Check if a signed attestation exists
 		hasAttestation, attErr := engineOps.AttestationExists(ctx, market.Hash)

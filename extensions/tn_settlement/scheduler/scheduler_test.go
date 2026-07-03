@@ -122,7 +122,12 @@ func (m *mockEngineOps) FindUnsettledMarkets(ctx context.Context, limit int) ([]
 	if m.onFindUnsettledMarkets != nil {
 		m.onFindUnsettledMarkets()
 	}
-	return m.markets, nil
+	// Mirror the real query's LIMIT: oldest-first, truncated to `limit`.
+	markets := m.markets
+	if limit >= 0 && len(markets) > limit {
+		markets = markets[:limit]
+	}
+	return markets, nil
 }
 
 func (m *mockEngineOps) AttestationExists(ctx context.Context, marketHash []byte) (bool, error) {
@@ -235,6 +240,49 @@ func TestRunSettlementCycle_SuccessClearsQuarantine(t *testing.T) {
 	}
 	if s.isQuarantined(42) {
 		t.Fatal("a successful settlement must clear the quarantine entry")
+	}
+}
+
+// TestRunSettlementCycle_QuarantinedMarketDoesNotStarveNewer asserts a quarantined
+// older market does not consume the maxMarkets budget and starve a newer eligible
+// market. With maxMarkets=1 and the (oldest-first) page truncating to the limit, the
+// naive fetch would return only the quarantined market and never reach the newer one;
+// over-fetching by the quarantine count keeps the newer market settleable.
+func TestRunSettlementCycle_QuarantinedMarketDoesNotStarveNewer(t *testing.T) {
+	broadcaster := &mockTxBroadcaster{}
+	signer := &mockSigner{}
+
+	older := &internal.UnsettledMarket{ID: 1, Hash: []byte{0x01}, SettleTime: 100}
+	newer := &internal.UnsettledMarket{ID: 2, Hash: []byte{0x02}, SettleTime: 200}
+
+	mockOps := &mockEngineOps{
+		markets:           []*internal.UnsettledMarket{older, newer}, // oldest-first
+		attestationExists: true,
+	}
+
+	s := NewSettlementScheduler(NewSettlementSchedulerParams{
+		Service:          &common.Service{Logger: log.New()},
+		Logger:           log.New(),
+		EngineOps:        mockOps,
+		Tx:               broadcaster,
+		Signer:           signer,
+		MaxMarketsPerRun: 1,
+		RetryAttempts:    3,
+	})
+
+	// The older market was quarantined by a prior permanent failure.
+	s.quarantineMarket(older.ID)
+
+	settled, failed, skipped, err := s.runSettlementCycle(context.Background(), mockOps, broadcaster, signer, "test-chain", 1, 3)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if settled != 1 || failed != 0 || skipped != 1 {
+		t.Fatalf("counts = settled=%d failed=%d skipped=%d; want 1/0/1 (older skipped, newer settled)", settled, failed, skipped)
+	}
+	// Only the newer market may be settled; the quarantined older one must be skipped.
+	if len(mockOps.settleCalls) != 1 || mockOps.settleCalls[0] != newer.ID {
+		t.Fatalf("expected exactly the newer market (%d) settled, got settleCalls=%v", newer.ID, mockOps.settleCalls)
 	}
 }
 
