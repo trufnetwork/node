@@ -693,3 +693,69 @@ func (m *mockReadDBForQueryComponents) Execute(ctx context.Context, stmt string,
 func (m *mockReadDBForQueryComponents) BeginTx(ctx context.Context) (sql.Tx, error) {
 	return nil, fmt.Errorf("mock read handle does not support transactions")
 }
+
+// =============================================================================
+// Test: Permanent-failure classification (infinite-retry fix)
+// =============================================================================
+
+func TestIsPermanentSettleError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"market-368 empty binary payload", errors.New("transaction failed with code 65535: binary action result must be 32 bytes (abi-encoded bool), got 128"), true},
+		{"wrapped malformed canonical", fmt.Errorf("settle: %w", errors.New("invalid result_canonical: too short for version")), true},
+		{"empty canonical", errors.New("result_canonical cannot be empty"), true},
+		{"boolean decode failure", errors.New("failed to decode boolean ABI result: bad payload"), true},
+		{"numeric market empty payload (368 analog)", errors.New("transaction failed with code 65535: result payload contains no values"), true},
+		{"numeric market malformed payload", errors.New("transaction failed with code 65535: failed to decode ABI result payload: bad"), true},
+		{"numeric market wrong array count", errors.New("expected 2 arrays (timestamps, values), got 1"), true},
+		{"nonce conflict is transient", errors.New("invalid nonce: expected 5 got 4"), false},
+		{"network/broadcast is transient", errors.New("broadcast tx: connection refused"), false},
+		{"unrelated action revert stays transient (conservative)", errors.New("transaction failed with code 1: insufficient collateral"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, isPermanentSettleError(tc.err))
+		})
+	}
+}
+
+// TestBroadcastSettleMarketWithRetry_PermanentFailureStopsImmediately asserts a
+// permanent (deterministic) settle_market failure is attempted exactly once —
+// never retried — and returns the ErrPermanentSettleFailure sentinel so the
+// scheduler can quarantine the market. This is the nonce-burn / block-spam fix.
+func TestBroadcastSettleMarketWithRetry_PermanentFailureStopsImmediately(t *testing.T) {
+	accounts := &mockAccounts{}
+	broadcaster := &mockBroadcaster{
+		failUntil: 10, // always return the failed result below
+		successResult: &ktypes.TxResult{
+			Code: 65535,
+			Log:  "ERROR: binary action result must be 32 bytes (abi-encoded bool), got 128",
+		},
+	}
+
+	priv, _, err := crypto.GenerateSecp256k1Key(nil)
+	require.NoError(t, err)
+	signer := auth.GetUserSigner(priv)
+
+	ops := &EngineOperations{
+		logger:   log.New(),
+		accounts: accounts,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = ops.BroadcastSettleMarketWithRetry(
+		ctx, "test-chain", signer, broadcaster.broadcast,
+		368, // queryID
+		3,   // maxRetries — must be ignored for a permanent failure
+	)
+
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrPermanentSettleFailure)
+	require.Equal(t, 1, broadcaster.attempts, "a permanent failure must be attempted exactly once (no retries)")
+}

@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -261,6 +262,17 @@ func (e *EngineOperations) BroadcastSettleMarketWithRetry(
 			"tx_hash", hash.String(),
 			"is_nonce_error", isNonceError(err),
 			"error", err)
+
+		// A permanent (deterministic) failure recurs identically on every retry,
+		// so stop now instead of burning more nonces and committing more failed
+		// txs to blocks. Returning the wrapped sentinel lets the scheduler
+		// quarantine the market and flag it for manual intervention.
+		if isPermanentSettleError(err) {
+			e.logger.Error("settle_market permanently failed; not retrying (needs manual intervention)",
+				"query_id", queryID,
+				"error", err)
+			return fmt.Errorf("%w (query_id=%d): %w", ErrPermanentSettleFailure, queryID, err)
+		}
 	}
 
 	return fmt.Errorf("settle_market failed after %d retries: %w", maxRetries, lastErr)
@@ -474,6 +486,66 @@ func isNonceError(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "nonce") || strings.Contains(msg, "invalid nonce")
+}
+
+// ErrPermanentSettleFailure marks a settle_market failure that will recur
+// identically on every retry. A market's attestation is signed and immutable, so
+// a deterministic parse/decode failure of it can never succeed by re-broadcasting
+// — the retry only burns nonces and commits another failed tx to a block. The
+// scheduler detects this with errors.Is and quarantines the market for manual
+// intervention (re-attestation or admin_force_settle_market) instead of retrying.
+var ErrPermanentSettleFailure = errors.New("permanent settle_market failure")
+
+// permanentSettleErrorSignatures are lowercased substrings that identify a
+// settle_market revert caused by an unparseable or malformed attestation. These
+// come from tn_utils.parse_attestation_boolean / parseBinaryActionResult
+// (extensions/tn_utils/precompiles.go) and are deterministic on-chain action
+// errors: the signed attestation cannot change, so the same parse fails forever.
+// The list is deliberately narrow — only errors that are provably permanent — so
+// a transient or unfamiliar failure keeps the existing retry behavior rather than
+// being mistakenly quarantined.
+var permanentSettleErrorSignatures = []string{
+	// Binary-action payload wrong width, e.g. an empty 128-byte result on a binary
+	// market whose data landed after the attestation was captured (the market-368
+	// case): "binary action result must be 32 bytes (abi-encoded bool), got 128".
+	"binary action result must be",
+	"abi-encoded bool",
+	"failed to decode boolean abi result",
+	"expected 1 value from boolean decode",
+	"decoded value is not boolean",
+	// Numeric-action payload (action_id 1-5): parse_attestation_boolean routes a
+	// numeric-settled market to parseNumericActionResult, which fails
+	// deterministically on an empty or malformed immutable payload — the same
+	// late-arriving-data failure mode as market 368, for numeric markets.
+	"result payload contains no values",
+	"failed to decode abi result payload",
+	"expected 2 arrays (timestamps, values)",
+	"values must be []*big.int",
+	// Malformed / empty canonical result — an immutable attestation that can never
+	// be parsed.
+	"invalid result_canonical",
+	"result_canonical cannot be empty",
+	"unsupported action_id",
+}
+
+// isPermanentSettleError reports whether a settle_market broadcast error is a
+// deterministic, non-recoverable failure that must not be retried. Nonce and
+// network/broadcast errors mean the tx never executed deterministically, so they
+// are explicitly excluded and left to the retry path.
+func isPermanentSettleError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if isNonceError(err) {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, sig := range permanentSettleErrorSignatures {
+		if strings.Contains(msg, sig) {
+			return true
+		}
+	}
+	return false
 }
 
 // RequestAttestationForMarket broadcasts a request_attestation transaction for a market
