@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime/debug"
 	"sync"
@@ -57,6 +58,15 @@ type SettlementScheduler struct {
 
 	// processingGuard prevents overlapping settlement runs (nonce conflicts)
 	processingGuard ProcessingGuard
+
+	// quarantine tracks query_ids whose settlement permanently failed, each
+	// mapped to the time after which the scheduler may re-probe it once. Such a
+	// market is skipped until then so a deterministically-failing settle_market
+	// tx is not re-broadcast every poll (which burns nonces and commits failed
+	// txs to blocks). In-memory and leader-local: on restart/leadership change it
+	// re-probes once and re-quarantines if still permanent. Protected by quarantineMu.
+	quarantine   map[int]time.Time
+	quarantineMu sync.Mutex
 }
 
 type NewSettlementSchedulerParams struct {
@@ -90,7 +100,38 @@ func NewSettlementScheduler(params NewSettlementSchedulerParams) *SettlementSche
 		maxMarketsPerRun: maxMarkets,
 		retryAttempts:    retries,
 		processingGuard:  params.ProcessingGuard,
+		quarantine:       make(map[int]time.Time),
 	}
+}
+
+// isQuarantined reports whether a market is currently quarantined after a
+// permanent settlement failure. Once past its re-probe deadline it returns false
+// so exactly one attempt is allowed through — the entry is kept until that
+// attempt either succeeds (clearQuarantine) or fails permanently again
+// (quarantineMarket re-arms the cooldown).
+func (s *SettlementScheduler) isQuarantined(queryID int) bool {
+	s.quarantineMu.Lock()
+	defer s.quarantineMu.Unlock()
+	reprobeAt, ok := s.quarantine[queryID]
+	if !ok {
+		return false
+	}
+	return time.Now().Before(reprobeAt)
+}
+
+// quarantineMarket flags a market as permanently failing and (re)arms its
+// re-probe cooldown.
+func (s *SettlementScheduler) quarantineMarket(queryID int) {
+	s.quarantineMu.Lock()
+	defer s.quarantineMu.Unlock()
+	s.quarantine[queryID] = time.Now().Add(PermanentFailureReprobeCooldown)
+}
+
+// clearQuarantine removes a market's quarantine entry (called when it settles).
+func (s *SettlementScheduler) clearQuarantine(queryID int) {
+	s.quarantineMu.Lock()
+	defer s.quarantineMu.Unlock()
+	delete(s.quarantine, queryID)
 }
 
 func (s *SettlementScheduler) SetSigner(sig auth.Signer) {
@@ -161,92 +202,23 @@ func (s *SettlementScheduler) Start(ctx context.Context, cronExpr string) error 
 			"max_markets", maxMarkets,
 			"retry_attempts", retries)
 
-		// Query for unsettled markets
-		markets, err := engineOps.FindUnsettledMarkets(jobCtx, maxMarkets)
+		settled, failed, skipped, err := s.runSettlementCycle(
+			jobCtx, engineOps, broadcaster, signer, chainID, maxMarkets, retries)
 		if err != nil {
-			s.logger.Error("failed to query unsettled markets", "error", err)
+			// Query error and cancellation are already logged inside the cycle.
 			return
 		}
 
-		if len(markets) == 0 {
-			s.logger.Debug("no unsettled markets found")
-			return
+		// Only emit the completion summary when markets were actually processed;
+		// an idle poll already logged a Debug line and would otherwise spam an
+		// Info line every poll interval.
+		if settled+failed+skipped > 0 {
+			s.logger.Info("settlement job completed",
+				"total_markets", settled+failed+skipped,
+				"settled", settled,
+				"failed", failed,
+				"skipped", skipped)
 		}
-
-		s.logger.Info("found unsettled markets", "count", len(markets))
-
-		// Attempt to settle each market
-		settled := 0
-		failed := 0
-		skipped := 0
-
-		for _, market := range markets {
-			// Check for cancellation
-			select {
-			case <-jobCtx.Done():
-				s.logger.Info("settlement job cancelled",
-					"settled", settled,
-					"failed", failed,
-					"skipped", skipped)
-				return
-			default:
-			}
-
-			// Check if attestation exists and is signed
-			hasAttestation, err := engineOps.AttestationExists(jobCtx, market.Hash)
-			if err != nil {
-				s.logger.Warn("failed to check attestation",
-					"query_id", market.ID,
-					"error", err)
-				failed++
-				continue
-			}
-			if !hasAttestation {
-				// Request attestation for this market
-				s.logger.Info("attestation not available, requesting attestation",
-					"query_id", market.ID,
-					"settle_time", market.SettleTime)
-
-				if err := engineOps.RequestAttestationForMarket(jobCtx, chainID, signer, broadcaster.BroadcastTx, market); err != nil {
-					s.logger.Warn("failed to request attestation",
-						"query_id", market.ID,
-						"error", err)
-					failed++
-				} else {
-					s.logger.Info("attestation requested successfully",
-						"query_id", market.ID)
-					skipped++ // Will settle on next run after signing
-				}
-				continue
-			}
-
-			// Broadcast settle_market transaction with retry
-			err = engineOps.BroadcastSettleMarketWithRetry(
-				jobCtx,
-				chainID,
-				signer,
-				broadcaster.BroadcastTx,
-				market.ID,
-				retries,
-			)
-
-			if err != nil {
-				s.logger.Warn("failed to settle market after retries",
-					"query_id", market.ID,
-					"settle_time", market.SettleTime,
-					"error", err)
-				failed++
-			} else {
-				s.logger.Info("market settled successfully", "query_id", market.ID)
-				settled++
-			}
-		}
-
-		s.logger.Info("settlement job completed",
-			"total_markets", len(markets),
-			"settled", settled,
-			"failed", failed,
-			"skipped", skipped)
 	}
 
 	if j, err := s.cron.Cron(cronExpr).Do(jobFunc); err != nil {
@@ -277,6 +249,119 @@ func (s *SettlementScheduler) Stop() error {
 	return nil
 }
 
+// runSettlementCycle performs one settlement pass: find unsettled markets, and
+// for each ensure a signed attestation exists then broadcast settle_market.
+// Markets whose settlement PERMANENTLY fails (ErrPermanentSettleFailure — e.g. an
+// immutable, malformed attestation) are quarantined and skipped on later cycles
+// so the scheduler stops re-broadcasting a tx that reverts identically forever
+// (which burns nonces and commits failed txs to blocks). Returns per-cycle
+// counts; err is non-nil only for a query failure or context cancellation.
+func (s *SettlementScheduler) runSettlementCycle(
+	ctx context.Context,
+	engineOps EngineOps,
+	broadcaster txBroadcaster,
+	signer auth.Signer,
+	chainID string,
+	maxMarkets, retries int,
+) (settled, failed, skipped int, err error) {
+	markets, err := engineOps.FindUnsettledMarkets(ctx, maxMarkets)
+	if err != nil {
+		s.logger.Error("failed to query unsettled markets", "error", err)
+		return 0, 0, 0, fmt.Errorf("query unsettled markets: %w", err)
+	}
+
+	if len(markets) == 0 {
+		s.logger.Debug("no unsettled markets found")
+		return 0, 0, 0, nil
+	}
+
+	s.logger.Info("found unsettled markets", "count", len(markets))
+
+	for _, market := range markets {
+		// Check for cancellation (e.g. leadership loss / shutdown)
+		select {
+		case <-ctx.Done():
+			s.logger.Info("settlement cycle cancelled",
+				"settled", settled,
+				"failed", failed,
+				"skipped", skipped)
+			return settled, failed, skipped, ctx.Err()
+		default:
+		}
+
+		// Skip markets quarantined by a prior permanent failure until their
+		// re-probe deadline.
+		if s.isQuarantined(market.ID) {
+			s.logger.Warn("skipping market quarantined after a permanent settlement failure; awaiting manual intervention",
+				"query_id", market.ID)
+			skipped++
+			continue
+		}
+
+		// Check if a signed attestation exists
+		hasAttestation, attErr := engineOps.AttestationExists(ctx, market.Hash)
+		if attErr != nil {
+			s.logger.Warn("failed to check attestation",
+				"query_id", market.ID,
+				"error", attErr)
+			failed++
+			continue
+		}
+		if !hasAttestation {
+			// Request attestation for this market
+			s.logger.Info("attestation not available, requesting attestation",
+				"query_id", market.ID,
+				"settle_time", market.SettleTime)
+
+			if reqErr := engineOps.RequestAttestationForMarket(ctx, chainID, signer, broadcaster.BroadcastTx, market); reqErr != nil {
+				s.logger.Warn("failed to request attestation",
+					"query_id", market.ID,
+					"error", reqErr)
+				failed++
+			} else {
+				s.logger.Info("attestation requested successfully",
+					"query_id", market.ID)
+				skipped++ // Will settle on next run after signing
+			}
+			continue
+		}
+
+		// Broadcast settle_market transaction with retry
+		settleErr := engineOps.BroadcastSettleMarketWithRetry(
+			ctx,
+			chainID,
+			signer,
+			broadcaster.BroadcastTx,
+			market.ID,
+			retries,
+		)
+		switch {
+		case settleErr == nil:
+			s.logger.Info("market settled successfully", "query_id", market.ID)
+			s.clearQuarantine(market.ID)
+			settled++
+		case errors.Is(settleErr, internal.ErrPermanentSettleFailure):
+			// Deterministic failure — will recur identically. Quarantine so it is
+			// not re-broadcast every poll, and flag it for manual intervention.
+			s.quarantineMarket(market.ID)
+			s.logger.Error("market permanently unsettleable; quarantined and flagged for manual intervention",
+				"query_id", market.ID,
+				"settle_time", market.SettleTime,
+				"reprobe_after", PermanentFailureReprobeCooldown,
+				"error", settleErr)
+			failed++
+		default:
+			s.logger.Warn("failed to settle market after retries",
+				"query_id", market.ID,
+				"settle_time", market.SettleTime,
+				"error", settleErr)
+			failed++
+		}
+	}
+
+	return settled, failed, skipped, nil
+}
+
 // RunOnce executes the settlement job payload once (for tests and manual triggering)
 func (s *SettlementScheduler) RunOnce(ctx context.Context) error {
 	// Check processing guard to prevent overlapping runs
@@ -305,41 +390,6 @@ func (s *SettlementScheduler) RunOnce(ctx context.Context) error {
 	}
 	chainID := kwilService.GenesisConfig.ChainID
 
-	markets, err := engineOps.FindUnsettledMarkets(ctx, maxMarkets)
-	if err != nil {
-		return fmt.Errorf("query unsettled markets: %w", err)
-	}
-
-	for _, market := range markets {
-		hasAttestation, err := engineOps.AttestationExists(ctx, market.Hash)
-		if err != nil {
-			s.logger.Error("failed to check attestation existence",
-				"query_id", market.ID,
-				"error", err)
-			return fmt.Errorf("check attestation for market %d: %w", market.ID, err)
-		}
-		if !hasAttestation {
-			// Request attestation for this market
-			if err := engineOps.RequestAttestationForMarket(ctx, chainID, signer, broadcaster.BroadcastTx, market); err != nil {
-				s.logger.Warn("failed to request attestation in RunOnce",
-					"query_id", market.ID,
-					"error", err)
-			}
-			continue
-		}
-
-		err = engineOps.BroadcastSettleMarketWithRetry(
-			ctx,
-			chainID,
-			signer,
-			broadcaster.BroadcastTx,
-			market.ID,
-			retries,
-		)
-		if err != nil {
-			return fmt.Errorf("settle market %d: %w", market.ID, err)
-		}
-	}
-
-	return nil
+	_, _, _, err := s.runSettlementCycle(ctx, engineOps, broadcaster, signer, chainID, maxMarkets, retries)
+	return err
 }

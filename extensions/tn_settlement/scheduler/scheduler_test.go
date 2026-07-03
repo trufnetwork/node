@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -93,9 +94,20 @@ func (m *mockSigner) PubKey() crypto.PublicKey {
 // mockEngineOps implements EngineOps interface for testing.
 // It signals when methods are called to verify job execution.
 // It also checks context cancellation to ensure the scheduler uses its own context.
+//
+// The zero value preserves the lifecycle tests' behavior (no markets, no
+// attestation, settle succeeds as a no-op). The optional fields drive the
+// settlement-flow tests: markets to return, whether a signed attestation exists,
+// the error BroadcastSettleMarketWithRetry returns, and a record of the query_ids
+// it was called with (to assert a quarantined market is not re-broadcast).
 type mockEngineOps struct {
 	t                      *testing.T
 	onFindUnsettledMarkets func()
+
+	markets           []*internal.UnsettledMarket
+	attestationExists bool
+	settleErr         error
+	settleCalls       []int
 }
 
 func (m *mockEngineOps) FindUnsettledMarkets(ctx context.Context, limit int) ([]*internal.UnsettledMarket, error) {
@@ -110,12 +122,11 @@ func (m *mockEngineOps) FindUnsettledMarkets(ctx context.Context, limit int) ([]
 	if m.onFindUnsettledMarkets != nil {
 		m.onFindUnsettledMarkets()
 	}
-	// Return empty list - no markets to settle
-	return []*internal.UnsettledMarket{}, nil
+	return m.markets, nil
 }
 
 func (m *mockEngineOps) AttestationExists(ctx context.Context, marketHash []byte) (bool, error) {
-	return false, nil
+	return m.attestationExists, nil
 }
 
 func (m *mockEngineOps) RequestAttestationForMarket(ctx context.Context, chainID string, signer auth.Signer, broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error), market *internal.UnsettledMarket) error {
@@ -123,7 +134,108 @@ func (m *mockEngineOps) RequestAttestationForMarket(ctx context.Context, chainID
 }
 
 func (m *mockEngineOps) BroadcastSettleMarketWithRetry(ctx context.Context, chainID string, signer auth.Signer, broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error), queryID int, maxRetries int) error {
-	return nil
+	m.settleCalls = append(m.settleCalls, queryID)
+	return m.settleErr
+}
+
+// =============================================================================
+// Test: Permanent settlement failure quarantines the market
+// =============================================================================
+
+// TestRunSettlementCycle_PermanentFailureQuarantinesMarket asserts the fix for
+// the infinite-retry bug: a market whose settlement fails permanently
+// (ErrPermanentSettleFailure, e.g. a malformed immutable attestation) is
+// attempted once, quarantined, then SKIPPED on the next cycle instead of being
+// re-broadcast every poll (which burned nonces and spammed failed txs to blocks).
+func TestRunSettlementCycle_PermanentFailureQuarantinesMarket(t *testing.T) {
+	broadcaster := &mockTxBroadcaster{}
+	signer := &mockSigner{}
+
+	mockOps := &mockEngineOps{
+		markets:           []*internal.UnsettledMarket{{ID: 368, Hash: []byte{0xab}, SettleTime: 1}},
+		attestationExists: true,
+		settleErr: fmt.Errorf("%w: transaction failed with code 65535: binary action result must be 32 bytes (abi-encoded bool), got 128",
+			internal.ErrPermanentSettleFailure),
+	}
+
+	s := NewSettlementScheduler(NewSettlementSchedulerParams{
+		Service:          &common.Service{Logger: log.New()},
+		Logger:           log.New(),
+		EngineOps:        mockOps,
+		Tx:               broadcaster,
+		Signer:           signer,
+		MaxMarketsPerRun: 10,
+		RetryAttempts:    3,
+	})
+
+	ctx := context.Background()
+
+	// Cycle 1: 368 fails permanently — attempted exactly once, then quarantined.
+	settled, failed, skipped, err := s.runSettlementCycle(ctx, mockOps, broadcaster, signer, "test-chain", 10, 3)
+	if err != nil {
+		t.Fatalf("cycle 1 unexpected error: %v", err)
+	}
+	if settled != 0 || failed != 1 || skipped != 0 {
+		t.Fatalf("cycle 1 counts = settled=%d failed=%d skipped=%d; want 0/1/0", settled, failed, skipped)
+	}
+	if len(mockOps.settleCalls) != 1 || mockOps.settleCalls[0] != 368 {
+		t.Fatalf("cycle 1 expected exactly one settle attempt for 368, got %v", mockOps.settleCalls)
+	}
+	if !s.isQuarantined(368) {
+		t.Fatal("market 368 should be quarantined after a permanent failure")
+	}
+
+	// Cycle 2: 368 is quarantined — skipped, and NOT re-broadcast.
+	settled, failed, skipped, err = s.runSettlementCycle(ctx, mockOps, broadcaster, signer, "test-chain", 10, 3)
+	if err != nil {
+		t.Fatalf("cycle 2 unexpected error: %v", err)
+	}
+	if settled != 0 || failed != 0 || skipped != 1 {
+		t.Fatalf("cycle 2 counts = settled=%d failed=%d skipped=%d; want 0/0/1", settled, failed, skipped)
+	}
+	if len(mockOps.settleCalls) != 1 {
+		t.Fatalf("cycle 2 must not re-broadcast a quarantined market; settleCalls=%v", mockOps.settleCalls)
+	}
+}
+
+// TestRunSettlementCycle_SuccessClearsQuarantine asserts a market that later
+// settles (e.g. after an operator re-attests) has its quarantine cleared.
+func TestRunSettlementCycle_SuccessClearsQuarantine(t *testing.T) {
+	broadcaster := &mockTxBroadcaster{}
+	signer := &mockSigner{}
+
+	mockOps := &mockEngineOps{
+		markets:           []*internal.UnsettledMarket{{ID: 42, Hash: []byte{0xcd}, SettleTime: 1}},
+		attestationExists: true,
+	}
+
+	s := NewSettlementScheduler(NewSettlementSchedulerParams{
+		Service:          &common.Service{Logger: log.New()},
+		Logger:           log.New(),
+		EngineOps:        mockOps,
+		Tx:               broadcaster,
+		Signer:           signer,
+		MaxMarketsPerRun: 10,
+		RetryAttempts:    3,
+	})
+
+	// Pre-quarantine the market, then let it settle successfully after the
+	// re-probe deadline by clearing the cooldown (simulate cooldown elapsed).
+	s.quarantineMarket(42)
+	s.quarantineMu.Lock()
+	s.quarantine[42] = time.Now().Add(-time.Minute) // deadline in the past → re-probe allowed
+	s.quarantineMu.Unlock()
+
+	settled, failed, skipped, err := s.runSettlementCycle(context.Background(), mockOps, broadcaster, signer, "test-chain", 10, 3)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if settled != 1 || failed != 0 || skipped != 0 {
+		t.Fatalf("counts = settled=%d failed=%d skipped=%d; want 1/0/0", settled, failed, skipped)
+	}
+	if s.isQuarantined(42) {
+		t.Fatal("a successful settlement must clear the quarantine entry")
+	}
 }
 
 // =============================================================================
