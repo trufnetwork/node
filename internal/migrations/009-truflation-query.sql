@@ -52,8 +52,26 @@ CREATE OR REPLACE ACTION truflation_insert_records(
     $fee_total NUMERIC(78, 0) := 0::NUMERIC(78, 0);
     $fee_recipient TEXT := NULL;
     $leader_hex TEXT := NULL;
+    -- Record count is used for validation only — fees are a flat 1 TRUF
+    -- per transaction now, so the count no longer factors into fee math.
     $num_records INT := array_length($data_provider);
-    if $num_records != array_length($stream_id) or $num_records != array_length($event_time) or $num_records != array_length($value) or $num_records != array_length($truflation_created_at) {
+
+    -- Cap batch size to keep per-transaction validation cost bounded, mirroring
+    -- the insert_records cap (003-primitive-insertion.sql). Clients chunk at 10
+    -- rows per tx, so this bounds batch size defensively rather than constraining
+    -- legitimate batching.
+    if $num_records > 10 {
+        ERROR('truflation_insert_records: batch size exceeds maximum of 10 records');
+    }
+
+    -- Fail fast on malformed input before any bridge roundtrip or fee transfer.
+    if $num_records IS NULL OR $num_records = 0 {
+        ERROR('truflation_insert_records: empty or NULL data_provider array');
+    }
+    if ($num_records IS DISTINCT FROM array_length($stream_id))
+       OR ($num_records IS DISTINCT FROM array_length($event_time))
+       OR ($num_records IS DISTINCT FROM array_length($value))
+       OR ($num_records IS DISTINCT FROM array_length($truflation_created_at)) {
         ERROR('array lengths mismatch');
     }
 
@@ -81,28 +99,25 @@ CREATE OR REPLACE ACTION truflation_insert_records(
 
     $current_block INT := @height;
 
-    -- Get stream reference for all streams (get_stream_ids returns NULL for non-existent streams)
-    $stream_refs := get_stream_ids($data_providers, $stream_id);
-
-    -- Check stream existence using stream refs (NULL values indicate non-existent streams)
-    for $i in 1..array_length($stream_refs) {
-        if $stream_refs[$i] IS NULL {
-            ERROR('stream does not exist: data_provider=' || $data_provider[$i] || ', stream_id=' || $stream_id[$i]);
+    -- One-shot validation: resolves stream refs + checks existence, primitive
+    -- type, and wallet write-auth in a single scoped SQL pass, mirroring
+    -- insert_records. Replaces the three separate batch calls (get_stream_ids +
+    -- is_primitive_stream_batch + is_wallet_allowed_to_write_batch); the last of
+    -- those scanned every stream_owner metadata row per tx, whereas the refs CTE
+    -- in validate_streams_for_write scopes that lookup to the batch. See
+    -- 002-validate-streams-for-write.sql.
+    $stream_refs INT[];
+    for $v in validate_streams_for_write($data_providers, $stream_id, $lower_caller) {
+        if !$v.all_exist {
+            ERROR('one or more streams do not exist');
         }
-    }
-
-    -- Check if streams are primitive in batch
-    for $row in is_primitive_stream_batch($data_providers, $stream_id) {
-        if !$row.is_primitive {
-            ERROR('stream is not a primitive stream: data_provider=' || $row.data_provider || ', stream_id=' || $row.stream_id);
+        if !$v.all_primitive {
+            ERROR('one or more streams are not primitive streams');
         }
-    }
-
-    -- Validate that the wallet is allowed to write to each stream
-    for $row in is_wallet_allowed_to_write_batch($data_providers, $stream_id, $lower_caller) {
-        if !$row.is_allowed {
-            ERROR('wallet not allowed to write to stream: data_provider=' || $row.data_provider || ', stream_id=' || $row.stream_id);
+        if !$v.all_writable {
+            ERROR('wallet not allowed to write to one or more streams');
         }
+        $stream_refs := $v.stream_refs;
     }
 
     -- Insert all records using WITH RECURSIVE pattern to avoid round trips
