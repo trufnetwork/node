@@ -1033,3 +1033,100 @@ func countTxEvents(t *testing.T, ctx context.Context, platform *kwilTesting.Plat
 	require.Len(t, res.Rows, 1)
 	return int(res.Rows[0][0].(int64))
 }
+
+// TestTrimTransactionEventsE2E drives the retention over rows produced by the
+// REAL write path: genuine create_streams (deployStream, method 1) and
+// insert_records (insertRecords, method 2) txs record ledger rows via
+// record_transaction_event, then trim_transaction_events prunes only the old
+// high-volume method-2 row (and its cascade child), keeping the recent write and
+// the deployStream row.
+func TestTrimTransactionEventsE2E(t *testing.T) {
+	owner := util.Unsafe_NewEthereumAddressFromString("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name:           "LEDGER_TRIM02_TransactionEventsRetentionE2E",
+		SeedStatements: migrations.GetSeedScriptStatements(),
+		Owner:          owner.Address(),
+		FunctionTests: []kwilTesting.TestFunc{
+			runTrimTxEventsE2EScenario(t, owner),
+		},
+	}, testutils.GetTestOptionsWithCache())
+}
+
+func runTrimTxEventsE2EScenario(t *testing.T, owner util.EthereumAddress) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		platform.Deployer = owner.Bytes()
+
+		require.NoError(t, setup.AddMemberToRoleBypass(ctx, platform, "system", "network_writers_manager", owner.Address()))
+		require.NoError(t, setup.CreateDataProvider(ctx, platform, owner.Address()))
+
+		err := erc20shim.ForTestingSeedAndActivateInstance(ctx, platform, ledgerChain, ledgerEscrow, ledgerERC20, 18, 60, ledgerExtensionAlias)
+		if err != nil {
+			if !strings.Contains(err.Error(), "alias \"sepolia_bridge\" already exists") {
+				require.NoError(t, err)
+			}
+			require.NoError(t, erc20shim.ForTestingInitializeExtension(ctx, platform))
+		}
+		require.NoError(t, erc20shim.ForTestingInitializeExtension(ctx, platform))
+
+		actorVal := util.Unsafe_NewEthereumAddressFromString("0x9999999999999999999999999999999999999999")
+		actor := &actorVal
+		require.NoError(t, setup.CreateDataProviderWithoutRole(ctx, platform, actor.Address()))
+		require.NoError(t, ledgerGiveBalance(ctx, platform, actor.Address(), initialUserFunds))
+		// create_streams is 100 TRUF/stream (#3971) + 1 TRUF/insert (#3805), all
+		// charged against hoodi_tt. Fund 300 TRUF for headroom.
+		require.NoError(t, feefund.EnsureWalletFunded(ctx, platform, actor.Address(), "300000000000000000000"),
+			"fund actor on hoodi_tt for write fees")
+
+		userLower := strings.ToLower(actor.Address())
+		primitiveStream := util.GenerateStreamId("trim_e2e_primitive")
+
+		// deployStream (method 1) at an old height — kept (wrong method).
+		createLeaderPub, _ := newLeader(t)
+		createTx, err := callActionWithLeader(ctx, platform, actor, createLeaderPub, 5, "create_streams", []any{
+			[]string{primitiveStream.String()},
+			[]string{"primitive"},
+		})
+		require.NoError(t, err)
+
+		// insertRecords (method 2) at an old height — the trim target.
+		oldLeaderPub, _ := newLeader(t)
+		oldVal, err := kwilTypes.ParseDecimalExplicit("10.5", 36, 18)
+		require.NoError(t, err)
+		oldInsertTx, err := callActionWithLeader(ctx, platform, actor, oldLeaderPub, 6, "insert_records", []any{
+			[]string{userLower},
+			[]string{primitiveStream.String()},
+			[]int64{1000},
+			[]*kwilTypes.Decimal{oldVal},
+		})
+		require.NoError(t, err)
+
+		// insertRecords (method 2) at a recent height — kept (>= cutoff).
+		newLeaderPub, _ := newLeader(t)
+		newVal, err := kwilTypes.ParseDecimalExplicit("11.5", 36, 18)
+		require.NoError(t, err)
+		newInsertTx, err := callActionWithLeader(ctx, platform, actor, newLeaderPub, 190_000, "insert_records", []any{
+			[]string{userLower},
+			[]string{primitiveStream.String()},
+			[]int64{2000},
+			[]*kwilTypes.Decimal{newVal},
+		})
+		require.NoError(t, err)
+
+		// Sanity: the real write path recorded all three rows, and the old write
+		// carries its fee-distribution child.
+		requireTxEvent(t, ctx, platform, createTx, true)
+		requireTxEvent(t, ctx, platform, oldInsertTx, true)
+		requireTxEvent(t, ctx, platform, newInsertTx, true)
+		requireDistribution(t, ctx, platform, oldInsertTx, true)
+
+		// Trim at height 200000 → cutoff = 200000 - 172800 = 27200.
+		require.NoError(t, callTrimTxEvents(ctx, platform, owner, 200_000, 172_800, 100))
+
+		requireTxEvent(t, ctx, platform, oldInsertTx, false)      // old write pruned
+		requireDistribution(t, ctx, platform, oldInsertTx, false) // fee distribution cascaded away
+		requireTxEvent(t, ctx, platform, newInsertTx, true)       // recent write kept
+		requireTxEvent(t, ctx, platform, createTx, true)          // deployStream kept (wrong method)
+
+		return nil
+	}
+}
