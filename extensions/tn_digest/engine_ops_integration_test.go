@@ -5,6 +5,7 @@ package tn_digest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -130,9 +131,11 @@ func TestBroadcastTrimTransactionEventsTx_VerifiesTxBuildSignAndDBEffect(t *test
 				const preserveBlocks = int64(172_800)
 				const deleteCap = 100
 
-				// Broadcaster stub: verify tx contents, then execute the real action
-				// at a height above the cutoff (authz overridden, since the node
-				// signer is not the namespace owner), returning a parseable NOTICE.
+				// The broadcaster executes the REAL action at trimHeight (authz
+				// overridden, since the node signer is not the namespace owner) and
+				// returns the action's own NOTICE — so the engine-op parses the real
+				// migration output, not a fabricated log.
+				var trimHeight int64
 				broadcaster := func(ctx context.Context, tx *types.Transaction, sync uint8) (types.Hash, *types.TxResult, error) {
 					payload, err := types.UnmarshalPayload(tx.Body.PayloadType, tx.Body.Payload)
 					require.NoError(t, err)
@@ -145,33 +148,49 @@ func TestBroadcastTrimTransactionEventsTx_VerifiesTxBuildSignAndDBEffect(t *test
 
 					txCtx := &common.TxContext{
 						Ctx:          ctx,
-						BlockContext: &common.BlockContext{Height: 200_000}, // cutoff = 200000 - 172800 = 27200
+						BlockContext: &common.BlockContext{Height: trimHeight},
 						Signer:       signer.CompactID(),
 						Caller:       "node",
 						TxID:         "test-tx",
 					}
 					engCtx := &common.EngineContext{TxContext: txCtx, OverrideAuthz: true}
-					_, execErr := platform.Engine.Call(engCtx, platform.DB, "main", "trim_transaction_events",
+					res, execErr := platform.Engine.Call(engCtx, platform.DB, "main", "trim_transaction_events",
 						[]any{preserveBlocks, int64(deleteCap)}, func(_ *common.Row) error { return nil })
 					require.NoError(t, execErr)
+					require.NoError(t, res.Error)
 
 					return types.Hash{}, &types.TxResult{
 						Code: uint32(types.CodeOk),
-						Log:  "trim_transaction_events: deleted=1 remaining=0 has_more=false",
+						Log:  strings.Join(res.Logs, "\n"),
 					}, nil
 				}
 
-				ctx2, cancel := context.WithTimeout(ctx, 5*time.Second)
-				defer cancel()
-				result, err := ops.BroadcastTrimTransactionEventsWithRetry(ctx2, "tn-test", signer, broadcaster, preserveBlocks, deleteCap, 3)
+				// Case 1: height above the cutoff (200000 - 172800 = 27200) prunes
+				// the seeded write-fee row (and its cascade child).
+				trimHeight = 200_000
+				ctx1, cancel1 := context.WithTimeout(ctx, 10*time.Second)
+				defer cancel1()
+				result, err := ops.BroadcastTrimTransactionEventsWithRetry(ctx1, "tn-test", signer, broadcaster, preserveBlocks, deleteCap, 3)
 				require.NoError(t, err)
 				require.Equal(t, 1, result.Deleted)
 				require.False(t, result.HasMore)
 
 				// Verify DB side-effect: the old write-fee row is gone.
-				res, qErr := platform.DB.Execute(ctx, `SELECT 1 FROM main.transaction_events WHERE tx_id = $1`, oldTxID)
+				sel, qErr := platform.DB.Execute(ctx, `SELECT 1 FROM main.transaction_events WHERE tx_id = $1`, oldTxID)
 				require.NoError(t, qErr)
-				require.Empty(t, res.Rows, "old write-fee row should have been pruned")
+				require.Empty(t, sel.Rows, "old write-fee row should have been pruned")
+
+				// Case 2: chain younger than the preserve window (cutoff <= 0) must
+				// report a clean no-op through the broadcast path — a parseable
+				// NOTICE, no retries, no error. (Regression guard for the cutoff<=0
+				// NOTICE format in migration 052.)
+				trimHeight = 100
+				ctx3, cancel3 := context.WithTimeout(ctx, 10*time.Second)
+				defer cancel3()
+				noop, err := ops.BroadcastTrimTransactionEventsWithRetry(ctx3, "tn-test", signer, broadcaster, preserveBlocks, deleteCap, 3)
+				require.NoError(t, err, "cutoff<=0 no-op must parse cleanly without retries")
+				require.Equal(t, 0, noop.Deleted)
+				require.False(t, noop.HasMore)
 
 				return nil
 			},
