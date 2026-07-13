@@ -895,3 +895,141 @@ func runTransactionIDTrackingScenario(t *testing.T) func(ctx context.Context, pl
 		return nil
 	}
 }
+
+const (
+	trimTestCaller    = "0x9999999999999999999999999999999999999999"
+	trimTestRecipient = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+)
+
+// TestTrimTransactionEvents verifies the retention action from migration 052:
+// only high-volume write-fee rows (method 2) past the block-height cutoff are
+// pruned, low-volume fee-bearing classes are kept, the delete cap is honored,
+// distribution children cascade, and a young chain is a no-op.
+func TestTrimTransactionEvents(t *testing.T) {
+	owner := util.Unsafe_NewEthereumAddressFromString("0x1111111111111111111111111111111111111111")
+	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
+		Name:           "LEDGER_TRIM01_TransactionEventsRetention",
+		SeedStatements: migrations.GetSeedScriptStatements(),
+		Owner:          owner.Address(),
+		FunctionTests: []kwilTesting.TestFunc{
+			runTrimTransactionEventsScenario(t, owner),
+		},
+	}, testutils.GetTestOptionsWithCache())
+}
+
+func runTrimTransactionEventsScenario(t *testing.T, owner util.EthereumAddress) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		platform.Deployer = owner.Bytes()
+
+		const (
+			preserveBlocks = int64(172_800)
+			trimHeight     = int64(200_000) // cutoff = 200000 - 172800 = 27200
+			cutoff         = int64(27_200)
+			methodInsert   = 2 // insertRecords — high-volume write fee (trimmed)
+			methodDeploy   = 1 // deployStream (kept)
+			methodAttest   = 6 // requestAttestation (kept)
+		)
+
+		// --- Phase A: selectivity + cascade ---
+		require.NoError(t, seedTxEvent(ctx, platform, trimTxHash(1), 100, methodInsert, true))      // old write, with distribution child
+		require.NoError(t, seedTxEvent(ctx, platform, trimTxHash(2), 200, methodInsert, false))     // old write
+		require.NoError(t, seedTxEvent(ctx, platform, trimTxHash(3), 190_000, methodInsert, false)) // recent write (>= cutoff)
+		require.NoError(t, seedTxEvent(ctx, platform, trimTxHash(4), 100, methodDeploy, false))     // old deploy (kept)
+		require.NoError(t, seedTxEvent(ctx, platform, trimTxHash(5), 100, methodAttest, false))     // old attestation (kept)
+
+		require.NoError(t, callTrimTxEvents(ctx, platform, owner, trimHeight, preserveBlocks, 100))
+
+		requireTxEvent(t, ctx, platform, trimTxHash(1), false)      // old write pruned
+		requireTxEvent(t, ctx, platform, trimTxHash(2), false)      // old write pruned
+		requireTxEvent(t, ctx, platform, trimTxHash(3), true)       // recent write kept
+		requireTxEvent(t, ctx, platform, trimTxHash(4), true)       // deploy kept (wrong method)
+		requireTxEvent(t, ctx, platform, trimTxHash(5), true)       // attestation kept (wrong method)
+		requireDistribution(t, ctx, platform, trimTxHash(1), false) // child cascade-deleted with parent
+
+		// --- Phase B: delete cap leaves a drainable remainder ---
+		require.NoError(t, seedTxEvent(ctx, platform, trimTxHash(10), 101, methodInsert, false))
+		require.NoError(t, seedTxEvent(ctx, platform, trimTxHash(11), 102, methodInsert, false))
+		require.NoError(t, seedTxEvent(ctx, platform, trimTxHash(12), 103, methodInsert, false))
+		require.NoError(t, callTrimTxEvents(ctx, platform, owner, trimHeight, preserveBlocks, 2))
+		require.Equal(t, 1, countTxEvents(t, ctx, platform, methodInsert, cutoff),
+			"delete_cap should leave exactly one old write-fee row for the next drain run")
+
+		// --- Phase C: cutoff <= 0 (young chain) is a no-op ---
+		require.NoError(t, seedTxEvent(ctx, platform, trimTxHash(20), 50, methodInsert, false))
+		require.NoError(t, callTrimTxEvents(ctx, platform, owner, 10, preserveBlocks, 100)) // cutoff = 10-172800 < 0
+		requireTxEvent(t, ctx, platform, trimTxHash(20), true)                              // untouched
+
+		return nil
+	}
+}
+
+// trimTxHash returns a deterministic, well-formed 0x-prefixed 32-byte tx hash.
+func trimTxHash(n int) string {
+	return fmt.Sprintf("0x%064x", n)
+}
+
+// seedTxEvent inserts a transaction_events row directly (bypassing
+// record_transaction_event's validation) so the trim can be exercised over a
+// controlled mix of methods/heights. When withDistribution is set, it also seeds
+// the CASCADE child so cascade behavior can be asserted.
+func seedTxEvent(ctx context.Context, platform *kwilTesting.Platform, txID string, height int64, methodID int, withDistribution bool) error {
+	_, err := platform.DB.Execute(ctx,
+		`INSERT INTO main.transaction_events (tx_id, block_height, method_id, caller, fee_amount, fee_recipient, metadata)
+		 VALUES ($1, $2, $3, $4, $5::NUMERIC(78, 0), $6, NULL)`,
+		txID, height, int64(methodID), trimTestCaller, feeOneTRUF, trimTestRecipient)
+	if err != nil {
+		return err
+	}
+	if withDistribution {
+		_, err = platform.DB.Execute(ctx,
+			`INSERT INTO main.transaction_event_distributions (tx_id, sequence, recipient, amount, note)
+			 VALUES ($1, 1, $2, $3::NUMERIC(78, 0), NULL)`,
+			txID, trimTestRecipient, feeOneTRUF)
+	}
+	return err
+}
+
+func callTrimTxEvents(ctx context.Context, platform *kwilTesting.Platform, owner util.EthereumAddress, height, preserveBlocks, deleteCap int64) error {
+	tx := &common.TxContext{
+		Ctx:           ctx,
+		BlockContext:  &common.BlockContext{Height: height},
+		Signer:        owner.Bytes(),
+		Caller:        owner.Address(),
+		TxID:          platform.Txid(),
+		Authenticator: coreauth.EthPersonalSignAuth,
+	}
+	engineCtx := &common.EngineContext{TxContext: tx}
+	res, err := platform.Engine.Call(engineCtx, platform.DB, "", "trim_transaction_events",
+		[]any{preserveBlocks, deleteCap}, func(row *common.Row) error { return nil })
+	if err != nil {
+		return err
+	}
+	if res != nil && res.Error != nil {
+		return res.Error
+	}
+	return nil
+}
+
+func requireTxEvent(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, txID string, wantExists bool) {
+	t.Helper()
+	res, err := platform.DB.Execute(ctx, `SELECT 1 FROM main.transaction_events WHERE tx_id = $1`, txID)
+	require.NoError(t, err)
+	require.Equal(t, wantExists, len(res.Rows) > 0, "transaction_events row existence for %s", txID)
+}
+
+func requireDistribution(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, txID string, wantExists bool) {
+	t.Helper()
+	res, err := platform.DB.Execute(ctx, `SELECT 1 FROM main.transaction_event_distributions WHERE tx_id = $1`, txID)
+	require.NoError(t, err)
+	require.Equal(t, wantExists, len(res.Rows) > 0, "transaction_event_distributions row existence for %s", txID)
+}
+
+func countTxEvents(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, methodID int, cutoff int64) int {
+	t.Helper()
+	res, err := platform.DB.Execute(ctx,
+		`SELECT count(*)::INT8 FROM main.transaction_events WHERE method_id = $1 AND block_height < $2`,
+		int64(methodID), cutoff)
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	return int(res.Rows[0][0].(int64))
+}
