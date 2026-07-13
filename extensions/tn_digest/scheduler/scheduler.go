@@ -168,6 +168,8 @@ func (s *DigestScheduler) Start(ctx context.Context, cronExpr string) error {
 
 					// After digest drain, trim order events (best-effort, non-fatal)
 					s.trimOrderEvents(jobCtx, chainID, engineOps, signer, broadcaster)
+					// Then trim high-volume transaction-event ledger rows (best-effort, non-fatal)
+					s.trimTransactionEvents(jobCtx, chainID, engineOps, signer, broadcaster)
 					return
 				}
 			}
@@ -188,6 +190,8 @@ func (s *DigestScheduler) Start(ctx context.Context, cronExpr string) error {
 
 		// After digest drain, trim order events (best-effort, non-fatal)
 		s.trimOrderEvents(jobCtx, chainID, engineOps, signer, broadcaster)
+		// Then trim high-volume transaction-event ledger rows (best-effort, non-fatal)
+		s.trimTransactionEvents(jobCtx, chainID, engineOps, signer, broadcaster)
 	}
 
 	if j, err := s.cron.Cron(cronExpr).Do(jobFunc); err != nil {
@@ -267,6 +271,64 @@ func (s *DigestScheduler) trimOrderEvents(
 	}
 
 	s.logger.Info("order event trim reached max runs", "max_runs", TrimOrderEventsMaxRuns)
+}
+
+// trimTransactionEvents runs the trim_transaction_events action in a drain loop
+// (best-effort). Called after the order-event trim completes. Gated by
+// TrimTxEventsEnabled so pruning stays off until deliberately activated (after
+// the Trufscan indexer fallback is live). Failures are logged but do not fail
+// the digest job.
+func (s *DigestScheduler) trimTransactionEvents(
+	ctx context.Context,
+	chainID string,
+	engineOps *internal.EngineOperations,
+	signer auth.Signer,
+	broadcaster txBroadcaster,
+) {
+	if !TrimTxEventsEnabled {
+		return
+	}
+
+	s.logger.Info("starting transaction event trim")
+
+	for run := 0; run < TrimTxEventsMaxRuns; run++ {
+		select {
+		case <-ctx.Done():
+			s.logger.Info("transaction event trim canceled", "runs_completed", run)
+			return
+		default:
+		}
+
+		result, err := engineOps.BroadcastTrimTransactionEventsWithRetry(
+			ctx, chainID, signer, broadcaster.BroadcastTx,
+			TrimTxEventsPreserveBlocks,
+			TrimTxEventsDeleteCap,
+			3, // maxRetries
+		)
+		if err != nil {
+			s.logger.Warn("trim_transaction_events failed (non-fatal)", "run", run, "error", err)
+			return
+		}
+
+		s.logger.Info("trim_transaction_events run completed",
+			"run", run,
+			"deleted", result.Deleted,
+			"remaining", result.Remaining,
+			"has_more", result.HasMore)
+
+		if !result.HasMore {
+			return
+		}
+
+		// Brief delay between trim runs
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
+	}
+
+	s.logger.Info("transaction event trim reached max runs", "max_runs", TrimTxEventsMaxRuns)
 }
 
 // RunOnce executes the digest job payload once (for tests and manual triggering).

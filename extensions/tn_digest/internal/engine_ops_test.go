@@ -57,6 +57,68 @@ func TestParseDigestResultFromTxLog_NoEntry(t *testing.T) {
 	}
 }
 
+func TestParseTxEventsTrimResultFromTxLog_HasMoreTrue(t *testing.T) {
+	log := "INFO something\nNOTICE: trim_transaction_events: deleted=2 remaining=5 has_more=true\nother"
+	res, err := parseTxEventsTrimResultFromTxLog(log)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Deleted != 2 {
+		t.Fatalf("deleted: want 2, got %d", res.Deleted)
+	}
+	if res.Remaining != 5 {
+		t.Fatalf("remaining: want 5, got %d", res.Remaining)
+	}
+	if !res.HasMore {
+		t.Fatalf("has_more: want true, got false")
+	}
+}
+
+func TestParseTxEventsTrimResultFromTxLog_HasMoreFalse(t *testing.T) {
+	log := "trim_transaction_events: deleted=3 remaining=0 has_more=false"
+	res, err := parseTxEventsTrimResultFromTxLog(log)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Deleted != 3 {
+		t.Fatalf("deleted: want 3, got %d", res.Deleted)
+	}
+	if res.Remaining != 0 {
+		t.Fatalf("remaining: want 0, got %d", res.Remaining)
+	}
+	if res.HasMore {
+		t.Fatalf("has_more: want false, got true")
+	}
+}
+
+func TestParseTxEventsTrimResultFromTxLog_NoEntry(t *testing.T) {
+	log := "INFO: nothing relevant here\nNOTICE: trim_order_events: deleted=1 remaining=0 has_more=false"
+	_, err := parseTxEventsTrimResultFromTxLog(log)
+	if err == nil {
+		t.Fatalf("expected error for missing trim_transaction_events entry, got nil")
+	}
+}
+
+// TestParseTxEventsTrimResultFromTxLog_CutoffNoop asserts the exact NOTICE the
+// migration emits on the cutoff<=0 branch parses as a clean no-op (no error, no
+// retries). Guards the parser<->migration contract for the young-chain case.
+func TestParseTxEventsTrimResultFromTxLog_CutoffNoop(t *testing.T) {
+	log := "NOTICE: trim_transaction_events: deleted=0 remaining=0 has_more=false"
+	res, err := parseTxEventsTrimResultFromTxLog(log)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Deleted != 0 {
+		t.Fatalf("deleted: want 0, got %d", res.Deleted)
+	}
+	if res.Remaining != 0 {
+		t.Fatalf("remaining: want 0, got %d", res.Remaining)
+	}
+	if res.HasMore {
+		t.Fatalf("has_more: want false, got true")
+	}
+}
+
 // Mock implementations for testing retry logic
 
 type mockBroadcaster struct {
