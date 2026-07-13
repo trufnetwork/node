@@ -99,6 +99,26 @@ func TestParseTxEventsTrimResultFromTxLog_NoEntry(t *testing.T) {
 	}
 }
 
+// TestParseTxEventsTrimResultFromTxLog_CutoffNoop asserts the exact NOTICE the
+// migration emits on the cutoff<=0 branch parses as a clean no-op (no error, no
+// retries). Guards the parser<->migration contract for the young-chain case.
+func TestParseTxEventsTrimResultFromTxLog_CutoffNoop(t *testing.T) {
+	log := "NOTICE: trim_transaction_events: deleted=0 remaining=0 has_more=false"
+	res, err := parseTxEventsTrimResultFromTxLog(log)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Deleted != 0 {
+		t.Fatalf("deleted: want 0, got %d", res.Deleted)
+	}
+	if res.Remaining != 0 {
+		t.Fatalf("remaining: want 0, got %d", res.Remaining)
+	}
+	if res.HasMore {
+		t.Fatalf("has_more: want false, got true")
+	}
+}
+
 // Mock implementations for testing retry logic
 
 type mockBroadcaster struct {

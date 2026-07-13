@@ -50,9 +50,12 @@ CREATE OR REPLACE ACTION trim_transaction_events(
 
     $cutoff INT8 := @height - $preserve_blocks;
 
-    -- Don't trim if cutoff is negative (chain is younger than preserve window)
+    -- Don't trim if cutoff is negative (chain is younger than preserve window).
+    -- Emit the parseable no-op form so the scheduler's broadcast path reads a
+    -- clean success (deleted=0, has_more=false) instead of an unrecognized NOTICE
+    -- that would look like a parse failure and trigger needless retries.
     if $cutoff <= 0 {
-        NOTICE('trim_transaction_events: cutoff<=0, nothing to trim');
+        NOTICE('trim_transaction_events: deleted=0 remaining=0 has_more=false');
         RETURN;
     }
 
