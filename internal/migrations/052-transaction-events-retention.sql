@@ -43,7 +43,12 @@
 CREATE OR REPLACE ACTION trim_transaction_events(
     $preserve_blocks INT8,
     $delete_cap INT
-) PUBLIC owner {
+) PUBLIC {
+    -- Leader authorization: the tn_digest scheduler signs with the node's leader
+    -- key (not the namespace owner), mirroring auto_digest. Without this gate the
+    -- scheduler's calls were rejected ("action is owner-only") and never ran.
+    check_leader_authorization();
+
     -- Only the high-volume write-fee ledger rows are trimmed; other methods
     -- carry irreplaceable fee/distribution history and are kept.
     $write_method_id INT := 2; -- insertRecords (insert_records + truflation)
