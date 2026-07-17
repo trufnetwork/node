@@ -65,7 +65,7 @@ CREATE OR REPLACE ACTION get_ordered_balances(
             SELECT '0x' || encode(address, 'hex') AS addr, balance
             FROM kwil_erc20_meta.balances
             WHERE reward_id = $reward_id AND balance >= $threshold
-            ORDER BY balance ASC
+            ORDER BY balance ASC, address ASC
             LIMIT $limit
         {
             RETURN NEXT $row_asc.addr, $row_asc.balance;
@@ -75,7 +75,7 @@ CREATE OR REPLACE ACTION get_ordered_balances(
             SELECT '0x' || encode(address, 'hex') AS addr, balance
             FROM kwil_erc20_meta.balances
             WHERE reward_id = $reward_id AND balance >= $threshold
-            ORDER BY balance DESC
+            ORDER BY balance DESC, address ASC
             LIMIT $limit
         {
             RETURN NEXT $row_desc.addr, $row_desc.balance;
