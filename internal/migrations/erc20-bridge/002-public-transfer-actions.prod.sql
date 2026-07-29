@@ -15,6 +15,11 @@
 -- fee is paid in the SAME bridge as the transfer (not always in TRUF).
 -- This avoids forcing USDC senders to also hold TRUF.
 --
+-- Because of that, and because transaction_events carries no token column, both
+-- actions record the bridge in the ledger event's metadata. Without it the two
+-- fees are indistinguishable in the ledger and a reader has to infer the token
+-- from the amount, which only works while the two fees stay different constants.
+--
 -- Manual-apply mainnet override. The embedded migration loader skips
 -- *.prod.sql, so apply via:
 --
@@ -58,11 +63,14 @@ CREATE OR REPLACE ACTION eth_truf_transfer($to_address TEXT, $amount TEXT) PUBLI
   -- Execute transfer using the bridge extension
   eth_truf.transfer($to_address, $amount::NUMERIC(78, 0));
 
+  -- The fee is paid in the bridge that moved, not always in $TRUF, and
+  -- transaction_events has no token column. Naming the bridge here is what lets
+  -- a reader tell this row's 1 TRUF from eth_usdc_transfer's 1 USDC.
   record_transaction_event(
     4,
     $fee,
     '0x' || $leader_hex,
-    NULL
+    '{"bridge":"eth_truf"}'
   );
 };
 
@@ -100,10 +108,12 @@ CREATE OR REPLACE ACTION eth_usdc_transfer($to_address TEXT, $amount TEXT) PUBLI
   -- Execute transfer using the bridge extension
   eth_usdc.transfer($to_address, $amount::NUMERIC(78, 0));
 
+  -- See eth_truf_transfer above: without this the 6-decimal fee is
+  -- indistinguishable from an 18-decimal one in the ledger.
   record_transaction_event(
     4,
     $fee,
     '0x' || $leader_hex,
-    NULL
+    '{"bridge":"eth_usdc"}'
   );
 };

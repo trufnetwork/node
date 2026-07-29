@@ -204,6 +204,19 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		require.NoError(t, err)
 		height++
 
+		// A second transfer on a different bridge. Two transfer actions booking
+		// two different bridges under the same method is the whole point of
+		// recording one: the amount alone cannot tell them apart once a bridge
+		// with different decimals exists. The actor is already funded on
+		// hoodi_tt for the write fees above, so this needs no extra setup.
+		ttTransferLeaderPub, ttTransferLeaderAddr := newLeader(t)
+		ttTransferTx, err := callActionWithLeader(ctx, platform, actor, ttTransferLeaderPub, height, "hoodi_tt_transfer", []any{
+			receiver.Address(),
+			transferAmount,
+		})
+		require.NoError(t, err)
+		height++
+
 		withdrawLeaderPub, withdrawLeaderAddr := newLeader(t)
 		withdrawTx, err := callActionWithLeader(ctx, platform, actor, withdrawLeaderPub, height, "sepolia_bridge_tokens", []any{
 			actor.Address(),
@@ -236,6 +249,17 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 
 		assertNoMetadata := func(meta metadataMap) {
 			require.Empty(t, meta, "expected no metadata for ledger event")
+		}
+
+		// A transfer is the one method that does not always charge its fee in
+		// $TRUF: it charges in the bridge it moves. The ledger has no token
+		// column, so unless each action names its own bridge a reader cannot
+		// tell a 1 TRUF fee from a 1 USDC one, and the two differ by 1e12.
+		assertBridge := func(want string) func(meta metadataMap) {
+			return func(meta metadataMap) {
+				require.Equal(t, want, meta.String("bridge"),
+					"a transfer must name the bridge its fee was charged in")
+			}
 		}
 
 		expected := map[string]ledgerExpectation{
@@ -274,7 +298,16 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 				feeDistributions: []string{
 					buildDistribution(transferLeaderAddr, feeOneTRUF),
 				},
-				assertMetadata: assertNoMetadata,
+				assertMetadata: assertBridge("sepolia_bridge"),
+			},
+			ttTransferTx: {
+				method:       "transferTN",
+				fee:          feeOneTRUF,
+				feeRecipient: ttTransferLeaderAddr,
+				feeDistributions: []string{
+					buildDistribution(ttTransferLeaderAddr, feeOneTRUF),
+				},
+				assertMetadata: assertBridge("hoodi_tt"),
 			},
 			withdrawTx: {
 				method:       "withdrawTN",

@@ -37,7 +37,7 @@ CREATE OR REPLACE ACTION sepolia_transfer($to_address TEXT, $amount TEXT) PUBLIC
     4,
     $fee,
     '0x' || $leader_hex,
-    NULL
+    '{"bridge":"sepolia_bridge"}'
   );
 };
 
@@ -78,7 +78,7 @@ CREATE OR REPLACE ACTION ethereum_transfer($to_address TEXT, $amount TEXT) PUBLI
     4,
     $fee,
     '0x' || $leader_hex,
-    NULL
+    '{"bridge":"ethereum_bridge"}'
   );
 };
 
@@ -119,7 +119,7 @@ CREATE OR REPLACE ACTION hoodi_tt_transfer($to_address TEXT, $amount TEXT) PUBLI
     4,
     $fee,
     '0x' || $leader_hex,
-    NULL
+    '{"bridge":"hoodi_tt"}'
   );
 };
 
@@ -160,6 +160,6 @@ CREATE OR REPLACE ACTION hoodi_tt2_transfer($to_address TEXT, $amount TEXT) PUBL
     4,
     $fee,
     '0x' || $leader_hex,
-    NULL
+    '{"bridge":"hoodi_tt2"}'
   );
 };
