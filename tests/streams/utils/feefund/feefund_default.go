@@ -14,9 +14,10 @@ import (
 
 // Constants kept identical to feefund_kwiltest.go so callers compile uniformly.
 const (
-	WriteFeeWei          = "1000000000000000000"   // 1 TRUF (flat per-tx write fee on insert_records / insert_taxonomy)
-	StreamCreationFeeWei = "100000000000000000000" // 100 TRUF per stream (create_streams; issue #3971)
-	AttestationFeeWei    = "40000000000000000000"  // 40 TRUF
+	WriteFeeWei            = "1000000000000000000"   // 1 TRUF (flat per-tx write fee on insert_records)
+	StreamCreationFeeWei   = "100000000000000000000" // 100 TRUF per stream (create_streams; issue #3971)
+	TaxonomyFeePerChildWei = "10000000000000000000"  // 10 TRUF per child stream (insert_taxonomy; issue #3972)
+	AttestationFeeWei      = "40000000000000000000"  // 40 TRUF
 )
 
 // EnsureWalletFunded is a no-op outside the kwiltest build. Non-kwiltest callers

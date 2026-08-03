@@ -24,9 +24,8 @@ import (
 // in sync with on-chain charges. If a migration changes its fee, update here.
 const (
 	// WriteFeeWei mirrors the flat per-transaction write fee charged by
-	// 003-primitive-insertion.sql `insert_records` and
-	// 004-composed-taxonomy.sql `insert_taxonomy` — independent of batch
-	// size (1 TRUF regardless of records/children).
+	// 003-primitive-insertion.sql `insert_records` — independent of batch
+	// size (1 TRUF regardless of how many records are in the batch).
 	WriteFeeWei = "1000000000000000000" // 1 TRUF
 
 	// StreamCreationFeeWei mirrors the per-stream fee charged by
@@ -34,6 +33,13 @@ const (
 	// scales with array_length($stream_ids): a batch of N streams costs
 	// N × StreamCreationFeeWei. No role exemption — every caller pays.
 	StreamCreationFeeWei = "100000000000000000000" // 100 TRUF per stream
+
+	// TaxonomyFeePerChildWei mirrors the per-child fee charged by
+	// 004-composed-taxonomy.sql `insert_taxonomy`. Per issue #3972 the fee
+	// scales with array_length($child_stream_ids): a taxonomy attaching N
+	// children costs N × TaxonomyFeePerChildWei, not a flat per-tx fee.
+	// No role exemption — every caller pays.
+	TaxonomyFeePerChildWei = "10000000000000000000" // 10 TRUF per child stream
 
 	// AttestationFeeWei mirrors the flat fee in 024-attestation-actions.sql.
 	AttestationFeeWei = "40000000000000000000" // 40 TRUF

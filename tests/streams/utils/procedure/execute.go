@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -434,9 +435,12 @@ func SetTaxonomy(ctx context.Context, input SetTaxonomyInput) error {
 		weightDecimals = append(weightDecimals, valueDecimal)
 	}
 
-	// insert_taxonomy charges a flat 1 TRUF per call regardless of child
-	// count, so fund a single feefund.WriteFeeWei before invoking it.
-	if err := feefund.EnsureWalletFunded(ctx, input.Platform, deployer.Address(), feefund.WriteFeeWei); err != nil {
+	// insert_taxonomy charges 10 TRUF per child stream (004-composed-taxonomy.sql,
+	// issue #3972), so fund N × per-child fee before invoking it.
+	totalTaxonomyFee := new(big.Int)
+	totalTaxonomyFee.SetString(feefund.TaxonomyFeePerChildWei, 10)
+	totalTaxonomyFee.Mul(totalTaxonomyFee, big.NewInt(int64(len(primitiveStreamStrings))))
+	if err := feefund.EnsureWalletFunded(ctx, input.Platform, deployer.Address(), totalTaxonomyFee.String()); err != nil {
 		return errors.Wrap(err, "fund deployer for insert_taxonomy fee")
 	}
 
