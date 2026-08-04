@@ -258,7 +258,8 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		// A transfer is the one method that does not always charge its fee in
 		// $TRUF: it charges in the bridge it moves. The ledger has no token
 		// column, so unless each action names its own bridge a reader cannot
-		// tell a 1 TRUF fee from a 1 USDC one, and the two differ by 1e12.
+		// tell a $TRUF fee from a USDC one. On mainnet the two are 1 TRUF and a
+		// cent of USDC, 1e18 against 1e4.
 		assertBridge := func(want string) func(meta metadataMap) {
 			return func(meta metadataMap) {
 				require.Equal(t, want, meta.String("bridge"),

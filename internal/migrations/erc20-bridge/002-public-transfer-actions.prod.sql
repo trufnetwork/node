@@ -9,7 +9,7 @@
 -- production bridges:
 --
 --   eth_truf_transfer  — TRUF token p2p transfer + 1 TRUF fee (18 decimals)
---   eth_usdc_transfer  — USDC token p2p transfer + 1 USDC fee (6 decimals)
+--   eth_usdc_transfer  — USDC token p2p transfer + 0.01 USDC fee (6 decimals)
 --
 -- Both follow the same pattern as the original ethereum_transfer:
 -- fee is paid in the SAME bridge as the transfer (not always in TRUF).
@@ -65,7 +65,7 @@ CREATE OR REPLACE ACTION eth_truf_transfer($to_address TEXT, $amount TEXT) PUBLI
 
   -- The fee is paid in the bridge that moved, not always in $TRUF, and
   -- transaction_events has no token column. Naming the bridge here is what lets
-  -- a reader tell this row's 1 TRUF from eth_usdc_transfer's 1 USDC.
+  -- a reader tell this row's 1 TRUF from eth_usdc_transfer's cent of USDC.
   record_transaction_event(
     4,
     $fee,
@@ -76,7 +76,7 @@ CREATE OR REPLACE ACTION eth_truf_transfer($to_address TEXT, $amount TEXT) PUBLI
 
 
 -- USDC p2p transfer
--- Fee: 1 USDC (10^6 wei, since USDC has 6 decimals)
+-- Fee: 0.01 USDC (10^4 wei, since USDC has 6 decimals)
 CREATE OR REPLACE ACTION eth_usdc_transfer($to_address TEXT, $amount TEXT) PUBLIC {
   $recipient_lower TEXT := LOWER($to_address);
 
@@ -91,7 +91,10 @@ CREATE OR REPLACE ACTION eth_usdc_transfer($to_address TEXT, $amount TEXT) PUBLI
   }
 
   -- Fee
-  $fee := 1000000::NUMERIC(78, 0); -- 1 USDC with 6 decimals
+  -- One cent, not one dollar. USDC moves in small amounts and a $1 fee priced
+  -- most of those transfers out, while a cent still makes spamming the action
+  -- expensive enough to be worth nobody's while.
+  $fee := 10000::NUMERIC(78, 0); -- 0.01 USDC with 6 decimals
   $caller_balance := COALESCE(eth_usdc.balance(@caller), 0::NUMERIC(78, 0));
 
   IF @leader_sender IS NULL {
@@ -100,7 +103,7 @@ CREATE OR REPLACE ACTION eth_usdc_transfer($to_address TEXT, $amount TEXT) PUBLI
   $leader_hex TEXT := encode(@leader_sender, 'hex')::TEXT;
 
   IF ($caller_balance < ($amount::NUMERIC(78, 0) + $fee)) {
-    ERROR('Insufficient balance for transfer. Requires an extra 1 USDC fee on top of the transfer amount');
+    ERROR('Insufficient balance for transfer. Requires an extra 0.01 USDC fee on top of the transfer amount');
   }
 
   eth_usdc.transfer($leader_hex, $fee);
