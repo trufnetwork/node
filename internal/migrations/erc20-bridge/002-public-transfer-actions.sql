@@ -139,7 +139,13 @@ CREATE OR REPLACE ACTION hoodi_tt2_transfer($to_address TEXT, $amount TEXT) PUBL
   }
 
   -- Fee
-  $fee := 1000000000000000000::NUMERIC(78, 0); -- 1 TT2 with 18 decimals
+  -- One cent, not one token. TT2 is the testnet stand-in for USDC, which people
+  -- send in small amounts, and a whole-token fee priced most of those out. The
+  -- fee still has to bite enough to make spamming transfers expensive.
+  --
+  -- TT2 carries 18 decimals while mainnet USDC carries 6, so the same one cent
+  -- is 10^16 base units here and 10^4 in eth_usdc_transfer.
+  $fee := 10000000000000000::NUMERIC(78, 0); -- 0.01 TT2 with 18 decimals
   $caller_balance := COALESCE(hoodi_tt2.balance(@caller), 0::NUMERIC(78, 0));
 
   IF @leader_sender IS NULL {
@@ -148,7 +154,7 @@ CREATE OR REPLACE ACTION hoodi_tt2_transfer($to_address TEXT, $amount TEXT) PUBL
   $leader_hex TEXT := encode(@leader_sender, 'hex')::TEXT;
 
   IF ($caller_balance < ($amount::NUMERIC(78, 0) + $fee)) {
-    ERROR('Insufficient balance for transfer. Requires an extra 1 TT2 fee on top of the transfer amount');
+    ERROR('Insufficient balance for transfer. Requires an extra 0.01 TT2 fee on top of the transfer amount');
   }
 
   hoodi_tt2.transfer($leader_hex, $fee);

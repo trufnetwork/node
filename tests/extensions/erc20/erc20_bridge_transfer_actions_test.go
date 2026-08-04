@@ -470,3 +470,96 @@ func callHoodiWalletBalance(ctx context.Context, platform *kwilTesting.Platform,
 	}
 	return balance, nil
 }
+
+// hoodi_tt2 bridge constants, matching erc20-bridge/000-extension.sql. The casing is copied verbatim
+// from the migration for the same reason as hoodi_tt above: the instance id is derived from the
+// escrow string, so a differently-cased one addresses a bridge nothing ever registered.
+const (
+	hoodiTT2Chain  = "hoodi"
+	hoodiTT2Escrow = "0x80D9B3b6941367917816d36748C88B303f7F1415"
+	hoodiTT2ERC20  = "0x1591DeAa21710E0BA6CC1b15F49620C9F65B2dEd"
+)
+
+// TestHoodiTT2TransferFee pins hoodi_tt2_transfer's fee at one cent.
+//
+// TT2 is the testnet stand-in for USDC, which people send in amounts where a whole-token fee is the
+// larger half of the transfer. The balance assertions below are exact, so moving the fee in either
+// direction fails here rather than on somebody's testnet wallet. TT2 carries 18 decimals while
+// mainnet USDC carries 6, so the cent is 10^16 here and 10^4 in the eth_usdc_transfer override.
+func TestHoodiTT2TransferFee(t *testing.T) {
+	seedAndRun(t, "hoodi_tt2_transfer_fee", func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Activate the bridge singleton (loads + syncs the migration-registered instances, incl. hoodi_tt2).
+		require.NoError(t, erc20shim.ForTestingInitializeExtension(ctx, platform))
+
+		// Credit UserA with 2.0 TT2. Single deposit -> nil prev.
+		initialAmount := "2000000000000000000"
+		require.NoError(t, testerc20.InjectERC20Transfer(ctx, platform,
+			hoodiTT2Chain, hoodiTT2Escrow, hoodiTT2ERC20, TestUserA, TestUserA, initialAmount, 20, nil))
+
+		// Transfer 1.0 TT2 from A to B.
+		require.NoError(t, callHoodiTT2Transfer(ctx, platform, TestUserA, TestUserB, TestAmount1))
+
+		// UserA: 2.0 - 1.0 transfer - 0.01 fee = 0.99.
+		balanceA, err := callHoodiTT2WalletBalance(ctx, platform, TestUserA)
+		require.NoError(t, err)
+		require.Equal(t, "990000000000000000", balanceA, "UserA should be charged exactly one cent on top of the transfer")
+
+		// UserB: received the transfer amount, never the fee.
+		balanceB, err := callHoodiTT2WalletBalance(ctx, platform, TestUserB)
+		require.NoError(t, err)
+		require.Equal(t, TestAmount1, balanceB, "UserB should have received the transferred amount")
+
+		// UserB holds exactly 1.0, so 0.99 plus the cent spends it to the last base unit. The same
+		// transfer was rejected outright while the fee was a whole token.
+		require.NoError(t, callHoodiTT2Transfer(ctx, platform, TestUserB, TestUserC, "990000000000000000"))
+
+		balanceB, err = callHoodiTT2WalletBalance(ctx, platform, TestUserB)
+		require.NoError(t, err)
+		require.Equal(t, "0", balanceB, "0.99 plus the cent fee should spend UserB's balance exactly")
+
+		// UserD holds nothing, so the shortfall message has to quote the fee a caller now needs.
+		err = callHoodiTT2Transfer(ctx, platform, TestUserD, TestUserA, TestAmount1)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "Insufficient balance for transfer")
+		require.Contains(t, err.Error(), "Requires an extra 0.01 TT2 fee")
+
+		return nil
+	})
+}
+
+// Helper function to call hoodi_tt2_transfer action
+func callHoodiTT2Transfer(ctx context.Context, platform *kwilTesting.Platform, from, to, amount string) error {
+	engineCtx := engCtx(ctx, platform, from, 1, false)
+
+	res, err := platform.Engine.Call(engineCtx, platform.DB, "", "hoodi_tt2_transfer", []any{to, amount}, func(row *common.Row) error {
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if res != nil && res.Error != nil {
+		return res.Error
+	}
+	return nil
+}
+
+// Helper function to call hoodi_tt2_wallet_balance action
+func callHoodiTT2WalletBalance(ctx context.Context, platform *kwilTesting.Platform, userAddr string) (string, error) {
+	engineCtx := engCtx(ctx, platform, "0x0000000000000000000000000000000000000000", 1, false)
+
+	var balance string
+	res, err := platform.Engine.Call(engineCtx, platform.DB, "", "hoodi_tt2_wallet_balance", []any{userAddr}, func(row *common.Row) error {
+		if len(row.Values) != 1 {
+			return fmt.Errorf("expected 1 column, got %d", len(row.Values))
+		}
+		balance = row.Values[0].(*types.Decimal).String()
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if res != nil && res.Error != nil {
+		return "", res.Error
+	}
+	return balance, nil
+}
