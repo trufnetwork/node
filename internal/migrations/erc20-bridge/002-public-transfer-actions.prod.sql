@@ -76,7 +76,7 @@ CREATE OR REPLACE ACTION eth_truf_transfer($to_address TEXT, $amount TEXT) PUBLI
 
 
 -- USDC p2p transfer
--- Fee: 0.01 USDC (10^4 wei, since USDC has 6 decimals)
+-- Fee: 0.01 USDC (10^4 token base units, since USDC has 6 decimals)
 CREATE OR REPLACE ACTION eth_usdc_transfer($to_address TEXT, $amount TEXT) PUBLIC {
   $recipient_lower TEXT := LOWER($to_address);
 
