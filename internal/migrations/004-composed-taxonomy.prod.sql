@@ -56,10 +56,13 @@ CREATE OR REPLACE ACTION insert_taxonomy(
     }
 
     -- ===== FEE COLLECTION =====
-    -- Flat 1 TRUF per transaction (write-fee policy per issue #3805).
-    -- Charged universally — no role gate. Every caller pays the flat
-    -- per-tx fee regardless of role membership.
-    $total_fee := 1000000000000000000::NUMERIC(78, 0); -- 1 TRUF with 18 decimals
+    -- Per-child write fee per issue #3972. Charged universally — no role gate.
+    -- Each child adds a permanent taxonomies row that every composed read walks,
+    -- so per-child pricing keeps the cost proportional to what the caller
+    -- actually attaches. A flat per-tx fee let one caller attach an arbitrary
+    -- number of children for the price of one.
+    $per_child_fee NUMERIC(78, 0) := '10000000000000000000'::NUMERIC(78, 0); -- 10 TRUF (10^19)
+    $total_fee NUMERIC(78, 0) := $per_child_fee * $num_children::NUMERIC(78, 0);
 
     IF @leader_sender IS NULL {
         ERROR('Leader address not available for fee transfer');
@@ -69,7 +72,7 @@ CREATE OR REPLACE ACTION insert_taxonomy(
     $caller_balance := eth_truf.balance(@caller);
 
     IF $caller_balance < $total_fee {
-        ERROR('Insufficient balance for taxonomies creation. Required: 1 TRUF');
+        ERROR('Insufficient balance for taxonomies creation. Required: 10 TRUF per child stream');
     }
 
     eth_truf.transfer($leader_hex, $total_fee);

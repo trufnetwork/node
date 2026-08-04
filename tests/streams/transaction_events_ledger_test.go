@@ -38,8 +38,11 @@ const (
 	ledgerERC20          = "0x2222222222222222222222222222222222222222"
 	ledgerExtensionAlias = "sepolia_bridge"
 
-	feeHalfTRUF  = "500000000000000000"
-	feeOneTRUF   = "1000000000000000000"
+	feeHalfTRUF = "500000000000000000"
+	feeOneTRUF  = "1000000000000000000"
+	// feeTenTRUF mirrors insert_taxonomy charging 10 TRUF × N children
+	// (issue #3972); this test sets a taxonomy with 1 child → 10 TRUF.
+	feeTenTRUF   = "10000000000000000000"
 	feeFortyTRUF = "40000000000000000000"
 	// feeTwoHundredTRUF mirrors create_streams charging 100 TRUF × N streams
 	// (issue #3971); this test creates 2 streams in one tx → 200 TRUF.
@@ -95,15 +98,16 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		// The write-fee actions (create_streams / insert_records /
 		// insert_taxonomy / request_attestation) charge against `hoodi_tt`,
 		// not `sepolia_bridge`. create_streams is now 100 TRUF per stream
-		// (#3971); this test creates 2 streams, inserts 1 record, sets a
-		// taxonomy, and requests an attestation. Fund 500 TRUF to cover
-		// 200 + 1 + 1 + 40 with headroom for future ledger assertions.
+		// (#3971) and insert_taxonomy 10 TRUF per child (#3972); this test
+		// creates 2 streams, inserts 1 record, sets a 1-child taxonomy, and
+		// requests an attestation. Fund 500 TRUF to cover 200 + 1 + 10 + 40
+		// with headroom for future ledger assertions.
 		require.NoError(t, feefund.EnsureWalletFunded(ctx, platform, actor.Address(), "500000000000000000000"),
 			"fund actor on hoodi_tt for write fees")
-		// create_streams (100 TRUF/stream, #3971), insert_records and
-		// insert_taxonomy (flat 1 TRUF/tx, #3805) all charge every caller
-		// universally now — no role enrollment needed for the ledger test's
-		// fee rows to fire.
+		// create_streams (100 TRUF/stream, #3971), insert_records (flat
+		// 1 TRUF/tx, #3805) and insert_taxonomy (10 TRUF/child, #3972) all
+		// charge every caller universally now — no role enrollment needed for
+		// the ledger test's fee rows to fire.
 
 		receiverVal := util.Unsafe_NewEthereumAddressFromString("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 		receiver := &receiverVal
@@ -284,10 +288,10 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 			},
 			taxTx: {
 				method:       "setTaxonomies",
-				fee:          feeOneTRUF, // flat 1 TRUF regardless of child count
+				fee:          feeTenTRUF, // 10 TRUF × 1 child (#3972)
 				feeRecipient: taxLeaderAddr,
 				feeDistributions: []string{
-					buildDistribution(taxLeaderAddr, feeOneTRUF),
+					buildDistribution(taxLeaderAddr, feeTenTRUF),
 				},
 				assertMetadata: assertNoMetadata,
 			},
@@ -781,8 +785,9 @@ func runTransactionIDTrackingScenario(t *testing.T) func(ctx context.Context, pl
 		require.NoError(t, setup.CreateDataProviderWithoutRole(ctx, platform, actor.Address()))
 		require.NoError(t, ledgerGiveBalance(ctx, platform, actor.Address(), initialUserFunds))
 		// Write-fee actions charge against `hoodi_tt`; fund that bridge too.
-		// create_streams is now 100 TRUF per stream (#3971) — this test
-		// creates 2 streams + inserts records. 300 TRUF gives headroom.
+		// create_streams is 100 TRUF per stream (#3971) and insert_taxonomy
+		// 10 TRUF per child (#3972) — this test creates 2 streams, inserts
+		// records, and sets a 1-child taxonomy. 300 TRUF gives headroom.
 		require.NoError(t, feefund.EnsureWalletFunded(ctx, platform, actor.Address(), "300000000000000000000"),
 			"fund actor on hoodi_tt for write fees")
 
