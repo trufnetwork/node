@@ -63,6 +63,12 @@ func TestQueries(t *testing.T) {
 			testGetMarketDepthEmpty(t),
 			testGetMarketDepthAggregation(t),
 
+			// get_full_market_depth tests
+			testGetFullMarketDepthEmpty(t),
+			testGetFullMarketDepthBothOutcomes(t),
+			testGetFullMarketDepthMatchesPerOutcomeReads(t),
+			testGetFullMarketDepthExcludesHoldings(t),
+
 			// get_best_prices tests
 			testGetBestPricesNoOrders(t),
 			testGetBestPricesOnlyBuy(t),
@@ -564,6 +570,159 @@ func testGetMarketDepthAggregation(t *testing.T) func(context.Context, *kwilTest
 }
 
 // ============================================================================
+// get_full_market_depth Tests
+// ============================================================================
+
+func testGetFullMarketDepthEmpty(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
+
+		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
+		require.NoError(t, err)
+
+		user := util.Unsafe_NewEthereumAddressFromString("0xA1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1")
+
+		err = giveBalanceQueries(ctx, platform, user.Address(), "100000000000000000000")
+		require.NoError(t, err)
+
+		queryID, _ := createTestMarketQueries(t, ctx, platform, &user)
+
+		require.Empty(t, readFullMarketDepth(t, ctx, platform, &user, queryID))
+
+		return nil
+	}
+}
+
+func testGetFullMarketDepthBothOutcomes(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
+
+		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
+		require.NoError(t, err)
+
+		user1 := util.Unsafe_NewEthereumAddressFromString("0xB2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2")
+		user2 := util.Unsafe_NewEthereumAddressFromString("0xC3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3")
+
+		err = giveBalanceQueries(ctx, platform, user1.Address(), "1000000000000000000000")
+		require.NoError(t, err)
+		err = giveBalanceQueries(ctx, platform, user2.Address(), "1000000000000000000000")
+		require.NoError(t, err)
+
+		queryID, _ := createTestMarketQueries(t, ctx, platform, &user1)
+
+		// Two YES buys at the same price, to prove aggregation still happens
+		// per outcome and not across the market.
+		err = callPlaceBuyOrderQueries(ctx, platform, &user1, queryID, true, 55, 100, nil)
+		require.NoError(t, err)
+		err = callPlaceBuyOrderQueries(ctx, platform, &user2, queryID, true, 55, 50, nil)
+		require.NoError(t, err)
+
+		// A NO buy at 30. It cannot mint against the YES buys at 55 (55 + 30
+		// is not 100), so it rests.
+		err = callPlaceBuyOrderQueries(ctx, platform, &user1, queryID, false, 30, 200, nil)
+		require.NoError(t, err)
+
+		// A split at 60 leaves YES holdings and a NO sell at 40. The NO sell
+		// does not cross the NO buy at 30, and has no YES sell at 60 to burn
+		// against, so it rests too.
+		err = callPlaceSplitOrderQueries(ctx, platform, &user2, queryID, 60, 100, nil)
+		require.NoError(t, err)
+
+		// YES levels first, then NO, each ascending by price. The NO sell at 40
+		// is the interesting row: consolidated into the YES frame it is a bid
+		// for YES at 60, which a single-outcome read can never show.
+		require.Equal(t, []FullMarketDepth{
+			{Outcome: true, Price: 55, BuyVolume: 150, SellVolume: 0},
+			{Outcome: false, Price: 30, BuyVolume: 200, SellVolume: 0},
+			{Outcome: false, Price: 40, BuyVolume: 0, SellVolume: 100},
+		}, readFullMarketDepth(t, ctx, platform, &user1, queryID))
+
+		return nil
+	}
+}
+
+// The whole point of this action is that it answers what two get_market_depth
+// calls answer, without the gap between them. If the two ever disagree on the
+// numbers, callers that switched to the single read silently get a different
+// book, so pin them together.
+func testGetFullMarketDepthMatchesPerOutcomeReads(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
+
+		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
+		require.NoError(t, err)
+
+		user1 := util.Unsafe_NewEthereumAddressFromString("0xD4D4D4D4D4D4D4D4D4D4D4D4D4D4D4D4D4D4D4D4")
+		user2 := util.Unsafe_NewEthereumAddressFromString("0xE5E5E5E5E5E5E5E5E5E5E5E5E5E5E5E5E5E5E5E5")
+
+		err = giveBalanceQueries(ctx, platform, user1.Address(), "1000000000000000000000")
+		require.NoError(t, err)
+		err = giveBalanceQueries(ctx, platform, user2.Address(), "1000000000000000000000")
+		require.NoError(t, err)
+
+		queryID, _ := createTestMarketQueries(t, ctx, platform, &user1)
+
+		err = callPlaceBuyOrderQueries(ctx, platform, &user1, queryID, true, 45, 100, nil)
+		require.NoError(t, err)
+		err = callPlaceSplitOrderQueries(ctx, platform, &user2, queryID, 70, 60, nil)
+		require.NoError(t, err)
+		err = callPlaceBuyOrderQueries(ctx, platform, &user2, queryID, false, 25, 80, nil)
+		require.NoError(t, err)
+
+		var want []FullMarketDepth
+		for _, outcome := range []bool{true, false} {
+			err = callGetMarketDepth(ctx, platform, &user1, queryID, outcome, func(row *common.Row) error {
+				want = append(want, FullMarketDepth{
+					Outcome:    outcome,
+					Price:      int(row.Values[0].(int64)),
+					BuyVolume:  row.Values[1].(int64),
+					SellVolume: row.Values[2].(int64),
+				})
+				return nil
+			})
+			require.NoError(t, err)
+		}
+		require.NotEmpty(t, want, "the fixture must quote both outcomes for this to mean anything")
+
+		require.Equal(t, want, readFullMarketDepth(t, ctx, platform, &user1, queryID))
+
+		return nil
+	}
+}
+
+func testGetFullMarketDepthExcludesHoldings(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		lastBalancePointQueries = nil // Reset for this test
+		lastTrufBalancePointQueries = nil
+
+		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
+		require.NoError(t, err)
+
+		user := util.Unsafe_NewEthereumAddressFromString("0xF6F6F6F6F6F6F6F6F6F6F6F6F6F6F6F6F6F6F6F6")
+
+		err = giveBalanceQueries(ctx, platform, user.Address(), "500000000000000000000")
+		require.NoError(t, err)
+
+		queryID, _ := createTestMarketQueries(t, ctx, platform, &user)
+
+		// Leaves 100 YES holdings at price 0 and a NO sell at 40.
+		err = callPlaceSplitOrderQueries(ctx, platform, &user, queryID, 60, 100, nil)
+		require.NoError(t, err)
+
+		// Holdings are not orders. Nobody can trade against them, so no YES row
+		// may appear at all.
+		require.Equal(t, []FullMarketDepth{
+			{Outcome: false, Price: 40, BuyVolume: 0, SellVolume: 100},
+		}, readFullMarketDepth(t, ctx, platform, &user, queryID))
+
+		return nil
+	}
+}
+
+// ============================================================================
 // get_best_prices Tests
 // ============================================================================
 
@@ -950,6 +1109,26 @@ func callGetMarketDepth(ctx context.Context, platform *kwilTesting.Platform, sig
 		[]any{queryID, outcome}, resultFn)
 }
 
+func callGetFullMarketDepth(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, queryID int, resultFn func(*common.Row) error) error {
+	return callActionQueries(ctx, platform, signer, "get_full_market_depth",
+		[]any{queryID}, resultFn)
+}
+
+func readFullMarketDepth(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, queryID int) []FullMarketDepth {
+	var levels []FullMarketDepth
+	err := callGetFullMarketDepth(ctx, platform, signer, queryID, func(row *common.Row) error {
+		levels = append(levels, FullMarketDepth{
+			Outcome:    row.Values[0].(bool),
+			Price:      int(row.Values[1].(int64)),
+			BuyVolume:  row.Values[2].(int64),
+			SellVolume: row.Values[3].(int64),
+		})
+		return nil
+	})
+	require.NoError(t, err)
+	return levels
+}
+
 func callGetBestPrices(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, queryID int, outcome bool, resultFn func(*common.Row) error) error {
 	return callActionQueries(ctx, platform, signer, "get_best_prices",
 		[]any{queryID, outcome}, resultFn)
@@ -1027,6 +1206,13 @@ type UserPosition struct {
 }
 
 type MarketDepth struct {
+	Price      int
+	BuyVolume  int64
+	SellVolume int64
+}
+
+type FullMarketDepth struct {
+	Outcome    bool
 	Price      int
 	BuyVolume  int64
 	SellVolume int64

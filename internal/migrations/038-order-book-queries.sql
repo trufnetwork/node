@@ -5,6 +5,7 @@
  * - get_order_book($query_id, $outcome) - View market orders
  * - get_user_positions() - View caller's portfolio
  * - get_market_depth($query_id, $outcome) - Aggregated volume (optional)
+ * - get_full_market_depth($query_id) - Both outcomes' volume in one read
  * - get_best_prices($query_id, $outcome) - Market spread (optional)
  * - get_user_collateral() - User's locked value (optional)
  *
@@ -208,6 +209,75 @@ CREATE OR REPLACE ACTION get_market_depth(
         ORDER BY abs(price) ASC
     {
         RETURN NEXT $depth.abs_price, $depth.buy_vol, $depth.sell_vol;
+    }
+};
+
+/**
+ * get_full_market_depth($query_id)
+ *
+ * Same aggregation as get_market_depth, but for BOTH outcomes of a market in a
+ * single read, tagged with the outcome each price level belongs to.
+ *
+ * Why this exists beside get_market_depth: a market's YES and NO shares are two
+ * views of one position, so a resting NO sell at 93 is a standing bid for YES at
+ * 7 — a trader hits it by selling YES, and the pair burns. Anything that folds
+ * the two books into one ladder therefore needs both sides. Reading them as two
+ * separate calls reads them at two independent points in time, and an order that
+ * lands between the two can appear on one side and not the other. The stitched
+ * ladder can then show a bid above an ask that never existed at any single
+ * moment. One statement over one snapshot removes that whole class of artifact.
+ *
+ * get_market_depth stays as it is. Callers that want one outcome — the
+ * market-maker bot, the LP bot, depth charts — should keep using it.
+ *
+ * Parameters:
+ * - $query_id: Market ID
+ *
+ * Returns TABLE of:
+ * - outcome: TRUE for YES, FALSE for NO
+ * - price: Absolute price level (1-99)
+ * - buy_volume: Total shares in buy orders at this outcome and price
+ * - sell_volume: Total shares in sell orders at this outcome and price
+ *
+ * Sorting: YES levels first, then NO levels; price ascending within each.
+ *
+ * Usage:
+ *   kwil-cli call-action get_full_market_depth int:1
+ *
+ * Example Output:
+ *   outcome | price | buy_volume | sell_volume
+ *   TRUE    | 55    | 150        | 0
+ *   FALSE   | 30    | 200        | 0
+ *   FALSE   | 40    | 0          | 100
+ */
+CREATE OR REPLACE ACTION get_full_market_depth(
+    $query_id INT
+) PUBLIC VIEW RETURNS TABLE(
+    outcome BOOL,
+    price INT,
+    buy_volume INT8,
+    sell_volume INT8
+) {
+    if $query_id IS NULL {
+        ERROR('query_id is required');
+    }
+
+    -- Aggregate volume at each (outcome, price level) pair
+    for $depth in
+        SELECT
+            outcome,
+            abs(price) as abs_price,
+            COALESCE(SUM(CASE WHEN price < 0 THEN amount ELSE 0::INT8 END)::INT8, 0::INT8) as buy_vol,
+            COALESCE(SUM(CASE WHEN price > 0 THEN amount ELSE 0::INT8 END)::INT8, 0::INT8) as sell_vol
+        FROM ob_positions
+        WHERE query_id = $query_id
+          AND price != 0  -- Exclude holdings
+        GROUP BY outcome, abs(price)
+        ORDER BY
+            outcome DESC,      -- TRUE (YES) before FALSE (NO)
+            abs(price) ASC     -- Best prices first within an outcome
+    {
+        RETURN NEXT $depth.outcome, $depth.abs_price, $depth.buy_vol, $depth.sell_vol;
     }
 };
 
