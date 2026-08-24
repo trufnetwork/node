@@ -138,7 +138,9 @@ func testAllDateRangeValidations(t *testing.T) func(ctx context.Context, platfor
 		}
 		argsBytes, err = tn_utils.EncodeActionArgs(binaryArgs)
 		require.NoError(t, err)
-		err = requestAttestationWithArgsBytes(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "price_above_threshold", argsBytes)
+		// The binary actions refuse to resolve before their timestamp, so the block clock has to
+		// have reached it. While call_dispatch discarded action errors this call looked like a pass.
+		err = requestAttestationAtBlockTime(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "price_above_threshold", argsBytes, 1000000)
 		require.NoError(t, err, "binary action should pass")
 
 		// =====================================================================
@@ -219,6 +221,77 @@ func testAllDateRangeValidations(t *testing.T) func(ctx context.Context, platfor
 		require.NoError(t, err)
 		err = requestAttestationWithArgsBytes(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID, "get_high_value", argsBytes)
 		require.NoError(t, err, "exactly 90-day range should succeed")
+
+		// =====================================================================
+		// Group 5: Action 12 (index_change_in_range) interval validation
+		// =====================================================================
+		//
+		// The seeded series is 75 at t=1000000, 120 at t=1000100, 30 at
+		// t=1000200, so an interval of 100 at t=1000200 compares 30 against 120.
+		// The block clock has to have reached the settlement time, which is why
+		// these calls set one.
+
+		indexChangeArgs := func(interval any) []byte {
+			minVal, parseErr := kwilTypes.ParseDecimal("-100.000000000000000000")
+			require.NoError(t, parseErr)
+			minVal.SetPrecisionAndScale(36, 18)
+			maxVal, parseErr := kwilTypes.ParseDecimal("0.000000000000000000")
+			require.NoError(t, parseErr)
+			maxVal.SetPrecisionAndScale(36, 18)
+
+			encoded, encodeErr := tn_utils.EncodeActionArgs([]any{
+				systemAdmin.Address(), streamID,
+				int64(1000200), // timestamp
+				nil,            // base_time
+				interval,       // time_interval
+				minVal,         // min_change
+				maxVal,         // max_change
+				nil,            // frozen_at
+			})
+			require.NoError(t, encodeErr)
+			return encoded
+		}
+
+		// === Test 13: index_change_in_range with a valid interval succeeds ===
+		// Proves the action is registered in attestation_actions and that
+		// getActionIDNumber agrees, since a mismatch fails one or the other.
+		t.Log("Test 13: index_change_in_range with a valid interval should succeed")
+		err = requestAttestationAtBlockTime(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID,
+			"index_change_in_range", indexChangeArgs(int64(100)), 1000200)
+		require.NoError(t, err, "index_change_in_range with a valid interval should succeed")
+
+		// === Test 14: zero time_interval fails ===
+		t.Log("Test 14: index_change_in_range with a zero interval should fail")
+		err = requestAttestationAtBlockTime(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID,
+			"index_change_in_range", indexChangeArgs(int64(0)), 1000200)
+		require.Error(t, err, "a zero interval is not a change over anything")
+		require.Contains(t, err.Error(), "time_interval' must be positive")
+
+		// === Test 15: negative time_interval fails ===
+		t.Log("Test 15: index_change_in_range with a negative interval should fail")
+		err = requestAttestationAtBlockTime(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID,
+			"index_change_in_range", indexChangeArgs(int64(-100)), 1000200)
+		require.Error(t, err, "a negative interval would place the anchor in the future")
+		require.Contains(t, err.Error(), "time_interval' must be positive")
+
+		// === Test 16: nil time_interval fails ===
+		t.Log("Test 16: index_change_in_range with no interval should fail")
+		err = requestAttestationAtBlockTime(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID,
+			"index_change_in_range", indexChangeArgs(nil), 1000200)
+		require.Error(t, err, "the interval is what places the comparison anchor")
+		require.Contains(t, err.Error(), "requires a 'time_interval' parameter")
+
+		// === Test 17: the 90-day cap does not apply to action 12 ===
+		// An interval well past 90 days reaches back before the series starts,
+		// so the action itself refuses. What matters is that the refusal comes
+		// from the action rather than from the range validator.
+		t.Log("Test 17: index_change_in_range is not subject to the 90-day range cap")
+		err = requestAttestationAtBlockTime(ctx, platform, &systemAdmin, systemAdmin.Address(), streamID,
+			"index_change_in_range", indexChangeArgs(int64(180*24*60*60)), 1000200)
+		require.Error(t, err, "there is no record that far back in the fixture")
+		require.NotContains(t, err.Error(), "exceeds maximum",
+			"the 90-day rule belongs to the range actions, not to index_change_in_range")
+		require.Contains(t, err.Error(), "No data at or before")
 
 		t.Log("All attestation restriction tests passed")
 		return nil

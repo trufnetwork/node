@@ -470,12 +470,22 @@ func callDispatchHandler(ctx *common.EngineContext, app *common.App, inputs []an
 	}
 
 	var rows []*common.Row
-	_, err = app.Engine.Call(ctx, app.DB, "main", actionName, args, func(row *common.Row) error {
+	res, err := app.Engine.Call(ctx, app.DB, "main", actionName, args, func(row *common.Row) error {
 		rows = append(rows, row)
 		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("action '%s' call failed: %w", actionName, err)
+	}
+
+	// An ERROR() raised inside the dispatched action arrives in the call result, not in err.
+	// Dropping it let request_attestation succeed over an empty row set: the caller paid the fee,
+	// an attestation was stored that no consumer can parse, and the reason it failed was lost. Every
+	// attestation action reaches its own validation this way — "no data found", "wallet not allowed
+	// to read", a stale value — so this is the difference between a refusal and a silent bad
+	// attestation.
+	if res != nil && res.Error != nil {
+		return fmt.Errorf("action '%s' call failed: %w", actionName, res.Error)
 	}
 
 	resultBytes, err := EncodeQueryResultCanonical(rows)
@@ -735,6 +745,12 @@ func forceLastArgFalseHandler(ctx *common.EngineContext, app *common.App, inputs
 //   - 90 days of daily data = 90 rows, hourly = 2,160 rows (both safe)
 const MaxAttestationDateRangeSeconds int64 = 90 * 24 * 60 * 60 // 7,776,000 seconds
 
+// IndexChangeInRangeActionID is the attestation action id of index_change_in_range, registered by
+// migration 055. Untyped so it can serve both the int64 comparison in the validation handler and the
+// uint16 entry in getActionIDNumber, which have to agree with each other and with the
+// attestation_actions row.
+const IndexChangeInRangeActionID = 12
+
 // validateAttestationDateRangeMethod validates attestation action eligibility:
 //   - Actions 1-3 (get_record, get_index, get_change_over_time) are BLOCKED — they return
 //     multiple rows and are not allowed for attestation.
@@ -742,6 +758,8 @@ const MaxAttestationDateRangeSeconds int64 = 90 * 24 * 60 * 60 // 7,776,000 seco
 //   - Actions 6-9 (binary) return a single boolean — no validation needed.
 //   - Actions 10-11 (get_high_value, get_low_value) are single-row range queries — date range
 //     validated (max 90 days, both from and to required).
+//   - Action 12 (index_change_in_range) returns a single boolean from two point lookups — only
+//     its time_interval is validated; the 90-day range rule does not apply.
 func validateAttestationDateRangeMethod() precompiles.Method {
 	return precompiles.Method{
 		Name:            "validate_attestation_date_range",
@@ -765,6 +783,15 @@ func validateAttestationDateRangeHandler(ctx *common.EngineContext, app *common.
 	// These return arrays and are not allowed for attestation.
 	if actionID >= 1 && actionID <= 3 {
 		return fmt.Errorf("action %d not allowed for attestation: use get_last_record, get_first_record, get_high_value, get_low_value, or binary actions", actionID)
+	}
+
+	// index_change_in_range reads two single-point anchors rather than a range, so the 90-day rule
+	// below does not describe it. What does need checking before dispatch is the interval, since
+	// that is what places the second anchor. The remaining argument checks (the bounds) are
+	// semantic rather than cost-related and live in the action body, where a NULL decimal is
+	// unambiguous.
+	if actionID == IndexChangeInRangeActionID {
+		return validateIndexChangeInRangeArgs(inputs[1])
 	}
 
 	// Only validate date range for range-based single-row actions (IDs 10-11: get_high_value, get_low_value).
@@ -813,6 +840,47 @@ func validateAttestationDateRangeHandler(ctx *common.EngineContext, app *common.
 	}
 	if dateRange > MaxAttestationDateRangeSeconds {
 		return fmt.Errorf("attestation date range of %d seconds exceeds maximum of %d seconds (90 days)", dateRange, MaxAttestationDateRangeSeconds)
+	}
+
+	return nil
+}
+
+// validateIndexChangeInRangeArgs checks the interval of an index_change_in_range request before the
+// action is dispatched.
+//
+// Signature: (data_provider, stream_id, timestamp, base_time, time_interval, min_change, max_change,
+// frozen_at), so time_interval sits at index 4.
+//
+// A non-positive interval would place the comparison anchor at or after the settlement time, which
+// is not a percentage change over anything. The action body rejects it too; catching it here keeps
+// the failure at the same stage as every other attestation argument error.
+func validateIndexChangeInRangeArgs(rawArgs any) error {
+	argsBytes, ok := rawArgs.([]byte)
+	if !ok {
+		return fmt.Errorf("args_bytes must be []byte, got %T", rawArgs)
+	}
+
+	args, err := DecodeActionArgs(argsBytes)
+	if err != nil {
+		return fmt.Errorf("failed to decode action args: %w", err)
+	}
+
+	if len(args) < 5 {
+		return fmt.Errorf("index_change_in_range requires at least 5 args, got %d", len(args))
+	}
+
+	intervalVal := derefIntPtr(args[4])
+	if intervalVal == nil {
+		return fmt.Errorf("index_change_in_range requires a 'time_interval' parameter")
+	}
+
+	interval, err := toInt64(*intervalVal)
+	if err != nil {
+		return fmt.Errorf("failed to parse 'time_interval' parameter: %w", err)
+	}
+
+	if interval <= 0 {
+		return fmt.Errorf("index_change_in_range 'time_interval' must be positive, got %d", interval)
 	}
 
 	return nil
@@ -1167,6 +1235,8 @@ func getActionIDNumber(actionName string) (uint16, error) {
 		// Single-row range actions (return TABLE(event_time INT8, value NUMERIC) LIMIT 1)
 		"get_high_value": 10,
 		"get_low_value":  11,
+		// Index-change action (returns TABLE(result BOOLEAN)) — see migration 055
+		"index_change_in_range": IndexChangeInRangeActionID,
 	}
 
 	id, ok := actionMap[actionName]
