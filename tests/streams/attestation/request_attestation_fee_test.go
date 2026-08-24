@@ -56,7 +56,6 @@ func TestRequestAttestationFees(t *testing.T) {
 		Name:           "ATTESTATION_FEE01_RequestAttestationFees",
 		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
-			setupAttestationTestEnvironment(t),
 			testAttestationNetworkWriterPaysFee(t),
 			testAttestationInsufficientBalance(t),
 			testAttestationMultipleRequestsChargeFees(t),
@@ -66,7 +65,13 @@ func TestRequestAttestationFees(t *testing.T) {
 	}, testutils.GetTestOptionsWithCache())
 }
 
-// setupAttestationTestEnvironment creates system admin, registers test action, and creates test stream
+// setupAttestationTestEnvironment creates system admin, registers test action, and creates test stream.
+//
+// Every function test in a suite runs against its own fresh container (see
+// tests/streams/utils/runner.go), so this cannot be listed as a FunctionTest of its own: the stream
+// it creates would be gone by the time the next function ran. Each test calls it directly instead.
+// While it was a standalone entry, every dispatched get_last_record here failed with "Stream not
+// found", and call_dispatch discarded that error, so the suite attested nothing and still passed.
 func setupAttestationTestEnvironment(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		// Use the system admin address (derived from private key 0x00...01)
@@ -109,6 +114,10 @@ func setupAttestationTestEnvironment(t *testing.T) func(ctx context.Context, pla
 // Test 1: Non-exempt user pays 40 TRUF fee per attestation request
 func testAttestationNetworkWriterPaysFee(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Each function test gets its own container, so the provider and stream are created
+		// here rather than once for the suite.
+		require.NoError(t, setupAttestationTestEnvironment(t)(ctx, platform), "environment setup")
+
 		requesterAddrVal := util.Unsafe_NewEthereumAddressFromString("0xa111111111111111111111111111111111111111")
 		requesterAddr := &requesterAddrVal
 
@@ -142,6 +151,10 @@ func testAttestationNetworkWriterPaysFee(t *testing.T) func(ctx context.Context,
 // Test 2: Insufficient balance causes error
 func testAttestationInsufficientBalance(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Each function test gets its own container, so the provider and stream are created
+		// here rather than once for the suite.
+		require.NoError(t, setupAttestationTestEnvironment(t)(ctx, platform), "environment setup")
+
 		requesterAddrVal := util.Unsafe_NewEthereumAddressFromString("0xa222222222222222222222222222222222222222")
 		requesterAddr := &requesterAddrVal
 
@@ -164,6 +177,10 @@ func testAttestationInsufficientBalance(t *testing.T) func(ctx context.Context, 
 // Test 3: Multiple attestation requests charge 40 TRUF each
 func testAttestationMultipleRequestsChargeFees(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Each function test gets its own container, so the provider and stream are created
+		// here rather than once for the suite.
+		require.NoError(t, setupAttestationTestEnvironment(t)(ctx, platform), "environment setup")
+
 		requesterAddrVal := util.Unsafe_NewEthereumAddressFromString("0xa333333333333333333333333333333333333333")
 		requesterAddr := &requesterAddrVal
 
@@ -202,6 +219,10 @@ func testAttestationMultipleRequestsChargeFees(t *testing.T) func(ctx context.Co
 // Test 4: Leader receives attestation fees correctly
 func testAttestationLeaderReceivesFees(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Each function test gets its own container, so the provider and stream are created
+		// here rather than once for the suite.
+		require.NoError(t, setupAttestationTestEnvironment(t)(ctx, platform), "environment setup")
+
 		requesterAddrVal := util.Unsafe_NewEthereumAddressFromString("0xa444444444444444444444444444444444444444")
 		requesterAddr := &requesterAddrVal
 
@@ -247,6 +268,10 @@ func testAttestationLeaderReceivesFees(t *testing.T) func(ctx context.Context, p
 // Test 5: Balance is correctly deducted after fee payment
 func testAttestationBalanceCorrectlyDeducted(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		// Each function test gets its own container, so the provider and stream are created
+		// here rather than once for the suite.
+		require.NoError(t, setupAttestationTestEnvironment(t)(ctx, platform), "environment setup")
+
 		requesterAddrVal := util.Unsafe_NewEthereumAddressFromString("0xa555555555555555555555555555555555555555")
 		requesterAddr := &requesterAddrVal
 
@@ -458,6 +483,12 @@ func requestAttestationWithLeader(ctx context.Context, platform *kwilTesting.Pla
 
 // requestAttestationWithArgsBytes requests attestation with pre-encoded args bytes
 func requestAttestationWithArgsBytes(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, dataProvider string, streamID string, actionName string, argsBytes []byte) error {
+	return requestAttestationAtBlockTime(ctx, platform, signer, dataProvider, streamID, actionName, argsBytes, 0)
+}
+
+// requestAttestationAtBlockTime is requestAttestationWithArgsBytes with a settable block clock.
+// Actions that refuse to resolve before a settlement time need a clock that has reached it.
+func requestAttestationAtBlockTime(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress, dataProvider string, streamID string, actionName string, argsBytes []byte, blockTimestamp int64) error {
 	_, pubGeneric, err := crypto.GenerateSecp256k1Key(nil)
 	if err != nil {
 		return err
@@ -467,8 +498,9 @@ func requestAttestationWithArgsBytes(ctx context.Context, platform *kwilTesting.
 	tx := &common.TxContext{
 		Ctx: ctx,
 		BlockContext: &common.BlockContext{
-			Height:   1,
-			Proposer: pub,
+			Height:    1,
+			Proposer:  pub,
+			Timestamp: blockTimestamp,
 		},
 		Signer:        signer.Bytes(),
 		Caller:        signer.Address(),
