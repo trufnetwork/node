@@ -278,3 +278,49 @@ func computeExpectedAttestationHash(t *testing.T, dataProvider, streamID, action
 	hash := sha256.Sum256(buffer.Bytes())
 	return hash[:]
 }
+
+// TestIsBinaryAction pins which action ids settle as a boolean rather than as a number.
+//
+// The set is deliberately not contiguous. Ids 10 and 11 (get_high_value, get_low_value) were
+// registered for attestation by migration 045 and were never wired for settlement, and they are
+// numeric: settlement would read them under the "value > 0 = YES" rule, so a market on either would
+// resolve YES for essentially any price stream. Reaching id 12 by widening the upper bound would
+// admit them silently, which is why the assertions below cover the gap and not just the members.
+func TestIsBinaryAction(t *testing.T) {
+	binary := map[uint16]string{
+		6:  "price_above_threshold",
+		7:  "price_below_threshold",
+		8:  "value_in_range",
+		9:  "value_equals",
+		12: "index_change_in_range",
+	}
+	for actionID, name := range binary {
+		require.True(t, IsBinaryAction(actionID), "%s (id %d) should settle as a boolean", name, actionID)
+	}
+
+	numeric := map[uint16]string{
+		1:  "get_record",
+		2:  "get_index",
+		3:  "get_change_over_time",
+		4:  "get_last_record",
+		5:  "get_first_record",
+		10: "get_high_value",
+		11: "get_low_value",
+	}
+	for actionID, name := range numeric {
+		require.False(t, IsBinaryAction(actionID), "%s (id %d) should not settle as a boolean", name, actionID)
+	}
+
+	require.False(t, IsBinaryAction(0), "id 0 is not an action")
+	require.False(t, IsBinaryAction(13), "id 13 is unregistered")
+}
+
+// TestIndexChangeInRangeActionIDAgreesWithRegistry keeps the constant, the name map, and the
+// settlement predicate from drifting apart. Nothing else checks that they agree, and a mismatch
+// would let markets be created against an id that can never be settled.
+func TestIndexChangeInRangeActionIDAgreesWithRegistry(t *testing.T) {
+	id, err := getActionIDNumber("index_change_in_range")
+	require.NoError(t, err, "index_change_in_range should be a known action")
+	require.Equal(t, uint16(IndexChangeInRangeActionID), id, "name map must agree with the constant")
+	require.True(t, IsBinaryAction(id), "index_change_in_range must settle as a boolean")
+}
