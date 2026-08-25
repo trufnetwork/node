@@ -747,8 +747,8 @@ const MaxAttestationDateRangeSeconds int64 = 90 * 24 * 60 * 60 // 7,776,000 seco
 
 // IndexChangeInRangeActionID is the attestation action id of index_change_in_range, registered by
 // migration 055. Untyped so it can serve both the int64 comparison in the validation handler and the
-// uint16 entry in getActionIDNumber, which have to agree with each other and with the
-// attestation_actions row.
+// uint16 entries in getActionIDNumber and IsBinaryAction, which have to agree with each other and
+// with the attestation_actions row.
 const IndexChangeInRangeActionID = 12
 
 // validateAttestationDateRangeMethod validates attestation action eligibility:
@@ -983,7 +983,7 @@ func parseAttestationBooleanMethod() precompiles.Method {
 // parseAttestationBooleanHandler parses result_canonical to extract a boolean outcome.
 //
 // This handler supports both:
-// 1. Binary action results (action_id 6-9): Direct boolean encoded as abi.encode(bool)
+// 1. Binary action results (action_id 6-9 and 12): Direct boolean encoded as abi.encode(bool)
 // 2. Numeric results (action_id 1-5): Interpreted as value > 0 = TRUE, value == 0 = FALSE
 //
 // The result_canonical format is:
@@ -1076,7 +1076,7 @@ func parseAttestationBooleanHandler(ctx *common.EngineContext, app *common.App, 
 
 	resultPayload := resultCanonical[offset : offset+int(resultLength)]
 
-	// Check if this is a binary action (action_id 6-9)
+	// Check if this is a binary action (action_id 6-9 and 12)
 	// Binary actions return abi.encode(bool) directly
 	if IsBinaryAction(actionID) {
 		return parseBinaryActionResult(resultPayload, resultFn)
@@ -1248,8 +1248,13 @@ func getActionIDNumber(actionName string) (uint16, error) {
 
 // IsBinaryAction returns true if the action ID corresponds to a binary action
 // that returns TABLE(result BOOLEAN) instead of TABLE(event_time INT8, value NUMERIC)
+//
+// Membership is explicit rather than a range. Ids 10 and 11 (get_high_value, get_low_value) sit
+// between the 040 family and index_change_in_range and are numeric, so widening the bound to reach
+// 12 would also admit them to settlement under the "value > 0 = YES" rule, where a high or low
+// price resolves YES for essentially any stream.
 func IsBinaryAction(actionID uint16) bool {
-	return actionID >= 6 && actionID <= 9
+	return (actionID >= 6 && actionID <= 9) || actionID == IndexChangeInRangeActionID
 }
 
 // unpackQueryComponents extracts (dataProvider, streamID, actionID, args) from ABI-encoded bytes.
