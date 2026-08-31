@@ -117,8 +117,13 @@ func testIndexChangeWinnerIsPaidAndLoserIsNot(t *testing.T) func(context.Context
 		require.NoError(t, callPlaceBuyOrder(
 			ctx, platform, &loser, queryID, false, indexChangePayoutNoPrice, indexChangePayoutShares))
 
-		requireHolding(t, ctx, platform, queryID, true, indexChangePayoutShares)
-		requireHolding(t, ctx, platform, queryID, false, indexChangePayoutShares)
+		// Asserted per wallet, not per side. A match that credited both holdings
+		// to one trader while still debiting the other would leave every share
+		// count and every balance below unchanged.
+		winnerID := participantIDForWallet(t, ctx, platform, &winner)
+		loserID := participantIDForWallet(t, ctx, platform, &loser)
+		requireHolding(t, ctx, platform, queryID, winnerID, true, indexChangePayoutShares)
+		requireHolding(t, ctx, platform, queryID, loserID, false, indexChangePayoutShares)
 
 		// Minting cost 100 USDC and selling the NO side returned 40, so the winner is down 60 and
 		// the loser is down the 40 they paid. Checked before settlement so a wrong payout below
@@ -304,13 +309,47 @@ func (fx *indexChangePayoutFixture) encodeArgs(t *testing.T) []byte {
 // Assertions
 // =============================================================================
 
-// requireHolding asserts that one side of the market is held outright, which is a position at
-// price 0 rather than a resting order.
+// participantIDForWallet resolves the order book's internal id for a wallet, which is what
+// ob_positions rows are keyed by.
+func participantIDForWallet(
+	t *testing.T,
+	ctx context.Context,
+	platform *kwilTesting.Platform,
+	wallet *util.EthereumAddress,
+) int {
+	t.Helper()
+
+	engineCtx := &common.EngineContext{TxContext: &common.TxContext{
+		Ctx:          ctx,
+		BlockContext: &common.BlockContext{Height: 1},
+		TxID:         platform.Txid(),
+	}}
+
+	var participantID int
+	var found bool
+	err := platform.Engine.Execute(engineCtx, platform.DB,
+		"SELECT id FROM ob_participants WHERE wallet_address = $wallet",
+		map[string]any{"$wallet": wallet.Bytes()},
+		func(row *common.Row) error {
+			participantID = int(row.Values[0].(int64))
+			found = true
+			return nil
+		})
+	require.NoError(t, err)
+	require.True(t, found, "no participant row for %s", wallet.Address())
+
+	return participantID
+}
+
+// requireHolding asserts that a named trader holds one side of the market outright, which is a
+// position at price 0 rather than a resting order. Checking the owner is the point: the share
+// counts alone are satisfied by both sides landing in the same wallet.
 func requireHolding(
 	t *testing.T,
 	ctx context.Context,
 	platform *kwilTesting.Platform,
 	queryID int,
+	participantID int,
 	outcome bool,
 	amount int64,
 ) {
@@ -325,13 +364,16 @@ func requireHolding(
 	}
 
 	for _, position := range positions {
-		if position.Outcome == outcome && position.Price == 0 {
+		if position.ParticipantID == participantID &&
+			position.Outcome == outcome &&
+			position.Price == 0 {
 			require.Equal(t, amount, position.Amount, "%s holding amount", side)
 			return
 		}
 	}
 
-	t.Fatalf("no %s holding found among %d positions", side, len(positions))
+	t.Fatalf("participant %d holds no %s among %d positions on the market",
+		participantID, side, len(positions))
 }
 
 // requireUSDCDelta asserts a wallet's movement against a starting balance, in whole USDC.
