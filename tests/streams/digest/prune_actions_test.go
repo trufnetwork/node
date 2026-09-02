@@ -1061,7 +1061,10 @@ func callAutoPrune(
 	if err != nil {
 		return nil, nil, err
 	}
-	if r != nil && r.Error != nil {
+	if r == nil {
+		return nil, nil, errors.New("auto_prune_duplicates returned no call result")
+	}
+	if r.Error != nil {
 		return nil, nil, errors.Wrap(r.Error, "auto_prune_duplicates failed")
 	}
 	return out, r.Logs, nil
