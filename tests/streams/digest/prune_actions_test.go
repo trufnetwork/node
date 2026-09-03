@@ -49,6 +49,7 @@ func TestPruneActions(t *testing.T) {
 		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			WithPruneStream(testPruneCollapsesRunsAndLeavesReadsAlone(t)),
+			WithPruneStream(testPruneLeavesEveryReadPathAlone(t)),
 			WithPruneStream(testPruneKeepsTheFirstAndNewestRecords(t)),
 			WithPruneStream(testPruneKeepsTheTruflationWatermark(t)),
 			WithPruneStream(testPruneLeavesRecentRecordsAlone(t)),
@@ -137,6 +138,129 @@ func testPruneCollapsesRunsAndLeavesReadsAlone(t *testing.T) func(context.Contex
 			|---------------------|--------------|--------------------|
 			| 0                   | 0            | false              |
 		`)
+		return nil
+	}
+}
+
+// The claim widened to the reads a consumer actually makes, and driven the way the
+// scheduler drives it: auto_prune_duplicates with retention left NULL so it comes
+// from duplicate_prune_config, looped until the sweep reports a finished pass.
+//
+// Values are compared, not whole rows. An anchored read reports the anchor's own
+// event_time, and pruning moves that back to the head of the run on purpose, so
+// the timestamp beside a value is expected to move. get_first_record is left out
+// for a stronger reason: it is a forward scan rather than an anchored lookup, so
+// pruning the record it would have returned moves its value, and migration 057's
+// header says so.
+func testPruneLeavesEveryReadPathAlone(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		streamRef, err := setup.GetStreamIdForDeployer(ctx, platform, pruneStreamName)
+		if err != nil {
+			return errors.Wrap(err, "resolve stream ref")
+		}
+		if err := seedPruneRecords(ctx, platform, streamRef, []pruneRecord{
+			{Day: 1, Value: "10"},
+			{Day: 2, Value: "10"},
+			{Day: 3, Value: "10"},
+			{Day: 4, Value: "12"},
+			{Day: 5, Value: "12"},
+			{Day: 6, Value: "12"},
+			{Day: 7, Value: "8"},
+			{Day: 8, Value: "8"},
+			{Day: 9, Value: "11"},
+			{Day: 10, Value: "11"},
+			{Day: 11, Value: "11"},
+			{Day: 12, Value: "11"},
+		}); err != nil {
+			return err
+		}
+
+		days := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
+		// Windows worth naming. Days 2 to 3 sit entirely inside a run, so after
+		// pruning they hold no record of their own and the answer can only come
+		// from the anchor -- which is the read B1 fixed and the reason pruning was
+		// safe to build at all.
+		windows := [][2]int64{{1, 12}, {2, 3}, {5, 8}, {9, 12}}
+
+		beforeRecords, err := readEachDay(ctx, platform, days)
+		if err != nil {
+			return errors.Wrap(err, "read records before pruning")
+		}
+		beforeIndex, err := readIndexEachDay(ctx, platform, days)
+		if err != nil {
+			return errors.Wrap(err, "read index before pruning")
+		}
+		beforeExtremes, err := readExtremesOverWindows(ctx, platform, windows)
+		if err != nil {
+			return errors.Wrap(err, "read high and low before pruning")
+		}
+
+		storedBefore, err := readStoredRecords(ctx, platform, streamRef)
+		if err != nil {
+			return err
+		}
+
+		// A cap of two forces the resume path, so this covers the same loop the
+		// scheduler runs rather than a single call that happens to finish.
+		rounds := 0
+		for {
+			rounds++
+			if rounds > 20 {
+				return errors.New("the sweep never reported a finished pass")
+			}
+			res, _, err := callAutoPrune(ctx, platform, 2, 100, nil)
+			if err != nil {
+				return errors.Wrapf(err, "sweep %d", rounds)
+			}
+			if len(res) != 1 {
+				return errors.Errorf("sweep %d returned %d rows, want 1", rounds, len(res))
+			}
+			if res[0][3] == "false" {
+				break
+			}
+		}
+		if rounds < 2 {
+			return errors.Errorf("the cap should have taken more than one round, got %d", rounds)
+		}
+
+		storedAfter, err := readStoredRecords(ctx, platform, streamRef)
+		if err != nil {
+			return err
+		}
+		if got, want := storedAfter, "86400=10 345600=12 604800=8 777600=11 1036800=11"; got != want {
+			return errors.Errorf("wrong records survived:\n got: %s\nwant: %s", got, want)
+		}
+		if storedBefore == storedAfter {
+			// Without this the three comparisons below would pass on a sweep that
+			// deleted nothing, which is the one way this could look green while
+			// proving nothing.
+			return errors.New("the sweep deleted nothing, so the comparisons prove nothing")
+		}
+
+		afterRecords, err := readEachDay(ctx, platform, days)
+		if err != nil {
+			return errors.Wrap(err, "read records after pruning")
+		}
+		if beforeRecords != afterRecords {
+			return errors.Errorf("pruning moved get_record:\nbefore: %s\n after: %s", beforeRecords, afterRecords)
+		}
+
+		afterIndex, err := readIndexEachDay(ctx, platform, days)
+		if err != nil {
+			return errors.Wrap(err, "read index after pruning")
+		}
+		if beforeIndex != afterIndex {
+			return errors.Errorf("pruning moved get_index:\nbefore: %s\n after: %s", beforeIndex, afterIndex)
+		}
+
+		afterExtremes, err := readExtremesOverWindows(ctx, platform, windows)
+		if err != nil {
+			return errors.Wrap(err, "read high and low after pruning")
+		}
+		if beforeExtremes != afterExtremes {
+			return errors.Errorf("pruning moved get_high_value or get_low_value:\nbefore: %s\n after: %s",
+				beforeExtremes, afterExtremes)
+		}
 		return nil
 	}
 }
@@ -1088,6 +1212,59 @@ func readEachDay(ctx context.Context, platform *kwilTesting.Platform, days []int
 			return "", errors.Errorf("get_record answered %d rows for day %d; expected exactly one", len(rows), day)
 		}
 		parts = append(parts, fmt.Sprintf("%d->%s", day, rows[0][1]))
+	}
+	return strings.Join(parts, " "), nil
+}
+
+// readIndexEachDay is readEachDay through get_index. base_time is left NULL so the
+// base resolves the way a consumer's would: from default_base_time if the stream
+// has one, otherwise from the first record -- which rule 3 never deletes.
+func readIndexEachDay(ctx context.Context, platform *kwilTesting.Platform, days []int64) (string, error) {
+	address, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+	if err != nil {
+		return "", errors.Wrap(err, "deployer address")
+	}
+	var parts []string
+	for _, day := range days {
+		at := day * daySecs
+		rows, err := callActionAsStrings(ctx, platform, "get_index", 2,
+			address.Address(), pruneStreamId.String(), at, at, nil, nil)
+		if err != nil {
+			return "", errors.Wrapf(err, "get_index at %d", at)
+		}
+		if len(rows) != 1 {
+			return "", errors.Errorf("get_index answered %d rows for day %d; expected exactly one", len(rows), day)
+		}
+		parts = append(parts, fmt.Sprintf("%d->%s", day, rows[0][1]))
+	}
+	return strings.Join(parts, " "), nil
+}
+
+// readExtremesOverWindows renders get_high_value and get_low_value across each
+// window as "from-to->high/low". Both anchor since B1, so a window holding no
+// record of its own still answers with the value carried into it.
+func readExtremesOverWindows(ctx context.Context, platform *kwilTesting.Platform, windows [][2]int64) (string, error) {
+	address, err := util.NewEthereumAddressFromBytes(platform.Deployer)
+	if err != nil {
+		return "", errors.Wrap(err, "deployer address")
+	}
+	var parts []string
+	for _, window := range windows {
+		from, to := window[0]*daySecs, window[1]*daySecs
+		values := make([]string, 0, 2)
+		for _, action := range []string{"get_high_value", "get_low_value"} {
+			rows, err := callActionAsStrings(ctx, platform, action, 2,
+				address.Address(), pruneStreamId.String(), from, to, nil)
+			if err != nil {
+				return "", errors.Wrapf(err, "%s over days %d-%d", action, window[0], window[1])
+			}
+			if len(rows) != 1 {
+				return "", errors.Errorf("%s answered %d rows for days %d-%d; expected exactly one",
+					action, len(rows), window[0], window[1])
+			}
+			values = append(values, rows[0][1])
+		}
+		parts = append(parts, fmt.Sprintf("%d-%d->%s/%s", window[0], window[1], values[0], values[1]))
 	}
 	return strings.Join(parts, " "), nil
 }

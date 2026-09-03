@@ -50,6 +50,16 @@ func (e *Extension) stopSchedulerIfRunning() {
 	}
 }
 
+func (e *Extension) startPruneScheduler(_ context.Context) error {
+	return e.Scheduler().StartPrune(context.Background(), e.PruneSchedule())
+}
+
+func (e *Extension) stopPruneIfRunning() {
+	if e.Scheduler() != nil {
+		_ = e.Scheduler().StopPrune()
+	}
+}
+
 // wireSignerAndBroadcaster fills in signer and broadcaster if not already set.
 func wireSignerAndBroadcaster(app *common.App, ext *Extension) {
 	if app == nil || app.Service == nil || app.Service.LocalConfig == nil {
