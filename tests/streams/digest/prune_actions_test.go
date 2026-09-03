@@ -59,6 +59,7 @@ func TestPruneActions(t *testing.T) {
 			WithPruneStream(testPruneTakesTheMarkerWithTheRecord(t)),
 			WithPruneStream(testPruneLeavesADigestedDayReadable(t)),
 			WithPruneStream(testAutoPruneSweepsAndMovesTheCursor(t)),
+			WithPruneStream(testAutoPruneWrapsAtTheEndOfAPass(t)),
 			WithSignerAndProvider(testPruneConfigShipsDisabled(t)),
 			WithSignerAndProvider(testPruneRejectsBadArguments(t)),
 			WithSignerAndProvider(testPruneIsLeaderOnly(t)),
@@ -377,14 +378,8 @@ func testPruneKeepsStreamsApart(t *testing.T) func(context.Context, *kwilTesting
 		if err != nil {
 			return errors.Wrap(err, "resolve first stream ref")
 		}
-		if err := SetupStreamMD(ctx, platform, pruneSecondId, 1, pruneEmptyStreamData); err != nil {
-			return errors.Wrap(err, "set up second stream")
-		}
-		second, err := setup.GetStreamIdForDeployer(ctx, platform, pruneSecondName)
+		second, err := addSecondPruneStream(ctx, platform)
 		if err != nil {
-			return errors.Wrap(err, "resolve second stream ref")
-		}
-		if err := clearPruneRecords(ctx, platform, second); err != nil {
 			return err
 		}
 		if first >= second {
@@ -719,6 +714,52 @@ func testAutoPruneSweepsAndMovesTheCursor(t *testing.T) func(context.Context, *k
 	}
 }
 
+// The sweep is cyclic. Once the cursor has passed the last stream there is
+// nothing above it, so the next call restarts from the beginning — and the cursor
+// moving backwards is the only visible sign that it did.
+func testAutoPruneWrapsAtTheEndOfAPass(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		first, err := setup.GetStreamIdForDeployer(ctx, platform, pruneStreamName)
+		if err != nil {
+			return errors.Wrap(err, "resolve first stream ref")
+		}
+		second, err := addSecondPruneStream(ctx, platform)
+		if err != nil {
+			return err
+		}
+
+		// One stream per call, so a pass takes two of them and the third wraps.
+		steps := []struct {
+			wantCursor  int
+			wantHasMore string
+			why         string
+		}{
+			{first, "true", "the first stream of the pass, with the second still ahead"},
+			{second, "false", "the last stream of the pass, with nothing above it"},
+			{first, "true", "wrapped back to the beginning"},
+		}
+		for i, step := range steps {
+			res, _, err := callAutoPrune(ctx, platform, 1000, 1, nil)
+			if err != nil {
+				return errors.Wrapf(err, "sweep %d", i+1)
+			}
+			if len(res) != 1 || res[0][3] != step.wantHasMore {
+				return errors.Errorf("sweep %d (%s): has_more_to_delete = %v, want %s",
+					i+1, step.why, res, step.wantHasMore)
+			}
+			cursor, err := pruneCursor(ctx, platform)
+			if err != nil {
+				return err
+			}
+			if cursor != step.wantCursor {
+				return errors.Errorf("sweep %d (%s): cursor = %d, want %d",
+					i+1, step.why, cursor, step.wantCursor)
+			}
+		}
+		return nil
+	}
+}
+
 // =============================================================================
 // Configuration
 // =============================================================================
@@ -736,6 +777,18 @@ func testPruneConfigShipsDisabled(t *testing.T) func(context.Context, *kwilTesti
 			| enabled | retention_days | prune_schedule | last_stream_ref |
 			|---------|----------------|----------------|-----------------|
 			| false   | 30             | 0 */6 * * *    | 0               |
+		`)
+
+		// This test runs on a network with no primitive streams at all, which is
+		// the one branch that returns before ever calling batch_prune_duplicates.
+		swept, _, err := callAutoPrune(ctx, platform, 1000, 100, nil)
+		if err != nil {
+			return err
+		}
+		assertMarkdownEquals(t, swept, `
+			| swept_streams | deleted_event_times | deleted_rows | has_more_to_delete |
+			|---------------|---------------------|--------------|--------------------|
+			| 0             | 0                   | 0            | false              |
 		`)
 		return nil
 	}
@@ -931,6 +984,19 @@ func seedPruneRecordsAt(ctx context.Context, platform *kwilTesting.Platform, str
 		converted = append(converted, pruneRecord{Day: record.EventTime, Value: record.Value, Seconds: true})
 	}
 	return seedPruneRecords(ctx, platform, streamRef, converted)
+}
+
+// addSecondPruneStream creates an empty second primitive stream, which always
+// takes a higher streams.id than the one WithPruneStream made.
+func addSecondPruneStream(ctx context.Context, platform *kwilTesting.Platform) (int, error) {
+	if err := SetupStreamMD(ctx, platform, pruneSecondId, 1, pruneEmptyStreamData); err != nil {
+		return 0, errors.Wrap(err, "set up second stream")
+	}
+	streamRef, err := setup.GetStreamIdForDeployer(ctx, platform, pruneSecondName)
+	if err != nil {
+		return 0, errors.Wrap(err, "resolve second stream ref")
+	}
+	return streamRef, clearPruneRecords(ctx, platform, streamRef)
 }
 
 func clearPruneRecords(ctx context.Context, platform *kwilTesting.Platform, streamRef int) error {

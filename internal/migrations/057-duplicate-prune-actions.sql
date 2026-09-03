@@ -143,12 +143,20 @@ CREATE OR REPLACE ACTION batch_prune_duplicates(
 
     $cutoff INT8 := @block_timestamp - $retention_seconds;
 
-    $probe_count INT := 0;
+    $chosen_stream_refs INT[];
+    $chosen_event_times INT8[];
     $deleted_event_times INT := 0;
     $deleted_rows INT := 0;
     $has_more_to_delete BOOL := false;
 
-    -- Step 1: how many event times qualify, and is there a leftover.
+    -- Step 1: walk the rule once and carry the answer out in arrays.
+    --
+    -- The three statements that follow read those arrays instead of rebuilding
+    -- this chain, which sorts every record of every stream in the batch. Doing it
+    -- four times would be four whole-history passes per call, and it would let
+    -- the probe and the deletes disagree if the predicate were ever edited in one
+    -- copy and not another. Collecting cap + 1 rows and slicing back to cap is
+    -- how auto_digest learns the same thing about its own queue.
     for $result in
     WITH targets AS (
         SELECT r.stream_ref
@@ -168,13 +176,12 @@ CREATE OR REPLACE ACTION batch_prune_duplicates(
                -- over the batch's records instead of three.
                MAX(pe.truflation_created_at) OVER (PARTITION BY pe.stream_ref, pe.event_time) AS event_watermark,
                MAX(pe.truflation_created_at) OVER (PARTITION BY pe.stream_ref) AS stream_watermark,
-               -- How many rows share the winning created_at (counting a NOT NULL
-               -- column, because kwil rejects COUNT(*) as a window function).
-               -- More than one and
-               -- there is no single record a read resolves to: the readers order
-               -- by created_at alone, so which value they answer with is the
-               -- planner's choice. Deleting on a guess would make that choice
-               -- permanent, so an event time like that is left alone.
+               -- Rule 7. How many rows share the winning created_at (counting a
+               -- NOT NULL column, because kwil rejects COUNT(*) as a window
+               -- function). More than one and there is no single record a read
+               -- resolves to: the readers order by created_at alone, so which
+               -- value they answer with is the planner's choice. Deleting on a
+               -- guess would make that choice permanent.
                COUNT(pe.value) OVER (PARTITION BY pe.stream_ref, pe.event_time, pe.created_at) AS peers
         FROM primitive_events pe
         JOIN targets t ON t.stream_ref = pe.stream_ref
@@ -218,97 +225,46 @@ CREATE OR REPLACE ACTION batch_prune_duplicates(
           AND (s.event_time / $retention_seconds) = (s.previous_event_time / $retention_seconds)
           AND wt.stream_ref IS NULL
     ),
-    probe AS (
-        -- cap + 1, so a full page tells us something was left over. Same trick
-        -- batch_digest uses.
+    candidates AS (
         SELECT stream_ref, event_time FROM deletable
         ORDER BY stream_ref ASC, event_time ASC
         LIMIT $delete_cap + 1
+    ),
+    aggregated AS (
+        SELECT ARRAY_AGG(stream_ref ORDER BY stream_ref ASC, event_time ASC) AS all_stream_refs,
+               ARRAY_AGG(event_time ORDER BY stream_ref ASC, event_time ASC) AS all_event_times,
+               COUNT(*) AS total_count
+        FROM candidates
     )
-    SELECT COUNT(*) AS probe_count FROM probe
+    SELECT
+        CASE WHEN total_count > $delete_cap
+             THEN all_stream_refs[1:$delete_cap]
+             ELSE all_stream_refs
+        END AS stream_refs,
+        CASE WHEN total_count > $delete_cap
+             THEN all_event_times[1:$delete_cap]
+             ELSE all_event_times
+        END AS event_times,
+        CASE WHEN total_count > $delete_cap
+             THEN true
+             ELSE false
+        END AS has_more_flag
+    FROM aggregated
     {
-        $probe_count := $result.probe_count;
+        $chosen_stream_refs := $result.stream_refs;
+        $chosen_event_times := $result.event_times;
+        $has_more_to_delete := $result.has_more_flag;
     }
 
-    $has_more_to_delete := $probe_count > $delete_cap;
-    $deleted_event_times := LEAST($delete_cap, $probe_count);
+    $deleted_event_times := COALESCE(array_length($chosen_stream_refs), 0);
 
     if $deleted_event_times > 0 {
         -- Step 2: count what is about to go, before it goes. Events and markers
         -- together, the way batch_digest reports its own total.
         for $result in
-        WITH targets AS (
-            SELECT r.stream_ref
-            FROM UNNEST($stream_refs) AS r(stream_ref)
-        ),
-        effective AS (
-            -- The record a read resolves to at each event time: the greatest
-            -- created_at. The value tiebreak is for consensus rather than for
-            -- correctness -- primitive_events has carried no primary key since
-            -- migration 017, so two rows can share (stream_ref, event_time,
-            -- created_at), and every node has to pick the same one.
-            SELECT pe.stream_ref, pe.event_time, pe.value,
-                   ROW_NUMBER() OVER (PARTITION BY pe.stream_ref, pe.event_time
-                                      ORDER BY pe.created_at DESC, pe.value DESC) AS rn,
-                   -- Rule 4b, read as two windows over this same scan rather than as a
-                   -- separate aggregate and join. The whole rule then costs one pass
-                   -- over the batch's records instead of three.
-                   MAX(pe.truflation_created_at) OVER (PARTITION BY pe.stream_ref, pe.event_time) AS event_watermark,
-                   MAX(pe.truflation_created_at) OVER (PARTITION BY pe.stream_ref) AS stream_watermark,
-                   -- How many rows share the winning created_at (counting a NOT NULL
-               -- column, because kwil rejects COUNT(*) as a window function).
-               -- More than one and
-                   -- there is no single record a read resolves to: the readers order
-                   -- by created_at alone, so which value they answer with is the
-                   -- planner's choice. Deleting on a guess would make that choice
-                   -- permanent, so an event time like that is left alone.
-                   COUNT(pe.value) OVER (PARTITION BY pe.stream_ref, pe.event_time, pe.created_at) AS peers
-            FROM primitive_events pe
-            JOIN targets t ON t.stream_ref = pe.stream_ref
-        ),
-        series AS (
-            SELECT stream_ref, event_time, value, event_watermark, stream_watermark, peers,
-                   LAG(value) OVER (PARTITION BY stream_ref ORDER BY event_time ASC) AS previous_value,
-                   LAG(event_time) OVER (PARTITION BY stream_ref ORDER BY event_time ASC) AS previous_event_time,
-                   LAG(peers) OVER (PARTITION BY stream_ref ORDER BY event_time ASC) AS previous_peers,
-                   ROW_NUMBER() OVER (PARTITION BY stream_ref ORDER BY event_time DESC) AS rn_newest
-            FROM effective
-            WHERE rn = 1
-        ),
-        watermark_times AS (
-            -- The event times holding their stream's greatest truflation_created_at.
-            -- A stream with none anywhere has a NULL stream_watermark and selects
-            -- nothing here, which is right: it has no Truflation watermark to protect.
-            SELECT DISTINCT stream_ref, event_time
-            FROM effective
-            WHERE stream_watermark IS NOT NULL
-              AND event_watermark = stream_watermark
-        ),
-        deletable AS (
-            SELECT s.stream_ref, s.event_time
-            FROM series s
-            LEFT JOIN watermark_times wt ON wt.stream_ref = s.stream_ref
-                                        AND wt.event_time = s.event_time
-            WHERE s.previous_value IS NOT NULL
-              AND s.value = s.previous_value
-              AND s.event_time < $cutoff
-              AND s.rn_newest > 1
-              AND s.peers = 1
-              AND s.previous_peers = 1
-              -- Rule 6: keep one record per retention window. Without this a flat run
-              -- collapses to its head, and an anchor can end up years older than the
-              -- point it answers for -- which get_indexed_value_at (055) rejects
-              -- outright rather than carrying forward. Bucketing by the retention
-              -- window is what makes that impossible: a market whose interval fits
-              -- inside the window never reads pruned history at all, and one whose
-              -- interval exceeds it allows a staleness at least that large.
-              AND (s.event_time / $retention_seconds) = (s.previous_event_time / $retention_seconds)
-              AND wt.stream_ref IS NULL
-        ),
-        chosen AS (
-            SELECT stream_ref, event_time FROM deletable
-            ORDER BY stream_ref ASC, event_time ASC
-            LIMIT $delete_cap
+        WITH chosen AS (
+            SELECT sr AS stream_ref, et AS event_time
+            FROM UNNEST($chosen_stream_refs, $chosen_event_times) AS u(sr, et)
         ),
         deleted_row_probe AS (
             SELECT pe.stream_ref, pe.event_time
@@ -326,91 +282,18 @@ CREATE OR REPLACE ACTION batch_prune_duplicates(
             $deleted_rows := $result.row_count;
         }
 
-        -- Step 3: markers first. `chosen` is derived from primitive_events, so
-        -- deleting the events first would leave this statement recomputing an
-        -- empty set and orphaning every marker it was meant to remove.
-        --
-        -- A whole day's markers go, not just the ones at the chosen event times.
-        -- get_daily_ohlc treats a day as digested if ANY surviving marker still
-        -- joins a live record, and then reads each of open/high/low/close from
-        -- its own marker bit -- so taking one marked record out of a digested day
-        -- and leaving the rest would answer NULL for that role beside three real
-        -- values, which reads as corruption rather than as absence. Clearing the
-        -- day drops it back to the raw branch, which recomputes from whatever
+        -- Step 3: a whole day's markers go, not just the ones at the chosen event
+        -- times. get_daily_ohlc treats a day as digested if ANY surviving marker
+        -- still joins a live record, and then reads each of open/high/low/close
+        -- from its own marker bit -- so taking one marked record out of a digested
+        -- day and leaving the rest would answer NULL for that role beside three
+        -- real values, which reads as corruption rather than as absence. Clearing
+        -- the day drops it back to the raw branch, which recomputes from whatever
         -- survives. Nothing re-marks it: digest only writes markers for days in
         -- pending_prune_days, and the pruner never enqueues one.
-        WITH targets AS (
-            SELECT r.stream_ref
-            FROM UNNEST($stream_refs) AS r(stream_ref)
-        ),
-        effective AS (
-            -- The record a read resolves to at each event time: the greatest
-            -- created_at. The value tiebreak is for consensus rather than for
-            -- correctness -- primitive_events has carried no primary key since
-            -- migration 017, so two rows can share (stream_ref, event_time,
-            -- created_at), and every node has to pick the same one.
-            SELECT pe.stream_ref, pe.event_time, pe.value,
-                   ROW_NUMBER() OVER (PARTITION BY pe.stream_ref, pe.event_time
-                                      ORDER BY pe.created_at DESC, pe.value DESC) AS rn,
-                   -- Rule 4b, read as two windows over this same scan rather than as a
-                   -- separate aggregate and join. The whole rule then costs one pass
-                   -- over the batch's records instead of three.
-                   MAX(pe.truflation_created_at) OVER (PARTITION BY pe.stream_ref, pe.event_time) AS event_watermark,
-                   MAX(pe.truflation_created_at) OVER (PARTITION BY pe.stream_ref) AS stream_watermark,
-                   -- How many rows share the winning created_at (counting a NOT NULL
-               -- column, because kwil rejects COUNT(*) as a window function).
-               -- More than one and
-                   -- there is no single record a read resolves to: the readers order
-                   -- by created_at alone, so which value they answer with is the
-                   -- planner's choice. Deleting on a guess would make that choice
-                   -- permanent, so an event time like that is left alone.
-                   COUNT(pe.value) OVER (PARTITION BY pe.stream_ref, pe.event_time, pe.created_at) AS peers
-            FROM primitive_events pe
-            JOIN targets t ON t.stream_ref = pe.stream_ref
-        ),
-        series AS (
-            SELECT stream_ref, event_time, value, event_watermark, stream_watermark, peers,
-                   LAG(value) OVER (PARTITION BY stream_ref ORDER BY event_time ASC) AS previous_value,
-                   LAG(event_time) OVER (PARTITION BY stream_ref ORDER BY event_time ASC) AS previous_event_time,
-                   LAG(peers) OVER (PARTITION BY stream_ref ORDER BY event_time ASC) AS previous_peers,
-                   ROW_NUMBER() OVER (PARTITION BY stream_ref ORDER BY event_time DESC) AS rn_newest
-            FROM effective
-            WHERE rn = 1
-        ),
-        watermark_times AS (
-            -- The event times holding their stream's greatest truflation_created_at.
-            -- A stream with none anywhere has a NULL stream_watermark and selects
-            -- nothing here, which is right: it has no Truflation watermark to protect.
-            SELECT DISTINCT stream_ref, event_time
-            FROM effective
-            WHERE stream_watermark IS NOT NULL
-              AND event_watermark = stream_watermark
-        ),
-        deletable AS (
-            SELECT s.stream_ref, s.event_time
-            FROM series s
-            LEFT JOIN watermark_times wt ON wt.stream_ref = s.stream_ref
-                                        AND wt.event_time = s.event_time
-            WHERE s.previous_value IS NOT NULL
-              AND s.value = s.previous_value
-              AND s.event_time < $cutoff
-              AND s.rn_newest > 1
-              AND s.peers = 1
-              AND s.previous_peers = 1
-              -- Rule 6: keep one record per retention window. Without this a flat run
-              -- collapses to its head, and an anchor can end up years older than the
-              -- point it answers for -- which get_indexed_value_at (055) rejects
-              -- outright rather than carrying forward. Bucketing by the retention
-              -- window is what makes that impossible: a market whose interval fits
-              -- inside the window never reads pruned history at all, and one whose
-              -- interval exceeds it allows a staleness at least that large.
-              AND (s.event_time / $retention_seconds) = (s.previous_event_time / $retention_seconds)
-              AND wt.stream_ref IS NULL
-        ),
-        chosen AS (
-            SELECT stream_ref, event_time FROM deletable
-            ORDER BY stream_ref ASC, event_time ASC
-            LIMIT $delete_cap
+        WITH chosen AS (
+            SELECT sr AS stream_ref, et AS event_time
+            FROM UNNEST($chosen_stream_refs, $chosen_event_times) AS u(sr, et)
         )
         DELETE FROM primitive_event_type
         WHERE EXISTS (
@@ -421,78 +304,9 @@ CREATE OR REPLACE ACTION batch_prune_duplicates(
         );
 
         -- Step 4: every row at those event times, shadowed revisions included.
-        WITH targets AS (
-            SELECT r.stream_ref
-            FROM UNNEST($stream_refs) AS r(stream_ref)
-        ),
-        effective AS (
-            -- The record a read resolves to at each event time: the greatest
-            -- created_at. The value tiebreak is for consensus rather than for
-            -- correctness -- primitive_events has carried no primary key since
-            -- migration 017, so two rows can share (stream_ref, event_time,
-            -- created_at), and every node has to pick the same one.
-            SELECT pe.stream_ref, pe.event_time, pe.value,
-                   ROW_NUMBER() OVER (PARTITION BY pe.stream_ref, pe.event_time
-                                      ORDER BY pe.created_at DESC, pe.value DESC) AS rn,
-                   -- Rule 4b, read as two windows over this same scan rather than as a
-                   -- separate aggregate and join. The whole rule then costs one pass
-                   -- over the batch's records instead of three.
-                   MAX(pe.truflation_created_at) OVER (PARTITION BY pe.stream_ref, pe.event_time) AS event_watermark,
-                   MAX(pe.truflation_created_at) OVER (PARTITION BY pe.stream_ref) AS stream_watermark,
-                   -- How many rows share the winning created_at (counting a NOT NULL
-               -- column, because kwil rejects COUNT(*) as a window function).
-               -- More than one and
-                   -- there is no single record a read resolves to: the readers order
-                   -- by created_at alone, so which value they answer with is the
-                   -- planner's choice. Deleting on a guess would make that choice
-                   -- permanent, so an event time like that is left alone.
-                   COUNT(pe.value) OVER (PARTITION BY pe.stream_ref, pe.event_time, pe.created_at) AS peers
-            FROM primitive_events pe
-            JOIN targets t ON t.stream_ref = pe.stream_ref
-        ),
-        series AS (
-            SELECT stream_ref, event_time, value, event_watermark, stream_watermark, peers,
-                   LAG(value) OVER (PARTITION BY stream_ref ORDER BY event_time ASC) AS previous_value,
-                   LAG(event_time) OVER (PARTITION BY stream_ref ORDER BY event_time ASC) AS previous_event_time,
-                   LAG(peers) OVER (PARTITION BY stream_ref ORDER BY event_time ASC) AS previous_peers,
-                   ROW_NUMBER() OVER (PARTITION BY stream_ref ORDER BY event_time DESC) AS rn_newest
-            FROM effective
-            WHERE rn = 1
-        ),
-        watermark_times AS (
-            -- The event times holding their stream's greatest truflation_created_at.
-            -- A stream with none anywhere has a NULL stream_watermark and selects
-            -- nothing here, which is right: it has no Truflation watermark to protect.
-            SELECT DISTINCT stream_ref, event_time
-            FROM effective
-            WHERE stream_watermark IS NOT NULL
-              AND event_watermark = stream_watermark
-        ),
-        deletable AS (
-            SELECT s.stream_ref, s.event_time
-            FROM series s
-            LEFT JOIN watermark_times wt ON wt.stream_ref = s.stream_ref
-                                        AND wt.event_time = s.event_time
-            WHERE s.previous_value IS NOT NULL
-              AND s.value = s.previous_value
-              AND s.event_time < $cutoff
-              AND s.rn_newest > 1
-              AND s.peers = 1
-              AND s.previous_peers = 1
-              -- Rule 6: keep one record per retention window. Without this a flat run
-              -- collapses to its head, and an anchor can end up years older than the
-              -- point it answers for -- which get_indexed_value_at (055) rejects
-              -- outright rather than carrying forward. Bucketing by the retention
-              -- window is what makes that impossible: a market whose interval fits
-              -- inside the window never reads pruned history at all, and one whose
-              -- interval exceeds it allows a staleness at least that large.
-              AND (s.event_time / $retention_seconds) = (s.previous_event_time / $retention_seconds)
-              AND wt.stream_ref IS NULL
-        ),
-        chosen AS (
-            SELECT stream_ref, event_time FROM deletable
-            ORDER BY stream_ref ASC, event_time ASC
-            LIMIT $delete_cap
+        WITH chosen AS (
+            SELECT sr AS stream_ref, et AS event_time
+            FROM UNNEST($chosen_stream_refs, $chosen_event_times) AS u(sr, et)
         )
         DELETE FROM primitive_events
         WHERE EXISTS (
