@@ -808,3 +808,238 @@ func parseDigestResultFromTxLog(logOutput string) (*DigestTxResult, error) {
 
 	return result, nil
 }
+
+// PruneTxResult represents the parsed result from an auto_prune_duplicates
+// transaction.
+type PruneTxResult struct {
+	SweptStreams      int
+	DeletedEventTimes int
+	DeletedRows       int
+	HasMoreToDelete   bool
+}
+
+// LoadPruneConfig reads the single-row duplicate prune configuration.
+// Returns (enabled, schedule). If the table or row is missing it returns
+// false, "" and no error, so a node running a binary newer than its migrations
+// simply leaves the sweep off.
+func (e *EngineOperations) LoadPruneConfig(ctx context.Context) (bool, string, error) {
+	var (
+		enabled  bool
+		schedule string
+		found    bool
+	)
+
+	db, cleanup, err := e.getFreshReadTx(ctx)
+	if err != nil {
+		return false, "", fmt.Errorf("get fresh read tx: %w", err)
+	}
+	defer cleanup()
+
+	err = e.engine.ExecuteWithoutEngineCtx(ctx, db,
+		`SELECT enabled, prune_schedule FROM main.duplicate_prune_config WHERE id = 1`, nil,
+		func(row *common.Row) error {
+			if len(row.Values) >= 2 {
+				if v, ok := row.Values[0].(bool); ok {
+					enabled = v
+				}
+				if s, ok := row.Values[1].(string); ok {
+					schedule = s
+				}
+				found = true
+			}
+			return nil
+		})
+	if err != nil {
+		msg := err.Error()
+		// Tolerate a missing table the way LoadDigestConfig does; everything else
+		// should surface to the caller.
+		if strings.Contains(msg, "duplicate_prune_config") && (strings.Contains(msg, "does not exist") || strings.Contains(msg, "undefined") || strings.Contains(msg, "not found")) {
+			e.logger.Info("duplicate_prune_config table not found; duplicate pruning stays off")
+			return false, "", nil
+		}
+		return false, "", err
+	}
+	if !found {
+		return false, "", nil
+	}
+	return enabled, schedule, nil
+}
+
+// BroadcastAutoPruneDuplicatesWithRetry wraps broadcastAutoPruneDuplicatesOnce
+// with retry logic. On any error it re-fetches a fresh nonce before retrying,
+// mirroring BroadcastTrimOrderEventsWithRetry.
+func (e *EngineOperations) BroadcastAutoPruneDuplicatesWithRetry(
+	ctx context.Context,
+	chainID string,
+	signer auth.Signer,
+	broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error),
+	deleteCap int,
+	streamBatchSize int,
+	maxRetries int,
+) (*PruneTxResult, error) {
+	var lastErr error
+	backoff := 5 * time.Second
+	maxBackoff := 30 * time.Second
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			e.logger.Warn("retrying auto_prune_duplicates with fresh nonce",
+				"attempt", attempt, "last_error", lastErr)
+
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+
+		result, err := e.broadcastAutoPruneDuplicatesOnce(ctx, chainID, signer, broadcaster, deleteCap, streamBatchSize)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+	}
+
+	return nil, fmt.Errorf("auto_prune_duplicates max retries (%d) exceeded: %w", maxRetries, lastErr)
+}
+
+// broadcastAutoPruneDuplicatesOnce fetches a fresh nonce and broadcasts once.
+//
+// The action's third parameter, retention_days, is deliberately left off the
+// argument list so its NULL default applies and the action reads retention from
+// duplicate_prune_config. Retention is an operator setting that has to be
+// changeable without a binary release, and passing it from here would silently
+// override whatever the operator set.
+func (e *EngineOperations) broadcastAutoPruneDuplicatesOnce(
+	ctx context.Context,
+	chainID string,
+	signer auth.Signer,
+	broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error),
+	deleteCap int,
+	streamBatchSize int,
+) (*PruneTxResult, error) {
+	signerAccountID, err := ktypes.GetSignerAccount(signer)
+	if err != nil {
+		return nil, fmt.Errorf("get signer account: %w", err)
+	}
+
+	db, cleanup, err := e.getFreshReadTx(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get fresh read tx: %w", err)
+	}
+	defer cleanup()
+
+	account, err := e.accounts.GetAccount(ctx, db, signerAccountID)
+	var nextNonce uint64
+	if err != nil {
+		msg := strings.ToLower(err.Error())
+		if !strings.Contains(msg, "not found") && !strings.Contains(msg, "no rows") {
+			return nil, fmt.Errorf("get account: %w", err)
+		}
+		nextNonce = 1
+	} else {
+		nextNonce = uint64(account.Nonce + 1)
+	}
+
+	deleteCapArg, err := ktypes.EncodeValue(int64(deleteCap))
+	if err != nil {
+		return nil, fmt.Errorf("encode deleteCap: %w", err)
+	}
+	streamBatchSizeArg, err := ktypes.EncodeValue(int64(streamBatchSize))
+	if err != nil {
+		return nil, fmt.Errorf("encode streamBatchSize: %w", err)
+	}
+
+	payload := &ktypes.ActionExecution{
+		Namespace: "main",
+		Action:    "auto_prune_duplicates",
+		Arguments: [][]*ktypes.EncodedValue{{
+			deleteCapArg, streamBatchSizeArg,
+		}},
+	}
+
+	tx, err := ktypes.CreateNodeTransaction(payload, chainID, nextNonce)
+	if err != nil {
+		return nil, fmt.Errorf("create tx: %w", err)
+	}
+	if err := tx.Sign(signer); err != nil {
+		return nil, fmt.Errorf("sign tx: %w", err)
+	}
+
+	hash, txResult, err := broadcaster(ctx, tx, 1)
+	if err != nil {
+		return nil, fmt.Errorf("broadcast tx: %w", err)
+	}
+
+	if txResult.Code != uint32(ktypes.CodeOk) {
+		return nil, fmt.Errorf("transaction failed with code %d: %s",
+			txResult.Code, txResult.Log)
+	}
+
+	result, err := parsePruneResultFromTxLog(txResult.Log)
+	if err != nil {
+		e.logger.Warn("failed to parse auto_prune_duplicates result", "error", err, "log", txResult.Log)
+		return nil, fmt.Errorf("parse prune result: %w", err)
+	}
+
+	e.logger.Info("auto_prune_duplicates completed",
+		"swept_streams", result.SweptStreams,
+		"deleted_event_times", result.DeletedEventTimes,
+		"deleted_rows", result.DeletedRows,
+		"has_more", result.HasMoreToDelete,
+		"tx_hash", hash.String(),
+		"nonce", nextNonce,
+		"delete_cap", deleteCap,
+		"stream_batch_size", streamBatchSize)
+
+	return result, nil
+}
+
+// parsePruneResultFromTxLog extracts the sweep counters from the NOTICE the
+// action emits. The payload is JSON rather than the key=value the trim actions
+// use, so this mirrors parseDigestResultFromTxLog rather than
+// parseTrimResultFromTxLog.
+func parsePruneResultFromTxLog(logOutput string) (*PruneTxResult, error) {
+	if logOutput == "" {
+		return nil, fmt.Errorf("empty log output")
+	}
+
+	var pruneJSON string
+	for _, line := range strings.Split(logOutput, "\n") {
+		if !strings.Contains(line, "auto_prune_duplicates:") {
+			continue
+		}
+		parts := strings.SplitN(line, "auto_prune_duplicates:", 2)
+		if len(parts) == 2 {
+			pruneJSON = strings.TrimSpace(parts[1])
+		}
+	}
+
+	if pruneJSON == "" {
+		return nil, fmt.Errorf("no auto_prune_duplicates log entry found in: %q", logOutput)
+	}
+
+	pruneJSON = strings.Trim(pruneJSON, `"`)
+
+	var jsonResult struct {
+		SweptStreams      int  `json:"swept_streams"`
+		DeletedEventTimes int  `json:"deleted_event_times"`
+		DeletedRows       int  `json:"deleted_rows"`
+		HasMoreToDelete   bool `json:"has_more_to_delete"`
+	}
+	if err := json.Unmarshal([]byte(pruneJSON), &jsonResult); err != nil {
+		return nil, fmt.Errorf("failed to parse prune JSON: %w", err)
+	}
+
+	return &PruneTxResult{
+		SweptStreams:      jsonResult.SweptStreams,
+		DeletedEventTimes: jsonResult.DeletedEventTimes,
+		DeletedRows:       jsonResult.DeletedRows,
+		HasMoreToDelete:   jsonResult.HasMoreToDelete,
+	}, nil
+}
