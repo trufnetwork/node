@@ -35,6 +35,11 @@ type Extension struct {
 	enabled  bool
 	schedule string
 
+	// duplicate prune config snapshot, read from duplicate_prune_config rather
+	// than digest_config and gating a separate cron
+	pruneEnabled  bool
+	pruneSchedule string
+
 	// reload policy
 	reloadIntervalBlocks int64
 	lastCheckedHeight    int64
@@ -94,11 +99,23 @@ func (e *Extension) SetConfig(enabled bool, schedule string) {
 }
 func (e *Extension) ConfigEnabled() bool { return e.enabled }
 func (e *Extension) Schedule() string    { return e.schedule }
+func (e *Extension) SetPruneConfig(enabled bool, schedule string) {
+	e.pruneEnabled = enabled
+	e.pruneSchedule = schedule
+}
+func (e *Extension) PruneEnabled() bool { return e.pruneEnabled }
+func (e *Extension) PruneSchedule() string {
+	if e.pruneSchedule == "" {
+		return DefaultPruneSchedule
+	}
+	return e.pruneSchedule
+}
 func (e *Extension) SetScheduler(s *scheduler.DigestScheduler) {
 	if e.scheduler == s {
 		return
 	}
 	if e.scheduler != nil {
+		_ = e.scheduler.StopPrune()
 		_ = e.scheduler.Stop()
 	}
 	e.scheduler = s
@@ -183,14 +200,27 @@ func (e *Extension) retryConfigReload() {
 		}
 
 		enabled, schedule, err := e.EngineOps().LoadDigestConfig(e.retryWorkerCtx)
+		var pruneEnabled bool
+		var pruneSchedule string
+		var pruneErr error
 		if err == nil {
+			// Both configs are reloaded together so one worker covers both crons.
+			pruneEnabled, pruneSchedule, pruneErr = e.EngineOps().LoadPruneConfig(e.retryWorkerCtx)
+		}
+		if err == nil && pruneErr == nil {
 			// Success! Update config (app=nil since we're in background, service already cached)
-			e.Logger().Info("config reload succeeded in background", "attempt", attempt, "enabled", enabled, "schedule", schedule)
+			e.Logger().Info("config reload succeeded in background", "attempt", attempt,
+				"enabled", enabled, "schedule", schedule,
+				"prune_enabled", pruneEnabled, "prune_schedule", pruneSchedule)
 			e.applyConfigChangeWithLock(e.retryWorkerCtx, enabled, schedule, nil)
+			e.applyPruneConfigChangeWithLock(e.retryWorkerCtx, pruneEnabled, pruneSchedule, nil)
 			return
 		}
+		if err == nil {
+			err = pruneErr
+		}
 
-		// Check if context was cancelled during LoadDigestConfig
+		// Check if context was cancelled during the reload
 		if e.retryWorkerCtx.Err() != nil {
 			e.Logger().Info("retry worker cancelled during config reload")
 			return
@@ -247,10 +277,63 @@ func (e *Extension) applyConfigChangeWithLock(ctx context.Context, enabled bool,
 	}
 }
 
+// applyPruneConfigChangeWithLock applies duplicate_prune_config changes with the
+// same synchronization applyConfigChangeWithLock uses, and shares its lock so a
+// single reload cannot have the two crons half-applied.
+func (e *Extension) applyPruneConfigChangeWithLock(ctx context.Context, enabled bool, schedule string, app *common.App) {
+	e.retryMu.Lock()
+	defer e.retryMu.Unlock()
+
+	if schedule == "" {
+		schedule = DefaultPruneSchedule
+	}
+
+	if enabled == e.PruneEnabled() && schedule == e.PruneSchedule() {
+		return
+	}
+
+	e.Logger().Info("duplicate prune config changed, updating scheduler",
+		"old_enabled", e.PruneEnabled(),
+		"new_enabled", enabled,
+		"old_schedule", e.PruneSchedule(),
+		"new_schedule", schedule,
+		"is_leader", e.IsLeader())
+	e.SetPruneConfig(enabled, schedule)
+
+	if !enabled {
+		e.stopPruneIfRunning()
+		e.Logger().Info("duplicate prune stopped due to config disabled")
+		return
+	}
+	if !e.IsLeader() {
+		e.Logger().Info("duplicate prune config enabled but not leader, will start when leadership acquired")
+		return
+	}
+
+	service := e.Service()
+	if app != nil && app.Service != nil {
+		service = app.Service
+		if e.Service() == nil {
+			e.SetService(service)
+		}
+	}
+	if e.Scheduler() == nil && !e.ensureSchedulerWithService(service) {
+		e.Logger().Debug("tn_digest: prerequisites missing; deferring duplicate prune (re)start after config update")
+		return
+	}
+	e.stopPruneIfRunning()
+	if err := e.startPruneScheduler(ctx); err != nil {
+		e.Logger().Warn("failed to (re)start duplicate prune scheduler after config update", "error", err)
+	} else {
+		e.Logger().Info("duplicate prune (re)started with new schedule", "schedule", e.PruneSchedule())
+	}
+}
+
 // Close stops background jobs.
 func (e *Extension) Close() {
 	e.stopRetryWorker()
 	if e.scheduler != nil {
+		_ = e.scheduler.StopPrune()
 		_ = e.scheduler.Stop()
 	}
 }

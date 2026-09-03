@@ -70,12 +70,20 @@ func engineReadyHook(ctx context.Context, app *common.App) error {
 		schedule = DefaultDigestSchedule
 	}
 
+	// The duplicate prune sweep has its own table, its own enabled flag and its own
+	// schedule, so it is snapshotted separately rather than derived from digest's.
+	pruneEnabled, pruneSchedule, _ := engOps.LoadPruneConfig(ctx)
+	if pruneSchedule == "" {
+		pruneSchedule = DefaultPruneSchedule
+	}
+
 	// Create extension instance and snapshot references
 	ext := GetExtension()
 	ext.logger = logger
 	ext.SetService(app.Service)
 	ext.SetEngineOps(engOps)
 	ext.SetConfig(enabled, schedule)
+	ext.SetPruneConfig(pruneEnabled, pruneSchedule)
 
 	// Load config from node TOML [extensions.tn_digest]
 	if ext.Service() != nil && ext.Service().LocalConfig != nil {
@@ -135,7 +143,9 @@ func digestLeaderAcquire(ctx context.Context, app *common.App, block *common.Blo
 		return
 	}
 	ext.setLeader(true)
-	if !ext.ConfigEnabled() {
+	// Either feature being on is reason enough to build the scheduler; both off
+	// leaves it nil, so a node with nothing enabled allocates nothing.
+	if !ext.ConfigEnabled() && !ext.PruneEnabled() {
 		return
 	}
 	service := ext.Service()
@@ -152,10 +162,19 @@ func digestLeaderAcquire(ctx context.Context, app *common.App, block *common.Blo
 		ext.Logger().Debug("tn_digest: prerequisites missing; deferring start until broadcaster/signer/engine/service are available")
 		return
 	}
-	if err := ext.startScheduler(ctx); err != nil {
-		ext.Logger().Warn("failed to start tn_digest scheduler on leader acquire", "error", err)
-	} else {
-		ext.Logger().Info("tn_digest started (leader)", "schedule", ext.Schedule())
+	if ext.ConfigEnabled() {
+		if err := ext.startScheduler(ctx); err != nil {
+			ext.Logger().Warn("failed to start tn_digest scheduler on leader acquire", "error", err)
+		} else {
+			ext.Logger().Info("tn_digest started (leader)", "schedule", ext.Schedule())
+		}
+	}
+	if ext.PruneEnabled() {
+		if err := ext.startPruneScheduler(ctx); err != nil {
+			ext.Logger().Warn("failed to start duplicate prune scheduler on leader acquire", "error", err)
+		} else {
+			ext.Logger().Info("duplicate prune started (leader)", "schedule", ext.PruneSchedule())
+		}
 	}
 }
 
@@ -165,6 +184,7 @@ func digestLeaderLose(ctx context.Context, app *common.App, block *common.BlockC
 		return
 	}
 	ext.setLeader(false)
+	ext.stopPruneIfRunning()
 	ext.stopSchedulerIfRunning()
 	if ext.Logger() != nil {
 		ext.Logger().Info("tn_digest stopped (lost leadership)")
@@ -206,8 +226,20 @@ func digestLeaderEndBlock(ctx context.Context, app *common.App, block *common.Bl
 		return
 	}
 
+	pruneEnabled, pruneSchedule, pruneLoadErr := ext.EngineOps().LoadPruneConfig(ctx)
+	if pruneLoadErr != nil {
+		// The digest config did load, so apply it rather than dropping it, and let
+		// the retry worker come back for both.
+		ext.applyConfigChangeWithLock(ctx, enabled, schedule, app)
+		ext.Logger().Warn("duplicate prune config reload failed in end-block, signaling background retry worker", "error", pruneLoadErr)
+		ext.SetLastCheckedHeight(block.Height)
+		ext.signalRetryNeeded()
+		return
+	}
+
 	// Apply config change with proper synchronization (prevents race with background worker)
 	ext.applyConfigChangeWithLock(ctx, enabled, schedule, app)
+	ext.applyPruneConfigChangeWithLock(ctx, pruneEnabled, pruneSchedule, app)
 
 	ext.SetLastCheckedHeight(block.Height)
 }

@@ -29,6 +29,21 @@ type DigestScheduler struct {
 	cancel      context.CancelFunc
 	mu          sync.Mutex
 
+	// The duplicate prune sweep runs on its own cron and its own context, because
+	// duplicate_prune_config carries its own enabled flag and its own schedule. A
+	// digest config change stops and restarts the digest cron; sharing one would
+	// make that cancel a prune drain halfway through, and the other way round.
+	pruneCron   *gocron.Scheduler
+	pruneCtx    context.Context
+	pruneCancel context.CancelFunc
+
+	// drainSlot holds one token and serialises the two drains. They broadcast from
+	// the same signer account, so two in flight would take the same nonce and one
+	// would lose; and both delete from primitive_events, so keeping them apart also
+	// keeps a block from carrying two capped deletes. Both default schedules are
+	// six-hourly, so without this they would contend on every firing.
+	drainSlot chan struct{}
+
 	broadcaster txBroadcaster
 	signer      auth.Signer
 }
@@ -47,6 +62,8 @@ func NewDigestScheduler(params NewDigestSchedulerParams) *DigestScheduler {
 		logger:      params.Logger.New("scheduler"),
 		engineOps:   params.EngineOps,
 		cron:        gocron.NewScheduler(time.UTC),
+		pruneCron:   gocron.NewScheduler(time.UTC),
+		drainSlot:   make(chan struct{}, 1),
 		broadcaster: params.Tx,
 		signer:      params.Signer,
 	}
@@ -96,6 +113,13 @@ func (s *DigestScheduler) Start(ctx context.Context, cronExpr string) error {
 			return
 		}
 		chainID := kwilService.GenesisConfig.ChainID
+
+		// One drain at a time; see drainSlot.
+		if !s.acquireDrainSlot(jobCtx) {
+			s.logger.Info("digest drain canceled while waiting for the duplicate prune drain")
+			return
+		}
+		defer s.releaseDrainSlot()
 
 		// Implement drain mode: run auto_digest repeatedly until has_more=false
 		s.logger.Info("starting digest drain mode",
@@ -211,15 +235,260 @@ func (s *DigestScheduler) Start(ctx context.Context, cronExpr string) error {
 	return nil
 }
 
+// Stop stops the digest cron and cancels its drain. It deliberately leaves the
+// duplicate prune cron running: the two configurations are independent, and the
+// extension restarts the digest cron whenever digest_config changes.
+//
+// The cancel comes first and neither call happens under the mutex, because
+// gocron's Stop waits for a running job to return and this job only returns when
+// its context is done. Cancelling afterwards would wait forever, and holding the
+// mutex across the wait would block the job in the snapshot it takes on entry.
 func (s *DigestScheduler) Stop() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.cron.Stop()
-	if s.cancel != nil {
-		s.cancel()
+	cancel := s.cancel
+	cron := s.cron
+	s.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if cron != nil {
+		cron.Stop()
 	}
 	s.logger.Info("digest scheduler stopped")
 	return nil
+}
+
+// acquireDrainSlot blocks until the other drain finishes or ctx is done, and
+// reports whether it got the slot. Waiting rather than skipping is deliberate:
+// digest and prune ship with the same six-hourly default, so a firing that
+// skipped on contention would skip every time.
+func (s *DigestScheduler) acquireDrainSlot(ctx context.Context) bool {
+	s.mu.Lock()
+	if s.drainSlot == nil {
+		s.drainSlot = make(chan struct{}, 1)
+	}
+	slot := s.drainSlot
+	s.mu.Unlock()
+
+	select {
+	case slot <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (s *DigestScheduler) releaseDrainSlot() {
+	s.mu.Lock()
+	slot := s.drainSlot
+	s.mu.Unlock()
+	if slot == nil {
+		return
+	}
+	select {
+	case <-slot:
+	default:
+	}
+}
+
+// StartPrune registers the duplicate prune sweep on its own cron expression.
+//
+// The extension calls this only when duplicate_prune_config.enabled is true, and
+// that column ships false. Nothing on a network prunes until an operator sets it
+// through a signed exec-sql.
+func (s *DigestScheduler) StartPrune(ctx context.Context, cronExpr string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.pruneCancel != nil {
+		s.pruneCancel()
+	}
+	s.pruneCtx, s.pruneCancel = context.WithCancel(ctx)
+
+	if s.pruneCron == nil {
+		s.pruneCron = gocron.NewScheduler(time.UTC)
+	}
+	s.pruneCron.Clear()
+
+	jobCtx := s.pruneCtx
+	jobFunc := func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.logger.Error("panic in duplicate prune job", "panic", r, "stack", string(debug.Stack()))
+			}
+		}()
+		s.runPruneDrain(jobCtx)
+	}
+
+	if j, err := s.pruneCron.Cron(cronExpr).Do(jobFunc); err != nil {
+		// Fallback for schedules that include seconds.
+		if j2, err2 := s.pruneCron.CronWithSeconds(cronExpr).Do(jobFunc); err2 != nil {
+			return fmt.Errorf("register duplicate prune job: %w", err)
+		} else {
+			j2.SingletonMode()
+		}
+	} else {
+		j.SingletonMode()
+	}
+
+	s.pruneCron.StartAsync()
+	s.logger.Info("duplicate prune scheduler started", "schedule", cronExpr)
+	return nil
+}
+
+// Running reports whether the digest cron is scheduled, and PruneRunning does the
+// same for the duplicate prune sweep. The two crons are independent, so an
+// operator or a test that wants to know one is up cannot infer it from the other.
+func (s *DigestScheduler) Running() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cron != nil && s.cron.IsRunning()
+}
+
+func (s *DigestScheduler) PruneRunning() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pruneCron != nil && s.pruneCron.IsRunning()
+}
+
+// StopPrune stops the duplicate prune cron and cancels a drain in flight. Same
+// ordering as Stop, and here it matters more: a sweep can sit for minutes waiting
+// on the drain slot, and only its context releases it.
+func (s *DigestScheduler) StopPrune() error {
+	s.mu.Lock()
+	cancel := s.pruneCancel
+	cron := s.pruneCron
+	s.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if cron != nil {
+		cron.Stop()
+	}
+	s.logger.Info("duplicate prune scheduler stopped")
+	return nil
+}
+
+// runPruneDrain broadcasts auto_prune_duplicates until the sweep finishes a pass
+// over every primitive stream, the run budget is spent, or the context is done.
+//
+// Unlike digest, finishing early is the exception rather than the rule. The sweep
+// is cyclic and has_more_to_delete reports "the cursor has not reached the end of
+// a pass", so on a network with more streams than one firing can visit the loop
+// runs to PruneDrainMaxRuns every time. That is why an empty run gets the short
+// delay: after the backlog is gone every run is an empty one.
+func (s *DigestScheduler) runPruneDrain(ctx context.Context) {
+	s.mu.Lock()
+	engineOps := s.engineOps
+	broadcaster := s.broadcaster
+	signer := s.signer
+	kwilService := s.kwilService
+	s.mu.Unlock()
+
+	if engineOps == nil || broadcaster == nil || signer == nil || kwilService == nil || kwilService.GenesisConfig == nil {
+		s.logger.Warn("duplicate prune job prerequisites missing; skipping run")
+		return
+	}
+	chainID := kwilService.GenesisConfig.ChainID
+
+	// One drain at a time; see drainSlot.
+	if !s.acquireDrainSlot(ctx) {
+		s.logger.Info("duplicate prune canceled while waiting for the digest drain")
+		return
+	}
+	defer s.releaseDrainSlot()
+
+	s.logger.Info("starting duplicate prune drain",
+		"delete_cap", PruneDeleteCap,
+		"stream_batch_size", PruneStreamBatchSize,
+		"max_runs", PruneDrainMaxRuns)
+
+	runs := 0
+	consecutiveFailures := 0
+	totalSweptStreams := 0
+	totalEventTimes := 0
+	totalRows := 0
+
+	for runs < PruneDrainMaxRuns {
+		select {
+		case <-ctx.Done():
+			s.logger.Info("duplicate prune drain canceled", "runs_completed", runs)
+			return
+		default:
+		}
+
+		runs++
+
+		result, err := engineOps.BroadcastAutoPruneDuplicatesWithRetry(
+			ctx,
+			chainID,
+			signer,
+			broadcaster.BroadcastTx,
+			PruneDeleteCap,
+			PruneStreamBatchSize,
+			3, // maxRetries = 3 attempts per run
+		)
+
+		delay := PruneIdleRunDelay
+		if err != nil {
+			consecutiveFailures++
+			s.logger.Warn("auto_prune_duplicates broadcast failed after retries",
+				"run", runs,
+				"consecutive_failures", consecutiveFailures,
+				"error", err)
+
+			if consecutiveFailures >= PruneDrainMaxConsecutiveFailures {
+				s.logger.Error("too many consecutive failures, aborting duplicate prune drain",
+					"consecutive_failures", consecutiveFailures,
+					"max_allowed", PruneDrainMaxConsecutiveFailures)
+				return
+			}
+			delay = PruneDrainRunDelay
+		} else {
+			consecutiveFailures = 0
+			totalSweptStreams += result.SweptStreams
+			totalEventTimes += result.DeletedEventTimes
+			totalRows += result.DeletedRows
+
+			s.logger.Info("duplicate prune run completed",
+				"run", runs,
+				"swept_streams", result.SweptStreams,
+				"deleted_event_times", result.DeletedEventTimes,
+				"deleted_rows", result.DeletedRows,
+				"has_more", result.HasMoreToDelete,
+				"cumulative_swept", totalSweptStreams,
+				"cumulative_deleted_rows", totalRows)
+
+			if !result.HasMoreToDelete {
+				s.logger.Info("duplicate prune pass completed",
+					"total_runs", runs,
+					"total_swept_streams", totalSweptStreams,
+					"total_deleted_event_times", totalEventTimes,
+					"total_deleted_rows", totalRows)
+				return
+			}
+
+			if result.DeletedRows > 0 {
+				delay = PruneDrainRunDelay
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			s.logger.Info("duplicate prune drain canceled during sleep", "runs_completed", runs)
+			return
+		case <-time.After(delay):
+		}
+	}
+
+	s.logger.Info("duplicate prune drain reached max runs",
+		"max_runs", PruneDrainMaxRuns,
+		"runs_completed", runs,
+		"total_swept_streams", totalSweptStreams,
+		"total_deleted_event_times", totalEventTimes,
+		"total_deleted_rows", totalRows)
 }
 
 // trimOrderEvents runs the trim_order_events action in a drain loop (best-effort).
@@ -338,4 +607,18 @@ func (s *DigestScheduler) RunOnce(ctx context.Context) error {
 	}
 	chainID := s.kwilService.GenesisConfig.ChainID
 	return s.engineOps.BuildAndBroadcastAutoDigestTx(ctx, chainID, s.signer, s.broadcaster.BroadcastTx)
+}
+
+// RunPruneOnce broadcasts a single auto_prune_duplicates batch (for tests and
+// manual triggering). It takes no drain slot: a caller reaching for one batch is
+// not the scheduler, and blocking it behind a six-hour drain would be surprising.
+func (s *DigestScheduler) RunPruneOnce(ctx context.Context) (*internal.PruneTxResult, error) {
+	if s.engineOps == nil || s.broadcaster == nil || s.signer == nil || s.kwilService == nil || s.kwilService.GenesisConfig == nil {
+		return nil, fmt.Errorf("missing prerequisites to run duplicate prune once")
+	}
+	chainID := s.kwilService.GenesisConfig.ChainID
+	return s.engineOps.BroadcastAutoPruneDuplicatesWithRetry(
+		ctx, chainID, s.signer, s.broadcaster.BroadcastTx,
+		PruneDeleteCap, PruneStreamBatchSize, 3,
+	)
 }

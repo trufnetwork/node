@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,6 +40,12 @@ func (p testPubKey) Verify(data []byte, sig []byte) (bool, error) { return true,
 type fakeDB struct {
 	enabled  bool
 	schedule string
+	// duplicate_prune_config is a separate row in a separate table, and the two
+	// features move independently, so it answers from its own fields. Leaving
+	// pruneSchedule empty answers no row, which is a network that has not been
+	// migrated as far as 056.
+	pruneEnabled  bool
+	pruneSchedule string
 	// For testing transient failures
 	failCount   int // number of times to fail before succeeding
 	callCount   int // current call count
@@ -53,6 +60,13 @@ func (f *fakeDB) Execute(ctx context.Context, stmt string, args ...any) (*sqltyp
 			return nil, f.failWithErr
 		}
 		return nil, errors.New("database timeout")
+	}
+
+	if strings.Contains(stmt, "duplicate_prune_config") {
+		if f.pruneSchedule == "" {
+			return &sqltypes.ResultSet{Columns: []string{"enabled", "prune_schedule"}, Rows: [][]any{}}, nil
+		}
+		return &sqltypes.ResultSet{Columns: []string{"enabled", "prune_schedule"}, Rows: [][]any{{f.pruneEnabled, f.pruneSchedule}}}, nil
 	}
 
 	// Return one row for SELECT enabled, digest_schedule FROM digest_config WHERE id = 1
