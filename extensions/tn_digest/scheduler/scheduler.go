@@ -259,22 +259,42 @@ func (s *DigestScheduler) Stop() error {
 	return nil
 }
 
+// slotChan returns the drain slot, creating it if the scheduler was built as a
+// struct literal rather than through the constructor. Selecting on a nil channel
+// blocks forever, so this cannot trust the constructor to have run.
+func (s *DigestScheduler) slotChan() chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.drainSlot == nil {
+		s.drainSlot = make(chan struct{}, 1)
+	}
+	return s.drainSlot
+}
+
 // acquireDrainSlot blocks until the other drain finishes or ctx is done, and
 // reports whether it got the slot. Waiting rather than skipping is deliberate:
 // digest and prune ship with the same six-hourly default, so a firing that
 // skipped on contention would skip every time.
 func (s *DigestScheduler) acquireDrainSlot(ctx context.Context) bool {
-	s.mu.Lock()
-	if s.drainSlot == nil {
-		s.drainSlot = make(chan struct{}, 1)
-	}
-	slot := s.drainSlot
-	s.mu.Unlock()
-
+	slot := s.slotChan()
 	select {
 	case slot <- struct{}{}:
 		return true
 	case <-ctx.Done():
+		return false
+	}
+}
+
+// tryAcquireDrainSlot takes the slot only if it is free. It is for the one-off
+// entry points, which need the same protection against two transactions taking
+// the same nonce but should not disappear into a drain that can hold the slot for
+// the better part of two hours.
+func (s *DigestScheduler) tryAcquireDrainSlot() bool {
+	slot := s.slotChan()
+	select {
+	case slot <- struct{}{}:
+		return true
+	default:
 		return false
 	}
 }
@@ -610,12 +630,22 @@ func (s *DigestScheduler) RunOnce(ctx context.Context) error {
 }
 
 // RunPruneOnce broadcasts a single auto_prune_duplicates batch (for tests and
-// manual triggering). It takes no drain slot: a caller reaching for one batch is
-// not the scheduler, and blocking it behind a six-hour drain would be surprising.
+// manual triggering).
+//
+// It takes the drain slot, because it broadcasts from the same signer account as
+// the scheduled drains and would otherwise read the same nonce. It does not wait
+// for it: a caller asking for one batch wants an answer, and a drain holds the
+// slot for as long as it runs. Refusing says which of the two happened, where a
+// nonce collision would only show up as a retry in the logs.
 func (s *DigestScheduler) RunPruneOnce(ctx context.Context) (*internal.PruneTxResult, error) {
 	if s.engineOps == nil || s.broadcaster == nil || s.signer == nil || s.kwilService == nil || s.kwilService.GenesisConfig == nil {
 		return nil, fmt.Errorf("missing prerequisites to run duplicate prune once")
 	}
+	if !s.tryAcquireDrainSlot() {
+		return nil, fmt.Errorf("a digest or duplicate prune drain is already running; retry once it finishes")
+	}
+	defer s.releaseDrainSlot()
+
 	chainID := s.kwilService.GenesisConfig.ChainID
 	return s.engineOps.BroadcastAutoPruneDuplicatesWithRetry(
 		ctx, chainID, s.signer, s.broadcaster.BroadcastTx,

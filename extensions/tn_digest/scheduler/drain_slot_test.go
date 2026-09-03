@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"math/big"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/trufnetwork/kwil-db/core/crypto/auth"
 	"github.com/trufnetwork/kwil-db/core/log"
 	ktypes "github.com/trufnetwork/kwil-db/core/types"
+	"github.com/trufnetwork/kwil-db/node/types/sql"
 	"github.com/trufnetwork/node/extensions/tn_digest/internal"
 )
 
@@ -121,7 +123,7 @@ func TestStopPrune_ReleasesASweepWaitingForTheSlot(t *testing.T) {
 		Logger:    log.New(log.WithLevel(log.LevelError)),
 		Service:   &common.Service{GenesisConfig: &config.GenesisConfig{ChainID: "test-chain"}},
 		EngineOps: internal.NewEngineOperations(nil, nil, nil, nil, log.New(log.WithLevel(log.LevelError))),
-		Signer:    stubSigner{},
+		Signer:    testSigner(),
 		Tx:        stubBroadcaster{},
 	})
 
@@ -147,17 +149,96 @@ func TestStopPrune_ReleasesASweepWaitingForTheSlot(t *testing.T) {
 	}
 }
 
-type stubSigner struct{}
+// RunPruneOnce broadcasts from the same signer account as the scheduled drains, so
+// letting it run alongside one means both read the same nonce and one transaction
+// loses. It refuses instead of waiting, and the error says which of the two it was.
+func TestRunPruneOnce_RefusesWhileADrainHoldsTheSlot(t *testing.T) {
+	s := newPruneTestScheduler()
 
-func (stubSigner) Sign(msg []byte) (*auth.Signature, error) {
-	return &auth.Signature{Data: []byte("sig"), Type: "stub"}, nil
+	if !s.acquireDrainSlot(context.Background()) {
+		t.Fatal("could not take the slot for the drain")
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.RunPruneOnce(context.Background())
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("RunPruneOnce should have refused while a drain held the slot")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunPruneOnce waited for the slot instead of refusing")
+	}
+
+	// And it leaves the slot where it found it, so the drain still owns it.
+	s.releaseDrainSlot()
+	if !s.tryAcquireDrainSlot() {
+		t.Fatal("the refused call consumed or corrupted the slot")
+	}
+	s.releaseDrainSlot()
 }
-func (stubSigner) CompactID() []byte        { return []byte("node") }
-func (stubSigner) PubKey() crypto.PublicKey { return nil }
-func (stubSigner) AuthType() string         { return "stub" }
+
+// The other half of the same claim: refusing is about contention, not a permanent
+// state, so a free slot lets the one-off through and hands it back afterwards.
+func TestRunPruneOnce_RunsAndReleasesWhenTheSlotIsFree(t *testing.T) {
+	s := newPruneTestScheduler()
+
+	if _, err := s.RunPruneOnce(context.Background()); err != nil {
+		t.Fatalf("RunPruneOnce with a free slot: %v", err)
+	}
+	if !s.tryAcquireDrainSlot() {
+		t.Fatal("RunPruneOnce did not release the slot")
+	}
+	s.releaseDrainSlot()
+}
+
+// newPruneTestScheduler builds a scheduler whose dependencies are present but inert,
+// which is enough for the entry points that only broadcast.
+func newPruneTestScheduler() *DigestScheduler {
+	return NewDigestScheduler(NewDigestSchedulerParams{
+		Logger:    log.New(log.WithLevel(log.LevelError)),
+		Service:   &common.Service{GenesisConfig: &config.GenesisConfig{ChainID: "test-chain"}},
+		EngineOps: internal.NewEngineOperations(nil, nil, nil, stubAccounts{}, log.New(log.WithLevel(log.LevelError))),
+		Signer:    testSigner(),
+		Tx:        stubBroadcaster{},
+	})
+}
+
+type stubAccounts struct{}
+
+func (stubAccounts) GetAccount(ctx context.Context, db sql.Executor, id *ktypes.AccountID) (*ktypes.Account, error) {
+	return &ktypes.Account{ID: id, Nonce: 0, Balance: big.NewInt(1000)}, nil
+}
+func (stubAccounts) Credit(ctx context.Context, db sql.Executor, id *ktypes.AccountID, amt *big.Int) error {
+	return nil
+}
+func (stubAccounts) Transfer(ctx context.Context, db sql.TxMaker, from, to *ktypes.AccountID, amt *big.Int) error {
+	return nil
+}
+func (stubAccounts) ApplySpend(ctx context.Context, db sql.Executor, id *ktypes.AccountID, amt *big.Int, nonce int64) error {
+	return nil
+}
+
+// testSigner is a real key rather than a stub. A stub with a nil PubKey panics
+// inside GetSignerAccount, which the slot tests never reach but the one-off
+// entry points do.
+func testSigner() auth.Signer {
+	priv, _, err := crypto.GenerateSecp256k1Key(nil)
+	if err != nil {
+		panic(err)
+	}
+	return auth.GetNodeSigner(priv)
+}
 
 type stubBroadcaster struct{}
 
 func (stubBroadcaster) BroadcastTx(ctx context.Context, tx *ktypes.Transaction, sync uint8) (ktypes.Hash, *ktypes.TxResult, error) {
-	return ktypes.Hash{}, &ktypes.TxResult{Code: uint32(ktypes.CodeOk)}, nil
+	return ktypes.Hash{}, &ktypes.TxResult{
+		Code: uint32(ktypes.CodeOk),
+		Log:  `auto_prune_duplicates:{"swept_streams":1,"deleted_event_times":0,"deleted_rows":0,"has_more_to_delete":false}`,
+	}, nil
 }
