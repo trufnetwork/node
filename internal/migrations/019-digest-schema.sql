@@ -39,4 +39,24 @@ CREATE TABLE IF NOT EXISTS digest_config (
     updated_at_height INT8 NOT NULL DEFAULT 0
 );
 
+-- Seed the row rather than leaving it to whoever brings the network up. Leaving
+-- it out is how a network reaches the state testnet was in: no row, so the
+-- scheduler reads "disabled" and stops, which is indistinguishable in the logs
+-- from digest being deliberately off. Nobody noticed until the queue had been
+-- filling since 2010.
+--
+-- Shipped disabled, so this creates the row without starting digest anywhere,
+-- and ON CONFLICT leaves a network that already has one exactly as it is --
+-- including its own schedule. Turning digest on stays an operator decision made
+-- through a signed exec-sql.
+--
+-- digest_schedule is NOT NULL with no default, which is the reason a row could
+-- not simply be conjured by the DEFAULTs the way duplicate_prune_config's is in
+-- 056. The value below matches DefaultDigestSchedule in
+-- extensions/tn_digest/constants.go, which is what the extension already falls
+-- back to when the schedule comes back empty.
+INSERT INTO digest_config (id, enabled, digest_schedule)
+VALUES (1, false, '0 */6 * * *')
+ON CONFLICT (id) DO NOTHING;
+
 

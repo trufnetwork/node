@@ -17,6 +17,7 @@ import (
 
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 
+	"github.com/trufnetwork/node/extensions/tn_digest"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	"github.com/trufnetwork/node/tests/streams/utils/procedure"
@@ -33,7 +34,7 @@ var idempotencyTestStreamId = util.GenerateStreamId(idempotencyTestStreamName)
 
 func TestDigestActions(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name:        "digest_actions_test",
+		Name:           "digest_actions_test",
 		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			WithDigestTestSetup(testDigestBasicOHLCCalculation(t)),
@@ -60,6 +61,7 @@ func TestDigestActions(t *testing.T) {
 			WithHighCloseTogetherSetup(testHighCloseTogether_Flag10(t)),
 			WithAutoDigestZeroExpectedSetup(testAutoDigest_ValidatesExpectedRecordsInput(t)),
 			WithSignerAndProvider(testAutoDigest_PreservesRecentDaysCutoff(t)),
+			WithSignerAndProvider(testDigestConfigShipsSeeded(t)),
 		},
 	}, testutils.GetTestOptionsWithCache())
 }
@@ -67,7 +69,7 @@ func TestDigestActions(t *testing.T) {
 // Verifies leader-only authorization on digest actions using BlockContext.Proposer.
 func TestDigestActionsLeaderAuthorization(t *testing.T) {
 	testutils.RunSchemaTest(t, kwilTesting.SchemaTest{
-		Name:        "digest_actions_leader_authorization",
+		Name:           "digest_actions_leader_authorization",
 		SeedStatements: migrations.GetSeedScriptStatements(),
 		FunctionTests: []kwilTesting.TestFunc{
 			WithSignerAndProvider(func(ctx context.Context, platform *kwilTesting.Platform) error {
@@ -2826,6 +2828,50 @@ func testAutoDigest_PreservesRecentDaysCutoff(t *testing.T) func(ctx context.Con
 			return errors.Errorf("expected no markers for recentDay, got %d", markersRecent)
 		}
 
+		return nil
+	}
+}
+
+// digest_config had no row on testnet, so the scheduler read "disabled" and
+// stopped — which looks in the logs exactly like digest being switched off on
+// purpose. Nobody noticed for years, and the queue was 27,148 days deep by the
+// time anyone did. 019 seeds the row now; this asserts it is there, that it is
+// off, and that its schedule agrees with the fallback the extension applies when
+// the schedule comes back empty. A seed that drifted from that constant would
+// silently change a fresh network's cadence.
+func testDigestConfigShipsSeeded(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		kit, err := newCtxKit(ctx, platform, true)
+		if err != nil {
+			return errors.Wrap(err, "new ctx kit")
+		}
+
+		var (
+			rows     int
+			enabled  bool
+			schedule string
+		)
+		if err := platform.Engine.Execute(kit.eng, platform.DB,
+			`SELECT enabled, digest_schedule FROM digest_config WHERE id = 1`, nil,
+			func(row *common.Row) error {
+				rows++
+				enabled, _ = row.Values[0].(bool)
+				schedule, _ = row.Values[1].(string)
+				return nil
+			}); err != nil {
+			return errors.Wrap(err, "read digest_config")
+		}
+
+		if rows != 1 {
+			return errors.Errorf("digest_config should hold exactly one seeded row, got %d", rows)
+		}
+		if enabled {
+			return errors.New("digest_config should ship disabled; enabling digest is an operator decision")
+		}
+		if schedule != tn_digest.DefaultDigestSchedule {
+			return errors.Errorf("seeded schedule %q should match DefaultDigestSchedule %q",
+				schedule, tn_digest.DefaultDigestSchedule)
+		}
 		return nil
 	}
 }

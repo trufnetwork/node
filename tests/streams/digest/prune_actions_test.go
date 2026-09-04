@@ -888,9 +888,10 @@ func testAutoPruneWrapsAtTheEndOfAPass(t *testing.T) func(context.Context, *kwil
 // Configuration
 // =============================================================================
 
-// The row is seeded by migration 056, disabled. digest_config is not seeded, and
-// the consequence is a network where digest has never run because nobody noticed
-// the row was missing — this asserts we did not repeat that.
+// The row is seeded by migration 056, disabled. digest_config went unseeded for
+// years, and the consequence was a network where digest had never run because
+// nobody noticed the row was missing — this asserts we did not repeat that.
+// 019 now seeds its own row, covered by testDigestConfigShipsSeeded.
 func testPruneConfigShipsDisabled(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		res, err := callActionAsStrings(ctx, platform, "get_duplicate_prune_config", 4)
