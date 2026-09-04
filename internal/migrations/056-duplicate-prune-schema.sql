@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS duplicate_prune_config (
     CONSTRAINT chk_dpc_cursor_not_negative CHECK (last_stream_ref >= 0)
 );
 
--- Seeded here on purpose. digest_config is not, and the consequence is a network
--- where digest has simply never run because nobody noticed the row was missing.
--- Creating it disabled costs nothing and removes that failure mode.
+-- Seeded here on purpose. digest_config went unseeded for years, and the
+-- consequence was a network where digest had simply never run because nobody
+-- noticed the row was missing. Creating it disabled costs nothing and removes
+-- that failure mode; 019 now seeds its own row the same way.
 INSERT INTO duplicate_prune_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
