@@ -3,6 +3,7 @@ package internal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -13,6 +14,30 @@ import (
 	ktypes "github.com/trufnetwork/kwil-db/core/types"
 	"github.com/trufnetwork/kwil-db/node/types/sql"
 )
+
+// ErrBroadcastPending reports that a broadcast returned without a committed
+// result while the transaction is still live in the mempool.
+//
+// This is not a failure and must not be retried. ktypes.ErrTxTimeout means the
+// wait for inclusion elapsed, not that the transaction was rejected -- it stays
+// in the mempool and still executes. Retrying it with a fresh nonce therefore
+// does not replace the work, it duplicates it, and the two transactions race
+// for the same account's nonce sequence.
+//
+// Mainnet, 2026-09-08: auto_prune_duplicates executed 22 times on chain while
+// the scheduler logged one success and five failures, because every timeout was
+// retried. Each of those was a ~17 second consensus transaction, so the retry
+// path roughly quadrupled the load during the window it was already hurting.
+//
+// A caller that sees this should stop its drain for the firing. The sweep is
+// cyclic and resumes from its cursor, so nothing is lost by ending early.
+var ErrBroadcastPending = errors.New("broadcast returned no committed result; transaction is still pending")
+
+// isBroadcastPending reports whether err means the transaction is live but
+// uncommitted, rather than rejected.
+func isBroadcastPending(err error) bool {
+	return errors.Is(err, ktypes.ErrTxTimeout)
+}
 
 // DigestTxResult represents the parsed result from an auto_digest transaction
 type DigestTxResult struct {
@@ -325,7 +350,17 @@ func (e *EngineOperations) BroadcastAutoDigestWithArgsAndRetry(
 			return result, nil
 		}
 
-		// On ANY error, retry with fresh nonce after backoff
+		if isBroadcastPending(err) {
+			// See ErrBroadcastPending: still in the mempool, still going to execute.
+			// The digest path left the same nonce gaps as the prune one did.
+			e.logger.Warn("auto_digest broadcast did not confirm in time; leaving it pending rather than retrying",
+				"attempt", attempt,
+				"tx_hash", hash.String(),
+				"error", err)
+			return nil, fmt.Errorf("%w: %v", ErrBroadcastPending, err)
+		}
+
+		// On any other error, retry with a fresh nonce after backoff
 		lastErr = err
 		e.logger.Warn("Broadcast failed, will retry with fresh nonce",
 			"attempt", attempt,
@@ -901,6 +936,14 @@ func (e *EngineOperations) BroadcastAutoPruneDuplicatesWithRetry(
 		result, err := e.broadcastAutoPruneDuplicatesOnce(ctx, chainID, signer, broadcaster, deleteCap, streamBatchSize)
 		if err == nil {
 			return result, nil
+		}
+		if isBroadcastPending(err) {
+			// See ErrBroadcastPending: the transaction is still in the mempool and
+			// will execute. Retrying duplicates a ~17 second scan rather than
+			// replacing it.
+			e.logger.Warn("auto_prune_duplicates broadcast did not confirm in time; leaving it pending rather than retrying",
+				"attempt", attempt, "error", err)
+			return nil, fmt.Errorf("%w: %v", ErrBroadcastPending, err)
 		}
 		lastErr = err
 	}
