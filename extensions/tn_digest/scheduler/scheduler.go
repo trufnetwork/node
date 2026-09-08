@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime/debug"
 	"sync"
@@ -157,6 +158,15 @@ func (s *DigestScheduler) Start(ctx context.Context, cronExpr string) error {
 			)
 
 			if err != nil {
+				if errors.Is(err, internal.ErrBroadcastPending) {
+					// Same reasoning as the prune drain: the transaction is live and
+					// will execute, so ending the firing is cheaper than stacking on it.
+					s.logger.Info("digest drain ending early: a broadcast is still pending",
+						"runs_completed", runs,
+						"error", err)
+					return
+				}
+
 				consecutiveFailures++
 				s.logger.Warn("auto_digest broadcast failed after retries",
 					"run", runs,
@@ -453,6 +463,18 @@ func (s *DigestScheduler) runPruneDrain(ctx context.Context) {
 
 		delay := PruneIdleRunDelay
 		if err != nil {
+			if errors.Is(err, internal.ErrBroadcastPending) {
+				// The transaction is still in the mempool and will execute. Carrying
+				// on would stack a second scan on top of it and race its nonce, so
+				// the firing ends here; the cursor resumes it next time.
+				s.logger.Info("duplicate prune drain ending early: a broadcast is still pending",
+					"runs_completed", runs,
+					"cumulative_swept", totalSweptStreams,
+					"cumulative_deleted_rows", totalRows,
+					"error", err)
+				return
+			}
+
 			consecutiveFailures++
 			s.logger.Warn("auto_prune_duplicates broadcast failed after retries",
 				"run", runs,

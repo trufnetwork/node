@@ -3,6 +3,7 @@ package internal
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -85,6 +86,9 @@ func TestParsePruneResultFromTxLog_IgnoresTheDigestNotice(t *testing.T) {
 type prunePathBroadcaster struct {
 	attempts  int
 	failUntil int
+	// failWith replaces the generic network error, so a test can distinguish a
+	// rejected transaction from one that is merely uncommitted.
+	failWith error
 	// action and argCount record what the last transaction actually asked for.
 	action   string
 	argCount int
@@ -102,6 +106,9 @@ func (m *prunePathBroadcaster) broadcast(ctx context.Context, tx *ktypes.Transac
 
 	result := &ktypes.TxResult{Code: uint32(ktypes.CodeOk), Log: pruneNotice}
 	if m.attempts <= m.failUntil {
+		if m.failWith != nil {
+			return ktypes.Hash{}, result, m.failWith
+		}
 		return ktypes.Hash{}, result, errors.New("network error")
 	}
 	return ktypes.Hash{1, 2, 3}, result, nil
@@ -189,5 +196,79 @@ func TestBroadcastAutoPruneDuplicates_StopsOnContextCancellation(t *testing.T) {
 	}
 	if broadcaster.attempts > 2 {
 		t.Fatalf("kept broadcasting past cancellation: %d attempts", broadcaster.attempts)
+	}
+}
+
+// A broadcast timeout is not a rejection. The transaction stays in the mempool and
+// still executes, so retrying it with a fresh nonce does not replace the work, it
+// duplicates it -- and each duplicate is a ~17 second consensus transaction.
+//
+// This is the regression for the mainnet incident of 2026-09-08, where
+// auto_prune_duplicates ran 22 times on chain while the scheduler believed it had
+// managed one success and five failures.
+func TestBroadcastAutoPruneDuplicates_DoesNotRetryAPendingTransaction(t *testing.T) {
+	accounts := &mockAccounts{}
+	// failUntil high enough that a retrying implementation would broadcast again.
+	broadcaster := &prunePathBroadcaster{failUntil: 100, failWith: ktypes.ErrTxTimeout}
+	ops := &EngineOperations{logger: log.New(), accounts: accounts}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := ops.BroadcastAutoPruneDuplicatesWithRetry(
+		ctx, "test-chain", newPruneSigner(t), broadcaster.broadcast, 1000, 5, 3,
+	)
+	if err == nil {
+		t.Fatal("expected an error when the broadcast does not confirm")
+	}
+	if !errors.Is(err, ErrBroadcastPending) {
+		t.Fatalf("want ErrBroadcastPending so the drain can end the firing, got %v", err)
+	}
+	if broadcaster.attempts != 1 {
+		t.Fatalf("a pending transaction was rebroadcast: want 1 attempt, got %d", broadcaster.attempts)
+	}
+}
+
+// A wrapped timeout still has to be recognised: the broadcast path wraps with
+// %w before the retry loop sees it.
+func TestBroadcastAutoPruneDuplicates_RecognisesAWrappedTimeout(t *testing.T) {
+	accounts := &mockAccounts{}
+	broadcaster := &prunePathBroadcaster{
+		failUntil: 100,
+		failWith:  fmt.Errorf("broadcast tx: %w", ktypes.ErrTxTimeout),
+	}
+	ops := &EngineOperations{logger: log.New(), accounts: accounts}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := ops.BroadcastAutoPruneDuplicatesWithRetry(
+		ctx, "test-chain", newPruneSigner(t), broadcaster.broadcast, 1000, 5, 3,
+	)
+	if !errors.Is(err, ErrBroadcastPending) {
+		t.Fatalf("want ErrBroadcastPending for a wrapped timeout, got %v", err)
+	}
+	if broadcaster.attempts != 1 {
+		t.Fatalf("want 1 attempt, got %d", broadcaster.attempts)
+	}
+}
+
+// The narrowing must not swallow ordinary failures: a rejected transaction is not
+// pending and still deserves its retries.
+func TestBroadcastAutoPruneDuplicates_StillRetriesARealFailure(t *testing.T) {
+	accounts := &mockAccounts{}
+	broadcaster := &prunePathBroadcaster{failUntil: 1}
+	ops := &EngineOperations{logger: log.New(), accounts: accounts}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if _, err := ops.BroadcastAutoPruneDuplicatesWithRetry(
+		ctx, "test-chain", newPruneSigner(t), broadcaster.broadcast, 1000, 5, 3,
+	); err != nil {
+		t.Fatalf("a network error should still be retried, got %v", err)
+	}
+	if broadcaster.attempts != 2 {
+		t.Fatalf("want 2 attempts, got %d", broadcaster.attempts)
 	}
 }
