@@ -111,9 +111,11 @@ type mockEngineOps struct {
 	settleErr         error
 	settleCalls       []int
 
-	// attestedFor answers AttestationExists per market id when set, so a cycle
+	// attestedFor answers the capture status per market id when set, so a cycle
 	// can mix markets that still need capturing with markets ready to settle.
 	attestedFor map[int]bool
+	// capturedFor marks a market as captured but not yet signed.
+	capturedFor map[int]bool
 	// requestErrFor fails the capture of one market id.
 	requestErrFor map[int]error
 
@@ -145,11 +147,21 @@ func (m *mockEngineOps) FindUnsettledMarkets(ctx context.Context, limit int) ([]
 	return markets, nil
 }
 
-func (m *mockEngineOps) AttestationExists(ctx context.Context, marketHash []byte) (bool, error) {
+func (m *mockEngineOps) CaptureStatusFor(ctx context.Context, marketHash []byte) (internal.CaptureStatus, error) {
+	signed := m.attestationExists
+	captured := m.attestationExists
 	if m.attestedFor != nil && len(marketHash) > 0 {
-		return m.attestedFor[int(marketHash[0])], nil
+		signed = m.attestedFor[int(marketHash[0])]
+		captured = signed
 	}
-	return m.attestationExists, nil
+	if m.capturedFor != nil && len(marketHash) > 0 && m.capturedFor[int(marketHash[0])] {
+		captured = true
+	}
+	st := internal.CaptureStatus{Captured: captured, Signed: signed}
+	if captured {
+		st.CapturedAt = 1000
+	}
+	return st, nil
 }
 
 func (m *mockEngineOps) BeginCycle() {
@@ -783,4 +795,27 @@ func TestRunSettlementCycle_AFailedCaptureAbandonsTheRest(t *testing.T) {
 
 	require.Equal(t, []int{1}, ops.requestCalls,
 		"market 3 must not be captured after market 2 failed")
+}
+
+// A market whose capture is waiting on a validator signature must be left alone:
+// not settled, because there is nothing signed to settle on, and not captured
+// again, because a second capture would read the query against a later block's
+// chain state and leave signing order to decide which one resolves the market.
+func TestRunSettlementCycle_AwaitingSignatureIsNotCapturedAgain(t *testing.T) {
+	ops := &mockEngineOps{
+		markets: []*internal.UnsettledMarket{
+			{ID: 1, Hash: []byte{1}, SettleTime: 1}, // captured, unsigned
+			{ID: 2, Hash: []byte{2}, SettleTime: 1}, // nothing captured
+			{ID: 3, Hash: []byte{3}, SettleTime: 1}, // signed, ready to settle
+		},
+		attestedFor: map[int]bool{3: true},
+		capturedFor: map[int]bool{1: true},
+	}
+	s := mixedCycleScheduler(t, ops)
+
+	require.NoError(t, s.RunOnce(context.Background()))
+
+	require.Equal(t, []string{"capture:2", "settle:3"}, ops.calls,
+		"market 1 is already captured and must be neither re-captured nor settled")
+	require.Equal(t, []int{2}, ops.requestCalls)
 }
