@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/config"
 	"github.com/trufnetwork/kwil-db/core/crypto"
@@ -108,6 +110,19 @@ type mockEngineOps struct {
 	attestationExists bool
 	settleErr         error
 	settleCalls       []int
+
+	// attestedFor answers AttestationExists per market id when set, so a cycle
+	// can mix markets that still need capturing with markets ready to settle.
+	attestedFor map[int]bool
+	// requestErrFor fails the capture of one market id.
+	requestErrFor map[int]error
+
+	beginCycleCalls int
+	requestCalls    []int
+	// calls records every broadcast the cycle made, in order, as "capture:<id>"
+	// or "settle:<id>". It is what proves no settlement landed between two
+	// captures.
+	calls []string
 }
 
 func (m *mockEngineOps) FindUnsettledMarkets(ctx context.Context, limit int) ([]*internal.UnsettledMarket, error) {
@@ -131,15 +146,28 @@ func (m *mockEngineOps) FindUnsettledMarkets(ctx context.Context, limit int) ([]
 }
 
 func (m *mockEngineOps) AttestationExists(ctx context.Context, marketHash []byte) (bool, error) {
+	if m.attestedFor != nil && len(marketHash) > 0 {
+		return m.attestedFor[int(marketHash[0])], nil
+	}
 	return m.attestationExists, nil
 }
 
+func (m *mockEngineOps) BeginCycle() {
+	m.beginCycleCalls++
+}
+
 func (m *mockEngineOps) RequestAttestationForMarket(ctx context.Context, chainID string, signer auth.Signer, broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error), market *internal.UnsettledMarket) error {
+	if err, ok := m.requestErrFor[market.ID]; ok {
+		return err
+	}
+	m.requestCalls = append(m.requestCalls, market.ID)
+	m.calls = append(m.calls, fmt.Sprintf("capture:%d", market.ID))
 	return nil
 }
 
 func (m *mockEngineOps) BroadcastSettleMarketWithRetry(ctx context.Context, chainID string, signer auth.Signer, broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error), queryID int, maxRetries int) error {
 	m.settleCalls = append(m.settleCalls, queryID)
+	m.calls = append(m.calls, fmt.Sprintf("settle:%d", queryID))
 	return m.settleErr
 }
 
@@ -670,4 +698,89 @@ func TestSchedulerParameterDefaults(t *testing.T) {
 	}
 
 	t.Log("Scheduler applied default parameters correctly")
+}
+
+// =============================================================================
+// Test: a cycle captures every market before it settles any
+// =============================================================================
+
+// mixedCycleScheduler builds a scheduler over a due set where some markets still
+// need their query captured and others already have a signed attestation.
+func mixedCycleScheduler(t *testing.T, ops *mockEngineOps) *SettlementScheduler {
+	t.Helper()
+	return NewSettlementScheduler(NewSettlementSchedulerParams{
+		Service:   &common.Service{GenesisConfig: &config.GenesisConfig{ChainID: "test-chain"}},
+		Logger:    log.DiscardLogger,
+		EngineOps: ops,
+		Signer:    &mockSigner{},
+		Tx:        &mockTxBroadcaster{},
+	})
+}
+
+// T5. A market is one band of a ladder, and each capture freezes the query
+// result at whatever block its transaction lands in. A settle_market waits for
+// its commit, so letting one run between two captures puts them in different
+// blocks — and a price landing in between makes two bands of one ladder resolve
+// against two different values, signed and immutable.
+//
+// Every capture must therefore be issued before the first settlement, whatever
+// order the due set arrives in.
+func TestRunSettlementCycle_CapturesEverythingBeforeSettlingAnything(t *testing.T) {
+	// Interleaved on purpose: settleable, ladder book, settleable, ladder book.
+	ops := &mockEngineOps{
+		markets: []*internal.UnsettledMarket{
+			{ID: 1, Hash: []byte{1}, SettleTime: 1},
+			{ID: 2, Hash: []byte{2}, SettleTime: 1},
+			{ID: 3, Hash: []byte{3}, SettleTime: 1},
+			{ID: 4, Hash: []byte{4}, SettleTime: 1},
+		},
+		attestedFor: map[int]bool{1: true, 3: true},
+	}
+	s := mixedCycleScheduler(t, ops)
+
+	require.NoError(t, s.RunOnce(context.Background()))
+
+	require.Equal(t, []string{
+		"capture:2", "capture:4", "settle:1", "settle:3",
+	}, ops.calls, "no settlement may land between two captures")
+	require.Equal(t, 1, ops.beginCycleCalls,
+		"the nonce counter is re-seeded once per cycle, before anything is broadcast")
+}
+
+// A settle-only cycle re-seeds too. A counter left over from the cycle that
+// captured is stale the moment tn_digest or tn_attestation — which sign with the
+// same node key — land a transaction between two polls.
+func TestRunSettlementCycle_SettleOnlyCycleStillReseedsTheNonce(t *testing.T) {
+	ops := &mockEngineOps{
+		markets:     []*internal.UnsettledMarket{{ID: 1, Hash: []byte{1}, SettleTime: 1}},
+		attestedFor: map[int]bool{1: true},
+	}
+	s := mixedCycleScheduler(t, ops)
+
+	require.NoError(t, s.RunOnce(context.Background()))
+
+	require.Equal(t, []string{"settle:1"}, ops.calls)
+	require.Equal(t, 1, ops.beginCycleCalls)
+}
+
+// A failed capture ends the pass. Carrying on would broadcast the rest of a
+// ladder against a nonce sequence that is no longer known to be good, and
+// re-requesting the failed book on the next poll would capture it in a later
+// block than its siblings — the split this ordering exists to prevent.
+func TestRunSettlementCycle_AFailedCaptureAbandonsTheRest(t *testing.T) {
+	ops := &mockEngineOps{
+		markets: []*internal.UnsettledMarket{
+			{ID: 1, Hash: []byte{1}, SettleTime: 1},
+			{ID: 2, Hash: []byte{2}, SettleTime: 1},
+			{ID: 3, Hash: []byte{3}, SettleTime: 1},
+		},
+		attestedFor:   map[int]bool{},
+		requestErrFor: map[int]error{2: fmt.Errorf("invalid nonce")},
+	}
+	s := mixedCycleScheduler(t, ops)
+
+	require.NoError(t, s.RunOnce(context.Background()))
+
+	require.Equal(t, []int{1}, ops.requestCalls,
+		"market 3 must not be captured after market 2 failed")
 }

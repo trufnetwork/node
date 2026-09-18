@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	gethAbi "github.com/ethereum/go-ethereum/accounts/abi"
@@ -32,6 +33,103 @@ type EngineOperations struct {
 	dbPool   sql.DelayedReadTxMaker // For fresh read transactions in background jobs
 	readDB   sql.DB                 // Independent read handle for poll reads; bypasses the engine interpreter lock
 	accounts common.Accounts
+
+	// nonceMu guards the settlement cycle's nonce counter below.
+	nonceMu sync.Mutex
+	// cycleNonce is the nonce for this cycle's next transaction, and cycleNonceSet
+	// says whether it has been seeded yet. A cycle's request_attestation
+	// transactions are broadcast accept-only, so the account's committed nonce
+	// stays behind until they are in a block and cannot be read again for the
+	// next one. Counting locally is what lets a whole ladder reach the mempool
+	// together. See BeginCycle for the rules that keep the counter honest.
+	cycleNonce    uint64
+	cycleNonceSet bool
+}
+
+// BeginCycle discards the nonce left over from the previous settlement cycle so
+// the next transaction re-seeds from committed account state.
+//
+// The counter is deliberately short-lived. Three subsystems sign with the node
+// key — tn_settlement, tn_digest and tn_attestation — so any counter that
+// outlives the work it was seeded for goes stale as soon as one of the others
+// lands a transaction, and every later broadcast is then rejected for an invalid
+// nonce. Seeding once per cycle bounds that to the cycle that was running.
+func (e *EngineOperations) BeginCycle() {
+	e.nonceMu.Lock()
+	defer e.nonceMu.Unlock()
+	e.cycleNonce = 0
+	e.cycleNonceSet = false
+}
+
+// nextCycleNonce returns the nonce to use for the next transaction of this
+// cycle, seeding from committed account state on first use.
+func (e *EngineOperations) nextCycleNonce(ctx context.Context, accountID *ktypes.AccountID) (uint64, error) {
+	e.nonceMu.Lock()
+	defer e.nonceMu.Unlock()
+
+	if e.cycleNonceSet {
+		return e.cycleNonce, nil
+	}
+
+	nonce, err := e.committedNonce(ctx, accountID)
+	if err != nil {
+		return 0, err
+	}
+	e.cycleNonce, e.cycleNonceSet = nonce, true
+	return nonce, nil
+}
+
+// advanceCycleNonce consumes the current nonce. Call it only after a broadcast
+// the mempool accepted: a rejected transaction never consumed its nonce, and
+// advancing past it would leave a gap that rejects everything after it.
+func (e *EngineOperations) advanceCycleNonce() {
+	e.nonceMu.Lock()
+	defer e.nonceMu.Unlock()
+	if e.cycleNonceSet {
+		e.cycleNonce++
+	}
+}
+
+// resetCycleNonce drops the counter so the next transaction re-seeds from
+// committed state. Call it when a broadcast failed and the counter can no longer
+// be trusted — most of all on an invalid-nonce rejection, which means another
+// subsystem signing with the node key got there first.
+func (e *EngineOperations) resetCycleNonce() {
+	e.nonceMu.Lock()
+	defer e.nonceMu.Unlock()
+	e.cycleNonce = 0
+	e.cycleNonceSet = false
+}
+
+// committedNonce reads the account's committed nonce and returns the next one to
+// use. Callers hold nonceMu.
+func (e *EngineOperations) committedNonce(ctx context.Context, accountID *ktypes.AccountID) (uint64, error) {
+	db := e.db
+	if e.dbPool != nil {
+		// A fresh read transaction, so a background job never reads through a
+		// handle another caller may have closed.
+		readTx := e.dbPool.BeginDelayedReadTx()
+		defer readTx.Rollback(ctx)
+		db = readTx
+	}
+
+	account, err := e.accounts.GetAccount(ctx, db, accountID)
+	if err != nil {
+		if !isAccountNotFoundError(err) {
+			return 0, fmt.Errorf("get account: %w", err)
+		}
+		// Never transacted, so the first nonce is 1.
+		e.logger.Info("account not found, using nonce 1",
+			"account", fmt.Sprintf("%x", accountID.Identifier))
+		return 1, nil
+	}
+
+	nonce := uint64(account.Nonce + 1)
+	e.logger.Info("seeded settlement cycle nonce from committed state",
+		"account", fmt.Sprintf("%x", accountID.Identifier),
+		"db_nonce", account.Nonce,
+		"next_nonce", nonce)
+	return nonce, nil
 }
 
 // UnsettledMarket represents a market that is ready for settlement
@@ -292,44 +390,13 @@ func (e *EngineOperations) broadcastSettleMarketWithFreshNonce(
 		return ktypes.Hash{}, fmt.Errorf("get signer account: %w", err)
 	}
 
-	// Fetch fresh nonce from database using a fresh read transaction
-	var nextNonce uint64
-	if e.dbPool != nil {
-		readTx := e.dbPool.BeginDelayedReadTx()
-		defer readTx.Rollback(ctx)
-
-		account, err := e.accounts.GetAccount(ctx, readTx, signerAccountID)
-		if err != nil {
-			if !isAccountNotFoundError(err) {
-				return ktypes.Hash{}, fmt.Errorf("get account: %w", err)
-			}
-			nextNonce = 1
-			e.logger.Info("account not found, using nonce 1",
-				"account", fmt.Sprintf("%x", signerAccountID.Identifier))
-		} else {
-			nextNonce = uint64(account.Nonce + 1)
-			e.logger.Info("fresh nonce from database",
-				"account", fmt.Sprintf("%x", signerAccountID.Identifier),
-				"db_nonce", account.Nonce,
-				"next_nonce", nextNonce)
-		}
-	} else {
-		// Fallback to stored db (may fail if tx is closed)
-		account, err := e.accounts.GetAccount(ctx, e.db, signerAccountID)
-		if err != nil {
-			if !isAccountNotFoundError(err) {
-				return ktypes.Hash{}, fmt.Errorf("get account: %w", err)
-			}
-			nextNonce = 1
-			e.logger.Info("account not found, using nonce 1",
-				"account", fmt.Sprintf("%x", signerAccountID.Identifier))
-		} else {
-			nextNonce = uint64(account.Nonce + 1)
-			e.logger.Info("fresh nonce from database",
-				"account", fmt.Sprintf("%x", signerAccountID.Identifier),
-				"db_nonce", account.Nonce,
-				"next_nonce", nextNonce)
-		}
+	// Take the cycle's nonce. This cycle's request_attestation transactions may
+	// still be in the mempool, in which case the account's committed nonce is
+	// behind by however many of them there are and reading it here would build a
+	// transaction the mempool rejects.
+	nextNonce, err := e.nextCycleNonce(ctx, signerAccountID)
+	if err != nil {
+		return ktypes.Hash{}, err
 	}
 
 	// Encode query_id argument
@@ -356,17 +423,27 @@ func (e *EngineOperations) broadcastSettleMarketWithFreshNonce(
 		return ktypes.Hash{}, fmt.Errorf("sign tx: %w", err)
 	}
 
-	// Broadcast (sync mode = WaitCommit)
+	// Broadcast (sync mode = WaitCommit). settle_market keeps waiting for the
+	// commit because isPermanentSettleError classifies a quarantine decision from
+	// the execution result, which only a committed transaction has.
 	hash, txResult, err := broadcaster(ctx, tx, 1)
 	if err != nil {
+		// The counter can no longer be trusted: the transaction may or may not
+		// have consumed its nonce. Re-seed from committed state next time, which
+		// is accurate because this path waits for the commit.
+		e.resetCycleNonce()
 		return hash, fmt.Errorf("broadcast tx: %w", err)
 	}
 
-	// Check transaction result
+	// Check transaction result. A reverting transaction is still in a block and
+	// still consumed its nonce, so re-seed rather than reuse the counter.
 	if txResult.Code != uint32(ktypes.CodeOk) {
+		e.resetCycleNonce()
 		return hash, fmt.Errorf("transaction failed with code %d: %s",
 			txResult.Code, txResult.Log)
 	}
+
+	e.advanceCycleNonce()
 
 	e.logger.Info("settle_market transaction succeeded",
 		"query_id", queryID,
@@ -548,8 +625,14 @@ func isPermanentSettleError(err error) bool {
 	return false
 }
 
-// RequestAttestationForMarket broadcasts a request_attestation transaction for a market
-// with retry logic (exponential backoff for transient errors like nonce conflicts)
+// RequestAttestationForMarket broadcasts a request_attestation transaction for a
+// market, capturing the query result at whatever block the transaction lands in.
+//
+// It does not retry. A market whose books settle together must have every one of
+// its captures in the same block, and there is no way to wait between two of them
+// without splitting the ladder across blocks — which is the whole defect. A
+// failure here ends the cycle's capture pass; the next poll five minutes later
+// re-requests whatever is still missing, together.
 func (e *EngineOperations) RequestAttestationForMarket(
 	ctx context.Context,
 	chainID string,
@@ -557,60 +640,24 @@ func (e *EngineOperations) RequestAttestationForMarket(
 	broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error),
 	market *UnsettledMarket,
 ) error {
-	// Get query components from market (only need to do this once)
 	components, err := e.GetMarketQueryComponents(ctx, market.ID)
 	if err != nil {
 		return fmt.Errorf("get query components: %w", err)
 	}
 
-	// Retry configuration
-	// Uses exponential backoff since external systems may be using the same wallet
-	const maxRetries = 5
-	backoff := 2 * time.Second
-	maxBackoff := 30 * time.Second
-
-	var lastErr error
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if attempt > 0 {
-			e.logger.Warn("retrying request_attestation",
-				"query_id", market.ID,
-				"attempt", attempt,
-				"backoff", backoff,
-				"is_nonce_error", isNonceError(lastErr),
-				"last_error", lastErr)
-
-			// Wait before retry with context cancellation support
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(backoff):
-			}
-
-			// Exponential backoff
-			backoff *= 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
-			}
-		}
-
-		err := e.broadcastRequestAttestationWithFreshNonce(ctx, chainID, signer, broadcaster, market, components)
-		if err == nil {
-			return nil
-		}
-
-		lastErr = err
+	if err := e.broadcastRequestAttestation(ctx, chainID, signer, broadcaster, market, components); err != nil {
 		e.logger.Warn("request_attestation broadcast failed",
 			"query_id", market.ID,
-			"attempt", attempt,
 			"is_nonce_error", isNonceError(err),
 			"error", err)
+		return err
 	}
-
-	return fmt.Errorf("request_attestation failed after %d retries: %w", maxRetries, lastErr)
+	return nil
 }
 
-// broadcastRequestAttestationWithFreshNonce builds and broadcasts request_attestation with fresh nonce
-func (e *EngineOperations) broadcastRequestAttestationWithFreshNonce(
+// broadcastRequestAttestation builds and broadcasts one request_attestation
+// against the settlement cycle's nonce counter.
+func (e *EngineOperations) broadcastRequestAttestation(
 	ctx context.Context,
 	chainID string,
 	signer auth.Signer,
@@ -624,32 +671,12 @@ func (e *EngineOperations) broadcastRequestAttestationWithFreshNonce(
 		return fmt.Errorf("get signer account: %w", err)
 	}
 
-	// Fetch fresh nonce from database using a fresh read transaction
-	var nextNonce uint64
-	if e.dbPool != nil {
-		readTx := e.dbPool.BeginDelayedReadTx()
-		defer readTx.Rollback(ctx)
-
-		account, err := e.accounts.GetAccount(ctx, readTx, signerAccountID)
-		if err != nil {
-			if !isAccountNotFoundError(err) {
-				return fmt.Errorf("get account: %w", err)
-			}
-			nextNonce = 1
-		} else {
-			nextNonce = uint64(account.Nonce + 1)
-		}
-	} else {
-		// Fallback to stored db (may fail if tx is closed)
-		account, err := e.accounts.GetAccount(ctx, e.db, signerAccountID)
-		if err != nil {
-			if !isAccountNotFoundError(err) {
-				return fmt.Errorf("get account: %w", err)
-			}
-			nextNonce = 1
-		} else {
-			nextNonce = uint64(account.Nonce + 1)
-		}
+	// Take the cycle's nonce rather than reading committed state. The previous
+	// capture of this cycle is still in the mempool, so the committed nonce is
+	// behind it and a transaction built from it would be rejected.
+	nextNonce, err := e.nextCycleNonce(ctx, signerAccountID)
+	if err != nil {
+		return err
 	}
 
 	// Encode arguments for request_attestation action
@@ -705,18 +732,28 @@ func (e *EngineOperations) broadcastRequestAttestationWithFreshNonce(
 		return fmt.Errorf("sign tx: %w", err)
 	}
 
-	// Broadcast (sync mode = WaitCommit)
-	hash, txResult, err := broadcaster(ctx, tx, 1)
+	// Broadcast accept-only (sync mode = WaitAccept). Waiting for the commit is
+	// what limited a cycle to one capture per block: the next transaction could
+	// not be built until this one was in a block, so every book of a ladder
+	// landed in a different block and captured a different value.
+	//
+	// The returned result is nil by definition — the transaction is in the
+	// mempool, not in a block — so there is nothing to check here. Whether the
+	// action executed is answered by AttestationExists on the next poll: a
+	// request that reverted leaves no attestation row and is simply requested
+	// again, so no market can settle on a transaction that did not execute.
+	hash, _, err := broadcaster(ctx, tx, 0)
 	if err != nil {
+		// Rejected, so the nonce was not consumed. Drop the counter rather than
+		// advance it: the caller abandons the rest of this cycle's captures and
+		// the next cycle re-seeds from committed state.
+		e.resetCycleNonce()
 		return fmt.Errorf("broadcast tx: %w", err)
 	}
 
-	// Check transaction result
-	if txResult.Code != uint32(ktypes.CodeOk) {
-		return fmt.Errorf("transaction failed with code %d: %s", txResult.Code, txResult.Log)
-	}
+	e.advanceCycleNonce()
 
-	e.logger.Info("request_attestation broadcast succeeded",
+	e.logger.Info("request_attestation accepted into the mempool",
 		"query_id", market.ID,
 		"tx_hash", hash.String(),
 		"data_provider", components.DataProvider,
