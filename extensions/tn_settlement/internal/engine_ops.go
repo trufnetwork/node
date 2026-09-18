@@ -284,24 +284,70 @@ func (e *EngineOperations) FindUnsettledMarkets(ctx context.Context, limit int) 
 	return markets, nil
 }
 
+// CaptureStatus is what the settlement path knows about a market's captured query
+// result: whether one has been taken at all, and whether a validator has signed it.
+//
+// The two are separate questions and answering only the second is what produces a
+// second capture. A request_attestation transaction writes its row immediately and
+// the signature arrives in a later block — usually the next one, but the tail
+// reaches past two hundred. A market whose capture is signed but not yet visible
+// as signed has still been captured, and asking for another one gives it a second
+// result taken at a different height against different chain state.
+type CaptureStatus struct {
+	// Captured is true once a request_attestation row exists, signed or not.
+	Captured bool
+	// Signed is true once one of those rows carries a validator signature, which
+	// is the point settle_market can use it.
+	Signed bool
+	// CapturedAt is the height of the earliest capture, or 0 when there is none.
+	// It is the only handle an operator has on how long a capture has been
+	// waiting, so it is logged when a market is held back.
+	CapturedAt int64
+}
+
+// CaptureStatusFor reports what has been captured for a market.
+//
+// Reads run on the independent readDB handle rather than the engine interpreter.
+func (e *EngineOperations) CaptureStatusFor(ctx context.Context, marketHash []byte) (CaptureStatus, error) {
+	if e.readDB == nil {
+		return CaptureStatus{}, fmt.Errorf("settlement read handle not initialized")
+	}
+
+	// One row always comes back: with no captures the aggregates are NULL, which
+	// decodes to the zero CaptureStatus.
+	rs, err := e.readDB.Execute(ctx,
+		`SELECT bool_or(signature IS NOT NULL) AS signed,
+		        min(created_height)           AS captured_at
+		   FROM main.attestations
+		  WHERE attestation_hash = $1`,
+		marketHash)
+	if err != nil {
+		return CaptureStatus{}, fmt.Errorf("check attestation: %w", err)
+	}
+	if len(rs.Rows) == 0 || len(rs.Rows[0]) < 2 {
+		return CaptureStatus{}, nil
+	}
+
+	row := rs.Rows[0]
+	capturedAt, captured := toInt64(row[1])
+	signed, _ := row[0].(bool)
+
+	return CaptureStatus{
+		Captured:   captured,
+		Signed:     signed,
+		CapturedAt: capturedAt,
+	}, nil
+}
+
 // AttestationExists checks if a signed attestation exists for the given hash.
 //
 // Reads run on the independent readDB handle rather than the engine interpreter.
 func (e *EngineOperations) AttestationExists(ctx context.Context, marketHash []byte) (bool, error) {
-	if e.readDB == nil {
-		return false, fmt.Errorf("settlement read handle not initialized")
-	}
-
-	rs, err := e.readDB.Execute(ctx,
-		`SELECT 1 FROM main.attestations
-		 WHERE attestation_hash = $1 AND signature IS NOT NULL
-		 LIMIT 1`,
-		marketHash)
+	status, err := e.CaptureStatusFor(ctx, marketHash)
 	if err != nil {
-		return false, fmt.Errorf("check attestation: %w", err)
+		return false, err
 	}
-
-	return len(rs.Rows) > 0, nil
+	return status.Signed, nil
 }
 
 // BroadcastSettleMarketWithRetry broadcasts settle_market transaction with retry logic.

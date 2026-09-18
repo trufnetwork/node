@@ -907,3 +907,66 @@ func TestSettleMarket_ContinuesTheCycleNonceAfterCaptures(t *testing.T) {
 		"the settlement takes the next nonce after the cycle's captures, not a stale committed one")
 	require.Equal(t, 1, accounts.nonceCalls, "one ledger read for the whole cycle")
 }
+
+// =============================================================================
+// Test: capture status separates "captured" from "signed"
+// =============================================================================
+
+// stubReadDB returns one prepared row for every query.
+type stubReadDB struct{ row []any }
+
+var _ sql.DB = (*stubReadDB)(nil)
+
+func (s *stubReadDB) Execute(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
+	return &sql.ResultSet{
+		Columns: []string{"signed", "captured_at"},
+		Rows:    [][]any{s.row},
+	}, nil
+}
+
+func (s *stubReadDB) BeginTx(ctx context.Context) (sql.Tx, error) {
+	return nil, fmt.Errorf("stub read handle does not support transactions")
+}
+
+// Asking only whether a signed capture exists is what produces a second one: a
+// capture is written in one block and signed in a later one, so between those two
+// blocks a market looks uncaptured. The status has to answer both questions.
+func TestCaptureStatusFor_SeparatesCapturedFromSigned(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		row  []any
+		want CaptureStatus
+	}{
+		{
+			// No capture at all: both aggregates come back NULL.
+			name: "nothing captured",
+			row:  []any{nil, nil},
+			want: CaptureStatus{},
+		},
+		{
+			// The window this exists for. A capture is on chain, its signature
+			// is not, and the market must not be captured again.
+			name: "captured, awaiting signature",
+			row:  []any{false, int64(2615513)},
+			want: CaptureStatus{Captured: true, Signed: false, CapturedAt: 2615513},
+		},
+		{
+			name: "captured and signed",
+			row:  []any{true, int64(2615513)},
+			want: CaptureStatus{Captured: true, Signed: true, CapturedAt: 2615513},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ops := &EngineOperations{logger: log.DiscardLogger, readDB: &stubReadDB{row: tc.row}}
+
+			got, err := ops.CaptureStatusFor(context.Background(), []byte{0xab})
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+
+			// AttestationExists keeps its old meaning: signed, not merely present.
+			exists, err := ops.AttestationExists(context.Background(), []byte{0xab})
+			require.NoError(t, err)
+			require.Equal(t, tc.want.Signed, exists)
+		})
+	}
+}

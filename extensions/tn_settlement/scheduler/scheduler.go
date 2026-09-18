@@ -36,7 +36,7 @@ type ProcessingGuard interface {
 // This interface allows for mocking in tests.
 type EngineOps interface {
 	FindUnsettledMarkets(ctx context.Context, limit int) ([]*internal.UnsettledMarket, error)
-	AttestationExists(ctx context.Context, marketHash []byte) (bool, error)
+	CaptureStatusFor(ctx context.Context, marketHash []byte) (internal.CaptureStatus, error)
 	// BeginCycle discards the nonce counter left over from the previous cycle so
 	// the next transaction re-seeds from committed account state.
 	BeginCycle()
@@ -312,7 +312,7 @@ func (s *SettlementScheduler) runSettlementCycle(
 
 	// Pass 1 of 3 — decide. Split the due markets into the ones that still need
 	// their query captured and the ones that are ready to settle, without
-	// broadcasting anything. Doing every AttestationExists read up front also
+	// broadcasting anything. Doing every capture-status read up front also
 	// means no settlement committed by this cycle can change the answer for a
 	// market later in the same list.
 	//
@@ -350,8 +350,7 @@ func (s *SettlementScheduler) runSettlementCycle(
 
 		processed++
 
-		// Check if a signed attestation exists
-		hasAttestation, attErr := engineOps.AttestationExists(ctx, market.Hash)
+		capture, attErr := engineOps.CaptureStatusFor(ctx, market.Hash)
 		if attErr != nil {
 			s.logger.Warn("failed to check attestation",
 				"query_id", market.ID,
@@ -359,9 +358,29 @@ func (s *SettlementScheduler) runSettlementCycle(
 			failed++
 			continue
 		}
-		if hasAttestation {
+
+		switch {
+		case capture.Signed:
 			toSettle = append(toSettle, market)
-		} else {
+
+		case capture.Captured:
+			// Captured, waiting on a validator signature. Do not ask for
+			// another: the signature arrives in a later block, and a second
+			// request would capture the query again against whatever chain
+			// state that later block holds. Which of the two then settled the
+			// market would come down to signing order rather than to the
+			// market's settle time.
+			//
+			// A capture that stays unsigned indefinitely is an operator
+			// problem, not something to paper over by capturing again — the
+			// height below is the handle for it.
+			s.logger.Info("capture awaiting signature; not requesting another",
+				"query_id", market.ID,
+				"captured_at_height", capture.CapturedAt,
+				"settle_time", market.SettleTime)
+			skipped++
+
+		default:
 			toCapture = append(toCapture, market)
 		}
 	}

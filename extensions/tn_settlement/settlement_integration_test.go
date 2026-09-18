@@ -88,9 +88,10 @@ func testFindUnsettledMarkets(t *testing.T) func(context.Context, *kwilTesting.P
 
 		// Give TRUF balance for market creation fee
 		// Cover one market's worth of fees: create_stream (100, #3971) +
-		// insert_records (1) + request_attestation (40) = 141 TRUF.
-		// Fund 200 TRUF for headroom.
-		err = giveTrufBalance(ctx, platform, deployer.Address(), "200000000000000000000") // 200 TRUF
+		// insert_records (1) + request_attestation (40) = 141 TRUF, plus a
+		// second request_attestation (40) for the unsigned-capture case below.
+		// Fund 250 TRUF for headroom.
+		err = giveTrufBalance(ctx, platform, deployer.Address(), "250000000000000000000") // 250 TRUF
 		require.NoError(t, err)
 
 		// Create stream and attestation - returns query_components (ABI-encoded)
@@ -167,9 +168,10 @@ func testAttestationExists(t *testing.T) func(context.Context, *kwilTesting.Plat
 
 		// Give TRUF balance for market creation fee
 		// Cover one market's worth of fees: create_stream (100, #3971) +
-		// insert_records (1) + request_attestation (40) = 141 TRUF.
-		// Fund 200 TRUF for headroom.
-		err = giveTrufBalance(ctx, platform, deployer.Address(), "200000000000000000000") // 200 TRUF
+		// insert_records (1) + request_attestation (40) = 141 TRUF, plus a
+		// second request_attestation (40) for the unsigned-capture case below.
+		// Fund 250 TRUF for headroom.
+		err = giveTrufBalance(ctx, platform, deployer.Address(), "250000000000000000000") // 250 TRUF
 		require.NoError(t, err)
 
 		streamID := "stattexists000000000000000000000"
@@ -218,7 +220,50 @@ func testAttestationExists(t *testing.T) func(context.Context, *kwilTesting.Plat
 		require.NoError(t, err)
 		require.False(t, exists, "fake attestation should not exist")
 
-		t.Logf("✅ AttestationExists correctly validates signed attestations")
+		// CaptureStatusFor answers two questions where AttestationExists answers
+		// one, and it is the second — "has this been captured at all" — that
+		// keeps a market from being captured twice. Exercised here rather than
+		// against a stub so the aggregate SQL itself is covered.
+		status, err := ops.CaptureStatusFor(ctx, attestationHash)
+		require.NoError(t, err)
+		require.True(t, status.Captured, "a signed capture is also a capture")
+		require.True(t, status.Signed)
+		require.NotZero(t, status.CapturedAt, "the capture height is what an operator watches")
+
+		status, err = ops.CaptureStatusFor(ctx, fakeHash)
+		require.NoError(t, err)
+		require.Equal(t, internal.CaptureStatus{}, status, "no rows must decode to the zero status")
+
+		// The window that produces a second capture: requested, on chain, not
+		// yet signed. Different args give a different hash, so this attestation
+		// is unsigned on its own.
+		unsignedArgs, err := tn_utils.EncodeActionArgs([]any{
+			deployer.Address(), streamID, int64(1400), nil, false,
+		})
+		require.NoError(t, err)
+
+		var unsignedHash []byte
+		engineCtx = helper.NewEngineContext()
+		reqRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
+			[]any{deployer.Address(), streamID, "get_last_record", unsignedArgs, false, nil},
+			func(row *common.Row) error {
+				unsignedHash = append([]byte(nil), row.Values[1].([]byte)...)
+				return nil
+			})
+		require.NoError(t, err)
+		require.NoError(t, reqRes.Error, "request_attestation failed")
+
+		status, err = ops.CaptureStatusFor(ctx, unsignedHash)
+		require.NoError(t, err)
+		require.True(t, status.Captured, "the row is on chain, so the market is captured")
+		require.False(t, status.Signed, "nothing has signed it yet")
+		require.NotZero(t, status.CapturedAt)
+
+		exists, err = ops.AttestationExists(ctx, unsignedHash)
+		require.NoError(t, err)
+		require.False(t, exists, "AttestationExists keeps its old meaning: signed, not merely present")
+
+		t.Logf("✅ capture status separates captured from signed")
 		return nil
 	}
 }
@@ -245,9 +290,10 @@ func testSettleMarketViaAction(t *testing.T) func(context.Context, *kwilTesting.
 
 		// Give TRUF balance for market creation fee
 		// Cover one market's worth of fees: create_stream (100, #3971) +
-		// insert_records (1) + request_attestation (40) = 141 TRUF.
-		// Fund 200 TRUF for headroom.
-		err = giveTrufBalance(ctx, platform, deployer.Address(), "200000000000000000000") // 200 TRUF
+		// insert_records (1) + request_attestation (40) = 141 TRUF, plus a
+		// second request_attestation (40) for the unsigned-capture case below.
+		// Fund 250 TRUF for headroom.
+		err = giveTrufBalance(ctx, platform, deployer.Address(), "250000000000000000000") // 250 TRUF
 		require.NoError(t, err)
 
 		streamID := "stsettleaction000000000000000000"
@@ -360,9 +406,10 @@ func testSkipMarketWithoutAttestation(t *testing.T) func(context.Context, *kwilT
 
 		// Give TRUF balance for market creation fee
 		// Cover one market's worth of fees: create_stream (100, #3971) +
-		// insert_records (1) + request_attestation (40) = 141 TRUF.
-		// Fund 200 TRUF for headroom.
-		err = giveTrufBalance(ctx, platform, deployer.Address(), "200000000000000000000") // 200 TRUF
+		// insert_records (1) + request_attestation (40) = 141 TRUF, plus a
+		// second request_attestation (40) for the unsigned-capture case below.
+		// Fund 250 TRUF for headroom.
+		err = giveTrufBalance(ctx, platform, deployer.Address(), "250000000000000000000") // 250 TRUF
 		require.NoError(t, err)
 
 		// Create stream and attestation WITHOUT signing (skip the SignAttestation step)
