@@ -37,6 +37,9 @@ type ProcessingGuard interface {
 type EngineOps interface {
 	FindUnsettledMarkets(ctx context.Context, limit int) ([]*internal.UnsettledMarket, error)
 	AttestationExists(ctx context.Context, marketHash []byte) (bool, error)
+	// BeginCycle discards the nonce counter left over from the previous cycle so
+	// the next transaction re-seeds from committed account state.
+	BeginCycle()
 	RequestAttestationForMarket(ctx context.Context, chainID string, signer auth.Signer, broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error), market *internal.UnsettledMarket) error
 	BroadcastSettleMarketWithRetry(ctx context.Context, chainID string, signer auth.Signer, broadcaster func(context.Context, *ktypes.Transaction, uint8) (ktypes.Hash, *ktypes.TxResult, error), queryID int, maxRetries int) error
 }
@@ -259,8 +262,17 @@ func (s *SettlementScheduler) Stop() error {
 	return nil
 }
 
-// runSettlementCycle performs one settlement pass: find unsettled markets, and
-// for each ensure a signed attestation exists then broadcast settle_market.
+// runSettlementCycle performs one settlement pass over the markets that are due.
+//
+// It runs in two passes, and the order is the point. Every market that still
+// needs its query captured is requested first, back to back, and only then is
+// anything settled. A market is a band of a ladder whose bands partition the
+// number line, so exactly one band may win — and each capture freezes the query
+// result at whatever block its transaction lands in. Interleaving a settle_market
+// between two captures puts them in different blocks, and a price landing in
+// between makes two bands of one ladder answer two different questions. Both are
+// then signed and immutable.
+//
 // Markets whose settlement PERMANENTLY fails (ErrPermanentSettleFailure — e.g. an
 // immutable, malformed attestation) are quarantined and skipped on later cycles
 // so the scheduler stops re-broadcasting a tx that reverts identically forever
@@ -292,9 +304,22 @@ func (s *SettlementScheduler) runSettlementCycle(
 
 	s.logger.Info("found unsettled markets", "count", len(markets))
 
+	// Every cycle starts from committed account state. The counter below is a
+	// cycle's own, and carrying one between cycles is how it goes stale: three
+	// subsystems sign with the node key, so anything tn_digest or tn_attestation
+	// lands between two polls moves the account on without us.
+	engineOps.BeginCycle()
+
+	// Pass 1 of 3 — decide. Split the due markets into the ones that still need
+	// their query captured and the ones that are ready to settle, without
+	// broadcasting anything. Doing every AttestationExists read up front also
+	// means no settlement committed by this cycle can change the answer for a
+	// market later in the same list.
+	//
 	// processed counts the non-quarantined markets handled this cycle — it is the
 	// maxMarkets budget. Quarantine skips do NOT consume it, so a quarantined market
 	// cannot crowd out settleable ones.
+	var toCapture, toSettle []*internal.UnsettledMarket
 	processed := 0
 	for _, market := range markets {
 		// Stop once the budget of non-quarantined markets is met; any remaining
@@ -334,23 +359,62 @@ func (s *SettlementScheduler) runSettlementCycle(
 			failed++
 			continue
 		}
-		if !hasAttestation {
-			// Request attestation for this market
-			s.logger.Info("attestation not available, requesting attestation",
-				"query_id", market.ID,
-				"settle_time", market.SettleTime)
+		if hasAttestation {
+			toSettle = append(toSettle, market)
+		} else {
+			toCapture = append(toCapture, market)
+		}
+	}
+
+	// Pass 2 of 3 — capture. Every request goes out before any settlement, back
+	// to back and without waiting for a commit between them, so a ladder's books
+	// reach the mempool together and are captured in one block.
+	if len(toCapture) > 0 {
+		s.logger.Info("requesting attestations", "count", len(toCapture))
+
+		for i, market := range toCapture {
+			select {
+			case <-ctx.Done():
+				s.logger.Info("settlement cycle cancelled",
+					"settled", settled,
+					"failed", failed,
+					"skipped", skipped)
+				return settled, failed, skipped, ctx.Err()
+			default:
+			}
 
 			if reqErr := engineOps.RequestAttestationForMarket(ctx, chainID, signer, broadcaster.BroadcastTx, market); reqErr != nil {
-				s.logger.Warn("failed to request attestation",
+				// Stop the pass rather than carry on. The nonce sequence is no
+				// longer known to be good, and re-broadcasting part of a ladder
+				// now would capture the rest of it in a later block — the split
+				// this ordering exists to prevent. The next poll requests
+				// everything still missing, together.
+				abandoned := len(toCapture) - i - 1
+				s.logger.Warn("failed to request attestation; abandoning the rest of this cycle's captures",
 					"query_id", market.ID,
+					"abandoned", abandoned,
 					"error", reqErr)
 				failed++
-			} else {
-				s.logger.Info("attestation requested successfully",
-					"query_id", market.ID)
-				skipped++ // Will settle on next run after signing
+				skipped += abandoned
+				break
 			}
-			continue
+
+			s.logger.Info("attestation requested successfully", "query_id", market.ID)
+			skipped++ // Will settle on a later run, once signed
+		}
+	}
+
+	// Pass 3 of 3 — settle. These markets were captured by an earlier cycle, so
+	// nothing here can move a value another market in this cycle depends on.
+	for _, market := range toSettle {
+		select {
+		case <-ctx.Done():
+			s.logger.Info("settlement cycle cancelled",
+				"settled", settled,
+				"failed", failed,
+				"skipped", skipped)
+			return settled, failed, skipped, ctx.Err()
+		default:
 		}
 
 		// Broadcast settle_market transaction with retry

@@ -759,3 +759,151 @@ func TestBroadcastSettleMarketWithRetry_PermanentFailureStopsImmediately(t *test
 	require.ErrorIs(t, err, ErrPermanentSettleFailure)
 	require.Equal(t, 1, broadcaster.attempts, "a permanent failure must be attempted exactly once (no retries)")
 }
+
+// =============================================================================
+// Test: a cycle's captures go out accept-only, on one nonce sequence
+// =============================================================================
+
+// recordingBroadcaster records the sync flag and nonce of every transaction, and
+// can be made to fail on the nth one.
+type recordingBroadcaster struct {
+	syncFlags []uint8
+	nonces    []uint64
+	// failOn is the 1-based call number that returns an error; 0 never fails.
+	failOn int
+	// nilResult returns a nil *TxResult, which is what an accept-only broadcast
+	// gives back: the tx is in the mempool, so there is no execution result.
+	nilResult bool
+}
+
+func (r *recordingBroadcaster) broadcast(ctx context.Context, tx *ktypes.Transaction, sync uint8) (ktypes.Hash, *ktypes.TxResult, error) {
+	call := len(r.syncFlags) + 1
+	r.syncFlags = append(r.syncFlags, sync)
+	r.nonces = append(r.nonces, tx.Body.Nonce)
+
+	if r.failOn == call {
+		return ktypes.Hash{}, nil, errors.New("invalid nonce for account abc: got 5, expected 9")
+	}
+	if r.nilResult {
+		return ktypes.Hash{1, 2, 3}, nil, nil
+	}
+	return ktypes.Hash{1, 2, 3}, &ktypes.TxResult{Code: uint32(ktypes.CodeOk)}, nil
+}
+
+func newCaptureOps(t *testing.T, accounts *mockAccounts) (*EngineOperations, auth.Signer) {
+	t.Helper()
+	queryComponents, err := encodeQueryComponentsForTest(
+		"0xe5252596672cd0208a881bdb67c9df429916ba92",
+		"st9bc3cf61c3a88aa17f4ea5f1bad7b2",
+		"price_above_threshold",
+		[]byte{0x01, 0x02},
+	)
+	if err != nil {
+		t.Fatalf("encode query components: %v", err)
+	}
+	priv, _, err := crypto.GenerateSecp256k1Key(nil)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	return &EngineOperations{
+		logger:   log.DiscardLogger,
+		accounts: accounts,
+		readDB:   &mockReadDBForQueryComponents{queryComponents: queryComponents},
+	}, auth.GetUserSigner(priv)
+}
+
+func captureMarkets(n int) []*UnsettledMarket {
+	markets := make([]*UnsettledMarket, 0, n)
+	for i := 1; i <= n; i++ {
+		markets = append(markets, &UnsettledMarket{ID: i, Hash: []byte{byte(i)}, SettleTime: 1})
+	}
+	return markets
+}
+
+// T3/T6. Every capture of a cycle must be broadcast accept-only and carry the
+// next nonce in one sequence taken from a single read of committed state.
+//
+// Reading the ledger per transaction is what limited a cycle to one capture per
+// block: the account's committed nonce does not move until the previous capture
+// is in a block, so the next transaction could not be built until then. The
+// accept-only broadcast returns a nil result, which must not be dereferenced.
+func TestRequestAttestation_IsAcceptOnlyOnOneNonceSequence(t *testing.T) {
+	accounts := &mockAccounts{currentNonce: 41}
+	ops, signer := newCaptureOps(t, accounts)
+	b := &recordingBroadcaster{nilResult: true}
+
+	ops.BeginCycle()
+	for _, market := range captureMarkets(5) {
+		if err := ops.RequestAttestationForMarket(context.Background(), "test-chain", signer, b.broadcast, market); err != nil {
+			t.Fatalf("capture of market %d failed: %v", market.ID, err)
+		}
+	}
+
+	require.Equal(t, []uint8{0, 0, 0, 0, 0}, b.syncFlags,
+		"every capture must be accept-only; waiting for a commit is what splits a ladder")
+	require.Equal(t, []uint64{43, 44, 45, 46, 47}, b.nonces,
+		"the cycle's captures must run on one consecutive nonce sequence")
+	require.Equal(t, 1, accounts.nonceCalls,
+		"committed state is read once per cycle, not once per capture")
+}
+
+// T7. A rejected transaction never consumed its nonce. Advancing past it would
+// leave a gap that the mempool rejects everything after, so the counter is
+// dropped and the next cycle re-seeds from committed state.
+func TestRequestAttestation_RejectionDoesNotConsumeTheNonce(t *testing.T) {
+	accounts := &mockAccounts{currentNonce: 9}
+	ops, signer := newCaptureOps(t, accounts)
+	b := &recordingBroadcaster{nilResult: true, failOn: 2}
+
+	markets := captureMarkets(3)
+	ops.BeginCycle()
+
+	require.NoError(t, ops.RequestAttestationForMarket(context.Background(), "test-chain", signer, b.broadcast, markets[0]))
+	require.Error(t, ops.RequestAttestationForMarket(context.Background(), "test-chain", signer, b.broadcast, markets[1]),
+		"a rejected broadcast must surface as an error so the scheduler can stop the pass")
+
+	// The scheduler abandons the pass here. Whatever runs next must re-seed
+	// rather than continue past a nonce that was never consumed.
+	require.NoError(t, ops.RequestAttestationForMarket(context.Background(), "test-chain", signer, b.broadcast, markets[2]))
+
+	require.Equal(t, 2, accounts.nonceCalls, "a rejection must force a re-seed from committed state")
+	require.Equal(t, b.nonces[1], b.nonces[2],
+		"the rejected nonce was never consumed, so the next transaction must reuse it rather than leave a gap")
+	require.Equal(t, []uint64{11, 12, 12}, b.nonces)
+}
+
+// T4. settle_market must keep waiting for the commit. isPermanentSettleError
+// classifies a quarantine decision from the execution result, and only a
+// committed transaction has one.
+func TestSettleMarket_StillWaitsForTheCommit(t *testing.T) {
+	accounts := &mockAccounts{}
+	ops := &EngineOperations{logger: log.DiscardLogger, accounts: accounts}
+	priv, _, err := crypto.GenerateSecp256k1Key(nil)
+	require.NoError(t, err)
+	b := &recordingBroadcaster{}
+
+	require.NoError(t, ops.BroadcastSettleMarketWithRetry(
+		context.Background(), "test-chain", auth.GetUserSigner(priv), b.broadcast, 1, 3))
+
+	require.Equal(t, []uint8{1}, b.syncFlags, "settle_market must broadcast with WaitCommit")
+}
+
+// A cycle that captures and then settles runs both on the same nonce sequence.
+// The captures are still in the mempool, so the account's committed nonce is
+// behind them and a settlement built from it would be rejected.
+func TestSettleMarket_ContinuesTheCycleNonceAfterCaptures(t *testing.T) {
+	accounts := &mockAccounts{currentNonce: 99}
+	ops, signer := newCaptureOps(t, accounts)
+	b := &recordingBroadcaster{}
+
+	ops.BeginCycle()
+	for _, market := range captureMarkets(2) {
+		require.NoError(t, ops.RequestAttestationForMarket(context.Background(), "test-chain", signer, b.broadcast, market))
+	}
+	require.NoError(t, ops.BroadcastSettleMarketWithRetry(
+		context.Background(), "test-chain", signer, b.broadcast, 7, 3))
+
+	require.Equal(t, []uint64{101, 102, 103}, b.nonces,
+		"the settlement takes the next nonce after the cycle's captures, not a stale committed one")
+	require.Equal(t, 1, accounts.nonceCalls, "one ledger read for the whole cycle")
+}
