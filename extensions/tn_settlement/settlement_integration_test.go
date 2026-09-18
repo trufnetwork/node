@@ -62,6 +62,7 @@ func TestSettlementIntegration(t *testing.T) {
 			testLoadSettlementConfig(t),
 			testSkipMarketWithoutAttestation(t),
 			testMultipleMarketsProcessing(t),
+			testSettleUsesTheEarliestCapture(t),
 		},
 	}, testutils.GetTestOptionsWithCache())
 }
@@ -758,4 +759,157 @@ func createStreamAndAttestation(
 	require.NoError(t, err)
 
 	return queryComponents
+}
+
+// =============================================================================
+// Test: a market with two captures settles on the earlier one
+// =============================================================================
+
+// A market can end up with two captures: request_attestation freezes the query
+// result in the block it lands in, a validator signs it in a later one, and a
+// poll between those two blocks sees nothing signed and asks for another. The
+// two read the query against different chain state, so which one resolves the
+// market decides the outcome.
+//
+// It must be the earliest — the one taken closest to settle_time, which is the
+// state the market was defined to resolve against. Ordering by signing order
+// made it a function of when a validator got to each row.
+func testSettleUsesTheEarliestCapture(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		lastTrufBalancePoint = nil
+
+		deployer := util.Unsafe_NewEthereumAddressFromString("0x8888888888888888888888888888888888888888")
+		platform.Deployer = deployer.Bytes()
+
+		helper := attestationTests.NewAttestationTestHelper(t, ctx, platform)
+		require.NoError(t, setup.CreateDataProvider(ctx, platform, deployer.Address()))
+		require.NoError(t, erc20bridge.ForTestingInitializeExtension(ctx, platform))
+
+		// create_stream (100) + insert_records (1 each) + two captures (40 each).
+		require.NoError(t, giveTrufBalance(ctx, platform, deployer.Address(), "300000000000000000000"))
+
+		streamID := "stearliestcapture0000000000000000"[:32]
+		dataProvider := deployer.Address()
+
+		engineCtx := helper.NewEngineContext()
+		_, err := platform.Engine.Call(engineCtx, platform.DB, "", "create_stream",
+			[]any{streamID, "primitive"}, nil)
+		require.NoError(t, err)
+
+		// insert_records drops value=0 unless the stream opts in (046-allow-zeros-config.sql),
+		// and the second capture below has to read a zero for the two captures
+		// to disagree. Without this the zero is silently discarded, both captures
+		// read the same value and the test proves nothing.
+		zerosRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "set_allow_zeros",
+			[]any{dataProvider, streamID, true}, nil)
+		require.NoError(t, err)
+		require.NoError(t, zerosRes.Error, "set_allow_zeros failed")
+
+		// The two captures must disagree, so the stream has to move between
+		// them. parse_attestation_boolean reads a numeric action as value > 0,
+		// so non-zero then zero gives TRUE then FALSE.
+		insert := func(eventTime int64, value string) {
+			dec, err := kwilTypes.ParseDecimalExplicit(value, 36, 18)
+			require.NoError(t, err)
+			res, err := platform.Engine.Call(engineCtx, platform.DB, "", "insert_records",
+				[]any{[]string{dataProvider}, []string{streamID}, []int64{eventTime}, []*kwilTypes.Decimal{dec}}, nil)
+			require.NoError(t, err)
+			require.NoError(t, res.Error)
+		}
+
+		// Identical args for both captures, so both land on one attestation hash
+		// and one market — which is what makes them two captures of the same
+		// question rather than two different questions.
+		argsBytes, err := tn_utils.EncodeActionArgs([]any{
+			dataProvider, streamID, int64(1500), nil, false,
+		})
+		require.NoError(t, err)
+
+		// One engine context throughout: a capture has to see the records inserted
+		// above, and a fresh context cannot. Height and TxID are moved on it
+		// instead — height is what request_attestation stores as created_height,
+		// and the transaction id is the attestations primary key, so the two
+		// captures need different ones.
+		capture := func(height int64) []byte {
+			ec := engineCtx
+			ec.TxContext.BlockContext.Height = height
+			ec.TxContext.TxID = platform.Txid()
+			var requestTxID string
+			var hash []byte
+			res, err := platform.Engine.Call(ec, platform.DB, "", "request_attestation",
+				[]any{dataProvider, streamID, "get_last_record", argsBytes, false, nil},
+				func(row *common.Row) error {
+					requestTxID = row.Values[0].(string)
+					hash = append([]byte(nil), row.Values[1].([]byte)...)
+					return nil
+				})
+			require.NoError(t, err)
+			require.NoError(t, res.Error, "request_attestation failed")
+			helper.SignAttestation(requestTxID)
+			return hash
+		}
+
+		insert(1000, "2.000000000000000000")
+		firstHash := capture(10) // sees 2 -> TRUE
+
+		insert(1200, "0.000000000000000000")
+		secondHash := capture(20) // sees 0 -> FALSE
+
+		require.Equal(t, firstHash, secondHash,
+			"identical args must give one hash, so this is one market with two captures")
+
+		// Both are signed and they disagree, which is the whole point.
+		var captures int
+		engineCtx = helper.NewEngineContext()
+		require.NoError(t, platform.Engine.Execute(engineCtx, platform.DB,
+			`SELECT count(*) FROM attestations WHERE attestation_hash = $h AND signature IS NOT NULL`,
+			map[string]any{"h": firstHash},
+			func(row *common.Row) error {
+				captures = int(row.Values[0].(int64))
+				return nil
+			}))
+		require.Equal(t, 2, captures, "the test needs two signed captures to choose between")
+
+		queryComponents, err := encodeQueryComponents(dataProvider, streamID, "get_last_record", argsBytes)
+		require.NoError(t, err)
+
+		engineCtx = helper.NewEngineContext()
+		engineCtx.TxContext.BlockContext.Timestamp = 50
+		var queryID int
+		createRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "create_market",
+			[]any{testExtensionName, queryComponents, int64(100), int64(5), int64(1)},
+			func(row *common.Row) error {
+				queryID = int(row.Values[0].(int64))
+				return nil
+			})
+		require.NoError(t, err)
+		require.Nil(t, createRes.Error)
+
+		engineCtx = helper.NewEngineContext()
+		engineCtx.TxContext.BlockContext.Timestamp = 200
+		settleRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "settle_market",
+			[]any{queryID}, nil)
+		require.NoError(t, err)
+		require.Nil(t, settleRes.Error)
+
+		var winning *bool
+		engineCtx = helper.NewEngineContext()
+		require.NoError(t, platform.Engine.Execute(engineCtx, platform.DB,
+			`SELECT winning_outcome FROM ob_queries WHERE id = $id`,
+			map[string]any{"id": queryID},
+			func(row *common.Row) error {
+				if row.Values[0] != nil {
+					v := row.Values[0].(bool)
+					winning = &v
+				}
+				return nil
+			}))
+
+		require.NotNil(t, winning, "market should be settled")
+		require.True(t, *winning,
+			"settlement must resolve on the capture taken at height 10 (value 2 -> TRUE), not the later one at height 20 (value 0 -> FALSE)")
+
+		t.Logf("✅ settlement resolved on the earliest signed capture")
+		return nil
+	}
 }
