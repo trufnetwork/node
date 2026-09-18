@@ -2615,27 +2615,49 @@ CREATE OR REPLACE ACTION settle_market(
     -- Query attestation by hash
     -- Note: market.hash should match attestation.attestation_hash
     -- This links the market to the cryptographic attestation of the query result
+    --
+    -- A market can carry more than one capture. request_attestation freezes the
+    -- query result in the block it lands in and a validator signs it in a later
+    -- one, so a poll that falls between those two blocks sees nothing signed and
+    -- asks for another. The two captures read the query against different chain
+    -- state and are not interchangeable.
+    --
+    -- Resolve on the EARLIEST signed capture: it is the one taken closest to
+    -- settle_time, which is the state the market was defined to resolve against.
+    -- Ordering by signed_height instead made the outcome a function of when a
+    -- validator got to each row, and when two were signed in the same block that
+    -- ordering was a tie decided by whichever row the database returned first.
     $result_canonical BYTEA;
-    $signature BYTEA;
+    $capture_height INT8;
     $attestation_found BOOL := false;
 
-    for $row in SELECT result_canonical, signature
+    for $row in SELECT result_canonical, created_height
                 FROM attestations
                 WHERE attestation_hash = $market_hash
-                ORDER BY signed_height DESC NULLS LAST
+                  AND signature IS NOT NULL
+                ORDER BY created_height ASC
                 LIMIT 1 {
         $result_canonical := $row.result_canonical;
-        $signature := $row.signature;
+        $capture_height := $row.created_height;
         $attestation_found := true;
     }
 
     if NOT $attestation_found {
-        ERROR('Attestation not found for market hash. Market cannot be settled without attestation.');
-    }
+        -- Nothing signed. Say which of the two reasons it is, because they need
+        -- different responses: a capture that exists is waiting on a validator,
+        -- and one that does not has to be requested.
+        $capture_exists BOOL := false;
+        for $row in SELECT 1 AS present
+                    FROM attestations
+                    WHERE attestation_hash = $market_hash
+                    LIMIT 1 {
+            $capture_exists := true;
+        }
 
-    -- Verify attestation has been signed
-    if $signature IS NULL {
-        ERROR('Attestation not yet signed by validator. Please wait for signing to complete.');
+        if $capture_exists {
+            ERROR('Attestation not yet signed by validator. Please wait for signing to complete.');
+        }
+        ERROR('Attestation not found for market hash. Market cannot be settled without attestation.');
     }
 
     -- ==========================================================================
