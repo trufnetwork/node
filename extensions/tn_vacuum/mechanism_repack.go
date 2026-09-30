@@ -16,14 +16,25 @@ import (
 
 var ErrPgRepackUnavailable = errors.New("pg_repack binary not found in PATH")
 
+// pgRepackStopGrace is how long a cancelled pg_repack gets to drop its trigger
+// and log table before it is killed. pg_repack cleans up on SIGINT only; a
+// SIGKILL leaves both behind.
+const pgRepackStopGrace = 30 * time.Second
+
+// leftoverLockTimeout bounds how long clearing an interrupted run may wait for a
+// table lock, since block execution queues behind that wait.
+const leftoverLockTimeout = "5s"
+
 type pgRepackMechanism struct {
 	logger     log.Logger
 	binaryPath string
 	db         DBConnConfig
+	// clearLeftovers runs before every pg_repack; tests replace it.
+	clearLeftovers func(ctx context.Context, db DBConnConfig, logger log.Logger) error
 }
 
 func NewPgRepackMechanism() Mechanism {
-	return &pgRepackMechanism{}
+	return &pgRepackMechanism{clearLeftovers: clearInterruptedRepack}
 }
 
 func (m *pgRepackMechanism) Name() string { return "pg_repack" }
@@ -62,6 +73,16 @@ func (m *pgRepackMechanism) Run(ctx context.Context, req RunRequest) (*RunReport
 		return nil, fmt.Errorf("pg_repack requires database name")
 	}
 
+	if m.clearLeftovers != nil {
+		if err := m.clearLeftovers(ctx, db, m.logger); err != nil {
+			report.Duration = time.Since(startTime)
+			report.Status = StatusFailed
+			report.Error = err.Error()
+			m.logger.Warn("pg_repack skipped: could not clear an interrupted run", "error", err)
+			return report, err
+		}
+	}
+
 	args := []string{fmt.Sprintf("--dbname=%s", db.Database), "--all"}
 	if db.Host != "" {
 		args = append(args, fmt.Sprintf("--host=%s", db.Host))
@@ -80,6 +101,10 @@ func (m *pgRepackMechanism) Run(ctx context.Context, req RunRequest) (*RunReport
 	args = append(args, "--no-order")
 
 	cmd := exec.CommandContext(ctx, m.binaryPath, args...)
+	// On cancellation send SIGINT, which pg_repack handles by dropping its trigger
+	// and log table, and kill it only if it has not exited after the grace period.
+	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
+	cmd.WaitDelay = pgRepackStopGrace
 	env := os.Environ()
 	if db.Password != "" {
 		env = append(env, fmt.Sprintf("PGPASSWORD=%s", db.Password))
@@ -165,6 +190,57 @@ func ensurePgRepackExtension(ctx context.Context, db DBConnConfig, logger log.Lo
 		return fmt.Errorf("create pg_repack extension: %w", err)
 	}
 	logger.Info("pg_repack extension ensured")
+	return nil
+}
+
+// leftoverCountSQL counts what a pg_repack run leaves when it is killed before it
+// can clean up: repack_trigger on a source table, and the tables it creates in the
+// repack schema. A fresh pg_repack extension owns no tables there.
+const leftoverCountSQL = `SELECT
+	(SELECT count(*) FROM pg_trigger WHERE tgname = 'repack_trigger' AND NOT tgisinternal),
+	(SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+	  WHERE n.nspname = 'repack' AND c.relkind = 'r')`
+
+// clearInterruptedRepack removes the trigger and log tables an interrupted
+// pg_repack run leaves behind. The trigger copies every write to its table into a
+// repack.log_<oid> table until someone drops it, and a later --all run repacks
+// those log tables as well, so the triggers chain and one write becomes many.
+// Dropping the extension with CASCADE removes all of it, and the extension is
+// created again in the same transaction. Nothing in the repack schema is
+// consensus state.
+func clearInterruptedRepack(ctx context.Context, db DBConnConfig, logger log.Logger) error {
+	conn, err := pgx.Connect(ctx, buildConnString(db))
+	if err != nil {
+		return fmt.Errorf("connect to clear pg_repack leftovers: %w", err)
+	}
+	defer conn.Close(ctx)
+
+	var triggers, tables int64
+	if err := conn.QueryRow(ctx, leftoverCountSQL).Scan(&triggers, &tables); err != nil {
+		return fmt.Errorf("count pg_repack leftovers: %w", err)
+	}
+	if triggers == 0 && tables == 0 {
+		return nil
+	}
+	logger.Warn("clearing what an interrupted pg_repack run left behind", "triggers", triggers, "tables", tables)
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin clearing pg_repack leftovers: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	for _, stmt := range []string{
+		"SET LOCAL lock_timeout = '" + leftoverLockTimeout + "'",
+		"DROP EXTENSION IF EXISTS pg_repack CASCADE",
+		"CREATE EXTENSION pg_repack",
+	} {
+		if _, err := tx.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("clear pg_repack leftovers: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit clearing pg_repack leftovers: %w", err)
+	}
 	return nil
 }
 

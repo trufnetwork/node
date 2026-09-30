@@ -1,6 +1,17 @@
 package tn_vacuum
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	"github.com/trufnetwork/kwil-db/core/log"
+)
 
 func TestCountRepackedTables(t *testing.T) {
 	tests := []struct {
@@ -76,4 +87,63 @@ func TestDetectPgRepackSoftFailure(t *testing.T) {
 			}
 		})
 	}
+}
+
+// fakePgRepack writes a stand-in for the pg_repack binary. It records that it
+// started, then waits; on SIGINT it records that too, the way pg_repack drops
+// its trigger and log table when interrupted.
+func fakePgRepack(t *testing.T) (binary, started, interrupted string) {
+	t.Helper()
+	dir := t.TempDir()
+	binary = filepath.Join(dir, "pg_repack")
+	started = filepath.Join(dir, "started")
+	interrupted = filepath.Join(dir, "interrupted")
+	script := fmt.Sprintf("#!/bin/sh\ntrap 'touch %s; exit 1' INT\ntouch %s\nwhile :; do sleep 0.05; done\n", interrupted, started)
+	require.NoError(t, os.WriteFile(binary, []byte(script), 0o755))
+	return binary, started, interrupted
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func TestRunInterruptsPgRepackOnCancel(t *testing.T) {
+	binary, started, interrupted := fakePgRepack(t)
+	m := &pgRepackMechanism{
+		logger:         log.DiscardLogger,
+		binaryPath:     binary,
+		clearLeftovers: func(context.Context, DBConnConfig, log.Logger) error { return nil },
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := m.Run(ctx, RunRequest{DB: DBConnConfig{Database: "kwild"}})
+		done <- err
+	}()
+	require.Eventually(t, func() bool { return fileExists(started) }, 5*time.Second, 10*time.Millisecond)
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return after its context was cancelled")
+	}
+	require.True(t, fileExists(interrupted), "a cancelled pg_repack must get SIGINT, the signal it cleans up on")
+}
+
+func TestRunSkipsPgRepackWhenLeftoversCannotBeCleared(t *testing.T) {
+	binary, started, _ := fakePgRepack(t)
+	clearErr := errors.New("lock timeout")
+	m := &pgRepackMechanism{
+		logger:         log.DiscardLogger,
+		binaryPath:     binary,
+		clearLeftovers: func(context.Context, DBConnConfig, log.Logger) error { return clearErr },
+	}
+
+	report, err := m.Run(context.Background(), RunRequest{DB: DBConnConfig{Database: "kwild"}})
+	require.ErrorIs(t, err, clearErr)
+	require.Equal(t, StatusFailed, report.Status)
+	require.False(t, fileExists(started), "pg_repack must not run on top of an interrupted run's trigger and log tables")
 }
