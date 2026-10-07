@@ -10,6 +10,7 @@ import (
 
 	gethAbi "github.com/ethereum/go-ethereum/accounts/abi"
 	gethCommon "github.com/ethereum/go-ethereum/common"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/crypto/auth"
 	"github.com/trufnetwork/kwil-db/core/log"
@@ -33,6 +34,10 @@ type EngineOperations struct {
 	dbPool   sql.DelayedReadTxMaker // For fresh read transactions in background jobs
 	readDB   sql.DB                 // Independent read handle for poll reads; bypasses the engine interpreter lock
 	accounts common.Accounts
+
+	// untimedCapturesOnce logs, once, that attestations has no created_timestamp
+	// yet and every capture is being counted. See CaptureStatusFor.
+	untimedCapturesOnce sync.Once
 
 	// nonceMu guards the settlement cycle's nonce counter below.
 	nonceMu sync.Mutex
@@ -305,10 +310,16 @@ type CaptureStatus struct {
 	CapturedAt int64
 }
 
-// CaptureStatusFor reports what has been captured for a market.
+// CaptureStatusFor reports what has been captured for a market at or after its
+// settle time.
+//
+// A capture taken before settleTime does not count, and neither does one with no
+// recorded time: settle_market never resolves a market on either. Counting one
+// would leave the market waiting on a capture that can never settle it, when what
+// it needs is a new capture.
 //
 // Reads run on the independent readDB handle rather than the engine interpreter.
-func (e *EngineOperations) CaptureStatusFor(ctx context.Context, marketHash []byte) (CaptureStatus, error) {
+func (e *EngineOperations) CaptureStatusFor(ctx context.Context, marketHash []byte, settleTime int64) (CaptureStatus, error) {
 	if e.readDB == nil {
 		return CaptureStatus{}, fmt.Errorf("settlement read handle not initialized")
 	}
@@ -319,8 +330,24 @@ func (e *EngineOperations) CaptureStatusFor(ctx context.Context, marketHash []by
 		`SELECT bool_or(signature IS NOT NULL) AS signed,
 		        min(created_height)           AS captured_at
 		   FROM main.attestations
-		  WHERE attestation_hash = $1`,
-		marketHash)
+		  WHERE attestation_hash = $1
+		    AND created_timestamp >= $2`,
+		marketHash, settleTime)
+	if isUndefinedColumn(err) {
+		// The binary is ahead of its release's SQL. Until migrate.sh adds
+		// created_timestamp, settle_market is still the version that takes any
+		// signed capture, so count every capture as both did before rather than
+		// fail the check for every market and settle nothing.
+		e.untimedCapturesOnce.Do(func() {
+			e.logger.Warn("attestations has no created_timestamp yet; counting captures taken at any time until the migrations are applied")
+		})
+		rs, err = e.readDB.Execute(ctx,
+			`SELECT bool_or(signature IS NOT NULL) AS signed,
+			        min(created_height)           AS captured_at
+			   FROM main.attestations
+			  WHERE attestation_hash = $1`,
+			marketHash)
+	}
 	if err != nil {
 		return CaptureStatus{}, fmt.Errorf("check attestation: %w", err)
 	}
@@ -339,15 +366,25 @@ func (e *EngineOperations) CaptureStatusFor(ctx context.Context, marketHash []by
 	}, nil
 }
 
-// AttestationExists checks if a signed attestation exists for the given hash.
+// AttestationExists checks if a signed attestation taken at or after settleTime
+// exists for the given hash.
 //
 // Reads run on the independent readDB handle rather than the engine interpreter.
-func (e *EngineOperations) AttestationExists(ctx context.Context, marketHash []byte) (bool, error) {
-	status, err := e.CaptureStatusFor(ctx, marketHash)
+func (e *EngineOperations) AttestationExists(ctx context.Context, marketHash []byte, settleTime int64) (bool, error) {
+	status, err := e.CaptureStatusFor(ctx, marketHash, settleTime)
 	if err != nil {
 		return false, err
 	}
 	return status.Signed, nil
+}
+
+// undefinedColumnCode is the Postgres SQLSTATE for a reference to a column that
+// does not exist.
+const undefinedColumnCode = "42703"
+
+func isUndefinedColumn(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == undefinedColumnCode
 }
 
 // BroadcastSettleMarketWithRetry broadcasts settle_market transaction with retry logic.

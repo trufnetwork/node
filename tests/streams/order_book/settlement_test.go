@@ -21,6 +21,11 @@ import (
 	attestationTests "github.com/trufnetwork/node/tests/streams/attestation"
 )
 
+// captureTime is the block time this file's captures are taken at for markets
+// that settle at 100: settle_market resolves a market only on a capture taken at
+// or after its settle time.
+const captureTime = int64(150)
+
 // NO_OUTCOME_VALUE represents a NO outcome in settlement tests.
 // We use -1.0 instead of 0.0 because insert_records filters WHERE value != 0,
 // which prevents inserting exact 0.0 values. The parse_attestation_boolean
@@ -145,6 +150,8 @@ func testSettleMarketHappyPath(t *testing.T) func(context.Context, *kwilTesting.
 
 		var requestTxID string
 		engineCtx = helper.NewEngineContext()
+		settleTime := time.Now().Add(1 * time.Hour).Unix()
+		engineCtx.TxContext.BlockContext.Timestamp = settleTime // settle_market only takes a capture from settle_time on
 		res, err := platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 			[]any{
 				dataProvider,
@@ -176,7 +183,6 @@ func testSettleMarketHappyPath(t *testing.T) func(context.Context, *kwilTesting.
 		require.NoError(t, err)
 
 		// Create market using query_components
-		settleTime := time.Now().Add(1 * time.Hour).Unix()
 		maxSpread := int64(5)
 		minOrderSize := int64(1)
 		var queryID int
@@ -308,6 +314,7 @@ func testSettleMarketWithNoOutcome(t *testing.T) func(context.Context, *kwilTest
 
 		var requestTxID string
 		engineCtx = helper.NewEngineContext()
+		engineCtx.TxContext.BlockContext.Timestamp = captureTime
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 			[]any{dataProvider, streamID, "get_last_record", argsBytes, false, nil},
 			func(row *common.Row) error {
@@ -419,6 +426,7 @@ func testSettleMarketWithMultipleDatapoints(t *testing.T) func(context.Context, 
 
 		var requestTxID string
 		engineCtx = helper.NewEngineContext()
+		engineCtx.TxContext.BlockContext.Timestamp = captureTime
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 			[]any{dataProvider, streamID, "get_last_record", argsBytes, false, nil},
 			func(row *common.Row) error {
@@ -545,6 +553,7 @@ func testSettleMarketAlreadySettled(t *testing.T) func(context.Context, *kwilTes
 
 		var requestTxID string
 		engineCtx = helper.NewEngineContext()
+		engineCtx.TxContext.BlockContext.Timestamp = captureTime
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 			[]any{dataProvider, streamID, "get_last_record", argsBytes, false, nil},
 			func(row *common.Row) error {
@@ -640,6 +649,7 @@ func testSettleMarketTooEarly(t *testing.T) func(context.Context, *kwilTesting.P
 
 		var requestTxID string
 		engineCtx = helper.NewEngineContext()
+		engineCtx.TxContext.BlockContext.Timestamp = 1000 // the market's settle time below
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 			[]any{dataProvider, streamID, "get_last_record", argsBytes, false, nil},
 			func(row *common.Row) error {
@@ -779,6 +789,7 @@ func testSettleMarketAttestationNotSigned(t *testing.T) func(context.Context, *k
 		})
 
 		engineCtx = helper.NewEngineContext()
+		engineCtx.TxContext.BlockContext.Timestamp = captureTime
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 			[]any{dataProvider, streamID, "get_last_record", argsBytes, false, nil},
 			func(row *common.Row) error {
@@ -881,6 +892,7 @@ func testSettleMarketValidationIntegration(t *testing.T) func(context.Context, *
 
 		var requestTxID string
 		engineCtx = helper.NewEngineContext()
+		engineCtx.TxContext.BlockContext.Timestamp = captureTime
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 			[]any{dataProvider, streamID, "get_last_record", argsBytes, false, nil},
 			func(row *common.Row) error {
@@ -989,6 +1001,8 @@ func testSettleMarketBlockedByBinaryParityViolation(t *testing.T) func(context.C
 
 		var requestTxID string
 		engineCtx = helper.NewEngineContext()
+		settleTime := time.Now().Add(1 * time.Hour).Unix()
+		engineCtx.TxContext.BlockContext.Timestamp = settleTime // settle_market only takes a capture from settle_time on
 		_, err = platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 			[]any{dataProvider, streamID, "get_last_record", argsBytes, false, nil},
 			func(row *common.Row) error {
@@ -1004,7 +1018,6 @@ func testSettleMarketBlockedByBinaryParityViolation(t *testing.T) func(context.C
 		require.NoError(t, err)
 
 		// Create market
-		settleTime := time.Now().Add(1 * time.Hour).Unix()
 		var queryID int
 		engineCtx = helper.NewEngineContext()
 		engineCtx.TxContext.BlockContext.Timestamp = time.Now().Unix()
@@ -1149,6 +1162,7 @@ func testSettleMarketMultiMarketCollateral(t *testing.T) func(context.Context, *
 		require.NoError(t, err)
 		var requestTxID1 string
 		engineCtx = helper.NewEngineContext()
+		engineCtx.TxContext.BlockContext.Timestamp = captureTime
 		res1, err := platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 			[]any{dataProvider, streamID1, "get_last_record", argsBytes1, false, nil},
 			func(row *common.Row) error {
@@ -1191,6 +1205,7 @@ func testSettleMarketMultiMarketCollateral(t *testing.T) func(context.Context, *
 		require.NoError(t, err)
 		var requestTxID2 string
 		engineCtx = helper.NewEngineContext()
+		engineCtx.TxContext.BlockContext.Timestamp = captureTime
 		res2, err := platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 			[]any{dataProvider, streamID2, "get_last_record", argsBytes2, false, nil},
 			func(row *common.Row) error {

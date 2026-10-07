@@ -2481,7 +2481,8 @@ CREATE OR REPLACE ACTION change_ask(
  *
  * Settlement Process:
  * 1. Validate market exists, not already settled, and settle_time reached
- * 2. Query attestation by market hash (market.hash = attestation.attestation_hash)
+ * 2. Query attestation by market hash (market.hash = attestation.attestation_hash),
+ *    taken at or after settle_time
  * 3. Verify attestation has been signed
  * 4. Parse result_canonical to extract boolean outcome (TRUE = YES wins, FALSE = NO wins)
  * 5. Mark market as settled with winning_outcome and settled_at timestamp
@@ -2501,6 +2502,7 @@ CREATE OR REPLACE ACTION change_ask(
  * - If market is already settled
  * - If settle_time has not been reached
  * - If attestation doesn't exist for market hash
+ * - If every attestation for market hash was taken before settle_time
  * - If attestation is not yet signed
  * - If result parsing fails
  *
@@ -2622,11 +2624,20 @@ CREATE OR REPLACE ACTION settle_market(
     -- asks for another. The two captures read the query against different chain
     -- state and are not interchangeable.
     --
-    -- Resolve on the EARLIEST signed capture: it is the one taken closest to
-    -- settle_time, which is the state the market was defined to resolve against.
-    -- Ordering by signed_height instead made the outcome a function of when a
-    -- validator got to each row, and when two were signed in the same block that
-    -- ordering was a tie decided by whichever row the database returned first.
+    -- Resolve on the EARLIEST signed capture taken at or after settle_time: it is
+    -- the one taken closest to settle_time, which is the state the market was
+    -- defined to resolve against. Ordering by signed_height instead made the
+    -- outcome a function of when a validator got to each row, and when two were
+    -- signed in the same block that ordering was a tie decided by whichever row
+    -- the database returned first.
+    --
+    -- A capture taken before settle_time never resolves the market.
+    -- request_attestation is PUBLIC and a live market's query_components are
+    -- readable, so anyone can capture its query while the window it settles on
+    -- is still open, and the earliest-first ordering would then prefer that
+    -- capture to every later one. A capture with no created_timestamp was taken
+    -- before the column existed and cannot be placed against settle_time, so it
+    -- is skipped as well (NULL >= settle_time is not true).
     $result_canonical BYTEA;
     $capture_height INT8;
     $attestation_found BOOL := false;
@@ -2635,6 +2646,7 @@ CREATE OR REPLACE ACTION settle_market(
                 FROM attestations
                 WHERE attestation_hash = $market_hash
                   AND signature IS NOT NULL
+                  AND created_timestamp >= $settle_time
                 ORDER BY created_height ASC
                 LIMIT 1 {
         $result_canonical := $row.result_canonical;
@@ -2643,9 +2655,22 @@ CREATE OR REPLACE ACTION settle_market(
     }
 
     if NOT $attestation_found {
-        -- Nothing signed. Say which of the two reasons it is, because they need
-        -- different responses: a capture that exists is waiting on a validator,
-        -- and one that does not has to be requested.
+        -- Nothing usable is signed. Say which reason it is, because they need
+        -- different responses: a capture taken in time is waiting on a
+        -- validator, and otherwise a new capture has to be requested.
+        $capture_in_time BOOL := false;
+        for $row in SELECT 1 AS present
+                    FROM attestations
+                    WHERE attestation_hash = $market_hash
+                      AND created_timestamp >= $settle_time
+                    LIMIT 1 {
+            $capture_in_time := true;
+        }
+
+        if $capture_in_time {
+            ERROR('Attestation not yet signed by validator. Please wait for signing to complete.');
+        }
+
         $capture_exists BOOL := false;
         for $row in SELECT 1 AS present
                     FROM attestations
@@ -2655,7 +2680,8 @@ CREATE OR REPLACE ACTION settle_market(
         }
 
         if $capture_exists {
-            ERROR('Attestation not yet signed by validator. Please wait for signing to complete.');
+            ERROR('Every attestation for market hash was taken before settle_time ' || $settle_time::TEXT ||
+                  ' or has no recorded time. Request a new attestation.');
         }
         ERROR('Attestation not found for market hash. Market cannot be settled without attestation.');
     }

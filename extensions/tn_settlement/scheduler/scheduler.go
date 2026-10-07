@@ -36,7 +36,9 @@ type ProcessingGuard interface {
 // This interface allows for mocking in tests.
 type EngineOps interface {
 	FindUnsettledMarkets(ctx context.Context, limit int) ([]*internal.UnsettledMarket, error)
-	CaptureStatusFor(ctx context.Context, marketHash []byte) (internal.CaptureStatus, error)
+	// CaptureStatusFor counts only captures taken at or after settleTime, the
+	// only ones settle_market resolves a market on.
+	CaptureStatusFor(ctx context.Context, marketHash []byte, settleTime int64) (internal.CaptureStatus, error)
 	// BeginCycle discards the nonce counter left over from the previous cycle so
 	// the next transaction re-seeds from committed account state.
 	BeginCycle()
@@ -350,7 +352,7 @@ func (s *SettlementScheduler) runSettlementCycle(
 
 		processed++
 
-		capture, attErr := engineOps.CaptureStatusFor(ctx, market.Hash)
+		capture, attErr := engineOps.CaptureStatusFor(ctx, market.Hash, market.SettleTime)
 		if attErr != nil {
 			s.logger.Warn("failed to check attestation",
 				"query_id", market.ID,

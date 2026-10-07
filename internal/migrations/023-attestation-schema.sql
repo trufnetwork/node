@@ -22,6 +22,18 @@ CREATE TABLE IF NOT EXISTS attestations (
     CONSTRAINT chk_att_encrypt_sig_false CHECK (encrypt_sig = false)
 );
 
+-- Block time (unix seconds) of the block a capture was taken in.
+--
+-- A market resolves against the value that stood at its settle_time, a unix
+-- timestamp, and created_height alone cannot be compared with that. This is what
+-- lets settle_market tell a capture taken before settle_time from one taken after.
+--
+-- Rows written before this column existed keep it NULL: their block time is not
+-- recoverable from attestations. Settlement never resolves on a capture without a
+-- time, so a market whose only captures predate this column is captured again.
+ALTER TABLE attestations
+ADD COLUMN IF NOT EXISTS created_timestamp INT8;
+
 -- Allowlist table for actions permitted for attestation
 CREATE TABLE IF NOT EXISTS attestation_actions (
     action_name TEXT PRIMARY KEY,

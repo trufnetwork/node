@@ -12,6 +12,7 @@ import (
 
 	gethAbi "github.com/ethereum/go-ethereum/accounts/abi"
 	gethCommon "github.com/ethereum/go-ethereum/common"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/core/crypto"
 	"github.com/trufnetwork/kwil-db/core/crypto/auth"
@@ -36,7 +37,7 @@ func TestPollReads_FailClosedWhenReadDBNil(t *testing.T) {
 	_, err = ops.FindUnsettledMarkets(ctx, 10)
 	require.ErrorContains(t, err, want, "FindUnsettledMarkets must fail closed")
 
-	_, err = ops.AttestationExists(ctx, []byte{0x01})
+	_, err = ops.AttestationExists(ctx, []byte{0x01}, 1)
 	require.ErrorContains(t, err, want, "AttestationExists must fail closed")
 
 	_, err = ops.GetMarketQueryComponents(ctx, 1)
@@ -959,14 +960,98 @@ func TestCaptureStatusFor_SeparatesCapturedFromSigned(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ops := &EngineOperations{logger: log.DiscardLogger, readDB: &stubReadDB{row: tc.row}}
 
-			got, err := ops.CaptureStatusFor(context.Background(), []byte{0xab})
+			got, err := ops.CaptureStatusFor(context.Background(), []byte{0xab}, 1)
 			require.NoError(t, err)
 			require.Equal(t, tc.want, got)
 
 			// AttestationExists keeps its old meaning: signed, not merely present.
-			exists, err := ops.AttestationExists(context.Background(), []byte{0xab})
+			exists, err := ops.AttestationExists(context.Background(), []byte{0xab}, 1)
 			require.NoError(t, err)
 			require.Equal(t, tc.want.Signed, exists)
 		})
 	}
+}
+
+// =============================================================================
+// Test: capture status only counts captures taken at or after settle time
+// =============================================================================
+
+// recordingReadDB records every statement and its arguments. A statement that
+// names created_timestamp fails with failTimed when that is set, as on a database
+// whose attestations table predates the column.
+type recordingReadDB struct {
+	row       []any
+	failTimed error
+	stmts     []string
+	args      [][]any
+}
+
+var _ sql.DB = (*recordingReadDB)(nil)
+
+func (r *recordingReadDB) Execute(ctx context.Context, stmt string, args ...any) (*sql.ResultSet, error) {
+	r.stmts = append(r.stmts, stmt)
+	r.args = append(r.args, args)
+	if r.failTimed != nil && strings.Contains(stmt, "created_timestamp") {
+		return nil, fmt.Errorf("execute query: %w", r.failTimed)
+	}
+	return &sql.ResultSet{
+		Columns: []string{"signed", "captured_at"},
+		Rows:    [][]any{r.row},
+	}, nil
+}
+
+func (r *recordingReadDB) BeginTx(ctx context.Context) (sql.Tx, error) {
+	return nil, fmt.Errorf("recording read handle does not support transactions")
+}
+
+// settle_market resolves a market only on a capture taken at or after its
+// settle_time (node#1435). The status the scheduler acts on has to apply the same
+// rule, or a market whose only capture is early looks captured, is never captured
+// again, and waits forever on a capture settle_market refuses.
+func TestCaptureStatusFor_CountsOnlyCapturesTakenAtOrAfterSettleTime(t *testing.T) {
+	db := &recordingReadDB{row: []any{true, int64(2615513)}}
+	ops := &EngineOperations{logger: log.DiscardLogger, readDB: db}
+
+	got, err := ops.CaptureStatusFor(context.Background(), []byte{0xab}, 1700000000)
+	require.NoError(t, err)
+	require.Equal(t, CaptureStatus{Captured: true, Signed: true, CapturedAt: 2615513}, got)
+
+	require.Len(t, db.stmts, 1)
+	require.Contains(t, db.stmts[0], "created_timestamp >= $2",
+		"the status must exclude captures taken before the settle time, and ones with no time")
+	require.Equal(t, []any{[]byte{0xab}, int64(1700000000)}, db.args[0])
+}
+
+// A release ships its binary before migrate.sh applies its SQL. Until then
+// attestations has no created_timestamp and settle_market still takes any signed
+// capture, so the status falls back to counting every capture rather than fail
+// for every market and settle nothing.
+func TestCaptureStatusFor_CountsEveryCaptureUntilTheColumnExists(t *testing.T) {
+	db := &recordingReadDB{
+		row:       []any{true, int64(2615513)},
+		failTimed: &pgconn.PgError{Code: "42703", Message: `column "created_timestamp" does not exist`},
+	}
+	ops := &EngineOperations{logger: log.DiscardLogger, readDB: db}
+
+	got, err := ops.CaptureStatusFor(context.Background(), []byte{0xab}, 1700000000)
+	require.NoError(t, err)
+	require.Equal(t, CaptureStatus{Captured: true, Signed: true, CapturedAt: 2615513}, got)
+
+	require.Len(t, db.stmts, 2, "one timed attempt, then one fallback")
+	require.NotContains(t, db.stmts[1], "created_timestamp")
+	require.Equal(t, []any{[]byte{0xab}}, db.args[1])
+}
+
+// Only a missing column falls back. Any other failure, a lock timeout above all,
+// keeps failing the check closed, as every poll read does.
+func TestCaptureStatusFor_OtherErrorsDoNotFallBack(t *testing.T) {
+	db := &recordingReadDB{
+		row:       []any{true, int64(2615513)},
+		failTimed: &pgconn.PgError{Code: "55P03", Message: "canceling statement due to lock timeout"},
+	}
+	ops := &EngineOperations{logger: log.DiscardLogger, readDB: db}
+
+	_, err := ops.CaptureStatusFor(context.Background(), []byte{0xab}, 1700000000)
+	require.ErrorContains(t, err, "lock timeout")
+	require.Len(t, db.stmts, 1, "no fallback read after a failure that is not a missing column")
 }

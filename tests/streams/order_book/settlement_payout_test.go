@@ -170,6 +170,11 @@ func testWinnerReceivesFullPayout(t *testing.T) func(context.Context, *kwilTesti
 		})
 		require.NoError(t, err)
 
+		// The market below settles an hour from now, and settle_market only takes
+		// a capture taken from its settle time on.
+		settleTime := time.Now().Add(1 * time.Hour).Unix()
+		dpEngineCtx.TxContext.BlockContext.Timestamp = settleTime
+
 		var requestTxID string
 		var attestationHash []byte
 		// Attestations are typically requested by users, but can be anyone
@@ -205,7 +210,6 @@ func testWinnerReceivesFullPayout(t *testing.T) func(context.Context, *kwilTesti
 		require.NoError(t, err)
 
 		// Create market using query_components
-		settleTime := time.Now().Add(1 * time.Hour).Unix() // Future timestamp
 		maxSpread := int64(5)
 		minOrderSize := int64(1)
 		var queryID int

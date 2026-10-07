@@ -63,6 +63,8 @@ func TestSettlementIntegration(t *testing.T) {
 			testSkipMarketWithoutAttestation(t),
 			testMultipleMarketsProcessing(t),
 			testSettleUsesTheEarliestCapture(t),
+			testSettleIgnoresACaptureTakenBeforeSettleTime(t),
+			testSettleIgnoresACaptureWithNoTime(t),
 		},
 	}, testutils.GetTestOptionsWithCache())
 }
@@ -147,6 +149,11 @@ func testFindUnsettledMarkets(t *testing.T) func(context.Context, *kwilTesting.P
 	}
 }
 
+// captureTime is the block time the captures in this file are taken at. Every
+// market here settles at 100, and settle_market resolves a market only on a
+// capture taken at or after its settle time.
+const captureTime = int64(150)
+
 // =============================================================================
 // Test: AttestationExists
 // =============================================================================
@@ -210,14 +217,14 @@ func testAttestationExists(t *testing.T) func(context.Context, *kwilTesting.Plat
 		require.NoError(t, err)
 		ops := internal.NewEngineOperations(platform.Engine, platform.DB, nil, platform.DB, accts, log.New())
 
-		exists, err := ops.AttestationExists(ctx, attestationHash)
+		exists, err := ops.AttestationExists(ctx, attestationHash, 100)
 		require.NoError(t, err)
 		require.True(t, exists, "attestation should exist and be signed")
 
 		// Test with non-existent hash
 		fakeHash := make([]byte, 32)
 		copy(fakeHash, []byte("nonexistent"))
-		exists, err = ops.AttestationExists(ctx, fakeHash)
+		exists, err = ops.AttestationExists(ctx, fakeHash, 100)
 		require.NoError(t, err)
 		require.False(t, exists, "fake attestation should not exist")
 
@@ -225,13 +232,13 @@ func testAttestationExists(t *testing.T) func(context.Context, *kwilTesting.Plat
 		// one, and it is the second — "has this been captured at all" — that
 		// keeps a market from being captured twice. Exercised here rather than
 		// against a stub so the aggregate SQL itself is covered.
-		status, err := ops.CaptureStatusFor(ctx, attestationHash)
+		status, err := ops.CaptureStatusFor(ctx, attestationHash, 100)
 		require.NoError(t, err)
 		require.True(t, status.Captured, "a signed capture is also a capture")
 		require.True(t, status.Signed)
 		require.NotZero(t, status.CapturedAt, "the capture height is what an operator watches")
 
-		status, err = ops.CaptureStatusFor(ctx, fakeHash)
+		status, err = ops.CaptureStatusFor(ctx, fakeHash, 100)
 		require.NoError(t, err)
 		require.Equal(t, internal.CaptureStatus{}, status, "no rows must decode to the zero status")
 
@@ -245,6 +252,7 @@ func testAttestationExists(t *testing.T) func(context.Context, *kwilTesting.Plat
 
 		var unsignedHash []byte
 		engineCtx = helper.NewEngineContext()
+		engineCtx.TxContext.BlockContext.Timestamp = captureTime
 		reqRes, err := platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 			[]any{deployer.Address(), streamID, "get_last_record", unsignedArgs, false, nil},
 			func(row *common.Row) error {
@@ -254,13 +262,13 @@ func testAttestationExists(t *testing.T) func(context.Context, *kwilTesting.Plat
 		require.NoError(t, err)
 		require.NoError(t, reqRes.Error, "request_attestation failed")
 
-		status, err = ops.CaptureStatusFor(ctx, unsignedHash)
+		status, err = ops.CaptureStatusFor(ctx, unsignedHash, 100)
 		require.NoError(t, err)
 		require.True(t, status.Captured, "the row is on chain, so the market is captured")
 		require.False(t, status.Signed, "nothing has signed it yet")
 		require.NotZero(t, status.CapturedAt)
 
-		exists, err = ops.AttestationExists(ctx, unsignedHash)
+		exists, err = ops.AttestationExists(ctx, unsignedHash, 100)
 		require.NoError(t, err)
 		require.False(t, exists, "AttestationExists keeps its old meaning: signed, not merely present")
 
@@ -453,7 +461,7 @@ func testSkipMarketWithoutAttestation(t *testing.T) func(context.Context, *kwilT
 		require.NoError(t, err)
 		ops := internal.NewEngineOperations(platform.Engine, platform.DB, nil, platform.DB, accts, log.New())
 
-		exists, err := ops.AttestationExists(ctx, attestationHash)
+		exists, err := ops.AttestationExists(ctx, attestationHash, settleTime)
 		require.NoError(t, err)
 		require.False(t, exists, "attestation without signature should not be considered ready")
 
@@ -672,7 +680,8 @@ func createStreamWithoutSigningAttestation(
 	})
 	require.NoError(t, err)
 
-	// Request attestation (but don't sign)
+	// Request attestation (but don't sign), after the market's settle time
+	engineCtx.TxContext.BlockContext.Timestamp = captureTime
 	res, err := platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 		[]any{dataProvider, streamID, "get_last_record", argsBytes, false, nil},
 		func(row *common.Row) error {
@@ -733,7 +742,9 @@ func createStreamAndAttestation(
 	})
 	require.NoError(t, err)
 
-	// Request attestation using the SAME engineCtx so it sees the inserted data
+	// Request attestation using the SAME engineCtx so it sees the inserted data,
+	// at a block time after the settle time of every market in this file.
+	engineCtx.TxContext.BlockContext.Timestamp = captureTime
 	var requestTxID string
 	var attestationHash []byte
 	res, err := platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
@@ -833,6 +844,7 @@ func testSettleUsesTheEarliestCapture(t *testing.T) func(context.Context, *kwilT
 		capture := func(height int64) []byte {
 			ec := engineCtx
 			ec.TxContext.BlockContext.Height = height
+			ec.TxContext.BlockContext.Timestamp = captureTime
 			ec.TxContext.TxID = platform.Txid()
 			var requestTxID string
 			var hash []byte
@@ -910,6 +922,241 @@ func testSettleUsesTheEarliestCapture(t *testing.T) func(context.Context, *kwilT
 			"settlement must resolve on the capture taken at height 10 (value 2 -> TRUE), not the later one at height 20 (value 0 -> FALSE)")
 
 		t.Logf("✅ settlement resolved on the earliest signed capture")
+		return nil
+	}
+}
+
+// =============================================================================
+// Test: a capture taken before settle_time never settles the market
+// =============================================================================
+
+// captureScenario is one market on one stream, with what the two tests below
+// need to move the stream's value, capture its query at a chosen height and block
+// time, and settle it.
+type captureScenario struct {
+	t         *testing.T
+	ctx       context.Context
+	platform  *kwilTesting.Platform
+	helper    *attestationTests.AttestationTestHelper
+	engineCtx *common.EngineContext
+	ops       *internal.EngineOperations
+
+	dataProvider string
+	streamID     string
+	argsBytes    []byte
+	queryID      int
+	marketHash   []byte
+}
+
+// newCaptureScenario creates a stream that accepts zeros and a market on its
+// get_last_record query that settles at settleTime. Nothing is captured yet.
+func newCaptureScenario(t *testing.T, ctx context.Context, platform *kwilTesting.Platform,
+	deployerHex, streamID string, settleTime int64) *captureScenario {
+	t.Helper()
+	lastTrufBalancePoint = nil
+
+	deployer := util.Unsafe_NewEthereumAddressFromString(deployerHex)
+	platform.Deployer = deployer.Bytes()
+
+	helper := attestationTests.NewAttestationTestHelper(t, ctx, platform)
+	require.NoError(t, setup.CreateDataProvider(ctx, platform, deployer.Address()))
+	require.NoError(t, erc20bridge.ForTestingInitializeExtension(ctx, platform))
+
+	// create_stream (100) + insert_records (1 each) + two captures (40 each).
+	require.NoError(t, giveTrufBalance(ctx, platform, deployer.Address(), "300000000000000000000"))
+
+	sc := &captureScenario{
+		t: t, ctx: ctx, platform: platform, helper: helper,
+		engineCtx:    helper.NewEngineContext(),
+		dataProvider: deployer.Address(),
+		streamID:     streamID,
+	}
+
+	_, err := platform.Engine.Call(sc.engineCtx, platform.DB, "", "create_stream",
+		[]any{streamID, "primitive"}, nil)
+	require.NoError(t, err)
+
+	// The captures must disagree, and the second one reads a zero, which
+	// insert_records drops unless the stream opts in.
+	zerosRes, err := platform.Engine.Call(sc.engineCtx, platform.DB, "", "set_allow_zeros",
+		[]any{sc.dataProvider, streamID, true}, nil)
+	require.NoError(t, err)
+	require.NoError(t, zerosRes.Error, "set_allow_zeros failed")
+
+	sc.argsBytes, err = tn_utils.EncodeActionArgs([]any{
+		sc.dataProvider, streamID, int64(1500), nil, false,
+	})
+	require.NoError(t, err)
+
+	queryComponents, err := encodeQueryComponents(sc.dataProvider, streamID, "get_last_record", sc.argsBytes)
+	require.NoError(t, err)
+
+	createCtx := helper.NewEngineContext()
+	createCtx.TxContext.BlockContext.Timestamp = settleTime - 50
+	createRes, err := platform.Engine.Call(createCtx, platform.DB, "", "create_market",
+		[]any{testExtensionName, queryComponents, settleTime, int64(5), int64(1)},
+		func(row *common.Row) error {
+			sc.queryID = int(row.Values[0].(int64))
+			return nil
+		})
+	require.NoError(t, err)
+	require.Nil(t, createRes.Error)
+
+	require.NoError(t, platform.Engine.Execute(helper.NewEngineContext(), platform.DB,
+		`SELECT hash FROM ob_queries WHERE id = $id`,
+		map[string]any{"id": sc.queryID},
+		func(row *common.Row) error {
+			sc.marketHash = append([]byte(nil), row.Values[0].([]byte)...)
+			return nil
+		}))
+
+	accts, err := accounts.InitializeAccountStore(ctx, platform.DB, log.New())
+	require.NoError(t, err)
+	sc.ops = internal.NewEngineOperations(platform.Engine, platform.DB, nil, platform.DB, accts, log.New())
+
+	return sc
+}
+
+// insert records value at eventTime. parse_attestation_boolean reads a numeric
+// action as value > 0, so 2 settles TRUE and 0 settles FALSE.
+func (sc *captureScenario) insert(eventTime int64, value string) {
+	dec, err := kwilTypes.ParseDecimalExplicit(value, 36, 18)
+	require.NoError(sc.t, err)
+	res, err := sc.platform.Engine.Call(sc.engineCtx, sc.platform.DB, "", "insert_records",
+		[]any{[]string{sc.dataProvider}, []string{sc.streamID}, []int64{eventTime}, []*kwilTypes.Decimal{dec}}, nil)
+	require.NoError(sc.t, err)
+	require.NoError(sc.t, res.Error)
+}
+
+// capture takes and signs a capture of the market's query at height and block
+// time blockTime. It runs on the scenario's one engine context, which is what
+// lets it see the records inserted above.
+func (sc *captureScenario) capture(height, blockTime int64) {
+	ec := sc.engineCtx
+	ec.TxContext.BlockContext.Height = height
+	ec.TxContext.BlockContext.Timestamp = blockTime
+	ec.TxContext.TxID = sc.platform.Txid()
+	var requestTxID string
+	var hash []byte
+	res, err := sc.platform.Engine.Call(ec, sc.platform.DB, "", "request_attestation",
+		[]any{sc.dataProvider, sc.streamID, "get_last_record", sc.argsBytes, false, nil},
+		func(row *common.Row) error {
+			requestTxID = row.Values[0].(string)
+			hash = append([]byte(nil), row.Values[1].([]byte)...)
+			return nil
+		})
+	require.NoError(sc.t, err)
+	require.NoError(sc.t, res.Error, "request_attestation failed")
+	require.Equal(sc.t, sc.marketHash, hash, "every capture here is of the market's query")
+	sc.helper.SignAttestation(requestTxID)
+}
+
+// settle calls settle_market at block time 200, after the market's settle time,
+// and returns the action's error.
+func (sc *captureScenario) settle() error {
+	ec := sc.helper.NewEngineContext()
+	ec.TxContext.BlockContext.Timestamp = 200
+	res, err := sc.platform.Engine.Call(ec, sc.platform.DB, "", "settle_market", []any{sc.queryID}, nil)
+	require.NoError(sc.t, err)
+	return res.Error
+}
+
+func (sc *captureScenario) winningOutcome() *bool {
+	var winning *bool
+	require.NoError(sc.t, sc.platform.Engine.Execute(sc.helper.NewEngineContext(), sc.platform.DB,
+		`SELECT winning_outcome FROM ob_queries WHERE id = $id`,
+		map[string]any{"id": sc.queryID},
+		func(row *common.Row) error {
+			if row.Values[0] != nil {
+				v := row.Values[0].(bool)
+				winning = &v
+			}
+			return nil
+		}))
+	return winning
+}
+
+// request_attestation is PUBLIC and a live market's query_components are
+// readable, so anyone can capture a market's query before its settle_time, while
+// the window it resolves on is still open. Ordered earliest first, that capture
+// would beat every later one. settle_market has to skip it and resolve on the
+// earliest capture taken at or after settle_time, and the scheduler must not count
+// it as captured, or the market waits on a capture that can never settle it.
+func testSettleIgnoresACaptureTakenBeforeSettleTime(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		const settleTime = int64(100)
+		sc := newCaptureScenario(t, ctx, platform,
+			"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "stcapturebeforesettle00000000000", settleTime)
+
+		sc.insert(1000, "2.000000000000000000")
+		sc.capture(10, settleTime-1) // one second early; sees 2 -> TRUE
+
+		status, err := sc.ops.CaptureStatusFor(ctx, sc.marketHash, settleTime)
+		require.NoError(t, err)
+		require.Equal(t, internal.CaptureStatus{}, status,
+			"an early capture must not count, so the scheduler captures the market again")
+
+		settleErr := sc.settle()
+		require.Error(t, settleErr, "the only capture is early, so nothing can settle the market yet")
+		require.Contains(t, settleErr.Error(), "taken before settle_time")
+		require.Nil(t, sc.winningOutcome())
+
+		sc.insert(1200, "0.000000000000000000")
+		sc.capture(20, settleTime) // exactly at settle time; sees 0 -> FALSE
+
+		status, err = sc.ops.CaptureStatusFor(ctx, sc.marketHash, settleTime)
+		require.NoError(t, err)
+		require.Equal(t, internal.CaptureStatus{Captured: true, Signed: true, CapturedAt: 20}, status,
+			"a capture at settle time counts, and the early one at height 10 does not")
+
+		require.NoError(t, sc.settle())
+		winning := sc.winningOutcome()
+		require.NotNil(t, winning, "market should be settled")
+		require.False(t, *winning,
+			"settlement must resolve on the capture taken at settle time (0 -> FALSE), not the earlier one at height 10 (2 -> TRUE)")
+
+		t.Logf("✅ settlement skipped the capture taken before settle_time")
+		return nil
+	}
+}
+
+// A capture written before attestations had created_timestamp has no time, and
+// its block time cannot be recovered from the table. It cannot be placed against
+// settle_time, so it is treated like an early one: skipped, and the market is
+// captured again.
+func testSettleIgnoresACaptureWithNoTime(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		const settleTime = int64(100)
+		sc := newCaptureScenario(t, ctx, platform,
+			"0xcccccccccccccccccccccccccccccccccccccccc", "stcapturewithnotime0000000000000", settleTime)
+
+		sc.insert(1000, "2.000000000000000000")
+		sc.capture(10, settleTime+50) // sees 2 -> TRUE
+
+		// The row as it reads after the column was added to a table that
+		// already held it.
+		_, err := platform.DB.Execute(ctx,
+			`UPDATE main.attestations SET created_timestamp = NULL WHERE attestation_hash = $1`, sc.marketHash)
+		require.NoError(t, err)
+
+		status, err := sc.ops.CaptureStatusFor(ctx, sc.marketHash, settleTime)
+		require.NoError(t, err)
+		require.Equal(t, internal.CaptureStatus{}, status, "a capture with no time must not count")
+
+		settleErr := sc.settle()
+		require.Error(t, settleErr)
+		require.Contains(t, settleErr.Error(), "no recorded time")
+
+		sc.insert(1200, "0.000000000000000000")
+		sc.capture(20, settleTime+60) // sees 0 -> FALSE
+
+		require.NoError(t, sc.settle())
+		winning := sc.winningOutcome()
+		require.NotNil(t, winning, "market should be settled")
+		require.False(t, *winning,
+			"settlement must resolve on the timed capture (0 -> FALSE), not the one with no time (2 -> TRUE)")
+
+		t.Logf("✅ settlement skipped the capture with no recorded time")
 		return nil
 	}
 }
