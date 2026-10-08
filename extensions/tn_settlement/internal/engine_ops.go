@@ -382,6 +382,8 @@ func (e *EngineOperations) AttestationExists(ctx context.Context, marketHash []b
 // does not exist.
 const undefinedColumnCode = "42703"
 
+// isUndefinedColumn reports whether err is Postgres refusing a statement that
+// names a column the table does not have.
 func isUndefinedColumn(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == undefinedColumnCode

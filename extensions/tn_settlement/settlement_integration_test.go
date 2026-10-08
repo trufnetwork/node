@@ -1061,6 +1061,7 @@ func (sc *captureScenario) settle() error {
 	return res.Error
 }
 
+// winningOutcome reads the market's winning outcome, or nil while it is unsettled.
 func (sc *captureScenario) winningOutcome() *bool {
 	var winning *bool
 	require.NoError(sc.t, sc.platform.Engine.Execute(sc.helper.NewEngineContext(), sc.platform.DB,
