@@ -35,6 +35,10 @@ CREATE INDEX IF NOT EXISTS idx_ob_order_events_id ON ob_order_events(id);
 -- Index for trim operations (delete by block_height)
 CREATE INDEX IF NOT EXISTS idx_ob_order_events_height ON ob_order_events(block_height);
 
+-- Index for one market's events over a time window (get_market_activity, 058),
+-- so a read costs what its window holds rather than the whole retained table
+CREATE INDEX IF NOT EXISTS idx_ob_order_events_query_ts ON ob_order_events(query_id, block_timestamp);
+
 -- =============================================================================
 -- ob_record_order_event: Helper to insert a single order event
 -- =============================================================================
