@@ -621,8 +621,13 @@ func testOrderEventSettlement(t *testing.T) func(ctx context.Context, platform *
 		})
 		require.NoError(t, err)
 
+		// The market below settles an hour from now, and settle_market only takes
+		// a capture taken from its settle time on.
+		settleTime := time.Now().Add(1 * time.Hour).Unix()
+
 		var requestTxID string
 		engineCtx = helper.NewEngineContext()
+		engineCtx.TxContext.BlockContext.Timestamp = settleTime
 		res, err := platform.Engine.Call(engineCtx, platform.DB, "", "request_attestation",
 			[]any{dataProvider, streamID, "get_last_record", argsBytes, false, nil},
 			func(row *common.Row) error {
@@ -638,7 +643,6 @@ func testOrderEventSettlement(t *testing.T) func(ctx context.Context, platform *
 		queryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_last_record", argsBytes)
 		require.NoError(t, err)
 
-		settleTime := time.Now().Add(1 * time.Hour).Unix()
 		var queryID int
 
 		engineCtx = helper.NewEngineContext()

@@ -121,6 +121,9 @@ type mockEngineOps struct {
 
 	beginCycleCalls int
 	requestCalls    []int
+	// captureSettleTimes records the settle time each capture-status check was
+	// asked about, in order.
+	captureSettleTimes []int64
 	// calls records every broadcast the cycle made, in order, as "capture:<id>"
 	// or "settle:<id>". It is what proves no settlement landed between two
 	// captures.
@@ -147,7 +150,8 @@ func (m *mockEngineOps) FindUnsettledMarkets(ctx context.Context, limit int) ([]
 	return markets, nil
 }
 
-func (m *mockEngineOps) CaptureStatusFor(ctx context.Context, marketHash []byte) (internal.CaptureStatus, error) {
+func (m *mockEngineOps) CaptureStatusFor(ctx context.Context, marketHash []byte, settleTime int64) (internal.CaptureStatus, error) {
+	m.captureSettleTimes = append(m.captureSettleTimes, settleTime)
 	signed := m.attestationExists
 	captured := m.attestationExists
 	if m.attestedFor != nil && len(marketHash) > 0 {
@@ -818,4 +822,24 @@ func TestRunSettlementCycle_AwaitingSignatureIsNotCapturedAgain(t *testing.T) {
 	require.Equal(t, []string{"capture:2", "settle:3"}, ops.calls,
 		"market 1 is already captured and must be neither re-captured nor settled")
 	require.Equal(t, []int{2}, ops.requestCalls)
+}
+
+// A market's capture status is asked about at that market's own settle time. Only
+// a capture taken at or after it can settle the market, so a status checked
+// against any other time either counts a capture settle_market will refuse, and
+// the market waits forever, or misses one it would accept.
+func TestRunSettlementCycle_ChecksCapturesAtEachMarketsSettleTime(t *testing.T) {
+	ops := &mockEngineOps{
+		markets: []*internal.UnsettledMarket{
+			{ID: 1, Hash: []byte{1}, SettleTime: 1700000000},
+			{ID: 2, Hash: []byte{2}, SettleTime: 1700003600},
+			{ID: 3, Hash: []byte{3}, SettleTime: 1700007200},
+		},
+		attestedFor: map[int]bool{1: true},
+	}
+	s := mixedCycleScheduler(t, ops)
+
+	require.NoError(t, s.RunOnce(context.Background()))
+
+	require.Equal(t, []int64{1700000000, 1700003600, 1700007200}, ops.captureSettleTimes)
 }

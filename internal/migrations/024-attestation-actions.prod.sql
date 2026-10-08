@@ -74,9 +74,11 @@ CREATE OR REPLACE ACTION request_attestation(
     eth_truf.transfer($leader_addr, $attestation_fee);
     -- ===== END FEE COLLECTION =====
     
-    -- Get current block height
+    -- Get current block height, and the block time settlement compares with a
+    -- market's settle_time
     $created_height := @height;
-    
+    $created_timestamp := @block_timestamp;
+
     -- Normalize caller address to bytes for storage (re-use safe normalization)
     $caller_bytes := $caller_bytes; -- Already normalized above
     
@@ -150,10 +152,12 @@ CREATE OR REPLACE ACTION request_attestation(
     -- Store unsigned attestation
     INSERT INTO attestations (
         request_tx_id, attestation_hash, requester, data_provider, stream_id,
-        result_canonical, encrypt_sig, created_height, signature, validator_pubkey, signed_height
+        result_canonical, encrypt_sig, created_height, created_timestamp,
+        signature, validator_pubkey, signed_height
     ) VALUES (
         $request_tx_id, $attestation_hash, $caller_bytes, $data_provider, $stream_id,
-        $result_canonical, $encrypt_sig, $created_height, NULL, NULL, NULL
+        $result_canonical, $encrypt_sig, $created_height, $created_timestamp,
+        NULL, NULL, NULL
     );
     
     -- Queue for signing (no-op on non-leader validators; handled by precompile)

@@ -54,7 +54,7 @@ Every N minutes (configurable):
   │         LIMIT max_markets_per_run
   │
   ├─ For each market:
-  │  ├─ Check if attestation exists AND is signed
+  │  ├─ Check for a signed capture taken at or after settle_time
   │  ├─ If yes → Broadcast settle_market(query_id) transaction
   │  ├─ Retry up to N times with exponential backoff
   │  └─ Log success/failure
@@ -72,7 +72,7 @@ settle_market($query_id)
 
 The action:
 1. Validates settlement time has arrived
-2. Retrieves signed attestation for market hash
+2. Retrieves the earliest signed attestation for the market hash taken at or after settle_time
 3. Parses result to determine winning outcome
 4. Updates market: `settled=TRUE, winning_outcome=result, settled_at=timestamp`
 
@@ -116,7 +116,7 @@ INFO: tn_settlement (re)started with new schedule, schedule=*/10 * * * *
 
 ### Engine Operations (`internal/engine_ops.go`)
 - `FindUnsettledMarkets()` - Query markets ready for settlement
-- `AttestationExists()` - Check if signed attestation available
+- `AttestationExists()` - Check if a signed attestation taken at or after settle_time is available
 - `BroadcastSettleMarketWithRetry()` - Build, sign, broadcast transaction
 
 ### Lifecycle Management (`scheduler_lifecycle.go`)
