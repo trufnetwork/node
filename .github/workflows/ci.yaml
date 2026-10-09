@@ -181,8 +181,17 @@ jobs:
               - 'tests/extensions/database-size/**'
 
   slow-integration-tests:
+    name: slow-integration-tests (${{ matrix.shard }})
     runs-on: ubuntu-latest
     needs: check-slow-test-paths
+    # The slow packages run in three parallel jobs. order_book and the
+    # tests/streams root package are the two largest and get a job each; "rest"
+    # is every other slow package, listed at run time so a new package lands
+    # there without editing this file. A retry reruns only its own job's packages.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [order_book, streams, rest]
     # Runs on:
     # - main branch (always)
     # - workflow_dispatch (manual trigger)
@@ -245,8 +254,29 @@ jobs:
           df -h /
 
       - name: Run Slow Integration Tests (with retry)
+        env:
+          SHARD: ${{ matrix.shard }}
         run: |
           set -o errexit -o nounset -o pipefail
+
+          # Every slow package (everything excluded from PR fast tests), split by shard
+          slow_packages=(./tests/streams/... ./tests/database_size ./tests/extensions/erc20 ./tests/extensions/database-size)
+          case "$SHARD" in
+            order_book) packages=(./tests/streams/order_book) ;;
+            streams) packages=(./tests/streams) ;;
+            rest)
+              mapfile -t packages < <(go list -tags=kwiltest "${slow_packages[@]}" | grep -v -x \
+                -e 'github.com/trufnetwork/node/tests/streams' \
+                -e 'github.com/trufnetwork/node/tests/streams/order_book')
+              ;;
+            *) echo "unknown shard: $SHARD"; exit 1 ;;
+          esac
+          if [ "${#packages[@]}" -eq 0 ]; then
+            echo "❌ No packages found for shard $SHARD"
+            exit 1
+          fi
+          echo "Packages in shard $SHARD:"
+          printf '%s\n' "${packages[@]}"
 
           attempt=1
           max_attempts=3
@@ -279,22 +309,19 @@ jobs:
               sleep 5
             fi
 
-            # Run ALL integration tests (everything excluded from PR fast tests)
             # These create Docker containers and need significant disk space
-            if go test -v -p 1 -timeout=120m -count=1 -tags=kwiltest \
-              ./tests/streams/... \
-              ./tests/database_size \
-              ./tests/extensions/erc20 \
-              ./tests/extensions/database-size; then
+            if go test -v -p 1 -timeout=120m -count=1 -tags=kwiltest "${packages[@]}"; then
               echo "✅ Integration tests passed on attempt $attempt"
               break
             else
               echo "❌ Integration tests failed on attempt $attempt"
-              # Surface Docker diagnostics
+              # Surface Docker diagnostics, including what a leftover test
+              # database printed before the run stopped
               echo "::group::Docker diagnostics"
               docker ps -a || true
               docker system df || true
               docker info || true
+              docker logs --tail 100 kwil-testing-postgres || true
               echo "::endgroup::"
 
               if [ $attempt -eq $max_attempts ]; then
