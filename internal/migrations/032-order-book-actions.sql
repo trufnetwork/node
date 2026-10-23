@@ -2385,9 +2385,16 @@ CREATE OR REPLACE ACTION change_ask(
             $held_amount := $row.amount;
         }
 
-        if $held_amount IS NULL OR $held_amount < $additional_shares {
+        -- Checked on its own: joined to the comparison below with OR, a NULL
+        -- $held_amount makes the whole condition NULL and the branch is skipped.
+        if $held_amount IS NULL {
             ERROR('Insufficient shares in holdings. Need ' || $additional_shares::TEXT ||
-                  ' more shares, but only have ' || COALESCE($held_amount, 0::INT8)::TEXT || ' in holdings.');
+                  ' more shares, but only have 0 in holdings.');
+        }
+
+        if $held_amount < $additional_shares {
+            ERROR('Insufficient shares in holdings. Need ' || $additional_shares::TEXT ||
+                  ' more shares, but only have ' || $held_amount::TEXT || ' in holdings.');
         }
 
         -- Reduce holdings
