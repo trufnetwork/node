@@ -60,6 +60,43 @@ cors_allow_origins = if (
   null else
   cors_allow_origins_raw.split(",")
 
+// SPECIAL CASE: ACTIONS EXEMPT FROM AUTHENTICATION
+// Public views that take the market or the wallet as an argument and never read
+// @caller, so a session adds nothing to them. Every other action keeps needing one:
+// stream reads check @caller for private streams.
+// A name a network does not have is ignored, so one list covers testnet and mainnet.
+// AUTHN_EXEMPT_ACTIONS (comma separated, no spaces) replaces the list.
+hidden default_authn_exempt_actions = List(
+  // order books and markets
+  "get_order_book",
+  "get_market_depth",
+  "get_full_market_depth",
+  "get_best_prices",
+  "get_market_info",
+  "get_market_by_hash",
+  "list_markets",
+  "get_market_activity",
+  // a wallet's positions, collateral, order events and balances
+  "get_positions_by_wallet",
+  "get_collateral_by_wallet",
+  "get_order_events_by_wallet",
+  "get_ordered_balances",
+  // bridge balances: mainnet, then testnet
+  "eth_truf_wallet_balance",
+  "eth_usdc_wallet_balance",
+  "hoodi_tt_wallet_balance",
+  "hoodi_tt2_wallet_balance",
+  "sepolia_wallet_balance",
+  "ethereum_wallet_balance"
+)
+hidden authn_exempt_actions_raw = read?("env:AUTHN_EXEMPT_ACTIONS")
+authn_exempt_actions = if (
+  authn_exempt_actions_raw == null
+  || authn_exempt_actions_raw.isEmpty
+)
+  default_authn_exempt_actions else
+  authn_exempt_actions_raw.split(",")
+
 // OpenTelemetry configurations
 export_meta_log = read?("env:EXPORT_RPC_META_LOG") == "true"
 meta_log_format = read?("env:META_LOG_FORMAT")
