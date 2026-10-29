@@ -16,9 +16,10 @@ import (
 	testhelpers "github.com/trufnetwork/node/infra/tests/testhelpers"
 )
 
-// The HTTPS rule for the v1 API belongs on the indexer's own security group,
+// The ports of the services set up on the indexer host (HTTPS for the v1 API,
+// 8080 for the testnet indexer) belong on the indexer's own security group,
 // next to ssh, whatever the fronting.
-func TestIndexerSecurityGroupAllowsHTTPS(t *testing.T) {
+func TestIndexerSecurityGroupAllowsPublicPorts(t *testing.T) {
 	app := awscdk.NewApp(nil)
 	stack := awscdk.NewStack(app, jsii.String("TestStack"), &awscdk.StackProps{
 		Env: &awscdk.Environment{
@@ -51,16 +52,21 @@ func TestIndexerSecurityGroupAllowsHTTPS(t *testing.T) {
 	})
 
 	template := assertions.Template_FromStack(stack, nil)
-	template.HasResourceProperties(jsii.String("AWS::EC2::SecurityGroup"), map[string]interface{}{
-		"GroupDescription": "Kwil Indexer Security Group.",
-		"SecurityGroupIngress": assertions.Match_ArrayWith(&[]interface{}{
-			map[string]interface{}{
-				"IpProtocol":  "tcp",
-				"FromPort":    443,
-				"ToPort":      443,
-				"CidrIp":      "0.0.0.0/0",
-				"Description": "Allow HTTPS to the v1 API.",
-			},
-		}),
-	})
+	for port, description := range map[int]string{
+		443:  "Allow HTTPS to the v1 API.",
+		8080: "Allow the testnet indexer API.",
+	} {
+		template.HasResourceProperties(jsii.String("AWS::EC2::SecurityGroup"), map[string]interface{}{
+			"GroupDescription": "Kwil Indexer Security Group.",
+			"SecurityGroupIngress": assertions.Match_ArrayWith(&[]interface{}{
+				map[string]interface{}{
+					"IpProtocol":  "tcp",
+					"FromPort":    port,
+					"ToPort":      port,
+					"CidrIp":      "0.0.0.0/0",
+					"Description": description,
+				},
+			}),
+		})
+	}
 }
