@@ -106,6 +106,15 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 		jsii.String("Allow ssh."),
 		jsii.Bool(false))
 
+	// https: the v1 API (api.trufscan.io) gets TLS from a Caddy site set up on the
+	// host, not from the fronting, so the API sees each visitor's address. The
+	// Caddyfile shipped in deployments/indexer serves :80 only.
+	instanceSG.AddIngressRule(
+		awsec2.Peer_AnyIpv4(),
+		awsec2.Port_Tcp(jsii.Number(443)),
+		jsii.String("Allow HTTPS to the v1 API."),
+		jsii.Bool(false))
+
 	// Get key-pair pointer.
 	keyPair := awsec2.KeyPair_FromKeyPairName(scope, jsii.String("KeyPair-ind"), jsii.String(config.KeyPairName(scope)))
 
