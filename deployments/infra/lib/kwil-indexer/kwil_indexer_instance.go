@@ -115,6 +115,14 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 		jsii.String("Allow HTTPS to the v1 API."),
 		jsii.Bool(false))
 
+	// testnet indexer: a second indexer, set up on the host for testnet, serves
+	// its API on 8080 directly.
+	instanceSG.AddIngressRule(
+		awsec2.Peer_AnyIpv4(),
+		awsec2.Port_Tcp(jsii.Number(8080)),
+		jsii.String("Allow the testnet indexer API."),
+		jsii.Bool(false))
+
 	// Get key-pair pointer.
 	keyPair := awsec2.KeyPair_FromKeyPairName(scope, jsii.String("KeyPair-ind"), jsii.String(config.KeyPairName(scope)))
 
