@@ -150,8 +150,9 @@ func TestCallDispatchPublicViewHeights(t *testing.T) {
 func TestCallDispatchKeepsOldBehaviourBelowHeight(t *testing.T) {
 	// Below the mainnet height the target is not checked, so replaying old
 	// blocks reaches the state they produced.
+	mainnet := callDispatchPublicViewHeights["tn-v2.1"]
 	eng := &guardEngine{modifiers: map[string][]string{"private_action": {"PRIVATE"}}}
-	if err := dispatch(t, blockCtx("tn-v2.1", 3010039), eng, "private_action"); err != nil {
+	if err := dispatch(t, blockCtx("tn-v2.1", mainnet-1), eng, "private_action"); err != nil {
 		t.Fatalf("below the height: %v", err)
 	}
 	if len(eng.lookups) != 0 {
@@ -162,7 +163,7 @@ func TestCallDispatchKeepsOldBehaviourBelowHeight(t *testing.T) {
 	}
 
 	eng2 := &guardEngine{modifiers: map[string][]string{"private_action": {"PRIVATE"}}}
-	if err := dispatch(t, blockCtx("tn-v2.1", 3010040), eng2, "private_action"); err == nil {
+	if err := dispatch(t, blockCtx("tn-v2.1", mainnet), eng2, "private_action"); err == nil {
 		t.Fatal("expected refusal at the height")
 	}
 	if len(eng2.called) != 0 {
