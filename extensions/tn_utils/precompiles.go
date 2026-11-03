@@ -469,6 +469,13 @@ func callDispatchHandler(ctx *common.EngineContext, app *common.App, inputs []an
 		return fmt.Errorf("failed to decode args for action '%s': %w", actionName, err)
 	}
 
+	// Only PUBLIC VIEW actions may be dispatched; see dispatch_guard.go.
+	if dispatchRequiresPublicView(ctx) {
+		if err := requirePublicViewTarget(ctx, app, actionName); err != nil {
+			return err
+		}
+	}
+
 	var rows []*common.Row
 	res, err := app.Engine.Call(ctx, app.DB, "main", actionName, args, func(row *common.Row) error {
 		rows = append(rows, row)

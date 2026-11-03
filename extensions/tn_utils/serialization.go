@@ -6,9 +6,9 @@
 // Kwil data types automatically.
 //
 // Security Note:
-// The call_dispatch precompile does NOT enforce any access control or allowlists.
-// Callers are responsible for validating which actions can be dispatched before
-// invoking this precompile.
+// call_dispatch runs only PUBLIC VIEW actions in the main namespace (see
+// dispatch_guard.go for the heights this applies from). It enforces no other
+// allowlist: callers still decide which of those actions may be dispatched.
 //
 // Encoding Format:
 // Uses Kwil's types.EncodedValue format which includes type information and deterministic

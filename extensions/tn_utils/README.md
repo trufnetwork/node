@@ -7,6 +7,7 @@ Reusable precompiles that support attestation and other deterministic workflows.
 ### `call_dispatch(action_name TEXT, args_bytes BYTEA) -> BYTEA`
 - Dispatches to another action while preserving the current engine context.
 - Returns the canonical, deterministic encoding of the target action's result rows.
+- Runs only `PUBLIC VIEW` actions in the `main` namespace (`dispatch_guard.go` lists the height this applies from on each network).
 
 ### `bytea_join(chunks BYTEA[], delimiter BYTEA) -> BYTEA`
 - Concatenates an array of `BYTEA` chunks, inserting the provided delimiter between entries.
