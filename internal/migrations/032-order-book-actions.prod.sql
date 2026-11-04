@@ -637,16 +637,14 @@ CREATE OR REPLACE ACTION change_bid(
         ERROR('No participant record found for this wallet');
     }
 
-    -- Get old order amount and timestamp
+    -- Get old order amount
     $old_amount INT8;
-    $old_timestamp INT8;
-    for $row in SELECT amount, last_updated FROM ob_positions
+    for $row in SELECT amount FROM ob_positions
                 WHERE query_id = $query_id
                   AND participant_id = $participant_id
                   AND outcome = $outcome
                   AND price = $old_price {
         $old_amount := $row.amount;
-        $old_timestamp := $row.last_updated;
     }
 
     if $old_amount IS NULL {
@@ -711,21 +709,18 @@ CREATE OR REPLACE ACTION change_bid(
       AND price = $old_price;
 
     -- ==========================================================================
-    -- SECTION 8: INSERT NEW ORDER (PRESERVING TIMESTAMP)
+    -- SECTION 8: INSERT NEW ORDER (AT THE CURRENT BLOCK TIME)
     -- ==========================================================================
 
-    -- CRITICAL: Use old_timestamp to preserve FIFO priority
-    -- If accumulating with existing order at new price, keep EARLIEST timestamp
+    -- Queue the order at its new price exactly as place_buy_order would: it
+    -- takes the current block time, and when it merges into an order the
+    -- caller already rests at that price, the merged order takes it too.
     INSERT INTO ob_positions
     (query_id, participant_id, outcome, price, amount, last_updated)
-    VALUES ($query_id, $participant_id, $outcome, $new_price, $new_amount, $old_timestamp)
+    VALUES ($query_id, $participant_id, $outcome, $new_price, $new_amount, @block_timestamp)
     ON CONFLICT (query_id, participant_id, outcome, price) DO UPDATE
     SET amount = ob_positions.amount + EXCLUDED.amount,
-        last_updated = CASE
-            WHEN ob_positions.last_updated < EXCLUDED.last_updated
-            THEN ob_positions.last_updated  -- Keep earlier timestamp (existing order was first)
-            ELSE EXCLUDED.last_updated       -- Keep earlier timestamp (moved order was first)
-        END;
+        last_updated = EXCLUDED.last_updated;
 
     -- Record bid change event (positive price for display)
     ob_record_order_event($query_id, $participant_id, 'bid_changed', $outcome, $new_abs_price, $new_amount, NULL);
@@ -745,7 +740,6 @@ CREATE OR REPLACE ACTION change_bid(
     ob_cleanup_tx_payouts($query_id);
 
     -- Success: Buy order price modified atomically
-    -- - Old order deleted, new order placed with preserved timestamp
+    -- - Old order deleted, new order queued at the current block time
     -- - Collateral adjusted (net change only)
-    -- - FIFO priority maintained
 };
