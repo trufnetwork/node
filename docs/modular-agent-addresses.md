@@ -1,9 +1,16 @@
 # Modular Agent Addresses — the worked examples
 
 A **Modular Agent Address (MAA)** is a non-custodial agent wallet: a token holder (the
-*owner*) delegates a limited set of actions to an *agent* key, which can operate the wallet —
-but provably **cannot move funds out**. The owner keeps full control and withdraws at any time,
-paying the agent an agreed commission. This is TRUF.NETWORK's analogue of a Safe Module.
+*owner*) delegates a limited set of actions to an *agent* key, which operates the wallet through
+those actions. The agent cannot withdraw. The withdrawal actions are reserved for the owner, and
+the token boundary blocks the agent's transfers (apart from network write fees) and bridge-outs.
+The owner withdraws at any time, paying the agent an agreed commission. This is TRUF.NETWORK's
+analogue of a Safe Module.
+
+What the agent can do with the wallet's value depends on its allow-list. An agent allowed to
+trade sets the price and size of its orders, so it controls the wallet's value through its
+trades, and its key needs the same care as the owner key. See
+[What the agent key controls](#what-the-agent-key-controls).
 
 This document walks the two end-to-end examples:
 
@@ -13,8 +20,10 @@ This document walks the two end-to-end examples:
    paying the network's write fees out of the wallet's escrow.
 
 > Roles, in MAA terms:
-> - **Restricted address (agent):** creates the rule; limited to the rule's allow-list; can
->   never move funds out.
+> - **Restricted address (agent):** creates the rule; limited to the rule's allow-list; cannot
+>   withdraw, bridge or transfer the wallet's funds, except to pay network write fees. Within
+>   the allow-list it can use the wallet's whole balance, and with trading actions it sets the
+>   price and size of its orders.
 > - **Unrestricted address (owner / LP):** funds the agent wallet; can run any allowed action
 >   *and* withdraw funds at any time.
 >
@@ -23,6 +32,40 @@ This document walks the two end-to-end examples:
 
 Activating the `maa_exec` route on a running network is a coordinated, height-gated rollout —
 see the [MAA activation rollout runbook](./maa-rollout.md).
+
+## What the agent key controls
+
+The agent route and the token boundary stop the agent from withdrawing, bridging or transferring
+the wallet's tokens, apart from network write fees (see
+[What the token boundary blocks](#what-the-token-boundary-blocks)). They do not otherwise limit
+what an allow-listed action does with the wallet's value. A rule holds only the fee terms and the
+allow-list, so nothing limits the price, size or counterparty of the agent's trades beyond the
+order book's own rules.
+
+With the order-book trading actions on its allow-list, the agent chooses the market, outcome,
+price and size of each order, up to the wallet's free balance and share holdings. Its orders
+fill against whichever wallets take the other side, at any price the orders allow. A trading
+allow-list therefore gives the agent control of the wallet's value, and joining such a rule
+means trusting the agent with that value. The agent key needs the same care as the owner key:
+
+- Keep the agent key in a secrets manager or an encrypted keystore that only the agent can read,
+  and never in source code, container images, logs or shared configuration.
+- Fund the agent wallet with only the amount the agent is meant to trade.
+- Watch the wallet's orders and fills with `get_order_events_by_wallet`, its holdings and open
+  orders with `get_positions_by_wallet`, and its locked collateral with
+  `get_collateral_by_wallet`.
+- If the agent key may have been exposed, use the owner key to withdraw the free balance, cancel
+  the wallet's open orders, then withdraw again (see step 6 of the first example's
+  [lifecycle](#lifecycle)). The owner can cancel only when `cancel_order` is on the allow-list.
+  Withdrawals move only the free balance, so shares the wallet holds stay in it until they are
+  sold or their market settles.
+
+A wallet's agent key cannot be changed, because the rule and the wallet address both derive from
+it. To replace the key, create a rule from a new agent key, join it and fund the new wallet.
+
+Without trading actions, the agent still acts as the wallet within its allow-list. The Data
+Provision Agent below spends the wallet's TRUF on write fees, and the streams it creates belong
+to the wallet.
 
 ## Example 1 — Liquidity Vault Operator
 
@@ -50,21 +93,22 @@ These are the only powers the bot needs. Deliberately **excluded**:
 Body-hash pinning (`body_hash`) is supported by the rule store but left unpinned in this
 example.
 
-### Why the agent can lock collateral but can't steal
+### What the token boundary blocks
 
 Every order-book trade only ever moves the agent wallet's tokens through the erc20 **`lock`**
 (escrow into the network vault) and **`unlock`** (refunds, fills, settlement) primitives. The
 MAA token boundary blocks `transfer` / `bridge` / `issue` / `lock_admin` for a restricted agent
 at any call depth, but leaves `lock` / `unlock` open — so allow-listed trading survives while
 every path that would move funds *out of the network* for the agent is closed. Placing an order
-escrows collateral; it never sends tokens to an address the agent chooses.
+escrows collateral and never names a recipient address. The boundary does not limit the trades
+themselves. Fills still settle with other wallets at any price the agent's orders allow (see
+[What the agent key controls](#what-the-agent-key-controls)).
 
 There is exactly **one carve-out** in the boundary: a `transfer` whose recipient is the **block
 leader's sender address** — the network's write-fee sink (`@leader_sender` in the fee-charging
-actions). The recipient is consensus-determined, never a call parameter, so the agent still
-cannot steer a single token to an address of its choosing; the worst a malicious agent can do
-is spend the wallet's escrow on protocol fees, which is precisely the spending the owner funded
-it for. The carve-out is what makes the Data Provision Agent below possible.
+actions). The recipient is consensus-determined, never a call parameter, so the carve-out cannot
+send a token to any other address. Through it, the agent can only spend the wallet's escrow on
+protocol fees. The carve-out is what makes the Data Provision Agent below possible.
 
 ### Lifecycle
 
@@ -83,15 +127,17 @@ it for. The carve-out is what makes the Data Provision Agent below possible.
 6. **Withdraw any time** — the LP signs `maa_withdraw($bridge, $amount)` (internal payout) or
    `maa_bridge_out($bridge, $amount, $recipient)` (off-ramp). The agent's commission is paid out
    of the gross on the way out; the owner receives the remainder. Withdrawals operate on the
-   **free** balance, so collateral in open orders must be unwound (`cancel_order`) first — after
-   which the LP can recover everything.
+   **free** balance, so collateral in open orders must be unwound (`cancel_order`) first, after
+   which the LP can withdraw it too.
 
 ### Monitoring getter
 
 `get_order_events_by_wallet` (migration `050-order-book-event-queries.sql`) exposes the order
 book's per-event history for any wallet address — the surface an owner uses to watch an agent
-wallet they do not sign for. (The existing portfolio getters are caller-scoped and only return
-the signer's own rows.)
+wallet they do not sign for. (The portfolio getters in `038-order-book-queries.sql`,
+`get_user_positions` and `get_user_collateral`, read `@caller` and only return the signer's own
+rows. Migration `051-order-book-portfolio-by-wallet.sql` adds by-wallet versions:
+`get_positions_by_wallet` and `get_collateral_by_wallet`.)
 
 ```
 get_order_events_by_wallet(
@@ -125,7 +171,8 @@ get_order_events_by_wallet(
 
 An AI agent creates new indexes (streams) and provides regular data to them, running entirely
 as its agent wallet. The owner fills the wallet with **TRUF** — the agent's working budget —
-secure that the agent can spend it only on the network's write fees, never take it.
+secure that the agent can spend it only on the network's write fees, never take it. That holds
+because both actions on the allow-list below only pay write fees.
 
 ### The data-provision allow-list
 
