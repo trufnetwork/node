@@ -191,6 +191,21 @@ Use the `--profile` option to specify your AWS profile.
 - Stacks now read `stage` and `devPrefix` from CDK context (not CloudFormation parameters).
 - Example: `cdk deploy -c stage=dev -c devPrefix=<prefix>`.
 
+## RPC Port Sources
+
+The validators' security group opens the TN RPC port (8484) only to the sources listed for the stack's
+`stackSuffix` under `rpcSources` in `cdk.json`, each an IPv4 CIDR mapped to the host behind it:
+
+```json
+"rpcSources": {
+  "prod": {
+    "203.0.113.10/32": "mainnet gateway"
+  }
+}
+```
+
+A stack whose suffix has no entry keeps the port open to any address. Run `cdk diff` after changing the list.
+
 ## Useful Commands
 
 - `cdk deploy`: Deploy this stack to your default AWS account/region
