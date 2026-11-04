@@ -11,7 +11,6 @@ import (
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/types"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
-	"github.com/trufnetwork/node/extensions/tn_utils"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
 )
@@ -68,8 +67,7 @@ func TestMaxFeeValidation(t *testing.T) {
 
 // testMaxFeeNull verifies that NULL max_fee allows attestation (no limit)
 func testMaxFeeNull(t *testing.T, h *AttestationTestHelper, actionName string) {
-	argsBytes, err := tn_utils.EncodeActionArgs([]any{int64(42)})
-	require.NoError(t, err, "encode action args")
+	argsBytes := EncodeTestActionArgs(t, int64(42))
 
 	engineCtx := h.NewEngineContext()
 
@@ -93,8 +91,7 @@ func testMaxFeeNull(t *testing.T, h *AttestationTestHelper, actionName string) {
 
 // testMaxFeeZero verifies that zero max_fee allows attestation (treated as no limit)
 func testMaxFeeZero(t *testing.T, h *AttestationTestHelper, actionName string) {
-	argsBytes, err := tn_utils.EncodeActionArgs([]any{int64(43)})
-	require.NoError(t, err, "encode action args")
+	argsBytes := EncodeTestActionArgs(t, int64(43))
 
 	engineCtx := h.NewEngineContext()
 
@@ -120,8 +117,7 @@ func testMaxFeeZero(t *testing.T, h *AttestationTestHelper, actionName string) {
 
 // testMaxFeeExactly40TRUF verifies that max_fee of exactly 40 TRUF succeeds
 func testMaxFeeExactly40TRUF(t *testing.T, h *AttestationTestHelper, actionName string) {
-	argsBytes, err := tn_utils.EncodeActionArgs([]any{int64(44)})
-	require.NoError(t, err, "encode action args")
+	argsBytes := EncodeTestActionArgs(t, int64(44))
 
 	engineCtx := h.NewEngineContext()
 
@@ -147,8 +143,7 @@ func testMaxFeeExactly40TRUF(t *testing.T, h *AttestationTestHelper, actionName 
 
 // testMaxFeeAbove40TRUF verifies that max_fee above 40 TRUF succeeds
 func testMaxFeeAbove40TRUF(t *testing.T, h *AttestationTestHelper, actionName string) {
-	argsBytes, err := tn_utils.EncodeActionArgs([]any{int64(45)})
-	require.NoError(t, err, "encode action args")
+	argsBytes := EncodeTestActionArgs(t, int64(45))
 
 	engineCtx := h.NewEngineContext()
 
@@ -174,8 +169,7 @@ func testMaxFeeAbove40TRUF(t *testing.T, h *AttestationTestHelper, actionName st
 
 // testMaxFeeBelow40TRUF verifies that max_fee below 40 TRUF fails
 func testMaxFeeBelow40TRUF(t *testing.T, h *AttestationTestHelper, actionName string) {
-	argsBytes, err := tn_utils.EncodeActionArgs([]any{int64(46)})
-	require.NoError(t, err, "encode action args")
+	argsBytes := EncodeTestActionArgs(t, int64(46))
 
 	// Use non-exempt user to test max_fee validation (exempt users skip fee checks)
 	addrs := NewTestAddresses()
@@ -202,8 +196,7 @@ func testMaxFeeBelow40TRUF(t *testing.T, h *AttestationTestHelper, actionName st
 
 // testMaxFeeVeryLarge verifies that very large max_fee succeeds (tests NUMERIC(78,0) capacity)
 func testMaxFeeVeryLarge(t *testing.T, h *AttestationTestHelper, actionName string) {
-	argsBytes, err := tn_utils.EncodeActionArgs([]any{int64(47)})
-	require.NoError(t, err, "encode action args")
+	argsBytes := EncodeTestActionArgs(t, int64(47))
 
 	engineCtx := h.NewEngineContext()
 
@@ -231,8 +224,7 @@ func testMaxFeeVeryLarge(t *testing.T, h *AttestationTestHelper, actionName stri
 
 // testMaxFeeNegative verifies that negative max_fee is treated as no limit
 func testMaxFeeNegative(t *testing.T, h *AttestationTestHelper, actionName string) {
-	argsBytes, err := tn_utils.EncodeActionArgs([]any{int64(48)})
-	require.NoError(t, err, "encode action args")
+	argsBytes := EncodeTestActionArgs(t, int64(48))
 
 	engineCtx := h.NewEngineContext()
 

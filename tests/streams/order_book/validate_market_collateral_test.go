@@ -194,7 +194,7 @@ func testValidMarketWithPositions(t *testing.T) func(context.Context, *kwilTesti
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000068", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000068", "get_record", nil)
 		require.NoError(t, err)
 
 		var marketID int64
@@ -300,7 +300,7 @@ func testMultipleMarketsIsolation(t *testing.T) func(context.Context, *kwilTesti
 			userAddr.Address(),
 			"sttest_market_a_isolation0000000", // 32 chars
 			"get_record",
-			[]byte{0x01},
+			nil,
 		)
 		require.NoError(t, err)
 
@@ -317,7 +317,7 @@ func testMultipleMarketsIsolation(t *testing.T) func(context.Context, *kwilTesti
 			userAddr.Address(),
 			"sttest_market_b_isolation0000000", // 32 chars
 			"get_record",
-			[]byte{0x02},
+			nil,
 		)
 		require.NoError(t, err)
 
@@ -412,7 +412,7 @@ func validateMarket(
 // createMarketWithHelper creates a market using the existing helper
 func createMarketWithHelper(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress) (int, error) {
 	// Create proper query components
-	queryComponents, err := encodeQueryComponentsForTests(signer.Address(), "sttest00000000000000000000000069", "get_record", []byte{0x01})
+	queryComponents, err := encodeQueryComponentsForTests(signer.Address(), "sttest00000000000000000000000069", "get_record", nil)
 	if err != nil {
 		return 0, err
 	}

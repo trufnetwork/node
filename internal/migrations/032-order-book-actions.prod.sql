@@ -77,9 +77,17 @@ CREATE OR REPLACE ACTION create_market(
     -- The query action must be on the attestation allowlist. request_attestation
     -- refuses any other, so a market on it could never be captured or settled.
     -- compute_attestation_hash still knows ids that have left the allowlist.
+    -- The data provider and stream in the header must also be the first two
+    -- args, which name the stream the action reads.
     $market_action TEXT;
+    $header_data_provider BYTEA;
+    $header_stream_id BYTEA;
+    $query_args BYTEA;
     for $row in tn_utils.unpack_query_components($query_components) {
         $market_action := $row.action_id;
+        $header_data_provider := $row.data_provider;
+        $header_stream_id := $row.stream_id;
+        $query_args := $row.args;
     }
     $market_action_allowed BOOL := false;
     for $row in SELECT 1 AS present FROM attestation_actions WHERE action_name = $market_action {
@@ -88,6 +96,7 @@ CREATE OR REPLACE ACTION create_market(
     if NOT $market_action_allowed {
         ERROR('Action not allowed for attestation: ' || COALESCE($market_action, 'NULL'));
     }
+    tn_utils.validate_query_stream($header_data_provider, $header_stream_id, $query_args);
 
     -- Check for duplicate market (hash must be unique)
     $existing_id INT;

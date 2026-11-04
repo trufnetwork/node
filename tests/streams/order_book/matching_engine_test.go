@@ -117,7 +117,7 @@ func testDirectMatchFullMatch(t *testing.T) func(context.Context, *kwilTesting.P
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000036", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000036", "get_record", nil)
 
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
@@ -185,7 +185,7 @@ func testMintMatchFullMatch(t *testing.T) func(context.Context, *kwilTesting.Pla
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000037", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000037", "get_record", nil)
 
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
@@ -254,7 +254,7 @@ func testBurnMatchFullMatch(t *testing.T) func(context.Context, *kwilTesting.Pla
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000038", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000038", "get_record", nil)
 
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
@@ -350,7 +350,7 @@ func testDirectMatchPartialFill(t *testing.T) func(context.Context, *kwilTesting
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000039", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000039", "get_record", nil)
 
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
@@ -422,7 +422,7 @@ func testMintMatchPartialFill(t *testing.T) func(context.Context, *kwilTesting.P
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000040", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000040", "get_record", nil)
 
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
@@ -487,7 +487,7 @@ func testMintMatchSameWallet(t *testing.T) func(context.Context, *kwilTesting.Pl
 		err = giveBalanceChained(ctx, platform, userAddr.Address(), "500000000000000000000")
 		require.NoError(t, err)
 
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000046", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000046", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 		var marketID int64
@@ -561,7 +561,7 @@ func testBurnMatchPartialFill(t *testing.T) func(context.Context, *kwilTesting.P
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000041", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000041", "get_record", nil)
 
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
@@ -650,7 +650,7 @@ func testBurnMatchSameWallet(t *testing.T) func(context.Context, *kwilTesting.Pl
 		err = giveBalanceChained(ctx, platform, userAddr.Address(), "500000000000000000000")
 		require.NoError(t, err)
 
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000047", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000047", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 		var marketID int64
@@ -742,7 +742,7 @@ func testDirectMatchMultipleRounds(t *testing.T) func(context.Context, *kwilTest
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000042", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000042", "get_record", nil)
 
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
@@ -829,7 +829,7 @@ func testNoMatchingOrders(t *testing.T) func(context.Context, *kwilTesting.Platf
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000043", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1Addr.Address(), "sttest00000000000000000000000043", "get_record", nil)
 
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
@@ -905,7 +905,7 @@ func testDirectMatchPriceCrossing(t *testing.T) func(context.Context, *kwilTesti
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(buyer.Address(), "sttest00000000000000000000000044", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(buyer.Address(), "sttest00000000000000000000000044", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 		var marketID int64
@@ -1008,7 +1008,7 @@ func testDirectMatchPriceCrossingSweep(t *testing.T) func(context.Context, *kwil
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(buyer.Address(), "sttest00000000000000000000000045", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(buyer.Address(), "sttest00000000000000000000000045", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 		var marketID int64
