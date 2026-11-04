@@ -207,9 +207,9 @@ Use `kwild` to create your initial configuration file. This command is the same 
 kwild setup init \
   --genesis ./configs/network/v2/genesis.json \
   --root ./my-node-config \
-  --p2p.bootnodes "4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656,0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656" \
+  --p2p.bootnodes "1fb91e9aa09d0e4467e1c42883a7ea7e89aaf8dfe3ccec1990096e058907f7e9#ed25519@node-1.mainnet.truf.network:26656,66a720f322c30018bebc0ee4efa013a8e5982ea75cea27453eaad5cc8bfc5435#ed25519@node-2.mainnet.truf.network:26656" \
   --state-sync.enable \
-  --state-sync.trusted-providers "4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656" \
+  --state-sync.trusted-providers "1fb91e9aa09d0e4467e1c42883a7ea7e89aaf8dfe3ccec1990096e058907f7e9#ed25519@node-1.mainnet.truf.network:26656" \
   --rpc.private
 ```
 
@@ -914,9 +914,9 @@ Sometimes you may need to reset your node to sync from a specific point or recov
    kwild setup init \
      --genesis ./configs/network/v2/genesis.json \
      --root ./my-node-config \
-     --p2p.bootnodes "4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656,0c830b69790eaa09315826403c2008edc65b5c7132be9d4b7b4da825c2a166ae#ed25519@node-2.mainnet.truf.network:26656" \
+     --p2p.bootnodes "1fb91e9aa09d0e4467e1c42883a7ea7e89aaf8dfe3ccec1990096e058907f7e9#ed25519@node-1.mainnet.truf.network:26656,66a720f322c30018bebc0ee4efa013a8e5982ea75cea27453eaad5cc8bfc5435#ed25519@node-2.mainnet.truf.network:26656" \
      --state-sync.enable \
-     --state-sync.trusted-providers "4e0b5c952be7f26698dc1898ff3696ac30e990f25891aeaf88b0285eab4663e1#ed25519@node-1.mainnet.truf.network:26656" \
+     --state-sync.trusted-providers "1fb91e9aa09d0e4467e1c42883a7ea7e89aaf8dfe3ccec1990096e058907f7e9#ed25519@node-1.mainnet.truf.network:26656" \
      --rpc.private
    ```
 
