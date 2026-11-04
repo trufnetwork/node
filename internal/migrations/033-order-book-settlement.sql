@@ -17,6 +17,52 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
     $amounts NUMERIC(78, 0)[],
     $outcomes BOOL[]
 ) PRIVATE {
+    -- 0. Check every entry before any money moves: the four arrays line up, and
+    --    each entry has a participant, an outcome, a 0x-prefixed 42-char wallet
+    --    and a positive amount. NULL is checked on its own: kwil evaluates
+    --    TRUE OR NULL as NULL, so a combined "IS NULL OR ..." would let it pass.
+    $entry_count INT := COALESCE(array_length($wallet_hexes), 0);
+    if COALESCE(array_length($pids), 0) != $entry_count
+        OR COALESCE(array_length($amounts), 0) != $entry_count
+        OR COALESCE(array_length($outcomes), 0) != $entry_count {
+        ERROR('Batch unlock arrays must have the same length');
+    }
+
+    -- The wallet's length and prefix come from the query: SQL functions such
+    -- as length() cannot run inside the body of a loop over a query.
+    for $entry in
+        SELECT u.pid, u.wallet_hex, u.amount, u.outcome,
+               length(u.wallet_hex) AS wallet_len,
+               LOWER(substring(u.wallet_hex, 1, 2)) AS wallet_prefix
+        FROM UNNEST($pids, $wallet_hexes, $amounts, $outcomes) AS u(pid, wallet_hex, amount, outcome)
+    {
+        $chk_pid INT := $entry.pid;
+        $chk_wallet TEXT := $entry.wallet_hex;
+        $chk_amount NUMERIC(78, 0) := $entry.amount;
+        $chk_outcome BOOL := $entry.outcome;
+        $chk_wallet_len INT := $entry.wallet_len;
+        $chk_wallet_prefix TEXT := $entry.wallet_prefix;
+
+        if $chk_pid IS NULL {
+            ERROR('Batch unlock participant is required');
+        }
+        if $chk_outcome IS NULL {
+            ERROR('Batch unlock outcome is required');
+        }
+        if $chk_wallet IS NULL {
+            ERROR('Batch unlock wallet is required');
+        }
+        if $chk_wallet_len != 42 OR $chk_wallet_prefix != '0x' {
+            ERROR('Invalid batch unlock wallet format (expected 0x-prefixed hex, 42 chars)');
+        }
+        if $chk_amount IS NULL {
+            ERROR('Batch unlock amount is required');
+        }
+        if $chk_amount <= 0::NUMERIC(78, 0) {
+            ERROR('Batch unlock amount must be positive');
+        }
+    }
+
     -- 1. Call precompile for each unlock (Safe in loops)
     for $payout in
         SELECT u.wallet_hex, u.amount
@@ -28,6 +74,8 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
             sepolia_bridge.unlock($payout.wallet_hex, $payout.amount);
         } else if $bridge = 'ethereum_bridge' {
             ethereum_bridge.unlock($payout.wallet_hex, $payout.amount);
+        } else {
+            ERROR('Invalid bridge. Supported: hoodi_tt2, sepolia_bridge, ethereum_bridge');
         }
     }
 

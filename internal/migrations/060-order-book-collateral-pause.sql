@@ -5,11 +5,11 @@
  * order-book vault, for example during bridge maintenance, without stopping
  * anyone from leaving. While a bridge is paused:
  * - refused: place_buy_order, place_split_limit_order, and change_bid when the
- *   new bid needs more collateral than the old one (also ob_lock_collateral)
+ *   new bid needs more collateral than the old one
  * - unchanged: cancel_order, change_bid that keeps or lowers collateral,
  *   place_sell_order, change_ask, settlement and fee distribution
  *
- * Each of those lock paths (031, 032) calls ob_check_collateral_lock_open
+ * Each of those lock paths (032) calls ob_check_collateral_lock_open
  * before it locks. A bridge with no row in ob_collateral_lock_pauses is open,
  * so a network that never uses the switch behaves exactly as before.
  *
