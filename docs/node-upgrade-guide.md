@@ -205,6 +205,8 @@ kwild blacklist list
 *Minor* Kwil releases do **not** require a database upgrade.  
 If the release notes specify a new official Postgres image (e.g. `ghcr.io/trufnetwork/kwil-postgres:x.y-z`) you can recreate the container at your convenience – data volumes are preserved.
 
+`kwild` connects to Postgres as a role without superuser rights, set up by `deployments/postgres-roles.sql`. The Compose files run that script before the node starts. If you run `kwild` as a service, stop it, run the script once when you upgrade from a release that connected as a superuser, and start it again; see [Moving an Existing Node Off the Superuser Role](./node-operator-guide.md#moving-an-existing-node-off-the-superuser-role).
+
 ---
 
 ## Breaking Changes & Migrations

@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/trufnetwork/kwil-db/common"
+	"github.com/trufnetwork/kwil-db/config"
 	"github.com/trufnetwork/kwil-db/core/log"
 )
 
@@ -146,4 +149,110 @@ func TestRunSkipsPgRepackWhenLeftoversCannotBeCleared(t *testing.T) {
 	require.ErrorIs(t, err, clearErr)
 	require.Equal(t, StatusFailed, report.Status)
 	require.False(t, fileExists(started), "pg_repack must not run on top of an interrupted run's trigger and log tables")
+}
+
+func TestLoadConfigReadsPgRepackRole(t *testing.T) {
+	svc := &common.Service{LocalConfig: &config.Config{Extensions: map[string]map[string]string{
+		ExtensionName: {
+			ConfigKeyPgRepackUser:     " repacker ",
+			ConfigKeyPgRepackPassword: "pass word",
+		},
+	}}}
+	cfg, err := LoadConfig(svc)
+	require.NoError(t, err)
+	require.Equal(t, "repacker", cfg.PgRepackUser)
+	require.Equal(t, "pass word", cfg.PgRepackPassword)
+
+	cfg, err = LoadConfig(&common.Service{LocalConfig: &config.Config{}})
+	require.NoError(t, err)
+	require.Empty(t, cfg.PgRepackUser, "without the key, the role is chosen when the mechanism starts")
+}
+
+func TestPgRepackRoleFromConfig(t *testing.T) {
+	ctx := context.Background()
+	kwild := DBConnConfig{User: "kwild", Password: "kwild-pass", Database: "kwild"}
+
+	role, err := pgRepackRole(ctx, MechanismDeps{DB: kwild, PgRepackUser: "repacker", PgRepackPassword: "repacker-pass"})
+	require.NoError(t, err)
+	require.Equal(t, &repackRole{user: "repacker", password: "repacker-pass"}, role)
+
+	role, err = pgRepackRole(ctx, MechanismDeps{DB: kwild, PgRepackUser: "kwild"})
+	require.NoError(t, err)
+	require.Nil(t, role, "naming kwild's own user keeps pg_repack on kwild's connection settings")
+}
+
+// recordingPgRepack writes a stand-in for the pg_repack binary that records
+// its arguments, one per line, and the password it was given.
+func recordingPgRepack(t *testing.T) (binary, argsFile, passwordFile string) {
+	t.Helper()
+	dir := t.TempDir()
+	binary = filepath.Join(dir, "pg_repack")
+	argsFile = filepath.Join(dir, "args")
+	passwordFile = filepath.Join(dir, "password")
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %s\nprintf '%%s' \"$PGPASSWORD\" > %s\n", argsFile, passwordFile)
+	require.NoError(t, os.WriteFile(binary, []byte(script), 0o755))
+	return binary, argsFile, passwordFile
+}
+
+func readLines(t *testing.T, path string) []string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return strings.Split(strings.TrimSpace(string(data)), "\n")
+}
+
+func TestRunConnectsAsPgRepackRole(t *testing.T) {
+	kwild := DBConnConfig{Host: "db", Port: "5432", User: "kwild", Password: "kwild-pass", Database: "kwild"}
+
+	for _, tc := range []struct {
+		name         string
+		role         *repackRole
+		wantUser     string
+		wantPassword string
+		wantSkipFlag bool
+	}{
+		{name: "kwild's own user", wantUser: "kwild", wantPassword: "kwild-pass"},
+		{
+			name:         "own role",
+			role:         &repackRole{user: "tn_repack", password: "repack-pass"},
+			wantUser:     "tn_repack",
+			wantPassword: "repack-pass",
+			wantSkipFlag: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			binary, argsFile, passwordFile := recordingPgRepack(t)
+			var cleared DBConnConfig
+			m := &pgRepackMechanism{
+				logger:     log.DiscardLogger,
+				binaryPath: binary,
+				role:       tc.role,
+				clearLeftovers: func(_ context.Context, db DBConnConfig, _ log.Logger) error {
+					cleared = db
+					return nil
+				},
+			}
+
+			report, err := m.Run(context.Background(), RunRequest{DB: kwild})
+			require.NoError(t, err)
+			require.Equal(t, StatusOK, report.Status)
+
+			args := readLines(t, argsFile)
+			require.Contains(t, args, "--username="+tc.wantUser)
+			require.Contains(t, args, "--dbname=kwild")
+			require.Contains(t, args, "--host=db")
+			if tc.wantSkipFlag {
+				require.Contains(t, args, "--no-superuser-check")
+			} else {
+				require.NotContains(t, args, "--no-superuser-check")
+			}
+			password, err := os.ReadFile(passwordFile)
+			require.NoError(t, err)
+			require.Equal(t, tc.wantPassword, string(password))
+
+			require.Equal(t, tc.wantUser, cleared.User, "leftovers are cleared as the same role")
+			require.Equal(t, tc.wantPassword, cleared.Password)
+			require.Equal(t, "kwild", cleared.Database)
+		})
+	}
 }

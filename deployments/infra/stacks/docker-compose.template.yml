@@ -18,6 +18,20 @@ services:
       timeout: 5s
       retries: 12
 
+  # Sets up the Postgres roles the node connects as. It runs before the node on
+  # every start and is safe to run again. A new database takes TCP connections
+  # only once the image has set it up, so it waits for that first.
+  tn-postgres-roles:
+    image: ghcr.io/trufnetwork/node:latest
+    container_name: tn-postgres-roles
+    entrypoint: ["sh", "-c", "for i in $$(seq 60); do pg_isready --host=tn-postgres --username=postgres --quiet && break; sleep 1; done; exec psql --host=tn-postgres --username=postgres --no-psqlrc --set=ON_ERROR_STOP=1 --file=/app/postgres-roles.sql"]
+    depends_on:
+      tn-postgres:
+        condition: service_healthy
+    networks:
+      - tn-network
+    restart: "no"
+
   tn-node:
     image: ghcr.io/trufnetwork/node:latest
     container_name: tn-node
@@ -35,6 +49,8 @@ services:
     depends_on:
       tn-postgres:
         condition: service_healthy
+      tn-postgres-roles:
+        condition: service_completed_successfully
     networks:
       - tn-network
     restart: unless-stopped

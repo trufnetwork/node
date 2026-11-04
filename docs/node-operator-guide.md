@@ -229,9 +229,19 @@ docker run -d -p 127.0.0.1:5432:5432 --name tn-postgres \
     ghcr.io/trufnetwork/kwil-postgres:latest
 ```
 
+Then create the roles that `kwild` and the [vacuum extension](#vacuum-extension-tn_vacuum) connect as. Run this before you start `kwild`. It waits until Postgres takes TCP connections, which a new container does once it has finished setting up its database, and it is safe to run again.
+
+```bash
+until docker exec tn-postgres pg_isready -h 127.0.0.1 -U postgres -q; do sleep 1; done
+curl -fsSL https://raw.githubusercontent.com/trufnetwork/node/main/deployments/postgres-roles.sql \
+    | docker exec -i tn-postgres psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 --no-psqlrc
+```
+
+The script makes `kwild` a regular role that owns the `kwild` database, without superuser rights, and adds the `tn_repack` role that `tn_vacuum` runs `pg_repack` as. It also creates the few objects `kwild` needs that only a superuser may create: the publication `kwild` reads its changes from, the event trigger that gives its tables full replica identity, and the `pg_repack` extension.
+
 > **Warning**: Critical Security Requirements
 >
-> 1. `kwild` requires a "superuser" role to perform various tasks that require elevated privileges, such as creating triggers and publications for logical replication. The PostgreSQL database cluster should be dedicated to `kwild`, and should not be used for any other purpose.
+> 1. The PostgreSQL database cluster should be dedicated to `kwild`, and should not be used for any other purpose. Keep `kwild` on the `kwild` role from the roles script rather than on a superuser such as `postgres`.
 >
 > 2. NEVER expose PostgreSQL port (5432) to the public internet. Always bind to localhost (127.0.0.1) as shown in the example above.
 
@@ -499,6 +509,8 @@ The `tn_vacuum` extension provides **automated database maintenance** through pe
 
 > **Note:** If you're using the official TrufNetwork node image, `pg_repack` is already included. For custom installations, see the installation guide in the extension documentation.
 
+`tn_vacuum` runs `pg_repack` as the `tn_repack` role that the [roles script](#3-set-up-postgresql) creates, because the `kwild` role may not use `pg_repack` itself.
+
 **Quick enable**
 
 ```toml
@@ -673,6 +685,12 @@ docker run -d --pull always -p 127.0.0.1:5432:5432 --name tn-postgres \
 # Start kwild back up
 launchctl start com.trufnetwork.kwild
 ```
+
+### Moving an Existing Node Off the Superuser Role
+
+A node set up before the [roles script](#3-set-up-postgresql) existed connects as a `kwild` role that is a superuser. After upgrading to a release that ships the script, stop `kwild`, run the script as shown in [Set Up PostgreSQL](#3-set-up-postgresql), and start `kwild` again. The script leaves the node's data as it is: it turns the `kwild` role into a regular role, gives the publication, the event trigger and the `pg_repack` extension to the `postgres` superuser, and lets only `tn_repack` use `pg_repack`.
+
+If you drop or reset the node's database, run the script again before starting `kwild`. It creates the `kwild` database if it is missing. The `kwild` role may not create databases, so run `kwild setup reset` with `--user postgres`.
 
 ### Missing Logs on Linux (`journalctl` shows no entries)
 

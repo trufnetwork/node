@@ -305,7 +305,12 @@ func (e *Extension) configure(ctx context.Context, cfg Config) error {
 	}
 
 	mech := newMechanism()
-	deps := MechanismDeps{Logger: e.logger, DB: dbConnFromService(e.service)}
+	deps := MechanismDeps{
+		Logger:           e.logger,
+		DB:               dbConnFromService(e.service),
+		PgRepackUser:     cfg.PgRepackUser,
+		PgRepackPassword: cfg.PgRepackPassword,
+	}
 	if deps.DB.Database == "" {
 		return fmt.Errorf("tn_vacuum requires database name in configuration")
 	}
