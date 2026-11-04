@@ -37,6 +37,9 @@ PRIVATE {
         ERROR('Lock amount must be positive');
     }
 
+    -- Refuse while the owner has paused new collateral on this bridge (060)
+    ob_check_collateral_lock_open($bridge);
+
     -- Lock collateral using bridge (user -> network ownedBalance)
     if $bridge = 'hoodi_tt2' {
         hoodi_tt2.lock($amount);

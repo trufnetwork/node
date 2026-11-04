@@ -241,6 +241,9 @@ CREATE OR REPLACE ACTION place_buy_order(
         ERROR('Trading is closed. Market has passed its settlement time.');
     }
 
+    -- 1.5 Refuse while the owner has paused new collateral on this bridge (060)
+    ob_check_collateral_lock_open($bridge);
+
     -- ==========================================================================
     -- SECTION 2: CALCULATE COLLATERAL NEEDED
     -- ==========================================================================
@@ -408,6 +411,9 @@ CREATE OR REPLACE ACTION place_split_limit_order(
     if @block_timestamp >= $settle_time {
         ERROR('Trading is closed. Market has passed its settlement time.');
     }
+
+    -- 1.5 Refuse while the owner has paused new collateral on this bridge (060)
+    ob_check_collateral_lock_open($bridge);
 
     -- ==========================================================================
     -- SECTION 2: CALCULATE COLLATERAL NEEDED
@@ -682,6 +688,9 @@ CREATE OR REPLACE ACTION change_bid(
 
     if $collateral_delta > $zero {
         -- New order needs MORE collateral
+        -- Refuse while the owner has paused new collateral on this bridge (060)
+        ob_check_collateral_lock_open($bridge);
+
         -- Lock additional amount (will ERROR if insufficient balance)
         if $bridge = 'eth_usdc' {
             eth_usdc.lock($collateral_delta);
