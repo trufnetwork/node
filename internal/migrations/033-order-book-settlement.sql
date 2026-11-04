@@ -361,6 +361,22 @@ CREATE OR REPLACE ACTION process_settlement(
     }
 };
 
+-- ============================================================================
+-- Manual Fee Distribution
+-- ============================================================================
+
+-- trigger_fee_distribution($query_id, $total_fees)
+--
+-- A market's fees are distributed once, from what the market collected, and
+-- that happens when it settles: process_settlement passes the fee it collects
+-- to distribute_fees whenever the fee is above zero, and distribute_fees always
+-- records a row in ob_fee_distributions. So this action refuses every call and
+-- says why:
+-- - a market that has not settled has collected no fees yet;
+-- - a market with a row in ob_fee_distributions had its fees distributed;
+-- - a settled market without a row collected no fees.
+--
+-- $total_fees stays for existing callers; the amount is never taken from it.
 CREATE OR REPLACE ACTION trigger_fee_distribution(
     $query_id INT,
     $total_fees TEXT
@@ -370,14 +386,18 @@ CREATE OR REPLACE ACTION trigger_fee_distribution(
     for $row in SELECT 1 FROM role_members WHERE owner = 'system' AND role_name = 'network_writer' AND wallet = $lower_caller LIMIT 1 { $has_role := TRUE; }
     if $has_role = FALSE { ERROR('Only network_writer can trigger fee distribution'); }
 
-    $winning BOOL;
+    $settled BOOL := FALSE;
     $found BOOL := FALSE;
-    for $row in SELECT winning_outcome FROM ob_queries WHERE id = $query_id {
-        $winning := $row.winning_outcome;
+    for $row in SELECT settled FROM ob_queries WHERE id = $query_id {
+        $settled := $row.settled;
         $found := TRUE;
     }
     if NOT $found { ERROR('Market not found: ' || $query_id::TEXT); }
+    if NOT $settled { ERROR('Market ' || $query_id::TEXT || ' has not settled, so it has collected no fees'); }
 
-    $fees NUMERIC(78, 0) := $total_fees::NUMERIC(78, 0);
-    distribute_fees($query_id, $fees, $winning);
+    $paid BOOL := FALSE;
+    for $row in SELECT 1 FROM ob_fee_distributions WHERE query_id = $query_id LIMIT 1 { $paid := TRUE; }
+    if $paid { ERROR('Fees for market ' || $query_id::TEXT || ' were already distributed'); }
+
+    ERROR('Market ' || $query_id::TEXT || ' collected no fees to distribute');
 }
