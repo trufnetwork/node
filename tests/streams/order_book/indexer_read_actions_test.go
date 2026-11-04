@@ -218,7 +218,8 @@ func testIndexerReadsFeeDistributions(t *testing.T) func(context.Context, *kwilT
 			{ID: 3, QueryID: 2, Bridge: "eth_usdc", TotalFees: "7", DPFees: "1",
 				ValidatorFees: "1", LPCount: 3, BlockCount: 1, DistributedAt: 1_800_000_400},
 		}
-		for _, d := range distributions {
+		// Inserted in reverse key order, so insertion order cannot produce the order checked below.
+		for _, d := range irReversed(distributions) {
 			irExec(t, ctx, platform,
 				`INSERT INTO main.ob_fee_distributions (id, query_id, total_fees_distributed, total_dp_fees,
 				     total_validator_fees, total_lp_count, block_count, distributed_at)
@@ -297,7 +298,8 @@ func testIndexerReadsTradesAndOrderEvents(t *testing.T) func(context.Context, *k
 			{ID: 4, TxHash: irTxHash(0x03), QueryID: 4, ParticipantID: 3, Wallet: irWallet3, Outcome: false,
 				SharesChange: 0, CollateralChange: irPtr("1000000"), IsNegative: false, Timestamp: 1_800_000_030},
 		}
-		for _, n := range impacts {
+		// Inserted in reverse key order, so insertion order cannot produce the order checked below.
+		for _, n := range irReversed(impacts) {
 			irExec(t, ctx, platform,
 				`INSERT INTO main.ob_net_impacts (id, tx_hash, query_id, participant_id, outcome,
 				     shares_change, collateral_change, is_negative, timestamp)
@@ -318,7 +320,8 @@ func testIndexerReadsTradesAndOrderEvents(t *testing.T) func(context.Context, *k
 			{ID: 9, TxHash: irTxHash(0x03), QueryID: 4, ParticipantID: 3, Wallet: irWallet3, EventType: "cancelled",
 				Outcome: false, Price: 45, Amount: 10, CounterpartyID: nil, BlockHeight: 25, BlockTimestamp: 1_800_000_025},
 		}
-		for _, e := range events {
+		// Inserted in reverse key order, so insertion order cannot produce the order checked below.
+		for _, e := range irReversed(events) {
 			irExec(t, ctx, platform,
 				`INSERT INTO main.ob_order_events (id, tx_hash, query_id, participant_id, event_type, outcome,
 				     price, amount, counterparty_id, block_height, block_timestamp)
@@ -861,6 +864,15 @@ func irListTxEvents(t *testing.T, ctx context.Context, platform *kwilTesting.Pla
 			FeeRecipient: irOptText(r[5]),
 			Metadata:     irOptText(r[6]),
 		})
+	}
+	return out
+}
+
+// irReversed returns a copy of s in reverse order.
+func irReversed[T any](s []T) []T {
+	out := make([]T, len(s))
+	for i, v := range s {
+		out[len(s)-1-i] = v
 	}
 	return out
 }

@@ -17,10 +17,10 @@
  *   get_order_book_max_ids         ob_net_impacts (043), ob_order_events (044)
  *   list_transaction_events        transaction_events (026)
  *
- * Paging. Each list_* action returns rows in the order of a key and takes the
+ * Paging. Each paged list_* action returns rows in the order of a key and takes the
  * key of the last row already read as its cursor, so the next call starts
  * right after that row. A cursor never skips a row, wherever a page boundary
- * falls. A NULL in a cursor sorts before every value: an all-NULL cursor
+ * falls (list_order_events notes the one case where ids restart). A NULL in a cursor sorts before every value: an all-NULL cursor
  * starts at the first row, and a NULL second part starts at the first row
  * whose first part is the one given. The ids these tables generate start at 1.
  *
