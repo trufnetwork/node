@@ -3,7 +3,6 @@ package tn_utils
 import (
 	"context"
 	"errors"
-	"math"
 	"strings"
 	"testing"
 
@@ -125,6 +124,10 @@ func TestCallDispatchPublicViewHeights(t *testing.T) {
 	if mainnet != 3010040 {
 		t.Fatalf("mainnet height changed: %d", mainnet)
 	}
+	testnet := callDispatchPublicViewHeights["testnet-v1"]
+	if testnet != 15150000 {
+		t.Fatalf("testnet height changed: %d", testnet)
+	}
 	cases := []struct {
 		name string
 		ctx  *common.EngineContext
@@ -138,7 +141,9 @@ func TestCallDispatchPublicViewHeights(t *testing.T) {
 		{"mainnet before", blockCtx("tn-v2.1", mainnet-1), false},
 		{"mainnet at", blockCtx("tn-v2.1", mainnet), true},
 		{"mainnet after", blockCtx("tn-v2.1", mainnet+1), true},
-		{"testnet unscheduled", blockCtx("testnet-v1", math.MaxInt64-1), false},
+		{"testnet before", blockCtx("testnet-v1", testnet-1), false},
+		{"testnet at", blockCtx("testnet-v1", testnet), true},
+		{"testnet after", blockCtx("testnet-v1", testnet+1), true},
 	}
 	for _, c := range cases {
 		if got := dispatchRequiresPublicView(c.ctx); got != c.want {

@@ -3,7 +3,6 @@ package tn_utils
 import (
 	"context"
 	"fmt"
-	"math"
 	"strings"
 
 	"github.com/trufnetwork/kwil-db/common"
@@ -17,9 +16,8 @@ import (
 // node that replays old blocks reaches the same state. A chain that is not
 // listed applies the rule at every height.
 var callDispatchPublicViewHeights = map[string]int64{
-	"tn-v2.1": 3010040, // mainnet
-	// testnet: set with the next testnet upgrade.
-	"testnet-v1": math.MaxInt64,
+	"tn-v2.1":    3010040,  // mainnet
+	"testnet-v1": 15150000, // testnet
 }
 
 // callDispatchModifiersQuery reads the access modifiers of a main action.
