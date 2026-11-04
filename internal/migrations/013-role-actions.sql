@@ -143,6 +143,12 @@ CREATE OR REPLACE ACTION grant_roles(
         RETURN;
     }
 
+    -- An agent wallet (048-maa.sql) runs allow-listed actions for its agent key, so it
+    -- never holds system:network_writer.
+    IF $owner = 'system' AND $role_name = 'network_writer' {
+        maa_assert_no_agent_wallets($wallets);
+    }
+
     -- Insert into role_members using UNNEST for optimal performance
     INSERT INTO role_members (owner, role_name, wallet, granted_at, granted_by)
     SELECT $owner, $role_name, t.wallet, @height, LOWER(@caller)
