@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -244,22 +246,35 @@ $$`,
 	require.NoError(t, asKwild.Close(ctx))
 
 	runPostgresRoles(t, container)
-	runPostgresRoles(t, container) // and again, as on every start
-
 	asKwild = connectAs(t, kwild)
+	const triggerOID = "SELECT oid::bigint FROM pg_event_trigger WHERE evtname = 'set_replica_identity_on_create'"
+	trigger := countOne(t, asKwild, triggerOID)
+	runPostgresRoles(t, container) // and again, as on every start
+	require.Equal(t, trigger, countOne(t, asKwild, triggerOID), "a second run keeps the event trigger as it is")
+
 	require.False(t, queryBool(t, asKwild, "SELECT rolsuper FROM pg_roles WHERE rolname = current_user"))
+	// The event trigger's function is read through the trigger, from the
+	// catalog: kwild may not look up names in the function's schema.
+	const triggerFunction = "pg_event_trigger e JOIN pg_proc p ON p.oid = e.evtfoid " +
+		"JOIN pg_namespace n ON n.oid = p.pronamespace WHERE e.evtname = 'set_replica_identity_on_create'"
 	for name, query := range map[string]string{
-		"extension":     "SELECT r.rolsuper FROM pg_extension e JOIN pg_roles r ON r.oid = e.extowner WHERE e.extname = 'pg_repack'",
-		"event trigger": "SELECT r.rolsuper FROM pg_event_trigger e JOIN pg_roles r ON r.oid = e.evtowner WHERE e.evtname = 'set_replica_identity_on_create'",
-		"function":      "SELECT r.rolsuper FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner WHERE p.oid = 'public.set_replica_identity'::regproc",
-		"publication":   "SELECT r.rolsuper FROM pg_publication p JOIN pg_roles r ON r.oid = p.pubowner WHERE p.pubname = 'kwild_repl'",
+		"extension":         "SELECT r.rolsuper FROM pg_extension e JOIN pg_roles r ON r.oid = e.extowner WHERE e.extname = 'pg_repack'",
+		"event trigger":     "SELECT r.rolsuper FROM pg_event_trigger e JOIN pg_roles r ON r.oid = e.evtowner WHERE e.evtname = 'set_replica_identity_on_create'",
+		"function":          "SELECT (SELECT rolsuper FROM pg_roles WHERE oid = p.proowner) FROM " + triggerFunction,
+		"function's schema": "SELECT (SELECT rolsuper FROM pg_roles WHERE oid = n.nspowner) FROM " + triggerFunction,
+		"publication":       "SELECT r.rolsuper FROM pg_publication p JOIN pg_roles r ON r.oid = p.pubowner WHERE p.pubname = 'kwild_repl'",
 	} {
 		require.True(t, queryBool(t, asKwild, query), "a superuser owns the %s", name)
 	}
+	require.True(t, queryBool(t, asKwild,
+		"SELECT n.nspname = 'tn_replica_identity' AND p.proname = 'set_replica_identity' FROM "+triggerFunction),
+		"the event trigger calls the function in the superuser's schema")
+	require.True(t, queryBool(t, asKwild, "SELECT to_regprocedure('public.set_replica_identity()') IS NULL"),
+		"the function kwild made in its public schema is gone")
 	// The event trigger's function runs for every role that creates a table,
 	// so it looks names up in pg_catalog only, not in schemas kwild owns.
 	require.True(t, queryBool(t, asKwild,
-		"SELECT proconfig = ARRAY['search_path=pg_catalog, pg_temp'] FROM pg_proc WHERE oid = 'public.set_replica_identity'::regproc"))
+		"SELECT p.proconfig = ARRAY['search_path=pg_catalog, pg_temp'] FROM "+triggerFunction))
 	// Read from the catalog by name: kwild may not look up names in the repack schema.
 	require.True(t, queryBool(t, asKwild,
 		`SELECT r.rolname = 'tn_repack' FROM pg_proc p
@@ -268,12 +283,16 @@ $$`,
 		WHERE n.nspname = 'repack' AND p.proname = 'repack_trigger'`),
 		"tn_repack owns pg_repack's trigger function")
 
-	// kwild may not run programs, read the server's files, or use pg_repack.
+	// kwild may not run programs, read the server's files, use pg_repack, or
+	// drop the event trigger, its function or the function's schema.
 	for _, stmt := range []string{
 		"COPY (SELECT 1) TO PROGRAM 'true'",
 		"COPY (SELECT 1) TO '/tmp/kwild-copy'",
 		"SELECT pg_read_file('PG_VERSION')",
 		"SELECT repack.version()",
+		"DROP EVENT TRIGGER set_replica_identity_on_create",
+		"DROP FUNCTION tn_replica_identity.set_replica_identity() CASCADE",
+		"DROP SCHEMA tn_replica_identity CASCADE",
 	} {
 		_, err := asKwild.Exec(ctx, stmt)
 		requirePermissionDenied(t, err, stmt)
@@ -330,4 +349,61 @@ $$`,
 	require.EqualValues(t, 101, countOne(t, asKwild, "SELECT count(*) FROM main.events"))
 	require.EqualValues(t, 0, countOne(t, asKwild,
 		"SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'repack' AND c.relkind IN ('r', 'c')"))
+}
+
+// pg_repack runs as kwild while kwild is a superuser, and an interrupted run
+// is cleared by creating the extension again. Once the roles script has made
+// kwild a regular role, pg_repack runs as tn_repack, which may not drop the
+// extension and clears an interrupted run one object at a time.
+func TestPgRepackRoleFollowsKwildsRole(t *testing.T) {
+	ctx := context.Background()
+	container, kwild := startNodePostgres(t)
+	binary, argsFile, _ := recordingPgRepack(t)
+	t.Setenv("PATH", filepath.Dir(binary)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	asKwild := connectAs(t, kwild)
+	for _, stmt := range []string{
+		"CREATE SCHEMA main",
+		"CREATE TABLE main.events (id INT PRIMARY KEY, v TEXT)",
+	} {
+		_, err := asKwild.Exec(ctx, stmt)
+		require.NoError(t, err)
+	}
+	const extOID = "SELECT oid::bigint FROM pg_extension WHERE extname = 'pg_repack'"
+	const leftoverTriggers = "SELECT count(*) FROM pg_trigger WHERE tgname = 'repack_trigger' AND NOT tgisinternal"
+
+	// kwild is still the superuser that the image's init script made it.
+	role, err := pgRepackRole(ctx, MechanismDeps{DB: kwild})
+	require.NoError(t, err)
+	require.Nil(t, role, "pg_repack keeps kwild's own user while that user is a superuser")
+
+	m := NewPgRepackMechanism().(*pgRepackMechanism)
+	require.NoError(t, m.Prepare(ctx, MechanismDeps{Logger: log.DiscardLogger, DB: kwild}))
+	leaveInterruptedRepack(t, asKwild, "main.events")
+	ext := countOne(t, asKwild, extOID)
+	_, err = m.Run(ctx, RunRequest{DB: kwild})
+	require.NoError(t, err)
+	require.Zero(t, countOne(t, asKwild, leftoverTriggers))
+	require.NotEqual(t, ext, countOne(t, asKwild, extOID), "kwild clears the run by creating the extension again")
+	args := readLines(t, argsFile)
+	require.Contains(t, args, "--username=kwild")
+	require.NotContains(t, args, "--no-superuser-check")
+
+	require.NoError(t, asKwild.Close(ctx))
+	runPostgresRoles(t, container)
+	asKwild = connectAs(t, kwild)
+	repacker := kwild
+	repacker.User = DefaultPgRepackUser
+
+	m = NewPgRepackMechanism().(*pgRepackMechanism)
+	require.NoError(t, m.Prepare(ctx, MechanismDeps{Logger: log.DiscardLogger, DB: kwild}))
+	leaveInterruptedRepack(t, connectAs(t, repacker), "main.events")
+	ext = countOne(t, asKwild, extOID)
+	_, err = m.Run(ctx, RunRequest{DB: kwild})
+	require.NoError(t, err)
+	require.Zero(t, countOne(t, asKwild, leftoverTriggers))
+	require.Equal(t, ext, countOne(t, asKwild, extOID), "tn_repack leaves the extension in place")
+	args = readLines(t, argsFile)
+	require.Contains(t, args, "--username="+DefaultPgRepackUser)
+	require.Contains(t, args, "--no-superuser-check")
 }

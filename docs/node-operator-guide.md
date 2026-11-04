@@ -983,7 +983,16 @@ Sometimes you may need to reset your node to sync from a specific point or recov
       ghcr.io/trufnetwork/kwil-postgres:latest
    ```
 
-8. **Re-enable and start services**:
+8. **Set up the database roles again**:
+
+   The new database comes from the image's init script, which makes `kwild` a superuser again. Run the roles script from [Set Up PostgreSQL](#3-set-up-postgresql) before `kwild` starts:
+   ```bash
+   until docker exec tn-postgres pg_isready -h 127.0.0.1 -U postgres -q; do sleep 1; done
+   curl -fsSL https://raw.githubusercontent.com/trufnetwork/node/main/deployments/postgres-roles.sql \
+       | docker exec -i tn-postgres psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 --no-psqlrc
+   ```
+
+9. **Re-enable and start services**:
    ```bash
    # For Linux
    sudo systemctl enable tn-postgres kwild
@@ -995,11 +1004,11 @@ Sometimes you may need to reset your node to sync from a specific point or recov
    launchctl start com.trufnetwork.kwild
    ```
 
-9. **Monitor synchronization**:
-   ```bash
-   kwild admin status
-   ```
-   Wait for `syncing: false` and ensure your `best_block_height` is advancing.
+10. **Monitor synchronization**:
+    ```bash
+    kwild admin status
+    ```
+    Wait for `syncing: false` and ensure your `best_block_height` is advancing.
 
 ### Important Notes
 

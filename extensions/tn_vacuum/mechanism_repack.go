@@ -393,16 +393,22 @@ func buildConnString(db DBConnConfig) string {
 		port = DefaultPostgresPort
 	}
 	parts := []string{
-		fmt.Sprintf("host=%s", host),
-		fmt.Sprintf("port=%s", port),
-		fmt.Sprintf("dbname=%s", db.Database),
+		"host=" + quoteConnValue(host),
+		"port=" + quoteConnValue(port),
+		"dbname=" + quoteConnValue(db.Database),
 		DefaultSSLMode,
 	}
 	if db.User != "" {
-		parts = append(parts, fmt.Sprintf("user=%s", db.User))
+		parts = append(parts, "user="+quoteConnValue(db.User))
 	}
 	if db.Password != "" {
-		parts = append(parts, fmt.Sprintf("password=%s", db.Password))
+		parts = append(parts, "password="+quoteConnValue(db.Password))
 	}
 	return strings.Join(parts, " ")
+}
+
+// quoteConnValue quotes v for a keyword/value connection string, so that a
+// value with spaces, quotes or backslashes, such as a password, is read whole.
+func quoteConnValue(v string) string {
+	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(v) + "'"
 }

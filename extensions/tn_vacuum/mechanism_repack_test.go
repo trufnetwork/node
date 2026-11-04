@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/config"
@@ -255,4 +256,31 @@ func TestRunConnectsAsPgRepackRole(t *testing.T) {
 			require.Equal(t, "kwild", cleared.Database)
 		})
 	}
+}
+
+func TestBuildConnStringKeepsValuesWhole(t *testing.T) {
+	for _, password := range []string{
+		"pass word",
+		"it's",
+		`back\slash`,
+		`ends in \`,
+		`\'`,
+		"a=b c=d",
+	} {
+		t.Run(password, func(t *testing.T) {
+			db := DBConnConfig{Host: "db", Port: "5433", User: "re packer", Password: password, Database: "kwild"}
+			cfg, err := pgx.ParseConfig(buildConnString(db))
+			require.NoError(t, err)
+			require.Equal(t, "db", cfg.Host)
+			require.EqualValues(t, 5433, cfg.Port)
+			require.Equal(t, "kwild", cfg.Database)
+			require.Equal(t, "re packer", cfg.User)
+			require.Equal(t, password, cfg.Password)
+		})
+	}
+
+	cfg, err := pgx.ParseConfig(buildConnString(DBConnConfig{User: "kwild", Database: "kwild"}))
+	require.NoError(t, err)
+	require.Equal(t, DefaultPostgresHost, cfg.Host)
+	require.EqualValues(t, 5432, cfg.Port)
 }

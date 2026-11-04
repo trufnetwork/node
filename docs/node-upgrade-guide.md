@@ -228,7 +228,7 @@ After you create the new genesis file, beware that the content still points to t
 
 3. `leader`: choose which validator starts as leader. In a single-validator setup this is the same key as in step 2.
 
-Then you'll be able to follow the [Resetting Your Node Instance](node-operator-guide.md#resetting-your-node-instance) procedure to reset your node and sync with the new genesis file and database snapshot. It's important to also update the `config.toml` file to point to the new snapshot by updating the `genesis_state` parameter.
+Then you'll be able to follow the [Resetting Your Node Instance](node-operator-guide.md#resetting-your-node-instance) procedure to reset your node and sync with the new genesis file and database snapshot. It's important to also update the `config.toml` file to point to the new snapshot by updating the `genesis_state` parameter. The procedure recreates the Postgres container on an empty volume, where the image's init script makes `kwild` a superuser again, so do not skip its step that runs `postgres-roles.sql` again before `kwild` starts.
 
 note: 
 - You can use this command to see your node address and keys, `kwild key info -o ./new-node-config/nodekey.json`
@@ -244,7 +244,7 @@ When the network requires a fork due to consensus changes or critical issues, yo
 
 **Recovery Steps:**
 
-Follow the **[Resetting Your Node Instance](node-operator-guide.md#resetting-your-node-instance)** procedure in the Node Operator Guide. The process preserves your node identity and configuration while syncing with the new network state.
+Follow the **[Resetting Your Node Instance](node-operator-guide.md#resetting-your-node-instance)** procedure in the Node Operator Guide. The process preserves your node identity and configuration while syncing with the new network state. It recreates the Postgres container on an empty volume, where the image's init script makes `kwild` a superuser again, so do not skip its step that runs `postgres-roles.sql` again before `kwild` starts.
 
 **What's Preserved During Network Forks:**
 - Node identity (nodekey) and validator status
