@@ -156,6 +156,21 @@ CREATE OR REPLACE ACTION create_market(
         ERROR('Invalid query_components: computed hash must be 32 bytes');
     }
 
+    -- The query action must be on the attestation allowlist. request_attestation
+    -- refuses any other, so a market on it could never be captured or settled.
+    -- compute_attestation_hash still knows ids that have left the allowlist.
+    $market_action TEXT;
+    for $row in tn_utils.unpack_query_components($query_components) {
+        $market_action := $row.action_id;
+    }
+    $market_action_allowed BOOL := false;
+    for $row in SELECT 1 AS present FROM attestation_actions WHERE action_name = $market_action {
+        $market_action_allowed := true;
+    }
+    if NOT $market_action_allowed {
+        ERROR('Action not allowed for attestation: ' || COALESCE($market_action, 'NULL'));
+    }
+
     -- Check for duplicate market (hash must be unique)
     $existing_id INT;
     for $row in SELECT id FROM ob_queries WHERE hash = $query_hash {

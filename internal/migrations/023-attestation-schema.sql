@@ -54,10 +54,15 @@ CREATE INDEX IF NOT EXISTS ix_att_hash_unsigned
     ON attestations(attestation_hash, signature);
 
 -- Bootstrap the action ID registry per issue #1197
-INSERT INTO attestation_actions (action_name, action_id) VALUES 
+INSERT INTO attestation_actions (action_name, action_id) VALUES
     ('get_record', 1),
     ('get_index', 2),
-    ('get_change_over_time', 3),
     ('get_last_record', 4),
     ('get_first_record', 5)
 ON CONFLICT (action_name) DO NOTHING;
+
+-- Id 3 was registered for get_change_over_time, which no migration defines, so
+-- nothing could ever be attested or settled on it. Networks seeded before it
+-- left the list above still carry the row. The id stays retired: clients map
+-- ids to names, so it must not be given to another action.
+DELETE FROM attestation_actions WHERE action_name = 'get_change_over_time';

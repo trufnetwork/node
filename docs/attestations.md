@@ -43,12 +43,12 @@ Call the `request_attestation` action with the following parameters:
 
 - **data_provider**: The data provider's address (0x-prefixed)
 - **stream_id**: The stream identifier (32 characters)
-- **action_name**: The query action to attest (e.g., `get_record`, `get_index`, `get_change_over_time`, `get_last_record`, `get_first_record`)
+- **action_name**: The query action to attest. It must be on the `attestation_actions` allowlist (e.g., `get_last_record`, `get_first_record`, `get_high_value`, `get_low_value`, `price_above_threshold`, `index_change_in_range`)
 - **args_bytes**: ABI-encoded arguments for the query action
 - **encrypt_sig**: Must be `false` (encryption not yet supported)
 - **max_fee**: Maximum fee you're willing to pay for the attestation
 
-All standard query actions are supported for attestation. The node executes the query deterministically to ensure all validators compute identical results.
+Actions that return more than one row, such as `get_record` and `get_index`, are refused. The node executes the query deterministically to ensure all validators compute identical results.
 
 **Returns:** `request_tx_id` (use this to retrieve the signed attestation) and `attestation_hash`
 
@@ -87,7 +87,7 @@ To verify attestation signatures in your Solidity contracts, use the TrufAttesta
 
 **Signature Algorithm:** secp256k1 (same as Ethereum)
 
-**Deterministic Execution:** All query actions are executed with `use_cache=false` to ensure validators compute identical results regardless of cache state.
+**Deterministic Execution:** All query actions are executed with `use_cache=false` to ensure validators compute identical results regardless of cache state. The payload and `attestation_hash` keep the arguments as sent, `use_cache` included, so a market resolves on the capture of the query it stores.
 
 ## Current Limitations
 
