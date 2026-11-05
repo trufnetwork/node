@@ -124,7 +124,10 @@ CREATE OR REPLACE ACTION helper_assert_can_manage_members($owner TEXT, $role_nam
  * Validations:
  * - Validates wallet and owner addresses.
  * - Ensures the role exists.
+ * - For system:network_writer, refuses the whole list if any wallet is a joined agent
+ *   wallet (maa_assert_no_agent_wallets, 048-maa.sql).
  * - The action is idempotent; granting an existing role membership will not cause an error.
+ *   The agent-wallet refusal above still applies when that wallet already holds the role.
  */
 CREATE OR REPLACE ACTION grant_roles(
     $owner TEXT,
