@@ -98,8 +98,17 @@ func TestValidateQueryStreamRefusesAnIncompleteQuery(t *testing.T) {
 
 	require.ErrorContains(t, validateQueryStream(provider[:19], []byte(queryStreamID), args), "20-byte address")
 	require.ErrorContains(t, validateQueryStream(nil, []byte(queryStreamID), args), "20-byte address")
-	require.ErrorContains(t, validateQueryStream(provider, nil, args), "stream_id is required")
-	require.ErrorContains(t, validateQueryStream(provider, []byte{}, args), "stream_id is required")
+	require.ErrorContains(t, validateQueryStream(provider, nil, args), "stream_id must be 32 bytes")
+	require.ErrorContains(t, validateQueryStream(provider, []byte{}, args), "stream_id must be 32 bytes")
+
+	// request_attestation refuses a stream ID of any other length, so a market
+	// on one could never settle, even when the args name the same stream.
+	shortStream := queryStreamID[:31]
+	shortArgs := encodeQueryArgs(t, queryStreamProvider, shortStream, int64(1500))
+	require.ErrorContains(t, validateQueryStream(provider, []byte(shortStream), shortArgs), "stream_id must be 32 bytes, got 31")
+	longStream := queryStreamID + "0"
+	longArgs := encodeQueryArgs(t, queryStreamProvider, longStream, int64(1500))
+	require.ErrorContains(t, validateQueryStream(provider, []byte(longStream), longArgs), "stream_id must be 32 bytes, got 33")
 }
 
 func TestValidateQueryStreamHandler(t *testing.T) {

@@ -50,8 +50,8 @@ func validateQueryStreamHandler(ctx *common.EngineContext, app *common.App, inpu
 	return validateQueryStream(dataProvider, streamID, argsBytes)
 }
 
-// validateQueryStream returns an error unless argsBytes decodes and its first
-// two args are dataProvider and streamID.
+// validateQueryStream returns an error unless streamID is 32 bytes, argsBytes
+// decodes, and its first two args are dataProvider and streamID.
 //
 // Every attestation action is declared ($data_provider TEXT, $stream_id TEXT,
 // ...) and reads LOWER($data_provider). So the first arg matches when it is the
@@ -61,8 +61,10 @@ func validateQueryStream(dataProvider, streamID, argsBytes []byte) error {
 	if len(dataProvider) != 20 {
 		return fmt.Errorf("query data_provider must be a 20-byte address, got %d bytes", len(dataProvider))
 	}
-	if len(streamID) == 0 {
-		return fmt.Errorf("query stream_id is required")
+	// request_attestation takes only 32-character stream IDs, so a market on a
+	// shorter one could never be captured or settled.
+	if len(streamID) != 32 {
+		return fmt.Errorf("query stream_id must be 32 bytes, got %d bytes", len(streamID))
 	}
 
 	args, err := decodeQueryArgs(argsBytes)
