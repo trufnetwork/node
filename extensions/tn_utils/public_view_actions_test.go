@@ -174,6 +174,30 @@ CREATE OR REPLACE ACTION moves_tokens() VIEW PUBLIC {
     some_bridge.unlock('0x0000000000000000000000000000000000000001', 1::NUMERIC(78, 0));
 };
 
+CREATE OR REPLACE ACTION calls_issue() PUBLIC VIEW {
+    some_bridge.issue('0x0000000000000000000000000000000000000001', 1::NUMERIC(78, 0));
+};
+
+CREATE OR REPLACE ACTION calls_transfer() PUBLIC VIEW {
+    some_bridge.transfer('0x0000000000000000000000000000000000000001', 1::NUMERIC(78, 0));
+};
+
+CREATE OR REPLACE ACTION calls_lock() PUBLIC VIEW {
+    some_bridge.lock(1::NUMERIC(78, 0));
+};
+
+CREATE OR REPLACE ACTION calls_lock_admin() PUBLIC VIEW {
+    some_bridge.lock_admin('0x0000000000000000000000000000000000000001', 1::NUMERIC(78, 0));
+};
+
+CREATE OR REPLACE ACTION calls_bridge() PUBLIC VIEW {
+    some_bridge.bridge('0x0000000000000000000000000000000000000001', 1::NUMERIC(78, 0));
+};
+
+CREATE OR REPLACE ACTION calls_vote_epoch($epoch_id UUID, $nonce INT8, $signature BYTEA) PUBLIC VIEW {
+    some_bridge.vote_epoch($epoch_id, $nonce, $signature);
+};
+
 CREATE OR REPLACE ACTION writes_but_not_a_view() PUBLIC {
     INSERT INTO probe (id) VALUES (3);
 };
@@ -217,9 +241,26 @@ CREATE OR REPLACE ACTION calls_allowed_writer_calls_update() PUBLIC VIEW {
 	for _, p := range problems {
 		flagged[strings.Fields(p)[0]] = true
 	}
-	for _, name := range []string{"inserts", "calls_private_update", "deletes_in_branch", "moves_tokens", "calls_allowed_writer_calls_update"} {
+	for _, name := range []string{
+		"inserts", "calls_private_update", "deletes_in_branch", "moves_tokens", "calls_allowed_writer_calls_update",
+		// These and moves_tokens (unlock) call one tokenMethods entry each,
+		// so dropping any entry leaves its caller unflagged.
+		"calls_issue", "calls_transfer", "calls_lock", "calls_lock_admin", "calls_bridge", "calls_vote_epoch",
+	} {
 		if !flagged[name] {
 			t.Errorf("%s was not flagged; problems: %v", name, problems)
+		}
+	}
+	// A method added to tokenMethods needs an action in src that calls it.
+	for m := range tokenMethods {
+		reported := false
+		for _, p := range problems {
+			if strings.Contains(p, " calls some_bridge."+m+" at line ") {
+				reported = true
+			}
+		}
+		if !reported {
+			t.Errorf("no action in src calls some_bridge.%s", m)
 		}
 	}
 	for _, name := range []string{"reads", "reads_through_helper", "writes_but_not_a_view", "owner_view_writes", "calls_allowed_writer", "allowed_view_writer", "private_update", "allowed_writer"} {
@@ -234,8 +275,8 @@ CREATE OR REPLACE ACTION calls_allowed_writer_calls_update() PUBLIC VIEW {
 			t.Errorf("unexpected problem: %s", p)
 		}
 	}
-	if len(problems) != 5 {
-		t.Errorf("expected 5 problems, got %d: %v", len(problems), problems)
+	if len(problems) != 11 {
+		t.Errorf("expected 11 problems, got %d: %v", len(problems), problems)
 	}
 }
 
