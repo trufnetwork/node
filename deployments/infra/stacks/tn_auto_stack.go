@@ -42,8 +42,16 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 	devPrefix := config.GetDevPrefix(stack)
 	// Retrieve Main environment variables including DbOwner
 	autoEnvVars := config.GetEnvironmentVariables[config.AutoStackEnvironmentVariables](stack)
-	cdklogger.LogInfo(stack, "", "Loaded environment variables for TnAutoStack. Key vars: DB_OWNER=%s, CHAIN_ID=%s, KWILD_CLI_PATH=%s, CDK_DOCKER=%s, IncludeObserver=%t. SessionSecret is loaded (value masked).",
+	cdklogger.LogInfo(stack, "", "Loaded environment variables for TnAutoStack. Key vars: DB_OWNER=%s, CHAIN_ID=%s, KWILD_CLI_PATH=%s, CDK_DOCKER=%s, IncludeObserver=%t.",
 		autoEnvVars.DbOwner, autoEnvVars.ChainId, autoEnvVars.KwildCliPath, autoEnvVars.CdkDocker, autoEnvVars.IncludeObserver)
+
+	// Node keys are created before synth (scripts/ssm-secrets.sh gen-node-keys)
+	// and stored in SSM. Synth only takes their public keys.
+	nodePublicKeys, err := kwil_network.ParseNodePublicKeys(autoEnvVars.NodePublicKeys)
+	if err != nil {
+		panic(fmt.Sprintf("NODE_PUBLIC_KEYS: %v", err))
+	}
+	secretsStore := config.SecretsStore(stack)
 
 	initElements := []awsec2.InitElement{} // Base elements only
 	var observerAsset awss3assets.Asset    // Keep asset variable, needed for Attach call
@@ -66,11 +74,12 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 		EdgeCertificate: false,
 	})
 
-	// Generate network config assets (peers, node keys, genesis)
+	// Generate network config assets (peers, genesis) from the public keys
 	peers, nodeKeys, genesisAsset := kwil_network.KwilNetworkConfigAssetsFromNumberOfNodes(
 		stack,
 		kwil_network.KwilAutoNetworkConfigAssetInput{
 			NumberOfNodes: config.NumOfNodes(stack),
+			NodeKeys:      nodePublicKeys,
 			DbOwner:       autoEnvVars.DbOwner, // Pass DbOwner here
 			Params:        cdkParams,
 		},
@@ -83,12 +92,13 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 		Vpc:          vpc,
 		HostedDomain: hd,
 		Peers:        peers,    // Pass public peer info
-		NodeKeys:     nodeKeys, // Pass node keys (including private)
+		NodeKeys:     nodeKeys, // Public keys only
 		GenesisAsset: genesisAsset,
 		KeyPair:      nil,
 		Assets:       tnAssets,
 		InitElements: initElements,
 		CDKParams:    cdkParams,
+		Secrets:      secretsStore,
 	})
 
 	// --- Instantiate Alternative Domain Manager ---
@@ -145,12 +155,12 @@ func TnAutoStack(scope constructs.Construct, id string, props *TnAutoStackProps)
 		HostedDomain:         hd,
 		Cert:                 props.CertStackExports.DomainCert,
 		CorsOrigins:          cdkParams.CorsAllowOrigins.ValueAsString(),
-		SessionSecret:        jsii.String(autoEnvVars.SessionSecret),
 		ChainId:              jsii.String(autoEnvVars.ChainId),
 		Validators:           vs.Nodes,
 		InitElements:         initElements,
 		Assets:               kwilAssets,
 		SelectedFrontingKind: selectedKind,
+		Secrets:              secretsStore,
 	})
 
 	// --- Create EC2 Instance for Kwil Gateway ---

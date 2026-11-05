@@ -1,0 +1,44 @@
+{{- /*
+Template: kgw_start.sh.tmpl
+Description: Start script for the gateway systemd unit. Reads the session
+             secret from an SSM SecureString on every start and hands it to
+             compose through the environment only. Exits non-zero if the
+             parameter cannot be read or is empty.
+Expected variables:
+  .Region                 (string): AWS Region of the parameter.
+  .SessionSecretParameter (string): SSM parameter holding the session secret.
+  .ComposePath            (string): Path to the gateway compose file.
+  .ProjectName            (string): Compose project name.
+*/ -}}
+#!/bin/bash
+{{- if not .Region }}{{ fail "missing required field '.Region'" }}{{ end }}
+{{- if not .SessionSecretParameter }}{{ fail "missing required field '.SessionSecretParameter'" }}{{ end }}
+{{- if not .ComposePath }}{{ fail "missing required field '.ComposePath'" }}{{ end }}
+{{- if not .ProjectName }}{{ fail "missing required field '.ProjectName'" }}{{ end }}
+# -----------------------------------------------------------------------------
+# ⚠ WARNING: This file is auto-generated from a template. Do not edit directly!
+# -----------------------------------------------------------------------------
+# Starts the gateway. The session secret is read from SSM Parameter Store on
+# every start, so a new value only needs a restart. Keep tracing off here.
+set +x
+set -euo pipefail
+
+PARAM_NAME="{{ .SessionSecretParameter }}"
+AWS_REGION="{{ .Region }}"
+
+SESSION_SECRET=""
+for attempt in 1 2 3 4 5; do
+  if SESSION_SECRET="$(aws ssm get-parameter --name "$PARAM_NAME" --with-decryption \
+      --query Parameter.Value --output text --region "$AWS_REGION")"; then
+    break
+  fi
+  echo "Reading SSM parameter $PARAM_NAME failed (attempt $attempt/5)" >&2
+  if [ "$attempt" -lt 5 ]; then sleep 5; fi
+done
+if [ -z "$SESSION_SECRET" ]; then
+  echo "ERROR: session secret parameter $PARAM_NAME is missing or empty; the gateway will not start." >&2
+  exit 1
+fi
+export SESSION_SECRET
+
+docker compose -p "{{ .ProjectName }}" -f "{{ .ComposePath }}" up -d --wait || true

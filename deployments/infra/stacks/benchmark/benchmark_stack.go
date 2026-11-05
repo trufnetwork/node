@@ -14,6 +14,7 @@ import (
 
 	"github.com/trufnetwork/node/infra/config"
 	goasset "github.com/trufnetwork/node/infra/lib/goasset"
+	"github.com/trufnetwork/node/infra/lib/utils"
 )
 
 // Main stack function
@@ -71,8 +72,8 @@ func BenchmarkStack(scope constructs.Construct, id string, props *awscdk.StackPr
 	// Add CloudWatch managed policy
 	ec2InstanceRole.AddManagedPolicy(awsiam.ManagedPolicy_FromAwsManagedPolicyName(jsii.String("CloudWatchAgentServerPolicy")))
 
-	// grant read permissions to the binary s3 asset
-	binaryS3Asset.GrantRead(ec2InstanceRole)
+	// grant read permissions to the binary s3 asset (that object only)
+	utils.GrantReadAsset(binaryS3Asset, ec2InstanceRole)
 
 	// Grant read/write permissions to the specific results bucket
 	resultsBucket.GrantReadWrite(ec2InstanceRole, "*")

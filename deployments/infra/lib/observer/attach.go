@@ -57,7 +57,7 @@ func AttachObservability(input AttachObservabilityInput) {
 			structure.Role,
 			ssmPrefix,
 		)
-		input.ObserverAsset.GrantRead(structure.Role)
+		utils.GrantReadAsset(input.ObserverAsset, structure.Role)
 
 		// 2. Prepare UserData Commands
 		observerDir := "/home/ec2-user/observer"                       // Target directory for observer assets

@@ -9,6 +9,7 @@ import (
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/lib/cdklogger"
+	"github.com/trufnetwork/node/infra/lib/utils"
 )
 
 type (
@@ -33,14 +34,14 @@ func createLaunchTemplate(scope constructs.Construct, input CreateLaunchTemplate
 	AWSLinux2MachineImage := awsec2.MachineImage_LatestAmazonLinux2023(nil)
 
 	// Create a new EC2 launch template with specified properties
-	launchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String(ltConstructID), &awsec2.LaunchTemplateProps{
+	launchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String(ltConstructID), utils.WithImdsV2(&awsec2.LaunchTemplateProps{
 		InstanceType:  input.InstanceType,
 		MachineImage:  AWSLinux2MachineImage,
 		SecurityGroup: input.SecurityGroup,
 		KeyPair:       input.KeyPair,
 		Role:          input.IAMRole,
 		UserData:      awsec2.UserData_ForLinux(nil),
-	})
+	}))
 
 	// Log Launch Template creation
 	instanceTypeStr := input.InstanceType.ToString()

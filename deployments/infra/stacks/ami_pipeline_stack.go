@@ -93,9 +93,10 @@ func AmiPipelineStack(scope constructs.Construct, id string, props *AmiPipelineS
 		InstanceTypes: &[]*string{
 			jsii.String("t3.medium"), // Cost-effective for AMI building
 		},
+		// IMDSv2 only, reachable from the build host but not from containers.
 		InstanceMetadataOptions: &awsimagebuilder.CfnInfrastructureConfiguration_InstanceMetadataOptionsProperty{
 			HttpTokens:              jsii.String("required"),
-			HttpPutResponseHopLimit: jsii.Number(2),
+			HttpPutResponseHopLimit: jsii.Number(1),
 		},
 		// Omit to use default VPC security group
 		SecurityGroupIds: nil,

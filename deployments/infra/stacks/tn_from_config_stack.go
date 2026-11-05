@@ -2,7 +2,6 @@ package stacks
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awscertificatemanager"
@@ -42,15 +41,20 @@ func TnFromConfigStack(
 		return stack
 	}
 
-	// Read environment config for number of nodes
+	// Read environment config. Only public keys are synth inputs. Node keys and
+	// the session secret stay in SSM and are read by the instances at boot.
 	cfg := config.GetEnvironmentVariables[config.ConfigStackEnvironmentVariables](stack)
-	privateKeys := strings.Split(cfg.NodePrivateKeys, ",")
+	nodePublicKeys, err := kwil_network.ParseNodePublicKeys(cfg.NodePublicKeys)
+	if err != nil {
+		panic(fmt.Sprintf("NODE_PUBLIC_KEYS: %v", err))
+	}
 	shouldIncludeObserver := cfg.IncludeObserver // Read the new variable
 
 	// Define CDK params and stage early, and read dev prefix from context
 	cdkParams := config.NewCDKParams(stack)
 	stage := config.GetStage(stack)
 	devPrefix := config.GetDevPrefix(stack)
+	secretsStore := config.SecretsStore(stack)
 
 	// Define Fronting Type parameter within stack scope
 	selectedKind := config.GetFrontingKind(stack) // Use context helper
@@ -76,11 +80,11 @@ func TnFromConfigStack(
 		EdgeCertificate: false,
 	})
 
-	// Generate network configs from number of private keys
+	// Generate network configs from the node public keys
 	peers, nodeKeys, genesisAsset := kwil_network.KwilNetworkConfigAssetsFromNumberOfNodes(
 		stack,
 		kwil_network.KwilAutoNetworkConfigAssetInput{
-			PrivateKeys:     privateKeys,
+			NodeKeys:        nodePublicKeys,
 			GenesisFilePath: cfg.GenesisPath,
 			BaseDomainFqdn:  hd.DomainName,
 		},
@@ -100,6 +104,7 @@ func TnFromConfigStack(
 		InitElements: initElements,
 		CDKParams:    cdkParams,
 		NodeKeys:     nodeKeys,
+		Secrets:      secretsStore,
 	})
 
 	// --- Register Node Targets with Manager (After ValidatorSet creation) ---
@@ -142,12 +147,12 @@ func TnFromConfigStack(
 		Vpc:                  vpc,
 		HostedDomain:         hd,
 		CorsOrigins:          cdkParams.CorsAllowOrigins.ValueAsString(),
-		SessionSecret:        jsii.String(cfg.SessionSecret),
 		ChainId:              jsii.String(cfg.ChainId),
 		Validators:           vs.Nodes,
 		InitElements:         initElements,
 		Assets:               kwilAssets,
 		SelectedFrontingKind: selectedKind,
+		Secrets:              secretsStore,
 	})
 
 	// --- Fronting Setup ---

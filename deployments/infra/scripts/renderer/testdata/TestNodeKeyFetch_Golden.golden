@@ -1,0 +1,27 @@
+# -----------------------------------------------------------------------------
+# ⚠ WARNING: This file is auto-generated from a template. Do not edit directly!
+# -----------------------------------------------------------------------------
+
+# Node key: read from SSM Parameter Store and written only to the key file.
+NODE_KEY_PARAM="/tsn/test/node/0/nodekey"
+NODE_KEY_FILE="/data/tn/nodekey.json"
+node_key_umask="$(umask)"
+umask 077
+node_key_ok=false
+for attempt in 1 2 3 4 5; do
+  if aws ssm get-parameter --name "$NODE_KEY_PARAM" --with-decryption \
+      --query Parameter.Value --output text --region "us-west-2" > "$NODE_KEY_FILE"; then
+    node_key_ok=true
+    break
+  fi
+  echo "Reading SSM parameter $NODE_KEY_PARAM failed (attempt $attempt/5)" >&2
+  if [ "$attempt" -lt 5 ]; then sleep 5; fi
+done
+umask "$node_key_umask"
+if [ "$node_key_ok" != true ] || [ ! -s "$NODE_KEY_FILE" ]; then
+  rm -f "$NODE_KEY_FILE"
+  echo "ERROR: node key parameter $NODE_KEY_PARAM is missing or empty; the node will not start." >&2
+  exit 1
+fi
+chown ec2-user:ec2-user "$NODE_KEY_FILE"
+chmod 600 "$NODE_KEY_FILE"

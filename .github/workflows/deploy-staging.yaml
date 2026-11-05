@@ -16,16 +16,16 @@ jobs:
         env:
           AWS_ACCESS_KEY: ${{ secrets.AWS_ACCESS_KEY }}
           AWS_SECRET_KEY: ${{ secrets.AWS_SECRET_KEY }}
-          GW_SESSION_SECRET: ${{ secrets.GW_SESSION_SECRET }}
-          # NODE_PRIVATE_KEYS is a comma separated list of private keys of the nodes to act as validators
-          NODE_PRIVATE_KEYS: ${{ secrets.NODE_PRIVATE_KEYS }}
-          # PRIVATE_KEY is the private key of the account that will be used to deploy the TN system contract
-          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          # STAGING_NODE_PUBLIC_KEYS is a comma separated list of the validators' node IDs
+          # (<public key hex>#<key type>), in node order. The node private keys and the
+          # gateway session secret are not inputs: they live in SSM Parameter Store, stored
+          # with deployments/infra/scripts/ssm-secrets.sh, and the instances read them at boot.
+          NODE_PUBLIC_KEYS: ${{ vars.STAGING_NODE_PUBLIC_KEYS }}
           # READ_TOKEN is the token used to read the genesis.json from the tn-node-operator repo
           READ_TOKEN: ${{ secrets.READ_TOKEN }}
-        if: ${{ env.AWS_ACCESS_KEY == '' || env.AWS_SECRET_KEY == '' || env.GW_SESSION_SECRET == '' || env.PRIVATE_KEY == '' || env.READ_TOKEN == '' || env.NODE_PRIVATE_KEYS == '' }}
+        if: ${{ env.AWS_ACCESS_KEY == '' || env.AWS_SECRET_KEY == '' || env.READ_TOKEN == '' || env.NODE_PUBLIC_KEYS == '' }}
         run: |
-          echo "Missing secrets"
+          echo "Missing secrets or variables"
           exit 1
       - name: Checkout
         uses: actions/checkout@v4
@@ -99,7 +99,6 @@ jobs:
           # GW_CORS_ALLOW_ORIGINS = Comma separated list of allowed origins
           cdk deploy --require-approval never TN-From-Config* TN-Cert* \
             --exclusively \
-            --parameters TN-From-Config-staging-Stack:sessionSecret=${{ secrets.GW_SESSION_SECRET }} \
             --parameters TN-From-Config-staging-Stack:corsAllowOrigins=${{ secrets.GW_CORS_ALLOW_ORIGINS || '*' }} \
             --context deploymentStage=STAGING
 
@@ -108,5 +107,4 @@ jobs:
           # path to the kwild CLI binary for configuration generation
           KWILD_CLI_PATH: ../../.build/kwild
           CHAIN_ID: trufnetwork-dev
-          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
-          NODE_PRIVATE_KEYS: ${{ secrets.NODE_PRIVATE_KEYS }}
+          NODE_PUBLIC_KEYS: ${{ vars.STAGING_NODE_PUBLIC_KEYS }}

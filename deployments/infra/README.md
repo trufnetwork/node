@@ -13,9 +13,9 @@ The `cdk.json` file tells the CDK toolkit how to execute your app.
 ## High-level Constructs
 We have extracted three reusable L3 constructs under [deployments/infra/lib/constructs](https://github.com/trufnetwork/node/tree/main/deployments/infra/lib/constructs) to simplify stack logic:
 
-- **ValidatorSet**: provisions a group of TN validator EC2 instances with Elastic IPs, DNS A records, a shared IAM role, and security group.
-  - Props: `Vpc`, `HostedDomain`, `NodesConfig`, `KeyPair`, `ImageAssets`, `InitElements` (e.g. custom EC2 user-data such as observer bootstrap)
-  - Outputs: `Nodes []tn.TNInstance`, `Role awsiam.IRole`, `SecurityGroup awsec2.SecurityGroup`
+- **ValidatorSet**: provisions a group of TN validator EC2 instances with Elastic IPs, DNS A records, one IAM role per node, and a shared security group. Each node role may read only that node's key in SSM.
+  - Props: `Vpc`, `HostedDomain`, `Peers`, `NodeKeys` (public keys only), `GenesisAsset`, `KeyPair`, `Assets`, `InitElements` (e.g. custom EC2 user-data such as observer bootstrap), `CDKParams`, `Secrets` (where the node keys are in SSM)
+  - Outputs: `Nodes []tn.TNInstance` (each with its own `Role`), `SecurityGroup awsec2.SecurityGroup`
   - Import:
     ```go
     import "github.com/trufnetwork/node/infra/lib/constructs/validator_set"
@@ -26,7 +26,7 @@ We have extracted three reusable L3 constructs under [deployments/infra/lib/cons
     ```
 
 - **KwilCluster**: provisions a Kwil Gateway and an Indexer.
-  - Props: `Vpc`, `HostedDomain`, `Cert` (currently passed but not used for fronting), `CorsOrigins`, `SessionSecret`, `ChainId`, `Validators`, `InitElements`, `KGWDirAsset`, `KGWBinaryAsset`, `IndexerDirAsset`
+  - Props: `Vpc`, `HostedDomain`, `Cert` (currently passed but not used for fronting), `CorsOrigins`, `Secrets` (where the session secret is in SSM), `ChainId`, `Validators`, `InitElements`, `KGWDirAsset`, `KGWBinaryAsset`, `IndexerDirAsset`
   - Outputs: `Gateway kwil_gateway.KGWInstance`, `Indexer kwil_indexer.IndexerInstance`
   - Import:
     ```go
@@ -87,36 +87,36 @@ cdk deploy --context frontingType=cloudfront    # only if you really need CF
 
 This method dynamically generates the TN node configuration during deployment. It deploys both the launch templates and the EC2 instances from these templates.
 
+Store the node keys and the session secret first (see [Node Keys and the Gateway Session Secret](#node-keys-and-the-gateway-session-secret)), then pass the node IDs the script printed.
+
 #### Example Command:
 
 ```bash
-PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
 KWILD_CLI_PATH=kwild \
 CHAIN_ID=truflation-dev \
+DB_OWNER=<DB-OWNER-ADDRESS> \
+NODE_PUBLIC_KEYS="<node-1 ID>,<node-2 ID>" \
 CDK_DOCKER="<YOUR-DIRECTORY>/tn/deployments/infra/buildx.sh" \
 cdk deploy --profile <YOUR-AWS-PROFILE> --all --asset-parallelism=false --notices false \
   -c stage=dev \
-  -c devPrefix=<YOUR-DEV-PREFIX> \
-  --parameters TN-DB-Stack-dev:sessionSecret=abab
+  -c devPrefix=<YOUR-DEV-PREFIX>
 ```
 
 ### 2. Pre-configured Setup
 
-This method uses a pre-existing genesis file and a list of private keys for the TN nodes. It deploys only the launch templates, not the instances.
+This method uses a pre-existing genesis file and the public keys of the TN nodes. It deploys only the launch templates, not the instances. Store each node's key with `put-node-key` and the session secret with `put-session-secret` first (see [Node Keys and the Gateway Session Secret](#node-keys-and-the-gateway-session-secret)).
 
 #### Example Command:
 
 ```bash
-PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
 KWILD_CLI_PATH=kwild \
 CHAIN_ID=truflation-dev \
 CDK_DOCKER="<YOUR-DIRECTORY>/tn/deployments/infra/buildx.sh" \
-NODE_PRIVATE_KEYS="key1,key2,key3" \
+NODE_PUBLIC_KEYS="<node-1 ID>,<node-2 ID>,<node-3 ID>" \
 GENESIS_PATH="/path/to/genesis.json" \
 cdk deploy --profile <YOUR-AWS-PROFILE> TN-From-Config* TN-Cert* \
   -c stage=dev \
-  -c devPrefix=<YOUR-DEV-PREFIX> \
-  --parameters TN-From-Config-<environment>-Stack:sessionSecret=abab
+  -c devPrefix=<YOUR-DEV-PREFIX>
 ```
 
 ## Redeploying Instances from Launch Templates
@@ -148,8 +148,7 @@ For the prod environment, which uses the pre-configured setup, upgrading a node 
 1. Deploy the stack to update the launch template with the new image:
 
     ```bash
-    cdk deploy --profile <YOUR-AWS-PROFILE> TN-From-Config* TN-Cert* \
-    --parameters TN-From-Config-<environment>-Stack:sessionSecret=<SESSION-SECRET>
+    cdk deploy --profile <YOUR-AWS-PROFILE> TN-From-Config* TN-Cert*
     ```
 
 2. After deployment, SSH into the instance you want to upgrade.
@@ -175,12 +174,62 @@ This process ensures that your node is running the latest version of the softwar
 
 ## Environment Variables
 
-- `PRIVATE_KEY`: Ethereum private key for the admin account
 - `KWILD_CLI_PATH`: Path to the `kwild` CLI binary (use `kwild` if it's in your PATH)
 - `CHAIN_ID`: Chain ID for the Kwil network
 - `CDK_DOCKER`: Path to docker buildx script
-- `NODE_PRIVATE_KEYS`: Comma-separated list of private keys for TSN nodes (only for pre-configured setup)
+- `NODE_PUBLIC_KEYS`: Comma-separated node IDs of the validators (`<public key hex>#<key type>`, as printed by `kwild key info` or `scripts/ssm-secrets.sh`), in node order: the first entry is node-1. A bare public key means `secp256k1`. The auto-generated stack needs exactly `numOfNodes` entries (2 in `cdk.json`).
+- `DB_OWNER`: Database owner written into the generated genesis (only for auto-generated configuration)
 - `GENESIS_PATH`: Path to the genesis file (only for pre-configured setup)
+
+Synth takes no private key and no session secret. They are in SSM Parameter Store, see below.
+
+## Node Keys and the Gateway Session Secret
+
+Each node reads its own `nodekey.json` from an SSM SecureString parameter at first boot, and the gateway reads its
+session secret from SSM every time its service starts. The values never appear in the CloudFormation template, in
+user data or in a CDK asset. The parameters are:
+
+| Parameter | Value | Read by |
+|-----------|-------|---------|
+| `<prefix>/node/<i>/nodekey` | `nodekey.json` of node `i` (0-based: node-1 is `0`) | that node only |
+| `<prefix>/kgw/session_secret` | gateway session secret | the gateway |
+
+`<prefix>` is `/tsn/<stage>`, or `/tsn/<stage>/<devPrefix>` when the stack has a `devPrefix`. Two optional CDK
+context keys change this:
+
+| Context key | Meaning | Default |
+|-------------|---------|---------|
+| `secretsPrefix` | SSM path prefix, such as `/tsn/prod` | `/tsn/<stage>[/<devPrefix>]` |
+| `secretsKmsKeyArn` | customer managed KMS key ARN that encrypts the parameters | the AWS managed `aws/ssm` key |
+
+Of these parameters, each instance role may read only its own (`ssm:GetParameter` on that one parameter), plus
+`kms:Decrypt` through SSM when `secretsKmsKeyArn` is set.
+
+CloudFormation cannot create SecureString parameters, so `scripts/ssm-secrets.sh` stores them before the first
+deploy. It reads every value from a file or stdin and never prints one:
+
+```bash
+# New stack: generate the node keys in SSM and print NODE_PUBLIC_KEYS
+scripts/ssm-secrets.sh --stage dev --dev-prefix <YOUR-DEV-PREFIX> gen-node-keys 2
+
+# Existing node key (a nodekey.json, or a private key in hex): prints the node ID
+scripts/ssm-secrets.sh --stage prod put-node-key 0 ./node-1/nodekey.json
+
+# Gateway session secret
+openssl rand -hex 32 | scripts/ssm-secrets.sh --stage prod put-session-secret -
+
+# Show the parameter names only, with no AWS call
+scripts/ssm-secrets.sh --stage prod --dry-run gen-node-keys 3
+```
+
+Pass the same `--prefix` and `--kms-key-arn` as the stack's `secretsPrefix` and `secretsKmsKeyArn`, and `--region`
+when the AWS CLI's default region is not the stack's. The script stops before writing when a parameter already
+exists. `--overwrite` replaces it. Run `scripts/ssm-secrets.sh --help` for every option. The script needs the AWS
+CLI and `jq`, and `kwild` (or `KWILD_CLI_PATH`) for the node key commands. The caller needs `ssm:PutParameter` on
+the parameters, `ssm:DescribeParameters`, and `kms:Encrypt` on a customer managed key.
+
+A node reads its key only at first boot, so a running node keeps the key it started with. A new session secret
+takes effect when the gateway service restarts (`sudo systemctl restart kgw`).
 
 ## AWS Profile
 
