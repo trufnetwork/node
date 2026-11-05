@@ -167,7 +167,7 @@ func (m *pgRepackMechanism) Run(ctx context.Context, req RunRequest) (*RunReport
 	}
 	if m.role != nil {
 		// pg_repack stops for a role that is not a superuser unless told to
-		// skip its check; the role's grants cover what pg_repack does.
+		// skip its check. The role's grants cover what pg_repack does.
 		args = append(args, "--no-superuser-check")
 	}
 

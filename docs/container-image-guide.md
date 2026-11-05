@@ -39,7 +39,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # creates the Postgres roles the node connects as; runs before the node on every start,
+  # creates the Postgres roles the node connects as. It runs before the node on every start,
   # once Postgres takes TCP connections
   postgres-roles:
     image: ghcr.io/trufnetwork/node:${TN_NODE_TAG:-latest}
