@@ -13,16 +13,21 @@ import (
 	"github.com/trufnetwork/node/internal/migrations"
 )
 
-// call_dispatch runs only PUBLIC VIEW actions in the main namespace
-// (dispatch_guard.go). The engine does not check that the body of a VIEW action
-// only reads, so the tests below keep every PUBLIC VIEW action in the
-// migrations, and every action it calls, free of INSERT, UPDATE, DELETE and
-// token methods.
+// call_dispatch runs only PUBLIC VIEW actions in the main namespace from the
+// heights in callDispatchPublicViewHeights (dispatch_guard.go): on mainnet from
+// 3010040, and at every height on a chain that is not listed. Below a listed
+// chain's height, dispatch can still run main actions that are not PUBLIC
+// VIEW, and these tests do not cover that.
+//
+// The engine does not check that the body of a VIEW action only reads, so the
+// tests below keep every PUBLIC VIEW action in the migrations, and every action
+// it calls, free of INSERT, UPDATE, DELETE and of bridge methods that write.
 
 // tokenMethods are the erc20 bridge methods that change balances or bridge
-// state. A bridge alias exposes them as <alias>.<method>, for example
-// hoodi_tt.transfer. The read methods (balance, info, decimals, ...) are not
-// listed.
+// state on every bridge alias, so a call to one is flagged in any namespace. A
+// bridge alias exposes them as <alias>.<method>, for example hoodi_tt.transfer,
+// and kwil_erc20_meta has them under the same names. The read methods
+// (balance, info, decimals, ...) are not listed.
 var tokenMethods = map[string]bool{
 	"issue":      true,
 	"transfer":   true,
@@ -31,6 +36,25 @@ var tokenMethods = map[string]bool{
 	"unlock":     true,
 	"bridge":     true,
 	"vote_epoch": true,
+}
+
+// metaNamespace is the namespace of kwil-db's erc20 meta extension
+// (erc20.RewardMetaExtensionName). Genesis USEs it on every node.
+const metaNamespace = "kwil_erc20_meta"
+
+// metaMethods are the other metaNamespace methods that change bridge state:
+// prepare creates a bridge instance and disable switches one off. No bridge
+// alias exposes them, and a method of another namespace may have the same name,
+// so a call to one is flagged only in metaNamespace.
+var metaMethods = map[string]bool{
+	"prepare": true,
+	"disable": true,
+}
+
+// writesBridge reports whether c calls a bridge method that changes balances
+// or bridge state.
+func writesBridge(c actionCall) bool {
+	return tokenMethods[c.name] || (c.namespace == metaNamespace && metaMethods[c.name])
 }
 
 // readOnlyExceptions lists actions whose own writes and token calls are allowed
@@ -198,6 +222,20 @@ CREATE OR REPLACE ACTION calls_vote_epoch($epoch_id UUID, $nonce INT8, $signatur
     some_bridge.vote_epoch($epoch_id, $nonce, $signature);
 };
 
+CREATE OR REPLACE ACTION calls_meta_prepare() PUBLIC VIEW {
+    kwil_erc20_meta.prepare('sepolia', '0x0000000000000000000000000000000000000001', '1h');
+};
+
+CREATE OR REPLACE ACTION calls_meta_disable($id UUID) PUBLIC VIEW {
+    kwil_erc20_meta.disable($id);
+};
+
+CREATE OR REPLACE ACTION same_names_elsewhere($id UUID) PUBLIC VIEW {
+    other_ext.prepare('sepolia', '0x0000000000000000000000000000000000000001', '1h');
+    other_ext.disable($id);
+    $b := kwil_erc20_meta.balance($id, '0x0000000000000000000000000000000000000001');
+};
+
 CREATE OR REPLACE ACTION writes_but_not_a_view() PUBLIC {
     INSERT INTO probe (id) VALUES (3);
 };
@@ -246,24 +284,36 @@ CREATE OR REPLACE ACTION calls_allowed_writer_calls_update() PUBLIC VIEW {
 		// These and moves_tokens (unlock) call one tokenMethods entry each,
 		// so dropping any entry leaves its caller unflagged.
 		"calls_issue", "calls_transfer", "calls_lock", "calls_lock_admin", "calls_bridge", "calls_vote_epoch",
+		// These call one metaMethods entry each.
+		"calls_meta_prepare", "calls_meta_disable",
 	} {
 		if !flagged[name] {
 			t.Errorf("%s was not flagged; problems: %v", name, problems)
 		}
 	}
-	// A method added to tokenMethods needs an action in src that calls it.
+	// A method added to tokenMethods or metaMethods needs an action in src
+	// that calls it.
+	listed := map[string]bool{}
 	for m := range tokenMethods {
+		listed["some_bridge."+m] = true
+	}
+	for m := range metaMethods {
+		listed[metaNamespace+"."+m] = true
+	}
+	for call := range listed {
 		reported := false
 		for _, p := range problems {
-			if strings.Contains(p, " calls some_bridge."+m+" at line ") {
+			if strings.Contains(p, " calls "+call+" at line ") {
 				reported = true
 			}
 		}
 		if !reported {
-			t.Errorf("no action in src calls some_bridge.%s", m)
+			t.Errorf("no action in src calls %s", call)
 		}
 	}
-	for _, name := range []string{"reads", "reads_through_helper", "writes_but_not_a_view", "owner_view_writes", "calls_allowed_writer", "allowed_view_writer", "private_update", "allowed_writer"} {
+	// same_names_elsewhere calls prepare and disable outside metaNamespace,
+	// and a read method of metaNamespace.
+	for _, name := range []string{"reads", "reads_through_helper", "writes_but_not_a_view", "owner_view_writes", "calls_allowed_writer", "allowed_view_writer", "private_update", "allowed_writer", "same_names_elsewhere"} {
 		if flagged[name] {
 			t.Errorf("%s was flagged; problems: %v", name, problems)
 		}
@@ -275,8 +325,8 @@ CREATE OR REPLACE ACTION calls_allowed_writer_calls_update() PUBLIC VIEW {
 			t.Errorf("unexpected problem: %s", p)
 		}
 	}
-	if len(problems) != 11 {
-		t.Errorf("expected 11 problems, got %d: %v", len(problems), problems)
+	if len(problems) != 13 {
+		t.Errorf("expected 13 problems, got %d: %v", len(problems), problems)
 	}
 }
 
@@ -327,7 +377,7 @@ func parseActionDefs(file, src string) ([]*actionDef, error) {
 }
 
 // readOnlyProblems follows every PUBLIC VIEW action in main through the
-// actions it calls and reports each write or token method it can reach. An
+// actions it calls and reports each write or bridge write it can reach. An
 // action defined in more than one file (for example a *.prod.sql override) is
 // followed through every definition.
 func readOnlyProblems(defs []*actionDef, exceptions map[string]string) []string {
@@ -379,7 +429,7 @@ func readOnlyProblems(defs []*actionDef, exceptions map[string]string) []string 
 					}
 					continue
 				}
-				if !allowed && c.namespace != "" && c.namespace != d.namespace && tokenMethods[c.name] {
+				if !allowed && c.namespace != "" && c.namespace != d.namespace && writesBridge(c) {
 					report(fmt.Sprintf("%s (%s) calls %s.%s at line %d%s", root.name, root.where(), c.namespace, c.name, c.line, via))
 				}
 			}
