@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
@@ -111,8 +112,20 @@ func TestRPCPortClosedWhenNoSourcesListed(t *testing.T) {
 	}
 }
 
-// The prod stack reads its RPC sources from cdk.json, so a redeploy keeps the
-// port limited to them.
+// The longest host name RPCSources accepts still fits the 255 characters EC2
+// allows in a rule description.
+func TestRPCRuleDescriptionFitsEC2Limit(t *testing.T) {
+	got := synthIngress(t, map[string]interface{}{
+		"stackSuffix": "prod",
+		"rpcSources":  map[string]interface{}{"prod": map[string]interface{}{"203.0.113.10/32": strings.Repeat("a", 200)}},
+	})
+	if n := len(got[0].Description); got[0].Port != 8484 || n > 255 {
+		t.Fatalf("want an RPC rule description of at most 255 characters, got %d in %v", n, got[0])
+	}
+}
+
+// The prod stack reads its RPC sources from cdk.json. The list is pinned here,
+// so any change to it has to be made in this test too.
 func TestProdRPCPortLimitedByCdkJSON(t *testing.T) {
 	raw, err := os.ReadFile("../../cdk.json")
 	if err != nil {
@@ -124,16 +137,22 @@ func TestProdRPCPortLimitedByCdkJSON(t *testing.T) {
 	if err := json.Unmarshal(raw, &cdkJSON); err != nil {
 		t.Fatal(err)
 	}
+	cdkJSON.Context["stage"] = "prod"
 	cdkJSON.Context["stackSuffix"] = "prod"
 
-	got := synthIngress(t, cdkJSON.Context)
-	n := len(got) - len(openPorts)
-	if n <= 0 || !reflect.DeepEqual(got[n:], openPorts) {
-		t.Fatalf("want RPC rules followed by the open ports, got %v", got)
-	}
-	for _, r := range got[:n] {
-		if r.Port != 8484 || r.CIDR == "0.0.0.0/0" {
-			t.Fatalf("want the RPC port open only to listed sources, got %v", r)
-		}
+	// Both gateways, the indexer and the data ingestor, each by its public and
+	// its private address.
+	want := append([]rule{
+		{8484, "172.31.10.39/32", "Allow requests to the TN RPC port from the data ingestor."},
+		{8484, "172.31.34.135/32", "Allow requests to the TN RPC port from the testnet gateway."},
+		{8484, "172.31.7.71/32", "Allow requests to the TN RPC port from the indexer."},
+		{8484, "172.31.8.217/32", "Allow requests to the TN RPC port from the mainnet gateway."},
+		{8484, "18.220.142.158/32", "Allow requests to the TN RPC port from the mainnet gateway."},
+		{8484, "3.12.225.104/32", "Allow requests to the TN RPC port from the testnet gateway."},
+		{8484, "3.144.3.105/32", "Allow requests to the TN RPC port from the data ingestor."},
+		{8484, "52.15.66.172/32", "Allow requests to the TN RPC port from the indexer."},
+	}, openPorts...)
+	if got := synthIngress(t, cdkJSON.Context); !reflect.DeepEqual(got, want) {
+		t.Fatalf("ingress rules\n got: %v\nwant: %v", got, want)
 	}
 }

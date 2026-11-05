@@ -204,7 +204,12 @@ The validators' security group opens the TN RPC port (8484) only to the sources 
 }
 ```
 
-A stack whose suffix has no entry keeps the port open to any address. Run `cdk diff` after changing the list.
+A stack whose suffix has no entry keeps the port open to any address, except on the `prod` stage, where the synth
+stops instead. An empty entry (`{}`) closes the port. CDK drops `null` values from context, so a `null` entry counts
+as missing and a `null` host name drops its source. The host name goes into the rule description, so it may hold only
+letters, digits, spaces and `._-:/()#,@[]+=&;{}!$*`, up to 200 characters.
+
+`lib/tn/security_group_test.go` pins the `prod` list, so change it there as well. Run `cdk diff` after changing the list.
 
 ## Useful Commands
 
