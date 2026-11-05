@@ -61,6 +61,18 @@
     "@aws-cdk/aws-codepipeline:crossAccountKeysDefaultValueToFalse": true,
     "frontingType": "api",
     "numOfNodes": 2,
-    "keyPairName": "tsn-key-pair"
+    "keyPairName": "tsn-key-pair",
+    "rpcSources": {
+      "prod": {
+        "18.220.142.158/32": "mainnet gateway",
+        "172.31.8.217/32": "mainnet gateway",
+        "3.12.225.104/32": "testnet gateway",
+        "172.31.34.135/32": "testnet gateway",
+        "52.15.66.172/32": "indexer",
+        "172.31.7.71/32": "indexer",
+        "3.144.3.105/32": "data ingestor",
+        "172.31.10.39/32": "data ingestor"
+      }
+    }
   }
 }
