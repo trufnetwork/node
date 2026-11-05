@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       NUMBER_OF_NODES:
-        description: 'Number of nodes to deploy. Max 5.'
+        description: 'Number of nodes to deploy. Max 5. Must match the number of node IDs in AUTO_NODE_PUBLIC_KEYS.'
         required: false
         default: 1
         type: number
@@ -40,12 +40,14 @@ jobs:
         env:
           AWS_ACCESS_KEY: ${{ secrets.AWS_ACCESS_KEY }}
           AWS_SECRET_KEY: ${{ secrets.AWS_SECRET_KEY }}
-          GW_SESSION_SECRET: ${{ secrets.GW_SESSION_SECRET }}
-          # PRIVATE_KEY is the private key of the account that will be used to deploy the TN system contract
-          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
-        if: ${{ env.AWS_ACCESS_KEY == '' || env.AWS_SECRET_KEY == '' || env.GW_SESSION_SECRET == '' || env.PRIVATE_KEY == '' }}
+          # AUTO_NODE_PUBLIC_KEYS is a comma separated list of the validators' node IDs
+          # (<public key hex>#<key type>), in node order. The node private keys and the
+          # gateway session secret are not inputs: they live in SSM Parameter Store, stored
+          # with deployments/infra/scripts/ssm-secrets.sh, and the instances read them at boot.
+          NODE_PUBLIC_KEYS: ${{ vars.AUTO_NODE_PUBLIC_KEYS }}
+        if: ${{ env.AWS_ACCESS_KEY == '' || env.AWS_SECRET_KEY == '' || env.NODE_PUBLIC_KEYS == '' }}
         run: |
-          echo "Missing secrets"
+          echo "Missing secrets or variables"
           exit 1
       - name: Checkout
         uses: actions/checkout@v4
@@ -107,7 +109,6 @@ jobs:
 
           # GW_CORS_ALLOW_ORIGINS = Comma separated list of allowed origins
           cdk deploy --require-approval never TN-DB-Auto* TN-Cert* \
-            --parameters TN-DB-Auto-${{github.event.inputs.SUBDOMAIN}}-Stack:sessionSecret=${{ secrets.GW_SESSION_SECRET }} \
             --parameters TN-DB-Auto-${{github.event.inputs.SUBDOMAIN}}-Stack:corsAllowOrigins=${{ secrets.GW_CORS_ALLOW_ORIGINS || '*' }} \
             --exclusively \
             --context deploymentStage=DEV \
@@ -119,4 +120,4 @@ jobs:
           # path to the kwild CLI binary for configuration generation
           KWILD_CLI_PATH: ../../.build/kwild
           CHAIN_ID: truflation-dev
-          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          NODE_PUBLIC_KEYS: ${{ vars.AUTO_NODE_PUBLIC_KEYS }}
