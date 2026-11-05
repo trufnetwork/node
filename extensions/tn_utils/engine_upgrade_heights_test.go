@@ -11,7 +11,8 @@ import (
 
 // The package's init sets both engine heights from engineUpgradeHeights.
 func TestEngineUpgradeHeights(t *testing.T) {
-	require.Len(t, engineUpgradeHeights, 2)
+	// The live chain IDs and the heights the v2.6.5 release announces.
+	require.Equal(t, map[string]int64{"tn-v2.1": 3115000, "testnet-v1": 15500000}, engineUpgradeHeights)
 	for chainID, height := range engineUpgradeHeights {
 		require.True(t, pggenerate.LegacyAt(chainID, height-1), chainID)
 		require.False(t, pggenerate.LegacyAt(chainID, height), chainID)
