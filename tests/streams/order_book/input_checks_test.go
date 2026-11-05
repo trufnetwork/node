@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"os"
-	"strings"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -40,6 +40,7 @@ func TestOrderInputChecks(t *testing.T) {
 			testDirectMatchFillBudget(t),
 			testMintMatchFillBudget(t),
 			testBurnMatchFillBudget(t),
+			testMintWaitsForCrossingBook(t),
 			testSettleChecksVaultForOpenBuys(t),
 			testSettleRefundsOpenBuysWhenVaultCovers(t),
 			testBatchUnlockChecksInputs(t),
@@ -270,6 +271,58 @@ func testBurnMatchFillBudget(t *testing.T) func(context.Context, *kwilTesting.Pl
 	}
 }
 
+// A YES bid that crosses 101 asks fills 100 of them directly. The ask left
+// over still crosses the bid, so the call does not mint the rest of the bid
+// against a NO bid at the complementary price. The next YES order fills the
+// crossing pair at the ask's price.
+func testMintWaitsForCrossingBook(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		lastBalancePoint = nil
+		lastTrufBalancePoint = nil
+		require.NoError(t, erc20bridge.ForTestingInitializeExtension(ctx, platform))
+
+		maker := util.Unsafe_NewEthereumAddressFromString("0x7c00000000000000000000000000000000000060")
+		yesBuyer := util.Unsafe_NewEthereumAddressFromString("0x7c00000000000000000000000000000000000061")
+		noBuyer := util.Unsafe_NewEthereumAddressFromString("0x7c00000000000000000000000000000000000062")
+		lateBuyer := util.Unsafe_NewEthereumAddressFromString("0x7c00000000000000000000000000000000000063")
+		require.NoError(t, giveBalanceChained(ctx, platform, maker.Address(), "500000000000000000000"))
+		require.NoError(t, giveUSDCBalanceChained(ctx, platform, yesBuyer.Address(), "100000000000000000000"))
+		require.NoError(t, giveUSDCBalanceChained(ctx, platform, noBuyer.Address(), "10000000000000000000"))
+		require.NoError(t, giveUSDCBalanceChained(ctx, platform, lateBuyer.Address(), "10000000000000000000"))
+		marketID := askHoldingsMarket(t, ctx, platform, &maker, "stfillbudgetcross000000000000001")
+		sellers := fundedWallets(t, ctx, platform, 0x7f, 101, "1000000000000000000")
+		place := orderPlacer(t, ctx, platform)
+
+		// 101 one-share YES asks @40. Each split lists its NO share @90, which
+		// no order below reaches.
+		for i := range sellers {
+			place(&sellers[i], "place_split_limit_order", marketID, 10, int64(1))
+			place(&sellers[i], "place_sell_order", marketID, true, 40, int64(1))
+		}
+		require.Equal(t, 101, countRestingOrders(t, ctx, platform, marketID, true, false))
+
+		// A NO bid @50 that a YES bid @50 could mint against.
+		place(&noBuyer, "place_buy_order", marketID, false, 50, int64(1))
+
+		// The YES bid @50 for 101 shares fills 100 asks and keeps one share open.
+		place(&yesBuyer, "place_buy_order", marketID, true, 50, int64(101))
+		askHoldingsRequireOrder(t, ctx, platform, marketID, &yesBuyer, true, 0, 100)
+		askHoldingsRequireOrder(t, ctx, platform, marketID, &yesBuyer, true, -50, 1)
+		askHoldingsRequireOrder(t, ctx, platform, marketID, &noBuyer, false, -50, 1)
+		require.Equal(t, 1, countRestingOrders(t, ctx, platform, marketID, true, false))
+		requireMarketBalanced(t, ctx, platform, marketID)
+
+		// The next YES order matches the crossing pair at the ask's price.
+		place(&lateBuyer, "place_buy_order", marketID, true, 1, int64(1))
+		askHoldingsRequireOrder(t, ctx, platform, marketID, &yesBuyer, true, -50, 0)
+		askHoldingsRequireOrder(t, ctx, platform, marketID, &yesBuyer, true, 0, 101)
+		askHoldingsRequireOrder(t, ctx, platform, marketID, &noBuyer, false, -50, 1)
+		require.Equal(t, 0, countRestingOrders(t, ctx, platform, marketID, true, false))
+		requireMarketBalanced(t, ctx, platform, marketID)
+		return nil
+	}
+}
+
 // A market that holds only buy orders is refunded out of the shared vault, so
 // settlement checks the vault for it too. With the vault $5 short of what the
 // open markets are owed, settling it is refused and nothing moves.
@@ -432,7 +485,7 @@ PRIVATE {
 
 		var vaultMigration string
 		for _, path := range migrations.GetSeedScriptPaths() {
-			if strings.HasSuffix(path, "/031-order-book-vault.sql") {
+			if filepath.Base(path) == "031-order-book-vault.sql" {
 				content, err := os.ReadFile(path)
 				require.NoError(t, err)
 				vaultMigration = string(content)

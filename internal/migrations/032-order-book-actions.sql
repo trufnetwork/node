@@ -1034,6 +1034,56 @@ CREATE OR REPLACE ACTION match_burn(
 };
 
 -- =============================================================================
+-- ob_book_crosses: Whether one outcome still has a bid at or above an ask
+-- =============================================================================
+/**
+ * match_direct stops when its fill budget is spent, which can leave a bid at or
+ * above an ask on the book. match_orders checks both outcomes with this before
+ * it mints or burns. Mint and burn fill at fixed prices, so running them while
+ * a book crosses could fill an order at its limit while a better price rests.
+ *
+ * Parameters:
+ * - $query_id: Market identifier
+ * - $outcome: TRUE (YES) or FALSE (NO)
+ */
+CREATE OR REPLACE ACTION ob_book_crosses($query_id INT, $outcome BOOL)
+PRIVATE VIEW RETURNS (crosses BOOL) {
+    $best_ask INT;
+    for $ask in
+        SELECT price
+        FROM ob_positions
+        WHERE query_id = $query_id
+          AND outcome = $outcome
+          AND price > 0          -- Sell orders have positive price
+        ORDER BY price ASC
+        LIMIT 1
+    {
+        $best_ask := $ask.price;
+    }
+    if $best_ask IS NULL {
+        RETURN false;
+    }
+
+    $best_bid_neg INT;
+    for $bid in
+        SELECT price
+        FROM ob_positions
+        WHERE query_id = $query_id
+          AND outcome = $outcome
+          AND price < 0          -- Buy orders have negative price
+        ORDER BY price ASC       -- Most negative first = highest buy price
+        LIMIT 1
+    {
+        $best_bid_neg := $bid.price;
+    }
+    if $best_bid_neg IS NULL {
+        RETURN false;
+    }
+
+    RETURN (0 - $best_bid_neg) >= $best_ask;
+};
+
+-- =============================================================================
 -- match_orders: Main matching orchestrator
 -- =============================================================================
 /**
@@ -1048,6 +1098,9 @@ CREATE OR REPLACE ACTION match_burn(
  * Each match type makes at most $max_fills fills per call, which bounds the
  * work a single order can trigger. Orders that still cross once a budget is
  * spent stay on the book until a later order in the same market matches them.
+ * While either outcome's book still crosses after the direct match, the call
+ * skips mint and burn, so those fixed-price fills never jump a better price.
+ * The next order on the crossing outcome fills that pair directly.
  *
  * Parameters:
  * - $query_id: Market identifier
@@ -1089,6 +1142,14 @@ CREATE OR REPLACE ACTION match_orders(
     -- Match executes at sell price; buyer is refunded price difference
 
     match_direct($query_id, $outcome, $price, $bridge, $max_fills);
+
+    -- A spent direct budget can leave a book crossing. Mint and burn fill at
+    -- fixed prices, so they wait until a later call fills that pair directly.
+    $yes_book_crosses BOOL := ob_book_crosses($query_id, true);
+    $no_book_crosses BOOL := ob_book_crosses($query_id, false);
+    if $yes_book_crosses OR $no_book_crosses {
+        RETURN;
+    }
 
     -- ==========================================================================
     -- SECTION 3: TRY MINT MATCH
