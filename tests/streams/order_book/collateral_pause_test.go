@@ -307,7 +307,7 @@ func getCollateralLockPauses(t *testing.T, ctx context.Context, platform *kwilTe
 
 func createCollateralPauseMarket(t *testing.T, ctx context.Context, platform *kwilTesting.Platform,
 	creator *util.EthereumAddress, streamID string) int {
-	queryComponents, err := encodeQueryComponentsForTests(creator.Address(), streamID, "get_record", []byte{0x01})
+	queryComponents, err := encodeQueryComponentsForTests(creator.Address(), streamID, "get_record", nil)
 	require.NoError(t, err)
 
 	var marketID int64

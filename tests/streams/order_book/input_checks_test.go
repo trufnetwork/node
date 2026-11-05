@@ -119,7 +119,7 @@ func testCreateMarketRefusesNullArguments(t *testing.T) func(context.Context, *k
 
 		creator := util.Unsafe_NewEthereumAddressFromString("0x7c00000000000000000000000000000000000002")
 		require.NoError(t, giveBalanceChained(ctx, platform, creator.Address(), "500000000000000000000"))
-		queryComponents, err := encodeQueryComponentsForTests(creator.Address(), "stinputchecksnull000000000000002", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(creator.Address(), "stinputchecksnull000000000000002", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
