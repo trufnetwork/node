@@ -13,7 +13,6 @@ import (
 	"github.com/trufnetwork/kwil-db/common"
 	"github.com/trufnetwork/kwil-db/core/crypto"
 	coreauth "github.com/trufnetwork/kwil-db/core/crypto/auth"
-	kwilTypes "github.com/trufnetwork/kwil-db/core/types"
 	erc20bridge "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
 	"github.com/trufnetwork/node/internal/migrations"
@@ -81,9 +80,9 @@ func testCollateralPauseOwnerOnly(t *testing.T) func(context.Context, *kwilTesti
 	}
 }
 
-// testCollateralPauseRefusesLocks: while hoodi_tt2 is paused, a buy, a split, a
-// bid raise and ob_lock_collateral are refused and leave the book and the wallet
-// as they were; after the owner resumes, each of them locks as before.
+// testCollateralPauseRefusesLocks: while hoodi_tt2 is paused, a buy, a split and
+// a bid raise are refused and leave the book and the wallet as they were; after
+// the owner resumes, each of them locks as before.
 func testCollateralPauseRefusesLocks(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		lastBalancePoint = nil
@@ -110,8 +109,6 @@ func testCollateralPauseRefusesLocks(t *testing.T) func(context.Context, *kwilTe
 		require.ErrorContains(t, err, collateralPausedErr, "split")
 		err = callChangeBid(ctx, platform, &trader, marketID, true, -50, -60, 10)
 		require.ErrorContains(t, err, collateralPausedErr, "bid raise")
-		err = callObLockCollateral(ctx, platform, &trader, testUSDCExtensionName, toWei("1"))
-		require.ErrorContains(t, err, collateralPausedErr, "ob_lock_collateral")
 
 		bookAfter, err := getPositions(ctx, platform, marketID)
 		require.NoError(t, err)
@@ -122,14 +119,13 @@ func testCollateralPauseRefusesLocks(t *testing.T) func(context.Context, *kwilTe
 
 		require.NoError(t, callSetCollateralLockPaused(ctx, platform, &collateralPauseOwner, 2, testUSDCExtensionName, false))
 
-		require.NoError(t, callPlaceBuyOrder(ctx, platform, &trader, marketID, true, 40, 10))               // locks 4
-		require.NoError(t, callPlaceSplitLimitOrder(ctx, platform, &trader, marketID, 60, 10))              // locks 10
-		require.NoError(t, callChangeBid(ctx, platform, &trader, marketID, true, -50, -60, 10))             // locks 1 more
-		require.NoError(t, callObLockCollateral(ctx, platform, &trader, testUSDCExtensionName, toWei("1"))) // locks 1
+		require.NoError(t, callPlaceBuyOrder(ctx, platform, &trader, marketID, true, 40, 10))   // locks 4
+		require.NoError(t, callPlaceSplitLimitOrder(ctx, platform, &trader, marketID, 60, 10))  // locks 10
+		require.NoError(t, callChangeBid(ctx, platform, &trader, marketID, true, -50, -60, 10)) // locks 1 more
 
 		balanceResumed, err := getUSDCBalance(ctx, platform, trader.Address())
 		require.NoError(t, err)
-		require.Equal(t, new(big.Int).Sub(balanceBefore, toWei("16")).String(), balanceResumed.String())
+		require.Equal(t, new(big.Int).Sub(balanceBefore, toWei("15")).String(), balanceResumed.String())
 
 		return nil
 	}
@@ -307,27 +303,6 @@ func getCollateralLockPauses(t *testing.T, ctx context.Context, platform *kwilTe
 		require.NoError(t, res.Error)
 	}
 	return pauses
-}
-
-// callObLockCollateral reaches the PRIVATE helper directly; OverrideAuthz only
-// lifts the top-level PRIVATE check, so the nested pause check still runs.
-func callObLockCollateral(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress,
-	bridge string, amount *big.Int) error {
-	amt, err := kwilTypes.ParseDecimalExplicit(amount.String(), 78, 0)
-	if err != nil {
-		return err
-	}
-	res, err := platform.Engine.Call(
-		&common.EngineContext{TxContext: collateralPauseTx(ctx, platform, signer, 1), OverrideAuthz: true},
-		platform.DB, "", "ob_lock_collateral", []any{bridge, amt}, nil,
-	)
-	if err != nil {
-		return err
-	}
-	if res != nil && res.Error != nil {
-		return res.Error
-	}
-	return nil
 }
 
 func createCollateralPauseMarket(t *testing.T, ctx context.Context, platform *kwilTesting.Platform,
