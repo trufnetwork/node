@@ -39,12 +39,24 @@ services:
       timeout: 5s
       retries: 5
 
+  # creates the Postgres roles the node connects as. It runs before the node on every start,
+  # once Postgres takes TCP connections
+  postgres-roles:
+    image: ghcr.io/trufnetwork/node:${TN_NODE_TAG:-latest}
+    entrypoint: ["sh", "-c", "for i in $$(seq 60); do pg_isready --host=postgres --username=postgres --quiet && break; sleep 1; done; exec psql --host=postgres --username=postgres --no-psqlrc --set=ON_ERROR_STOP=1 --file=/app/postgres-roles.sql"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   tn-node:
     image: ghcr.io/trufnetwork/node:${TN_NODE_TAG:-latest}
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
+      postgres-roles:
+        condition: service_completed_successfully
     environment:
       KWILD_DB_HOST: postgres
       KWILD_DB_PORT: 5432
@@ -74,7 +86,7 @@ SETUP_DB_OWNER=
 docker compose up -d
 docker compose ps
 ```
-The node waits for Postgres to pass its health check before it starts. Use the bind mount (`~/truf-node/tn_data`) to inspect the generated config, keys, and logs.
+The node waits for Postgres to pass its health check and for `postgres-roles` to finish before it starts. `postgres-roles` runs the image's `/app/postgres-roles.sql`, which sets up the `kwild` role the node connects as, without superuser rights, and the `tn_repack` role that `tn_vacuum` runs `pg_repack` as. Use the bind mount (`~/truf-node/tn_data`) to inspect the generated config, keys, and logs.
 
 ### Verify the node
 ```bash

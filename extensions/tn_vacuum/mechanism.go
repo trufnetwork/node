@@ -18,6 +18,9 @@ type Mechanism interface {
 type MechanismDeps struct {
 	Logger log.Logger
 	DB     DBConnConfig
+	// PgRepackUser and PgRepackPassword are the configured pg_repack role.
+	PgRepackUser     string
+	PgRepackPassword string
 }
 
 type RunRequest struct {

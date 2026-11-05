@@ -67,6 +67,22 @@ services:
         target: /app/config
     logging: *common_logging
 
+  # Sets up the Postgres roles kwild and tn_vacuum connect as, on both
+  # databases. It runs before the nodes on every start and is safe to run again.
+  # A new database takes TCP connections only once the image has set it up, so
+  # it waits for that first.
+  tn-db-roles:
+    build: *tn_db_build
+    entrypoint: [ "sh", "-c", "for host in kwil-postgres-1 kwil-postgres-2; do for i in $$(seq 60); do pg_isready --host=$$host --username=postgres --quiet && break; sleep 1; done; psql --host=$$host --username=postgres --no-psqlrc --set=ON_ERROR_STOP=1 --file=/app/postgres-roles.sql || exit 1; done" ]
+    depends_on:
+      kwil-postgres-1:
+        condition: service_healthy
+      kwil-postgres-2:
+        condition: service_healthy
+    networks:
+      - tn-network
+    logging: *common_logging
+
   tn-db-1:
     container_name: tn-db-1
     hostname: tn-db-1
@@ -89,6 +105,8 @@ services:
         condition: service_completed_successfully
       kwil-postgres-1:
         condition: service_healthy
+      tn-db-roles:
+        condition: service_completed_successfully
     networks:
       - tn-network
     volumes:
@@ -117,6 +135,8 @@ services:
         condition: service_completed_successfully
       kwil-postgres-2:
         condition: service_healthy
+      tn-db-roles:
+        condition: service_completed_successfully
     networks:
       - tn-network
     volumes:

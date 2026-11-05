@@ -29,6 +29,22 @@ services:
         max-file: "2"
         tag: "{{.Name}}"
 
+  # Sets up the Postgres roles kwild and tn_vacuum connect as. It runs before
+  # kwild on every start and is safe to run again. A new database takes TCP
+  # connections only once the image has set it up, so it waits for that first.
+  tn-db-roles:
+    image: "ghcr.io/trufnetwork/node:${TN_IMAGE:-local}"
+    build:
+      context: .
+      dockerfile: ./deployments/Dockerfile
+    entrypoint: [ "sh", "-c", "for i in $$(seq 60); do pg_isready --host=kwil-postgres --username=postgres --quiet && break; sleep 1; done; exec psql --host=kwil-postgres --username=postgres --no-psqlrc --set=ON_ERROR_STOP=1 --file=/app/postgres-roles.sql" ]
+    restart: "no"
+    depends_on:
+      kwil-postgres:
+        condition: service_healthy
+    networks:
+      - tn-network
+
   tn-db:
     container_name: tn-db
     hostname: tn-db
@@ -67,6 +83,8 @@ services:
     depends_on:
       kwil-postgres:
         condition: service_healthy
+      tn-db-roles:
+        condition: service_completed_successfully
     volumes:
       - ${TN_VOLUME:-data-tn-db}:/root/.kwild
     networks:

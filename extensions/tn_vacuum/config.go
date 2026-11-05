@@ -12,6 +12,11 @@ type Config struct {
 	Enabled       bool
 	BlockInterval int64
 	PgRepackJobs  int
+	// PgRepackUser is the role pg_repack connects as, with PgRepackPassword.
+	// When it is empty, pg_repack uses kwild's own database user if that user
+	// is a superuser, and DefaultPgRepackUser if not.
+	PgRepackUser     string
+	PgRepackPassword string
 }
 
 func LoadConfig(service *common.Service) (Config, error) {
@@ -57,6 +62,13 @@ func LoadConfig(service *common.Service) (Config, error) {
 			val = 0
 		}
 		cfg.PgRepackJobs = val
+	}
+
+	if v, ok := raw[ConfigKeyPgRepackUser]; ok {
+		cfg.PgRepackUser = strings.TrimSpace(v)
+	}
+	if v, ok := raw[ConfigKeyPgRepackPassword]; ok {
+		cfg.PgRepackPassword = v
 	}
 
 	return cfg, nil

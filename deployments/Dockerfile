@@ -63,6 +63,9 @@ COPY --from=build /app/.build/* /app/
 # move the entrypoint script to /app
 COPY --from=build /app/deployments/tn-entrypoint.sh /app/entrypoint.sh
 
+# the script that sets up the Postgres roles kwild and tn_vacuum connect as. The composes run it with psql before kwild starts
+COPY deployments/postgres-roles.sql /app/postgres-roles.sql
+
 RUN chmod +x /app/entrypoint.sh
 
 # create the configuration script; note that we are NOT running it here

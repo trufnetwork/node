@@ -29,8 +29,20 @@ type pgRepackMechanism struct {
 	logger     log.Logger
 	binaryPath string
 	db         DBConnConfig
+	// role is set when pg_repack connects as its own role instead of kwild's
+	// database user. That role need not be a superuser, so pg_repack skips its
+	// own superuser check, and an interrupted run is cleared one object at a
+	// time, which needs no superuser either, instead of by creating the
+	// extension again.
+	role *repackRole
 	// clearLeftovers runs before every pg_repack; tests replace it.
 	clearLeftovers func(ctx context.Context, db DBConnConfig, logger log.Logger) error
+}
+
+// repackRole is the role pg_repack connects as in place of kwild's own user.
+type repackRole struct {
+	user     string
+	password string
 }
 
 func NewPgRepackMechanism() Mechanism {
@@ -49,10 +61,69 @@ func (m *pgRepackMechanism) Prepare(ctx context.Context, deps MechanismDeps) err
 	}
 	m.binaryPath = path
 	m.logger.Info("pg_repack binary detected", "path", path)
-	if err := ensurePgRepackExtension(ctx, deps.DB, m.logger); err != nil {
+	role, err := pgRepackRole(ctx, deps)
+	if err != nil {
+		return fmt.Errorf("choose the pg_repack role: %w", err)
+	}
+	m.role = role
+	if role != nil {
+		m.clearLeftovers = clearInterruptedRepackAsOwner
+		m.logger.Info("pg_repack runs as its own role", "user", role.user)
+	}
+	if err := ensurePgRepackExtension(ctx, m.conn(deps.DB), m.logger); err != nil {
+		if role != nil {
+			return fmt.Errorf("ensure pg_repack extension as %s (a superuser creates it with the node's postgres-roles.sql): %w", role.user, err)
+		}
 		return fmt.Errorf("ensure pg_repack extension: %w", err)
 	}
 	return nil
+}
+
+// conn returns db with the user and password pg_repack connects with.
+func (m *pgRepackMechanism) conn(db DBConnConfig) DBConnConfig {
+	if m.role != nil {
+		db.User = m.role.user
+		db.Password = m.role.password
+	}
+	return db
+}
+
+// pgRepackRole returns the role pg_repack connects as, or nil when it uses
+// kwild's own database user. A configured pg_repack_user is used as given.
+// Otherwise pg_repack keeps kwild's user while that user is a superuser, as it
+// always has, and uses DefaultPgRepackUser once it is not: a database set up
+// with postgres-roles.sql reserves the pg_repack extension to that role.
+func pgRepackRole(ctx context.Context, deps MechanismDeps) (*repackRole, error) {
+	user := deps.PgRepackUser
+	if user == "" {
+		super, err := isSuperuser(ctx, deps.DB)
+		if err != nil {
+			return nil, err
+		}
+		if super {
+			return nil, nil
+		}
+		user = DefaultPgRepackUser
+	}
+	if user == deps.DB.User {
+		return nil, nil
+	}
+	return &repackRole{user: user, password: deps.PgRepackPassword}, nil
+}
+
+// isSuperuser reports whether db's user is a Postgres superuser.
+func isSuperuser(ctx context.Context, db DBConnConfig) (bool, error) {
+	conn, err := pgx.Connect(ctx, buildConnString(db))
+	if err != nil {
+		return false, fmt.Errorf("connect to read the database role: %w", err)
+	}
+	defer conn.Close(ctx)
+
+	var super bool
+	if err := conn.QueryRow(ctx, "SELECT rolsuper FROM pg_roles WHERE rolname = current_user").Scan(&super); err != nil {
+		return false, fmt.Errorf("read whether the database role is a superuser: %w", err)
+	}
+	return super, nil
 }
 
 func (m *pgRepackMechanism) Run(ctx context.Context, req RunRequest) (*RunReport, error) {
@@ -72,6 +143,7 @@ func (m *pgRepackMechanism) Run(ctx context.Context, req RunRequest) (*RunReport
 	if db.Database == "" {
 		return nil, fmt.Errorf("pg_repack requires database name")
 	}
+	db = m.conn(db)
 
 	if m.clearLeftovers != nil {
 		if err := m.clearLeftovers(ctx, db, m.logger); err != nil {
@@ -92,6 +164,11 @@ func (m *pgRepackMechanism) Run(ctx context.Context, req RunRequest) (*RunReport
 	}
 	if db.User != "" {
 		args = append(args, fmt.Sprintf("--username=%s", db.User))
+	}
+	if m.role != nil {
+		// pg_repack stops for a role that is not a superuser unless told to
+		// skip its check. The role's grants cover what pg_repack does.
+		args = append(args, "--no-superuser-check")
 	}
 
 	if req.PgRepackJobs > 0 {
@@ -244,6 +321,68 @@ func clearInterruptedRepack(ctx context.Context, db DBConnConfig, logger log.Log
 	return nil
 }
 
+// leftoverDropsSQL lists, in the order to run them, the statements that clear
+// what an interrupted pg_repack run left behind without dropping the
+// extension: repack_trigger on each table outside the repack schema, then the
+// tables in the repack schema, then the key types pg_repack created there.
+// The extension creates no tables or standalone types of its own.
+const leftoverDropsSQL = `SELECT stmt FROM (
+	SELECT 1 AS step, format('DROP TRIGGER repack_trigger ON %I.%I', n.nspname, c.relname) AS stmt
+	FROM pg_trigger t
+	JOIN pg_class c ON c.oid = t.tgrelid
+	JOIN pg_namespace n ON n.oid = c.relnamespace
+	WHERE t.tgname = 'repack_trigger' AND NOT t.tgisinternal AND n.nspname <> 'repack'
+	UNION ALL
+	SELECT 2, format('DROP TABLE IF EXISTS repack.%I', c.relname)
+	FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+	WHERE n.nspname = 'repack' AND c.relkind = 'r'
+	UNION ALL
+	SELECT 3, format('DROP TYPE IF EXISTS repack.%I', c.relname)
+	FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+	WHERE n.nspname = 'repack' AND c.relkind = 'c'
+) leftovers ORDER BY step, stmt`
+
+// clearInterruptedRepackAsOwner clears an interrupted run for a pg_repack role
+// that is not a superuser, which may not drop and create the extension. The
+// role owns what its own runs create in the repack schema, and it may drop
+// the trigger from kwild's tables as a member of their owner.
+func clearInterruptedRepackAsOwner(ctx context.Context, db DBConnConfig, logger log.Logger) error {
+	conn, err := pgx.Connect(ctx, buildConnString(db))
+	if err != nil {
+		return fmt.Errorf("connect to clear pg_repack leftovers: %w", err)
+	}
+	defer conn.Close(ctx)
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin clearing pg_repack leftovers: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	rows, _ := tx.Query(ctx, leftoverDropsSQL)
+	stmts, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return fmt.Errorf("list pg_repack leftovers: %w", err)
+	}
+	if len(stmts) == 0 {
+		return nil
+	}
+	logger.Warn("clearing what an interrupted pg_repack run left behind", "objects", len(stmts))
+
+	if _, err := tx.Exec(ctx, "SET LOCAL lock_timeout = '"+leftoverLockTimeout+"'"); err != nil {
+		return fmt.Errorf("clear pg_repack leftovers: %w", err)
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("clear pg_repack leftovers: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit clearing pg_repack leftovers: %w", err)
+	}
+	return nil
+}
+
 func buildConnString(db DBConnConfig) string {
 	host := db.Host
 	if host == "" {
@@ -254,16 +393,22 @@ func buildConnString(db DBConnConfig) string {
 		port = DefaultPostgresPort
 	}
 	parts := []string{
-		fmt.Sprintf("host=%s", host),
-		fmt.Sprintf("port=%s", port),
-		fmt.Sprintf("dbname=%s", db.Database),
+		"host=" + quoteConnValue(host),
+		"port=" + quoteConnValue(port),
+		"dbname=" + quoteConnValue(db.Database),
 		DefaultSSLMode,
 	}
 	if db.User != "" {
-		parts = append(parts, fmt.Sprintf("user=%s", db.User))
+		parts = append(parts, "user="+quoteConnValue(db.User))
 	}
 	if db.Password != "" {
-		parts = append(parts, fmt.Sprintf("password=%s", db.Password))
+		parts = append(parts, "password="+quoteConnValue(db.Password))
 	}
 	return strings.Join(parts, " ")
+}
+
+// quoteConnValue quotes v for a keyword/value connection string, so that a
+// value with spaces, quotes or backslashes, such as a password, is read whole.
+func quoteConnValue(v string) string {
+	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(v) + "'"
 }

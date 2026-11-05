@@ -12,10 +12,17 @@ const (
 
 // Configuration keys
 const (
-	ConfigKeyEnabled       = "enabled"
-	ConfigKeyBlockInterval = "block_interval"
-	ConfigKeyPgRepackJobs  = "pg_repack_jobs"
+	ConfigKeyEnabled          = "enabled"
+	ConfigKeyBlockInterval    = "block_interval"
+	ConfigKeyPgRepackJobs     = "pg_repack_jobs"
+	ConfigKeyPgRepackUser     = "pg_repack_user"
+	ConfigKeyPgRepackPassword = "pg_repack_password"
 )
+
+// DefaultPgRepackUser is the role pg_repack runs as when kwild's own database
+// user is not a superuser and pg_repack_user is not set. The node's
+// deployments/postgres-roles.sql creates it.
+const DefaultPgRepackUser = "tn_repack"
 
 // Database connection defaults
 const (

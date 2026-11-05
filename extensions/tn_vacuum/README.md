@@ -13,6 +13,8 @@ enabled = "true"
 block_interval = "50000"
 # Optional tuning
 # pg_repack_jobs = "1"      # limit pg_repack concurrency (default: auto)
+# pg_repack_user = "tn_repack"  # role pg_repack connects as (default: see below)
+# pg_repack_password = ""       # that role's password, if Postgres asks for one
 ```
 
 | Option | Type | Default | Description |
@@ -20,6 +22,8 @@ block_interval = "50000"
 | `enabled` | string (`"true"`/`"false"`) | `"true"` | Enable/disable the vacuum extension |
 | `block_interval` | string (numeric) | `"50000"` | Number of blocks between vacuum runs |
 | `pg_repack_jobs` | string (numeric) | _unset_ | Passes `--jobs=N` to `pg_repack` to throttle concurrency (omit to use the binary default) |
+| `pg_repack_user` | string | _unset_ | Postgres role `pg_repack` connects as. Unset, it is the node's own database user when that user is a superuser, and `tn_repack` otherwise |
+| `pg_repack_password` | string | _unset_ | Password for `pg_repack_user`, if Postgres asks for one |
 
 **Tuning `block_interval`:**
 - High-write environments: `25000` - `50000` blocks
@@ -44,7 +48,22 @@ sudo apt-get install postgresql-client-16 postgresql-16-repack
 sudo yum install postgresql16 pg_repack_16
 ```
 
-The extension automatically creates the `pg_repack` PostgreSQL extension on first run.
+## Database Roles
+
+`pg_repack` runs under its own Postgres role, `tn_repack`, which the node's
+[`deployments/postgres-roles.sql`](../../deployments/postgres-roles.sql)
+creates. The script also creates the `pg_repack` extension, which only a
+superuser may do, and lets no role but `tn_repack` and superusers use it.
+`tn_repack` is not a superuser: it acts on the node's tables as a member of the
+`kwild` role, and owns what its runs create in the `repack` schema.
+
+When `pg_repack` connects as a role other than the node's own database user,
+the extension passes `--no-superuser-check` to it, and clears what an
+interrupted run left behind by dropping those objects one by one.
+
+On a node whose database user is still a superuser, and with `pg_repack_user`
+unset, `pg_repack` connects as that user, as before, and the extension creates
+the `pg_repack` extension itself on first run.
 
 ## State Persistence
 
@@ -84,12 +103,11 @@ When OpenTelemetry is enabled, the extension provides:
 
 ### Permission Errors
 
-**Symptom:** Vacuum fails with permission denied
+**Symptom:** Vacuum fails with permission denied, or the extension logs that it
+could not ensure the `pg_repack` extension
 
-**Solution:** Ensure database user has superuser privileges OR grant explicit permissions:
-```sql
-GRANT EXECUTE ON FUNCTION pg_repack.* TO your_user;
-```
+**Solution:** Run [`deployments/postgres-roles.sql`](../../deployments/postgres-roles.sql)
+as a Postgres superuser, then restart the node. The script is safe to run again.
 
 ### High Memory Usage
 
@@ -111,7 +129,9 @@ Vacuum operations are non-blocking but consume resources:
 
 ## Security Note
 
-Database credentials are passed via environment variables to `pg_repack`. Requires elevated database privileges (superuser or pg_repack role).
+Database credentials are passed via environment variables to `pg_repack`. It
+runs as the `tn_repack` role described in [Database Roles](#database-roles),
+which is not a superuser.
 
 ## Related Documentation
 

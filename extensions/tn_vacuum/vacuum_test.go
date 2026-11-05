@@ -952,3 +952,36 @@ func TestVacuumResumesAfterCatchup(t *testing.T) {
 	waitForRunCount(t, stub, 2)
 	require.Equal(t, 2, stub.runCount())
 }
+
+// depsRecordingMechanism records the dependencies it was prepared with.
+type depsRecordingMechanism struct {
+	stubMechanism
+	deps MechanismDeps
+}
+
+func (d *depsRecordingMechanism) Prepare(ctx context.Context, deps MechanismDeps) error {
+	d.deps = deps
+	return nil
+}
+
+func TestConfigurePassesPgRepackRole(t *testing.T) {
+	ctx := context.Background()
+	ResetForTest()
+	ext := GetExtension()
+	ext.setLogger(log.New())
+	ext.setService(&common.Service{LocalConfig: &config.Config{DB: config.DBConfig{DBName: "kwild", User: "kwild"}}})
+
+	rec := &depsRecordingMechanism{}
+	setMechanismFactoryForTest(func() Mechanism { return rec })
+	defer resetMechanismFactory()
+
+	require.NoError(t, ext.configure(ctx, Config{
+		Enabled:          true,
+		BlockInterval:    10,
+		PgRepackUser:     "repacker",
+		PgRepackPassword: "secret",
+	}))
+	require.Equal(t, "repacker", rec.deps.PgRepackUser)
+	require.Equal(t, "secret", rec.deps.PgRepackPassword)
+	require.Equal(t, "kwild", rec.deps.DB.User, "the mechanism still gets kwild's own connection settings")
+}
