@@ -1,16 +1,20 @@
 {
   "chain_id": "unit-test-chain",
   "db_owner": "0x0000000000000000000000000000000000000000",
+  "leader": {
+    "key": "02aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "type": "secp256k1"
+  },
   "validators": [
     {
-      "name": "validator-0",
       "power": 1,
-      "pub_key": "deadbeef"
+      "pubkey": "02aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "type": "secp256k1"
     },
     {
-      "name": "validator-1",
       "power": 1,
-      "pub_key": "cafebabe"
+      "pubkey": "03bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "type": "secp256k1"
     }
   ]
 }

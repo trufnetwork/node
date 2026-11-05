@@ -4,6 +4,7 @@ package renderer_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/aws/jsii-runtime-go"
@@ -165,12 +166,40 @@ func TestObserverScript_RenderMatchesGolden(t *testing.T) {
 	g.Assert(t, t.Name(), []byte(gotBytes))
 }
 
+func TestNodeKeyFetch_Golden(t *testing.T) {
+	g := goldie.New(t)
+	got, err := renderer.Render(renderer.TplNodeKeyFetch, renderer.NodeKeyFetchData{
+		Region:        "us-west-2",
+		ParameterName: "/tsn/test/node/0/nodekey",
+		KeyFilePath:   "/data/tn/nodekey.json",
+		Owner:         "ec2-user",
+	})
+	require.NoError(t, err)
+	g.Assert(t, t.Name(), []byte(got))
+}
+
+func TestKgwStart_Golden(t *testing.T) {
+	g := goldie.New(t)
+	got, err := renderer.Render(renderer.TplKgwStart, renderer.KgwStartData{
+		Region:                 "us-west-2",
+		SessionSecretParameter: "/tsn/test/kgw/session_secret",
+		ComposePath:            "/home/ec2-user/kgw/gateway-compose.yaml",
+		ProjectName:            "kgw",
+	})
+	require.NoError(t, err)
+	// The start script must begin with its interpreter line.
+	require.True(t, strings.HasPrefix(got, "#!/bin/bash\n"), "start script must begin with a shebang")
+	g.Assert(t, t.Name(), []byte(got))
+}
+
 func TestAllTemplatesCanRender(t *testing.T) {
 	names := []renderer.TemplateName{
 		renderer.TplInstallDocker,
 		renderer.TplConfigureDocker,
 		renderer.TplTnDBStartup,
 		renderer.TplObserverStart,
+		renderer.TplNodeKeyFetch,
+		renderer.TplKgwStart,
 	}
 	for _, n := range names {
 		t.Run(string(n), func(t *testing.T) {
@@ -189,6 +218,16 @@ func TestAllTemplatesCanRender(t *testing.T) {
 					AwsRegion:   "test-region",
 					ObserverDir: "/tmp", Prefix: "/test",
 					Params: []renderer.ParameterDescriptor{},
+				}
+			case renderer.TplNodeKeyFetch:
+				data = renderer.NodeKeyFetchData{
+					Region: "test-region", ParameterName: "/test/node/0/nodekey",
+					KeyFilePath: "/tmp/nodekey.json", Owner: "ec2-user",
+				}
+			case renderer.TplKgwStart:
+				data = renderer.KgwStartData{
+					Region: "test-region", SessionSecretParameter: "/test/kgw/session_secret",
+					ComposePath: "/dev/null", ProjectName: "kgw",
 				}
 			default:
 				// For templates without required data (like TplInstallDocker) or unknown ones,
@@ -223,6 +262,20 @@ func TestRendererErrors(t *testing.T) {
 			expectError: true,
 			// Error now comes from fail(printf...) during execution
 			wantErrMsg: "missing required field '.DataRoot'", // Check for the core message part
+		},
+		{
+			name:        "Node key fetch without a parameter",
+			tplName:     renderer.TplNodeKeyFetch,
+			data:        renderer.NodeKeyFetchData{Region: "r", KeyFilePath: "/k", Owner: "o"},
+			expectError: true,
+			wantErrMsg:  "missing required field '.ParameterName'",
+		},
+		{
+			name:        "Gateway start without a parameter",
+			tplName:     renderer.TplKgwStart,
+			data:        renderer.KgwStartData{Region: "r", ComposePath: "/c", ProjectName: "p"},
+			expectError: true,
+			wantErrMsg:  "missing required field '.SessionSecretParameter'",
 		},
 		{
 			name:        "Incorrect data type",

@@ -16,6 +16,7 @@ import (
 	"github.com/trufnetwork/node/infra/lib/cdklogger"
 	kwilnetwork "github.com/trufnetwork/node/infra/lib/kwil-network"
 	peer "github.com/trufnetwork/node/infra/lib/kwil-network/peer"
+	"github.com/trufnetwork/node/infra/lib/secrets"
 	"github.com/trufnetwork/node/infra/lib/tn"
 )
 
@@ -26,20 +27,23 @@ type ValidatorSetProps struct {
 	Vpc          awsec2.IVpc
 	HostedDomain *domain.HostedDomain
 	Peers        []peer.TNPeer
+	// NodeKeys are the public keys of Peers, in the same order.
 	NodeKeys     []kwilnetwork.NodeKeys
 	GenesisAsset awss3assets.Asset
 	KeyPair      awsec2.IKeyPair
 	Assets       TNAssets
 	InitElements []awsec2.InitElement
 	CDKParams    config.CDKParams
+	// Secrets locates each node's key in SSM Parameter Store.
+	Secrets secrets.Store
 }
 
 // ValidatorSet is a reusable construct for TN validator nodes
 type ValidatorSet struct {
 	constructs.Construct
 
+	// Nodes each have their own IAM role (TNInstance.Role).
 	Nodes         []tn.TNInstance
-	Role          awsiam.IRole
 	SecurityGroup awsec2.SecurityGroup
 	GenesisAsset  awss3assets.Asset
 }
@@ -53,6 +57,12 @@ func NewValidatorSet(scope constructs.Construct, id string, props *ValidatorSetP
 	allPeers := props.Peers // Use the provided peer list
 	n := len(allPeers)
 	cdklogger.LogInfo(nodeConstruct, "", "Initializing ValidatorSet for %d peers.", n)
+	if len(props.NodeKeys) != n {
+		panic(fmt.Sprintf("ValidatorSet: %d peers but %d node keys", n, len(props.NodeKeys)))
+	}
+	if props.Secrets.Prefix == "" {
+		panic("ValidatorSet: Secrets.Prefix is required")
+	}
 
 	// handle KeyPair reuse or create default from context
 	if props.KeyPair == nil {
@@ -63,37 +73,30 @@ func NewValidatorSet(scope constructs.Construct, id string, props *ValidatorSetP
 		props.KeyPair = awsec2.KeyPair_FromKeyPairName(nodeConstruct, jsii.String("DefaultKeyPair"), jsii.String(keyPairName))
 	}
 
-	// create IAM role for TN instances
-	role := awsiam.NewRole(nodeConstruct, jsii.String("ValidatorSetRole"), &awsiam.RoleProps{
-		AssumedBy: awsiam.NewServicePrincipal(jsii.String("ec2.amazonaws.com"), nil),
-	})
-
-	// Grant pull access to the TN Docker image repository
-	props.Assets.DockerImage.Repository().GrantPull(role)
-
-	// Grant read access to the genesis asset bucket
-	props.GenesisAsset.Bucket().GrantRead(role, nil)
-
 	// create security group for TN instances
 	sg := tn.NewTNSecurityGroup(nodeConstruct, tn.NewTNSecurityGroupInput{Vpc: props.Vpc})
 
 	// provision TN instances and record EIP and DNS
 	instances := make([]tn.TNInstance, n)
 	for i := 0; i < n; i++ {
-		peerInfo := allPeers[i]      // Get current peer
-		nodeKey := props.NodeKeys[i] // Get corresponding node key data
+		peerInfo := allPeers[i] // Get current peer
+
+		// One role per node, so that a node can read its own key and no other.
+		role := awsiam.NewRole(nodeConstruct, jsii.String(fmt.Sprintf("NodeRole-%d", i)), &awsiam.RoleProps{
+			AssumedBy: awsiam.NewServicePrincipal(jsii.String("ec2.amazonaws.com"), nil),
+		})
+		// Grant pull access to the TN Docker image repository
+		props.Assets.DockerImage.Repository().GrantPull(role)
 
 		// The genesis asset details will be passed to tn_instance.go -> tn_startup_scripts.go
 		inst := newNode(nodeConstruct, NewNodeInput{
-			Index:         i,
-			Role:          role,
-			SG:            sg,
-			Props:         props,
-			Connection:    peerInfo,              // Pass public peer info
-			PrivateKeyHex: nodeKey.PrivateKeyHex, // Pass private key hex
-			KeyType:       nodeKey.KeyType,       // Pass key type
-			AllPeers:      allPeers,
-			GenisisAsset:  props.GenesisAsset,
+			Index:        i,
+			Role:         role,
+			SG:           sg,
+			Props:        props,
+			Connection:   peerInfo, // Pass public peer info
+			AllPeers:     allPeers,
+			GenisisAsset: props.GenesisAsset,
 		})
 
 		// allocate Elastic IP
@@ -115,7 +118,6 @@ func NewValidatorSet(scope constructs.Construct, id string, props *ValidatorSetP
 
 	// set outputs
 	vs.Nodes = instances
-	vs.Role = role
 	vs.SecurityGroup = sg
 	vs.GenesisAsset = props.GenesisAsset // Add genesis asset to outputs
 

@@ -5,7 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
-	"sort"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
@@ -43,9 +44,9 @@ func minimalConstruct() constructs.Construct {
 	return stack
 }
 
-// stripVolatiles removes or normalises fields that change on every run
-// (e.g. timestamps).  We only keep the parts we care about – chain-id and
-// validators – so the golden file stays stable but still proves correctness.
+// stripVolatiles keeps only the fields this code sets (chain id, db owner,
+// validators and leader), so the golden file stays stable across kwild
+// versions.
 func stripVolatiles(raw []byte) ([]byte, error) {
 	var doc map[string]any
 	if err := json.Unmarshal(raw, &doc); err != nil {
@@ -54,17 +55,9 @@ func stripVolatiles(raw []byte) ([]byte, error) {
 
 	out := map[string]any{
 		"chain_id":   doc["chain_id"],
-		"validators": doc["validators"],
 		"db_owner":   doc["db_owner"],
-	}
-
-	// sort validators by name so snapshot diff is deterministic
-	if vs, ok := out["validators"].([]any); ok {
-		sort.Slice(vs, func(i, j int) bool {
-			a := vs[i].(map[string]any)["name"].(string)
-			b := vs[j].(map[string]any)["name"].(string)
-			return a < b
-		})
+		"leader":     doc["leader"],
+		"validators": doc["validators"],
 	}
 
 	return json.MarshalIndent(out, "", "  ")
@@ -76,14 +69,22 @@ func stripVolatiles(raw []byte) ([]byte, error) {
 
 func TestGenerateGenesisFile_Snapshot(t *testing.T) {
 	kwildPath := findKwild(t)
-	t.Setenv("KWILD_CLI_PATH", kwildPath) // used by config.GetEnvironmentVariables
+	// Placeholder values that config.GetEnvironmentVariables requires.
+	t.Setenv("KWILD_CLI_PATH", kwildPath)
+	t.Setenv("CDK_DOCKER", "docker")
+	t.Setenv("CHAIN_ID", "unit-test-chain")
 
 	// ----------- Arrange -----------------------------------------------------
 	scope := minimalConstruct()
 
+	// Placeholder public keys.
+	nodeKeys := []kwilnet.NodeKeys{
+		{KeyType: "secp256k1", PublicKeyHex: "02" + strings.Repeat("aa", 32)},
+		{KeyType: "secp256k1", PublicKeyHex: "03" + strings.Repeat("bb", 32)},
+	}
 	peers := []peer.TNPeer{
-		{Address: jsii.String("1.2.3.4"), NodeHexAddress: "deadbeef", NodeId: "node0"},
-		{Address: jsii.String("5.6.7.8"), NodeHexAddress: "cafebabe", NodeId: "node1"},
+		{Address: jsii.String("node-1.example.com"), NodeHexAddress: nodeKeys[0].PublicKeyHex, NodeId: nodeKeys[0].NodeId()},
+		{Address: jsii.String("node-2.example.com"), NodeHexAddress: nodeKeys[1].PublicKeyHex, NodeId: nodeKeys[1].NodeId()},
 	}
 	chainID := "unit-test-chain"
 
@@ -92,7 +93,12 @@ func TestGenerateGenesisFile_Snapshot(t *testing.T) {
 		PeerConnections: peers,
 		ChainId:         chainID,
 		DbOwner:         "0x0000000000000000000000000000000000000000",
+		NodeKeys:        nodeKeys,
 	})
+
+	// kwild setup init writes a node key next to genesis.json. It must be gone.
+	_, err := os.Stat(filepath.Join(filepath.Dir(outPath), "nodekey.json"))
+	require.True(t, os.IsNotExist(err), "the unused node key from kwild setup init must be removed")
 
 	raw, err := os.ReadFile(outPath)
 	require.NoError(t, err, "generated genesis file must be readable")

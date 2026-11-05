@@ -131,7 +131,7 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 	indexerBinaryZipPath := jsii.String("/home/ec2-user/kwil-indexer-binary.zip")
 
 	elements := []awsec2.InitElement{
-		awsec2.InitFile_FromExistingAsset(indexerDirZipPath, input.IndexerDirAsset, &awsec2.InitFileOptions{
+		utils.InitFileFromAsset(indexerDirZipPath, input.IndexerDirAsset, &awsec2.InitFileOptions{
 			Owner: jsii.String("ec2-user"),
 		}),
 		// Add download for the binary zip from S3
@@ -159,7 +159,7 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 	userDataLogPathPrefix := ltConstructID + "/UserData"
 
 	// Create launch template
-	launchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String(ltConstructID), &awsec2.LaunchTemplateProps{
+	launchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String(ltConstructID), utils.WithImdsV2(&awsec2.LaunchTemplateProps{
 		InstanceType:       awsec2.InstanceType_Of(awsec2.InstanceClass_T3A, indexerInstanceSize),
 		MachineImage:       AWSLinux2MachineImage,
 		SecurityGroup:      instanceSG,
@@ -176,7 +176,7 @@ func NewIndexerInstance(scope constructs.Construct, input NewIndexerInstanceInpu
 				}),
 			},
 		},
-	})
+	}))
 
 	// Log Launch Template creation
 	instanceTypeStr := "T3a." + string(indexerInstanceSize) // indexerInstanceSize is const awsec2.InstanceSize_SMALL

@@ -11,6 +11,7 @@ import (
 	"github.com/trufnetwork/node/infra/config"
 	domain "github.com/trufnetwork/node/infra/config/domain"
 	"github.com/trufnetwork/node/infra/lib/cdklogger"
+	"github.com/trufnetwork/node/infra/lib/secrets"
 	"github.com/trufnetwork/node/infra/lib/tn"
 	"github.com/trufnetwork/node/infra/lib/utils"
 )
@@ -18,7 +19,6 @@ import (
 type KGWConfig struct {
 	CorsAllowOrigins   *string
 	Domain             *string
-	SessionSecret      *string
 	ChainId            *string
 	Nodes              []tn.TNInstance
 	XffTrustProxyCount *string
@@ -33,6 +33,8 @@ type NewKGWInstanceInput struct {
 	Vpc            awsec2.IVpc
 	Config         KGWConfig
 	InitElements   []awsec2.InitElement
+	// Secrets locates the session secret in SSM Parameter Store.
+	Secrets secrets.Store
 }
 
 type KGWInstance struct {
@@ -67,11 +69,18 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 
 	keyPair := awsec2.KeyPair_FromKeyPairName(scope, jsii.String("KGWKeyPair"), jsii.String(config.KeyPairName(scope)))
 
+	// The session secret is read from SSM at every gateway start.
+	if input.Secrets.Prefix == "" {
+		panic("KGW: Secrets.Prefix is required")
+	}
+	sessionSecretParameter := input.Secrets.SessionSecretParameter()
+	input.Secrets.GrantRead(role, sessionSecretParameter)
+
 	kgwBinaryPath := jsii.String("/home/ec2-user/kgw-binary.zip")
 	kgwDirZipPath := jsii.String("/home/ec2-user/kgw.zip")
 
 	elements := []awsec2.InitElement{
-		awsec2.InitFile_FromExistingAsset(kgwDirZipPath, input.KGWDirAsset, &awsec2.InitFileOptions{
+		utils.InitFileFromAsset(kgwDirZipPath, input.KGWDirAsset, &awsec2.InitFileOptions{
 			Owner: jsii.String("ec2-user"),
 		}),
 		awsec2.InitFile_FromS3Object(kgwBinaryPath, input.KGWBinaryAsset.Bucket,
@@ -98,7 +107,7 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 	userDataLogPathPrefix := ltConstructID + "/UserData"
 
 	// Create launch template
-	launchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String(ltConstructID), &awsec2.LaunchTemplateProps{
+	launchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String(ltConstructID), utils.WithImdsV2(&awsec2.LaunchTemplateProps{
 		InstanceType:       awsec2.InstanceType_Of(awsec2.InstanceClass_T3A, awsec2.InstanceSize_SMALL),
 		MachineImage:       AWSLinux2MachineImage,
 		SecurityGroup:      instanceSG,
@@ -106,7 +115,7 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 		KeyPair:            keyPair,
 		UserData:           defaultUd,
 		LaunchTemplateName: jsii.Sprintf("%s/%s", *awscdk.Aws_STACK_NAME(), ltConstructID),
-	})
+	}))
 
 	// Log Launch Template creation
 	instanceTypeStr := "T3.SMALL" // Hardcoded as per LaunchTemplateProps
@@ -126,9 +135,11 @@ func NewKGWInstance(scope constructs.Construct, input NewKGWInstanceInput) KGWIn
 	// UserData Steps 2 & 3: Docker installation, app setup (via AddKwilGatewayStartupScriptsToInstance)
 	cdklogger.LogInfo(scope, userDataLogPathPrefix, "[Step 2/3 & 3/3] Adding Docker installation, configuration, asset preparation, and KGW application startup script (systemd service).")
 	scripts := AddKwilGatewayStartupScriptsToInstance(AddKwilGatewayStartupScriptsOptions{
-		kgwBinaryPath: kgwBinaryPath,
-		Config:        input.Config,
-		KGWDirZipPath: kgwDirZipPath,
+		kgwBinaryPath:          kgwBinaryPath,
+		Config:                 input.Config,
+		KGWDirZipPath:          kgwDirZipPath,
+		SessionSecretParameter: sessionSecretParameter,
+		Region:                 *awscdk.Aws_REGION(),
 	})
 	launchTemplate.UserData().AddCommands(scripts)
 

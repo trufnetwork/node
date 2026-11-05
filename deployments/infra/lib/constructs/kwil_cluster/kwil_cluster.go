@@ -11,6 +11,7 @@ import (
 	"github.com/trufnetwork/node/infra/lib/constructs/fronting"
 	kwil_gateway "github.com/trufnetwork/node/infra/lib/kwil-gateway"
 	kwil_indexer "github.com/trufnetwork/node/infra/lib/kwil-indexer"
+	"github.com/trufnetwork/node/infra/lib/secrets"
 	"github.com/trufnetwork/node/infra/lib/tn"
 	"github.com/trufnetwork/node/infra/lib/utils"
 )
@@ -25,12 +26,13 @@ type KwilClusterProps struct {
 	HostedDomain         *domaincfg.HostedDomain
 	Cert                 awscertificatemanager.Certificate // optional
 	CorsOrigins          *string
-	SessionSecret        *string
 	ChainId              *string
 	Validators           []tn.TNInstance
 	InitElements         []awsec2.InitElement
 	Assets               KwilAssets
 	SelectedFrontingKind fronting.Kind
+	// Secrets locates the gateway session secret in SSM Parameter Store.
+	Secrets secrets.Store
 }
 
 // KwilCluster is a reusable construct for Gateway and Indexer without CloudFront
@@ -59,7 +61,6 @@ func NewKwilCluster(scope constructs.Construct, id string, props *KwilClusterPro
 		Config: kwil_gateway.KGWConfig{
 			Domain:           props.HostedDomain.DomainName,
 			CorsAllowOrigins: props.CorsOrigins,
-			SessionSecret:    props.SessionSecret,
 			ChainId:          props.ChainId,
 			Nodes:            props.Validators,
 			// default to 1, because it is behind a TLS termination point
@@ -67,6 +68,7 @@ func NewKwilCluster(scope constructs.Construct, id string, props *KwilClusterPro
 			CookieSameSite:     jsii.String("None"),
 		},
 		InitElements: props.InitElements,
+		Secrets:      props.Secrets,
 	})
 	kc.Gateway = gw
 	// Apply ingress rules to Gateway SG

@@ -1,15 +1,29 @@
 package kwil_gateway
 
 import (
+	"fmt"
+
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/jsii-runtime-go"
 	"github.com/trufnetwork/node/infra/lib/utils"
+	"github.com/trufnetwork/node/infra/scripts/renderer"
+)
+
+const (
+	kgwDir             = "/home/ec2-user/kgw"
+	kgwComposeFile     = kgwDir + "/gateway-compose.yaml"
+	kgwComposeProject  = "kgw"
+	kgwStartScriptPath = "/usr/local/bin/start-kgw.sh"
 )
 
 type AddKwilGatewayStartupScriptsOptions struct {
 	KGWDirZipPath *string
 	kgwBinaryPath *string
 	Config        KGWConfig
+	// SessionSecretParameter is the SSM SecureString the start script reads.
+	SessionSecretParameter string
+	// Region is the AWS region of that parameter.
+	Region string
 }
 
 func AddKwilGatewayStartupScriptsToInstance(options AddKwilGatewayStartupScriptsOptions) *string {
@@ -25,14 +39,24 @@ func AddKwilGatewayStartupScriptsToInstance(options AddKwilGatewayStartupScripts
 		nodeAddresses = append(nodeAddresses, url)
 	}
 
+	// SESSION_SECRET is not set here: the start script reads it from SSM.
 	kgwEnvConfig := KGWEnvConfig{
 		CorsAllowOrigins:   config.CorsAllowOrigins,
-		SessionSecret:      config.SessionSecret,
 		Backends:           awscdk.Fn_Join(jsii.String(","), &nodeAddresses), // nodeAddresses now contains http://host:port
 		ChainId:            config.ChainId,
 		Domain:             jsii.String("gateway." + *config.Domain),
 		XffTrustProxyCount: config.XffTrustProxyCount,
 		CookieSameSite:     config.CookieSameSite,
+	}
+
+	startScript, err := renderer.Render(renderer.TplKgwStart, renderer.KgwStartData{
+		Region:                 options.Region,
+		SessionSecretParameter: options.SessionSecretParameter,
+		ComposePath:            kgwComposeFile,
+		ProjectName:            kgwComposeProject,
+	})
+	if err != nil {
+		panic(fmt.Errorf("render %s: %w", renderer.TplKgwStart, err))
 	}
 
 	script := "#!/bin/bash\nset -e\nset -x\n\n"
@@ -47,7 +71,7 @@ func AddKwilGatewayStartupScriptsToInstance(options AddKwilGatewayStartupScripts
 	// 	MetricsAddr: jsii.String("127.0.0.1:9323"),
 	// }) + "\n"
 
-	script += utils.UnzipFileScript(*options.KGWDirZipPath, "/home/ec2-user/kgw") + "\n"
+	script += utils.UnzipFileScript(*options.KGWDirZipPath, kgwDir) + "\n"
 	script += `
 mkdir -p /tmp/kgw-pkg
 unzip ` + *options.kgwBinaryPath + ` v0.4.1/kgw_0.4.1_linux_amd64.tar.gz -d /tmp/kgw-pkg
@@ -57,11 +81,13 @@ chmod +x /tmp/kgw-binary/kgw
 mv /tmp/kgw-binary/kgw /home/ec2-user/kgw/kgw
 rm -rf /tmp/kgw-pkg /tmp/kgw-binary
 ` + "\n"
+	script += utils.WrapAsFile(startScript, kgwStartScriptPath)
+	// Stop by project name: it needs no compose file, so no session secret.
 	script += utils.CreateSystemdServiceScript(
 		"kgw",
 		"Kwil Gateway Compose",
-		"/bin/bash -c \"docker compose -f /home/ec2-user/kgw/gateway-compose.yaml up -d --wait || true\"",
-		"/bin/bash -c \"docker compose -f /home/ec2-user/kgw/gateway-compose.yaml down\"",
+		kgwStartScriptPath,
+		"/bin/bash -c \"docker compose -p "+kgwComposeProject+" down\"",
 		kgwEnvConfig.GetDict(),
 	)
 
@@ -71,7 +97,6 @@ rm -rf /tmp/kgw-pkg /tmp/kgw-binary
 type KGWEnvConfig struct {
 	Domain             *string `env:"DOMAIN"`
 	CorsAllowOrigins   *string `env:"CORS_ALLOW_ORIGINS"`
-	SessionSecret      *string `env:"SESSION_SECRET"`
 	XffTrustProxyCount *string `env:"XFF_TRUST_PROXY_COUNT"`
 	Backends           *string `env:"BACKENDS"`
 	ChainId            *string `env:"CHAIN_ID"`

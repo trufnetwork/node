@@ -9,6 +9,8 @@ const (
 	TplConfigureDocker TemplateName = "configure_docker.sh.tmpl"
 	TplTnDBStartup     TemplateName = "tn_db_startup.sh.tmpl"
 	TplObserverStart   TemplateName = "observer_start.sh.tmpl"
+	TplNodeKeyFetch    TemplateName = "node_key_fetch.sh.tmpl"
+	TplKgwStart        TemplateName = "kgw_start.sh.tmpl"
 )
 
 // TnStartupData holds the data required by the TplTnDBStartup template.
@@ -39,4 +41,20 @@ type ObserverStartData struct {
 	ObserverDir string
 	Prefix      string
 	Params      []ParameterDescriptor // Use local ParameterDescriptor type
+}
+
+// NodeKeyFetchData holds the data required by the TplNodeKeyFetch template.
+type NodeKeyFetchData struct {
+	Region        string // AWS Region of the parameter
+	ParameterName string // SSM SecureString holding the nodekey.json content
+	KeyFilePath   string // Path of the nodekey.json file kwild reads
+	Owner         string // User and group that own the key file
+}
+
+// KgwStartData holds the data required by the TplKgwStart template.
+type KgwStartData struct {
+	Region                 string // AWS Region of the parameter
+	SessionSecretParameter string // SSM SecureString holding the session secret
+	ComposePath            string // Path to the gateway compose file
+	ProjectName            string // Compose project name
 }

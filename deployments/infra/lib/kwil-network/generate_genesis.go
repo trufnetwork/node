@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -41,6 +42,9 @@ func GenerateGenesisFile(scope constructs.Construct, input GenerateGenesisFileIn
 	if len(input.PeerConnections) == 0 {
 		panic(fmt.Sprintf("PeerConnections list cannot be empty when generating genesis with validators"))
 	}
+	if len(input.NodeKeys) != len(input.PeerConnections) {
+		panic(fmt.Sprintf("got %d node keys for %d peers", len(input.NodeKeys), len(input.PeerConnections)))
+	}
 
 	// Prepare Validators list
 	var validators []Validator
@@ -73,6 +77,11 @@ func GenerateGenesisFile(scope constructs.Construct, input GenerateGenesisFileIn
 		// Include the captured output for easier debugging
 		cdklogger.LogError(scope, "GenesisGenerator", "Failed to execute 'kwild setup init'. Command: %s, Duration: %s, Error: %s, Output: %s", commandString, duration.String(), err.Error(), string(output))
 		zap.L().Panic("Failed to generate genesis file", zap.Error(err), zap.String("output", string(output)))
+	}
+
+	// kwild setup init also writes a node key that nothing uses. Remove it.
+	if err := os.Remove(filepath.Join(*tempDir, "nodekey.json")); err != nil && !os.IsNotExist(err) {
+		panic(fmt.Sprintf("failed to remove the unused node key in %s: %v", *tempDir, err))
 	}
 
 	genesisFile := *tempDir + "/genesis.json"

@@ -88,3 +88,26 @@ func TnDbStartupScripts(options AddStartupScriptsOptions) (*string, error) {
 	script += body
 	return &script, nil
 }
+
+// NodeKeyFetchScriptInput describes where the node key comes from and goes to.
+type NodeKeyFetchScriptInput struct {
+	ParameterName string // SSM SecureString holding the nodekey.json content
+	Region        string // AWS region of the parameter
+	KeyFilePath   string // path of the nodekey.json file kwild reads
+	Owner         string // user and group that own the key file
+}
+
+// NodeKeyFetchScript returns the user data that writes nodekey.json from the
+// node's SSM parameter at first boot and stops the boot if it cannot.
+func NodeKeyFetchScript(input NodeKeyFetchScriptInput) (string, error) {
+	script, err := renderer.Render(renderer.TplNodeKeyFetch, renderer.NodeKeyFetchData{
+		Region:        input.Region,
+		ParameterName: input.ParameterName,
+		KeyFilePath:   input.KeyFilePath,
+		Owner:         input.Owner,
+	})
+	if err != nil {
+		return "", fmt.Errorf("render %s: %w", renderer.TplNodeKeyFetch, err)
+	}
+	return script, nil
+}

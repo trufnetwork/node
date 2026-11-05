@@ -25,9 +25,10 @@ type NetworkConfigOutput struct {
 }
 
 type KwilAutoNetworkConfigAssetInput struct {
+	// NumberOfNodes, when set, must equal len(NodeKeys).
 	NumberOfNodes int
-	// If provided, the private keys will be used to extract the node info
-	PrivateKeys     []string
+	// NodeKeys are the validators' public keys in node order (entry 0 is node-1).
+	NodeKeys        []NodeKeys
 	DbOwner         string
 	GenesisFilePath string
 	Params          config.CDKParams
@@ -39,8 +40,9 @@ type KwilNetworkConfig struct {
 	Connection peer.TNPeer
 }
 
-// KwilNetworkConfigAssetsFromNumberOfNodes generates peer information and the genesis file asset.
-// It no longer generates individual node config files, as that's handled by templating.
+// KwilNetworkConfigAssetsFromNumberOfNodes builds peer information from the
+// nodes' public keys and the genesis file asset. Node config files are
+// rendered elsewhere, and private keys are never read here.
 func KwilNetworkConfigAssetsFromNumberOfNodes(scope constructs.Construct, input KwilAutoNetworkConfigAssetInput) ([]peer.TNPeer, []NodeKeys, awss3assets.Asset) {
 	// Initialize CDK parameters and DomainConfig
 	var baseDomain string
@@ -68,47 +70,26 @@ func KwilNetworkConfigAssetsFromNumberOfNodes(scope constructs.Construct, input 
 	env := config.GetEnvironmentVariables[config.MainEnvironmentVariables](scope)
 
 	// --- Determine number of nodes ---
-	numNodes := input.NumberOfNodes
-	useProvidedKeys := len(input.PrivateKeys) > 0
-	if useProvidedKeys {
-		if numNodes > 0 && numNodes != len(input.PrivateKeys) {
-			// If both NumberOfNodes and PrivateKeys are provided, their lengths must match
-			panic(fmt.Sprintf("NumberOfNodes (%d) and the number of provided PrivateKeys (%d) must match if both are specified", numNodes, len(input.PrivateKeys)))
-		}
-		numNodes = len(input.PrivateKeys) // Set numNodes based on provided keys
-		if numNodes == 0 {
-			panic("PrivateKeys slice was provided but is empty")
-		}
-	} else if numNodes <= 0 {
-		// If not using provided keys, NumberOfNodes must be positive
-		panic("NumberOfNodes must be positive if PrivateKeys are not provided")
+	numNodes := len(input.NodeKeys)
+	if numNodes == 0 {
+		panic("at least one node public key is required")
+	}
+	if input.NumberOfNodes > 0 && input.NumberOfNodes != numNodes {
+		panic(fmt.Sprintf("numOfNodes (%d) does not match the number of node public keys (%d)", input.NumberOfNodes, numNodes))
 	}
 
 	configGenConstructID := "KwilNetworkConfigGen" // For logging context
 
-	// Generate or Extract Node Keys and Peer Info
-	nodeKeys := make([]NodeKeys, numNodes)
+	// Peer info from the public keys. Hostnames follow the node index.
 	peers := make([]peer.TNPeer, numNodes)
-	for i := 0; i < numNodes; i++ {
-		if useProvidedKeys {
-			// Use provided private key to extract node info
-			nodeKeys[i] = ExtractKeys(scope, input.PrivateKeys[i])
-		} else {
-			// Generate new keys
-			nodeKeys[i] = GenerateNodeKeys(scope)
-		}
-		// Create peer info (same logic for both cases)
+	for i, key := range input.NodeKeys {
 		peers[i] = peer.TNPeer{
-			NodeId:         nodeKeys[i].NodeId,
+			NodeId:         key.NodeId(),
 			Address:        jsii.String(fmt.Sprintf("node-%d.%s", i+1, baseDomain)),
-			NodeHexAddress: nodeKeys[i].PublicKeyHex,
+			NodeHexAddress: key.PublicKeyHex,
 		}
 	}
-	keyGenerationMethod := "Generated"
-	if useProvidedKeys {
-		keyGenerationMethod = "Extracted from provided keys"
-	}
-	cdklogger.LogInfo(scope, configGenConstructID, "[NetCfg 1/2] %s %d node keys and peer info. Base Domain: %s.", keyGenerationMethod, numNodes, baseDomain)
+	cdklogger.LogInfo(scope, configGenConstructID, "[NetCfg 1/2] Built peer info for %d nodes from their public keys. Base Domain: %s.", numNodes, baseDomain)
 
 	var genesisAsset awss3assets.Asset
 	genesisSource := ""
@@ -133,7 +114,7 @@ func KwilNetworkConfigAssetsFromNumberOfNodes(scope constructs.Construct, input 
 			ChainId:         env.ChainId,
 			PeerConnections: peers, // Pass peers to include validators in genesis
 			DbOwner:         input.DbOwner,
-			NodeKeys:        nodeKeys, // Pass the generated nodeKeys
+			NodeKeys:        input.NodeKeys,
 		})
 
 		// Create Genesis Asset
@@ -151,7 +132,7 @@ func KwilNetworkConfigAssetsFromNumberOfNodes(scope constructs.Construct, input 
 	cdklogger.LogInfo(scope, configGenConstructID, "[NetCfg 2/2] Generating/Validating Genesis file (%s). ChainID: %s, DBOwner: %s. Output Asset (token): %s.", genesisSource, env.ChainId, input.DbOwner, assetPathToken)
 
 	// Return the list of peers, the corresponding node keys, and the single genesis asset
-	return peers, nodeKeys, genesisAsset
+	return peers, input.NodeKeys, genesisAsset
 }
 
 // verifyGenesisChainID reads a genesis file, parses it, and verifies its chain_id against the expected one.

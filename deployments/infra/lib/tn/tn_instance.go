@@ -25,12 +25,14 @@ type NewTNInstanceInput struct {
 	TNDockerImageAsset   awsecrassets.DockerImageAsset
 	RenderedConfigAsset  awss3assets.Asset
 	GenesisAsset         awss3assets.Asset
-	NodeKeyJsonAsset     awss3assets.Asset
-	TNConfigImageAsset   awss3assets.Asset
-	InitElements         []awsec2.InitElement
-	PeerConnection       peer2.TNPeer
-	AllPeerConnections   []peer2.TNPeer
-	KeyPair              awsec2.IKeyPair
+	// NodeKeyParameter is the SSM SecureString holding this node's
+	// nodekey.json. The instance role must be allowed to read it.
+	NodeKeyParameter   string
+	TNConfigImageAsset awss3assets.Asset
+	InitElements       []awsec2.InitElement
+	PeerConnection     peer2.TNPeer
+	AllPeerConnections []peer2.TNPeer
+	KeyPair            awsec2.IKeyPair
 }
 
 type TNInstance struct {
@@ -57,15 +59,17 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 	tnComposeFile := "docker-compose.yaml"
 	tnConfigImageFile := "deployments/tn-config.dockerfile"
 
+	// Asset downloads grant read on each asset object only. The node key is
+	// not an asset: it is read from SSM later in user data.
 	elements := []awsec2.InitElement{
-		awsec2.InitFile_FromExistingAsset(jsii.String(initAssetsDir+tnComposeFile), input.TNDockerComposeAsset, &awsec2.InitFileOptions{
+		utils.InitFileFromAsset(jsii.String(initAssetsDir+tnComposeFile), input.TNDockerComposeAsset, &awsec2.InitFileOptions{
 			Owner: defaultInstanceUser,
 		}),
-		awsec2.InitFile_FromExistingAsset(jsii.String(initAssetsDir+tnConfigImageFile), input.TNConfigImageAsset, &awsec2.InitFileOptions{
+		utils.InitFileFromAsset(jsii.String(initAssetsDir+tnConfigImageFile), input.TNConfigImageAsset, &awsec2.InitFileOptions{
 			Owner: defaultInstanceUser,
 		}),
 		// Place config and genesis in a temporary directory first
-		awsec2.InitFile_FromExistingAsset(
+		utils.InitFileFromAsset(
 			jsii.String(initTempDir+"config.toml"), // Use temporary path
 			input.RenderedConfigAsset,
 			&awsec2.InitFileOptions{
@@ -74,22 +78,13 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 				Mode:  jsii.String("000644"),
 			},
 		),
-		awsec2.InitFile_FromExistingAsset(
+		utils.InitFileFromAsset(
 			jsii.String(initTempDir+"genesis.json"), // Use temporary path
 			input.GenesisAsset,
 			&awsec2.InitFileOptions{
 				Owner: defaultInstanceUser,
 				Group: defaultInstanceUser,
 				Mode:  jsii.String("000644"),
-			},
-		),
-		awsec2.InitFile_FromExistingAsset(
-			jsii.String(initTempDir+"nodekey.json"), // Target filename in temp dir
-			input.NodeKeyJsonAsset,                  // Use the new asset passed in input
-			&awsec2.InitFileOptions{
-				Owner: defaultInstanceUser,
-				Group: defaultInstanceUser,
-				Mode:  jsii.String("000600"), // Restrict permissions for the key file
 			},
 		),
 	}
@@ -127,7 +122,7 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 	ltConstructID := name
 	userDataLogPathPrefix := ltConstructID + "/UserData" // For logging UserData steps under the LT's path
 
-	tnLaunchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String(ltConstructID), &awsec2.LaunchTemplateProps{
+	tnLaunchTemplate := awsec2.NewLaunchTemplate(scope, jsii.String(ltConstructID), utils.WithImdsV2(&awsec2.LaunchTemplateProps{
 		InstanceType:       awsec2.InstanceType_Of(awsec2.InstanceClass_T3A, instanceSize),
 		MachineImage:       AWSLinux2MachineImage,
 		SecurityGroup:      input.SecurityGroup,
@@ -144,7 +139,7 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 			},
 		},
 		UserData: userData,
-	})
+	}))
 
 	// Log Launch Template creation
 	instanceTypeStr := "T3a." + string(instanceSize)
@@ -153,7 +148,7 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 	cdklogger.LogInfo(scope, ltConstructID, "Created Launch Template: InstanceType=%s, MachineImage=%s, Role=%s", instanceTypeStr, amiID, roleArn)
 
 	// UserData Step 1: CloudFormation Init (asset downloads)
-	cdklogger.LogInfo(scope, userDataLogPathPrefix, "[Step 1/4] Adding CloudFormation Init (asset downloads: config, genesis, keys, compose, tn-config-dockerfile).")
+	cdklogger.LogInfo(scope, userDataLogPathPrefix, "[Step 1/4] Adding CloudFormation Init (asset downloads: config, genesis, compose, tn-config-dockerfile).")
 	utils.AttachInitDataToLaunchTemplate(utils.AttachInitDataToLaunchTemplateInput{
 		LaunchTemplate: tnLaunchTemplate,
 		InitData:       initData,
@@ -161,8 +156,8 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 		Platform:       awsec2.OperatingSystemType_LINUX,
 	})
 
-	// UserData Step 2: Volume mount and config file placement
-	cdklogger.LogInfo(scope, userDataLogPathPrefix, "[Step 2/4] Adding volume mount and config file placement commands.")
+	// UserData Step 2: Volume mount, config file placement and node key
+	cdklogger.LogInfo(scope, userDataLogPathPrefix, "[Step 2/4] Adding volume mount, config file placement and node key fetch (SSM parameter %s).", input.NodeKeyParameter)
 	tnLaunchTemplate.UserData().AddCommands(
 		utils.MountVolumeToPathAndPersist("nvme1n1", "/data")...,
 	)
@@ -173,6 +168,17 @@ func NewTNInstance(scope constructs.Construct, input NewTNInstanceInput) TNInsta
 		jsii.Sprintf("sudo chown %s:%s %stn/*", *defaultInstanceUser, *defaultInstanceUser, mountDataDir),
 		jsii.Sprintf("sudo rm -rf %s", initTempDir), // Clean up temp dir
 	)
+	// kwild reads nodekey.json from the same directory (mounted as /root/.kwild).
+	nodeKeyScript, err := NodeKeyFetchScript(NodeKeyFetchScriptInput{
+		ParameterName: input.NodeKeyParameter,
+		Region:        *awscdk.Aws_REGION(),
+		KeyFilePath:   mountDataDir + "tn/nodekey.json",
+		Owner:         *defaultInstanceUser,
+	})
+	if err != nil {
+		panic(err)
+	}
+	tnLaunchTemplate.UserData().AddCommands(jsii.String(nodeKeyScript))
 	// Move other assets from initAssetsDir after mount
 	tnLaunchTemplate.UserData().AddCommands(utils.MoveToPath(initAssetsDir+"*", mountDataDir))
 
