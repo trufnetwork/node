@@ -1950,20 +1950,22 @@ CREATE OR REPLACE ACTION cancel_order(
 -- =============================================================================
 /**
  * Atomically cancels an existing buy order and places a new buy order at a different price.
- * This is critical for market makers who need to adjust prices without losing FIFO priority
- * or creating liquidity gaps.
+ * Market makers use it to reprice without leaving a gap in their liquidity between a cancel
+ * and a new order.
  *
  * Key Features:
  * - ATOMIC: Either both cancel+place succeed, or neither happens
- * - TIMESTAMP PRESERVATION: New order inherits old order's last_updated timestamp (maintains FIFO queue position)
+ * - QUEUE TIME: The moved order takes the current block time, like a new order placed at
+ *   that price, so it queues behind orders resting there with an earlier time. Block time
+ *   is in whole seconds, and orders with the same time match lowest participant id first
  * - NET COLLATERAL: Only locks/unlocks the difference in collateral needed
  * - FLEXIBLE AMOUNT: Can increase or decrease order size during modification
  *
  * Market Maker Use Case:
- * - MM has: Buy 100 YES @ $0.54 (timestamp T1, 54 TRUF locked)
+ * - MM has: Buy 100 YES @ $0.54 (placed at T1, 54 TRUF locked)
  * - Market moves down, MM needs to adjust to $0.50
- * - MM calls: change_bid(query_id, TRUE, -54, -50, 100)
- * - Result: Buy 100 YES @ $0.50 (timestamp T1 preserved, 50 TRUF locked, 4 TRUF refunded)
+ * - MM calls at T2: change_bid(query_id, TRUE, -54, -50, 100)
+ * - Result: Buy 100 YES @ $0.50 (queued at T2, 50 TRUF locked, 4 TRUF refunded)
  *
  * Partial Match Scenario:
  * - Original order: 100 shares @ $0.54
@@ -2088,16 +2090,14 @@ CREATE OR REPLACE ACTION change_bid(
         ERROR('No participant record found for this wallet');
     }
 
-    -- Get old order amount and timestamp
+    -- Get old order amount
     $old_amount INT8;
-    $old_timestamp INT8;
-    for $row in SELECT amount, last_updated FROM ob_positions
+    for $row in SELECT amount FROM ob_positions
                 WHERE query_id = $query_id
                   AND participant_id = $participant_id
                   AND outcome = $outcome
                   AND price = $old_price {
         $old_amount := $row.amount;
-        $old_timestamp := $row.last_updated;
     }
 
     if $old_amount IS NULL {
@@ -2166,21 +2166,18 @@ CREATE OR REPLACE ACTION change_bid(
       AND price = $old_price;
 
     -- ==========================================================================
-    -- SECTION 8: INSERT NEW ORDER (PRESERVING TIMESTAMP)
+    -- SECTION 8: INSERT NEW ORDER (AT THE CURRENT BLOCK TIME)
     -- ==========================================================================
 
-    -- CRITICAL: Use old_timestamp to preserve FIFO priority
-    -- If accumulating with existing order at new price, keep EARLIEST timestamp
+    -- Queue the order at its new price exactly as place_buy_order would: it
+    -- takes the current block time, and when it merges into an order the
+    -- caller already rests at that price, the merged order takes it too.
     INSERT INTO ob_positions
     (query_id, participant_id, outcome, price, amount, last_updated)
-    VALUES ($query_id, $participant_id, $outcome, $new_price, $new_amount, $old_timestamp)
+    VALUES ($query_id, $participant_id, $outcome, $new_price, $new_amount, @block_timestamp)
     ON CONFLICT (query_id, participant_id, outcome, price) DO UPDATE
     SET amount = ob_positions.amount + EXCLUDED.amount,
-        last_updated = CASE
-            WHEN ob_positions.last_updated < EXCLUDED.last_updated
-            THEN ob_positions.last_updated  -- Keep earlier timestamp (existing order was first)
-            ELSE EXCLUDED.last_updated       -- Keep earlier timestamp (moved order was first)
-        END;
+        last_updated = EXCLUDED.last_updated;
 
     -- Record bid change event (positive price for display)
     ob_record_order_event($query_id, $participant_id, 'bid_changed', $outcome, $new_abs_price, $new_amount, NULL);
@@ -2200,9 +2197,8 @@ CREATE OR REPLACE ACTION change_bid(
     ob_cleanup_tx_payouts($query_id);
 
     -- Success: Buy order price modified atomically
-    -- - Old order deleted, new order placed with preserved timestamp
+    -- - Old order deleted, new order queued at the current block time
     -- - Collateral adjusted (net change only)
-    -- - FIFO priority maintained
 };
 
 -- =============================================================================
@@ -2214,15 +2210,17 @@ CREATE OR REPLACE ACTION change_bid(
  *
  * Key Features:
  * - ATOMIC: Either both cancel+place succeed, or neither happens
- * - TIMESTAMP PRESERVATION: New order inherits old order's last_updated timestamp
+ * - QUEUE TIME: The moved order takes the current block time, like a new order placed at
+ *   that price, so it queues behind orders resting there with an earlier time. Block time
+ *   is in whole seconds, and orders with the same time match lowest participant id first
  * - FLEXIBLE AMOUNT: Can increase (pull from holdings) or decrease (return to holdings) order size
  * - NO COLLATERAL: Sell orders just move shares between holdings and order book
  *
  * Market Maker Use Case:
- * - MM has: Sell 100 YES @ $0.60 (timestamp T1)
+ * - MM has: Sell 100 YES @ $0.60 (placed at T1)
  * - Market moves up, MM needs to adjust to $0.65
- * - MM calls: change_ask(query_id, TRUE, 60, 65, 100)
- * - Result: Sell 100 YES @ $0.65 (timestamp T1 preserved)
+ * - MM calls at T2: change_ask(query_id, TRUE, 60, 65, 100)
+ * - Result: Sell 100 YES @ $0.65 (queued at T2)
  *
  * Amount Adjustment Scenarios:
  * 1. Increase amount (new_amount > old_amount):
@@ -2350,16 +2348,14 @@ CREATE OR REPLACE ACTION change_ask(
         ERROR('No participant record found for this wallet. You must own shares before selling.');
     }
 
-    -- Get old order amount and timestamp
+    -- Get old order amount
     $old_amount INT8;
-    $old_timestamp INT8;
-    for $row in SELECT amount, last_updated FROM ob_positions
+    for $row in SELECT amount FROM ob_positions
                 WHERE query_id = $query_id
                   AND participant_id = $participant_id
                   AND outcome = $outcome
                   AND price = $old_price {
         $old_amount := $row.amount;
-        $old_timestamp := $row.last_updated;
     }
 
     if $old_amount IS NULL {
@@ -2440,21 +2436,18 @@ CREATE OR REPLACE ACTION change_ask(
       AND price = $old_price;
 
     -- ==========================================================================
-    -- SECTION 7: INSERT NEW ORDER (PRESERVING TIMESTAMP)
+    -- SECTION 7: INSERT NEW ORDER (AT THE CURRENT BLOCK TIME)
     -- ==========================================================================
 
-    -- CRITICAL: Use old_timestamp to preserve FIFO priority
-    -- If accumulating with existing order at new price, keep EARLIEST timestamp
+    -- Queue the order at its new price exactly as place_sell_order would: it
+    -- takes the current block time, and when it merges into an order the
+    -- caller already rests at that price, the merged order takes it too.
     INSERT INTO ob_positions
     (query_id, participant_id, outcome, price, amount, last_updated)
-    VALUES ($query_id, $participant_id, $outcome, $new_price, $new_amount, $old_timestamp)
+    VALUES ($query_id, $participant_id, $outcome, $new_price, $new_amount, @block_timestamp)
     ON CONFLICT (query_id, participant_id, outcome, price) DO UPDATE
     SET amount = ob_positions.amount + EXCLUDED.amount,
-        last_updated = CASE
-            WHEN ob_positions.last_updated < EXCLUDED.last_updated
-            THEN ob_positions.last_updated  -- Keep earlier timestamp (existing order was first)
-            ELSE EXCLUDED.last_updated       -- Keep earlier timestamp (moved order was first)
-        END;
+        last_updated = EXCLUDED.last_updated;
 
     -- Record ask change event
     ob_record_order_event($query_id, $participant_id, 'ask_changed', $outcome, $new_price, $new_amount, NULL);
@@ -2473,9 +2466,8 @@ CREATE OR REPLACE ACTION change_ask(
     ob_cleanup_tx_payouts($query_id);
 
     -- Success: Sell order price modified atomically
-    -- - Old order deleted, new order placed with preserved timestamp
+    -- - Old order deleted, new order queued at the current block time
     -- - Shares adjusted (pulled from or returned to holdings)
-    -- - FIFO priority maintained
 };
 
 -- =============================================================================

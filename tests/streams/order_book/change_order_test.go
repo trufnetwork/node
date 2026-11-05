@@ -27,13 +27,13 @@ func TestChangeOrder(t *testing.T) {
 			testChangeBidSuccess(t),
 			testChangeBidHigherPrice(t),
 			testChangeBidInsufficientBalance(t),
-			testChangeBidTimestampPreservation(t),
+			testChangeBidQueuesAtNewTime(t),
 			testChangeBidInvalidPrices(t),
 
 			// change_ask tests
 			testChangeAskSuccess(t),
 			testChangeAskHigherPrice(t),
-			testChangeAskTimestampPreservation(t),
+			testChangeAskQueuesAtNewTime(t),
 			testChangeAskInvalidPrices(t),
 			testChangeAskUpsizing(t),
 			testChangeAskDownsizing(t),
@@ -47,11 +47,17 @@ func TestChangeOrder(t *testing.T) {
 
 func callChangeBid(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress,
 	marketID int, outcome bool, oldPrice, newPrice int, newAmount int64) error {
+	return callChangeBidAt(ctx, platform, signer, time.Now().Unix(), marketID, outcome, oldPrice, newPrice, newAmount)
+}
+
+// callChangeBidAt calls change_bid in a block with the given timestamp.
+func callChangeBidAt(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress,
+	blockTimestamp int64, marketID int, outcome bool, oldPrice, newPrice int, newAmount int64) error {
 	tx := &common.TxContext{
 		Ctx: ctx,
 		BlockContext: &common.BlockContext{
 			Height:    1,
-			Timestamp: time.Now().Unix(),
+			Timestamp: blockTimestamp,
 		},
 		Signer:        signer.Bytes(),
 		Caller:        signer.Address(),
@@ -79,11 +85,17 @@ func callChangeBid(ctx context.Context, platform *kwilTesting.Platform, signer *
 
 func callChangeAsk(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress,
 	marketID int, outcome bool, oldPrice, newPrice int, newAmount int64) error {
+	return callChangeAskAt(ctx, platform, signer, time.Now().Unix(), marketID, outcome, oldPrice, newPrice, newAmount)
+}
+
+// callChangeAskAt calls change_ask in a block with the given timestamp.
+func callChangeAskAt(ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress,
+	blockTimestamp int64, marketID int, outcome bool, oldPrice, newPrice int, newAmount int64) error {
 	tx := &common.TxContext{
 		Ctx: ctx,
 		BlockContext: &common.BlockContext{
 			Height:    1,
-			Timestamp: time.Now().Unix(),
+			Timestamp: blockTimestamp,
 		},
 		Signer:        signer.Bytes(),
 		Caller:        signer.Address(),
@@ -114,7 +126,7 @@ func getOrderDetails(ctx context.Context, platform *kwilTesting.Platform,
 	tx := &common.TxContext{
 		Ctx:          ctx,
 		BlockContext: &common.BlockContext{Height: 1},
-		TxID:          platform.Txid(),
+		TxID:         platform.Txid(),
 	}
 	engineCtx := &common.EngineContext{TxContext: tx}
 
@@ -132,10 +144,10 @@ func getOrderDetails(ctx context.Context, platform *kwilTesting.Platform,
 		platform.DB,
 		query,
 		map[string]any{
-			"$query_id":     marketID,
-			"$wallet_addr":  decodeAddress(walletAddr),
-			"$outcome":      outcome,
-			"$price":        price,
+			"$query_id":    marketID,
+			"$wallet_addr": decodeAddress(walletAddr),
+			"$outcome":     outcome,
+			"$price":       price,
 		},
 		func(row *common.Row) error {
 			amount = row.Values[0].(int64)
@@ -301,7 +313,10 @@ func testChangeBidInsufficientBalance(t *testing.T) func(ctx context.Context, pl
 	}
 }
 
-func testChangeBidTimestampPreservation(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+// A changed bid is queued like a new order at its new price: it takes the
+// change's block time, also when it merges into a bid the caller already
+// rests at that price.
+func testChangeBidQueuesAtNewTime(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -321,25 +336,35 @@ func testChangeBidTimestampPreservation(t *testing.T) func(ctx context.Context, 
 		})
 		require.NoError(t, err)
 
-		// Place initial buy order
+		// Two resting bids: 100 YES @ $0.54 and 100 YES @ $0.48
 		err = callPlaceBuyOrder(ctx, platform, &userAddr, int(marketID), true, 54, 100)
 		require.NoError(t, err)
-
-		// Get original timestamp
-		_, originalTimestamp, err := getOrderDetails(ctx, platform, int(marketID), userAddr.Address(), true, -54)
-		require.NoError(t, err)
-		require.Greater(t, originalTimestamp, int64(0))
-
-		// Change bid (timestamp should be preserved from original order)
-		err = callChangeBid(ctx, platform, &userAddr, int(marketID), true, -54, -50, 100)
+		err = callPlaceBuyOrder(ctx, platform, &userAddr, int(marketID), true, 48, 100)
 		require.NoError(t, err)
 
-		// Get new order timestamp
-		_, newTimestamp, err := getOrderDetails(ctx, platform, int(marketID), userAddr.Address(), true, -50)
+		_, placedAt, err := getOrderDetails(ctx, platform, int(marketID), userAddr.Address(), true, -54)
+		require.NoError(t, err)
+		require.Greater(t, placedAt, int64(0))
+
+		// Move the $0.54 bid to $0.50 a minute later
+		movedAt := placedAt + 60
+		err = callChangeBidAt(ctx, platform, &userAddr, movedAt, int(marketID), true, -54, -50, 100)
 		require.NoError(t, err)
 
-		// Verify timestamp preserved
-		require.Equal(t, originalTimestamp, newTimestamp, "Timestamp should be preserved for FIFO ordering")
+		amount, queuedAt, err := getOrderDetails(ctx, platform, int(marketID), userAddr.Address(), true, -50)
+		require.NoError(t, err)
+		require.Equal(t, int64(100), amount)
+		require.Equal(t, movedAt, queuedAt, "a changed bid should take the block time of the change")
+
+		// Move it again onto the resting $0.48 bid: the merged bid takes the new time
+		mergedAt := placedAt + 120
+		err = callChangeBidAt(ctx, platform, &userAddr, mergedAt, int(marketID), true, -50, -48, 100)
+		require.NoError(t, err)
+
+		amount, queuedAt, err = getOrderDetails(ctx, platform, int(marketID), userAddr.Address(), true, -48)
+		require.NoError(t, err)
+		require.Equal(t, int64(200), amount)
+		require.Equal(t, mergedAt, queuedAt, "a bid merged by change_bid should take the block time of the change")
 
 		return nil
 	}
@@ -475,7 +500,10 @@ func testChangeAskHigherPrice(t *testing.T) func(ctx context.Context, platform *
 	}
 }
 
-func testChangeAskTimestampPreservation(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+// A changed ask is queued like a new order at its new price: it takes the
+// change's block time, also when it merges into an ask the caller already
+// rests at that price.
+func testChangeAskQueuesAtNewTime(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
 		require.NoError(t, err)
@@ -495,25 +523,39 @@ func testChangeAskTimestampPreservation(t *testing.T) func(ctx context.Context, 
 		})
 		require.NoError(t, err)
 
-		// Place split limit order
+		// Split limit order: holds 100 YES, sells 100 NO @ $0.44
 		err = callPlaceSplitLimitOrder(ctx, platform, &userAddr, int(marketID), 56, 100)
 		require.NoError(t, err)
 
-		// Get original timestamp
-		_, originalTimestamp, err := getOrderDetails(ctx, platform, int(marketID), userAddr.Address(), false, 44)
+		_, placedAt, err := getOrderDetails(ctx, platform, int(marketID), userAddr.Address(), false, 44)
 		require.NoError(t, err)
-		require.Greater(t, originalTimestamp, int64(0))
+		require.Greater(t, placedAt, int64(0))
 
-		// Change ask (timestamp should be preserved from original order)
-		err = callChangeAsk(ctx, platform, &userAddr, int(marketID), false, 44, 40, 100)
-		require.NoError(t, err)
-
-		// Get new order timestamp
-		_, newTimestamp, err := getOrderDetails(ctx, platform, int(marketID), userAddr.Address(), false, 40)
+		// Move the NO ask from $0.44 to $0.40 a minute later
+		movedAt := placedAt + 60
+		err = callChangeAskAt(ctx, platform, &userAddr, movedAt, int(marketID), false, 44, 40, 100)
 		require.NoError(t, err)
 
-		// Verify timestamp preserved
-		require.Equal(t, originalTimestamp, newTimestamp, "Timestamp should be preserved for FIFO ordering")
+		amount, queuedAt, err := getOrderDetails(ctx, platform, int(marketID), userAddr.Address(), false, 40)
+		require.NoError(t, err)
+		require.Equal(t, int64(100), amount)
+		require.Equal(t, movedAt, queuedAt, "a changed ask should take the block time of the change")
+
+		// Two YES asks from the holdings, 50 @ $0.70 and 50 @ $0.72, then move
+		// the first onto the second: the merged ask takes the new time
+		err = callPlaceSellOrder(ctx, platform, &userAddr, int(marketID), true, 70, 50)
+		require.NoError(t, err)
+		err = callPlaceSellOrder(ctx, platform, &userAddr, int(marketID), true, 72, 50)
+		require.NoError(t, err)
+
+		mergedAt := placedAt + 120
+		err = callChangeAskAt(ctx, platform, &userAddr, mergedAt, int(marketID), true, 70, 72, 50)
+		require.NoError(t, err)
+
+		amount, queuedAt, err = getOrderDetails(ctx, platform, int(marketID), userAddr.Address(), true, 72)
+		require.NoError(t, err)
+		require.Equal(t, int64(100), amount)
+		require.Equal(t, mergedAt, queuedAt, "an ask merged by change_ask should take the block time of the change")
 
 		return nil
 	}
