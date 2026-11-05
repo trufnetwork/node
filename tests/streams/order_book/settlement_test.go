@@ -714,7 +714,7 @@ func testSettleMarketNoAttestation(t *testing.T) func(context.Context, *kwilTest
 
 		// Create fake query components (no actual attestation exists)
 		dataProvider := deployer.Address()
-		streamID := "stfakeattest0000000000000000000"
+		streamID := "stfakeattest00000000000000000000"
 		fakeQueryComponents, err := encodeQueryComponentsForTests(dataProvider, streamID, "get_last_record", nil)
 		require.NoError(t, err)
 

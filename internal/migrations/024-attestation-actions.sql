@@ -7,8 +7,9 @@
  *
  * Fee: 40 TRUF flat fee charged to every caller.
  *
- * Validates action is allowed, executes query deterministically, calculates
- * attestation hash, stores unsigned attestation, and queues for signing.
+ * Validates action is allowed and that its args start with $data_provider and
+ * $stream_id, executes query deterministically, calculates attestation hash,
+ * stores unsigned attestation, and queues for signing.
  */
 CREATE OR REPLACE ACTION request_attestation(
     $data_provider TEXT,
@@ -93,6 +94,10 @@ CREATE OR REPLACE ACTION request_attestation(
     }
     $stream_bytes := $stream_id::BYTEA;
 
+    -- The data provider and stream above must be the first two args, which
+    -- name the stream the action reads
+    tn_utils.validate_query_stream($data_provider_bytes, $stream_bytes, $args_bytes);
+
     -- Validate date range for range-based attestation actions (IDs 1-3) BEFORE
     -- executing the query. This prevents unbounded queries from scanning the entire
     -- primitive_events table during block execution. Max range: 90 days.
@@ -104,12 +109,18 @@ CREATE OR REPLACE ACTION request_attestation(
     -- Query actions (IDs 1-5) all have use_cache as their last parameter.
     -- Force use_cache=false to ensure all validators compute identical results
     -- regardless of cache state.
+    --
+    -- Only the copy that runs is changed. The payload and the hash below keep
+    -- the arguments as requested: a market's hash is computed from its query
+    -- as stored, use_cache included, and a capture stored under any other hash
+    -- is one settlement never finds.
+    $dispatch_args BYTEA := $args_bytes;
     if $action_id >= 1 AND $action_id <= 5 {
-        $args_bytes := tn_utils.force_last_arg_false($args_bytes);
+        $dispatch_args := tn_utils.force_last_arg_false($args_bytes);
     }
 
     -- Execute target query deterministically using tn_utils.call_dispatch precompile
-    $query_result := tn_utils.call_dispatch($action_name, $args_bytes);
+    $query_result := tn_utils.call_dispatch($action_name, $dispatch_args);
     $result_payload := tn_utils.canonical_to_datapoints_abi($query_result);
     
     $version := 1;

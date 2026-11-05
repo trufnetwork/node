@@ -217,7 +217,7 @@ func testBuyOrderSuccessful(t *testing.T) func(ctx context.Context, platform *kw
 		})
 
 		// Create a market
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000001", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000001", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -276,7 +276,7 @@ func testBuyOrderInsufficientBalance(t *testing.T) func(ctx context.Context, pla
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000002", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000002", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -330,7 +330,7 @@ func testBuyOrderInvalidPrice(t *testing.T) func(ctx context.Context, platform *
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000003", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000003", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -368,7 +368,7 @@ func testBuyOrderInvalidAmount(t *testing.T) func(ctx context.Context, platform 
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000004", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000004", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -411,7 +411,7 @@ func testBuyOrderMultipleOrdersDifferentPrices(t *testing.T) func(ctx context.Co
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000005", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000005", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -465,7 +465,7 @@ func testBuyOrderMultipleOrdersSamePrice(t *testing.T) func(ctx context.Context,
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000006", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000006", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -511,7 +511,7 @@ func testBuyOrderBalanceChanges(t *testing.T) func(ctx context.Context, platform
 		require.NoError(t, err)
 
 		// Create market (costs 2 TRUF)
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000007", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000007", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -653,7 +653,7 @@ func testBuyOrderTradingClosed(t *testing.T) func(ctx context.Context, platform 
 		// Note: We need a slight delay to ensure we can create it before it expires
 		settleTime := time.Now().Add(2 * time.Second).Unix()
 		
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000008", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000008", "get_record", nil)
 		require.NoError(t, err)
 
 		var marketID int64

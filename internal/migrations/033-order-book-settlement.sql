@@ -17,6 +17,52 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
     $amounts NUMERIC(78, 0)[],
     $outcomes BOOL[]
 ) PRIVATE {
+    -- 0. Check every entry before any money moves: the four arrays line up, and
+    --    each entry has a participant, an outcome, a 0x-prefixed 42-char wallet
+    --    and a positive amount. NULL is checked on its own: kwil evaluates
+    --    TRUE OR NULL as NULL, so a combined "IS NULL OR ..." would let it pass.
+    $entry_count INT := COALESCE(array_length($wallet_hexes), 0);
+    if COALESCE(array_length($pids), 0) != $entry_count
+        OR COALESCE(array_length($amounts), 0) != $entry_count
+        OR COALESCE(array_length($outcomes), 0) != $entry_count {
+        ERROR('Batch unlock arrays must have the same length');
+    }
+
+    -- The wallet's length and prefix come from the query: SQL functions such
+    -- as length() cannot run inside the body of a loop over a query.
+    for $entry in
+        SELECT u.pid, u.wallet_hex, u.amount, u.outcome,
+               length(u.wallet_hex) AS wallet_len,
+               LOWER(substring(u.wallet_hex, 1, 2)) AS wallet_prefix
+        FROM UNNEST($pids, $wallet_hexes, $amounts, $outcomes) AS u(pid, wallet_hex, amount, outcome)
+    {
+        $chk_pid INT := $entry.pid;
+        $chk_wallet TEXT := $entry.wallet_hex;
+        $chk_amount NUMERIC(78, 0) := $entry.amount;
+        $chk_outcome BOOL := $entry.outcome;
+        $chk_wallet_len INT := $entry.wallet_len;
+        $chk_wallet_prefix TEXT := $entry.wallet_prefix;
+
+        if $chk_pid IS NULL {
+            ERROR('Batch unlock participant is required');
+        }
+        if $chk_outcome IS NULL {
+            ERROR('Batch unlock outcome is required');
+        }
+        if $chk_wallet IS NULL {
+            ERROR('Batch unlock wallet is required');
+        }
+        if $chk_wallet_len != 42 OR $chk_wallet_prefix != '0x' {
+            ERROR('Invalid batch unlock wallet format (expected 0x-prefixed hex, 42 chars)');
+        }
+        if $chk_amount IS NULL {
+            ERROR('Batch unlock amount is required');
+        }
+        if $chk_amount <= 0::NUMERIC(78, 0) {
+            ERROR('Batch unlock amount must be positive');
+        }
+    }
+
     -- 1. Call precompile for each unlock (Safe in loops)
     for $payout in
         SELECT u.wallet_hex, u.amount
@@ -28,6 +74,8 @@ CREATE OR REPLACE ACTION ob_batch_unlock_collateral(
             sepolia_bridge.unlock($payout.wallet_hex, $payout.amount);
         } else if $bridge = 'ethereum_bridge' {
             ethereum_bridge.unlock($payout.wallet_hex, $payout.amount);
+        } else {
+            ERROR('Invalid bridge. Supported: hoodi_tt2, sepolia_bridge, ethereum_bridge');
         }
     }
 
@@ -361,6 +409,22 @@ CREATE OR REPLACE ACTION process_settlement(
     }
 };
 
+-- ============================================================================
+-- Manual Fee Distribution
+-- ============================================================================
+
+-- trigger_fee_distribution($query_id, $total_fees)
+--
+-- A market's fees are distributed once, from what the market collected, and
+-- that happens when it settles: process_settlement passes the fee it collects
+-- to distribute_fees whenever the fee is above zero, and distribute_fees always
+-- records a row in ob_fee_distributions. So this action refuses every call and
+-- says why:
+-- - a market that has not settled has collected no fees yet;
+-- - a market with a row in ob_fee_distributions had its fees distributed;
+-- - a settled market without a row collected no fees.
+--
+-- $total_fees stays for existing callers; the amount is never taken from it.
 CREATE OR REPLACE ACTION trigger_fee_distribution(
     $query_id INT,
     $total_fees TEXT
@@ -370,14 +434,18 @@ CREATE OR REPLACE ACTION trigger_fee_distribution(
     for $row in SELECT 1 FROM role_members WHERE owner = 'system' AND role_name = 'network_writer' AND wallet = $lower_caller LIMIT 1 { $has_role := TRUE; }
     if $has_role = FALSE { ERROR('Only network_writer can trigger fee distribution'); }
 
-    $winning BOOL;
+    $settled BOOL := FALSE;
     $found BOOL := FALSE;
-    for $row in SELECT winning_outcome FROM ob_queries WHERE id = $query_id {
-        $winning := $row.winning_outcome;
+    for $row in SELECT settled FROM ob_queries WHERE id = $query_id {
+        $settled := $row.settled;
         $found := TRUE;
     }
     if NOT $found { ERROR('Market not found: ' || $query_id::TEXT); }
+    if NOT $settled { ERROR('Market ' || $query_id::TEXT || ' has not settled, so it has collected no fees'); }
 
-    $fees NUMERIC(78, 0) := $total_fees::NUMERIC(78, 0);
-    distribute_fees($query_id, $fees, $winning);
+    $paid BOOL := FALSE;
+    for $row in SELECT 1 FROM ob_fee_distributions WHERE query_id = $query_id LIMIT 1 { $paid := TRUE; }
+    if $paid { ERROR('Fees for market ' || $query_id::TEXT || ' were already distributed'); }
+
+    ERROR('Market ' || $query_id::TEXT || ' collected no fees to distribute');
 }

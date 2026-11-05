@@ -194,7 +194,7 @@ func testChangeBidSuccess(t *testing.T) func(ctx context.Context, platform *kwil
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_bid_success0", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_bid_success0", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -241,7 +241,7 @@ func testChangeBidHigherPrice(t *testing.T) func(ctx context.Context, platform *
 		err = giveBalance(ctx, platform, userAddr.Address(), "300000000000000000000")
 		require.NoError(t, err)
 
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_bid_higher00", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_bid_higher00", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -279,7 +279,7 @@ func testChangeBidInsufficientBalance(t *testing.T) func(ctx context.Context, pl
 		err = giveBalance(ctx, platform, userAddr.Address(), "102000000000000000000") // 102 TRUF
 		require.NoError(t, err)
 
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_bid_insuffic", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_bid_insuffic", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -325,7 +325,7 @@ func testChangeBidQueuesAtNewTime(t *testing.T) func(ctx context.Context, platfo
 		err = giveBalance(ctx, platform, userAddr.Address(), "200000000000000000000")
 		require.NoError(t, err)
 
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_bid_timestam", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_bid_timestam", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -379,7 +379,7 @@ func testChangeBidInvalidPrices(t *testing.T) func(ctx context.Context, platform
 		err = giveBalance(ctx, platform, userAddr.Address(), "200000000000000000000")
 		require.NoError(t, err)
 
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_bid_invalid0", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_bid_invalid0", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -425,7 +425,7 @@ func testChangeAskSuccess(t *testing.T) func(ctx context.Context, platform *kwil
 		err = giveBalance(ctx, platform, userAddr.Address(), "200000000000000000000")
 		require.NoError(t, err)
 
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_ask_success0", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_ask_success0", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -472,7 +472,7 @@ func testChangeAskHigherPrice(t *testing.T) func(ctx context.Context, platform *
 		err = giveBalance(ctx, platform, userAddr.Address(), "200000000000000000000")
 		require.NoError(t, err)
 
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_ask_higher00", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_ask_higher00", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -512,7 +512,7 @@ func testChangeAskQueuesAtNewTime(t *testing.T) func(ctx context.Context, platfo
 		err = giveBalance(ctx, platform, userAddr.Address(), "200000000000000000000")
 		require.NoError(t, err)
 
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_ask_timestam", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_ask_timestam", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -570,7 +570,7 @@ func testChangeAskInvalidPrices(t *testing.T) func(ctx context.Context, platform
 		err = giveBalance(ctx, platform, userAddr.Address(), "200000000000000000000")
 		require.NoError(t, err)
 
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_ask_invalid0", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_ask_invalid0", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -612,7 +612,7 @@ func testChangeAskUpsizing(t *testing.T) func(ctx context.Context, platform *kwi
 		err = giveBalance(ctx, platform, userAddr.Address(), "300000000000000000000")
 		require.NoError(t, err)
 
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_ask_upsize00", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_ask_upsize00", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -688,7 +688,7 @@ func testChangeAskDownsizing(t *testing.T) func(ctx context.Context, platform *k
 		err = giveBalance(ctx, platform, userAddr.Address(), "200000000000000000000")
 		require.NoError(t, err)
 
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_ask_downsize", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "stchangetest_change_ask_downsize", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 

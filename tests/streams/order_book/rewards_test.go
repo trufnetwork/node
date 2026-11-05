@@ -147,7 +147,7 @@ func testSampleRewardsMarketSettled(t *testing.T) func(context.Context, *kwilTes
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000046", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000046", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -206,7 +206,7 @@ func testSampleRewardsNoOrderBook(t *testing.T) func(context.Context, *kwilTesti
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000047", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000047", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -246,7 +246,7 @@ func testSampleRewardsIncompleteOrderBook(t *testing.T) func(context.Context, *k
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000048", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000048", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -298,7 +298,7 @@ func testSampleRewardsSpread5Cents(t *testing.T) func(context.Context, *kwilTest
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000049", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000049", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -373,7 +373,7 @@ func testSampleRewardsSpread4Cents(t *testing.T) func(context.Context, *kwilTest
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000050", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000050", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -441,7 +441,7 @@ func testSampleRewardsSpread3Cents(t *testing.T) func(context.Context, *kwilTest
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000051", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000051", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -509,7 +509,7 @@ func testSampleRewardsIneligibleMarket(t *testing.T) func(context.Context, *kwil
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000052", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000052", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -561,7 +561,7 @@ func testSampleRewardsSingleLP(t *testing.T) func(context.Context, *kwilTesting.
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000053", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000053", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -638,7 +638,7 @@ func testSampleRewardsTwoLPs(t *testing.T) func(context.Context, *kwilTesting.Pl
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000054", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000054", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -740,7 +740,7 @@ func testSampleRewardsMultipleLPs(t *testing.T) func(context.Context, *kwilTesti
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000055", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000055", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -852,7 +852,7 @@ func testSampleRewardsNoQualifyingOrders(t *testing.T) func(context.Context, *kw
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000056", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000056", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -913,7 +913,7 @@ func testConstraintSellBuyPair(t *testing.T) func(context.Context, *kwilTesting.
 		err = giveBalanceChained(ctx, platform, user1.Address(), "1000000000000000000000")
 		require.NoError(t, err)
 
-		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000044", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000044", "get_record", nil)
 
 
 		require.NoError(t, err)
@@ -989,7 +989,7 @@ func testConstraintNoDuplicates(t *testing.T) func(context.Context, *kwilTesting
 		err = giveBalanceChained(ctx, platform, user2.Address(), "1000000000000000000000")
 		require.NoError(t, err)
 
-		queryComponents, err := encodeQueryComponentsForTests(user2.Address(), "sttest00000000000000000000000045", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user2.Address(), "sttest00000000000000000000000045", "get_record", nil)
 
 
 		require.NoError(t, err)

@@ -66,7 +66,7 @@ func testPnLImpactTrading(t *testing.T) func(ctx context.Context, platform *kwil
 		require.NoError(t, err)
 
 		// 2. Create Market
-		queryComponents, err := encodeQueryComponentsForTests(userA.Address(), "st_pnl_test_000000000000000000001", "get_record", nil)
+		queryComponents, err := encodeQueryComponentsForTests(userA.Address(), "st_pnl_test_00000000000000000001", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -189,7 +189,7 @@ func testPnLImpactSettlement(t *testing.T) func(ctx context.Context, platform *k
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(userA.Address(), "st_pnl_settle_000000000000000000001", "get_record", nil)
+		queryComponents, err := encodeQueryComponentsForTests(userA.Address(), "st_pnl_settle_000000000000000001", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(1 * time.Hour).Unix()
 

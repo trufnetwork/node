@@ -1078,7 +1078,7 @@ func giveBalanceQueries(ctx context.Context, platform *kwilTesting.Platform, wal
 }
 
 func createTestMarketQueries(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, signer *util.EthereumAddress) (int, []byte) {
-	queryComponents, err := encodeQueryComponentsForTests(signer.Address(), "sttest00000000000000000000000067", "get_record", []byte{0x01})
+	queryComponents, err := encodeQueryComponentsForTests(signer.Address(), "sttest00000000000000000000000067", "get_record", nil)
 	require.NoError(t, err)
 
 	settleTime := time.Now().Add(1 * time.Hour).Unix()

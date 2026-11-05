@@ -137,22 +137,29 @@ func ensureNonZeroAddress(addr string) string {
 	return addr
 }
 
+// getRecordArgsForTests encodes get_record args that read dataProvider's streamID.
+// create_market requires a query's args to start with the data provider and stream
+// in its header, so a market's args are built from the same two values.
+func getRecordArgsForTests(dataProvider, streamID string) ([]byte, error) {
+	// For get_record action, args are: (data_provider, stream_id, from, to, frozen_at, use_cache)
+	return tn_utils.EncodeActionArgs([]any{
+		dataProvider,     // data_provider (TEXT)
+		streamID,         // stream_id (TEXT)
+		int64(0),         // from (INT8)
+		int64(999999999), // to (INT8) - far future
+		nil,              // frozen_at (INT8, nullable)
+		false,            // use_cache (BOOL)
+	})
+}
+
 // encodeQueryComponentsForTests encodes query components using ABI format for testing
 // This is a shared helper for all order_book tests
 // If argsBytes is provided, it uses those args; otherwise creates default args for get_record
 func encodeQueryComponentsForTests(dataProvider, streamID, actionID string, argsBytes []byte) ([]byte, error) {
 	// If args not provided, encode default args for get_record action
 	if argsBytes == nil {
-		// For get_record action, args are: (data_provider, stream_id, from, to, frozen_at, use_cache)
 		var err error
-		argsBytes, err = tn_utils.EncodeActionArgs([]any{
-			dataProvider,       // data_provider (TEXT)
-			streamID,           // stream_id (TEXT)
-			int64(0),           // from (INT8)
-			int64(999999999),   // to (INT8) - far future
-			nil,                // frozen_at (INT8, nullable)
-			false,              // use_cache (BOOL)
-		})
+		argsBytes, err = getRecordArgsForTests(dataProvider, streamID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to encode action args: %w", err)
 		}

@@ -190,7 +190,7 @@ func testChangeAskGrowFromHoldings(t *testing.T) func(context.Context, *kwilTest
 // askHoldingsMarket creates a market that settles in a day. It has no
 // attestation, so it is only for trading.
 func askHoldingsMarket(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, maker *util.EthereumAddress, streamID string) int {
-	queryComponents, err := encodeQueryComponentsForTests(maker.Address(), streamID, "get_record", []byte{0x01})
+	queryComponents, err := encodeQueryComponentsForTests(maker.Address(), streamID, "get_record", nil)
 	require.NoError(t, err)
 
 	var marketID int64

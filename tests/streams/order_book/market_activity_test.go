@@ -287,7 +287,7 @@ func createActivityMarket(
 	t.Helper()
 
 	queryComponents, err := encodeQueryComponentsForTests(
-		creator.Address(), "sttest00000000000000000000"+streamSuffix, "get_record", []byte{0x01})
+		creator.Address(), "sttest00000000000000000000"+streamSuffix, "get_record", nil)
 	require.NoError(t, err)
 
 	var marketID int64

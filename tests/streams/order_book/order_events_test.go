@@ -110,9 +110,9 @@ func getOrderEventsByType(events []OrderEvent, eventType string) []OrderEvent {
 func setupMarket(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, user *util.EthereumAddress, streamSuffix string) int64 {
 	queryComponents, err := encodeQueryComponentsForTests(
 		user.Address(),
-		"sttest00000000000000000000"+streamSuffix,
+		"sttest000000000000000000"+streamSuffix, // 32 chars with an 8-char suffix
 		"get_record",
-		[]byte{0x01},
+		nil,
 	)
 	require.NoError(t, err)
 

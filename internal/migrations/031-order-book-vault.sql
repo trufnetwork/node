@@ -2,7 +2,6 @@
  * ORDER BOOK VAULT HELPERS
  *
  * Provides helper actions for vault/collateral operations:
- * - ob_lock_collateral: Lock user's tokens into network vault
  * - ob_unlock_collateral: Return tokens from network to user
  * - ob_get_or_create_participant: Get or create participant record
  *
@@ -21,33 +20,11 @@
 -- Note: This procedure is defined in the order book actions file but used here too
 
 -- =============================================================================
--- ob_lock_collateral: Lock user's collateral into network vault
+-- ob_lock_collateral: removed
 -- =============================================================================
--- Uses the ERC20 bridge's lock() method which:
--- - Decreases user's balance in kwil_erc20_meta.balances
--- - Increases network's ownedBalance in reward_instances.balance
-CREATE OR REPLACE ACTION ob_lock_collateral($bridge TEXT, $amount NUMERIC(78, 0))
-PRIVATE {
-    -- Validate bridge (will ERROR if invalid)
-    -- Note: validate_bridge procedure defined in 032-order-book-actions.sql
-    -- Since migrations run in order, that procedure will exist when this is called
-
-    -- Validate amount
-    if $amount IS NULL OR $amount <= 0::NUMERIC(78, 0) {
-        ERROR('Lock amount must be positive');
-    }
-
-    -- Lock collateral using bridge (user -> network ownedBalance)
-    if $bridge = 'hoodi_tt2' {
-        hoodi_tt2.lock($amount);
-    } else if $bridge = 'sepolia_bridge' {
-        sepolia_bridge.lock($amount);
-    } else if $bridge = 'ethereum_bridge' {
-        ethereum_bridge.lock($amount);
-    } else {
-        ERROR('Invalid bridge. Supported: hoodi_tt2, sepolia_bridge, ethereum_bridge');
-    }
-};
+-- Nothing called this helper: the order actions lock collateral through the
+-- bridge's lock() themselves. Chains that already carry it drop it here.
+DROP ACTION IF EXISTS ob_lock_collateral;
 
 -- =============================================================================
 -- ob_unlock_collateral: Return collateral from network vault to user
@@ -59,12 +36,20 @@ PRIVATE {
 -- NOTE: This is effectively a SYSTEM action - unlock() requires owner permission
 CREATE OR REPLACE ACTION ob_unlock_collateral($bridge TEXT, $user_address TEXT, $amount NUMERIC(78, 0))
 PRIVATE {
-    -- Validate inputs (must be 0x-prefixed 40 hex character address)
-    if $user_address IS NULL OR length($user_address) != 42 OR substring(LOWER($user_address), 1, 2) != '0x' {
+    -- Validate inputs (must be 0x-prefixed 40 hex character address).
+    -- NULL is checked on its own: kwil evaluates TRUE OR NULL as NULL, so a
+    -- combined "IS NULL OR ..." condition is skipped for a NULL argument.
+    if $user_address IS NULL {
+        ERROR('user address is required');
+    }
+    if length($user_address) != 42 OR substring(LOWER($user_address), 1, 2) != '0x' {
         ERROR('Invalid user address format (expected 0x-prefixed hex, 42 chars)');
     }
 
-    if $amount IS NULL OR $amount <= 0::NUMERIC(78, 0) {
+    if $amount IS NULL {
+        ERROR('Unlock amount is required');
+    }
+    if $amount <= 0::NUMERIC(78, 0) {
         ERROR('Unlock amount must be positive');
     }
 

@@ -70,7 +70,7 @@ func testDistribution1Block2LPs(t *testing.T) func(context.Context, *kwilTesting
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000057", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000057", "get_record", nil)
 
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
@@ -278,7 +278,7 @@ func testDistribution3Blocks2LPs(t *testing.T) func(context.Context, *kwilTestin
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000058", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000058", "get_record", nil)
 
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
@@ -478,7 +478,7 @@ func testDistributionNoSamples(t *testing.T) func(context.Context, *kwilTesting.
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000059", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000059", "get_record", nil)
 
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
@@ -602,7 +602,7 @@ func testDistributionZeroFees(t *testing.T) func(context.Context, *kwilTesting.P
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000060", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000060", "get_record", nil)
 
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
@@ -730,7 +730,7 @@ func testDistribution1LP(t *testing.T) func(context.Context, *kwilTesting.Platfo
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000061", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000061", "get_record", nil)
 
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
@@ -895,7 +895,7 @@ func testDistributionDPValidatorAutoParticipant(t *testing.T) func(context.Conte
 		require.NoError(t, err)
 
 		// Create market with dpAddress as the Data Provider (NOT user1)
-		queryComponents, err := encodeQueryComponentsForTests(dpAddress.Address(), "sttest00000000000000000000000070", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(dpAddress.Address(), "sttest00000000000000000000000070", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -1144,7 +1144,7 @@ func testDistributionMultipleValidators(t *testing.T) func(context.Context, *kwi
 		require.NoError(t, err)
 
 		// Create market with user1 as DP
-		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000071", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000071", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 

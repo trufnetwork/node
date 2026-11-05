@@ -51,8 +51,14 @@ CREATE OR REPLACE ACTION create_market(
     -- Validate bridge parameter
     validate_bridge($bridge);
 
-    -- Validate query components (must be ABI-encoded)
-    if $query_components IS NULL OR length(encode($query_components, 'hex')) = 0 {
+    -- Validate query components (must be ABI-encoded).
+    -- Here and in the actions below, NULL is checked on its own: kwil
+    -- evaluates TRUE OR NULL as NULL, so a combined "IS NULL OR ..."
+    -- condition is skipped for a NULL argument.
+    if $query_components IS NULL {
+        ERROR('query_components is required (ABI-encoded (address,bytes32,string,bytes))');
+    }
+    if length(encode($query_components, 'hex')) = 0 {
         ERROR('query_components is required (ABI-encoded (address,bytes32,string,bytes))');
     }
 
@@ -68,6 +74,30 @@ CREATE OR REPLACE ACTION create_market(
         ERROR('Invalid query_components: computed hash must be 32 bytes');
     }
 
+    -- The query action must be on the attestation allowlist. request_attestation
+    -- refuses any other, so a market on it could never be captured or settled.
+    -- compute_attestation_hash still knows ids that have left the allowlist.
+    -- The data provider and stream in the header must also be the first two
+    -- args, which name the stream the action reads.
+    $market_action TEXT;
+    $header_data_provider BYTEA;
+    $header_stream_id BYTEA;
+    $query_args BYTEA;
+    for $row in tn_utils.unpack_query_components($query_components) {
+        $market_action := $row.action_id;
+        $header_data_provider := $row.data_provider;
+        $header_stream_id := $row.stream_id;
+        $query_args := $row.args;
+    }
+    $market_action_allowed BOOL := false;
+    for $row in SELECT 1 AS present FROM attestation_actions WHERE action_name = $market_action {
+        $market_action_allowed := true;
+    }
+    if NOT $market_action_allowed {
+        ERROR('Action not allowed for attestation: ' || COALESCE($market_action, 'NULL'));
+    }
+    tn_utils.validate_query_stream($header_data_provider, $header_stream_id, $query_args);
+
     -- Check for duplicate market (hash must be unique)
     $existing_id INT;
     for $row in SELECT id FROM ob_queries WHERE hash = $query_hash {
@@ -79,17 +109,26 @@ CREATE OR REPLACE ACTION create_market(
 
     -- Validate settlement time (must be in the future)
     -- Use @block_timestamp (unix epoch seconds of current block)
-    if $settle_time IS NULL OR $settle_time <= @block_timestamp {
+    if $settle_time IS NULL {
+        ERROR('settle_time is required');
+    }
+    if $settle_time <= @block_timestamp {
         ERROR('Settlement time must be in the future');
     }
 
     -- Validate max_spread (1-50 price-points)
-    if $max_spread IS NULL OR $max_spread < 1 OR $max_spread > 50 {
+    if $max_spread IS NULL {
+        ERROR('max_spread is required');
+    }
+    if $max_spread < 1 OR $max_spread > 50 {
         ERROR('Max spread must be between 1 and 50 (price-points)');
     }
 
     -- Validate min_order_size (must be positive)
-    if $min_order_size IS NULL OR $min_order_size < 1 {
+    if $min_order_size IS NULL {
+        ERROR('min_order_size is required');
+    }
+    if $min_order_size < 1 {
         ERROR('Minimum order size must be positive');
     }
 
@@ -201,11 +240,17 @@ CREATE OR REPLACE ACTION place_buy_order(
         ERROR('outcome is required (TRUE for YES, FALSE for NO)');
     }
 
-    if $price IS NULL OR $price < 1 OR $price > 99 {
+    if $price IS NULL {
+        ERROR('price is required');
+    }
+    if $price < 1 OR $price > 99 {
         ERROR('price must be between 1 and 99 ($0.01 to $0.99)');
     }
 
-    if $amount IS NULL OR $amount <= 0 {
+    if $amount IS NULL {
+        ERROR('amount is required');
+    }
+    if $amount <= 0 {
         ERROR('amount must be positive');
     }
 
@@ -240,6 +285,9 @@ CREATE OR REPLACE ACTION place_buy_order(
     if @block_timestamp >= $settle_time {
         ERROR('Trading is closed. Market has passed its settlement time.');
     }
+
+    -- 1.5 Refuse while the owner has paused new collateral on this bridge (060)
+    ob_check_collateral_lock_open($bridge);
 
     -- ==========================================================================
     -- SECTION 2: CALCULATE COLLATERAL NEEDED
@@ -369,11 +417,17 @@ CREATE OR REPLACE ACTION place_split_limit_order(
         ERROR('query_id is required');
     }
 
-    if $true_price IS NULL OR $true_price < 1 OR $true_price > 99 {
+    if $true_price IS NULL {
+        ERROR('true_price is required');
+    }
+    if $true_price < 1 OR $true_price > 99 {
         ERROR('true_price must be between 1 and 99 ($0.01 to $0.99)');
     }
 
-    if $amount IS NULL OR $amount <= 0 {
+    if $amount IS NULL {
+        ERROR('amount is required');
+    }
+    if $amount <= 0 {
         ERROR('amount must be positive');
     }
 
@@ -408,6 +462,9 @@ CREATE OR REPLACE ACTION place_split_limit_order(
     if @block_timestamp >= $settle_time {
         ERROR('Trading is closed. Market has passed its settlement time.');
     }
+
+    -- 1.5 Refuse while the owner has paused new collateral on this bridge (060)
+    ob_check_collateral_lock_open($bridge);
 
     -- ==========================================================================
     -- SECTION 2: CALCULATE COLLATERAL NEEDED
@@ -572,7 +629,10 @@ CREATE OR REPLACE ACTION change_bid(
     -- SECTION 2: VALIDATE PARAMETERS
     -- ==========================================================================
 
-    if $query_id IS NULL OR $query_id < 1 {
+    if $query_id IS NULL {
+        ERROR('query_id is required');
+    }
+    if $query_id < 1 {
         ERROR('Invalid query_id');
     }
 
@@ -581,12 +641,18 @@ CREATE OR REPLACE ACTION change_bid(
     }
 
     -- Validate old_price (must be negative for buy orders)
-    if $old_price IS NULL OR $old_price >= 0 OR $old_price < -99 {
+    if $old_price IS NULL {
+        ERROR('old_price is required');
+    }
+    if $old_price >= 0 OR $old_price < -99 {
         ERROR('Old price must be negative (buy order) between -99 and -1');
     }
 
     -- Validate new_price (must be negative for buy orders)
-    if $new_price IS NULL OR $new_price >= 0 OR $new_price < -99 {
+    if $new_price IS NULL {
+        ERROR('new_price is required');
+    }
+    if $new_price >= 0 OR $new_price < -99 {
         ERROR('New price must be negative (buy order) between -99 and -1');
     }
 
@@ -596,7 +662,10 @@ CREATE OR REPLACE ACTION change_bid(
     }
 
     -- Validate amount
-    if $new_amount IS NULL OR $new_amount <= 0 {
+    if $new_amount IS NULL {
+        ERROR('new_amount is required');
+    }
+    if $new_amount <= 0 {
         ERROR('New amount must be positive');
     }
 
@@ -680,6 +749,9 @@ CREATE OR REPLACE ACTION change_bid(
 
     if $collateral_delta > $zero {
         -- New order needs MORE collateral
+        -- Refuse while the owner has paused new collateral on this bridge (060)
+        ob_check_collateral_lock_open($bridge);
+
         -- Lock additional amount (will ERROR if insufficient balance)
         if $bridge = 'eth_usdc' {
             eth_usdc.lock($collateral_delta);

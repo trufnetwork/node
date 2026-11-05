@@ -90,7 +90,8 @@ func testCreateMarketHappyPath(t *testing.T) func(ctx context.Context, platform 
 		dataProvider := userAddr.Address()
 		streamID := "sthappypath000000000000000000000" // Exactly 32 chars
 		actionID := "get_record"
-		argsBytes := []byte{0x01, 0x02, 0x03}
+		argsBytes, err := getRecordArgsForTests(dataProvider, streamID)
+		require.NoError(t, err)
 
 		queryComponents, err := encodeQueryComponents(dataProvider, streamID, actionID, argsBytes)
 		require.NoError(t, err, "failed to encode query components")
@@ -156,9 +157,10 @@ func testCreateMarketValidation(t *testing.T) func(ctx context.Context, platform
 
 		// Encode valid query components
 		dataProvider := userAddr.Address()
-		streamID := "stvalidation0000000000000000000000" // Exactly 32 chars
+		streamID := "stvalidation00000000000000000000" // Exactly 32 chars
 		actionID := "get_record"
-		argsBytes := []byte{0x01}
+		argsBytes, err := getRecordArgsForTests(dataProvider, streamID)
+		require.NoError(t, err)
 
 		validComponents, err := encodeQueryComponents(dataProvider, streamID, actionID, argsBytes)
 		require.NoError(t, err)
@@ -205,9 +207,10 @@ func testCreateMarketDuplicateHash(t *testing.T) func(ctx context.Context, platf
 
 		// Encode query components
 		dataProvider := userAddr.Address()
-		streamID := "stduplicate0000000000000000000000" // Exactly 32 chars
+		streamID := "stduplicate000000000000000000000" // Exactly 32 chars
 		actionID := "get_record"
-		argsBytes := []byte{0x01}
+		argsBytes, err := getRecordArgsForTests(dataProvider, streamID)
+		require.NoError(t, err)
 
 		queryComponents, err := encodeQueryComponents(dataProvider, streamID, actionID, argsBytes)
 		require.NoError(t, err)
@@ -239,7 +242,8 @@ func testCreateMarketInsufficientBalance(t *testing.T) func(ctx context.Context,
 		dataProvider := userAddr.Address()
 		streamID := "stinsufficient000000000000000000" // Exactly 32 chars
 		actionID := "get_record"
-		argsBytes := []byte{0x01}
+		argsBytes, err := getRecordArgsForTests(dataProvider, streamID)
+		require.NoError(t, err)
 
 		queryComponents, err := encodeQueryComponents(dataProvider, streamID, actionID, argsBytes)
 		require.NoError(t, err)
@@ -268,7 +272,8 @@ func testGetMarketInfo(t *testing.T) func(ctx context.Context, platform *kwilTes
 		dataProvider := userAddr.Address()
 		streamID := "stgetmarketinfo00000000000000000" // Exactly 32 chars
 		actionID := "get_index"
-		argsBytes := []byte{0x01, 0x02}
+		argsBytes, err := getRecordArgsForTests(dataProvider, streamID)
+		require.NoError(t, err)
 
 		queryComponents, err := encodeQueryComponents(dataProvider, streamID, actionID, argsBytes)
 		require.NoError(t, err)
@@ -333,7 +338,8 @@ func testListMarkets(t *testing.T) func(ctx context.Context, platform *kwilTesti
 			// Generate exactly 32-char stream ID
 			streamID := fmt.Sprintf("stlistmarkets%02d00000000000000000", i)[:32]
 			actionID := "get_record"
-			argsBytes := []byte{byte(i)}
+			argsBytes, err := getRecordArgsForTests(dataProvider, streamID)
+			require.NoError(t, err)
 			queryComponents, err := encodeQueryComponents(dataProvider, streamID, actionID, argsBytes)
 			require.NoError(t, err)
 			settleTime := time.Now().Add(time.Duration(i+1) * time.Hour).Unix()
@@ -367,7 +373,8 @@ func testMarketExists(t *testing.T) func(ctx context.Context, platform *kwilTest
 		dataProvider := userAddr.Address()
 		streamID := "stmarketexists000000000000000000" // Exactly 32 chars
 		actionID := "get_record"
-		argsBytes := []byte{0x01}
+		argsBytes, err := getRecordArgsForTests(dataProvider, streamID)
+		require.NoError(t, err)
 
 		queryComponents, err := encodeQueryComponents(dataProvider, streamID, actionID, argsBytes)
 		require.NoError(t, err)

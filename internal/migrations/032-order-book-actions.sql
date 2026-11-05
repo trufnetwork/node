@@ -88,6 +88,10 @@ CREATE OR REPLACE ACTION get_bridge_units_per_dollar($bridge TEXT)
  * - The bridge namespace (hoodi_tt2, sepolia_bridge, or ethereum_bridge)
  */
 CREATE OR REPLACE ACTION get_market_bridge($query_id INT) PRIVATE RETURNS (bridge TEXT) {
+    if $query_id IS NULL {
+        ERROR('query_id is required');
+    }
+
     $found_bridge TEXT;
 
     for $row in SELECT bridge FROM ob_queries WHERE id = $query_id {
@@ -110,7 +114,8 @@ CREATE OR REPLACE ACTION get_market_bridge($query_id INT) PRIVATE RETURNS (bridg
  *
  * Parameters:
  * - $bridge: Bridge namespace for collateral (hoodi_tt2, sepolia_bridge, ethereum_bridge)
- * - $query_components: ABI-encoded (address data_provider, bytes32 stream_id, string action_id, bytes args)
+ * - $query_components: ABI-encoded (address data_provider, bytes32 stream_id, string action_id, bytes args).
+ *                      The args must start with the same data_provider and stream_id.
  * - $settle_time: Unix timestamp when market can be settled (must be in future)
  * - $max_spread: DEPRECATED — accepted, validated, and stored, but no longer
  *                consumed. LP reward eligibility uses a dynamic spread
@@ -139,8 +144,14 @@ CREATE OR REPLACE ACTION create_market(
     -- Validate bridge parameter
     validate_bridge($bridge);
 
-    -- Validate query components (must be ABI-encoded)
-    if $query_components IS NULL OR length(encode($query_components, 'hex')) = 0 {
+    -- Validate query components (must be ABI-encoded).
+    -- Here and in the actions below, NULL is checked on its own: kwil
+    -- evaluates TRUE OR NULL as NULL, so a combined "IS NULL OR ..."
+    -- condition is skipped for a NULL argument.
+    if $query_components IS NULL {
+        ERROR('query_components is required (ABI-encoded (address,bytes32,string,bytes))');
+    }
+    if length(encode($query_components, 'hex')) = 0 {
         ERROR('query_components is required (ABI-encoded (address,bytes32,string,bytes))');
     }
 
@@ -156,6 +167,30 @@ CREATE OR REPLACE ACTION create_market(
         ERROR('Invalid query_components: computed hash must be 32 bytes');
     }
 
+    -- The query action must be on the attestation allowlist. request_attestation
+    -- refuses any other, so a market on it could never be captured or settled.
+    -- compute_attestation_hash still knows ids that have left the allowlist.
+    -- The data provider and stream in the header must also be the first two
+    -- args, which name the stream the action reads.
+    $market_action TEXT;
+    $header_data_provider BYTEA;
+    $header_stream_id BYTEA;
+    $query_args BYTEA;
+    for $row in tn_utils.unpack_query_components($query_components) {
+        $market_action := $row.action_id;
+        $header_data_provider := $row.data_provider;
+        $header_stream_id := $row.stream_id;
+        $query_args := $row.args;
+    }
+    $market_action_allowed BOOL := false;
+    for $row in SELECT 1 AS present FROM attestation_actions WHERE action_name = $market_action {
+        $market_action_allowed := true;
+    }
+    if NOT $market_action_allowed {
+        ERROR('Action not allowed for attestation: ' || COALESCE($market_action, 'NULL'));
+    }
+    tn_utils.validate_query_stream($header_data_provider, $header_stream_id, $query_args);
+
     -- Check for duplicate market (hash must be unique)
     $existing_id INT;
     for $row in SELECT id FROM ob_queries WHERE hash = $query_hash {
@@ -167,17 +202,26 @@ CREATE OR REPLACE ACTION create_market(
 
     -- Validate settlement time (must be in the future)
     -- Use @block_timestamp (unix epoch seconds of current block)
-    if $settle_time IS NULL OR $settle_time <= @block_timestamp {
+    if $settle_time IS NULL {
+        ERROR('settle_time is required');
+    }
+    if $settle_time <= @block_timestamp {
         ERROR('Settlement time must be in the future');
     }
 
     -- Validate max_spread (1-50 price-points)
-    if $max_spread IS NULL OR $max_spread < 1 OR $max_spread > 50 {
+    if $max_spread IS NULL {
+        ERROR('max_spread is required');
+    }
+    if $max_spread < 1 OR $max_spread > 50 {
         ERROR('Max spread must be between 1 and 50 (price-points)');
     }
 
     -- Validate min_order_size (must be positive)
-    if $min_order_size IS NULL OR $min_order_size < 1 {
+    if $min_order_size IS NULL {
+        ERROR('min_order_size is required');
+    }
+    if $min_order_size < 1 {
         ERROR('Minimum order size must be positive');
     }
 
@@ -455,6 +499,9 @@ PUBLIC VIEW RETURNS (market_exists BOOLEAN) {
  * - FIFO ordering (earlier orders matched first via last_updated timestamp)
  * - Partial fills (order remains open if not fully matched)
  * - Atomic execution (all updates succeed or all fail)
+ * - A fill budget: each match type makes at most $fills_left fills per call
+ *   (match_orders passes 100). Orders that still cross once the budget is
+ *   spent stay on the book until a later order in the same market matches them.
  */
 
 -- =============================================================================
@@ -479,21 +526,31 @@ PUBLIC VIEW RETURNS (market_exists BOOLEAN) {
  * Recursion Behavior:
  * - Uses tail recursion to process multiple matches sequentially
  * - Each iteration matches one order pair and removes/reduces them from ob_positions
- * - Natural termination when no more overlapping orders exist
- * - Maximum depth is bounded by the number of orders in the order book
+ * - Terminates when no more overlapping orders exist or $fills_left reaches 0
+ * - Maximum depth is $fills_left
  *
  * Parameters:
  * - $query_id: Market identifier
  * - $outcome: TRUE (YES) or FALSE (NO)
  * - $price: Unused (kept for call-site compatibility). Sweep finds best overlap.
  * - $bridge: Bridge identifier for collateral operations
+ * - $fills_left: Fills this call may still make
  */
 CREATE OR REPLACE ACTION match_direct(
     $query_id INT,
     $outcome BOOL,
     $price INT,
-    $bridge TEXT
+    $bridge TEXT,
+    $fills_left INT
 ) PRIVATE {
+    -- Budget spent (or missing): leave any remaining overlap for a later call
+    if $fills_left IS NULL {
+        RETURN;
+    }
+    if $fills_left < 1 {
+        RETURN;
+    }
+
     -- Find the cheapest sell order (best ask)
     $sell_price INT;
     $sell_participant_id INT;
@@ -651,7 +708,7 @@ CREATE OR REPLACE ACTION match_direct(
       AND amount > $match_amount;
 
     -- Recursively call to match next overlapping orders
-    match_direct($query_id, $outcome, $price, $bridge);
+    match_direct($query_id, $outcome, $price, $bridge, $fills_left - 1);
 };
 
 -- =============================================================================
@@ -670,27 +727,32 @@ CREATE OR REPLACE ACTION match_direct(
  * Recursion Behavior:
  * - Uses tail recursion to process multiple mint matches sequentially
  * - Each iteration mints one share pair and removes/reduces buy orders from ob_positions
- * - Recursion depth = number of share pairs minted at these complementary price levels
- * - Natural termination when no more complementary buy orders exist (LIMIT 1 returns nothing)
- * - Maximum depth is bounded by the number of buy orders in the order book
- * - In practice, depth rarely exceeds 10-20 due to:
- *   * Economic constraints (gas costs for creating many small orders)
- *   * Market maker behavior (traders prefer larger consolidated orders)
- *   * Natural order book dynamics
- * - Worst case: One large YES buy matching 100+ tiny NO buys requires 100+ separate
- *   transactions to create those orders, making it economically impractical
+ * - Recursion depth = number of fills made at these complementary price levels
+ * - Terminates when no more complementary buy orders exist (LIMIT 1 returns nothing)
+ *   or $fills_left reaches 0
+ * - Maximum depth is $fills_left
  *
  * Parameters:
  * - $query_id: Market identifier
  * - $yes_price: YES buy order price (e.g., 56)
  * - $no_price: NO buy order price (must sum to 100, e.g., 44)
+ * - $fills_left: Fills this call may still make
  */
 CREATE OR REPLACE ACTION match_mint(
     $query_id INT,
     $yes_price INT,
     $no_price INT,
-    $bridge TEXT
+    $bridge TEXT,
+    $fills_left INT
 ) PRIVATE {
+    -- Budget spent (or missing): leave any remaining overlap for a later call
+    if $fills_left IS NULL {
+        RETURN;
+    }
+    if $fills_left < 1 {
+        RETURN;
+    }
+
     -- Validate complementary prices (must sum to 100)
     if ($yes_price + $no_price) != 100 {
         RETURN;
@@ -802,7 +864,7 @@ CREATE OR REPLACE ACTION match_mint(
       AND amount > $mint_amount;
 
     -- Recursively match next orders
-    match_mint($query_id, $yes_price, $no_price, $bridge);
+    match_mint($query_id, $yes_price, $no_price, $bridge, $fills_left - 1);
 };
 
 -- =============================================================================
@@ -823,27 +885,32 @@ CREATE OR REPLACE ACTION match_mint(
  * Recursion Behavior:
  * - Uses tail recursion to process multiple burn matches sequentially
  * - Each iteration burns one share pair and removes/reduces sell orders from ob_positions
- * - Recursion depth = number of share pairs burned at these complementary price levels
- * - Natural termination when no more complementary sell orders exist (LIMIT 1 returns nothing)
- * - Maximum depth is bounded by the number of sell orders in the order book
- * - In practice, depth rarely exceeds 10-20 due to:
- *   * Economic constraints (gas costs for creating many small orders)
- *   * Market maker behavior (traders prefer larger consolidated orders)
- *   * Natural order book dynamics
- * - Worst case: One large YES sell matching 100+ tiny NO sells requires 100+ separate
- *   transactions to create those orders, making it economically impractical
+ * - Recursion depth = number of fills made at these complementary price levels
+ * - Terminates when no more complementary sell orders exist (LIMIT 1 returns nothing)
+ *   or $fills_left reaches 0
+ * - Maximum depth is $fills_left
  *
  * Parameters:
  * - $query_id: Market identifier
  * - $yes_price: YES sell order price (e.g., 60)
  * - $no_price: NO sell order price (must sum to 100, e.g., 40)
+ * - $fills_left: Fills this call may still make
  */
 CREATE OR REPLACE ACTION match_burn(
     $query_id INT,
     $yes_price INT,
     $no_price INT,
-    $bridge TEXT
+    $bridge TEXT,
+    $fills_left INT
 ) PRIVATE {
+    -- Budget spent (or missing): leave any remaining overlap for a later call
+    if $fills_left IS NULL {
+        RETURN;
+    }
+    if $fills_left < 1 {
+        RETURN;
+    }
+
     -- Bridge token base units per $1.00 of collateral (single source of truth).
     $units_per_dollar NUMERIC(78, 0) := get_bridge_units_per_dollar($bridge);
 
@@ -973,7 +1040,57 @@ CREATE OR REPLACE ACTION match_burn(
       AND amount > $burn_amount;
 
     -- Recursively match next orders
-    match_burn($query_id, $yes_price, $no_price, $bridge);
+    match_burn($query_id, $yes_price, $no_price, $bridge, $fills_left - 1);
+};
+
+-- =============================================================================
+-- ob_book_crosses: Whether one outcome still has a bid at or above an ask
+-- =============================================================================
+/**
+ * match_direct stops when its fill budget is spent, which can leave a bid at or
+ * above an ask on the book. match_orders checks both outcomes with this before
+ * it mints or burns. Mint and burn fill at fixed prices, so running them while
+ * a book crosses could fill an order at its limit while a better price rests.
+ *
+ * Parameters:
+ * - $query_id: Market identifier
+ * - $outcome: TRUE (YES) or FALSE (NO)
+ */
+CREATE OR REPLACE ACTION ob_book_crosses($query_id INT, $outcome BOOL)
+PRIVATE VIEW RETURNS (crosses BOOL) {
+    $best_ask INT;
+    for $ask in
+        SELECT price
+        FROM ob_positions
+        WHERE query_id = $query_id
+          AND outcome = $outcome
+          AND price > 0          -- Sell orders have positive price
+        ORDER BY price ASC
+        LIMIT 1
+    {
+        $best_ask := $ask.price;
+    }
+    if $best_ask IS NULL {
+        RETURN false;
+    }
+
+    $best_bid_neg INT;
+    for $bid in
+        SELECT price
+        FROM ob_positions
+        WHERE query_id = $query_id
+          AND outcome = $outcome
+          AND price < 0          -- Buy orders have negative price
+        ORDER BY price ASC       -- Most negative first = highest buy price
+        LIMIT 1
+    {
+        $best_bid_neg := $bid.price;
+    }
+    if $best_bid_neg IS NULL {
+        RETURN false;
+    }
+
+    RETURN (0 - $best_bid_neg) >= $best_ask;
 };
 
 -- =============================================================================
@@ -987,6 +1104,13 @@ CREATE OR REPLACE ACTION match_burn(
  * 1. Direct match with price-crossing (buy_price >= sell_price)
  * 2. Mint match (creates liquidity, exact complementary prices)
  * 3. Burn match (removes liquidity, exact complementary prices)
+ *
+ * Each match type makes at most $max_fills fills per call, which bounds the
+ * work a single order can trigger. Orders that still cross once a budget is
+ * spent stay on the book until a later order in the same market matches them.
+ * While either outcome's book still crosses after the direct match, the call
+ * skips mint and burn, so those fixed-price fills never jump a better price.
+ * The next order on the crossing outcome fills that pair directly.
  *
  * Parameters:
  * - $query_id: Market identifier
@@ -1011,9 +1135,15 @@ CREATE OR REPLACE ACTION match_orders(
         ERROR('outcome is required for matching');
     }
 
-    if $price IS NULL OR $price < 1 OR $price > 99 {
+    if $price IS NULL {
+        ERROR('price is required for matching');
+    }
+    if $price < 1 OR $price > 99 {
         ERROR('price must be between 1 and 99 for matching');
     }
+
+    -- Fill budget for each match type below
+    $max_fills INT := 100;
 
     -- ==========================================================================
     -- SECTION 2: TRY DIRECT MATCH (with price-crossing)
@@ -1021,7 +1151,15 @@ CREATE OR REPLACE ACTION match_orders(
     -- Sweeps to find the best overlapping buy/sell pair (buy_price >= sell_price)
     -- Match executes at sell price; buyer is refunded price difference
 
-    match_direct($query_id, $outcome, $price, $bridge);
+    match_direct($query_id, $outcome, $price, $bridge, $max_fills);
+
+    -- A spent direct budget can leave a book crossing. Mint and burn fill at
+    -- fixed prices, so they wait until a later call fills that pair directly.
+    $yes_book_crosses BOOL := ob_book_crosses($query_id, true);
+    $no_book_crosses BOOL := ob_book_crosses($query_id, false);
+    if $yes_book_crosses OR $no_book_crosses {
+        RETURN;
+    }
 
     -- ==========================================================================
     -- SECTION 3: TRY MINT MATCH
@@ -1037,10 +1175,10 @@ CREATE OR REPLACE ACTION match_orders(
         -- Match based on which outcome we're matching for
         if $outcome = true {
             -- Matching YES order: look for NO buy at complementary price
-            match_mint($query_id, $price, $complementary_price, $bridge);
+            match_mint($query_id, $price, $complementary_price, $bridge, $max_fills);
         } else {
             -- Matching NO order: look for YES buy at complementary price
-            match_mint($query_id, $complementary_price, $price, $bridge);
+            match_mint($query_id, $complementary_price, $price, $bridge, $max_fills);
         }
     }
 
@@ -1054,10 +1192,10 @@ CREATE OR REPLACE ACTION match_orders(
         -- Match based on which outcome we're matching for
         if $outcome = true {
             -- Matching YES order: look for NO sell at complementary price
-            match_burn($query_id, $price, $complementary_price, $bridge);
+            match_burn($query_id, $price, $complementary_price, $bridge, $max_fills);
         } else {
             -- Matching NO order: look for YES sell at complementary price
-            match_burn($query_id, $complementary_price, $price, $bridge);
+            match_burn($query_id, $complementary_price, $price, $bridge, $max_fills);
         }
     }
 
@@ -1123,11 +1261,17 @@ CREATE OR REPLACE ACTION place_buy_order(
         ERROR('outcome is required (TRUE for YES, FALSE for NO)');
     }
 
-    if $price IS NULL OR $price < 1 OR $price > 99 {
+    if $price IS NULL {
+        ERROR('price is required');
+    }
+    if $price < 1 OR $price > 99 {
         ERROR('price must be between 1 and 99 ($0.01 to $0.99)');
     }
 
-    if $amount IS NULL OR $amount <= 0 {
+    if $amount IS NULL {
+        ERROR('amount is required');
+    }
+    if $amount <= 0 {
         ERROR('amount must be positive');
     }
 
@@ -1162,6 +1306,9 @@ CREATE OR REPLACE ACTION place_buy_order(
     if @block_timestamp >= $settle_time {
         ERROR('Trading is closed. Market has passed its settlement time.');
     }
+
+    -- 1.5 Refuse while the owner has paused new collateral on this bridge (060)
+    ob_check_collateral_lock_open($bridge);
 
     -- ==========================================================================
     -- SECTION 2: CALCULATE COLLATERAL NEEDED
@@ -1330,11 +1477,17 @@ CREATE OR REPLACE ACTION place_sell_order(
         ERROR('outcome is required (TRUE for YES, FALSE for NO)');
     }
 
-    if $price IS NULL OR $price < 1 OR $price > 99 {
+    if $price IS NULL {
+        ERROR('price is required');
+    }
+    if $price < 1 OR $price > 99 {
         ERROR('price must be between 1 and 99 ($0.01 to $0.99)');
     }
 
-    if $amount IS NULL OR $amount <= 0 {
+    if $amount IS NULL {
+        ERROR('amount is required');
+    }
+    if $amount <= 0 {
         ERROR('amount must be positive');
     }
 
@@ -1547,11 +1700,17 @@ CREATE OR REPLACE ACTION place_split_limit_order(
         ERROR('query_id is required');
     }
 
-    if $true_price IS NULL OR $true_price < 1 OR $true_price > 99 {
+    if $true_price IS NULL {
+        ERROR('true_price is required');
+    }
+    if $true_price < 1 OR $true_price > 99 {
         ERROR('true_price must be between 1 and 99 ($0.01 to $0.99)');
     }
 
-    if $amount IS NULL OR $amount <= 0 {
+    if $amount IS NULL {
+        ERROR('amount is required');
+    }
+    if $amount <= 0 {
         ERROR('amount must be positive');
     }
 
@@ -1586,6 +1745,9 @@ CREATE OR REPLACE ACTION place_split_limit_order(
     if @block_timestamp >= $settle_time {
         ERROR('Trading is closed. Market has passed its settlement time.');
     }
+
+    -- 1.5 Refuse while the owner has paused new collateral on this bridge (060)
+    ob_check_collateral_lock_open($bridge);
 
     -- ==========================================================================
     -- SECTION 2: CALCULATE COLLATERAL NEEDED
@@ -1807,7 +1969,10 @@ CREATE OR REPLACE ACTION cancel_order(
     -- ==========================================================================
 
     -- Validate query_id
-    if $query_id IS NULL OR $query_id < 1 {
+    if $query_id IS NULL {
+        ERROR('query_id is required');
+    }
+    if $query_id < 1 {
         ERROR('Invalid query_id');
     }
 
@@ -1820,7 +1985,10 @@ CREATE OR REPLACE ACTION cancel_order(
     -- Buy orders: -99 to -1 (negative)
     -- Sell orders: 1 to 99 (positive)
     -- Holdings: 0 (NOT allowed - holdings cannot be cancelled, use place_sell_order to list)
-    if $price IS NULL OR $price < -99 OR $price > 99 OR $price = 0 {
+    if $price IS NULL {
+        ERROR('price is required');
+    }
+    if $price < -99 OR $price > 99 OR $price = 0 {
         ERROR('Price must be between -99 and 99 (excluding 0). Holdings (price=0) cannot be cancelled.');
     }
 
@@ -1998,6 +2166,7 @@ CREATE OR REPLACE ACTION cancel_order(
  * - If market doesn't exist or is already settled
  * - If old order doesn't exist at specified price
  * - If insufficient balance for collateral increase
+ * - If the owner has paused new collateral on the market's bridge (collateral increase only; see 060)
  *
  * Examples:
  *   change_bid(1, TRUE, -54, -50, 100)   -- Adjust buy from $0.54 to $0.50 (lower price)
@@ -2025,7 +2194,10 @@ CREATE OR REPLACE ACTION change_bid(
     -- SECTION 2: VALIDATE PARAMETERS
     -- ==========================================================================
 
-    if $query_id IS NULL OR $query_id < 1 {
+    if $query_id IS NULL {
+        ERROR('query_id is required');
+    }
+    if $query_id < 1 {
         ERROR('Invalid query_id');
     }
 
@@ -2034,12 +2206,18 @@ CREATE OR REPLACE ACTION change_bid(
     }
 
     -- Validate old_price (must be negative for buy orders)
-    if $old_price IS NULL OR $old_price >= 0 OR $old_price < -99 {
+    if $old_price IS NULL {
+        ERROR('old_price is required');
+    }
+    if $old_price >= 0 OR $old_price < -99 {
         ERROR('Old price must be negative (buy order) between -99 and -1');
     }
 
     -- Validate new_price (must be negative for buy orders)
-    if $new_price IS NULL OR $new_price >= 0 OR $new_price < -99 {
+    if $new_price IS NULL {
+        ERROR('new_price is required');
+    }
+    if $new_price >= 0 OR $new_price < -99 {
         ERROR('New price must be negative (buy order) between -99 and -1');
     }
 
@@ -2049,7 +2227,10 @@ CREATE OR REPLACE ACTION change_bid(
     }
 
     -- Validate amount
-    if $new_amount IS NULL OR $new_amount <= 0 {
+    if $new_amount IS NULL {
+        ERROR('new_amount is required');
+    }
+    if $new_amount <= 0 {
         ERROR('New amount must be positive');
     }
 
@@ -2133,6 +2314,9 @@ CREATE OR REPLACE ACTION change_bid(
 
     if $collateral_delta > $zero {
         -- New order needs MORE collateral
+        -- Refuse while the owner has paused new collateral on this bridge (060)
+        ob_check_collateral_lock_open($bridge);
+
         -- Lock additional amount (will ERROR if insufficient balance)
         if $bridge = 'hoodi_tt2' {
             hoodi_tt2.lock($collateral_delta);
@@ -2283,7 +2467,10 @@ CREATE OR REPLACE ACTION change_ask(
     -- SECTION 2: VALIDATE PARAMETERS
     -- ==========================================================================
 
-    if $query_id IS NULL OR $query_id < 1 {
+    if $query_id IS NULL {
+        ERROR('query_id is required');
+    }
+    if $query_id < 1 {
         ERROR('Invalid query_id');
     }
 
@@ -2292,12 +2479,18 @@ CREATE OR REPLACE ACTION change_ask(
     }
 
     -- Validate old_price (must be positive for sell orders)
-    if $old_price IS NULL OR $old_price <= 0 OR $old_price > 99 {
+    if $old_price IS NULL {
+        ERROR('old_price is required');
+    }
+    if $old_price <= 0 OR $old_price > 99 {
         ERROR('Old price must be positive (sell order) between 1 and 99');
     }
 
     -- Validate new_price (must be positive for sell orders)
-    if $new_price IS NULL OR $new_price <= 0 OR $new_price > 99 {
+    if $new_price IS NULL {
+        ERROR('new_price is required');
+    }
+    if $new_price <= 0 OR $new_price > 99 {
         ERROR('New price must be positive (sell order) between 1 and 99');
     }
 
@@ -2307,7 +2500,10 @@ CREATE OR REPLACE ACTION change_ask(
     }
 
     -- Validate amount
-    if $new_amount IS NULL OR $new_amount <= 0 {
+    if $new_amount IS NULL {
+        ERROR('new_amount is required');
+    }
+    if $new_amount <= 0 {
         ERROR('New amount must be positive');
     }
 
@@ -2512,7 +2708,10 @@ CREATE OR REPLACE ACTION settle_market(
     $query_id INT
 ) PUBLIC {
     -- Quick input validation before integrity checks
-    if $query_id IS NULL OR $query_id < 1 {
+    if $query_id IS NULL {
+        ERROR('query_id is required');
+    }
+    if $query_id < 1 {
         ERROR('Invalid query_id');
     }
 
@@ -2564,9 +2763,11 @@ CREATE OR REPLACE ACTION settle_market(
     -- Block settlement if vault collateral doesn't match obligations
     -- NOTE: Multi-market limitation - vault_balance is GLOBAL (all markets combined),
     -- so collateral validation is only performed for markets with actual positions.
-    -- Empty markets (total_true=0, total_false=0) skip this check since they have
-    -- no collateral obligations and the vault may contain funds from other markets.
-    if $total_true > 0 OR $total_false > 0 {
+    -- A market pays out of the vault for its shares and refunds its open buy
+    -- orders, so either one makes this check run. Empty markets (no shares and
+    -- no open buys) skip it since they have no collateral obligations and the
+    -- vault may contain funds from other markets.
+    if COALESCE($total_true, 0) > 0 OR COALESCE($total_false, 0) > 0 OR COALESCE($open_buys_value, 0) > 0 {
         if NOT $valid_collateral {
             ERROR('Cannot settle market: Vault collateral mismatch. Expected=' ||
                   COALESCE($expected_collateral::TEXT, 'NULL') || ' base units, Actual=' || COALESCE($vault_balance::TEXT, 'NULL') ||

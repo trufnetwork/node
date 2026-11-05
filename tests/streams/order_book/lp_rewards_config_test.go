@@ -281,7 +281,7 @@ func testGetActiveMarketsForSampling(t *testing.T) func(context.Context, *kwilTe
 		require.NoError(t, err)
 
 		// Create a market (will be active/unsettled)
-		queryComponents, err := encodeQueryComponentsForTests(user.Address(), "sttest00000000000000000000000057", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user.Address(), "sttest00000000000000000000000057", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
