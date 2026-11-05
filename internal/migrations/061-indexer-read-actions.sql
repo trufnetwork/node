@@ -17,23 +17,24 @@
  *   get_order_book_max_ids         ob_net_impacts (043), ob_order_events (044)
  *   list_transaction_events        transaction_events (026)
  *
- * Paging. Each paged list_* action returns rows in the order of a key and takes the
+ * Paging. Each paged action returns rows in the order of a key and takes the
  * key of the last row already read as its cursor, so the next call starts
  * right after that row. A cursor never skips a row, wherever a page boundary
- * falls (list_order_events notes the one case where ids restart). A NULL in a cursor sorts before every value: an all-NULL cursor
- * starts at the first row, and a NULL second part starts at the first row
- * whose first part is the one given. The ids these tables generate start at 1.
+ * falls. A NULL in a cursor sorts before every value: an all-NULL cursor
+ * starts at the first row, and a cursor whose later parts are NULL starts at
+ * the first row that matches its earlier parts. The ids these tables generate
+ * start at 1.
  *
  * Page size. $limit is between 1 and 1000, and NULL means 1000. A larger value
  * is refused rather than cut down: a caller that reads "fewer rows than I
  * asked for" as "no rows left" would otherwise stop at the cap and believe it
  * had read everything.
  *
- * Every cursor walks a primary key or an existing index, and
- * get_market_positions reads one market through the primary key of
- * ob_positions. get_open_interest_by_bridge reads every market and every open
- * position, and list_markets_with_positions every open position: settlement
- * deletes a market's positions, so that is the open book, not its history.
+ * Every cursor walks a primary key or an existing index; list_order_events
+ * walks the block_height index and sorts the events of each block by id.
+ * get_open_interest_by_bridge reads every market and every open position, and
+ * list_markets_with_positions every open position: settlement deletes a
+ * market's positions, so that is the open book, not its history.
  *
  * References no bridge namespace, so there is no dev/prod twin.
  */
@@ -121,15 +122,25 @@ PUBLIC VIEW RETURNS TABLE(
 -- =============================================================================
 /**
  * Holdings (price 0), asks (price > 0) and bids (price < 0), in primary key
- * order. This is the market's whole book: the rows get_order_book returns for
- * both outcomes, plus holdings. Its size is bounded by the market, not by a
- * page.
+ * order. Read to the end, this is the market's whole book: the rows
+ * get_order_book returns for both outcomes, plus holdings.
+ *
+ * The cursor is the last row's (participant_id, outcome, price), the primary
+ * key of ob_positions after query_id. One holder can have rows on both
+ * outcomes and at several prices, so a cursor on the participant alone would
+ * skip the rest of a holder that a page boundary splits. FALSE sorts before
+ * TRUE. ($p, NULL, NULL) starts at the first row of participant $p, and
+ * ($p, $o, NULL) at its first row on outcome $o.
  *
  * Usage:
- *   kwil-cli call-action get_market_positions int:1
+ *   kwil-cli call-action get_market_positions int:1 int:null bool:null int:null int:1000
  */
 CREATE OR REPLACE ACTION get_market_positions(
-    $query_id INT
+    $query_id INT,
+    $after_participant_id INT,
+    $after_outcome BOOL,
+    $after_price INT,
+    $limit INT
 ) PUBLIC VIEW RETURNS TABLE(
     participant_id INT,
     wallet_address BYTEA,
@@ -138,12 +149,22 @@ CREATE OR REPLACE ACTION get_market_positions(
     amount INT8
 ) {
     if $query_id IS NULL { ERROR('query_id is required'); }
+    if $limit IS NULL { $limit := 1000; }
+    if $limit < 1 OR $limit > 1000 { ERROR('limit must be between 1 and 1000'); }
+    if $after_participant_id IS NULL { $after_participant_id := 0; }
 
     RETURN SELECT p.participant_id, part.wallet_address, p.outcome, p.price, p.amount
     FROM ob_positions p
     LEFT JOIN ob_participants part ON part.id = p.participant_id
     WHERE p.query_id = $query_id
-    ORDER BY p.participant_id ASC, p.outcome ASC, p.price ASC;
+      AND p.participant_id >= $after_participant_id
+      AND (p.participant_id > $after_participant_id
+           OR $after_outcome IS NULL
+           OR p.outcome > $after_outcome
+           OR (p.outcome = $after_outcome
+               AND ($after_price IS NULL OR p.price > $after_price)))
+    ORDER BY p.participant_id ASC, p.outcome ASC, p.price ASC
+    LIMIT $limit;
 };
 
 -- =============================================================================
@@ -320,19 +341,27 @@ CREATE OR REPLACE ACTION list_net_impacts(
 };
 
 -- =============================================================================
--- list_order_events: order events in id order, after a cursor.
+-- list_order_events: order events in block order, after a cursor.
 -- =============================================================================
 /**
- * Rows of ob_order_events with the acting participant's wallet. The node
- * trims events older than a retention window (044), so it holds only recent
- * ones. Ids are MAX(id) + 1, so a trim that removes every event makes them
- * start again at 1; get_order_book_max_ids falling below a reader's cursor is
- * how that shows.
+ * Rows of ob_order_events with the acting participant's wallet, in
+ * (block_height, id) order. The node trims events older than a retention
+ * window (044), so it holds only recent ones.
+ *
+ * The cursor is the last row's (block_height, id). Ids are MAX(id) + 1, so a
+ * trim that removes every event makes them start again at 1, and new events
+ * can then take ids at or below a reader's cursor. A call sees only committed
+ * blocks, so every event recorded after a page was read is in a later block
+ * than that page's last row, and a cursor that leads with the block height
+ * reads it whatever its id. An id alone names an event only until such a
+ * restart; (block_height, id) names it for good. ($h, NULL) starts at the
+ * first event of block $h.
  *
  * Usage:
- *   kwil-cli call-action list_order_events int:0 int:1000
+ *   kwil-cli call-action list_order_events int:null int:null int:1000
  */
 CREATE OR REPLACE ACTION list_order_events(
+    $after_height INT8,
     $after_id INT8,
     $limit INT
 ) PUBLIC VIEW RETURNS TABLE(
@@ -351,24 +380,37 @@ CREATE OR REPLACE ACTION list_order_events(
 ) {
     if $limit IS NULL { $limit := 1000; }
     if $limit < 1 OR $limit > 1000 { ERROR('limit must be between 1 and 1000'); }
-    if $after_id IS NULL { $after_id := 0; }
+    -- Block heights are never negative, so -1 starts before every event.
+    if $after_height IS NULL { $after_height := -1; }
 
     RETURN SELECT e.id, e.tx_hash, e.query_id, e.participant_id, part.wallet_address,
                   e.event_type, e.outcome, e.price, e.amount, e.counterparty_id,
                   e.block_height, e.block_timestamp
     FROM ob_order_events e
     LEFT JOIN ob_participants part ON part.id = e.participant_id
-    WHERE e.id > $after_id
-    ORDER BY e.id ASC
+    WHERE e.block_height >= $after_height
+      AND (e.block_height > $after_height
+           OR $after_id IS NULL
+           OR e.id > $after_id)
+    ORDER BY e.block_height ASC, e.id ASC
     LIMIT $limit;
 };
 
 -- =============================================================================
--- get_order_book_max_ids: the highest net impact and order event ids.
+-- get_order_book_max_ids: the highest net impact id and the newest order event.
 -- =============================================================================
 /**
- * Each is NULL when its table is empty. A reader compares them with its
- * cursors before paging with list_net_impacts and list_order_events.
+ * max_net_impact_id is the highest net impact id. max_order_event_height and
+ * max_order_event_id are the block height and id of the newest order event,
+ * the last row list_order_events returns. Each is NULL when its table is
+ * empty.
+ *
+ * A reader compares them with its cursors before paging with
+ * list_net_impacts and list_order_events. There are order events to read when
+ * max_order_event_height is above the cursor's height, or equal to it with
+ * max_order_event_id above the cursor's id. The id alone cannot tell: after a
+ * trim restarts the ids, the newest id can be below, at or above the cursor's
+ * id while the reader has read none of the events.
  *
  * Usage:
  *   kwil-cli call-action get_order_book_max_ids
@@ -376,6 +418,7 @@ CREATE OR REPLACE ACTION list_order_events(
 CREATE OR REPLACE ACTION get_order_book_max_ids()
 PUBLIC VIEW RETURNS (
     max_net_impact_id INT,
+    max_order_event_height INT8,
     max_order_event_id INT8
 ) {
     $max_net_impact_id INT;
@@ -383,12 +426,16 @@ PUBLIC VIEW RETURNS (
         $max_net_impact_id := $n.max_id;
     }
 
+    $max_order_event_height INT8;
     $max_order_event_id INT8;
-    for $e in SELECT MAX(id)::INT8 AS max_id FROM ob_order_events {
-        $max_order_event_id := $e.max_id;
+    for $e in SELECT block_height, id FROM ob_order_events
+              ORDER BY block_height DESC, id DESC
+              LIMIT 1 {
+        $max_order_event_height := $e.block_height;
+        $max_order_event_id := $e.id;
     }
 
-    RETURN $max_net_impact_id, $max_order_event_id;
+    RETURN $max_net_impact_id, $max_order_event_height, $max_order_event_id;
 };
 
 -- =============================================================================

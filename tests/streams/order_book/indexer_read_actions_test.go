@@ -34,8 +34,10 @@ func TestIndexerReadActions(t *testing.T) {
 		FunctionTests: []kwilTesting.TestFunc{
 			testIndexerReadsOnAnEmptyNode(t),
 			testIndexerReadsMarketsAndPositions(t),
+			testIndexerReadsALargeBook(t),
 			testIndexerReadsFeeDistributions(t),
 			testIndexerReadsTradesAndOrderEvents(t),
+			testIndexerReadsOrderEventsAcrossARestart(t),
 			testIndexerReadsTransactionEvents(t),
 			testIndexerReadsRefuseBadPageSizes(t),
 		},
@@ -74,7 +76,7 @@ var (
 		"event_type text", "outcome bool", "price int8", "amount int8", "counterparty_id int8",
 		"block_height int8", "block_timestamp int8",
 	}
-	irMaxIDColumns   = []string{"max_net_impact_id int8", "max_order_event_id int8"}
+	irMaxIDColumns   = []string{"max_net_impact_id int8", "max_order_event_height int8", "max_order_event_id int8"}
 	irTxEventColumns = []string{
 		"tx_id text", "block_height int8", "method_id int8", "caller text",
 		"fee_amount numeric(78,0)", "fee_recipient text", "metadata text",
@@ -111,13 +113,13 @@ func testIndexerReadsOnAnEmptyNode(t *testing.T) func(context.Context, *kwilTest
 		}{
 			{"list_markets_after", []any{nil, nil}, irMarketColumns},
 			{"get_open_interest_by_bridge", nil, irOpenInterestColumns},
-			{"get_market_positions", []any{int64(1)}, irPositionColumns},
+			{"get_market_positions", []any{int64(1), nil, nil, nil, nil}, irPositionColumns},
 			{"list_markets_with_positions", nil, irMarketIDColumns},
 			{"list_fee_distributions", []any{nil, nil}, irDistributionColumns},
 			{"get_latest_fee_distribution", nil, irDistributionColumns},
 			{"list_fee_distribution_details", []any{nil, nil, nil}, irDetailColumns},
 			{"list_net_impacts", []any{nil, nil}, irNetImpactColumns},
-			{"list_order_events", []any{nil, nil}, irOrderEventColumns},
+			{"list_order_events", []any{nil, nil, nil}, irOrderEventColumns},
 			{"list_transaction_events", []any{nil, nil, nil, nil}, irTxEventColumns},
 		}
 		for _, tc := range empty {
@@ -126,32 +128,32 @@ func testIndexerReadsOnAnEmptyNode(t *testing.T) func(context.Context, *kwilTest
 			require.Empty(t, rows, tc.action)
 		}
 
-		// MAX over an empty table is NULL, and the action still returns its row.
-		maxNetImpact, maxOrderEvent := irMaxIDs(t, ctx, platform)
-		require.Nil(t, maxNetImpact)
-		require.Nil(t, maxOrderEvent)
+		// Every value is NULL on empty tables, and the action still returns its row.
+		require.Equal(t, irMaxIDsRow{}, irMaxIDs(t, ctx, platform))
 		return nil
 	}
 }
 
 // testIndexerReadsMarketsAndPositions reads markets in pages, open interest per
-// bridge, and the positions of single markets.
+// bridge, and the positions of single markets in pages.
 func testIndexerReadsMarketsAndPositions(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		irSeedParticipants(t, ctx, platform)
 		markets := irSeedMarkets(t, ctx, platform)
 
-		// Market 1 (eth_truf, open) holds every kind of position; market 3
-		// (eth_truf, settled) still holds a YES holding, which open interest
-		// must not count; market 4 (eth_usdc, open) holds YES only; market 5
-		// (hoodi_tt, open) holds a NO holding and a YES bid, neither of which is
-		// open interest. Markets 2 and 6 have settled and hold nothing.
+		// Market 1 (eth_truf, open) holds every kind of position, and
+		// participant 2 holds NO at two prices; market 3 (eth_truf, settled)
+		// still holds a YES holding, which open interest must not count;
+		// market 4 (eth_usdc, open) holds YES only; market 5 (hoodi_tt, open)
+		// holds a NO holding and a YES bid, neither of which is open interest.
+		// Markets 2 and 6 have settled and hold nothing.
 		irSeedPositions(t, ctx, platform, []irPosition{
 			{QueryID: 1, ParticipantID: 2, Outcome: true, Price: 60, Amount: 30},   // YES ask
 			{QueryID: 1, ParticipantID: 1, Outcome: true, Price: 0, Amount: 100},   // YES holding
 			{QueryID: 1, ParticipantID: 3, Outcome: true, Price: -40, Amount: 50},  // YES bid
 			{QueryID: 1, ParticipantID: 2, Outcome: false, Price: 0, Amount: 100},  // NO holding
 			{QueryID: 1, ParticipantID: 1, Outcome: false, Price: -45, Amount: 10}, // NO bid
+			{QueryID: 1, ParticipantID: 2, Outcome: false, Price: -10, Amount: 7},  // NO bid
 			{QueryID: 3, ParticipantID: 1, Outcome: true, Price: 0, Amount: 999},   // settled market
 			{QueryID: 4, ParticipantID: 1, Outcome: true, Price: 0, Amount: 10},
 			{QueryID: 4, ParticipantID: 1, Outcome: true, Price: 1, Amount: 5},
@@ -180,15 +182,45 @@ func testIndexerReadsMarketsAndPositions(t *testing.T) func(context.Context, *kw
 
 		// The whole book of market 1, holdings included, in primary key order,
 		// with each holder's wallet.
-		require.Equal(t, []irMarketPosition{
+		book := []irMarketPosition{
 			{ParticipantID: 1, Wallet: irWallet1, Outcome: false, Price: -45, Amount: 10},
 			{ParticipantID: 1, Wallet: irWallet1, Outcome: true, Price: 0, Amount: 100},
+			{ParticipantID: 2, Wallet: irWallet2, Outcome: false, Price: -10, Amount: 7},
 			{ParticipantID: 2, Wallet: irWallet2, Outcome: false, Price: 0, Amount: 100},
 			{ParticipantID: 2, Wallet: irWallet2, Outcome: true, Price: 60, Amount: 30},
 			{ParticipantID: 3, Wallet: irWallet3, Outcome: true, Price: -40, Amount: 50},
-		}, irMarketPositions(t, ctx, platform, 1))
-		require.Empty(t, irMarketPositions(t, ctx, platform, 2), "a settled market holds nothing")
-		require.Empty(t, irMarketPositions(t, ctx, platform, 77), "no such market")
+		}
+		require.Equal(t, book, irMarketPositions(t, ctx, platform, 1, nil, nil, nil, nil))
+		require.Empty(t, irMarketPositions(t, ctx, platform, 2, nil, nil, nil, nil), "a settled market holds nothing")
+		require.Empty(t, irMarketPositions(t, ctx, platform, 77, nil, nil, nil, nil), "no such market")
+
+		// Pages of one, two and four. The cursor is the last row's
+		// (participant_id, outcome, price), so a page that ends inside a
+		// participant, or inside one of its outcomes, skips none of the rest.
+		for _, size := range []int64{1, 2, 4} {
+			var walked []irMarketPosition
+			cursor := []any{nil, nil, nil}
+			for range 10 {
+				page := irMarketPositions(t, ctx, platform, 1, cursor[0], cursor[1], cursor[2], size)
+				if len(page) == 0 {
+					break
+				}
+				require.LessOrEqual(t, len(page), int(size))
+				walked = append(walked, page...)
+				lastRow := page[len(page)-1]
+				cursor = []any{lastRow.ParticipantID, lastRow.Outcome, lastRow.Price}
+			}
+			require.Equal(t, book, walked, "pages of %d", size)
+		}
+		require.Equal(t, book[3:5], irMarketPositions(t, ctx, platform, 1, int64(2), false, int64(-10), int64(2)))
+		require.Empty(t, irMarketPositions(t, ctx, platform, 1, int64(3), true, int64(-40), nil))
+
+		// NULL parts at the end of a cursor start at the first row that
+		// matches the parts before them, and a NULL participant at the first
+		// row of the market.
+		require.Equal(t, book[2:], irMarketPositions(t, ctx, platform, 1, int64(2), nil, nil, nil))
+		require.Equal(t, book[4:], irMarketPositions(t, ctx, platform, 1, int64(2), true, nil, nil))
+		require.Equal(t, book, irMarketPositions(t, ctx, platform, 1, nil, true, int64(60), nil))
 
 		rows, err := irRead(ctx, platform, "list_markets_with_positions", nil, irMarketIDColumns)
 		require.NoError(t, err)
@@ -197,6 +229,45 @@ func testIndexerReadsMarketsAndPositions(t *testing.T) func(context.Context, *kw
 			withPositions = append(withPositions, r[0].(int64))
 		}
 		require.Equal(t, []int64{1, 3, 4, 5}, withPositions)
+		return nil
+	}
+}
+
+// testIndexerReadsALargeBook reads a market that holds more positions than one
+// page: a NULL page size reads 1000 rows, and the next page carries on inside
+// one participant's outcome.
+func testIndexerReadsALargeBook(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		irSeedParticipants(t, ctx, platform)
+		irSeedMarkets(t, ctx, platform)
+
+		// Each participant on both outcomes at every price from -99 to 99, so
+		// 3 * 2 * 199 = 1194 rows in market 1, inserted in reverse key order.
+		irExec(t, ctx, platform,
+			`INSERT INTO main.ob_positions (query_id, participant_id, outcome, price, amount, last_updated)
+			 SELECT 1, p, o, pr, 1, 1000
+			 FROM generate_series(3, 1, -1) AS p, (VALUES (TRUE), (FALSE)) AS v(o),
+			      generate_series(99, -99, -1) AS pr`)
+
+		wallets := [][]byte{irWallet1, irWallet2, irWallet3}
+		var book []irMarketPosition
+		for participant := int64(1); participant <= 3; participant++ {
+			for _, outcome := range []bool{false, true} {
+				for price := int64(-99); price <= 99; price++ {
+					book = append(book, irMarketPosition{ParticipantID: participant, Wallet: wallets[participant-1],
+						Outcome: outcome, Price: price, Amount: 1})
+				}
+			}
+		}
+
+		// The 1000th row is participant 3's YES row at price -95, so the next
+		// page starts inside that participant's outcome.
+		first := irMarketPositions(t, ctx, platform, 1, nil, nil, nil, nil)
+		require.Equal(t, book[:1000], first)
+		lastRow := first[len(first)-1]
+		require.Equal(t, irMarketPosition{ParticipantID: 3, Wallet: irWallet3, Outcome: true, Price: -95, Amount: 1}, lastRow)
+		require.Equal(t, book[1000:],
+			irMarketPositions(t, ctx, platform, 1, lastRow.ParticipantID, lastRow.Outcome, lastRow.Price, nil))
 		return nil
 	}
 }
@@ -308,8 +379,9 @@ func testIndexerReadsTradesAndOrderEvents(t *testing.T) func(context.Context, *k
 				n.CollateralChange, n.IsNegative, n.Timestamp)
 		}
 
-		// Ids start at 3 and jump from 5 to 9, as they do once old events are
-		// trimmed, so the cursor has to be a key and not a count.
+		// Ids start at 3, as they do once old events are trimmed, and jump
+		// from 5 to 9, so the cursor has to be a key and not a count. Block 21
+		// holds events 4 and 5.
 		events := []irOrderEvent{
 			{ID: 3, TxHash: irTxHash(0x01), QueryID: 1, ParticipantID: 1, Wallet: irWallet1, EventType: "buy_placed",
 				Outcome: true, Price: -40, Amount: 50, CounterpartyID: nil, BlockHeight: 20, BlockTimestamp: 1_800_000_020},
@@ -335,34 +407,93 @@ func testIndexerReadsTradesAndOrderEvents(t *testing.T) func(context.Context, *k
 		require.Equal(t, impacts[3:], irListNetImpacts(t, ctx, platform, int64(3), int64(2)))
 		require.Empty(t, irListNetImpacts(t, ctx, platform, int64(4), int64(2)))
 
-		require.Equal(t, events, irListOrderEvents(t, ctx, platform, nil, nil))
-		require.Equal(t, events[0:2], irListOrderEvents(t, ctx, platform, int64(0), int64(2)))
-		require.Equal(t, events[2:4], irListOrderEvents(t, ctx, platform, int64(4), int64(2)))
-		require.Empty(t, irListOrderEvents(t, ctx, platform, int64(9), int64(2)))
+		require.Equal(t, events, irListOrderEvents(t, ctx, platform, nil, nil, nil))
 
-		maxNetImpact, maxOrderEvent := irMaxIDs(t, ctx, platform)
-		require.Equal(t, irPtr(int64(4)), maxNetImpact)
-		require.Equal(t, irPtr(int64(9)), maxOrderEvent)
+		// Pages of two. The cursor is the last row's (block_height, id), so the
+		// page that ends with event 4 is followed by event 5 from the same block.
+		require.Equal(t, events[0:2], irListOrderEvents(t, ctx, platform, nil, nil, int64(2)))
+		require.Equal(t, events[2:4], irListOrderEvents(t, ctx, platform, int64(21), int64(4), int64(2)))
+		require.Empty(t, irListOrderEvents(t, ctx, platform, int64(25), int64(9), int64(2)))
 
-		// 1001 more events, ids 10 to 1010. A NULL page size reads 1000 of them
-		// and the next page the last one.
+		// (21, NULL) starts at the first event of block 21.
+		require.Equal(t, events[1:], irListOrderEvents(t, ctx, platform, int64(21), nil, nil))
+
+		require.Equal(t, irMaxIDsRow{NetImpact: irPtr(int64(4)), OrderEventHeight: irPtr(int64(25)), OrderEvent: irPtr(int64(9))},
+			irMaxIDs(t, ctx, platform))
+
+		// 1001 more events, ids 10 to 1010 in blocks 110 to 1110. A NULL page
+		// size reads 1000 of them and the next page the last one.
 		irExec(t, ctx, platform,
 			`INSERT INTO main.ob_order_events (id, tx_hash, query_id, participant_id, event_type, outcome,
 			     price, amount, counterparty_id, block_height, block_timestamp)
 			 SELECT g, decode(repeat('ee', 32), 'hex'), 1, 1, 'buy_placed', TRUE, -40, 1, NULL, 100 + g, 1800001000 + g
 			 FROM generate_series(10, 1010) AS g`)
 
-		page := irListOrderEvents(t, ctx, platform, int64(9), nil)
+		page := irListOrderEvents(t, ctx, platform, int64(25), int64(9), nil)
 		require.Len(t, page, 1000)
 		for i, e := range page {
 			require.Equal(t, int64(10+i), e.ID)
 		}
-		last := irListOrderEvents(t, ctx, platform, page[len(page)-1].ID, nil)
-		require.Len(t, last, 1)
-		require.Equal(t, int64(1010), last[0].ID)
+		lastRow := page[len(page)-1]
+		last := irListOrderEvents(t, ctx, platform, lastRow.BlockHeight, lastRow.ID, nil)
+		require.Equal(t, [][2]int64{{1110, 1010}}, irOrderEventKeys(last))
 
-		_, maxOrderEvent = irMaxIDs(t, ctx, platform)
-		require.Equal(t, irPtr(int64(1010)), maxOrderEvent)
+		maxIDs := irMaxIDs(t, ctx, platform)
+		require.Equal(t, irPtr(int64(1110)), maxIDs.OrderEventHeight)
+		require.Equal(t, irPtr(int64(1010)), maxIDs.OrderEvent)
+		return nil
+	}
+}
+
+// testIndexerReadsOrderEventsAcrossARestart reads order events with a cursor
+// taken before a trim removed every event, after the new events have started
+// the ids again at 1.
+func testIndexerReadsOrderEventsAcrossARestart(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		irSeedParticipants(t, ctx, platform)
+		irSeedMarkets(t, ctx, platform)
+
+		// record adds one event in the given block with id MAX(id) + 1, as
+		// ob_record_order_event (044) does.
+		record := func(height int64) {
+			irExec(t, ctx, platform,
+				`INSERT INTO main.ob_order_events (id, tx_hash, query_id, participant_id, event_type, outcome,
+				     price, amount, counterparty_id, block_height, block_timestamp)
+				 SELECT COALESCE(MAX(id), 0::INT8) + 1, decode(repeat('ee', 32), 'hex'), 1, 1, 'buy_placed',
+				     TRUE, -40, 1, NULL, $1::INT8, 1800000000 + $1::INT8
+				 FROM main.ob_order_events`, height)
+		}
+
+		// Five events in blocks 10 to 13. A reader that has read them all
+		// holds the cursor (13, 5).
+		for _, height := range []int64{10, 11, 11, 12, 13} {
+			record(height)
+		}
+		read := irListOrderEvents(t, ctx, platform, nil, nil, nil)
+		require.Equal(t, [][2]int64{{10, 1}, {11, 2}, {11, 3}, {12, 4}, {13, 5}}, irOrderEventKeys(read))
+		cursor := read[len(read)-1]
+
+		// A trim whose cutoff is past block 13 removes every event, so the
+		// next id is 1 again.
+		irExec(t, ctx, platform, `DELETE FROM main.ob_order_events WHERE block_height < 50`)
+		require.Equal(t, irMaxIDsRow{}, irMaxIDs(t, ctx, platform))
+
+		// Seven new events in blocks 60 to 64 take ids 1 to 7, five of them at
+		// or below the cursor's id. The newest id, 7, is above the cursor's,
+		// so the ids alone look like two new events, while the newest height,
+		// 64, is past the cursor's 13.
+		for _, height := range []int64{60, 60, 61, 62, 62, 63, 64} {
+			record(height)
+		}
+		require.Equal(t, irMaxIDsRow{OrderEventHeight: irPtr(int64(64)), OrderEvent: irPtr(int64(7))},
+			irMaxIDs(t, ctx, platform))
+
+		// The cursor from before the trim reads all seven, in pages of four
+		// that split block 62.
+		first := irListOrderEvents(t, ctx, platform, cursor.BlockHeight, cursor.ID, int64(4))
+		require.Equal(t, [][2]int64{{60, 1}, {60, 2}, {61, 3}, {62, 4}}, irOrderEventKeys(first))
+		next := irListOrderEvents(t, ctx, platform, first[3].BlockHeight, first[3].ID, int64(4))
+		require.Equal(t, [][2]int64{{62, 5}, {63, 6}, {64, 7}}, irOrderEventKeys(next))
 		return nil
 	}
 }
@@ -437,10 +568,11 @@ func testIndexerReadsRefuseBadPageSizes(t *testing.T) func(context.Context, *kwi
 			columns []string
 		}{
 			{"list_markets_after", func(l int64) []any { return []any{nil, l} }, irMarketColumns},
+			{"get_market_positions", func(l int64) []any { return []any{int64(1), nil, nil, nil, l} }, irPositionColumns},
 			{"list_fee_distributions", func(l int64) []any { return []any{nil, l} }, irDistributionColumns},
 			{"list_fee_distribution_details", func(l int64) []any { return []any{nil, nil, l} }, irDetailColumns},
 			{"list_net_impacts", func(l int64) []any { return []any{nil, l} }, irNetImpactColumns},
-			{"list_order_events", func(l int64) []any { return []any{nil, l} }, irOrderEventColumns},
+			{"list_order_events", func(l int64) []any { return []any{nil, nil, l} }, irOrderEventColumns},
 			{"list_transaction_events", func(l int64) []any { return []any{nil, nil, nil, l} }, irTxEventColumns},
 		}
 		for _, tc := range paged {
@@ -452,7 +584,7 @@ func testIndexerReadsRefuseBadPageSizes(t *testing.T) func(context.Context, *kwi
 			require.NoError(t, err, "%s with limit 1000", tc.action)
 		}
 
-		_, err := irRead(ctx, platform, "get_market_positions", []any{nil}, irPositionColumns)
+		_, err := irRead(ctx, platform, "get_market_positions", []any{nil, nil, nil, nil, nil}, irPositionColumns)
 		require.ErrorContains(t, err, "query_id is required")
 		return nil
 	}
@@ -665,9 +797,11 @@ type irMarketPosition struct {
 	Amount        int64
 }
 
-func irMarketPositions(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, queryID int64) []irMarketPosition {
+func irMarketPositions(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, queryID int64,
+	afterParticipant, afterOutcome, afterPrice, limit any) []irMarketPosition {
 	t.Helper()
-	rows, err := irRead(ctx, platform, "get_market_positions", []any{queryID}, irPositionColumns)
+	rows, err := irRead(ctx, platform, "get_market_positions",
+		[]any{queryID, afterParticipant, afterOutcome, afterPrice, limit}, irPositionColumns)
 	require.NoError(t, err)
 	var out []irMarketPosition
 	for _, r := range rows {
@@ -805,9 +939,9 @@ type irOrderEvent struct {
 	BlockTimestamp int64
 }
 
-func irListOrderEvents(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, afterID, limit any) []irOrderEvent {
+func irListOrderEvents(t *testing.T, ctx context.Context, platform *kwilTesting.Platform, afterHeight, afterID, limit any) []irOrderEvent {
 	t.Helper()
-	rows, err := irRead(ctx, platform, "list_order_events", []any{afterID, limit}, irOrderEventColumns)
+	rows, err := irRead(ctx, platform, "list_order_events", []any{afterHeight, afterID, limit}, irOrderEventColumns)
 	require.NoError(t, err)
 	var out []irOrderEvent
 	for _, r := range rows {
@@ -829,13 +963,28 @@ func irListOrderEvents(t *testing.T, ctx context.Context, platform *kwilTesting.
 	return out
 }
 
-// irMaxIDs reads the one row get_order_book_max_ids returns.
-func irMaxIDs(t *testing.T, ctx context.Context, platform *kwilTesting.Platform) (maxNetImpact, maxOrderEvent *int64) {
+// irOrderEventKeys returns the (block_height, id) of each event.
+func irOrderEventKeys(events []irOrderEvent) [][2]int64 {
+	var keys [][2]int64
+	for _, e := range events {
+		keys = append(keys, [2]int64{e.BlockHeight, e.ID})
+	}
+	return keys
+}
+
+// irMaxIDsRow is the one row get_order_book_max_ids returns.
+type irMaxIDsRow struct {
+	NetImpact        *int64
+	OrderEventHeight *int64
+	OrderEvent       *int64
+}
+
+func irMaxIDs(t *testing.T, ctx context.Context, platform *kwilTesting.Platform) irMaxIDsRow {
 	t.Helper()
 	rows, err := irRead(ctx, platform, "get_order_book_max_ids", nil, irMaxIDColumns)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
-	return irOptInt(rows[0][0]), irOptInt(rows[0][1])
+	return irMaxIDsRow{NetImpact: irOptInt(rows[0][0]), OrderEventHeight: irOptInt(rows[0][1]), OrderEvent: irOptInt(rows[0][2])}
 }
 
 type irTxEvent struct {
