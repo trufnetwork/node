@@ -5,6 +5,7 @@ package tests
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -43,6 +44,14 @@ func TestRequestAttestationInsertsCanonicalPayload(t *testing.T) {
 					runAttestationUnauthorizedBlocked(t, ctx, platform, helper, testActionName)
 				})
 
+				t.Run("ArgsForAnotherStreamRefused", func(t *testing.T) {
+					runAttestationRefusesArgsForAnotherStream(t, helper, testActionName)
+				})
+
+				t.Run("UpperCaseDataProviderInArgsAccepted", func(t *testing.T) {
+					runAttestationAcceptsUpperCaseDataProviderInArgs(t, helper, testActionName)
+				})
+
 				return nil
 			},
 		},
@@ -55,14 +64,13 @@ func runAttestationHappyPath(helper *AttestationTestHelper, actionName string, a
 	dataProviderHex := TestDataProviderHex
 	streamID := TestStreamID
 
-	argsBytes, err := tn_utils.EncodeActionArgs([]any{attestedValue})
-	require.NoError(helper.t, err, "encode action args")
+	argsBytes := EncodeTestActionArgs(helper.t, attestedValue)
 
 	engineCtx := helper.NewEngineContext()
 
 	var requestTxID string
 	var attestationHash []byte
-	_, err = helper.platform.Engine.Call(engineCtx, helper.platform.DB, "", "request_attestation", []any{
+	_, err := helper.platform.Engine.Call(engineCtx, helper.platform.DB, "", "request_attestation", []any{
 		dataProviderHex,
 		streamID,
 		actionName,
@@ -141,8 +149,7 @@ func runAttestationUnauthorizedBlocked(t *testing.T, ctx context.Context, platfo
 	// Create a non-exempt user that does NOT have network_writer role (must pay 40 TRUF fee)
 	unauthorizedAddr := util.Unsafe_NewEthereumAddressFromString("0x0000000000000000000000000000000000009999")
 
-	argsBytes, err := tn_utils.EncodeActionArgs([]any{int64(999)})
-	require.NoError(t, err, "encode action args")
+	argsBytes := EncodeTestActionArgs(t, int64(999))
 
 	// Create a context for the non-exempt user (no balance given, so can't pay fee)
 	unauthorizedCtx := &common.EngineContext{
@@ -175,6 +182,60 @@ func runAttestationUnauthorizedBlocked(t *testing.T, ctx context.Context, platfo
 	require.NotNil(t, res.Error, "action should return error for user without balance")
 	require.Contains(t, res.Error.Error(), "Insufficient balance for attestation",
 		"error should indicate insufficient balance (non-exempt users must pay 40 TRUF fee)")
+}
+
+// requestTestAttestation calls request_attestation for TestDataProviderHex's
+// TestStreamID with the given args. An error raised by a precompile comes back
+// from Engine.Call and one raised by ERROR() in the result, so either is returned.
+func requestTestAttestation(t *testing.T, helper *AttestationTestHelper, actionName string, args []any) error {
+	argsBytes, err := tn_utils.EncodeActionArgs(args)
+	require.NoError(t, err, "encode action args")
+
+	res, err := helper.platform.Engine.Call(helper.NewEngineContext(), helper.platform.DB, "", "request_attestation", []any{
+		TestDataProviderHex,
+		TestStreamID,
+		actionName,
+		argsBytes,
+		false,
+		nil, // max_fee = NULL (no limit)
+	}, func(row *common.Row) error {
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return res.Error
+}
+
+// runAttestationRefusesArgsForAnotherStream checks that a request's args have to
+// start with the data provider and stream the request is for.
+func runAttestationRefusesArgsForAnotherStream(t *testing.T, helper *AttestationTestHelper, actionName string) {
+	otherStream := "stream_attestation_test_00000001"
+	otherProvider := "0x0000000000000000000000000000000000000b22"
+
+	cases := []struct {
+		name string
+		args []any
+		want string
+	}{
+		{"another stream", []any{TestDataProviderHex, otherStream, int64(7)}, "stream_id in query args"},
+		{"another data provider", []any{otherProvider, TestStreamID, int64(7)}, "data_provider in query args"},
+		{"a data provider only", []any{TestDataProviderHex}, "must start with data_provider and stream_id"},
+	}
+	for _, tc := range cases {
+		err := requestTestAttestation(t, helper, actionName, tc.args)
+		require.Error(t, err, "request_attestation should refuse args for %s", tc.name)
+		require.Contains(t, err.Error(), tc.want, tc.name)
+	}
+}
+
+// runAttestationAcceptsUpperCaseDataProviderInArgs checks that the data provider
+// in the args is compared as an address, since the query actions lower-case it
+// before they read.
+func runAttestationAcceptsUpperCaseDataProviderInArgs(t *testing.T, helper *AttestationTestHelper, actionName string) {
+	upperCaseProvider := "0x" + strings.ToUpper(TestDataProviderHex[2:])
+	err := requestTestAttestation(t, helper, actionName, []any{upperCaseProvider, TestStreamID, int64(8)})
+	require.NoError(t, err, "an upper-case data provider in the args names the same address")
 }
 
 func fetchAttestationRow(helper *AttestationTestHelper, hash []byte) attestationRow {

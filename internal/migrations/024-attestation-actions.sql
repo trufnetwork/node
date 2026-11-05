@@ -7,8 +7,9 @@
  *
  * Fee: 40 TRUF flat fee charged to every caller.
  *
- * Validates action is allowed, executes query deterministically, calculates
- * attestation hash, stores unsigned attestation, and queues for signing.
+ * Validates action is allowed and that its args start with $data_provider and
+ * $stream_id, executes query deterministically, calculates attestation hash,
+ * stores unsigned attestation, and queues for signing.
  */
 CREATE OR REPLACE ACTION request_attestation(
     $data_provider TEXT,
@@ -92,6 +93,10 @@ CREATE OR REPLACE ACTION request_attestation(
         ERROR('stream_id must be 32 characters');
     }
     $stream_bytes := $stream_id::BYTEA;
+
+    -- The data provider and stream above must be the first two args, which
+    -- name the stream the action reads
+    tn_utils.validate_query_stream($data_provider_bytes, $stream_bytes, $args_bytes);
 
     -- Validate date range for range-based attestation actions (IDs 1-3) BEFORE
     -- executing the query. This prevents unbounded queries from scanning the entire

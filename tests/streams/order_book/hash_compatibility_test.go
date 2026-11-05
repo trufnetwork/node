@@ -231,7 +231,8 @@ func testHashCompatibility_SameComponentsProduceSameHash(t *testing.T) func(cont
 		dataProvider := deployer.Address()
 		streamID := "stsamecomponents0000000000000000"
 		actionID := "get_record"
-		argsBytes := []byte{0x01, 0x02, 0x03, 0x04}
+		argsBytes, err := getRecordArgsForTests(dataProvider, streamID)
+		require.NoError(t, err)
 
 		queryComponents, err := encodeQueryComponentsABIHashCompat(dataProvider, streamID, actionID, argsBytes)
 		require.NoError(t, err)
@@ -326,13 +327,16 @@ func testHashCompatibility_DifferentComponentsProduceDifferentHash(t *testing.T)
 		streamID1 := "stdiffcomp1000000000000000000000"
 		streamID2 := "stdiffcomp2000000000000000000000"
 		actionID := "get_record"
-		argsBytes := []byte{0x00}
-
-		// Create two markets with DIFFERENT stream IDs
-		components1, err := encodeQueryComponentsABIHashCompat(dataProvider, streamID1, actionID, argsBytes)
+		argsBytes1, err := getRecordArgsForTests(dataProvider, streamID1)
+		require.NoError(t, err)
+		argsBytes2, err := getRecordArgsForTests(dataProvider, streamID2)
 		require.NoError(t, err)
 
-		components2, err := encodeQueryComponentsABIHashCompat(dataProvider, streamID2, actionID, argsBytes)
+		// Create two markets with DIFFERENT stream IDs
+		components1, err := encodeQueryComponentsABIHashCompat(dataProvider, streamID1, actionID, argsBytes1)
+		require.NoError(t, err)
+
+		components2, err := encodeQueryComponentsABIHashCompat(dataProvider, streamID2, actionID, argsBytes2)
 		require.NoError(t, err)
 
 		settleTime := time.Now().Add(1 * time.Hour).Unix()

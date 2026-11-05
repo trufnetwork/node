@@ -213,8 +213,7 @@ func (h *AttestationTestHelper) AssertActionError(res *common.CallResult, expect
 
 // RequestAttestation creates a test attestation request
 func (h *AttestationTestHelper) RequestAttestation(actionName string, value int64) (requestTxID string, attestationHash []byte) {
-	argsBytes, err := tn_utils.EncodeActionArgs([]any{value})
-	require.NoError(h.t, err, "encode action args")
+	argsBytes := EncodeTestActionArgs(h.t, value)
 
 	res := h.CallAction("request_attestation", []any{
 		TestDataProviderHex,
@@ -280,8 +279,7 @@ func (h *AttestationTestHelper) CreateAttestationForRequester(actionName string,
 	// Give requester balance to pay for attestation fees (using proper kwil-db API)
 	h.GiveBalance(requester.Address(), "1000000000000000000000") // 1000 TRUF in wei
 
-	argsBytes, err := tn_utils.EncodeActionArgs([]any{value})
-	require.NoError(h.t, err, "encode args")
+	argsBytes := EncodeTestActionArgs(h.t, value)
 
 	// Use requester context (now that balance injection works properly)
 	requesterCtx := h.NewRequesterContext(requester)
@@ -311,12 +309,23 @@ func (h *AttestationTestHelper) CountRows(actionName string, args []any) int {
 	return count
 }
 
+// EncodeTestActionArgs encodes args for the action SetupTestAction creates. They start
+// with TestDataProviderHex and TestStreamID, the data provider and stream the
+// requests in these tests are for, as request_attestation requires.
+func EncodeTestActionArgs(t require.TestingT, value int64) []byte {
+	argsBytes, err := tn_utils.EncodeActionArgs([]any{TestDataProviderHex, TestStreamID, value})
+	require.NoError(t, err, "encode action args")
+	return argsBytes
+}
+
 // SetupTestAction creates a test action and adds it to the attestation allowlist
 func (h *AttestationTestHelper) SetupTestAction(actionName string, actionID int) error {
 	engineCtx := h.NewEngineContext()
 
 	createAction := `
 CREATE OR REPLACE ACTION ` + actionName + `(
+	$data_provider TEXT,
+	$stream_id TEXT,
 	$value INT8
 ) PUBLIC VIEW RETURNS TABLE(event_time INT8, value NUMERIC(36,18)) {
 	RETURN NEXT 1, ($value)::NUMERIC(36,18);

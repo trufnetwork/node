@@ -39,6 +39,7 @@ func buildPrecompile() precompiles.Precompile {
 			parseAttestationBooleanMethod(),
 			computeAttestationHashMethod(),
 			unpackQueryComponentsMethod(),
+			validateQueryStreamMethod(),
 			getCallerHexMethod(),
 			getCallerBytesMethod(),
 			getLeaderHexMethod(),

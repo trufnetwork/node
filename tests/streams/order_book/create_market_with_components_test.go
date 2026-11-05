@@ -5,6 +5,7 @@ package order_book
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	coreauth "github.com/trufnetwork/kwil-db/core/crypto/auth"
 	erc20bridge "github.com/trufnetwork/kwil-db/node/exts/erc20-bridge/erc20"
 	kwilTesting "github.com/trufnetwork/kwil-db/testing"
+	"github.com/trufnetwork/node/extensions/tn_utils"
 	"github.com/trufnetwork/node/internal/migrations"
 	testutils "github.com/trufnetwork/node/tests/streams/utils"
 	testerc20 "github.com/trufnetwork/node/tests/streams/utils/erc20"
@@ -57,6 +59,8 @@ func TestCreateMarketWithQueryComponents(t *testing.T) {
 			testCreateMarketRejectsMalformedABI(t),
 			testGetMarketInfoReturnsComponentsAndBridge(t),
 			testCreateMarketWithDifferentBridges(t),
+			testCreateMarketRefusesArgsForAnotherStream(t),
+			testCreateMarketAcceptsUpperCaseDataProviderInArgs(t),
 		},
 	}, testutils.GetTestOptionsWithCache())
 }
@@ -116,7 +120,8 @@ func testCreateMarketStoresHashAndComponents(t *testing.T) func(ctx context.Cont
 		dataProvider := userAddr.Address()
 		streamID := "ststorage00000000000000000000000" // Exactly 32 chars
 		actionID := "get_record"
-		argsBytes := []byte{0x01, 0x02, 0x03}
+		argsBytes, err := getRecordArgsForTests(dataProvider, streamID)
+		require.NoError(t, err)
 
 		queryComponents, err := encodeQueryComponentsABI(dataProvider, streamID, actionID, argsBytes)
 		require.NoError(t, err)
@@ -173,7 +178,8 @@ func testCreateMarketRejectsDuplicateHash(t *testing.T) func(ctx context.Context
 		dataProvider := userAddr.Address()
 		streamID := "stduplicate000000000000000000000" // Exactly 32 chars
 		actionID := "get_record"
-		argsBytes := []byte{0xAA, 0xBB}
+		argsBytes, err := getRecordArgsForTests(dataProvider, streamID)
+		require.NoError(t, err)
 
 		queryComponents, err := encodeQueryComponentsABI(dataProvider, streamID, actionID, argsBytes)
 		require.NoError(t, err)
@@ -265,7 +271,8 @@ func testGetMarketInfoReturnsComponentsAndBridge(t *testing.T) func(ctx context.
 		dataProvider := userAddr.Address()
 		streamID := "stgetinfo00000000000000000000000" // Exactly 32 chars
 		actionID := "get_index"
-		argsBytes := []byte{0x11, 0x22, 0x33, 0x44}
+		argsBytes, err := getRecordArgsForTests(dataProvider, streamID)
+		require.NoError(t, err)
 
 		queryComponents, err := encodeQueryComponentsABI(dataProvider, streamID, actionID, argsBytes)
 		require.NoError(t, err)
@@ -330,7 +337,8 @@ func testCreateMarketWithDifferentBridges(t *testing.T) func(ctx context.Context
 		dataProvider := userAddr.Address()
 		streamID := "stbridgetest00000000000000000000" // Exactly 32 chars
 		actionID := "get_record"
-		argsBytes := []byte{0x00}
+		argsBytes, err := getRecordArgsForTests(dataProvider, streamID)
+		require.NoError(t, err)
 
 		queryComponents, err := encodeQueryComponentsABI(dataProvider, streamID, actionID, argsBytes)
 		require.NoError(t, err)
@@ -352,6 +360,93 @@ func testCreateMarketWithDifferentBridges(t *testing.T) func(ctx context.Context
 		})
 		require.NoError(t, err)
 		require.Equal(t, testUSDCExtensionNameComponents, storedBridge, "bridge should be stored correctly")
+
+		return nil
+	}
+}
+
+// testCreateMarketRefusesArgsForAnotherStream checks that a market's query args
+// have to start with the data provider and stream in its header.
+func testCreateMarketRefusesArgsForAnotherStream(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		lastBalancePointComponents = nil
+
+		userAddr := util.Unsafe_NewEthereumAddressFromString("0x8888888888888888888888888888888888888888")
+
+		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
+		require.NoError(t, err)
+		err = giveBalanceChainedComponents(ctx, platform, userAddr.Address(), "100000000000000000000")
+		require.NoError(t, err)
+
+		dataProvider := userAddr.Address()
+		otherProvider := "0x9999999999999999999999999999999999999999"
+		streamID := "stheaderstream000000000000000000"    // Exactly 32 chars
+		otherStream := "stotherstream0000000000000000000" // Exactly 32 chars
+		settleTime := time.Now().Add(1 * time.Hour).Unix()
+
+		otherStreamArgs, err := getRecordArgsForTests(dataProvider, otherStream)
+		require.NoError(t, err)
+		otherProviderArgs, err := getRecordArgsForTests(otherProvider, streamID)
+		require.NoError(t, err)
+		oneArg, err := tn_utils.EncodeActionArgs([]any{dataProvider})
+		require.NoError(t, err)
+
+		cases := []struct {
+			name string
+			args []byte
+			want string
+		}{
+			{"args for another stream", otherStreamArgs, "stream_id in query args"},
+			{"args for another data provider", otherProviderArgs, "data_provider in query args"},
+			{"args with only a data provider", oneArg, "must start with data_provider and stream_id"},
+			{"args that do not decode", []byte{0x01, 0x02, 0x03}, "failed to decode query args"},
+		}
+		for _, tc := range cases {
+			queryComponents, err := encodeQueryComponentsABI(dataProvider, streamID, "get_record", tc.args)
+			require.NoError(t, err, tc.name)
+
+			err = callCreateMarketWithComponents(ctx, platform, &userAddr, queryComponents, settleTime, int64(5), int64(100), nil)
+			require.Error(t, err, "create_market should refuse %s", tc.name)
+			require.Contains(t, err.Error(), tc.want, tc.name)
+		}
+
+		// The same header with args for its own stream is a valid market.
+		ownArgs, err := getRecordArgsForTests(dataProvider, streamID)
+		require.NoError(t, err)
+		queryComponents, err := encodeQueryComponentsABI(dataProvider, streamID, "get_record", ownArgs)
+		require.NoError(t, err)
+		err = callCreateMarketWithComponents(ctx, platform, &userAddr, queryComponents, settleTime, int64(5), int64(100), nil)
+		require.NoError(t, err, "create_market should accept args for the header's stream")
+
+		return nil
+	}
+}
+
+// testCreateMarketAcceptsUpperCaseDataProviderInArgs checks that the data
+// provider in the args is compared as an address, since the query actions
+// lower-case it before they read.
+func testCreateMarketAcceptsUpperCaseDataProviderInArgs(t *testing.T) func(ctx context.Context, platform *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		lastBalancePointComponents = nil
+
+		userAddr := util.Unsafe_NewEthereumAddressFromString("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd")
+
+		err := erc20bridge.ForTestingInitializeExtension(ctx, platform)
+		require.NoError(t, err)
+		err = giveBalanceChainedComponents(ctx, platform, userAddr.Address(), "100000000000000000000")
+		require.NoError(t, err)
+
+		dataProvider := userAddr.Address()
+		streamID := "stuppercaseprovider0000000000000" // Exactly 32 chars
+
+		args, err := getRecordArgsForTests("0x"+strings.ToUpper(dataProvider[2:]), streamID)
+		require.NoError(t, err)
+		queryComponents, err := encodeQueryComponentsABI(dataProvider, streamID, "get_record", args)
+		require.NoError(t, err)
+
+		settleTime := time.Now().Add(1 * time.Hour).Unix()
+		err = callCreateMarketWithComponents(ctx, platform, &userAddr, queryComponents, settleTime, int64(5), int64(100), nil)
+		require.NoError(t, err, "an upper-case data provider in the args names the same address")
 
 		return nil
 	}

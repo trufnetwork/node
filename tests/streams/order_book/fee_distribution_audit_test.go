@@ -63,7 +63,7 @@ func testAuditRecordCreation(t *testing.T) func(context.Context, *kwilTesting.Pl
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000062", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000062", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -203,7 +203,7 @@ func testAuditMultiBlock(t *testing.T) func(context.Context, *kwilTesting.Platfo
 		err = giveBalanceChained(ctx, platform, user2.Address(), "1000000000000000000000")
 		require.NoError(t, err)
 
-		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000063", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000063", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -276,7 +276,7 @@ func testAuditNoLPs(t *testing.T) func(context.Context, *kwilTesting.Platform) e
 		err = giveBalanceChained(ctx, platform, user1.Address(), "1000000000000000000000")
 		require.NoError(t, err)
 
-		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000064", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000064", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -349,7 +349,7 @@ func testAuditZeroFees(t *testing.T) func(context.Context, *kwilTesting.Platform
 		err = giveBalanceChained(ctx, platform, user1.Address(), "1000000000000000000000")
 		require.NoError(t, err)
 
-		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000065", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000065", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -413,7 +413,7 @@ func testAuditDataIntegrity(t *testing.T) func(context.Context, *kwilTesting.Pla
 		err = giveBalanceChained(ctx, platform, user2.Address(), "1000000000000000000000")
 		require.NoError(t, err)
 
-		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000066", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(user1.Address(), "sttest00000000000000000000000066", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 

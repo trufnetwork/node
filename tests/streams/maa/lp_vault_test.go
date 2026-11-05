@@ -314,7 +314,7 @@ func testLPVaultLifecycle(t *testing.T) func(context.Context, *kwilTesting.Platf
 
 		// Market maker funds the 2-TRUF creation fee and opens a tradable market.
 		lpFundTRUF(t, ctx, platform, marketMaker.Address(), "10000000000000000000") // 10 TRUF
-		marketID := createOBMarket(t, ctx, platform, marketMaker, "lpvault-lifecycle")
+		marketID := createOBMarket(t, ctx, platform, marketMaker, "stlpvaultlifecycle00000000000000")
 
 		// Agent registers the LP allow-list rule; the LP joins it and funds the MAA with 100 USDC.
 		ruleID := createLPRule(t, ctx, platform, restricted, 250, repeat(0xab, 32))
@@ -385,7 +385,7 @@ func testLPVaultBotFillIsAudited(t *testing.T) func(context.Context, *kwilTestin
 		lpResetFunding()
 
 		lpFundTRUF(t, ctx, platform, marketMaker.Address(), "10000000000000000000")
-		marketID := createOBMarket(t, ctx, platform, marketMaker, "lpvault-fill")
+		marketID := createOBMarket(t, ctx, platform, marketMaker, "stlpvaultfill0000000000000000000")
 
 		ruleID := createLPRule(t, ctx, platform, restricted, 250, repeat(0xab, 32))
 		maa := joinRule(t, ctx, platform, unrestricted, ruleID)
@@ -438,7 +438,7 @@ func testLPVaultAgentCannotDrain(t *testing.T) func(context.Context, *kwilTestin
 		lpResetFunding()
 
 		lpFundTRUF(t, ctx, platform, marketMaker.Address(), "10000000000000000000")
-		marketID := createOBMarket(t, ctx, platform, marketMaker, "lpvault-nodrain")
+		marketID := createOBMarket(t, ctx, platform, marketMaker, "stlpvaultnodrain0000000000000000")
 
 		ruleID := createLPRule(t, ctx, platform, restricted, 250, repeat(0xab, 32))
 		maa := joinRule(t, ctx, platform, unrestricted, ruleID)

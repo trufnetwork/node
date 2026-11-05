@@ -44,7 +44,7 @@ Call the `request_attestation` action with the following parameters:
 - **data_provider**: The data provider's address (0x-prefixed)
 - **stream_id**: The stream identifier (32 characters)
 - **action_name**: The query action to attest. It must be on the `attestation_actions` allowlist (e.g., `get_last_record`, `get_first_record`, `get_high_value`, `get_low_value`, `price_above_threshold`, `index_change_in_range`)
-- **args_bytes**: ABI-encoded arguments for the query action
+- **args_bytes**: ABI-encoded arguments for the query action. They must start with the same data_provider and stream_id, or the request is refused
 - **encrypt_sig**: Must be `false` (encryption not yet supported)
 - **max_fee**: Maximum fee you're willing to pay for the attestation
 

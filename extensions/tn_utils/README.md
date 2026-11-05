@@ -9,6 +9,10 @@ Reusable precompiles that support attestation and other deterministic workflows.
 - Returns the canonical, deterministic encoding of the target action's result rows.
 - Runs only `PUBLIC VIEW` actions in the `main` namespace (`dispatch_guard.go` lists the height this applies from on each network).
 
+### `validate_query_stream(data_provider BYTEA, stream_id BYTEA, args_bytes BYTEA)`
+- Errors unless `stream_id` is 32 bytes, `args_bytes` decodes, and its first two args are `data_provider` (0x-prefixed hex, either letter case) and `stream_id` (exact).
+- `create_market` and `request_attestation` call it, so the stream a query is for is the stream its action reads.
+
 ### `bytea_join(chunks BYTEA[], delimiter BYTEA) -> BYTEA`
 - Concatenates an array of `BYTEA` chunks, inserting the provided delimiter between entries.
 - Treats `NULL` or empty chunks as empty segments.

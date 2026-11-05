@@ -58,7 +58,7 @@ func testSellOrderSuccessful(t *testing.T) func(ctx context.Context, platform *k
 		require.NoError(t, err, "failed to give balance")
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000008", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000008", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -123,7 +123,7 @@ func testSellOrderInsufficientShares(t *testing.T) func(ctx context.Context, pla
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000009", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000009", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -161,7 +161,7 @@ func testSellOrderNoSharesAtAll(t *testing.T) func(ctx context.Context, platform
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000010", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000010", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -194,7 +194,7 @@ func testSellOrderWrongOutcome(t *testing.T) func(ctx context.Context, platform 
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000011", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000011", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -244,7 +244,7 @@ func testSellOrderMarketSettled(t *testing.T) func(ctx context.Context, platform
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000012", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000012", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -301,7 +301,7 @@ func testSellOrderInvalidPrice(t *testing.T) func(ctx context.Context, platform 
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000013", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000013", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -344,7 +344,7 @@ func testSellOrderInvalidAmount(t *testing.T) func(ctx context.Context, platform
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000014", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000014", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -386,7 +386,7 @@ func testSellOrderMultipleDifferentPrices(t *testing.T) func(ctx context.Context
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000015", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000015", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -455,7 +455,7 @@ func testSellOrderMultipleSamePrice(t *testing.T) func(ctx context.Context, plat
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000016", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000016", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 
@@ -516,7 +516,7 @@ func testSellOrderExactAmount(t *testing.T) func(ctx context.Context, platform *
 		require.NoError(t, err)
 
 		// Create market
-		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000017", "get_record", []byte{0x01})
+		queryComponents, err := encodeQueryComponentsForTests(userAddr.Address(), "sttest00000000000000000000000017", "get_record", nil)
 		require.NoError(t, err)
 		settleTime := time.Now().Add(24 * time.Hour).Unix()
 

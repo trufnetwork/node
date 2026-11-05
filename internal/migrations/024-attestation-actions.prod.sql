@@ -97,6 +97,10 @@ CREATE OR REPLACE ACTION request_attestation(
     }
     $stream_bytes := $stream_id::BYTEA;
 
+    -- The data provider and stream above must be the first two args, which
+    -- name the stream the action reads
+    tn_utils.validate_query_stream($data_provider_bytes, $stream_bytes, $args_bytes);
+
     -- Validate date range for range-based attestation actions (IDs 1-3) BEFORE
     -- executing the query. This prevents unbounded queries from scanning the entire
     -- primitive_events table during block execution. Max range: 90 days.

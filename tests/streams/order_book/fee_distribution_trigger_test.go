@@ -185,7 +185,7 @@ func (fx *feeTriggerFixture) openMarket(t *testing.T, platform *kwilTesting.Plat
 	t.Helper()
 
 	queryComponents, err := encodeQueryComponentsForTests(
-		fx.dataProvider.Address(), streamID, "get_record", []byte{0x01})
+		fx.dataProvider.Address(), streamID, "get_record", nil)
 	require.NoError(t, err)
 
 	return fx.createMarket(t, platform, queryComponents, time.Now().Add(24*time.Hour).Unix())
