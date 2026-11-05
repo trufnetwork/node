@@ -3,9 +3,9 @@
 A **Modular Agent Address (MAA)** is a non-custodial agent wallet: a token holder (the
 *owner*) delegates a limited set of actions to an *agent* key, which operates the wallet through
 those actions. The agent cannot withdraw. The withdrawal actions are reserved for the owner, and
-the token boundary blocks the agent's transfers (apart from network write fees) and bridge-outs.
-The owner withdraws at any time, paying the agent an agreed commission. This is TRUF.NETWORK's
-analogue of a Safe Module.
+the token boundary blocks the agent's bridge-outs and its transfers to any address but the block
+leader's, which collects network write fees. The owner withdraws at any time, paying the agent an
+agreed commission. This is TRUF.NETWORK's analogue of a Safe Module.
 
 What the agent can do with the wallet's value depends on its allow-list. An agent allowed to
 trade sets the price and size of its orders, so it controls the wallet's value through its
@@ -21,9 +21,9 @@ This document walks the two end-to-end examples:
 
 > Roles, in MAA terms:
 > - **Restricted address (agent):** creates the rule; limited to the rule's allow-list; cannot
->   withdraw, bridge or transfer the wallet's funds, except to pay network write fees. Within
->   the allow-list it can use the wallet's whole balance, and with trading actions it sets the
->   price and size of its orders.
+>   withdraw, bridge or transfer the wallet's funds, except to the block leader, which collects
+>   network write fees. Within the allow-list it can use the wallet's whole balance, and with
+>   trading actions it sets the price and size of its orders.
 > - **Unrestricted address (owner / LP):** funds the agent wallet; can run any allowed action
 >   *and* withdraw funds at any time.
 >
@@ -36,11 +36,11 @@ see the [MAA activation rollout runbook](./maa-rollout.md).
 ## What the agent key controls
 
 The agent route and the token boundary stop the agent from withdrawing, bridging or transferring
-the wallet's tokens, apart from network write fees (see
-[What the token boundary blocks](#what-the-token-boundary-blocks)). They do not otherwise limit
-what an allow-listed action does with the wallet's value. A rule holds only the fee terms and the
-allow-list, so nothing limits the price, size or counterparty of the agent's trades beyond the
-order book's own rules.
+the wallet's tokens, apart from transfers to the block leader, which collects network write fees
+(see [What the token boundary blocks](#what-the-token-boundary-blocks)). They do not otherwise
+limit what an allow-listed action does with the wallet's value. A rule holds only the fee terms
+and the allow-list, so nothing limits the price, size or counterparty of the agent's trades
+beyond the order book's own rules.
 
 With the order-book trading actions on its allow-list, the agent chooses the market, outcome,
 price and size of each order, up to the wallet's free balance and share holdings. Its orders
@@ -53,15 +53,30 @@ means trusting the agent with that value. The agent key needs the same care as t
 - Fund the agent wallet with only the amount the agent is meant to trade.
 - Watch the wallet's orders and fills with `get_order_events_by_wallet`, its holdings and open
   orders with `get_positions_by_wallet`, and its locked collateral with
-  `get_collateral_by_wallet`.
+  `get_collateral_by_wallet`. Order events older than 172,800 blocks are trimmed (see
+  [Monitoring getter](#monitoring-getter)), so check them more often than that.
 - If the agent key may have been exposed, use the owner key to withdraw the free balance, cancel
   the wallet's open orders, then withdraw again (see step 6 of the first example's
   [lifecycle](#lifecycle)). The owner can cancel only when `cancel_order` is on the allow-list.
   Withdrawals move only the free balance, so shares the wallet holds stay in it until they are
   sold or their market settles.
 
-A wallet's agent key cannot be changed, because the rule and the wallet address both derive from
-it. To replace the key, create a rule from a new agent key, join it and fund the new wallet.
+Nothing revokes an agent key. A wallet's agent key cannot be changed, because the rule and the
+wallet address both derive from it, and a rule never changes. For a trading wallet, each step
+above is its own transaction, so until the wallet is empty an exposed key keeps trading it
+alongside you. It can sell the wallet's shares at any price, and it can lock collateral freed by
+your cancels, or settlement payouts, in new orders before your next withdrawal. A withdrawal for
+more than the free balance reverts. These steps may therefore recover only part of the funds. Each
+withdrawal also pays the rule's commission to the agent's address, which the exposed key
+controls. Under a flat fee every withdrawal pays it again, and a withdrawal of no more than the
+flat fee pays you nothing.
+
+To replace the key, create a rule from a new agent key, join it and fund the new wallet. The old
+key keeps every allow-listed power over the old wallet. For a data wallet like the Data Provision
+Agent's below, it can still write records to the old wallet's streams and create new streams
+under that wallet. Anyone, the old key's own address included, can send TRUF to the old wallet to
+pay those write fees, and no action on that allow-list moves or deletes a stream, so consumers of
+the data have to move to the new wallet's streams.
 
 Without trading actions, the agent still acts as the wallet within its allow-list. The Data
 Provision Agent below spends the wallet's TRUF on write fees, and the streams it creates belong
@@ -90,8 +105,10 @@ These are the only powers the bot needs. Deliberately **excluded**:
 - **Any withdrawal / bridge primitive** — exits are never allow-listed; the owner withdraws
   through the route-privileged `maa_withdraw` / `maa_bridge_out`, which the agent cannot reach.
 
-Body-hash pinning (`body_hash`) is supported by the rule store but left unpinned in this
-example.
+A rule can store a body hash (`body_hash`) for each allow-listed action. The hash is part of the
+rule hash, so it changes the rule id and the wallet address, but nothing checks it when the
+action runs: the agent route matches only the namespace and the action name. This example leaves
+it unset.
 
 ### What the token boundary blocks
 
@@ -106,9 +123,12 @@ themselves. Fills still settle with other wallets at any price the agent's order
 
 There is exactly **one carve-out** in the boundary: a `transfer` whose recipient is the **block
 leader's sender address** — the network's write-fee sink (`@leader_sender` in the fee-charging
-actions). The recipient is consensus-determined, never a call parameter, so the carve-out cannot
-send a token to any other address. Through it, the agent can only spend the wallet's escrow on
-protocol fees. The carve-out is what makes the Data Provision Agent below possible.
+actions). The boundary compares the recipient with the current block leader's address, which
+consensus sets, so the carve-out passes no transfer to any other address. It does not check the
+amount or the action making the transfer: any transfer to the leader's address passes. With the
+allow-lists in this document, the only such transfers are write fees, so through the carve-out
+the agent can only spend the wallet's escrow on protocol fees. The carve-out is what makes the
+Data Provision Agent below possible.
 
 ### Lifecycle
 
@@ -153,14 +173,18 @@ get_order_events_by_wallet(
 `ask_changed`, `cancelled`, `direct_buy_fill`, `direct_sell_fill`, `mint_fill`, `burn_fill`,
 `settled`.
 
+The getter reads `ob_order_events`, and a scheduled trim deletes events there that are older than
+172,800 blocks (about two days at one-second blocks). The getter therefore returns only recent
+events. Older history is available only from an indexer that synced the events before the trim.
+
 ### End-to-end test
 
 `tests/streams/maa/lp_vault_test.go` drives the whole lifecycle against the real order book:
 
 - **`testLPVaultLifecycle`** — the bot places an order as the MAA (collateral locks); the owner
   monitors it, withdraws the free portion (commission to the agent), cancels the order to free
-  the rest, and withdraws everything — proving "withdraw at any time" returns *all* the LP's
-  funds, net of commission.
+  the rest, and withdraws everything, showing that with no fills the owner recovers all the
+  funds net of commission.
 - **`testLPVaultBotFillIsAudited`** — the bot's order fills against a counterparty (a mint
   match) and the fill is visible to the owner via `get_order_events_by_wallet`.
 - **`testLPVaultAgentCannotDrain`** — the agent can place allow-listed orders, but every attempt
@@ -188,8 +212,11 @@ debit the **agent wallet's own escrow**, with zero fee code specific to MAA. The
 carve-out; any other `transfer` recipient remains blocked for the restricted agent.
 
 The streams the agent creates belong to the **MAA**, not to the agent's own key: the agent
-wallet is the data provider of record, so replacing the agent (a new rule + wallet) never
-strands the data identity with a key the owner doesn't control.
+wallet is the data provider of record. Neither action on the allow-list moves or deletes a
+stream, and a rule never changes, so the streams stay with this wallet and its agent key keeps
+write access to them. Replacing the agent (a new rule + wallet) starts a new data identity, and
+consumers have to move to the new wallet's streams (see
+[What the agent key controls](#what-the-agent-key-controls)).
 
 ### Lifecycle
 
