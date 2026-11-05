@@ -17,7 +17,7 @@ import (
 // listed applies the rule at every height.
 var callDispatchPublicViewHeights = map[string]int64{
 	"tn-v2.1":    3010040,  // mainnet
-	"testnet-v1": 15150000, // testnet
+	"testnet-v1": 15500000, // testnet
 }
 
 // callDispatchModifiersQuery reads the access modifiers of a main action.

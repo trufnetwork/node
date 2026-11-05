@@ -125,7 +125,7 @@ func TestCallDispatchPublicViewHeights(t *testing.T) {
 		t.Fatalf("mainnet height changed: %d", mainnet)
 	}
 	testnet := callDispatchPublicViewHeights["testnet-v1"]
-	if testnet != 15150000 {
+	if testnet != 15500000 {
 		t.Fatalf("testnet height changed: %d", testnet)
 	}
 	cases := []struct {
