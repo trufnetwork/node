@@ -21,8 +21,10 @@ import (
 // The read actions of migration 061 let an indexer page through the order book
 // and the fee ledgers. These tests seed each table directly, with known keys,
 // NULLs and page boundaries, and read the rows back through the actions. Every
-// read checks the column names and declared types, every value, the order, the
-// cursor and the page size.
+// row a read returns is checked for its column names and declared types. A read
+// that returns no rows checks no columns, so each action returns rows in at
+// least one scenario. The reads also check every value, the order, the cursor
+// and the page size.
 
 func TestIndexerReadActions(t *testing.T) {
 	owner := util.Unsafe_NewEthereumAddressFromString("0x1111111111111111111111111111111111111111")
@@ -704,7 +706,8 @@ func irSeedPositions(t *testing.T, ctx context.Context, platform *kwilTesting.Pl
 // =============================================================================
 
 // irRead calls a read action as a wallet that holds nothing and returns its
-// rows. Every row must carry exactly the given columns, in order.
+// rows. Every row must carry exactly the given columns, in order. The columns
+// come with the rows, so a read that returns no rows checks none.
 func irRead(ctx context.Context, platform *kwilTesting.Platform, action string, args []any, columns []string) ([][]any, error) {
 	reader := util.Unsafe_NewEthereumAddressFromString("0xD4D4D4D4D4D4D4D4D4D4D4D4D4D4D4D4D4D4D4D4")
 	var rows [][]any
