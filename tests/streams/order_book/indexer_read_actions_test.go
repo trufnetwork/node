@@ -145,8 +145,10 @@ func testIndexerReadsMarketsAndPositions(t *testing.T) func(context.Context, *kw
 		// participant 2 holds NO at two prices; market 3 (eth_truf, settled)
 		// still holds a YES holding, which open interest must not count;
 		// market 4 (eth_usdc, open) holds YES only; market 5 (hoodi_tt, open)
-		// holds a NO holding and a YES bid, neither of which is open interest.
-		// Markets 2 and 6 have settled and hold nothing.
+		// holds a NO holding and a YES bid, neither of which is open interest;
+		// market 7 (eth_truf, open) holds a YES holding, so eth_truf has two
+		// markets with open interest. Markets 2 and 6 have settled and hold
+		// nothing.
 		irSeedPositions(t, ctx, platform, []irPosition{
 			{QueryID: 1, ParticipantID: 2, Outcome: true, Price: 60, Amount: 30},   // YES ask
 			{QueryID: 1, ParticipantID: 1, Outcome: true, Price: 0, Amount: 100},   // YES holding
@@ -159,6 +161,7 @@ func testIndexerReadsMarketsAndPositions(t *testing.T) func(context.Context, *kw
 			{QueryID: 4, ParticipantID: 1, Outcome: true, Price: 1, Amount: 5},
 			{QueryID: 5, ParticipantID: 3, Outcome: false, Price: 0, Amount: 40},
 			{QueryID: 5, ParticipantID: 3, Outcome: true, Price: -55, Amount: 20},
+			{QueryID: 7, ParticipantID: 2, Outcome: true, Price: 0, Amount: 10},
 		})
 
 		// Every column of every market, in id order, NULLs included.
@@ -166,15 +169,16 @@ func testIndexerReadsMarketsAndPositions(t *testing.T) func(context.Context, *kw
 
 		// Pages of four: the cursor is the last id read.
 		require.Equal(t, []int64{1, 2, 3, 4}, irMarketIDs(irListMarkets(t, ctx, platform, nil, int64(4))))
-		require.Equal(t, []int64{5, 6}, irMarketIDs(irListMarkets(t, ctx, platform, int64(4), int64(4))))
-		require.Empty(t, irListMarkets(t, ctx, platform, int64(6), int64(4)))
+		require.Equal(t, []int64{5, 6, 7}, irMarketIDs(irListMarkets(t, ctx, platform, int64(4), int64(4))))
+		require.Empty(t, irListMarkets(t, ctx, platform, int64(7), int64(4)))
 		require.Equal(t, []int64{3}, irMarketIDs(irListMarkets(t, ctx, platform, int64(2), int64(1))))
 
 		// One row per bridge. YES holdings and asks of open markets count; bids,
-		// the NO side and settled markets do not. Bridges with nothing open
-		// still return a row, of zero.
+		// the NO side and settled markets do not. markets_with_oi counts each
+		// market once: eth_truf has two, 1 and 7, though two rows of market 1
+		// count. Bridges with nothing open still return a row, of zero.
 		require.Equal(t, []irOpenInterest{
-			{Bridge: "eth_truf", OpenInterest: 130, Markets: 1},
+			{Bridge: "eth_truf", OpenInterest: 140, Markets: 2},
 			{Bridge: "eth_usdc", OpenInterest: 15, Markets: 1},
 			{Bridge: "hoodi_tt", OpenInterest: 0, Markets: 0},
 			{Bridge: "hoodi_tt2", OpenInterest: 0, Markets: 0},
@@ -191,8 +195,15 @@ func testIndexerReadsMarketsAndPositions(t *testing.T) func(context.Context, *kw
 			{ParticipantID: 3, Wallet: irWallet3, Outcome: true, Price: -40, Amount: 50},
 		}
 		require.Equal(t, book, irMarketPositions(t, ctx, platform, 1, nil, nil, nil, nil))
-		require.Empty(t, irMarketPositions(t, ctx, platform, 2, nil, nil, nil, nil), "a settled market holds nothing")
+		require.Empty(t, irMarketPositions(t, ctx, platform, 2, nil, nil, nil, nil), "market 2 holds no position")
 		require.Empty(t, irMarketPositions(t, ctx, platform, 77, nil, nil, nil, nil), "no such market")
+
+		// Market 3 has settled but still holds the row seeded above, and
+		// list_markets_with_positions lists it below. The action reads the
+		// table as it is, with no test on settled, so that row reads back.
+		require.Equal(t, []irMarketPosition{
+			{ParticipantID: 1, Wallet: irWallet1, Outcome: true, Price: 0, Amount: 999},
+		}, irMarketPositions(t, ctx, platform, 3, nil, nil, nil, nil))
 
 		// Pages of one, two and four. The cursor is the last row's
 		// (participant_id, outcome, price), so a page that ends inside a
@@ -228,7 +239,7 @@ func testIndexerReadsMarketsAndPositions(t *testing.T) func(context.Context, *kw
 		for _, r := range rows {
 			withPositions = append(withPositions, r[0].(int64))
 		}
-		require.Equal(t, []int64{1, 3, 4, 5}, withPositions)
+		require.Equal(t, []int64{1, 3, 4, 5, 7}, withPositions)
 		return nil
 	}
 }
@@ -559,7 +570,8 @@ func testIndexerReadsTransactionEvents(t *testing.T) func(context.Context, *kwil
 }
 
 // testIndexerReadsRefuseBadPageSizes checks that each paged action refuses a
-// page size outside 1 to 1000 instead of cutting it down, and takes 1000.
+// page size outside 1 to 1000 instead of cutting it down, and takes 1 and
+// 1000.
 func testIndexerReadsRefuseBadPageSizes(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
 	return func(ctx context.Context, platform *kwilTesting.Platform) error {
 		paged := []struct {
@@ -580,8 +592,10 @@ func testIndexerReadsRefuseBadPageSizes(t *testing.T) func(context.Context, *kwi
 				_, err := irRead(ctx, platform, tc.action, tc.args(limit), tc.columns)
 				require.ErrorContains(t, err, "limit must be between 1 and 1000", "%s with limit %d", tc.action, limit)
 			}
-			_, err := irRead(ctx, platform, tc.action, tc.args(1000), tc.columns)
-			require.NoError(t, err, "%s with limit 1000", tc.action)
+			for _, limit := range []int64{1, 1000} {
+				_, err := irRead(ctx, platform, tc.action, tc.args(limit), tc.columns)
+				require.NoError(t, err, "%s with limit %d", tc.action, limit)
+			}
 		}
 
 		_, err := irRead(ctx, platform, "get_market_positions", []any{nil, nil, nil, nil, nil}, irPositionColumns)
@@ -626,9 +640,9 @@ type irMarket struct {
 	Bridge          string
 }
 
-// irSeedMarkets seeds six markets on four bridges and returns them in id
-// order. Markets 1, 4 and 5 are open; 2, 3 and 6 have settled, and the only
-// market on hoodi_tt2 is settled.
+// irSeedMarkets seeds seven markets on four bridges and returns them in id
+// order. Markets 1, 4, 5 and 7 are open; 2, 3 and 6 have settled, and the
+// only market on hoodi_tt2 is settled.
 func irSeedMarkets(t *testing.T, ctx context.Context, platform *kwilTesting.Platform) []irMarket {
 	t.Helper()
 	market := func(id int64, bridge string, creator []byte, settled bool, winning *bool, settledAt *int64) irMarket {
@@ -654,6 +668,7 @@ func irSeedMarkets(t *testing.T, ctx context.Context, platform *kwilTesting.Plat
 		market(4, "eth_usdc", irWallet2, false, nil, nil),
 		market(5, "hoodi_tt", irWallet3, false, nil, nil),
 		market(6, "hoodi_tt2", irWallet3, true, irPtr(true), irPtr(int64(1_800_000_600))),
+		market(7, "eth_truf", irWallet2, false, nil, nil),
 	}
 	// Seeded in reverse, so the order the action returns is its own.
 	for i := len(markets) - 1; i >= 0; i-- {

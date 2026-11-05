@@ -123,7 +123,10 @@ PUBLIC VIEW RETURNS TABLE(
 /**
  * Holdings (price 0), asks (price > 0) and bids (price < 0), in primary key
  * order. Read to the end, this is the market's whole book: the rows
- * get_order_book returns for both outcomes, plus holdings.
+ * get_order_book returns for both outcomes, plus holdings. Positions change
+ * with every order and trade, so pages read at different heights are not one
+ * snapshot: a change made behind the cursor during a walk, such as a new,
+ * moved or removed position, is missed until the next walk from the start.
  *
  * The cursor is the last row's (participant_id, outcome, price), the primary
  * key of ob_positions after query_id. One holder can have rows on both
