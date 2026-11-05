@@ -104,12 +104,18 @@ CREATE OR REPLACE ACTION request_attestation(
     -- Query actions (IDs 1-5) all have use_cache as their last parameter.
     -- Force use_cache=false to ensure all validators compute identical results
     -- regardless of cache state.
+    --
+    -- Only the copy that runs is changed. The payload and the hash below keep
+    -- the arguments as requested: a market's hash is computed from its query
+    -- as stored, use_cache included, and a capture stored under any other hash
+    -- is one settlement never finds.
+    $dispatch_args BYTEA := $args_bytes;
     if $action_id >= 1 AND $action_id <= 5 {
-        $args_bytes := tn_utils.force_last_arg_false($args_bytes);
+        $dispatch_args := tn_utils.force_last_arg_false($args_bytes);
     }
 
     -- Execute target query deterministically using tn_utils.call_dispatch precompile
-    $query_result := tn_utils.call_dispatch($action_name, $args_bytes);
+    $query_result := tn_utils.call_dispatch($action_name, $dispatch_args);
     $result_payload := tn_utils.canonical_to_datapoints_abi($query_result);
     
     $version := 1;
