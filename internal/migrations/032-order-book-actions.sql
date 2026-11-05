@@ -1163,6 +1163,9 @@ CREATE OR REPLACE ACTION place_buy_order(
         ERROR('Trading is closed. Market has passed its settlement time.');
     }
 
+    -- 1.5 Refuse while the owner has paused new collateral on this bridge (060)
+    ob_check_collateral_lock_open($bridge);
+
     -- ==========================================================================
     -- SECTION 2: CALCULATE COLLATERAL NEEDED
     -- ==========================================================================
@@ -1587,6 +1590,9 @@ CREATE OR REPLACE ACTION place_split_limit_order(
         ERROR('Trading is closed. Market has passed its settlement time.');
     }
 
+    -- 1.5 Refuse while the owner has paused new collateral on this bridge (060)
+    ob_check_collateral_lock_open($bridge);
+
     -- ==========================================================================
     -- SECTION 2: CALCULATE COLLATERAL NEEDED
     -- ==========================================================================
@@ -1998,6 +2004,7 @@ CREATE OR REPLACE ACTION cancel_order(
  * - If market doesn't exist or is already settled
  * - If old order doesn't exist at specified price
  * - If insufficient balance for collateral increase
+ * - If the owner has paused new collateral on the market's bridge (collateral increase only; see 060)
  *
  * Examples:
  *   change_bid(1, TRUE, -54, -50, 100)   -- Adjust buy from $0.54 to $0.50 (lower price)
@@ -2133,6 +2140,9 @@ CREATE OR REPLACE ACTION change_bid(
 
     if $collateral_delta > $zero {
         -- New order needs MORE collateral
+        -- Refuse while the owner has paused new collateral on this bridge (060)
+        ob_check_collateral_lock_open($bridge);
+
         -- Lock additional amount (will ERROR if insufficient balance)
         if $bridge = 'hoodi_tt2' {
             hoodi_tt2.lock($collateral_delta);
