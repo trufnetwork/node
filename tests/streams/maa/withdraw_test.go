@@ -41,6 +41,7 @@ func TestMAAWithdraw(t *testing.T) {
 		FunctionTests: []kwilTesting.TestFunc{
 			testMAAWithdrawInternalBps(t),
 			testMAAWithdrawGuards(t),
+			testMAAWithdrawNullAmount(t),
 			testMAAWithdrawFlatFeeClamped(t),
 			testMAABridgeOut(t),
 			testMAAWithdrawBpsRounding(t),
@@ -211,6 +212,54 @@ func testMAAWithdrawGuards(t *testing.T) func(context.Context, *kwilTesting.Plat
 		// A non-positive amount must be rejected.
 		require.Error(t, callAs(ctx, platform, maaAddr, "maa_withdraw", []any{wdBridge, dec(t, "0")}, nil),
 			"zero-amount withdrawal must be rejected")
+		return nil
+	}
+}
+
+// testMAAWithdrawNullAmount: a NULL amount is refused before either leg runs, on both entry
+// points: no commission, no payout, no WITHDRAW event. The rule charges a flat fee, whose
+// commission does not depend on the amount.
+func testMAAWithdrawNullAmount(t *testing.T) func(context.Context, *kwilTesting.Platform) error {
+	return func(ctx context.Context, platform *kwilTesting.Platform) error {
+		restricted := util.Unsafe_NewEthereumAddressFromString(restrictedHex)
+		unrestricted := util.Unsafe_NewEthereumAddressFromString(unrestrictedHex)
+		platform.Deployer = restricted.Bytes()
+
+		require.NoError(t, erc20bridge.ForTestingInitializeExtension(ctx, platform))
+
+		// Flat fee of 10 tokens; 100 tokens funded.
+		var ruleID []byte
+		require.NoError(t, callAs(ctx, platform, restricted, "maa_create_rule", []any{
+			repeat(0x78, 32), "flat", int64(0), dec(t, "10000000000000000000"),
+			[]string{}, []string{}, [][]byte{},
+		}, func(row *common.Row) error {
+			ruleID = append([]byte(nil), row.Values[0].([]byte)...)
+			return nil
+		}))
+		maa := joinRule(t, ctx, platform, unrestricted, ruleID)
+		maaAddr := addrFromBytes(maa)
+
+		orderedsync.ForTestingReset()
+		fundAddress(t, ctx, platform, maaAddr.Address(), "100000000000000000000", 1)
+
+		// Both entry points share the guard: neither moves anything on a NULL amount.
+		err := callAs(ctx, platform, maaAddr, "maa_withdraw", []any{wdBridge, nil}, nil)
+		require.Equal(t, "0", balance(t, ctx, platform, restrictedHex), "a NULL withdrawal must pay no commission")
+		require.Equal(t, "100000000000000000000", balance(t, ctx, platform, maaAddr.Address()), "a NULL withdrawal must move nothing")
+		require.ErrorContains(t, err, "withdraw amount must be positive", "a NULL withdrawal must be refused")
+
+		err = callAs(ctx, platform, maaAddr, "maa_bridge_out", []any{wdBridge, nil, nil}, nil)
+		require.Equal(t, "0", balance(t, ctx, platform, restrictedHex), "a NULL bridge-out must pay no commission")
+		require.Equal(t, "100000000000000000000", balance(t, ctx, platform, maaAddr.Address()), "a NULL bridge-out must move nothing")
+		require.ErrorContains(t, err, "withdraw amount must be positive", "a NULL bridge-out must be refused")
+
+		require.Equal(t, "0", balance(t, ctx, platform, unrestrictedHex), "the owner is paid nothing")
+
+		// A refused withdrawal leaves no WITHDRAW event behind.
+		var evtTypes []string
+		require.NoError(t, callAs(ctx, platform, restricted, "maa_get_events", []any{ruleID, int64(100), int64(0)},
+			func(row *common.Row) error { evtTypes = append(evtTypes, row.Values[2].(string)); return nil }))
+		require.NotContains(t, evtTypes, "WITHDRAW")
 		return nil
 	}
 }

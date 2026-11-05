@@ -39,7 +39,8 @@
 -- maa_join_and_fund: join a rule and fund the derived agent wallet atomically.
 -- Leg 1 delegates to maa_join (048) — all of its guards apply: unknown rule_id,
 -- creator-join rejection, duplicate-join rejection (an already-joined funder
--- tops up with a plain transfer instead). Leg 2 debits @caller (the funder) and
+-- tops up with a plain transfer instead), and the refusal of an address that
+-- already holds system:network_writer. Leg 2 debits @caller (the funder) and
 -- credits the fresh MAA on the chosen bridge's ledger.
 -- SDK name: joinAndFundAgentAddress.
 -- =============================================================================

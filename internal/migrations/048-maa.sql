@@ -246,6 +246,17 @@ CREATE OR REPLACE ACTION maa_join($rule_id BYTEA) PUBLIC RETURNS (maa_address BY
         ERROR('this funder has already joined this rule (MAA exists)');
     }
 
+    -- An agent wallet never holds system:network_writer (grant_roles refuses the grant, see
+    -- maa_assert_no_agent_wallets). The address is known before the join, so the role could
+    -- already sit on it: refuse to register the wallet until the role is revoked.
+    $maa_hex TEXT := '0x' || encode($maa_address, 'hex');
+    for $row in
+        SELECT 1 AS one FROM role_members
+        WHERE owner = 'system' AND role_name = 'network_writer' AND wallet = $maa_hex
+    {
+        ERROR('agent wallet address holds system:network_writer; revoke it before joining');
+    }
+
     INSERT INTO maa_instances (maa_address, rule_id, unrestricted_addr, created_at)
     VALUES ($maa_address, $rule_id, $unrestricted_bytes, @height);
 
@@ -442,4 +453,24 @@ PUBLIC VIEW RETURNS (known BOOL) {
         RETURN true;
     }
     RETURN false;
+};
+
+-- =============================================================================
+-- maa_assert_no_agent_wallets: errors if any of $wallets is a joined agent wallet.
+-- grant_roles (013-role-actions.sql) calls it before granting system:network_writer:
+-- an agent wallet runs allow-listed actions for its agent key, so it never holds that
+-- role. $wallets are grant_roles' sanitized addresses (lowercase, 0x + 40 hex chars).
+-- =============================================================================
+CREATE OR REPLACE ACTION maa_assert_no_agent_wallets($wallets TEXT[]) PRIVATE VIEW {
+    for $row in
+        SELECT '0x' || encode(maa_address, 'hex') AS maa_hex
+        FROM maa_instances
+        WHERE maa_address IN (
+            SELECT decode(substring(u.wallet, 3, 40), 'hex') FROM UNNEST($wallets) AS u(wallet)
+        )
+        ORDER BY maa_address ASC
+        LIMIT 1
+    {
+        ERROR('system:network_writer cannot be granted to an agent wallet: ' || $row.maa_hex);
+    }
 };

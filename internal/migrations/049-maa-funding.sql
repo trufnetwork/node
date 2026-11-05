@@ -114,7 +114,13 @@ CREATE OR REPLACE ACTION maa_do_withdraw(
     -- MAA, so the lookup below fails closed and nothing moves.
     $maa_bytes BYTEA := tn_utils.get_caller_bytes();
 
-    if $amount IS NULL OR $amount <= 0::NUMERIC(78, 0) {
+    -- Two separate ifs on purpose (as in 054-maa-join-fund.sql): the engine's OR yields
+    -- NULL when either side is NULL, so a combined `$amount IS NULL OR $amount <= 0` test
+    -- does not fire on a NULL amount.
+    if $amount IS NULL {
+        ERROR('withdraw amount must be positive');
+    }
+    if $amount <= 0::NUMERIC(78, 0) {
         ERROR('withdraw amount must be positive');
     }
 
