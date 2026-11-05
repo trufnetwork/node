@@ -1956,7 +1956,8 @@ CREATE OR REPLACE ACTION cancel_order(
  * Key Features:
  * - ATOMIC: Either both cancel+place succeed, or neither happens
  * - QUEUE TIME: The moved order takes the current block time, like a new order placed at
- *   that price, so it joins the back of the FIFO queue at its new price level
+ *   that price, so it queues behind orders resting there with an earlier time. Block time
+ *   is in whole seconds, and orders with the same time match lowest participant id first
  * - NET COLLATERAL: Only locks/unlocks the difference in collateral needed
  * - FLEXIBLE AMOUNT: Can increase or decrease order size during modification
  *
@@ -2210,7 +2211,8 @@ CREATE OR REPLACE ACTION change_bid(
  * Key Features:
  * - ATOMIC: Either both cancel+place succeed, or neither happens
  * - QUEUE TIME: The moved order takes the current block time, like a new order placed at
- *   that price, so it joins the back of the FIFO queue at its new price level
+ *   that price, so it queues behind orders resting there with an earlier time. Block time
+ *   is in whole seconds, and orders with the same time match lowest participant id first
  * - FLEXIBLE AMOUNT: Can increase (pull from holdings) or decrease (return to holdings) order size
  * - NO COLLATERAL: Sell orders just move shares between holdings and order book
  *
