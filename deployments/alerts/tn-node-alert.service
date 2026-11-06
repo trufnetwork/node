@@ -1,0 +1,10 @@
+[Unit]
+Description=Alert when the node stops making blocks or crashes
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/tn-node-alert
+# A stuck run would block every later one, so it gets a time limit.
+TimeoutStartSec=4min

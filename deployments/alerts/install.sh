@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Installs tn-pg-alert and tn-node-alert on a node. Run it as root from this directory:
+#   sudo ./install.sh
+# It is safe to run again and keeps an existing /etc/tn-alert/telegram.env.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+install -m 755 pg-program-alert.sh /usr/local/bin/tn-pg-alert
+install -m 755 node-health-alert.sh /usr/local/bin/tn-node-alert
+install -m 644 tn-pg-alert.service tn-pg-alert.timer tn-node-alert.service tn-node-alert.timer /etc/systemd/system/
+install -d -m 700 -o root -g root /etc/tn-alert
+chown root:root /etc/tn-alert
+chmod 700 /etc/tn-alert
+if [ -e /etc/tn-alert/telegram.env ]; then
+	chown root:root /etc/tn-alert/telegram.env
+	chmod 600 /etc/tn-alert/telegram.env
+else
+	install -m 600 -o root -g root /dev/null /etc/tn-alert/telegram.env
+	printf '%s\n' 'TELEGRAM_BOT_TOKEN=' 'TELEGRAM_CHAT_ID=' '# TELEGRAM_TOPIC_ID=' '# PG_CONTAINER=tn-postgres' '# NODE_LABEL=' >/etc/tn-alert/telegram.env
+fi
+systemctl daemon-reload
+systemctl enable --now tn-pg-alert.timer tn-node-alert.timer
+echo "tn-pg-alert and tn-node-alert installed. Put the bot token and chat id in /etc/tn-alert/telegram.env, then run: sudo tn-pg-alert --test && sudo tn-node-alert --test"
