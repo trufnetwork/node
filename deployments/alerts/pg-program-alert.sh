@@ -25,11 +25,11 @@ PG_CONTAINER=${PG_CONTAINER:-tn-postgres}
 NODE_LABEL=${NODE_LABEL:-$(hostname)}
 
 send() {
-	local text=$1 code topic=()
-	logger -t tn-pg-alert -- "$text" || true
+	local text=$1 code topic=() logged=0
+	logger -t tn-pg-alert -- "$text" || logged=1
 	if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
 		echo "tn-pg-alert: no Telegram token or chat id set, wrote the alert to the journal only" >&2
-		return 0
+		return "$logged"
 	fi
 	if [ -n "${TELEGRAM_TOPIC_ID:-}" ]; then
 		topic=(--data-urlencode "message_thread_id=${TELEGRAM_TOPIC_ID}")
@@ -52,17 +52,28 @@ fi
 
 mkdir -p "$STATE_DIR"
 now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-since=$(cat "$STATE_DIR/last-run" 2>/dev/null || date -u -d '-10 min' +%Y-%m-%dT%H:%M:%SZ)
+since=$(cat "$STATE_DIR/last-run" 2>/dev/null || true)
+if ! [[ $since =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+	since=$(date -u -d '-10 min' +%Y-%m-%dT%H:%M:%SZ)
+fi
 
-if ! logs=$(docker logs --since "$since" --until "$now" "$PG_CONTAINER" 2>&1); then
+# A statement can be split over several log lines, so the scan also matches the
+# fixed message Postgres logs when it refuses one. Only matching lines are kept.
+pattern='(to|from)[[:space:]]+program|external program|pg_execute_server_program'
+if ! matches=$(
+	docker logs --since "$since" --until "$now" "$PG_CONTAINER" 2>&1 | grep -i -E "$pattern"
+	exit "${PIPESTATUS[0]}"
+); then
 	send "${NODE_LABEL}: tn-pg-alert cannot read the logs of ${PG_CONTAINER}"
 	exit 1
 fi
 
-count=$(printf '%s\n' "$logs" | grep -c -i -E '(to|from)[[:space:]]+program' || true)
+count=$(printf '%s' "$matches" | grep -c . || true)
 if [ "$count" -gt 0 ]; then
 	# The last run time only moves once the message is out, so a failed send
 	# is retried on the next run.
-	send "${NODE_LABEL}: Postgres logged ${count} line(s) with TO PROGRAM between ${since} and ${now}. Read them with: docker logs --since ${since} --until ${now} ${PG_CONTAINER} 2>&1 | grep -i program"
+	send "${NODE_LABEL}: Postgres logged ${count} line(s) about running a server program between ${since} and ${now}. Read them with: docker logs --since ${since} --until ${now} ${PG_CONTAINER} 2>&1 | grep -i program"
 fi
-echo "$now" >"$STATE_DIR/last-run"
+printf '%s\n' "$now" >"$STATE_DIR/last-run.tmp"
+sync "$STATE_DIR/last-run.tmp" 2>/dev/null || true
+mv -f "$STATE_DIR/last-run.tmp" "$STATE_DIR/last-run"

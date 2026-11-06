@@ -6,3 +6,5 @@ Wants=docker.service
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/tn-pg-alert
+# A stuck run would block every later one, so it gets a time limit.
+TimeoutStartSec=4min
