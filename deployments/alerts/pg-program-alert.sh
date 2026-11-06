@@ -6,6 +6,7 @@
 #
 # Settings come from /etc/tn-alert/telegram.env (see README.md):
 #   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID  where the message goes
+#   TELEGRAM_TOPIC_ID                     topic (thread) in a forum chat, optional
 #   PG_CONTAINER                          Postgres container, default tn-postgres
 #   NODE_LABEL                            node name in the message, default the hostname
 # Without a token and a chat id, the alert goes to the system journal only.
@@ -24,16 +25,19 @@ PG_CONTAINER=${PG_CONTAINER:-tn-postgres}
 NODE_LABEL=${NODE_LABEL:-$(hostname)}
 
 send() {
-	local text=$1 code
+	local text=$1 code topic=()
 	logger -t tn-pg-alert -- "$text" || true
 	if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
 		echo "tn-pg-alert: no Telegram token or chat id set, wrote the alert to the journal only" >&2
 		return 0
 	fi
+	if [ -n "${TELEGRAM_TOPIC_ID:-}" ]; then
+		topic=(--data-urlencode "message_thread_id=${TELEGRAM_TOPIC_ID}")
+	fi
 	# The URL holds the token, so it goes through stdin, not the command line.
 	code=$(printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TELEGRAM_BOT_TOKEN" |
 		curl -sS -m 20 -o /dev/null -w '%{http_code}' -K - \
-			--data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+			--data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" ${topic[@]+"${topic[@]}"} \
 			--data-urlencode "text=${text}") || code=000
 	if [ "$code" != 200 ]; then
 		echo "tn-pg-alert: Telegram answered HTTP $code" >&2

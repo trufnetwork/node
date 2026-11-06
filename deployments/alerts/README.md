@@ -24,6 +24,8 @@ The script installs `/usr/local/bin/tn-pg-alert`, the `tn-pg-alert` service and 
    ```bash
    TELEGRAM_BOT_TOKEN=123456:ABC...
    TELEGRAM_CHAT_ID=-1001234567890
+   # only for a chat with topics:
+   TELEGRAM_TOPIC_ID=42
    ```
 
 4. Check that a message arrives: `sudo tn-pg-alert --test`
@@ -36,5 +38,6 @@ No restart is needed. The next timer run reads the file.
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | empty | Bot token from @BotFather |
 | `TELEGRAM_CHAT_ID` | empty | Chat that receives the alerts |
+| `TELEGRAM_TOPIC_ID` | empty | Topic in a chat with topics, where the alerts go |
 | `PG_CONTAINER` | `tn-postgres` | Name of the node's Postgres container |
 | `NODE_LABEL` | the hostname | Node name shown in the message |

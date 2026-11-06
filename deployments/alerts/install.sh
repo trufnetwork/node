@@ -10,7 +10,7 @@ install -m 644 tn-pg-alert.service tn-pg-alert.timer /etc/systemd/system/
 install -d -m 700 /etc/tn-alert
 if [ ! -e /etc/tn-alert/telegram.env ]; then
 	install -m 600 /dev/null /etc/tn-alert/telegram.env
-	printf '%s\n' 'TELEGRAM_BOT_TOKEN=' 'TELEGRAM_CHAT_ID=' '# PG_CONTAINER=tn-postgres' '# NODE_LABEL=' >/etc/tn-alert/telegram.env
+	printf '%s\n' 'TELEGRAM_BOT_TOKEN=' 'TELEGRAM_CHAT_ID=' '# TELEGRAM_TOPIC_ID=' '# PG_CONTAINER=tn-postgres' '# NODE_LABEL=' >/etc/tn-alert/telegram.env
 fi
 systemctl daemon-reload
 systemctl enable --now tn-pg-alert.timer
