@@ -6,7 +6,7 @@ Two small alerts send Telegram messages from each node. Both read the same setti
 
 `tn-pg-alert` sends a Telegram message when a node's Postgres container logs a statement that runs a server program, such as `COPY ... TO PROGRAM`. kwild's database role may not run programs (see `deployments/postgres-roles.sql`), so Postgres refuses the statement and logs it. Any such line means something tried, and it is worth a look.
 
-Each run reads the container's log lines written since the previous run, so nothing is counted twice.
+Each run reads the container's log lines written since the last run that sent its alert. If a send fails, the next run reads the same lines again, so the alert is retried.
 
 ## tn-node-alert: the node stops or crashes
 

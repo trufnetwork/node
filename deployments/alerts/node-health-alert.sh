@@ -61,12 +61,13 @@ state="$STATE_DIR/node-state"
 now=$(date -u +%s)
 
 # Saved state: height, when it last changed, restart count, when the last stall
-# alert went out (0 when none is open).
-last_height=0 changed_at=$now last_restarts=-1 alerted_at=0
+# alert went out (0 when none is open), and the minutes of a stall whose
+# recovery message has not gone out yet (0 when none).
+last_height=0 changed_at=$now last_restarts=-1 alerted_at=0 recovery=0
 if [ -r "$state" ]; then
-	read -r last_height changed_at last_restarts alerted_at <"$state" || true
+	read -r last_height changed_at last_restarts alerted_at recovery <"$state" || true
 fi
-for v in last_height changed_at last_restarts alerted_at; do
+for v in last_height changed_at last_restarts alerted_at recovery; do
 	[[ ${!v} =~ ^-?[0-9]+$ ]] || printf -v "$v" '%s' 0
 done
 [ "$changed_at" -gt 0 ] || changed_at=$now
@@ -100,7 +101,8 @@ fi
 
 if [ "$height" -gt "$last_height" ]; then
 	if [ "$alerted_at" -gt 0 ]; then
-		send "${NODE_LABEL}: blocks are moving again, height ${height}, after $(((now - changed_at) / 60)) min without a new block." || failed=1
+		recovery=$(((now - changed_at) / 60))
+		[ "$recovery" -gt 0 ] || recovery=1
 	fi
 	changed_at=$now
 	alerted_at=0
@@ -118,7 +120,16 @@ else
 	fi
 fi
 
-printf '%s %s %s %s\n' "$height" "$changed_at" "${restarts:--1}" "$alerted_at" >"$state.tmp"
+# A recovery message that fails is kept and sent again on the next run.
+if [ "$recovery" -gt 0 ]; then
+	if send "${NODE_LABEL}: blocks are moving again, height ${height}, after ${recovery} min without a new block."; then
+		recovery=0
+	else
+		failed=1
+	fi
+fi
+
+printf '%s %s %s %s %s\n' "$height" "$changed_at" "${restarts:--1}" "$alerted_at" "$recovery" >"$state.tmp"
 sync "$state.tmp" 2>/dev/null || true
 mv -f "$state.tmp" "$state"
 exit "$failed"
