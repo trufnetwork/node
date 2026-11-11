@@ -131,9 +131,11 @@ behind.
 
 **Solution:** Run [`deployments/postgres-roles.sql`](../../deployments/postgres-roles.sql)
 again as a Postgres superuser, between runs: first check that no `pg_repack`
-session is open (`SELECT count(*) FROM pg_stat_activity WHERE usename = 'tn_repack'`
-returns 0), because the script clears an interrupted run's leftovers and would
-wait on a live run's locks. On a node whose `kwild` already connects without
+session is open for the role `pg_repack` runs as, which is the `pg_repack_user`
+setting, or `tn_repack` when that is unset on a node whose `kwild` is not a
+superuser (`SELECT count(*) FROM pg_stat_activity WHERE usename = 'tn_repack'`
+returns 0). The script clears an interrupted run's leftovers, and would wait on
+a live run's locks. On a node whose `kwild` already connects without
 superuser rights, `kwild` need not restart; the next run uses the trigger. A node
 whose `kwild` still connects as a superuser has to stop `kwild` first, as
 [Moving an Existing Node Off the Superuser Role](../../docs/node-operator-guide.md#moving-an-existing-node-off-the-superuser-role)
@@ -147,8 +149,9 @@ through than the node waits for a block to commit (30 minutes), and `kwild` then
 restarts and the run starts over. Each table is also swapped in under an
 `ACCESS EXCLUSIVE` lock, and `pg_repack` cancels the sessions that hold it up.
 On a node where `tn_vacuum` is enabled, confirm that its biggest table copies
-well within that limit, or set `enabled = false` under `[extensions.tn_vacuum]`,
-before you run the script.
+well within that limit before you run the script. If it might not, set
+`enabled = false` under `[extensions.tn_vacuum]` and restart `kwild` first: the
+extension reads its settings only when the node starts.
 
 ### High Memory Usage
 
