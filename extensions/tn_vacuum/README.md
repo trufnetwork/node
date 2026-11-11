@@ -57,6 +57,15 @@ superuser may do, and lets no role but `tn_repack` and superusers use it.
 `tn_repack` is not a superuser: it acts on the node's tables as a member of the
 `kwild` role, and owns what its runs create in the `repack` schema.
 
+`pg_repack` copies each table with `CREATE TABLE ... AS` and, until it swaps
+the copy in, replays on the copy the writes the table takes. The node's
+publication covers every table, so Postgres refuses an update or delete on the
+copy unless the copy has a replica identity. The script creates an event
+trigger, `set_replica_identity_on_repack_copy`, that gives the tables
+`CREATE TABLE ... AS` makes in the `repack` schema full replica identity. It
+leaves `set_replica_identity_on_create`, which `kwild` checks at startup, as
+`kwild` expects it.
+
 When `pg_repack` connects as a role other than the node's own database user,
 the extension passes `--no-superuser-check` to it, and clears what an
 interrupted run left behind by dropping those objects one by one.
@@ -108,6 +117,41 @@ could not ensure the `pg_repack` extension
 
 **Solution:** Run [`deployments/postgres-roles.sql`](../../deployments/postgres-roles.sql)
 as a Postgres superuser, then restart the node. The script is safe to run again.
+
+### Replica Identity Errors
+
+**Symptom:** A run fails with exit status 254, and its output reads
+`cannot update table "table_<oid>" because it does not have a replica identity
+and publishes updates` (or `cannot delete from table ...`)
+
+**Cause:** The table took an update or a delete while `pg_repack` worked on it,
+and the database lacks the event trigger that gives `pg_repack`'s copies full
+replica identity. `pg_repack` drops its copy when it fails, so nothing is left
+behind.
+
+**Solution:** Run [`deployments/postgres-roles.sql`](../../deployments/postgres-roles.sql)
+again as a Postgres superuser, between runs: first check that no `pg_repack`
+session is open for the role `pg_repack` runs as, which is the `pg_repack_user`
+setting, or `tn_repack` when that is unset on a node whose `kwild` is not a
+superuser (`SELECT count(*) FROM pg_stat_activity WHERE usename = 'tn_repack'`
+returns 0). The script clears an interrupted run's leftovers, and would wait on
+a live run's locks. On a node whose `kwild` already connects without
+superuser rights, `kwild` need not restart; the next run uses the trigger. A node
+whose `kwild` still connects as a superuser has to stop `kwild` first, as
+[Moving an Existing Node Off the Superuser Role](../../docs/node-operator-guide.md#moving-an-existing-node-off-the-superuser-role)
+describes.
+
+**Before you do:** without the trigger, a run stops at the first table that
+takes an update or a delete while it is copied. With it, a run copies every
+table, and each copy passes through the node's replication slot like any other
+write. On a large database the copy of the biggest table can take longer to pass
+through than the node waits for a block to commit (30 minutes), and `kwild` then
+restarts and the run starts over. Each table is also swapped in under an
+`ACCESS EXCLUSIVE` lock, and `pg_repack` cancels the sessions that hold it up.
+On a node where `tn_vacuum` is enabled, confirm that its biggest table copies
+well within that limit before you run the script. If it might not, set
+`enabled = false` under `[extensions.tn_vacuum]` and restart `kwild` first: the
+extension reads its settings only when the node starts.
 
 ### High Memory Usage
 

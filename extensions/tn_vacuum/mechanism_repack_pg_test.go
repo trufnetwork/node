@@ -19,6 +19,7 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/wait"
 	"github.com/trufnetwork/kwil-db/core/log"
+	"github.com/trufnetwork/kwil-db/node/pg"
 )
 
 // startRepackPostgres starts the Postgres image nodes run, which ships the
@@ -248,20 +249,29 @@ $$`,
 	runPostgresRoles(t, container)
 	asKwild = connectAs(t, kwild)
 	const triggerOID = "SELECT oid::bigint FROM pg_event_trigger WHERE evtname = 'set_replica_identity_on_create'"
+	const copyTriggerOID = "SELECT oid::bigint FROM pg_event_trigger WHERE evtname = 'set_replica_identity_on_repack_copy'"
 	trigger := countOne(t, asKwild, triggerOID)
+	copyTrigger := countOne(t, asKwild, copyTriggerOID)
 	runPostgresRoles(t, container) // and again, as on every start
 	require.Equal(t, trigger, countOne(t, asKwild, triggerOID), "a second run keeps the event trigger as it is")
+	require.Equal(t, copyTrigger, countOne(t, asKwild, copyTriggerOID),
+		"a second run keeps the event trigger for pg_repack's copies as it is")
 
 	require.False(t, queryBool(t, asKwild, "SELECT rolsuper FROM pg_roles WHERE rolname = current_user"))
 	// The event trigger's function is read through the trigger, from the
 	// catalog: kwild may not look up names in the function's schema.
 	const triggerFunction = "pg_event_trigger e JOIN pg_proc p ON p.oid = e.evtfoid " +
 		"JOIN pg_namespace n ON n.oid = p.pronamespace WHERE e.evtname = 'set_replica_identity_on_create'"
+	const copyTriggerFunction = "pg_event_trigger e JOIN pg_proc p ON p.oid = e.evtfoid " +
+		"JOIN pg_namespace n ON n.oid = p.pronamespace WHERE e.evtname = 'set_replica_identity_on_repack_copy'"
 	for name, query := range map[string]string{
 		"extension":         "SELECT r.rolsuper FROM pg_extension e JOIN pg_roles r ON r.oid = e.extowner WHERE e.extname = 'pg_repack'",
 		"event trigger":     "SELECT r.rolsuper FROM pg_event_trigger e JOIN pg_roles r ON r.oid = e.evtowner WHERE e.evtname = 'set_replica_identity_on_create'",
 		"function":          "SELECT (SELECT rolsuper FROM pg_roles WHERE oid = p.proowner) FROM " + triggerFunction,
 		"function's schema": "SELECT (SELECT rolsuper FROM pg_roles WHERE oid = n.nspowner) FROM " + triggerFunction,
+		"copy trigger":      "SELECT r.rolsuper FROM pg_event_trigger e JOIN pg_roles r ON r.oid = e.evtowner WHERE e.evtname = 'set_replica_identity_on_repack_copy'",
+		"copy function":     "SELECT (SELECT rolsuper FROM pg_roles WHERE oid = p.proowner) FROM " + copyTriggerFunction,
+		"copy schema":       "SELECT (SELECT rolsuper FROM pg_roles WHERE oid = n.nspowner) FROM " + copyTriggerFunction,
 		"publication":       "SELECT r.rolsuper FROM pg_publication p JOIN pg_roles r ON r.oid = p.pubowner WHERE p.pubname = 'kwild_repl'",
 	} {
 		require.True(t, queryBool(t, asKwild, query), "a superuser owns the %s", name)
@@ -284,7 +294,7 @@ $$`,
 		"tn_repack owns pg_repack's trigger function")
 
 	// kwild may not run programs, read the server's files, use pg_repack, or
-	// drop the event trigger, its function or the function's schema.
+	// drop the event triggers, their functions or the functions' schema.
 	for _, stmt := range []string{
 		"COPY (SELECT 1) TO PROGRAM 'true'",
 		"COPY (SELECT 1) TO '/tmp/kwild-copy'",
@@ -292,6 +302,8 @@ $$`,
 		"SELECT repack.version()",
 		"DROP EVENT TRIGGER set_replica_identity_on_create",
 		"DROP FUNCTION tn_replica_identity.set_replica_identity() CASCADE",
+		"DROP EVENT TRIGGER set_replica_identity_on_repack_copy",
+		"DROP FUNCTION tn_replica_identity.set_repack_copy_replica_identity() CASCADE",
 		"DROP SCHEMA tn_replica_identity CASCADE",
 	} {
 		_, err := asKwild.Exec(ctx, stmt)
@@ -406,4 +418,221 @@ func TestPgRepackRoleFollowsKwildsRole(t *testing.T) {
 	args = readLines(t, argsFile)
 	require.Contains(t, args, "--username="+DefaultPgRepackUser)
 	require.Contains(t, args, "--no-superuser-check")
+}
+
+// pgRepackRun is the exit code and output of a pg_repack run in a container.
+type pgRepackRun struct {
+	code int
+	out  string
+	err  error
+}
+
+// startPgRepack runs pg_repack in the container as tn_vacuum runs it on a
+// database set up with postgres-roles.sql, and returns at once. The run's
+// result arrives on the channel.
+func startPgRepack(container testcontainers.Container) <-chan pgRepackRun {
+	done := make(chan pgRepackRun, 1)
+	go func() {
+		code, reader, err := container.Exec(context.Background(), []string{"pg_repack", "--no-superuser-check",
+			"--username=" + DefaultPgRepackUser, "--dbname=kwild", "--all", "--no-order"}, tcexec.Multiplexed())
+		var out []byte
+		if err == nil {
+			out, err = io.ReadAll(reader)
+		}
+		done <- pgRepackRun{code: code, out: string(out), err: err}
+	}()
+	return done
+}
+
+// pg_repack copies a table with CREATE TABLE ... AS, and until it swaps the
+// copy in, it replays on the copy the writes the table takes. The publication
+// covers every table, and Postgres refuses an UPDATE or DELETE on a published
+// table without a replica identity. The copy has no primary key, so the roles
+// script gives it full replica identity.
+func TestPgRepackReplaysUpdatesAndDeletesUnderPublication(t *testing.T) {
+	ctx := context.Background()
+	container, kwild := startNodePostgres(t)
+	runPostgresRoles(t, container)
+
+	asKwild := connectAs(t, kwild)
+	for _, stmt := range []string{
+		"CREATE SCHEMA main",
+		"CREATE TABLE main.events (id INT PRIMARY KEY, v TEXT)",
+		"INSERT INTO main.events SELECT g, 'r' || g FROM generate_series(1, 100) g",
+		// The CREATE TABLE trigger gave the table full replica identity, like
+		// the copy will get. Set it back to the default, so that the check after
+		// the swap shows the table keeps its own setting, not the copy's.
+		"ALTER TABLE main.events REPLICA IDENTITY DEFAULT",
+	} {
+		_, err := asKwild.Exec(ctx, stmt)
+		require.NoError(t, err)
+	}
+	require.True(t, queryBool(t, asKwild,
+		"SELECT puballtables AND pubupdate AND pubdelete FROM pg_publication WHERE pubname = 'kwild_repl'"),
+		"the publication covers every table and publishes updates and deletes")
+	var eventsOID, before uint32
+	require.NoError(t, asKwild.QueryRow(ctx,
+		"SELECT 'main.events'::regclass::oid, pg_relation_filenode('main.events')").Scan(&eventsOID, &before))
+
+	// pg_repack swaps the copy in only once the transactions that were open
+	// when it began to copy have ended. Holding one open keeps it replaying
+	// writes on the copy until the writes below have reached it.
+	hold, err := connectAs(t, kwild).Begin(ctx)
+	require.NoError(t, err)
+	_, err = hold.Exec(ctx, "SELECT 1")
+	require.NoError(t, err)
+
+	run := startPgRepack(container)
+
+	// kwild may not look up names in the repack schema, so it reads the copy
+	// from the catalog. The copy is there once pg_repack has filled it.
+	var copyReplident string
+	deadline := time.Now().Add(time.Minute)
+	for {
+		err := asKwild.QueryRow(ctx, `SELECT c.relreplident::text FROM pg_class c
+			JOIN pg_namespace n ON n.oid = c.relnamespace
+			WHERE n.nspname = 'repack' AND c.relname = $1`, fmt.Sprintf("table_%d", eventsOID)).Scan(&copyReplident)
+		if err == nil {
+			break
+		}
+		require.ErrorIs(t, err, pgx.ErrNoRows)
+		select {
+		case r := <-run:
+			t.Fatalf("pg_repack ended before it copied main.events: exit %d, %v\n%s", r.code, r.err, r.out)
+		default:
+		}
+		require.True(t, time.Now().Before(deadline), "pg_repack did not copy main.events within a minute")
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	for _, stmt := range []string{
+		"UPDATE main.events SET v = 'u' || id WHERE id <= 10",
+		"DELETE FROM main.events WHERE id > 90",
+		"INSERT INTO main.events VALUES (101, 'r101')",
+	} {
+		_, err := asKwild.Exec(ctx, stmt)
+		require.NoError(t, err)
+	}
+	require.NoError(t, hold.Commit(ctx))
+
+	var r pgRepackRun
+	select {
+	case r = <-run:
+	case <-time.After(2 * time.Minute):
+		t.Fatal("pg_repack did not finish within two minutes")
+	}
+	require.NoError(t, r.err)
+	require.Equal(t, 0, r.code, r.out)
+	require.Contains(t, r.out, `repacking table "main.events"`)
+	require.Equal(t, "f", copyReplident, "pg_repack's copy of main.events has full replica identity")
+
+	var after uint32
+	require.NoError(t, asKwild.QueryRow(ctx, "SELECT pg_relation_filenode('main.events')").Scan(&after))
+	require.NotEqual(t, before, after, "the table was rewritten")
+	require.EqualValues(t, 91, countOne(t, asKwild, "SELECT count(*) FROM main.events"))
+	require.EqualValues(t, 10, countOne(t, asKwild, "SELECT count(*) FROM main.events WHERE v = 'u' || id"),
+		"the updates made during the run are kept")
+	require.EqualValues(t, 0, countOne(t, asKwild, "SELECT count(*) FROM main.events WHERE id BETWEEN 91 AND 100"),
+		"the deletes made during the run are kept")
+	require.EqualValues(t, 1, countOne(t, asKwild, "SELECT count(*) FROM main.events WHERE id = 101"),
+		"the insert made during the run is kept")
+	require.True(t, queryBool(t, asKwild, "SELECT relreplident = 'd' FROM pg_class WHERE oid = 'main.events'::regclass"),
+		"the table keeps its own replica identity, not the copy's")
+	require.EqualValues(t, 0, countOne(t, asKwild,
+		"SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'repack' AND c.relkind IN ('r', 'c')"))
+}
+
+// kwild stops at startup unless set_replica_identity_on_create fires on
+// CREATE TABLE alone and runs kwild's own function, so the copies pg_repack
+// makes have a trigger of their own. Running the roles script again adds that
+// trigger to a node set up before it, and puts either trigger back when its
+// tags have changed.
+func TestPostgresRolesKeepReplicaIdentityTriggersAsKwildChecks(t *testing.T) {
+	ctx := context.Background()
+	container, kwild := startNodePostgres(t)
+	runPostgresRoles(t, container)
+	superuser := kwild
+	superuser.User = "postgres"
+	asSuperuser := connectAs(t, superuser)
+
+	type trigger struct {
+		Enabled string
+		Tags    []string
+	}
+	readTrigger := func(name string) trigger {
+		t.Helper()
+		var tr trigger
+		require.NoError(t, asSuperuser.QueryRow(ctx,
+			"SELECT evtenabled::text, evttags FROM pg_event_trigger WHERE evtname = $1 AND evtevent = 'ddl_command_end'",
+			name).Scan(&tr.Enabled, &tr.Tags))
+		return tr
+	}
+	asKwildChecks := trigger{Enabled: "O", Tags: []string{"CREATE TABLE"}}
+	forRepackCopies := trigger{Enabled: "O", Tags: []string{"CREATE TABLE AS"}}
+
+	// A node set up by an earlier roles script has no trigger for pg_repack's
+	// copies, and that script kept a trigger whose tags had changed as long as
+	// it ran the right function.
+	for _, stmt := range []string{
+		"DROP EVENT TRIGGER set_replica_identity_on_repack_copy",
+		"DROP FUNCTION tn_replica_identity.set_repack_copy_replica_identity()",
+		"DROP EVENT TRIGGER set_replica_identity_on_create",
+		`CREATE EVENT TRIGGER set_replica_identity_on_create ON ddl_command_end
+			WHEN TAG IN ('CREATE TABLE', 'CREATE TABLE AS') EXECUTE FUNCTION tn_replica_identity.set_replica_identity()`,
+	} {
+		_, err := asSuperuser.Exec(ctx, stmt)
+		require.NoError(t, err)
+	}
+	runPostgresRoles(t, container)
+	require.Equal(t, asKwildChecks, readTrigger("set_replica_identity_on_create"))
+	require.Equal(t, forRepackCopies, readTrigger("set_replica_identity_on_repack_copy"))
+
+	// The same for the trigger on pg_repack's copies, also when disabled.
+	for _, stmt := range []string{
+		"DROP EVENT TRIGGER set_replica_identity_on_repack_copy",
+		`CREATE EVENT TRIGGER set_replica_identity_on_repack_copy ON ddl_command_end
+			WHEN TAG IN ('CREATE TABLE AS', 'SELECT INTO') EXECUTE FUNCTION tn_replica_identity.set_repack_copy_replica_identity()`,
+		"ALTER EVENT TRIGGER set_replica_identity_on_repack_copy DISABLE",
+	} {
+		_, err := asSuperuser.Exec(ctx, stmt)
+		require.NoError(t, err)
+	}
+	runPostgresRoles(t, container)
+	require.Equal(t, asKwildChecks, readTrigger("set_replica_identity_on_create"))
+	require.Equal(t, forRepackCopies, readTrigger("set_replica_identity_on_repack_copy"))
+
+	const triggerOIDs = "SELECT array_agg(oid::bigint ORDER BY evtname) FROM pg_event_trigger " +
+		"WHERE evtname IN ('set_replica_identity_on_create', 'set_replica_identity_on_repack_copy')"
+	var oids, oidsAgain []int64
+	require.NoError(t, asSuperuser.QueryRow(ctx, triggerOIDs).Scan(&oids))
+	require.Len(t, oids, 2)
+	runPostgresRoles(t, container)
+	require.NoError(t, asSuperuser.QueryRow(ctx, triggerOIDs).Scan(&oidsAgain))
+	require.Equal(t, oids, oidsAgain, "a run with nothing to repair keeps both triggers")
+
+	// A table that CREATE TABLE ... AS makes in pg_repack's schema gets full
+	// replica identity. One kwild makes in its own schemas keeps the default,
+	// as it has on every node so far.
+	repacker := kwild
+	repacker.User = DefaultPgRepackUser
+	asRepacker := connectAs(t, repacker)
+	_, err := asRepacker.Exec(ctx, "CREATE TABLE repack.probe AS SELECT 1 AS x")
+	require.NoError(t, err)
+	require.True(t, queryBool(t, asRepacker, "SELECT relreplident = 'f' FROM pg_class WHERE oid = 'repack.probe'::regclass"))
+	_, err = asRepacker.Exec(ctx, "DROP TABLE repack.probe")
+	require.NoError(t, err)
+	asKwild := connectAs(t, kwild)
+	for _, stmt := range []string{"CREATE SCHEMA main", "CREATE TABLE main.probe AS SELECT 1 AS x"} {
+		_, err := asKwild.Exec(ctx, stmt)
+		require.NoError(t, err)
+	}
+	require.True(t, queryBool(t, asKwild, "SELECT relreplident = 'd' FROM pg_class WHERE oid = 'main.probe'::regclass"))
+
+	// kwild starts, which it does only when its own trigger is as it checks.
+	db, err := pg.NewDB(ctx, &pg.DBConfig{PoolConfig: pg.PoolConfig{
+		ConnConfig: pg.ConnConfig{Host: kwild.Host, Port: kwild.Port, User: kwild.User, DBName: kwild.Database},
+		MaxConns:   4,
+	}})
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
 }
