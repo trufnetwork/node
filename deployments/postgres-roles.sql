@@ -10,9 +10,11 @@
 --
 -- Some objects kwild needs can only be created by a superuser: the publication
 -- it reads its changes from, the event trigger that gives its tables full
--- replica identity, and the pg_repack extension. This script creates them and
--- leaves them owned by the superuser that runs it, with the event trigger's
--- function in the "tn_replica_identity" schema, which kwild may not use.
+-- replica identity, a second event trigger that does the same for the copy
+-- pg_repack makes of a table, and the pg_repack extension. This script creates
+-- them and leaves them owned by the superuser that runs it, with the event
+-- triggers' functions in the "tn_replica_identity" schema, which kwild may not
+-- use.
 --
 -- Run it as a superuser, such as the "postgres" role of the kwil-postgres
 -- image, before kwild starts. It is safe to run again.
@@ -84,20 +86,66 @@ ALTER FUNCTION tn_replica_identity.set_replica_identity() OWNER TO CURRENT_USER;
 -- An event trigger cannot be pointed at another function. One that calls any
 -- other function, such as the public.set_replica_identity() that kwild creates
 -- while it is a superuser, is dropped and created again, and the function it
--- called is dropped. This runs in one transaction, so that no table is created
--- in between without the trigger.
+-- called is dropped. So is one that fires on any other event or tags: kwild
+-- does not start unless the trigger fires on CREATE TABLE alone. This runs in
+-- one transaction, so that no table is created in between without the trigger.
 BEGIN;
 SELECT 'DROP EVENT TRIGGER set_replica_identity_on_create',
-    format('DROP FUNCTION %s', evtfoid::regprocedure)
+    CASE WHEN evtfoid <> 'tn_replica_identity.set_replica_identity()'::regprocedure
+        THEN format('DROP FUNCTION %s', evtfoid::regprocedure) END
 FROM pg_event_trigger
 WHERE evtname = 'set_replica_identity_on_create'
-  AND evtfoid <> 'tn_replica_identity.set_replica_identity()'::regprocedure\gexec
+  AND (evtfoid <> 'tn_replica_identity.set_replica_identity()'::regprocedure
+    OR evtevent <> 'ddl_command_end'
+    OR evttags IS DISTINCT FROM ARRAY['CREATE TABLE'])\gexec
 SELECT 'CREATE EVENT TRIGGER set_replica_identity_on_create ON ddl_command_end '
     'WHEN TAG IN (''CREATE TABLE'') EXECUTE FUNCTION tn_replica_identity.set_replica_identity()'
 WHERE NOT EXISTS (SELECT FROM pg_event_trigger WHERE evtname = 'set_replica_identity_on_create')\gexec
 COMMIT;
 ALTER EVENT TRIGGER set_replica_identity_on_create OWNER TO CURRENT_USER;
 ALTER EVENT TRIGGER set_replica_identity_on_create ENABLE;
+
+-- pg_repack copies a table with CREATE TABLE ... AS, which the trigger above
+-- does not fire on, and while it runs it replays the table's writes on the
+-- copy. The copy has no primary key and the publication covers every table, so
+-- Postgres refuses the updates and deletes among those writes unless the copy
+-- has full replica identity. kwild does not start if the trigger above fires
+-- on any other tag or runs another function, so a second trigger covers the
+-- copies: the tables that CREATE TABLE ... AS makes in pg_repack's schema, and
+-- no other table.
+CREATE OR REPLACE FUNCTION tn_replica_identity.set_repack_copy_replica_identity()
+RETURNS event_trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+    obj record;
+BEGIN
+    FOR obj IN
+        SELECT * FROM pg_event_trigger_ddl_commands()
+        WHERE command_tag = 'CREATE TABLE AS' AND object_type = 'table' AND schema_name = 'repack'
+    LOOP
+        EXECUTE 'ALTER TABLE ' || obj.object_identity || ' REPLICA IDENTITY FULL';
+    END LOOP;
+END;
+$$;
+ALTER FUNCTION tn_replica_identity.set_repack_copy_replica_identity() OWNER TO CURRENT_USER;
+
+-- As above, a trigger of that name that calls another function, or fires on
+-- any other event or tags, is replaced in one transaction.
+BEGIN;
+SELECT 'DROP EVENT TRIGGER set_replica_identity_on_repack_copy'
+FROM pg_event_trigger
+WHERE evtname = 'set_replica_identity_on_repack_copy'
+  AND (evtfoid <> 'tn_replica_identity.set_repack_copy_replica_identity()'::regprocedure
+    OR evtevent <> 'ddl_command_end'
+    OR evttags IS DISTINCT FROM ARRAY['CREATE TABLE AS'])\gexec
+SELECT 'CREATE EVENT TRIGGER set_replica_identity_on_repack_copy ON ddl_command_end '
+    'WHEN TAG IN (''CREATE TABLE AS'') EXECUTE FUNCTION tn_replica_identity.set_repack_copy_replica_identity()'
+WHERE NOT EXISTS (SELECT FROM pg_event_trigger WHERE evtname = 'set_replica_identity_on_repack_copy')\gexec
+COMMIT;
+ALTER EVENT TRIGGER set_replica_identity_on_repack_copy OWNER TO CURRENT_USER;
+ALTER EVENT TRIGGER set_replica_identity_on_repack_copy ENABLE;
 
 -- An extension that a role other than a superuser created, or the tables and
 -- triggers an interrupted pg_repack run left behind, are cleared by creating
@@ -151,6 +199,31 @@ BEGIN
                OR pg_has_role(m.rolname, p.proowner, 'USAGE')
                OR pg_has_role(m.rolname, n.nspowner, 'USAGE'))) THEN
         RAISE EXCEPTION 'kwild and tn_repack must not be able to drop the event trigger that sets replica identity';
+    END IF;
+    -- kwild checks this at startup.
+    IF NOT EXISTS (
+        SELECT FROM pg_event_trigger
+        WHERE evtname = 'set_replica_identity_on_create' AND evtenabled = 'O'
+          AND evtevent = 'ddl_command_end' AND evttags = ARRAY['CREATE TABLE']) THEN
+        RAISE EXCEPTION 'the event trigger set_replica_identity_on_create must be enabled and fire on CREATE TABLE alone';
+    END IF;
+    IF NOT EXISTS (
+        SELECT FROM pg_event_trigger
+        WHERE evtname = 'set_replica_identity_on_repack_copy' AND evtenabled IN ('O', 'A')
+          AND evtevent = 'ddl_command_end' AND 'CREATE TABLE AS' = ANY (evttags)) THEN
+        RAISE EXCEPTION 'the event trigger set_replica_identity_on_repack_copy must be enabled and fire on CREATE TABLE AS';
+    END IF;
+    IF NOT EXISTS (
+        SELECT FROM pg_event_trigger e
+        JOIN pg_proc p ON p.oid = e.evtfoid
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE e.evtname = 'set_replica_identity_on_repack_copy'
+          AND NOT EXISTS (
+            SELECT FROM unnest(ARRAY['kwild', 'tn_repack']) AS m(rolname)
+            WHERE pg_has_role(m.rolname, e.evtowner, 'USAGE')
+               OR pg_has_role(m.rolname, p.proowner, 'USAGE')
+               OR pg_has_role(m.rolname, n.nspowner, 'USAGE'))) THEN
+        RAISE EXCEPTION 'kwild and tn_repack must not be able to drop the event trigger that sets replica identity on pg_repack''s copies';
     END IF;
 END
 $$;
