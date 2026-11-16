@@ -98,6 +98,29 @@ CREATE OR REPLACE ACTION create_market(
     }
     tn_utils.validate_query_stream($header_data_provider, $header_stream_id, $query_args);
 
+    -- The outcome actions (migration 063) end every market, as YES, NO or
+    -- INVALID, only if each capture can run. So their args get the checks
+    -- request_attestation makes before it runs the query, and the stream must
+    -- be primitive, the only kind they read.
+    if $market_action = 'index_change_in_range_v2'
+        OR $market_action = 'price_above_threshold_v2'
+        OR $market_action = 'price_below_threshold_v2'
+        OR $market_action = 'value_in_range_v2' {
+        $outcome_action_id INT;
+        for $row in SELECT action_id FROM attestation_actions WHERE action_name = $market_action {
+            $outcome_action_id := $row.action_id;
+        }
+        tn_utils.validate_attestation_date_range($outcome_action_id, $query_args);
+
+        -- validate_query_stream has checked that these are the action's own
+        -- data_provider and stream_id args.
+        $outcome_data_provider TEXT := '0x' || encode($header_data_provider, 'hex');
+        $outcome_stream_id TEXT := $header_stream_id::TEXT;
+        if NOT is_primitive_stream($outcome_data_provider, $outcome_stream_id) {
+            ERROR('Action ' || $market_action || ' reads primitive streams only: ' || $outcome_stream_id || ' is composed');
+        }
+    }
+
     -- Check for duplicate market (hash must be unique)
     $existing_id INT;
     for $row in SELECT id FROM ob_queries WHERE hash = $query_hash {

@@ -43,7 +43,7 @@ Call the `request_attestation` action with the following parameters:
 
 - **data_provider**: The data provider's address (0x-prefixed)
 - **stream_id**: The stream identifier (32 characters)
-- **action_name**: The query action to attest. It must be on the `attestation_actions` allowlist (e.g., `get_last_record`, `get_first_record`, `get_high_value`, `get_low_value`, `price_above_threshold`, `index_change_in_range`)
+- **action_name**: The query action to attest. It must be on the `attestation_actions` allowlist (e.g., `get_last_record`, `get_first_record`, `get_high_value`, `get_low_value`, `price_above_threshold`, `index_change_in_range`, and the outcome actions below)
 - **args_bytes**: ABI-encoded arguments for the query action. They must start with the same data_provider and stream_id, or the request is refused
 - **encrypt_sig**: Must be `false` (encryption not yet supported)
 - **max_fee**: Maximum fee you're willing to pay for the attestation
@@ -51,6 +51,25 @@ Call the `request_attestation` action with the following parameters:
 Actions that return more than one row, such as `get_record` and `get_index`, are refused. The node executes the query deterministically to ensure all validators compute identical results.
 
 **Returns:** `request_tx_id` (use this to retrieve the signed attestation) and `attestation_hash`
+
+### Outcome actions (ids 13 to 16)
+
+These actions settle prediction markets and always end them: YES, NO, or INVALID when the print has not arrived by the deadline. Each returns one row, `(event_time INT8, value NUMERIC(36,18))`, with `value` `1` (YES), `0` (NO) or `-1` (INVALID), encoded like any numeric result.
+
+| id | action | args |
+|---|---|---|
+| 13 | `index_change_in_range_v2` | `data_provider, stream_id, timestamp, window, tolerance, time_interval, min_change, max_change` |
+| 14 | `price_above_threshold_v2` | `data_provider, stream_id, timestamp, window, tolerance, threshold` |
+| 15 | `price_below_threshold_v2` | `data_provider, stream_id, timestamp, window, tolerance, threshold` |
+| 16 | `value_in_range_v2` | `data_provider, stream_id, timestamp, window, tolerance, min_value, max_value` |
+
+`timestamp` (T), `window` (W), `tolerance` and `time_interval` are INT8 seconds; thresholds and bounds are `NUMERIC(36,18)`, and a NULL bound leaves that tail open. `tolerance` bounds the event time of the record read, and `W` bounds block time. A request before block time T fails, so a market whose settle time is before T still resolves on the value as of T. From T, while no record qualifies, a request fails until `T + W`, and from then on it returns INVALID.
+
+These actions read primitive streams only. A missing, deleted or composed stream reads as no record. Read permissions are not checked, as in `price_above_threshold` and the other id 6 to 9 actions, so every requester gets the same answer; the attestation publishes only the outcome and the event time of the record it used.
+
+Requests and markets with other arguments are refused: every arg present with the exact type; `0 <= T <= block time + 10 years`; `0 < W <= 10 years`; `0 <= tolerance <= 45 days`; `W >= tolerance`. For id 13, `0 < time_interval <= 10 years` and `2 * tolerance < time_interval`. For ids 14 and 15 the threshold is not NULL. For ids 13 and 16 the bounds are not both NULL, and `min < max` when both are set. Here 10 years is 315,360,000 seconds and 45 days 3,888,000.
+
+Consumers read the outcome with `tn_utils.parse_attestation_outcome(result_canonical)`, which returns `1`, `0` or `-1`. `parse_attestation_boolean` refuses these ids.
 
 ## Retrieving Attestations
 

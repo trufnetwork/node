@@ -37,6 +37,7 @@ func buildPrecompile() precompiles.Precompile {
 			forceLastArgFalseMethod(),
 			validateAttestationDateRangeMethod(),
 			parseAttestationBooleanMethod(),
+			parseAttestationOutcomeMethod(),
 			computeAttestationHashMethod(),
 			unpackQueryComponentsMethod(),
 			validateQueryStreamMethod(),
@@ -759,6 +760,28 @@ const MaxAttestationDateRangeSeconds int64 = 90 * 24 * 60 * 60 // 7,776,000 seco
 // with the attestation_actions row.
 const IndexChangeInRangeActionID = 12
 
+// Attestation action ids of the outcome actions registered by migration 063. Each returns one row
+// whose value is 1 (YES), 0 (NO) or -1 (INVALID), so these ids settle through
+// parse_attestation_outcome and never through parse_attestation_boolean. Untyped for the same
+// reason as IndexChangeInRangeActionID; the attestation_actions rows must carry the same ids.
+const (
+	IndexChangeInRangeV2ActionID  = 13
+	PriceAboveThresholdV2ActionID = 14
+	PriceBelowThresholdV2ActionID = 15
+	ValueInRangeV2ActionID        = 16
+)
+
+// Bounds on the outcome action arguments. They are consensus constants: changing one changes which
+// create_market and request_attestation calls succeed, at every height.
+const (
+	// OutcomeMaxSpanSeconds (10 years of 365 days) caps how far the timestamp may sit past the
+	// block time, the window and the time interval.
+	OutcomeMaxSpanSeconds int64 = 10 * 365 * 24 * 60 * 60 // 315,360,000 seconds
+	// OutcomeMaxToleranceSeconds (45 days) keeps a read of target +/- tolerance within the 90-day
+	// range rule above.
+	OutcomeMaxToleranceSeconds int64 = 45 * 24 * 60 * 60 // 3,888,000 seconds
+)
+
 // validateAttestationDateRangeMethod validates attestation action eligibility:
 //   - Actions 1-3 (get_record, get_index, get_change_over_time) are BLOCKED — they return
 //     multiple rows and are not allowed for attestation.
@@ -768,6 +791,8 @@ const IndexChangeInRangeActionID = 12
 //     validated (max 90 days, both from and to required).
 //   - Action 12 (index_change_in_range) returns a single boolean from two point lookups — only
 //     its time_interval is validated; the 90-day range rule does not apply.
+//   - Actions 13-16 (the outcome actions) — arg count, types, NULLs and bounds are all validated,
+//     because create_market calls this too and a market whose query can never run would hang.
 func validateAttestationDateRangeMethod() precompiles.Method {
 	return precompiles.Method{
 		Name:            "validate_attestation_date_range",
@@ -800,6 +825,10 @@ func validateAttestationDateRangeHandler(ctx *common.EngineContext, app *common.
 	// unambiguous.
 	if actionID == IndexChangeInRangeActionID {
 		return validateIndexChangeInRangeArgs(inputs[1])
+	}
+
+	if actionID >= 0 && actionID <= math.MaxUint16 && IsOutcomeAction(uint16(actionID)) {
+		return validateOutcomeActionArgs(ctx, uint16(actionID), inputs[1])
 	}
 
 	// Only validate date range for range-based single-row actions (IDs 10-11: get_high_value, get_low_value).
@@ -1245,6 +1274,11 @@ func getActionIDNumber(actionName string) (uint16, error) {
 		"get_low_value":  11,
 		// Index-change action (returns TABLE(result BOOLEAN)) — see migration 055
 		"index_change_in_range": IndexChangeInRangeActionID,
+		// Outcome actions (one row: value 1 YES, 0 NO, -1 INVALID) — see migration 063
+		"index_change_in_range_v2": IndexChangeInRangeV2ActionID,
+		"price_above_threshold_v2": PriceAboveThresholdV2ActionID,
+		"price_below_threshold_v2": PriceBelowThresholdV2ActionID,
+		"value_in_range_v2":        ValueInRangeV2ActionID,
 	}
 
 	id, ok := actionMap[actionName]
@@ -1263,6 +1297,19 @@ func getActionIDNumber(actionName string) (uint16, error) {
 // price resolves YES for essentially any stream.
 func IsBinaryAction(actionID uint16) bool {
 	return (actionID >= 6 && actionID <= 9) || actionID == IndexChangeInRangeActionID
+}
+
+// IsOutcomeAction returns true if the action ID is one of the outcome actions, whose single row
+// carries 1 (YES), 0 (NO) or -1 (INVALID). Membership is explicit, as for IsBinaryAction, so an id
+// registered later is not admitted by accident.
+func IsOutcomeAction(actionID uint16) bool {
+	switch actionID {
+	case IndexChangeInRangeV2ActionID, PriceAboveThresholdV2ActionID,
+		PriceBelowThresholdV2ActionID, ValueInRangeV2ActionID:
+		return true
+	default:
+		return false
+	}
 }
 
 // unpackQueryComponents extracts (dataProvider, streamID, actionID, args) from ABI-encoded bytes.
