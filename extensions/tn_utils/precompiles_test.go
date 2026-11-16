@@ -311,8 +311,20 @@ func TestIsBinaryAction(t *testing.T) {
 		require.False(t, IsBinaryAction(actionID), "%s (id %d) should not settle as a boolean", name, actionID)
 	}
 
+	// The outcome actions return a number with a third state, INVALID, so the boolean parser must
+	// keep refusing them.
+	outcome := map[uint16]string{
+		13: "index_change_in_range_v2",
+		14: "price_above_threshold_v2",
+		15: "price_below_threshold_v2",
+		16: "value_in_range_v2",
+	}
+	for actionID, name := range outcome {
+		require.False(t, IsBinaryAction(actionID), "%s (id %d) should not settle as a boolean", name, actionID)
+	}
+
 	require.False(t, IsBinaryAction(0), "id 0 is not an action")
-	require.False(t, IsBinaryAction(13), "id 13 is unregistered")
+	require.False(t, IsBinaryAction(17), "id 17 is unregistered")
 }
 
 // TestIndexChangeInRangeActionIDAgreesWithRegistry keeps the constant, the name map, and the

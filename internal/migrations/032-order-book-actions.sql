@@ -191,6 +191,29 @@ CREATE OR REPLACE ACTION create_market(
     }
     tn_utils.validate_query_stream($header_data_provider, $header_stream_id, $query_args);
 
+    -- The outcome actions (migration 063) end every market, as YES, NO or
+    -- INVALID, only if each capture can run. So their args get the checks
+    -- request_attestation makes before it runs the query, and the stream must
+    -- be primitive, the only kind they read.
+    if $market_action = 'index_change_in_range_v2'
+        OR $market_action = 'price_above_threshold_v2'
+        OR $market_action = 'price_below_threshold_v2'
+        OR $market_action = 'value_in_range_v2' {
+        $outcome_action_id INT;
+        for $row in SELECT action_id FROM attestation_actions WHERE action_name = $market_action {
+            $outcome_action_id := $row.action_id;
+        }
+        tn_utils.validate_attestation_date_range($outcome_action_id, $query_args);
+
+        -- validate_query_stream has checked that these are the action's own
+        -- data_provider and stream_id args.
+        $outcome_data_provider TEXT := '0x' || encode($header_data_provider, 'hex');
+        $outcome_stream_id TEXT := $header_stream_id::TEXT;
+        if NOT is_primitive_stream($outcome_data_provider, $outcome_stream_id) {
+            ERROR('Action ' || $market_action || ' reads primitive streams only: ' || $outcome_stream_id || ' is composed');
+        }
+    }
+
     -- Check for duplicate market (hash must be unique)
     $existing_id INT;
     for $row in SELECT id FROM ob_queries WHERE hash = $query_hash {
@@ -2679,12 +2702,16 @@ CREATE OR REPLACE ACTION change_ask(
  * 2. Query attestation by market hash (market.hash = attestation.attestation_hash),
  *    taken at or after settle_time
  * 3. Verify attestation has been signed
- * 4. Parse result_canonical to extract boolean outcome (TRUE = YES wins, FALSE = NO wins)
- * 5. Mark market as settled with winning_outcome and settled_at timestamp
+ * 4. Parse result_canonical to extract the outcome (TRUE = YES wins, FALSE = NO wins).
+ *    The outcome actions (ids 13 to 16, migration 063) can also resolve INVALID.
+ * 5. Pay out, then mark market as settled with winning_outcome and settled_at timestamp
  *
  * After settlement:
  * - All trading is permanently blocked (buy, sell, split, cancel, change orders)
- * - Users must call claim_payout() to redeem winning shares
+ * - Payouts have already been made in this transaction: winning shares are
+ *   redeemed and open buy orders refunded by process_settlement, or, when the
+ *   outcome is INVALID, every share is redeemed at $0.50 and open buy orders
+ *   refunded by process_invalid_settlement, with winning_outcome left NULL
  * - Market state is frozen and cannot be changed
  *
  * Parameters:
@@ -2784,13 +2811,15 @@ CREATE OR REPLACE ACTION settle_market(
     $settle_time INT8;
     $settled BOOL;
     $market_found BOOL := false;
+    $query_components BYTEA;
 
-    for $row in SELECT hash, settle_time, settled
+    for $row in SELECT hash, settle_time, settled, query_components
                 FROM ob_queries
                 WHERE id = $query_id {
         $market_hash := $row.hash;
         $settle_time := $row.settle_time;
         $settled := $row.settled;
+        $query_components := $row.query_components;
         $market_found := true;
     }
 
@@ -2890,13 +2919,57 @@ CREATE OR REPLACE ACTION settle_market(
     -- SECTION 3: PARSE ATTESTATION RESULT
     -- ==========================================================================
 
-    -- Parse result_canonical to extract boolean outcome
-    -- Uses tn_utils.parse_attestation_boolean() precompile
-    -- Returns: TRUE (YES wins) or FALSE (NO wins)
-    $winning_outcome BOOL := tn_utils.parse_attestation_boolean($result_canonical);
+    -- Declared here so the tail below sees it: each branch of an if runs in
+    -- its own scope.
+    $winning_outcome BOOL;
 
-    if $winning_outcome IS NULL {
-        ERROR('Failed to parse attestation result (result is NULL)');
+    -- Route on the market's action name. The attestation hash covers the
+    -- action id, so the capture comes from the same action. A NULL name makes
+    -- every comparison NULL and falls through to parse_attestation_boolean,
+    -- which refuses the outcome ids.
+    $market_action TEXT;
+    for $row in tn_utils.unpack_query_components($query_components) {
+        $market_action := $row.action_id;
+    }
+
+    if $market_action = 'index_change_in_range_v2'
+        OR $market_action = 'price_above_threshold_v2'
+        OR $market_action = 'price_below_threshold_v2'
+        OR $market_action = 'value_in_range_v2' {
+        -- Outcome actions (migration 063): 1 YES, 0 NO, -1 INVALID
+        $outcome_code INT := tn_utils.parse_attestation_outcome($result_canonical);
+        if $outcome_code IS NULL {
+            ERROR('Failed to parse attestation outcome (result is NULL)');
+        }
+
+        -- INVALID: nobody wins. Shares are redeemed at $0.50 and buy orders
+        -- refunded, with no fee, and the market closes with no winner.
+        if $outcome_code = -1 {
+            process_invalid_settlement($query_id);
+
+            UPDATE ob_queries
+            SET settled = true,
+                winning_outcome = NULL,
+                settled_at = @block_timestamp
+            WHERE id = $query_id;
+            RETURN;
+        }
+
+        if $outcome_code != 0 {
+            if $outcome_code != 1 {
+                ERROR('Failed to parse attestation outcome (unexpected code ' || $outcome_code::TEXT || ')');
+            }
+        }
+        $winning_outcome := $outcome_code = 1;
+    } else {
+        -- Parse result_canonical to extract boolean outcome
+        -- Uses tn_utils.parse_attestation_boolean() precompile
+        -- Returns: TRUE (YES wins) or FALSE (NO wins)
+        $winning_outcome := tn_utils.parse_attestation_boolean($result_canonical);
+
+        if $winning_outcome IS NULL {
+            ERROR('Failed to parse attestation result (result is NULL)');
+        }
     }
 
     -- ==========================================================================
