@@ -688,6 +688,9 @@ var permanentSettleErrorSignatures = []string{
 	"invalid result_canonical",
 	"result_canonical cannot be empty",
 	"unsupported action_id",
+	// tn_utils.parse_attestation_outcome (ids 13-16): a signed result that is not
+	// exactly one value of 1e18, 0 or -1e18.
+	"outcome action result",
 }
 
 // isPermanentSettleError reports whether a settle_market broadcast error is a

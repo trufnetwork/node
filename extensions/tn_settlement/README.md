@@ -57,9 +57,12 @@ Every N minutes (configurable):
   │  ├─ Check for a signed capture taken at or after settle_time
   │  ├─ If yes → Broadcast settle_market(query_id) transaction
   │  ├─ Retry up to N times with exponential backoff
+  │  ├─ If nothing is captured → request_attestation, on every poll for the
+  │  │  first hour past settle_time, then once per hour slot counted from
+  │  │  settle_time (markets waiting for their slot do not use the run budget)
   │  └─ Log success/failure
   │
-  └─ Summary: total markets, settled count, failed count, skipped count
+  └─ Summary: total markets, settled, failed, skipped and backing_off counts
 ```
 
 ### Settlement Transaction
@@ -93,7 +96,7 @@ INFO: found unsettled markets, count=5
 DEBUG: attestation not yet available, skipping market, query_id=1
 INFO: market settled successfully, query_id=2, tx_hash=0x...
 WARN: failed to settle market after retries, query_id=3, error=...
-INFO: settlement job completed, total_markets=5, settled=4, failed=0, skipped=1
+INFO: settlement job completed, total_markets=5, settled=4, failed=0, skipped=1, backing_off=0
 ```
 
 ### Config Reload

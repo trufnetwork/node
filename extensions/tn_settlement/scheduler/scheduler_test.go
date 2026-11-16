@@ -220,7 +220,7 @@ func TestRunSettlementCycle_PermanentFailureQuarantinesMarket(t *testing.T) {
 	ctx := context.Background()
 
 	// Cycle 1: 368 fails permanently — attempted exactly once, then quarantined.
-	settled, failed, skipped, err := s.runSettlementCycle(ctx, mockOps, broadcaster, signer, "test-chain", 10, 3)
+	settled, failed, skipped, _, err := s.runSettlementCycle(ctx, mockOps, broadcaster, signer, "test-chain", 10, 3)
 	if err != nil {
 		t.Fatalf("cycle 1 unexpected error: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestRunSettlementCycle_PermanentFailureQuarantinesMarket(t *testing.T) {
 	}
 
 	// Cycle 2: 368 is quarantined — skipped, and NOT re-broadcast.
-	settled, failed, skipped, err = s.runSettlementCycle(ctx, mockOps, broadcaster, signer, "test-chain", 10, 3)
+	settled, failed, skipped, _, err = s.runSettlementCycle(ctx, mockOps, broadcaster, signer, "test-chain", 10, 3)
 	if err != nil {
 		t.Fatalf("cycle 2 unexpected error: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestRunSettlementCycle_SuccessClearsQuarantine(t *testing.T) {
 	s.quarantine[42] = time.Now().Add(-time.Minute) // deadline in the past → re-probe allowed
 	s.quarantineMu.Unlock()
 
-	settled, failed, skipped, err := s.runSettlementCycle(context.Background(), mockOps, broadcaster, signer, "test-chain", 10, 3)
+	settled, failed, skipped, _, err := s.runSettlementCycle(context.Background(), mockOps, broadcaster, signer, "test-chain", 10, 3)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestRunSettlementCycle_QuarantinedMarketDoesNotStarveNewer(t *testing.T) {
 	// The older market was quarantined by a prior permanent failure.
 	s.quarantineMarket(older.ID)
 
-	settled, failed, skipped, err := s.runSettlementCycle(context.Background(), mockOps, broadcaster, signer, "test-chain", 1, 3)
+	settled, failed, skipped, _, err := s.runSettlementCycle(context.Background(), mockOps, broadcaster, signer, "test-chain", 1, 3)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -842,4 +842,270 @@ func TestRunSettlementCycle_ChecksCapturesAtEachMarketsSettleTime(t *testing.T) 
 	require.NoError(t, s.RunOnce(context.Background()))
 
 	require.Equal(t, []int64{1700000000, 1700003600, 1700007200}, ops.captureSettleTimes)
+}
+
+// =============================================================================
+// Test: a market whose capture does not land is requested hourly after an hour
+// =============================================================================
+
+// backoffSettleTime is deliberately not on a 5-minute mark, so the polls and the
+// hour slots counted from it do not line up.
+const backoffSettleTime int64 = 1_700_000_123
+
+// testClock is a clock the test sets by hand.
+type testClock struct{ t time.Time }
+
+func (c *testClock) now() time.Time { return c.t }
+
+// backoffScheduler builds a scheduler that reads its time from clock.
+func backoffScheduler(t *testing.T, ops *mockEngineOps, maxMarkets int, clock *testClock) *SettlementScheduler {
+	t.Helper()
+	s := NewSettlementScheduler(NewSettlementSchedulerParams{
+		Service:          &common.Service{GenesisConfig: &config.GenesisConfig{ChainID: "test-chain"}},
+		Logger:           log.DiscardLogger,
+		EngineOps:        ops,
+		Signer:           &mockSigner{},
+		Tx:               &mockTxBroadcaster{},
+		MaxMarketsPerRun: maxMarkets,
+	})
+	s.now = clock.now
+	return s
+}
+
+// pollTimes lists the wall-clock 5-minute marks in [from, to), the times a
+// "*/5 * * * *" schedule fires.
+func pollTimes(from, to time.Time) []time.Time {
+	var out []time.Time
+	p := from.Truncate(SettlementPollFrequency)
+	if p.Before(from) {
+		p = p.Add(SettlementPollFrequency)
+	}
+	for ; p.Before(to); p = p.Add(SettlementPollFrequency) {
+		out = append(out, p)
+	}
+	return out
+}
+
+// pollCycle runs one cycle at the clock's time and returns the market ids it
+// requested and how many it left for a later slot.
+func pollCycle(t *testing.T, s *SettlementScheduler, ops *mockEngineOps, maxMarkets int) (requested []int, backingOff int) {
+	t.Helper()
+	before := len(ops.requestCalls)
+	_, _, _, backingOff, err := s.runSettlementCycle(context.Background(), ops, &mockTxBroadcaster{}, &mockSigner{}, "test-chain", maxMarkets, 3)
+	require.NoError(t, err)
+	return append([]int(nil), ops.requestCalls[before:]...), backingOff
+}
+
+// A capture whose block timestamp lands just under settle_time does not count,
+// so for the first hour the market is requested on every poll, as before.
+func TestRunSettlementCycle_FirstHourRequestsEveryPoll(t *testing.T) {
+	settle := time.Unix(backoffSettleTime, 0)
+	ops := &mockEngineOps{
+		markets:     []*internal.UnsettledMarket{{ID: 1, Hash: []byte{1}, SettleTime: backoffSettleTime}},
+		attestedFor: map[int]bool{},
+	}
+	clock := &testClock{}
+	s := backoffScheduler(t, ops, 10, clock)
+
+	polls := pollTimes(settle, settle.Add(CaptureFullPollWindow))
+	require.Len(t, polls, 12)
+	for _, p := range polls {
+		clock.t = p
+		requested, backingOff := pollCycle(t, s, ops, 10)
+		require.Equal(t, []int{1}, requested, "poll at %s must request", p.Sub(settle))
+		require.Zero(t, backingOff)
+	}
+}
+
+// After the first hour the market is requested once per hour slot counted from
+// settle_time: on the first poll of each slot, and on no other poll. Its capture
+// status is still read on every poll.
+func TestRunSettlementCycle_AfterFirstHourOneRequestPerSlot(t *testing.T) {
+	settle := time.Unix(backoffSettleTime, 0)
+	ops := &mockEngineOps{
+		markets:     []*internal.UnsettledMarket{{ID: 1, Hash: []byte{1}, SettleTime: backoffSettleTime}},
+		attestedFor: map[int]bool{},
+	}
+	clock := &testClock{}
+	s := backoffScheduler(t, ops, 10, clock)
+
+	polls := pollTimes(settle, settle.Add(4*time.Hour))
+	var requestedAt []time.Duration
+	for _, p := range polls {
+		clock.t = p
+		requested, backingOff := pollCycle(t, s, ops, 10)
+		if len(requested) > 0 {
+			require.Equal(t, []int{1}, requested)
+			require.Zero(t, backingOff)
+			requestedAt = append(requestedAt, p.Sub(settle))
+		} else {
+			require.Equal(t, 1, backingOff, "a poll that does not request must count the market as backing off")
+		}
+	}
+
+	var want []time.Duration
+	for _, p := range polls {
+		if p.Sub(settle) < CaptureFullPollWindow {
+			want = append(want, p.Sub(settle))
+		}
+	}
+	for k := 1; k <= 3; k++ {
+		first := pollTimes(settle.Add(time.Duration(k)*CaptureBackoffSlot), settle.Add(4*time.Hour))[0]
+		want = append(want, first.Sub(settle))
+	}
+	require.Equal(t, want, requestedAt)
+	require.Len(t, requestedAt, 15, "12 polls in the first hour, then one per slot")
+	require.Len(t, ops.captureSettleTimes, len(polls), "the capture status is read on every poll")
+}
+
+// Books of one ladder share a settle_time. Their slots are counted from it, so
+// they are requested on the same polls and in the same pass. A market with
+// another settle_time follows its own slots.
+func TestRunSettlementCycle_BooksSharingASettleTimeStayInLockstep(t *testing.T) {
+	settle := time.Unix(backoffSettleTime, 0)
+	other := backoffSettleTime + int64((20 * time.Minute).Seconds())
+	ops := &mockEngineOps{
+		markets: []*internal.UnsettledMarket{
+			{ID: 1, Hash: []byte{1}, SettleTime: backoffSettleTime},
+			{ID: 2, Hash: []byte{2}, SettleTime: backoffSettleTime},
+			{ID: 3, Hash: []byte{3}, SettleTime: other},
+		},
+		attestedFor: map[int]bool{},
+	}
+	clock := &testClock{}
+	s := backoffScheduler(t, ops, 10, clock)
+
+	// Start once market 3's first hour is over too. Nothing has been requested
+	// yet, so the first poll requests all three; after that market 3 follows
+	// slots that start 20 minutes after the ladder's.
+	ladderPolls, otherPolls := 0, 0
+	for i, p := range pollTimes(settle.Add(CaptureFullPollWindow+20*time.Minute), settle.Add(5*time.Hour)) {
+		clock.t = p
+		requested, _ := pollCycle(t, s, ops, 10)
+		has := map[int]bool{}
+		for _, id := range requested {
+			has[id] = true
+		}
+		require.Equal(t, has[1], has[2], "poll at %s: books 1 and 2 must be requested together", p.Sub(settle))
+		if has[1] {
+			ladderPolls++
+		}
+		if has[3] {
+			otherPolls++
+			if i > 0 {
+				require.False(t, has[1], "poll at %s: market 3 has its own slots", p.Sub(settle))
+			}
+		}
+	}
+	require.Equal(t, 4, ladderPolls)
+	require.Equal(t, 4, otherPolls)
+}
+
+// A rejected broadcast ends the pass. Past the first hour the books requested
+// before the rejection wait for the next slot, and at that slot the whole ladder
+// is requested together again.
+func TestRunSettlementCycle_LadderSplitByARejectionRejoinsAtTheNextSlot(t *testing.T) {
+	settle := time.Unix(backoffSettleTime, 0)
+	ops := &mockEngineOps{
+		markets: []*internal.UnsettledMarket{
+			{ID: 1, Hash: []byte{1}, SettleTime: backoffSettleTime},
+			{ID: 2, Hash: []byte{2}, SettleTime: backoffSettleTime},
+		},
+		attestedFor:   map[int]bool{},
+		requestErrFor: map[int]error{2: fmt.Errorf("broadcast tx: mempool full")},
+	}
+	clock := &testClock{}
+	s := backoffScheduler(t, ops, 10, clock)
+
+	polls := pollTimes(settle.Add(2*CaptureBackoffSlot), settle.Add(3*CaptureBackoffSlot+10*time.Minute))
+
+	clock.t = polls[0]
+	requested, _ := pollCycle(t, s, ops, 10)
+	require.Equal(t, []int{1}, requested, "book 2 is rejected and the pass ends")
+
+	delete(ops.requestErrFor, 2)
+	clock.t = polls[1]
+	requested, backingOff := pollCycle(t, s, ops, 10)
+	require.Equal(t, []int{2}, requested, "book 2 was never requested in this slot")
+	require.Equal(t, 1, backingOff)
+
+	nextSlot := settle.Add(3 * CaptureBackoffSlot)
+	for _, p := range polls[2:] {
+		clock.t = p
+		requested, _ := pollCycle(t, s, ops, 10)
+		if p.Before(nextSlot) {
+			require.Empty(t, requested, "poll at %s", p.Sub(settle))
+			continue
+		}
+		require.Equal(t, []int{1, 2}, requested, "the first poll of the next slot requests the whole ladder")
+		return
+	}
+	t.Fatal("no poll reached the next slot")
+}
+
+// Markets waiting out their slot do not use the per-run budget, and the fetch
+// over-fetches by the number of request records. With a budget of one, three
+// older hung markets must not keep a newer one from being requested.
+func TestRunSettlementCycle_BackingOffMarketsDoNotStarveNewer(t *testing.T) {
+	now := time.Unix(backoffSettleTime, 0).Add(10 * time.Hour)
+	hung := now.Add(-5*time.Hour - 30*time.Minute).Unix()
+	ops := &mockEngineOps{
+		markets: []*internal.UnsettledMarket{
+			{ID: 1, Hash: []byte{1}, SettleTime: hung},
+			{ID: 2, Hash: []byte{2}, SettleTime: hung},
+			{ID: 3, Hash: []byte{3}, SettleTime: hung},
+			{ID: 4, Hash: []byte{4}, SettleTime: now.Add(-10 * time.Minute).Unix()},
+		},
+		attestedFor: map[int]bool{},
+	}
+	clock := &testClock{t: now}
+	s := backoffScheduler(t, ops, 1, clock)
+	// Each hung market was requested 5 minutes ago, inside its current slot.
+	for _, id := range []int{1, 2, 3} {
+		s.recordCaptureRequest(id, now.Add(-5*time.Minute))
+	}
+
+	requested, backingOff := pollCycle(t, s, ops, 1)
+
+	require.Equal(t, []int{4}, requested, "the newer market must be requested")
+	require.Equal(t, 3, backingOff)
+	require.Len(t, ops.captureSettleTimes, 4, "the hung markets' capture status is still read")
+}
+
+// A capture seen on any poll, or a settlement, drops the market's request
+// record. A record for a market no longer due is dropped once it is old enough
+// that it could not hold the market back.
+func TestRunSettlementCycle_CaptureClearsTheRequestRecord(t *testing.T) {
+	// Half way through a slot, so a request 5 minutes ago is in the current one.
+	now := time.Unix(backoffSettleTime, 0).Add(10*time.Hour + 30*time.Minute)
+	ops := &mockEngineOps{
+		markets: []*internal.UnsettledMarket{
+			{ID: 1, Hash: []byte{1}, SettleTime: backoffSettleTime}, // captured, unsigned
+			{ID: 2, Hash: []byte{2}, SettleTime: backoffSettleTime}, // signed, settles
+			{ID: 3, Hash: []byte{3}, SettleTime: backoffSettleTime}, // still waiting
+		},
+		attestedFor: map[int]bool{2: true},
+		capturedFor: map[int]bool{1: true},
+	}
+	clock := &testClock{t: now}
+	s := backoffScheduler(t, ops, 10, clock)
+	for _, id := range []int{1, 2, 3} {
+		s.recordCaptureRequest(id, now.Add(-5*time.Minute))
+	}
+	s.recordCaptureRequest(98, now.Add(-30*time.Minute))                       // left the due list recently
+	s.recordCaptureRequest(99, now.Add(-CaptureBackoffPruneAfter-time.Minute)) // left it long ago
+
+	requested, backingOff := pollCycle(t, s, ops, 10)
+
+	require.Empty(t, requested)
+	require.Equal(t, 1, backingOff, "only market 3 is still waiting")
+	require.Equal(t, []int{2}, ops.settleCalls)
+
+	s.captureRequestsMu.Lock()
+	defer s.captureRequestsMu.Unlock()
+	require.NotContains(t, s.captureRequests, 1, "a capture clears the record")
+	require.NotContains(t, s.captureRequests, 2, "a settlement clears the record")
+	require.Contains(t, s.captureRequests, 3)
+	require.Contains(t, s.captureRequests, 98)
+	require.NotContains(t, s.captureRequests, 99, "an old record is pruned")
 }
